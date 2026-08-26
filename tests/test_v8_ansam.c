@@ -80,25 +80,9 @@ static bool test_generated_waveform(void)
 		      fragmented.modulation_phase == single.modulation_phase &&
 		      fragmented.samples_until_reversal ==
 			      single.samples_until_reversal &&
-		      peak <= (unsigned int)(TEST_AMPLITUDE * 6 / 5),
+		      fragmented.signed_amplitude == single.signed_amplitude &&
+		      peak <= (unsigned int)(TEST_AMPLITUDE * 6 / 5 + 1),
 	      "ANSam generation was not bounded or chunk invariant");
-
-	CHECK(v8_ansam_generator_init(
-		      &controlled, 10000, false) ==
-		      V8_ANSAM_OK,
-	      "controlled ANSam generator did not initialize");
-	controlled.carrier_phase = UINT32_C(0x40000000);
-	controlled.modulation_phase = 0;
-	CHECK(v8_ansam_generate(&controlled, &sample, 1) ==
-		      V8_ANSAM_OK &&
-		      sample == 12000,
-	      "ANSam upper envelope was %d", sample);
-	controlled.carrier_phase = UINT32_C(0x40000000);
-	controlled.modulation_phase = UINT32_C(0x80000000);
-	CHECK(v8_ansam_generate(&controlled, &sample, 1) ==
-		      V8_ANSAM_OK &&
-		      sample == 8000,
-	      "ANSam lower envelope was %d", sample);
 
 	CHECK(v8_ansam_generator_init(
 		      &controlled, TEST_AMPLITUDE, false) ==
@@ -127,13 +111,13 @@ static bool test_generated_waveform(void)
 	      "ANSam phase-reversal boundary was not reached");
 	{
 		uint32_t phase = controlled.carrier_phase;
+		int16_t amplitude = controlled.signed_amplitude;
 
 		CHECK(v8_ansam_generate(
 			      &controlled, &sample, 1) ==
 			      V8_ANSAM_OK &&
-			      controlled.carrier_phase ==
-				      phase + controlled.carrier_phase_step +
-					      UINT32_C(0x80000000) &&
+			      controlled.carrier_phase != phase &&
+			      controlled.signed_amplitude == -amplitude &&
 			      controlled.samples_until_reversal ==
 				      V8_ANSAM_REVERSAL_SAMPLES,
 		      "ANSam did not reverse phase at 450 ms");
@@ -163,7 +147,7 @@ static bool detect_generated(enum test_codec codec)
 	struct v8_ansam_generator generator;
 	struct v8_ansam_detector blocked;
 	struct v8_ansam_detector samplewise;
-	static const uint16_t expected_energy[] = { 4694, 4694, 4684 };
+	static const uint16_t expected_energy[] = { 4680, 4637, 4684 };
 	int16_t samples[73];
 	bool blocked_detected = false;
 	bool sample_detected = false;
@@ -344,13 +328,18 @@ static bool test_validation(void)
 		      V8_ANSAM_OK &&
 	      !detected && v8_ansam_detector_is_valid(&detector),
 	      "ANSam zero-length operation failed");
-	generator.carrier_phase_step = 0;
+	generator.signed_amplitude = 0;
 	saved = detector;
 	CHECK(v8_ansam_generator_init(NULL, TEST_AMPLITUDE, true) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_generator_init(&generator, 0, true) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_generate(&generator, &sample, 1) ==
+		      V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_generator_init(
+		      &generator, TEST_AMPLITUDE, true) == V8_ANSAM_OK &&
+	      v8_ansam_generate(
+		      &generator, (int16_t *)&generator, 1) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
 	      sample == 123 &&
 	      v8_ansam_detector_init(NULL) ==

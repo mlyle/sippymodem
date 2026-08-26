@@ -13,6 +13,9 @@
 
 enum {
 	V8_ANSWERING_MAX_FRAGMENT_SAMPLES = 160,
+	/* The direct media owner retains the complete 387 ms answer-station
+	 * quiet interval before ANSam. */
+	V8_ANSWERING_QUIET_SAMPLES = 3096,
 	V8_ANSWERING_CALL_MENU_TIMEOUT_SAMPLES =
 		12 * V8_ANSAM_SAMPLE_RATE,
 	V8_ANSWERING_CJ_TIMEOUT_SAMPLES =
@@ -53,6 +56,7 @@ struct v8_answering {
 	enum v8_answering_state state;
 	enum v8_answering_result terminal_result;
 	uint32_t state_samples;
+	uint16_t quiet_samples;
 	uint8_t transmit_bit;
 	uint8_t cj_fallback_bits;
 	bool cj_fallback_armed;

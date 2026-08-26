@@ -5,7 +5,16 @@
 
 #include "test.h"
 
+#include <stdint.h>
 #include <string.h>
+
+static uint64_t hash_word(uint64_t hash, uint16_t word)
+{
+	hash ^= word & UINT16_C(0xff);
+	hash *= UINT64_C(1099511628211);
+	hash ^= word >> 8;
+	return hash * UINT64_C(1099511628211);
+}
 
 static bool endpoints_init(
 	struct v8_calling *calling,
@@ -83,6 +92,44 @@ static bool test_call_negotiation(void)
 		      calling_selection.modulations &&
 	      answering_selection.lapm && calling_selection.lapm,
 	      "V.8 endpoints disagreed on the selected data mode");
+	return true;
+}
+
+static bool test_answer_signal_wire(void)
+{
+	struct v8_answering answering;
+	struct v8_menu menu;
+	int16_t receive[73] = { 0 };
+	int16_t transmit[ARRAY_LENGTH(receive)];
+	uint64_t hash = UINT64_C(14695981039346656037);
+	size_t first_nonzero = SIZE_MAX;
+
+	CHECK(v8_call_menu_init(
+		      &menu, V8_MODULATION_V34_DUPLEX, false) == V8_MENU_OK &&
+	      v8_answering_init(&answering, &menu) == V8_ANSWERING_OK,
+	      "V.8 answer-signal oracle did not initialize");
+	for (size_t offset = 0; offset < 9000;) {
+		size_t count = ARRAY_LENGTH(receive);
+
+		if (count > 9000u - offset)
+			count = 9000u - offset;
+		CHECK(v8_answering_process(
+			      &answering, receive, transmit, count) ==
+			      V8_ANSWERING_OK,
+		      "V.8 answer signal stopped at %zu", offset);
+		for (size_t index = 0; index < count; ++index) {
+			if (first_nonzero == SIZE_MAX && transmit[index] != 0)
+				first_nonzero = offset + index;
+			hash = hash_word(hash, (uint16_t)transmit[index]);
+		}
+		offset += count;
+	}
+	CHECK(first_nonzero == V8_ANSWERING_QUIET_SAMPLES &&
+		      hash == UINT64_C(0xd927fafa7f14d42f) &&
+		      answering.quiet_samples == 0 &&
+		      answering.state == V8_ANSWERING_WAIT_CALL_MENU,
+	      "V.8 answer wire changed at %zu: %#llx",
+	      first_nonzero, (unsigned long long)hash);
 	return true;
 }
 
@@ -350,6 +397,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "answer signal wire", test_answer_signal_wire },
 		{ "call negotiation", test_call_negotiation },
 		{ "no common modulation", test_no_common_modulation },
 		{ "call menu timeout", test_call_menu_timeout },

@@ -145,6 +145,14 @@ struct fixed_phase_q14 fixed_phase_sin_cos_u16_q14(uint16_t phase)
 	};
 }
 
+int16_t fixed_phase_cosine_u8_q14(uint8_t phase)
+{
+	if (phase == 128u)
+		return -16383;
+	return (int16_t)(cos(
+		2.0 * FIXED_PHASE_PI * phase / 256.0) * 16384.0);
+}
+
 static int32_t floor_divide_power_of_two(
 	int32_t value, unsigned int shift)
 {

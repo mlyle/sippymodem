@@ -475,6 +475,7 @@ FSK_TEST_OBJECTS := $(BUILD_DIR)/test_fsk.o \
 V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_v8_ansam.o \
 	$(BUILD_DIR)/v8_ansam.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/g711.o
 V8_ANSWERING_TEST_BINARY := $(BUILD_DIR)/test_v8_answering
 V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_answering.o \
@@ -484,6 +485,7 @@ V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_answering.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_menu.o \
 	$(BUILD_DIR)/v8_framing.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/fsk.o
 V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_v8_calling
@@ -493,6 +495,7 @@ V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_calling.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_menu.o \
 	$(BUILD_DIR)/v8_framing.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/fsk.o
 V8_FSK_TEST_BINARY := $(BUILD_DIR)/test_v8_fsk
@@ -500,6 +503,7 @@ V8_FSK_TEST_OBJECTS := $(BUILD_DIR)/test_v8_fsk.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_menu.o \
 	$(BUILD_DIR)/v8_framing.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/g711.o

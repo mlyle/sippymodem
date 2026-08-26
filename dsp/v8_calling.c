@@ -64,7 +64,8 @@ static bool calling_is_valid(const struct v8_calling *calling)
 		return !calling->negotiated && calling->state_samples <
 		       V8_CALLING_MENU_TIMEOUT_SAMPLES;
 	case V8_CALLING_SEND_CJ:
-		return calling->negotiated && calling->state_samples == 0;
+		return calling->negotiated && calling->state_samples <
+		       V8_CALLING_CJ_FILTER_DRAIN_SAMPLES;
 	case V8_CALLING_COMPLETE:
 		return calling->negotiated &&
 		       calling->cj_bit_index == V8_CJ_BITS &&
@@ -199,6 +200,17 @@ static enum v8_calling_result send_cj_sample(
 {
 	bool bit_consumed;
 
+	if (calling->cj_bit_index == V8_CJ_BITS &&
+	    v8_fsk_can_accept_bit(&calling->fsk)) {
+		if (v8_fsk_filter_transmit_sample(
+			    &calling->fsk, 0, transmit) != V8_FSK_OK)
+			return V8_CALLING_INVALID_ARGUMENT;
+		calling->state_samples++;
+		if (calling->state_samples ==
+		    V8_CALLING_CJ_FILTER_DRAIN_SAMPLES)
+			enter_state(calling, V8_CALLING_COMPLETE);
+		return V8_CALLING_OK;
+	}
 	if (v8_fsk_can_accept_bit(&calling->fsk) &&
 	    calling->cj_bit_index < V8_CJ_BITS) {
 		if (v8_cj_bit(
@@ -211,9 +223,6 @@ static enum v8_calling_result send_cj_sample(
 		    &calling->fsk, calling->transmit_bit, transmit,
 		    &bit_consumed) != V8_FSK_OK)
 		return V8_CALLING_INVALID_ARGUMENT;
-	if (bit_consumed &&
-	    calling->cj_bit_index == V8_CJ_BITS)
-		enter_state(calling, V8_CALLING_COMPLETE);
 	return V8_CALLING_OK;
 }
 

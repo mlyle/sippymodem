@@ -17,6 +17,7 @@ enum {
 		12 * V8_ANSAM_SAMPLE_RATE,
 	V8_CALLING_MENU_TIMEOUT_SAMPLES =
 		7 * V8_ANSAM_SAMPLE_RATE,
+	V8_CALLING_CJ_FILTER_DRAIN_SAMPLES = V8_FSK_TRANSMIT_FILTER_TAPS,
 };
 
 enum v8_calling_state {
@@ -55,8 +56,8 @@ struct v8_calling {
 enum v8_calling_result v8_calling_init(
 	struct v8_calling *calling,
 	const struct v8_menu *local_menu);
-/* COMPLETE transfers the next sample to the selected datapump.  That owner
- * emits the post-CJ silence while already listening for its peer. */
+/* COMPLETE transfers the next sample to the selected datapump after the CJ
+ * tail has left the V.21 transmit filter. */
 enum v8_calling_result v8_calling_process(
 	struct v8_calling *calling, const int16_t *receive,
 	int16_t *transmit, size_t count);

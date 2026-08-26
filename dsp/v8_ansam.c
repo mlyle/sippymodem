@@ -2,32 +2,39 @@
 
 #include "v8_ansam.h"
 
+#include "fixed_phase.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
 
 #include <limits.h>
-#include <math.h>
 #include <string.h>
 
-static const double V8_ANSAM_MODULATION_DEPTH = 0.2;
-static const double V8_ANSAM_TWO_PI =
-	6.283185307179586476925286766559;
+static int16_t mul_shift_s16(
+	int16_t left, int16_t right, unsigned int shift);
+
+static int16_t cycle_cosine_q14(uint8_t index)
+{
+	return fixed_phase_cosine_u8_q14(index);
+}
+
+static int16_t phase_cosine_q14(uint32_t phase)
+{
+	return cycle_cosine_q14(
+		(uint8_t)((phase + UINT32_C(0x00800000)) >> 24));
+}
 
 static bool generator_is_valid(
 	const struct v8_ansam_generator *generator)
 {
-	return generator != NULL && generator->average_amplitude > 0 &&
-	       generator->average_amplitude <=
-		       V8_ANSAM_MAX_AVERAGE_AMPLITUDE &&
-	       generator->carrier_phase_step ==
-		       phase_step_u32(
-			       V8_ANSAM_SAMPLE_RATE,
-			       V8_ANSAM_CARRIER_HZ, 1) &&
-	       generator->modulation_phase_step ==
-		       phase_step_u32(
-			       V8_ANSAM_SAMPLE_RATE,
-			       V8_ANSAM_MODULATION_HZ, 1) &&
+	int32_t amplitude;
+
+	if (generator == NULL || generator->signed_amplitude == 0)
+		return false;
+	amplitude = generator->signed_amplitude;
+	if (amplitude < 0)
+		amplitude = -amplitude;
+	return amplitude <= V8_ANSAM_MAX_AVERAGE_AMPLITUDE &&
 	       ((!generator->phase_reversals &&
 		 generator->samples_until_reversal == 0) ||
 		(generator->phase_reversals &&
@@ -41,18 +48,10 @@ enum v8_ansam_result v8_ansam_generator_init(
 	int16_t average_amplitude, bool phase_reversals)
 {
 	struct v8_ansam_generator initialized = {
-		.carrier_phase_step =
-			phase_step_u32(
-				V8_ANSAM_SAMPLE_RATE,
-				V8_ANSAM_CARRIER_HZ, 1),
-		.modulation_phase_step =
-			phase_step_u32(
-				V8_ANSAM_SAMPLE_RATE,
-				V8_ANSAM_MODULATION_HZ, 1),
 		.samples_until_reversal =
 			phase_reversals ?
 				V8_ANSAM_REVERSAL_SAMPLES : 0,
-		.average_amplitude = average_amplitude,
+		.signed_amplitude = average_amplitude,
 		.phase_reversals = phase_reversals,
 	};
 
@@ -67,24 +66,38 @@ enum v8_ansam_result v8_ansam_generate(
 	int16_t *samples, size_t count)
 {
 	struct v8_ansam_generator next;
+	size_t bytes;
 
-	if (!generator_is_valid(generator) || (samples == NULL && count != 0))
+	if (!generator_is_valid(generator) ||
+	    count > SIZE_MAX / sizeof(*samples) ||
+	    (samples == NULL && count != 0))
+		return V8_ANSAM_INVALID_ARGUMENT;
+	bytes = count * sizeof(*samples);
+	if (memory_regions_overlap(
+		    generator, sizeof(*generator), samples, bytes))
 		return V8_ANSAM_INVALID_ARGUMENT;
 	next = *generator;
 	for (size_t index = 0; index < count; ++index) {
-		double carrier = sin(phase_radians_u32(next.carrier_phase));
-		double envelope =
-			1.0 + V8_ANSAM_MODULATION_DEPTH *
-				      cos(phase_radians_u32(
-					      next.modulation_phase));
+		int16_t envelope;
+		int16_t scaled_envelope;
+		int16_t carrier;
 
-		samples[index] = (int16_t)lround(
-			(double)next.average_amplitude * envelope * carrier);
-		next.carrier_phase += next.carrier_phase_step;
-		next.modulation_phase += next.modulation_phase_step;
+		next.modulation_phase += phase_step_u32(
+			V8_ANSAM_SAMPLE_RATE, V8_ANSAM_MODULATION_HZ, 1);
+		next.carrier_phase += phase_step_u32(
+			V8_ANSAM_SAMPLE_RATE, V8_ANSAM_CARRIER_HZ, 1);
+		envelope = mul_shift_s16(
+			0x0ccd, phase_cosine_q14(next.modulation_phase), 14);
+		scaled_envelope = mul_shift_s16(
+			(int16_t)(envelope + 0x4000),
+			next.signed_amplitude, 14);
+		carrier = phase_cosine_q14(next.carrier_phase);
+		samples[index] = mul_shift_s16(
+			carrier, scaled_envelope, 14);
 		if (next.phase_reversals &&
 		    --next.samples_until_reversal == 0) {
-			next.carrier_phase += UINT32_C(0x80000000);
+			next.signed_amplitude =
+				(int16_t)-next.signed_amplitude;
 			next.samples_until_reversal =
 				V8_ANSAM_REVERSAL_SAMPLES;
 		}
@@ -468,16 +481,6 @@ static void update_signal_stability(struct v8_ansam_agc *gain)
 	gain->signal_stable_time = (uint16_t)timer;
 	if (timer >= V8_ANSAM_SIGNAL_STABILITY_SAMPLES)
 		gain->signal_stable = true;
-}
-
-/* Generate the exact signed-Q14 256-point carrier profile.  Truncation is
- * intentional; the negative peak is limited by the signed profile. */
-static int16_t cycle_cosine_q14(uint8_t index)
-{
-	if (index == 128u)
-		return -16383;
-	return (int16_t)(cos(
-		V8_ANSAM_TWO_PI * index / 256.0) * 16384.0);
 }
 
 static void accumulate_modulation(

@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum {
-	V8_ANSWER_SIGNAL_AVERAGE_AMPLITUDE = 10000,
+	V8_ANSWER_SIGNAL_AVERAGE_AMPLITUDE = 16000,
 };
 
 static bool menu_is_usable(const struct v8_menu *menu)
@@ -45,6 +45,7 @@ static bool answering_is_valid(
 	    (unsigned int)answering->terminal_result >
 		    V8_ANSWERING_NO_COMMON_MODULATION ||
 	    answering->transmit_bit > 1 ||
+	    answering->quiet_samples > V8_ANSWERING_QUIET_SAMPLES ||
 	    answering->cj_fallback_bits >=
 		    V8_ANSWERING_CJ_FALLBACK_BITS ||
 	    (!answering->cj_fallback_armed &&
@@ -106,6 +107,8 @@ static void enter_state(
 {
 	answering->state = state;
 	answering->state_samples = 0;
+	if (state != V8_ANSWERING_WAIT_CALL_MENU)
+		answering->quiet_samples = 0;
 	if (state != V8_ANSWERING_SEND_JOINT_MENU) {
 		answering->cj_fallback_armed = false;
 		answering->cj_fallback_bits = 0;
@@ -126,6 +129,7 @@ enum v8_answering_result v8_answering_init(
 	const struct v8_menu *local_menu)
 {
 	struct v8_answering initialized = {
+		.quiet_samples = V8_ANSWERING_QUIET_SAMPLES,
 		.transmit_bit = 1,
 	};
 
@@ -192,11 +196,20 @@ static enum v8_answering_result wait_call_menu_sample(
 	uint8_t bit;
 	bool ready;
 	bool confirmed = false;
+	int16_t unfiltered;
 
-	if (v8_ansam_generate(
-		    &answering->answer_signal, transmit, 1) !=
-		    V8_ANSAM_OK ||
-	    v8_fsk_receive_sample(
+	if (answering->quiet_samples != 0) {
+		*transmit = 0;
+		answering->quiet_samples--;
+	} else if (v8_ansam_generate(
+			   &answering->answer_signal, &unfiltered, 1) !=
+			   V8_ANSAM_OK ||
+		   v8_fsk_filter_transmit_sample(
+			   &answering->fsk, unfiltered, transmit) !=
+			   V8_FSK_OK) {
+		return V8_ANSWERING_INVALID_ARGUMENT;
+	}
+	if (v8_fsk_receive_sample(
 		    &answering->fsk, receive, &bit, &ready) !=
 		    V8_FSK_OK)
 		return V8_ANSWERING_INVALID_ARGUMENT;

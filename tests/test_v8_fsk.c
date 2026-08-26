@@ -39,6 +39,14 @@ static bool channel_matches(
 	       actual->space_frequency_hz == expected->space_frequency_hz;
 }
 
+static uint64_t hash_word(uint64_t hash, uint16_t word)
+{
+	hash ^= word & UINT16_C(0xff);
+	hash *= UINT64_C(1099511628211);
+	hash ^= word >> 8;
+	return hash * UINT64_C(1099511628211);
+}
+
 static bool test_station_channels(void)
 {
 	struct v8_fsk caller;
@@ -52,16 +60,60 @@ static bool test_station_channels(void)
 		      V8_FSK_OK,
 	      "V.8 FSK stations did not initialize");
 	CHECK(channel_matches(
-		      &caller.transmitter.channel,
-		      &v21_channel_1) &&
-	      channel_matches(
 		      &caller.receiver.channel, &v21_channel_2) &&
 	      channel_matches(
-		      &answerer.transmitter.channel,
-		      &v21_channel_2) &&
-	      channel_matches(
-		      &answerer.receiver.channel, &v21_channel_1),
+		      &answerer.receiver.channel, &v21_channel_1) &&
+	      caller.transmitter.mark_phase_step == 1004 &&
+	      caller.transmitter.space_phase_step == 1208 &&
+	      answerer.transmitter.mark_phase_step == 1690 &&
+	      answerer.transmitter.space_phase_step == 1894 &&
+	      caller.transmitter.gain == 0x3ead &&
+	      answerer.transmitter.gain == 0x3ead,
 	      "V.8 FSK stations selected the wrong V.21 channels");
+	return true;
+}
+
+static bool test_transmit_oracle(void)
+{
+	static const uint64_t expected_hash[] = {
+		UINT64_C(0x0946f673c1b431e4),
+		UINT64_C(0xa87832e2a321791b),
+	};
+	static const unsigned int expected_periods[] = { 27, 27, 26 };
+
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct v8_fsk fsk;
+		uint64_t hash = UINT64_C(14695981039346656037);
+		unsigned int period = 0;
+		unsigned int period_index = 0;
+
+		CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK,
+		      "V.8 FSK oracle role %u did not initialize", role);
+		for (size_t index = 0; index < 512; ++index) {
+			int16_t sample;
+			bool consumed;
+
+			CHECK(v8_fsk_transmit_sample(
+				      &fsk, 1, &sample, &consumed) == V8_FSK_OK,
+			      "V.8 FSK oracle role %u stopped at %zu",
+			      role, index);
+			hash = hash_word(hash, (uint16_t)sample);
+			period++;
+			if (consumed && period_index < ARRAY_LENGTH(expected_periods)) {
+				CHECK(period == expected_periods[period_index] &&
+					      v8_fsk_can_accept_bit(&fsk),
+				      "V.8 FSK bit period %u was %u",
+				      period_index, period);
+				period = 0;
+				period_index++;
+			}
+		}
+		CHECK(hash == expected_hash[role] &&
+			      period_index == ARRAY_LENGTH(expected_periods),
+		      "V.8 FSK role %u wire hash changed: %#llx",
+		      role, (unsigned long long)hash);
+	}
 	return true;
 }
 
@@ -215,7 +267,9 @@ static bool test_validation_and_reset(void)
 		      &fsk, 1, &sample, &ready) == V8_FSK_OK &&
 	      v8_fsk_reset(&fsk) == V8_FSK_OK &&
 	      fsk.role == V8_ANSWERING_STATION &&
-	      fsk.transmitter.tones.carrier_phase == 0 &&
+	      fsk.transmitter.carrier_phase == 0 &&
+	      fsk.transmitter.bit_progress == 0 &&
+	      fsk.transmitter.filter_history[33] == 0x1000 &&
 	      fsk.receiver.history_count == 0,
 	      "V.8 FSK reset did not preserve role and clear stream state");
 	return true;
@@ -228,6 +282,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "station channels", test_station_channels },
+		{ "transmit oracle", test_transmit_oracle },
 		{ "menu audio round trip", test_menu_audio_round_trip },
 		{ "validation and reset", test_validation_and_reset },
 	};

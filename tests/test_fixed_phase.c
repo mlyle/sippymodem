@@ -104,6 +104,25 @@ static bool test_complete_unsigned_carrier_profile(void)
 	return true;
 }
 
+static bool test_compact_cosine_profile(void)
+{
+	uint64_t hash = UINT64_C(14695981039346656037);
+
+	for (unsigned int phase = 0; phase < 256; ++phase) {
+		int16_t cosine = fixed_phase_cosine_u8_q14((uint8_t)phase);
+
+		hash = hash_word64(hash, (uint16_t)cosine);
+	}
+	CHECK(hash == UINT64_C(0x34d86b711379ea60) &&
+		      fixed_phase_cosine_u8_q14(0) == 16384 &&
+		      fixed_phase_cosine_u8_q14(64) == 0 &&
+		      fixed_phase_cosine_u8_q14(128) == -16383 &&
+		      fixed_phase_cosine_u8_q14(192) == 0,
+	      "compact cosine profile changed: %#llx",
+	      (unsigned long long)hash);
+	return true;
+}
+
 static bool test_atan_axes_and_perimeter(void)
 {
 	uint32_t hash = UINT32_C(2166136261);
@@ -142,6 +161,7 @@ int main(void)
 		{ "complete phasor profile", test_complete_phasor_profile },
 		{ "complete unsigned carrier profile",
 		  test_complete_unsigned_carrier_profile },
+		{ "compact cosine profile", test_compact_cosine_profile },
 		{ "atan axes and perimeter", test_atan_axes_and_perimeter },
 	};
 	unsigned int failures = 0;

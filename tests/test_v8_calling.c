@@ -34,7 +34,7 @@ static bool remote_answerer_init(
 	};
 
 	if (v8_ansam_generator_init(
-		    &initialized.answer_signal, 10000, true) !=
+		    &initialized.answer_signal, 16000, true) !=
 		    V8_ANSAM_OK ||
 	    v8_fsk_init(
 		    &initialized.fsk, V8_ANSWERING_STATION) !=
@@ -56,10 +56,16 @@ static bool remote_answerer_transmit(
 {
 	bool consumed;
 
-	if (answerer->state == REMOTE_ANSWER_SIGNAL)
+	if (answerer->state == REMOTE_ANSWER_SIGNAL) {
+		int16_t unfiltered;
+
 		return v8_ansam_generate(
-			       &answerer->answer_signal, sample, 1) ==
-		       V8_ANSAM_OK;
+			       &answerer->answer_signal, &unfiltered, 1) ==
+			       V8_ANSAM_OK &&
+		       v8_fsk_filter_transmit_sample(
+			       &answerer->fsk, unfiltered, sample) ==
+			       V8_FSK_OK;
+	}
 	if (answerer->state == REMOTE_JOINT_MENU) {
 		if (v8_fsk_can_accept_bit(&answerer->fsk)) {
 			bool sequence_complete;

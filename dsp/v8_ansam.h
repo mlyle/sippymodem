@@ -32,10 +32,8 @@ enum v8_ansam_result {
 struct v8_ansam_generator {
 	uint32_t carrier_phase;
 	uint32_t modulation_phase;
-	uint32_t carrier_phase_step;
-	uint32_t modulation_phase_step;
 	uint32_t samples_until_reversal;
-	int16_t average_amplitude;
+	int16_t signed_amplitude;
 	bool phase_reversals;
 };
 
