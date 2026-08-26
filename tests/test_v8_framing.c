@@ -153,6 +153,59 @@ static bool test_control_recovery(void)
 	return true;
 }
 
+static bool test_clipped_control_preamble(void)
+{
+	static const uint8_t information[] = { UINT8_C(0xc1), UINT8_C(0x2a) };
+
+	for (size_t clipped = 1; clipped <= V8_SYNC_MARK_BITS - 2u;
+	     ++clipped) {
+		struct v8_control_generator generator;
+		struct v8_control_receiver receiver;
+		size_t octet_count = 0;
+		unsigned int starts = 0;
+
+		CHECK(v8_control_generator_init(
+			      &generator, information,
+			      ARRAY_LENGTH(information)) == V8_FRAMING_OK &&
+		      v8_control_receiver_init(&receiver) == V8_FRAMING_OK,
+		      "V.8 clipped-preamble endpoints did not initialize");
+		for (size_t index = 0; index < clipped; ++index) {
+			bool complete;
+			uint8_t bit;
+
+			CHECK(v8_control_next_bit(
+				      &generator, &bit, &complete) == V8_FRAMING_OK &&
+			      bit == 1 && !complete,
+			      "V.8 clipped a non-mark preamble bit");
+		}
+		for (;;) {
+			struct v8_control_event event;
+			bool complete;
+			uint8_t bit;
+
+			CHECK(v8_control_next_bit(
+				      &generator, &bit, &complete) == V8_FRAMING_OK &&
+			      v8_control_receive_bit(
+				      &receiver, bit, &event) == V8_FRAMING_OK,
+			      "V.8 clipped-preamble receive failed");
+			if (event.type == V8_CONTROL_SEQUENCE_START)
+				starts++;
+			else if (event.type == V8_CONTROL_INFORMATION_OCTET) {
+				CHECK(octet_count < ARRAY_LENGTH(information) &&
+				      event.octet == information[octet_count],
+				      "V.8 clipped preamble changed octet %zu",
+				      octet_count);
+				octet_count++;
+			}
+			if (complete)
+				break;
+		}
+		CHECK(starts == 1 && octet_count == ARRAY_LENGTH(information),
+		      "V.8 lost a preamble clipped by %zu marks", clipped);
+	}
+	return true;
+}
+
 static bool test_control_reacquisition(void)
 {
 	static const uint8_t information[] = { UINT8_C(0xc1), UINT8_C(0x2a) };
@@ -360,6 +413,7 @@ int main(void)
 		{ "owned bounded information", test_owned_bounded_information },
 		{ "CJ sequence", test_cj_sequence },
 		{ "control recovery", test_control_recovery },
+		{ "clipped control preamble", test_clipped_control_preamble },
 		{ "control reacquisition", test_control_reacquisition },
 		{ "CJ detection", test_cj_detection },
 		{ "validation", test_validation },

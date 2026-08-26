@@ -5,10 +5,14 @@
 #include <string.h>
 
 enum {
+	/* The final two mark bits plus the ten-bit synchronization pattern form
+	 * the sliding control header.  The preceding marks establish carrier,
+	 * but are not required to survive intact for frame alignment. */
+	V8_SYNC_HEADER_BITS = V8_SYNC_PATTERN_BITS + 2,
 	V8_SYNC_WINDOW_MASK =
-		(1u << V8_PREAMBLE_BITS) - 1u,
+		(1u << V8_SYNC_HEADER_BITS) - 1u,
 	V8_SYNC_PATTERN =
-		(((1u << V8_SYNC_MARK_BITS) - 1u) <<
+		(((1u << 2) - 1u) <<
 		 V8_SYNC_PATTERN_BITS) |
 		((1u << 4) - 1u),
 	V8_FRAMED_OCTET_MASK =
@@ -105,8 +109,8 @@ static bool control_receiver_is_valid(
 
 	if (receiver == NULL ||
 	    (receiver->sync_window & ~V8_SYNC_WINDOW_MASK) != 0 ||
-	    receiver->sync_bit_count > V8_PREAMBLE_BITS ||
-	    (receiver->sync_bit_count < V8_PREAMBLE_BITS &&
+	    receiver->sync_bit_count > V8_SYNC_HEADER_BITS ||
+	    (receiver->sync_bit_count < V8_SYNC_HEADER_BITS &&
 	     receiver->sync_window >= (1u << receiver->sync_bit_count)) ||
 	    receiver->frame_bit_index >=
 		    V8_FRAMED_OCTET_BITS)
@@ -142,9 +146,9 @@ static bool observe_sync_bit(
 {
 	receiver->sync_window =
 		((receiver->sync_window << 1) | bit) & V8_SYNC_WINDOW_MASK;
-	if (receiver->sync_bit_count < V8_PREAMBLE_BITS)
+	if (receiver->sync_bit_count < V8_SYNC_HEADER_BITS)
 		receiver->sync_bit_count++;
-	return receiver->sync_bit_count == V8_PREAMBLE_BITS &&
+	return receiver->sync_bit_count == V8_SYNC_HEADER_BITS &&
 	       receiver->sync_window == V8_SYNC_PATTERN;
 }
 
