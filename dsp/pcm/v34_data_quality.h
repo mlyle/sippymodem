@@ -36,6 +36,15 @@ enum v34_data_quality_result v34_data_quality_init(
 	struct v34_data_quality *quality);
 bool v34_data_quality_is_valid(const struct v34_data_quality *quality);
 
+/* Select the highest enabled receive rate supported by the completed
+ * training metric.  A metric at or above a rate threshold steps down to the
+ * next enabled rate; the lowest enabled rate remains the bounded fallback. */
+enum v34_data_quality_result v34_data_quality_select_receive_rate(
+	enum v34_symbol_rate symbol_rate, uint16_t enabled_rate_mask,
+	uint8_t maximum_rate_2400_bps_units,
+	const struct v34_adaptive_equalizer_quality *measurement,
+	uint8_t *selected_rate_2400_bps_units);
+
 /* Start a new data generation while retaining the automatic-retrain budget.
  * The current window is deliberately latched when it ends exactly at the B1
  * boundary; only a subsequently completed online window affects policy. */

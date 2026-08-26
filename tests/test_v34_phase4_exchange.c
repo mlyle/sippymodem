@@ -531,6 +531,7 @@ static bool test_peer_mp_releases_trn(void)
 	struct endpoint caller;
 	struct endpoint answerer;
 	struct v34_training_transmitter peer_transmit;
+	struct v34_mp_parameters *caller_parameters;
 	int16_t caller_receive = 0;
 	int16_t answerer_receive = 0;
 	bool trn_ready = false;
@@ -538,6 +539,10 @@ static bool test_peer_mp_releases_trn(void)
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
 	      "early-peer-MP endpoints did not initialize");
+	caller_parameters = mp_common(
+		&caller.phase4_configuration.transmit_mp);
+	caller_parameters->maximum_call_to_answer_rate_2400_bps_units = 8;
+	caller_parameters->maximum_answer_to_call_rate_2400_bps_units = 8;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
@@ -566,6 +571,12 @@ static bool test_peer_mp_releases_trn(void)
 	CHECK(trn_ready && !caller.phase4.peer_mp_received &&
 	      !caller.phase4.transmit_mp_started,
 	      "early-peer-MP setup missed the open TRN interval");
+	/* A complete metric of 600 is above the 19.2 kbit/s threshold but
+	 * below the 16.8 kbit/s threshold for 3000 symbols/s. */
+	caller.phase4.receive.equalizer.quality =
+		(struct v34_adaptive_equalizer_quality){
+			.decision_metric = 600,
+		};
 	peer_transmit = answerer.phase4.transmit.training;
 	CHECK(v34_training_transmitter_start_mp_type0(
 		      &peer_transmit,
@@ -603,9 +614,14 @@ static bool test_peer_mp_releases_trn(void)
 		      "early peer MP exchange stopped at sample %zu", index);
 		if ((events & V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED) == 0)
 			continue;
+		caller_parameters = mp_common(&caller.phase4.transmit_mp);
 		CHECK((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) != 0 &&
 		      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
 		      caller.trn_symbols_at_mp < 2u * 3000u &&
+		      caller_parameters
+			      ->maximum_call_to_answer_rate_2400_bps_units == 8 &&
+		      caller_parameters
+			      ->maximum_answer_to_call_rate_2400_bps_units == 7 &&
 		      caller.phase4.transmit_mp_started &&
 		      caller.phase4.receive.feedback_training_complete &&
 		      caller.data_preparation_count == 1u,

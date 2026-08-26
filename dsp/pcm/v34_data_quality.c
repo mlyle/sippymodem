@@ -9,6 +9,7 @@
 
 enum {
 	V34_RATE_PROFILE_UNITS = 14,
+	V34_RATE_PROFILE_MASK = (1u << V34_RATE_PROFILE_UNITS) - 1u,
 };
 
 /* Receive-rate coefficients for the decision metric's fixed-point domain.
@@ -133,6 +134,55 @@ enum v34_data_quality_result v34_data_quality_init(
 	if (quality == NULL)
 		return V34_DATA_QUALITY_INVALID_ARGUMENT;
 	*quality = (struct v34_data_quality){ 0 };
+	return V34_DATA_QUALITY_OK;
+}
+
+static uint8_t next_enabled_rate(
+	const uint16_t *profile, uint16_t enabled_rate_mask,
+	uint8_t maximum_rate)
+{
+	for (uint8_t rate = maximum_rate; rate != 0u; --rate)
+		if ((enabled_rate_mask & (uint16_t)(1u << (rate - 1u))) != 0u &&
+		    profile[rate - 1u] != 0u)
+			return rate;
+	return 0u;
+}
+
+enum v34_data_quality_result v34_data_quality_select_receive_rate(
+	enum v34_symbol_rate symbol_rate, uint16_t enabled_rate_mask,
+	uint8_t maximum_rate_2400_bps_units,
+	const struct v34_adaptive_equalizer_quality *measurement,
+	uint8_t *selected_rate_2400_bps_units)
+{
+	const uint16_t *profile = rate_profile(symbol_rate);
+	uint8_t selected;
+
+	if (profile == NULL || measurement == NULL ||
+	    selected_rate_2400_bps_units == NULL ||
+	    memory_regions_overlap(
+		measurement, sizeof(*measurement),
+		selected_rate_2400_bps_units,
+		sizeof(*selected_rate_2400_bps_units)) ||
+	    !measurement_is_valid(measurement) || enabled_rate_mask == 0u ||
+	    (enabled_rate_mask & (uint16_t)~V34_RATE_PROFILE_MASK) != 0u ||
+	    maximum_rate_2400_bps_units == 0u ||
+	    maximum_rate_2400_bps_units > V34_RATE_PROFILE_UNITS)
+		return V34_DATA_QUALITY_INVALID_ARGUMENT;
+	selected = next_enabled_rate(
+		profile, enabled_rate_mask, maximum_rate_2400_bps_units);
+	if (selected == 0u)
+		return V34_DATA_QUALITY_INVALID_ARGUMENT;
+	for (;;) {
+		uint8_t lower = next_enabled_rate(
+			profile, enabled_rate_mask, (uint8_t)(selected - 1u));
+		int16_t threshold = rate_threshold(
+			profile[selected - 1u], selected);
+
+		if (lower == 0u || measurement->decision_metric < threshold)
+			break;
+		selected = lower;
+	}
+	*selected_rate_2400_bps_units = selected;
 	return V34_DATA_QUALITY_OK;
 }
 

@@ -763,6 +763,7 @@ static bool test_data_quality_policy(void)
 		.window_position = 1,
 	};
 	struct v34_data_quality quality;
+	uint8_t selected_rate;
 	uint64_t profile_hash = UINT64_C(14695981039346656037);
 
 	for (size_t index = 0; index < sizeof(profiles) / sizeof(profiles[0]);
@@ -793,6 +794,43 @@ static bool test_data_quality_policy(void)
 	}
 	CHECK(profile_hash == UINT64_C(0xd16019b57923c441),
 	      "quality profile digest changed: 0x%016" PRIx64, profile_hash);
+	measurement.decision_metric = 49;
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0x3fffu, 14, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_OK &&
+	      selected_rate == 14,
+	      "sub-threshold training did not retain 33600: %u",
+	      selected_rate);
+	measurement.decision_metric = 50;
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0x3fffu, 14, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_OK &&
+	      selected_rate == 13,
+	      "threshold boundary did not step down to 31200: %u",
+	      selected_rate);
+	measurement.decision_metric = 88;
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0x3fffu, 14, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_OK &&
+	      selected_rate == 12,
+	      "retained live metric did not select 28800: %u",
+	      selected_rate);
+	measurement.decision_metric = 50;
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429,
+		      (uint16_t)((1u << 13u) | (1u << 11u)), 14,
+		      &measurement, &selected_rate) == V34_DATA_QUALITY_OK &&
+	      selected_rate == 12,
+	      "sparse capability mask did not skip rate 13: %u",
+	      selected_rate);
+	measurement.decision_metric = INT16_MAX;
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_2400, 0x01ffu, 9, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_OK &&
+	      selected_rate == 1,
+	      "poor training did not retain the minimum rate: %u",
+	      selected_rate);
+	measurement.decision_metric = 100;
 	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 	      v34_data_quality_start(
 		      &quality, V34_SYMBOL_RATE_2400, 1, &measurement) ==
@@ -896,6 +934,7 @@ static bool test_data_quality_transactionality(void)
 	};
 	struct v34_data_quality quality;
 	struct v34_data_quality saved;
+	uint8_t selected_rate = 7;
 
 	CHECK(v34_data_quality_init(NULL) ==
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
@@ -917,6 +956,21 @@ static bool test_data_quality_transactionality(void)
 		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&quality, &saved, sizeof(quality)) == 0,
 	      "quality setup rejection changed the owner");
+	CHECK(v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_COUNT, 0x3fffu, 14, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0xc000u, 14, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0x3fffu, 0, &measurement,
+		      &selected_rate) == V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v34_data_quality_select_receive_rate(
+		      V34_SYMBOL_RATE_3429, 0x3fffu, 14, &measurement,
+		      (uint8_t *)&measurement) ==
+		      V34_DATA_QUALITY_INVALID_ARGUMENT &&
+	      selected_rate == 7,
+	      "rate-selection rejection changed its output");
 	CHECK(v34_data_quality_start(
 		      &quality, V34_SYMBOL_RATE_3429, 14, &measurement) ==
 		      V34_DATA_QUALITY_OK,

@@ -3,6 +3,7 @@
 #include "v34_phase4_exchange.h"
 
 #include "memory_region.h"
+#include "v34_data_quality.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -561,6 +562,27 @@ static enum v34_phase4_exchange_result finish_feedback_training(
 	return V34_PHASE4_EXCHANGE_OK;
 }
 
+static enum v34_phase4_exchange_result select_trained_receive_rate(
+	struct v34_phase4_exchange *exchange)
+{
+	struct v34_mp_parameters *parameters = record_common(
+		&exchange->transmit_mp);
+	uint8_t *maximum = exchange->local_role == V34_CALLING_STATION ?
+		&parameters->maximum_answer_to_call_rate_2400_bps_units :
+		&parameters->maximum_call_to_answer_rate_2400_bps_units;
+	uint8_t selected;
+
+	if (v34_data_quality_select_receive_rate(
+		    peer_transmit_profile(exchange)->symbol_rate,
+		    parameters->data_rate_capability_mask, *maximum,
+		    &exchange->receive.equalizer.quality, &selected) !=
+	    V34_DATA_QUALITY_OK)
+		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+	*maximum = selected;
+	return v34_mp_record_is_valid(&exchange->transmit_mp) ?
+		V34_PHASE4_EXCHANGE_OK : V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
+}
+
 static enum v34_phase4_exchange_result start_transmit_data(
 	struct v34_phase4_exchange *exchange, uint32_t *events)
 {
@@ -608,6 +630,9 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	}
 	if (!exchange->transmit_mp_started && trn_ready_for_mp(exchange)) {
 		result = finish_feedback_training(exchange);
+		if (result != V34_PHASE4_EXCHANGE_OK)
+			return result;
+		result = select_trained_receive_rate(exchange);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			return result;
 		result = start_transmit_mp(exchange, false);

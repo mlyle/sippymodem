@@ -1493,6 +1493,7 @@ V34_PHASE4_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_exchange
 V34_PHASE4_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase4_exchange.o \
+	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v34_phase4_exchange.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_data_startup.o \
