@@ -16,6 +16,7 @@ enum {
 	/* The direct media owner retains the complete 387 ms answer-station
 	 * quiet interval before ANSam. */
 	V8_ANSWERING_QUIET_SAMPLES = 3096,
+	V8_ANSWERING_COARSE_GAIN_SAMPLES = V8_ANSAM_SAMPLE_RATE / 4,
 	V8_ANSWERING_CALL_MENU_TIMEOUT_SAMPLES =
 		12 * V8_ANSAM_SAMPLE_RATE,
 	V8_ANSWERING_CJ_TIMEOUT_SAMPLES =

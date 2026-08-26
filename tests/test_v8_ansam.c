@@ -147,6 +147,8 @@ static bool detect_generated(enum test_codec codec)
 	struct v8_ansam_generator generator;
 	struct v8_ansam_detector blocked;
 	struct v8_ansam_detector samplewise;
+	struct v8_line_conditioner blocked_line;
+	struct v8_line_conditioner samplewise_line;
 	static const uint16_t expected_energy[] = { 4680, 4637, 4684 };
 	int16_t samples[73];
 	bool blocked_detected = false;
@@ -160,7 +162,13 @@ static bool detect_generated(enum test_codec codec)
 	      v8_ansam_detector_init(&blocked) ==
 		      V8_ANSAM_OK &&
 	      v8_ansam_detector_init(&samplewise) ==
-		      V8_ANSAM_OK,
+		      V8_ANSAM_OK &&
+	      v8_line_conditioner_init(
+		      &blocked_line, V8_CALLING_STATION) ==
+		      V8_LINE_CONDITIONER_OK &&
+	      v8_line_conditioner_init(
+		      &samplewise_line, V8_CALLING_STATION) ==
+		      V8_LINE_CONDITIONER_OK,
 	      "ANSam loopback did not initialize");
 	while (!sample_detected && total < 2u * V8_ANSAM_SAMPLE_RATE) {
 		CHECK(v8_ansam_generate(
@@ -170,12 +178,14 @@ static bool detect_generated(enum test_codec codec)
 		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index)
 			samples[index] = codec_round_trip(samples[index], codec);
 		CHECK(v8_ansam_detect(
-			      &blocked, samples, ARRAY_LENGTH(samples),
+			      &blocked, &blocked_line, samples,
+			      ARRAY_LENGTH(samples),
 			      &blocked_detected) == V8_ANSAM_OK,
 		      "ANSam loopback detection failed");
 		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index) {
 			CHECK(v8_ansam_detect(
-				      &samplewise, &samples[index], 1,
+				      &samplewise, &samplewise_line,
+				      &samples[index], 1,
 				      &sample_detected) ==
 				      V8_ANSAM_OK,
 			      "samplewise ANSam detection failed");
@@ -186,10 +196,12 @@ static bool detect_generated(enum test_codec codec)
 	}
 	CHECK(blocked_detected && sample_detected && detection_sample == 8782 &&
 	      memcmp(&blocked, &samplewise, sizeof(blocked)) == 0 &&
+	      memcmp(&blocked_line, &samplewise_line,
+		     sizeof(blocked_line)) == 0 &&
 	      blocked.stage == V8_ANSAM_DETECTED &&
 	      blocked.dwell_blocks ==
 		      V8_ANSAM_POST_DETECT_DWELL_BLOCKS + 1u &&
-	      blocked.agc.gain == 406 && blocked.tone.counter == 85 &&
+	      blocked_line.gain == 406 && blocked.tone.counter == 85 &&
 	      blocked.modulation_energy == expected_energy[codec],
 	      "ANSam codec %d changed the fixed detector oracle at %zu/%u",
 	      codec, detection_sample, blocked.modulation_energy);
@@ -201,11 +213,14 @@ static bool run_synthetic_signal(
 	double modulation_depth, int amplitude,
 	struct v8_ansam_detector *detector, bool *detected)
 {
+	struct v8_line_conditioner line;
 	int16_t samples[80];
 	size_t total = 3u * V8_ANSAM_SAMPLE_RATE;
 
-	CHECK(v8_ansam_detector_init(detector) ==
-		      V8_ANSAM_OK,
+	CHECK(v8_ansam_detector_init(detector) == V8_ANSAM_OK &&
+	      v8_line_conditioner_init(
+		      &line, V8_CALLING_STATION) ==
+		      V8_LINE_CONDITIONER_OK,
 	      "synthetic ANSam detector did not initialize");
 	*detected = false;
 	for (size_t offset = 0; offset < total;
@@ -225,7 +240,7 @@ static bool run_synthetic_signal(
 				(int16_t)lround(amplitude * envelope * carrier);
 		}
 		CHECK(v8_ansam_detect(
-			      detector, samples, ARRAY_LENGTH(samples),
+			      detector, &line, samples, ARRAY_LENGTH(samples),
 			      detected) == V8_ANSAM_OK,
 		      "synthetic ANSam detection failed");
 	}
@@ -278,6 +293,7 @@ static bool test_reversal_alignment(void)
 	     start < V8_ANSAM_REVERSAL_SAMPLES; start += 300) {
 		struct v8_ansam_generator generator;
 		struct v8_ansam_detector detector;
+		struct v8_line_conditioner line;
 		bool detected = false;
 
 		CHECK(v8_ansam_generator_init(
@@ -285,7 +301,10 @@ static bool test_reversal_alignment(void)
 			      V8_ANSAM_OK &&
 		      generate_discard(&generator, start) &&
 		      v8_ansam_detector_init(&detector) ==
-			      V8_ANSAM_OK,
+			      V8_ANSAM_OK &&
+		      v8_line_conditioner_init(
+			      &line, V8_CALLING_STATION) ==
+			      V8_LINE_CONDITIONER_OK,
 		      "offset ANSam detector did not initialize");
 		for (size_t offset = 0;
 		     offset < 2u * V8_ANSAM_SAMPLE_RATE &&
@@ -296,7 +315,7 @@ static bool test_reversal_alignment(void)
 				      ARRAY_LENGTH(samples)) ==
 				      V8_ANSAM_OK &&
 			      v8_ansam_detect(
-				      &detector, samples,
+				      &detector, &line, samples,
 				      ARRAY_LENGTH(samples), &detected) ==
 				      V8_ANSAM_OK,
 			      "offset ANSam processing failed");
@@ -312,6 +331,8 @@ static bool test_validation(void)
 	struct v8_ansam_generator generator;
 	struct v8_ansam_detector detector;
 	struct v8_ansam_detector saved;
+	struct v8_line_conditioner line;
+	struct v8_line_conditioner saved_line;
 	int16_t sample = 123;
 	int16_t output_sample = 123;
 	bool detected = true;
@@ -323,13 +344,17 @@ static bool test_validation(void)
 		      V8_ANSAM_OK &&
 	      v8_ansam_detector_init(&detector) ==
 		      V8_ANSAM_OK &&
+	      v8_line_conditioner_init(
+		      &line, V8_CALLING_STATION) ==
+		      V8_LINE_CONDITIONER_OK &&
 	      v8_ansam_detect(
-		      &detector, NULL, 0, &detected) ==
+		      &detector, &line, NULL, 0, &detected) ==
 		      V8_ANSAM_OK &&
 	      !detected && v8_ansam_detector_is_valid(&detector),
 	      "ANSam zero-length operation failed");
 	generator.signed_amplitude = 0;
 	saved = detector;
+	saved_line = line;
 	CHECK(v8_ansam_generator_init(NULL, TEST_AMPLITUDE, true) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_generator_init(&generator, 0, true) ==
@@ -344,25 +369,40 @@ static bool test_validation(void)
 	      sample == 123 &&
 	      v8_ansam_detector_init(NULL) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
-	      v8_ansam_detect(NULL, &sample, 1, &detected) ==
+	      v8_ansam_detect(NULL, &line, &sample, 1, &detected) ==
+		      V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_detect(&detector, NULL, &sample, 1, &detected) ==
 		      V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_detect(
-		      &detector, (const int16_t *)&detector, 1,
+		      &detector, &line, (const int16_t *)&detector, 1,
 		      &detected) == V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_detect(
-		      &detector, &output_sample, 1,
+		      &detector, &line, (const int16_t *)&line, 1,
+		      &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_detect(
+		      &detector, &line, &output_sample, 1,
 		      (bool *)&detector) == V8_ANSAM_INVALID_ARGUMENT &&
 	      v8_ansam_detect(
-		      &detector, &output_sample, 1,
+		      &detector, &line, &output_sample, 1,
+		      (bool *)&line) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_detect(
+		      &detector, &line, &output_sample, 1,
 		      (bool *)&output_sample) == V8_ANSAM_INVALID_ARGUMENT &&
 	      memcmp(&detector, &saved, sizeof(detector)) == 0 &&
+	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
 	      output_sample == 123 && detected == false,
 	      "ANSam overlap handling changed state or output");
-	detector.agc.gain = 0;
+	detector.signal_ref_gain = 0;
 	CHECK(!v8_ansam_detector_is_valid(&detector) &&
-	      v8_ansam_detect(&detector, &sample, 1, &detected) ==
+	      v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
 		      V8_ANSAM_INVALID_ARGUMENT,
 	      "ANSam API accepted invalid state");
+	detector = saved;
+	line.gain = 0;
+	CHECK(!v8_line_conditioner_is_valid(&line) &&
+	      v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
+		      V8_ANSAM_INVALID_ARGUMENT,
+	      "ANSam API accepted invalid line state");
 	CHECK(v8_ansam_detector_init(&detector) == V8_ANSAM_OK &&
 	      v8_ansam_detector_is_valid(&detector) &&
 	      detector.stage == V8_ANSAM_WAIT_CARRIER,

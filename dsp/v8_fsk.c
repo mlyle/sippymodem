@@ -140,6 +140,8 @@ static bool fsk_is_configured(const struct v8_fsk *fsk)
 
 	return fsk != NULL && role_channels(fsk->role, &transmit, &receive) &&
 	       transmitter_is_valid(&fsk->transmitter, transmit) &&
+	       v8_line_conditioner_is_valid(&fsk->line) &&
+	       fsk->line.role == fsk->role &&
 	       channels_equal(&fsk->receiver.channel, receive);
 }
 
@@ -160,7 +162,9 @@ enum v8_fsk_result v8_fsk_init(
 	};
 	initialized.transmitter
 		.filter_history[V8_FSK_HISTORY_SEED_INDEX] = 0x1000;
-	if (fsk_receiver_init(&initialized.receiver, receive) !=
+	if (v8_line_conditioner_init(&initialized.line, role) !=
+		    V8_LINE_CONDITIONER_OK ||
+	    fsk_receiver_init(&initialized.receiver, receive) !=
 		    FSK_OK)
 		return V8_FSK_INVALID_ARGUMENT;
 	initialized.role = role;
@@ -271,9 +275,12 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	struct v8_fsk *fsk, int16_t sample, uint8_t *bit,
 	bool *bit_ready)
 {
+	struct v8_line_conditioner next_line;
 	struct fsk_receiver next;
-	uint8_t received;
-	bool ready;
+	struct v8_line_conditioned_block block;
+	uint8_t received = 0;
+	bool block_ready;
+	bool ready = false;
 
 	if (!fsk_is_configured(fsk) || bit == NULL || bit_ready == NULL ||
 	    memory_regions_overlap(fsk, sizeof(*fsk), bit, sizeof(*bit)) ||
@@ -282,11 +289,29 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	    memory_regions_overlap(
 		    bit, sizeof(*bit), bit_ready, sizeof(*bit_ready)))
 		return V8_FSK_INVALID_ARGUMENT;
+	next_line = fsk->line;
 	next = fsk->receiver;
-	if (fsk_receiver_sample(
-		    &next, sample, &received, &ready) !=
-		    FSK_OK)
+	if (v8_line_conditioner_process_sample(
+		    &next_line, sample, &block, &block_ready) !=
+	    V8_LINE_CONDITIONER_OK)
 		return V8_FSK_INVALID_ARGUMENT;
+	if (block_ready) {
+		for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
+			uint8_t candidate;
+			bool candidate_ready;
+
+			if (fsk_receiver_sample(
+				    &next, block.samples[index], &candidate,
+				    &candidate_ready) != FSK_OK ||
+			    (ready && candidate_ready))
+				return V8_FSK_INVALID_ARGUMENT;
+			if (candidate_ready) {
+				received = candidate;
+				ready = true;
+			}
+		}
+	}
+	fsk->line = next_line;
 	fsk->receiver = next;
 	*bit = received;
 	*bit_ready = ready;

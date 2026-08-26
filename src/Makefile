@@ -115,6 +115,7 @@ SHARED_DSP_SOURCES := \
 	$(DSP_SOURCE_DIR)/v8_datapump.c \
 	$(DSP_SOURCE_DIR)/v8_fsk.c \
 	$(DSP_SOURCE_DIR)/v8_framing.c \
+	$(DSP_SOURCE_DIR)/v8_line_conditioner.c \
 	$(DSP_SOURCE_DIR)/v8_menu.c
 V21_202_SOURCES := \
 	$(DSP_V21_202_SOURCE_DIR)/baudot.c \

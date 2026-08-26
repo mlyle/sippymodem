@@ -3,6 +3,8 @@
 #ifndef V8_ANSAM_H
 #define V8_ANSAM_H
 
+#include "v8_line_conditioner.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -13,10 +15,7 @@ enum {
 	V8_ANSAM_MODULATION_HZ = 15,
 	V8_ANSAM_REVERSAL_SAMPLES =
 		V8_ANSAM_SAMPLE_RATE * 450 / 1000,
-	V8_ANSAM_BLOCK_SAMPLES = 4,
-	V8_ANSAM_INPUT_QUEUE_SAMPLES = 6,
-	V8_ANSAM_ENTRANCE_FILTER_TAPS = 34,
-	V8_ANSAM_POWER_HISTORY_SAMPLES = 30,
+	V8_ANSAM_BLOCK_SAMPLES = V8_LINE_BLOCK_SAMPLES,
 	/* Te is one second plus the 30 ms receiver margin. */
 	V8_ANSAM_POST_DETECT_DWELL_BLOCKS =
 		V8_ANSAM_SAMPLE_RATE / V8_ANSAM_BLOCK_SAMPLES + 60,
@@ -43,19 +42,6 @@ enum v8_ansam_detector_stage {
 	V8_ANSAM_DETECTED,
 };
 
-struct v8_ansam_agc {
-	uint16_t filtered_energy;
-	uint16_t gain;
-	uint16_t gain_delta;
-	uint16_t power_history[V8_ANSAM_POWER_HISTORY_SAMPLES];
-	uint16_t power_index;
-	uint16_t signal_timer;
-	uint16_t signal_ref_gain;
-	uint16_t signal_stable_time;
-	uint16_t overflow_count;
-	bool signal_stable;
-};
-
 struct v8_ansam_tone_detector {
 	uint16_t counter;
 	uint16_t filtered_energy;
@@ -73,20 +59,18 @@ struct v8_ansam_dft {
 	uint32_t imaginary_accumulator;
 };
 
-/* The receive owner includes the entrance filter, gain lineage, robust
- * carrier acquisition, and the complete post-detect echo-control dwell. */
+/* The detector owns ANSam evidence while its caller supplies the continuous
+ * V.8 line conditioner shared with the following control exchange. */
 struct v8_ansam_detector {
-	struct v8_ansam_agc agc;
 	struct v8_ansam_tone_detector tone;
 	struct v8_ansam_dft modulation;
-	int16_t entrance_history[V8_ANSAM_ENTRANCE_FILTER_TAPS];
-	int16_t input_queue[V8_ANSAM_INPUT_QUEUE_SAMPLES];
-	uint16_t post_filter_word;
-	uint16_t input_count;
+	uint16_t signal_timer;
+	uint16_t signal_ref_gain;
+	uint16_t signal_stable_time;
 	uint16_t dwell_blocks;
 	uint16_t modulation_energy;
 	enum v8_ansam_detector_stage stage;
-	bool gain_tracking;
+	bool signal_stable;
 };
 
 enum v8_ansam_result v8_ansam_generator_init(
@@ -102,6 +86,7 @@ bool v8_ansam_detector_is_valid(
 	const struct v8_ansam_detector *detector);
 enum v8_ansam_result v8_ansam_detect(
 	struct v8_ansam_detector *detector,
+	struct v8_line_conditioner *conditioner,
 	const int16_t *samples, size_t count, bool *detected);
 
 #endif

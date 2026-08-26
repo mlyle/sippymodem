@@ -221,6 +221,11 @@ static enum v8_answering_result wait_call_menu_sample(
 	if (confirmed)
 		return select_joint_menu(answering, &call_menu);
 	answering->state_samples++;
+	if (answering->state_samples == V8_ANSWERING_COARSE_GAIN_SAMPLES &&
+	    v8_line_conditioner_set_gain_mode(
+		    &answering->fsk.line, V8_LINE_GAIN_FINE) !=
+		    V8_LINE_CONDITIONER_OK)
+		return V8_ANSWERING_INVALID_ARGUMENT;
 	if (answering->state_samples ==
 	    V8_ANSWERING_CALL_MENU_TIMEOUT_SAMPLES)
 		return fail(

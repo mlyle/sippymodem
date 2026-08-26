@@ -4,14 +4,10 @@
 #define V8_FSK_H
 
 #include "fsk.h"
+#include "v8_line_conditioner.h"
 
 #include <stdbool.h>
 #include <stdint.h>
-
-enum v8_station_role {
-	V8_CALLING_STATION,
-	V8_ANSWERING_STATION,
-};
 
 enum v8_fsk_result {
 	V8_FSK_OK,
@@ -35,6 +31,7 @@ struct v8_fsk_transmitter {
 
 struct v8_fsk {
 	struct v8_fsk_transmitter transmitter;
+	struct v8_line_conditioner line;
 	struct fsk_receiver receiver;
 	enum v8_station_role role;
 };

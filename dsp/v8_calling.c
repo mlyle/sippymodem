@@ -234,7 +234,8 @@ static enum v8_calling_result process_one(
 		bool detected;
 
 		if (v8_ansam_detect(
-			    &calling->answer_signal, &receive, 1, &detected) !=
+			    &calling->answer_signal, &calling->fsk.line,
+			    &receive, 1, &detected) !=
 		    V8_ANSAM_OK)
 			return V8_CALLING_INVALID_ARGUMENT;
 		calling->state_samples++;
