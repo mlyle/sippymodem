@@ -4,7 +4,98 @@
 
 #include "test.h"
 
+#include <float.h>
+#include <math.h>
 #include <string.h>
+
+static struct v34_phase2_probe_receiver_measurement probe_measurement(
+	double threshold_power, double source_power)
+{
+	struct v34_phase2_probe_receiver_measurement measurement = {
+		.l1.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES,
+	};
+
+	measurement.l1.harmonics[4].mean_square = 1000000.0;
+	measurement.l2.harmonics[4].mean_square = threshold_power;
+	measurement.l2.harmonics[18].mean_square = source_power;
+	measurement.l2.harmonics[19].mean_square = source_power;
+	measurement.l2.harmonics[20].mean_square = source_power;
+	measurement.l2.harmonics[22].mean_square = source_power;
+	return measurement;
+}
+
+static bool test_measured_preemphasis(void)
+{
+	static const uint8_t expected[V34_SYMBOL_RATE_COUNT] = {
+		8, 8, 8, 9, 9, 8,
+	};
+	struct v34_phase2_probe_receiver_measurement measurement =
+		probe_measurement(4.0, 1.0);
+	uint8_t selected;
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		selected = 0xa5;
+		CHECK(v34_phase2_select_preemphasis(
+			      &measurement, (enum v34_symbol_rate)rate,
+			      &selected) == V34_PHASE2_SELECTION_OK &&
+		      selected == expected[rate],
+		      "rate %u selected pre-emphasis %u, want %u", rate,
+		      selected, expected[rate]);
+	}
+	measurement = probe_measurement(1.0, 1.0);
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_3429, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected == 6,
+	      "flat probe did not select the first shaped filter");
+	measurement = probe_measurement(1.0, 0.0);
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_2400, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected == 10,
+	      "high-frequency null did not select maximum pre-emphasis");
+	return true;
+}
+
+static bool test_preemphasis_validation(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement =
+		probe_measurement(1.0, 1.0);
+	uint8_t selected = 0xa5;
+
+	CHECK(v34_phase2_select_preemphasis(
+		      NULL, V34_SYMBOL_RATE_2400, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_2400, NULL) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_COUNT, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      selected == 0xa5,
+	      "invalid pre-emphasis selection changed its output");
+	measurement.l2.harmonics[18].mean_square = NAN;
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_2400, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      selected == 0xa5,
+	      "non-finite probe selected pre-emphasis");
+	measurement = probe_measurement(1.0, DBL_MAX);
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_2400, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      selected == 0xa5,
+	      "overflowing probe selected pre-emphasis");
+	measurement = probe_measurement(1.0, 1.0);
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_2400,
+		      (uint8_t *)&measurement) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT,
+	      "aliased pre-emphasis output was accepted");
+	return true;
+}
 
 static struct v34_info0 full_capabilities(void)
 {
@@ -348,6 +439,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "measured pre-emphasis", test_measured_preemphasis },
+		{ "pre-emphasis validation", test_preemphasis_validation },
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },
 		{ "cross-record constraints", test_cross_record_constraints },

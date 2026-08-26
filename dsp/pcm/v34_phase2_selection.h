@@ -4,6 +4,7 @@
 #define V34_PHASE2_SELECTION_H
 
 #include "v34_info0.h"
+#include "v34_phase2_probe_receiver.h"
 #include "v34_phase3_profile.h"
 
 #include <stdbool.h>
@@ -14,6 +15,13 @@ enum v34_phase2_selection_result {
 	V34_PHASE2_SELECTION_INCONSISTENT_INFO1C,
 	V34_PHASE2_SELECTION_INCONSISTENT_INFO1A,
 };
+
+/* Select the peer transmitter's pre-emphasis from the received L2 spectrum.
+ * The four source bands and their per-filter slopes are the V.34 probe
+ * profiles; 2743 and 2800 symbol/s share one pulse-shaping geometry. */
+enum v34_phase2_selection_result v34_phase2_select_preemphasis(
+	const struct v34_phase2_probe_receiver_measurement *measurement,
+	enum v34_symbol_rate symbol_rate, uint8_t *filter_index);
 
 /* INFO1c describes the answerer's possible transmit profiles. A usable entry
  * must be supported by both endpoints and by the answerer's advertised

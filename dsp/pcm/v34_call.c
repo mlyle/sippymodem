@@ -334,6 +334,44 @@ static enum v34_call_result answer_info1c(struct v34_call *call)
 		       V34_CALL_OK : V34_CALL_SEQUENCE_MISMATCH;
 }
 
+static bool select_local_preemphasis(struct v34_call *call)
+{
+	struct v34_phase2_probe_receiver_measurement measurement;
+	union v34_local_info1 selected = call->local_info1;
+
+	if (v34_phase2_measure_remote_probe(
+		    &call->state.phase2, &measurement) != V34_PHASE2_OK)
+		return false;
+	if (call->local_role == V34_CALLING_STATION) {
+		for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
+		     ++index) {
+			struct v34_info1_probe_result *probe =
+				&selected.calling.answer_transmit[index];
+
+			if (probe->projected_data_rate_2400_bps_units == 0)
+				continue;
+			if (v34_phase2_select_preemphasis(
+				    &measurement, (enum v34_symbol_rate)index,
+				    &probe->preemphasis_filter_index) !=
+			    V34_PHASE2_SELECTION_OK)
+				return false;
+		}
+	} else {
+		struct v34_info1_probe_result *probe =
+			&selected.answering.call_transmit;
+
+		if (probe->projected_data_rate_2400_bps_units != 0 &&
+		    v34_phase2_select_preemphasis(
+			    &measurement,
+			    selected.answering.call_to_answer_symbol_rate,
+			    &probe->preemphasis_filter_index) !=
+			    V34_PHASE2_SELECTION_OK)
+			return false;
+	}
+	call->local_info1 = selected;
+	return true;
+}
+
 static enum v34_call_result advance_phase2(
 	struct v34_call *call, const struct v34_phase2_event *event)
 {
@@ -342,6 +380,8 @@ static enum v34_call_result advance_phase2(
 	if (event->kind == V34_PHASE2_EVENT_FAILED)
 		return V34_CALL_FAILED;
 	if (v34_phase2_is_ready_for_info1(&call->state.phase2)) {
+		if (!select_local_preemphasis(call))
+			return V34_CALL_NUMERIC_FAILURE;
 		result = call->local_role == V34_CALLING_STATION ?
 			v34_phase2_start_caller_info1(
 				&call->state.phase2,

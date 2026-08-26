@@ -2,7 +2,96 @@
 
 #include "v34_phase2_selection.h"
 
+#include "memory_region.h"
+
+#include <math.h>
 #include <stddef.h>
+
+enum {
+	V34_PREEMPHASIS_THRESHOLD_BIN = 4,
+	V34_PREEMPHASIS_2400_2800_BIN = 18,
+	V34_PREEMPHASIS_3000_BIN = 19,
+	V34_PREEMPHASIS_3200_BIN = 20,
+	V34_PREEMPHASIS_3429_BIN = 22,
+	V34_PREEMPHASIS_FIRST_FILTER = 6,
+};
+
+struct preemphasis_probe_profile {
+	uint8_t source_bin;
+	uint16_t slope_q14;
+};
+
+static bool preemphasis_probe_profile(
+	enum v34_symbol_rate symbol_rate,
+	struct preemphasis_probe_profile *profile)
+{
+	static const struct preemphasis_probe_profile profiles[] = {
+		[V34_SYMBOL_RATE_2400] = {
+			V34_PREEMPHASIS_2400_2800_BIN, 0x7da7,
+		},
+		[V34_SYMBOL_RATE_2743] = {
+			V34_PREEMPHASIS_2400_2800_BIN, 0x6789,
+		},
+		[V34_SYMBOL_RATE_2800] = {
+			V34_PREEMPHASIS_2400_2800_BIN, 0x6789,
+		},
+		[V34_SYMBOL_RATE_3000] = {
+			V34_PREEMPHASIS_3000_BIN, 0x656f,
+		},
+		[V34_SYMBOL_RATE_3200] = {
+			V34_PREEMPHASIS_3200_BIN, 0x639f,
+		},
+		[V34_SYMBOL_RATE_3429] = {
+			V34_PREEMPHASIS_3429_BIN, 0x6626,
+		},
+	};
+
+	if (profile == NULL || (unsigned int)symbol_rate >=
+				       V34_SYMBOL_RATE_COUNT)
+		return false;
+	*profile = profiles[symbol_rate];
+	return true;
+}
+
+enum v34_phase2_selection_result v34_phase2_select_preemphasis(
+	const struct v34_phase2_probe_receiver_measurement *measurement,
+	enum v34_symbol_rate symbol_rate, uint8_t *filter_index)
+{
+	struct preemphasis_probe_profile profile;
+	double sample;
+	double threshold;
+	double slope;
+	uint8_t selected = V34_PREEMPHASIS_FIRST_FILTER - 1u;
+
+	if (measurement == NULL || filter_index == NULL ||
+	    memory_regions_overlap(
+		    measurement, sizeof(*measurement), filter_index,
+		    sizeof(*filter_index)) ||
+	    !preemphasis_probe_profile(symbol_rate, &profile) ||
+	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples >=
+		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	sample = measurement->l2.harmonics[profile.source_bin].mean_square;
+	threshold = measurement->l2
+			    .harmonics[V34_PREEMPHASIS_THRESHOLD_BIN]
+			    .mean_square;
+	if (!isfinite(sample) || sample < 0.0 || !isfinite(threshold) ||
+	    threshold < 0.0)
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	slope = (double)profile.slope_q14 / 16384.0;
+	do {
+		selected++;
+		sample *= slope;
+		if (!isfinite(sample))
+			return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+		if (threshold < sample)
+			break;
+	} while (selected < V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX);
+	*filter_index = selected;
+	return V34_PHASE2_SELECTION_OK;
+}
 
 static bool receiver_supports_rate(
 	const struct v34_info0 *receiver, enum v34_symbol_rate rate)

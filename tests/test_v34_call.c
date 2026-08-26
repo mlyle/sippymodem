@@ -518,8 +518,13 @@ static bool check_symmetric_call(
 			CHECK(caller.call.state.phase4.receive.stage ==
 				      V34_PHASE34_RECEIVER_DATA &&
 			      answerer.call.state.phase4.receive.stage ==
-				      V34_PHASE34_RECEIVER_DATA,
-			      "rate %u call did not retain its receive owners",
+				      V34_PHASE34_RECEIVER_DATA &&
+			      caller.call.local_info1.calling
+					      .answer_transmit[symbol_rate]
+					      .preemphasis_filter_index == 6 &&
+			      answerer.call.local_info1.answering.call_transmit
+					      .preemphasis_filter_index == 6,
+			      "rate %u call lost data or measured pre-emphasis",
 			      symbol_rate);
 			return true;
 		}

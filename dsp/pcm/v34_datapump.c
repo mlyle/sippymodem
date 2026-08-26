@@ -113,56 +113,38 @@ static uint8_t highest_rate(uint16_t mask)
 	return 0;
 }
 
-struct v34_baseline_profile {
-	uint8_t maximum_rate_units;
-	uint8_t preemphasis_filter_index;
-};
-
-static bool baseline_profile(
-	enum v34_symbol_rate symbol_rate,
-	struct v34_baseline_profile *profile)
+static uint8_t maximum_rate_units(enum v34_symbol_rate symbol_rate)
 {
-	/* Advertise only rate/cadence pairs that pass generated full-duplex
-	 * calls through both G.711 laws and in both station roles. */
-	if (profile == NULL)
-		return false;
 	switch (symbol_rate) {
 	case V34_SYMBOL_RATE_2400:
-		*profile = (struct v34_baseline_profile){ 9, 0 };
-		return true;
+		return 9;
 	case V34_SYMBOL_RATE_2743:
-		*profile = (struct v34_baseline_profile){ 10, 0 };
-		return true;
+		return 10;
 	case V34_SYMBOL_RATE_2800:
-		*profile = (struct v34_baseline_profile){ 11, 0 };
-		return true;
+		return 11;
 	case V34_SYMBOL_RATE_3000:
-		*profile = (struct v34_baseline_profile){ 12, 2 };
-		return true;
+		return 12;
 	case V34_SYMBOL_RATE_3200:
-		*profile = (struct v34_baseline_profile){ 13, 0 };
-		return true;
+		return 13;
 	case V34_SYMBOL_RATE_3429:
-		*profile = (struct v34_baseline_profile){ 14, 7 };
-		return true;
+		return 14;
 	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
-	return false;
+	return 0;
 }
 
 static uint16_t enabled_rate_mask(
 	const struct modem *modem, enum v34_symbol_rate *symbol_rate,
-	uint8_t *highest_rate_units, uint8_t *preemphasis_filter_index)
+	uint8_t *highest_rate_units)
 {
-	struct v34_baseline_profile profile;
 	uint16_t requested = requested_rate_mask(modem);
 	uint16_t enabled = 0;
 	uint8_t highest = highest_rate(requested);
+	uint8_t maximum;
 	enum v34_symbol_rate selected;
 
-	if (symbol_rate == NULL || highest_rate_units == NULL ||
-	    preemphasis_filter_index == NULL || highest == 0)
+	if (symbol_rate == NULL || highest_rate_units == NULL || highest == 0)
 		return 0;
 	if (modem->v34_symbol_rate == 0) {
 		selected = highest == V34_MIN_BIT_RATE / V34_RATE_STEP ?
@@ -171,9 +153,12 @@ static uint16_t enabled_rate_mask(
 			   modem->v34_symbol_rate, &selected)) {
 		return 0;
 	}
-	if (!baseline_profile(selected, &profile))
+	maximum = maximum_rate_units(selected);
+	if (maximum == 0)
 		return 0;
-	for (uint8_t units = 1; units <= profile.maximum_rate_units; ++units) {
+	/* Advertise only rate/cadence pairs that pass generated full-duplex
+	 * calls through both G.711 laws and in both station roles. */
+	for (uint8_t units = 1; units <= maximum; ++units) {
 		struct v34_frame_geometry geometry;
 
 		if ((requested & (uint16_t)(1u << (units - 1u))) != 0 &&
@@ -184,7 +169,6 @@ static uint16_t enabled_rate_mask(
 	}
 	*symbol_rate = selected;
 	*highest_rate_units = highest_rate(enabled);
-	*preemphasis_filter_index = profile.preemphasis_filter_index;
 	return enabled;
 }
 
@@ -207,19 +191,15 @@ static struct v34_info0 baseline_info0(void)
 
 static union v34_local_info1 baseline_info1(
 	bool caller, enum v34_symbol_rate symbol_rate,
-	uint8_t projected_rate_units, uint8_t preemphasis_filter_index)
+	uint8_t projected_rate_units)
 {
 	union v34_local_info1 info1 = { 0 };
 
-	/* Probe scoring is not wired into the datapump yet. Use the symmetric,
-	 * generated-gated profile until measured selection owns these fields. */
 	if (caller) {
 		info1.calling.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		info1.calling.answer_transmit[symbol_rate]
 			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
-		info1.calling.answer_transmit[symbol_rate]
-			.preemphasis_filter_index = preemphasis_filter_index;
 		info1.calling.answer_transmit[symbol_rate]
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 	} else {
@@ -227,8 +207,6 @@ static union v34_local_info1 baseline_info1(
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 		info1.answering.call_transmit
 			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
-		info1.answering.call_transmit
-			.preemphasis_filter_index = preemphasis_filter_index;
 		info1.answering.call_transmit
 			.projected_data_rate_2400_bps_units = projected_rate_units;
 		info1.answering.answer_to_call_symbol_rate =
@@ -263,11 +241,9 @@ static bool call_configuration(
 	uint16_t *selected_rate_mask)
 {
 	uint8_t highest_rate_units = 0;
-	uint8_t preemphasis_filter_index = 0;
 	enum v34_symbol_rate symbol_rate;
 	uint16_t rate_mask = enabled_rate_mask(
-		modem, &symbol_rate, &highest_rate_units,
-		&preemphasis_filter_index);
+		modem, &symbol_rate, &highest_rate_units);
 
 	if (configuration == NULL || selected_rate_mask == NULL ||
 	    rate_mask == 0)
@@ -277,8 +253,7 @@ static bool call_configuration(
 		.phase2_nominal_amplitude = V34_PHASE2_L2_AMPLITUDE,
 		.local_info0 = baseline_info0(),
 		.local_info1 = baseline_info1(
-			caller, symbol_rate, highest_rate_units,
-			preemphasis_filter_index),
+			caller, symbol_rate, highest_rate_units),
 		.phase3 = {
 			.requested_remote_constellation =
 				V34_CONSTELLATION_4_POINT,

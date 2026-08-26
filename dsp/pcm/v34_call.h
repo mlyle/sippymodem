@@ -44,9 +44,9 @@ struct v34_call_configuration {
 	enum v34_station_role local_role;
 	int16_t phase2_nominal_amplitude;
 	struct v34_info0 local_info0;
-	/* The role selects calling INFO1c or answering INFO1a. The records are
-	 * explicit so measurement-driven selection policy remains outside the
-	 * waveform owner. */
+	/* The role selects calling INFO1c or answering INFO1a. Rate, carrier,
+	 * and projected-rate fields are policy inputs; the call replaces each
+	 * active pre-emphasis field from its retained remote probe measurement. */
 	union v34_local_info1 local_info1;
 	struct v34_phase3_exchange_configuration phase3;
 	struct v34_phase4_exchange_configuration phase4;
