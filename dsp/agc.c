@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "agc.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -36,52 +37,6 @@ static int16_t clamp_s16(int64_t value)
 	if (value < INT16_MIN)
 		return INT16_MIN;
 	return (int16_t)value;
-}
-
-static uint32_t integer_square_root(uint32_t value)
-{
-	uint32_t root = 0;
-	uint32_t bit = UINT32_C(1) << 30;
-
-	while (bit > value)
-		bit >>= 2;
-	while (bit != 0) {
-		if (value >= root + bit) {
-			value -= root + bit;
-			root = (root >> 1) + bit;
-		} else {
-			root >>= 1;
-		}
-		bit >>= 2;
-	}
-	return root;
-}
-
-/* Exact formula for the 192-entry modem square-root profile. */
-static uint16_t square_root_profile(uint32_t value)
-{
-	uint16_t shift = 0;
-	uint32_t normalized = value;
-	uint16_t mantissa;
-	uint16_t index;
-	uint32_t profile_value;
-
-	if (value == 0)
-		return 0;
-	while (normalized <= UINT32_C(0x1fffffff)) {
-		normalized <<= 1;
-		shift++;
-	}
-	mantissa = (uint16_t)(normalized >> 15);
-	if ((shift & 1u) != 0)
-		mantissa >>= 1;
-	index = (uint16_t)((((uint32_t)mantissa + 0x40u) >> 7) -
-			   0x40u);
-	if (index > 0xbfu)
-		index = 0xbfu;
-	profile_value = ((uint32_t)index + 64u) << 22;
-	return (uint16_t)(integer_square_root(profile_value) >>
-			  (shift >> 1));
 }
 
 /* Exact formula for the normalized 128-entry reciprocal profile. */
@@ -120,7 +75,7 @@ enum agc_result agc_measure_level_s16(
 
 		energy += (uint32_t)(scaled * (int32_t)samples[index]);
 	}
-	measured = wrap_s16((int32_t)square_root_profile(energy));
+	measured = wrap_s16((int32_t)fixed_square_root_u32(energy));
 	*level = measured;
 	return AGC_OK;
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <agc.h>
+#include <integer_math.h>
 
 #include "test.h"
 
@@ -43,6 +44,29 @@ static void fill_reference_block(int16_t *samples, unsigned seed)
 
 		samples[index] = (int16_t)(value % 12000u) - 6000;
 	}
+}
+
+static bool test_fixed_square_root_profile(void)
+{
+	uint32_t value = 1;
+	uint64_t hash = UINT64_C(1469598103934665603);
+
+	CHECK(fixed_square_root_u32(0) == 0 &&
+	      fixed_square_root_u32(1) == 1 &&
+	      fixed_square_root_u32(UINT32_C(0x40000000)) == 32703 &&
+	      fixed_square_root_u32(UINT32_MAX) == 32703,
+	      "fixed square-root boundaries changed");
+	for (size_t index = 0; index < 65536; ++index) {
+		uint16_t root = fixed_square_root_u32(value);
+
+		hash = (hash ^ (root & UINT16_C(0xff))) *
+		       UINT64_C(1099511628211);
+		hash = (hash ^ (root >> 8)) * UINT64_C(1099511628211);
+		value = value * UINT32_C(1664525) + UINT32_C(1013904223);
+	}
+	CHECK(hash == UINT64_C(0xcb8e125169ce8fe8),
+	      "fixed square-root profile changed");
+	return true;
 }
 
 static bool test_exact_arithmetic(void)
@@ -262,7 +286,8 @@ static bool test_level_measurement_contract(void)
 
 int main(void)
 {
-	if (!test_exact_arithmetic() || !test_lifecycle_and_contracts() ||
+	if (!test_fixed_square_root_profile() || !test_exact_arithmetic() ||
+	    !test_lifecycle_and_contracts() ||
 	    !test_level_measurement_contract())
 		return 1;
 	puts("AGC tests passed");
