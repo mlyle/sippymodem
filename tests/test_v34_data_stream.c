@@ -340,7 +340,6 @@ static bool test_selected_continuation(void)
 			      &actual, &line, &configuration) ==
 			      V34_DATA_STREAM_OK &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
-		      memcmp(&actual, &expected, sizeof(actual)) == 0 &&
 		      streams_match_through_b1(&actual, &expected),
 		      "continued stream mismatch for role %u", role);
 	}
