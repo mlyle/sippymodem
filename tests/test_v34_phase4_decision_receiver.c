@@ -205,6 +205,37 @@ static bool receive_fixed(
 	return receive_observation(fixture, point, point, expected);
 }
 
+static bool receive_call_boundary(
+	struct receive_fixture *fixture, struct v34_analytic_sample point,
+	bool *candidate_mismatch)
+{
+	struct v34_analytic_sample target = point;
+
+	if (fixture->receiver.stage ==
+	    V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE) {
+		struct v34_fixed_training_decision hard;
+		struct v34_phase4_trn expected =
+			fixture->receiver.expected_trn;
+		struct v34_analytic_sample ignored;
+		uint8_t expected_quarter;
+		uint8_t expected_rotation;
+
+		CHECK(v34_training_constellation_fixed_slice(
+			      fixture->receiver.mp_receiver.constellation, point,
+			      &hard) == V34_CONSTELLATION_OK &&
+		      v34_phase4_trn_next_fixed(
+			      &expected, &ignored, &expected_quarter,
+			      &expected_rotation) == V34_PHASE4_TRN_OK,
+		      "call-boundary decision could not be generated");
+		target = hard.target;
+		*candidate_mismatch |=
+			hard.quarter_point != expected_quarter ||
+			hard.clockwise_quarter_turns != expected_rotation;
+	}
+	return receive_observation(
+		fixture, point, target, V34_PHASE4_DECISION_RECEIVER_OK);
+}
+
 static bool normalized_to_fixed(
 	enum v34_constellation_size constellation,
 	const struct qam_point *point, struct v34_analytic_sample *fixed)
@@ -361,8 +392,8 @@ static bool run_timeline(
 			      "J-prime observation %u stopped", symbol);
 		}
 		CHECK(fixture.receiver.stage ==
-			      V34_PHASE4_DECISION_RECEIVER_TRN,
-		      "J-prime did not open known TRN");
+			      V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE,
+		      "J-prime did not open the TRN candidate");
 	}
 	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
 		      V34_PHASE4_TRN_OK,
@@ -374,6 +405,7 @@ static bool run_timeline(
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
 				V34_PHASE4_DECISION_RECEIVER_OK;
 		struct v34_analytic_sample received;
+		struct v34_analytic_sample target;
 		uint8_t received_rotation;
 
 		CHECK(v34_phase4_trn_next_fixed(
@@ -381,7 +413,17 @@ static bool run_timeline(
 			      V34_PHASE4_TRN_OK,
 		      "Phase 4 TRN source %u stopped", symbol);
 		received = point;
+		target = point;
 		received_rotation = rotation;
+		if (role == V34_CALLING_STATION &&
+		    symbol + 1u == V34_PHASE4_TRN_CONFIRM_SYMBOLS / 2u) {
+			received_rotation = (uint8_t)((rotation + 1u) & 3u);
+			CHECK(v34_training_constellation_fixed_point(
+				      constellation, quarter, received_rotation,
+				      &received) == V34_CONSTELLATION_OK,
+			      "TRN confirmation error could not be generated");
+			target = received;
+		}
 		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS) {
 			received_rotation = (uint8_t)((rotation + 1u) & 3u);
 			CHECK(v34_training_constellation_fixed_point(
@@ -390,7 +432,7 @@ static bool run_timeline(
 			      "TRN boundary slip could not be generated");
 		}
 		CHECK(receive_observation(
-			      &fixture, received, point, expected),
+			      &fixture, received, target, expected),
 		      "Phase 4 TRN observation %u stopped", symbol);
 		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS)
 			CHECK(fixture.receiver.mp_receiver.has_previous_symbol &&
@@ -639,6 +681,126 @@ static bool test_j_prime_requires_training_evidence(void)
 	return true;
 }
 
+static bool test_false_j_prime_preserves_training(void)
+{
+	struct receive_fixture fixture = {
+		.clock.lineage = UINT64_C(14695981039346656037),
+	};
+	struct v34_phase3_j_sequence j_sequence;
+	struct v34_phase3_j_sequence continued_j;
+	struct v34_phase4_j_prime_sequence j_prime;
+	struct v34_phase4_trn trn;
+	struct qam_point normalized;
+	struct v34_analytic_sample point;
+	bool candidate_mismatch = false;
+	bool candidate_rejected = false;
+	uint8_t quarter;
+	uint8_t rotation;
+
+	CHECK(make_j_sequence(
+		      V34_CALLING_STATION, V34_CONSTELLATION_16_POINT,
+		      &j_sequence) &&
+	      v34_phase4_decision_receiver_init(
+		      &fixture.receiver, &j_sequence,
+		      V34_CONSTELLATION_16_POINT) ==
+		      V34_PHASE4_DECISION_RECEIVER_OK,
+	      "false J-prime case did not initialize");
+	continued_j = j_sequence;
+	CHECK(v34_phase4_j_prime_sequence_init_from_j(
+		      &j_prime, &j_sequence) ==
+		      V34_PHASE4_J_PRIME_SEQUENCE_OK,
+	      "false J-prime source did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
+		CHECK(v34_phase4_j_prime_sequence_next(
+			      &j_prime, &normalized, &rotation) ==
+			      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+		      normalized_to_fixed(
+			      V34_CONSTELLATION_4_POINT, &normalized,
+			      &point) &&
+		      receive_call_boundary(
+			      &fixture, point, &candidate_mismatch),
+		      "false J-prime symbol %u stopped", symbol);
+	}
+	CHECK(fixture.receiver.stage ==
+		      V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE,
+	      "false J-prime did not open a candidate");
+	for (unsigned int pattern = 0; pattern < 16u; ++pattern) {
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE3_J_PATTERN_SYMBOLS; ++symbol) {
+			enum v34_phase4_decision_receiver_stage before =
+				fixture.receiver.stage;
+
+			CHECK(v34_phase3_j_sequence_next_fixed(
+				      &continued_j, &point, &rotation) ==
+				      V34_PHASE3_J_SEQUENCE_OK &&
+			      receive_call_boundary(
+				      &fixture, point,
+				      &candidate_mismatch),
+			      "continued J pattern %u symbol %u stopped",
+			      pattern, symbol);
+			candidate_rejected |=
+				before ==
+					V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE &&
+				fixture.receiver.stage ==
+					V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME;
+		}
+		if (pattern >= 3u && fixture.receiver.stage ==
+					    V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME)
+			break;
+	}
+	CHECK(candidate_mismatch && candidate_rejected &&
+	      fixture.receiver.stage ==
+		      V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME &&
+	      v34_phase3_j_sequence_at_pattern_boundary(&continued_j),
+	      "false J-prime candidate was not rejected cleanly");
+	CHECK(v34_phase4_j_prime_sequence_init_from_j(
+		      &j_prime, &continued_j) ==
+		      V34_PHASE4_J_PRIME_SEQUENCE_OK,
+	      "real J-prime source did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE4_J_PRIME_SYMBOLS; ++symbol) {
+		CHECK(v34_phase4_j_prime_sequence_next(
+			      &j_prime, &normalized, &rotation) ==
+			      V34_PHASE4_J_PRIME_SEQUENCE_OK &&
+		      normalized_to_fixed(
+			      V34_CONSTELLATION_4_POINT, &normalized,
+			      &point) &&
+		      receive_call_boundary(
+			      &fixture, point, &candidate_mismatch),
+		      "real J-prime symbol %u stopped", symbol);
+	}
+	CHECK(fixture.receiver.stage ==
+		      V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE &&
+	      v34_phase4_trn_init(
+		      &trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_16_POINT) == V34_PHASE4_TRN_OK,
+	      "real J-prime did not open its candidate");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE4_TRN_CONFIRM_SYMBOLS; ++symbol) {
+		CHECK(v34_phase4_trn_next_fixed(
+			      &trn, &point, &quarter, &rotation) ==
+			      V34_PHASE4_TRN_OK &&
+		      receive_call_boundary(
+			      &fixture, point, &candidate_mismatch),
+		      "TRN confirmation symbol %u stopped", symbol);
+	}
+	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
+	      fixture.receiver.trn_symbols ==
+		      V34_PHASE4_TRN_CONFIRM_SYMBOLS &&
+	      fixture.receiver.expected_trn.scrambler.history ==
+		      trn.scrambler.history &&
+	      fixture.receiver.expected_trn.scrambler.polynomial ==
+		      trn.scrambler.polynomial &&
+	      fixture.receiver.expected_trn.last_clockwise_quarter_turns ==
+		      trn.last_clockwise_quarter_turns &&
+	      fixture.receiver.expected_trn.has_last_symbol ==
+		      trn.has_last_symbol &&
+	      v34_phase4_decision_receiver_is_valid(&fixture.receiver),
+	      "real zero-seeded TRN did not confirm the boundary");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_phase3_j_sequence j_sequence;
@@ -748,6 +910,8 @@ int main(void)
 		  test_delayed_answer_marker_alignment },
 		{ "J-prime training evidence",
 		  test_j_prime_requires_training_evidence },
+		{ "false J-prime preserves training",
+		  test_false_j_prime_preserves_training },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

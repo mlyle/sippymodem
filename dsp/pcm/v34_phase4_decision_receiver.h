@@ -13,8 +13,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum {
+	/* J and J-prime differ by only two dibits.  Confirm the following
+	 * zero-seeded TRN before making known-sequence equalizer decisions. */
+	V34_PHASE4_TRN_CONFIRM_SYMBOLS = 16,
+};
+
 enum v34_phase4_decision_receiver_stage {
 	V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME,
+	V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE,
 	V34_PHASE4_DECISION_RECEIVER_ANSWER_S,
 	V34_PHASE4_DECISION_RECEIVER_TRN,
 	V34_PHASE4_DECISION_RECEIVER_MP,
@@ -66,6 +73,7 @@ struct v34_phase4_decision_receiver {
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
 	uint16_t trn_symbols;
+	uint8_t trn_candidate_errors;
 	enum v34_phase4_decision_receiver_stage stage;
 	bool record_pending;
 	bool pending_record_is_valid;
