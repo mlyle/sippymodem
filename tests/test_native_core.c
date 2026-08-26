@@ -570,6 +570,120 @@ static bool test_datapump_error_control_policy(void)
 	return true;
 }
 
+static bool complete_raw_v14_detection(struct modem *answerer)
+{
+	uint8_t bits[108];
+	struct modem pattern_source = {
+		.name = "raw detection pattern source",
+	};
+
+	pattern_source.packer.detector.tx_count = 1;
+	pattern_source.packer.detector.tx_pattern[0] = 0x88;
+	pattern_source.packer.detector.tx_pattern[1] = 0x89;
+	CHECK(modem_detector_get_bits(
+		      &pattern_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits) &&
+		      modem_detector_put_bits(
+			      answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+			      (int)ARRAY_LENGTH(bits) &&
+		      answerer->packer.detector.rx_count == 4 &&
+		      answerer->packer.detector.ec_enable == 0,
+	      "raw answerer did not accept two ODP patterns");
+	answerer->bit_timer_func(answerer);
+	CHECK(answerer->get_bits == modem_async_get_bits &&
+		      answerer->put_bits == modem_async_put_bits &&
+		      answerer->cfg.ec == 0,
+	      "raw answerer did not complete V.14 selection");
+	return true;
+}
+
+static bool feed_async_characters(
+	struct modem *receiver, const uint8_t *characters, size_t count)
+{
+	uint8_t bits[128];
+	struct modem source = {
+		.name = "raw detection residue source",
+		.get_chars = scripted_lapm_source,
+	};
+	size_t bit_count = count * 10u;
+
+	CHECK(bit_count <= ARRAY_LENGTH(bits),
+	      "raw detection residue fixture overflowed");
+	lapm_source.data = characters;
+	lapm_source.length = count;
+	lapm_source.offset = 0;
+	modem_async_start(&source);
+	CHECK(modem_async_get_bits(
+		      &source, 1, bits, (int)bit_count) == (int)bit_count &&
+		      lapm_source.offset == count &&
+		      receiver->put_bits(receiver, 1, bits, (int)bit_count) ==
+			      (int)bit_count,
+	      "raw detection residue stream was not transferred");
+	return true;
+}
+
+static bool test_raw_answerer_discards_detection_residue(void)
+{
+	static const uint8_t residue_then_data[] = {
+		0x91, 0x11, 0x91, 0x11, 'R',
+	};
+	static const uint8_t lone_detection_character[] = { 0x11, 'S' };
+	static const struct {
+		const uint8_t *input;
+		size_t input_length;
+		const uint8_t *expected;
+		size_t expected_length;
+	} cases[] = {
+		{ residue_then_data, ARRAY_LENGTH(residue_then_data),
+		  (const uint8_t *)"R", 1 },
+		{ lone_detection_character, ARRAY_LENGTH(lone_detection_character),
+		  lone_detection_character, ARRAY_LENGTH(lone_detection_character) },
+	};
+	struct modem_driver driver = {
+		.name = "raw detection residue test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct modem *answerer = modem_create(
+			&driver, "raw detection residue test");
+		struct dp datapump = {
+			.id = DP_V34,
+			.modem = answerer,
+			.status = DPSTAT_CONNECT,
+		};
+
+		CHECK(answerer != NULL,
+		      "raw detection residue modem could not be created");
+		answerer->dp = &datapump;
+		answerer->rx_rate = answerer->tx_rate = 9600;
+		answerer->cfg.ec = 0;
+		answerer->cfg.ec_detector = 0;
+		modem_dp_connected(answerer);
+		CHECK(complete_raw_v14_detection(answerer),
+		      "raw answerer detection setup failed");
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		answerer->put_chars = scripted_lapm_sink;
+		CHECK(feed_async_characters(
+			      answerer, cases[index].input,
+			      cases[index].input_length),
+		      "raw answerer residue fixture failed");
+		CHECK(lapm_sink.length == cases[index].expected_length &&
+			      memcmp(lapm_sink.data, cases[index].expected,
+				     cases[index].expected_length) == 0,
+		      "raw answerer produced %zu bytes in residue case %zu",
+		      lapm_sink.length, index);
+		answerer->dp = NULL;
+		modem_delete(answerer);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_modulation_report_identity(void)
 {
 	struct modem modem = { 0 };
@@ -2213,6 +2327,8 @@ int main(void)
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "data-pump error-control policy",
 		  test_datapump_error_control_policy },
+		{ "raw V.42 detection residue",
+		  test_raw_answerer_discards_detection_residue },
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "G.711 data-pump input", test_g711_datapump_input },

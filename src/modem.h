@@ -369,6 +369,9 @@ struct modem {
 			unsigned int receive_state;
 			unsigned int receive_bit_count;
 			u8 receive_data;
+			unsigned int detection_residue_state;
+			u8 detection_residue_character;
+			u8 detection_residue_pattern[2];
 			int transmit_mark_bits;
 		} async;
 		struct detect_state {

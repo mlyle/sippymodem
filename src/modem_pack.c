@@ -78,6 +78,71 @@ enum async_receive_state {
 	ASYNC_RECEIVE_HUNT_MARK,
 };
 
+enum async_detection_residue_state {
+	ASYNC_DETECTION_RESIDUE_OFF,
+	ASYNC_DETECTION_RESIDUE_WAIT,
+	ASYNC_DETECTION_RESIDUE_HELD,
+	ASYNC_DETECTION_RESIDUE_CONFIRMED,
+};
+
+/* A delayed detection run can continue after V.14 selection.  Hold one
+ * matching character until its alternating peer proves that this is protocol
+ * residue rather than raw DTE data. */
+
+static void async_deliver_character(struct modem *m, u8 character)
+{
+	if (m->put_chars != NULL)
+		(void)m->put_chars(m, (const char *)&character, 1);
+}
+
+static int async_is_detection_character(
+	const struct async_state *async, u8 character)
+{
+	return character == async->detection_residue_pattern[0] ||
+		character == async->detection_residue_pattern[1];
+}
+
+static void async_receive_character(struct modem *m, u8 character)
+{
+	struct async_state *async = &m->packer.async;
+
+	switch (async->detection_residue_state) {
+	case ASYNC_DETECTION_RESIDUE_WAIT:
+		if (async_is_detection_character(async, character)) {
+			async->detection_residue_character = character;
+			async->detection_residue_state =
+				ASYNC_DETECTION_RESIDUE_HELD;
+			return;
+		}
+		async->detection_residue_state = ASYNC_DETECTION_RESIDUE_OFF;
+		break;
+	case ASYNC_DETECTION_RESIDUE_HELD:
+		if (async_is_detection_character(async, character) &&
+		    character != async->detection_residue_character) {
+			async->detection_residue_state =
+				ASYNC_DETECTION_RESIDUE_CONFIRMED;
+			return;
+		}
+		async_deliver_character(m, async->detection_residue_character);
+		if (async_is_detection_character(async, character)) {
+			async->detection_residue_character = character;
+			return;
+		}
+		async->detection_residue_state = ASYNC_DETECTION_RESIDUE_OFF;
+		break;
+	case ASYNC_DETECTION_RESIDUE_CONFIRMED:
+		if (async_is_detection_character(async, character))
+			return;
+		async->detection_residue_state = ASYNC_DETECTION_RESIDUE_OFF;
+		break;
+	default:
+		async->detection_residue_state = ASYNC_DETECTION_RESIDUE_OFF;
+		break;
+	}
+
+	async_deliver_character(m, character);
+}
+
 int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 {
 	struct bits_state *s = &m->pack;
@@ -172,11 +237,8 @@ int modem_async_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 				break;
 			case ASYNC_RECEIVE_STOP:
 				if (bit != 0) {
-					u8 ch = async->receive_data;
-
-					if (m->put_chars != NULL)
-						(void)m->put_chars(
-							m, (const char *)&ch, 1);
+					async_receive_character(
+						m, async->receive_data);
 					async->receive_state =
 						ASYNC_RECEIVE_HUNT_START;
 				} else {
@@ -205,6 +267,8 @@ static void modem_async_reset_receive(struct modem *m)
 	m->packer.async.receive_state = ASYNC_RECEIVE_HUNT_START;
 	m->packer.async.receive_bit_count = 0;
 	m->packer.async.receive_data = 0;
+	m->packer.async.detection_residue_state =
+		ASYNC_DETECTION_RESIDUE_OFF;
 }
 
 void modem_async_retrain(struct modem *m)
@@ -315,6 +379,13 @@ static int detector_ec_required(const struct modem *m)
 
 static void detector_finish(struct modem *m)
 {
+	u8 residue_pattern[2] = {
+		m->packer.detector.rx_pattern[0],
+		m->packer.detector.rx_pattern[1],
+	};
+	int discard_residue = !m->packer.detector.ec_enable &&
+		m->packer.detector.rx_count >= DETECTOR_MATCH_CHARACTERS;
+
 	PACK_DBG("detector finished.\n");
 	if (!m->packer.detector.ec_enable && detector_ec_required(m)) {
 		modem_update_status(m, STATUS_ERROR);
@@ -322,8 +393,19 @@ static void detector_finish(struct modem *m)
 	}
 	m->cfg.ec = m->packer.detector.ec_enable;
 	modem_update_status(m,STATUS_PACK_LINK);
-	if (!m->cfg.ec && m->get_bits == modem_async_get_bits)
+	if (!m->cfg.ec && m->get_bits == modem_async_get_bits) {
 		m->packer.async.transmit_mark_bits = 0;
+		if (discard_residue) {
+			REVERSE_BITS(residue_pattern[0]);
+			REVERSE_BITS(residue_pattern[1]);
+			m->packer.async.detection_residue_pattern[0] =
+				residue_pattern[0];
+			m->packer.async.detection_residue_pattern[1] =
+				residue_pattern[1];
+			m->packer.async.detection_residue_state =
+				ASYNC_DETECTION_RESIDUE_WAIT;
+		}
+	}
 }
 
 static int detector_accept_pattern_character(struct modem *m,
