@@ -5,69 +5,93 @@
 #include <limits.h>
 #include <stddef.h>
 
+enum {
+	V34_PHASE3_J_DECODED_HISTORY_BITS =
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS * 2,
+};
+
+#define V34_PHASE3_J_DECODED_HISTORY_MASK \
+	((UINT64_C(1) << V34_PHASE3_J_DECODED_HISTORY_BITS) - 1u)
+#define V34_PHASE3_J_QUALIFIED_HISTORY_MASK \
+	((UINT32_C(1) << V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS) - 1u)
+
 _Static_assert(
-	V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS <= UINT8_MAX,
-	"V.34 J receive window must fit its counters");
-_Static_assert(
-	V34_PHASE3_J_RECEIVER_MAX_ERRORS <
-		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
-	"V.34 J correlation must retain matching evidence");
+	V34_PHASE3_J_DECODED_HISTORY_BITS < 64,
+	"V.34 J decoded history must fit its owner");
+
+static bool role_is_valid(enum v34_station_role role)
+{
+	return role == V34_CALLING_STATION ||
+	       role == V34_ANSWERING_STATION;
+}
 
 bool v34_phase3_j_detection_is_valid(
 	const struct v34_phase3_j_detection *detection)
 {
 	return detection != NULL &&
-	       detection->trn_symbols >= V34_PHASE3_TRN_MIN_SYMBOLS &&
+	       detection->preceding_symbols >=
+		       V34_PHASE3_TRN_MIN_SYMBOLS +
+		       V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS &&
 	       detection->errors <= V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	       v34_phase3_j_sequence_at_pattern_boundary(
 		       &detection->sequence);
 }
 
-static bool ring_is_valid(const struct v34_phase3_j_receiver *receiver)
+static uint8_t expected_buffered(uint32_t received_symbols)
 {
-	uint32_t expected_buffered = receiver->received_symbols <
-					     V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ?
-				     receiver->received_symbols :
-				     V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS;
-	uint8_t expected_next = (uint8_t)(
-		receiver->received_symbols %
-		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS);
+	uint32_t decoded = received_symbols == 0u ? 0u : received_symbols - 1u;
 
-	if (receiver->buffered_decisions != expected_buffered ||
-	    receiver->next_decision != expected_next)
-		return false;
-	for (size_t index = 0;
-	     index < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++index) {
-		bool populated = receiver->buffered_decisions ==
-					 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ||
-			 index < receiver->buffered_decisions;
+	return (uint8_t)(decoded < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ?
+				 decoded :
+				 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS);
+}
 
-		if (receiver->preceding_rotations[index] >= 4u ||
-		    receiver->decisions[index] >= 16u ||
-		    (populated &&
-		     (!v34_phase3_trn_is_valid(&receiver->boundaries[index]) ||
-		      receiver->boundaries[index].role != receiver->trn.role)))
-			return false;
-	}
-	return true;
+static bool detection_is_clear(
+	const struct v34_phase3_j_detection *detection)
+{
+	return detection->preceding_symbols == 0u && detection->errors == 0u &&
+	       detection->sequence.scrambler.history == 0u &&
+	       detection->sequence.scrambler.polynomial ==
+		       V34_POLYNOMIAL_GPC &&
+	       detection->sequence.role == V34_CALLING_STATION &&
+	       detection->sequence.remote_constellation == 0 &&
+	       detection->sequence.previous_clockwise_quarter_turns == 0u &&
+	       detection->sequence.symbol_in_pattern == 0u;
 }
 
 bool v34_phase3_j_receiver_is_valid(
 	const struct v34_phase3_j_receiver *receiver)
 {
-	if (receiver == NULL || !v34_phase3_trn_is_valid(&receiver->trn) ||
-	    !ring_is_valid(receiver))
+	if (receiver == NULL || !role_is_valid(receiver->transmitting_role) ||
+	    !v34_transmit_scrambler_is_valid(
+		    &receiver->descrambler, receiver->transmitting_role) ||
+	    receiver->buffered_decisions !=
+		    expected_buffered(receiver->received_symbols) ||
+	    receiver->previous_clockwise_quarter_turns >= 4u ||
+	    (receiver->decoded_history &
+	     ~V34_PHASE3_J_DECODED_HISTORY_MASK) != 0u ||
+	    (receiver->qualified_history &
+	     ~V34_PHASE3_J_QUALIFIED_HISTORY_MASK) != 0u ||
+	    receiver->has_previous_rotation !=
+		    (receiver->received_symbols != 0u))
 		return false;
 	if (!receiver->complete)
-		return receiver->detection.trn_symbols == 0 &&
-		       receiver->detection.errors == 0;
+		return detection_is_clear(&receiver->detection);
 	return receiver->buffered_decisions ==
 		       V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
 	       v34_phase3_j_detection_is_valid(&receiver->detection) &&
-	       receiver->detection.sequence.role == receiver->trn.role &&
-	       receiver->detection.trn_symbols <=
+	       receiver->detection.sequence.role ==
+		       receiver->transmitting_role &&
+	       receiver->detection.sequence.scrambler.history ==
+		       receiver->descrambler.history &&
+	       receiver->detection.sequence.scrambler.polynomial ==
+		       receiver->descrambler.polynomial &&
+	       receiver->detection.sequence
+		       .previous_clockwise_quarter_turns ==
+		       receiver->previous_clockwise_quarter_turns &&
+	       receiver->detection.preceding_symbols <=
 		       UINT32_MAX - V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
-	       receiver->detection.trn_symbols +
+	       receiver->detection.preceding_symbols +
 		       V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ==
 		       receiver->received_symbols;
 }
@@ -75,114 +99,103 @@ bool v34_phase3_j_receiver_is_valid(
 bool v34_phase3_j_receiver_is_complete(
 	const struct v34_phase3_j_receiver *receiver)
 {
-	return v34_phase3_j_receiver_is_valid(receiver) &&
-	       receiver->complete;
+	return v34_phase3_j_receiver_is_valid(receiver) && receiver->complete;
 }
 
 enum v34_phase3_j_receiver_result v34_phase3_j_receiver_init(
 	struct v34_phase3_j_receiver *receiver,
 	enum v34_station_role transmitting_role)
 {
-	struct v34_phase3_j_receiver initialized = { 0 };
+	struct v34_phase3_j_receiver initialized = {
+		.transmitting_role = transmitting_role,
+	};
 
-	if (receiver == NULL ||
-	    v34_phase3_trn_init(&initialized.trn, transmitting_role) !=
-		    V34_PHASE3_TRN_OK ||
+	if (receiver == NULL || !role_is_valid(transmitting_role) ||
+	    v34_transmit_scrambler_init(
+		    &initialized.descrambler, transmitting_role) !=
+		    V34_FRAMING_OK ||
 	    !v34_phase3_j_receiver_is_valid(&initialized))
 		return V34_PHASE3_J_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_PHASE3_J_RECEIVER_OK;
 }
 
-static uint8_t buffered_decision(
+static uint8_t decoded_symbol(
 	const struct v34_phase3_j_receiver *receiver, size_t index)
 {
-	return receiver->decisions[
-		(receiver->next_decision + index) %
-		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
+	unsigned int shift = 2u *
+		(V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS - 1u - index);
+
+	return (uint8_t)((receiver->decoded_history >> shift) & 3u);
 }
 
-static const struct v34_phase3_trn *window_boundary(
-	const struct v34_phase3_j_receiver *receiver)
+static bool decision_is_qualified(
+	const struct v34_phase3_j_receiver *receiver, size_t index)
 {
-	return &receiver->boundaries[receiver->next_decision];
+	unsigned int shift =
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS - 1u - index;
+
+	return ((receiver->qualified_history >> shift) & 1u) != 0u;
 }
 
-static uint8_t window_preceding_rotation(
-	const struct v34_phase3_j_receiver *receiver)
+static uint8_t pattern_symbol(
+	enum v34_constellation_size constellation, size_t index)
 {
-	return receiver->preceding_rotations[receiver->next_decision];
+	uint16_t pattern = constellation == V34_CONSTELLATION_4_POINT ?
+		V34_PHASE3_J_4_POINT_PATTERN :
+		V34_PHASE3_J_16_POINT_PATTERN;
+	unsigned int symbol =
+		(unsigned int)(index % V34_PHASE3_J_PATTERN_SYMBOLS);
+	unsigned int shift =
+		2u * (V34_PHASE3_J_PATTERN_SYMBOLS - 1u - symbol);
+
+	return (uint8_t)((pattern >> shift) & 3u);
 }
 
-static bool correlate_candidate(
+static uint8_t candidate_errors(
 	const struct v34_phase3_j_receiver *receiver,
-	enum v34_constellation_size constellation,
-	struct v34_phase3_j_detection *detection)
+	enum v34_constellation_size constellation)
 {
-	struct v34_phase3_j_sequence sequence;
 	uint8_t errors = 0;
 
-	if (v34_phase3_j_sequence_init_from_trn(
-		    &sequence, window_boundary(receiver), constellation) !=
-	    V34_PHASE3_J_SEQUENCE_OK)
-		return false;
-	/* The scrambler boundary follows locally generated TRN, but the
-	 * differential phase follows the actual final received TRN symbol. */
-	sequence.previous_clockwise_quarter_turns =
-		window_preceding_rotation(receiver);
-	for (size_t symbol = 0;
-	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
-		struct v34_analytic_sample point;
-		uint8_t rotation;
-
-		if (v34_phase3_j_sequence_next_fixed(
-			    &sequence, &point, &rotation) !=
-		    V34_PHASE3_J_SEQUENCE_OK)
-			return false;
-		if (buffered_decision(receiver, symbol) != rotation)
+	for (size_t index = 0;
+	     index < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++index) {
+		if (!decision_is_qualified(receiver, index) ||
+		    decoded_symbol(receiver, index) !=
+			    pattern_symbol(constellation, index))
 			errors++;
 	}
-	*detection = (struct v34_phase3_j_detection){
-		.sequence = sequence,
-		.trn_symbols = receiver->received_symbols -
-			       V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
-		.errors = errors,
-	};
-	return true;
+	return errors;
 }
 
 static bool correlate(
 	const struct v34_phase3_j_receiver *receiver,
 	struct v34_phase3_j_detection *detection)
 {
-	static const enum v34_constellation_size CONSTELLATIONS[] = {
-		V34_CONSTELLATION_4_POINT,
-		V34_CONSTELLATION_16_POINT,
+	uint8_t four_errors = candidate_errors(
+		receiver, V34_CONSTELLATION_4_POINT);
+	uint8_t sixteen_errors = candidate_errors(
+		receiver, V34_CONSTELLATION_16_POINT);
+	struct v34_phase3_j_detection candidate = {
+		.sequence = {
+			.scrambler = receiver->descrambler,
+			.role = receiver->transmitting_role,
+			.remote_constellation = four_errors < sixteen_errors ?
+				V34_CONSTELLATION_4_POINT :
+				V34_CONSTELLATION_16_POINT,
+			.previous_clockwise_quarter_turns =
+				receiver->previous_clockwise_quarter_turns,
+		},
+		.preceding_symbols = receiver->received_symbols -
+			V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+		.errors = four_errors < sixteen_errors ?
+			four_errors : sixteen_errors,
 	};
-	struct v34_phase3_j_detection best = { 0 };
-	bool found = false;
-	bool ambiguous = false;
 
-	for (size_t index = 0;
-	     index < sizeof(CONSTELLATIONS) / sizeof(CONSTELLATIONS[0]);
-	     ++index) {
-		struct v34_phase3_j_detection candidate;
-
-		if (!correlate_candidate(
-			    receiver, CONSTELLATIONS[index], &candidate) ||
-		    candidate.errors > V34_PHASE3_J_RECEIVER_MAX_ERRORS)
-			continue;
-		if (!found || candidate.errors < best.errors) {
-			best = candidate;
-			found = true;
-			ambiguous = false;
-		} else if (candidate.errors == best.errors) {
-			ambiguous = true;
-		}
-	}
-	if (!found || ambiguous)
+	if (four_errors == sixteen_errors ||
+	    !v34_phase3_j_detection_is_valid(&candidate))
 		return false;
-	*detection = best;
+	*detection = candidate;
 	return true;
 }
 
@@ -192,8 +205,7 @@ enum v34_phase3_j_receiver_result v34_phase3_j_receiver_receive(
 {
 	struct v34_phase3_j_receiver next;
 	struct v34_phase3_j_detection detection;
-	struct qam_point expected;
-	uint8_t expected_rotation;
+	uint8_t decoded;
 
 	if (!v34_phase3_j_receiver_is_valid(receiver) || quarter_point >= 4u ||
 	    clockwise_quarter_turns >= 4u)
@@ -203,32 +215,35 @@ enum v34_phase3_j_receiver_result v34_phase3_j_receiver_receive(
 	if (receiver->received_symbols == UINT32_MAX)
 		return V34_PHASE3_J_RECEIVER_OUT_OF_RANGE;
 	next = *receiver;
-	next.boundaries[next.next_decision] = next.trn;
-	if (next.received_symbols != 0) {
-		size_t preceding =
-			(next.next_decision +
-			 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS - 1u) %
-			V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS;
-
-		next.preceding_rotations[next.next_decision] =
-			next.decisions[preceding] & 3u;
-	}
-	next.decisions[next.next_decision] =
-		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns);
-	if (v34_phase3_trn_next(
-		    &next.trn, &expected, &expected_rotation) !=
-	    V34_PHASE3_TRN_OK)
-		return V34_PHASE3_J_RECEIVER_INVALID_ARGUMENT;
 	next.received_symbols++;
-	next.next_decision++;
-	if (next.next_decision == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
-		next.next_decision = 0;
-	if (next.buffered_decisions < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
-		next.buffered_decisions++;
+	if (!next.has_previous_rotation) {
+		next.previous_clockwise_quarter_turns =
+			clockwise_quarter_turns;
+		next.has_previous_rotation = true;
+	} else {
+		if (v34_descramble_differential_dibit(
+			    &next.descrambler,
+			    next.previous_clockwise_quarter_turns,
+			    clockwise_quarter_turns, &decoded) != V34_FRAMING_OK)
+			return V34_PHASE3_J_RECEIVER_INVALID_ARGUMENT;
+		next.previous_clockwise_quarter_turns =
+			clockwise_quarter_turns;
+		next.decoded_history =
+			((next.decoded_history << 2u) | decoded) &
+			V34_PHASE3_J_DECODED_HISTORY_MASK;
+		next.qualified_history =
+			((next.qualified_history << 1u) |
+			 (quarter_point == 0u ? 1u : 0u)) &
+			V34_PHASE3_J_QUALIFIED_HISTORY_MASK;
+		if (next.buffered_decisions <
+		    V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
+			next.buffered_decisions++;
+	}
 	if (next.buffered_decisions ==
 		    V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
 	    next.received_symbols - V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS >=
-		    V34_PHASE3_TRN_MIN_SYMBOLS &&
+		    V34_PHASE3_TRN_MIN_SYMBOLS +
+		    V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS &&
 	    correlate(&next, &detection)) {
 		next.detection = detection;
 		next.complete = true;

@@ -7,11 +7,6 @@
 
 #include <stddef.h>
 
-enum {
-	V34_PHASE3_J_4_POINT_PATTERN = 0x0991,
-	V34_PHASE3_J_16_POINT_PATTERN = 0x0d91,
-};
-
 _Static_assert(
 	V34_PHASE3_J_PATTERN_SYMBOLS * 2 ==
 		V34_PHASE3_J_PATTERN_BITS,
@@ -28,6 +23,20 @@ bool v34_phase3_j_sequence_is_valid(
 		       V34_PHASE3_J_PATTERN_SYMBOLS &&
 	       v34_transmit_scrambler_is_valid(
 		       &sequence->scrambler, sequence->role);
+}
+
+bool v34_phase3_j_sequence_is_equal(
+	const struct v34_phase3_j_sequence *left,
+	const struct v34_phase3_j_sequence *right)
+{
+	return left != NULL && right != NULL &&
+	       left->scrambler.history == right->scrambler.history &&
+	       left->scrambler.polynomial == right->scrambler.polynomial &&
+	       left->role == right->role &&
+	       left->remote_constellation == right->remote_constellation &&
+	       left->previous_clockwise_quarter_turns ==
+		       right->previous_clockwise_quarter_turns &&
+	       left->symbol_in_pattern == right->symbol_in_pattern;
 }
 
 enum v34_phase3_j_sequence_result

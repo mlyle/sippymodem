@@ -118,7 +118,7 @@ bool v34_phase3_receiver_is_valid(
 			       &receiver->state.j) &&
 		       !v34_phase3_j_equalizer_receiver_is_complete(
 			       &receiver->state.j) &&
-		       receiver->state.j.detector.trn.role ==
+		       receiver->state.j.detector.transmitting_role ==
 			       receiver->configuration.transmitting_role &&
 		       receiver->state.j.adaptation ==
 			       receiver->configuration
@@ -129,7 +129,7 @@ bool v34_phase3_receiver_is_valid(
 			       &receiver->s_detection) &&
 		       v34_phase3_j_equalizer_receiver_is_complete(
 			       &receiver->state.j) &&
-		       receiver->state.j.detector.trn.role ==
+		       receiver->state.j.detector.transmitting_role ==
 			       receiver->configuration.transmitting_role &&
 		       receiver->state.j.adaptation ==
 			       receiver->configuration

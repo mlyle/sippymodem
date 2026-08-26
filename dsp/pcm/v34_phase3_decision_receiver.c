@@ -27,8 +27,10 @@ static bool j_is_initial(
 {
 	return receiver->j.received_symbols == 0u &&
 	       receiver->j.buffered_decisions == 0u &&
-	       receiver->j.next_decision == 0u && !receiver->j.complete &&
-	       receiver->j.trn.role == receiver->transmitting_role;
+	       receiver->j.decoded_history == 0u &&
+	       receiver->j.qualified_history == 0u &&
+	       !receiver->j.has_previous_rotation && !receiver->j.complete &&
+	       receiver->j.transmitting_role == receiver->transmitting_role;
 }
 
 static bool s_target_is_valid(
@@ -56,7 +58,7 @@ bool v34_phase3_decision_receiver_is_valid(
 	    !v34_phase3_s_receiver_is_valid(&receiver->s) ||
 	    !v34_phase3_pp_sequence_is_valid(&receiver->pp) ||
 	    !v34_phase3_j_receiver_is_valid(&receiver->j) ||
-	    receiver->j.trn.role != receiver->transmitting_role)
+	    receiver->j.transmitting_role != receiver->transmitting_role)
 		return false;
 	s_active = receiver->stage == V34_PHASE3_DECISION_RECEIVER_S ||
 		   receiver->stage ==
@@ -374,16 +376,7 @@ static enum v34_phase3_decision_receiver_result receive_j(
 		    V34_CONSTELLATION_4_POINT, observation->decision,
 		    &hard) != V34_CONSTELLATION_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	if (receiver->j.received_symbols < V34_PHASE3_TRN_MIN_SYMBOLS) {
-		struct v34_phase3_trn known = receiver->j.trn;
-		uint8_t rotation;
-
-		if (v34_phase3_trn_next_fixed(
-			    &known, &target, &rotation) != V34_PHASE3_TRN_OK)
-			return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	} else {
-		target = hard.target;
-	}
+	target = hard.target;
 	result = v34_phase3_j_receiver_receive(
 		&receiver->j, hard.quarter_point,
 		hard.clockwise_quarter_turns);

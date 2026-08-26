@@ -15,6 +15,8 @@
 enum {
 	V34_PHASE3_J_PATTERN_BITS = 16,
 	V34_PHASE3_J_PATTERN_SYMBOLS = 8,
+	V34_PHASE3_J_4_POINT_PATTERN = 0x0991,
+	V34_PHASE3_J_16_POINT_PATTERN = 0x0d91,
 };
 
 enum v34_phase3_j_sequence_result {
@@ -42,6 +44,9 @@ v34_phase3_j_sequence_init_from_trn(
 
 bool v34_phase3_j_sequence_is_valid(
 	const struct v34_phase3_j_sequence *sequence);
+bool v34_phase3_j_sequence_is_equal(
+	const struct v34_phase3_j_sequence *left,
+	const struct v34_phase3_j_sequence *right);
 
 /* J may stop only after a whole 16-bit pattern. A new sequence is initially
  * at a boundary; each boundary recurs after eight emitted symbols. */

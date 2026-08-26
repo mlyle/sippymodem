@@ -10,7 +10,12 @@
 #include <math.h>
 #include <string.h>
 
-enum { CHANNEL_TAPS = 3 };
+enum {
+	CHANNEL_TAPS = 3,
+	J_DETECTION_SYMBOLS =
+		V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS +
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+};
 
 struct test_channel {
 	struct qam_point history[CHANNEL_TAPS];
@@ -123,8 +128,14 @@ static bool run_stream(
 	struct v34_phase3_j_sequence j;
 	struct v34_phase3_j_sequence detection_boundary;
 	struct v34_phase3_j_handoff handoff;
+	struct v34_phase3_j_sequence boundaries[
+		J_DETECTION_SYMBOLS + V34_EQUALIZER_DECISION_DELAY];
+	struct qam_point received_j[
+		J_DETECTION_SYMBOLS + V34_EQUALIZER_DECISION_DELAY];
 	struct qam_point retained[V34_EQUALIZER_DECISION_DELAY];
 	struct qam_point transmitted;
+	unsigned int detection_input_symbols = 0;
+	unsigned int detection_j_symbols;
 	uint8_t rotation;
 
 	CHECK(prepare_fixture(&fixture, role) &&
@@ -147,50 +158,48 @@ static bool run_stream(
 		      V34_PHASE3_J_SEQUENCE_OK,
 	      "role %d J source did not initialize", role);
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
+	     symbol < J_DETECTION_SYMBOLS +
 			      V34_EQUALIZER_DECISION_DELAY;
 	     ++symbol) {
-		enum v34_phase3_j_equalizer_receiver_result expected =
-			symbol + 1u ==
-				V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-					V34_EQUALIZER_DECISION_DELAY ?
-				V34_PHASE3_J_EQUALIZER_RECEIVER_DETECTED :
-				V34_PHASE3_J_EQUALIZER_RECEIVER_OK;
+		enum v34_phase3_j_equalizer_receiver_result result;
 
 		CHECK(v34_phase3_j_sequence_next(
 			      &j, &transmitted, &rotation) ==
 			      V34_PHASE3_J_SEQUENCE_OK,
 		      "role %d J point %u did not generate", role, symbol);
-		if (symbol + 1u == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
-			detection_boundary = j;
-		if (symbol >= V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
-			retained[symbol -
-				 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS] =
-				channel_point(&fixture.channel, &transmitted);
-		else
-			CHECK(receive_point(
-				      &receiver, &fixture.channel, &transmitted,
-				      expected),
-			      "role %d J point %u returned early", role, symbol);
-		if (symbol >= V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS) {
-			CHECK(v34_phase3_j_equalizer_receive_point(
-				      &receiver,
-				      &retained[symbol -
-					 V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS]) ==
-				      expected,
-			      "role %d retained J point %u failed", role, symbol);
+		boundaries[symbol] = j;
+		received_j[symbol] = channel_point(
+			&fixture.channel, &transmitted);
+		result = v34_phase3_j_equalizer_receive_point(
+			&receiver, &received_j[symbol]);
+		CHECK(result == V34_PHASE3_J_EQUALIZER_RECEIVER_OK ||
+		      result == V34_PHASE3_J_EQUALIZER_RECEIVER_DETECTED,
+		      "role %d J point %u failed", role, symbol);
+		if (result == V34_PHASE3_J_EQUALIZER_RECEIVER_DETECTED) {
+			detection_input_symbols = symbol + 1u;
+			break;
 		}
 	}
+	CHECK(detection_input_symbols >= V34_EQUALIZER_DECISION_DELAY + 1u,
+	      "role %d J never reached a qualified window", role);
+	detection_j_symbols =
+		detection_input_symbols - V34_EQUALIZER_DECISION_DELAY;
+	detection_boundary = boundaries[detection_j_symbols - 1u];
+	for (size_t index = 0; index < ARRAY_LENGTH(retained); ++index)
+		retained[index] = received_j[detection_j_symbols + index];
 	CHECK(v34_phase3_j_equalizer_receiver_is_complete(&receiver) &&
 	      v34_phase3_j_equalizer_receiver_handoff(
 		      &receiver, &handoff) ==
 		      V34_PHASE3_J_EQUALIZER_RECEIVER_OK &&
 	      v34_phase3_j_handoff_is_valid(&handoff) &&
-	      handoff.detection.trn_symbols == trn_symbols &&
-	      handoff.detection.errors == 0 &&
+	      handoff.detection.preceding_symbols ==
+		      trn_symbols + detection_j_symbols -
+		      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
+	      handoff.detection.errors <=
+		      V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	      handoff.detection.sequence.remote_constellation == constellation &&
-	      memcmp(&handoff.detection.sequence, &detection_boundary,
-		     sizeof(detection_boundary)) == 0,
+	      v34_phase3_j_sequence_is_equal(
+		      &handoff.detection.sequence, &detection_boundary),
 	      "role %d J handoff lost its detected boundary", role);
 	{
 		struct v34_phase3_j_equalizer_receiver complete = receiver;
@@ -312,7 +321,7 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase3_j_handoff_is_valid(NULL),
 	      "composed handoff was not transactional");
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
+	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS + 1u; ++symbol) {
 		struct qam_point transmitted;
 		uint8_t rotation;
 
@@ -325,8 +334,6 @@ static bool test_validation_and_transactionality(void)
 		      "saturation fixture stopped at %u", symbol);
 	}
 	receiver.detector.received_symbols = UINT32_MAX;
-	receiver.detector.next_decision = (uint8_t)(
-		UINT32_MAX % V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS);
 	CHECK(v34_phase3_j_equalizer_receiver_is_valid(&receiver),
 	      "saturated composed receiver was not valid");
 	saved = receiver;

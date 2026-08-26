@@ -14,6 +14,10 @@ enum {
 	V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS =
 		V34_PHASE3_J_PATTERN_SYMBOLS *
 		V34_PHASE3_J_RECEIVER_PATTERN_REPETITIONS,
+	/* Twelve symbols replace all 23 descrambler bits; round that prefix to
+	 * the following complete eight-symbol Table 18 boundary. */
+	V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS =
+		2 * V34_PHASE3_J_PATTERN_SYMBOLS,
 	V34_PHASE3_J_RECEIVER_MAX_ERRORS = 2,
 };
 
@@ -31,30 +35,29 @@ struct v34_phase3_j_detection {
 	/* Expected peer state immediately after the detected whole J window.
 	 * remote_constellation is the Phase 4 selection signalled by J. */
 	struct v34_phase3_j_sequence sequence;
-	uint32_t trn_symbols;
+	/* Symbols preceding the qualified J window. This includes the bounded
+	 * prefix needed for the self-synchronizing descrambler to acquire J. */
+	uint32_t preceding_symbols;
 	uint8_t errors;
 };
 
 bool v34_phase3_j_detection_is_valid(
 	const struct v34_phase3_j_detection *detection);
 
-/* Locate the TRN-to-J transition from hard four-point decisions. A rolling
- * three-pattern window rejects continued TRN and correlates both possible J
- * selections. Candidate symbols are generated from retained TRN boundary
- * states, so no pattern or scrambler-state table is stored. */
+/* Locate J from hard four-point decisions. The receive descrambler remains
+ * live across TRN and self-synchronizes after the peer begins differentially
+ * encoded J. A rolling three-pattern window rejects continued TRN and selects
+ * the Phase 4 constellation without predicting the peer's transition epoch. */
 struct v34_phase3_j_receiver {
-	struct v34_phase3_trn trn;
-	struct v34_phase3_trn
-		boundaries[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
-	/* Observed phase immediately before each retained decision. J's
-	 * differential encoder continues from the final transmitted TRN
-	 * symbol, whose absolute carrier phase need not match our generator. */
-	uint8_t preceding_rotations[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
-	uint8_t decisions[V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS];
+	struct v34_scrambler descrambler;
 	struct v34_phase3_j_detection detection;
+	enum v34_station_role transmitting_role;
+	uint64_t decoded_history;
+	uint32_t qualified_history;
 	uint32_t received_symbols;
-	uint8_t next_decision;
 	uint8_t buffered_decisions;
+	uint8_t previous_clockwise_quarter_turns;
+	bool has_previous_rotation;
 	bool complete;
 };
 
@@ -69,13 +72,14 @@ bool v34_phase3_j_receiver_is_complete(
 
 /* Accept one training-constellation decision. TRN and J use quarter point
  * zero; a different valid point counts as a correlation error. Detection is
- * disabled until at least 512 preceding TRN decisions have been accepted. */
+ * disabled until enough decisions precede the candidate window for the 512T
+ * minimum TRN interval and the bounded descrambler-acquisition prefix. */
 enum v34_phase3_j_receiver_result v34_phase3_j_receiver_receive(
 	struct v34_phase3_j_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);
 
-/* Copy the selected constellation, exact post-J sequence state, transition
- * position, and error count. A false return leaves the output unchanged. */
+/* Copy the selected constellation, exact post-J sequence state, qualified
+ * window position, and error count. A false return leaves output unchanged. */
 bool v34_phase3_j_receiver_get_detection(
 	const struct v34_phase3_j_receiver *receiver,
 	struct v34_phase3_j_detection *detection);

@@ -6,6 +6,11 @@
 
 #include <string.h>
 
+enum {
+	J_FEED_SYMBOLS = V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS +
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+};
+
 static bool start_pair(
 	struct v34_phase3_j_receiver *receiver,
 	struct v34_phase3_trn *source, enum v34_station_role role)
@@ -44,11 +49,41 @@ static bool feed_trn(
 
 static bool feed_j(
 	struct v34_phase3_j_receiver *receiver,
+	struct v34_phase3_j_sequence *source,
+	enum v34_phase3_j_receiver_result final_result,
+	unsigned int *consumed_symbols)
+{
+	for (unsigned int symbol = 0; symbol < J_FEED_SYMBOLS; ++symbol) {
+		struct qam_point point;
+		uint8_t rotation;
+		enum v34_phase3_j_receiver_result result;
+
+		if (v34_phase3_j_sequence_next(source, &point, &rotation) !=
+		    V34_PHASE3_J_SEQUENCE_OK)
+			return false;
+		result = v34_phase3_j_receiver_receive(receiver, 0, rotation);
+		if (result == V34_PHASE3_J_RECEIVER_DETECTED) {
+			if (consumed_symbols != NULL)
+				*consumed_symbols = symbol + 1u;
+			return final_result == V34_PHASE3_J_RECEIVER_DETECTED;
+		}
+		if (result != V34_PHASE3_J_RECEIVER_OK)
+			return false;
+	}
+	if (consumed_symbols != NULL)
+		*consumed_symbols = J_FEED_SYMBOLS;
+	return final_result == V34_PHASE3_J_RECEIVER_OK;
+}
+
+static bool feed_j_window_with_errors(
+	struct v34_phase3_j_receiver *receiver,
 	struct v34_phase3_j_sequence *source, unsigned int error_count,
 	enum v34_phase3_j_receiver_result final_result)
 {
 	static const unsigned int ERROR_SYMBOLS[] = { 3, 11, 19 };
 
+	if (error_count > ARRAY_LENGTH(ERROR_SYMBOLS))
+		return false;
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
 		struct qam_point point;
@@ -63,15 +98,29 @@ static bool feed_j(
 		    V34_PHASE3_J_SEQUENCE_OK)
 			return false;
 		for (unsigned int error = 0; error < error_count; ++error) {
-			if (symbol != ERROR_SYMBOLS[error])
-				continue;
-			if (error == 1)
+			if (symbol == ERROR_SYMBOLS[error])
 				quarter_point = 1;
-			else
-				rotation = (uint8_t)((rotation + 1u) & 3u);
 		}
 		if (v34_phase3_j_receiver_receive(
 			    receiver, quarter_point, rotation) != expected)
+			return false;
+	}
+	return true;
+}
+
+static bool feed_unqualified_j_window(
+	struct v34_phase3_j_receiver *receiver,
+	struct v34_phase3_j_sequence *source)
+{
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
+		struct qam_point point;
+		uint8_t rotation;
+
+		if (v34_phase3_j_sequence_next(source, &point, &rotation) !=
+			    V34_PHASE3_J_SEQUENCE_OK ||
+		    v34_phase3_j_receiver_receive(receiver, 1, rotation) !=
+			    V34_PHASE3_J_RECEIVER_OK)
 			return false;
 	}
 	return true;
@@ -86,6 +135,7 @@ static bool run_generated_transition(
 	struct v34_phase3_trn source_trn;
 	struct v34_phase3_j_sequence source_j;
 	struct v34_phase3_j_detection detection;
+	unsigned int j_symbols;
 
 	CHECK(start_pair(&receiver, &source_trn, role) &&
 	      feed_trn(&receiver, &source_trn, trn_symbols) &&
@@ -93,19 +143,22 @@ static bool run_generated_transition(
 		      &source_j, &source_trn, constellation) ==
 		      V34_PHASE3_J_SEQUENCE_OK &&
 	      feed_j(
-		      &receiver, &source_j, 0,
-		      V34_PHASE3_J_RECEIVER_DETECTED),
+		      &receiver, &source_j,
+		      V34_PHASE3_J_RECEIVER_DETECTED, &j_symbols),
 	      "role %d constellation %d transition at %u was not detected",
 	      role, constellation, trn_symbols);
 	CHECK(v34_phase3_j_receiver_is_valid(&receiver) &&
 	      v34_phase3_j_receiver_is_complete(&receiver) &&
 	      v34_phase3_j_receiver_get_detection(&receiver, &detection) &&
-	      detection.trn_symbols == trn_symbols && detection.errors == 0 &&
+	      detection.preceding_symbols ==
+		      trn_symbols + j_symbols -
+		      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
+	      detection.errors <= V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	      detection.sequence.remote_constellation == constellation &&
 	      detection.sequence.role == role &&
 	      v34_phase3_j_sequence_at_pattern_boundary(
 		      &detection.sequence) &&
-	      memcmp(&detection.sequence, &source_j, sizeof(source_j)) == 0,
+	      v34_phase3_j_sequence_is_equal(&detection.sequence, &source_j),
 	      "role %d constellation %d detection lost boundary state",
 	      role, constellation);
 	{
@@ -159,14 +212,15 @@ static bool test_minimum_and_error_threshold(void)
 		      &receiver, &source_trn, V34_CALLING_STATION) &&
 	      feed_trn(
 		      &receiver, &source_trn,
-		      V34_PHASE3_TRN_MIN_SYMBOLS - 1u) &&
+		      V34_PHASE3_TRN_MIN_SYMBOLS -
+			      V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS - 1u) &&
 	      v34_phase3_j_sequence_init_from_trn(
 		      &source_j, &source_trn,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_OK &&
 	      feed_j(
-		      &receiver, &source_j, 0,
-		      V34_PHASE3_J_RECEIVER_OK) &&
+		      &receiver, &source_j,
+		      V34_PHASE3_J_RECEIVER_OK, NULL) &&
 	      !v34_phase3_j_receiver_is_complete(&receiver),
 	      "J was accepted before the minimum TRN interval");
 	CHECK(start_pair(
@@ -176,12 +230,15 @@ static bool test_minimum_and_error_threshold(void)
 		      &source_j, &source_trn,
 		      V34_CONSTELLATION_16_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_OK &&
-	      feed_j(
+	      feed_unqualified_j_window(&receiver, &source_j),
+	      "bounded-error fixture did not initialize");
+	CHECK(feed_j_window_with_errors(
 		      &receiver, &source_j,
 		      V34_PHASE3_J_RECEIVER_MAX_ERRORS,
 		      V34_PHASE3_J_RECEIVER_DETECTED) &&
 	      v34_phase3_j_receiver_get_detection(&receiver, &detection) &&
-	      detection.trn_symbols == 701 &&
+	      detection.preceding_symbols ==
+		      701 + V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
 	      detection.errors == V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	      detection.sequence.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT,
@@ -193,7 +250,9 @@ static bool test_minimum_and_error_threshold(void)
 		      &source_j, &source_trn,
 		      V34_CONSTELLATION_16_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_OK &&
-	      feed_j(
+	      feed_unqualified_j_window(&receiver, &source_j),
+	      "excess-error fixture did not initialize");
+	CHECK(feed_j_window_with_errors(
 		      &receiver, &source_j,
 		      V34_PHASE3_J_RECEIVER_MAX_ERRORS + 1u,
 		      V34_PHASE3_J_RECEIVER_OK) &&
@@ -230,6 +289,7 @@ static bool test_carrier_phase_ambiguity(void)
 		struct v34_phase3_trn source_trn;
 		struct v34_phase3_j_sequence source_j;
 		struct v34_phase3_j_detection detection;
+		unsigned int j_symbols = 0;
 
 		CHECK(start_pair(
 			      &receiver, &source_trn,
@@ -241,34 +301,38 @@ static bool test_carrier_phase_ambiguity(void)
 			      V34_PHASE3_J_SEQUENCE_OK,
 		      "offset %u carrier-phase fixture did not initialize",
 		      offset);
-		for (unsigned int symbol = 0;
-		     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
+		for (unsigned int symbol = 0; symbol < J_FEED_SYMBOLS; ++symbol) {
 			struct qam_point point;
 			uint8_t rotation;
-			enum v34_phase3_j_receiver_result expected =
-				symbol + 1u ==
-					V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ?
-					V34_PHASE3_J_RECEIVER_DETECTED :
-					V34_PHASE3_J_RECEIVER_OK;
+			enum v34_phase3_j_receiver_result result;
 
 			CHECK(v34_phase3_j_sequence_next(
 				      &source_j, &point, &rotation) ==
 				      V34_PHASE3_J_SEQUENCE_OK &&
-			      v34_phase3_j_receiver_receive(
+			      ((result = v34_phase3_j_receiver_receive(
 				      &receiver, 0,
-				      (uint8_t)((rotation + offset) & 3u)) ==
-				      expected,
+				      (uint8_t)((rotation + offset) & 3u))) ==
+				      V34_PHASE3_J_RECEIVER_OK ||
+			       result == V34_PHASE3_J_RECEIVER_DETECTED),
 			      "offset %u J symbol %u was not detected",
 			      offset, symbol);
+			if (result == V34_PHASE3_J_RECEIVER_DETECTED) {
+				j_symbols = symbol + 1u;
+				break;
+			}
 		}
+		CHECK(j_symbols != 0u,
+		      "offset %u J never reached a qualified window", offset);
 		source_j.previous_clockwise_quarter_turns = (uint8_t)(
 			(source_j.previous_clockwise_quarter_turns + offset) & 3u);
 		CHECK(v34_phase3_j_receiver_get_detection(
 			      &receiver, &detection) &&
 		      detection.errors == 0 &&
-		      detection.trn_symbols == 701 &&
-		      memcmp(&detection.sequence, &source_j,
-			     sizeof(source_j)) == 0,
+		      detection.preceding_symbols ==
+			      701 + j_symbols -
+			      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
+		      v34_phase3_j_sequence_is_equal(
+			      &detection.sequence, &source_j),
 		      "offset %u did not survive the J handoff", offset);
 	}
 	return true;
@@ -309,22 +373,18 @@ static bool test_validation_and_range(void)
 	      "invalid J decision changed state or an output");
 	CHECK(feed_trn(
 		      &receiver, &source,
-		      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS),
+		      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS + 1u),
 	      "range fixture did not fill its history");
 	receiver.received_symbols = UINT32_MAX;
-	receiver.next_decision = (uint8_t)(
-		UINT32_MAX % V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS);
 	CHECK(v34_phase3_j_receiver_is_valid(&receiver),
 	      "range fixture was not a valid saturated state");
 	saved = receiver;
 	CHECK(v34_phase3_j_receiver_receive(&receiver, 0, 0) ==
 		      V34_PHASE3_J_RECEIVER_OUT_OF_RANGE &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "saturated J receiver consumed another decision");
 	corrupt = receiver;
-	corrupt.next_decision = (uint8_t)(
-		(corrupt.next_decision + 1u) %
-		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS);
+	corrupt.decoded_history |= UINT64_C(1) << 60u;
 	CHECK(!v34_phase3_j_receiver_is_valid(NULL) &&
 	      !v34_phase3_j_receiver_is_valid(&corrupt) &&
 	      !v34_phase3_j_receiver_is_complete(&corrupt) &&

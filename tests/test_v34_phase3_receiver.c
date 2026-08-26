@@ -12,7 +12,12 @@
 #include <math.h>
 #include <string.h>
 
-enum { CHANNEL_TAPS = 3 };
+enum {
+	CHANNEL_TAPS = 3,
+	J_DETECTION_SYMBOLS =
+		V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS +
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
+};
 
 struct test_channel {
 	struct qam_point history[CHANNEL_TAPS];
@@ -87,12 +92,16 @@ static bool run_timeline(
 	struct v34_phase3_trn trn;
 	struct v34_phase3_j_sequence j;
 	struct v34_phase3_j_sequence detection_boundary;
+	struct v34_phase3_j_sequence boundaries[
+		J_DETECTION_SYMBOLS + V34_EQUALIZER_DECISION_DELAY];
 	struct v34_phase3_handoff handoff;
 	struct v34_phase3_prefix_handoff prefix_handoff;
 	struct v34_phase3_s_detection s_detection;
 	struct v34_phase3_s_detection first_s_detection;
 	struct test_channel channel = { 0 };
 	struct qam_point transmitted;
+	unsigned int detection_input_symbols = 0;
+	unsigned int detection_j_symbols;
 	uint8_t rotation;
 
 	CHECK(v34_phase3_receiver_init(&receiver, &config) ==
@@ -233,38 +242,45 @@ static bool run_timeline(
 		      V34_PHASE3_J_SEQUENCE_OK,
 	      "role %d J source did not initialize", role);
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
+	     symbol < J_DETECTION_SYMBOLS +
 			      V34_EQUALIZER_DECISION_DELAY;
 	     ++symbol) {
-		enum v34_phase3_receiver_result expected =
-			symbol + 1u ==
-				V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS +
-					V34_EQUALIZER_DECISION_DELAY ?
-				V34_PHASE3_RECEIVER_J_DETECTED :
-				V34_PHASE3_RECEIVER_OK;
+		enum v34_phase3_receiver_result result;
 
 		CHECK(v34_phase3_j_sequence_next(
 			      &j, &transmitted, &rotation) ==
 			      V34_PHASE3_J_SEQUENCE_OK,
 		      "role %d J source stopped at %u", role, symbol);
-		if (symbol + 1u == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS)
-			detection_boundary = j;
-		CHECK(receive_point(&receiver, &channel, &transmitted) ==
-			      expected,
+		boundaries[symbol] = j;
+		result = receive_point(&receiver, &channel, &transmitted);
+		CHECK(result == V34_PHASE3_RECEIVER_OK ||
+		      result == V34_PHASE3_RECEIVER_J_DETECTED,
 		      "role %d J point %u did not cross its boundary",
 		      role, symbol);
+		if (result == V34_PHASE3_RECEIVER_J_DETECTED) {
+			detection_input_symbols = symbol + 1u;
+			break;
+		}
 	}
+	CHECK(detection_input_symbols >= V34_EQUALIZER_DECISION_DELAY + 1u,
+	      "role %d J never reached a qualified window", role);
+	detection_j_symbols =
+		detection_input_symbols - V34_EQUALIZER_DECISION_DELAY;
+	detection_boundary = boundaries[detection_j_symbols - 1u];
 	CHECK(v34_phase3_receiver_is_complete(&receiver) &&
 	      v34_phase3_receiver_handoff(&receiver, &handoff) ==
 		      V34_PHASE3_RECEIVER_OK &&
 	      v34_phase3_handoff_is_valid(&handoff) &&
 	      memcmp(&handoff.s, &s_detection, sizeof(s_detection)) == 0 &&
-	      handoff.j.detection.trn_symbols == trn_symbols &&
-	      handoff.j.detection.errors == 0 &&
+	      handoff.j.detection.preceding_symbols ==
+		      trn_symbols + detection_j_symbols -
+		      V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
+	      handoff.j.detection.errors <=
+		      V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	      handoff.j.detection.sequence.remote_constellation ==
 		      constellation &&
-	      memcmp(&handoff.j.detection.sequence, &detection_boundary,
-		     sizeof(detection_boundary)) == 0,
+	      v34_phase3_j_sequence_is_equal(
+		      &handoff.j.detection.sequence, &detection_boundary),
 	      "role %d Phase 3 handoff lost its exact boundary", role);
 	{
 		struct v34_phase3_receiver corrupt = receiver;

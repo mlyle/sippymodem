@@ -33,7 +33,7 @@ bool v34_phase3_j_handoff_is_valid(
 
 /* Continue from the PP receiver's delayed handoff. Each accepted point trains
  * the equalizer decision-directed on the four-point TRN/J constellation and
- * advances the generated J correlator by exactly one equalized decision. */
+ * advances the self-synchronizing J detector by one equalized decision. */
 struct v34_phase3_j_equalizer_receiver {
 	struct qam_equalizer equalizer;
 	struct v34_phase3_j_receiver detector;

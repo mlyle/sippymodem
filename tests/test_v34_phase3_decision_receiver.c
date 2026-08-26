@@ -12,6 +12,8 @@
 
 enum {
 	TEST_TRN_SYMBOLS = 640,
+	TEST_J_SYMBOLS = V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS +
+		V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS,
 	TEST_MD_SYMBOLS = 12,
 	TEST_DECODER_POWER_Q15 = 0x7000,
 };
@@ -219,12 +221,11 @@ static bool run_clean_timeline(enum v34_station_role role)
 		      &j, &trn, V34_CONSTELLATION_16_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_OK,
 	      "role %d J source did not initialize", role);
-	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS; ++symbol) {
+	for (unsigned int symbol = 0; symbol < TEST_J_SYMBOLS; ++symbol) {
 		struct v34_phase3_decision_output output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
-			symbol + 1u == V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS ?
+			symbol + 1u == TEST_J_SYMBOLS ?
 				V34_PHASE3_DECISION_RECEIVER_J_DETECTED :
 				V34_PHASE3_DECISION_RECEIVER_OK;
 
@@ -243,7 +244,9 @@ static bool run_clean_timeline(enum v34_station_role role)
 	      v34_phase3_decision_receiver_handoff(&receiver, &handoff) ==
 		      V34_PHASE3_DECISION_RECEIVER_OK &&
 	      v34_phase3_decision_handoff_is_valid(&handoff) &&
-	      handoff.j.trn_symbols == TEST_TRN_SYMBOLS &&
+	      handoff.j.preceding_symbols ==
+		      TEST_TRN_SYMBOLS +
+		      V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS &&
 	      handoff.j.sequence.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT,
 	      "role %d fixed Phase 3 handoff changed", role);
