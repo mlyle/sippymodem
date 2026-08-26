@@ -355,77 +355,49 @@ static bool test_b1_errors_and_rejection(void)
 	return true;
 }
 
-static bool test_b1_alignment_retry(void)
+static bool test_b1_schedule_continuity(void)
 {
 	for (size_t index = 0; index < ARRAY_LENGTH(CONFIGURATIONS); ++index) {
 		struct fixture fixture;
-		struct fixture aligned_source;
 		struct packet packet;
-		struct v34_data_receiver expected;
 		struct v34_received_mapping_frame received;
-		struct v34_received_mapping_frame saved_received;
-		enum v34_data_receive_result expected_result;
+		uint16_t initial_errors;
 
 		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[index]) &&
-		      initialize_fixture(
-			      &aligned_source, &CONFIGURATIONS[index]) &&
 		      transmit_uniform(&fixture, 0, &packet),
-		      "alignment retry fixture %zu did not initialize", index);
-		expected = fixture.receiver;
-		expected.b1_alignment_retry_available = false;
-		memset(&received, 0xa5, sizeof(received));
-		saved_received = received;
+		      "B1 continuity fixture %zu did not initialize", index);
+		initial_errors = packet.frame.data_bits;
 		CHECK(v34_data_receiver_receive_mapping_frame(
 			      &fixture.receiver, packet.decided, &received) ==
-			      V34_DATA_RECEIVE_OK &&
-		      memcmp(&fixture.receiver, &expected,
-			     sizeof(expected)) == 0 &&
-		      memcmp(&received, &saved_received,
-			     sizeof(received)) == 0,
-		      "alignment retry %zu changed B1 state or output", index);
-
-		CHECK(transmit_next(
-			      &aligned_source, true, false, false, 0, &packet),
-		      "aligned B1 frame %zu did not transmit", index);
-		expected_result = packet.frame.completes_data_frame ?
-			V34_DATA_RECEIVE_B1_COMPLETE :
-			V34_DATA_RECEIVE_B1_IN_PROGRESS;
-		CHECK(v34_data_receiver_receive_mapping_frame(
-			      &fixture.receiver, packet.decided, &received) ==
-			      expected_result &&
+			      V34_DATA_RECEIVE_B1_IN_PROGRESS &&
 		      received_matches(&received, &packet) &&
 		      fixture.receiver.b1_received_bits ==
 			      packet.frame.data_bits &&
-		      fixture.receiver.b1_error_bits == 0u &&
-		      !fixture.receiver.b1_alignment_retry_available,
-		      "aligned B1 frame %zu did not recover", index);
-	}
+		      fixture.receiver.b1_error_bits == initial_errors &&
+		      fixture.receiver.schedule.next_mapping_frame ==
+			      fixture.transmit_schedule.next_mapping_frame,
+		      "noisy B1 prefix %zu changed frame alignment", index);
+		while (v34_data_receiver_is_receiving_b1(&fixture.receiver)) {
+			enum v34_data_receive_result expected;
 
-	{
-		struct fixture fixture;
-		struct fixture second_source;
-		struct packet packet;
-		struct v34_received_mapping_frame received;
-		enum v34_data_receive_result expected_result;
-
-		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-		      initialize_fixture(&second_source, &CONFIGURATIONS[0]) &&
-		      transmit_uniform(&fixture, 0, &packet) &&
-		      v34_data_receiver_receive_mapping_frame(
-			      &fixture.receiver, packet.decided, &received) ==
-			      V34_DATA_RECEIVE_OK &&
-		      transmit_uniform(&second_source, 0, &packet),
-		      "one-shot alignment fixture did not initialize");
-		expected_result = packet.frame.completes_data_frame ?
-			V34_DATA_RECEIVE_B1_COMPLETE :
-			V34_DATA_RECEIVE_B1_IN_PROGRESS;
-		CHECK(v34_data_receiver_receive_mapping_frame(
-			      &fixture.receiver, packet.decided, &received) ==
-			      expected_result &&
-		      received_matches(&received, &packet) &&
-		      fixture.receiver.b1_error_bits >
-			      fixture.receiver.b1_received_bits / 2u,
-		      "alignment retry repeated after its one attempt");
+			CHECK(transmit_next(
+				      &fixture, true, false, false, 0, &packet),
+			      "B1 continuation %zu did not transmit", index);
+			expected = packet.frame.completes_data_frame ?
+				V34_DATA_RECEIVE_B1_COMPLETE :
+				V34_DATA_RECEIVE_B1_IN_PROGRESS;
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &fixture.receiver, packet.decided,
+				      &received) == expected &&
+			      received_matches(&received, &packet) &&
+			      fixture.receiver.schedule.next_mapping_frame ==
+				      fixture.transmit_schedule.next_mapping_frame,
+			      "B1 continuation %zu lost frame alignment", index);
+		}
+		CHECK(fixture.receiver.b1_received_bits ==
+			      fixture.geometry.data_bits_per_frame &&
+		      fixture.receiver.b1_error_bits == initial_errors,
+		      "B1 continuity diagnostics %zu changed", index);
 	}
 	return true;
 }
@@ -494,7 +466,7 @@ int main(void)
 	} tests[] = {
 		{ "B1 and superframe handoff", test_b1_and_superframe_handoff },
 		{ "B1 errors and rejection", test_b1_errors_and_rejection },
-		{ "B1 alignment retry", test_b1_alignment_retry },
+		{ "B1 schedule continuity", test_b1_schedule_continuity },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
