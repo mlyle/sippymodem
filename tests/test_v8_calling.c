@@ -136,7 +136,6 @@ static bool test_call_negotiation(void)
 	struct v8_menu negotiated_menu;
 	struct remote_answerer answerer;
 	enum v8_modulation modulation;
-	size_t dwell_started = 0;
 	size_t exchange_started = 0;
 	size_t completed = 0;
 
@@ -163,16 +162,12 @@ static bool test_call_negotiation(void)
 		CHECK(remote_answerer_receive(&answerer, transmit),
 		      "V.8 answering station failed at sample %zu", sample_index);
 		if (before == V8_CALLING_WAIT_ANSWER_SIGNAL ||
-		    before == V8_CALLING_ECHO_CONTROL_DWELL ||
 		    before == V8_CALLING_COMPLETE)
 			CHECK(transmit == 0,
 			      "V.8 silent state emitted audio at sample %zu",
 			      sample_index);
 		if (before != calling.state) {
 			if (calling.state ==
-			    V8_CALLING_ECHO_CONTROL_DWELL)
-				dwell_started = sample_index + 1u;
-			else if (calling.state ==
 				 V8_CALLING_EXCHANGE_MENUS)
 				exchange_started = sample_index + 1u;
 			else if (calling.state ==
@@ -183,9 +178,9 @@ static bool test_call_negotiation(void)
 		    answerer.cj_detected)
 			break;
 	}
-	CHECK(dwell_started != 0 &&
-	      exchange_started - dwell_started ==
-		      V8_ECHO_CONTROL_DWELL_SAMPLES &&
+	CHECK(exchange_started >
+		      V8_ANSAM_POST_DETECT_DWELL_BLOCKS *
+			      V8_ANSAM_BLOCK_SAMPLES &&
 	      completed != 0 &&
 	      v8_calling_is_complete(&calling) &&
 	      answerer.call_menu_confirmed && answerer.cj_detected,

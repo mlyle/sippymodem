@@ -21,6 +21,7 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	bool selection_is_single;
 
 	if (calling == NULL || !menu_is_usable(&calling->local_menu) ||
+	    !v8_ansam_detector_is_valid(&calling->answer_signal) ||
 	    (unsigned int)calling->state > V8_CALLING_FAILED ||
 	    (unsigned int)calling->terminal_result >
 		    V8_CALLING_NO_COMMON_MODULATION ||
@@ -59,9 +60,6 @@ static bool calling_is_valid(const struct v8_calling *calling)
 	case V8_CALLING_WAIT_ANSWER_SIGNAL:
 		return !calling->negotiated && calling->state_samples <
 		       V8_CALLING_ANSWER_TIMEOUT_SAMPLES;
-	case V8_CALLING_ECHO_CONTROL_DWELL:
-		return !calling->negotiated && calling->state_samples <
-		       V8_ECHO_CONTROL_DWELL_SAMPLES;
 	case V8_CALLING_EXCHANGE_MENUS:
 		return !calling->negotiated && calling->state_samples <
 		       V8_CALLING_MENU_TIMEOUT_SAMPLES;
@@ -234,21 +232,12 @@ static enum v8_calling_result process_one(
 		if (detected) {
 			enter_state(
 				calling,
-				V8_CALLING_ECHO_CONTROL_DWELL);
+				V8_CALLING_EXCHANGE_MENUS);
 		} else if (calling->state_samples ==
 			   V8_CALLING_ANSWER_TIMEOUT_SAMPLES) {
 			return fail(
 				calling, V8_CALLING_ANSWER_TIMEOUT);
 		}
-		return V8_CALLING_OK;
-	}
-	if (calling->state == V8_CALLING_ECHO_CONTROL_DWELL) {
-		calling->state_samples++;
-		if (calling->state_samples ==
-		    V8_ECHO_CONTROL_DWELL_SAMPLES)
-			enter_state(
-				calling,
-				V8_CALLING_EXCHANGE_MENUS);
 		return V8_CALLING_OK;
 	}
 	if (calling->state == V8_CALLING_EXCHANGE_MENUS)

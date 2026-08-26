@@ -13,10 +13,13 @@ enum {
 	V8_ANSAM_MODULATION_HZ = 15,
 	V8_ANSAM_REVERSAL_SAMPLES =
 		V8_ANSAM_SAMPLE_RATE * 450 / 1000,
-	/* A 200 ms window contains exactly three 15 Hz envelope cycles. */
-	V8_ANSAM_DETECTOR_WINDOW_SAMPLES =
-		V8_ANSAM_SAMPLE_RATE / 5,
-	V8_ANSAM_REQUIRED_WINDOWS = 2,
+	V8_ANSAM_BLOCK_SAMPLES = 4,
+	V8_ANSAM_INPUT_QUEUE_SAMPLES = 6,
+	V8_ANSAM_ENTRANCE_FILTER_TAPS = 34,
+	V8_ANSAM_POWER_HISTORY_SAMPLES = 30,
+	/* Te is one second plus the 30 ms receiver margin. */
+	V8_ANSAM_POST_DETECT_DWELL_BLOCKS =
+		V8_ANSAM_SAMPLE_RATE / V8_ANSAM_BLOCK_SAMPLES + 60,
 	/* The specified envelope peaks at 6/5 of its average amplitude. */
 	V8_ANSAM_MAX_AVERAGE_AMPLITUDE = INT16_MAX * 5 / 6,
 };
@@ -36,33 +39,56 @@ struct v8_ansam_generator {
 	bool phase_reversals;
 };
 
-struct v8_ansam_projection {
-	double in_phase;
-	double quadrature;
-	uint32_t phase;
-	uint32_t phase_step;
+enum v8_ansam_detector_stage {
+	V8_ANSAM_WAIT_CARRIER,
+	V8_ANSAM_WAIT_MODULATION,
+	V8_ANSAM_DETECTED,
 };
 
+struct v8_ansam_agc {
+	uint16_t filtered_energy;
+	uint16_t gain;
+	uint16_t gain_delta;
+	uint16_t power_history[V8_ANSAM_POWER_HISTORY_SAMPLES];
+	uint16_t power_index;
+	uint16_t signal_timer;
+	uint16_t signal_ref_gain;
+	uint16_t signal_stable_time;
+	uint16_t overflow_count;
+	bool signal_stable;
+};
+
+struct v8_ansam_tone_detector {
+	uint16_t counter;
+	uint16_t filtered_energy;
+	uint16_t iir_input[4];
+	uint16_t iir_output[4];
+	uint16_t tone_input[3];
+	uint16_t tone_output[3];
+	uint16_t warmup_count;
+	bool locked;
+};
+
+struct v8_ansam_dft {
+	uint16_t phase;
+	uint32_t real_accumulator;
+	uint32_t imaginary_accumulator;
+};
+
+/* The receive owner includes the entrance filter, gain lineage, robust
+ * carrier acquisition, and the complete post-detect echo-control dwell. */
 struct v8_ansam_detector {
-	struct v8_ansam_projection lower_sideband;
-	struct v8_ansam_projection carrier;
-	struct v8_ansam_projection upper_sideband;
-	double line_energy;
-	double carrier_share;
-	double modulation_ratio;
-	uint32_t sample_count;
-	unsigned int qualifying_windows;
-	unsigned int missed_windows;
-	bool measurement_ready;
-	bool detected;
-};
-
-struct v8_ansam_measurement {
-	double carrier_share;
-	double modulation_ratio;
-	unsigned int qualifying_windows;
-	bool ready;
-	bool detected;
+	struct v8_ansam_agc agc;
+	struct v8_ansam_tone_detector tone;
+	struct v8_ansam_dft modulation;
+	int16_t entrance_history[V8_ANSAM_ENTRANCE_FILTER_TAPS];
+	int16_t input_queue[V8_ANSAM_INPUT_QUEUE_SAMPLES];
+	uint16_t post_filter_word;
+	uint16_t input_count;
+	uint16_t dwell_blocks;
+	uint16_t modulation_energy;
+	enum v8_ansam_detector_stage stage;
+	bool gain_tracking;
 };
 
 enum v8_ansam_result v8_ansam_generator_init(
@@ -74,15 +100,10 @@ enum v8_ansam_result v8_ansam_generate(
 
 enum v8_ansam_result v8_ansam_detector_init(
 	struct v8_ansam_detector *detector);
-void v8_ansam_detector_reset(
-	struct v8_ansam_detector *detector);
+bool v8_ansam_detector_is_valid(
+	const struct v8_ansam_detector *detector);
 enum v8_ansam_result v8_ansam_detect(
 	struct v8_ansam_detector *detector,
 	const int16_t *samples, size_t count, bool *detected);
-struct v8_ansam_measurement v8_ansam_measure(
-	const struct v8_ansam_detector *detector);
-
-const char *v8_ansam_result_name(
-	enum v8_ansam_result result);
 
 #endif
