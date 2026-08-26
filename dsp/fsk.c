@@ -2,6 +2,7 @@
 
 #include "fsk.h"
 
+#include "fixed_phase.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -9,12 +10,41 @@
 #include <string.h>
 
 enum {
-	FSK_PROJECTION_SCALE = 16384,
 	FSK_MIN_DETECTOR_WINDOW = 3,
 	FSK_MAX_SMOOTHING_SHIFT = 30,
 };
 
-static const double FSK_TWO_PI = 6.283185307179586476925286766559;
+static int32_t arithmetic_shift_right_s32(
+	uint32_t value, unsigned int shift)
+{
+	uint32_t shifted;
+
+	if (shift == 0)
+		shifted = value;
+	else if ((value & UINT32_C(0x80000000)) == 0)
+		shifted = value >> shift;
+	else
+		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
+	return shifted <= INT32_MAX ?
+		       (int32_t)shifted :
+		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
+}
+
+static int64_t arithmetic_shift_right_s64(
+	uint64_t value, unsigned int shift)
+{
+	uint64_t shifted;
+
+	if (shift == 0)
+		shifted = value;
+	else if ((value & (UINT64_C(1) << 63)) == 0)
+		shifted = value >> shift;
+	else
+		shifted = (value >> shift) | ~(UINT64_MAX >> shift);
+	return shifted <= INT64_MAX ?
+		       (int64_t)shifted :
+		       -(int64_t)(UINT64_MAX - shifted) - 1;
+}
 
 static uint64_t symbol_period_units(
 	const struct fsk_channel *channel)
@@ -181,17 +211,18 @@ static void build_projection(
 	const struct fsk_channel *channel,
 	uint32_t frequency_hz)
 {
-	/* Generate each matched filter directly from its defining sinusoid.
-	 * Q14 rounding limits every coefficient error to half a unit and avoids
-	 * storing waveform or coefficient tables in the source. */
 	for (size_t tap = 0; tap < channel->detector_window; ++tap) {
-		double phase = -FSK_TWO_PI * (double)frequency_hz *
-			       (double)tap / (double)channel->sample_rate;
+		uint64_t numerator =
+			((uint64_t)frequency_hz * tap) << 16;
+		uint64_t phase =
+			(numerator + channel->sample_rate / 2u) /
+			channel->sample_rate;
+		struct fixed_phase_q14 phasor =
+			fixed_phase_sin_cos_u16_q14(
+				(uint16_t)(0u - (uint16_t)phase));
 
-		projection->in_phase[tap] =
-			(int16_t)lround(cos(phase) * FSK_PROJECTION_SCALE);
-		projection->quadrature[tap] =
-			(int16_t)lround(sin(phase) * FSK_PROJECTION_SCALE);
+		projection->in_phase[tap] = phasor.cosine;
+		projection->quadrature[tap] = phasor.sine;
 	}
 }
 
@@ -258,11 +289,11 @@ static int64_t projection_power(
 			(receiver->history_index + window - 1 - tap) % window;
 		int32_t sample = receiver->history[index];
 
-		in_phase += sample * projection->in_phase[tap];
-		quadrature += sample * projection->quadrature[tap];
+		in_phase += arithmetic_shift_right_s32(
+			(uint32_t)(sample * projection->in_phase[tap]), 8);
+		quadrature += arithmetic_shift_right_s32(
+			(uint32_t)(sample * projection->quadrature[tap]), 8);
 	}
-	in_phase /= FSK_PROJECTION_SCALE;
-	quadrature /= FSK_PROJECTION_SCALE;
 	return in_phase * in_phase + quadrature * quadrature;
 }
 
@@ -271,8 +302,6 @@ static void update_detector(
 {
 	uint64_t line_power = 0;
 	int64_t metric;
-	int64_t smoothing_divisor =
-		INT64_C(1) << receiver->channel.metric_smoothing_shift;
 	size_t window = receiver->channel.detector_window;
 
 	receiver->history[receiver->history_index] = sample;
@@ -291,8 +320,9 @@ static void update_detector(
 	}
 	receiver->line_power = line_power;
 	metric = receiver->mark_power - receiver->space_power;
-	receiver->smoothed_metric +=
-		(metric - receiver->smoothed_metric) / smoothing_divisor;
+	receiver->smoothed_metric += arithmetic_shift_right_s64(
+		(uint64_t)(metric - receiver->smoothed_metric),
+		receiver->channel.metric_smoothing_shift);
 }
 
 enum fsk_result fsk_receiver_detect(

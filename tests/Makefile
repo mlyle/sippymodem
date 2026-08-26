@@ -471,6 +471,7 @@ NATIVE_CORE_TEST_OBJECTS := $(BUILD_DIR)/test_native_core.o \
 FSK_TEST_BINARY := $(BUILD_DIR)/test_fsk
 FSK_TEST_OBJECTS := $(BUILD_DIR)/test_fsk.o \
 	$(BUILD_DIR)/fsk.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v21.o
 V8_ANSAM_TEST_BINARY := $(BUILD_DIR)/test_v8_ansam
 V8_ANSAM_TEST_OBJECTS := $(BUILD_DIR)/test_v8_ansam.o \
@@ -516,11 +517,14 @@ V8_MENU_TEST_OBJECTS := $(BUILD_DIR)/test_v8_menu.o \
 	$(BUILD_DIR)/v8_framing.o
 BAUDOT_TEST_BINARY := $(BUILD_DIR)/test_baudot
 BAUDOT_TEST_OBJECTS := $(BUILD_DIR)/test_baudot.o \
-	$(BUILD_DIR)/baudot.o $(BUILD_DIR)/fsk.o
+	$(BUILD_DIR)/baudot.o \
+	$(BUILD_DIR)/fsk.o \
+	$(BUILD_DIR)/fixed_phase.o
 V23_TEST_BINARY := $(BUILD_DIR)/test_v23
 V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
 	$(NATIVE_CORE_OBJECTS) \
 	$(BUILD_DIR)/fsk.o \
+	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v23_datapump.o
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v22_framing

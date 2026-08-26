@@ -56,6 +56,24 @@ struct loopback_result {
 	struct fsk_measurement measurement;
 };
 
+static uint64_t hash_byte(uint64_t hash, uint8_t byte)
+{
+	return (hash ^ byte) * UINT64_C(1099511628211);
+}
+
+static uint64_t hash_u64(uint64_t hash, uint64_t value)
+{
+	for (unsigned int shift = 0; shift < 64; shift += 8)
+		hash = hash_byte(hash, (uint8_t)(value >> shift));
+	return hash;
+}
+
+static int16_t word_to_s16(uint16_t word)
+{
+	return word <= INT16_MAX ?
+		       (int16_t)word : (int16_t)((int32_t)word - 65536);
+}
+
 static uint32_t fixture_random(uint32_t *state)
 {
 	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
@@ -385,6 +403,57 @@ static bool test_v21_profiles(void)
 	return true;
 }
 
+static bool test_fixed_detector_arithmetic(void)
+{
+	struct fsk_receiver receiver;
+	uint64_t coefficient_hash = UINT64_C(14695981039346656037);
+	uint64_t stream_hash = UINT64_C(14695981039346656037);
+	uint32_t random = UINT32_C(0x7a31c29d);
+
+	CHECK(fsk_receiver_init(&receiver, &v21_channel_2) == FSK_OK,
+	      "fixed FSK detector did not initialize");
+	for (size_t tap = 0; tap < v21_channel_2.detector_window; ++tap) {
+		const int16_t values[] = {
+			receiver.mark.in_phase[tap],
+			receiver.mark.quadrature[tap],
+			receiver.space.in_phase[tap],
+			receiver.space.quadrature[tap],
+		};
+
+		for (size_t index = 0; index < ARRAY_LENGTH(values); ++index)
+			coefficient_hash = hash_u64(
+				coefficient_hash, (uint16_t)values[index]);
+	}
+	for (size_t index = 0; index < 4096; ++index) {
+		uint8_t bit = 0;
+		bool ready = false;
+		int16_t sample;
+
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		sample = word_to_s16((uint16_t)(random >> 16));
+		CHECK(fsk_receiver_sample(
+			      &receiver, sample, &bit, &ready) == FSK_OK,
+		      "fixed FSK detector rejected sample %zu", index);
+		stream_hash = hash_u64(stream_hash, (uint16_t)sample);
+		stream_hash = hash_u64(
+			stream_hash, (uint64_t)receiver.mark_power);
+		stream_hash = hash_u64(
+			stream_hash, (uint64_t)receiver.space_power);
+		stream_hash = hash_u64(
+			stream_hash, (uint64_t)receiver.smoothed_metric);
+		stream_hash = hash_byte(stream_hash, ready);
+		stream_hash = hash_byte(stream_hash, bit);
+	}
+	CHECK(coefficient_hash == UINT64_C(0xeecab44adea3eb7f) &&
+		      stream_hash == UINT64_C(0x63c7974c663f5b97) &&
+		      receiver.emitted_bits == 121 &&
+		      receiver.smoothed_metric == INT64_C(-48866622206990),
+	      "fixed FSK detector arithmetic changed: %#llx/%#llx",
+	      (unsigned long long)coefficient_hash,
+	      (unsigned long long)stream_hash);
+	return true;
+}
+
 static bool test_configurable_rate_and_tone_pair(void)
 {
 	return check_payload(&channel_1200_baud, false) &&
@@ -402,6 +471,7 @@ int main(void)
 		{ "fractional symbol clock", test_fractional_symbol_clock },
 		{ "continuous tone detection", test_continuous_tone_detection },
 		{ "V.21 profiles", test_v21_profiles },
+		{ "fixed detector arithmetic", test_fixed_detector_arithmetic },
 		{ "V.21 channel pairs", test_v21_channel_pairs },
 		{ "configurable rate and tone pair",
 		  test_configurable_rate_and_tone_pair },
