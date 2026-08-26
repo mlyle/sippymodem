@@ -189,7 +189,7 @@ static int request_handoff(struct v8_datapump *datapump)
 		return DPSTAT_ERROR;
 	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
 	datapump->dp.modem->cfg.ec = menu.lapm;
-	datapump->dp.modem->dsp_info.qc_lapm = menu.lapm;
+	datapump->dp.modem->dsp_info.qc_lapm = 0;
 	datapump->handoff_requested = true;
 	datapump->dp.status = DPSTAT_CHANGEDP;
 	return DPSTAT_CHANGEDP;

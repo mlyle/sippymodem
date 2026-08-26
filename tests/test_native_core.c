@@ -634,11 +634,19 @@ static bool test_v8_datapump_mapping(void)
 	return true;
 }
 
-static bool test_v8_pcm_handoff(void)
+static bool test_v8_handoff(void)
 {
-	static const enum DP_ID requested_ids[] = { DP_V90, DP_V92 };
+	static const struct {
+		enum DP_ID requested;
+		enum modem_pcm_role caller_role;
+		enum modem_pcm_role answerer_role;
+	} selections[] = {
+		{ DP_V34, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE },
+		{ DP_V90, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL },
+		{ DP_V92, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL },
+	};
 	struct modem_driver driver = {
-		.name = "V.8 PCM handoff test",
+		.name = "V.8 handoff test",
 		.start = unused_start,
 		.stop = unused_stop,
 		.ioctl = unused_control,
@@ -655,20 +663,21 @@ static bool test_v8_pcm_handoff(void)
 	int answering_status = DPSTAT_OK;
 
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
-	      "V.8 PCM handoff registrations did not start");
+	      "V.8 handoff registrations did not start");
 	operations = modem_dp_get_registered_ops(DP_V8);
 	CHECK(operations != NULL,
-	      "V.8 PCM handoff operation did not initialize");
+	      "V.8 handoff operation did not initialize");
 	for (size_t selection = 0;
-	     selection < ARRAY_LENGTH(requested_ids); ++selection) {
-		enum DP_ID requested = requested_ids[selection];
+	     selection < ARRAY_LENGTH(selections); ++selection) {
+		enum DP_ID requested = selections[selection].requested;
 
-		caller = modem_create(&driver, "V.8 PCM caller");
-		answerer = modem_create(&driver, "V.8 PCM answerer");
+		caller = modem_create(&driver, "V.8 caller");
+		answerer = modem_create(&driver, "V.8 answerer");
 		CHECK(caller != NULL && answerer != NULL,
-		      "V.8 PCM handoff endpoints did not initialize");
-		CHECK(process_at_command(caller, "AT+V90D=0") == 0 &&
-			      process_at_command(answerer, "AT+V90D=1") == 0,
+		      "V.8 handoff endpoints did not initialize");
+		CHECK((!v8_datapump_uses_pcm(requested) ||
+		       (process_at_command(caller, "AT+V90D=0") == 0 &&
+			process_at_command(answerer, "AT+V90D=1") == 0)),
 		      "V.8 PCM endpoints did not accept complementary roles");
 		calling_dp = operations->create(
 			caller, requested, 1, MODEM_RATE, MODEM_FRAG, operations);
@@ -704,9 +713,14 @@ static bool test_v8_pcm_handoff(void)
 			      answering_status == DPSTAT_CHANGEDP &&
 			      caller->dp_requested == requested &&
 			      answerer->dp_requested == requested &&
-			      caller->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG &&
-			      answerer->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL,
-		      "V.8 PCM peers did not agree on handoff %u",
+			      caller->dsp_info.pcm_role ==
+				      selections[selection].caller_role &&
+			      answerer->dsp_info.pcm_role ==
+				      selections[selection].answerer_role &&
+			      caller->cfg.ec == 1 && answerer->cfg.ec == 1 &&
+			      caller->dsp_info.qc_lapm == 0 &&
+			      answerer->dsp_info.qc_lapm == 0,
+		      "V.8 peers did not agree on handoff %u",
 		      (unsigned int)requested);
 		CHECK(operations->delete(calling_dp) == 0 &&
 			      operations->delete(answering_dp) == 0 &&
@@ -716,7 +730,7 @@ static bool test_v8_pcm_handoff(void)
 		modem_delete(answerer);
 	}
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
-	      "V.8 PCM handoff registrations did not stop");
+	      "V.8 handoff registrations did not stop");
 	return true;
 }
 
@@ -2195,7 +2209,7 @@ int main(void)
 		{ "escape discards async transmit fragment",
 		  test_escape_discards_async_transmit_fragment },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
-		{ "V.8 PCM handoff", test_v8_pcm_handoff },
+		{ "V.8 handoff", test_v8_handoff },
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "data-pump error-control policy",
 		  test_datapump_error_control_policy },
