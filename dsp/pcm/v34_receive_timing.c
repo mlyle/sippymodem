@@ -40,9 +40,8 @@ bool v34_receive_timing_is_valid(
 	       v34_timing_control_is_valid(&timing->timing) &&
 	       timing->timing.local_role ==
 		       receiving_role(timing->transmitting_profile.local_role) &&
-	       (timing->s_detector.acquired ?
-		(timing->timing.mode != V34_TIMING_CONTROL_LOCKED) :
-		(timing->timing.mode == V34_TIMING_CONTROL_LOCKED)) &&
+	       (timing->s_detector.acquired ||
+		timing->timing.mode == V34_TIMING_CONTROL_LOCKED) &&
 	       queue_state_is_valid(timing);
 }
 
@@ -125,6 +124,23 @@ enum v34_receive_timing_result v34_receive_timing_enter_hold(
 		return V34_RECEIVE_TIMING_INVALID_STATE;
 	next = *timing;
 	if (v34_timing_control_enter_hold(&next.timing) !=
+		    V34_TIMING_CONTROL_OK ||
+	    !v34_receive_timing_is_valid(&next))
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	*timing = next;
+	return V34_RECEIVE_TIMING_OK;
+}
+
+enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
+	struct v34_receive_timing *timing, bool frozen)
+{
+	struct v34_receive_timing next;
+
+	if (!v34_receive_timing_is_valid(timing) ||
+	    !timing->s_detector.acquired)
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	next = *timing;
+	if (v34_timing_control_set_data_frozen(&next.timing, frozen) !=
 		    V34_TIMING_CONTROL_OK ||
 	    !v34_receive_timing_is_valid(&next))
 		return V34_RECEIVE_TIMING_INVALID_STATE;

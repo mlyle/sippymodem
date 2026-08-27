@@ -120,12 +120,16 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality == NULL ||
 	    quality->bad_windows > V34_DATA_QUALITY_LOSS_WINDOWS ||
 	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
-	    quality->threshold < 0)
+	    quality->baseline < 0 || quality->threshold < 0 ||
+	    (quality->timing_frozen &&
+	     (quality->threshold <= quality->baseline ||
+	      quality->threshold == INT16_MAX)))
 		return false;
 	if (quality->active)
 		return true;
-	return quality->threshold == 0 && quality->bad_windows == 0 &&
-	       !quality->window_latched;
+	return quality->baseline == 0 && quality->threshold == 0 &&
+	       quality->bad_windows == 0 && !quality->window_latched &&
+	       !quality->timing_frozen;
 }
 
 enum v34_data_quality_result v34_data_quality_init(
@@ -206,11 +210,38 @@ enum v34_data_quality_result v34_data_quality_start(
 	if (!v34_data_quality_is_valid(quality))
 		return V34_DATA_QUALITY_INVALID_STATE;
 	next = *quality;
+	next.baseline = measurement->decision_metric;
 	next.threshold = threshold;
 	next.bad_windows = 0;
 	next.window_latched = measurement->window_position == 0;
+	next.timing_frozen = false;
 	next.active = true;
 	*quality = next;
+	return V34_DATA_QUALITY_OK;
+}
+
+static enum v34_data_quality_result update_timing_gate(
+	struct v34_data_quality *quality, int16_t metric)
+{
+	int16_t range;
+	int16_t freeze_threshold;
+	int16_t resume_threshold;
+
+	if (quality->threshold <= quality->baseline ||
+	    quality->threshold == INT16_MAX)
+		return V34_DATA_QUALITY_OK;
+	range = (int16_t)(quality->threshold - quality->baseline);
+	freeze_threshold = (int16_t)(
+		quality->baseline + (int16_t)(((int32_t)range * 3) >> 3));
+	resume_threshold = (int16_t)(quality->baseline + (range >> 2));
+	if (!quality->timing_frozen && metric >= freeze_threshold) {
+		quality->timing_frozen = true;
+		return V34_DATA_QUALITY_FREEZE_TIMING;
+	}
+	if (quality->timing_frozen && metric <= resume_threshold) {
+		quality->timing_frozen = false;
+		return V34_DATA_QUALITY_RESUME_TIMING;
+	}
 	return V34_DATA_QUALITY_OK;
 }
 
@@ -219,6 +250,7 @@ enum v34_data_quality_result v34_data_quality_observe(
 	const struct v34_adaptive_equalizer_quality *measurement)
 {
 	struct v34_data_quality next;
+	enum v34_data_quality_result timing_result = V34_DATA_QUALITY_OK;
 
 	if (quality == NULL || measurement == NULL ||
 	    memory_regions_overlap(
@@ -232,6 +264,8 @@ enum v34_data_quality_result v34_data_quality_observe(
 		next.window_latched = false;
 	} else if (!next.window_latched) {
 		next.window_latched = true;
+		timing_result = update_timing_gate(
+			&next, measurement->decision_metric);
 		if (next.threshold == 0 ||
 		    measurement->decision_metric < next.threshold) {
 			next.bad_windows = 0;
@@ -242,13 +276,15 @@ enum v34_data_quality_result v34_data_quality_observe(
 	if (next.bad_windows == V34_DATA_QUALITY_LOSS_WINDOWS &&
 	    next.automatic_retrains < V34_DATA_QUALITY_MAX_RETRAINS) {
 		next.automatic_retrains++;
+		next.baseline = 0;
 		next.threshold = 0;
 		next.bad_windows = 0;
 		next.window_latched = false;
+		next.timing_frozen = false;
 		next.active = false;
 		*quality = next;
 		return V34_DATA_QUALITY_RETRAIN;
 	}
 	*quality = next;
-	return V34_DATA_QUALITY_OK;
+	return timing_result;
 }

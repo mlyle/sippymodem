@@ -77,6 +77,11 @@ enum v34_timing_control_result v34_timing_control_begin_acquisition(
 enum v34_timing_control_result v34_timing_control_enter_hold(
 	struct v34_timing_control *control);
 
+/* Freeze or resume the trained data-mode clock without changing its learned
+ * phase, increment, integrator, or low-gain HOLD profile. */
+enum v34_timing_control_result v34_timing_control_set_data_frozen(
+	struct v34_timing_control *control, bool frozen);
+
 /* Consume one complete timing-error group and publish the increment for the
  * next symbol interval. Rejected calls leave the owner and output unchanged. */
 enum v34_timing_control_result v34_timing_control_process(

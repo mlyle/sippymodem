@@ -660,6 +660,19 @@ static bool test_training_case(
 			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 			      "role %u rate %u repeated data start changed state",
 			      role, rate);
+			saved = receiver;
+			CHECK(v34_phase34_receiver_set_data_timing_frozen(
+				      &receiver, true) == V34_PHASE34_RECEIVER_OK &&
+			      receiver.timing.timing.mode ==
+				      V34_TIMING_CONTROL_LOCKED &&
+			      v34_phase34_receiver_is_valid(&receiver) &&
+			      v34_phase34_receiver_set_data_timing_frozen(
+				      &receiver, false) == V34_PHASE34_RECEIVER_OK &&
+			      receiver.timing.timing.mode ==
+				      V34_TIMING_CONTROL_HOLD &&
+			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      "role %u rate %u timing freeze changed data lineage",
+			      role, rate);
 			e_complete = true;
 			break;
 		}

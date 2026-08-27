@@ -144,6 +144,12 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		coefficients[V34_PRECODER_TAP_COUNT],
 	enum v34_trellis_selection selection);
 
+/* Freeze or resume the trained data-mode sample clock at an online quality
+ * boundary.  No line sample is consumed. */
+enum v34_phase34_receiver_result
+v34_phase34_receiver_set_data_timing_frozen(
+	struct v34_phase34_receiver *receiver, bool frozen);
+
 /* Copy the detected Phase 3 boundary after the receiver has left Phase 3. */
 enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
 	const struct v34_phase34_receiver *receiver,

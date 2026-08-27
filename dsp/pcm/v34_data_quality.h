@@ -16,6 +16,8 @@ enum {
 
 enum v34_data_quality_result {
 	V34_DATA_QUALITY_OK,
+	V34_DATA_QUALITY_FREEZE_TIMING,
+	V34_DATA_QUALITY_RESUME_TIMING,
 	V34_DATA_QUALITY_RETRAIN,
 	V34_DATA_QUALITY_INVALID_ARGUMENT,
 	V34_DATA_QUALITY_INVALID_STATE,
@@ -25,10 +27,12 @@ enum v34_data_quality_result {
  * the measurements themselves; this compact owner consumes each completed
  * 1024-symbol window exactly once and bounds automatic full retraining. */
 struct v34_data_quality {
+	int16_t baseline;
 	int16_t threshold;
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
 	bool window_latched;
+	bool timing_frozen;
 	bool active;
 };
 
@@ -54,10 +58,13 @@ enum v34_data_quality_result v34_data_quality_start(
 	uint8_t primary_data_rate_2400_bps_units,
 	const struct v34_adaptive_equalizer_quality *measurement);
 
-/* Return RETRAIN once after three consecutive complete bad windows.  The
- * owner becomes inactive in that result and is restarted after retraining.
- * Once its two-retrain budget is exhausted, later windows remain observable
- * but do not repeatedly request an impossible recovery. */
+/* A completed window can first request that the trained sample clock be
+ * frozen as quality approaches the rate-down threshold, then resume its
+ * low-gain tracking profile after recovery.  Return RETRAIN once after three
+ * consecutive complete bad windows.  The owner becomes inactive in that
+ * result and is restarted after retraining.  Once its two-retrain budget is
+ * exhausted, later windows remain observable but do not repeatedly request
+ * an impossible recovery. */
 enum v34_data_quality_result v34_data_quality_observe(
 	struct v34_data_quality *quality,
 	const struct v34_adaptive_equalizer_quality *measurement);

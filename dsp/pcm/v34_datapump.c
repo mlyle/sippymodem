@@ -505,7 +505,14 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 	enum v34_data_quality_result result =
 		v34_data_quality_observe(&next, measurement);
 
-	if (result == V34_DATA_QUALITY_RETRAIN) {
+	if (result == V34_DATA_QUALITY_FREEZE_TIMING ||
+	    result == V34_DATA_QUALITY_RESUME_TIMING) {
+		if (v34_phase34_receiver_set_data_timing_frozen(
+			    &datapump->call.state.phase4.receive,
+			    result == V34_DATA_QUALITY_FREEZE_TIMING) !=
+		    V34_PHASE34_RECEIVER_OK)
+			return false;
+	} else if (result == V34_DATA_QUALITY_RETRAIN) {
 		if (start_local_retrain(datapump) != 0)
 			return false;
 	} else if (result != V34_DATA_QUALITY_OK) {

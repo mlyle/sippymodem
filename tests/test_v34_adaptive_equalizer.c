@@ -849,6 +849,28 @@ static bool test_data_quality_policy(void)
 	      "disabled minimum-rate quality requested recovery");
 	measurement.decision_metric = 0;
 	measurement.window_position = 1;
+	measurement.decision_metric = 109;
+	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+	      v34_data_quality_start(
+		      &quality, V34_SYMBOL_RATE_3429, 12, &measurement) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.baseline == 109 && quality.threshold == 168 &&
+	      !quality.timing_frozen &&
+	      publish_quality_window(&quality, &measurement, 130) ==
+		      V34_DATA_QUALITY_OK &&
+	      !quality.timing_frozen &&
+	      publish_quality_window(&quality, &measurement, 131) ==
+		      V34_DATA_QUALITY_FREEZE_TIMING &&
+	      quality.timing_frozen &&
+	      publish_quality_window(&quality, &measurement, 124) ==
+		      V34_DATA_QUALITY_OK &&
+	      quality.timing_frozen &&
+	      publish_quality_window(&quality, &measurement, 123) ==
+		      V34_DATA_QUALITY_RESUME_TIMING &&
+	      !quality.timing_frozen,
+	      "quality timing hysteresis changed");
+	measurement.decision_metric = 0;
+	measurement.window_position = 1;
 
 	CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
 	      v34_data_quality_start(
@@ -859,8 +881,9 @@ static bool test_data_quality_policy(void)
 	measurement.decision_metric = 192;
 	measurement.window_position = 0;
 	CHECK(v34_data_quality_observe(&quality, &measurement) ==
-		      V34_DATA_QUALITY_OK &&
+		      V34_DATA_QUALITY_FREEZE_TIMING &&
 	      quality.bad_windows == 1 && quality.window_latched &&
+	      quality.timing_frozen &&
 	      v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_OK &&
 	      quality.bad_windows == 1,
@@ -916,13 +939,15 @@ static bool test_data_quality_policy(void)
 	for (unsigned int window = 0;
 	     window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window)
 		CHECK(publish_quality_window(&quality, &measurement, 345) ==
-			      V34_DATA_QUALITY_OK,
+			      (window == 0 ?
+				       V34_DATA_QUALITY_FREEZE_TIMING :
+				       V34_DATA_QUALITY_OK),
 		      "exhausted quality budget retriggered at %u", window);
 	CHECK(quality.active &&
 	      quality.bad_windows == V34_DATA_QUALITY_LOSS_WINDOWS &&
 	      publish_quality_window(&quality, &measurement, 166) ==
-		      V34_DATA_QUALITY_OK &&
-	      quality.bad_windows == 0,
+		      V34_DATA_QUALITY_RESUME_TIMING &&
+	      quality.bad_windows == 0 && !quality.timing_frozen,
 	      "exhausted quality monitor did not retain recovery evidence");
 	return true;
 }

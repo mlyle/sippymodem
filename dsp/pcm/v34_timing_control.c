@@ -337,6 +337,26 @@ enum v34_timing_control_result v34_timing_control_enter_hold(
 	return V34_TIMING_CONTROL_OK;
 }
 
+enum v34_timing_control_result v34_timing_control_set_data_frozen(
+	struct v34_timing_control *control, bool frozen)
+{
+	struct v34_timing_control next;
+
+	if (!v34_timing_control_is_valid(control) ||
+	    (control->mode != V34_TIMING_CONTROL_HOLD &&
+	     control->mode != V34_TIMING_CONTROL_LOCKED) ||
+	    control->proportional_gain != 0x01f4 ||
+	    control->integral_gain != 0x0001 || control->timeout != -1)
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	next = *control;
+	next.mode = frozen ? V34_TIMING_CONTROL_LOCKED :
+			       V34_TIMING_CONTROL_HOLD;
+	if (!v34_timing_control_is_valid(&next))
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	*control = next;
+	return V34_TIMING_CONTROL_OK;
+}
+
 static int32_t timing_phase_error(
 	const struct v34_timing_control *control,
 	const int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS])

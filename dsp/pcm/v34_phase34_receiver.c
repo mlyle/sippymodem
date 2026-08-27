@@ -1014,6 +1014,24 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 	return V34_PHASE34_RECEIVER_OK;
 }
 
+enum v34_phase34_receiver_result
+v34_phase34_receiver_set_data_timing_frozen(
+	struct v34_phase34_receiver *receiver, bool frozen)
+{
+	struct v34_phase34_receiver next;
+
+	if (!v34_phase34_receiver_is_valid(receiver) ||
+	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	if (v34_receive_timing_set_data_frozen(&next.timing, frozen) !=
+		    V34_RECEIVE_TIMING_OK ||
+	    !v34_phase34_receiver_is_valid(&next))
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	*receiver = next;
+	return V34_PHASE34_RECEIVER_OK;
+}
+
 enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
 	const struct v34_phase34_receiver *receiver,
 	struct v34_phase3_decision_handoff *handoff)

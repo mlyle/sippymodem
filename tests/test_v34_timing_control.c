@@ -284,6 +284,10 @@ static bool test_hold_transition(void)
 	CHECK(v34_timing_control_enter_hold(NULL) ==
 			      V34_TIMING_CONTROL_INVALID_STATE &&
 	      v34_timing_control_enter_hold(&uninitialized) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+	      v34_timing_control_set_data_frozen(NULL, true) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+	      v34_timing_control_set_data_frozen(&uninitialized, true) ==
 			      V34_TIMING_CONTROL_INVALID_STATE,
 	      "V.34 timing hold accepted an absent owner");
 	for (unsigned int role = V34_CALLING_STATION;
@@ -300,6 +304,8 @@ static bool test_hold_transition(void)
 		      "V.34 timing hold owner %u did not initialize", role);
 		saved = control;
 		CHECK(v34_timing_control_enter_hold(&control) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+		      v34_timing_control_set_data_frozen(&control, false) ==
 			      V34_TIMING_CONTROL_INVALID_STATE &&
 		      memcmp(&control, &saved, sizeof(control)) == 0 &&
 		      v34_timing_control_begin_acquisition(&control, true) ==
@@ -325,14 +331,33 @@ static bool test_hold_transition(void)
 			      V34_TIMING_CONTROL_OK &&
 		      memcmp(&control, &expected, sizeof(control)) == 0,
 		      "V.34 timing hold changed trained lineage %u", role);
+		saved = control;
+		expected = control;
+		expected.mode = V34_TIMING_CONTROL_LOCKED;
+		CHECK(v34_timing_control_set_data_frozen(&control, true) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_set_data_frozen(&control, true) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "V.34 timing freeze changed trained lineage %u", role);
 		for (unsigned int step = 0; step < 512; ++step) {
 			generate_observations(&random, step + 2u, observations);
 			CHECK(v34_timing_control_process(
 				      &control, observations, &increment) ==
 				      V34_TIMING_CONTROL_OK &&
-			      control.mode == V34_TIMING_CONTROL_HOLD,
-			      "V.34 timing hold escaped at %u/%u", role, step);
+			      control.mode == V34_TIMING_CONTROL_LOCKED &&
+			      control.integrator == saved.integrator,
+			      "V.34 timing freeze escaped at %u/%u", role, step);
 		}
+		expected = control;
+		expected.mode = V34_TIMING_CONTROL_HOLD;
+		CHECK(v34_timing_control_set_data_frozen(&control, false) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_set_data_frozen(&control, false) ==
+			      V34_TIMING_CONTROL_OK,
+		      "V.34 timing hold did not resume for role %u", role);
 	}
 	return true;
 }
