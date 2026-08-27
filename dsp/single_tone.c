@@ -367,14 +367,11 @@ static enum single_tone_event_kind finish_acquisition(
 			detector->profile.acquire_samples - 2);
 	detector->tone_present = true;
 	detector->interruption = SINGLE_TONE_UNINTERRUPTED;
-	if (reversed) {
-		detector->reference_in_phase = -detector->reference_in_phase;
-		detector->reference_quadrature =
-			-detector->reference_quadrature;
-	} else {
-		detector->reference_in_phase = detector->in_phase;
-		detector->reference_quadrature = detector->quadrature;
-	}
+	/* The retained phase classifies the boundary.  Lock the following
+	 * carrier to its measured phase so channel rotation during an INFO or
+	 * silence interval cannot hide its next physical reversal. */
+	detector->reference_in_phase = detector->in_phase;
+	detector->reference_quadrature = detector->quadrature;
 	detector->reversal_pending = false;
 	detector->reversal_delay_samples = 0;
 	return kind;

@@ -370,6 +370,11 @@ static bool check_interrupted_reference(
 			      V34_PHASE2_TONE_OK,
 		      "interrupted tone did not preserve oscillator time");
 	}
+	/* The INFO interval may cross a channel-phase change which is neither
+	 * known to nor clocked by the local oscillator.  Classification still
+	 * uses the retained phase, while the following tone becomes the new
+	 * physical reference. */
+	transmitter.carrier_phase += UINT32_C(0x33333333);
 	CHECK(v34_phase2_tone_transmitter_reverse(&transmitter) ==
 		      V34_PHASE2_TONE_OK,
 	      "interrupted remote tone did not reverse");
@@ -400,6 +405,23 @@ static bool check_interrupted_reference(
 		      resumed_at - TEST_HANDOFF_DELAY_SAMPLES) <= 2u,
 	      "interrupted reversal edge moved from the following tone: resume=%zu event=%zu delay=%u",
 	      resumed_at, event_at, last_reversal.reversal_delay_samples);
+	CHECK(v34_phase2_tone_transmitter_reverse(&transmitter) ==
+		      V34_PHASE2_TONE_OK,
+	      "reacquired remote tone did not reverse again");
+	for (size_t count = 0; count < 240; ++count, ++sample_index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &transmitter, &sample) == V34_PHASE2_TONE_OK &&
+		      feed_sample(
+			      &detector, sample, codec, sample_index,
+			      &started_count, &reversal_count, &ended_count,
+			      &last_reversal),
+		      "post-interruption reversal failed");
+	}
+	CHECK(started_count == 1 && reversal_count == 2 && ended_count == 0 &&
+	      detector.carrier.tone_present,
+	      "reacquired carrier did not establish a fresh phase reference");
 	return true;
 }
 
