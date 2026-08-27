@@ -554,6 +554,11 @@ static enum v34_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct v34_call *call)
 {
+	/* A peer can repeat its request after one side has advanced into Phase 3
+	 * while the other is still restarting Phase 2.  Treat that as the same
+	 * full-retrain transaction; ordinary initial Phase 3 remains unarmed. */
+	if (call->stage == V34_CALL_PHASE3)
+		return call->retrain_active;
 	if (call->stage == V34_CALL_PHASE4)
 		return !call->retrain_active;
 	return call->stage == V34_CALL_PHASE2 &&

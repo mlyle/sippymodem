@@ -878,7 +878,9 @@ static bool check_retrain_tone_stage_guard(
 	struct v34_retrain_detector before;
 	int16_t trigger_sample = 0;
 	int16_t transmitted;
-	bool expect_retrain = target_stage == V34_CALL_PHASE4 && !retraining;
+	bool expect_retrain =
+		(target_stage == V34_CALL_PHASE3 && retraining) ||
+		(target_stage == V34_CALL_PHASE4 && !retraining);
 	bool trigger_found = false;
 	bool detected;
 
@@ -898,7 +900,8 @@ static bool check_retrain_tone_stage_guard(
 		if (endpoint->call.stage == target_stage)
 			break;
 	}
-	if (target_stage == V34_CALL_PHASE4)
+	if (target_stage == V34_CALL_PHASE3 ||
+	    target_stage == V34_CALL_PHASE4)
 		endpoint->call.retrain_active = retraining;
 	CHECK(endpoint->call.stage == target_stage &&
 	      v34_call_is_valid(&endpoint->call) &&
@@ -963,6 +966,11 @@ static bool test_retrain_tone_stage_guard(void)
 				      role, law != 0, V34_CALL_PHASE3,
 				      false),
 			      "Phase 3 retrain guard failed role=%d law=%u",
+			      role, law);
+			CHECK(check_retrain_tone_stage_guard(
+				      role, law != 0, V34_CALL_PHASE3,
+				      true),
+			      "active Phase 3 retrain failed role=%d law=%u",
 			      role, law);
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE4,
