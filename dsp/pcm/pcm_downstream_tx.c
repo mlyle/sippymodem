@@ -98,15 +98,6 @@ static bool encode_cpd_sequence(
 	return true;
 }
 
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0u; index < count; ++index) {
-		if (bytes[index] != 0u)
-			return false;
-	}
-	return true;
-}
-
 static bool stored_sequence_matches(
 	const struct pcm_downstream_tx *transmitter,
 	const uint8_t *expected, size_t expected_capacity,
@@ -120,7 +111,7 @@ static bool stored_sequence_matches(
 	       memcmp(
 		       transmitter->control_sequence, expected,
 		       expected_bytes) == 0 &&
-	       bytes_are_zero(
+	       memory_region_is_zero(
 		       transmitter->control_sequence + expected_bytes,
 		       PCM_DOWNSTREAM_TX_CONTROL_BYTES - expected_bytes);
 }

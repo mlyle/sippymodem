@@ -146,6 +146,19 @@ static bool test_zero_tail(void)
 	return true;
 }
 
+static bool test_zero_range(void)
+{
+	uint8_t packed[] = { 0xff, 0x00, 0x08 };
+
+	CHECK(packed_msb_bits_are_zero(packed, 8, 12) &&
+	      packed_msb_bits_are_zero(packed, 4, 0) &&
+	      !packed_msb_bits_are_zero(packed, 0, 1) &&
+	      !packed_msb_bits_are_zero(packed, 8, 13) &&
+	      !packed_msb_bits_are_zero(NULL, 0, 0),
+	      "packed zero-range validation changed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -158,6 +171,7 @@ int main(void)
 		{ "field order and boundaries", test_fields },
 		{ "unpacked validation", test_unpacked_validation },
 		{ "zero tail", test_zero_tail },
+		{ "zero range", test_zero_range },
 	};
 	unsigned int failures = 0;
 

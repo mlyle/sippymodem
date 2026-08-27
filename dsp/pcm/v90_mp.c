@@ -331,12 +331,9 @@ static bool framing_bits_are_valid(
 		if (packed_msb_bit(sequence, bit) != 0)
 			return false;
 	}
-	for (size_t bit = crc_start_bit + 1u + V90_MP_CRC_BITS;
-	     bit < sequence_bit_count; ++bit) {
-		if (packed_msb_bit(sequence, bit) != 0)
-			return false;
-	}
-	return true;
+	return packed_msb_bits_are_zero(
+		sequence, crc_start_bit + 1u + V90_MP_CRC_BITS,
+		sequence_bit_count - crc_start_bit - 1u - V90_MP_CRC_BITS);
 }
 
 static int16_t decode_twos_complement(uint16_t value)

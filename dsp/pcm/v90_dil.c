@@ -2,6 +2,7 @@
 
 #include "v90_dil.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 #include "pcm_dil_descriptor.h"
 
@@ -124,15 +125,6 @@ bool v90_dil_training_symbol_count(
 	return true;
 }
 
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0; index < count; ++index) {
-		if (bytes[index] != 0u)
-			return false;
-	}
-	return true;
-}
-
 static bool pattern_is_valid(
 	const uint8_t *pattern, uint8_t pattern_bits)
 {
@@ -147,7 +139,7 @@ static bool pattern_is_valid(
 		if ((pattern[used_bytes - 1u] & final_mask) != 0u)
 			return false;
 	}
-	return bytes_are_zero(
+	return memory_region_is_zero(
 		pattern + used_bytes, V90_DIL_PATTERN_BYTES - used_bytes);
 }
 
@@ -175,7 +167,7 @@ bool v90_dil_parameters_are_valid(
 		if (parameters->training_ucodes[segment] > 127u)
 			return false;
 	}
-	return bytes_are_zero(
+	return memory_region_is_zero(
 		parameters->training_ucodes + parameters->segment_count,
 		V90_DIL_MAX_SEGMENTS - parameters->segment_count);
 }

@@ -107,11 +107,12 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 		if (packed_msb_bit(descriptor, bit) != 0u)
 			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	}
-	for (size_t bit = layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u;
-	     bit < layout->bit_count; ++bit) {
-		if (packed_msb_bit(descriptor, bit) != 0u)
-			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
-	}
+	if (!packed_msb_bits_are_zero(
+		    descriptor,
+		    layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u,
+		    layout->bit_count - layout->crc_start_bit -
+			    PCM_DIL_CRC_BITS - 1u))
+		return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	return PCM_DIL_DESCRIPTOR_OK;
 }
 

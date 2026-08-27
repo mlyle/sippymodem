@@ -2,18 +2,10 @@
 
 #include "v92_phase4_record_tx.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <string.h>
-
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0u; index < count; ++index) {
-		if (bytes[index] != 0u)
-			return false;
-	}
-	return true;
-}
 
 static bool record_shape_is_valid(
 	const struct v92_phase4_modulator *modulator,
@@ -52,7 +44,7 @@ bool v92_phase4_record_tx_is_valid(
 	frame_bytes = (tx->frame_bit_count + 7u) / 8u;
 	return tx->bit_index <= tx->frame_bit_count &&
 	       tx->bit_index % bits == 0u &&
-	       bytes_are_zero(
+	       memory_region_is_zero(
 		       tx->frame + frame_bytes,
 		       sizeof(tx->frame) - frame_bytes);
 }

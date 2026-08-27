@@ -247,16 +247,6 @@ enum v92_cpt_result v92_cpt_encode(
 	return V92_CPT_OK;
 }
 
-static bool bits_are_zero(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	for (size_t index = 0; index < bit_count; ++index) {
-		if (packed_msb_bit(frame, first_bit + index) != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool framing_is_valid(
 	const uint8_t *frame, size_t payload_end,
 	size_t frame_bit_count)
@@ -269,11 +259,11 @@ static bool framing_is_valid(
 		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
-	return bits_are_zero(frame, 18u, 3u) &&
-	       bits_are_zero(
+	return packed_msb_bits_are_zero(frame, 18u, 3u) &&
+	       packed_msb_bits_are_zero(
 		       frame, payload_end + 1u + CPT_CRC_BITS,
 		       frame_bit_count - payload_end - 1u - CPT_CRC_BITS) &&
-	       bits_are_zero(
+	       packed_msb_bits_are_zero(
 		       frame, frame_bit_count,
 		       (8u - frame_bit_count % 8u) % 8u);
 }

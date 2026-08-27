@@ -2,6 +2,7 @@
 
 #include "pcm_phase3_digital_tx.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <stdbool.h>
@@ -20,15 +21,6 @@ static bool stage_is_valid(enum pcm_phase3_digital_tx_stage stage)
 {
 	return stage >= PCM_PHASE3_DIGITAL_TX_PREFIX &&
 	       stage <= PCM_PHASE3_DIGITAL_TX_COMPLETE;
-}
-
-static bool bytes_are_zero(const uint8_t *bytes, size_t length)
-{
-	for (size_t index = 0; index < length; ++index) {
-		if (bytes[index] != 0)
-			return false;
-	}
-	return true;
 }
 
 static bool v90_jd_frame_is_valid(const uint8_t *frame)
@@ -68,7 +60,7 @@ static bool frames_are_valid(
 {
 	if (transmitter->protocol == PCM_PROTOCOL_V90)
 		return v90_jd_frame_is_valid(transmitter->jd_frame) &&
-		       bytes_are_zero(
+		       memory_region_is_zero(
 			       transmitter->jp_frame,
 			       sizeof(transmitter->jp_frame));
 	return v92_jd_frame_is_valid(transmitter->jd_frame) &&
@@ -88,7 +80,7 @@ static bool dil_is_valid(
 	const struct v90_dil_sequence *dil = &transmitter->dil;
 
 	if (transmitter->protocol == PCM_PROTOCOL_V92)
-		return bytes_are_zero(
+		return memory_region_is_zero(
 			(const uint8_t *)dil, sizeof(*dil));
 	if (!v90_dil_parameters_are_valid(&dil->parameters) ||
 	    dil->law != law)

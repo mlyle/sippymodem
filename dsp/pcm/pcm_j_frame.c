@@ -78,12 +78,7 @@ static bool framing_is_valid(const uint8_t *frame)
 	    packed_msb_bit(frame, START1_BIT) != 0 ||
 	    packed_msb_bit(frame, START2_BIT) != 0)
 		return false;
-	for (size_t index = FILL_FIRST_BIT;
-	     index < FILL_FIRST_BIT + FILL_BITS; ++index) {
-		if (packed_msb_bit(frame, index) != 0)
-			return false;
-	}
-	return true;
+	return packed_msb_bits_are_zero(frame, FILL_FIRST_BIT, FILL_BITS);
 }
 
 static uint32_t decode_payload(const uint8_t *frame)

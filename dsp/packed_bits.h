@@ -3,6 +3,8 @@
 #ifndef PACKED_BITS_H
 #define PACKED_BITS_H
 
+#include "memory_region.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -14,6 +16,18 @@ static inline uint8_t packed_msb_bit(
 	return (uint8_t)((bytes[bit_index / 8u] >>
 			  (7u - bit_index % 8u)) &
 			 1u);
+}
+
+static inline bool packed_msb_bits_are_zero(
+	const uint8_t *bytes, size_t first_bit, size_t bit_count)
+{
+	if (bytes == NULL)
+		return false;
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		if (packed_msb_bit(bytes, first_bit + bit) != 0u)
+			return false;
+	}
+	return true;
 }
 
 /* Assign one bit using the same most-significant-bit-first numbering. */
@@ -107,11 +121,8 @@ static inline bool packed_msb_tail_is_zero(
 			return false;
 		++byte_index;
 	}
-	for (; byte_index < capacity; ++byte_index) {
-		if (bytes[byte_index] != 0)
-			return false;
-	}
-	return true;
+	return memory_region_is_zero(
+		bytes + byte_index, capacity - byte_index);
 }
 
 #endif

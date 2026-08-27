@@ -2,19 +2,11 @@
 
 #include "v90_ja_search.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <stddef.h>
 #include <string.h>
-
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0; index < count; ++index) {
-		if (bytes[index] != 0)
-			return false;
-	}
-	return true;
-}
 
 static bool collected_bits_are_valid(
 	const struct v90_ja_search *search)
@@ -25,7 +17,7 @@ static bool collected_bits_are_valid(
 
 	if (!search->collecting)
 		return search->bit_index == 0 && search->descriptor_bits == 0 &&
-		       bytes_are_zero(
+		       memory_region_is_zero(
 			       search->descriptor,
 			       sizeof(search->descriptor));
 	if (search->bit_index < V90_DIL_FRAME_SYNC_BITS + 1u ||
@@ -50,11 +42,10 @@ static bool collected_bits_are_valid(
 		    search->bit_index > search->descriptor_bits)
 			return false;
 	}
-	for (size_t bit = search->bit_index;
-	     bit < V90_DIL_MAX_DESCRIPTOR_BITS; ++bit) {
-		if (packed_msb_bit(search->descriptor, bit) != 0)
-			return false;
-	}
+	if (!packed_msb_bits_are_zero(
+		    search->descriptor, search->bit_index,
+		    V90_DIL_MAX_DESCRIPTOR_BITS - search->bit_index))
+		return false;
 	if (!search->complete)
 		return search->descriptor_bits == 0u ||
 		       search->bit_index < search->descriptor_bits;

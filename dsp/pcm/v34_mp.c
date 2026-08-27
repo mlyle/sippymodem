@@ -304,12 +304,8 @@ static bool framing_bits_are_valid(
 		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
-	for (size_t index = fill_first_bit;
-	     index < fill_first_bit + fill_bit_count; ++index) {
-		if (packed_msb_bit(frame, index) != 0)
-			return false;
-	}
-	return true;
+	return packed_msb_bits_are_zero(
+		frame, fill_first_bit, fill_bit_count);
 }
 
 enum v34_mp_result v34_mp_type0_decode(

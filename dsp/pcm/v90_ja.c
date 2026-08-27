@@ -40,17 +40,6 @@ static void store_descriptor_dibit(
 			   (uint8_t)(dibit << (6u - bit_index % 8u)));
 }
 
-static bool unread_bits_are_zero(
-	const uint8_t *descriptor, uint16_t first_bit)
-{
-	for (uint16_t bit = first_bit; bit < V90_DIL_ZERO_DESCRIPTOR_BITS;
-	     ++bit) {
-		if (packed_msb_bit(descriptor, bit) != 0)
-			return false;
-	}
-	return true;
-}
-
 static uint32_t descriptor_fingerprint(
 	const uint8_t *descriptor, uint16_t descriptor_bits)
 {
@@ -186,7 +175,9 @@ bool v90_ja_rx_is_valid(const struct v90_ja_rx *rx)
 		       v90_dil_decode_zero(
 			       rx->descriptor, sizeof(rx->descriptor)) == V90_DIL_OK;
 	return rx->bit_index < V90_DIL_ZERO_DESCRIPTOR_BITS &&
-	       unread_bits_are_zero(rx->descriptor, rx->bit_index);
+	       packed_msb_bits_are_zero(
+		       rx->descriptor, rx->bit_index,
+		       V90_DIL_ZERO_DESCRIPTOR_BITS - rx->bit_index);
 }
 
 enum v90_ja_result v90_ja_rx_init_from_trn(

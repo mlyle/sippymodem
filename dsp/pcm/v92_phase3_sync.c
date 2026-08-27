@@ -2,18 +2,11 @@
 
 #include "v92_phase3_sync.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0; index < count; ++index) {
-		if (bytes[index] != 0u)
-			return false;
-	}
-	return true;
-}
 
 static bool coding_is_gpa(const struct pcm_binary_sign *coding)
 {
@@ -54,7 +47,7 @@ bool v92_phase3_sync_is_valid(const struct v92_phase3_sync *sync)
 	switch (sync->stage) {
 	case V92_PHASE3_SYNC_TRAINING:
 		return sync->marker_count == 0u && sync->marker_index == 0u &&
-		       bytes_are_zero(
+		       memory_region_is_zero(
 			       sync->marker_signs, sizeof(sync->marker_signs));
 	case V92_PHASE3_SYNC_SEARCHING:
 		return sync->trained_symbols >=
@@ -63,7 +56,7 @@ bool v92_phase3_sync_is_valid(const struct v92_phase3_sync *sync)
 		return sync->trained_symbols >=
 			       V92_PHASE3_SYNC_MIN_TRAINING_SYMBOLS &&
 		       sync->marker_count == 0u && sync->marker_index == 0u &&
-		       bytes_are_zero(
+		       memory_region_is_zero(
 			       sync->marker_signs, sizeof(sync->marker_signs)) &&
 		       coding_matches(&sync->training, &sync->window_start);
 	}

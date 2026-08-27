@@ -23,4 +23,18 @@ static inline bool memory_regions_overlap(
 		       left_address - right_address < right_size;
 }
 
+/* Validate a caller-owned byte region without relying on object alignment. */
+static inline bool memory_region_is_zero(const void *region, size_t size)
+{
+	const uint8_t *bytes = region;
+
+	if (bytes == NULL)
+		return false;
+	for (size_t index = 0; index < size; ++index) {
+		if (bytes[index] != 0u)
+			return false;
+	}
+	return true;
+}
+
 #endif

@@ -2,19 +2,12 @@
 
 #include "v92_pcm_phase3_cpt_rx.h"
 
+#include "memory_region.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-
-static bool bytes_are_zero(const uint8_t *bytes, size_t count)
-{
-	for (size_t index = 0; index < count; ++index) {
-		if (bytes[index] != 0u)
-			return false;
-	}
-	return true;
-}
 
 static bool stage_is_valid(enum v92_pcm_phase3_cpt_rx_stage stage)
 {
@@ -55,7 +48,7 @@ static bool parameters_are_valid(
 
 	if (receiver->matching_records == 0u)
 		return receiver->parameter_frame_bits == 0u &&
-		       bytes_are_zero(
+		       memory_region_is_zero(
 			       receiver->parameter_frame,
 			       sizeof(receiver->parameter_frame));
 	return v92_cpt_encode(

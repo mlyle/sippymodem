@@ -30,6 +30,21 @@ static bool test_empty_regions(void)
 	return true;
 }
 
+static bool test_zero_regions(void)
+{
+	uint8_t storage[8] = { 0 };
+
+	CHECK(memory_region_is_zero(storage, sizeof(storage)) &&
+	      memory_region_is_zero(storage, 0) &&
+	      !memory_region_is_zero(NULL, 0),
+	      "zero memory region validation changed");
+	storage[5] = 1;
+	CHECK(!memory_region_is_zero(storage, sizeof(storage)) &&
+	      memory_region_is_zero(storage, 5),
+	      "nonzero memory byte was not bounded correctly");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -38,6 +53,7 @@ int main(void)
 	} tests[] = {
 		{ "boundaries and containment", test_boundaries_and_containment },
 		{ "empty regions", test_empty_regions },
+		{ "zero regions", test_zero_regions },
 	};
 	unsigned int failures = 0;
 

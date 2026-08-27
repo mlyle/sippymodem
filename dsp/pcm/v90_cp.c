@@ -255,16 +255,6 @@ enum v90_cp_result v90_cp_encode(
 	return V90_CP_OK;
 }
 
-static bool bits_are_zero(
-	const uint8_t *frame, size_t first_bit, size_t bit_count)
-{
-	for (size_t index = 0; index < bit_count; ++index) {
-		if (packed_msb_bit(frame, first_bit + index) != 0)
-			return false;
-	}
-	return true;
-}
-
 static bool framing_is_valid(
 	const uint8_t *frame, size_t payload_end,
 	size_t frame_bit_count)
@@ -279,10 +269,10 @@ static bool framing_is_valid(
 			return false;
 	}
 	return packed_msb_bit(frame, 18) == 0 &&
-	       bits_are_zero(frame, 25, 5) &&
-	       bits_are_zero(frame, 129, 7) &&
-	       bits_are_zero(frame, payload_end + 17u, 3) &&
-	       bits_are_zero(
+	       packed_msb_bits_are_zero(frame, 25, 5) &&
+	       packed_msb_bits_are_zero(frame, 129, 7) &&
+	       packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
+	       packed_msb_bits_are_zero(
 		       frame, frame_bit_count,
 		       (8u - frame_bit_count % 8u) % 8u);
 }
