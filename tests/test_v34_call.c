@@ -412,6 +412,27 @@ static bool channel_sample_pair(
 	return true;
 }
 
+static bool run_initialized_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	struct channel *channel)
+{
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_call_observation caller_observation;
+		struct v34_call_observation answerer_observation;
+
+		CHECK(channel_sample_pair(
+			      channel, caller, answerer,
+			      &caller_observation, &answerer_observation),
+		      "V.34 pair stopped at sample %zu", index);
+		if (v34_call_is_online(&caller->call) &&
+		    v34_call_is_online(&answerer->call) &&
+		    caller->mapping_frames_received >= 4u &&
+		    answerer->mapping_frames_received >= 4u)
+			return true;
+	}
+	CHECK(false, "V.34 pair did not reach mapped data");
+}
+
 static bool run_online_pair(
 	struct endpoint *caller, struct endpoint *answerer,
 	struct channel *connected_channel, bool pcma)
@@ -423,26 +444,13 @@ static bool run_online_pair(
 	CHECK(endpoint_init(&calling, V34_CALLING_STATION) &&
 	      endpoint_init(&answering, V34_ANSWERING_STATION),
 	      "full-call endpoints did not initialize");
-	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
-		struct v34_call_observation caller_observation;
-		struct v34_call_observation answerer_observation;
-
-		CHECK(channel_sample_pair(
-			      &channel, &calling, &answering,
-			      &caller_observation, &answerer_observation),
-		      "full V.34 call stopped at sample %zu", index);
-		if (v34_call_is_online(&calling.call) &&
-		    v34_call_is_online(&answering.call) &&
-		    calling.mapping_frames_received >= 4u &&
-		    answering.mapping_frames_received >= 4u) {
-			*caller = calling;
-			*answerer = answering;
-			if (connected_channel != NULL)
-				*connected_channel = channel;
-			return true;
-		}
-	}
-	CHECK(false, "full V.34 call did not reach mapped data");
+	CHECK(run_initialized_pair(&calling, &answering, &channel),
+	      "full V.34 call did not reach mapped data");
+	*caller = calling;
+	*answerer = answering;
+	if (connected_channel != NULL)
+		*connected_channel = channel;
+	return true;
 }
 
 static bool test_pcmu_call(void)
@@ -502,35 +510,18 @@ static bool check_symmetric_call(
 	      endpoint_init_symmetric(
 		      &answerer, V34_ANSWERING_STATION, symbol_rate),
 	      "symmetric rate %u endpoints did not initialize", symbol_rate);
-	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
-		struct v34_call_observation caller_observation;
-		struct v34_call_observation answerer_observation;
-
-		CHECK(channel_sample_pair(
-			      &channel, &caller, &answerer,
-			      &caller_observation, &answerer_observation),
-		      "symmetric rate %u call stopped at sample %zu",
-		      symbol_rate, index);
-		if (v34_call_is_online(&caller.call) &&
-		    v34_call_is_online(&answerer.call) &&
-		    caller.mapping_frames_received >= 4u &&
-		    answerer.mapping_frames_received >= 4u) {
-			CHECK(caller.call.state.phase4.receive.stage ==
-				      V34_PHASE34_RECEIVER_DATA &&
-			      answerer.call.state.phase4.receive.stage ==
-				      V34_PHASE34_RECEIVER_DATA &&
-			      caller.call.local_info1.calling
-					      .answer_transmit[symbol_rate]
-					      .preemphasis_filter_index == 6 &&
-			      answerer.call.local_info1.answering.call_transmit
-					      .preemphasis_filter_index == 6,
-			      "rate %u call lost data or measured pre-emphasis",
-			      symbol_rate);
-			return true;
-		}
-	}
-	CHECK(false, "symmetric rate %u call did not reach mapped data",
-	      symbol_rate);
+	CHECK(run_initialized_pair(&caller, &answerer, &channel),
+	      "symmetric rate %u call did not reach mapped data", symbol_rate);
+	CHECK(caller.call.state.phase4.receive.stage ==
+		      V34_PHASE34_RECEIVER_DATA &&
+	      answerer.call.state.phase4.receive.stage ==
+		      V34_PHASE34_RECEIVER_DATA &&
+	      caller.call.local_info1.calling.answer_transmit[symbol_rate]
+		      .preemphasis_filter_index == 6 &&
+	      answerer.call.local_info1.answering.call_transmit
+		      .preemphasis_filter_index == 6,
+	      "rate %u call lost data or measured pre-emphasis", symbol_rate);
+	return true;
 }
 
 static bool test_symmetric_calls(void)
@@ -612,32 +603,28 @@ static bool test_source_backpressure(void)
 	CHECK(false, "mapping source was not consulted");
 }
 
-static bool exercise_full_retrain(
-	enum v34_station_role initiator_role, bool pcma)
+static bool retrain_online_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	struct channel *channel, enum v34_station_role initiator_role)
 {
-	struct endpoint caller;
-	struct endpoint answerer;
-	struct channel channel;
 	bool caller_retrained = false;
 	bool answerer_retrained = false;
 	bool verifying_resumed_data = false;
 
-	CHECK(run_online_pair(&caller, &answerer, &channel, pcma),
-	      "retrain pair failed to connect");
-	caller.mapping_frames_received = 0;
-	answerer.mapping_frames_received = 0;
-	caller.verify_mapping_frames = false;
-	answerer.verify_mapping_frames = false;
+	caller->mapping_frames_received = 0;
+	answerer->mapping_frames_received = 0;
+	caller->verify_mapping_frames = false;
+	answerer->verify_mapping_frames = false;
 	CHECK(v34_call_start_retrain(
 		      initiator_role == V34_CALLING_STATION ?
-			      &caller.call : &answerer.call) == V34_CALL_OK,
+			      &caller->call : &answerer->call) == V34_CALL_OK,
 	      "local full retrain was rejected");
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
 
 		CHECK(channel_sample_pair(
-			      &channel, &caller, &answerer,
+			      channel, caller, answerer,
 			      &caller_observation, &answerer_observation),
 		      "full retrain stopped at sample %zu", index);
 		caller_retrained |=
@@ -646,21 +633,34 @@ static bool exercise_full_retrain(
 			answerer_observation.next == V34_CALL_RETRAIN_SILENCE;
 		if (!verifying_resumed_data && caller_retrained &&
 		    answerer_retrained &&
-		    v34_call_is_online(&caller.call) &&
-		    v34_call_is_online(&answerer.call)) {
-			caller.mapping_frames_received = 0;
-			answerer.mapping_frames_received = 0;
-			caller.verify_mapping_frames = true;
-			answerer.verify_mapping_frames = true;
+		    v34_call_is_online(&caller->call) &&
+		    v34_call_is_online(&answerer->call)) {
+			caller->mapping_frames_received = 0;
+			answerer->mapping_frames_received = 0;
+			caller->verify_mapping_frames = true;
+			answerer->verify_mapping_frames = true;
 			verifying_resumed_data = true;
 		}
 		if (verifying_resumed_data &&
-		    caller.mapping_frames_received >= 4u &&
-		    answerer.mapping_frames_received >= 4u)
+		    caller->mapping_frames_received >= 4u &&
+		    answerer->mapping_frames_received >= 4u)
 			return true;
 	}
 	CHECK(false,
 	      "full retrain did not reconnect both roles and resume data");
+}
+
+static bool exercise_full_retrain(
+	enum v34_station_role initiator_role, bool pcma)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, pcma),
+	      "retrain pair failed to connect");
+	return retrain_online_pair(
+		&caller, &answerer, &channel, initiator_role);
 }
 
 static bool test_full_retrain(void)
@@ -939,12 +939,28 @@ static bool test_unusable_info1_retrains(void)
 	return true;
 }
 
+static struct v34_call_configuration fallback_configuration(
+	enum v34_station_role role)
+{
+	struct v34_call_configuration selected = symmetric_configuration(
+		role, V34_SYMBOL_RATE_3429);
+
+	selected.local_info0.low_carrier_3200_supported = true;
+	if (role == V34_CALLING_STATION)
+		selected.local_info1.calling
+			.answer_transmit[V34_SYMBOL_RATE_3200] =
+				(struct v34_info1_probe_result){
+					.projected_data_rate_2400_bps_units = 10,
+				};
+	return selected;
+}
+
 static bool check_info1_fallback(bool pcma)
 {
-	struct v34_call_configuration caller_config = symmetric_configuration(
-		V34_CALLING_STATION, V34_SYMBOL_RATE_3429);
-	struct v34_call_configuration answerer_config = symmetric_configuration(
-		V34_ANSWERING_STATION, V34_SYMBOL_RATE_3429);
+	struct v34_call_configuration caller_config =
+		fallback_configuration(V34_CALLING_STATION);
+	struct v34_call_configuration answerer_config =
+		fallback_configuration(V34_ANSWERING_STATION);
 	struct channel channel = { .pcma = pcma };
 	struct endpoint caller = {
 		.transmit_bit = 0,
@@ -954,50 +970,49 @@ static bool check_info1_fallback(bool pcma)
 		.transmit_bit = 1,
 		.verify_mapping_frames = true,
 	};
+	enum v34_station_role first_initiator =
+		pcma ? V34_CALLING_STATION : V34_ANSWERING_STATION;
 
-	caller_config.local_info1.calling
-		.answer_transmit[V34_SYMBOL_RATE_3429] =
-			(struct v34_info1_probe_result){ 0 };
-	caller_config.local_info1.calling
-		.answer_transmit[V34_SYMBOL_RATE_2400] =
-			(struct v34_info1_probe_result){
-				.projected_data_rate_2400_bps_units = 9,
-			};
 	CHECK(v34_call_init(&caller.call, &caller_config) == V34_CALL_OK &&
 	      v34_call_init(&answerer.call, &answerer_config) == V34_CALL_OK,
 	      "fallback endpoints did not initialize");
-	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
-		struct v34_call_observation caller_observation;
-		struct v34_call_observation answerer_observation;
+	CHECK(run_initialized_pair(&caller, &answerer, &channel) &&
+	      answerer.call.local_info1.answering
+		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3429 &&
+	      answerer.call.local_info1.answering
+		      .call_to_answer_symbol_rate == V34_SYMBOL_RATE_3429,
+	      "fallback pair did not begin at 3429 symbol/s");
 
-		CHECK(channel_sample_pair(
-			      &channel, &caller, &answerer,
-			      &caller_observation, &answerer_observation),
-		      "fallback call stopped at sample %zu", index);
-		if (v34_call_is_online(&caller.call) &&
-		    v34_call_is_online(&answerer.call) &&
-		    caller.mapping_frames_received >= 4u &&
-		    answerer.mapping_frames_received >= 4u) {
-			CHECK(answerer.call.local_info1.answering
-				      .answer_to_call_symbol_rate ==
-				      V34_SYMBOL_RATE_2400 &&
-			      answerer.call.local_info1.answering
-				      .call_to_answer_symbol_rate ==
-				      V34_SYMBOL_RATE_2400 &&
-			      answerer.call.local_info1.answering.call_transmit
-				      .projected_data_rate_2400_bps_units == 9,
-			      "fallback call retained the withdrawn 3429 profile");
-			return true;
-		}
-	}
-	CHECK(false, "fallback call did not reach mapped data");
-	return false;
+	/* A fresh caller probe withdraws only the selected profile. The answerer
+	 * must fall back once and use that selection for later retrains. */
+	caller.call.local_info1.calling
+		.answer_transmit[V34_SYMBOL_RATE_3429] =
+			(struct v34_info1_probe_result){ 0 };
+	CHECK(retrain_online_pair(
+		      &caller, &answerer, &channel, first_initiator) &&
+	      answerer.call.local_info1.answering
+		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
+	      answerer.call.local_info1.answering
+		      .call_to_answer_symbol_rate == V34_SYMBOL_RATE_3200,
+	      "first retrain did not retain the 3200 fallback");
+	CHECK(retrain_online_pair(
+		      &caller, &answerer, &channel,
+		      first_initiator == V34_CALLING_STATION ?
+			      V34_ANSWERING_STATION : V34_CALLING_STATION) &&
+	      answerer.call.local_info1.answering
+		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
+	      answerer.call.local_info1.answering
+		      .call_to_answer_symbol_rate == V34_SYMBOL_RATE_3200,
+	      "second retrain returned to the withdrawn profile");
+	return true;
 }
 
 static bool test_info1_fallback(void)
 {
-	CHECK(check_info1_fallback(false), "PCMU INFO1 fallback failed");
-	CHECK(check_info1_fallback(true), "PCMA INFO1 fallback failed");
+	CHECK(check_info1_fallback(false),
+	      "PCMU repeated INFO1 fallback failed");
+	CHECK(check_info1_fallback(true),
+	      "PCMA repeated INFO1 fallback failed");
 	return true;
 }
 
@@ -1066,7 +1081,8 @@ int main(void)
 		  test_phase3_retrain_tone_is_ignored },
 		{ "unusable INFO1 starts full retrain",
 		  test_unusable_info1_retrains },
-		{ "usable INFO1 selects a lower profile", test_info1_fallback },
+		{ "repeated retrain retains INFO1 fallback",
+		  test_info1_fallback },
 		{ "mapping source backpressure", test_source_backpressure },
 		{ "validation", test_validation },
 	};
