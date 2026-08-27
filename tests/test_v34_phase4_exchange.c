@@ -23,6 +23,8 @@ struct endpoint {
 	unsigned int mapping_frames_supplied;
 	unsigned int mapping_frames_received;
 	uint32_t trn_symbols_at_mp;
+	uint32_t j_symbols_at_peer_s;
+	uint32_t j_symbols_at_finish;
 	int16_t next_received;
 	uint8_t primary_idle_bits_remaining;
 	uint8_t transmit_bit;
@@ -279,6 +281,14 @@ static bool endpoint_sample(
 			return false;
 		}
 		if ((*phase4_events &
+		     V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED) != 0)
+			endpoint->j_symbols_at_peer_s =
+				endpoint->phase4.transmit.training.phase3.j_symbols;
+		if ((*phase4_events &
+		     V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED) != 0)
+			endpoint->j_symbols_at_finish =
+				endpoint->phase4.transmit.training.phase3.j_symbols;
+		if ((*phase4_events &
 		     V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) != 0)
 			endpoint->trn_symbols_at_mp =
 				endpoint->phase4.transmit.training
@@ -484,7 +494,16 @@ static bool test_generated_online_exchange(void)
 	      !v34_phase4_exchange_has_failed(&answerer.phase4) &&
 	      caller.data_preparation_count == 1 &&
 	      answerer.data_preparation_count == 1 &&
-	      caller.trn_symbols_at_mp == 2u * 3000u &&
+	      caller.j_symbols_at_peer_s != 0 &&
+	      caller.j_symbols_at_finish >=
+		      caller.j_symbols_at_peer_s +
+			      V34_PHASE4_J_RELEASE_MIN_SYMBOLS &&
+	      caller.j_symbols_at_finish - caller.j_symbols_at_peer_s <=
+		      V34_PHASE4_J_RELEASE_MIN_SYMBOLS +
+			      V34_PHASE3_J_PATTERN_SYMBOLS - 1u &&
+	      caller.j_symbols_at_finish % V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
+	      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
+	      caller.trn_symbols_at_mp <= 2u * 3000u &&
 	      answerer.trn_symbols_at_mp == 2u * 3000u &&
 	      caller.constellations_routed &&
 	      answerer.constellations_routed &&
@@ -492,7 +511,9 @@ static bool test_generated_online_exchange(void)
 		      answerer.mapping_frames_received &&
 	      answerer.mapping_frames_supplied >=
 		      caller.mapping_frames_received,
-	      "Phase 4 owners reached the wrong online boundary");
+	      "Phase 4 owners reached the wrong online boundary (J %u->%u, TRN %u/%u)",
+	      caller.j_symbols_at_peer_s, caller.j_symbols_at_finish,
+	      caller.trn_symbols_at_mp, answerer.trn_symbols_at_mp);
 	CHECK(v34_phase4_exchange_get_data_startup(
 		      &caller.phase4, &caller_startup) &&
 	      v34_phase4_exchange_get_data_startup(

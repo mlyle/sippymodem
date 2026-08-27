@@ -45,6 +45,9 @@ enum v34_phase4_exchange_event {
 };
 
 enum {
+	/* Keep J active for more than 128 symbols after the caller receives
+	 * S/S-bar, then release J-prime at a complete J-pattern boundary. */
+	V34_PHASE4_J_RELEASE_MIN_SYMBOLS = 129,
 	/* Repeat both MP and MP' across eight complete record boundaries. The
 	 * ordinary window lets a slow 4-point/type-1 peer finish its current MP,
 	 * publish MP', and survive one missed local type-0 record before our MP'
@@ -88,7 +91,7 @@ struct v34_phase4_exchange {
 	struct v34_mp_record peer_mp;
 	double data_equalizer_adaptation;
 	enum v34_station_role local_role;
-	bool finish_j_requested;
+	uint32_t finish_j_requested_at_symbol;
 	bool transmit_trn_started;
 	bool transmit_mp_started;
 	uint8_t transmit_mp_records_completed;
