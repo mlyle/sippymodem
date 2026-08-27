@@ -7,10 +7,6 @@
 _Static_assert(
 	PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES <= UINT16_MAX,
 	"Initial-probe tone deadline must fit its sample counter");
-_Static_assert(
-	(unsigned int)PHASE2_INITIAL_PROBE_REMOTE_TONE_GUARD_SAMPLES <
-		(unsigned int)V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES,
-	"Remote-tone guard must leave a bounded L2 response window");
 
 static bool signal_is_b(const struct phase2_info0_exchange *exchange)
 {
@@ -266,20 +262,16 @@ static bool transmit_local_probe(
 {
 	struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
-	uint32_t l2_samples = transmit->samples_emitted >=
-				      V34_PHASE2_PROBE_L1_SAMPLES ?
-				      transmit->samples_emitted -
-					      V34_PHASE2_PROBE_L1_SAMPLES :
-				      0;
 	bool remote_tone_started;
 
-	if (transmit->samples_emitted == 0 &&
-	    !reset_remote_tone_detector(exchange))
-		return false;
-	if (transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
-	    l2_samples >= PHASE2_INITIAL_PROBE_REMOTE_TONE_GUARD_SAMPLES &&
-	    !observe_remote_tone(exchange, received_sample, event))
-		return false;
+	if (transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2) {
+		if (transmit->samples_emitted ==
+			    V34_PHASE2_PROBE_L1_SAMPLES &&
+		    !reset_remote_tone_detector(exchange))
+			return false;
+		if (!observe_remote_tone(exchange, received_sample, event))
+			return false;
+	}
 	remote_tone_started = event->tone_event.kind ==
 			      V34_PHASE2_TONE_STARTED;
 	if (remote_tone_started &&
