@@ -515,6 +515,14 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 	return true;
 }
 
+static bool data_link_is_online(const struct v34_datapump *datapump)
+{
+	const struct modem *modem = datapump->dp.modem;
+
+	return modem != NULL && modem->get_chars != NULL &&
+	       modem->put_chars != NULL;
+}
+
 static bool update_carrier(
 	struct v34_datapump *datapump, const int16_t *samples, int count)
 {
@@ -618,6 +626,7 @@ static int process_v34(
 			return DPSTAT_ERROR;
 		}
 		if (training_session_is_online(&datapump->training) &&
+		    data_link_is_online(datapump) &&
 		    !observe_online_quality(datapump)) {
 			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
