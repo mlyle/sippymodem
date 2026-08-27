@@ -11,7 +11,9 @@
 
 enum {
 	TEST_AMPLITUDE = 12000,
-	TEST_SAMPLE_LIMIT = 3200,
+	TEST_SAMPLE_LIMIT = 5000,
+	TEST_ANSWER_START_DELAY =
+		V34_PHASE2_SAMPLE_RATE * 15 / 1000,
 };
 
 enum test_codec {
@@ -124,7 +126,8 @@ static bool observe_event(
 	return true;
 }
 
-static bool check_exchange(enum test_codec codec)
+static bool check_exchange(
+	enum test_codec codec, size_t answer_start_delay)
 {
 	struct v34_info0 calling = calling_capabilities();
 	struct v34_info0 answering = answering_capabilities();
@@ -155,32 +158,41 @@ static bool check_exchange(enum test_codec codec)
 	      "INFO0 exchange endpoints did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_info0_exchange_event caller_event;
-		struct v34_phase2_info0_exchange_event answer_event;
+		struct v34_phase2_info0_exchange_event answer_event = { 0 };
 		enum phase2_info0_transmit_phase caller_before =
 			caller.transport.transmit_phase;
 		enum phase2_info0_transmit_phase answer_before =
 			answerer.transport.transmit_phase;
 		int16_t next_caller_sample;
-		int16_t next_answer_sample;
+		int16_t next_answer_sample = 0;
 
 		CHECK(v34_phase2_info0_exchange_sample(
 			      &caller,
 			      codec_round_trip(answer_line_sample, codec),
 			      &next_caller_sample, &caller_event) ==
 			      V34_PHASE2_INFO0_EXCHANGE_OK &&
-		      v34_phase2_info0_exchange_sample(
-			      &answerer,
-			      codec_round_trip(caller_line_sample, codec),
-			      &next_answer_sample, &answer_event) ==
-			      V34_PHASE2_INFO0_EXCHANGE_OK &&
 		      observe_event(
-			      &caller_event, index, &caller_observation) &&
-		      observe_event(
-			      &answer_event, index, &answer_observation),
+			      &caller_event, index, &caller_observation),
 		      "INFO0 exchange failed at sample %zu", index);
+		if (index >= answer_start_delay)
+			CHECK(v34_phase2_info0_exchange_sample(
+				      &answerer,
+				      codec_round_trip(caller_line_sample, codec),
+				      &next_answer_sample, &answer_event) ==
+				      V34_PHASE2_INFO0_EXCHANGE_OK &&
+			      observe_event(
+				      &answer_event, index,
+				      &answer_observation),
+			      "delayed INFO0 answerer failed at sample %zu",
+			      index);
 		if (index < V34_PHASE2_POST_V8_SILENCE_SAMPLES)
-			CHECK(next_caller_sample == 0 && next_answer_sample == 0,
+			CHECK(next_caller_sample == 0,
 			      "post-V.8 silence ended at sample %zu", index);
+		if (index < answer_start_delay +
+				    V34_PHASE2_POST_V8_SILENCE_SAMPLES)
+			CHECK(next_answer_sample == 0,
+			      "delayed post-V.8 silence ended at sample %zu",
+			      index);
 		if (caller_before != caller.transport.transmit_phase) {
 			if (caller.transport.transmit_phase ==
 			    PHASE2_INFO0_SEQUENCE)
@@ -189,7 +201,8 @@ static bool check_exchange(enum test_codec codec)
 			    PHASE2_INFO0_TONE)
 				caller_tone_start = index + 1u;
 		}
-		if (answer_before != answerer.transport.transmit_phase) {
+		if (index >= answer_start_delay &&
+		    answer_before != answerer.transport.transmit_phase) {
 			if (answerer.transport.transmit_phase ==
 			    PHASE2_INFO0_SEQUENCE)
 				answer_info_start = index + 1u;
@@ -209,11 +222,17 @@ static bool check_exchange(enum test_codec codec)
 	}
 	CHECK(caller_info_start ==
 		      V34_PHASE2_POST_V8_SILENCE_SAMPLES &&
-		      answer_info_start == caller_info_start &&
-		      caller_tone_start > caller_info_start + 600u &&
-		      caller_tone_start < caller_info_start + 750u &&
-		      answer_tone_start == caller_tone_start,
+		      answer_info_start == answer_start_delay +
+			      V34_PHASE2_POST_V8_SILENCE_SAMPLES,
+	      "INFO0 transmit guard changed for delay %zu",
+	      answer_start_delay);
+	CHECK(caller_tone_start > caller_info_start + 600u &&
+		      answer_tone_start > answer_info_start + 600u,
 	      "INFO0 transmit timing changed");
+	if (answer_start_delay == 0)
+		CHECK(caller_tone_start < caller_info_start + 750u &&
+			      answer_tone_start == caller_tone_start,
+		      "synchronous INFO0 timing changed");
 	CHECK(caller.transport.transmit_phase == PHASE2_INFO0_TONE &&
 		      answerer.transport.transmit_phase ==
 			      PHASE2_INFO0_TONE &&
@@ -251,7 +270,9 @@ static bool test_bidirectional_exchange(void)
 {
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
 	     codec <= TEST_CODEC_PCMA; ++codec)
-		CHECK(check_exchange(codec),
+		CHECK(check_exchange(codec, 0) &&
+			      check_exchange(
+				      codec, TEST_ANSWER_START_DELAY),
 		      "bidirectional INFO0 exchange failed for codec %d", codec);
 	return true;
 }

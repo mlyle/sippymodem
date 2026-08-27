@@ -12,8 +12,10 @@
 #include <stdint.h>
 
 enum {
+	/* V.34 permits 75 +/- 5 ms after Phase 1.  Leave three milliseconds
+	 * for a peer that completes V.8 later to arm its INFO receiver. */
 	PHASE2_INFO0_POST_V8_SILENCE_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 75 / 1000,
+		V34_PHASE2_SAMPLE_RATE * 78 / 1000,
 };
 
 enum phase2_info0_exchange_result {
