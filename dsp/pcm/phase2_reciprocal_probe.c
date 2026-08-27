@@ -65,8 +65,10 @@ static bool signal_a_path_is_valid(
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING:
 		return probe->failure ==
 			       PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
-		       (receive->phase ==
-				V34_PHASE2_PROBE_ACQUISITION_SEARCHING ||
+		       ((receive->phase ==
+				 V34_PHASE2_PROBE_ACQUISITION_SEARCHING &&
+			 probe->signal_a_reversal_elapsed_samples <
+				 PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES) ||
 			receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_RECEIVING);
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE:
@@ -77,8 +79,12 @@ static bool signal_a_path_is_valid(
 	case PHASE2_RECIPROCAL_PROBE_FAILED:
 		return probe->failure ==
 			       PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND &&
-		       receive->phase ==
-			       V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND;
+		       probe->signal_a_reversal_elapsed_samples ==
+			       PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
+		       (receive->phase ==
+				V34_PHASE2_PROBE_ACQUISITION_SEARCHING ||
+			receive->phase ==
+				V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND);
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING:
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE:
 		return false;
@@ -274,11 +280,34 @@ static bool receive_remote_probe(
 		return false;
 	switch (event->receive_event.kind) {
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND:
-		fail_probe(
-			probe, PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND,
-			event);
+		if (probe->signal_a_reversal_elapsed_samples >=
+		    PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES - 1u) {
+			fail_probe(
+				probe,
+				PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND,
+				event);
+			break;
+		}
+		/* A valid Tone-B reversal begins one bounded response epoch, but
+		 * media scheduling can leave the first short capture before L1.
+		 * Search the next complete interval without exposing a false
+		 * terminal acquisition event. */
+		if (v34_phase2_probe_acquisition_init(receive) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
+			return false;
+		event->receive_event =
+			(struct v34_phase2_probe_acquisition_event){ 0 };
 		break;
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NONE:
+		if (receive->phase ==
+			    V34_PHASE2_PROBE_ACQUISITION_SEARCHING &&
+		    probe->signal_a_reversal_elapsed_samples >=
+			    PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES - 1u)
+			fail_probe(
+				probe,
+				PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND,
+				event);
+		break;
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED:
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_L2_STARTED:
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_MEASUREMENT_READY:

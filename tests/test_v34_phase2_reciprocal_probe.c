@@ -329,6 +329,79 @@ static bool completed_turnaround_states(
 	return false;
 }
 
+static bool test_delayed_remote_probe(void)
+{
+	enum {
+		POST_RESTART_SILENCE_SAMPLES = 80,
+	};
+	struct v34_phase2_probe_turnaround caller_turnaround;
+	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct v34_phase2_reciprocal_probe caller;
+	struct v34_phase2_reciprocal_probe answerer;
+	struct phase2_reciprocal_probe_event caller_event;
+	struct phase2_reciprocal_probe_event answerer_event;
+	int16_t caller_transmit;
+	int16_t answerer_transmit;
+	bool acquired = false;
+
+	CHECK(completed_turnaround_states(
+		      &caller_turnaround, &answerer_turnaround) &&
+	      v34_phase2_reciprocal_probe_init(
+		      &caller, &caller_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      v34_phase2_reciprocal_probe_init(
+		      &answerer, &answerer_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK,
+	      "delayed reciprocal-probe fixtures did not initialize");
+	for (size_t sample = 0;
+	     sample < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES +
+			      POST_RESTART_SILENCE_SAMPLES;
+	     ++sample) {
+		CHECK(v34_phase2_reciprocal_probe_sample(
+			      &answerer, 0, &answerer_transmit,
+			      &answerer_event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK &&
+		      answerer_transmit == 0 &&
+		      answerer_event.kind ==
+			      PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
+		      answerer_event.receive_event.kind ==
+			      V34_PHASE2_PROBE_ACQUISITION_EVENT_NONE &&
+		      answerer.control.phase ==
+			      PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING,
+		      "answerer did not retain delayed probe search at sample %zu",
+		      sample);
+	}
+	CHECK(answerer.control.path.receive.phase ==
+		      V34_PHASE2_PROBE_ACQUISITION_SEARCHING &&
+	      answerer.control.path.receive.synchronizer.samples_observed ==
+		      POST_RESTART_SILENCE_SAMPLES,
+	      "answerer did not restart at the failed capture boundary");
+	for (size_t sample = 0;
+	     sample < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     ++sample) {
+		CHECK(v34_phase2_reciprocal_probe_sample(
+			      &caller, 0, &caller_transmit, &caller_event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK &&
+		      v34_phase2_reciprocal_probe_sample(
+			      &answerer, caller_transmit, &answerer_transmit,
+			      &answerer_event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK,
+		      "delayed reciprocal probe failed at sample %zu", sample);
+		if (answerer_event.receive_event.kind ==
+		    V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED) {
+			acquired = true;
+			break;
+		}
+	}
+	CHECK(acquired &&
+	      answerer.control.phase ==
+		      PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING &&
+	      answerer.control.path.receive.phase ==
+		      V34_PHASE2_PROBE_ACQUISITION_RECEIVING,
+	      "answerer did not acquire L1 after a failed capture window");
+	return true;
+}
+
 static bool test_bounded_failures(void)
 {
 	struct v34_phase2_probe_turnaround caller_turnaround;
@@ -340,6 +413,7 @@ static bool test_bounded_failures(void)
 	int16_t transmit;
 	size_t samples;
 	uint32_t caller_l2_limit;
+	uint32_t answerer_start_elapsed;
 
 	CHECK(completed_turnaround_states(
 		      &caller_turnaround, &answerer_turnaround) &&
@@ -383,23 +457,27 @@ static bool test_bounded_failures(void)
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed caller was not silent and stable");
 
+	answerer_start_elapsed =
+		answerer.control.signal_a_reversal_elapsed_samples;
 	for (samples = 0;
-	     samples < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+	     samples < PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
 	     answerer.control.phase != PHASE2_RECIPROCAL_PROBE_FAILED;
 	     ++samples)
 		CHECK(v34_phase2_reciprocal_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      PHASE2_RECIPROCAL_PROBE_OK,
 		      "missing reciprocal probe failed at sample %zu", samples);
-	CHECK(samples == V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+	CHECK(samples ==
+		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES -
+			      answerer_start_elapsed &&
 	      answerer.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
 	      answerer.control.failure ==
 		      PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND &&
 	      event.kind ==
 		      PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
-	      event.receive_event.kind ==
-		      V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND,
-	      "missing reciprocal probe did not fail at the acquisition bound");
+	      answerer.control.signal_a_reversal_elapsed_samples ==
+		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES,
+	      "missing reciprocal probe did not fail at the response bound");
 	return true;
 }
 
@@ -474,6 +552,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional reciprocal probe", test_bidirectional_probe },
+		{ "delayed remote probe", test_delayed_remote_probe },
 		{ "bounded failures", test_bounded_failures },
 		{ "validation", test_validation },
 	};
