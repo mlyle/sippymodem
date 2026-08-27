@@ -87,6 +87,9 @@ struct v34_call {
 	struct v34_retrain_detector retrain_detector;
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
+	/* Last completed directional selection; COUNT means not selected yet. */
+	enum v34_symbol_rate retained_answer_to_call_symbol_rate;
+	enum v34_symbol_rate retained_call_to_answer_symbol_rate;
 	enum v34_station_role local_role;
 	enum v34_call_stage stage;
 	bool peer_info0_stored;

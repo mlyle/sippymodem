@@ -402,6 +402,34 @@ static bool check_timeline(
 	      caller_local_profile.symbol_rate == V34_SYMBOL_RATE_3000 &&
 	      answerer_local_profile.symbol_rate == V34_SYMBOL_RATE_3200,
 	      "INFO1 did not produce reciprocal Phase 3 profiles");
+	{
+		struct v34_phase2 retained = pair.caller;
+		struct v34_info1a raw_info1a;
+		struct v34_phase3_profile retained_local;
+		struct v34_phase3_profile retained_peer;
+
+		retained.state.info1.peer_parameters.info1a
+			.answer_to_call_symbol_rate = V34_SYMBOL_RATE_2400;
+		retained.state.info1.peer_parameters.info1a
+			.call_to_answer_symbol_rate = V34_SYMBOL_RATE_2400;
+		CHECK(!v34_phase2_is_valid(&retained),
+		      "fresh INFO1a treated its zero rate pair as retained state");
+		retained.prior_answer_to_call_symbol_rate = V34_SYMBOL_RATE_3200;
+		retained.prior_call_to_answer_symbol_rate = V34_SYMBOL_RATE_3000;
+		CHECK(v34_phase2_is_valid(&retained) &&
+		      v34_phase2_peer_info1a(&retained, &raw_info1a) ==
+			      V34_PHASE2_OK &&
+		      raw_info1a.answer_to_call_symbol_rate ==
+			      V34_SYMBOL_RATE_2400 &&
+		      raw_info1a.call_to_answer_symbol_rate ==
+			      V34_SYMBOL_RATE_2400 &&
+		      v34_phase2_profiles(
+			      &retained, &retained_local, &retained_peer) ==
+			      V34_PHASE2_OK &&
+		      retained_local.symbol_rate == V34_SYMBOL_RATE_3000 &&
+		      retained_peer.symbol_rate == V34_SYMBOL_RATE_3200,
+		      "retrain INFO1a did not retain its selected rate pair");
+	}
 	if (zero_md) {
 		struct v34_phase3_line_transmitter caller_phase3;
 		struct v34_phase3_line_transmitter answerer_phase3;
@@ -498,11 +526,15 @@ static bool test_retrain_timeline(void)
 	      v34_phase2_init_retrain(
 			      &pair.caller, V34_CALLING_STATION, TEST_AMPLITUDE,
 			      &caller_info0, &answerer_info0,
-			      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK &&
+			      RETRAIN_PRIOR_RTD_SAMPLES,
+			      V34_SYMBOL_RATE_COUNT,
+			      V34_SYMBOL_RATE_COUNT) == V34_PHASE2_OK &&
 	      v34_phase2_init_retrain(
 			      &pair.answerer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
 			      &answerer_info0, &caller_info0,
-			      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK,
+			      RETRAIN_PRIOR_RTD_SAMPLES,
+			      V34_SYMBOL_RATE_COUNT,
+			      V34_SYMBOL_RATE_COUNT) == V34_PHASE2_OK,
 	      "Phase 2 retrain pair did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_event caller_event;
@@ -560,7 +592,9 @@ static bool test_retrain_second_reversal_probe(void)
 	CHECK(v34_phase2_init_retrain(
 		      &caller, V34_CALLING_STATION, TEST_AMPLITUDE,
 		      &caller_info0, &answerer_info0,
-		      RETRAIN_PRIOR_RTD_SAMPLES) == V34_PHASE2_OK &&
+		      RETRAIN_PRIOR_RTD_SAMPLES,
+		      V34_SYMBOL_RATE_COUNT,
+		      V34_SYMBOL_RATE_COUNT) == V34_PHASE2_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &answer_tone, V34_ANSWERING_STATION,
 		      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
@@ -629,6 +663,8 @@ static bool test_validation(void)
 {
 	struct v34_info0 info0 = test_v34_phase2_capabilities(
 		V34_CALLING_STATION);
+	struct v34_info0 peer_info0 = test_v34_phase2_capabilities(
+		V34_ANSWERING_STATION);
 	struct v34_info0 invalid_info0 = info0;
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_phase2_probe_receiver_measurement saved_measurement;
@@ -655,6 +691,13 @@ static bool test_validation(void)
 		      &info0) == V34_PHASE2_OK,
 	      "validation endpoint did not initialize");
 	saved = phase2;
+	CHECK(v34_phase2_init_retrain(
+		      &phase2, V34_CALLING_STATION, TEST_AMPLITUDE,
+		      &info0, &peer_info0, RETRAIN_PRIOR_RTD_SAMPLES,
+		      V34_SYMBOL_RATE_COUNT, V34_SYMBOL_RATE_3000) ==
+		      V34_PHASE2_INVALID_ARGUMENT &&
+	      memcmp(&phase2, &saved, sizeof(phase2)) == 0,
+	      "partial prior rate pair changed the Phase 2 destination");
 	memset(&event, 0x5a, sizeof(event));
 	saved_event = event;
 	memset(&measurement, 0x6b, sizeof(measurement));

@@ -603,12 +603,38 @@ static bool test_source_backpressure(void)
 	CHECK(false, "mapping source was not consulted");
 }
 
+static bool replace_answerer_info1a_rate_pair(struct endpoint *answerer)
+{
+	struct v34_phase2 *phase2 = &answerer->call.state.phase2;
+	struct v34_info1a wire_info1a;
+	uint8_t payload[V34_INFO1A_PAYLOAD_BYTES];
+
+	if (answerer->call.stage != V34_CALL_PHASE2 ||
+	    phase2->stage != V34_PHASE2_INFO1 ||
+	    phase2->local_role != V34_ANSWERING_STATION ||
+	    phase2->state.info1.control.phase != PHASE2_INFO1_TRANSMITTING ||
+	    phase2->state.info1.control.transmitter.frame.bit_index != 0u ||
+	    phase2->state.info1.control.transmitter.frame_complete)
+		return false;
+	wire_info1a = phase2->local_info1.info1a;
+	wire_info1a.answer_to_call_symbol_rate = V34_SYMBOL_RATE_2400;
+	wire_info1a.call_to_answer_symbol_rate = V34_SYMBOL_RATE_2400;
+	return v34_info1a_encode(
+		       &wire_info1a, payload, sizeof(payload)) == V34_INFO1_OK &&
+	       v34_phase2_info_generator_init(
+		       &phase2->state.info1.control.transmitter.frame, payload,
+		       V34_INFO1A_PAYLOAD_BITS) == V34_PHASE2_INFO_OK &&
+	       v34_call_is_valid(&answerer->call);
+}
+
 static bool retrain_online_pair(
 	struct endpoint *caller, struct endpoint *answerer,
-	struct channel *channel, enum v34_station_role initiator_role)
+	struct channel *channel, enum v34_station_role initiator_role,
+	bool replace_info1a_rate_pair)
 {
 	bool caller_retrained = false;
 	bool answerer_retrained = false;
+	bool rate_pair_replaced = false;
 	bool verifying_resumed_data = false;
 
 	caller->mapping_frames_received = 0;
@@ -631,6 +657,15 @@ static bool retrain_online_pair(
 			caller_observation.next == V34_CALL_RETRAIN_SILENCE;
 		answerer_retrained |=
 			answerer_observation.next == V34_CALL_RETRAIN_SILENCE;
+		if (replace_info1a_rate_pair &&
+		    answerer_observation.processed == V34_CALL_PHASE2 &&
+		    answerer_observation.events.phase2.kind ==
+			    V34_PHASE2_EVENT_PEER_INFO1C_RECEIVED) {
+			CHECK(!rate_pair_replaced &&
+			      replace_answerer_info1a_rate_pair(answerer),
+			      "retrain INFO1a rate pair was not replaced");
+			rate_pair_replaced = true;
+		}
 		if (!verifying_resumed_data && caller_retrained &&
 		    answerer_retrained &&
 		    v34_call_is_online(&caller->call) &&
@@ -643,8 +678,11 @@ static bool retrain_online_pair(
 		}
 		if (verifying_resumed_data &&
 		    caller->mapping_frames_received >= 4u &&
-		    answerer->mapping_frames_received >= 4u)
+		    answerer->mapping_frames_received >= 4u) {
+			CHECK(!replace_info1a_rate_pair || rate_pair_replaced,
+			      "retrain completed without the zero INFO1a rate pair");
 			return true;
+		}
 	}
 	CHECK(false,
 	      "full retrain did not reconnect both roles and resume data");
@@ -660,7 +698,7 @@ static bool exercise_full_retrain(
 	CHECK(run_online_pair(&caller, &answerer, &channel, pcma),
 	      "retrain pair failed to connect");
 	return retrain_online_pair(
-		&caller, &answerer, &channel, initiator_role);
+		&caller, &answerer, &channel, initiator_role, false);
 }
 
 static bool test_full_retrain(void)
@@ -673,6 +711,47 @@ static bool test_full_retrain(void)
 	      "PCMA calling-station retrain failed");
 	CHECK(exercise_full_retrain(V34_ANSWERING_STATION, true),
 	      "PCMA answering-station retrain failed");
+	return true;
+}
+
+static bool check_retrain_retains_zero_rate_pair(bool pcma)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, pcma) &&
+	      caller.call.retained_answer_to_call_symbol_rate ==
+		      V34_SYMBOL_RATE_3200 &&
+	      caller.call.retained_call_to_answer_symbol_rate ==
+		      V34_SYMBOL_RATE_3000 &&
+	      answerer.call.retained_answer_to_call_symbol_rate ==
+		      V34_SYMBOL_RATE_3200 &&
+	      answerer.call.retained_call_to_answer_symbol_rate ==
+		      V34_SYMBOL_RATE_3000,
+	      "initial call did not retain its directional symbol rates");
+	CHECK(retrain_online_pair(
+		      &caller, &answerer, &channel,
+		      pcma ? V34_ANSWERING_STATION : V34_CALLING_STATION,
+		      true) &&
+	      caller.call.retained_answer_to_call_symbol_rate ==
+		      V34_SYMBOL_RATE_3200 &&
+	      caller.call.retained_call_to_answer_symbol_rate ==
+		      V34_SYMBOL_RATE_3000 &&
+	      answerer.call.retained_answer_to_call_symbol_rate ==
+		      V34_SYMBOL_RATE_3200 &&
+	      answerer.call.retained_call_to_answer_symbol_rate ==
+		      V34_SYMBOL_RATE_3000,
+	      "zero retrain INFO1a changed the retained symbol rates");
+	return true;
+}
+
+static bool test_retrain_retains_zero_rate_pair(void)
+{
+	CHECK(check_retrain_retains_zero_rate_pair(false),
+	      "PCMU zero-rate retrain failed");
+	CHECK(check_retrain_retains_zero_rate_pair(true),
+	      "PCMA zero-rate retrain failed");
 	return true;
 }
 
@@ -1014,7 +1093,7 @@ static bool check_info1_fallback(bool pcma)
 		.answer_transmit[V34_SYMBOL_RATE_3429] =
 			(struct v34_info1_probe_result){ 0 };
 	CHECK(retrain_online_pair(
-		      &caller, &answerer, &channel, first_initiator) &&
+		      &caller, &answerer, &channel, first_initiator, false) &&
 	      answerer.call.local_info1.answering
 		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
 	      answerer.call.local_info1.answering
@@ -1023,7 +1102,8 @@ static bool check_info1_fallback(bool pcma)
 	CHECK(retrain_online_pair(
 		      &caller, &answerer, &channel,
 		      first_initiator == V34_CALLING_STATION ?
-			      V34_ANSWERING_STATION : V34_CALLING_STATION) &&
+			      V34_ANSWERING_STATION : V34_CALLING_STATION,
+		      false) &&
 	      answerer.call.local_info1.answering
 		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
 	      answerer.call.local_info1.answering
@@ -1100,6 +1180,8 @@ int main(void)
 		{ "generated PCMU call", test_pcmu_call },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
+		{ "retrain retains zero INFO1a rate pair",
+		  test_retrain_retains_zero_rate_pair },
 		{ "failed probe", test_failed_probe },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "retrain tone stage guard",

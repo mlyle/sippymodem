@@ -82,6 +82,8 @@ struct v34_phase2 {
 	uint16_t prior_round_trip_delay_samples;
 	int16_t remote_receive_gain;
 	union v34_phase2_info1_parameters local_info1;
+	enum v34_symbol_rate prior_answer_to_call_symbol_rate;
+	enum v34_symbol_rate prior_call_to_answer_symbol_rate;
 	enum v34_phase2_stage stage;
 	enum v34_phase2_failure failure;
 	enum v34_station_role local_role;
@@ -95,12 +97,17 @@ enum v34_phase2_result v34_phase2_init(
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0);
 
 /* Retain the confirmed within-call RTD when a new reversal alias would shorten
- * it by more than one line-terminal turnaround. Zero disables that guard. */
+ * it by more than one line-terminal turnaround. Zero disables that guard.
+ * A prior rate pair lets a retraining caller honor the interoperable all-zero
+ * INFO1a convention by retaining both already-selected symbol rates. Pass
+ * V34_SYMBOL_RATE_COUNT for both rates when no prior selection exists. */
 enum v34_phase2_result v34_phase2_init_retrain(
 	struct v34_phase2 *phase2, enum v34_station_role local_role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
 	const struct v34_info0 *peer_info0,
-	uint16_t prior_round_trip_delay_samples);
+	uint16_t prior_round_trip_delay_samples,
+	enum v34_symbol_rate prior_answer_to_call_symbol_rate,
+	enum v34_symbol_rate prior_call_to_answer_symbol_rate);
 
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2);
 bool v34_phase2_has_failed(const struct v34_phase2 *phase2);
@@ -123,6 +130,8 @@ enum v34_phase2_result v34_phase2_answerer_reply(
 
 enum v34_phase2_result v34_phase2_peer_info1c(
 	const struct v34_phase2 *phase2, struct v34_info1c *peer_info1c);
+/* Copy the decoded peer record exactly as received. Any retrain-only retained
+ * rate interpretation is applied when Phase 3 profiles are constructed. */
 enum v34_phase2_result v34_phase2_peer_info1a(
 	const struct v34_phase2 *phase2, struct v34_info1a *peer_info1a);
 
