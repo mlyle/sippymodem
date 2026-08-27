@@ -75,6 +75,7 @@ bool v34_phase3_s_receiver_is_valid(
 	      !v34_phase3_s_detection_is_valid(
 		      &receiver->pending_detection) ||
 	      (!receiver->pending_metric &&
+	       receiver->pending_detection.s_errors == 0 &&
 	       receiver->pending_detection.s_bar_errors == 0))) ||
 	    (!receiver->detection_pending &&
 	     (receiver->pending_symbols != 0 ||
@@ -200,19 +201,6 @@ static bool boundary_matches(
 	return true;
 }
 
-static bool s_tail_matches(
-	const struct v34_phase3_s_receiver *receiver, uint8_t offset,
-	bool metric)
-{
-	const size_t first =
-		receiver->s_symbols - V34_PHASE3_S_BOUNDARY_ANCHOR_SYMBOLS;
-
-	for (size_t symbol = first; symbol < receiver->s_symbols; ++symbol)
-		if (!symbol_matches(receiver, symbol, offset, metric))
-			return false;
-	return true;
-}
-
 static bool correlate(
 	const struct v34_phase3_s_receiver *receiver,
 	struct v34_phase3_s_detection *detection, bool metric)
@@ -226,9 +214,6 @@ static bool correlate(
 		struct v34_phase3_s_detection candidate = {
 			.clockwise_quarter_turn_offset = offset,
 		};
-
-		if (!s_tail_matches(receiver, offset, metric))
-			continue;
 
 		for (size_t symbol = 0; symbol < window; ++symbol) {
 			if (symbol_matches(receiver, symbol, offset, metric))
@@ -259,6 +244,15 @@ static unsigned int detection_errors(
 	const struct v34_phase3_s_detection *detection)
 {
 	return detection->s_errors + detection->s_bar_errors;
+}
+
+static bool metric_confirms_complete_s_bar(
+	const struct v34_phase3_s_detection *hard,
+	const struct v34_phase3_s_detection *metric)
+{
+	return hard->clockwise_quarter_turn_offset ==
+		       metric->clockwise_quarter_turn_offset &&
+	       metric->s_bar_errors == 0u;
 }
 
 static uint64_t metric(
@@ -358,7 +352,10 @@ static enum v34_phase3_s_receiver_result receive_decision(
 		if (boundary_matches(
 			    &next,
 			    hard_detection.clockwise_quarter_turn_offset,
-			    false)) {
+			    false) ||
+		    (metric_found &&
+		     metric_confirms_complete_s_bar(
+			     &hard_detection, &metric_detection))) {
 			complete_detection(&next, &hard_detection, 0);
 		} else if (!next.detection_pending || next.pending_metric) {
 			next.pending_detection = hard_detection;
@@ -368,6 +365,7 @@ static enum v34_phase3_s_receiver_result receive_decision(
 		} else if (detection_errors(&hard_detection) <
 			   detection_errors(&next.pending_detection)) {
 			next.pending_detection = hard_detection;
+			next.pending_symbols = 0;
 		}
 	} else if (metric_found && !next.complete) {
 		if (!next.detection_pending) {
@@ -379,6 +377,7 @@ static enum v34_phase3_s_receiver_result receive_decision(
 			   detection_errors(&metric_detection) <
 				   detection_errors(&next.pending_detection)) {
 			next.pending_detection = metric_detection;
+			next.pending_symbols = 0;
 		}
 	}
 	if (next.detection_pending &&

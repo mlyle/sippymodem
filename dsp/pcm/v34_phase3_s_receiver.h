@@ -13,7 +13,7 @@ enum {
 	V34_PHASE3_S_RECEIVER_MAX_S_ERRORS = 8,
 	/* A companded line can smear the S-to-S-bar reversal across several
 	 * equalized decisions.  Keep this bound small relative to the 16T marker;
-	 * the preceding 128T S and its exact two-symbol tail still anchor it. */
+	 * the retained S suffix still anchors the phase. */
 	V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS = 4,
 	/* A sample-domain receiver may lock after S begins. Retaining at least
 	 * 32T before the 16T S-bar still gives a bounded correlation. */
@@ -43,10 +43,12 @@ bool v34_phase3_s_detection_is_valid(
 /* Bounded hard-decision history for locating S followed by the complete 16T
  * S-bar marker at an arbitrary input boundary. The ordinary initializer
  * requires all 128T of S; a suffix initializer supports a receiver that locks
- * during S. The last two S decisions form an exact phase anchor; S-bar uses
- * its separate bounded error budget so a line-code transition error cannot
- * veto an otherwise qualified marker. Expected rotations are generated
- * during correlation. */
+ * during S. The complete retained S suffix supplies the phase anchor; S and
+ * S-bar have separate bounded error budgets so a smeared transition cannot
+ * veto an otherwise qualified marker. Fixed-distance evidence for a complete
+ * S-bar can publish the same hard alignment immediately; an otherwise
+ * non-exact four-symbol boundary is confirmed by later decisions. Expected
+ * rotations are generated during correlation. */
 struct v34_phase3_s_receiver {
 	/* Low nibble: hard training decision. High nibble: fixed-distance
 	 * evidence for rotations 0..3 when metric_enabled is set. */
@@ -85,10 +87,11 @@ bool v34_phase3_s_receiver_is_complete(
 
 /* Accept one hard decision in the training-constellation convention. S and
  * S-bar use quarter point zero; a different valid point counts as a symbol
- * error. Labels outside 0..3 and already-complete calls consume nothing. The
- * An exact transition reports at the end of S-bar. If its leading symbols use
- * the S decision, the receiver waits at most the bounded S-bar error budget
- * for a better alignment before reporting the qualified marker. */
+ * error. Labels outside 0..3 and already-complete calls consume nothing. An
+ * exact transition reports at the end of S-bar. If the physical transition
+ * smears either side of the nominal boundary, fixed-distance evidence may
+ * confirm the complete S-bar immediately; otherwise the receiver waits a
+ * bounded number of decisions for a better alignment. */
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);

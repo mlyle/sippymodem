@@ -202,7 +202,7 @@ static bool test_point_zero_requirement(void)
 	return true;
 }
 
-static bool test_exact_transition_anchor(void)
+static bool test_transition_anchor_tolerance(void)
 {
 	static const size_t ANCHORS[] = {
 		V34_PHASE3_S_SYMBOLS - 2u,
@@ -224,9 +224,11 @@ static bool test_exact_transition_anchor(void)
 		      &receiver, 0, generated[1]) ==
 		      V34_PHASE3_S_RECEIVER_OK &&
 	      receive_marker(&receiver, generated, 0),
-	      "S-like prefix shifted the exact transition boundary");
+	      "S-like prefix shifted the transition boundary");
 	for (size_t anchor = 0; anchor < ARRAY_LENGTH(ANCHORS); ++anchor) {
 		uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+		struct v34_phase3_s_detection detection;
+		bool detected = false;
 
 		memcpy(rotations, generated, sizeof(rotations));
 		rotations[ANCHORS[anchor]] =
@@ -235,16 +237,92 @@ static bool test_exact_transition_anchor(void)
 			      V34_PHASE3_S_RECEIVER_OK,
 		      "transition-anchor receiver did not initialize");
 		for (size_t symbol = 0;
-		     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol)
-			CHECK(v34_phase3_s_receiver_receive(
-				      &receiver, 0, rotations[symbol]) ==
-				      V34_PHASE3_S_RECEIVER_OK,
-			      "corrupt anchor %zu detected at symbol %zu",
-			      ANCHORS[anchor], symbol);
-		CHECK(!v34_phase3_s_receiver_is_complete(&receiver),
-		      "corrupt transition anchor %zu was accepted",
+		     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+			enum v34_phase3_s_receiver_result result =
+				v34_phase3_s_receiver_receive(
+					&receiver, 0, rotations[symbol]);
+
+			CHECK(result == V34_PHASE3_S_RECEIVER_OK ||
+				      (result == V34_PHASE3_S_RECEIVER_DETECTED &&
+				       symbol + 1u +
+					       V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS >=
+					       V34_PHASE3_S_SEQUENCE_SYMBOLS),
+			      "boundary error %zu changed result %d at symbol %zu",
+			      ANCHORS[anchor], result, symbol);
+			detected = result == V34_PHASE3_S_RECEIVER_DETECTED;
+			if (detected)
+				break;
+		}
+		for (unsigned int confirmation = 0;
+		     !detected &&
+		     confirmation <
+			     V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
+		     ++confirmation) {
+			enum v34_phase3_s_receiver_result result =
+				v34_phase3_s_receiver_receive(
+					&receiver, 1, (uint8_t)confirmation);
+
+			CHECK(result == V34_PHASE3_S_RECEIVER_OK ||
+				      result == V34_PHASE3_S_RECEIVER_DETECTED,
+			      "boundary error %zu confirmation %u changed",
+			      ANCHORS[anchor], confirmation);
+			detected = result == V34_PHASE3_S_RECEIVER_DETECTED;
+		}
+		CHECK(detected &&
+		      v34_phase3_s_receiver_get_detection(
+			      &receiver, &detection) &&
+		      detection.clockwise_quarter_turn_offset == 0u &&
+		      detection.s_errors + detection.s_bar_errors == 1u,
+		      "bounded transition error %zu was not retained",
 		      ANCHORS[anchor]);
 	}
+	return true;
+}
+
+static bool test_fixed_smeared_transition_confirmation(void)
+{
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	const size_t first = V34_PHASE3_S_SYMBOLS - suffix;
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver receiver;
+	struct v34_phase3_s_detection detection;
+
+	CHECK(generate_marker(rotations),
+	      "smeared transition marker did not generate");
+	CHECK(v34_phase3_s_receiver_init_fixed_suffix(&receiver, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "smeared transition receiver did not initialize");
+	for (size_t local = 0;
+	     local < suffix + V34_PHASE3_S_BAR_SYMBOLS; ++local) {
+		size_t symbol = first + local;
+		struct v34_analytic_sample point;
+		uint8_t hard_rotation = rotations[symbol];
+		enum v34_phase3_s_receiver_result expected =
+			local + 1u == suffix + V34_PHASE3_S_BAR_SYMBOLS ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0,
+			      rotations[symbol],
+			      &point) == V34_CONSTELLATION_OK,
+		      "smeared transition point %zu did not generate", local);
+		/* A physical 3200-symbol/s trace moved two terminal S decisions and
+		 * one later S-bar decision toward the following point. */
+		if (symbol == V34_PHASE3_S_SYMBOLS - 2u ||
+		    symbol == V34_PHASE3_S_SYMBOLS - 1u ||
+		    symbol == V34_PHASE3_S_SYMBOLS + 13u)
+			hard_rotation = (uint8_t)((hard_rotation + 3u) & 3u);
+		if (symbol == first + 7u)
+			point = (struct v34_analytic_sample){ 0, 0 };
+		CHECK(v34_phase3_s_receiver_receive_fixed(
+			      &receiver, 0, hard_rotation, point) == expected,
+		      "smeared transition changed at %zu", local);
+	}
+	CHECK(v34_phase3_s_receiver_get_detection(&receiver, &detection) &&
+	      detection.s_errors == 2u && detection.s_bar_errors == 1u &&
+	      receiver.post_marker_symbols == 0u,
+	      "smeared transition evidence was not retained");
 	return true;
 }
 
@@ -637,7 +715,10 @@ int main(void)
 		  test_sliding_window_and_tolerance },
 		{ "rejection thresholds", test_rejection_thresholds },
 		{ "point-zero requirement", test_point_zero_requirement },
-		{ "exact transition anchor", test_exact_transition_anchor },
+		{ "transition anchor tolerance",
+		  test_transition_anchor_tolerance },
+		{ "fixed smeared transition confirmation",
+		  test_fixed_smeared_transition_confirmation },
 		{ "transition error confirmation",
 		  test_transition_error_confirmation },
 		{ "suffix acquisition", test_suffix_acquisition },

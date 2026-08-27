@@ -582,6 +582,11 @@ static bool test_delayed_answer_marker_alignment(void)
 	      "delayed answer marker did not initialize");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+		enum v34_phase4_decision_receiver_result expected =
+			symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+				V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
+				V34_PHASE4_DECISION_RECEIVER_OK;
+
 		CHECK(v34_phase3_s_sequence_next(
 			      &s, &normalized, &section) ==
 			      V34_PHASE3_S_SEQUENCE_OK &&
@@ -589,42 +594,20 @@ static bool test_delayed_answer_marker_alignment(void)
 			      V34_CONSTELLATION_4_POINT, &normalized,
 			      &quarter, &rotation) == V34_CONSTELLATION_OK,
 		      "delayed answer S source stopped at %u", symbol);
-		if (symbol >= V34_PHASE3_S_SYMBOLS &&
-		    symbol < V34_PHASE3_S_SYMBOLS +
-			     V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
-			rotation = (uint8_t)((rotation + 1u) & 3u);
 		CHECK(v34_training_constellation_fixed_point(
 			      V34_CONSTELLATION_4_POINT, 0, rotation, &point) ==
 			      V34_CONSTELLATION_OK &&
-		      receive_fixed(
-			      &fixture, point,
-			      V34_PHASE4_DECISION_RECEIVER_OK),
+		      receive_fixed(&fixture, point, expected),
 		      "delayed answer S observation %u stopped", symbol);
 	}
-	CHECK(fixture.receiver.answer_s.detection_pending &&
+	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
 	      v34_phase4_trn_init(
 		      &trn, V34_ANSWERING_STATION,
 		      V34_CONSTELLATION_4_POINT) == V34_PHASE4_TRN_OK,
-	      "delayed answer marker did not retain its candidate");
-	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++symbol) {
-		enum v34_phase4_decision_receiver_result expected =
-			symbol + 1u ==
-					V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ?
-				V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
-				V34_PHASE4_DECISION_RECEIVER_OK;
-
-		CHECK(v34_phase4_trn_next_fixed(
-			      &trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK &&
-		      receive_fixed(&fixture, point, expected),
-		      "delayed marker confirmation %u stopped", symbol);
-	}
-	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
-	      fixture.receiver.trn_symbols ==
-		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS &&
+	      "delayed answer marker was not detected");
+	CHECK(fixture.receiver.trn_symbols == 0u &&
 	      memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
-	      "delayed marker did not advance the known TRN cursor");
+	      "delayed marker changed the known TRN cursor");
 	CHECK(v34_phase4_trn_next_fixed(
 		      &trn, &point, &quarter, &rotation) == V34_PHASE4_TRN_OK &&
 	      receive_fixed(
