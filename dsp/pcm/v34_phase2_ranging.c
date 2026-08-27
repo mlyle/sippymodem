@@ -77,11 +77,12 @@ static bool control_has_ranging_epoch(
 	const struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange)
 {
-	if (exchange->signal_role == PHASE2_SIGNAL_A)
-		return control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL ||
-		       control->phase == PHASE2_RESPONSE_DELAY ||
+	if (exchange->signal_role == PHASE2_SIGNAL_A) {
+		/* A repeated INFO0 invalidates an unanswered local reversal. */
+		return control->phase == PHASE2_RESPONSE_DELAY ||
 		       control->phase == PHASE2_RESPONSE_TONE_TAIL ||
 		       control->phase == PHASE2_RANGING_PROBE_READY;
+	}
 	return control->phase == PHASE2_RESPONSE_DELAY ||
 	       control->phase == PHASE2_RESPONSE_TONE_TAIL ||
 	       control->phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL ||

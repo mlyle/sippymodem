@@ -447,6 +447,97 @@ static bool test_info_interrupted_reversal(void)
 	return true;
 }
 
+static bool check_unanswered_reversal_recovery(enum test_codec codec)
+{
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	struct v34_phase2_ranging answerer;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	bool repeat_started = false;
+	bool recovery_started = false;
+	bool recovery_completed = false;
+	bool fresh_reversal = false;
+
+	CHECK(v34_info0_encode(&calling, payload, sizeof(payload)) ==
+		      V34_INFO0_OK &&
+	      v34_phase2_ranging_init(
+		      &answerer, V34_ANSWERING_STATION,
+		      TEST_AMPLITUDE, &answering) ==
+		      V34_PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_B, TEST_AMPLITUDE, payload,
+		      V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "unanswered-reversal recovery did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v34_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before =
+			answerer.control.phase;
+		int16_t peer_sample;
+		int16_t ignored;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_sample, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_ranging_sample(
+			      &answerer,
+			      codec_round_trip(peer_sample, codec),
+			      &ignored, &event) == V34_PHASE2_RANGING_OK,
+		      "unanswered-reversal recovery failed for %d at %zu",
+		      codec, index);
+		if (event.exchange_event.recovery_started) {
+			recovery_started = true;
+			CHECK(phase_before ==
+				      PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+			      !answerer.recovery_paused &&
+			      answerer.control.phase ==
+				      PHASE2_RANGING_INFO0_EXCHANGE,
+			      "unanswered reversal was retained across INFO0 for %d",
+			      codec);
+		}
+		recovery_completed |= event.exchange_event.recovery_completed;
+		if (recovery_completed &&
+		    phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    answerer.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			fresh_reversal = true;
+			break;
+		}
+		if (!repeat_started &&
+		    answerer.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    answerer.control.measurement_elapsed_samples >=
+			    PHASE2_RANGING_TURNAROUND_SAMPLES &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(phase2_info0_exchange_restart_info(
+				      &peer, payload,
+				      V34_INFO0_PAYLOAD_BITS) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "peer INFO0 repeat did not start for %d", codec);
+			repeat_started = true;
+		}
+	}
+	CHECK(repeat_started && recovery_started && recovery_completed &&
+	      fresh_reversal &&
+	      answerer.control.local_tone_samples ==
+		      PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
+	      answerer.control.measurement_elapsed_samples <= 1u,
+	      "unanswered reversal did not restart after INFO0 for %d",
+	      codec);
+	return true;
+}
+
+static bool test_unanswered_reversal_recovery(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_unanswered_reversal_recovery(codec),
+		      "unanswered-reversal recovery failed for %d", codec);
+	return true;
+}
+
 static bool check_rejected_edge_before_info(enum test_codec codec)
 {
 	struct v34_info0 calling = calling_capabilities();
@@ -965,6 +1056,8 @@ int main(void)
 		{ "bidirectional ranging", test_bidirectional_ranging },
 		{ "early turnaround tolerance", test_early_turnaround_tolerance },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
+		{ "unanswered reversal recovery",
+		  test_unanswered_reversal_recovery },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "retrain residual reversal", test_retrain_residual_reversal },
 		{ "INFO0 recovery", test_info0_recovery },
