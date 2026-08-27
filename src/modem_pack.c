@@ -812,24 +812,29 @@ int modem_hdlc_put_bits(struct modem *m, int nbits,
 }
 
 
+static void hdlc_reset_physical_framing(
+	struct modem *m, struct hdlc_state *h)
+{
+	h->tx_frame = NULL;
+	h->tx_ones = 0;
+	h->rx_ones = 0;
+	h->rx_error = 1;
+	h->rx_frame->count = 0;
+	h->rx_frame->fcs = INIT_FCS;
+	m->pack.bit = m->unpack.bit = 0;
+	m->pack.data = m->unpack.data = 0;
+}
+
 void modem_hdlc_start(struct modem *m)
 {
 	struct hdlc_state *h = &m->packer.hdlc;
 	PACK_DBG("hdlc_start...\n");
 	memset(h,0,sizeof(*h));
-	/* wait for flag to clear rx error state */
-	h->rx_error = 1;
 	/* rx frame */
 	h->rx_frame = &h->_rx_frame;
 	h->rx_frame->buf  = h->_rx_buf;
-	h->rx_frame->count= 0;
 	h->rx_frame->size = sizeof(h->_rx_buf);
-	h->rx_frame->fcs  = INIT_FCS;
-	/* tx frame */
-	h->tx_frame = 0;
-
-	m->pack.bit  = m->unpack.bit  = 0;
-	m->pack.data = m->unpack.data = 0;
+	hdlc_reset_physical_framing(m, h);
         m->bit_timer_func = NULL;
 	m->bit_timer = 0;
 }
@@ -847,15 +852,8 @@ int modem_hdlc_reframe(struct modem *m)
 		return -1;
 	if (h->tx_frame != NULL) {
 		h->tx_complete(h->framer, h->tx_frame);
-		h->tx_frame = NULL;
 	}
-	h->tx_ones = 0;
-	h->rx_ones = 0;
-	h->rx_error = 1;
-	h->rx_frame->count = 0;
-	h->rx_frame->fcs = INIT_FCS;
-	m->pack.bit = m->unpack.bit = 0;
-	m->pack.data = m->unpack.data = 0;
+	hdlc_reset_physical_framing(m, h);
 	return 0;
 }
 
