@@ -1334,33 +1334,6 @@ V34_PHASE3_J_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_trn.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_receiver.o
-V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase3_j_equalizer_receiver
-V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase3_j_equalizer_receiver.o \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/v34_constellation.o \
-	$(BUILD_DIR)/v34_equalizer_handoff.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_j_equalizer_receiver.o \
-	$(BUILD_DIR)/v34_phase3_j_receiver.o \
-	$(BUILD_DIR)/v34_phase3_j_sequence.o \
-	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
-	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o
-V34_PHASE3_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase3_receiver
-V34_PHASE3_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase3_receiver.o \
-	$(BUILD_DIR)/v34_phase3_receiver.o \
-	$(BUILD_DIR)/qam_gain.o \
-	$(BUILD_DIR)/v34_training_channel.o \
-	$(BUILD_DIR)/v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/v34_phase3_s_receiver.o \
-	$(filter-out \
-		$(BUILD_DIR)/test_v34_phase3_j_equalizer_receiver.o, \
-		$(V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_OBJECTS))
 V34_PHASE3_DECISION_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_decision_receiver
 V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS := \
@@ -3122,8 +3095,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE3_TRN_TEST_BINARY) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE3_J_RECEIVER_TEST_BINARY) \
-	$(V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_BINARY) \
-	$(V34_PHASE3_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE3_DECISION_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE3_TRANSMITTER_TEST_BINARY) \
@@ -3438,8 +3409,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE3_TRN_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_J_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE3_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_TRANSMITTER_TEST_OBJECTS:.o=.d) \
@@ -4101,13 +4070,6 @@ $(V34_PHASE3_J_SEQUENCE_TEST_BINARY): \
 
 $(V34_PHASE3_J_RECEIVER_TEST_BINARY): \
 	$(V34_PHASE3_J_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_BINARY): \
-	$(V34_PHASE3_J_EQUALIZER_RECEIVER_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_PHASE3_RECEIVER_TEST_BINARY): $(V34_PHASE3_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE3_DECISION_RECEIVER_TEST_BINARY): \
@@ -5715,15 +5677,6 @@ $(BUILD_DIR)/v34_phase3_j_sequence.o: \
 $(BUILD_DIR)/v34_phase3_j_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_j_receiver.c | \
 	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase3_j_equalizer_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase3_j_equalizer_receiver.c | \
-	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase3_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase3_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase3_decision_receiver.o: \
