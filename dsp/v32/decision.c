@@ -3,6 +3,7 @@
 #include "decision.h"
 
 #include "constellation.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -204,32 +205,9 @@ static const int16_t ROTATED_LEVEL_128[6] = {
 	0x05a8, 0x10f8, 0x1c48, 0x2799, 0x32e9, 0x3e39,
 };
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t absolute_wrap_s16(int16_t value)
 {
-	return value < 0 ? wrap_s16(-(int32_t)value) : value;
+	return value < 0 ? wrap_s16_from_s32(-(int32_t)value) : value;
 }
 
 struct rotated_sample {
@@ -251,19 +229,19 @@ static struct rotated_sample mirrored_rotation(
 	uint8_t rotation = observation->q < observation->i ?
 		(uint8_t)((absolute_q < absolute_i) + 2u) :
 		(uint8_t)(absolute_q < absolute_i);
-	int16_t i_cos = wrap_s16(sar32(
+	int16_t i_cos = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)observation->i * COSINE[rotation]), 15));
-	int16_t q_sin = wrap_s16(sar32(
+	int16_t q_sin = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)observation->q * SINE[rotation]), 15));
-	int16_t q_cos = wrap_s16(sar32(
+	int16_t q_cos = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)COSINE[rotation] * observation->q), 15));
-	int16_t i_sin = wrap_s16(sar32(
+	int16_t i_sin = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)SINE[rotation] * observation->i), 15));
 
 	return (struct rotated_sample){
 		.point = {
-			.i = wrap_s16((int32_t)i_cos - q_sin),
-			.q = wrap_s16((int32_t)q_cos + i_sin),
+			.i = wrap_s16_from_s32((int32_t)i_cos - q_sin),
+			.q = wrap_s16_from_s32((int32_t)q_cos + i_sin),
 		},
 		.rotation = rotation,
 	};

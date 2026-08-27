@@ -3,6 +3,7 @@
 #include "symbol_timing.h"
 #include "agc.h"
 #include "fixed_phase.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -60,40 +61,10 @@ static const int16_t DETECTOR_Q[3] = { 0, 14189, -14189 };
 static const int16_t PROPORTIONAL_GAIN[3] = { 2336, 3049, 1524 };
 static const int16_t INTEGRAL_GAIN[3] = { 0, 17, 8 };
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int32_t wrap_s32(uint32_t value)
-{
-	return value <= INT32_MAX ?
-		       (int32_t)value :
-		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t multiply_shift_s16(
 	int16_t left, int16_t right, unsigned int shift)
 {
-	return wrap_s16(sar32(
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)left * right), shift));
 }
 
@@ -101,7 +72,7 @@ static int16_t absolute_wrap_s16(int16_t value)
 {
 	int32_t wide = value;
 
-	return wrap_s16(wide < 0 ? -wide : wide);
+	return wrap_s16_from_s32(wide < 0 ? -wide : wide);
 }
 
 static int16_t filter_symbol(const struct v32_symbol_timing *timing)
@@ -118,7 +89,9 @@ static int16_t filter_symbol(const struct v32_symbol_timing *timing)
 		history = history == 0 ? V32_SYMBOL_TIMING_HISTORY - 1u :
 					 history - 1u;
 	}
-	return wrap_s16(wrap_s16(sar32(accumulator, 15)) * 2);
+	return wrap_s16_from_s32(
+		wrap_s16_from_s32(
+			arithmetic_shift_right_u32(accumulator, 15)) * 2);
 }
 
 static int16_t filter_error(
@@ -128,29 +101,33 @@ static int16_t filter_error(
 	int32_t scaled = (int32_t)symbol * 0x200;
 	int16_t s0 = state[0], s1 = state[1], s2 = state[2];
 	int16_t s3 = state[3], s4 = state[4], s5 = state[5];
-	int32_t y0_acc = wrap_s32((uint32_t)scaled -
+	int32_t y0_acc = wrap_s32_from_u32((uint32_t)scaled -
 		(uint32_t)((int32_t)ERROR_FILTER[0] * s0) -
 		(uint32_t)((int32_t)ERROR_FILTER[1] * s1));
-	int32_t y1_acc = wrap_s32((uint32_t)scaled -
+	int32_t y1_acc = wrap_s32_from_u32((uint32_t)scaled -
 		(uint32_t)((int32_t)ERROR_FILTER[2] * s2) -
 		(uint32_t)((int32_t)ERROR_FILTER[3] * s3));
-	int16_t y0 = wrap_s16(sar32((uint32_t)y0_acc, 14));
-	int16_t y1 = wrap_s16(sar32((uint32_t)y1_acc, 14));
-	int16_t first = wrap_s16(
+	int16_t y0 = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)y0_acc, 14));
+	int16_t y1 = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)y1_acc, 14));
+	int16_t first = wrap_s16_from_s32(
 		y1 - multiply_shift_s16(ERROR_FILTER[6], s2, 14));
-	int16_t second = wrap_s16(
+	int16_t second = wrap_s16_from_s32(
 		y0 - multiply_shift_s16(ERROR_FILTER[4], s0, 14));
-	int32_t mixed_acc = wrap_s32(
+	int32_t mixed_acc = wrap_s32_from_u32(
 		(uint32_t)((int32_t)first * second) +
 		(uint32_t)((int32_t)multiply_shift_s16(
 			ERROR_FILTER[7], s2, 14) *
 			multiply_shift_s16(ERROR_FILTER[5], s0, 14)));
-	int16_t mixed = wrap_s16(sar32((uint32_t)mixed_acc, 11));
-	int32_t y2_acc = wrap_s32(
+	int16_t mixed = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)mixed_acc, 11));
+	int32_t y2_acc = wrap_s32_from_u32(
 		(uint32_t)((int32_t)ERROR_FILTER[8] * mixed) +
 		(uint32_t)((int32_t)ERROR_FILTER[9] * s4) -
 		(uint32_t)((int32_t)ERROR_FILTER[10] * s5));
-	int16_t y2 = wrap_s16(sar32((uint32_t)y2_acc, 14));
+	int16_t y2 = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)y2_acc, 14));
 
 	state[1] = s0;
 	state[0] = y0;
@@ -158,22 +135,22 @@ static int16_t filter_error(
 	state[2] = y1;
 	state[5] = s4;
 	state[4] = y2;
-	return wrap_s16(y2 - s5);
+	return wrap_s16_from_s32(y2 - s5);
 }
 
 static void interpolate_coefficients(
 	struct v32_symbol_timing *timing)
 {
 	int16_t fraction = timing->fractional_phase_q11;
-	int16_t left = wrap_s16(0x7fff - fraction * 0x10);
-	int16_t right = wrap_s16(fraction * 0x10);
+	int16_t left = wrap_s16_from_s32(0x7fff - fraction * 0x10);
+	int16_t right = wrap_s16_from_s32(fraction * 0x10);
 
 	for (size_t index = 0; index < V32_SYMBOL_TIMING_COEFFICIENTS;
 	     ++index) {
 		int16_t value = multiply_shift_s16(
 			INTERPOLATOR_SOURCE[index], left, 15);
 
-		timing->interpolator[index] = wrap_s16(
+		timing->interpolator[index] = wrap_s16_from_s32(
 			value + multiply_shift_s16(
 				INTERPOLATOR_SOURCE[index + 1u], right, 15));
 	}
@@ -185,38 +162,42 @@ static void adjust_phase(
 	int16_t mode = (int16_t)timing->mode;
 	int16_t proportional = multiply_shift_s16(
 		PROPORTIONAL_GAIN[mode], angle_error, 12);
-	int16_t integral_step = wrap_s16(sar32(
+	int16_t integral_step = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)INTEGRAL_GAIN[mode] * angle_error +
 			   0x800), 12));
-	int16_t loop_output = wrap_s16(proportional + timing->loop_integral);
-	int32_t adjust = sar32(
+	int16_t loop_output = wrap_s16_from_s32(
+		proportional + timing->loop_integral);
+	int32_t adjust = arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)loop_output * -10), 4);
 	int16_t whole;
 	int16_t phase;
 	int16_t fraction;
 
-	timing->loop_integral = wrap_s16(
+	timing->loop_integral = wrap_s16_from_s32(
 		timing->loop_integral + integral_step);
 	if (adjust > 0x5000)
 		adjust = 0x5000;
 	else if (adjust < -0x4800)
 		adjust = -0x4800;
-	whole = wrap_s16(sar32((uint32_t)adjust, 11));
+	whole = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)adjust, 11));
 	if (adjust < 0)
-		whole = wrap_s16(whole + 1);
-	phase = wrap_s16(timing->polyphase_index + whole);
-	fraction = wrap_s16(
-		wrap_s16(adjust) - whole * 0x800 +
+		whole = wrap_s16_from_s32(whole + 1);
+	phase = wrap_s16_from_s32(timing->polyphase_index + whole);
+	fraction = wrap_s16_from_s32(
+		wrap_s16_from_s32(adjust) - whole * 0x800 +
 		timing->fractional_phase_q11);
 	if (fraction < 0) {
-		phase = wrap_s16(phase - 1);
-		fraction = wrap_s16(fraction + 0x800);
+		phase = wrap_s16_from_s32(phase - 1);
+		fraction = wrap_s16_from_s32(fraction + 0x800);
 	}
 	timing->fractional_phase_q11 = fraction;
 	timing->polyphase_index = phase;
 	if (fraction > 0x7ff) {
-		timing->fractional_phase_q11 = wrap_s16(fraction - 0x800);
-		timing->polyphase_index = wrap_s16(phase + 1);
+		timing->fractional_phase_q11 =
+			wrap_s16_from_s32(fraction - 0x800);
+		timing->polyphase_index = wrap_s16_from_s32(phase + 1);
 	}
 }
 
@@ -224,8 +205,10 @@ static void update_loop(
 	struct v32_symbol_timing *timing, int32_t detector_i,
 	int32_t detector_q)
 {
-	int16_t i = wrap_s16(sar32((uint32_t)detector_i, 16));
-	int16_t q = wrap_s16(sar32((uint32_t)detector_q, 16));
+	int16_t i = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)detector_i, 16));
+	int16_t q = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)detector_q, 16));
 	uint16_t angle;
 	int16_t angle_error;
 	int16_t absolute_error;
@@ -240,11 +223,13 @@ static void update_loop(
 	angle = fixed_phase_atan2_u15(q, i);
 	if (angle > 0x4000)
 		angle = (uint16_t)(angle - 0x8000);
-	angle_error = wrap_s16(sar32(
-		(uint32_t)(SAMPLES_PER_SYMBOL * wrap_s16(angle)), 3));
-	timing->smoothed_error = wrap_s16(
-		sar32((uint32_t)((int32_t)timing->smoothed_error * 15), 4) +
-		sar32((uint32_t)(int32_t)angle_error, 4));
+	angle_error = wrap_s16_from_s32(arithmetic_shift_right_u32(
+		(uint32_t)(SAMPLES_PER_SYMBOL * wrap_s16_from_s32(angle)), 3));
+	timing->smoothed_error = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)timing->smoothed_error * 15), 4) +
+		arithmetic_shift_right_u32(
+			(uint32_t)(int32_t)angle_error, 4));
 	if (!timing->tracking_enabled)
 		return;
 	if (timing->acquisition_groups > ACQUISITION_DELAY_GROUPS) {
@@ -410,24 +395,24 @@ enum v32_symbol_timing_result v32_symbol_timing_process(
 				error = 0;
 		}
 		uint8_t detector_sample = next.detector_sample;
-		int32_t next_i = wrap_s32(
+		int32_t next_i = wrap_s32_from_u32(
 			(uint32_t)next.detector_i_accumulator +
-			(uint32_t)sar32(
+			(uint32_t)arithmetic_shift_right_u32(
 				(uint32_t)((int32_t)error *
 					   DETECTOR_I[detector_sample]), 3));
-		int32_t next_q = wrap_s32(
+		int32_t next_q = wrap_s32_from_u32(
 			(uint32_t)next.detector_q_accumulator -
-			(uint32_t)sar32(
+			(uint32_t)arithmetic_shift_right_u32(
 				(uint32_t)((int32_t)error *
 					   DETECTOR_Q[detector_sample]), 3));
-		int32_t level = wrap_s16((int32_t)(
+		int32_t level = wrap_s16_from_s32((int32_t)(
 			((uint32_t)(int32_t)next.detector_level * 15u) >> 4));
 
-		level += sar32(
+		level += arithmetic_shift_right_u32(
 			(uint32_t)(int32_t)absolute_wrap_s16(error), 1);
 		if (level > INT16_MAX)
 			level = INT16_MAX;
-		next.detector_level = wrap_s16(level);
+		next.detector_level = wrap_s16_from_s32(level);
 		next.detector_sample++;
 		if (next.detector_sample < SAMPLES_PER_SYMBOL) {
 			next.detector_i_accumulator = next_i;
@@ -457,11 +442,12 @@ enum v32_symbol_timing_result v32_symbol_timing_process(
 		 * output opportunities contain at most four corrections, bounding
 		 * a 36-sample call to 36 + 2 + 4 == 42 outputs.
 		 */
-		int16_t phase = wrap_s16(next.polyphase_index + TIMING_PHASES);
+		int16_t phase = wrap_s16_from_s32(
+			next.polyphase_index + TIMING_PHASES);
 		uint8_t advance = 0;
 
 		while (phase >= TIMING_PHASES) {
-			phase = wrap_s16(phase - TIMING_PHASES);
+			phase = wrap_s16_from_s32(phase - TIMING_PHASES);
 			advance++;
 		}
 		if (phase < 0 || advance > 2)

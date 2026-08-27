@@ -2,6 +2,7 @@
 
 #include "equalizer.h"
 #include "fixed_phase.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -57,47 +58,19 @@ static const int16_t CARRIER_INTEGRAL_GAIN[] = {
 	0, 18, 1,
 };
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int32_t wrap_s32(uint32_t value)
-{
-	return value <= INT32_MAX ?
-		       (int32_t)value :
-		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t smooth_q15(
 	int16_t prior, int16_t sample)
 {
-	return wrap_s16(
-		sar32((uint32_t)((int32_t)prior * ERROR_SMOOTH_PRIOR_Q15), 15) +
-		sar32((uint32_t)((int32_t)sample * ERROR_SMOOTH_SAMPLE_Q15), 15));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)prior * ERROR_SMOOTH_PRIOR_Q15), 15) +
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)sample * ERROR_SMOOTH_SAMPLE_Q15), 15));
 }
 
 static int16_t absolute_wrap_s16(int16_t value)
 {
-	return wrap_s16(value < 0 ? -(int32_t)value : value);
+	return wrap_s16_from_s32(value < 0 ? -(int32_t)value : value);
 }
 
 static uint64_t lineage_word(uint64_t lineage, uint16_t word)
@@ -163,7 +136,8 @@ static void reconstruct_initial_coefficients(
 {
 	for (size_t profile = 0; profile < 52; ++profile) {
 		int16_t value = profile < 26 ? INITIAL_I_HALF[profile] :
-			wrap_s16(-(int32_t)INITIAL_I_HALF[51u - profile]);
+			wrap_s16_from_s32(
+				-(int32_t)INITIAL_I_HALF[51u - profile]);
 
 		equalizer->i_coefficients[profile * 2u] = value;
 	}
@@ -253,14 +227,16 @@ static int16_t filter_sample(
 			equalizer->sample_history[history]);
 		history = history == 0 ? V32_EQUALIZER_TAPS - 1u : history - 1u;
 	}
-	return wrap_s16(wrap_s16(sar32(accumulator, 15)) * 2);
+	return wrap_s16_from_s32(
+		wrap_s16_from_s32(
+			arithmetic_shift_right_u32(accumulator, 15)) * 2);
 }
 
 static int16_t carrier_phase_offset(
 	const struct v32_equalizer *equalizer)
 {
-	return wrap_s16(sar32(
-		(uint32_t)wrap_s32(
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
+		(uint32_t)wrap_s32_from_u32(
 			(uint32_t)equalizer->carrier_phase_accumulator + 0x4000u),
 		15));
 }
@@ -270,15 +246,18 @@ static int16_t half_phase(int16_t left, int16_t right, bool subtract)
 	int32_t value = subtract ? (int32_t)left - right :
 					 (int32_t)left + right;
 
-	return wrap_s16(sar32((uint32_t)value, 1));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)value, 1));
 }
 
 static int16_t wrap_quarter_phase(int16_t phase)
 {
 	if (phase < 0)
-		phase = wrap_s16((int32_t)phase + CARRIER_QUARTER_PERIOD);
+		phase = wrap_s16_from_s32(
+			(int32_t)phase + CARRIER_QUARTER_PERIOD);
 	if (phase >= CARRIER_QUARTER_PERIOD)
-		phase = wrap_s16((int32_t)phase - CARRIER_QUARTER_PERIOD);
+		phase = wrap_s16_from_s32(
+			(int32_t)phase - CARRIER_QUARTER_PERIOD);
 	return phase;
 }
 
@@ -286,7 +265,8 @@ static int16_t wrap_decision_error(int16_t phase)
 {
 	if (phase < -CARRIER_QUARTER_PERIOD ||
 	    phase > CARRIER_QUARTER_PERIOD)
-		phase = wrap_s16((int32_t)phase - CARRIER_DECISION_PERIOD);
+		phase = wrap_s16_from_s32(
+			(int32_t)phase - CARRIER_DECISION_PERIOD);
 	return phase;
 }
 
@@ -311,13 +291,13 @@ static struct v32_equalizer_observation make_observation(
 	uint16_t raw_phase = fixed_phase_atan2_u15(sample_q, sample_i);
 	struct fixed_phase_q14 phasor =
 		fixed_phase_sin_cos_q14((int16_t)raw_phase);
-	int16_t magnitude = wrap_s16(sar32(
+	int16_t magnitude = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)phasor.cosine * sample_i +
 			   (int32_t)phasor.sine * sample_q), 15));
-	int16_t carrier_phase = wrap_s16(
+	int16_t carrier_phase = wrap_s16_from_s32(
 		(int32_t)CARRIER_PHASE[equalizer->carrier_phase_index] +
 		carrier_phase_offset(equalizer));
-	int16_t phase = wrap_s16(
+	int16_t phase = wrap_s16_from_s32(
 		wrap_quarter_phase(half_phase(
 			(int16_t)raw_phase, carrier_phase, true)) * 2);
 
@@ -326,9 +306,9 @@ static struct v32_equalizer_observation make_observation(
 	equalizer->pending_filtered_q = sample_q;
 	equalizer->pending_carrier_phase = carrier_phase;
 	return (struct v32_equalizer_observation) {
-		.i = wrap_s16(sar32(
+		.i = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)phasor.cosine * magnitude), 13)),
-		.q = wrap_s16(sar32(
+		.q = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)phasor.sine * magnitude), 13)),
 		.phase = (uint16_t)phase,
 		.magnitude = (uint16_t)magnitude,
@@ -436,16 +416,19 @@ static void update_carrier_loop(
 		(int32_t)CARRIER_PROPORTIONAL_GAIN[gain] * phase_error;
 	int32_t phase;
 
-	equalizer->carrier_integrator = wrap_s32(
+	equalizer->carrier_integrator = wrap_s32_from_u32(
 		(uint32_t)integral + (uint32_t)old_integrator);
-	phase = wrap_s32(
+	phase = wrap_s32_from_u32(
 		(uint32_t)proportional +
 		(uint32_t)equalizer->carrier_phase_accumulator);
-	phase = wrap_s32((uint32_t)phase + (uint32_t)old_integrator);
+	phase = wrap_s32_from_u32(
+		(uint32_t)phase + (uint32_t)old_integrator);
 	if (phase < -0x20000000)
-		phase = wrap_s32((uint32_t)phase + CARRIER_ACCUMULATOR_PERIOD);
+		phase = wrap_s32_from_u32(
+			(uint32_t)phase + CARRIER_ACCUMULATOR_PERIOD);
 	if (phase > 0x20000000)
-		phase = wrap_s32((uint32_t)phase - CARRIER_ACCUMULATOR_PERIOD);
+		phase = wrap_s32_from_u32(
+			(uint32_t)phase - CARRIER_ACCUMULATOR_PERIOD);
 	equalizer->carrier_phase_accumulator = phase;
 }
 
@@ -468,10 +451,10 @@ static void lms_update(
 	for (size_t tap = 0; tap < V32_EQUALIZER_TAPS; ++tap) {
 		int32_t product = (int32_t)equalizer->sample_history[history] *
 			gain;
-		int16_t delta = wrap_s16(sar32(
+		int16_t delta = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			(uint32_t)product + UINT32_C(0x20000), 18));
 
-		coefficients[tap] = wrap_s16(
+		coefficients[tap] = wrap_s16_from_s32(
 			(int32_t)coefficients[tap] + delta);
 		history = history == 0 ? V32_EQUALIZER_TAPS - 1u : history - 1u;
 	}
@@ -518,40 +501,46 @@ enum v32_equalizer_result v32_equalizer_commit(
 	    decision->ideal_magnitude > INT16_MAX)
 		return V32_EQUALIZER_INVALID_ARGUMENT;
 	next = *equalizer;
-	carrier_error = wrap_decision_error(wrap_s16(
+	carrier_error = wrap_decision_error(wrap_s16_from_s32(
 		(int32_t)(int16_t)next.pending_observation.phase -
 		(int16_t)decision->ideal_phase));
 	update_carrier_loop(&next, carrier_error);
 	ideal_phase = wrap_quarter_phase(half_phase(
 		(int16_t)decision->ideal_phase,
 		next.pending_carrier_phase, false));
-	phasor = fixed_phase_sin_cos_q14(wrap_s16((int32_t)ideal_phase * 2));
-	error_i = wrap_s16(
-		sar32((uint32_t)((int32_t)phasor.cosine *
+	phasor = fixed_phase_sin_cos_q14(
+		wrap_s16_from_s32((int32_t)ideal_phase * 2));
+	error_i = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)phasor.cosine *
 				 (int16_t)decision->ideal_magnitude), 14) -
 		next.pending_filtered_i);
-	error_q = wrap_s16(
-		sar32((uint32_t)((int32_t)(int16_t)decision->ideal_magnitude *
+	error_q = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)(int16_t)decision->ideal_magnitude *
 				 phasor.sine), 14) -
 		next.pending_filtered_q);
-	error_energy = wrap_s32(
+	error_energy = wrap_s32_from_u32(
 		(uint32_t)((int32_t)error_i * error_i) +
 		(uint32_t)((int32_t)error_q * error_q));
-	scaled_error = wrap_s16(sar32((uint32_t)error_energy, 11));
+	scaled_error = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)error_energy, 11));
 	next_error =
-		sar32((uint32_t)((int32_t)next.decision_error *
-				 ERROR_SMOOTH_PRIOR_Q15), 15) +
-		sar32((uint32_t)((int32_t)scaled_error *
-				 ERROR_SMOOTH_SAMPLE_Q15), 15);
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)next.decision_error *
+				   ERROR_SMOOTH_PRIOR_Q15), 15) +
+		arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)scaled_error *
+				   ERROR_SMOOTH_SAMPLE_Q15), 15);
 	next.decision_error = (uint32_t)next_error < CARRIER_DECISION_PERIOD ?
-		wrap_s16(next_error) : INT16_MAX;
+		wrap_s16_from_s32(next_error) : INT16_MAX;
 	adapt = next.adaptation != V32_EQUALIZER_ADAPTATION_DISABLED &&
 		decision->adapt_on_error && next.decision_error > 0;
 	if (adapt) {
 		int16_t gain = adaptation_gain(next.adaptation);
-		int16_t gain_i = wrap_s16(sar32(
+		int16_t gain_i = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)error_i * gain + 0x800), 12));
-		int16_t gain_q = wrap_s16(sar32(
+		int16_t gain_q = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)error_q * gain + 0x800), 12));
 
 		lms_update(next.i_coefficients, &next, gain_i);

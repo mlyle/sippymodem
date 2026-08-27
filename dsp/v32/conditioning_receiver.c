@@ -4,6 +4,7 @@
 
 #include "constellation.h"
 #include "decision.h"
+#include "integer_math.h"
 #include "memory_region.h"
 #include "rate_signal.h"
 
@@ -233,26 +234,12 @@ static int reset_search(
 	return 0;
 }
 
-static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
-{
-	if (shift == 0)
-		return (int32_t)value;
-	if ((value & UINT32_C(0x80000000)) == 0)
-		return (int32_t)(value >> shift);
-	return (int32_t)(~((~value) >> shift));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	return (int16_t)(uint16_t)value;
-}
-
 static int16_t smooth_magnitude(int16_t average, int16_t magnitude)
 {
-	return wrap_s16(
-		arithmetic_shift_right_s32(
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)average * 0x7c00), 15) +
-		arithmetic_shift_right_s32(
+		arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)magnitude * 0x0400), 15));
 }
 
@@ -268,7 +255,8 @@ static int16_t shifted_distance(
 		(uint32_t)((int32_t)difference_i * difference_i) +
 		(uint32_t)((int32_t)difference_q * difference_q);
 
-	return wrap_s16(arithmetic_shift_right_s32(energy, shift));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(energy, shift));
 }
 
 /* S alternates between two points, so each observation normally repeats the
@@ -279,7 +267,7 @@ static bool observe_epoch_energy(
 	struct v32_conditioning_epoch_detector *detector,
 	const struct v32_equalizer_observation *observation)
 {
-	int16_t phase_delta = wrap_s16(
+	int16_t phase_delta = wrap_s16_from_s32(
 		(uint16_t)observation->phase - detector->phase);
 	int16_t history_energy;
 	int16_t average_energy;
@@ -288,7 +276,8 @@ static bool observe_epoch_energy(
 
 	detector->phase = observation->phase;
 	if (phase_delta < 0)
-		phase_delta = wrap_s16((uint16_t)phase_delta - 0x8000u);
+		phase_delta = wrap_s16_from_s32(
+			(uint16_t)phase_delta - 0x8000u);
 	if (phase_delta > 0x4000)
 		detector->average_a = smooth_magnitude(
 			detector->average_a,
@@ -297,7 +286,7 @@ static bool observe_epoch_energy(
 		detector->average_b = smooth_magnitude(
 			detector->average_b,
 			(int16_t)observation->magnitude);
-	history_energy = wrap_s16(
+	history_energy = wrap_s16_from_s32(
 		shifted_distance(
 			detector->i_previous,
 			detector->q_previous,

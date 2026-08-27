@@ -3,6 +3,7 @@
 #include "trellis_decoder.h"
 
 #include "constellation.h"
+#include "integer_math.h"
 #include "memory_region.h"
 #include "trellis_profile.h"
 
@@ -32,26 +33,6 @@ static const uint8_t DIFFERENTIAL_DECODE[4][4] = {
 	{ 3, 2, 0, 1 },
 	{ 2, 3, 1, 0 },
 };
-
-static int32_t arithmetic_shift_right_s32(int32_t value, unsigned shift)
-{
-	uint32_t magnitude;
-	uint32_t rounding;
-
-	if (value >= 0)
-		return value >> shift;
-	magnitude = (uint32_t)(-(int64_t)value);
-	rounding = (UINT32_C(1) << shift) - 1u;
-	return -(int32_t)((magnitude + rounding) >> shift);
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t wrapped = (uint16_t)(uint32_t)value;
-
-	return wrapped <= INT16_MAX ? (int16_t)wrapped :
-	       (int16_t)((int32_t)wrapped - 65536);
-}
 
 static bool decoder_header_is_valid(
 	const struct v32_trellis_decoder *decoder)
@@ -147,7 +128,7 @@ static int16_t branch_metric(
 				     difference_q * difference_q);
 	uint64_t scaled = ((energy >> 16) * BRANCH_SCALE) >> 12;
 
-	return wrap_s16((int32_t)scaled);
+	return wrap_s16_from_s32((int32_t)scaled);
 }
 
 static void select_path(
@@ -160,7 +141,7 @@ static void select_path(
 	uint8_t selected_predecessor = predecessor_base;
 	uint8_t selected_candidate = (uint8_t)(
 		predecessor_base + BRANCH_FOR_STATE[state][0]);
-	int16_t selected_metric = wrap_s16(
+	int16_t selected_metric = wrap_s16_from_s32(
 		(int32_t)previous[selected_predecessor] +
 		branch[selected_candidate]);
 
@@ -168,7 +149,7 @@ static void select_path(
 		uint8_t predecessor = (uint8_t)(predecessor_base + offset);
 		uint8_t candidate = (uint8_t)(
 			predecessor_base + BRANCH_FOR_STATE[state][offset]);
-		int16_t metric = wrap_s16(
+		int16_t metric = wrap_s16_from_s32(
 			(int32_t)previous[predecessor] + branch[candidate]);
 
 		if (metric < selected_metric) {
@@ -206,10 +187,11 @@ static enum v32_trellis_decoder_result advance_paths(
 	for (uint8_t state = 0; state < V32_TRELLIS_STATE_COUNT; ++state) {
 		struct v32_fixed_point point;
 
-		previous[state] = wrap_s16(arithmetic_shift_right_s32(
-			(int32_t)decoder->path_metrics[state] *
-				METRIC_DECAY_Q15,
-			15));
+		previous[state] = wrap_s16_from_s32(
+			arithmetic_shift_right_u32(
+				(uint32_t)((int32_t)decoder->path_metrics[state] *
+					   METRIC_DECAY_Q15),
+				15));
 		old_symbols[state] = decoder->paths[slot][state].signal_symbol;
 		if (v32_trellis_fixed_signal_point(
 			    decoder->data_bits_per_symbol, candidates[state],

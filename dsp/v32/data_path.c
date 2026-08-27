@@ -3,25 +3,10 @@
 #include "data_path.h"
 
 #include "decision.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <stddef.h>
-
-static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
-{
-	if (shift == 0)
-		return value <= INT32_MAX ?
-			       (int32_t)value :
-			       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-	if ((value & UINT32_C(0x80000000)) == 0)
-		return (int32_t)(value >> shift);
-	return (int32_t)(~((~value) >> shift));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	return (int16_t)(uint16_t)value;
-}
 
 static int32_t repeated_pair_energy(
 	int16_t previous_i, int16_t previous_q,
@@ -35,7 +20,7 @@ static int32_t repeated_pair_energy(
 		(uint32_t)((int32_t)difference_i * difference_i) +
 		(uint32_t)((int32_t)difference_q * difference_q);
 
-	return arithmetic_shift_right_s32(energy, 16);
+	return arithmetic_shift_right_u32(energy, 16);
 }
 
 static bool observe_retrain(
@@ -44,10 +29,10 @@ static bool observe_retrain(
 {
 	int32_t energy = repeated_pair_energy(
 		detector->i_previous, detector->q_previous, observation);
-	int16_t average = wrap_s16(
-		arithmetic_shift_right_s32(
+	int16_t average = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)detector->average_error * 15), 4) +
-		arithmetic_shift_right_s32((uint32_t)energy, 4));
+		arithmetic_shift_right_u32((uint32_t)energy, 4));
 	uint16_t count = detector->repeated_pair_observations + 1u;
 
 	detector->i_previous = detector->i_last;
@@ -59,7 +44,7 @@ static bool observe_retrain(
 		/* A large new two-symbol error during qualification is the separate
 		 * rate-renegotiation pattern.  This path does not yet negotiate a new
 		 * rate, but it must reset rather than falsely request full retrain. */
-		if (average < (int16_t)arithmetic_shift_right_s32(
+		if (average < (int16_t)arithmetic_shift_right_u32(
 				      (uint32_t)energy, 3) &&
 		    count > 0x0014 && count <= 0x003b) {
 			detector->repeated_pair_observations = 0;

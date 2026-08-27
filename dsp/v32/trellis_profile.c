@@ -2,10 +2,10 @@
 
 #include "trellis_profile.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 #include "trellis.h"
 
-#include <limits.h>
 #include <string.h>
 
 #define ARRAY_LENGTH(array) (sizeof(array) / sizeof((array)[0]))
@@ -327,40 +327,22 @@ bool v32_trellis_profile_is_valid(
 	return owned_profile(profile) != NULL;
 }
 
-static int32_t arithmetic_shift_right_s32(int32_t value, unsigned shift)
-{
-	uint32_t magnitude;
-	uint32_t rounding;
-
-	if (value >= 0)
-		return value >> shift;
-	magnitude = (uint32_t)(-(int64_t)value);
-	rounding = (UINT32_C(1) << shift) - 1u;
-	return -(int32_t)((magnitude + rounding) >> shift);
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t wrapped = (uint16_t)(uint32_t)value;
-
-	return wrapped <= INT16_MAX ? (int16_t)wrapped :
-	       (int16_t)((int32_t)wrapped - 65536);
-}
-
 static void region_coordinates(
 	uint8_t data_bits_per_symbol, int16_t in_phase, int16_t quadrature,
 	int32_t *region_i, int32_t *region_q)
 {
 	if (data_bits_per_symbol == V32_7200_DATA_BITS) {
-		*region_i = arithmetic_shift_right_s32(
-			(int32_t)in_phase + quadrature, 2);
-		*region_q = arithmetic_shift_right_s32(
-			(int32_t)quadrature - in_phase, 2);
+		*region_i = arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)in_phase + quadrature), 2);
+		*region_q = arithmetic_shift_right_u32(
+			(uint32_t)((int32_t)quadrature - in_phase), 2);
 	} else if (data_bits_per_symbol == V32_12000_DATA_BITS) {
-		*region_i = arithmetic_shift_right_s32(
-			wrap_s16((int32_t)in_phase + quadrature), 1);
-		*region_q = arithmetic_shift_right_s32(
-			wrap_s16((int32_t)quadrature - in_phase), 1);
+		*region_i = arithmetic_shift_right_u32(
+			(uint32_t)wrap_s16_from_s32(
+				(int32_t)in_phase + quadrature), 1);
+		*region_q = arithmetic_shift_right_u32(
+			(uint32_t)wrap_s16_from_s32(
+				(int32_t)quadrature - in_phase), 1);
 	} else {
 		*region_i = in_phase;
 		*region_q = quadrature;
