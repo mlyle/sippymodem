@@ -14,6 +14,7 @@ enum {
 	TEST_SAMPLE_LIMIT = 40000,
 	TEST_TONE_SAMPLES = 160,
 	RETRAIN_PRIOR_RTD_SAMPLES = 1000,
+	RETRAIN_LATE_ALIAS_SAMPLES = 5000,
 };
 
 struct owned_pair {
@@ -517,6 +518,7 @@ static bool test_retrain_timeline(void)
 	struct owned_pair pair;
 	uint16_t caller_rtd = 0;
 	uint16_t answerer_rtd = 0;
+	bool answerer_late_alias_injected = false;
 	bool caller_trial_rejected = false;
 	bool ready = false;
 
@@ -542,6 +544,19 @@ static bool test_retrain_timeline(void)
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
 
+		if (!answerer_late_alias_injected &&
+		    pair.answerer.stage == V34_PHASE2_RANGING &&
+		    pair.answerer.state.ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    pair.answerer.state.ranging.control
+			    .measurement_elapsed_samples != 0) {
+			pair.answerer.state.ranging.control
+				.measurement_elapsed_samples +=
+				RETRAIN_LATE_ALIAS_SAMPLES;
+			CHECK(v34_phase2_is_valid(&pair.answerer),
+			      "late-reversal alias invalidated the answerer");
+			answerer_late_alias_injected = true;
+		}
 		CHECK(pair_sample(
 			      &pair, &caller_event, &answerer_event,
 			      &caller_transmit, &answerer_transmit),
@@ -560,7 +575,8 @@ static bool test_retrain_timeline(void)
 			break;
 		}
 	}
-	CHECK(ready && caller_trial_rejected &&
+	CHECK(ready && answerer_late_alias_injected &&
+	      caller_trial_rejected &&
 	      caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
 	      answerer_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
 	      !v34_phase2_has_failed(&pair.caller) &&

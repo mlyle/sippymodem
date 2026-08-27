@@ -595,6 +595,8 @@ static bool sample_ranging(
 {
 	struct v34_phase2_ranging_event child;
 	uint32_t measured;
+	uint32_t prior;
+	uint32_t separation;
 
 	if (v34_phase2_ranging_sample(
 		    &phase2->state.ranging, received_sample,
@@ -606,20 +608,19 @@ static bool sample_ranging(
 		phase2->peer_info0_stored = true;
 	}
 	/* Each line terminal turns a ranging reversal around in 40 ms. A larger
-	 * within-call drop is an early reversal alias, not a new propagation delay.
-	 * Preserve the already-confirmed RTD before it sizes the retrain probe. */
+	 * within-call RTD change is an early or late reversal alias, not a new
+	 * propagation delay. Preserve the confirmed RTD before it sizes the probe. */
 	measured = child.round_trip_delay_samples;
-	if (phase2->prior_round_trip_delay_samples != 0u &&
+	prior = phase2->prior_round_trip_delay_samples;
+	separation = measured > prior ? measured - prior : prior - measured;
+	if (prior != 0u &&
 	    phase2->state.ranging.control.round_trip_delay_valid &&
 	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
 	     child.kind == PHASE2_PROBE_RECEIVE_READY ||
 	     child.kind == PHASE2_PROBE_TRANSMIT_READY) &&
-	    measured + PHASE2_RANGING_TURNAROUND_SAMPLES <
-		    phase2->prior_round_trip_delay_samples) {
-		child.round_trip_delay_samples =
-			phase2->prior_round_trip_delay_samples;
-		phase2->state.ranging.control.round_trip_delay_samples =
-			phase2->prior_round_trip_delay_samples;
+	    separation > PHASE2_RANGING_TURNAROUND_SAMPLES) {
+		child.round_trip_delay_samples = prior;
+		phase2->state.ranging.control.round_trip_delay_samples = prior;
 	}
 	switch (child.kind) {
 	case PHASE2_ROUND_TRIP_DELAY_MEASURED:
