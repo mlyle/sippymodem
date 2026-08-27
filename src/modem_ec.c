@@ -1789,15 +1789,15 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	if (l->modem != m || l->state != LAPM_DATA || l->ctrl_list == NULL ||
 	    l->tx_ctrl == NULL)
 		return -1;
-	if (l->retrain_poll)
-		return 0;
-	if (l->ctrl_list->next == l->tx_ctrl ||
+	if ((!l->retrain_poll && l->ctrl_list->next == l->tx_ctrl) ||
 	    modem_hdlc_reframe(m) != 0)
 		return -1;
 	/* A physical interruption loses HDLC framing and leaves the peer's
 	 * receive sequence uncertain. Hold new information frames until one
 	 * solicited response acknowledges or requeues the retained window. */
 	l->peer_busy = 1;
+	if (l->retrain_poll)
+		return 0;
 	if ((l->busy ? TX_RNR(l, l->cmd_addr, 1) :
 		      TX_RR(l, l->cmd_addr, 1)) != 0)
 		return -1;

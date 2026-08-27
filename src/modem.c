@@ -704,10 +704,6 @@ void modem_dp_connected(struct modem *m)
 	if (m == NULL)
 		return;
 	if (IS_STATE_ONLINE(m->state)) {
-		if (modem_ec_resume_after_retrain(m) != 0) {
-			modem_update_status(m, STATUS_EC_ERROR);
-			return;
-		}
 		if (m->retrain_pending)
 			modem_update_status(m, STATUS_RETRAIN_COMPLETE);
 		return;
@@ -720,6 +716,14 @@ void modem_dp_reconnected(struct modem *m)
 {
 	if (m == NULL)
 		return;
+	if (IS_STATE_ONLINE(m->state)) {
+		if (modem_ec_resume_after_retrain(m) != 0) {
+			modem_update_status(m, STATUS_EC_ERROR);
+			return;
+		}
+		modem_dp_connected(m);
+		return;
+	}
 	if (m->state != STATE_EC_ESTAB) {
 		modem_dp_connected(m);
 		return;

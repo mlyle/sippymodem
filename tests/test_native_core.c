@@ -1578,6 +1578,54 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			      modem->packer.hdlc.framer) == NULL,
 		      "duplicate LAPM %s reconnect queued a second status enquiry",
 		      local ? "local" : "remote");
+		if (local == 0) {
+			modem->bit_timer_func(modem);
+			CHECK(modem->bit_timer == 52800 && lapm->rtx_count == 2,
+			      "LAPM retrain did not retain its status retry");
+			lapm->peer_busy = 0;
+			modem->pack.bit = 3;
+			modem->unpack.bit = 5;
+			modem->packer.hdlc.tx_ones = 2;
+			modem->packer.hdlc.rx_ones = 4;
+			modem->packer.hdlc.rx_error = 0;
+			modem->packer.hdlc.rx_frame->count = 2;
+			modem->retrain_pending = 1;
+			modem_dp_reconnected(modem);
+			CHECK(modem->retrain_pending == 0 &&
+				      lapm->state == LAPM_DATA_STATE &&
+				      lapm->peer_busy == 1 && lapm->vs == 5 &&
+				      lapm->va == 5 && lapm->vr == 6 &&
+				      lapm->v44_path == v44_path &&
+				      lapm->retrain_poll == 1 &&
+				      modem->bit_timer == 52800 &&
+				      lapm->rtx_count == 2 &&
+				      modem->pack.bit == 0 &&
+				      modem->unpack.bit == 0 &&
+				      modem->packer.hdlc.tx_ones == 0 &&
+				      modem->packer.hdlc.rx_ones == 0 &&
+				      modem->packer.hdlc.rx_error == 1 &&
+				      modem->packer.hdlc.rx_frame->count == 0,
+			      "repeated LAPM retrain did not reframe the retained link");
+			modem->pack.bit = 3;
+			modem_dp_connected(modem);
+			CHECK(modem->pack.bit == 3 && modem->bit_timer == 52800 &&
+				      lapm->rtx_count == 2,
+			      "duplicate LAPM reconnect reframed the active link");
+			modem->pack.bit = 0;
+			outgoing = modem->packer.hdlc.get_tx_frame(
+				modem->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->size == 3 &&
+				      outgoing->buf[0] == lapm->cmd_addr &&
+				      outgoing->buf[1] == FRAME_S_RR &&
+				      outgoing->buf[2] ==
+					      (uint8_t)((lapm->vr << 1) | 1),
+			      "repeated LAPM retrain lost its queued status retry");
+			modem->packer.hdlc.tx_complete(
+				modem->packer.hdlc.framer, outgoing);
+			CHECK(modem->packer.hdlc.get_tx_frame(
+				      modem->packer.hdlc.framer) == NULL,
+			      "repeated LAPM retrain duplicated its status retry");
+		}
 
 		response[0] = lapm->cmd_addr;
 		response[1] = FRAME_S_RR;
