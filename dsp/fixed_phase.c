@@ -2,6 +2,8 @@
 
 #include "fixed_phase.h"
 
+#include "integer_math.h"
+
 #include <limits.h>
 #include <math.h>
 #include <stdint.h>
@@ -13,29 +15,6 @@ enum {
 
 static const double FIXED_PHASE_PI =
 	3.1415926535897932384626433832795;
-
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
 
 static uint16_t reciprocal_q15(
 	uint16_t value, uint16_t *exponent)
@@ -85,10 +64,10 @@ uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y)
 	}
 	index = (uint16_t)(((scale >> 15) << (exponent & 0x1fu)) &
 			     UINT16_MAX);
-	angle_input = wrap_s16(index);
+	angle_input = wrap_s16_from_s32(index);
 	if (index > 0x7eu)
 		angle_input = (int16_t)atan_profile_u15(index >> 7);
-	angle = sar32(
+	angle = arithmetic_shift_right_u32(
 		(uint32_t)(angle_input * 0x145f + 0x4000), 15);
 	if (absolute_x < absolute_y) {
 		if (y < 0)
@@ -196,19 +175,19 @@ struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase)
 	cosine1 = quadrant_sine_q15(
 		FIXED_PHASE_QUARTER_STEPS - (unsigned int)index - 1u);
 	sine = ((uint32_t)sine0 +
-		 (uint32_t)sar32(
+		 (uint32_t)arithmetic_shift_right_u32(
 			 (uint32_t)(((int32_t)sine1 - (int32_t)sine0) *
 				    fraction), 5)) &
 		UINT16_MAX;
 	cosine = ((uint32_t)cosine0 +
-		   (uint32_t)sar32(
+		   (uint32_t)arithmetic_shift_right_u32(
 			   (uint32_t)(((int32_t)cosine1 -
 				       (int32_t)cosine0) * fraction),
 			   5)) &
 		  UINT16_MAX;
-	result.sine = wrap_s16(sar32(
+	result.sine = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)sine * sine_sign[quadrant + 4]), 15));
-	result.cosine = wrap_s16(sar32(
+	result.cosine = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)cosine * cosine_sign[quadrant + 4]), 15));
 	return result;
 }

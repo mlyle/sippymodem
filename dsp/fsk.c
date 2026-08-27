@@ -3,6 +3,7 @@
 #include "fsk.h"
 
 #include "fixed_phase.h"
+#include "integer_math.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -13,22 +14,6 @@ enum {
 	FSK_MIN_DETECTOR_WINDOW = 3,
 	FSK_MAX_SMOOTHING_SHIFT = 30,
 };
-
-static int32_t arithmetic_shift_right_s32(
-	uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
 
 static int64_t arithmetic_shift_right_s64(
 	uint64_t value, unsigned int shift)
@@ -289,9 +274,9 @@ static int64_t projection_power(
 			(receiver->history_index + window - 1 - tap) % window;
 		int32_t sample = receiver->history[index];
 
-		in_phase += arithmetic_shift_right_s32(
+		in_phase += arithmetic_shift_right_u32(
 			(uint32_t)(sample * projection->in_phase[tap]), 8);
-		quadrature += arithmetic_shift_right_s32(
+		quadrature += arithmetic_shift_right_u32(
 			(uint32_t)(sample * projection->quadrature[tap]), 8);
 	}
 	return in_phase * in_phase + quadrature * quadrature;

@@ -3,6 +3,7 @@
 #include "v8_ansam.h"
 
 #include "fixed_phase.h"
+#include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
 
@@ -137,32 +138,10 @@ _Static_assert(
 			sizeof(V8_ANSAM_REJECTION_B[0]) == 3,
 	"ANSam rejection filter profile changed");
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	if (shift == 0)
-		return value <= INT32_MAX ?
-			       (int32_t)value :
-			       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-	if ((value & UINT32_C(0x80000000)) == 0)
-		return (int32_t)(value >> shift);
-	value = (value >> shift) | ~(UINT32_MAX >> shift);
-	return value <= INT32_MAX ?
-		       (int32_t)value :
-		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t mul_shift_s16(
 	int16_t left, int16_t right, unsigned int shift)
 {
-	return wrap_s16(sar32(
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)left * right), shift));
 }
 
@@ -229,10 +208,11 @@ static bool detect_carrier(
 				tone->tone_output[1 - index];
 		}
 		tone->tone_output[0] = (uint16_t)output;
-		samples[sample_index] = wrap_s16(output);
+		samples[sample_index] = wrap_s16_from_s32(output);
 
 		{
-			int32_t stage = sar32((uint32_t)output, 4);
+			int32_t stage = arithmetic_shift_right_u32(
+				(uint32_t)output, 4);
 
 			for (size_t index = 0; index < 2; ++index) {
 				stage += mul_shift_s16(
@@ -246,10 +226,10 @@ static bool detect_carrier(
 			tone->iir_output[1] = tone->iir_output[0];
 			tone->iir_input[1] = tone->iir_input[0];
 			tone->iir_output[0] = (uint16_t)stage;
-			tone->iir_input[0] = (uint16_t)sar32(
+			tone->iir_input[0] = (uint16_t)arithmetic_shift_right_u32(
 				(uint32_t)output, 4);
 
-			output = sar32((uint32_t)stage, 4);
+			output = arithmetic_shift_right_u32((uint32_t)stage, 4);
 			for (size_t index = 0; index < 2; ++index) {
 				output += mul_shift_s16(
 					(int16_t)tone->iir_input[2 + index],
@@ -263,12 +243,14 @@ static bool detect_carrier(
 			tone->iir_output[3] = tone->iir_output[2];
 			tone->iir_input[3] = tone->iir_input[2];
 			tone->iir_output[2] = (uint16_t)output;
-			tone->iir_input[2] = (uint16_t)sar32(
+			tone->iir_input[2] = (uint16_t)arithmetic_shift_right_u32(
 				(uint32_t)stage, 4);
 
 			output = mul_shift_s16(
-				wrap_s16(magnitude_s16(wrap_s16(sar32(
-					(uint32_t)output, 4)))),
+				wrap_s16_from_s32(magnitude_s16(
+					wrap_s16_from_s32(
+						arithmetic_shift_right_u32(
+							(uint32_t)output, 4)))),
 				V8_ANSAM_TONE_ENERGY_GAIN_Q14, 14);
 			output += mul_shift_s16(
 				(int16_t)tone->filtered_energy,
@@ -353,21 +335,24 @@ static void accumulate_modulation(
 		cosine = cycle_cosine_q14(phase_index);
 		phase_index = (uint8_t)(phase_index + 64u);
 		quadrature = cycle_cosine_q14(phase_index);
-		dft->real_accumulator += (uint32_t)sar32(
+		dft->real_accumulator += (uint32_t)arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)cosine * magnitude), 6);
-		dft->imaginary_accumulator += (uint32_t)sar32(
+		dft->imaginary_accumulator +=
+			(uint32_t)arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)quadrature * magnitude), 6);
 	}
 }
 
 static uint16_t modulation_energy(const struct v8_ansam_dft *dft)
 {
-	int32_t real = sar32(dft->real_accumulator << 1, 16);
-	int32_t imaginary = sar32(dft->imaginary_accumulator << 1, 16);
+	int32_t real = arithmetic_shift_right_u32(
+		dft->real_accumulator << 1, 16);
+	int32_t imaginary = arithmetic_shift_right_u32(
+		dft->imaginary_accumulator << 1, 16);
 	uint32_t energy = (uint32_t)real * (uint32_t)real;
 
 	energy += (uint32_t)imaginary * (uint32_t)imaginary;
-	return (uint16_t)sar32(energy, 16);
+	return (uint16_t)arithmetic_shift_right_u32(energy, 16);
 }
 
 static bool process_block(

@@ -3,10 +3,9 @@
 #include "v8_fsk.h"
 
 #include "fixed_phase.h"
+#include "integer_math.h"
 #include "memory_region.h"
 #include "v21.h"
-
-#include <limits.h>
 
 enum {
 	V8_FSK_SAMPLE_RATE = 8000,
@@ -40,33 +39,10 @@ _Static_assert(
 		(unsigned int)V8_FSK_TRANSMIT_FILTER_TAPS,
 	"V.8 transmit history seed left the filter");
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t mul_shift_s16(
 	int16_t left, int16_t right, unsigned int shift)
 {
-	return wrap_s16(sar32(
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)left * right), shift));
 }
 
@@ -203,7 +179,8 @@ static int16_t filter_sample(
 		accumulator += (uint32_t)((int32_t)sample * coefficients[tap]);
 		sample = previous;
 	}
-	return wrap_s16(sar32(accumulator, 16));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(accumulator, 16));
 }
 
 enum v8_fsk_result v8_fsk_transmit_sample(

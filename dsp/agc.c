@@ -22,14 +22,6 @@ static int32_t shift_q15(uint32_t bits)
 			 -((-value + INT32_C(0x7fff)) / INT32_C(0x8000)));
 }
 
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t clamp_s16(int64_t value)
 {
 	if (value > INT16_MAX)
@@ -75,7 +67,8 @@ enum agc_result agc_measure_level_s16(
 
 		energy += (uint32_t)(scaled * (int32_t)samples[index]);
 	}
-	measured = wrap_s16((int32_t)fixed_square_root_u32(energy));
+	measured = wrap_s16_from_s32(
+		(int32_t)fixed_square_root_u32(energy));
 	*level = measured;
 	return AGC_OK;
 }
@@ -177,7 +170,7 @@ enum agc_result agc_process(
 			(uint32_t)((int32_t)level *
 				   next.config.input_weight_q15));
 
-		block_gain = wrap_s16(history + observed);
+		block_gain = wrap_s16_from_s32(history + observed);
 		next.smoothed_level = block_gain;
 		if (next.gain_mode == AGC_GAIN_TRACKING && block_gain != 0) {
 			uint16_t exponent;
@@ -185,7 +178,7 @@ enum agc_result agc_process(
 				(uint16_t)block_gain, &exponent);
 
 			next.gain_shift = (int16_t)exponent - 1;
-			next.gain_mantissa_q15 = wrap_s16(
+			next.gain_mantissa_q15 = wrap_s16_from_s32(
 				shift_q15(
 					(uint32_t)((int32_t)reciprocal *
 						   next.config.target_level_q15)));

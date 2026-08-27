@@ -5,7 +5,6 @@
 #include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <string.h>
 
 enum {
@@ -34,29 +33,6 @@ _Static_assert(
 			sizeof(V8_ANSWERER_ENTRANCE_FILTER[0]) ==
 		V8_LINE_ENTRANCE_FILTER_TAPS,
 	"V.8 entrance filter profile changed");
-
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
 
 static int32_t magnitude_s16(int16_t value)
 {
@@ -144,7 +120,8 @@ static int16_t entrance_filter_sample(
 		accumulator += (uint32_t)((int32_t)sample * coefficients[index]);
 		sample = previous;
 	}
-	return wrap_s16(sar32(accumulator, 14));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(accumulator, 14));
 }
 
 static int16_t gain_step(enum v8_line_gain_mode mode)
@@ -158,7 +135,8 @@ static void adapt_gain(
 	int32_t filtered = (int16_t)conditioner->filtered_energy;
 	int32_t block_high = (uint16_t)(block_energy >> 16);
 	int32_t next_filtered =
-		sar32((uint32_t)(filtered * 0x6952), 15) + block_high;
+		arithmetic_shift_right_u32(
+			(uint32_t)(filtered * 0x6952), 15) + block_high;
 	int32_t deviation;
 	int32_t delta;
 
@@ -171,22 +149,22 @@ static void adapt_gain(
 		return;
 
 	deviation = (int16_t)conditioner->filtered_energy - 4000;
-	if (magnitude_s16(wrap_s16(deviation)) <= 2000)
+	if (magnitude_s16(wrap_s16_from_s32(deviation)) <= 2000)
 		return;
-	delta = sar32(
+	delta = arithmetic_shift_right_u32(
 		(uint32_t)(gain_step(conditioner->gain_mode) * deviation), 16) +
 		(int16_t)conditioner->gain_delta;
-	if (magnitude_s16(wrap_s16(delta)) <= 1000) {
+	if (magnitude_s16(wrap_s16_from_s32(delta)) <= 1000) {
 		conditioner->gain_delta = (uint16_t)delta;
 		return;
 	}
 
 	conditioner->gain_delta = 0;
 	if (delta > 0) {
-		conditioner->gain = (uint16_t)sar32(
+		conditioner->gain = (uint16_t)arithmetic_shift_right_u32(
 			(uint32_t)((int16_t)conditioner->gain * 0x390a), 14);
 	} else if ((int16_t)conditioner->gain <= 0x6a00) {
-		conditioner->gain = (uint16_t)sar32(
+		conditioner->gain = (uint16_t)arithmetic_shift_right_u32(
 			(uint32_t)((int16_t)conditioner->gain * 0x47cf), 14);
 	}
 }
@@ -198,9 +176,11 @@ static int16_t scale_sample(
 	uint32_t top = (uint32_t)product >> 25;
 
 	if (top == 0u || top == 0x7fu)
-		return wrap_s16(sar32((uint32_t)product, 10));
+		return wrap_s16_from_s32(
+			arithmetic_shift_right_u32((uint32_t)product, 10));
 	*overflow = true;
-	return wrap_s16(sar32((uint32_t)product, 16)) < 1 ?
+	return wrap_s16_from_s32(
+		       arithmetic_shift_right_u32((uint32_t)product, 16)) < 1 ?
 		       (int16_t)0x8100 : (int16_t)0x7f00;
 }
 
@@ -225,7 +205,7 @@ static void condition_block(
 	for (size_t index = 0;
 	     index < V8_LINE_POWER_HISTORY_SAMPLES; ++index) {
 		int16_t sample = (int16_t)conditioner->power_history[index];
-		int32_t weighted = sar32(
+		int32_t weighted = arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)sample * V8_LINE_POWER_WEIGHT_Q15), 15);
 
 		history_energy += (uint32_t)(weighted * sample);
@@ -277,11 +257,13 @@ enum v8_line_conditioner_result v8_line_conditioner_process_sample(
 		return V8_LINE_CONDITIONER_INVALID_ARGUMENT;
 	next = *conditioner;
 	filtered_word = (uint16_t)sample + next.post_filter_word;
-	next.input_queue[next.input_count++] = wrap_s16(filtered_word);
+	next.input_queue[next.input_count++] =
+		wrap_s16_from_s32(filtered_word);
 	feedback =
-		(uint32_t)((int32_t)wrap_s16(filtered_word) * 0x0f6d) -
+		(uint32_t)((int32_t)wrap_s16_from_s32(filtered_word) * 0x0f6d) -
 		((uint32_t)(int32_t)sample << 12);
-	next.post_filter_word = (uint16_t)sar32(feedback, 12);
+	next.post_filter_word =
+		(uint16_t)arithmetic_shift_right_u32(feedback, 12);
 	if (next.input_count == V8_LINE_INPUT_QUEUE_SAMPLES) {
 		memcpy(
 			produced.samples, next.input_queue,
