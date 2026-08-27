@@ -34,9 +34,8 @@ bool v90_phase3_analog_line_rx_is_valid(
 	    rx->demodulator.tracking_window_symbols !=
 		    V90_PHASE3_LINE_TRACKING_SYMBOLS)
 		return false;
-	if (rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_PREFIX &&
-	    rx->points.state.prefix.stage == V34_PHASE3_RECEIVER_STAGE_S)
-		return rx->points.state.prefix.state.s.detector.s_symbols ==
+	if (rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_S)
+		return rx->points.state.s.detector.s_symbols ==
 		       V90_PHASE3_LINE_S_SUFFIX_SYMBOLS;
 	return qam_demodulator_measure(&rx->demodulator).timing_locked;
 }

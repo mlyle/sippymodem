@@ -3,14 +3,17 @@
 #ifndef V90_PHASE3_ANALOG_RX_H
 #define V90_PHASE3_ANALOG_RX_H
 
-#include "v34_phase3_receiver.h"
+#include "qam_gain.h"
+#include "v34_phase3_pp_receiver.h"
+#include "v34_phase3_s_receiver.h"
 #include "v90_ja_search.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 enum v90_phase3_analog_rx_stage {
-	V90_PHASE3_ANALOG_RX_STAGE_PREFIX,
+	V90_PHASE3_ANALOG_RX_STAGE_S,
+	V90_PHASE3_ANALOG_RX_STAGE_PP,
 	V90_PHASE3_ANALOG_RX_STAGE_JA,
 	V90_PHASE3_ANALOG_RX_STAGE_COMPLETE,
 };
@@ -41,14 +44,21 @@ struct v90_phase3_ja_point_receiver {
 	uint32_t decisions;
 };
 
+struct v90_phase3_s_point_receiver {
+	struct qam_gain gain;
+	struct v34_phase3_s_receiver detector;
+	bool gain_seeded;
+};
+
 union v90_phase3_analog_rx_state {
-	struct v34_phase3_receiver prefix;
+	struct v90_phase3_s_point_receiver s;
+	struct v34_phase3_pp_receiver pp;
 	struct v90_phase3_ja_point_receiver ja;
 };
 
-/* Receive the analogue modem's S/S-bar, PP, TRN, and repeated Ja point
- * stream. The common prefix owns gain and equalizer acquisition; Ja search
- * begins only after the required 512 equalized TRN decisions. */
+/* Receive the analogue modem's zero-MD S/S-bar, PP, TRN, and repeated Ja
+ * point stream. The V.90 prefix owns gain and equalizer acquisition; Ja
+ * search begins only after the required 512 equalized TRN decisions. */
 struct v90_phase3_analog_rx {
 	union v90_phase3_analog_rx_state state;
 	struct v90_phase3_analog_rx_configuration configuration;

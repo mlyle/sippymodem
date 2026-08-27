@@ -4,6 +4,7 @@
 
 #include "v34_constellation.h"
 #include "v34_phase3_trn.h"
+#include "v34_training_channel.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -28,6 +29,21 @@ static bool detection_is_clear(
 {
 	return detection->clockwise_quarter_turn_offset == 0 &&
 	       detection->s_errors == 0 && detection->s_bar_errors == 0;
+}
+
+static bool s_receiver_is_valid(
+	const struct v90_phase3_s_point_receiver *receiver,
+	double adaptation)
+{
+	if (!v34_phase3_s_receiver_is_valid(&receiver->detector) ||
+	    v34_phase3_s_receiver_is_complete(&receiver->detector))
+		return false;
+	if (receiver->gain_seeded)
+		return qam_gain_is_valid(&receiver->gain) &&
+		       receiver->gain.adaptation == adaptation;
+	return receiver->gain.channel_gain.in_phase == 0.0 &&
+	       receiver->gain.channel_gain.quadrature == 0.0 &&
+	       receiver->gain.adaptation == 0.0;
 }
 
 static bool search_is_initial(const struct v90_ja_search *search)
@@ -62,22 +78,17 @@ bool v90_phase3_analog_rx_is_valid(
 	    !v90_phase3_analog_rx_configuration_is_valid(&rx->configuration))
 		return false;
 	switch (rx->stage) {
-	case V90_PHASE3_ANALOG_RX_STAGE_PREFIX:
+	case V90_PHASE3_ANALOG_RX_STAGE_S:
 		return detection_is_clear(&rx->s_detection) &&
-		       v34_phase3_receiver_is_valid(&rx->state.prefix) &&
-		       (rx->state.prefix.stage == V34_PHASE3_RECEIVER_STAGE_S ||
-			rx->state.prefix.stage ==
-				V34_PHASE3_RECEIVER_STAGE_PP) &&
-		       rx->state.prefix.configuration.transmitting_role ==
-			       V34_ANSWERING_STATION &&
-		       rx->state.prefix.configuration.md_symbols == 0 &&
-		       rx->state.prefix.configuration.s_gain_adaptation ==
-			       rx->configuration.s_gain_adaptation &&
-		       rx->state.prefix.configuration.pp_equalizer_adaptation ==
-			       rx->configuration.pp_equalizer_adaptation &&
-		       rx->state.prefix.configuration
-			       .tracking_equalizer_adaptation ==
-			       rx->configuration.tracking_equalizer_adaptation;
+		       s_receiver_is_valid(
+			       &rx->state.s,
+			       rx->configuration.s_gain_adaptation);
+	case V90_PHASE3_ANALOG_RX_STAGE_PP:
+		return v34_phase3_s_detection_is_valid(&rx->s_detection) &&
+		       v34_phase3_pp_receiver_is_valid(&rx->state.pp) &&
+		       !v34_phase3_pp_receiver_is_complete(&rx->state.pp) &&
+		       rx->state.pp.adaptation ==
+			       rx->configuration.pp_equalizer_adaptation;
 	case V90_PHASE3_ANALOG_RX_STAGE_JA:
 		return v34_phase3_s_detection_is_valid(&rx->s_detection) &&
 		       ja_receiver_is_valid(&rx->state.ja, false) &&
@@ -113,56 +124,80 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_init_suffix(
 	uint8_t s_symbols)
 {
 	struct v90_phase3_analog_rx initialized = {
-		.stage = V90_PHASE3_ANALOG_RX_STAGE_PREFIX,
+		.stage = V90_PHASE3_ANALOG_RX_STAGE_S,
 	};
-	struct v34_phase3_receiver_configuration prefix_configuration;
 
 	if (rx == NULL ||
 	    !v90_phase3_analog_rx_configuration_is_valid(configuration))
 		return V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT;
-	prefix_configuration = (struct v34_phase3_receiver_configuration){
-		.transmitting_role = V34_ANSWERING_STATION,
-		.md_symbols = 0,
-		.s_gain_adaptation = configuration->s_gain_adaptation,
-		.pp_equalizer_adaptation =
-			configuration->pp_equalizer_adaptation,
-		.tracking_equalizer_adaptation =
-			configuration->tracking_equalizer_adaptation,
-	};
 	initialized.configuration = *configuration;
-	if (v34_phase3_receiver_init_suffix(
-		    &initialized.state.prefix, &prefix_configuration,
-		    s_symbols) !=
-		    V34_PHASE3_RECEIVER_OK ||
+	if (v34_phase3_s_receiver_init_suffix(
+		    &initialized.state.s.detector, s_symbols) !=
+		    V34_PHASE3_S_RECEIVER_OK ||
 	    !v90_phase3_analog_rx_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT;
 	*rx = initialized;
 	return V90_PHASE3_ANALOG_RX_OK;
 }
 
-static enum v90_phase3_analog_rx_result receive_prefix(
+static enum v90_phase3_analog_rx_result receive_s(
 	struct v90_phase3_analog_rx *rx, const struct qam_point *received)
 {
-	struct v34_phase3_prefix_handoff handoff;
-	struct v90_phase3_ja_point_receiver ja = { 0 };
-	enum v34_phase3_receiver_result result = v34_phase3_receive_point(
-		&rx->state.prefix, received);
+	struct v90_phase3_s_point_receiver *s = &rx->state.s;
+	struct qam_point reference = v34_rotated_point_zero(0);
+	struct v34_phase3_s_detection detection;
+	struct v34_phase3_pp_receiver pp;
+	uint8_t quarter_point;
+	uint8_t clockwise_quarter_turns;
+	enum v34_phase3_s_receiver_result result;
 
-	if (result == V34_PHASE3_RECEIVER_OK)
+	if (!s->gain_seeded) {
+		if (qam_gain_init_from_reference(
+			    &s->gain, received, &reference,
+			    rx->configuration.s_gain_adaptation) != QAM_GAIN_OK)
+			return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+		s->gain_seeded = true;
+	}
+	if (v34_training_channel_decide(
+		    &s->gain, V34_CONSTELLATION_4_POINT, received,
+		    &quarter_point, &clockwise_quarter_turns) !=
+	    V34_TRAINING_CHANNEL_OK)
+		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	result = v34_phase3_s_receiver_receive(
+		&s->detector, quarter_point, clockwise_quarter_turns);
+	if (result == V34_PHASE3_S_RECEIVER_OK)
 		return V90_PHASE3_ANALOG_RX_OK;
-	if (result == V34_PHASE3_RECEIVER_S_DETECTED)
-		return V90_PHASE3_ANALOG_RX_S_DETECTED;
-	if (result != V34_PHASE3_RECEIVER_PP_COMPLETE ||
-	    v34_phase3_receiver_prefix_handoff(
-		    &rx->state.prefix, &handoff) != V34_PHASE3_RECEIVER_OK)
-		return result == V34_PHASE3_RECEIVER_OUT_OF_RANGE ?
-			       V90_PHASE3_ANALOG_RX_OUT_OF_RANGE :
-			       V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
-	ja.equalizer = handoff.equalizer.equalizer;
+	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
+	    !v34_phase3_s_receiver_get_detection(&s->detector, &detection) ||
+	    v34_phase3_pp_receiver_init(
+		    &pp, rx->configuration.pp_equalizer_adaptation) !=
+		    V34_PHASE3_PP_RECEIVER_OK)
+		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	rx->state = (union v90_phase3_analog_rx_state){ .pp = pp };
+	rx->s_detection = detection;
+	rx->stage = V90_PHASE3_ANALOG_RX_STAGE_PP;
+	return V90_PHASE3_ANALOG_RX_S_DETECTED;
+}
+
+static enum v90_phase3_analog_rx_result receive_pp(
+	struct v90_phase3_analog_rx *rx, const struct qam_point *received)
+{
+	struct v34_equalizer_handoff handoff;
+	struct v90_phase3_ja_point_receiver ja = { 0 };
+	enum v34_phase3_pp_receiver_result result =
+		v34_phase3_pp_receive_point(&rx->state.pp, received);
+
+	if (result != V34_PHASE3_PP_RECEIVER_OK)
+		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	if (!v34_phase3_pp_receiver_is_complete(&rx->state.pp))
+		return V90_PHASE3_ANALOG_RX_OK;
+	if (v34_phase3_pp_receiver_handoff(&rx->state.pp, &handoff) !=
+	    V34_PHASE3_PP_RECEIVER_OK)
+		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	ja.equalizer = handoff.equalizer;
 	ja.adaptation = rx->configuration.tracking_equalizer_adaptation;
 	if (v90_ja_search_init(&ja.search) != V90_JA_SEARCH_OK)
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
-	rx->s_detection = handoff.s;
 	rx->state = (union v90_phase3_analog_rx_state){ .ja = ja };
 	rx->stage = V90_PHASE3_ANALOG_RX_STAGE_JA;
 	return V90_PHASE3_ANALOG_RX_PP_COMPLETE;
@@ -240,9 +275,21 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_point(
 	if (rx->stage == V90_PHASE3_ANALOG_RX_STAGE_COMPLETE)
 		return V90_PHASE3_ANALOG_RX_COMPLETE;
 	next = *rx;
-	result = next.stage == V90_PHASE3_ANALOG_RX_STAGE_PREFIX ?
-			 receive_prefix(&next, received) :
-			 receive_ja(&next, received);
+	switch (next.stage) {
+	case V90_PHASE3_ANALOG_RX_STAGE_S:
+		result = receive_s(&next, received);
+		break;
+	case V90_PHASE3_ANALOG_RX_STAGE_PP:
+		result = receive_pp(&next, received);
+		break;
+	case V90_PHASE3_ANALOG_RX_STAGE_JA:
+		result = receive_ja(&next, received);
+		break;
+	case V90_PHASE3_ANALOG_RX_STAGE_COMPLETE:
+		return V90_PHASE3_ANALOG_RX_COMPLETE;
+	default:
+		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
+	}
 	if (!result_commits(result))
 		return result;
 	if (result == V90_PHASE3_ANALOG_RX_JA_DETECTED)
