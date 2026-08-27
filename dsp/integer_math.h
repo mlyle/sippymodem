@@ -7,6 +7,41 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Interpret the low fixed-width word without relying on implementation-defined
+ * unsigned-to-signed conversions. */
+static inline int32_t wrap_s32_from_u32(uint32_t value)
+{
+	return value <= INT32_MAX ?
+		       (int32_t)value :
+		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
+}
+
+static inline int16_t wrap_s16_from_s32(int32_t value)
+{
+	uint16_t word = (uint16_t)(uint32_t)value;
+
+	return word <= INT16_MAX ?
+		       (int16_t)word : (int16_t)((int32_t)word - 65536);
+}
+
+/* Arithmetic right shift of a two's-complement word, defined for every shift. */
+static inline int32_t arithmetic_shift_right_u32(
+	uint32_t value, unsigned int shift)
+{
+	uint32_t shifted;
+
+	if (shift == 0u)
+		shifted = value;
+	else if (shift >= 32u)
+		shifted = (value & UINT32_C(0x80000000)) != 0 ?
+			UINT32_MAX : 0u;
+	else if ((value & UINT32_C(0x80000000)) == 0)
+		shifted = value >> shift;
+	else
+		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
+	return wrap_s32_from_u32(shifted);
+}
+
 /* Euclid's algorithm, with gcd(0, 0) defined as zero. */
 static inline uint64_t gcd_u64(uint64_t left, uint64_t right)
 {

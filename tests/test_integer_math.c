@@ -57,6 +57,68 @@ static bool test_signed_rounding(void)
 	return true;
 }
 
+static bool test_fixed_width_words(void)
+{
+	static const struct {
+		uint32_t input;
+		int32_t expected;
+	} s32_cases[] = {
+		{ 0u, 0 },
+		{ UINT32_C(0x7fffffff), INT32_MAX },
+		{ UINT32_C(0x80000000), INT32_MIN },
+		{ UINT32_MAX, -1 },
+	};
+	static const struct {
+		int32_t input;
+		int16_t expected;
+	} s16_cases[] = {
+		{ 0, 0 },
+		{ INT16_MAX, INT16_MAX },
+		{ INT16_MAX + 1, INT16_MIN },
+		{ 65535, -1 },
+		{ INT32_MAX, -1 },
+		{ INT32_MIN, 0 },
+	};
+
+	for (size_t index = 0u;
+	     index < ARRAY_LENGTH(s32_cases); ++index)
+		CHECK(wrap_s32_from_u32(s32_cases[index].input) ==
+			      s32_cases[index].expected,
+		      "32-bit wrap case %zu changed", index);
+	for (size_t index = 0u;
+	     index < ARRAY_LENGTH(s16_cases); ++index)
+		CHECK(wrap_s16_from_s32(s16_cases[index].input) ==
+			      s16_cases[index].expected,
+		      "16-bit wrap case %zu changed", index);
+	return true;
+}
+
+static bool test_arithmetic_shift(void)
+{
+	static const struct {
+		uint32_t input;
+		unsigned int shift;
+		int32_t expected;
+	} cases[] = {
+		{ UINT32_C(0x7fffffff), 0u, INT32_MAX },
+		{ UINT32_C(0x80000000), 0u, INT32_MIN },
+		{ UINT32_C(0x40000000), 1u, 0x20000000 },
+		{ UINT32_C(0x80000000), 1u, -1073741824 },
+		{ UINT32_MAX, 15u, -1 },
+		{ UINT32_C(0x80000000), 31u, -1 },
+		{ UINT32_C(0x7fffffff), 31u, 0 },
+		{ UINT32_C(0x80000000), 32u, -1 },
+		{ UINT32_C(0x7fffffff), 33u, 0 },
+	};
+
+	for (size_t index = 0u; index < ARRAY_LENGTH(cases); ++index)
+		CHECK(arithmetic_shift_right_u32(
+			      cases[index].input, cases[index].shift) ==
+			      cases[index].expected,
+		      "arithmetic shift case %zu changed", index);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -66,6 +128,8 @@ int main(void)
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },
 		{ "signed rounding", test_signed_rounding },
+		{ "fixed-width words", test_fixed_width_words },
+		{ "arithmetic shift", test_arithmetic_shift },
 	};
 	unsigned int failures = 0;
 

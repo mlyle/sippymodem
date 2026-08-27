@@ -379,32 +379,9 @@ static bool outputs_are_disjoint(
 			 sizeof(*point_accepted))));
 }
 
-static int32_t arithmetic_shift_right_s32(uint32_t value, unsigned shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
 static uint32_t multiply_low_s32(int32_t left, int32_t right)
 {
 	return (uint32_t)((uint64_t)(uint32_t)left * (uint32_t)right);
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
 }
 
 static bool fixed_coordinate(double coordinate, int16_t *fixed)
@@ -494,11 +471,11 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	phasor = fixed_phase_sin_cos_u16_q14(
 		(uint16_t)(next.carrier_phase >> 16));
 	mixed = multiply_low_s32(
-		arithmetic_shift_right_s32(in_phase, 13), phasor.cosine);
+		arithmetic_shift_right_u32(in_phase, 13), phasor.cosine);
 	mixed -= multiply_low_s32(
-		arithmetic_shift_right_s32(quadrature, 13), phasor.sine);
-	preemphasis_input = wrap_s16(
-		arithmetic_shift_right_s32(mixed + 0x2000u, 14));
+		arithmetic_shift_right_u32(quadrature, 13), phasor.sine);
+	preemphasis_input = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(mixed + 0x2000u, 14));
 	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap) {
 		int16_t previous = next.preemphasis_history[tap];
 
@@ -506,8 +483,8 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		filtered += multiply_low_s32(preemphasis_input, preemphasis[tap]);
 		preemphasis_input = previous;
 	}
-	fixed_sample = wrap_s16(
-		arithmetic_shift_right_s32(filtered + 0x2000u, 14));
+	fixed_sample = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(filtered + 0x2000u, 14));
 	generated = (double)fixed_sample / V34_PULSE_OUTPUT_SCALE;
 	next.generated_samples++;
 	next.carrier_phase += next.carrier_phase_step;

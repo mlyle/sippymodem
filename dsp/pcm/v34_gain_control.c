@@ -3,9 +3,9 @@
 #include "v34_gain_control.h"
 
 #include "agc.h"
+#include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -22,49 +22,27 @@ enum {
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
 
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t absolute_wrap_s16(int16_t value)
 {
-	return value < 0 ? wrap_s16(-(int32_t)value) : value;
+	return value < 0 ? wrap_s16_from_s32(-(int32_t)value) : value;
 }
 
 static int16_t scale_sample(int16_t gain, int16_t sample)
 {
 	uint32_t product = (uint32_t)((int32_t)gain * sample);
 	uint32_t top = product >> 25;
-	int16_t overflow = wrap_s16(arithmetic_shift_right(product, 16));
+	int16_t overflow = wrap_s16_from_s32(
+		arithmetic_shift_right_u32(product, 16));
 
 	if (top == 0 || top == 0x7f)
-		return wrap_s16(arithmetic_shift_right(
+		return wrap_s16_from_s32(arithmetic_shift_right_u32(
 			product + V34_GAIN_ROUNDING, 10));
 	return overflow <= 0 ? (int16_t)0x8100 : (int16_t)0x7f00;
 }
 
 static uint16_t smooth_energy(uint16_t average, uint32_t energy)
 {
-	int32_t history = arithmetic_shift_right(
+	int32_t history = arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)(int16_t)average *
 			   V34_GAIN_ENERGY_HISTORY_Q15),
 		15);
@@ -77,7 +55,7 @@ static uint16_t smooth_energy(uint16_t average, uint32_t energy)
 
 static void correct_gain(struct v34_gain_control *control)
 {
-	int16_t delta = wrap_s16(
+	int16_t delta = wrap_s16_from_s32(
 		(int32_t)control->average_energy - V34_GAIN_TARGET_ENERGY);
 	int16_t delta_magnitude = absolute_wrap_s16(delta);
 	int32_t correction_step;
@@ -85,16 +63,16 @@ static void correct_gain(struct v34_gain_control *control)
 	int16_t correction_magnitude;
 	int32_t scale;
 
-	if (wrap_s16((int32_t)delta_magnitude -
+	if (wrap_s16_from_s32((int32_t)delta_magnitude -
 		     V34_GAIN_ENERGY_DEADBAND) <= 0)
 		return;
-	correction_step = arithmetic_shift_right(
+	correction_step = arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)V34_GAIN_CORRECTION_Q15 * delta), 16);
-	next_correction = wrap_s16(
+	next_correction = wrap_s16_from_s32(
 		(int32_t)control->correction + correction_step);
 	correction_magnitude = absolute_wrap_s16(next_correction);
 	control->correction = next_correction;
-	if (wrap_s16((int32_t)correction_magnitude -
+	if (wrap_s16_from_s32((int32_t)correction_magnitude -
 		     V34_GAIN_CORRECTION_LIMIT) <= 0)
 		return;
 	control->correction = 0;
@@ -105,7 +83,7 @@ static void correct_gain(struct v34_gain_control *control)
 			return;
 		scale = V34_GAIN_INCREASE_Q14;
 	}
-	control->gain = wrap_s16(arithmetic_shift_right(
+	control->gain = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)control->gain * scale), 14));
 }
 

@@ -2,6 +2,7 @@
 
 #include "v34_adaptive_equalizer.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -36,36 +37,6 @@ static const int16_t CARRIER_COSINE_QUARTER_Q14[65] = {
 	0,
 };
 
-static int32_t sar32(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int32_t wrap_s32(uint32_t value)
-{
-	return value <= INT32_MAX ?
-		       (int32_t)value :
-		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static uint32_t product_low(int16_t left, int16_t right)
 {
 	return (uint32_t)((int32_t)left * right);
@@ -73,7 +44,7 @@ static uint32_t product_low(int16_t left, int16_t right)
 
 static int16_t shifted_s16(uint32_t value, unsigned int shift)
 {
-	return wrap_s16(sar32(value, shift));
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, shift));
 }
 
 static int16_t carrier_cosine_q14(uint8_t index)
@@ -342,9 +313,9 @@ static struct v34_analytic_sample apply_feedback(
 	int16_t predicted_quadrature =
 		feedback_shift_and_quadrature(feedback);
 	struct v34_analytic_sample output = {
-		.in_phase = wrap_s16(
+		.in_phase = wrap_s16_from_s32(
 			(int32_t)input.in_phase + predicted_in_phase),
-		.quadrature = wrap_s16(
+		.quadrature = wrap_s16_from_s32(
 			(int32_t)input.quadrature + predicted_quadrature),
 	};
 
@@ -409,7 +380,8 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 	generated = (struct v34_adaptive_equalizer_observation){
 		.decision = rotate_q14(
 			demodulated, next.rotate_in_phase,
-			wrap_s16(-(int32_t)next.rotate_quadrature)),
+			wrap_s16_from_s32(
+				-(int32_t)next.rotate_quadrature)),
 		.epoch = next.epoch,
 		.lineage = next.lineage,
 	};
@@ -431,9 +403,9 @@ static struct v34_analytic_sample update_feedback_filter(
 	int16_t predicted_in_phase = feedback_in_phase(feedback);
 	int16_t predicted_quadrature =
 		feedback_shift_and_quadrature(feedback);
-	int16_t error_in_phase = wrap_s16(
+	int16_t error_in_phase = wrap_s16_from_s32(
 		(int32_t)decision_error.in_phase + predicted_in_phase);
-	int16_t error_quadrature = wrap_s16(
+	int16_t error_quadrature = wrap_s16_from_s32(
 		(int32_t)decision_error.quadrature + predicted_quadrature);
 
 	feedback->in_phase_history[0] = error_in_phase;
@@ -465,9 +437,9 @@ static uint32_t distance_squared(
 	struct v34_analytic_sample sample,
 	struct v34_analytic_sample reference)
 {
-	int32_t in_phase = wrap_s16(
+	int32_t in_phase = wrap_s16_from_s32(
 		(int32_t)sample.in_phase - reference.in_phase);
-	int32_t quadrature = wrap_s16(
+	int32_t quadrature = wrap_s16_from_s32(
 		(int32_t)sample.quadrature - reference.quadrature);
 
 	return (uint32_t)(in_phase * in_phase) +
@@ -515,29 +487,33 @@ static int32_t phase_error(
 	uint32_t error = product_low(target.in_phase, observation.quadrature) -
 		product_low(target.quadrature, observation.in_phase);
 
-	return wrap_s32(error << 2u);
+	return wrap_s32_from_u32(error << 2u);
 }
 
 static void update_carrier(
 	struct v34_adaptive_equalizer *equalizer, int32_t error)
 {
 	uint32_t accumulator_word =
-		(uint32_t)sar32((uint32_t)error, V34_CARRIER_PHASE_SHIFT_B) +
+		(uint32_t)arithmetic_shift_right_u32(
+			(uint32_t)error, V34_CARRIER_PHASE_SHIFT_B) +
 		(uint32_t)equalizer->phase_accumulator;
-	int32_t accumulator = wrap_s32(accumulator_word);
+	int32_t accumulator = wrap_s32_from_u32(accumulator_word);
 	uint32_t phase_word =
-		(uint32_t)sar32((uint32_t)error, V34_CARRIER_PHASE_SHIFT_A) +
-		(uint32_t)sar32((uint32_t)accumulator, 5) +
+		(uint32_t)arithmetic_shift_right_u32(
+			(uint32_t)error, V34_CARRIER_PHASE_SHIFT_A) +
+		(uint32_t)arithmetic_shift_right_u32(
+			(uint32_t)accumulator, 5) +
 		((uint32_t)equalizer->carrier_phase_fraction << 16) +
 		(uint32_t)(int32_t)(int16_t)equalizer->carrier_phase_low;
-	int32_t phase = wrap_s32(phase_word);
+	int32_t phase = wrap_s32_from_u32(phase_word);
 	uint16_t coarse = (uint16_t)(
-		(uint32_t)sar32((uint32_t)phase, 16) & UINT32_C(0x1fff));
+		(uint32_t)arithmetic_shift_right_u32(
+			(uint32_t)phase, 16) & UINT32_C(0x1fff));
 	uint8_t index = (uint8_t)(coarse >> 5);
 	int32_t fraction = (int32_t)(coarse & UINT16_C(0x001f)) * 0x32;
 	int16_t cosine = carrier_cosine_q14(index);
 	int16_t sine = carrier_cosine_q14((uint8_t)(index + 64u));
-	int16_t negative_sine = wrap_s16(-(int32_t)sine);
+	int16_t negative_sine = wrap_s16_from_s32(-(int32_t)sine);
 	uint32_t interpolated_quadrature =
 		((uint32_t)(int32_t)negative_sine << 16) +
 		(uint32_t)(fraction * cosine) + UINT32_C(0x8000);
@@ -606,10 +582,10 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 		decision->target, next.pending_observation.decision);
 	if ((next.feedback_mode & V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) != 0) {
 		struct v34_analytic_sample decision_error = {
-			.in_phase = wrap_s16(
+			.in_phase = wrap_s16_from_s32(
 				(int32_t)next.pending_observation.decision.in_phase -
 				decision->target.in_phase),
-			.quadrature = wrap_s16(
+			.quadrature = wrap_s16_from_s32(
 				(int32_t)next.pending_observation.decision.quadrature -
 				decision->target.quadrature),
 		};
@@ -627,14 +603,14 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 		error = (struct v34_analytic_sample){
 			.in_phase = shifted_s16(
 				product_low(
-					wrap_s16(
+					wrap_s16_from_s32(
 						(int32_t)next.pending_demodulated.in_phase -
 						rotated_target.in_phase),
 					(int16_t)decision->decoder_power_q15),
 				16),
 			.quadrature = shifted_s16(
 				product_low(
-					wrap_s16(
+					wrap_s16_from_s32(
 						(int32_t)next.pending_demodulated.quadrature -
 						rotated_target.quadrature),
 					(int16_t)decision->decoder_power_q15),
@@ -647,9 +623,9 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 			    V34_EQUALIZER_OK)
 				return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 		} else {
-			error.in_phase = wrap_s16(
+			error.in_phase = wrap_s16_from_s32(
 				(int32_t)error.in_phase * 2);
-			error.quadrature = wrap_s16(
+			error.quadrature = wrap_s16_from_s32(
 				(int32_t)error.quadrature * 2);
 			if (v34_equalizer_adapt_center(
 				    &next.equalizer, error) != V34_EQUALIZER_OK)

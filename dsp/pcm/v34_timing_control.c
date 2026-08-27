@@ -2,6 +2,7 @@
 
 #include "v34_timing_control.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -15,34 +16,6 @@ static bool role_is_valid(enum v34_station_role role)
 	       role == V34_ANSWERING_STATION;
 }
 
-static int32_t wrap_s32(uint32_t value)
-{
-	return value <= INT32_MAX ?
-		       (int32_t)value :
-		       (int32_t)((int64_t)value - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return wrap_s32(shifted);
-}
-
 static uint32_t multiply_low(int32_t left, int32_t right)
 {
 	return (uint32_t)((uint64_t)(uint32_t)left *
@@ -53,7 +26,8 @@ static int32_t divide_s32(uint32_t dividend, int32_t divisor)
 {
 	return divisor == 0 ?
 		       0 :
-		       (int32_t)((int64_t)wrap_s32(dividend) / divisor);
+		       (int32_t)((int64_t)wrap_s32_from_u32(dividend) /
+				 divisor);
 }
 
 static uint32_t gcd_u32(uint32_t left, uint32_t right)
@@ -255,7 +229,7 @@ static void set_initial_phase(
 			ratio = divide_s32(numerator, sum);
 		}
 		difference = target - ratio;
-		error = wrap_s16(arithmetic_shift_right(
+		error = wrap_s16_from_s32(arithmetic_shift_right_u32(
 			multiply_low(difference, difference) +
 				UINT32_C(0x1000),
 			13));
@@ -379,7 +353,8 @@ static int32_t timing_phase_error(
 	uint32_t sum;
 	uint32_t numerator;
 
-	if (wrap_s32(early_energy) >= 0 && wrap_s32(late_energy) >= 0) {
+	if (wrap_s32_from_u32(early_energy) >= 0 &&
+	    wrap_s32_from_u32(late_energy) >= 0) {
 		do {
 			mask >>= 1;
 			shift_count = (int16_t)(uint16_t)(shift_count + 1);
@@ -388,22 +363,22 @@ static int32_t timing_phase_error(
 		} while ((late_energy & mask) == 0 && shift_count <= 15);
 	}
 	shift = (unsigned int)(16 - shift_count) & 31u;
-	early_normalized = (uint16_t)arithmetic_shift_right(
+	early_normalized = (uint16_t)arithmetic_shift_right_u32(
 		early_energy, shift);
-	late_normalized = (uint16_t)arithmetic_shift_right(
+	late_normalized = (uint16_t)arithmetic_shift_right_u32(
 		late_energy, shift);
 	if ((early_normalized | late_normalized) == 0)
 		return 0;
 	sum = early_normalized + late_normalized;
 	numerator = ((late_normalized - early_normalized) << 15) +
-		    (uint32_t)arithmetic_shift_right(sum, 1);
+		    (uint32_t)arithmetic_shift_right_u32(sum, 1);
 	return divide_s32(numerator, (int32_t)sum);
 }
 
 static void update_offset(struct v34_timing_control *control,
 			  int16_t phase_delta)
 {
-	int16_t accumulated = wrap_s16(
+	int16_t accumulated = wrap_s16_from_s32(
 		(int32_t)control->accumulated_delta + phase_delta);
 	uint16_t count = (uint16_t)(control->accumulated_count + 1u);
 
@@ -412,7 +387,7 @@ static void update_offset(struct v34_timing_control *control,
 		control->accumulated_delta = accumulated;
 		return;
 	}
-	control->offset_ppm = wrap_s16(divide_s32(
+	control->offset_ppm = wrap_s16_from_s32(divide_s32(
 		(uint32_t)((int32_t)(int16_t)control->nominal_increment / 2 +
 			   divide_s32(
 				   (uint32_t)((int32_t)accumulated * 10000 +
@@ -473,25 +448,25 @@ enum v34_timing_control_result v34_timing_control_process(
 		timing_step = next.integrator;
 	} else {
 		int32_t error = timing_phase_error(&next, observations);
-		int32_t integral_delta = arithmetic_shift_right(
+		int32_t integral_delta = arithmetic_shift_right_u32(
 			multiply_low(next.integral_gain, error) +
 				UINT32_C(0x4000),
 			15);
-		int32_t proportional = arithmetic_shift_right(
+		int32_t proportional = arithmetic_shift_right_u32(
 			multiply_low(next.proportional_gain, error) +
 				UINT32_C(0x200),
 			11);
 
-		next.integrator = wrap_s32(
+		next.integrator = wrap_s32_from_u32(
 			(uint32_t)next.integrator + (uint32_t)integral_delta);
-		timing_step = wrap_s32(
+		timing_step = wrap_s32_from_u32(
 			(uint32_t)next.integrator + (uint32_t)proportional);
 	}
 	phase_accumulator = (uint32_t)timing_step +
 			    (uint32_t)next.phase_residue;
-	phase_delta = wrap_s16(arithmetic_shift_right(
+	phase_delta = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		phase_accumulator + UINT32_C(0x4000), 15));
-	next.phase_residue = wrap_s32(
+	next.phase_residue = wrap_s32_from_u32(
 		phase_accumulator -
 		((uint32_t)(int32_t)phase_delta << 15));
 	next.phase_increment = (uint16_t)(

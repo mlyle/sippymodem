@@ -2,9 +2,9 @@
 
 #include "v34_analytic_filter.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -53,28 +53,10 @@ static int16_t quadrature_coefficient(size_t tap)
 	return (int16_t)-QUADRATURE_HALF_PROFILE[29u - position];
 }
 
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
 static int16_t rounded_q14(uint32_t accumulator)
 {
-	uint16_t word = (uint16_t)(uint32_t)arithmetic_shift_right(
-		accumulator + UINT32_C(0x2000), 14);
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
+		accumulator + UINT32_C(0x2000), 14));
 }
 
 bool v34_analytic_filter_is_valid(

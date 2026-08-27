@@ -2,9 +2,9 @@
 
 #include "v34_receive_timing.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -189,29 +189,6 @@ static bool advance_input(struct v34_receive_timing *timing)
 	return true;
 }
 
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t interpolate(
 	int16_t current, uint16_t phase, int16_t previous, uint16_t remaining)
 {
@@ -219,7 +196,7 @@ static int16_t interpolate(
 			 UINT32_C(0x2000) +
 			 (uint32_t)((int32_t)previous * remaining);
 
-	return wrap_s16(arithmetic_shift_right(value, 14));
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, 14));
 }
 
 static struct v34_analytic_sample interpolate_current(

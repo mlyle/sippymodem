@@ -2,9 +2,9 @@
 
 #include "v34_timing_filter.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -39,44 +39,21 @@ _Static_assert(
 		V34_TIMING_FILTER_COMPLEX_TAPS,
 	"V.34 timing complex filter size changed");
 
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
 static uint32_t multiply_low(int32_t left, int32_t right)
 {
 	return (uint32_t)((uint64_t)(uint32_t)left *
 			  (uint64_t)(uint32_t)right);
 }
 
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int32_t rounded_shift(
 	uint32_t value, uint32_t rounding, unsigned int shift)
 {
-	return arithmetic_shift_right(value + rounding, shift);
+	return arithmetic_shift_right_u32(value + rounding, shift);
 }
 
 static int16_t scale_input(int16_t input)
 {
-	return wrap_s16(rounded_shift(
+	return wrap_s16_from_s32(rounded_shift(
 		multiply_low(input, 0x599a), UINT32_C(0x8000), 15));
 }
 
@@ -126,7 +103,8 @@ static int16_t high_pass_error(
 		accumulator += multiply_low(input, ERROR_HIGH_PASS[tap]);
 		input = old;
 	}
-	return wrap_s16(arithmetic_shift_right(accumulator, 15));
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(accumulator, 15));
 }
 
 static uint32_t pack_sample(struct v34_analytic_sample sample)
@@ -137,12 +115,12 @@ static uint32_t pack_sample(struct v34_analytic_sample sample)
 
 static int16_t low_s16(uint32_t value)
 {
-	return wrap_s16((int32_t)(uint16_t)value);
+	return wrap_s16_from_s32((int32_t)(uint16_t)value);
 }
 
 static int16_t high_s16(uint32_t value)
 {
-	return wrap_s16((int32_t)(uint16_t)(value >> 16));
+	return wrap_s16_from_s32((int32_t)(uint16_t)(value >> 16));
 }
 
 bool v34_timing_filter_is_valid(const struct v34_timing_filter *filter)
@@ -221,11 +199,11 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 		b_real - negative_a_real, UINT32_C(0x2000), 14);
 	filtered_negative_imag = rounded_shift(
 		b_imag - negative_a_imag, UINT32_C(0x2000), 14);
-	next.positive_a_real[0] = wrap_s16(filtered_positive_real);
-	next.positive_a_imag[0] = wrap_s16(filtered_positive_imag);
-	next.negative_a_real[0] = wrap_s16(filtered_negative_real);
-	next.negative_a_imag[0] = wrap_s16(filtered_negative_imag);
-	generated = wrap_s16(rounded_shift(
+	next.positive_a_real[0] = wrap_s16_from_s32(filtered_positive_real);
+	next.positive_a_imag[0] = wrap_s16_from_s32(filtered_positive_imag);
+	next.negative_a_real[0] = wrap_s16_from_s32(filtered_negative_real);
+	next.negative_a_imag[0] = wrap_s16_from_s32(filtered_negative_imag);
+	generated = wrap_s16_from_s32(rounded_shift(
 		multiply_low(filtered_positive_imag, filtered_negative_real) -
 			multiply_low(filtered_positive_real,
 				     filtered_negative_imag),
@@ -270,8 +248,10 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 		previous = old_previous;
 	}
 	generated = (struct v34_analytic_sample){
-		.in_phase = wrap_s16(arithmetic_shift_right(imag, 14)),
-		.quadrature = wrap_s16(arithmetic_shift_right(real, 14)),
+		.in_phase = wrap_s16_from_s32(
+			arithmetic_shift_right_u32(imag, 14)),
+		.quadrature = wrap_s16_from_s32(
+			arithmetic_shift_right_u32(real, 14)),
 	};
 	*filter = next;
 	*output = generated;

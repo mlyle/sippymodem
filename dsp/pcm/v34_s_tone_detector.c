@@ -2,7 +2,8 @@
 
 #include "v34_s_tone_detector.h"
 
-#include <limits.h>
+#include "integer_math.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -39,41 +40,19 @@ _Static_assert(
 	sizeof(PROFILES) / sizeof(PROFILES[0]) == V34_S_TONE_CARRIER_COUNT,
 	"V.34 S detector carrier profile count changed");
 
-static int32_t arithmetic_shift_right(uint32_t value, unsigned int shift)
-{
-	uint32_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & UINT32_C(0x80000000)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT32_MAX >> shift);
-	return shifted <= INT32_MAX ?
-		       (int32_t)shifted :
-		       (int32_t)((int64_t)shifted - (INT64_C(1) << 32));
-}
-
-static int16_t wrap_s16(int32_t value)
-{
-	uint16_t word = (uint16_t)(uint32_t)value;
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
-}
-
 static int16_t multiply_shift_q14(int16_t left, int16_t right)
 {
-	return wrap_s16(arithmetic_shift_right(
+	return wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)((int32_t)left * right), 14));
 }
 
 static int16_t absolute_shift4(int16_t value)
 {
-	int16_t shifted = wrap_s16(arithmetic_shift_right(
+	int16_t shifted = wrap_s16_from_s32(arithmetic_shift_right_u32(
 		(uint32_t)(int32_t)value, 4));
 
-	return shifted < 0 ? wrap_s16(-(int32_t)shifted) : shifted;
+	return shifted < 0 ?
+		wrap_s16_from_s32(-(int32_t)shifted) : shifted;
 }
 
 static bool select_carrier(
@@ -159,23 +138,25 @@ enum v34_s_tone_detector_result v34_s_tone_detector_sample(
 	if (detector->detected)
 		return V34_S_TONE_DETECTOR_DETECTED;
 	profile = &PROFILES[detector->carrier];
-	stage_a = arithmetic_shift_right((uint32_t)(int32_t)sample, 4) -
+	stage_a = arithmetic_shift_right_u32(
+		(uint32_t)(int32_t)sample, 4) -
 		  multiply_shift_q14(
 			detector->stage_a[0], profile->stage_a_feedback) -
 		  multiply_shift_q14(
 			detector->stage_a[1], V34_S_TONE_FEEDBACK_Q14);
-	shifted_a = wrap_s16(arithmetic_shift_right((uint32_t)stage_a, 4));
+	shifted_a = wrap_s16_from_s32(
+		arithmetic_shift_right_u32((uint32_t)stage_a, 4));
 	detector->stage_a[1] = detector->stage_a[0];
-	detector->stage_a[0] = wrap_s16(stage_a);
+	detector->stage_a[0] = wrap_s16_from_s32(stage_a);
 	stage_b = shifted_a -
 		  multiply_shift_q14(
 			detector->stage_b[0], profile->stage_b_feedback) -
 		  multiply_shift_q14(
 			detector->stage_b[1], V34_S_TONE_FEEDBACK_Q14);
-	stage_b_word = wrap_s16(stage_b);
+	stage_b_word = wrap_s16_from_s32(stage_b);
 	detector->stage_b[1] = detector->stage_b[0];
 	detector->stage_b[0] = stage_b_word;
-	energy = wrap_s16(
+	energy = wrap_s16_from_s32(
 		(int32_t)absolute_shift4(stage_b_word) +
 		multiply_shift_q14(detector->energy, V34_S_TONE_ENERGY_POLE_Q14));
 	detector->energy = energy;
