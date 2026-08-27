@@ -40,6 +40,8 @@ struct v34_phase2_ranging {
 	struct v34_phase2_info0_exchange info0_exchange;
 	struct v34_phase2_retrain_probe retrain_probe;
 	struct phase2_ranging_control control;
+	struct phase2_ranging_control recovery_control;
+	bool recovery_paused;
 	bool retraining;
 };
 

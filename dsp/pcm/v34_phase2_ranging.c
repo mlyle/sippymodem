@@ -61,6 +61,34 @@ static bool retrain_probe_is_valid(
 	return false;
 }
 
+static bool control_is_clear(const struct phase2_ranging_control *control)
+{
+	return control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
+	       control->local_tone_samples == 0 &&
+	       control->response_delay_samples == 0 &&
+	       control->post_reversal_samples == 0 &&
+	       control->probe_start_delay_samples == 0 &&
+	       control->measurement_elapsed_samples == 0 &&
+	       control->round_trip_delay_samples == 0 &&
+	       !control->round_trip_delay_valid;
+}
+
+static bool control_has_ranging_epoch(
+	const struct phase2_ranging_control *control,
+	const struct phase2_info0_exchange *exchange)
+{
+	if (exchange->signal_role == PHASE2_SIGNAL_A)
+		return control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL ||
+		       control->phase == PHASE2_RESPONSE_DELAY ||
+		       control->phase == PHASE2_RESPONSE_TONE_TAIL ||
+		       control->phase == PHASE2_RANGING_PROBE_READY;
+	return control->phase == PHASE2_RESPONSE_DELAY ||
+	       control->phase == PHASE2_RESPONSE_TONE_TAIL ||
+	       control->phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL ||
+	       control->phase == PHASE2_SIGNAL_B_WAIT_PROBE_START ||
+	       control->phase == PHASE2_RANGING_PROBE_READY;
+}
+
 static bool reset_retrain_probe(
 	struct v34_phase2_ranging *ranging,
 	enum v34_phase2_retrain_probe_phase phase)
@@ -88,7 +116,57 @@ bool v34_phase2_ranging_is_valid(
 		       &ranging->control,
 		       &ranging->info0_exchange.transport,
 		       ranging->info0_exchange.peer_info0_received) &&
+	       (ranging->recovery_paused ?
+		       (ranging->info0_exchange.recovery_active ||
+			ranging->info0_exchange.acknowledgements_complete) &&
+		       control_has_ranging_epoch(
+			       &ranging->recovery_control,
+			       &ranging->info0_exchange.transport) &&
+		       phase2_ranging_control_is_valid(
+			       &ranging->recovery_control,
+			       &ranging->info0_exchange.transport,
+			       ranging->info0_exchange.peer_info0_received) :
+		       control_is_clear(&ranging->recovery_control)) &&
 	       retrain_probe_is_valid(ranging);
+}
+
+static bool pause_ranging_for_recovery(struct v34_phase2_ranging *ranging)
+{
+	struct phase2_ranging_control retained = ranging->control;
+	bool pause = control_has_ranging_epoch(
+		&retained, &ranging->info0_exchange.transport);
+
+	if (phase2_ranging_control_init(
+		    &ranging->control,
+		    &ranging->info0_exchange.transport) != PHASE2_RANGING_OK)
+		return false;
+	if (pause) {
+		ranging->recovery_control = retained;
+		ranging->recovery_paused = true;
+	}
+	return true;
+}
+
+static bool resume_ranging_after_recovery(struct v34_phase2_ranging *ranging)
+{
+	if (!ranging->recovery_paused)
+		return true;
+	ranging->control = ranging->recovery_control;
+	ranging->recovery_control = (struct phase2_ranging_control){ 0 };
+	ranging->recovery_paused = false;
+	return phase2_ranging_control_is_valid(
+		&ranging->control, &ranging->info0_exchange.transport,
+		ranging->info0_exchange.peer_info0_received);
+}
+
+static bool recovery_tone_handoff_ready(
+	const struct v34_phase2_ranging *ranging,
+	const struct v34_phase2_info0_exchange_event *event)
+{
+	return ranging->recovery_paused &&
+	       !ranging->info0_exchange.recovery_active &&
+	       (event->tone_event.kind == V34_PHASE2_TONE_STARTED ||
+		event->tone_event.kind == V34_PHASE2_TONE_PHASE_REVERSED);
 }
 
 enum v34_phase2_ranging_result
@@ -282,10 +360,9 @@ v34_phase2_ranging_sample(
 		    &next.info0_exchange, received_sample, &generated,
 		    &exchange_event) != V34_PHASE2_INFO0_EXCHANGE_OK ||
 	    (exchange_event.recovery_started &&
-	     phase2_ranging_control_init(
-		     &next.control,
-		     &next.info0_exchange.transport) !=
-		     PHASE2_RANGING_OK) ||
+	     !pause_ranging_for_recovery(&next)) ||
+	    (recovery_tone_handoff_ready(&next, &exchange_event) &&
+	     !resume_ranging_after_recovery(&next)) ||
 	    (exchange_event.recovery_started && next.retraining &&
 	     next.info0_exchange.local_role == V34_CALLING_STATION &&
 	     !reset_retrain_probe(

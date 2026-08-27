@@ -16,11 +16,11 @@ static uint16_t completed_initial_tone_samples(
 		       0 : PHASE2_RANGING_INITIAL_TONE_SAMPLES;
 }
 
-static bool has_ranging_context(
+static bool retains_ranging_context(
 	const struct phase2_info0_exchange *exchange,
 	bool peer_info0_received)
 {
-	return exchange->transmit_phase == PHASE2_INFO0_TONE &&
+	return exchange->transmit_phase != PHASE2_INFO0_POST_V8_SILENCE &&
 	       peer_info0_received;
 }
 
@@ -60,7 +60,7 @@ bool phase2_ranging_control_is_valid(
 	side_b = signal_is_b(exchange);
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    control->phase != PHASE2_RANGING_TIMED_OUT &&
-	    !has_ranging_context(exchange, peer_info0_received))
+	    !retains_ranging_context(exchange, peer_info0_received))
 		return false;
 
 	switch (control->phase) {
@@ -175,7 +175,7 @@ static bool prepared_control_is_valid(
 		return true;
 	if (!bounds_are_valid(control) ||
 	    !phase2_info0_exchange_is_valid(exchange) ||
-	    !has_ranging_context(exchange, peer_info0_received))
+	    !retains_ranging_context(exchange, peer_info0_received))
 		return false;
 	side_b = signal_is_b(exchange);
 	if (control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL)
@@ -256,7 +256,8 @@ static void enter_active_ranging(
 	bool peer_info0_received)
 {
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE ||
-	    !has_ranging_context(exchange, peer_info0_received) ||
+	    exchange->transmit_phase != PHASE2_INFO0_TONE ||
+	    !retains_ranging_context(exchange, peer_info0_received) ||
 	    !exchange->tone_detector.carrier.tone_present)
 		return;
 	control->phase = signal_is_b(exchange) ?
@@ -339,6 +340,15 @@ static bool handle_reversal(
 	bool accepted = false;
 
 	switch (control->phase) {
+	case PHASE2_SIGNAL_A_WAIT_INITIAL_TONE:
+		/* A peer edge delivered on the final 50 ms Tone A sample cannot
+		 * answer the local reversal, which is prepared on the next call.
+		 * Retain its following-tone phase as the detector baseline. */
+		if (!signal_is_b(exchange) &&
+		    control->local_tone_samples ==
+			    PHASE2_RANGING_INITIAL_TONE_SAMPLES)
+			accepted = true;
+		break;
 	case PHASE2_WAIT_FIRST_REMOTE_REVERSAL:
 		if (signal_is_b(exchange)) {
 			accepted = schedule_response(

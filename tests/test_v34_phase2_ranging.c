@@ -366,6 +366,7 @@ static bool check_info_interrupted_reversal(
 			PHASE2_SIGNAL_A : PHASE2_SIGNAL_B;
 	size_t edge_sample = SIZE_MAX;
 	size_t local_reversal = SIZE_MAX;
+	size_t pre_repeat_samples = 0;
 	bool repeat_started = false;
 	bool peer_reversed = false;
 
@@ -413,6 +414,9 @@ static bool check_info_interrupted_reversal(
 		}
 		if (!repeat_started &&
 		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			if (++pre_repeat_samples <
+			    PHASE2_RANGING_TURNAROUND_SAMPLES)
+				continue;
 			CHECK(phase2_info0_exchange_restart_info(
 				      &peer, payload, V34_INFO0_PAYLOAD_BITS) ==
 				      PHASE2_INFO0_EXCHANGE_OK,
