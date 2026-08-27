@@ -198,17 +198,80 @@ static bool replay_into_receiver(
 
 static bool test_offsets_and_codecs(void)
 {
+	static const uint16_t codec_offsets[] = {
+		0,
+		V34_PHASE2_PROBE_SYNCHRONIZER_NOMINAL_LEADING_SAMPLES,
+		V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES,
+	};
+
 	for (uint16_t offset = 0;
 	     offset <= V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES;
 	     ++offset)
-		for (enum test_codec codec = TEST_CODEC_LINEAR;
-		     codec <= TEST_CODEC_PCMA; ++codec)
-			for (unsigned int polarity = 0; polarity < 2; ++polarity)
+		CHECK(replay_into_receiver(
+			      offset, TEST_CODEC_LINEAR, false),
+		      "probe acquisition failed at offset %u", offset);
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (unsigned int polarity = 0; polarity < 2; ++polarity)
+			for (size_t index = 0;
+			     index < ARRAY_LENGTH(codec_offsets); ++index)
 				CHECK(replay_into_receiver(
-					      offset, codec, polarity != 0),
+					      codec_offsets[index], codec,
+					      polarity != 0),
 				      "probe acquisition failed at offset %u, "
 				      "codec %d, polarity %u",
-				      offset, codec, polarity);
+				      codec_offsets[index], codec, polarity);
+	return true;
+}
+
+static bool test_turnaround_tail_and_silence(void)
+{
+	enum { TONE_TAIL_SAMPLES = 12 };
+	struct v34_phase2_probe_synchronizer synchronizer;
+	struct v34_phase2_probe_synchronizer_event event;
+	struct v34_phase2_probe_transmitter probe;
+	struct v34_phase2_tone_transmitter tone;
+
+	CHECK(v34_phase2_probe_synchronizer_init(&synchronizer) ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_OK &&
+	      v34_phase2_probe_transmitter_init(
+		      &probe, TEST_NOMINAL_AMPLITUDE) ==
+		      V34_PHASE2_PROBE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone, V34_CALLING_STATION,
+		      TEST_NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "delayed-probe fixture did not initialize");
+	for (uint16_t index = 0;
+	     index < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     ++index) {
+		int16_t sample = 0;
+		bool final_sample = index + 1u ==
+				    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+
+		if (index < TONE_TAIL_SAMPLES)
+			CHECK(v34_phase2_tone_transmitter_sample(
+				      &tone, &sample) == V34_PHASE2_TONE_OK,
+			      "turnaround tone failed at sample %u", index);
+		else if (index >=
+			 V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES)
+			CHECK(v34_phase2_probe_transmitter_sample(
+				      &probe, V34_PHASE2_PROBE_L1,
+				      &sample) == V34_PHASE2_PROBE_OK,
+			      "delayed L1 failed at sample %u", index);
+		CHECK(v34_phase2_probe_synchronizer_sample(
+			      &synchronizer, sample, &event) ==
+			      V34_PHASE2_PROBE_SYNCHRONIZER_OK &&
+		      event.kind ==
+			      (final_sample ?
+				       V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_ACQUIRED :
+				       V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_NONE),
+		      "delayed probe changed acquisition at sample %u", index);
+	}
+	CHECK(event.leading_samples ==
+		      V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES &&
+	      event.replay_samples == V34_PHASE2_PROBE_PERIOD_SAMPLES &&
+	      event.probe_energy_fraction > 0.99,
+	      "turnaround silence changed the delayed probe boundary");
 	return true;
 }
 
@@ -477,6 +540,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "offsets and codecs", test_offsets_and_codecs },
+		{ "turnaround tail and silence",
+		  test_turnaround_tail_and_silence },
 		{ "independent phase distortion", test_phase_distortion },
 		{ "false acquisition", test_false_acquisition },
 		{ "validation", test_validation },

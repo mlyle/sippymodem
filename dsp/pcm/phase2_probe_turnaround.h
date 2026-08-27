@@ -15,9 +15,10 @@ enum {
 		V34_PHASE2_SAMPLE_RATE * 50 / 1000,
 	PHASE2_PROBE_TURNAROUND_TONE_TAIL_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 10 / 1000,
-	/* Center the expected L1 edge within the synchronizer search prefix. */
+	/* Begin one millisecond before the expected L1 edge. The remaining
+	 * synchronizer prefix tolerates the receiver timing-settling interval. */
 	PHASE2_PROBE_TURNAROUND_RECEIVE_HANDOFF_LEAD_SAMPLES =
-		V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES / 2,
+		V34_PHASE2_PROBE_SYNCHRONIZER_NOMINAL_LEADING_SAMPLES,
 	PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 2,
 };

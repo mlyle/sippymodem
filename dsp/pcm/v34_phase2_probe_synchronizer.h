@@ -9,11 +9,13 @@
 #include <stdint.h>
 
 enum {
-	/* Ranging hands reception over near the end of the preceding tone. Two
-	 * milliseconds bounds the residual edge-estimation error without making
-	 * acquisition consume a second probe period. */
+	/* Ranging hands reception over near the end of the preceding tone. Keep
+	 * the nominal edge one millisecond into a 22-ms timing-settling prefix,
+	 * then require one complete probe period before classifying L1. */
+	V34_PHASE2_PROBE_SYNCHRONIZER_NOMINAL_LEADING_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE / 1000,
 	V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 2 / 1000,
+		V34_PHASE2_SAMPLE_RATE * 22 / 1000,
 	V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES =
 		V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES +
 		V34_PHASE2_PROBE_PERIOD_SAMPLES,
