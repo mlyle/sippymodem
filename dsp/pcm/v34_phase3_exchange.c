@@ -74,15 +74,15 @@ static bool trn_timing_is_valid(
 		    &exchange->transmit.line.profile, &expected) ||
 	    exchange->trn_target_symbols != expected)
 		return false;
-	switch (exchange->transmit.symbols.stage) {
+	switch (exchange->transmit.phase3.stage) {
 	case V34_PHASE3_TRANSMITTER_S:
 	case V34_PHASE3_TRANSMITTER_PP:
-		return exchange->transmit.symbols.trn_symbols == 0;
+		return exchange->transmit.phase3.trn_symbols == 0;
 	case V34_PHASE3_TRANSMITTER_TRN:
-		return exchange->transmit.symbols.trn_symbols <= expected;
+		return exchange->transmit.phase3.trn_symbols <= expected;
 	case V34_PHASE3_TRANSMITTER_J:
 	case V34_PHASE3_TRANSMITTER_COMPLETE:
-		return exchange->transmit.symbols.trn_symbols == expected;
+		return exchange->transmit.phase3.trn_symbols == expected;
 	}
 	return false;
 }
@@ -100,10 +100,14 @@ static bool handoff_ready(const struct v34_phase3_exchange *exchange)
 		return false;
 	if (exchange->local_role == V34_CALLING_STATION)
 		return exchange->transmit_started &&
-		       exchange->transmit.symbols.stage ==
+		       exchange->transmit.stage ==
+			       V34_TRAINING_TRANSMITTER_PHASE3 &&
+		       exchange->transmit.phase3.stage ==
 			       V34_PHASE3_TRANSMITTER_J;
 	return exchange->local_role == V34_ANSWERING_STATION &&
-	       exchange->transmit_stopped;
+	       exchange->transmit_stopped &&
+	       exchange->transmit.stage ==
+		       V34_TRAINING_TRANSMITTER_ANSWER_S;
 }
 
 bool v34_phase3_exchange_is_valid(
@@ -113,12 +117,19 @@ bool v34_phase3_exchange_is_valid(
 	uint32_t sample_rate;
 
 	if (exchange == NULL ||
-	    !v34_phase3_line_transmitter_is_valid(&exchange->transmit) ||
+	    !v34_training_transmitter_is_valid(&exchange->transmit) ||
 	    !v34_phase34_receiver_is_valid(&exchange->receive) ||
 	    !trn_timing_is_valid(exchange) ||
 	    !roles_are_reciprocal(&exchange->transmit.line.profile,
 				 &exchange->receive.transmitting_profile) ||
 	    exchange->local_role != exchange->transmit.line.profile.local_role ||
+	    v34_constellation_size_is_valid(
+		    exchange->transmit.phase4_constellation) !=
+		    receiver_complete(exchange) ||
+	    (receiver_complete(exchange) &&
+	     exchange->transmit.phase4_constellation !=
+		     exchange->receive.phase3_handoff.j.sequence
+			     .remote_constellation) ||
 	    (v34_phase34_receiver_has_failed(&exchange->receive) &&
 	     !exchange->failed))
 		return false;
@@ -133,7 +144,7 @@ bool v34_phase3_exchange_is_valid(
 		    (exchange->transmit_started && !receiver_complete(exchange)) ||
 		    (receiver_complete(exchange) &&
 		     exchange->receive.phase4_s_rearmed !=
-			     (exchange->transmit.symbols.stage >=
+			     (exchange->transmit.phase3.stage >=
 			      V34_PHASE3_TRANSMITTER_J)))
 			return false;
 	} else if (exchange->local_role == V34_ANSWERING_STATION) {
@@ -146,8 +157,8 @@ bool v34_phase3_exchange_is_valid(
 		     !exchange->transmit_started) ||
 		    (exchange->transmit_stopped &&
 		     (!exchange->stop_transmit_requested ||
-		      exchange->transmit.symbols.stage !=
-			      V34_PHASE3_TRANSMITTER_COMPLETE)))
+		      exchange->transmit.stage !=
+			      V34_TRAINING_TRANSMITTER_ANSWER_S)))
 			return false;
 	} else {
 		return false;
@@ -166,7 +177,7 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	int16_t initial_receive_gain)
 {
 	struct v34_phase3_exchange initialized = { 0 };
-	enum v34_phase3_line_transmitter_result transmit_result;
+	enum v34_training_transmitter_result transmit_result;
 
 	if (exchange == NULL || configuration == NULL ||
 	    !roles_are_reciprocal(local_transmit, peer_transmit) ||
@@ -175,18 +186,18 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	    !v34_constellation_size_is_valid(
 		    configuration->requested_remote_constellation))
 		return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
-	transmit_result = v34_phase3_line_transmitter_init(
+	transmit_result = v34_training_transmitter_init(
 		&initialized.transmit, local_transmit,
 		configuration->requested_remote_constellation,
 		configuration->sample_rate,
 		configuration->nominal_peak_amplitude);
-	if (transmit_result != V34_PHASE3_LINE_TRANSMITTER_OK) {
-		if (transmit_result == V34_PHASE3_LINE_TRANSMITTER_OUT_OF_RANGE)
+	if (transmit_result != V34_TRAINING_TRANSMITTER_OK) {
+		if (transmit_result == V34_TRAINING_TRANSMITTER_OUT_OF_RANGE)
 			return V34_PHASE3_EXCHANGE_OUT_OF_RANGE;
-		if (transmit_result == V34_PHASE3_LINE_TRANSMITTER_CLIPPING_RISK)
+		if (transmit_result == V34_TRAINING_TRANSMITTER_CLIPPING_RISK)
 			return V34_PHASE3_EXCHANGE_CLIPPING_RISK;
 		return transmit_result ==
-			       V34_PHASE3_LINE_TRANSMITTER_INVALID_ARGUMENT ?
+			       V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT ?
 			       V34_PHASE3_EXCHANGE_INVALID_ARGUMENT :
 			       V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	}
@@ -231,22 +242,28 @@ bool v34_phase3_exchange_handoff_is_valid(
 	const struct v34_phase3_exchange_handoff *handoff)
 {
 	if (handoff == NULL ||
-	    !v34_training_line_is_valid(&handoff->transmit_line) ||
-	    !v34_phase3_transmitter_is_valid(&handoff->phase3_transmit) ||
+	    !v34_training_transmitter_is_valid(&handoff->transmit) ||
 	    !v34_phase34_receiver_is_valid(&handoff->receive) ||
 	    v34_phase34_receiver_has_failed(&handoff->receive) ||
 	    handoff->receive.stage != V34_PHASE34_RECEIVER_PHASE4 ||
-	    handoff->transmit_line.profile.local_role !=
-		    handoff->phase3_transmit.local_role ||
-	    !roles_are_reciprocal(&handoff->transmit_line.profile,
+	    !v34_constellation_size_is_valid(
+		    handoff->transmit.phase4_constellation) ||
+	    handoff->transmit.phase4_constellation !=
+		    handoff->receive.phase3_handoff.j.sequence
+			    .remote_constellation ||
+	    !roles_are_reciprocal(&handoff->transmit.line.profile,
 				 &handoff->receive.transmitting_profile))
 		return false;
-	return handoff->transmit_line.profile.local_role ==
+	return handoff->transmit.line.profile.local_role ==
 		       V34_CALLING_STATION ?
-		       handoff->phase3_transmit.stage ==
+		       handoff->transmit.stage ==
+			       V34_TRAINING_TRANSMITTER_PHASE3 &&
+		       handoff->transmit.phase3.stage ==
 			       V34_PHASE3_TRANSMITTER_J &&
 			       handoff->receive.phase4_s_rearmed :
-		       handoff->phase3_transmit.stage ==
+		       handoff->transmit.stage ==
+			       V34_TRAINING_TRANSMITTER_ANSWER_S &&
+		       handoff->transmit.phase3.stage ==
 			       V34_PHASE3_TRANSMITTER_COMPLETE &&
 			       !handoff->receive.phase4_s_rearmed;
 }
@@ -272,7 +289,7 @@ static enum v34_phase3_exchange_result drive_transmitter(
 	struct v34_phase3_exchange *exchange,
 	int16_t *sample, uint32_t *events)
 {
-	enum v34_phase3_line_transmitter_result result;
+	enum v34_training_transmitter_result result;
 
 	if (!exchange->transmit_started) {
 		*sample = 0;
@@ -283,35 +300,34 @@ static enum v34_phase3_exchange_result drive_transmitter(
 		}
 		return V34_PHASE3_EXCHANGE_OK;
 	}
-	if (exchange->transmit.symbols.stage ==
+	if (exchange->transmit.phase3.stage ==
 		    V34_PHASE3_TRANSMITTER_TRN &&
-	    exchange->transmit.symbols.trn_symbols ==
+	    exchange->transmit.phase3.trn_symbols ==
 		    exchange->trn_target_symbols) {
-		if (v34_phase3_line_transmitter_start_j(&exchange->transmit) !=
-		    V34_PHASE3_LINE_TRANSMITTER_OK)
+		if (v34_training_transmitter_start_j(&exchange->transmit) !=
+		    V34_TRAINING_TRANSMITTER_OK)
 			return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 		*events |= V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED;
 	}
 	if (exchange->stop_transmit_requested &&
-	    exchange->transmit.symbols.stage ==
+	    exchange->transmit.phase3.stage ==
 		    V34_PHASE3_TRANSMITTER_J &&
-	    exchange->transmit.symbols.j_symbols >=
+	    exchange->transmit.phase3.j_symbols >=
 		    V34_PHASE3_J_PATTERN_SYMBOLS &&
-	    exchange->transmit.symbols.j_symbols %
+	    exchange->transmit.phase3.j_symbols %
 		    V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
-	    v34_phase3_line_transmitter_finish_j(&exchange->transmit) !=
-		    V34_PHASE3_LINE_TRANSMITTER_OK)
+	    v34_training_transmitter_finish_j(&exchange->transmit) !=
+		    V34_TRAINING_TRANSMITTER_OK)
 		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
-	if (exchange->transmit.symbols.stage ==
-	    V34_PHASE3_TRANSMITTER_COMPLETE) {
+	if (exchange->transmit.stage != V34_TRAINING_TRANSMITTER_PHASE3) {
 		if (!exchange->transmit_stopped) {
 			exchange->transmit_stopped = true;
 			*events |= V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED;
 		}
 		return drive_silence(&exchange->transmit.line, sample);
 	}
-	result = v34_phase3_line_transmitter_sample(&exchange->transmit, sample);
-	if (result == V34_PHASE3_LINE_TRANSMITTER_OK)
+	result = v34_training_transmitter_sample(&exchange->transmit, sample);
+	if (result == V34_TRAINING_TRANSMITTER_OK)
 		return V34_PHASE3_EXCHANGE_OK;
 	return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 }
@@ -324,7 +340,7 @@ static enum v34_phase3_exchange_result drive_receiver(
 	 * boundary. Earlier input belongs to the peer's prescribed silence and
 	 * is discarded so the initialized receiver begins on that boundary. */
 	if (exchange->local_role == V34_ANSWERING_STATION &&
-	    exchange->transmit.symbols.stage < V34_PHASE3_TRANSMITTER_J)
+	    exchange->transmit.phase3.stage < V34_PHASE3_TRANSMITTER_J)
 		return V34_PHASE3_EXCHANGE_OK;
 	/* The caller's answering peer cannot begin Phase 4 S before receiving
 	 * local J. Discard the remaining Phase 3 peer stream (and any local
@@ -349,7 +365,7 @@ static enum v34_phase3_exchange_result drive_receiver(
 		case V34_PHASE34_RECEIVER_PHASE3_S_DETECTED:
 			*events |= V34_PHASE3_EXCHANGE_EVENT_PEER_S_DETECTED;
 			if (exchange->local_role == V34_ANSWERING_STATION) {
-				if (exchange->transmit.symbols.stage !=
+				if (exchange->transmit.phase3.stage !=
 				    V34_PHASE3_TRANSMITTER_J)
 					return V34_PHASE3_EXCHANGE_SEQUENCE_MISMATCH;
 				exchange->stop_transmit_requested = true;
@@ -438,6 +454,17 @@ enum v34_phase3_exchange_result v34_phase3_exchange_sample(
 		next.failed = true;
 	if (result != V34_PHASE3_EXCHANGE_OK && !result_is_terminal(result))
 		return result;
+	if (!next.failed && receiver_complete(&next) &&
+	    !v34_constellation_size_is_valid(
+		    next.transmit.phase4_constellation) &&
+	    v34_training_transmitter_select_phase4_constellation(
+		    &next.transmit,
+		    next.receive.phase3_handoff.j.sequence
+			    .remote_constellation) !=
+		    V34_TRAINING_TRANSMITTER_OK) {
+		next.failed = true;
+		result = V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	}
 	if (!next.failed && handoff_ready(&next) &&
 	    !next.handoff_announced) {
 		next.handoff_announced = true;
@@ -465,8 +492,7 @@ enum v34_phase3_exchange_result v34_phase3_exchange_handoff(
 		return V34_PHASE3_EXCHANGE_FAILED;
 	if (!v34_phase3_exchange_is_handoff_ready(exchange))
 		return V34_PHASE3_EXCHANGE_INVALID_STATE;
-	generated.transmit_line = exchange->transmit.line;
-	generated.phase3_transmit = exchange->transmit.symbols;
+	generated.transmit = exchange->transmit;
 	generated.receive = exchange->receive;
 	if (!v34_phase3_exchange_handoff_is_valid(&generated))
 		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;

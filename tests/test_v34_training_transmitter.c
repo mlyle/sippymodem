@@ -309,6 +309,9 @@ static bool run_composed_sequence(
 	CHECK(v34_training_transmitter_init(
 		      &actual, &profile, constellation, 8000, 5000) ==
 		      V34_TRAINING_TRANSMITTER_OK &&
+	      v34_training_transmitter_select_phase4_constellation(
+		      &actual, constellation) ==
+		      V34_TRAINING_TRANSMITTER_OK &&
 	      model_init(&model, &profile, constellation),
 	      "role %u selection %u did not initialize", role, constellation);
 	while (model.stage != V34_TRAINING_TRANSMITTER_PHASE4_E ||
@@ -427,258 +430,57 @@ static bool test_composed_line(void)
 		       V34_ANSWERING_STATION, V34_CONSTELLATION_16_POINT);
 }
 
-static bool build_phase3_boundary(
-	enum v34_station_role role, struct v34_training_line *line,
-	struct v34_phase3_transmitter *phase3)
+static bool test_phase4_selection(void)
 {
-	struct v34_phase3_profile profile = profile_fixture(role);
-	struct v34_training_line generated_line;
-	struct v34_phase3_transmitter generated_phase3;
-	bool reached_j_boundary = false;
-
-	if (line == NULL || phase3 == NULL ||
-	    v34_training_line_init(
-		    &generated_line, &profile, 8000, 5000) !=
-		    V34_TRAINING_LINE_OK ||
-	    v34_phase3_transmitter_init(
-		    &generated_phase3, role, V34_CONSTELLATION_16_POINT) !=
-		    V34_PHASE3_TRANSMITTER_OK)
-		return false;
-	for (uint32_t sample_count = 0; sample_count < 5000; ++sample_count) {
-		struct qam_point point;
-		const struct qam_point *next_point = NULL;
-		int16_t ignored;
-		bool accepted;
-
-		if (v34_training_line_needs_point(&generated_line)) {
-			if (generated_phase3.stage ==
-				    V34_PHASE3_TRANSMITTER_TRN &&
-			    generated_phase3.trn_symbols ==
-				    V34_PHASE3_TRN_MIN_SYMBOLS &&
-			    v34_phase3_transmitter_start_j(&generated_phase3) !=
-				    V34_PHASE3_TRANSMITTER_OK)
-				return false;
-			if (v34_phase3_transmitter_next(
-				    &generated_phase3, &point) !=
-			    V34_PHASE3_TRANSMITTER_OK)
-				return false;
-			next_point = &point;
-		}
-		if (v34_training_line_sample(
-			    &generated_line, next_point, &ignored, &accepted) !=
-			    V34_TRAINING_LINE_OK ||
-		    accepted != (next_point != NULL))
-			return false;
-		if (generated_phase3.stage == V34_PHASE3_TRANSMITTER_J &&
-		    generated_phase3.j_symbols == V34_PHASE3_J_PATTERN_SYMBOLS) {
-			reached_j_boundary = true;
-			break;
-		}
-	}
-	if (!reached_j_boundary)
-		return false;
-	if (role == V34_ANSWERING_STATION) {
-		static const struct qam_point zero;
-
-		if (v34_phase3_transmitter_finish_j(&generated_phase3) !=
-		    V34_PHASE3_TRANSMITTER_OK)
-			return false;
-		for (unsigned int sample_count = 0; sample_count < 5;
-		     ++sample_count) {
-			const struct qam_point *next_point =
-				v34_training_line_needs_point(&generated_line) ?
-					&zero :
-					NULL;
-			int16_t ignored;
-			bool accepted;
-
-			if (v34_training_line_sample(
-				    &generated_line, next_point, &ignored,
-				    &accepted) != V34_TRAINING_LINE_OK ||
-			    accepted != (next_point != NULL))
-				return false;
-		}
-	}
-	*line = generated_line;
-	*phase3 = generated_phase3;
-	return true;
-}
-
-static bool run_continued_sequence(enum v34_station_role role)
-{
-	const enum v34_constellation_size phase4_constellation =
-		V34_CONSTELLATION_4_POINT;
-	struct v34_training_line line;
-	struct v34_phase3_transmitter phase3;
-	struct v34_training_transmitter actual;
-	struct model_training model = { 0 };
-	uint64_t initial_samples;
-	uint32_t transition_symbols = 0;
-	unsigned int stages_seen = 0;
-
-	CHECK(build_phase3_boundary(role, &line, &phase3) &&
-	      v34_training_transmitter_continue(
-		      &actual, &line, &phase3, phase4_constellation) ==
-		      V34_TRAINING_TRANSMITTER_OK &&
-	      memcmp(&actual.line, &line, sizeof(line)) == 0 &&
-	      memcmp(&actual.phase3, &phase3, sizeof(phase3)) == 0 &&
-	      actual.phase4_constellation == phase4_constellation,
-	      "role %u continuation did not copy its exact boundary", role);
-	model.line = line;
-	model.phase3 = phase3;
-	model.phase4_constellation = phase4_constellation;
-	if (role == V34_CALLING_STATION) {
-		model.stage = V34_TRAINING_TRANSMITTER_PHASE3;
-		CHECK(v34_training_transmitter_finish_j(&actual) ==
-			      V34_TRAINING_TRANSMITTER_OK &&
-		      model_finish_j(&model),
-		      "continued caller did not leave J");
-	} else {
-		CHECK(v34_phase3_s_sequence_init(&model.phase4.answer_s) ==
-			      V34_PHASE3_S_SEQUENCE_OK,
-		      "answering continuation model did not initialize");
-		model.stage = V34_TRAINING_TRANSMITTER_ANSWER_S;
-	}
-	initial_samples = line.generated_samples;
-	for (uint32_t sample_count = 0;
-	     model.stage != V34_TRAINING_TRANSMITTER_PHASE4_TRN ||
-	     model.phase4_trn_symbols < 32;
-	     ++sample_count) {
-		struct qam_point point;
-		const struct qam_point *next_point = NULL;
-		enum v34_training_transmitter_stage stage = model.stage;
-		int16_t expected;
-		int16_t sample;
-		bool accepted;
-
-		CHECK(sample_count < 1000,
-		      "role %u continuation exceeded its sample bound", role);
-		stages_seen |= 1u << stage;
-		if (v34_training_line_needs_point(&model.line)) {
-			if (stage == V34_TRAINING_TRANSMITTER_J_PRIME ||
-			    stage == V34_TRAINING_TRANSMITTER_ANSWER_S)
-				transition_symbols++;
-			next_point = &point;
-			CHECK(model_next_point(&model, &point),
-			      "role %u continuation model failed", role);
-		}
-		CHECK(v34_training_line_sample(
-			      &model.line, next_point, &expected, &accepted) ==
-			      V34_TRAINING_LINE_OK &&
-		      accepted == (next_point != NULL) &&
-		      v34_training_transmitter_sample(&actual, &sample) ==
-			      V34_TRAINING_TRANSMITTER_OK &&
-		      sample == expected &&
-		      protocol_state_matches(&actual, &model) &&
-		      actual.line.generated_samples ==
-			      model.line.generated_samples &&
-		      actual.line.carrier.carrier_phase ==
-			      model.line.carrier.carrier_phase &&
-		      actual.line.carrier.symbol_phase_units ==
-			      model.line.carrier.symbol_phase_units,
-		      "role %u continuation diverged at sample %u",
-		      role, sample_count);
-	}
-	CHECK((stages_seen &
-	       (1u << (role == V34_CALLING_STATION ?
-			V34_TRAINING_TRANSMITTER_J_PRIME :
-			V34_TRAINING_TRANSMITTER_ANSWER_S))) != 0 &&
-	      (stages_seen &
-	       (1u << V34_TRAINING_TRANSMITTER_PHASE4_TRN)) != 0 &&
-	      transition_symbols ==
-		      (role == V34_CALLING_STATION ?
-			       V34_PHASE4_J_PRIME_SYMBOLS :
-			       V34_PHASE3_S_SEQUENCE_SYMBOLS) &&
-	      actual.line.generated_samples > initial_samples &&
-	      actual.phase4.trn.role == role,
-	      "role %u continuation crossed the wrong protocol boundary", role);
-	return true;
-}
-
-static bool test_continuation(void)
-{
-	return run_continued_sequence(V34_CALLING_STATION) &&
-	       run_continued_sequence(V34_ANSWERING_STATION);
-}
-
-static bool test_continuation_validation(void)
-{
-	struct v34_training_line caller_line;
-	struct v34_training_line answer_line;
-	struct v34_training_line with_md;
-	struct v34_training_line corrupt;
-	struct v34_phase3_transmitter caller;
-	struct v34_phase3_transmitter answer;
-	struct v34_phase3_transmitter caller_complete;
-	struct v34_phase3_transmitter answer_j;
+	struct v34_phase3_profile profile =
+		profile_fixture(V34_CALLING_STATION);
 	struct v34_training_transmitter training;
 	struct v34_training_transmitter before;
+	struct v34_training_line line;
+	struct v34_phase3_transmitter phase3;
 
-	CHECK(build_phase3_boundary(
-		      V34_CALLING_STATION, &caller_line, &caller) &&
-	      build_phase3_boundary(
-		      V34_ANSWERING_STATION, &answer_line, &answer),
-	      "continuation validation boundaries did not initialize");
-	caller_complete = caller;
-	answer_j = answer;
-	CHECK(v34_phase3_transmitter_finish_j(&caller_complete) ==
-		      V34_PHASE3_TRANSMITTER_OK,
-	      "caller validation boundary did not complete");
-	answer_j.stage = V34_PHASE3_TRANSMITTER_J;
-	with_md = caller_line;
-	with_md.profile.md_length_35_ms_units = 1;
-	with_md.profile.md_symbol_count = 105;
-	corrupt = caller_line;
-	corrupt.carrier.preemphasis_filter_index =
-		V34_PREEMPHASIS_MAX_FILTER_INDEX + 1u;
-	CHECK(v34_phase3_transmitter_is_valid(&answer_j) &&
-	      v34_training_line_is_valid(&with_md),
-	      "validation fixtures were not independently valid");
-	memset(&training, 0xa5, sizeof(training));
+	CHECK(v34_training_transmitter_init(
+		      &training, &profile, V34_CONSTELLATION_16_POINT,
+		      8000, 5000) == V34_TRAINING_TRANSMITTER_OK &&
+	      !v34_constellation_size_is_valid(
+		      training.phase4_constellation) &&
+	      training.phase4_constellation == 0,
+	      "Phase 4 selection fixture did not initialize unselected");
+	line = training.line;
+	phase3 = training.phase3;
+	CHECK(v34_training_transmitter_select_phase4_constellation(
+		      &training, V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_TRANSMITTER_OK &&
+	      v34_constellation_size_is_valid(
+		      training.phase4_constellation) &&
+	      training.phase4_constellation == V34_CONSTELLATION_4_POINT &&
+	      memcmp(&training.line, &line, sizeof(line)) == 0 &&
+	      memcmp(&training.phase3, &phase3, sizeof(phase3)) == 0,
+	      "Phase 4 selection replaced the active waveform boundary");
 	before = training;
-	CHECK(v34_training_transmitter_continue(
-		      NULL, &caller_line, &caller,
-		      V34_CONSTELLATION_4_POINT) ==
+	CHECK(v34_training_transmitter_select_phase4_constellation(
+		      NULL, V34_CONSTELLATION_4_POINT) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, NULL, &caller,
-		      V34_CONSTELLATION_4_POINT) ==
+	      v34_training_transmitter_select_phase4_constellation(
+		      &training, (enum v34_constellation_size)8) ==
 		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &caller_line, NULL,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &caller_line, &answer,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &caller_line, &caller_complete,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &answer_line, &answer_j,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &with_md, &caller,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &corrupt, &caller,
-		      V34_CONSTELLATION_4_POINT) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_training_transmitter_continue(
-		      &training, &caller_line, &caller,
-		      (enum v34_constellation_size)8) ==
-		      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
+	      v34_training_transmitter_select_phase4_constellation(
+		      &training, V34_CONSTELLATION_16_POINT) ==
+		      V34_TRAINING_TRANSMITTER_INVALID_STATE &&
 	      memcmp(&training, &before, sizeof(training)) == 0,
-	      "invalid continuation changed its destination");
+	      "rejected Phase 4 selection changed the transmitter");
 	return true;
 }
 
 static bool advance_to_phase4(struct v34_training_transmitter *training)
 {
+	if (!v34_training_transmitter_is_valid(training) ||
+	    (!v34_constellation_size_is_valid(
+		    training->phase4_constellation) &&
+	     v34_training_transmitter_select_phase4_constellation(
+		     training, training->phase3.remote_constellation) !=
+		     V34_TRAINING_TRANSMITTER_OK))
+		return false;
 	for (uint32_t sample_count = 0; sample_count < 5000; ++sample_count) {
 		int16_t ignored;
 
@@ -915,7 +717,10 @@ static bool test_initialization(void)
 		      &training, &answering, V34_CONSTELLATION_4_POINT,
 		      8000, 5000) == V34_TRAINING_TRANSMITTER_OK &&
 	      v34_training_transmitter_is_valid(&training) &&
-	      training.phase3.local_role == V34_ANSWERING_STATION,
+	      training.phase3.local_role == V34_ANSWERING_STATION &&
+	      !v34_constellation_size_is_valid(
+		      training.phase4_constellation) &&
+	      training.phase4_constellation == 0,
 	      "answering training did not initialize");
 	invalid_role.local_role = (enum v34_station_role)99;
 	with_md.md_length_35_ms_units = 1;
@@ -963,8 +768,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "composed line", test_composed_line },
-		{ "Phase 3 continuation", test_continuation },
-		{ "continuation validation", test_continuation_validation },
+		{ "Phase 4 selection", test_phase4_selection },
 		{ "copy, controls, and overflow", test_copy_controls_and_overflow },
 		{ "Phase 4 controls", test_phase4_controls },
 		{ "initialization", test_initialization },

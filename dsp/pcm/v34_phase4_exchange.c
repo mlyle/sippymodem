@@ -444,7 +444,6 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	struct v34_phase4_exchange initialized = { 0 };
 	enum v34_constellation_size local_transmit_constellation;
 	enum v34_constellation_size peer_transmit_constellation;
-	enum v34_training_transmitter_result transmit;
 
 	if (exchange == NULL ||
 	    !v34_phase3_exchange_handoff_is_valid(handoff) ||
@@ -458,12 +457,11 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	/* Each J selects the other station's Phase 4 transmitter. */
 	local_transmit_constellation = detected_j_constellation(handoff);
 	peer_transmit_constellation =
-		handoff->phase3_transmit.remote_constellation;
-	transmit = v34_training_transmitter_continue(
-		&initialized.transmit.training, &handoff->transmit_line,
-		&handoff->phase3_transmit, local_transmit_constellation);
-	if (transmit != V34_TRAINING_TRANSMITTER_OK)
-		return transmit_result(transmit);
+		handoff->transmit.phase3.remote_constellation;
+	initialized.transmit.training = handoff->transmit;
+	if (initialized.transmit.training.phase4_constellation !=
+	    local_transmit_constellation)
+		return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
 	initialized.receive = handoff->receive;
 	if (initialized.receive.phase4_constellation !=
 		    peer_transmit_constellation ||
@@ -472,7 +470,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	initialized.transmit_mp = configuration->transmit_mp;
 	initialized.data_equalizer_adaptation =
 		configuration->data_equalizer_adaptation;
-	initialized.local_role = handoff->transmit_line.profile.local_role;
+	initialized.local_role = handoff->transmit.line.profile.local_role;
 	if (!v34_phase4_exchange_is_valid(&initialized))
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 	*exchange = initialized;

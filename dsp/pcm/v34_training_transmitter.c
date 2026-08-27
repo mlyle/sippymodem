@@ -9,6 +9,8 @@ static bool stage_is_valid(
 {
 	bool phase3_complete =
 		training->phase3.stage == V34_PHASE3_TRANSMITTER_COMPLETE;
+	bool selected = v34_constellation_size_is_valid(
+		training->phase4_constellation);
 	enum v34_station_role role = training->phase3.local_role;
 
 	switch (training->stage) {
@@ -20,16 +22,19 @@ static bool stage_is_valid(
 		       v34_phase3_s_sequence_is_valid(
 			       &training->phase4.answer_s) &&
 		       !v34_phase3_s_sequence_is_complete(
-			       &training->phase4.answer_s);
+			       &training->phase4.answer_s) &&
+		       (selected ||
+			training->phase4.answer_s.emitted_symbols == 0);
 	case V34_TRAINING_TRANSMITTER_J_PRIME:
-		return role == V34_CALLING_STATION && phase3_complete &&
+		return selected && role == V34_CALLING_STATION &&
+		       phase3_complete &&
 		       training->phase4_trn_symbols == 0 &&
 		       v34_phase4_j_prime_sequence_is_valid(
 			       &training->phase4.j_prime) &&
 		       !v34_phase4_j_prime_sequence_is_complete(
 			       &training->phase4.j_prime);
 	case V34_TRAINING_TRANSMITTER_PHASE4_TRN:
-		return phase3_complete &&
+		return selected && phase3_complete &&
 		       v34_phase4_trn_is_valid(&training->phase4.trn) &&
 		       training->phase4.trn.role == role &&
 		       training->phase4.trn.constellation ==
@@ -37,7 +42,7 @@ static bool stage_is_valid(
 		       training->phase4.trn.has_last_symbol ==
 			       (training->phase4_trn_symbols != 0);
 	case V34_TRAINING_TRANSMITTER_PHASE4_MP:
-		return phase3_complete &&
+		return selected && phase3_complete &&
 		       training->phase4_trn_symbols >=
 			       V34_PHASE4_TRN_MIN_SYMBOLS &&
 		       v34_phase4_mp_is_valid(&training->phase4.mp) &&
@@ -45,7 +50,7 @@ static bool stage_is_valid(
 		       training->phase4.mp.constellation ==
 			       training->phase4_constellation;
 	case V34_TRAINING_TRANSMITTER_PHASE4_E:
-		return phase3_complete &&
+		return selected && phase3_complete &&
 		       training->phase4_trn_symbols >=
 			       V34_PHASE4_TRN_MIN_SYMBOLS &&
 		       v34_phase4_e_sequence_is_valid(&training->phase4.e) &&
@@ -62,8 +67,9 @@ bool v34_training_transmitter_is_valid(
 	return training != NULL &&
 	       v34_training_line_is_valid(&training->line) &&
 	       training->line.profile.md_symbol_count == 0 &&
-	       v34_constellation_size_is_valid(
-		       training->phase4_constellation) &&
+	       (training->phase4_constellation == 0 ||
+		v34_constellation_size_is_valid(
+			training->phase4_constellation)) &&
 	       v34_phase3_transmitter_is_valid(&training->phase3) &&
 	       training->line.profile.local_role ==
 		       training->phase3.local_role &&
@@ -110,44 +116,7 @@ enum v34_training_transmitter_result v34_training_transmitter_init(
 		    remote_constellation) !=
 		    V34_PHASE3_TRANSMITTER_OK)
 		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
-	initialized.phase4_constellation = remote_constellation;
 	initialized.stage = V34_TRAINING_TRANSMITTER_PHASE3;
-	if (!v34_training_transmitter_is_valid(&initialized))
-		return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
-	*training = initialized;
-	return V34_TRAINING_TRANSMITTER_OK;
-}
-
-enum v34_training_transmitter_result v34_training_transmitter_continue(
-	struct v34_training_transmitter *training,
-	const struct v34_training_line *active_line,
-	const struct v34_phase3_transmitter *phase3,
-	enum v34_constellation_size phase4_constellation)
-{
-	struct v34_training_transmitter initialized = { 0 };
-
-	if (training == NULL || !v34_training_line_is_valid(active_line) ||
-	    active_line->profile.md_symbol_count != 0 ||
-	    !v34_phase3_transmitter_is_valid(phase3) ||
-	    !v34_constellation_size_is_valid(phase4_constellation) ||
-	    active_line->profile.local_role != phase3->local_role ||
-	    (phase3->local_role == V34_CALLING_STATION &&
-	     phase3->stage != V34_PHASE3_TRANSMITTER_J) ||
-	    (phase3->local_role == V34_ANSWERING_STATION &&
-	     phase3->stage != V34_PHASE3_TRANSMITTER_COMPLETE))
-		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
-	initialized.line = *active_line;
-	initialized.phase3 = *phase3;
-	initialized.phase4_constellation = phase4_constellation;
-	if (phase3->local_role == V34_CALLING_STATION) {
-		initialized.stage = V34_TRAINING_TRANSMITTER_PHASE3;
-	} else {
-		if (v34_phase3_s_sequence_init(
-			    &initialized.phase4.answer_s) !=
-		    V34_PHASE3_S_SEQUENCE_OK)
-			return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
-		initialized.stage = V34_TRAINING_TRANSMITTER_ANSWER_S;
-	}
 	if (!v34_training_transmitter_is_valid(&initialized))
 		return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
 	*training = initialized;
@@ -175,6 +144,30 @@ enum v34_training_transmitter_result v34_training_transmitter_start_j(
 	return V34_TRAINING_TRANSMITTER_OK;
 }
 
+enum v34_training_transmitter_result
+v34_training_transmitter_select_phase4_constellation(
+	struct v34_training_transmitter *training,
+	enum v34_constellation_size constellation)
+{
+	struct v34_training_transmitter next;
+
+	if (!v34_training_transmitter_is_valid(training) ||
+	    !v34_constellation_size_is_valid(constellation))
+		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
+	if (v34_constellation_size_is_valid(
+		    training->phase4_constellation) ||
+	    (training->stage != V34_TRAINING_TRANSMITTER_PHASE3 &&
+	     (training->stage != V34_TRAINING_TRANSMITTER_ANSWER_S ||
+	      training->phase4.answer_s.emitted_symbols != 0)))
+		return V34_TRAINING_TRANSMITTER_INVALID_STATE;
+	next = *training;
+	next.phase4_constellation = constellation;
+	if (!v34_training_transmitter_is_valid(&next))
+		return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
+	*training = next;
+	return V34_TRAINING_TRANSMITTER_OK;
+}
+
 enum v34_training_transmitter_result v34_training_transmitter_finish_j(
 	struct v34_training_transmitter *training)
 {
@@ -184,6 +177,10 @@ enum v34_training_transmitter_result v34_training_transmitter_finish_j(
 	if (!v34_training_transmitter_is_valid(training))
 		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
 	if (training->stage != V34_TRAINING_TRANSMITTER_PHASE3)
+		return V34_TRAINING_TRANSMITTER_INVALID_STATE;
+	if (training->phase3.local_role == V34_CALLING_STATION &&
+	    !v34_constellation_size_is_valid(
+		    training->phase4_constellation))
 		return V34_TRAINING_TRANSMITTER_INVALID_STATE;
 	next = *training;
 	result = v34_phase3_transmitter_finish_j(&next.phase3);
@@ -447,6 +444,10 @@ enum v34_training_transmitter_result v34_training_transmitter_sample(
 
 	if (!v34_training_transmitter_is_valid(training) || sample == NULL)
 		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
+	if (training->stage != V34_TRAINING_TRANSMITTER_PHASE3 &&
+	    !v34_constellation_size_is_valid(
+		    training->phase4_constellation))
+		return V34_TRAINING_TRANSMITTER_INVALID_STATE;
 	next = *training;
 	accepting = v34_training_line_needs_point(&next.line);
 	if (accepting) {

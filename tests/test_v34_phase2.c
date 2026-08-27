@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase2.h>
-#include <v34_phase3_line_transmitter.h>
+#include <v34_training_transmitter.h>
 
 #include "v34_phase2_test_pair.h"
 #include "test.h"
@@ -431,27 +431,27 @@ static bool check_timeline(
 		      "retrain INFO1a did not retain its selected rate pair");
 	}
 	if (zero_md) {
-		struct v34_phase3_line_transmitter caller_phase3;
-		struct v34_phase3_line_transmitter answerer_phase3;
+		struct v34_training_transmitter caller_phase3;
+		struct v34_training_transmitter answerer_phase3;
 
-		CHECK(v34_phase3_line_transmitter_init(
+		CHECK(v34_training_transmitter_init(
 			      &caller_phase3, &caller_local_profile,
 			      V34_CONSTELLATION_16_POINT, 8000,
 			      TEST_AMPLITUDE) ==
-			      V34_PHASE3_LINE_TRANSMITTER_OK &&
-		      v34_phase3_line_transmitter_init(
+			      V34_TRAINING_TRANSMITTER_OK &&
+		      v34_training_transmitter_init(
 			      &answerer_phase3, &answerer_local_profile,
 			      V34_CONSTELLATION_16_POINT, 8000,
 			      TEST_AMPLITUDE) ==
-			      V34_PHASE3_LINE_TRANSMITTER_OK &&
+			      V34_TRAINING_TRANSMITTER_OK &&
 		      profiles_equal(
 			      &caller_phase3.line.profile,
 			      &caller_local_profile) &&
 		      profiles_equal(
 			      &answerer_phase3.line.profile,
 			      &answerer_local_profile) &&
-		      caller_phase3.symbols.local_role == V34_CALLING_STATION &&
-		      answerer_phase3.symbols.local_role ==
+		      caller_phase3.phase3.local_role == V34_CALLING_STATION &&
+		      answerer_phase3.phase3.local_role ==
 			      V34_ANSWERING_STATION,
 		      "Phase 2 profiles did not initialize reciprocal Phase 3 lines");
 	}

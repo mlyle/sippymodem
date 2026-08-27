@@ -327,9 +327,13 @@ static bool endpoint_sample(
 		endpoint->constellations_routed =
 			endpoint->phase4.transmit.training.phase4_constellation ==
 				handoff_detected_constellation(&endpoint->handoff) &&
+			memcmp(&endpoint->phase4.transmit.training,
+			       &endpoint->handoff.transmit,
+			       sizeof(endpoint->handoff.transmit)) == 0 &&
 			receive_constellation_is(
 				&endpoint->phase4,
-				endpoint->handoff.phase3_transmit.remote_constellation) &&
+				endpoint->handoff.transmit.phase3
+					.remote_constellation) &&
 			memcmp(&endpoint->phase4.receive,
 			       &endpoint->handoff.receive,
 			       sizeof(endpoint->phase4.receive)) == 0;

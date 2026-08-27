@@ -116,6 +116,9 @@ static bool source_init(
 		    V34_CONSTELLATION_16_POINT, SAMPLE_RATE,
 		    nominal_peak_amplitude) !=
 		    V34_TRAINING_TRANSMITTER_OK ||
+	    v34_training_transmitter_select_phase4_constellation(
+		    &initialized.training, V34_CONSTELLATION_16_POINT) !=
+		    V34_TRAINING_TRANSMITTER_OK ||
 	    v34_data_mapping_prepare(
 		    &initialized.mapping, transmitting_profile,
 		    &initialized.parameters, false) != V34_DATA_MAPPING_OK)

@@ -234,9 +234,9 @@ static bool run_generated_duplex_exchange(
 		bool answerer_signal_was_started =
 			answerer.receive.signal_started;
 		bool answerer_starting_j =
-			answerer.transmit.symbols.stage ==
+			answerer.transmit.phase3.stage ==
 				V34_PHASE3_TRANSMITTER_TRN &&
-			answerer.transmit.symbols.trn_symbols ==
+			answerer.transmit.phase3.trn_symbols ==
 				answerer.trn_target_symbols;
 
 		channel_receive(&channel, &caller_receive, &answerer_receive);
@@ -319,9 +319,9 @@ static bool run_generated_duplex_exchange(
 	      !v34_phase3_exchange_has_failed(&answerer),
 	      "codec %d delay %zu stopped at caller tx/rx=%d/%d "
 	      "answerer tx/rx=%d/%d events=0x%x/0x%x",
-	      codec, delay_samples, caller.transmit.symbols.stage,
+	      codec, delay_samples, caller.transmit.phase3.stage,
 	      caller.receive.stage,
-	      answerer.transmit.symbols.stage,
+	      answerer.transmit.phase3.stage,
 	      answerer.receive.stage, caller_seen,
 	      answerer_seen);
 	CHECK(caller_signal_start < exchanged_samples &&
@@ -344,16 +344,16 @@ static bool run_generated_duplex_exchange(
 		       V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED),
 	      "Phase 3 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
-	CHECK(caller.transmit.symbols.stage == V34_PHASE3_TRANSMITTER_J &&
+	CHECK(caller.transmit.phase3.stage == V34_PHASE3_TRANSMITTER_J &&
 	      caller.trn_target_symbols == V34_PHASE3_TRN_MIN_SYMBOLS &&
-	      caller.transmit.symbols.trn_symbols == caller.trn_target_symbols &&
-	      caller.transmit.symbols.j_symbols >=
+	      caller.transmit.phase3.trn_symbols == caller.trn_target_symbols &&
+	      caller.transmit.phase3.j_symbols >=
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
 	      answerer.stop_transmit_requested && answerer.transmit_stopped &&
-	      answerer.transmit.symbols.stage ==
-		      V34_PHASE3_TRANSMITTER_COMPLETE &&
+	      answerer.transmit.stage ==
+		      V34_TRAINING_TRANSMITTER_ANSWER_S &&
 	      answerer.trn_target_symbols == answerer_trn_symbols &&
-	      answerer.transmit.symbols.trn_symbols ==
+	      answerer.transmit.phase3.trn_symbols ==
 		      answerer.trn_target_symbols &&
 	      answerer_samples_at_stop != 0 &&
 	      answerer.transmit.line.generated_samples >
@@ -371,9 +371,9 @@ static bool run_generated_duplex_exchange(
 	      answerer_handoff.receive.phase3_handoff.j
 		      .sequence
 			      .remote_constellation == V34_CONSTELLATION_16_POINT &&
-	      caller_handoff.phase3_transmit.remote_constellation ==
+	      caller_handoff.transmit.phase3.remote_constellation ==
 		      V34_CONSTELLATION_16_POINT &&
-	      answerer_handoff.phase3_transmit.remote_constellation ==
+	      answerer_handoff.transmit.phase3.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
 	      caller_handoff.receive.phase4_s_rearmed &&
 	      !caller_handoff.receive.signal_started &&

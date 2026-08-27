@@ -1371,21 +1371,15 @@ V34_PHASE3_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_trn.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o
-V34_PHASE3_LINE_TRANSMITTER_OBJECTS := \
-	$(BUILD_DIR)/v34_phase3_line_transmitter.o \
-	$(filter-out \
-		$(BUILD_DIR)/test_v34_training_line.o, \
-		$(V34_TRAINING_LINE_TEST_OBJECTS)) \
-	$(filter-out \
-		$(BUILD_DIR)/test_v34_phase3_transmitter.o, \
-		$(V34_PHASE3_TRANSMITTER_TEST_OBJECTS))
 V34_PHASE3_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_exchange
 V34_PHASE3_EXCHANGE_TEST_OBJECTS = \
 	$(BUILD_DIR)/test_v34_phase3_exchange.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/v34_phase3_exchange.o \
-	$(sort $(V34_PHASE3_LINE_TRANSMITTER_OBJECTS) \
+	$(sort $(filter-out \
+			$(BUILD_DIR)/test_v34_training_transmitter.o, \
+			$(V34_TRAINING_TRANSMITTER_TEST_OBJECTS)) \
 		$(filter-out \
 			$(BUILD_DIR)/test_v34_phase34_receiver.o, \
 			$(V34_PHASE34_RECEIVER_TEST_OBJECTS)))
@@ -2824,7 +2818,9 @@ V34_PHASE2_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase2_info1_exchange.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
-	$(V34_PHASE3_LINE_TRANSMITTER_OBJECTS) \
+	$(filter-out \
+		$(BUILD_DIR)/test_v34_training_transmitter.o, \
+		$(V34_TRAINING_TRANSMITTER_TEST_OBJECTS)) \
 	$(V34_PHASE2_PROBE_FLOW_OBJECTS)
 V34_CALL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_call.o \
@@ -5618,10 +5614,6 @@ $(BUILD_DIR)/v34_phase2_selection.o: \
 
 $(BUILD_DIR)/v34_phase3_transmitter.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase3_transmitter.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase3_line_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase3_line_transmitter.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase3_exchange.o: \

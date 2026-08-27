@@ -63,18 +63,17 @@ enum v34_training_transmitter_result v34_training_transmitter_init(
 	enum v34_constellation_size remote_constellation,
 	uint32_t sample_rate, int16_t nominal_peak_amplitude);
 
-/* Continue an exact Phase 3 exchange boundary. A caller must still be sending
- * J; an answerer must have completed J and begins its 128T S plus 16T S-bar.
- * `phase4_constellation` is the selection received in the peer's J. Both
- * inputs are copied and remain unchanged on every result. */
-enum v34_training_transmitter_result v34_training_transmitter_continue(
-	struct v34_training_transmitter *training,
-	const struct v34_training_line *active_line,
-	const struct v34_phase3_transmitter *phase3,
-	enum v34_constellation_size phase4_constellation);
-
 bool v34_training_transmitter_is_valid(
 	const struct v34_training_transmitter *training);
+
+/* Record the constellation selected by the peer's J without replacing the
+ * waveform owner. A calling transmitter may receive the selection anywhere
+ * in Phase 3. An answering transmitter that has stopped J may receive it only
+ * before emitting its following S/S-bar sequence. */
+enum v34_training_transmitter_result
+v34_training_transmitter_select_phase4_constellation(
+	struct v34_training_transmitter *training,
+	enum v34_constellation_size constellation);
 
 /* These controls apply at the next unconsumed symbol boundary. Calls before
  * the Phase 3 minimum/pattern boundary leave the complete instance unchanged.

@@ -4,7 +4,7 @@
 #define V34_PHASE3_EXCHANGE_H
 
 #include "v34_phase34_receiver.h"
-#include "v34_phase3_line_transmitter.h"
+#include "v34_training_transmitter.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -50,8 +50,7 @@ struct v34_phase3_exchange_configuration {
  * waveform state, and the next owner must continue only its copied
  * instances. */
 struct v34_phase3_exchange_handoff {
-	struct v34_training_line transmit_line;
-	struct v34_phase3_transmitter phase3_transmit;
+	struct v34_training_transmitter transmit;
 	struct v34_phase34_receiver receive;
 };
 
@@ -65,7 +64,7 @@ bool v34_phase3_exchange_handoff_is_valid(
  * minimum. The following Phase 4 owner decides when the caller may terminate
  * J. Calls on one instance must be serialized. */
 struct v34_phase3_exchange {
-	struct v34_phase3_line_transmitter transmit;
+	struct v34_training_transmitter transmit;
 	struct v34_phase34_receiver receive;
 	uint32_t trn_target_symbols;
 	uint32_t answer_silence_samples;
