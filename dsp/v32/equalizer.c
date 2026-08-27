@@ -68,11 +68,6 @@ static int16_t smooth_q15(
 			(uint32_t)((int32_t)sample * ERROR_SMOOTH_SAMPLE_Q15), 15));
 }
 
-static int16_t absolute_wrap_s16(int16_t value)
-{
-	return wrap_s16_from_s32(value < 0 ? -(int32_t)value : value);
-}
-
 static uint64_t lineage_word(uint64_t lineage, uint16_t word)
 {
 	return (lineage ^ word) * UINT64_C(1099511628211);
@@ -306,10 +301,8 @@ static struct v32_equalizer_observation make_observation(
 	equalizer->pending_filtered_q = sample_q;
 	equalizer->pending_carrier_phase = carrier_phase;
 	return (struct v32_equalizer_observation) {
-		.i = wrap_s16_from_s32(arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)phasor.cosine * magnitude), 13)),
-		.q = wrap_s16_from_s32(arithmetic_shift_right_u32(
-			(uint32_t)((int32_t)phasor.sine * magnitude), 13)),
+		.i = multiply_shift_s16(phasor.cosine, magnitude, 13),
+		.q = multiply_shift_s16(phasor.sine, magnitude, 13),
 		.phase = (uint16_t)phase,
 		.magnitude = (uint16_t)magnitude,
 		.epoch = equalizer->epoch,

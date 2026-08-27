@@ -415,11 +415,7 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 		(int64_t)prefilter_output *
 			mapping->cpd.four_times_gain_q0_16 * upstream_level,
 		V92_PCM_GAIN_SHIFT);
-	if (scaled > INT16_MAX)
-		scaled = INT16_MAX;
-	else if (scaled < INT16_MIN)
-		scaled = INT16_MIN;
-	*sample = (int16_t)scaled;
+	*sample = clamp_s16(scaled);
 	return V92_PCM_FRAME_OK;
 }
 

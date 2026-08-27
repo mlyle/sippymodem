@@ -53,8 +53,8 @@ uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y)
 		return (uint16_t)(x < 0 ? 0x6000u : 0x2000u);
 	if (x == 0)
 		return (uint16_t)(y < 0 ? 0x4000u : 0);
-	absolute_x = (uint16_t)(x < 0 ? -(int32_t)x : x);
-	absolute_y = (uint16_t)(y < 0 ? -(int32_t)y : y);
+	absolute_x = (uint16_t)magnitude_s16(x);
+	absolute_y = (uint16_t)magnitude_s16(y);
 	if (absolute_x < absolute_y) {
 		mantissa = reciprocal_q15(absolute_y, &exponent);
 		scale = (uint32_t)mantissa * absolute_x;

@@ -40,12 +40,6 @@ _Static_assert(
 	sizeof(PROFILES) / sizeof(PROFILES[0]) == V34_S_TONE_CARRIER_COUNT,
 	"V.34 S detector carrier profile count changed");
 
-static int16_t multiply_shift_q14(int16_t left, int16_t right)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)left * right), 14));
-}
-
 static int16_t absolute_shift4(int16_t value)
 {
 	int16_t shifted = wrap_s16_from_s32(arithmetic_shift_right_u32(
@@ -140,25 +134,26 @@ enum v34_s_tone_detector_result v34_s_tone_detector_sample(
 	profile = &PROFILES[detector->carrier];
 	stage_a = arithmetic_shift_right_u32(
 		(uint32_t)(int32_t)sample, 4) -
-		  multiply_shift_q14(
-			detector->stage_a[0], profile->stage_a_feedback) -
-		  multiply_shift_q14(
-			detector->stage_a[1], V34_S_TONE_FEEDBACK_Q14);
+		  multiply_shift_s16(
+			detector->stage_a[0], profile->stage_a_feedback, 14) -
+		  multiply_shift_s16(
+			detector->stage_a[1], V34_S_TONE_FEEDBACK_Q14, 14);
 	shifted_a = wrap_s16_from_s32(
 		arithmetic_shift_right_u32((uint32_t)stage_a, 4));
 	detector->stage_a[1] = detector->stage_a[0];
 	detector->stage_a[0] = wrap_s16_from_s32(stage_a);
 	stage_b = shifted_a -
-		  multiply_shift_q14(
-			detector->stage_b[0], profile->stage_b_feedback) -
-		  multiply_shift_q14(
-			detector->stage_b[1], V34_S_TONE_FEEDBACK_Q14);
+		  multiply_shift_s16(
+			detector->stage_b[0], profile->stage_b_feedback, 14) -
+		  multiply_shift_s16(
+			detector->stage_b[1], V34_S_TONE_FEEDBACK_Q14, 14);
 	stage_b_word = wrap_s16_from_s32(stage_b);
 	detector->stage_b[1] = detector->stage_b[0];
 	detector->stage_b[0] = stage_b_word;
 	energy = wrap_s16_from_s32(
 		(int32_t)absolute_shift4(stage_b_word) +
-		multiply_shift_q14(detector->energy, V34_S_TONE_ENERGY_POLE_Q14));
+		multiply_shift_s16(
+			detector->energy, V34_S_TONE_ENERGY_POLE_Q14, 14));
 	detector->energy = energy;
 	return V34_S_TONE_DETECTOR_OK;
 }

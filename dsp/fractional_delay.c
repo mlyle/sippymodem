@@ -2,6 +2,8 @@
 
 #include "fractional_delay.h"
 
+#include "integer_math.h"
+
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
@@ -9,7 +11,6 @@
 
 enum {
 	FRACTIONAL_DELAY_Q15_ONE = 32768,
-	FRACTIONAL_DELAY_Q15_ROUND = 16384,
 };
 
 static bool phase_is_valid(int32_t phase_q16)
@@ -103,21 +104,6 @@ static enum fractional_delay_result generate_coefficients(
 		FRACTIONAL_DELAY_OK : FRACTIONAL_DELAY_NUMERIC_FAILURE;
 }
 
-static int16_t round_and_saturate(int64_t value_q15)
-{
-	int64_t rounded;
-
-	if (value_q15 < 0)
-		rounded = -((-value_q15 + FRACTIONAL_DELAY_Q15_ROUND) >> 15);
-	else
-		rounded = (value_q15 + FRACTIONAL_DELAY_Q15_ROUND) >> 15;
-	if (rounded > INT16_MAX)
-		return INT16_MAX;
-	if (rounded < INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)rounded;
-}
-
 void fractional_delay_init(struct fractional_delay *delay)
 {
 	if (delay == NULL)
@@ -188,7 +174,7 @@ enum fractional_delay_result fractional_delay_process(
 	delay->history_position++;
 	if (delay->history_position == FRACTIONAL_DELAY_TAPS)
 		delay->history_position = 0;
-	*output = round_and_saturate(filtered);
+	*output = round_shift_s64_to_s16_saturating(filtered, 15u);
 	return FRACTIONAL_DELAY_OK;
 }
 

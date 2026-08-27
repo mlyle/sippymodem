@@ -2,6 +2,7 @@
 
 #include "v34_phase2_dpsk.h"
 
+#include "integer_math.h"
 #include "phase.h"
 
 #include <limits.h>
@@ -292,11 +293,7 @@ static int16_t q14_shift(int64_t accumulator, bool round)
 	else
 		shifted = -((-accumulator + INT64_C(16383)) /
 			    INT64_C(16384));
-	if (shifted > INT16_MAX)
-		return INT16_MAX;
-	if (shifted < INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)shifted;
+	return clamp_s16(shifted);
 }
 
 static int16_t select_carrier(
@@ -331,11 +328,7 @@ static int16_t select_carrier(
 	else
 		accumulator = -((-accumulator + INT64_C(65535)) /
 				INT64_C(65536));
-	if (accumulator > INT16_MAX)
-		return INT16_MAX;
-	if (accumulator < INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)accumulator;
+	return clamp_s16(accumulator);
 }
 
 static int16_t interpolate(

@@ -22,11 +22,6 @@ enum {
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
 
-static int16_t absolute_wrap_s16(int16_t value)
-{
-	return value < 0 ? wrap_s16_from_s32(-(int32_t)value) : value;
-}
-
 static int16_t scale_sample(int16_t gain, int16_t sample)
 {
 	uint32_t product = (uint32_t)((int32_t)gain * sample);
@@ -61,7 +56,7 @@ static void correct_gain(struct v34_gain_control *control)
 	int32_t correction_step;
 	int16_t next_correction;
 	int16_t correction_magnitude;
-	int32_t scale;
+	int16_t scale;
 
 	if (wrap_s16_from_s32((int32_t)delta_magnitude -
 		     V34_GAIN_ENERGY_DEADBAND) <= 0)
@@ -83,8 +78,7 @@ static void correct_gain(struct v34_gain_control *control)
 			return;
 		scale = V34_GAIN_INCREASE_Q14;
 	}
-	control->gain = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)control->gain * scale), 14));
+	control->gain = multiply_shift_s16(control->gain, scale, 14);
 }
 
 bool v34_gain_control_is_valid(const struct v34_gain_control *control)

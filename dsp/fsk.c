@@ -15,22 +15,6 @@ enum {
 	FSK_MAX_SMOOTHING_SHIFT = 30,
 };
 
-static int64_t arithmetic_shift_right_s64(
-	uint64_t value, unsigned int shift)
-{
-	uint64_t shifted;
-
-	if (shift == 0)
-		shifted = value;
-	else if ((value & (UINT64_C(1) << 63)) == 0)
-		shifted = value >> shift;
-	else
-		shifted = (value >> shift) | ~(UINT64_MAX >> shift);
-	return shifted <= INT64_MAX ?
-		       (int64_t)shifted :
-		       -(int64_t)(UINT64_MAX - shifted) - 1;
-}
-
 static uint64_t symbol_period_units(
 	const struct fsk_channel *channel)
 {
@@ -305,7 +289,7 @@ static void update_detector(
 	}
 	receiver->line_power = line_power;
 	metric = receiver->mark_power - receiver->space_power;
-	receiver->smoothed_metric += arithmetic_shift_right_s64(
+	receiver->smoothed_metric += arithmetic_shift_right_u64(
 		(uint64_t)(metric - receiver->smoothed_metric),
 		receiver->channel.metric_smoothing_shift);
 }

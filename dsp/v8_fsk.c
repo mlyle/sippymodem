@@ -39,13 +39,6 @@ _Static_assert(
 		(unsigned int)V8_FSK_TRANSMIT_FILTER_TAPS,
 	"V.8 transmit history seed left the filter");
 
-static int16_t mul_shift_s16(
-	int16_t left, int16_t right, unsigned int shift)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)left * right), shift));
-}
-
 static uint16_t phase_step(unsigned int frequency_hz)
 {
 	uint32_t scaled = frequency_hz * V8_FSK_PHASE_UNITS;
@@ -211,7 +204,7 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 	step = next.held_bit ? next.mark_phase_step : next.space_phase_step;
 	next.carrier_phase = (uint16_t)(
 		(next.carrier_phase + step) & V8_FSK_PHASE_MASK);
-	generated = mul_shift_s16(
+	generated = multiply_shift_s16(
 		fixed_phase_cosine_u8_q14(
 			(uint8_t)(next.carrier_phase >> V8_FSK_PHASE_SHIFT)),
 		next.gain, 14);

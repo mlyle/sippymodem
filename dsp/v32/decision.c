@@ -205,11 +205,6 @@ static const int16_t ROTATED_LEVEL_128[6] = {
 	0x05a8, 0x10f8, 0x1c48, 0x2799, 0x32e9, 0x3e39,
 };
 
-static int16_t absolute_wrap_s16(int16_t value)
-{
-	return value < 0 ? wrap_s16_from_s32(-(int32_t)value) : value;
-}
-
 struct rotated_sample {
 	struct v32_fixed_point point;
 	uint8_t rotation;
@@ -229,14 +224,14 @@ static struct rotated_sample mirrored_rotation(
 	uint8_t rotation = observation->q < observation->i ?
 		(uint8_t)((absolute_q < absolute_i) + 2u) :
 		(uint8_t)(absolute_q < absolute_i);
-	int16_t i_cos = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)observation->i * COSINE[rotation]), 15));
-	int16_t q_sin = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)observation->q * SINE[rotation]), 15));
-	int16_t q_cos = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)COSINE[rotation] * observation->q), 15));
-	int16_t i_sin = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)SINE[rotation] * observation->i), 15));
+	int16_t i_cos = multiply_shift_s16(
+		observation->i, COSINE[rotation], 15);
+	int16_t q_sin = multiply_shift_s16(
+		observation->q, SINE[rotation], 15);
+	int16_t q_cos = multiply_shift_s16(
+		COSINE[rotation], observation->q, 15);
+	int16_t i_sin = multiply_shift_s16(
+		SINE[rotation], observation->i, 15);
 
 	return (struct rotated_sample){
 		.point = {

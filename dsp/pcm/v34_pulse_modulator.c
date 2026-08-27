@@ -314,15 +314,6 @@ static int64_t divide_round(int64_t numerator, int64_t denominator)
 		       -((-numerator + denominator / 2) / denominator);
 }
 
-static int16_t clamp_s16(int64_t value)
-{
-	if (value > INT16_MAX)
-		return INT16_MAX;
-	if (value < INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)value;
-}
-
 static int16_t interpolated_coefficient(
 	const struct pulse_profile *profile, uint32_t target_phase,
 	uint32_t target_phase_count, int symbol)

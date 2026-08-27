@@ -52,8 +52,12 @@ static bool test_signed_rounding(void)
 	CHECK(round_shift_s64_to_s32_saturating(INT64_MAX, 0u) ==
 		      INT32_MAX &&
 	      round_shift_s64_to_s32_saturating(INT64_MIN, 0u) ==
-		      INT32_MIN,
-	      "signed rounding did not saturate to 32 bits");
+		      INT32_MIN &&
+	      round_shift_s64_to_s16_saturating(
+		      INT64_C(32768) * 32768, 15u) == INT16_MAX &&
+	      round_shift_s64_to_s16_saturating(
+		      INT64_C(-32769) * 32768, 15u) == INT16_MIN,
+	      "signed rounding saturation changed");
 	return true;
 }
 
@@ -90,6 +94,15 @@ static bool test_fixed_width_words(void)
 		CHECK(wrap_s16_from_s32(s16_cases[index].input) ==
 			      s16_cases[index].expected,
 		      "16-bit wrap case %zu changed", index);
+	CHECK(wrap_s64_from_u64(UINT64_C(0x8000000000000000)) ==
+		      INT64_MIN &&
+	      wrap_s64_from_u64(UINT64_MAX) == -1 &&
+	      magnitude_s16(INT16_MIN) == 32768 &&
+	      absolute_wrap_s16(INT16_MIN) == INT16_MIN &&
+	      absolute_wrap_s16(-1234) == 1234 &&
+	      clamp_s16(INT64_MAX) == INT16_MAX &&
+	      clamp_s16(INT64_MIN) == INT16_MIN,
+	      "shared signed-word helpers changed");
 	return true;
 }
 
@@ -116,6 +129,17 @@ static bool test_arithmetic_shift(void)
 			      cases[index].input, cases[index].shift) ==
 			      cases[index].expected,
 		      "arithmetic shift case %zu changed", index);
+	CHECK(arithmetic_shift_right_u64(
+		      UINT64_C(0x8000000000000000), 1u) ==
+		      INT64_C(-4611686018427387904) &&
+	      arithmetic_shift_right_u64(UINT64_MAX, 63u) == -1 &&
+	      arithmetic_shift_right_u64(
+		      UINT64_C(0x7fffffffffffffff), 64u) == 0 &&
+	      arithmetic_shift_right_u64(
+		      UINT64_C(0x8000000000000000), 65u) == -1 &&
+	      multiply_shift_s16(0x4000, 0x4000, 14u) == 0x4000 &&
+	      multiply_shift_s16(INT16_MIN, INT16_MIN, 15u) == INT16_MIN,
+	      "wide shift or wrapped multiply changed");
 	return true;
 }
 

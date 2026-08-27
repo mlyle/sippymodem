@@ -61,20 +61,6 @@ static const int16_t DETECTOR_Q[3] = { 0, 14189, -14189 };
 static const int16_t PROPORTIONAL_GAIN[3] = { 2336, 3049, 1524 };
 static const int16_t INTEGRAL_GAIN[3] = { 0, 17, 8 };
 
-static int16_t multiply_shift_s16(
-	int16_t left, int16_t right, unsigned int shift)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)left * right), shift));
-}
-
-static int16_t absolute_wrap_s16(int16_t value)
-{
-	int32_t wide = value;
-
-	return wrap_s16_from_s32(wide < 0 ? -wide : wide);
-}
-
 static int16_t filter_symbol(const struct v32_symbol_timing *timing)
 {
 	uint32_t accumulator = 0;

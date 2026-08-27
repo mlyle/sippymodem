@@ -22,15 +22,6 @@ static int32_t shift_q15(uint32_t bits)
 			 -((-value + INT32_C(0x7fff)) / INT32_C(0x8000)));
 }
 
-static int16_t clamp_s16(int64_t value)
-{
-	if (value > INT16_MAX)
-		return INT16_MAX;
-	if (value < INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)value;
-}
-
 /* Exact formula for the normalized 128-entry reciprocal profile. */
 static uint16_t reciprocal_profile(
 	uint16_t value, uint16_t *exponent)

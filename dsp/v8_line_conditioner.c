@@ -34,11 +34,6 @@ _Static_assert(
 		V8_LINE_ENTRANCE_FILTER_TAPS,
 	"V.8 entrance filter profile changed");
 
-static int32_t magnitude_s16(int16_t value)
-{
-	return value < 0 ? -(int32_t)value : value;
-}
-
 static bool role_is_valid(enum v8_station_role role)
 {
 	return role == V8_CALLING_STATION ||

@@ -9,9 +9,6 @@
 
 #include <limits.h>
 
-static int16_t mul_shift_s16(
-	int16_t left, int16_t right, unsigned int shift);
-
 static int16_t cycle_cosine_q14(uint8_t index)
 {
 	return fixed_phase_cosine_u8_q14(index);
@@ -85,13 +82,13 @@ enum v8_ansam_result v8_ansam_generate(
 			V8_ANSAM_SAMPLE_RATE, V8_ANSAM_MODULATION_HZ, 1);
 		next.carrier_phase += phase_step_u32(
 			V8_ANSAM_SAMPLE_RATE, V8_ANSAM_CARRIER_HZ, 1);
-		envelope = mul_shift_s16(
+		envelope = multiply_shift_s16(
 			0x0ccd, phase_cosine_q14(next.modulation_phase), 14);
-		scaled_envelope = mul_shift_s16(
+		scaled_envelope = multiply_shift_s16(
 			(int16_t)(envelope + 0x4000),
 			next.signed_amplitude, 14);
 		carrier = phase_cosine_q14(next.carrier_phase);
-		samples[index] = mul_shift_s16(
+		samples[index] = multiply_shift_s16(
 			carrier, scaled_envelope, 14);
 		if (next.phase_reversals &&
 		    --next.samples_until_reversal == 0) {
@@ -138,18 +135,6 @@ _Static_assert(
 			sizeof(V8_ANSAM_REJECTION_B[0]) == 3,
 	"ANSam rejection filter profile changed");
 
-static int16_t mul_shift_s16(
-	int16_t left, int16_t right, unsigned int shift)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)left * right), shift));
-}
-
-static int32_t magnitude_s16(int16_t value)
-{
-	return value < 0 ? -(int32_t)value : value;
-}
-
 bool v8_ansam_detector_is_valid(
 	const struct v8_ansam_detector *detector)
 {
@@ -194,11 +179,11 @@ static bool detect_carrier(
 
 		tone->tone_input[0] = (uint16_t)samples[sample_index];
 		for (size_t index = 0; index < 3; ++index)
-			output += mul_shift_s16(
+			output += multiply_shift_s16(
 				(int16_t)tone->tone_input[index],
 				V8_ANSAM_REJECTION_B[index], 14);
 		for (size_t index = 0; index < 2; ++index)
-			output -= mul_shift_s16(
+			output -= multiply_shift_s16(
 				(int16_t)tone->tone_output[index],
 				V8_ANSAM_REJECTION_A[index], 14);
 		for (size_t index = 0; index < 2; ++index) {
@@ -215,10 +200,10 @@ static bool detect_carrier(
 				(uint32_t)output, 4);
 
 			for (size_t index = 0; index < 2; ++index) {
-				stage += mul_shift_s16(
+				stage += multiply_shift_s16(
 					(int16_t)tone->iir_input[index],
 					V8_ANSAM_TONE_COEFFICIENTS[index], 14);
-				stage -= mul_shift_s16(
+				stage -= multiply_shift_s16(
 					(int16_t)tone->iir_output[index],
 					V8_ANSAM_TONE_COEFFICIENTS[4 + index],
 					14);
@@ -231,11 +216,11 @@ static bool detect_carrier(
 
 			output = arithmetic_shift_right_u32((uint32_t)stage, 4);
 			for (size_t index = 0; index < 2; ++index) {
-				output += mul_shift_s16(
+				output += multiply_shift_s16(
 					(int16_t)tone->iir_input[2 + index],
 					V8_ANSAM_TONE_COEFFICIENTS[2 + index],
 					14);
-				output -= mul_shift_s16(
+				output -= multiply_shift_s16(
 					(int16_t)tone->iir_output[2 + index],
 					V8_ANSAM_TONE_COEFFICIENTS[6 + index],
 					14);
@@ -246,13 +231,13 @@ static bool detect_carrier(
 			tone->iir_input[2] = (uint16_t)arithmetic_shift_right_u32(
 				(uint32_t)stage, 4);
 
-			output = mul_shift_s16(
+			output = multiply_shift_s16(
 				wrap_s16_from_s32(magnitude_s16(
 					wrap_s16_from_s32(
 						arithmetic_shift_right_u32(
 							(uint32_t)output, 4)))),
 				V8_ANSAM_TONE_ENERGY_GAIN_Q14, 14);
-			output += mul_shift_s16(
+			output += multiply_shift_s16(
 				(int16_t)tone->filtered_energy,
 				V8_ANSAM_TONE_ENERGY_POLE_Q14, 14);
 			tone->filtered_energy = (uint16_t)output;
