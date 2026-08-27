@@ -428,14 +428,8 @@ static bool test_validation(void)
 	scrambler.history = 0;
 	scrambler.polynomial =
 		(enum v34_scrambler_polynomial)2;
-	CHECK(!v34_scrambler_is_valid(&scrambler) &&
-		      strcmp(v34_framing_result_name(
-			     V34_FRAMING_INVALID_ARGUMENT),
-			     "invalid argument") == 0 &&
-		      strcmp(v34_framing_result_name(
-			     (enum v34_framing_result)2),
-			     "unknown") == 0,
-	      "V.34 framing accepted corrupt polynomial or result");
+	CHECK(!v34_scrambler_is_valid(&scrambler),
+	      "V.34 framing accepted corrupt polynomial");
 	return true;
 }
 

@@ -541,23 +541,8 @@ static bool test_validation(void)
 	      v34_symbol_power_observe_q7(&measurement, &q7) ==
 		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
 	      measurement.mean_squared_magnitude == -1.0 &&
-	      measurement.symbol_count == 1u &&
-	      strcmp(v34_symbol_power_result_name(
-		     V34_SYMBOL_POWER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_symbol_power_result_name(
-		     V34_SYMBOL_POWER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_symbol_power_result_name(
-		     V34_SYMBOL_POWER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_symbol_power_result_name(
-		     V34_SYMBOL_POWER_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_symbol_power_result_name(
-		     (enum v34_symbol_power_result)4),
-		     "unknown") == 0,
-	      "symbol-power validation or result names changed");
+	      measurement.symbol_count == 1u,
+	      "symbol-power validation changed");
 	return true;
 }
 

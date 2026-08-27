@@ -249,15 +249,3 @@ v34_convolutional_encoder_advance(
 	*encoder = next;
 	return V34_TRELLIS_OK;
 }
-
-const char *v34_trellis_result_name(
-	enum v34_trellis_result result)
-{
-	switch (result) {
-	case V34_TRELLIS_OK:
-		return "ok";
-	case V34_TRELLIS_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

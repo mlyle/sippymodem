@@ -76,7 +76,4 @@ enum v34_symbol_power_result v34_normalize_power(
 	const struct qam_point *projected_point,
 	struct qam_point *normalized_point);
 
-const char *v34_symbol_power_result_name(
-	enum v34_symbol_power_result result);
-
 #endif

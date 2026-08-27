@@ -547,16 +547,6 @@ static bool test_validation(void)
 		      V34_TRELLIS_INVALID_ARGUMENT &&
 	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0,
 	      "invalid convolutional input changed encoder state");
-	CHECK(strcmp(v34_trellis_result_name(
-		     V34_TRELLIS_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_trellis_result_name(
-		     V34_TRELLIS_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_trellis_result_name(
-		     (enum v34_trellis_result)2),
-		     "unknown") == 0,
-	      "trellis result names changed");
 	return true;
 }
 

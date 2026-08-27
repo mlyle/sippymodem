@@ -58,7 +58,4 @@ enum v34_info0_result v34_info0_decode(
 	const uint8_t *payload, size_t payload_capacity,
 	size_t payload_bit_count, struct v34_info0 *info0);
 
-const char *v34_info0_result_name(
-	enum v34_info0_result result);
-
 #endif

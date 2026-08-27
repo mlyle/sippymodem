@@ -63,7 +63,4 @@ v34_calibrate_line_power(
 	uint32_t sample_rate,
 	struct v34_line_power_measurement *measurement);
 
-const char *v34_power_calibration_result_name(
-	enum v34_power_calibration_result result);
-
 #endif

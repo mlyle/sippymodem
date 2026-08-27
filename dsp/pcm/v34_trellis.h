@@ -78,7 +78,4 @@ v34_convolutional_encoder_advance(
 	struct v34_convolutional_encoder *encoder,
 	const struct v34_convolutional_input *input);
 
-const char *v34_trellis_result_name(
-	enum v34_trellis_result result);
-
 #endif /* V34_TRELLIS_H */

@@ -418,22 +418,6 @@ static bool test_transactional_validation(void)
 		      V34_POWER_CALIBRATION_OUT_OF_RANGE &&
 	      bytes_are_filled(&normalizer, sizeof(normalizer), 0xa5),
 	      "range calibration changed its destination");
-	CHECK(strcmp(v34_power_calibration_result_name(
-		     V34_POWER_CALIBRATION_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_power_calibration_result_name(
-		     V34_POWER_CALIBRATION_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_power_calibration_result_name(
-		     V34_POWER_CALIBRATION_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_power_calibration_result_name(
-		     V34_POWER_CALIBRATION_NUMERIC_FAILURE),
-		     "numeric failure") == 0 &&
-	      strcmp(v34_power_calibration_result_name(
-		     (enum v34_power_calibration_result)4),
-		     "unknown") == 0,
-	      "power-calibration result names changed");
 	return true;
 }
 

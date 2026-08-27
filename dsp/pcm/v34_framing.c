@@ -275,15 +275,3 @@ v34_superframe_inversion_bit(
 	*bit = (uint8_t)((packed >> index) & 1u);
 	return V34_FRAMING_OK;
 }
-
-const char *v34_framing_result_name(
-	enum v34_framing_result result)
-{
-	switch (result) {
-	case V34_FRAMING_OK:
-		return "ok";
-	case V34_FRAMING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

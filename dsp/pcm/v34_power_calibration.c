@@ -387,19 +387,3 @@ v34_calibrate_line_power(
 	*measurement = measured;
 	return V34_POWER_CALIBRATION_OK;
 }
-
-const char *v34_power_calibration_result_name(
-	enum v34_power_calibration_result result)
-{
-	switch (result) {
-	case V34_POWER_CALIBRATION_OK:
-		return "ok";
-	case V34_POWER_CALIBRATION_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_POWER_CALIBRATION_OUT_OF_RANGE:
-		return "out of range";
-	case V34_POWER_CALIBRATION_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

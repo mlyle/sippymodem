@@ -342,15 +342,3 @@ enum v34_shell_mapper_result v34_shell_unmap_decision(
 	*shell_label = (uint32_t)(recovered % label_limit);
 	return V34_SHELL_MAPPER_OK;
 }
-
-const char *v34_shell_mapper_result_name(
-	enum v34_shell_mapper_result result)
-{
-	switch (result) {
-	case V34_SHELL_MAPPER_OK:
-		return "ok";
-	case V34_SHELL_MAPPER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

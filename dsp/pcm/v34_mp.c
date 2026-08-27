@@ -165,19 +165,6 @@ enum v34_mp_rate_result v34_mp_select_rates(
 	return V34_MP_RATE_OK;
 }
 
-const char *v34_mp_rate_result_name(enum v34_mp_rate_result result)
-{
-	switch (result) {
-	case V34_MP_RATE_OK:
-		return "ok";
-	case V34_MP_RATE_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_MP_RATE_NO_COMMON_RATE:
-		return "no common rate";
-	}
-	return "unknown";
-}
-
 static bool is_start_bit(size_t bit_index)
 {
 	return bit_index >= V34_MP_START0_BIT &&
@@ -600,22 +587,4 @@ enum v34_mp_result v34_mp_receive_bit(
 	*receiver = next;
 	*event = emitted;
 	return V34_MP_OK;
-}
-
-const char *v34_mp_result_name(
-	enum v34_mp_result result)
-{
-	switch (result) {
-	case V34_MP_OK:
-		return "ok";
-	case V34_MP_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_MP_INVALID_PARAMETERS:
-		return "invalid parameters";
-	case V34_MP_INVALID_FRAME:
-		return "invalid frame";
-	case V34_MP_CRC_MISMATCH:
-		return "CRC mismatch";
-	}
-	return "unknown";
 }

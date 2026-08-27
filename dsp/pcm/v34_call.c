@@ -654,30 +654,3 @@ enum v34_call_result v34_call_sample(
 		*received = decoded;
 	return result;
 }
-
-const char *v34_call_result_name(enum v34_call_result result)
-{
-	switch (result) {
-	case V34_CALL_OK:
-		return "ok";
-	case V34_CALL_SOURCE_FAILURE:
-		return "mapping-frame source failure";
-	case V34_CALL_FAILED:
-		return "failed";
-	case V34_CALL_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_CALL_INVALID_STATE:
-		return "invalid state";
-	case V34_CALL_NO_COMMON_RATE:
-		return "no common rate";
-	case V34_CALL_OUT_OF_RANGE:
-		return "out of range";
-	case V34_CALL_CLIPPING_RISK:
-		return "clipping risk";
-	case V34_CALL_SEQUENCE_MISMATCH:
-		return "sequence mismatch";
-	case V34_CALL_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

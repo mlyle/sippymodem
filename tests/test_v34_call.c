@@ -357,10 +357,10 @@ static bool endpoint_sample(
 
 	if (result != V34_CALL_OK)
 		fprintf(stderr,
-			"V.34 endpoint role=%d stage=%d tone=%u failed: %s\n",
+			"V.34 endpoint role=%d stage=%d tone=%u failed: %d\n",
 			endpoint->call.local_role, endpoint->call.stage,
 			endpoint->call.retrain_detector.tone_samples,
-			v34_call_result_name(result));
+			result);
 	return result == V34_CALL_OK &&
 	       endpoint_accept_observation(endpoint, observation, &received);
 }
@@ -1170,11 +1170,7 @@ static bool test_validation(void)
 	      !v34_call_get_data_startup(
 		      &call, (struct v34_data_startup *)&call) &&
 	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE &&
-	      v34_call_current_stage(NULL) == (enum v34_call_stage)-1 &&
-	      strcmp(v34_call_result_name(V34_CALL_SOURCE_FAILURE),
-		     "mapping-frame source failure") == 0 &&
-	      strcmp(v34_call_result_name((enum v34_call_result)99),
-		     "unknown") == 0,
+	      v34_call_current_stage(NULL) == (enum v34_call_stage)-1,
 	      "rejected call-controller operations were not transactional");
 	return true;
 }

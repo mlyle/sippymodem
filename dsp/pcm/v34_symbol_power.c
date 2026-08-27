@@ -335,19 +335,3 @@ enum v34_symbol_power_result v34_normalize_power(
 	*normalized_point = generated;
 	return V34_SYMBOL_POWER_OK;
 }
-
-const char *v34_symbol_power_result_name(
-	enum v34_symbol_power_result result)
-{
-	switch (result) {
-	case V34_SYMBOL_POWER_OK:
-		return "ok";
-	case V34_SYMBOL_POWER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_SYMBOL_POWER_OUT_OF_RANGE:
-		return "out of range";
-	case V34_SYMBOL_POWER_NUMERIC_FAILURE:
-		return "numeric failure";
-	}
-	return "unknown";
-}

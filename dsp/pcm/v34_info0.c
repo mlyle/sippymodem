@@ -150,19 +150,3 @@ enum v34_info0_result v34_info0_decode(
 	*info0 = decoded;
 	return V34_INFO0_OK;
 }
-
-const char *v34_info0_result_name(
-	enum v34_info0_result result)
-{
-	switch (result) {
-	case V34_INFO0_OK:
-		return "ok";
-	case V34_INFO0_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_INFO0_INVALID_CAPABILITIES:
-		return "invalid capabilities";
-	case V34_INFO0_INVALID_PAYLOAD:
-		return "invalid payload";
-	}
-	return "unknown";
-}

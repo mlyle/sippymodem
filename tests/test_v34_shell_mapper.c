@@ -464,16 +464,6 @@ static bool test_validation(void)
 		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
 	      shell_label == UINT32_C(0xa5a5a5a5),
 	      "invalid received-shell recovery changed its outputs");
-	CHECK(strcmp(v34_shell_mapper_result_name(
-		     V34_SHELL_MAPPER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_shell_mapper_result_name(
-		     V34_SHELL_MAPPER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_shell_mapper_result_name(
-		     (enum v34_shell_mapper_result)2),
-		     "unknown") == 0,
-	      "shell mapper result names changed");
 	return true;
 }
 

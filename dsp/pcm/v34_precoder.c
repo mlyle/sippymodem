@@ -406,17 +406,3 @@ enum v34_precoder_result v34_precoder_inverse_step(
 	*symbol = generated;
 	return V34_PRECODER_OK;
 }
-
-const char *v34_precoder_result_name(
-	enum v34_precoder_result result)
-{
-	switch (result) {
-	case V34_PRECODER_OK:
-		return "ok";
-	case V34_PRECODER_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PRECODER_OUT_OF_RANGE:
-		return "out of range";
-	}
-	return "unknown";
-}

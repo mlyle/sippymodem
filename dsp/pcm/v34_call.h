@@ -126,6 +126,4 @@ enum v34_call_result v34_call_sample(
 	int16_t *transmit_sample, struct v34_call_observation *observation,
 	struct v34_received_mapping_frame *received);
 
-const char *v34_call_result_name(enum v34_call_result result);
-
 #endif /* V34_CALL_H */

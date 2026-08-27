@@ -716,19 +716,6 @@ static bool test_validation(void)
 	precoder.coefficients[0].imaginary = INT16_MIN;
 	CHECK(!v34_precoder_is_valid(&precoder),
 	      "out-of-range coefficient was accepted");
-	CHECK(strcmp(v34_precoder_result_name(
-		     V34_PRECODER_OK),
-		     "ok") == 0 &&
-	      strcmp(v34_precoder_result_name(
-		     V34_PRECODER_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_precoder_result_name(
-		     V34_PRECODER_OUT_OF_RANGE),
-		     "out of range") == 0 &&
-	      strcmp(v34_precoder_result_name(
-		     (enum v34_precoder_result)3),
-		     "unknown") == 0,
-	      "precoder result names changed");
 	return true;
 }
 

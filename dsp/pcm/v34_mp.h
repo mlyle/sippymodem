@@ -110,8 +110,6 @@ enum v34_mp_rate_result v34_mp_select_rates(
 	const struct v34_mp_record *second,
 	struct v34_mp_rates *rates);
 
-const char *v34_mp_rate_result_name(enum v34_mp_rate_result result);
-
 struct v34_mp_receive_event {
 	enum v34_mp_receive_event_type type;
 	/* Meaningful for a rejected frame; accepted frames report OK. */
@@ -159,8 +157,5 @@ bool v34_mp_receiver_is_valid(
 enum v34_mp_result v34_mp_receive_bit(
 	struct v34_mp_receiver *receiver, uint8_t bit,
 	struct v34_mp_receive_event *event);
-
-const char *v34_mp_result_name(
-	enum v34_mp_result result);
 
 #endif

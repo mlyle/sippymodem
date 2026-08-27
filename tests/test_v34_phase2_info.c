@@ -295,17 +295,8 @@ static bool test_info0_validation(void)
 		      V34_INFO0_PAYLOAD_BITS, &decoded) ==
 		      V34_INFO0_INVALID_PAYLOAD &&
 	      info0_equal(&decoded, &saved_decoded) &&
-	      !v34_info0_is_valid(NULL) &&
-	      strcmp(v34_info0_result_name(
-		     V34_INFO0_INVALID_CAPABILITIES),
-		     "invalid capabilities") == 0 &&
-	      strcmp(v34_info0_result_name(
-		     V34_INFO0_INVALID_PAYLOAD),
-		     "invalid payload") == 0 &&
-	      strcmp(v34_info0_result_name(
-		     (enum v34_info0_result)4),
-		     "unknown") == 0,
-	      "INFO0 accepted a reserved clock source or result");
+	      !v34_info0_is_valid(NULL),
+	      "INFO0 accepted a reserved clock source");
 	return true;
 }
 

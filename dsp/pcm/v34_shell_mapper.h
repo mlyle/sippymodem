@@ -48,7 +48,4 @@ bool v34_ring_indices_are_valid(
 	const struct v34_ring_indices *indices,
 	const struct v34_mapping_parameters *parameters);
 
-const char *v34_shell_mapper_result_name(
-	enum v34_shell_mapper_result result);
-
 #endif

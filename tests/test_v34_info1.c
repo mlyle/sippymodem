@@ -306,14 +306,8 @@ static bool test_validation(void)
 	      v34_info1c_decode(
 		      payload_c, sizeof(payload_c),
 		      V34_INFO1C_PAYLOAD_BITS - 1u, &decoded_c) ==
-		      V34_INFO1_INVALID_PAYLOAD &&
-	      strcmp(v34_info1_result_name(
-			     V34_INFO1_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v34_info1_result_name(
-			     (enum v34_info1_result)99),
-		     "unknown") == 0,
-	      "INFO1 validation or result names changed");
+		      V34_INFO1_INVALID_PAYLOAD,
+	      "INFO1 validation changed");
 	return true;
 }
 

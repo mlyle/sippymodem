@@ -95,7 +95,4 @@ v34_superframe_inversion_bit(
 	enum v34_inversion_pattern pattern,
 	unsigned int index, uint8_t *bit);
 
-const char *v34_framing_result_name(
-	enum v34_framing_result result);
-
 #endif

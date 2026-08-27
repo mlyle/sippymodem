@@ -827,12 +827,8 @@ static bool test_rate_selection(void)
 		      V34_MP_RATE_INVALID_ARGUMENT &&
 	      v34_mp_select_rates(&first, &second, NULL) ==
 		      V34_MP_RATE_INVALID_ARGUMENT &&
-	      memcmp(&selected, saved, sizeof(selected)) == 0 &&
-	      strcmp(v34_mp_rate_result_name(V34_MP_RATE_NO_COMMON_RATE),
-		     "no common rate") == 0 &&
-	      strcmp(v34_mp_rate_result_name((enum v34_mp_rate_result)99),
-		     "unknown") == 0,
-	      "MP rate validation changed state or result names");
+	      memcmp(&selected, saved, sizeof(selected)) == 0,
+	      "MP rate validation changed state");
 	return true;
 }
 
@@ -892,16 +888,6 @@ static bool test_validation(void)
 		      &decoded) == V34_MP_INVALID_ARGUMENT &&
 	      parameters_are_equal(&decoded, &saved_decoded),
 	      "invalid Type 0 MP decoding mutated output");
-	CHECK(strcmp(v34_mp_result_name(
-		     V34_MP_INVALID_PARAMETERS),
-		     "invalid parameters") == 0 &&
-	      strcmp(v34_mp_result_name(
-		     V34_MP_CRC_MISMATCH),
-		     "CRC mismatch") == 0 &&
-	      strcmp(v34_mp_result_name(
-		     (enum v34_mp_result)5),
-		     "unknown") == 0,
-	      "Type 0 MP result names changed");
 	return true;
 }
 

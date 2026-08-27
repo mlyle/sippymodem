@@ -119,7 +119,4 @@ enum v34_precoder_result v34_precoder_inverse_step(
 	struct v34_grid_point *mapper_output,
 	struct v34_precoder_symbol *symbol);
 
-const char *v34_precoder_result_name(
-	enum v34_precoder_result result);
-
 #endif
