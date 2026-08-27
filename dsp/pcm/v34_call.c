@@ -104,7 +104,7 @@ bool v34_call_is_valid(const struct v34_call *call)
 		child_role = call->state.phase4.local_role;
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
-		child_valid = call->peer_info0_stored &&
+		child_valid = call->peer_info0_stored && call->retrain_active &&
 			      call->retrain_detector.silence_samples == 0 &&
 			      call->retrain_detector.tone_samples == 0 &&
 			      call->retrain_detector.edge_samples == 0 &&
@@ -174,6 +174,7 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 		return V34_CALL_NUMERIC_FAILURE;
 	next.state.retrain_silence.samples_remaining =
 		V34_CALL_RETRAIN_SILENCE_SAMPLES;
+	next.retrain_active = true;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -514,7 +515,7 @@ static enum v34_call_result sample_retrain_silence(
 static bool retrain_detection_is_active(const struct v34_call *call)
 {
 	if (call->stage == V34_CALL_PHASE4)
-		return true;
+		return !call->retrain_active;
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
 	       call->state.phase2.state.info1.control.phase ==
@@ -584,6 +585,9 @@ enum v34_call_result v34_call_sample(
 	default:
 		return V34_CALL_INVALID_STATE;
 	}
+	if (result == V34_CALL_OK && call->stage == V34_CALL_PHASE4 &&
+	    call->state.phase4.online_announced)
+		call->retrain_active = false;
 	if (result == V34_CALL_OK && emitted.processed != call->stage &&
 		 call->stage != V34_CALL_RETRAIN_SILENCE)
 		result = reset_retrain_detector(call);

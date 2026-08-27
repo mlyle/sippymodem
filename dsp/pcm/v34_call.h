@@ -91,6 +91,7 @@ struct v34_call {
 	enum v34_call_stage stage;
 	bool peer_info0_stored;
 	bool round_trip_delay_stored;
+	bool retrain_active;
 	bool failed;
 };
 

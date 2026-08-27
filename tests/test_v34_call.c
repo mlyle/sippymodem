@@ -783,8 +783,9 @@ static bool test_retrain_tone_guard(void)
 	return true;
 }
 
-static bool check_phase3_retrain_tone_is_ignored(
-	enum v34_station_role local_role, bool pcma)
+static bool check_retrain_tone_stage_guard(
+	enum v34_station_role local_role, bool pcma,
+	enum v34_call_stage target_stage, bool retraining)
 {
 	enum v34_station_role remote_role =
 		local_role == V34_CALLING_STATION ?
@@ -798,12 +799,13 @@ static bool check_phase3_retrain_tone_is_ignored(
 	struct v34_retrain_detector before;
 	int16_t trigger_sample = 0;
 	int16_t transmitted;
+	bool expect_retrain = target_stage == V34_CALL_PHASE4 && !retraining;
 	bool trigger_found = false;
 	bool detected;
 
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
-	      "Phase 3 retrain guard endpoints did not initialize");
+	      "retrain stage guard endpoints did not initialize");
 	endpoint = local_role == V34_CALLING_STATION ? &caller : &answerer;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
@@ -812,22 +814,27 @@ static bool check_phase3_retrain_tone_is_ignored(
 		CHECK(channel_sample_pair(
 			      &channel, &caller, &answerer,
 			      &caller_observation, &answerer_observation),
-		      "Phase 3 retrain guard setup stopped at sample %zu",
+		      "retrain stage guard setup stopped at sample %zu",
 		      index);
-		if (endpoint->call.stage == V34_CALL_PHASE3)
+		if (endpoint->call.stage == target_stage)
 			break;
 	}
-	CHECK(endpoint->call.stage == V34_CALL_PHASE3 &&
+	if (target_stage == V34_CALL_PHASE4)
+		endpoint->call.retrain_active = retraining;
+	CHECK(endpoint->call.stage == target_stage &&
+	      v34_call_is_valid(&endpoint->call) &&
+	      (target_stage != V34_CALL_PHASE4 ||
+	       !v34_call_is_online(&endpoint->call)) &&
 	      v34_phase2_tone_transmitter_init(
 		      &remote_tone, remote_role, NOMINAL_AMPLITUDE) ==
 			      V34_PHASE2_TONE_OK,
-	      "Phase 3 retrain guard did not reach its target stage");
+	      "retrain stage guard did not reach stage %d", target_stage);
 	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
 	     ++index)
 		CHECK(v34_retrain_detector_sample(
 			      &endpoint->call.retrain_detector, 0, &detected) ==
 			      V34_PHASE2_TONE_OK && !detected,
-		      "Phase 3 retrain guard silence failed at sample %zu",
+		      "retrain stage guard silence failed at sample %zu",
 		      index);
 	for (size_t index = 0;
 	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
@@ -839,38 +846,56 @@ static bool check_phase3_retrain_tone_is_ignored(
 
 		CHECK(v34_phase2_tone_transmitter_sample(
 			      &remote_tone, &remote_sample) == V34_PHASE2_TONE_OK,
-		      "Phase 3 retrain guard tone failed at sample %zu", index);
+		      "retrain stage guard tone failed at sample %zu", index);
 		trigger_sample = codec_round_trip(remote_sample, pcma);
 		CHECK(v34_retrain_detector_sample(
 			      &candidate, trigger_sample, &detected) ==
 			      V34_PHASE2_TONE_OK,
-		      "Phase 3 retrain detector failed at sample %zu", index);
+		      "retrain stage detector failed at sample %zu", index);
 		if (detected) {
 			trigger_found = true;
 			break;
 		}
 		endpoint->call.retrain_detector = candidate;
 	}
-	CHECK(trigger_found, "Phase 3 retrain guard did not find a trigger");
+	CHECK(trigger_found, "retrain stage guard did not find a trigger");
 	before = endpoint->call.retrain_detector;
 	CHECK(endpoint_sample(
 		      endpoint, trigger_sample, supply_mapping_frame,
 		      &transmitted, &observation) &&
-	      observation.processed == V34_CALL_PHASE3 &&
-	      observation.next == V34_CALL_PHASE3 &&
-	      memcmp(&endpoint->call.retrain_detector, &before,
-		     sizeof(before)) == 0,
-	      "initial Phase 3 accepted a full-retrain tone");
+	      observation.processed == target_stage &&
+	      (expect_retrain ?
+		       observation.next == V34_CALL_RETRAIN_SILENCE &&
+			       endpoint->call.retrain_active :
+		       observation.next == target_stage &&
+			       memcmp(&endpoint->call.retrain_detector, &before,
+				      sizeof(before)) == 0),
+	      "retrain stage %d produced the wrong detector transition",
+	      target_stage);
 	return true;
 }
 
-static bool test_phase3_retrain_tone_is_ignored(void)
+static bool test_retrain_tone_stage_guard(void)
 {
 	for (enum v34_station_role role = V34_CALLING_STATION;
 	     role <= V34_ANSWERING_STATION; ++role)
-		CHECK(check_phase3_retrain_tone_is_ignored(role, false) &&
-		      check_phase3_retrain_tone_is_ignored(role, true),
-		      "Phase 3 retrain guard failed role=%d", role);
+		for (unsigned int law = 0; law < 2; ++law) {
+			CHECK(check_retrain_tone_stage_guard(
+				      role, law != 0, V34_CALL_PHASE3,
+				      false),
+			      "Phase 3 retrain guard failed role=%d law=%u",
+			      role, law);
+			CHECK(check_retrain_tone_stage_guard(
+				      role, law != 0, V34_CALL_PHASE4,
+				      false),
+			      "initial Phase 4 retrain guard failed role=%d law=%u",
+			      role, law);
+			CHECK(check_retrain_tone_stage_guard(
+				      role, law != 0, V34_CALL_PHASE4,
+				      true),
+			      "active retrain guard failed role=%d law=%u",
+			      role, law);
+		}
 	return true;
 }
 
@@ -1077,8 +1102,8 @@ int main(void)
 		{ "local and remote full retrain", test_full_retrain },
 		{ "failed probe", test_failed_probe },
 		{ "retrain tone guard", test_retrain_tone_guard },
-		{ "Phase 3 retrain tone guard",
-		  test_phase3_retrain_tone_is_ignored },
+		{ "retrain tone stage guard",
+		  test_retrain_tone_stage_guard },
 		{ "unusable INFO1 starts full retrain",
 		  test_unusable_info1_retrains },
 		{ "repeated retrain retains INFO1 fallback",
