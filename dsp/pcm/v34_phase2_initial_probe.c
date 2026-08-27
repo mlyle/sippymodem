@@ -127,15 +127,3 @@ v34_phase2_initial_probe_receive_gain(
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return V34_PHASE2_INITIAL_PROBE_OK;
 }
-
-const char *v34_phase2_initial_probe_result_name(
-	enum v34_phase2_initial_probe_result result)
-{
-	switch (result) {
-	case V34_PHASE2_INITIAL_PROBE_OK:
-		return "ok";
-	case V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

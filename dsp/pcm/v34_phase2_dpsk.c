@@ -498,15 +498,3 @@ v34_phase2_dpsk_receiver_measure(
 		.timing_locked = receiver->timing_locked,
 	};
 }
-
-const char *v34_phase2_dpsk_result_name(
-	enum v34_phase2_dpsk_result result)
-{
-	switch (result) {
-	case V34_PHASE2_DPSK_OK:
-		return "ok";
-	case V34_PHASE2_DPSK_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

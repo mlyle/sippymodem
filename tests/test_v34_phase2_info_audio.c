@@ -553,10 +553,6 @@ static bool test_validation(void)
 		      memcmp(snapshot, &transmitter, sizeof(snapshot)) == 0 &&
 		      sample == 321 && complete,
 	      "invalid Phase 2 INFO audio mutated state or outputs");
-	CHECK(strcmp(v34_phase2_info_audio_result_name(
-			     V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT),
-		     "invalid argument") == 0,
-	      "Phase 2 INFO audio returned an unstable result name");
 	CHECK(v34_phase2_info_audio_receiver_init(
 		      NULL, V34_CALLING_STATION,
 		      TEST_PAYLOAD_BITS) ==

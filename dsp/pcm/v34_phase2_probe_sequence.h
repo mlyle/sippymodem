@@ -58,7 +58,4 @@ v34_phase2_probe_sequence_sample(
 	bool finish_l2, int16_t *sample,
 	struct v34_phase2_probe_sequence_event *event);
 
-const char *v34_phase2_probe_sequence_result_name(
-	enum v34_phase2_probe_sequence_result result);
-
 #endif

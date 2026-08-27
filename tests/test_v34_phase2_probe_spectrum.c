@@ -245,19 +245,6 @@ static bool test_validation(void)
 		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      !v34_phase2_probe_spectrum_is_valid(NULL),
 	      "null spectrum was accepted");
-	CHECK(strcmp(
-		      v34_phase2_probe_spectrum_result_name(
-			      V34_PHASE2_PROBE_SPECTRUM_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_spectrum_result_name(
-				      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT),
-			      "invalid argument") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_spectrum_result_name(
-				      (enum v34_phase2_probe_spectrum_result)99),
-			      "unknown") == 0,
-	      "spectrum result names changed");
 	return true;
 }
 

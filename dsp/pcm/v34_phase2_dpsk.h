@@ -109,7 +109,4 @@ struct v34_phase2_dpsk_measurement
 v34_phase2_dpsk_receiver_measure(
 	const struct v34_phase2_dpsk_receiver *receiver);
 
-const char *v34_phase2_dpsk_result_name(
-	enum v34_phase2_dpsk_result result);
-
 #endif

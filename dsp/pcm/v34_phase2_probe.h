@@ -57,7 +57,4 @@ v34_phase2_probe_transmitter_sample(
 	struct v34_phase2_probe_transmitter *transmitter,
 	enum v34_phase2_probe_level level, int16_t *sample);
 
-const char *v34_phase2_probe_result_name(
-	enum v34_phase2_probe_result result);
-
 #endif

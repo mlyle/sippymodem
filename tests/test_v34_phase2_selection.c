@@ -454,10 +454,7 @@ static bool test_answerer_fallback_selection(void)
 	      v34_phase2_select_answerer_info1a(
 		      &caller, &answerer, &info1c, &preferred,
 		      (struct v34_info1a *)&info1c) ==
-		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
-	      strcmp(v34_phase2_selection_result_name(
-		     V34_PHASE2_SELECTION_NO_COMMON_PROFILE),
-		     "no common profile") == 0,
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT,
 	      "fallback validation was not transactional");
 	return true;
 }
@@ -518,14 +515,8 @@ static bool test_profile_selection_and_validation(void)
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      !v34_phase2_info1c_is_consistent(NULL, &answerer, &info1c) &&
 	      !v34_phase2_info1a_is_consistent(
-		      &caller, NULL, &info1c, &info1a) &&
-	      strcmp(v34_phase2_selection_result_name(
-		     V34_PHASE2_SELECTION_INCONSISTENT_INFO1C),
-		     "inconsistent INFO1c") == 0 &&
-	      strcmp(v34_phase2_selection_result_name(
-		     (enum v34_phase2_selection_result)99),
-		     "unknown") == 0,
-	      "selection validation or result names changed");
+		      &caller, NULL, &info1c, &info1a),
+	      "selection validation changed");
 	return true;
 }
 

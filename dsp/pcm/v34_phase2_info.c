@@ -368,15 +368,3 @@ v34_phase2_info_receive_bit(
 	*event = emitted;
 	return V34_PHASE2_INFO_OK;
 }
-
-const char *v34_phase2_info_result_name(
-	enum v34_phase2_info_result result)
-{
-	switch (result) {
-	case V34_PHASE2_INFO_OK:
-		return "ok";
-	case V34_PHASE2_INFO_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

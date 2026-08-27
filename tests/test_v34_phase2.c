@@ -729,12 +729,7 @@ static bool test_validation(void)
 	      memcmp(&measurement, &saved_measurement,
 		     sizeof(measurement)) == 0 &&
 	      receive_gain == 4321 &&
-	      transmit == 1234 &&
-	      strcmp(v34_phase2_result_name(V34_PHASE2_INVALID_STATE),
-		     "invalid state") == 0 &&
-	      strcmp(v34_phase2_failure_name(
-			     V34_PHASE2_FAILURE_INTERNAL),
-		     "internal failure") == 0,
+	      transmit == 1234,
 	      "Phase 2 validation was not transactional");
 	CHECK(pair_init(&pair, TEST_CODEC_LINEAR, 1),
 	      "failure pair did not initialize");

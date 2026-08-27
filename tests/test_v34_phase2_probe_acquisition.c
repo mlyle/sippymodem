@@ -434,15 +434,6 @@ static bool test_validation(void)
 		      &acquisition, NULL) ==
 		      V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT,
 	      "probe acquisition null validation changed");
-	CHECK(strcmp(
-		      v34_phase2_probe_acquisition_result_name(
-			      V34_PHASE2_PROBE_ACQUISITION_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_phase2_probe_acquisition_result_name(
-			      (enum v34_phase2_probe_acquisition_result)99),
-		      "unknown") == 0,
-	      "probe acquisition result names changed");
 	return true;
 }
 

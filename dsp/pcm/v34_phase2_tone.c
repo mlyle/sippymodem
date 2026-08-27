@@ -551,15 +551,3 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	*detected = emitted;
 	return V34_PHASE2_TONE_OK;
 }
-
-const char *v34_phase2_tone_result_name(
-	enum v34_phase2_tone_result result)
-{
-	switch (result) {
-	case V34_PHASE2_TONE_OK:
-		return "ok";
-	case V34_PHASE2_TONE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

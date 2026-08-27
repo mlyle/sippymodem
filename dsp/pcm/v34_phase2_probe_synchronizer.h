@@ -78,7 +78,4 @@ v34_phase2_probe_synchronizer_replay(
 	const struct v34_phase2_probe_synchronizer *synchronizer,
 	uint16_t replay_index, int16_t *sample);
 
-const char *v34_phase2_probe_synchronizer_result_name(
-	enum v34_phase2_probe_synchronizer_result result);
-
 #endif

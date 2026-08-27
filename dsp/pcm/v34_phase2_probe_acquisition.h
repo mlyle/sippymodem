@@ -81,7 +81,4 @@ v34_phase2_probe_acquisition_receive_gain(
 	const struct v34_phase2_probe_acquisition *acquisition,
 	int16_t *receive_gain);
 
-const char *v34_phase2_probe_acquisition_result_name(
-	enum v34_phase2_probe_acquisition_result result);
-
 #endif

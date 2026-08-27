@@ -365,21 +365,3 @@ enum v34_phase2_selection_result v34_phase2_select_profiles(
 	*answerer_transmit = selected_answerer;
 	return V34_PHASE2_SELECTION_OK;
 }
-
-const char *v34_phase2_selection_result_name(
-	enum v34_phase2_selection_result result)
-{
-	switch (result) {
-	case V34_PHASE2_SELECTION_OK:
-		return "ok";
-	case V34_PHASE2_SELECTION_INVALID_ARGUMENT:
-		return "invalid argument";
-	case V34_PHASE2_SELECTION_INCONSISTENT_INFO1C:
-		return "inconsistent INFO1c";
-	case V34_PHASE2_SELECTION_INCONSISTENT_INFO1A:
-		return "inconsistent INFO1a";
-	case V34_PHASE2_SELECTION_NO_COMMON_PROFILE:
-		return "no common profile";
-	}
-	return "unknown";
-}

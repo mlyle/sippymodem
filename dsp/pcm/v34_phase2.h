@@ -159,7 +159,4 @@ enum v34_phase2_result v34_phase2_measure_remote_probe(
 enum v34_phase2_result v34_phase2_receive_gain(
 	const struct v34_phase2 *phase2, int16_t *receive_gain);
 
-const char *v34_phase2_result_name(enum v34_phase2_result result);
-const char *v34_phase2_failure_name(enum v34_phase2_failure failure);
-
 #endif /* V34_PHASE2_H */

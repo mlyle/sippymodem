@@ -1035,15 +1035,6 @@ static bool test_validation(void)
 	      sample == 1234 &&
 	      event.kind == PHASE2_RANGING_TIMEOUT,
 	      "invalid ranging state mutated state or outputs");
-	CHECK(strcmp(
-		      v34_phase2_ranging_result_name(
-			      V34_PHASE2_RANGING_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_phase2_ranging_result_name(
-			      (enum v34_phase2_ranging_result)99),
-		      "unknown") == 0,
-	      "ranging result names changed");
 	return true;
 }
 

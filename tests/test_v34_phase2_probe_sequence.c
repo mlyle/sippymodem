@@ -294,19 +294,6 @@ static bool test_validation(void)
 		      V34_PHASE2_PROBE_SEQUENCE_INVALID_ARGUMENT &&
 		      !v34_phase2_probe_sequence_is_valid(NULL),
 	      "null sequence was accepted");
-	CHECK(strcmp(
-		      v34_phase2_probe_sequence_result_name(
-			      V34_PHASE2_PROBE_SEQUENCE_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_sequence_result_name(
-				      V34_PHASE2_PROBE_SEQUENCE_INVALID_ARGUMENT),
-			      "invalid argument") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_sequence_result_name(
-				      (enum v34_phase2_probe_sequence_result)99),
-			      "unknown") == 0,
-	      "sequence result names changed");
 	return true;
 }
 

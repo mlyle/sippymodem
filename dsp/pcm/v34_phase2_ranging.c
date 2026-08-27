@@ -391,15 +391,3 @@ v34_phase2_ranging_sample(
 	*event = emitted;
 	return V34_PHASE2_RANGING_OK;
 }
-
-const char *v34_phase2_ranging_result_name(
-	enum v34_phase2_ranging_result result)
-{
-	switch (result) {
-	case V34_PHASE2_RANGING_OK:
-		return "ok";
-	case V34_PHASE2_RANGING_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

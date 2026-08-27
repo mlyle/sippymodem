@@ -101,7 +101,4 @@ v34_phase2_info_audio_receiver_measure(
 uint16_t v34_phase2_info_audio_receiver_handoff_delay_samples(
 	const struct v34_phase2_info_audio_receiver *receiver);
 
-const char *v34_phase2_info_audio_result_name(
-	enum v34_phase2_info_audio_result result);
-
 #endif

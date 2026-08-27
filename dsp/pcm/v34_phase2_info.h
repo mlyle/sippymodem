@@ -107,7 +107,4 @@ v34_phase2_info_receive_bit(
 	struct v34_phase2_info_receiver *receiver, uint8_t bit,
 	struct v34_phase2_info_event *event);
 
-const char *v34_phase2_info_result_name(
-	enum v34_phase2_info_result result);
-
 #endif

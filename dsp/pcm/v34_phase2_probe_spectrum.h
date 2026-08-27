@@ -62,7 +62,4 @@ v34_phase2_probe_spectrum_measure(
 	const struct v34_phase2_probe_spectrum *spectrum,
 	struct v34_phase2_probe_spectrum_measurement *measurement);
 
-const char *v34_phase2_probe_spectrum_result_name(
-	enum v34_phase2_probe_spectrum_result result);
-
 #endif

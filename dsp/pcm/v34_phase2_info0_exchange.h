@@ -75,7 +75,4 @@ v34_phase2_info0_exchange_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct v34_phase2_info0_exchange_event *event);
 
-const char *v34_phase2_info0_exchange_result_name(
-	enum v34_phase2_info0_exchange_result result);
-
 #endif

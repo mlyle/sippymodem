@@ -176,15 +176,3 @@ v34_phase2_probe_sequence_sample(
 	*event = emitted;
 	return V34_PHASE2_PROBE_SEQUENCE_OK;
 }
-
-const char *v34_phase2_probe_sequence_result_name(
-	enum v34_phase2_probe_sequence_result result)
-{
-	switch (result) {
-	case V34_PHASE2_PROBE_SEQUENCE_OK:
-		return "ok";
-	case V34_PHASE2_PROBE_SEQUENCE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

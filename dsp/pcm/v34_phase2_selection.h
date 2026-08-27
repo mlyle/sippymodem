@@ -69,7 +69,4 @@ enum v34_phase2_selection_result v34_phase2_select_profiles(
 	struct v34_phase3_profile *caller_transmit,
 	struct v34_phase3_profile *answerer_transmit);
 
-const char *v34_phase2_selection_result_name(
-	enum v34_phase2_selection_result result);
-
 #endif /* V34_PHASE2_SELECTION_H */

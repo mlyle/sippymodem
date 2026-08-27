@@ -47,7 +47,4 @@ v34_phase2_probe_turnaround_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct v34_phase2_probe_turnaround_event *event);
 
-const char *v34_phase2_probe_turnaround_result_name(
-	enum v34_phase2_probe_turnaround_result result);
-
 #endif

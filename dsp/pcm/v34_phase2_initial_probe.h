@@ -58,7 +58,4 @@ v34_phase2_initial_probe_receive_gain(
 	const struct v34_phase2_initial_probe *probe,
 	int16_t *receive_gain);
 
-const char *v34_phase2_initial_probe_result_name(
-	enum v34_phase2_initial_probe_result result);
-
 #endif

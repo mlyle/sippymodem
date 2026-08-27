@@ -309,15 +309,6 @@ static bool test_validation(void)
 		      event.peer_info0_event ==
 			      V34_PHASE2_PEER_INFO0_REJECTED,
 	      "invalid INFO0 exchange mutated state or outputs");
-	CHECK(strcmp(
-		      v34_phase2_info0_exchange_result_name(
-			      V34_PHASE2_INFO0_EXCHANGE_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v34_phase2_info0_exchange_result_name(
-				      (enum v34_phase2_info0_exchange_result)99),
-			      "unknown") == 0,
-	      "INFO0 exchange result names changed");
 	return true;
 }
 

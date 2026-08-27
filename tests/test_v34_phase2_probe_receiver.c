@@ -366,15 +366,6 @@ static bool test_validation(void)
 		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
 	      !v34_phase2_probe_receiver_is_valid(NULL),
 	      "probe receiver null validation changed");
-	CHECK(strcmp(
-		      v34_phase2_probe_receiver_result_name(
-			      V34_PHASE2_PROBE_RECEIVER_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_phase2_probe_receiver_result_name(
-			      (enum v34_phase2_probe_receiver_result)99),
-		      "unknown") == 0,
-	      "probe receiver result names changed");
 	return true;
 }
 

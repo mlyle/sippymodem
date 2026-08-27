@@ -821,16 +821,8 @@ static bool test_validation(void)
 		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
 	CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
 	      v34_phase2_initial_probe_measure(&probe, NULL) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
-	      strcmp(
-		      v34_phase2_initial_probe_result_name(
-			      V34_PHASE2_INITIAL_PROBE_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_phase2_initial_probe_result_name(
-			      (enum v34_phase2_initial_probe_result)99),
-		      "unknown") == 0,
-	      "validation or result-name contract changed");
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+	      "validation contract changed");
 	return true;
 }
 
@@ -948,16 +940,8 @@ static bool test_turnaround_failures_and_validation(void)
 		PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
 	invalid.control.phase_samples_remaining =
 		PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES;
-	CHECK(!v34_phase2_probe_turnaround_is_valid(&invalid) &&
-	      strcmp(
-		      v34_phase2_probe_turnaround_result_name(
-			      V34_PHASE2_PROBE_TURNAROUND_OK),
-		      "ok") == 0 &&
-	      strcmp(
-		      v34_phase2_probe_turnaround_result_name(
-			      (enum v34_phase2_probe_turnaround_result)99),
-		      "unknown") == 0,
-	      "turnaround validation or result-name contract changed");
+	CHECK(!v34_phase2_probe_turnaround_is_valid(&invalid),
+	      "turnaround validation contract changed");
 	return true;
 }
 

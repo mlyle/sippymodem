@@ -159,15 +159,3 @@ v34_phase2_probe_spectrum_measure(
 	*measurement = measured;
 	return V34_PHASE2_PROBE_SPECTRUM_OK;
 }
-
-const char *v34_phase2_probe_spectrum_result_name(
-	enum v34_phase2_probe_spectrum_result result)
-{
-	switch (result) {
-	case V34_PHASE2_PROBE_SPECTRUM_OK:
-		return "ok";
-	case V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

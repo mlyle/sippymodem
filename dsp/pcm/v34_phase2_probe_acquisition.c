@@ -315,15 +315,3 @@ v34_phase2_probe_acquisition_measure(
 		return V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT;
 	return V34_PHASE2_PROBE_ACQUISITION_OK;
 }
-
-const char *v34_phase2_probe_acquisition_result_name(
-	enum v34_phase2_probe_acquisition_result result)
-{
-	switch (result) {
-	case V34_PHASE2_PROBE_ACQUISITION_OK:
-		return "ok";
-	case V34_PHASE2_PROBE_ACQUISITION_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

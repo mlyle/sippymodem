@@ -289,19 +289,6 @@ static bool test_validation(void)
 		      memcmp(&transmitter, &before, sizeof(transmitter)) == 0 &&
 		      !v34_phase2_probe_transmitter_is_valid(NULL),
 	      "invalid probe sampling changed transmitter state");
-	CHECK(strcmp(
-		      v34_phase2_probe_result_name(
-			      V34_PHASE2_PROBE_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_result_name(
-				      V34_PHASE2_PROBE_INVALID_ARGUMENT),
-			      "invalid argument") == 0 &&
-		      strcmp(
-			      v34_phase2_probe_result_name(
-				      (enum v34_phase2_probe_result)99),
-			      "unknown") == 0,
-	      "probe result names changed");
 	return true;
 }
 

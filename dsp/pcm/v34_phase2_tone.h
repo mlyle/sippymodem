@@ -173,7 +173,4 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	bool *detected);
 
-const char *v34_phase2_tone_result_name(
-	enum v34_phase2_tone_result result);
-
 #endif

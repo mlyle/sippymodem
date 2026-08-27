@@ -1024,15 +1024,6 @@ static bool test_validation(void)
 		      detected,
 		      "corrupt silence history was not transactional");
 	}
-	CHECK(strcmp(
-		      v34_phase2_tone_result_name(
-			      V34_PHASE2_TONE_OK),
-		      "ok") == 0 &&
-		      strcmp(
-			      v34_phase2_tone_result_name(
-				      (enum v34_phase2_tone_result)99),
-			      "unknown") == 0,
-	      "tone result names changed");
 	return true;
 }
 

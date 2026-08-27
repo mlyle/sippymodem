@@ -235,15 +235,3 @@ v34_phase2_probe_synchronizer_replay(
 				       replay_index];
 	return V34_PHASE2_PROBE_SYNCHRONIZER_OK;
 }
-
-const char *v34_phase2_probe_synchronizer_result_name(
-	enum v34_phase2_probe_synchronizer_result result)
-{
-	switch (result) {
-	case V34_PHASE2_PROBE_SYNCHRONIZER_OK:
-		return "ok";
-	case V34_PHASE2_PROBE_SYNCHRONIZER_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

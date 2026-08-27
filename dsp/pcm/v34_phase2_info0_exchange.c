@@ -251,15 +251,3 @@ v34_phase2_info0_exchange_sample(
 	*event = emitted;
 	return V34_PHASE2_INFO0_EXCHANGE_OK;
 }
-
-const char *v34_phase2_info0_exchange_result_name(
-	enum v34_phase2_info0_exchange_result result)
-{
-	switch (result) {
-	case V34_PHASE2_INFO0_EXCHANGE_OK:
-		return "ok";
-	case V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

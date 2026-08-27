@@ -243,15 +243,3 @@ uint16_t v34_phase2_info_audio_receiver_handoff_delay_samples(
 		return 0;
 	return receiver->handoff_delay_samples;
 }
-
-const char *v34_phase2_info_audio_result_name(
-	enum v34_phase2_info_audio_result result)
-{
-	switch (result) {
-	case V34_PHASE2_INFO_AUDIO_OK:
-		return "ok";
-	case V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT:
-		return "invalid argument";
-	}
-	return "unknown";
-}

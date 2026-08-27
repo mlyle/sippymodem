@@ -314,10 +314,6 @@ static bool test_validation(void)
 		      V34_PHASE2_DPSK_INVALID_ARGUMENT &&
 		      !measurement.timing_locked && measurement.line_power == 0.0,
 	      "Phase 2 receiver accepted corrupt state");
-	CHECK(strcmp(v34_phase2_dpsk_result_name(
-			     V34_PHASE2_DPSK_INVALID_ARGUMENT),
-			     "invalid argument") == 0,
-	      "Phase 2 transmitter returned an unstable result name");
 	return true;
 }
 

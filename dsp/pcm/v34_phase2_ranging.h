@@ -79,7 +79,4 @@ v34_phase2_ranging_sample(
 	int16_t received_sample, int16_t *transmit_sample,
 	struct v34_phase2_ranging_event *event);
 
-const char *v34_phase2_ranging_result_name(
-	enum v34_phase2_ranging_result result);
-
 #endif

@@ -579,14 +579,8 @@ static bool test_validation(void)
 	generator.bit_index =
 		v34_phase2_info_frame_bit_count(17) + 1u;
 	CHECK(!v34_phase2_info_generator_is_valid(&generator) &&
-	      !v34_phase2_info_generator_is_valid(NULL) &&
-	      strcmp(v34_phase2_info_result_name(
-		     V34_PHASE2_INFO_INVALID_ARGUMENT),
-		     "invalid argument") == 0 &&
-	      strcmp(v34_phase2_info_result_name(
-		     (enum v34_phase2_info_result)2),
-		     "unknown") == 0,
-	      "Phase 2 INFO accepted corrupt state or result");
+	      !v34_phase2_info_generator_is_valid(NULL),
+	      "Phase 2 INFO accepted corrupt state");
 	return true;
 }
 
