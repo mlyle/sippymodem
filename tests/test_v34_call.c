@@ -864,7 +864,8 @@ static bool test_retrain_tone_guard(void)
 
 static bool check_retrain_tone_stage_guard(
 	enum v34_station_role local_role, bool pcma,
-	enum v34_call_stage target_stage, bool retraining)
+	enum v34_call_stage target_stage, bool retraining,
+	bool peer_can_be_online)
 {
 	enum v34_station_role remote_role =
 		local_role == V34_CALLING_STATION ?
@@ -880,7 +881,8 @@ static bool check_retrain_tone_stage_guard(
 	int16_t transmitted;
 	bool expect_retrain =
 		(target_stage == V34_CALL_PHASE3 && retraining) ||
-		(target_stage == V34_CALL_PHASE4 && !retraining);
+		(target_stage == V34_CALL_PHASE4 && !retraining &&
+		 peer_can_be_online);
 	bool trigger_found = false;
 	bool detected;
 
@@ -897,16 +899,25 @@ static bool check_retrain_tone_stage_guard(
 			      &caller_observation, &answerer_observation),
 		      "retrain stage guard setup stopped at sample %zu",
 		      index);
-		if (endpoint->call.stage == target_stage)
+		if (endpoint->call.stage == target_stage &&
+		    (target_stage != V34_CALL_PHASE4 ||
+		     endpoint->call.state.phase4.transmit_b1_complete ==
+			     peer_can_be_online))
 			break;
 	}
 	if (target_stage == V34_CALL_PHASE3 ||
 	    target_stage == V34_CALL_PHASE4)
 		endpoint->call.retrain_active = retraining;
 	CHECK(endpoint->call.stage == target_stage &&
-	      v34_call_is_valid(&endpoint->call) &&
 	      (target_stage != V34_CALL_PHASE4 ||
+	       endpoint->call.state.phase4.transmit_b1_complete ==
+		       peer_can_be_online) &&
+	      v34_call_is_valid(&endpoint->call) &&
+	      (target_stage != V34_CALL_PHASE4 || peer_can_be_online ||
 	       !v34_call_is_online(&endpoint->call)) &&
+	      v34_retrain_detector_reset(
+		      &endpoint->call.retrain_detector) ==
+		      V34_PHASE2_TONE_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &remote_tone, remote_role, NOMINAL_AMPLITUDE) ==
 			      V34_PHASE2_TONE_OK,
@@ -964,22 +975,27 @@ static bool test_retrain_tone_stage_guard(void)
 		for (unsigned int law = 0; law < 2; ++law) {
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE3,
-				      false),
+				      false, false),
 			      "Phase 3 retrain guard failed role=%d law=%u",
 			      role, law);
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE3,
-				      true),
+				      true, false),
 			      "active Phase 3 retrain failed role=%d law=%u",
 			      role, law);
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE4,
-				      false),
-			      "initial Phase 4 retrain guard failed role=%d law=%u",
+				      false, false),
+			      "pre-B1 Phase 4 retrain guard failed role=%d law=%u",
 			      role, law);
 			CHECK(check_retrain_tone_stage_guard(
 				      role, law != 0, V34_CALL_PHASE4,
-				      true),
+				      false, true),
+			      "peer-online Phase 4 retrain failed role=%d law=%u",
+			      role, law);
+			CHECK(check_retrain_tone_stage_guard(
+				      role, law != 0, V34_CALL_PHASE4,
+				      true, false),
 			      "active retrain guard failed role=%d law=%u",
 			      role, law);
 		}
