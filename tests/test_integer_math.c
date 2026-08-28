@@ -142,9 +142,15 @@ static bool test_arithmetic_shift(void)
 		      UINT64_C(0x7fffffffffffffff), 64u) == 0 &&
 	      arithmetic_shift_right_u64(
 		      UINT64_C(0x8000000000000000), 65u) == -1 &&
+	      round_shift_s32_word_to_s16(
+		      UINT32_C(0x00002000), 14u) == 1 &&
+	      round_shift_s32_word_to_s16(
+		      (uint32_t)-8192, 14u) == 0 &&
+	      round_shift_s32_word_to_s16(
+		      UINT32_C(0x20002000), 14u) == -32767 &&
 	      multiply_shift_s16(0x4000, 0x4000, 14u) == 0x4000 &&
 	      multiply_shift_s16(INT16_MIN, INT16_MIN, 15u) == INT16_MIN,
-	      "wide shift or wrapped multiply changed");
+	      "wide shift, rounding, or wrapped multiply changed");
 	return true;
 }
 

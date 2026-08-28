@@ -10,12 +10,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static int16_t rounded_q14(uint32_t accumulator)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		accumulator + UINT32_C(0x2000), 14));
-}
-
 bool v34_carrier_demodulator_is_valid(
 	const struct v34_carrier_demodulator *demodulator)
 {
@@ -75,8 +69,8 @@ enum v34_carrier_demodulator_result v34_carrier_demodulator_process(
 		(uint32_t)((int32_t)carrier.cosine * input.quadrature) -
 		(uint32_t)((int32_t)carrier.sine * input.in_phase);
 	generated = (struct v34_analytic_sample){
-		.in_phase = rounded_q14(real),
-		.quadrature = rounded_q14(quadrature),
+		.in_phase = round_shift_s32_word_to_s16(real, 14),
+		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),
 	};
 	*demodulator = next;
 	*output = generated;

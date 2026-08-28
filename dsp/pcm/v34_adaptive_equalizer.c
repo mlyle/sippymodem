@@ -323,25 +323,13 @@ static struct v34_analytic_sample rotate_q14(
 	struct v34_analytic_sample input, int16_t cosine, int16_t sine)
 {
 	uint32_t in_phase = multiply_low_s32(cosine, input.in_phase) -
-		multiply_low_s32(sine, input.quadrature) + UINT32_C(0x2000);
+		multiply_low_s32(sine, input.quadrature);
 	uint32_t quadrature = multiply_low_s32(sine, input.in_phase) +
-		multiply_low_s32(cosine, input.quadrature) + UINT32_C(0x2000);
+		multiply_low_s32(cosine, input.quadrature);
 
 	return (struct v34_analytic_sample){
-		.in_phase = shifted_s16(in_phase, 14),
-		.quadrature = shifted_s16(quadrature, 14),
-	};
-}
-
-static struct v34_analytic_sample rounded_output(
-	struct v34_equalizer_accumulator accumulator)
-{
-	return (struct v34_analytic_sample){
-		.in_phase = shifted_s16(
-			(uint32_t)accumulator.in_phase + UINT32_C(0x2000), 14),
-		.quadrature = shifted_s16(
-			(uint32_t)accumulator.quadrature + UINT32_C(0x2000),
-			14),
+		.in_phase = round_shift_s32_word_to_s16(in_phase, 14),
+		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),
 	};
 }
 
@@ -368,7 +356,12 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 	if (v34_equalizer_filter(&next.equalizer, &accumulator) !=
 	    V34_EQUALIZER_OK)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	demodulated = rounded_output(accumulator);
+	demodulated = (struct v34_analytic_sample){
+		.in_phase = round_shift_s32_word_to_s16(
+			(uint32_t)accumulator.in_phase, 14),
+		.quadrature = round_shift_s32_word_to_s16(
+			(uint32_t)accumulator.quadrature, 14),
+	};
 	if ((next.feedback_mode & V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) != 0)
 		demodulated = apply_feedback(&next.feedback, demodulated);
 	next.epoch++;
@@ -413,14 +406,16 @@ static struct v34_analytic_sample update_feedback_filter(
 		uint32_t next_a =
 			((uint32_t)(uint16_t)a << 16) -
 			multiply_low_s32(d, error_in_phase) -
-			multiply_low_s32(f, error_quadrature) + UINT32_C(0x8000);
+			multiply_low_s32(f, error_quadrature);
 		uint32_t next_b =
 			((uint32_t)(uint16_t)b << 16) -
 			multiply_low_s32(d, error_quadrature) +
-			multiply_low_s32(f, error_in_phase) + UINT32_C(0x8000);
+			multiply_low_s32(f, error_in_phase);
 
-		feedback->coefficient_a[index] = shifted_s16(next_a, 16);
-		feedback->coefficient_b[index] = shifted_s16(next_b, 16);
+		feedback->coefficient_a[index] =
+			round_shift_s32_word_to_s16(next_a, 16);
+		feedback->coefficient_b[index] =
+			round_shift_s32_word_to_s16(next_b, 16);
 	}
 	return (struct v34_analytic_sample){
 		.in_phase = error_in_phase,
@@ -511,16 +506,17 @@ static void update_carrier(
 	int16_t negative_sine = wrap_s16_from_s32(-(int32_t)sine);
 	uint32_t interpolated_quadrature =
 		((uint32_t)(int32_t)negative_sine << 16) +
-		(uint32_t)(fraction * cosine) + UINT32_C(0x8000);
+		(uint32_t)(fraction * cosine);
 	uint32_t interpolated_in_phase =
 		((uint32_t)(int32_t)cosine << 16) -
-		(uint32_t)(fraction * negative_sine) + UINT32_C(0x8000);
+		(uint32_t)(fraction * negative_sine);
 
 	equalizer->phase_accumulator = accumulator;
 	equalizer->carrier_phase_low = (uint16_t)phase;
 	equalizer->carrier_phase_fraction = coarse;
-	equalizer->rotate_in_phase = shifted_s16(interpolated_in_phase, 16);
-	equalizer->rotate_quadrature = shifted_s16(
+	equalizer->rotate_in_phase = round_shift_s32_word_to_s16(
+		interpolated_in_phase, 16);
+	equalizer->rotate_quadrature = round_shift_s32_word_to_s16(
 		interpolated_quadrature, 16);
 }
 

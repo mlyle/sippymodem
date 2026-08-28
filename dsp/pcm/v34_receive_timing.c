@@ -193,10 +193,9 @@ static int16_t interpolate(
 	int16_t current, uint16_t phase, int16_t previous, uint16_t remaining)
 {
 	uint32_t value = (uint32_t)((int32_t)current * phase) +
-			 UINT32_C(0x2000) +
 			 (uint32_t)((int32_t)previous * remaining);
 
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, 14));
+	return round_shift_s32_word_to_s16(value, 14);
 }
 
 static struct v34_analytic_sample interpolate_current(

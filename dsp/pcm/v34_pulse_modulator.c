@@ -460,8 +460,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		arithmetic_shift_right_u32(in_phase, 13), phasor.cosine);
 	mixed -= multiply_low_s32(
 		arithmetic_shift_right_u32(quadrature, 13), phasor.sine);
-	preemphasis_input = wrap_s16_from_s32(
-		arithmetic_shift_right_u32(mixed + 0x2000u, 14));
+	preemphasis_input = round_shift_s32_word_to_s16(mixed, 14);
 	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap) {
 		int16_t previous = next.preemphasis_history[tap];
 
@@ -469,8 +468,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		filtered += multiply_low_s32(preemphasis_input, preemphasis[tap]);
 		preemphasis_input = previous;
 	}
-	fixed_sample = wrap_s16_from_s32(
-		arithmetic_shift_right_u32(filtered + 0x2000u, 14));
+	fixed_sample = round_shift_s32_word_to_s16(filtered, 14);
 	generated = (double)fixed_sample / V34_PULSE_OUTPUT_SCALE;
 	next.generated_samples++;
 	next.carrier_phase += next.carrier_phase_step;

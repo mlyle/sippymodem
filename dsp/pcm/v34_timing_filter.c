@@ -88,7 +88,7 @@ static void shift_recursive_filter(
 static int16_t high_pass_error(
 	int16_t history[V34_TIMING_FILTER_FIR_TAPS], int16_t input)
 {
-	uint32_t accumulator = UINT32_C(0x4000);
+	uint32_t accumulator = 0;
 
 	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS; ++tap) {
 		int16_t old = history[tap];
@@ -97,8 +97,7 @@ static int16_t high_pass_error(
 		accumulator += multiply_low_s32(input, ERROR_HIGH_PASS[tap]);
 		input = old;
 	}
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(accumulator, 15));
+	return round_shift_s32_word_to_s16(accumulator, 15);
 }
 
 static uint32_t pack_sample(struct v34_analytic_sample sample)
@@ -197,11 +196,11 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 	next.positive_a_imag[0] = wrap_s16_from_s32(filtered_positive_imag);
 	next.negative_a_real[0] = wrap_s16_from_s32(filtered_negative_real);
 	next.negative_a_imag[0] = wrap_s16_from_s32(filtered_negative_imag);
-	generated = wrap_s16_from_s32(rounded_shift(
+	generated = round_shift_s32_word_to_s16(
 		multiply_low_s32(filtered_positive_imag, filtered_negative_real) -
 			multiply_low_s32(filtered_positive_real,
 				     filtered_negative_imag),
-		UINT32_C(0x2000), 14));
+		14);
 	generated = high_pass_error(next.error_history, generated);
 	*filter = next;
 	*timing_error = generated;
@@ -215,8 +214,8 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 	struct v34_timing_filter next;
 	uint32_t current;
 	uint32_t previous;
-	uint32_t real = UINT32_C(0x2000);
-	uint32_t imag = UINT32_C(0x2000);
+	uint32_t real = 0;
+	uint32_t imag = 0;
 	struct v34_analytic_sample generated;
 
 	if (!v34_timing_filter_is_valid(filter))
@@ -242,10 +241,8 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 		previous = old_previous;
 	}
 	generated = (struct v34_analytic_sample){
-		.in_phase = wrap_s16_from_s32(
-			arithmetic_shift_right_u32(imag, 14)),
-		.quadrature = wrap_s16_from_s32(
-			arithmetic_shift_right_u32(real, 14)),
+		.in_phase = round_shift_s32_word_to_s16(imag, 14),
+		.quadrature = round_shift_s32_word_to_s16(real, 14),
 	};
 	*filter = next;
 	*output = generated;

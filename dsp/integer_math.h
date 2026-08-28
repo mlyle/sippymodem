@@ -92,6 +92,16 @@ static inline int64_t arithmetic_shift_right_u64(
 	return wrap_s64_from_u64(shifted);
 }
 
+/* Round a signed low word upward at ties and keep the low 16 result bits. */
+static inline int16_t round_shift_s32_word_to_s16(
+	uint32_t value, unsigned int shift)
+{
+	uint32_t rounding = shift > 0u && shift < 32u ?
+		UINT32_C(1) << (shift - 1u) : 0u;
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(value + rounding, shift));
+}
+
 static inline int16_t multiply_shift_s16(
 	int16_t left, int16_t right, unsigned int shift)
 {

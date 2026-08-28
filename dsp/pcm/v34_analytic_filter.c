@@ -53,12 +53,6 @@ static int16_t quadrature_coefficient(size_t tap)
 	return (int16_t)-QUADRATURE_HALF_PROFILE[29u - position];
 }
 
-static int16_t rounded_q14(uint32_t accumulator)
-{
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		accumulator + UINT32_C(0x2000), 14));
-}
-
 bool v34_analytic_filter_is_valid(
 	const struct v34_analytic_filter *filter)
 {
@@ -106,8 +100,8 @@ enum v34_analytic_filter_result v34_analytic_filter_process(
 		previous = current;
 	}
 	generated = (struct v34_analytic_sample){
-		.in_phase = rounded_q14(in_phase),
-		.quadrature = rounded_q14(quadrature),
+		.in_phase = round_shift_s32_word_to_s16(in_phase, 14),
+		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),
 	};
 	*filter = next;
 	*output = generated;
