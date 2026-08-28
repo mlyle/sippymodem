@@ -32,8 +32,7 @@ static const double V34_SIXTEEN_POINT_GRID_UNIT =
 bool v34_constellation_size_is_valid(
 	enum v34_constellation_size constellation)
 {
-	return constellation == V34_CONSTELLATION_4_POINT ||
-	       constellation == V34_CONSTELLATION_16_POINT;
+	return v34_constellation_bits_per_symbol(constellation) != 0u;
 }
 
 static int squared_magnitude(int in_phase, int quadrature)

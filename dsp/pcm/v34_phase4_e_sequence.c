@@ -13,13 +13,6 @@ _Static_assert(
 		V34_PHASE4_E_BITS,
 	"V.34 sixteen-point E must contain whole symbols");
 
-static uint8_t bits_per_symbol(
-	enum v34_constellation_size constellation)
-{
-	return constellation == V34_CONSTELLATION_16_POINT ? 4u :
-								    2u;
-}
-
 bool v34_phase4_e_sequence_is_valid(
 	const struct v34_phase4_e_sequence *sequence)
 {
@@ -31,7 +24,8 @@ bool v34_phase4_e_sequence_is_valid(
 	    !v34_transmit_scrambler_is_valid(
 		    &sequence->scrambler, sequence->role))
 		return false;
-	return sequence->emitted_bits % bits_per_symbol(sequence->constellation) ==
+	return sequence->emitted_bits %
+		       v34_constellation_bits_per_symbol(sequence->constellation) ==
 	       0;
 }
 
@@ -117,7 +111,8 @@ v34_phase4_e_sequence_next(
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = next_rotation;
 	next.emitted_bits = (uint8_t)(
-		next.emitted_bits + bits_per_symbol(next.constellation));
+		next.emitted_bits +
+		v34_constellation_bits_per_symbol(next.constellation));
 	if (!v34_phase4_e_sequence_is_valid(&next))
 		return V34_PHASE4_E_SEQUENCE_INVALID_ARGUMENT;
 	*sequence = next;

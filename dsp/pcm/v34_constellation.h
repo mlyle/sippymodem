@@ -26,6 +26,14 @@ enum v34_constellation_size {
 	V34_CONSTELLATION_16_POINT = 16,
 };
 
+/* Return zero for a value outside the Phase 3/4 training constellations. */
+static inline unsigned int v34_constellation_bits_per_symbol(
+	enum v34_constellation_size constellation)
+{
+	return constellation == V34_CONSTELLATION_4_POINT ? 2u :
+	       constellation == V34_CONSTELLATION_16_POINT ? 4u : 0u;
+}
+
 enum v34_constellation_result {
 	V34_CONSTELLATION_OK,
 	V34_CONSTELLATION_INVALID_ARGUMENT,

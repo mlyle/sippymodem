@@ -510,6 +510,12 @@ static bool test_validation(void)
 		      V34_CONSTELLATION_16_POINT) &&
 	      !v34_constellation_size_is_valid(
 		      (enum v34_constellation_size)8) &&
+	      v34_constellation_bits_per_symbol(
+		      V34_CONSTELLATION_4_POINT) == 2u &&
+	      v34_constellation_bits_per_symbol(
+		      V34_CONSTELLATION_16_POINT) == 4u &&
+	      v34_constellation_bits_per_symbol(
+		      (enum v34_constellation_size)8) == 0u &&
 	      v34_training_constellation_point(
 		      V34_CONSTELLATION_4_POINT, 1, 0,
 		      &point) == V34_CONSTELLATION_INVALID_ARGUMENT &&

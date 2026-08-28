@@ -18,12 +18,6 @@ _Static_assert(V90_CP_CONSTELLATION_BITS % 4 == 0,
 _Static_assert(V90_CP_MAX_FRAME_BITS % 4 == 0,
 	       "maximum CP record must contain whole 16-point symbols");
 
-static size_t bits_per_symbol(
-	enum v34_constellation_size constellation)
-{
-	return constellation == V34_CONSTELLATION_16_POINT ? 4u : 2u;
-}
-
 static bool frame_is_valid(
 	const uint8_t *frame, size_t bit_count)
 {
@@ -45,8 +39,6 @@ static bool frame_is_valid(
 bool v90_phase4_cp_tx_is_valid(
 	const struct v90_phase4_cp_tx *tx)
 {
-	size_t symbol_bits;
-
 	if (tx == NULL ||
 	    !v34_constellation_size_is_valid(tx->constellation) ||
 	    !v34_transmit_scrambler_is_valid(&tx->scrambler, tx->role) ||
@@ -54,8 +46,9 @@ bool v90_phase4_cp_tx_is_valid(
 	    tx->bit_index > tx->frame_bit_count ||
 	    !frame_is_valid(tx->frame, tx->frame_bit_count))
 		return false;
-	symbol_bits = bits_per_symbol(tx->constellation);
-	return tx->bit_index % symbol_bits == 0;
+	return tx->bit_index %
+		       v34_constellation_bits_per_symbol(tx->constellation) ==
+	       0;
 }
 
 bool v90_phase4_cp_tx_record_is_complete(
@@ -207,7 +200,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 		    &next_point) != V34_CONSTELLATION_OK)
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = next_rotation;
-	next.bit_index += bits_per_symbol(next.constellation);
+	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
 	if (!v90_phase4_cp_tx_is_valid(&next))
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;

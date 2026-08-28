@@ -4,13 +4,6 @@
 
 #include <stddef.h>
 
-static uint8_t bits_per_symbol(
-	enum v34_constellation_size constellation)
-{
-	return constellation == V34_CONSTELLATION_16_POINT ? 4u :
-								    2u;
-}
-
 bool v34_phase4_e_receiver_is_valid(
 	const struct v34_phase4_e_receiver *receiver)
 {
@@ -24,7 +17,8 @@ bool v34_phase4_e_receiver_is_valid(
 		return false;
 	return receiver->searching ||
 	       receiver->received_bits %
-		       bits_per_symbol(receiver->constellation) ==
+		       v34_constellation_bits_per_symbol(
+			       receiver->constellation) ==
 		       0;
 }
 
@@ -153,7 +147,8 @@ v34_phase4_e_receive_decision(
 		return V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH;
 	next.previous_clockwise_quarter_turns = clockwise_quarter_turns;
 	next.received_bits = (uint8_t)(
-		next.received_bits + bits_per_symbol(next.constellation));
+		next.received_bits +
+		v34_constellation_bits_per_symbol(next.constellation));
 	if (!v34_phase4_e_receiver_is_valid(&next))
 		return V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT;
 	*receiver = next;

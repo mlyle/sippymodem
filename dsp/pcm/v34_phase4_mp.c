@@ -11,13 +11,6 @@ struct encoded_mp_record {
 	size_t bit_count;
 };
 
-static size_t bits_per_symbol(
-	enum v34_constellation_size constellation)
-{
-	return constellation == V34_CONSTELLATION_16_POINT ? 4u :
-								    2u;
-}
-
 static bool frame_is_valid(const uint8_t *frame, size_t bit_count)
 {
 	if (bit_count != V34_MP_TYPE0_FRAME_BITS &&
@@ -45,8 +38,6 @@ static bool frame_is_valid(const uint8_t *frame, size_t bit_count)
 bool v34_phase4_mp_is_valid(
 	const struct v34_phase4_mp *transmitter)
 {
-	size_t symbol_bits;
-
 	if (transmitter == NULL ||
 	    !v34_constellation_size_is_valid(
 		    transmitter->constellation) ||
@@ -57,8 +48,8 @@ bool v34_phase4_mp_is_valid(
 	    !frame_is_valid(
 		    transmitter->frame, transmitter->frame_bit_count))
 		return false;
-	symbol_bits = bits_per_symbol(transmitter->constellation);
-	return transmitter->bit_index % symbol_bits == 0;
+	return transmitter->bit_index % v34_constellation_bits_per_symbol(
+					 transmitter->constellation) == 0;
 }
 
 bool v34_phase4_mp_record_is_complete(
@@ -284,7 +275,7 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 		    &next_point) != V34_CONSTELLATION_OK)
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = next_rotation;
-	next.bit_index += bits_per_symbol(next.constellation);
+	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
 	if (!v34_phase4_mp_is_valid(&next))
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
