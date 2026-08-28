@@ -33,6 +33,14 @@ enum v34_precoder_grid_step {
 	V34_PRECODER_GRID_STEP_4 = 4,
 };
 
+static inline enum v34_precoder_grid_step
+v34_precoder_grid_step_for_mapping(
+	const struct v34_mapping_parameters *parameters)
+{
+	return parameters->mapping_frame_bits < 56u ?
+		V34_PRECODER_GRID_STEP_2 : V34_PRECODER_GRID_STEP_4;
+}
+
 enum v34_precoder_result {
 	V34_PRECODER_OK,
 	V34_PRECODER_INVALID_ARGUMENT,

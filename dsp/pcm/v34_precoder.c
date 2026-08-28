@@ -52,9 +52,8 @@ enum v34_precoder_result v34_precoder_init(
 			return V34_PRECODER_INVALID_ARGUMENT;
 		initialized.coefficients[tap] = coefficients[tap];
 	}
-	initialized.grid_step = parameters->mapping_frame_bits < 56u ?
-		V34_PRECODER_GRID_STEP_2 :
-		V34_PRECODER_GRID_STEP_4;
+	initialized.grid_step =
+		v34_precoder_grid_step_for_mapping(parameters);
 	*precoder = initialized;
 	return V34_PRECODER_OK;
 }

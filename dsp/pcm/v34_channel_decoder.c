@@ -7,14 +7,6 @@
 
 #include <stddef.h>
 
-static enum v34_precoder_grid_step expected_grid_step(
-	const struct v34_mapping_parameters *parameters)
-{
-	return parameters->mapping_frame_bits < 56u ?
-		V34_PRECODER_GRID_STEP_2 :
-		V34_PRECODER_GRID_STEP_4;
-}
-
 static bool init_regions_overlap(
 	const struct v34_channel_decoder *decoder,
 	const struct v34_frame_geometry *geometry,
@@ -43,7 +35,8 @@ bool v34_channel_decoder_is_valid(
 	       v34_survivor_is_valid(&decoder->survivor) &&
 	       v34_precoder_is_valid(&decoder->inverse_precoder) &&
 	       decoder->inverse_precoder.grid_step ==
-		       expected_grid_step(&decoder->parameters);
+		       v34_precoder_grid_step_for_mapping(
+			       &decoder->parameters);
 }
 
 enum v34_channel_decoder_result

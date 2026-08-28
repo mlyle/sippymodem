@@ -117,9 +117,7 @@ static bool maximum_precoded_point_power(
 {
 	int64_t maximum_squared_q7 = 0;
 	int64_t half_grid_step_q7 =
-		(int64_t)(parameters->mapping_frame_bits < 56u ?
-				  V34_PRECODER_GRID_STEP_2 :
-				  V34_PRECODER_GRID_STEP_4) *
+		(int64_t)v34_precoder_grid_step_for_mapping(parameters) *
 		V34_Q7_SCALE / 2;
 	size_t quarter_point_count = parameters->constellation_points / 4u;
 

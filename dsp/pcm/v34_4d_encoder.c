@@ -4,14 +4,6 @@
 
 #include <stddef.h>
 
-static enum v34_precoder_grid_step expected_grid_step(
-	const struct v34_mapping_parameters *parameters)
-{
-	return parameters->mapping_frame_bits < 56u ?
-		V34_PRECODER_GRID_STEP_2 :
-		V34_PRECODER_GRID_STEP_4;
-}
-
 bool v34_4d_encoder_is_valid(
 	const struct v34_4d_encoder *encoder)
 {
@@ -20,7 +12,8 @@ bool v34_4d_encoder_is_valid(
 		       &encoder->parameters) &&
 	       v34_precoder_is_valid(&encoder->precoder) &&
 	       encoder->precoder.grid_step ==
-		       expected_grid_step(&encoder->parameters) &&
+		       v34_precoder_grid_step_for_mapping(
+			       &encoder->parameters) &&
 	       v34_convolutional_encoder_is_valid(
 		       &encoder->convolutional_encoder) &&
 	       encoder->previous_differential_output < 4u;
