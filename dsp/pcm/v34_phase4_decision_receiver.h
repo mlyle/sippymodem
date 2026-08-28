@@ -24,6 +24,7 @@ enum v34_phase4_decision_receiver_stage {
 	V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE,
 	V34_PHASE4_DECISION_RECEIVER_ANSWER_S,
 	V34_PHASE4_DECISION_RECEIVER_TRN,
+	V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP,
 	V34_PHASE4_DECISION_RECEIVER_MP,
 	V34_PHASE4_DECISION_RECEIVER_E,
 	V34_PHASE4_DECISION_RECEIVER_COMPLETE,
@@ -63,11 +64,13 @@ struct v34_phase4_decision_output {
 };
 
 /* Own only the Phase 4 S/TRN/MP/E semantics. Both roles retain at least 512
- * known TRN decisions before the continuous MP decoder takes ownership; the
- * answering peer first supplies its S/S-bar boundary. The physical timing and
- * one adaptive equalizer remain in the aggregate receive owner through B1 and
- * data. A complete MP event pauses this owner until the controller decides
- * whether to continue MP or start E. */
+ * known TRN decisions. Four-point reception advances that known lineage until
+ * the physical MP boundary diverges; sixteen-point reception lets the
+ * continuous MP decoder self-synchronize. The answering peer first supplies
+ * its S/S-bar boundary. The physical timing and one adaptive equalizer remain
+ * in the aggregate receive owner through B1 and data. A complete MP event
+ * pauses this owner until the controller decides whether to continue MP or
+ * start E. */
 struct v34_phase4_decision_receiver {
 	struct v34_phase3_s_receiver answer_s;
 	struct v34_phase4_j_prime_receiver call_j_prime;

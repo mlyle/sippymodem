@@ -16,6 +16,8 @@ enum v34_phase4_mp_receiver_result {
 	V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT,
 };
 
+struct v34_phase4_trn;
+
 struct v34_phase4_mp_receiver {
 	struct v34_scrambler descrambler;
 	struct v34_mp_receiver records;
@@ -25,13 +27,22 @@ struct v34_phase4_mp_receiver {
 	bool has_previous_symbol;
 };
 
-/* Initialize while the peer is transmitting Phase 4 TRN. The self-
- * synchronizing descrambler does not require the peer's scrambler history. */
+/* Initialize a continuous receiver while the peer is still transmitting
+ * Phase 4 TRN. The self-synchronizing descrambler acquires from the received
+ * wire symbols before MP begins. */
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_receiver_init(
 	struct v34_phase4_mp_receiver *receiver,
 	enum v34_station_role transmitting_role,
 	enum v34_constellation_size constellation);
+
+/* Initialize the four-point receiver at the exact TRN-to-MP boundary. Four-
+ * point TRN is known, so its retained wire history and differential phase are
+ * the decoder state for the first MP symbol. */
+enum v34_phase4_mp_receiver_result
+v34_phase4_mp_receiver_init_from_trn(
+	struct v34_phase4_mp_receiver *receiver,
+	const struct v34_phase4_trn *trn);
 bool v34_phase4_mp_receiver_is_valid(
 	const struct v34_phase4_mp_receiver *receiver);
 

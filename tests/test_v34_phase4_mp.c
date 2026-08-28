@@ -385,7 +385,11 @@ static bool test_decision_rejection_and_reacquisition(void)
 
 static bool test_receiver_validation(void)
 {
+	struct v34_phase4_trn trn;
+	struct v34_phase4_trn initial_trn;
+	struct v34_phase4_trn sixteen_trn;
 	struct v34_phase4_mp_receiver receiver;
+	struct v34_phase4_mp_receiver seeded;
 	struct v34_phase4_mp_receiver saved;
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
@@ -414,6 +418,43 @@ static bool test_receiver_validation(void)
 	      v34_phase4_mp_receiver_is_valid(&receiver) &&
 	      !v34_phase4_mp_receiver_is_valid(NULL),
 	      "Phase 4 receiver validation fixture did not initialize");
+	CHECK(generate_trn_prefix(
+		      &trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT, NULL) &&
+	      v34_phase4_mp_receiver_init_from_trn(&seeded, &trn) ==
+		      V34_PHASE4_MP_RECEIVER_OK &&
+	      seeded.descrambler.history == trn.scrambler.history &&
+	      seeded.descrambler.polynomial == trn.scrambler.polynomial &&
+	      seeded.previous_clockwise_quarter_turns ==
+		      trn.last_clockwise_quarter_turns &&
+	      seeded.has_previous_symbol &&
+	      v34_mp_receiver_is_valid(&seeded.records),
+	      "four-point TRN did not seed the exact decoder state");
+	CHECK(v34_phase4_trn_init(
+		      &initial_trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) == V34_PHASE4_TRN_OK,
+	      "initial TRN rejection fixture did not initialize");
+	CHECK(generate_trn_prefix(
+		      &sixteen_trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_16_POINT, NULL),
+	      "sixteen-point TRN rejection fixture did not initialize");
+	saved = seeded;
+	CHECK(v34_phase4_mp_receiver_init_from_trn(NULL, &trn) ==
+		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_mp_receiver_init_from_trn(&seeded, NULL) ==
+		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_mp_receiver_init_from_trn(
+		      &seeded,
+		      (const struct v34_phase4_trn *)&seeded) ==
+		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_mp_receiver_init_from_trn(
+		      &seeded, &initial_trn) ==
+		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_mp_receiver_init_from_trn(
+		      &seeded, &sixteen_trn) ==
+		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&seeded, &saved, sizeof(seeded)) == 0,
+	      "invalid four-point TRN seed changed the receiver");
 	saved = receiver;
 	memset(&event, 0xa5, sizeof(event));
 	saved_event = event;

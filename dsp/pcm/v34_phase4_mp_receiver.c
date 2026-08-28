@@ -2,6 +2,9 @@
 
 #include "v34_phase4_mp_receiver.h"
 
+#include "memory_region.h"
+#include "v34_phase4_trn.h"
+
 #include <stddef.h>
 
 bool v34_phase4_mp_receiver_is_valid(
@@ -37,6 +40,33 @@ v34_phase4_mp_receiver_init(
 	    v34_mp_receiver_init(&initialized.records) !=
 		    V34_MP_OK ||
 	    !v34_phase4_mp_receiver_is_valid(&initialized))
+		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+	*receiver = initialized;
+	return V34_PHASE4_MP_RECEIVER_OK;
+}
+
+enum v34_phase4_mp_receiver_result
+v34_phase4_mp_receiver_init_from_trn(
+	struct v34_phase4_mp_receiver *receiver,
+	const struct v34_phase4_trn *trn)
+{
+	struct v34_phase4_mp_receiver initialized = { 0 };
+
+	if (receiver == NULL || trn == NULL ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), trn, sizeof(*trn)) ||
+	    !v34_phase4_trn_is_valid(trn) ||
+	    trn->constellation != V34_CONSTELLATION_4_POINT ||
+	    !trn->has_last_symbol ||
+	    v34_mp_receiver_init(&initialized.records) != V34_MP_OK)
+		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
+	initialized.descrambler = trn->scrambler;
+	initialized.transmitting_role = trn->role;
+	initialized.constellation = trn->constellation;
+	initialized.previous_clockwise_quarter_turns =
+		trn->last_clockwise_quarter_turns;
+	initialized.has_previous_symbol = true;
+	if (!v34_phase4_mp_receiver_is_valid(&initialized))
 		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V34_PHASE4_MP_RECEIVER_OK;

@@ -153,6 +153,21 @@ static bool trn_state_is_valid(
 		       (!calling_peer ||
 			receiver->trn_symbols >=
 				V34_PHASE4_TRN_CONFIRM_SYMBOLS);
+	if (receiver->stage ==
+	    V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP)
+		return receiver->mp_receiver.constellation ==
+			       V34_CONSTELLATION_4_POINT &&
+		       receiver->trn_symbols ==
+			       V34_PHASE4_TRN_MIN_SYMBOLS &&
+		       receiver->mp_receiver.has_previous_symbol &&
+		       receiver->mp_receiver.descrambler.history ==
+			       receiver->expected_trn.scrambler.history &&
+		       receiver->mp_receiver.descrambler.polynomial ==
+			       receiver->expected_trn.scrambler.polynomial &&
+		       receiver->mp_receiver
+			       .previous_clockwise_quarter_turns ==
+			       receiver->expected_trn
+				       .last_clockwise_quarter_turns;
 	return receiver->stage ==
 		       V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE ||
 	       receiver->trn_symbols == V34_PHASE4_TRN_MIN_SYMBOLS;
@@ -507,14 +522,90 @@ static enum v34_phase4_decision_receiver_result receive_trn(
 		V34_ADAPTIVE_EQUALIZER_FULL);
 	if (receiver->trn_symbols != V34_PHASE4_TRN_MIN_SYMBOLS)
 		return V34_PHASE4_DECISION_RECEIVER_OK;
+	if (receiver->mp_receiver.constellation ==
+	    V34_CONSTELLATION_4_POINT) {
+		if (v34_phase4_mp_receiver_init_from_trn(
+			    &receiver->mp_receiver,
+			    &receiver->expected_trn) !=
+		    V34_PHASE4_MP_RECEIVER_OK)
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		receiver->stage =
+			V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP;
+	} else {
+		if (v34_phase4_mp_receive_decision(
+			    &receiver->mp_receiver, hard->quarter_point,
+			    hard->clockwise_quarter_turns, &ignored) !=
+			    V34_PHASE4_MP_RECEIVER_OK ||
+		    ignored.type != V34_MP_RECEIVE_NO_EVENT)
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		receiver->stage = V34_PHASE4_DECISION_RECEIVER_MP;
+	}
+	return V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE;
+}
+
+static enum v34_phase4_decision_receiver_result receive_mp(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	const struct v34_fixed_training_decision *hard,
+	struct v34_phase4_decision_output *output,
+	struct v34_mp_receive_event *event);
+
+static bool mp_decoder_matches_trn(
+	const struct v34_phase4_mp_receiver *receiver,
+	const struct v34_phase4_trn *trn)
+{
+	return receiver->has_previous_symbol &&
+	       receiver->descrambler.history == trn->scrambler.history &&
+	       receiver->descrambler.polynomial == trn->scrambler.polynomial &&
+	       receiver->previous_clockwise_quarter_turns ==
+		       trn->last_clockwise_quarter_turns;
+}
+
+static enum v34_phase4_decision_receiver_result receive_trn_or_mp(
+	struct v34_phase4_decision_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15,
+	const struct v34_fixed_training_decision *hard,
+	struct v34_phase4_decision_output *output,
+	struct v34_mp_receive_event *event)
+{
+	struct v34_phase4_trn expected = receiver->expected_trn;
+	struct v34_phase4_mp_receiver candidate = receiver->mp_receiver;
+	struct v34_mp_receive_event ignored = { 0 };
+	struct v34_analytic_sample target;
+	uint8_t quarter;
+	uint8_t rotation;
+
+	if (v34_phase4_trn_next_fixed(
+		    &expected, &target, &quarter, &rotation) !=
+	    V34_PHASE4_TRN_OK)
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	if (hard->quarter_point != quarter ||
+	    hard->clockwise_quarter_turns != rotation) {
+		receiver->stage = V34_PHASE4_DECISION_RECEIVER_MP;
+		return receive_mp(
+			receiver, observation, decoder_power_q15, hard,
+			output, event);
+	}
 	if (v34_phase4_mp_receive_decision(
-		    &receiver->mp_receiver, hard->quarter_point,
+		    &candidate, hard->quarter_point,
 		    hard->clockwise_quarter_turns, &ignored) !=
 		    V34_PHASE4_MP_RECEIVER_OK ||
 	    ignored.type != V34_MP_RECEIVE_NO_EVENT)
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	receiver->stage = V34_PHASE4_DECISION_RECEIVER_MP;
-	return V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE;
+	receiver->expected_trn = expected;
+	if (mp_decoder_matches_trn(&candidate, &expected)) {
+		receiver->mp_receiver = candidate;
+	} else if (v34_phase4_mp_receiver_init_from_trn(
+			   &receiver->mp_receiver, &expected) !=
+		   V34_PHASE4_MP_RECEIVER_OK) {
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	}
+	*output = commit_output(
+		observation, target, decoder_power_q15,
+		V34_ADAPTIVE_EQUALIZER_FULL);
+	return V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
 static enum v34_phase4_decision_receiver_result receive_mp(
@@ -683,6 +774,11 @@ v34_phase4_decision_receiver_observe(
 		result = receive_trn(
 			&next, observation, decoder_power_q15, &hard,
 			&generated);
+	else if (next.stage ==
+		 V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP)
+		result = receive_trn_or_mp(
+			&next, observation, decoder_power_q15, &hard,
+			&generated, &emitted);
 	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME)
 		result = receive_call_j_prime(
 			&next, observation, decoder_power_q15, &hard,

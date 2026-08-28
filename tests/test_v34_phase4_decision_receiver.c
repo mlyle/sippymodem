@@ -355,7 +355,8 @@ static bool feed_mp_record(
 
 static bool run_timeline(
 	enum v34_station_role role,
-	enum v34_constellation_size constellation, bool search_e)
+	enum v34_constellation_size constellation, bool search_e,
+	unsigned int extra_trn_symbols)
 {
 	struct receive_fixture fixture = {
 		.clock.lineage = UINT64_C(14695981039346656037),
@@ -375,6 +376,8 @@ static bool run_timeline(
 	enum v34_phase3_s_section section;
 	uint8_t quarter;
 	uint8_t rotation;
+	unsigned int acquisition_trn_symbols =
+		V34_PHASE4_TRN_MIN_SYMBOLS + extra_trn_symbols;
 
 	CHECK(make_j_sequence(role, constellation, &j_sequence) &&
 	      v34_phase4_decision_receiver_init(
@@ -439,7 +442,7 @@ static bool run_timeline(
 		      V34_PHASE4_TRN_OK,
 	      "Phase 4 TRN source did not initialize");
 	for (unsigned int symbol = 0;
-	     symbol < MP_ACQUISITION_TRN_SYMBOLS; ++symbol) {
+	     symbol < acquisition_trn_symbols; ++symbol) {
 		enum v34_phase4_decision_receiver_result expected =
 			symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS ?
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
@@ -475,22 +478,49 @@ static bool run_timeline(
 			      &fixture, received, target, expected),
 		      "Phase 4 TRN observation %u stopped", symbol);
 		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS)
-			CHECK(fixture.receiver.mp_receiver.has_previous_symbol &&
+			CHECK(fixture.receiver.stage ==
+				      (constellation ==
+					       V34_CONSTELLATION_4_POINT ?
+					       V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP :
+					       V34_PHASE4_DECISION_RECEIVER_MP) &&
+			      fixture.receiver.mp_receiver.has_previous_symbol &&
 				      fixture.receiver.mp_receiver
 					      .previous_clockwise_quarter_turns ==
-					      received_rotation,
-			      "MP did not retain the received TRN phase");
+					      (constellation ==
+					       V34_CONSTELLATION_4_POINT ?
+						       rotation :
+						       received_rotation),
+			      "MP did not retain the TRN boundary phase");
 	}
-	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_MP &&
+	CHECK(fixture.receiver.stage ==
+		      (constellation == V34_CONSTELLATION_4_POINT ?
+			       V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP :
+			       V34_PHASE4_DECISION_RECEIVER_MP) &&
 	      fixture.receiver.mp_receiver.has_previous_symbol &&
 	      fixture.receiver.mp_receiver.previous_clockwise_quarter_turns ==
-		      rotation,
+		      rotation &&
+	      (constellation != V34_CONSTELLATION_4_POINT ||
+	       (fixture.receiver.mp_receiver.descrambler.history ==
+			trn.scrambler.history &&
+		fixture.receiver.mp_receiver.descrambler.polynomial ==
+			trn.scrambler.polynomial)),
 	      "TRN did not retain the MP phase boundary");
-	CHECK(v34_phase4_mp_init_type0_from_trn(
-		      &mp, &trn, &fixture.unacknowledged) ==
-		      V34_PHASE4_MP_OK &&
-	      feed_mp_record(&fixture, &mp),
-	      "first MP record stopped");
+	{
+		unsigned int rejected_before = fixture.rejected_records;
+		unsigned int unacknowledged_before =
+			fixture.unacknowledged_records;
+
+		CHECK(v34_phase4_mp_init_type0_from_trn(
+			      &mp, &trn, &fixture.unacknowledged) ==
+			      V34_PHASE4_MP_OK &&
+		      feed_mp_record(&fixture, &mp),
+		      "first MP record stopped");
+		if (constellation == V34_CONSTELLATION_4_POINT)
+			CHECK(fixture.rejected_records == rejected_before &&
+			      fixture.unacknowledged_records ==
+				      unacknowledged_before + 1u,
+			      "first four-point MP record was not accepted");
+	}
 	CHECK(v34_phase4_mp_start_next_type0_record(
 		      &mp, &fixture.unacknowledged) == V34_PHASE4_MP_OK &&
 	      feed_mp_record(&fixture, &mp),
@@ -583,11 +613,26 @@ static bool test_role_constellation_timelines(void)
 	for (size_t role = 0; role < ARRAY_LENGTH(roles); ++role)
 		for (size_t constellation = 0;
 		     constellation < ARRAY_LENGTH(constellations);
-		     ++constellation)
+		     ++constellation) {
+			unsigned int extra_trn_symbols =
+				constellations[constellation] ==
+						V34_CONSTELLATION_4_POINT ?
+					0u :
+					MP_ACQUISITION_TRN_SYMBOLS -
+						V34_PHASE4_TRN_MIN_SYMBOLS;
+
 			if (!run_timeline(
 				    roles[role], constellations[constellation],
-				    role == 0 && constellation == 1))
+				    role == 0 && constellation == 1,
+				    extra_trn_symbols))
 				return false;
+			if (constellations[constellation] ==
+				    V34_CONSTELLATION_4_POINT &&
+			    !run_timeline(
+				    roles[role], constellations[constellation],
+				    false, 307u))
+				return false;
+		}
 	return true;
 }
 
