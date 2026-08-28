@@ -80,9 +80,6 @@ static bool outputs_overlap(
 		       events, sizeof(*events), received, sizeof(*received));
 }
 
-static void note_ready(
-	struct v34_phase4_exchange *exchange, uint32_t *events);
-
 static const uint16_t MP_WAIT_MULTIPLIER_Q14[V34_SYMBOL_RATE_COUNT] = {
 	[V34_SYMBOL_RATE_2400] = 0x1000u,
 	[V34_SYMBOL_RATE_2743] = 0x12abu,
@@ -334,7 +331,7 @@ static bool transmitter_stage_is_valid(
 		       exchange->transmit_mp_started &&
 		       exchange->transmit_mp_prime_started &&
 		       exchange->transmit_mp_records_completed ==
-			       V34_PHASE4_MP_REPEAT_RECORDS &&
+			       V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
 		       exchange->peer_mp_prime_received &&
 		       exchange->data_startup_prepared;
 	stage = exchange->transmit.training.stage;
@@ -350,7 +347,7 @@ static bool transmitter_stage_is_valid(
 	if (stage == V34_TRAINING_TRANSMITTER_PHASE4_E &&
 	    (!exchange->transmit_mp_prime_started ||
 	     exchange->transmit_mp_records_completed !=
-		     V34_PHASE4_MP_REPEAT_RECORDS ||
+		     V34_PHASE4_MP_PRIME_REPEAT_RECORDS ||
 	     !exchange->peer_mp_prime_received ||
 	     !exchange->data_startup_prepared))
 		return false;
@@ -392,19 +389,15 @@ bool v34_phase4_exchange_is_valid(
 	     !exchange->failed) ||
 	    (exchange->transmit_mp_started && !trn_ready_for_mp(exchange)) ||
 	    exchange->transmit_mp_records_completed >
-		    V34_PHASE4_MP_REPEAT_RECORDS ||
+		    (exchange->transmit_mp_prime_started ?
+			     V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
+			     V34_PHASE4_MP_REPEAT_RECORDS) ||
 	    (!exchange->transmit_mp_started &&
 	     exchange->transmit_mp_records_completed != 0u) ||
 	    (exchange->transmit_mp_prime_started &&
 	     (!exchange->transmit_mp_started || !exchange->peer_mp_received)) ||
 	    (exchange->peer_mp_prime_received &&
 	     !exchange->peer_mp_received) ||
-	    exchange->ready_announced !=
-		    (exchange->transmit_mp_prime_started &&
-		     exchange->transmit_mp_records_completed ==
-			     V34_PHASE4_MP_REPEAT_RECORDS &&
-		     exchange->peer_mp_prime_received &&
-		     exchange->data_startup_prepared) ||
 	    (exchange->peer_mp_received &&
 	     (!v34_mp_record_is_valid(&exchange->peer_mp) ||
 	      record_is_acknowledged(&exchange->peer_mp))))
@@ -532,13 +525,6 @@ bool v34_phase4_exchange_needs_data_preparation(
 {
 	return v34_phase4_exchange_is_valid(exchange) && !exchange->failed &&
 	       exchange->data_preparation_required;
-}
-
-bool v34_phase4_exchange_is_ready_for_e(
-	const struct v34_phase4_exchange *exchange)
-{
-	return v34_phase4_exchange_is_valid(exchange) && !exchange->failed &&
-	       exchange->ready_announced;
 }
 
 bool v34_phase4_exchange_is_online(
@@ -689,9 +675,12 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	    v34_training_transmitter_phase4_mp_record_complete(
 			    &exchange->transmit.training)) {
 		bool acknowledged;
+		uint8_t repeat_records = exchange->transmit_mp_prime_started ?
+			V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
+			V34_PHASE4_MP_REPEAT_RECORDS;
 
 		if (exchange->transmit_mp_records_completed <
-		    V34_PHASE4_MP_REPEAT_RECORDS)
+		    repeat_records)
 			exchange->transmit_mp_records_completed++;
 		acknowledged = exchange->transmit_mp_prime_started ||
 			(exchange->peer_mp_received &&
@@ -700,7 +689,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 
 		if (exchange->transmit_mp_prime_started &&
 		    exchange->transmit_mp_records_completed ==
-			    V34_PHASE4_MP_REPEAT_RECORDS &&
+			    V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
 		    exchange->peer_mp_prime_received &&
 		    exchange->data_startup_prepared) {
 			result = transmit_result(v34_training_transmitter_start_e(
@@ -791,7 +780,7 @@ static enum v34_phase4_exchange_result latch_failure(
 }
 
 enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
-	struct v34_phase4_exchange *exchange, uint32_t *events)
+	struct v34_phase4_exchange *exchange)
 {
 	struct v34_phase4_exchange next;
 	struct v34_data_mode mode;
@@ -799,11 +788,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	enum v34_data_mode_result mode_result;
 	enum v34_data_startup_result startup_result;
 	enum v34_phase4_exchange_result result;
-	uint32_t emitted = 0;
 
-	if (!v34_phase4_exchange_is_valid(exchange) || events == NULL ||
-	    memory_regions_overlap(
-		    exchange, sizeof(*exchange), events, sizeof(*events)))
+	if (!v34_phase4_exchange_is_valid(exchange))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (exchange->failed)
 		return V34_PHASE4_EXCHANGE_FAILED;
@@ -844,12 +830,10 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 			exchange->failed = true;
 		return result;
 	}
-	note_ready(&next, &emitted);
 	if (!v34_phase4_exchange_is_valid(&next))
 		return latch_failure(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	*exchange = next;
-	*events |= emitted;
 	return V34_PHASE4_EXCHANGE_OK;
 }
 
@@ -968,18 +952,9 @@ static enum v34_phase4_exchange_result drive_receiver(
 	return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 }
 
-static void note_ready(
+static void note_online(
 	struct v34_phase4_exchange *exchange, uint32_t *events)
 {
-	if (!exchange->ready_announced &&
-	    exchange->transmit_mp_prime_started &&
-	    exchange->transmit_mp_records_completed ==
-		    V34_PHASE4_MP_REPEAT_RECORDS &&
-	    exchange->peer_mp_prime_received &&
-	    exchange->data_startup_prepared) {
-		exchange->ready_announced = true;
-		*events |= V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E;
-	}
 	if (!exchange->online_announced && exchange->transmit_b1_complete &&
 	    exchange->receive_b1_complete) {
 		exchange->online_announced = true;
@@ -1062,7 +1037,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_sample(
 	if (result == V34_PHASE4_EXCHANGE_OK)
 		result = prepare_transmitter(&next, &emitted);
 	if (result == V34_PHASE4_EXCHANGE_OK)
-		note_ready(&next, &emitted);
+		note_online(&next, &emitted);
 	if (terminal_result(result))
 		next.failed = true;
 	if (!v34_phase4_exchange_is_valid(&next)) {

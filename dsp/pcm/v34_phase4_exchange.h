@@ -34,7 +34,6 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED = 1u << 5,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED = 1u << 6,
 	V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED = 1u << 7,
-	V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E = 1u << 8,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED = 1u << 9,
 	V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED = 1u << 10,
 	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_STARTED = 1u << 11,
@@ -48,12 +47,13 @@ enum {
 	/* Keep J active for more than 128 symbols and until the caller receives
 	 * S/S-bar, then release J-prime at a complete J-pattern boundary. */
 	V34_PHASE4_J_RELEASE_MIN_SYMBOLS = 129,
-	/* Repeat both MP and MP' across eight complete record boundaries. The
-	 * ordinary window lets a slow 4-point/type-1 peer finish its current MP,
-	 * publish MP', and survive one missed local type-0 record before our MP'
-	 * can release it into E. The same bound gives the reciprocal receiver
-	 * repeated sync-and-CRC opportunities without obscuring E. */
+	/* Repeat ordinary MP across eight complete record boundaries. This lets a
+	 * slow 4-point/type-1 peer finish its current MP, publish MP', and survive
+	 * one missed local type-0 record before our MP' can release it into E. */
 	V34_PHASE4_MP_REPEAT_RECORDS = 8,
+	/* Repeat MP' across four complete record boundaries so a reciprocal peer
+	 * has a complete acknowledgement before the following E transition. */
+	V34_PHASE4_MP_PRIME_REPEAT_RECORDS = 4,
 };
 
 struct v34_phase4_exchange_configuration {
@@ -111,7 +111,6 @@ struct v34_phase4_exchange {
 	bool receive_data_active;
 	bool transmit_b1_complete;
 	bool receive_b1_complete;
-	bool ready_announced;
 	bool online_announced;
 	bool failed;
 };
@@ -130,18 +129,11 @@ bool v34_phase4_exchange_needs_data_preparation(
 	const struct v34_phase4_exchange *exchange);
 
 /* Resolve the pending first peer MP, selecting and calibrating both negotiated
- * data directions. If an acknowledged first record already completed the
- * reciprocal MP exchange, READY_FOR_E is ORed into events here. Rejected
- * calls leave the exchange and events unchanged. A terminal preparation
- * failure is latched because the paused line sample cannot be skipped or
- * replayed. */
+ * data directions. Rejected calls leave the exchange unchanged. A terminal
+ * preparation failure is latched because the paused line sample cannot be
+ * skipped or replayed. */
 enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
-	struct v34_phase4_exchange *exchange, uint32_t *events);
-
-/* True once both acknowledgments were committed and both post-E paths were
- * prepared. The milestone remains observable after E has begun. */
-bool v34_phase4_exchange_is_ready_for_e(
-	const struct v34_phase4_exchange *exchange);
+	struct v34_phase4_exchange *exchange);
 bool v34_phase4_exchange_is_online(
 	const struct v34_phase4_exchange *exchange);
 

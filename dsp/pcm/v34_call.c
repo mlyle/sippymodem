@@ -474,7 +474,7 @@ static enum v34_call_result sample_phase4(
 		    &call->state.phase4))
 		return V34_CALL_OK;
 	result = v34_phase4_exchange_prepare_data_startup(
-		&call->state.phase4, &observation->events.phase4);
+		&call->state.phase4);
 	return phase4_result(result);
 }
 

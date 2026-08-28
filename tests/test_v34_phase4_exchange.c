@@ -299,7 +299,7 @@ static bool endpoint_sample(
 		}
 		endpoint->data_preparation_count++;
 		result = v34_phase4_exchange_prepare_data_startup(
-			&endpoint->phase4, phase4_events);
+			&endpoint->phase4);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			fprintf(stderr, "Phase 4 data preparation: %d\n", result);
 		return result == V34_PHASE4_EXCHANGE_OK;
@@ -512,7 +512,6 @@ static bool test_generated_online_exchange(void)
 		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED |
 		V34_PHASE4_EXCHANGE_EVENT_PEER_MP_PRIME_RECEIVED |
-		V34_PHASE4_EXCHANGE_EVENT_READY_FOR_E |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED |
 		V34_PHASE4_EXCHANGE_EVENT_PEER_E_RECEIVED |
 		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_B1_STARTED |
@@ -541,9 +540,9 @@ static bool test_generated_online_exchange(void)
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
 	      caller.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MP_REPEAT_RECORDS &&
+		      V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
 	      answerer.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MP_REPEAT_RECORDS &&
+		      V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
 	      caller.phase4.receive_data_active &&
 	      answerer.phase4.receive_data_active &&
 	      caller.phase4.transmit_b1_complete &&
@@ -934,13 +933,49 @@ static bool test_acknowledged_first_record(void)
 	CHECK(v34_phase4_exchange_is_valid(&pending),
 	      "acknowledged first record made pending state invalid");
 	CHECK(v34_phase4_exchange_prepare_data_startup(
-		      &pending, &events) == V34_PHASE4_EXCHANGE_OK &&
+		      &pending) == V34_PHASE4_EXCHANGE_OK &&
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
-	      !v34_phase4_exchange_is_ready_for_e(&pending) &&
+	      pending.transmit.training.stage ==
+		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
 	      pending.transmit_mp_records_completed == 0 &&
 	      events == UINT32_C(0x40000000),
-	      "acknowledged first record bypassed the MP-prime repeat boundary");
+	      "acknowledged first record changed before its MP-prime boundary");
+	for (uint8_t record = 0;
+	     record < V34_PHASE4_MP_PRIME_REPEAT_RECORDS; ++record) {
+		struct v34_received_mapping_frame received = { 0 };
+		int16_t sample = 0;
+
+		for (size_t sample_index = 0;
+		     !v34_training_transmitter_phase4_mp_record_complete(
+			     &pending.transmit.training);
+		     ++sample_index) {
+			CHECK(sample_index < 1000u &&
+			      v34_training_transmitter_sample(
+				      &pending.transmit.training, &sample) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "local MP-prime did not reach record %u boundary",
+			      record + 1u);
+		}
+		events = 0;
+		CHECK(v34_phase4_exchange_sample(
+			      &pending, 0, NULL, NULL, &sample, &events,
+			      &received) == V34_PHASE4_EXCHANGE_OK &&
+		      pending.transmit_mp_records_completed == record + 1u,
+		      "MP-prime record %u did not complete", record + 1u);
+		if (record + 1u < V34_PHASE4_MP_PRIME_REPEAT_RECORDS) {
+			CHECK(pending.transmit.training.stage ==
+				      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
+			      events == 0,
+			      "MP-prime record %u released E early", record + 1u);
+		} else {
+			CHECK(pending.transmit.training.stage ==
+				      V34_TRAINING_TRANSMITTER_PHASE4_E &&
+			      events ==
+				      V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED,
+			      "completed reciprocal MP-prime did not release E");
+		}
+	}
 	return true;
 }
 
@@ -1062,16 +1097,10 @@ static bool test_validation_and_transactionality(void)
 	      "rejected Phase 4 samples were not transactional");
 	saved = caller.phase4;
 	CHECK(v34_phase4_exchange_prepare_data_startup(
-		      &caller.phase4, &events) ==
+		      &caller.phase4) ==
 		      V34_PHASE4_EXCHANGE_INVALID_STATE &&
 	      v34_phase4_exchange_prepare_data_startup(
-		      NULL, &events) ==
-		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      v34_phase4_exchange_prepare_data_startup(
-		      &caller.phase4, NULL) ==
-		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      v34_phase4_exchange_prepare_data_startup(
-		      &caller.phase4, (uint32_t *)&caller.phase4) ==
+		      NULL) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&caller.phase4, &saved, sizeof(saved)) == 0 &&
 	      events == UINT32_C(0x5aa5a55a),
@@ -1081,7 +1110,6 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase4_exchange_is_valid(NULL) &&
 	      !v34_phase4_exchange_has_failed(NULL) &&
 	      !v34_phase4_exchange_needs_data_preparation(NULL) &&
-	      !v34_phase4_exchange_is_ready_for_e(NULL) &&
 	      !v34_phase4_exchange_is_online(NULL) &&
 	      !v34_phase4_exchange_get_data_startup(NULL, &startup) &&
 	      !v34_phase4_exchange_get_data_startup(
