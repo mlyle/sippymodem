@@ -331,7 +331,7 @@ static bool endpoint_sample(
 				    V34_PHASE3_EXCHANGE_OK ||
 		    v34_phase4_exchange_init(
 			    &endpoint->phase4, &endpoint->handoff,
-			    &endpoint->phase4_configuration) !=
+			    &endpoint->phase4_configuration, 0u) !=
 				    V34_PHASE4_EXCHANGE_OK)
 			return false;
 		endpoint->constellations_routed =
@@ -442,6 +442,58 @@ static bool directions_are_equal(
 		      sizeof(left->precoder_coefficients)) == 0;
 }
 
+static bool test_mp_transition_schedule(void)
+{
+	static const struct {
+		enum v34_symbol_rate rate;
+		uint32_t zero_delay;
+		uint32_t delayed_answerer;
+		uint32_t delayed_caller;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_2400, 4212u, 4655u, 6430u },
+		{ V34_SYMBOL_RATE_2743, 4732u, 5249u, 7024u },
+		{ V34_SYMBOL_RATE_2800, 4818u, 5335u, 7110u },
+		{ V34_SYMBOL_RATE_3000, 5121u, 5675u, 7450u },
+		{ V34_SYMBOL_RATE_3200, 5423u, 6015u, 7790u },
+		{ V34_SYMBOL_RATE_3429, 5770u, 6404u, 8179u },
+	};
+	const uint16_t measured_delay = 1775u;
+	uint32_t symbols;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		CHECK(v34_phase4_mp_transition_symbols(
+			      cases[index].rate, V34_CALLING_STATION, 0u,
+			      &symbols) &&
+		      symbols == cases[index].zero_delay &&
+		      v34_phase4_mp_transition_symbols(
+			      cases[index].rate, V34_ANSWERING_STATION, 0u,
+			      &symbols) &&
+		      symbols == cases[index].zero_delay &&
+		      v34_phase4_mp_transition_symbols(
+			      cases[index].rate, V34_ANSWERING_STATION,
+			      measured_delay, &symbols) &&
+		      symbols == cases[index].delayed_answerer &&
+		      v34_phase4_mp_transition_symbols(
+			      cases[index].rate, V34_CALLING_STATION,
+			      measured_delay, &symbols) &&
+		      symbols == cases[index].delayed_caller,
+		      "Phase 4 MP transition changed for rate %u",
+		      (unsigned int)cases[index].rate);
+	}
+	symbols = UINT32_C(0xa55a5aa5);
+	CHECK(!v34_phase4_mp_transition_symbols(
+		      V34_SYMBOL_RATE_COUNT, V34_CALLING_STATION, 0u,
+		      &symbols) &&
+	      !v34_phase4_mp_transition_symbols(
+		      V34_SYMBOL_RATE_2400, (enum v34_station_role)99, 0u,
+		      &symbols) &&
+	      !v34_phase4_mp_transition_symbols(
+		      V34_SYMBOL_RATE_2400, V34_CALLING_STATION, 0u, NULL) &&
+	      symbols == UINT32_C(0xa55a5aa5),
+	      "invalid MP transition arguments changed the output");
+	return true;
+}
+
 static bool test_generated_online_exchange(void)
 {
 	const uint32_t common_events =
@@ -504,7 +556,7 @@ static bool test_generated_online_exchange(void)
 	      caller.j_symbols_at_finish % V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
 	      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      caller.trn_symbols_at_mp <= 2u * 3000u &&
-	      answerer.trn_symbols_at_mp == 2u * 3000u &&
+	      answerer.trn_symbols_at_mp == 5121u &&
 	      caller.constellations_routed &&
 	      answerer.constellations_routed &&
 	      caller.mapping_frames_supplied >=
@@ -910,11 +962,19 @@ static bool test_validation_and_transactionality(void)
 	exchange.transmit_mp_prime_started = false;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted MP-prime completions without MP-prime");
+	exchange = caller.phase4;
+	exchange.mp_transition_symbols++;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange),
+	      "Phase 4 accepted a changed MP transition target");
+	exchange = caller.phase4;
+	exchange.round_trip_delay_samples++;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange),
+	      "Phase 4 accepted a changed round-trip delay");
 	invalid.data_equalizer_adaptation = NAN;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;
 	CHECK(v34_phase4_exchange_init(
-		      &exchange, &caller.handoff, &invalid) ==
+		      &exchange, &caller.handoff, &invalid, 0u) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "invalid data adaptation changed the Phase 4 destination");
@@ -923,7 +983,7 @@ static bool test_validation_and_transactionality(void)
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;
 	CHECK(v34_phase4_exchange_init(
-		      &exchange, &caller.handoff, &invalid) ==
+		      &exchange, &caller.handoff, &invalid, 0u) ==
 		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "pre-acknowledged MP configuration changed the destination");
@@ -998,6 +1058,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "role-aware MP transition schedule",
+		  test_mp_transition_schedule },
 		{ "generated online exchange",
 		  test_generated_online_exchange },
 		{ "peer MP releases trained TRN",

@@ -98,33 +98,90 @@ static bool outputs_overlap(
 static void note_ready(
 	struct v34_phase4_exchange *exchange, uint32_t *events);
 
+static bool phase4_baud_and_wait_multiplier(
+	enum v34_symbol_rate symbol_rate, uint32_t *baud,
+	uint16_t *wait_multiplier)
+{
+	switch (symbol_rate) {
+	case V34_SYMBOL_RATE_2400:
+		*baud = 2400u;
+		*wait_multiplier = 0u;
+		return true;
+	case V34_SYMBOL_RATE_2743:
+		*baud = 2743u;
+		*wait_multiplier = 0x12abu;
+		return true;
+	case V34_SYMBOL_RATE_2800:
+		*baud = 2800u;
+		*wait_multiplier = 0x12abu;
+		return true;
+	case V34_SYMBOL_RATE_3000:
+		*baud = 3000u;
+		*wait_multiplier = 0x1400u;
+		return true;
+	case V34_SYMBOL_RATE_3200:
+		*baud = 3200u;
+		*wait_multiplier = 0x1555u;
+		return true;
+	case V34_SYMBOL_RATE_3429:
+		*baud = 3429u;
+		*wait_multiplier = 0x16dcu;
+		return true;
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return false;
+}
+
+bool v34_phase4_mp_transition_symbols(
+	enum v34_symbol_rate symbol_rate, enum v34_station_role local_role,
+	uint16_t round_trip_delay_samples, uint32_t *symbols)
+{
+	uint32_t baud;
+	uint16_t multiplier;
+	uint32_t wait;
+	uint32_t transition;
+
+	if (symbols == NULL || !v34_station_role_is_valid(local_role) ||
+	    !phase4_baud_and_wait_multiplier(
+		    symbol_rate, &baud, &multiplier))
+		return false;
+	wait = (uint32_t)round_trip_delay_samples +
+		V34_PHASE3_S_SEQUENCE_SYMBOLS;
+	wait = multiplier == 0u ? wait >> 2 :
+		(uint32_t)(((uint64_t)wait * multiplier) >> 14);
+	/* The physical schedule carries the two completed PP spans into the
+	 * 1.5-second TRN window. A caller also retains one complete measured
+	 * echo-path interval; an answerer has already paid that interval while
+	 * turning the line around. This software line has no separate DMA or
+	 * hardware-echo delay to add. */
+	transition = baud + baud / 2u + wait +
+		2u * V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+	if (local_role == V34_CALLING_STATION)
+		transition += round_trip_delay_samples;
+	if (transition < V34_PHASE4_TRN_MIN_SYMBOLS)
+		return false;
+	*symbols = transition;
+	return true;
+}
+
 static bool trn_ready_for_mp(const struct v34_phase4_exchange *exchange)
 {
-	const struct v34_phase3_profile *profile;
 	uint32_t transmitted;
-	uint64_t two_seconds;
 
 	if (exchange == NULL)
 		return false;
 	if (exchange->transmit_data_active)
 		return true;
-	profile = &exchange->transmit.training.line.profile;
-	if (!v34_phase3_profile_is_valid(profile))
-		return false;
 	transmitted = exchange->transmit.training.phase4_trn_symbols;
 	if (transmitted < V34_PHASE4_TRN_MIN_SYMBOLS)
 		return false;
 	/* A valid peer MP proves that its receiver has finished training on this
-	 * TRN. Otherwise retain the complete zero-RTD training allowance as a
-	 * bounded fallback when the two modems finish training together. */
+	 * TRN. Otherwise retain the measured physical schedule as a bounded
+	 * fallback when the two modems finish training together. */
 	if (exchange->peer_mp_received)
 		return true;
-	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
-		profile->symbol_rate_denominator;
-	if (two_seconds < V34_PHASE4_TRN_MIN_SYMBOLS ||
-	    two_seconds > UINT32_MAX)
-		return false;
-	return transmitted >= (uint32_t)two_seconds;
+	return transmitted >= exchange->mp_transition_symbols;
 }
 
 static const struct v34_phase3_profile *local_transmit_profile(
@@ -342,12 +399,20 @@ static bool transmitter_stage_is_valid(
 bool v34_phase4_exchange_is_valid(
 	const struct v34_phase4_exchange *exchange)
 {
+	uint32_t expected_transition;
+
 	if (exchange == NULL ||
 	    (!exchange->transmit_data_active &&
 	     !v34_training_transmitter_is_valid(&exchange->transmit.training)) ||
 	    !v34_phase34_receiver_is_valid(&exchange->receive) ||
 	    !v34_mp_record_is_valid(&exchange->transmit_mp) ||
 	    record_is_acknowledged(&exchange->transmit_mp) ||
+	    !v34_phase4_mp_transition_symbols(
+		    local_transmit_profile(exchange)->symbol_rate,
+		    exchange->local_role,
+		    exchange->round_trip_delay_samples,
+		    &expected_transition) ||
+	    exchange->mp_transition_symbols != expected_transition ||
 	    !transmitter_stage_is_valid(exchange) ||
 	    !receiver_feedback_matches_mp(exchange) ||
 	    !transmitter_mp_matches(exchange) || !data_state_is_valid(exchange))
@@ -445,7 +510,8 @@ static enum v34_constellation_size detected_j_constellation(
 enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	struct v34_phase4_exchange *exchange,
 	const struct v34_phase3_exchange_handoff *handoff,
-	const struct v34_phase4_exchange_configuration *configuration)
+	const struct v34_phase4_exchange_configuration *configuration,
+	uint16_t round_trip_delay_samples)
 {
 	struct v34_phase4_exchange initialized = { 0 };
 	enum v34_constellation_size local_transmit_constellation;
@@ -477,6 +543,12 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	initialized.data_equalizer_adaptation =
 		configuration->data_equalizer_adaptation;
 	initialized.local_role = handoff->transmit.line.profile.local_role;
+	initialized.round_trip_delay_samples = round_trip_delay_samples;
+	if (!v34_phase4_mp_transition_symbols(
+		    initialized.transmit.training.line.profile.symbol_rate,
+		    initialized.local_role, round_trip_delay_samples,
+		    &initialized.mp_transition_symbols))
+		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (!v34_phase4_exchange_is_valid(&initialized))
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 	*exchange = initialized;

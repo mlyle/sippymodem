@@ -63,6 +63,12 @@ struct v34_phase4_exchange_configuration {
 	double data_equalizer_adaptation;
 };
 
+/* Derive the blind TRN-to-MP transition when no peer MP has arrived. The
+ * measured Phase 2 round-trip delay remains in 8 kHz sample units. */
+bool v34_phase4_mp_transition_symbols(
+	enum v34_symbol_rate symbol_rate, enum v34_station_role local_role,
+	uint16_t round_trip_delay_samples, uint32_t *symbols);
+
 union v34_phase4_transmit_path {
 	struct v34_training_transmitter training;
 	struct v34_data_stream data;
@@ -91,7 +97,9 @@ struct v34_phase4_exchange {
 	struct v34_mp_record peer_mp;
 	double data_equalizer_adaptation;
 	enum v34_station_role local_role;
+	uint32_t mp_transition_symbols;
 	uint32_t finish_j_requested_at_symbol;
+	uint16_t round_trip_delay_samples;
 	bool transmit_trn_started;
 	bool transmit_mp_started;
 	uint8_t transmit_mp_records_completed;
@@ -112,7 +120,8 @@ struct v34_phase4_exchange {
 enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	struct v34_phase4_exchange *exchange,
 	const struct v34_phase3_exchange_handoff *handoff,
-	const struct v34_phase4_exchange_configuration *configuration);
+	const struct v34_phase4_exchange_configuration *configuration,
+	uint16_t round_trip_delay_samples);
 
 bool v34_phase4_exchange_is_valid(
 	const struct v34_phase4_exchange *exchange);

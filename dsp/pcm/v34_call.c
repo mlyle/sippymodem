@@ -435,7 +435,8 @@ static enum v34_call_result enter_phase4(struct v34_call *call)
 		return V34_CALL_NUMERIC_FAILURE;
 	result = v34_phase4_exchange_init(
 		&call->state.phase4, &handoff,
-		&call->phase4_configuration);
+		&call->phase4_configuration,
+		call->round_trip_delay_samples);
 	if (result != V34_PHASE4_EXCHANGE_OK)
 		return phase4_result(result);
 	call->stage = V34_CALL_PHASE4;
