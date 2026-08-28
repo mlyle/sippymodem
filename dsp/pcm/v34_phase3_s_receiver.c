@@ -45,13 +45,6 @@ static size_t receive_window(
 	return receiver->s_symbols + V34_PHASE3_S_BAR_SYMBOLS;
 }
 
-static unsigned int allowed_s_errors(
-	const struct v34_phase3_s_receiver *receiver)
-{
-	return receiver->s_symbols * V34_PHASE3_S_RECEIVER_MAX_S_ERRORS /
-	       V34_PHASE3_S_SYMBOLS;
-}
-
 bool v34_phase3_s_receiver_is_valid(
 	const struct v34_phase3_s_receiver *receiver)
 {
@@ -86,8 +79,7 @@ bool v34_phase3_s_receiver_is_valid(
 	    (!receiver->complete && receiver->post_marker_symbols != 0) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != window ||
-	      !v34_phase3_s_detection_is_valid(&receiver->detection) ||
-	      receiver->detection.s_errors > allowed_s_errors(receiver))) ||
+	      !v34_phase3_s_detection_is_valid(&receiver->detection))) ||
 	    (!receiver->complete &&
 	     (receiver->detection.clockwise_quarter_turn_offset != 0 ||
 	      receiver->detection.s_errors != 0 ||
@@ -223,8 +215,7 @@ static bool correlate(
 			else
 				candidate.s_bar_errors++;
 		}
-		if (candidate.s_errors <= allowed_s_errors(receiver) &&
-		    v34_phase3_s_detection_is_valid(&candidate)) {
+		if (v34_phase3_s_detection_is_valid(&candidate)) {
 			unsigned int errors =
 				candidate.s_errors + candidate.s_bar_errors;
 
@@ -368,7 +359,9 @@ static enum v34_phase3_s_receiver_result receive_decision(
 			next.pending_symbols = 0;
 		}
 	} else if (metric_found && !next.complete) {
-		if (!next.detection_pending) {
+		if (metric_detection.s_bar_errors == 0u) {
+			complete_detection(&next, &metric_detection, 0);
+		} else if (!next.detection_pending) {
 			next.pending_detection = metric_detection;
 			next.pending_symbols = 0;
 			next.detection_pending = true;

@@ -43,12 +43,12 @@ bool v34_phase3_s_detection_is_valid(
 /* Bounded hard-decision history for locating S followed by the complete 16T
  * S-bar marker at an arbitrary input boundary. The ordinary initializer
  * requires all 128T of S; a suffix initializer supports a receiver that locks
- * during S. The complete retained S suffix supplies the phase anchor; S and
- * S-bar have separate bounded error budgets so a smeared transition cannot
- * veto an otherwise qualified marker. Fixed-distance evidence for a complete
- * S-bar can publish the same hard alignment immediately; an otherwise
- * non-exact four-symbol boundary is confirmed by later decisions. Expected
- * rotations are generated during correlation. */
+ * during S. The complete retained S suffix supplies the phase anchor and keeps
+ * the full bounded S error budget; S and S-bar remain separate so a smeared
+ * transition cannot veto an otherwise qualified marker. Fixed-distance
+ * evidence for a complete S-bar can publish the same hard alignment
+ * immediately; an otherwise non-exact four-symbol boundary is confirmed by
+ * later decisions. Expected rotations are generated during correlation. */
 struct v34_phase3_s_receiver {
 	/* Low nibble: hard training decision. High nibble: fixed-distance
 	 * evidence for rotations 0..3 when metric_enabled is set. */

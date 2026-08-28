@@ -436,6 +436,12 @@ static bool test_suffix_acquisition(void)
 	      detection.clockwise_quarter_turn_offset == 2,
 	      "odd-length suffix lost its absolute marker phase");
 	CHECK(v34_phase3_s_receiver_init_suffix(
+		      &receiver, suffix) == V34_PHASE3_S_RECEIVER_OK &&
+	      receive_suffix(
+		      &receiver, rotations, 1, suffix,
+		      V34_PHASE3_S_RECEIVER_MAX_S_ERRORS),
+	      "suffix lost the bounded S error budget");
+	CHECK(v34_phase3_s_receiver_init_suffix(
 		      &receiver, suffix) == V34_PHASE3_S_RECEIVER_OK,
 	      "suffix rejection receiver did not initialize");
 	for (size_t symbol = V34_PHASE3_S_SYMBOLS - suffix;
@@ -443,7 +449,7 @@ static bool test_suffix_acquisition(void)
 		uint8_t rotation = rotations[symbol];
 		size_t local = symbol - (V34_PHASE3_S_SYMBOLS - suffix);
 
-		if (local < 3u)
+		if (local <= V34_PHASE3_S_RECEIVER_MAX_S_ERRORS)
 			rotation = (uint8_t)((rotation + 1u) & 3u);
 		CHECK(v34_phase3_s_receiver_receive(
 			      &receiver, 0, rotation) ==
@@ -451,7 +457,7 @@ static bool test_suffix_acquisition(void)
 		      "excess-error suffix changed result at %zu", local);
 	}
 	CHECK(!v34_phase3_s_receiver_is_complete(&receiver),
-	      "suffix accepted more than its proportional S error bound");
+	      "suffix accepted more than its bounded S error budget");
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
 	CHECK(v34_phase3_s_receiver_init_suffix(
@@ -552,6 +558,48 @@ static bool test_fixed_metric_fallback(void)
 	return true;
 }
 
+static bool test_fixed_metric_exact_marker(void)
+{
+	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	const size_t first = V34_PHASE3_S_SYMBOLS - suffix;
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_receiver receiver;
+	struct v34_phase3_s_detection detection;
+	unsigned int hard_errors = 0;
+
+	CHECK(generate_marker(rotations) &&
+	      v34_phase3_s_receiver_init_fixed_suffix(&receiver, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "exact fixed marker did not initialize");
+	for (size_t local = 0;
+	     local < suffix + V34_PHASE3_S_BAR_SYMBOLS; ++local) {
+		size_t symbol = first + local;
+		uint8_t rotation = (uint8_t)((rotations[symbol] + 1u) & 3u);
+		struct v34_analytic_sample point = collapsed_point(rotation);
+		struct v34_fixed_training_decision sliced;
+		enum v34_phase3_s_receiver_result expected =
+			local + 1u == suffix + V34_PHASE3_S_BAR_SYMBOLS ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
+		CHECK(v34_training_constellation_fixed_slice(
+			      V34_CONSTELLATION_4_POINT, point, &sliced) ==
+			      V34_CONSTELLATION_OK &&
+		      v34_phase3_s_receiver_receive_fixed(
+			      &receiver, sliced.quarter_point,
+			      sliced.clockwise_quarter_turns, point) == expected,
+		      "exact fixed marker failed at %zu", local);
+		hard_errors += sliced.clockwise_quarter_turns != rotation;
+	}
+	CHECK(hard_errors > V34_PHASE3_S_RECEIVER_MAX_S_ERRORS &&
+	      v34_phase3_s_receiver_get_detection(&receiver, &detection) &&
+	      detection.clockwise_quarter_turn_offset == 1u &&
+	      detection.s_errors == 0u && detection.s_bar_errors == 0u &&
+	      receiver.post_marker_symbols == 0u,
+	      "exact fixed S-bar did not complete at its physical boundary");
+	return true;
+}
+
 static bool test_fixed_metric_api_ownership(void)
 {
 	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
@@ -617,13 +665,20 @@ static bool receive_metric_margin(
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
-	for (size_t local = 0; local < count; ++local)
+	for (size_t local = 0; local < count; ++local) {
+		enum v34_phase3_s_receiver_result expected =
+			expected_detection && local + 1u == count ?
+				V34_PHASE3_S_RECEIVER_DETECTED :
+				V34_PHASE3_S_RECEIVER_OK;
+
 		if (v34_phase3_s_receiver_receive_fixed(
 			    receiver, 1, 0,
 			    margin_point(
-				    rotations[first + local], above)) !=
-		    V34_PHASE3_S_RECEIVER_OK)
+				    rotations[first + local], above)) != expected)
 			return false;
+	}
+	if (expected_detection)
+		return receiver->complete;
 	for (unsigned int wait = 0;
 	     wait < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++wait) {
 		enum v34_phase3_s_receiver_result expected =
@@ -723,6 +778,8 @@ int main(void)
 		  test_transition_error_confirmation },
 		{ "suffix acquisition", test_suffix_acquisition },
 		{ "fixed metric fallback", test_fixed_metric_fallback },
+		{ "fixed metric exact marker",
+		  test_fixed_metric_exact_marker },
 		{ "fixed metric API ownership",
 		  test_fixed_metric_api_ownership },
 		{ "fixed metric margin", test_fixed_metric_margin },
