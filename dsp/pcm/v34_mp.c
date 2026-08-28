@@ -33,14 +33,6 @@ enum {
 	V34_MP_TYPE1_FILL_BITS = 1,
 };
 
-static bool trellis_is_valid(
-	enum v34_trellis_selection trellis)
-{
-	return trellis == V34_TRELLIS_16_STATE ||
-	       trellis == V34_TRELLIS_32_STATE ||
-	       trellis == V34_TRELLIS_64_STATE;
-}
-
 static bool rate_is_valid(uint8_t rate_2400_bps_units)
 {
 	return rate_2400_bps_units >=
@@ -57,7 +49,8 @@ bool v34_mp_parameters_are_valid(
 		       parameters->maximum_call_to_answer_rate_2400_bps_units) &&
 	       rate_is_valid(
 		       parameters->maximum_answer_to_call_rate_2400_bps_units) &&
-	       trellis_is_valid(parameters->remote_transmitter_trellis) &&
+	       v34_trellis_selection_is_valid(
+		       parameters->remote_transmitter_trellis) &&
 	       (parameters->data_rate_capability_mask &
 		~V34_MP_RATE_CAPABILITY_MASK) == 0;
 }

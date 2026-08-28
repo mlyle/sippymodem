@@ -37,8 +37,13 @@ struct v34_convolutional_encoder {
 	enum v34_trellis_selection selection;
 };
 
-bool v34_trellis_selection_is_valid(
-	enum v34_trellis_selection selection);
+static inline bool v34_trellis_selection_is_valid(
+	enum v34_trellis_selection selection)
+{
+	return selection == V34_TRELLIS_16_STATE ||
+	       selection == V34_TRELLIS_32_STATE ||
+	       selection == V34_TRELLIS_64_STATE;
+}
 
 /* Return the repeated three-bit Figure 9 label for an odd-integer channel
  * output point. The destination is unchanged when the point is off-grid. */

@@ -18,12 +18,6 @@ static uint8_t selection_state_bits(
 	return 0;
 }
 
-bool v34_trellis_selection_is_valid(
-	enum v34_trellis_selection selection)
-{
-	return selection_state_bits(selection) != 0;
-}
-
 static uint8_t grid_residue_index(int16_t coordinate)
 {
 	return (uint8_t)((((uint16_t)coordinate - 1u) & 7u) >> 1);

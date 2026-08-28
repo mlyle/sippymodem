@@ -34,19 +34,12 @@ static bool rate_is_valid(uint8_t rate_2400_bps_units)
 			V90_MP_MAXIMUM_RATE_2400_BPS_UNITS);
 }
 
-static bool trellis_is_valid(enum v34_trellis_selection trellis)
-{
-	return trellis == V34_TRELLIS_16_STATE ||
-	       trellis == V34_TRELLIS_32_STATE ||
-	       trellis == V34_TRELLIS_64_STATE;
-}
-
 bool v90_mp_parameters_are_valid(
 	const struct v90_mp_parameters *parameters)
 {
 	return parameters != NULL &&
 	       rate_is_valid(parameters->maximum_upstream_rate_2400_bps_units) &&
-	       trellis_is_valid(parameters->upstream_trellis) &&
+	       v34_trellis_selection_is_valid(parameters->upstream_trellis) &&
 	       (parameters->upstream_rate_capability_mask &
 		~V90_MP_RATE_CAPABILITY_MASK) == 0;
 }

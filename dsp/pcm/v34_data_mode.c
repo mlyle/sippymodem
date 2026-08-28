@@ -6,13 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool trellis_is_valid(enum v34_trellis_selection selection)
-{
-	return selection == V34_TRELLIS_16_STATE ||
-	       selection == V34_TRELLIS_32_STATE ||
-	       selection == V34_TRELLIS_64_STATE;
-}
-
 static bool nonlinear_is_valid(enum v34_nonlinear_parameter parameter)
 {
 	return parameter == V34_NONLINEAR_THETA_ZERO ||
@@ -27,7 +20,7 @@ bool v34_data_direction_parameters_are_valid(
 		    V34_MP_MINIMUM_RATE_2400_BPS_UNITS ||
 	    parameters->primary_data_rate_2400_bps_units >
 		    V34_MP_MAXIMUM_RATE_2400_BPS_UNITS ||
-	    !trellis_is_valid(parameters->trellis_selection) ||
+	    !v34_trellis_selection_is_valid(parameters->trellis_selection) ||
 	    !nonlinear_is_valid(parameters->nonlinear_parameter))
 		return false;
 	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT; ++index) {
