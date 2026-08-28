@@ -558,11 +558,14 @@ static bool test_generated_online_exchange(void)
 	      answerer.data_preparation_count == 1 &&
 	      caller.j_symbols_at_peer_s != 0 &&
 	      caller.j_symbols_at_finish >=
-		      caller.j_symbols_at_peer_s +
-			      V34_PHASE4_J_RELEASE_MIN_SYMBOLS &&
-	      caller.j_symbols_at_finish - caller.j_symbols_at_peer_s <=
-		      V34_PHASE4_J_RELEASE_MIN_SYMBOLS +
-			      V34_PHASE3_J_PATTERN_SYMBOLS - 1u &&
+		      V34_PHASE4_J_RELEASE_MIN_SYMBOLS &&
+	      caller.j_symbols_at_finish >= caller.j_symbols_at_peer_s &&
+	      caller.j_symbols_at_finish -
+		      (caller.j_symbols_at_peer_s <
+			       V34_PHASE4_J_RELEASE_MIN_SYMBOLS ?
+		       V34_PHASE4_J_RELEASE_MIN_SYMBOLS :
+		       caller.j_symbols_at_peer_s) <
+		      V34_PHASE3_J_PATTERN_SYMBOLS &&
 	      caller.j_symbols_at_finish % V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
 	      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
 	      caller.trn_symbols_at_mp <= 2u * 3000u &&

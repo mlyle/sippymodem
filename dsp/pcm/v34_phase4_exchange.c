@@ -410,19 +410,13 @@ bool v34_phase4_exchange_is_valid(
 	      record_is_acknowledged(&exchange->peer_mp))))
 		return false;
 	if (local_role(exchange) == V34_ANSWERING_STATION)
-		return exchange->finish_j_requested_at_symbol == 0;
+		return !exchange->peer_s_detected;
 	if (local_role(exchange) != V34_CALLING_STATION)
 		return false;
-	if (exchange->finish_j_requested_at_symbol != 0)
+	if (exchange->peer_s_detected)
 		return !exchange->transmit_data_active &&
 		       exchange->transmit.training.stage ==
-		       V34_TRAINING_TRANSMITTER_PHASE3 &&
-		       exchange->finish_j_requested_at_symbol <=
-		       exchange->transmit.training.phase3.j_symbols &&
-		       exchange->transmit.training.phase3.j_symbols -
-			       exchange->finish_j_requested_at_symbol <=
-		       V34_PHASE4_J_RELEASE_MIN_SYMBOLS +
-			       V34_PHASE3_J_PATTERN_SYMBOLS - 1u;
+		       V34_TRAINING_TRANSMITTER_PHASE3;
 	return exchange->transmit_data_active ||
 	       exchange->transmit.training.stage !=
 		       V34_TRAINING_TRANSMITTER_PHASE3 ||
@@ -662,11 +656,10 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 			return V34_PHASE4_EXCHANGE_OK;
 		return start_transmit_data(exchange, events);
 	}
-	if (exchange->finish_j_requested_at_symbol != 0 &&
+	if (exchange->peer_s_detected &&
 	    exchange->transmit.training.stage ==
 		    V34_TRAINING_TRANSMITTER_PHASE3 &&
-	    exchange->transmit.training.phase3.j_symbols -
-		    exchange->finish_j_requested_at_symbol >=
+	    exchange->transmit.training.phase3.j_symbols >=
 		    V34_PHASE4_J_RELEASE_MIN_SYMBOLS &&
 	    exchange->transmit.training.phase3.j_symbols >=
 		    V34_PHASE3_J_PATTERN_SYMBOLS &&
@@ -676,7 +669,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 			    &exchange->transmit.training) !=
 		    V34_TRAINING_TRANSMITTER_OK)
 			return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
-		exchange->finish_j_requested_at_symbol = 0;
+		exchange->peer_s_detected = false;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED;
 	}
 	if (!exchange->transmit_mp_started && trn_ready_for_mp(exchange)) {
@@ -939,11 +932,10 @@ static enum v34_phase4_exchange_result drive_receiver(
 		if (local_role(exchange) != V34_CALLING_STATION ||
 		    exchange->transmit.training.stage !=
 			    V34_TRAINING_TRANSMITTER_PHASE3 ||
-		    exchange->finish_j_requested_at_symbol != 0 ||
+		    exchange->peer_s_detected ||
 		    exchange->transmit.training.phase3.j_symbols == 0)
 			return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
-		exchange->finish_j_requested_at_symbol =
-			exchange->transmit.training.phase3.j_symbols;
+		exchange->peer_s_detected = true;
 		*events |= V34_PHASE4_EXCHANGE_EVENT_PEER_S_DETECTED;
 		return V34_PHASE4_EXCHANGE_OK;
 	case V34_PHASE34_RECEIVER_RECORD_READY:
