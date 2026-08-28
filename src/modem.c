@@ -656,30 +656,49 @@ void modem_update_config(struct modem *m, struct modem_config *cfg)
  *
  */
 
+static void modem_tick_bit_timer(struct modem *m, int bits)
+{
+	if (m == NULL || bits <= 0 || !m->bit_timer)
+		return;
+	m->bit_timer -= bits;
+	if (m->bit_timer <= 0) {
+		m->bit_timer = 0;
+		m->bit_timer_func(m);
+	}
+}
+
 /* get/put bits */
 int modem_get_bits(struct modem *m, int nbits, u8 *buf, int n)
 {
+	void (*timer_func)(struct modem *m) = m->bit_timer_func;
+	int timer = m->bit_timer;
+	int bits;
+
 	if(m->get_bits)
 		n = m->get_bits(m,nbits,buf,n);
 	else
 		memset(buf,0xff,n);
 	modem_debug_log_data(m,MODEM_DBG_TX_BITS,buf,n);
 	/* process bit timer and packer */
-	if (m->bit_timer && (m->bit_timer -= nbits*n) <= 0) {
-		m->bit_timer = 0;
-		m->bit_timer_func(m);
-	}
+	bits = nbits * n;
+	if (m->bit_timer == timer && m->bit_timer_func == timer_func)
+		modem_tick_bit_timer(m, bits);
 	// FIXME NOW: remove packer_process from modem to EC
 	if(m->packer_process)
-		m->packer_process(m,nbits*n);
+		m->packer_process(m,bits);
 	return n;
 }
 
 int modem_put_bits(struct modem *m, int nbits, u8 *buf, int n)
 {
+	void (*timer_func)(struct modem *m) = m->bit_timer_func;
+	int timer = m->bit_timer;
+
 	if(m->put_bits)
 		n = m->put_bits(m,nbits,buf,n);
 	modem_debug_log_data(m,MODEM_DBG_RX_BITS,buf,n);	
+	if (m->bit_timer == timer && m->bit_timer_func == timer_func)
+		modem_tick_bit_timer(m, nbits * n);
 	return n;
 }
 

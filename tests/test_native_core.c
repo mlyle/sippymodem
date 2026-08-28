@@ -43,6 +43,74 @@ static int unused_control(
 	return 0;
 }
 
+static void bit_timer_expired(struct modem *modem)
+{
+	modem->ring_count++;
+	modem->bit_timer = 0;
+}
+
+static int arm_bit_timer_on_transmit(
+	struct modem *modem, int bits_per_group, uint8_t *bits, int count)
+{
+	(void)bits_per_group;
+	memset(bits, 1, (size_t)count);
+	if (modem->bit_timer == 0) {
+		modem->bit_timer = 32;
+		modem->bit_timer_func = bit_timer_expired;
+	}
+	return count;
+}
+
+static int arm_bit_timer_on_receive(
+	struct modem *modem, int bits_per_group, uint8_t *bits, int count)
+{
+	(void)bits_per_group;
+	(void)bits;
+	if (modem->bit_timer == 0) {
+		modem->bit_timer = 32;
+		modem->bit_timer_func = bit_timer_expired;
+	}
+	return count;
+}
+
+static bool check_bit_timer_transition(bool transmit)
+{
+	struct modem modem = { 0 };
+	uint8_t bits[64] = { 0 };
+
+	if (transmit)
+		modem.get_bits = arm_bit_timer_on_transmit;
+	else
+		modem.put_bits = arm_bit_timer_on_receive;
+	if (transmit)
+		CHECK(modem_get_bits(&modem, 1, bits, (int)sizeof(bits)) ==
+			      (int)sizeof(bits),
+		      "transmit timer fixture produced an unexpected length");
+	else
+		CHECK(modem_put_bits(&modem, 1, bits, (int)sizeof(bits)) ==
+			      (int)sizeof(bits),
+		      "receive timer fixture consumed an unexpected length");
+	CHECK(modem.bit_timer == 32 && modem.ring_count == 0,
+	      "new %s timer was charged for its transition batch",
+	      transmit ? "transmit" : "receive");
+	if (transmit)
+		modem_get_bits(&modem, 1, bits, (int)sizeof(bits));
+	else
+		modem_put_bits(&modem, 1, bits, (int)sizeof(bits));
+	CHECK(modem.bit_timer == 0 && modem.ring_count == 1,
+	      "%s timer did not consume the following batch",
+	      transmit ? "transmit" : "receive");
+	return true;
+}
+
+static bool test_bit_timers_follow_duplex_time(void)
+{
+	CHECK(check_bit_timer_transition(true) &&
+		      check_bit_timer_transition(false),
+	      "link timer transition accounting failed");
+	return true;
+}
+
 static bool test_modem_events_are_instance_owned(void)
 {
 	struct modem_driver driver = {
@@ -1148,6 +1216,7 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not be created");
 	caller->caller = 1;
 	answerer->caller = 0;
+	caller->rx_rate = caller->tx_rate = 2400;
 	CHECK(modem_ec_init(caller) == 0 && modem_ec_init(answerer) == 0,
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
@@ -1182,6 +1251,9 @@ static bool test_lapm_xid_envelopes(void)
 		      caller->ec.lapm.v44_session.phase ==
 			      LAPM_V44_COMMAND_PENDING,
 	      "LAPM caller did not emit a bounded V.44 XID offer");
+	CHECK(caller->bit_timer ==
+		      (int)(3u * (caller->rx_rate + caller->tx_rate)),
+	      "LAPM response timer did not provide three elapsed seconds");
 	command_size = outgoing->size;
 	memcpy(command, outgoing->buf, (size_t)command_size);
 	caller->packer.hdlc.tx_complete(
@@ -1202,7 +1274,11 @@ static bool test_lapm_xid_envelopes(void)
 				      LAPM_V44_COMMAND_PENDING,
 		      "malformed XID response completed LAPM negotiation");
 	}
+	caller->rx_rate = caller->tx_rate = 300;
 	caller->bit_timer_func(caller);
+	CHECK(caller->bit_timer == 3300,
+	      "LAPM response timer did not allow slow-frame serialization");
+	caller->rx_rate = caller->tx_rate = 2400;
 	outgoing = caller->packer.hdlc.get_tx_frame(
 		caller->packer.hdlc.framer);
 	CHECK(outgoing != NULL && outgoing->size == command_size &&
@@ -1519,7 +1595,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	CHECK(modem != NULL, "LAPM retrain modem could not be created");
 	modem->caller = 0;
 	modem->cfg.ec = 1;
-	modem->tx_rate = 26400;
+	modem->rx_rate = modem->tx_rate = 26400;
 	CHECK(modem_ec_init(modem) == 0,
 	      "LAPM retrain modem could not initialize");
 	modem_hdlc_start(modem);
@@ -1556,11 +1632,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			      lapm->va == 5 && lapm->vr == 6 &&
 			      lapm->v44_path == v44_path &&
 			      lapm->retrain_poll == 1 &&
-			      modem->bit_timer == 52800 && lapm->rtx_count == 1,
+			      modem->bit_timer == 158400 && lapm->rtx_count == 1,
 		      "LAPM %s retrain did not retain and poll peer flow control",
 		      local ? "local" : "remote");
 		modem_dp_connected(modem);
-		CHECK(modem->bit_timer == 52800 && lapm->rtx_count == 1,
+		CHECK(modem->bit_timer == 158400 && lapm->rtx_count == 1,
 		      "duplicate LAPM %s reconnect restarted its status enquiry",
 		      local ? "local" : "remote");
 		outgoing = modem->packer.hdlc.get_tx_frame(
@@ -1580,7 +1656,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 		      local ? "local" : "remote");
 		if (local == 0) {
 			modem->bit_timer_func(modem);
-			CHECK(modem->bit_timer == 52800 && lapm->rtx_count == 2,
+			CHECK(modem->bit_timer == 158400 && lapm->rtx_count == 2,
 			      "LAPM retrain did not retain its status retry");
 			lapm->peer_busy = 0;
 			modem->pack.bit = 3;
@@ -1597,7 +1673,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 				      lapm->va == 5 && lapm->vr == 6 &&
 				      lapm->v44_path == v44_path &&
 				      lapm->retrain_poll == 1 &&
-				      modem->bit_timer == 52800 &&
+				      modem->bit_timer == 158400 &&
 				      lapm->rtx_count == 2 &&
 				      modem->pack.bit == 0 &&
 				      modem->unpack.bit == 0 &&
@@ -1608,7 +1684,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			      "repeated LAPM retrain did not reframe the retained link");
 			modem->pack.bit = 3;
 			modem_dp_connected(modem);
-			CHECK(modem->pack.bit == 3 && modem->bit_timer == 52800 &&
+			CHECK(modem->pack.bit == 3 && modem->bit_timer == 158400 &&
 				      lapm->rtx_count == 2,
 			      "duplicate LAPM reconnect reframed the active link");
 			modem->pack.bit = 0;
@@ -2366,6 +2442,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "duplex link timer accounting",
+		  test_bit_timers_follow_duplex_time },
 		{ "instance-owned modem events",
 		  test_modem_events_are_instance_owned },
 		{ "escape discards async transmit fragment",

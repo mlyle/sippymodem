@@ -58,20 +58,45 @@
 #define LAPM_MAX_RTX          5  /* max num of retransmissions (N400) */
 
 enum {
-	LAPM_TIMER_SECONDS = 2,
-	LAPM_TIMER_FALLBACK_BIT_RATE = 28800,
+	LAPM_TIMER_MIN_MS = 3000,
+	LAPM_TIMER_RESPONSE_MARGIN_MS = 1000,
+	LAPM_TIMER_FRAME_OVERHEAD_OCTETS = 7,
+	LAPM_TIMER_STUFFED_BITS_PER_OCTET = 10,
+	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
 };
 
-static int lapm_timer_bits(const struct lapm_state *l)
+/* The shared bit timer advances with both line directions. Express T401 in
+ * elapsed time, and at slow rates leave room for a maximally stuffed frame
+ * before the peer-response margin begins. */
+static int lapm_timer_timeout(const struct lapm_state *l)
 {
-	unsigned int bit_rate;
+	uint64_t bits_per_second;
+	uint64_t tx_rate;
+	uint64_t info_octets;
+	uint64_t frame_bits;
+	uint64_t timeout_ms;
+	uint64_t timeout;
 
 	if (l == NULL || l->modem == NULL)
-		return LAPM_TIMER_FALLBACK_BIT_RATE * LAPM_TIMER_SECONDS;
-	bit_rate = l->modem->tx_rate;
-	if (bit_rate == 0 || bit_rate > INT_MAX / LAPM_TIMER_SECONDS)
-		bit_rate = LAPM_TIMER_FALLBACK_BIT_RATE;
-	return (int)(bit_rate * LAPM_TIMER_SECONDS);
+		return LAPM_TIMER_FALLBACK_BIT_RATE * LAPM_TIMER_MIN_MS / 1000;
+	bits_per_second = (uint64_t)l->modem->rx_rate + l->modem->tx_rate;
+	tx_rate = l->modem->tx_rate;
+	info_octets = l->tx_info_size != 0 ? l->tx_info_size :
+		LAPM_DFLT_INFO_SIZE;
+	frame_bits = (info_octets + LAPM_TIMER_FRAME_OVERHEAD_OCTETS) *
+		LAPM_TIMER_STUFFED_BITS_PER_OCTET;
+	if (bits_per_second == 0) {
+		bits_per_second = LAPM_TIMER_FALLBACK_BIT_RATE;
+		tx_rate = LAPM_TIMER_FALLBACK_BIT_RATE / 2;
+	} else if (tx_rate == 0) {
+		tx_rate = bits_per_second;
+	}
+	timeout_ms = (frame_bits * 1000 + tx_rate - 1) / tx_rate +
+		LAPM_TIMER_RESPONSE_MARGIN_MS;
+	if (timeout_ms < LAPM_TIMER_MIN_MS)
+		timeout_ms = LAPM_TIMER_MIN_MS;
+	timeout = (bits_per_second * timeout_ms + 999) / 1000;
+	return timeout > INT_MAX ? INT_MAX : (int)timeout;
 }
 
 /* LAPM definitions */
@@ -125,18 +150,18 @@ enum {
 /* timers */
 #define T401_START(l) 	{ EC_DBG("T401 start.\n");\
                           (l)->rtx_count = 0; \
-			  (l)->modem->bit_timer = lapm_timer_bits(l); \
+			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
 			  (l)->modem->bit_timer_func = t401_timeout; }
 #define T401_STOP(l) 	{ EC_DBG("T401 stop.\n"); \
                           (l)->modem->bit_timer = 0; (l)->rtx_count = 0; }
 #if T403_IMPLEMENTED
 #define TIMER_START(l)  { EC_DBG("T403 stop, T401 start.\n"); \
                           (l)->rtx_count = 0; \
-                          (l)->modem->bit_timer = lapm_timer_bits(l); \
+			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
                           (l)->modem->bit_timer_func = t401_timeout; }
 #define TIMER_STOP(l)   { EC_DBG("T401 stop, T403 start.\n"); \
                           (l)->rtx_count = 0; \
-                          (l)->modem->bit_timer = lapm_timer_bits(l); \
+			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
                           (l)->modem->bit_timer_func = t403_timeout; }
 #else /* !T403 */
 #define TIMER_START(l) T401_START(l)
@@ -893,7 +918,7 @@ static void t401_timeout(struct modem *m)
 			break;
 		}
 	}
-	m->bit_timer      = lapm_timer_bits(l);
+	m->bit_timer      = lapm_timer_timeout(l);
 	m->bit_timer_func = t401_timeout;
 }
 

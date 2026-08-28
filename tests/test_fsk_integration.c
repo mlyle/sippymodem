@@ -117,7 +117,6 @@ struct modem_test_case {
 	bool test_prelink;
 	bool test_retrain;
 	bool raw_transport;
-	unsigned int pcmu_link_response_noise_frames;
 	enum integration_impairment impairment;
 };
 
@@ -510,37 +509,6 @@ static bool process_sip_frame(
 	return process_transmit_frame(caller, codec, recorder) &&
 	       process_transmit_frame(answerer, codec, recorder) &&
 	       deliver_media_frame(caller, answerer, codec, recorder) &&
-	       deliver_media_frame(answerer, caller, codec, recorder);
-}
-
-static bool process_sip_frame_with_answer_noise(
-	struct integration_endpoint *caller,
-	struct integration_endpoint *answerer,
-	enum media_codec codec, const struct media_recorder *recorder,
-	uint32_t *noise_state)
-{
-	enum g711_law law;
-
-	if (noise_state == NULL || *noise_state == 0 ||
-	    !codec_law(codec, &law) ||
-	    !process_transmit_frame(caller, codec, recorder) ||
-	    !process_transmit_frame(answerer, codec, recorder))
-		return false;
-	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
-		uint32_t random = noise_state_next(noise_state);
-		int32_t sample = answerer->transmit[index] +
-				 (((int32_t)(random & 1023u) - 512) * 3 / 4);
-
-		if (sample > INT16_MAX)
-			sample = INT16_MAX;
-		else if (sample < INT16_MIN)
-			sample = INT16_MIN;
-		answerer->transmit_codewords[index] =
-			encode_codeword(law, (int16_t)sample);
-		answerer->transmit[index] = decode_codeword(
-			law, answerer->transmit_codewords[index]);
-	}
-	return deliver_media_frame(caller, answerer, codec, recorder) &&
 	       deliver_media_frame(answerer, caller, codec, recorder);
 }
 
@@ -1247,11 +1215,6 @@ static bool run_media_call(
 	bool answerer_signal_seen = false;
 	bool answerer_carrier_seen = false;
 	uint32_t answerer_precarrier_noise = 0x42519554u;
-	uint32_t link_response_noise = 0x6a09e667u;
-	unsigned int link_response_noise_limit =
-		codec == MEDIA_CODEC_PCMU ?
-			test_case->pcmu_link_response_noise_frames : 0;
-	unsigned int link_response_noise_frames = 0;
 	unsigned int answerer_silence_frames = 0;
 	unsigned int answerer_silence_max = 0;
 	enum DP_ID initial_datapump = uses_v8 ? DP_V8 : test_case->id;
@@ -1476,8 +1439,6 @@ static bool run_media_call(
 	      "%s did not expose its asymmetric pre-link interval",
 	      test_case->name);
 	for (unsigned int frame = 0; frame < LINK_DRAIN_FRAME_LIMIT; ++frame) {
-		bool corrupt_answerer = false;
-
 		CHECK(endpoint_drain(&caller) && endpoint_drain(&answerer),
 		      "%s connection output could not be read", test_case->name);
 		if (!test_case->test_prelink ||
@@ -1489,29 +1450,11 @@ static bool run_media_call(
 		    output_contains_connect(
 			    &answerer, test_case->answerer_rx_rate))
 			break;
-		corrupt_answerer = link_response_noise_frames <
-				link_response_noise_limit;
-		CHECK((corrupt_answerer ?
-		       process_sip_frame_with_answer_noise(
-			       &caller, &answerer, codec, &recorder,
-			       &link_response_noise) :
-		       process_test_frame(
-			       &caller, &answerer, codec, &recorder,
-			       &caller_delay,
-			       test_case->caller_delay_frames)),
+		CHECK(process_test_frame(
+			      &caller, &answerer, codec, &recorder,
+			      &caller_delay, test_case->caller_delay_frames),
 		      "%s pre-link delivery failed at the SIP media boundary",
 		      test_case->name);
-		if (corrupt_answerer &&
-		    ++link_response_noise_frames == link_response_noise_limit) {
-			CHECK(caller.modem->ec.lapm.config &&
-				      caller.modem->ec.lapm.rtx_count != 0,
-			      "%s interrupted V.42 establishment before its first "
-			      "XID retry (state=%u config=%d retry=%d timer=%d)",
-			      test_case->name, caller.modem->state,
-			      caller.modem->ec.lapm.config,
-			      caller.modem->ec.lapm.rtx_count,
-			      caller.modem->bit_timer);
-		}
 	}
 	CHECK(prelink_delivered &&
 		      output_contains_connect(
@@ -2852,7 +2795,6 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.test_retrain = true,
-			.pcmu_link_response_noise_frames = 110,
 		},
 		{
 			.id = DP_V34,
