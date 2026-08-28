@@ -8,8 +8,7 @@
 #include "training_session.h"
 #include "v34_call.h"
 #include "v34_data_quality.h"
-#include "v34_frame_schedule.h"
-#include "v34_phase2_selection.h"
+#include "v34_profile.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -17,12 +16,6 @@
 #include <string.h>
 
 enum {
-	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
-	/* Phase 2 L2 is 6 dB below its 8192-peak L1.  The
-	 * normalized Phase 3 line has a separate scale so its S/S-bar power
-	 * matches the fixed V.34 training constellation. */
-	V34_PHASE2_L2_AMPLITUDE = 4096,
-	V34_PHASE3_NOMINAL_AMPLITUDE = 3792,
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
@@ -59,206 +52,6 @@ static struct dp_operations v34_operations = {
 static enum v34_station_role station_role(bool caller)
 {
 	return caller ? V34_CALLING_STATION : V34_ANSWERING_STATION;
-}
-
-static bool symbol_rate_from_number(
-	unsigned int number, enum v34_symbol_rate *symbol_rate)
-{
-	if (symbol_rate == NULL)
-		return false;
-	switch (number) {
-	case 2400:
-		*symbol_rate = V34_SYMBOL_RATE_2400;
-		return true;
-	case 2743:
-		*symbol_rate = V34_SYMBOL_RATE_2743;
-		return true;
-	case 2800:
-		*symbol_rate = V34_SYMBOL_RATE_2800;
-		return true;
-	case 3000:
-		*symbol_rate = V34_SYMBOL_RATE_3000;
-		return true;
-	case 3200:
-		*symbol_rate = V34_SYMBOL_RATE_3200;
-		return true;
-	case 3429:
-		*symbol_rate = V34_SYMBOL_RATE_3429;
-		return true;
-	default:
-		return false;
-	}
-}
-
-static uint16_t requested_rate_mask(const struct modem *modem)
-{
-	uint16_t mask = 0;
-
-	if (modem == NULL)
-		return 0;
-	for (uint8_t units = 1; units <= V34_MAX_RATE_UNITS;
-	     ++units) {
-		unsigned int bit_rate = (unsigned int)units * V34_RATE_STEP;
-
-		if (modem->min_rate <= bit_rate && modem->max_rate >= bit_rate)
-			mask |= (uint16_t)(1u << (units - 1u));
-	}
-	return mask;
-}
-
-static uint8_t highest_rate(uint16_t mask)
-{
-	for (uint8_t units = V34_MAX_RATE_UNITS; units != 0; --units)
-		if ((mask & (uint16_t)(1u << (units - 1u))) != 0)
-			return units;
-	return 0;
-}
-
-static uint16_t enabled_rate_mask(
-	const struct modem *modem, enum v34_symbol_rate *symbol_rate,
-	uint8_t *highest_rate_units)
-{
-	uint16_t requested = requested_rate_mask(modem);
-	uint16_t enabled = 0;
-	uint8_t highest = highest_rate(requested);
-	uint8_t maximum;
-	enum v34_symbol_rate selected;
-
-	if (symbol_rate == NULL || highest_rate_units == NULL || highest == 0)
-		return 0;
-	if (modem->v34_symbol_rate == 0) {
-		selected = highest == V34_MIN_BIT_RATE / V34_RATE_STEP ?
-				   V34_SYMBOL_RATE_2400 : V34_SYMBOL_RATE_3429;
-	} else if (!symbol_rate_from_number(
-			   modem->v34_symbol_rate, &selected)) {
-		return 0;
-	}
-	maximum = v34_phase2_projected_rate_limit(selected);
-	if (maximum == 0)
-		return 0;
-	/* Advertise only rate/cadence pairs that pass generated full-duplex
-	 * calls through both G.711 laws and in both station roles. */
-	for (uint8_t units = 1; units <= maximum; ++units) {
-		struct v34_frame_geometry geometry;
-
-		if ((requested & (uint16_t)(1u << (units - 1u))) != 0 &&
-		    v34_frame_geometry_init(
-			    &geometry, selected, units, false) ==
-			    V34_FRAME_SCHEDULE_OK)
-			enabled |= (uint16_t)(1u << (units - 1u));
-	}
-	*symbol_rate = selected;
-	*highest_rate_units = highest_rate(enabled);
-	return enabled;
-}
-
-static struct v34_info0 baseline_info0(void)
-{
-	return (struct v34_info0){
-		.symbol_rate_2743_supported = true,
-		.symbol_rate_2800_supported = true,
-		.symbol_rate_3429_supported = true,
-		.low_carrier_3000_supported = true,
-		.high_carrier_3000_supported = true,
-		.low_carrier_3200_supported = true,
-		.high_carrier_3200_supported = true,
-		.symbol_rate_3429_transmit_permitted = true,
-		.constellation_1664_supported = true,
-		.maximum_symbol_rate_difference_steps = 0,
-		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
-	};
-}
-
-static union v34_local_info1 baseline_info1(
-	bool caller, enum v34_symbol_rate symbol_rate,
-	uint8_t projected_rate_units)
-{
-	union v34_local_info1 info1 = { 0 };
-
-	if (caller) {
-		info1.calling.common.frequency_offset_1_50_hz_units =
-			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
-		for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
-		     ++index) {
-			uint8_t limit = v34_phase2_projected_rate_limit(
-				(enum v34_symbol_rate)index);
-			struct v34_info1_probe_result *probe =
-				&info1.calling.answer_transmit[index];
-
-			probe->high_carrier =
-				index == V34_SYMBOL_RATE_2743;
-			probe->projected_data_rate_2400_bps_units =
-				projected_rate_units < limit ?
-					projected_rate_units : limit;
-		}
-	} else {
-		info1.answering.common.frequency_offset_1_50_hz_units =
-			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
-		info1.answering.call_transmit
-			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
-		info1.answering.call_transmit
-			.projected_data_rate_2400_bps_units = projected_rate_units;
-		info1.answering.answer_to_call_symbol_rate =
-			symbol_rate;
-		info1.answering.call_to_answer_symbol_rate =
-			symbol_rate;
-	}
-	return info1;
-}
-
-static struct v34_mp_record baseline_mp(
-	uint16_t rate_mask, uint8_t highest_rate_units)
-{
-	return (struct v34_mp_record){
-		.type = V34_MP_RECORD_TYPE0,
-		.parameters.type0 = {
-			.maximum_call_to_answer_rate_2400_bps_units =
-				highest_rate_units,
-			.maximum_answer_to_call_rate_2400_bps_units =
-				highest_rate_units,
-			/* Use the mandatory 16-state mode until higher-complexity
-			 * receivers have comparable interop coverage. */
-			.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
-			.data_rate_capability_mask = rate_mask,
-		},
-	};
-}
-
-static bool call_configuration(
-	const struct modem *modem, bool caller,
-	struct v34_call_configuration *configuration,
-	uint16_t *selected_rate_mask)
-{
-	uint8_t highest_rate_units = 0;
-	enum v34_symbol_rate symbol_rate;
-	uint16_t rate_mask = enabled_rate_mask(
-		modem, &symbol_rate, &highest_rate_units);
-
-	if (configuration == NULL || selected_rate_mask == NULL ||
-	    rate_mask == 0)
-		return false;
-	*configuration = (struct v34_call_configuration){
-		.local_role = station_role(caller),
-		.phase2_nominal_amplitude = V34_PHASE2_L2_AMPLITUDE,
-		.local_info0 = baseline_info0(),
-		.local_info1 = baseline_info1(
-			caller, symbol_rate, highest_rate_units),
-		.phase3 = {
-			.requested_remote_constellation =
-				V34_CONSTELLATION_4_POINT,
-			.sample_rate = MODEM_RATE,
-			.nominal_peak_amplitude =
-				V34_PHASE3_NOMINAL_AMPLITUDE,
-		},
-		.phase4 = {
-			.transmit_mp = baseline_mp(
-				rate_mask, highest_rate_units),
-			.data_equalizer_adaptation =
-				V34_DATA_EQUALIZER_TRACKING_STEP,
-		},
-	};
-	*selected_rate_mask = rate_mask;
-	return true;
 }
 
 static struct v34_datapump *v34_from_dp(struct dp *dp)
@@ -304,8 +97,10 @@ static struct dp *create_v34(
 	if (modem == NULL || id != DP_V34 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v34_operations || operations->use_count == INT_MAX ||
-	    !call_configuration(
-		    modem, caller != 0, &configuration, &rate_mask))
+	    v34_profile_init(
+		    &configuration, &rate_mask, station_role(caller != 0),
+		    modem->min_rate, modem->max_rate, modem->v34_symbol_rate) !=
+		    V34_PROFILE_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
