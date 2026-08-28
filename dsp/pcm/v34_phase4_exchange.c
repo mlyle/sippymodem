@@ -98,58 +98,33 @@ static bool outputs_overlap(
 static void note_ready(
 	struct v34_phase4_exchange *exchange, uint32_t *events);
 
-static bool phase4_baud_and_wait_multiplier(
-	enum v34_symbol_rate symbol_rate, uint32_t *baud,
-	uint16_t *wait_multiplier)
-{
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		*baud = 2400u;
-		*wait_multiplier = 0u;
-		return true;
-	case V34_SYMBOL_RATE_2743:
-		*baud = 2743u;
-		*wait_multiplier = 0x12abu;
-		return true;
-	case V34_SYMBOL_RATE_2800:
-		*baud = 2800u;
-		*wait_multiplier = 0x12abu;
-		return true;
-	case V34_SYMBOL_RATE_3000:
-		*baud = 3000u;
-		*wait_multiplier = 0x1400u;
-		return true;
-	case V34_SYMBOL_RATE_3200:
-		*baud = 3200u;
-		*wait_multiplier = 0x1555u;
-		return true;
-	case V34_SYMBOL_RATE_3429:
-		*baud = 3429u;
-		*wait_multiplier = 0x16dcu;
-		return true;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
-}
+static const uint16_t MP_WAIT_MULTIPLIER_Q14[V34_SYMBOL_RATE_COUNT] = {
+	[V34_SYMBOL_RATE_2400] = 0x1000u,
+	[V34_SYMBOL_RATE_2743] = 0x12abu,
+	[V34_SYMBOL_RATE_2800] = 0x12abu,
+	[V34_SYMBOL_RATE_3000] = 0x1400u,
+	[V34_SYMBOL_RATE_3200] = 0x1555u,
+	[V34_SYMBOL_RATE_3429] = 0x16dcu,
+};
 
 bool v34_phase4_mp_transition_symbols(
-	enum v34_symbol_rate symbol_rate, enum v34_station_role local_role,
+	const struct v34_phase3_profile *transmitting_profile,
 	uint16_t round_trip_delay_samples, uint32_t *symbols)
 {
 	uint32_t baud;
-	uint16_t multiplier;
 	uint32_t wait;
 	uint32_t transition;
 
-	if (symbols == NULL || !v34_station_role_is_valid(local_role) ||
-	    !phase4_baud_and_wait_multiplier(
-		    symbol_rate, &baud, &multiplier))
+	if (!v34_phase3_profile_is_valid(transmitting_profile) ||
+	    symbols == NULL)
 		return false;
+	baud = (transmitting_profile->symbol_rate_numerator +
+		transmitting_profile->symbol_rate_denominator / 2u) /
+		transmitting_profile->symbol_rate_denominator;
 	wait = (uint32_t)round_trip_delay_samples +
 		V34_PHASE3_S_SEQUENCE_SYMBOLS;
-	wait = multiplier == 0u ? wait >> 2 :
-		(uint32_t)(((uint64_t)wait * multiplier) >> 14);
+	wait = (uint32_t)(((uint64_t)wait *
+		MP_WAIT_MULTIPLIER_Q14[transmitting_profile->symbol_rate]) >> 14);
 	/* The physical schedule carries the two completed PP spans into the
 	 * 1.5-second TRN window. A caller also retains one complete measured
 	 * echo-path interval; an answerer has already paid that interval while
@@ -157,7 +132,7 @@ bool v34_phase4_mp_transition_symbols(
 	 * hardware-echo delay to add. */
 	transition = baud + baud / 2u + wait +
 		2u * V34_PHASE3_PP_SEQUENCE_SYMBOLS;
-	if (local_role == V34_CALLING_STATION)
+	if (transmitting_profile->local_role == V34_CALLING_STATION)
 		transition += round_trip_delay_samples;
 	if (transition < V34_PHASE4_TRN_MIN_SYMBOLS)
 		return false;
@@ -190,6 +165,12 @@ static const struct v34_phase3_profile *local_transmit_profile(
 	return exchange->transmit_data_active ?
 	       &exchange->data_startup.transmit.transmitting_profile :
 	       &exchange->transmit.training.line.profile;
+}
+
+static enum v34_station_role local_role(
+	const struct v34_phase4_exchange *exchange)
+{
+	return local_transmit_profile(exchange)->local_role;
 }
 
 static const struct v34_phase3_profile *peer_transmit_profile(
@@ -388,18 +369,20 @@ static bool transmitter_stage_is_valid(
 	     !exchange->peer_mp_prime_received ||
 	     !exchange->data_startup_prepared))
 		return false;
-	if (exchange->local_role == V34_CALLING_STATION)
+	if (local_role(exchange) == V34_CALLING_STATION)
 		return stage == V34_TRAINING_TRANSMITTER_PHASE3 ||
 		       stage == V34_TRAINING_TRANSMITTER_J_PRIME ||
 		       entered_trn;
-	return exchange->local_role == V34_ANSWERING_STATION &&
+	return local_role(exchange) == V34_ANSWERING_STATION &&
 	       (stage == V34_TRAINING_TRANSMITTER_ANSWER_S || entered_trn);
 }
 
 bool v34_phase4_exchange_is_valid(
 	const struct v34_phase4_exchange *exchange)
 {
-	uint32_t expected_transition;
+	uint32_t minimum_transition;
+	uint32_t maximum_transition;
+	const struct v34_phase3_profile *profile;
 
 	if (exchange == NULL ||
 	    (!exchange->transmit_data_active &&
@@ -407,19 +390,18 @@ bool v34_phase4_exchange_is_valid(
 	    !v34_phase34_receiver_is_valid(&exchange->receive) ||
 	    !v34_mp_record_is_valid(&exchange->transmit_mp) ||
 	    record_is_acknowledged(&exchange->transmit_mp) ||
-	    !v34_phase4_mp_transition_symbols(
-		    local_transmit_profile(exchange)->symbol_rate,
-		    exchange->local_role,
-		    exchange->round_trip_delay_samples,
-		    &expected_transition) ||
-	    exchange->mp_transition_symbols != expected_transition ||
 	    !transmitter_stage_is_valid(exchange) ||
 	    !receiver_feedback_matches_mp(exchange) ||
 	    !transmitter_mp_matches(exchange) || !data_state_is_valid(exchange))
 		return false;
-	if (exchange->local_role !=
-		    local_transmit_profile(exchange)->local_role ||
-	    exchange->local_role == peer_transmit_profile(exchange)->local_role ||
+	profile = local_transmit_profile(exchange);
+	if (!v34_phase4_mp_transition_symbols(
+		    profile, 0u, &minimum_transition) ||
+	    !v34_phase4_mp_transition_symbols(
+		    profile, UINT16_MAX, &maximum_transition) ||
+	    exchange->mp_transition_symbols < minimum_transition ||
+	    exchange->mp_transition_symbols > maximum_transition ||
+	    local_role(exchange) == peer_transmit_profile(exchange)->local_role ||
 	    transmit_sample_rate(exchange) != V34_RECEIVE_TIMING_SAMPLE_RATE ||
 	    (v34_phase34_receiver_has_failed(&exchange->receive) &&
 	     !exchange->failed) ||
@@ -442,9 +424,9 @@ bool v34_phase4_exchange_is_valid(
 	     (!v34_mp_record_is_valid(&exchange->peer_mp) ||
 	      record_is_acknowledged(&exchange->peer_mp))))
 		return false;
-	if (exchange->local_role == V34_ANSWERING_STATION)
+	if (local_role(exchange) == V34_ANSWERING_STATION)
 		return exchange->finish_j_requested_at_symbol == 0;
-	if (exchange->local_role != V34_CALLING_STATION)
+	if (local_role(exchange) != V34_CALLING_STATION)
 		return false;
 	if (exchange->finish_j_requested_at_symbol != 0)
 		return !exchange->transmit_data_active &&
@@ -542,11 +524,9 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	initialized.transmit_mp = configuration->transmit_mp;
 	initialized.data_equalizer_adaptation =
 		configuration->data_equalizer_adaptation;
-	initialized.local_role = handoff->transmit.line.profile.local_role;
-	initialized.round_trip_delay_samples = round_trip_delay_samples;
 	if (!v34_phase4_mp_transition_symbols(
-		    initialized.transmit.training.line.profile.symbol_rate,
-		    initialized.local_role, round_trip_delay_samples,
+		    &initialized.transmit.training.line.profile,
+		    round_trip_delay_samples,
 		    &initialized.mp_transition_symbols))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	if (!v34_phase4_exchange_is_valid(&initialized))
@@ -643,7 +623,7 @@ static enum v34_phase4_exchange_result select_trained_receive_rate(
 {
 	struct v34_mp_parameters *parameters = record_common(
 		&exchange->transmit_mp);
-	uint8_t *maximum = exchange->local_role == V34_CALLING_STATION ?
+	uint8_t *maximum = local_role(exchange) == V34_CALLING_STATION ?
 		&parameters->maximum_answer_to_call_rate_2400_bps_units :
 		&parameters->maximum_call_to_answer_rate_2400_bps_units;
 	uint8_t selected;
@@ -845,7 +825,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 	if (!exchange->data_preparation_required)
 		return V34_PHASE4_EXCHANGE_INVALID_STATE;
 	mode_result = v34_data_mode_select_startup(
-		exchange->local_role, &exchange->transmit_mp,
+		local_role(exchange), &exchange->transmit_mp,
 		&exchange->peer_mp, &mode);
 	if (mode_result == V34_DATA_MODE_NO_COMMON_RATE)
 		return latch_failure(
@@ -964,7 +944,7 @@ static enum v34_phase4_exchange_result drive_receiver(
 	case V34_PHASE34_RECEIVER_B1_IN_PROGRESS:
 		return V34_PHASE4_EXCHANGE_OK;
 	case V34_PHASE34_RECEIVER_PHASE4_S_DETECTED:
-		if (exchange->local_role != V34_CALLING_STATION ||
+		if (local_role(exchange) != V34_CALLING_STATION ||
 		    exchange->transmit.training.stage !=
 			    V34_TRAINING_TRANSMITTER_PHASE3 ||
 		    exchange->finish_j_requested_at_symbol != 0 ||

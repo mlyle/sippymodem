@@ -444,6 +444,9 @@ static bool directions_are_equal(
 
 static bool test_mp_transition_schedule(void)
 {
+	const struct v34_info1_probe_result probe = {
+		.projected_data_rate_2400_bps_units = 1,
+	};
 	static const struct {
 		enum v34_symbol_rate rate;
 		uint32_t zero_delay;
@@ -458,37 +461,47 @@ static bool test_mp_transition_schedule(void)
 		{ V34_SYMBOL_RATE_3429, 5770u, 6404u, 8179u },
 	};
 	const uint16_t measured_delay = 1775u;
+	struct v34_phase3_profile caller;
+	struct v34_phase3_profile answerer;
+	struct v34_phase3_profile invalid;
 	uint32_t symbols;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		CHECK(v34_phase3_profile_init(
+			      &caller, V34_CALLING_STATION,
+			      cases[index].rate, &probe, 0u, 0u) ==
+			      V34_PHASE3_PROFILE_OK &&
+		      v34_phase3_profile_init(
+			      &answerer, V34_ANSWERING_STATION,
+			      cases[index].rate, &probe, 0u, 0u) ==
+			      V34_PHASE3_PROFILE_OK,
+		      "Phase 4 schedule profile failed for rate %u",
+		      (unsigned int)cases[index].rate);
 		CHECK(v34_phase4_mp_transition_symbols(
-			      cases[index].rate, V34_CALLING_STATION, 0u,
+			      &caller, 0u,
 			      &symbols) &&
 		      symbols == cases[index].zero_delay &&
 		      v34_phase4_mp_transition_symbols(
-			      cases[index].rate, V34_ANSWERING_STATION, 0u,
+			      &answerer, 0u,
 			      &symbols) &&
 		      symbols == cases[index].zero_delay &&
 		      v34_phase4_mp_transition_symbols(
-			      cases[index].rate, V34_ANSWERING_STATION,
-			      measured_delay, &symbols) &&
+			      &answerer, measured_delay, &symbols) &&
 		      symbols == cases[index].delayed_answerer &&
 		      v34_phase4_mp_transition_symbols(
-			      cases[index].rate, V34_CALLING_STATION,
-			      measured_delay, &symbols) &&
+			      &caller, measured_delay, &symbols) &&
 		      symbols == cases[index].delayed_caller,
 		      "Phase 4 MP transition changed for rate %u",
 		      (unsigned int)cases[index].rate);
 	}
+	invalid = caller;
+	invalid.local_role = (enum v34_station_role)99;
 	symbols = UINT32_C(0xa55a5aa5);
 	CHECK(!v34_phase4_mp_transition_symbols(
-		      V34_SYMBOL_RATE_COUNT, V34_CALLING_STATION, 0u,
-		      &symbols) &&
+		      &invalid, 0u, &symbols) &&
 	      !v34_phase4_mp_transition_symbols(
-		      V34_SYMBOL_RATE_2400, (enum v34_station_role)99, 0u,
-		      &symbols) &&
-	      !v34_phase4_mp_transition_symbols(
-		      V34_SYMBOL_RATE_2400, V34_CALLING_STATION, 0u, NULL) &&
+		      NULL, 0u, &symbols) &&
+	      !v34_phase4_mp_transition_symbols(&caller, 0u, NULL) &&
 	      symbols == UINT32_C(0xa55a5aa5),
 	      "invalid MP transition arguments changed the output");
 	return true;
@@ -963,13 +976,9 @@ static bool test_validation_and_transactionality(void)
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted MP-prime completions without MP-prime");
 	exchange = caller.phase4;
-	exchange.mp_transition_symbols++;
+	exchange.mp_transition_symbols = 0u;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted a changed MP transition target");
-	exchange = caller.phase4;
-	exchange.round_trip_delay_samples++;
-	CHECK(!v34_phase4_exchange_is_valid(&exchange),
-	      "Phase 4 accepted a changed round-trip delay");
 	invalid.data_equalizer_adaptation = NAN;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	saved = exchange;
