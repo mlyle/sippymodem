@@ -603,10 +603,16 @@ static bool test_fixed_metric_exact_marker(void)
 static bool test_fixed_metric_api_ownership(void)
 {
 	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
+	struct v34_phase3_s_adaptation adaptation = {
+		.target = { 7, 9 },
+		.adapt = false,
+	};
+	struct v34_phase3_s_adaptation saved_adaptation = adaptation;
 	struct v34_phase3_s_receiver hard;
 	struct v34_phase3_s_receiver fixed;
 	struct v34_phase3_s_receiver saved;
 	struct v34_analytic_sample point = { 600, -100 };
+	struct v34_analytic_sample target;
 
 	CHECK(v34_phase3_s_receiver_init_suffix(&hard, suffix) ==
 		      V34_PHASE3_S_RECEIVER_OK &&
@@ -625,6 +631,54 @@ static bool test_fixed_metric_api_ownership(void)
 	      v34_phase3_s_receiver_init_fixed_suffix(NULL, suffix) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT,
 	      "fixed owner accepted the hard-only API");
+	CHECK(v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 0u, 0u, &point) ==
+		      V34_CONSTELLATION_OK &&
+	      v34_phase3_s_receiver_receive_adaptive(
+		      &fixed, 0u, 0u, point, &adaptation) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      adaptation.adapt &&
+	      adaptation.target.in_phase == point.in_phase &&
+	      adaptation.target.quadrature == point.quadrature &&
+	      fixed.target_seeded && fixed.next_target_rotation == 3u,
+	      "adaptive fixed owner did not publish its first S target");
+	saved = fixed;
+	CHECK(v34_phase3_s_receiver_receive_fixed(
+		      &fixed, 0u, 3u, point) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_s_receiver_receive_adaptive(
+		      &fixed, 0u, 3u, point,
+		      (struct v34_phase3_s_adaptation *)&fixed) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&fixed, &saved, sizeof(fixed)) == 0,
+	      "adaptive owner mixing or alias changed state");
+	CHECK(v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 0u, 1u, &point) ==
+		      V34_CONSTELLATION_OK &&
+	      v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 0u, 3u, &target) ==
+		      V34_CONSTELLATION_OK,
+	      "adaptive S-bar target did not generate");
+	adaptation = saved_adaptation;
+	CHECK(v34_phase3_s_receiver_receive_adaptive(
+		      &fixed, 0u, 1u, point, &adaptation) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      !adaptation.adapt && adaptation.target.in_phase == 0 &&
+	      adaptation.target.quadrature == 0 &&
+	      target.in_phase != point.in_phase &&
+	      target.quadrature != point.quadrature,
+	      "adaptive owner trained on an S-bar opposite");
+	CHECK(v34_phase3_s_receiver_init_fixed_suffix(&fixed, suffix) ==
+		      V34_PHASE3_S_RECEIVER_OK,
+	      "ambiguous adaptive owner did not initialize");
+	adaptation = saved_adaptation;
+	CHECK(v34_phase3_s_receiver_receive_adaptive(
+		      &fixed, 0u, 0u,
+		      (struct v34_analytic_sample){ 0, 0 }, &adaptation) ==
+		      V34_PHASE3_S_RECEIVER_OK &&
+	      adaptation.adapt && adaptation.target.in_phase != 0 &&
+	      adaptation.target.quadrature != 0,
+	      "adaptive owner discarded an ambiguous S observation");
 	return true;
 }
 

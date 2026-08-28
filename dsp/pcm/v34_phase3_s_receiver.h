@@ -37,6 +37,14 @@ struct v34_phase3_s_detection {
 	uint8_t s_bar_errors;
 };
 
+/* One known S target for the equalizer owner. The target is meaningful only
+ * when `adapt` is true; S-bar and a pending boundary remain detector evidence
+ * and must not train the equalizer. */
+struct v34_phase3_s_adaptation {
+	struct v34_analytic_sample target;
+	bool adapt;
+};
+
 bool v34_phase3_s_detection_is_valid(
 	const struct v34_phase3_s_detection *detection);
 
@@ -62,9 +70,13 @@ struct v34_phase3_s_receiver {
 	/* Bounded decisions consumed after the retained marker while a
 	 * transition-error candidate awaited confirmation. */
 	uint8_t post_marker_symbols;
+	/* S target phase is shared by every semantic consumer so Phase 3 and
+	 * Phase 4 cannot acquire the same signal with different adaptation. */
+	uint8_t next_target_rotation;
 	bool detection_pending;
 	bool pending_metric;
 	bool metric_enabled;
+	bool target_seeded;
 	bool complete;
 };
 
@@ -100,6 +112,16 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns,
 	struct v34_analytic_sample observation);
+
+/* Receive one fixed-domain decision and generate the alternating S target
+ * from the same owned cursor. This is the adaptive path used by V.34 Phase 3
+ * and Phase 4. Rejected and completed calls leave both outputs unchanged. */
+enum v34_phase3_s_receiver_result
+v34_phase3_s_receiver_receive_adaptive(
+	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
+	uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample observation,
+	struct v34_phase3_s_adaptation *adaptation);
 
 /* Copy the completed correlation result. A false return leaves the output
  * unchanged. */

@@ -104,7 +104,8 @@ static bool output_matches(
 	const struct v34_phase4_decision_output *output,
 	const struct v34_adaptive_equalizer_observation *input,
 	struct v34_analytic_sample target,
-	enum v34_phase4_decision_action action)
+	enum v34_phase4_decision_action action,
+	enum v34_adaptive_equalizer_adaptation adaptation)
 {
 	if (action != V34_PHASE4_DECISION_COMMIT)
 		return output->action == action &&
@@ -115,7 +116,7 @@ static bool output_matches(
 	       output->equalizer.target.quadrature == target.quadrature &&
 	       output->equalizer.decoder_power_q15 ==
 		       TEST_DECODER_POWER_Q15 &&
-	       output->equalizer.adaptation == V34_ADAPTIVE_EQUALIZER_FULL;
+	       output->equalizer.adaptation == adaptation;
 }
 
 static bool handle_record(
@@ -177,10 +178,34 @@ static bool receive_observation(
 	struct v34_phase4_decision_output output = { 0 };
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
+	struct v34_analytic_sample expected_target = target;
 	bool answer_s = fixture->receiver.stage ==
 		V34_PHASE4_DECISION_RECEIVER_ANSWER_S;
+	bool answer_s_matches = false;
+	bool answer_s_adapt;
+	enum v34_phase4_decision_action action;
+	enum v34_adaptive_equalizer_adaptation adaptation =
+		V34_ADAPTIVE_EQUALIZER_FULL;
 	enum v34_phase4_decision_receiver_result result;
 
+	if (answer_s) {
+		struct v34_fixed_training_decision hard;
+		uint8_t rotation;
+
+		CHECK(v34_training_constellation_fixed_slice(
+			      V34_CONSTELLATION_4_POINT, point, &hard) ==
+			      V34_CONSTELLATION_OK,
+		      "answer S point did not slice");
+		rotation = fixture->receiver.answer_s.target_seeded ?
+			fixture->receiver.answer_s.next_target_rotation :
+			hard.clockwise_quarter_turns;
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0u, rotation,
+			      &expected_target) == V34_CONSTELLATION_OK,
+		      "answer S target did not generate");
+		answer_s_matches = point.in_phase == expected_target.in_phase &&
+			point.quadrature == expected_target.quadrature;
+	}
 	memset(&event, 0xa5, sizeof(event));
 	saved_event = event;
 	result = v34_phase4_decision_receiver_observe(
@@ -191,12 +216,21 @@ static bool receive_observation(
 	       result == V34_PHASE4_DECISION_RECEIVER_OK),
 	      "fixed observation returned %d instead of %d", result,
 	      expected);
+	answer_s_adapt = answer_s &&
+		result == V34_PHASE4_DECISION_RECEIVER_OK &&
+		answer_s_matches &&
+		fixture->receiver.answer_s.target_seeded &&
+		!fixture->receiver.answer_s.detection_pending;
+	action = answer_s &&
+		 result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ?
+		V34_PHASE4_DECISION_BEGIN_TRACKING :
+		answer_s_adapt ? V34_PHASE4_DECISION_COMMIT :
+		answer_s ? V34_PHASE4_DECISION_DISCARD :
+			   V34_PHASE4_DECISION_COMMIT;
+	if (answer_s_adapt)
+		adaptation = V34_ADAPTIVE_EQUALIZER_CENTER;
 	CHECK(output_matches(
-		      &output, &input, target,
-		      answer_s && result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ?
-			      V34_PHASE4_DECISION_BEGIN_TRACKING :
-		      answer_s ? V34_PHASE4_DECISION_DISCARD :
-			      V34_PHASE4_DECISION_COMMIT),
+		      &output, &input, expected_target, action, adaptation),
 	      "fixed observation target/action changed at epoch %llu",
 	      (unsigned long long)input.epoch);
 	if (result != V34_PHASE4_DECISION_RECEIVER_RECORD_READY)

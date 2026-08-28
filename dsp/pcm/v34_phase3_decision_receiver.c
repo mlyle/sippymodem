@@ -26,22 +26,9 @@ static bool j_is_initial(
 	       receiver->j.transmitting_role == receiver->transmitting_role;
 }
 
-static bool s_target_is_valid(
-	const struct v34_phase3_decision_receiver *receiver, bool active)
-{
-	if (!active)
-		return !receiver->s_target_seeded &&
-		       receiver->next_s_rotation == 0u;
-	return receiver->s_target_seeded ?
-		       receiver->next_s_rotation < 4u :
-		       receiver->next_s_rotation == 0u;
-}
-
 bool v34_phase3_decision_receiver_is_valid(
 	const struct v34_phase3_decision_receiver *receiver)
 {
-	bool s_active;
-
 	if (receiver == NULL ||
 	    !v34_station_role_is_valid(receiver->transmitting_role) ||
 	    receiver->md_symbols >
@@ -53,11 +40,6 @@ bool v34_phase3_decision_receiver_is_valid(
 	    !v34_phase3_pp_sequence_is_valid(&receiver->pp) ||
 	    !v34_phase3_j_receiver_is_valid(&receiver->j) ||
 	    receiver->j.transmitting_role != receiver->transmitting_role)
-		return false;
-	s_active = receiver->stage == V34_PHASE3_DECISION_RECEIVER_S ||
-		   receiver->stage ==
-			   V34_PHASE3_DECISION_RECEIVER_REPEATED_S;
-	if (!s_target_is_valid(receiver, s_active))
 		return false;
 	switch (receiver->stage) {
 	case V34_PHASE3_DECISION_RECEIVER_S:
@@ -225,39 +207,6 @@ static bool advance_pp_prefix(
 	return true;
 }
 
-static bool s_target(
-	struct v34_phase3_decision_receiver *receiver,
-	const struct v34_fixed_training_decision *hard,
-	struct v34_analytic_sample *target)
-{
-	uint8_t rotation;
-
-	if (!receiver->s_target_seeded) {
-		*target = hard->target;
-		rotation = hard->clockwise_quarter_turns;
-		receiver->s_target_seeded = true;
-	} else {
-		rotation = receiver->next_s_rotation;
-		if (v34_training_constellation_fixed_point(
-			    V34_CONSTELLATION_4_POINT, 0, rotation,
-			    target) != V34_CONSTELLATION_OK)
-			return false;
-	}
-	/* S alternates between two absolute quarter rotations.  The bounded
-	 * detector window has even length, so its cursor retains that parity
-	 * after the window fills and while a smeared boundary is resolved. */
-	receiver->next_s_rotation = (uint8_t)(
-		(rotation + ((receiver->s.next_decision & 1u) != 0u ? 1u : 3u)) &
-		3u);
-	return true;
-}
-
-static void clear_s_target(struct v34_phase3_decision_receiver *receiver)
-{
-	receiver->next_s_rotation = 0u;
-	receiver->s_target_seeded = false;
-}
-
 static enum v34_phase3_decision_receiver_result receive_s(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
@@ -265,7 +214,7 @@ static enum v34_phase3_decision_receiver_result receive_s(
 	struct v34_phase3_decision_output *output)
 {
 	struct v34_fixed_training_decision hard;
-	struct v34_analytic_sample target;
+	struct v34_phase3_s_adaptation adaptation;
 	struct v34_phase3_s_detection detection;
 	enum v34_phase3_s_receiver_result result;
 	bool repeated = receiver->stage ==
@@ -273,22 +222,17 @@ static enum v34_phase3_decision_receiver_result receive_s(
 
 	if (v34_training_constellation_fixed_slice(
 		    V34_CONSTELLATION_4_POINT, observation->decision,
-		    &hard) != V34_CONSTELLATION_OK ||
-	    !s_target(receiver, &hard, &target))
+		    &hard) != V34_CONSTELLATION_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	result = v34_phase3_s_receiver_receive_fixed(
+	result = v34_phase3_s_receiver_receive_adaptive(
 		&receiver->s, hard.quarter_point,
-		hard.clockwise_quarter_turns, observation->decision);
+		hard.clockwise_quarter_turns, observation->decision,
+		&adaptation);
 	if (result == V34_PHASE3_S_RECEIVER_OK) {
-		/* The startup sequence supplies exact alternating targets even when
-		 * the initial hard decisions land on the other symbol-clock eye.
-		 * Stop at the owned S suffix so S-bar remains marker evidence. */
-		*output = receiver->s.detection_pending ||
-			  receiver->s.buffered_decisions >
-				  receiver->s.s_symbols ?
+		*output = !adaptation.adapt ?
 			action_output(V34_PHASE3_DECISION_DISCARD) :
 			commit_output(
-				observation, target,
+				observation, adaptation.target,
 				V34_ADAPTIVE_EQUALIZER_CENTER,
 				decoder_power_q15);
 		return V34_PHASE3_DECISION_RECEIVER_OK;
@@ -296,7 +240,6 @@ static enum v34_phase3_decision_receiver_result receive_s(
 	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
 	    !v34_phase3_s_receiver_get_detection(&receiver->s, &detection))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	clear_s_target(receiver);
 	receiver->s_detection = detection;
 	if (!repeated && receiver->md_symbols != 0u) {
 		if (receiver->s.post_marker_symbols >= receiver->md_symbols)
@@ -331,7 +274,6 @@ static enum v34_phase3_decision_receiver_result receive_md(
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	clear_s_target(receiver);
 	receiver->stage = V34_PHASE3_DECISION_RECEIVER_REPEATED_S;
 	*output = action_output(V34_PHASE3_DECISION_RESTART_RECEIVE_PATH);
 	return V34_PHASE3_DECISION_RECEIVER_MD_COMPLETE;

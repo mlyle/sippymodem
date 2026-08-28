@@ -184,13 +184,14 @@ bool v34_phase34_receiver_is_valid(
 			 receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S) &&
 			receiver->semantic.phase3.s.buffered_decisions == 0u &&
-			!receiver->semantic.phase3.s_target_seeded) ||
+			!receiver->semantic.phase3.s.target_seeded) ||
 			(receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
 			 receiver->phase4_s_rearmed &&
 			 receiver->semantic.phase4.stage ==
 				 V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 			 receiver->semantic.phase4.answer_s.buffered_decisions ==
-				 0u));
+				 0u &&
+			 !receiver->semantic.phase4.answer_s.target_seeded));
 	return true;
 }
 

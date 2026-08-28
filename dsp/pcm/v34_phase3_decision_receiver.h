@@ -66,8 +66,6 @@ struct v34_phase3_decision_receiver {
 	uint32_t md_symbols_remaining;
 	enum v34_station_role transmitting_role;
 	enum v34_phase3_decision_receiver_stage stage;
-	uint8_t next_s_rotation;
-	bool s_target_seeded;
 };
 
 struct v34_phase3_decision_handoff {

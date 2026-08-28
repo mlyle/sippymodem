@@ -51,7 +51,7 @@ enum v34_phase4_decision_receiver_result {
 
 enum v34_phase4_decision_action {
 	V34_PHASE4_DECISION_COMMIT,
-	/* The answering peer's S/S-bar follows an unowned Phase 3 drain. */
+	/* An ambiguous S/S-bar decision remains marker evidence only. */
 	V34_PHASE4_DECISION_DISCARD,
 	/* S-bar completed the separately reacquired Phase 4 startup signal. */
 	V34_PHASE4_DECISION_BEGIN_TRACKING,

@@ -2,6 +2,7 @@
 
 #include "v34_phase3_s_receiver.h"
 
+#include "memory_region.h"
 #include "v34_constellation.h"
 
 #include <limits.h>
@@ -76,6 +77,12 @@ bool v34_phase3_s_receiver_is_valid(
 	      receiver->pending_detection.clockwise_quarter_turn_offset != 0 ||
 	      receiver->pending_detection.s_errors != 0 ||
 	      receiver->pending_detection.s_bar_errors != 0)) ||
+	    (!receiver->target_seeded &&
+	     receiver->next_target_rotation != 0u) ||
+	    (receiver->target_seeded &&
+	     receiver->next_target_rotation >= 4u) ||
+	    (receiver->target_seeded && !receiver->metric_enabled) ||
+	    (receiver->complete && receiver->target_seeded) ||
 	    (!receiver->complete && receiver->post_marker_symbols != 0) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != window ||
@@ -261,6 +268,22 @@ static uint64_t metric(
 	       V34_PHASE3_S_METRIC_SHIFT;
 }
 
+static bool s_bar_target_is_qualified(
+	struct v34_analytic_sample observation,
+	struct v34_analytic_sample target,
+	struct v34_analytic_sample opposite)
+{
+	uint64_t target_metric = metric(observation, target);
+	uint64_t opposite_metric = metric(observation, opposite);
+
+	/* Stop training only when the S-bar opposite clearly beats the expected
+	 * S target. Ambiguous S observations still need to train the equalizer;
+	 * requiring a clean S decision here can prevent carrier acquisition on a
+	 * channel which needs that adaptation most. */
+	return target_metric > opposite_metric &&
+	       target_metric - opposite_metric > V34_PHASE3_S_METRIC_MARGIN;
+}
+
 static bool observation_evidence(
 	struct v34_analytic_sample observation, uint8_t *generated)
 {
@@ -305,8 +328,10 @@ static void complete_detection(
 		(struct v34_phase3_s_detection){ 0 };
 	receiver->pending_symbols = 0;
 	receiver->post_marker_symbols = post_marker_symbols;
+	receiver->next_target_rotation = 0u;
 	receiver->detection_pending = false;
 	receiver->pending_metric = false;
+	receiver->target_seeded = false;
 	receiver->complete = true;
 }
 
@@ -390,6 +415,7 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	uint8_t clockwise_quarter_turns)
 {
 	if (!v34_phase3_s_receiver_is_valid(receiver) ||
+	    receiver->target_seeded ||
 	    receiver->metric_enabled || quarter_point >= 4u ||
 	    clockwise_quarter_turns >= 4u)
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
@@ -406,6 +432,7 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
 	uint8_t evidence;
 
 	if (!v34_phase3_s_receiver_is_valid(receiver) ||
+	    receiver->target_seeded ||
 	    !receiver->metric_enabled || quarter_point >= 4u ||
 	    clockwise_quarter_turns >= 4u ||
 	    !observation_evidence(observation, &evidence))
@@ -414,6 +441,71 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
 		receiver,
 		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns),
 		evidence);
+}
+
+enum v34_phase3_s_receiver_result
+v34_phase3_s_receiver_receive_adaptive(
+	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
+	uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample observation,
+	struct v34_phase3_s_adaptation *adaptation)
+{
+	struct v34_phase3_s_receiver next;
+	struct v34_phase3_s_adaptation generated = { 0 };
+	struct v34_analytic_sample opposite;
+	struct v34_analytic_sample target;
+	enum v34_phase3_s_receiver_result result;
+	uint8_t evidence;
+	uint8_t rotation;
+
+	if (receiver == NULL || adaptation == NULL ||
+	    memory_regions_overlap(
+		    receiver, receiver == NULL ? 0u : sizeof(*receiver),
+		    adaptation, sizeof(*adaptation)) ||
+	    !v34_phase3_s_receiver_is_valid(receiver) ||
+	    !receiver->metric_enabled || quarter_point >= 4u ||
+	    clockwise_quarter_turns >= 4u ||
+	    !observation_evidence(observation, &evidence))
+		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
+	if (receiver->complete)
+		return V34_PHASE3_S_RECEIVER_COMPLETE;
+	next = *receiver;
+	rotation = next.target_seeded ? next.next_target_rotation :
+				       clockwise_quarter_turns;
+	if (v34_training_constellation_fixed_point(
+		    V34_CONSTELLATION_4_POINT, 0u, rotation, &target) !=
+	    V34_CONSTELLATION_OK ||
+	    v34_training_constellation_fixed_point(
+		    V34_CONSTELLATION_4_POINT, 0u,
+		    (uint8_t)((rotation + 2u) & 3u), &opposite) !=
+		    V34_CONSTELLATION_OK)
+		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
+	next.target_seeded = true;
+	/* S alternates between two absolute quarter rotations. The bounded
+	 * detector window is even, so its cursor retains parity after wrapping. */
+	next.next_target_rotation = (uint8_t)(
+		(rotation + ((next.next_decision & 1u) != 0u ? 1u : 3u)) &
+		3u);
+	result = receive_decision(
+		&next,
+		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns),
+		evidence);
+	if (result != V34_PHASE3_S_RECEIVER_OK &&
+	    result != V34_PHASE3_S_RECEIVER_DETECTED)
+		return result;
+	if (result == V34_PHASE3_S_RECEIVER_DETECTED) {
+		next.target_seeded = false;
+		next.next_target_rotation = 0u;
+	} else if (!next.detection_pending &&
+		   !s_bar_target_is_qualified(observation, target, opposite)) {
+		generated.target = target;
+		generated.adapt = true;
+	}
+	if (!v34_phase3_s_receiver_is_valid(&next))
+		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
+	*receiver = next;
+	*adaptation = generated;
+	return result;
 }
 
 bool v34_phase3_s_receiver_get_detection(
