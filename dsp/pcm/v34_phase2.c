@@ -10,23 +10,6 @@ static bool failure_is_valid(enum v34_phase2_failure failure)
 	       failure <= V34_PHASE2_FAILURE_INTERNAL;
 }
 
-static bool symbol_rate_is_valid(enum v34_symbol_rate rate)
-{
-	return (unsigned int)rate < V34_SYMBOL_RATE_COUNT;
-}
-
-static bool prior_symbol_rates_are_valid(const struct v34_phase2 *phase2)
-{
-	return (symbol_rate_is_valid(
-			phase2->prior_answer_to_call_symbol_rate) &&
-		symbol_rate_is_valid(
-			phase2->prior_call_to_answer_symbol_rate)) ||
-	       (phase2->prior_answer_to_call_symbol_rate ==
-			V34_SYMBOL_RATE_COUNT &&
-		phase2->prior_call_to_answer_symbol_rate ==
-			V34_SYMBOL_RATE_COUNT);
-}
-
 static const struct v34_info0 *caller_info0(
 	const struct v34_phase2 *phase2)
 {
@@ -39,26 +22,6 @@ static const struct v34_info0 *answerer_info0(
 {
 	return phase2->local_role == V34_ANSWERING_STATION ?
 		       &phase2->local_info0 : &phase2->peer_info0;
-}
-
-static struct v34_info1a effective_peer_info1a(
-	const struct v34_phase2 *phase2)
-{
-	struct v34_info1a effective =
-		phase2->state.info1.peer_parameters.info1a;
-
-	/* Some peers encode both final-rate fields as zero during a retrain to
-	 * retain the rates selected by probing. A fresh exchange has no prior pair
-	 * and therefore keeps the standard 2400-symbol/s interpretation. */
-	if (phase2->prior_answer_to_call_symbol_rate != V34_SYMBOL_RATE_COUNT &&
-	    effective.answer_to_call_symbol_rate == V34_SYMBOL_RATE_2400 &&
-	    effective.call_to_answer_symbol_rate == V34_SYMBOL_RATE_2400) {
-		effective.answer_to_call_symbol_rate =
-			phase2->prior_answer_to_call_symbol_rate;
-		effective.call_to_answer_symbol_rate =
-			phase2->prior_call_to_answer_symbol_rate;
-	}
-	return effective;
 }
 
 static enum v34_phase2_failure initial_probe_failure(
@@ -83,7 +46,6 @@ static bool info1_records_are_consistent(
 	const struct v34_phase2_info1_exchange *exchange =
 		&phase2->state.info1;
 	const struct v34_info1c *info1c;
-	struct v34_info1a effective_info1a;
 
 	if (!exchange->peer_parameters_received)
 		return true;
@@ -93,12 +55,10 @@ static bool info1_records_are_consistent(
 	if (!v34_phase2_info1c_is_consistent(
 		    caller_info0(phase2), answerer_info0(phase2), info1c))
 		return false;
-	if (phase2->local_role == V34_CALLING_STATION) {
-		effective_info1a = effective_peer_info1a(phase2);
+	if (phase2->local_role == V34_CALLING_STATION)
 		return v34_phase2_info1a_is_consistent(
 			caller_info0(phase2), answerer_info0(phase2),
-			info1c, &effective_info1a);
-	}
+			info1c, &exchange->peer_parameters.info1a);
 	return !phase2->local_info1_stored ||
 	       v34_phase2_info1a_is_consistent(
 		       caller_info0(phase2), answerer_info0(phase2), info1c,
@@ -197,7 +157,6 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 
 	if (phase2 == NULL || !failure_is_valid(phase2->failure) ||
 	    !v34_station_role_is_valid(phase2->local_role) ||
-	    !prior_symbol_rates_are_valid(phase2) ||
 	    phase2->prior_round_trip_delay_samples >
 		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
 			    PHASE2_RANGING_TURNAROUND_SAMPLES ||
@@ -290,8 +249,6 @@ enum v34_phase2_result v34_phase2_init(
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0)
 {
 	struct v34_phase2 initialized = {
-		.prior_answer_to_call_symbol_rate = V34_SYMBOL_RATE_COUNT,
-		.prior_call_to_answer_symbol_rate = V34_SYMBOL_RATE_COUNT,
 		.local_role = role,
 		.stage = V34_PHASE2_RANGING,
 	};
@@ -313,17 +270,11 @@ enum v34_phase2_result v34_phase2_init_retrain(
 	struct v34_phase2 *phase2, enum v34_station_role role,
 	int16_t nominal_amplitude, const struct v34_info0 *local_info0,
 	const struct v34_info0 *peer_info0,
-	uint16_t prior_round_trip_delay_samples,
-	enum v34_symbol_rate prior_answer_to_call_symbol_rate,
-	enum v34_symbol_rate prior_call_to_answer_symbol_rate)
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct v34_phase2 initialized = {
 		.prior_round_trip_delay_samples =
 			prior_round_trip_delay_samples,
-		.prior_answer_to_call_symbol_rate =
-			prior_answer_to_call_symbol_rate,
-		.prior_call_to_answer_symbol_rate =
-			prior_call_to_answer_symbol_rate,
 		.local_role = role,
 		.stage = V34_PHASE2_RANGING,
 		.peer_info0_stored = true,
@@ -331,7 +282,6 @@ enum v34_phase2_result v34_phase2_init_retrain(
 
 	if (phase2 == NULL || !v34_info0_is_valid(local_info0) ||
 	    !v34_info0_is_valid(peer_info0) ||
-	    !prior_symbol_rates_are_valid(&initialized) ||
 	    prior_round_trip_delay_samples >
 		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
 			    PHASE2_RANGING_TURNAROUND_SAMPLES)
@@ -488,7 +438,6 @@ enum v34_phase2_result v34_phase2_profiles(
 {
 	struct v34_phase3_profile caller;
 	struct v34_phase3_profile answerer;
-	struct v34_info1a effective_info1a;
 	const struct v34_info1c *info1c;
 	const struct v34_info1a *info1a;
 
@@ -500,12 +449,9 @@ enum v34_phase2_result v34_phase2_profiles(
 	info1c = phase2->local_role == V34_CALLING_STATION ?
 			 &phase2->local_info1.info1c :
 			 &phase2->state.info1.peer_parameters.info1c;
-	if (phase2->local_role == V34_ANSWERING_STATION) {
-		info1a = &phase2->local_info1.info1a;
-	} else {
-		effective_info1a = effective_peer_info1a(phase2);
-		info1a = &effective_info1a;
-	}
+	info1a = phase2->local_role == V34_ANSWERING_STATION ?
+			 &phase2->local_info1.info1a :
+			 &phase2->state.info1.peer_parameters.info1a;
 	if (v34_phase2_select_profiles(
 		    caller_info0(phase2), answerer_info0(phase2), info1c,
 		    info1a, &caller, &answerer) != V34_PHASE2_SELECTION_OK)

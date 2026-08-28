@@ -8,29 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool symbol_rate_is_valid(enum v34_symbol_rate rate)
-{
-	return (unsigned int)rate < V34_SYMBOL_RATE_COUNT;
-}
-
-static bool retained_symbol_rates_are_valid(const struct v34_call *call)
-{
-	return (symbol_rate_is_valid(
-			call->retained_answer_to_call_symbol_rate) &&
-		symbol_rate_is_valid(
-			call->retained_call_to_answer_symbol_rate)) ||
-	       (call->retained_answer_to_call_symbol_rate ==
-			V34_SYMBOL_RATE_COUNT &&
-		call->retained_call_to_answer_symbol_rate ==
-			V34_SYMBOL_RATE_COUNT);
-}
-
-static bool retained_symbol_rates_are_available(const struct v34_call *call)
-{
-	return symbol_rate_is_valid(
-		call->retained_answer_to_call_symbol_rate);
-}
-
 static const struct v34_mp_parameters *mp_common(
 	const struct v34_mp_record *record)
 {
@@ -67,7 +44,6 @@ static bool configuration_is_valid(
 static bool stored_configuration_is_valid(const struct v34_call *call)
 {
 	if (!v34_station_role_is_valid(call->local_role) ||
-	    !retained_symbol_rates_are_valid(call) ||
 	    call->phase2_nominal_amplitude <= 0 ||
 	    !v34_info0_is_valid(&call->local_info0) ||
 	    (call->peer_info0_stored &&
@@ -136,9 +112,6 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
-	       ((call->stage != V34_CALL_PHASE3 &&
-		 call->stage != V34_CALL_PHASE4) ||
-		retained_symbol_rates_are_available(call)) &&
 	       (call->round_trip_delay_stored ||
 		(call->stage == V34_CALL_PHASE2 &&
 		 call->state.phase2.stage == V34_PHASE2_RANGING)) &&
@@ -164,10 +137,6 @@ enum v34_call_result v34_call_init(
 	initialized.phase4_configuration = configuration->phase4;
 	initialized.phase2_nominal_amplitude =
 		configuration->phase2_nominal_amplitude;
-	initialized.retained_answer_to_call_symbol_rate =
-		V34_SYMBOL_RATE_COUNT;
-	initialized.retained_call_to_answer_symbol_rate =
-		V34_SYMBOL_RATE_COUNT;
 	initialized.local_role = configuration->local_role;
 	initialized.stage = V34_CALL_PHASE2;
 	if (v34_retrain_detector_init(
@@ -336,13 +305,6 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		&call->phase3_configuration, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
-	if (call->local_role == V34_CALLING_STATION) {
-		call->retained_call_to_answer_symbol_rate = local.symbol_rate;
-		call->retained_answer_to_call_symbol_rate = peer.symbol_rate;
-	} else {
-		call->retained_answer_to_call_symbol_rate = local.symbol_rate;
-		call->retained_call_to_answer_symbol_rate = peer.symbol_rate;
-	}
 	call->stage = V34_CALL_PHASE3;
 	return V34_CALL_OK;
 }
@@ -536,9 +498,7 @@ static enum v34_call_result sample_retrain_silence(
 	if (v34_phase2_init_retrain(
 		    &restarted, call->local_role,
 		    call->phase2_nominal_amplitude, &call->local_info0,
-		    &call->peer_info0, call->round_trip_delay_samples,
-		    call->retained_answer_to_call_symbol_rate,
-		    call->retained_call_to_answer_symbol_rate) !=
+		    &call->peer_info0, call->round_trip_delay_samples) !=
 	    V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	call->state.phase2 = restarted;

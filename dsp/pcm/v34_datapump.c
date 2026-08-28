@@ -178,10 +178,19 @@ static union v34_local_info1 baseline_info1(
 	if (caller) {
 		info1.calling.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
-		info1.calling.answer_transmit[symbol_rate]
-			.high_carrier = symbol_rate == V34_SYMBOL_RATE_2743;
-		info1.calling.answer_transmit[symbol_rate]
-			.projected_data_rate_2400_bps_units = projected_rate_units;
+		for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
+		     ++index) {
+			uint8_t limit = v34_phase2_projected_rate_limit(
+				(enum v34_symbol_rate)index);
+			struct v34_info1_probe_result *probe =
+				&info1.calling.answer_transmit[index];
+
+			probe->high_carrier =
+				index == V34_SYMBOL_RATE_2743;
+			probe->projected_data_rate_2400_bps_units =
+				projected_rate_units < limit ?
+					projected_rate_units : limit;
+		}
 	} else {
 		info1.answering.common.frequency_offset_1_50_hz_units =
 			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
