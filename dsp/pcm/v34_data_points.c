@@ -7,12 +7,6 @@
 
 static const double V34_DATA_POINT_POWER_EPSILON = 1e-12;
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool point_fits(
 	const struct qam_point *point, double maximum_power)
 {
@@ -31,7 +25,7 @@ static bool point_fits(
 bool v34_data_points_is_valid(
 	const struct v34_data_points *points)
 {
-	if (points == NULL || !role_is_valid(points->local_role) ||
+	if (points == NULL || !v34_station_role_is_valid(points->local_role) ||
 	    !v34_frame_schedule_is_valid(&points->schedule) ||
 	    !v34_transmit_scrambler_is_valid(
 		    &points->scrambler, points->local_role) ||
@@ -66,7 +60,7 @@ enum v34_data_points_result v34_data_points_init(
 
 	if (points == NULL || schedule == NULL || scrambler == NULL ||
 	    encoder == NULL || normalizer == NULL ||
-	    !role_is_valid(local_role))
+	    !v34_station_role_is_valid(local_role))
 		return V34_DATA_POINTS_INVALID_ARGUMENT;
 	initialized.schedule = *schedule;
 	initialized.scrambler = *scrambler;

@@ -4,12 +4,6 @@
 
 #include <stddef.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool counters_are_valid(const struct v34_phase3_transmitter *transmitter)
 {
 	switch (transmitter->stage) {
@@ -36,7 +30,7 @@ bool v34_phase3_transmitter_is_valid(
 	const struct v34_phase3_transmitter *transmitter)
 {
 	if (transmitter == NULL ||
-	    !role_is_valid(transmitter->local_role) ||
+	    !v34_station_role_is_valid(transmitter->local_role) ||
 	    !v34_constellation_size_is_valid(
 		    transmitter->remote_constellation) ||
 	    !counters_are_valid(transmitter))
@@ -77,7 +71,7 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_init(
 		.stage = V34_PHASE3_TRANSMITTER_S,
 	};
 
-	if (transmitter == NULL || !role_is_valid(local_role) ||
+	if (transmitter == NULL || !v34_station_role_is_valid(local_role) ||
 	    !v34_constellation_size_is_valid(remote_constellation) ||
 	    v34_phase3_s_sequence_init(&initialized.state.s) !=
 		    V34_PHASE3_S_SEQUENCE_OK ||

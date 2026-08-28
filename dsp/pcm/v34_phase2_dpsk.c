@@ -58,12 +58,6 @@ static const int16_t v34_phase2_lowpass_q14
 	1363, 1422, 1474, 1518, 1554, 1582, 1601, 1610,
 };
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static uint32_t local_carrier_hz(
 	enum v34_station_role role)
 {
@@ -105,7 +99,8 @@ static bool channel_matches(
 static bool transmitter_metadata_is_valid(
 	const struct v34_phase2_dpsk_transmitter *transmitter)
 {
-	if (transmitter == NULL || !role_is_valid(transmitter->local_role) ||
+	if (transmitter == NULL ||
+	    !v34_station_role_is_valid(transmitter->local_role) ||
 	    !channel_matches(
 		    &transmitter->carrier.channel,
 		    local_carrier_hz(transmitter->local_role)))
@@ -153,7 +148,7 @@ v34_phase2_dpsk_transmitter_init(
 	long carrier_amplitude;
 	long guard_amplitude = 0;
 
-	if (transmitter == NULL || !role_is_valid(local_role) ||
+	if (transmitter == NULL || !v34_station_role_is_valid(local_role) ||
 	    nominal_amplitude <= 0)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	carrier_amplitude = nominal_amplitude;
@@ -234,7 +229,8 @@ v34_phase2_dpsk_transmitter_sample(
 bool v34_phase2_dpsk_receiver_is_valid(
 	const struct v34_phase2_dpsk_receiver *receiver)
 {
-	return receiver != NULL && role_is_valid(receiver->local_role) &&
+	return receiver != NULL &&
+	       v34_station_role_is_valid(receiver->local_role) &&
 	       receiver->input_count < V34_PHASE2_DPSK_INPUT_BLOCK &&
 	       receiver->carrier_index <
 		       V34_PHASE2_DPSK_CARRIER_FILTER_TAPS &&
@@ -262,7 +258,7 @@ v34_phase2_dpsk_receiver_init(
 		.local_role = local_role,
 	};
 
-	if (receiver == NULL || !role_is_valid(local_role))
+	if (receiver == NULL || !v34_station_role_is_valid(local_role))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	if (!v34_phase2_dpsk_receiver_is_valid(&initialized))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;

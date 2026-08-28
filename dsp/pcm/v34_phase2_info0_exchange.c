@@ -4,12 +4,6 @@
 
 #include <string.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static enum phase2_signal_role signal_for_station(
 	enum v34_station_role role)
 {
@@ -20,7 +14,8 @@ static enum phase2_signal_role signal_for_station(
 bool v34_phase2_info0_exchange_is_valid(
 	const struct v34_phase2_info0_exchange *exchange)
 {
-	return exchange != NULL && role_is_valid(exchange->local_role) &&
+	return exchange != NULL &&
+	       v34_station_role_is_valid(exchange->local_role) &&
 	       phase2_info0_exchange_is_valid(&exchange->transport) &&
 	       exchange->transport.signal_role ==
 		       signal_for_station(exchange->local_role) &&
@@ -60,7 +55,7 @@ v34_phase2_info0_exchange_init(
 	struct v34_info0 initial_info0;
 	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
 
-	if (exchange == NULL || !role_is_valid(local_role) ||
+	if (exchange == NULL || !v34_station_role_is_valid(local_role) ||
 	    !v34_info0_is_valid(local_info0))
 		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	initial_info0 = *local_info0;

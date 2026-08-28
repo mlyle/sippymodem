@@ -11,12 +11,6 @@ struct exact_fraction {
 	uint32_t denominator;
 };
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool symbol_rate_fraction(
 	enum v34_symbol_rate rate, struct exact_fraction *fraction)
 {
@@ -130,7 +124,8 @@ static bool profile_fields_match_rates(
 bool v34_phase3_profile_is_valid(
 	const struct v34_phase3_profile *profile)
 {
-	return profile != NULL && role_is_valid(profile->local_role) &&
+	return profile != NULL &&
+	       v34_station_role_is_valid(profile->local_role) &&
 	       profile->transmit_power_reduction_db <=
 		       V34_INFO1_MAX_POWER_REDUCTION_DB &&
 	       profile->preemphasis_filter_index <=
@@ -180,7 +175,7 @@ enum v34_phase3_profile_result v34_phase3_profile_init(
 	struct exact_fraction frequency;
 
 	if (profile == NULL || probe_result == NULL ||
-	    !role_is_valid(local_role) ||
+	    !v34_station_role_is_valid(local_role) ||
 	    power_reduction_db > V34_INFO1_MAX_POWER_REDUCTION_DB ||
 	    probe_result->preemphasis_filter_index >
 		    V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX ||

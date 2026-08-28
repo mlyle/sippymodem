@@ -6,12 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool trellis_is_valid(enum v34_trellis_selection selection)
 {
 	return selection == V34_TRELLIS_16_STATE ||
@@ -112,7 +106,7 @@ enum v34_data_mode_result v34_data_mode_select_startup(
 	uint8_t transmit_rate;
 	uint8_t receive_rate;
 
-	if (!role_is_valid(local_role) || mode == NULL)
+	if (!v34_station_role_is_valid(local_role) || mode == NULL)
 		return V34_DATA_MODE_INVALID_ARGUMENT;
 	result = v34_mp_select_rates(local_record, peer_record, &rates);
 	if (result != V34_MP_RATE_OK)

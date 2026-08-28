@@ -10,12 +10,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static uint32_t multiply_low(int32_t left, int32_t right)
 {
 	return (uint32_t)((uint64_t)(uint32_t)left *
@@ -51,7 +45,7 @@ static bool control_header_is_valid(
 	const struct v34_timing_control *control)
 {
 	return control != NULL && control->initialized &&
-	       role_is_valid(control->local_role) &&
+	       v34_station_role_is_valid(control->local_role) &&
 	       mode_is_valid(control->mode) && control->phase_limit > 0 &&
 	       control->phase_limit <= INT16_MAX &&
 	       control->phase < control->phase_limit &&
@@ -96,7 +90,7 @@ enum v34_timing_control_result v34_timing_control_init(
 
 	if (control == NULL || sample_rate_hz == 0 ||
 	    symbol_rate_numerator == 0 || symbol_rate_denominator == 0 ||
-	    !role_is_valid(local_role))
+	    !v34_station_role_is_valid(local_role))
 		return V34_TIMING_CONTROL_INVALID_ARGUMENT;
 	wide_numerator = (uint64_t)sample_rate_hz * symbol_rate_denominator;
 	wide_denominator = (uint64_t)symbol_rate_numerator * 4u;

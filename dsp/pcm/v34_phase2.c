@@ -10,12 +10,6 @@ static bool failure_is_valid(enum v34_phase2_failure failure)
 	       failure <= V34_PHASE2_FAILURE_INTERNAL;
 }
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool symbol_rate_is_valid(enum v34_symbol_rate rate)
 {
 	return (unsigned int)rate < V34_SYMBOL_RATE_COUNT;
@@ -202,7 +196,7 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 	bool child_valid;
 
 	if (phase2 == NULL || !failure_is_valid(phase2->failure) ||
-	    !role_is_valid(phase2->local_role) ||
+	    !v34_station_role_is_valid(phase2->local_role) ||
 	    !prior_symbol_rates_are_valid(phase2) ||
 	    phase2->prior_round_trip_delay_samples >
 		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -

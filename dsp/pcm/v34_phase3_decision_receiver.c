@@ -9,12 +9,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool detection_is_clear(
 	const struct v34_phase3_s_detection *detection)
 {
@@ -48,7 +42,8 @@ bool v34_phase3_decision_receiver_is_valid(
 {
 	bool s_active;
 
-	if (receiver == NULL || !role_is_valid(receiver->transmitting_role) ||
+	if (receiver == NULL ||
+	    !v34_station_role_is_valid(receiver->transmitting_role) ||
 	    receiver->md_symbols >
 		    V34_PHASE3_DECISION_RECEIVER_MAX_MD_SYMBOLS ||
 	    (receiver->md_symbols != 0u &&
@@ -137,7 +132,8 @@ v34_phase3_decision_receiver_init_suffix(
 {
 	struct v34_phase3_decision_receiver initialized;
 
-	if (receiver == NULL || !role_is_valid(transmitting_role) ||
+	if (receiver == NULL ||
+	    !v34_station_role_is_valid(transmitting_role) ||
 	    md_symbols > V34_PHASE3_DECISION_RECEIVER_MAX_MD_SYMBOLS ||
 	    (md_symbols != 0u &&
 	     md_symbols <= V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS))

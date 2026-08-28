@@ -20,12 +20,6 @@ _Static_assert(
 	V34_PHASE3_J_ROTATION_PADDING < 4,
 	"V.34 J rotation history must waste less than one packed byte");
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 bool v34_phase3_j_detection_is_valid(
 	const struct v34_phase3_j_detection *detection)
 {
@@ -79,7 +73,8 @@ static bool rotation_history_is_valid(
 bool v34_phase3_j_receiver_is_valid(
 	const struct v34_phase3_j_receiver *receiver)
 {
-	if (receiver == NULL || !role_is_valid(receiver->transmitting_role) ||
+	if (receiver == NULL ||
+	    !v34_station_role_is_valid(receiver->transmitting_role) ||
 	    receiver->buffered_decisions !=
 		    expected_buffered(receiver->received_symbols) ||
 	    (receiver->qualified_history &
@@ -114,7 +109,8 @@ enum v34_phase3_j_receiver_result v34_phase3_j_receiver_init(
 		.transmitting_role = transmitting_role,
 	};
 
-	if (receiver == NULL || !role_is_valid(transmitting_role) ||
+	if (receiver == NULL ||
+	    !v34_station_role_is_valid(transmitting_role) ||
 	    !v34_phase3_j_receiver_is_valid(&initialized))
 		return V34_PHASE3_J_RECEIVER_INVALID_ARGUMENT;
 	*receiver = initialized;

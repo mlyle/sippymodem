@@ -35,12 +35,6 @@ _Static_assert(
 	(int)V34_PHASE2_TONE_ENDED == (int)SINGLE_TONE_ENDED,
 	"shared tone events must preserve the V.34 event order");
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static uint32_t local_carrier_hz(
 	enum v34_station_role role)
 {
@@ -60,7 +54,8 @@ static uint32_t remote_carrier_hz(
 bool v34_phase2_tone_transmitter_is_valid(
 	const struct v34_phase2_tone_transmitter *transmitter)
 {
-	if (transmitter == NULL || !role_is_valid(transmitter->local_role) ||
+	if (transmitter == NULL ||
+	    !v34_station_role_is_valid(transmitter->local_role) ||
 	    transmitter->carrier_amplitude <= 0 ||
 	    transmitter->carrier_phase_step !=
 		    phase_step_u32(
@@ -92,7 +87,7 @@ v34_phase2_tone_transmitter_init(
 	long carrier_amplitude = nominal_amplitude;
 	long guard_amplitude = 0;
 
-	if (transmitter == NULL || !role_is_valid(local_role) ||
+	if (transmitter == NULL || !v34_station_role_is_valid(local_role) ||
 	    nominal_amplitude <= 0)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	if (local_role == V34_ANSWERING_STATION) {
@@ -199,7 +194,8 @@ static bool profile_matches_role(
 static bool detector_has_role_profile(
 	const struct v34_phase2_tone_detector *detector)
 {
-	return detector != NULL && role_is_valid(detector->local_role) &&
+	return detector != NULL &&
+	       v34_station_role_is_valid(detector->local_role) &&
 	       profile_matches_role(
 		       &detector->carrier.profile, detector->local_role);
 }
@@ -221,7 +217,7 @@ v34_phase2_tone_detector_init(
 	};
 	struct single_tone_detector_profile profile;
 
-	if (detector == NULL || !role_is_valid(local_role))
+	if (detector == NULL || !v34_station_role_is_valid(local_role))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	profile = detector_profile(local_role);
 	if (single_tone_detector_init_profile(

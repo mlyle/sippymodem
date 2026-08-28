@@ -12,12 +12,6 @@ enum {
 	V34_PHASE4_TRN_CONFIRM_MAX_ERRORS = 1,
 };
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool s_is_initial(const struct v34_phase3_s_receiver *receiver)
 {
 	return receiver->next_decision == 0u &&
@@ -169,7 +163,8 @@ bool v34_phase4_decision_receiver_is_valid(
 	    receiver->stage < V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME ||
 	    receiver->stage > V34_PHASE4_DECISION_RECEIVER_COMPLETE ||
 	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
-	    !role_is_valid(receiver->mp_receiver.transmitting_role) ||
+	    !v34_station_role_is_valid(
+		    receiver->mp_receiver.transmitting_role) ||
 	    !answer_s_state_is_valid(receiver) ||
 	    !call_j_prime_state_is_valid(receiver) ||
 	    !trn_state_is_valid(receiver) ||
@@ -216,7 +211,7 @@ v34_phase4_decision_receiver_init(
 		    receiver, sizeof(*receiver), j_sequence,
 		    sizeof(*j_sequence)) ||
 	    !v34_phase3_j_sequence_at_pattern_boundary(j_sequence) ||
-	    !role_is_valid(transmitting_role) ||
+	    !v34_station_role_is_valid(transmitting_role) ||
 	    !v34_constellation_size_is_valid(constellation) ||
 	    v34_phase3_s_receiver_init_fixed_suffix(
 		    &initialized.answer_s,

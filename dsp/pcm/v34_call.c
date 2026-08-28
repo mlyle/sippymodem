@@ -8,12 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool role_is_valid(enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ||
-	       role == V34_ANSWERING_STATION;
-}
-
 static bool symbol_rate_is_valid(enum v34_symbol_rate rate)
 {
 	return (unsigned int)rate < V34_SYMBOL_RATE_COUNT;
@@ -49,7 +43,7 @@ static bool configuration_is_valid(
 	const struct v34_call_configuration *configuration)
 {
 	if (configuration == NULL ||
-	    !role_is_valid(configuration->local_role) ||
+	    !v34_station_role_is_valid(configuration->local_role) ||
 	    !v34_info0_is_valid(&configuration->local_info0) ||
 	    configuration->phase2_nominal_amplitude <= 0 ||
 	    configuration->phase3.sample_rate != V34_PHASE2_SAMPLE_RATE ||
@@ -72,7 +66,7 @@ static bool configuration_is_valid(
 
 static bool stored_configuration_is_valid(const struct v34_call *call)
 {
-	if (!role_is_valid(call->local_role) ||
+	if (!v34_station_role_is_valid(call->local_role) ||
 	    !retained_symbol_rates_are_valid(call) ||
 	    call->phase2_nominal_amplitude <= 0 ||
 	    !v34_info0_is_valid(&call->local_info0) ||
