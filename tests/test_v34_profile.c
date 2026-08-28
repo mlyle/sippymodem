@@ -25,8 +25,18 @@ static bool profile_common_is_expected(
 	const struct v34_call_configuration *configuration,
 	enum v34_station_role role, uint16_t rate_mask, uint8_t highest)
 {
+	const struct v34_mp_record *record =
+		&configuration->phase4.transmit_mp;
 	const struct v34_mp_parameters *mp =
-		&configuration->phase4.transmit_mp.parameters.type0;
+		v34_mp_record_common_parameters(record);
+	bool zero_precoder = record->type == V34_MP_RECORD_TYPE1;
+
+	for (size_t tap = 0; zero_precoder && tap < V34_PRECODER_TAP_COUNT;
+	     ++tap)
+		zero_precoder &=
+			record->parameters.type1.precoder_coefficients[tap].real == 0 &&
+			record->parameters.type1.precoder_coefficients[tap]
+				.imaginary == 0;
 
 	return configuration->local_role == role &&
 	       configuration->phase2_nominal_amplitude == 4096 &&
@@ -40,8 +50,8 @@ static bool profile_common_is_expected(
 		       V34_CONSTELLATION_4_POINT &&
 	       configuration->phase3.sample_rate == V34_PHASE2_SAMPLE_RATE &&
 	       configuration->phase3.nominal_peak_amplitude == 3792 &&
-	       configuration->phase4.transmit_mp.type ==
-		       V34_MP_RECORD_TYPE0 &&
+	       record->type == V34_MP_RECORD_TYPE1 && mp != NULL &&
+	       zero_precoder &&
 	       mp->maximum_call_to_answer_rate_2400_bps_units == highest &&
 	       mp->maximum_answer_to_call_rate_2400_bps_units == highest &&
 	       mp->remote_transmitter_trellis == V34_TRELLIS_16_STATE &&

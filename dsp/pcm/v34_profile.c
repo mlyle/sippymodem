@@ -161,16 +161,18 @@ static struct v34_mp_record local_mp(
 	uint16_t rate_mask, uint8_t highest_rate_units)
 {
 	return (struct v34_mp_record){
-		.type = V34_MP_RECORD_TYPE0,
-		.parameters.type0 = {
-			.maximum_call_to_answer_rate_2400_bps_units =
-				highest_rate_units,
-			.maximum_answer_to_call_rate_2400_bps_units =
-				highest_rate_units,
-			/* Keep the mandatory mode until larger receivers have
-			 * comparable interoperability coverage. */
-			.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
-			.data_rate_capability_mask = rate_mask,
+		.type = V34_MP_RECORD_TYPE1,
+		.parameters.type1 = {
+			.common = {
+				.maximum_call_to_answer_rate_2400_bps_units =
+					highest_rate_units,
+				.maximum_answer_to_call_rate_2400_bps_units =
+					highest_rate_units,
+				/* Keep the mandatory mode until larger receivers have
+				 * comparable interoperability coverage. */
+				.remote_transmitter_trellis = V34_TRELLIS_16_STATE,
+				.data_rate_capability_mask = rate_mask,
+			},
 		},
 	};
 }
