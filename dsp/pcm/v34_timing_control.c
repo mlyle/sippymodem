@@ -10,12 +10,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static uint32_t multiply_low(int32_t left, int32_t right)
-{
-	return (uint32_t)((uint64_t)(uint32_t)left *
-			  (uint64_t)(uint32_t)right);
-}
-
 static int32_t divide_s32(uint32_t dividend, int32_t divisor)
 {
 	return divisor == 0 ?
@@ -224,7 +218,7 @@ static void set_initial_phase(
 		}
 		difference = target - ratio;
 		error = wrap_s16_from_s32(arithmetic_shift_right_u32(
-			multiply_low(difference, difference) +
+			multiply_low_s32(difference, difference) +
 				UINT32_C(0x1000),
 			13));
 		if (error < best_error) {
@@ -335,10 +329,10 @@ static int32_t timing_phase_error(
 	int16_t early_imag = observations[early + 2u];
 	int16_t late_real = observations[late];
 	int16_t late_imag = observations[late + 2u];
-	uint32_t early_energy = multiply_low(early_real, early_real) +
-				(uint32_t)multiply_low(early_imag, early_imag);
-	uint32_t late_energy = multiply_low(late_real, late_real) +
-			       (uint32_t)multiply_low(late_imag, late_imag);
+	uint32_t early_energy = multiply_low_s32(early_real, early_real) +
+				(uint32_t)multiply_low_s32(early_imag, early_imag);
+	uint32_t late_energy = multiply_low_s32(late_real, late_real) +
+			       (uint32_t)multiply_low_s32(late_imag, late_imag);
 	int16_t shift_count = 0;
 	uint32_t mask = UINT32_C(0x80000000);
 	unsigned int shift;
@@ -443,11 +437,11 @@ enum v34_timing_control_result v34_timing_control_process(
 	} else {
 		int32_t error = timing_phase_error(&next, observations);
 		int32_t integral_delta = arithmetic_shift_right_u32(
-			multiply_low(next.integral_gain, error) +
+			multiply_low_s32(next.integral_gain, error) +
 				UINT32_C(0x4000),
 			15);
 		int32_t proportional = arithmetic_shift_right_u32(
-			multiply_low(next.proportional_gain, error) +
+			multiply_low_s32(next.proportional_gain, error) +
 				UINT32_C(0x200),
 			11);
 

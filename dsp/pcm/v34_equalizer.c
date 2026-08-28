@@ -2,6 +2,7 @@
 
 #include "v34_equalizer.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
 #include <limits.h>
@@ -20,11 +21,6 @@ static int16_t high_word(uint32_t value)
 static uint32_t coefficient_word(int16_t coefficient, uint16_t residue)
 {
 	return ((uint32_t)(uint16_t)coefficient << 16) | residue;
-}
-
-static uint32_t product_low(int16_t left, int16_t right)
-{
-	return (uint32_t)((int32_t)left * right);
 }
 
 bool v34_equalizer_is_valid(const struct v34_equalizer *equalizer)
@@ -91,10 +87,10 @@ static void accumulate_tap(
 	int16_t coefficient_quadrature =
 		equalizer->quadrature_coefficient[coefficient_index];
 
-	*in_phase += product_low(sample_in_phase, coefficient_in_phase);
-	*in_phase -= product_low(sample_quadrature, coefficient_quadrature);
-	*quadrature += product_low(sample_quadrature, coefficient_in_phase);
-	*quadrature += product_low(sample_in_phase, coefficient_quadrature);
+	*in_phase += multiply_low_s32(sample_in_phase, coefficient_in_phase);
+	*in_phase -= multiply_low_s32(sample_quadrature, coefficient_quadrature);
+	*quadrature += multiply_low_s32(sample_quadrature, coefficient_in_phase);
+	*quadrature += multiply_low_s32(sample_in_phase, coefficient_quadrature);
 }
 
 enum v34_equalizer_result v34_equalizer_filter(
@@ -142,10 +138,10 @@ static void adapt_tap(
 		preserve_residue ?
 			equalizer->quadrature_residue[coefficient_index] : 0);
 
-	in_phase -= product_low(sample_in_phase, error.in_phase);
-	in_phase -= product_low(sample_quadrature, error.quadrature);
-	quadrature -= product_low(sample_in_phase, error.quadrature);
-	quadrature += product_low(sample_quadrature, error.in_phase);
+	in_phase -= multiply_low_s32(sample_in_phase, error.in_phase);
+	in_phase -= multiply_low_s32(sample_quadrature, error.quadrature);
+	quadrature -= multiply_low_s32(sample_in_phase, error.quadrature);
+	quadrature += multiply_low_s32(sample_quadrature, error.in_phase);
 	if (!preserve_residue) {
 		in_phase += UINT32_C(0x8000);
 		quadrature += UINT32_C(0x8000);

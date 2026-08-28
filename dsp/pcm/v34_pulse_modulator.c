@@ -370,11 +370,6 @@ static bool outputs_are_disjoint(
 			 sizeof(*point_accepted))));
 }
 
-static uint32_t multiply_low_s32(int32_t left, int32_t right)
-{
-	return (uint32_t)((uint64_t)(uint32_t)left * (uint32_t)right);
-}
-
 static bool fixed_coordinate(double coordinate, int16_t *fixed)
 {
 	double scaled = coordinate * V34_PULSE_POINT_SCALE;

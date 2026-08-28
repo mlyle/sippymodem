@@ -36,6 +36,12 @@ static inline int32_t magnitude_s16(int16_t value)
 	return value < 0 ? -(int32_t)value : value;
 }
 
+/* Return the low two's-complement word of a signed product. */
+static inline uint32_t multiply_low_s32(int32_t left, int32_t right)
+{
+	return (uint32_t)((uint64_t)(uint32_t)left * (uint32_t)right);
+}
+
 /* Preserve the low signed word, including INT16_MIN for abs(INT16_MIN). */
 static inline int16_t absolute_wrap_s16(int16_t value)
 {

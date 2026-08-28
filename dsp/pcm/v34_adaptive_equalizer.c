@@ -37,11 +37,6 @@ static const int16_t CARRIER_COSINE_QUARTER_Q14[65] = {
 	0,
 };
 
-static uint32_t product_low(int16_t left, int16_t right)
-{
-	return (uint32_t)((int32_t)left * right);
-}
-
 static int16_t shifted_s16(uint32_t value, unsigned int shift)
 {
 	return wrap_s16_from_s32(arithmetic_shift_right_u32(value, shift));
@@ -270,12 +265,12 @@ static int16_t feedback_in_phase(
 	uint32_t accumulator = UINT32_C(0x2000);
 
 	for (size_t index = 0; index < 3; ++index)
-		accumulator += product_low(
+		accumulator += multiply_low_s32(
 			feedback->coefficient_b[index],
 			feedback->quadrature_history[2u - index]);
 	accumulator = 0u - accumulator;
 	for (size_t index = 0; index < 3; ++index)
-		accumulator += product_low(
+		accumulator += multiply_low_s32(
 			feedback->in_phase_history[2u - index],
 			feedback->coefficient_a[index]);
 	return shifted_s16(accumulator, 14);
@@ -292,14 +287,14 @@ static int16_t feedback_shift_and_quadrature(
 		int16_t value = feedback->in_phase_history[2u - index];
 
 		feedback->in_phase_history[3u - index] = value;
-		accumulator += product_low(
+		accumulator += multiply_low_s32(
 			value, feedback->coefficient_b[index]);
 	}
 	for (size_t index = 0; index < 3; ++index) {
 		int16_t value = feedback->quadrature_history[2u - index];
 
 		feedback->quadrature_history[3u - index] = value;
-		accumulator += product_low(
+		accumulator += multiply_low_s32(
 			value, feedback->coefficient_a[index]);
 	}
 	return shifted_s16(accumulator, 14);
@@ -327,10 +322,10 @@ static struct v34_analytic_sample apply_feedback(
 static struct v34_analytic_sample rotate_q14(
 	struct v34_analytic_sample input, int16_t cosine, int16_t sine)
 {
-	uint32_t in_phase = product_low(cosine, input.in_phase) -
-		product_low(sine, input.quadrature) + UINT32_C(0x2000);
-	uint32_t quadrature = product_low(sine, input.in_phase) +
-		product_low(cosine, input.quadrature) + UINT32_C(0x2000);
+	uint32_t in_phase = multiply_low_s32(cosine, input.in_phase) -
+		multiply_low_s32(sine, input.quadrature) + UINT32_C(0x2000);
+	uint32_t quadrature = multiply_low_s32(sine, input.in_phase) +
+		multiply_low_s32(cosine, input.quadrature) + UINT32_C(0x2000);
 
 	return (struct v34_analytic_sample){
 		.in_phase = shifted_s16(in_phase, 14),
@@ -417,12 +412,12 @@ static struct v34_analytic_sample update_feedback_filter(
 		int16_t f = feedback->quadrature_history[3u - index];
 		uint32_t next_a =
 			((uint32_t)(uint16_t)a << 16) -
-			product_low(d, error_in_phase) -
-			product_low(f, error_quadrature) + UINT32_C(0x8000);
+			multiply_low_s32(d, error_in_phase) -
+			multiply_low_s32(f, error_quadrature) + UINT32_C(0x8000);
 		uint32_t next_b =
 			((uint32_t)(uint16_t)b << 16) -
-			product_low(d, error_quadrature) +
-			product_low(f, error_in_phase) + UINT32_C(0x8000);
+			multiply_low_s32(d, error_quadrature) +
+			multiply_low_s32(f, error_in_phase) + UINT32_C(0x8000);
 
 		feedback->coefficient_a[index] = shifted_s16(next_a, 16);
 		feedback->coefficient_b[index] = shifted_s16(next_b, 16);
@@ -484,8 +479,8 @@ static int32_t phase_error(
 	struct v34_analytic_sample target,
 	struct v34_analytic_sample observation)
 {
-	uint32_t error = product_low(target.in_phase, observation.quadrature) -
-		product_low(target.quadrature, observation.in_phase);
+	uint32_t error = multiply_low_s32(target.in_phase, observation.quadrature) -
+		multiply_low_s32(target.quadrature, observation.in_phase);
 
 	return wrap_s32_from_u32(error << 2u);
 }
@@ -602,14 +597,14 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 		update_carrier(&next, next.phase_error);
 		error = (struct v34_analytic_sample){
 			.in_phase = shifted_s16(
-				product_low(
+				multiply_low_s32(
 					wrap_s16_from_s32(
 						(int32_t)next.pending_demodulated.in_phase -
 						rotated_target.in_phase),
 					(int16_t)decision->decoder_power_q15),
 				16),
 			.quadrature = shifted_s16(
-				product_low(
+				multiply_low_s32(
 					wrap_s16_from_s32(
 						(int32_t)next.pending_demodulated.quadrature -
 						rotated_target.quadrature),

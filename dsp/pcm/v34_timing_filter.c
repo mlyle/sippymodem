@@ -39,12 +39,6 @@ _Static_assert(
 		V34_TIMING_FILTER_COMPLEX_TAPS,
 	"V.34 timing complex filter size changed");
 
-static uint32_t multiply_low(int32_t left, int32_t right)
-{
-	return (uint32_t)((uint64_t)(uint32_t)left *
-			  (uint64_t)(uint32_t)right);
-}
-
 static int32_t rounded_shift(
 	uint32_t value, uint32_t rounding, unsigned int shift)
 {
@@ -54,7 +48,7 @@ static int32_t rounded_shift(
 static int16_t scale_input(int16_t input)
 {
 	return wrap_s16_from_s32(rounded_shift(
-		multiply_low(input, 0x599a), UINT32_C(0x8000), 15));
+		multiply_low_s32(input, 0x599a), UINT32_C(0x8000), 15));
 }
 
 static void accumulate_complex(
@@ -62,10 +56,10 @@ static void accumulate_complex(
 	int16_t coefficient_real, int16_t coefficient_imag,
 	uint32_t *real, uint32_t *imag)
 {
-	*real += multiply_low(input_real, coefficient_real) -
-		 multiply_low(input_imag, coefficient_imag);
-	*imag += multiply_low(input_real, coefficient_imag) +
-		 multiply_low(input_imag, coefficient_real);
+	*real += multiply_low_s32(input_real, coefficient_real) -
+		 multiply_low_s32(input_imag, coefficient_imag);
+	*imag += multiply_low_s32(input_real, coefficient_imag) +
+		 multiply_low_s32(input_imag, coefficient_real);
 }
 
 static void shift_recursive_filter(
@@ -100,7 +94,7 @@ static int16_t high_pass_error(
 		int16_t old = history[tap];
 
 		history[tap] = input;
-		accumulator += multiply_low(input, ERROR_HIGH_PASS[tap]);
+		accumulator += multiply_low_s32(input, ERROR_HIGH_PASS[tap]);
 		input = old;
 	}
 	return wrap_s16_from_s32(
@@ -204,8 +198,8 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 	next.negative_a_real[0] = wrap_s16_from_s32(filtered_negative_real);
 	next.negative_a_imag[0] = wrap_s16_from_s32(filtered_negative_imag);
 	generated = wrap_s16_from_s32(rounded_shift(
-		multiply_low(filtered_positive_imag, filtered_negative_real) -
-			multiply_low(filtered_positive_real,
+		multiply_low_s32(filtered_positive_imag, filtered_negative_real) -
+			multiply_low_s32(filtered_positive_real,
 				     filtered_negative_imag),
 		UINT32_C(0x2000), 14));
 	generated = high_pass_error(next.error_history, generated);
@@ -240,10 +234,10 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 
 		next.prefilter_history[tap] = current;
 		next.prefilter_history[tap + 1u] = previous;
-		real += multiply_low(high_s16(current), PREFILTER[tap]);
-		real += multiply_low(high_s16(previous), PREFILTER[tap + 1u]);
-		imag += multiply_low(low_s16(current), PREFILTER[tap]);
-		imag += multiply_low(low_s16(previous), PREFILTER[tap + 1u]);
+		real += multiply_low_s32(high_s16(current), PREFILTER[tap]);
+		real += multiply_low_s32(high_s16(previous), PREFILTER[tap + 1u]);
+		imag += multiply_low_s32(low_s16(current), PREFILTER[tap]);
+		imag += multiply_low_s32(low_s16(previous), PREFILTER[tap + 1u]);
 		current = old_current;
 		previous = old_previous;
 	}

@@ -97,6 +97,11 @@ static bool test_fixed_width_words(void)
 	CHECK(wrap_s64_from_u64(UINT64_C(0x8000000000000000)) ==
 		      INT64_MIN &&
 	      wrap_s64_from_u64(UINT64_MAX) == -1 &&
+	      multiply_low_s32(-3, 7) == UINT32_MAX - 20u &&
+	      multiply_low_s32(INT32_MIN, -1) ==
+		      UINT32_C(0x80000000) &&
+	      multiply_low_s32(INT32_MAX, INT32_MAX) == 1u &&
+	      multiply_low_s32(INT32_MIN, INT32_MIN) == 0u &&
 	      magnitude_s16(INT16_MIN) == 32768 &&
 	      absolute_wrap_s16(INT16_MIN) == INT16_MIN &&
 	      absolute_wrap_s16(-1234) == 1234 &&
