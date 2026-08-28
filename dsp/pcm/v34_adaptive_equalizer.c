@@ -107,7 +107,8 @@ bool v34_adaptive_equalizer_is_valid(
 	    equalizer->rotate_quadrature < -V34_CARRIER_Q14_LIMIT ||
 	    equalizer->rotate_quadrature > V34_CARRIER_Q14_LIMIT ||
 	    equalizer->carrier_phase_fraction > UINT16_C(0x1fff) ||
-	    equalizer->inputs_since_observation > 2u ||
+	    equalizer->inputs_since_observation >
+		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION ||
 	    !feedback_mode_is_valid(equalizer->feedback_mode) ||
 	    !quality_is_valid(&equalizer->quality) ||
 	    equalizer->lineage == 0)
@@ -243,7 +244,8 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_push(
 
 	if (!v34_adaptive_equalizer_is_valid(equalizer) ||
 	    equalizer->decision_pending ||
-	    equalizer->inputs_since_observation == 2u)
+	    equalizer->inputs_since_observation ==
+		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	next_lineage = lineage_word(
 		lineage_word(lineage_tag(equalizer->lineage, 2),
@@ -349,7 +351,8 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
 	if (!v34_adaptive_equalizer_is_valid(equalizer) ||
 	    equalizer->decision_pending ||
-	    equalizer->inputs_since_observation != 2u ||
+	    equalizer->inputs_since_observation !=
+		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION ||
 	    equalizer->epoch == UINT64_MAX)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	next = *equalizer;

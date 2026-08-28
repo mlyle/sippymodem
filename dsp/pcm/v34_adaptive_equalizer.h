@@ -11,7 +11,19 @@
 
 enum {
 	V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS = 1024,
+	V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION = 2,
+	/* The identity tap first reaches a complete semantic observation at
+	 * this epoch after a fresh delay line. */
+	V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH =
+		V34_EQUALIZER_IDENTITY_TAP /
+		V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION,
 };
+
+_Static_assert(
+	V34_EQUALIZER_IDENTITY_TAP %
+		V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION ==
+		0,
+	"V.34 equalizer identity tap must end on an observation boundary");
 
 enum v34_adaptive_equalizer_adaptation {
 	V34_ADAPTIVE_EQUALIZER_SKIP,

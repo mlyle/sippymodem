@@ -381,6 +381,8 @@ static bool test_training_case(
 	unsigned int rejected_records = 0;
 	unsigned int b1_frames = 0;
 	unsigned int mapping_frames = 0;
+	uint64_t phase3_preroll_epoch = 0;
+	uint64_t phase4_preroll_epoch = 0;
 	bool final_record = false;
 	bool e_complete = false;
 	bool b1_complete = false;
@@ -408,6 +410,45 @@ static bool test_training_case(
 		memset(&output, 0x5d, sizeof(output));
 		saved_output = output;
 		result = v34_phase34_receiver_sample(&receiver, sample, &output);
+		if (receiver.equalizer.epoch > 0u &&
+		    receiver.equalizer.epoch <
+			    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH &&
+		    receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
+		    receiver.semantic.phase3.stage ==
+			    V34_PHASE3_DECISION_RECEIVER_S) {
+			CHECK(receiver.semantic.phase3.s.buffered_decisions == 0u &&
+			      !receiver.semantic.phase3.s.target_seeded &&
+			      !receiver.equalizer.decision_pending,
+			      "role %u rate %u changed Phase 3 S during preroll",
+			      role, rate);
+			if (phase3_preroll_epoch != receiver.equalizer.epoch) {
+				CHECK(receiver.equalizer.epoch ==
+					      phase3_preroll_epoch + 1u,
+				      "role %u rate %u skipped Phase 3 preroll epoch",
+				      role, rate);
+				phase3_preroll_epoch = receiver.equalizer.epoch;
+			}
+		}
+		if (receiver.equalizer.epoch > 0u &&
+		    receiver.equalizer.epoch <
+			    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH &&
+		    receiver.stage == V34_PHASE34_RECEIVER_PHASE4 &&
+		    receiver.semantic.phase4.stage ==
+			    V34_PHASE4_DECISION_RECEIVER_ANSWER_S) {
+			CHECK(receiver.semantic.phase4.answer_s.buffered_decisions ==
+				      0u &&
+			      !receiver.semantic.phase4.answer_s.target_seeded &&
+			      !receiver.equalizer.decision_pending,
+			      "role %u rate %u changed Phase 4 S during preroll",
+			      role, rate);
+			if (phase4_preroll_epoch != receiver.equalizer.epoch) {
+				CHECK(receiver.equalizer.epoch ==
+					      phase4_preroll_epoch + 1u,
+				      "role %u rate %u skipped Phase 4 preroll epoch",
+				      role, rate);
+				phase4_preroll_epoch = receiver.equalizer.epoch;
+			}
+		}
 		switch (result) {
 		case V34_PHASE34_RECEIVER_OK:
 			break;
@@ -688,6 +729,15 @@ static bool test_training_case(
 		      "role %u rate %u non-record result changed its event",
 		      role, rate);
 	}
+	CHECK(phase3_preroll_epoch + 1u ==
+		      V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH &&
+	      (role != V34_ANSWERING_STATION ||
+	       phase4_preroll_epoch + 1u ==
+		       V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH),
+	      "role %u rate %u did not preserve S through preroll: "
+	      "phase3=%llu phase4=%llu",
+	      role, rate, (unsigned long long)phase3_preroll_epoch,
+	      (unsigned long long)phase4_preroll_epoch);
 	CHECK(e_complete && b1_complete && mapping_frames >= 3u &&
 	      b1_frames ==
 		      source.mapping.schedule.geometry

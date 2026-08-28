@@ -665,6 +665,18 @@ static enum v34_phase34_receiver_result receive_line_sample(
 		    &receiver->equalizer, &observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	/* A fresh identity equalizer first publishes its zero-filled delay-line
+	 * prefix.  Consume that prefix without letting it seed the known S target
+	 * in an arbitrary quadrant; epoch 20 is the first signal-bearing symbol. */
+	if (receiver->equalizer.epoch <
+	    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH) {
+		if (v34_adaptive_equalizer_discard(
+			    &receiver->equalizer, &observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return fail(
+				receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+		return V34_PHASE34_RECEIVER_OK;
+	}
 	result = receive_observation(receiver, &observation, output);
 	if (result == V34_PHASE34_RECEIVER_OK && !was_acquired && acquired)
 		result = V34_PHASE34_RECEIVER_TIMING_ACQUIRED;
