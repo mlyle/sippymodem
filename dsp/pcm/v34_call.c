@@ -510,12 +510,12 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 	 * full-retrain transaction; ordinary initial Phase 3 remains unarmed. */
 	if (call->stage == V34_CALL_PHASE3)
 		return call->retrain_active;
-	/* A peer cannot reach data until our complete B1 has crossed the line.
-	 * Arm at that causal boundary rather than at Phase 4 entry, where the
-	 * ordinary S/J-prime training waveform can qualify as a retrain tone. */
+	/* A peer cannot request an online retrain while it is still sending its
+	 * Phase 4 E or B1.  Arm only after both local directions are online;
+	 * earlier Phase 4 waveforms can otherwise qualify as a retrain tone. */
 	if (call->stage == V34_CALL_PHASE4)
 		return !call->retrain_active &&
-		       call->state.phase4.transmit_b1_complete;
+		       call->state.phase4.online_announced;
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
 	       call->state.phase2.state.info1.control.phase ==
