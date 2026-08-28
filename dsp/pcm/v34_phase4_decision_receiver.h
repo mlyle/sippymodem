@@ -47,7 +47,6 @@ enum v34_phase4_decision_receiver_result {
 	V34_PHASE4_DECISION_RECEIVER_ALREADY_COMPLETE,
 	V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT,
 	V34_PHASE4_DECISION_RECEIVER_INVALID_STATE,
-	V34_PHASE4_DECISION_RECEIVER_SEQUENCE_MISMATCH,
 };
 
 enum v34_phase4_decision_action {
@@ -97,9 +96,6 @@ bool v34_phase4_decision_receiver_is_complete(
 
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_continue_mp(
-	struct v34_phase4_decision_receiver *receiver);
-enum v34_phase4_decision_receiver_result
-v34_phase4_decision_receiver_start_e(
 	struct v34_phase4_decision_receiver *receiver);
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_expect_e(

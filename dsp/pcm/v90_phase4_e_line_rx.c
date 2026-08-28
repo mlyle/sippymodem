@@ -103,7 +103,6 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
 		.previous_clockwise_quarter_turns =
 			completed_cp->symbols
 				.previous_clockwise_quarter_turns,
-		.searching = true,
 	};
 	if (!v90_phase4_e_line_rx_is_valid(&initialized))
 		return V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT;
@@ -178,10 +177,6 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_sample(
 			rx, &next, V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE);
 	symbol_result = v34_phase4_e_receive_decision(
 		&next.symbols, quarter_point, clockwise_quarter_turns);
-	if (symbol_result == V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH)
-		return fail_sample(
-			rx, &next,
-			V90_PHASE4_E_LINE_RX_SEQUENCE_MISMATCH);
 	if (symbol_result != V34_PHASE4_E_RECEIVER_OK &&
 	    symbol_result != V34_PHASE4_E_RECEIVER_COMPLETE)
 		return fail_sample(
@@ -238,8 +233,6 @@ const char *v90_phase4_e_line_rx_result_name(
 		return "invalid state";
 	case V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE:
 		return "numeric failure";
-	case V90_PHASE4_E_LINE_RX_SEQUENCE_MISMATCH:
-		return "sequence mismatch";
 	}
 	return "unknown";
 }

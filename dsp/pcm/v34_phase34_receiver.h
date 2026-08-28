@@ -41,7 +41,6 @@ enum v34_phase34_receiver_result {
 	V34_PHASE34_RECEIVER_INVALID_STATE,
 	V34_PHASE34_RECEIVER_NUMERIC_FAILURE,
 	V34_PHASE34_RECEIVER_OUT_OF_RANGE,
-	V34_PHASE34_RECEIVER_SEQUENCE_MISMATCH,
 };
 
 union v34_phase34_receiver_semantic_state {
@@ -109,8 +108,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 /* Resolve the pending MP record without embedding negotiation policy in the
  * receive owner. */
 enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
-	struct v34_phase34_receiver *receiver);
-enum v34_phase34_receiver_result v34_phase34_receiver_start_e(
 	struct v34_phase34_receiver *receiver);
 enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	struct v34_phase34_receiver *receiver);

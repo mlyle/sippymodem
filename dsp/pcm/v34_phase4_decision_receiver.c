@@ -254,8 +254,7 @@ v34_phase4_decision_receiver_init(
 }
 
 static enum v34_phase4_decision_receiver_result clear_record(
-	struct v34_phase4_decision_receiver *receiver, bool require_valid,
-	bool search)
+	struct v34_phase4_decision_receiver *receiver, bool expect_e)
 {
 	struct v34_phase4_decision_receiver next;
 
@@ -263,17 +262,13 @@ static enum v34_phase4_decision_receiver_result clear_record(
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
 	if (receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP ||
 	    !receiver->record_pending ||
-	    (require_valid && !receiver->pending_record_is_valid))
+	    (expect_e && !receiver->pending_record_is_valid))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
 	next = *receiver;
-	if (require_valid) {
-		enum v34_phase4_e_receiver_result result = search ?
-			v34_phase4_e_receiver_search_from_mp(
-				&next.e_receiver, &next.mp_receiver) :
-			v34_phase4_e_receiver_init_from_mp(
-				&next.e_receiver, &next.mp_receiver);
-
-		if (result != V34_PHASE4_E_RECEIVER_OK)
+	if (expect_e) {
+		if (v34_phase4_e_receiver_search_from_mp(
+			    &next.e_receiver, &next.mp_receiver) !=
+		    V34_PHASE4_E_RECEIVER_OK)
 			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
 		next.stage = V34_PHASE4_DECISION_RECEIVER_E;
 	}
@@ -289,21 +284,14 @@ enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_continue_mp(
 	struct v34_phase4_decision_receiver *receiver)
 {
-	return clear_record(receiver, false, false);
-}
-
-enum v34_phase4_decision_receiver_result
-v34_phase4_decision_receiver_start_e(
-	struct v34_phase4_decision_receiver *receiver)
-{
-	return clear_record(receiver, true, false);
+	return clear_record(receiver, false);
 }
 
 enum v34_phase4_decision_receiver_result
 v34_phase4_decision_receiver_expect_e(
 	struct v34_phase4_decision_receiver *receiver)
 {
-	return clear_record(receiver, true, true);
+	return clear_record(receiver, true);
 }
 
 static struct v34_phase4_decision_output discard_output(void)
@@ -649,8 +637,6 @@ static enum v34_phase4_decision_receiver_result receive_e(
 			&receiver->e_receiver, hard->quarter_point,
 			hard->clockwise_quarter_turns);
 
-	if (result == V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH)
-		return V34_PHASE4_DECISION_RECEIVER_SEQUENCE_MISMATCH;
 	if (result != V34_PHASE4_E_RECEIVER_OK &&
 	    result != V34_PHASE4_E_RECEIVER_COMPLETE)
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;

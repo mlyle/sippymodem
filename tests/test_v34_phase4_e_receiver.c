@@ -4,7 +4,6 @@
 
 #include "test.h"
 
-#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -16,8 +15,7 @@ struct e_fixture {
 	struct v34_phase4_mp mp;
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_sequence transmitter;
-	struct v34_phase4_e_receiver decision_receiver;
-	struct v34_phase4_e_receiver point_receiver;
+	struct v34_phase4_e_receiver receiver;
 };
 
 static struct v34_mp_parameters test_parameters(bool acknowledged)
@@ -43,8 +41,7 @@ static bool receivers_are_equal(
 	       left->constellation == right->constellation &&
 	       left->previous_clockwise_quarter_turns ==
 		       right->previous_clockwise_quarter_turns &&
-	       left->received_bits == right->received_bits &&
-	       left->searching == right->searching;
+	       left->received_bits == right->received_bits;
 }
 
 static bool initialize_fixture(
@@ -115,11 +112,10 @@ static bool initialize_fixture(
 	      v34_phase4_e_sequence_init_from_mp(
 		      &fixture->transmitter, &fixture->mp) ==
 		      V34_PHASE4_E_SEQUENCE_OK &&
-	      v34_phase4_e_receiver_init_from_mp(
-		      &fixture->decision_receiver, &fixture->mp_receiver) ==
+	      v34_phase4_e_receiver_search_from_mp(
+		      &fixture->receiver, &fixture->mp_receiver) ==
 		      V34_PHASE4_E_RECEIVER_OK,
 	      "E receiver fixture did not accept MP");
-	fixture->point_receiver = fixture->decision_receiver;
 	return true;
 }
 
@@ -179,7 +175,6 @@ static bool test_search_across_repeated_mp_prime(void)
 		      "E search did not complete at 20 consecutive bits");
 	}
 	CHECK(v34_phase4_e_receiver_is_complete(&receiver) &&
-	      receiver.searching &&
 	      receiver.descrambler.history == e.scrambler.history &&
 	      receiver.previous_clockwise_quarter_turns ==
 		      e.previous_clockwise_quarter_turns,
@@ -213,34 +208,27 @@ static bool check_sequence(
 				   V34_PHASE4_E_RECEIVER_COMPLETE :
 				   V34_PHASE4_E_RECEIVER_OK;
 		CHECK(v34_phase4_e_receive_decision(
-			      &fixture.decision_receiver, quarter_point,
-			      clockwise_quarter_turns) == expected &&
-		      v34_phase4_e_receive_point(
-			      &fixture.point_receiver, &point) == expected &&
-		      receivers_are_equal(
-			      &fixture.decision_receiver,
-			      &fixture.point_receiver),
-		      "E receivers diverged at symbol %zu", symbol);
+			      &fixture.receiver, quarter_point,
+			      clockwise_quarter_turns) == expected,
+		      "E receiver diverged at symbol %zu", symbol);
 		++symbol;
 	}
-	CHECK(v34_phase4_e_receiver_is_complete(
-		      &fixture.decision_receiver) &&
-	      fixture.decision_receiver.received_bits ==
+	CHECK(v34_phase4_e_receiver_is_complete(&fixture.receiver) &&
+	      fixture.receiver.received_bits ==
 		      V34_PHASE4_E_BITS &&
-	      fixture.decision_receiver.descrambler.history ==
+	      fixture.receiver.descrambler.history ==
 		      fixture.transmitter.scrambler.history &&
-	      fixture.decision_receiver.previous_clockwise_quarter_turns ==
+	      fixture.receiver.previous_clockwise_quarter_turns ==
 		      fixture.transmitter.previous_clockwise_quarter_turns,
 	      "E receiver did not finish on the transmitter boundary");
 	{
 		struct v34_phase4_e_receiver saved =
-			fixture.decision_receiver;
+			fixture.receiver;
 
 		CHECK(v34_phase4_e_receive_decision(
-			      &fixture.decision_receiver, 0, 0) ==
+			      &fixture.receiver, 0, 0) ==
 			      V34_PHASE4_E_RECEIVER_COMPLETE &&
-		      receivers_are_equal(
-			      &fixture.decision_receiver, &saved),
+		      receivers_are_equal(&fixture.receiver, &saved),
 		      "completed E receiver consumed another decision");
 	}
 	return true;
@@ -271,60 +259,11 @@ static bool test_generated_sequence(void)
 	return true;
 }
 
-static bool test_mismatch_is_transactional(void)
-{
-	struct e_fixture fixture;
-	struct v34_phase4_e_receiver saved;
-	struct qam_point point;
-	uint8_t quarter_point;
-	uint8_t clockwise_quarter_turns;
-
-	CHECK(initialize_fixture(
-		      &fixture, V34_CALLING_STATION,
-		      V34_CONSTELLATION_16_POINT, true) &&
-	      v34_phase4_e_sequence_next(
-		      &fixture.transmitter, &point, &quarter_point,
-		      &clockwise_quarter_turns) ==
-		      V34_PHASE4_E_SEQUENCE_OK,
-	      "E mismatch fixture did not initialize");
-	saved = fixture.decision_receiver;
-	CHECK(v34_phase4_e_receive_decision(
-		      &fixture.decision_receiver, quarter_point,
-		      (uint8_t)((clockwise_quarter_turns + 1u) & 3u)) ==
-		      V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH &&
-	      receivers_are_equal(&fixture.decision_receiver, &saved),
-	      "differential E mismatch changed state");
-	saved = fixture.point_receiver;
-	CHECK(v34_training_constellation_point(
-		      fixture.point_receiver.constellation, quarter_point,
-		      (uint8_t)((clockwise_quarter_turns + 1u) & 3u), &point) ==
-		      V34_CONSTELLATION_OK &&
-	      v34_phase4_e_receive_point(
-		      &fixture.point_receiver, &point) ==
-		      V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH &&
-	      receivers_are_equal(&fixture.point_receiver, &saved),
-	      "sliced E mismatch changed state");
-	saved = fixture.decision_receiver;
-	CHECK(v34_phase4_e_receive_decision(
-		      &fixture.decision_receiver,
-		      (uint8_t)(quarter_point ^ 1u),
-		      clockwise_quarter_turns) ==
-		      V34_PHASE4_E_RECEIVER_SEQUENCE_MISMATCH &&
-	      receivers_are_equal(&fixture.decision_receiver, &saved) &&
-	      v34_phase4_e_receive_decision(
-		      &fixture.decision_receiver, quarter_point,
-		      clockwise_quarter_turns) ==
-		      V34_PHASE4_E_RECEIVER_OK,
-	      "mapped E mismatch changed state or blocked retry");
-	return true;
-}
-
 static bool test_validation(void)
 {
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver receiver;
 	struct v34_phase4_e_receiver saved;
-	struct qam_point invalid_point = { NAN, 0.0 };
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
@@ -332,16 +271,13 @@ static bool test_validation(void)
 		      &mp_receiver, V34_ANSWERING_STATION,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE4_MP_RECEIVER_OK &&
-	      v34_phase4_e_receiver_init_from_mp(
-		      NULL, &mp_receiver) ==
-		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_e_receiver_init_from_mp(
-		      &receiver, NULL) ==
-		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_e_receiver_search_from_mp(
 		      NULL, &mp_receiver) ==
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_e_receiver_init_from_mp(
+	      v34_phase4_e_receiver_search_from_mp(
+		      &receiver, NULL) ==
+		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase4_e_receiver_search_from_mp(
 		      &receiver, &mp_receiver) ==
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
@@ -353,7 +289,7 @@ static bool test_validation(void)
 			      &fixture, V34_ANSWERING_STATION,
 			      V34_CONSTELLATION_4_POINT, true),
 		      "E validation fixture failed");
-		receiver = fixture.decision_receiver;
+		receiver = fixture.receiver;
 	}
 	saved = receiver;
 	CHECK(v34_phase4_e_receive_decision(NULL, 0, 0) ==
@@ -362,17 +298,8 @@ static bool test_validation(void)
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_e_receive_decision(&receiver, 0, 4) ==
 		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_e_receive_point(&receiver, NULL) ==
-		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_e_receive_point(
-		      &receiver, &invalid_point) ==
-		      V34_PHASE4_E_RECEIVER_INVALID_ARGUMENT &&
 	      receivers_are_equal(&receiver, &saved),
 	      "invalid E input changed receiver state");
-	receiver = saved;
-	receiver.received_bits = 1;
-	CHECK(!v34_phase4_e_receiver_is_valid(&receiver),
-	      "E receiver accepted a partial-symbol cursor");
 	receiver = saved;
 	receiver.received_bits = V34_PHASE4_E_BITS + 1;
 	CHECK(!v34_phase4_e_receiver_is_valid(&receiver),
@@ -399,7 +326,6 @@ int main(void)
 		{ "generated continuous sequence", test_generated_sequence },
 		{ "search across repeated MP-prime",
 		  test_search_across_repeated_mp_prime },
-		{ "transactional mismatch", test_mismatch_is_transactional },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

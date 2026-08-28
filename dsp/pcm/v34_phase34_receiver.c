@@ -449,8 +449,6 @@ static enum v34_phase34_receiver_result phase4_result(
 		return V34_PHASE34_RECEIVER_RECORD_READY;
 	case V34_PHASE4_DECISION_RECEIVER_E_COMPLETE:
 		return V34_PHASE34_RECEIVER_E_COMPLETE;
-	case V34_PHASE4_DECISION_RECEIVER_SEQUENCE_MISMATCH:
-		return V34_PHASE34_RECEIVER_SEQUENCE_MISMATCH;
 	case V34_PHASE4_DECISION_RECEIVER_ALREADY_COMPLETE:
 	case V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT:
 	case V34_PHASE4_DECISION_RECEIVER_INVALID_STATE:
@@ -472,7 +470,6 @@ static bool phase4_result_consumed(
 	case V34_PHASE4_DECISION_RECEIVER_ALREADY_COMPLETE:
 	case V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT:
 	case V34_PHASE4_DECISION_RECEIVER_INVALID_STATE:
-	case V34_PHASE4_DECISION_RECEIVER_SEQUENCE_MISMATCH:
 		return false;
 	}
 	return false;
@@ -749,12 +746,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
 {
 	return phase4_control(
 		receiver, v34_phase4_decision_receiver_continue_mp);
-}
-
-enum v34_phase34_receiver_result v34_phase34_receiver_start_e(
-	struct v34_phase34_receiver *receiver)
-{
-	return phase4_control(receiver, v34_phase4_decision_receiver_start_e);
 }
 
 enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(

@@ -392,9 +392,6 @@ static bool test_contracts(void)
 		     V90_PHASE4_E_LINE_RX_E_COMPLETE),
 		     "E complete") == 0 &&
 	      strcmp(v90_phase4_e_line_rx_result_name(
-		     V90_PHASE4_E_LINE_RX_SEQUENCE_MISMATCH),
-		     "sequence mismatch") == 0 &&
-	      strcmp(v90_phase4_e_line_rx_result_name(
 		     (enum v90_phase4_e_line_rx_result)99),
 		     "unknown") == 0,
 	      "E result names changed");

@@ -22,7 +22,6 @@ enum v90_phase4_e_line_rx_result {
 	V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT,
 	V90_PHASE4_E_LINE_RX_INVALID_STATE,
 	V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE,
-	V90_PHASE4_E_LINE_RX_SEQUENCE_MISMATCH,
 };
 
 /* Own the digital modem's continuous conventional-upstream line after an
@@ -50,8 +49,8 @@ bool v90_phase4_e_line_rx_is_complete(
 	const struct v90_phase4_e_line_rx *rx);
 
 /* Consume one signed 8 kHz sample. Complete and rejected calls consume
- * nothing. A terminal DSP or sequence error consumes the sample and latches
- * failure because the continuous waveform cannot be replayed. */
+ * nothing. A terminal DSP error consumes the sample and latches failure
+ * because the continuous waveform cannot be replayed. */
 enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_sample(
 	struct v90_phase4_e_line_rx *rx, int16_t sample);
 

@@ -30,7 +30,6 @@ struct receive_fixture {
 	unsigned int rejected_records;
 	unsigned int unacknowledged_records;
 	unsigned int acknowledged_records;
-	bool search_e;
 };
 
 static struct v34_mp_parameters parameters(bool acknowledges_peer)
@@ -162,9 +161,7 @@ static bool handle_record(
 		      &event->parameters.type0, &fixture->acknowledged),
 	      "acknowledged MP parameters changed");
 	fixture->acknowledged_records++;
-	return (fixture->search_e ?
-		v34_phase4_decision_receiver_expect_e(&fixture->receiver) :
-		v34_phase4_decision_receiver_start_e(&fixture->receiver)) ==
+	return v34_phase4_decision_receiver_expect_e(&fixture->receiver) ==
 	       V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
@@ -355,14 +352,13 @@ static bool feed_mp_record(
 
 static bool run_timeline(
 	enum v34_station_role role,
-	enum v34_constellation_size constellation, bool search_e,
+	enum v34_constellation_size constellation, bool repeat_mp_prime,
 	unsigned int extra_trn_symbols)
 {
 	struct receive_fixture fixture = {
 		.clock.lineage = UINT64_C(14695981039346656037),
 		.unacknowledged = parameters(false),
 		.acknowledged = parameters(true),
-		.search_e = search_e,
 	};
 	struct v34_phase3_s_sequence answer_s;
 	struct v34_phase3_j_sequence j_sequence;
@@ -535,7 +531,7 @@ static bool run_timeline(
 	      "MP acquisition accepted %u/%u records (%u rejected)",
 	      fixture.unacknowledged_records, fixture.acknowledged_records,
 	      fixture.rejected_records);
-	if (search_e) {
+	if (repeat_mp_prime) {
 		CHECK(v34_phase4_mp_start_next_type0_record(
 			      &mp, &fixture.acknowledged) == V34_PHASE4_MP_OK,
 		      "search-E MP repeat did not initialize");
@@ -947,7 +943,7 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_continue_mp(&receiver) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_STATE &&
-	      v34_phase4_decision_receiver_start_e(&receiver) ==
+	      v34_phase4_decision_receiver_expect_e(&receiver) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&

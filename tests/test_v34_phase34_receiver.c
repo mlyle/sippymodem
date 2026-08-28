@@ -270,8 +270,6 @@ static bool test_validation(void)
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase34_receiver_continue_mp(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      v34_phase34_receiver_start_e(&receiver) ==
-		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_expect_e(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_phase3_handoff(&receiver, NULL) ==
@@ -519,7 +517,7 @@ static bool test_training_case(
 				      parameters_match(
 					      &output.mp.parameters.type0,
 					      &source.final_mp) &&
-				      v34_phase34_receiver_start_e(&receiver) ==
+				      v34_phase34_receiver_expect_e(&receiver) ==
 					      V34_PHASE34_RECEIVER_OK,
 				      "role %u rate %u final MP was not accepted",
 				      role, rate);
