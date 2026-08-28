@@ -46,8 +46,17 @@ v34_phase2_reciprocal_probe_init(
 		    transport(&initialized),
 		    initialized.turnaround.initial_probe.ranging.control
 			    .round_trip_delay_samples) !=
-		    PHASE2_RECIPROCAL_PROBE_OK ||
-	    !v34_phase2_reciprocal_probe_is_valid(&initialized))
+		    PHASE2_RECIPROCAL_PROBE_OK)
+		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+	if (initialized.turnaround.initial_probe.concurrent_receive_enabled &&
+	    initialized.turnaround.initial_probe.concurrent_receive.phase ==
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
+		initialized.control.path.receive =
+			initialized.turnaround.initial_probe.concurrent_receive;
+		initialized.control.phase =
+			PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
+	}
+	if (!v34_phase2_reciprocal_probe_is_valid(&initialized))
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	*probe = initialized;
 	return PHASE2_RECIPROCAL_PROBE_OK;

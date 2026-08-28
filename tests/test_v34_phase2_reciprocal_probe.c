@@ -402,6 +402,85 @@ static bool test_delayed_remote_probe(void)
 	return true;
 }
 
+static bool complete_probe_acquisition(
+	struct v34_phase2_probe_acquisition *acquisition)
+{
+	struct v34_phase2_probe_sequence sequence;
+
+	if (v34_phase2_probe_acquisition_init(acquisition) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK ||
+	    v34_phase2_probe_sequence_init(
+		    &sequence, TEST_AMPLITUDE, 1) !=
+		    V34_PHASE2_PROBE_SEQUENCE_OK)
+		return false;
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		struct v34_phase2_probe_acquisition_event event;
+		struct v34_phase2_probe_sequence_event sequence_event;
+		bool finish_l2 = acquisition->phase ==
+					 V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
+				 acquisition->receiver.phase ==
+					 V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
+		int16_t received = 0;
+
+		if (!finish_l2 &&
+		    v34_phase2_probe_sequence_sample(
+			    &sequence, false, &received, &sequence_event) !=
+			    V34_PHASE2_PROBE_SEQUENCE_OK)
+			return false;
+		if (v34_phase2_probe_acquisition_sample(
+			    acquisition, received, finish_l2, &event) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
+			return false;
+		if (event.kind ==
+		    V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED)
+			return true;
+	}
+	return false;
+}
+
+static bool test_completed_concurrent_probe_handoff(void)
+{
+	struct v34_phase2_probe_receiver_measurement expected;
+	struct v34_phase2_probe_receiver_measurement retained;
+	struct v34_phase2_probe_turnaround caller_turnaround;
+	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct v34_phase2_reciprocal_probe answerer;
+	int16_t expected_gain;
+	int16_t retained_gain;
+
+	CHECK(completed_turnaround_states(
+		      &caller_turnaround, &answerer_turnaround) &&
+	      complete_probe_acquisition(
+		      &answerer_turnaround.initial_probe.concurrent_receive),
+	      "completed concurrent-probe fixture did not initialize");
+	answerer_turnaround.initial_probe.concurrent_receive_enabled = true;
+	CHECK(v34_phase2_probe_turnaround_is_valid(&answerer_turnaround) &&
+	      v34_phase2_probe_acquisition_measure(
+		      &answerer_turnaround.initial_probe.concurrent_receive,
+		      &expected) == V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      v34_phase2_probe_acquisition_receive_gain(
+		      &answerer_turnaround.initial_probe.concurrent_receive,
+		      &expected_gain) == V34_PHASE2_PROBE_ACQUISITION_OK &&
+	      v34_phase2_reciprocal_probe_init(
+		      &answerer, &answerer_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK,
+	      "completed concurrent probe did not enter reciprocal handoff");
+	CHECK(answerer.control.phase ==
+		      PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE &&
+	      answerer.control.path.receive.phase ==
+		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
+	      v34_phase2_reciprocal_probe_measure(
+		      &answerer, &retained) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      v34_phase2_reciprocal_probe_receive_gain(
+		      &answerer, &retained_gain) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      memcmp(&retained, &expected, sizeof(retained)) == 0 &&
+	      retained_gain == expected_gain,
+	      "reciprocal handoff discarded the concurrent measurement");
+	return true;
+}
+
 static bool test_bounded_failures(void)
 {
 	struct v34_phase2_probe_turnaround caller_turnaround;
@@ -553,6 +632,8 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional reciprocal probe", test_bidirectional_probe },
 		{ "delayed remote probe", test_delayed_remote_probe },
+		{ "completed concurrent probe handoff",
+		  test_completed_concurrent_probe_handoff },
 		{ "bounded failures", test_bounded_failures },
 		{ "validation", test_validation },
 	};

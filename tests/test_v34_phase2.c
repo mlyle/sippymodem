@@ -520,6 +520,7 @@ static bool test_retrain_timeline(void)
 	uint16_t caller_rtd = 0;
 	uint16_t answerer_rtd = 0;
 	bool answerer_late_alias_injected = false;
+	bool answerer_concurrent_receive_armed = false;
 	bool caller_trial_rejected = false;
 	bool ready = false;
 
@@ -560,8 +561,13 @@ static bool test_retrain_timeline(void)
 		      "Phase 2 retrain pair failed at sample %zu", index);
 		if (caller_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED)
 			caller_rtd = caller_event.round_trip_delay_samples;
-		if (answerer_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED)
+		if (answerer_event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
 			answerer_rtd = answerer_event.round_trip_delay_samples;
+			answerer_concurrent_receive_armed =
+				pair.answerer.concurrent_probe_receive &&
+				pair.answerer.state.initial_probe
+					.concurrent_receive_enabled;
+		}
 		if (pair.caller.stage == V34_PHASE2_RANGING &&
 		    pair.caller.state.ranging.retrain_probe.phase ==
 			    V34_PHASE2_RETRAIN_PROBE_REJECTED)
@@ -573,6 +579,7 @@ static bool test_retrain_timeline(void)
 		}
 	}
 	CHECK(ready && answerer_late_alias_injected &&
+	      answerer_concurrent_receive_armed &&
 	      caller_trial_rejected &&
 	      caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
 	      answerer_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
@@ -699,6 +706,11 @@ static bool test_validation(void)
 		      &phase2, V34_CALLING_STATION, TEST_AMPLITUDE,
 		      &info0) == V34_PHASE2_OK,
 	      "validation endpoint did not initialize");
+	saved = phase2;
+	phase2.concurrent_probe_receive = true;
+	CHECK(!v34_phase2_is_valid(&phase2),
+	      "initial caller accepted concurrent retrain reception");
+	phase2 = saved;
 	saved = phase2;
 	memset(&event, 0x5a, sizeof(event));
 	saved_event = event;

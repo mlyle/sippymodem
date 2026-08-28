@@ -9,14 +9,17 @@ static bool adopt_retrain_probe_prefix(
 {
 	const struct v34_phase2_retrain_probe *trial =
 		&probe->ranging.retrain_probe;
-	struct v34_phase2_probe_acquisition *receive =
-		&probe->control.path.receive;
+	struct v34_phase2_probe_acquisition *receive;
 	struct v34_phase2_probe_acquisition_event event = { 0 };
 
 	if (trial->phase != V34_PHASE2_RETRAIN_PROBE_ACQUIRED)
 		return true;
-	if (probe->ranging.info0_exchange.transport.signal_role !=
+	if (probe->ranging.info0_exchange.transport.signal_role ==
 	    PHASE2_SIGNAL_B)
+		receive = &probe->control.path.receive;
+	else if (probe->concurrent_receive_enabled)
+		receive = &probe->concurrent_receive;
+	else
 		return false;
 	for (size_t index = 0;
 	     index < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
@@ -35,23 +38,34 @@ static bool adopt_retrain_probe_prefix(
 bool v34_phase2_initial_probe_is_valid(
 	const struct v34_phase2_initial_probe *probe)
 {
-	return probe != NULL &&
-	       v34_phase2_ranging_is_valid(&probe->ranging) &&
-	       probe->ranging.control.phase == PHASE2_RANGING_PROBE_READY &&
-	       phase2_initial_probe_is_valid(
-		       &probe->control,
-		       &probe->ranging.info0_exchange.transport);
+	if (probe == NULL || !v34_phase2_ranging_is_valid(&probe->ranging) ||
+	    probe->ranging.control.phase != PHASE2_RANGING_PROBE_READY ||
+	    !phase2_initial_probe_is_valid(
+		    &probe->control,
+		    &probe->ranging.info0_exchange.transport))
+		return false;
+	return !probe->concurrent_receive_enabled ||
+	       (probe->ranging.info0_exchange.transport.signal_role ==
+			PHASE2_SIGNAL_A &&
+		v34_phase2_probe_acquisition_is_valid(
+			&probe->concurrent_receive));
 }
 
 enum v34_phase2_initial_probe_result v34_phase2_initial_probe_init(
 	struct v34_phase2_initial_probe *probe,
-	const struct v34_phase2_ranging *completed_ranging)
+	const struct v34_phase2_ranging *completed_ranging,
+	bool receive_concurrent_probe)
 {
-	struct v34_phase2_initial_probe initialized;
+	struct v34_phase2_initial_probe initialized = {
+		.concurrent_receive_enabled = receive_concurrent_probe,
+	};
 
 	if (probe == NULL ||
 	    !v34_phase2_ranging_is_valid(completed_ranging) ||
-	    completed_ranging->control.phase != PHASE2_RANGING_PROBE_READY)
+	    completed_ranging->control.phase != PHASE2_RANGING_PROBE_READY ||
+	    (receive_concurrent_probe &&
+	     completed_ranging->info0_exchange.transport.signal_role !=
+		     PHASE2_SIGNAL_A))
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	initialized.ranging = *completed_ranging;
 	if (phase2_initial_probe_init(
@@ -59,11 +73,45 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_init(
 		    &initialized.ranging.info0_exchange.transport,
 		    initialized.ranging.control.round_trip_delay_samples) !=
 		    PHASE2_INITIAL_PROBE_OK ||
+	    (receive_concurrent_probe &&
+	     v34_phase2_probe_acquisition_init(
+		     &initialized.concurrent_receive) !=
+		     V34_PHASE2_PROBE_ACQUISITION_OK) ||
 	    !adopt_retrain_probe_prefix(&initialized) ||
 	    !v34_phase2_initial_probe_is_valid(&initialized))
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	*probe = initialized;
 	return V34_PHASE2_INITIAL_PROBE_OK;
+}
+
+static bool sample_concurrent_probe(
+	struct v34_phase2_initial_probe *probe, int16_t received_sample,
+	struct v34_phase2_probe_acquisition_event *event)
+{
+	struct v34_phase2_probe_acquisition *receive =
+		&probe->concurrent_receive;
+	bool finish_l2;
+
+	*event = (struct v34_phase2_probe_acquisition_event){ 0 };
+	if (!probe->concurrent_receive_enabled ||
+	    receive->phase == V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
+		return true;
+	finish_l2 = receive->phase ==
+			    V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
+		    receive->receiver.phase ==
+			    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
+	if (v34_phase2_probe_acquisition_sample(
+		    receive, received_sample, finish_l2, event) !=
+	    V34_PHASE2_PROBE_ACQUISITION_OK)
+		return false;
+	if (event->kind != V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND &&
+	    event->kind != V34_PHASE2_PROBE_ACQUISITION_EVENT_LIMIT_REACHED)
+		return true;
+	if (v34_phase2_probe_acquisition_init(receive) !=
+	    V34_PHASE2_PROBE_ACQUISITION_OK)
+		return false;
+	*event = (struct v34_phase2_probe_acquisition_event){ 0 };
+	return true;
 }
 
 enum v34_phase2_initial_probe_result v34_phase2_initial_probe_sample(
@@ -74,13 +122,16 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	struct v34_phase2_initial_probe next;
 	struct phase2_initial_probe_event common;
 	struct v34_phase2_initial_probe_event emitted;
+	struct v34_phase2_probe_acquisition_event concurrent;
 	int16_t generated;
 
 	if (!v34_phase2_initial_probe_is_valid(probe) ||
 	    transmit_sample == NULL || event == NULL)
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	next = *probe;
-	if (phase2_initial_probe_sample(
+	if (!sample_concurrent_probe(
+		    &next, received_sample, &concurrent) ||
+	    phase2_initial_probe_sample(
 		    &next.control,
 		    &next.ranging.info0_exchange.transport,
 		    received_sample, &generated, &common) !=
@@ -94,6 +145,8 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_sample(
 		.kind = common.kind,
 		.failure = common.failure,
 	};
+	if (next.concurrent_receive_enabled)
+		emitted.receive_event = concurrent;
 	*probe = next;
 	*transmit_sample = generated;
 	*event = emitted;
@@ -104,11 +157,20 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_measure(
 	const struct v34_phase2_initial_probe *probe,
 	struct v34_phase2_probe_receiver_measurement *measurement)
 {
-	if (!v34_phase2_initial_probe_is_valid(probe) ||
-	    phase2_initial_probe_measure(
-		    &probe->control,
-		    &probe->ranging.info0_exchange.transport,
-		    measurement) != PHASE2_INITIAL_PROBE_OK)
+	const struct phase2_info0_exchange *transport;
+	const struct v34_phase2_probe_acquisition *receive;
+
+	if (!v34_phase2_initial_probe_is_valid(probe) || measurement == NULL)
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	transport = &probe->ranging.info0_exchange.transport;
+	if (transport->signal_role == PHASE2_SIGNAL_B)
+		receive = &probe->control.path.receive;
+	else if (probe->concurrent_receive_enabled)
+		receive = &probe->concurrent_receive;
+	else
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	if (v34_phase2_probe_acquisition_measure(receive, measurement) !=
+	    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return V34_PHASE2_INITIAL_PROBE_OK;
 }
@@ -118,12 +180,21 @@ v34_phase2_initial_probe_receive_gain(
 	const struct v34_phase2_initial_probe *probe,
 	int16_t *receive_gain)
 {
-	if (!v34_phase2_initial_probe_is_valid(probe) ||
-	    probe->ranging.info0_exchange.transport.signal_role !=
-		    PHASE2_SIGNAL_B ||
-	    v34_phase2_probe_acquisition_receive_gain(
-		    &probe->control.path.receive, receive_gain) !=
-		    V34_PHASE2_PROBE_ACQUISITION_OK)
+	const struct phase2_info0_exchange *transport;
+	const struct v34_phase2_probe_acquisition *receive;
+
+	if (!v34_phase2_initial_probe_is_valid(probe) || receive_gain == NULL)
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	transport = &probe->ranging.info0_exchange.transport;
+	if (transport->signal_role == PHASE2_SIGNAL_B)
+		receive = &probe->control.path.receive;
+	else if (probe->concurrent_receive_enabled)
+		receive = &probe->concurrent_receive;
+	else
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	if (v34_phase2_probe_acquisition_receive_gain(
+		    receive, receive_gain) !=
+	    V34_PHASE2_PROBE_ACQUISITION_OK)
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	return V34_PHASE2_INITIAL_PROBE_OK;
 }

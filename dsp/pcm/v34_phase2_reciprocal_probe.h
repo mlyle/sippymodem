@@ -16,7 +16,8 @@ struct v34_phase2_reciprocal_probe {
 
 /* Continue from a role-appropriate probe-turnaround readiness event. The
  * caller begins L1 on the following sample; the answerer begins bounded probe
- * acquisition on the following received sample. */
+ * acquisition on the following received sample. A completed overlapping probe
+ * retained by the initial-probe owner is adopted without measuring it twice. */
 enum phase2_reciprocal_probe_result
 v34_phase2_reciprocal_probe_init(
 	struct v34_phase2_reciprocal_probe *probe,

@@ -150,6 +150,33 @@ static bool local_info1_is_valid(const struct v34_phase2 *phase2)
 		       v34_info1a_is_valid(&phase2->local_info1.info1a);
 }
 
+static bool concurrent_probe_receive_matches_stage(
+	const struct v34_phase2 *phase2)
+{
+	bool child_enabled = phase2->concurrent_probe_receive;
+
+	if (child_enabled &&
+	    (phase2->prior_round_trip_delay_samples == 0 ||
+	     phase2->local_role != V34_ANSWERING_STATION))
+		return false;
+	switch (phase2->stage) {
+	case V34_PHASE2_RANGING:
+		return true;
+	case V34_PHASE2_INITIAL_PROBE:
+		return phase2->state.initial_probe.concurrent_receive_enabled ==
+		       child_enabled;
+	case V34_PHASE2_PROBE_TURNAROUND:
+		return phase2->state.turnaround.initial_probe
+			       .concurrent_receive_enabled == child_enabled;
+	case V34_PHASE2_RECIPROCAL_PROBE:
+		return phase2->state.reciprocal_probe.turnaround.initial_probe
+			       .concurrent_receive_enabled == child_enabled;
+	case V34_PHASE2_INFO1:
+		return !child_enabled;
+	}
+	return false;
+}
+
 bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 {
 	enum v34_phase2_failure child_failure;
@@ -170,6 +197,7 @@ bool v34_phase2_is_valid(const struct v34_phase2 *phase2)
 	    (!phase2->remote_probe_stored &&
 	     phase2->remote_receive_gain != 0) ||
 	    !local_info1_is_valid(phase2) ||
+	    !concurrent_probe_receive_matches_stage(phase2) ||
 	    (phase2->stage != V34_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
 		return false;
@@ -334,6 +362,7 @@ enum v34_phase2_result v34_phase2_start_caller_info1(
 	next.state.info1 = exchange;
 	next.local_info1.info1c = *local_info1c;
 	next.local_info1_stored = true;
+	next.concurrent_probe_receive = false;
 	next.stage = V34_PHASE2_INFO1;
 	if (!v34_phase2_is_valid(&next))
 		return V34_PHASE2_INVALID_STATE;
@@ -361,6 +390,7 @@ enum v34_phase2_result v34_phase2_start_answerer_info1(
 	next.state.info1 = exchange;
 	next.local_info1 = (union v34_phase2_info1_parameters){ 0 };
 	next.local_info1_stored = false;
+	next.concurrent_probe_receive = false;
 	next.stage = V34_PHASE2_INFO1;
 	if (!v34_phase2_is_valid(&next))
 		return V34_PHASE2_INVALID_STATE;
@@ -484,7 +514,8 @@ static bool enter_initial_probe(
 	if (!exchange->peer_info0_received ||
 	    !v34_info0_is_valid(&exchange->peer_info0) ||
 	    v34_phase2_initial_probe_init(
-		    &next, &phase2->state.ranging) !=
+		    &next, &phase2->state.ranging,
+		    phase2->concurrent_probe_receive) !=
 	    V34_PHASE2_INITIAL_PROBE_OK)
 		return false;
 	phase2->peer_info0 = exchange->peer_info0;
@@ -553,6 +584,14 @@ static bool sample_ranging(
 	measured = child.round_trip_delay_samples;
 	prior = phase2->prior_round_trip_delay_samples;
 	separation = measured > prior ? measured - prior : prior - measured;
+	if (prior != 0u && measured > prior &&
+	    phase2->state.ranging.control.round_trip_delay_valid &&
+	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
+	     child.kind == PHASE2_PROBE_RECEIVE_READY ||
+	     child.kind == PHASE2_PROBE_TRANSMIT_READY) &&
+	    separation > PHASE2_RANGING_TURNAROUND_SAMPLES &&
+	    phase2->local_role == V34_ANSWERING_STATION)
+		phase2->concurrent_probe_receive = true;
 	if (prior != 0u &&
 	    phase2->state.ranging.control.round_trip_delay_valid &&
 	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
@@ -588,17 +627,22 @@ static bool sample_initial_probe(
 {
 	struct v34_phase2_initial_probe_event child;
 	enum v34_station_role role = phase2->local_role;
+	bool measured_remote_probe;
 
 	if (v34_phase2_initial_probe_sample(
 		    &phase2->state.initial_probe, received_sample,
 		    transmit_sample, &child) != V34_PHASE2_INITIAL_PROBE_OK)
 		return false;
+	measured_remote_probe =
+		child.kind == PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE ||
+		(role == V34_ANSWERING_STATION &&
+		 child.receive_event.kind ==
+			 V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED);
 	if (child.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED) {
 		phase2->failure = initial_probe_failure(child.failure);
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
-	} else if (child.kind ==
-		   PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
+	} else if (measured_remote_probe) {
 		struct v34_phase2_probe_receiver_measurement measurement;
 		int16_t receive_gain;
 
@@ -618,12 +662,12 @@ static bool sample_initial_probe(
 		phase2->remote_probe_stored = true;
 		event->kind =
 			V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
-	} else if ((role == V34_CALLING_STATION &&
-		    child.kind ==
-			    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) ||
-		   (role == V34_ANSWERING_STATION &&
-		    child.kind ==
-			    PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE)) {
+	}
+	if (phase2->failure == V34_PHASE2_FAILURE_NONE &&
+	    ((role == V34_CALLING_STATION &&
+	      child.kind == PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) ||
+	     (role == V34_ANSWERING_STATION &&
+	      child.kind == PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE))) {
 		return enter_turnaround(phase2, event);
 	}
 	return true;

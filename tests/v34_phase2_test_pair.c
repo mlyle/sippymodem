@@ -130,7 +130,8 @@ static bool endpoint_sample(
 			return false;
 		if (emitted.ranging.kind == expected_ready) {
 			if (v34_phase2_initial_probe_init(
-				    &endpoint->initial_probe, &endpoint->ranging) !=
+				    &endpoint->initial_probe, &endpoint->ranging,
+				    false) !=
 			    V34_PHASE2_INITIAL_PROBE_OK)
 				return false;
 			endpoint->stage = TEST_ENDPOINT_INITIAL_PROBE;

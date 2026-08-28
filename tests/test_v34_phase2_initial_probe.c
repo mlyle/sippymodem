@@ -265,7 +265,7 @@ static bool test_answerer_accepts_early_tone_b(void)
 
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
 	      v34_phase2_initial_probe_init(
-		      &answerer, &answerer_ranging) ==
+		      &answerer, &answerer_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &peer_tone, V34_CALLING_STATION, TEST_AMPLITUDE) ==
@@ -313,6 +313,65 @@ static bool test_answerer_accepts_early_tone_b(void)
 		      TEST_EARLY_TONE_LIMIT_L2_SAMPLES &&
 	      answerer.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_A_TONE,
 	      "answerer did not accept early Tone B during L2");
+	return true;
+}
+
+static bool test_answerer_receives_concurrent_probe(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_ranging caller_ranging;
+	struct v34_phase2_ranging answerer_ranging;
+	struct v34_phase2_initial_probe answerer;
+	struct v34_phase2_probe_sequence peer_probe;
+	struct v34_phase2_initial_probe_event event;
+	uint64_t local_probe_magnitude = 0;
+	int16_t receive_gain = 0;
+	bool completed = false;
+
+	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
+	      v34_phase2_initial_probe_init(
+		      &answerer, &answerer_ranging, true) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      v34_phase2_probe_sequence_init(
+		      &peer_probe, TEST_AMPLITUDE,
+		      answerer_ranging.control.round_trip_delay_samples) ==
+		      V34_PHASE2_PROBE_SEQUENCE_OK,
+	      "concurrent-probe fixture did not initialize");
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		struct v34_phase2_probe_sequence_event peer_event;
+		int16_t peer_transmit;
+		int16_t local_transmit;
+
+		CHECK(v34_phase2_probe_sequence_sample(
+			      &peer_probe, false, &peer_transmit,
+			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
+		      v34_phase2_initial_probe_sample(
+			      &answerer, peer_transmit, &local_transmit,
+			      &event) == V34_PHASE2_INITIAL_PROBE_OK,
+		      "concurrent probe stopped at sample %zu", sample);
+		local_probe_magnitude +=
+			(uint64_t)sample_magnitude(local_transmit);
+		if (event.receive_event.kind ==
+		    V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED) {
+			completed = true;
+			break;
+		}
+	}
+	CHECK(completed && local_probe_magnitude != 0 &&
+	      answerer.concurrent_receive.phase ==
+		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
+	      v34_phase2_initial_probe_measure(
+		      &answerer, &measurement) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      v34_phase2_initial_probe_receive_gain(
+		      &answerer, &receive_gain) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      measurement.l1.sample_count ==
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      measurement.l2.sample_count ==
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      receive_gain > 0,
+	      "answerer did not retain the probe received while transmitting");
 	return true;
 }
 
@@ -680,7 +739,7 @@ static bool test_bounded_failures(void)
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging),
 	      "failure fixtures did not complete ranging");
 	CHECK(v34_phase2_initial_probe_init(
-		      &caller, &caller_ranging) ==
+		      &caller, &caller_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "missing-probe fixture did not initialize");
 	for (samples = 0; samples < 1000 &&
@@ -707,7 +766,7 @@ static bool test_bounded_failures(void)
 	      "failed controller did not remain silent and stable");
 
 	CHECK(v34_phase2_initial_probe_init(
-		      &answerer, &answerer_ranging) ==
+		      &answerer, &answerer_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "transmit-limit fixture did not initialize");
 	for (samples = 0; samples < 7000 &&
@@ -727,7 +786,7 @@ static bool test_bounded_failures(void)
 	      "unanswered local probe did not reach its RTD-adjusted limit");
 
 	CHECK(v34_phase2_initial_probe_init(
-		      &caller, &caller_ranging) ==
+		      &caller, &caller_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_probe_sequence_init(
 		      &remote_probe, TEST_AMPLITUDE,
@@ -795,14 +854,14 @@ static bool test_validation(void)
 	      "validation fixtures did not initialize");
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;
-	CHECK(v34_phase2_initial_probe_init(&probe, &unready) ==
+	CHECK(v34_phase2_initial_probe_init(&probe, &unready, false) ==
 		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
-	      v34_phase2_initial_probe_init(NULL, &caller_ranging) ==
+	      v34_phase2_initial_probe_init(NULL, &caller_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "invalid initialization changed caller-owned state");
 	CHECK(v34_phase2_initial_probe_init(
-		      &probe, &caller_ranging) ==
+		      &probe, &caller_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "validation controller did not initialize");
 	before = probe;
@@ -816,6 +875,10 @@ static bool test_validation(void)
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
+	CHECK(v34_phase2_initial_probe_init(
+		      &invalid, &caller_ranging, true) ==
+		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+	      "caller accepted concurrent answerer probe reception");
 	invalid = probe;
 	invalid.control.phase =
 		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
@@ -901,7 +964,7 @@ static bool test_turnaround_failures_and_validation(void)
 
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
 	      v34_phase2_initial_probe_init(
-		      &unready_probe, &caller_ranging) ==
+		      &unready_probe, &caller_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "turnaround validation fixtures did not initialize");
 	memset(&invalid, 0xa5, sizeof(invalid));
@@ -954,6 +1017,8 @@ int main(void)
 			{ "bidirectional initial probe", test_bidirectional_turn },
 			{ "answerer early Tone B",
 			  test_answerer_accepts_early_tone_b },
+			{ "answerer concurrent probe",
+			  test_answerer_receives_concurrent_probe },
 			{ "bidirectional probe turnaround", test_probe_turnaround },
 			{ "answerer reversal recovery",
 			  test_answerer_reversal_recovery },

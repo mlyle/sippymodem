@@ -25,17 +25,21 @@ enum v34_phase2_initial_probe_result {
 struct v34_phase2_initial_probe {
 	struct v34_phase2_ranging ranging;
 	struct phase2_initial_probe control;
+	struct v34_phase2_probe_acquisition concurrent_receive;
+	bool concurrent_receive_enabled;
 };
 
 /* Continue from a ranging controller after it emits its role-appropriate
  * probe-ready event. The completed state is copied so the tone phases, remote
  * detector state, and measured round-trip delay remain coherent. The answerer
  * begins L1 on the next sample; the caller begins bounded onset acquisition on
- * the next received sample. */
+ * the next received sample. Concurrent reception is valid only for a Signal-A
+ * retrain whose ranging owner identified an overlapping peer probe. */
 enum v34_phase2_initial_probe_result
 v34_phase2_initial_probe_init(
 	struct v34_phase2_initial_probe *probe,
-	const struct v34_phase2_ranging *completed_ranging);
+	const struct v34_phase2_ranging *completed_ranging,
+	bool receive_concurrent_probe);
 bool v34_phase2_initial_probe_is_valid(
 	const struct v34_phase2_initial_probe *probe);
 

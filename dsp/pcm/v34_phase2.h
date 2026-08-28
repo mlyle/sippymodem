@@ -88,6 +88,8 @@ struct v34_phase2 {
 	bool peer_info0_stored;
 	bool remote_probe_stored;
 	bool local_info1_stored;
+	/* A late retrain reversal can be the peer's overlapping L1 edge. */
+	bool concurrent_probe_receive;
 };
 
 enum v34_phase2_result v34_phase2_init(
