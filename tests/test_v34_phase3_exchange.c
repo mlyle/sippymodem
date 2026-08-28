@@ -229,10 +229,10 @@ static bool run_generated_duplex_exchange(
 		enum v34_phase3_exchange_result caller_result;
 		enum v34_phase3_exchange_result answerer_result;
 		bool answerer_was_transmitting = answerer.transmit_started;
-		bool caller_signal_was_started =
-			caller.receive.signal_started;
-		bool answerer_signal_was_started =
-			answerer.receive.signal_started;
+		bool caller_timing_was_acquired =
+			v34_receive_timing_is_acquired(&caller.receive.timing);
+		bool answerer_timing_was_acquired =
+			v34_receive_timing_is_acquired(&answerer.receive.timing);
 		bool answerer_starting_j =
 			answerer.transmit.phase3.stage ==
 				V34_PHASE3_TRANSMITTER_TRN &&
@@ -266,11 +266,11 @@ static bool run_generated_duplex_exchange(
 		CHECK(record_events(caller_events, &caller_seen) &&
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
-		if (!caller_signal_was_started &&
-		    caller.receive.signal_started)
+		if (!caller_timing_was_acquired &&
+		    v34_receive_timing_is_acquired(&caller.receive.timing))
 			caller_signal_start = index;
-		if (!answerer_signal_was_started &&
-		    answerer.receive.signal_started) {
+		if (!answerer_timing_was_acquired &&
+		    v34_receive_timing_is_acquired(&answerer.receive.timing)) {
 			answerer_signal_start = index;
 			answerer_signal_phase =
 				answerer.receive.timing.carrier.phase;
@@ -285,9 +285,9 @@ static bool run_generated_duplex_exchange(
 			CHECK(answerer_starting_j &&
 			      answerer.receive.stage ==
 				      V34_PHASE34_RECEIVER_PHASE3 &&
-			      !answerer.receive.signal_started &&
-			      answerer.receive.timing.carrier.phase ==
-				      0,
+			      !v34_receive_timing_is_acquired(
+				      &answerer.receive.timing) &&
+			      answerer.receive.equalizer.epoch == 0u,
 			      "answerer did not start S reception at local J");
 		}
 		if ((caller_events &
@@ -296,10 +296,11 @@ static bool run_generated_duplex_exchange(
 				      V34_PHASE34_RECEIVER_PHASE4 &&
 			      caller.receive.semantic.phase4.stage ==
 				      V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
-			      caller.receive.phase4_s_rearmed &&
-			      !caller.receive.signal_started &&
-			      caller.receive.timing.carrier.phase == 0,
-			      "caller did not rearm Phase 4 S at local J");
+			      !caller.receive.phase4_s_rearmed &&
+			      v34_receive_timing_is_acquired(
+				      &caller.receive.timing) &&
+			      caller.receive.tracking_started,
+			      "caller changed Phase 3 reception at local J");
 		if ((caller_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0)
 			CHECK((caller_events &
@@ -325,16 +326,15 @@ static bool run_generated_duplex_exchange(
 	      answerer.receive.stage, caller_seen,
 	      answerer_seen);
 	CHECK(caller_signal_start < exchanged_samples &&
-	      caller.receive.phase4_s_rearmed &&
-	      !caller.receive.signal_started &&
-	      caller.receive.timing.carrier.phase == 0 &&
+	      !caller.receive.phase4_s_rearmed &&
+	      v34_receive_timing_is_acquired(&caller.receive.timing) &&
 	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
 	      answerer.receive.timing.carrier.phase ==
 		      answerer_signal_phase +
 			      (uint32_t)((uint64_t)answerer.receive.timing.carrier.phase_step *
 				 (exchanged_samples - answerer_signal_start - 1u)),
-	      "Phase 3 receivers did not consume the complete sample timeline");
+	      "Phase 3 receivers did not reach the expected handoff timeline");
 	CHECK(answer_silence ==
 		      SAMPLE_RATE * V34_PHASE3_ANSWER_SILENCE_MS / 1000u,
 	      "answerer silence was %u samples", answer_silence);
@@ -375,9 +375,8 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_16_POINT &&
 	      answerer_handoff.transmit.phase3.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
-	      caller_handoff.receive.phase4_s_rearmed &&
-	      !caller_handoff.receive.signal_started &&
-	      !v34_receive_timing_is_acquired(
+	      !caller_handoff.receive.phase4_s_rearmed &&
+	      v34_receive_timing_is_acquired(
 		      &caller_handoff.receive.timing) &&
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.timing),

@@ -252,9 +252,14 @@ static bool test_validation(void)
 		CHECK(v34_phase34_receiver_sample(&receiver, 0, &output) ==
 			      V34_PHASE34_RECEIVER_OK,
 		      "leading silence failed at sample %u", sample);
-	CHECK(memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
+	      memcmp(&receiver.equalizer, &saved.equalizer,
+		     sizeof(receiver.equalizer)) == 0 &&
+	      memcmp(&receiver.semantic, &saved.semantic,
+		     sizeof(receiver.semantic)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
-	      "leading silence changed receiver state or output");
+	      "leading silence advanced semantic reception or output");
+	saved = receiver;
 	memset(&handoff, 0x7c, sizeof(handoff));
 	saved_handoff = handoff;
 	CHECK(v34_phase34_receiver_sample(&receiver, 1, NULL) ==
@@ -279,11 +284,10 @@ static bool test_validation(void)
 	return true;
 }
 
-static bool test_signal_acquisition(void)
+static bool test_tone_owned_acquisition(void)
 {
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_phase34_receiver receiver;
-	struct v34_receive_timing saved_timing;
 	struct v34_adaptive_equalizer saved_equalizer;
 	union v34_phase34_receiver_semantic_state saved_semantic;
 	struct v34_phase34_receive_output output;
@@ -297,8 +301,7 @@ static bool test_signal_acquisition(void)
 		      V34_CONSTELLATION_16_POINT,
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
-	      "signal-acquisition receiver did not initialize");
-	saved_timing = receiver.timing;
+	      "tone-owned receiver did not initialize");
 	saved_equalizer = receiver.equalizer;
 	saved_semantic = receiver.semantic;
 	memset(&output, 0x6d, sizeof(output));
@@ -310,11 +313,7 @@ static bool test_signal_acquisition(void)
 			      V34_PHASE34_RECEIVER_OK,
 		      "codec noise failed at sample %u", index);
 	}
-	CHECK(!receiver.signal_started &&
-	      receiver.signal_acquisition_count ==
-		      V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES &&
-	      memcmp(&receiver.timing, &saved_timing, sizeof(saved_timing)) ==
-		      0 &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
 	      memcmp(
 		      &receiver.equalizer, &saved_equalizer,
 		      sizeof(saved_equalizer)) == 0 &&
@@ -323,7 +322,7 @@ static bool test_signal_acquisition(void)
 		      sizeof(saved_semantic)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
 	      v34_phase34_receiver_is_valid(&receiver),
-	      "codec noise advanced the receive path");
+	      "codec noise advanced semantic reception");
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
@@ -331,38 +330,16 @@ static bool test_signal_acquisition(void)
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "impulse receiver did not initialize");
-	for (unsigned int index = 0;
-	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index) {
+	for (unsigned int index = 0; index < 96u; ++index) {
 		int16_t sample = index == 0u ? INT16_MAX : 0;
 
 		CHECK(v34_phase34_receiver_sample(&receiver, sample, &output) ==
 			      V34_PHASE34_RECEIVER_OK,
 		      "isolated impulse failed at sample %u", index);
 	}
-	CHECK(!receiver.signal_started &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
 	      v34_phase34_receiver_is_valid(&receiver),
-	      "isolated impulse started the receive path");
-
-	CHECK(v34_phase34_receiver_init(
-		      &receiver, &transmitting_profile,
-		      V34_CONSTELLATION_16_POINT,
-		      TEST_INITIAL_RECEIVE_GAIN) ==
-		      V34_PHASE34_RECEIVER_OK,
-	      "qualified receiver did not initialize");
-	for (unsigned int index = 0;
-	     index < V34_PHASE34_SIGNAL_ACQUISITION_SAMPLES; ++index) {
-		int16_t sample = (index & 1u) != 0u ? 2048 : -2048;
-
-		CHECK(v34_phase34_receiver_sample(&receiver, sample, &output) ==
-			      V34_PHASE34_RECEIVER_OK,
-		      "qualified signal failed at sample %u", index);
-	}
-	CHECK(receiver.signal_started &&
-	      receiver.signal_acquisition_count == 0u &&
-	      receiver.signal_acquisition_energy == 0u &&
-	      v34_phase34_receiver_is_valid(&receiver) &&
-	      memcmp(&output, &saved_output, sizeof(output)) == 0,
-	      "qualified signal did not start from a clear acquisition owner");
+	      "isolated impulse acquired S timing");
 
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &transmitting_profile,
@@ -372,7 +349,7 @@ static bool test_signal_acquisition(void)
 	      v34_phase34_receiver_sample(&receiver, 400, &output) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "corrupt-state receiver did not initialize");
-	receiver.signal_acquisition_energy++;
+	receiver.timing.s_detector.carrier = V34_S_TONE_CARRIER_COUNT;
 	{
 		struct v34_phase34_receiver saved = receiver;
 
@@ -381,7 +358,7 @@ static bool test_signal_acquisition(void)
 			      V34_PHASE34_RECEIVER_INVALID_STATE &&
 		      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 		      memcmp(&output, &saved_output, sizeof(output)) == 0,
-		      "corrupt acquisition state was not rejected transactionally");
+		      "corrupt timing state was not rejected transactionally");
 	}
 	return true;
 }
@@ -467,14 +444,12 @@ static bool test_training_case(
 					      V34_PHASE34_RECEIVER_PHASE4 &&
 				      receiver.semantic.phase4.stage ==
 					      V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
-				      receiver.signal_started &&
 				      receiver.tracking_started &&
 				      !receiver.phase4_s_rearmed &&
 				      v34_phase34_receiver_rearm_phase4_s(
-					      &receiver) ==
+					      &receiver, false) ==
 					      V34_PHASE34_RECEIVER_OK &&
 				      receiver.phase4_s_rearmed &&
-				      !receiver.signal_started &&
 				      !v34_receive_timing_is_acquired(
 					      &receiver.timing) &&
 				      receiver.equalizer.epoch == 0u &&
@@ -817,7 +792,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "validation", test_validation },
-		{ "signal acquisition", test_signal_acquisition },
+		{ "tone-owned acquisition", test_tone_owned_acquisition },
 		{ "continuous Phase 3 through data", test_training },
 	};
 	unsigned int failures = 0;

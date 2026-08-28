@@ -56,13 +56,18 @@ struct v34_receive_timing {
 	uint8_t input_advance_pending;
 	uint8_t timing_output_count;
 	bool current_valid;
+	/* Treat lower-threshold carrier pull-in as provisional until the first
+	 * fully qualified S boundary. */
+	bool reanchor_at_s;
 	bool initialized;
 };
 
+/* REANCHOR_AT_S preserves early carrier pull-in, but starts the fractional
+ * timing acquisition epoch again when S becomes fully qualified. */
 enum v34_receive_timing_result v34_receive_timing_init(
 	struct v34_receive_timing *timing,
 	const struct v34_phase3_profile *transmitting_profile,
-	int16_t initial_gain);
+	int16_t initial_gain, bool reanchor_at_s);
 bool v34_receive_timing_is_valid(
 	const struct v34_receive_timing *timing);
 bool v34_receive_timing_is_acquired(

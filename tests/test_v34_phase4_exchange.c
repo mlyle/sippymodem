@@ -305,6 +305,7 @@ static bool endpoint_sample(
 		return result == V34_PHASE4_EXCHANGE_OK;
 	}
 	{
+		struct v34_phase34_receiver expected_receive;
 		uint32_t phase3_events;
 
 		*phase4_events = 0;
@@ -316,8 +317,16 @@ static bool endpoint_sample(
 			return true;
 		if (v34_phase3_exchange_handoff(
 			    &endpoint->phase3, &endpoint->handoff) !=
-				    V34_PHASE3_EXCHANGE_OK ||
-		    v34_phase4_exchange_init(
+				    V34_PHASE3_EXCHANGE_OK)
+			return false;
+		expected_receive = endpoint->handoff.receive;
+		if (endpoint->handoff.transmit.line.profile.local_role ==
+			    V34_CALLING_STATION &&
+		    v34_phase34_receiver_rearm_phase4_s(
+			    &expected_receive, false) !=
+			    V34_PHASE34_RECEIVER_OK)
+			return false;
+		if (v34_phase4_exchange_init(
 			    &endpoint->phase4, &endpoint->handoff,
 			    &endpoint->phase4_configuration, 0u) !=
 				    V34_PHASE4_EXCHANGE_OK)
@@ -333,7 +342,7 @@ static bool endpoint_sample(
 				endpoint->handoff.transmit.phase3
 					.remote_constellation) &&
 			memcmp(&endpoint->phase4.receive,
-			       &endpoint->handoff.receive,
+			       &expected_receive,
 			       sizeof(endpoint->phase4.receive)) == 0;
 		if (!endpoint->constellations_routed) {
 			fprintf(stderr,
@@ -957,6 +966,37 @@ static bool test_validation_and_transactionality(void)
 	CHECK(run_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
 	      "validation Phase 4 pair failed");
+	{
+		struct v34_phase4_exchange_configuration configuration =
+			phase4_configuration(V34_CALLING_STATION);
+		struct v34_phase34_receiver expected_receive;
+
+		expected_receive = caller.handoff.receive;
+		CHECK(v34_phase4_exchange_init(
+			      &exchange, &caller.handoff, &configuration, 17u) ==
+			      V34_PHASE4_EXCHANGE_OK &&
+		      v34_phase34_receiver_rearm_phase4_s(
+			      &expected_receive, true) ==
+			      V34_PHASE34_RECEIVER_OK &&
+		      exchange.receive.phase4_s_rearmed &&
+		      exchange.receive.timing.reanchor_at_s &&
+		      expected_receive.timing.reanchor_at_s &&
+		      !v34_receive_timing_is_acquired(&exchange.receive.timing) &&
+		      exchange.receive.equalizer.epoch == 0u &&
+		      memcmp(&exchange.receive, &expected_receive,
+			     sizeof(exchange.receive)) == 0,
+		      "caller Phase 4 did not own the fresh S acquisition");
+
+		configuration = phase4_configuration(V34_ANSWERING_STATION);
+		CHECK(v34_phase4_exchange_init(
+			      &exchange, &answerer.handoff, &configuration, 17u) ==
+			      V34_PHASE4_EXCHANGE_OK &&
+		      !exchange.receive.phase4_s_rearmed &&
+		      !exchange.receive.timing.reanchor_at_s &&
+		      memcmp(&exchange.receive, &answerer.handoff.receive,
+			     sizeof(exchange.receive)) == 0,
+		      "answerer incorrectly applied the caller-only S rearm");
+	}
 	exchange = caller.phase4;
 	exchange.transmit_mp_records_completed =
 		V34_PHASE4_MP_REPEAT_RECORDS + 1;

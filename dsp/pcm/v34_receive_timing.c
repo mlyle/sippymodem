@@ -40,6 +40,7 @@ bool v34_receive_timing_is_valid(
 	       v34_timing_control_is_valid(&timing->timing) &&
 	       timing->timing.local_role ==
 		       receiving_role(timing->transmitting_profile.local_role) &&
+	       (!timing->reanchor_at_s || !timing->s_detector.detected) &&
 	       (timing->s_detector.acquired ||
 		timing->timing.mode == V34_TIMING_CONTROL_LOCKED) &&
 	       queue_state_is_valid(timing);
@@ -48,7 +49,7 @@ bool v34_receive_timing_is_valid(
 enum v34_receive_timing_result v34_receive_timing_init(
 	struct v34_receive_timing *timing,
 	const struct v34_phase3_profile *transmitting_profile,
-	int16_t initial_gain)
+	int16_t initial_gain, bool reanchor_at_s)
 {
 	struct v34_receive_timing initialized;
 
@@ -79,6 +80,7 @@ enum v34_receive_timing_result v34_receive_timing_init(
 	    v34_timing_filter_init(&initialized.timing_filter) !=
 		    V34_TIMING_FILTER_OK)
 		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
+	initialized.reanchor_at_s = reanchor_at_s;
 	initialized.initialized = true;
 	if (!v34_receive_timing_is_valid(&initialized))
 		return V34_RECEIVE_TIMING_INVALID_ARGUMENT;
@@ -256,6 +258,7 @@ static enum v34_receive_timing_result drain_timing(
 		if (timing->timing_output_count == V34_RECEIVE_TIMING_OUTPUTS) {
 			enum v34_s_tone_detector_result detector_result;
 			bool detector_was_acquired = timing->s_detector.acquired;
+			bool detector_was_detected = timing->s_detector.detected;
 			uint16_t increment;
 
 			detector_result = v34_s_tone_detector_end_group(
@@ -271,6 +274,16 @@ static enum v34_receive_timing_result drain_timing(
 			    v34_timing_control_begin_acquisition(
 				    &timing->timing, true) != V34_TIMING_CONTROL_OK)
 				return V34_RECEIVE_TIMING_INVALID_STATE;
+			if (!detector_was_detected && timing->s_detector.detected &&
+			    timing->reanchor_at_s) {
+				/* Discard the provisional carrier epoch without discarding
+				 * the qualified S group that established this boundary. */
+				if (v34_timing_control_begin_acquisition(
+					    &timing->timing, true) !=
+					    V34_TIMING_CONTROL_OK)
+					return V34_RECEIVE_TIMING_INVALID_STATE;
+				timing->reanchor_at_s = false;
+			}
 			if (v34_timing_control_process(
 				    &timing->timing,
 				    timing->timing_observations,

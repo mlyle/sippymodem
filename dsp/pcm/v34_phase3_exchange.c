@@ -142,10 +142,7 @@ bool v34_phase3_exchange_is_valid(
 		    exchange->stop_transmit_requested ||
 		    exchange->transmit_stopped ||
 		    (exchange->transmit_started && !receiver_complete(exchange)) ||
-		    (receiver_complete(exchange) &&
-		     exchange->receive.phase4_s_rearmed !=
-			     (exchange->transmit.phase3.stage >=
-			      V34_PHASE3_TRANSMITTER_J)))
+		    exchange->receive.phase4_s_rearmed)
 			return false;
 	} else if (exchange->local_role == V34_ANSWERING_STATION) {
 		if (!answer_silence_samples(sample_rate, &expected_silence) ||
@@ -254,18 +251,18 @@ bool v34_phase3_exchange_handoff_is_valid(
 	    !roles_are_reciprocal(&handoff->transmit.line.profile,
 				 &handoff->receive.transmitting_profile))
 		return false;
+	if (handoff->receive.phase4_s_rearmed)
+		return false;
 	return handoff->transmit.line.profile.local_role ==
 		       V34_CALLING_STATION ?
 		       handoff->transmit.stage ==
 			       V34_TRAINING_TRANSMITTER_PHASE3 &&
 		       handoff->transmit.phase3.stage ==
-			       V34_PHASE3_TRANSMITTER_J &&
-			       handoff->receive.phase4_s_rearmed :
+			       V34_PHASE3_TRANSMITTER_J :
 		       handoff->transmit.stage ==
 			       V34_TRAINING_TRANSMITTER_ANSWER_S &&
 		       handoff->transmit.phase3.stage ==
-			       V34_PHASE3_TRANSMITTER_COMPLETE &&
-			       !handoff->receive.phase4_s_rearmed;
+			       V34_PHASE3_TRANSMITTER_COMPLETE;
 }
 
 static enum v34_phase3_exchange_result drive_silence(
@@ -344,7 +341,7 @@ static enum v34_phase3_exchange_result drive_receiver(
 		return V34_PHASE3_EXCHANGE_OK;
 	/* The caller's answering peer cannot begin Phase 4 S before receiving
 	 * local J. Discard the remaining Phase 3 peer stream (and any local
-	 * echo), then rearm on that exact local transmit boundary. */
+	 * echo); the Phase 4 owner performs the fresh receive rearm at handoff. */
 	if (exchange->local_role == V34_CALLING_STATION &&
 	    receiver_complete(exchange) &&
 	    !exchange->receive.phase4_s_rearmed)
@@ -441,13 +438,6 @@ enum v34_phase3_exchange_result v34_phase3_exchange_sample(
 	if (result != V34_PHASE3_EXCHANGE_OK) {
 		exchange->failed = true;
 		return result;
-	}
-	if ((emitted & V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0u &&
-	    next.local_role == V34_CALLING_STATION &&
-	    v34_phase34_receiver_rearm_phase4_s(&next.receive) !=
-		    V34_PHASE34_RECEIVER_OK) {
-		exchange->failed = true;
-		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 	}
 	result = drive_receiver(&next, received_sample, &emitted);
 	if (result_is_terminal(result))
