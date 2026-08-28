@@ -47,6 +47,23 @@ static inline bool point_is_finite(const struct qam_point *point)
 	       isfinite(point->quadrature);
 }
 
+/* Accept a finite point whose squared magnitude fits a finite positive limit.
+ * A small relative tolerance covers floating-point roundoff at the boundary. */
+static inline bool qam_point_fits_power(
+	const struct qam_point *point, double maximum_point_power)
+{
+	double power;
+
+	if (!point_is_finite(point) || !isfinite(maximum_point_power) ||
+	    maximum_point_power <= 0.0)
+		return false;
+	power = point->in_phase * point->in_phase +
+		point->quadrature * point->quadrature;
+	return isfinite(power) &&
+	       (power <= maximum_point_power ||
+		power / maximum_point_power <= 1.0 + 1e-12);
+}
+
 struct qam_active_symbol {
 	uint64_t age_units;
 	struct qam_point point;

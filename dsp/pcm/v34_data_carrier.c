@@ -14,19 +14,6 @@ static bool power_fits(double power, double maximum)
 		power / maximum <= 1.0 + V34_DATA_POINT_POWER_EPSILON);
 }
 
-static bool point_fits(
-	const struct qam_point *point, double maximum_power)
-{
-	double power;
-
-	if (point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature))
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return power_fits(power, maximum_power);
-}
-
 static bool scaled_point_power(
 	const struct v34_power_normalizer *normalizer,
 	double point_gain, double *maximum_power)
@@ -171,7 +158,7 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
 	accepting = v34_pulse_modulator_needs_point(&carrier->modulator);
 	if ((point != NULL) != accepting ||
-	    (point != NULL && !point_fits(
+	    (point != NULL && !qam_point_fits_power(
 			      point, carrier->normalizer
 					     .maximum_normalized_point_power)))
 		return V34_DATA_CARRIER_INVALID_ARGUMENT;
@@ -181,7 +168,7 @@ enum v34_data_carrier_result v34_data_carrier_sample(
 			.in_phase = point->in_phase * next.point_gain,
 			.quadrature = point->quadrature * next.point_gain,
 		};
-		if (!point_fits(
+		if (!qam_point_fits_power(
 			    &scaled_point,
 			    next.modulator.maximum_point_power))
 			return V34_DATA_CARRIER_NUMERIC_FAILURE;

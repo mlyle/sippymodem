@@ -2,25 +2,7 @@
 
 #include "v34_data_points.h"
 
-#include <math.h>
 #include <stddef.h>
-
-static const double V34_DATA_POINT_POWER_EPSILON = 1e-12;
-
-static bool point_fits(
-	const struct qam_point *point, double maximum_power)
-{
-	double power;
-
-	if (!isfinite(point->in_phase) || !isfinite(point->quadrature))
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return isfinite(power) &&
-	       (power <= maximum_power ||
-		power / maximum_power <=
-			1.0 + V34_DATA_POINT_POWER_EPSILON);
-}
 
 bool v34_data_points_is_valid(
 	const struct v34_data_points *points)
@@ -40,7 +22,7 @@ bool v34_data_points_is_valid(
 		return false;
 	for (size_t index = 0; index < V34_SYMBOLS_PER_MAPPING_FRAME;
 	     ++index) {
-		if (!point_fits(
+		if (!qam_point_fits_power(
 			    &points->point[index],
 			    points->normalizer.maximum_normalized_point_power))
 			return false;

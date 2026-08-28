@@ -145,21 +145,6 @@ static bool channel_matches_profile(
 	       v34_line_channel_matches(profile, channel);
 }
 
-static bool point_fits(
-	const struct qam_point *point, double maximum_power)
-{
-	double power;
-
-	if (!point_is_finite(point) || !isfinite(maximum_power) ||
-	    maximum_power <= 0.0)
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return isfinite(power) &&
-	       (power <= maximum_power ||
-		power / maximum_power <= 1.0 + 1e-12);
-}
-
 static const int16_t *selected_preemphasis(
 	enum v34_symbol_rate symbol_rate, uint8_t filter_index)
 {
@@ -415,7 +400,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	accepting = v34_pulse_modulator_needs_point(modulator);
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
-	     (!point_fits(point, modulator->maximum_point_power) ||
+	     (!qam_point_fits_power(point, modulator->maximum_point_power) ||
 	      !fixed_coordinate(point->in_phase, &fixed_in_phase) ||
 	      !fixed_coordinate(point->quadrature, &fixed_quadrature))))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;

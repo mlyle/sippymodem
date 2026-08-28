@@ -21,26 +21,10 @@ enum {
 
 static const double QAM_PI = 3.1415926535897932384626433832795;
 static const double QAM_SINGULARITY_EPSILON = 1e-10;
-static const double QAM_POINT_EPSILON = 1e-12;
 /* Unit-average-power square training constellations reach 9/5 at a corner. */
 static const double QAM_MAX_POINT_POWER = 9.0 / 5.0;
 static const double QAM_MIN_ACQUISITION_POWER = 64.0;
 static const double QAM_DEFAULT_TIMING_POWER_HYSTERESIS = 1.005;
-
-static bool transmit_point_is_valid(
-	const struct qam_point *point, double maximum_point_power)
-{
-	double power;
-
-	if (!point_is_finite(point) || !isfinite(maximum_point_power) ||
-	    maximum_point_power <= 0.0)
-		return false;
-	power = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	return isfinite(power) &&
-	       (power <= maximum_point_power ||
-		power / maximum_point_power <= 1.0 + QAM_POINT_EPSILON);
-}
 
 enum qam_result qam_nearest_quarter_turn(
 	const struct qam_point *previous,
@@ -191,7 +175,7 @@ bool qam_modulator_is_valid(
 		return false;
 	for (size_t index = 0; index < modulator->active_count; ++index)
 		if (modulator->active[index].age_units > support ||
-		    !transmit_point_is_valid(
+		    !qam_point_fits_power(
 			    &modulator->active[index].point,
 			    modulator->maximum_point_power))
 			return false;
@@ -319,7 +303,7 @@ enum qam_result qam_modulator_sample_f64(
 	double waveform;
 
 	if (!qam_modulator_is_valid(modulator) ||
-	    !transmit_point_is_valid(point, modulator->maximum_point_power) ||
+	    !qam_point_fits_power(point, modulator->maximum_point_power) ||
 	    sample == NULL || symbol_accepted == NULL ||
 	    (modulator->needs_symbol &&
 	     modulator->active_count == QAM_MAX_ACTIVE_SYMBOLS))

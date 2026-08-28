@@ -83,6 +83,14 @@ static bool test_point_validation(void)
 	      !point_is_finite(&bad_in_phase) &&
 	      !point_is_finite(&bad_quadrature),
 	      "QAM point finiteness accepted a non-finite coordinate");
+	CHECK(qam_point_fits_power(&finite, 5.0) &&
+	      qam_point_fits_power(&finite, 5.0 - 1e-12) &&
+	      !qam_point_fits_power(&finite, 4.0) &&
+	      !qam_point_fits_power(NULL, 5.0) &&
+	      !qam_point_fits_power(&bad_in_phase, 5.0) &&
+	      !qam_point_fits_power(&finite, 0.0) &&
+	      !qam_point_fits_power(&finite, NAN),
+	      "QAM point power bounds changed");
 	return true;
 }
 
