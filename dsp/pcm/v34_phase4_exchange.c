@@ -9,31 +9,16 @@
 #include <stddef.h>
 #include <string.h>
 
-static struct v34_mp_parameters *record_common(
-	struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
-static const struct v34_mp_parameters *record_common_const(
-	const struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static void set_record_acknowledgment(
 	struct v34_mp_record *record, bool acknowledged)
 {
-	record_common(record)->acknowledges_peer_mp = acknowledged;
+	v34_mp_record_common_parameters_mutable(record)->acknowledges_peer_mp =
+		acknowledged;
 }
 
 static bool record_is_acknowledged(const struct v34_mp_record *record)
 {
-	return record_common_const(record)->acknowledges_peer_mp;
+	return v34_mp_record_common_parameters(record)->acknowledges_peer_mp;
 }
 
 static bool encode_record(
@@ -621,8 +606,8 @@ static enum v34_phase4_exchange_result finish_feedback_training(
 static enum v34_phase4_exchange_result select_trained_receive_rate(
 	struct v34_phase4_exchange *exchange)
 {
-	struct v34_mp_parameters *parameters = record_common(
-		&exchange->transmit_mp);
+	struct v34_mp_parameters *parameters =
+		v34_mp_record_common_parameters_mutable(&exchange->transmit_mp);
 	uint8_t *maximum = local_role(exchange) == V34_CALLING_STATION ?
 		&parameters->maximum_answer_to_call_rate_2400_bps_units :
 		&parameters->maximum_call_to_answer_rate_2400_bps_units;

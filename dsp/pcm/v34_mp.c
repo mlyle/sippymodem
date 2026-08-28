@@ -88,14 +88,6 @@ bool v34_mp_record_is_valid(const struct v34_mp_record *record)
 	       v34_mp_type1_parameters_are_valid(&record->parameters.type1);
 }
 
-static const struct v34_mp_parameters *record_common(
-	const struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static uint8_t minimum_rate(uint8_t first, uint8_t second)
 {
 	return first < second ? first : second;
@@ -126,8 +118,8 @@ enum v34_mp_rate_result v34_mp_select_rates(
 	if (!v34_mp_record_is_valid(first) ||
 	    !v34_mp_record_is_valid(second) || rates == NULL)
 		return V34_MP_RATE_INVALID_ARGUMENT;
-	first_common = record_common(first);
-	second_common = record_common(second);
+	first_common = v34_mp_record_common_parameters(first);
+	second_common = v34_mp_record_common_parameters(second);
 	enabled = (uint16_t)(first_common->data_rate_capability_mask &
 			     second_common->data_rate_capability_mask);
 	call_limit = minimum_rate(

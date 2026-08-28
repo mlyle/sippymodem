@@ -87,6 +87,28 @@ struct v34_mp_record {
 	union v34_mp_received_parameters parameters;
 };
 
+static inline const struct v34_mp_parameters *
+v34_mp_record_common_parameters(const struct v34_mp_record *record)
+{
+	if (record == NULL)
+		return NULL;
+	if (record->type == V34_MP_RECORD_TYPE0)
+		return &record->parameters.type0;
+	return record->type == V34_MP_RECORD_TYPE1 ?
+		       &record->parameters.type1.common : NULL;
+}
+
+static inline struct v34_mp_parameters *
+v34_mp_record_common_parameters_mutable(struct v34_mp_record *record)
+{
+	if (record == NULL)
+		return NULL;
+	if (record->type == V34_MP_RECORD_TYPE0)
+		return &record->parameters.type0;
+	return record->type == V34_MP_RECORD_TYPE1 ?
+		       &record->parameters.type1.common : NULL;
+}
+
 bool v34_mp_record_is_valid(const struct v34_mp_record *record);
 
 enum v34_mp_rate_result {

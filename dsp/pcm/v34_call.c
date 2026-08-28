@@ -8,14 +8,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static const struct v34_mp_parameters *mp_common(
-	const struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool configuration_is_valid(
 	const struct v34_call_configuration *configuration)
 {
@@ -28,7 +20,8 @@ static bool configuration_is_valid(
 	    !v34_constellation_size_is_valid(
 		    configuration->phase3.requested_remote_constellation) ||
 	    !v34_mp_record_is_valid(&configuration->phase4.transmit_mp) ||
-	    mp_common(&configuration->phase4.transmit_mp)
+	    v34_mp_record_common_parameters(
+		    &configuration->phase4.transmit_mp)
 		    ->acknowledges_peer_mp ||
 	    !isfinite(configuration->phase4.data_equalizer_adaptation) ||
 	    configuration->phase4.data_equalizer_adaptation < 0.0 ||
@@ -62,7 +55,8 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 		    call->phase3_configuration.requested_remote_constellation) ||
 	    !v34_mp_record_is_valid(
 		    &call->phase4_configuration.transmit_mp) ||
-	    mp_common(&call->phase4_configuration.transmit_mp)
+	    v34_mp_record_common_parameters(
+		    &call->phase4_configuration.transmit_mp)
 		    ->acknowledges_peer_mp ||
 	    !isfinite(call->phase4_configuration.data_equalizer_adaptation) ||
 	    call->phase4_configuration.data_equalizer_adaptation < 0.0 ||

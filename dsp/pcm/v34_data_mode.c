@@ -49,19 +49,12 @@ bool v34_data_mode_is_valid(const struct v34_data_mode *mode)
 			mode->receive.primary_data_rate_2400_bps_units);
 }
 
-static const struct v34_mp_parameters *record_common(
-	const struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static void direction_from_record(
 	const struct v34_mp_record *record, uint8_t rate,
 	struct v34_data_direction_parameters *direction)
 {
-	const struct v34_mp_parameters *common = record_common(record);
+	const struct v34_mp_parameters *common =
+		v34_mp_record_common_parameters(record);
 	struct v34_data_direction_parameters selected = {
 		.trellis_selection = common->remote_transmitter_trellis,
 		.nonlinear_parameter =

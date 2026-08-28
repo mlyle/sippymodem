@@ -166,19 +166,6 @@ static struct v34_mp_record mp_record(enum v34_station_role role)
 	return record;
 }
 
-static struct v34_mp_parameters *mp_common(struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		&record->parameters.type0 : &record->parameters.type1.common;
-}
-
-static const struct v34_mp_parameters *mp_common_const(
-	const struct v34_mp_record *record)
-{
-	return record->type == V34_MP_RECORD_TYPE0 ?
-		&record->parameters.type0 : &record->parameters.type1.common;
-}
-
 static bool mp_records_are_equal(
 	const struct v34_mp_record *left,
 	const struct v34_mp_record *right)
@@ -238,8 +225,9 @@ static bool endpoint_init_with_rates(
 		.phase4_configuration = phase4_configuration(role),
 		.transmit_bit = role == V34_ANSWERING_STATION,
 	};
-	struct v34_mp_parameters *parameters = mp_common(
-		&initialized.phase4_configuration.transmit_mp);
+	struct v34_mp_parameters *parameters =
+		v34_mp_record_common_parameters_mutable(
+			&initialized.phase4_configuration.transmit_mp);
 
 	local.projected_data_rate_2400_bps_units = local_projected_rate;
 	peer.projected_data_rate_2400_bps_units = peer_projected_rate;
@@ -629,7 +617,7 @@ static bool test_peer_mp_releases_trn(void)
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
 	      "early-peer-MP endpoints did not initialize");
-	caller_parameters = mp_common(
+	caller_parameters = v34_mp_record_common_parameters_mutable(
 		&caller.phase4_configuration.transmit_mp);
 	caller_parameters->maximum_call_to_answer_rate_2400_bps_units = 8;
 	caller_parameters->maximum_answer_to_call_rate_2400_bps_units = 8;
@@ -704,7 +692,8 @@ static bool test_peer_mp_releases_trn(void)
 		      "early peer MP exchange stopped at sample %zu", index);
 		if ((events & V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED) == 0)
 			continue;
-		caller_parameters = mp_common(&caller.phase4.transmit_mp);
+		caller_parameters = v34_mp_record_common_parameters_mutable(
+			&caller.phase4.transmit_mp);
 		CHECK((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) != 0 &&
 		      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
 		      caller.trn_symbols_at_mp < 2u * 3000u &&
@@ -740,9 +729,9 @@ static bool test_phase4_owns_selected_rates(void)
 	      endpoint_init_with_rates(
 		      &answerer, V34_ANSWERING_STATION, 6, 4, 8),
 	      "asymmetric projected-rate endpoints did not initialize");
-	caller_configuration = mp_common_const(
+	caller_configuration = v34_mp_record_common_parameters(
 		&caller.phase4_configuration.transmit_mp);
-	answerer_configuration = mp_common_const(
+	answerer_configuration = v34_mp_record_common_parameters(
 		&answerer.phase4_configuration.transmit_mp);
 	CHECK(caller_configuration
 		      ->maximum_call_to_answer_rate_2400_bps_units == 8 &&
@@ -756,8 +745,10 @@ static bool test_phase4_owns_selected_rates(void)
 	CHECK(run_initialized_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
 	      "asymmetric projected-rate exchange failed");
-	caller_mp = mp_common_const(&caller.phase4.transmit_mp);
-	answerer_mp = mp_common_const(&answerer.phase4.transmit_mp);
+	caller_mp = v34_mp_record_common_parameters(
+		&caller.phase4.transmit_mp);
+	answerer_mp = v34_mp_record_common_parameters(
+		&answerer.phase4.transmit_mp);
 	CHECK(caller_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&
 	      caller_mp->maximum_answer_to_call_rate_2400_bps_units == 8 &&
 	      answerer_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&

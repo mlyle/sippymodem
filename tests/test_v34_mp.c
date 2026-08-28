@@ -762,6 +762,15 @@ static bool test_rate_selection(void)
 	second_parameters.asymmetric_rates_enabled = true;
 	first = type0_record(&first_parameters);
 	second = type1_record(&second_parameters);
+	CHECK(v34_mp_record_common_parameters(&first) ==
+		      &first.parameters.type0 &&
+	      v34_mp_record_common_parameters_mutable(&first) ==
+		      &first.parameters.type0 &&
+	      v34_mp_record_common_parameters(&second) ==
+		      &second.parameters.type1.common &&
+	      v34_mp_record_common_parameters_mutable(&second) ==
+		      &second.parameters.type1.common,
+	      "MP record accessors selected the wrong record member");
 	CHECK(v34_mp_record_is_valid(&first) &&
 	      v34_mp_record_is_valid(&second) &&
 	      v34_mp_select_rates(&first, &second, &selected) ==
@@ -817,7 +826,11 @@ static bool test_rate_selection(void)
 
 	invalid = first;
 	invalid.type = (enum v34_mp_record_type)99;
-	CHECK(!v34_mp_record_is_valid(NULL) &&
+	CHECK(v34_mp_record_common_parameters(NULL) == NULL &&
+	      v34_mp_record_common_parameters_mutable(NULL) == NULL &&
+	      v34_mp_record_common_parameters(&invalid) == NULL &&
+	      v34_mp_record_common_parameters_mutable(&invalid) == NULL &&
+	      !v34_mp_record_is_valid(NULL) &&
 	      !v34_mp_record_is_valid(&invalid) &&
 	      v34_mp_select_rates(NULL, &second, &selected) ==
 		      V34_MP_RATE_INVALID_ARGUMENT &&
