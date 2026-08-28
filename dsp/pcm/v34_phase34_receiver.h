@@ -57,9 +57,9 @@ struct v34_phase34_receive_output {
 };
 
 /* Own the fixed-point receive lineage from the peer's Phase 3 S through
- * mapped data. The caller rearms timing and equalization when Phase 4 takes
- * ownership at local J because the answering peer begins a distinct S signal;
- * all other semantic boundaries preserve the physical lineage. */
+ * mapped data. At local J the caller starts a distinct Phase 4 S semantic
+ * window while preserving the learned timing and equalizer; all other
+ * semantic boundaries preserve that physical lineage too. */
 struct v34_phase34_receiver {
 	struct v34_receive_timing timing;
 	struct v34_adaptive_equalizer equalizer;
@@ -100,11 +100,11 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output);
 
-/* Begin the caller's distinct Phase 4 receive acquisition. No received sample
- * is consumed by this transition. REANCHOR_AT_S makes any carrier acquired
- * before the peer response provisional until S is fully qualified. */
+/* Begin the caller's distinct Phase 4 S/S-bar semantic window while retaining
+ * the learned timing and equalizer. No received sample is consumed by this
+ * transition. */
 enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
-	struct v34_phase34_receiver *receiver, bool reanchor_at_s);
+	struct v34_phase34_receiver *receiver);
 
 /* Resolve the pending MP record without embedding negotiation policy in the
  * receive owner. */

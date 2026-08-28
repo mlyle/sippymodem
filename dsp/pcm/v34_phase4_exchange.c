@@ -500,11 +500,11 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 		    peer_transmit_constellation ||
 	    initialized.receive.stage != V34_PHASE34_RECEIVER_PHASE4)
 		return V34_PHASE4_EXCHANGE_SEQUENCE_MISMATCH;
-	/* A delayed peer response can leave J or echo in the provisional carrier
-	 * acquisition window. Anchor the final receive epoch at qualified S. */
+	/* The caller starts a distinct Phase 4 S/S-bar semantic window without
+	 * breaking the physical timing and equalizer lineage learned in Phase 3. */
 	if (handoff->transmit.line.profile.local_role == V34_CALLING_STATION &&
 	    v34_phase34_receiver_rearm_phase4_s(
-		    &initialized.receive, round_trip_delay_samples != 0u) !=
+		    &initialized.receive) !=
 		    V34_PHASE34_RECEIVER_OK)
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 	initialized.transmit_mp = configuration->transmit_mp;

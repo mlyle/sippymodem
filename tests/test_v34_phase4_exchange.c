@@ -323,7 +323,7 @@ static bool endpoint_sample(
 		if (endpoint->handoff.transmit.line.profile.local_role ==
 			    V34_CALLING_STATION &&
 		    v34_phase34_receiver_rearm_phase4_s(
-			    &expected_receive, false) !=
+			    &expected_receive) !=
 			    V34_PHASE34_RECEIVER_OK)
 			return false;
 		if (v34_phase4_exchange_init(
@@ -979,16 +979,19 @@ static bool test_validation_and_transactionality(void)
 			      &exchange, &caller.handoff, &configuration, 17u) ==
 			      V34_PHASE4_EXCHANGE_OK &&
 		      v34_phase34_receiver_rearm_phase4_s(
-			      &expected_receive, true) ==
+			      &expected_receive) ==
 			      V34_PHASE34_RECEIVER_OK &&
 		      exchange.receive.phase4_s_rearmed &&
-		      exchange.receive.timing.reanchor_at_s &&
-		      expected_receive.timing.reanchor_at_s &&
-		      !v34_receive_timing_is_acquired(&exchange.receive.timing) &&
-		      exchange.receive.equalizer.epoch == 0u &&
+		      v34_receive_timing_is_acquired(&exchange.receive.timing) &&
+		      memcmp(&exchange.receive.timing,
+			     &caller.handoff.receive.timing,
+			     sizeof(exchange.receive.timing)) == 0 &&
+		      memcmp(&exchange.receive.equalizer,
+			     &caller.handoff.receive.equalizer,
+			     sizeof(exchange.receive.equalizer)) == 0 &&
 		      memcmp(&exchange.receive, &expected_receive,
 			     sizeof(exchange.receive)) == 0,
-		      "caller Phase 4 did not own the fresh S acquisition");
+		      "caller Phase 4 did not retain the receive lineage");
 
 		configuration = phase4_configuration(V34_ANSWERING_STATION);
 		CHECK(v34_phase4_exchange_init(

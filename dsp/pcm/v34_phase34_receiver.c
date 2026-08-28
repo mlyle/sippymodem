@@ -178,20 +178,13 @@ bool v34_phase34_receiver_is_valid(
 		return receiver->equalizer.epoch == 0u &&
 		       receiver->equalizer.inputs_since_observation == 0u &&
 		       !receiver->equalizer.decision_pending &&
-		       ((receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
-			(receiver->semantic.phase3.stage ==
+		       receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
+		       (receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_S ||
-			 receiver->semantic.phase3.stage ==
+			receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S) &&
-			receiver->semantic.phase3.s.buffered_decisions == 0u &&
-			!receiver->semantic.phase3.s.target_seeded) ||
-			(receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
-			 receiver->phase4_s_rearmed &&
-			 receiver->semantic.phase4.stage ==
-				 V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
-			 receiver->semantic.phase4.answer_s.buffered_decisions ==
-				 0u &&
-			 !receiver->semantic.phase4.answer_s.target_seeded));
+		       receiver->semantic.phase3.s.buffered_decisions == 0u &&
+		       !receiver->semantic.phase3.s.target_seeded;
 	return true;
 }
 
@@ -712,31 +705,21 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 }
 
 enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
-	struct v34_phase34_receiver *receiver, bool reanchor_at_s)
+	struct v34_phase34_receiver *receiver)
 {
 	struct v34_phase34_receiver next;
-	struct v34_receive_timing timing;
-	struct v34_adaptive_equalizer equalizer;
 
 	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
 	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4 ||
 	    receiver->semantic.phase4.stage !=
 		    V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
-	    receiver->phase4_s_rearmed)
+	    receiver->phase4_s_rearmed || receiver->equalizer.decision_pending ||
+	    receiver->equalizer.inputs_since_observation != 0u ||
+	    !v34_receive_timing_is_acquired(&receiver->timing) ||
+	    receiver->equalizer.epoch <
+		    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	if (v34_receive_timing_init(
-		    &timing, &receiver->transmitting_profile,
-		    receiver->timing.gain.gain, reanchor_at_s) !=
-		    V34_RECEIVE_TIMING_OK ||
-	    v34_adaptive_equalizer_init(&equalizer) !=
-		    V34_ADAPTIVE_EQUALIZER_OK ||
-	    v34_adaptive_equalizer_set_feedback_mode(
-		    &equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 	next = *receiver;
-	next.timing = timing;
-	next.equalizer = equalizer;
 	next.tracking_started = false;
 	next.tracking_symbols = 0u;
 	next.decoder_power_q15 = V34_PHASE34_INITIAL_DECODER_POWER_Q15;
