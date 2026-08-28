@@ -180,10 +180,10 @@ static bool run_generated_duplex_exchange(
 	struct v34_phase3_profile answerer_profile =
 		generated_profile(V34_ANSWERING_STATION, symbol_rate);
 	uint32_t answerer_trn_symbols =
-		symbol_rate == V34_SYMBOL_RATE_2743 ? 5053u :
-		symbol_rate == V34_SYMBOL_RATE_2800 ? 5168u :
-		symbol_rate == V34_SYMBOL_RATE_3200 ? 5968u :
-		symbol_rate == V34_SYMBOL_RATE_3429 ? 6425u : 5568u;
+		symbol_rate == V34_SYMBOL_RATE_2743 ? 4268u :
+		symbol_rate == V34_SYMBOL_RATE_2800 ? 4375u :
+		symbol_rate == V34_SYMBOL_RATE_3200 ? 5125u :
+		symbol_rate == V34_SYMBOL_RATE_3429 ? 5554u : 4750u;
 	struct v34_phase3_exchange_configuration caller_configuration =
 		configuration(V34_CONSTELLATION_16_POINT);
 	struct v34_phase3_exchange_configuration answerer_configuration =
@@ -390,12 +390,12 @@ static bool test_trn_duration_policy(void)
 		enum v34_symbol_rate rate;
 		uint32_t symbols;
 	} cases[] = {
-		{ V34_SYMBOL_RATE_2400, 4368 },
-		{ V34_SYMBOL_RATE_2743, 5053 },
-		{ V34_SYMBOL_RATE_2800, 5168 },
-		{ V34_SYMBOL_RATE_3000, 5568 },
-		{ V34_SYMBOL_RATE_3200, 5968 },
-		{ V34_SYMBOL_RATE_3429, 6425 },
+		{ V34_SYMBOL_RATE_2400, 3625 },
+		{ V34_SYMBOL_RATE_2743, 4268 },
+		{ V34_SYMBOL_RATE_2800, 4375 },
+		{ V34_SYMBOL_RATE_3000, 4750 },
+		{ V34_SYMBOL_RATE_3200, 5125 },
+		{ V34_SYMBOL_RATE_3429, 5554 },
 	};
 	struct v34_phase3_exchange_configuration config =
 		configuration(V34_CONSTELLATION_4_POINT);

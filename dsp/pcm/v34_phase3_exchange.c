@@ -7,6 +7,12 @@
 #include <limits.h>
 #include <stddef.h>
 
+enum {
+	V34_PHASE3_ECHO_TRAINING_SCALE_NUMERATOR = 15,
+	V34_PHASE3_ECHO_TRAINING_SCALE_SHIFT = 3,
+	V34_PHASE3_ECHO_TRAINING_OFFSET_SYMBOLS = 0x024c,
+};
+
 static bool roles_are_reciprocal(
 	const struct v34_phase3_profile *local,
 	const struct v34_phase3_profile *peer)
@@ -42,9 +48,9 @@ static bool receiver_complete(
 static bool zero_md_trn_target(
 	const struct v34_phase3_profile *profile, uint32_t *symbols)
 {
-	uint64_t two_seconds;
-	uint64_t prefix_symbols = V34_PHASE3_S_SEQUENCE_SYMBOLS +
-		V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+	uint64_t baud;
+	uint64_t terminal_count;
+	uint64_t pp_terminal_count = V34_PHASE3_PP_SEQUENCE_SYMBOLS - 1u;
 
 	if (!v34_phase3_profile_is_valid(profile) || symbols == NULL ||
 	    profile->md_symbol_count != 0)
@@ -53,15 +59,21 @@ static bool zero_md_trn_target(
 		*symbols = V34_PHASE3_TRN_MIN_SYMBOLS;
 		return true;
 	}
-	/* Give the answerer's peer the complete zero-RTD line-training window.
-	 * S/S-bar and PP occupy the prefix; the measured round-trip-delay
-	 * allowance remains deliberately unused. */
-	two_seconds = (uint64_t)profile->symbol_rate_numerator * 2u /
+	/* The answerer's echo-training counter spans PP and TRN. PP leaves it
+	 * one below its symbol count; zero measured delay ends it at 15/8 baud
+	 * minus the fixed echo-training offset. */
+	baud = ((uint64_t)profile->symbol_rate_numerator +
+		profile->symbol_rate_denominator / 2u) /
 		profile->symbol_rate_denominator;
-	if (two_seconds <= prefix_symbols ||
-	    two_seconds - prefix_symbols > UINT32_MAX)
+	terminal_count = baud * V34_PHASE3_ECHO_TRAINING_SCALE_NUMERATOR >>
+		V34_PHASE3_ECHO_TRAINING_SCALE_SHIFT;
+	if (terminal_count <= V34_PHASE3_ECHO_TRAINING_OFFSET_SYMBOLS)
 		return false;
-	*symbols = (uint32_t)(two_seconds - prefix_symbols);
+	terminal_count -= V34_PHASE3_ECHO_TRAINING_OFFSET_SYMBOLS;
+	if (terminal_count <= pp_terminal_count ||
+	    terminal_count - pp_terminal_count > UINT32_MAX)
+		return false;
+	*symbols = (uint32_t)(terminal_count - pp_terminal_count);
 	return *symbols >= V34_PHASE3_TRN_MIN_SYMBOLS;
 }
 
