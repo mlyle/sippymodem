@@ -108,11 +108,6 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
 	uint8_t clockwise_quarter_turns);
 
-enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
-	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
-	uint8_t clockwise_quarter_turns,
-	struct v34_analytic_sample observation);
-
 /* Receive one fixed-domain decision and generate the alternating S target
  * from the same owned cursor. This is the adaptive path used by V.34 Phase 3
  * and Phase 4. Rejected and completed calls leave both outputs unchanged. */

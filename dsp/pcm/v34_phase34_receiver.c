@@ -860,19 +860,3 @@ v34_phase34_receiver_set_data_timing_frozen(
 	*receiver = next;
 	return V34_PHASE34_RECEIVER_OK;
 }
-
-enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
-	const struct v34_phase34_receiver *receiver,
-	struct v34_phase3_decision_handoff *handoff)
-{
-	if (handoff == NULL ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    handoff, sizeof(*handoff)))
-		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
-	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
-	    receiver->stage == V34_PHASE34_RECEIVER_PHASE3)
-		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	*handoff = receiver->phase3_handoff;
-	return V34_PHASE34_RECEIVER_OK;
-}

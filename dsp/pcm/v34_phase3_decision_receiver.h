@@ -75,11 +75,6 @@ struct v34_phase3_decision_handoff {
 	struct v34_phase3_j_detection j;
 };
 
-enum v34_phase3_decision_receiver_result
-v34_phase3_decision_receiver_init(
-	struct v34_phase3_decision_receiver *receiver,
-	enum v34_station_role transmitting_role, uint32_t md_symbols);
-
 /* Start from a bounded suffix when timing acquisition completes during S. */
 enum v34_phase3_decision_receiver_result
 v34_phase3_decision_receiver_init_suffix(

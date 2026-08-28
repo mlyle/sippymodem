@@ -112,15 +112,6 @@ bool v34_phase3_decision_handoff_is_valid(
 }
 
 enum v34_phase3_decision_receiver_result
-v34_phase3_decision_receiver_init(
-	struct v34_phase3_decision_receiver *receiver,
-	enum v34_station_role transmitting_role, uint32_t md_symbols)
-{
-	return v34_phase3_decision_receiver_init_suffix(
-		receiver, transmitting_role, md_symbols, V34_PHASE3_S_SYMBOLS);
-}
-
-enum v34_phase3_decision_receiver_result
 v34_phase3_decision_receiver_init_suffix(
 	struct v34_phase3_decision_receiver *receiver,
 	enum v34_station_role transmitting_role, uint32_t md_symbols,

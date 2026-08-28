@@ -193,8 +193,6 @@ static bool test_validation(void)
 	struct v34_phase3_profile reduced;
 	struct v34_phase34_receiver receiver;
 	struct v34_phase34_receiver saved;
-	struct v34_phase3_decision_handoff handoff;
-	struct v34_phase3_decision_handoff saved_handoff;
 	struct v34_phase34_receive_output output;
 	struct v34_phase34_receive_output saved_output;
 
@@ -260,8 +258,6 @@ static bool test_validation(void)
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "leading silence advanced semantic reception or output");
 	saved = receiver;
-	memset(&handoff, 0x7c, sizeof(handoff));
-	saved_handoff = handoff;
 	CHECK(v34_phase34_receiver_sample(&receiver, 1, NULL) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase34_receiver_sample(
@@ -272,12 +268,7 @@ static bool test_validation(void)
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_expect_e(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      v34_phase34_receiver_phase3_handoff(&receiver, NULL) ==
-		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase34_receiver_phase3_handoff(&receiver, &handoff) ==
-		      V34_PHASE34_RECEIVER_INVALID_STATE &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid controls changed an incomplete receiver");
 	return true;
 }
@@ -367,7 +358,6 @@ static bool test_training_case(
 {
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_phase34_receiver receiver;
-	struct v34_phase3_decision_handoff handoff;
 	struct line_source source;
 	unsigned int timing_events = 0;
 	unsigned int phase3_s_events = 0;
@@ -740,9 +730,8 @@ static bool test_training_case(
 	      phase4_s_events, trn_events, initial_records, final_record,
 	      source.completed_records, rejected_records, b1_frames,
 	      mapping_frames, receiver.stage, receiver.failed);
-	CHECK(v34_phase34_receiver_phase3_handoff(&receiver, &handoff) ==
-		      V34_PHASE34_RECEIVER_OK &&
-	      v34_phase3_decision_handoff_is_valid(&handoff) &&
+	CHECK(v34_phase3_decision_handoff_is_valid(
+		      &receiver.phase3_handoff) &&
 	      receiver.tracking_started && receiver.tracking_symbols != 0u &&
 	      receiver.equalizer.epoch != 0u &&
 	      !receiver.equalizer.decision_pending,

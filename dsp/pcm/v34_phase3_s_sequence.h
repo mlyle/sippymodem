@@ -4,7 +4,6 @@
 #define V34_PHASE3_S_SEQUENCE_H
 
 #include "qam.h"
-#include "v34_analytic_filter.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -47,14 +46,6 @@ enum v34_phase3_s_sequence_result
 v34_phase3_s_sequence_next(
 	struct v34_phase3_s_sequence *sequence,
 	struct qam_point *point,
-	enum v34_phase3_s_section *section);
-
-/* Emit the same S/S-bar sequence in the exact half-scale coordinates used by
- * the fixed V.34 receive equalizer. */
-enum v34_phase3_s_sequence_result
-v34_phase3_s_sequence_next_fixed(
-	struct v34_phase3_s_sequence *sequence,
-	struct v34_analytic_sample *point,
 	enum v34_phase3_s_section *section);
 
 #endif

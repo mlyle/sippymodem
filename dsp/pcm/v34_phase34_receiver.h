@@ -138,9 +138,4 @@ enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_timing_frozen(
 	struct v34_phase34_receiver *receiver, bool frozen);
 
-/* Copy the detected Phase 3 boundary after the receiver has left Phase 3. */
-enum v34_phase34_receiver_result v34_phase34_receiver_phase3_handoff(
-	const struct v34_phase34_receiver *receiver,
-	struct v34_phase3_decision_handoff *handoff);
-
 #endif /* V34_PHASE34_RECEIVER_H */

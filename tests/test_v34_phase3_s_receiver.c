@@ -53,6 +53,18 @@ static bool receive_marker(
 	return true;
 }
 
+static enum v34_phase3_s_receiver_result receive_adaptive_marker(
+	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
+	uint8_t clockwise_quarter_turns,
+	struct v34_analytic_sample observation)
+{
+	struct v34_phase3_s_adaptation ignored;
+
+	return v34_phase3_s_receiver_receive_adaptive(
+		receiver, quarter_point, clockwise_quarter_turns,
+		observation, &ignored);
+}
+
 static bool test_generated_rotations(void)
 {
 	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
@@ -315,7 +327,7 @@ static bool test_fixed_smeared_transition_confirmation(void)
 			hard_rotation = (uint8_t)((hard_rotation + 3u) & 3u);
 		if (symbol == first + 7u)
 			point = (struct v34_analytic_sample){ 0, 0 };
-		CHECK(v34_phase3_s_receiver_receive_fixed(
+		CHECK(receive_adaptive_marker(
 			      &receiver, 0, hard_rotation, point) == expected,
 		      "smeared transition changed at %zu", local);
 	}
@@ -502,7 +514,7 @@ static bool test_fixed_metric_fallback(void)
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "fixed metric receivers did not initialize");
 	for (size_t prefix = 0; prefix < 71; ++prefix)
-		CHECK(v34_phase3_s_receiver_receive_fixed(
+		CHECK(receive_adaptive_marker(
 			      &metric, 0, 0,
 			      (struct v34_analytic_sample){ 0, 0 }) ==
 			      V34_PHASE3_S_RECEIVER_OK,
@@ -519,7 +531,7 @@ static bool test_fixed_metric_fallback(void)
 		CHECK(v34_training_constellation_fixed_slice(
 			      V34_CONSTELLATION_4_POINT, point, &sliced) ==
 			      V34_CONSTELLATION_OK &&
-		      v34_phase3_s_receiver_receive_fixed(
+		      receive_adaptive_marker(
 			      &metric, sliced.quarter_point,
 			      sliced.clockwise_quarter_turns, point) ==
 			      V34_PHASE3_S_RECEIVER_OK &&
@@ -544,7 +556,7 @@ static bool test_fixed_metric_fallback(void)
 				V34_PHASE3_S_RECEIVER_DETECTED :
 				V34_PHASE3_S_RECEIVER_OK;
 
-		CHECK(v34_phase3_s_receiver_receive_fixed(
+		CHECK(receive_adaptive_marker(
 			      &metric, 0, 0,
 			      (struct v34_analytic_sample){ 0, 0 }) == expected,
 		      "fixed metric confirmation %u changed", confirmation);
@@ -585,7 +597,7 @@ static bool test_fixed_metric_exact_marker(void)
 		CHECK(v34_training_constellation_fixed_slice(
 			      V34_CONSTELLATION_4_POINT, point, &sliced) ==
 			      V34_CONSTELLATION_OK &&
-		      v34_phase3_s_receiver_receive_fixed(
+		      receive_adaptive_marker(
 			      &receiver, sliced.quarter_point,
 			      sliced.clockwise_quarter_turns, point) == expected,
 		      "exact fixed marker failed at %zu", local);
@@ -620,7 +632,7 @@ static bool test_fixed_metric_api_ownership(void)
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "fixed API ownership receivers did not initialize");
 	saved = hard;
-	CHECK(v34_phase3_s_receiver_receive_fixed(&hard, 0, 0, point) ==
+	CHECK(receive_adaptive_marker(&hard, 0, 0, point) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&hard, &saved, sizeof(hard)) == 0,
 	      "hard owner accepted a fixed observation");
@@ -643,15 +655,12 @@ static bool test_fixed_metric_api_ownership(void)
 	      fixed.target_seeded && fixed.next_target_rotation == 3u,
 	      "adaptive fixed owner did not publish its first S target");
 	saved = fixed;
-	CHECK(v34_phase3_s_receiver_receive_fixed(
-		      &fixed, 0u, 3u, point) ==
-		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase3_s_receiver_receive_adaptive(
+	CHECK(v34_phase3_s_receiver_receive_adaptive(
 		      &fixed, 0u, 3u, point,
 		      (struct v34_phase3_s_adaptation *)&fixed) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&fixed, &saved, sizeof(fixed)) == 0,
-	      "adaptive owner mixing or alias changed state");
+	      "adaptive owner alias changed state");
 	CHECK(v34_training_constellation_fixed_point(
 		      V34_CONSTELLATION_4_POINT, 0u, 1u, &point) ==
 		      V34_CONSTELLATION_OK &&
@@ -725,7 +734,7 @@ static bool receive_metric_margin(
 				V34_PHASE3_S_RECEIVER_DETECTED :
 				V34_PHASE3_S_RECEIVER_OK;
 
-		if (v34_phase3_s_receiver_receive_fixed(
+		if (receive_adaptive_marker(
 			    receiver, 1, 0,
 			    margin_point(
 				    rotations[first + local], above)) != expected)
@@ -742,7 +751,7 @@ static bool receive_metric_margin(
 				V34_PHASE3_S_RECEIVER_DETECTED :
 				V34_PHASE3_S_RECEIVER_OK;
 
-		if (v34_phase3_s_receiver_receive_fixed(
+		if (receive_adaptive_marker(
 			    receiver, 1, 0,
 			    (struct v34_analytic_sample){ 0, 0 }) != expected)
 			return false;

@@ -162,23 +162,3 @@ v34_phase4_mp_receive_decision(
 	*event = emitted;
 	return V34_PHASE4_MP_RECEIVER_OK;
 }
-
-enum v34_phase4_mp_receiver_result
-v34_phase4_mp_receive_point(
-	struct v34_phase4_mp_receiver *receiver,
-	const struct qam_point *point,
-	struct v34_mp_receive_event *event)
-{
-	uint8_t quarter_point;
-	uint8_t clockwise_quarter_turns;
-
-	if (!v34_phase4_mp_receiver_is_valid(receiver) ||
-	    event == NULL ||
-	    v34_training_constellation_slice(
-		    receiver->constellation, point, &quarter_point,
-		    &clockwise_quarter_turns) !=
-		    V34_CONSTELLATION_OK)
-		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
-	return v34_phase4_mp_receive_decision(
-		receiver, quarter_point, clockwise_quarter_turns, event);
-}

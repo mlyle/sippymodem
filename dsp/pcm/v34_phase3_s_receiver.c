@@ -424,25 +424,6 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns), 0u);
 }
 
-enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive_fixed(
-	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,
-	uint8_t clockwise_quarter_turns,
-	struct v34_analytic_sample observation)
-{
-	uint8_t evidence;
-
-	if (!v34_phase3_s_receiver_is_valid(receiver) ||
-	    receiver->target_seeded ||
-	    !receiver->metric_enabled || quarter_point >= 4u ||
-	    clockwise_quarter_turns >= 4u ||
-	    !observation_evidence(observation, &evidence))
-		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
-	return receive_decision(
-		receiver,
-		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns),
-		evidence);
-}
-
 enum v34_phase3_s_receiver_result
 v34_phase3_s_receiver_receive_adaptive(
 	struct v34_phase3_s_receiver *receiver, uint8_t quarter_point,

@@ -107,6 +107,22 @@ static uint8_t s_clockwise_rotation(unsigned int symbol)
 	return (uint8_t)((4u - counterclockwise) & 3u);
 }
 
+static bool next_s_observation(
+	struct v34_phase3_s_sequence *sequence,
+	struct v34_analytic_sample *point,
+	enum v34_phase3_s_section *section)
+{
+	struct qam_point normalized;
+	uint8_t rotation = s_clockwise_rotation(sequence->emitted_symbols);
+
+	return v34_phase3_s_sequence_next(
+		       sequence, &normalized, section) ==
+		       V34_PHASE3_S_SEQUENCE_OK &&
+	       v34_training_constellation_fixed_point(
+		       V34_CONSTELLATION_4_POINT, 0u, rotation, point) ==
+		       V34_CONSTELLATION_OK;
+}
+
 static bool run_clean_timeline(enum v34_station_role role)
 {
 	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
@@ -134,9 +150,8 @@ static bool run_clean_timeline(enum v34_station_role role)
 	      "role %d fixed Phase 3 timeline did not initialize", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SYMBOLS - suffix; ++symbol)
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK,
+		CHECK(next_s_observation(
+			      &s, &point, &section),
 		      "role %d S prefix stopped at %u", role, symbol);
 	for (unsigned int local = 0;
 	     local < suffix + V34_PHASE3_S_BAR_SYMBOLS; ++local) {
@@ -148,9 +163,8 @@ static bool run_clean_timeline(enum v34_station_role role)
 				V34_PHASE3_DECISION_RECEIVER_S_DETECTED :
 				V34_PHASE3_DECISION_RECEIVER_OK;
 
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK &&
+		CHECK(next_s_observation(
+			      &s, &point, &section) &&
 		      receive(
 			      &receiver, &clock, point, expected,
 			      &output, &input),
@@ -285,9 +299,10 @@ static bool test_md_and_delayed_marker(void)
 	struct v34_analytic_sample point;
 	enum v34_phase3_s_section section;
 
-	CHECK(v34_phase3_decision_receiver_init(
+	CHECK(v34_phase3_decision_receiver_init_suffix(
 		      &receiver, V34_CALLING_STATION,
-		      TEST_MD_SYMBOLS) == V34_PHASE3_DECISION_RECEIVER_OK &&
+		      TEST_MD_SYMBOLS, V34_PHASE3_S_SYMBOLS) ==
+		      V34_PHASE3_DECISION_RECEIVER_OK &&
 	      v34_phase3_s_sequence_init(&s) ==
 		      V34_PHASE3_S_SEQUENCE_OK,
 	      "MD decision receiver did not initialize");
@@ -296,9 +311,8 @@ static bool test_md_and_delayed_marker(void)
 		struct v34_phase3_decision_output output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK,
+		CHECK(next_s_observation(
+			      &s, &point, &section),
 		      "MD S source stopped at %u", symbol);
 		if (symbol >= V34_PHASE3_S_SYMBOLS &&
 		    symbol < V34_PHASE3_S_SYMBOLS +
@@ -381,9 +395,8 @@ static bool test_md_and_delayed_marker(void)
 	     symbol < V34_PHASE3_S_SYMBOLS -
 		      V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
 	     ++symbol)
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK,
+		CHECK(next_s_observation(
+			      &s, &point, &section),
 		      "repeated S discarded prefix %u stopped", symbol);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS +
@@ -406,9 +419,8 @@ static bool test_md_and_delayed_marker(void)
 					V34_PHASE3_DECISION_DISCARD :
 					V34_PHASE3_DECISION_COMMIT;
 
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK &&
+		CHECK(next_s_observation(
+			      &s, &point, &section) &&
 		      receive(
 			      &receiver, &clock, point, expected,
 			      &output, &input) &&
@@ -433,8 +445,9 @@ static bool test_delayed_marker_pp_alignment(void)
 	unsigned int skipped = 0;
 	bool detected = false;
 
-	CHECK(v34_phase3_decision_receiver_init(
-		      &receiver, V34_ANSWERING_STATION, 0u) ==
+	CHECK(v34_phase3_decision_receiver_init_suffix(
+		      &receiver, V34_ANSWERING_STATION, 0u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_OK &&
 	      v34_phase3_s_sequence_init(&s) ==
 		      V34_PHASE3_S_SEQUENCE_OK &&
@@ -446,9 +459,8 @@ static bool test_delayed_marker_pp_alignment(void)
 		struct v34_phase3_decision_output output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 
-		CHECK(v34_phase3_s_sequence_next_fixed(
-			      &s, &point, &section) ==
-			      V34_PHASE3_S_SEQUENCE_OK,
+		CHECK(next_s_observation(
+			      &s, &point, &section),
 		      "delayed-marker S source stopped at %u", symbol);
 		if (symbol >= V34_PHASE3_S_SYMBOLS &&
 		    symbol < V34_PHASE3_S_SYMBOLS +
@@ -535,8 +547,9 @@ static bool test_validation_and_transactionality(void)
 	};
 	struct v34_phase3_decision_handoff saved_handoff = handoff;
 
-	CHECK(v34_phase3_decision_receiver_init(
-		      &receiver, V34_CALLING_STATION, 0u) ==
+	CHECK(v34_phase3_decision_receiver_init_suffix(
+		      &receiver, V34_CALLING_STATION, 0u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_OK,
 	      "transaction fixture did not initialize");
 	scaled = receiver;
@@ -551,18 +564,22 @@ static bool test_validation_and_transactionality(void)
 		      scaled_output.equalizer.decoder_power_q15 == 0x4000u,
 		      "aggregate training power was not retained");
 	}
-	CHECK(v34_phase3_decision_receiver_init(
-		      NULL, V34_CALLING_STATION, 0u) ==
+	CHECK(v34_phase3_decision_receiver_init_suffix(
+		      NULL, V34_CALLING_STATION, 0u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase3_decision_receiver_init(
-		      &receiver, (enum v34_station_role)99, 0u) ==
+	      v34_phase3_decision_receiver_init_suffix(
+		      &receiver, (enum v34_station_role)99, 0u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase3_decision_receiver_init(
-		      &receiver, V34_CALLING_STATION, 1u) ==
+	      v34_phase3_decision_receiver_init_suffix(
+		      &receiver, V34_CALLING_STATION, 1u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase3_decision_receiver_init(
+	      v34_phase3_decision_receiver_init_suffix(
 		      &receiver, V34_CALLING_STATION,
-		      V34_PHASE3_DECISION_RECEIVER_MAX_MD_SYMBOLS + 1u) ==
+		      V34_PHASE3_DECISION_RECEIVER_MAX_MD_SYMBOLS + 1u,
+		      V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid initialization changed the receiver");

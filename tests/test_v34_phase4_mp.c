@@ -212,8 +212,8 @@ static bool generate_trn_prefix(
 			      trn, &point, &quarter, &rotation) ==
 			      V34_PHASE4_TRN_OK &&
 		      (receiver == NULL ||
-		       v34_phase4_mp_receive_point(
-			       receiver, &point, &event) ==
+		       v34_phase4_mp_receive_decision(
+			       receiver, quarter, rotation, &event) ==
 			       V34_PHASE4_MP_RECEIVER_OK),
 		      "TRN prefix stopped at symbol %zu", symbol);
 	}
@@ -266,15 +266,8 @@ static bool receive_current_record(
 		      "Phase 4 MP record stopped at symbol %zu", symbol);
 		if (symbol == corrupt_quarter_symbol)
 			quarter ^= 1u;
-		if (corrupt_quarter_symbol == SIZE_MAX) {
-			point.in_phase += symbol % 2u == 0u ? 0.08 : -0.07;
-			point.quadrature += symbol % 3u == 0u ? -0.09 : 0.06;
-		}
-		CHECK((corrupt_quarter_symbol == SIZE_MAX ?
-		       v34_phase4_mp_receive_point(
-			       receiver, &point, &emitted) :
-		       v34_phase4_mp_receive_decision(
-			       receiver, quarter, rotation, &emitted)) ==
+		CHECK(v34_phase4_mp_receive_decision(
+			      receiver, quarter, rotation, &emitted) ==
 			      V34_PHASE4_MP_RECEIVER_OK,
 		      "Phase 4 MP receiver stopped at symbol %zu", symbol);
 		if (emitted.type != V34_MP_RECEIVE_NO_EVENT) {
@@ -393,7 +386,6 @@ static bool test_receiver_validation(void)
 	struct v34_phase4_mp_receiver saved;
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
-	struct qam_point invalid_point = { NAN, 0.0 };
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
@@ -469,12 +461,6 @@ static bool test_receiver_validation(void)
 		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_mp_receive_decision(
 		      &receiver, 0, 0, NULL) ==
-		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_mp_receive_point(
-		      &receiver, NULL, &event) ==
-		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
-	      v34_phase4_mp_receive_point(
-		      &receiver, &invalid_point, &event) ==
 		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0,
