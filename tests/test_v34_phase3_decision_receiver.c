@@ -204,15 +204,34 @@ static bool run_clean_timeline(enum v34_station_role role)
 	for (unsigned int symbol = 0; symbol < TEST_TRN_SYMBOLS; ++symbol) {
 		struct v34_phase3_decision_output output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
+		struct v34_analytic_sample observed;
+		struct v34_analytic_sample target;
 
-		CHECK(v34_phase3_trn_next_fixed(
-			      &trn, &point, &rotation) == V34_PHASE3_TRN_OK &&
+		CHECK(v34_phase3_trn_next_fixed(&trn, &point, &rotation) ==
+			      V34_PHASE3_TRN_OK,
+		      "role %d TRN source %u stopped", role, symbol);
+		observed = point;
+		target = point;
+		/* The minimum legal TRN interval has a known reset scrambler.
+		 * Deliberately give the semantic receiver the wrong hard point to
+		 * prove that interval trains from the source, not its decision. */
+		if (symbol <= V34_PHASE3_TRN_MIN_SYMBOLS) {
+			CHECK(v34_training_constellation_fixed_point(
+				      V34_CONSTELLATION_4_POINT, 0,
+				      (uint8_t)((rotation + 1u) & 3u),
+				      &observed) == V34_CONSTELLATION_OK,
+			      "role %d TRN perturbation %u failed", role,
+			      symbol);
+			if (symbol == V34_PHASE3_TRN_MIN_SYMBOLS)
+				target = observed;
+		}
+		CHECK(
 		      receive(
-			      &receiver, &clock, point,
+			      &receiver, &clock, observed,
 			      V34_PHASE3_DECISION_RECEIVER_OK,
 			      &output, &input) &&
 		      expect_commit(
-			      &output, &input, point,
+			      &output, &input, target,
 			      V34_ADAPTIVE_EQUALIZER_FULL),
 		      "role %d TRN target %u changed", role, symbol);
 	}
@@ -597,6 +616,10 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_STATE &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid owner or early handoff changed state");
+	corrupt = receiver;
+	corrupt.trn.role = V34_ANSWERING_STATION;
+	CHECK(!v34_phase3_decision_receiver_is_valid(&corrupt),
+	      "mismatched TRN owner was accepted");
 	return true;
 }
 

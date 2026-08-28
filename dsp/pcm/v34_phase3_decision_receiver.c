@@ -26,6 +26,19 @@ static bool j_is_initial(
 	       receiver->j.transmitting_role == receiver->transmitting_role;
 }
 
+static bool trn_state_is_valid(
+	const struct v34_phase3_decision_receiver *receiver)
+{
+	if (!v34_phase3_trn_is_valid(&receiver->trn) ||
+	    receiver->trn.role != receiver->transmitting_role)
+		return false;
+	if (receiver->j.received_symbols == 0u)
+		return !receiver->trn.has_last_symbol &&
+		       receiver->trn.last_clockwise_quarter_turns == 0u &&
+		       receiver->trn.scrambler.history == 0u;
+	return receiver->trn.has_last_symbol;
+}
+
 bool v34_phase3_decision_receiver_is_valid(
 	const struct v34_phase3_decision_receiver *receiver)
 {
@@ -38,6 +51,7 @@ bool v34_phase3_decision_receiver_is_valid(
 		     V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS) ||
 	    !v34_phase3_s_receiver_is_valid(&receiver->s) ||
 	    !v34_phase3_pp_sequence_is_valid(&receiver->pp) ||
+	    !trn_state_is_valid(receiver) ||
 	    !v34_phase3_j_receiver_is_valid(&receiver->j) ||
 	    receiver->j.transmitting_role != receiver->transmitting_role)
 		return false;
@@ -129,6 +143,8 @@ v34_phase3_decision_receiver_init_suffix(
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_phase3_pp_sequence_init(&initialized.pp) !=
 		    V34_PHASE3_PP_SEQUENCE_OK ||
+	    v34_phase3_trn_init(&initialized.trn, transmitting_role) !=
+		    V34_PHASE3_TRN_OK ||
 	    v34_phase3_j_receiver_init(&initialized.j, transmitting_role) !=
 		    V34_PHASE3_J_RECEIVER_OK ||
 	    !v34_phase3_decision_receiver_is_valid(&initialized))
@@ -313,7 +329,16 @@ static enum v34_phase3_decision_receiver_result receive_j(
 		    V34_CONSTELLATION_4_POINT, observation->decision,
 		    &hard) != V34_CONSTELLATION_OK)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	target = hard.target;
+	if (receiver->j.received_symbols < V34_PHASE3_TRN_MIN_SYMBOLS) {
+		uint8_t expected_rotation;
+
+		if (v34_phase3_trn_next_fixed(
+			    &receiver->trn, &target, &expected_rotation) !=
+		    V34_PHASE3_TRN_OK)
+			return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
+	} else {
+		target = hard.target;
+	}
 	result = v34_phase3_j_receiver_receive(
 		&receiver->j, hard.quarter_point,
 		hard.clockwise_quarter_turns);
