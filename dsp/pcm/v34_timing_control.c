@@ -280,32 +280,17 @@ static void set_mode_parameters(struct v34_timing_control *control)
 	}
 }
 
-enum v34_timing_control_result v34_timing_control_enter_hold(
-	struct v34_timing_control *control)
-{
-	struct v34_timing_control next;
-
-	if (!v34_timing_control_is_valid(control) ||
-	    control->mode == V34_TIMING_CONTROL_LOCKED ||
-	    control->mode == V34_TIMING_CONTROL_INITIAL_PHASE)
-		return V34_TIMING_CONTROL_INVALID_STATE;
-	next = *control;
-	next.mode = V34_TIMING_CONTROL_HOLD;
-	next.state_count = 0;
-	set_mode_parameters(&next);
-	if (!v34_timing_control_is_valid(&next))
-		return V34_TIMING_CONTROL_INVALID_STATE;
-	*control = next;
-	return V34_TIMING_CONTROL_OK;
-}
-
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen)
 {
 	struct v34_timing_control next;
 
-	if (!v34_timing_control_is_valid(control) ||
-	    (control->mode != V34_TIMING_CONTROL_HOLD &&
+	if (!v34_timing_control_is_valid(control))
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	if (control->mode >= V34_TIMING_CONTROL_FAST_PULL_IN &&
+	    control->mode <= V34_TIMING_CONTROL_FINE_TRACK)
+		return V34_TIMING_CONTROL_OK;
+	if ((control->mode != V34_TIMING_CONTROL_HOLD &&
 	     control->mode != V34_TIMING_CONTROL_LOCKED) ||
 	    control->proportional_gain != 0x01f4 ||
 	    control->integral_gain != 0x0001 || control->timeout != -1)

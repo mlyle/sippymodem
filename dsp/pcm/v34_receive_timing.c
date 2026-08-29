@@ -117,22 +117,6 @@ enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	return V34_RECEIVE_TIMING_OK;
 }
 
-enum v34_receive_timing_result v34_receive_timing_enter_hold(
-	struct v34_receive_timing *timing)
-{
-	struct v34_receive_timing next;
-
-	if (!v34_receive_timing_is_valid(timing))
-		return V34_RECEIVE_TIMING_INVALID_STATE;
-	next = *timing;
-	if (v34_timing_control_enter_hold(&next.timing) !=
-		    V34_TIMING_CONTROL_OK ||
-	    !v34_receive_timing_is_valid(&next))
-		return V34_RECEIVE_TIMING_INVALID_STATE;
-	*timing = next;
-	return V34_RECEIVE_TIMING_OK;
-}
-
 enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 	struct v34_receive_timing *timing, bool frozen)
 {

@@ -72,13 +72,9 @@ bool v34_timing_control_is_valid(
 enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	struct v34_timing_control *control, bool full_pull_in);
 
-/* Retain the trained fractional clock while reducing the data-mode loop to
- * its bounded long-term tracking profile. */
-enum v34_timing_control_result v34_timing_control_enter_hold(
-	struct v34_timing_control *control);
-
-/* Freeze or resume the trained data-mode clock without changing its learned
- * phase, increment, integrator, or low-gain HOLD profile. */
+/* Freeze or resume a data-mode clock that has naturally reached HOLD without
+ * changing its learned phase, increment, integrator, or low-gain profile.
+ * Earlier acquisition/tracking modes continue unchanged. */
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen);
 

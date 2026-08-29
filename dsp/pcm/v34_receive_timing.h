@@ -80,10 +80,8 @@ bool v34_receive_timing_matches_profile(
 enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 	struct v34_receive_timing *timing);
 
-/* Preserve the trained sample epoch and enter the data-mode tracking profile. */
-enum v34_receive_timing_result v34_receive_timing_enter_hold(
-	struct v34_receive_timing *timing);
-
+/* Freeze or resume a data-mode clock that has naturally reached HOLD.  An
+ * acquisition or tracking schedule still in progress remains unchanged. */
 enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 	struct v34_receive_timing *timing, bool frozen);
 

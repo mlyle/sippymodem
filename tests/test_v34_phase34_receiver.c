@@ -523,6 +523,8 @@ static bool test_training_case(
 				zero_coefficients[V34_PRECODER_TAP_COUNT];
 			struct v34_q14_coefficient changed_coefficients[
 				V34_PRECODER_TAP_COUNT];
+			struct v34_receive_timing feedback_timing;
+			struct v34_receive_timing zero_timing;
 			struct v34_frame_geometry wrong =
 				source.mapping.schedule.geometry;
 
@@ -584,6 +586,8 @@ static bool test_training_case(
 			      !receiver.precoder_selected,
 			      "role %u rate %u selected the wrong feedback path", role,
 			      rate);
+			feedback_timing = feedback_receiver.timing;
+			zero_timing = receiver.timing;
 			changed_coefficients[0] = feedback_coefficients[0];
 			changed_coefficients[1] = feedback_coefficients[1];
 			changed_coefficients[2] = feedback_coefficients[2];
@@ -615,8 +619,8 @@ static bool test_training_case(
 				      V34_PHASE34_RECEIVER_OK &&
 			      feedback_receiver.equalizer.feedback_mode ==
 				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
-			      feedback_receiver.timing.timing.mode ==
-				      V34_TIMING_CONTROL_HOLD &&
+			      memcmp(&feedback_receiver.timing, &feedback_timing,
+				     sizeof(feedback_timing)) == 0 &&
 			      v34_phase34_receiver_is_valid(
 				      &feedback_receiver) &&
 			      v34_phase34_receiver_start_data(
@@ -629,11 +633,8 @@ static bool test_training_case(
 				      V34_PHASE34_RECEIVER_OK &&
 			      receiver.equalizer.feedback_mode ==
 				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
-			      receiver.timing.timing.mode ==
-				      V34_TIMING_CONTROL_HOLD &&
-			      receiver.timing.timing.proportional_gain == 0x01f4 &&
-			      receiver.timing.timing.integral_gain == 0x0001 &&
-			      receiver.timing.timing.timeout == -1,
+			      memcmp(&receiver.timing, &zero_timing,
+				     sizeof(zero_timing)) == 0,
 			      "role %u rate %u did not enter data at E", role,
 			      rate);
 			saved = receiver;
@@ -650,15 +651,10 @@ static bool test_training_case(
 			saved = receiver;
 			CHECK(v34_phase34_receiver_set_data_timing_frozen(
 				      &receiver, true) == V34_PHASE34_RECEIVER_OK &&
-			      receiver.timing.timing.mode ==
-				      V34_TIMING_CONTROL_LOCKED &&
-			      v34_phase34_receiver_is_valid(&receiver) &&
 			      v34_phase34_receiver_set_data_timing_frozen(
 				      &receiver, false) == V34_PHASE34_RECEIVER_OK &&
-			      receiver.timing.timing.mode ==
-				      V34_TIMING_CONTROL_HOLD &&
 			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
-			      "role %u rate %u timing freeze changed data lineage",
+			      "role %u rate %u gated active timing acquisition",
 			      role, rate);
 			e_complete = true;
 			break;

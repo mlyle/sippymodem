@@ -828,9 +828,10 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 	    V34_DATA_RECEIVE_OK)
 		return V34_PHASE34_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	if (v34_receive_timing_enter_hold(&next.timing) !=
-		    V34_RECEIVE_TIMING_OK ||
-	    v34_adaptive_equalizer_set_feedback_mode(
+	/* E changes the semantic decoder, not the physical receive epoch.  Keep
+	 * the active timing schedule and its learned fractional-clock state
+	 * continuous through B1. */
+	if (v34_adaptive_equalizer_set_feedback_mode(
 		    &next.equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
