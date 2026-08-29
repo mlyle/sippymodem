@@ -70,12 +70,14 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 
 static bool echo_adaptation_is_expected(const struct v34_call *call)
 {
-	return call->stage == V34_CALL_PHASE3 &&
-	       call->local_role == V34_ANSWERING_STATION &&
-	       call->state.phase3.transmit.stage ==
-		       V34_TRAINING_TRANSMITTER_PHASE3 &&
-	       call->state.phase3.transmit.phase3.stage !=
-		       V34_PHASE3_TRANSMITTER_J;
+	if (call->stage != V34_CALL_PHASE3 ||
+	    call->state.phase3.transmit.stage !=
+		    V34_TRAINING_TRANSMITTER_PHASE3 ||
+	    call->state.phase3.transmit.phase3.stage ==
+		    V34_PHASE3_TRANSMITTER_J)
+		return false;
+	return call->local_role == V34_ANSWERING_STATION ||
+	       call->state.phase3.transmit_started;
 }
 
 bool v34_call_is_valid(const struct v34_call *call)
@@ -326,8 +328,9 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		    &call->echo, call->round_trip_delay_samples) !=
 		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_NUMERIC_FAILURE;
-	/* Caller training overlaps peer signalling; retain pass-through until
-	 * that role has an independently owned adaptation interval. */
+	/* The caller retains pass-through until its own Phase 3 transmission.
+	 * The answering peer then turns off J and leaves a training interval
+	 * before it may answer the caller's later J. */
 	if (call->local_role == V34_CALLING_STATION &&
 	    v34_echo_canceller_freeze(&call->echo) !=
 		    V34_ECHO_CANCELLER_OK)
@@ -594,9 +597,9 @@ enum v34_call_result v34_call_sample(
 	if (call->failed)
 		return V34_CALL_FAILED;
 	emitted.processed = call->stage;
-	echo_processed = call->local_role == V34_ANSWERING_STATION &&
-			 (emitted.processed == V34_CALL_PHASE3 ||
-			  emitted.processed == V34_CALL_PHASE4);
+	echo_processed = (emitted.processed == V34_CALL_PHASE3 ||
+			  emitted.processed == V34_CALL_PHASE4) &&
+			 (call->echo.adapting || call->echo.filtering);
 	if (echo_processed &&
 	    v34_echo_canceller_predict(
 		    &call->echo, received_sample, &conditioned) !=
@@ -628,6 +631,17 @@ enum v34_call_result v34_call_sample(
 		break;
 	default:
 		return V34_CALL_INVALID_STATE;
+	}
+	if (emitted.processed == V34_CALL_PHASE3 &&
+	    call->local_role == V34_CALLING_STATION &&
+	    (emitted.events.phase3 &
+	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0) {
+		if (v34_echo_canceller_init(
+			    &call->echo, call->round_trip_delay_samples) !=
+		    V34_ECHO_CANCELLER_OK)
+			result = V34_CALL_NUMERIC_FAILURE;
+		else
+			echo_processed = true;
 	}
 	if (echo_processed &&
 	    v34_echo_canceller_advance(

@@ -16,15 +16,19 @@ enum {
 	NOMINAL_AMPLITUDE = 7000,
 };
 
+struct self_echo {
+	int16_t samples[ECHO_DELAY_CAPACITY];
+	size_t cursor;
+	size_t delay_samples;
+	int16_t gain_q15;
+	bool disable_filter;
+};
+
 struct channel {
 	int16_t call_to_answer[LINE_DELAY_SAMPLES];
 	int16_t answer_to_call[LINE_DELAY_SAMPLES];
-	int16_t answerer_echo[ECHO_DELAY_CAPACITY];
+	struct self_echo echo[V34_ANSWERING_STATION + 1];
 	size_t cursor;
-	size_t echo_cursor;
-	size_t echo_delay_samples;
-	int16_t echo_gain_q15;
-	bool disable_answerer_echo_filter;
 	bool pcma;
 };
 
@@ -386,14 +390,29 @@ static int16_t mix_echo(int16_t remote, int16_t local, int16_t gain_q15)
 	return (int16_t)mixed;
 }
 
+static int16_t self_echo_receive(
+	const struct self_echo *echo, int16_t remote)
+{
+	return mix_echo(remote, echo->samples[echo->cursor], echo->gain_q15);
+}
+
+static void self_echo_transmit(struct self_echo *echo, int16_t local)
+{
+	if (echo->delay_samples == 0)
+		return;
+	echo->samples[echo->cursor] = local;
+	echo->cursor = (echo->cursor + 1u) % echo->delay_samples;
+}
+
 static void channel_receive(
 	const struct channel *channel, int16_t *caller, int16_t *answerer)
 {
-	*caller = channel->answer_to_call[channel->cursor];
-	*answerer = mix_echo(
-		channel->call_to_answer[channel->cursor],
-		channel->answerer_echo[channel->echo_cursor],
-		channel->echo_gain_q15);
+	*caller = self_echo_receive(
+		&channel->echo[V34_CALLING_STATION],
+		channel->answer_to_call[channel->cursor]);
+	*answerer = self_echo_receive(
+		&channel->echo[V34_ANSWERING_STATION],
+		channel->call_to_answer[channel->cursor]);
 }
 
 static int16_t codec_round_trip(int16_t sample, bool pcma)
@@ -405,11 +424,8 @@ static int16_t codec_round_trip(int16_t sample, bool pcma)
 static void channel_transmit(
 	struct channel *channel, int16_t caller, int16_t answerer)
 {
-	if (channel->echo_delay_samples != 0) {
-		channel->answerer_echo[channel->echo_cursor] = answerer;
-		channel->echo_cursor =
-			(channel->echo_cursor + 1u) % channel->echo_delay_samples;
-	}
+	self_echo_transmit(&channel->echo[V34_CALLING_STATION], caller);
+	self_echo_transmit(&channel->echo[V34_ANSWERING_STATION], answerer);
 	channel->call_to_answer[channel->cursor] =
 		codec_round_trip(caller, channel->pcma);
 	channel->answer_to_call[channel->cursor] =
@@ -428,7 +444,9 @@ static bool channel_sample_pair(
 	int16_t caller_transmit;
 	int16_t answerer_transmit;
 
-	if (channel->disable_answerer_echo_filter)
+	if (channel->echo[V34_CALLING_STATION].disable_filter)
+		caller->call.echo.filtering = false;
+	if (channel->echo[V34_ANSWERING_STATION].disable_filter)
 		answerer->call.echo.filtering = false;
 	channel_receive(channel, &caller_receive, &answerer_receive);
 	note_peer_primary_delays(caller, answerer);
@@ -529,50 +547,63 @@ static bool test_pcmu_call(void)
 	return true;
 }
 
-static bool run_answerer_echo_call(
-	bool pcma, bool disable_filter, struct endpoint *answerer_result)
+static bool run_echo_call(
+	enum v34_station_role echoed_role, bool pcma, bool disable_filter,
+	struct endpoint *result)
 {
 	struct channel channel = {
-		.echo_delay_samples = TEST_ECHO_DELAY_SAMPLES,
-		.echo_gain_q15 = 14000,
-		.disable_answerer_echo_filter = disable_filter,
 		.pcma = pcma,
 	};
 	struct endpoint caller;
 	struct endpoint answerer;
 	bool connected;
 
+	channel.echo[echoed_role] = (struct self_echo){
+		.delay_samples = TEST_ECHO_DELAY_SAMPLES,
+		.gain_q15 = 14000,
+		.disable_filter = disable_filter,
+	};
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
 	      "echoed endpoints did not initialize");
 	caller.suppress_failure_diagnostic = disable_filter;
 	answerer.suppress_failure_diagnostic = disable_filter;
 	connected = run_initialized_pair(&caller, &answerer, &channel);
-	*answerer_result = answerer;
+	*result = echoed_role == V34_CALLING_STATION ? caller : answerer;
 	return connected;
 }
 
-static bool check_answerer_echo_call(bool pcma)
+static bool check_echo_call(enum v34_station_role role, bool pcma)
 {
-	struct endpoint unfiltered;
 	struct endpoint filtered;
+	uint64_t maximum_residual_percent =
+		role == V34_CALLING_STATION ? 5u : 1u;
+	const char *station = role == V34_CALLING_STATION ? "calling" :
+							       "answering";
 
-	CHECK(!run_answerer_echo_call(pcma, true, &unfiltered),
-	      "uncancelled answering-station echo reached mapped data");
-	CHECK(run_answerer_echo_call(pcma, false, &filtered),
-	      "cancelled answering-station echo did not reach mapped data");
+	CHECK(!run_echo_call(role, pcma, true, &filtered),
+	      "uncancelled %s-station echo reached mapped data", station);
+	CHECK(run_echo_call(role, pcma, false, &filtered),
+	      "cancelled %s-station echo did not reach mapped data", station);
 	CHECK(filtered.call.echo.filtering &&
 	      filtered.call.echo.validation_input_energy != 0 &&
 	      filtered.call.echo.validation_residual_energy * 100u <
-		      filtered.call.echo.validation_input_energy,
-	      "answering-station echo model was not retained");
+		      filtered.call.echo.validation_input_energy *
+			      maximum_residual_percent,
+	      "%s-station echo model was not retained", station);
 	return true;
 }
 
-static bool test_answerer_echo_calls(void)
+static bool test_echo_calls(void)
 {
-	CHECK(check_answerer_echo_call(false), "PCMU echo call failed");
-	CHECK(check_answerer_echo_call(true), "PCMA echo call failed");
+	CHECK(check_echo_call(V34_ANSWERING_STATION, false),
+	      "PCMU answerer echo call failed");
+	CHECK(check_echo_call(V34_ANSWERING_STATION, true),
+	      "PCMA answerer echo call failed");
+	CHECK(check_echo_call(V34_CALLING_STATION, false),
+	      "PCMU caller echo call failed");
+	CHECK(check_echo_call(V34_CALLING_STATION, true),
+	      "PCMA caller echo call failed");
 	return true;
 }
 
@@ -1253,8 +1284,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
-		{ "generated answering-station echo",
-		  test_answerer_echo_calls },
+		{ "generated station echo", test_echo_calls },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain selects new INFO1a rate pair",
