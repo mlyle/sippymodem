@@ -65,23 +65,6 @@ static uint64_t lineage_tag(uint64_t lineage, uint16_t tag)
 	return lineage_word(lineage_word(lineage, UINT16_C(0xa55a)), tag);
 }
 
-static bool observation_is_zero(
-	const struct v34_adaptive_equalizer_observation *observation)
-{
-	return observation->decision.in_phase == 0 &&
-	       observation->decision.quadrature == 0 &&
-	       observation->epoch == 0 && observation->lineage == 0;
-}
-
-static bool observations_are_equal(
-	const struct v34_adaptive_equalizer_observation *left,
-	const struct v34_adaptive_equalizer_observation *right)
-{
-	return left->decision.in_phase == right->decision.in_phase &&
-	       left->decision.quadrature == right->decision.quadrature &&
-	       left->epoch == right->epoch && left->lineage == right->lineage;
-}
-
 static bool feedback_mode_is_valid(unsigned int mode)
 {
 	return (mode & (unsigned int)~(
@@ -118,7 +101,8 @@ bool v34_adaptive_equalizer_is_valid(
 		       equalizer->epoch != 0 &&
 		       equalizer->pending_observation.epoch == equalizer->epoch &&
 		       equalizer->pending_observation.lineage == equalizer->lineage;
-	return observation_is_zero(&equalizer->pending_observation) &&
+	return v34_adaptive_equalizer_observation_is_zero(
+		       &equalizer->pending_observation) &&
 	       equalizer->pending_demodulated.in_phase == 0 &&
 	       equalizer->pending_demodulated.quadrature == 0;
 }
@@ -567,7 +551,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 	    !equalizer->decision_pending)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	if (!decision_is_valid(decision) ||
-	    !observations_are_equal(
+	    !v34_adaptive_equalizer_observations_are_equal(
 		    &decision->observation,
 		    &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
@@ -657,7 +641,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_discard(
 	    (equalizer->feedback_mode &
 	     V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) != 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	if (!observations_are_equal(
+	if (!v34_adaptive_equalizer_observations_are_equal(
 		    observation, &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
 	next = *equalizer;

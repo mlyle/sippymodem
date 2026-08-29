@@ -625,29 +625,15 @@ static bool output_is_valid(
 	uint16_t decoder_power_q15,
 	const struct v34_phase4_decision_receiver *receiver)
 {
-	if (output->action == V34_RECEIVE_DISCARD ||
-	    output->action == V34_RECEIVE_BEGIN_TRACKING)
-		return output->equalizer.observation.decision.in_phase == 0 &&
-		       output->equalizer.observation.decision.quadrature == 0 &&
-		       output->equalizer.observation.epoch == 0u &&
-		       output->equalizer.observation.lineage == 0u &&
-		       output->equalizer.target.in_phase == 0 &&
-		       output->equalizer.target.quadrature == 0 &&
-		       output->equalizer.decoder_power_q15 == 0u &&
-		       output->equalizer.adaptation ==
-			       V34_ADAPTIVE_EQUALIZER_SKIP;
-	return output->action == V34_RECEIVE_COMMIT &&
-	       output->equalizer.observation.decision.in_phase ==
-		       observation->decision.in_phase &&
-	       output->equalizer.observation.decision.quadrature ==
-		       observation->decision.quadrature &&
-	       output->equalizer.observation.epoch == observation->epoch &&
-	       output->equalizer.observation.lineage == observation->lineage &&
-	       output->equalizer.decoder_power_q15 == decoder_power_q15 &&
-	       (receiver->stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S ?
-			output->equalizer.adaptation ==
+	if (!v34_receive_action_is_valid(
+		    output, observation, decoder_power_q15) ||
+	    output->action == V34_RECEIVE_RESTART_PATH)
+		return false;
+	return output->action != V34_RECEIVE_COMMIT ||
+	       output->equalizer.adaptation ==
+		       (receiver->stage ==
+					V34_PHASE4_DECISION_RECEIVER_ANSWER_S ?
 				V34_ADAPTIVE_EQUALIZER_CENTER :
-			output->equalizer.adaptation ==
 				V34_ADAPTIVE_EQUALIZER_FULL);
 }
 
@@ -697,7 +683,7 @@ v34_phase4_decision_receiver_observe(
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase4_decision_receiver_is_valid(receiver))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	if (observation->epoch == 0u || observation->lineage == 0u ||
+	if (!v34_adaptive_equalizer_observation_is_valid(observation) ||
 	    decoder_power_q15 == 0u || decoder_power_q15 > INT16_MAX)
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (receiver->record_pending)

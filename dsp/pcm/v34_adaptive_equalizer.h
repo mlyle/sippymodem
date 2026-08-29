@@ -96,6 +96,58 @@ static inline struct v34_receive_action v34_receive_action_commit(
 	};
 }
 
+static inline bool v34_adaptive_equalizer_observation_is_zero(
+	const struct v34_adaptive_equalizer_observation *observation)
+{
+	return observation->decision.in_phase == 0 &&
+	       observation->decision.quadrature == 0 &&
+	       observation->epoch == 0u && observation->lineage == 0u;
+}
+
+static inline bool v34_adaptive_equalizer_observations_are_equal(
+	const struct v34_adaptive_equalizer_observation *left,
+	const struct v34_adaptive_equalizer_observation *right)
+{
+	return left->decision.in_phase == right->decision.in_phase &&
+	       left->decision.quadrature == right->decision.quadrature &&
+	       left->epoch == right->epoch && left->lineage == right->lineage;
+}
+
+static inline bool v34_adaptive_equalizer_observation_is_valid(
+	const struct v34_adaptive_equalizer_observation *observation)
+{
+	return observation != NULL && observation->epoch != 0u &&
+	       observation->lineage != 0u;
+}
+
+static inline bool v34_receive_action_is_valid(
+	const struct v34_receive_action *action,
+	const struct v34_adaptive_equalizer_observation *observation,
+	uint16_t decoder_power_q15)
+{
+	if (action == NULL ||
+	    !v34_adaptive_equalizer_observation_is_valid(observation) ||
+	    decoder_power_q15 == 0u || decoder_power_q15 > INT16_MAX)
+		return false;
+	if (action->action == V34_RECEIVE_COMMIT)
+		return v34_adaptive_equalizer_observations_are_equal(
+			       &action->equalizer.observation, observation) &&
+		       action->equalizer.decoder_power_q15 == decoder_power_q15 &&
+		       (action->equalizer.adaptation ==
+				V34_ADAPTIVE_EQUALIZER_CENTER ||
+			action->equalizer.adaptation ==
+				V34_ADAPTIVE_EQUALIZER_FULL);
+	return (action->action == V34_RECEIVE_DISCARD ||
+		action->action == V34_RECEIVE_BEGIN_TRACKING ||
+		action->action == V34_RECEIVE_RESTART_PATH) &&
+	       v34_adaptive_equalizer_observation_is_zero(
+		       &action->equalizer.observation) &&
+	       action->equalizer.target.in_phase == 0 &&
+	       action->equalizer.target.quadrature == 0 &&
+	       action->equalizer.decoder_power_q15 == 0u &&
+	       action->equalizer.adaptation == V34_ADAPTIVE_EQUALIZER_SKIP;
+}
+
 struct v34_adaptive_equalizer_feedback {
 	int16_t coefficient_a[3];
 	int16_t coefficient_b[3];

@@ -130,7 +130,7 @@ v34_data_decision_receiver_observe(
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!v34_data_decision_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_STATE;
-	if (observation->epoch == 0u || observation->lineage == 0u)
+	if (!v34_adaptive_equalizer_observation_is_valid(observation))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
 	normalized[1] = normalized_observation(observation);

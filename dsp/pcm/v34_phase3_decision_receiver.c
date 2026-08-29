@@ -144,39 +144,6 @@ v34_phase3_decision_receiver_init_suffix(
 	return V34_PHASE3_DECISION_RECEIVER_OK;
 }
 
-static bool output_decision_is_zero(
-	const struct v34_adaptive_equalizer_decision *decision)
-{
-	return decision->observation.decision.in_phase == 0 &&
-	       decision->observation.decision.quadrature == 0 &&
-	       decision->observation.epoch == 0u &&
-	       decision->observation.lineage == 0u &&
-	       decision->target.in_phase == 0 &&
-	       decision->target.quadrature == 0 &&
-	       decision->decoder_power_q15 == 0u &&
-	       decision->adaptation == V34_ADAPTIVE_EQUALIZER_SKIP;
-}
-
-static bool output_is_valid(
-	const struct v34_receive_action *output,
-	uint16_t decoder_power_q15)
-{
-	if (output->action == V34_RECEIVE_COMMIT)
-		return output->equalizer.observation.epoch != 0u &&
-		       output->equalizer.observation.lineage != 0u &&
-		       output->equalizer.decoder_power_q15 ==
-			       decoder_power_q15 &&
-		       (output->equalizer.adaptation ==
-				V34_ADAPTIVE_EQUALIZER_CENTER ||
-			output->equalizer.adaptation ==
-				V34_ADAPTIVE_EQUALIZER_FULL);
-	return (output->action == V34_RECEIVE_DISCARD ||
-		output->action == V34_RECEIVE_BEGIN_TRACKING ||
-		output->action ==
-			V34_RECEIVE_RESTART_PATH) &&
-	       output_decision_is_zero(&output->equalizer);
-}
-
 static bool advance_pp_prefix(
 	struct v34_phase3_decision_receiver *receiver, uint8_t symbols)
 {
@@ -324,13 +291,6 @@ static enum v34_phase3_decision_receiver_result receive_j(
 	return V34_PHASE3_DECISION_RECEIVER_J_DETECTED;
 }
 
-static bool observation_is_valid(
-	const struct v34_adaptive_equalizer_observation *observation)
-{
-	return observation != NULL && observation->epoch != 0u &&
-	       observation->lineage != 0u;
-}
-
 static bool result_commits(
 	enum v34_phase3_decision_receiver_result result)
 {
@@ -367,7 +327,8 @@ v34_phase3_decision_receiver_observe(
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase3_decision_receiver_is_valid(receiver))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
-	if (!observation_is_valid(observation) || decoder_power_q15 == 0u ||
+	if (!v34_adaptive_equalizer_observation_is_valid(observation) ||
+	    decoder_power_q15 == 0u ||
 	    decoder_power_q15 > INT16_MAX)
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (receiver->stage == V34_PHASE3_DECISION_RECEIVER_COMPLETE)
@@ -399,7 +360,8 @@ v34_phase3_decision_receiver_observe(
 	if (!result_commits(result))
 		return result;
 	if (!v34_phase3_decision_receiver_is_valid(&next) ||
-	    !output_is_valid(&generated, decoder_power_q15))
+	    !v34_receive_action_is_valid(
+		    &generated, observation, decoder_power_q15))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;
 	*receiver = next;
 	*output = generated;
