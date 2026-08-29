@@ -480,8 +480,12 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		s->data = (s->data << 9) | 0x1ffu;
 		s->bit += 9;
 		if (d->tx_count > 0) {
+			unsigned int pattern_index =
+				((unsigned int)d->tx_count - 1u) & 1u;
+
 			s->data = (s->data << 9) |
-				d->tx_pattern[d->tx_count++ % 2];
+				d->tx_pattern[pattern_index];
+			d->tx_count++;
 			s->bit += 9;
 		}
 	}

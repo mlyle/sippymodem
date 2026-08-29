@@ -107,6 +107,20 @@ static bool append_async_character(
 	return true;
 }
 
+static bool detection_character_matches(
+	const uint8_t *bits, uint8_t character)
+{
+	for (unsigned int bit = 0; bit < 9; ++bit) {
+		if (bits[bit] != 1)
+			return false;
+	}
+	for (unsigned int bit = 0; bit < 9; ++bit) {
+		if (bits[9 + bit] != ((character >> (8 - bit)) & 1u))
+			return false;
+	}
+	return true;
+}
+
 static bool test_async_resynchronizes_after_bad_stop(void)
 {
 	uint8_t bits[64] = { 0 };
@@ -299,9 +313,11 @@ static bool test_raw_answerer_selects_v14(void)
 	pattern_source.packer.detector.tx_pattern[0] = 0x88;
 	pattern_source.packer.detector.tx_pattern[1] = 0x89;
 	CHECK(modem_detector_get_bits(
-		      &pattern_source, 1, bits, 72) == 72 &&
+		      &pattern_source, 1, bits, 37) == 37 &&
+		      detection_character_matches(bits, 0x88) &&
+		      detection_character_matches(bits + 18, 0x89) &&
 		      modem_detector_put_bits(
-			      &answerer, 1, bits, 72) == 72,
+			      &answerer, 1, bits, 37) == 37,
 	      "raw answerer did not consume the first ODP");
 	CHECK(answerer.packer.detector.rx_count == 2 &&
 		      answerer.packer.detector.tx_count == 0,
@@ -338,9 +354,13 @@ static bool test_raw_answerer_selects_v14(void)
 	CHECK(answerer.packer.detector.tx_count == 0 &&
 		      answerer.bit_timer_func == NULL,
 	      "V.14 answerer did not finish after exactly ten ADPs");
-	for (size_t pattern = 1; pattern < 10; ++pattern)
-		CHECK(memcmp(bits, bits + pattern * 36, 36) == 0,
-		      "V.14 ADP pattern %zu changed", pattern);
+	for (size_t pattern = 0; pattern < 10; ++pattern) {
+		CHECK(detection_character_matches(bits + pattern * 36, 0xa2),
+		      "V.14 ADP pattern %zu did not begin with ADP0", pattern);
+		CHECK(detection_character_matches(
+			      bits + pattern * 36 + 18, 0x00),
+		      "V.14 ADP pattern %zu did not end with ADP1", pattern);
+	}
 	return true;
 }
 
