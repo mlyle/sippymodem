@@ -69,6 +69,9 @@ enum v34_receive_timing_result v34_receive_timing_init(
 	    v34_gain_control_init(
 		    &initialized.gain, initial_gain) !=
 		    V34_GAIN_CONTROL_OK ||
+	    v34_gain_control_set_mode(
+		    &initialized.gain, V34_GAIN_FROZEN) !=
+		    V34_GAIN_CONTROL_OK ||
 	    v34_s_tone_detector_init(
 		    &initialized.s_detector, transmitting_profile) !=
 		    V34_S_TONE_DETECTOR_OK ||
@@ -257,6 +260,14 @@ static enum v34_receive_timing_result drain_timing(
 			    timing->timing.mode == V34_TIMING_CONTROL_LOCKED &&
 			    v34_timing_control_begin_acquisition(
 				    &timing->timing, true) != V34_TIMING_CONTROL_OK)
+				return V34_RECEIVE_TIMING_INVALID_STATE;
+			/* Silence and echo must not train the line gain.  The
+			 * carrier-specific S acquisition edge starts gain pull-in;
+			 * later qualification still gates the semantic receive epoch. */
+			if (!detector_was_acquired && timing->s_detector.acquired &&
+			    v34_gain_control_set_mode(
+				    &timing->gain, V34_GAIN_TRACKING) !=
+				    V34_GAIN_CONTROL_OK)
 				return V34_RECEIVE_TIMING_INVALID_STATE;
 			if (!detector_was_detected && timing->s_detector.detected &&
 			    timing->reanchor_at_s) {

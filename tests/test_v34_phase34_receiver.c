@@ -230,7 +230,8 @@ static bool test_validation(void)
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
-	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN,
+	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
+	      receiver.timing.gain.mode == V34_GAIN_FROZEN,
 	      "valid receiver did not initialize");
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &reduced, V34_CONSTELLATION_16_POINT,
@@ -251,6 +252,8 @@ static bool test_validation(void)
 			      V34_PHASE34_RECEIVER_OK,
 		      "leading silence failed at sample %u", sample);
 	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
+	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
+	      receiver.timing.gain.mode == V34_GAIN_FROZEN &&
 	      memcmp(&receiver.equalizer, &saved.equalizer,
 		     sizeof(receiver.equalizer)) == 0 &&
 	      memcmp(&receiver.semantic, &saved.semantic,
@@ -529,6 +532,7 @@ static bool test_training_case(
 			break;
 		case V34_PHASE34_RECEIVER_TIMING_ACQUIRED:
 			CHECK(receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
+			      receiver.timing.gain.mode == V34_GAIN_TRACKING &&
 			      receiver.equalizer.epoch == 0u &&
 			      receiver.equalizer.inputs_since_observation == 0u &&
 			      !receiver.equalizer.decision_pending &&
