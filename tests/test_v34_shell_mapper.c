@@ -95,6 +95,21 @@ static uint8_t inverse_pair_selector(
 		(uint8_t)(ring_count - 1u - pair[1]);
 }
 
+static struct v34_ring_prefixes prefixes_from_indices(
+	const struct v34_ring_indices *indices)
+{
+	struct v34_ring_prefixes prefixes;
+
+	for (uint8_t interval = 0;
+	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME; ++interval) {
+		for (uint8_t symbol = 0;
+		     symbol < V34_RING_INDICES_PER_4D_INTERVAL; ++symbol)
+			prefixes.prefix[interval][symbol] =
+				indices->index[interval][symbol];
+	}
+	return prefixes;
+}
+
 static bool recover_shell_label(
 	const struct v34_ring_indices *indices,
 	uint8_t ring_count, const struct inverse_counts *counts,
@@ -156,6 +171,7 @@ static bool verify_label(
 	const struct inverse_counts *counts, uint32_t shell_label)
 {
 	struct v34_ring_indices indices;
+	struct v34_ring_prefixes prefixes;
 	uint64_t recovered = 0;
 	uint32_t production_recovered = UINT32_MAX;
 	uint32_t decision_recovered = UINT32_MAX;
@@ -166,6 +182,7 @@ static bool verify_label(
 	      "K=%u M=%u rejected shell label %u",
 	      parameters->shell_mapper_bits, parameters->ring_count,
 	      shell_label);
+	prefixes = prefixes_from_indices(&indices);
 	CHECK(v34_ring_indices_are_valid(&indices, parameters),
 	      "K=%u M=%u produced an invalid ring index for %u",
 	      parameters->shell_mapper_bits, parameters->ring_count,
@@ -178,13 +195,48 @@ static bool verify_label(
 		      V34_SHELL_MAPPER_OK &&
 	      production_recovered == shell_label &&
 	      v34_shell_unmap_decision(
-		      parameters, &indices, parameters->shell_mapper_bits,
+		      parameters, &prefixes, parameters->shell_mapper_bits,
 		      &decision_recovered) ==
 		      V34_SHELL_MAPPER_OK &&
 	      decision_recovered == shell_label,
 	      "K=%u M=%u mapped %u to independently ranked %llu",
 	      parameters->shell_mapper_bits, parameters->ring_count,
 	      shell_label, (unsigned long long)recovered);
+	return true;
+}
+
+static bool test_received_prefix_extension(void)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	const struct v34_ring_prefixes prefixes = {
+		.prefix = {
+			{ 0, 0 }, { 14, 1 }, { 1, 14 }, { 22, 8 },
+		},
+	};
+	struct v34_ring_prefixes invalid = prefixes;
+	uint32_t shell_label = UINT32_C(0xa5a5a5a5);
+
+	CHECK(v34_frame_geometry_init(
+		      &geometry, V34_SYMBOL_RATE_2800, 6, false) ==
+		      V34_FRAME_SCHEDULE_OK &&
+	      v34_mapping_parameters_init(&parameters, &geometry, false) ==
+		      V34_MAPPING_PARAMETERS_OK &&
+	      parameters.ring_count == 14u &&
+	      parameters.shell_mapper_bits == 30u,
+	      "received-prefix fixture did not initialize");
+	CHECK(v34_shell_unmap_decision(
+		      &parameters, &prefixes, 29, &shell_label) ==
+		      V34_SHELL_MAPPER_OK &&
+	      shell_label == UINT32_C(20308816),
+	      "received prefixes recovered shell label %u", shell_label);
+	invalid.prefix[0][0] = 128;
+	shell_label = UINT32_C(0xa5a5a5a5);
+	CHECK(v34_shell_unmap_decision(
+		      &parameters, &invalid, 29, &shell_label) ==
+		      V34_SHELL_MAPPER_OK &&
+	      shell_label == (UINT32_C(1) << 29) - 1u,
+	      "out-of-span received prefix did not recover the error word");
 	return true;
 }
 
@@ -385,6 +437,7 @@ static bool test_validation(void)
 	};
 	struct v34_ring_indices indices;
 	struct v34_ring_indices saved;
+	struct v34_ring_prefixes prefixes;
 	struct inverse_counts counts;
 	const struct v34_mapping_parameters expanded = {
 		.constellation_points = 12,
@@ -443,10 +496,11 @@ static bool test_validation(void)
 	      shell_label == UINT32_C(0xa5a5a5a5),
 	      "unused expanded shell sequence was accepted");
 	generate_inverse_counts(expanded.ring_count, &counts);
+	prefixes = prefixes_from_indices(&indices);
 	CHECK(recover_shell_label(
 		      &indices, expanded.ring_count, &counts, &recovered) &&
 	      v34_shell_unmap_decision(
-		      &expanded, &indices, expanded.shell_mapper_bits,
+		      &expanded, &prefixes, expanded.shell_mapper_bits,
 		      &shell_label) ==
 		      V34_SHELL_MAPPER_OK &&
 	      shell_label ==
@@ -455,10 +509,10 @@ static bool test_validation(void)
 	      "unused shell decision did not recover bounded data bits");
 	shell_label = UINT32_C(0xa5a5a5a5);
 	CHECK(v34_shell_unmap_decision(
-		      NULL, &indices, 0, &shell_label) ==
+		      NULL, &prefixes, 0, &shell_label) ==
 		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
 	      v34_shell_unmap_decision(
-		      &expanded, &indices,
+		      &expanded, &prefixes,
 		      (uint8_t)(expanded.shell_mapper_bits + 1u),
 		      &shell_label) ==
 		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
@@ -475,6 +529,7 @@ int main(void)
 	} tests[] = {
 		{ "small shell order", test_small_shell_order },
 		{ "all supported parameters", test_all_supported_parameters },
+		{ "received prefix extension", test_received_prefix_extension },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

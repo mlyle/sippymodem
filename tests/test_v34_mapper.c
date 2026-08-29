@@ -258,8 +258,9 @@ static bool test_hard_decision_folding(void)
 	struct v34_frame_geometry geometry;
 	struct v34_mapping_parameters parameters;
 	struct v34_grid_point outside;
-	struct v34_2d_mapping_input recovered;
-	struct v34_2d_mapping_input saved;
+	struct v34_2d_mapping_input exact;
+	struct v34_2d_mapping_decision recovered;
+	struct v34_2d_mapping_decision saved;
 
 	CHECK(v34_frame_geometry_init(
 		      &geometry, V34_SYMBOL_RATE_2400, 1, false) ==
@@ -276,18 +277,18 @@ static bool test_hard_decision_folding(void)
 			rotate_clockwise(outside, rotation);
 
 		CHECK(v34_unmap_2d_symbol(
-			      &parameters, &decided, &recovered) ==
+			      &parameters, &decided, &exact) ==
 			      V34_MAPPER_INVALID_ARGUMENT &&
 		      v34_unmap_2d_decision(
 			      &parameters, &decided, &recovered) ==
 			      V34_MAPPER_OK &&
-		      recovered.ring_index == 0u &&
+		      recovered.ring_prefix == 1u &&
 		      recovered.point_index == 0u &&
 		      recovered.clockwise_quarter_turns == rotation,
 		      "hard decision rotation %u did not fold", rotation);
 	}
-	recovered = (struct v34_2d_mapping_input){
-		.ring_index = 0xa5,
+	recovered = (struct v34_2d_mapping_decision){
+		.ring_prefix = 0xa5,
 		.point_index = 0x5a,
 		.clockwise_quarter_turns = 0xa5,
 	};
@@ -300,12 +301,12 @@ static bool test_hard_decision_folding(void)
 		      &parameters,
 		      &(const struct v34_grid_point){ 47, 1 },
 		      &recovered) == V34_MAPPER_OK &&
-	      recovered.ring_index == 0u &&
+	      recovered.ring_prefix > 0u &&
 	      recovered.point_index == 0u &&
 	      recovered.clockwise_quarter_turns == 3u,
 	      "bounded hard decision did not choose a nearest label");
-	recovered = (struct v34_2d_mapping_input){
-		.ring_index = 0xa5,
+	recovered = (struct v34_2d_mapping_decision){
+		.ring_prefix = 0xa5,
 		.point_index = 0x5a,
 		.clockwise_quarter_turns = 0xa5,
 	};

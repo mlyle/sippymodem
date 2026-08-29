@@ -30,7 +30,7 @@ struct v34_decided_4d_interval {
 
 struct v34_decoded_4d_interval {
 	struct v34_4d_mapping_input mapping;
-	uint8_t ring_index[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	uint16_t ring_prefix[V34_2D_SYMBOLS_PER_4D_INTERVAL];
 	/* Z(m), retained as compact decision evidence. */
 	uint8_t differential_output;
 };

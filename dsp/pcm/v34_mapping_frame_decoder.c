@@ -20,7 +20,7 @@ static bool decode_intervals(
 	const struct v34_decided_4d_interval
 		decided[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	struct v34_parsed_mapping_frame *parsed,
-	struct v34_ring_indices *rings)
+	struct v34_ring_prefixes *rings)
 {
 	for (uint8_t interval = 0;
 	     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME;
@@ -35,8 +35,8 @@ static bool decode_intervals(
 		for (uint8_t symbol = 0;
 		     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL;
 		     ++symbol)
-			rings->index[interval][symbol] =
-				decoded.ring_index[symbol];
+			rings->prefix[interval][symbol] =
+				decoded.ring_prefix[symbol];
 	}
 	return true;
 }
@@ -52,7 +52,7 @@ v34_decode_mapping_frame(
 	struct v34_4d_decoder next;
 	struct v34_recovered_mapping_frame generated = { 0 };
 	struct v34_parsed_mapping_frame parsed = { 0 };
-	struct v34_ring_indices rings = { 0 };
+	struct v34_ring_prefixes rings = { 0 };
 	uint8_t *auxiliary_bit;
 	uint8_t shell_bits;
 

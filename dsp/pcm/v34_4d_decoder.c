@@ -34,7 +34,7 @@ enum v34_4d_decoder_result v34_decode_4d_interval(
 {
 	struct v34_4d_decoder next;
 	struct v34_decoded_4d_interval generated = { 0 };
-	struct v34_2d_mapping_input mapped[2];
+	struct v34_2d_mapping_decision mapped[2];
 	uint8_t relative_rotation;
 
 	if (!v34_4d_decoder_is_valid(decoder) || decided == NULL ||
@@ -47,7 +47,7 @@ enum v34_4d_decoder_result v34_decode_4d_interval(
 			    &next.parameters, &decided->mapper_output[symbol],
 			    &mapped[symbol]) != V34_MAPPER_OK)
 			return V34_4D_DECODER_INVALID_ARGUMENT;
-		generated.ring_index[symbol] = mapped[symbol].ring_index;
+		generated.ring_prefix[symbol] = mapped[symbol].ring_prefix;
 		generated.mapping.point_index[symbol] =
 			mapped[symbol].point_index;
 	}

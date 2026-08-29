@@ -21,6 +21,14 @@ struct v34_2d_mapping_input {
 	uint8_t clockwise_quarter_turns;
 };
 
+/* A hard receive decision retains the complete Figure 5 grid prefix.  Unlike
+ * a mapping input, that prefix is not limited by the negotiated ring count. */
+struct v34_2d_mapping_decision {
+	uint16_t ring_prefix;
+	uint8_t point_index;
+	uint8_t clockwise_quarter_turns;
+};
+
 struct v34_2d_mapping_output {
 	uint16_t constellation_label;
 	/* Exact odd-integer u(n) supplied to the precoder. */
@@ -49,12 +57,12 @@ enum v34_mapper_result v34_unmap_2d_symbol(
 
 /* Recover a hard receiver decision. A noisy trellis path can produce a valid
  * odd-lattice point outside either the negotiated prefix or the complete
- * Figure 5 superconstellation. Fold an in-superconstellation label over the
- * prefix; otherwise select the nearest complete-superconstellation label
- * before folding. Off-grid and unbounded points remain errors. */
+ * Figure 5 superconstellation. Preserve an in-superconstellation prefix;
+ * otherwise select the nearest complete-superconstellation point. Off-grid
+ * and unbounded points remain errors. */
 enum v34_mapper_result v34_unmap_2d_decision(
 	const struct v34_mapping_parameters *parameters,
 	const struct v34_grid_point *mapper_output,
-	struct v34_2d_mapping_input *input);
+	struct v34_2d_mapping_decision *decision);
 
 #endif

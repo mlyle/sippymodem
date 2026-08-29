@@ -10,12 +10,13 @@ enum {
 	V34_MAX_4_RING_SUM = 2 * V34_MAX_2_RING_SUM,
 	V34_MAX_2_RING_SUM_COUNT = V34_MAX_2_RING_SUM + 1,
 	V34_MAX_4_RING_SUM_COUNT = V34_MAX_4_RING_SUM + 1,
+	V34_RECEIVE_SHELL_WORD_COUNT = 128,
 };
 
 struct shell_coefficients {
 	/* g2 and g4 count ordered pairs and quartets at each ring sum. */
-	uint32_t g2[V34_MAX_2_RING_SUM_COUNT];
-	uint32_t g4[V34_MAX_4_RING_SUM_COUNT];
+	uint32_t g2[V34_RECEIVE_SHELL_WORD_COUNT];
+	uint32_t g4[V34_RECEIVE_SHELL_WORD_COUNT];
 	uint8_t g2_count;
 	uint8_t g4_count;
 };
@@ -194,6 +195,121 @@ static bool recover_shell_label(
 	return true;
 }
 
+static uint32_t receive_correlation(
+	const uint32_t weights[V34_RECEIVE_SHELL_WORD_COUNT],
+	uint16_t count, uint16_t reverse_index)
+{
+	uint32_t total = 0;
+
+	for (uint16_t forward = 0; forward < count; ++forward)
+		total += weights[forward] * weights[reverse_index - forward];
+	return total;
+}
+
+static int32_t receive_edge_weight(
+	uint16_t limit, uint16_t start, uint16_t edge,
+	uint16_t inner, uint16_t tail)
+{
+	if ((uint32_t)edge - start >= limit)
+		return (int32_t)limit - tail;
+	return inner;
+}
+
+static int32_t receive_start_weight(
+	uint16_t limit, uint16_t start, uint16_t head, uint16_t lead)
+{
+	if (start >= limit)
+		return (int32_t)limit - lead;
+	return head;
+}
+
+static uint32_t receive_shell_metric(
+	const struct shell_coefficients *coefficients, uint16_t sum)
+{
+	uint64_t cumulative = 0;
+	uint16_t candidate = 0;
+	uint16_t sum_count = (uint16_t)(2u * coefficients->g4_count - 1u);
+
+	while (candidate < sum_count &&
+	       candidate < V34_RECEIVE_SHELL_WORD_COUNT &&
+	       cumulative <= INT32_MAX) {
+		if (candidate == sum)
+			return (uint32_t)cumulative;
+		cumulative += convolution_at(
+			coefficients->g4, coefficients->g4_count, candidate);
+		candidate++;
+	}
+	return UINT32_MAX;
+}
+
+static bool recover_received_shell_word(
+	const struct shell_coefficients *coefficients, uint8_t ring_count,
+	const struct v34_ring_prefixes *prefixes, uint32_t *shell_word)
+{
+	const uint16_t *first = prefixes->prefix[0];
+	const uint16_t *second = prefixes->prefix[2];
+	uint16_t limit = (uint16_t)(ring_count - 1u);
+	uint32_t first_pair_sum = (uint32_t)first[0] + first[1];
+	uint32_t first_quartet_sum = first_pair_sum +
+		prefixes->prefix[1][0] + prefixes->prefix[1][1];
+	uint32_t second_pair_sum = (uint32_t)second[0] + second[1];
+	uint32_t second_quartet_sum = second_pair_sum +
+		prefixes->prefix[3][0] + prefixes->prefix[3][1];
+	uint32_t total_sum = first_quartet_sum + second_quartet_sum;
+	uint16_t first_pair;
+	uint16_t first_quartet;
+	uint16_t second_pair;
+	uint16_t second_quartet;
+	uint16_t total;
+	int32_t first_pair_weight;
+	int32_t first_start_weight;
+	int32_t second_pair_weight;
+	int32_t second_start_weight;
+	uint32_t first_prefix;
+	uint32_t second_prefix;
+	uint32_t quartet_prefix;
+	uint32_t second_rank;
+	uint32_t generated;
+
+	if (first_pair_sum >= V34_RECEIVE_SHELL_WORD_COUNT ||
+	    first_quartet_sum >= V34_RECEIVE_SHELL_WORD_COUNT ||
+	    second_pair_sum >= V34_RECEIVE_SHELL_WORD_COUNT ||
+	    second_quartet_sum >= V34_RECEIVE_SHELL_WORD_COUNT ||
+	    total_sum >= V34_RECEIVE_SHELL_WORD_COUNT)
+		return false;
+	first_pair = (uint16_t)first_pair_sum;
+	first_quartet = (uint16_t)first_quartet_sum;
+	second_pair = (uint16_t)second_pair_sum;
+	second_quartet = (uint16_t)second_quartet_sum;
+	total = (uint16_t)total_sum;
+	first_pair_weight = receive_edge_weight(
+		limit, first_pair, first_quartet,
+		prefixes->prefix[1][0], prefixes->prefix[1][1]);
+	first_start_weight = receive_start_weight(
+		limit, first_pair, first[0], first[1]);
+	second_pair_weight = receive_edge_weight(
+		limit, second_pair, second_quartet,
+		prefixes->prefix[3][0], prefixes->prefix[3][1]);
+	second_start_weight = receive_start_weight(
+		limit, second_pair, second[0], second[1]);
+	first_prefix = receive_correlation(
+		coefficients->g2, first_pair, first_quartet);
+	second_prefix = receive_correlation(
+		coefficients->g2, second_pair, second_quartet);
+	quartet_prefix = receive_correlation(
+		coefficients->g4, first_quartet, total);
+	second_rank = coefficients->g2[second_pair] *
+		(uint32_t)second_pair_weight +
+		(uint32_t)second_start_weight + second_prefix;
+	generated = coefficients->g4[first_quartet] * second_rank +
+		first_prefix + coefficients->g2[first_pair] *
+		(uint32_t)first_pair_weight +
+		(uint32_t)first_start_weight + quartet_prefix +
+		receive_shell_metric(coefficients, total);
+	*shell_word = generated;
+	return true;
+}
+
 static bool map_shell_label(
 	const struct shell_coefficients *coefficients, uint8_t ring_count,
 	uint32_t shell_label, struct v34_ring_indices *indices)
@@ -286,7 +402,7 @@ enum v34_shell_mapper_result v34_shell_map(
 	uint32_t shell_label, struct v34_ring_indices *indices)
 {
 	struct v34_ring_indices generated = { 0 };
-	struct shell_coefficients coefficients;
+	struct shell_coefficients coefficients = { 0 };
 	uint32_t label_limit;
 
 	if (!v34_mapping_parameters_is_valid(parameters) ||
@@ -309,7 +425,7 @@ enum v34_shell_mapper_result v34_shell_unmap(
 	const struct v34_ring_indices *indices,
 	uint32_t *shell_label)
 {
-	struct shell_coefficients coefficients;
+	struct shell_coefficients coefficients = { 0 };
 	uint64_t recovered;
 
 	if (!v34_ring_indices_are_valid(indices, parameters) ||
@@ -325,20 +441,25 @@ enum v34_shell_mapper_result v34_shell_unmap(
 
 enum v34_shell_mapper_result v34_shell_unmap_decision(
 	const struct v34_mapping_parameters *parameters,
-	const struct v34_ring_indices *indices,
+	const struct v34_ring_prefixes *prefixes,
 	uint8_t shell_bits, uint32_t *shell_label)
 {
-	struct shell_coefficients coefficients;
-	uint64_t recovered;
+	struct shell_coefficients coefficients = { 0 };
+	uint32_t recovered;
 	uint32_t label_limit;
 
-	if (!v34_ring_indices_are_valid(indices, parameters) ||
+	if (!v34_mapping_parameters_is_valid(parameters) || prefixes == NULL ||
 	    shell_bits > parameters->shell_mapper_bits || shell_label == NULL ||
-	    !generate_coefficients(parameters->ring_count, &coefficients) ||
-	    !recover_shell_label(
-		    &coefficients, parameters->ring_count, indices, &recovered))
+	    !generate_coefficients(parameters->ring_count, &coefficients))
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
+	/* A corrupted survivor can exceed the bounded receive work tables.  The
+	 * receive mapping represents that span with an all-one shell word and
+	 * continues decoding rather than turning channel errors into state
+	 * errors. */
+	if (!recover_received_shell_word(
+		    &coefficients, parameters->ring_count, prefixes, &recovered))
+		recovered = UINT32_MAX;
 	label_limit = shell_bits == 0 ? 1u : UINT32_C(1) << shell_bits;
-	*shell_label = (uint32_t)(recovered % label_limit);
+	*shell_label = recovered % label_limit;
 	return V34_SHELL_MAPPER_OK;
 }

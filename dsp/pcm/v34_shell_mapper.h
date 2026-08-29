@@ -22,6 +22,12 @@ struct v34_ring_indices {
 		     [V34_RING_INDICES_PER_4D_INTERVAL];
 };
 
+/* Receive decisions may lie outside the negotiated shaping rings. */
+struct v34_ring_prefixes {
+	uint16_t prefix[V34_4D_INTERVALS_PER_MAPPING_FRAME]
+		       [V34_RING_INDICES_PER_4D_INTERVAL];
+};
+
 /* Map R0 to the eight ring indices m(0)..m(7) from clause 9.4.  Coefficients
  * are generated from the selected ring count; no normative table is stored. */
 enum v34_shell_mapper_result v34_shell_map(
@@ -36,12 +42,12 @@ enum v34_shell_mapper_result v34_shell_unmap(
 	const struct v34_ring_indices *indices,
 	uint32_t *shell_label);
 
-/* Recover the low `shell_bits` data bits from a received ring decision.
- * A decision outside that mapping-frame codebook is reduced modulo 2^K, as
- * the frame bit extraction would truncate the recovered shell word. */
+/* Recover the low `shell_bits` data bits from received Figure 5 prefixes.
+ * Prefixes outside the negotiated shaping rings follow the bounded receive
+ * extension before the recovered shell word is truncated to K bits. */
 enum v34_shell_mapper_result v34_shell_unmap_decision(
 	const struct v34_mapping_parameters *parameters,
-	const struct v34_ring_indices *indices,
+	const struct v34_ring_prefixes *prefixes,
 	uint8_t shell_bits, uint32_t *shell_label);
 
 bool v34_ring_indices_are_valid(

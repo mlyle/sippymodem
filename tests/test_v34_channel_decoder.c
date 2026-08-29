@@ -140,9 +140,8 @@ static bool decoded_matches(
 		       decoded->mapping.point_index,
 		       expected->input.mapping.point_index,
 		       sizeof(decoded->mapping.point_index)) == 0 &&
-	       memcmp(
-		       decoded->ring_index, expected->input.ring_index,
-		       sizeof(decoded->ring_index)) == 0 &&
+	       decoded->ring_prefix[0] == expected->input.ring_index[0] &&
+	       decoded->ring_prefix[1] == expected->input.ring_index[1] &&
 	       decoded->differential_output == expected->differential_output;
 }
 

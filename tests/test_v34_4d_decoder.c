@@ -85,9 +85,8 @@ static bool decoded_matches(
 	       memcmp(
 		       decoded->mapping.point_index, mapping->point_index,
 		       sizeof(decoded->mapping.point_index)) == 0 &&
-	       memcmp(
-		       decoded->ring_index, ring_index,
-		       sizeof(decoded->ring_index)) == 0 &&
+	       decoded->ring_prefix[0] == ring_index[0] &&
+	       decoded->ring_prefix[1] == ring_index[1] &&
 	       decoded->differential_output == differential_output;
 }
 
@@ -314,7 +313,8 @@ static bool test_noisy_decision_folding(void)
 		.rotation_bit = 1,
 		.differential_input = 1,
 	};
-	const uint8_t ring_index[2] = { 0 };
+	const uint8_t mapped_ring_index[2] = { 0, 0 };
+	const uint8_t decided_ring_prefix[2] = { 1, 1 };
 	struct v34_decided_4d_interval decided;
 	struct v34_decoded_4d_interval decoded;
 	struct v34_grid_point outside;
@@ -325,7 +325,8 @@ static bool test_noisy_decision_folding(void)
 	      v34_4d_decoder_init(&decoder, &parameters) ==
 		      V34_4D_DECODER_OK &&
 	      generate_decision(
-		      &parameters, 0, &mapping, ring_index, 0, &decided) &&
+		      &parameters, 0, &mapping, mapped_ring_index, 0,
+		      &decided) &&
 	      v34_quarter_superconstellation_point(
 		      1, &outside) == V34_CONSTELLATION_OK,
 	      "noisy-decision fixture did not initialize");
@@ -333,8 +334,8 @@ static bool test_noisy_decision_folding(void)
 	decided.mapper_output[1] = rotate_clockwise(outside, 3);
 	CHECK(v34_decode_4d_interval(
 		      &decoder, &decided, &decoded) == V34_4D_DECODER_OK &&
-	      decoded_matches(&decoded, &mapping, ring_index, 1),
-	      "outside-prefix hard decision did not preserve the 4-D mapping");
+	      decoded_matches(&decoded, &mapping, decided_ring_prefix, 1),
+	      "outside-prefix hard decision did not preserve its prefixes");
 	return true;
 }
 
