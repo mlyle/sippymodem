@@ -938,6 +938,50 @@ static bool test_retrain_tone_guard(void)
 	return true;
 }
 
+static bool complete_remote_retrain_silence(
+	struct endpoint *endpoint,
+	struct v34_phase2_tone_transmitter *remote_tone, bool pcma)
+{
+	struct v34_phase2_tone_detector retained =
+		endpoint->call.retrain_detector.tone;
+
+	CHECK(endpoint->call.stage == V34_CALL_RETRAIN_SILENCE &&
+	      endpoint->call.retrain_peer_tone_retained,
+	      "remote retrain did not retain its peer tone");
+	for (size_t index = 0; index < V34_CALL_RETRAIN_SILENCE_SAMPLES;
+	     ++index) {
+		struct v34_phase2_tone_event tone_event;
+		struct v34_call_observation observation;
+		int16_t remote_sample;
+		int16_t received_sample;
+		int16_t transmitted;
+		enum v34_call_stage next =
+			index + 1u == V34_CALL_RETRAIN_SILENCE_SAMPLES ?
+				V34_CALL_PHASE2 : V34_CALL_RETRAIN_SILENCE;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      remote_tone, &remote_sample) == V34_PHASE2_TONE_OK,
+		      "remote retrain continuation failed at sample %zu", index);
+		received_sample = codec_round_trip(remote_sample, pcma);
+		CHECK(v34_phase2_tone_detector_sample(
+			      &retained, received_sample, &tone_event) ==
+			      V34_PHASE2_TONE_OK &&
+		      endpoint_sample(
+			      endpoint, received_sample, supply_mapping_frame,
+			      &transmitted, &observation) &&
+		      transmitted == 0 &&
+		      observation.processed == V34_CALL_RETRAIN_SILENCE &&
+		      observation.next == next,
+		      "remote retrain silence failed at sample %zu", index);
+	}
+	CHECK(!endpoint->call.retrain_peer_tone_retained &&
+	      memcmp(&endpoint->call.state.phase2.state.ranging.info0_exchange
+			      .transport.tone_detector,
+		     &retained, sizeof(retained)) == 0,
+	      "remote retrain lost the peer tone at the Phase 2 handoff");
+	return true;
+}
+
 static bool check_retrain_tone_stage_guard(
 	enum v34_station_role local_role, bool pcma,
 	enum v34_call_stage target_stage, bool retraining,
@@ -1044,6 +1088,10 @@ static bool check_retrain_tone_stage_guard(
 				      sizeof(before)) == 0),
 	      "retrain stage %d produced the wrong detector transition",
 	      target_stage);
+	if (expect_retrain)
+		CHECK(complete_remote_retrain_silence(
+			      endpoint, &remote_tone, pcma),
+		      "retrain stage %d lost its peer tone", target_stage);
 	return true;
 }
 

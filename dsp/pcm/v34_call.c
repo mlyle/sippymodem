@@ -167,7 +167,11 @@ bool v34_call_is_valid(const struct v34_call *call)
 			      call->retrain_detector.edge_samples == 0 &&
 			      call->state.retrain_silence.samples_remaining > 0 &&
 			      call->state.retrain_silence.samples_remaining <=
-				      V34_CALL_RETRAIN_SILENCE_SAMPLES;
+				      V34_CALL_RETRAIN_SILENCE_SAMPLES &&
+			      (!call->retrain_peer_tone_retained ||
+			       v34_phase2_tone_detector_measure(
+				       &call->retrain_detector.tone)
+				       .tone_present);
 		child_failed = false;
 		child_role = call->local_role;
 		break;
@@ -175,6 +179,8 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
+	       (call->stage == V34_CALL_RETRAIN_SILENCE ||
+		!call->retrain_peer_tone_retained) &&
 	       v34_echo_canceller_is_adapting(&call->echo) ==
 		       echo_adaptation_is_expected(call) &&
 	       (call->round_trip_delay_stored ||
@@ -218,7 +224,8 @@ enum v34_call_result v34_call_init(
 	return V34_CALL_OK;
 }
 
-static enum v34_call_result begin_retrain(struct v34_call *call)
+static enum v34_call_result begin_retrain(
+	struct v34_call *call, bool retain_peer_tone)
 {
 	struct v34_call next = *call;
 
@@ -238,8 +245,9 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 	if (next.local_role == V34_CALLING_STATION &&
 	    !add_caller_retrain_fallbacks(&next))
 		return V34_CALL_INVALID_STATE;
-	if (v34_retrain_detector_reset(
-		    &next.retrain_detector) != V34_PHASE2_TONE_OK ||
+	if ((!retain_peer_tone &&
+	     v34_retrain_detector_reset(
+		     &next.retrain_detector) != V34_PHASE2_TONE_OK) ||
 	    v34_echo_canceller_init(&next.echo) !=
 		    V34_ECHO_CANCELLER_OK ||
 	    v34_echo_canceller_freeze(&next.echo) !=
@@ -248,6 +256,7 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 	next.state.retrain_silence.samples_remaining =
 		V34_CALL_RETRAIN_SILENCE_SAMPLES;
 	next.retrain_active = true;
+	next.retrain_peer_tone_retained = retain_peer_tone;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -261,7 +270,7 @@ enum v34_call_result v34_call_start_retrain(struct v34_call *call)
 		return V34_CALL_INVALID_ARGUMENT;
 	if (!v34_call_is_online(call))
 		return V34_CALL_INVALID_STATE;
-	return begin_retrain(call);
+	return begin_retrain(call, false);
 }
 
 bool v34_call_has_failed(const struct v34_call *call)
@@ -417,7 +426,7 @@ static enum v34_call_result answer_info1c(struct v34_call *call)
 		&peer_info0, &call->local_info0, &peer,
 		&call->local_info1.answering, &selection.answering);
 	if (result == V34_PHASE2_SELECTION_NO_COMMON_PROFILE)
-		return begin_retrain(call);
+		return begin_retrain(call, false);
 	if (result != V34_PHASE2_SELECTION_OK ||
 	    !select_local_preemphasis(call, &selection))
 		return V34_CALL_SEQUENCE_MISMATCH;
@@ -578,21 +587,35 @@ static bool phase4_receive_has_failed(
 }
 
 static enum v34_call_result sample_retrain_silence(
-	struct v34_call *call, int16_t *transmit_sample)
+	struct v34_call *call, int16_t received_sample,
+	int16_t *transmit_sample)
 {
 	struct v34_phase2 restarted;
+	struct v34_phase2_tone_event event;
 
 	*transmit_sample = 0;
+	if (call->retrain_peer_tone_retained &&
+	    v34_phase2_tone_detector_sample(
+		    &call->retrain_detector.tone,
+		    received_sample, &event) != V34_PHASE2_TONE_OK)
+		return V34_CALL_NUMERIC_FAILURE;
 	if (--call->state.retrain_silence.samples_remaining != 0)
 		return V34_CALL_OK;
 	if (v34_phase2_init_retrain(
 		    &restarted, call->local_role,
 		    call->phase2_nominal_amplitude, &call->local_info0,
 		    &call->peer_info0, call->round_trip_delay_samples) !=
-	    V34_PHASE2_OK)
+		    V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
+	if (call->retrain_peer_tone_retained) {
+		restarted.state.ranging.info0_exchange.transport.tone_detector =
+			call->retrain_detector.tone;
+		if (!v34_phase2_is_valid(&restarted))
+			return V34_CALL_NUMERIC_FAILURE;
+	}
 	call->state.phase2 = restarted;
 	call->stage = V34_CALL_PHASE2;
+	call->retrain_peer_tone_retained = false;
 	return V34_CALL_OK;
 }
 
@@ -624,7 +647,7 @@ static enum v34_call_result observe_retrain_tone(
 		    &call->retrain_detector, received_sample,
 		    &detected) != V34_PHASE2_TONE_OK)
 		return V34_CALL_NUMERIC_FAILURE;
-	return detected ? begin_retrain(call) : V34_CALL_OK;
+	return detected ? begin_retrain(call, true) : V34_CALL_OK;
 }
 
 static enum v34_call_result reset_retrain_detector(struct v34_call *call)
@@ -686,7 +709,8 @@ enum v34_call_result v34_call_sample(
 			retrain_requested = true;
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
-		result = sample_retrain_silence(call, &generated);
+		result = sample_retrain_silence(
+			call, received_sample, &generated);
 		break;
 	default:
 		return V34_CALL_INVALID_STATE;
@@ -712,7 +736,7 @@ enum v34_call_result v34_call_sample(
 			 V34_ECHO_CANCELLER_OK)
 		result = V34_CALL_NUMERIC_FAILURE;
 	else if (retrain_requested)
-		result = begin_retrain(call);
+		result = begin_retrain(call, false);
 	if (result == V34_CALL_OK && call->stage == V34_CALL_PHASE4 &&
 	    call->state.phase4.online_announced)
 		call->retrain_active = false;

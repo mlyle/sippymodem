@@ -94,6 +94,7 @@ struct v34_call {
 	bool peer_info0_stored;
 	bool round_trip_delay_stored;
 	bool retrain_active;
+	bool retrain_peer_tone_retained;
 	bool failed;
 };
 
