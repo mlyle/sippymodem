@@ -399,8 +399,8 @@ static struct v34_analytic_sample update_feedback_filter(
 	int16_t error_quadrature = wrap_s16_from_s32(
 		(int32_t)decision_error.quadrature + predicted_quadrature);
 
-	feedback->in_phase_history[0] = error_in_phase;
-	feedback->quadrature_history[0] = error_quadrature;
+	feedback->in_phase_history[0] = decision_error.in_phase;
+	feedback->quadrature_history[0] = decision_error.quadrature;
 	for (size_t index = 0; index < 3; ++index) {
 		int16_t a = feedback->coefficient_a[index];
 		int16_t b = feedback->coefficient_b[index];

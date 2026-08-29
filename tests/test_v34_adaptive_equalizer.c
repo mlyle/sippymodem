@@ -244,23 +244,63 @@ static bool test_exact_decision_feedback_oracle(void)
 			      V34_ADAPTIVE_EQUALIZER_OK,
 		      "oracle commit failed at symbol %zu", symbol);
 	}
-	CHECK(observation_hash == UINT64_C(0xf9bec92bd51138ed),
+	CHECK(observation_hash == UINT64_C(0x4b5ed34a8f4b676c),
 	      "observation oracle changed: %#llx",
 	      (unsigned long long)observation_hash);
-	CHECK(state_hash(&equalizer) == UINT64_C(0x72ec1bba8e50fbce),
+	CHECK(state_hash(&equalizer) == UINT64_C(0xa240b84b6ce805f7),
 	      "terminal oracle changed: %#llx",
 	      (unsigned long long)state_hash(&equalizer));
-	CHECK(equalizer.phase_accumulator == -8971410 &&
-	      equalizer.phase_error == -324130468 &&
-	      equalizer.rotate_in_phase == 14508 &&
-	      equalizer.rotate_quadrature == -7613 &&
-	      equalizer.carrier_phase_low == 29358 &&
-	      equalizer.carrier_phase_fraction == 7562 &&
+	CHECK(equalizer.phase_accumulator == 1859052 &&
+	      equalizer.phase_error == 330697664 &&
+	      equalizer.rotate_in_phase == 2963 &&
+	      equalizer.rotate_quadrature == 16115 &&
+	      equalizer.carrier_phase_low == 48886 &&
+	      equalizer.carrier_phase_fraction == 1811 &&
 	      equalizer.equalizer.index == 32 && equalizer.epoch == 96 &&
 	      equalizer.lineage == UINT64_C(0xd3e3fb96b7dabaf6) &&
 	      !equalizer.decision_pending &&
 	      v34_adaptive_equalizer_is_valid(&equalizer),
 	      "terminal oracle scalar state changed");
+	return true;
+}
+
+static bool test_feedback_history_lineage(void)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer_observation observation;
+	struct v34_adaptive_equalizer_decision decision;
+	static const int16_t in_phase_history[] = { 20, 30, 40, 50 };
+	static const int16_t quadrature_history[] = { 5, 7, 11, 13 };
+
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_adaptive_equalizer_set_feedback_mode(
+		      &equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "feedback-history owner did not initialize");
+	equalizer.feedback.coefficient_a[0] = 0x2000;
+	memcpy(equalizer.feedback.in_phase_history, in_phase_history,
+	       sizeof(in_phase_history));
+	memcpy(equalizer.feedback.quadrature_history, quadrature_history,
+	       sizeof(quadrature_history));
+	CHECK(push_zero_symbol(&equalizer) &&
+	      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "feedback-history observation failed");
+	decision = (struct v34_adaptive_equalizer_decision){
+		.observation = observation,
+		.target = { -100, 50 },
+		.adaptation = V34_ADAPTIVE_EQUALIZER_SKIP,
+	};
+	CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      memcmp(equalizer.feedback.in_phase_history,
+		     (const int16_t[]){ 100, 20, 30, 40 },
+		     sizeof(equalizer.feedback.in_phase_history)) == 0 &&
+	      memcmp(equalizer.feedback.quadrature_history,
+		     (const int16_t[]){ -50, 5, 7, 11 },
+		     sizeof(equalizer.feedback.quadrature_history)) == 0,
+	      "feedback history retained the corrected residual");
 	return true;
 }
 
@@ -1016,6 +1056,7 @@ int main(void)
 {
 	if (!test_initial_state_and_carrier_profile() ||
 	    !test_exact_decision_feedback_oracle() ||
+	    !test_feedback_history_lineage() ||
 	    !test_feedback_and_discard_lifecycle() ||
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
