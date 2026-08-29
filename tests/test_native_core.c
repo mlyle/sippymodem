@@ -640,7 +640,7 @@ static bool test_datapump_error_control_policy(void)
 
 static bool complete_raw_v14_detection(struct modem *answerer)
 {
-	uint8_t bits[108];
+	uint8_t bits[360];
 	struct modem pattern_source = {
 		.name = "raw detection pattern source",
 	};
@@ -657,7 +657,10 @@ static bool complete_raw_v14_detection(struct modem *answerer)
 		      answerer->packer.detector.rx_count == 4 &&
 		      answerer->packer.detector.ec_enable == 0,
 	      "raw answerer did not accept two ODP patterns");
-	answerer->bit_timer_func(answerer);
+	CHECK(modem_get_bits(
+		      answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
+		      (int)ARRAY_LENGTH(bits),
+	      "raw answerer did not transmit ten ADP-V.14 patterns");
 	CHECK(answerer->get_bits == modem_async_get_bits &&
 		      answerer->put_bits == modem_async_put_bits &&
 		      answerer->cfg.ec == 0,

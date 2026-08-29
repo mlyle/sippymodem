@@ -329,10 +329,9 @@ void modem_async_start(struct modem *m)
 #define ADP1_V42 0xc2
 
 #define DETECTOR_MATCH_CHARACTERS 4
-#define DETECTOR_ADP_REPLY_PATTERNS 16
+#define DETECTOR_ADP_REPLY_PATTERNS 10
 #define DETECTOR_ORIGINATOR_MARK_BITS (64 * 8)
 #define DETECTOR_ANSWER_TIMEOUT_SCALE 96
-#define PATTERN_SIZE 36
 #define DETECTOR_FALLBACK_RATE 28800
 
 int modem_link_supports_v42(const struct modem *m)
@@ -371,6 +370,14 @@ static void detector_start(struct modem *m)
 	m->packer.detector.tx_count = 1;
 }
 
+static void detector_start_adp_reply(struct modem *m)
+{
+	m->packer.detector.tx_count = 1;
+	m->packer.detector.ec_enable = m->cfg.ec != 0;
+	m->bit_timer = 0;
+	m->bit_timer_func = NULL;
+}
+
 static int detector_ec_required(const struct modem *m)
 {
 	return m->sregs[SREG_EC] == 2 || m->sregs[SREG_EC] == 4 ||
@@ -387,6 +394,9 @@ static void detector_finish(struct modem *m)
 		m->packer.detector.rx_count >= DETECTOR_MATCH_CHARACTERS;
 
 	PACK_DBG("detector finished.\n");
+	m->packer.detector.tx_count = 0;
+	m->bit_timer = 0;
+	m->bit_timer_func = NULL;
 	if (!m->packer.detector.ec_enable && detector_ec_required(m)) {
 		modem_update_status(m, STATUS_ERROR);
 		return;
@@ -446,13 +456,26 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 	while (bit_cnt > 0) {
 		/* fill bits */
 		while (bit_cnt > 0 && s->bit >= nbits) {
-			*bit_buf++ = (u8)(s->data >> (s->bit - nbits));
+			*bit_buf++ = (u8)(s->data >> (s->bit - nbits)) &
+				(u8)(((u32)1 << nbits) - 1u);
 			s->bit -= nbits;
 			ret++;
 			bit_cnt--;
 		}
 		if (bit_cnt <= 0)
 			break;
+		if (!m->caller &&
+		    d->tx_count > 2 * DETECTOR_ADP_REPLY_PATTERNS) {
+			/* Finish the selected output group with marks.  The detector
+			 * changes ownership only after every required ADP bit is on the
+			 * wire, independent of receive-side activity. */
+			int marks = nbits - s->bit;
+
+			s->data = (s->data << marks) |
+				(((u32)1 << marks) - 1u);
+			s->bit += marks;
+			continue;
+		}
 		/* Insert the mark interval preceding each pattern character. */
 		s->data = (s->data << 9) | 0x1ffu;
 		s->bit += 9;
@@ -462,6 +485,9 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			s->bit += 9;
 		}
 	}
+	if (!m->caller &&
+	    d->tx_count > 2 * DETECTOR_ADP_REPLY_PATTERNS && s->bit == 0)
+		detector_finish(m);
 	return ret;
 }
 
@@ -471,6 +497,7 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 	struct bits_state *s = &m->unpack;
 	struct detect_state *d = &m->packer.detector;
 	int ret = 0;
+	int finish = 0;
 	u8 ch;
 	while(bit_cnt > 0) {
 		s->data<<= nbits;
@@ -489,16 +516,12 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 				/* A peer may resume HDLC immediately after physical
 				 * retrain. Reply once; continued flags must not keep
 				 * postponing the selected V.42 transition. */
-				if (!d->ec_enable) {
-					d->ec_enable = m->cfg.ec != 0;
-					m->bit_timer_func = detector_finish;
-					if (!m->caller && d->ec_enable) {
-						d->tx_count = 1;
-						m->bit_timer =
-							DETECTOR_ADP_REPLY_PATTERNS *
-							PATTERN_SIZE;
-					} else {
-						m->bit_timer = PATTERN_SIZE;
+				if (!d->ec_enable && (m->caller || d->tx_count == 0)) {
+					if (!m->caller)
+						detector_start_adp_reply(m);
+					else {
+						d->ec_enable = m->cfg.ec != 0;
+						finish = 1;
 					}
 				}
 				continue;
@@ -506,21 +529,19 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 			if (!detector_accept_pattern_character(m, d, ch))
 				continue;
 
-			m->bit_timer_func = detector_finish;
 			if (!m->caller) {
 				/* Reply with the locally selected V.42 or V.14 mode. */
-				d->tx_count = 1;
-				d->ec_enable = m->cfg.ec != 0;
-				m->bit_timer =
-					DETECTOR_ADP_REPLY_PATTERNS * PATTERN_SIZE;
+				detector_start_adp_reply(m);
 			} else {
 				d->ec_enable = d->rx_pattern[1] == ADP1_V42;
 				if (d->ec_enable)
 					m->cfg.ec = 1;
-				m->bit_timer = PATTERN_SIZE;
+				finish = 1;
 			}
 		}
 	}
+	if (finish)
+		detector_finish(m);
 	return ret;
 }
 

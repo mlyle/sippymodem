@@ -269,7 +269,7 @@ static bool test_async_preserves_raw_data_through_t400(void)
 
 static bool test_raw_answerer_selects_v14(void)
 {
-	uint8_t bits[72];
+	uint8_t bits[360];
 	struct dp answer_datapump = { .id = DP_V34 };
 	struct modem answerer = {
 		.name = "raw-v42-answerer",
@@ -313,6 +313,7 @@ static bool test_raw_answerer_selects_v14(void)
 	      "raw answerer did not consume the second ODP");
 	CHECK(answerer.packer.detector.rx_count == 4 &&
 		      answerer.packer.detector.tx_count == 1 &&
+		      answerer.bit_timer == 0 &&
 		      answerer.packer.detector.ec_enable == 0,
 	      "two ODPs did not start the ADP-V.14 response");
 
@@ -321,13 +322,25 @@ static bool test_raw_answerer_selects_v14(void)
 		      modem_detector_put_bits(
 			      &originator, 1, bits, 72) == 72,
 	      "originator did not consume the first ADP-V.14");
-	CHECK(modem_detector_get_bits(&answerer, 1, bits, 36) == 36 &&
+	CHECK(modem_detector_get_bits(&answerer, 1, bits + 72, 36) == 36 &&
 		      modem_detector_put_bits(
-			      &originator, 1, bits, 36) == 36,
+			      &originator, 1, bits + 72, 36) == 36,
 	      "originator did not consume the second ADP-V.14");
 	CHECK(originator.packer.detector.rx_count == 4 &&
 		      originator.packer.detector.ec_enable == 0,
 	      "originator did not accept the V.14 selection");
+	CHECK(modem_detector_get_bits(&answerer, 1, bits + 108, 251) == 251 &&
+		      answerer.packer.detector.tx_count == 21 &&
+		      answerer.pack.bit == 1 && answerer.bit_timer == 0,
+	      "V.14 answerer did not retain the final ADP bit");
+	CHECK(modem_detector_get_bits(&answerer, 1, bits + 359, 1) == 1,
+	      "V.14 answerer did not emit the final ADP bit");
+	CHECK(answerer.packer.detector.tx_count == 0 &&
+		      answerer.bit_timer_func == NULL,
+	      "V.14 answerer did not finish after exactly ten ADPs");
+	for (size_t pattern = 1; pattern < 10; ++pattern)
+		CHECK(memcmp(bits, bits + pattern * 36, 36) == 0,
+		      "V.14 ADP pattern %zu changed", pattern);
 	return true;
 }
 
@@ -430,16 +443,16 @@ static bool test_v42_flags_do_not_extend_detection(void)
 			      (int)ARRAY_LENGTH(bits) &&
 		      detector.packer.detector.ec_enable == 1 &&
 		      detector.packer.detector.tx_count == 1 &&
-		      detector.bit_timer == 576,
+		      detector.bit_timer == 0,
 	      "V.42 detector did not accept the HDLC flag transition");
-	detector.bit_timer = 500;
 	CHECK(modem_hdlc_get_bits(
 		      &flag_source, 1, bits, (int)ARRAY_LENGTH(bits)) ==
 		      (int)ARRAY_LENGTH(bits) &&
 		      modem_detector_put_bits(
 			      &detector, 1, bits, (int)ARRAY_LENGTH(bits)) ==
 			      (int)ARRAY_LENGTH(bits) &&
-		      detector.bit_timer == 500,
+		      detector.packer.detector.tx_count == 1 &&
+		      detector.bit_timer == 0,
 	      "continued HDLC flags postponed V.42 completion");
 	return true;
 }
