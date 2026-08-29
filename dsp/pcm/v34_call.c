@@ -80,6 +80,60 @@ static bool echo_adaptation_is_expected(const struct v34_call *call)
 	       call->state.phase3.transmit_started;
 }
 
+static bool add_caller_retrain_fallbacks(struct v34_call *call)
+{
+	struct v34_info1c selected = call->local_info1.calling;
+	uint8_t projected_ceiling = 0;
+	unsigned int highest_offered = 0;
+	bool offered = false;
+
+	if (!v34_phase2_info1c_is_consistent(
+		    &call->local_info0, &call->peer_info0, &selected))
+		return false;
+	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT; ++index) {
+		uint8_t projected = selected.answer_transmit[index]
+					    .projected_data_rate_2400_bps_units;
+
+		if (projected == 0)
+			continue;
+		offered = true;
+		highest_offered = index;
+		if (projected > projected_ceiling)
+			projected_ceiling = projected;
+	}
+	if (!offered)
+		return true;
+	for (unsigned int index = 0; index <= highest_offered; ++index) {
+		struct v34_info1c candidate;
+		struct v34_info1_probe_result *probe;
+		uint8_t limit;
+
+		if (selected.answer_transmit[index]
+			    .projected_data_rate_2400_bps_units != 0)
+			continue;
+		limit = v34_phase2_projected_rate_limit(
+			(enum v34_symbol_rate)index);
+		if (limit == 0)
+			continue;
+		candidate = selected;
+		probe = &candidate.answer_transmit[index];
+		probe->high_carrier = index == V34_SYMBOL_RATE_2743;
+		probe->projected_data_rate_2400_bps_units =
+			projected_ceiling < limit ? projected_ceiling : limit;
+		if (!v34_phase2_info1c_is_consistent(
+			    &call->local_info0, &call->peer_info0, &candidate)) {
+			probe->high_carrier = !probe->high_carrier;
+			if (!v34_phase2_info1c_is_consistent(
+				    &call->local_info0, &call->peer_info0,
+				    &candidate))
+				continue;
+		}
+		selected = candidate;
+	}
+	call->local_info1.calling = selected;
+	return true;
+}
+
 bool v34_call_is_valid(const struct v34_call *call)
 {
 	bool child_valid;
@@ -177,6 +231,12 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 		next.peer_info0_stored = true;
 	}
 	if (!next.round_trip_delay_stored)
+		return V34_CALL_INVALID_STATE;
+	/* A forced initial cadence remains exact.  Once the peer requests a full
+	 * retrain, let it select a compatible slower probe result instead of
+	 * rejecting an otherwise valid INFO1a fallback. */
+	if (next.local_role == V34_CALLING_STATION &&
+	    !add_caller_retrain_fallbacks(&next))
 		return V34_CALL_INVALID_STATE;
 	if (v34_retrain_detector_reset(
 		    &next.retrain_detector) != V34_PHASE2_TONE_OK ||

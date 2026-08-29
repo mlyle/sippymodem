@@ -793,11 +793,10 @@ static bool check_retrain_selects_new_rate(bool pcma)
 
 	CHECK(run_online_pair(&caller, &answerer, &channel, pcma),
 	      "rate-selection pair failed to connect");
-	caller.call.local_info1.calling
-		.answer_transmit[V34_SYMBOL_RATE_2400] =
-			(struct v34_info1_probe_result){
-				.projected_data_rate_2400_bps_units = 4,
-			};
+	CHECK(caller.call.local_info1.calling
+		      .answer_transmit[V34_SYMBOL_RATE_2400]
+		      .projected_data_rate_2400_bps_units == 0,
+	      "initial caller unexpectedly offered the fallback rate");
 	answerer.call.local_info1.answering.answer_to_call_symbol_rate =
 		V34_SYMBOL_RATE_2400;
 	answerer.call.local_info1.answering.call_to_answer_symbol_rate =
@@ -812,6 +811,9 @@ static bool check_retrain_selects_new_rate(bool pcma)
 		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
 	      caller.call.state.phase4.data_startup.receive
 		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
+	      caller.call.local_info1.calling
+		      .answer_transmit[V34_SYMBOL_RATE_2400]
+		      .projected_data_rate_2400_bps_units == 4 &&
 	      answerer.call.state.phase4.data_startup.transmit
 		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
 	      answerer.call.state.phase4.data_startup.receive
