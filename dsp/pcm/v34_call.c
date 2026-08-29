@@ -207,7 +207,7 @@ enum v34_call_result v34_call_init(
 	if (v34_retrain_detector_init(
 		    &initialized.retrain_detector,
 		    configuration->local_role) != V34_PHASE2_TONE_OK ||
-	    v34_echo_canceller_init(&initialized.echo, 0) !=
+	    v34_echo_canceller_init(&initialized.echo) !=
 		    V34_ECHO_CANCELLER_OK ||
 	    v34_echo_canceller_freeze(&initialized.echo) !=
 		    V34_ECHO_CANCELLER_OK)
@@ -240,7 +240,7 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 		return V34_CALL_INVALID_STATE;
 	if (v34_retrain_detector_reset(
 		    &next.retrain_detector) != V34_PHASE2_TONE_OK ||
-	    v34_echo_canceller_init(&next.echo, 0) !=
+	    v34_echo_canceller_init(&next.echo) !=
 		    V34_ECHO_CANCELLER_OK ||
 	    v34_echo_canceller_freeze(&next.echo) !=
 		    V34_ECHO_CANCELLER_OK)
@@ -384,8 +384,7 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		&call->phase3_configuration, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
-	if (v34_echo_canceller_init(
-		    &call->echo, call->round_trip_delay_samples) !=
+	if (v34_echo_canceller_init(&call->echo) !=
 		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	/* The caller retains pass-through until its own Phase 3 transmission.
@@ -696,8 +695,7 @@ enum v34_call_result v34_call_sample(
 	    call->local_role == V34_CALLING_STATION &&
 	    (emitted.events.phase3 &
 	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0) {
-		if (v34_echo_canceller_init(
-			    &call->echo, call->round_trip_delay_samples) !=
+		if (v34_echo_canceller_init(&call->echo) !=
 		    V34_ECHO_CANCELLER_OK)
 			result = V34_CALL_NUMERIC_FAILURE;
 		else

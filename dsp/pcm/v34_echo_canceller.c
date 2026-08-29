@@ -10,42 +10,33 @@
 
 enum {
 	V34_ECHO_NEAR_ADAPT_SAMPLES = 18000,
-	V34_ECHO_FAR_ADAPT_START_SAMPLE = 700,
 	V34_ECHO_ALPHA_MEASURE_SAMPLE = V34_ECHO_TAP_COUNT,
 	V34_ECHO_ALPHA_SMOOTH_START_SAMPLE = 2000,
 	V34_ECHO_ALPHA_SMOOTH_PERIOD = 45,
 	V34_ECHO_VALIDATION_START_SAMPLE = 1000,
 	V34_ECHO_VALIDATION_MIN_SAMPLES = 256,
-	V34_ECHO_NEAR_ENERGY_SCALE = 0x6666,
-	V34_ECHO_FAR_ENERGY_SCALE = 0x2b84,
+	V34_ECHO_ENERGY_SCALE = 0x6666,
 	V34_ECHO_ALPHA_SMOOTH_SCALE = 0x7f5c,
 };
 
 struct echo_step {
 	int16_t cleaned;
 	int16_t residual;
-	int16_t near_alpha;
-	int16_t far_alpha;
-	int16_t near_error;
-	int16_t far_error;
+	int16_t alpha;
+	int16_t error;
 	uint32_t sample_count;
-	bool adapt_near;
-	bool adapt_far;
+	bool adapt;
 };
 
 bool v34_echo_canceller_is_valid(
 	const struct v34_echo_canceller *canceller)
 {
 	return canceller != NULL &&
-	       canceller->reference_write < V34_ECHO_REFERENCE_SAMPLES &&
-	       canceller->reference_fill <= V34_ECHO_REFERENCE_SAMPLES &&
-	       (canceller->reference_fill == V34_ECHO_REFERENCE_SAMPLES ||
+	       canceller->reference_write < V34_ECHO_TAP_COUNT &&
+	       canceller->reference_fill <= V34_ECHO_TAP_COUNT &&
+	       (canceller->reference_fill == V34_ECHO_TAP_COUNT ||
 		canceller->reference_write == canceller->reference_fill) &&
-	       (canceller->training_started || canceller->sample_count == 0) &&
-	       (canceller->far_delay_samples == 0 ||
-		(canceller->far_delay_samples >= V34_ECHO_TAP_COUNT &&
-		 canceller->far_delay_samples <=
-			 V34_ECHO_MAX_FAR_DELAY_SAMPLES));
+	       (canceller->training_started || canceller->sample_count == 0);
 }
 
 bool v34_echo_canceller_is_adapting(
@@ -56,17 +47,13 @@ bool v34_echo_canceller_is_adapting(
 }
 
 enum v34_echo_canceller_result v34_echo_canceller_init(
-	struct v34_echo_canceller *canceller,
-	uint16_t round_trip_delay_samples)
+	struct v34_echo_canceller *canceller)
 {
 	struct v34_echo_canceller initialized;
 
 	if (canceller == NULL)
 		return V34_ECHO_CANCELLER_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
-	if (round_trip_delay_samples >= V34_ECHO_TAP_COUNT &&
-	    round_trip_delay_samples <= V34_ECHO_MAX_FAR_DELAY_SAMPLES)
-		initialized.far_delay_samples = round_trip_delay_samples;
 	initialized.adapting = true;
 	if (!v34_echo_canceller_is_valid(&initialized))
 		return V34_ECHO_CANCELLER_INVALID_STATE;
@@ -102,36 +89,35 @@ static int16_t reference_at_age(
 
 	if (age == 0 || age > canceller->reference_fill)
 		return 0;
-	index = canceller->reference_write + V34_ECHO_REFERENCE_SAMPLES - age;
-	if (index >= V34_ECHO_REFERENCE_SAMPLES)
-		index -= V34_ECHO_REFERENCE_SAMPLES;
+	index = canceller->reference_write + V34_ECHO_TAP_COUNT - age;
+	if (index >= V34_ECHO_TAP_COUNT)
+		index -= V34_ECHO_TAP_COUNT;
 	return canceller->references[index];
 }
 
 static int32_t filter_prediction(
-	const struct v34_echo_canceller *canceller,
-	const struct v34_echo_filter *filter, size_t delay)
+	const struct v34_echo_canceller *canceller)
 {
 	uint32_t accumulated = 0;
 
 	for (size_t tap = 0; tap < V34_ECHO_TAP_COUNT; ++tap) {
 		int16_t reference = reference_at_age(
-			canceller, delay + tap + 1u);
+			canceller, tap + 1u);
 
 		accumulated += multiply_low_s32(
-			filter->coefficients[tap], reference);
+			canceller->coefficients[tap], reference);
 	}
 	return wrap_s32_from_u32(accumulated);
 }
 
 static uint32_t reference_energy(
-	const struct v34_echo_canceller *canceller, size_t delay)
+	const struct v34_echo_canceller *canceller)
 {
 	uint32_t accumulated = 0;
 
 	for (size_t tap = 0; tap < V34_ECHO_TAP_COUNT; ++tap) {
 		int16_t reference = reference_at_age(
-			canceller, delay + tap + 1u);
+			canceller, tap + 1u);
 
 		accumulated += multiply_low_s32(reference, reference) >> 5;
 	}
@@ -188,64 +174,32 @@ static void calculate_step(
 	const struct v34_echo_canceller *canceller,
 	int16_t received_sample, struct echo_step *step)
 {
-	uint32_t near_prediction = (uint32_t)filter_prediction(
-		canceller, &canceller->near_filter, 0);
-	uint32_t far_prediction = 0;
+	uint32_t prediction = (uint32_t)filter_prediction(canceller);
 	uint32_t feedback;
-	bool smooth_near;
-	bool smooth_far;
-	uint32_t near_energy = 0;
-	uint32_t far_energy = 0;
+	bool smooth;
+	uint32_t energy = 0;
 
-	if (canceller->far_delay_samples != 0)
-		far_prediction = (uint32_t)filter_prediction(
-			canceller, &canceller->far_filter,
-			canceller->far_delay_samples);
-	feedback = near_prediction * 4u + far_prediction * 4u + 0x8000u;
+	feedback = prediction * 4u + 0x8000u;
 	step->residual = wrap_s16_from_s32(
 		(int32_t)received_sample +
 		arithmetic_shift_right_u32(feedback, 16));
 	step->cleaned = canceller->filtering ?
 			step->residual : received_sample;
-	step->near_alpha = canceller->near_filter.alpha;
-	step->far_alpha = canceller->far_filter.alpha;
-	step->near_error = 0;
-	step->far_error = 0;
+	step->alpha = canceller->alpha;
+	step->error = 0;
 	step->sample_count = canceller->sample_count;
-	step->adapt_near = false;
-	step->adapt_far = false;
+	step->adapt = false;
 	if (!canceller->adapting || !canceller->training_started)
 		return;
 	step->sample_count++;
-	smooth_near = step->sample_count >
-			      V34_ECHO_ALPHA_SMOOTH_START_SAMPLE &&
-		      step->sample_count % V34_ECHO_ALPHA_SMOOTH_PERIOD == 0;
-	smooth_far = step->sample_count >
-			     V34_ECHO_FAR_ADAPT_START_SAMPLE +
-				     V34_ECHO_ALPHA_SMOOTH_START_SAMPLE &&
-		     smooth_near;
+	smooth = step->sample_count > V34_ECHO_ALPHA_SMOOTH_START_SAMPLE &&
+		 step->sample_count % V34_ECHO_ALPHA_SMOOTH_PERIOD == 0;
 	if (step->sample_count == V34_ECHO_ALPHA_MEASURE_SAMPLE)
-		near_energy = reference_energy(canceller, 0);
-	if (canceller->far_delay_samples != 0 &&
-	    step->sample_count == V34_ECHO_FAR_ADAPT_START_SAMPLE +
-				  V34_ECHO_ALPHA_MEASURE_SAMPLE)
-		far_energy = reference_energy(
-			canceller, canceller->far_delay_samples);
-	step->near_alpha = update_alpha(
-		step->near_alpha, near_energy, smooth_near,
-		V34_ECHO_NEAR_ENERGY_SCALE);
-	if (canceller->far_delay_samples != 0)
-		step->far_alpha = update_alpha(
-			step->far_alpha, far_energy, smooth_far,
-			V34_ECHO_FAR_ENERGY_SCALE);
-	step->near_error = adaptation_error(
-		step->near_alpha, step->residual);
-	step->far_error = adaptation_error(
-		step->far_alpha, step->residual);
-	step->adapt_near = step->sample_count < V34_ECHO_NEAR_ADAPT_SAMPLES;
-	step->adapt_far = canceller->far_delay_samples != 0 &&
-			  step->sample_count >
-				  V34_ECHO_FAR_ADAPT_START_SAMPLE;
+		energy = reference_energy(canceller);
+	step->alpha = update_alpha(
+		step->alpha, energy, smooth, V34_ECHO_ENERGY_SCALE);
+	step->error = adaptation_error(step->alpha, step->residual);
+	step->adapt = step->sample_count < V34_ECHO_NEAR_ADAPT_SAMPLES;
 }
 
 enum v34_echo_canceller_result v34_echo_canceller_predict(
@@ -266,20 +220,19 @@ enum v34_echo_canceller_result v34_echo_canceller_predict(
 }
 
 static void adapt_filter(
-	struct v34_echo_canceller *canceller,
-	struct v34_echo_filter *filter, size_t delay, int16_t error)
+	struct v34_echo_canceller *canceller, int16_t error)
 {
 	for (size_t tap = 0; tap < V34_ECHO_TAP_COUNT; ++tap) {
 		int16_t reference = reference_at_age(
-			canceller, delay + tap + 1u);
+			canceller, tap + 1u);
 		uint32_t word =
-			((uint32_t)(uint16_t)filter->coefficients[tap] << 16) |
-			(uint16_t)filter->residues[tap];
+			((uint32_t)(uint16_t)canceller->coefficients[tap] << 16) |
+			(uint16_t)canceller->residues[tap];
 
 		word += multiply_low_s32(reference, error);
-		filter->coefficients[tap] = wrap_s16_from_s32(
+		canceller->coefficients[tap] = wrap_s16_from_s32(
 			arithmetic_shift_right_u32(word, 16));
-		filter->residues[tap] = (int16_t)(uint16_t)word;
+		canceller->residues[tap] = (int16_t)(uint16_t)word;
 	}
 }
 
@@ -291,9 +244,9 @@ static void push_reference(
 
 	canceller->references[canceller->reference_write] = reference;
 	canceller->reference_write++;
-	if (canceller->reference_write == V34_ECHO_REFERENCE_SAMPLES)
+	if (canceller->reference_write == V34_ECHO_TAP_COUNT)
 		canceller->reference_write = 0;
-	if (canceller->reference_fill < V34_ECHO_REFERENCE_SAMPLES)
+	if (canceller->reference_fill < V34_ECHO_TAP_COUNT)
 		canceller->reference_fill++;
 	if (reference != 0)
 		canceller->training_started = true;
@@ -328,16 +281,9 @@ enum v34_echo_canceller_result v34_echo_canceller_advance(
 		if (canceller->validation_samples != UINT32_MAX)
 			canceller->validation_samples++;
 	}
-	if (step.adapt_near)
-		adapt_filter(
-			canceller, &canceller->near_filter, 0,
-			step.near_error);
-	if (step.adapt_far)
-		adapt_filter(
-			canceller, &canceller->far_filter,
-			canceller->far_delay_samples, step.far_error);
-	canceller->near_filter.alpha = step.near_alpha;
-	canceller->far_filter.alpha = step.far_alpha;
+	if (step.adapt)
+		adapt_filter(canceller, step.error);
+	canceller->alpha = step.alpha;
 	canceller->sample_count = step.sample_count;
 	push_reference(canceller, transmit_sample);
 	return V34_ECHO_CANCELLER_OK;

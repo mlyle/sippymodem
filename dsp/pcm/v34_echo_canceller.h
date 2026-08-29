@@ -9,10 +9,6 @@
 
 enum {
 	V34_ECHO_TAP_COUNT = 144,
-	/* The retained far-end delay owner spans one 8 kHz second. */
-	V34_ECHO_MAX_FAR_DELAY_SAMPLES = 8000,
-	V34_ECHO_REFERENCE_SAMPLES =
-		V34_ECHO_MAX_FAR_DELAY_SAMPLES + V34_ECHO_TAP_COUNT,
 };
 
 enum v34_echo_canceller_result {
@@ -22,42 +18,33 @@ enum v34_echo_canceller_result {
 	V34_ECHO_CANCELLER_SEQUENCE_MISMATCH,
 };
 
-struct v34_echo_filter {
-	int16_t coefficients[V34_ECHO_TAP_COUNT];
-	int16_t residues[V34_ECHO_TAP_COUNT];
-	int16_t alpha;
-};
-
 /*
- * Own two fixed-point adaptive echo windows over one continuous local transmit
- * reference.  The near window covers the preceding 144 samples.  When the
- * measured round trip fits the retained one-second reference, a second window
- * covers the corresponding far-end reflection.  Longer paths retain near-end
- * cancellation without rejecting an otherwise valid call.
+ * Own one fixed-point adaptive echo window over the preceding 144 samples of
+ * one continuous local transmit reference.  Phase 2 round-trip timing belongs
+ * to peer response scheduling and is deliberately not used as an echo delay.
  *
  * Prediction is pure.  Advance verifies that prediction and only then updates
  * coefficients and clocks the transmit reference, which lets a surrounding
  * duplex owner preserve source-failure transactionality.
  */
 struct v34_echo_canceller {
-	int16_t references[V34_ECHO_REFERENCE_SAMPLES];
-	struct v34_echo_filter near_filter;
-	struct v34_echo_filter far_filter;
+	int16_t references[V34_ECHO_TAP_COUNT];
+	int16_t coefficients[V34_ECHO_TAP_COUNT];
+	int16_t residues[V34_ECHO_TAP_COUNT];
 	size_t reference_write;
 	size_t reference_fill;
 	uint64_t validation_input_energy;
 	uint64_t validation_residual_energy;
 	uint32_t sample_count;
 	uint32_t validation_samples;
-	uint16_t far_delay_samples;
+	int16_t alpha;
 	bool training_started;
 	bool filtering;
 	bool adapting;
 };
 
 enum v34_echo_canceller_result v34_echo_canceller_init(
-	struct v34_echo_canceller *canceller,
-	uint16_t round_trip_delay_samples);
+	struct v34_echo_canceller *canceller);
 bool v34_echo_canceller_is_valid(
 	const struct v34_echo_canceller *canceller);
 bool v34_echo_canceller_is_adapting(

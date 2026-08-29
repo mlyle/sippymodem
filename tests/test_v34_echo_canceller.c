@@ -20,10 +20,8 @@
 	} while (0)
 
 enum {
-	PATH_CAPACITY = 1024,
+	PATH_CAPACITY = 256,
 	NEAR_DELAY = 32,
-	FAR_DELAY = 500,
-	FAR_TAP_DELAY = 33,
 	TRAIN_SAMPLES = 18000,
 	VERIFY_SAMPLES = 8000,
 };
@@ -78,10 +76,7 @@ static int16_t q15_scale(int16_t sample, int16_t scale)
 
 static int16_t generated_echo(const struct generated_line *line)
 {
-	int32_t echo =
-		q15_scale(line_at_age(line, NEAR_DELAY), 11000) +
-		q15_scale(
-			line_at_age(line, FAR_DELAY + FAR_TAP_DELAY), 6000);
+	int32_t echo = q15_scale(line_at_age(line, NEAR_DELAY), 11000);
 
 	if (echo > INT16_MAX)
 		return INT16_MAX;
@@ -115,14 +110,13 @@ static bool test_validation_and_transactionality(void)
 	struct v34_echo_canceller saved;
 	int16_t output = 1234;
 
-	CHECK(v34_echo_canceller_init(NULL, FAR_DELAY) ==
+	CHECK(v34_echo_canceller_init(NULL) ==
 		      V34_ECHO_CANCELLER_INVALID_ARGUMENT,
 	      "null owner initialized");
-	CHECK(v34_echo_canceller_init(&canceller, FAR_DELAY) ==
+	CHECK(v34_echo_canceller_init(&canceller) ==
 		      V34_ECHO_CANCELLER_OK &&
 		      v34_echo_canceller_is_valid(&canceller) &&
-		      v34_echo_canceller_is_adapting(&canceller) &&
-		      canceller.far_delay_samples == FAR_DELAY,
+		      v34_echo_canceller_is_adapting(&canceller),
 	      "ordinary owner did not initialize");
 	CHECK(v34_echo_canceller_predict(&canceller, 17, NULL) ==
 		      V34_ECHO_CANCELLER_INVALID_ARGUMENT,
@@ -148,18 +142,7 @@ static bool test_validation_and_transactionality(void)
 		      !v34_echo_canceller_is_adapting(&canceller) &&
 		      !canceller.filtering,
 	      "owner did not freeze");
-	CHECK(v34_echo_canceller_init(
-		      &canceller, V34_ECHO_MAX_FAR_DELAY_SAMPLES) ==
-		      V34_ECHO_CANCELLER_OK &&
-		      canceller.far_delay_samples ==
-			      V34_ECHO_MAX_FAR_DELAY_SAMPLES,
-	      "maximum far delay was not retained");
-	CHECK(v34_echo_canceller_init(
-		      &canceller, V34_ECHO_MAX_FAR_DELAY_SAMPLES + 1u) ==
-		      V34_ECHO_CANCELLER_OK &&
-		      canceller.far_delay_samples == 0,
-	      "long path did not fall back to near cancellation");
-	canceller.reference_write = V34_ECHO_REFERENCE_SAMPLES;
+	canceller.reference_write = V34_ECHO_TAP_COUNT;
 	CHECK(!v34_echo_canceller_is_valid(&canceller) &&
 	      v34_echo_canceller_predict(&canceller, 0, &output) ==
 		      V34_ECHO_CANCELLER_INVALID_STATE &&
@@ -168,7 +151,7 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
-static bool test_near_and_far_cancellation(void)
+static bool test_near_cancellation(void)
 {
 	struct v34_echo_canceller canceller;
 	struct generated_line line = { 0 };
@@ -177,7 +160,7 @@ static bool test_near_and_far_cancellation(void)
 	uint64_t echo_energy = 0;
 	uint64_t residual_energy = 0;
 
-	CHECK(v34_echo_canceller_init(&canceller, FAR_DELAY) ==
+	CHECK(v34_echo_canceller_init(&canceller) ==
 		      V34_ECHO_CANCELLER_OK,
 	      "training owner did not initialize");
 	for (size_t sample = 0; sample < TRAIN_SAMPLES; ++sample) {
@@ -188,8 +171,7 @@ static bool test_near_and_far_cancellation(void)
 			      &canceller, &line, local, 0, &cleaned),
 		      "training failed at sample %zu", sample);
 	}
-	CHECK(canceller.near_filter.alpha != 0 &&
-	      canceller.far_filter.alpha != 0,
+	CHECK(canceller.alpha != 0,
 	      "adaptive scales were not established");
 	CHECK(v34_echo_canceller_freeze(&canceller) ==
 		      V34_ECHO_CANCELLER_OK && canceller.filtering,
@@ -219,8 +201,8 @@ int main(void)
 {
 	CHECK(test_validation_and_transactionality(),
 	      "validation/transactionality failed");
-	CHECK(test_near_and_far_cancellation(),
-	      "generated near/far cancellation failed");
+	CHECK(test_near_cancellation(),
+	      "generated near cancellation failed");
 	puts("V.34 echo canceller tests passed");
 	return 0;
 }
