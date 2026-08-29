@@ -1206,8 +1206,8 @@ static bool test_lapm_xid_envelopes(void)
 	uint8_t payload[96];
 	uint8_t discarded[80];
 	uint8_t recovery[112];
-	uint8_t preamble[16];
-	uint8_t expected_preamble[16];
+	uint8_t preamble[52];
+	uint8_t expected_preamble[52];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -1221,7 +1221,7 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
 	modem_ec_start(answerer);
-	CHECK(caller->packer.hdlc.tx_preamble_flags == 16u &&
+	CHECK(caller->packer.hdlc.tx_preamble_flags == 52u &&
 		      caller->packer.hdlc.tx_preamble_complete != NULL &&
 		      caller->packer.hdlc.get_tx_frame == NULL &&
 		      caller->bit_timer == 0,

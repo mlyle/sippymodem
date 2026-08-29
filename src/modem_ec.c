@@ -134,7 +134,10 @@ static int lapm_timer_timeout(const struct lapm_state *l)
 #define FRAME_NR(f)   ((f)->buf[2]>>1)
 
 enum {
-	LAPM_ORIGINATOR_PREAMBLE_FLAGS = 16,
+	/* The answerer must send at least ten 36-bit ADPs, while the
+	 * originator recognizes it after two.  Keep flags on the wire for the
+	 * remaining eight ADPs plus the 16 flags required before the first XID. */
+	LAPM_ORIGINATOR_PREAMBLE_FLAGS = 8 * 36 / 8 + 16,
 };
 
 /* tx unnumbered */
@@ -1775,9 +1778,9 @@ void modem_ec_start(struct modem *m)
 	h->rx_complete  = lapm_rx_complete;
 	h->get_tx_frame = NULL;
 	if(m->caller) {
-		/* V.42 requires 16 transmitted flags before the originator's
-		 * first XID. Count wire flags rather than received/transmitted bit
-		 * callbacks, whose batching must not shorten the preamble. */
+		/* V.42 requires at least 16 transmitted flags before the
+		 * originator's first XID. Count wire flags rather than callbacks,
+		 * and cover an answerer that finishes its required ADP reply first. */
 		h->tx_preamble_flags = LAPM_ORIGINATOR_PREAMBLE_FLAGS;
 		h->tx_preamble_complete = modem_ec_negotiate;
 	}
