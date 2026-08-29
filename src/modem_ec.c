@@ -1128,15 +1128,17 @@ static void push_rest_data(struct modem *m, int bits)
 /* info frame process */
 static int rx_info(struct lapm_state *l, frame_t *f)
 {
-	int ret = 0, n;
+	int ret = 0;
 	int payload_length;
+	bool retrain_progress;
 	//LAPM_PRINT_FRAME("rx_info",1,f);
 	if (f->count < 3)
 		return -1;
 	payload_length = f->count - 3;
 
 	/* ack I frames: nr -1 */
-	n = ack_info(l,FRAME_NR(f));
+	if (ack_info(l,FRAME_NR(f)) < 0)
+		return -1;
 	/* busy */
 	if (l->busy) {
 		if(FRAME_I_PF(f)) /* 8.4.7 */
@@ -1160,6 +1162,17 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 		return -1;
 	}
 	l->reject = 0;
+	retrain_progress = l->retrain_poll && l->rtx_count;
+	if (retrain_progress) {
+		/* Some peers resume with sequenced information instead of the
+		 * solicited supervisory response.  Its N(R) has synchronized the
+		 * retained transmit window, and a valid N(S) proves the new HDLC
+		 * epoch is usable. */
+		reject_info(l);
+		TIMER_STOP(l);
+		l->peer_busy = 0;
+		l->retrain_poll = 0;
+	}
 	/* recv data */
 
 	if (l->v44_path != NULL) {
@@ -1817,15 +1830,20 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	if (l->modem != m || l->state != LAPM_DATA || l->ctrl_list == NULL ||
 	    l->tx_ctrl == NULL)
 		return -1;
-	if ((!l->retrain_poll && l->ctrl_list->next == l->tx_ctrl) ||
-	    modem_hdlc_reframe(m) != 0)
+	if (modem_hdlc_reframe(m) != 0)
 		return -1;
 	/* A physical interruption loses HDLC framing and leaves the peer's
-	 * receive sequence uncertain. Hold new information frames until one
-	 * solicited response acknowledges or requeues the retained window. */
-	l->peer_busy = 1;
-	if (l->retrain_poll)
+	 * receive sequence uncertain only while flow control or unacknowledged
+	 * information remains.  A clean retained window can continue directly. */
+	if (l->retrain_poll) {
+		l->peer_busy = 1;
 		return 0;
+	}
+	if (!l->busy && !l->peer_busy && l->va == l->vs)
+		return 0;
+	if (l->ctrl_list->next == l->tx_ctrl)
+		return -1;
+	l->peer_busy = 1;
 	if ((l->busy ? TX_RNR(l, l->cmd_addr, 1) :
 		      TX_RR(l, l->cmd_addr, 1)) != 0)
 		return -1;

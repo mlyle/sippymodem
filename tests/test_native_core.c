@@ -1626,6 +1626,7 @@ static bool test_lapm_retrain_preserves_link_state(void)
 
 	for (unsigned int local = 0; local < 2; ++local) {
 		lapm->peer_busy = 1;
+		lapm->vr = 6;
 		modem->retrain_pending = local;
 		modem->bit_timer = 0;
 		modem_dp_reconnected(modem);
@@ -1706,18 +1707,42 @@ static bool test_lapm_retrain_preserves_link_state(void)
 			      "repeated LAPM retrain duplicated its status retry");
 		}
 
-		response[0] = lapm->cmd_addr;
-		response[1] = FRAME_S_RR;
-		response[2] = (uint8_t)((lapm->va << 1) | 1);
+		response[0] = local == 0 ? lapm->rsp_addr : lapm->cmd_addr;
+		response[1] = local == 0 ? (uint8_t)(lapm->vr << 1) :
+			FRAME_S_RR;
+		response[2] = (uint8_t)(lapm->va << 1) |
+			(local == 0 ? 0 : 1);
 		modem->packer.hdlc.rx_complete(
 			modem->packer.hdlc.framer, &incoming);
 		CHECK(lapm->peer_busy == 0 && !lapm->retrain_poll &&
 			      modem->bit_timer == 0 &&
 			      lapm->rtx_count == 0 && lapm->vs == 5 &&
-			      lapm->va == 5 && lapm->vr == 6,
-		      "LAPM %s retrain did not accept the ready response",
-		      local ? "local" : "remote");
+			      lapm->va == 5 && lapm->vr == 6 + (local == 0),
+		      "LAPM %s retrain did not accept peer progress",
+		      local ? "supervisory" : "information");
+		if (local == 0) {
+			outgoing = modem->packer.hdlc.get_tx_frame(
+				modem->packer.hdlc.framer);
+			CHECK(outgoing != NULL && outgoing->size == 3 &&
+				      outgoing->buf[1] == FRAME_S_RR,
+			      "LAPM information recovery did not acknowledge the peer");
+			modem->packer.hdlc.tx_complete(
+				modem->packer.hdlc.framer, outgoing);
+		}
 	}
+
+	lapm->peer_busy = 0;
+	lapm->vr = 6;
+	modem->pack.bit = 3;
+	modem->unpack.bit = 5;
+	modem->retrain_pending = 1;
+	modem_dp_reconnected(modem);
+	CHECK(modem->retrain_pending == 0 && !lapm->peer_busy &&
+		      !lapm->retrain_poll && lapm->rtx_count == 0 &&
+		      modem->bit_timer == 0 && lapm->vs == 5 && lapm->va == 5 &&
+		      lapm->vr == 6 && modem->pack.bit == 0 &&
+		      modem->unpack.bit == 0,
+	      "clean LAPM retrain invented a recovery poll");
 
 	memset(&lapm_source, 0, sizeof(lapm_source));
 	lapm_source.data = retained_payload;
