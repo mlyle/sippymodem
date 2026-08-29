@@ -523,11 +523,11 @@ static bool test_pcmu_call(void)
 		      V34_PHASE34_RECEIVER_DATA &&
 	      caller.call.state.phase4.receive.semantic.data
 		      .data_receiver.channel_receiver.frame_decoder
-		      .channel_decoder.survivor.selection ==
+		      .channel_decoder.selection ==
 			      V34_TRELLIS_32_STATE &&
 	      answerer.call.state.phase4.receive.semantic.data
 		      .data_receiver.channel_receiver.frame_decoder
-		      .channel_decoder.survivor.selection ==
+		      .channel_decoder.selection ==
 			      V34_TRELLIS_16_STATE &&
 	      v34_call_get_data_startup(&caller.call, &caller_startup) &&
 	      v34_call_get_data_startup(&answerer.call, &answerer_startup) &&

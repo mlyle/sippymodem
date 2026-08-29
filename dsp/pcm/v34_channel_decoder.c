@@ -7,6 +7,54 @@
 
 #include <stddef.h>
 
+static bool profiles_are_equal(
+	const struct v34_16_state_branch_profile *left,
+	const struct v34_16_state_branch_profile *right)
+{
+	return left->symbol_rate == right->symbol_rate &&
+	       left->metric == right->metric &&
+	       left->primary_data_rate_2400_bps_units ==
+		       right->primary_data_rate_2400_bps_units &&
+	       left->distance_shift == right->distance_shift &&
+	       left->expanded_shaping == right->expanded_shaping;
+}
+
+static bool path_is_valid(const struct v34_channel_decoder *decoder)
+{
+	if (decoder->selection == V34_TRELLIS_16_STATE) {
+		struct v34_16_state_branch_profile expected;
+
+		return v34_16_state_branch_profile_init(
+			       &expected, &decoder->geometry,
+			       decoder->parameters.expanded_shaping) ==
+			       V34_16_STATE_BRANCHES_OK &&
+		       profiles_are_equal(
+			       &decoder->path.fixed_16.profile, &expected) &&
+		       v34_16_state_survivor_is_valid(
+			       &decoder->path.fixed_16.survivor);
+	}
+	return (decoder->selection == V34_TRELLIS_32_STATE ||
+		decoder->selection == V34_TRELLIS_64_STATE) &&
+	       v34_survivor_is_valid(&decoder->path.generic) &&
+	       decoder->path.generic.selection == decoder->selection;
+}
+
+static bool initialize_path(
+	struct v34_channel_decoder *decoder,
+	const struct v34_frame_geometry *geometry, bool expanded_shaping)
+{
+	if (decoder->selection == V34_TRELLIS_16_STATE)
+		return v34_16_state_branch_profile_init(
+			       &decoder->path.fixed_16.profile, geometry,
+			       expanded_shaping) == V34_16_STATE_BRANCHES_OK &&
+		       v34_16_state_survivor_init(
+			       &decoder->path.fixed_16.survivor) ==
+			       V34_16_STATE_SURVIVOR_OK;
+	return v34_survivor_init(
+		       &decoder->path.generic, decoder->selection) ==
+	       V34_SURVIVOR_OK;
+}
+
 static bool init_regions_overlap(
 	const struct v34_channel_decoder *decoder,
 	const struct v34_frame_geometry *geometry,
@@ -32,7 +80,7 @@ bool v34_channel_decoder_is_valid(
 		       V34_MAPPING_PARAMETERS_OK &&
 	       v34_mapping_parameters_are_equal(
 		       &decoder->parameters, &expected) &&
-	       v34_survivor_is_valid(&decoder->survivor) &&
+	       path_is_valid(decoder) &&
 	       v34_precoder_is_valid(&decoder->inverse_precoder) &&
 	       decoder->inverse_precoder.grid_step ==
 		       v34_precoder_grid_step_for_mapping(
@@ -56,11 +104,11 @@ v34_channel_decoder_init(
 	    !v34_trellis_selection_is_valid(selection))
 		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
 	initialized.geometry = *geometry;
+	initialized.selection = selection;
 	if (v34_mapping_parameters_init(
 		    &initialized.parameters, geometry, expanded_shaping) !=
 		    V34_MAPPING_PARAMETERS_OK ||
-	    v34_survivor_init(&initialized.survivor, selection) !=
-		    V34_SURVIVOR_OK ||
+	    !initialize_path(&initialized, geometry, expanded_shaping) ||
 	    v34_precoder_init(
 		    &initialized.inverse_precoder, &initialized.parameters,
 		    coefficients) !=
@@ -95,7 +143,56 @@ static enum v34_channel_decoder_result path_result(
 		V34_CHANNEL_DECODER_INVALID_ARGUMENT;
 }
 
-static enum v34_channel_decoder_result advance_path(
+static enum v34_channel_decoder_result fixed_branches_result(
+	enum v34_16_state_branches_result result)
+{
+	switch (result) {
+	case V34_16_STATE_BRANCHES_OUT_OF_RANGE:
+		return V34_CHANNEL_DECODER_NUMERIC_FAILURE;
+	case V34_16_STATE_BRANCHES_OK:
+	case V34_16_STATE_BRANCHES_INVALID_ARGUMENT:
+	case V34_16_STATE_BRANCHES_UNSUPPORTED_SELECTION:
+		break;
+	}
+	return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
+}
+
+static enum v34_channel_decoder_result advance_fixed_16(
+	struct v34_channel_decoder *decoder,
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	uint8_t inversion_bit, struct v34_survivor_decision *current,
+	struct v34_survivor_decision *traceback, bool *ready)
+{
+	struct v34_analytic_sample samples[V34_2D_SYMBOLS_PER_4D_INTERVAL];
+	struct v34_16_state_branch branches[V34_16_STATE_BRANCH_COUNT];
+
+	for (uint8_t symbol = 0;
+	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		enum v34_16_state_branches_result result =
+			v34_16_state_branch_quantize(
+				&decoder->path.fixed_16.profile,
+				&estimates[symbol], &samples[symbol]);
+
+		if (result != V34_16_STATE_BRANCHES_OK)
+			return fixed_branches_result(result);
+	}
+	{
+		enum v34_16_state_branches_result result =
+			v34_16_state_branches_build(
+				&decoder->path.fixed_16.profile, samples,
+				inversion_bit, branches);
+
+		if (result != V34_16_STATE_BRANCHES_OK)
+			return fixed_branches_result(result);
+	}
+	return v34_16_state_survivor_advance(
+		       &decoder->path.fixed_16.survivor, branches, current,
+		       traceback, ready) == V34_16_STATE_SURVIVOR_OK ?
+		       V34_CHANNEL_DECODER_OK :
+		       V34_CHANNEL_DECODER_INVALID_ARGUMENT;
+}
+
+static enum v34_channel_decoder_result advance_generic(
 	struct v34_channel_decoder *decoder,
 	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	uint8_t inversion_bit, struct v34_survivor_decision *current,
@@ -114,7 +211,7 @@ static enum v34_channel_decoder_result advance_path(
 	}
 	{
 		enum v34_branches_result result = v34_build_branch_set(
-			slices, inversion_bit, decoder->survivor.selection,
+			slices, inversion_bit, decoder->selection,
 			&branches);
 
 		if (result != V34_BRANCHES_OK)
@@ -122,7 +219,7 @@ static enum v34_channel_decoder_result advance_path(
 	}
 	{
 		enum v34_survivor_result result = v34_survivor_advance(
-			&decoder->survivor, &branches, current, traceback,
+			&decoder->path.generic, &branches, current, traceback,
 			ready);
 
 		if (result != V34_SURVIVOR_OK)
@@ -189,10 +286,15 @@ v34_channel_decoder_advance(
 	next = *decoder;
 	{
 		enum v34_channel_decoder_result result =
-			advance_path(
-				&next, estimates, inversion_bit,
-				&generated_current, &traceback,
-				&generated_ready);
+			next.selection == V34_TRELLIS_16_STATE ?
+				advance_fixed_16(
+					&next, estimates, inversion_bit,
+					&generated_current, &traceback,
+					&generated_ready) :
+				advance_generic(
+					&next, estimates, inversion_bit,
+					&generated_current, &traceback,
+					&generated_ready);
 
 		if (result != V34_CHANNEL_DECODER_OK)
 			return result;

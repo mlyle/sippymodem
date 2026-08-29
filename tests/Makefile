@@ -931,6 +931,8 @@ V34_CHANNEL_DECODER_TEST_BINARY := \
 V34_CHANNEL_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_channel_decoder.o \
 	$(BUILD_DIR)/v34_channel_decoder.o \
+	$(BUILD_DIR)/v34_16_state_branches.o \
+	$(BUILD_DIR)/v34_16_state_survivor.o \
 	$(filter-out $(BUILD_DIR)/test_v34_path_decoder.o, \
 		$(V34_PATH_DECODER_TEST_OBJECTS))
 V34_4D_DECODER_TEST_BINARY := \

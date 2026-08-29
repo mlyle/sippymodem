@@ -498,7 +498,7 @@ static bool test_transactional_boundaries(void)
 	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "misaligned pending frame was accepted");
 	corrupted = decoder;
-	corrupted.channel_decoder.survivor.path_index = 1;
+	corrupted.channel_decoder.path.fixed_16.survivor.path_index = 1;
 	CHECK(!v34_channel_frame_decoder_is_valid(&corrupted),
 	      "misaligned survivor cursor was accepted");
 	return true;

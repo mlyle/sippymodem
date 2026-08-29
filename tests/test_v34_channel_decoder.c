@@ -426,19 +426,19 @@ static bool test_transactional_boundaries(void)
 		      V34_CHANNEL_DECODER_NUMERIC_FAILURE),
 	      "overflowing channel metric was accepted");
 	corrupted = decoder;
-	corrupted.survivor.selection = (enum v34_trellis_selection)3;
+	corrupted.selection = (enum v34_trellis_selection)3;
 	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates, 0,
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "corrupt channel state was accepted");
 	corrupted = decoder;
-	corrupted.survivor.path_index = 1;
+	corrupted.path.fixed_16.survivor.path_index = 1;
 	CHECK(!v34_channel_decoder_is_valid(&corrupted) &&
 	      rejected_advance_is_transactional(
 		      &corrupted, estimates, 0,
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
-	      "corrupt survivor state was accepted");
+	      "corrupt fixed survivor state was accepted");
 	corrupted = decoder;
 	corrupted.inverse_precoder.grid_step =
 		V34_PRECODER_GRID_STEP_4;
