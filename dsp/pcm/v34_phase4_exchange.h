@@ -47,10 +47,9 @@ enum {
 	/* Keep J active for more than 128 symbols and until the caller receives
 	 * S/S-bar, then release J-prime at a complete J-pattern boundary. */
 	V34_PHASE4_J_RELEASE_MIN_SYMBOLS = 129,
-	/* Repeat ordinary MP across eight complete record boundaries. This lets a
-	 * slow 4-point/type-1 peer finish its current MP, publish MP', and survive
-	 * one missed local type-0 record before our MP' can release it into E. */
-	V34_PHASE4_MP_REPEAT_RECORDS = 8,
+	/* Complete at least two ordinary MP records before acknowledging a peer
+	 * record. Continue ordinary MP until that peer record has arrived. */
+	V34_PHASE4_MIN_MP_RECORDS = 2,
 	/* Repeat MP' across four complete record boundaries so a reciprocal peer
 	 * has a complete acknowledgement before the following E transition. */
 	V34_PHASE4_MP_PRIME_REPEAT_RECORDS = 4,

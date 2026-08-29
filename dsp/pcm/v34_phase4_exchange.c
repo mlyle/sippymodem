@@ -391,7 +391,7 @@ bool v34_phase4_exchange_is_valid(
 	    exchange->transmit_mp_records_completed >
 		    (exchange->transmit_mp_prime_started ?
 			     V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
-			     V34_PHASE4_MP_REPEAT_RECORDS) ||
+			     V34_PHASE4_MIN_MP_RECORDS) ||
 	    (!exchange->transmit_mp_started &&
 	     exchange->transmit_mp_records_completed != 0u) ||
 	    (exchange->transmit_mp_prime_started &&
@@ -677,7 +677,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		bool acknowledged;
 		uint8_t repeat_records = exchange->transmit_mp_prime_started ?
 			V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
-			V34_PHASE4_MP_REPEAT_RECORDS;
+			V34_PHASE4_MIN_MP_RECORDS;
 
 		if (exchange->transmit_mp_records_completed <
 		    repeat_records)
@@ -685,7 +685,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		acknowledged = exchange->transmit_mp_prime_started ||
 			(exchange->peer_mp_received &&
 			 exchange->transmit_mp_records_completed ==
-				 V34_PHASE4_MP_REPEAT_RECORDS);
+				 V34_PHASE4_MIN_MP_RECORDS);
 
 		if (exchange->transmit_mp_prime_started &&
 		    exchange->transmit_mp_records_completed ==

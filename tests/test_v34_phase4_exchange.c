@@ -833,7 +833,23 @@ static bool test_source_backpressure(void)
 	CHECK(false, "mapping source was not consulted within one data frame");
 }
 
-static bool test_acknowledged_first_record(void)
+static bool complete_local_mp_record(struct v34_phase4_exchange *exchange)
+{
+	for (size_t sample_index = 0; sample_index < 1000u; ++sample_index) {
+		int16_t sample;
+
+		if (v34_training_transmitter_phase4_mp_record_complete(
+			    &exchange->transmit.training))
+			return true;
+		if (v34_training_transmitter_sample(
+			    &exchange->transmit.training, &sample) !=
+		    V34_TRAINING_TRANSMITTER_OK)
+			return false;
+	}
+	return false;
+}
+
+static bool test_mp_acknowledgment_boundaries(void)
 {
 	struct endpoint caller;
 	struct endpoint answerer;
@@ -896,67 +912,49 @@ static bool test_acknowledged_first_record(void)
 		CHECK(v34_phase4_exchange_is_valid(&pending),
 		      "answerer MP boundary made pending state invalid");
 	}
-	for (size_t sample_index = 0;
-	     !v34_training_transmitter_phase4_mp_record_complete(
-		     &pending.transmit.training);
-	     ++sample_index) {
-		int16_t sample;
-
-		CHECK(sample_index < 1000u &&
-		      v34_training_transmitter_sample(
-			      &pending.transmit.training, &sample) ==
-			      V34_TRAINING_TRANSMITTER_OK,
-		      "local MP did not reach its record boundary");
-	}
-	if (pending.transmit_mp.type == V34_MP_RECORD_TYPE0) {
-		struct v34_mp_parameters acknowledged =
-			pending.transmit_mp.parameters.type0;
-
-		acknowledged.acknowledges_peer_mp = true;
-		CHECK(v34_training_transmitter_start_mp_type0(
-			      &pending.transmit.training, &acknowledged) ==
-			      V34_TRAINING_TRANSMITTER_OK,
-		      "acknowledged local type-0 MP did not start");
-	} else {
-		struct v34_mp_type1_parameters acknowledged =
-			pending.transmit_mp.parameters.type1;
-
-		acknowledged.common.acknowledges_peer_mp = true;
-		CHECK(v34_training_transmitter_start_mp_type1(
-			      &pending.transmit.training, &acknowledged) ==
-			      V34_TRAINING_TRANSMITTER_OK,
-		      "acknowledged local type-1 MP did not start");
-	}
-	pending.transmit_mp_prime_started = true;
-	pending.transmit_mp_records_completed = 0;
+	CHECK(pending.transmit_mp_records_completed == 0,
+	      "ordinary MP did not start at its first record");
 	pending.peer_mp_prime_received = true;
 	CHECK(v34_phase4_exchange_is_valid(&pending),
-	      "acknowledged first record made pending state invalid");
+	      "early reciprocal MP-prime made pending state invalid");
 	CHECK(v34_phase4_exchange_prepare_data_startup(
 		      &pending) == V34_PHASE4_EXCHANGE_OK &&
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
-	      pending.transmit.training.stage ==
-		      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-	      pending.transmit_mp_records_completed == 0 &&
 	      events == UINT32_C(0x40000000),
-	      "acknowledged first record changed before its MP-prime boundary");
+	      "early reciprocal MP-prime changed data preparation output");
+	for (uint8_t record = 0; record < V34_PHASE4_MIN_MP_RECORDS; ++record) {
+		struct v34_received_mapping_frame received = { 0 };
+		int16_t sample = 0;
+
+		CHECK(complete_local_mp_record(&pending),
+		      "ordinary MP did not reach record %u boundary", record + 1u);
+		events = 0;
+		CHECK(v34_phase4_exchange_sample(
+			      &pending, 0, NULL, NULL, &sample, &events,
+			      &received) == V34_PHASE4_EXCHANGE_OK,
+		      "ordinary MP record %u did not complete", record + 1u);
+		if (record + 1u < V34_PHASE4_MIN_MP_RECORDS) {
+			CHECK(!pending.transmit_mp_prime_started &&
+			      pending.transmit_mp_records_completed == record + 1u &&
+			      events == 0,
+			      "ordinary MP record %u acknowledged early", record + 1u);
+		} else {
+			CHECK(pending.transmit_mp_prime_started &&
+			      pending.transmit_mp_records_completed == 0 &&
+			      events ==
+				      V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED,
+			      "second ordinary MP record did not start MP-prime");
+		}
+	}
 	for (uint8_t record = 0;
 	     record < V34_PHASE4_MP_PRIME_REPEAT_RECORDS; ++record) {
 		struct v34_received_mapping_frame received = { 0 };
 		int16_t sample = 0;
 
-		for (size_t sample_index = 0;
-		     !v34_training_transmitter_phase4_mp_record_complete(
-			     &pending.transmit.training);
-		     ++sample_index) {
-			CHECK(sample_index < 1000u &&
-			      v34_training_transmitter_sample(
-				      &pending.transmit.training, &sample) ==
-				      V34_TRAINING_TRANSMITTER_OK,
-			      "local MP-prime did not reach record %u boundary",
-			      record + 1u);
-		}
+		CHECK(complete_local_mp_record(&pending),
+		      "local MP-prime did not reach record %u boundary",
+		      record + 1u);
 		events = 0;
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
@@ -1040,7 +1038,7 @@ static bool test_validation_and_transactionality(void)
 	}
 	exchange = caller.phase4;
 	exchange.transmit_mp_records_completed =
-		V34_PHASE4_MP_REPEAT_RECORDS + 1;
+		V34_PHASE4_MIN_MP_RECORDS + 1;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted too many completed MP records");
 	exchange = caller.phase4;
@@ -1142,8 +1140,8 @@ int main(void)
 		  test_phase4_owns_selected_rates },
 		{ "mapping source backpressure",
 		  test_source_backpressure },
-		{ "acknowledged first MP record",
-		  test_acknowledged_first_record },
+		{ "MP acknowledgment boundaries",
+		  test_mp_acknowledgment_boundaries },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};
