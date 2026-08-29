@@ -49,19 +49,6 @@ enum v34_phase4_decision_receiver_result {
 	V34_PHASE4_DECISION_RECEIVER_INVALID_STATE,
 };
 
-enum v34_phase4_decision_action {
-	V34_PHASE4_DECISION_COMMIT,
-	/* An ambiguous S/S-bar decision remains marker evidence only. */
-	V34_PHASE4_DECISION_DISCARD,
-	/* S-bar completed the separately reacquired Phase 4 startup signal. */
-	V34_PHASE4_DECISION_BEGIN_TRACKING,
-};
-
-struct v34_phase4_decision_output {
-	struct v34_adaptive_equalizer_decision equalizer;
-	enum v34_phase4_decision_action action;
-};
-
 /* Own only the Phase 4 S/TRN/MP/E semantics. Both roles retain at least 512
  * known TRN decisions. Four-point reception advances that known lineage until
  * the physical MP boundary diverges; sixteen-point reception lets the
@@ -110,7 +97,7 @@ v34_phase4_decision_receiver_observe(
 	struct v34_phase4_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
 	uint16_t decoder_power_q15,
-	struct v34_phase4_decision_output *output,
+	struct v34_receive_action *output,
 	struct v34_mp_receive_event *event);
 
 #endif /* V34_PHASE4_DECISION_RECEIVER_H */

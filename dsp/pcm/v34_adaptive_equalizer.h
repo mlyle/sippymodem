@@ -58,6 +58,44 @@ struct v34_adaptive_equalizer_decision {
 	enum v34_adaptive_equalizer_adaptation adaptation;
 };
 
+/* Every semantic receiver that consumes an observation returns exactly one
+ * operation for the persistent physical receive owner. */
+enum v34_receive_action_kind {
+	V34_RECEIVE_COMMIT,
+	V34_RECEIVE_DISCARD,
+	/* Discard the boundary decision, then start full tracking. */
+	V34_RECEIVE_BEGIN_TRACKING,
+	/* Discard the boundary decision, then restart timing and equalization. */
+	V34_RECEIVE_RESTART_PATH,
+};
+
+struct v34_receive_action {
+	struct v34_adaptive_equalizer_decision equalizer;
+	enum v34_receive_action_kind action;
+};
+
+static inline struct v34_receive_action v34_receive_action_only(
+	enum v34_receive_action_kind action)
+{
+	return (struct v34_receive_action){ .action = action };
+}
+
+static inline struct v34_receive_action v34_receive_action_commit(
+	const struct v34_adaptive_equalizer_observation *observation,
+	struct v34_analytic_sample target, uint16_t decoder_power_q15,
+	enum v34_adaptive_equalizer_adaptation adaptation)
+{
+	return (struct v34_receive_action){
+		.equalizer = {
+			.observation = *observation,
+			.target = target,
+			.decoder_power_q15 = decoder_power_q15,
+			.adaptation = adaptation,
+		},
+		.action = V34_RECEIVE_COMMIT,
+	};
+}
+
 struct v34_adaptive_equalizer_feedback {
 	int16_t coefficient_a[3];
 	int16_t coefficient_b[3];

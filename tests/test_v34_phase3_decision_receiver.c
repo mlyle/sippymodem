@@ -62,21 +62,21 @@ static bool decision_is_zero(
 }
 
 static bool expect_action(
-	const struct v34_phase3_decision_output *output,
-	enum v34_phase3_decision_action action)
+	const struct v34_receive_action *output,
+	enum v34_receive_action_kind action)
 {
 	return output->action == action &&
-	       (action == V34_PHASE3_DECISION_COMMIT ||
+	       (action == V34_RECEIVE_COMMIT ||
 		decision_is_zero(&output->equalizer));
 }
 
 static bool expect_commit(
-	const struct v34_phase3_decision_output *output,
+	const struct v34_receive_action *output,
 	const struct v34_adaptive_equalizer_observation *input,
 	struct v34_analytic_sample target,
 	enum v34_adaptive_equalizer_adaptation adaptation)
 {
-	return output->action == V34_PHASE3_DECISION_COMMIT &&
+	return output->action == V34_RECEIVE_COMMIT &&
 	       observations_are_equal(&output->equalizer.observation, input) &&
 	       output->equalizer.target.in_phase == target.in_phase &&
 	       output->equalizer.target.quadrature == target.quadrature &&
@@ -89,7 +89,7 @@ static bool receive(
 	struct v34_phase3_decision_receiver *receiver,
 	struct observation_clock *clock, struct v34_analytic_sample point,
 	enum v34_phase3_decision_receiver_result expected_result,
-	struct v34_phase3_decision_output *output,
+	struct v34_receive_action *output,
 	struct v34_adaptive_equalizer_observation *input)
 {
 	*input = observation(clock, point);
@@ -155,7 +155,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 		      "role %d S prefix stopped at %u", role, symbol);
 	for (unsigned int local = 0;
 	     local < suffix + V34_PHASE3_S_BAR_SYMBOLS; ++local) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		struct v34_analytic_sample target;
 		enum v34_phase3_decision_receiver_result expected =
@@ -172,13 +172,13 @@ static bool run_clean_timeline(enum v34_station_role role)
 		if (expected == V34_PHASE3_DECISION_RECEIVER_S_DETECTED) {
 			CHECK(expect_action(
 				      &output,
-				      V34_PHASE3_DECISION_BEGIN_TRACKING),
+				      V34_RECEIVE_BEGIN_TRACKING),
 			      "role %d S/S-bar boundary was not explicit", role);
 			continue;
 		}
 		if (local >= suffix) {
 			CHECK(expect_action(
-				      &output, V34_PHASE3_DECISION_DISCARD),
+				      &output, V34_RECEIVE_DISCARD),
 			      "role %d S-bar evidence %u was adapted",
 			      role, local);
 			continue;
@@ -198,7 +198,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 	      "role %d did not enter PP", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_PP_SEQUENCE_SYMBOLS; ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
 			symbol + 1u == V34_PHASE3_PP_SEQUENCE_SYMBOLS ?
@@ -216,7 +216,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 		      "role %d PP target %u changed", role, symbol);
 	}
 	for (unsigned int symbol = 0; symbol < TEST_TRN_SYMBOLS; ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		struct v34_analytic_sample observed;
 		struct v34_analytic_sample target;
@@ -254,7 +254,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 		      V34_PHASE3_J_SEQUENCE_OK,
 	      "role %d J source did not initialize", role);
 	for (unsigned int symbol = 0; symbol < TEST_J_SYMBOLS; ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
 			symbol + 1u == TEST_J_SYMBOLS ?
@@ -308,7 +308,7 @@ static bool test_md_and_delayed_marker(void)
 	      "MD decision receiver did not initialize");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 
 		CHECK(next_s_observation(
@@ -336,7 +336,7 @@ static bool test_md_and_delayed_marker(void)
 	for (unsigned int confirmation = 0;
 	     confirmation < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
 	     ++confirmation) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
 			confirmation + 1u ==
@@ -349,7 +349,7 @@ static bool test_md_and_delayed_marker(void)
 			      &receiver, &clock, point, expected,
 			      &output, &input) &&
 		      expect_action(
-			      &output, V34_PHASE3_DECISION_DISCARD),
+			      &output, V34_RECEIVE_DISCARD),
 		      "MD marker confirmation %u changed", confirmation);
 	}
 	CHECK(receiver.stage == V34_PHASE3_DECISION_RECEIVER_MD &&
@@ -361,17 +361,17 @@ static bool test_md_and_delayed_marker(void)
 	     symbol < TEST_MD_SYMBOLS -
 		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS;
 	     ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
 			symbol + 1u == TEST_MD_SYMBOLS -
 					       V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ?
 				V34_PHASE3_DECISION_RECEIVER_MD_COMPLETE :
 				V34_PHASE3_DECISION_RECEIVER_OK;
-		enum v34_phase3_decision_action action =
+		enum v34_receive_action_kind action =
 			expected == V34_PHASE3_DECISION_RECEIVER_MD_COMPLETE ?
-				V34_PHASE3_DECISION_RESTART_RECEIVE_PATH :
-				V34_PHASE3_DECISION_DISCARD;
+				V34_RECEIVE_RESTART_PATH :
+				V34_RECEIVE_DISCARD;
 
 		point = (struct v34_analytic_sample){
 			.in_phase = (int16_t)(symbol * 211u),
@@ -402,7 +402,7 @@ static bool test_md_and_delayed_marker(void)
 	     symbol < V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS +
 		      V34_PHASE3_S_BAR_SYMBOLS;
 	     ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result expected =
 			symbol + 1u ==
@@ -410,14 +410,14 @@ static bool test_md_and_delayed_marker(void)
 					V34_PHASE3_S_BAR_SYMBOLS ?
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S_DETECTED :
 				V34_PHASE3_DECISION_RECEIVER_OK;
-		enum v34_phase3_decision_action action =
+		enum v34_receive_action_kind action =
 			expected ==
 					V34_PHASE3_DECISION_RECEIVER_REPEATED_S_DETECTED ?
-				V34_PHASE3_DECISION_BEGIN_TRACKING :
+				V34_RECEIVE_BEGIN_TRACKING :
 				symbol >=
 					V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS ?
-					V34_PHASE3_DECISION_DISCARD :
-					V34_PHASE3_DECISION_COMMIT;
+					V34_RECEIVE_DISCARD :
+					V34_RECEIVE_COMMIT;
 
 		CHECK(next_s_observation(
 			      &s, &point, &section) &&
@@ -456,7 +456,7 @@ static bool test_delayed_marker_pp_alignment(void)
 	      "delayed-marker fixture did not initialize");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 
 		CHECK(next_s_observation(
@@ -483,7 +483,7 @@ static bool test_delayed_marker_pp_alignment(void)
 	      "delayed-marker candidate was not retained");
 	while (!detected &&
 	       skipped < V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS) {
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 		enum v34_phase3_decision_receiver_result result;
 
@@ -502,15 +502,15 @@ static bool test_delayed_marker_pp_alignment(void)
 		}
 		CHECK(expect_action(
 			      &output,
-			      detected ? V34_PHASE3_DECISION_BEGIN_TRACKING :
-					 V34_PHASE3_DECISION_DISCARD),
+			      detected ? V34_RECEIVE_BEGIN_TRACKING :
+					 V34_RECEIVE_DISCARD),
 		      "delayed-marker PP prefix %u was adapted", skipped);
 	}
 	CHECK(detected && receiver.stage == V34_PHASE3_DECISION_RECEIVER_PP &&
 	      receiver.pp.emitted_symbols == skipped,
 	      "delayed marker did not preserve the PP cursor");
 	{
-		struct v34_phase3_decision_output output = { 0 };
+		struct v34_receive_action output = { 0 };
 		struct v34_adaptive_equalizer_observation input;
 
 		CHECK(v34_phase3_pp_sequence_next_fixed(&pp, &point) ==
@@ -533,10 +533,10 @@ static bool test_validation_and_transactionality(void)
 	struct v34_phase3_decision_receiver scaled;
 	struct v34_phase3_decision_receiver saved;
 	struct v34_phase3_decision_receiver corrupt;
-	struct v34_phase3_decision_output output = {
-		.action = V34_PHASE3_DECISION_RESTART_RECEIVE_PATH,
+	struct v34_receive_action output = {
+		.action = V34_RECEIVE_RESTART_PATH,
 	};
-	struct v34_phase3_decision_output saved_output = output;
+	struct v34_receive_action saved_output = output;
 	struct v34_adaptive_equalizer_observation input = {
 		.decision = { 2289, 2289 },
 		.epoch = 1,
@@ -555,12 +555,12 @@ static bool test_validation_and_transactionality(void)
 	scaled = receiver;
 	saved = receiver;
 	{
-		struct v34_phase3_decision_output scaled_output = { 0 };
+		struct v34_receive_action scaled_output = { 0 };
 
 		CHECK(v34_phase3_decision_receiver_observe(
 			      &scaled, &input, 0x4000u, &scaled_output) ==
 			      V34_PHASE3_DECISION_RECEIVER_OK &&
-		      scaled_output.action == V34_PHASE3_DECISION_COMMIT &&
+		      scaled_output.action == V34_RECEIVE_COMMIT &&
 		      scaled_output.equalizer.decoder_power_q15 == 0x4000u,
 		      "aggregate training power was not retained");
 	}
@@ -599,11 +599,11 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
 		      &receiver, &input, TEST_DECODER_POWER_Q15,
-		      (struct v34_phase3_decision_output *)&receiver) ==
+		      (struct v34_receive_action *)&receiver) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
 		      &receiver, &input, TEST_DECODER_POWER_Q15,
-		      (struct v34_phase3_decision_output *)&input) ==
+		      (struct v34_receive_action *)&input) ==
 		      V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_decision_receiver_observe(
 		      &receiver, &input, 0u, &output) ==

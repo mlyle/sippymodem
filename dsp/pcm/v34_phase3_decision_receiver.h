@@ -40,21 +40,6 @@ enum v34_phase3_decision_receiver_result {
 	V34_PHASE3_DECISION_RECEIVER_OUT_OF_RANGE,
 };
 
-/* Every consumed observation has one explicit physical-owner operation. */
-enum v34_phase3_decision_action {
-	V34_PHASE3_DECISION_COMMIT,
-	V34_PHASE3_DECISION_DISCARD,
-	/* Discard the completed S-bar decision, then start full tracking. */
-	V34_PHASE3_DECISION_BEGIN_TRACKING,
-	/* Discard the final MD decision, then restart before repeated S. */
-	V34_PHASE3_DECISION_RESTART_RECEIVE_PATH,
-};
-
-struct v34_phase3_decision_output {
-	struct v34_adaptive_equalizer_decision equalizer;
-	enum v34_phase3_decision_action action;
-};
-
 /* Own only Phase 3 semantic state. The physical sample clock and adaptive
  * equalizer remain in the aggregate receive owner so they can cross Phase 4,
  * B1, and data without a handoff reset. */
@@ -100,7 +85,7 @@ v34_phase3_decision_receiver_observe(
 	struct v34_phase3_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
 	uint16_t decoder_power_q15,
-	struct v34_phase3_decision_output *output);
+	struct v34_receive_action *output);
 
 enum v34_phase3_decision_receiver_result
 v34_phase3_decision_receiver_handoff(

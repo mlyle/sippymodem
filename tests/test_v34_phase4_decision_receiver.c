@@ -100,16 +100,16 @@ static bool decision_is_zero(
 }
 
 static bool output_matches(
-	const struct v34_phase4_decision_output *output,
+	const struct v34_receive_action *output,
 	const struct v34_adaptive_equalizer_observation *input,
 	struct v34_analytic_sample target,
-	enum v34_phase4_decision_action action,
+	enum v34_receive_action_kind action,
 	enum v34_adaptive_equalizer_adaptation adaptation)
 {
-	if (action != V34_PHASE4_DECISION_COMMIT)
+	if (action != V34_RECEIVE_COMMIT)
 		return output->action == action &&
 		       decision_is_zero(&output->equalizer);
-	return output->action == V34_PHASE4_DECISION_COMMIT &&
+	return output->action == V34_RECEIVE_COMMIT &&
 	       observations_are_equal(&output->equalizer.observation, input) &&
 	       output->equalizer.target.in_phase == target.in_phase &&
 	       output->equalizer.target.quadrature == target.quadrature &&
@@ -128,7 +128,7 @@ static bool handle_record(
 		.epoch = fixture->clock.epoch + 1u,
 		.lineage = fixture->clock.lineage,
 	};
-	struct v34_phase4_decision_output output = { 0 };
+	struct v34_receive_action output = { 0 };
 	struct v34_mp_receive_event ignored = { 0 };
 
 	CHECK(v34_phase4_decision_receiver_observe(
@@ -172,7 +172,7 @@ static bool receive_observation(
 {
 	struct v34_adaptive_equalizer_observation input =
 		observation(&fixture->clock, point);
-	struct v34_phase4_decision_output output = { 0 };
+	struct v34_receive_action output = { 0 };
 	struct v34_mp_receive_event event;
 	struct v34_mp_receive_event saved_event;
 	struct v34_analytic_sample expected_target = target;
@@ -180,7 +180,7 @@ static bool receive_observation(
 		V34_PHASE4_DECISION_RECEIVER_ANSWER_S;
 	bool answer_s_matches = false;
 	bool answer_s_adapt;
-	enum v34_phase4_decision_action action;
+	enum v34_receive_action_kind action;
 	enum v34_adaptive_equalizer_adaptation adaptation =
 		V34_ADAPTIVE_EQUALIZER_FULL;
 	enum v34_phase4_decision_receiver_result result;
@@ -220,10 +220,10 @@ static bool receive_observation(
 		!fixture->receiver.answer_s.detection_pending;
 	action = answer_s &&
 		 result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ?
-		V34_PHASE4_DECISION_BEGIN_TRACKING :
-		answer_s_adapt ? V34_PHASE4_DECISION_COMMIT :
-		answer_s ? V34_PHASE4_DECISION_DISCARD :
-			   V34_PHASE4_DECISION_COMMIT;
+		V34_RECEIVE_BEGIN_TRACKING :
+		answer_s_adapt ? V34_RECEIVE_COMMIT :
+		answer_s ? V34_RECEIVE_DISCARD :
+			   V34_RECEIVE_COMMIT;
 	if (answer_s_adapt)
 		adaptation = V34_ADAPTIVE_EQUALIZER_CENTER;
 	CHECK(output_matches(
@@ -578,8 +578,8 @@ static bool run_timeline(
 		struct v34_phase4_decision_receiver saved = fixture.receiver;
 		struct v34_adaptive_equalizer_observation input =
 			observation(&fixture.clock, point);
-		struct v34_phase4_decision_output output = { 0 };
-		struct v34_phase4_decision_output saved_output = output;
+		struct v34_receive_action output = { 0 };
+		struct v34_receive_action saved_output = output;
 		struct v34_mp_receive_event event = { 0 };
 		struct v34_mp_receive_event saved_event = event;
 
@@ -870,10 +870,10 @@ static bool test_validation_and_transactionality(void)
 	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase4_decision_receiver receiver;
 	struct v34_phase4_decision_receiver saved;
-	struct v34_phase4_decision_output output = {
-		.action = V34_PHASE4_DECISION_DISCARD,
+	struct v34_receive_action output = {
+		.action = V34_RECEIVE_DISCARD,
 	};
-	struct v34_phase4_decision_output saved_output = output;
+	struct v34_receive_action saved_output = output;
 	struct v34_adaptive_equalizer_observation input = {
 		.decision = { 2289, 2289 },
 		.epoch = 1,
@@ -933,7 +933,7 @@ static bool test_validation_and_transactionality(void)
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_observe(
 		      &receiver, &input, TEST_DECODER_POWER_Q15,
-		      (struct v34_phase4_decision_output *)&receiver, &event) ==
+		      (struct v34_receive_action *)&receiver, &event) ==
 		      V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_decision_receiver_observe(
 		      &receiver, &input, 0u, &output, &event) ==

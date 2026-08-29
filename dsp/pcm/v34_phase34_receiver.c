@@ -316,27 +316,27 @@ static bool phase3_result_consumed(
 	return false;
 }
 
-static bool execute_phase3_action(
+static bool execute_receive_action(
 	struct v34_phase34_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
-	const struct v34_phase3_decision_output *output)
+	const struct v34_receive_action *output)
 {
 	bool was_tracking = receiver->tracking_started;
 
 	switch (output->action) {
-	case V34_PHASE3_DECISION_COMMIT:
+	case V34_RECEIVE_COMMIT:
 		if (v34_adaptive_equalizer_commit(
 			    &receiver->equalizer, &output->equalizer) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return false;
 		break;
-	case V34_PHASE3_DECISION_DISCARD:
+	case V34_RECEIVE_DISCARD:
 		if (v34_adaptive_equalizer_discard(
 			    &receiver->equalizer, observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return false;
 		break;
-	case V34_PHASE3_DECISION_BEGIN_TRACKING:
+	case V34_RECEIVE_BEGIN_TRACKING:
 		if (v34_adaptive_equalizer_discard(
 			    &receiver->equalizer, observation) !=
 			    V34_ADAPTIVE_EQUALIZER_OK ||
@@ -351,7 +351,7 @@ static bool execute_phase3_action(
 		receiver->decoder_power_q15 =
 			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
-	case V34_PHASE3_DECISION_RESTART_RECEIVE_PATH: {
+	case V34_RECEIVE_RESTART_PATH: {
 		struct v34_receive_timing timing;
 		struct v34_adaptive_equalizer equalizer;
 
@@ -410,7 +410,7 @@ static enum v34_phase34_receiver_result receive_phase3(
 {
 	struct v34_phase3_decision_receiver phase3 =
 		receiver->semantic.phase3;
-	struct v34_phase3_decision_output output;
+	struct v34_receive_action output;
 	enum v34_phase3_decision_receiver_result result =
 		v34_phase3_decision_receiver_observe(
 			&phase3, observation, receiver->decoder_power_q15,
@@ -424,7 +424,7 @@ static enum v34_phase34_receiver_result receive_phase3(
 			mapped = V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 		return fail(receiver, mapped);
 	}
-	if (!execute_phase3_action(receiver, observation, &output))
+	if (!execute_receive_action(receiver, observation, &output))
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	if (result == V34_PHASE3_DECISION_RECEIVER_J_DETECTED) {
 		enum v34_phase34_receiver_result transition =
@@ -485,7 +485,7 @@ static enum v34_phase34_receiver_result receive_phase4(
 {
 	struct v34_phase4_decision_receiver phase4 =
 		receiver->semantic.phase4;
-	struct v34_phase4_decision_output decision;
+	struct v34_receive_action decision;
 	struct v34_mp_receive_event emitted = { 0 };
 	enum v34_phase4_decision_receiver_result result =
 		v34_phase4_decision_receiver_observe(
@@ -500,35 +500,8 @@ static enum v34_phase34_receiver_result receive_phase4(
 			mapped = V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 		return fail(receiver, mapped);
 	}
-	if (decision.action == V34_PHASE4_DECISION_COMMIT) {
-		if (v34_adaptive_equalizer_commit(
-			    &receiver->equalizer, &decision.equalizer) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	} else if (decision.action ==
-		   V34_PHASE4_DECISION_BEGIN_TRACKING) {
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, observation) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_receive_timing_freeze_gain(&receiver->timing) !=
-			    V34_RECEIVE_TIMING_OK ||
-		    v34_adaptive_equalizer_begin_tracking(
-			    &receiver->equalizer) !=
-			    V34_ADAPTIVE_EQUALIZER_OK)
-			return fail(
-				receiver,
-				V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-		receiver->tracking_started = true;
-		receiver->tracking_symbols = 0u;
-		receiver->decoder_power_q15 =
-			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
-	} else if (v34_adaptive_equalizer_discard(
-			   &receiver->equalizer, observation) !=
-		   V34_ADAPTIVE_EQUALIZER_OK) {
+	if (!execute_receive_action(receiver, observation, &decision))
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	}
-	if (decision.action != V34_PHASE4_DECISION_BEGIN_TRACKING)
-		advance_tracking(receiver);
 	receiver->semantic.phase4 = phase4;
 	if (result == V34_PHASE4_DECISION_RECEIVER_RECORD_READY)
 		output->mp = emitted;
