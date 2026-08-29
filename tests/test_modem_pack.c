@@ -283,7 +283,14 @@ static bool test_async_preserves_raw_data_through_t400(void)
 
 static bool test_raw_answerer_selects_v14(void)
 {
-	uint8_t bits[360];
+	enum {
+		EXPECTED_ADP_PATTERNS = 16,
+		EXPECTED_PATTERN_BITS = 36,
+		EXPECTED_ADP_BITS =
+			EXPECTED_ADP_PATTERNS * EXPECTED_PATTERN_BITS,
+		EARLY_ADP_BITS = 3 * EXPECTED_PATTERN_BITS,
+	};
+	uint8_t bits[EXPECTED_ADP_BITS];
 	struct dp answer_datapump = { .id = DP_V34 };
 	struct modem answerer = {
 		.name = "raw-v42-answerer",
@@ -345,20 +352,26 @@ static bool test_raw_answerer_selects_v14(void)
 	CHECK(originator.packer.detector.rx_count == 4 &&
 		      originator.packer.detector.ec_enable == 0,
 	      "originator did not accept the V.14 selection");
-	CHECK(modem_detector_get_bits(&answerer, 1, bits + 108, 251) == 251 &&
-		      answerer.packer.detector.tx_count == 21 &&
+	CHECK(modem_detector_get_bits(
+		      &answerer, 1, bits + EARLY_ADP_BITS,
+		      EXPECTED_ADP_BITS - EARLY_ADP_BITS - 1) ==
+		      EXPECTED_ADP_BITS - EARLY_ADP_BITS - 1 &&
+		      answerer.packer.detector.tx_count ==
+			      2 * EXPECTED_ADP_PATTERNS + 1 &&
 		      answerer.pack.bit == 1 && answerer.bit_timer == 0,
 	      "V.14 answerer did not retain the final ADP bit");
-	CHECK(modem_detector_get_bits(&answerer, 1, bits + 359, 1) == 1,
+	CHECK(modem_detector_get_bits(
+		      &answerer, 1, bits + EXPECTED_ADP_BITS - 1, 1) == 1,
 	      "V.14 answerer did not emit the final ADP bit");
 	CHECK(answerer.packer.detector.tx_count == 0 &&
 		      answerer.bit_timer_func == NULL,
-	      "V.14 answerer did not finish after exactly ten ADPs");
-	for (size_t pattern = 0; pattern < 10; ++pattern) {
-		CHECK(detection_character_matches(bits + pattern * 36, 0xa2),
+	      "V.14 answerer did not finish after exactly 16 ADPs");
+	for (size_t pattern = 0; pattern < EXPECTED_ADP_PATTERNS; ++pattern) {
+		CHECK(detection_character_matches(
+			      bits + pattern * EXPECTED_PATTERN_BITS, 0xa2),
 		      "V.14 ADP pattern %zu did not begin with ADP0", pattern);
 		CHECK(detection_character_matches(
-			      bits + pattern * 36 + 18, 0x00),
+			      bits + pattern * EXPECTED_PATTERN_BITS + 18, 0x00),
 		      "V.14 ADP pattern %zu did not end with ADP1", pattern);
 	}
 	return true;

@@ -328,11 +328,14 @@ void modem_async_start(struct modem *m)
 #define ADP1_V14 0x00
 #define ADP1_V42 0xc2
 
-#define DETECTOR_MATCH_CHARACTERS 4
-#define DETECTOR_ADP_REPLY_PATTERNS 10
+#define DETECTOR_MATCH_CHARACTERS (2 * V42_ORIGINATOR_MATCH_PATTERNS)
 #define DETECTOR_ORIGINATOR_MARK_BITS (64 * 8)
 #define DETECTOR_ANSWER_TIMEOUT_SCALE 96
 #define DETECTOR_FALLBACK_RATE 28800
+
+_Static_assert(V42_ANSWER_REPLY_PATTERNS >=
+		       V42_MINIMUM_ANSWER_PATTERNS,
+	       "V.42 answer reply is shorter than the protocol minimum");
 
 int modem_link_supports_v42(const struct modem *m)
 {
@@ -465,7 +468,7 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		if (bit_cnt <= 0)
 			break;
 		if (!m->caller &&
-		    d->tx_count > 2 * DETECTOR_ADP_REPLY_PATTERNS) {
+		    d->tx_count > 2 * V42_ANSWER_REPLY_PATTERNS) {
 			/* Finish the selected output group with marks.  The detector
 			 * changes ownership only after every required ADP bit is on the
 			 * wire, independent of receive-side activity. */
@@ -490,7 +493,7 @@ int modem_detector_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		}
 	}
 	if (!m->caller &&
-	    d->tx_count > 2 * DETECTOR_ADP_REPLY_PATTERNS && s->bit == 0)
+	    d->tx_count > 2 * V42_ANSWER_REPLY_PATTERNS && s->bit == 0)
 		detector_finish(m);
 	return ret;
 }

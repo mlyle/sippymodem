@@ -134,10 +134,14 @@ static int lapm_timer_timeout(const struct lapm_state *l)
 #define FRAME_NR(f)   ((f)->buf[2]>>1)
 
 enum {
-	/* The answerer must send at least ten 36-bit ADPs, while the
-	 * originator recognizes it after two.  Keep flags on the wire for the
-	 * remaining eight ADPs plus the 16 flags required before the first XID. */
-	LAPM_ORIGINATOR_PREAMBLE_FLAGS = 8 * 36 / 8 + 16,
+	/* The originator recognizes two ADPs before the answerer's robust reply
+	 * is complete.  Keep flags on the wire for the remaining ADPs and then
+	 * for the protocol preamble required before the first XID. */
+	LAPM_ORIGINATOR_PREAMBLE_FLAGS =
+		((V42_ANSWER_REPLY_PATTERNS -
+		  V42_ORIGINATOR_MATCH_PATTERNS) *
+		 V42_DETECTION_PATTERN_BITS + 7) / 8 +
+		V42_PROTOCOL_PREAMBLE_FLAGS,
 };
 
 /* tx unnumbered */

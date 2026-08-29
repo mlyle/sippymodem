@@ -640,7 +640,7 @@ static bool test_datapump_error_control_policy(void)
 
 static bool complete_raw_v14_detection(struct modem *answerer)
 {
-	uint8_t bits[360];
+	uint8_t bits[576];
 	struct modem pattern_source = {
 		.name = "raw detection pattern source",
 	};
@@ -660,7 +660,7 @@ static bool complete_raw_v14_detection(struct modem *answerer)
 	CHECK(modem_get_bits(
 		      answerer, 1, bits, (int)ARRAY_LENGTH(bits)) ==
 		      (int)ARRAY_LENGTH(bits),
-	      "raw answerer did not transmit ten ADP-V.14 patterns");
+	      "raw answerer did not transmit 16 ADP-V.14 patterns");
 	CHECK(answerer->get_bits == modem_async_get_bits &&
 		      answerer->put_bits == modem_async_put_bits &&
 		      answerer->cfg.ec == 0,
@@ -1209,8 +1209,8 @@ static bool test_lapm_xid_envelopes(void)
 	uint8_t payload[96];
 	uint8_t discarded[80];
 	uint8_t recovery[112];
-	uint8_t preamble[52];
-	uint8_t expected_preamble[52];
+	uint8_t preamble[79];
+	uint8_t expected_preamble[79];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -1224,7 +1224,7 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
 	modem_ec_start(answerer);
-	CHECK(caller->packer.hdlc.tx_preamble_flags == 52u &&
+	CHECK(caller->packer.hdlc.tx_preamble_flags == 79u &&
 		      caller->packer.hdlc.tx_preamble_complete != NULL &&
 		      caller->packer.hdlc.get_tx_frame == NULL &&
 		      caller->bit_timer == 0,

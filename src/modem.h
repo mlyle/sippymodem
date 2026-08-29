@@ -194,6 +194,15 @@ extern int  modem_comp_flush_decoder(struct modem *m, char *buf, int n);
  *
  */
 
+enum {
+	V42_DETECTION_PATTERN_BITS = 36,
+	V42_ORIGINATOR_MATCH_PATTERNS = 2,
+	V42_MINIMUM_ANSWER_PATTERNS = 10,
+	/* A longer bounded reply gives a damaged pattern room to recover. */
+	V42_ANSWER_REPLY_PATTERNS = 16,
+	V42_PROTOCOL_PREAMBLE_FLAGS = 16,
+};
+
 typedef struct hdlc_frame {
 	struct hdlc_frame *next;
 	int count;
