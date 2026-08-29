@@ -34,14 +34,6 @@ enum v34_shell_mapper_result v34_shell_map(
 	const struct v34_mapping_parameters *parameters,
 	uint32_t shell_label, struct v34_ring_indices *indices);
 
-/* Recover R0 from eight exact decided ring indices. The same generated
- * coefficients define both directions; unused expanded-shaping sequences
- * are rejected and the destination is unchanged on failure. */
-enum v34_shell_mapper_result v34_shell_unmap(
-	const struct v34_mapping_parameters *parameters,
-	const struct v34_ring_indices *indices,
-	uint32_t *shell_label);
-
 /* Recover the low `shell_bits` data bits from received Figure 5 prefixes.
  * Prefixes outside the negotiated shaping rings follow the bounded receive
  * extension before the recovered shell word is truncated to K bits. */

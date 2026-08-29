@@ -173,7 +173,6 @@ static bool verify_label(
 	struct v34_ring_indices indices;
 	struct v34_ring_prefixes prefixes;
 	uint64_t recovered = 0;
-	uint32_t production_recovered = UINT32_MAX;
 	uint32_t decision_recovered = UINT32_MAX;
 
 	CHECK(v34_shell_map(
@@ -190,10 +189,6 @@ static bool verify_label(
 	CHECK(recover_shell_label(
 		      &indices, parameters->ring_count, counts, &recovered) &&
 	      recovered == shell_label &&
-	      v34_shell_unmap(
-		      parameters, &indices, &production_recovered) ==
-		      V34_SHELL_MAPPER_OK &&
-	      production_recovered == shell_label &&
 	      v34_shell_unmap_decision(
 		      parameters, &prefixes, parameters->shell_mapper_bits,
 		      &decision_recovered) ==
@@ -475,26 +470,11 @@ static bool test_validation(void)
 	      !v34_ring_indices_are_valid(NULL, &parameters) &&
 	      !v34_ring_indices_are_valid(&indices, NULL),
 	      "invalid ring indices were accepted");
-	CHECK(v34_shell_unmap(NULL, &indices, &shell_label) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      v34_shell_unmap(&parameters, NULL, &shell_label) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      v34_shell_unmap(&parameters, &indices, NULL) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      v34_shell_unmap(
-		      &parameters, &indices, &shell_label) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      shell_label == UINT32_C(0xa5a5a5a5),
-	      "invalid shell inverse changed its destination");
 	CHECK(v34_mapping_parameters_is_valid(&expanded),
-	      "expanded inverse fixture has invalid dimensions");
+	      "expanded receive fixture has invalid dimensions");
 	memset(&indices, expanded.ring_count - 1u, sizeof(indices));
-	CHECK(v34_ring_indices_are_valid(&indices, &expanded) &&
-	      v34_shell_unmap(
-		      &expanded, &indices, &shell_label) ==
-		      V34_SHELL_MAPPER_INVALID_ARGUMENT &&
-	      shell_label == UINT32_C(0xa5a5a5a5),
-	      "unused expanded shell sequence was accepted");
+	CHECK(v34_ring_indices_are_valid(&indices, &expanded),
+	      "expanded receive indices are invalid");
 	generate_inverse_counts(expanded.ring_count, &counts);
 	prefixes = prefixes_from_indices(&indices);
 	CHECK(recover_shell_label(

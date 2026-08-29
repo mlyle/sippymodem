@@ -8,10 +8,7 @@
 #include <stdlib.h>
 
 enum {
-	V34_LATTICE_CLASS_PERIOD = 4,
 	V34_LATTICE_SUBSET_PERIOD = 8,
-	V34_LATTICE_CLASS_ONE = 1,
-	V34_LATTICE_CLASS_THREE = 3,
 };
 
 static int class_coordinate(int class_index, int residue, int period)
@@ -58,18 +55,6 @@ static int16_t nearest_residue_coordinate(
 	return (int16_t)lower;
 }
 
-static struct v34_grid_point candidate_point(
-	const int16_t in_phase[2], const int16_t quadrature[2], uint8_t path)
-{
-	uint8_t in_phase_index = path >> 1;
-	uint8_t quadrature_index = (uint8_t)(in_phase_index ^ (path & 1u));
-
-	return (struct v34_grid_point){
-		.in_phase = in_phase[in_phase_index],
-		.quadrature = quadrature[quadrature_index],
-	};
-}
-
 static bool candidate_error(
 	const struct qam_point *estimate,
 	const struct v34_grid_point *candidate, double *squared_error)
@@ -110,50 +95,6 @@ static bool candidate_precedes(
 		       current->channel_output.in_phase;
 	return candidate->channel_output.quadrature <
 	       current->channel_output.quadrature;
-}
-
-enum v34_lattice_result v34_slice_odd_lattice(
-	const struct qam_point *channel_estimate,
-	struct v34_lattice_slice *slice)
-{
-	struct v34_lattice_slice generated = { 0 };
-	int16_t in_phase[2];
-	int16_t quadrature[2];
-
-	if (channel_estimate == NULL || slice == NULL ||
-	    !isfinite(channel_estimate->in_phase) ||
-	    !isfinite(channel_estimate->quadrature))
-		return V34_LATTICE_INVALID_ARGUMENT;
-	in_phase[0] = nearest_residue_coordinate(
-		channel_estimate->in_phase, V34_LATTICE_CLASS_ONE,
-		V34_LATTICE_CLASS_PERIOD);
-	in_phase[1] = nearest_residue_coordinate(
-		channel_estimate->in_phase, V34_LATTICE_CLASS_THREE,
-		V34_LATTICE_CLASS_PERIOD);
-	quadrature[0] = nearest_residue_coordinate(
-		channel_estimate->quadrature, V34_LATTICE_CLASS_ONE,
-		V34_LATTICE_CLASS_PERIOD);
-	quadrature[1] = nearest_residue_coordinate(
-		channel_estimate->quadrature, V34_LATTICE_CLASS_THREE,
-		V34_LATTICE_CLASS_PERIOD);
-	for (uint8_t path = 0;
-	     path < V34_LATTICE_CANDIDATE_COUNT; ++path) {
-		struct v34_lattice_candidate *candidate =
-			&generated.candidate[path];
-
-		candidate->channel_output = candidate_point(
-			in_phase, quadrature, path);
-		if (v34_grid_subset_label(
-			    &candidate->channel_output,
-			    &candidate->subset_label) != V34_TRELLIS_OK)
-			return V34_LATTICE_INVALID_ARGUMENT;
-		if (!candidate_error(
-			    channel_estimate, &candidate->channel_output,
-			    &candidate->squared_error))
-			return V34_LATTICE_NUMERIC_FAILURE;
-	}
-	*slice = generated;
-	return V34_LATTICE_OK;
 }
 
 enum v34_lattice_result v34_slice_grid_subsets(

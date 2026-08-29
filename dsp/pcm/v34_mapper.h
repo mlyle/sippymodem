@@ -46,15 +46,6 @@ enum v34_mapper_result v34_map_2d_symbol(
 	const struct v34_2d_mapping_input *input,
 	struct v34_2d_mapping_output *output);
 
-/* Invert one exact mapper output, including the rotation encoded by its
- * odd-grid coordinate residues. This is the receive-side boundary after
- * trellis and precoder decisions; noisy channel symbols must be decided
- * before calling it. Rejection leaves the destination unchanged. */
-enum v34_mapper_result v34_unmap_2d_symbol(
-	const struct v34_mapping_parameters *parameters,
-	const struct v34_grid_point *mapper_output,
-	struct v34_2d_mapping_input *input);
-
 /* Recover a hard receiver decision. A noisy trellis path can produce a valid
  * odd-lattice point outside either the negotiated prefix or the complete
  * Figure 5 superconstellation. Preserve an in-superconstellation prefix;

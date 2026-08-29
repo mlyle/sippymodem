@@ -112,89 +112,6 @@ static void split_ring_pair(
 	}
 }
 
-static uint64_t partition_prefix(
-	const uint32_t *weights, uint8_t count, uint8_t total,
-	uint8_t selected_left)
-{
-	uint64_t prefix = 0;
-
-	for (uint8_t left = 0; left < selected_left && left < count &&
-	     left <= total; ++left) {
-		uint8_t right = (uint8_t)(total - left);
-
-		if (right < count)
-			prefix += (uint64_t)weights[left] * weights[right];
-	}
-	return prefix;
-}
-
-static uint8_t ring_pair_selector(
-	uint8_t ring_count, uint8_t sum,
-	const uint8_t pair[V34_RING_INDICES_PER_4D_INTERVAL])
-{
-	return sum < ring_count ? pair[0] :
-		(uint8_t)(ring_count - 1u - pair[1]);
-}
-
-static bool rank_ring_quartet(
-	const struct shell_coefficients *coefficients, uint8_t ring_count,
-	const struct v34_ring_indices *indices,
-	uint8_t first_interval, uint8_t *sum, uint64_t *rank)
-{
-	const uint8_t *first_pair = indices->index[first_interval];
-	const uint8_t *second_pair = indices->index[first_interval + 1u];
-	uint8_t first_sum = (uint8_t)(first_pair[0] + first_pair[1]);
-	uint8_t second_sum = (uint8_t)(second_pair[0] + second_pair[1]);
-	uint8_t first_selector = ring_pair_selector(
-		ring_count, first_sum, first_pair);
-	uint8_t second_selector = ring_pair_selector(
-		ring_count, second_sum, second_pair);
-	uint8_t quartet_sum = (uint8_t)(first_sum + second_sum);
-
-	if (first_sum >= coefficients->g2_count ||
-	    second_sum >= coefficients->g2_count ||
-	    quartet_sum >= coefficients->g4_count ||
-	    first_selector >= coefficients->g2[first_sum] ||
-	    second_selector >= coefficients->g2[second_sum])
-		return false;
-	*sum = quartet_sum;
-	*rank = partition_prefix(
-		coefficients->g2, coefficients->g2_count, quartet_sum,
-		first_sum) + first_selector +
-		(uint64_t)coefficients->g2[first_sum] * second_selector;
-	return *rank < coefficients->g4[quartet_sum];
-}
-
-static bool recover_shell_label(
-	const struct shell_coefficients *coefficients, uint8_t ring_count,
-	const struct v34_ring_indices *indices, uint64_t *shell_label)
-{
-	uint8_t first_four_sum;
-	uint8_t second_four_sum;
-	uint8_t eight_ring_sum;
-	uint64_t first_four_rank;
-	uint64_t second_four_rank;
-	uint64_t rank;
-
-	if (!rank_ring_quartet(
-		    coefficients, ring_count, indices, 0, &first_four_sum,
-		    &first_four_rank) ||
-	    !rank_ring_quartet(
-		    coefficients, ring_count, indices, 2, &second_four_sum,
-		    &second_four_rank))
-		return false;
-	eight_ring_sum = (uint8_t)(first_four_sum + second_four_sum);
-	rank = partition_prefix(
-		coefficients->g4, coefficients->g4_count, eight_ring_sum,
-		first_four_sum) + first_four_rank +
-		(uint64_t)coefficients->g4[first_four_sum] * second_four_rank;
-	for (uint8_t sum = 0; sum < eight_ring_sum; ++sum)
-		rank += convolution_at(
-			coefficients->g4, coefficients->g4_count, sum);
-	*shell_label = rank;
-	return true;
-}
-
 static uint32_t receive_correlation(
 	const uint32_t weights[V34_RECEIVE_SHELL_WORD_COUNT],
 	uint16_t count, uint16_t reverse_index)
@@ -417,25 +334,6 @@ enum v34_shell_mapper_result v34_shell_map(
 	    !v34_ring_indices_are_valid(&generated, parameters))
 		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
 	*indices = generated;
-	return V34_SHELL_MAPPER_OK;
-}
-
-enum v34_shell_mapper_result v34_shell_unmap(
-	const struct v34_mapping_parameters *parameters,
-	const struct v34_ring_indices *indices,
-	uint32_t *shell_label)
-{
-	struct shell_coefficients coefficients = { 0 };
-	uint64_t recovered;
-
-	if (!v34_ring_indices_are_valid(indices, parameters) ||
-	    shell_label == NULL ||
-	    !generate_coefficients(parameters->ring_count, &coefficients) ||
-	    !recover_shell_label(
-		    &coefficients, parameters->ring_count, indices, &recovered) ||
-	    recovered >= shell_label_limit(parameters))
-		return V34_SHELL_MAPPER_INVALID_ARGUMENT;
-	*shell_label = (uint32_t)recovered;
 	return V34_SHELL_MAPPER_OK;
 }
 

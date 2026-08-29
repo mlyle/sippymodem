@@ -107,7 +107,7 @@ static bool test_all_supported_mappings(void)
 									};
 								struct v34_2d_mapping_output
 									output;
-								struct v34_2d_mapping_input
+								struct v34_2d_mapping_decision
 									recovered;
 								struct v34_grid_point expected =
 									rotate_clockwise(
@@ -126,12 +126,12 @@ static bool test_all_supported_mappings(void)
 									      expected.in_phase &&
 								      output.mapper_output.quadrature ==
 									      expected.quadrature &&
-								      v34_unmap_2d_symbol(
+								      v34_unmap_2d_decision(
 									      &parameters,
 									      &output.mapper_output,
 									      &recovered) ==
 									      V34_MAPPER_OK &&
-								      recovered.ring_index == ring &&
+								      recovered.ring_prefix == ring &&
 								      recovered.point_index == point &&
 								      recovered.clockwise_quarter_turns ==
 									      rotation,
@@ -162,17 +162,10 @@ static bool test_all_supported_mappings(void)
 static bool test_validation(void)
 {
 	struct v34_frame_geometry geometry;
-	struct v34_frame_geometry low_geometry;
 	struct v34_mapping_parameters parameters;
-	struct v34_mapping_parameters low_parameters;
 	struct v34_2d_mapping_input input = { 0 };
 	struct v34_2d_mapping_output output;
 	struct v34_2d_mapping_output saved;
-	struct v34_2d_mapping_input recovered;
-	struct v34_2d_mapping_input recovered_saved;
-	struct v34_grid_point invalid_point = { 3, 1 };
-	struct v34_grid_point off_grid_point = { 2, 1 };
-	struct v34_grid_point outside_point;
 
 	CHECK(v34_frame_geometry_init(
 		      &geometry, V34_SYMBOL_RATE_3429, 14, false) ==
@@ -181,20 +174,8 @@ static bool test_validation(void)
 		      &parameters, &geometry, true) ==
 		      V34_MAPPING_PARAMETERS_OK,
 	      "validation parameters did not initialize");
-	CHECK(v34_frame_geometry_init(
-		      &low_geometry, V34_SYMBOL_RATE_2400, 1, false) ==
-		      V34_FRAME_SCHEDULE_OK &&
-	      v34_mapping_parameters_init(
-		      &low_parameters, &low_geometry, false) ==
-		      V34_MAPPING_PARAMETERS_OK &&
-	      low_parameters.constellation_points == 4u &&
-	      v34_quarter_superconstellation_point(
-		      1, &outside_point) == V34_CONSTELLATION_OK,
-	      "low-constellation validation fixture did not initialize");
 	memset(&output, 0x5a, sizeof(output));
 	saved = output;
-	memset(&recovered, 0xa5, sizeof(recovered));
-	recovered_saved = recovered;
 	input.ring_index = parameters.ring_count;
 	CHECK(!v34_2d_mapping_input_is_valid(&input, &parameters) &&
 	      v34_map_2d_symbol(&parameters, &input, &output) ==
@@ -230,26 +211,6 @@ static bool test_validation(void)
 		      V34_MAPPER_INVALID_ARGUMENT &&
 	      memcmp(&output, &saved, sizeof(output)) == 0,
 	      "inconsistent parameters changed the output");
-	CHECK(v34_unmap_2d_symbol(
-		      &low_parameters, &invalid_point, &recovered) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_symbol(
-		      &low_parameters, &off_grid_point, &recovered) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_symbol(
-		      &low_parameters, &outside_point, &recovered) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_symbol(
-		      NULL, &invalid_point, &recovered) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_symbol(
-		      &low_parameters, NULL, &recovered) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      v34_unmap_2d_symbol(
-		      &low_parameters, &invalid_point, NULL) ==
-		      V34_MAPPER_INVALID_ARGUMENT &&
-	      memcmp(&recovered, &recovered_saved, sizeof(recovered)) == 0,
-	      "invalid inverse mapper changed its output");
 	return true;
 }
 
@@ -258,7 +219,6 @@ static bool test_hard_decision_folding(void)
 	struct v34_frame_geometry geometry;
 	struct v34_mapping_parameters parameters;
 	struct v34_grid_point outside;
-	struct v34_2d_mapping_input exact;
 	struct v34_2d_mapping_decision recovered;
 	struct v34_2d_mapping_decision saved;
 
@@ -276,10 +236,7 @@ static bool test_hard_decision_folding(void)
 		struct v34_grid_point decided =
 			rotate_clockwise(outside, rotation);
 
-		CHECK(v34_unmap_2d_symbol(
-			      &parameters, &decided, &exact) ==
-			      V34_MAPPER_INVALID_ARGUMENT &&
-		      v34_unmap_2d_decision(
+		CHECK(v34_unmap_2d_decision(
 			      &parameters, &decided, &recovered) ==
 			      V34_MAPPER_OK &&
 		      recovered.ring_prefix == 1u &&
