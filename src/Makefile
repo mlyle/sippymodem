@@ -166,6 +166,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_j_frame.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_prefix.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_call.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_echo_canceller.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_datapump.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_quality.c \

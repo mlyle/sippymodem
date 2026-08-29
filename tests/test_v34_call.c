@@ -11,13 +11,20 @@
 enum {
 	SAMPLE_LIMIT = 140000,
 	LINE_DELAY_SAMPLES = 13,
+	ECHO_DELAY_CAPACITY = 256,
+	TEST_ECHO_DELAY_SAMPLES = 32,
 	NOMINAL_AMPLITUDE = 7000,
 };
 
 struct channel {
 	int16_t call_to_answer[LINE_DELAY_SAMPLES];
 	int16_t answer_to_call[LINE_DELAY_SAMPLES];
+	int16_t answerer_echo[ECHO_DELAY_CAPACITY];
 	size_t cursor;
+	size_t echo_cursor;
+	size_t echo_delay_samples;
+	int16_t echo_gain_q15;
+	bool disable_answerer_echo_filter;
 	bool pcma;
 };
 
@@ -36,6 +43,7 @@ struct endpoint {
 	bool verify_mapping_frames;
 	bool entered_phase3;
 	bool entered_phase4;
+	bool suppress_failure_diagnostic;
 };
 
 static struct v34_info0 info0(enum v34_station_role role)
@@ -355,7 +363,8 @@ static bool endpoint_sample(
 		&endpoint->call, received_sample, source, endpoint,
 		transmit_sample, observation, &received);
 
-	if (result != V34_CALL_OK)
+	if (result != V34_CALL_OK &&
+	    !endpoint->suppress_failure_diagnostic)
 		fprintf(stderr,
 			"V.34 endpoint role=%d stage=%d tone=%u failed: %d\n",
 			endpoint->call.local_role, endpoint->call.stage,
@@ -365,11 +374,26 @@ static bool endpoint_sample(
 	       endpoint_accept_observation(endpoint, observation, &received);
 }
 
+static int16_t mix_echo(int16_t remote, int16_t local, int16_t gain_q15)
+{
+	int32_t mixed = (int32_t)remote +
+		(int32_t)((int64_t)local * gain_q15 / 32768);
+
+	if (mixed > INT16_MAX)
+		return INT16_MAX;
+	if (mixed < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)mixed;
+}
+
 static void channel_receive(
 	const struct channel *channel, int16_t *caller, int16_t *answerer)
 {
 	*caller = channel->answer_to_call[channel->cursor];
-	*answerer = channel->call_to_answer[channel->cursor];
+	*answerer = mix_echo(
+		channel->call_to_answer[channel->cursor],
+		channel->answerer_echo[channel->echo_cursor],
+		channel->echo_gain_q15);
 }
 
 static int16_t codec_round_trip(int16_t sample, bool pcma)
@@ -381,6 +405,11 @@ static int16_t codec_round_trip(int16_t sample, bool pcma)
 static void channel_transmit(
 	struct channel *channel, int16_t caller, int16_t answerer)
 {
+	if (channel->echo_delay_samples != 0) {
+		channel->answerer_echo[channel->echo_cursor] = answerer;
+		channel->echo_cursor =
+			(channel->echo_cursor + 1u) % channel->echo_delay_samples;
+	}
 	channel->call_to_answer[channel->cursor] =
 		codec_round_trip(caller, channel->pcma);
 	channel->answer_to_call[channel->cursor] =
@@ -399,6 +428,8 @@ static bool channel_sample_pair(
 	int16_t caller_transmit;
 	int16_t answerer_transmit;
 
+	if (channel->disable_answerer_echo_filter)
+		answerer->call.echo.filtering = false;
 	channel_receive(channel, &caller_receive, &answerer_receive);
 	note_peer_primary_delays(caller, answerer);
 	if (!endpoint_sample(
@@ -420,17 +451,17 @@ static bool run_initialized_pair(
 		struct v34_call_observation caller_observation;
 		struct v34_call_observation answerer_observation;
 
-		CHECK(channel_sample_pair(
-			      channel, caller, answerer,
-			      &caller_observation, &answerer_observation),
-		      "V.34 pair stopped at sample %zu", index);
+		if (!channel_sample_pair(
+			    channel, caller, answerer,
+			    &caller_observation, &answerer_observation))
+			return false;
 		if (v34_call_is_online(&caller->call) &&
 		    v34_call_is_online(&answerer->call) &&
 		    caller->mapping_frames_received >= 4u &&
 		    answerer->mapping_frames_received >= 4u)
 			return true;
 	}
-	CHECK(false, "V.34 pair did not reach mapped data");
+	return false;
 }
 
 static bool run_online_pair(
@@ -495,6 +526,53 @@ static bool test_pcmu_call(void)
 	      answerer.mapping_frames_supplied >=
 		      caller.mapping_frames_received,
 	      "full call lost a phase or mapping frame");
+	return true;
+}
+
+static bool run_answerer_echo_call(
+	bool pcma, bool disable_filter, struct endpoint *answerer_result)
+{
+	struct channel channel = {
+		.echo_delay_samples = TEST_ECHO_DELAY_SAMPLES,
+		.echo_gain_q15 = 14000,
+		.disable_answerer_echo_filter = disable_filter,
+		.pcma = pcma,
+	};
+	struct endpoint caller;
+	struct endpoint answerer;
+	bool connected;
+
+	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+	      endpoint_init(&answerer, V34_ANSWERING_STATION),
+	      "echoed endpoints did not initialize");
+	caller.suppress_failure_diagnostic = disable_filter;
+	answerer.suppress_failure_diagnostic = disable_filter;
+	connected = run_initialized_pair(&caller, &answerer, &channel);
+	*answerer_result = answerer;
+	return connected;
+}
+
+static bool check_answerer_echo_call(bool pcma)
+{
+	struct endpoint unfiltered;
+	struct endpoint filtered;
+
+	CHECK(!run_answerer_echo_call(pcma, true, &unfiltered),
+	      "uncancelled answering-station echo reached mapped data");
+	CHECK(run_answerer_echo_call(pcma, false, &filtered),
+	      "cancelled answering-station echo did not reach mapped data");
+	CHECK(filtered.call.echo.filtering &&
+	      filtered.call.echo.validation_input_energy != 0 &&
+	      filtered.call.echo.validation_residual_energy * 100u <
+		      filtered.call.echo.validation_input_energy,
+	      "answering-station echo model was not retained");
+	return true;
+}
+
+static bool test_answerer_echo_calls(void)
+{
+	CHECK(check_answerer_echo_call(false), "PCMU echo call failed");
+	CHECK(check_answerer_echo_call(true), "PCMA echo call failed");
 	return true;
 }
 
@@ -1175,6 +1253,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated PCMU call", test_pcmu_call },
+		{ "generated answering-station echo",
+		  test_answerer_echo_calls },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain selects new INFO1a rate pair",

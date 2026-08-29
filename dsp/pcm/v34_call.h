@@ -6,6 +6,7 @@
 #include "v34_phase2.h"
 #include "v34_phase3_exchange.h"
 #include "v34_phase4_exchange.h"
+#include "v34_echo_canceller.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -79,6 +80,7 @@ struct v34_call_observation {
  * exact handoff boundaries. Calls on one instance must be serialized. */
 struct v34_call {
 	union v34_call_state state;
+	struct v34_echo_canceller echo;
 	union v34_local_info1 local_info1;
 	struct v34_info0 local_info0;
 	struct v34_info0 peer_info0;

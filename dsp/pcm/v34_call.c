@@ -43,6 +43,7 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	     !v34_info0_is_valid(&call->peer_info0)) ||
 	    !v34_retrain_detector_is_valid(&call->retrain_detector) ||
 	    call->retrain_detector.tone.local_role != call->local_role ||
+	    !v34_echo_canceller_is_valid(&call->echo) ||
 	    (!call->round_trip_delay_stored &&
 	     call->round_trip_delay_samples != 0u) ||
 	    call->round_trip_delay_samples >
@@ -65,6 +66,16 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	return call->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(&call->local_info1.calling) :
 		       v34_info1a_is_valid(&call->local_info1.answering);
+}
+
+static bool echo_adaptation_is_expected(const struct v34_call *call)
+{
+	return call->stage == V34_CALL_PHASE3 &&
+	       call->local_role == V34_ANSWERING_STATION &&
+	       call->state.phase3.transmit.stage ==
+		       V34_TRAINING_TRANSMITTER_PHASE3 &&
+	       call->state.phase3.transmit.phase3.stage !=
+		       V34_PHASE3_TRANSMITTER_J;
 }
 
 bool v34_call_is_valid(const struct v34_call *call)
@@ -108,6 +119,8 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
+	       v34_echo_canceller_is_adapting(&call->echo) ==
+		       echo_adaptation_is_expected(call) &&
 	       (call->round_trip_delay_stored ||
 		(call->stage == V34_CALL_PHASE2 &&
 		 call->state.phase2.stage == V34_PHASE2_RANGING)) &&
@@ -137,7 +150,11 @@ enum v34_call_result v34_call_init(
 	initialized.stage = V34_CALL_PHASE2;
 	if (v34_retrain_detector_init(
 		    &initialized.retrain_detector,
-		    configuration->local_role) != V34_PHASE2_TONE_OK)
+		    configuration->local_role) != V34_PHASE2_TONE_OK ||
+	    v34_echo_canceller_init(&initialized.echo, 0) !=
+		    V34_ECHO_CANCELLER_OK ||
+	    v34_echo_canceller_freeze(&initialized.echo) !=
+		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_INVALID_ARGUMENT;
 	if (!v34_call_is_valid(&initialized))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -160,7 +177,11 @@ static enum v34_call_result begin_retrain(struct v34_call *call)
 	if (!next.round_trip_delay_stored)
 		return V34_CALL_INVALID_STATE;
 	if (v34_retrain_detector_reset(
-		    &next.retrain_detector) != V34_PHASE2_TONE_OK)
+		    &next.retrain_detector) != V34_PHASE2_TONE_OK ||
+	    v34_echo_canceller_init(&next.echo, 0) !=
+		    V34_ECHO_CANCELLER_OK ||
+	    v34_echo_canceller_freeze(&next.echo) !=
+		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	next.state.retrain_silence.samples_remaining =
 		V34_CALL_RETRAIN_SILENCE_SAMPLES;
@@ -301,6 +322,16 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		&call->phase3_configuration, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
+	if (v34_echo_canceller_init(
+		    &call->echo, call->round_trip_delay_samples) !=
+		    V34_ECHO_CANCELLER_OK)
+		return V34_CALL_NUMERIC_FAILURE;
+	/* Caller training overlaps peer signalling; retain pass-through until
+	 * that role has an independently owned adaptation interval. */
+	if (call->local_role == V34_CALLING_STATION &&
+	    v34_echo_canceller_freeze(&call->echo) !=
+		    V34_ECHO_CANCELLER_OK)
+		return V34_CALL_NUMERIC_FAILURE;
 	call->stage = V34_CALL_PHASE3;
 	return V34_CALL_OK;
 }
@@ -551,7 +582,10 @@ enum v34_call_result v34_call_sample(
 	struct v34_call_observation emitted = { 0 };
 	struct v34_received_mapping_frame decoded;
 	enum v34_call_result result;
+	int16_t conditioned = received_sample;
 	int16_t generated = 0;
+	bool echo_processed;
+	bool retrain_requested = false;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
 	    observation == NULL || received == NULL ||
@@ -560,6 +594,16 @@ enum v34_call_result v34_call_sample(
 	if (call->failed)
 		return V34_CALL_FAILED;
 	emitted.processed = call->stage;
+	echo_processed = call->local_role == V34_ANSWERING_STATION &&
+			 (emitted.processed == V34_CALL_PHASE3 ||
+			  emitted.processed == V34_CALL_PHASE4);
+	if (echo_processed &&
+	    v34_echo_canceller_predict(
+		    &call->echo, received_sample, &conditioned) !=
+		    V34_ECHO_CANCELLER_OK) {
+		call->failed = true;
+		return V34_CALL_NUMERIC_FAILURE;
+	}
 	switch (call->stage) {
 	case V34_CALL_PHASE2:
 		result = sample_phase2(
@@ -567,17 +611,17 @@ enum v34_call_result v34_call_sample(
 		break;
 	case V34_CALL_PHASE3:
 		result = sample_phase3(
-			call, received_sample, &generated, &emitted);
+			call, conditioned, &generated, &emitted);
 		break;
 	case V34_CALL_PHASE4:
 		result = sample_phase4(
-			call, received_sample, source, source_context,
+			call, conditioned, source, source_context,
 			&generated, &emitted, &decoded);
 		if (result == V34_CALL_SOURCE_FAILURE)
 			return result;
 		if (result != V34_CALL_OK &&
 		    phase4_receive_has_failed(&call->state.phase4))
-			result = begin_retrain(call);
+			retrain_requested = true;
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(call, &generated);
@@ -585,6 +629,18 @@ enum v34_call_result v34_call_sample(
 	default:
 		return V34_CALL_INVALID_STATE;
 	}
+	if (echo_processed &&
+	    v34_echo_canceller_advance(
+		    &call->echo, received_sample, conditioned, generated) !=
+		    V34_ECHO_CANCELLER_OK)
+		result = V34_CALL_NUMERIC_FAILURE;
+	else if (v34_echo_canceller_is_adapting(&call->echo) &&
+		 !echo_adaptation_is_expected(call) &&
+		 v34_echo_canceller_freeze(&call->echo) !=
+			 V34_ECHO_CANCELLER_OK)
+		result = V34_CALL_NUMERIC_FAILURE;
+	else if (retrain_requested)
+		result = begin_retrain(call);
 	if (result == V34_CALL_OK && call->stage == V34_CALL_PHASE4 &&
 	    call->state.phase4.online_announced)
 		call->retrain_active = false;
@@ -593,7 +649,7 @@ enum v34_call_result v34_call_sample(
 		result = reset_retrain_detector(call);
 	else if (result == V34_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
-		result = observe_retrain_tone(call, received_sample);
+		result = observe_retrain_tone(call, conditioned);
 	if (result != V34_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;
