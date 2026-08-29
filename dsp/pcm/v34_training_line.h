@@ -25,10 +25,10 @@ enum v34_training_line_result {
 	V34_TRAINING_LINE_NUMERIC_FAILURE,
 };
 
-/* One continuous Phase 3/4 training waveform. The pulse/carrier line owner
- * and sample clock remain here across protocol section boundaries. S/S-bar
- * supplies the deterministic line-power
- * calibration, but is not retained as transmit state. */
+/* One continuous V.34 transmit waveform. The pulse/carrier line owner, line
+ * gain, and sample clock remain here across training, B1, and data. S/S-bar
+ * supplies the deterministic line-power calibration, but is not retained as
+ * transmit state. */
 struct v34_training_line {
 	struct v34_phase3_profile profile;
 	struct v34_pulse_modulator carrier;

@@ -4,7 +4,9 @@
 
 #include "packed_bits.h"
 #include "v34_data_mapping.h"
+#include "v34_power_calibration.h"
 
+#include <limits.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -28,18 +30,34 @@ static enum v34_data_stream_result points_result(
 }
 
 static enum v34_data_stream_result line_result(
-	enum v34_data_line_transmitter_result result)
+	enum v34_training_line_result result)
 {
 	switch (result) {
-	case V34_DATA_LINE_TRANSMITTER_OK:
+	case V34_TRAINING_LINE_OK:
 		return V34_DATA_STREAM_OK;
-	case V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT:
+	case V34_TRAINING_LINE_INVALID_ARGUMENT:
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
-	case V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE:
+	case V34_TRAINING_LINE_OUT_OF_RANGE:
 		return V34_DATA_STREAM_OUT_OF_RANGE;
-	case V34_DATA_LINE_TRANSMITTER_CLIPPING_RISK:
+	case V34_TRAINING_LINE_CLIPPING_RISK:
 		return V34_DATA_STREAM_CLIPPING_RISK;
-	case V34_DATA_LINE_TRANSMITTER_NUMERIC_FAILURE:
+	case V34_TRAINING_LINE_NUMERIC_FAILURE:
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
+	}
+	return V34_DATA_STREAM_NUMERIC_FAILURE;
+}
+
+static enum v34_data_stream_result calibration_result(
+	enum v34_power_calibration_result result)
+{
+	switch (result) {
+	case V34_POWER_CALIBRATION_OK:
+		return V34_DATA_STREAM_OK;
+	case V34_POWER_CALIBRATION_INVALID_ARGUMENT:
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	case V34_POWER_CALIBRATION_OUT_OF_RANGE:
+		return V34_DATA_STREAM_OUT_OF_RANGE;
+	case V34_POWER_CALIBRATION_NUMERIC_FAILURE:
 		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	}
 	return V34_DATA_STREAM_NUMERIC_FAILURE;
@@ -99,7 +117,7 @@ static bool configuration_matches_line(
 static enum v34_data_stream_result initialize_b1(
 	struct v34_data_stream *stream,
 	const struct v34_data_points *points,
-	const struct v34_data_line_transmitter *line);
+	const struct v34_training_line *line);
 
 enum v34_data_stream_result v34_data_stream_continue_b1(
 	struct v34_data_stream *stream,
@@ -125,7 +143,8 @@ enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 	const struct v34_data_mapping *mapping)
 {
 	struct v34_data_points points;
-	struct v34_data_line_transmitter line;
+	struct v34_training_line line;
+	struct v34_line_power_measurement measurement;
 	enum v34_data_stream_result result;
 
 	if (stream == NULL || !v34_data_mapping_is_valid(mapping) ||
@@ -140,11 +159,22 @@ enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 		active_line->profile.local_role));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = line_result(v34_data_line_transmitter_continue(
-		&line, active_line, &mapping->schedule, &mapping->scrambler,
-		&mapping->encoder, &mapping->normalizer));
+	result = calibration_result(v34_calibrate_line_power(
+		&mapping->schedule, &mapping->scrambler, &mapping->encoder,
+		&mapping->normalizer, &active_line->profile,
+		active_line->carrier.channel.sample_rate, &measurement));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
+	if (measurement.peak_amplitude * active_line->output_gain >=
+	    INT16_MAX + 0.5)
+		return V34_DATA_STREAM_CLIPPING_RISK;
+	line = *active_line;
+	if (line.carrier.maximum_point_power <
+	    mapping->normalizer.maximum_normalized_point_power)
+		line.carrier.maximum_point_power =
+			mapping->normalizer.maximum_normalized_point_power;
+	if (!v34_training_line_is_valid(&line))
+		return V34_DATA_STREAM_NUMERIC_FAILURE;
 	return initialize_b1(stream, &points, &line);
 }
 
@@ -209,42 +239,19 @@ static bool primary_delay_is_valid(
 	       (delayed_primary_bits >> delay_bits) == 0;
 }
 
-static bool normalizers_are_equal(
-	const struct v34_power_normalizer *left,
-	const struct v34_power_normalizer *right)
-{
-	return v34_mapping_parameters_are_equal(
-		       &left->parameters, &right->parameters) &&
-	       left->precoded_mean_squared_magnitude ==
-		       right->precoded_mean_squared_magnitude &&
-	       left->projected_mean_squared_magnitude ==
-		       right->projected_mean_squared_magnitude &&
-	       left->normalization_gain == right->normalization_gain &&
-	       left->maximum_precoded_point_power ==
-		       right->maximum_precoded_point_power &&
-	       left->maximum_projected_point_power ==
-		       right->maximum_projected_point_power &&
-	       left->maximum_normalized_point_power ==
-		       right->maximum_normalized_point_power &&
-	       left->calibration_symbol_count ==
-		       right->calibration_symbol_count &&
-	       left->nonlinear_parameter == right->nonlinear_parameter;
-}
-
 bool v34_data_stream_is_valid(
 	const struct v34_data_stream *stream)
 {
 	return stream != NULL &&
 	       v34_data_points_is_valid(&stream->points) &&
-	       v34_data_line_transmitter_is_valid(&stream->line) &&
+	       v34_training_line_is_valid(&stream->line) &&
 	       stream->points.local_role ==
-		       stream->line.carrier.profile.local_role &&
-	       v34_frame_geometry_is_equal(
-		       &stream->points.schedule.geometry,
-		       &stream->line.carrier.geometry) &&
-	       normalizers_are_equal(
-		       &stream->points.normalizer,
-		       &stream->line.carrier.normalizer) &&
+		       stream->line.profile.local_role &&
+	       stream->points.schedule.geometry.symbol_rate ==
+		       stream->line.profile.symbol_rate &&
+	       stream->line.carrier.maximum_point_power >=
+		       stream->points.normalizer
+			       .maximum_normalized_point_power &&
 	       primary_delay_is_valid(
 		       stream->delayed_primary_bits,
 		       stream->primary_delay_bits) &&
@@ -257,13 +264,13 @@ bool v34_data_stream_is_valid(
 static enum v34_data_stream_result initialize_b1(
 	struct v34_data_stream *stream,
 	const struct v34_data_points *points,
-	const struct v34_data_line_transmitter *line)
+	const struct v34_training_line *line)
 {
 	struct v34_data_stream initialized;
 	uint8_t delay_bits;
 
 	if (stream == NULL || !v34_data_points_is_valid(points) ||
-	    !v34_data_line_transmitter_is_valid(line) ||
+	    !v34_training_line_is_valid(line) ||
 	    !v34_data_points_needs_mapping_frame(points) ||
 	    !schedule_is_at_b1_start(&points->schedule) ||
 	    !b1_primary_delay(
@@ -367,14 +374,14 @@ enum v34_data_stream_result v34_data_stream_sample(
 		if (result != V34_DATA_STREAM_OK)
 			return result;
 	}
-	if (v34_data_line_transmitter_needs_point(&next.line)) {
+	if (v34_training_line_needs_point(&next.line)) {
 		result = points_result(v34_data_points_next(
 			&next.points, &point));
 		if (result != V34_DATA_STREAM_OK)
 			return result;
 		point_pointer = &point;
 	}
-	result = line_result(v34_data_line_transmitter_sample(
+	result = line_result(v34_training_line_sample(
 		&next.line, point_pointer, &generated_sample,
 		&generated_accepted));
 	if (result != V34_DATA_STREAM_OK)

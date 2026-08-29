@@ -128,7 +128,7 @@ static bool test_b1_and_host_handoff(void)
 		configuration_fixture();
 	struct v34_data_stream stream;
 	struct v34_data_points model_points;
-	struct v34_data_line_transmitter model_line;
+	struct v34_training_line model_line;
 	struct source_fixture source = { 0 };
 	uint32_t model_delayed_primary_bits;
 	uint8_t model_delay_bits;
@@ -198,17 +198,17 @@ static bool test_b1_and_host_handoff(void)
 			struct qam_point point;
 			const struct qam_point *next_point = NULL;
 
-			if (v34_data_line_transmitter_needs_point(&model_line)) {
+			if (v34_training_line_needs_point(&model_line)) {
 				CHECK(v34_data_points_next(
 					      &model_points, &point) ==
 					      V34_DATA_POINTS_OK,
 				      "model point generation failed");
 				next_point = &point;
 			}
-			CHECK(v34_data_line_transmitter_sample(
+			CHECK(v34_training_line_sample(
 				      &model_line, next_point, &expected_sample,
 				      &expected_accepted) ==
-				      V34_DATA_LINE_TRANSMITTER_OK,
+				      V34_TRAINING_LINE_OK,
 			      "model line generation failed");
 		}
 		CHECK(
@@ -322,6 +322,7 @@ static bool test_selected_continuation(void)
 			configuration_fixture();
 		struct v34_data_mapping mapping;
 		struct v34_training_line line;
+		struct v34_training_line expected_line;
 		struct v34_data_stream expected;
 		struct v34_data_stream actual;
 
@@ -332,13 +333,24 @@ static bool test_selected_continuation(void)
 			      &line, &configuration.profile,
 			      configuration.sample_rate,
 			      configuration.nominal_peak_amplitude) ==
-			      V34_TRAINING_LINE_OK &&
+			      V34_TRAINING_LINE_OK,
+		      "continuation inputs failed for role %u", role);
+		expected_line = line;
+		if (expected_line.carrier.maximum_point_power <
+		    mapping.normalizer.maximum_normalized_point_power)
+			expected_line.carrier.maximum_point_power =
+				mapping.normalizer.maximum_normalized_point_power;
+		CHECK(
 		      v34_data_stream_continue_prepared_b1(
 			      &expected, &line, &mapping) ==
 			      V34_DATA_STREAM_OK &&
 		      v34_data_stream_continue_b1(
 			      &actual, &line, &configuration) ==
 			      V34_DATA_STREAM_OK &&
+		      memcmp(&expected.line, &expected_line,
+			     sizeof(expected_line)) == 0 &&
+		      memcmp(&actual.line, &expected_line,
+			     sizeof(expected_line)) == 0 &&
 		      v34_data_stream_is_transmitting_b1(&actual) &&
 		      streams_match_through_b1(&actual, &expected),
 		      "continued stream mismatch for role %u", role);
@@ -435,7 +447,7 @@ static bool test_initialization_failures(void)
 		      &rejected, &line, &configuration) ==
 		      V34_DATA_STREAM_OK &&
 	      v34_data_stream_is_valid(&rejected) &&
-	      rejected.line.carrier.geometry
+	      rejected.points.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 9,
 	      "Phase 2 projection incorrectly limited the Phase 4 stream");
 	configuration = configuration_fixture();
@@ -554,9 +566,10 @@ static bool test_transactional_boundaries(void)
 	      memcmp(&stream, &before, sizeof(stream)) == 0,
 	      "invalid stream call changed state");
 	corrupt = stream;
-	corrupt.line.carrier.geometry.primary_data_rate_2400_bps_units++;
+	corrupt.line.carrier.maximum_point_power =
+		corrupt.points.normalizer.maximum_normalized_point_power * 0.5;
 	CHECK(!v34_data_stream_is_valid(&corrupt),
-	      "mismatched point and line owners were accepted");
+	      "undersized point capacity was accepted");
 	stream.b1_active = true;
 	CHECK(!v34_data_stream_is_valid(&stream),
 	      "B1 state accepted an ordinary data frame");

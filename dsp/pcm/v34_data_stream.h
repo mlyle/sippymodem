@@ -3,9 +3,9 @@
 #ifndef V34_DATA_STREAM_H
 #define V34_DATA_STREAM_H
 
-#include "v34_data_line_transmitter.h"
 #include "v34_data_mapping.h"
 #include "v34_data_points.h"
+#include "v34_training_line.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -30,7 +30,7 @@ typedef bool (*v34_mapping_frame_source)(
 
 struct v34_data_stream {
 	struct v34_data_points points;
-	struct v34_data_line_transmitter line;
+	struct v34_training_line line;
 	/* The data scrambler accepts 16-bit DTE words. B1 can leave that word
 	 * cursor between mapping-frame boundaries, so retain the exact pending
 	 * mark bits as well as their negotiated delay. */

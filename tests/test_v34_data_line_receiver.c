@@ -82,9 +82,8 @@ static struct v34_data_line_receiver_configuration receiver_configuration(
 	struct v34_data_line_receiver_configuration receiver = {
 		.transmitting_profile = configuration->profile,
 		.geometry = stream->points.schedule.geometry,
-		.normalizer = stream->line.carrier.normalizer,
-		.transmit_point_gain =
-			stream->line.carrier.point_gain,
+		.normalizer = stream->points.normalizer,
+		.transmit_point_gain = 1.0,
 		.equalizer_adaptation = equalizer_adaptation,
 		.trellis_selection = configuration->trellis_selection,
 		.expanded_shaping = configuration->expanded_shaping,
@@ -100,35 +99,17 @@ static bool training_line_sample(
 	struct v34_data_stream *stream, const struct qam_point *point,
 	int16_t *sample, bool *symbol_accepted)
 {
-	struct v34_data_line_transmitter *line =
-		&stream->line;
+	struct v34_training_line *line = &stream->line;
 	const struct qam_point *supplied = NULL;
-	double line_sample;
-	double scaled_sample;
-	long rounded;
-	bool accepted;
 
 	if (point == NULL || symbol_accepted == NULL)
 		return false;
-	if (v34_pulse_modulator_needs_point(&line->carrier.modulator))
+	if (v34_training_line_needs_point(line))
 		supplied = point;
-	if (v34_pulse_modulator_sample(
-		    &line->carrier.modulator, supplied,
-		    &line_sample, &accepted) != V34_PULSE_MODULATOR_OK)
-		return false;
-	(void)accepted;
-	scaled_sample = line_sample * line->output_gain;
-	if (!isfinite(scaled_sample) || scaled_sample <= INT16_MIN - 0.5 ||
-	    scaled_sample >= INT16_MAX + 0.5 ||
-	    line->generated_samples == UINT64_MAX)
-		return false;
-	rounded = lround(scaled_sample);
-	if (rounded < INT16_MIN || rounded > INT16_MAX)
-		return false;
-	line->generated_samples++;
-	*sample = (int16_t)rounded;
-	*symbol_accepted = accepted;
-	return v34_data_stream_is_valid(stream);
+	return v34_training_line_sample(
+		       line, supplied, sample, symbol_accepted) ==
+		       V34_TRAINING_LINE_OK &&
+	       v34_data_stream_is_valid(stream);
 }
 
 static uint32_t next_generated_word(uint32_t *state)
@@ -158,7 +139,7 @@ static bool train_front_end(
 
 	if (qam_demodulator_init(
 		    demodulator,
-		    &stream->line.carrier.modulator.channel) !=
+		    &stream->line.carrier.channel) !=
 	    QAM_OK)
 		return false;
 	for (size_t sample_index = 0; sample_index < TRAINING_SAMPLE_LIMIT;

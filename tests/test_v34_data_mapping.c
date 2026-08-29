@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_data_mapping.h>
-#include <v34_data_line_transmitter.h>
-#include <v34_training_line.h>
 
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
@@ -77,8 +75,6 @@ static bool test_prepared_b1_mapping(void)
 	struct v34_data_mapping first;
 	struct v34_data_mapping repeated;
 	struct v34_data_mapping reverse;
-	struct v34_training_line training;
-	struct v34_data_line_transmitter continued;
 	double point_gain;
 	double repeated_gain;
 
@@ -121,14 +117,7 @@ static bool test_prepared_b1_mapping(void)
 		      &first, 8000, &point_gain) == V34_DATA_MAPPING_OK &&
 	      v34_data_mapping_line_point_gain(
 		      &first, 8000, &repeated_gain) == V34_DATA_MAPPING_OK &&
-	      v34_training_line_init(&training, &caller, 8000, 5000) ==
-		      V34_TRAINING_LINE_OK &&
-	      v34_data_line_transmitter_continue(
-		      &continued, &training, &first.schedule,
-		      &first.scrambler, &first.encoder, &first.normalizer) ==
-		      V34_DATA_LINE_TRANSMITTER_OK &&
-	      point_gain == 1.0 && repeated_gain == 1.0 &&
-	      continued.carrier.point_gain == 1.0,
+	      point_gain == 1.0 && repeated_gain == 1.0,
 	      "B1 mapping changed the trained constellation scale");
 	return true;
 }

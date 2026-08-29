@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_data_line_transmitter.h>
+#include <v34_data_carrier.h>
 #include <v34_data_points.h>
+#include <v34_power_calibration.h>
 
 #include "test.h"
 
-#include <float.h>
-#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -156,22 +155,6 @@ static bool initialize_fixture(struct carrier_fixture *fixture)
 	return true;
 }
 
-static bool initialize_continued_line(
-	const struct carrier_fixture *fixture,
-	const struct v34_phase3_profile *profile,
-	struct v34_data_line_transmitter *line)
-{
-	struct v34_training_line training;
-
-	return fixture != NULL && profile != NULL && line != NULL &&
-	       v34_training_line_init(&training, profile, 8000, 4000) ==
-		       V34_TRAINING_LINE_OK &&
-	       v34_data_line_transmitter_continue(
-		       line, &training, &fixture->schedule,
-		       &fixture->scrambler, &fixture->encoder,
-		       &fixture->normalizer) == V34_DATA_LINE_TRANSMITTER_OK;
-}
-
 static bool test_carrier_point_stream(void)
 {
 	struct carrier_fixture fixture;
@@ -221,339 +204,6 @@ static bool test_carrier_point_stream(void)
 	CHECK(samples > V34_SYMBOLS_PER_MAPPING_FRAME && nonzero_seen &&
 	      !v34_data_carrier_needs_point(&carrier),
 	      "carrier did not consume the complete point frame");
-	return true;
-}
-
-static bool test_active_carrier_handoff(void)
-{
-	static const struct qam_point TRAINING_POINT = { 1.0, 0.0 };
-	const double point_gain = 1.25;
-	struct carrier_fixture fixture;
-	struct v34_data_points points;
-	struct qam_channel channel;
-	struct v34_pulse_modulator active;
-	struct v34_pulse_modulator active_before;
-	struct v34_pulse_modulator model;
-	struct v34_data_carrier carrier;
-	struct qam_point point;
-	double ignored;
-	double required_power;
-	bool ignored_accepted;
-	bool data_point_accepted = false;
-	bool retained_pulse_seen = false;
-
-	CHECK(initialize_fixture(&fixture) &&
-	      v34_line_channel_init(
-		      &fixture.profile, 8000, &channel) == V34_LINE_CHANNEL_OK &&
-	      v34_pulse_modulator_init(
-		      &active, &fixture.profile, &channel,
-		      fixture.normalizer.maximum_normalized_point_power) ==
-		      V34_PULSE_MODULATOR_OK &&
-	      v34_pulse_modulator_sample(
-		      &active, &TRAINING_POINT, &ignored,
-		      &ignored_accepted) == V34_PULSE_MODULATOR_OK &&
-	      ignored_accepted && active.generated_samples == 1,
-	      "active-carrier fixture did not retain its training pulse");
-	active_before = active;
-	required_power = fixture.normalizer.maximum_normalized_point_power *
-		point_gain * point_gain;
-	CHECK(required_power > active.maximum_point_power &&
-	      v34_data_carrier_continue(
-		      &carrier, &active, &fixture.profile, &fixture.geometry,
-		      &fixture.normalizer, point_gain) == V34_DATA_CARRIER_OK &&
-	      memcmp(&active, &active_before, sizeof(active)) == 0 &&
-	      carrier.point_gain == point_gain &&
-	      carrier.modulator.maximum_point_power == required_power &&
-	      carrier.modulator.generated_samples == active.generated_samples &&
-	      memcmp(carrier.modulator.in_phase_history,
-		     active.in_phase_history,
-		     sizeof(active.in_phase_history)) == 0 &&
-	      memcmp(carrier.modulator.quadrature_history,
-		     active.quadrature_history,
-		     sizeof(active.quadrature_history)) == 0 &&
-	      memcmp(carrier.modulator.preemphasis_history,
-		     active.preemphasis_history,
-		     sizeof(active.preemphasis_history)) == 0 &&
-	      carrier.modulator.carrier_phase == active.carrier_phase &&
-	      carrier.modulator.symbol_phase_units ==
-		      active.symbol_phase_units,
-	      "data continuation reset or changed the active carrier");
-	points = fixture.points;
-	model = carrier.modulator;
-	for (size_t sample_index = 0;
-	     sample_index < 16u && !data_point_accepted; ++sample_index) {
-		struct qam_point scaled;
-		const struct qam_point *point_pointer = NULL;
-		const struct qam_point *model_pointer = NULL;
-		double expected;
-		double actual;
-		bool model_accepted;
-		bool actual_accepted;
-
-		if (v34_data_carrier_needs_point(&carrier)) {
-			CHECK(v34_data_points_next(&points, &point) ==
-				      V34_DATA_POINTS_OK,
-			      "continued carrier did not obtain a data point");
-			point_pointer = &point;
-			scaled = (struct qam_point){
-				.in_phase = point.in_phase * point_gain,
-				.quadrature = point.quadrature * point_gain,
-			};
-			model_pointer = &scaled;
-		}
-		CHECK(v34_pulse_modulator_sample(
-			      &model, model_pointer, &expected,
-			      &model_accepted) == V34_PULSE_MODULATOR_OK &&
-		      v34_data_carrier_sample(
-			      &carrier, point_pointer, &actual,
-			      &actual_accepted) == V34_DATA_CARRIER_OK &&
-		      actual == expected &&
-		      actual_accepted == model_accepted &&
-		      memcmp(&carrier.modulator, &model, sizeof(model)) == 0,
-		      "continued carrier diverged at sample %zu", sample_index);
-		retained_pulse_seen |= point_pointer == NULL && actual != 0.0;
-		data_point_accepted |= actual_accepted;
-	}
-	CHECK(retained_pulse_seen && data_point_accepted,
-	      "continued carrier lost its pulse tail or next data point");
-	return true;
-}
-
-static bool test_line_output(void)
-{
-	struct carrier_fixture fixture;
-	struct v34_data_points points;
-	struct v34_data_line_transmitter line;
-	struct v34_data_carrier model_carrier;
-	size_t samples = 0;
-	bool nonzero_seen = false;
-
-	CHECK(initialize_fixture(&fixture) &&
-	      initialize_continued_line(&fixture, &fixture.profile, &line),
-	      "data line did not continue");
-	points = fixture.points;
-	model_carrier = line.carrier;
-	while (!v34_data_points_needs_mapping_frame(&points)) {
-		struct qam_point point;
-		const struct qam_point *point_pointer = NULL;
-		double line_sample;
-		long expected_sample;
-		int16_t actual_sample;
-		bool expected_accepted;
-		bool actual_accepted;
-
-		if (v34_data_line_transmitter_needs_point(&line)) {
-			CHECK(v34_data_points_next(&points, &point) ==
-				      V34_DATA_POINTS_OK,
-			      "line point stream failed at sample %zu", samples);
-			point_pointer = &point;
-		}
-		CHECK(samples++ < 64u &&
-		      v34_data_carrier_sample(
-			      &model_carrier, point_pointer, &line_sample,
-			      &expected_accepted) == V34_DATA_CARRIER_OK,
-		      "line model failed at sample %zu", samples - 1u);
-		expected_sample = lround(line_sample * line.output_gain);
-		CHECK(v34_data_line_transmitter_sample(
-			      &line, point_pointer, &actual_sample,
-			      &actual_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
-		      actual_sample == expected_sample &&
-		      actual_accepted == expected_accepted,
-		      "line output diverged at sample %zu", samples - 1u);
-		nonzero_seen |= actual_sample != 0;
-	}
-	CHECK(line.generated_samples == samples && nonzero_seen &&
-	      memcmp(&line.carrier, &model_carrier,
-		     sizeof(model_carrier)) == 0,
-	      "data line did not preserve its composed state");
-	return true;
-}
-
-static bool advance_training_line(struct v34_training_line *line)
-{
-	uint32_t accepted_points = 0;
-
-	for (size_t sample_index = 0; sample_index < 128u; ++sample_index) {
-		struct qam_point point =
-			v34_rotated_point_zero((int)(accepted_points & 3u));
-		const struct qam_point *point_pointer =
-			v34_training_line_needs_point(line) ? &point : NULL;
-		int16_t ignored;
-		bool accepted;
-
-		if (v34_training_line_sample(
-			    line, point_pointer, &ignored, &accepted) !=
-			    V34_TRAINING_LINE_OK ||
-		    accepted != (point_pointer != NULL))
-			return false;
-		accepted_points += accepted;
-	}
-	if (v34_training_line_needs_point(line)) {
-		struct qam_point point =
-			v34_rotated_point_zero((int)(accepted_points & 3u));
-		int16_t ignored;
-		bool accepted;
-
-		if (v34_training_line_sample(
-			    line, &point, &ignored, &accepted) !=
-			    V34_TRAINING_LINE_OK ||
-		    !accepted)
-			return false;
-	}
-	return !v34_training_line_needs_point(line);
-}
-
-static bool test_active_line_handoff(void)
-{
-	struct carrier_fixture fixture;
-	struct v34_training_line training;
-	struct v34_training_line training_before;
-	struct v34_data_line_transmitter continued;
-	struct v34_data_points points;
-	struct v34_pulse_modulator model_carrier;
-	bool retained_tail_seen = false;
-	bool data_point_accepted = false;
-
-	CHECK(initialize_fixture(&fixture) &&
-	      v34_training_line_init(
-		      &training, &fixture.profile, 8000, 4000) ==
-		      V34_TRAINING_LINE_OK &&
-	      advance_training_line(&training),
-	      "active-line fixture did not initialize");
-	training_before = training;
-	CHECK(v34_data_line_transmitter_continue(
-		      &continued, &training, &fixture.schedule,
-		      &fixture.scrambler, &fixture.encoder,
-		      &fixture.normalizer) == V34_DATA_LINE_TRANSMITTER_OK &&
-	      memcmp(&training, &training_before, sizeof(training)) == 0 &&
-	      continued.output_gain == training.output_gain &&
-	      continued.gain_reference_rms == training.raw_rms &&
-	      continued.carrier.point_gain == 1.0 &&
-	      fabs(continued.output_gain * continued.gain_reference_rms -
-		   continued.target_rms) < 1e-12 &&
-	      continued.target_rms == training.target_rms &&
-	      continued.generated_samples == training.generated_samples &&
-	      continued.carrier.modulator.carrier_phase ==
-		      training.carrier.carrier_phase &&
-	      continued.carrier.modulator.symbol_phase_units ==
-		      training.carrier.symbol_phase_units &&
-	      continued.carrier.modulator.generated_samples ==
-		      training.carrier.generated_samples &&
-	      memcmp(continued.carrier.modulator.in_phase_history,
-		     training.carrier.in_phase_history,
-		     sizeof(training.carrier.in_phase_history)) == 0 &&
-	      memcmp(continued.carrier.modulator.quadrature_history,
-		     training.carrier.quadrature_history,
-		     sizeof(training.carrier.quadrature_history)) == 0 &&
-	      memcmp(continued.carrier.modulator.preemphasis_history,
-		     training.carrier.preemphasis_history,
-		     sizeof(training.carrier.preemphasis_history)) == 0,
-	      "data line did not preserve the active training waveform");
-	points = fixture.points;
-	model_carrier = continued.carrier.modulator;
-	for (size_t sample_index = 0;
-	     sample_index < 32u && !data_point_accepted; ++sample_index) {
-		struct qam_point point;
-		const struct qam_point *point_pointer = NULL;
-		const struct qam_point *model_pointer = NULL;
-		double line_sample;
-		long expected_sample;
-		int16_t actual_sample;
-		bool expected_accepted;
-		bool actual_accepted;
-
-		if (v34_data_line_transmitter_needs_point(&continued)) {
-			CHECK(v34_data_points_next(&points, &point) ==
-				      V34_DATA_POINTS_OK,
-			      "continued line did not obtain a data point");
-			point_pointer = &point;
-			model_pointer = &point;
-		}
-		CHECK(v34_pulse_modulator_sample(
-			      &model_carrier, model_pointer, &line_sample,
-			      &expected_accepted) == V34_PULSE_MODULATOR_OK,
-		      "continued line model failed at sample %zu", sample_index);
-		expected_sample = lround(line_sample * training.output_gain);
-		CHECK(expected_sample >= INT16_MIN &&
-		      expected_sample <= INT16_MAX &&
-		      v34_data_line_transmitter_sample(
-			      &continued, point_pointer, &actual_sample,
-			      &actual_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
-		      actual_sample == expected_sample &&
-		      actual_accepted == expected_accepted &&
-		      memcmp(&continued.carrier.modulator, &model_carrier,
-			     sizeof(model_carrier)) == 0,
-		      "continued line diverged at sample %zu", sample_index);
-		retained_tail_seen |= point_pointer == NULL && actual_sample != 0;
-		data_point_accepted |= actual_accepted;
-	}
-	CHECK(retained_tail_seen && data_point_accepted,
-	      "continued line lost its training tail or first data point");
-	return true;
-}
-
-static bool test_line_power_reduction(void)
-{
-	struct carrier_fixture fixture;
-	struct v34_phase3_profile reduced_profile;
-	struct v34_data_points points;
-	struct v34_data_line_transmitter full;
-	struct v34_data_line_transmitter reduced;
-	long double full_squares = 0.0L;
-	long double reduced_squares = 0.0L;
-	double expected_ratio = pow(10.0, -6.0 / 20.0);
-	size_t samples = 0;
-
-	CHECK(initialize_fixture(&fixture),
-	      "power-reduction fixture did not initialize");
-	reduced_profile = fixture.profile;
-	reduced_profile.transmit_power_reduction_db = 6;
-	CHECK(initialize_continued_line(
-		      &fixture, &fixture.profile, &full) &&
-	      initialize_continued_line(
-		      &fixture, &reduced_profile, &reduced) &&
-	      memcmp(&full.calibration, &reduced.calibration,
-		     sizeof(full.calibration)) == 0 &&
-	      fabs(reduced.output_gain / full.output_gain - expected_ratio) <
-		      1e-12,
-	      "power reduction changed calibration or gain");
-	points = fixture.points;
-	/* Repeat a generated frame so integer quantization is measured over the
-	 * steady waveform rather than only the pulse shaper's startup. */
-	for (samples = 0; samples < 512u; ++samples) {
-		struct qam_point point;
-		const struct qam_point *point_pointer = NULL;
-		int16_t full_sample;
-		int16_t reduced_sample;
-		bool full_accepted;
-		bool reduced_accepted;
-
-		CHECK(v34_data_line_transmitter_needs_point(&full) ==
-			      v34_data_line_transmitter_needs_point(&reduced),
-		      "reduced line clock diverged");
-		if (v34_data_line_transmitter_needs_point(&full)) {
-			if (v34_data_points_needs_mapping_frame(&points))
-				points = fixture.points;
-			CHECK(v34_data_points_next(&points, &point) ==
-				      V34_DATA_POINTS_OK,
-			      "power-reduction point stream failed");
-			point_pointer = &point;
-		}
-		CHECK(v34_data_line_transmitter_sample(
-			      &full, point_pointer, &full_sample,
-			      &full_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
-		      v34_data_line_transmitter_sample(
-			      &reduced, point_pointer, &reduced_sample,
-			      &reduced_accepted) == V34_DATA_LINE_TRANSMITTER_OK &&
-		      full_accepted == reduced_accepted,
-		      "reduced line output diverged at sample %zu", samples);
-		full_squares += (long double)full_sample * full_sample;
-		reduced_squares += (long double)reduced_sample * reduced_sample;
-	}
-	CHECK(fabsl(sqrtl(reduced_squares / samples) /
-			    sqrtl(full_squares / samples) -
-		    expected_ratio) < 0.001L,
-	      "rendered data did not honor negotiated power reduction");
 	return true;
 }
 
@@ -622,19 +272,11 @@ static bool test_transactional_validation(void)
 	struct carrier_fixture fixture;
 	struct v34_data_carrier carrier;
 	struct v34_data_carrier carrier_before;
-	struct v34_data_line_transmitter line;
-	struct v34_data_line_transmitter line_before;
-	struct v34_training_line training;
-	struct v34_training_line invalid_training;
 	struct v34_phase3_profile limited_profile;
 	struct v34_frame_geometry other_geometry;
 	struct qam_point point = { 0.1, -0.2 };
 	struct qam_point excessive;
-	struct v34_pulse_modulator active;
-	struct qam_channel other_channel;
-	struct v34_phase3_profile other_profile;
 	double carrier_sample = 123.0;
-	int16_t line_sample = 1234;
 	bool accepted = true;
 
 	CHECK(initialize_fixture(&fixture),
@@ -672,44 +314,6 @@ static bool test_transactional_validation(void)
 		      &carrier, &fixture.profile, &fixture.geometry,
 		      &fixture.normalizer, 8000) == V34_DATA_CARRIER_OK,
 	      "valid carrier did not initialize");
-	active = carrier.modulator;
-	other_channel = active.channel;
-	other_channel.carrier_frequency_numerator = 1800;
-	other_profile = fixture.profile;
-	other_profile.carrier_frequency_numerator = 1800;
-	other_profile.high_carrier = false;
-	CHECK(v34_pulse_modulator_init(
-		      &active, &other_profile, &other_channel,
-		      fixture.normalizer.maximum_normalized_point_power) ==
-		      V34_PULSE_MODULATOR_OK,
-	      "mismatched active carrier did not initialize");
-	carrier_before = carrier;
-	CHECK(v34_data_carrier_continue(
-		      NULL, &carrier.modulator, &fixture.profile,
-		      &fixture.geometry, &fixture.normalizer, 1.0) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_continue(
-		      &carrier, NULL, &fixture.profile, &fixture.geometry,
-		      &fixture.normalizer, 1.0) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_continue(
-		      &carrier, &active, &fixture.profile, &fixture.geometry,
-		      &fixture.normalizer, 1.0) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_continue(
-		      &carrier, &carrier.modulator, &fixture.profile,
-		      &fixture.geometry, &fixture.normalizer, 0.0) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_continue(
-		      &carrier, &carrier.modulator, &fixture.profile,
-		      &fixture.geometry, &fixture.normalizer, NAN) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      v34_data_carrier_continue(
-		      &carrier, &carrier.modulator, &fixture.profile,
-		      &fixture.geometry, &fixture.normalizer, DBL_MAX) ==
-		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
-	      memcmp(&carrier, &carrier_before, sizeof(carrier)) == 0,
-	      "invalid active-carrier continuation changed its destination");
 	carrier_before = carrier;
 	excessive = (struct qam_point){
 		.in_phase =
@@ -747,85 +351,6 @@ static bool test_transactional_validation(void)
 		      V34_DATA_CARRIER_INVALID_ARGUMENT &&
 	      memcmp(&carrier, &carrier_before, sizeof(carrier)) == 0,
 	      "carrier accepted a point between boundaries");
-
-	CHECK(v34_training_line_init(
-		      &training, &fixture.profile, 8000, 4000) ==
-		      V34_TRAINING_LINE_OK &&
-	      v34_data_line_transmitter_continue(
-		      &line, &training, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer) ==
-		      V34_DATA_LINE_TRANSMITTER_OK,
-	      "valid line did not continue");
-	line_before = line;
-	line.gain_reference_rms = NAN;
-	CHECK(!v34_data_line_transmitter_is_valid(&line),
-	      "line accepted an invalid gain reference");
-	line = line_before;
-	line.carrier.point_gain = 1.01;
-	CHECK(!v34_data_line_transmitter_is_valid(&line),
-	      "line accepted a post-training point scale change");
-	line = line_before;
-	invalid_training = training;
-	invalid_training.generated_samples++;
-	line_before = line;
-	CHECK(!v34_data_line_transmitter_is_valid(NULL) &&
-	      !v34_data_line_transmitter_needs_point(NULL) &&
-	      v34_data_line_transmitter_sample(
-		      NULL, &point, &line_sample, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_sample(
-		      &line, NULL, &line_sample, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_sample(
-		      &line, &point, NULL, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_sample(
-		      &line, &point, &line_sample, NULL) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      memcmp(&line, &line_before, sizeof(line)) == 0 &&
-	      line_sample == 1234 && accepted,
-	      "invalid line point changed state or output");
-	CHECK(v34_data_line_transmitter_continue(
-		      NULL, &training, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_continue(
-		      &line, NULL, &fixture.schedule, &fixture.scrambler,
-		      &fixture.encoder, &fixture.normalizer) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      v34_data_line_transmitter_continue(
-		      &line, &invalid_training, &fixture.schedule,
-		      &fixture.scrambler, &fixture.encoder,
-		      &fixture.normalizer) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      memcmp(&line, &line_before, sizeof(line)) == 0,
-	      "invalid line continuation changed its destination");
-	CHECK(v34_data_line_transmitter_sample(
-		      &line, &point, &line_sample, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_OK && accepted,
-	      "valid line point was not accepted");
-	line_before = line;
-	CHECK(v34_data_line_transmitter_sample(
-		      &line, &point, &line_sample, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_INVALID_ARGUMENT &&
-	      memcmp(&line, &line_before, sizeof(line)) == 0,
-	      "line accepted a point between boundaries");
-	line.generated_samples = UINT64_MAX;
-	line.carrier.modulator.generated_samples = UINT64_MAX;
-	line.carrier.modulator.carrier_phase =
-		(uint32_t)UINT64_MAX *
-		line.carrier.modulator.carrier_phase_step;
-	line.carrier.modulator.symbol_phase_units =
-		(UINT64_MAX % line.carrier.modulator.symbol_period_units) *
-		line.carrier.profile.symbol_rate_numerator %
-		line.carrier.modulator.symbol_period_units;
-	line_before = line;
-	CHECK(v34_data_line_transmitter_is_valid(&line) &&
-	      v34_data_line_transmitter_sample(
-		      &line, NULL, &line_sample, &accepted) ==
-		      V34_DATA_LINE_TRANSMITTER_OUT_OF_RANGE &&
-	      memcmp(&line, &line_before, sizeof(line)) == 0,
-	      "exhausted line sample count changed state");
 	return true;
 }
 
@@ -836,10 +361,6 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "carrier point stream", test_carrier_point_stream },
-		{ "active carrier handoff", test_active_carrier_handoff },
-		{ "line output", test_line_output },
-		{ "active line handoff", test_active_line_handoff },
-		{ "line power reduction", test_line_power_reduction },
 		{ "all carrier profiles", test_all_carrier_profiles },
 		{ "transactional validation", test_transactional_validation },
 	};

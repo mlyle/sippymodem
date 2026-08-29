@@ -1132,10 +1132,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
-	$(BUILD_DIR)/v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/v34_training_line.o \
-	$(BUILD_DIR)/v34_data_carrier.o \
-	$(BUILD_DIR)/v34_data_line_transmitter.o
+	$(BUILD_DIR)/v34_data_carrier.o
 V34_DATA_MAPPING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_data_mapping
 V34_DATA_MAPPING_TEST_OBJECTS := \
@@ -1159,6 +1156,8 @@ V34_DATA_STREAM_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_data_stream.o \
 	$(filter-out $(BUILD_DIR)/test_v34_data_mapping.o, \
 		$(V34_DATA_MAPPING_TEST_OBJECTS)) \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_training_line.o \
 	$(BUILD_DIR)/v34_data_stream.o
 V34_RECEIVE_PRIMITIVE_OBJECTS := \
 	$(BUILD_DIR)/v34_receive_timing.o \
@@ -5102,11 +5101,6 @@ $(BUILD_DIR)/v34_power_calibration.o: \
 
 $(BUILD_DIR)/v34_data_carrier.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_carrier.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_data_line_transmitter.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_line_transmitter.c | \
-	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_data_stream.o: \

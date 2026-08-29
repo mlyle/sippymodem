@@ -167,7 +167,7 @@ static uint32_t transmit_sample_rate(
 	const struct v34_phase4_exchange *exchange)
 {
 	return exchange->transmit_data_active ?
-	       exchange->transmit.data.line.carrier.modulator.channel
+	       exchange->transmit.data.line.carrier.channel
 		       .sample_rate :
 	       exchange->transmit.training.line.carrier.channel.sample_rate;
 }
@@ -245,7 +245,7 @@ static bool data_state_is_valid(
 		if (!v34_data_stream_is_valid(&exchange->transmit.data) ||
 		    !v34_phase3_profile_is_equal(
 			    &exchange->data_startup.transmit.transmitting_profile,
-			    &exchange->transmit.data.line.carrier.profile))
+			    &exchange->transmit.data.line.profile))
 			return false;
 	} else if (!v34_phase3_profile_is_equal(
 			   &exchange->data_startup.transmit.transmitting_profile,
