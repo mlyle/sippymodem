@@ -19,6 +19,12 @@ enum {
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
 	V34_CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
+	/* A 2.5-ms window spans at least six V.34 symbols.  Requiring every
+	 * window avoids treating a half-carrier, half-silence RTP frame as data. */
+	V34_CARRIER_WINDOW_SAMPLES = MODEM_RATE / 400,
+	/* One 20-ms media interval exceeds the trained equalizer's 20-symbol
+	 * centre delay at every V.34 symbol rate. */
+	V34_CARRIER_RECOVERY_SAMPLES = MODEM_RATE / 50,
 	V34_MIN_LINE_POWER = 1000000,
 };
 
@@ -28,6 +34,7 @@ struct v34_datapump {
 	struct v34_data_quality data_quality;
 	struct training_session training;
 	uint32_t missing_carrier_samples;
+	uint16_t carrier_recovery_samples;
 	uint16_t rate_mask;
 	bool caller;
 	bool retrain_carrier_acquired;
@@ -66,6 +73,8 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	    !v34_data_quality_is_valid(&datapump->data_quality) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    datapump->missing_carrier_samples > V34_CARRIER_LOSS_SAMPLES ||
+	    datapump->carrier_recovery_samples >
+		    V34_CARRIER_RECOVERY_SAMPLES ||
 	    !v34_call_is_valid(&datapump->call) ||
 	    datapump->call.local_role != station_role(datapump->caller) ||
 	    (v34_call_has_failed(&datapump->call) &&
@@ -163,6 +172,7 @@ static int start_local_retrain(struct v34_datapump *datapump)
 	datapump->call = call;
 	datapump->training = training;
 	datapump->missing_carrier_samples = 0;
+	datapump->carrier_recovery_samples = 0;
 	datapump->retrain_carrier_acquired = false;
 	return 0;
 }
@@ -269,6 +279,7 @@ static bool enter_link(struct v34_datapump *datapump)
 		return false;
 	datapump->data_quality = data_quality;
 	datapump->missing_carrier_samples = 0;
+	datapump->carrier_recovery_samples = 0;
 	datapump->dp.status = DPSTAT_CONNECT;
 	if (retrained)
 		modem_dp_reconnected(datapump->dp.modem);
@@ -334,8 +345,7 @@ static bool data_link_is_online(const struct v34_datapump *datapump)
 	       modem->put_chars != NULL;
 }
 
-static bool update_carrier(
-	struct v34_datapump *datapump, const int16_t *samples, int count)
+static bool window_has_carrier(const int16_t *samples, int count)
 {
 	uint64_t power = 0;
 
@@ -344,17 +354,49 @@ static bool update_carrier(
 
 		power += (uint64_t)(sample * sample);
 	}
-	if (power / (unsigned int)count >= V34_MIN_LINE_POWER) {
-		datapump->missing_carrier_samples = 0;
-		return true;
-	} else if ((uint32_t)(unsigned int)count >=
+	return power / (unsigned int)count >= V34_MIN_LINE_POWER;
+}
+
+static bool fragment_has_carrier(const int16_t *samples, int count)
+{
+	int offset;
+
+	if (count <= V34_CARRIER_WINDOW_SAMPLES)
+		return window_has_carrier(samples, count);
+	for (offset = 0;
+	     offset + V34_CARRIER_WINDOW_SAMPLES <= count;
+	     offset += V34_CARRIER_WINDOW_SAMPLES)
+		if (!window_has_carrier(
+			    samples + offset, V34_CARRIER_WINDOW_SAMPLES))
+			return false;
+	/* Also cover a short tail without making a sub-window zero crossing its
+	 * own carrier decision. */
+	if (offset != count &&
+	    !window_has_carrier(
+		    samples + count - V34_CARRIER_WINDOW_SAMPLES,
+		    V34_CARRIER_WINDOW_SAMPLES))
+		return false;
+	return true;
+}
+
+static void note_missing_carrier(
+	struct v34_datapump *datapump, int count)
+{
+	if ((uint32_t)(unsigned int)count >=
 		   V34_CARRIER_LOSS_SAMPLES -
 			   datapump->missing_carrier_samples) {
 		datapump->missing_carrier_samples = V34_CARRIER_LOSS_SAMPLES;
 	} else {
 		datapump->missing_carrier_samples += (uint32_t)(unsigned int)count;
 	}
-	return false;
+}
+
+static bool set_data_erasure(
+	struct v34_datapump *datapump, bool erasure)
+{
+	return v34_phase34_receiver_set_data_erasure(
+		       &datapump->call.state.phase4.receive, erasure) ==
+	       V34_PHASE34_RECEIVER_OK;
 }
 
 static int process_v34(
@@ -364,6 +406,8 @@ static int process_v34(
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	bool connected = false;
+	bool carrier_present;
+	bool carrier_erased = false;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
 	    count <= 0 || count > MODEM_FRAG) {
@@ -374,6 +418,41 @@ static int process_v34(
 	if (training_session_has_failed(&datapump->training)) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
+	}
+	carrier_present = fragment_has_carrier(receive, count);
+	if (training_session_is_online(&datapump->training)) {
+		carrier_erased =
+			datapump->call.state.phase4.receive.data_erasure;
+		if (!carrier_present) {
+			datapump->carrier_recovery_samples = 0;
+			note_missing_carrier(datapump, count);
+			carrier_erased = true;
+		} else if (datapump->missing_carrier_samples != 0u) {
+			datapump->missing_carrier_samples = 0;
+			datapump->carrier_recovery_samples =
+				V34_CARRIER_RECOVERY_SAMPLES;
+			carrier_erased = true;
+		} else if (datapump->carrier_recovery_samples != 0u) {
+			carrier_erased = true;
+		}
+		if (carrier_erased &&
+		    !datapump->call.state.phase4.receive.data_erasure &&
+		    !set_data_erasure(datapump, true)) {
+			fail_training(datapump);
+			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+			return DPSTAT_ERROR;
+		}
+		if (carrier_present &&
+		    datapump->carrier_recovery_samples != 0u) {
+			if ((unsigned int)count >=
+			    datapump->carrier_recovery_samples) {
+				datapump->carrier_recovery_samples = 0;
+			} else {
+				datapump->carrier_recovery_samples = (uint16_t)(
+					datapump->carrier_recovery_samples -
+					(unsigned int)count);
+			}
+		}
 	}
 	if (!training_session_is_online(&datapump->training)) {
 		if (training_session_advance(
@@ -431,6 +510,7 @@ static int process_v34(
 		if (observation.processed == V34_CALL_PHASE4 &&
 		    (observation.events.phase4 &
 		     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED) != 0 &&
+		    !carrier_erased &&
 		    !deliver_mapping_frame(datapump, &received)) {
 			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
@@ -438,21 +518,34 @@ static int process_v34(
 		}
 		if (training_session_is_online(&datapump->training) &&
 		    data_link_is_online(datapump) &&
+		    !carrier_erased &&
 		    !observe_online_quality(datapump)) {
 			fail_training(datapump);
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
 	}
-	if (training_session_is_online(&datapump->training)) {
-		(void)update_carrier(datapump, receive, count);
-	} else if (training_session_is_retraining(&datapump->training) &&
-		   !datapump->retrain_carrier_acquired &&
-		   update_carrier(datapump, receive, count)) {
+	/* A qualified silence prefix remains an active remote-retrain candidate
+	 * throughout the following tone guard.  Do not leak that tone as data or
+	 * resume semantic state merely because line power has returned. */
+	if (training_session_is_online(&datapump->training) &&
+	    datapump->call.state.phase4.receive.data_erasure &&
+	    carrier_present && datapump->carrier_recovery_samples == 0u &&
+	    datapump->call.retrain_detector.silence_samples == 0u &&
+	    !set_data_erasure(datapump, false)) {
+		fail_training(datapump);
+		return DPSTAT_ERROR;
+	}
+	if (training_session_is_retraining(&datapump->training) &&
+	    !datapump->retrain_carrier_acquired && carrier_present) {
 		/* Once the peer has answered a full retrain, later half-duplex
 		 * training gaps are not carrier loss.  The training-session deadline
 		 * still bounds a peer that responds but never completes. */
 		datapump->retrain_carrier_acquired = true;
+		datapump->missing_carrier_samples = 0;
+	} else if (training_session_is_retraining(&datapump->training) &&
+		   !datapump->retrain_carrier_acquired) {
+		note_missing_carrier(datapump, count);
 	}
 	if (connected)
 		return DPSTAT_CONNECT;

@@ -75,6 +75,7 @@ struct v34_phase34_receiver {
 	bool phase4_s_rearmed;
 	bool feedback_training_complete;
 	bool precoder_selected;
+	bool data_erasure;
 	bool failed;
 	bool initialized;
 };
@@ -137,5 +138,11 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_timing_frozen(
 	struct v34_phase34_receiver *receiver, bool frozen);
+
+/* Suppress semantic data decisions across a known line erasure while keeping
+ * the physical timing, carrier, and equalizer input clocks continuous. */
+enum v34_phase34_receiver_result
+v34_phase34_receiver_set_data_erasure(
+	struct v34_phase34_receiver *receiver, bool erasure);
 
 #endif /* V34_PHASE34_RECEIVER_H */

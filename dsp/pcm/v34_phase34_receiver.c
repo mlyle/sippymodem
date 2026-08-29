@@ -157,6 +157,9 @@ bool v34_phase34_receiver_is_valid(
 	    !phase4_s_rearm_state_is_valid(receiver) ||
 	    !tracking_state_is_valid(receiver))
 		return false;
+	if (receiver->data_erasure &&
+	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
+		return false;
 	if ((!receiver->feedback_training_complete &&
 	     (receiver->precoder_selected ||
 	      !precoder_coefficients_are_zero(
@@ -655,6 +658,15 @@ static enum v34_phase34_receiver_result receive_line_sample(
 		    &receiver->equalizer, &observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	    receiver->data_erasure) {
+		if (v34_adaptive_equalizer_discard(
+			    &receiver->equalizer, &observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return fail(
+				receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+		return V34_PHASE34_RECEIVER_OK;
+	}
 	/* A fresh identity equalizer first publishes its zero-filled delay-line
 	 * prefix.  Consume that prefix without letting it seed the known S target
 	 * in an arbitrary quadrant; epoch 20 is the first signal-bearing symbol. */
@@ -857,6 +869,24 @@ v34_phase34_receiver_set_data_timing_frozen(
 	if (v34_receive_timing_set_data_frozen(&next.timing, frozen) !=
 		    V34_RECEIVE_TIMING_OK ||
 	    !v34_phase34_receiver_is_valid(&next))
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	*receiver = next;
+	return V34_PHASE34_RECEIVER_OK;
+}
+
+enum v34_phase34_receiver_result
+v34_phase34_receiver_set_data_erasure(
+	struct v34_phase34_receiver *receiver, bool erasure)
+{
+	struct v34_phase34_receiver next;
+
+	if (!v34_phase34_receiver_is_valid(receiver) ||
+	    receiver->stage != V34_PHASE34_RECEIVER_DATA ||
+	    receiver->equalizer.decision_pending)
+		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	next.data_erasure = erasure;
+	if (!v34_phase34_receiver_is_valid(&next))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	*receiver = next;
 	return V34_PHASE34_RECEIVER_OK;

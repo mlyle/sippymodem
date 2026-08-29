@@ -264,12 +264,117 @@ static bool test_validation(void)
 		      &receiver, 1,
 		      (struct v34_phase34_receive_output *)&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase34_receiver_set_data_erasure(NULL, true) ==
+		      V34_PHASE34_RECEIVER_INVALID_STATE &&
+	      v34_phase34_receiver_set_data_erasure(&receiver, true) ==
+		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_continue_mp(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_expect_e(&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid controls changed an incomplete receiver");
+	return true;
+}
+
+static bool test_data_erasure(
+	struct v34_phase34_receiver *receiver, struct line_source *source,
+	enum v34_station_role role, uint8_t rate)
+{
+	struct v34_phase34_receiver saved;
+	struct v34_phase34_receiver pending;
+	struct v34_phase34_receive_output output;
+	struct v34_phase34_receive_output saved_output;
+	struct v34_adaptive_equalizer_observation observation;
+
+	saved = *receiver;
+	CHECK(v34_phase34_receiver_set_data_erasure(receiver, false) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      memcmp(receiver, &saved, sizeof(*receiver)) == 0 &&
+	      v34_phase34_receiver_set_data_erasure(receiver, true) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      receiver->data_erasure,
+	      "role %u rate %u did not enter data erasure", role, rate);
+	saved = *receiver;
+	memset(&output, 0x3a, sizeof(output));
+	saved_output = output;
+	for (unsigned int index = 0; index < 320u; ++index) {
+		int16_t sample;
+
+		CHECK(source_sample(source, &sample) &&
+		      v34_phase34_receiver_sample(receiver, sample, &output) ==
+			      V34_PHASE34_RECEIVER_OK &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0,
+		      "role %u rate %u data erasure failed at sample %u", role,
+		      rate, index);
+	}
+	CHECK(memcmp(&receiver->semantic, &saved.semantic,
+		     sizeof(receiver->semantic)) == 0 &&
+	      receiver->tracking_symbols == saved.tracking_symbols &&
+	      receiver->decoder_power_q15 == saved.decoder_power_q15 &&
+	      memcmp(&receiver->equalizer.feedback, &saved.equalizer.feedback,
+		     sizeof(receiver->equalizer.feedback)) == 0 &&
+	      memcmp(&receiver->equalizer.quality, &saved.equalizer.quality,
+		     sizeof(receiver->equalizer.quality)) == 0 &&
+	      memcmp(receiver->equalizer.equalizer.in_phase_coefficient,
+		     saved.equalizer.equalizer.in_phase_coefficient,
+		     sizeof(receiver->equalizer.equalizer
+				    .in_phase_coefficient)) == 0 &&
+	      memcmp(receiver->equalizer.equalizer.quadrature_coefficient,
+		     saved.equalizer.equalizer.quadrature_coefficient,
+		     sizeof(receiver->equalizer.equalizer
+				    .quadrature_coefficient)) == 0 &&
+	      memcmp(receiver->equalizer.equalizer.in_phase_residue,
+		     saved.equalizer.equalizer.in_phase_residue,
+		     sizeof(receiver->equalizer.equalizer.in_phase_residue)) == 0 &&
+	      memcmp(receiver->equalizer.equalizer.quadrature_residue,
+		     saved.equalizer.equalizer.quadrature_residue,
+		     sizeof(receiver->equalizer.equalizer
+				    .quadrature_residue)) == 0 &&
+	      receiver->equalizer.phase_accumulator ==
+		      saved.equalizer.phase_accumulator &&
+	      receiver->equalizer.phase_error == saved.equalizer.phase_error &&
+	      receiver->equalizer.rotate_in_phase ==
+		      saved.equalizer.rotate_in_phase &&
+	      receiver->equalizer.rotate_quadrature ==
+		      saved.equalizer.rotate_quadrature &&
+	      receiver->equalizer.carrier_phase_low ==
+		      saved.equalizer.carrier_phase_low &&
+	      receiver->equalizer.carrier_phase_fraction ==
+		      saved.equalizer.carrier_phase_fraction &&
+	      receiver->equalizer.epoch > saved.equalizer.epoch &&
+	      receiver->equalizer.lineage != saved.equalizer.lineage &&
+	      memcmp(&receiver->timing, &saved.timing,
+		     sizeof(receiver->timing)) != 0 &&
+	      !receiver->equalizer.decision_pending &&
+	      v34_phase34_receiver_is_valid(receiver),
+	      "role %u rate %u data erasure changed adaptive or semantic state",
+	      role, rate);
+	CHECK(v34_phase34_receiver_set_data_erasure(receiver, false) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      !receiver->data_erasure &&
+	      v34_phase34_receiver_is_valid(receiver),
+	      "role %u rate %u did not leave data erasure", role, rate);
+
+	pending = *receiver;
+	while (pending.equalizer.inputs_since_observation <
+	       V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION)
+		CHECK(v34_adaptive_equalizer_push(
+			      &pending.equalizer,
+			      (struct v34_analytic_sample){ 0, 0 }) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "role %u rate %u could not prepare a pending decision", role,
+		      rate);
+	CHECK(v34_adaptive_equalizer_observe(
+		      &pending.equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_phase34_receiver_is_valid(&pending),
+	      "role %u rate %u pending receiver became invalid", role, rate);
+	saved = pending;
+	CHECK(v34_phase34_receiver_set_data_erasure(&pending, true) ==
+		      V34_PHASE34_RECEIVER_INVALID_STATE &&
+	      memcmp(&pending, &saved, sizeof(pending)) == 0,
+	      "role %u rate %u pending erasure changed state", role, rate);
 	return true;
 }
 
@@ -733,7 +838,7 @@ static bool test_training_case(
 	      !receiver.equalizer.decision_pending,
 	      "role %u rate %u receiver did not retain its physical lineage",
 	      role, rate);
-	return true;
+	return test_data_erasure(&receiver, &source, role, rate);
 }
 
 static bool test_training(void)
