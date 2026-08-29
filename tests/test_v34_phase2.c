@@ -13,6 +13,7 @@
 enum {
 	TEST_SAMPLE_LIMIT = 40000,
 	TEST_TONE_SAMPLES = 160,
+	INITIAL_CONCURRENT_DELAY_SAMPLES = 1000,
 	RETRAIN_PRIOR_RTD_SAMPLES = 1000,
 	RETRAIN_LATE_ALIAS_SAMPLES = 5000,
 };
@@ -595,6 +596,133 @@ static bool test_retrain_timeline(void)
 	return true;
 }
 
+static bool test_initial_concurrent_trial(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_probe_sequence peer_probe;
+	struct owned_pair pair;
+	struct v34_phase2 empty_trial;
+	uint16_t measured_round_trip_delay = 0;
+	int16_t receive_gain = 0;
+	bool delay_injected = false;
+	bool armed = false;
+	bool disabled = false;
+	bool received = false;
+	bool handed_off = false;
+
+	CHECK(pair_init(&pair, TEST_CODEC_LINEAR, 1),
+	      "initial concurrent-trial pair did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		if (!delay_injected &&
+		    pair.answerer.stage == V34_PHASE2_RANGING &&
+		    pair.answerer.state.ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    pair.answerer.state.ranging.control
+			    .measurement_elapsed_samples != 0) {
+			pair.answerer.state.ranging.control
+				.measurement_elapsed_samples +=
+				INITIAL_CONCURRENT_DELAY_SAMPLES;
+			CHECK(v34_phase2_is_valid(&pair.answerer),
+			      "initial delay invalidated the answerer");
+			delay_injected = true;
+		}
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit),
+		      "initial concurrent trial stopped at sample %zu", index);
+		if (answerer_event.kind ==
+		    V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
+			measured_round_trip_delay =
+				answerer_event.round_trip_delay_samples;
+			armed = pair.answerer.concurrent_probe_receive &&
+				pair.answerer.state.initial_probe
+					.concurrent_receive_enabled;
+			break;
+		}
+	}
+	CHECK(delay_injected && armed &&
+	      measured_round_trip_delay >=
+		      V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES,
+	      "echo-safe initial answerer trial was not armed");
+	empty_trial = pair.answerer;
+	for (size_t index = 0;
+	     index <= V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     ++index) {
+		struct v34_phase2_event event;
+		int16_t transmit;
+
+		CHECK(v34_phase2_sample(
+			      &empty_trial, 0, &transmit, &event) ==
+			      V34_PHASE2_OK,
+		      "empty initial concurrent trial stopped at %zu", index);
+		if (!empty_trial.concurrent_probe_receive) {
+			disabled = true;
+			break;
+		}
+	}
+	CHECK(disabled &&
+	      !empty_trial.state.initial_probe.concurrent_receive_enabled &&
+	      v34_phase2_is_valid(&empty_trial) &&
+	      !v34_phase2_has_failed(&empty_trial),
+	      "empty initial trial did not disable itself transactionally");
+	CHECK(v34_phase2_probe_sequence_init(
+		      &peer_probe, TEST_AMPLITUDE,
+		      measured_round_trip_delay) ==
+		      V34_PHASE2_PROBE_SEQUENCE_OK,
+	      "initial overlapping-probe source did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_probe_sequence_event peer_event;
+		struct v34_phase2_probe_acquisition_event receive_event;
+		int16_t peer_transmit;
+
+		CHECK(v34_phase2_probe_sequence_sample(
+			      &peer_probe, false, &peer_transmit,
+			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
+		      v34_phase2_initial_probe_sample_concurrent(
+			      &pair.answerer.state.initial_probe,
+			      peer_transmit, &receive_event) ==
+			      V34_PHASE2_INITIAL_PROBE_OK,
+		      "initial overlapping probe stopped at %zu", index);
+		if (pair.answerer.state.initial_probe.concurrent_receive.phase ==
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
+			received = true;
+			break;
+		}
+	}
+	CHECK(received && v34_phase2_is_valid(&pair.answerer),
+	      "initial answerer did not retain its overlapping probe");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_event caller_event;
+		struct v34_phase2_event answerer_event;
+		int16_t caller_transmit;
+		int16_t answerer_transmit;
+
+		CHECK(pair_sample(
+			      &pair, &caller_event, &answerer_event,
+			      &caller_transmit, &answerer_transmit),
+		      "initial concurrent handoff stopped at sample %zu", index);
+		if (answerer_event.kind ==
+		    V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED) {
+			handed_off = true;
+			break;
+		}
+	}
+	CHECK(handed_off && pair.answerer.remote_probe_stored &&
+	      v34_phase2_is_ready_for_info1(&pair.answerer) &&
+	      v34_phase2_measure_remote_probe(
+		      &pair.answerer, &measurement) == V34_PHASE2_OK &&
+	      v34_phase2_receive_gain(
+		      &pair.answerer, &receive_gain) == V34_PHASE2_OK &&
+	      measurement_is_finite(&measurement) && receive_gain > 0,
+	      "initial concurrent measurement did not cross the reciprocal handoff");
+	return true;
+}
+
 static bool test_retrain_second_reversal_probe(void)
 {
 	struct v34_info0 caller_info0 = test_v34_phase2_capabilities(
@@ -825,6 +953,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
+		{ "initial concurrent probe trial",
+		  test_initial_concurrent_trial },
 		{ "generated retrain timeline", test_retrain_timeline },
 		{ "second-reversal retrain probe",
 		  test_retrain_second_reversal_probe },

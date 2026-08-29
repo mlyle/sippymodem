@@ -33,8 +33,9 @@ struct v34_phase2_initial_probe {
  * probe-ready event. The completed state is copied so the tone phases, remote
  * detector state, and measured round-trip delay remain coherent. The answerer
  * begins L1 on the next sample; the caller begins bounded onset acquisition on
- * the next received sample. Concurrent reception is valid only for a Signal-A
- * retrain whose ranging owner identified an overlapping peer probe. */
+ * the next received sample. Concurrent reception is valid only for Signal A:
+ * retraining may retain a probe edge identified during ranging, while an
+ * initial call may arm one echo-safe synchronization capture. */
 enum v34_phase2_initial_probe_result
 v34_phase2_initial_probe_init(
 	struct v34_phase2_initial_probe *probe,
@@ -52,6 +53,16 @@ v34_phase2_initial_probe_sample(
 	struct v34_phase2_initial_probe *probe,
 	int16_t received_sample, int16_t *transmit_sample,
 	struct v34_phase2_initial_probe_event *event);
+
+/* Keep an armed overlapping-probe receiver live after the local probe has
+ * handed transmission to the turnaround owner. Initial-call trials are
+ * deliberately one-shot so a later copy of the local probe cannot be adopted
+ * as the remote line measurement. */
+enum v34_phase2_initial_probe_result
+v34_phase2_initial_probe_sample_concurrent(
+	struct v34_phase2_initial_probe *probe,
+	int16_t received_sample,
+	struct v34_phase2_probe_acquisition_event *event);
 
 enum v34_phase2_initial_probe_result
 v34_phase2_initial_probe_measure(

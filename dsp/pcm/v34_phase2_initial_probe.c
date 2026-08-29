@@ -84,34 +84,51 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_init(
 	return V34_PHASE2_INITIAL_PROBE_OK;
 }
 
-static bool sample_concurrent_probe(
+enum v34_phase2_initial_probe_result
+v34_phase2_initial_probe_sample_concurrent(
 	struct v34_phase2_initial_probe *probe, int16_t received_sample,
 	struct v34_phase2_probe_acquisition_event *event)
 {
+	struct v34_phase2_initial_probe next;
+	struct v34_phase2_probe_acquisition_event emitted = { 0 };
 	struct v34_phase2_probe_acquisition *receive =
-		&probe->concurrent_receive;
+		&next.concurrent_receive;
 	bool finish_l2;
 
-	*event = (struct v34_phase2_probe_acquisition_event){ 0 };
+	if (!v34_phase2_initial_probe_is_valid(probe) || event == NULL)
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	next = *probe;
 	if (!probe->concurrent_receive_enabled ||
-	    receive->phase == V34_PHASE2_PROBE_ACQUISITION_COMPLETE)
-		return true;
+	    probe->concurrent_receive.phase ==
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
+		*event = emitted;
+		return V34_PHASE2_INITIAL_PROBE_OK;
+	}
 	finish_l2 = receive->phase ==
 			    V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
 		    receive->receiver.phase ==
 			    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
 	if (v34_phase2_probe_acquisition_sample(
-		    receive, received_sample, finish_l2, event) !=
+		    receive, received_sample, finish_l2, &emitted) !=
 	    V34_PHASE2_PROBE_ACQUISITION_OK)
-		return false;
-	if (event->kind != V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND &&
-	    event->kind != V34_PHASE2_PROBE_ACQUISITION_EVENT_LIMIT_REACHED)
-		return true;
-	if (v34_phase2_probe_acquisition_init(receive) !=
-	    V34_PHASE2_PROBE_ACQUISITION_OK)
-		return false;
-	*event = (struct v34_phase2_probe_acquisition_event){ 0 };
-	return true;
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	if (emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND ||
+	    emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_LIMIT_REACHED) {
+		if (!next.ranging.retraining) {
+			next.concurrent_receive_enabled = false;
+		} else {
+			if (v34_phase2_probe_acquisition_init(receive) !=
+			    V34_PHASE2_PROBE_ACQUISITION_OK)
+				return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+			emitted =
+				(struct v34_phase2_probe_acquisition_event){ 0 };
+		}
+	}
+	if (!v34_phase2_initial_probe_is_valid(&next))
+		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
+	*probe = next;
+	*event = emitted;
+	return V34_PHASE2_INITIAL_PROBE_OK;
 }
 
 enum v34_phase2_initial_probe_result v34_phase2_initial_probe_sample(
@@ -129,8 +146,9 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_sample(
 	    transmit_sample == NULL || event == NULL)
 		return V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	next = *probe;
-	if (!sample_concurrent_probe(
-		    &next, received_sample, &concurrent) ||
+	if (v34_phase2_initial_probe_sample_concurrent(
+		    &next, received_sample, &concurrent) !=
+		    V34_PHASE2_INITIAL_PROBE_OK ||
 	    phase2_initial_probe_sample(
 		    &next.control,
 		    &next.ranging.info0_exchange.transport,

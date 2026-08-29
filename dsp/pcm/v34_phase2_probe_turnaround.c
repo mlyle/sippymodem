@@ -48,13 +48,17 @@ v34_phase2_probe_turnaround_sample(
 	struct v34_phase2_probe_turnaround next;
 	struct phase2_probe_turnaround_event common;
 	struct v34_phase2_probe_turnaround_event emitted;
+	struct v34_phase2_probe_acquisition_event concurrent;
 	int16_t generated;
 
 	if (!v34_phase2_probe_turnaround_is_valid(turnaround) ||
 	    transmit_sample == NULL || event == NULL)
 		return V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	next = *turnaround;
-	if (phase2_probe_turnaround_sample(
+	if (v34_phase2_initial_probe_sample_concurrent(
+		    &next.initial_probe, received_sample, &concurrent) !=
+		    V34_PHASE2_INITIAL_PROBE_OK ||
+	    phase2_probe_turnaround_sample(
 		    &next.control, &next.initial_probe.control,
 		    &next.initial_probe.ranging.info0_exchange.transport,
 		    received_sample, &generated, &common) !=

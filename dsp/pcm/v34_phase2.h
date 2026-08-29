@@ -88,7 +88,7 @@ struct v34_phase2 {
 	bool peer_info0_stored;
 	bool remote_probe_stored;
 	bool local_info1_stored;
-	/* A late retrain reversal can be the peer's overlapping L1 edge. */
+	/* The answerer may retain one peer probe overlapping its local turn. */
 	bool concurrent_probe_receive;
 };
 

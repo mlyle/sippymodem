@@ -648,6 +648,99 @@ static bool completed_initial_probe_states(
 	return false;
 }
 
+static bool test_concurrent_probe_crosses_turnaround(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement;
+	struct v34_phase2_initial_probe caller_probe;
+	struct v34_phase2_initial_probe answerer_probe;
+	struct v34_phase2_probe_turnaround turnaround;
+	struct v34_phase2_probe_sequence peer_probe;
+	struct v34_phase2_probe_acquisition_event concurrent_event;
+	struct v34_phase2_probe_turnaround_event turnaround_event;
+	int16_t receive_gain = 0;
+	bool partial = false;
+	bool complete = false;
+
+	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
+	      v34_phase2_probe_acquisition_init(
+		      &answerer_probe.concurrent_receive) ==
+		      V34_PHASE2_PROBE_ACQUISITION_OK,
+	      "turnaround-crossing probe fixture did not initialize");
+	answerer_probe.concurrent_receive_enabled = true;
+	CHECK(v34_phase2_initial_probe_is_valid(&answerer_probe) &&
+	      v34_phase2_probe_sequence_init(
+		      &peer_probe, TEST_AMPLITUDE,
+		      answerer_probe.ranging.control
+			      .round_trip_delay_samples) ==
+		      V34_PHASE2_PROBE_SEQUENCE_OK,
+	      "turnaround-crossing probe owners were invalid");
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		struct v34_phase2_probe_sequence_event peer_event;
+		int16_t peer_transmit;
+
+		CHECK(v34_phase2_probe_sequence_sample(
+			      &peer_probe, false, &peer_transmit,
+			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
+		      v34_phase2_initial_probe_sample_concurrent(
+			      &answerer_probe, peer_transmit,
+			      &concurrent_event) ==
+			      V34_PHASE2_INITIAL_PROBE_OK,
+		      "concurrent probe prefix stopped at sample %zu", sample);
+		if (answerer_probe.concurrent_receive.phase ==
+			    V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
+		    answerer_probe.concurrent_receive.receiver.l2_spectrum
+				    .samples_observed >=
+			    V34_PHASE2_PROBE_L1_SAMPLES / 4u) {
+			partial = true;
+			break;
+		}
+	}
+	CHECK(partial &&
+	      answerer_probe.concurrent_receive.receiver.l1_spectrum
+			      .samples_observed ==
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      answerer_probe.concurrent_receive.phase !=
+		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
+	      v34_phase2_probe_turnaround_init(
+		      &turnaround, &answerer_probe) ==
+		      V34_PHASE2_PROBE_TURNAROUND_OK,
+	      "probe did not retain its partial L2 at turnaround");
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		struct v34_phase2_probe_sequence_event peer_event;
+		int16_t peer_transmit;
+		int16_t local_transmit;
+
+		CHECK(v34_phase2_probe_sequence_sample(
+			      &peer_probe, false, &peer_transmit,
+			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
+		      v34_phase2_probe_turnaround_sample(
+			      &turnaround, peer_transmit, &local_transmit,
+			      &turnaround_event) ==
+			      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      "concurrent probe turnaround stopped at sample %zu",
+		      sample);
+		if (turnaround.initial_probe.concurrent_receive.phase ==
+		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
+			complete = true;
+			break;
+		}
+	}
+	CHECK(complete &&
+	      v34_phase2_initial_probe_measure(
+		      &turnaround.initial_probe, &measurement) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      v34_phase2_initial_probe_receive_gain(
+		      &turnaround.initial_probe, &receive_gain) ==
+		      V34_PHASE2_INITIAL_PROBE_OK &&
+	      measurement.l1.sample_count ==
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      measurement.l2.sample_count ==
+		      V34_PHASE2_PROBE_L1_SAMPLES &&
+	      receive_gain > 0,
+	      "turnaround did not finish and retain the overlapping probe");
+	return true;
+}
+
 static bool test_answerer_reversal_recovery(void)
 {
 	struct v34_phase2_initial_probe caller_probe;
@@ -1019,6 +1112,8 @@ int main(void)
 			  test_answerer_accepts_early_tone_b },
 			{ "answerer concurrent probe",
 			  test_answerer_receives_concurrent_probe },
+			{ "concurrent probe crosses turnaround",
+			  test_concurrent_probe_crosses_turnaround },
 			{ "bidirectional probe turnaround", test_probe_turnaround },
 			{ "answerer reversal recovery",
 			  test_answerer_reversal_recovery },
