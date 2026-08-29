@@ -10,8 +10,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum {
+	/* Tone A is sent for at least 50 ms after the answering station receives
+	 * L2. Keep listening for that bounded response after local L2 stops. */
+	PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 50 / 1000,
+};
+
 enum phase2_reciprocal_probe_phase {
 	PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING,
+	PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE,
 	PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE,
 	PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING,
 	PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE,
@@ -56,10 +64,12 @@ struct phase2_reciprocal_probe {
 	/* Elapsed samples from Signal B's reversal. The mode-specific INFO1
 	 * owner retains this epoch for its response deadline. */
 	uint32_t signal_a_reversal_elapsed_samples;
+	uint16_t signal_b_tone_wait_samples;
 };
 
-/* Continue after probe turnaround. Signal B transmits reciprocal L1/L2;
- * Signal A measures it and raises Tone A when the fixed windows complete. */
+/* Continue after probe turnaround. Signal B transmits reciprocal L1/L2, then
+ * waits silently for a bounded Tone-A response if L2 reaches its wire limit.
+ * Signal A measures the probe and raises Tone A when the fixed windows complete. */
 enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,

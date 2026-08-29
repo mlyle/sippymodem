@@ -49,7 +49,7 @@ bool v34_phase2_probe_sequence_is_valid(
 	case V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE:
 		return sequence->samples_emitted >
 			       V34_PHASE2_PROBE_L1_SAMPLES &&
-		       l2_samples_emitted(sequence) < l2_limit;
+		       l2_samples_emitted(sequence) <= l2_limit;
 	case V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED:
 		return sequence->samples_emitted >=
 			       V34_PHASE2_PROBE_L1_SAMPLES &&
@@ -165,7 +165,15 @@ v34_phase2_probe_sequence_sample(
 		}
 		break;
 	case V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE:
+		break;
 	case V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED:
+		if (finish_l2) {
+			next.phase =
+				V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE;
+			emitted.kind =
+				V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED;
+			emitted.l2_samples = l2_samples_emitted(&next);
+		}
 		break;
 	}
 	if (result != V34_PHASE2_PROBE_SEQUENCE_OK ||

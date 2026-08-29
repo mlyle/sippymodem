@@ -51,7 +51,8 @@ bool v34_phase2_probe_sequence_is_valid(
 
 /* finish_l2 is invalid during L1 and before the first L2 sample. A successful
  * finish call emits silence and reports the exact number of completed L2
- * samples. Complete and limit-reached sequences continue to emit silence. */
+ * samples, including when the limit has already made the sequence silent.
+ * Complete sequences continue to emit silence. */
 enum v34_phase2_probe_sequence_result
 v34_phase2_probe_sequence_sample(
 	struct v34_phase2_probe_sequence *sequence,

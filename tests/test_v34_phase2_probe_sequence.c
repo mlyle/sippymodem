@@ -183,6 +183,17 @@ static bool check_l2_limit(uint16_t round_trip_delay_samples)
 		      event.l2_samples == 0 &&
 		      memcmp(&sequence, &before, sizeof(sequence)) == 0,
 	      "limit-reached sequence did not remain silent and stable");
+	CHECK(v34_phase2_probe_sequence_sample(
+		      &sequence, true, &sample, &event) ==
+		      V34_PHASE2_PROBE_SEQUENCE_OK &&
+	      sample == 0 &&
+	      event.kind == V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED &&
+	      event.l2_samples == expected_limit &&
+	      sequence.phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE &&
+	      sequence.samples_emitted ==
+		      V34_PHASE2_PROBE_L1_SAMPLES + expected_limit &&
+	      v34_phase2_probe_sequence_is_valid(&sequence),
+	      "limit-reached sequence did not complete without more L2");
 	return true;
 }
 

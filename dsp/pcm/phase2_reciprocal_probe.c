@@ -4,6 +4,10 @@
 
 #include <stddef.h>
 
+_Static_assert(
+	PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES <= UINT16_MAX,
+	"reciprocal-probe Tone-A wait must fit its owner");
+
 static bool signal_is_b(const struct phase2_info0_exchange *exchange)
 {
 	return exchange->signal_role == PHASE2_SIGNAL_B;
@@ -32,18 +36,29 @@ static bool signal_b_path_is_valid(
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING:
 		return probe->failure ==
 			       PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
+		       probe->signal_b_tone_wait_samples == 0 &&
 		       (transmit->phase ==
 				V34_PHASE2_PROBE_SEQUENCE_PHASE_L1 ||
 			transmit->phase ==
 				V34_PHASE2_PROBE_SEQUENCE_PHASE_L2);
+	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE:
+		return probe->failure ==
+			       PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
+		       probe->signal_b_tone_wait_samples <
+			       PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
+		       transmit->phase ==
+			       V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE:
 		return probe->failure ==
 			       PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
+		       probe->signal_b_tone_wait_samples == 0 &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE;
 	case PHASE2_RECIPROCAL_PROBE_FAILED:
 		return probe->failure ==
 			       PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+		       probe->signal_b_tone_wait_samples ==
+			       PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_A_RECEIVING:
@@ -86,6 +101,7 @@ static bool signal_a_path_is_valid(
 			receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND);
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING:
+	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE:
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE:
 		return false;
 	}
@@ -111,7 +127,8 @@ bool phase2_reciprocal_probe_is_valid(
 	if (signal_is_b(exchange))
 		return probe->signal_a_reversal_elapsed_samples == 0 &&
 		       signal_b_path_is_valid(probe);
-	return probe->signal_a_reversal_elapsed_samples >=
+	return probe->signal_b_tone_wait_samples == 0 &&
+	       probe->signal_a_reversal_elapsed_samples >=
 		       completed_turnaround
 			       ->signal_a_reversal_elapsed_samples &&
 	       signal_a_path_is_valid(probe);
@@ -220,8 +237,10 @@ static bool transmit_local_probe(
 	remote_tone_started =
 		event->tone_event.kind == V34_PHASE2_TONE_STARTED;
 	if (remote_tone_started &&
-	    transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
-	    transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) {
+	    ((transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
+	      transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) ||
+	     transmit->phase ==
+		     V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED)) {
 		if (v34_phase2_probe_sequence_sample(
 			    transmit, true, transmit_sample,
 			    &event->transmit_event) !=
@@ -230,6 +249,7 @@ static bool transmit_local_probe(
 			    V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED)
 			return false;
 		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE;
+		probe->signal_b_tone_wait_samples = 0;
 		event->kind =
 			PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED;
 		return true;
@@ -241,6 +261,26 @@ static bool transmit_local_probe(
 		return false;
 	if (event->transmit_event.kind ==
 	    V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED)
+		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE;
+	return true;
+}
+
+static bool wait_for_remote_tone(
+	struct phase2_reciprocal_probe *probe,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_reciprocal_probe_event *event)
+{
+	if (!transmit_local_probe(
+		    probe, exchange, received_sample, transmit_sample, event))
+		return false;
+	if (probe->phase == PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE)
+		return true;
+	if (probe->phase != PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE)
+		return false;
+	probe->signal_b_tone_wait_samples++;
+	if (probe->signal_b_tone_wait_samples ==
+	    PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES)
 		fail_probe(
 			probe,
 			PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT,
@@ -343,6 +383,11 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 	switch (next.phase) {
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_TRANSMITTING:
 		accepted = transmit_local_probe(
+			&next, &next_exchange, received_sample,
+			&generated, &emitted);
+		break;
+	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE:
+		accepted = wait_for_remote_tone(
 			&next, &next_exchange, received_sample,
 			&generated, &emitted);
 		break;

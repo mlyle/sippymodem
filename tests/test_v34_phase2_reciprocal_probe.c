@@ -508,24 +508,46 @@ static bool test_bounded_failures(void)
 		caller_turnaround.initial_probe.ranging.control
 			.round_trip_delay_samples;
 	for (samples = 0;
-	     samples < V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
-	     caller.control.phase != PHASE2_RECIPROCAL_PROBE_FAILED;
+	     samples < V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit;
 	     ++samples)
 		CHECK(v34_phase2_reciprocal_probe_sample(
 			      &caller, 0, &transmit, &event) ==
 			      PHASE2_RECIPROCAL_PROBE_OK,
 		      "caller transmit limit failed at sample %zu", samples);
 	CHECK(samples ==
-		      V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
-	      caller.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
-	      caller.control.failure ==
-		      PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
-	      event.kind ==
-		      PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
+			      V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit &&
+	      caller.control.phase ==
+		      PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE &&
+	      caller.control.failure == PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
+	      caller.control.signal_b_tone_wait_samples == 0 &&
+	      caller.control.path.transmit.phase ==
+		      V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED &&
+	      event.kind == PHASE2_RECIPROCAL_PROBE_EVENT_NONE &&
 	      event.transmit_event.kind ==
 		      V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED &&
 	      event.transmit_event.l2_samples == caller_l2_limit,
-	      "missing Tone A did not reach the exact local transmit limit");
+	      "missing Tone A did not stop at the exact local transmit limit");
+	for (samples = 0;
+	     samples < PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
+	     caller.control.phase != PHASE2_RECIPROCAL_PROBE_FAILED;
+	     ++samples) {
+		CHECK(v34_phase2_reciprocal_probe_sample(
+			      &caller, 0, &transmit, &event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK &&
+		      transmit == 0,
+		      "caller response wait failed at sample %zu", samples);
+	}
+	CHECK(samples == PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
+	      caller.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
+	      caller.control.failure ==
+		      PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+	      caller.control.signal_b_tone_wait_samples ==
+		      PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
+	      event.kind ==
+		      PHASE2_RECIPROCAL_PROBE_EVENT_FAILED &&
+	      caller.control.path.transmit.samples_emitted ==
+		      V34_PHASE2_PROBE_L1_SAMPLES + caller_l2_limit,
+	      "missing Tone A did not fail at the bounded response deadline");
 	terminal = caller;
 	transmit = 1234;
 	CHECK(v34_phase2_reciprocal_probe_sample(
@@ -557,6 +579,87 @@ static bool test_bounded_failures(void)
 	      answerer.control.signal_a_reversal_elapsed_samples ==
 		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES,
 	      "missing reciprocal probe did not fail at the response bound");
+	return true;
+}
+
+static bool test_late_tone_after_l2_limit(void)
+{
+	enum {
+		LATE_TONE_SILENCE_SAMPLES =
+			PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES -
+			V34_PHASE2_TONE_ACQUIRE_SAMPLES -
+			V34_PHASE2_TONE_WINDOW_SAMPLES * 2,
+	};
+	struct v34_phase2_probe_turnaround caller_turnaround;
+	struct v34_phase2_probe_turnaround answerer_turnaround;
+	struct v34_phase2_tone_transmitter tone_a;
+	struct v34_phase2_reciprocal_probe caller;
+	struct phase2_reciprocal_probe_event event;
+	uint32_t l2_limit;
+	int16_t received;
+	int16_t transmit;
+	bool acknowledged = false;
+
+	CHECK(completed_turnaround_states(
+		      &caller_turnaround, &answerer_turnaround) &&
+	      v34_phase2_reciprocal_probe_init(
+		      &caller, &caller_turnaround) ==
+		      PHASE2_RECIPROCAL_PROBE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &tone_a, V34_ANSWERING_STATION,
+		      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "late Tone-A fixture did not initialize");
+	l2_limit =
+		(uint32_t)V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
+		caller_turnaround.initial_probe.ranging.control
+			.round_trip_delay_samples;
+	for (size_t sample = 0;
+	     sample < V34_PHASE2_PROBE_L1_SAMPLES + l2_limit; ++sample)
+		CHECK(v34_phase2_reciprocal_probe_sample(
+			      &caller, 0, &transmit, &event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK,
+		      "late Tone-A fixture failed before the L2 limit");
+	CHECK(caller.control.phase ==
+		      PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE &&
+	      caller.control.path.transmit.samples_emitted ==
+		      V34_PHASE2_PROBE_L1_SAMPLES + l2_limit,
+	      "late Tone-A fixture did not reach the silent response window");
+	for (size_t sample = 0; sample < LATE_TONE_SILENCE_SAMPLES; ++sample)
+		CHECK(v34_phase2_reciprocal_probe_sample(
+			      &caller, 0, &transmit, &event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK &&
+		      transmit == 0 &&
+		      caller.control.phase ==
+			      PHASE2_RECIPROCAL_PROBE_SIGNAL_B_WAIT_TONE,
+		      "late Tone-A silence failed at sample %zu", sample);
+	for (size_t sample = LATE_TONE_SILENCE_SAMPLES;
+	     sample < PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES; ++sample) {
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &tone_a, &received) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_reciprocal_probe_sample(
+			      &caller, received, &transmit, &event) ==
+			      PHASE2_RECIPROCAL_PROBE_OK &&
+		      transmit == 0,
+		      "late Tone A failed at response sample %zu", sample);
+		if (event.kind ==
+		    PHASE2_RECIPROCAL_PROBE_EVENT_LOCAL_PROBE_ACKNOWLEDGED) {
+			acknowledged = true;
+			break;
+		}
+	}
+	CHECK(acknowledged &&
+	      caller.control.phase ==
+		      PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE &&
+	      caller.control.failure == PHASE2_RECIPROCAL_PROBE_NO_FAILURE &&
+	      caller.control.signal_b_tone_wait_samples == 0 &&
+	      caller.control.path.transmit.phase ==
+		      V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE &&
+	      caller.control.path.transmit.samples_emitted ==
+		      V34_PHASE2_PROBE_L1_SAMPLES + l2_limit &&
+	      event.transmit_event.kind ==
+		      V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED &&
+	      event.transmit_event.l2_samples == l2_limit,
+	      "late Tone A did not acknowledge the bounded silent probe");
 	return true;
 }
 
@@ -634,6 +737,7 @@ int main(void)
 		{ "delayed remote probe", test_delayed_remote_probe },
 		{ "completed concurrent probe handoff",
 		  test_completed_concurrent_probe_handoff },
+		{ "late tone after L2 limit", test_late_tone_after_l2_limit },
 		{ "bounded failures", test_bounded_failures },
 		{ "validation", test_validation },
 	};

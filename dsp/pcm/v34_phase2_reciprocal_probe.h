@@ -28,8 +28,9 @@ bool v34_phase2_reciprocal_probe_is_valid(
 
 /* One call consumes and produces one 8 kHz line sample. The answerer starts
  * Tone A immediately after completing its fixed probe measurement. The caller
- * ends L2 when that tone is acquired, leaving the following sample to the
- * INFO1 exchange owner. Terminal caller and failure states remain silent. */
+ * ends L2 when that tone is acquired, or at the L2 wire limit while continuing
+ * to listen silently for the bounded response. The following sample belongs to
+ * the INFO1 exchange owner. Terminal caller and failure states remain silent. */
 enum phase2_reciprocal_probe_result
 v34_phase2_reciprocal_probe_sample(
 	struct v34_phase2_reciprocal_probe *probe,
