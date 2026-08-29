@@ -50,9 +50,9 @@ enum {
 	/* Complete at least two ordinary MP records before acknowledging a peer
 	 * record. Continue ordinary MP until that peer record has arrived. */
 	V34_PHASE4_MIN_MP_RECORDS = 2,
-	/* Repeat MP' across four complete record boundaries so a reciprocal peer
-	 * has a complete acknowledgement before the following E transition. */
-	V34_PHASE4_MP_PRIME_REPEAT_RECORDS = 4,
+	/* Bound the completed MP' record count while waiting for the reciprocal
+	 * acknowledgement. Release E at the next complete record boundary. */
+	V34_PHASE4_MAX_MP_PRIME_RECORDS = 4,
 };
 
 struct v34_phase4_exchange_configuration {

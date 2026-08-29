@@ -330,8 +330,7 @@ static bool transmitter_stage_is_valid(
 		return exchange->transmit_trn_started &&
 		       exchange->transmit_mp_started &&
 		       exchange->transmit_mp_prime_started &&
-		       exchange->transmit_mp_records_completed ==
-			       V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
+		       exchange->transmit_mp_records_completed != 0u &&
 		       exchange->peer_mp_prime_received &&
 		       exchange->data_startup_prepared;
 	stage = exchange->transmit.training.stage;
@@ -346,8 +345,7 @@ static bool transmitter_stage_is_valid(
 		return false;
 	if (stage == V34_TRAINING_TRANSMITTER_PHASE4_E &&
 	    (!exchange->transmit_mp_prime_started ||
-	     exchange->transmit_mp_records_completed !=
-		     V34_PHASE4_MP_PRIME_REPEAT_RECORDS ||
+	     exchange->transmit_mp_records_completed == 0u ||
 	     !exchange->peer_mp_prime_received ||
 	     !exchange->data_startup_prepared))
 		return false;
@@ -390,7 +388,7 @@ bool v34_phase4_exchange_is_valid(
 	    (exchange->transmit_mp_started && !trn_ready_for_mp(exchange)) ||
 	    exchange->transmit_mp_records_completed >
 		    (exchange->transmit_mp_prime_started ?
-			     V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
+			     V34_PHASE4_MAX_MP_PRIME_RECORDS :
 			     V34_PHASE4_MIN_MP_RECORDS) ||
 	    (!exchange->transmit_mp_started &&
 	     exchange->transmit_mp_records_completed != 0u) ||
@@ -676,7 +674,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 			    &exchange->transmit.training)) {
 		bool acknowledged;
 		uint8_t repeat_records = exchange->transmit_mp_prime_started ?
-			V34_PHASE4_MP_PRIME_REPEAT_RECORDS :
+			V34_PHASE4_MAX_MP_PRIME_RECORDS :
 			V34_PHASE4_MIN_MP_RECORDS;
 
 		if (exchange->transmit_mp_records_completed <
@@ -688,8 +686,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 				 V34_PHASE4_MIN_MP_RECORDS);
 
 		if (exchange->transmit_mp_prime_started &&
-		    exchange->transmit_mp_records_completed ==
-			    V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
+		    exchange->transmit_mp_records_completed != 0u &&
 		    exchange->peer_mp_prime_received &&
 		    exchange->data_startup_prepared) {
 			result = transmit_result(v34_training_transmitter_start_e(

@@ -539,10 +539,12 @@ static bool test_generated_online_exchange(void)
 	      caller_seen, answerer_seen);
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
-	      caller.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
-	      answerer.phase4.transmit_mp_records_completed ==
-		      V34_PHASE4_MP_PRIME_REPEAT_RECORDS &&
+	      caller.phase4.transmit_mp_records_completed != 0u &&
+	      caller.phase4.transmit_mp_records_completed <=
+		      V34_PHASE4_MAX_MP_PRIME_RECORDS &&
+	      answerer.phase4.transmit_mp_records_completed != 0u &&
+	      answerer.phase4.transmit_mp_records_completed <=
+		      V34_PHASE4_MAX_MP_PRIME_RECORDS &&
 	      caller.phase4.receive_data_active &&
 	      answerer.phase4.receive_data_active &&
 	      caller.phase4.transmit_b1_complete &&
@@ -947,32 +949,22 @@ static bool test_mp_acknowledgment_boundaries(void)
 			      "second ordinary MP record did not start MP-prime");
 		}
 	}
-	for (uint8_t record = 0;
-	     record < V34_PHASE4_MP_PRIME_REPEAT_RECORDS; ++record) {
+	{
 		struct v34_received_mapping_frame received = { 0 };
 		int16_t sample = 0;
 
 		CHECK(complete_local_mp_record(&pending),
-		      "local MP-prime did not reach record %u boundary",
-		      record + 1u);
+		      "local MP-prime did not reach its first record boundary");
 		events = 0;
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
 			      &received) == V34_PHASE4_EXCHANGE_OK &&
-		      pending.transmit_mp_records_completed == record + 1u,
-		      "MP-prime record %u did not complete", record + 1u);
-		if (record + 1u < V34_PHASE4_MP_PRIME_REPEAT_RECORDS) {
-			CHECK(pending.transmit.training.stage ==
-				      V34_TRAINING_TRANSMITTER_PHASE4_MP &&
-			      events == 0,
-			      "MP-prime record %u released E early", record + 1u);
-		} else {
-			CHECK(pending.transmit.training.stage ==
-				      V34_TRAINING_TRANSMITTER_PHASE4_E &&
-			      events ==
-				      V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED,
-			      "completed reciprocal MP-prime did not release E");
-		}
+		      pending.transmit_mp_records_completed == 1u &&
+		      pending.transmit.training.stage ==
+			      V34_TRAINING_TRANSMITTER_PHASE4_E &&
+		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED,
+		      "acknowledged MP-prime did not release E at its first "
+		      "complete record boundary");
 	}
 	return true;
 }
@@ -1038,7 +1030,7 @@ static bool test_validation_and_transactionality(void)
 	}
 	exchange = caller.phase4;
 	exchange.transmit_mp_records_completed =
-		V34_PHASE4_MIN_MP_RECORDS + 1;
+		V34_PHASE4_MAX_MP_PRIME_RECORDS + 1;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted too many completed MP records");
 	exchange = caller.phase4;
