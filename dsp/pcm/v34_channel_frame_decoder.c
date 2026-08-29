@@ -62,26 +62,14 @@ static bool cursors_are_aligned(
 {
 	const struct v34_channel_decoder *channel =
 		&decoder->channel_decoder;
-	uint8_t path_index;
-	uint8_t history;
-	uint8_t traceback_intervals;
-
-	if (channel->selection == V34_TRELLIS_16_STATE) {
-		path_index = channel->path.fixed_16.survivor.path_index;
-		history = channel->path.fixed_16.survivor.path_intervals;
-		traceback_intervals = V34_16_STATE_TRACEBACK_INTERVALS;
-	} else {
-		path_index = channel->path.generic.path_index;
-		history = channel->path.generic.path_intervals;
-		traceback_intervals = V34_SURVIVOR_TRACEBACK_INTERVALS;
-	}
+	const struct v34_survivor *survivor = &channel->survivor;
 
 	if (decoder->next_channel_interval !=
-	    path_index %
+	    survivor->path_index %
 		    V34_4D_INTERVALS_PER_MAPPING_FRAME)
 		return false;
 
-	if (history < traceback_intervals)
+	if (survivor->path_intervals < V34_SURVIVOR_TRACEBACK_INTERVALS)
 		return decoder->pending_interval_count == 0u;
 	return decoder->pending_interval_count ==
 	       (uint8_t)((decoder->next_channel_interval + 1u) %

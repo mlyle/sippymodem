@@ -3,7 +3,6 @@
 #ifndef V34_CHANNEL_DECODER_H
 #define V34_CHANNEL_DECODER_H
 
-#include "v34_16_state_branches.h"
 #include "v34_path_decoder.h"
 
 #include <stdbool.h>
@@ -19,21 +18,13 @@ enum v34_channel_decoder_result {
 struct v34_channel_decoder {
 	struct v34_frame_geometry geometry;
 	struct v34_mapping_parameters parameters;
-	enum v34_trellis_selection selection;
-	union {
-		struct {
-			struct v34_16_state_branch_profile profile;
-			struct v34_16_state_survivor survivor;
-		} fixed_16;
-		struct v34_survivor generic;
-	} path;
+	struct v34_survivor survivor;
 	struct v34_precoder inverse_precoder;
 };
 
-/* Bind the mapping geometry to the fixed 16-state path or the generic
- * 32/64-state path, then initialize its convolutional and inverse-precoder
- * histories to their B1 all-zero state. The destination is unchanged on
- * rejection. */
+/* Bind the mapping geometry to one shared trellis path, then initialize its
+ * convolutional and inverse-precoder histories to their B1 all-zero state.
+ * The destination is unchanged on rejection. */
 enum v34_channel_decoder_result
 v34_channel_decoder_init(
 	struct v34_channel_decoder *decoder,
