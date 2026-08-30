@@ -76,7 +76,10 @@ static struct dp *create_v8(
 
 	lapm = modem_get_sreg(modem, SREG_EC) != 0;
 	if (v8_datapump_uses_pcm(id)) {
-		digital = modem_get_param(
+		/* Digital head-end operation belongs to the answering leg.  A
+		 * caller advertises the analogue PCM role even when +V90D remains
+		 * enabled from a preceding answered call. */
+		digital = caller == 0 && modem_get_param(
 			modem, MDMPRM_V90_DIGITAL_INDICATION) != 0;
 		menu_result = v8_pcm_call_menu_init(
 			&local_menu,

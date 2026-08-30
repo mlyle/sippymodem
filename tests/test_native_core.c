@@ -861,9 +861,9 @@ static bool test_v8_handoff(void)
 		CHECK(caller != NULL && answerer != NULL,
 		      "V.8 handoff endpoints did not initialize");
 		CHECK((!v8_datapump_uses_pcm(requested) ||
-		       (process_at_command(caller, "AT+V90D=0") == 0 &&
+		       (process_at_command(caller, "AT+V90D=1") == 0 &&
 			process_at_command(answerer, "AT+V90D=1") == 0)),
-		      "V.8 PCM endpoints did not accept complementary roles");
+		      "V.8 PCM endpoints did not accept head-end configuration");
 		calling_dp = operations->create(
 			caller, requested, 1, MODEM_RATE, MODEM_FRAG, operations);
 		answering_dp = operations->create(
