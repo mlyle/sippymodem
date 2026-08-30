@@ -429,21 +429,6 @@ enum v34_phase2_result v34_phase2_peer_info1c(
 	return V34_PHASE2_OK;
 }
 
-enum v34_phase2_result v34_phase2_peer_info1a(
-	const struct v34_phase2 *phase2, struct v34_info1a *peer_info1a)
-{
-	if (!v34_phase2_is_valid(phase2) || peer_info1a == NULL)
-		return V34_PHASE2_INVALID_ARGUMENT;
-	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
-	    phase2->stage != V34_PHASE2_INFO1 ||
-	    phase2->local_role != V34_CALLING_STATION ||
-	    !phase2->state.info1.peer_parameters_received ||
-	    !info1_records_are_consistent(phase2))
-		return V34_PHASE2_INVALID_STATE;
-	*peer_info1a = phase2->state.info1.peer_parameters.info1a;
-	return V34_PHASE2_OK;
-}
-
 enum v34_phase2_result v34_phase2_answerer_reply(
 	struct v34_phase2 *phase2, const struct v34_info1a *local_info1a)
 {

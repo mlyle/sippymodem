@@ -80,8 +80,6 @@ struct v34_phase3_s_receiver {
 	bool complete;
 };
 
-enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init(
-	struct v34_phase3_s_receiver *receiver);
 /* Detect a suffix of S followed by the complete S-bar. This is for receivers
  * whose carrier and symbol timing lock after S has already begun. */
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(

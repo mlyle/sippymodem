@@ -285,12 +285,6 @@ bool v34_call_is_online(const struct v34_call *call)
 	       v34_phase4_exchange_is_online(&call->state.phase4);
 }
 
-enum v34_call_stage v34_call_current_stage(const struct v34_call *call)
-{
-	return v34_call_is_valid(call) ? call->stage :
-				       (enum v34_call_stage)-1;
-}
-
 bool v34_call_get_data_startup(
 	const struct v34_call *call, struct v34_data_startup *startup)
 {

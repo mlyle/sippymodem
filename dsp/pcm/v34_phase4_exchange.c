@@ -538,17 +538,6 @@ bool v34_phase4_exchange_get_data_startup(
 	return true;
 }
 
-bool v34_phase4_exchange_get_peer_mp(
-	const struct v34_phase4_exchange *exchange,
-	struct v34_mp_record *record)
-{
-	if (!v34_phase4_exchange_is_valid(exchange) || exchange->failed ||
-	    !exchange->peer_mp_received || record == NULL)
-		return false;
-	*record = exchange->peer_mp;
-	return true;
-}
-
 static enum v34_phase4_exchange_result start_transmit_mp(
 	struct v34_phase4_exchange *exchange, bool acknowledged)
 {

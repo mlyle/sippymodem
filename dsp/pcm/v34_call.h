@@ -109,7 +109,6 @@ enum v34_call_result v34_call_start_retrain(struct v34_call *call);
 bool v34_call_is_valid(const struct v34_call *call);
 bool v34_call_has_failed(const struct v34_call *call);
 bool v34_call_is_online(const struct v34_call *call);
-enum v34_call_stage v34_call_current_stage(const struct v34_call *call);
 
 /* Copy the negotiated data directions once Phase 4 has prepared them. */
 bool v34_call_get_data_startup(

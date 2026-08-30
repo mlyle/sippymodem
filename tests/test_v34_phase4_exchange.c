@@ -522,8 +522,6 @@ static bool test_generated_online_exchange(void)
 	struct endpoint answerer;
 	struct v34_data_startup caller_startup;
 	struct v34_data_startup answerer_startup;
-	struct v34_mp_record caller_peer;
-	struct v34_mp_record answerer_peer;
 	uint32_t caller_seen;
 	uint32_t answerer_seen;
 
@@ -601,14 +599,14 @@ static bool test_generated_online_exchange(void)
 		      &caller_startup.mode.receive,
 		      &answerer_startup.mode.transmit),
 	      "Phase 4 prepared incompatible post-E data directions");
-	CHECK(v34_phase4_exchange_get_peer_mp(
-		      &caller.phase4, &caller_peer) &&
-	      v34_phase4_exchange_get_peer_mp(
-		      &answerer.phase4, &answerer_peer) &&
+	CHECK(caller.phase4.peer_mp_received &&
+	      answerer.phase4.peer_mp_received &&
 	      mp_records_are_equal(
-		      &caller_peer, &answerer.phase4.transmit_mp) &&
+		      &caller.phase4.peer_mp,
+		      &answerer.phase4.transmit_mp) &&
 	      mp_records_are_equal(
-		      &answerer_peer, &caller.phase4.transmit_mp) &&
+		      &answerer.phase4.peer_mp,
+		      &caller.phase4.transmit_mp) &&
 	      caller.phase4.receive.feedback_training_complete &&
 	      answerer.phase4.receive.feedback_training_complete,
 	      "Phase 4 owners did not retain normalized peer records");
@@ -1000,9 +998,8 @@ static bool test_validation_and_transactionality(void)
 	struct v34_phase4_exchange saved;
 	struct v34_data_startup startup = { 0 };
 	struct v34_data_startup saved_startup;
-	struct v34_mp_record peer = mp_record(V34_CALLING_STATION);
-	struct v34_mp_record saved_peer = peer;
-	struct v34_mp_record invalid_record = peer;
+	struct v34_mp_record invalid_record =
+		mp_record(V34_CALLING_STATION);
 	union {
 		uint32_t events;
 		int16_t samples[2];
@@ -1126,9 +1123,6 @@ static bool test_validation_and_transactionality(void)
 	      !v34_phase4_exchange_get_data_startup(
 		      &caller.phase4, NULL) &&
 	      memcmp(&startup, &saved_startup, sizeof(startup)) == 0 &&
-	      !v34_phase4_exchange_get_peer_mp(NULL, &peer) &&
-	      !v34_phase4_exchange_get_peer_mp(&caller.phase4, NULL) &&
-	      memcmp(&peer, &saved_peer, sizeof(peer)) == 0 &&
 	      !v34_mp_record_is_valid(NULL),
 	      "Phase 4 validation helpers returned the wrong result");
 	invalid_record.type = (enum v34_mp_record_type)99;

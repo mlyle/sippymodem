@@ -125,8 +125,6 @@ enum v34_phase2_result v34_phase2_answerer_reply(
 
 enum v34_phase2_result v34_phase2_peer_info1c(
 	const struct v34_phase2 *phase2, struct v34_info1c *peer_info1c);
-enum v34_phase2_result v34_phase2_peer_info1a(
-	const struct v34_phase2 *phase2, struct v34_info1a *peer_info1a);
 
 /* Copy the completed local and peer transmitter profiles atomically. */
 enum v34_phase2_result v34_phase2_profiles(

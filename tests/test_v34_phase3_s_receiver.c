@@ -74,7 +74,7 @@ static bool test_generated_rotations(void)
 		struct v34_phase3_s_receiver receiver;
 		struct v34_phase3_s_detection detection = { 0xff, 0xff, 0xff };
 
-		CHECK(v34_phase3_s_receiver_init(&receiver) ==
+		CHECK(v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 			      V34_PHASE3_S_RECEIVER_OK &&
 		      receive_marker(&receiver, rotations, offset) &&
 		      v34_phase3_s_receiver_is_valid(&receiver) &&
@@ -97,7 +97,7 @@ static bool test_sliding_window_and_tolerance(void)
 	uint32_t noise = UINT32_C(0x243f6a88);
 
 	CHECK(generate_marker(rotations) &&
-	      v34_phase3_s_receiver_init(&receiver) ==
+	      v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "sliding marker fixture did not initialize");
 	for (size_t symbol = 0; symbol < 197; ++symbol) {
@@ -142,7 +142,7 @@ static bool marker_with_errors_is_rejected(bool s_bar)
 	size_t first = s_bar ? V34_PHASE3_S_SYMBOLS + 1u : 0u;
 
 	if (!generate_marker(rotations) ||
-	    v34_phase3_s_receiver_init(&receiver) !=
+	    v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
 	for (unsigned int error = 0; error < errors; ++error) {
@@ -168,7 +168,7 @@ static bool test_rejection_thresholds(void)
 	      marker_with_errors_is_rejected(true),
 	      "marker beyond an error threshold was accepted");
 	CHECK(generate_marker(rotations) &&
-	      v34_phase3_s_receiver_init(&receiver) ==
+	      v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "constant-S rejection fixture did not initialize");
 	for (size_t symbol = 0;
@@ -192,7 +192,7 @@ static bool test_point_zero_requirement(void)
 	struct v34_phase3_s_detection detection;
 
 	CHECK(generate_marker(rotations) &&
-	      v34_phase3_s_receiver_init(&receiver) ==
+	      v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "point-zero fixture did not initialize");
 	for (size_t symbol = 0;
@@ -227,7 +227,7 @@ static bool test_transition_anchor_tolerance(void)
 
 	CHECK(generate_marker(generated),
 	      "transition-anchor marker did not generate");
-	CHECK(v34_phase3_s_receiver_init(&receiver) ==
+	CHECK(v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK &&
 	      v34_phase3_s_receiver_receive(
 		      &receiver, 0, generated[0]) ==
@@ -245,7 +245,7 @@ static bool test_transition_anchor_tolerance(void)
 		memcpy(rotations, generated, sizeof(rotations));
 		rotations[ANCHORS[anchor]] =
 			(uint8_t)((rotations[ANCHORS[anchor]] + 1u) & 3u);
-		CHECK(v34_phase3_s_receiver_init(&receiver) ==
+		CHECK(v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 			      V34_PHASE3_S_RECEIVER_OK,
 		      "transition-anchor receiver did not initialize");
 		for (size_t symbol = 0;
@@ -353,7 +353,7 @@ static bool test_transition_error_confirmation(void)
 		rotations[symbol] =
 			(uint8_t)((rotations[symbol] + 1u) & 3u);
 	}
-	CHECK(v34_phase3_s_receiver_init(&receiver) ==
+	CHECK(v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "transition-error receiver did not initialize");
 	for (size_t symbol = 0;
@@ -782,7 +782,7 @@ static bool test_completion_and_validation(void)
 	struct v34_phase3_s_detection saved_detection = detection;
 
 	CHECK(generate_marker(rotations) &&
-	      v34_phase3_s_receiver_init(&receiver) ==
+	      v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK &&
 	      receive_marker(&receiver, rotations, 0),
 	      "completion fixture did not detect its marker");
@@ -791,7 +791,7 @@ static bool test_completion_and_validation(void)
 		      V34_PHASE3_S_RECEIVER_COMPLETE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "completed receiver consumed another rotation");
-	CHECK(v34_phase3_s_receiver_init(&receiver) ==
+	CHECK(v34_phase3_s_receiver_init_suffix(&receiver, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_OK,
 	      "validation receiver did not reset");
 	saved = receiver;
@@ -813,7 +813,7 @@ static bool test_completion_and_validation(void)
 	      !v34_phase3_s_receiver_is_complete(&corrupt) &&
 	      v34_phase3_s_detection_is_valid(&detection) &&
 	      !v34_phase3_s_detection_is_valid(NULL) &&
-	      v34_phase3_s_receiver_init(NULL) ==
+	      v34_phase3_s_receiver_init_suffix(NULL, V34_PHASE3_S_SYMBOLS) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase3_s_receiver_receive(NULL, 0, 0) ==
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&

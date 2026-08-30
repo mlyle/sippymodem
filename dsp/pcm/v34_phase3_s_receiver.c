@@ -108,13 +108,6 @@ bool v34_phase3_s_receiver_is_complete(
 	       receiver->complete;
 }
 
-enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init(
-	struct v34_phase3_s_receiver *receiver)
-{
-	return v34_phase3_s_receiver_init_suffix(
-		receiver, V34_PHASE3_S_SYMBOLS);
-}
-
 enum v34_phase3_s_receiver_result v34_phase3_s_receiver_init_suffix(
 	struct v34_phase3_s_receiver *receiver, uint8_t s_symbols)
 {

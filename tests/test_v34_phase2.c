@@ -230,7 +230,6 @@ static bool check_timeline(
 	struct v34_info1c local_info1c = caller_info1c(zero_md);
 	struct v34_info1c received_info1c;
 	struct v34_info1a local_info1a = answerer_info1a(zero_md);
-	struct v34_info1a received_info1a;
 	struct v34_phase2_probe_receiver_measurement caller_measurement;
 	struct v34_phase2_probe_receiver_measurement answerer_measurement;
 	struct v34_phase3_profile caller_local_profile;
@@ -389,9 +388,9 @@ static bool check_timeline(
 	      (caller_events & caller_info1_events) == caller_info1_events &&
 	      (answerer_events & answerer_info1_events) ==
 		      answerer_info1_events &&
-	      v34_phase2_peer_info1a(
-		      &pair.caller, &received_info1a) == V34_PHASE2_OK &&
-	      info1a_equal(&received_info1a, &local_info1a),
+	      info1a_equal(
+		      &pair.caller.state.info1.peer_parameters.info1a,
+		      &local_info1a),
 	      "INFO1 exchange did not complete with both records");
 	CHECK(v34_phase2_profiles(
 		      &pair.caller, &caller_local_profile,
@@ -406,7 +405,6 @@ static bool check_timeline(
 	      "INFO1 did not produce reciprocal Phase 3 profiles");
 	{
 		struct v34_phase2 selected = pair.caller;
-		struct v34_info1a raw_info1a;
 		struct v34_phase3_profile selected_local;
 		struct v34_phase3_profile selected_peer;
 
@@ -420,11 +418,11 @@ static bool check_timeline(
 		selected.state.info1.peer_parameters.info1a
 			.call_to_answer_symbol_rate = V34_SYMBOL_RATE_2400;
 		CHECK(v34_phase2_is_valid(&selected) &&
-		      v34_phase2_peer_info1a(&selected, &raw_info1a) ==
-			      V34_PHASE2_OK &&
-		      raw_info1a.answer_to_call_symbol_rate ==
+		      selected.state.info1.peer_parameters.info1a
+			      .answer_to_call_symbol_rate ==
 			      V34_SYMBOL_RATE_2400 &&
-		      raw_info1a.call_to_answer_symbol_rate ==
+		      selected.state.info1.peer_parameters.info1a
+			      .call_to_answer_symbol_rate ==
 			      V34_SYMBOL_RATE_2400 &&
 		      v34_phase2_profiles(
 			      &selected, &selected_local, &selected_peer) ==

@@ -140,12 +140,6 @@ bool v34_phase4_exchange_get_data_startup(
 	const struct v34_phase4_exchange *exchange,
 	struct v34_data_startup *startup);
 
-/* Copy the first accepted peer record with its acknowledgment bit cleared.
- * A rejected call leaves the destination unchanged. */
-bool v34_phase4_exchange_get_peer_mp(
-	const struct v34_phase4_exchange *exchange,
-	struct v34_mp_record *record);
-
 /* Consume and produce one simultaneous line sample. `source` supplies local
  * post-B1 mapping frames; NULL deliberately emits idle ones. `received` changes
  * only with MAPPING_FRAME_RECEIVED and never exposes the peer's B1 frame.

@@ -513,8 +513,8 @@ static bool test_pcmu_call(void)
 	      "PCMU call failed");
 	CHECK(caller.entered_phase3 && answerer.entered_phase3 &&
 	      caller.entered_phase4 && answerer.entered_phase4 &&
-	      v34_call_current_stage(&caller.call) == V34_CALL_PHASE4 &&
-	      v34_call_current_stage(&answerer.call) == V34_CALL_PHASE4 &&
+	      caller.call.stage == V34_CALL_PHASE4 &&
+	      answerer.call.stage == V34_CALL_PHASE4 &&
 	      !v34_call_has_failed(&caller.call) &&
 	      !v34_call_has_failed(&answerer.call) &&
 	      caller.call.state.phase4.receive.stage ==
@@ -1189,7 +1189,7 @@ static bool check_unusable_info1_retrains(bool pcma)
 			      &observation) && transmit == 0,
 		      "INFO1 retrain silence failed at sample %zu", index);
 	}
-	CHECK(v34_call_current_stage(&answerer.call) == V34_CALL_PHASE2 &&
+	CHECK(answerer.call.stage == V34_CALL_PHASE2 &&
 	      !v34_call_has_failed(&answerer.call),
 	      "INFO1 retrain did not restart Phase 2 after 70 ms");
 	return true;
@@ -1321,8 +1321,7 @@ static bool test_validation(void)
 	      !v34_call_get_data_startup(NULL, NULL) &&
 	      !v34_call_get_data_startup(
 		      &call, (struct v34_data_startup *)&call) &&
-	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE &&
-	      v34_call_current_stage(NULL) == (enum v34_call_stage)-1,
+	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE,
 	      "rejected call-controller operations were not transactional");
 	return true;
 }
