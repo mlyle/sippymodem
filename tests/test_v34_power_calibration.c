@@ -8,6 +8,7 @@
 #include "v34_encoder_test_helpers.h"
 
 #include <inttypes.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -92,6 +93,13 @@ static double expected_rate_gain(uint16_t level)
 	return (double)level * V34_TRAINING_PULSE_POINT_ZERO_Q12 /
 		((double)V34_PULSE_POINT_SCALE *
 		 V34_TRAINING_FIXED_POINT_ZERO);
+}
+
+static bool mean_powers_are_equal(double first, double second)
+{
+	double scale = fmax(1.0, fmax(fabs(first), fabs(second)));
+
+	return fabs(first - second) <= 1e-12 * scale;
 }
 
 static bool initialize_fixture(
@@ -256,6 +264,14 @@ static bool test_generated_calibration(void)
 		      linear.projected_mean_squared_magnitude &&
 	      normalizer.projected_mean_squared_magnitude >
 		      normalizer.precoded_mean_squared_magnitude &&
+	      normalizer.normalization_gain < linear.normalization_gain &&
+	      mean_powers_are_equal(
+		      normalizer.projected_mean_squared_magnitude *
+			      normalizer.normalization_gain *
+			      normalizer.normalization_gain,
+		      linear.projected_mean_squared_magnitude *
+			      linear.normalization_gain *
+			      linear.normalization_gain) &&
 	      normalizer.precoded_mean_squared_magnitude <=
 		      normalizer.maximum_precoded_point_power &&
 	      normalizer.projected_mean_squared_magnitude <=

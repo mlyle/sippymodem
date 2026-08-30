@@ -211,6 +211,12 @@ v34_calibrate_mapping_power(
 		V34_TRAINING_PULSE_POINT_ZERO_Q12 /
 		((double)V34_PULSE_POINT_SCALE *
 		 V34_TRAINING_FIXED_POINT_ZERO);
+	/* The rate profile sets the linear mean-power scale.  Preserve that
+	 * mean after the radial nonlinear projection instead of transmitting
+	 * the projection's additional power. */
+	normalization_gain *= sqrt(
+		precoded.mean_squared_magnitude /
+		projected.mean_squared_magnitude);
 	result = symbol_power_result(v34_power_normalizer_set_gain(
 		&generated, normalization_gain));
 	if (result == V34_POWER_CALIBRATION_OK)
