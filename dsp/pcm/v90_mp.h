@@ -77,6 +77,14 @@ struct v90_mp_record {
 
 bool v90_mp_record_is_valid(const struct v90_mp_record *record);
 
+/* Lower the advertised maximum to the highest enabled rate at or below the
+ * requested ceiling. A valid record with no such enabled rate is left
+ * unchanged, as is an existing lower maximum or cleardown request. Invalid
+ * calls leave the record unchanged. */
+bool v90_mp_record_limit_maximum_upstream_rate(
+	struct v90_mp_record *record,
+	uint8_t maximum_rate_2400_bps_units);
+
 /* MP-prime repeats the selected MP record with only the CP acknowledgement
  * changed. These helpers keep that comparison independent of structure
  * padding and make the shared field explicit for both record layouts. Invalid

@@ -319,6 +319,58 @@ static bool test_record_comparison(void)
 	return true;
 }
 
+static bool test_maximum_rate_limit(void)
+{
+	struct v90_mp_record type0 = type0_record(false);
+	struct v90_mp_record type1 = type1_record();
+	struct v90_mp_record saved;
+	struct v90_mp_record invalid;
+
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	      type0.parameters.type0.maximum_upstream_rate_2400_bps_units ==
+		      12 &&
+	      type0.parameters.type0.upstream_rate_capability_mask == 0x1555,
+	      "MP type 0 did not limit to its highest enabled rate");
+	saved = type0;
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 14) &&
+	      memcmp(&type0, &saved, sizeof(type0)) == 0,
+	      "MP rate limit raised an existing maximum");
+
+	type1.parameters.type1.common.maximum_upstream_rate_2400_bps_units =
+		14;
+	type1.parameters.type1.common.upstream_rate_capability_mask =
+		(uint16_t)((1u << (11u - 2u)) | (1u << (9u - 2u)));
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type1, 12) &&
+	      type1.parameters.type1.common
+			      .maximum_upstream_rate_2400_bps_units == 11 &&
+	      type1.parameters.type1.precoder_coefficients[1].real == -32767,
+	      "MP type 1 did not preserve its profile while limiting rate");
+
+	type0 = type0_record(false);
+	type0.parameters.type0.upstream_rate_capability_mask =
+		(uint16_t)(1u << (14u - 2u));
+	saved = type0;
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	      memcmp(&type0, &saved, sizeof(type0)) == 0,
+	      "MP limit invented an unavailable lower rate");
+	type0.parameters.type0.maximum_upstream_rate_2400_bps_units = 0;
+	saved = type0;
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	      memcmp(&type0, &saved, sizeof(type0)) == 0,
+	      "MP limit changed a cleardown request");
+
+	invalid = type0_record(false);
+	invalid.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
+	saved = invalid;
+	CHECK(!v90_mp_record_limit_maximum_upstream_rate(NULL, 12) &&
+	      !v90_mp_record_limit_maximum_upstream_rate(&invalid, 12) &&
+	      !v90_mp_record_limit_maximum_upstream_rate(&type0, 1) &&
+	      !v90_mp_record_limit_maximum_upstream_rate(&type0, 15) &&
+	      memcmp(&invalid, &saved, sizeof(invalid)) == 0,
+	      "invalid MP rate limits changed their owner");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct v90_mp_record valid = type0_record(false);
@@ -403,6 +455,7 @@ int main(void)
 		{ "all training frame widths", test_all_training_frame_widths },
 		{ "frame rejection", test_frame_rejection },
 		{ "record comparison", test_record_comparison },
+		{ "maximum rate limit", test_maximum_rate_limit },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

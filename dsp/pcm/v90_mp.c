@@ -69,6 +69,50 @@ bool v90_mp_record_is_valid(const struct v90_mp_record *record)
 	       v90_mp_type1_parameters_are_valid(&record->parameters.type1);
 }
 
+static struct v90_mp_parameters *mutable_record_parameters(
+	struct v90_mp_record *record)
+{
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
+bool v90_mp_record_limit_maximum_upstream_rate(
+	struct v90_mp_record *record,
+	uint8_t maximum_rate_2400_bps_units)
+{
+	struct v90_mp_record limited;
+	struct v90_mp_parameters *parameters;
+
+	if (!v90_mp_record_is_valid(record) ||
+	    maximum_rate_2400_bps_units <
+		    V90_MP_MINIMUM_RATE_2400_BPS_UNITS ||
+	    maximum_rate_2400_bps_units >
+		    V90_MP_MAXIMUM_RATE_2400_BPS_UNITS)
+		return false;
+	limited = *record;
+	parameters = mutable_record_parameters(&limited);
+	if (parameters->maximum_upstream_rate_2400_bps_units == 0u ||
+	    parameters->maximum_upstream_rate_2400_bps_units <=
+		    maximum_rate_2400_bps_units)
+		return true;
+	for (int rate = maximum_rate_2400_bps_units;
+	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
+		uint16_t bit = (uint16_t)(1u <<
+			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
+
+		if ((parameters->upstream_rate_capability_mask & bit) == 0u)
+			continue;
+		parameters->maximum_upstream_rate_2400_bps_units =
+			(uint8_t)rate;
+		break;
+	}
+	if (!v90_mp_record_is_valid(&limited))
+		return false;
+	*record = limited;
+	return true;
+}
+
 static const struct v90_mp_parameters *record_parameters(
 	const struct v90_mp_record *record)
 {
