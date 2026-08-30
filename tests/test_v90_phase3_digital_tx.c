@@ -125,7 +125,7 @@ static bool run_timeline(enum g711_law law)
 		      PCM_PHASE3_DIGITAL_PREFIX_TRN1D,
 	      "Sd-bar did not hand off to TRN1d");
 	for (size_t index = 0;
-	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
+	     index < V90_PHASE3_TRN1D_SYMBOLS; ++index) {
 		struct v90_pcm_symbol symbol;
 		uint8_t sign = reference_scramble(&scrambler, 1);
 
@@ -140,7 +140,7 @@ static bool run_timeline(enum g711_law law)
 	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_JD &&
 		      transmitter.bit_index == 0 &&
 		      transmitter.jd_records == 0,
-	      "minimum TRN1d did not hand off to Jd");
+	      "V.90 TRN1d did not hand off to Jd");
 	for (size_t index = 0; index < 13; ++index) {
 		struct v90_pcm_symbol symbol;
 		uint8_t bit = (uint8_t)(

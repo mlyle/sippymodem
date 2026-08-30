@@ -10,10 +10,18 @@ static bool stage_is_valid(enum pcm_phase3_digital_prefix_stage stage)
 	       stage <= PCM_PHASE3_DIGITAL_PREFIX_COMPLETE;
 }
 
+static bool target_is_valid(uint32_t target)
+{
+	return target >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
+	       target <= V90_PHASE3_TRN1D_MAX_SYMBOLS &&
+	       target % V90_PHASE3_TRN1D_ALIGNMENT == 0;
+}
+
 bool pcm_phase3_digital_prefix_is_valid(
 	const struct pcm_phase3_digital_prefix *prefix)
 {
-	if (prefix == NULL || !stage_is_valid(prefix->stage))
+	if (prefix == NULL || !stage_is_valid(prefix->stage) ||
+	    !target_is_valid(prefix->trn1d_target_symbols))
 		return false;
 	switch (prefix->stage) {
 	case PCM_PHASE3_DIGITAL_PREFIX_SD:
@@ -28,12 +36,12 @@ bool pcm_phase3_digital_prefix_is_valid(
 		return v90_phase3_signs_is_valid(&prefix->sequence.signs) &&
 		       prefix->sequence.signs.phase == V90_PHASE3_SIGNS_TRN1D &&
 		       prefix->sequence.signs.trn1d_symbols <
-			       V90_PHASE3_TRN1D_MIN_SYMBOLS;
+			       prefix->trn1d_target_symbols;
 	case PCM_PHASE3_DIGITAL_PREFIX_COMPLETE:
 		return v90_phase3_signs_is_valid(&prefix->sequence.signs) &&
 		       prefix->sequence.signs.phase == V90_PHASE3_SIGNS_TRN1D &&
 		       prefix->sequence.signs.trn1d_symbols ==
-			       V90_PHASE3_TRN1D_MIN_SYMBOLS;
+			       prefix->trn1d_target_symbols;
 	}
 	return false;
 }
@@ -47,13 +55,14 @@ bool pcm_phase3_digital_prefix_is_complete(
 
 enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_init(
 	struct pcm_phase3_digital_prefix *prefix, enum g711_law law,
-	uint8_t training_ucode)
+	uint8_t training_ucode, uint32_t trn1d_target_symbols)
 {
 	struct pcm_phase3_digital_prefix initialized = {
+		.trn1d_target_symbols = trn1d_target_symbols,
 		.stage = PCM_PHASE3_DIGITAL_PREFIX_SD,
 	};
 
-	if (prefix == NULL ||
+	if (prefix == NULL || !target_is_valid(trn1d_target_symbols) ||
 	    v90_phase3_sd_init(
 		    &initialized.sequence.sd, law, training_ucode,
 		    V90_PHASE3_SD) != V90_PHASE3_SD_OK)
@@ -113,7 +122,7 @@ static bool next_trn1d(
 		    &prefix->sequence.signs, symbol) != V90_PHASE3_SIGNS_OK)
 		return false;
 	if (prefix->sequence.signs.trn1d_symbols ==
-	    V90_PHASE3_TRN1D_MIN_SYMBOLS)
+	    prefix->trn1d_target_symbols)
 		prefix->stage = PCM_PHASE3_DIGITAL_PREFIX_COMPLETE;
 	return true;
 }

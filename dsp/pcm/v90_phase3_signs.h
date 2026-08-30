@@ -12,6 +12,11 @@
 enum {
 	V90_PHASE3_TRN1D_MIN_SYMBOLS = 2040,
 	V90_PHASE3_TRN1D_ALIGNMENT = 6,
+	/* V.90 permits Jd after at least 2040T and requires it within four
+	 * seconds.  This longer head-end interval leaves a remote-silent window
+	 * for delayed echo acquisition while remaining inside that deadline. */
+	V90_PHASE3_TRN1D_SYMBOLS = 15996,
+	V90_PHASE3_TRN1D_MAX_SYMBOLS = 31998,
 	V90_PHASE3_JD_PRIME_BITS = 12,
 };
 

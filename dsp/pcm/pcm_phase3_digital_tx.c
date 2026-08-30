@@ -55,6 +55,13 @@ static bool v92_jp_frame_is_valid(const uint8_t *frame)
 	       memcmp(frame, canonical, sizeof(canonical)) == 0;
 }
 
+static uint32_t protocol_trn1d_symbols(enum pcm_protocol protocol)
+{
+	return protocol == PCM_PROTOCOL_V90 ?
+		       V90_PHASE3_TRN1D_SYMBOLS :
+		       V90_PHASE3_TRN1D_MIN_SYMBOLS;
+}
+
 static bool frames_are_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
@@ -191,7 +198,7 @@ bool pcm_phase3_digital_tx_is_valid(
 		if (!v90_phase3_signs_is_valid(&transmitter->sequence.signs) ||
 		    transmitter->sequence.signs.phase != V90_PHASE3_SIGNS_JD ||
 		    transmitter->sequence.signs.trn1d_symbols !=
-			    V90_PHASE3_TRN1D_MIN_SYMBOLS)
+			    protocol_trn1d_symbols(transmitter->protocol))
 			return false;
 		law = transmitter->sequence.signs.law;
 	}
@@ -234,7 +241,8 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	    !initialize_v90_dil(
 		    &initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
-		    &initialized.sequence.prefix, law, training_ucode) !=
+		    &initialized.sequence.prefix, law, training_ucode,
+		    protocol_trn1d_symbols(PCM_PROTOCOL_V90)) !=
 		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
 	    !pcm_phase3_digital_tx_is_valid(&initialized))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
@@ -260,7 +268,8 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 		    jp, initialized.jp_frame,
 		    sizeof(initialized.jp_frame)) != V92_J_OK ||
 	    pcm_phase3_digital_prefix_init(
-		    &initialized.sequence.prefix, law, training_ucode) !=
+		    &initialized.sequence.prefix, law, training_ucode,
+		    protocol_trn1d_symbols(PCM_PROTOCOL_V92)) !=
 		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
 	    !pcm_phase3_digital_tx_is_valid(&initialized))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;

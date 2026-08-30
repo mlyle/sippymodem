@@ -33,12 +33,13 @@ union pcm_phase3_digital_prefix_sequence {
  * format and continues the GPC scrambler and final TRN1d sign. */
 struct pcm_phase3_digital_prefix {
 	union pcm_phase3_digital_prefix_sequence sequence;
+	uint32_t trn1d_target_symbols;
 	enum pcm_phase3_digital_prefix_stage stage;
 };
 
 enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_init(
 	struct pcm_phase3_digital_prefix *prefix, enum g711_law law,
-	uint8_t training_ucode);
+	uint8_t training_ucode, uint32_t trn1d_target_symbols);
 bool pcm_phase3_digital_prefix_is_valid(
 	const struct pcm_phase3_digital_prefix *prefix);
 bool pcm_phase3_digital_prefix_is_complete(

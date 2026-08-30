@@ -38,7 +38,7 @@ static bool symbol_matches(
 					 g711_encode_pcma(symbol->sample)) == octet;
 }
 
-static bool run_prefix(enum g711_law law)
+static bool run_prefix(enum g711_law law, uint32_t trn1d_symbols)
 {
 	const uint8_t training_ucode = 78;
 	const uint8_t sd_ucode = (uint8_t)(training_ucode + 16u);
@@ -48,7 +48,7 @@ static bool run_prefix(enum g711_law law)
 	uint8_t final_sign = 0;
 
 	CHECK(pcm_phase3_digital_prefix_init(
-		      &prefix, law, training_ucode) ==
+		      &prefix, law, training_ucode, trn1d_symbols) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_OK &&
 	      prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_SD,
 	      "shared prefix initialization failed for law %u",
@@ -80,7 +80,7 @@ static bool run_prefix(enum g711_law law)
 	CHECK(prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_TRN1D,
 	      "Sd-bar did not hand off for law %u", (unsigned int)law);
 	for (size_t index = 0;
-	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
+	     index < trn1d_symbols; ++index) {
 		struct v90_pcm_symbol symbol;
 		uint8_t sign = scramble_one(&reference);
 
@@ -98,7 +98,7 @@ static bool run_prefix(enum g711_law law)
 	      handoff.phase == V90_PHASE3_SIGNS_TRN1D &&
 	      handoff.scrambler.history ==
 		      prefix.sequence.signs.scrambler.history &&
-	      handoff.trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS &&
+	      handoff.trn1d_symbols == trn1d_symbols &&
 	      handoff.last_sign == final_sign,
 	      "shared prefix handoff changed coding state for law %u",
 	      (unsigned int)law);
@@ -118,7 +118,10 @@ static bool run_prefix(enum g711_law law)
 
 static bool test_exact_prefix(void)
 {
-	return run_prefix(G711_LAW_PCMU) && run_prefix(G711_LAW_PCMA);
+	return run_prefix(G711_LAW_PCMU, V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
+	       run_prefix(G711_LAW_PCMA, V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
+	       run_prefix(G711_LAW_PCMU, V90_PHASE3_TRN1D_SYMBOLS) &&
+	       run_prefix(G711_LAW_PCMA, V90_PHASE3_TRN1D_SYMBOLS);
 }
 
 static bool test_validation(void)
@@ -133,18 +136,26 @@ static bool test_validation(void)
 	memset(&prefix, 0xa5, sizeof(prefix));
 	saved = prefix;
 	CHECK(pcm_phase3_digital_prefix_init(
-		      NULL, G711_LAW_PCMU, 78) ==
+		      NULL, G711_LAW_PCMU, 78,
+		      V90_PHASE3_TRN1D_MIN_SYMBOLS) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_prefix_init(
-		      &prefix, (enum g711_law)2, 78) ==
+		      &prefix, (enum g711_law)2, 78,
+		      V90_PHASE3_TRN1D_MIN_SYMBOLS) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_prefix_init(
-		      &prefix, G711_LAW_PCMU, 66) ==
+		      &prefix, G711_LAW_PCMU, 66,
+		      V90_PHASE3_TRN1D_MIN_SYMBOLS) ==
+		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_prefix_init(
+		      &prefix, G711_LAW_PCMU, 78,
+		      V90_PHASE3_TRN1D_MIN_SYMBOLS + 1u) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_INVALID_ARGUMENT &&
 	      memcmp(&prefix, &saved, sizeof(saved)) == 0,
 	      "invalid prefix initialization changed state");
 	CHECK(pcm_phase3_digital_prefix_init(
-		      &prefix, G711_LAW_PCMU, 78) ==
+		      &prefix, G711_LAW_PCMU, 78,
+		      V90_PHASE3_TRN1D_MIN_SYMBOLS) ==
 		      PCM_PHASE3_DIGITAL_PREFIX_OK,
 	      "valid prefix fixture did not initialize");
 	memset(&signs, 0xa5, sizeof(signs));
