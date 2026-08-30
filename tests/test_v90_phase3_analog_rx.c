@@ -126,7 +126,7 @@ static bool run_timeline(
 	}
 	CHECK(started_ja && s_events == 1 && pp_events == 1 &&
 	      v90_phase3_analog_rx_is_complete(&rx) &&
-	      rx.state.ja.decisions > V34_PHASE3_TRN_MIN_SYMBOLS &&
+	      rx.state.ja.decisions > V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      v90_phase3_analog_rx_handoff(&rx, &handoff) ==
 		      V90_PHASE3_ANALOG_RX_OK &&
 	      v90_phase3_analog_handoff_is_valid(&handoff) &&
@@ -148,9 +148,9 @@ static bool run_timeline(
 
 static bool test_generated_timelines(void)
 {
-	CHECK(run_timeline(V34_PHASE3_TRN_MIN_SYMBOLS, 0) &&
-	      run_timeline(V34_PHASE3_TRN_MIN_SYMBOLS + 137u, 1) &&
-	      run_timeline(V34_PHASE3_TRN_MIN_SYMBOLS + 251u, 3),
+	CHECK(run_timeline(V34_TRAINING_SEQUENCE_MIN_SYMBOLS, 0) &&
+	      run_timeline(V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 137u, 1) &&
+	      run_timeline(V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 251u, 3),
 	      "generated analogue receive timelines failed");
 	return true;
 }

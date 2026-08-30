@@ -3,7 +3,7 @@
 #include "test.h"
 
 #include "v34_constellation.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "v90_ja.h"
 
 #include <stdint.h>
@@ -22,18 +22,22 @@ struct reference_stream {
 };
 
 static bool prepare_trn(
-	struct v34_phase3_trn *trn, enum v34_station_role role,
+	struct v34_training_sequence *trn, enum v34_station_role role,
 	unsigned int symbols)
 {
 	struct qam_point ignored_point;
+	uint8_t ignored_quarter;
 	uint8_t ignored_rotation;
 
-	if (v34_phase3_trn_init(trn, role) != V34_PHASE3_TRN_OK)
+	if (v34_training_sequence_init(
+		    trn, role, V34_CONSTELLATION_4_POINT) !=
+	    V34_TRAINING_SEQUENCE_OK)
 		return false;
 	for (unsigned int symbol = 0; symbol < symbols; ++symbol) {
-		if (v34_phase3_trn_next(
-			    trn, &ignored_point, &ignored_rotation) !=
-		    V34_PHASE3_TRN_OK)
+		if (v34_training_sequence_next(
+			    trn, &ignored_point, &ignored_quarter,
+			    &ignored_rotation) !=
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 	}
 	return true;
@@ -41,7 +45,7 @@ static bool prepare_trn(
 
 static void reference_init(
 	struct reference_stream *stream,
-	const struct v34_phase3_trn *trn, uint8_t phase_offset)
+	const struct v34_training_sequence *trn, uint8_t phase_offset)
 {
 	memset(stream, 0, sizeof(*stream));
 	for (size_t delay = 0; delay < HISTORY_BITS; ++delay)
@@ -89,7 +93,7 @@ static uint8_t reference_next(
 
 static bool test_exact_repeating_stream(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_ja_tx tx;
 	struct reference_stream reference;
 	uint8_t descriptor[V90_DIL_ZERO_DESCRIPTOR_BYTES];
@@ -125,7 +129,7 @@ static bool test_exact_repeating_stream(void)
 
 static bool test_variable_repeating_stream(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_dil_parameters parameters;
 	struct v90_ja_tx tx;
 	struct reference_stream reference;
@@ -164,7 +168,7 @@ static bool test_variable_repeating_stream(void)
 
 static bool test_round_trip_with_phase_offsets(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 
 	CHECK(prepare_trn(
 		      &trn, V34_ANSWERING_STATION, TRN_PREFIX_SYMBOLS + 29u),
@@ -220,7 +224,7 @@ static enum v90_ja_result feed_reference_descriptor(
 
 static bool test_rejected_repetitions_recover(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_ja_rx rx;
 	struct reference_stream reference;
 	uint8_t canonical[V90_DIL_ZERO_DESCRIPTOR_BYTES];
@@ -254,9 +258,10 @@ static bool test_rejected_repetitions_recover(void)
 
 static bool test_validation(void)
 {
-	struct v34_phase3_trn empty;
-	struct v34_phase3_trn wrong_polynomial;
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence empty;
+	struct v34_training_sequence wrong_polynomial;
+	struct v34_training_sequence wrong_constellation;
+	struct v34_training_sequence trn;
 	struct v90_ja_tx tx;
 	struct v90_ja_tx saved_tx;
 	struct v90_ja_rx rx;
@@ -267,11 +272,13 @@ static bool test_validation(void)
 
 	memset(&tx, 0xa5, sizeof(tx));
 	saved_tx = tx;
-	CHECK(v34_phase3_trn_init(&empty, V34_ANSWERING_STATION) ==
-		      V34_PHASE3_TRN_OK &&
+	CHECK(v34_training_sequence_init(
+		      &empty, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK &&
 	      prepare_trn(
 		      &wrong_polynomial, V34_CALLING_STATION,
-		      V34_PHASE3_TRN_MIN_SYMBOLS) &&
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS) &&
 	      v90_ja_tx_init_from_trn(NULL, &empty) ==
 		      V90_JA_INVALID_ARGUMENT &&
 	      v90_ja_tx_init_from_trn(&tx, NULL) ==
@@ -284,8 +291,15 @@ static bool test_validation(void)
 	      "Ja accepted an invalid TRN boundary");
 	CHECK(prepare_trn(
 		      &trn, V34_ANSWERING_STATION,
-		      V34_PHASE3_TRN_MIN_SYMBOLS) &&
-	      v90_ja_tx_init_from_trn(&tx, &trn) == V90_JA_OK,
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS),
+	      "Ja validation TRN fixture did not initialize");
+	wrong_constellation = trn;
+	wrong_constellation.constellation = V34_CONSTELLATION_16_POINT;
+	CHECK(v90_ja_tx_init_from_trn(&tx, &wrong_constellation) ==
+		      V90_JA_INVALID_ARGUMENT &&
+	      memcmp(&tx, &saved_tx, sizeof(tx)) == 0,
+	      "Ja transmitter accepted a 16-point TRN boundary");
+	CHECK(v90_ja_tx_init_from_trn(&tx, &trn) == V90_JA_OK,
 	      "Ja validation stream did not initialize");
 	saved_tx = tx;
 	CHECK(v90_ja_tx_next(NULL, &point, &rotation) ==
@@ -319,6 +333,8 @@ static bool test_validation(void)
 	CHECK(v90_ja_rx_init_from_trn(NULL, &trn, 0) ==
 		      V90_JA_INVALID_ARGUMENT &&
 	      v90_ja_rx_init_from_trn(&rx, NULL, 0) ==
+		      V90_JA_INVALID_ARGUMENT &&
+	      v90_ja_rx_init_from_trn(&rx, &wrong_constellation, 0) ==
 		      V90_JA_INVALID_ARGUMENT &&
 	      v90_ja_rx_init_from_trn(&rx, &trn, 4) ==
 		      V90_JA_INVALID_ARGUMENT &&

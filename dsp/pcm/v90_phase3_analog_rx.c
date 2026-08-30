@@ -3,7 +3,7 @@
 #include "v90_phase3_analog_rx.h"
 
 #include "v34_constellation.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "v34_training_channel.h"
 
 #include <math.h>
@@ -66,7 +66,7 @@ static bool ja_receiver_is_valid(
 	    !v90_ja_search_is_valid(&receiver->search) ||
 	    v90_ja_search_is_complete(&receiver->search) != complete)
 		return false;
-	if (receiver->decisions <= V34_PHASE3_TRN_MIN_SYMBOLS)
+	if (receiver->decisions <= V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return search_is_initial(&receiver->search);
 	return receiver->search.has_previous_rotation;
 }
@@ -246,7 +246,7 @@ static enum v90_phase3_analog_rx_result receive_ja(
 		    rx->state.ja.adaptation) != QAM_EQUALIZER_OK)
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 	rx->state.ja.decisions++;
-	if (rx->state.ja.decisions <= V34_PHASE3_TRN_MIN_SYMBOLS)
+	if (rx->state.ja.decisions <= V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return V90_PHASE3_ANALOG_RX_OK;
 	return search_result(v90_ja_search_receive(
 		&rx->state.ja.search, rotation));

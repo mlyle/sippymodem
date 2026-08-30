@@ -3,16 +3,17 @@
 #include "v90_ja.h"
 
 #include "v34_constellation.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "packed_bits.h"
 
 #include <stddef.h>
 #include <string.h>
 
-static bool analogue_boundary_is_valid(const struct v34_phase3_trn *trn)
+static bool analogue_boundary_is_valid(const struct v34_training_sequence *trn)
 {
-	return v34_phase3_trn_is_valid(trn) && trn->has_last_symbol &&
-	       trn->role == V34_ANSWERING_STATION;
+	return v34_training_sequence_is_valid(trn) && trn->has_last_symbol &&
+	       trn->role == V34_ANSWERING_STATION &&
+	       trn->constellation == V34_CONSTELLATION_4_POINT;
 }
 
 static bool analogue_scrambler_is_valid(
@@ -77,7 +78,7 @@ bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx)
 }
 
 enum v90_ja_result v90_ja_tx_init_dil_from_trn(
-	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn,
+	struct v90_ja_tx *tx, const struct v34_training_sequence *trn,
 	const struct v90_dil_parameters *parameters)
 {
 	struct v90_ja_tx initialized = { 0 };
@@ -102,7 +103,7 @@ enum v90_ja_result v90_ja_tx_init_dil_from_trn(
 }
 
 enum v90_ja_result v90_ja_tx_init_from_trn(
-	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn)
+	struct v90_ja_tx *tx, const struct v34_training_sequence *trn)
 {
 	struct v90_dil_parameters parameters;
 
@@ -181,7 +182,7 @@ bool v90_ja_rx_is_valid(const struct v90_ja_rx *rx)
 }
 
 enum v90_ja_result v90_ja_rx_init_from_trn(
-	struct v90_ja_rx *rx, const struct v34_phase3_trn *trn,
+	struct v90_ja_rx *rx, const struct v34_training_sequence *trn,
 	uint8_t observed_previous_clockwise_quarter_turns)
 {
 	struct v90_ja_rx initialized = { 0 };

@@ -4,7 +4,7 @@
 #include <v34_phase3_decision_receiver.h>
 #include <v34_phase3_j_sequence.h>
 #include <v34_phase3_s_sequence.h>
-#include <v34_phase3_trn.h>
+#include <v34_training_sequence.h>
 
 #include "test.h"
 
@@ -129,7 +129,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 	struct v34_phase3_decision_receiver receiver;
 	struct v34_phase3_s_sequence s;
 	struct v34_phase3_pp_sequence pp;
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase3_j_sequence j;
 	struct v34_phase3_decision_handoff handoff;
 	struct observation_clock clock = {
@@ -137,6 +137,7 @@ static bool run_clean_timeline(enum v34_station_role role)
 	};
 	struct v34_analytic_sample point;
 	enum v34_phase3_s_section section;
+	uint8_t quarter;
 	uint8_t rotation;
 
 	CHECK(v34_phase3_decision_receiver_init_suffix(
@@ -146,7 +147,9 @@ static bool run_clean_timeline(enum v34_station_role role)
 		      V34_PHASE3_S_SEQUENCE_OK &&
 	      v34_phase3_pp_sequence_init(&pp) ==
 		      V34_PHASE3_PP_SEQUENCE_OK &&
-	      v34_phase3_trn_init(&trn, role) == V34_PHASE3_TRN_OK,
+	      v34_training_sequence_init(
+		      &trn, role, V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "role %d fixed Phase 3 timeline did not initialize", role);
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SYMBOLS - suffix; ++symbol)
@@ -221,22 +224,23 @@ static bool run_clean_timeline(enum v34_station_role role)
 		struct v34_analytic_sample observed;
 		struct v34_analytic_sample target;
 
-		CHECK(v34_phase3_trn_next_fixed(&trn, &point, &rotation) ==
-			      V34_PHASE3_TRN_OK,
+		CHECK(v34_training_sequence_next_fixed(
+			      &trn, &point, &quarter, &rotation) ==
+			      V34_TRAINING_SEQUENCE_OK,
 		      "role %d TRN source %u stopped", role, symbol);
 		observed = point;
 		target = point;
 		/* The minimum legal TRN interval has a known reset scrambler.
 		 * Deliberately give the semantic receiver the wrong hard point to
 		 * prove that interval trains from the source, not its decision. */
-		if (symbol <= V34_PHASE3_TRN_MIN_SYMBOLS) {
+		if (symbol <= V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 			CHECK(v34_training_constellation_fixed_point(
 				      V34_CONSTELLATION_4_POINT, 0,
 				      (uint8_t)((rotation + 1u) & 3u),
 				      &observed) == V34_CONSTELLATION_OK,
 			      "role %d TRN perturbation %u failed", role,
 			      symbol);
-			if (symbol == V34_PHASE3_TRN_MIN_SYMBOLS)
+			if (symbol == V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 				target = observed;
 		}
 		CHECK(

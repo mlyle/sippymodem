@@ -333,6 +333,19 @@ static bool test_validation(void)
 	      v34_training_sequence_next(
 		      &trn, &point, &quarter, NULL) ==
 		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
+		      &trn, (struct qam_point *)&trn,
+		      &quarter, &rotation) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
+		      &trn, &point, (uint8_t *)&point, &rotation) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
+		      &trn, &point, &quarter, (uint8_t *)&point) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
+		      &trn, &point, &quarter, &quarter) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
@@ -348,6 +361,20 @@ static bool test_validation(void)
 		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      v34_training_sequence_next_fixed(
 		      &trn, &fixed_point, &quarter, NULL) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
+		      &trn, (struct v34_analytic_sample *)&trn,
+		      &quarter, &rotation) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
+		      &trn, &fixed_point, (uint8_t *)&fixed_point,
+		      &rotation) == V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
+		      &trn, &fixed_point, &quarter,
+		      (uint8_t *)&fixed_point) ==
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
+		      &trn, &fixed_point, &quarter, &quarter) ==
 		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&fixed_point, &before_fixed_point,

@@ -2,6 +2,8 @@
 
 #include "v34_training_sequence.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 
 bool v34_training_sequence_is_valid(
@@ -45,9 +47,6 @@ static enum v34_training_sequence_result next_labels(
 	uint8_t next_quarter_point = 0;
 	uint8_t rotation;
 
-	if (!v34_training_sequence_is_valid(trn) || next == NULL ||
-	    quarter_point == NULL || clockwise_quarter_turns == NULL)
-		return V34_TRAINING_SEQUENCE_INVALID_ARGUMENT;
 	*next = *trn;
 	if (v34_scramble_mapped_dibit(
 		    &next->scrambler, 3u, &rotation) !=
@@ -67,6 +66,32 @@ static enum v34_training_sequence_result next_labels(
 	return V34_TRAINING_SEQUENCE_OK;
 }
 
+static bool outputs_overlap(
+	const struct v34_training_sequence *trn,
+	const void *point, size_t point_size,
+	const uint8_t *quarter_point,
+	const uint8_t *clockwise_quarter_turns)
+{
+	return memory_regions_overlap(
+		       trn, sizeof(*trn), point, point_size) ||
+	       memory_regions_overlap(
+		       trn, sizeof(*trn), quarter_point,
+		       sizeof(*quarter_point)) ||
+	       memory_regions_overlap(
+		       trn, sizeof(*trn), clockwise_quarter_turns,
+		       sizeof(*clockwise_quarter_turns)) ||
+	       memory_regions_overlap(
+		       point, point_size, quarter_point,
+		       sizeof(*quarter_point)) ||
+	       memory_regions_overlap(
+		       point, point_size, clockwise_quarter_turns,
+		       sizeof(*clockwise_quarter_turns)) ||
+	       memory_regions_overlap(
+		       quarter_point, sizeof(*quarter_point),
+		       clockwise_quarter_turns,
+		       sizeof(*clockwise_quarter_turns));
+}
+
 enum v34_training_sequence_result v34_training_sequence_next(
 	struct v34_training_sequence *trn,
 	struct qam_point *point, uint8_t *quarter_point,
@@ -77,8 +102,12 @@ enum v34_training_sequence_result v34_training_sequence_next(
 	uint8_t quarter;
 	uint8_t rotation;
 
-	if (point == NULL || quarter_point == NULL ||
+	if (!v34_training_sequence_is_valid(trn) || point == NULL ||
+	    quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL ||
+	    outputs_overlap(
+		    trn, point, sizeof(*point), quarter_point,
+		    clockwise_quarter_turns) ||
 	    next_labels(trn, &next, &quarter, &rotation) !=
 		    V34_TRAINING_SEQUENCE_OK ||
 	    v34_training_constellation_point(
@@ -102,8 +131,12 @@ enum v34_training_sequence_result v34_training_sequence_next_fixed(
 	uint8_t quarter;
 	uint8_t rotation;
 
-	if (point == NULL || quarter_point == NULL ||
+	if (!v34_training_sequence_is_valid(trn) || point == NULL ||
+	    quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL ||
+	    outputs_overlap(
+		    trn, point, sizeof(*point), quarter_point,
+		    clockwise_quarter_turns) ||
 	    next_labels(trn, &next, &quarter, &rotation) !=
 		    V34_TRAINING_SEQUENCE_OK ||
 	    v34_training_constellation_fixed_point(

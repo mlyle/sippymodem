@@ -56,7 +56,7 @@ static bool zero_md_trn_target(
 	    profile->md_symbol_count != 0)
 		return false;
 	if (profile->local_role == V34_CALLING_STATION) {
-		*symbols = V34_PHASE3_TRN_MIN_SYMBOLS;
+		*symbols = V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 		return true;
 	}
 	/* The answerer's echo-training counter spans PP and TRN. PP leaves it
@@ -74,7 +74,7 @@ static bool zero_md_trn_target(
 	    terminal_count - pp_terminal_count > UINT32_MAX)
 		return false;
 	*symbols = (uint32_t)(terminal_count - pp_terminal_count);
-	return *symbols >= V34_PHASE3_TRN_MIN_SYMBOLS;
+	return *symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 }
 
 static bool trn_timing_is_valid(

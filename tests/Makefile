@@ -1293,7 +1293,7 @@ V34_PHASE3_PP_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o
+	$(BUILD_DIR)/v34_training_sequence.o
 V34_PHASE3_S_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_s_sequence
 V34_PHASE3_S_SEQUENCE_TEST_OBJECTS := \
@@ -1321,14 +1321,6 @@ V34_TRAINING_LINE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o
-V34_PHASE3_TRN_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase3_trn
-V34_PHASE3_TRN_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase3_trn.o \
-	$(SELF_SYNC_SCRAMBLER_OBJECT) \
-	$(BUILD_DIR)/v34_constellation.o \
-	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o
 V34_PHASE3_J_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_j_sequence
 V34_PHASE3_J_SEQUENCE_TEST_OBJECTS := \
@@ -1336,7 +1328,7 @@ V34_PHASE3_J_SEQUENCE_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o
 V34_PHASE3_J_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_j_receiver
@@ -1345,7 +1337,7 @@ V34_PHASE3_J_RECEIVER_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_receiver.o
 V34_PHASE3_DECISION_RECEIVER_TEST_BINARY := \
@@ -1361,7 +1353,7 @@ V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o
+	$(BUILD_DIR)/v34_training_sequence.o
 V34_PHASE4_J_PRIME_SEQUENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_j_prime_sequence
 V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS := \
@@ -1369,7 +1361,7 @@ V34_PHASE4_J_PRIME_SEQUENCE_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o
 V34_PHASE3_TRANSMITTER_TEST_BINARY := \
@@ -1382,7 +1374,7 @@ V34_PHASE3_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o
 V34_PHASE3_EXCHANGE_TEST_BINARY := \
@@ -1413,11 +1405,10 @@ V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_transmitter.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
-	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
@@ -1450,13 +1441,12 @@ V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
-	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
@@ -2347,7 +2337,7 @@ V90_JA_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/v90_ja.o
@@ -2357,7 +2347,7 @@ V90_JA_SEARCH_TEST_OBJECTS := \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/v90_ja.o \
@@ -2421,7 +2411,7 @@ V90_PHASE3_ANALOG_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_phase3_pp_sequence.o \
-	$(BUILD_DIR)/v34_phase3_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
 	$(BUILD_DIR)/v34_phase3_transmitter.o \
@@ -3109,7 +3099,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE3_S_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE3_S_RECEIVER_TEST_BINARY) \
 	$(V34_TRAINING_LINE_TEST_BINARY) \
-	$(V34_PHASE3_TRN_TEST_BINARY) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE3_J_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE3_DECISION_RECEIVER_TEST_BINARY) \
@@ -3425,7 +3414,6 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE3_S_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_S_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_TRAINING_LINE_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE3_TRN_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_J_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_J_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS:.o=.d) \
@@ -4082,9 +4070,6 @@ $(V34_PHASE3_S_RECEIVER_TEST_BINARY): $(V34_PHASE3_S_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_TRAINING_LINE_TEST_BINARY): $(V34_TRAINING_LINE_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_PHASE3_TRN_TEST_BINARY): $(V34_PHASE3_TRN_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE3_J_SEQUENCE_TEST_BINARY): \
@@ -5688,10 +5673,6 @@ $(BUILD_DIR)/v34_phase3_s_receiver.o: \
 
 $(BUILD_DIR)/v34_training_line.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_line.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_phase3_trn.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase3_trn.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase3_j_sequence.o: \

@@ -24,7 +24,7 @@ enum v34_phase3_j_sequence_result {
 	V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT,
 };
 
-struct v34_phase3_trn;
+struct v34_training_sequence;
 
 struct v34_phase3_j_sequence {
 	struct v34_scrambler scrambler;
@@ -39,7 +39,7 @@ struct v34_phase3_j_sequence {
 enum v34_phase3_j_sequence_result
 v34_phase3_j_sequence_init_from_trn(
 	struct v34_phase3_j_sequence *sequence,
-	const struct v34_phase3_trn *trn,
+	const struct v34_training_sequence *trn,
 	enum v34_constellation_size remote_constellation);
 
 bool v34_phase3_j_sequence_is_valid(

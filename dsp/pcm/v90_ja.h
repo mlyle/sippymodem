@@ -18,7 +18,7 @@ enum v90_ja_result {
 	V90_JA_INVALID_ARGUMENT,
 };
 
-struct v34_phase3_trn;
+struct v34_training_sequence;
 struct qam_point;
 
 /* Ja carries one complete DIL descriptor repeatedly, continuing the analogue
@@ -43,9 +43,9 @@ struct v90_ja_rx {
 };
 
 enum v90_ja_result v90_ja_tx_init_from_trn(
-	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn);
+	struct v90_ja_tx *tx, const struct v34_training_sequence *trn);
 enum v90_ja_result v90_ja_tx_init_dil_from_trn(
-	struct v90_ja_tx *tx, const struct v34_phase3_trn *trn,
+	struct v90_ja_tx *tx, const struct v34_training_sequence *trn,
 	const struct v90_dil_parameters *parameters);
 bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx);
 bool v90_ja_tx_at_descriptor_boundary(const struct v90_ja_tx *tx);
@@ -65,7 +65,7 @@ enum v90_ja_result v90_ja_tx_next_owned(
 	uint8_t *clockwise_quarter_turns);
 
 enum v90_ja_result v90_ja_rx_init_from_trn(
-	struct v90_ja_rx *rx, const struct v34_phase3_trn *trn,
+	struct v90_ja_rx *rx, const struct v34_training_sequence *trn,
 	uint8_t observed_previous_clockwise_quarter_turns);
 bool v90_ja_rx_is_valid(const struct v90_ja_rx *rx);
 bool v90_ja_rx_is_complete(const struct v90_ja_rx *rx);

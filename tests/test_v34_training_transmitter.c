@@ -329,7 +329,7 @@ static bool run_composed_sequence(
 			stages_seen |= 1u << model.phase3.stage;
 			if (model.phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
 			    model.phase3.trn_symbols ==
-				    V34_PHASE3_TRN_MIN_SYMBOLS) {
+				    V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 				CHECK(v34_training_transmitter_start_j(&actual) ==
 					      V34_TRAINING_TRANSMITTER_OK &&
 				      v34_phase3_transmitter_start_j(&model.phase3) ==
@@ -486,7 +486,7 @@ static bool advance_to_phase4(struct v34_training_transmitter *training)
 
 		if (training->stage == V34_TRAINING_TRANSMITTER_PHASE3 &&
 		    training->phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
-		    training->phase3.trn_symbols == V34_PHASE3_TRN_MIN_SYMBOLS &&
+		    training->phase3.trn_symbols == V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 		    v34_training_transmitter_start_j(training) !=
 			    V34_TRAINING_TRANSMITTER_OK)
 			return false;

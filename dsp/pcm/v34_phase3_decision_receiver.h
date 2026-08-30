@@ -7,7 +7,7 @@
 #include "v34_phase3_j_receiver.h"
 #include "v34_phase3_pp_sequence.h"
 #include "v34_phase3_s_receiver.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "v34_station.h"
 
 #include <stdbool.h>
@@ -46,7 +46,7 @@ enum v34_phase3_decision_receiver_result {
 struct v34_phase3_decision_receiver {
 	struct v34_phase3_s_receiver s;
 	struct v34_phase3_pp_sequence pp;
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase3_j_receiver j;
 	struct v34_phase3_s_detection s_detection;
 	uint32_t md_symbols;

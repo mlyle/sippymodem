@@ -13,24 +13,28 @@ enum {
 
 static bool start_pair(
 	struct v34_phase3_j_receiver *receiver,
-	struct v34_phase3_trn *source, enum v34_station_role role)
+	struct v34_training_sequence *source, enum v34_station_role role)
 {
 	return v34_phase3_j_receiver_init(receiver, role) ==
 		       V34_PHASE3_J_RECEIVER_OK &&
-	       v34_phase3_trn_init(source, role) == V34_PHASE3_TRN_OK;
+	       v34_training_sequence_init(
+		       source, role, V34_CONSTELLATION_4_POINT) ==
+		       V34_TRAINING_SEQUENCE_OK;
 }
 
 static bool feed_trn_offset(
 	struct v34_phase3_j_receiver *receiver,
-	struct v34_phase3_trn *source, unsigned int symbols,
+	struct v34_training_sequence *source, unsigned int symbols,
 	uint8_t rotation_offset)
 {
 	for (unsigned int symbol = 0; symbol < symbols; ++symbol) {
 		struct qam_point point;
+		uint8_t quarter;
 		uint8_t rotation;
 
-		if (v34_phase3_trn_next(source, &point, &rotation) !=
-			    V34_PHASE3_TRN_OK ||
+		if (v34_training_sequence_next(
+			    source, &point, &quarter, &rotation) !=
+			    V34_TRAINING_SEQUENCE_OK ||
 		    v34_phase3_j_receiver_receive(
 			    receiver, 0,
 			    (uint8_t)((rotation + rotation_offset) & 3u)) !=
@@ -42,7 +46,7 @@ static bool feed_trn_offset(
 
 static bool feed_trn(
 	struct v34_phase3_j_receiver *receiver,
-	struct v34_phase3_trn *source, unsigned int symbols)
+	struct v34_training_sequence *source, unsigned int symbols)
 {
 	return feed_trn_offset(receiver, source, symbols, 0);
 }
@@ -132,7 +136,7 @@ static bool run_generated_transition(
 	unsigned int trn_symbols)
 {
 	struct v34_phase3_j_receiver receiver;
-	struct v34_phase3_trn source_trn;
+	struct v34_training_sequence source_trn;
 	struct v34_phase3_j_sequence source_j;
 	struct v34_phase3_j_detection detection;
 	unsigned int j_symbols;
@@ -205,7 +209,7 @@ static bool test_generated_selections_and_boundaries(void)
 static bool test_minimum_and_error_threshold(void)
 {
 	struct v34_phase3_j_receiver receiver;
-	struct v34_phase3_trn source_trn;
+	struct v34_training_sequence source_trn;
 	struct v34_phase3_j_sequence source_j;
 	struct v34_phase3_j_detection detection;
 
@@ -213,7 +217,7 @@ static bool test_minimum_and_error_threshold(void)
 		      &receiver, &source_trn, V34_CALLING_STATION) &&
 	      feed_trn(
 		      &receiver, &source_trn,
-		      V34_PHASE3_TRN_MIN_SYMBOLS -
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS -
 			      V34_PHASE3_J_RECEIVER_ACQUISITION_SYMBOLS - 1u) &&
 	      v34_phase3_j_sequence_init_from_trn(
 		      &source_j, &source_trn,
@@ -271,7 +275,7 @@ static bool test_continued_trn_rejection(void)
 
 	for (size_t role = 0; role < ARRAY_LENGTH(ROLES); ++role) {
 		struct v34_phase3_j_receiver receiver;
-		struct v34_phase3_trn source;
+		struct v34_training_sequence source;
 
 		CHECK(start_pair(&receiver, &source, ROLES[role]) &&
 		      feed_trn(&receiver, &source, 20000) &&
@@ -287,7 +291,7 @@ static bool test_carrier_phase_ambiguity(void)
 {
 	for (uint8_t offset = 1; offset < 4u; ++offset) {
 		struct v34_phase3_j_receiver receiver;
-		struct v34_phase3_trn source_trn;
+		struct v34_training_sequence source_trn;
 		struct v34_phase3_j_sequence source_j;
 		struct v34_phase3_j_detection detection;
 		unsigned int j_symbols = 0;
@@ -347,7 +351,7 @@ static bool test_validation_and_range(void)
 	struct v34_phase3_j_receiver receiver;
 	struct v34_phase3_j_receiver saved;
 	struct v34_phase3_j_receiver corrupt;
-	struct v34_phase3_trn source;
+	struct v34_training_sequence source;
 	struct v34_phase3_j_detection detection;
 	struct v34_phase3_j_detection saved_detection;
 

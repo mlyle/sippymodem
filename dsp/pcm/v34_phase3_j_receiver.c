@@ -24,7 +24,7 @@ bool v34_phase3_j_detection_is_valid(
 	const struct v34_phase3_j_detection *detection)
 {
 	return detection != NULL &&
-	       detection->preceding_symbols >= V34_PHASE3_TRN_MIN_SYMBOLS &&
+	       detection->preceding_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	       detection->errors <= V34_PHASE3_J_RECEIVER_MAX_ERRORS &&
 	       v34_phase3_j_sequence_at_pattern_boundary(
 		       &detection->sequence);
@@ -306,7 +306,7 @@ enum v34_phase3_j_receiver_result v34_phase3_j_receiver_receive(
 		    V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS &&
 	    next.received_symbols >= V34_PHASE3_J_RECEIVER_ROTATION_SYMBOLS &&
 	    next.received_symbols - V34_PHASE3_J_RECEIVER_WINDOW_SYMBOLS >=
-		    V34_PHASE3_TRN_MIN_SYMBOLS &&
+		    V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	    correlate(&next, &detection)) {
 		next.detection = detection;
 		next.complete = true;

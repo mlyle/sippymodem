@@ -345,7 +345,7 @@ static bool run_generated_duplex_exchange(
 	      "Phase 3 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
 	CHECK(caller.transmit.phase3.stage == V34_PHASE3_TRANSMITTER_J &&
-	      caller.trn_target_symbols == V34_PHASE3_TRN_MIN_SYMBOLS &&
+	      caller.trn_target_symbols == V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      caller.transmit.phase3.trn_symbols == caller.trn_target_symbols &&
 	      caller.transmit.phase3.j_symbols >=
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
@@ -417,10 +417,10 @@ static bool test_trn_duration_policy(void)
 			      TEST_INITIAL_RECEIVE_GAIN) ==
 			      V34_PHASE3_EXCHANGE_OK &&
 		      exchange.trn_target_symbols ==
-			      V34_PHASE3_TRN_MIN_SYMBOLS,
+			      V34_TRAINING_SEQUENCE_MIN_SYMBOLS,
 		      "rate %d caller selected %u TRN symbols instead of %u",
 		      cases[index].rate, exchange.trn_target_symbols,
-		      V34_PHASE3_TRN_MIN_SYMBOLS);
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS);
 		CHECK(v34_phase3_exchange_init(
 			      &exchange, &answerer, &caller, &config,
 			      TEST_INITIAL_RECEIVE_GAIN) ==

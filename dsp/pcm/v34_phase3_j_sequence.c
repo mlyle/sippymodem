@@ -3,7 +3,7 @@
 #include "v34_phase3_j_sequence.h"
 
 #include "memory_region.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 
 #include <stddef.h>
 
@@ -42,12 +42,13 @@ bool v34_phase3_j_sequence_is_equal(
 enum v34_phase3_j_sequence_result
 v34_phase3_j_sequence_init_from_trn(
 	struct v34_phase3_j_sequence *sequence,
-	const struct v34_phase3_trn *trn,
+	const struct v34_training_sequence *trn,
 	enum v34_constellation_size remote_constellation)
 {
 	struct v34_phase3_j_sequence initialized;
 
-	if (sequence == NULL || !v34_phase3_trn_is_valid(trn) ||
+	if (sequence == NULL || !v34_training_sequence_is_valid(trn) ||
+	    trn->constellation != V34_CONSTELLATION_4_POINT ||
 	    !trn->has_last_symbol ||
 	    !v34_constellation_size_is_valid(
 		    remote_constellation))

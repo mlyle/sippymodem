@@ -105,7 +105,7 @@ enum v90_phase3_analog_tx_result v90_phase3_analog_tx_start_dil_ja(
 	const struct v90_dil_parameters *parameters)
 {
 	struct v90_phase3_analog_tx next;
-	struct v34_phase3_trn boundary;
+	struct v34_training_sequence boundary;
 	struct v90_ja_tx ja;
 	enum v34_phase3_transmitter_result boundary_result;
 

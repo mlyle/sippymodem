@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_constellation.h>
-#include <v34_phase3_trn.h>
+#include <v34_training_sequence.h>
 #include <v34_phase3_s_sequence.h>
 #include <v34_phase4_decision_receiver.h>
 #include <v34_phase4_e_sequence.h>
@@ -293,19 +293,23 @@ static bool make_j_sequence(
 	enum v34_constellation_size constellation,
 	struct v34_phase3_j_sequence *sequence)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase3_j_sequence j;
 	struct v34_analytic_sample ignored;
+	uint8_t ignored_quarter;
 	uint8_t ignored_rotation;
 
 	if (sequence == NULL ||
-	    v34_phase3_trn_init(&trn, role) != V34_PHASE3_TRN_OK)
+	    v34_training_sequence_init(
+		    &trn, role, V34_CONSTELLATION_4_POINT) !=
+		    V34_TRAINING_SEQUENCE_OK)
 		return false;
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_TRN_MIN_SYMBOLS; ++symbol)
-		if (v34_phase3_trn_next_fixed(
-			    &trn, &ignored, &ignored_rotation) !=
-		    V34_PHASE3_TRN_OK)
+	     symbol < V34_TRAINING_SEQUENCE_MIN_SYMBOLS; ++symbol)
+		if (v34_training_sequence_next_fixed(
+			    &trn, &ignored, &ignored_quarter,
+			    &ignored_rotation) !=
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 	if (v34_phase3_j_sequence_init_from_trn(
 		    &j, &trn, constellation) != V34_PHASE3_J_SEQUENCE_OK)

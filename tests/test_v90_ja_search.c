@@ -2,7 +2,7 @@
 
 #include "test.h"
 
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "v90_ja.h"
 #include "v90_ja_search.h"
 
@@ -30,16 +30,18 @@ static bool feed_rotation(
 }
 
 static bool feed_trn(
-	struct v34_phase3_trn *trn, struct v90_ja_search *search,
+	struct v34_training_sequence *trn, struct v90_ja_search *search,
 	unsigned int first, unsigned int count, uint8_t phase_offset,
 	enum v90_ja_search_result *event)
 {
 	for (unsigned int symbol = first; symbol < count; ++symbol) {
 		struct qam_point ignored;
+		uint8_t quarter;
 		uint8_t rotation;
 
-		if (v34_phase3_trn_next(trn, &ignored, &rotation) !=
-			    V34_PHASE3_TRN_OK ||
+		if (v34_training_sequence_next(
+			    trn, &ignored, &quarter, &rotation) !=
+			    V34_TRAINING_SEQUENCE_OK ||
 		    (symbol >= SEARCH_START_TRN_SYMBOL &&
 		     !feed_rotation(search, rotation, phase_offset, event)))
 			return false;
@@ -68,13 +70,14 @@ static bool feed_ja(
 
 static bool run_first_descriptor(uint8_t phase_offset)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_ja_tx tx;
 	struct v90_ja_search search;
 	enum v90_ja_search_result event = V90_JA_SEARCH_OK;
 
-	CHECK(v34_phase3_trn_init(
-		      &trn, V34_ANSWERING_STATION) == V34_PHASE3_TRN_OK &&
+	CHECK(v34_training_sequence_init(
+		      &trn, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK &&
 	      v90_ja_search_init(&search) == V90_JA_SEARCH_OK &&
 	      feed_trn(
 		      &trn, &search, 0, JA_START_TRN_SYMBOL,
@@ -104,14 +107,15 @@ static bool test_boundary_free_acquisition(void)
 
 static bool test_damaged_repetition_recovers(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_ja_tx tx;
 	struct v90_ja_search search;
 	enum v90_ja_search_result event = V90_JA_SEARCH_OK;
 	bool rejection_seen = false;
 
-	CHECK(v34_phase3_trn_init(
-		      &trn, V34_ANSWERING_STATION) == V34_PHASE3_TRN_OK &&
+	CHECK(v34_training_sequence_init(
+		      &trn, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK &&
 	      v90_ja_search_init(&search) == V90_JA_SEARCH_OK &&
 	      feed_trn(
 		      &trn, &search, 0, JA_START_TRN_SYMBOL,
@@ -176,7 +180,7 @@ static bool feed_descriptor(
 
 static bool test_variable_descriptor(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v90_ja_search search;
 	const struct v90_dil_parameters expected = {
 		.segment_count = 144,
@@ -189,8 +193,9 @@ static bool test_variable_descriptor(void)
 	uint8_t previous_rotation;
 	enum v90_ja_search_result event = V90_JA_SEARCH_OK;
 
-	CHECK(v34_phase3_trn_init(
-		      &trn, V34_ANSWERING_STATION) == V34_PHASE3_TRN_OK &&
+	CHECK(v34_training_sequence_init(
+		      &trn, V34_ANSWERING_STATION,
+		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK &&
 	      v90_ja_search_init(&search) == V90_JA_SEARCH_OK &&
 		      feed_trn(
 		      &trn, &search, 0, JA_START_TRN_SYMBOL,

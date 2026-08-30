@@ -15,11 +15,11 @@ static bool counters_are_valid(const struct v34_phase3_transmitter *transmitter)
 		       transmitter->state.trn.has_last_symbol ==
 			       (transmitter->trn_symbols != 0);
 	case V34_PHASE3_TRANSMITTER_J:
-		return transmitter->trn_symbols >= V34_PHASE3_TRN_MIN_SYMBOLS &&
+		return transmitter->trn_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 		       transmitter->j_symbols % V34_PHASE3_J_PATTERN_SYMBOLS ==
 			       transmitter->state.j.symbol_in_pattern;
 	case V34_PHASE3_TRANSMITTER_COMPLETE:
-		return transmitter->trn_symbols >= V34_PHASE3_TRN_MIN_SYMBOLS &&
+		return transmitter->trn_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 		       transmitter->j_symbols >= V34_PHASE3_J_PATTERN_SYMBOLS &&
 		       transmitter->j_symbols % V34_PHASE3_J_PATTERN_SYMBOLS == 0;
 	}
@@ -43,8 +43,10 @@ bool v34_phase3_transmitter_is_valid(
 		return v34_phase3_pp_sequence_is_valid(&transmitter->state.pp) &&
 		       !v34_phase3_pp_sequence_is_complete(&transmitter->state.pp);
 	case V34_PHASE3_TRANSMITTER_TRN:
-		return v34_phase3_trn_is_valid(&transmitter->state.trn) &&
-		       transmitter->state.trn.role == transmitter->local_role;
+		return v34_training_sequence_is_valid(&transmitter->state.trn) &&
+		       transmitter->state.trn.role == transmitter->local_role &&
+		       transmitter->state.trn.constellation ==
+			       V34_CONSTELLATION_4_POINT;
 	case V34_PHASE3_TRANSMITTER_J:
 		return v34_phase3_j_sequence_is_valid(&transmitter->state.j) &&
 		       transmitter->state.j.role == transmitter->local_role &&
@@ -108,10 +110,11 @@ static enum v34_phase3_transmitter_result next_pp(
 		return V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE;
 	if (v34_phase3_pp_sequence_is_complete(&transmitter->state.pp)) {
 		transmitter->state = (union v34_phase3_transmitter_state){ 0 };
-		if (v34_phase3_trn_init(
+		if (v34_training_sequence_init(
 			    &transmitter->state.trn,
-			    transmitter->local_role) !=
-		    V34_PHASE3_TRN_OK)
+			    transmitter->local_role,
+			    V34_CONSTELLATION_4_POINT) !=
+		    V34_TRAINING_SEQUENCE_OK)
 			return V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE;
 		transmitter->stage = V34_PHASE3_TRANSMITTER_TRN;
 	}
@@ -121,12 +124,13 @@ static enum v34_phase3_transmitter_result next_pp(
 static enum v34_phase3_transmitter_result next_trn(
 	struct v34_phase3_transmitter *transmitter, struct qam_point *point)
 {
+	uint8_t quarter;
 	uint8_t rotation;
 
 	if (transmitter->trn_symbols == UINT32_MAX ||
-	    v34_phase3_trn_next(
-		    &transmitter->state.trn, point, &rotation) !=
-		    V34_PHASE3_TRN_OK)
+	    v34_training_sequence_next(
+		    &transmitter->state.trn, point, &quarter, &rotation) !=
+		    V34_TRAINING_SEQUENCE_OK)
 		return V34_PHASE3_TRANSMITTER_NUMERIC_FAILURE;
 	transmitter->trn_symbols++;
 	return V34_PHASE3_TRANSMITTER_OK;
@@ -194,7 +198,7 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
 	if (!v34_phase3_transmitter_is_valid(transmitter))
 		return V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT;
 	if (transmitter->stage != V34_PHASE3_TRANSMITTER_TRN ||
-	    transmitter->trn_symbols < V34_PHASE3_TRN_MIN_SYMBOLS)
+	    transmitter->trn_symbols < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return V34_PHASE3_TRANSMITTER_INVALID_STATE;
 	if (v34_phase3_j_sequence_init_from_trn(
 		    &j, &transmitter->state.trn,
@@ -213,12 +217,12 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
 
 enum v34_phase3_transmitter_result v34_phase3_transmitter_trn_boundary(
 	const struct v34_phase3_transmitter *transmitter,
-	struct v34_phase3_trn *trn)
+	struct v34_training_sequence *trn)
 {
 	if (!v34_phase3_transmitter_is_valid(transmitter) || trn == NULL)
 		return V34_PHASE3_TRANSMITTER_INVALID_ARGUMENT;
 	if (transmitter->stage != V34_PHASE3_TRANSMITTER_TRN ||
-	    transmitter->trn_symbols < V34_PHASE3_TRN_MIN_SYMBOLS)
+	    transmitter->trn_symbols < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return V34_PHASE3_TRANSMITTER_INVALID_STATE;
 	*trn = transmitter->state.trn;
 	return V34_PHASE3_TRANSMITTER_OK;

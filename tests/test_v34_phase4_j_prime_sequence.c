@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase3_j_sequence.h>
-#include <v34_phase3_trn.h>
+#include <v34_training_sequence.h>
 #include <v34_phase4_j_prime_sequence.h>
 
 #include "test.h"
@@ -65,17 +65,20 @@ static bool prepare_j(
 	enum v34_constellation_size constellation,
 	unsigned int patterns)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct qam_point ignored_point;
+	uint8_t ignored_quarter;
 	uint8_t ignored_rotation;
 
-	if (v34_phase3_trn_init(&trn, role) !=
-	    V34_PHASE3_TRN_OK)
+	if (v34_training_sequence_init(
+		    &trn, role, V34_CONSTELLATION_4_POINT) !=
+	    V34_TRAINING_SEQUENCE_OK)
 		return false;
 	for (unsigned int symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
-		if (v34_phase3_trn_next(
-			    &trn, &ignored_point, &ignored_rotation) !=
-		    V34_PHASE3_TRN_OK)
+		if (v34_training_sequence_next(
+			    &trn, &ignored_point, &ignored_quarter,
+			    &ignored_rotation) !=
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 	}
 	if (v34_phase3_j_sequence_init_from_trn(

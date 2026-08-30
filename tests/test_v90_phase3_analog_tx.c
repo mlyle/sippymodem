@@ -22,8 +22,8 @@ static bool points_match(
 }
 
 static bool trn_matches(
-	const struct v34_phase3_trn *left,
-	const struct v34_phase3_trn *right)
+	const struct v34_training_sequence *left,
+	const struct v34_training_sequence *right)
 {
 	return left->scrambler.history == right->scrambler.history &&
 	       left->scrambler.polynomial == right->scrambler.polynomial &&
@@ -37,10 +37,10 @@ static bool test_composed_sequence(void)
 {
 	struct v90_phase3_analog_tx tx;
 	struct v34_phase3_transmitter prefix;
-	struct v34_phase3_trn boundary;
+	struct v34_training_sequence boundary;
 	struct v90_ja_tx ja;
 	size_t prefix_symbols = PREFIX_FIXED_SYMBOLS +
-				V34_PHASE3_TRN_MIN_SYMBOLS +
+				V34_TRAINING_SEQUENCE_MIN_SYMBOLS +
 				EXTRA_TRN_SYMBOLS;
 
 	CHECK(v90_phase3_analog_tx_init(&tx) == V90_PHASE3_ANALOG_TX_OK &&
@@ -55,7 +55,7 @@ static bool test_composed_sequence(void)
 		struct qam_point expected;
 
 		if (symbol + 1u == PREFIX_FIXED_SYMBOLS +
-					      V34_PHASE3_TRN_MIN_SYMBOLS) {
+					      V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 			struct v90_phase3_analog_tx saved = tx;
 
 			CHECK(v90_phase3_analog_tx_start_ja(&tx) ==
@@ -122,7 +122,7 @@ static bool test_composed_sequence(void)
 static bool reach_ja(struct v90_phase3_analog_tx *tx)
 {
 	struct qam_point point;
-	size_t symbols = PREFIX_FIXED_SYMBOLS + V34_PHASE3_TRN_MIN_SYMBOLS;
+	size_t symbols = PREFIX_FIXED_SYMBOLS + V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 
 	if (v90_phase3_analog_tx_init(tx) != V90_PHASE3_ANALOG_TX_OK)
 		return false;
@@ -139,8 +139,8 @@ static bool test_boundaries_and_overflow(void)
 {
 	struct v90_phase3_analog_tx tx;
 	struct v90_phase3_analog_tx saved;
-	struct v34_phase3_trn boundary;
-	struct v34_phase3_trn saved_boundary;
+	struct v34_training_sequence boundary;
+	struct v34_training_sequence saved_boundary;
 	struct qam_point point = { 3.0, -4.0 };
 	struct qam_point saved_point = point;
 

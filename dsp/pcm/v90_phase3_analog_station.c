@@ -176,7 +176,8 @@ static enum v90_phase3_analog_station_result start_or_finish_ja(
 
 	if (symbols->stage == V90_PHASE3_ANALOG_TX_PREFIX &&
 	    symbols->sequence.prefix.stage == V34_PHASE3_TRANSMITTER_TRN &&
-	    symbols->sequence.prefix.trn_symbols == V34_PHASE3_TRN_MIN_SYMBOLS) {
+	    symbols->sequence.prefix.trn_symbols ==
+		    V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 		if (v90_dil_profile_init(&dil, station->dil_profile) !=
 		    V90_DIL_OK)
 			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;

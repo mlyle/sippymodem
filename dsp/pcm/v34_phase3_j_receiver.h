@@ -4,7 +4,7 @@
 #define V34_PHASE3_J_RECEIVER_H
 
 #include "v34_phase3_j_sequence.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 
 #include <stdbool.h>
 #include <stdint.h>

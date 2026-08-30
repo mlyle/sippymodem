@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase3_j_sequence.h>
-#include <v34_phase3_trn.h>
+#include <v34_training_sequence.h>
 
 #include "test.h"
 
@@ -77,19 +77,22 @@ static const char *reference_pattern(
 }
 
 static bool prepare_trn(
-	struct v34_phase3_trn *trn,
+	struct v34_training_sequence *trn,
 	enum v34_station_role role, unsigned int symbols)
 {
 	struct qam_point ignored_point;
+	uint8_t ignored_quarter;
 	uint8_t ignored_rotation;
 
-	if (v34_phase3_trn_init(trn, role) !=
-	    V34_PHASE3_TRN_OK)
+	if (v34_training_sequence_init(
+		    trn, role, V34_CONSTELLATION_4_POINT) !=
+	    V34_TRAINING_SEQUENCE_OK)
 		return false;
 	for (unsigned int symbol = 0; symbol < symbols; ++symbol) {
-		if (v34_phase3_trn_next(
-			    trn, &ignored_point, &ignored_rotation) !=
-		    V34_PHASE3_TRN_OK)
+		if (v34_training_sequence_next(
+			    trn, &ignored_point, &ignored_quarter,
+			    &ignored_rotation) !=
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 	}
 	return true;
@@ -111,7 +114,7 @@ static bool test_patterns_and_phase(void)
 	      "J pattern dimensions changed");
 	for (size_t role_index = 0; role_index < ARRAY_LENGTH(roles);
 	     ++role_index) {
-		struct v34_phase3_trn trn;
+		struct v34_training_sequence trn;
 		uint8_t first_pattern[ARRAY_LENGTH(constellations)]
 				     [V34_PHASE3_J_PATTERN_SYMBOLS];
 
@@ -239,7 +242,7 @@ static bool test_patterns_and_phase(void)
 
 static bool test_copy_and_restart(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase3_j_sequence first;
 	struct v34_phase3_j_sequence second;
 	struct v34_phase3_j_sequence restarted;
@@ -292,7 +295,8 @@ static bool test_copy_and_restart(void)
 
 static bool test_validation(void)
 {
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
+	struct v34_training_sequence wrong_constellation;
 	struct v34_phase3_j_sequence sequence;
 	struct v34_phase3_j_sequence before;
 	struct v34_phase3_j_sequence corrupt;
@@ -304,9 +308,10 @@ static bool test_validation(void)
 
 	memset(&sequence, 0xa5, sizeof(sequence));
 	before = sequence;
-	CHECK(v34_phase3_trn_init(
-		      &trn, V34_CALLING_STATION) ==
-		      V34_PHASE3_TRN_OK &&
+	CHECK(v34_training_sequence_init(
+		      &trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK &&
 	      v34_phase3_j_sequence_init_from_trn(
 		      NULL, &trn, V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
@@ -326,8 +331,17 @@ static bool test_validation(void)
 	      "invalid J handoff mutated its destination");
 	CHECK(prepare_trn(
 		      &trn, V34_CALLING_STATION,
-		      V34_PHASE3_TRN_MIN_SYMBOLS) &&
-	      v34_phase3_j_sequence_init_from_trn(
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS),
+	      "J validation TRN fixture did not initialize");
+	wrong_constellation = trn;
+	wrong_constellation.constellation = V34_CONSTELLATION_16_POINT;
+	CHECK(v34_phase3_j_sequence_init_from_trn(
+		      &sequence, &wrong_constellation,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_PHASE3_J_SEQUENCE_INVALID_ARGUMENT &&
+	      memcmp(&sequence, &before, sizeof(sequence)) == 0,
+	      "J accepted a 16-point TRN boundary");
+	CHECK(v34_phase3_j_sequence_init_from_trn(
 		      &sequence, &trn,
 		      V34_CONSTELLATION_4_POINT) ==
 		      V34_PHASE3_J_SEQUENCE_OK,

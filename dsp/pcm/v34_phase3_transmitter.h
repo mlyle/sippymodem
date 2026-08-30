@@ -6,7 +6,7 @@
 #include "v34_phase3_j_sequence.h"
 #include "v34_phase3_pp_sequence.h"
 #include "v34_phase3_s_sequence.h"
-#include "v34_phase3_trn.h"
+#include "v34_training_sequence.h"
 #include "v34_phase4_j_prime_sequence.h"
 
 #include <stdbool.h>
@@ -31,7 +31,7 @@ enum v34_phase3_transmitter_result {
 union v34_phase3_transmitter_state {
 	struct v34_phase3_s_sequence s;
 	struct v34_phase3_pp_sequence pp;
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase3_j_sequence j;
 };
 
@@ -70,7 +70,7 @@ enum v34_phase3_transmitter_result v34_phase3_transmitter_start_j(
  * entering V.34 J. */
 enum v34_phase3_transmitter_result v34_phase3_transmitter_trn_boundary(
 	const struct v34_phase3_transmitter *transmitter,
-	struct v34_phase3_trn *trn);
+	struct v34_training_sequence *trn);
 
 /* Finish J only after at least one whole Table 18 pattern and at a pattern
  * boundary. The transmitter may keep emitting J while it waits for the remote

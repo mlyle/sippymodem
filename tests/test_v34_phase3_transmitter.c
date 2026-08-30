@@ -24,11 +24,12 @@ static bool scramblers_match(
 }
 
 static bool trn_matches(
-	const struct v34_phase3_trn *left,
-	const struct v34_phase3_trn *right)
+	const struct v34_training_sequence *left,
+	const struct v34_training_sequence *right)
 {
 	return scramblers_match(&left->scrambler, &right->scrambler) &&
 	       left->role == right->role &&
+	       left->constellation == right->constellation &&
 	       left->last_clockwise_quarter_turns ==
 		       right->last_clockwise_quarter_turns &&
 	       left->has_last_symbol == right->has_last_symbol;
@@ -53,7 +54,7 @@ static bool run_sequence(
 	struct v34_phase3_transmitter transmitter;
 	struct v34_phase3_s_sequence expected_s;
 	struct v34_phase3_pp_sequence expected_pp;
-	struct v34_phase3_trn expected_trn;
+	struct v34_training_sequence expected_trn;
 	struct v34_phase3_j_sequence expected_j;
 	struct v34_phase4_j_prime_sequence j_prime;
 	struct v34_phase4_j_prime_sequence expected_j_prime;
@@ -105,16 +106,18 @@ static bool run_sequence(
 	}
 	CHECK(v34_phase3_pp_sequence_is_complete(&expected_pp) &&
 	      transmitter.stage == V34_PHASE3_TRANSMITTER_TRN &&
-	      v34_phase3_trn_init(&expected_trn, role) ==
-		      V34_PHASE3_TRN_OK,
+	      v34_training_sequence_init(
+		      &expected_trn, role, V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "PP did not hand off to TRN");
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE3_TRN_MIN_SYMBOLS + extra_trn; ++symbol) {
+	     symbol < V34_TRAINING_SEQUENCE_MIN_SYMBOLS + extra_trn; ++symbol) {
 		struct qam_point actual;
 		struct qam_point expected;
+		uint8_t quarter;
 		uint8_t rotation;
 
-		if (symbol + 1u == V34_PHASE3_TRN_MIN_SYMBOLS) {
+		if (symbol + 1u == V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 			struct v34_phase3_transmitter saved = transmitter;
 
 			CHECK(v34_phase3_transmitter_start_j(&transmitter) ==
@@ -122,16 +125,16 @@ static bool run_sequence(
 			      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0,
 			      "TRN ended before its minimum");
 		}
-		CHECK(v34_phase3_trn_next(
-			      &expected_trn, &expected, &rotation) ==
-			      V34_PHASE3_TRN_OK &&
+		CHECK(v34_training_sequence_next(
+			      &expected_trn, &expected, &quarter, &rotation) ==
+			      V34_TRAINING_SEQUENCE_OK &&
 		      v34_phase3_transmitter_next(&transmitter, &actual) ==
 			      V34_PHASE3_TRANSMITTER_OK &&
 		      points_match(&actual, &expected),
 		      "TRN composition diverged at symbol %u", symbol);
 	}
 	CHECK(transmitter.trn_symbols ==
-		      V34_PHASE3_TRN_MIN_SYMBOLS + extra_trn &&
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS + extra_trn &&
 	      trn_matches(&transmitter.state.trn, &expected_trn) &&
 	      v34_phase3_transmitter_start_j(&transmitter) ==
 		      V34_PHASE3_TRANSMITTER_OK &&

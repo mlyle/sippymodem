@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_phase3_pp_receiver.h>
-#include <v34_phase3_trn.h>
+#include <v34_training_sequence.h>
 
 #include "test.h"
 
@@ -63,21 +63,24 @@ static bool test_training_and_delayed_handoff(void)
 {
 	struct v34_phase3_pp_receiver receiver;
 	struct v34_phase3_pp_sequence pp;
-	struct v34_phase3_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_equalizer_handoff handoff;
 	struct test_channel channel = { 0 };
 	struct qam_point lookahead[V34_EQUALIZER_DECISION_DELAY];
 	struct qam_point first_trn;
 	struct qam_point transmitted;
 	struct qam_point received;
+	uint8_t quarter;
 	uint8_t rotation;
 
 	CHECK(v34_phase3_pp_receiver_init(&receiver, 0.2) ==
 		      V34_PHASE3_PP_RECEIVER_OK &&
 	      v34_phase3_pp_sequence_init(&pp) ==
 		      V34_PHASE3_PP_SEQUENCE_OK &&
-	      v34_phase3_trn_init(&trn, V34_CALLING_STATION) ==
-		      V34_PHASE3_TRN_OK,
+	      v34_training_sequence_init(
+		      &trn, V34_CALLING_STATION,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "PP receive fixture did not initialize");
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_PP_SEQUENCE_SYMBOLS; ++symbol) {
@@ -111,9 +114,9 @@ static bool test_training_and_delayed_handoff(void)
 		      "PP receiver exported before delayed decisions completed");
 	}
 	for (size_t index = 0; index < ARRAY_LENGTH(lookahead); ++index) {
-		CHECK(v34_phase3_trn_next(
-			      &trn, &transmitted, &rotation) ==
-			      V34_PHASE3_TRN_OK,
+		CHECK(v34_training_sequence_next(
+			      &trn, &transmitted, &quarter, &rotation) ==
+			      V34_TRAINING_SEQUENCE_OK,
 		      "TRN lookahead stopped at %zu", index);
 		if (index == 0)
 			first_trn = transmitted;
@@ -152,8 +155,9 @@ static bool test_training_and_delayed_handoff(void)
 		      "completed PP receiver consumed another point");
 		/* The next input produces the first TRN output because the retained
 		 * points above belong to TRN, not PP. */
-		CHECK(v34_phase3_trn_next(&trn, &transmitted, &rotation) ==
-			      V34_PHASE3_TRN_OK,
+		CHECK(v34_training_sequence_next(
+			      &trn, &transmitted, &quarter, &rotation) ==
+			      V34_TRAINING_SEQUENCE_OK,
 		      "TRN continuation did not generate");
 		received = channel_point(&channel, &transmitted);
 		CHECK(qam_equalizer_push(

@@ -12,7 +12,7 @@
 
 enum {
 	JA_REPETITIONS = 4,
-	TRN_SYMBOLS = V34_PHASE3_TRN_MIN_SYMBOLS + 97,
+	TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 97,
 };
 
 static struct qam_point rotate(
