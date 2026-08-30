@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import select
+import shutil
 import signal
 import socket
 import stat
@@ -258,9 +259,19 @@ class EndpointProcess:
     def start(self, timeout_seconds: float) -> None:
         if self.process is not None:
             raise InteropRunError("endpoint process is already started")
+        parent_guard = shutil.which("setpriv")
+        if parent_guard is None:
+            raise InteropRunError("endpoint parent-death guard is unavailable")
         try:
             process = subprocess.Popen(
-                [str(self.config.executable), *self.config.arguments],
+                [
+                    parent_guard,
+                    "--pdeathsig",
+                    "KILL",
+                    "--",
+                    str(self.config.executable),
+                    *self.config.arguments,
+                ],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,

@@ -4,10 +4,13 @@
 import json
 import os
 from pathlib import Path
+import select
+import signal
 import stat
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 from unittest import mock
 
@@ -146,6 +149,77 @@ class InteropEndpointTests(unittest.TestCase):
                 self.assertTrue(endpoint.stop(0.1))
                 with self.assertRaises(ProcessLookupError):
                     os.kill(pid, 0)
+
+    def test_endpoint_dies_with_its_harness_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            script = directory / "fake_endpoint.py"
+            script.write_text(
+                textwrap.dedent(FAKE_ENDPOINT).lstrip(), encoding="utf-8"
+            )
+            artifacts = RunArtifacts.create(directory / "evidence")
+            config = EndpointConfig(
+                executable=Path(sys.executable),
+                arguments=(str(script), "bare"),
+                environment=(),
+                at_commands=("ATZ",),
+            )
+            read_descriptor, write_descriptor = os.pipe()
+            controller = os.fork()
+            if controller == 0:
+                os.close(read_descriptor)
+                try:
+                    endpoint = EndpointProcess(
+                        "answerer",
+                        config,
+                        os.environ,
+                        artifacts.daemon_log("answerer"),
+                    )
+                    endpoint.start(2)
+                    assert endpoint.process is not None
+                    os.write(
+                        write_descriptor,
+                        f"{endpoint.process.pid}\n".encode("ascii"),
+                    )
+                    while True:
+                        signal.pause()
+                except BaseException:
+                    os._exit(2)
+            os.close(write_descriptor)
+            endpoint_pid: int | None = None
+            controller_reaped = False
+            try:
+                readable, _, _ = select.select([read_descriptor], [], [], 3)
+                self.assertEqual(readable, [read_descriptor])
+                endpoint_pid = int(os.read(read_descriptor, 32))
+                os.kill(controller, signal.SIGKILL)
+                os.waitpid(controller, 0)
+                controller_reaped = True
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(endpoint_pid, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail("endpoint survived its harness parent")
+            finally:
+                os.close(read_descriptor)
+                try:
+                    os.kill(controller, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                if not controller_reaped:
+                    try:
+                        os.waitpid(controller, 0)
+                    except ChildProcessError:
+                        pass
+                if endpoint_pid is not None:
+                    try:
+                        os.kill(endpoint_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
 
 if __name__ == "__main__":
