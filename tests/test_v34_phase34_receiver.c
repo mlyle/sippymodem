@@ -713,10 +713,8 @@ static bool test_training_case(
 				     sizeof(unstable_coefficients)) == 0 &&
 			      !feedback_receiver.equalizer.decision_pending &&
 			      feedback_receiver.feedback_training_complete &&
-			      feedback_receiver.precoder_selected &&
 			      receiver.feedback_training_complete &&
-			      !receiver.precoder_selected &&
-			      !unstable_receiver.precoder_selected,
+			      unstable_receiver.feedback_training_complete,
 			      "role %u rate %u selected unhelpful feedback", role,
 			      rate);
 			feedback_timing = feedback_receiver.timing;

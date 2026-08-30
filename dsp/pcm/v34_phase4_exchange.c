@@ -303,6 +303,8 @@ static bool transmitter_mp_matches(
 static bool receiver_feedback_matches_mp(
 	const struct v34_phase4_exchange *exchange)
 {
+	static const struct v34_q14_coefficient
+		zero[V34_PRECODER_TAP_COUNT];
 	const struct v34_phase34_receiver *receiver = &exchange->receive;
 	if (receiver->feedback_training_complete !=
 	    exchange->transmit_mp_started)
@@ -310,7 +312,7 @@ static bool receiver_feedback_matches_mp(
 	if (!receiver->feedback_training_complete)
 		return true;
 	return exchange->transmit_mp.type == V34_MP_RECORD_TYPE0 ?
-		!receiver->precoder_selected :
+		memcmp(receiver->precoder_coefficients, zero, sizeof(zero)) == 0 :
 	       memcmp(receiver->precoder_coefficients,
 		      exchange->transmit_mp.parameters.type1
 			      .precoder_coefficients,

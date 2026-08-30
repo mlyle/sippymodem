@@ -198,14 +198,10 @@ bool v34_phase34_receiver_is_valid(
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
 		return false;
 	if ((!receiver->feedback_training_complete &&
-	     (receiver->precoder_selected ||
-	      !precoder_coefficients_are_zero(
-		      receiver->precoder_coefficients))) ||
-	    (receiver->feedback_training_complete &&
-	     receiver->stage == V34_PHASE34_RECEIVER_PHASE3) ||
-	    (!receiver->precoder_selected &&
 	     !precoder_coefficients_are_zero(
-		     receiver->precoder_coefficients)))
+		     receiver->precoder_coefficients)) ||
+	    (receiver->feedback_training_complete &&
+	     receiver->stage == V34_PHASE34_RECEIVER_PHASE3))
 		return false;
 	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
 	    (!receiver->feedback_training_complete ||
@@ -779,7 +775,6 @@ v34_phase34_receiver_finish_feedback_training(
 		memcpy(selected, learned, sizeof(selected));
 	memcpy(next.precoder_coefficients, selected, sizeof(selected));
 	next.feedback_training_complete = true;
-	next.precoder_selected = select_precoder;
 	if (!v34_phase34_receiver_is_valid(&next))
 		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 	*receiver = next;

@@ -74,7 +74,6 @@ struct v34_phase34_receiver {
 	bool tracking_started;
 	bool phase4_s_rearmed;
 	bool feedback_training_complete;
-	bool precoder_selected;
 	bool data_erasure;
 	bool failed;
 	bool initialized;
