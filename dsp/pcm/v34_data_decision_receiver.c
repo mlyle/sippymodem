@@ -12,17 +12,12 @@ enum {
 	V34_DATA_DECISION_DECODER_POWER_Q15 = 0x2000,
 };
 
-static bool normalized_point_is_finite(const struct qam_point *point)
-{
-	return isfinite(point->in_phase) && isfinite(point->quadrature);
-}
-
 bool v34_data_decision_receiver_is_valid(
 	const struct v34_data_decision_receiver *receiver)
 {
 	if (receiver == NULL ||
 	    !v34_data_channel_receiver_is_valid(&receiver->data_receiver) ||
-	    !normalized_point_is_finite(&receiver->first_normalized))
+	    !point_is_finite(&receiver->first_normalized))
 		return false;
 	return receiver->has_first_symbol ||
 	       (receiver->first_normalized.in_phase == 0.0 &&
@@ -90,7 +85,7 @@ static bool fixed_coordinate(double normalized, int16_t *fixed)
 static bool fixed_target(
 	const struct qam_point *normalized, struct v34_analytic_sample *fixed)
 {
-	return normalized_point_is_finite(normalized) &&
+	return point_is_finite(normalized) &&
 	       fixed_coordinate(normalized->in_phase, &fixed->in_phase) &&
 	       fixed_coordinate(normalized->quadrature, &fixed->quadrature);
 }

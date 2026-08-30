@@ -104,9 +104,7 @@ enum v34_lattice_result v34_slice_grid_subsets(
 	struct v34_subset_slice generated = { 0 };
 	bool found[V34_SUBSET_LABEL_COUNT] = { false };
 
-	if (channel_estimate == NULL || slice == NULL ||
-	    !isfinite(channel_estimate->in_phase) ||
-	    !isfinite(channel_estimate->quadrature))
+	if (!point_is_finite(channel_estimate) || slice == NULL)
 		return V34_LATTICE_INVALID_ARGUMENT;
 	for (int in_phase_residue = 1; in_phase_residue < 8;
 	     in_phase_residue += 2) {

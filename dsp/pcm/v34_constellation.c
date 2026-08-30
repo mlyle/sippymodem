@@ -326,8 +326,7 @@ v34_training_constellation_slice(
 	bool found = false;
 
 	if (!v34_constellation_size_is_valid(constellation) ||
-	    point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature) || quarter_point == NULL ||
+	    !point_is_finite(point) || quarter_point == NULL ||
 	    clockwise_quarter_turns == NULL ||
 	    quarter_point == clockwise_quarter_turns)
 		return V34_CONSTELLATION_INVALID_ARGUMENT;

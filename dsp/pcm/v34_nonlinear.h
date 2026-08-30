@@ -18,8 +18,12 @@ enum v34_nonlinear_result {
 	V34_NONLINEAR_NUMERIC_FAILURE,
 };
 
-bool v34_nonlinear_parameter_is_valid(
-	enum v34_nonlinear_parameter parameter);
+static inline bool v34_nonlinear_parameter_is_valid(
+	enum v34_nonlinear_parameter parameter)
+{
+	return parameter == V34_NONLINEAR_THETA_ZERO ||
+	       parameter == V34_NONLINEAR_THETA_5_OVER_16;
+}
 bool v34_nonlinear_configuration_is_valid(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude);

@@ -6,12 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool nonlinear_is_valid(enum v34_nonlinear_parameter parameter)
-{
-	return parameter == V34_NONLINEAR_THETA_ZERO ||
-	       parameter == V34_NONLINEAR_THETA_5_OVER_16;
-}
-
 bool v34_data_direction_parameters_are_valid(
 	const struct v34_data_direction_parameters *parameters)
 {
@@ -21,7 +15,8 @@ bool v34_data_direction_parameters_are_valid(
 	    parameters->primary_data_rate_2400_bps_units >
 		    V34_MP_MAXIMUM_RATE_2400_BPS_UNITS ||
 	    !v34_trellis_selection_is_valid(parameters->trellis_selection) ||
-	    !nonlinear_is_valid(parameters->nonlinear_parameter))
+	    !v34_nonlinear_parameter_is_valid(
+		    parameters->nonlinear_parameter))
 		return false;
 	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT; ++index) {
 		if (parameters->precoder_coefficients[index].real == INT16_MIN ||

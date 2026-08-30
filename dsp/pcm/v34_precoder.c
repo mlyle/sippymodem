@@ -292,8 +292,7 @@ static enum v34_precoder_result reconstruct_channel_point(
 			(double)prediction.filter_output.quadrature /
 				V34_Q7_SCALE,
 	};
-	if (!isfinite(generated.in_phase) ||
-	    !isfinite(generated.quadrature))
+	if (!point_is_finite(&generated))
 		return V34_PRECODER_OUT_OF_RANGE;
 	push_previous_symbol(receive_history, &received);
 	result = v34_precoder_predict(
@@ -321,8 +320,7 @@ v34_precoder_reconstruct_interval(
 		return V34_PRECODER_INVALID_ARGUMENT;
 	for (size_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		if (!isfinite(precoded_estimates[symbol].in_phase) ||
-		    !isfinite(precoded_estimates[symbol].quadrature))
+		if (!point_is_finite(&precoded_estimates[symbol]))
 			return V34_PRECODER_INVALID_ARGUMENT;
 	}
 	next = *receive_history;

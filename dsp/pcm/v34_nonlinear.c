@@ -11,13 +11,6 @@ enum {
 	V34_NONLINEAR_INVERSE_ITERATIONS = 64,
 };
 
-bool v34_nonlinear_parameter_is_valid(
-	enum v34_nonlinear_parameter parameter)
-{
-	return parameter == V34_NONLINEAR_THETA_ZERO ||
-	       parameter == V34_NONLINEAR_THETA_5_OVER_16;
-}
-
 bool v34_nonlinear_configuration_is_valid(
 	enum v34_nonlinear_parameter parameter,
 	double mean_squared_magnitude)
@@ -183,8 +176,7 @@ v34_nonlinear_encode(
 		.in_phase = in_phase * projection,
 		.quadrature = quadrature * projection,
 	};
-	if (!isfinite(generated.in_phase) ||
-	    !isfinite(generated.quadrature))
+	if (!point_is_finite(&generated))
 		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*projected_symbol = generated;
 	return V34_NONLINEAR_OK;
@@ -207,9 +199,7 @@ v34_nonlinear_unproject(
 
 	if (!v34_nonlinear_configuration_is_valid(
 		    parameter, mean_squared_magnitude) ||
-	    projected_symbol == NULL || precoded_estimate == NULL ||
-	    !isfinite(projected_symbol->in_phase) ||
-	    !isfinite(projected_symbol->quadrature))
+	    !point_is_finite(projected_symbol) || precoded_estimate == NULL)
 		return V34_NONLINEAR_INVALID_ARGUMENT;
 	generated = *projected_symbol;
 	if (parameter == V34_NONLINEAR_THETA_ZERO) {
@@ -247,8 +237,7 @@ v34_nonlinear_unproject(
 		generated.quadrature =
 			((generated.quadrature / zeta) / zeta) * scale;
 	}
-	if (!isfinite(generated.in_phase) ||
-	    !isfinite(generated.quadrature))
+	if (!point_is_finite(&generated))
 		return V34_NONLINEAR_NUMERIC_FAILURE;
 	*precoded_estimate = generated;
 	return V34_NONLINEAR_OK;

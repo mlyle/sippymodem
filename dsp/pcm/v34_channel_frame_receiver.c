@@ -2,7 +2,6 @@
 
 #include "v34_channel_frame_receiver.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -152,8 +151,7 @@ correct_receive_history(
 			.quadrature = projected.quadrature *
 				normalizer->normalization_gain,
 		};
-		if (!isfinite(target.in_phase) ||
-		    !isfinite(target.quadrature))
+		if (!point_is_finite(&target))
 			return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 		decision_targets[symbol] = target;
 	}

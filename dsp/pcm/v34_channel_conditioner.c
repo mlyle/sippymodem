@@ -2,7 +2,6 @@
 
 #include "v34_channel_conditioner.h"
 
-#include <math.h>
 #include <stddef.h>
 
 bool v34_channel_conditioner_is_valid(
@@ -53,8 +52,7 @@ static enum v34_channel_conditioner_result condition_finite_point(
 		.quadrature = normalized_point->quadrature /
 			conditioner->normalizer.normalization_gain,
 	};
-	if (!isfinite(projected.in_phase) ||
-	    !isfinite(projected.quadrature))
+	if (!point_is_finite(&projected))
 		return V34_CHANNEL_CONDITIONER_NUMERIC_FAILURE;
 	result = v34_nonlinear_unproject(
 		conditioner->normalizer.nonlinear_parameter,
@@ -73,9 +71,7 @@ v34_channel_condition_point(
 	struct qam_point *grid_estimate)
 {
 	if (!v34_channel_conditioner_is_valid(conditioner) ||
-	    normalized_point == NULL || grid_estimate == NULL ||
-	    !isfinite(normalized_point->in_phase) ||
-	    !isfinite(normalized_point->quadrature))
+	    !point_is_finite(normalized_point) || grid_estimate == NULL)
 		return V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT;
 	return condition_finite_point(
 		conditioner, normalized_point, grid_estimate);
@@ -99,8 +95,7 @@ v34_channel_condition_interval(
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
 		enum v34_channel_conditioner_result result;
 
-		if (!isfinite(normalized[symbol].in_phase) ||
-		    !isfinite(normalized[symbol].quadrature))
+		if (!point_is_finite(&normalized[symbol]))
 			return V34_CHANNEL_CONDITIONER_INVALID_ARGUMENT;
 		result = condition_finite_point(
 			conditioner, &normalized[symbol], &generated[symbol]);

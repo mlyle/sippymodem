@@ -67,8 +67,7 @@ v34_symbol_power_observe_point(
 {
 	double squared_magnitude;
 
-	if (point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature))
+	if (!point_is_finite(point))
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	squared_magnitude = point->in_phase * point->in_phase +
 		point->quadrature * point->quadrature;
@@ -312,9 +311,7 @@ enum v34_symbol_power_result v34_normalize_power(
 	double normalized_power;
 
 	if (!v34_power_normalizer_is_valid(normalizer) ||
-	    projected_point == NULL || normalized_point == NULL ||
-	    !isfinite(projected_point->in_phase) ||
-	    !isfinite(projected_point->quadrature))
+	    !point_is_finite(projected_point) || normalized_point == NULL)
 		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
 	projected_power =
 		projected_point->in_phase * projected_point->in_phase +
