@@ -34,6 +34,7 @@ struct v34_phase2_retrain_probe {
 	struct v34_phase2_probe_synchronizer synchronizer;
 	uint16_t boundary_delay_samples;
 	enum v34_phase2_retrain_probe_phase phase;
+	bool early_boundary_retry_used;
 };
 
 struct v34_phase2_ranging {
@@ -50,8 +51,9 @@ struct v34_phase2_ranging {
  * latency-compensated estimate of that boundary. During a caller retrain, a
  * bounded probe trial also recognizes when the first observed reversal was
  * already the second one: L1 must then begin after the exact 10 ms tone tail.
- * Probe reception owns final waveform synchronization. INFO0 repetition and
- * probing are later owners. */
+ * If that trial still contains Tone A, one later early edge may restart it at
+ * the observed L1 boundary. Probe reception owns final waveform
+ * synchronization. INFO0 repetition and probing are later owners. */
 enum v34_phase2_ranging_result
 v34_phase2_ranging_init(
 	struct v34_phase2_ranging *ranging,

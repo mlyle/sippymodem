@@ -27,14 +27,17 @@ static bool retrain_probe_is_valid(
 		return false;
 	switch (probe->phase) {
 	case V34_PHASE2_RETRAIN_PROBE_DISABLED:
-		return probe->boundary_delay_samples == 0 &&
+		return !probe->early_boundary_retry_used &&
+		       probe->boundary_delay_samples == 0 &&
 		       synchronizer_is_empty(&probe->synchronizer);
 	case V34_PHASE2_RETRAIN_PROBE_WAIT_REVERSAL:
 		return caller_retrain &&
+		       !probe->early_boundary_retry_used &&
 		       probe->boundary_delay_samples == 0 &&
 		       synchronizer_is_empty(&probe->synchronizer);
 	case V34_PHASE2_RETRAIN_PROBE_WAIT_BOUNDARY:
 		return caller_retrain &&
+		       !probe->early_boundary_retry_used &&
 		       probe->boundary_delay_samples > 0 &&
 		       probe->boundary_delay_samples <=
 			       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
@@ -102,6 +105,7 @@ static bool reset_retrain_probe(
 		return false;
 	ranging->retrain_probe.boundary_delay_samples = 0;
 	ranging->retrain_probe.phase = phase;
+	ranging->retrain_probe.early_boundary_retry_used = false;
 	return true;
 }
 
@@ -265,6 +269,19 @@ static void accept_retrain_probe(
 	*generated = 0;
 }
 
+static bool restart_retrain_probe_trial(
+	struct v34_phase2_retrain_probe *probe)
+{
+	if (probe->early_boundary_retry_used ||
+	    v34_phase2_probe_synchronizer_init(&probe->synchronizer) !=
+		    V34_PHASE2_PROBE_SYNCHRONIZER_OK)
+		return false;
+	probe->boundary_delay_samples = 0;
+	probe->phase = V34_PHASE2_RETRAIN_PROBE_COLLECTING;
+	probe->early_boundary_retry_used = true;
+	return true;
+}
+
 static bool sample_retrain_probe_trial(
 	struct v34_phase2_ranging *ranging,
 	enum phase2_ranging_phase phase_before,
@@ -300,6 +317,20 @@ static bool sample_retrain_probe_trial(
 	    ranging->control.phase == PHASE2_RESPONSE_DELAY &&
 	    tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED &&
 	    !arm_retrain_probe_trial(ranging, tone_event))
+		return false;
+	/* Some peers retain Tone A after the first ranging reversal and begin L1
+	 * on a later edge that is too early to be a new round-trip measurement.
+	 * The timing controller correctly rejects that edge; use it once as a
+	 * stronger probe boundary and let the spectrum check decide. */
+	if (!probe->early_boundary_retry_used &&
+	    (probe->phase == V34_PHASE2_RETRAIN_PROBE_WAIT_BOUNDARY ||
+	     probe->phase == V34_PHASE2_RETRAIN_PROBE_COLLECTING ||
+	     probe->phase == V34_PHASE2_RETRAIN_PROBE_REJECTED) &&
+	    phase_before == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL &&
+	    ranging->control.phase ==
+		    PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL &&
+	    tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED &&
+	    !restart_retrain_probe_trial(probe))
 		return false;
 	if (probe->phase ==
 	    V34_PHASE2_RETRAIN_PROBE_WAIT_BOUNDARY) {

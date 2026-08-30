@@ -721,7 +721,7 @@ static bool test_initial_concurrent_trial(void)
 	return true;
 }
 
-static bool test_retrain_second_reversal_probe(void)
+static bool check_retrain_probe_boundary(bool delayed_probe)
 {
 	struct v34_info0 caller_info0 = test_v34_phase2_capabilities(
 		V34_CALLING_STATION);
@@ -731,7 +731,10 @@ static bool test_retrain_second_reversal_probe(void)
 	struct v34_phase2_probe_transmitter answer_probe;
 	struct v34_phase2 caller;
 	size_t tail_samples = 0;
-	bool reversed = false;
+	bool first_reversed = false;
+	bool second_reversed = false;
+	bool first_trial_rejected = false;
+	bool retry_started = false;
 	bool probing = false;
 	bool handed_off = false;
 
@@ -751,20 +754,31 @@ static bool test_retrain_second_reversal_probe(void)
 		int16_t received;
 		int16_t transmit;
 
-		if (!reversed && caller.stage == V34_PHASE2_RANGING &&
+		if (!first_reversed && caller.stage == V34_PHASE2_RANGING &&
 		    caller.state.ranging.control.phase ==
 			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
 			CHECK(v34_phase2_tone_transmitter_reverse(
 				      &answer_tone) == V34_PHASE2_TONE_OK,
-			      "second-reversal fixture did not reverse Tone A");
-			reversed = true;
+			      "retrain fixture did not reverse Tone A");
+			first_reversed = true;
+		}
+		if (delayed_probe && !second_reversed &&
+		    caller.stage == V34_PHASE2_RANGING &&
+		    caller.state.ranging.control.phase ==
+			    PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL &&
+		    caller.state.ranging.retrain_probe.phase ==
+			    V34_PHASE2_RETRAIN_PROBE_REJECTED) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &answer_tone) == V34_PHASE2_TONE_OK,
+			      "delayed retrain fixture did not start its L1 edge");
+			second_reversed = true;
 		}
 		if (!probing) {
 			CHECK(v34_phase2_tone_transmitter_sample(
 				      &answer_tone, &received) ==
 				      V34_PHASE2_TONE_OK,
-			      "second-reversal Tone A generation failed");
-			if (reversed &&
+			      "retrain Tone A generation failed");
+			if (!delayed_probe && first_reversed &&
 			    ++tail_samples ==
 				    PHASE2_RANGING_TONE_TAIL_SAMPLES)
 				probing = true;
@@ -777,7 +791,18 @@ static bool test_retrain_second_reversal_probe(void)
 		CHECK(v34_phase2_sample(
 			      &caller, received, &transmit, &event) ==
 			      V34_PHASE2_OK,
-		      "second-reversal retrain stopped at sample %zu", index);
+		      "retrain probe boundary stopped at sample %zu", index);
+		if (caller.stage == V34_PHASE2_RANGING &&
+		    caller.state.ranging.retrain_probe.phase ==
+			    V34_PHASE2_RETRAIN_PROBE_REJECTED)
+			first_trial_rejected = true;
+		if (delayed_probe && second_reversed && !probing &&
+		    caller.stage == V34_PHASE2_RANGING &&
+		    caller.state.ranging.retrain_probe
+			    .early_boundary_retry_used) {
+			retry_started = true;
+			probing = true;
+		}
 		if (event.kind == V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
 			const struct v34_phase2_initial_probe *initial =
 				&caller.state.initial_probe;
@@ -787,6 +812,8 @@ static bool test_retrain_second_reversal_probe(void)
 			      transmit == 0 &&
 			      initial->ranging.retrain_probe.phase ==
 				      V34_PHASE2_RETRAIN_PROBE_ACQUIRED &&
+			      initial->ranging.retrain_probe
+				      .early_boundary_retry_used == delayed_probe &&
 			      initial->control.path.receive.phase ==
 				      V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
 			      initial->control.path.receive.receiver.l1_spectrum
@@ -797,9 +824,22 @@ static bool test_retrain_second_reversal_probe(void)
 			break;
 		}
 	}
-	CHECK(reversed && probing && handed_off &&
+	CHECK(first_reversed && probing && handed_off &&
+	      second_reversed == delayed_probe &&
+	      first_trial_rejected == delayed_probe &&
+	      retry_started == delayed_probe &&
 	      !v34_phase2_has_failed(&caller),
-	      "second observed reversal did not recover retrain probing");
+	      "retrain probe boundary was not recovered (delayed=%d)",
+	      delayed_probe);
+	return true;
+}
+
+static bool test_retrain_probe_boundaries(void)
+{
+	CHECK(check_retrain_probe_boundary(false),
+	      "first observed retrain boundary failed");
+	CHECK(check_retrain_probe_boundary(true),
+	      "delayed retrain boundary failed");
 	return true;
 }
 
@@ -954,8 +994,7 @@ int main(void)
 		{ "initial concurrent probe trial",
 		  test_initial_concurrent_trial },
 		{ "generated retrain timeline", test_retrain_timeline },
-		{ "second-reversal retrain probe",
-		  test_retrain_second_reversal_probe },
+		{ "retrain probe boundaries", test_retrain_probe_boundaries },
 		{ "validation", test_validation },
 		{ "INFO1 recovery", test_info1_recovery },
 	};
