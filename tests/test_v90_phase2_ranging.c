@@ -319,6 +319,8 @@ static bool check_info_interrupted_reversal(
 	size_t edge_sample = SIZE_MAX;
 	size_t local_reversal = SIZE_MAX;
 	bool repeat_started = false;
+	bool repeat_synchronized = false;
+	bool ranging_wait_preserved = true;
 	bool peer_reversed = false;
 
 	CHECK(initialize_interrupted_ranging(
@@ -329,6 +331,8 @@ static bool check_info_interrupted_reversal(
 		struct phase2_info0_exchange_event peer_event;
 		struct v90_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		enum v34_phase2_info_receive_stage receive_stage_before =
+			ranging.info0_exchange.transport.info_receiver.frame.stage;
 		int16_t peer_line;
 		int16_t ignored;
 
@@ -347,6 +351,15 @@ static bool check_info_interrupted_reversal(
 			      &ranging, codec_round_trip(peer_line, codec),
 			      &ignored, &event) == V90_PHASE2_RANGING_OK,
 		      "interrupted ranging failed at %zu", index);
+		if (local_role == V90_DIGITAL_MODEM && repeat_started &&
+		    !peer_reversed) {
+			repeat_synchronized |=
+				receive_stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
+				ranging.info0_exchange.transport.info_receiver.frame.stage !=
+					V34_PHASE2_INFO_SEARCH_SYNC;
+			ranging_wait_preserved &= ranging.control.phase ==
+				PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
+		}
 		if (phase_before == PHASE2_RESPONSE_DELAY &&
 		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL) {
 			local_reversal = index;
@@ -370,6 +383,8 @@ static bool check_info_interrupted_reversal(
 	}
 	CHECK(repeat_started && peer_reversed && edge_sample != SIZE_MAX &&
 	      local_reversal != SIZE_MAX &&
+	      (local_role != V90_DIGITAL_MODEM ||
+	       (repeat_synchronized && ranging_wait_preserved)) &&
 	      absolute_difference(
 		      local_reversal,
 		      edge_sample + PHASE2_RANGING_TURNAROUND_SAMPLES) <=
@@ -391,6 +406,112 @@ static bool test_info_interrupted_reversal(void)
 					      codec, protocol, role),
 				      "INFO interruption failed for %d/%d/%d",
 				      codec, protocol, role);
+	return true;
+}
+
+static bool check_response_during_repeat(
+	enum test_codec codec, enum pcm_protocol protocol)
+{
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t payload_bits = 0;
+	int16_t local_line = 0;
+	int16_t peer_line = 0;
+	bool edge_started = false;
+	bool repeat_started = false;
+	bool response_scheduled_during_info = false;
+	bool measurement_advanced_during_info = false;
+
+	CHECK(initialize_interrupted_ranging(
+		      &ranging, &peer, V90_DIGITAL_MODEM, protocol, codec,
+		      payload, &payload_bits),
+	      "response-during-repeat fixture did not initialize");
+	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_info0_transmit_phase transmit_before =
+			ranging.info0_exchange.transport.transmit_phase;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, codec_round_trip(local_line, codec),
+			      &peer_line, &peer_event) == PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &local_line, &event) == V90_PHASE2_RANGING_OK,
+		      "response-during-repeat failed at %zu for %d/%d",
+		      index, codec, protocol);
+		if (!edge_started &&
+		    pcm_phase2_info0_exchange_complete(
+			    &ranging.info0_exchange) &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "peer first reversal did not start");
+			edge_started = true;
+		}
+		if (edge_started && !repeat_started &&
+		    phase_before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    ranging.control.phase == PHASE2_RESPONSE_DELAY) {
+			CHECK(encode_peer_info0(
+				      payload, V90_ANALOG_MODEM, protocol,
+				      codec, true) &&
+			      phase2_info0_exchange_restart_info(
+				      &peer, payload, payload_bits) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "peer INFO repeat did not interrupt response");
+			repeat_started = true;
+		}
+		if (repeat_started && phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL)
+			response_scheduled_during_info =
+				ranging.info0_exchange.transport.transmit_phase !=
+				PHASE2_INFO0_TONE;
+		if (ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL &&
+		    ranging.info0_exchange.transport.transmit_phase !=
+			    PHASE2_INFO0_TONE) {
+			CHECK(ranging.control.post_reversal_samples == 0,
+			      "INFO record consumed the physical Tone-B tail");
+			measurement_advanced_during_info |=
+				ranging.control.measurement_elapsed_samples != 0;
+		}
+		if (ranging.control.phase ==
+			    PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL) {
+			CHECK(ranging.control.post_reversal_samples ==
+				      PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+			      ranging.control.measurement_elapsed_samples >
+				      ranging.control.post_reversal_samples &&
+			      transmit_before == PHASE2_INFO0_TONE,
+			      "recovered Tone-B tail did not finish exactly");
+			break;
+		}
+	}
+	CHECK(edge_started && repeat_started &&
+	      response_scheduled_during_info &&
+	      measurement_advanced_during_info &&
+	      ranging.control.phase ==
+		      PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL,
+	      "INFO repeat did not preserve scheduled response for %d/%d: edge=%d repeat=%d scheduled=%d measured=%d phase=%d",
+	      codec, protocol, edge_started, repeat_started,
+	      response_scheduled_during_info,
+	      measurement_advanced_during_info,
+	      ranging.control.phase);
+	return true;
+}
+
+static bool test_response_during_repeat(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_response_during_repeat(codec, protocol),
+			      "response-during-repeat failed for %d/%d",
+			      codec, protocol);
 	return true;
 }
 
@@ -629,6 +750,7 @@ static bool check_completed_exchange_repeat(
 	size_t completed_records = 0;
 	bool repeat_started = false;
 	bool receiver_synchronized = false;
+	bool acknowledgment_started_on_sync = false;
 	bool reopened = false;
 	bool reversed_during_record = false;
 
@@ -662,8 +784,18 @@ static bool check_completed_exchange_repeat(
 			      &ignored, &event) == V90_PHASE2_RANGING_OK,
 		      "completed-repeat ranging failed at %zu for %d/%d",
 		      index, codec, reject_repeat);
-		receiver_synchronized |=
-			receive_stage_before != V34_PHASE2_INFO_SEARCH_SYNC;
+		if (repeat_started &&
+		    receive_stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
+		    ranging.info0_exchange.transport.info_receiver.frame.stage !=
+			    V34_PHASE2_INFO_SEARCH_SYNC) {
+			receiver_synchronized = true;
+			acknowledgment_started_on_sync =
+				ranging.info0_exchange.state ==
+					PCM_PHASE2_INFO0_VERIFY_REPEAT &&
+				ranging.info0_exchange.transport.transmit_phase ==
+					PHASE2_INFO0_SEQUENCE &&
+				ranging.control.phase == phase_before;
+		}
 		if (receive_stage_before != V34_PHASE2_INFO_SEARCH_SYNC &&
 		    phase_before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
 		    ranging.control.phase ==
@@ -705,14 +837,18 @@ static bool check_completed_exchange_repeat(
 		}
 	}
 	CHECK(repeat_started && receiver_synchronized &&
+	      acknowledgment_started_on_sync &&
 	      !reversed_during_record && reversal != SIZE_MAX,
 	      "synchronized INFO0 did not defer reversal for %d/%d",
 	      codec, reject_repeat);
 	if (reject_repeat)
-		CHECK(rejection != SIZE_MAX && reversal > rejection && !reopened &&
-		      completed_records == 1u,
-		      "rejected INFO0 changed completed ranging for %d",
-		      codec);
+		CHECK(rejection != SIZE_MAX && reversal > rejection && reopened &&
+		      completed_records == 2u &&
+		      ranging.info0_exchange.state == PCM_PHASE2_INFO0_COMPLETE,
+		      "rejected INFO0 changed completed ranging for %d: rejected=%zu reversal=%zu reopened=%d records=%zu state=%d phase=%d local=%u",
+		      codec, rejection, reversal, reopened, completed_records,
+		      ranging.info0_exchange.state, ranging.control.phase,
+		      ranging.control.local_tone_samples);
 	else
 		CHECK(reopened && completed_records == 2u &&
 		      ranging.info0_exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
@@ -774,6 +910,7 @@ int main(void)
 	} tests[] = {
 		{ "PCMU and PCMA ranging", test_pcm_ranging },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
+		{ "response during INFO repeat", test_response_during_repeat },
 		{ "deferred first reversal", test_deferred_first_reversal },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",

@@ -25,6 +25,9 @@ enum pcm_phase2_info0_exchange_state {
 	PCM_PHASE2_INFO0_INITIAL,
 	/* Opposite tone arrived before a valid record; repeat without ACK. */
 	PCM_PHASE2_INFO0_REPEAT,
+	/* A completed peer started another record.  Acknowledge the retained
+	 * selection immediately while the repeated record is verified. */
+	PCM_PHASE2_INFO0_VERIFY_REPEAT,
 	/* A peer record is retained; its local ACK is pending or in flight. */
 	PCM_PHASE2_INFO0_ACKNOWLEDGING,
 	/* An unacknowledged peer repeat queued one more local ACK. */

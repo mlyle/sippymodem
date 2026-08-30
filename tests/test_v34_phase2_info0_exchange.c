@@ -277,6 +277,70 @@ static bool test_bidirectional_exchange(void)
 	return true;
 }
 
+static bool test_reversal_during_recovery_info(void)
+{
+	struct v34_info0 capabilities = calling_capabilities();
+	struct phase2_info0_exchange baseline;
+	struct phase2_info0_exchange reversed;
+	uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+	bool reached_tone = false;
+
+	CHECK(v34_info0_encode(
+		      &capabilities, payload, sizeof(payload)) == V34_INFO0_OK &&
+	      phase2_info0_exchange_init(
+		      &baseline, PHASE2_SIGNAL_B, TEST_AMPLITUDE,
+		      payload, V34_INFO0_PAYLOAD_BITS,
+		      V34_INFO0_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK &&
+	      phase2_info0_exchange_start_tone(&baseline) ==
+		      PHASE2_INFO0_EXCHANGE_OK,
+	      "recovery reversal fixture did not initialize");
+	reversed = baseline;
+	CHECK(phase2_info0_exchange_restart_info(
+		      &baseline, payload, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK &&
+	      phase2_info0_exchange_restart_info(
+		      &reversed, payload, V34_INFO0_PAYLOAD_BITS) ==
+		      PHASE2_INFO0_EXCHANGE_OK &&
+	      v34_phase2_tone_transmitter_reverse(
+		      &reversed.tone_transmitter) == V34_PHASE2_TONE_OK,
+	      "recovery reversal did not start");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event baseline_event;
+		struct phase2_info0_exchange_event reversed_event;
+		enum phase2_info0_transmit_phase transmit_before =
+			baseline.transmit_phase;
+		int16_t baseline_sample;
+		int16_t reversed_sample;
+
+		CHECK(phase2_info0_exchange_sample(
+			      &baseline, 0, &baseline_sample,
+			      &baseline_event) == PHASE2_INFO0_EXCHANGE_OK &&
+		      phase2_info0_exchange_sample(
+			      &reversed, 0, &reversed_sample,
+			      &reversed_event) == PHASE2_INFO0_EXCHANGE_OK,
+		      "recovery INFO failed at sample %zu", index);
+		if (transmit_before != PHASE2_INFO0_TONE) {
+			CHECK(reversed.transmit_phase == baseline.transmit_phase &&
+			      reversed_sample == baseline_sample,
+			      "hidden reversal changed INFO at sample %zu", index);
+			continue;
+		}
+		CHECK(reversed.transmit_phase == PHASE2_INFO0_TONE &&
+		      reversed.tone_transmitter.carrier_phase ==
+			      baseline.tone_transmitter.carrier_phase +
+				      UINT32_C(0x80000000) &&
+		      reversed_sample == -baseline_sample,
+		      "recovery handoff lost the retained reversal: phase %08x/%08x sample %d/%d",
+		      reversed.tone_transmitter.carrier_phase,
+		      baseline.tone_transmitter.carrier_phase,
+		      reversed_sample, baseline_sample);
+		reached_tone = true;
+		break;
+	}
+	CHECK(reached_tone, "recovery INFO did not return to tone");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 capabilities = calling_capabilities();
@@ -335,6 +399,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional exchange", test_bidirectional_exchange },
+		{ "reversal during recovery INFO",
+		  test_reversal_during_recovery_info },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -108,13 +108,13 @@ bool phase2_ranging_control_is_valid(
 		return control->local_tone_samples ==
 			       completed_initial_tone_samples(exchange) &&
 		       control->response_delay_samples == 0 &&
-		       control->post_reversal_samples != 0 &&
 		       control->post_reversal_samples <
 			       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       control->probe_start_delay_samples == 0 &&
-		       control->measurement_elapsed_samples ==
-			       (side_b ?
-					control->post_reversal_samples : 0) &&
+		       (side_b ?
+				control->measurement_elapsed_samples >=
+					control->post_reversal_samples :
+				control->measurement_elapsed_samples == 0) &&
 		       control->round_trip_delay_valid == !side_b;
 	case PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL:
 		return side_b && control->local_tone_samples == 0 &&
@@ -241,7 +241,6 @@ enum phase2_ranging_result phase2_ranging_prepare_sample(
 		next.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
 		reverse = true;
 	} else if (next.phase == PHASE2_RESPONSE_DELAY &&
-		   !peer_info0_in_progress &&
 		   --next.response_delay_samples == 0) {
 		next.phase = PHASE2_RESPONSE_TONE_TAIL;
 		reverse = true;
@@ -468,9 +467,11 @@ static void advance_probe_start(
 static void finish_tone_tail(
 	struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange,
+	enum phase2_info0_transmit_phase transmit_phase_before,
 	struct phase2_ranging_event *event)
 {
-	if (control->phase != PHASE2_RESPONSE_TONE_TAIL)
+	if (control->phase != PHASE2_RESPONSE_TONE_TAIL ||
+	    transmit_phase_before != PHASE2_INFO0_TONE)
 		return;
 	if (++control->post_reversal_samples <
 	    PHASE2_RANGING_TONE_TAIL_SAMPLES)
@@ -549,13 +550,16 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *control;
 	generated = *transmit_sample;
-	if (next.phase != PHASE2_RANGING_INFO0_EXCHANGE &&
+	if (exchange->transmit_phase == PHASE2_INFO0_TONE &&
+	    next.phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    !phase_transmits_tone(next.phase))
 		generated = 0;
 	/* A recovery INFO0 interrupts the continuous local-tone epoch.  The
 	 * analogue modem must transmit a fresh 50 ms of Tone A after the repeated
 	 * record before its first phase reversal. */
 	if (!signal_is_b(exchange) &&
+	    (next.phase == PHASE2_RANGING_INFO0_EXCHANGE ||
+	     next.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE) &&
 	    transmit_phase_before == PHASE2_INFO0_TONE &&
 	    exchange->transmit_phase == PHASE2_INFO0_SEQUENCE)
 		next.local_tone_samples = 0;
@@ -578,7 +582,8 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 			return PHASE2_RANGING_INVALID_ARGUMENT;
 		reversal_rejected = true;
 	}
-	finish_tone_tail(&next, exchange, &emitted);
+	finish_tone_tail(
+		&next, exchange, transmit_phase_before, &emitted);
 	advance_measurement(&next, exchange, &emitted);
 	advance_probe_start(&next, &emitted);
 	if (!phase2_ranging_control_is_valid(

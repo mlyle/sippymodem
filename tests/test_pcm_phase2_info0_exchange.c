@@ -432,6 +432,7 @@ static bool check_following_tone(
 	bool overlapping_repeat = false;
 	bool reopened_after_completion = false;
 	bool rejected_after_completion = false;
+	bool early_acknowledgment = false;
 	bool initialized;
 
 	analog.v90.acknowledges_peer_info0 = false;
@@ -538,8 +539,11 @@ static bool check_following_tone(
 		}
 		if (transmit_before != PHASE2_INFO0_SEQUENCE &&
 		    transmit_before != PHASE2_INFO0_POST_V8_SILENCE &&
-		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE)
+		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE) {
 			acknowledge_starts++;
+			early_acknowledgment |= repeated &&
+				event.peer_info0_event == PCM_PEER_INFO0_NO_EVENT;
+		}
 		if (state_before != PCM_PHASE2_INFO0_WAIT_COMPLETION &&
 		    exchange.state == PCM_PHASE2_INFO0_WAIT_COMPLETION) {
 			wait_starts++;
@@ -561,7 +565,7 @@ static bool check_following_tone(
 		    !exchange.fresh_peer_tone_seen &&
 		    !pcm_phase2_info0_exchange_complete(&exchange))
 			tone_invalidated = true;
-		if (state_before == PCM_PHASE2_INFO0_COMPLETE &&
+		if (repeated &&
 		    !pcm_phase2_info0_exchange_complete(&exchange))
 			reopened_after_completion = true;
 		if (test_case == TEST_TONE_INVALIDATED_BY_REPEAT &&
@@ -580,8 +584,6 @@ static bool check_following_tone(
 		if (event.peer_info0_event == PCM_PEER_INFO0_REJECTED &&
 		    test_case == TEST_TONE_REJECT_AFTER_COMPLETION) {
 			rejected_after_completion = true;
-			completed = index;
-			break;
 		}
 		if (event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 			received_records++;
@@ -637,6 +639,11 @@ static bool check_following_tone(
 			completed = index;
 			break;
 		}
+		if (rejected_after_completion &&
+		    exchange.state == PCM_PHASE2_INFO0_COMPLETE) {
+			completed = index;
+			break;
+		}
 	}
 	CHECK(first_completion != SIZE_MAX,
 	      "following tone did not initially complete INFO0 for %d/%d/%d",
@@ -674,19 +681,26 @@ static bool check_following_tone(
 		      overlapping_repeat);
 	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION)
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
-		      reopened_after_completion && acknowledge_starts == 2 &&
+		      reopened_after_completion && early_acknowledgment &&
+		      acknowledge_starts == 2 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen,
-		      "valid completed-state repeat did not reopen/recover for %d/%d/%d",
-		      mode, codec, digital_local);
+		      "valid completed-state repeat did not reopen/recover for %d/%d/%d: records %zu complete %zu reopened %d early %d ACK %zu state %d tone %d",
+		      mode, codec, digital_local, received_records, completed,
+		      reopened_after_completion, early_acknowledgment,
+		      acknowledge_starts, exchange.state,
+		      exchange.fresh_peer_tone_seen);
 	else
-		CHECK(received_records == 1 && completed != SIZE_MAX &&
-		      rejected_after_completion &&
-		      !reopened_after_completion && acknowledge_starts == 1 &&
+		CHECK(received_records == 2 && completed != SIZE_MAX &&
+		      rejected_after_completion && reopened_after_completion &&
+		      early_acknowledgment && acknowledge_starts == 2 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen,
-		      "rejected completed-state repeat mutated recovery for %d/%d/%d",
-		      mode, codec, digital_local);
+		      "rejected completed-state repeat did not recover for %d/%d/%d: records %zu complete %zu rejected %d reopened %d early %d ACK %zu state %d tone %d",
+		      mode, codec, digital_local, received_records, completed,
+		      rejected_after_completion, reopened_after_completion,
+		      early_acknowledgment, acknowledge_starts, exchange.state,
+		      exchange.fresh_peer_tone_seen);
 	return true;
 }
 

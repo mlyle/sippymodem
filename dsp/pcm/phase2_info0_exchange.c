@@ -98,8 +98,17 @@ enum phase2_info0_exchange_result phase2_info0_exchange_init(
 		    nominal_amplitude) != V34_PHASE2_TONE_OK ||
 	    v34_phase2_tone_detector_init(
 		    &initialized.tone_detector, station_role) !=
-		    V34_PHASE2_TONE_OK ||
-	    !phase2_info0_exchange_is_valid(&initialized))
+		    V34_PHASE2_TONE_OK)
+		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	/* The INFO carrier uses cosine while the following tone uses sine.
+	 * Clock both oscillators from the same next-sample phase so a reversal
+	 * requested during a recovery record survives its eventual handoff. */
+	initialized.tone_transmitter.carrier_phase =
+		initialized.info_transmitter.modulation.carrier.carrier_phase +
+		UINT32_C(0x40000000);
+	initialized.tone_transmitter.guard_phase =
+		initialized.info_transmitter.modulation.guard_phase;
+	if (!phase2_info0_exchange_is_valid(&initialized))
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = initialized;
 	return PHASE2_INFO0_EXCHANGE_OK;
@@ -225,14 +234,20 @@ static void align_tone_with_info_carrier(
 	struct v34_phase2_tone_transmitter *tone =
 		&exchange->tone_transmitter;
 
-	/* The QAM carrier represents its in-phase point with cosine, while the
-	 * tone oscillator represents it with sine. Add one quarter turn and the
-	 * final DPSK point inversion so the handoff does not create a false edge.
-	 * Signal A's guard uses sine in both implementations. */
-	tone->carrier_phase = info->carrier.carrier_phase +
-		UINT32_C(0x40000000) +
-		(info->point_inverted ? UINT32_C(0x80000000) : 0);
-	tone->guard_phase = info->guard_phase;
+	/* Both oscillators were advanced together. Apply only the final DPSK
+	 * point inversion; any ranging reversal made while INFO was on the wire
+	 * is already retained by the tone oscillator. */
+	if (info->point_inverted)
+		tone->carrier_phase += UINT32_C(0x80000000);
+}
+
+static void advance_tone_oscillator(
+	struct phase2_info0_exchange *exchange)
+{
+	exchange->tone_transmitter.carrier_phase +=
+		exchange->tone_transmitter.carrier_phase_step;
+	exchange->tone_transmitter.guard_phase +=
+		exchange->tone_transmitter.guard_phase_step;
 }
 
 static bool generate_transmit_sample(
@@ -252,6 +267,7 @@ static bool generate_transmit_sample(
 			    &exchange->info_transmitter, sample, &complete) !=
 		    V34_PHASE2_INFO_AUDIO_OK)
 			return false;
+		advance_tone_oscillator(exchange);
 		if (complete)
 			exchange->transmit_phase = PHASE2_INFO0_CARRIER_TAIL;
 		return true;
@@ -263,6 +279,7 @@ static bool generate_transmit_sample(
 			    &exchange->info_transmitter.modulation, 0, sample,
 			    &bit_accepted) != V34_PHASE2_DPSK_OK)
 			return false;
+		advance_tone_oscillator(exchange);
 		if (bit_accepted &&
 		    ++exchange->filter_tail_symbols ==
 			    V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS) {

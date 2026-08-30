@@ -131,7 +131,8 @@ static bool local_info0_acknowledges_peer(
 static bool state_retains_peer_info0(
 	enum pcm_phase2_info0_exchange_state state)
 {
-	return state == PCM_PHASE2_INFO0_ACKNOWLEDGING ||
+	return state == PCM_PHASE2_INFO0_VERIFY_REPEAT ||
+	       state == PCM_PHASE2_INFO0_ACKNOWLEDGING ||
 	       state == PCM_PHASE2_INFO0_ACK_REPEAT ||
 	       state == PCM_PHASE2_INFO0_WAIT_COMPLETION ||
 	       state == PCM_PHASE2_INFO0_COMPLETE ||
@@ -173,6 +174,12 @@ static bool exchange_state_contract_is_valid(
 	case PCM_PHASE2_INFO0_INITIAL:
 	case PCM_PHASE2_INFO0_REPEAT:
 		return !local_ack && !exchange->fresh_peer_tone_seen;
+	case PCM_PHASE2_INFO0_VERIFY_REPEAT:
+		return local_ack && !exchange->fresh_peer_tone_seen &&
+		       exchange->transport.info_receiver.frame.stage !=
+			       V34_PHASE2_INFO_SEARCH_SYNC &&
+		       exchange->transport.transmit_phase !=
+			       PHASE2_INFO0_POST_V8_SILENCE;
 	case PCM_PHASE2_INFO0_ACKNOWLEDGING:
 		return (!exchange->fresh_peer_tone_seen || !peer_ack) &&
 		       exchange->transport.transmit_phase != PHASE2_INFO0_TONE;
@@ -377,6 +384,8 @@ static bool reject_peer_info0(
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
+	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT)
+		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
 	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE &&
 	    !state_is_retrain(exchange->state))
 		clear_completion_tone(exchange, event);
@@ -390,6 +399,7 @@ static bool retain_peer_info0(
 {
 	union pcm_info0_record decoded = { 0 };
 	bool retained = state_retains_peer_info0(exchange->state);
+	bool decoded_ack;
 
 	event->tone_event = raw->tone_event;
 	event->protocol = exchange->protocol;
@@ -405,8 +415,21 @@ static bool retain_peer_info0(
 	if (retained &&
 	    !info0_semantics_match(exchange, &exchange->peer_info0, &decoded))
 		return reject_peer_info0(exchange, event);
+	decoded_ack = record_common_const(
+		&decoded, exchange->protocol,
+		opposite_role(exchange->local_role))
+		->acknowledges_peer_info0;
 	if (state_is_retrain(exchange->state))
 		return true;
+	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
+		record_common(
+			&exchange->peer_info0, exchange->protocol,
+			opposite_role(exchange->local_role))
+			->acknowledges_peer_info0 = decoded_ack;
+		clear_completion_tone(exchange, event);
+		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
+		return true;
+	}
 	if (!retained) {
 		exchange->peer_info0 = decoded;
 	} else
@@ -433,6 +456,8 @@ static bool retain_peer_info0(
 	case PCM_PHASE2_INFO0_REPEAT:
 		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
 		break;
+	case PCM_PHASE2_INFO0_VERIFY_REPEAT:
+		return false;
 	case PCM_PHASE2_INFO0_ACKNOWLEDGING:
 		if (!peer_acknowledges_local(exchange) &&
 		    local_info0_acknowledges_peer(exchange))
@@ -480,6 +505,21 @@ static bool restart_local_info0(
 		       PHASE2_INFO0_EXCHANGE_OK;
 }
 
+static bool begin_repeat_verification(
+	struct pcm_phase2_info0_exchange *exchange,
+	struct pcm_phase2_info0_exchange_event *event)
+{
+	record_common(
+		&exchange->peer_info0, exchange->protocol,
+		opposite_role(exchange->local_role))
+		->acknowledges_peer_info0 = false;
+	clear_completion_tone(exchange, event);
+	if (!restart_local_info0(exchange, true))
+		return false;
+	exchange->state = PCM_PHASE2_INFO0_VERIFY_REPEAT;
+	return true;
+}
+
 static void complete_exchange(
 	struct pcm_phase2_info0_exchange *exchange,
 	struct pcm_phase2_info0_exchange_event *event)
@@ -511,6 +551,8 @@ static bool advance_recovery(
 		return true;
 	case PCM_PHASE2_INFO0_REPEAT:
 		return restart_local_info0(exchange, false);
+	case PCM_PHASE2_INFO0_VERIFY_REPEAT:
+		return true;
 	case PCM_PHASE2_INFO0_ACKNOWLEDGING:
 		if (!local_info0_acknowledges_peer(exchange))
 			return restart_local_info0(exchange, true);
@@ -558,6 +600,7 @@ pcm_phase2_info0_exchange_sample(
 	struct phase2_info0_exchange_event raw_event;
 	struct pcm_phase2_info0_exchange_event emitted = { 0 };
 	int16_t generated;
+	bool info_started;
 
 	if (!pcm_phase2_info0_exchange_is_valid(exchange) ||
 	    transmit_sample == NULL || event == NULL)
@@ -567,12 +610,16 @@ pcm_phase2_info0_exchange_sample(
 		    &next.transport, received_sample, &generated, &raw_event) !=
 		    PHASE2_INFO0_EXCHANGE_OK)
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
-	if (exchange->transport.info_receiver.frame.stage ==
-		    V34_PHASE2_INFO_SEARCH_SYNC &&
-	    next.transport.info_receiver.frame.stage !=
-		    V34_PHASE2_INFO_SEARCH_SYNC &&
-	    next.state != PCM_PHASE2_INFO0_COMPLETE)
+	info_started = exchange->transport.info_receiver.frame.stage ==
+		       V34_PHASE2_INFO_SEARCH_SYNC &&
+	       next.transport.info_receiver.frame.stage !=
+		       V34_PHASE2_INFO_SEARCH_SYNC;
+	if (info_started && next.state == PCM_PHASE2_INFO0_COMPLETE) {
+		if (!begin_repeat_verification(&next, &emitted))
+			return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+	} else if (info_started) {
 		next.fresh_peer_tone_seen = false;
+	}
 	if (!retain_peer_info0(&next, &raw_event, &emitted) ||
 	    !advance_recovery(&next, &emitted))
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
