@@ -128,13 +128,6 @@ static bool model_sample(
 	       V90_PHASE4_CP_LINE_TX_OK;
 }
 
-static bool ri_search_matches(
-	const struct v90_phase4_ri_search *left,
-	const struct v90_phase4_ri_search *right)
-{
-	return memcmp(left, right, sizeof(*left)) == 0;
-}
-
 static bool run_exchange(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
@@ -158,7 +151,7 @@ static bool run_exchange(
 	CHECK(prepare_line(&line), "Phase 4 line fixture did not initialize");
 	CHECK(v90_phase4_analog_station_init(
 		      &station, &line, &jd, law, TRAINING_UCODE,
-		      &training) == V90_PHASE4_ANALOG_STATION_OK &&
+		      0u, &training) == V90_PHASE4_ANALOG_STATION_OK &&
 	      v90_phase4_cp_line_tx_init(
 		      &model, &line, constellation, &training) ==
 		      V90_PHASE4_CP_LINE_TX_OK &&
@@ -326,57 +319,47 @@ static bool run_exchange(
 	return true;
 }
 
-static bool resume_after_ri_transition(enum g711_law law)
+static bool round_trip_delay_guards_ri(enum g711_law law)
 {
+	enum { ROUND_TRIP_DELAY_SAMPLES = 47 };
 	struct v90_jd_parameters jd =
 		jd_parameters(V34_CONSTELLATION_4_POINT);
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v34_training_line line;
 	struct v90_phase4_ri_tx transmit;
-	struct v90_phase4_ri_search receive;
+	struct v90_phase4_ri_search pristine;
 	struct v90_phase4_analog_station station;
-	bool transition_seen = false;
 
 	CHECK(prepare_line(&line) &&
 	      v90_phase4_ri_tx_init(&transmit, law, TRAINING_UCODE) ==
 		      V90_PHASE4_RI_OK &&
-	      v90_phase4_ri_search_init(&receive, law, TRAINING_UCODE) ==
+	      v90_phase4_ri_search_init(&pristine, law, TRAINING_UCODE) ==
 		      V90_PHASE4_RI_SEARCH_OK &&
-	      v90_phase4_ri_tx_request_finish(&transmit) ==
-		      V90_PHASE4_RI_OK,
-	      "law %u resume fixture did not initialize",
+	      v90_phase4_analog_station_init(
+		      &station, &line, &jd, law, TRAINING_UCODE,
+		      ROUND_TRIP_DELAY_SAMPLES, &training) ==
+		      V90_PHASE4_ANALOG_STATION_OK &&
+	      station.ri_wait_remaining_samples ==
+		      ROUND_TRIP_DELAY_SAMPLES &&
+	      memcmp(&station.receive, &pristine, sizeof(pristine)) == 0,
+	      "law %u RTD guard fixture did not initialize",
 	      (unsigned int)law);
-	for (size_t index = 0;
-	     index < V90_PHASE4_RI_MIN_SYMBOLS + V90_PHASE4_RI_PERIOD;
-	     ++index) {
+	for (uint32_t index = 0; index < ROUND_TRIP_DELAY_SAMPLES; ++index) {
 		uint8_t octet;
-		enum v90_phase4_ri_search_result result;
 
 		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
-			      V90_PHASE4_RI_OK,
-		      "law %u Ri prefix stopped at %zu",
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK &&
+		      station.ri_wait_remaining_samples ==
+			      ROUND_TRIP_DELAY_SAMPLES - index - 1u &&
+		      memcmp(&station.receive, &pristine, sizeof(pristine)) == 0,
+		      "law %u RTD guard consumed Ri at sample %u",
 		      (unsigned int)law, index);
-		result = v90_phase4_ri_search_receive(&receive, octet);
-		CHECK(result == V90_PHASE4_RI_SEARCH_OK ||
-		      result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
-		      result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED,
-		      "law %u Ri prefix was rejected at %zu",
-		      (unsigned int)law, index);
-		if (result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED) {
-			transition_seen = true;
-			break;
-		}
 	}
-	CHECK(transition_seen &&
-	      v90_phase4_analog_station_resume(
-		      &station, &line, &receive, &jd, &training) ==
-		      V90_PHASE4_ANALOG_STATION_OK &&
-	      station.finish_cpt_requested &&
-	      ri_search_matches(&station.receive, &receive),
-	      "law %u advanced Ri receiver was not preserved",
-	      (unsigned int)law);
 	{
-		struct v90_phase4_ri_search model = receive;
+		struct v90_phase4_ri_search model = pristine;
+		struct v90_phase4_analog_station corrupted;
 		uint8_t octet;
 
 		CHECK(v90_phase4_ri_tx_next(&transmit, &octet) ==
@@ -385,18 +368,23 @@ static bool resume_after_ri_transition(enum g711_law law)
 			      V90_PHASE4_RI_SEARCH_OK &&
 		      v90_phase4_analog_station_receive(&station, octet) ==
 			      V90_PHASE4_ANALOG_STATION_OK &&
-		      ri_search_matches(&station.receive, &model),
-		      "law %u resumed Ri receiver replayed its prefix",
+		      memcmp(&station.receive, &model, sizeof(model)) == 0,
+		      "law %u Ri search did not start after the RTD",
+		      (unsigned int)law);
+		corrupted = station;
+		corrupted.ri_wait_remaining_samples = 1u;
+		CHECK(!v90_phase4_analog_station_is_valid(&corrupted),
+		      "law %u station accepted a progressed pre-RTD search",
 		      (unsigned int)law);
 	}
 	return true;
 }
 
-static bool test_directional_resume(void)
+static bool test_round_trip_delay_guard(void)
 {
-	CHECK(resume_after_ri_transition(G711_LAW_PCMU) &&
-	      resume_after_ri_transition(G711_LAW_PCMA),
-	      "advanced Ri receiver resume failed");
+	CHECK(round_trip_delay_guards_ri(G711_LAW_PCMU) &&
+	      round_trip_delay_guards_ri(G711_LAW_PCMA),
+	      "round-trip delay did not guard Ri acquisition");
 	return true;
 }
 
@@ -437,39 +425,39 @@ static bool test_contracts(void)
 	untouched_saved = untouched;
 	CHECK(v90_phase4_analog_station_init(
 		      NULL, &line, &jd, G711_LAW_PCMU, TRAINING_UCODE,
-		      &training) == V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+		      0u, &training) == V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_analog_station_init(
 		      &untouched, &line, NULL, G711_LAW_PCMU,
-		      TRAINING_UCODE, &training) ==
+		      TRAINING_UCODE, 0u, &training) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_analog_station_init(
 		      &untouched, &line, &bad_jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &training) ==
+		      TRAINING_UCODE, 0u, &training) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_analog_station_init(
 		      &untouched, &bad_line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &training) ==
+		      TRAINING_UCODE, 0u, &training) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "rejected station input changed its destination");
 	bad.kind = V90_CP_DATA;
 	CHECK(v90_phase4_analog_station_init(
 		      &untouched, &line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &bad) ==
+		      TRAINING_UCODE, 0u, &bad) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS,
 	      "station accepted CP in place of CPt");
 	bad = training;
 	bad.law = G711_LAW_PCMA;
 	CHECK(v90_phase4_analog_station_init(
 		      &untouched, &line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &bad) ==
+		      TRAINING_UCODE, 0u, &bad) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS,
 	      "station accepted a mismatched codec law");
 	bad = training;
 	bad.spectral_lookahead = 3;
 	CHECK(v90_phase4_analog_station_init(
 		      &untouched, &line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &bad) ==
+		      TRAINING_UCODE, 0u, &bad) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "station accepted unsupported spectral lookahead");
@@ -481,14 +469,14 @@ static bool test_contracts(void)
 	add_ucode(&bad.transmit_constellations[0], 119);
 	CHECK(v90_phase4_analog_station_init(
 		      &untouched, &line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &bad) ==
+		      TRAINING_UCODE, 0u, &bad) ==
 		      V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "station accepted an undersized CPt mapping");
 
 	CHECK(v90_phase4_analog_station_init(
 		      &station, &line, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, &training) ==
+		      TRAINING_UCODE, 0u, &training) ==
 		      V90_PHASE4_ANALOG_STATION_OK,
 	      "valid station did not initialize");
 	memset(&transmit_handoff, 0x5a, sizeof(transmit_handoff));
@@ -580,7 +568,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "initial exchange", test_initial_exchange },
-		{ "advanced Ri receive resume", test_directional_resume },
+		{ "round-trip delay guard", test_round_trip_delay_guard },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

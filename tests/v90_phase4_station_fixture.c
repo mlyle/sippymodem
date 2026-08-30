@@ -32,7 +32,7 @@ bool v90_phase4_station_fixture_init(
 		    law, &line, &return_receive) ||
 	    v90_phase4_analog_station_init(
 		    &generated_analog, &line, jd, law, training_ucode,
-		    training) != V90_PHASE4_ANALOG_STATION_OK)
+		    0u, training) != V90_PHASE4_ANALOG_STATION_OK)
 		return false;
 	for (uint32_t index = 0;
 	     index < FIXTURE_SAMPLE_LIMIT; ++index) {

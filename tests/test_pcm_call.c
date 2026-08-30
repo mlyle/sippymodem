@@ -47,6 +47,7 @@ struct endpoint {
 	size_t upstream_frames;
 	uint16_t upstream_received_delay;
 	uint16_t phase4_entry_ri_symbols;
+	uint32_t phase4_entry_ri_wait_samples;
 	bool entered_phase3;
 	bool entered_mixed;
 	bool entered_phase4;
@@ -704,14 +705,17 @@ static bool endpoint_octet(
 	if (observation.processed != PCM_CALL_PHASE4 &&
 	    observation.next == PCM_CALL_PHASE4) {
 		if (endpoint->call.local_role == V90_ANALOG_MODEM) {
+			const struct v90_phase4_analog_station *station =
+				&endpoint->call.state.phase4.analog.state.initial;
 			const struct v90_phase4_ri_search *search =
-				&endpoint->call.state.phase4.analog.state.initial
-					 .receive;
+				&station->receive;
 
 			endpoint->phase4_entry_ri_symbols =
 				search->stage == V90_PHASE4_RI_SEARCH_HUNT ?
 					search->history_count :
 					V90_PHASE4_RI_MIN_SYMBOLS;
+			endpoint->phase4_entry_ri_wait_samples =
+				station->ri_wait_remaining_samples;
 		} else {
 			endpoint->phase4_entry_ri_symbols =
 				endpoint->call.state.phase4.digital.state.initial
@@ -727,12 +731,9 @@ static bool ri_progress_is_consistent(const struct endpoint *endpoint)
 	size_t expected = endpoint->mixed_octets;
 
 	if (endpoint->call.local_role == V90_ANALOG_MODEM) {
-		if (endpoint->phase4_entry_ri_symbols ==
-		    V90_PHASE4_RI_MIN_SYMBOLS)
-			return expected >= V90_PHASE4_RI_SEARCH_SYMBOLS;
-		return endpoint->phase4_entry_ri_symbols <
-			       V90_PHASE4_RI_SEARCH_SYMBOLS &&
-		       endpoint->phase4_entry_ri_symbols <= expected;
+		return endpoint->phase4_entry_ri_symbols == 0u &&
+		       endpoint->phase4_entry_ri_wait_samples ==
+			       endpoint->call.round_trip_delay_samples;
 	}
 	if (expected > V90_PHASE4_RI_MIN_SYMBOLS)
 		expected = V90_PHASE4_RI_MIN_SYMBOLS;

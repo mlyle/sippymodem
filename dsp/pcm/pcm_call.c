@@ -337,9 +337,6 @@ static bool analog_mixed_is_valid(const struct pcm_call *call)
 	       mixed->phase3.receive_stage ==
 		       V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
 	       v90_phase3_sign_receiver_is_complete(signs) &&
-	       v90_phase4_ri_search_is_valid(&mixed->receive) &&
-	       mixed->receive.law == signs->law &&
-	       mixed->receive.training_ucode == signs->training_ucode &&
 	       (call->failed || !transmit_complete);
 }
 
@@ -1226,19 +1223,10 @@ static enum pcm_call_result enter_mixed_phase3(struct pcm_call *call)
 
 	next.state.mixed = (union pcm_call_mixed_state){ 0 };
 	if (call->local_role == V90_ANALOG_MODEM) {
-		struct v90_phase3_analog_receive_handoff handoff;
 		struct pcm_call_analog_mixed_state mixed = {
 			.phase3 = call->state.phase3.analog,
 		};
 
-		if (v90_phase3_analog_station_receive_handoff(
-			    &call->state.phase3.analog, &handoff) !=
-			    V90_PHASE3_ANALOG_STATION_OK)
-			return PCM_CALL_INVALID_STATE;
-		if (v90_phase4_ri_search_init(
-			    &mixed.receive, handoff.law,
-			    handoff.training_ucode) != V90_PHASE4_RI_SEARCH_OK)
-			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.mixed.analog = mixed;
 	} else {
 		struct v90_phase3_digital_transmit_handoff handoff;
@@ -1398,9 +1386,12 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 				.maximum_spectral_shaping_lookahead);
 		next.analog_phase4_configuration.data_parameters
 			.selected_rate_index = selected_rate_index;
-		result = analog_phase4_result(v90_phase4_analog_station_resume(
-			&station, &transmit_handoff, &mixed->receive,
-			&receive_handoff.jd,
+		if (!call->round_trip_delay_stored)
+			return PCM_CALL_INVALID_STATE;
+		result = analog_phase4_result(v90_phase4_analog_station_init(
+			&station, &transmit_handoff, &receive_handoff.jd,
+			receive_handoff.law, receive_handoff.training_ucode,
+			call->round_trip_delay_samples,
 			&next.analog_phase4_configuration
 				.training_parameters));
 		if (result != PCM_CALL_OK)
@@ -1769,25 +1760,6 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
-static enum pcm_call_result receive_mixed_ri(
-	struct v90_phase4_ri_search *receive, uint8_t network_octet)
-{
-	struct v90_phase4_ri_search next = *receive;
-	enum v90_phase4_ri_search_result result =
-		v90_phase4_ri_search_receive(&next, network_octet);
-
-	if (result == V90_PHASE4_RI_SEARCH_OK ||
-	    result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
-	    result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED ||
-	    result == V90_PHASE4_RI_SEARCH_DONE) {
-		*receive = next;
-		return PCM_CALL_OK;
-	}
-	if (result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE)
-		return PCM_CALL_SEQUENCE_MISMATCH;
-	return PCM_CALL_NUMERIC_FAILURE;
-}
-
 static enum pcm_call_result sample_mixed_phase3(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet)
@@ -1809,7 +1781,7 @@ static enum pcm_call_result sample_mixed_phase3(
 		if (result != PCM_CALL_OK)
 			return result;
 		*transmit_octet = encode_sample(call->law, sample);
-		result = receive_mixed_ri(&mixed->receive, received_octet);
+		return advance_phase3(call);
 	} else {
 		struct pcm_call_digital_mixed_state *mixed =
 			&call->state.mixed.digital;

@@ -32,6 +32,11 @@ bool v90_phase4_analog_station_is_valid(
 		    station->receive.law,
 		    station->maximum_spectral_lookahead))
 		return false;
+	if (station->ri_wait_remaining_samples != 0u &&
+	    (station->receive.stage != V90_PHASE4_RI_SEARCH_HUNT ||
+	     station->receive.history_count != 0u ||
+	     station->receive.history_cursor != 0u))
+		return false;
 	return station->finish_cpt_requested ==
 	       (station->receive.stage >= V90_PHASE4_RI_SEARCH_BAR);
 }
@@ -71,35 +76,20 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	struct v90_phase4_analog_station *station,
 	const struct v34_training_line *phase3_transmit,
 	const struct v90_jd_parameters *jd, enum g711_law law,
-	uint8_t training_ucode,
+	uint8_t training_ucode, uint32_t round_trip_delay_samples,
 	const struct v90_cp_parameters *training_parameters)
 {
+	struct v90_phase4_analog_station initialized = { 0 };
 	struct v90_phase4_ri_search receive;
+	enum v90_phase4_analog_station_result result;
 
 	if (v90_phase4_ri_search_init(&receive, law, training_ucode) !=
 	    V90_PHASE4_RI_SEARCH_OK)
 		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
-	return v90_phase4_analog_station_resume(
-		station, phase3_transmit, &receive, jd,
-		training_parameters);
-}
-
-enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
-	struct v90_phase4_analog_station *station,
-	const struct v34_training_line *phase3_transmit,
-	const struct v90_phase4_ri_search *receive,
-	const struct v90_jd_parameters *jd,
-	const struct v90_cp_parameters *training_parameters)
-{
-	struct v90_phase4_analog_station initialized = { 0 };
-	enum v90_phase4_analog_station_result result;
-
-	if (station == NULL ||
-	    !v90_phase4_ri_search_is_valid(receive) ||
-	    !v90_jd_parameters_are_valid(jd))
+	if (station == NULL || !v90_jd_parameters_are_valid(jd))
 		return V90_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
 	if (!training_parameters_are_supported(
-		    training_parameters, receive->law,
+		    training_parameters, law,
 		    jd->maximum_spectral_shaping_lookahead))
 		return V90_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	result = transmit_result(v90_phase4_cp_line_tx_init(
@@ -108,12 +98,11 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
 		training_parameters));
 	if (result != V90_PHASE4_ANALOG_STATION_OK)
 		return result;
-	initialized.receive = *receive;
+	initialized.receive = receive;
 	initialized.training_parameters = *training_parameters;
+	initialized.ri_wait_remaining_samples = round_trip_delay_samples;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
-	initialized.finish_cpt_requested =
-		receive->stage >= V90_PHASE4_RI_SEARCH_BAR;
 	if (!v90_phase4_analog_station_is_valid(&initialized))
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	*station = initialized;
@@ -187,6 +176,15 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_receive(
 	if (v90_phase4_analog_station_receive_complete(station))
 		return V90_PHASE4_ANALOG_STATION_COMPLETE;
 	next = *station;
+	if (next.ri_wait_remaining_samples != 0u) {
+		next.ri_wait_remaining_samples--;
+		if (!v90_phase4_analog_station_is_valid(&next)) {
+			station->failed = true;
+			return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
+		}
+		*station = next;
+		return V90_PHASE4_ANALOG_STATION_OK;
+	}
 	receive_result = v90_phase4_ri_search_receive(
 		&next.receive, network_octet);
 	if (receive_result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE) {

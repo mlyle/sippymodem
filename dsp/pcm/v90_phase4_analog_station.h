@@ -34,14 +34,16 @@ struct v90_phase4_analog_receive_handoff {
 };
 
 /* Own the analogue modem's initial Phase 4 exchange. CPt is repeated on the
- * continuous Phase 3 QAM line until the receive direction detects Ri-bar;
- * only the CPt record then in progress is completed. Receive and transmit
- * calls may complete independently, but calls on one instance are serialized.
- */
+ * continuous Phase 3 QAM line until the receive direction detects Ri-bar.
+ * Ri acquisition starts only after CPt has been exposed for the measured
+ * round-trip delay. Only the CPt record then in progress is completed.
+ * Receive and transmit calls may complete independently, but calls on one
+ * instance are serialized. */
 struct v90_phase4_analog_station {
 	struct v90_phase4_cp_line_tx transmit;
 	struct v90_phase4_ri_search receive;
 	struct v90_cp_parameters training_parameters;
+	uint32_t ri_wait_remaining_samples;
 	uint8_t maximum_spectral_lookahead;
 	bool finish_cpt_requested;
 	bool failed;
@@ -51,17 +53,7 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	struct v90_phase4_analog_station *station,
 	const struct v34_training_line *phase3_transmit,
 	const struct v90_jd_parameters *jd, enum g711_law law,
-	uint8_t training_ucode,
-	const struct v90_cp_parameters *training_parameters);
-
-/* Join a Phase 3 transmit handoff to a Phase 4 Ri receiver that has already
- * consumed the intervening network characters. This is the lossless boundary
- * used when the two full-duplex directions leave Phase 3 independently. */
-enum v90_phase4_analog_station_result v90_phase4_analog_station_resume(
-	struct v90_phase4_analog_station *station,
-	const struct v34_training_line *phase3_transmit,
-	const struct v90_phase4_ri_search *receive,
-	const struct v90_jd_parameters *jd,
+	uint8_t training_ucode, uint32_t round_trip_delay_samples,
 	const struct v90_cp_parameters *training_parameters);
 bool v90_phase4_analog_station_is_valid(
 	const struct v90_phase4_analog_station *station);
@@ -74,7 +66,8 @@ bool v90_phase4_analog_station_has_failed(
 enum v90_phase4_analog_station_result v90_phase4_analog_station_transmit(
 	struct v90_phase4_analog_station *station, int16_t *sample);
 
-/* Consume one raw G.711 character. The character that completes Ri-bar is
+/* Consume one raw G.711 character. Characters inside the initial round-trip
+ * delay do not contribute Ri evidence. The character that completes Ri-bar is
  * consumed normally; a later call returns COMPLETE without consuming input. */
 enum v90_phase4_analog_station_result v90_phase4_analog_station_receive(
 	struct v90_phase4_analog_station *station, uint8_t network_octet);

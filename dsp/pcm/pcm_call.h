@@ -129,12 +129,11 @@ union pcm_call_phase3_state {
 	struct v92_phase3_digital_station v92_digital;
 };
 
-/* Ri starts as soon as the raw digital-character direction completes Phase 3.
- * The conventional direction remains in its continuous Phase 3 line until its
- * independent handoff boundary. */
+/* The conventional direction remains in its continuous Phase 3 line after
+ * the raw digital-character direction completes. Ri cannot causally respond
+ * until CPt begins, so Phase 4 owns a fresh, RTD-guarded Ri search. */
 struct pcm_call_analog_mixed_state {
 	struct v90_phase3_analog_station phase3;
-	struct v90_phase4_ri_search receive;
 };
 
 struct pcm_call_digital_mixed_state {
