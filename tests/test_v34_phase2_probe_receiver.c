@@ -35,12 +35,6 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 	return 0;
 }
 
-static bool harmonic_is_omitted(unsigned int harmonic)
-{
-	return harmonic == 6 || harmonic == 8 || harmonic == 12 ||
-	       harmonic == 16;
-}
-
 static double bin_peak(
 	const struct v34_phase2_probe_spectrum_bin *bin)
 {
@@ -112,7 +106,7 @@ static bool measurement_spectrum_is_plausible(
 		const struct v34_phase2_probe_spectrum_bin *l2_bin =
 			&measurement->l2.harmonics[harmonic - 1u];
 
-		if (harmonic_is_omitted(harmonic)) {
+		if (!v34_phase2_probe_harmonic_is_transmitted(harmonic)) {
 			CHECK(bin_peak(l1_bin) < omitted_tolerance * 2.1 &&
 				      bin_peak(l2_bin) < omitted_tolerance,
 			      "omitted harmonic %u leaked through codec %d: L1 %.3f L2 %.3f",

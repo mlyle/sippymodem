@@ -35,6 +35,17 @@ enum v34_phase2_probe_result {
 	V34_PHASE2_PROBE_INVALID_ARGUMENT,
 };
 
+/* The probing profile contains every 150 Hz harmonic from 150 through
+ * 3750 Hz except 900, 1200, 1800, and 2400 Hz. */
+static inline bool
+v34_phase2_probe_harmonic_is_transmitted(unsigned int harmonic)
+{
+	return harmonic >= 1u &&
+	       harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC &&
+	       harmonic != 6u && harmonic != 8u &&
+	       harmonic != 12u && harmonic != 16u;
+}
+
 struct v34_phase2_probe_transmitter {
 	uint16_t period_index;
 	int16_t nominal_amplitude;

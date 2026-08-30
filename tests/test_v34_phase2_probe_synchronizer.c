@@ -275,12 +275,6 @@ static bool test_turnaround_tail_and_silence(void)
 	return true;
 }
 
-static bool harmonic_is_omitted(unsigned int harmonic)
-{
-	return harmonic == 6 || harmonic == 8 || harmonic == 12 ||
-	       harmonic == 16;
-}
-
 static int16_t phase_distorted_probe_sample(uint16_t period_index)
 {
 	double sum = 0.0;
@@ -290,7 +284,7 @@ static int16_t phase_distorted_probe_sample(uint16_t period_index)
 	     ++harmonic) {
 		double phase;
 
-		if (harmonic_is_omitted(harmonic))
+		if (!v34_phase2_probe_harmonic_is_transmitted(harmonic))
 			continue;
 		phase = TEST_TWO_PI * 3.0 * (double)harmonic *
 			(double)period_index /

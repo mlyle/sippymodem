@@ -29,19 +29,6 @@ static bool probe_level_is_valid(
 	       level == V34_PHASE2_PROBE_L2;
 }
 
-static bool harmonic_is_omitted(unsigned int harmonic)
-{
-	switch (harmonic) {
-	case 6:  /* 900 Hz */
-	case 8:  /* 1200 Hz */
-	case 12: /* 1800 Hz */
-	case 16: /* 2400 Hz */
-		return true;
-	default:
-		return false;
-	}
-}
-
 static bool harmonic_is_inverted(unsigned int harmonic)
 {
 	/* These are the eight probing tones whose initial phase is 180 degrees;
@@ -80,7 +67,7 @@ static double normalized_probe_sample(uint16_t period_index)
 			2.0 * fundamental_cosine * harmonic_cosine -
 			previous_cosine;
 
-		if (!harmonic_is_omitted(harmonic))
+		if (v34_phase2_probe_harmonic_is_transmitted(harmonic))
 			sum += harmonic_is_inverted(harmonic) ?
 				       -harmonic_cosine :
 				       harmonic_cosine;

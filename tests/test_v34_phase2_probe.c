@@ -84,6 +84,12 @@ static bool test_spectrum_and_initial_phases(void)
 
 	CHECK(ARRAY_LENGTH(expected_tones) ==
 		      V34_PHASE2_PROBE_TONE_COUNT &&
+	      ARRAY_LENGTH(omitted_harmonics) ==
+		      V34_PHASE2_PROBE_HIGHEST_HARMONIC -
+			      V34_PHASE2_PROBE_TONE_COUNT &&
+	      !v34_phase2_probe_harmonic_is_transmitted(0) &&
+	      !v34_phase2_probe_harmonic_is_transmitted(
+		      V34_PHASE2_PROBE_HIGHEST_HARMONIC + 1u) &&
 		      render_period(V34_PHASE2_PROBE_L2, samples),
 	      "probe spectrum fixture failed");
 	for (size_t index = 0; index < ARRAY_LENGTH(expected_tones); ++index) {
@@ -92,7 +98,9 @@ static bool test_spectrum_and_initial_phases(void)
 		double expected =
 			expected_tones[index].phase_sign * expected_tone_peak;
 
-		CHECK(fabs(projection.cosine - expected) < 2.0 &&
+		CHECK(v34_phase2_probe_harmonic_is_transmitted(
+			      expected_tones[index].harmonic) &&
+			      fabs(projection.cosine - expected) < 2.0 &&
 			      fabs(projection.sine) < 2.0,
 		      "harmonic %u changed amplitude or initial phase "
 		      "(cosine %.3f, sine %.3f)",
@@ -104,7 +112,9 @@ static bool test_spectrum_and_initial_phases(void)
 		struct test_projection projection = project_harmonic(
 			samples, omitted_harmonics[index]);
 
-		CHECK(hypot(projection.cosine, projection.sine) < 2.0,
+		CHECK(!v34_phase2_probe_harmonic_is_transmitted(
+			      omitted_harmonics[index]) &&
+			      hypot(projection.cosine, projection.sine) < 2.0,
 		      "omitted harmonic %u leaked into the probe",
 		      omitted_harmonics[index]);
 	}

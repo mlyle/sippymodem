@@ -12,10 +12,6 @@ static const double
 static const double
 	V34_PHASE2_PROBE_SYNCHRONIZER_PLATEAU_TOLERANCE = 0.001;
 
-enum {
-	V34_PHASE2_PROBE_OMITTED_TONES = 4,
-};
-
 _Static_assert(
 	V34_PHASE2_PROBE_SYNCHRONIZER_SEARCH_SAMPLES > 0,
 	"V.34 probe synchronization needs a non-empty search prefix");
@@ -24,8 +20,7 @@ _Static_assert(
 	"V.34 probe synchronization counters must contain the capture");
 _Static_assert(
 	V34_PHASE2_PROBE_HIGHEST_HARMONIC -
-		V34_PHASE2_PROBE_OMITTED_TONES ==
-		V34_PHASE2_PROBE_TONE_COUNT,
+		V34_PHASE2_PROBE_TONE_COUNT == 4,
 	"V.34 probe energy selection must contain every transmitted tone");
 
 bool v34_phase2_probe_synchronizer_is_valid(
@@ -76,12 +71,6 @@ v34_phase2_probe_synchronizer_init(
 	return V34_PHASE2_PROBE_SYNCHRONIZER_OK;
 }
 
-static bool harmonic_is_omitted(unsigned int harmonic)
-{
-	return harmonic == 6 || harmonic == 8 || harmonic == 12 ||
-	       harmonic == 16;
-}
-
 static bool measure_probe_energy_fraction(
 	const int16_t *received, double *fraction)
 {
@@ -114,7 +103,7 @@ static bool measure_probe_energy_fraction(
 	for (unsigned int harmonic = 1;
 	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
 	     ++harmonic)
-		if (!harmonic_is_omitted(harmonic))
+		if (v34_phase2_probe_harmonic_is_transmitted(harmonic))
 			probe_mean_square +=
 				measurement.harmonics[harmonic - 1u]
 					.mean_square;

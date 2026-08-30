@@ -18,19 +18,6 @@ static const double TEST_TWO_PI = 6.283185307179586476925286766559;
 static const double TEST_PHASE_RADIANS = 0.63;
 static const double TEST_BIN_TOLERANCE = 0.25;
 
-static bool harmonic_is_omitted(unsigned int harmonic)
-{
-	switch (harmonic) {
-	case 6:
-	case 8:
-	case 12:
-	case 16:
-		return true;
-	default:
-		return false;
-	}
-}
-
 static double bin_peak(
 	const struct v34_phase2_probe_spectrum_bin *bin)
 {
@@ -78,7 +65,7 @@ static bool test_generated_probe_spectrum(void)
 			&measurement.harmonics[harmonic - 1u];
 		double peak = bin_peak(bin);
 
-		if (harmonic_is_omitted(harmonic)) {
+		if (!v34_phase2_probe_harmonic_is_transmitted(harmonic)) {
 			CHECK(peak < TEST_BIN_TOLERANCE,
 			      "omitted harmonic %u measured peak %.9f",
 			      harmonic, peak);
