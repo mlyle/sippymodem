@@ -7,15 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool roles_are_complementary(
-	enum v34_station_role local, enum v34_station_role peer)
-{
-	return (local == V34_CALLING_STATION &&
-		peer == V34_ANSWERING_STATION) ||
-	       (local == V34_ANSWERING_STATION &&
-		peer == V34_CALLING_STATION);
-}
-
 static bool mapping_matches_direction(
 	const struct v34_data_mapping *mapping,
 	const struct v34_data_direction_parameters *direction,
@@ -73,9 +64,9 @@ bool v34_data_startup_is_valid(
 	const struct v34_data_startup *startup)
 {
 	return startup != NULL && v34_data_mode_is_valid(&startup->mode) &&
-	       roles_are_complementary(
-		       startup->transmit.transmitting_profile.local_role,
-		       startup->receive.transmitting_profile.local_role) &&
+	       startup->receive.transmitting_profile.local_role ==
+		       v34_station_peer_role(
+			       startup->transmit.transmitting_profile.local_role) &&
 	       mapping_matches_direction(
 		       &startup->transmit, &startup->mode.transmit,
 		       startup->mode.auxiliary_channel_enabled) &&
@@ -114,8 +105,8 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	if (startup == NULL || !v34_data_mode_is_valid(mode) ||
 	    !v34_phase3_profile_is_valid(transmit_profile) ||
 	    !v34_phase3_profile_is_valid(receive_profile) ||
-	    !roles_are_complementary(
-		    transmit_profile->local_role, receive_profile->local_role) ||
+	    receive_profile->local_role !=
+		    v34_station_peer_role(transmit_profile->local_role) ||
 	    !qam_adaptation_is_valid(equalizer_adaptation))
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
 	result = v34_data_mapping_prepare(

@@ -4,13 +4,6 @@
 
 #include <string.h>
 
-static enum phase2_signal_role signal_for_station(
-	enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ?
-		       PHASE2_SIGNAL_B : PHASE2_SIGNAL_A;
-}
-
 bool v34_phase2_info0_exchange_is_valid(
 	const struct v34_phase2_info0_exchange *exchange)
 {
@@ -18,7 +11,7 @@ bool v34_phase2_info0_exchange_is_valid(
 	       v34_station_role_is_valid(exchange->local_role) &&
 	       phase2_info0_exchange_is_valid(&exchange->transport) &&
 	       exchange->transport.signal_role ==
-		       signal_for_station(exchange->local_role) &&
+		       v34_phase2_signal_for_station(exchange->local_role) &&
 	       v34_info0_is_valid(&exchange->local_info0) &&
 	       exchange->local_info0.acknowledges_peer_info0 ==
 		       exchange->peer_info0_received &&
@@ -64,7 +57,8 @@ v34_phase2_info0_exchange_init(
 	if (v34_info0_encode(&initial_info0, payload, sizeof(payload)) !=
 		    V34_INFO0_OK ||
 	    phase2_info0_exchange_init(
-		    &initialized.transport, signal_for_station(local_role),
+		    &initialized.transport,
+		    v34_phase2_signal_for_station(local_role),
 		    nominal_amplitude, payload, V34_INFO0_PAYLOAD_BITS,
 		    V34_INFO0_PAYLOAD_BITS) != PHASE2_INFO0_EXCHANGE_OK ||
 	    !v34_phase2_info0_exchange_is_valid(&initialized))

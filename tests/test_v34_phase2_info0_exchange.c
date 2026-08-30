@@ -287,6 +287,22 @@ static bool test_validation(void)
 	};
 	int16_t sample = 1234;
 
+	CHECK(phase2_signal_role_is_valid(PHASE2_SIGNAL_A) &&
+	      phase2_signal_role_is_valid(PHASE2_SIGNAL_B) &&
+	      !phase2_signal_role_is_valid((enum phase2_signal_role)-1) &&
+	      v34_phase2_signal_for_station(V34_CALLING_STATION) ==
+		      PHASE2_SIGNAL_B &&
+	      v34_phase2_signal_for_station(V34_ANSWERING_STATION) ==
+		      PHASE2_SIGNAL_A &&
+	      v34_phase2_station_for_signal(PHASE2_SIGNAL_B) ==
+		      V34_CALLING_STATION &&
+	      v34_phase2_station_for_signal(PHASE2_SIGNAL_A) ==
+		      V34_ANSWERING_STATION &&
+	      !phase2_signal_role_is_valid(v34_phase2_signal_for_station(
+		      (enum v34_station_role)-1)) &&
+	      !v34_station_role_is_valid(v34_phase2_station_for_signal(
+		      (enum phase2_signal_role)-1)),
+	      "Phase 2 role mappings changed");
 	capabilities.maximum_symbol_rate_difference_steps = 6;
 	CHECK(v34_phase2_info0_exchange_init(
 		      &exchange, V34_CALLING_STATION,

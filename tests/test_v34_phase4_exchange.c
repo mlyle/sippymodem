@@ -213,9 +213,7 @@ static bool endpoint_init_with_rates(
 	uint8_t mp_rate_limit)
 {
 	struct v34_phase3_profile local = profile(role);
-	struct v34_phase3_profile peer = profile(
-		role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION);
+	struct v34_phase3_profile peer = profile(v34_station_peer_role(role));
 	struct v34_phase3_exchange_configuration configuration =
 		phase3_configuration(
 			role == V34_CALLING_STATION ?

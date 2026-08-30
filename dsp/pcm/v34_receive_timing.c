@@ -9,13 +9,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static enum v34_station_role receiving_role(
-	enum v34_station_role transmitting_role)
-{
-	return transmitting_role == V34_CALLING_STATION ?
-		       V34_ANSWERING_STATION : V34_CALLING_STATION;
-}
-
 static bool queue_state_is_valid(const struct v34_receive_timing *timing)
 {
 	return timing->input_read < V34_RECEIVE_TIMING_INPUT_CAPACITY &&
@@ -39,7 +32,8 @@ bool v34_receive_timing_is_valid(
 	       v34_timing_filter_is_valid(&timing->timing_filter) &&
 	       v34_timing_control_is_valid(&timing->timing) &&
 	       timing->timing.local_role ==
-		       receiving_role(timing->transmitting_profile.local_role) &&
+		       v34_station_peer_role(
+			       timing->transmitting_profile.local_role) &&
 	       (!timing->reanchor_at_s || !timing->s_detector.detected) &&
 	       (timing->s_detector.acquired ||
 		timing->timing.mode == V34_TIMING_CONTROL_LOCKED) &&
@@ -64,7 +58,8 @@ enum v34_receive_timing_result v34_receive_timing_init(
 		    &initialized.timing, V34_RECEIVE_TIMING_SAMPLE_RATE,
 		    transmitting_profile->symbol_rate_numerator,
 		    transmitting_profile->symbol_rate_denominator,
-		    receiving_role(transmitting_profile->local_role)) !=
+		    v34_station_peer_role(
+			    transmitting_profile->local_role)) !=
 		    V34_TIMING_CONTROL_OK ||
 	    v34_gain_control_init(
 		    &initialized.gain, initial_gain) !=

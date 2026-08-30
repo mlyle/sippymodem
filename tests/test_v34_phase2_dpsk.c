@@ -156,9 +156,7 @@ static bool check_loopback(
 	size_t leading_silence, unsigned int noise_peak)
 {
 	enum v34_station_role receive_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION :
-			V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_dpsk_transmitter transmitter;
 	struct v34_phase2_dpsk_receiver receiver;
 	struct v34_phase2_dpsk_measurement measurement;

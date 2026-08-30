@@ -35,22 +35,6 @@ _Static_assert(
 	(int)V34_PHASE2_TONE_ENDED == (int)SINGLE_TONE_ENDED,
 	"shared tone events must preserve the V.34 event order");
 
-static uint32_t local_carrier_hz(
-	enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ?
-		       V34_PHASE2_CALLING_CARRIER_HZ :
-		       V34_PHASE2_ANSWERING_CARRIER_HZ;
-}
-
-static uint32_t remote_carrier_hz(
-	enum v34_station_role local_role)
-{
-	return local_role == V34_CALLING_STATION ?
-		       V34_PHASE2_ANSWERING_CARRIER_HZ :
-		       V34_PHASE2_CALLING_CARRIER_HZ;
-}
-
 bool v34_phase2_tone_transmitter_is_valid(
 	const struct v34_phase2_tone_transmitter *transmitter)
 {
@@ -60,7 +44,8 @@ bool v34_phase2_tone_transmitter_is_valid(
 	    transmitter->carrier_phase_step !=
 		    phase_step_u32(
 			    V34_PHASE2_SAMPLE_RATE,
-			    local_carrier_hz(transmitter->local_role), 1))
+			    v34_phase2_carrier_hz(
+				    transmitter->local_role), 1))
 		return false;
 	if (transmitter->local_role ==
 	    V34_CALLING_STATION)
@@ -104,7 +89,7 @@ v34_phase2_tone_transmitter_init(
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	initialized.carrier_phase_step = phase_step_u32(
 		V34_PHASE2_SAMPLE_RATE,
-		local_carrier_hz(local_role), 1);
+		v34_phase2_carrier_hz(local_role), 1);
 	initialized.carrier_amplitude = (int16_t)carrier_amplitude;
 	initialized.guard_amplitude = (int16_t)guard_amplitude;
 	if (!v34_phase2_tone_transmitter_is_valid(&initialized))
@@ -163,7 +148,8 @@ static struct single_tone_detector_profile detector_profile(
 		.minimum_carrier_share = minimum_carrier_share(local_role),
 		.maximum_carrier_share = V34_PHASE2_TONE_MAX_CARRIER_SHARE,
 		.sample_rate_hz = V34_PHASE2_SAMPLE_RATE,
-		.frequency_hz = (uint16_t)remote_carrier_hz(local_role),
+		.frequency_hz = (uint16_t)v34_phase2_carrier_hz(
+			v34_station_peer_role(local_role)),
 		.window_samples = V34_PHASE2_TONE_WINDOW_SAMPLES,
 		.acquire_samples = V34_PHASE2_TONE_ACQUIRE_SAMPLES,
 		.loss_samples = V34_PHASE2_TONE_LOSS_SAMPLES,

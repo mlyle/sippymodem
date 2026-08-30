@@ -66,7 +66,12 @@ static bool test_tone_levels(void)
 	double answering_carrier;
 	double answering_guard;
 
-	CHECK(render(
+	CHECK(v34_phase2_carrier_hz(V34_CALLING_STATION) ==
+		      V34_PHASE2_CALLING_CARRIER_HZ &&
+	      v34_phase2_carrier_hz(V34_ANSWERING_STATION) ==
+		      V34_PHASE2_ANSWERING_CARRIER_HZ &&
+	      v34_phase2_carrier_hz((enum v34_station_role)99) == 0u &&
+	      render(
 		      V34_CALLING_STATION,
 		      calling_samples, &calling) &&
 		      render(
@@ -220,9 +225,7 @@ static bool check_detector(
 	enum test_codec codec)
 {
 	enum v34_station_role local_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION :
-			V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_tone_transmitter transmitter;
 	struct v34_phase2_tone_detector detector;
 	struct v34_phase2_tone_measurement measurement;
@@ -329,8 +332,7 @@ static bool check_interrupted_reference(
 	enum v34_station_role transmit_role, enum test_codec codec)
 {
 	enum v34_station_role local_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_tone_transmitter transmitter;
 	struct v34_phase2_tone_detector detector;
 	struct v34_phase2_tone_event last_reversal = { 0 };
@@ -442,8 +444,7 @@ static bool check_rejected_reversal(
 	bool opposite_after_info)
 {
 	enum v34_station_role local_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_tone_transmitter transmitter;
 	struct v34_phase2_tone_detector detector;
 	double committed_in_phase = 0.0;
@@ -606,9 +607,7 @@ static bool check_frequency_offset(
 	double frequency_scale)
 {
 	enum v34_station_role local_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION :
-			V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_tone_transmitter levels;
 	struct v34_phase2_tone_detector detector;
 	const size_t edge_sample = 4803;
@@ -776,8 +775,7 @@ static bool check_full_retrain_request(
 	enum v34_station_role local_role, enum test_codec codec)
 {
 	enum v34_station_role remote_role =
-		local_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(local_role);
 	struct v34_phase2_tone_transmitter tone;
 	struct v34_retrain_detector detector;
 	struct v34_phase2_tone_event reversal = { 0 };

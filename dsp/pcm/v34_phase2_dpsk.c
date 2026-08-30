@@ -58,14 +58,6 @@ static const int16_t v34_phase2_lowpass_q14
 	1363, 1422, 1474, 1518, 1554, 1582, 1601, 1610,
 };
 
-static uint32_t local_carrier_hz(
-	enum v34_station_role role)
-{
-	return role == V34_CALLING_STATION ?
-		       V34_PHASE2_CALLING_CARRIER_HZ :
-		       V34_PHASE2_ANSWERING_CARRIER_HZ;
-}
-
 static struct qam_channel phase2_channel(uint32_t carrier_hz)
 {
 	return (struct qam_channel){
@@ -103,7 +95,7 @@ static bool transmitter_metadata_is_valid(
 	    !v34_station_role_is_valid(transmitter->local_role) ||
 	    !channel_matches(
 		    &transmitter->carrier.channel,
-		    local_carrier_hz(transmitter->local_role)))
+		    v34_phase2_carrier_hz(transmitter->local_role)))
 		return false;
 	if (transmitter->local_role ==
 	    V34_CALLING_STATION)
@@ -167,7 +159,7 @@ v34_phase2_dpsk_transmitter_init(
 	    carrier_amplitude + guard_amplitude > INT16_MAX)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	initialized.guard_amplitude = (int16_t)guard_amplitude;
-	channel = phase2_channel(local_carrier_hz(local_role));
+	channel = phase2_channel(v34_phase2_carrier_hz(local_role));
 	if (qam_modulator_init(
 		    &initialized.carrier, &channel,
 		    (int16_t)carrier_amplitude) != QAM_OK ||

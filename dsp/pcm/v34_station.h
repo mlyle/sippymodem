@@ -16,4 +16,12 @@ static inline bool v34_station_role_is_valid(enum v34_station_role role)
 	       role == V34_ANSWERING_STATION;
 }
 
+static inline enum v34_station_role
+v34_station_peer_role(enum v34_station_role role)
+{
+	return role == V34_CALLING_STATION ? V34_ANSWERING_STATION :
+	       role == V34_ANSWERING_STATION ? V34_CALLING_STATION :
+	       (enum v34_station_role)-1;
+}
+
 #endif

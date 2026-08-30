@@ -887,8 +887,7 @@ static bool check_retrain_tone_guard(
 	enum v34_station_role local_role, bool pcma)
 {
 	enum v34_station_role remote_role =
-		local_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(local_role);
 	struct endpoint caller;
 	struct endpoint answerer;
 	struct endpoint *endpoint;
@@ -988,8 +987,7 @@ static bool check_retrain_tone_stage_guard(
 	bool transmit_b1_complete, bool online)
 {
 	enum v34_station_role remote_role =
-		local_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(local_role);
 	struct channel channel = { .pcma = pcma };
 	struct endpoint caller;
 	struct endpoint answerer;
@@ -1262,8 +1260,7 @@ static bool check_info1_fallback(bool pcma)
 	      "first retrain did not retain the 3200 fallback");
 	CHECK(retrain_online_pair(
 		      &caller, &answerer, &channel,
-		      first_initiator == V34_CALLING_STATION ?
-			      V34_ANSWERING_STATION : V34_CALLING_STATION) &&
+		      v34_station_peer_role(first_initiator)) &&
 	      answerer.call.local_info1.answering
 		      .answer_to_call_symbol_rate == V34_SYMBOL_RATE_3200 &&
 	      answerer.call.local_info1.answering

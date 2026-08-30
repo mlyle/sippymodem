@@ -4,17 +4,6 @@
 
 #include <stddef.h>
 
-static bool signal_role_is_valid(enum phase2_signal_role role)
-{
-	return role == PHASE2_SIGNAL_A || role == PHASE2_SIGNAL_B;
-}
-
-static enum v34_station_role dpsk_role(enum phase2_signal_role role)
-{
-	return role == PHASE2_SIGNAL_B ?
-		       V34_CALLING_STATION : V34_ANSWERING_STATION;
-}
-
 static uint32_t peer_deadline_samples(
 	const struct phase2_info1_exchange *exchange)
 {
@@ -49,7 +38,7 @@ static bool transmitter_matches(
 
 	return v34_phase2_info_audio_transmitter_is_valid(transmitter) &&
 	       transmitter->modulation.local_role ==
-		       dpsk_role(exchange->signal_role) &&
+		       v34_phase2_station_for_signal(exchange->signal_role) &&
 	       transmitter->frame.payload_bit_count ==
 		       local_payload_bits(exchange) &&
 	       transmitter->frame_complete == frame_complete;
@@ -129,7 +118,8 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange)
 	uint32_t deadline;
 	bool failed;
 
-	if (exchange == NULL || !signal_role_is_valid(exchange->signal_role) ||
+	if (exchange == NULL ||
+	    !phase2_signal_role_is_valid(exchange->signal_role) ||
 	    exchange->nominal_amplitude <= 0 ||
 	    exchange->first_payload_bit_count >
 		    V34_PHASE2_INFO_MAX_PAYLOAD_BITS ||
@@ -141,7 +131,7 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange)
 		    V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS ||
 	    !v34_phase2_info_audio_receiver_is_valid(&exchange->receiver) ||
 	    exchange->receiver.modulation.local_role !=
-		    dpsk_role(exchange->signal_role) ||
+		    v34_phase2_station_for_signal(exchange->signal_role) ||
 	    exchange->receiver.frame.expected_payload_bit_count !=
 		    peer_payload_bits(exchange))
 		return false;

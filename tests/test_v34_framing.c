@@ -67,9 +67,7 @@ static bool test_station_role_polynomials(void)
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 		enum v34_station_role other =
-			cases[index].role == V34_CALLING_STATION ?
-				V34_ANSWERING_STATION :
-				V34_CALLING_STATION;
+			v34_station_peer_role(cases[index].role);
 
 		CHECK(v34_transmit_scrambler_init(
 			      &scrambler, cases[index].role) ==
@@ -87,6 +85,12 @@ static bool test_station_role_polynomials(void)
 	CHECK(v34_transmit_scrambler_init(
 		      NULL, V34_CALLING_STATION) ==
 		      V34_FRAMING_INVALID_ARGUMENT &&
+	      v34_station_peer_role(V34_CALLING_STATION) ==
+		      V34_ANSWERING_STATION &&
+	      v34_station_peer_role(V34_ANSWERING_STATION) ==
+		      V34_CALLING_STATION &&
+	      !v34_station_role_is_valid(v34_station_peer_role(
+		      (enum v34_station_role)99)) &&
 	      v34_transmit_scrambler_init(
 		      &scrambler, (enum v34_station_role)99) ==
 		      V34_FRAMING_INVALID_ARGUMENT &&

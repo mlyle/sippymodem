@@ -160,9 +160,7 @@ static bool check_frame_recovery(
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
 	enum v34_station_role receive_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION :
-			V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_info_audio_transmitter transmitter;
 	struct v34_phase2_info_audio_receiver receiver;
 	struct v34_phase2_info_event event = { 0 };
@@ -323,8 +321,7 @@ static bool measure_handoff_delay(
 {
 	uint8_t payload[V34_PHASE2_INFO_MAX_PAYLOAD_BYTES] = { 0 };
 	enum v34_station_role receive_role =
-		transmit_role == V34_CALLING_STATION ?
-			V34_ANSWERING_STATION : V34_CALLING_STATION;
+		v34_station_peer_role(transmit_role);
 	struct v34_phase2_info_audio_transmitter transmitter;
 	struct v34_phase2_info_audio_receiver receiver;
 	struct test_following_tone tone = { 0 };

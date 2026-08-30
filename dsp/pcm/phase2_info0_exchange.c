@@ -2,18 +2,6 @@
 
 #include "phase2_info0_exchange.h"
 
-static bool signal_role_is_valid(enum phase2_signal_role role)
-{
-	return role == PHASE2_SIGNAL_A || role == PHASE2_SIGNAL_B;
-}
-
-static enum v34_station_role station_role_for_signal(
-	enum phase2_signal_role role)
-{
-	return role == PHASE2_SIGNAL_B ?
-		       V34_CALLING_STATION : V34_ANSWERING_STATION;
-}
-
 static bool transmit_phase_is_valid(
 	enum phase2_info0_transmit_phase phase)
 {
@@ -29,7 +17,7 @@ bool phase2_info0_exchange_is_valid(
 	enum v34_station_role station_role;
 
 	if (exchange == NULL ||
-	    !signal_role_is_valid(exchange->signal_role) ||
+	    !phase2_signal_role_is_valid(exchange->signal_role) ||
 	    !transmit_phase_is_valid(exchange->transmit_phase) ||
 	    exchange->post_v8_silence_samples >
 		    PHASE2_INFO0_POST_V8_SILENCE_SAMPLES ||
@@ -44,7 +32,7 @@ bool phase2_info0_exchange_is_valid(
 	    !v34_phase2_tone_detector_is_valid(
 		    &exchange->tone_detector))
 		return false;
-	station_role = station_role_for_signal(exchange->signal_role);
+	station_role = v34_phase2_station_for_signal(exchange->signal_role);
 	if (exchange->info_transmitter.frame.payload_bit_count == 0 ||
 	    exchange->info_receiver.frame.expected_payload_bit_count == 0 ||
 	    exchange->info_transmitter.modulation.local_role != station_role ||
@@ -93,11 +81,11 @@ enum phase2_info0_exchange_result phase2_info0_exchange_init(
 	};
 	enum v34_station_role station_role;
 
-	if (exchange == NULL || !signal_role_is_valid(signal_role) ||
+	if (exchange == NULL || !phase2_signal_role_is_valid(signal_role) ||
 	    local_payload == NULL || local_payload_bit_count == 0 ||
 	    peer_payload_bit_count == 0)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
-	station_role = station_role_for_signal(signal_role);
+	station_role = v34_phase2_station_for_signal(signal_role);
 	if (v34_phase2_info_audio_transmitter_init(
 		    &initialized.info_transmitter, station_role,
 		    nominal_amplitude, local_payload,
@@ -137,7 +125,7 @@ enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
 				exchange->tone_transmitter.carrier_amplitude;
 	if (v34_phase2_info_audio_transmitter_init(
 		    &transmitter,
-		    station_role_for_signal(exchange->signal_role),
+		    v34_phase2_station_for_signal(exchange->signal_role),
 		    nominal_amplitude, local_payload,
 		    local_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;

@@ -119,9 +119,8 @@ static enum v34_station_role child_role(
 		return phase2->state.reciprocal_probe.turnaround.initial_probe
 			.ranging.info0_exchange.local_role;
 	case V34_PHASE2_INFO1:
-		return phase2->state.info1.control.signal_role ==
-			       PHASE2_SIGNAL_B ?
-			       V34_CALLING_STATION : V34_ANSWERING_STATION;
+		return v34_phase2_station_for_signal(
+			phase2->state.info1.control.signal_role);
 	}
 	return (enum v34_station_role)-1;
 }
