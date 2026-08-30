@@ -37,17 +37,14 @@ static struct qam_point generated_point(uint32_t index)
 	return points[index % ARRAY_LENGTH(points)];
 }
 
-static bool test_fixed_line_gain(void)
+static bool test_calibrated_line_power(void)
 {
-	static const uint16_t expected_line_scale[] = {
-		6815, 6073, 5412, 4822, 4298, 3829, 3412, 3040,
-	};
 	struct v34_info1_probe_result probe = {
 		.high_carrier = true,
 		.projected_data_rate_2400_bps_units = 1,
 	};
-	double zero_reduction_gain =
-		expected_line_scale[0] * 4579.0 / 2896.0;
+	double full_power =
+		V34_TRAINING_LINE_REFERENCE_AMPLITUDE / sqrt(2.0);
 
 	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
 		for (uint8_t preemphasis = 0;
@@ -65,9 +62,11 @@ static bool test_fixed_line_gain(void)
 				      &line, &profile, 8000,
 				      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
 				      V34_TRAINING_LINE_OK &&
-			      fabs(line.output_gain - zero_reduction_gain) <=
-				      zero_reduction_gain * 1e-12,
-			      "fixed line gain changed at rate %u/pre-emphasis %u",
+			      fabs(line.target_rms - full_power) <= 1e-9 &&
+			      fabs(line.output_gain * line.raw_rms - full_power) <=
+				      1e-9 &&
+			      line.raw_peak * line.output_gain < INT16_MAX,
+			      "line calibration changed at rate %u/pre-emphasis %u",
 			      rate, preemphasis);
 		}
 	}
@@ -75,8 +74,8 @@ static bool test_fixed_line_gain(void)
 	     reduction <= V34_INFO1_MAX_POWER_REDUCTION_DB; ++reduction) {
 		struct v34_phase3_profile profile;
 		struct v34_training_line line;
-		double expected_gain =
-			expected_line_scale[reduction] * 4579.0 / 2896.0;
+		double expected_power =
+			full_power * pow(10.0, -(double)reduction / 20.0);
 
 		probe.preemphasis_filter_index = 7;
 		CHECK(v34_phase3_profile_init(
@@ -87,9 +86,10 @@ static bool test_fixed_line_gain(void)
 			      &line, &profile, 8000,
 			      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
 			      V34_TRAINING_LINE_OK &&
-		      fabs(line.output_gain - expected_gain) <=
-			      expected_gain * 1e-12,
-		      "fixed %u dB line reduction changed", reduction);
+		      fabs(line.target_rms - expected_power) <= 1e-9 &&
+		      fabs(line.output_gain * line.raw_rms - expected_power) <=
+			      1e-9,
+		      "calibrated %u dB line reduction changed", reduction);
 	}
 	return true;
 }
@@ -287,7 +287,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "fixed line gain", test_fixed_line_gain },
+		{ "calibrated line power", test_calibrated_line_power },
 		{ "continuous points", test_continuous_points },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and overflow", test_initialization_and_overflow },
