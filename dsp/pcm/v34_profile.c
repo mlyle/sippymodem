@@ -12,7 +12,6 @@
 enum {
 	V34_MAX_RATE_UNITS = V34_MAX_BIT_RATE / V34_RATE_STEP,
 	V34_PHASE2_L2_AMPLITUDE = 4096,
-	V34_PHASE3_NOMINAL_AMPLITUDE = 3792,
 };
 
 static bool symbol_rate_from_number(
@@ -211,7 +210,8 @@ enum v34_profile_result v34_profile_init(
 			.requested_remote_constellation =
 				V34_CONSTELLATION_4_POINT,
 			.sample_rate = V34_PHASE2_SAMPLE_RATE,
-			.nominal_peak_amplitude = V34_PHASE3_NOMINAL_AMPLITUDE,
+			.nominal_peak_amplitude =
+				V34_TRAINING_LINE_REFERENCE_AMPLITUDE,
 		},
 		.phase4 = {
 			.transmit_mp = local_mp(rate_mask, highest_rate_units),

@@ -37,6 +37,63 @@ static struct qam_point generated_point(uint32_t index)
 	return points[index % ARRAY_LENGTH(points)];
 }
 
+static bool test_fixed_line_gain(void)
+{
+	static const uint16_t expected_line_scale[] = {
+		6815, 6073, 5412, 4822, 4298, 3829, 3412, 3040,
+	};
+	struct v34_info1_probe_result probe = {
+		.high_carrier = true,
+		.projected_data_rate_2400_bps_units = 1,
+	};
+	double zero_reduction_gain =
+		expected_line_scale[0] * 4579.0 / 2896.0;
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		for (uint8_t preemphasis = 0;
+		     preemphasis <= V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX;
+		     ++preemphasis) {
+			struct v34_phase3_profile profile;
+			struct v34_training_line line;
+
+			probe.preemphasis_filter_index = preemphasis;
+			CHECK(v34_phase3_profile_init(
+				      &profile, V34_CALLING_STATION,
+				      (enum v34_symbol_rate)rate, &probe, 0, 0) ==
+				      V34_PHASE3_PROFILE_OK &&
+			      v34_training_line_init(
+				      &line, &profile, 8000,
+				      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
+				      V34_TRAINING_LINE_OK &&
+			      fabs(line.output_gain - zero_reduction_gain) <=
+				      zero_reduction_gain * 1e-12,
+			      "fixed line gain changed at rate %u/pre-emphasis %u",
+			      rate, preemphasis);
+		}
+	}
+	for (uint8_t reduction = 0;
+	     reduction <= V34_INFO1_MAX_POWER_REDUCTION_DB; ++reduction) {
+		struct v34_phase3_profile profile;
+		struct v34_training_line line;
+		double expected_gain =
+			expected_line_scale[reduction] * 4579.0 / 2896.0;
+
+		probe.preemphasis_filter_index = 7;
+		CHECK(v34_phase3_profile_init(
+			      &profile, V34_ANSWERING_STATION,
+			      V34_SYMBOL_RATE_3200, &probe, reduction, 0) ==
+			      V34_PHASE3_PROFILE_OK &&
+		      v34_training_line_init(
+			      &line, &profile, 8000,
+			      V34_TRAINING_LINE_REFERENCE_AMPLITUDE) ==
+			      V34_TRAINING_LINE_OK &&
+		      fabs(line.output_gain - expected_gain) <=
+			      expected_gain * 1e-12,
+		      "fixed %u dB line reduction changed", reduction);
+	}
+	return true;
+}
+
 static bool test_continuous_points(void)
 {
 	struct v34_phase3_profile profile = profile_fixture();
@@ -230,6 +287,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "fixed line gain", test_fixed_line_gain },
 		{ "continuous points", test_continuous_points },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and overflow", test_initialization_and_overflow },

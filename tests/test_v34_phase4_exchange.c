@@ -760,11 +760,13 @@ static bool test_phase4_owns_selected_rates(void)
 		&caller.phase4.transmit_mp);
 	answerer_mp = v34_mp_record_common_parameters(
 		&answerer.phase4.transmit_mp);
+	/* The trained answer-to-caller path selects 16.8 kbit/s. Both Phase 4
+	 * directions remain above their deliberately lower Phase 2 projections. */
 	CHECK(caller_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&
-	      caller_mp->maximum_answer_to_call_rate_2400_bps_units == 8 &&
+	      caller_mp->maximum_answer_to_call_rate_2400_bps_units == 7 &&
 	      answerer_mp->maximum_call_to_answer_rate_2400_bps_units == 8 &&
 	      answerer_mp->maximum_answer_to_call_rate_2400_bps_units == 8,
-	      "Phase 2 projections changed Phase 4 MP rates");
+	      "Phase 2 projections or trained quality changed Phase 4 MP rates");
 	CHECK(v34_phase4_exchange_get_data_startup(
 		      &caller.phase4, &caller_startup) &&
 	      v34_phase4_exchange_get_data_startup(
@@ -772,9 +774,9 @@ static bool test_phase4_owns_selected_rates(void)
 	      caller_startup.mode.transmit
 		      .primary_data_rate_2400_bps_units == 8 &&
 	      caller_startup.mode.receive
-		      .primary_data_rate_2400_bps_units == 8 &&
+		      .primary_data_rate_2400_bps_units == 7 &&
 	      answerer_startup.mode.transmit
-		      .primary_data_rate_2400_bps_units == 8 &&
+		      .primary_data_rate_2400_bps_units == 7 &&
 	      answerer_startup.mode.receive
 		      .primary_data_rate_2400_bps_units == 8 &&
 	      directions_are_equal(
