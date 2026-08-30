@@ -66,6 +66,11 @@ v34_power_normalizer_init(
 	const struct v34_symbol_power_measurement
 		*projected_measurement);
 
+/* Replace the initial unit-power gain with a negotiated line-profile gain.
+ * Generated means and hard bounds remain owned by the same calibration. */
+enum v34_symbol_power_result v34_power_normalizer_set_gain(
+	struct v34_power_normalizer *normalizer, double normalization_gain);
+
 bool v34_power_normalizer_is_valid(
 	const struct v34_power_normalizer *normalizer);
 

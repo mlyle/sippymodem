@@ -387,6 +387,7 @@ static bool test_normalizer_validation(void)
 	struct v34_symbol_power_measurement invalid;
 	struct v34_power_normalizer normalizer;
 	struct v34_power_normalizer corrupt;
+	struct v34_power_normalizer saved;
 	struct qam_point output = { 123.0, -456.0 };
 	const struct qam_point point = { 1.0, 0.0 };
 	const struct qam_point nonfinite = { NAN, 0.0 };
@@ -473,6 +474,21 @@ static bool test_normalizer_validation(void)
 		      V34_SYMBOL_POWER_NUMERIC_FAILURE &&
 	      output.in_phase == 123.0 && output.quadrature == -456.0,
 	      "overflowing normalization changed its destination");
+	saved = normalizer;
+	CHECK(v34_power_normalizer_set_gain(NULL, 0.25) ==
+		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      v34_power_normalizer_set_gain(&normalizer, 0.0) ==
+		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      v34_power_normalizer_set_gain(&normalizer, NAN) ==
+		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
+	      memcmp(&normalizer, &saved, sizeof(normalizer)) == 0 &&
+	      v34_power_normalizer_set_gain(&normalizer, 0.25) ==
+		      V34_SYMBOL_POWER_OK &&
+	      v34_power_normalizer_is_valid(&normalizer) &&
+	      normalizer.normalization_gain == 0.25 &&
+	      normalizer.maximum_normalized_point_power ==
+		      normalizer.maximum_projected_point_power * 0.25 * 0.25,
+	      "normalizer gain selection was not transactional");
 	corrupt = normalizer;
 	corrupt.normalization_gain *= 2.0;
 	CHECK(!v34_power_normalizer_is_valid(&corrupt) &&

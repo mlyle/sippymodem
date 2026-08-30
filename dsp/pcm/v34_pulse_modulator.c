@@ -14,9 +14,6 @@
 
 enum {
 	V34_PULSE_SAMPLE_RATE = 8000,
-	/* Q12 represents every normalized V.34 data profile while retaining
-	 * exact power-of-two lattice coordinates through the fixed line path. */
-	V34_PULSE_POINT_SCALE = 4096,
 	V34_PULSE_OUTPUT_SCALE = 16384,
 };
 

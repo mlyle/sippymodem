@@ -210,8 +210,8 @@ static enum v34_symbol_power_result derive_normalizer(
 	generated.normalization_gain =
 		1.0 / sqrt(projected_measurement->mean_squared_magnitude);
 	generated.maximum_normalized_point_power =
-		generated.maximum_projected_point_power /
-		projected_measurement->mean_squared_magnitude;
+		generated.maximum_projected_point_power *
+		generated.normalization_gain * generated.normalization_gain;
 	generated.calibration_symbol_count = precoded_measurement->symbol_count;
 	generated.nonlinear_parameter = nonlinear_parameter;
 	if (!isfinite(generated.normalization_gain) ||
@@ -246,6 +246,26 @@ v34_power_normalizer_init(
 	return result;
 }
 
+enum v34_symbol_power_result v34_power_normalizer_set_gain(
+	struct v34_power_normalizer *normalizer, double normalization_gain)
+{
+	struct v34_power_normalizer updated;
+
+	if (!v34_power_normalizer_is_valid(normalizer) ||
+	    !isfinite(normalization_gain) || normalization_gain <= 0.0)
+		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
+	updated = *normalizer;
+	updated.normalization_gain = normalization_gain;
+	updated.maximum_normalized_point_power =
+		updated.maximum_projected_point_power * normalization_gain *
+		normalization_gain;
+	if (!isfinite(updated.maximum_normalized_point_power) ||
+	    updated.maximum_normalized_point_power <= 0.0)
+		return V34_SYMBOL_POWER_NUMERIC_FAILURE;
+	*normalizer = updated;
+	return V34_SYMBOL_POWER_OK;
+}
+
 bool v34_power_normalizer_is_valid(
 	const struct v34_power_normalizer *normalizer)
 {
@@ -278,16 +298,15 @@ bool v34_power_normalizer_is_valid(
 		    &expected_maximum_projected) !=
 		    V34_NONLINEAR_OK)
 		return false;
-	expected_gain =
-		1.0 / sqrt(normalizer->projected_mean_squared_magnitude);
-	expected_maximum_normalized = expected_maximum_projected /
-		normalizer->projected_mean_squared_magnitude;
+	expected_gain = normalizer->normalization_gain;
+	expected_maximum_normalized = expected_maximum_projected *
+		expected_gain * expected_gain;
 	return normalizer->maximum_projected_point_power ==
 		       expected_maximum_projected &&
 	       power_does_not_exceed(
 		       normalizer->projected_mean_squared_magnitude,
 		       normalizer->maximum_projected_point_power) &&
-	       normalizer->normalization_gain == expected_gain &&
+	       isfinite(expected_gain) && expected_gain > 0.0 &&
 	       normalizer->maximum_normalized_point_power ==
 		       expected_maximum_normalized &&
 	       isfinite(normalizer->maximum_normalized_point_power) &&

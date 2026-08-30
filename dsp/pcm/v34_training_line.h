@@ -11,6 +11,10 @@
 #include <stdint.h>
 
 enum {
+	/* Point zero in the pulse owner's Q12 domain and in the fixed modem
+	 * arithmetic.  Data-rate scaling uses the same coordinate bridge. */
+	V34_TRAINING_PULSE_POINT_ZERO_Q12 = 2896,
+	V34_TRAINING_FIXED_POINT_ZERO = 0x11e3,
 	/* The ordinary V.34 profile maps this policy value to the fixed
 	 * transmit scale used by the modem arithmetic. */
 	V34_TRAINING_LINE_REFERENCE_AMPLITUDE = 3792,

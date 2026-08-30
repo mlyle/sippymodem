@@ -3,62 +3,25 @@
 #include "v34_data_quality.h"
 
 #include "memory_region.h"
+#include "v34_rate_profile.h"
 
 #include <limits.h>
 #include <stddef.h>
 
 enum {
-	V34_RATE_PROFILE_UNITS = 14,
 	V34_RATE_PROFILE_MASK = (1u << V34_RATE_PROFILE_UNITS) - 1u,
 };
 
-/* Receive-rate coefficients for the decision metric's fixed-point domain.
- * The 2743-symbol/s mode uses the 2800-symbol/s profile, matching its shared
- * carrier/rate-selection geometry.  Only the active receive half of each
- * profile is needed by online quality policy. */
-static const uint16_t scale_2400[V34_RATE_PROFILE_UNITS] = {
-	0x11e3, 0x0db7, 0x0a10, 0x0719, 0x0504, 0x0391, 0x0286,
-	0x01c8, 0x0143, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
-};
-
-static const uint16_t scale_2800[V34_RATE_PROFILE_UNITS] = {
-	0x0000, 0x0f7d, 0x0b94, 0x08a3, 0x0677, 0x04d6, 0x0392,
-	0x02aa, 0x01fb, 0x0178, 0x0118, 0x0000, 0x0000, 0x0000,
-};
-
-static const uint16_t scale_3000[V34_RATE_PROFILE_UNITS] = {
-	0x0000, 0x103b, 0x0c33, 0x0955, 0x0714, 0x056f, 0x041c,
-	0x031f, 0x025e, 0x01c8, 0x015c, 0x0107, 0x0000, 0x0000,
-};
-
-static const uint16_t scale_3200[V34_RATE_PROFILE_UNITS] = {
-	0x0000, 0x11e3, 0x0c43, 0x0a0c, 0x07c1, 0x05f6, 0x04a5,
-	0x0393, 0x02c2, 0x0220, 0x01a4, 0x0143, 0x00fa, 0x0000,
-};
-
-static const uint16_t scale_3429[V34_RATE_PROFILE_UNITS] = {
-	0x0000, 0x11e3, 0x0d4b, 0x0aaa, 0x0862, 0x06a3, 0x053f,
-	0x041f, 0x0339, 0x0285, 0x01fd, 0x0190, 0x0137, 0x00f6,
-};
-
-static const uint16_t *rate_profile(enum v34_symbol_rate symbol_rate)
+static uint16_t receive_rate_level(
+	enum v34_symbol_rate symbol_rate, uint8_t rate_units)
 {
-	switch (symbol_rate) {
-	case V34_SYMBOL_RATE_2400:
-		return scale_2400;
-	case V34_SYMBOL_RATE_2743:
-	case V34_SYMBOL_RATE_2800:
-		return scale_2800;
-	case V34_SYMBOL_RATE_3000:
-		return scale_3000;
-	case V34_SYMBOL_RATE_3200:
-		return scale_3200;
-	case V34_SYMBOL_RATE_3429:
-		return scale_3429;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return NULL;
+	uint16_t level = 0;
+
+	return v34_rate_profile_level(
+		       symbol_rate, rate_units, true, &level) ==
+		       V34_RATE_PROFILE_OK ?
+		       level :
+		       0;
 }
 
 static int16_t rate_threshold(uint16_t coefficient, uint8_t rate_units)
@@ -73,14 +36,14 @@ static bool selected_threshold(
 	enum v34_symbol_rate symbol_rate, uint8_t rate_units,
 	int16_t baseline, int16_t *threshold)
 {
-	const uint16_t *profile = rate_profile(symbol_rate);
 	uint8_t minimum_rate =
 		symbol_rate == V34_SYMBOL_RATE_2400 ? 1u : 2u;
+	uint16_t selected_level = receive_rate_level(symbol_rate, rate_units);
 	int16_t selected;
 
-	if (profile == NULL || threshold == NULL || rate_units == 0 ||
+	if (threshold == NULL || rate_units == 0 ||
 	    rate_units < minimum_rate || rate_units > V34_RATE_PROFILE_UNITS ||
-	    profile[rate_units - 1u] == 0)
+	    selected_level == 0)
 		return false;
 	if (rate_units == minimum_rate) {
 		/* At the minimum rate there is no lower profile midpoint.  Use the
@@ -94,10 +57,12 @@ static bool selected_threshold(
 		*threshold = (int16_t)(baseline * 8);
 		return true;
 	}
-	selected = rate_threshold(profile[rate_units - 1u], rate_units);
-	if (profile[rate_units - 2u] != 0) {
+	selected = rate_threshold(selected_level, rate_units);
+	selected_level = receive_rate_level(
+		symbol_rate, (uint8_t)(rate_units - 1u));
+	if (selected_level != 0) {
 		int16_t lower = rate_threshold(
-			profile[rate_units - 2u], rate_units);
+			selected_level, rate_units);
 
 		selected = (int16_t)((selected + lower) >> 1);
 	}
@@ -142,12 +107,12 @@ enum v34_data_quality_result v34_data_quality_init(
 }
 
 static uint8_t next_enabled_rate(
-	const uint16_t *profile, uint16_t enabled_rate_mask,
+	enum v34_symbol_rate symbol_rate, uint16_t enabled_rate_mask,
 	uint8_t maximum_rate)
 {
 	for (uint8_t rate = maximum_rate; rate != 0u; --rate)
 		if ((enabled_rate_mask & (uint16_t)(1u << (rate - 1u))) != 0u &&
-		    profile[rate - 1u] != 0u)
+		    receive_rate_level(symbol_rate, rate) != 0u)
 			return rate;
 	return 0u;
 }
@@ -158,10 +123,9 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	const struct v34_adaptive_equalizer_quality *measurement,
 	uint8_t *selected_rate_2400_bps_units)
 {
-	const uint16_t *profile = rate_profile(symbol_rate);
 	uint8_t selected;
 
-	if (profile == NULL || measurement == NULL ||
+	if (measurement == NULL ||
 	    selected_rate_2400_bps_units == NULL ||
 	    memory_regions_overlap(
 		measurement, sizeof(*measurement),
@@ -173,14 +137,14 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	    maximum_rate_2400_bps_units > V34_RATE_PROFILE_UNITS)
 		return V34_DATA_QUALITY_INVALID_ARGUMENT;
 	selected = next_enabled_rate(
-		profile, enabled_rate_mask, maximum_rate_2400_bps_units);
+		symbol_rate, enabled_rate_mask, maximum_rate_2400_bps_units);
 	if (selected == 0u)
 		return V34_DATA_QUALITY_INVALID_ARGUMENT;
 	for (;;) {
 		uint8_t lower = next_enabled_rate(
-			profile, enabled_rate_mask, (uint8_t)(selected - 1u));
+			symbol_rate, enabled_rate_mask, (uint8_t)(selected - 1u));
 		int16_t threshold = rate_threshold(
-			profile[selected - 1u], selected);
+			receive_rate_level(symbol_rate, selected), selected);
 
 		if (lower == 0u || measurement->decision_metric < threshold)
 			break;

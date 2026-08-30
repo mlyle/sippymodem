@@ -1071,6 +1071,7 @@ V34_DATA_POINTS_TEST_OBJECTS := \
 		$(BUILD_DIR)/test_v34_mapping_frame_transmitter.o, \
 		$(V34_MAPPING_FRAME_TRANSMITTER_TEST_OBJECTS)) \
 	$(BUILD_DIR)/v34_symbol_power.o \
+	$(BUILD_DIR)/v34_rate_profile.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
@@ -1099,6 +1100,7 @@ V34_POWER_CALIBRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_symbol_power.o \
 	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/v34_data_points.o \
+	$(BUILD_DIR)/v34_rate_profile.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info1.o \
@@ -1127,6 +1129,7 @@ V34_DATA_CARRIER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_symbol_power.o \
 	$(BUILD_DIR)/v34_mapping_frame_transmitter.o \
 	$(BUILD_DIR)/v34_data_points.o \
+	$(BUILD_DIR)/v34_rate_profile.o \
 	$(BUILD_DIR)/v34_power_calibration.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/fixed_phase.o \
@@ -1228,6 +1231,7 @@ V34_ADAPTIVE_EQUALIZER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_adaptive_equalizer.o \
 	$(BUILD_DIR)/v34_adaptive_equalizer.o \
 	$(BUILD_DIR)/v34_data_quality.o \
+	$(BUILD_DIR)/v34_rate_profile.o \
 	$(BUILD_DIR)/v34_equalizer.o
 V34_CONSTELLATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_constellation
@@ -5028,6 +5032,10 @@ $(BUILD_DIR)/v34_adaptive_equalizer.o: \
 
 $(BUILD_DIR)/v34_data_quality.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_quality.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_rate_profile.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_rate_profile.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_receive_timing.o: \

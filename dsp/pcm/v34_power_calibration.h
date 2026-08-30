@@ -25,7 +25,8 @@ enum v34_power_calibration_result {
 };
 
 /* Measure a generated data stream twice: first at the exact Q7 precoder
- * boundary, then after nonlinear projection using that raw mean. One complete
+ * boundary, then after nonlinear projection using that raw mean. The selected
+ * normative rate level supplies the final line-profile gain. One complete
  * schedule period is visited four times from the supplied starting position.
  * The input schedule, scrambler, and encoder are copied and remain unchanged;
  * the destination is also unchanged on failure. */

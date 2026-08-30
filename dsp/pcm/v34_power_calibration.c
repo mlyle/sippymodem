@@ -3,6 +3,8 @@
 #include "v34_power_calibration.h"
 
 #include "v34_data_points.h"
+#include "v34_rate_profile.h"
+#include "v34_training_line.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -164,6 +166,8 @@ v34_calibrate_mapping_power(
 	struct v34_symbol_power_measurement precoded;
 	struct v34_symbol_power_measurement projected;
 	struct v34_power_normalizer generated;
+	uint16_t rate_level;
+	double normalization_gain;
 	uint32_t mapping_frame_count;
 	enum v34_power_calibration_result result;
 
@@ -195,6 +199,20 @@ v34_calibrate_mapping_power(
 	result = symbol_power_result(v34_power_normalizer_init(
 		&generated, &initial_encoder->parameters, nonlinear_parameter,
 		&precoded, &projected));
+	if (result != V34_POWER_CALIBRATION_OK)
+		return result;
+	if (v34_rate_profile_level(
+		    initial_schedule->geometry.symbol_rate,
+		    initial_schedule->geometry.primary_data_rate_2400_bps_units,
+		    initial_encoder->parameters.expanded_shaping, &rate_level) !=
+	    V34_RATE_PROFILE_OK)
+		return V34_POWER_CALIBRATION_OUT_OF_RANGE;
+	normalization_gain = (double)rate_level *
+		V34_TRAINING_PULSE_POINT_ZERO_Q12 /
+		((double)V34_PULSE_POINT_SCALE *
+		 V34_TRAINING_FIXED_POINT_ZERO);
+	result = symbol_power_result(v34_power_normalizer_set_gain(
+		&generated, normalization_gain));
 	if (result == V34_POWER_CALIBRATION_OK)
 		*normalizer = generated;
 	return result;

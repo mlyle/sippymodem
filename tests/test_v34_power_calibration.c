@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_power_calibration.h>
+#include <v34_rate_profile.h>
+#include <v34_training_line.h>
 
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
 
+#include <inttypes.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -75,6 +78,22 @@ static bool bytes_are_filled(
 	return true;
 }
 
+static uint64_t hash_word(uint64_t hash, uint16_t word)
+{
+	for (unsigned int shift = 0; shift < 16u; shift += 8u) {
+		hash ^= (uint8_t)(word >> shift);
+		hash *= UINT64_C(1099511628211);
+	}
+	return hash;
+}
+
+static double expected_rate_gain(uint16_t level)
+{
+	return (double)level * V34_TRAINING_PULSE_POINT_ZERO_Q12 /
+		((double)V34_PULSE_POINT_SCALE *
+		 V34_TRAINING_FIXED_POINT_ZERO);
+}
+
 static bool initialize_fixture(
 	struct calibration_fixture *fixture,
 	enum v34_station_role role,
@@ -107,6 +126,89 @@ static bool initialize_fixture(
 			return false;
 	}
 	*fixture = generated;
+	return true;
+}
+
+static bool test_rate_profile(void)
+{
+	struct calibration_fixture ordinary;
+	struct calibration_fixture expanded;
+	struct v34_mapping_parameters expanded_parameters;
+	struct v34_power_normalizer ordinary_normalizer;
+	struct v34_power_normalizer expanded_normalizer;
+	uint64_t hash = UINT64_C(14695981039346656037);
+	size_t supported = 0;
+	uint16_t level = 0xa5a5;
+
+	for (unsigned int symbol_rate = 0;
+	     symbol_rate < V34_SYMBOL_RATE_COUNT; ++symbol_rate) {
+		for (unsigned int shaping = 0; shaping < 2u; ++shaping) {
+			for (uint8_t rate = 1; rate <= V34_RATE_PROFILE_UNITS;
+			     ++rate) {
+				uint16_t selected = 0;
+				enum v34_rate_profile_result result =
+					v34_rate_profile_level(
+						(enum v34_symbol_rate)symbol_rate,
+						rate, shaping != 0, &selected);
+
+				if (result == V34_RATE_PROFILE_OK)
+					supported++;
+				else if (result ==
+					 V34_RATE_PROFILE_UNSUPPORTED_SELECTION)
+					selected = 0;
+				else
+					CHECK(false,
+					      "rate profile rejected %u/%u/%u",
+					      symbol_rate, shaping, rate);
+				hash = hash_word(hash, selected);
+			}
+		}
+	}
+	CHECK(supported == 130u && hash == UINT64_C(0x05ce8ea521c3e614),
+	      "rate profile changed: %zu/0x%016" PRIx64, supported, hash);
+	CHECK(v34_rate_profile_level(
+		      V34_SYMBOL_RATE_COUNT, 8, false, &level) ==
+		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
+	      v34_rate_profile_level(
+		      V34_SYMBOL_RATE_3000, 0, false, &level) ==
+		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
+	      v34_rate_profile_level(
+		      V34_SYMBOL_RATE_3000, 15, false, &level) ==
+		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
+	      v34_rate_profile_level(
+		      V34_SYMBOL_RATE_3429, 1, false, &level) ==
+		      V34_RATE_PROFILE_UNSUPPORTED_SELECTION &&
+	      v34_rate_profile_level(
+		      V34_SYMBOL_RATE_3000, 8, false, NULL) ==
+		      V34_RATE_PROFILE_INVALID_ARGUMENT &&
+	      level == 0xa5a5,
+	      "invalid rate profile changed its destination");
+	CHECK(initialize_fixture(
+		      &ordinary, V34_CALLING_STATION,
+		      V34_TRELLIS_32_STATE, 0, 0),
+	      "ordinary rate profile fixture did not initialize");
+	expanded = ordinary;
+	CHECK(v34_mapping_parameters_init(
+		      &expanded_parameters, &expanded.geometry, true) ==
+		      V34_MAPPING_PARAMETERS_OK &&
+	      v34_4d_encoder_init(
+		      &expanded.encoder, &expanded_parameters, COEFFICIENTS,
+		      V34_TRELLIS_32_STATE) == V34_4D_ENCODER_OK &&
+	      v34_calibrate_mapping_power(
+		      &ordinary.schedule, &ordinary.scrambler,
+		      &ordinary.encoder, V34_NONLINEAR_THETA_ZERO,
+		      &ordinary_normalizer) == V34_POWER_CALIBRATION_OK &&
+	      v34_calibrate_mapping_power(
+		      &expanded.schedule, &expanded.scrambler,
+		      &expanded.encoder, V34_NONLINEAR_THETA_ZERO,
+		      &expanded_normalizer) == V34_POWER_CALIBRATION_OK &&
+	      ordinary_normalizer.normalization_gain ==
+		      expected_rate_gain(0x0302) &&
+	      expanded_normalizer.normalization_gain ==
+		      expected_rate_gain(0x031f) &&
+	      ordinary_normalizer.normalization_gain !=
+		      expanded_normalizer.normalization_gain,
+	      "calibration ignored the selected rate-profile half");
 	return true;
 }
 
@@ -427,6 +529,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "rate profile", test_rate_profile },
 		{ "generated calibration", test_generated_calibration },
 		{ "generated line power", test_generated_line_power },
 		{ "configuration sweep", test_configuration_sweep },

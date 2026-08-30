@@ -11,11 +11,8 @@
 static const double V34_TRAINING_MAXIMUM_POINT_POWER = 9.0 / 5.0;
 
 enum {
-	/* The pulse owner represents point zero as round(4096 / sqrt(2)).
-	 * The remaining constants are the fixed transmit coordinate, initial
-	 * Q14 scale, 1 dB reduction, and final line-level factor. */
-	V34_PULSE_POINT_ZERO_Q12 = 2896,
-	V34_FIXED_POINT_ZERO = 0x11e3,
+	/* The remaining constants are the initial Q14 scale, 1 dB reduction,
+	 * and final line-level factor. */
 	V34_FIXED_TX_SCALE_Q14 = 0x16a1,
 	V34_FIXED_REDUCTION_1_DB_Q14 = 0x390a,
 	V34_FIXED_LINE_LEVEL_Q14 = 0x4b4b,
@@ -37,7 +34,8 @@ static double fixed_output_gain(
 	uint8_t reduction_db, int16_t nominal_peak_amplitude)
 {
 	return (double)fixed_line_scale(reduction_db) *
-		V34_FIXED_POINT_ZERO / V34_PULSE_POINT_ZERO_Q12 *
+		V34_TRAINING_FIXED_POINT_ZERO /
+		V34_TRAINING_PULSE_POINT_ZERO_Q12 *
 		nominal_peak_amplitude /
 		V34_TRAINING_LINE_REFERENCE_AMPLITUDE;
 }
