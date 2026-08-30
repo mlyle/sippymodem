@@ -230,8 +230,8 @@ static bool check_frame_recovery(
 		      memcmp(received_event.payload, payload,
 			     sizeof(payload)) == 0,
 	      "Phase 2 INFO payload changed across G.711 audio");
-	measurement =
-		v34_phase2_info_audio_receiver_measure(&receiver);
+	measurement = v34_phase2_dpsk_receiver_measure(
+		&receiver.modulation);
 	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
 		      measurement.symbol_power > 1.0,
 	      "Phase 2 INFO audio receiver omitted its signal measurement");
@@ -585,10 +585,12 @@ static bool test_validation(void)
 		      V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT &&
 		      memcmp(receiver_snapshot, &receiver, sizeof(receiver_snapshot)) ==
 			      0 &&
-		      v34_phase2_info_audio_receiver_reset(&receiver) ==
+		      v34_phase2_info_audio_receiver_init(
+			      &receiver, V34_CALLING_STATION,
+			      TEST_PAYLOAD_BITS) ==
 			      V34_PHASE2_INFO_AUDIO_OK &&
 		      receiver.handoff_delay_samples == 0,
-	      "Phase 2 INFO audio receiver validation or reset failed");
+	      "Phase 2 INFO audio receiver validation or reinit failed");
 	receiver.modulation.detector_output = NAN;
 	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
 	CHECK(v34_phase2_info_audio_receiver_sample(

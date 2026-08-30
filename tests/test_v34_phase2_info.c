@@ -308,31 +308,25 @@ static bool test_crc_and_bounds(void)
 	};
 	static const uint8_t one_bit[] = { 0x80 };
 	struct v34_phase2_info_generator generator;
-	uint16_t crc = 0;
 	size_t frame_bit_count = v34_phase2_info_frame_bit_count(
 		V34_PHASE2_INFO_MAX_PAYLOAD_BITS);
 
-	CHECK(v34_phase2_info_crc(NULL, 0, &crc) ==
+	CHECK(v34_phase2_info_generator_init(&generator, NULL, 0) ==
 		      V34_PHASE2_INFO_OK &&
-	      crc == UINT16_C(0xffff) &&
-	      v34_phase2_info_crc(one_bit, 1, &crc) ==
+	      generator.crc == UINT16_C(0xffff) &&
+	      v34_phase2_info_generator_init(&generator, one_bit, 1) ==
 		      V34_PHASE2_INFO_OK &&
-	      crc == UINT16_C(0xfffe) &&
-	      v34_phase2_info_crc(
-		      maximum_payload,
-		      V34_PHASE2_INFO_MAX_PAYLOAD_BITS, &crc) ==
+	      generator.crc == UINT16_C(0xfffe) &&
+	      v34_phase2_info_generator_init(
+		      &generator, maximum_payload,
+		      V34_PHASE2_INFO_MAX_PAYLOAD_BITS) ==
 		      V34_PHASE2_INFO_OK &&
-	      crc == UINT16_C(0x93d5) &&
+	      generator.crc == UINT16_C(0x93d5) &&
 	      frame_bit_count ==
 		      V34_PHASE2_INFO_MAX_FRAME_BITS &&
 	      v34_phase2_info_frame_bit_count(
 		      V34_PHASE2_INFO_MAX_PAYLOAD_BITS + 1u) == 0,
 	      "Phase 2 INFO CRC or bounds changed");
-	CHECK(v34_phase2_info_generator_init(
-		      &generator, maximum_payload,
-		      V34_PHASE2_INFO_MAX_PAYLOAD_BITS) ==
-		      V34_PHASE2_INFO_OK,
-	      "maximum Phase 2 INFO fixture did not initialize");
 	for (size_t index = 0; index < frame_bit_count; ++index) {
 		uint8_t bit;
 		bool complete;
@@ -343,11 +337,6 @@ static bool test_crc_and_bounds(void)
 		      complete == (index + 1u == frame_bit_count),
 		      "maximum Phase 2 INFO ended at %zu", index);
 	}
-	CHECK(v34_phase2_info_generator_reset(&generator) ==
-		      V34_PHASE2_INFO_OK &&
-	      generator.bit_index == 0 &&
-	      generator.crc == UINT16_C(0x93d5),
-	      "Phase 2 INFO reset changed owned payload state");
 	return true;
 }
 
@@ -485,9 +474,7 @@ static bool test_receiver_validation(void)
 
 	receiver.stage =
 		(enum v34_phase2_info_receive_stage)4;
-	CHECK(!v34_phase2_info_receiver_is_valid(&receiver) &&
-	      v34_phase2_info_receiver_reset(&receiver) ==
-		      V34_PHASE2_INFO_INVALID_ARGUMENT,
+	CHECK(!v34_phase2_info_receiver_is_valid(&receiver),
 	      "receiver accepted a corrupt stage");
 	receiver = saved;
 	receiver.crc ^= 1;
@@ -501,13 +488,13 @@ static bool test_receiver_validation(void)
 	CHECK(v34_phase2_info_receive_bit(
 		      &receiver, 1, &event) ==
 		      V34_PHASE2_INFO_OK &&
-	      v34_phase2_info_receiver_reset(&receiver) ==
+	      v34_phase2_info_receiver_init(&receiver, 17) ==
 		      V34_PHASE2_INFO_OK &&
 	      receiver.sync_window == 0 &&
 	      receiver.stage == V34_PHASE2_INFO_SEARCH_SYNC &&
 	      v34_phase2_info_receiver_is_valid(&receiver) &&
 	      !v34_phase2_info_receiver_is_valid(NULL),
-	      "receiver reset did not clear acquisition state");
+	      "receiver reinit did not clear acquisition state");
 	return true;
 }
 
@@ -518,7 +505,6 @@ static bool test_validation(void)
 	struct v34_phase2_info_generator saved;
 	uint8_t bit = UINT8_MAX;
 	bool complete = true;
-	uint16_t crc = UINT16_MAX;
 
 	memset(&generator, 0xa5, sizeof(generator));
 	saved = generator;
@@ -532,12 +518,7 @@ static bool test_validation(void)
 		      &generator, payload,
 		      V34_PHASE2_INFO_MAX_PAYLOAD_BITS + 1u) ==
 		      V34_PHASE2_INFO_INVALID_ARGUMENT &&
-	      memcmp(&generator, &saved, sizeof(generator)) == 0 &&
-	      v34_phase2_info_crc(NULL, 1, &crc) ==
-		      V34_PHASE2_INFO_INVALID_ARGUMENT &&
-	      v34_phase2_info_crc(payload, 17, NULL) ==
-		      V34_PHASE2_INFO_INVALID_ARGUMENT &&
-	      crc == UINT16_MAX,
+	      memcmp(&generator, &saved, sizeof(generator)) == 0,
 	      "Phase 2 INFO initialization accepted invalid input");
 
 	CHECK(v34_phase2_info_generator_init(
@@ -558,9 +539,7 @@ static bool test_validation(void)
 	      "Phase 2 INFO emission mutated state on invalid input");
 
 	generator.payload[2] |= 1;
-	CHECK(!v34_phase2_info_generator_is_valid(&generator) &&
-	      v34_phase2_info_generator_reset(&generator) ==
-		      V34_PHASE2_INFO_INVALID_ARGUMENT,
+	CHECK(!v34_phase2_info_generator_is_valid(&generator),
 	      "Phase 2 INFO accepted noncanonical payload padding");
 	generator = saved;
 	generator.crc ^= 1;

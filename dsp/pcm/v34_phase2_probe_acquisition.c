@@ -18,8 +18,7 @@ _Static_assert(
 static bool spectrum_is_empty(
 	const struct v34_phase2_probe_spectrum *spectrum)
 {
-	if (spectrum->samples_observed != 0 ||
-	    spectrum->window_start_sample != 0)
+	if (spectrum->samples_observed != 0)
 		return false;
 	for (size_t index = 0;
 	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index)

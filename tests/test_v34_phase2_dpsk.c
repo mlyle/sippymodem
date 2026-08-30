@@ -300,13 +300,14 @@ static bool test_validation(void)
 		      v34_phase2_dpsk_receiver_sample(
 			      &receiver, 0, NULL, &ready) ==
 			      V34_PHASE2_DPSK_INVALID_ARGUMENT &&
-		      v34_phase2_dpsk_receiver_reset(&receiver) ==
+		      v34_phase2_dpsk_receiver_init(
+			      &receiver, V34_CALLING_STATION) ==
 			      V34_PHASE2_DPSK_OK,
-	      "Phase 2 receiver validation or reset failed");
+	      "Phase 2 receiver validation or reinit failed");
 	measurement = v34_phase2_dpsk_receiver_measure(&receiver);
 	CHECK(!measurement.timing_locked && measurement.line_power == 0.0 &&
 		      measurement.symbol_power == 0.0,
-	      "Phase 2 receiver reset retained measurements");
+	      "Phase 2 receiver reinit retained measurements");
 	receiver.detector_output = NAN;
 	measurement = v34_phase2_dpsk_receiver_measure(&receiver);
 	CHECK(v34_phase2_dpsk_receiver_sample(

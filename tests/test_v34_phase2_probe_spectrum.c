@@ -12,7 +12,6 @@ enum {
 	TEST_NOMINAL_AMPLITUDE = 12000,
 	TEST_PHASE_HARMONIC = 9,
 	TEST_PHASE_AMPLITUDE = 10000,
-	TEST_SKIP_SAMPLES = 53,
 };
 
 static const double TEST_TWO_PI = 6.283185307179586476925286766559;
@@ -111,12 +110,10 @@ static int16_t phase_test_sample(uint32_t sample_index)
 	return (int16_t)lround(TEST_PHASE_AMPLITUDE * cos(angle));
 }
 
-static bool test_phase_and_window_restart(void)
+static bool test_phase_measurement(void)
 {
 	struct v34_phase2_probe_spectrum spectrum;
-	struct v34_phase2_probe_spectrum before;
 	struct v34_phase2_probe_spectrum_measurement measurement;
-	struct v34_phase2_probe_spectrum_measurement untouched;
 	double expected_in_phase =
 		TEST_PHASE_AMPLITUDE * cos(TEST_PHASE_RADIANS);
 	double expected_quadrature =
@@ -125,23 +122,12 @@ static bool test_phase_and_window_restart(void)
 	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
 		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "phase spectrum fixture did not initialize");
-	for (uint32_t index = 0; index < TEST_SKIP_SAMPLES; ++index)
-		CHECK(v34_phase2_probe_spectrum_sample(
-			      &spectrum, 0) ==
-			      V34_PHASE2_PROBE_SPECTRUM_OK,
-		      "phase spectrum skip failed at sample %u", index);
-	CHECK(v34_phase2_probe_spectrum_restart_window(
-		      &spectrum) ==
-		      V34_PHASE2_PROBE_SPECTRUM_OK &&
-		      spectrum.samples_observed == TEST_SKIP_SAMPLES &&
-		      spectrum.window_start_sample == TEST_SKIP_SAMPLES,
-	      "window restart did not preserve absolute phase");
 	for (uint32_t index = 0;
 	     index < 2u * V34_PHASE2_PROBE_PERIOD_SAMPLES;
 	     ++index) {
 		CHECK(v34_phase2_probe_spectrum_sample(
 			      &spectrum,
-			      phase_test_sample(TEST_SKIP_SAMPLES + index)) ==
+			      phase_test_sample(index)) ==
 			      V34_PHASE2_PROBE_SPECTRUM_OK,
 		      "phase spectrum failed at window sample %u", index);
 	}
@@ -163,20 +149,6 @@ static bool test_phase_and_window_restart(void)
 		      bin->in_phase_peak, bin->quadrature_peak,
 		      expected_in_phase, expected_quadrature);
 	}
-	before = spectrum;
-	CHECK(v34_phase2_probe_spectrum_restart_window(
-		      &spectrum) ==
-		      V34_PHASE2_PROBE_SPECTRUM_OK &&
-		      spectrum.samples_observed == before.samples_observed &&
-		      spectrum.window_start_sample == before.samples_observed,
-	      "second window restart changed the sample timeline");
-	memset(&measurement, 0xa5, sizeof(measurement));
-	untouched = measurement;
-	CHECK(v34_phase2_probe_spectrum_measure(
-		      &spectrum, &measurement) ==
-		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      memcmp(&measurement, &untouched, sizeof(measurement)) == 0,
-	      "empty restarted window produced a measurement");
 	return true;
 }
 
@@ -203,20 +175,6 @@ static bool test_validation(void)
 			      &spectrum, NULL) ==
 			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT,
 	      "invalid measurement changed caller-owned state");
-	spectrum.window_start_sample = 1;
-	before = spectrum;
-	CHECK(!v34_phase2_probe_spectrum_is_valid(&spectrum) &&
-		      v34_phase2_probe_spectrum_sample(
-			      &spectrum, 1) ==
-			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      v34_phase2_probe_spectrum_restart_window(
-			      &spectrum) ==
-			      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      memcmp(&spectrum, &before, sizeof(spectrum)) == 0,
-	      "inconsistent window timeline was accepted");
-	CHECK(v34_phase2_probe_spectrum_init(&spectrum) ==
-		      V34_PHASE2_PROBE_SPECTRUM_OK,
-	      "validation fixture did not reset");
 	spectrum.harmonics[3].in_phase_sum = NAN;
 	before = spectrum;
 	CHECK(!v34_phase2_probe_spectrum_is_valid(&spectrum) &&
@@ -229,7 +187,6 @@ static bool test_validation(void)
 		      V34_PHASE2_PROBE_SPECTRUM_OK,
 	      "overflow fixture did not initialize");
 	spectrum.samples_observed = UINT32_MAX;
-	spectrum.window_start_sample = UINT32_MAX;
 	before = spectrum;
 	CHECK(v34_phase2_probe_spectrum_is_valid(&spectrum) &&
 		      v34_phase2_probe_spectrum_sample(
@@ -240,8 +197,6 @@ static bool test_validation(void)
 	CHECK(v34_phase2_probe_spectrum_init(NULL) ==
 		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      v34_phase2_probe_spectrum_sample(NULL, 0) ==
-		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
-		      v34_phase2_probe_spectrum_restart_window(NULL) ==
 		      V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT &&
 		      !v34_phase2_probe_spectrum_is_valid(NULL),
 	      "null spectrum was accepted");
@@ -255,7 +210,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated probe spectrum", test_generated_probe_spectrum },
-		{ "phase and window restart", test_phase_and_window_restart },
+		{ "phase measurement", test_phase_measurement },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

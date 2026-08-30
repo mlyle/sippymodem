@@ -147,27 +147,6 @@ v34_phase2_info_audio_receiver_init(
 }
 
 enum v34_phase2_info_audio_result
-v34_phase2_info_audio_receiver_reset(
-	struct v34_phase2_info_audio_receiver *receiver)
-{
-	struct v34_phase2_info_audio_receiver reset;
-
-	if (!v34_phase2_info_audio_receiver_is_valid(receiver))
-		return V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
-	reset = *receiver;
-	reset.samples_since_sync = 0;
-	reset.handoff_delay_samples = 0;
-	if (v34_phase2_dpsk_receiver_reset(&reset.modulation) !=
-		    V34_PHASE2_DPSK_OK ||
-	    v34_phase2_info_receiver_reset(&reset.frame) !=
-		    V34_PHASE2_INFO_OK ||
-	    !v34_phase2_info_audio_receiver_is_valid(&reset))
-		return V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
-	*receiver = reset;
-	return V34_PHASE2_INFO_AUDIO_OK;
-}
-
-enum v34_phase2_info_audio_result
 v34_phase2_info_audio_receiver_sample(
 	struct v34_phase2_info_audio_receiver *receiver,
 	int16_t sample, struct v34_phase2_info_event *event)
@@ -224,16 +203,6 @@ v34_phase2_info_audio_receiver_sample(
 	*receiver = next;
 	*event = emitted;
 	return V34_PHASE2_INFO_AUDIO_OK;
-}
-
-struct v34_phase2_dpsk_measurement
-v34_phase2_info_audio_receiver_measure(
-	const struct v34_phase2_info_audio_receiver *receiver)
-{
-	if (!v34_phase2_info_audio_receiver_is_valid(receiver))
-		return (struct v34_phase2_dpsk_measurement){ 0 };
-	return v34_phase2_dpsk_receiver_measure(
-		&receiver->modulation);
 }
 
 uint16_t v34_phase2_info_audio_receiver_handoff_delay_samples(

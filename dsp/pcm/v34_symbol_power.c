@@ -18,17 +18,6 @@ bool v34_symbol_power_measurement_is_valid(
 		measurement->mean_squared_magnitude == 0.0);
 }
 
-enum v34_symbol_power_result
-v34_symbol_power_measurement_reset(
-	struct v34_symbol_power_measurement *measurement)
-{
-	if (measurement == NULL)
-		return V34_SYMBOL_POWER_INVALID_ARGUMENT;
-	*measurement =
-		(struct v34_symbol_power_measurement){ 0 };
-	return V34_SYMBOL_POWER_OK;
-}
-
 static enum v34_symbol_power_result observe_power(
 	struct v34_symbol_power_measurement *measurement,
 	double squared_magnitude)

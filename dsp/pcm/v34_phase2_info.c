@@ -43,16 +43,6 @@ size_t v34_phase2_info_frame_bit_count(
 	       V34_PHASE2_INFO_TRAILING_FILL_BITS;
 }
 
-enum v34_phase2_info_result v34_phase2_info_crc(
-	const uint8_t *payload, size_t payload_bit_count, uint16_t *crc)
-{
-	if (!payload_arguments_are_valid(payload, payload_bit_count) ||
-	    crc == NULL)
-		return V34_PHASE2_INFO_INVALID_ARGUMENT;
-	*crc = payload_crc(payload, payload_bit_count);
-	return V34_PHASE2_INFO_OK;
-}
-
 bool v34_phase2_info_generator_is_valid(
 	const struct v34_phase2_info_generator *generator)
 {
@@ -93,20 +83,6 @@ v34_phase2_info_generator_init(
 	if (!v34_phase2_info_generator_is_valid(&initialized))
 		return V34_PHASE2_INFO_INVALID_ARGUMENT;
 	*generator = initialized;
-	return V34_PHASE2_INFO_OK;
-}
-
-enum v34_phase2_info_result
-v34_phase2_info_generator_reset(
-	struct v34_phase2_info_generator *generator)
-{
-	struct v34_phase2_info_generator reset;
-
-	if (!v34_phase2_info_generator_is_valid(generator))
-		return V34_PHASE2_INFO_INVALID_ARGUMENT;
-	reset = *generator;
-	reset.bit_index = 0;
-	*generator = reset;
 	return V34_PHASE2_INFO_OK;
 }
 
@@ -271,23 +247,6 @@ v34_phase2_info_receiver_init(
 	if (!v34_phase2_info_receiver_is_valid(&initialized))
 		return V34_PHASE2_INFO_INVALID_ARGUMENT;
 	*receiver = initialized;
-	return V34_PHASE2_INFO_OK;
-}
-
-enum v34_phase2_info_result
-v34_phase2_info_receiver_reset(
-	struct v34_phase2_info_receiver *receiver)
-{
-	struct v34_phase2_info_receiver reset;
-
-	if (!v34_phase2_info_receiver_is_valid(receiver))
-		return V34_PHASE2_INFO_INVALID_ARGUMENT;
-	reset = (struct v34_phase2_info_receiver){
-		.expected_payload_bit_count =
-			receiver->expected_payload_bit_count,
-	};
-	search_for_sync(&reset);
-	*receiver = reset;
 	return V34_PHASE2_INFO_OK;
 }
 

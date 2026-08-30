@@ -81,9 +81,6 @@ v34_phase2_info_audio_receiver_init(
 	size_t expected_payload_bit_count);
 bool v34_phase2_info_audio_receiver_is_valid(
 	const struct v34_phase2_info_audio_receiver *receiver);
-enum v34_phase2_info_audio_result
-v34_phase2_info_audio_receiver_reset(
-	struct v34_phase2_info_audio_receiver *receiver);
 
 /* Each successful call emits either NO_EVENT or the typed frame event from
  * the first recovered bit boundary in this sample. */
@@ -91,9 +88,6 @@ enum v34_phase2_info_audio_result
 v34_phase2_info_audio_receiver_sample(
 	struct v34_phase2_info_audio_receiver *receiver,
 	int16_t sample, struct v34_phase2_info_event *event);
-struct v34_phase2_dpsk_measurement
-v34_phase2_info_audio_receiver_measure(
-	const struct v34_phase2_info_audio_receiver *receiver);
 
 /* Return the implementation-derived delay from the peer's following-tone
  * transition through delivery of a just-completed, tail-valid INFO frame.

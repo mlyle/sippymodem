@@ -53,16 +53,11 @@ static uint32_t next_random(uint32_t *state)
 
 static bool test_generated_mean(void)
 {
-	struct v34_symbol_power_measurement q7_measurement;
-	struct v34_symbol_power_measurement point_measurement;
+	struct v34_symbol_power_measurement q7_measurement = { 0 };
+	struct v34_symbol_power_measurement point_measurement = { 0 };
 	uint32_t random = UINT32_C(0x7f08c4d3);
 	long double sum = 0.0L;
 
-	CHECK(v34_symbol_power_measurement_reset(
-		      &q7_measurement) == V34_SYMBOL_POWER_OK &&
-	      v34_symbol_power_measurement_reset(
-		      &point_measurement) == V34_SYMBOL_POWER_OK,
-	      "symbol-power measurements did not reset");
 	for (uint32_t index = 0; index < GENERATED_SYMBOLS; ++index) {
 		struct v34_q7_point q7 = {
 			.in_phase =
@@ -518,8 +513,6 @@ static bool test_validation(void)
 	const struct qam_point overflowing = { DBL_MAX, DBL_MAX };
 
 	CHECK(!v34_symbol_power_measurement_is_valid(NULL) &&
-	      v34_symbol_power_measurement_reset(NULL) ==
-		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
 	      v34_symbol_power_observe_q7(NULL, &q7) ==
 		      V34_SYMBOL_POWER_INVALID_ARGUMENT &&
 	      v34_symbol_power_observe_q7(&measurement, NULL) ==

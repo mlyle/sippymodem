@@ -4,7 +4,6 @@
 
 #include <math.h>
 #include <stddef.h>
-#include <string.h>
 
 static const double V34_PHASE2_PROBE_SPECTRUM_TWO_PI =
 	6.283185307179586476925286766559;
@@ -23,8 +22,7 @@ _Static_assert(
 bool v34_phase2_probe_spectrum_is_valid(
 	const struct v34_phase2_probe_spectrum *spectrum)
 {
-	if (spectrum == NULL ||
-	    spectrum->window_start_sample > spectrum->samples_observed)
+	if (spectrum == NULL)
 		return false;
 	for (size_t harmonic = 0;
 	     harmonic < V34_PHASE2_PROBE_HIGHEST_HARMONIC;
@@ -46,23 +44,6 @@ v34_phase2_probe_spectrum_init(
 	    !v34_phase2_probe_spectrum_is_valid(&initialized))
 		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
 	*spectrum = initialized;
-	return V34_PHASE2_PROBE_SPECTRUM_OK;
-}
-
-enum v34_phase2_probe_spectrum_result
-v34_phase2_probe_spectrum_restart_window(
-	struct v34_phase2_probe_spectrum *spectrum)
-{
-	struct v34_phase2_probe_spectrum restarted;
-
-	if (!v34_phase2_probe_spectrum_is_valid(spectrum))
-		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
-	restarted = *spectrum;
-	memset(restarted.harmonics, 0, sizeof(restarted.harmonics));
-	restarted.window_start_sample = restarted.samples_observed;
-	if (!v34_phase2_probe_spectrum_is_valid(&restarted))
-		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
-	*spectrum = restarted;
 	return V34_PHASE2_PROBE_SPECTRUM_OK;
 }
 
@@ -132,8 +113,7 @@ v34_phase2_probe_spectrum_measure(
 	if (!v34_phase2_probe_spectrum_is_valid(spectrum) ||
 	    measurement == NULL)
 		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
-	measured.sample_count =
-		spectrum->samples_observed - spectrum->window_start_sample;
+	measured.sample_count = spectrum->samples_observed;
 	if (measured.sample_count == 0)
 		return V34_PHASE2_PROBE_SPECTRUM_INVALID_ARGUMENT;
 	peak_scale = 2.0 / (double)measured.sample_count;

@@ -37,10 +37,6 @@ struct v34_power_normalizer {
 bool v34_symbol_power_measurement_is_valid(
 	const struct v34_symbol_power_measurement *measurement);
 
-enum v34_symbol_power_result
-v34_symbol_power_measurement_reset(
-	struct v34_symbol_power_measurement *measurement);
-
 /* Q7 precoder outputs are measured in unscaled constellation-grid units. */
 enum v34_symbol_power_result
 v34_symbol_power_observe_q7(

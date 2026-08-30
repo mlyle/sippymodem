@@ -22,7 +22,6 @@ struct v34_phase2_probe_spectrum {
 	struct v34_phase2_probe_spectrum_accumulator harmonics
 		[V34_PHASE2_PROBE_HIGHEST_HARMONIC];
 	uint32_t samples_observed;
-	uint32_t window_start_sample;
 };
 
 struct v34_phase2_probe_spectrum_bin {
@@ -45,11 +44,6 @@ v34_phase2_probe_spectrum_init(
 bool v34_phase2_probe_spectrum_is_valid(
 	const struct v34_phase2_probe_spectrum *spectrum);
 
-/* Clear the current measurement window while retaining the harmonic phase
- * established by all samples observed since initialization. */
-enum v34_phase2_probe_spectrum_result
-v34_phase2_probe_spectrum_restart_window(
-	struct v34_phase2_probe_spectrum *spectrum);
 enum v34_phase2_probe_spectrum_result
 v34_phase2_probe_spectrum_sample(
 	struct v34_phase2_probe_spectrum *spectrum,

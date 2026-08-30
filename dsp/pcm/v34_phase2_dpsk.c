@@ -266,18 +266,6 @@ v34_phase2_dpsk_receiver_init(
 	return V34_PHASE2_DPSK_OK;
 }
 
-enum v34_phase2_dpsk_result
-v34_phase2_dpsk_receiver_reset(
-	struct v34_phase2_dpsk_receiver *receiver)
-{
-	enum v34_station_role local_role;
-
-	if (!v34_phase2_dpsk_receiver_is_valid(receiver))
-		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	local_role = receiver->local_role;
-	return v34_phase2_dpsk_receiver_init(receiver, local_role);
-}
-
 static int16_t q14_shift(int64_t accumulator, bool round)
 {
 	int64_t shifted;

@@ -99,9 +99,6 @@ v34_phase2_dpsk_receiver_init(
 bool v34_phase2_dpsk_receiver_is_valid(
 	const struct v34_phase2_dpsk_receiver *receiver);
 enum v34_phase2_dpsk_result
-v34_phase2_dpsk_receiver_reset(
-	struct v34_phase2_dpsk_receiver *receiver);
-enum v34_phase2_dpsk_result
 v34_phase2_dpsk_receiver_sample(
 	struct v34_phase2_dpsk_receiver *receiver,
 	int16_t sample, uint8_t *bit, bool *bit_ready);

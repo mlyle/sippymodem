@@ -55,8 +55,6 @@ bool v34_phase2_probe_receiver_is_valid(
 		    &receiver->l1_spectrum) ||
 	    !v34_phase2_probe_spectrum_is_valid(
 		    &receiver->l2_spectrum) ||
-	    receiver->l1_spectrum.window_start_sample != 0 ||
-	    receiver->l2_spectrum.window_start_sample != 0 ||
 	    (unsigned int)receiver->phase >
 		    V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED)
 		return false;

@@ -74,8 +74,6 @@ struct v34_phase2_info_receiver {
 
 size_t v34_phase2_info_frame_bit_count(
 	size_t payload_bit_count);
-enum v34_phase2_info_result v34_phase2_info_crc(
-	const uint8_t *payload, size_t payload_bit_count, uint16_t *crc);
 
 enum v34_phase2_info_result
 v34_phase2_info_generator_init(
@@ -83,9 +81,6 @@ v34_phase2_info_generator_init(
 	const uint8_t *payload, size_t payload_bit_count);
 bool v34_phase2_info_generator_is_valid(
 	const struct v34_phase2_info_generator *generator);
-enum v34_phase2_info_result
-v34_phase2_info_generator_reset(
-	struct v34_phase2_info_generator *generator);
 
 /* frame_complete accompanies the final transmitted fill bit. */
 enum v34_phase2_info_result
@@ -99,9 +94,6 @@ v34_phase2_info_receiver_init(
 	size_t expected_payload_bit_count);
 bool v34_phase2_info_receiver_is_valid(
 	const struct v34_phase2_info_receiver *receiver);
-enum v34_phase2_info_result
-v34_phase2_info_receiver_reset(
-	struct v34_phase2_info_receiver *receiver);
 enum v34_phase2_info_result
 v34_phase2_info_receive_bit(
 	struct v34_phase2_info_receiver *receiver, uint8_t bit,
