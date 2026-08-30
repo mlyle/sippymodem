@@ -4,7 +4,6 @@
 
 #include "v34_constellation.h"
 #include "v34_training_sequence.h"
-#include "v34_training_channel.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -144,7 +143,10 @@ static enum v90_phase3_analog_rx_result receive_s(
 	struct v90_phase3_analog_rx *rx, const struct qam_point *received)
 {
 	struct v90_phase3_s_point_receiver *s = &rx->state.s;
+	struct qam_gain next_gain;
 	struct qam_point reference = v34_rotated_point_zero(0);
+	struct qam_point normalized;
+	struct qam_point decision;
 	struct v34_phase3_s_detection detection;
 	struct v34_phase3_pp_receiver pp;
 	uint8_t quarter_point;
@@ -158,11 +160,20 @@ static enum v90_phase3_analog_rx_result receive_s(
 			return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 		s->gain_seeded = true;
 	}
-	if (v34_training_channel_decide(
-		    &s->gain, V34_CONSTELLATION_4_POINT, received,
-		    &quarter_point, &clockwise_quarter_turns) !=
-	    V34_TRAINING_CHANNEL_OK)
+	next_gain = s->gain;
+	if (qam_gain_equalize(&next_gain, received, &normalized) !=
+		    QAM_GAIN_OK ||
+	    v34_training_constellation_slice(
+		    V34_CONSTELLATION_4_POINT, &normalized, &quarter_point,
+		    &clockwise_quarter_turns) != V34_CONSTELLATION_OK ||
+	    v34_training_constellation_point(
+		    V34_CONSTELLATION_4_POINT, quarter_point,
+		    clockwise_quarter_turns, &decision) !=
+		    V34_CONSTELLATION_OK ||
+	    qam_gain_track(&next_gain, received, &decision) != QAM_GAIN_OK ||
+	    !qam_gain_is_valid(&next_gain))
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	s->gain = next_gain;
 	result = v34_phase3_s_receiver_receive(
 		&s->detector, quarter_point, clockwise_quarter_turns);
 	if (result == V34_PHASE3_S_RECEIVER_OK)

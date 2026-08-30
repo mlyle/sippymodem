@@ -2426,7 +2426,6 @@ V90_PHASE3_ANALOG_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
-	$(BUILD_DIR)/v34_training_channel.o \
 	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v90_phase3_analog_rx.o \
@@ -5711,10 +5710,6 @@ $(BUILD_DIR)/v34_phase4_mp_receiver.o: \
 $(BUILD_DIR)/v34_phase4_decision_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c | \
 	$(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_training_channel.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase4_e_sequence.o: \
