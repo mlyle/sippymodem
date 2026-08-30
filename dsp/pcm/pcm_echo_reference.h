@@ -81,6 +81,9 @@ enum pcm_echo_reference_result pcm_echo_reference_push(
 enum pcm_echo_reference_result pcm_echo_reference_read_at_age(
 	const struct pcm_echo_reference *reference, uint32_t age,
 	int16_t *sample);
+enum pcm_echo_reference_result pcm_echo_reference_read_window(
+	const struct pcm_echo_reference *reference, uint32_t first_age,
+	int16_t *samples, size_t count);
 
 enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	struct pcm_echo_reference *reference,

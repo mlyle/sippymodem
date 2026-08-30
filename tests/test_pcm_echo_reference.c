@@ -61,6 +61,7 @@ static bool test_ring_and_contracts(void)
 		.best_window_delay_samples = 1234,
 	};
 	struct pcm_echo_reference_scan_result saved_scan = scan;
+	int16_t window[3] = { 11, 22, 33 };
 	int16_t output = 1234;
 
 	CHECK(pcm_echo_reference_init(NULL) ==
@@ -115,6 +116,25 @@ static bool test_ring_and_contracts(void)
 		      &output) == PCM_ECHO_REFERENCE_OK &&
 		      output == reference_sample(7),
 	      "oldest wrapped sample changed");
+	CHECK(pcm_echo_reference_read_window(
+		      &reference, 1, window, 3) == PCM_ECHO_REFERENCE_OK &&
+	      window[0] == reference_sample(
+		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 6u) &&
+	      window[1] == reference_sample(
+		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 5u) &&
+	      window[2] == reference_sample(
+		      PCM_ECHO_REFERENCE_HISTORY_SAMPLES + 4u),
+	      "wrapped reference window changed");
+	CHECK(pcm_echo_reference_read_window(
+		      &reference, 1, NULL, 3) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_read_window(
+		      &reference, 1, window, 0) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT &&
+	      pcm_echo_reference_read_window(
+		      &reference, 1, (int16_t *)&reference, 3) ==
+		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT,
+	      "invalid reference window was accepted");
 
 	saved = reference;
 	CHECK(pcm_echo_reference_start_scan(&reference, 0,

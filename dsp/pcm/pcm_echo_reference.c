@@ -130,6 +130,32 @@ enum pcm_echo_reference_result pcm_echo_reference_read_at_age(
 	return PCM_ECHO_REFERENCE_OK;
 }
 
+enum pcm_echo_reference_result pcm_echo_reference_read_window(
+	const struct pcm_echo_reference *reference, uint32_t first_age,
+	int16_t *samples, size_t count)
+{
+	uint64_t last_age;
+	size_t bytes;
+
+	if (!pcm_echo_reference_is_valid(reference))
+		return PCM_ECHO_REFERENCE_INVALID_STATE;
+	if (samples == NULL || first_age == 0 || count == 0 ||
+	    count > PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES)
+		return PCM_ECHO_REFERENCE_INVALID_ARGUMENT;
+	last_age = (uint64_t)first_age + count - 1u;
+	bytes = count * sizeof(*samples);
+	if (last_age > PCM_ECHO_REFERENCE_HISTORY_SAMPLES ||
+	    memory_regions_overlap(reference, sizeof(*reference),
+			   samples, bytes))
+		return PCM_ECHO_REFERENCE_INVALID_ARGUMENT;
+	if (last_age > reference->fill)
+		return PCM_ECHO_REFERENCE_NOT_READY;
+	for (size_t index = 0; index < count; ++index)
+		samples[index] = sample_at_age(
+			reference, first_age + (uint32_t)index);
+	return PCM_ECHO_REFERENCE_OK;
+}
+
 static void clear_scan(struct pcm_echo_reference *reference)
 {
 	memset(reference->scan_reference_energy, 0,

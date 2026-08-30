@@ -37,6 +37,7 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c \
+	pcm_echo_reference.c \
 	pcm_info1.c pcm_j_frame.c \
 	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
@@ -1498,6 +1499,11 @@ PCM_ECHO_REFERENCE_TEST_BINARY := \
 	$(BUILD_DIR)/test_pcm_echo_reference
 PCM_ECHO_REFERENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_echo_reference.o \
+	$(BUILD_DIR)/pcm_echo_reference.o
+V90_HOST_ECHO_TEST_BINARY := $(BUILD_DIR)/test_v90_host_echo
+V90_HOST_ECHO_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v90_host_echo.o \
+	$(BUILD_DIR)/v90_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o
 V34_CALL_TEST_BINARY := $(BUILD_DIR)/test_v34_call
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
@@ -3123,6 +3129,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE4_EXCHANGE_TEST_BINARY) \
 	$(V34_ECHO_CANCELLER_TEST_BINARY) \
 	$(PCM_ECHO_REFERENCE_TEST_BINARY) \
+	$(V90_HOST_ECHO_TEST_BINARY) \
 	$(V34_CALL_TEST_BINARY) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_E_RECEIVER_TEST_BINARY) \
@@ -3438,6 +3445,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE4_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_ECHO_CANCELLER_TEST_OBJECTS:.o=.d) \
 	$(PCM_ECHO_REFERENCE_TEST_OBJECTS:.o=.d) \
+	$(V90_HOST_ECHO_TEST_OBJECTS:.o=.d) \
 	$(V34_CALL_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_E_RECEIVER_TEST_OBJECTS:.o=.d) \
@@ -4114,6 +4122,9 @@ $(V34_ECHO_CANCELLER_TEST_BINARY): $(V34_ECHO_CANCELLER_TEST_OBJECTS)
 
 $(PCM_ECHO_REFERENCE_TEST_BINARY): $(PCM_ECHO_REFERENCE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(V90_HOST_ECHO_TEST_BINARY): $(V90_HOST_ECHO_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_CALL_TEST_BINARY): $(V34_CALL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -5860,6 +5871,10 @@ $(BUILD_DIR)/v34_echo_canceller.o: \
 
 $(BUILD_DIR)/pcm_echo_reference.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_echo_reference.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_host_echo.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_host_echo.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v22_datapump.o: \
