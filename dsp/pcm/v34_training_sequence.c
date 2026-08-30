@@ -72,24 +72,14 @@ static bool outputs_overlap(
 	const uint8_t *quarter_point,
 	const uint8_t *clockwise_quarter_turns)
 {
-	return memory_regions_overlap(
-		       trn, sizeof(*trn), point, point_size) ||
-	       memory_regions_overlap(
-		       trn, sizeof(*trn), quarter_point,
-		       sizeof(*quarter_point)) ||
-	       memory_regions_overlap(
-		       trn, sizeof(*trn), clockwise_quarter_turns,
-		       sizeof(*clockwise_quarter_turns)) ||
-	       memory_regions_overlap(
-		       point, point_size, quarter_point,
-		       sizeof(*quarter_point)) ||
-	       memory_regions_overlap(
-		       point, point_size, clockwise_quarter_turns,
-		       sizeof(*clockwise_quarter_turns)) ||
-	       memory_regions_overlap(
-		       quarter_point, sizeof(*quarter_point),
-		       clockwise_quarter_turns,
-		       sizeof(*clockwise_quarter_turns));
+	const struct memory_region regions[] = {
+		{ trn, sizeof(*trn) },
+		{ point, point_size },
+		{ quarter_point, sizeof(*quarter_point) },
+		{ clockwise_quarter_turns, sizeof(*clockwise_quarter_turns) },
+	};
+
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 enum v34_training_sequence_result v34_training_sequence_next(

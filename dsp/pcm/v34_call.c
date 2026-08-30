@@ -298,20 +298,14 @@ static bool outputs_overlap(
 	const struct v34_call_observation *observation,
 	const struct v34_received_mapping_frame *received)
 {
-	return memory_regions_overlap(
-		       call, sizeof(*call), sample, sizeof(*sample)) ||
-	       memory_regions_overlap(
-		       call, sizeof(*call), observation, sizeof(*observation)) ||
-	       memory_regions_overlap(
-		       call, sizeof(*call), received, sizeof(*received)) ||
-	       memory_regions_overlap(
-		       sample, sizeof(*sample), observation,
-		       sizeof(*observation)) ||
-	       memory_regions_overlap(
-		       sample, sizeof(*sample), received, sizeof(*received)) ||
-	       memory_regions_overlap(
-		       observation, sizeof(*observation), received,
-		       sizeof(*received));
+	const struct memory_region regions[] = {
+		{ call, sizeof(*call) },
+		{ sample, sizeof(*sample) },
+		{ observation, sizeof(*observation) },
+		{ received, sizeof(*received) },
+	};
+
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 static enum v34_call_result phase3_result(

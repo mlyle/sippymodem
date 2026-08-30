@@ -30,6 +30,36 @@ static bool test_empty_regions(void)
 	return true;
 }
 
+static bool test_region_sets(void)
+{
+	uint8_t storage[32];
+	struct memory_region regions[] = {
+		{ storage, 4 },
+		{ storage + 8, 4 },
+		{ storage + 16, 4 },
+		{ storage + 24, 4 },
+	};
+
+	CHECK(!memory_region_set_overlaps(NULL, 0) &&
+	      memory_region_set_overlaps(NULL, 1) &&
+	      !memory_region_set_overlaps(regions, 0) &&
+	      !memory_region_set_overlaps(regions, 1) &&
+	      !memory_region_set_overlaps(
+		      regions, ARRAY_LENGTH(regions)),
+	      "disjoint memory-region set changed");
+	regions[2].data = storage + 10;
+	CHECK(memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
+	      "middle memory-region overlap was missed");
+	regions[2].data = storage + 16;
+	regions[3] = (struct memory_region){ storage + 2, 0 };
+	CHECK(!memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
+	      "empty set member was treated as overlapping");
+	regions[3].size = 1;
+	CHECK(memory_region_set_overlaps(regions, ARRAY_LENGTH(regions)),
+	      "final memory-region overlap was missed");
+	return true;
+}
+
 static bool test_zero_regions(void)
 {
 	uint8_t storage[8] = { 0 };
@@ -53,6 +83,7 @@ int main(void)
 	} tests[] = {
 		{ "boundaries and containment", test_boundaries_and_containment },
 		{ "empty regions", test_empty_regions },
+		{ "region sets", test_region_sets },
 		{ "zero regions", test_zero_regions },
 	};
 	unsigned int failures = 0;

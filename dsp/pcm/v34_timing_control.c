@@ -377,6 +377,12 @@ enum v34_timing_control_result v34_timing_control_process(
 	const int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS],
 	uint16_t *phase_increment)
 {
+	const struct memory_region regions[] = {
+		{ control, control == NULL ? 0 : sizeof(*control) },
+		{ observations,
+		  sizeof(*observations) * V34_TIMING_CONTROL_OBSERVATIONS },
+		{ phase_increment, sizeof(*phase_increment) },
+	};
 	struct v34_timing_control next;
 	int32_t timing_step;
 	uint32_t phase_accumulator;
@@ -385,16 +391,7 @@ enum v34_timing_control_result v34_timing_control_process(
 	if (!v34_timing_control_is_valid(control))
 		return V34_TIMING_CONTROL_INVALID_STATE;
 	if (observations == NULL || phase_increment == NULL ||
-	    memory_regions_overlap(
-		    control, sizeof(*control), observations,
-		    sizeof(*observations) * V34_TIMING_CONTROL_OBSERVATIONS) ||
-	    memory_regions_overlap(
-		    control, sizeof(*control), phase_increment,
-		    sizeof(*phase_increment)) ||
-	    memory_regions_overlap(
-		    observations,
-		    sizeof(*observations) * V34_TIMING_CONTROL_OBSERVATIONS,
-		    phase_increment, sizeof(*phase_increment)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_TIMING_CONTROL_INVALID_ARGUMENT;
 	next = *control;
 	if (next.mode == V34_TIMING_CONTROL_INITIAL_PHASE) {

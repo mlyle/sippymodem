@@ -105,6 +105,11 @@ v34_data_decision_receiver_observe(
 	const struct v34_adaptive_equalizer_observation *observation,
 	struct v34_data_decision_output *output)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ observation, sizeof(*observation) },
+		{ output, sizeof(*output) },
+	};
 	struct v34_data_decision_receiver next;
 	struct v34_data_decision_output generated = { 0 };
 	struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL];
@@ -113,15 +118,7 @@ v34_data_decision_receiver_observe(
 	enum v34_data_receive_result result;
 
 	if (observation == NULL || output == NULL ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    observation, sizeof(*observation)) ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    output, sizeof(*output)) ||
-	    memory_regions_overlap(
-		    observation, sizeof(*observation), output,
-		    sizeof(*output)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (!v34_data_decision_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_STATE;

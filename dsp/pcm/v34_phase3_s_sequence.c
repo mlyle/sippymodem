@@ -43,6 +43,11 @@ v34_phase3_s_sequence_next(
 	struct qam_point *point,
 	enum v34_phase3_s_section *section)
 {
+	const struct memory_region regions[] = {
+		{ sequence, sequence == NULL ? 0 : sizeof(*sequence) },
+		{ point, sizeof(*point) },
+		{ section, sizeof(*section) },
+	};
 	struct v34_phase3_s_sequence next;
 	struct qam_point next_point;
 	enum v34_phase3_s_section next_section;
@@ -51,14 +56,7 @@ v34_phase3_s_sequence_next(
 
 	if (!v34_phase3_s_sequence_is_valid(sequence) ||
 	    point == NULL || section == NULL ||
-	    memory_regions_overlap(
-		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
-		    point, sizeof(*point)) ||
-	    memory_regions_overlap(
-		    sequence, sequence == NULL ? 0 : sizeof(*sequence),
-		    section, sizeof(*section)) ||
-	    memory_regions_overlap(
-		    point, sizeof(*point), section, sizeof(*section)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_PHASE3_S_SEQUENCE_INVALID_ARGUMENT;
 	if (v34_phase3_s_sequence_is_complete(sequence))
 		return V34_PHASE3_S_SEQUENCE_COMPLETE;

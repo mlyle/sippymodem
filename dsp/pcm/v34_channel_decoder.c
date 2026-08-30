@@ -141,27 +141,15 @@ static bool advance_regions_overlap(
 {
 	const size_t estimates_size =
 		sizeof(*estimates) * V34_2D_SYMBOLS_PER_4D_INTERVAL;
+	const struct memory_region regions[] = {
+		{ decoder, sizeof(*decoder) },
+		{ estimates, estimates_size },
+		{ current, sizeof(*current) },
+		{ decided, sizeof(*decided) },
+		{ ready, sizeof(*ready) },
+	};
 
-	return memory_regions_overlap(
-		       decoder, sizeof(*decoder), estimates, estimates_size) ||
-	       memory_regions_overlap(
-		       decoder, sizeof(*decoder), current, sizeof(*current)) ||
-	       memory_regions_overlap(
-		       decoder, sizeof(*decoder), decided, sizeof(*decided)) ||
-	       memory_regions_overlap(
-		       decoder, sizeof(*decoder), ready, sizeof(*ready)) ||
-	       memory_regions_overlap(
-		       estimates, estimates_size, current, sizeof(*current)) ||
-	       memory_regions_overlap(
-		       estimates, estimates_size, decided, sizeof(*decided)) ||
-	       memory_regions_overlap(
-		       estimates, estimates_size, ready, sizeof(*ready)) ||
-	       memory_regions_overlap(
-		       current, sizeof(*current), decided, sizeof(*decided)) ||
-	       memory_regions_overlap(
-		       current, sizeof(*current), ready, sizeof(*ready)) ||
-	       memory_regions_overlap(
-		       decided, sizeof(*decided), ready, sizeof(*ready));
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 enum v34_channel_decoder_result

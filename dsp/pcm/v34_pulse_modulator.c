@@ -334,22 +334,15 @@ static bool outputs_are_disjoint(
 	const struct qam_point *point, double *sample,
 	bool *point_accepted)
 {
-	return !memory_regions_overlap(
-		       modulator, sizeof(*modulator), sample, sizeof(*sample)) &&
-	       !memory_regions_overlap(
-		       modulator, sizeof(*modulator), point_accepted,
-		       sizeof(*point_accepted)) &&
-	       !memory_regions_overlap(
-		       sample, sizeof(*sample), point_accepted,
-		       sizeof(*point_accepted)) &&
-	       (point == NULL ||
-		(!memory_regions_overlap(
-			 point, sizeof(*point), modulator, sizeof(*modulator)) &&
-		 !memory_regions_overlap(
-			 point, sizeof(*point), sample, sizeof(*sample)) &&
-		 !memory_regions_overlap(
-			 point, sizeof(*point), point_accepted,
-			 sizeof(*point_accepted))));
+	const struct memory_region regions[] = {
+		{ modulator, sizeof(*modulator) },
+		{ sample, sizeof(*sample) },
+		{ point_accepted, sizeof(*point_accepted) },
+		{ point, sizeof(*point) },
+	};
+	size_t count = point == NULL ? 3u : 4u;
+
+	return !memory_region_set_overlaps(regions, count);
 }
 
 static bool fixed_coordinate(double coordinate, int16_t *fixed)

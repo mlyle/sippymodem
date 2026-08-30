@@ -108,13 +108,13 @@ static bool outputs_overlap(
 	const struct v34_phase3_j_sequence *sequence, const void *point,
 	size_t point_size, const uint8_t *rotation)
 {
-	return memory_regions_overlap(
-		       sequence, sizeof(*sequence), point, point_size) ||
-	       memory_regions_overlap(
-		       sequence, sizeof(*sequence), rotation,
-		       sizeof(*rotation)) ||
-	       memory_regions_overlap(
-		       point, point_size, rotation, sizeof(*rotation));
+	const struct memory_region regions[] = {
+		{ sequence, sizeof(*sequence) },
+		{ point, point_size },
+		{ rotation, sizeof(*rotation) },
+	};
+
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 enum v34_phase3_j_sequence_result

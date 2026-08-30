@@ -655,6 +655,12 @@ v34_phase4_decision_receiver_observe(
 	struct v34_receive_action *output,
 	struct v34_mp_receive_event *event)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ observation, sizeof(*observation) },
+		{ output, sizeof(*output) },
+		{ event, sizeof(*event) },
+	};
 	struct v34_phase4_decision_receiver next;
 	struct v34_receive_action generated = { 0 };
 	struct v34_mp_receive_event emitted = { 0 };
@@ -664,22 +670,7 @@ v34_phase4_decision_receiver_observe(
 	enum v34_constellation_size constellation;
 
 	if (observation == NULL || output == NULL || event == NULL ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    observation, sizeof(*observation)) ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    output, sizeof(*output)) ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    event, sizeof(*event)) ||
-	    memory_regions_overlap(
-		    observation, sizeof(*observation), output,
-		    sizeof(*output)) ||
-	    memory_regions_overlap(
-		    observation, sizeof(*observation), event, sizeof(*event)) ||
-	    memory_regions_overlap(
-		    output, sizeof(*output), event, sizeof(*event)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase4_decision_receiver_is_valid(receiver))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;

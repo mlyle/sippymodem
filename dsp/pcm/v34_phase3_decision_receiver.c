@@ -315,20 +315,17 @@ v34_phase3_decision_receiver_observe(
 	uint16_t decoder_power_q15,
 	struct v34_receive_action *output)
 {
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ observation, sizeof(*observation) },
+		{ output, sizeof(*output) },
+	};
 	struct v34_phase3_decision_receiver next;
 	struct v34_receive_action generated;
 	enum v34_phase3_decision_receiver_result result;
 
 	if (observation == NULL || output == NULL ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    observation, sizeof(*observation)) ||
-	    memory_regions_overlap(
-		    receiver, receiver == NULL ? 0 : sizeof(*receiver),
-		    output, sizeof(*output)) ||
-	    memory_regions_overlap(
-		    observation, sizeof(*observation), output,
-		    sizeof(*output)))
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_ARGUMENT;
 	if (!v34_phase3_decision_receiver_is_valid(receiver))
 		return V34_PHASE3_DECISION_RECEIVER_INVALID_STATE;

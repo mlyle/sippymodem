@@ -65,18 +65,14 @@ static bool outputs_overlap(
 	const int16_t *sample, const uint32_t *events,
 	const struct v34_received_mapping_frame *received)
 {
-	return memory_regions_overlap(
-		       exchange, sizeof(*exchange), sample, sizeof(*sample)) ||
-	       memory_regions_overlap(
-		       exchange, sizeof(*exchange), events, sizeof(*events)) ||
-	       memory_regions_overlap(
-		       exchange, sizeof(*exchange), received, sizeof(*received)) ||
-	       memory_regions_overlap(
-		       sample, sizeof(*sample), events, sizeof(*events)) ||
-	       memory_regions_overlap(
-		       sample, sizeof(*sample), received, sizeof(*received)) ||
-	       memory_regions_overlap(
-		       events, sizeof(*events), received, sizeof(*received));
+	const struct memory_region regions[] = {
+		{ exchange, sizeof(*exchange) },
+		{ sample, sizeof(*sample) },
+		{ events, sizeof(*events) },
+		{ received, sizeof(*received) },
+	};
+
+	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
 static const uint16_t MP_WAIT_MULTIPLIER_Q14[V34_SYMBOL_RATE_COUNT] = {
