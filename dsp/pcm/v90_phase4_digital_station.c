@@ -45,6 +45,9 @@ bool v90_phase4_digital_station_is_valid(
 	if (station == NULL ||
 	    !v90_phase4_cp_line_rx_is_valid(&station->receive) ||
 	    !v90_phase4_ri_tx_is_valid(&station->transmit) ||
+	    (station->peer_upstream_rate_mask &
+	     ~V90_CP_UPSTREAM_RATE_MASK) != 0u ||
+	    (!station->cpt_received && station->peer_upstream_rate_mask != 0u) ||
 	    station->maximum_spectral_lookahead <
 		    V90_JD_MINIMUM_LOOKAHEAD ||
 	    station->maximum_spectral_lookahead >
@@ -198,6 +201,8 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_receive(
 			return fail_receive(station, &next);
 		if (supported) {
 			next.training_mapping = mapping;
+			next.peer_upstream_rate_mask =
+				event.parameters.upstream_rate_mask;
 			next.cpt_received = true;
 			if (v90_phase4_ri_tx_request_finish(&next.transmit) !=
 			    V90_PHASE4_RI_OK)

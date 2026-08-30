@@ -13,6 +13,58 @@ static bool initial_mp_is_valid(const struct v90_mp_record *record)
 	       !v90_mp_record_acknowledges_cp(record);
 }
 
+static const struct v90_mp_parameters *mp_parameters(
+	const struct v90_mp_record *record)
+{
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
+static bool select_initial_mp(
+	const struct v90_mp_record *configured,
+	const struct v90_phase4_digital_station *station,
+	struct v90_mp_record *selected)
+{
+	struct v90_mp_record limited;
+	const struct v90_mp_parameters *parameters;
+	uint16_t common_mask;
+	uint8_t maximum;
+
+	if (!initial_mp_is_valid(configured) ||
+	    !v90_phase4_digital_station_is_valid(station) ||
+	    !v90_phase4_digital_station_receive_complete(station) ||
+	    selected == NULL)
+		return false;
+	parameters = mp_parameters(configured);
+	/* MP advertises the local receive-rate set. CPt and the Phase 3 probe
+	 * select its maximum without rewriting that capability set. */
+	common_mask = (uint16_t)(
+		parameters->upstream_rate_capability_mask &
+		station->peer_upstream_rate_mask);
+	maximum = parameters->maximum_upstream_rate_2400_bps_units;
+	if (maximum >
+	    station->receive.transmitting_profile
+		    .projected_data_rate_2400_bps_units)
+		maximum = station->receive.transmitting_profile
+			  .projected_data_rate_2400_bps_units;
+	for (int rate = maximum;
+	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
+		uint16_t bit = (uint16_t)(1u <<
+			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
+
+		if ((common_mask & bit) == 0u)
+			continue;
+		limited = *configured;
+		if (!v90_mp_record_limit_maximum_upstream_rate(
+			    &limited, (uint8_t)rate))
+			return false;
+		*selected = limited;
+		return true;
+	}
+	return false;
+}
+
 static bool configured_mp_matches(
 	const struct v90_phase4_digital_handoff *handoff,
 	const struct v90_mp_record *record)
@@ -208,14 +260,20 @@ static enum v90_phase4_startup_result advance_startup(
 	if (startup->stage == V90_PHASE4_STARTUP_INITIAL &&
 	    v90_phase4_digital_station_receive_complete(
 		    &startup->state.initial)) {
+		struct v90_mp_record selected_mp;
 		struct v90_phase4_digital_continuation continuing = {
 			.station = startup->state.initial,
 		};
 
+		if (!select_initial_mp(
+			    &startup->initial_mp, &continuing.station,
+			    &selected_mp))
+			return V90_PHASE4_STARTUP_INVALID_PARAMETERS;
 		if (v90_phase4_digital_station_receive_handoff(
 			    &continuing.station, &continuing.receive) !=
 		    V90_PHASE4_DIGITAL_STATION_OK)
 			return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
+		startup->initial_mp = selected_mp;
 		startup->state = (union v90_phase4_digital_startup_state){ 0 };
 		startup->state.continuing = continuing;
 		startup->stage = V90_PHASE4_STARTUP_CONTINUING;

@@ -85,16 +85,21 @@ static int16_t decode_octet(enum g711_law law, uint8_t octet)
 }
 
 static bool prepare_stations(
-	enum g711_law law, struct v90_phase4_analog_station *analog,
+	enum g711_law law, uint8_t projected_rate,
+	const struct v90_cp_parameters *training,
+	struct v90_phase4_analog_station *analog,
 	struct v90_phase4_digital_station *digital)
 {
 	struct v90_jd_parameters jd = jd_parameters();
-	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_phase3_return_line_handoff receive;
 
-	return v90_phase4_station_fixture_init(
-		       law, &jd, TRAINING_UCODE, &training,
-		       analog, &receive) &&
+	if (!v90_phase4_station_fixture_init(
+		    law, &jd, TRAINING_UCODE, training,
+		    analog, &receive))
+		return false;
+	receive.transmitting_profile.projected_data_rate_2400_bps_units =
+		projected_rate;
+	return v90_phase3_return_line_handoff_is_valid(&receive) &&
 	       v90_phase4_digital_station_init(
 		       digital, &receive, &jd, law,
 		       TRAINING_UCODE, 0.05) ==
@@ -136,7 +141,9 @@ static bool next_cp_octet(
 	return true;
 }
 
-static bool run_exchange(enum g711_law law)
+static bool run_exchange(
+	enum g711_law law, uint8_t projected_rate,
+	uint16_t peer_rate_mask, uint8_t expected_maximum)
 {
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_mp_record mp = mp_parameters(false);
@@ -153,8 +160,12 @@ static bool run_exchange(enum g711_law law)
 	bool cp_handed_off = false;
 	bool tracking_continuation = false;
 	bool complete = false;
+	bool unusable = false;
 
-	CHECK(prepare_stations(law, &analog_station, &digital_station),
+	training.upstream_rate_mask = peer_rate_mask;
+	CHECK(prepare_stations(
+		      law, projected_rate, &training,
+		      &analog_station, &digital_station),
 	      "law %u digital fixture did not initialize",
 	      (unsigned int)law);
 	{
@@ -199,12 +210,23 @@ static bool run_exchange(enum g711_law law)
 				demodulator->matched_filter_count;
 			continued_octets++;
 		}
-		CHECK(v90_phase4_digital_startup_sample(
-			      &startup, decode_octet(law, to_digital),
-			      &next_to_analog) ==
-			      V90_PHASE4_STARTUP_OK,
-		      "law %u digital startup stopped at %zu",
-		      (unsigned int)law, clock);
+		{
+			enum v90_phase4_startup_result result =
+				v90_phase4_digital_startup_sample(
+					&startup,
+					decode_octet(law, to_digital),
+					&next_to_analog);
+
+			if (expected_maximum == 0u &&
+			    result == V90_PHASE4_STARTUP_INVALID_PARAMETERS) {
+				unusable = true;
+				break;
+			}
+			CHECK(result == V90_PHASE4_STARTUP_OK,
+			      "law %u digital startup stopped at %zu: %s",
+			      (unsigned int)law, clock,
+			      v90_phase4_startup_result_name(result));
+		}
 		if (!v90_phase4_analog_station_receive_complete(
 			    &analog_station))
 			CHECK(v90_phase4_analog_station_receive(
@@ -232,8 +254,22 @@ static bool run_exchange(enum g711_law law)
 			break;
 		}
 	}
+	if (expected_maximum == 0u) {
+		CHECK(unusable && startup.failed &&
+		      startup.stage == V90_PHASE4_STARTUP_INITIAL &&
+		      startup.initial_mp.parameters.type0
+			      .maximum_upstream_rate_2400_bps_units == 12u,
+		      "law %u disjoint CPt rates emitted an MP",
+		      (unsigned int)law);
+		return true;
+	}
 
 	CHECK(complete && tracking_continuation && continued_octets > 0 &&
+	      startup.initial_mp.parameters.type0
+		      .maximum_upstream_rate_2400_bps_units ==
+		      expected_maximum &&
+	      startup.initial_mp.parameters.type0
+		      .upstream_rate_capability_mask == 0x1555u &&
 	      v90_phase4_digital_startup_handoff(
 		      &startup, &handoff) == V90_PHASE4_STARTUP_OK &&
 	      handoff.receive.demodulator.carrier_phase ==
@@ -273,7 +309,14 @@ static bool run_exchange(enum g711_law law)
 
 static bool test_generated_exchange(void)
 {
-	CHECK(run_exchange(G711_LAW_PCMU) && run_exchange(G711_LAW_PCMA),
+	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, 12u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x1555u, 12u) &&
+	      run_exchange(G711_LAW_PCMU, 8u, 0x1555u, 8u) &&
+	      run_exchange(G711_LAW_PCMA, 8u, 0x1555u, 8u) &&
+	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, 6u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, 6u) &&
+	      run_exchange(G711_LAW_PCMU, 12u, 0x0002u, 0u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x0002u, 0u),
 	      "generated digital startup exchanges failed");
 	return true;
 }
@@ -288,10 +331,13 @@ static bool test_contracts(void)
 	struct v90_phase4_digital_startup saved;
 	struct v90_phase4_digital_startup failed;
 	struct v90_phase4_digital_handoff handoff;
+	struct v90_cp_parameters training =
+		training_parameters(G711_LAW_PCMU);
 	uint8_t output = 0xa5;
 
 	CHECK(prepare_stations(
-		      G711_LAW_PCMU, &analog_station, &digital_station),
+		      G711_LAW_PCMU, 8u, &training,
+		      &analog_station, &digital_station),
 	      "contract fixture did not initialize");
 	memset(&startup, 0xa5, sizeof(startup));
 	saved = startup;

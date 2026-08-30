@@ -202,6 +202,9 @@ static bool run_exchange(
 			      "CPt receive path failed at clock %zu", clock);
 			if (!previously_received && station.cpt_received) {
 				CHECK(next_record == ARRAY_LENGTH(records) &&
+				      station.peer_upstream_rate_mask ==
+					      records[ARRAY_LENGTH(records) - 1u]
+						      .upstream_rate_mask &&
 				      mapping_matches(
 					      &station.training_mapping,
 					      &records[ARRAY_LENGTH(records) - 1u]) &&
@@ -407,6 +410,13 @@ static bool test_contracts(void)
 		      TRAINING_UCODE, 0.05) ==
 		      V90_PHASE4_DIGITAL_STATION_OK,
 	      "valid digital station did not initialize");
+	{
+		struct v90_phase4_digital_station mismatched = station;
+
+		mismatched.peer_upstream_rate_mask = 1u;
+		CHECK(!v90_phase4_digital_station_is_valid(&mismatched),
+		      "unreceived CPt rate state was accepted");
+	}
 	memset(&receive_handoff, 0x5a, sizeof(receive_handoff));
 	receive_saved = receive_handoff;
 	memset(&transmit_handoff, 0x5a, sizeof(transmit_handoff));

@@ -29,13 +29,14 @@ struct v90_phase4_digital_transmit_handoff {
 
 /* Own the digital modem's initial Phase 4 exchange. Ri begins immediately;
  * the inherited Phase 3 carrier/equalizer receives CPt concurrently. A valid
- * initial CPt requests the record-aligned Ri-to-Ri-bar transition. Receive and
- * transmit calls may complete independently, but calls on one instance are
- * serialized. */
+ * initial CPt retains its upstream capability mask and requests the
+ * record-aligned Ri-to-Ri-bar transition. Receive and transmit calls may
+ * complete independently, but calls on one instance are serialized. */
 struct v90_phase4_digital_station {
 	struct v90_phase4_cp_line_rx receive;
 	struct v90_phase4_ri_tx transmit;
 	struct v90_pcm_mapping training_mapping;
+	uint16_t peer_upstream_rate_mask;
 	uint8_t maximum_spectral_lookahead;
 	bool cpt_received;
 	bool failed;
