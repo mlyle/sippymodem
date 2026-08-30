@@ -7,6 +7,7 @@
 #include "modem_param.h"
 #include "pcm_call.h"
 #include "training_session.h"
+#include "v90_host_echo.h"
 #include "v90_info1.h"
 #include "v90_profile.h"
 #include "v92_profile.h"
@@ -20,6 +21,7 @@ struct v90_datapump {
 	struct dp dp;
 	struct pcm_call call;
 	struct training_session training;
+	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
 	enum g711_law media_law;
@@ -113,6 +115,8 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->role != role ||
 	    datapump->protocol != protocol ||
+	    ((protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) !=
+	     (datapump->host_echo != NULL)) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->media_law) ||
@@ -167,10 +171,20 @@ static struct dp *create_v90(
 	datapump->protocol = protocol;
 	datapump->maximum_pcm_upstream_data_rate_number =
 		maximum_pcm_upstream_data_rate_number;
+	if (protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) {
+		datapump->host_echo = malloc(sizeof(*datapump->host_echo));
+		if (datapump->host_echo == NULL ||
+		    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK) {
+			free(datapump->host_echo);
+			free(datapump);
+			return NULL;
+		}
+	}
 	if (training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
 	    TRAINING_SESSION_OK) {
+		free(datapump->host_echo);
 		free(datapump);
 		return NULL;
 	}
@@ -193,6 +207,7 @@ static int delete_v90(struct dp *dp)
 		return -1;
 	v90_operations.use_count--;
 	datapump->dp.dp_data = NULL;
+	free(datapump->host_echo);
 	free(datapump);
 	return 0;
 }
@@ -214,6 +229,9 @@ static int retrain_v90(struct dp *dp)
 	if (pcm_call_start_retrain(&call) != PCM_CALL_OK ||
 	    training_session_start_retrain(
 		    &training, TRAINING_LOCAL_RETRAIN) != TRAINING_SESSION_OK)
+		return -1;
+	if (datapump->host_echo != NULL &&
+	    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
 		return -1;
 	datapump->call = call;
 	datapump->training = training;
@@ -518,6 +536,27 @@ static void mute_output(
 		memset(samples, 0, (size_t)count * sizeof(*samples));
 }
 
+static enum v90_host_echo_mode host_echo_mode(
+	const struct v90_datapump *datapump)
+{
+	const struct pcm_call *call = &datapump->call;
+
+	if (datapump->host_echo == NULL)
+		return V90_HOST_ECHO_BYPASS;
+	if (call->stage == PCM_CALL_PHASE3 &&
+	    call->state.phase3.digital.transmit_started &&
+	    call->state.phase3.digital.transmit.stage ==
+		    PCM_PHASE3_DIGITAL_TX_PREFIX &&
+	    call->state.phase3.digital.transmit.sequence.prefix.stage ==
+		    PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
+		return V90_HOST_ECHO_TRAIN;
+	if (call->stage == PCM_CALL_DATA_PATH ||
+	    (call->stage == PCM_CALL_PHASE4 &&
+	     pcm_call_phase4_is_ready(call)))
+		return V90_HOST_ECHO_FILTER;
+	return V90_HOST_ECHO_BYPASS;
+}
+
 static int process_v90_g711(
 	struct dp *dp, enum g711_law law,
 	const uint8_t *receive_codewords, void *receive_samples_buffer,
@@ -545,17 +584,26 @@ static int process_v90_g711(
 	if (!start_call(datapump, law))
 		goto failure;
 	for (int index = 0; index < count; ++index) {
+		enum pcm_call_stage stage_before = datapump->call.stage;
+		enum v90_host_echo_mode echo_mode = host_echo_mode(datapump);
+		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
 
 		if (!training_session_is_online(&datapump->training) &&
 		    training_session_advance(&datapump->training, 1) !=
 			    TRAINING_SESSION_OK)
 			goto failure;
+		if (datapump->host_echo != NULL &&
+		    v90_host_echo_predict(
+			    datapump->host_echo, echo_mode,
+			    receive_samples[index], &cleaned_sample) !=
+			    V90_HOST_ECHO_OK)
+			goto failure;
 		if (!process_octet(
 			    datapump,
 			    media_to_pcm_octet(
 				    datapump, law, receive_codewords[index]),
-			    receive_samples[index],
+			    cleaned_sample,
 			    &pcm_transmit, &connected))
 			goto failure;
 		transmit_codewords[index] =
@@ -563,6 +611,16 @@ static int process_v90_g711(
 		transmit_samples[index] = law == G711_LAW_PCMA ?
 			g711_decode_pcma(transmit_codewords[index]) :
 			g711_decode_pcmu(transmit_codewords[index]);
+		if (datapump->host_echo != NULL &&
+		    (v90_host_echo_advance(
+			     datapump->host_echo, echo_mode,
+			     receive_samples[index], cleaned_sample,
+			     transmit_samples[index]) != V90_HOST_ECHO_OK ||
+		     (stage_before != PCM_CALL_RETRAIN_SILENCE &&
+		      datapump->call.stage == PCM_CALL_RETRAIN_SILENCE &&
+		      v90_host_echo_init(datapump->host_echo) !=
+			      V90_HOST_ECHO_OK)))
+			goto failure;
 	}
 	*exact_output = true;
 	return connected ? DPSTAT_CONNECT : DPSTAT_OK;

@@ -2752,6 +2752,8 @@ V90_DATAPUMP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v90_datapump.o \
+	$(BUILD_DIR)/v90_host_echo.o \
+	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
 	$(BUILD_DIR)/v92_profile.o \

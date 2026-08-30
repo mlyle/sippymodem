@@ -23,7 +23,7 @@
 enum {
 	RETURN_DELAY = 5600,
 	FILTER_DELAY = RETURN_DELAY - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
-	TRAIN_SAMPLES = 13000,
+	TRAIN_SAMPLES = 16000,
 	VERIFY_SAMPLES = 4000,
 	FALSE_TRAIN_SAMPLES = 8000,
 };
@@ -243,6 +243,12 @@ static bool test_unrelated_input_does_not_train(void)
 	CHECK(!v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
 	      "uncorrelated input produced a ready model: delay=%u corr=%" PRIi64,
 	      echo.window_delay_samples, echo.cross_energy);
+	CHECK(echo.reference.scan_samples != 0 &&
+	      echo.reference.scan_samples <=
+		      FALSE_TRAIN_SAMPLES /
+		      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES,
+	      "delay scan was not decimated: %u observations",
+	      echo.reference.scan_samples);
 	return true;
 }
 

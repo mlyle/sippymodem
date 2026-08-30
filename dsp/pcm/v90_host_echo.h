@@ -23,6 +23,9 @@ enum {
 		PCM_ECHO_REFERENCE_SAMPLE_RATE / 4,
 	V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES =
 		PCM_ECHO_REFERENCE_SAMPLE_RATE / 2,
+	/* A 2 kHz correlation stream still acquires after the retained-history
+	 * fill and leaves the retimed filter its required 250 ms in TRN1d. */
+	V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES = 4,
 	V90_HOST_ECHO_READY_MIN_PEAK = 64,
 };
 

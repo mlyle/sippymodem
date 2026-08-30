@@ -444,8 +444,14 @@ enum v90_host_echo_result v90_host_echo_advance(
 				echo, received_sample, &training);
 			if (result != V90_HOST_ECHO_OK)
 				return result;
-			reference_result = pcm_echo_reference_scan_observe(
-				&echo->reference, received_sample, &scan);
+			reference_result = PCM_ECHO_REFERENCE_NOT_READY;
+			if (training.available &&
+			    training.train_samples %
+				    V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES == 0)
+				reference_result =
+					pcm_echo_reference_scan_observe(
+						&echo->reference,
+						received_sample, &scan);
 			if (reference_result != PCM_ECHO_REFERENCE_OK &&
 			    reference_result != PCM_ECHO_REFERENCE_NOT_READY &&
 			    reference_result !=
