@@ -3,6 +3,7 @@
 #include "channel_bench.h"
 #include "test.h"
 
+#include <fractional_delay.h>
 #include <g711.h>
 
 #include <errno.h>
@@ -220,6 +221,49 @@ static bool test_noise_and_codec_effects(void)
 	return true;
 }
 
+static bool test_fractional_delay_effect(void)
+{
+	static const struct channel_bench_effect_spec effect = {
+		.kind = CHANNEL_BENCH_FRACTIONAL_DELAY,
+		.parameters.fractional_delay.phase_q16 =
+			FRACTIONAL_DELAY_HALF_SAMPLE_Q16,
+	};
+	struct channel_bench_generator generator;
+	struct channel_bench whole = { 0 };
+	struct channel_bench chunked = { 0 };
+	int16_t whole_samples[GENERATED_SAMPLES];
+	int16_t chunked_samples[GENERATED_SAMPLES];
+	int16_t original[GENERATED_SAMPLES];
+
+	channel_bench_generator_init(&generator, UINT32_C(0x9e3779b9));
+	CHECK(channel_bench_generate_uniform(
+		      &generator, whole_samples, ARRAY_LENGTH(whole_samples),
+		      12000) == CHANNEL_BENCH_OK,
+	      "fractional-delay excitation failed");
+	memcpy(chunked_samples, whole_samples, sizeof(whole_samples));
+	memcpy(original, whole_samples, sizeof(original));
+	CHECK(channel_bench_init(&whole, &effect, 1) == CHANNEL_BENCH_OK &&
+		      channel_bench_init(&chunked, &effect, 1) == CHANNEL_BENCH_OK,
+	      "fractional-delay channels did not initialize");
+	CHECK(channel_bench_process(
+		      &whole, whole_samples, ARRAY_LENGTH(whole_samples)) ==
+		      CHANNEL_BENCH_OK &&
+		      channel_bench_process(&chunked, chunked_samples, 17) ==
+		      CHANNEL_BENCH_OK &&
+		      channel_bench_process(
+			      &chunked, chunked_samples + 17,
+			      ARRAY_LENGTH(chunked_samples) - 17) ==
+		      CHANNEL_BENCH_OK,
+	      "fractional-delay channel processing failed");
+	CHECK(memcmp(whole_samples, original, sizeof(original)) != 0 &&
+		      memcmp(whole_samples, chunked_samples, sizeof(whole_samples)) ==
+		      0,
+	      "fractional-delay effect changed with ownership or chunking");
+	channel_bench_destroy(&chunked);
+	channel_bench_destroy(&whole);
+	return true;
+}
+
 static bool test_validation_and_saturation(void)
 {
 	struct channel_bench bench = { 0 };
@@ -231,6 +275,11 @@ static bool test_validation_and_saturation(void)
 		.kind = CHANNEL_BENCH_MUTE,
 		.start_sample = 10,
 		.end_sample = 10,
+	};
+	const struct channel_bench_effect_spec invalid_fractional_delay = {
+		.kind = CHANNEL_BENCH_FRACTIONAL_DELAY,
+		.parameters.fractional_delay.phase_q16 =
+			FRACTIONAL_DELAY_ONE_SAMPLE_Q16 + 1,
 	};
 	const struct channel_bench_effect_spec gain = {
 		.kind = CHANNEL_BENCH_GAIN,
@@ -245,6 +294,9 @@ static bool test_validation_and_saturation(void)
 	CHECK(channel_bench_init(&bench, &invalid_window, 1) ==
 		      CHANNEL_BENCH_INVALID_ARGUMENT,
 	      "channel accepted an empty effect window");
+	CHECK(channel_bench_init(&bench, &invalid_fractional_delay, 1) ==
+		      CHANNEL_BENCH_INVALID_ARGUMENT,
+	      "channel accepted an invalid fractional delay");
 	CHECK(channel_bench_init(&bench, &gain, 1) == CHANNEL_BENCH_OK,
 	      "gain channel failed to initialize");
 	CHECK(channel_bench_init(&bench, &gain, 1) ==
@@ -481,6 +533,7 @@ int main(void)
 		{ "effect order and chunk invariance",
 		  test_effect_order_and_chunk_invariance },
 		{ "noise and codec effects", test_noise_and_codec_effects },
+		{ "fractional delay effect", test_fractional_delay_effect },
 		{ "validation and saturation", test_validation_and_saturation },
 		{ "comparison metrics and alignment",
 		  test_comparison_metrics_and_alignment },

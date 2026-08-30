@@ -4,6 +4,7 @@
 #include <baudot.h>
 #include <datapumps.h>
 #include <fsk300_datapump.h>
+#include <fractional_delay.h>
 #include <g711.h>
 #include <media.h>
 #include <qam.h>
@@ -117,6 +118,7 @@ struct modem_test_case {
 	bool test_prelink;
 	bool test_retrain;
 	bool raw_transport;
+	bool require_lapm;
 	enum integration_impairment impairment;
 };
 
@@ -461,10 +463,16 @@ static bool endpoint_add_impairment(
 			.parameters.delay.samples = 2,
 		},
 		{
+			.kind = CHANNEL_BENCH_FRACTIONAL_DELAY,
+			.parameters.fractional_delay.phase_q16 =
+				FRACTIONAL_DELAY_HALF_SAMPLE_Q16,
+		},
+		{
 			.kind = CHANNEL_BENCH_ECHO,
 			.parameters.echo = {
 				.delay_samples = 8,
-				.gain_q15 = 256,
+				/* Representative delayed echo at roughly -34 dB. */
+				.gain_q15 = 640,
 			},
 		},
 		{
@@ -1230,6 +1238,8 @@ static bool run_media_call(
 	static const char no_compression_command[] = "AT+DS=0,0\r";
 	bool monitor_caller_rate =
 		test_case->minimum_caller_rate_signals != 0;
+	bool require_lapm = test_case->require_lapm ||
+		(test_case->test_retrain && !test_case->raw_transport);
 	bool impair_answerer_precarrier =
 		test_case->id == DP_V22 || test_case->id == DP_V22BIS ||
 		test_case->id == DP_B212;
@@ -1282,7 +1292,7 @@ static bool run_media_call(
 		caller.output_count = 0;
 		answerer.output_count = 0;
 	}
-	if (test_case->test_retrain && !test_case->raw_transport) {
+	if (require_lapm) {
 		CHECK(modem_write(
 			      caller.modem, lapm_command,
 			      (int)(sizeof(lapm_command) - 1u)) ==
@@ -1294,7 +1304,7 @@ static bool run_media_call(
 			      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 			      output_contains(&caller, "OK") &&
 			      output_contains(&answerer, "OK"),
-		      "%s did not require LAPM for the retrain test",
+		      "%s did not accept its required LAPM transport",
 		      test_case->name);
 		caller.output_count = 0;
 		answerer.output_count = 0;
@@ -1520,6 +1530,9 @@ static bool run_media_call(
 	      caller.output_count != 0 ? caller.output[0] : 0,
 	      answerer.output_count,
 	      answerer.output_count != 0 ? answerer.output[0] : 0);
+	CHECK(!require_lapm ||
+		      (caller.modem->cfg.ec && answerer.modem->cfg.ec),
+	      "%s did not retain its required LAPM transport", test_case->name);
 	if (test_case->test_retrain) {
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
@@ -2807,6 +2820,7 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE / 2,
 			.training_frame_limit = 1500,
 			.automode = true,
+			.require_lapm = true,
 			.impairment = INTEGRATION_IMPAIRMENT_COMPOSITE,
 		},
 		{

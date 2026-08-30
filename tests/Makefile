@@ -79,7 +79,8 @@ G711_TEST_OBJECTS := $(BUILD_DIR)/test_g711.o \
 	$(BUILD_DIR)/g711.o
 CHANNEL_BENCH_TEST_BINARY := $(BUILD_DIR)/test_channel_bench
 CHANNEL_BENCH_TEST_OBJECTS := $(BUILD_DIR)/test_channel_bench.o \
-	$(BUILD_DIR)/channel_bench.o $(BUILD_DIR)/g711.o
+	$(BUILD_DIR)/channel_bench.o $(BUILD_DIR)/fractional_delay.o \
+	$(BUILD_DIR)/g711.o
 V42_XID_TEST_BINARY := $(BUILD_DIR)/test_v42_xid
 V42_XID_TEST_OBJECTS := $(BUILD_DIR)/test_v42_xid.o \
 	$(BUILD_DIR)/v42_xid.o \
@@ -772,6 +773,7 @@ V32_LINE_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/line_startup.o \
 	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o
 V32_DATAPUMP_CONDITIONING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_datapump_conditioning
@@ -1638,6 +1640,7 @@ V92_PCM_PHASE3_TRN1U_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o
 V92_PCM_PHASE3_JA_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ja
@@ -1693,6 +1696,7 @@ V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o
 V92_PHASE3_SYNC_TEST_BINARY := $(BUILD_DIR)/test_v92_phase3_sync
 V92_PHASE3_SYNC_TEST_OBJECTS := \
@@ -1730,6 +1734,7 @@ V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o
 V92_J_TEST_BINARY := $(BUILD_DIR)/test_v92_j
 V92_J_TEST_OBJECTS := \
@@ -1906,6 +1911,7 @@ V92_PCM_PHASE3_CPT_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/channel_bench.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/g711.o \
 	$(CRC16_CCITT_FALSE_OBJECT)
 V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \

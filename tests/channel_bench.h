@@ -28,6 +28,7 @@ enum channel_bench_effect_kind {
 	CHANNEL_BENCH_GAIN,
 	CHANNEL_BENCH_NOISE,
 	CHANNEL_BENCH_DELAY,
+	CHANNEL_BENCH_FRACTIONAL_DELAY,
 	CHANNEL_BENCH_ECHO,
 	CHANNEL_BENCH_PCMU,
 	CHANNEL_BENCH_PCMA,
@@ -52,6 +53,10 @@ struct channel_bench_effect_spec {
 		struct {
 			size_t samples;
 		} delay;
+		struct {
+			/* Signed Q16 samples in the inclusive range [-1, 1]. */
+			int32_t phase_q16;
+		} fractional_delay;
 		struct {
 			size_t delay_samples;
 			/* 32768 returns the delayed signal at unity gain. */

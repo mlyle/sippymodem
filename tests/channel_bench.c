@@ -2,6 +2,7 @@
 
 #include "channel_bench.h"
 
+#include <fractional_delay.h>
 #include <g711.h>
 
 #include <errno.h>
@@ -21,6 +22,7 @@ enum {
 struct channel_bench_effect_state {
 	struct channel_bench_effect_spec spec;
 	struct channel_bench_generator generator;
+	struct fractional_delay fractional_delay;
 	int16_t *history;
 	size_t history_count;
 	size_t history_cursor;
@@ -143,6 +145,14 @@ static enum channel_bench_result prepare_effect(
 	case CHANNEL_BENCH_DELAY:
 		history_count = spec->parameters.delay.samples;
 		break;
+	case CHANNEL_BENCH_FRACTIONAL_DELAY:
+		fractional_delay_init(&state->fractional_delay);
+		if (fractional_delay_set_phase(
+			    &state->fractional_delay,
+			    spec->parameters.fractional_delay.phase_q16) !=
+		    FRACTIONAL_DELAY_OK)
+			return CHANNEL_BENCH_INVALID_ARGUMENT;
+		break;
 	case CHANNEL_BENCH_ECHO:
 		history_count = spec->parameters.echo.delay_samples;
 		break;
@@ -204,7 +214,7 @@ static bool effect_is_active(
 	       (effect->spec.end_sample == 0 || sample < effect->spec.end_sample);
 }
 
-static void apply_effect(
+static bool apply_effect(
 	struct channel_bench_effect_state *effect,
 	int16_t *samples, size_t count, uint64_t sample_start)
 {
@@ -234,6 +244,12 @@ static void apply_effect(
 			sample = delayed;
 			break;
 		}
+		case CHANNEL_BENCH_FRACTIONAL_DELAY:
+			if (fractional_delay_process(
+				    &effect->fractional_delay, sample, &sample) !=
+			    FRACTIONAL_DELAY_OK)
+				return false;
+			break;
 		case CHANNEL_BENCH_ECHO: {
 			int16_t delayed = effect->history[effect->history_cursor];
 
@@ -259,6 +275,7 @@ static void apply_effect(
 		}
 		samples[index] = sample;
 	}
+	return true;
 }
 
 enum channel_bench_result channel_bench_process(
@@ -269,9 +286,10 @@ enum channel_bench_result channel_bench_process(
 	    count > UINT64_MAX - bench->samples_processed)
 		return CHANNEL_BENCH_INVALID_ARGUMENT;
 	for (size_t index = 0; index < bench->effect_count; ++index)
-		apply_effect(
-			&bench->effects[index], samples, count,
-			bench->samples_processed);
+		if (!apply_effect(
+			    &bench->effects[index], samples, count,
+			    bench->samples_processed))
+			return CHANNEL_BENCH_INVALID_ARGUMENT;
 	bench->samples_processed += count;
 	return CHANNEL_BENCH_OK;
 }
