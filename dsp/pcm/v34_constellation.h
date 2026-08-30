@@ -21,6 +21,30 @@ struct v34_grid_point {
 	int16_t quadrature;
 };
 
+static inline bool v34_grid_point_is_bounded(
+	const struct v34_grid_point *point)
+{
+	return point != NULL &&
+	       point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
+	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
+}
+
+static inline bool v34_grid_point_coordinates_are_odd(
+	const struct v34_grid_point *point)
+{
+	return point != NULL && ((uint16_t)point->in_phase & 1u) != 0u &&
+	       ((uint16_t)point->quadrature & 1u) != 0u;
+}
+
+static inline bool v34_grid_point_coordinates_are_even(
+	const struct v34_grid_point *point)
+{
+	return point != NULL && ((uint16_t)point->in_phase & 1u) == 0u &&
+	       ((uint16_t)point->quadrature & 1u) == 0u;
+}
+
 enum v34_constellation_size {
 	V34_CONSTELLATION_4_POINT = 4,
 	V34_CONSTELLATION_16_POINT = 16,

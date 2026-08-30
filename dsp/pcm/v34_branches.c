@@ -6,29 +6,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-static uint8_t branch_count(
-	enum v34_trellis_selection selection)
-{
-	switch (selection) {
-	case V34_TRELLIS_16_STATE:
-		return 8;
-	case V34_TRELLIS_32_STATE:
-		return 16;
-	case V34_TRELLIS_64_STATE:
-		return 32;
-	}
-	return 0;
-}
-
-static bool grid_point_is_bounded(
-	const struct v34_grid_point *point)
-{
-	return point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
-}
-
 static bool subset_slice_is_valid(
 	const struct v34_subset_slice *slice)
 {
@@ -41,7 +18,7 @@ static bool subset_slice_is_valid(
 		uint8_t actual_label;
 
 		if (candidate->subset_label != label ||
-		    !grid_point_is_bounded(&candidate->channel_output) ||
+		    !v34_grid_point_is_bounded(&candidate->channel_output) ||
 		    !isfinite(candidate->squared_error) ||
 		    candidate->squared_error < 0.0 ||
 		    v34_grid_subset_label(
@@ -113,7 +90,7 @@ bool v34_branch_set_is_valid(
 
 	if (set == NULL)
 		return false;
-	count = branch_count(set->selection);
+	count = v34_trellis_branch_count(set->selection);
 	if (count == 0 || set->count != count || set->inversion_bit > 1u)
 		return false;
 	for (uint8_t index = 0; index < count; ++index) {
@@ -138,7 +115,8 @@ bool v34_branch_set_is_valid(
 
 			if (candidate->subset_label >=
 				    V34_SUBSET_LABEL_COUNT ||
-			    !grid_point_is_bounded(&candidate->channel_output) ||
+			    !v34_grid_point_is_bounded(
+				    &candidate->channel_output) ||
 			    !isfinite(candidate->squared_error) ||
 			    candidate->squared_error < 0.0 ||
 			    v34_grid_subset_label(
@@ -177,7 +155,7 @@ enum v34_branches_result v34_build_branch_set(
 {
 	struct v34_branch_set generated = {
 		.selection = selection,
-		.count = branch_count(selection),
+		.count = v34_trellis_branch_count(selection),
 		.inversion_bit = inversion_bit,
 	};
 	bool found[V34_MAX_BRANCH_COUNT] = { false };

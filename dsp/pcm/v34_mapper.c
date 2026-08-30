@@ -115,14 +115,6 @@ static bool recover_label_and_rotation(
 		       &quarter_point, label) == V34_CONSTELLATION_OK;
 }
 
-static bool grid_point_is_bounded(const struct v34_grid_point *point)
-{
-	return point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT;
-}
-
 static bool recover_nearest_label_and_rotation(
 	const struct v34_grid_point *mapper_output, size_t *label,
 	uint8_t *clockwise_quarter_turns)
@@ -135,7 +127,7 @@ static bool recover_nearest_label_and_rotation(
 
 	if (mapper_output == NULL || label == NULL ||
 	    clockwise_quarter_turns == NULL ||
-	    !grid_point_is_bounded(mapper_output) ||
+	    !v34_grid_point_is_bounded(mapper_output) ||
 	    !recover_clockwise_quarter_turns(
 		    mapper_output, clockwise_quarter_turns) ||
 	    !rotate_clockwise(

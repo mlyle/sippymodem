@@ -33,9 +33,8 @@ enum v34_trellis_result v34_grid_subset_label(
 	uint8_t high;
 	uint8_t generated;
 
-	if (point == NULL || subset_label == NULL ||
-	    ((uint16_t)point->in_phase & 1u) == 0u ||
-	    ((uint16_t)point->quadrature & 1u) == 0u)
+	if (!v34_grid_point_coordinates_are_odd(point) ||
+	    subset_label == NULL)
 		return V34_TRELLIS_INVALID_ARGUMENT;
 	in_phase = grid_residue_index(point->in_phase);
 	quadrature = grid_residue_index(point->quadrature);
@@ -51,13 +50,6 @@ enum v34_trellis_result v34_grid_subset_label(
 	return V34_TRELLIS_OK;
 }
 
-static bool grid_point_coordinates_are_even(
-	const struct v34_grid_point *point)
-{
-	return point != NULL && ((uint16_t)point->in_phase & 1u) == 0u &&
-	       ((uint16_t)point->quadrature & 1u) == 0u;
-}
-
 static uint8_t half_coordinate_sum_parity(
 	const struct v34_grid_point *point)
 {
@@ -70,8 +62,8 @@ enum v34_trellis_result v34_modulo_encoder_output(
 	const struct v34_grid_point *first_offset,
 	const struct v34_grid_point *second_offset, uint8_t *c0)
 {
-	if (!grid_point_coordinates_are_even(first_offset) ||
-	    !grid_point_coordinates_are_even(second_offset) || c0 == NULL)
+	if (!v34_grid_point_coordinates_are_even(first_offset) ||
+	    !v34_grid_point_coordinates_are_even(second_offset) || c0 == NULL)
 		return V34_TRELLIS_INVALID_ARGUMENT;
 	*c0 = half_coordinate_sum_parity(first_offset) ^
 	      half_coordinate_sum_parity(second_offset);

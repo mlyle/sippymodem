@@ -7,27 +7,10 @@
 #include <stddef.h>
 #include <string.h>
 
-static uint8_t trellis_state_count(
-	enum v34_trellis_selection selection)
-{
-	switch (selection) {
-	case V34_TRELLIS_16_STATE:
-		return 16;
-	case V34_TRELLIS_32_STATE:
-		return 32;
-	case V34_TRELLIS_64_STATE:
-		return 64;
-	}
-	return 0;
-}
-
 static bool grid_point_label(
 	const struct v34_grid_point *point, uint8_t *label)
 {
-	return point->in_phase >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->in_phase <= V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature >= -V34_CHANNEL_COORDINATE_LIMIT &&
-	       point->quadrature <= V34_CHANNEL_COORDINATE_LIMIT &&
+	return v34_grid_point_is_bounded(point) &&
 	       v34_grid_subset_label(point, label) ==
 		       V34_TRELLIS_OK;
 }
@@ -80,8 +63,8 @@ bool v34_survivor_is_valid(
 
 	if (survivor == NULL)
 		return false;
-	state_count = trellis_state_count(survivor->selection);
-	branch_count = (uint8_t)(state_count / 2u);
+	state_count = v34_trellis_state_count(survivor->selection);
+	branch_count = v34_trellis_branch_count(survivor->selection);
 	if (state_count == 0 ||
 	    survivor->path_index >=
 		    V34_SURVIVOR_TRACEBACK_INTERVALS ||
@@ -117,7 +100,7 @@ enum v34_survivor_result v34_survivor_init(
 {
 	struct v34_survivor initialized;
 
-	if (survivor == NULL || trellis_state_count(selection) == 0)
+	if (survivor == NULL || v34_trellis_state_count(selection) == 0)
 		return V34_SURVIVOR_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.selection = selection;
@@ -146,7 +129,7 @@ static bool select_paths(
 	double next_metric[V34_MAX_TRELLIS_STATES],
 	struct v34_survivor_traceback_step *step)
 {
-	uint8_t state_count = trellis_state_count(survivor->selection);
+	uint8_t state_count = v34_trellis_state_count(survivor->selection);
 	double minimum = DBL_MAX;
 
 	for (uint8_t state = 0; state < V34_MAX_TRELLIS_STATES;
@@ -277,7 +260,7 @@ enum v34_survivor_result v34_survivor_advance(
 	if (!select_paths(
 		    survivor, branches, next_metric, &generated_step))
 		return V34_SURVIVOR_NUMERIC_FAILURE;
-	state_count = trellis_state_count(survivor->selection);
+	state_count = v34_trellis_state_count(survivor->selection);
 	current_state = best_state(next_metric, state_count);
 	generated_current = generated_step.branch
 		[generated_step.branch_index[current_state]];

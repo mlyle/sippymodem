@@ -45,6 +45,19 @@ static inline bool v34_trellis_selection_is_valid(
 	       selection == V34_TRELLIS_64_STATE;
 }
 
+static inline uint8_t v34_trellis_state_count(
+	enum v34_trellis_selection selection)
+{
+	return v34_trellis_selection_is_valid(selection) ?
+		       (uint8_t)(16u << (unsigned int)selection) : 0u;
+}
+
+static inline uint8_t v34_trellis_branch_count(
+	enum v34_trellis_selection selection)
+{
+	return (uint8_t)(v34_trellis_state_count(selection) / 2u);
+}
+
 /* Return the repeated three-bit Figure 9 label for an odd-integer channel
  * output point. The destination is unchanged when the point is off-grid. */
 enum v34_trellis_result v34_grid_subset_label(

@@ -61,9 +61,7 @@ enum v34_precoder_result v34_precoder_init(
 static bool mapper_output_is_valid(
 	const struct v34_grid_point *mapper_output)
 {
-	return mapper_output != NULL &&
-	       ((uint16_t)mapper_output->in_phase & 1u) != 0u &&
-	       ((uint16_t)mapper_output->quadrature & 1u) != 0u;
+	return v34_grid_point_coordinates_are_odd(mapper_output);
 }
 
 static int64_t round_divide_ties_toward_zero(
@@ -344,17 +342,8 @@ v34_precoder_reconstruct_interval(
 static bool channel_output_is_valid(
 	const struct v34_grid_point *channel_output)
 {
-	return channel_output != NULL &&
-	       channel_output->in_phase >=
-		       -V34_CHANNEL_COORDINATE_LIMIT &&
-	       channel_output->in_phase <=
-		       V34_CHANNEL_COORDINATE_LIMIT &&
-	       channel_output->quadrature >=
-		       -V34_CHANNEL_COORDINATE_LIMIT &&
-	       channel_output->quadrature <=
-		       V34_CHANNEL_COORDINATE_LIMIT &&
-	       ((uint16_t)channel_output->in_phase & 1u) != 0u &&
-	       ((uint16_t)channel_output->quadrature & 1u) != 0u;
+	return v34_grid_point_is_bounded(channel_output) &&
+	       v34_grid_point_coordinates_are_odd(channel_output);
 }
 
 enum v34_precoder_result v34_precoder_inverse_step(

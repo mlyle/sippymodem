@@ -50,8 +50,7 @@ static bool decided_interval_is_bounded(
 		const struct v34_grid_point *point =
 			&decided->mapper_output[symbol];
 
-		if (((uint16_t)point->in_phase & 1u) == 0u ||
-		    ((uint16_t)point->quadrature & 1u) == 0u)
+		if (!v34_grid_point_coordinates_are_odd(point))
 			return false;
 	}
 	return true;

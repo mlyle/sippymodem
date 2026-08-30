@@ -429,21 +429,40 @@ static bool test_validation(void)
 	};
 	struct v34_convolutional_encoder saved_encoder;
 	struct v34_grid_point grid_point = { 1, 1 };
+	struct v34_grid_point unbounded = { -256, 255 };
 	struct v34_grid_point first_offset = { 2, 4 };
 	struct v34_grid_point second_offset = { -6, 8 };
 	uint8_t subset_label = UINT8_MAX;
 	uint8_t c0 = UINT8_MAX;
 	uint8_t y0 = UINT8_MAX;
 
-	CHECK(v34_trellis_selection_is_valid(
-		      V34_TRELLIS_16_STATE) &&
-	      v34_trellis_selection_is_valid(
-		      V34_TRELLIS_32_STATE) &&
-	      v34_trellis_selection_is_valid(
-		      V34_TRELLIS_64_STATE) &&
-	      !v34_trellis_selection_is_valid(
-		      (enum v34_trellis_selection)3),
-	      "trellis selection validation changed");
+	for (enum v34_trellis_selection selection = V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		uint8_t expected = (uint8_t)(16u << (unsigned int)selection);
+
+		CHECK(v34_trellis_selection_is_valid(selection) &&
+		      v34_trellis_state_count(selection) == expected &&
+		      v34_trellis_branch_count(selection) == expected / 2u,
+		      "trellis dimensions changed for selection %d", selection);
+	}
+	CHECK(!v34_trellis_selection_is_valid(
+		      (enum v34_trellis_selection)3) &&
+	      v34_trellis_state_count(
+		      (enum v34_trellis_selection)3) == 0u &&
+	      v34_trellis_branch_count(
+		      (enum v34_trellis_selection)3) == 0u,
+	      "invalid trellis dimensions changed");
+	CHECK(v34_grid_point_is_bounded(&grid_point) &&
+	      v34_grid_point_coordinates_are_odd(&grid_point) &&
+	      !v34_grid_point_coordinates_are_even(&grid_point) &&
+	      v34_grid_point_is_bounded(&first_offset) &&
+	      v34_grid_point_coordinates_are_even(&first_offset) &&
+	      !v34_grid_point_coordinates_are_odd(&first_offset) &&
+	      !v34_grid_point_is_bounded(&unbounded) &&
+	      !v34_grid_point_is_bounded(NULL) &&
+	      !v34_grid_point_coordinates_are_odd(NULL) &&
+	      !v34_grid_point_coordinates_are_even(NULL),
+	      "grid point geometry changed");
 
 	memset(&input, 0x5a, sizeof(input));
 	saved_input = input;
