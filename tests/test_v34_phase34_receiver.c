@@ -626,10 +626,13 @@ static bool test_training_case(
 		case V34_PHASE34_RECEIVER_E_COMPLETE: {
 			struct v34_phase34_receiver saved = receiver;
 			struct v34_phase34_receiver feedback_receiver = receiver;
+			struct v34_phase34_receiver unstable_receiver = receiver;
 			struct v34_q14_coefficient
 				feedback_coefficients[V34_PRECODER_TAP_COUNT];
 			struct v34_q14_coefficient
 				zero_coefficients[V34_PRECODER_TAP_COUNT];
+			struct v34_q14_coefficient
+				unstable_coefficients[V34_PRECODER_TAP_COUNT];
 			struct v34_q14_coefficient changed_coefficients[
 				V34_PRECODER_TAP_COUNT];
 			struct v34_receive_timing feedback_timing;
@@ -642,6 +645,19 @@ static bool test_training_case(
 						V34_SYMBOL_RATE_2800 ?
 					V34_SYMBOL_RATE_3000 :
 					V34_SYMBOL_RATE_2800;
+			feedback_receiver.equalizer.quality.decision_metric = 2;
+			feedback_receiver.equalizer.quality.feedback_metric = 1;
+			receiver.equalizer.quality.decision_metric = 1;
+			receiver.equalizer.quality.feedback_metric = 1;
+			unstable_receiver.equalizer.quality.decision_metric = 300;
+			unstable_receiver.equalizer.quality.feedback_metric = 1;
+			for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+				unstable_receiver.equalizer.feedback.coefficient_a[tap] =
+					6000;
+				unstable_receiver.equalizer.feedback.coefficient_b[tap] =
+					6000;
+			}
+			saved = receiver;
 			CHECK(v34_phase34_receiver_is_complete(&receiver) &&
 			      v34_phase34_receiver_finish_feedback_training(
 				      &receiver, false,
@@ -681,19 +697,27 @@ static bool test_training_case(
 				      feedback_coefficients) ==
 				      V34_PHASE34_RECEIVER_OK &&
 			      v34_phase34_receiver_finish_feedback_training(
-				      &receiver, false, zero_coefficients) ==
+				      &receiver, true, zero_coefficients) ==
+				      V34_PHASE34_RECEIVER_OK &&
+			      v34_phase34_receiver_finish_feedback_training(
+				      &unstable_receiver, true,
+				      unstable_coefficients) ==
 				      V34_PHASE34_RECEIVER_OK,
 			      "role %u rate %u did not freeze feedback at E", role,
 			      rate);
 			CHECK(memcmp(zero_coefficients,
 				     source.parameters.precoder_coefficients,
 				     sizeof(zero_coefficients)) == 0 &&
+			      memcmp(unstable_coefficients,
+				     source.parameters.precoder_coefficients,
+				     sizeof(unstable_coefficients)) == 0 &&
 			      !feedback_receiver.equalizer.decision_pending &&
 			      feedback_receiver.feedback_training_complete &&
 			      feedback_receiver.precoder_selected &&
 			      receiver.feedback_training_complete &&
-			      !receiver.precoder_selected,
-			      "role %u rate %u selected the wrong feedback path", role,
+			      !receiver.precoder_selected &&
+			      !unstable_receiver.precoder_selected,
+			      "role %u rate %u selected unhelpful feedback", role,
 			      rate);
 			feedback_timing = feedback_receiver.timing;
 			zero_timing = receiver.timing;

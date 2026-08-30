@@ -113,13 +113,14 @@ enum v34_phase34_receiver_result v34_phase34_receiver_continue_mp(
 enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 	struct v34_phase34_receiver *receiver);
 
-/* End decision-feedback training at the local MP boundary. A Type 1 MP owns
- * the returned learned coefficients; Type 0 selects a zero-coefficient
- * receive path while still freezing the learned filter and clearing its B1
- * history. */
+/* End decision-feedback training at the local MP boundary. When the record
+ * permits precoding, select the learned coefficients only if the measured
+ * feedback residual strictly improves on the ordinary decision error. A
+ * rejected or disallowed precoder returns zero coefficients while still
+ * freezing the learned filter and clearing its B1 history. */
 enum v34_phase34_receiver_result
 v34_phase34_receiver_finish_feedback_training(
-	struct v34_phase34_receiver *receiver, bool select_precoder,
+	struct v34_phase34_receiver *receiver, bool allow_precoder,
 	struct v34_q14_coefficient
 		coefficients[V34_PRECODER_TAP_COUNT]);
 

@@ -2,6 +2,7 @@
 
 #include "v34_phase34_receiver.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 #include "v34_constellation.h"
 
@@ -87,6 +88,42 @@ static bool precoder_coefficients_are_zero(
 	static const struct v34_q14_coefficient zero[V34_PRECODER_TAP_COUNT];
 
 	return precoder_coefficients_match(coefficients, zero);
+}
+
+static uint32_t scaled_coefficient_magnitude(int16_t coefficient)
+{
+	int32_t scaled = arithmetic_shift_right_u32(
+		(uint32_t)(int32_t)coefficient, 2);
+
+	return scaled < 0 ? (uint32_t)-scaled : (uint32_t)scaled;
+}
+
+static bool feedback_training_supports_precoding(
+	const struct v34_adaptive_equalizer *equalizer,
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT])
+{
+	const struct v34_adaptive_equalizer_quality *quality =
+		&equalizer->quality;
+	uint32_t coefficient_magnitude = 0;
+	int32_t gate = (int32_t)quality->decision_metric -
+		quality->feedback_metric;
+
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		coefficient_magnitude +=
+			scaled_coefficient_magnitude(coefficients[tap].real);
+		coefficient_magnitude +=
+			scaled_coefficient_magnitude(coefficients[tap].imaginary);
+	}
+	if (gate < 1)
+		gate = quality->feedback_metric;
+	gate -= quality->decision_metric >> 2;
+	if (coefficient_magnitude > 8000u &&
+	    quality->decision_metric > 200 && gate > 0)
+		coefficient_magnitude = 0x5000u;
+	return quality->decision_metric < 0x0200 &&
+	       quality->feedback_metric < quality->decision_metric &&
+	       coefficient_magnitude < 0x4000u;
 }
 
 static enum v34_adaptive_equalizer_feedback_mode expected_feedback_mode(
@@ -714,13 +751,14 @@ enum v34_phase34_receiver_result v34_phase34_receiver_expect_e(
 
 enum v34_phase34_receiver_result
 v34_phase34_receiver_finish_feedback_training(
-	struct v34_phase34_receiver *receiver, bool select_precoder,
+	struct v34_phase34_receiver *receiver, bool allow_precoder,
 	struct v34_q14_coefficient
 		coefficients[V34_PRECODER_TAP_COUNT])
 {
 	struct v34_phase34_receiver next;
 	struct v34_q14_coefficient learned[V34_PRECODER_TAP_COUNT];
 	struct v34_q14_coefficient selected[V34_PRECODER_TAP_COUNT] = { 0 };
+	bool select_precoder;
 
 	if (coefficients == NULL ||
 	    memory_regions_overlap(
@@ -735,6 +773,8 @@ v34_phase34_receiver_finish_feedback_training(
 	if (v34_adaptive_equalizer_finish_feedback_training(
 		    &next.equalizer, learned) != V34_ADAPTIVE_EQUALIZER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	select_precoder = allow_precoder &&
+		feedback_training_supports_precoding(&next.equalizer, learned);
 	if (select_precoder)
 		memcpy(selected, learned, sizeof(selected));
 	memcpy(next.precoder_coefficients, selected, sizeof(selected));

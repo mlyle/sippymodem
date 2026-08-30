@@ -309,10 +309,8 @@ static bool receiver_feedback_matches_mp(
 		return false;
 	if (!receiver->feedback_training_complete)
 		return true;
-	if (receiver->precoder_selected !=
-	    (exchange->transmit_mp.type == V34_MP_RECORD_TYPE1))
-		return false;
-	return exchange->transmit_mp.type == V34_MP_RECORD_TYPE0 ||
+	return exchange->transmit_mp.type == V34_MP_RECORD_TYPE0 ?
+		!receiver->precoder_selected :
 	       memcmp(receiver->precoder_coefficients,
 		      exchange->transmit_mp.parameters.type1
 			      .precoder_coefficients,
@@ -572,16 +570,19 @@ static enum v34_phase4_exchange_result start_transmit_mp(
 static enum v34_phase4_exchange_result finish_feedback_training(
 	struct v34_phase4_exchange *exchange)
 {
+	const struct v34_mp_parameters *parameters =
+		v34_mp_record_common_parameters(&exchange->transmit_mp);
 	struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT];
-	bool select_precoder;
+	bool allow_precoder;
 
-	select_precoder =
-		exchange->transmit_mp.type == V34_MP_RECORD_TYPE1;
+	allow_precoder = exchange->transmit_mp.type == V34_MP_RECORD_TYPE1 &&
+		(parameters->data_rate_capability_mask &
+		 (uint16_t)~UINT16_C(1)) != 0;
 	if (v34_phase34_receiver_finish_feedback_training(
-		    &exchange->receive, select_precoder,
+		    &exchange->receive, allow_precoder,
 		    coefficients) != V34_PHASE34_RECEIVER_OK)
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
-	if (select_precoder)
+	if (exchange->transmit_mp.type == V34_MP_RECORD_TYPE1)
 		memcpy(exchange->transmit_mp.parameters.type1
 			       .precoder_coefficients,
 		       coefficients, sizeof(coefficients));

@@ -610,7 +610,7 @@ static bool test_generated_online_exchange(void)
 	      mp_records_are_equal(
 		      &answerer_peer, &caller.phase4.transmit_mp) &&
 	      caller.phase4.receive.feedback_training_complete &&
-	      caller.phase4.receive.precoder_selected &&
+	      !caller.phase4.receive.precoder_selected &&
 	      answerer.phase4.receive.feedback_training_complete &&
 	      !answerer.phase4.receive.precoder_selected,
 	      "Phase 4 owners did not retain normalized peer records");
