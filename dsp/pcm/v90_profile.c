@@ -6,7 +6,9 @@
 #include <stdint.h>
 
 enum {
-	V90_PHASE2_NOMINAL_AMPLITUDE = 12000,
+	V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE = 12000,
+	/* The digital head-end uses one lower level for Tone B and L1/L2. */
+	V90_PHASE2_DIGITAL_NOMINAL_AMPLITUDE = 5320,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
@@ -302,7 +304,10 @@ enum v90_profile_result v90_profile_init(
 	struct pcm_call_configuration selected = {
 		.local_role = role,
 		.law = law,
-		.phase2_nominal_amplitude = V90_PHASE2_NOMINAL_AMPLITUDE,
+		.phase2_nominal_amplitude =
+			role == V90_DIGITAL_MODEM ?
+				V90_PHASE2_DIGITAL_NOMINAL_AMPLITUDE :
+				V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE,
 	};
 
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||

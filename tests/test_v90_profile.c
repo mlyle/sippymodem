@@ -7,6 +7,11 @@
 #include <stdint.h>
 #include <string.h>
 
+enum {
+	ANALOG_PHASE2_AMPLITUDE = 12000,
+	DIGITAL_PHASE2_AMPLITUDE = 5320,
+};
+
 static uint32_t expected_bit_rate(uint8_t rate_index)
 {
 	return ((uint32_t)(PCM_DOWNSTREAM_BASE_FRAME_BITS + rate_index) *
@@ -94,6 +99,7 @@ static bool test_generated_profiles(void)
 					(enum v90_modem_role)role_index;
 				struct pcm_call_configuration configuration;
 				struct pcm_call call;
+				const struct v34_phase2_tone_transmitter *tone;
 
 				CHECK(v90_profile_init(
 					      &configuration, role, law,
@@ -101,8 +107,24 @@ static bool test_generated_profiles(void)
 				      pcm_call_init(&call, &configuration) ==
 					      PCM_CALL_OK &&
 				      pcm_call_is_valid(&call) &&
-				      call.local_role == role && call.law == law,
+				      call.local_role == role && call.law == law &&
+				      configuration.phase2_nominal_amplitude ==
+					      (role == V90_DIGITAL_MODEM ?
+						       DIGITAL_PHASE2_AMPLITUDE :
+						       ANALOG_PHASE2_AMPLITUDE) &&
+				      call.phase2_nominal_amplitude ==
+					      configuration.phase2_nominal_amplitude,
 				      "role %u law %u rate %u profile did not initialize",
+				      role_index, law_index, bit_rate);
+				tone = &call.state.phase2.state.ranging.info0_exchange
+						.transport.tone_transmitter;
+				CHECK(role == V90_DIGITAL_MODEM ?
+					      tone->carrier_amplitude ==
+						      DIGITAL_PHASE2_AMPLITUDE &&
+						      tone->guard_amplitude == 0 :
+					      tone->guard_amplitude ==
+						      ANALOG_PHASE2_AMPLITUDE,
+				      "role %u law %u rate %u Phase 2 level changed",
 				      role_index, law_index, bit_rate);
 				if (role == V90_ANALOG_MODEM) {
 					struct v90_pcm_mapping mapping;
