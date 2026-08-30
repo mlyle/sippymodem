@@ -21,6 +21,12 @@ enum {
 	RETURNED_ECHO_HISTORY = RETURNED_ECHO_TAP_2 + 1,
 };
 
+enum returned_echo_mode {
+	RETURNED_ECHO_NONE,
+	RETURNED_ECHO_STABLE,
+	RETURNED_ECHO_WEAK_MARGIN,
+};
+
 struct bit_endpoint {
 	uint64_t supplied_bits;
 	uint64_t received_bits;
@@ -275,7 +281,7 @@ static int16_t history_sample(
 
 static int16_t returned_echo(
 	const int16_t history[RETURNED_ECHO_HISTORY], size_t write,
-	size_t fill)
+	size_t fill, enum returned_echo_mode mode)
 {
 	int32_t sample = scale_q15(
 		history_sample(history, write, fill, RETURNED_ECHO_DELAY),
@@ -287,16 +293,19 @@ static int16_t returned_echo(
 	sample -= scale_q15(
 		history_sample(history, write, fill, RETURNED_ECHO_TAP_2),
 		2200);
+	if (mode == RETURNED_ECHO_WEAK_MARGIN)
+		sample += 1400;
 	return add_s16(sample);
 }
 
-static bool run_pair_with_input_contract(
+static bool run_pair_with_rate_window(
 	enum g711_law analog_law, enum g711_law digital_law,
 	uint32_t downstream_rate,
-	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
+	uint32_t upstream_min_rate, uint32_t upstream_max_rate,
+	uint32_t expected_upstream_rate, uint32_t upstream_symbol_rate,
 	bool require_online, enum modem_pcm_role retrain_role,
 	bool separate_upstream_sample, bool alias_pcma_negative_zero,
-	bool add_returned_echo)
+	enum returned_echo_mode echo_mode)
 {
 	int16_t echo_history[RETURNED_ECHO_HISTORY] = { 0 };
 	struct bit_endpoint analog_bits = {
@@ -337,11 +346,11 @@ static bool run_pair_with_input_contract(
 	analog.max_rate = downstream_rate;
 	digital.min_rate = downstream_rate;
 	digital.max_rate = downstream_rate;
-	analog.v90_upstream_min_rate = upstream_rate;
-	analog.v90_upstream_max_rate = upstream_rate;
+	analog.v90_upstream_min_rate = upstream_min_rate;
+	analog.v90_upstream_max_rate = upstream_max_rate;
 	analog.v90_upstream_max_baud = upstream_symbol_rate;
-	digital.v90_upstream_min_rate = upstream_rate;
-	digital.v90_upstream_max_rate = upstream_rate;
+	digital.v90_upstream_min_rate = upstream_min_rate;
+	digital.v90_upstream_max_rate = upstream_max_rate;
 	digital.v90_upstream_max_baud = upstream_symbol_rate;
 
 	CHECK(operations != NULL && operations->process_g711 != NULL,
@@ -384,12 +393,12 @@ static bool run_pair_with_input_contract(
 			sample_codeword_separated |=
 				digital_received_octet != analog_to_digital;
 		}
-		if (add_returned_echo)
+		if (echo_mode != RETURNED_ECHO_NONE)
 			digital_receive = add_s16(
 				(int32_t)digital_receive +
 				returned_echo(
 					echo_history, echo_history_write,
-					echo_history_fill));
+					echo_history_fill, echo_mode));
 		digital_result = operations->process_g711(
 			digital_dp, digital_law,
 			&digital_received_octet, &digital_receive,
@@ -399,7 +408,7 @@ static bool run_pair_with_input_contract(
 		       digital_result == DPSTAT_CONNECT) && digital_exact &&
 		      digital_transmit == decode(digital_law, next_digital),
 		      "digital V.90 path failed at octet %zu", octet);
-		if (add_returned_echo) {
+		if (echo_mode != RETURNED_ECHO_NONE) {
 			echo_history[echo_history_write] = digital_transmit;
 			echo_history_write++;
 			if (echo_history_write == RETURNED_ECHO_HISTORY)
@@ -494,10 +503,11 @@ static bool run_pair_with_input_contract(
 	      analog.rx_rate == downstream_rate &&
 	      digital.tx_rate == downstream_rate &&
 	      analog.tx_rate != 0 && analog.tx_rate == digital.rx_rate &&
-	      (upstream_rate == 0 || analog.tx_rate == upstream_rate),
+	      (expected_upstream_rate == 0 ||
+	       analog.tx_rate == expected_upstream_rate),
 	      "V.90 pair did not report complementary online rates "
 	      "(expected down/up %u/%u, analogue %u/%u, digital %u/%u)",
-	      downstream_rate, upstream_rate,
+	      downstream_rate, expected_upstream_rate,
 	      analog.rx_rate, analog.tx_rate,
 	      digital.tx_rate, digital.rx_rate);
 	CHECK(analog_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
@@ -525,6 +535,22 @@ static bool run_pair_with_input_contract(
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
 	      "V.90 data pumps did not release their call state");
 	return true;
+}
+
+static bool run_pair_with_input_contract(
+	enum g711_law analog_law, enum g711_law digital_law,
+	uint32_t downstream_rate,
+	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
+	bool require_online, enum modem_pcm_role retrain_role,
+	bool separate_upstream_sample, bool alias_pcma_negative_zero,
+	bool add_returned_echo)
+{
+	return run_pair_with_rate_window(
+		analog_law, digital_law, downstream_rate,
+		upstream_rate, upstream_rate, upstream_rate,
+		upstream_symbol_rate, require_online, retrain_role,
+		separate_upstream_sample, alias_pcma_negative_zero,
+		add_returned_echo ? RETURNED_ECHO_STABLE : RETURNED_ECHO_NONE);
 }
 
 static bool run_pair(
@@ -624,6 +650,21 @@ static bool test_delayed_host_echo(void)
 	      "V.90 digital answerer did not cancel delayed host echo");
 	CHECK(v90_datapump_unregister() == 0,
 	      "host-echo V.90 registration remained busy");
+	return true;
+}
+
+static bool test_weak_host_echo_limits_upstream_rate(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "weak-margin V.90 registration failed");
+	CHECK(run_pair_with_rate_window(
+		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      56000, 28800, 33600, 28800, 3429, true,
+		      MODEM_PCM_ROLE_NONE, false, false,
+		      RETURNED_ECHO_WEAK_MARGIN),
+	      "weak digital host echo did not limit optional upstream rates");
+	CHECK(v90_datapump_unregister() == 0,
+	      "weak-margin V.90 registration remained busy");
 	return true;
 }
 
@@ -870,6 +911,8 @@ int main(void)
 		{ "sample-owned PCMA upstream", test_upstream_uses_media_samples },
 		{ "PCMA negative-zero bridge", test_pcma_negative_zero_bridge },
 		{ "delayed digital-answerer host echo", test_delayed_host_echo },
+		{ "weak host-echo upstream limit",
+		  test_weak_host_echo_limits_upstream_rate },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "media-independent Phase 2 codebook",
 		  test_independent_media_laws },

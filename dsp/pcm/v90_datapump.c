@@ -9,6 +9,7 @@
 #include "training_session.h"
 #include "v90_host_echo.h"
 #include "v90_info1.h"
+#include "v90_mp.h"
 #include "v90_profile.h"
 #include "v92_profile.h"
 
@@ -27,6 +28,7 @@ struct v90_datapump {
 	enum g711_law media_law;
 	uint8_t maximum_pcm_upstream_data_rate_number;
 	bool call_started;
+	bool host_echo_margin_evaluated;
 };
 
 /* The integrated digital network currently uses the North American PCM
@@ -117,6 +119,9 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    datapump->protocol != protocol ||
 	    ((protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) !=
 	     (datapump->host_echo != NULL)) ||
+	    (datapump->host_echo_margin_evaluated &&
+	     (!datapump->call_started || datapump->host_echo == NULL ||
+	      !v90_host_echo_is_ready(datapump->host_echo))) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->media_law) ||
@@ -233,6 +238,7 @@ static int retrain_v90(struct dp *dp)
 	if (datapump->host_echo != NULL &&
 	    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
 		return -1;
+	datapump->host_echo_margin_evaluated = false;
 	datapump->call = call;
 	datapump->training = training;
 	return 0;
@@ -557,6 +563,32 @@ static enum v90_host_echo_mode host_echo_mode(
 	return V90_HOST_ECHO_BYPASS;
 }
 
+static bool apply_host_echo_margin(struct v90_datapump *datapump)
+{
+	struct pcm_call limited;
+
+	if (datapump->host_echo == NULL ||
+	    datapump->host_echo_margin_evaluated ||
+	    !v90_host_echo_is_ready(datapump->host_echo))
+		return true;
+	if (datapump->call.stage != PCM_CALL_PHASE3 &&
+	    datapump->call.stage != PCM_CALL_PHASE3_MIXED)
+		return false;
+	if (!v90_host_echo_has_weak_margin(datapump->host_echo)) {
+		datapump->host_echo_margin_evaluated = true;
+		return true;
+	}
+	limited = datapump->call;
+	if (!v90_mp_record_limit_maximum_upstream_rate(
+		     &limited.digital_phase4_configuration.initial_mp,
+		     V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) ||
+	    !pcm_call_is_valid(&limited))
+		return false;
+	datapump->call = limited;
+	datapump->host_echo_margin_evaluated = true;
+	return true;
+}
+
 static int process_v90_g711(
 	struct dp *dp, enum g711_law law,
 	const uint8_t *receive_codewords, void *receive_samples_buffer,
@@ -611,16 +643,22 @@ static int process_v90_g711(
 		transmit_samples[index] = law == G711_LAW_PCMA ?
 			g711_decode_pcma(transmit_codewords[index]) :
 			g711_decode_pcmu(transmit_codewords[index]);
-		if (datapump->host_echo != NULL &&
-		    (v90_host_echo_advance(
-			     datapump->host_echo, echo_mode,
-			     receive_samples[index], cleaned_sample,
-			     transmit_samples[index]) != V90_HOST_ECHO_OK ||
-		     (stage_before != PCM_CALL_RETRAIN_SILENCE &&
-		      datapump->call.stage == PCM_CALL_RETRAIN_SILENCE &&
-		      v90_host_echo_init(datapump->host_echo) !=
-			      V90_HOST_ECHO_OK)))
-			goto failure;
+		if (datapump->host_echo != NULL) {
+			if (v90_host_echo_advance(
+				    datapump->host_echo, echo_mode,
+				    receive_samples[index], cleaned_sample,
+				    transmit_samples[index]) != V90_HOST_ECHO_OK)
+				goto failure;
+			if (stage_before != PCM_CALL_RETRAIN_SILENCE &&
+			    datapump->call.stage == PCM_CALL_RETRAIN_SILENCE) {
+				if (v90_host_echo_init(datapump->host_echo) !=
+				    V90_HOST_ECHO_OK)
+					goto failure;
+				datapump->host_echo_margin_evaluated = false;
+			} else if (!apply_host_echo_margin(datapump)) {
+				goto failure;
+			}
+		}
 	}
 	*exact_output = true;
 	return connected ? DPSTAT_CONNECT : DPSTAT_OK;

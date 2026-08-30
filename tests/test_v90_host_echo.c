@@ -179,7 +179,8 @@ static bool test_long_delay_cancellation(void)
 		CHECK(cleaned == received,
 		      "training filtered sample %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo),
+	CHECK(v90_host_echo_is_ready(&echo) &&
+	      !v90_host_echo_has_weak_margin(&echo),
 	      "trained filter did not become ready: delay=%u train=%u peak=%u",
 	      v90_host_echo_window_delay_samples(&echo),
 	      echo.train_samples, echo.train_peak);
@@ -224,6 +225,32 @@ static bool test_long_delay_cancellation(void)
 	return true;
 }
 
+static bool test_weak_joint_margin(void)
+{
+	struct v90_host_echo echo;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "weak-margin owner did not initialize");
+	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
+		int16_t unrelated = generated_sample(
+			index, UINT32_C(0x4f1bbcdc), 1400);
+		int16_t received = add_s16(
+			(int32_t)echo_sample(index) + unrelated);
+		int16_t cleaned;
+
+		CHECK(echo_step(
+			      &echo, V90_HOST_ECHO_TRAIN, index,
+			      received, &cleaned),
+		      "weak-margin training failed at sample %zu", index);
+	}
+	CHECK(v90_host_echo_is_ready(&echo) &&
+	      v90_host_echo_has_weak_margin(&echo),
+	      "joint echo model did not retain weak margin: error=%" PRIu64
+	      " input=%" PRIu64,
+	      echo.error_energy, echo.input_energy);
+	return true;
+}
+
 static bool test_unrelated_input_does_not_train(void)
 {
 	struct v90_host_echo echo;
@@ -257,6 +284,7 @@ int main(void)
 	CHECK(test_contracts(), "contracts failed");
 	CHECK(test_long_delay_cancellation(),
 	      "long-delay cancellation failed");
+	CHECK(test_weak_joint_margin(), "weak joint margin failed");
 	CHECK(test_unrelated_input_does_not_train(),
 	      "uncorrelated-input gate failed");
 	puts("V.90 host echo tests passed");

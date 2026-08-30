@@ -24,6 +24,9 @@ enum {
 	V90_MP_RATE_CAPABILITY_MASK =
 		(1u << V90_MP_RATE_CAPABILITY_BITS) - 1u,
 	V90_MP_MINIMUM_RATE_2400_BPS_UNITS = 2,
+	/* V.90 requires rates through 28.8 kbit/s; 31.2 and 33.6 kbit/s are
+	 * optional. */
+	V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS = 12,
 	V90_MP_MAXIMUM_RATE_2400_BPS_UNITS = 14,
 };
 

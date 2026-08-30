@@ -326,9 +326,10 @@ static bool test_maximum_rate_limit(void)
 	struct v90_mp_record saved;
 	struct v90_mp_record invalid;
 
-	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(
+		      &type0, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
 	      type0.parameters.type0.maximum_upstream_rate_2400_bps_units ==
-		      12 &&
+		      V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS &&
 	      type0.parameters.type0.upstream_rate_capability_mask == 0x1555,
 	      "MP type 0 did not limit to its highest enabled rate");
 	saved = type0;
@@ -340,7 +341,8 @@ static bool test_maximum_rate_limit(void)
 		14;
 	type1.parameters.type1.common.upstream_rate_capability_mask =
 		(uint16_t)((1u << (11u - 2u)) | (1u << (9u - 2u)));
-	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type1, 12) &&
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(
+		      &type1, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
 	      type1.parameters.type1.common
 			      .maximum_upstream_rate_2400_bps_units == 11 &&
 	      type1.parameters.type1.precoder_coefficients[1].real == -32767,
@@ -350,20 +352,24 @@ static bool test_maximum_rate_limit(void)
 	type0.parameters.type0.upstream_rate_capability_mask =
 		(uint16_t)(1u << (14u - 2u));
 	saved = type0;
-	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(
+		      &type0, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
 	      memcmp(&type0, &saved, sizeof(type0)) == 0,
 	      "MP limit invented an unavailable lower rate");
 	type0.parameters.type0.maximum_upstream_rate_2400_bps_units = 0;
 	saved = type0;
-	CHECK(v90_mp_record_limit_maximum_upstream_rate(&type0, 12) &&
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(
+		      &type0, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
 	      memcmp(&type0, &saved, sizeof(type0)) == 0,
 	      "MP limit changed a cleardown request");
 
 	invalid = type0_record(false);
 	invalid.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
 	saved = invalid;
-	CHECK(!v90_mp_record_limit_maximum_upstream_rate(NULL, 12) &&
-	      !v90_mp_record_limit_maximum_upstream_rate(&invalid, 12) &&
+	CHECK(!v90_mp_record_limit_maximum_upstream_rate(
+		      NULL, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
+	      !v90_mp_record_limit_maximum_upstream_rate(
+		      &invalid, V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS) &&
 	      !v90_mp_record_limit_maximum_upstream_rate(&type0, 1) &&
 	      !v90_mp_record_limit_maximum_upstream_rate(&type0, 15) &&
 	      memcmp(&invalid, &saved, sizeof(invalid)) == 0,
