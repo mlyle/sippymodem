@@ -394,6 +394,113 @@ static bool test_info_interrupted_reversal(void)
 	return true;
 }
 
+static bool check_deferred_first_reversal(
+	enum test_codec codec, enum pcm_protocol protocol)
+{
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t local_frame_bits = v34_phase2_info_frame_bit_count(
+		V90_INFO0D_PAYLOAD_BITS);
+	size_t edge_sample = SIZE_MAX;
+	size_t response_sample = SIZE_MAX;
+	bool acknowledging_record_started = false;
+	bool edge_deferred = false;
+	enum phase2_info0_transmit_phase last_transmit_phase =
+		PHASE2_INFO0_POST_V8_SILENCE;
+
+	CHECK(initialize_info0_exchange(
+		      &ranging.info0_exchange, V90_DIGITAL_MODEM,
+		      protocol, codec) == PCM_PHASE2_INFO0_EXCHANGE_OK &&
+	      encode_peer_info0(
+		      payload, V90_ANALOG_MODEM, protocol, codec, true) &&
+	      phase2_ranging_control_init(
+		      &ranging.control,
+		      &ranging.info0_exchange.transport) == PHASE2_RANGING_OK &&
+	      phase2_info0_exchange_init(
+		      &peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE,
+		      payload, V90_INFO0A_PAYLOAD_BITS,
+		      V90_INFO0D_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK &&
+	      v90_phase2_ranging_is_valid(&ranging),
+	      "deferred-reversal fixture did not initialize for %d/%d",
+	      codec, protocol);
+
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		const struct v34_phase2_info_generator *local_frame =
+			&ranging.info0_exchange.transport.info_transmitter.frame;
+		int16_t peer_line;
+		int16_t ignored;
+
+		if (acknowledging_record_started && edge_sample == SIZE_MAX &&
+		    ranging.info0_exchange.state ==
+			    PCM_PHASE2_INFO0_ACKNOWLEDGING &&
+		    ranging.info0_exchange.transport.transmit_phase ==
+			    PHASE2_INFO0_SEQUENCE &&
+		    local_frame->bit_index + 2u >= local_frame_bits &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "deferred peer reversal failed for %d/%d",
+			      codec, protocol);
+			edge_sample = index;
+		}
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, codec_round_trip(peer_line, codec),
+			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+		      "deferred reversal failed at %zu for %d/%d",
+		      index, codec, protocol);
+		if (last_transmit_phase == PHASE2_INFO0_CARRIER_TAIL &&
+		    ranging.info0_exchange.transport.transmit_phase ==
+			    PHASE2_INFO0_SEQUENCE)
+			acknowledging_record_started = true;
+		last_transmit_phase =
+			ranging.info0_exchange.transport.transmit_phase;
+		if (event.exchange_event.tone_event.kind ==
+			    V34_PHASE2_TONE_PHASE_REVERSED &&
+		    ranging.control.deferred_reversal_samples != 0)
+			edge_deferred = true;
+		if (phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL) {
+			response_sample = index;
+			break;
+		}
+	}
+	CHECK(acknowledging_record_started && edge_sample != SIZE_MAX &&
+	      edge_deferred,
+	      "acknowledging tail did not retain reversal for %d/%d",
+	      codec, protocol);
+	CHECK(response_sample != SIZE_MAX,
+	      "deferred reversal did not schedule a response for %d/%d: phase=%d tx=%d",
+	      codec, protocol, ranging.control.phase,
+	      ranging.info0_exchange.transport.transmit_phase);
+	CHECK(absolute_difference(
+		      response_sample,
+		      edge_sample + PHASE2_RANGING_TURNAROUND_SAMPLES) <=
+		      TEST_EDGE_TOLERANCE_SAMPLES,
+	      "deferred reversal timing failed for %d/%d at %zu/%zu",
+	      codec, protocol, edge_sample, response_sample);
+	return true;
+}
+
+static bool test_deferred_first_reversal(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_deferred_first_reversal(codec, protocol),
+			      "deferred reversal failed for %d/%d",
+			      codec, protocol);
+	return true;
+}
+
 static bool check_rejected_edge_before_info(
 	enum test_codec codec, enum pcm_protocol protocol)
 {
@@ -667,6 +774,7 @@ int main(void)
 	} tests[] = {
 		{ "PCMU and PCMA ranging", test_pcm_ranging },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
+		{ "deferred first reversal", test_deferred_first_reversal },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },

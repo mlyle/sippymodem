@@ -31,6 +31,8 @@ static bool bounds_are_valid(
 	       (unsigned int)control->phase <= PHASE2_RANGING_TIMED_OUT &&
 	       control->local_tone_samples <=
 		       PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
+	       control->deferred_reversal_samples <
+		       PHASE2_RANGING_TURNAROUND_SAMPLES &&
 	       control->response_delay_samples <=
 		       PHASE2_RANGING_TURNAROUND_SAMPLES &&
 	       control->post_reversal_samples <=
@@ -59,6 +61,9 @@ bool phase2_ranging_control_is_valid(
 		return false;
 	side_b = signal_is_b(exchange);
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE &&
+	    control->deferred_reversal_samples != 0)
+		return false;
+	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    control->phase != PHASE2_RANGING_TIMED_OUT &&
 	    !retains_ranging_context(exchange, peer_info0_received))
 		return false;
@@ -70,6 +75,10 @@ bool phase2_ranging_control_is_valid(
 		       control->probe_start_delay_samples == 0 &&
 		       control->measurement_elapsed_samples == 0 &&
 		       !control->round_trip_delay_valid &&
+		       (control->deferred_reversal_samples == 0 ||
+			(side_b &&
+			 exchange->transmit_phase ==
+				 PHASE2_INFO0_CARRIER_TAIL)) &&
 		       (!side_b || control->local_tone_samples == 0);
 	case PHASE2_SIGNAL_A_WAIT_INITIAL_TONE:
 		return !side_b && control->response_delay_samples == 0 &&
@@ -187,6 +196,15 @@ static bool prepared_control_is_valid(
 		       control->probe_start_delay_samples == 0 &&
 		       control->measurement_elapsed_samples == 0 &&
 		       !control->round_trip_delay_valid;
+	if (control->phase == PHASE2_RANGING_INFO0_EXCHANGE && side_b &&
+	    control->deferred_reversal_samples != 0 &&
+	    control->response_delay_samples == 0 &&
+	    control->post_reversal_samples == 0 &&
+	    control->probe_start_delay_samples == 0 &&
+	    control->measurement_elapsed_samples == 0 &&
+	    !control->round_trip_delay_valid &&
+	    exchange->transmit_phase != PHASE2_INFO0_POST_V8_SILENCE)
+		return true;
 	return control->phase == PHASE2_RESPONSE_TONE_TAIL &&
 	       control->local_tone_samples ==
 		       completed_initial_tone_samples(exchange) &&
@@ -210,6 +228,10 @@ enum phase2_ranging_result phase2_ranging_prepare_sample(
 		    control, exchange, peer_info0_received))
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *control;
+	if (next.deferred_reversal_samples != 0 &&
+	    ++next.deferred_reversal_samples ==
+		    PHASE2_RANGING_TURNAROUND_SAMPLES)
+		next.deferred_reversal_samples = 0;
 	peer_info0_in_progress =
 		exchange->info_receiver.frame.stage !=
 		V34_PHASE2_INFO_SEARCH_SYNC;
@@ -274,7 +296,38 @@ static bool schedule_response(
 		return false;
 	control->response_delay_samples =
 		PHASE2_RANGING_TURNAROUND_SAMPLES - detector_delay_samples;
+	control->deferred_reversal_samples = 0;
 	control->phase = PHASE2_RESPONSE_DELAY;
+	return true;
+}
+
+static bool defer_response(
+	struct phase2_ranging_control *control,
+	uint16_t detector_delay_samples)
+{
+	if (control->deferred_reversal_samples != 0 ||
+	    detector_delay_samples == 0 ||
+	    detector_delay_samples >= PHASE2_RANGING_TURNAROUND_SAMPLES)
+		return false;
+	control->deferred_reversal_samples = detector_delay_samples;
+	return true;
+}
+
+static bool resume_deferred_response(
+	struct phase2_ranging_control *control,
+	const struct phase2_info0_exchange *exchange)
+{
+	uint16_t elapsed = control->deferred_reversal_samples;
+
+	if (elapsed == 0)
+		return true;
+	if (control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+	    signal_is_b(exchange))
+		return schedule_response(control, elapsed);
+	if (control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
+	    exchange->transmit_phase == PHASE2_INFO0_CARRIER_TAIL)
+		return true;
+	control->deferred_reversal_samples = 0;
 	return true;
 }
 
@@ -333,6 +386,7 @@ static void schedule_probe_start(
 static bool handle_reversal(
 	struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange,
+	enum phase2_info0_transmit_phase transmit_phase_before,
 	uint16_t detector_delay_samples,
 	struct phase2_ranging_event *event)
 {
@@ -340,6 +394,14 @@ static bool handle_reversal(
 	bool accepted = false;
 
 	switch (control->phase) {
+	case PHASE2_RANGING_INFO0_EXCHANGE:
+		if (signal_is_b(exchange) &&
+		    transmit_phase_before == PHASE2_INFO0_CARRIER_TAIL &&
+		    exchange->transmit_phase == PHASE2_INFO0_CARRIER_TAIL) {
+			accepted = defer_response(
+				&next, detector_delay_samples);
+		}
+		break;
 	case PHASE2_SIGNAL_A_WAIT_INITIAL_TONE:
 		/* A peer edge delivered on the final 50 ms Tone A sample cannot
 		 * answer the local reversal, which is prepared on the next call.
@@ -502,9 +564,12 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	    transmit_phase_before == PHASE2_INFO0_TONE)
 		next.local_tone_samples++;
 	enter_active_ranging(&next, exchange, peer_info0_received);
+	if (!resume_deferred_response(&next, exchange))
+		return PHASE2_RANGING_INVALID_ARGUMENT;
 	if (tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED &&
 	    !handle_reversal(
-		    &next, exchange, tone_event->reversal_delay_samples,
+		    &next, exchange, transmit_phase_before,
+		    tone_event->reversal_delay_samples,
 		    &emitted)) {
 		rejected_detector = exchange->tone_detector;
 		if (v34_phase2_tone_detector_reject_reversal(

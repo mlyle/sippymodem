@@ -68,6 +68,7 @@ static bool control_is_clear(const struct phase2_ranging_control *control)
 {
 	return control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
 	       control->local_tone_samples == 0 &&
+	       control->deferred_reversal_samples == 0 &&
 	       control->response_delay_samples == 0 &&
 	       control->post_reversal_samples == 0 &&
 	       control->probe_start_delay_samples == 0 &&

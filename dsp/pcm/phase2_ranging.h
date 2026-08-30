@@ -57,6 +57,10 @@ struct phase2_ranging_event {
 struct phase2_ranging_control {
 	enum phase2_ranging_phase phase;
 	uint16_t local_tone_samples;
+	/* A qualified Signal-B first edge may arrive while the final local INFO0
+	 * carrier tail is still draining. Retain its physical age until the
+	 * exchange hands the following tone to ranging. */
+	uint16_t deferred_reversal_samples;
 	uint16_t response_delay_samples;
 	uint16_t post_reversal_samples;
 	uint16_t probe_start_delay_samples;
