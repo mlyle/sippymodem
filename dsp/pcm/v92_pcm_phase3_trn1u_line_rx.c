@@ -78,8 +78,7 @@ bool v92_pcm_phase3_trn1u_line_rx_is_valid(
 		    V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS ||
 	    receiver->window_index >=
 		    V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS ||
-	    !isfinite(receiver->adaptation) || receiver->adaptation < 0.0 ||
-	    receiver->adaptation > 1.0 ||
+	    !qam_adaptation_is_valid(receiver->adaptation) ||
 	    !isfinite(receiver->signal_level) || receiver->signal_level < 0.0 ||
 	    receiver->signal_level > 32768.0 || receiver->polarity < -1 ||
 	    receiver->polarity > 1 ||
@@ -132,8 +131,7 @@ v92_pcm_phase3_trn1u_line_rx_init(
 {
 	struct v92_pcm_phase3_trn1u_line_rx initialized = { 0 };
 
-	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 ||
+	if (receiver == NULL || !qam_adaptation_is_valid(adaptation) ||
 	    !initialize_equalizer(&initialized.equalizer, 1.0) ||
 	    v92_phase3_sync_init(&initialized.sync) != V92_PHASE3_SYNC_OK ||
 	    v34_scrambler_init(
@@ -370,8 +368,7 @@ bool v92_pcm_phase3_trn1u_line_handoff_is_valid(
 	       handoff->signal_level >=
 		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
 	       handoff->signal_level <= 32768.0 &&
-	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
-	       handoff->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(handoff->adaptation) &&
 	       handoff->input_advance_symbols ==
 		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	       handoff->input_samples >=

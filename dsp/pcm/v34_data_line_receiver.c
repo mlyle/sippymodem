@@ -2,7 +2,6 @@
 
 #include "v34_data_line_receiver.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static const struct v34_frame_geometry *data_geometry(
@@ -53,9 +52,8 @@ enum v34_data_receive_result v34_data_line_receiver_init(
 	    !v34_frame_geometry_is_valid(&configuration->geometry) ||
 	    configuration->transmitting_profile.symbol_rate !=
 		    configuration->geometry.symbol_rate ||
-	    !isfinite(configuration->equalizer_adaptation) ||
-	    configuration->equalizer_adaptation < 0.0 ||
-	    configuration->equalizer_adaptation > 1.0 ||
+	    !qam_adaptation_is_valid(
+		    configuration->equalizer_adaptation) ||
 	    !line_matches_profile(
 		    demodulator, &configuration->transmitting_profile) ||
 	    !v34_equalizer_handoff_is_valid(handoff))

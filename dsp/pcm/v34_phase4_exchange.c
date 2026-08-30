@@ -5,7 +5,6 @@
 #include "memory_region.h"
 #include "v34_data_quality.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -212,9 +211,7 @@ static bool data_state_is_valid(
 {
 	bool record_pending;
 
-	if (!isfinite(exchange->data_equalizer_adaptation) ||
-	    exchange->data_equalizer_adaptation < 0.0 ||
-	    exchange->data_equalizer_adaptation > 1.0)
+	if (!qam_adaptation_is_valid(exchange->data_equalizer_adaptation))
 		return false;
 	if (!exchange->peer_mp_received)
 		return !exchange->data_preparation_required &&
@@ -469,9 +466,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	    configuration == NULL ||
 	    !v34_mp_record_is_valid(&configuration->transmit_mp) ||
 	    record_is_acknowledged(&configuration->transmit_mp) ||
-	    !isfinite(configuration->data_equalizer_adaptation) ||
-	    configuration->data_equalizer_adaptation < 0.0 ||
-	    configuration->data_equalizer_adaptation > 1.0)
+	    !qam_adaptation_is_valid(
+		    configuration->data_equalizer_adaptation))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	/* Each J selects the other station's Phase 4 transmitter. */
 	local_transmit_constellation = detected_j_constellation(handoff);

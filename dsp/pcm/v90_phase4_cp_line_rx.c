@@ -5,7 +5,6 @@
 #include "v34_pulse_modulator.h"
 #include "v90_phase3.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool profile_is_analog(
@@ -49,8 +48,7 @@ bool v90_phase4_cp_line_rx_is_valid(
 	       v90_phase4_cp_rx_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==
 		       rx->transmitting_profile.local_role &&
-	       isfinite(rx->adaptation) && rx->adaptation >= 0.0 &&
-	       rx->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(rx->adaptation) &&
 	       (!rx->pending_record_is_valid ||
 		(rx->record_pending &&
 		 v90_cp_parameters_are_valid(&rx->pending_parameters)));
@@ -102,7 +100,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 
 	if (rx == NULL ||
 	    !v90_phase3_return_line_handoff_is_valid(handoff) ||
-	    !isfinite(adaptation) || adaptation < 0.0 || adaptation > 1.0)
+	    !qam_adaptation_is_valid(adaptation))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	initialized.demodulator = handoff->demodulator;
 	initialized.equalizer = handoff->phase3.equalizer.equalizer;

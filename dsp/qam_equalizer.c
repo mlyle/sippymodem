@@ -292,8 +292,8 @@ enum qam_equalizer_result qam_equalizer_adapt(
 	struct qam_equalizer next;
 
 	if (!qam_equalizer_is_valid(equalizer) ||
-	    !point_is_finite(target) || !isfinite(adaptation) ||
-	    adaptation < 0.0 || adaptation > 1.0)
+	    !point_is_finite(target) ||
+	    !qam_adaptation_is_valid(adaptation))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!equalizer->can_adapt)
 		return QAM_EQUALIZER_INVALID_STATE;
@@ -320,7 +320,7 @@ qam_equalizer_adapt_observation(
 
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    observation == NULL || !point_is_finite(target) ||
-	    !isfinite(adaptation) || adaptation < 0.0 || adaptation > 1.0)
+	    !qam_adaptation_is_valid(adaptation))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!qam_equalizer_observation_is_pending(observation))
 		return QAM_EQUALIZER_INVALID_STATE;

@@ -4,7 +4,6 @@
 
 #include "v90_info1.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool receive_stage_is_valid(
@@ -144,9 +143,7 @@ bool v92_phase3_digital_station_is_valid(
 	    !g711_law_is_valid(station->law) ||
 	    station->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    station->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
-	    !isfinite(station->equalizer_adaptation) ||
-	    station->equalizer_adaptation < 0.0 ||
-	    station->equalizer_adaptation > 1.0 ||
+	    !qam_adaptation_is_valid(station->equalizer_adaptation) ||
 	    station->su_minimum_magnitude == 0u ||
 	    !v92_jd_is_valid(&station->jd) || !v92_jp_is_valid(&station->jp) ||
 	    !v92_pcm_dil_rate_mask_is_valid(station->upstream_rate_mask) ||
@@ -174,9 +171,7 @@ bool v92_phase3_digital_station_parameters_are_valid(
 	return g711_law_is_valid(law) &&
 	       training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
-	       isfinite(equalizer_adaptation) &&
-	       equalizer_adaptation >= 0.0 &&
-	       equalizer_adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(equalizer_adaptation) &&
 	       su_minimum_magnitude != 0u &&
 	       v92_jd_is_valid(jd) && v92_jp_is_valid(jp);
 }

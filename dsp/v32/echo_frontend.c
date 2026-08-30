@@ -83,8 +83,7 @@ static bool echo_header_is_valid(
 	       (echo->reference_fill == V32_ECHO_REFERENCE_CAPACITY ||
 		echo->reference_write == echo->reference_fill) &&
 	       echo->phase < V32_ECHO_PHASE_COUNT &&
-	       isfinite(echo->adaptation) && echo->adaptation >= 0.0 &&
-	       echo->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(echo->adaptation) &&
 	       (!echo->adapting || echo->adaptation > 0.0);
 }
 

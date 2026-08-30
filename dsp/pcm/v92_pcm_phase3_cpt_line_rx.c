@@ -165,8 +165,8 @@ bool v92_pcm_phase3_cpt_line_handoff_is_valid(
 	       handoff->signal_level >=
 		       V92_PCM_PHASE3_TRN1U_LINE_MIN_SIGNAL_LEVEL &&
 	       handoff->signal_level <= 32768.0 &&
-	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
-	       handoff->adaptation <= 1.0 && handoff->previous_sign <= 1u &&
+	       qam_adaptation_is_valid(handoff->adaptation) &&
+	       handoff->previous_sign <= 1u &&
 	       (handoff->polarity == -1 || handoff->polarity == 1);
 }
 

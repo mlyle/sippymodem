@@ -5,22 +5,17 @@
 #include "v34_constellation.h"
 #include "v34_training_sequence.h"
 
-#include <math.h>
 #include <stddef.h>
-
-static bool adaptation_is_valid(double adaptation)
-{
-	return isfinite(adaptation) && adaptation >= 0.0 &&
-	       adaptation <= 1.0;
-}
 
 bool v90_phase3_analog_rx_configuration_is_valid(
 	const struct v90_phase3_analog_rx_configuration *configuration)
 {
 	return configuration != NULL &&
-	       adaptation_is_valid(configuration->s_gain_adaptation) &&
-	       adaptation_is_valid(configuration->pp_equalizer_adaptation) &&
-	       adaptation_is_valid(configuration->tracking_equalizer_adaptation);
+	       qam_adaptation_is_valid(configuration->s_gain_adaptation) &&
+	       qam_adaptation_is_valid(
+		       configuration->pp_equalizer_adaptation) &&
+	       qam_adaptation_is_valid(
+		       configuration->tracking_equalizer_adaptation);
 }
 
 static bool detection_is_clear(
@@ -61,7 +56,7 @@ static bool ja_receiver_is_valid(
 	if (receiver == NULL ||
 	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    receiver->equalizer.can_adapt ||
-	    !adaptation_is_valid(receiver->adaptation) ||
+	    !qam_adaptation_is_valid(receiver->adaptation) ||
 	    !v90_ja_search_is_valid(&receiver->search) ||
 	    v90_ja_search_is_complete(&receiver->search) != complete)
 		return false;
@@ -279,9 +274,8 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_point(
 	struct v90_phase3_analog_rx next;
 	enum v90_phase3_analog_rx_result result;
 
-	if (!v90_phase3_analog_rx_is_valid(rx) || received == NULL ||
-	    !isfinite(received->in_phase) ||
-	    !isfinite(received->quadrature))
+	if (!v90_phase3_analog_rx_is_valid(rx) ||
+	    !point_is_finite(received))
 		return V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_ANALOG_RX_STAGE_COMPLETE)
 		return V90_PHASE3_ANALOG_RX_COMPLETE;

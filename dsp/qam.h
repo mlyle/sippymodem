@@ -41,6 +41,12 @@ struct qam_point {
 	double quadrature;
 };
 
+static inline bool qam_adaptation_is_valid(double adaptation)
+{
+	return isfinite(adaptation) && adaptation >= 0.0 &&
+	       adaptation <= 1.0;
+}
+
 static inline bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&

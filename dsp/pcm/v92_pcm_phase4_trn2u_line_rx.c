@@ -88,8 +88,7 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 		       receiver->trained_symbols &&
 	       isfinite(receiver->squared_error_sum) &&
 	       receiver->squared_error_sum >= 0.0 &&
-	       isfinite(receiver->adaptation) && receiver->adaptation >= 0.0 &&
-	       receiver->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(receiver->adaptation) &&
 	       g711_law_is_valid(receiver->law) &&
 	       receiver->expected_index <
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
@@ -135,8 +134,7 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 	       handoff->training_symbols %
 		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
 	       handoff->input_samples >= handoff->training_symbols &&
-	       isfinite(handoff->adaptation) && handoff->adaptation >= 0.0 &&
-	       handoff->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(handoff->adaptation) &&
 	       g711_law_is_valid(handoff->law) &&
 	       (handoff->polarity == -1 || handoff->polarity == 1) &&
 	       targets_are_valid(

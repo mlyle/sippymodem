@@ -77,8 +77,7 @@ bool qam_gain_is_valid(
 {
 	return tracker != NULL &&
 	       nonzero_point_power(&tracker->channel_gain, NULL) &&
-	       isfinite(tracker->adaptation) && tracker->adaptation >= 0.0 &&
-	       tracker->adaptation <= 1.0;
+	       qam_adaptation_is_valid(tracker->adaptation);
 }
 
 enum qam_gain_result qam_gain_init(

@@ -4,7 +4,6 @@
 
 #include "v34_mapping_parameters.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -67,9 +66,7 @@ static bool receive_matches_direction(
 	       memcmp(receive->precoder_coefficients,
 		      direction->precoder_coefficients,
 		      sizeof(direction->precoder_coefficients)) == 0 &&
-	       isfinite(receive->equalizer_adaptation) &&
-	       receive->equalizer_adaptation >= 0.0 &&
-	       receive->equalizer_adaptation <= 1.0;
+	       qam_adaptation_is_valid(receive->equalizer_adaptation);
 }
 
 bool v34_data_startup_is_valid(
@@ -119,8 +116,7 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	    !v34_phase3_profile_is_valid(receive_profile) ||
 	    !roles_are_complementary(
 		    transmit_profile->local_role, receive_profile->local_role) ||
-	    !isfinite(equalizer_adaptation) || equalizer_adaptation < 0.0 ||
-	    equalizer_adaptation > 1.0)
+	    !qam_adaptation_is_valid(equalizer_adaptation))
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
 	result = v34_data_mapping_prepare(
 		&prepared.transmit, transmit_profile, &mode->transmit,

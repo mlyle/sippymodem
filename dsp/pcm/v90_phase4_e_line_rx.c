@@ -5,7 +5,6 @@
 #include "v34_pulse_modulator.h"
 #include "v90_phase3.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool profile_is_analog(
@@ -53,8 +52,8 @@ bool v90_phase4_e_line_rx_is_valid(
 	       v34_phase4_e_receiver_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==
 		       rx->transmitting_profile.local_role &&
-	       cp_is_final(&rx->cp) && isfinite(rx->adaptation) &&
-	       rx->adaptation >= 0.0 && rx->adaptation <= 1.0;
+	       cp_is_final(&rx->cp) &&
+	       qam_adaptation_is_valid(rx->adaptation);
 }
 
 bool v90_phase4_e_line_rx_has_failed(

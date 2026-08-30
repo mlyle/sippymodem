@@ -4,7 +4,6 @@
 
 #include "memory_region.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -23,9 +22,8 @@ static bool configuration_is_valid(
 	    v34_mp_record_common_parameters(
 		    &configuration->phase4.transmit_mp)
 		    ->acknowledges_peer_mp ||
-	    !isfinite(configuration->phase4.data_equalizer_adaptation) ||
-	    configuration->phase4.data_equalizer_adaptation < 0.0 ||
-	    configuration->phase4.data_equalizer_adaptation > 1.0)
+	    !qam_adaptation_is_valid(
+		    configuration->phase4.data_equalizer_adaptation))
 		return false;
 	return configuration->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(
@@ -59,9 +57,8 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	    v34_mp_record_common_parameters(
 		    &call->phase4_configuration.transmit_mp)
 		    ->acknowledges_peer_mp ||
-	    !isfinite(call->phase4_configuration.data_equalizer_adaptation) ||
-	    call->phase4_configuration.data_equalizer_adaptation < 0.0 ||
-	    call->phase4_configuration.data_equalizer_adaptation > 1.0)
+	    !qam_adaptation_is_valid(
+		    call->phase4_configuration.data_equalizer_adaptation))
 		return false;
 	return call->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(&call->local_info1.calling) :

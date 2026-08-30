@@ -37,9 +37,7 @@ static bool state_header_is_valid(
 		canceller->reference_write == canceller->reference_fill) &&
 	       canceller->phase < V32_ECHO_PHASE_COUNT &&
 	       (canceller->phase == 0 || canceller->reference_pending) &&
-	       isfinite(canceller->adaptation) &&
-	       canceller->adaptation >= 0.0 &&
-	       canceller->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(canceller->adaptation) &&
 	       (!canceller->adapting || canceller->adaptation > 0.0);
 }
 
@@ -91,7 +89,7 @@ enum v32_echo_result v32_echo_canceller_start_adaptation(
 {
 	if (!v32_echo_canceller_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
-	if (!isfinite(adaptation) || adaptation <= 0.0 || adaptation > 1.0)
+	if (!qam_adaptation_is_valid(adaptation) || adaptation == 0.0)
 		return V32_ECHO_INVALID_ARGUMENT;
 	if (canceller->reference_pending)
 		return V32_ECHO_INVALID_STATE;

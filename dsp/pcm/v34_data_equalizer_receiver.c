@@ -2,7 +2,6 @@
 
 #include "v34_data_equalizer_receiver.h"
 
-#include <math.h>
 #include <stddef.h>
 
 bool v34_data_equalizer_receiver_is_valid(
@@ -12,8 +11,7 @@ bool v34_data_equalizer_receiver_is_valid(
 	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    !v34_data_channel_receiver_is_valid(
 		    &receiver->data_receiver) ||
-	    !isfinite(receiver->adaptation) || receiver->adaptation < 0.0 ||
-	    receiver->adaptation > 1.0)
+	    !qam_adaptation_is_valid(receiver->adaptation))
 		return false;
 	return !receiver->first_observation.pending ||
 	       qam_equalizer_observation_is_pending(
@@ -37,8 +35,7 @@ v34_data_equalizer_receiver_init_from_handoff(
 
 	if (!v34_equalizer_handoff_is_valid(handoff))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
-	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 ||
+	if (receiver == NULL || !qam_adaptation_is_valid(adaptation) ||
 	    v34_data_channel_receiver_init(
 		    &initialized.data_receiver, normalizer, geometry,
 		    expanded_shaping, coefficients, selection,

@@ -2,7 +2,6 @@
 
 #include "v34_phase3_pp_receiver.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool sequence_counts_are_valid(
@@ -29,8 +28,8 @@ static bool sequence_counts_are_valid(
 bool v34_phase3_pp_receiver_is_valid(
 	const struct v34_phase3_pp_receiver *receiver)
 {
-	if (receiver == NULL || !isfinite(receiver->adaptation) ||
-	    receiver->adaptation < 0.0 || receiver->adaptation > 1.0 ||
+	if (receiver == NULL ||
+	    !qam_adaptation_is_valid(receiver->adaptation) ||
 	    !v34_phase3_pp_sequence_is_valid(&receiver->received_targets) ||
 	    !v34_phase3_pp_sequence_is_valid(&receiver->adaptation_targets) ||
 	    !sequence_counts_are_valid(receiver))
@@ -60,8 +59,7 @@ enum v34_phase3_pp_receiver_result v34_phase3_pp_receiver_init(
 		.adaptation = adaptation,
 	};
 
-	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 ||
+	if (receiver == NULL || !qam_adaptation_is_valid(adaptation) ||
 	    v34_phase3_pp_sequence_init(&initialized.received_targets) !=
 		    V34_PHASE3_PP_SEQUENCE_OK ||
 	    v34_phase3_pp_sequence_init(&initialized.adaptation_targets) !=

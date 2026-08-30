@@ -5,17 +5,11 @@
 #include "v34_constellation.h"
 
 #include <limits.h>
-#include <math.h>
 #include <stddef.h>
 
 _Static_assert(
 	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <= UINT8_MAX,
 	"V.90 S onset history must fit its counters");
-
-static bool adaptation_is_valid(double adaptation)
-{
-	return isfinite(adaptation) && adaptation >= 0.0 && adaptation <= 1.0;
-}
 
 static bool equalizer_is_at_handoff(
 	const struct qam_equalizer *equalizer)
@@ -57,7 +51,7 @@ static bool s_exit_is_valid(const struct v90_phase3_return_rx *rx)
 bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
-	if (rx == NULL || !adaptation_is_valid(rx->adaptation) ||
+	if (rx == NULL || !qam_adaptation_is_valid(rx->adaptation) ||
 	    !equalizer_is_at_handoff(&rx->equalizer) ||
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols != V90_PHASE3_RETURN_RX_ONSET_SYMBOLS ||
@@ -119,7 +113,7 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 	};
 
 	if (rx == NULL || !v34_equalizer_handoff_is_valid(equalizer) ||
-	    !adaptation_is_valid(adaptation))
+	    !qam_adaptation_is_valid(adaptation))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	initialized.equalizer = equalizer->equalizer;
 	if (v34_phase3_s_receiver_init_suffix(
@@ -342,9 +336,8 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 	bool ready;
 	enum v90_phase3_return_rx_result result;
 
-	if (!v90_phase3_return_rx_is_valid(rx) || received == NULL ||
-	    !isfinite(received->in_phase) ||
-	    !isfinite(received->quadrature))
+	if (!v90_phase3_return_rx_is_valid(rx) ||
+	    !point_is_finite(received))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_COMPLETE;

@@ -2,7 +2,6 @@
 
 #include "v92_pcm_phase3_initial_rx.h"
 
-#include <math.h>
 #include <stddef.h>
 
 static bool stage_is_valid(enum v92_pcm_phase3_initial_rx_stage stage)
@@ -37,8 +36,7 @@ enum v92_pcm_phase3_initial_rx_result v92_pcm_phase3_initial_rx_init(
 {
 	struct v92_pcm_phase3_initial_rx initialized = { 0 };
 
-	if (receiver == NULL || !isfinite(adaptation) || adaptation < 0.0 ||
-	    adaptation > 1.0 ||
+	if (receiver == NULL || !qam_adaptation_is_valid(adaptation) ||
 	    v92_pcm_phase3_trn1u_line_rx_init(
 		    &initialized.sequence.trn1u, adaptation) !=
 		    V92_PCM_PHASE3_TRN1U_LINE_RX_OK ||

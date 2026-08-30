@@ -15,8 +15,7 @@ bool binary_equalizer_is_valid(
 	       !receiver->equalizer.can_adapt &&
 	       isfinite(receiver->magnitude) && receiver->magnitude > 0.0 &&
 	       receiver->magnitude <= 32768.0 &&
-	       isfinite(receiver->adaptation) && receiver->adaptation >= 0.0 &&
-	       receiver->adaptation <= 1.0 &&
+	       qam_adaptation_is_valid(receiver->adaptation) &&
 	       (receiver->polarity == -1 || receiver->polarity == 1);
 }
 
