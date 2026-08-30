@@ -10,6 +10,8 @@
 enum {
 	ANALOG_PHASE2_AMPLITUDE = 12000,
 	DIGITAL_PHASE2_AMPLITUDE = 5320,
+	DIGITAL_PHASE2_NOMINAL_POWER_CODE = 4,
+	DIGITAL_PHASE2_MAXIMUM_POWER_CODE = 23,
 };
 
 static uint32_t expected_bit_rate(uint8_t rate_index)
@@ -186,7 +188,13 @@ static bool test_generated_profiles(void)
 					      "analogue profile did not generate rate %u",
 					      bit_rate);
 				} else {
-					CHECK(configuration.local_info0.digital.pcm_law ==
+					CHECK(configuration.local_info0.digital
+						      .nominal_transmit_power ==
+						      DIGITAL_PHASE2_NOMINAL_POWER_CODE &&
+					      configuration.local_info0.digital
+						      .maximum_transmit_power ==
+						      DIGITAL_PHASE2_MAXIMUM_POWER_CODE &&
+					      configuration.local_info0.digital.pcm_law ==
 						      (law == G711_LAW_PCMA ?
 							       V90_PCM_A_LAW :
 							       V90_PCM_MU_LAW) &&

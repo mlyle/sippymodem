@@ -9,6 +9,9 @@ enum {
 	V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE = 12000,
 	/* The digital head-end uses one lower level for Tone B and L1/L2. */
 	V90_PHASE2_DIGITAL_NOMINAL_AMPLITUDE = 5320,
+	/* V.90 Table 7 encodes nominal power as -6 dBm0 minus this value. */
+	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 4,
+	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
@@ -56,8 +59,10 @@ static struct v90_info0d digital_info0(enum g711_law law)
 			.cme_modem = true,
 			.constellation_1664_supported = true,
 		},
-		.nominal_transmit_power = 9,
-		.maximum_transmit_power = 18,
+		.nominal_transmit_power =
+			V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE,
+		.maximum_transmit_power =
+			V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE,
 		.measure_power_at_codec_output = true,
 		.pcm_law = law == G711_LAW_PCMA ?
 				   V90_PCM_A_LAW : V90_PCM_MU_LAW,

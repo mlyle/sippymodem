@@ -15,6 +15,8 @@
 enum {
 	ANALOG_PHASE2_AMPLITUDE = 12000,
 	DIGITAL_PHASE2_AMPLITUDE = 5320,
+	DIGITAL_PHASE2_NOMINAL_POWER_CODE = 4,
+	DIGITAL_PHASE2_MAXIMUM_POWER_CODE = 23,
 };
 
 static uint8_t constellation_members(
@@ -145,7 +147,13 @@ static bool test_generated_profiles(void)
 					const struct v92_cpd_base_parameters *cpd =
 						&configuration.v92_digital_phase4.cpd;
 
-					CHECK(configuration.local_info0.v92_digital
+					CHECK(configuration.local_info0.v92_digital.v90
+						      .nominal_transmit_power ==
+						      DIGITAL_PHASE2_NOMINAL_POWER_CODE &&
+					      configuration.local_info0.v92_digital.v90
+						      .maximum_transmit_power ==
+						      DIGITAL_PHASE2_MAXIMUM_POWER_CODE &&
+					      configuration.local_info0.v92_digital
 						      .v92_capable &&
 					      !configuration.local_info0.v92_digital
 						       .short_phase2_requested &&
