@@ -133,11 +133,6 @@ static bool trn_ready_for_mp(const struct v34_phase4_exchange *exchange)
 	transmitted = exchange->transmit.training.phase4_trn_symbols;
 	if (transmitted < V34_PHASE4_TRN_MIN_SYMBOLS)
 		return false;
-	/* A valid peer MP proves that its receiver has finished training on this
-	 * TRN. Otherwise retain the measured physical schedule as a bounded
-	 * fallback when the two modems finish training together. */
-	if (exchange->peer_mp_received)
-		return true;
 	return transmitted >= exchange->mp_transition_symbols;
 }
 

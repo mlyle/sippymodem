@@ -615,23 +615,19 @@ static bool test_generated_online_exchange(void)
 	return true;
 }
 
-static bool test_peer_mp_releases_trn(void)
+static bool test_peer_mp_preserves_trn_schedule(void)
 {
 	struct endpoint caller;
 	struct endpoint answerer;
 	struct v34_training_transmitter peer_transmit;
-	struct v34_mp_parameters *caller_parameters;
 	int16_t caller_receive = 0;
 	int16_t answerer_receive = 0;
+	uint32_t trn_symbols_at_peer_mp = 0;
 	bool trn_ready = false;
 
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
 	      "early-peer-MP endpoints did not initialize");
-	caller_parameters = v34_mp_record_common_parameters_mutable(
-		&caller.phase4_configuration.transmit_mp);
-	caller_parameters->maximum_call_to_answer_rate_2400_bps_units = 8;
-	caller_parameters->maximum_answer_to_call_rate_2400_bps_units = 8;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
@@ -660,12 +656,6 @@ static bool test_peer_mp_releases_trn(void)
 	CHECK(trn_ready && !caller.phase4.peer_mp_received &&
 	      !caller.phase4.transmit_mp_started,
 	      "early-peer-MP setup missed the open TRN interval");
-	/* A complete metric of 600 is above the 19.2 kbit/s threshold but
-	 * below the 16.8 kbit/s threshold for 3000 symbols/s. */
-	caller.phase4.receive.equalizer.quality =
-		(struct v34_adaptive_equalizer_quality){
-			.decision_metric = 600,
-		};
 	peer_transmit = answerer.phase4.transmit.training;
 	CHECK(v34_training_transmitter_start_mp_type0(
 		      &peer_transmit,
@@ -703,23 +693,54 @@ static bool test_peer_mp_releases_trn(void)
 		      "early peer MP exchange stopped at sample %zu", index);
 		if ((events & V34_PHASE4_EXCHANGE_EVENT_PEER_MP_RECEIVED) == 0)
 			continue;
-		caller_parameters = v34_mp_record_common_parameters_mutable(
-			&caller.phase4.transmit_mp);
-		CHECK((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) != 0 &&
-		      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
-		      caller.trn_symbols_at_mp < 2u * 3000u &&
-		      caller_parameters
-			      ->maximum_call_to_answer_rate_2400_bps_units == 8 &&
-		      caller_parameters
-			      ->maximum_answer_to_call_rate_2400_bps_units == 7 &&
-		      caller.phase4.transmit_mp_started &&
-		      caller.phase4.receive.feedback_training_complete &&
+		trn_symbols_at_peer_mp = caller.phase4.transmit.training
+			.phase4_trn_symbols;
+		CHECK((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) == 0 &&
+		      trn_symbols_at_peer_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
+		      trn_symbols_at_peer_mp <
+			      caller.phase4.mp_transition_symbols &&
+		      !caller.phase4.transmit_mp_started &&
+		      !caller.phase4.receive.feedback_training_complete &&
 		      caller.data_preparation_count == 1u,
-		      "valid peer MP did not release trained local TRN at %uT",
-		      caller.trn_symbols_at_mp);
+		      "valid peer MP changed the local TRN schedule at %u/%uT",
+		      trn_symbols_at_peer_mp,
+		      caller.phase4.mp_transition_symbols);
+		break;
+	}
+	CHECK(trn_symbols_at_peer_mp != 0u,
+	      "early peer MP was not accepted");
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		int16_t peer_sample;
+		int16_t discarded;
+		uint32_t events;
+
+		if (v34_training_transmitter_phase4_mp_record_complete(
+			    &peer_transmit)) {
+			CHECK(v34_training_transmitter_start_mp_type0(
+				      &peer_transmit,
+				      &answerer.phase4_configuration.transmit_mp
+					       .parameters.type0) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "peer MP repeat did not restart");
+		}
+		CHECK(v34_training_transmitter_sample(
+			      &peer_transmit, &peer_sample) ==
+			      V34_TRAINING_TRANSMITTER_OK &&
+		      endpoint_sample(
+			      &caller, peer_sample, &discarded, &events),
+		      "scheduled local TRN stopped at sample %zu", index);
+		if ((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) == 0)
+			continue;
+		CHECK(caller.trn_symbols_at_mp ==
+			      caller.phase4.mp_transition_symbols &&
+		      caller.trn_symbols_at_mp > trn_symbols_at_peer_mp &&
+		      caller.phase4.receive.feedback_training_complete,
+		      "local MP started outside its schedule at %u/%uT",
+		      caller.trn_symbols_at_mp,
+		      caller.phase4.mp_transition_symbols);
 		return true;
 	}
-	CHECK(false, "early peer MP was not accepted");
+	CHECK(false, "local MP did not start on its retained schedule");
 }
 
 static bool test_phase4_owns_selected_rates(void)
@@ -1126,8 +1147,8 @@ int main(void)
 		  test_mp_transition_schedule },
 		{ "generated online exchange",
 		  test_generated_online_exchange },
-		{ "peer MP releases trained TRN",
-		  test_peer_mp_releases_trn },
+		{ "peer MP preserves local TRN schedule",
+		  test_peer_mp_preserves_trn_schedule },
 		{ "Phase 4 owns selected data rates",
 		  test_phase4_owns_selected_rates },
 		{ "mapping source backpressure",
