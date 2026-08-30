@@ -124,30 +124,16 @@ static bool test_complementary_paths(void)
 	struct v34_data_mode answerer_selection = answerer_mode();
 	struct v34_data_startup caller_startup;
 	struct v34_data_startup answerer_startup;
-	double caller_point_gain;
-	double answerer_point_gain;
 
 	CHECK(v34_data_startup_prepare(
 		      &caller_startup, &caller_selection, &caller, &answerer,
-		      8000, 0.01) == V34_DATA_STARTUP_OK &&
+		      0.01) == V34_DATA_STARTUP_OK &&
 	      v34_data_startup_prepare(
 		      &answerer_startup, &answerer_selection, &answerer, &caller,
-		      8000, 0.02) == V34_DATA_STARTUP_OK &&
+		      0.02) == V34_DATA_STARTUP_OK &&
 	      v34_data_startup_is_valid(&caller_startup) &&
 	      v34_data_startup_is_valid(&answerer_startup),
 	      "complementary startup paths did not initialize");
-	CHECK(v34_data_mapping_line_point_gain(
-		      &caller_startup.transmit, 8000,
-		      &caller_point_gain) == V34_DATA_MAPPING_OK &&
-	      v34_data_mapping_line_point_gain(
-		      &answerer_startup.transmit, 8000,
-		      &answerer_point_gain) == V34_DATA_MAPPING_OK &&
-	      caller_point_gain == 1.0 && answerer_point_gain == 1.0 &&
-	      caller_point_gain ==
-		      answerer_startup.receive.transmit_point_gain &&
-	      answerer_point_gain ==
-		      caller_startup.receive.transmit_point_gain,
-	      "complementary startup point gains changed direction");
 	CHECK(mapping_matches_receiver(
 		      &caller_startup.transmit, &answerer_startup.receive) &&
 	      mapping_matches_receiver(
@@ -186,7 +172,7 @@ static bool test_validation_and_transactionality(void)
 	caller.projected_data_rate_2400_bps_units = 4;
 	answerer.projected_data_rate_2400_bps_units = 5;
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000, 0.01) ==
+		      &prepared, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_OK &&
 	      v34_data_startup_is_valid(&prepared) &&
 	      prepared.transmit.schedule.geometry
@@ -198,32 +184,29 @@ static bool test_validation_and_transactionality(void)
 	answerer = answerer_profile();
 	memset(&destination, 0xa5, sizeof(destination));
 	CHECK(v34_data_startup_prepare(
-		      NULL, &mode, &caller, &answerer, 8000, 0.01) ==
+		      NULL, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, NULL, &caller, &answerer, 8000, 0.01) ==
+		      &destination, NULL, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, NULL, &answerer, 8000, 0.01) ==
+		      &destination, &mode, NULL, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, NULL, 8000, 0.01) ==
+		      &destination, &mode, &caller, NULL, 0.01) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, &caller, 8000, 0.01) ==
+		      &destination, &mode, &caller, &caller, 0.01) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 8000, NAN) ==
-		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 0, 0.01) ==
+		      &destination, &mode, &caller, &answerer, NAN) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "invalid startup input changed the destination");
 	mode.transmit.primary_data_rate_2400_bps_units = 14;
 	caller.projected_data_rate_2400_bps_units = 14;
 	CHECK(v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 8000, 0.01) ==
+		      &destination, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "unsupported transmit geometry changed the destination");
@@ -231,7 +214,7 @@ static bool test_validation_and_transactionality(void)
 	mode.receive.primary_data_rate_2400_bps_units = 14;
 	answerer.projected_data_rate_2400_bps_units = 14;
 	CHECK(v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 8000, 0.01) ==
+		      &destination, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "receive failure exposed a partially prepared path");
@@ -240,7 +223,7 @@ static bool test_validation_and_transactionality(void)
 	caller = caller_profile();
 	answerer = answerer_profile();
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000, 0.01) ==
+		      &prepared, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_OK,
 	      "startup validation fixture did not initialize");
 	prepared.receive.equalizer_adaptation = NAN;
@@ -248,16 +231,9 @@ static bool test_validation_and_transactionality(void)
 	      !v34_data_startup_is_valid(&prepared),
 	      "invalid receive adaptation was accepted");
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000, 0.01) ==
+		      &prepared, &mode, &caller, &answerer, 0.01) ==
 		      V34_DATA_STARTUP_OK,
 	      "startup validation fixture did not reinitialize");
-	prepared.receive.transmit_point_gain = NAN;
-	CHECK(!v34_data_startup_is_valid(&prepared),
-	      "invalid receive point gain was accepted");
-	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 8000, 0.01) ==
-		      V34_DATA_STARTUP_OK,
-	      "startup point-gain fixture did not reinitialize");
 	prepared.transmit.encoder.previous_differential_output = 1;
 	CHECK(!v34_data_startup_is_valid(&prepared),
 	      "advanced transmit mapping was accepted");

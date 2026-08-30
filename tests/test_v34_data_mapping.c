@@ -75,8 +75,6 @@ static bool test_prepared_b1_mapping(void)
 	struct v34_data_mapping first;
 	struct v34_data_mapping repeated;
 	struct v34_data_mapping reverse;
-	double point_gain;
-	double repeated_gain;
 
 	CHECK(v34_data_mapping_prepare(
 		      &first, &caller, &parameters, true) ==
@@ -113,12 +111,6 @@ static bool test_prepared_b1_mapping(void)
 	      v34_test_encoders_are_equal(&first.encoder, &repeated.encoder) &&
 	      normalizers_are_equal(&first.normalizer, &repeated.normalizer),
 	      "directional mapping state or deterministic calibration changed");
-	CHECK(v34_data_mapping_line_point_gain(
-		      &first, 8000, &point_gain) == V34_DATA_MAPPING_OK &&
-	      v34_data_mapping_line_point_gain(
-		      &first, 8000, &repeated_gain) == V34_DATA_MAPPING_OK &&
-	      point_gain == 1.0 && repeated_gain == 1.0,
-	      "B1 mapping changed the trained constellation scale");
 	return true;
 }
 
@@ -129,7 +121,6 @@ static bool test_validation_and_transactionality(void)
 	struct v34_data_direction_parameters parameters = parameters_fixture();
 	struct v34_data_mapping destination;
 	struct v34_data_mapping prepared;
-	double point_gain = 123.0;
 	unsigned char saved[sizeof(destination)];
 
 	memset(&destination, 0xa5, sizeof(destination));
@@ -184,24 +175,9 @@ static bool test_validation_and_transactionality(void)
 		      &prepared, &profile, &parameters, false) ==
 		      V34_DATA_MAPPING_OK,
 	      "validation fixture did not reinitialize");
-	CHECK(v34_data_mapping_line_point_gain(
-		      &prepared, 0, &point_gain) ==
-		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      v34_data_mapping_line_point_gain(
-		      NULL, 8000, &point_gain) ==
-		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      v34_data_mapping_line_point_gain(
-		      &prepared, 8000, NULL) ==
-		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      point_gain == 123.0,
-	      "invalid line point-gain input changed its output");
 	prepared.encoder.previous_differential_output = 1;
-	CHECK(!v34_data_mapping_is_valid(&prepared) &&
-	      v34_data_mapping_line_point_gain(
-		      &prepared, 8000, &point_gain) ==
-		      V34_DATA_MAPPING_INVALID_ARGUMENT &&
-	      point_gain == 123.0,
-	      "advanced encoder was accepted by line point calibration");
+	CHECK(!v34_data_mapping_is_valid(&prepared),
+	      "advanced encoder was accepted as a fresh mapping");
 	return true;
 }
 

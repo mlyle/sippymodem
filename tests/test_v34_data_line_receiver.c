@@ -83,7 +83,6 @@ static struct v34_data_line_receiver_configuration receiver_configuration(
 		.transmitting_profile = configuration->profile,
 		.geometry = stream->points.schedule.geometry,
 		.normalizer = stream->points.normalizer,
-		.transmit_point_gain = 1.0,
 		.equalizer_adaptation = equalizer_adaptation,
 		.trellis_selection = configuration->trellis_selection,
 		.expanded_shaping = configuration->expanded_shaping,
@@ -410,24 +409,6 @@ static bool prepare_handoff(
 		    &prepared.receiver, &demodulator, &handoff,
 		    &receiver_config) != V34_DATA_RECEIVE_OK)
 		return false;
-	for (size_t tap = 0; tap < equalizer.tap_count; ++tap) {
-		double in_phase = prepared.receiver.equalizer_receiver.equalizer
-			.coefficients[tap].in_phase *
-			receiver_config.transmit_point_gain;
-		double quadrature = prepared.receiver.equalizer_receiver.equalizer
-			.coefficients[tap].quadrature *
-			receiver_config.transmit_point_gain;
-		double scale = fmax(
-			1.0, hypot(equalizer.coefficients[tap].in_phase,
-				   equalizer.coefficients[tap].quadrature));
-
-		if (fabs(in_phase - equalizer.coefficients[tap].in_phase) >
-			    1e-12 * scale ||
-		    fabs(quadrature -
-			 equalizer.coefficients[tap].quadrature) >
-			    1e-12 * scale)
-			return false;
-	}
 	*fixture = prepared;
 	return true;
 }
@@ -692,14 +673,6 @@ static bool test_validation_and_failure_latch(void)
 		      &configuration) == V34_DATA_RECEIVE_INVALID_ARGUMENT &&
 	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
 	      "V.34 line receiver accepted an unlocked handoff");
-	configuration.transmit_point_gain = 0.0;
-	CHECK(v34_data_line_receiver_init(
-		      &rejected, &fixture.receiver.line, &handoff,
-		      &configuration) == V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      object_is_filled(&rejected, sizeof(rejected), 0xa5),
-	      "V.34 line receiver accepted a zero point gain");
-	configuration = receiver_configuration(
-		&fixture.stream, &fixture.configuration, 0.01);
 	invalid_handoff = handoff;
 	invalid_handoff.equalizer.fill =
 		handoff.equalizer.decision_delay;

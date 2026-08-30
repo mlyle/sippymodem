@@ -126,16 +126,3 @@ enum v34_data_mapping_result v34_data_mapping_prepare(
 	*mapping = prepared;
 	return V34_DATA_MAPPING_OK;
 }
-
-enum v34_data_mapping_result v34_data_mapping_line_point_gain(
-	const struct v34_data_mapping *mapping, uint32_t sample_rate,
-	double *point_gain)
-{
-	if (!v34_data_mapping_is_valid(mapping) || sample_rate == 0 ||
-	    point_gain == NULL)
-		return V34_DATA_MAPPING_INVALID_ARGUMENT;
-	/* E, B1, and data are one uninterrupted line signal. The trained
-	 * equalizer and the transmitter therefore retain the same point scale. */
-	*point_gain = 1.0;
-	return V34_DATA_MAPPING_OK;
-}

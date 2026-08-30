@@ -806,7 +806,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	startup_result = v34_data_startup_prepare(
 		&startup, &mode, &exchange->transmit.training.line.profile,
-		peer_transmit_profile(exchange), V34_RECEIVE_TIMING_SAMPLE_RATE,
+		peer_transmit_profile(exchange),
 		exchange->data_equalizer_adaptation);
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?

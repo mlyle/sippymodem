@@ -471,11 +471,6 @@ enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 		completed_e->transmitting_profile;
 	configuration.geometry = mapping.schedule.geometry;
 	configuration.normalizer = mapping.normalizer;
-	result = mapping_result(v34_data_mapping_line_point_gain(
-		&mapping, completed_e->demodulator.channel.sample_rate,
-		&configuration.transmit_point_gain));
-	if (result != V90_UPSTREAM_DATA_OK)
-		return result;
 	configuration.equalizer_adaptation = completed_e->adaptation;
 	configuration.trellis_selection = direction.trellis_selection;
 	configuration.expanded_shaping = direction.expanded_shaping;
