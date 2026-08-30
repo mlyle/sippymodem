@@ -77,8 +77,8 @@ union v34_phase4_transmit_path {
  * reciprocal MP-prime, E, and B1 exchanges and into mapped data. The local MP
  * reduces its receive-direction ceiling from the completed training metric
  * before it is encoded. Each transmitter retains its measured line-delay
- * schedule even after receiving a peer MP: that record follows the peer's
- * transmit schedule and does not acknowledge completion of its receiver.
+ * schedule even after receiving a peer MP: that record ends receive-side
+ * feedback training, but says nothing about completion of the peer's receiver.
  * The caller ends J only after
  * receiving the answerer's complete S/S-bar marker and reaching a J-pattern
  * boundary. Receipt of the first valid peer MP pauses

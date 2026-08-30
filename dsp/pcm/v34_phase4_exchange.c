@@ -302,7 +302,7 @@ static bool receiver_feedback_matches_mp(
 		zero[V34_PRECODER_TAP_COUNT];
 	const struct v34_phase34_receiver *receiver = &exchange->receive;
 	if (receiver->feedback_training_complete !=
-	    exchange->transmit_mp_started)
+	    (exchange->transmit_mp_started || exchange->peer_mp_received))
 		return false;
 	if (!receiver->feedback_training_complete)
 		return true;
@@ -564,14 +564,18 @@ static enum v34_phase4_exchange_result start_transmit_mp(
 	return transmit_result(result);
 }
 
-static enum v34_phase4_exchange_result finish_feedback_training(
+static enum v34_phase4_exchange_result prepare_local_mp(
 	struct v34_phase4_exchange *exchange)
 {
-	const struct v34_mp_parameters *parameters =
-		v34_mp_record_common_parameters(&exchange->transmit_mp);
+	struct v34_mp_parameters *parameters =
+		v34_mp_record_common_parameters_mutable(&exchange->transmit_mp);
 	struct v34_q14_coefficient coefficients[V34_PRECODER_TAP_COUNT];
+	uint8_t *maximum;
+	uint8_t selected;
 	bool allow_precoder;
 
+	if (exchange->receive.feedback_training_complete)
+		return V34_PHASE4_EXCHANGE_OK;
 	allow_precoder = exchange->transmit_mp.type == V34_MP_RECORD_TYPE1 &&
 		(parameters->data_rate_capability_mask &
 		 (uint16_t)~UINT16_C(1)) != 0;
@@ -583,18 +587,9 @@ static enum v34_phase4_exchange_result finish_feedback_training(
 		memcpy(exchange->transmit_mp.parameters.type1
 			       .precoder_coefficients,
 		       coefficients, sizeof(coefficients));
-	return V34_PHASE4_EXCHANGE_OK;
-}
-
-static enum v34_phase4_exchange_result select_trained_receive_rate(
-	struct v34_phase4_exchange *exchange)
-{
-	struct v34_mp_parameters *parameters =
-		v34_mp_record_common_parameters_mutable(&exchange->transmit_mp);
-	uint8_t *maximum = local_role(exchange) == V34_CALLING_STATION ?
+	maximum = local_role(exchange) == V34_CALLING_STATION ?
 		&parameters->maximum_answer_to_call_rate_2400_bps_units :
 		&parameters->maximum_call_to_answer_rate_2400_bps_units;
-	uint8_t selected;
 
 	if (v34_data_quality_select_receive_rate(
 		    peer_transmit_profile(exchange)->symbol_rate,
@@ -655,10 +650,7 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 		*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_J_FINISHED;
 	}
 	if (!exchange->transmit_mp_started && trn_ready_for_mp(exchange)) {
-		result = finish_feedback_training(exchange);
-		if (result != V34_PHASE4_EXCHANGE_OK)
-			return result;
-		result = select_trained_receive_rate(exchange);
+		result = prepare_local_mp(exchange);
 		if (result != V34_PHASE4_EXCHANGE_OK)
 			return result;
 		result = start_transmit_mp(exchange, false);
@@ -837,6 +829,7 @@ static enum v34_phase4_exchange_result accept_mp_record(
 	const struct v34_mp_receive_event *event, uint32_t *events)
 {
 	struct v34_mp_record record;
+	enum v34_phase4_exchange_result result;
 	bool acknowledged;
 
 	if (event->type == V34_MP_RECEIVE_REJECTED)
@@ -846,6 +839,9 @@ static enum v34_phase4_exchange_result accept_mp_record(
 	acknowledged = record_is_acknowledged(&record);
 	set_record_acknowledgment(&record, false);
 	if (!exchange->peer_mp_received) {
+		result = prepare_local_mp(exchange);
+		if (result != V34_PHASE4_EXCHANGE_OK)
+			return result;
 		exchange->peer_mp = record;
 		exchange->peer_mp_received = true;
 		exchange->data_preparation_required = true;

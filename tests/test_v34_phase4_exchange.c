@@ -700,15 +700,51 @@ static bool test_peer_mp_preserves_trn_schedule(void)
 		      trn_symbols_at_peer_mp <
 			      caller.phase4.mp_transition_symbols &&
 		      !caller.phase4.transmit_mp_started &&
-		      !caller.phase4.receive.feedback_training_complete &&
+		      caller.phase4.receive.feedback_training_complete &&
 		      caller.data_preparation_count == 1u,
-		      "valid peer MP changed the local TRN schedule at %u/%uT",
+		      "valid peer MP crossed the local TRN schedule at %u/%uT",
 		      trn_symbols_at_peer_mp,
 		      caller.phase4.mp_transition_symbols);
 		break;
 	}
 	CHECK(trn_symbols_at_peer_mp != 0u,
 	      "early peer MP was not accepted");
+	{
+		struct v34_phase4_exchange crossed =
+			caller.preparation_snapshot;
+		struct v34_received_mapping_frame received = { 0 };
+		int16_t sample = 0;
+		uint32_t events = 0;
+
+		crossed.peer_mp_prime_received = true;
+		CHECK(caller.has_preparation_snapshot &&
+		      crossed.receive.feedback_training_complete &&
+		      !crossed.transmit_mp_started &&
+		      v34_phase4_exchange_is_valid(&crossed) &&
+		      v34_phase4_exchange_prepare_data_startup(&crossed) ==
+			      V34_PHASE4_EXCHANGE_OK &&
+		      crossed.receive.semantic.phase4.stage ==
+			      V34_PHASE4_DECISION_RECEIVER_E,
+		      "early peer MP-prime did not arm independent E reception");
+		for (size_t index = 0;
+		     crossed.transmit.training.phase4_trn_symbols <
+			     crossed.mp_transition_symbols;
+		     ++index) {
+			CHECK(index < SAMPLE_LIMIT &&
+			      v34_training_transmitter_sample(
+				      &crossed.transmit.training, &sample) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "crossed E/TRN state missed the local MP boundary");
+		}
+		CHECK(v34_phase4_exchange_sample(
+			      &crossed, 0, NULL, NULL, &sample, &events,
+			      &received) == V34_PHASE4_EXCHANGE_OK &&
+		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED &&
+		      crossed.transmit_mp_started &&
+		      crossed.receive.semantic.phase4.stage ==
+			      V34_PHASE4_DECISION_RECEIVER_E,
+		      "independent E reception blocked the scheduled local MP");
+	}
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t peer_sample;
 		int16_t discarded;
@@ -880,7 +916,7 @@ static bool test_mp_acknowledgment_boundaries(void)
 	const struct v34_phase4_exchange *snapshot;
 	uint32_t caller_seen;
 	uint32_t answerer_seen;
-	uint32_t events = UINT32_C(0x40000000);
+	uint32_t events = 0;
 
 	CHECK(run_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
@@ -893,50 +929,11 @@ static bool test_mp_acknowledgment_boundaries(void)
 		&answerer.preparation_snapshot;
 	CHECK(!snapshot->peer_mp_prime_received &&
 	      snapshot->peer_mp_received &&
+	      snapshot->receive.feedback_training_complete &&
+	      snapshot->transmit_mp_started &&
 	      v34_phase4_exchange_needs_data_preparation(snapshot),
 	      "preparation snapshot cannot model an acknowledged first record");
 	pending = *snapshot;
-	if (!pending.transmit_mp_started) {
-		struct v34_q14_coefficient
-			coefficients[V34_PRECODER_TAP_COUNT];
-		enum v34_training_transmitter_result start_result;
-
-		for (size_t sample_index = 0;
-		     pending.transmit.training.phase4_trn_symbols < 2u * 3000u;
-		     ++sample_index) {
-			int16_t sample;
-
-			CHECK(sample_index < 20000u &&
-			      v34_training_transmitter_sample(
-				      &pending.transmit.training, &sample) ==
-				      V34_TRAINING_TRANSMITTER_OK,
-			      "answerer TRN did not reach its MP boundary");
-		}
-		CHECK(v34_phase34_receiver_finish_feedback_training(
-			      &pending.receive,
-			      pending.transmit_mp.type == V34_MP_RECORD_TYPE1,
-			      coefficients) == V34_PHASE34_RECEIVER_OK,
-		      "answerer feedback did not freeze at its MP boundary");
-		if (pending.transmit_mp.type == V34_MP_RECORD_TYPE1) {
-			memcpy(pending.transmit_mp.parameters.type1
-				       .precoder_coefficients,
-			       coefficients, sizeof(coefficients));
-			start_result = v34_training_transmitter_start_mp_type1(
-				&pending.transmit.training,
-				&pending.transmit_mp.parameters.type1);
-		} else {
-			start_result = v34_training_transmitter_start_mp_type0(
-				&pending.transmit.training,
-				&pending.transmit_mp.parameters.type0);
-		}
-		CHECK(start_result == V34_TRAINING_TRANSMITTER_OK,
-		      "answerer local MP did not start");
-		pending.transmit_mp_started = true;
-		CHECK(v34_phase4_exchange_is_valid(&pending),
-		      "answerer MP boundary made pending state invalid");
-	}
-	CHECK(pending.transmit_mp_records_completed == 0,
-	      "ordinary MP did not start at its first record");
 	pending.peer_mp_prime_received = true;
 	CHECK(v34_phase4_exchange_is_valid(&pending),
 	      "early reciprocal MP-prime made pending state invalid");
@@ -944,8 +941,11 @@ static bool test_mp_acknowledgment_boundaries(void)
 		      &pending) == V34_PHASE4_EXCHANGE_OK &&
 	      v34_phase4_exchange_is_valid(&pending) &&
 	      !v34_phase4_exchange_needs_data_preparation(&pending) &&
-	      events == UINT32_C(0x40000000),
-	      "early reciprocal MP-prime changed data preparation output");
+	      pending.receive.semantic.phase4.stage ==
+		      V34_PHASE4_DECISION_RECEIVER_E,
+	      "early reciprocal MP-prime did not arm E reception");
+	CHECK(pending.transmit_mp_records_completed == 0,
+	      "ordinary MP did not start at its first record");
 	for (uint8_t record = 0; record < V34_PHASE4_MIN_MP_RECORDS; ++record) {
 		struct v34_received_mapping_frame received = { 0 };
 		int16_t sample = 0;
