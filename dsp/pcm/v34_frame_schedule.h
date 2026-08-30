@@ -81,10 +81,10 @@ bool v34_frame_schedule_is_valid(
 bool v34_frame_schedule_is_complete(
 	const struct v34_frame_schedule *schedule);
 
-/* Continue a completed schedule at the next data frame, wrapping at the
- * superframe boundary. Incomplete and invalid schedules are unchanged. */
+/* Leave an in-progress schedule unchanged, or continue a completed schedule
+ * at the next data frame. Invalid schedules are unchanged. */
 enum v34_frame_schedule_result
-v34_frame_schedule_advance_data_frame(
+v34_frame_schedule_prepare_mapping_frame(
 	struct v34_frame_schedule *schedule);
 
 /* Emit one mapping-frame description. Rejected and completed calls leave the

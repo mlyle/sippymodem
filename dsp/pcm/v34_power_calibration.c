@@ -72,9 +72,8 @@ static enum v34_power_calibration_result generate_mapping_frame(
 	const uint8_t *auxiliary_pointer = NULL;
 	enum v34_mapping_frame_transmitter_result result;
 
-	if (v34_frame_schedule_is_complete(schedule) &&
-	    v34_frame_schedule_advance_data_frame(schedule) !=
-		    V34_FRAME_SCHEDULE_OK)
+	if (v34_frame_schedule_prepare_mapping_frame(schedule) !=
+	    V34_FRAME_SCHEDULE_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	preview = *schedule;
 	if (v34_frame_schedule_next(&preview, &mapping_frame) !=

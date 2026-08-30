@@ -104,9 +104,7 @@ bool v34_channel_frame_decoder_is_valid(
 static bool load_next_channel_frame(
 	struct v34_channel_frame_decoder *decoder)
 {
-	if (v34_frame_schedule_is_complete(
-		    &decoder->channel_schedule) &&
-	    v34_frame_schedule_advance_data_frame(
+	if (v34_frame_schedule_prepare_mapping_frame(
 		    &decoder->channel_schedule) !=
 		    V34_FRAME_SCHEDULE_OK)
 		return false;

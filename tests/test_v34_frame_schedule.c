@@ -369,7 +369,7 @@ static bool test_data_frame_rollover(void)
 				      &schedule, &geometry, data_frame) ==
 				      V34_FRAME_SCHEDULE_OK &&
 			      collect_schedule(&schedule, &ignored) &&
-			      v34_frame_schedule_advance_data_frame(
+			      v34_frame_schedule_prepare_mapping_frame(
 				      &schedule) ==
 				      V34_FRAME_SCHEDULE_OK &&
 			      v34_frame_schedule_is_valid(&schedule) &&
@@ -380,11 +380,10 @@ static bool test_data_frame_rollover(void)
 			      "data frame %zu/%u did not roll over", rate_index,
 			      data_frame);
 			advanced = schedule;
-			CHECK(v34_frame_schedule_advance_data_frame(
-				      &schedule) ==
-				      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+			CHECK(v34_frame_schedule_prepare_mapping_frame(
+				      &schedule) == V34_FRAME_SCHEDULE_OK &&
 			      schedules_are_equal(&schedule, &advanced),
-			      "incomplete schedule %zu/%u advanced", rate_index,
+			      "incomplete schedule %zu/%u changed", rate_index,
 			      data_frame);
 		}
 	}
@@ -468,7 +467,7 @@ static bool test_validation(void)
 	CHECK(v34_frame_schedule_next(
 		      NULL, &mapping_frame) ==
 		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
-	      v34_frame_schedule_advance_data_frame(NULL) ==
+	      v34_frame_schedule_prepare_mapping_frame(NULL) ==
 		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
 	      v34_frame_schedule_next(&schedule, NULL) ==
 		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
@@ -479,7 +478,11 @@ static bool test_validation(void)
 	schedule = saved_schedule;
 	schedule.next_mapping_frame =
 		(uint8_t)(geometry.mapping_frames_per_data_frame + 1u);
+	saved_schedule = schedule;
 	CHECK(!v34_frame_schedule_is_valid(&schedule) &&
+	      v34_frame_schedule_prepare_mapping_frame(&schedule) ==
+		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&
+	      schedules_are_equal(&schedule, &saved_schedule) &&
 	      v34_frame_schedule_next(
 		      &schedule, &mapping_frame) ==
 		      V34_FRAME_SCHEDULE_INVALID_ARGUMENT &&

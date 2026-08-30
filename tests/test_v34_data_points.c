@@ -99,8 +99,7 @@ static bool queue_and_compare_frame(
 	uint8_t auxiliary_bit = (uint8_t)(frame_index & 1u);
 	const uint8_t *auxiliary;
 
-	if (v34_frame_schedule_is_complete(schedule) &&
-	    v34_frame_schedule_advance_data_frame(schedule) !=
+	if (v34_frame_schedule_prepare_mapping_frame(schedule) !=
 		    V34_FRAME_SCHEDULE_OK)
 		return false;
 	preview_schedule = *schedule;

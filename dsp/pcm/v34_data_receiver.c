@@ -89,14 +89,6 @@ bool v34_data_receiver_is_receiving_b1(
 	       receiver->b1_active;
 }
 
-static bool prepare_next_schedule(
-	struct v34_frame_schedule *schedule)
-{
-	return !v34_frame_schedule_is_complete(schedule) ||
-	       v34_frame_schedule_advance_data_frame(schedule) ==
-		       V34_FRAME_SCHEDULE_OK;
-}
-
 static uint16_t b1_error_count(
 	const struct v34_received_mapping_frame *received)
 {
@@ -127,7 +119,9 @@ v34_data_receiver_receive_mapping_frame(
 	    decided == NULL || received == NULL)
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	next = *receiver;
-	if (!next.b1_active && !prepare_next_schedule(&next.schedule))
+	if (!next.b1_active &&
+	    v34_frame_schedule_prepare_mapping_frame(&next.schedule) !=
+		    V34_FRAME_SCHEDULE_OK)
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	result = v34_receive_mapping_frame(
 		&next.schedule, &next.descrambler, &next.mapping_decoder,

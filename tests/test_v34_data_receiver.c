@@ -111,9 +111,7 @@ static bool prepare_packet(
 {
 	struct v34_frame_schedule preview;
 
-	if (v34_frame_schedule_is_complete(
-		    &fixture->transmit_schedule) &&
-	    v34_frame_schedule_advance_data_frame(
+	if (v34_frame_schedule_prepare_mapping_frame(
 		    &fixture->transmit_schedule) !=
 		    V34_FRAME_SCHEDULE_OK)
 		return false;

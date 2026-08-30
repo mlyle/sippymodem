@@ -63,13 +63,6 @@ bool v34_data_points_needs_mapping_frame(
 	       points->next_point == V34_SYMBOLS_PER_MAPPING_FRAME;
 }
 
-static bool prepare_next_schedule(struct v34_frame_schedule *schedule)
-{
-	return !v34_frame_schedule_is_complete(schedule) ||
-	       v34_frame_schedule_advance_data_frame(schedule) ==
-		       V34_FRAME_SCHEDULE_OK;
-}
-
 enum v34_data_points_result v34_data_points_preview_mapping_frame(
 	const struct v34_data_points *points,
 	struct v34_mapping_frame *mapping_frame)
@@ -82,7 +75,8 @@ enum v34_data_points_result v34_data_points_preview_mapping_frame(
 	if (!v34_data_points_needs_mapping_frame(points))
 		return V34_DATA_POINTS_MAPPING_FRAME_PENDING;
 	schedule = points->schedule;
-	if (!prepare_next_schedule(&schedule) ||
+	if (v34_frame_schedule_prepare_mapping_frame(&schedule) !=
+		    V34_FRAME_SCHEDULE_OK ||
 	    v34_frame_schedule_next(&schedule, &preview) !=
 		    V34_FRAME_SCHEDULE_OK)
 		return V34_DATA_POINTS_NUMERIC_FAILURE;
@@ -137,7 +131,8 @@ enum v34_data_points_result v34_data_points_queue_mapping_frame(
 	if (!v34_data_points_needs_mapping_frame(points))
 		return V34_DATA_POINTS_MAPPING_FRAME_PENDING;
 	next = *points;
-	if (!prepare_next_schedule(&next.schedule))
+	if (v34_frame_schedule_prepare_mapping_frame(&next.schedule) !=
+	    V34_FRAME_SCHEDULE_OK)
 		return V34_DATA_POINTS_NUMERIC_FAILURE;
 	result = mapping_result(v34_transmit_mapping_frame(
 		&next.schedule, &next.scrambler, &next.encoder,

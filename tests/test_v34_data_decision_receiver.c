@@ -125,8 +125,7 @@ static bool transmit_frame(
 		fixture->mapping.schedule.geometry
 			.mapping_frames_per_data_frame;
 
-	if (v34_frame_schedule_is_complete(&fixture->mapping.schedule) &&
-	    v34_frame_schedule_advance_data_frame(
+	if (v34_frame_schedule_prepare_mapping_frame(
 		    &fixture->mapping.schedule) != V34_FRAME_SCHEDULE_OK)
 		return false;
 	preview = fixture->mapping.schedule;

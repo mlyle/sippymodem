@@ -210,13 +210,15 @@ bool v34_frame_schedule_is_complete(
 }
 
 enum v34_frame_schedule_result
-v34_frame_schedule_advance_data_frame(
+v34_frame_schedule_prepare_mapping_frame(
 	struct v34_frame_schedule *schedule)
 {
 	uint8_t next_data_frame;
 
-	if (!v34_frame_schedule_is_complete(schedule))
+	if (!v34_frame_schedule_is_valid(schedule))
 		return V34_FRAME_SCHEDULE_INVALID_ARGUMENT;
+	if (!v34_frame_schedule_is_complete(schedule))
+		return V34_FRAME_SCHEDULE_OK;
 	next_data_frame = (uint8_t)(schedule->data_frame_in_superframe + 1u);
 	if (next_data_frame == schedule->geometry.data_frames_per_superframe)
 		next_data_frame = 0;
