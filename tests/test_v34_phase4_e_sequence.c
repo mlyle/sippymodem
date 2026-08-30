@@ -8,7 +8,7 @@
 #include <string.h>
 
 enum {
-	TRN_PREFIX_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 3,
+	TRN_PREFIX_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 3,
 	V34_HISTORY_MASK = (1u << V34_SCRAMBLER_BITS) - 1u,
 	V34_COMMON_TAP_DELAY = 23,
 };
@@ -107,21 +107,21 @@ static bool generate_completed_mp(
 	enum v34_constellation_size constellation,
 	bool acknowledged)
 {
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_mp_parameters selected =
 		parameters(acknowledged);
 
-	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
-		      V34_PHASE4_TRN_OK,
+	CHECK(v34_training_sequence_init(&trn, role, constellation) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "E fixture TRN did not initialize");
 	for (size_t symbol = 0; symbol < TRN_PREFIX_SYMBOLS; ++symbol) {
 		struct qam_point point;
 		uint8_t quarter;
 		uint8_t rotation;
 
-		CHECK(v34_phase4_trn_next(
+		CHECK(v34_training_sequence_next(
 			      &trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK,
+			      V34_TRAINING_SEQUENCE_OK,
 		      "E fixture TRN stopped at symbol %zu", symbol);
 	}
 	CHECK(v34_phase4_mp_init_type0_from_trn(

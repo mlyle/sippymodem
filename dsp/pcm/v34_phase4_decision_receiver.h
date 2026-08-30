@@ -8,7 +8,7 @@
 #include "v34_phase3_s_receiver.h"
 #include "v34_phase4_e_receiver.h"
 #include "v34_phase4_j_prime_sequence.h"
-#include "v34_phase4_trn.h"
+#include "v34_training_sequence.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,7 +16,7 @@
 enum {
 	/* J and J-prime differ by only two dibits.  Confirm the following
 	 * zero-seeded TRN before making known-sequence equalizer decisions. */
-	V34_PHASE4_TRN_CONFIRM_SYMBOLS = 16,
+	V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS = 16,
 };
 
 enum v34_phase4_decision_receiver_stage {
@@ -60,7 +60,7 @@ enum v34_phase4_decision_receiver_result {
 struct v34_phase4_decision_receiver {
 	struct v34_phase3_s_receiver answer_s;
 	struct v34_phase4_j_prime_receiver call_j_prime;
-	struct v34_phase4_trn expected_trn;
+	struct v34_training_sequence expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
 	uint16_t trn_symbols;

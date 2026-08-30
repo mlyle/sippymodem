@@ -568,7 +568,7 @@ static bool test_generated_online_exchange(void)
 		       caller.j_symbols_at_peer_s) <
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
 	      caller.j_symbols_at_finish % V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
-	      caller.trn_symbols_at_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
+	      caller.trn_symbols_at_mp >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      caller.trn_symbols_at_mp <= 2u * 3000u &&
 	      answerer.trn_symbols_at_mp == 5121u &&
 	      caller.constellations_routed &&
@@ -696,7 +696,7 @@ static bool test_peer_mp_preserves_trn_schedule(void)
 		trn_symbols_at_peer_mp = caller.phase4.transmit.training
 			.phase4_trn_symbols;
 		CHECK((events & V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_STARTED) == 0 &&
-		      trn_symbols_at_peer_mp >= V34_PHASE4_TRN_MIN_SYMBOLS &&
+		      trn_symbols_at_peer_mp >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 		      trn_symbols_at_peer_mp <
 			      caller.phase4.mp_transition_symbols &&
 		      !caller.phase4.transmit_mp_started &&

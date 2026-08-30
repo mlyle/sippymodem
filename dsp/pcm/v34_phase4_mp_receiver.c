@@ -3,7 +3,7 @@
 #include "v34_phase4_mp_receiver.h"
 
 #include "memory_region.h"
-#include "v34_phase4_trn.h"
+#include "v34_training_sequence.h"
 
 #include <stddef.h>
 
@@ -48,14 +48,14 @@ v34_phase4_mp_receiver_init(
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_receiver_init_from_trn(
 	struct v34_phase4_mp_receiver *receiver,
-	const struct v34_phase4_trn *trn)
+	const struct v34_training_sequence *trn)
 {
 	struct v34_phase4_mp_receiver initialized = { 0 };
 
 	if (receiver == NULL || trn == NULL ||
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), trn, sizeof(*trn)) ||
-	    !v34_phase4_trn_is_valid(trn) ||
+	    !v34_training_sequence_is_valid(trn) ||
 	    trn->constellation != V34_CONSTELLATION_4_POINT ||
 	    !trn->has_last_symbol ||
 	    v34_mp_receiver_init(&initialized.records) != V34_MP_OK)

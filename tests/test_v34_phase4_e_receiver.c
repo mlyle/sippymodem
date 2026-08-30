@@ -8,7 +8,7 @@
 #include <string.h>
 
 enum {
-	TEST_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 7,
+	TEST_TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 7,
 };
 
 struct e_fixture {
@@ -50,12 +50,12 @@ static bool initialize_fixture(
 {
 	struct v34_mp_parameters parameters =
 		test_parameters(acknowledged);
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_mp_receive_event event = { 0 };
 
 	CHECK(fixture != NULL &&
-	      v34_phase4_trn_init(&trn, role, constellation) ==
-		      V34_PHASE4_TRN_OK &&
+	      v34_training_sequence_init(&trn, role, constellation) ==
+		      V34_TRAINING_SEQUENCE_OK &&
 	      v34_phase4_mp_receiver_init(
 		      &fixture->mp_receiver, role, constellation) ==
 		      V34_PHASE4_MP_RECEIVER_OK,
@@ -65,10 +65,10 @@ static bool initialize_fixture(
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
 
-		CHECK(v34_phase4_trn_next(
+		CHECK(v34_training_sequence_next(
 			      &trn, &point, &quarter_point,
 			      &clockwise_quarter_turns) ==
-			      V34_PHASE4_TRN_OK &&
+			      V34_TRAINING_SEQUENCE_OK &&
 		      v34_phase4_mp_receive_decision(
 			      &fixture->mp_receiver, quarter_point,
 			      clockwise_quarter_turns, &event) ==

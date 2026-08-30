@@ -116,7 +116,7 @@ bool v34_phase4_mp_transition_symbols(
 		2u * V34_PHASE3_PP_SEQUENCE_SYMBOLS;
 	if (transmitting_profile->local_role == V34_CALLING_STATION)
 		transition += round_trip_delay_samples;
-	if (transition < V34_PHASE4_TRN_MIN_SYMBOLS)
+	if (transition < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return false;
 	*symbols = transition;
 	return true;
@@ -131,7 +131,7 @@ static bool trn_ready_for_mp(const struct v34_phase4_exchange *exchange)
 	if (exchange->transmit_data_active)
 		return true;
 	transmitted = exchange->transmit.training.phase4_trn_symbols;
-	if (transmitted < V34_PHASE4_TRN_MIN_SYMBOLS)
+	if (transmitted < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 		return false;
 	return transmitted >= exchange->mp_transition_symbols;
 }

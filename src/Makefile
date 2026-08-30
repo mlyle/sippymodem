@@ -388,7 +388,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_decision_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase4_mp_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_training_sequence.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_training_channel.c
 DSP_SOURCES := $(SHARED_DSP_SOURCES) \
 	$(V21_202_SOURCES) $(V22_SOURCES) \

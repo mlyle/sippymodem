@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v34_phase4_trn.h>
+#include <v34_training_sequence.h>
 
 #include "test.h"
 
@@ -104,8 +104,8 @@ static bool test_role_and_constellation_sequences(void)
 	uint8_t calling_prefix[ARRAY_LENGTH(constellations)][PREFIX_SYMBOLS][2];
 	bool roles_diverged[ARRAY_LENGTH(constellations)] = { false };
 
-	CHECK(V34_PHASE4_TRN_MIN_SYMBOLS == 512,
-	      "Phase 4 TRN minimum changed");
+	CHECK(V34_TRAINING_SEQUENCE_MIN_SYMBOLS == 512,
+	      "TRN minimum changed");
 	for (size_t role_index = 0; role_index < ARRAY_LENGTH(roles);
 	     ++role_index) {
 		for (size_t constellation_index = 0;
@@ -114,20 +114,20 @@ static bool test_role_and_constellation_sequences(void)
 			enum v34_station_role role = roles[role_index];
 			enum v34_constellation_size constellation =
 				constellations[constellation_index];
-			struct v34_phase4_trn trn;
-			struct v34_phase4_trn fixed_trn;
+			struct v34_training_sequence trn;
+			struct v34_training_sequence fixed_trn;
 			struct reference_scrambler reference;
 			unsigned int rotation_counts[4] = { 0 };
 			unsigned int quarter_counts[4] = { 0 };
 
 			reference_scrambler_init(&reference, role);
-			CHECK(v34_phase4_trn_init(
+			CHECK(v34_training_sequence_init(
 				      &trn, role, constellation) ==
-				      V34_PHASE4_TRN_OK &&
-			      v34_phase4_trn_init(
+				      V34_TRAINING_SEQUENCE_OK &&
+			      v34_training_sequence_init(
 				      &fixed_trn, role, constellation) ==
-				      V34_PHASE4_TRN_OK &&
-			      v34_phase4_trn_is_valid(&trn) &&
+				      V34_TRAINING_SEQUENCE_OK &&
+			      v34_training_sequence_is_valid(&trn) &&
 			      trn.scrambler.history == 0 &&
 			      trn.role == role &&
 			      trn.constellation == constellation &&
@@ -154,13 +154,13 @@ static bool test_role_and_constellation_sequences(void)
 				uint8_t rotation = UINT8_MAX;
 				uint8_t fixed_rotation = UINT8_MAX;
 
-				CHECK(v34_phase4_trn_next(
+				CHECK(v34_training_sequence_next(
 					      &trn, &point, &quarter, &rotation) ==
-					      V34_PHASE4_TRN_OK &&
-				      v34_phase4_trn_next_fixed(
+					      V34_TRAINING_SEQUENCE_OK &&
+				      v34_training_sequence_next_fixed(
 					      &fixed_trn, &fixed_point,
 					      &fixed_quarter, &fixed_rotation) ==
-					      V34_PHASE4_TRN_OK &&
+					      V34_TRAINING_SEQUENCE_OK &&
 				      v34_training_constellation_fixed_point(
 					      constellation, expected_quarter,
 					      expected_rotation, &expected_fixed) ==
@@ -179,7 +179,7 @@ static bool test_role_and_constellation_sequences(void)
 					      expected_rotation &&
 				      trn.has_last_symbol &&
 				      points_are_close(&point, &expected) &&
-				      v34_phase4_trn_is_valid(&trn),
+				      v34_training_sequence_is_valid(&trn),
 				      "TRN selection %zu/%zu symbol %u changed",
 				      role_index, constellation_index, symbol);
 				if (rotation < ARRAY_LENGTH(rotation_counts) &&
@@ -232,23 +232,23 @@ static bool test_copy_and_restart(void)
 
 	for (size_t selection = 0; selection < ARRAY_LENGTH(constellations);
 	     ++selection) {
-		struct v34_phase4_trn first;
-		struct v34_phase4_trn second;
-		struct v34_phase4_trn restarted;
+		struct v34_training_sequence first;
+		struct v34_training_sequence second;
+		struct v34_training_sequence restarted;
 		struct qam_point ignored_point;
 		uint8_t ignored_quarter;
 		uint8_t ignored_rotation;
 
-		CHECK(v34_phase4_trn_init(
+		CHECK(v34_training_sequence_init(
 			      &first, V34_ANSWERING_STATION,
 			      constellations[selection]) ==
-			      V34_PHASE4_TRN_OK,
+			      V34_TRAINING_SEQUENCE_OK,
 		      "TRN copy selection %zu did not initialize", selection);
 		for (unsigned int symbol = 0; symbol < 73; ++symbol)
-			CHECK(v34_phase4_trn_next(
+			CHECK(v34_training_sequence_next(
 				      &first, &ignored_point, &ignored_quarter,
 				      &ignored_rotation) ==
-				      V34_PHASE4_TRN_OK,
+				      V34_TRAINING_SEQUENCE_OK,
 			      "TRN copy prefix stopped at %zu/%u", selection,
 			      symbol);
 		second = first;
@@ -260,14 +260,14 @@ static bool test_copy_and_restart(void)
 			uint8_t first_rotation;
 			uint8_t second_rotation;
 
-			CHECK(v34_phase4_trn_next(
+			CHECK(v34_training_sequence_next(
 				      &first, &first_point, &first_quarter,
 				      &first_rotation) ==
-				      V34_PHASE4_TRN_OK &&
-			      v34_phase4_trn_next(
+				      V34_TRAINING_SEQUENCE_OK &&
+			      v34_training_sequence_next(
 				      &second, &second_point, &second_quarter,
 				      &second_rotation) ==
-				      V34_PHASE4_TRN_OK &&
+				      V34_TRAINING_SEQUENCE_OK &&
 			      first_quarter == second_quarter &&
 			      first_rotation == second_rotation &&
 			      memcmp(&first_point, &second_point,
@@ -276,10 +276,10 @@ static bool test_copy_and_restart(void)
 			      "copied TRN stream diverged at %zu/%u", selection,
 			      symbol);
 		}
-		CHECK(v34_phase4_trn_init(
+		CHECK(v34_training_sequence_init(
 			      &restarted, V34_ANSWERING_STATION,
 			      constellations[selection]) ==
-			      V34_PHASE4_TRN_OK &&
+			      V34_TRAINING_SEQUENCE_OK &&
 		      restarted.scrambler.history == 0 &&
 		      !restarted.has_last_symbol,
 		      "restarted TRN selection %zu retained state", selection);
@@ -289,8 +289,8 @@ static bool test_copy_and_restart(void)
 
 static bool test_validation(void)
 {
-	struct v34_phase4_trn trn;
-	struct v34_phase4_trn before;
+	struct v34_training_sequence trn;
+	struct v34_training_sequence before;
 	struct qam_point point = { 7.0, -9.0 };
 	struct qam_point before_point = point;
 	struct v34_analytic_sample fixed_point = { 123, -456 };
@@ -300,55 +300,55 @@ static bool test_validation(void)
 
 	memset(&trn, 0xa5, sizeof(trn));
 	before = trn;
-	CHECK(v34_phase4_trn_init(
+	CHECK(v34_training_sequence_init(
 		      NULL, V34_CALLING_STATION,
 		      V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_init(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_init(
 		      &trn, (enum v34_station_role)99,
 		      V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_init(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_init(
 		      &trn, V34_CALLING_STATION,
 		      (enum v34_constellation_size)8) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
-	      !v34_phase4_trn_is_valid(NULL),
+	      !v34_training_sequence_is_valid(NULL),
 	      "invalid TRN initialization mutated its destination");
-	CHECK(v34_phase4_trn_init(
+	CHECK(v34_training_sequence_init(
 		      &trn, V34_CALLING_STATION,
 		      V34_CONSTELLATION_16_POINT) ==
-		      V34_PHASE4_TRN_OK,
+		      V34_TRAINING_SEQUENCE_OK,
 	      "TRN validation fixture did not initialize");
 	before = trn;
-	CHECK(v34_phase4_trn_next(
+	CHECK(v34_training_sequence_next(
 		      NULL, &point, &quarter, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
 		      &trn, NULL, &quarter, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
 		      &trn, &point, NULL, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next(
 		      &trn, &point, &quarter, NULL) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
 	      "invalid TRN output argument mutated state");
-	CHECK(v34_phase4_trn_next_fixed(
+	CHECK(v34_training_sequence_next_fixed(
 		      NULL, &fixed_point, &quarter, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next_fixed(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
 		      &trn, NULL, &quarter, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next_fixed(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
 		      &trn, &fixed_point, NULL, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
-	      v34_phase4_trn_next_fixed(
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
+	      v34_training_sequence_next_fixed(
 		      &trn, &fixed_point, &quarter, NULL) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&fixed_point, &before_fixed_point,
 		     sizeof(fixed_point)) == 0 &&
@@ -356,38 +356,38 @@ static bool test_validation(void)
 	      "invalid fixed TRN output argument mutated state");
 	trn.scrambler.history = UINT32_C(1) << V34_SCRAMBLER_BITS;
 	before = trn;
-	CHECK(!v34_phase4_trn_is_valid(&trn) &&
-	      v34_phase4_trn_next(
+	CHECK(!v34_training_sequence_is_valid(&trn) &&
+	      v34_training_sequence_next(
 		      &trn, &point, &quarter, &rotation) ==
-		      V34_PHASE4_TRN_INVALID_ARGUMENT &&
+		      V34_TRAINING_SEQUENCE_INVALID_ARGUMENT &&
 	      memcmp(&trn, &before, sizeof(trn)) == 0 &&
 	      memcmp(&point, &before_point, sizeof(point)) == 0 &&
 	      quarter == UINT8_MAX && rotation == UINT8_MAX,
 	      "corrupt TRN state mutated outputs");
-	trn = (struct v34_phase4_trn){ 0 };
-	CHECK(v34_phase4_trn_init(
+	trn = (struct v34_training_sequence){ 0 };
+	CHECK(v34_training_sequence_init(
 		      &trn, V34_CALLING_STATION,
 		      V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE4_TRN_OK,
+		      V34_TRAINING_SEQUENCE_OK,
 	      "TRN corruption fixture did not initialize");
 	trn.scrambler.polynomial = V34_POLYNOMIAL_GPA;
-	CHECK(!v34_phase4_trn_is_valid(&trn),
+	CHECK(!v34_training_sequence_is_valid(&trn),
 	      "TRN accepted the other station's polynomial");
 	trn.scrambler.polynomial = V34_POLYNOMIAL_GPC;
 	trn.role = (enum v34_station_role)99;
-	CHECK(!v34_phase4_trn_is_valid(&trn),
+	CHECK(!v34_training_sequence_is_valid(&trn),
 	      "TRN accepted an invalid role");
 	trn.role = V34_CALLING_STATION;
 	trn.constellation = (enum v34_constellation_size)8;
-	CHECK(!v34_phase4_trn_is_valid(&trn),
+	CHECK(!v34_training_sequence_is_valid(&trn),
 	      "TRN accepted an invalid constellation");
 	trn.constellation = V34_CONSTELLATION_4_POINT;
 	trn.last_clockwise_quarter_turns = 4;
-	CHECK(!v34_phase4_trn_is_valid(&trn),
+	CHECK(!v34_training_sequence_is_valid(&trn),
 	      "TRN accepted an invalid final rotation");
 	trn.last_clockwise_quarter_turns = 1;
 	trn.has_last_symbol = false;
-	CHECK(!v34_phase4_trn_is_valid(&trn),
+	CHECK(!v34_training_sequence_is_valid(&trn),
 	      "TRN accepted a final rotation without a symbol");
 	return true;
 }

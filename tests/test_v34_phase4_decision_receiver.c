@@ -13,7 +13,7 @@
 
 enum {
 	J_DETECTION_SYMBOLS = 3 * V34_PHASE3_J_PATTERN_SYMBOLS,
-	MP_ACQUISITION_TRN_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 128,
+	MP_ACQUISITION_TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 128,
 	TEST_DECODER_POWER_Q15 = 0x7000,
 };
 
@@ -251,7 +251,7 @@ static bool receive_call_boundary(
 	if (fixture->receiver.stage ==
 	    V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE) {
 		struct v34_fixed_training_decision hard;
-		struct v34_phase4_trn expected =
+		struct v34_training_sequence expected =
 			fixture->receiver.expected_trn;
 		struct v34_analytic_sample ignored;
 		uint8_t expected_quarter;
@@ -260,9 +260,9 @@ static bool receive_call_boundary(
 		CHECK(v34_training_constellation_fixed_slice(
 			      fixture->receiver.mp_receiver.constellation, point,
 			      &hard) == V34_CONSTELLATION_OK &&
-		      v34_phase4_trn_next_fixed(
+		      v34_training_sequence_next_fixed(
 			      &expected, &ignored, &expected_quarter,
-			      &expected_rotation) == V34_PHASE4_TRN_OK,
+			      &expected_rotation) == V34_TRAINING_SEQUENCE_OK,
 		      "call-boundary decision could not be generated");
 		target = hard.target;
 		*candidate_mismatch |=
@@ -364,7 +364,7 @@ static bool run_timeline(
 	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase3_j_sequence continued_j;
 	struct v34_phase4_j_prime_sequence j_prime;
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
 	struct v34_analytic_sample point;
@@ -373,7 +373,7 @@ static bool run_timeline(
 	uint8_t quarter;
 	uint8_t rotation;
 	unsigned int acquisition_trn_symbols =
-		V34_PHASE4_TRN_MIN_SYMBOLS + extra_trn_symbols;
+		V34_TRAINING_SEQUENCE_MIN_SYMBOLS + extra_trn_symbols;
 
 	CHECK(make_j_sequence(role, constellation, &j_sequence) &&
 	      v34_phase4_decision_receiver_init(
@@ -434,28 +434,29 @@ static bool run_timeline(
 			      V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE,
 		      "J-prime did not open the TRN candidate");
 	}
-	CHECK(v34_phase4_trn_init(&trn, role, constellation) ==
-		      V34_PHASE4_TRN_OK,
+	CHECK(v34_training_sequence_init(&trn, role, constellation) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "Phase 4 TRN source did not initialize");
 	for (unsigned int symbol = 0;
 	     symbol < acquisition_trn_symbols; ++symbol) {
 		enum v34_phase4_decision_receiver_result expected =
-			symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS ?
+			symbol + 1u == V34_TRAINING_SEQUENCE_MIN_SYMBOLS ?
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
 				V34_PHASE4_DECISION_RECEIVER_OK;
 		struct v34_analytic_sample received;
 		struct v34_analytic_sample target;
 		uint8_t received_rotation;
 
-		CHECK(v34_phase4_trn_next_fixed(
+		CHECK(v34_training_sequence_next_fixed(
 			      &trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK,
+			      V34_TRAINING_SEQUENCE_OK,
 		      "Phase 4 TRN source %u stopped", symbol);
 		received = point;
 		target = point;
 		received_rotation = rotation;
 		if (role == V34_CALLING_STATION &&
-		    symbol + 1u == V34_PHASE4_TRN_CONFIRM_SYMBOLS / 2u) {
+		    symbol + 1u ==
+			    V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS / 2u) {
 			received_rotation = (uint8_t)((rotation + 1u) & 3u);
 			CHECK(v34_training_constellation_fixed_point(
 				      constellation, quarter, received_rotation,
@@ -463,7 +464,7 @@ static bool run_timeline(
 			      "TRN confirmation error could not be generated");
 			target = received;
 		}
-		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS) {
+		if (symbol + 1u == V34_TRAINING_SEQUENCE_MIN_SYMBOLS) {
 			received_rotation = (uint8_t)((rotation + 1u) & 3u);
 			CHECK(v34_training_constellation_fixed_point(
 				      constellation, quarter, received_rotation,
@@ -473,7 +474,7 @@ static bool run_timeline(
 		CHECK(receive_observation(
 			      &fixture, received, target, expected),
 		      "Phase 4 TRN observation %u stopped", symbol);
-		if (symbol + 1u == V34_PHASE4_TRN_MIN_SYMBOLS)
+		if (symbol + 1u == V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
 			CHECK(fixture.receiver.stage ==
 				      (constellation ==
 					       V34_CONSTELLATION_4_POINT ?
@@ -615,7 +616,7 @@ static bool test_role_constellation_timelines(void)
 						V34_CONSTELLATION_4_POINT ?
 					0u :
 					MP_ACQUISITION_TRN_SYMBOLS -
-						V34_PHASE4_TRN_MIN_SYMBOLS;
+						V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 
 			if (!run_timeline(
 				    roles[role], constellations[constellation],
@@ -639,7 +640,7 @@ static bool test_delayed_answer_marker_alignment(void)
 	};
 	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase3_s_sequence s;
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct qam_point normalized;
 	struct v34_analytic_sample point;
 	enum v34_phase3_s_section section;
@@ -676,15 +677,15 @@ static bool test_delayed_answer_marker_alignment(void)
 		      "delayed answer S observation %u stopped", symbol);
 	}
 	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
-	      v34_phase4_trn_init(
+	      v34_training_sequence_init(
 		      &trn, V34_ANSWERING_STATION,
-		      V34_CONSTELLATION_4_POINT) == V34_PHASE4_TRN_OK,
+		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK,
 	      "delayed answer marker was not detected");
 	CHECK(fixture.receiver.trn_symbols == 0u &&
 	      memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
 	      "delayed marker changed the known TRN cursor");
-	CHECK(v34_phase4_trn_next_fixed(
-		      &trn, &point, &quarter, &rotation) == V34_PHASE4_TRN_OK &&
+	CHECK(v34_training_sequence_next_fixed(
+		      &trn, &point, &quarter, &rotation) == V34_TRAINING_SEQUENCE_OK &&
 	      receive_fixed(
 		      &fixture, point, V34_PHASE4_DECISION_RECEIVER_OK),
 	      "first post-marker TRN target was misaligned");
@@ -753,7 +754,7 @@ static bool test_false_j_prime_preserves_training(void)
 	struct v34_phase3_j_sequence j_sequence;
 	struct v34_phase3_j_sequence continued_j;
 	struct v34_phase4_j_prime_sequence j_prime;
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct qam_point normalized;
 	struct v34_analytic_sample point;
 	bool candidate_mismatch = false;
@@ -836,22 +837,23 @@ static bool test_false_j_prime_preserves_training(void)
 	}
 	CHECK(fixture.receiver.stage ==
 		      V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE &&
-	      v34_phase4_trn_init(
+	      v34_training_sequence_init(
 		      &trn, V34_CALLING_STATION,
-		      V34_CONSTELLATION_16_POINT) == V34_PHASE4_TRN_OK,
+		      V34_CONSTELLATION_16_POINT) == V34_TRAINING_SEQUENCE_OK,
 	      "real J-prime did not open its candidate");
 	for (unsigned int symbol = 0;
-	     symbol < V34_PHASE4_TRN_CONFIRM_SYMBOLS; ++symbol) {
-		CHECK(v34_phase4_trn_next_fixed(
+	     symbol < V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS;
+	     ++symbol) {
+		CHECK(v34_training_sequence_next_fixed(
 			      &trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK &&
+			      V34_TRAINING_SEQUENCE_OK &&
 		      receive_call_boundary(
 			      &fixture, point, &candidate_mismatch),
 		      "TRN confirmation symbol %u stopped", symbol);
 	}
 	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
 	      fixture.receiver.trn_symbols ==
-		      V34_PHASE4_TRN_CONFIRM_SYMBOLS &&
+		      V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS &&
 	      fixture.receiver.expected_trn.scrambler.history ==
 		      trn.scrambler.history &&
 	      fixture.receiver.expected_trn.scrambler.polynomial ==

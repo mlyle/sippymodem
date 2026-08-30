@@ -161,7 +161,7 @@ static bool model_next_point(
 		return v34_phase3_transmitter_next(&model->phase3, point) ==
 		       V34_PHASE3_TRANSMITTER_OK;
 	case V34_TRAINING_TRANSMITTER_ANSWER_S: {
-		struct v34_phase4_trn trn;
+		struct v34_training_sequence trn;
 		enum v34_phase3_s_section section;
 
 		if (v34_phase3_s_sequence_next(
@@ -171,10 +171,10 @@ static bool model_next_point(
 		if (!v34_phase3_s_sequence_is_complete(
 			    &model->phase4.answer_s))
 			return true;
-		if (v34_phase4_trn_init(
+		if (v34_training_sequence_init(
 			    &trn, V34_ANSWERING_STATION,
 			    model->phase4_constellation) !=
-		    V34_PHASE4_TRN_OK)
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 		model->phase4 =
 			(union v34_training_transmitter_phase4_state){ 0 };
@@ -183,7 +183,7 @@ static bool model_next_point(
 		return true;
 	}
 	case V34_TRAINING_TRANSMITTER_J_PRIME: {
-		struct v34_phase4_trn trn;
+		struct v34_training_sequence trn;
 		uint8_t rotation;
 
 		if (v34_phase4_j_prime_sequence_next(
@@ -193,10 +193,10 @@ static bool model_next_point(
 		if (!v34_phase4_j_prime_sequence_is_complete(
 			    &model->phase4.j_prime))
 			return true;
-		if (v34_phase4_trn_init(
+		if (v34_training_sequence_init(
 			    &trn, V34_CALLING_STATION,
 			    model->phase4_constellation) !=
-		    V34_PHASE4_TRN_OK)
+		    V34_TRAINING_SEQUENCE_OK)
 			return false;
 		model->phase4 = (union v34_training_transmitter_phase4_state){ 0 };
 		model->phase4.trn = trn;
@@ -207,9 +207,9 @@ static bool model_next_point(
 		uint8_t quarter_point;
 		uint8_t rotation;
 
-		if (v34_phase4_trn_next(
+		if (v34_training_sequence_next(
 			    &model->phase4.trn, point, &quarter_point,
-			    &rotation) != V34_PHASE4_TRN_OK)
+			    &rotation) != V34_TRAINING_SEQUENCE_OK)
 			return false;
 		model->phase4_trn_symbols++;
 		return true;
@@ -654,7 +654,7 @@ static bool test_phase4_controls(void)
 	      memcmp(&training, &before, sizeof(training)) == 0,
 	      "early Phase 4 control changed state");
 	CHECK(advance_phase4_trn_to(
-		      &training, V34_PHASE4_TRN_MIN_SYMBOLS) &&
+		      &training, V34_TRAINING_SEQUENCE_MIN_SYMBOLS) &&
 	      v34_training_transmitter_phase4_trn_ready(&training),
 	      "Phase 4 control fixture did not reach the TRN minimum");
 	invalid.common.maximum_call_to_answer_rate_2400_bps_units = 0;

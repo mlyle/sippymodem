@@ -8,7 +8,7 @@
 #include "v34_phase4_e_sequence.h"
 #include "v34_phase4_j_prime_sequence.h"
 #include "v34_phase4_mp.h"
-#include "v34_phase4_trn.h"
+#include "v34_training_sequence.h"
 #include "v34_training_line.h"
 
 #include <stdbool.h>
@@ -36,7 +36,7 @@ enum v34_training_transmitter_result {
 union v34_training_transmitter_phase4_state {
 	struct v34_phase3_s_sequence answer_s;
 	struct v34_phase4_j_prime_sequence j_prime;
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase4_mp mp;
 	struct v34_phase4_e_sequence e;
 };

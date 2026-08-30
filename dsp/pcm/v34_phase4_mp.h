@@ -7,7 +7,7 @@
 #include "v34_constellation.h"
 #include "v34_framing.h"
 #include "v34_mp.h"
-#include "v34_phase4_trn.h"
+#include "v34_training_sequence.h"
 #include "v34_station.h"
 
 #include <stdbool.h>
@@ -48,12 +48,12 @@ struct v34_phase4_mp {
 enum v34_phase4_mp_result
 v34_phase4_mp_init_type0_from_trn(
 	struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn,
+	const struct v34_training_sequence *trn,
 	const struct v34_mp_parameters *parameters);
 enum v34_phase4_mp_result
 v34_phase4_mp_init_type1_from_trn(
 	struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn,
+	const struct v34_training_sequence *trn,
 	const struct v34_mp_type1_parameters *parameters);
 bool v34_phase4_mp_is_valid(
 	const struct v34_phase4_mp *transmitter);

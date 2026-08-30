@@ -1417,19 +1417,19 @@ V34_TRAINING_TRANSMITTER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_j_sequence.o \
 	$(BUILD_DIR)/v34_phase3_transmitter.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o
-V34_PHASE4_TRN_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_phase4_trn
-V34_PHASE4_TRN_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_phase4_trn.o \
+V34_TRAINING_SEQUENCE_TEST_BINARY := \
+	$(BUILD_DIR)/test_v34_training_sequence
+V34_TRAINING_SEQUENCE_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v34_training_sequence.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
-	$(BUILD_DIR)/v34_phase4_trn.o
+	$(BUILD_DIR)/v34_training_sequence.o
 V34_PHASE4_MP_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase4_mp
 V34_PHASE4_MP_TEST_OBJECTS := \
@@ -1439,7 +1439,7 @@ V34_PHASE4_MP_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_mp.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o
 V34_PHASE4_DECISION_RECEIVER_TEST_BINARY := \
@@ -1456,7 +1456,7 @@ V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v34_mp.o \
 	$(BUILD_DIR)/v34_phase4_j_prime_sequence.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
@@ -1512,7 +1512,7 @@ V34_PHASE4_E_SEQUENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_mp.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o
 V34_PHASE4_E_RECEIVER_TEST_BINARY := \
@@ -1524,7 +1524,7 @@ V34_PHASE4_E_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_mp.o \
-	$(BUILD_DIR)/v34_phase4_trn.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v34_phase4_mp.o \
 	$(BUILD_DIR)/v34_phase4_mp_receiver.o \
 	$(BUILD_DIR)/v34_phase4_e_sequence.o \
@@ -3117,7 +3117,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE3_TRANSMITTER_TEST_BINARY) \
 	$(V34_PHASE3_EXCHANGE_TEST_BINARY) \
 	$(V34_TRAINING_TRANSMITTER_TEST_BINARY) \
-	$(V34_PHASE4_TRN_TEST_BINARY) \
+	$(V34_TRAINING_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_MP_TEST_BINARY) \
 	$(V34_PHASE4_DECISION_RECEIVER_TEST_BINARY) \
 	$(V34_PHASE34_RECEIVER_TEST_BINARY) \
@@ -3433,7 +3433,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE3_TRANSMITTER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE3_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_TRAINING_TRANSMITTER_TEST_OBJECTS:.o=.d) \
-	$(V34_PHASE4_TRN_TEST_OBJECTS:.o=.d) \
+	$(V34_TRAINING_SEQUENCE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_MP_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE34_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE4_EXCHANGE_TEST_OBJECTS:.o=.d) \
@@ -4121,7 +4121,7 @@ $(V34_CALL_TEST_BINARY): $(V34_CALL_TEST_OBJECTS)
 $(V34_TRAINING_TRANSMITTER_TEST_BINARY): $(V34_TRAINING_TRANSMITTER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V34_PHASE4_TRN_TEST_BINARY): $(V34_PHASE4_TRN_TEST_OBJECTS)
+$(V34_TRAINING_SEQUENCE_TEST_BINARY): $(V34_TRAINING_SEQUENCE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE4_MP_TEST_BINARY): $(V34_PHASE4_MP_TEST_OBJECTS)
@@ -5714,8 +5714,8 @@ $(BUILD_DIR)/v34_phase4_j_prime_sequence.o: \
 	$(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v34_phase4_trn.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_phase4_trn.c | $(BUILD_DIR)
+$(BUILD_DIR)/v34_training_sequence.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_training_sequence.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_phase4_mp.o: \

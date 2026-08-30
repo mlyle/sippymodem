@@ -9,7 +9,7 @@
 #include <string.h>
 
 enum {
-	TRN_PREFIX_SYMBOLS = V34_PHASE4_TRN_MIN_SYMBOLS + 5,
+	TRN_PREFIX_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 5,
 	V34_HISTORY_MASK = (1u << V34_SCRAMBLER_BITS) - 1u,
 	V34_COMMON_TAP_DELAY = 23,
 };
@@ -121,7 +121,7 @@ static uint8_t packed_dibit(const uint8_t *packed, size_t first_bit)
 
 static void reference_mapper_init(
 	struct reference_mapper *mapper,
-	const struct v34_phase4_trn *trn)
+	const struct v34_training_sequence *trn)
 {
 	*mapper = (struct reference_mapper){
 		.history = trn->scrambler.history,
@@ -190,13 +190,13 @@ static bool points_are_close(
 }
 
 static bool generate_trn_prefix(
-	struct v34_phase4_trn *trn,
+	struct v34_training_sequence *trn,
 	enum v34_station_role role,
 	enum v34_constellation_size constellation,
 	struct v34_phase4_mp_receiver *receiver)
 {
-	CHECK(v34_phase4_trn_init(trn, role, constellation) ==
-		      V34_PHASE4_TRN_OK &&
+	CHECK(v34_training_sequence_init(trn, role, constellation) ==
+		      V34_TRAINING_SEQUENCE_OK &&
 	      (receiver == NULL ||
 	       v34_phase4_mp_receiver_init(
 		       receiver, role, constellation) ==
@@ -208,9 +208,9 @@ static bool generate_trn_prefix(
 		uint8_t quarter;
 		uint8_t rotation;
 
-		CHECK(v34_phase4_trn_next(
+		CHECK(v34_training_sequence_next(
 			      trn, &point, &quarter, &rotation) ==
-			      V34_PHASE4_TRN_OK &&
+			      V34_TRAINING_SEQUENCE_OK &&
 		      (receiver == NULL ||
 		       v34_phase4_mp_receive_decision(
 			       receiver, quarter, rotation, &event) ==
@@ -221,7 +221,7 @@ static bool generate_trn_prefix(
 }
 
 struct phase4_receive_link {
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase4_mp transmitter;
 	struct v34_phase4_mp_receiver receiver;
 };
@@ -378,9 +378,9 @@ static bool test_decision_rejection_and_reacquisition(void)
 
 static bool test_receiver_validation(void)
 {
-	struct v34_phase4_trn trn;
-	struct v34_phase4_trn initial_trn;
-	struct v34_phase4_trn sixteen_trn;
+	struct v34_training_sequence trn;
+	struct v34_training_sequence initial_trn;
+	struct v34_training_sequence sixteen_trn;
 	struct v34_phase4_mp_receiver receiver;
 	struct v34_phase4_mp_receiver seeded;
 	struct v34_phase4_mp_receiver saved;
@@ -422,9 +422,9 @@ static bool test_receiver_validation(void)
 	      seeded.has_previous_symbol &&
 	      v34_mp_receiver_is_valid(&seeded.records),
 	      "four-point TRN did not seed the exact decoder state");
-	CHECK(v34_phase4_trn_init(
+	CHECK(v34_training_sequence_init(
 		      &initial_trn, V34_CALLING_STATION,
-		      V34_CONSTELLATION_4_POINT) == V34_PHASE4_TRN_OK,
+		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK,
 	      "initial TRN rejection fixture did not initialize");
 	CHECK(generate_trn_prefix(
 		      &sixteen_trn, V34_CALLING_STATION,
@@ -437,7 +437,7 @@ static bool test_receiver_validation(void)
 		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_mp_receiver_init_from_trn(
 		      &seeded,
-		      (const struct v34_phase4_trn *)&seeded) ==
+		      (const struct v34_training_sequence *)&seeded) ==
 		      V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT &&
 	      v34_phase4_mp_receiver_init_from_trn(
 		      &seeded, &initial_trn) ==
@@ -615,7 +615,7 @@ static bool test_role_and_constellation_records(void)
 		for (size_t constellation_index = 0;
 		     constellation_index < ARRAY_LENGTH(constellations);
 		     ++constellation_index) {
-			struct v34_phase4_trn trn;
+			struct v34_training_sequence trn;
 			struct v34_phase4_mp transmitter;
 			struct v34_mp_parameters mp =
 				parameters(false);
@@ -694,7 +694,7 @@ static bool test_role_and_constellation_records(void)
 
 static bool test_copy_behavior(void)
 {
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase4_mp original;
 	struct v34_phase4_mp copy;
 	struct v34_mp_type1_parameters selected =
@@ -750,7 +750,7 @@ static bool test_copy_behavior(void)
 
 static bool test_validation(void)
 {
-	struct v34_phase4_trn trn;
+	struct v34_training_sequence trn;
 	struct v34_phase4_mp transmitter;
 	struct v34_phase4_mp saved;
 	struct v34_mp_parameters valid = parameters(false);
@@ -765,10 +765,10 @@ static bool test_validation(void)
 
 	memset(&transmitter, 0xa5, sizeof(transmitter));
 	saved = transmitter;
-	CHECK(v34_phase4_trn_init(
+	CHECK(v34_training_sequence_init(
 		      &trn, V34_ANSWERING_STATION,
 		      V34_CONSTELLATION_4_POINT) ==
-		      V34_PHASE4_TRN_OK &&
+		      V34_TRAINING_SEQUENCE_OK &&
 	      v34_phase4_mp_init_type0_from_trn(
 		      NULL, &trn, &valid) ==
 		      V34_PHASE4_MP_INVALID_ARGUMENT &&
@@ -788,9 +788,9 @@ static bool test_validation(void)
 		uint8_t trn_quarter;
 		uint8_t trn_rotation;
 
-		CHECK(v34_phase4_trn_next(
+		CHECK(v34_training_sequence_next(
 			      &trn, &trn_point, &trn_quarter,
-			      &trn_rotation) == V34_PHASE4_TRN_OK,
+			      &trn_rotation) == V34_TRAINING_SEQUENCE_OK,
 		      "MP validation TRN did not emit a symbol");
 	}
 	invalid.maximum_call_to_answer_rate_2400_bps_units = 0;

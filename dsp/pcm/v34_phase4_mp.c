@@ -109,15 +109,15 @@ static enum v34_phase4_mp_result encode_type1_record(
 
 static bool can_initialize_from_trn(
 	const struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn)
+	const struct v34_training_sequence *trn)
 {
-	return transmitter != NULL && v34_phase4_trn_is_valid(trn) &&
+	return transmitter != NULL && v34_training_sequence_is_valid(trn) &&
 	       trn->has_last_symbol;
 }
 
 static enum v34_phase4_mp_result initialize_from_record(
 	struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn,
+	const struct v34_training_sequence *trn,
 	const struct encoded_mp_record *record)
 {
 	struct v34_phase4_mp initialized = { 0 };
@@ -140,7 +140,7 @@ static enum v34_phase4_mp_result initialize_from_record(
 enum v34_phase4_mp_result
 v34_phase4_mp_init_type0_from_trn(
 	struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn,
+	const struct v34_training_sequence *trn,
 	const struct v34_mp_parameters *parameters)
 {
 	struct encoded_mp_record record;
@@ -157,7 +157,7 @@ v34_phase4_mp_init_type0_from_trn(
 enum v34_phase4_mp_result
 v34_phase4_mp_init_type1_from_trn(
 	struct v34_phase4_mp *transmitter,
-	const struct v34_phase4_trn *trn,
+	const struct v34_training_sequence *trn,
 	const struct v34_mp_type1_parameters *parameters)
 {
 	struct encoded_mp_record record;

@@ -16,7 +16,7 @@ enum v34_phase4_mp_receiver_result {
 	V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT,
 };
 
-struct v34_phase4_trn;
+struct v34_training_sequence;
 
 struct v34_phase4_mp_receiver {
 	struct v34_scrambler descrambler;
@@ -42,7 +42,7 @@ v34_phase4_mp_receiver_init(
 enum v34_phase4_mp_receiver_result
 v34_phase4_mp_receiver_init_from_trn(
 	struct v34_phase4_mp_receiver *receiver,
-	const struct v34_phase4_trn *trn);
+	const struct v34_training_sequence *trn);
 bool v34_phase4_mp_receiver_is_valid(
 	const struct v34_phase4_mp_receiver *receiver);
 
