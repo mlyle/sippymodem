@@ -3,6 +3,7 @@
 #include <g711.h>
 #include <v90_phase4_cp_line_rx.h>
 #include <v90_phase4_e_line_tx.h>
+#include <v90_jd.h>
 #include <v90_upstream_data.h>
 #include <v90_upstream_rx.h>
 
@@ -121,6 +122,7 @@ static bool run_line(
 		cp_parameters(
 			V90_CP_DATA, law, false,
 			rate_2400_bps_units);
+	struct v90_cp_parameters unadvertised = data;
 	struct v90_cp_parameters prime = data;
 	struct v90_mp_record mp = local_mp(rate_2400_bps_units);
 	struct v90_pcm_mapping training_mapping;
@@ -133,6 +135,7 @@ static bool run_line(
 	struct v90_upstream_rx receiver;
 	struct v34_data_line_receiver data_handoff;
 	bool data_started = false;
+	bool unadvertised_started = false;
 	bool prime_started = false;
 	bool cp_finished = false;
 	bool e_started = false;
@@ -143,6 +146,7 @@ static bool run_line(
 	bool b1_received = false;
 
 	prime.acknowledges_peer = true;
+	unadvertised.selected_rate_index = 2;
 	CHECK(line_profile(symbol_rate, rate_2400_bps_units, &profile) &&
 	      v90_phase4_line_fixture_init_for_profile(
 		      &profile, law, constellation, &training, &cp_tx,
@@ -159,7 +163,8 @@ static bool run_line(
 		      V90_PCM_MAPPING_OK,
 	      "training mapping did not initialize law=%d", law);
 	CHECK(v90_upstream_rx_init(
-		      &receiver, &cp_rx, &training_mapping, &mp) ==
+		      &receiver, &cp_rx, &training_mapping, &mp,
+		      UINT32_C(1)) ==
 		      V90_UPSTREAM_RX_OK,
 	      "upstream owner did not initialize law=%d constellation=%d",
 	      law, constellation);
@@ -172,7 +177,14 @@ static bool run_line(
 
 		if (!e_started &&
 		    v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
-			if (!data_started) {
+			if (!unadvertised_started) {
+				CHECK(v90_phase4_cp_line_tx_start_next_record(
+					      &cp_tx, &unadvertised) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "unadvertised CP did not start at clock %zu",
+				      clock);
+				unadvertised_started = true;
+			} else if (!data_started) {
 				CHECK(v90_phase4_cp_line_tx_start_next_record(
 					      &cp_tx, &data) ==
 					      V90_PHASE4_CP_LINE_TX_OK,
@@ -284,7 +296,8 @@ static bool run_line(
 		bool handoff_valid = handoff_result == V90_UPSTREAM_RX_OK &&
 			v34_data_line_receiver_is_valid(&data_handoff);
 
-		CHECK(data_started && prime_started && cp_finished && e_started &&
+		CHECK(unadvertised_started && data_started && prime_started &&
+		      cp_finished && e_started &&
 		      b1_started && mp_prime_requested && ed_requested &&
 		      e_received && b1_received &&
 		      v90_upstream_rx_is_complete(&receiver) &&
@@ -295,11 +308,12 @@ static bool run_line(
 			      rate_2400_bps_units &&
 		      data_handoff.equalizer_receiver.data_receiver.data_receiver
 			      .b1_error_bits == 0,
-		      "upstream entry at rate %u stopped: source=%d/%d/%d/%d/%d "
+		      "upstream entry at rate %u stopped: source=%d/%d/%d/%d/%d/%d "
 		      "events=%d/%d/%d/%d stage=%d failed=%d handoff=%s "
 		      "valid=%d rate=%u errors=%u",
 		      rate_2400_bps_units,
-		      data_started, prime_started, cp_finished, e_started,
+		      unadvertised_started, data_started, prime_started,
+		      cp_finished, e_started,
 		      b1_started, mp_prime_requested, ed_requested, e_received,
 		      b1_received,
 		      receiver.stage, v90_upstream_rx_has_failed(&receiver),
@@ -359,23 +373,37 @@ static bool test_contracts(void)
 	wrong_mapping.kind = V90_CP_DATA;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;
-	CHECK(v90_upstream_rx_init(NULL, &cp_rx, &mapping, &mp) ==
-		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
-	      v90_upstream_rx_init(&untouched, NULL, &mapping, &mp) ==
-		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
-	      v90_upstream_rx_init(&untouched, &cp_rx, NULL, &mp) ==
-		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
-	      v90_upstream_rx_init(&untouched, &cp_rx, &mapping, NULL) ==
+	CHECK(v90_upstream_rx_init(
+		      NULL, &cp_rx, &mapping, &mp, UINT32_C(1)) ==
 		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      v90_upstream_rx_init(
-		      &untouched, &cp_rx, &wrong_mapping, &mp) ==
+		      &untouched, NULL, &mapping, &mp, UINT32_C(1)) ==
 		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      v90_upstream_rx_init(
-		      &untouched, &cp_rx, &mapping, &acknowledged) ==
+		      &untouched, &cp_rx, NULL, &mp, UINT32_C(1)) ==
+		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_upstream_rx_init(
+		      &untouched, &cp_rx, &mapping, NULL, UINT32_C(1)) ==
+		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_upstream_rx_init(
+		      &untouched, &cp_rx, &wrong_mapping, &mp,
+		      UINT32_C(1)) ==
+		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_upstream_rx_init(
+		      &untouched, &cp_rx, &mapping, &acknowledged,
+		      UINT32_C(1)) ==
+		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_upstream_rx_init(
+		      &untouched, &cp_rx, &mapping, &mp, 0) ==
+		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
+	      v90_upstream_rx_init(
+		      &untouched, &cp_rx, &mapping, &mp,
+		      UINT32_C(1) << V90_JD_RATE_CAPABILITY_BITS) ==
 		      V90_UPSTREAM_RX_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &saved, sizeof(untouched)) == 0,
 	      "rejected initialization changed its destination");
-	CHECK(v90_upstream_rx_init(&receiver, &cp_rx, &mapping, &mp) ==
+	CHECK(v90_upstream_rx_init(
+		      &receiver, &cp_rx, &mapping, &mp, UINT32_C(1)) ==
 		      V90_UPSTREAM_RX_OK,
 	      "valid contract owner did not initialize");
 	memset(&data, 0xa5, sizeof(data));

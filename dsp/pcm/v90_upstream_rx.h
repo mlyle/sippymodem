@@ -51,6 +51,8 @@ struct v90_upstream_rx {
 	struct v90_pcm_mapping training_mapping;
 	struct v90_cp_parameters data_parameters;
 	struct v90_mp_record local_mp;
+	/* Data CP rate indices admitted by the Jd sent on this call. */
+	uint32_t enabled_downstream_rate_mask;
 	enum v90_upstream_rx_stage stage;
 	bool data_cp_received;
 	bool failed;
@@ -60,7 +62,8 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	struct v90_upstream_rx *receiver,
 	const struct v90_phase4_cp_line_rx *cp,
 	const struct v90_pcm_mapping *training_mapping,
-	const struct v90_mp_record *local_mp);
+	const struct v90_mp_record *local_mp,
+	uint32_t enabled_downstream_rate_mask);
 bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_has_failed(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_is_complete(const struct v90_upstream_rx *receiver);

@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "v34_data_mapping.h"
+#include "v90_jd.h"
 #include "v90_upstream_mode.h"
 
 #include <stddef.h>
@@ -14,6 +15,21 @@ static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
 	       !v90_mp_record_acknowledges_cp(record);
+}
+
+static bool downstream_rate_mask_is_valid(uint32_t mask)
+{
+	return mask != 0 &&
+	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0;
+}
+
+static bool downstream_rate_is_enabled(
+	const struct v90_upstream_rx *receiver,
+	const struct v90_cp_parameters *parameters)
+{
+	return parameters->selected_rate_index > 0 &&
+	       (receiver->enabled_downstream_rate_mask &
+		(UINT32_C(1) << (parameters->selected_rate_index - 1u))) != 0;
 }
 
 static bool parameters_are_equal(
@@ -88,6 +104,8 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	    !v90_pcm_mapping_is_valid(&receiver->training_mapping) ||
 	    receiver->training_mapping.kind != V90_CP_TRAINING ||
 	    !initial_mp_is_valid(&receiver->local_mp) ||
+	    !downstream_rate_mask_is_valid(
+		    receiver->enabled_downstream_rate_mask) ||
 	    (receiver->stage != V90_UPSTREAM_RX_STAGE_CP &&
 	     !receiver->data_cp_received) ||
 	    (receiver->data_cp_received &&
@@ -96,6 +114,8 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	      receiver->data_parameters.acknowledges_peer ||
 	      receiver->data_parameters.request_silence ||
 	      receiver->data_parameters.selected_rate_index == 0 ||
+	      !downstream_rate_is_enabled(
+		      receiver, &receiver->data_parameters) ||
 	      receiver->data_parameters.law !=
 		      receiver->training_mapping.law)))
 		return false;
@@ -145,7 +165,8 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	struct v90_upstream_rx *receiver,
 	const struct v90_phase4_cp_line_rx *cp,
 	const struct v90_pcm_mapping *training_mapping,
-	const struct v90_mp_record *local_mp)
+	const struct v90_mp_record *local_mp,
+	uint32_t enabled_downstream_rate_mask)
 {
 	struct v90_upstream_rx initialized = {
 		.stage = V90_UPSTREAM_RX_STAGE_CP,
@@ -157,11 +178,14 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	    v90_phase4_cp_line_rx_has_pending_record(cp) ||
 	    !v90_pcm_mapping_is_valid(training_mapping) ||
 	    training_mapping->kind != V90_CP_TRAINING ||
-	    !initial_mp_is_valid(local_mp))
+	    !initial_mp_is_valid(local_mp) ||
+	    !downstream_rate_mask_is_valid(enabled_downstream_rate_mask))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
 	initialized.state.cp = *cp;
 	initialized.training_mapping = *training_mapping;
 	initialized.local_mp = *local_mp;
+	initialized.enabled_downstream_rate_mask =
+		enabled_downstream_rate_mask;
 	if (!v90_upstream_rx_is_valid(&initialized))
 		return V90_UPSTREAM_RX_INVALID_PARAMETERS;
 	*receiver = initialized;
@@ -220,6 +244,11 @@ static enum v90_upstream_rx_result accept_cp_record(
 	result = validate_data_parameters(receiver, &parameters);
 	if (result != V90_UPSTREAM_RX_OK)
 		return result;
+	/* Jd advertises the digital transmitter's enabled downstream rates.
+	 * Consume an unadvertised CP without acknowledging or retaining it, then
+	 * keep the continuous receiver searching for an admissible repetition. */
+	if (!downstream_rate_is_enabled(receiver, &parameters))
+		return continue_cp(receiver);
 	if (!receiver->data_cp_received) {
 		if (parameters.acknowledges_peer)
 			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;

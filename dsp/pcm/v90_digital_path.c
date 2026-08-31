@@ -53,9 +53,7 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 			 (!startup->data_cp_received ||
 			  data_mapping_matches(
 				  &path->data_mapping,
-				  &startup->data_parameters))) ||
-			(path->failed && startup->data_cp_received &&
-			 !path->data_mapping_ready);
+				  &startup->data_parameters)));
 
 		return v90_upstream_rx_is_valid(startup) &&
 		       startup->training_mapping.law == path->law &&
@@ -74,9 +72,6 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
-	    path->enabled_downstream_rate_mask == 0 ||
-	    (path->enabled_downstream_rate_mask &
-	     ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) != 0 ||
 	    (path->data_mapping_ready &&
 	     (!v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	      path->data_mapping.kind != V90_CP_DATA ||
@@ -107,14 +102,13 @@ enum v90_digital_path_result v90_digital_path_init(
 	    v90_phase4_cp_line_rx_has_pending_record(&handoff->receive))
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	initialized.downstream.training = handoff->transmit.transmitter;
-	initialized.enabled_downstream_rate_mask =
-		enabled_downstream_rate_mask;
 	training = &initialized.downstream.training.encoder.mapping;
 	initialized.law = training->law;
 	if (v90_upstream_rx_init(
 		    &initialized.upstream.startup, &handoff->receive,
 		    training,
-		    &initialized.downstream.training.control.mp) !=
+		    &initialized.downstream.training.control.mp,
+		    enabled_downstream_rate_mask) !=
 	    V90_UPSTREAM_RX_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
 	if (!v90_digital_path_is_valid(&initialized))
@@ -245,9 +239,6 @@ static enum v90_digital_path_result request_mp_prime(
 	if (v90_pcm_mapping_init(&mapping, parameters) !=
 	    V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
-	if ((path->enabled_downstream_rate_mask &
-	     (UINT32_C(1) << (parameters->selected_rate_index - 1u))) == 0)
-		return V90_DIGITAL_PATH_NO_COMMON_RATE;
 	/* The upstream owner has already committed the accepted CP. Publish its
 	 * derived mapping before making the fallible downstream request so even
 	 * an internal failure leaves one valid, diagnosable owner. */

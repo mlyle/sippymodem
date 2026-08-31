@@ -53,7 +53,6 @@ struct v90_digital_path {
 	union v90_digital_path_downstream downstream;
 	union v90_digital_path_upstream upstream;
 	struct v90_pcm_mapping data_mapping;
-	uint32_t enabled_downstream_rate_mask;
 	enum g711_law law;
 	enum v90_digital_path_downstream_stage downstream_stage;
 	enum v90_digital_path_upstream_stage upstream_stage;

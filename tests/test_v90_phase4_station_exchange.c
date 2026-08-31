@@ -228,7 +228,7 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_analog_receive_handoff *analog,
 	const struct v90_cp_parameters *training,
 	uint32_t enabled_downstream_rate_mask,
-	bool expect_rate_rejection)
+	bool expect_rate_deferral)
 {
 	struct v90_cp_parameters data_cp = *training;
 	struct v90_phase4_analog_handoff analog_handoff = {
@@ -252,6 +252,7 @@ static bool verify_final_downstream_exchange(
 	bool trn2d_complete = false;
 	bool downstream_source_failure_checked = false;
 	bool upstream_source_failure_checked = false;
+	bool unadvertised_candidate_seen = false;
 
 	data_cp.kind = V90_CP_DATA;
 	data_cp.selected_rate_index = 1;
@@ -354,12 +355,24 @@ static bool verify_final_downstream_exchange(
 			&digital_path, decode_octet(digital_path.law, analog_octet),
 			source_downstream_frame,
 			&downstream_source, &digital_octet, &upstream_frame);
-		if (expect_rate_rejection &&
-		    digital_result == V90_DIGITAL_PATH_NO_COMMON_RATE) {
-			CHECK(v90_digital_path_has_failed(&digital_path) &&
-			      !digital_path.data_mapping_ready,
-			      "rejected CP published an unsupported mapping");
-			return true;
+		if (expect_rate_deferral) {
+			const struct v90_cp_receiver *records =
+				&digital_path.upstream.startup.state.cp.symbols.records;
+
+			if (records->stage == V90_CP_RECEIVER_READ_FRAME)
+				unadvertised_candidate_seen = true;
+			if (unadvertised_candidate_seen &&
+			    records->stage == V90_CP_RECEIVER_SEARCH_SYNC &&
+			    records->sync_one_count == 0) {
+				CHECK(digital_result == V90_DIGITAL_PATH_OK &&
+				      v90_digital_path_is_valid(&digital_path) &&
+				      !v90_digital_path_has_failed(&digital_path) &&
+				      !digital_path.upstream.startup
+					       .data_cp_received &&
+				      !digital_path.data_mapping_ready,
+				      "unadvertised CP changed the digital path");
+				return true;
+			}
 		}
 		if (digital_result == V90_DIGITAL_PATH_SOURCE_FAILURE) {
 			CHECK(downstream_source.reject_next &&
@@ -432,7 +445,7 @@ static bool verify_final_downstream_exchange(
 	}
 
 	CHECK(analog_path.peer_mp_received &&
-	      !expect_rate_rejection &&
+	      !expect_rate_deferral &&
 	      analog_path.peer_mp_prime_received &&
 	      analog_path.cp_prime_sent && analog_path.finishing_cp &&
 	      analog_path.ed_armed && trn2d_complete &&
