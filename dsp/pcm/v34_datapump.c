@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "training_session.h"
+#include "v8_datapump.h"
 #include "v34_call.h"
 #include "v34_data_quality.h"
 #include "v34_profile.h"
@@ -86,6 +87,32 @@ static enum v34_profile_result fallback_profile(
 		(unsigned int)symmetric_rate_units * V34_RATE_STEP, 0);
 }
 
+static enum v34_profile_result v8_fallback_profile(
+	struct v34_call_configuration *configuration, uint16_t *rate_mask,
+	const struct modem *modem, enum v34_station_role role)
+{
+	unsigned int minimum = modem->min_rate;
+	unsigned int maximum = modem->max_rate;
+
+	/* +MS V.90 downstream rates do not share V.34's 2400-bit/s grid.
+	 * Translate both bounds downward when V.8 selects conventional V.34. */
+	if (maximum > V34_MAX_BIT_RATE)
+		maximum = V34_MAX_BIT_RATE;
+	maximum -= maximum % V34_RATE_STEP;
+	if (maximum < V34_MIN_BIT_RATE)
+		return V34_PROFILE_UNSUPPORTED_RATE;
+	if (minimum > V34_MAX_BIT_RATE)
+		minimum = V34_MAX_BIT_RATE;
+	minimum -= minimum % V34_RATE_STEP;
+	if (minimum < V34_MIN_BIT_RATE)
+		minimum = V34_MIN_BIT_RATE;
+	if (minimum > maximum)
+		minimum = maximum;
+	return v34_profile_init(
+		configuration, rate_mask, role, minimum, maximum,
+		modem->v34_symbol_rate);
+}
+
 static struct v34_datapump *v34_from_dp(struct dp *dp)
 {
 	struct v34_datapump *datapump;
@@ -127,24 +154,33 @@ static struct dp *create_v34(
 	struct v34_call_configuration configuration;
 	struct v34_datapump *datapump;
 	struct v90_v34_fallback_handoff fallback;
+	enum v34_profile_result profile_result;
 	enum v34_station_role role;
 	bool from_v90;
+	bool from_v8_fallback;
 	uint16_t rate_mask;
 
 	from_v90 = modem != NULL && modem->dp != NULL &&
 		v90_datapump_v34_fallback_handoff(modem->dp, &fallback);
+	from_v8_fallback = modem != NULL && modem->dp != NULL &&
+		v8_datapump_selected_v34_fallback(modem->dp);
 	role = from_v90 ? fallback.phase2.local_role :
 		station_role(caller != 0);
 	if (modem == NULL || id != DP_V34 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v34_operations || operations->use_count == INT_MAX ||
-	    (from_v90 ?
-	     fallback_profile(&configuration, &rate_mask, &fallback.phase2) :
-	     v34_profile_init(
-		     &configuration, &rate_mask, role,
-		     modem->min_rate, modem->max_rate,
-		     modem->v34_symbol_rate)) !=
-		    V34_PROFILE_OK)
+	    operations != &v34_operations || operations->use_count == INT_MAX)
+		return NULL;
+	if (from_v90)
+		profile_result = fallback_profile(
+			&configuration, &rate_mask, &fallback.phase2);
+	else if (from_v8_fallback)
+		profile_result = v8_fallback_profile(
+			&configuration, &rate_mask, modem, role);
+	else
+		profile_result = v34_profile_init(
+			&configuration, &rate_mask, role, modem->min_rate,
+			modem->max_rate, modem->v34_symbol_rate);
+	if (profile_result != V34_PROFILE_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)

@@ -8,6 +8,8 @@
 
 #include <stdbool.h>
 
+struct dp;
+
 /* Returns the classic V.8 mode carried with the requested datapump. */
 static inline enum v8_modulation
 v8_datapump_modulation(enum DP_ID id)
@@ -41,5 +43,8 @@ static inline bool v8_datapump_uses_pcm(enum DP_ID id)
 int v8_datapump_register(void);
 int v8_datapump_unregister(void);
 bool v8_datapump_is_busy(void);
+/* True only while a completed PCM-mode V.8 exchange is handing this modem
+ * to conventional V.34 because the joint menu selected no PCM roles. */
+bool v8_datapump_selected_v34_fallback(const struct dp *dp);
 
 #endif

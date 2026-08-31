@@ -822,13 +822,21 @@ static bool test_v8_datapump_mapping(void)
 static bool test_v8_handoff(void)
 {
 	static const struct {
-		enum DP_ID requested;
+		enum DP_ID caller_requested;
+		enum DP_ID answerer_requested;
+		enum DP_ID handoff;
 		enum modem_pcm_role caller_role;
 		enum modem_pcm_role answerer_role;
+		bool caller_v34_fallback;
 	} selections[] = {
-		{ DP_V34, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE },
-		{ DP_V90, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL },
-		{ DP_V92, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL },
+		{ DP_V34, DP_V34, DP_V34,
+		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, false },
+		{ DP_V90, DP_V90, DP_V90,
+		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false },
+		{ DP_V92, DP_V92, DP_V92,
+		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false },
+		{ DP_V90, DP_V34, DP_V34,
+		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, true },
 	};
 	struct modem_driver driver = {
 		.name = "V.8 handoff test",
@@ -854,20 +862,25 @@ static bool test_v8_handoff(void)
 	      "V.8 handoff operation did not initialize");
 	for (size_t selection = 0;
 	     selection < ARRAY_LENGTH(selections); ++selection) {
-		enum DP_ID requested = selections[selection].requested;
+		enum DP_ID caller_requested =
+			selections[selection].caller_requested;
+		enum DP_ID answerer_requested =
+			selections[selection].answerer_requested;
 
 		caller = modem_create(&driver, "V.8 caller");
 		answerer = modem_create(&driver, "V.8 answerer");
 		CHECK(caller != NULL && answerer != NULL,
 		      "V.8 handoff endpoints did not initialize");
-		CHECK((!v8_datapump_uses_pcm(requested) ||
+		CHECK(((!v8_datapump_uses_pcm(caller_requested) &&
+			!v8_datapump_uses_pcm(answerer_requested)) ||
 		       (process_at_command(caller, "AT+V90D=1") == 0 &&
 			process_at_command(answerer, "AT+V90D=1") == 0)),
 		      "V.8 PCM endpoints did not accept head-end configuration");
 		calling_dp = operations->create(
-			caller, requested, 1, MODEM_RATE, MODEM_FRAG, operations);
+			caller, caller_requested, 1, MODEM_RATE, MODEM_FRAG,
+			operations);
 		answering_dp = operations->create(
-			answerer, requested, 0, MODEM_RATE, MODEM_FRAG,
+			answerer, answerer_requested, 0, MODEM_RATE, MODEM_FRAG,
 			operations);
 		CHECK(calling_dp != NULL && answering_dp != NULL &&
 			      operations->use_count == 2,
@@ -896,17 +909,20 @@ static bool test_v8_handoff(void)
 		}
 		CHECK(calling_status == DPSTAT_CHANGEDP &&
 			      answering_status == DPSTAT_CHANGEDP &&
-			      caller->dp_requested == requested &&
-			      answerer->dp_requested == requested &&
+			      caller->dp_requested == selections[selection].handoff &&
+			      answerer->dp_requested == selections[selection].handoff &&
 			      caller->dsp_info.pcm_role ==
 				      selections[selection].caller_role &&
 			      answerer->dsp_info.pcm_role ==
 				      selections[selection].answerer_role &&
 			      caller->cfg.ec == 1 && answerer->cfg.ec == 1 &&
 			      caller->dsp_info.qc_lapm == 0 &&
-			      answerer->dsp_info.qc_lapm == 0,
+			      answerer->dsp_info.qc_lapm == 0 &&
+			      v8_datapump_selected_v34_fallback(calling_dp) ==
+				      selections[selection].caller_v34_fallback &&
+			      !v8_datapump_selected_v34_fallback(answering_dp),
 		      "V.8 peers did not agree on handoff %u",
-		      (unsigned int)requested);
+		      (unsigned int)selections[selection].handoff);
 		CHECK(operations->delete(calling_dp) == 0 &&
 			      operations->delete(answering_dp) == 0 &&
 			      operations->use_count == 0,

@@ -22,6 +22,7 @@ struct v8_datapump {
 	enum v8_modulation negotiated_modulation;
 	bool caller;
 	bool handoff_requested;
+	bool v34_fallback;
 };
 
 static struct dp *create_v8(
@@ -38,9 +39,9 @@ static struct dp_operations v8_operations = {
 	.process = process_v8,
 };
 
-static struct v8_datapump *v8_from_dp(struct dp *dp)
+static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 {
-	struct v8_datapump *datapump;
+	const struct v8_datapump *datapump;
 	enum v8_modulation modulation;
 
 	if (dp == NULL || dp->id != DP_V8 || dp->op != &v8_operations ||
@@ -54,6 +55,11 @@ static struct v8_datapump *v8_from_dp(struct dp *dp)
 	    modulation != datapump->negotiated_modulation)
 		return NULL;
 	return datapump;
+}
+
+static struct v8_datapump *v8_from_dp(struct dp *dp)
+{
+	return (struct v8_datapump *)v8_from_dp_const(dp);
 }
 
 static struct dp *create_v8(
@@ -163,6 +169,7 @@ static int request_handoff(struct v8_datapump *datapump)
 	enum modem_pcm_role pcm_role = MODEM_PCM_ROLE_NONE;
 	enum DP_ID handoff = datapump->requested_datapump;
 	bool selected;
+	bool v34_fallback = false;
 
 	if (datapump->caller) {
 		selected = v8_calling_selection(
@@ -179,10 +186,12 @@ static int request_handoff(struct v8_datapump *datapump)
 	if (v8_datapump_uses_pcm(datapump->requested_datapump)) {
 		if (!selected_pcm_role(datapump, &menu, &pcm_role))
 			return DPSTAT_ERROR;
-		if (!menu.pcm_present)
+		if (!menu.pcm_present) {
 			handoff = DP_V34;
-		else if (pcm_role == MODEM_PCM_ROLE_NONE)
+			v34_fallback = true;
+		} else if (pcm_role == MODEM_PCM_ROLE_NONE) {
 			return DPSTAT_ERROR;
+		}
 	} else if (menu.pcm_present) {
 		return DPSTAT_ERROR;
 	}
@@ -193,6 +202,7 @@ static int request_handoff(struct v8_datapump *datapump)
 	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
 	datapump->dp.modem->cfg.ec = menu.lapm;
 	datapump->dp.modem->dsp_info.qc_lapm = 0;
+	datapump->v34_fallback = v34_fallback;
 	datapump->handoff_requested = true;
 	datapump->dp.status = DPSTAT_CHANGEDP;
 	return DPSTAT_CHANGEDP;
@@ -257,4 +267,12 @@ int v8_datapump_unregister(void)
 bool v8_datapump_is_busy(void)
 {
 	return v8_operations.use_count != 0;
+}
+
+bool v8_datapump_selected_v34_fallback(const struct dp *dp)
+{
+	const struct v8_datapump *datapump = v8_from_dp_const(dp);
+
+	return datapump != NULL && datapump->handoff_requested &&
+	       datapump->v34_fallback;
 }

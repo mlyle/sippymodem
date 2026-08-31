@@ -101,8 +101,11 @@ enum integration_impairment {
 
 struct modem_test_case {
 	enum DP_ID id;
+	enum DP_ID answerer_id;
+	enum DP_ID connected_id;
 	const char *name;
 	const char *selection_command;
+	const char *answerer_selection_command;
 	unsigned int caller_tx_rate;
 	unsigned int caller_rx_rate;
 	unsigned int answerer_tx_rate;
@@ -1215,8 +1218,19 @@ static bool run_media_call(
 	bool uses_v8 = (test_case->automode || test_case->requires_v8) &&
 		v8_datapump_modulation(test_case->id) !=
 		V8_MODULATION_NONE;
+	enum DP_ID answerer_id = test_case->answerer_id != 0 ?
+		test_case->answerer_id : test_case->id;
+	enum DP_ID connected_id = test_case->connected_id != 0 ?
+		test_case->connected_id : test_case->id;
+	const char *answerer_selection =
+		test_case->answerer_selection_command != NULL ?
+			test_case->answerer_selection_command :
+			test_case->selection_command;
+	bool answerer_requires_v8 =
+		(test_case->automode || test_case->requires_v8) &&
+		v8_datapump_modulation(answerer_id) != V8_MODULATION_NONE;
 	bool online = false;
-	bool answerer_used_v8 = !uses_v8;
+	bool answerer_used_v8 = !answerer_requires_v8;
 	bool prelink_queued = false;
 	bool prelink_delivered = false;
 	bool transferred = false;
@@ -1233,6 +1247,7 @@ static bool run_media_call(
 			 uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
 				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
+	int answerer_selection_length = (int)strlen(answerer_selection);
 	static const char raw_command[] = "AT\\N0\r";
 	static const char lapm_command[] = "AT\\N4\r";
 	static const char no_compression_command[] = "AT+DS=0,0\r";
@@ -1262,7 +1277,8 @@ static bool run_media_call(
 			       &caller_rate_monitor,
 			       test_case->minimum_caller_rate_signal_sample)),
 	      "%s integration endpoints did not initialize", test_case->name);
-	if (v8_datapump_uses_pcm(test_case->id)) {
+	if (v8_datapump_uses_pcm(test_case->id) ||
+	    v8_datapump_uses_pcm(answerer_id)) {
 		CHECK(modem_set_sreg(
 			      caller.modem, SREG_V90_DIGITAL_INDICATION, 0) == 0 &&
 		      modem_set_sreg(
@@ -1330,10 +1346,11 @@ static bool run_media_call(
 		      caller.modem, test_case->selection_command,
 		      selection_length) == selection_length &&
 		      modem_write(
-			      answerer.modem, test_case->selection_command,
-			      selection_length) == selection_length &&
+			      answerer.modem, answerer_selection,
+			      answerer_selection_length) ==
+			      answerer_selection_length &&
 		      MODEM_DP(caller.modem) == test_case->id &&
-		      MODEM_DP(answerer.modem) == test_case->id &&
+		      MODEM_DP(answerer.modem) == answerer_id &&
 		      MODEM_AUTOMODE(caller.modem) == test_case->automode &&
 		      MODEM_AUTOMODE(answerer.modem) == test_case->automode &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
@@ -1414,8 +1431,8 @@ static bool run_media_call(
 			      test_case->name);
 			prelink_queued = true;
 		}
-		if (modem_is_online(caller.modem, test_case->id) &&
-		    modem_is_online(answerer.modem, test_case->id)) {
+		if (modem_is_online(caller.modem, connected_id) &&
+		    modem_is_online(answerer.modem, connected_id)) {
 			online = true;
 			break;
 		}
@@ -1430,9 +1447,9 @@ static bool run_media_call(
 	      "%s peers did not acquire carrier and report their rates "
 	      "(caller=%d/%u/%u answerer=%d/%u/%u)",
 	      test_case->name,
-	      modem_is_online(caller.modem, test_case->id),
+	      modem_is_online(caller.modem, connected_id),
 	      caller.modem->tx_rate, caller.modem->rx_rate,
-	      modem_is_online(answerer.modem, test_case->id),
+	      modem_is_online(answerer.modem, connected_id),
 	      answerer.modem->tx_rate, answerer.modem->rx_rate);
 	CHECK(!monitor_caller_rate ||
 		      caller_rate_monitor.starts >=
@@ -1538,7 +1555,7 @@ static bool run_media_call(
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);
 		CHECK(exercise_retrain(
-				      &caller, &answerer, &answerer, test_case->id,
+				      &caller, &answerer, &answerer, connected_id,
 				      test_case->answerer_rx_rate, codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 0,
@@ -1550,7 +1567,7 @@ static bool run_media_call(
 		      "%s answerer retrain did not reconnect and pass data",
 		      test_case->name);
 		CHECK(exercise_retrain(
-				      &caller, &answerer, &caller, test_case->id,
+				      &caller, &answerer, &caller, connected_id,
 				      test_case->caller_rx_rate, codec, &recorder,
 				      &caller_delay,
 				      test_case->caller_delay_frames, 1,
@@ -2932,6 +2949,22 @@ int main(void)
 			.requires_v8 = true,
 			.requires_exact_g711 = true,
 			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+		},
+		{
+			.id = DP_V90,
+			.answerer_id = DP_V34,
+			.connected_id = DP_V34,
+			.name = "V.90 28000 selection fallback to V.34",
+			.selection_command =
+				"AT+MS=90,0,28000,28000+V90U=14400,14400,3000\r",
+			.answerer_selection_command =
+				"AT+MS=34,0,26400,26400+V34B=3000\r",
+			.caller_tx_rate = 26400,
+			.caller_rx_rate = 26400,
+			.answerer_tx_rate = 26400,
+			.answerer_rx_rate = 26400,
+			.training_frame_limit = 1500,
+			.requires_v8 = true,
 		},
 		{
 			.id = DP_B212,
