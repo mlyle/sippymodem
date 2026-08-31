@@ -815,7 +815,11 @@ static bool sample_ranging(
 		return true;
 	case PHASE2_PROBE_RECEIVE_READY:
 	case PHASE2_PROBE_TRANSMIT_READY:
-		return child.kind == ready && enter_initial_probe(phase2, event);
+		if (child.kind != ready || !enter_initial_probe(phase2, event))
+			return false;
+		event->round_trip_delay_samples =
+			child.round_trip_delay_samples;
+		return true;
 	case PHASE2_RANGING_TIMEOUT:
 		phase2->failure = PCM_PHASE2_FAILURE_RANGING_TIMEOUT;
 		event->kind = PCM_PHASE2_EVENT_FAILED;

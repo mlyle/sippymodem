@@ -888,6 +888,8 @@ static bool check_phase2_controller(
 	struct pcm_phase3_entry untouched_entry_before;
 	bool analog_initial = false;
 	bool digital_initial = false;
+	uint16_t analog_initial_round_trip = 0;
+	uint16_t digital_initial_round_trip = 0;
 	bool digital_measured_initial = false;
 	bool analog_turnaround = false;
 	bool digital_turnaround = false;
@@ -974,10 +976,18 @@ static bool check_phase2_controller(
 		delay_line_transmit(
 			&digital_to_analog,
 			codec_round_trip(digital_transmit, codec));
-		analog_initial |= analog_event.kind ==
-			PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
-		digital_initial |= digital_event.kind ==
-			PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED;
+		if (analog_event.kind ==
+		    PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
+			analog_initial = true;
+			analog_initial_round_trip =
+				analog_event.round_trip_delay_samples;
+		}
+		if (digital_event.kind ==
+		    PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
+			digital_initial = true;
+			digital_initial_round_trip =
+				digital_event.round_trip_delay_samples;
+		}
 		digital_measured_initial |= digital_event.kind ==
 			PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 		analog_turnaround |= analog_event.kind ==
@@ -998,7 +1008,9 @@ static bool check_phase2_controller(
 		if (analog_ready && digital_ready)
 			break;
 	}
-	CHECK(analog_initial && digital_initial && digital_measured_initial &&
+	CHECK(analog_initial && digital_initial &&
+	      analog_initial_round_trip != 0 &&
+	      digital_initial_round_trip != 0 && digital_measured_initial &&
 	      analog_turnaround && digital_turnaround && analog_reciprocal &&
 	      digital_reciprocal && analog_ready && digital_ready &&
 	      pcm_phase2_is_ready_for_info1(&analog) &&

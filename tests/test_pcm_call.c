@@ -12,6 +12,7 @@
 
 enum {
 	CALL_SAMPLE_LIMIT = 120000,
+	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	MAX_LINE_DELAY_CHARACTERS = 13,
 	PHASE2_NOMINAL_AMPLITUDE = 12000,
 	PHASE3_NOMINAL_AMPLITUDE = 6000,
@@ -48,9 +49,11 @@ struct endpoint {
 	uint16_t upstream_received_delay;
 	uint16_t phase4_entry_ri_symbols;
 	uint32_t phase4_entry_ri_wait_samples;
+	uint32_t info1_b1_deadline_samples;
 	bool entered_phase3;
 	bool entered_mixed;
 	bool entered_phase4;
+	bool info1_b1_deadline_seen;
 	bool phase4_boundary_checked;
 	bool data_path_started;
 	bool idle_source_checked;
@@ -694,6 +697,23 @@ static bool endpoint_octet(
 		    &endpoint->call, received, received_sample, transmitted,
 		    &observation) != PCM_CALL_OK)
 		return false;
+	if (endpoint->call.protocol == PCM_PROTOCOL_V90 &&
+	    ((endpoint->call.local_role == V90_ANALOG_MODEM &&
+	      observation.phase2.kind ==
+		      PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) ||
+	     (endpoint->call.local_role == V90_DIGITAL_MODEM &&
+	      observation.phase2.kind ==
+		      PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED))) {
+		uint32_t expected = V90_B1_BASE_DEADLINE_SAMPLES +
+			5u * endpoint->call.round_trip_delay_samples;
+
+		if (!endpoint->call.round_trip_delay_stored ||
+		    !endpoint->call.b1_deadline_armed ||
+		    endpoint->call.b1_deadline_remaining_samples != expected)
+			return false;
+		endpoint->info1_b1_deadline_samples = expected;
+		endpoint->info1_b1_deadline_seen = true;
+	}
 	endpoint->mixed_octets +=
 		observation.processed == PCM_CALL_PHASE3_MIXED;
 	endpoint->phase4_octets +=
@@ -842,6 +862,8 @@ static bool run_configured_call(
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
+	      analog.info1_b1_deadline_seen &&
+	      digital.info1_b1_deadline_seen &&
 	      ri_progress_is_consistent(&analog) &&
 	      ri_progress_is_consistent(&digital) &&
 	      !pcm_call_has_failed(&analog.call) &&
@@ -896,6 +918,10 @@ static bool run_configured_call(
 
 		CHECK(pcm_call_is_online(&analog.call) &&
 		      pcm_call_is_online(&digital.call) &&
+		      !analog.call.b1_deadline_armed &&
+		      analog.call.b1_deadline_remaining_samples == 0u &&
+		      !digital.call.b1_deadline_armed &&
+		      digital.call.b1_deadline_remaining_samples == 0u &&
 		      analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		      digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE &&
 		      analog.source_failure_checked &&
@@ -959,6 +985,96 @@ static bool step_endpoints(
 		    &digital_transmitted))
 		return false;
 	channel_transmit(channel, analog_transmitted, digital_transmitted);
+	return true;
+}
+
+static bool run_b1_timeout(
+	enum g711_law law, enum v90_modem_role stalled_role)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	struct endpoint *stalled;
+	uint32_t remaining;
+	uint8_t silence = silence_octet(law);
+	bool data_path_reached = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u B1 timeout endpoints did not initialize",
+	      (unsigned int)law);
+	stalled = stalled_role == V90_ANALOG_MODEM ? &analog : &digital;
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u role %u B1 timeout setup stopped at %zu",
+		      (unsigned int)law, (unsigned int)stalled_role, clock);
+		if (stalled->data_path_started) {
+			data_path_reached = true;
+			break;
+		}
+	}
+	remaining = stalled->call.b1_deadline_remaining_samples;
+	CHECK(data_path_reached && stalled->info1_b1_deadline_seen &&
+	      stalled->call.stage == PCM_CALL_DATA_PATH &&
+	      stalled->call.b1_deadline_armed && remaining != 0u &&
+	      remaining < stalled->info1_b1_deadline_samples &&
+	      !pcm_call_is_online(&stalled->call),
+	      "law %u role %u did not retain its B1 deadline",
+	      (unsigned int)law, (unsigned int)stalled_role);
+	for (uint32_t elapsed = 1u; elapsed < remaining; ++elapsed) {
+		struct pcm_call_data_event event;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_data_octet(
+			      &stalled->call, silence, 0, NULL,
+			      &transmitted, &event) == PCM_CALL_OK &&
+		      event.kind == PCM_CALL_DATA_NONE &&
+		      stalled->call.stage == PCM_CALL_DATA_PATH &&
+		      stalled->call.b1_deadline_armed &&
+		      stalled->call.b1_deadline_remaining_samples ==
+			      remaining - elapsed,
+		      "law %u role %u B1 deadline changed at %u/%u",
+		      (unsigned int)law, (unsigned int)stalled_role,
+		      elapsed, remaining);
+	}
+	{
+		struct pcm_call_data_event event;
+		struct pcm_call_observation observation;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_data_octet(
+			      &stalled->call, silence, 0, NULL,
+			      &transmitted, &event) == PCM_CALL_OK &&
+		      event.kind == PCM_CALL_DATA_NONE &&
+		      stalled->call.stage == PCM_CALL_RETRAIN_SILENCE &&
+		      !stalled->call.b1_deadline_armed &&
+		      stalled->call.b1_deadline_remaining_samples == 0u &&
+		      !pcm_call_has_failed(&stalled->call) &&
+		      pcm_call_octet(
+			      &stalled->call, silence, 0, &transmitted,
+			      &observation) == PCM_CALL_OK &&
+		      transmitted == silence &&
+		      observation.processed == PCM_CALL_RETRAIN_SILENCE &&
+		      observation.next == PCM_CALL_RETRAIN_SILENCE,
+		      "law %u role %u did not retrain at its B1 deadline",
+		      (unsigned int)law, (unsigned int)stalled_role);
+	}
+	return true;
+}
+
+static bool test_b1_timeout(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_b1_timeout(law, V90_ANALOG_MODEM) &&
+		      run_b1_timeout(law, V90_DIGITAL_MODEM),
+		      "law %u V.90 B1 timeout roles failed",
+		      (unsigned int)law);
+	}
 	return true;
 }
 
@@ -1327,8 +1443,8 @@ static bool run_v92_phase4_control(
 		      &digital.state.phase4.v92.owner.e2u) &&
 	      analog.round_trip_delay_stored &&
 	      analog.round_trip_delay_samples != 0u &&
-	      !digital.round_trip_delay_stored &&
-	      digital.round_trip_delay_samples == 0u &&
+	      digital.round_trip_delay_stored &&
+	      digital.round_trip_delay_samples != 0u &&
 	      analog_control.cpu_repeat_interval_samples ==
 		      800u + analog.round_trip_delay_samples &&
 	      analog_control.cpu_repeat_remaining_samples == 0u &&
@@ -1537,6 +1653,7 @@ static bool test_validation(void)
 	struct pcm_call_configuration selected =
 		configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	struct pcm_call call;
+	struct pcm_call invalid;
 	struct pcm_call saved;
 	struct pcm_call_observation observation;
 	struct pcm_call_observation saved_observation;
@@ -1599,6 +1716,16 @@ static bool test_validation(void)
 	      !pcm_call_phase4_is_ready(&call) &&
 	      !pcm_call_is_online(&call),
 	      "valid call did not initialize");
+	invalid = call;
+	invalid.b1_deadline_armed = true;
+	invalid.b1_deadline_remaining_samples =
+		V90_B1_BASE_DEADLINE_SAMPLES;
+	CHECK(!pcm_call_is_valid(&invalid),
+	      "call accepted a B1 deadline without timing evidence");
+	invalid = call;
+	invalid.b1_deadline_remaining_samples = 1u;
+	CHECK(!pcm_call_is_valid(&invalid),
+	      "call accepted an unowned B1 deadline");
 	saved = call;
 	memset(&observation, 0x5a, sizeof(observation));
 	saved_observation = observation;
@@ -1777,6 +1904,7 @@ int main(void)
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "local and remote PCM full retrain", test_full_retrain },
+		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",

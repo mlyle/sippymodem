@@ -264,6 +264,7 @@ struct pcm_call {
 	struct v34_retrain_detector retrain_detector;
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t v92_peer_downstream_rate_mask;
+	uint32_t b1_deadline_remaining_samples;
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	enum pcm_protocol protocol;
@@ -274,6 +275,7 @@ struct pcm_call {
 	bool peer_info0_stored;
 	bool v92_peer_downstream_rate_stored;
 	bool round_trip_delay_stored;
+	bool b1_deadline_armed;
 	bool retrain_peer_tone_retained;
 	bool failed;
 };

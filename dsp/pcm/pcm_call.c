@@ -13,6 +13,8 @@
 enum {
 	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
 	V90_UPSTREAM_RATE_UNIT = 2400,
+	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
+	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V92_CPU_REPEAT_BASE_SAMPLES = 800,
 };
 
@@ -509,6 +511,16 @@ static bool call_is_valid(
 	     !call->v92_peer_downstream_rate_stored) ||
 	    (!call->round_trip_delay_stored &&
 	     call->round_trip_delay_samples != 0u) ||
+	    (!call->b1_deadline_armed &&
+	     call->b1_deadline_remaining_samples != 0u) ||
+	    (call->b1_deadline_armed &&
+	     (call->protocol != PCM_PROTOCOL_V90 ||
+	      call->stage == PCM_CALL_RETRAIN_SILENCE ||
+	      !call->peer_info0_stored || !call->round_trip_delay_stored ||
+	      call->b1_deadline_remaining_samples >
+		      V90_B1_BASE_DEADLINE_SAMPLES +
+		      V90_B1_ROUND_TRIP_ALLOWANCES *
+			      (uint32_t)call->round_trip_delay_samples)) ||
 	    (call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
 	     !call->peer_info0_stored) ||
@@ -797,16 +809,72 @@ static enum pcm_call_result begin_retrain(
 		PCM_CALL_RETRAIN_SILENCE_SAMPLES;
 	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
 	next.v92_peer_downstream_rate_mask = 0u;
+	next.b1_deadline_remaining_samples = 0u;
 	next.round_trip_delay_samples = 0u;
 	next.stage = PCM_CALL_RETRAIN_SILENCE;
 	next.phase3_entry_stored = false;
 	next.v92_peer_downstream_rate_stored = false;
 	next.round_trip_delay_stored = false;
+	next.b1_deadline_armed = false;
 	next.retrain_peer_tone_retained = retain_peer_tone;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
 	return PCM_CALL_OK;
+}
+
+static bool is_v90_info1a_boundary(
+	const struct pcm_call *call, const struct pcm_phase2_event *event)
+{
+	if (call->protocol != PCM_PROTOCOL_V90)
+		return false;
+	return call->local_role == V90_ANALOG_MODEM ?
+		event->kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT :
+		event->kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
+}
+
+static enum pcm_call_result arm_b1_deadline(
+	struct pcm_call *call, const struct pcm_phase2_event *event)
+{
+	if (!is_v90_info1a_boundary(call, event))
+		return PCM_CALL_OK;
+	if (!call->round_trip_delay_stored)
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	call->b1_deadline_remaining_samples =
+		V90_B1_BASE_DEADLINE_SAMPLES +
+		V90_B1_ROUND_TRIP_ALLOWANCES *
+		(uint32_t)call->round_trip_delay_samples;
+	call->b1_deadline_armed = true;
+	return PCM_CALL_OK;
+}
+
+static bool peer_b1_received(const struct pcm_call *call)
+{
+	if (call->stage != PCM_CALL_DATA_PATH)
+		return false;
+	return call->local_role == V90_ANALOG_MODEM ?
+		v90_analog_path_downstream_is_online(
+			&call->state.data_path.analog) :
+		v90_digital_path_upstream_is_online(
+			&call->state.data_path.digital);
+}
+
+static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
+{
+	if (!call->b1_deadline_armed)
+		return PCM_CALL_OK;
+	if (peer_b1_received(call)) {
+		call->b1_deadline_remaining_samples = 0u;
+		call->b1_deadline_armed = false;
+		return PCM_CALL_OK;
+	}
+	if (call->b1_deadline_remaining_samples != 0u)
+		call->b1_deadline_remaining_samples--;
+	if (call->b1_deadline_remaining_samples != 0u ||
+	    (call->stage != PCM_CALL_PHASE4 &&
+	     call->stage != PCM_CALL_DATA_PATH))
+		return PCM_CALL_OK;
+	return begin_retrain(call, false);
 }
 
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
@@ -1020,6 +1088,7 @@ static enum pcm_call_result sample_phase2(
 	struct pcm_call *call, uint8_t received_octet,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
+	enum pcm_call_result call_result;
 	int16_t transmitted_sample;
 	enum pcm_phase2_result result = pcm_phase2_sample(
 		&call->state.phase2,
@@ -1033,7 +1102,9 @@ static enum pcm_call_result sample_phase2(
 		call->peer_info0 = call->state.phase2.peer_info0;
 		call->peer_info0_stored = true;
 	}
-	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY) {
+	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY ||
+	    observation->phase2.kind ==
+		    PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
 		if (call->round_trip_delay_stored &&
 		    call->round_trip_delay_samples !=
 			    observation->phase2.round_trip_delay_samples)
@@ -1042,7 +1113,9 @@ static enum pcm_call_result sample_phase2(
 			observation->phase2.round_trip_delay_samples;
 		call->round_trip_delay_stored = true;
 	}
-	return advance_phase2(call, &observation->phase2);
+	call_result = advance_phase2(call, &observation->phase2);
+	return call_result == PCM_CALL_OK ?
+		arm_b1_deadline(call, &observation->phase2) : call_result;
 }
 
 static enum pcm_call_result sample_retrain_silence(
@@ -2370,6 +2443,8 @@ enum pcm_call_result pcm_call_data_octet(
 	}
 	if (result == PCM_CALL_OK && retrain_detected)
 		result = begin_retrain(call, true);
+	if (result == PCM_CALL_OK)
+		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	if (!pcm_call_owned_state_is_valid(call)) {
@@ -2387,6 +2462,7 @@ enum pcm_call_result pcm_call_octet(
 	struct pcm_call_observation *observation)
 {
 	struct pcm_call_observation emitted = { 0 };
+	bool deadline_started;
 	uint8_t generated;
 	enum pcm_call_result result;
 
@@ -2432,6 +2508,10 @@ enum pcm_call_result pcm_call_octet(
 	else if (result == PCM_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
 		result = observe_retrain_tone(call, received_sample);
+	deadline_started = emitted.processed == PCM_CALL_PHASE2 &&
+		is_v90_info1a_boundary(call, &emitted.phase2);
+	if (result == PCM_CALL_OK && !deadline_started)
+		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
 	emitted.next = call->stage;

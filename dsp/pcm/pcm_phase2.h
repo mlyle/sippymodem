@@ -50,8 +50,10 @@ enum pcm_phase2_event_kind {
 	PCM_PHASE2_EVENT_FAILED,
 };
 
-/* A compact recording boundary for Phase 2 progress. Fields not selected by
- * kind are zero. */
+/* A compact recording boundary for Phase 2 progress. Round-trip delay is
+ * selected by both the dedicated measurement event and the initial-probe
+ * handoff, since Signal B completes its measurement at that handoff. Other
+ * fields not selected by kind are zero. */
 struct pcm_phase2_event {
 	enum pcm_phase2_event_kind kind;
 	enum pcm_phase2_failure failure;
