@@ -10,7 +10,12 @@
 #include <stdint.h>
 
 enum {
-	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS =
+	/* V.90 ends Jd as soon as the ordinary V.34 S detector qualifies the
+	 * analogue return.  Nine consecutive decisions match that detector's
+	 * limit; the longer suffix below remains responsible for the final S-bar
+	 * boundary. */
+	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS = 9,
+	V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS =
 		V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS,
 	V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS =
 		V90_PHASE3_RETURN_RX_ONSET_SYMBOLS *

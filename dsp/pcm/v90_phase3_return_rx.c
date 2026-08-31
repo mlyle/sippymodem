@@ -10,6 +10,10 @@
 _Static_assert(
 	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <= UINT8_MAX,
 	"V.90 S onset history must fit its counters");
+_Static_assert(
+	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <=
+		V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS,
+	"V.90 S onset must fit the retained marker suffix");
 
 static bool equalizer_is_at_handoff(
 	const struct qam_equalizer *equalizer)
@@ -54,7 +58,8 @@ bool v90_phase3_return_rx_is_valid(
 	if (rx == NULL || !qam_adaptation_is_valid(rx->adaptation) ||
 	    !equalizer_is_at_handoff(&rx->equalizer) ||
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
-	    rx->marker.s_symbols != V90_PHASE3_RETURN_RX_ONSET_SYMBOLS ||
+	    rx->marker.s_symbols !=
+		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS ||
 	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx))
 		return false;
 	switch (rx->stage) {
@@ -118,7 +123,7 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 	initialized.equalizer = equalizer->equalizer;
 	if (v34_phase3_s_receiver_init_suffix(
 		    &initialized.marker,
-		    V90_PHASE3_RETURN_RX_ONSET_SYMBOLS) !=
+		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    !v90_phase3_return_rx_is_valid(&initialized))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;

@@ -151,7 +151,7 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 			      V90_PHASE3_RETURN_TX_OK,
 		      "phase %u return source stopped", quarter_turns);
 		if (stage == V90_PHASE3_RETURN_TX_S &&
-		    (s_symbol == 5u || s_symbol == 19u))
+		    (s_symbol == 19u || s_symbol == 47u))
 			point = v34_rotated_point_zero(2);
 		point = channel_point(point, quarter_turns);
 		result = v90_phase3_return_rx_point(&rx, &point);
@@ -188,6 +188,8 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 	CHECK(s_events == 1 && s_bar_events == 1 &&
 	      s_at_detection == V90_PHASE3_RETURN_RX_ONSET_SYMBOLS +
 					V34_EQUALIZER_DECISION_DELAY &&
+	      rx.marker.s_symbols ==
+		      V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS &&
 	      post_consumed == V34_EQUALIZER_DECISION_DELAY &&
 	      handoff_result == V90_PHASE3_RETURN_RX_OK &&
 	      v90_phase3_return_handoff_is_valid(&handoff),
