@@ -334,9 +334,12 @@ static bool correlation_is_ready(const struct v90_host_echo *echo)
 		uint32_t delta = delay > echo->window_delay_samples ?
 			delay - echo->window_delay_samples :
 			echo->window_delay_samples - delay;
+		uint64_t scanned_training_samples =
+			(uint64_t)reference->scan_samples *
+			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES;
 
 		if (delta > reference->scan_step ||
-		    reference->scan_samples < echo->train_samples)
+		    scanned_training_samples < echo->train_samples)
 			continue;
 		if (correlation_at_least(
 			    reference->scan_reference_energy[index],

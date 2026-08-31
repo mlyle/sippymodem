@@ -251,6 +251,60 @@ static bool test_weak_joint_margin(void)
 	return true;
 }
 
+static bool test_decimated_adjacent_correlation(void)
+{
+	struct v90_host_echo echo;
+	struct pcm_echo_reference *reference = &echo.reference;
+	uint32_t adjacent;
+	int16_t cleaned;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "decimated-correlation owner did not initialize");
+	for (size_t index = 0;
+	     index < reference->scan_required_fill;
+	     ++index)
+		CHECK(pcm_echo_reference_push(reference, 100) ==
+			      PCM_ECHO_REFERENCE_OK,
+		      "decimated-correlation reference fill failed");
+
+	adjacent = reference->scan_current_index + 1u;
+	CHECK(adjacent < reference->scan_count,
+	      "decimated-correlation scan has no adjacent delay");
+	echo.coefficients[0] = 1.0f;
+	echo.reference_energy = UINT64_C(1000000000);
+	echo.input_energy = UINT64_C(1000000000);
+	echo.error_energy = 0;
+	echo.cross_energy = 0;
+	echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 1u;
+	echo.train_samples = V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES - 1u;
+	echo.train_peak = 100;
+	echo.delay_acquired = true;
+	reference->scan_reference_energy[adjacent] = UINT64_C(1000000000);
+	reference->scan_input_energy = UINT64_C(1000000000);
+	reference->scan_cross_energy[adjacent] = INT64_C(1000000000);
+	reference->scan_samples =
+		V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES /
+			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES -
+		1u;
+
+	CHECK(echo_step(
+		      &echo, V90_HOST_ECHO_TRAIN,
+		      reference->scan_required_fill,
+		      100, &cleaned),
+	      "decimated adjacent-correlation step failed");
+	CHECK(cleaned == 100 &&
+	      reference->scan_samples < echo.train_samples &&
+	      (uint64_t)reference->scan_samples *
+			      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES >=
+		      echo.train_samples &&
+	      v90_host_echo_is_ready(&echo),
+	      "full-rate training rejected covered decimated correlation: "
+	      "scan=%u train=%u ready=%d",
+	      reference->scan_samples, echo.train_samples,
+	      v90_host_echo_is_ready(&echo));
+	return true;
+}
+
 static bool test_unrelated_input_does_not_train(void)
 {
 	struct v90_host_echo echo;
@@ -285,6 +339,8 @@ int main(void)
 	CHECK(test_long_delay_cancellation(),
 	      "long-delay cancellation failed");
 	CHECK(test_weak_joint_margin(), "weak joint margin failed");
+	CHECK(test_decimated_adjacent_correlation(),
+	      "decimated adjacent correlation failed");
 	CHECK(test_unrelated_input_does_not_train(),
 	      "uncorrelated-input gate failed");
 	puts("V.90 host echo tests passed");
