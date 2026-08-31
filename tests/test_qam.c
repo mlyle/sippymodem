@@ -747,10 +747,10 @@ static bool test_filtered_clock_tracking(void)
 		CHECK(qam_demodulator_sample(
 			      &demodulator, sample, &received, &ready) == QAM_OK,
 		      "filtered-clock receiver failed");
-		if (qam_demodulator_measure(&demodulator).timing_locked)
+		if (qam_demodulator_has_timing_lock(&demodulator))
 			break;
 	}
-	CHECK(qam_demodulator_measure(&demodulator).timing_locked &&
+	CHECK(qam_demodulator_has_timing_lock(&demodulator) &&
 		      demodulator.timing_candidate_count == 8,
 	      "filtered-clock fixture did not acquire timing");
 	demodulator.timing_reference_index = 0;
@@ -896,7 +896,7 @@ static bool test_silence_does_not_lock(void)
 			      !ready,
 		      "QAM silence produced a symbol at sample %u", index);
 	}
-	CHECK(!qam_demodulator_measure(&demodulator).timing_locked,
+	CHECK(!qam_demodulator_has_timing_lock(&demodulator),
 	      "QAM silence produced a timing lock");
 	return true;
 }
@@ -1233,6 +1233,8 @@ static bool test_validation(void)
 	CHECK(qam_demodulator_sample(
 		      &demodulator, 0, &received_point, &accepted) ==
 		      QAM_INVALID_ARGUMENT &&
+	      !qam_demodulator_has_timing_lock(&demodulator) &&
+	      !qam_demodulator_has_timing_lock(NULL) &&
 		      !qam_demodulator_measure(&demodulator)
 			       .timing_locked,
 		      "QAM accepted corrupt matched-filter state");

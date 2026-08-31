@@ -6,18 +6,10 @@
 
 #include <stddef.h>
 
-static bool line_is_analog(const struct v34_training_line *line)
-{
-	return v34_training_line_is_valid(line) &&
-	       line->carrier.channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       line->profile.local_role == V34_ANSWERING_STATION &&
-	       line->profile.md_symbol_count == 0;
-}
-
 bool v90_phase4_cp_line_tx_is_valid(
 	const struct v90_phase4_cp_line_tx *tx)
 {
-	return tx != NULL && line_is_analog(&tx->line) &&
+	return tx != NULL && v90_phase3_training_line_is_valid(&tx->line) &&
 	       v90_phase4_cp_tx_is_valid(&tx->symbols) &&
 	       tx->symbols.role == tx->line.profile.local_role;
 }
@@ -63,7 +55,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_init(
 	struct v90_phase4_cp_line_tx initialized = { 0 };
 	enum v90_phase4_cp_line_tx_result result;
 
-	if (tx == NULL || !line_is_analog(line) ||
+	if (tx == NULL || !v90_phase3_training_line_is_valid(line) ||
 	    !v34_training_line_needs_point(line))
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
 	initialized.line = *line;

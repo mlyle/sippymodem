@@ -6,18 +6,11 @@
 
 #include <stddef.h>
 
-static bool line_is_analog(const struct v34_training_line *line)
-{
-	return v34_training_line_is_valid(line) &&
-	       line->carrier.channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       line->profile.local_role == V34_ANSWERING_STATION &&
-	       line->profile.md_symbol_count == 0;
-}
-
 bool v90_phase4_e_line_tx_is_valid(
 	const struct v90_phase4_e_line_tx *transmitter)
 {
-	return transmitter != NULL && line_is_analog(&transmitter->line) &&
+	return transmitter != NULL &&
+	       v90_phase3_training_line_is_valid(&transmitter->line) &&
 	       v34_phase4_e_sequence_is_valid(&transmitter->sequence) &&
 	       v90_cp_parameters_are_valid(&transmitter->cp) &&
 	       transmitter->cp.kind == V90_CP_DATA &&

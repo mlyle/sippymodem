@@ -33,10 +33,7 @@ static bool symbols_are_initial(
 bool v90_phase3_analog_line_tx_owned_state_is_valid(
 	const struct v90_phase3_analog_line_tx *tx)
 {
-	if (tx == NULL || !v34_training_line_is_valid(&tx->line) ||
-	    tx->line.carrier.channel.sample_rate != V90_PHASE3_SAMPLE_RATE ||
-	    tx->line.profile.local_role != V34_ANSWERING_STATION ||
-	    tx->line.profile.md_symbol_count != 0 ||
+	if (tx == NULL || !v90_phase3_training_line_is_valid(&tx->line) ||
 	    !v90_phase3_analog_tx_owned_state_is_valid(&tx->symbols) ||
 	    tx->leading_silence_samples >
 		    V90_PHASE3_ANALOG_LEADING_SILENCE_SAMPLES)
@@ -65,9 +62,8 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_init(
 	};
 	enum v90_phase3_analog_line_tx_result result;
 
-	if (tx == NULL || !v34_phase3_profile_is_valid(analog_profile) ||
-	    analog_profile->local_role != V34_ANSWERING_STATION ||
-	    analog_profile->md_symbol_count != 0)
+	if (tx == NULL ||
+	    !v90_phase3_analog_profile_is_valid(analog_profile))
 		return V90_PHASE3_ANALOG_LINE_TX_INVALID_ARGUMENT;
 	result = line_result(v34_training_line_init(
 		&initialized.line, analog_profile, V90_PHASE3_SAMPLE_RATE,

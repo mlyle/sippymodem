@@ -618,6 +618,13 @@ bool qam_demodulator_is_valid(
 	return true;
 }
 
+bool qam_demodulator_has_timing_lock(
+	const struct qam_demodulator *demodulator)
+{
+	return qam_demodulator_is_valid(demodulator) &&
+	       demodulator->timing_locked;
+}
+
 enum qam_result qam_demodulator_init(
 	struct qam_demodulator *demodulator,
 	const struct qam_channel *channel)

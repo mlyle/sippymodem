@@ -2,30 +2,9 @@
 
 #include "v90_phase4_e_line_rx.h"
 
-#include "v34_pulse_modulator.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
-
-static bool profile_is_analog(
-	const struct v34_phase3_profile *profile)
-{
-	return v34_phase3_profile_is_valid(profile) &&
-	       profile->local_role == V34_ANSWERING_STATION &&
-	       profile->md_symbol_count == 0;
-}
-
-static bool channel_matches(const struct v90_phase4_e_line_rx *rx)
-{
-	return rx->demodulator.channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       v34_line_channel_matches(
-		       &rx->transmitting_profile,
-		       &rx->demodulator.channel) &&
-	       rx->demodulator.acquisition_window_symbols ==
-		       V90_PHASE3_LINE_ACQUISITION_SYMBOLS &&
-	       rx->demodulator.tracking_window_symbols ==
-		       V90_PHASE3_LINE_TRACKING_SYMBOLS;
-}
 
 static bool cp_is_final(const struct v90_cp_parameters *cp)
 {
@@ -37,10 +16,9 @@ static bool cp_is_final(const struct v90_cp_parameters *cp)
 bool v90_phase4_e_line_rx_is_valid(
 	const struct v90_phase4_e_line_rx *rx)
 {
-	return rx != NULL && profile_is_analog(&rx->transmitting_profile) &&
-	       qam_demodulator_is_valid(&rx->demodulator) &&
-	       qam_demodulator_measure(&rx->demodulator).timing_locked &&
-	       channel_matches(rx) &&
+	return rx != NULL &&
+	       v90_phase3_demodulator_is_locked(
+		       &rx->demodulator, &rx->transmitting_profile) &&
 	       qam_equalizer_is_handoff_ready(&rx->equalizer) &&
 	       v34_phase4_e_receiver_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==

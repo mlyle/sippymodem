@@ -15,8 +15,7 @@ static bool line_matches_profile(
 	const struct qam_demodulator *line,
 	const struct v34_phase3_profile *transmitting_profile)
 {
-	return qam_demodulator_is_valid(line) &&
-	       qam_demodulator_measure(line).timing_locked &&
+	return qam_demodulator_has_timing_lock(line) &&
 	       v34_line_channel_matches(
 		       transmitting_profile, &line->channel);
 }

@@ -2,42 +2,20 @@
 
 #include "v90_phase3_analog_line_rx.h"
 
-#include "v34_pulse_modulator.h"
-
 #include <stddef.h>
-
-static bool profile_is_analog(
-	const struct v34_phase3_profile *profile)
-{
-	return v34_phase3_profile_is_valid(profile) &&
-	       profile->local_role == V34_ANSWERING_STATION &&
-	       profile->md_symbol_count == 0;
-}
-
-static bool channel_matches(
-	const struct v90_phase3_analog_line_rx *rx)
-{
-	return rx->demodulator.channel.sample_rate == V90_PHASE3_SAMPLE_RATE &&
-	       v34_line_channel_matches(
-		       &rx->transmitting_profile, &rx->demodulator.channel);
-}
 
 bool v90_phase3_analog_line_rx_is_valid(
 	const struct v90_phase3_analog_line_rx *rx)
 {
-	if (rx == NULL || !profile_is_analog(&rx->transmitting_profile) ||
-	    !qam_demodulator_is_valid(&rx->demodulator) ||
-	    !v90_phase3_analog_rx_is_valid(&rx->points) ||
-	    !channel_matches(rx) ||
-	    rx->demodulator.acquisition_window_symbols !=
-		    V90_PHASE3_LINE_ACQUISITION_SYMBOLS ||
-	    rx->demodulator.tracking_window_symbols !=
-		    V90_PHASE3_LINE_TRACKING_SYMBOLS)
+	if (rx == NULL ||
+	    !v90_phase3_demodulator_matches(
+		    &rx->demodulator, &rx->transmitting_profile) ||
+	    !v90_phase3_analog_rx_is_valid(&rx->points))
 		return false;
 	if (rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_S)
 		return rx->points.state.s.detector.s_symbols ==
 		       V90_PHASE3_LINE_S_SUFFIX_SYMBOLS;
-	return qam_demodulator_measure(&rx->demodulator).timing_locked;
+	return qam_demodulator_has_timing_lock(&rx->demodulator);
 }
 
 bool v90_phase3_analog_line_rx_has_failed(
@@ -55,7 +33,8 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_init(
 	struct qam_channel channel;
 	enum v34_line_channel_result channel_result;
 
-	if (rx == NULL || !profile_is_analog(analog_profile) ||
+	if (rx == NULL ||
+	    !v90_phase3_analog_profile_is_valid(analog_profile) ||
 	    !v90_phase3_analog_rx_configuration_is_valid(configuration))
 		return V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT;
 	channel_result = v34_line_channel_init(
@@ -127,7 +106,7 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 	if (v90_phase3_analog_rx_is_complete(&rx->points))
 		return V90_PHASE3_ANALOG_LINE_RX_COMPLETE;
 	next = *rx;
-	was_locked = qam_demodulator_measure(&next.demodulator).timing_locked;
+	was_locked = qam_demodulator_has_timing_lock(&next.demodulator);
 	if (qam_demodulator_sample(
 		    &next.demodulator, sample, &point, &ready) != QAM_OK) {
 		rx->failed = true;
@@ -140,8 +119,8 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 		}
 		*rx = next;
 		return !was_locked &&
-			       qam_demodulator_measure(&next.demodulator)
-				       .timing_locked ?
+			       qam_demodulator_has_timing_lock(
+				       &next.demodulator) ?
 			       V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED :
 			       V90_PHASE3_ANALOG_LINE_RX_OK;
 	}
@@ -166,14 +145,9 @@ bool v90_phase3_analog_line_handoff_is_valid(
 	const struct v90_phase3_analog_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       profile_is_analog(&handoff->transmitting_profile) &&
-	       qam_demodulator_is_valid(&handoff->demodulator) &&
-	       qam_demodulator_measure(&handoff->demodulator).timing_locked &&
-	       handoff->demodulator.channel.sample_rate ==
-		       V90_PHASE3_SAMPLE_RATE &&
-	       v34_line_channel_matches(
-		       &handoff->transmitting_profile,
-		       &handoff->demodulator.channel) &&
+	       v90_phase3_demodulator_is_locked(
+		       &handoff->demodulator,
+		       &handoff->transmitting_profile) &&
 	       v90_phase3_analog_handoff_is_valid(&handoff->phase3);
 }
 

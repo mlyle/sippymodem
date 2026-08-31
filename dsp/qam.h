@@ -203,6 +203,8 @@ enum qam_result qam_demodulator_set_timing_power_hysteresis(
 	struct qam_demodulator *demodulator, double ratio);
 bool qam_demodulator_is_valid(
 	const struct qam_demodulator *demodulator);
+bool qam_demodulator_has_timing_lock(
+	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator);
 /* Adopt a mode-specific symbol phase and cancel any pending interpolated
