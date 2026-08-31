@@ -524,8 +524,12 @@ static bool call_is_valid(
 	    (call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
 	     !call->peer_info0_stored) ||
+	    (call->retrain_active && !call->peer_info0_stored) ||
+	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
+	     !call->retrain_active) ||
 	    (call->retrain_peer_tone_retained &&
-	     call->stage != PCM_CALL_RETRAIN_SILENCE) ||
+	     (call->stage != PCM_CALL_RETRAIN_SILENCE ||
+	      !call->retrain_active)) ||
 	    ((call->stage == PCM_CALL_PHASE2 ||
 	      call->stage == PCM_CALL_RETRAIN_SILENCE) ?
 		     call->phase3_entry_stored : !call->phase3_entry_stored) ||
@@ -816,6 +820,7 @@ static enum pcm_call_result begin_retrain(
 	next.v92_peer_downstream_rate_stored = false;
 	next.round_trip_delay_stored = false;
 	next.b1_deadline_armed = false;
+	next.retrain_active = true;
 	next.retrain_peer_tone_retained = retain_peer_tone;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -1144,13 +1149,18 @@ static enum pcm_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct pcm_call *call)
 {
+	/* Before data, a peer can only repeat the request that owns the current
+	 * full-retrain transaction. Initial Phase 2/3/4 waveforms are training,
+	 * not online retrain evidence. */
 	if (call->stage == PCM_CALL_PHASE3 ||
-	    call->stage == PCM_CALL_PHASE3_MIXED ||
-	    call->stage == PCM_CALL_PHASE4)
-		return true;
+	    call->stage == PCM_CALL_PHASE3_MIXED)
+		return call->retrain_active;
+	if (call->stage == PCM_CALL_PHASE4)
+		return false;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return pcm_call_is_online(call);
 	return call->stage == PCM_CALL_PHASE2 &&
+	       call->retrain_active &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
 	       call->state.phase2.state.info1.control.phase ==
 		       PHASE2_INFO1_RECOVERING &&
@@ -2376,6 +2386,7 @@ enum pcm_call_result pcm_call_data_octet(
 	struct v34_received_mapping_frame upstream_frame = { 0 };
 	enum v90_analog_path_result analog_result = V90_ANALOG_PATH_OK;
 	enum v90_digital_path_result digital_result = V90_DIGITAL_PATH_OK;
+	bool retrain_detection_active;
 	bool retrain_candidate = false;
 	bool retrain_detected = false;
 	uint8_t generated;
@@ -2390,10 +2401,11 @@ enum pcm_call_result pcm_call_data_octet(
 		return PCM_CALL_INVALID_STATE;
 	if (sources == NULL)
 		sources = &idle;
-	retrain_candidate =
-		retrain_candidate_is_active(&call->retrain_detector) ||
+	retrain_detection_active = retrain_detection_is_active(call);
+	retrain_candidate = retrain_detection_active &&
+		(retrain_candidate_is_active(&call->retrain_detector) ||
 		(call->local_role == V90_ANALOG_MODEM &&
-		 received_octet == encode_sample(call->law, 0));
+		 received_octet == encode_sample(call->law, 0)));
 	generated = encode_sample(call->law, 0);
 	if (call->local_role == V90_ANALOG_MODEM) {
 		analog_result = v90_analog_path_transmit(
@@ -2435,7 +2447,7 @@ enum pcm_call_result pcm_call_data_octet(
 			emitted.kind = PCM_CALL_UPSTREAM_FRAME;
 		}
 	}
-	if (result == PCM_CALL_OK) {
+	if (result == PCM_CALL_OK && retrain_detection_active) {
 		if (v34_retrain_detector_sample(
 			    &call->retrain_detector, received_sample,
 			    &retrain_detected) != V34_PHASE2_TONE_OK)
@@ -2443,6 +2455,8 @@ enum pcm_call_result pcm_call_data_octet(
 	}
 	if (result == PCM_CALL_OK && retrain_detected)
 		result = begin_retrain(call, true);
+	else if (result == PCM_CALL_OK && pcm_call_is_online(call))
+		call->retrain_active = false;
 	if (result == PCM_CALL_OK)
 		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK)

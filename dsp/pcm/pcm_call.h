@@ -276,6 +276,7 @@ struct pcm_call {
 	bool v92_peer_downstream_rate_stored;
 	bool round_trip_delay_stored;
 	bool b1_deadline_armed;
+	bool retrain_active;
 	bool retrain_peer_tone_retained;
 	bool failed;
 };
