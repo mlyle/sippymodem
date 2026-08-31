@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v90_profile.h>
+#include <v90_info0.h>
 
 #include "test.h"
 
@@ -80,6 +81,31 @@ static bool test_downstream_rate_selection(void)
 		      pcm_downstream_bit_rate(
 			      PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER + 1u) == 0,
 		      "broad V.90 downstream range did not select all rates");
+	}
+	return true;
+}
+
+static bool test_digital_info0_profile(void)
+{
+	static const uint8_t expected[][V90_INFO0D_PAYLOAD_BYTES] = {
+		[G711_LAW_PCMU] = { 0xff, 0x84, 0x17, 0x68 },
+		[G711_LAW_PCMA] = { 0xff, 0x84, 0x17, 0x78 },
+	};
+
+	for (unsigned int law_index = G711_LAW_PCMU;
+	     law_index <= G711_LAW_PCMA; ++law_index) {
+		enum g711_law law = (enum g711_law)law_index;
+		struct pcm_call_configuration configuration;
+		uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
+
+		CHECK(v90_profile_init(
+			      &configuration, V90_DIGITAL_MODEM, law,
+			      28000, 56000, NULL) == V90_PROFILE_OK &&
+		      v90_info0d_encode(
+			      &configuration.local_info0.digital, payload,
+			      sizeof(payload)) == V90_INFO0_OK &&
+		      memcmp(payload, expected[law_index], sizeof(payload)) == 0,
+		      "digital V.90 law %u INFO0d profile changed", law_index);
 	}
 	return true;
 }
@@ -368,6 +394,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "downstream rate selection", test_downstream_rate_selection },
+		{ "digital INFO0 profile", test_digital_info0_profile },
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },

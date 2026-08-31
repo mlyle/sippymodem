@@ -48,6 +48,7 @@ static struct v90_info0d digital_info0(enum g711_law law)
 {
 	return (struct v90_info0d){
 		.common = {
+			.symbol_rate_2743_supported = true,
 			.symbol_rate_2800_supported = true,
 			.symbol_rate_3429_supported = true,
 			.low_carrier_3000_supported = true,
@@ -55,8 +56,7 @@ static struct v90_info0d digital_info0(enum g711_law law)
 			.low_carrier_3200_supported = true,
 			.high_carrier_3200_supported = true,
 			.symbol_rate_3429_transmit_permitted = true,
-			.maximum_symbol_rate_difference_steps = 4,
-			.cme_modem = true,
+			.transmit_power_reduction_supported = true,
 			.constellation_1664_supported = true,
 		},
 		.nominal_transmit_power =
