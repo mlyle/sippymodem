@@ -202,6 +202,8 @@ static bool map_common_event(
 	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
 		event->kind = V34_PHASE2_INFO1_EVENT_LOCAL_INFO1C_SENT;
 		return true;
+	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
+		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
 		return resolve_peer_frame(exchange, &common->frame_event, event);
 	case PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT:

@@ -3,6 +3,7 @@
 #include "phase2_info1_exchange.h"
 
 #include <stddef.h>
+#include <string.h>
 
 static uint32_t peer_deadline_samples(
 	const struct phase2_info1_exchange *exchange)
@@ -273,6 +274,35 @@ enum phase2_info1_result phase2_info1_recover(
 	return PHASE2_INFO1_OK;
 }
 
+enum phase2_info1_result phase2_info1_repeat_signal_b(
+	struct phase2_info1_exchange *exchange)
+{
+	struct phase2_info1_exchange next;
+	uint8_t payload[V34_PHASE2_INFO_MAX_PAYLOAD_BYTES];
+
+	if (!phase2_info1_is_valid(exchange) ||
+	    exchange->signal_role != PHASE2_SIGNAL_B ||
+	    exchange->phase != PHASE2_INFO1_RECOVERING)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	next = *exchange;
+	memcpy(payload, next.transmitter.frame.payload, sizeof(payload));
+	if (v34_phase2_info_audio_transmitter_init(
+		    &next.transmitter, V34_CALLING_STATION,
+		    next.nominal_amplitude, payload,
+		    next.first_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK ||
+	    v34_phase2_info_audio_receiver_init(
+		    &next.receiver, V34_CALLING_STATION,
+		    next.second_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	next.peer_deadline_elapsed_samples = 0;
+	next.carrier_tail_symbols = 0;
+	next.phase = PHASE2_INFO1_TRANSMITTING;
+	if (!phase2_info1_is_valid(&next))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	*exchange = next;
+	return PHASE2_INFO1_OK;
+}
+
 static void align_signal_a_info_with_tone(
 	struct phase2_info1_exchange *exchange)
 {
@@ -316,6 +346,8 @@ static bool receive_peer_frame(
 	struct phase2_info1_event *event)
 {
 	struct v34_phase2_info_event frame;
+	enum v34_phase2_info_receive_stage stage_before =
+		exchange->receiver.frame.stage;
 
 	if (v34_phase2_info_audio_receiver_sample(
 		    &exchange->receiver, sample, &frame) !=
@@ -327,7 +359,10 @@ static bool receive_peer_frame(
 	else if (frame.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
 		exchange->phase = PHASE2_INFO1_PEER_FRAME_PENDING;
 		event->kind = PHASE2_INFO1_EVENT_PEER_FRAME_PENDING;
-	}
+	} else if (stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
+		   exchange->receiver.frame.stage !=
+			   V34_PHASE2_INFO_SEARCH_SYNC)
+		event->kind = PHASE2_INFO1_EVENT_PEER_FRAME_STARTED;
 	return true;
 }
 

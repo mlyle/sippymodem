@@ -43,6 +43,7 @@ struct pcm_phase2_info1_exchange {
 	struct pcm_info1d digital;
 	struct pcm_phase2_info1a analog;
 	enum pcm_protocol protocol;
+	uint8_t info1d_resends;
 	bool digital_record_stored;
 	bool analog_record_stored;
 };
@@ -67,6 +68,11 @@ enum phase2_info1_result pcm_phase2_info1_init_v92_analog(
 	const struct v90_phase2_reciprocal_probe *completed_probe);
 
 bool pcm_phase2_info1_is_valid(
+	const struct pcm_phase2_info1_exchange *exchange);
+
+/* True only while a V.90 digital modem is recovering from the first INFO1a
+ * deadline and still owns its one standards-permitted INFO1d resend. */
+bool pcm_phase2_info1_retry_pending(
 	const struct pcm_phase2_info1_exchange *exchange);
 
 /* V.90 and V.92 can select conventional V.34 upstream. PCM upstream is a

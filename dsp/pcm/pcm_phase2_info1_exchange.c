@@ -99,6 +99,10 @@ bool pcm_phase2_info1_is_valid(
 	if (exchange == NULL ||
 	    !pcm_protocol_is_valid(exchange->protocol) ||
 	    !phase2_info1_is_valid(&exchange->control) ||
+	    exchange->info1d_resends > 1u ||
+	    (exchange->info1d_resends != 0u &&
+	     (exchange->protocol != PCM_PROTOCOL_V90 ||
+	      exchange->control.signal_role != PHASE2_SIGNAL_B)) ||
 	    exchange->control.phase == PHASE2_INFO1_PEER_FRAME_PENDING ||
 	    exchange->control.first_payload_bit_count !=
 		    V34_INFO1C_PAYLOAD_BITS ||
@@ -118,6 +122,16 @@ bool pcm_phase2_info1_is_valid(
 	     exchange->digital.protocol != exchange->protocol))
 		return false;
 	return !expect_analog || analog_record_is_valid(exchange);
+}
+
+bool pcm_phase2_info1_retry_pending(
+	const struct pcm_phase2_info1_exchange *exchange)
+{
+	return pcm_phase2_info1_is_valid(exchange) &&
+	       exchange->protocol == PCM_PROTOCOL_V90 &&
+	       exchange->control.signal_role == PHASE2_SIGNAL_B &&
+	       exchange->control.phase == PHASE2_INFO1_RECOVERING &&
+	       exchange->info1d_resends == 0u;
 }
 
 static enum phase2_info1_result initialize_digital(
@@ -402,6 +416,14 @@ static bool map_common_event(
 		return true;
 	case PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT:
 		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT;
+		return true;
+	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
+		if (!pcm_phase2_info1_retry_pending(exchange))
+			return true;
+		if (phase2_info1_repeat_signal_b(&exchange->control) !=
+		    PHASE2_INFO1_OK)
+			return false;
+		exchange->info1d_resends++;
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
 		return resolve_peer_frame(exchange, &common->frame_event, event);

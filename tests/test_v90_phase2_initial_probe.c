@@ -3,6 +3,7 @@
 #include <g711.h>
 #include <pcm_phase2.h>
 #include <pcm_phase2_info1_handoff.h>
+#include <v34_phase2_info_audio.h>
 #include <v90_phase2_initial_probe.h>
 #include <pcm_phase2_info1_exchange.h>
 #include <v90_phase2_probe_turnaround.h>
@@ -206,6 +207,90 @@ static bool pcm_info1a_equal(
 	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
+static bool check_v90_info1d_retry(
+	const struct pcm_phase2_info1_exchange *initial,
+	const uint8_t peer_payload[V90_INFO1A_PAYLOAD_BYTES])
+{
+	struct pcm_phase2_info1_exchange recovery = *initial;
+	struct v34_phase2_info_audio_transmitter peer;
+	struct pcm_phase2_info1_event event;
+	bool retry_sent = false;
+
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t transmit;
+
+		CHECK(pcm_phase2_info1_sample(
+			      &recovery, 0, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 INFO1d retry fixture failed before recovery");
+		if (event.kind == PCM_PHASE2_INFO1_EVENT_FAILED)
+			break;
+	}
+	CHECK(recovery.control.phase == PHASE2_INFO1_FAILED &&
+	      phase2_info1_recover(&recovery.control) == PHASE2_INFO1_OK &&
+	      pcm_phase2_info1_retry_pending(&recovery) &&
+	      v34_phase2_info_audio_transmitter_init(
+		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      peer_payload, V90_INFO1A_PAYLOAD_BITS) ==
+		      V34_PHASE2_INFO_AUDIO_OK,
+	      "V.90 INFO1d retry did not arm at the first deadline");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t received;
+		int16_t transmit;
+		bool frame_complete;
+
+		CHECK(!peer.frame_complete &&
+		      v34_phase2_info_audio_transmitter_sample(
+			      &peer, &received, &frame_complete) ==
+			      V34_PHASE2_INFO_AUDIO_OK &&
+		      pcm_phase2_info1_sample(
+			      &recovery, received, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 INFO1d retry marker failed at sample %zu", index);
+		if (recovery.info1d_resends != 0u) {
+			CHECK(transmit == 0 &&
+			      event.kind == PCM_PHASE2_INFO1_EVENT_NONE,
+			      "V.90 INFO1d retry consumed its marker interval");
+			break;
+		}
+	}
+	CHECK(recovery.info1d_resends == 1u &&
+	      recovery.control.phase == PHASE2_INFO1_TRANSMITTING &&
+	      !pcm_phase2_info1_retry_pending(&recovery),
+	      "V.90 INFO1d retry did not start from a fresh peer marker");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t transmit;
+
+		CHECK(pcm_phase2_info1_sample(
+			      &recovery, 0, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 repeated INFO1d failed at sample %zu", index);
+		if (event.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT) {
+			retry_sent = true;
+			break;
+		}
+	}
+	CHECK(retry_sent && recovery.info1d_resends == 1u,
+	      "V.90 repeated INFO1d did not complete exactly once");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t transmit;
+
+		CHECK(pcm_phase2_info1_sample(
+			      &recovery, 0, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 retry exhaustion failed at sample %zu", index);
+		if (event.kind == PCM_PHASE2_INFO1_EVENT_FAILED)
+			break;
+	}
+	CHECK(recovery.control.phase == PHASE2_INFO1_FAILED &&
+	      phase2_info1_recover(&recovery.control) == PHASE2_INFO1_OK &&
+	      recovery.control.phase == PHASE2_INFO1_RECOVERING &&
+	      recovery.info1d_resends == 1u &&
+	      !pcm_phase2_info1_retry_pending(&recovery),
+	      "V.90 INFO1d retry did not expose its exhausted recovery");
+	return true;
+}
+
 static bool check_info1_exchange(
 	enum test_codec codec, struct test_delay_line *analog_to_digital,
 	struct test_delay_line *digital_to_analog,
@@ -288,6 +373,9 @@ static bool check_info1_exchange(
 		      digital.control.transmitter.frame.payload,
 		      expected_digital, sizeof(expected_digital)) == 0,
 	      "PCM INFO1 mode %d did not preserve its exact handoff", mode);
+	CHECK(mode != TEST_INFO1_V90 ||
+	      check_v90_info1d_retry(&digital, expected_analog),
+	      "V.90 INFO1d recovery policy changed");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct pcm_phase2_info1_event analog_event;
 		struct pcm_phase2_info1_event digital_event;
@@ -946,7 +1034,9 @@ static bool check_phase2_controller(
 		}
 		CHECK(recovering && !pcm_phase2_has_failed(&recovery) &&
 		      recovery.state.info1.control.phase ==
-			      PHASE2_INFO1_RECOVERING,
+			      PHASE2_INFO1_RECOVERING &&
+		      pcm_phase2_info1_retry_pending(&recovery.state.info1) ==
+			      (mode == TEST_INFO1_V90),
 		      "PCM Phase 2 mode %d did not recover at the INFO1 deadline",
 		      mode);
 		for (size_t index = 0; index < V34_PHASE2_SAMPLE_RATE; ++index) {

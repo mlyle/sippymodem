@@ -1080,7 +1080,9 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 	return call->stage == PCM_CALL_PHASE2 &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
 	       call->state.phase2.state.info1.control.phase ==
-		       PHASE2_INFO1_RECOVERING;
+		       PHASE2_INFO1_RECOVERING &&
+	       !pcm_phase2_info1_retry_pending(
+		       &call->state.phase2.state.info1);
 }
 
 static enum pcm_call_result sample_retrain_detector(

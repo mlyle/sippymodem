@@ -388,6 +388,28 @@ static bool test_exact_deadlines(void)
 	      event.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
 	      "failed INFO1 controller was not silent and stable");
+	CHECK(phase2_info1_repeat_signal_b(&caller.control) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      memcmp(&caller, &terminal, sizeof(caller)) == 0 &&
+	      phase2_info1_recover(&caller.control) == PHASE2_INFO1_OK &&
+	      phase2_info1_repeat_signal_b(&caller.control) ==
+		      PHASE2_INFO1_OK &&
+	      caller.control.phase == PHASE2_INFO1_TRANSMITTING &&
+	      caller.control.peer_deadline_elapsed_samples == 0u &&
+	      caller.control.carrier_tail_symbols == 0u &&
+	      caller.control.receiver.frame.stage ==
+		      V34_PHASE2_INFO_SEARCH_SYNC &&
+	      memcmp(
+		      caller.control.transmitter.frame.payload,
+		      terminal.control.transmitter.frame.payload,
+		      sizeof(caller.control.transmitter.frame.payload)) == 0 &&
+	      v34_phase2_info1_exchange_is_valid(&caller),
+	      "Signal B recovery did not restart its retained first record");
+	terminal = caller;
+	CHECK(phase2_info1_repeat_signal_b(&caller.control) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      memcmp(&caller, &terminal, sizeof(caller)) == 0,
+	      "active Signal B repeat was not transactional");
 	return true;
 }
 

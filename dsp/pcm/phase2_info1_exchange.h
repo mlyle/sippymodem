@@ -42,6 +42,7 @@ enum phase2_info1_failure {
 enum phase2_info1_event_kind {
 	PHASE2_INFO1_EVENT_NONE,
 	PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT,
+	PHASE2_INFO1_EVENT_PEER_FRAME_STARTED,
 	PHASE2_INFO1_EVENT_PEER_FRAME_PENDING,
 	PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT,
 	PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED,
@@ -103,6 +104,12 @@ enum phase2_info1_result phase2_info1_reject_peer(
  * B remains silent while Signal A retains Tone A. A late peer INFO frame can
  * therefore complete the same exchange without reconstructing Phase 2. */
 enum phase2_info1_result phase2_info1_recover(
+	struct phase2_info1_exchange *exchange);
+
+/* Restart Signal B's retained first record after a mode owner recognizes a
+ * peer recovery marker. The peer receiver and deadline restart with the
+ * record; Signal A and ordinary first transmission are not repeatable. */
+enum phase2_info1_result phase2_info1_repeat_signal_b(
 	struct phase2_info1_exchange *exchange);
 
 /* Supply Signal A's selected response after its first peer record is accepted.
