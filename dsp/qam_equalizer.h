@@ -78,6 +78,11 @@ enum qam_equalizer_result qam_equalizer_extend_span(
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 
+/* A delay-full equalizer with no unconsumed direct-adaptation output can be
+ * transferred without replaying input or losing an adaptation decision. */
+bool qam_equalizer_is_handoff_ready(
+	const struct qam_equalizer *equalizer);
+
 /* Push one received symbol.  ready is false until the decision delay has
  * filled.  Invalid calls leave the equalizer and outputs unchanged. */
 enum qam_equalizer_result qam_equalizer_push(

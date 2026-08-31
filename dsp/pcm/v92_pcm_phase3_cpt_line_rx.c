@@ -9,13 +9,11 @@
 static bool equalizer_is_continuous(
 	const struct qam_equalizer *equalizer)
 {
-	return qam_equalizer_is_valid(equalizer) &&
+	return qam_equalizer_is_handoff_ready(equalizer) &&
 	       equalizer->tap_count ==
 		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
 	       equalizer->decision_delay ==
-		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
-	       equalizer->fill == equalizer->decision_delay + 1u &&
-	       !equalizer->can_adapt;
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
 }
 
 static bool line_geometry_is_valid(

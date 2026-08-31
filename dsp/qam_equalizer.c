@@ -100,6 +100,14 @@ bool qam_equalizer_is_valid(
 	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
 }
 
+bool qam_equalizer_is_handoff_ready(
+	const struct qam_equalizer *equalizer)
+{
+	return qam_equalizer_is_valid(equalizer) &&
+	       equalizer->fill == equalizer->decision_delay + 1u &&
+	       !equalizer->can_adapt;
+}
+
 enum qam_equalizer_result qam_equalizer_init(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received_reference,

@@ -62,14 +62,11 @@ bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver)
 {
 	return receiver != NULL &&
-	       qam_equalizer_is_valid(&receiver->equalizer) &&
+	       qam_equalizer_is_handoff_ready(&receiver->equalizer) &&
 	       receiver->equalizer.tap_count ==
 		       V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS &&
 	       receiver->equalizer.decision_delay ==
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
-	       receiver->equalizer.fill ==
-		       receiver->equalizer.decision_delay + 1u &&
-	       !receiver->equalizer.can_adapt &&
 	       v92_pcm_phase4_trn2u_is_valid(&receiver->reference) &&
 	       v92_phase4_demodulator_is_valid(&receiver->demodulator) &&
 	       receiver->demodulator.constellation ==
@@ -120,14 +117,11 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 	const struct v92_pcm_phase4_trn2u_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       qam_equalizer_is_valid(&handoff->equalizer) &&
+	       qam_equalizer_is_handoff_ready(&handoff->equalizer) &&
 	       handoff->equalizer.tap_count ==
 		       V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS &&
 	       handoff->equalizer.decision_delay ==
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
-	       handoff->equalizer.fill ==
-		       handoff->equalizer.decision_delay + 1u &&
-	       !handoff->equalizer.can_adapt &&
 	       v92_phase4_demodulator_is_valid(&handoff->demodulator) &&
 	       handoff->training_symbols >=
 		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&

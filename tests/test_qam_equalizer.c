@@ -83,7 +83,8 @@ static bool test_delay_and_flat_channel(void)
 	CHECK(qam_equalizer_init(
 		      &equalizer, &received_reference, &reference) ==
 		      QAM_EQUALIZER_OK &&
-	      qam_equalizer_is_valid(&equalizer),
+	      qam_equalizer_is_valid(&equalizer) &&
+	      !qam_equalizer_is_handoff_ready(&equalizer),
 	      "flat equalizer fixture did not initialize");
 	for (unsigned int index = 0;
 	     index < QAM_EQUALIZER_DELAY; ++index) {
@@ -110,13 +111,16 @@ static bool test_delay_and_flat_channel(void)
 		      points_are_close(
 			      &output,
 			      &(struct qam_point){ 1.0, 1.0 }) &&
-		      qam_equalizer_adapt(
+		      !qam_equalizer_is_handoff_ready(&equalizer),
+		      "equalizer delay changed");
+		CHECK(qam_equalizer_adapt(
 			      &equalizer, &output, 0.0) ==
 			      QAM_EQUALIZER_OK &&
+		      qam_equalizer_is_handoff_ready(&equalizer) &&
 		      qam_equalizer_adapt(
 			      &equalizer, &output, 0.0) ==
 			      QAM_EQUALIZER_INVALID_STATE,
-		      "equalizer delay or single-adaptation contract changed");
+		      "equalizer handoff or single-adaptation contract changed");
 	}
 	return true;
 }
@@ -601,7 +605,9 @@ static bool test_validation(void)
 	      "invalid equalizer operation was not transactional");
 	equalizer.coefficients[0].in_phase = INFINITY;
 	CHECK(!qam_equalizer_is_valid(&equalizer) &&
+	      !qam_equalizer_is_handoff_ready(&equalizer) &&
 	      !qam_equalizer_is_valid(NULL) &&
+	      !qam_equalizer_is_handoff_ready(NULL) &&
 	      strcmp(qam_equalizer_result_name(
 		     QAM_EQUALIZER_OK),
 		     "ok") == 0 &&

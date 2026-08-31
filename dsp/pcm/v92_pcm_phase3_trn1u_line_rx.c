@@ -354,10 +354,12 @@ v92_pcm_phase3_trn1u_line_rx_sample(
 bool v92_pcm_phase3_trn1u_line_handoff_is_valid(
 	const struct v92_pcm_phase3_trn1u_line_handoff *handoff)
 {
-	return handoff != NULL && geometry_is_valid(&handoff->equalizer) &&
-	       handoff->equalizer.fill ==
-		       handoff->equalizer.decision_delay + 1u &&
-	       !handoff->equalizer.can_adapt &&
+	return handoff != NULL &&
+	       qam_equalizer_is_handoff_ready(&handoff->equalizer) &&
+	       handoff->equalizer.tap_count ==
+		       V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS &&
+	       handoff->equalizer.decision_delay ==
+		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
 	       v92_phase3_sync_is_valid(&handoff->sync) &&
 	       handoff->sync.stage == V92_PHASE3_SYNC_TRAINING &&
 	       handoff->sync.trained_symbols ==

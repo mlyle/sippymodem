@@ -15,14 +15,6 @@ _Static_assert(
 		V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS,
 	"V.90 S onset must fit the retained marker suffix");
 
-static bool equalizer_is_at_handoff(
-	const struct qam_equalizer *equalizer)
-{
-	return qam_equalizer_is_valid(equalizer) &&
-	       equalizer->fill == equalizer->decision_delay + 1u &&
-	       !equalizer->can_adapt;
-}
-
 static bool onset_history_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
@@ -56,7 +48,7 @@ bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
 	if (rx == NULL || !qam_adaptation_is_valid(rx->adaptation) ||
-	    !equalizer_is_at_handoff(&rx->equalizer) ||
+	    !qam_equalizer_is_handoff_ready(&rx->equalizer) ||
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols !=
 		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS ||

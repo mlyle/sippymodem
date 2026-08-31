@@ -9,10 +9,7 @@ bool binary_equalizer_is_valid(
 	const struct binary_equalizer *receiver)
 {
 	return receiver != NULL &&
-	       qam_equalizer_is_valid(&receiver->equalizer) &&
-	       receiver->equalizer.fill ==
-		       receiver->equalizer.decision_delay + 1u &&
-	       !receiver->equalizer.can_adapt &&
+	       qam_equalizer_is_handoff_ready(&receiver->equalizer) &&
 	       isfinite(receiver->magnitude) && receiver->magnitude > 0.0 &&
 	       receiver->magnitude <= 32768.0 &&
 	       qam_adaptation_is_valid(receiver->adaptation) &&

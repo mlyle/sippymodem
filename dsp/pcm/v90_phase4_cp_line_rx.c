@@ -28,14 +28,6 @@ static bool channel_matches(
 		       V90_PHASE3_LINE_TRACKING_SYMBOLS;
 }
 
-static bool equalizer_is_at_handoff(
-	const struct qam_equalizer *equalizer)
-{
-	return qam_equalizer_is_valid(equalizer) &&
-	       equalizer->fill == equalizer->decision_delay + 1u &&
-	       !equalizer->can_adapt;
-}
-
 bool v90_phase4_cp_line_rx_is_valid(
 	const struct v90_phase4_cp_line_rx *rx)
 {
@@ -44,7 +36,7 @@ bool v90_phase4_cp_line_rx_is_valid(
 	       qam_demodulator_is_valid(&rx->demodulator) &&
 	       qam_demodulator_measure(&rx->demodulator).timing_locked &&
 	       channel_matches(rx) &&
-	       equalizer_is_at_handoff(&rx->equalizer) &&
+	       qam_equalizer_is_handoff_ready(&rx->equalizer) &&
 	       v90_phase4_cp_rx_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==
 		       rx->transmitting_profile.local_role &&
