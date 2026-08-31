@@ -3,6 +3,7 @@
 #include <pcm_call.h>
 
 #include <g711.h>
+#include <v34_phase2_selection.h>
 #include <v92_cpd_direct.h>
 
 #include "test.h"
@@ -53,6 +54,7 @@ struct endpoint {
 	bool entered_phase3;
 	bool entered_mixed;
 	bool entered_phase4;
+	bool measured_info1d_checked;
 	bool info1_b1_deadline_seen;
 	bool phase4_boundary_checked;
 	bool data_path_started;
@@ -137,6 +139,20 @@ static struct v34_info1c digital_info1(void)
 			};
 	info1.answer_transmit[V34_SYMBOL_RATE_3000].high_carrier = true;
 	return info1;
+}
+
+static bool v90_info1d_equal(
+	const struct v34_info1c *left, const struct v34_info1c *right)
+{
+	uint8_t left_payload[V34_INFO1C_PAYLOAD_BYTES];
+	uint8_t right_payload[V34_INFO1C_PAYLOAD_BYTES];
+
+	return v34_info1c_encode(
+		       left, left_payload, sizeof(left_payload)) == V34_INFO1_OK &&
+	       v34_info1c_encode(
+		       right, right_payload, sizeof(right_payload)) ==
+		       V34_INFO1_OK &&
+	       memcmp(left_payload, right_payload, sizeof(left_payload)) == 0;
 }
 
 static struct v90_info1a analog_info1(void)
@@ -704,6 +720,25 @@ static bool endpoint_octet(
 		    &observation) != PCM_CALL_OK)
 		return false;
 	if (endpoint->call.protocol == PCM_PROTOCOL_V90 &&
+	    endpoint->call.local_role == V90_DIGITAL_MODEM &&
+	    observation.phase2.kind == PCM_PHASE2_EVENT_READY_FOR_INFO1) {
+		struct v34_info1c expected;
+		const struct pcm_phase2 *phase2 = &endpoint->call.state.phase2;
+
+		if (phase2->stage != PCM_PHASE2_INFO1 ||
+		    v34_phase2_select_v90_info1d(
+			    &phase2->remote_probe,
+			    &endpoint->call.local_info1.digital,
+			    endpoint->call.peer_info0.analog
+				    .transmit_power_reduction_supported,
+			    &expected) != V34_PHASE2_SELECTION_OK ||
+		    !v90_info1d_equal(
+			    &expected,
+			    &phase2->state.info1.digital.record.v90))
+			return false;
+		endpoint->measured_info1d_checked = true;
+	}
+	if (endpoint->call.protocol == PCM_PROTOCOL_V90 &&
 	    ((endpoint->call.local_role == V90_ANALOG_MODEM &&
 	      observation.phase2.kind ==
 		      PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) ||
@@ -868,6 +903,7 @@ static bool run_configured_call(
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
+	      digital.measured_info1d_checked &&
 	      analog.info1_b1_deadline_seen &&
 	      digital.info1_b1_deadline_seen &&
 	      ri_progress_is_consistent(&analog) &&

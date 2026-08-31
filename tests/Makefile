@@ -2716,6 +2716,8 @@ PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_pcm_call.o \
 	$(BUILD_DIR)/pcm_call.o \
+	$(BUILD_DIR)/v34_info0.o \
+	$(BUILD_DIR)/v34_phase2_selection.o \
 	$(BUILD_DIR)/v90_phase4_startup.o \
 	$(BUILD_DIR)/v90_phase4_analog_startup.o \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \

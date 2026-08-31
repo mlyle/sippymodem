@@ -30,6 +30,15 @@ enum v34_phase2_selection_result v34_phase2_select_preemphasis(
 	const struct v34_phase2_probe_receiver_measurement *measurement,
 	enum v34_symbol_rate symbol_rate, uint8_t *filter_index);
 
+/* Build V.90-format digital INFO1d probe groups from the measured analogue
+ * modem's L2 spectrum. Nonzero configured groups enable one symbol rate;
+ * their placeholder projection and filter values are not retained. */
+enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
+	const struct v34_phase2_probe_receiver_measurement *measurement,
+	const struct v34_info1c *configured,
+	bool peer_supports_power_reduction,
+	struct v34_info1c *selected);
+
 /* INFO1c describes the answerer's possible transmit profiles. A usable entry
  * must be supported by both endpoints and by the answerer's advertised
  * transmitter configuration. Power-reduction requests are likewise bounded

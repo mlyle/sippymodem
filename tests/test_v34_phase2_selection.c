@@ -97,6 +97,134 @@ static bool test_preemphasis_validation(void)
 	return true;
 }
 
+static struct v34_phase2_probe_receiver_measurement flat_probe_measurement(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement = {
+		.l1.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES,
+	};
+
+	for (size_t index = 0;
+	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index) {
+		measurement.l1.harmonics[index].mean_square = 4.0;
+		measurement.l2.harmonics[index].mean_square = 1.0;
+	}
+	return measurement;
+}
+
+static struct v34_info1c v90_info1d_configuration(void)
+{
+	struct v34_info1c configured = { 0 };
+
+	for (size_t index = 0; index < V34_SYMBOL_RATE_COUNT; ++index)
+		configured.answer_transmit[index]
+			.projected_data_rate_2400_bps_units = 1;
+	return configured;
+}
+
+static bool v90_info1d_is_flat_selection(const struct v34_info1c *info1d)
+{
+	static const uint8_t expected[V34_INFO1C_PAYLOAD_BYTES] = {
+		0x18, 0x01, 0xa4, 0x01, 0x6d,
+		0xb1, 0xda, 0xcc, 0xe0, 0x00,
+	};
+	uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
+
+	return v34_info1c_encode(info1d, payload, sizeof(payload)) ==
+		       V34_INFO1_OK &&
+	       memcmp(payload, expected, sizeof(payload)) == 0;
+}
+
+static bool test_v90_info1d_selection(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement =
+		flat_probe_measurement();
+	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info1c selected;
+
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      v90_info1d_is_flat_selection(&selected),
+	      "flat V.90 probe did not reproduce the INFO1d profile");
+
+	measurement.l2.harmonics[20].mean_square = 1.0 / 64.0;
+	measurement.l2.harmonics[22].mean_square = 1.0 / 128.0;
+	measurement.l2.harmonics[23].mean_square = 1.0 / 256.0;
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, false, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected.common.additional_peer_power_reduction_db == 0 &&
+	      !selected.answer_transmit[V34_SYMBOL_RATE_2800].high_carrier &&
+	      !selected.answer_transmit[V34_SYMBOL_RATE_3000].high_carrier &&
+	      selected.answer_transmit[V34_SYMBOL_RATE_3000]
+			      .projected_data_rate_2400_bps_units == 10 &&
+	      !selected.answer_transmit[V34_SYMBOL_RATE_3200].high_carrier &&
+	      selected.answer_transmit[V34_SYMBOL_RATE_3200]
+			      .preemphasis_filter_index == 10 &&
+	      selected.answer_transmit[V34_SYMBOL_RATE_3200]
+			      .projected_data_rate_2400_bps_units == 11,
+	      "shaped V.90 probe selected the wrong carrier or projection");
+
+	configured.answer_transmit[V34_SYMBOL_RATE_3200]
+		.projected_data_rate_2400_bps_units = 0;
+	configured.answer_transmit[V34_SYMBOL_RATE_3429]
+		.projected_data_rate_2400_bps_units = 0;
+	measurement = flat_probe_measurement();
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true, &selected) ==
+		      V34_PHASE2_SELECTION_OK &&
+	      selected.answer_transmit[V34_SYMBOL_RATE_3200]
+			      .projected_data_rate_2400_bps_units == 0 &&
+	      selected.answer_transmit[V34_SYMBOL_RATE_3429]
+			      .projected_data_rate_2400_bps_units == 0,
+	      "V.90 INFO1d enabled a configured-out symbol rate");
+	return true;
+}
+
+static bool test_v90_info1d_validation(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement =
+		flat_probe_measurement();
+	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info1c selected;
+	struct v34_info1c saved;
+
+	memset(&selected, 0xa5, sizeof(selected));
+	saved = selected;
+	CHECK(v34_phase2_select_v90_info1d(
+		      NULL, &configured, true, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, NULL, true, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true, NULL) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      memcmp(&selected, &saved, sizeof(selected)) == 0,
+	      "invalid V.90 INFO1d selection changed its output");
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true,
+		      (struct v34_info1c *)&measurement) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true, &configured) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT,
+	      "aliased V.90 INFO1d selection was accepted");
+	measurement = (struct v34_phase2_probe_receiver_measurement){
+		.l1.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
+		.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES,
+	};
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, true, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      memcmp(&selected, &saved, sizeof(selected)) == 0,
+	      "silent V.90 probe selected INFO1d");
+	return true;
+}
+
 static struct v34_info0 full_capabilities(void)
 {
 	return (struct v34_info0){
@@ -528,6 +656,8 @@ int main(void)
 	} tests[] = {
 		{ "measured pre-emphasis", test_measured_preemphasis },
 		{ "pre-emphasis validation", test_preemphasis_validation },
+		{ "measured V.90 INFO1d", test_v90_info1d_selection },
+		{ "V.90 INFO1d validation", test_v90_info1d_validation },
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },
 		{ "cross-record constraints", test_cross_record_constraints },

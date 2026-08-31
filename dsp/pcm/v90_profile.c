@@ -73,36 +73,32 @@ static struct v90_info0d digital_info0(enum g711_law law)
 static struct v34_info1c digital_info1(
 	const struct v90_upstream_selection *upstream)
 {
-	struct v34_info1c info1 = {
-		.common = {
-			.minimum_peer_power_reduction_db = 2,
-			.additional_peer_power_reduction_db = 1,
-			.local_md_length_35_ms_units = 7,
-			.frequency_offset_1_50_hz_units =
-				V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE,
-		},
+	static const uint8_t projected_rates[V34_SYMBOL_RATE_COUNT] = {
+		[V34_SYMBOL_RATE_2400] = 9,
+		[V34_SYMBOL_RATE_2800] = 11,
+		[V34_SYMBOL_RATE_3000] = 12,
+		[V34_SYMBOL_RATE_3200] = 13,
+		[V34_SYMBOL_RATE_3429] = 14,
 	};
+	struct v34_info1c info1 = { 0 };
 
+	/* INFO1d advertises channel potential. The configured upstream bit-rate
+	 * limit is applied later when MP selects the data-mode parameters. */
 	for (size_t rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
-		uint8_t projected = (uint8_t)(rate + 6u);
+		uint8_t projected = projected_rates[rate];
 
-		if (upstream->custom) {
-			projected = (uint8_t)(rate + 9u);
-			if (rate > (size_t)upstream->symbol_rate)
-				projected = 0;
-			else if (projected >
-				 upstream->maximum_rate_2400_bps_units)
-				projected =
-					upstream->maximum_rate_2400_bps_units;
-		}
+		if (upstream->custom && rate > (size_t)upstream->symbol_rate)
+			projected = 0;
 		info1.answer_transmit[rate] =
 			(struct v34_info1_probe_result){
-				.high_carrier = (rate & 1u) != 0,
-				.preemphasis_filter_index = (uint8_t)(rate + 2u),
+				.high_carrier =
+					rate == V34_SYMBOL_RATE_2800 ||
+					rate == V34_SYMBOL_RATE_3000 ||
+					rate == V34_SYMBOL_RATE_3200,
+				.preemphasis_filter_index = projected != 0 ? 6 : 0,
 				.projected_data_rate_2400_bps_units = projected,
 			};
 	}
-	info1.answer_transmit[V34_SYMBOL_RATE_3000].high_carrier = true;
 	return info1;
 }
 

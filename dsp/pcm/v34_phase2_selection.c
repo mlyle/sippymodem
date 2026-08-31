@@ -14,6 +14,12 @@ enum {
 	V34_PREEMPHASIS_3200_BIN = 20,
 	V34_PREEMPHASIS_3429_BIN = 22,
 	V34_PREEMPHASIS_FIRST_FILTER = 6,
+	V90_PROBE_METRIC_LOW_PRIMARY = 2,
+	V90_PROBE_METRIC_2800 = 20,
+	V90_PROBE_METRIC_3000 = 22,
+	V90_PROBE_METRIC_3200 = 23,
+	V90_PROBE_METRIC_MAXIMUM = 20,
+	V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB = 3,
 };
 
 struct preemphasis_probe_profile {
@@ -101,6 +107,184 @@ enum v34_phase2_selection_result v34_phase2_select_preemphasis(
 			break;
 	} while (selected < V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX);
 	*filter_index = selected;
+	return V34_PHASE2_SELECTION_OK;
+}
+
+static bool v90_probe_bin_is_active(size_t index)
+{
+	return index < V34_PHASE2_PROBE_HIGHEST_HARMONIC &&
+	       index != 5u && index != 7u && index != 11u && index != 15u;
+}
+
+static bool v90_probe_metrics(
+	const struct v34_phase2_probe_receiver_measurement *measurement,
+	uint8_t metrics[V34_PHASE2_PROBE_HIGHEST_HARMONIC])
+{
+	double maximum = 0.0;
+	double maximum_fraction;
+	int maximum_exponent;
+
+	if (measurement == NULL ||
+	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
+	    measurement->l2_samples >=
+		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+		return false;
+	for (size_t index = 0;
+	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index) {
+		double power = measurement->l2.harmonics[index].mean_square;
+
+		if (!isfinite(power) || power < 0.0)
+			return false;
+		if (v90_probe_bin_is_active(index) && power > maximum)
+			maximum = power;
+	}
+	if (maximum <= 0.0 || !isfinite(maximum))
+		return false;
+	maximum_fraction = frexp(maximum, &maximum_exponent);
+	for (size_t index = 0;
+	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index) {
+		double power = measurement->l2.harmonics[index].mean_square;
+		double fraction;
+		int exponent;
+		int attenuation;
+
+		if (!v90_probe_bin_is_active(index) || power == 0.0) {
+			metrics[index] = V90_PROBE_METRIC_MAXIMUM;
+			continue;
+		}
+		fraction = frexp(power, &exponent);
+		attenuation = maximum_exponent - exponent;
+		if (maximum_fraction < fraction)
+			attenuation--;
+		if (attenuation < 0)
+			attenuation = 0;
+		if (attenuation > V90_PROBE_METRIC_MAXIMUM)
+			attenuation = V90_PROBE_METRIC_MAXIMUM;
+		metrics[index] = (uint8_t)attenuation;
+	}
+
+	/* Compensate the known probe edge geometry before applying the V.90
+	 * carrier and projection thresholds. */
+	{
+		unsigned int low = metrics[2] + metrics[3] + metrics[4] +
+			metrics[6];
+		unsigned int high = metrics[12] + metrics[13] + metrics[14] +
+			metrics[16];
+		uint8_t reduction = 0;
+
+		if (low == 0u)
+			low = 1u;
+		if (high > low * 4u)
+			reduction = 2;
+		else if (high > low * 2u)
+			reduction = 1;
+		if (reduction != 0u) {
+			for (size_t index = 16; index < 24; ++index) {
+				if (metrics[index] > reduction)
+					metrics[index] -= reduction;
+			}
+		}
+	}
+	return true;
+}
+
+static uint8_t v90_projected_rate(
+	enum v34_symbol_rate rate, const uint8_t *metrics)
+{
+	switch (rate) {
+	case V34_SYMBOL_RATE_2400:
+		return 9;
+	case V34_SYMBOL_RATE_2743:
+		return 0;
+	case V34_SYMBOL_RATE_2800:
+		return 11;
+	case V34_SYMBOL_RATE_3000:
+		if (metrics[V90_PROBE_METRIC_3000] < 7)
+			return 12;
+		return metrics[V90_PROBE_METRIC_3000] < 8 ? 10 : 9;
+	case V34_SYMBOL_RATE_3200:
+		if (metrics[V90_PROBE_METRIC_3200] == 0)
+			return 13;
+		return metrics[V90_PROBE_METRIC_3200] < 8 ? 12 : 11;
+	case V34_SYMBOL_RATE_3429:
+		return 14;
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return 0;
+}
+
+static bool v90_high_carrier(
+	enum v34_symbol_rate rate, const uint8_t *metrics)
+{
+	switch (rate) {
+	case V34_SYMBOL_RATE_2800:
+		return metrics[V90_PROBE_METRIC_2800] < 6 &&
+		       metrics[V90_PROBE_METRIC_LOW_PRIMARY] < 6;
+	case V34_SYMBOL_RATE_3000:
+		return metrics[V90_PROBE_METRIC_3000] < 6 &&
+		       metrics[V90_PROBE_METRIC_LOW_PRIMARY] < 6;
+	case V34_SYMBOL_RATE_3200:
+		return metrics[V90_PROBE_METRIC_3200] < 6;
+	case V34_SYMBOL_RATE_2400:
+	case V34_SYMBOL_RATE_2743:
+	case V34_SYMBOL_RATE_3429:
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return false;
+}
+
+enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
+	const struct v34_phase2_probe_receiver_measurement *measurement,
+	const struct v34_info1c *configured,
+	bool peer_supports_power_reduction,
+	struct v34_info1c *selected)
+{
+	uint8_t metrics[V34_PHASE2_PROBE_HIGHEST_HARMONIC];
+	struct v34_info1c result = {
+		.common = {
+			.additional_peer_power_reduction_db =
+				peer_supports_power_reduction ?
+					V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB : 0,
+		},
+	};
+
+	if (measurement == NULL || configured == NULL || selected == NULL ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), measurement,
+		    sizeof(*measurement)) ||
+	    memory_regions_overlap(
+		    selected, sizeof(*selected), configured,
+		    sizeof(*configured)))
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	if (!v34_info1c_is_valid(configured) ||
+	    !v90_probe_metrics(measurement, metrics))
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
+	     ++index) {
+		enum v34_symbol_rate rate = (enum v34_symbol_rate)index;
+		struct v34_info1_probe_result *probe =
+			&result.answer_transmit[index];
+
+		if (configured->answer_transmit[index]
+			    .projected_data_rate_2400_bps_units == 0)
+			continue;
+		probe->projected_data_rate_2400_bps_units =
+			v90_projected_rate(rate, metrics);
+		if (probe->projected_data_rate_2400_bps_units == 0)
+			continue;
+		probe->high_carrier = v90_high_carrier(rate, metrics);
+		if (v34_phase2_select_preemphasis(
+			    measurement, rate,
+			    &probe->preemphasis_filter_index) !=
+		    V34_PHASE2_SELECTION_OK)
+			return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	}
+	if (!v34_info1c_is_valid(&result))
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	*selected = result;
 	return V34_PHASE2_SELECTION_OK;
 }
 

@@ -262,7 +262,7 @@ static bool test_upstream_policy(void)
 			      .high_carrier_3200_supported &&
 		      digital.local_info1.digital
 			      .answer_transmit[V34_SYMBOL_RATE_3200]
-			      .projected_data_rate_2400_bps_units == 11 &&
+			      .projected_data_rate_2400_bps_units == 13 &&
 		      digital.local_info1.digital
 			      .answer_transmit[V34_SYMBOL_RATE_3429]
 			      .projected_data_rate_2400_bps_units == 0 &&
