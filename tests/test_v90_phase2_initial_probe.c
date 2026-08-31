@@ -316,6 +316,9 @@ static bool check_info1_exchange(
 	size_t analog_received = SIZE_MAX;
 	size_t analog_sent = SIZE_MAX;
 	size_t digital_received = SIZE_MAX;
+	size_t analog_silence_calls = 0;
+	size_t digital_silence_calls = 0;
+	uint16_t digital_silence_start = 0;
 	bool initialized;
 	bool wrong_role_rejected;
 
@@ -381,6 +384,10 @@ static bool check_info1_exchange(
 		struct pcm_phase2_info1_event digital_event;
 		int16_t analog_transmit;
 		int16_t digital_transmit;
+		bool analog_silencing = analog.control.phase ==
+			PHASE2_INFO1_SILENCE;
+		bool digital_silencing = digital.control.phase ==
+			PHASE2_INFO1_SILENCE;
 
 		CHECK(pcm_phase2_info1_sample(
 			      &analog, delay_line_receive(digital_to_analog),
@@ -469,11 +476,16 @@ static bool check_info1_exchange(
 			      mode);
 		}
 		if (analog_event.kind ==
-		    PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
+		    PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT) {
 			analog_sent = index;
+			CHECK(analog.control.phase == PHASE2_INFO1_SILENCE &&
+			      analog.control.silence_samples == 0,
+			      "analog modem did not begin INFO1a silence at its line edge");
+		}
 		if (digital_event.kind ==
 		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
+			digital_silence_start = digital.control.silence_samples;
 			CHECK(digital_event.peer_record.analog.upstream == upstream &&
 			      (upstream == PCM_UPSTREAM_V34 ?
 				       info1a_equal(
@@ -483,9 +495,23 @@ static bool check_info1_exchange(
 				       pcm_info1a_equal(
 					       &digital_event.peer_record.analog
 							.record.pcm,
-					       &pcm)),
+					       &pcm)) &&
+			      digital.control.phase == PHASE2_INFO1_SILENCE &&
+			      digital_silence_start ==
+				      v34_phase2_info_audio_receiver_handoff_delay_samples(
+					      &digital.control.receiver),
 			      "digital modem decoded a different INFO1 mode %d selection",
 			      mode);
+		}
+		if (analog_silencing) {
+			analog_silence_calls++;
+			CHECK(analog_transmit == 0,
+			      "analog modem emitted a post-INFO1a signal");
+		}
+		if (digital_silencing) {
+			digital_silence_calls++;
+			CHECK(digital_transmit == 0,
+			      "digital modem emitted a post-INFO1a signal");
 		}
 		if (analog.control.phase == PHASE2_INFO1_COMPLETE &&
 		    digital.control.phase == PHASE2_INFO1_COMPLETE)
@@ -498,6 +524,14 @@ static bool check_info1_exchange(
 	      analog.protocol == protocol && digital.protocol == protocol &&
 	      analog.analog.upstream == upstream &&
 	      digital.analog.upstream == upstream &&
+	      analog.control.silence_samples ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      digital.control.silence_samples ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      analog_silence_calls ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      digital_silence_start + digital_silence_calls ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
 	      (protocol == PCM_PROTOCOL_V90 ?
 		       info1d_equal(
 			       &analog.digital.record.v90, &v90_info1d) &&

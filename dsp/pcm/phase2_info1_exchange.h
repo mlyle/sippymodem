@@ -16,6 +16,11 @@ enum {
 		V34_PHASE2_SAMPLE_RATE * 700 / 1000,
 	PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 2,
+	/* V.34 11.3.1.2.1 and V.90 9.3.2.1 specify 70 +/- 5 ms of
+	 * silence after INFO1a.  The sample-owned exchange can represent the
+	 * nominal interval exactly instead of rounding it to media blocks. */
+	PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
 };
 
 enum phase2_info1_result {
@@ -30,6 +35,7 @@ enum phase2_info1_phase {
 	PHASE2_INFO1_PEER_FRAME_PENDING,
 	PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED,
 	PHASE2_INFO1_RECOVERING,
+	PHASE2_INFO1_SILENCE,
 	PHASE2_INFO1_COMPLETE,
 	PHASE2_INFO1_FAILED,
 };
@@ -61,6 +67,7 @@ struct phase2_info1_exchange {
 	struct v34_phase2_tone_transmitter signal_a_tone;
 	uint32_t peer_deadline_elapsed_samples;
 	uint16_t round_trip_delay_samples;
+	uint16_t silence_samples;
 	size_t first_payload_bit_count;
 	size_t second_payload_bit_count;
 	int16_t nominal_amplitude;

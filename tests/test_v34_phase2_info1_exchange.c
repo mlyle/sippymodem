@@ -215,6 +215,9 @@ static bool check_bidirectional_exchange(
 	size_t answerer_received = SIZE_MAX;
 	size_t answerer_sent = SIZE_MAX;
 	size_t caller_received = SIZE_MAX;
+	size_t caller_silence_calls = 0;
+	size_t answerer_silence_calls = 0;
+	uint16_t caller_silence_start = 0;
 
 	CHECK(exchange_pair_init(&pair, codec, delay_samples, &info1c),
 	      "INFO1 endpoints did not initialize for codec %d delay %zu",
@@ -224,6 +227,10 @@ static bool check_bidirectional_exchange(
 	      "INFO1 handoff did not preserve nominal power");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct info1_exchange_pair_event event;
+		bool caller_silencing = pair.caller.control.phase ==
+			PHASE2_INFO1_SILENCE;
+		bool answerer_silencing = pair.answerer.control.phase ==
+			PHASE2_INFO1_SILENCE;
 
 		CHECK(exchange_pair_sample(&pair, &event),
 		      "INFO1 exchange failed for codec %d delay %zu at sample %zu",
@@ -251,14 +258,36 @@ static bool check_bidirectional_exchange(
 			      "Tone A to INFO1a phase continuity changed");
 		}
 		if (event.answerer.kind ==
-		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT)
+		    V34_PHASE2_INFO1_EVENT_LOCAL_INFO1A_SENT) {
 			answerer_sent = index;
+			CHECK(pair.answerer.control.phase ==
+				      PHASE2_INFO1_SILENCE &&
+			      pair.answerer.control.silence_samples == 0,
+			      "answerer did not begin INFO1a silence at its line edge");
+		}
 		if (event.caller.kind ==
 		    V34_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			caller_received = index;
+			caller_silence_start =
+				pair.caller.control.silence_samples;
 			CHECK(info1a_equal(
-				      &event.caller.peer_parameters.info1a, &info1a),
+				      &event.caller.peer_parameters.info1a, &info1a) &&
+			      pair.caller.control.phase ==
+				      PHASE2_INFO1_SILENCE &&
+			      caller_silence_start ==
+				      v34_phase2_info_audio_receiver_handoff_delay_samples(
+					      &pair.caller.control.receiver),
 			      "caller decoded different INFO1a parameters");
+		}
+		if (caller_silencing) {
+			caller_silence_calls++;
+			CHECK(event.caller_transmit == 0,
+			      "caller emitted a non-silent post-INFO1a sample");
+		}
+		if (answerer_silencing) {
+			answerer_silence_calls++;
+			CHECK(event.answerer_transmit == 0,
+			      "answerer emitted a non-silent post-INFO1a sample");
 		}
 		if (pair.caller.control.phase == PHASE2_INFO1_COMPLETE &&
 		    pair.answerer.control.phase == PHASE2_INFO1_COMPLETE)
@@ -273,6 +302,14 @@ static bool check_bidirectional_exchange(
 		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 	      pair.answerer.control.carrier_tail_symbols ==
 		      V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
+	      pair.caller.control.silence_samples ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      pair.answerer.control.silence_samples ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      caller_silence_start + caller_silence_calls ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+	      answerer_silence_calls ==
+		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
 	      pair.caller.peer_parameters_received &&
 	      pair.answerer.peer_parameters_received &&
 	      info1a_equal(&pair.caller.peer_parameters.info1a, &info1a) &&
@@ -283,14 +320,17 @@ static bool check_bidirectional_exchange(
 	{
 		struct v34_phase2_info1_exchange caller = pair.caller;
 		struct v34_phase2_info1_exchange answerer = pair.answerer;
+		struct v34_phase2_info1_exchange invalid = pair.caller;
 		struct info1_exchange_pair_event event;
 
+		invalid.control.silence_samples--;
 		CHECK(exchange_pair_sample(&pair, &event) &&
 		      event.caller_transmit == 0 && event.answerer_transmit == 0 &&
 		      event.caller.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 		      event.answerer.kind == V34_PHASE2_INFO1_EVENT_NONE &&
 		      memcmp(&pair.caller, &caller, sizeof(caller)) == 0 &&
-		      memcmp(&pair.answerer, &answerer, sizeof(answerer)) == 0,
+		      memcmp(&pair.answerer, &answerer, sizeof(answerer)) == 0 &&
+		      !v34_phase2_info1_exchange_is_valid(&invalid),
 		      "completed INFO1 endpoints were not silent and stable");
 	}
 	return true;

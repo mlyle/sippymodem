@@ -139,6 +139,8 @@ static bool local_info1_is_valid(const struct v34_phase2 *phase2)
 			   phase2->state.info1.control.phase ==
 				   PHASE2_INFO1_CARRIER_TAIL ||
 			   phase2->state.info1.control.phase ==
+				   PHASE2_INFO1_SILENCE ||
+			   phase2->state.info1.control.phase ==
 				   PHASE2_INFO1_COMPLETE;
 	if (phase2->local_info1_stored != expected)
 		return false;

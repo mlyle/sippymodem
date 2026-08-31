@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <string.h>
 
+_Static_assert(PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES == 560,
+	"INFO1a silence must follow the exact 8 kHz sample clock");
+
 static uint32_t peer_deadline_samples(
 	const struct phase2_info1_exchange *exchange)
 {
@@ -45,6 +48,18 @@ static bool transmitter_matches(
 	       transmitter->frame_complete == frame_complete;
 }
 
+static bool silence_state_is_valid(
+	const struct phase2_info1_exchange *exchange)
+{
+	if (exchange->phase == PHASE2_INFO1_SILENCE)
+		return exchange->silence_samples <
+		       PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES;
+	if (exchange->phase == PHASE2_INFO1_COMPLETE)
+		return exchange->silence_samples ==
+		       PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES;
+	return exchange->silence_samples == 0;
+}
+
 static bool signal_b_state_is_valid(
 	const struct phase2_info1_exchange *exchange, uint32_t deadline)
 {
@@ -60,13 +75,18 @@ static bool signal_b_state_is_valid(
 		       transmitter_matches(exchange, true);
 	case PHASE2_INFO1_WAITING_FOR_PEER:
 	case PHASE2_INFO1_PEER_FRAME_PENDING:
-	case PHASE2_INFO1_COMPLETE:
 		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols ==
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
 	case PHASE2_INFO1_RECOVERING:
 		return exchange->peer_deadline_elapsed_samples == deadline &&
+		       exchange->carrier_tail_symbols ==
+			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
+		       transmitter_matches(exchange, true);
+	case PHASE2_INFO1_SILENCE:
+	case PHASE2_INFO1_COMPLETE:
+		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols ==
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
@@ -102,6 +122,7 @@ static bool signal_a_state_is_valid(
 		       exchange->carrier_tail_symbols <
 			       V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS &&
 		       transmitter_matches(exchange, true);
+	case PHASE2_INFO1_SILENCE:
 	case PHASE2_INFO1_COMPLETE:
 		return exchange->peer_deadline_elapsed_samples <= deadline &&
 		       exchange->carrier_tail_symbols ==
@@ -127,6 +148,7 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange)
 	    exchange->second_payload_bit_count >
 		    V34_PHASE2_INFO_MAX_PAYLOAD_BITS ||
 	    (unsigned int)exchange->phase > PHASE2_INFO1_FAILED ||
+	    !silence_state_is_valid(exchange) ||
 	    (unsigned int)exchange->failure > PHASE2_INFO1_PEER_TIMEOUT ||
 	    exchange->carrier_tail_symbols >
 		    V34_PHASE2_INFO_FILTER_TAIL_SYMBOLS ||
@@ -230,9 +252,17 @@ enum phase2_info1_result phase2_info1_accept_peer(
 	    exchange->phase != PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
-	next.phase = next.signal_role == PHASE2_SIGNAL_B ?
-			     PHASE2_INFO1_COMPLETE :
-			     PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED;
+	if (next.signal_role == PHASE2_SIGNAL_B) {
+		next.silence_samples =
+			v34_phase2_info_audio_receiver_handoff_delay_samples(
+				&next.receiver);
+		if (next.silence_samples >=
+		    PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES)
+			return PHASE2_INFO1_INVALID_ARGUMENT;
+		next.phase = PHASE2_INFO1_SILENCE;
+	} else {
+		next.phase = PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED;
+	}
 	if (!phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;
@@ -399,9 +429,19 @@ static bool generate_carrier_tail(
 		exchange->phase = PHASE2_INFO1_WAITING_FOR_PEER;
 		event->kind = PHASE2_INFO1_EVENT_LOCAL_FIRST_SENT;
 	} else {
-		exchange->phase = PHASE2_INFO1_COMPLETE;
+		exchange->phase = PHASE2_INFO1_SILENCE;
 		event->kind = PHASE2_INFO1_EVENT_LOCAL_SECOND_SENT;
 	}
+	return true;
+}
+
+static bool generate_silence(
+	struct phase2_info1_exchange *exchange, int16_t *sample)
+{
+	*sample = 0;
+	if (++exchange->silence_samples ==
+	    PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES)
+		exchange->phase = PHASE2_INFO1_COMPLETE;
 	return true;
 }
 
@@ -424,6 +464,8 @@ static bool generate_transmit_sample(
 			       V34_PHASE2_TONE_OK;
 		*sample = 0;
 		return true;
+	case PHASE2_INFO1_SILENCE:
+		return generate_silence(exchange, sample);
 	case PHASE2_INFO1_COMPLETE:
 	case PHASE2_INFO1_FAILED:
 		*sample = 0;

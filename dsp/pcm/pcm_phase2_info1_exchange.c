@@ -55,10 +55,12 @@ static bool phase_has_peer_record(
 	const struct phase2_info1_exchange *control = &exchange->control;
 
 	if (control->signal_role == PHASE2_SIGNAL_B)
-		return control->phase == PHASE2_INFO1_COMPLETE;
+		return control->phase == PHASE2_INFO1_SILENCE ||
+		       control->phase == PHASE2_INFO1_COMPLETE;
 	return control->phase == PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED ||
 	       control->phase == PHASE2_INFO1_TRANSMITTING ||
 	       control->phase == PHASE2_INFO1_CARRIER_TAIL ||
+	       control->phase == PHASE2_INFO1_SILENCE ||
 	       control->phase == PHASE2_INFO1_COMPLETE;
 }
 
@@ -69,6 +71,7 @@ static bool phase_has_local_analog_record(
 		return false;
 	return exchange->control.phase == PHASE2_INFO1_TRANSMITTING ||
 	       exchange->control.phase == PHASE2_INFO1_CARRIER_TAIL ||
+	       exchange->control.phase == PHASE2_INFO1_SILENCE ||
 	       exchange->control.phase == PHASE2_INFO1_COMPLETE;
 }
 
