@@ -2390,38 +2390,88 @@ static bool v90_replay_role_parse(const char *value, bool *originator)
 	return false;
 }
 
+struct v90_replay_profile {
+	unsigned int downstream_rate;
+	unsigned int upstream_rate;
+	unsigned int symbol_rate;
+};
+
+static bool v90_replay_unsigned_parse(
+	const char *value, unsigned int fallback, unsigned int *parsed_value)
+{
+	char *end;
+	unsigned long parsed;
+
+	if (parsed_value == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0') {
+		*parsed_value = fallback;
+		return true;
+	}
+	errno = 0;
+	parsed = strtoul(value, &end, 10);
+	if (errno != 0 || end == value || *end != '\0' || parsed > UINT_MAX)
+		return false;
+	*parsed_value = (unsigned int)parsed;
+	return true;
+}
+
+static bool v90_replay_profile_parse(
+	const char *downstream_value, const char *upstream_value,
+	const char *symbol_value, enum g711_law law, bool originator,
+	struct v90_replay_profile *profile)
+{
+	struct v90_replay_profile selected;
+	struct v90_upstream_policy upstream;
+	struct pcm_call_configuration configuration;
+
+	if (profile == NULL ||
+	    !v90_replay_unsigned_parse(
+		    downstream_value, 28000u, &selected.downstream_rate) ||
+	    !v90_replay_unsigned_parse(
+		    upstream_value, originator ? 14400u : 19200u,
+		    &selected.upstream_rate) ||
+	    !v90_replay_unsigned_parse(
+		    symbol_value, 3000u, &selected.symbol_rate))
+		return false;
+	upstream = (struct v90_upstream_policy){
+		.minimum_bit_rate = selected.upstream_rate,
+		.maximum_bit_rate = selected.upstream_rate,
+		.maximum_symbol_rate = selected.symbol_rate,
+	};
+	if (v90_profile_init(
+		    &configuration,
+		    originator ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, law,
+		    selected.downstream_rate, selected.downstream_rate,
+		    &upstream) != V90_PROFILE_OK)
+		return false;
+	*profile = selected;
+	return true;
+}
+
 static bool run_v90_recording_replay(
-	const char *path, enum media_codec codec, bool originator)
+	const char *path, enum media_codec codec, bool originator,
+	const char *downstream_value, const char *upstream_value,
+	const char *symbol_value)
 {
 	enum { MINIMUM_ONLINE_SAMPLES = 3200 };
-	static const char *const answerer_commands[] = {
+	static const char *const common_commands[] = {
 		"ATZ\r",
 		"ATE0\r",
 		"ATX3\r",
 		"AT\\N0\r",
 		"AT+DS=0,0\r",
 		"AT+V90D=1\r",
-		"AT+MS=90,0,28000,28000\r",
-		"AT+V90U=19200,19200,3000\r",
-	};
-	static const char *const originator_commands[] = {
-		"ATZ\r",
-		"ATE0\r",
-		"ATX3\r",
-		"AT\\N0\r",
-		"AT+DS=0,0\r",
-		"AT+V90D=1\r",
-		"AT+MS=90,0,28000,28000\r",
-		"AT+V90U=14400,14400,3000\r",
 	};
 	static const char dial_command[] = "ATDpeer\r";
-	const char *const *commands = originator ?
-		originator_commands : answerer_commands;
-	size_t command_count = originator ?
-		ARRAY_LENGTH(originator_commands) :
-		ARRAY_LENGTH(answerer_commands);
+	const char *commands[ARRAY_LENGTH(common_commands) + 2u];
+	char downstream_command[48];
+	char upstream_command[48];
+	int downstream_command_length;
+	int upstream_command_length;
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint endpoint;
+	struct v90_replay_profile profile;
 	enum g711_law law;
 	uint8_t *recording = NULL;
 	size_t recording_count = 0;
@@ -2430,13 +2480,34 @@ static bool run_v90_recording_replay(
 	bool v8_seen = false;
 
 	CHECK(codec_law(codec, &law) &&
-		      load_octet_recording(
-			      path, &recording, &recording_count),
+		      v90_replay_profile_parse(
+			      downstream_value, upstream_value, symbol_value,
+			      law, originator, &profile),
+	      "optional V.90 G.711 recording profile is invalid");
+	downstream_command_length = snprintf(
+		downstream_command, sizeof(downstream_command),
+		"AT+MS=90,0,%u,%u\r", profile.downstream_rate,
+		profile.downstream_rate);
+	upstream_command_length = snprintf(
+		upstream_command, sizeof(upstream_command),
+		"AT+V90U=%u,%u,%u\r", profile.upstream_rate,
+		profile.upstream_rate, profile.symbol_rate);
+	CHECK(downstream_command_length > 0 &&
+		      (size_t)downstream_command_length <
+			      sizeof(downstream_command) &&
+		      upstream_command_length > 0 &&
+		      (size_t)upstream_command_length < sizeof(upstream_command),
+	      "optional V.90 G.711 recording commands are too long");
+	CHECK(load_octet_recording(path, &recording, &recording_count),
 	      "optional V.90 G.711 recording could not be loaded");
+	for (size_t index = 0; index < ARRAY_LENGTH(common_commands); ++index)
+		commands[index] = common_commands[index];
+	commands[ARRAY_LENGTH(common_commands)] = downstream_command;
+	commands[ARRAY_LENGTH(common_commands) + 1u] = upstream_command;
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
 		      endpoint_init(&endpoint, "V.90 recording replay") &&
 		      configure_recording_replay(
-			      &endpoint, commands, command_count),
+			      &endpoint, commands, ARRAY_LENGTH(commands)),
 	      "V.90 recording replay did not initialize");
 	if (originator) {
 		CHECK(modem_write(
@@ -2570,6 +2641,12 @@ int main(void)
 		getenv("V90_REPLAY_LAW");
 	const char *v90_recording_role =
 		getenv("V90_REPLAY_ROLE");
+	const char *v90_recording_downstream_rate =
+		getenv("V90_REPLAY_DOWNSTREAM_RATE");
+	const char *v90_recording_upstream_rate =
+		getenv("V90_REPLAY_UPSTREAM_RATE");
+	const char *v90_recording_symbol_rate =
+		getenv("V90_REPLAY_SYMBOL_RATE");
 	enum media_codec v90_replay_codec;
 	bool v90_replay_originator;
 	bool integration_case_selected = false;
@@ -2928,7 +3005,10 @@ int main(void)
 		return 1;
 	} else if (!run_v90_recording_replay(
 			   v90_recording_path, v90_replay_codec,
-			   v90_replay_originator)) {
+			   v90_replay_originator,
+			   v90_recording_downstream_rate,
+			   v90_recording_upstream_rate,
+			   v90_recording_symbol_rate)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
