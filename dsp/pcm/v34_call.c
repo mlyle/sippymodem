@@ -7,6 +7,9 @@
 #include <stddef.h>
 #include <string.h>
 
+static enum v34_call_result phase3_result(
+	enum v34_phase3_exchange_result result);
+
 static bool configuration_is_valid(
 	const struct v34_call_configuration *configuration)
 {
@@ -214,6 +217,68 @@ enum v34_call_result v34_call_init(
 	    v34_echo_canceller_freeze(&initialized.echo) !=
 		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_INVALID_ARGUMENT;
+	if (!v34_call_is_valid(&initialized))
+		return V34_CALL_NUMERIC_FAILURE;
+	*call = initialized;
+	return V34_CALL_OK;
+}
+
+enum v34_call_result v34_call_init_from_phase2(
+	struct v34_call *call,
+	const struct v34_call_configuration *configuration,
+	const struct v34_phase2_handoff *handoff)
+{
+	struct v34_call initialized = { 0 };
+	struct v34_phase3_profile caller;
+	struct v34_phase3_profile answerer;
+	const struct v34_phase3_profile *local;
+	const struct v34_phase3_profile *peer;
+	enum v34_phase3_exchange_result result;
+
+	if (call == NULL || !configuration_is_valid(configuration) ||
+	    handoff == NULL ||
+	    configuration->local_role != handoff->local_role ||
+	    memory_regions_overlap(
+		    call, sizeof(*call), configuration, sizeof(*configuration)) ||
+	    memory_regions_overlap(
+		    call, sizeof(*call), handoff, sizeof(*handoff)))
+		return V34_CALL_INVALID_ARGUMENT;
+	if (v34_phase2_handoff_profiles(handoff, &caller, &answerer) !=
+	    V34_PHASE2_SELECTION_OK)
+		return V34_CALL_INVALID_ARGUMENT;
+	local = handoff->local_role == V34_CALLING_STATION ?
+			&caller : &answerer;
+	peer = handoff->local_role == V34_CALLING_STATION ?
+		       &answerer : &caller;
+	initialized.local_info0 = handoff->local_info0;
+	initialized.peer_info0 = handoff->peer_info0;
+	initialized.local_info1 = handoff->local_role == V34_CALLING_STATION ?
+		(union v34_local_info1){ .calling = handoff->caller_info1c } :
+		(union v34_local_info1){ .answering = handoff->answerer_info1a };
+	initialized.phase3_configuration = configuration->phase3;
+	initialized.phase4_configuration = configuration->phase4;
+	initialized.round_trip_delay_samples =
+		handoff->round_trip_delay_samples;
+	initialized.phase2_nominal_amplitude =
+		configuration->phase2_nominal_amplitude;
+	initialized.local_role = handoff->local_role;
+	initialized.stage = V34_CALL_PHASE3;
+	initialized.peer_info0_stored = true;
+	initialized.round_trip_delay_stored = true;
+	result = v34_phase3_exchange_init(
+		&initialized.state.phase3, local, peer,
+		&initialized.phase3_configuration, handoff->receive_gain);
+	if (result != V34_PHASE3_EXCHANGE_OK)
+		return phase3_result(result);
+	if (v34_retrain_detector_init(
+		    &initialized.retrain_detector, initialized.local_role) !=
+		    V34_PHASE2_TONE_OK ||
+	    v34_echo_canceller_init(&initialized.echo) !=
+		    V34_ECHO_CANCELLER_OK ||
+	    (initialized.local_role == V34_CALLING_STATION &&
+	     v34_echo_canceller_freeze(&initialized.echo) !=
+		     V34_ECHO_CANCELLER_OK))
+		return V34_CALL_NUMERIC_FAILURE;
 	if (!v34_call_is_valid(&initialized))
 		return V34_CALL_NUMERIC_FAILURE;
 	*call = initialized;

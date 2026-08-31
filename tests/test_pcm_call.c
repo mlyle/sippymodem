@@ -2172,6 +2172,7 @@ static bool test_result_names(void)
 	static const char *const expected[] = {
 		"ok",
 		"phase 4 ready",
+		"V.34 fallback ready",
 		"frame source failure",
 		"failed",
 		"invalid argument",

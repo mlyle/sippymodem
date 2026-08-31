@@ -1323,12 +1323,55 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_phase2_handoff(void)
+{
+	struct v34_call_configuration caller =
+		configuration(V34_CALLING_STATION);
+	struct v34_call_configuration answerer =
+		configuration(V34_ANSWERING_STATION);
+	struct v34_phase2_handoff handoff = {
+		.local_info0 = caller.local_info0,
+		.peer_info0 = answerer.local_info0,
+		.caller_info1c = caller.local_info1.calling,
+		.answerer_info1a = answerer.local_info1.answering,
+		.round_trip_delay_samples = LINE_DELAY_SAMPLES * 2u,
+		.receive_gain = INT16_MAX,
+		.local_role = V34_CALLING_STATION,
+	};
+	struct v34_call call;
+	struct v34_call saved;
+
+	memset(&call, 0xa5, sizeof(call));
+	CHECK(v34_phase2_handoff_is_valid(&handoff) &&
+	      v34_call_init_from_phase2(&call, &caller, &handoff) ==
+		      V34_CALL_OK &&
+	      v34_call_is_valid(&call) && call.stage == V34_CALL_PHASE3 &&
+	      call.local_role == V34_CALLING_STATION &&
+	      call.round_trip_delay_samples ==
+		      handoff.round_trip_delay_samples &&
+	      memcmp(&call.local_info0, &handoff.local_info0,
+		     sizeof(call.local_info0)) == 0 &&
+	      memcmp(&call.peer_info0, &handoff.peer_info0,
+		     sizeof(call.peer_info0)) == 0,
+	      "completed Phase 2 did not initialize the V.34 Phase 3 owner");
+	handoff.receive_gain = 0;
+	memset(&call, 0xa5, sizeof(call));
+	saved = call;
+	CHECK(!v34_phase2_handoff_is_valid(&handoff) &&
+	      v34_call_init_from_phase2(&call, &caller, &handoff) ==
+		      V34_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &saved, sizeof(call)) == 0,
+	      "invalid Phase 2 handoff changed the V.34 call destination");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "completed Phase 2 handoff", test_phase2_handoff },
 		{ "generated PCMU call", test_pcmu_call },
 		{ "generated station echo", test_echo_calls },
 		{ "symmetric selected-rate calls", test_symmetric_calls },

@@ -90,7 +90,10 @@ static bool startup_is_valid(const struct pcm_phase2 *phase2)
 static bool remote_probe_state_is_valid(const struct pcm_phase2 *phase2)
 {
 	if (phase2->remote_probe_stored &&
-	    !v34_phase2_probe_measurement_is_valid(&phase2->remote_probe))
+	    (!v34_phase2_probe_measurement_is_valid(&phase2->remote_probe) ||
+	     phase2->remote_receive_gain <= 0))
+		return false;
+	if (!phase2->remote_probe_stored && phase2->remote_receive_gain != 0)
 		return false;
 	if (phase2->stage == PCM_PHASE2_RANGING)
 		return !phase2->remote_probe_stored;
@@ -283,6 +286,16 @@ static bool ready_for_phase3(const struct pcm_phase2 *phase2)
 bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)
 {
 	return pcm_phase2_is_valid(phase2) && ready_for_phase3(phase2);
+}
+
+bool pcm_phase2_is_ready_for_v34_fallback(
+	const struct pcm_phase2 *phase2)
+{
+	return pcm_phase2_is_valid(phase2) && ready_for_phase3(phase2) &&
+	       phase2->startup.protocol == PCM_PROTOCOL_V90 &&
+	       phase2->local_role == V90_DIGITAL_MODEM &&
+	       phase2->state.info1.analog_record_stored &&
+	       phase2->state.info1.analog.kind == PCM_INFO1A_V34_FALLBACK;
 }
 
 static enum pcm_phase2_result initialize(
@@ -681,7 +694,7 @@ enum pcm_phase2_result pcm_phase2_peer_info1a(
 	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_DIGITAL_MODEM ||
 	    !phase2->state.info1.analog_record_stored ||
-	    phase2->state.info1.analog.upstream != PCM_UPSTREAM_V34)
+	    phase2->state.info1.analog.kind != PCM_INFO1A_CONVENTIONAL)
 		return PCM_PHASE2_INVALID_STATE;
 	*peer_info1a = phase2->state.info1.analog.record.conventional;
 	return PCM_PHASE2_OK;
@@ -711,7 +724,7 @@ enum pcm_phase2_result pcm_phase2_peer_pcm_info1a(
 	    phase2->stage != PCM_PHASE2_INFO1 ||
 	    phase2->local_role != V90_DIGITAL_MODEM ||
 	    !phase2->state.info1.analog_record_stored ||
-	    phase2->state.info1.analog.upstream != PCM_UPSTREAM_PCM)
+	    phase2->state.info1.analog.kind != PCM_INFO1A_PCM)
 		return PCM_PHASE2_INVALID_STATE;
 	*peer_info1a = phase2->state.info1.analog.record.pcm;
 	return PCM_PHASE2_OK;
@@ -851,8 +864,13 @@ static bool sample_initial_probe(
 		    v90_phase2_initial_probe_measure(
 			    &phase2->state.initial_probe,
 			    &phase2->remote_probe) != PHASE2_INITIAL_PROBE_OK ||
+		    v90_phase2_initial_probe_receive_gain(
+			    &phase2->state.initial_probe,
+			    &phase2->remote_receive_gain) !=
+			    PHASE2_INITIAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe))
+			    &phase2->remote_probe) ||
+		    phase2->remote_receive_gain <= 0)
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind = PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
@@ -918,8 +936,13 @@ static bool sample_reciprocal_probe(
 		    v90_phase2_reciprocal_probe_measure(
 			    &phase2->state.reciprocal_probe,
 			    &phase2->remote_probe) != PHASE2_RECIPROCAL_PROBE_OK ||
+		    v90_phase2_reciprocal_probe_receive_gain(
+			    &phase2->state.reciprocal_probe,
+			    &phase2->remote_receive_gain) !=
+			    PHASE2_RECIPROCAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(
-			    &phase2->remote_probe))
+			    &phase2->remote_probe) ||
+		    phase2->remote_receive_gain <= 0)
 			return false;
 		phase2->remote_probe_stored = true;
 		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;
@@ -1040,6 +1063,17 @@ enum pcm_phase2_result pcm_phase2_measure_remote_probe(
 	if (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1)
 		return PCM_PHASE2_INVALID_STATE;
 	*measurement = phase2->remote_probe;
+	return PCM_PHASE2_OK;
+}
+
+enum pcm_phase2_result pcm_phase2_receive_gain(
+	const struct pcm_phase2 *phase2, int16_t *receive_gain)
+{
+	if (!pcm_phase2_is_valid(phase2) || receive_gain == NULL)
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1)
+		return PCM_PHASE2_INVALID_STATE;
+	*receive_gain = phase2->remote_receive_gain;
 	return PCM_PHASE2_OK;
 }
 

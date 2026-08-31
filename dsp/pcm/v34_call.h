@@ -102,6 +102,11 @@ enum v34_call_result v34_call_init(
 	struct v34_call *call,
 	const struct v34_call_configuration *configuration);
 
+enum v34_call_result v34_call_init_from_phase2(
+	struct v34_call *call,
+	const struct v34_call_configuration *configuration,
+	const struct v34_phase2_handoff *handoff);
+
 /* Begin the role-specific full retrain with 70 ms of line silence. The
  * negotiated INFO0 capability records remain owned by the call. */
 enum v34_call_result v34_call_start_retrain(struct v34_call *call);

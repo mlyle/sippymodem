@@ -18,6 +18,28 @@ enum v34_phase2_selection_result {
 	V34_PHASE2_SELECTION_NO_COMMON_PROFILE,
 };
 
+/* Completed Phase 2 records and receiver state for entering Phase 3 without
+ * replaying INFO0, probing, or INFO1. */
+struct v34_phase2_handoff {
+	struct v34_info0 local_info0;
+	struct v34_info0 peer_info0;
+	struct v34_info1c caller_info1c;
+	struct v34_info1a answerer_info1a;
+	uint16_t round_trip_delay_samples;
+	int16_t receive_gain;
+	enum v34_station_role local_role;
+};
+
+bool v34_phase2_handoff_is_valid(
+	const struct v34_phase2_handoff *handoff);
+
+/* Validate the retained line state and derive both role-owned Phase 3
+ * profiles. Rejected calls leave both destinations unchanged. */
+enum v34_phase2_selection_result v34_phase2_handoff_profiles(
+	const struct v34_phase2_handoff *handoff,
+	struct v34_phase3_profile *caller_transmit,
+	struct v34_phase3_profile *answerer_transmit);
+
 /* Bound the projected data rate to the implemented modulation profile for
  * one symbol rate. Zero denotes an invalid symbol rate. */
 uint8_t v34_phase2_projected_rate_limit(

@@ -934,6 +934,65 @@ enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call)
 				       (enum pcm_call_stage)-1;
 }
 
+static struct v34_info0 v34_info0_from_v90(
+	const struct v90_info0 *info0)
+{
+	return (struct v34_info0){
+		.symbol_rate_2743_supported = info0->symbol_rate_2743_supported,
+		.symbol_rate_2800_supported = info0->symbol_rate_2800_supported,
+		.symbol_rate_3429_supported = info0->symbol_rate_3429_supported,
+		.low_carrier_3000_supported = info0->low_carrier_3000_supported,
+		.high_carrier_3000_supported = info0->high_carrier_3000_supported,
+		.low_carrier_3200_supported = info0->low_carrier_3200_supported,
+		.high_carrier_3200_supported = info0->high_carrier_3200_supported,
+		.symbol_rate_3429_transmit_permitted =
+			info0->symbol_rate_3429_transmit_permitted,
+		.transmit_power_reduction_supported =
+			info0->transmit_power_reduction_supported,
+		.maximum_symbol_rate_difference_steps =
+			info0->maximum_symbol_rate_difference_steps,
+		.cme_modem = info0->cme_modem,
+		.constellation_1664_supported =
+			info0->constellation_1664_supported,
+		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
+		.acknowledges_peer_info0 = info0->acknowledges_peer_info0,
+	};
+}
+
+enum pcm_call_result pcm_call_v34_fallback_handoff(
+	const struct pcm_call *call,
+	struct v34_phase2_handoff *handoff)
+{
+	struct v34_phase2_handoff selected;
+	int16_t receive_gain;
+
+	if (!pcm_call_is_valid(call) || handoff == NULL ||
+	    memory_regions_overlap(call, sizeof(*call), handoff, sizeof(*handoff)))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed || call->protocol != PCM_PROTOCOL_V90 ||
+	    call->local_role != V90_DIGITAL_MODEM ||
+	    !call->peer_info0_stored || !call->round_trip_delay_stored ||
+	    !pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2) ||
+	    pcm_phase2_receive_gain(&call->state.phase2, &receive_gain) !=
+		    PCM_PHASE2_OK)
+		return PCM_CALL_INVALID_STATE;
+	selected = (struct v34_phase2_handoff){
+		.local_info0 = v34_info0_from_v90(
+			&call->local_info0.digital.common),
+		.peer_info0 = v34_info0_from_v90(&call->peer_info0.analog),
+		.caller_info1c = call->state.phase2.state.info1.digital.record.v90,
+		.answerer_info1a =
+			call->state.phase2.state.info1.analog.record.v34_fallback,
+		.round_trip_delay_samples = call->round_trip_delay_samples,
+		.receive_gain = receive_gain,
+		.local_role = V34_CALLING_STATION,
+	};
+	if (!v34_phase2_handoff_is_valid(&selected))
+		return PCM_CALL_UNUSABLE_SELECTION;
+	*handoff = selected;
+	return PCM_CALL_OK;
+}
+
 static uint8_t encode_sample(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -1110,6 +1169,8 @@ static enum pcm_call_result advance_phase2(
 		if (result != PCM_PHASE2_OK)
 			return PCM_CALL_SEQUENCE_MISMATCH;
 	}
+	if (pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2))
+		return PCM_CALL_V34_FALLBACK_READY;
 	return pcm_phase2_is_ready_for_phase3(&call->state.phase2) ?
 		       enter_phase3(call) : PCM_CALL_OK;
 }
@@ -2513,6 +2574,9 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_FAILED;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return PCM_CALL_INVALID_STATE;
+	if (call->stage == PCM_CALL_PHASE2 &&
+	    pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2))
+		return PCM_CALL_V34_FALLBACK_READY;
 	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
 	generated = encode_sample(call->law, 0);
@@ -2551,7 +2615,8 @@ enum pcm_call_result pcm_call_octet(
 		is_v90_info1a_boundary(call, &emitted.phase2);
 	if (result == PCM_CALL_OK && !deadline_started)
 		result = advance_b1_deadline(call);
-	if (result != PCM_CALL_OK)
+	if (result != PCM_CALL_OK &&
+	    result != PCM_CALL_V34_FALLBACK_READY)
 		call->failed = true;
 	emitted.next = call->stage;
 	if (!pcm_call_owned_state_is_valid(call)) {
@@ -2570,6 +2635,8 @@ const char *pcm_call_result_name(enum pcm_call_result result)
 		return "ok";
 	case PCM_CALL_PHASE4_READY:
 		return "phase 4 ready";
+	case PCM_CALL_V34_FALLBACK_READY:
+		return "V.34 fallback ready";
 	case PCM_CALL_SOURCE_FAILURE:
 		return "frame source failure";
 	case PCM_CALL_FAILED:

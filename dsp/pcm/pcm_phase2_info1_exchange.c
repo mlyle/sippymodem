@@ -6,6 +6,8 @@
 
 _Static_assert((int)V92_INFO1D_PAYLOAD_BITS == (int)V34_INFO1C_PAYLOAD_BITS,
 	"PCM INFO1d records must share one transport width");
+_Static_assert((int)V90_INFO1A_PAYLOAD_BITS == (int)V34_INFO1A_PAYLOAD_BITS,
+	"V.90 and V.34 INFO1a records must share one transport width");
 _Static_assert(
 	(int)V92_PCM_INFO1A_PAYLOAD_BITS == (int)V90_INFO1A_PAYLOAD_BITS,
 	"PCM INFO1a records must share one transport width");
@@ -78,16 +80,20 @@ static bool phase_has_local_analog_record(
 static bool analog_record_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange)
 {
-	switch (exchange->analog.upstream) {
-	case PCM_UPSTREAM_V34:
+	switch (exchange->analog.kind) {
+	case PCM_INFO1A_CONVENTIONAL:
 		return v90_info1a_is_valid(
 			&exchange->analog.record.conventional);
-	case PCM_UPSTREAM_PCM:
+	case PCM_INFO1A_PCM:
 		return exchange->protocol == PCM_PROTOCOL_V92 &&
 		       exchange->digital_record_stored &&
 		       exchange->digital.protocol == PCM_PROTOCOL_V92 &&
 		       exchange->digital.record.v92.pcm_upstream_supported &&
 		       v92_pcm_info1a_is_valid(&exchange->analog.record.pcm);
+	case PCM_INFO1A_V34_FALLBACK:
+		return exchange->protocol == PCM_PROTOCOL_V90 &&
+		       v34_info1a_is_valid(
+			       &exchange->analog.record.v34_fallback);
 	}
 	return false;
 }
@@ -265,7 +271,7 @@ enum phase2_info1_result pcm_phase2_info1_reply_conventional(
 	const struct v90_info1a *local_info1a)
 {
 	struct pcm_phase2_info1a selected = {
-		.upstream = PCM_UPSTREAM_V34,
+		.kind = PCM_INFO1A_CONVENTIONAL,
 	};
 	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
 
@@ -281,7 +287,7 @@ enum phase2_info1_result pcm_phase2_info1_reply_pcm(
 	const struct v92_pcm_info1a *local_info1a)
 {
 	struct pcm_phase2_info1a selected = {
-		.upstream = PCM_UPSTREAM_PCM,
+		.kind = PCM_INFO1A_PCM,
 	};
 	uint8_t payload[V92_PCM_INFO1A_PAYLOAD_BYTES];
 
@@ -340,20 +346,31 @@ static bool decode_analog_record(
 	struct pcm_phase2_info1a *decoded)
 {
 	struct v90_info1a conventional;
+	struct v34_info1a fallback;
 	struct v92_pcm_info1a pcm;
 	bool conventional_valid;
+	bool fallback_valid;
 	bool pcm_valid;
 
 	conventional_valid = v90_info1a_decode(
 		frame->payload, sizeof(frame->payload),
 		frame->payload_bit_count, &conventional) == V90_INFO1_OK;
 	if (exchange->protocol == PCM_PROTOCOL_V90) {
-		if (!conventional_valid)
+		fallback_valid = v34_info1a_decode(
+			frame->payload, sizeof(frame->payload),
+			frame->payload_bit_count, &fallback) == V34_INFO1_OK;
+		if (conventional_valid == fallback_valid)
 			return false;
-		*decoded = (struct pcm_phase2_info1a){
-			.record.conventional = conventional,
-			.upstream = PCM_UPSTREAM_V34,
-		};
+		if (conventional_valid)
+			*decoded = (struct pcm_phase2_info1a){
+				.record.conventional = conventional,
+				.kind = PCM_INFO1A_CONVENTIONAL,
+			};
+		else
+			*decoded = (struct pcm_phase2_info1a){
+				.record.v34_fallback = fallback,
+				.kind = PCM_INFO1A_V34_FALLBACK,
+			};
 		return true;
 	}
 	pcm_valid = v92_pcm_info1a_decode(
@@ -364,7 +381,7 @@ static bool decode_analog_record(
 	if (conventional_valid) {
 		*decoded = (struct pcm_phase2_info1a){
 			.record.conventional = conventional,
-			.upstream = PCM_UPSTREAM_V34,
+			.kind = PCM_INFO1A_CONVENTIONAL,
 		};
 		return true;
 	}
@@ -372,7 +389,7 @@ static bool decode_analog_record(
 		return false;
 	*decoded = (struct pcm_phase2_info1a){
 		.record.pcm = pcm,
-		.upstream = PCM_UPSTREAM_PCM,
+		.kind = PCM_INFO1A_PCM,
 	};
 	return true;
 }

@@ -89,3 +89,19 @@ enum phase2_reciprocal_probe_result v90_phase2_reciprocal_probe_measure(
 		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
 	return PHASE2_RECIPROCAL_PROBE_OK;
 }
+
+enum phase2_reciprocal_probe_result
+v90_phase2_reciprocal_probe_receive_gain(
+	const struct v90_phase2_reciprocal_probe *probe,
+	int16_t *receive_gain)
+{
+	if (!v90_phase2_reciprocal_probe_is_valid(probe) ||
+	    receive_gain == NULL ||
+	    const_transport(probe)->signal_role != PHASE2_SIGNAL_A ||
+	    probe->control.phase != PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE ||
+	    v34_phase2_probe_acquisition_receive_gain(
+		    &probe->control.path.receive, receive_gain) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
+		return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;
+	return PHASE2_RECIPROCAL_PROBE_OK;
+}

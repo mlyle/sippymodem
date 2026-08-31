@@ -41,6 +41,14 @@ struct pcm_info1d {
 union pcm_info1a_record {
 	struct v90_info1a conventional;
 	struct v92_pcm_info1a pcm;
+	struct v34_info1a v34_fallback;
+};
+
+enum pcm_info1a_kind {
+	PCM_INFO1A_CONVENTIONAL,
+	PCM_INFO1A_PCM,
+	/* A conventional V.34 INFO1a declines the offered PCM session. */
+	PCM_INFO1A_V34_FALLBACK,
 };
 
 /* Self-contained INFO1 decision for the selected Phase 3 child. The

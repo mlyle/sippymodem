@@ -3,6 +3,7 @@
 #include "v34_phase2_selection.h"
 
 #include "memory_region.h"
+#include "phase2_ranging.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -21,6 +22,47 @@ enum {
 	V90_PROBE_METRIC_MAXIMUM = 20,
 	V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB = 3,
 };
+
+bool v34_phase2_handoff_is_valid(
+	const struct v34_phase2_handoff *handoff)
+{
+	struct v34_phase3_profile caller;
+	struct v34_phase3_profile answerer;
+
+	return v34_phase2_handoff_profiles(
+		       handoff, &caller, &answerer) ==
+	       V34_PHASE2_SELECTION_OK;
+}
+
+enum v34_phase2_selection_result v34_phase2_handoff_profiles(
+	const struct v34_phase2_handoff *handoff,
+	struct v34_phase3_profile *caller_transmit,
+	struct v34_phase3_profile *answerer_transmit)
+{
+	if (handoff == NULL || caller_transmit == NULL ||
+	    answerer_transmit == NULL ||
+	    memory_regions_overlap(
+		    handoff, sizeof(*handoff), caller_transmit,
+		    sizeof(*caller_transmit)) ||
+	    memory_regions_overlap(
+		    handoff, sizeof(*handoff), answerer_transmit,
+		    sizeof(*answerer_transmit)) ||
+	    !v34_station_role_is_valid(handoff->local_role) ||
+	    !v34_info0_is_valid(&handoff->local_info0) ||
+	    !v34_info0_is_valid(&handoff->peer_info0) ||
+	    handoff->receive_gain <= 0 ||
+	    handoff->round_trip_delay_samples >
+		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			    PHASE2_RANGING_TURNAROUND_SAMPLES)
+		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	return v34_phase2_select_profiles(
+		handoff->local_role == V34_CALLING_STATION ?
+			&handoff->local_info0 : &handoff->peer_info0,
+		handoff->local_role == V34_ANSWERING_STATION ?
+			&handoff->local_info0 : &handoff->peer_info0,
+		&handoff->caller_info1c, &handoff->answerer_info1a,
+		caller_transmit, answerer_transmit);
+}
 
 struct preemphasis_probe_profile {
 	uint8_t source_bin;
@@ -526,7 +568,9 @@ enum v34_phase2_selection_result v34_phase2_select_profiles(
 	struct v34_phase3_profile selected_answerer;
 
 	if (caller_transmit == NULL || answerer_transmit == NULL ||
-	    caller_transmit == answerer_transmit ||
+	    memory_regions_overlap(
+		    caller_transmit, sizeof(*caller_transmit),
+		    answerer_transmit, sizeof(*answerer_transmit)) ||
 	    !v34_info0_is_valid(caller_info0) ||
 	    !v34_info0_is_valid(answerer_info0) ||
 	    !v34_info1c_is_valid(info1c) ||

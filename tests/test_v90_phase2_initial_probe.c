@@ -291,6 +291,74 @@ static bool check_v90_info1d_retry(
 	return true;
 }
 
+static bool check_v34_fallback_info1a(
+	const struct v90_phase2_reciprocal_probe *digital_probe)
+{
+	static const uint8_t payload[V34_INFO1A_PAYLOAD_BYTES] = {
+		0x00, 0x06, 0x4f, 0x60, 0x04,
+	};
+	struct pcm_phase2_info1_exchange digital;
+	struct v34_phase2_info_audio_transmitter peer;
+	struct v34_info1c local = digital_info1();
+	struct pcm_phase2_info1_event event;
+	struct v34_info1a decoded;
+	uint8_t retained_payload[V34_INFO1A_PAYLOAD_BYTES];
+	bool local_sent = false;
+	bool peer_received = false;
+	bool frame_complete = false;
+
+	CHECK(v34_info1a_decode(
+		      payload, sizeof(payload), V34_INFO1A_PAYLOAD_BITS,
+		      &decoded) == V34_INFO1_OK &&
+	      pcm_phase2_info1_init_v90_digital(
+		      &digital, digital_probe, &local) == PHASE2_INFO1_OK,
+	      "captured V.34 fallback INFO1a fixture was invalid");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t transmit;
+
+		CHECK(pcm_phase2_info1_sample(
+			      &digital, 0, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 INFO1d did not reach its fallback receive boundary");
+		if (event.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT) {
+			local_sent = true;
+			break;
+		}
+	}
+	CHECK(local_sent &&
+	      v34_phase2_info_audio_transmitter_init(
+		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+		      payload, V34_INFO1A_PAYLOAD_BITS) ==
+		      V34_PHASE2_INFO_AUDIO_OK,
+	      "V.90 fallback peer did not start at the INFO1a boundary");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t received = 0;
+		int16_t transmit;
+
+		if (!frame_complete)
+			CHECK(v34_phase2_info_audio_transmitter_sample(
+				      &peer, &received, &frame_complete) ==
+				      V34_PHASE2_INFO_AUDIO_OK,
+			      "V.34 fallback peer failed at sample %zu", index);
+		CHECK(pcm_phase2_info1_sample(
+			      &digital, received, &transmit, &event) ==
+			      PHASE2_INFO1_OK,
+		      "V.90 fallback receiver failed at sample %zu", index);
+		if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
+			peer_received = true;
+			break;
+		}
+	}
+	CHECK(peer_received && digital.analog_record_stored &&
+	      digital.analog.kind == PCM_INFO1A_V34_FALLBACK &&
+	      v34_info1a_encode(
+		      &digital.analog.record.v34_fallback, retained_payload,
+		      sizeof(retained_payload)) == V34_INFO1_OK &&
+	      memcmp(retained_payload, payload, sizeof(payload)) == 0,
+	      "captured V.34 INFO1a was not retained as a typed fallback");
+	return true;
+}
+
 static bool check_info1_exchange(
 	enum test_codec codec, struct test_delay_line *analog_to_digital,
 	struct test_delay_line *digital_to_analog,
@@ -312,6 +380,8 @@ static bool check_info1_exchange(
 					 PCM_PROTOCOL_V90 : PCM_PROTOCOL_V92;
 	enum pcm_upstream_mode upstream = mode == TEST_INFO1_V92_PCM ?
 					 PCM_UPSTREAM_PCM : PCM_UPSTREAM_V34;
+	enum pcm_info1a_kind expected_kind = upstream == PCM_UPSTREAM_PCM ?
+					 PCM_INFO1A_PCM : PCM_INFO1A_CONVENTIONAL;
 	size_t digital_sent = SIZE_MAX;
 	size_t analog_received = SIZE_MAX;
 	size_t analog_sent = SIZE_MAX;
@@ -461,7 +531,7 @@ static bool check_info1_exchange(
 						  PHASE2_INFO1_OK;
 			}
 			CHECK(peer_matches && replied &&
-			      analog.analog.upstream == upstream &&
+			      analog.analog.kind == expected_kind &&
 			      memcmp(
 				      analog.control.transmitter.frame.payload,
 				      expected_analog,
@@ -486,7 +556,7 @@ static bool check_info1_exchange(
 		    PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
 			digital_silence_start = digital.control.silence_samples;
-			CHECK(digital_event.peer_record.analog.upstream == upstream &&
+			CHECK(digital_event.peer_record.analog.kind == expected_kind &&
 			      (upstream == PCM_UPSTREAM_V34 ?
 				       info1a_equal(
 					       &digital_event.peer_record.analog
@@ -522,8 +592,8 @@ static bool check_info1_exchange(
 	      analog.digital_record_stored && digital.digital_record_stored &&
 	      analog.analog_record_stored && digital.analog_record_stored &&
 	      analog.protocol == protocol && digital.protocol == protocol &&
-	      analog.analog.upstream == upstream &&
-	      digital.analog.upstream == upstream &&
+	      analog.analog.kind == expected_kind &&
+	      digital.analog.kind == expected_kind &&
 	      analog.control.silence_samples ==
 		      PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
 	      digital.control.silence_samples ==
@@ -841,6 +911,9 @@ static bool check_initial_probe(enum test_codec codec)
 			      "PCM INFO1 mode %d failed for codec %d",
 			      mode, codec);
 		}
+		CHECK(check_v34_fallback_info1a(&digital_reciprocal),
+		      "captured V.34 fallback INFO1a failed for codec %d",
+		      codec);
 	}
 
 	{

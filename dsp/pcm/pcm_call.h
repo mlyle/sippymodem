@@ -17,6 +17,7 @@
 #include "v92_phase4_digital_station.h"
 #include "v92_phase4_e2u.h"
 #include "v34_phase2_tone.h"
+#include "v34_phase2_selection.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,6 +39,7 @@ enum {
 enum pcm_call_result {
 	PCM_CALL_OK,
 	PCM_CALL_PHASE4_READY,
+	PCM_CALL_V34_FALLBACK_READY,
 	PCM_CALL_SOURCE_FAILURE,
 	PCM_CALL_FAILED,
 	PCM_CALL_INVALID_ARGUMENT,
@@ -295,6 +297,13 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
+/* A V.90 digital endpoint can receive a conventional V.34 INFO1a after its
+ * INFO1d offer. Copy the completed Phase 2 records and receive state without
+ * consuming a line character. Rejected calls leave the handoff unchanged. */
+enum pcm_call_result pcm_call_v34_fallback_handoff(
+	const struct pcm_call *call,
+	struct v34_phase2_handoff *handoff);
+
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character.
  * `received_octet` retains exact PCM codeword semantics while
  * `received_sample` is the decoded physical line sample. Phase 2 and Phase 3
@@ -304,8 +313,9 @@ enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
  * initial Phase 4 exchange and V.92 after its role-local E2u interval. The
  * peer may still need continuous media before reaching its own handoff. This
  * result consumes no character, changes no output, and leaves that continuous
- * state available to the next owner. Terminal protocol failures consume the
- * character and expose generated output and observation. */
+ * state available to the next owner. V34_FALLBACK_READY similarly retains the
+ * completed Phase 2 state for a conventional V.34 owner. Terminal protocol
+ * failures consume the character and expose generated output and observation. */
 enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet,

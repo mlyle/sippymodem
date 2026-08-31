@@ -3,6 +3,7 @@
 #include "v90_datapump.h"
 
 #include "datapump_timing.h"
+#include "memory_region.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "pcm_call.h"
@@ -22,12 +23,14 @@ struct v90_datapump {
 	struct dp dp;
 	struct pcm_call call;
 	struct training_session training;
+	struct v90_v34_fallback_handoff fallback;
 	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
 	enum g711_law media_law;
 	uint8_t maximum_pcm_upstream_data_rate_number;
 	bool call_started;
+	bool fallback_ready;
 	bool host_echo_margin_evaluated;
 };
 
@@ -123,6 +126,15 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	     (!datapump->call_started || datapump->host_echo == NULL ||
 	      !v90_host_echo_is_ready(datapump->host_echo))) ||
 	    !training_session_is_valid(&datapump->training) ||
+	    (datapump->fallback_ready &&
+	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
+	      !datapump->call_started ||
+	      !v34_phase2_handoff_is_valid(&datapump->fallback.phase2) ||
+	      memcmp(
+		      &datapump->fallback.training, &datapump->training,
+		      sizeof(datapump->training)) != 0 ||
+	      !pcm_phase2_is_ready_for_v34_fallback(
+		      &datapump->call.state.phase2))) ||
 	    (datapump->call_started &&
 	     (!g711_law_is_valid(datapump->media_law) ||
 	      !pcm_call_is_valid(&datapump->call) ||
@@ -146,6 +158,20 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	     !training_session_is_retraining(&datapump->training)))
 		return NULL;
 	return datapump;
+}
+
+bool v90_datapump_v34_fallback_handoff(
+	struct dp *dp, struct v90_v34_fallback_handoff *handoff)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+
+	if (datapump == NULL || handoff == NULL ||
+	    memory_regions_overlap(
+		    datapump, sizeof(*datapump), handoff, sizeof(*handoff)) ||
+	    !datapump->fallback_ready)
+		return false;
+	*handoff = datapump->fallback;
+	return true;
 }
 
 static struct dp *create_v90(
@@ -479,7 +505,7 @@ static uint8_t pcm_to_media_octet(enum g711_law media_law, uint8_t octet)
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
 	int16_t received_sample,
-	uint8_t *transmitted, bool *connected)
+	uint8_t *transmitted, bool *connected, bool *fallback)
 {
 	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
@@ -509,6 +535,17 @@ static bool process_octet(
 		result = pcm_call_octet(
 			&datapump->call, received, received_sample,
 			transmitted, &observation);
+	}
+	if (result == PCM_CALL_V34_FALLBACK_READY) {
+		if (datapump->fallback_ready ||
+		    pcm_call_v34_fallback_handoff(
+			    &datapump->call,
+			    &datapump->fallback.phase2) != PCM_CALL_OK)
+			return false;
+		datapump->fallback.training = datapump->training;
+		datapump->fallback_ready = true;
+		*fallback = true;
+		return true;
 	}
 	if (result != PCM_CALL_OK)
 		return false;
@@ -599,6 +636,7 @@ static int process_v90_g711(
 	const int16_t *receive_samples = receive_samples_buffer;
 	int16_t *transmit_samples = transmit_samples_buffer;
 	bool connected = false;
+	bool fallback = false;
 
 	if (exact_output != NULL)
 		*exact_output = false;
@@ -636,7 +674,7 @@ static int process_v90_g711(
 			    media_to_pcm_octet(
 				    datapump, law, receive_codewords[index]),
 			    cleaned_sample,
-			    &pcm_transmit, &connected))
+			    &pcm_transmit, &connected, &fallback))
 			goto failure;
 		transmit_codewords[index] =
 			pcm_to_media_octet(law, pcm_transmit);
@@ -658,6 +696,26 @@ static int process_v90_g711(
 			} else if (!apply_host_echo_margin(datapump)) {
 				goto failure;
 			}
+		}
+		if (fallback) {
+			int remaining = count - index - 1;
+
+			if (remaining > 0 &&
+			    training_session_advance(
+				    &datapump->training,
+				    (unsigned int)remaining) !=
+				    TRAINING_SESSION_OK)
+				goto failure;
+			datapump->fallback.training = datapump->training;
+			mute_output(
+				law, transmit_codewords + index + 1,
+				transmit_samples + index + 1, remaining);
+			if (modem_set_param(
+				    datapump->dp.modem, MDMPRM_DP_REQUESTED,
+				    DP_V34) != 0)
+				goto failure;
+			*exact_output = true;
+			return DPSTAT_CHANGEDP;
 		}
 	}
 	*exact_output = true;

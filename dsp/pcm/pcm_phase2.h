@@ -78,6 +78,7 @@ struct pcm_phase2 {
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_probe_receiver_measurement remote_probe;
 	struct pcm_startup_selection startup;
+	int16_t remote_receive_gain;
 	enum pcm_phase2_stage stage;
 	enum pcm_phase2_failure failure;
 	enum v90_modem_role local_role;
@@ -125,6 +126,11 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2);
 bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2);
 bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2);
 bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2);
+/* A V.90 digital modem may receive a conventional V.34 INFO1a instead of
+ * the PCM-selecting record. The completed Phase 2 owner remains available for
+ * a typed handoff to the conventional call path. */
+bool pcm_phase2_is_ready_for_v34_fallback(
+	const struct pcm_phase2 *phase2);
 
 /* Typed access prevents interpreting the role-dependent union through the
  * wrong member. Failed calls leave the destination unchanged. */
@@ -176,6 +182,8 @@ enum pcm_phase2_result pcm_phase2_sample(
 enum pcm_phase2_result pcm_phase2_measure_remote_probe(
 	const struct pcm_phase2 *phase2,
 	struct v34_phase2_probe_receiver_measurement *measurement);
+enum pcm_phase2_result pcm_phase2_receive_gain(
+	const struct pcm_phase2 *phase2, int16_t *receive_gain);
 
 const char *pcm_phase2_result_name(enum pcm_phase2_result result);
 const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure);

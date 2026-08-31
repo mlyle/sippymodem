@@ -31,5 +31,7 @@ enum phase2_initial_probe_result v90_phase2_initial_probe_sample(
 enum phase2_initial_probe_result v90_phase2_initial_probe_measure(
 	const struct v90_phase2_initial_probe *probe,
 	struct v34_phase2_probe_receiver_measurement *measurement);
+enum phase2_initial_probe_result v90_phase2_initial_probe_receive_gain(
+	const struct v90_phase2_initial_probe *probe, int16_t *receive_gain);
 
 #endif

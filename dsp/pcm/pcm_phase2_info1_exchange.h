@@ -22,7 +22,7 @@ enum pcm_phase2_info1_event_kind {
 
 struct pcm_phase2_info1a {
 	union pcm_info1a_record record;
-	enum pcm_upstream_mode upstream;
+	enum pcm_info1a_kind kind;
 };
 
 union pcm_phase2_info1_peer_record {

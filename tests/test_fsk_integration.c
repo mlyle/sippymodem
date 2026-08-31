@@ -2476,6 +2476,7 @@ static bool run_v90_recording_replay(
 	uint8_t *recording = NULL;
 	size_t recording_count = 0;
 	size_t handoff_at = SIZE_MAX;
+	size_t fallback_at = SIZE_MAX;
 	size_t connected_at = SIZE_MAX;
 	bool v8_seen = false;
 
@@ -2530,6 +2531,7 @@ static bool run_v90_recording_replay(
 		size_t frame_count = recording_count - offset;
 		bool exact_output = false;
 		bool v8_before;
+		bool v90_before;
 
 		if (frame_count > SIP_FRAME_SAMPLES)
 			frame_count = SIP_FRAME_SAMPLES;
@@ -2540,6 +2542,8 @@ static bool run_v90_recording_replay(
 				law, endpoint.receive_codewords[index]);
 		v8_before = endpoint.modem->dp != NULL &&
 			endpoint.modem->dp->id == DP_V8;
+		v90_before = endpoint.modem->dp != NULL &&
+			endpoint.modem->dp->id == DP_V90;
 		modem_process_g711(
 			endpoint.modem, law, endpoint.receive_codewords,
 			endpoint.receive, endpoint.transmit_codewords,
@@ -2552,6 +2556,10 @@ static bool run_v90_recording_replay(
 		    endpoint.modem->dp != NULL &&
 		    endpoint.modem->dp->id == DP_V90)
 			handoff_at = offset;
+		if (fallback_at == SIZE_MAX && v90_before &&
+		    endpoint.modem->dp != NULL &&
+		    endpoint.modem->dp->id == DP_V34)
+			fallback_at = offset;
 		if (modem_is_online(endpoint.modem, DP_V90)) {
 			if (connected_at == SIZE_MAX)
 				connected_at = offset;
@@ -2575,6 +2583,18 @@ static bool run_v90_recording_replay(
 		fprintf(stderr,
 			"[       OK ] outgoing V.90 V.8 recording replay over %s (%zu octets, handoff at %zu)\n",
 			codec_name(codec), recording_count, handoff_at);
+	} else if (fallback_at != SIZE_MAX) {
+		CHECK(endpoint.modem->dp != NULL &&
+			      endpoint.modem->dp->id == DP_V34,
+		      "V.90 recording lost its V.34 fallback owner (handoff %zu, fallback %zu, final DP %d/status %d)",
+		      handoff_at, fallback_at,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->id : -1,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->status : -1);
+		fprintf(stderr,
+			"[       OK ] V.90 recording selected V.34 fallback over %s (%zu octets, fallback at %zu)\n",
+			codec_name(codec), recording_count, fallback_at);
 	} else {
 		CHECK(connected_at != SIZE_MAX &&
 			      recording_count - connected_at >=

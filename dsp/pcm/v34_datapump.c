@@ -9,6 +9,7 @@
 #include "v34_call.h"
 #include "v34_data_quality.h"
 #include "v34_profile.h"
+#include "v90_datapump.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -61,6 +62,30 @@ static enum v34_station_role station_role(bool caller)
 	return caller ? V34_CALLING_STATION : V34_ANSWERING_STATION;
 }
 
+static enum v34_profile_result fallback_profile(
+	struct v34_call_configuration *configuration, uint16_t *rate_mask,
+	const struct v34_phase2_handoff *handoff)
+{
+	struct v34_phase3_profile caller;
+	struct v34_phase3_profile answerer;
+	uint8_t symmetric_rate_units;
+
+	if (v34_phase2_handoff_profiles(handoff, &caller, &answerer) !=
+	    V34_PHASE2_SELECTION_OK)
+		return V34_PROFILE_INVALID_ARGUMENT;
+	/* The current MP policy has one cap for both directions. Do not let it
+	 * exceed either projection retained from the completed exchange. */
+	symmetric_rate_units =
+		caller.projected_data_rate_2400_bps_units <
+				answerer.projected_data_rate_2400_bps_units ?
+			caller.projected_data_rate_2400_bps_units :
+			answerer.projected_data_rate_2400_bps_units;
+	return v34_profile_init(
+		configuration, rate_mask, handoff->local_role,
+		V34_MIN_BIT_RATE,
+		(unsigned int)symmetric_rate_units * V34_RATE_STEP, 0);
+}
+
 static struct v34_datapump *v34_from_dp(struct dp *dp)
 {
 	struct v34_datapump *datapump;
@@ -101,20 +126,33 @@ static struct dp *create_v34(
 {
 	struct v34_call_configuration configuration;
 	struct v34_datapump *datapump;
+	struct v90_v34_fallback_handoff fallback;
+	enum v34_station_role role;
+	bool from_v90;
 	uint16_t rate_mask;
 
+	from_v90 = modem != NULL && modem->dp != NULL &&
+		v90_datapump_v34_fallback_handoff(modem->dp, &fallback);
+	role = from_v90 ? fallback.phase2.local_role :
+		station_role(caller != 0);
 	if (modem == NULL || id != DP_V34 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v34_operations || operations->use_count == INT_MAX ||
-	    v34_profile_init(
-		    &configuration, &rate_mask, station_role(caller != 0),
-		    modem->min_rate, modem->max_rate, modem->v34_symbol_rate) !=
+	    (from_v90 ?
+	     fallback_profile(&configuration, &rate_mask, &fallback.phase2) :
+	     v34_profile_init(
+		     &configuration, &rate_mask, role,
+		     modem->min_rate, modem->max_rate,
+		     modem->v34_symbol_rate)) !=
 		    V34_PROFILE_OK)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	if (v34_call_init(&datapump->call, &configuration) != V34_CALL_OK) {
+	if ((from_v90 ?
+	     v34_call_init_from_phase2(
+		     &datapump->call, &configuration, &fallback.phase2) :
+	     v34_call_init(&datapump->call, &configuration)) != V34_CALL_OK) {
 		free(datapump);
 		return NULL;
 	}
@@ -123,12 +161,14 @@ static struct dp *create_v34(
 		free(datapump);
 		return NULL;
 	}
-	datapump->caller = caller != 0;
+	datapump->caller = role == V34_CALLING_STATION;
 	datapump->rate_mask = rate_mask;
-	if (training_session_init(
-		    &datapump->training,
-		    datapump_carrier_wait_ticks(modem)) !=
-	    TRAINING_SESSION_OK) {
+	if (from_v90)
+		datapump->training = fallback.training;
+	else if (training_session_init(
+			 &datapump->training,
+			 datapump_carrier_wait_ticks(modem)) !=
+		 TRAINING_SESSION_OK) {
 		free(datapump);
 		return NULL;
 	}
