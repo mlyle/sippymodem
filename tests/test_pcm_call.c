@@ -564,10 +564,11 @@ static void channel_transmit(
 	channel->cursor = (channel->cursor + 1u) % channel->delay;
 }
 
-static bool endpoint_init(
+static bool endpoint_init_with_dil(
 	struct endpoint *endpoint, enum v90_modem_role role,
 	enum g711_law law, uint32_t enabled_downstream_rate_mask,
-	uint8_t selected_downstream_rate_index)
+	uint8_t selected_downstream_rate_index,
+	enum v90_dil_profile dil_profile)
 {
 	struct pcm_call_configuration selected = configuration(role, law);
 	struct endpoint initialized = {
@@ -575,10 +576,11 @@ static bool endpoint_init(
 	};
 
 	selected.enabled_downstream_rate_mask = enabled_downstream_rate_mask;
-	if (role == V90_ANALOG_MODEM)
+	if (role == V90_ANALOG_MODEM) {
 		selected.analog_phase4.data_parameters.selected_rate_index =
 			selected_downstream_rate_index;
-	else
+		selected.phase3.analog.dil_profile = dil_profile;
+	} else
 		selected.phase3.digital.jd.data_rate_capability_mask =
 			enabled_downstream_rate_mask;
 	if (endpoint == NULL ||
@@ -586,6 +588,16 @@ static bool endpoint_init(
 		return false;
 	*endpoint = initialized;
 	return true;
+}
+
+static bool endpoint_init(
+	struct endpoint *endpoint, enum v90_modem_role role,
+	enum g711_law law, uint32_t enabled_downstream_rate_mask,
+	uint8_t selected_downstream_rate_index)
+{
+	return endpoint_init_with_dil(
+		endpoint, role, law, enabled_downstream_rate_mask,
+		selected_downstream_rate_index, V90_DIL_PROFILE_NONE);
 }
 
 static bool phase4_boundary_is_transactional(
@@ -2310,6 +2322,112 @@ static bool test_downstream_rate_negotiation(void)
 	return true;
 }
 
+static uint16_t current_dil_segment_symbols(
+	const struct v90_dil_sequence *sequence)
+{
+	uint8_t chord =
+		sequence->parameters.training_ucodes[sequence->segment] >> 4;
+
+	return (uint16_t)(
+		(sequence->parameters.segment_length_codes[chord] + 1u) *
+		V90_DIL_SEGMENT_INTERVALS);
+}
+
+static bool check_completed_dil_return_drains(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	bool drain_seen = false;
+	bool boundary_seen = false;
+	bool online_data_seen = false;
+	size_t drain_octets = 0u;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init_with_dil(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u,
+		      V90_DIL_PROFILE_CONVENTIONAL) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u DIL-drain endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		const struct v90_dil_sequence *dil = NULL;
+		uint16_t segment_symbols = 0u;
+		uint16_t segment_symbol = 0u;
+		uint8_t analog_received;
+		uint8_t digital_received;
+		uint8_t analog_transmitted;
+		uint8_t digital_transmitted;
+		bool draining = false;
+
+		channel_receive(
+			&channel, &analog_received, &digital_received);
+		CHECK(endpoint_octet(
+			      &analog, analog_received,
+			      decode_octet(law, analog_received), law,
+			      &analog_transmitted),
+		      "law %u DIL-drain analogue endpoint stopped at %zu",
+		      (unsigned int)law, clock);
+		if (digital.call.stage == PCM_CALL_PHASE3 &&
+		    v90_phase3_digital_station_receive_complete(
+			    &digital.call.state.phase3.digital) &&
+		    !v90_phase3_digital_station_transmit_complete(
+			    &digital.call.state.phase3.digital)) {
+			dil = &digital.call.state.phase3.digital.transmit.dil;
+			segment_symbols = current_dil_segment_symbols(dil);
+			segment_symbol = dil->segment_symbol;
+			draining = true;
+			drain_seen = true;
+			drain_octets++;
+			CHECK(digital.call.state.phase3.digital.transmit.stage ==
+				      PCM_PHASE3_DIGITAL_TX_DIL &&
+			      dil->finish_requested && !dil->complete &&
+			      segment_symbol < segment_symbols,
+			      "law %u invalid DIL drain state at %zu: %u/%u",
+			      (unsigned int)law, clock, segment_symbol,
+			      segment_symbols);
+		}
+		CHECK(endpoint_octet(
+			      &digital, digital_received,
+			      decode_octet(law, digital_received), law,
+			      &digital_transmitted),
+		      "law %u completed return was reused at %zu",
+		      (unsigned int)law, clock);
+		if (draining && digital.entered_phase4) {
+			boundary_seen = true;
+			CHECK((uint16_t)(segment_symbol + 1u) == segment_symbols,
+			      "law %u DIL left before its boundary: %u/%u",
+			      (unsigned int)law, segment_symbol, segment_symbols);
+		}
+		channel_transmit(
+			&channel, analog_transmitted, digital_transmitted);
+		if (goal_is_reached(
+			    CALL_GOAL_ONLINE_DATA, &analog, &digital)) {
+			online_data_seen = true;
+			break;
+		}
+	}
+	CHECK(drain_seen && drain_octets > 0u && boundary_seen &&
+	      analog.entered_phase4 && digital.entered_phase4 &&
+	      online_data_seen &&
+	      !pcm_call_has_failed(&analog.call) &&
+	      !pcm_call_has_failed(&digital.call),
+	      "law %u did not drain completed-return DIL into online data: "
+	      "drain=%zu boundary=%d online=%d stages=%u/%u",
+	      (unsigned int)law, drain_octets, boundary_seen, online_data_seen,
+	      (unsigned int)analog.call.stage,
+	      (unsigned int)digital.call.stage);
+	return true;
+}
+
+static bool test_completed_dil_return_drains(void)
+{
+	return check_completed_dil_return_drains(G711_LAW_PCMU) &&
+	       check_completed_dil_return_drains(G711_LAW_PCMA);
+}
+
 static bool test_generated_calls(void)
 {
 	static const size_t complete_delays[] = {
@@ -2603,6 +2721,8 @@ int main(void)
 		  test_initial_info1_retrain_guard },
 		{ "remote retrain during final PCM training",
 		  test_final_training_remote_retrain },
+		{ "completed V.90 return drains DIL",
+		  test_completed_dil_return_drains },
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "local and remote PCM full retrain", test_full_retrain },

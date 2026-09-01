@@ -274,6 +274,30 @@ static bool run_line(enum g711_law law)
 	      receive_return(
 		      law, &return_tx, &return_rx, &line, &return_handoff),
 	      "law %d second return failed", law);
+	{
+		struct qam_demodulator demodulator = return_rx.demodulator;
+		struct v34_phase3_s_receiver marker = return_rx.points.marker;
+		struct qam_point point = v34_rotated_point_zero(1);
+		int16_t sample;
+		bool accepted;
+
+		CHECK(v34_training_line_sample(
+			      &line,
+			      v34_training_line_needs_point(&line) ? &point : NULL,
+			      &sample, &accepted) == V34_TRAINING_LINE_OK &&
+		      v90_phase3_return_line_rx_advance_complete(
+			      &return_rx, quantize(law, sample)) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK &&
+		      memcmp(&return_rx.demodulator, &demodulator,
+			     sizeof(demodulator)) != 0 &&
+		      memcmp(&return_rx.points.marker, &marker,
+			     sizeof(marker)) == 0 &&
+		      v90_phase3_return_line_rx_handoff(
+			      &return_rx, &return_handoff) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK,
+		      "law %d completed return did not advance its line clock",
+		      law);
+	}
 	return true;
 }
 
@@ -315,6 +339,11 @@ static bool test_validation(void)
 	saved_handoff = handoff;
 	CHECK(v90_phase3_return_line_rx_sample(NULL, 0) ==
 		      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_line_rx_advance_complete(NULL, 0) ==
+		      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_line_rx_advance_complete(&rx, 0) ==
+		      V90_PHASE3_RETURN_LINE_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 	      v90_phase3_return_line_rx_handoff(&rx, &handoff) ==
 		      V90_PHASE3_RETURN_LINE_RX_INVALID_STATE &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,

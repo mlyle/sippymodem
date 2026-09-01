@@ -166,6 +166,8 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 	struct v90_phase3_return_rx *rx)
 {
 	struct v34_equalizer_handoff equalizer;
+	struct v90_phase3_return_rx restarted;
+	enum v90_phase3_return_rx_result result;
 	double adaptation;
 
 	if (!v90_phase3_return_rx_is_valid(rx))
@@ -175,7 +177,15 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	equalizer.equalizer = rx->equalizer;
 	adaptation = rx->adaptation;
-	return v90_phase3_return_rx_init(rx, &equalizer, adaptation);
+	result = v90_phase3_return_rx_init(
+		&restarted, &equalizer, adaptation);
+	if (result != V90_PHASE3_RETURN_RX_OK)
+		return result;
+	restarted.second_return = true;
+	if (!v90_phase3_return_rx_is_valid(&restarted))
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	*rx = restarted;
+	return V90_PHASE3_RETURN_RX_OK;
 }
 
 static uint8_t onset_decision(
@@ -260,6 +270,9 @@ static bool reset_onset_candidate(
 	rx->onset_offset = 0;
 	rx->onset_errors = 0;
 	rx->confirmed_s_symbols = 0;
+	rx->exit_symbols = 0;
+	rx->exit_errors = 0;
+	rx->stage = V90_PHASE3_RETURN_RX_STAGE_SEARCH_S;
 	(void)remember_onset(rx, rotation);
 	return true;
 }
@@ -292,6 +305,12 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 {
 	bool matches = expected_s_decision(rx, rotation);
 
+	if (rx->second_return && rx->exit_symbols == 0 && matches &&
+	    rx->confirmed_s_symbols >=
+		    V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS)
+		return reset_onset_candidate(rx, rotation) ?
+			V90_PHASE3_RETURN_RX_OK :
+			V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (rx->exit_symbols == 0 &&
 	    (rx->confirmed_s_symbols <
 		     V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS ||
@@ -366,6 +385,12 @@ static enum v90_phase3_return_rx_result receive_decision(
 	case V34_PHASE3_S_RECEIVER_OK:
 		return observe_s_exit(rx, rotation);
 	case V34_PHASE3_S_RECEIVER_DETECTED:
+		if (rx->second_return &&
+		    rx->confirmed_s_symbols <
+			    V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS)
+			return reset_onset_candidate(rx, rotation) ?
+				V90_PHASE3_RETURN_RX_OK :
+				V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_COMPLETE;
 		return V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
 	case V34_PHASE3_S_RECEIVER_COMPLETE:

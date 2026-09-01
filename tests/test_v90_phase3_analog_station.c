@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
+#include <v90_dil_sequence.h>
 #include <v90_phase3_analog_station.h>
 #include <v90_phase3_digital_station.h>
 
@@ -14,7 +15,8 @@ enum {
 	NOMINAL_AMPLITUDE = 6000,
 	POST_POINT_LIMIT =
 		2 * V34_LINE_PULSE_SPAN_SYMBOLS +
-		V34_EQUALIZER_DECISION_DELAY,
+		V34_EQUALIZER_DECISION_DELAY +
+		V90_DIL_MAX_SEGMENT_SYMBOLS,
 };
 
 static struct v34_phase3_profile profile(void)
@@ -114,6 +116,8 @@ static bool run_exchange(
 	uint32_t receive_complete_at = UINT32_MAX;
 	uint32_t transmit_complete_at = UINT32_MAX;
 	bool phase4_line_active = false;
+	bool second_s_seen = false;
+	bool dil_completion_seen = false;
 
 	CHECK(v90_dil_profile_init(&expected_dil, dil_profile) == V90_DIL_OK &&
 	      v90_dil_training_symbol_count(
@@ -177,8 +181,28 @@ static bool run_exchange(
 				      V90_PHASE3_DIGITAL_STATION_OK,
 			      "law %u digital receive failed at %u",
 			      (unsigned int)law, index);
+		if (expected_dil_symbols != 0u &&
+		    digital.receive_stage ==
+			    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN) {
+			if (!v90_phase3_digital_station_receive_complete(
+				    &digital) &&
+			    digital.receive.returning.points.stage ==
+				    V90_PHASE3_RETURN_RX_STAGE_S) {
+				second_s_seen = true;
+				CHECK(!digital.transmit.dil.finish_requested,
+				      "law %u second S ended DIL before S-bar",
+				      (unsigned int)law);
+			}
+			if (v90_phase3_digital_station_receive_complete(&digital)) {
+				dil_completion_seen = true;
+				CHECK(digital.transmit.dil.finish_requested,
+				      "law %u complete S-bar did not end DIL",
+				      (unsigned int)law);
+			}
+		}
 		if (phase4_line_active &&
-		    v90_phase3_digital_station_receive_complete(&digital))
+		    v90_phase3_digital_station_receive_complete(&digital) &&
+		    v90_phase3_digital_station_transmit_complete(&digital))
 			break;
 	}
 	CHECK(receive_complete_at < transmit_complete_at &&
@@ -226,6 +250,8 @@ static bool run_exchange(
 		analog.transmit.returning.idle_scr.has_last_symbol)) &&
 	      analog.transmit.returning.points.s_symbols >=
 		      V34_PHASE3_S_SYMBOLS &&
+	      (expected_dil_symbols == 0u ||
+	       (second_s_seen && dil_completion_seen)) &&
 	      !v90_phase3_analog_station_has_failed(&analog) &&
 	      !v90_phase3_digital_station_has_failed(&digital),
 	      "law %u did not reach matching independent handoffs",

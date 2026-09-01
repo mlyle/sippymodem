@@ -59,6 +59,14 @@ bool v90_phase3_return_line_rx_has_failed(
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);
 
+/* After the complete S-bar has fixed the Phase 4 handoff, advance the
+ * continuous demodulator/equalizer clock without interpreting or adapting to
+ * the following CPt samples. This keeps a later handoff sample-exact while an
+ * independently owned digital DIL segment drains. */
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_advance_complete(
+	struct v90_phase3_return_line_rx *rx, int16_t sample);
+
 bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff);
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_handoff(

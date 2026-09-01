@@ -238,17 +238,22 @@ static enum v90_phase3_digital_station_result receive_return(
 				V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN;
 			return V90_PHASE3_DIGITAL_STATION_OK;
 		}
+		if (station->receive_stage ==
+		    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN)
+			return pcm_phase3_digital_tx_finish_dil(
+				       &station->transmit) ==
+				       PCM_PHASE3_DIGITAL_TX_OK ?
+				       V90_PHASE3_DIGITAL_STATION_OK :
+				       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		return station->transmit.stage ==
 			       PCM_PHASE3_DIGITAL_TX_COMPLETE ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 	case V90_PHASE3_RETURN_LINE_RX_S_DETECTED:
-		return (station->receive_stage ==
-				V90_PHASE3_DIGITAL_RECEIVE_RETURN ?
-				pcm_phase3_digital_tx_finish_jd(
-					&station->transmit) :
-				pcm_phase3_digital_tx_finish_dil(
-					&station->transmit)) ==
+		if (station->receive_stage ==
+		    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN)
+			return V90_PHASE3_DIGITAL_STATION_OK;
+		return pcm_phase3_digital_tx_finish_jd(&station->transmit) ==
 			       PCM_PHASE3_DIGITAL_TX_OK ?
 			       V90_PHASE3_DIGITAL_STATION_OK :
 			       V90_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
@@ -307,6 +312,43 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 	}
 	if (result != V90_PHASE3_DIGITAL_STATION_OK)
 		return result;
+	if (!v90_phase3_digital_station_is_valid(&next)) {
+		station->failed = true;
+		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	}
+	*station = next;
+	return V90_PHASE3_DIGITAL_STATION_OK;
+}
+
+enum v90_phase3_digital_station_result
+v90_phase3_digital_station_advance_completed_receive(
+	struct v90_phase3_digital_station *station, int16_t sample)
+{
+	struct v90_phase3_digital_station next;
+	enum v90_phase3_return_line_rx_result result;
+
+	if (!v90_phase3_digital_station_is_valid(station))
+		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (station->failed)
+		return V90_PHASE3_DIGITAL_STATION_FAILED;
+	if (!v90_phase3_digital_station_receive_complete(station) ||
+	    v90_phase3_digital_station_transmit_complete(station))
+		return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
+	next = *station;
+	result = v90_phase3_return_line_rx_advance_complete(
+		&next.receive.returning, sample);
+	if (result != V90_PHASE3_RETURN_LINE_RX_OK) {
+		if (result == V90_PHASE3_RETURN_LINE_RX_INVALID_STATE)
+			return V90_PHASE3_DIGITAL_STATION_INVALID_STATE;
+		next.failed = true;
+		if (v90_phase3_digital_station_is_valid(&next))
+			*station = next;
+		else
+			station->failed = true;
+		return result == V90_PHASE3_RETURN_LINE_RX_FAILED ?
+			V90_PHASE3_DIGITAL_STATION_FAILED :
+			V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	}
 	if (!v90_phase3_digital_station_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;

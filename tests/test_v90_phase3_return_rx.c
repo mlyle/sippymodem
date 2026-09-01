@@ -410,6 +410,117 @@ static bool test_implicit_first_return_end(void)
 	return true;
 }
 
+static bool prepare_second_return(
+	unsigned int quarter_turns, struct v90_phase3_return_rx *rx)
+{
+	struct v34_equalizer_handoff equalizer;
+
+	return seed_handoff(quarter_turns, &equalizer) &&
+	       v90_phase3_return_rx_init(rx, &equalizer, 0.05) ==
+		       V90_PHASE3_RETURN_RX_OK &&
+	       v90_phase3_return_rx_allow_implicit_s_end(rx) ==
+		       V90_PHASE3_RETURN_RX_OK &&
+	       feed_implicit_return(rx, quarter_turns, true) &&
+	       v90_phase3_return_rx_restart(rx) ==
+		       V90_PHASE3_RETURN_RX_OK &&
+	       rx->second_return;
+}
+
+static bool feed_second_marker(
+	struct v90_phase3_return_rx *rx, unsigned int quarter_turns,
+	size_t s_symbols, unsigned int *s_events,
+	unsigned int *s_bar_events)
+{
+	static const unsigned int post_rotations[] = {
+		0, 2, 1, 3,
+	};
+
+	*s_events = 0;
+	*s_bar_events = 0;
+	for (size_t symbol = 0;
+	     symbol < s_symbols + V34_PHASE3_S_BAR_SYMBOLS +
+			      V34_EQUALIZER_DECISION_DELAY;
+	     ++symbol) {
+		struct qam_point point;
+		enum v90_phase3_return_rx_result result;
+		unsigned int rotation;
+
+		if (symbol < s_symbols)
+			rotation = (unsigned int)(symbol & 1u);
+		else if (symbol < s_symbols + V34_PHASE3_S_BAR_SYMBOLS)
+			rotation = 2u +
+				(unsigned int)((symbol - s_symbols) & 1u);
+		else
+			rotation = post_rotations[
+				(symbol - s_symbols -
+				 V34_PHASE3_S_BAR_SYMBOLS) %
+				ARRAY_LENGTH(post_rotations)];
+		point = channel_point(
+			v34_rotated_point_zero((int)rotation), quarter_turns);
+		result = v90_phase3_return_rx_point(rx, &point);
+		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
+			(*s_events)++;
+		else if (result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED)
+			(*s_bar_events)++;
+		else if (result != V90_PHASE3_RETURN_RX_OK &&
+			 result != V90_PHASE3_RETURN_RX_COMPLETE)
+			return false;
+	}
+	return true;
+}
+
+static bool test_second_return_bounds(void)
+{
+	const unsigned int quarter_turns = 3;
+	struct v90_phase3_return_rx rx = { 0 };
+	unsigned int s_events = 0;
+	unsigned int s_bar_events = 0;
+
+	CHECK(prepare_second_return(quarter_turns, &rx) &&
+	      feed_second_marker(
+		      &rx, quarter_turns,
+		      V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS - 32u,
+		      &s_events, &s_bar_events) &&
+	      s_events == 1 && s_bar_events == 0 &&
+	      !v90_phase3_return_rx_is_complete(&rx),
+	      "short second S was accepted: S=%u Sbar=%u stage=%d",
+	      s_events, s_bar_events, rx.stage);
+	CHECK(prepare_second_return(quarter_turns, &rx) &&
+	      feed_second_marker(
+		      &rx, quarter_turns,
+		      V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS,
+		      &s_events, &s_bar_events) &&
+	      s_events == 1 && s_bar_events == 1 &&
+	      v90_phase3_return_rx_is_complete(&rx),
+	      "minimum second S was rejected: S=%u Sbar=%u stage=%d",
+	      s_events, s_bar_events, rx.stage);
+	CHECK(prepare_second_return(quarter_turns, &rx) &&
+	      feed_second_marker(
+		      &rx, quarter_turns,
+		      V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS,
+		      &s_events, &s_bar_events) &&
+	      s_events == 1 && s_bar_events == 1 &&
+	      v90_phase3_return_rx_is_complete(&rx),
+	      "maximum second S was rejected: S=%u Sbar=%u stage=%d",
+	      s_events, s_bar_events, rx.stage);
+	CHECK(prepare_second_return(quarter_turns, &rx) &&
+	      feed_second_marker(
+		      &rx, quarter_turns,
+		      V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS + 32u,
+		      &s_events, &s_bar_events) &&
+	      s_bar_events == 0 && !v90_phase3_return_rx_is_complete(&rx),
+	      "overlong second S was accepted: S=%u Sbar=%u stage=%d",
+	      s_events, s_bar_events, rx.stage);
+	CHECK(feed_second_marker(
+		      &rx, quarter_turns, V34_PHASE3_S_SYMBOLS,
+		      &s_events, &s_bar_events) &&
+	      s_events == 1 && s_bar_events == 1 &&
+	      v90_phase3_return_rx_is_complete(&rx),
+	      "overlong second S poisoned reacquisition: S=%u Sbar=%u stage=%d",
+	      s_events, s_bar_events, rx.stage);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_equalizer_handoff equalizer;
@@ -468,6 +579,7 @@ int main(void)
 			{ "generated timelines", test_generated_timelines },
 			{ "tracked onset confirmation", test_tracked_onset_confirmation },
 			{ "implicit first-return end", test_implicit_first_return_end },
+			{ "second-return bounds", test_second_return_bounds },
 			{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

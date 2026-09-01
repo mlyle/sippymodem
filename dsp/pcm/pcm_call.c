@@ -1859,15 +1859,33 @@ static enum pcm_call_result sample_phase3(
 			v90_phase3_analog_station_receive(
 				&call->state.phase3.analog, received_octet));
 	} else {
+		bool receive_complete =
+			v90_phase3_digital_station_receive_complete(
+				&call->state.phase3.digital);
+
+		/* The second return can finish while the independently owned DIL
+		 * transmitter completes its current segment. Keep the inherited line
+		 * clock current without re-entering the completed S/S-bar receiver. */
+		if (receive_complete) {
+			result = digital_phase3_result(
+				v90_phase3_digital_station_advance_completed_receive(
+					&call->state.phase3.digital,
+					decode_octet(
+						call->law, received_octet)));
+			if (result != PCM_CALL_OK)
+				return result;
+		}
 		result = digital_phase3_result(
 			v90_phase3_digital_station_transmit(
 				&call->state.phase3.digital, transmit_octet));
 		if (result != PCM_CALL_OK)
 			return result;
-		result = digital_phase3_result(
-			v90_phase3_digital_station_receive(
-				&call->state.phase3.digital,
-				decode_octet(call->law, received_octet)));
+		if (!receive_complete)
+			result = digital_phase3_result(
+				v90_phase3_digital_station_receive(
+					&call->state.phase3.digital,
+					decode_octet(
+						call->law, received_octet)));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }

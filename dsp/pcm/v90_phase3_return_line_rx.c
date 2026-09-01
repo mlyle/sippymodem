@@ -141,6 +141,45 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	return result;
 }
 
+enum v90_phase3_return_line_rx_result
+v90_phase3_return_line_rx_advance_complete(
+	struct v90_phase3_return_line_rx *rx, int16_t sample)
+{
+	struct v90_phase3_return_line_rx next;
+	struct qam_equalizer_observation observation = { 0 };
+	struct qam_point point;
+	bool carrier_ready;
+	bool equalizer_ready;
+
+	if (!v90_phase3_return_line_rx_is_valid(rx))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
+	if (rx->failed)
+		return V90_PHASE3_RETURN_LINE_RX_FAILED;
+	if (!v90_phase3_return_rx_is_complete(&rx->points))
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
+	next = *rx;
+	if (qam_demodulator_sample(
+		    &next.demodulator, sample, &point, &carrier_ready) != QAM_OK ||
+	    (carrier_ready &&
+	     (qam_equalizer_observe(
+		      &next.points.equalizer, &point, &observation,
+		      &equalizer_ready) != QAM_EQUALIZER_OK ||
+	      !equalizer_ready))) {
+		next.failed = true;
+		if (v90_phase3_return_line_rx_is_valid(&next))
+			*rx = next;
+		else
+			rx->failed = true;
+		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+	}
+	if (!v90_phase3_return_line_rx_is_valid(&next)) {
+		rx->failed = true;
+		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+	}
+	*rx = next;
+	return V90_PHASE3_RETURN_LINE_RX_OK;
+}
+
 bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff)
 {

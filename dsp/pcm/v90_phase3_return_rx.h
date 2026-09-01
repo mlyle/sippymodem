@@ -26,6 +26,12 @@ enum {
 		V34_PHASE3_S_RECEIVER_MAX_S_ERRORS /
 		V34_PHASE3_S_SYMBOLS,
 	V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS = 96,
+	/* The second return is specified as 128T of S followed by 16T of S-bar.
+	 * Admit a narrow error/timing margin around that fixed S interval so an
+	 * alternating slice of permitted DIL SCR cannot own the adaptive receiver
+	 * indefinitely. */
+	V90_PHASE3_RETURN_RX_MIN_SECOND_S_SYMBOLS = 96,
+	V90_PHASE3_RETURN_RX_MAX_SECOND_S_SYMBOLS = 192,
 	V90_PHASE3_RETURN_RX_EXIT_SYMBOLS = 16,
 	V90_PHASE3_RETURN_RX_MIN_EXIT_ERRORS = 8,
 };
@@ -69,6 +75,7 @@ struct v90_phase3_return_rx {
 	uint8_t exit_errors;
 	enum v90_phase3_return_rx_stage stage;
 	bool allow_implicit_s_end;
+	bool second_return;
 };
 
 /* The equalizer has already accepted its decision-delay points following the
