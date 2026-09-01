@@ -1382,8 +1382,12 @@ static bool run_full_retrain(
 	struct endpoint *responder;
 	size_t downstream_before;
 	size_t upstream_before;
+	uint16_t initiator_prior_rtd;
+	uint16_t responder_prior_rtd;
 	bool initially_online = false;
 	bool remote_retrain_started = false;
+	bool initiator_prior_handed_off = false;
+	bool responder_prior_handed_off = false;
 	bool reconnected = false;
 
 	CHECK(channel_init(&channel, law, 3u) &&
@@ -1410,9 +1414,13 @@ static bool run_full_retrain(
 	      (unsigned int)law);
 	initiator = initiating_role == V90_ANALOG_MODEM ? &analog : &digital;
 	responder = initiating_role == V90_ANALOG_MODEM ? &digital : &analog;
+	initiator_prior_rtd = initiator->call.round_trip_delay_samples;
+	responder_prior_rtd = responder->call.round_trip_delay_samples;
 	CHECK(pcm_call_start_retrain(&initiator->call) == PCM_CALL_OK &&
 	      initiator->call.stage == PCM_CALL_RETRAIN_SILENCE &&
 	      initiator->call.retrain_active &&
+	      initiator->call.round_trip_delay_stored &&
+	      initiator->call.round_trip_delay_samples == initiator_prior_rtd &&
 	      initiator->call.protocol == PCM_PROTOCOL_V90,
 	      "law %u role %u did not begin local full retrain",
 	      (unsigned int)law, (unsigned int)initiating_role);
@@ -1433,9 +1441,23 @@ static bool run_full_retrain(
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u role %u retrain stopped at %zu",
 		      (unsigned int)law, (unsigned int)initiating_role, clock);
+		if (initiator->call.stage == PCM_CALL_PHASE2 &&
+		    initiator->call.retrain_active) {
+			CHECK(initiator->call.round_trip_delay_stored &&
+			      initiator->call.state.phase2.state.ranging.control
+				      .prior_round_trip_delay_samples ==
+				      initiator_prior_rtd,
+			      "law %u role %u lost local prior RTD",
+			      (unsigned int)law,
+			      (unsigned int)initiating_role);
+			initiator_prior_handed_off = true;
+		}
 		if (!remote_retrain_started &&
 		    responder->call.stage == PCM_CALL_RETRAIN_SILENCE) {
-			CHECK(responder->call.retrain_active,
+			CHECK(responder->call.retrain_active &&
+			      responder->call.round_trip_delay_stored &&
+			      responder->call.round_trip_delay_samples ==
+				      responder_prior_rtd,
 			      "law %u role %u remote retrain lacked ownership",
 			      (unsigned int)law,
 			      (unsigned int)initiating_role);
@@ -1449,6 +1471,18 @@ static bool run_full_retrain(
 			downstream_before = analog.resume_frame_index;
 			upstream_before = digital.resume_frame_index;
 		}
+		if (remote_retrain_started &&
+		    responder->call.stage == PCM_CALL_PHASE2 &&
+		    responder->call.retrain_active) {
+			CHECK(responder->call.round_trip_delay_stored &&
+			      responder->call.state.phase2.state.ranging.control
+				      .prior_round_trip_delay_samples ==
+				      responder_prior_rtd,
+			      "law %u role %u lost remote prior RTD",
+			      (unsigned int)law,
+			      (unsigned int)initiating_role);
+			responder_prior_handed_off = true;
+		}
 		if (remote_retrain_started && pcm_call_is_online(&analog.call) &&
 		    pcm_call_is_online(&digital.call) &&
 		    analog.downstream_frames > downstream_before &&
@@ -1457,7 +1491,8 @@ static bool run_full_retrain(
 			break;
 		}
 	}
-	CHECK(remote_retrain_started && reconnected &&
+	CHECK(remote_retrain_started && initiator_prior_handed_off &&
+	      responder_prior_handed_off && reconnected &&
 	      !analog.call.retrain_active &&
 	      !digital.call.retrain_active &&
 	      analog.call.protocol == PCM_PROTOCOL_V90 &&
@@ -1633,10 +1668,13 @@ static bool retrain_preserves_protocol(
 	const struct pcm_call *completed, enum g711_law law)
 {
 	struct pcm_call retraining = *completed;
+	uint16_t prior_round_trip_delay = completed->round_trip_delay_samples;
 	uint8_t silence = silence_octet(law);
 
 	if (pcm_call_start_retrain(&retraining) != PCM_CALL_OK ||
-	    retraining.stage != PCM_CALL_RETRAIN_SILENCE)
+	    retraining.stage != PCM_CALL_RETRAIN_SILENCE ||
+	    !retraining.round_trip_delay_stored ||
+	    retraining.round_trip_delay_samples != prior_round_trip_delay)
 		return false;
 	for (size_t index = 0;
 	     index < PCM_CALL_RETRAIN_SILENCE_SAMPLES; ++index) {
@@ -1654,6 +1692,10 @@ static bool retrain_preserves_protocol(
 	       retraining.protocol == PCM_PROTOCOL_V92 &&
 	       retraining.state.phase2.info0_protocol == PCM_PROTOCOL_V92 &&
 	       retraining.state.phase2.peer_info0_stored &&
+	       retraining.round_trip_delay_stored &&
+	       retraining.round_trip_delay_samples == prior_round_trip_delay &&
+	       retraining.state.phase2.state.ranging.control
+		       .prior_round_trip_delay_samples == prior_round_trip_delay &&
 	       retraining.peer_info0_stored &&
 	       !retraining.phase3_entry_stored &&
 	       pcm_call_is_valid(&retraining);

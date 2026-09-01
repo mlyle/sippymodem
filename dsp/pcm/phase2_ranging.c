@@ -41,6 +41,9 @@ static bool bounds_are_valid(
 		       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 	       control->measurement_elapsed_samples <=
 		       PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES &&
+	       control->prior_round_trip_delay_samples <=
+		       PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			       PHASE2_RANGING_TURNAROUND_SAMPLES &&
 	       (control->round_trip_delay_valid ||
 		control->round_trip_delay_samples == 0) &&
 	       (!control->round_trip_delay_valid ||
@@ -337,22 +340,32 @@ static bool measure_round_trip_delay(
 	uint32_t turnaround = PHASE2_RANGING_TURNAROUND_SAMPLES;
 	uint32_t elapsed = control->measurement_elapsed_samples;
 	uint32_t detected_edge;
+	uint32_t measured;
+	uint32_t prior = control->prior_round_trip_delay_samples;
+	uint32_t separation;
 
 	if (detector_delay_samples == 0 ||
 	    elapsed < detector_delay_samples)
 		return false;
 	detected_edge = elapsed - detector_delay_samples;
-	/* The line-terminal response is specified as 40 +/- 1 ms.  Codec and
+	/* The line-terminal response is specified as 40 +/- 1 ms. Codec and
 	 * serialized duplex scheduling can date a zero-delay response on the
 	 * preceding sample; accept the complete normative interval while keeping
-	 * implausibly early edges on the transactional rejection path. */
+	 * implausibly early edges on the transactional rejection path. During a
+	 * full retrain, however, the already-confirmed propagation delay makes a
+	 * qualified reversal within the preceding 10 ms tone tail unambiguous.
+	 * Accept that interoperability window, but retain the confirmed delay. */
 	if (detected_edge +
 		    PHASE2_RANGING_TURNAROUND_TOLERANCE_SAMPLES <
-	    turnaround)
+	    turnaround &&
+	    (prior == 0u ||
+	     detected_edge + PHASE2_RANGING_TONE_TAIL_SAMPLES < turnaround))
 		return false;
-	control->round_trip_delay_samples =
-		detected_edge > turnaround ?
-			(uint16_t)(detected_edge - turnaround) : 0u;
+	measured = detected_edge > turnaround ? detected_edge - turnaround : 0u;
+	separation = measured > prior ? measured - prior : prior - measured;
+	if (prior != 0u && separation > turnaround)
+		measured = prior;
+	control->round_trip_delay_samples = (uint16_t)measured;
 	control->round_trip_delay_valid = true;
 	control->measurement_elapsed_samples = 0;
 	return true;

@@ -773,22 +773,26 @@ static enum pcm_phase2_result initialize_retrain_phase2(
 		result = pcm_phase2_init_retrain_v92_analog(
 			phase2, call->phase2_nominal_amplitude,
 			&call->local_info0.v92_analog,
-			&call->peer_info0.v92_digital);
+			&call->peer_info0.v92_digital,
+			call->round_trip_delay_samples);
 	else if (call->protocol == PCM_PROTOCOL_V92)
 		result = pcm_phase2_init_retrain_v92_digital(
 			phase2, call->phase2_nominal_amplitude,
 			&call->local_info0.v92_digital,
-			&call->peer_info0.v92_analog);
+			&call->peer_info0.v92_analog,
+			call->round_trip_delay_samples);
 	else if (call->local_role == V90_ANALOG_MODEM)
 		result = pcm_phase2_init_retrain_v90_analog(
 			phase2, call->phase2_nominal_amplitude,
 			&call->local_info0.analog,
-			&call->peer_info0.digital);
+			&call->peer_info0.digital,
+			call->round_trip_delay_samples);
 	else
 		result = pcm_phase2_init_retrain_v90_digital(
 			phase2, call->phase2_nominal_amplitude,
 			&call->local_info0.digital,
-			&call->peer_info0.analog);
+			&call->peer_info0.analog,
+			call->round_trip_delay_samples);
 	if (result != PCM_PHASE2_OK ||
 	    !call->retrain_peer_tone_retained)
 		return result;
@@ -815,11 +819,9 @@ static enum pcm_call_result begin_retrain(
 	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
 	next.v92_peer_downstream_rate_mask = 0u;
 	next.b1_deadline_remaining_samples = 0u;
-	next.round_trip_delay_samples = 0u;
 	next.stage = PCM_CALL_RETRAIN_SILENCE;
 	next.phase3_entry_stored = false;
 	next.v92_peer_downstream_rate_stored = false;
-	next.round_trip_delay_stored = false;
 	next.b1_deadline_armed = false;
 	next.retrain_active = true;
 	next.retrain_peer_tone_retained = retain_peer_tone;
@@ -1253,7 +1255,7 @@ static enum pcm_call_result sample_phase2(
 	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY ||
 	    observation->phase2.kind ==
 		    PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
-		if (call->round_trip_delay_stored &&
+		if (call->round_trip_delay_stored && !call->retrain_active &&
 		    call->round_trip_delay_samples !=
 			    observation->phase2.round_trip_delay_samples)
 			return PCM_CALL_SEQUENCE_MISMATCH;

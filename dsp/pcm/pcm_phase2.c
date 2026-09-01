@@ -409,7 +409,8 @@ enum pcm_phase2_result pcm_phase2_init_v92_digital(
 
 static enum pcm_phase2_result initialize_retrain(
 	struct pcm_phase2 *phase2, const struct pcm_phase2 *initial,
-	const union pcm_info0_record *peer_info0)
+	const union pcm_info0_record *peer_info0,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 restarted;
 	struct pcm_phase2_info0_exchange *exchange;
@@ -424,6 +425,8 @@ static enum pcm_phase2_result initialize_retrain(
 	restarted.peer_info0_stored = true;
 	exchange->peer_info0 = *peer_info0;
 	exchange->state = PCM_PHASE2_INFO0_RETRAIN;
+	restarted.state.ranging.control.prior_round_trip_delay_samples =
+		prior_round_trip_delay_samples;
 	if (!derive_startup(&restarted, &restarted.startup) ||
 	    phase2_info0_exchange_start_tone(&exchange->transport) !=
 		    PHASE2_INFO0_EXCHANGE_OK ||
@@ -436,7 +439,8 @@ static enum pcm_phase2_result initialize_retrain(
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0 *local_info0a,
-	const struct v90_info0d *peer_info0d)
+	const struct v90_info0d *peer_info0d,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 initial;
 	union pcm_info0_record peer = { 0 };
@@ -446,13 +450,15 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v90_analog(
 	    !v90_info0d_is_valid(peer_info0d))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	peer.digital = *peer_info0d;
-	return initialize_retrain(phase2, &initial, &peer);
+	return initialize_retrain(
+		phase2, &initial, &peer, prior_round_trip_delay_samples);
 }
 
 enum pcm_phase2_result pcm_phase2_init_retrain_v90_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0d *local_info0d,
-	const struct v90_info0 *peer_info0a)
+	const struct v90_info0 *peer_info0a,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 initial;
 	union pcm_info0_record peer = { 0 };
@@ -462,13 +468,15 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v90_digital(
 	    !v90_info0_is_valid(peer_info0a))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	peer.analog = *peer_info0a;
-	return initialize_retrain(phase2, &initial, &peer);
+	return initialize_retrain(
+		phase2, &initial, &peer, prior_round_trip_delay_samples);
 }
 
 enum pcm_phase2_result pcm_phase2_init_retrain_v92_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v92_info0a *local_info0a,
-	const struct v92_info0d *peer_info0d)
+	const struct v92_info0d *peer_info0d,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 initial;
 	union pcm_info0_record peer = { 0 };
@@ -478,13 +486,15 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v92_analog(
 	    !v92_info0d_is_valid(peer_info0d))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	peer.v92_digital = *peer_info0d;
-	return initialize_retrain(phase2, &initial, &peer);
+	return initialize_retrain(
+		phase2, &initial, &peer, prior_round_trip_delay_samples);
 }
 
 enum pcm_phase2_result pcm_phase2_init_retrain_v92_digital(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v92_info0d *local_info0d,
-	const struct v92_info0a *peer_info0a)
+	const struct v92_info0a *peer_info0a,
+	uint16_t prior_round_trip_delay_samples)
 {
 	struct pcm_phase2 initial;
 	union pcm_info0_record peer = { 0 };
@@ -494,7 +504,8 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v92_digital(
 	    !v92_info0a_is_valid(peer_info0a))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	peer.v92_analog = *peer_info0a;
-	return initialize_retrain(phase2, &initial, &peer);
+	return initialize_retrain(
+		phase2, &initial, &peer, prior_round_trip_delay_samples);
 }
 
 enum pcm_phase2_result pcm_phase2_peer_info0a(
