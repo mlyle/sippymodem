@@ -59,9 +59,10 @@ enum v90_phase3_sign_receiver_result
 v90_phase3_sign_receiver_begin_jd_search(
 	struct v90_phase3_sign_receiver *receiver);
 
-/* Consume one raw G.711 network character. Rejected calls leave state
- * unchanged. Calls after completion return COMPLETE without consuming
- * the supplied character. */
+/* Consume one raw G.711 network character. Once Sd has qualified the level,
+ * TRN1d and Jd are decoded from sign; amplitude-code deviations and isolated
+ * known-sequence errors are tolerated while Jd remains CRC-protected. Calls
+ * after completion return COMPLETE without consuming the supplied character. */
 enum v90_phase3_sign_receiver_result v90_phase3_sign_receiver_receive(
 	struct v90_phase3_sign_receiver *receiver, uint8_t network_octet);
 

@@ -354,12 +354,100 @@ static bool test_sign_receiver_early_search(void)
 	return true;
 }
 
+static bool run_sign_receiver_error_recovery(enum g711_law law)
+{
+	const struct v90_jd_parameters parameters = {
+		.data_rate_capability_mask = UINT32_C(0x2a1555),
+		.training_constellation = V34_CONSTELLATION_16_POINT,
+		.rate_renegotiation_constellation = V34_CONSTELLATION_4_POINT,
+		.maximum_spectral_shaping_lookahead = 3,
+	};
+	struct v90_phase3_signs transmitter;
+	struct v90_phase3_sign_receiver receiver;
+	struct v90_jd_parameters received;
+	uint8_t frame[V90_JD_FRAME_BYTES];
+	bool detected = false;
+
+	CHECK(v90_phase3_signs_init(&transmitter, law, 78) ==
+		      V90_PHASE3_SIGNS_OK &&
+		      v90_phase3_sign_receiver_init(&receiver, law, 78) ==
+			      V90_PHASE3_SIGN_RECEIVER_OK,
+	      "could not initialize error recovery for law %u",
+	      (unsigned int)law);
+	for (size_t index = 0;
+	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
+		struct v90_pcm_symbol symbol;
+		enum v90_phase3_sign_receiver_result expected =
+			index + 1u == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
+				V90_PHASE3_SIGN_RECEIVER_TRN1D_READY :
+				V90_PHASE3_SIGN_RECEIVER_OK;
+
+		CHECK(v90_phase3_signs_next_trn1d(
+			      &transmitter, &symbol) == V90_PHASE3_SIGNS_OK,
+		      "could not generate recovery TRN1d at %zu", index);
+		if (index == 100u)
+			CHECK(v90_pcm_symbol_make(
+				      &symbol, law, 79, symbol.positive),
+			      "could not perturb the recovery training level");
+		if (index == 200u)
+			CHECK(v90_pcm_symbol_make(
+				      &symbol, law, 78, !symbol.positive),
+			      "could not perturb the recovery training sign");
+		CHECK(v90_phase3_sign_receiver_receive(
+			      &receiver, symbol.octet) == expected,
+		      "TRN1d error became terminal for law %u at %zu",
+		      (unsigned int)law, index);
+	}
+	CHECK(v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
+		      V90_PHASE3_SIGN_RECEIVER_OK &&
+		      v90_phase3_signs_begin_jd(&transmitter) ==
+			      V90_PHASE3_SIGNS_OK &&
+		      v90_jd_encode(&parameters, frame, sizeof(frame)) == V90_JD_OK,
+	      "could not begin recovery Jd for law %u", (unsigned int)law);
+
+	for (size_t repeat = 0; repeat < 4u && !detected; ++repeat) {
+		for (size_t index = 0; index < V90_JD_FRAME_BITS; ++index) {
+			struct v90_pcm_symbol symbol;
+			enum v90_phase3_sign_receiver_result result;
+
+			CHECK(v90_phase3_signs_next_jd_bit(
+				      &transmitter, frame_bit(frame, index),
+				      &symbol) == V90_PHASE3_SIGNS_OK,
+			      "could not generate recovery Jd bit %zu", index);
+			if (repeat == 0u && index == 20u)
+				CHECK(v90_pcm_symbol_make(
+					      &symbol, law, 79,
+					      !symbol.positive),
+				      "could not perturb recovery Jd");
+			result = v90_phase3_sign_receiver_receive(
+				&receiver, symbol.octet);
+			CHECK(result == V90_PHASE3_SIGN_RECEIVER_OK ||
+			      result == V90_PHASE3_SIGN_RECEIVER_JD_DETECTED,
+			      "Jd error became terminal for law %u at %zu/%zu",
+			      (unsigned int)law, repeat, index);
+			detected |=
+				result == V90_PHASE3_SIGN_RECEIVER_JD_DETECTED;
+		}
+	}
+	CHECK(detected &&
+		      v90_phase3_sign_receiver_jd(&receiver, &received) &&
+		      jd_parameters_match(&received, &parameters),
+	      "receiver did not recover a repeated Jd for law %u",
+	      (unsigned int)law);
+	return true;
+}
+
+static bool test_sign_receiver_error_recovery(void)
+{
+	return run_sign_receiver_error_recovery(G711_LAW_PCMU) &&
+	       run_sign_receiver_error_recovery(G711_LAW_PCMA);
+}
+
 static bool test_sign_receiver_boundaries(void)
 {
 	struct v90_phase3_signs transmitter;
 	struct v90_phase3_sign_receiver receiver;
 	struct v90_phase3_sign_receiver saved;
-	struct v90_pcm_symbol symbol;
 
 	CHECK(v90_phase3_signs_init(
 		      &transmitter, G711_LAW_PCMA, 78) ==
@@ -385,15 +473,6 @@ static bool test_sign_receiver_boundaries(void)
 		      v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
 			      V90_PHASE3_SIGN_RECEIVER_OK,
 	      "unaligned Jd-search boundary was not enforced");
-	CHECK(v90_pcm_symbol_make(
-		      &symbol, G711_LAW_PCMA, 79, true),
-	      "could not build wrong-code character");
-	saved = receiver;
-	CHECK(v90_phase3_sign_receiver_receive(
-		      &receiver, symbol.octet) ==
-		      V90_PHASE3_SIGN_RECEIVER_INVALID_SEQUENCE &&
-		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
-	      "wrong training code changed receiver state");
 	return true;
 }
 
@@ -512,6 +591,7 @@ int main(void)
 		{ "exact PCM symbol parsing", test_pcm_symbol_parsing },
 		{ "sign receiver round trip", test_sign_receiver_round_trip },
 		{ "sign receiver early search", test_sign_receiver_early_search },
+		{ "sign receiver error recovery", test_sign_receiver_error_recovery },
 		{ "sign receiver boundaries", test_sign_receiver_boundaries },
 		{ "sign receiver validation", test_sign_receiver_validation },
 		{ "validation and transactionality", test_validation },

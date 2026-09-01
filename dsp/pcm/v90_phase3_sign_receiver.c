@@ -115,9 +115,13 @@ static enum v90_phase3_sign_receiver_result receive_trn1d(
 	if (receiver->trn1d_symbols == UINT32_MAX ||
 	    v34_descramble_group(
 		    &receiver->descrambler, sign, 1, &bit) !=
-		    V34_FRAMING_OK ||
-	    bit != 1)
+		    V34_FRAMING_OK)
 		return V90_PHASE3_SIGN_RECEIVER_INVALID_SEQUENCE;
+	/* TRN1d is a known-one sequence, but an individual decision error must
+	 * not abort Phase 3.  The self-synchronizing descrambler settles again
+	 * while the digital modem continues the long training sequence, and Jd's
+	 * repeated CRC-protected frame provides the authoritative boundary. */
+	(void)bit;
 	receiver->last_sign = sign;
 	receiver->trn1d_symbols++;
 	return receiver->trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
@@ -224,9 +228,11 @@ enum v90_phase3_sign_receiver_result v90_phase3_sign_receiver_receive(
 		return V90_PHASE3_SIGN_RECEIVER_INVALID_STATE;
 	if (receiver->stage == V90_PHASE3_SIGN_RECEIVER_DONE)
 		return V90_PHASE3_SIGN_RECEIVER_COMPLETE;
-	if (!v90_pcm_symbol_parse(&symbol, receiver->law, network_octet) ||
-	    symbol.ucode != receiver->training_ucode)
-		return V90_PHASE3_SIGN_RECEIVER_INVALID_SEQUENCE;
+	if (!v90_pcm_symbol_parse(&symbol, receiver->law, network_octet))
+		return V90_PHASE3_SIGN_RECEIVER_INVALID_STATE;
+	/* Sd has already qualified the training level.  TRN1d and Jd carry their
+	 * control information in sign, so tolerate an imperfect amplitude code
+	 * and keep the descrambler moving just as an analogue slicer would. */
 	next = *receiver;
 	result = next.stage == V90_PHASE3_SIGN_RECEIVER_TRN1D ?
 			 receive_trn1d(&next, symbol.positive ? 1u : 0u) :

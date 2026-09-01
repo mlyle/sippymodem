@@ -287,6 +287,7 @@ static bool test_validation(void)
 	struct v90_phase3_digital_transmit_handoff saved_transmit_handoff;
 	struct v90_phase3_return_line_handoff return_handoff;
 	struct v90_phase3_return_line_handoff saved_return_handoff;
+	struct v90_pcm_symbol wrong_sd_bar;
 	uint8_t octet = 0xa5;
 	int16_t sample = 777;
 
@@ -324,13 +325,18 @@ static bool test_validation(void)
 	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid station calls were not transactional");
-	CHECK(v90_phase3_sign_receiver_init(
-		      &station.receive.signs, G711_LAW_PCMU, 91) ==
-		      V90_PHASE3_SIGN_RECEIVER_OK,
+	station.receive.sd.stage = V90_PHASE3_SD_RECEIVER_SD_BAR;
+	station.receive.sd.history_count =
+		V90_PHASE3_SD_ACQUISITION_SYMBOLS;
+	station.receive.sd.bar_symbols =
+		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS;
+	station.receive.sd.bar_errors = V90_PHASE3_SD_BAR_MAX_ERRORS;
+	CHECK(v90_pcm_symbol_make(
+		      &wrong_sd_bar, G711_LAW_PCMU, 91, true),
 	      "could not make mismatch fixture");
-	station.receive_stage = V90_PHASE3_ANALOG_RECEIVE_SIGNS;
 	CHECK(v90_phase3_analog_station_is_valid(&station) &&
-	      v90_phase3_analog_station_receive(&station, 0) ==
+	      v90_phase3_analog_station_receive(
+		      &station, wrong_sd_bar.octet) ==
 		      V90_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH &&
 	      v90_phase3_analog_station_has_failed(&station) &&
 	      v90_phase3_analog_station_transmit(&station, &sample) ==
