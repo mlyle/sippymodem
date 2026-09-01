@@ -95,6 +95,14 @@ enum qam_equalizer_result qam_equalizer_extend_span(
 enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
 	struct qam_equalizer *equalizer, double proportional_gain,
 	double integral_gain);
+
+/* Retain the frequency learned from known training symbols while stopping
+ * decision errors from changing it. Carrier phase still advances at the held
+ * frequency and receives proportional corrections, so constant residual
+ * drift remains trackable without feeding tentative decisions back into the
+ * frequency estimate. */
+enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
+	struct qam_equalizer *equalizer);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 

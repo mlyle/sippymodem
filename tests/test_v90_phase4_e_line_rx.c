@@ -295,6 +295,9 @@ static bool run_line(
 	      b1_complete && v90_phase4_e_line_rx_is_complete(&e_rx) &&
 	      !v90_phase4_e_line_rx_has_failed(&e_rx) &&
 	      !v34_data_line_receiver_has_failed(&data_rx) &&
+	      data_rx.equalizer_receiver.equalizer.carrier_integral_gain == 0.0 &&
+	      data_rx.equalizer_receiver.equalizer.carrier_frequency ==
+		      e_rx.equalizer.carrier_frequency &&
 	      data_rx.equalizer_receiver.data_receiver.data_receiver
 			      .b1_error_bits == 0,
 	      "CP/E/B1 path stopped law=%d constellation=%d "

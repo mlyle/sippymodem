@@ -17,6 +17,8 @@ enum {
 	LONG_PAYLOAD_SYMBOLS = 1024,
 	CARRIER_TRACKING_SYMBOLS = 8192,
 	CARRIER_TRACKING_SETTLE_SYMBOLS = 768,
+	CARRIER_HOLD_SYMBOLS = 2048,
+	CARRIER_HOLD_SETTLE_SYMBOLS = 64,
 };
 
 static const double CARRIER_DRIFT_RADIANS_PER_SYMBOL = 0.01;
@@ -322,6 +324,8 @@ static bool test_carrier_frequency_tracking(void)
 	uint32_t random = UINT32_C(0x504c4c21);
 	unsigned int baseline_errors = 0;
 	unsigned int tracked_errors = 0;
+	unsigned int held_errors = 0;
+	double held_frequency;
 
 	CHECK(qam_equalizer_init(&baseline, &reference, &reference) ==
 		      QAM_EQUALIZER_OK &&
@@ -384,6 +388,51 @@ static bool test_carrier_frequency_tracking(void)
 	      "carrier drift produced %u tracked errors versus %u without "
 	      "tracking at frequency %.6g",
 	      tracked_errors, baseline_errors, tracked.carrier_frequency);
+	held_frequency = tracked.carrier_frequency;
+	CHECK(qam_equalizer_hold_carrier_frequency(&tracked) ==
+		      QAM_EQUALIZER_OK &&
+	      tracked.carrier_integral_gain == 0.0,
+	      "carrier frequency hold was rejected");
+	for (unsigned int offset = 0; offset < CARRIER_HOLD_SYMBOLS; ++offset) {
+		unsigned int symbol = CARRIER_TRACKING_SYMBOLS + offset;
+		struct qam_equalizer_observation observation = { 0 };
+		struct qam_point received;
+		struct qam_point target;
+		struct qam_point feedback;
+		bool ready;
+
+		for (size_t index = ARRAY_LENGTH(transmitted) - 1u;
+		     index != 0; --index)
+			transmitted[index] = transmitted[index - 1u];
+		transmitted[0] = (struct qam_point){
+			.in_phase = (fixture_random(&random) & 1u) != 0u ?
+				-unit_coordinate : unit_coordinate,
+			.quadrature = (fixture_random(&random) & 1u) != 0u ?
+				-unit_coordinate : unit_coordinate,
+		};
+		received = rotate(
+			transmitted[0],
+			CARRIER_DRIFT_RADIANS_PER_SYMBOL * symbol);
+		CHECK(qam_equalizer_observe(
+			      &tracked, &received, &observation, &ready) ==
+			      QAM_EQUALIZER_OK && ready,
+		      "held carrier tracker rejected symbol %u", symbol);
+		target = transmitted[QAM_EQUALIZER_DELAY];
+		if (offset >= CARRIER_HOLD_SETTLE_SYMBOLS)
+			held_errors += !same_quadrant(
+				&observation.output, &target);
+		/* One unreliable data decision may move proportional phase, but it
+		 * must not bias the frequency learned from training. */
+		feedback = offset == 0u ?
+			rotate(target, 3.14159265358979323846 / 2.0) : target;
+		CHECK(qam_equalizer_adapt_observation(
+			      &tracked, &observation, &feedback, 0.0) ==
+			      QAM_EQUALIZER_OK,
+		      "held carrier tracker did not consume symbol %u", symbol);
+	}
+	CHECK(held_errors == 0 && tracked.carrier_frequency == held_frequency,
+	      "held carrier accumulated %u errors or changed frequency %.6g to %.6g",
+	      held_errors, held_frequency, tracked.carrier_frequency);
 	return true;
 }
 
@@ -724,6 +773,12 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
 	      "invalid carrier-loop gains changed the equalizer");
+	CHECK(qam_equalizer_hold_carrier_frequency(NULL) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_hold_carrier_frequency(&equalizer) ==
+		      QAM_EQUALIZER_INVALID_STATE &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "invalid carrier frequency hold changed the equalizer");
 	carrier = equalizer;
 	CHECK(qam_equalizer_enable_carrier_tracking(
 		      &carrier, 0.25, 0.001) == QAM_EQUALIZER_OK &&
@@ -735,6 +790,12 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_INVALID_STATE &&
 	      memcmp(&carrier, &saved, sizeof(carrier)) == 0,
 	      "re-enabling carrier tracking was not transactional");
+	CHECK(qam_equalizer_hold_carrier_frequency(&carrier) ==
+		      QAM_EQUALIZER_OK &&
+	      carrier.carrier_integral_gain == 0.0 &&
+	      qam_equalizer_hold_carrier_frequency(&carrier) ==
+		      QAM_EQUALIZER_OK,
+	      "carrier frequency hold was not valid and idempotent");
 	pending = equalizer;
 	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
 		CHECK(qam_equalizer_push(

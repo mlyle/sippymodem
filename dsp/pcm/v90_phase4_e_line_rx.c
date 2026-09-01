@@ -175,7 +175,12 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 	if (!v90_phase4_e_line_rx_is_complete(rx))
 		return V90_PHASE4_E_LINE_RX_INVALID_STATE;
 	handoff.equalizer = rx->equalizer;
-	if (!v34_equalizer_handoff_is_valid(&handoff) ||
+	/* E ends the known-symbol carrier-training epoch. Keep its oscillator
+	 * estimate for B1 and data, while the proportional loop continues to
+	 * follow residual phase without integrating tentative trellis decisions. */
+	if (qam_equalizer_hold_carrier_frequency(&handoff.equalizer) !=
+		    QAM_EQUALIZER_OK ||
+	    !v34_equalizer_handoff_is_valid(&handoff) ||
 	    v34_data_line_receiver_init(
 		    data_rx, &rx->demodulator, &handoff,
 		    configuration) != V34_DATA_RECEIVE_OK)
