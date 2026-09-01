@@ -1482,6 +1482,153 @@ static bool test_full_retrain(void)
 	return true;
 }
 
+static bool run_unusable_retrain_selection(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	bool initially_online = false;
+	bool remote_retrain_started = false;
+	bool selection_invalidated = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u unusable-selection endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u unusable-selection setup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (pcm_call_is_online(&analog.call) &&
+		    pcm_call_is_online(&digital.call)) {
+			initially_online = true;
+			break;
+		}
+	}
+	CHECK(initially_online &&
+	      pcm_call_start_retrain(&analog.call) == PCM_CALL_OK,
+	      "law %u unusable-selection retrain did not start",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_phase2_info1_exchange *analog_info1;
+		struct pcm_phase2_info1_exchange *digital_info1;
+
+		if (!remote_retrain_started) {
+			analog.resume_frame_index =
+				digital.downstream_source.frames;
+			digital.resume_frame_index = analog.upstream_source.frames;
+			analog.resync_data_frame = true;
+			digital.resync_data_frame = true;
+		}
+		if (!selection_invalidated &&
+		    call_is_in_info1_exchange(&analog.call) &&
+		    call_is_in_info1_exchange(&digital.call)) {
+			analog_info1 = &analog.call.state.phase2.state.info1;
+			digital_info1 = &digital.call.state.phase2.state.info1;
+			if (analog_info1->digital_record_stored &&
+			    !digital_info1->analog_record_stored) {
+				/* Keep the offer already decoded by the peer, but make
+				 * that peer's returning 3000-symbol/s choice unusable to
+				 * the digital call owner at Phase 3 entry. */
+				digital_info1->digital.record.v90
+					.answer_transmit[V34_SYMBOL_RATE_3000]
+					.projected_data_rate_2400_bps_units = 0u;
+				CHECK(pcm_call_is_valid(&digital.call),
+				      "law %u invalidated INFO1d damaged call state",
+				      (unsigned int)law);
+				selection_invalidated = true;
+			}
+		}
+		if (!selection_invalidated) {
+			CHECK(step_endpoints(&channel, &analog, &digital, law),
+			      "law %u retrain stopped before INFO1 at %zu",
+			      (unsigned int)law, clock);
+			if (!remote_retrain_started &&
+			    digital.call.stage == PCM_CALL_RETRAIN_SILENCE)
+				remote_retrain_started = true;
+			continue;
+		}
+		{
+			struct pcm_call strict;
+			struct pcm_call_observation strict_observation;
+			struct pcm_call_observation observation;
+			uint8_t analog_received;
+			uint8_t digital_received;
+			uint8_t analog_transmitted;
+			uint8_t digital_transmitted;
+			uint8_t strict_transmitted;
+			enum pcm_call_result strict_result;
+			enum pcm_call_result result;
+
+			channel_receive(
+				&channel, &analog_received, &digital_received);
+			CHECK(endpoint_octet(
+				      &analog, analog_received,
+				      decode_octet(law, analog_received), law,
+				      &analog_transmitted),
+			      "law %u analogue peer stopped after INFO1 mutation",
+			      (unsigned int)law);
+			strict = digital.call;
+			/* Replaying the same sample outside a retrain proves that
+			 * initial negotiation remains strict. */
+			strict.retrain_active = false;
+			strict_result = pcm_call_octet(
+				&strict, digital_received,
+				decode_octet(law, digital_received),
+				&strict_transmitted, &strict_observation);
+			result = pcm_call_octet(
+				&digital.call, digital_received,
+				decode_octet(law, digital_received),
+				&digital_transmitted, &observation);
+			if (digital.call.stage == PCM_CALL_RETRAIN_SILENCE) {
+				CHECK(strict_result == PCM_CALL_UNUSABLE_SELECTION &&
+				      pcm_call_has_failed(&strict) &&
+				      result == PCM_CALL_OK &&
+				      strict_transmitted == digital_transmitted &&
+				      observation.processed == PCM_CALL_PHASE2 &&
+				      observation.phase2.kind ==
+					      PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED &&
+				      observation.next == PCM_CALL_RETRAIN_SILENCE &&
+				      digital.call.retrain_active &&
+				      digital.call.peer_info0_stored &&
+				      digital.call.protocol == PCM_PROTOCOL_V90 &&
+				      !pcm_call_has_failed(&digital.call),
+				      "law %u unusable retrain selection returned %s/%s",
+				      (unsigned int)law,
+				      pcm_call_result_name(strict_result),
+				      pcm_call_result_name(result));
+				return true;
+			}
+			CHECK(strict_result == PCM_CALL_OK &&
+			      result == PCM_CALL_OK &&
+			      strict_transmitted == digital_transmitted,
+			      "law %u mutated INFO1 exchange diverged at %zu: %s/%s",
+			      (unsigned int)law, clock,
+			      pcm_call_result_name(strict_result),
+			      pcm_call_result_name(result));
+			channel_transmit(
+				&channel, analog_transmitted, digital_transmitted);
+		}
+	}
+	CHECK(false, "law %u unusable retrain selection was not received",
+	      (unsigned int)law);
+	return false;
+}
+
+static bool test_unusable_retrain_selection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law)
+		CHECK(run_unusable_retrain_selection(law),
+		      "law %u unusable retrain selection did not restart",
+		      (unsigned int)law);
+	return true;
+}
+
 static bool retrain_preserves_protocol(
 	const struct pcm_call *completed, enum g711_law law)
 {
@@ -2212,6 +2359,8 @@ int main(void)
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "local and remote PCM full retrain", test_full_retrain },
+		{ "unusable retrain selection restarts full training",
+		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },

@@ -829,6 +829,19 @@ static enum pcm_call_result begin_retrain(
 	return PCM_CALL_OK;
 }
 
+static enum pcm_call_result recover_unusable_retrain_selection(
+	struct pcm_call *call, enum pcm_call_result result)
+{
+	if (result != PCM_CALL_UNUSABLE_SELECTION ||
+	    call->protocol != PCM_PROTOCOL_V90 || !call->retrain_active ||
+	    call->stage != PCM_CALL_PHASE2)
+		return result;
+	/* A peer can answer INFO1 with a symbol rate for which its INFO1d offered
+	 * no usable data rate.  Refuse that profile, but keep the established
+	 * call agreement and request another standards-defined full retrain. */
+	return begin_retrain(call, false);
+}
+
 static bool is_v90_info1a_boundary(
 	const struct pcm_call *call, const struct pcm_phase2_event *event)
 {
@@ -2605,6 +2618,7 @@ enum pcm_call_result pcm_call_octet(
 	default:
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
+	result = recover_unusable_retrain_selection(call, result);
 	if (result == PCM_CALL_OK && emitted.processed != call->stage &&
 	    call->stage != PCM_CALL_RETRAIN_SILENCE)
 		result = reset_retrain_detector(call);
