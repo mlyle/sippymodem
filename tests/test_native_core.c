@@ -2161,6 +2161,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v21_operations != NULL && v21_operations->create != NULL &&
 		      v21_operations->delete != NULL &&
 		      v21_operations->process != NULL &&
+		      v21_operations->retrain == NULL &&
 		      v21_operations->use_count == 0 &&
 		      bell103_operations == v21_operations &&
 		      v23_operations != NULL &&
@@ -2168,6 +2169,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v23_operations->create != NULL &&
 		      v23_operations->delete != NULL &&
 		      v23_operations->process != NULL &&
+		      v23_operations->retrain == NULL &&
 		      v23_operations->use_count == 0 &&
 		      v22_operations != NULL &&
 		      v22_operations != v21_operations &&
@@ -2175,9 +2177,17 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v22_operations->create != NULL &&
 		      v22_operations->delete != NULL &&
 		      v22_operations->process != NULL &&
+		      v22_operations->retrain == NULL &&
 		      v22_operations->use_count == 0 &&
-		      v22bis_operations == v22_operations &&
+		      v22bis_operations != NULL &&
+		      v22bis_operations != v22_operations &&
+		      v22bis_operations->create == v22_operations->create &&
+		      v22bis_operations->delete == v22_operations->delete &&
+		      v22bis_operations->process == v22_operations->process &&
+		      v22bis_operations->retrain != NULL &&
+		      v22bis_operations->use_count == 0 &&
 		      bell212_operations == v22_operations &&
+		      bell212_operations->retrain == NULL &&
 		      v32_operations != NULL &&
 		      v32_operations != v21_operations &&
 		      v32_operations != v23_operations &&

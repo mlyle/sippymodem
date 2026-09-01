@@ -680,13 +680,16 @@ static bool exercise_retrain(
 			(MODEM_RATE / 10) / SIP_FRAME_SAMPLES,
 	};
 	static const uint8_t caller_payloads[][8] = {
-		{ 'c', 'a', 'l', 'l', '-', 'r', '1', 0x81 },
-		{ 'c', 'a', 'l', 'l', '-', 'r', '2', 0x82 },
+		{ 'c', '+', '+', '+', '-', 'r', '1', 0x81 },
+		{ 'c', '+', '+', '+', '-', 'r', '2', 0x82 },
 	};
 	static const uint8_t answerer_payloads[][8] = {
-		{ 'a', 'n', 's', '-', 'r', '1', 0x00, 0xfe },
-		{ 'a', 'n', 's', '-', 'r', '2', 0x01, 0xff },
+		{ 'a', '+', '+', '+', '-', 'r', '1', 0xfe },
+		{ 'a', '+', '+', '+', '-', 'r', '2', 0xff },
 	};
+	/* Retained slow-link calls carried a literal +++ when the peer failed to
+	 * leave data mode.  It remains ordinary online payload here; only the
+	 * endpoint issuing ATO1 changes its own host-side state. */
 	struct integration_endpoint *peer;
 	uint8_t caller_preserved[PRESERVED_CAPACITY] = {
 		0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98,
@@ -699,6 +702,8 @@ static bool exercise_retrain(
 	bool caller_preserved_delivered;
 	bool answerer_preserved_delivered;
 	bool peer_requested = peer_request_frame >= 0;
+	bool initiator_retrains;
+	bool peer_retrains;
 	char command[] = "ATO1";
 	char peer_command[] = "ATO1";
 	size_t caller_preserved_offset;
@@ -714,6 +719,12 @@ static bool exercise_retrain(
 	    sequence >= ARRAY_LENGTH(caller_payloads))
 		return false;
 	peer = initiator == caller ? answerer : caller;
+	if (initiator->modem->dp == NULL ||
+	    initiator->modem->dp->op == NULL || peer->modem->dp == NULL ||
+	    peer->modem->dp->op == NULL)
+		return false;
+	initiator_retrains = initiator->modem->dp->op->retrain != NULL;
+	peer_retrains = peer->modem->dp->op->retrain != NULL;
 	caller->output_count = 0;
 	answerer->output_count = 0;
 	pre_retrain_length = raw_transport ? bit_rate / 50u / 10u : 0;
@@ -773,14 +784,24 @@ static bool exercise_retrain(
 		peer->modem->command = 1;
 	}
 	if (process_at_command(initiator->modem, command) != 1 ||
-	    initiator->modem->retrain_pending == 0 ||
+	    (initiator->modem->retrain_pending != 0) != initiator_retrains ||
 	    (peer_request_frame == 0 &&
 	     (process_at_command(peer->modem, peer_command) != 1 ||
-	      peer->modem->retrain_pending == 0)) ||
+	      (peer->modem->retrain_pending != 0) != peer_retrains)) ||
 	    !endpoint_drain(caller) || !endpoint_drain(answerer) ||
-	    caller->output_count != 0 || answerer->output_count != 0) {
+	    (initiator_retrains && initiator->output_count != 0) ||
+	    (!initiator_retrains &&
+	     (!output_contains(initiator, "WARNING: Retrain unavailable") ||
+	      !output_contains_connect(initiator, bit_rate))) ||
+	    (peer_request_frame == 0 && peer_retrains &&
+	     peer->output_count != 0) ||
+	    (peer_request_frame == 0 && !peer_retrains &&
+	     (!output_contains(peer, "WARNING: Retrain unavailable") ||
+	      !output_contains_connect(peer, bit_rate)))) {
 		fprintf(stderr,
-			"retrain request failed (pending=%u outputs=%zu/%zu)\n",
+			"return-online request failed "
+			"(retrain=%d/%d pending=%u outputs=%zu/%zu)\n",
+			initiator_retrains, peer_retrains,
 			initiator->modem->retrain_pending,
 			caller->output_count, answerer->output_count);
 		return false;
@@ -816,7 +837,7 @@ static bool exercise_retrain(
 			peer->modem->state = TEST_STATE_COMMAND_ONLINE;
 			peer->modem->command = 1;
 			if (process_at_command(peer->modem, peer_command) != 1 ||
-			    peer->modem->retrain_pending == 0)
+			    (peer->modem->retrain_pending != 0) != peer_retrains)
 				return false;
 		}
 
@@ -848,13 +869,11 @@ static bool exercise_retrain(
 				return false;
 			}
 		}
-		if (id == DP_V22 || id == DP_B212) {
-			/* V.22/Bell has no reciprocal retrain signal.  The peer must
-			 * continue the existing constant-carrier link while only the
-			 * requester's receiver reacquires it. */
+		if (!initiator_retrains) {
+			/* Carrier-preserving ATO1 must not disturb the peer. */
 			if (!modem_is_online(peer->modem, id)) {
 				fprintf(stderr,
-					"V.22 ATO1 disturbed the continuing peer link\n");
+					"ATO1 disturbed the continuing peer link\n");
 				return false;
 			}
 		}
@@ -868,8 +887,6 @@ static bool exercise_retrain(
 		}
 	}
 	if (!completed ||
-	    ((id == DP_V22 || id == DP_B212) &&
-	     completion_frames < ATO1_100MS_FRAMES) ||
 	    !output_contains_connect(initiator, bit_rate) ||
 	    (peer_requested && !output_contains_connect(peer, bit_rate))) {
 		fprintf(stderr,
@@ -2991,13 +3008,15 @@ int main(void)
 	static const struct modem_test_case test_cases[] = {
 		{
 			.id = DP_V21,
-			.name = "forced V.21",
+			.name = "forced V.21 raw ATO1 resume",
 			.selection_command = "AT+MS=21,0,300,300\r",
 			.caller_tx_rate = FSK300_BIT_RATE,
 			.caller_rx_rate = FSK300_BIT_RATE,
 			.answerer_tx_rate = FSK300_BIT_RATE,
 			.answerer_rx_rate = FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
+			.test_retrain = true,
+			.raw_transport = true,
 		},
 		{
 			.id = DP_V21,
@@ -3012,7 +3031,7 @@ int main(void)
 		},
 		{
 			.id = DP_B103,
-			.name = "Bell 103",
+			.name = "Bell 103 raw ATO1 resume",
 			.selection_command = "AT+MS=103,1,300,300\r",
 			.caller_tx_rate = FSK300_BIT_RATE,
 			.caller_rx_rate = FSK300_BIT_RATE,
@@ -3020,6 +3039,8 @@ int main(void)
 			.answerer_rx_rate = FSK300_BIT_RATE,
 			.carrier_loss_samples = MODEM_RATE / 5,
 			.automode = true,
+			.test_retrain = true,
+			.raw_transport = true,
 		},
 		{
 			.id = DP_V22,
@@ -3269,7 +3290,7 @@ int main(void)
 		},
 		{
 			.id = DP_B212,
-			.name = "Bell 212A",
+			.name = "Bell 212A LAPM ATO1 resume",
 			.selection_command = "AT+MS=212,1,1200,1200\r",
 			.caller_tx_rate = V22_1200_BIT_RATE,
 			.caller_rx_rate = V22_1200_BIT_RATE,
@@ -3281,7 +3302,7 @@ int main(void)
 		},
 		{
 			.id = DP_V23,
-			.name = "V.23",
+			.name = "V.23 raw ATO1 resume",
 			.selection_command = "AT+MS=23,1,300,1200\r",
 			.caller_tx_rate = V23_BACKWARD_BIT_RATE,
 			.caller_rx_rate = V23_FORWARD_BIT_RATE,
@@ -3290,6 +3311,8 @@ int main(void)
 			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 			.test_prelink = true,
+			.test_retrain = true,
+			.raw_transport = true,
 		},
 	};
 	static const enum media_codec codecs[] = {

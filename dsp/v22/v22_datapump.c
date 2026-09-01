@@ -145,8 +145,18 @@ static void flush_retrain_candidate(struct v22_datapump *datapump);
 static void add_bounded(
 	uint32_t *value, uint32_t increment, uint32_t limit);
 
+/* V.22 6.3.1.2 keeps the established carrier instead of repeating a
+ * handshake.  Bell 212A has the same carrier-preserving ATO1 behavior, so
+ * only V.22bis advertises the reciprocal retrain operation. */
 static struct dp_operations v22_operations = {
-	.name = "V.22/V.22bis/Bell 212A",
+	.name = "V.22/Bell 212A",
+	.create = create_v22,
+	.delete = delete_v22,
+	.process = process_v22,
+};
+
+static struct dp_operations v22bis_operations = {
+	.name = "V.22bis",
 	.create = create_v22,
 	.delete = delete_v22,
 	.process = process_v22,
@@ -154,6 +164,15 @@ static struct dp_operations v22_operations = {
 };
 
 static const enum DP_ID v22_ids[] = { DP_V22, DP_V22BIS, DP_B212 };
+
+static struct dp_operations *operations_for_id(enum DP_ID id)
+{
+	if (id == DP_V22BIS)
+		return &v22bis_operations;
+	if (id == DP_V22 || id == DP_B212)
+		return &v22_operations;
+	return NULL;
+}
 
 static bool id_uses_v22_carrier(enum DP_ID id)
 {
@@ -222,7 +241,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	struct v22_datapump *datapump;
 
 	if (dp == NULL || !id_uses_v22_carrier(dp->id) ||
-	    dp->op != &v22_operations ||
+	    dp->op != operations_for_id(dp->id) ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
@@ -349,7 +368,8 @@ static struct dp *create_v22(
 	if (modem == NULL || !id_uses_v22_carrier(id) ||
 	    (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
-	    operations != &v22_operations || operations->use_count == INT_MAX ||
+	    operations != operations_for_id(id) ||
+	    operations->use_count == INT_MAX ||
 	    bit_rate == 0)
 		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
@@ -405,9 +425,9 @@ static int delete_v22(struct dp *dp)
 {
 	struct v22_datapump *datapump = v22_from_dp(dp);
 
-	if (datapump == NULL || v22_operations.use_count <= 0)
+	if (datapump == NULL || dp->op->use_count <= 0)
 		return -1;
-	v22_operations.use_count--;
+	dp->op->use_count--;
 	datapump->dp.dp_data = NULL;
 	free(datapump);
 	return 0;
@@ -1257,25 +1277,9 @@ static int retrain_v22(struct dp *dp)
 {
 	struct v22_datapump *datapump = v22_from_dp(dp);
 
-	if (datapump == NULL ||
+	if (datapump == NULL || !datapump_uses_v22bis(datapump) ||
 	    datapump->training_state != V22_TRAINING_ONLINE)
 		return -1;
-	/* V.22 6.3.1.2 forbids another handshake after the constant-carrier link
-	 * is established.  Reacquire only the continuing V.22/Bell receive
-	 * carrier, while the transmitter and its queued framing remain untouched.
-	 * V.22bis uses its defined reciprocal S1 exchange below. */
-	if (!datapump_uses_v22bis(datapump)) {
-		if (reset_v22_receive_path(datapump) != 0)
-			return -1;
-		datapump->training_samples = 0;
-		datapump->missing_carrier_samples = 0;
-		datapump->carrier_return_hold_samples =
-			V22_CARRIER_RETURN_HOLD_SAMPLES;
-		if (!datapump->dp.modem->cfg.ec)
-			modem_async_retrain(datapump->dp.modem);
-		datapump->dp.status = DPSTAT_OK;
-		return 0;
-	}
 	flush_retrain_candidate(datapump);
 	return begin_retrain(
 		datapump, receive_phase_quadrant(datapump), false);
@@ -1660,7 +1664,6 @@ static int process_v22(
 	bool discard_receive = false;
 	bool line_power_present;
 	bool linked = false;
-	bool resume_current_carrier;
 	bool return_hold_was_active;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL ||
@@ -1669,10 +1672,6 @@ static int process_v22(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	resume_current_carrier =
-		datapump->training_state == V22_TRAINING_ONLINE &&
-		!datapump_uses_v22bis(datapump) &&
-		datapump->dp.status == DPSTAT_OK;
 	line_power_present = line_power_is_present(receive, count);
 	/* The generic QAM floor is deliberately permissive.  Do not let codec
 	 * idle residue establish V.22 timing or protocol lineage before carrier. */
@@ -1687,8 +1686,7 @@ static int process_v22(
 		datapump->v22bis_confirm_bits = 0;
 		discard_retrain_candidate(datapump);
 	}
-	if (datapump->training_state != V22_TRAINING_ONLINE ||
-	    resume_current_carrier) {
+	if (datapump->training_state != V22_TRAINING_ONLINE) {
 		if ((uint64_t)(unsigned int)count >
 		    datapump->training_timeout_samples - datapump->training_samples)
 			return DPSTAT_ERROR;
@@ -1720,19 +1718,14 @@ static int process_v22(
 	for (int index = 0; index < count; ++index) {
 		if (generate_sample(datapump, &transmit[index]) != 0 ||
 		    (line_power_present && receive_sample(
-			    datapump, receive[index],
-			    discard_receive ||
-				    (resume_current_carrier &&
-				     !datapump->demodulator.timing_locked),
+			    datapump, receive[index], discard_receive,
 			    &linked) != 0) ||
 		    advance_training_timer(datapump, &linked) != 0) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
 		if (datapump->training_state == V22_TRAINING_ONLINE &&
-		    datapump->carrier_return_hold_samples != 0 &&
-		    (!resume_current_carrier ||
-		     datapump->demodulator.timing_locked))
+		    datapump->carrier_return_hold_samples != 0)
 			datapump->carrier_return_hold_samples--;
 	}
 	if (linked)
@@ -1741,21 +1734,6 @@ static int process_v22(
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
-	if (resume_current_carrier && line_power_present) {
-		if (carrier_is_present(&measurement, true)) {
-			if (datapump->missing_carrier_samples != 0) {
-				datapump->missing_carrier_samples = 0;
-				datapump->carrier_return_hold_samples =
-					V22_CARRIER_RETURN_HOLD_SAMPLES;
-			}
-			if (datapump->carrier_return_hold_samples == 0) {
-				datapump->training_samples = 0;
-				datapump->dp.status = DPSTAT_CONNECT;
-				return DPSTAT_CONNECT;
-			}
-		}
-		return DPSTAT_OK;
-	}
 	carrier_loss_limit = carrier_loss_limit_samples(datapump);
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
 	    datapump->missing_carrier_samples >=
@@ -1789,12 +1767,15 @@ int v22_datapump_register(void)
 {
 	for (size_t index = 0; index < sizeof(v22_ids) / sizeof(v22_ids[0]);
 	     ++index) {
-		if (modem_dp_register(v22_ids[index], &v22_operations) == 0)
+		struct dp_operations *operations =
+			operations_for_id(v22_ids[index]);
+
+		if (modem_dp_register(v22_ids[index], operations) == 0)
 			continue;
 		while (index > 0) {
 			index--;
 			(void)modem_dp_deregister(
-				v22_ids[index], &v22_operations);
+				v22_ids[index], operations_for_id(v22_ids[index]));
 		}
 		return -1;
 	}
@@ -1807,11 +1788,13 @@ int v22_datapump_unregister(void)
 
 	for (size_t index = count; index > 0; --index) {
 		if (modem_dp_deregister(
-			    v22_ids[index - 1], &v22_operations) == 0)
+			    v22_ids[index - 1],
+			    operations_for_id(v22_ids[index - 1])) == 0)
 			continue;
 		for (size_t restore = index; restore < count; ++restore)
 			(void)modem_dp_register(
-				v22_ids[restore], &v22_operations);
+				v22_ids[restore],
+				operations_for_id(v22_ids[restore]));
 		return -1;
 	}
 	return 0;
@@ -1819,5 +1802,6 @@ int v22_datapump_unregister(void)
 
 bool v22_datapump_is_busy(void)
 {
-	return v22_operations.use_count != 0;
+	return v22_operations.use_count != 0 ||
+	       v22bis_operations.use_count != 0;
 }
