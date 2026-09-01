@@ -29,7 +29,6 @@ enum {
 	V23_BACKWARD_MARK_ACQUIRE_SAMPLES = MODEM_RATE / 5,
 	V23_PRESENTATION_MIN_SAMPLES = MODEM_RATE * 3 / 10,
 	V23_PRESENTATION_MAX_SAMPLES = MODEM_RATE * 6 / 10,
-	V23_CARRIER_LOSS_SAMPLES = MODEM_RATE * 7 / 10,
 	V23_MIN_LINE_POWER = 10000000,
 	V23_MIN_DOMINANCE_Q8 = 180,
 	V23_PRELINK_BIT_CAPACITY = 1024,
@@ -397,6 +396,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct fsk_measurement measurement;
+	uint32_t carrier_loss_limit;
 	uint32_t received_samples = 0;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
@@ -440,14 +440,16 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	measurement = fsk_receiver_measure(&datapump->receiver);
 	if (datapump->phase != V23_PHASE_ONLINE)
 		return advance_training(datapump, &measurement, received_samples);
+	carrier_loss_limit =
+		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (carrier_is_present(&measurement)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
 		add_bounded(
 			&datapump->missing_carrier_samples, (uint32_t)count,
-			V23_CARRIER_LOSS_SAMPLES);
+			carrier_loss_limit);
 	}
-	return datapump->missing_carrier_samples >= V23_CARRIER_LOSS_SAMPLES ?
+	return datapump->missing_carrier_samples >= carrier_loss_limit ?
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 

@@ -22,7 +22,8 @@ enum {
 	FSK300_MARK_ACQUIRE_SAMPLES = MODEM_RATE * 15 / 1000,
 	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
-	FSK300_CARRIER_LOSS_SAMPLES = 1600,
+	/* Qualify three 20 ms mark blocks before accepting a fresh carrier. */
+	FSK300_CARRIER_RETURN_SAMPLES = MODEM_RATE * 60 / 1000,
 	FSK300_MIN_LINE_POWER = 10000000,
 	FSK300_MIN_DOMINANCE_Q8 = 180,
 	BELL103_ORIGINATOR_MARK_HZ = 1270,
@@ -100,6 +101,7 @@ struct fsk300_datapump {
 	uint64_t training_state_samples;
 	uint32_t remote_mark_samples;
 	uint32_t missing_carrier_samples;
+	uint32_t carrier_return_samples;
 	uint8_t transmit_bit;
 	bool transmit_bit_pending;
 	bool originator;
@@ -139,6 +141,10 @@ static struct fsk300_datapump *fsk300_from_dp(struct dp *dp)
 	datapump = dp->dp_data;
 	if (&datapump->dp != dp || datapump->profile == NULL ||
 	    datapump->profile->id != dp->id ||
+	    datapump->carrier_return_samples >
+		    FSK300_CARRIER_RETURN_SAMPLES ||
+	    (datapump->carrier_return_samples != 0 &&
+	     datapump->missing_carrier_samples == 0) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    ((datapump->training_state == FSK300_TRAINING_ONLINE) !=
 	     (datapump->training.state == TRAINING_SESSION_ONLINE)))
@@ -217,12 +223,11 @@ static bool mark_is_present(
 	       measurement->mark_power > measurement->space_power;
 }
 
-static bool carrier_is_present(
+static bool line_signal_is_present(
 	const struct fsk_measurement *measurement)
 {
 	return measurement->ready &&
-	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= FSK300_MIN_DOMINANCE_Q8;
+	       measurement->line_power >= FSK300_MIN_LINE_POWER;
 }
 
 static void generate_mark(
@@ -267,21 +272,37 @@ static void generate_data(
 	}
 }
 
-static void receive_samples(
+static int receive_samples(
 	struct fsk300_datapump *datapump,
 	const int16_t *receive,
 	int count,
-	bool deliver_bits)
+	uint8_t *bits,
+	size_t capacity)
 {
+	size_t produced = 0;
+
 	for (int index = 0; index < count; ++index) {
 		uint8_t bit;
 		bool ready;
 
-		(void)fsk_receiver_sample(
-			&datapump->receiver, receive[index], &bit, &ready);
-		if (deliver_bits && ready)
-			(void)modem_put_bits(datapump->dp.modem, 1, &bit, 1);
+		if (fsk_receiver_sample(
+			    &datapump->receiver, receive[index], &bit, &ready) !=
+		    FSK_OK)
+			return -1;
+		if (!ready || bits == NULL)
+			continue;
+		if (produced == capacity)
+			return -1;
+		bits[produced++] = bit;
 	}
+	return (int)produced;
+}
+
+static void add_bounded(
+	uint32_t *value, uint32_t increment, uint32_t limit)
+{
+	*value = *value >= limit || increment >= limit - *value ?
+		       limit : *value + increment;
 }
 
 static int advance_training(
@@ -337,6 +358,7 @@ static int advance_training(
 			return DPSTAT_ERROR;
 		datapump->training_state = FSK300_TRAINING_ONLINE;
 		datapump->missing_carrier_samples = 0;
+		datapump->carrier_return_samples = 0;
 		datapump->dp.status = DPSTAT_CONNECT;
 		return DPSTAT_CONNECT;
 	}
@@ -350,6 +372,9 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 	struct fsk_measurement measurement;
+	uint8_t received_bits[MODEM_FRAG];
+	uint32_t carrier_loss_limit;
+	int received_count;
 
 	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
 	    count > MODEM_FRAG) {
@@ -366,20 +391,51 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	} else {
 		generate_mark(datapump, transmit, count);
 	}
-	receive_samples(
+	received_count = receive_samples(
 		datapump, receive, count,
-		datapump->training_state == FSK300_TRAINING_ONLINE);
+		datapump->training_state == FSK300_TRAINING_ONLINE ?
+			received_bits : NULL,
+		sizeof(received_bits));
+	if (received_count < 0)
+		return DPSTAT_ERROR;
 	measurement = fsk_receiver_measure(&datapump->receiver);
 
 	if (datapump->training_state != FSK300_TRAINING_ONLINE)
 		return advance_training(datapump, &measurement, (unsigned int)count);
-	if (carrier_is_present(&measurement)) {
-		datapump->missing_carrier_samples = 0;
-	} else if (datapump->missing_carrier_samples <
-		   FSK300_CARRIER_LOSS_SAMPLES) {
-		datapump->missing_carrier_samples += (unsigned int)count;
+	carrier_loss_limit =
+		datapump_carrier_loss_ticks(datapump->dp.modem);
+	if (datapump->missing_carrier_samples != 0) {
+		if (mark_is_present(&measurement)) {
+			add_bounded(
+				&datapump->carrier_return_samples,
+				(uint32_t)(unsigned int)count,
+				FSK300_CARRIER_RETURN_SAMPLES);
+			if (datapump->carrier_return_samples >=
+			    FSK300_CARRIER_RETURN_SAMPLES) {
+				datapump->missing_carrier_samples = 0;
+				datapump->carrier_return_samples = 0;
+			}
+			return DPSTAT_OK;
+		}
+	} else if (line_signal_is_present(&measurement)) {
+		if (received_count != 0 &&
+		    modem_put_bits(
+			    datapump->dp.modem, 1, received_bits,
+			    received_count) != received_count)
+			return DPSTAT_ERROR;
+		return DPSTAT_OK;
 	}
-	return datapump->missing_carrier_samples >= FSK300_CARRIER_LOSS_SAMPLES ?
+	if (datapump->missing_carrier_samples == 0) {
+		if (!datapump->dp.modem->cfg.ec)
+			modem_async_retrain(datapump->dp.modem);
+		/* Start carrier qualification with no stale symbol clock. */
+		fsk_receiver_reset(&datapump->receiver);
+	}
+	datapump->carrier_return_samples = 0;
+	add_bounded(
+		&datapump->missing_carrier_samples,
+		(uint32_t)(unsigned int)count, carrier_loss_limit);
+	return datapump->missing_carrier_samples >= carrier_loss_limit ?
 		       DPSTAT_ERROR : DPSTAT_OK;
 }
 

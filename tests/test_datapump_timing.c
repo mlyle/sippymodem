@@ -35,6 +35,24 @@ static bool test_invalid_modem(void)
 {
 	CHECK(datapump_carrier_wait_ticks(NULL) == 0,
 	      "missing modem produced a carrier-wait deadline");
+	CHECK(datapump_carrier_loss_ticks(NULL) == 0,
+	      "missing modem produced a carrier-loss deadline");
+	return true;
+}
+
+static bool test_configured_carrier_loss(void)
+{
+	struct modem modem = { 0 };
+
+	CHECK(datapump_carrier_loss_ticks(&modem) == 1,
+	      "zero S10 did not request immediate carrier-loss handling");
+	modem.sregs[SREG_CARRIER_LOSS_DISCONNECT_TIME] = 7;
+	CHECK(datapump_carrier_loss_ticks(&modem) == MODEM_RATE * 7 / 10,
+	      "S10 was not converted from tenths to media ticks");
+	modem.sregs[SREG_CARRIER_LOSS_DISCONNECT_TIME] = UINT8_MAX;
+	CHECK(datapump_carrier_loss_ticks(&modem) ==
+		      UINT32_C(255) * MODEM_RATE / 10,
+	      "full-width S10 carrier-loss interval was truncated");
 	return true;
 }
 
@@ -152,6 +170,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "default and configured wait", test_default_and_configured_wait },
+		{ "configured carrier loss", test_configured_carrier_loss },
 		{ "invalid modem", test_invalid_modem },
 		{ "initial training lifecycle", test_initial_training_lifecycle },
 		{ "retraining lifecycle", test_retraining_lifecycle },

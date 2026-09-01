@@ -4,6 +4,7 @@
 #include <baudot.h>
 #include <datapumps.h>
 #include <fsk300_datapump.h>
+#include <fsk.h>
 #include <fractional_delay.h>
 #include <g711.h>
 #include <media.h>
@@ -663,6 +664,56 @@ static bool modem_is_online(const struct modem *modem, enum DP_ID id)
 	       modem->get_bits != NULL && modem->put_bits != NULL;
 }
 
+static bool exercise_carrier_loss_limit(
+	struct integration_endpoint *endpoint,
+	enum DP_ID id,
+	unsigned int carrier_loss_samples)
+{
+	static const unsigned int fragments[] = { 37, 29, 1, 23 };
+	int16_t silence[MODEM_FRAG] = { 0 };
+	int16_t transmit[MODEM_FRAG];
+	unsigned int presented = 0;
+	unsigned int fragment = 0;
+
+	if (endpoint == NULL || endpoint->modem == NULL ||
+	    carrier_loss_samples < 2)
+		return false;
+	if (id != DP_B103 && id != DP_V21 && id != DP_B212 &&
+	    id != DP_V22 && id != DP_V23) {
+		memset(endpoint->receive, 0, sizeof(endpoint->receive));
+		for (unsigned int frame = 0;
+		     frame * SIP_FRAME_SAMPLES <= carrier_loss_samples;
+		     ++frame)
+			modem_process(
+				endpoint->modem, endpoint->receive,
+				endpoint->transmit, SIP_FRAME_SAMPLES);
+		return endpoint->modem->process == NULL;
+	}
+	while (presented < carrier_loss_samples - 1u) {
+		unsigned int remaining = carrier_loss_samples - 1u - presented;
+		unsigned int count = fragments[fragment++ % ARRAY_LENGTH(fragments)];
+
+		if (count > remaining)
+			count = remaining;
+		modem_process(endpoint->modem, silence, transmit, (int)count);
+		if (endpoint->modem->process == NULL)
+			return false;
+		presented += count;
+	}
+	/* The QAM modes see silence immediately, so their S10 boundary is exact.
+	 * FSK first drains its bounded tone-detector window; nevertheless it must
+	 * disconnect within one maximum detector window after S10. */
+	for (unsigned int sample = 0;
+	     sample < (id == DP_V22 || id == DP_B212 ? 1u :
+						      FSK_MAX_DETECTOR_WINDOW);
+	     ++sample) {
+		modem_process(endpoint->modem, silence, transmit, 1);
+		if (endpoint->modem->process == NULL)
+			return true;
+	}
+	return false;
+}
+
 static bool exercise_retrain(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -1038,7 +1089,13 @@ static bool exercise_retrain(
 	return true;
 }
 
-static bool exercise_v22_carrier_recovery(
+static bool preserves_link_across_carrier_return(enum DP_ID id)
+{
+	return id == DP_B103 || id == DP_V21 || id == DP_B212 ||
+	       id == DP_V22 || id == DP_V23;
+}
+
+static bool exercise_low_speed_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
 	enum DP_ID id,
@@ -1047,8 +1104,8 @@ static bool exercise_v22_carrier_recovery(
 {
 	enum {
 		SHORT_LOSS_FRAMES = 2,
-		V22_LOSS_SAMPLES = MODEM_RATE / 2,
-		V22_RECOVERY_SAMPLES = MODEM_RATE / 4,
+		CARRIER_LOSS_SAMPLES = MODEM_RATE / 2,
+		CARRIER_RECOVERY_SAMPLES = MODEM_RATE * 3 / 10,
 	};
 	static const uint8_t caller_clamped_payload[] = {
 		'c', 'l', 'a', 'm', 'p', '-', 'c', 0x00, 0xa5, 0xff,
@@ -1062,20 +1119,53 @@ static bool exercise_v22_carrier_recovery(
 	static const uint8_t answerer_payload[] = {
 		'c', 'a', 'r', 'r', 'i', 'e', 'r', '-', 'a', 0x5a,
 	};
-	if (id != DP_V22 && id != DP_V22BIS)
+	if (!preserves_link_across_carrier_return(id) && id != DP_V22BIS)
 		return false;
 	for (unsigned int recovery =
-		     id == DP_V22 ? 0u : raw_transport ? 0u : 1u;
-	     recovery < (id == DP_V22 ? 1u : 2u); ++recovery) {
+		     id != DP_V22BIS ? 0u : raw_transport ? 0u : 1u;
+	     recovery < (id != DP_V22BIS ? 1u : 2u); ++recovery) {
+		bool link_uses_lapm = caller->modem->cfg.ec &&
+				      answerer->modem->cfg.ec;
 		bool transferred = false;
 
 		caller->output_count = 0;
 		answerer->output_count = 0;
-		if (id == DP_V22) {
-			/* V.22 resumes the existing connection after an inadvertent
-			 * signal loss; it does not negotiate another handshake. */
+		if (id != DP_V22BIS) {
+			if (link_uses_lapm &&
+			    (modem_write(
+				     caller->modem,
+				     (const char *)caller_clamped_payload,
+				     (int)sizeof(caller_clamped_payload)) !=
+					     (int)sizeof(caller_clamped_payload) ||
+			     modem_write(
+				     answerer->modem,
+				     (const char *)answerer_clamped_payload,
+				     (int)sizeof(answerer_clamped_payload)) !=
+					     (int)sizeof(answerer_clamped_payload)))
+				return false;
+			/* Cut each 300-bit/s raw receiver through a partial character;
+			 * the carrier transition must abandon only that receive prefix. */
+			if (!link_uses_lapm && (id == DP_B103 || id == DP_V21)) {
+				static const uint8_t partial = 0x00;
+
+				if (modem_write(
+					    caller->modem, (const char *)&partial, 1) != 1 ||
+				    modem_write(
+					    answerer->modem, (const char *)&partial, 1) != 1 ||
+				    !process_sip_frame(
+					    caller, answerer, codec, recorder) ||
+				    !endpoint_drain(caller) ||
+				    !endpoint_drain(answerer))
+					return false;
+				caller->output_count = 0;
+				answerer->output_count = 0;
+			}
+			/* These constant-carrier modes preserve the established link
+			 * across an S10-bounded interruption.  Idle carrier after the
+			 * interruption lets the existing receiver reacquire without
+			 * replaying the initial handshake or releasing LAPM state. */
 			for (unsigned int samples = 0;
-			     samples < V22_LOSS_SAMPLES;
+			     samples < CARRIER_LOSS_SAMPLES;
 			     samples += SIP_FRAME_SAMPLES) {
 				if (!process_sip_frame_with_loss(
 					    caller, answerer, codec, recorder,
@@ -1089,17 +1179,62 @@ static bool exercise_v22_carrier_recovery(
 					return false;
 			}
 			for (unsigned int samples = 0;
-			     samples < V22_RECOVERY_SAMPLES;
+			     samples < CARRIER_RECOVERY_SAMPLES;
 			     samples += SIP_FRAME_SAMPLES) {
 				if (!process_sip_frame(
 					    caller, answerer, codec, recorder) ||
 				    !endpoint_drain(caller) ||
 				    !endpoint_drain(answerer) ||
-				    caller->output_count != 0 ||
-				    answerer->output_count != 0 ||
+				    (!link_uses_lapm &&
+				     (caller->output_count != 0 ||
+				      answerer->output_count != 0)) ||
 				    !modem_is_online(caller->modem, id) ||
 				    !modem_is_online(answerer->modem, id))
 					return false;
+			}
+			if (link_uses_lapm) {
+				for (unsigned int frame = 0;
+				     frame < DATA_FRAME_LIMIT &&
+				     (caller->output_count <
+					      sizeof(answerer_clamped_payload) ||
+				      answerer->output_count <
+					      sizeof(caller_clamped_payload));
+				     ++frame) {
+					if (!process_sip_frame(
+						    caller, answerer, codec, recorder) ||
+					    !endpoint_drain(caller) ||
+					    !endpoint_drain(answerer) ||
+					    !modem_is_online(caller->modem, id) ||
+					    !modem_is_online(answerer->modem, id))
+						return false;
+				}
+				if (caller->output_count !=
+					    sizeof(answerer_clamped_payload) ||
+				    answerer->output_count !=
+					    sizeof(caller_clamped_payload) ||
+				    memcmp(
+					    caller->output, answerer_clamped_payload,
+					    sizeof(answerer_clamped_payload)) != 0 ||
+				    memcmp(
+					    answerer->output, caller_clamped_payload,
+					    sizeof(caller_clamped_payload)) != 0) {
+					fprintf(stderr,
+						"carrier recovery did not preserve LAPM "
+						"payloads (id=%u outputs=%zu/%zu "
+						"states=%u/%u lapm=%d/%d ctrl=%d/%d "
+						"timer=%d/%d)\n",
+						(unsigned int)id, caller->output_count,
+						answerer->output_count,
+						caller->modem->state,
+						answerer->modem->state,
+						caller->modem->ec.lapm.state,
+						answerer->modem->ec.lapm.state,
+						caller->modem->ec.lapm.ctrl_count,
+						answerer->modem->ec.lapm.ctrl_count,
+						caller->modem->bit_timer,
+						answerer->modem->bit_timer);
+					return false;
+				}
 			}
 		} else if (recovery == 0) {
 			for (unsigned int frame = 0;
@@ -1606,15 +1741,23 @@ static bool run_media_call(
 				      test_case->raw_transport, false, false, 1),
 			      "%s overlapping retrain did not reconnect and pass data",
 			      test_case->name);
-		if (test_case->id == DP_V22 || test_case->id == DP_V22BIS)
-			CHECK(exercise_v22_carrier_recovery(
+		if (test_case->id == DP_V22BIS)
+			CHECK(exercise_low_speed_carrier_recovery(
 					      &caller, &answerer, test_case->id,
 					      codec, &recorder,
 					      test_case->raw_transport),
-					      "%s carrier recovery did not preserve "
-					      "or retrain and pass data",
+					      "%s carrier recovery did not retrain "
+					      "and pass data",
 					      test_case->name);
 	}
+	if (preserves_link_across_carrier_return(test_case->id))
+		CHECK(exercise_low_speed_carrier_recovery(
+				      &caller, &answerer, test_case->id,
+				      codec, &recorder,
+				      test_case->raw_transport),
+			      "%s did not preserve the link and pass data after "
+			      "carrier reacquisition",
+			      test_case->name);
 	CHECK(!capture.invalid &&
 		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
@@ -1633,15 +1776,10 @@ static bool run_media_call(
 	      "live %s calls did not protect their process-global registration",
 	      test_case->name);
 	if (test_case->carrier_loss_samples != 0) {
-		memset(caller.receive, 0, sizeof(caller.receive));
-		for (unsigned int frame = 0;
-		     frame * SIP_FRAME_SAMPLES <=
-			     test_case->carrier_loss_samples;
-		     ++frame)
-			modem_process(caller.modem, caller.receive, caller.transmit,
-				      SIP_FRAME_SAMPLES);
-		CHECK(caller.modem->process == NULL,
-		      "%s carrier loss did not stop the modem data path",
+		CHECK(exercise_carrier_loss_limit(
+			      &caller, connected_id,
+			      test_case->carrier_loss_samples),
+		      "%s carrier loss did not honor the fragmented S10 boundary",
 		      test_case->name);
 	}
 
@@ -3017,7 +3155,7 @@ int main(void)
 			.caller_rx_rate = FSK300_BIT_RATE,
 			.answerer_tx_rate = FSK300_BIT_RATE,
 			.answerer_rx_rate = FSK300_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.test_retrain = true,
 			.raw_transport = true,
 		},
@@ -3029,7 +3167,7 @@ int main(void)
 			.caller_rx_rate = FSK300_BIT_RATE,
 			.answerer_tx_rate = FSK300_BIT_RATE,
 			.answerer_rx_rate = FSK300_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 		},
 		{
@@ -3040,7 +3178,7 @@ int main(void)
 			.caller_rx_rate = FSK300_BIT_RATE,
 			.answerer_tx_rate = FSK300_BIT_RATE,
 			.answerer_rx_rate = FSK300_BIT_RATE,
-			.carrier_loss_samples = MODEM_RATE / 5,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
 			.automode = true,
 			.test_retrain = true,
 			.raw_transport = true,

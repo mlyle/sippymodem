@@ -215,18 +215,6 @@ static bool datapump_is_retraining(
 	       datapump->retrain_peer_signal_received;
 }
 
-static uint32_t carrier_loss_limit_samples(
-	const struct v22_datapump *datapump)
-{
-	int tenths;
-
-	tenths = modem_get_sreg(
-		datapump->dp.modem, SREG_CARRIER_LOSS_DISCONNECT_TIME);
-
-	return tenths > 0 ?
-		(uint32_t)(unsigned int)tenths * MODEM_RATE / 10u : 1u;
-}
-
 static bool transmit_uses_v22bis_symbols(
 	const struct v22_datapump *datapump)
 {
@@ -266,7 +254,7 @@ static struct v22_datapump *v22_from_dp(struct dp *dp)
 	    datapump->retrain_peer_samples > V22_RETRAIN_RETRY_SAMPLES ||
 	    datapump->retrain_retry_samples > V22_RETRAIN_RETRY_SAMPLES ||
 	    datapump->missing_carrier_samples >
-		    carrier_loss_limit_samples(datapump) ||
+		    datapump_carrier_loss_ticks(datapump->dp.modem) ||
 	    datapump->carrier_return_hold_samples >
 		    V22_CARRIER_RETURN_HOLD_SAMPLES ||
 	    (datapump->carrier_return_hold_samples != 0 &&
@@ -1734,7 +1722,8 @@ static int process_v22(
 		return DPSTAT_OK;
 	measurement = qam_demodulator_measure(
 		&datapump->demodulator);
-	carrier_loss_limit = carrier_loss_limit_samples(datapump);
+	carrier_loss_limit =
+		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
 	    datapump->missing_carrier_samples >=
 		    V22BIS_CARRIER_RETRAIN_SAMPLES) {

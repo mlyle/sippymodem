@@ -35,6 +35,7 @@ static void initialize_modem(struct modem *modem)
 	modem->frag = MODEM_FRAG;
 	modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 10;
 	modem->sregs[SREG_CARRIER_DETECT_RESPONSE_TIME] = 6;
+	modem->sregs[SREG_CARRIER_LOSS_DISCONNECT_TIME] = 7;
 }
 
 static bool pair_init(struct v23_pair *pair)
