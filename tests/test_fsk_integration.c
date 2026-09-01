@@ -2744,7 +2744,7 @@ static bool v90_replay_profile_parse(
 static bool run_v90_recording_replay(
 	const char *path, enum media_codec codec, bool originator,
 	const char *downstream_value, const char *upstream_value,
-	const char *symbol_value)
+	const char *symbol_value, const char *expected_text)
 {
 	enum { MINIMUM_ONLINE_SAMPLES = 3200 };
 	static const char *const common_commands[] = {
@@ -2771,12 +2771,19 @@ static bool run_v90_recording_replay(
 	size_t fallback_at = SIZE_MAX;
 	size_t connected_at = SIZE_MAX;
 	bool v8_seen = false;
+	bool expected_text_seen = false;
+	size_t expected_text_length =
+		expected_text != NULL ? strlen(expected_text) : 0;
 
 	CHECK(codec_law(codec, &law) &&
 		      v90_replay_profile_parse(
 			      downstream_value, upstream_value, symbol_value,
 			      law, originator, &profile),
-	      "optional V.90 G.711 recording profile is invalid");
+		      "optional V.90 G.711 recording profile is invalid");
+	CHECK(expected_text_length < sizeof(endpoint.output),
+	      "optional V.90 recording replay text is too long");
+	CHECK(!originator || expected_text_length == 0,
+	      "outgoing V.90 V.8 replay cannot require terminal text");
 	downstream_command_length = snprintf(
 		downstream_command, sizeof(downstream_command),
 		"AT+MS=90,0,%u,%u\r", profile.downstream_rate,
@@ -2855,11 +2862,27 @@ static bool run_v90_recording_replay(
 		if (modem_is_online(endpoint.modem, DP_V90)) {
 			if (connected_at == SIZE_MAX)
 				connected_at = offset;
+			if (expected_text_length != 0 &&
+			    output_contains(&endpoint, expected_text))
+				expected_text_seen = true;
 			/* The external recording may continue with arbitrary data,
-			 * while this replay has no terminal consumer. */
-			endpoint.output_count = 0;
+			 * while this replay has no terminal consumer. Preserve only
+			 * enough output to find an expected substring across frames. */
+			if (expected_text_length == 0 || expected_text_seen) {
+				endpoint.output_count = 0;
+			} else if (endpoint.output_count >= expected_text_length) {
+				size_t retained = expected_text_length - 1u;
+
+				memmove(endpoint.output,
+					endpoint.output + endpoint.output_count - retained,
+					retained);
+				endpoint.output_count = retained;
+			}
 		}
 	}
+	CHECK(expected_text_length == 0 || expected_text_seen,
+	      "V.90 recording did not reproduce expected text '%s'",
+	      expected_text != NULL ? expected_text : "");
 	if (originator) {
 		/* A recording captured from a peer that never received CJ cannot
 		 * contain the interactive Phase 2 response to a repaired caller.
@@ -2903,7 +2926,6 @@ static bool run_v90_recording_replay(
 			"[       OK ] V.90 recording replay over %s (%zu octets, carrier at %zu)\n",
 			codec_name(codec), recording_count, connected_at);
 	}
-
 	endpoint_destroy(&endpoint);
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
 	      "V.90 recording replay registrations remained busy");
@@ -2961,6 +2983,8 @@ int main(void)
 		getenv("V90_REPLAY_UPSTREAM_RATE");
 	const char *v90_recording_symbol_rate =
 		getenv("V90_REPLAY_SYMBOL_RATE");
+	const char *v90_recording_expected_text =
+		getenv("V90_REPLAY_EXPECT_TEXT");
 	enum media_codec v90_replay_codec;
 	bool v90_replay_originator;
 	bool integration_case_selected = false;
@@ -3358,7 +3382,8 @@ int main(void)
 			   v90_replay_originator,
 			   v90_recording_downstream_rate,
 			   v90_recording_upstream_rate,
-			   v90_recording_symbol_rate)) {
+			   v90_recording_symbol_rate,
+			   v90_recording_expected_text)) {
 		return 1;
 	}
 	for (size_t standard = 0; standard < ARRAY_LENGTH(test_cases);
