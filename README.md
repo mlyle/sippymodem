@@ -257,8 +257,11 @@ matrix runs all 55 V.34 pairs through both G.711 laws and both station roles:
 through 21600 bit/s at 2400 symbol/s, through 26400 bit/s at 2800 symbol/s,
 through 28800 bit/s at 3000 symbol/s, through 31200 bit/s at 3200 symbol/s,
 and through 33600 bit/s at 3429 symbol/s. The optional 2743-symbol/s cadence
-is excluded because the control does not accept it. The native boundary also
-trains V.90 through V.8 over both G.711 laws, confirms exact codeword output at
+is excluded because the control does not accept it. The fast profile set also
+includes a representative V.90 call at 28000 bit/s downstream and 19200 bit/s
+upstream, exercising both implementation roles and both G.711 laws. The native
+boundary also trains V.90 through V.8 over both G.711 laws, confirms exact
+codeword output at
 both endpoints, exercises selectable conventional upstream rates, and passes
 distinct binary payloads in both directions. This is generated in-process
 coverage, not external modem

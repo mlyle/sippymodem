@@ -32,8 +32,8 @@ class FastMatrixTests(unittest.TestCase):
     def test_matrix_covers_every_supported_rate_codec_and_role(self) -> None:
         matrix = build_fast_matrix()
 
-        self.assertEqual(len(FAST_PROFILE_NAMES), 69)
-        self.assertEqual(len(matrix), 276)
+        self.assertEqual(len(FAST_PROFILE_NAMES), 70)
+        self.assertEqual(len(matrix), 280)
         self.assertIn("v22_600", FAST_PROFILE_NAMES)
         self.assertEqual(
             {case.profile.name for case in matrix}, set(FAST_PROFILE_NAMES)
@@ -94,6 +94,26 @@ class FastMatrixTests(unittest.TestCase):
         self.assertEqual(
             (candidate.baseline_rates.receive, candidate.baseline_rates.transmit),
             (75, 1200),
+        )
+        baseline = cases[BASELINE_ORIGINATES]
+        self.assertEqual(baseline.candidate_rates, candidate.baseline_rates)
+        self.assertEqual(baseline.baseline_rates, candidate.candidate_rates)
+
+    def test_v90_rates_follow_analog_and_digital_line_roles(self) -> None:
+        cases = {
+            case.originator_order: case
+            for case in build_fast_matrix(("v90_28000_19200_b3000",))
+            if case.media_codec == "PCMU"
+        }
+
+        candidate = cases[CANDIDATE_ORIGINATES]
+        self.assertEqual(
+            (candidate.candidate_rates.receive, candidate.candidate_rates.transmit),
+            (28000, 19200),
+        )
+        self.assertEqual(
+            (candidate.baseline_rates.receive, candidate.baseline_rates.transmit),
+            (19200, 28000),
         )
         baseline = cases[BASELINE_ORIGINATES]
         self.assertEqual(baseline.candidate_rates, candidate.baseline_rates)

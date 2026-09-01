@@ -314,6 +314,21 @@ def _build_profiles() -> dict[str, ModemProfile]:
                     ),
                 )
 
+    _add(
+        profiles,
+        ModemProfile(
+            name="v90_28000_19200_b3000",
+            family="v90",
+            description=(
+                "V.90 at 28000 bit/s downstream and 19200 bit/s upstream"
+            ),
+            at_commands=_v90_commands(90, 28000, 19200, 3000),
+            receive_rate=28000,
+            transmit_rate=19200,
+            symbol_rate=3000,
+        ),
+    )
+
     for datapump, family in ((90, "v90"), (92, "v92")):
         prerequisite = (
             V90_PREREQUISITE if datapump == 90 else V92_PREREQUISITE
@@ -357,6 +372,7 @@ def _build_profiles() -> dict[str, ModemProfile]:
                 )
         if any(
             profile.family == family
+            and profile.readiness == READINESS_PREREQUISITE
             and profile.prerequisite != prerequisite
             for profile in profiles.values()
         ):
@@ -482,6 +498,7 @@ PROFILE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "v34-rx": _named("v34_rx_"),
     "v34-tx": _named("v34_tx_"),
+    "v90-current": ("v90_28000_19200_b3000",),
     "v90-down": _named("v90_down_"),
     "v90-up": _named("v90_up_"),
     "v92-down": _named("v92_down_"),
@@ -513,6 +530,7 @@ PROFILE_GROUPS["implemented"] = (
     + PROFILE_GROUPS["v32"]
     + PROFILE_GROUPS["v32bis"]
     + PROFILE_GROUPS["v34-current"]
+    + PROFILE_GROUPS["v90-current"]
 )
 PROFILE_GROUPS["future-digital"] = (
     PROFILE_GROUPS["v90"]
