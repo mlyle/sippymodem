@@ -139,7 +139,7 @@ while True:
             os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
-            if mode == "stale-retrain-helper":
+            if mode == "online-prefix-before-retrain-end":
                 os.write(
                     master,
                     b"GETTY:RETRAIN:START:"
@@ -624,7 +624,7 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertEqual(result.maturity, "connect")
             self.assertIn("V.22", result.detail)
 
-    def test_peer_escape_bytes_do_not_become_infrastructure_failure(
+    def test_online_bytes_before_retrain_end_are_ordinary_payload(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -642,7 +642,7 @@ class LiveCampaignTests(unittest.TestCase):
                 False,
             )
             config = replace(
-                self.config(root, script, "stale-retrain-helper"),
+                self.config(root, script, "online-prefix-before-retrain-end"),
                 retrain_timeout_seconds=0.1,
             )
             result = run_physical_attempt(

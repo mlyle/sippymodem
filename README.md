@@ -191,10 +191,10 @@ An unattended peer service must treat a failed retrain or callback dial as a
 call-local result, clean up, and rearm for the next call. If that service exits
 on one failed call, later request legs can reach SIP while receiving no modem
 answer; those request-only failures remain auxiliary evidence rather than
-failures of each requested callback modulation. The peer's literal escape
-sequence may cross the data link after RETRAIN START. The runner treats those
-octets as in-band data and continues waiting for the matching END within the
-single retrain deadline.
+failures of each requested callback modulation. Remote retrain is an in-band
+modem operation; peer host escape sequencing and `ATO1` are outside this
+protocol. Any literal `+++` received remains ordinary online payload while the
+runner waits for the matching END within the single retrain deadline.
 
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next
