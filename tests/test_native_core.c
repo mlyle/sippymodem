@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h>
 
 extern int process_at_command(struct modem *modem, char *command);
 extern int modem_dial(struct modem *modem);
@@ -342,10 +343,13 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	int16_t receive[MODEM_FRAG] = { 0 };
 	int16_t transmit[MODEM_FRAG];
 	struct modem *modem;
+	char fallback_response[256];
 	char unsupported[] = "ATO1";
 	char invalid[] = "ATO2";
 	char retrain[] = "ATO1";
 	char resume[] = "ATO0";
+	ssize_t fallback_length;
+	int fallback_pipe[2];
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
 	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
@@ -355,12 +359,31 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	      "ATO1 test call did not start");
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
-	CHECK(process_at_command(modem, unsupported) == -1 &&
-		      modem->state == TEST_STATE_COMMAND_ONLINE &&
-		      modem->command == 1 && modem->retrain_pending == 0 &&
+	CHECK(pipe(fallback_pipe) == 0,
+	      "ATO1 fallback response pipe failed");
+	modem->pty = fallback_pipe[1];
+	CHECK(process_at_command(modem, unsupported) == 1 &&
+		      modem->state == TEST_STATE_MODEM_ONLINE &&
+		      modem->command == 0 && modem->retrain_pending == 0 &&
 		      retrain_dp.retrain_calls == 0,
-	      "ATO1 without data-pump support changed the link");
+	      "ATO1 without data-pump support did not resume the link");
+	close(fallback_pipe[1]);
+	modem->pty = -1;
+	fallback_length = read(
+		fallback_pipe[0], fallback_response,
+		sizeof(fallback_response) - 1u);
+	close(fallback_pipe[0]);
+	CHECK(fallback_length > 0,
+	      "ATO1 fallback produced no terminal response");
+	fallback_response[fallback_length] = '\0';
+	CHECK(strstr(fallback_response, "WARNING: Retrain unavailable") != NULL &&
+		      strstr(fallback_response, "CONNECT") != NULL &&
+		      strstr(fallback_response, "ERROR") == NULL,
+	      "ATO1 fallback response was not truthful: %s",
+	      fallback_response);
 	operations.retrain = request_retrain_dp;
+	modem->state = TEST_STATE_COMMAND_ONLINE;
+	modem->command = 1;
 	retrain_dp.retrain_result = -1;
 	CHECK(process_at_command(modem, retrain) == -1 &&
 		      modem->state == TEST_STATE_COMMAND_ONLINE &&

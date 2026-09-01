@@ -1863,17 +1863,34 @@ int modem_hook(struct modem *m, unsigned hook_state)
 
 int modem_online(struct modem *m, int retrain)
 {
+	char warning[96];
+	int warning_length;
+
 	MODEM_DBG("modem online...\n");
 	if (m == NULL || (retrain != 0 && retrain != 1) ||
 	    m->state != STATE_COMMAND_ONLINE)
                 return -1;
 	if (retrain != 0) {
-		if (m->dp == NULL || m->dp->op == NULL ||
-		    m->dp->op->retrain == NULL ||
-		    m->dp->op->retrain(m->dp) != 0)
+		if (m->dp == NULL || m->dp->op == NULL)
 			return -1;
-		m->retrain_pending = 1;
+		if (m->dp->op->retrain == NULL) {
+			warning_length = snprintf(
+				warning, sizeof(warning),
+				"WARNING: Retrain unavailable for DP %d; "
+				"resuming online",
+				m->dp->id);
+			if (warning_length > 0) {
+				if ((size_t)warning_length >= sizeof(warning))
+					warning_length = (int)sizeof(warning) - 1;
+				(void)modem_put_chars(m, warning, warning_length);
+				(void)modem_put_chars(m, CRLF_CHARS(m), 2);
+			}
+			retrain = 0;
+		} else if (m->dp->op->retrain(m->dp) != 0) {
+			return -1;
+		}
 	}
+	m->retrain_pending = retrain != 0;
 	m->command = 0;
         modem_set_state(m, STATE_MODEM_ONLINE);
 	if (retrain == 0)
