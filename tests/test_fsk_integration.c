@@ -122,6 +122,7 @@ struct modem_test_case {
 	bool test_retrain;
 	bool raw_transport;
 	bool require_lapm;
+	bool digital_caller;
 	enum integration_impairment impairment;
 };
 
@@ -1297,10 +1298,12 @@ static bool run_media_call(
 	if (v8_datapump_uses_pcm(test_case->id) ||
 	    v8_datapump_uses_pcm(answerer_id)) {
 		CHECK(modem_set_sreg(
-			      caller.modem, SREG_V90_DIGITAL_INDICATION, 0) == 0 &&
+			      caller.modem, SREG_V90_DIGITAL_INDICATION,
+			      test_case->digital_caller) == 0 &&
 		      modem_set_sreg(
 			      answerer.modem,
-			      SREG_V90_DIGITAL_INDICATION, 1) == 0,
+			      SREG_V90_DIGITAL_INDICATION,
+			      !test_case->digital_caller) == 0,
 		      "%s integration endpoints did not accept PCM roles",
 		      test_case->name);
 	}
@@ -3270,6 +3273,20 @@ int main(void)
 			.training_frame_limit = 1500,
 			.requires_v8 = true,
 			.requires_exact_g711 = true,
+			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+		},
+		{
+			.id = DP_V90,
+			.name = "V.90 28000 downstream with digital caller",
+			.selection_command = "AT+MS=90,0,28000,28000\r",
+			.caller_tx_rate = V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE,
+			.caller_rx_rate = 28800,
+			.answerer_tx_rate = 28800,
+			.answerer_rx_rate = V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE,
+			.training_frame_limit = 1500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.digital_caller = true,
 			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
 		},
 		{

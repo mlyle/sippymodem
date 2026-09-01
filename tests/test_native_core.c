@@ -848,6 +848,8 @@ static bool test_v8_handoff(void)
 		enum DP_ID caller_requested;
 		enum DP_ID answerer_requested;
 		enum DP_ID handoff;
+		bool caller_digital;
+		bool answerer_digital;
 		enum modem_pcm_role caller_role;
 		enum modem_pcm_role answerer_role;
 		bool caller_v34_fallback;
@@ -855,15 +857,23 @@ static bool test_v8_handoff(void)
 		bool answerer_lapm;
 	} selections[] = {
 		{ DP_V34, DP_V34, DP_V34,
-		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, false, true, true },
+		  false, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
+		  false, true, true },
 		{ DP_V90, DP_V90, DP_V90,
-		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, true },
+		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, true },
+		{ DP_V90, DP_V90, DP_V90,
+		  true, false, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
+		  false, true, true },
 		{ DP_V92, DP_V92, DP_V92,
-		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, true },
+		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, true },
 		{ DP_V90, DP_V34, DP_V34,
-		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, true, true, true },
+		  true, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
+		  true, true, true },
 		{ DP_V90, DP_V90, DP_V90,
-		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, false },
+		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, true, false },
 	};
 	struct modem_driver driver = {
 		.name = "V.8 handoff test",
@@ -898,11 +908,14 @@ static bool test_v8_handoff(void)
 		answerer = modem_create(&driver, "V.8 answerer");
 		CHECK(caller != NULL && answerer != NULL,
 		      "V.8 handoff endpoints did not initialize");
-		CHECK(((!v8_datapump_uses_pcm(caller_requested) &&
-			!v8_datapump_uses_pcm(answerer_requested)) ||
-		       (process_at_command(caller, "AT+V90D=1") == 0 &&
-			process_at_command(answerer, "AT+V90D=1") == 0)),
-		      "V.8 PCM endpoints did not accept head-end configuration");
+		CHECK(process_at_command(
+			      caller, selections[selection].caller_digital ?
+				      "AT+V90D=1" : "AT+V90D=0") == 0 &&
+			      process_at_command(
+				      answerer,
+				      selections[selection].answerer_digital ?
+					      "AT+V90D=1" : "AT+V90D=0") == 0,
+		      "V.8 endpoints did not accept PCM role configuration");
 		caller->cfg.ec = selections[selection].caller_lapm;
 		answerer->cfg.ec = selections[selection].answerer_lapm;
 		CHECK(process_at_command(
