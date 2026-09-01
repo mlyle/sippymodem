@@ -1252,10 +1252,28 @@ static bool check_phase2_controller(
 					       PCM_PHASE2_OK),
 			      "analog controller did not answer INFO1 mode %d", mode);
 		}
-		if (analog_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT)
+		if (analog_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) {
 			analog_sent = index;
-		if (digital_event.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED)
+			CHECK(mode == TEST_INFO1_V90 ?
+				      pcm_phase2_is_ready_for_phase3(&analog) &&
+					      analog.state.info1.control.phase ==
+						      PHASE2_INFO1_SILENCE :
+				      !pcm_phase2_is_ready_for_phase3(&analog),
+			      "PCM Phase 2 mode %d used the wrong local INFO1a "
+			      "handoff boundary",
+			      mode);
+		}
+		if (digital_event.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
+			CHECK(mode == TEST_INFO1_V90 ?
+				      pcm_phase2_is_ready_for_phase3(&digital) &&
+					      digital.state.info1.control.phase ==
+						      PHASE2_INFO1_SILENCE :
+				      !pcm_phase2_is_ready_for_phase3(&digital),
+			      "PCM Phase 2 mode %d used the wrong peer INFO1a "
+			      "handoff boundary",
+			      mode);
+		}
 		CHECK(analog_event.kind != PCM_PHASE2_EVENT_FAILED &&
 		      digital_event.kind != PCM_PHASE2_EVENT_FAILED,
 		      "owned PCM INFO1 mode %d reported a failure", mode);
@@ -1273,14 +1291,23 @@ static bool check_phase2_controller(
 				&digital, &peer_info1a) == PCM_PHASE2_OK &&
 				info1a_equal(
 					&peer_info1a, &conventional_info1a);
+		bool handoff_boundary_matches = mode == TEST_INFO1_V90 ?
+			digital.state.info1.control.phase ==
+				PHASE2_INFO1_SILENCE &&
+				digital.state.info1.control.silence_samples <
+					PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES :
+			analog.state.info1.control.phase ==
+					PHASE2_INFO1_COMPLETE &&
+				digital.state.info1.control.phase ==
+					PHASE2_INFO1_COMPLETE;
 
 		CHECK(digital_sent < analog_received &&
 		      analog_received < analog_sent &&
 		      analog_sent < digital_received &&
 		      pcm_phase2_is_ready_for_phase3(&analog) &&
 		      pcm_phase2_is_ready_for_phase3(&digital) &&
-		      peer_analog_matches,
-		      "PCM Phase 2 mode %d did not complete INFO1 in order", mode);
+		      peer_analog_matches && handoff_boundary_matches,
+		      "PCM Phase 2 mode %d did not hand off INFO1 in order", mode);
 	}
 	{
 		struct pcm_info1_selection analog_selection;

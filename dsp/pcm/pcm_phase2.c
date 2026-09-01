@@ -276,11 +276,27 @@ bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2)
 	return pcm_phase2_is_valid(phase2) && ready_for_info1(phase2);
 }
 
-static bool ready_for_phase3(const struct pcm_phase2 *phase2)
+static bool info1_timeline_is_complete(const struct pcm_phase2 *phase2)
 {
 	return phase2->failure == PCM_PHASE2_FAILURE_NONE &&
 	       phase2->stage == PCM_PHASE2_INFO1 &&
 	       phase2->state.info1.control.phase == PHASE2_INFO1_COMPLETE;
+}
+
+static bool ready_for_phase3(const struct pcm_phase2 *phase2)
+{
+	const struct pcm_phase2_info1_exchange *info1;
+
+	if (info1_timeline_is_complete(phase2))
+		return true;
+	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
+	    phase2->stage != PCM_PHASE2_INFO1 ||
+	    phase2->startup.protocol != PCM_PROTOCOL_V90)
+		return false;
+	info1 = &phase2->state.info1;
+	return info1->control.phase == PHASE2_INFO1_SILENCE &&
+	       info1->digital_record_stored && info1->analog_record_stored &&
+	       info1->analog.kind == PCM_INFO1A_CONVENTIONAL;
 }
 
 bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)
@@ -291,7 +307,8 @@ bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)
 bool pcm_phase2_is_ready_for_v34_fallback(
 	const struct pcm_phase2 *phase2)
 {
-	return pcm_phase2_is_valid(phase2) && ready_for_phase3(phase2) &&
+	return pcm_phase2_is_valid(phase2) &&
+	       info1_timeline_is_complete(phase2) &&
 	       phase2->startup.protocol == PCM_PROTOCOL_V90 &&
 	       phase2->local_role == V90_DIGITAL_MODEM &&
 	       phase2->state.info1.analog_record_stored &&

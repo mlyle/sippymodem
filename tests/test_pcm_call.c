@@ -750,7 +750,9 @@ static bool endpoint_octet(
 
 		if (!endpoint->call.round_trip_delay_stored ||
 		    !endpoint->call.b1_deadline_armed ||
-		    endpoint->call.b1_deadline_remaining_samples != expected)
+		    endpoint->call.b1_deadline_remaining_samples != expected ||
+		    observation.next != PCM_CALL_PHASE3 ||
+		    endpoint->call.stage != PCM_CALL_PHASE3)
 			return false;
 		endpoint->info1_b1_deadline_samples = expected;
 		endpoint->info1_b1_deadline_seen = true;
