@@ -6,7 +6,8 @@
     "arguments": [],
     "environment": {
       "SIP_CODEC": "PCMU",
-      "SIP_LOG_LEVEL": "2"
+      "SIP_LOG_LEVEL": "2",
+      "SIP_REMOTE_CLOCK": "1"
     },
     "at_commands": [
       "ATZ",
@@ -23,7 +24,8 @@
     "arguments": [],
     "environment": {
       "SIP_CODEC": "PCMU",
-      "SIP_LOG_LEVEL": "2"
+      "SIP_LOG_LEVEL": "2",
+      "SIP_REMOTE_CLOCK": "1"
     },
     "at_commands": [
       "ATZ",

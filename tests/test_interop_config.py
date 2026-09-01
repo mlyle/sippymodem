@@ -28,7 +28,10 @@ def write_config(directory: Path, *, enabled: bool = True) -> Path:
         "originator": {
             "executable": sys.executable,
             "arguments": [],
-            "environment": {"SIP_CODEC": "PCMU"},
+            "environment": {
+                "SIP_CODEC": "PCMU",
+                "SIP_REMOTE_CLOCK": "0",
+            },
             "at_commands": RAW_COMMANDS,
         },
         "answerer": {
@@ -129,6 +132,10 @@ class InteropConfigTests(unittest.TestCase):
             self.assertEqual(environment["SIP_PORT"], "42001")
             self.assertEqual(environment["SIP_RTP_PORT"], "42003")
             self.assertEqual(environment["SIP_AUTO_ANSWER"], "0")
+            self.assertEqual(environment["SIP_REMOTE_CLOCK"], "1")
+            self.assertEqual(
+                environment["SIP_DIRECT_RTP_REMOTE_CLOCK"], "1"
+            )
             self.assertEqual(
                 environment["SIP_TARGET"], "sip:interop@127.0.0.1:42002"
             )
@@ -145,6 +152,10 @@ class InteropConfigTests(unittest.TestCase):
             )
             self.assertEqual(answer_environment["SIP_PORT"], "42002")
             self.assertEqual(answer_environment["SIP_RTP_PORT"], "42004")
+            self.assertEqual(answer_environment["SIP_REMOTE_CLOCK"], "1")
+            self.assertEqual(
+                answer_environment["SIP_DIRECT_RTP_REMOTE_CLOCK"], "1"
+            )
             self.assertNotIn("SIP_TARGET", answer_environment)
 
 

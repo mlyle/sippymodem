@@ -404,12 +404,13 @@ def build_child_environment(
             "SIP_DIRECT_RTP": "1",
             "SIP_DIRECT_RTP_PORT": str(rtp_port),
             "SIP_DIRECT_RTP_RECORD": prefix,
+            # A local modem comparison must consume each arrived RTP frame.
+            # Wall-clock playout can turn host scheduling delays into
+            # synthetic silence inside an otherwise continuous waveform.
+            "SIP_REMOTE_CLOCK": "1",
+            "SIP_DIRECT_RTP_REMOTE_CLOCK": "1",
         }
     )
-    if "SIP_REMOTE_CLOCK" in environment:
-        environment["SIP_DIRECT_RTP_REMOTE_CLOCK"] = environment[
-            "SIP_REMOTE_CLOCK"
-        ]
     if role == "originator":
         environment["SIP_TARGET"] = (
             f"sip:interop@{LOOPBACK_ADDRESS}:{ports.answerer_sip}"
