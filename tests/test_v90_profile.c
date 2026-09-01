@@ -2,6 +2,7 @@
 
 #include <v90_profile.h>
 #include <v90_info0.h>
+#include <v90_jd.h>
 
 #include "test.h"
 
@@ -111,6 +112,10 @@ static bool test_digital_info0_profile(void)
 
 static bool test_generated_profiles(void)
 {
+	static const uint8_t maximum_rate_jd[V90_JD_FRAME_BYTES] = {
+		0xff, 0xff, 0x80, 0x00, 0x00, 0x80, 0x46, 0x84, 0x60,
+	};
+
 	for (unsigned int law_index = G711_LAW_PCMU;
 	     law_index <= G711_LAW_PCMA; ++law_index) {
 		enum g711_law law = (enum g711_law)law_index;
@@ -183,7 +188,7 @@ static bool test_generated_profiles(void)
 					      configuration.analog_phase4
 						      .data_parameters.sign_redundancy == 1 &&
 					      configuration.analog_phase4
-						      .data_parameters.spectral_lookahead == 2 &&
+						      .data_parameters.spectral_lookahead == 1 &&
 					      configuration.analog_phase4
 						      .data_parameters
 						      .selected_rate_index == rate_index &&
@@ -211,6 +216,15 @@ static bool test_generated_profiles(void)
 					      "analogue profile did not generate rate %u",
 					      bit_rate);
 				} else {
+					uint8_t jd[V90_JD_FRAME_BYTES];
+					bool jd_matches =
+						rate_index !=
+							PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER ||
+						(v90_jd_encode(
+							 &configuration.phase3.digital.jd,
+							 jd, sizeof(jd)) == V90_JD_OK &&
+						 memcmp(jd, maximum_rate_jd, sizeof(jd)) == 0);
+
 					CHECK(configuration.local_info0.digital
 						      .nominal_transmit_power ==
 						      DIGITAL_PHASE2_NOMINAL_POWER_CODE &&
@@ -225,9 +239,12 @@ static bool test_generated_profiles(void)
 						      .training_constellation ==
 						      V34_CONSTELLATION_4_POINT &&
 					      configuration.phase3.digital.jd
+						      .maximum_spectral_shaping_lookahead == 1 &&
+					      configuration.phase3.digital.jd
 						      .data_rate_capability_mask ==
 						      (UINT32_C(1) <<
 						       (rate_index - 1u)) &&
+					      jd_matches &&
 					      configuration.digital_phase4.initial_mp
 						      .parameters.type0
 						      .upstream_nonlinear_encoding &&

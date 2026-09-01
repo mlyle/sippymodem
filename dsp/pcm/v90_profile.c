@@ -17,6 +17,10 @@ enum {
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
 	V90_SIGN_REDUNDANCY = 1,
+	/* Depths zero and one are mandatory at the digital modem; deeper
+	 * spectral shaping is optional.  Use the deepest mandatory profile in
+	 * both directions so Jd and the subsequent CP mapping agree. */
+	V90_SPECTRAL_LOOKAHEAD = 1,
 	V90_CONSTELLATION_FIRST_UCODE = 24,
 	V90_CONSTELLATION_LAST_UCODE = 108,
 	V90_INITIAL_CONSTELLATION_SIZE = 8,
@@ -203,7 +207,7 @@ static struct v90_jd_parameters jd_parameters(uint32_t rate_mask)
 		 * acquisition margin and does not constrain the selected data rate. */
 		.training_constellation = V34_CONSTELLATION_4_POINT,
 		.rate_renegotiation_constellation = V34_CONSTELLATION_4_POINT,
-		.maximum_spectral_shaping_lookahead = 2,
+		.maximum_spectral_shaping_lookahead = V90_SPECTRAL_LOOKAHEAD,
 	};
 }
 
@@ -271,7 +275,8 @@ static struct v90_cp_parameters cp_parameters(
 		 * spectral frame to carry into the data mapping. */
 		.sign_redundancy = kind == V90_CP_TRAINING ?
 			0 : V90_SIGN_REDUNDANCY,
-		.spectral_lookahead = kind == V90_CP_TRAINING ? 0 : 2,
+		.spectral_lookahead = kind == V90_CP_TRAINING ?
+			0 : V90_SPECTRAL_LOOKAHEAD,
 		.constellation_count = 1,
 	};
 
