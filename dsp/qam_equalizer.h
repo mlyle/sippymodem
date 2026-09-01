@@ -29,10 +29,19 @@ struct qam_equalizer {
 	struct qam_point history[
 		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point last_output;
+	/* Carrier tracking rotates decisions without folding a changing carrier
+	 * phase into the learned channel impulse response. */
+	struct qam_point last_unrotated_output;
+	double carrier_phase;
+	double carrier_frequency;
+	double carrier_proportional_gain;
+	double carrier_integral_gain;
+	double last_carrier_phase;
 	unsigned int tap_count;
 	unsigned int decision_delay;
 	unsigned int fill;
 	bool can_adapt;
+	bool carrier_tracking;
 };
 
 /* An explicitly owned gradient snapshot for a decision that becomes known
@@ -42,9 +51,12 @@ struct qam_equalizer_observation {
 	struct qam_point history[
 		QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point output;
+	struct qam_point unrotated_output;
+	double carrier_phase;
 	unsigned int tap_count;
 	unsigned int decision_delay;
 	bool pending;
+	bool carrier_tracking;
 };
 
 enum qam_equalizer_result qam_equalizer_init(
@@ -75,6 +87,14 @@ enum qam_equalizer_result qam_equalizer_init_geometry(
  * applied after a successful extension. */
 enum qam_equalizer_result qam_equalizer_extend_span(
 	struct qam_equalizer *equalizer, unsigned int tap_count);
+
+/* Add a decision-directed second-order carrier loop. The proportional and
+ * integral gains are fractions of the measured phase error applied per
+ * equalized symbol. Enabling is allowed only with no unconsumed direct
+ * adaptation output; existing channel taps and delay history are retained. */
+enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
+	struct qam_equalizer *equalizer, double proportional_gain,
+	double integral_gain);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 

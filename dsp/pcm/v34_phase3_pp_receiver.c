@@ -4,6 +4,13 @@
 
 #include <stddef.h>
 
+/* The conventional V.34 upstream carrier loop uses a fast phase correction
+ * with a much slower frequency accumulator. Keeping it in the equalizer
+ * state lets V.90 carry the acquired oscillator offset through Ja, S-bar,
+ * CP, E, B1, and data without restarting it at a phase boundary. */
+static const double V34_CARRIER_PROPORTIONAL_GAIN = 1.0 / 4.0;
+static const double V34_CARRIER_INTEGRAL_GAIN = 1.0 / 8192.0;
+
 static bool sequence_counts_are_valid(
 	const struct v34_phase3_pp_receiver *receiver)
 {
@@ -77,7 +84,11 @@ static bool seed_equalizer(
 	if (qam_equalizer_init_geometry(
 		    &receiver->equalizer, received, target,
 		    V34_EQUALIZER_TAP_COUNT,
-		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK)
+		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK ||
+	    qam_equalizer_enable_carrier_tracking(
+		    &receiver->equalizer,
+		    V34_CARRIER_PROPORTIONAL_GAIN,
+		    V34_CARRIER_INTEGRAL_GAIN) != QAM_EQUALIZER_OK)
 		return false;
 	receiver->seeded = true;
 	return true;

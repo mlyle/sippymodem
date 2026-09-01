@@ -15,7 +15,11 @@ enum {
 	LONG_ECHO_DELAY = 8,
 	LONG_TRAINING_SYMBOLS = 4096,
 	LONG_PAYLOAD_SYMBOLS = 1024,
+	CARRIER_TRACKING_SYMBOLS = 8192,
+	CARRIER_TRACKING_SETTLE_SYMBOLS = 768,
 };
+
+static const double CARRIER_DRIFT_RADIANS_PER_SYMBOL = 0.01;
 
 static struct qam_point multiply(
 	struct qam_point left,
@@ -26,6 +30,20 @@ static struct qam_point multiply(
 			    left.quadrature * right.quadrature,
 		.quadrature = left.in_phase * right.quadrature +
 			      left.quadrature * right.in_phase,
+	};
+}
+
+static struct qam_point rotate(
+	struct qam_point point, double phase)
+{
+	double cosine = cos(phase);
+	double sine = sin(phase);
+
+	return (struct qam_point){
+		.in_phase = point.in_phase * cosine -
+			    point.quadrature * sine,
+		.quadrature = point.in_phase * sine +
+			      point.quadrature * cosine,
 	};
 }
 
@@ -67,6 +85,15 @@ static bool same_decision(
 {
 	return nearest_level(equalized->in_phase) == target->in_phase &&
 	       nearest_level(equalized->quadrature) == target->quadrature;
+}
+
+static bool same_quadrant(
+	const struct qam_point *equalized,
+	const struct qam_point *target)
+{
+	return (equalized->in_phase < 0.0) == (target->in_phase < 0.0) &&
+	       (equalized->quadrature < 0.0) ==
+		       (target->quadrature < 0.0);
 }
 
 static bool test_delay_and_flat_channel(void)
@@ -278,6 +305,85 @@ static bool test_generated_isi_channel(void)
 	CHECK(baseline_errors > PAYLOAD_SYMBOLS / 5 && trained_errors == 0,
 	      "adaptive equalizer errors were %u versus %u without adaptation",
 	      trained_errors, baseline_errors);
+	return true;
+}
+
+static bool test_carrier_frequency_tracking(void)
+{
+	static const double unit_coordinate =
+		0.70710678118654752440084436210485;
+	const struct qam_point reference = {
+		unit_coordinate,
+		unit_coordinate,
+	};
+	struct qam_point transmitted[QAM_EQUALIZER_MAX_TAP_COUNT] = { 0 };
+	struct qam_equalizer baseline;
+	struct qam_equalizer tracked;
+	uint32_t random = UINT32_C(0x504c4c21);
+	unsigned int baseline_errors = 0;
+	unsigned int tracked_errors = 0;
+
+	CHECK(qam_equalizer_init(&baseline, &reference, &reference) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_init(&tracked, &reference, &reference) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_enable_carrier_tracking(
+		      &tracked, 1.0 / 4.0, 1.0 / 8192.0) ==
+		      QAM_EQUALIZER_OK,
+	      "carrier-tracking equalizer fixture did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < CARRIER_TRACKING_SYMBOLS; ++symbol) {
+		struct qam_equalizer_observation baseline_observation = { 0 };
+		struct qam_equalizer_observation tracked_observation = { 0 };
+		struct qam_point received;
+		struct qam_point target;
+		bool baseline_ready;
+		bool tracked_ready;
+
+		for (size_t index = ARRAY_LENGTH(transmitted) - 1u;
+		     index != 0; --index)
+			transmitted[index] = transmitted[index - 1u];
+		transmitted[0] = (struct qam_point){
+			.in_phase = (fixture_random(&random) & 1u) != 0u ?
+				-unit_coordinate : unit_coordinate,
+			.quadrature = (fixture_random(&random) & 1u) != 0u ?
+				-unit_coordinate : unit_coordinate,
+		};
+		received = rotate(
+			transmitted[0],
+			CARRIER_DRIFT_RADIANS_PER_SYMBOL * symbol);
+		CHECK(qam_equalizer_observe(
+			      &baseline, &received, &baseline_observation,
+			      &baseline_ready) == QAM_EQUALIZER_OK &&
+		      qam_equalizer_observe(
+			      &tracked, &received, &tracked_observation,
+			      &tracked_ready) == QAM_EQUALIZER_OK &&
+		      baseline_ready == tracked_ready,
+		      "carrier tracker rejected symbol %u", symbol);
+		if (!tracked_ready)
+			continue;
+		target = transmitted[QAM_EQUALIZER_DELAY];
+		if (symbol >= CARRIER_TRACKING_SETTLE_SYMBOLS) {
+			baseline_errors += !same_quadrant(
+				&baseline_observation.output, &target);
+			tracked_errors += !same_quadrant(
+				&tracked_observation.output, &target);
+		}
+		CHECK(qam_equalizer_adapt_observation(
+			      &baseline, &baseline_observation, &target, 0.0) ==
+			      QAM_EQUALIZER_OK &&
+		      qam_equalizer_adapt_observation(
+			      &tracked, &tracked_observation, &target, 0.0) ==
+			      QAM_EQUALIZER_OK,
+		      "carrier tracker did not consume symbol %u", symbol);
+	}
+	CHECK(baseline_errors > CARRIER_TRACKING_SYMBOLS / 2u &&
+	      tracked_errors == 0 && tracked.carrier_tracking &&
+	      fabs(tracked.carrier_frequency +
+		   CARRIER_DRIFT_RADIANS_PER_SYMBOL) < 0.001,
+	      "carrier drift produced %u tracked errors versus %u without "
+	      "tracking at frequency %.6g",
+	      tracked_errors, baseline_errors, tracked.carrier_frequency);
 	return true;
 }
 
@@ -559,6 +665,8 @@ static bool test_validation(void)
 	const struct qam_point zero = { 0 };
 	const struct qam_point invalid = { NAN, 0.0 };
 	struct qam_equalizer equalizer = { 0 };
+	struct qam_equalizer carrier;
+	struct qam_equalizer pending;
 	struct qam_equalizer saved;
 	struct qam_point output = { 4.0, 5.0 };
 	struct qam_point saved_output = output;
@@ -603,6 +711,43 @@ static bool test_validation(void)
 	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
 	      ready == saved_ready,
 	      "invalid equalizer operation was not transactional");
+	CHECK(qam_equalizer_enable_carrier_tracking(NULL, 0.25, 0.001) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_enable_carrier_tracking(
+		      &equalizer, NAN, 0.001) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_enable_carrier_tracking(
+		      &equalizer, 0.25, 0.0) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_enable_carrier_tracking(
+		      &equalizer, 0.25, 0.5) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "invalid carrier-loop gains changed the equalizer");
+	carrier = equalizer;
+	CHECK(qam_equalizer_enable_carrier_tracking(
+		      &carrier, 0.25, 0.001) == QAM_EQUALIZER_OK &&
+	      qam_equalizer_is_valid(&carrier),
+	      "valid carrier-loop gains were rejected");
+	saved = carrier;
+	CHECK(qam_equalizer_enable_carrier_tracking(
+		      &carrier, 0.25, 0.001) ==
+		      QAM_EQUALIZER_INVALID_STATE &&
+	      memcmp(&carrier, &saved, sizeof(carrier)) == 0,
+	      "re-enabling carrier tracking was not transactional");
+	pending = equalizer;
+	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
+		CHECK(qam_equalizer_push(
+			      &pending, &reference, &output, &ready) ==
+			      QAM_EQUALIZER_OK,
+		      "pending carrier-loop fixture rejected input %u", index);
+	}
+	saved = pending;
+	CHECK(ready && qam_equalizer_enable_carrier_tracking(
+			       &pending, 0.25, 0.001) ==
+			       QAM_EQUALIZER_INVALID_STATE &&
+	      memcmp(&pending, &saved, sizeof(pending)) == 0,
+	      "carrier tracking accepted an unconsumed direct decision");
 	equalizer.coefficients[0].in_phase = INFINITY;
 	CHECK(!qam_equalizer_is_valid(&equalizer) &&
 	      !qam_equalizer_is_handoff_ready(&equalizer) &&
@@ -633,6 +778,7 @@ int main(void)
 		{ "decision delay and flat channel", test_delay_and_flat_channel },
 		{ "instance-selected decision delay", test_instance_selected_delay },
 		{ "generated ISI channel", test_generated_isi_channel },
+		{ "carrier-frequency tracking", test_carrier_frequency_tracking },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
 		{ "span extension", test_span_extension },
