@@ -21,12 +21,24 @@ enum v90_phase3_return_line_rx_result {
 	V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE,
 };
 
+enum {
+	/* After the shared raw S prefix re-seeds the 31-tap equalizer, allow its
+	 * decision delay plus a complete tracked-onset window and bounded margin.
+	 * Failure to qualify inside this window rearms raw acquisition. */
+	V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS =
+		V34_EQUALIZER_DECISION_DELAY +
+		V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS + 8,
+};
+
 /* Continue the digital modem's locked 8 kHz line receiver after Ja while the
  * analogue modem finishes Ja, goes silent, and returns S followed by S-bar. */
 struct v90_phase3_return_line_rx {
 	struct qam_demodulator demodulator;
 	struct v90_phase3_return_rx points;
+	struct v34_phase3_s_prefix s_prefix;
 	struct v34_phase3_profile transmitting_profile;
+	uint8_t reacquisition_symbols;
+	bool reacquiring_equalizer;
 	bool failed;
 };
 

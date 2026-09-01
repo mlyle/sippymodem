@@ -7,6 +7,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -521,6 +522,60 @@ static bool test_second_return_bounds(void)
 	return true;
 }
 
+static bool test_reacquisition_contract(void)
+{
+	const unsigned int quarter_turns = 2;
+	struct v34_equalizer_handoff equalizer;
+	struct v90_phase3_return_rx rx;
+	struct v90_phase3_return_rx saved;
+	struct qam_point point = channel_point(
+		v34_rotated_point_zero(0), quarter_turns);
+	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point unscalable = { DBL_MAX, DBL_MAX };
+
+	CHECK(seed_tracked_handoff(quarter_turns, &equalizer) &&
+	      v90_phase3_return_rx_init(&rx, &equalizer, 0.05) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "reacquisition receiver did not initialize");
+	saved = rx;
+	CHECK(v90_phase3_return_rx_reacquire_s(NULL, &point) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_rx_reacquire_s(&rx, NULL) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_rx_reacquire_s(&rx, &invalid) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_rx_reacquire_s(&rx, &point) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "invalid or first-return reacquisition changed state");
+	CHECK(v90_phase3_return_rx_allow_implicit_s_end(&rx) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      feed_implicit_return(&rx, quarter_turns, true) &&
+	      v90_phase3_return_rx_restart(&rx) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      rx.second_return && rx.equalizer.carrier_tracking,
+	      "reacquisition receiver did not reach the second return");
+	saved = rx;
+	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &unscalable) ==
+		      V90_PHASE3_RETURN_RX_NUMERIC_FAILURE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "failed equalizer reacquisition was not transactional");
+	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &point) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_rx_is_valid(&rx) &&
+	      rx.equalizer_reacquiring && rx.equalizer.fill == 0 &&
+	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.confirmed_s_symbols == 0 &&
+	      rx.buffered_onset_decisions == 0,
+	      "valid S point did not begin bounded equalizer reacquisition");
+	saved = rx;
+	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &point) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "duplicate equalizer reacquisition reset its fill window");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_equalizer_handoff equalizer;
@@ -580,6 +635,7 @@ int main(void)
 			{ "tracked onset confirmation", test_tracked_onset_confirmation },
 			{ "implicit first-return end", test_implicit_first_return_end },
 			{ "second-return bounds", test_second_return_bounds },
+			{ "reacquisition contract", test_reacquisition_contract },
 			{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -36,7 +36,9 @@ bool v34_phase3_s_prefix_is_valid(
 		     V34_PHASE3_S_PREFIX_RECURRENCE_HITS) ||
 	    prefix->alternating_turns > V34_PHASE3_S_PREFIX_TURNS ||
 	    prefix->complete !=
-		    (prefix->alternating_turns == V34_PHASE3_S_PREFIX_TURNS))
+		    (prefix->alternating_turns == V34_PHASE3_S_PREFIX_TURNS &&
+		     (!prefix->require_recurrence ||
+		      prefix->recurrence_qualified)))
 		return false;
 	for (uint8_t index = 0; index < prefix->recurrence_points; ++index)
 		if (!point_is_finite(&prefix->recurrence[index]))
@@ -69,6 +71,17 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init(
 	if (prefix == NULL)
 		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
 	*prefix = (struct v34_phase3_s_prefix){ 0 };
+	return V34_PHASE3_S_PREFIX_OK;
+}
+
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init_recurrent(
+	struct v34_phase3_s_prefix *prefix)
+{
+	if (prefix == NULL)
+		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
+	*prefix = (struct v34_phase3_s_prefix){
+		.require_recurrence = true,
+	};
 	return V34_PHASE3_S_PREFIX_OK;
 }
 
@@ -143,15 +156,22 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 	if (prefix->complete)
 		return V34_PHASE3_S_PREFIX_COMPLETE;
 	if (!point_has_power(point, minimum_point_power)) {
-		*prefix = (struct v34_phase3_s_prefix){ 0 };
+		bool require_recurrence = prefix->require_recurrence;
+
+		*prefix = (struct v34_phase3_s_prefix){
+			.require_recurrence = require_recurrence,
+		};
 		return V34_PHASE3_S_PREFIX_OK;
 	}
 	next = *prefix;
 	if (!next.previous_valid ||
 	    !point_has_power(&next.previous, minimum_point_power)) {
+		bool require_recurrence = next.require_recurrence;
+
 		next = (struct v34_phase3_s_prefix){
 			.previous = *point,
 			.previous_valid = true,
+			.require_recurrence = require_recurrence,
 		};
 		remember_recurrence(&next, point);
 		*prefix = next;
@@ -161,8 +181,11 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
 	if (turn == 1u || turn == 3u) {
 		if (next.alternating_turns == 0u ||
-		    turn != next.previous_turn)
-			next.alternating_turns++;
+		    turn != next.previous_turn) {
+			if (next.alternating_turns <
+			    V34_PHASE3_S_PREFIX_TURNS)
+				next.alternating_turns++;
+		}
 		else
 			next.alternating_turns = 1u;
 		next.previous_turn = turn;
@@ -170,16 +193,20 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 		next.previous_turn = 0u;
 		next.alternating_turns = 0u;
 	}
-	if (!next.recurrence_qualified &&
-	    next.recurrence_points == V34_PHASE3_S_PREFIX_RECURRENCE_LAG) {
+	if (next.recurrence_points == V34_PHASE3_S_PREFIX_RECURRENCE_LAG &&
+	    (!next.recurrence_qualified || next.require_recurrence)) {
 		if (points_recur(
 			    &next.previous, &next.recurrence[0], point,
 			    minimum_point_power)) {
-			next.recurrence_hits++;
+			if (next.recurrence_hits <
+			    V34_PHASE3_S_PREFIX_RECURRENCE_HITS)
+				next.recurrence_hits++;
 		} else {
 			next.recurrence_hits = 0u;
+			next.recurrence_qualified = false;
 		}
-		if (next.recurrence_hits ==
+		if (!next.recurrence_qualified &&
+		    next.recurrence_hits ==
 		    V34_PHASE3_S_PREFIX_RECURRENCE_HITS) {
 			next.recurrence_qualified = true;
 			recurrence_just_qualified = true;
@@ -188,7 +215,8 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 	remember_recurrence(&next, point);
 	next.previous = *point;
 	next.complete =
-		next.alternating_turns == V34_PHASE3_S_PREFIX_TURNS;
+		next.alternating_turns == V34_PHASE3_S_PREFIX_TURNS &&
+		(!next.require_recurrence || next.recurrence_qualified);
 	if (!v34_phase3_s_prefix_is_valid(&next))
 		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
 	*prefix = next;

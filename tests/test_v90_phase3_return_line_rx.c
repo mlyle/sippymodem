@@ -269,11 +269,25 @@ static bool run_line(enum g711_law law)
 		      "law %d could not preserve the inter-return boundary", law);
 	}
 	CHECK(v34_training_line_needs_point(&line) &&
+	      qam_equalizer_is_handoff_ready(&return_rx.points.equalizer),
+	      "law %d did not reach the second-return boundary", law);
+	{
+		struct qam_equalizer *equalizer =
+			&return_rx.points.equalizer;
+
+		for (size_t tap = 0; tap < equalizer->tap_count; ++tap)
+			equalizer->coefficients[tap] = (struct qam_point){ 0 };
+		equalizer->coefficients[equalizer->decision_delay] =
+			(struct qam_point){ 0.5, 0.0 };
+		equalizer->coefficients[equalizer->decision_delay + 1u] =
+			(struct qam_point){ 0.5, 0.0 };
+	}
+	CHECK(v90_phase3_return_line_rx_is_valid(&return_rx) &&
 	      v90_phase3_return_line_tx_init(&return_tx, &line) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK &&
 	      receive_return(
 		      law, &return_tx, &return_rx, &line, &return_handoff),
-	      "law %d second return failed", law);
+	      "law %d did not reacquire the second return", law);
 	{
 		struct qam_demodulator demodulator = return_rx.demodulator;
 		struct v34_phase3_s_receiver marker = return_rx.points.marker;

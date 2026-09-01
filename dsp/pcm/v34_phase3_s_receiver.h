@@ -47,12 +47,18 @@ struct v34_phase3_s_prefix {
 	uint8_t recurrence_hits;
 	bool previous_valid;
 	bool recurrence_qualified;
+	bool require_recurrence;
 	bool complete;
 };
 
 bool v34_phase3_s_prefix_is_valid(
 	const struct v34_phase3_s_prefix *prefix);
 enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init(
+	struct v34_phase3_s_prefix *prefix);
+/* Require both the ordinary alternating turns and continuing lag-two
+ * recurrence evidence. This stronger gate is for a receiver that searches
+ * through structured data before using S to rebuild its equalizer. */
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init_recurrent(
 	struct v34_phase3_s_prefix *prefix);
 enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 	struct v34_phase3_s_prefix *prefix,

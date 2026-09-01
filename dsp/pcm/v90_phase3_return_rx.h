@@ -76,6 +76,7 @@ struct v90_phase3_return_rx {
 	enum v90_phase3_return_rx_stage stage;
 	bool allow_implicit_s_end;
 	bool second_return;
+	bool equalizer_reacquiring;
 };
 
 /* The equalizer has already accepted its decision-delay points following the
@@ -98,6 +99,13 @@ v90_phase3_return_rx_allow_implicit_s_end(
 	struct v90_phase3_return_rx *rx);
 enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 	struct v90_phase3_return_rx *rx);
+/* A qualified raw S prefix may expose a changed symbol boundary that the
+ * equalizer inherited from the first return cannot slice. Re-seed the same
+ * bounded V.34 equalizer geometry on that known S point, retaining its
+ * carrier-loop gains and requiring the ordinary complete marker afterward. */
+enum v90_phase3_return_rx_result v90_phase3_return_rx_reacquire_s(
+	struct v90_phase3_return_rx *rx,
+	const struct qam_point *received);
 bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx);
 bool v90_phase3_return_rx_is_complete(

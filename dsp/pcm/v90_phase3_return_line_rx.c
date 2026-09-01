@@ -12,7 +12,16 @@ bool v90_phase3_return_line_rx_is_valid(
 	return rx != NULL &&
 	       v90_phase3_demodulator_is_locked(
 		       &rx->demodulator, &rx->transmitting_profile) &&
-	       v90_phase3_return_rx_is_valid(&rx->points);
+	       v90_phase3_return_rx_is_valid(&rx->points) &&
+	       v34_phase3_s_prefix_is_valid(&rx->s_prefix) &&
+	       rx->reacquisition_symbols <=
+		       V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS &&
+	       (rx->reacquiring_equalizer ?
+			(rx->points.second_return && rx->s_prefix.complete &&
+			 rx->points.stage ==
+				 V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) :
+			(rx->reacquisition_symbols == 0 &&
+			 !rx->points.equalizer_reacquiring));
 }
 
 bool v90_phase3_return_line_rx_has_failed(
@@ -36,6 +45,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	if (v90_phase3_return_rx_init(
 		    &initialized.points, &handoff->phase3.equalizer,
 		    adaptation) != V90_PHASE3_RETURN_RX_OK ||
+	    v34_phase3_s_prefix_init_recurrent(&initialized.s_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK ||
 	    !v90_phase3_return_line_rx_is_valid(&initialized))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	*rx = initialized;
@@ -73,6 +84,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 	if (result == V90_PHASE3_RETURN_RX_INVALID_STATE)
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	if (result != V90_PHASE3_RETURN_RX_OK ||
+	    v34_phase3_s_prefix_init_recurrent(&restarted.s_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK ||
 	    !v90_phase3_return_line_rx_is_valid(&restarted))
 		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	*rx = restarted;
@@ -105,6 +118,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 {
 	struct v90_phase3_return_line_rx next;
 	struct qam_point point;
+	enum v90_phase3_return_rx_stage previous_stage;
+	bool point_consumed = false;
 	bool ready;
 	enum v90_phase3_return_line_rx_result result;
 
@@ -122,9 +137,63 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		rx->failed = true;
 		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	}
-	result = ready ? point_result(v90_phase3_return_rx_point(
-				 &next.points, &point)) :
-			 V90_PHASE3_RETURN_LINE_RX_OK;
+	result = V90_PHASE3_RETURN_LINE_RX_OK;
+	if (ready && next.points.second_return &&
+	    next.points.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	    !next.reacquiring_equalizer) {
+		struct qam_measurement measurement =
+			qam_demodulator_measure(&next.demodulator);
+		enum v34_phase3_s_prefix_result prefix_result =
+			v34_phase3_s_prefix_receive(
+				&next.s_prefix, &point,
+				measurement.symbol_power / 64.0);
+
+		if (prefix_result != V34_PHASE3_S_PREFIX_OK &&
+		    prefix_result != V34_PHASE3_S_PREFIX_DETECTED &&
+		    prefix_result != V34_PHASE3_S_PREFIX_REBASE_TIMING) {
+			result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+		} else if (prefix_result == V34_PHASE3_S_PREFIX_DETECTED) {
+			if (v90_phase3_return_rx_reacquire_s(
+				    &next.points, &point) !=
+			    V90_PHASE3_RETURN_RX_OK) {
+				result =
+					V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+			} else {
+				next.reacquiring_equalizer = true;
+				next.reacquisition_symbols = 0;
+				point_consumed = true;
+			}
+		}
+	}
+	previous_stage = next.points.stage;
+	if (ready && result == V90_PHASE3_RETURN_LINE_RX_OK &&
+	    !point_consumed)
+		result = point_result(
+			v90_phase3_return_rx_point(&next.points, &point));
+	if (ready && next.reacquiring_equalizer) {
+		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED) {
+			next.reacquiring_equalizer = false;
+			next.reacquisition_symbols = 0;
+		} else if (next.reacquisition_symbols <
+			   V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS) {
+			next.reacquisition_symbols++;
+		} else if (v34_phase3_s_prefix_init_recurrent(
+				   &next.s_prefix) !=
+				   V34_PHASE3_S_PREFIX_OK) {
+			result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+		} else {
+			next.reacquiring_equalizer = false;
+			next.reacquisition_symbols = 0;
+		}
+	}
+	if (ready && previous_stage == V90_PHASE3_RETURN_RX_STAGE_S &&
+	    next.points.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) {
+		if (v34_phase3_s_prefix_init_recurrent(&next.s_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK)
+			result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
+		next.reacquiring_equalizer = false;
+		next.reacquisition_symbols = 0;
+	}
 	if (result == V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE) {
 		next.failed = true;
 		if (v90_phase3_return_line_rx_is_valid(&next))

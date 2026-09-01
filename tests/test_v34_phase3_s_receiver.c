@@ -102,6 +102,78 @@ static bool test_prefix_qualification(void)
 	      memcmp(&prefix, &saved, sizeof(prefix)) == 0,
 	      "completed S prefix detector consumed another point");
 
+	CHECK(v34_phase3_s_prefix_init_recurrent(&prefix) ==
+		      V34_PHASE3_S_PREFIX_OK &&
+	      prefix.require_recurrence &&
+	      v34_phase3_s_prefix_is_valid(&prefix),
+	      "recurrent S prefix detector did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+			      V34_PHASE3_S_PREFIX_RECURRENCE_HITS;
+	     ++symbol) {
+		point = v34_rotated_point_zero((int)(symbol & 1u));
+		CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+			      (symbol + 1u ==
+				       V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+				       V34_PHASE3_S_PREFIX_RECURRENCE_HITS ?
+				       V34_PHASE3_S_PREFIX_DETECTED :
+				       V34_PHASE3_S_PREFIX_OK),
+		      "recurrent S prefix stopped at symbol %u", symbol);
+	}
+	CHECK(prefix.complete && prefix.recurrence_qualified &&
+	      prefix.alternating_turns == V34_PHASE3_S_PREFIX_TURNS,
+	      "recurrent S prefix did not require both forms of evidence");
+	CHECK(v34_phase3_s_prefix_init_recurrent(&prefix) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "drifting prefix fixture did not initialize");
+	for (unsigned int symbol = 0; symbol < 32u; ++symbol) {
+		double degrees = (double)(symbol / 2u) * 20.0 +
+				 (symbol & 1u ? 100.0 : 0.0);
+		double radians = degrees * 3.14159265358979323846 / 180.0;
+		struct qam_point drifting = { cos(radians), sin(radians) };
+
+		CHECK(v34_phase3_s_prefix_receive(
+			      &prefix, &drifting, 0.5) ==
+			      V34_PHASE3_S_PREFIX_OK,
+		      "non-recurrent alternating prefix qualified at %u",
+		      symbol);
+	}
+	CHECK(!prefix.complete && !prefix.recurrence_qualified &&
+	      prefix.alternating_turns == V34_PHASE3_S_PREFIX_TURNS,
+	      "alternating DIL-like fragment bypassed recurrence");
+	CHECK(v34_phase3_s_prefix_init_recurrent(&prefix) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "stale recurrence fixture did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+			      V34_PHASE3_S_PREFIX_RECURRENCE_HITS;
+	     ++symbol) {
+		static const struct qam_point recurring[] = {
+			{ 3.0, 1.0 },
+			{ 2.0, 2.0 },
+		};
+
+		CHECK(v34_phase3_s_prefix_receive(
+			      &prefix, &recurring[symbol & 1u], 0.5) ==
+			      (symbol + 1u ==
+				       V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+					       V34_PHASE3_S_PREFIX_RECURRENCE_HITS ?
+				       V34_PHASE3_S_PREFIX_REBASE_TIMING :
+				       V34_PHASE3_S_PREFIX_OK),
+		      "stale recurrence fixture stopped at %u", symbol);
+	}
+	CHECK(prefix.recurrence_qualified && !prefix.complete,
+	      "non-alternating recurrence did not qualify independently");
+	for (unsigned int symbol = 0;
+	     symbol <= V34_PHASE3_S_PREFIX_TURNS; ++symbol) {
+		point = v34_rotated_point_zero((int)(symbol & 1u));
+		CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+			      V34_PHASE3_S_PREFIX_OK,
+		      "stale recurrence qualified later turns at %u", symbol);
+	}
+	CHECK(!prefix.complete && !prefix.recurrence_qualified,
+	      "recurrent gate retained unrelated earlier evidence");
+
 	CHECK(v34_phase3_s_prefix_init(&prefix) == V34_PHASE3_S_PREFIX_OK,
 	      "S prefix reset fixture did not initialize");
 	point = v34_rotated_point_zero(0);
@@ -127,6 +199,8 @@ static bool test_prefix_qualification(void)
 	      v34_phase3_s_prefix_receive(NULL, &point, 0.5) ==
 		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT &&
 	      v34_phase3_s_prefix_init(NULL) ==
+		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT &&
+	      v34_phase3_s_prefix_init_recurrent(NULL) ==
 		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT,
 	      "invalid S prefix call changed detector state");
 	corrupt = prefix;

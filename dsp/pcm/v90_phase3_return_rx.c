@@ -52,12 +52,23 @@ bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
 	if (rx == NULL || !qam_adaptation_is_valid(rx->adaptation) ||
-	    !qam_equalizer_is_handoff_ready(&rx->equalizer) ||
+	    (rx->equalizer_reacquiring ?
+		     !qam_equalizer_is_valid(&rx->equalizer) :
+		     !qam_equalizer_is_handoff_ready(&rx->equalizer)) ||
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols !=
 		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS ||
 	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx))
 		return false;
+	if (rx->equalizer_reacquiring)
+		return rx->second_return && rx->equalizer.carrier_tracking &&
+		       rx->stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+		       rx->confirmed_s_symbols == 0 &&
+		       rx->buffered_onset_decisions == 0 &&
+		       rx->onset_offset == 0 && rx->onset_errors == 0 &&
+		       rx->exit_symbols == 0 && rx->exit_errors == 0 &&
+		       rx->marker.buffered_decisions == 0 &&
+		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	switch (rx->stage) {
 	case V90_PHASE3_RETURN_RX_STAGE_SEARCH_S:
 		if (rx->confirmed_s_symbols == 0)
@@ -277,6 +288,51 @@ static bool reset_onset_candidate(
 	return true;
 }
 
+enum v90_phase3_return_rx_result v90_phase3_return_rx_reacquire_s(
+	struct v90_phase3_return_rx *rx,
+	const struct qam_point *received)
+{
+	struct v90_phase3_return_rx next;
+	struct qam_point target = v34_rotated_point_zero(0);
+	double proportional_gain;
+	double integral_gain;
+
+	if (!v90_phase3_return_rx_is_valid(rx) ||
+	    !point_is_finite(received))
+		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
+	if (!rx->second_return ||
+	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_SEARCH_S ||
+	    !rx->equalizer.carrier_tracking || rx->equalizer_reacquiring)
+		return V90_PHASE3_RETURN_RX_INVALID_STATE;
+	next = *rx;
+	proportional_gain = next.equalizer.carrier_proportional_gain;
+	integral_gain = next.equalizer.carrier_integral_gain;
+	if (qam_equalizer_init_geometry(
+		    &next.equalizer, received, &target,
+		    V34_EQUALIZER_TAP_COUNT,
+		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK ||
+	    qam_equalizer_enable_carrier_tracking(
+		    &next.equalizer, proportional_gain,
+		    integral_gain) != QAM_EQUALIZER_OK ||
+	    v34_phase3_s_receiver_init_suffix(
+		    &next.marker,
+		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS) !=
+		    V34_PHASE3_S_RECEIVER_OK)
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	next.next_onset_decision = 0;
+	next.buffered_onset_decisions = 0;
+	next.onset_offset = 0;
+	next.onset_errors = 0;
+	next.confirmed_s_symbols = 0;
+	next.exit_symbols = 0;
+	next.exit_errors = 0;
+	next.equalizer_reacquiring = true;
+	if (!v90_phase3_return_rx_is_valid(&next))
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	*rx = next;
+	return V90_PHASE3_RETURN_RX_OK;
+}
+
 static bool adapt_decision(
 	struct v90_phase3_return_rx *rx,
 	struct qam_equalizer_observation *observation,
@@ -429,9 +485,17 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 	next = *rx;
 	if (qam_equalizer_observe(
 		    &next.equalizer, received, &observation, &ready) !=
-		    QAM_EQUALIZER_OK ||
-	    !ready ||
-	    v34_training_constellation_slice(
+		    QAM_EQUALIZER_OK)
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+	if (!ready) {
+		if (!next.equalizer_reacquiring ||
+		    !v90_phase3_return_rx_is_valid(&next))
+			return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+		*rx = next;
+		return V90_PHASE3_RETURN_RX_OK;
+	}
+	next.equalizer_reacquiring = false;
+	if (v34_training_constellation_slice(
 		    V34_CONSTELLATION_4_POINT, &observation.output,
 		    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
 	    quarter_point != 0)
