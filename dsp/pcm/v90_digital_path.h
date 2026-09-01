@@ -100,6 +100,15 @@ enum v90_digital_path_result v90_digital_path_sample(
 	uint8_t *transmit_octet,
 	struct v34_received_mapping_frame *received);
 
+/* Clock a path whose serialized owner has already validated it for the
+ * current media block. Outputs must be distinct and outside the path. The
+ * owner must validate the path again before releasing that block. */
+enum v90_digital_path_result v90_digital_path_sample_owned(
+	struct v90_digital_path *path, int16_t received_sample,
+	v90_downstream_frame_source source, void *source_context,
+	uint8_t *transmit_octet,
+	struct v34_received_mapping_frame *received);
+
 const char *v90_digital_path_result_name(
 	enum v90_digital_path_result result);
 

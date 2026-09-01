@@ -526,7 +526,7 @@ static bool process_octet(
 	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
-		result = pcm_call_data_octet(
+		result = pcm_call_data_octet_owned(
 			&datapump->call, received, received_sample, &sources,
 			transmitted, &event);
 	} else {
@@ -718,6 +718,8 @@ static int process_v90_g711(
 			return DPSTAT_CHANGEDP;
 		}
 	}
+	if (!pcm_call_is_valid(&datapump->call))
+		goto failure;
 	*exact_output = true;
 	return connected ? DPSTAT_CONNECT : DPSTAT_OK;
 

@@ -348,6 +348,15 @@ enum pcm_call_result pcm_call_data_octet(
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);
 
+/* Consume a data character while the caller exclusively owns a call already
+ * validated for the current media block. Outputs must be distinct and outside
+ * the call. Validate the call again before releasing the block. */
+enum pcm_call_result pcm_call_data_octet_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	const struct pcm_call_data_sources *sources,
+	uint8_t *transmit_octet,
+	struct pcm_call_data_event *event);
+
 const char *pcm_call_result_name(enum pcm_call_result result);
 
 #endif /* PCM_CALL_H */

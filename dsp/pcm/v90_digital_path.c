@@ -421,7 +421,7 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
 	return result;
 }
 
-enum v90_digital_path_result v90_digital_path_sample(
+static enum v90_digital_path_result sample_owned(
 	struct v90_digital_path *path, int16_t received_sample,
 	v90_downstream_frame_source source, void *source_context,
 	uint8_t *transmit_octet,
@@ -430,6 +430,33 @@ enum v90_digital_path_result v90_digital_path_sample(
 	struct v34_received_mapping_frame frame = { 0 };
 	uint8_t generated;
 	bool frame_ready = false;
+	enum v90_digital_path_result result;
+
+	generated = silence_octet(path->law);
+	result = emit_downstream(
+		path, source, source_context, &generated);
+	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
+		return result;
+	if (result == V90_DIGITAL_PATH_OK)
+		result = receive_upstream(
+			path, received_sample, &frame, &frame_ready);
+	if (result != V90_DIGITAL_PATH_OK &&
+	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
+		path->failed = true;
+	*transmit_octet = generated;
+	if (frame_ready)
+		*received = frame;
+	return result;
+}
+
+enum v90_digital_path_result v90_digital_path_sample(
+	struct v90_digital_path *path, int16_t received_sample,
+	v90_downstream_frame_source source, void *source_context,
+	uint8_t *transmit_octet,
+	struct v34_received_mapping_frame *received)
+{
+	struct v34_received_mapping_frame frame;
+	uint8_t generated;
 	enum v90_digital_path_result result;
 
 	if (!v90_digital_path_is_valid(path) || transmit_octet == NULL ||
@@ -442,25 +469,35 @@ enum v90_digital_path_result v90_digital_path_sample(
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
-	generated = silence_octet(path->law);
-	result = emit_downstream(
-		path, source, source_context, &generated);
-	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
-		return result;
-	if (result == V90_DIGITAL_PATH_OK)
-		result = receive_upstream(
-			path, received_sample, &frame, &frame_ready);
-	if (result != V90_DIGITAL_PATH_OK &&
-	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
+	result = sample_owned(
+		path, received_sample, source, source_context,
+		&generated, &frame);
+	if (result != V90_DIGITAL_PATH_SOURCE_FAILURE &&
+	    !v90_digital_path_is_valid(path)) {
 		path->failed = true;
-	if (!v90_digital_path_is_valid(path)) {
-		path->failed = true;
-		result = V90_DIGITAL_PATH_INTERNAL_ERROR;
+		return V90_DIGITAL_PATH_INTERNAL_ERROR;
 	}
-	*transmit_octet = generated;
-	if (frame_ready)
-		*received = frame;
+	if (result != V90_DIGITAL_PATH_SOURCE_FAILURE) {
+		*transmit_octet = generated;
+		if (result == V90_DIGITAL_PATH_UPSTREAM_FRAME)
+			*received = frame;
+	}
 	return result;
+}
+
+enum v90_digital_path_result v90_digital_path_sample_owned(
+	struct v90_digital_path *path, int16_t received_sample,
+	v90_downstream_frame_source source, void *source_context,
+	uint8_t *transmit_octet,
+	struct v34_received_mapping_frame *received)
+{
+	if (path == NULL || transmit_octet == NULL || received == NULL)
+		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
+	if (path->failed)
+		return V90_DIGITAL_PATH_FAILED;
+	return sample_owned(
+		path, received_sample, source, source_context,
+		transmit_octet, received);
 }
 
 const char *v90_digital_path_result_name(

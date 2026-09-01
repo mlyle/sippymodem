@@ -867,14 +867,65 @@ static enum pcm_call_result arm_b1_deadline(
 	return PCM_CALL_OK;
 }
 
+/* These predicates are only used while the call owns a data path already
+ * covered by aggregate validation. Avoid recursively walking that graph for
+ * every 8 kHz character. */
+static bool analog_upstream_is_online_owned(
+	const struct v90_analog_path *path)
+{
+	return !path->failed &&
+	       path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA &&
+	       !path->upstream.data.b1_active;
+}
+
+static bool analog_downstream_is_online_owned(
+	const struct v90_analog_path *path)
+{
+	return !path->failed &&
+	       path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
+	       path->downstream.data.stage ==
+		       V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
+}
+
+static bool digital_downstream_is_online_owned(
+	const struct v90_digital_path *path)
+{
+	return !path->failed &&
+	       path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA &&
+	       path->downstream.data.transmitted_symbols >=
+		       V90_PHASE4_B1D_FRAMES * V90_CP_FRAME_INTERVALS;
+}
+
+static bool digital_upstream_is_online_owned(
+	const struct v90_digital_path *path)
+{
+	return !path->failed &&
+	       path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA;
+}
+
+static bool data_path_is_online_owned(const struct pcm_call *call)
+{
+	if (call->failed || call->stage != PCM_CALL_DATA_PATH)
+		return false;
+	if (call->local_role == V90_ANALOG_MODEM)
+		return analog_upstream_is_online_owned(
+			       &call->state.data_path.analog) &&
+		       analog_downstream_is_online_owned(
+			       &call->state.data_path.analog);
+	return digital_downstream_is_online_owned(
+		       &call->state.data_path.digital) &&
+	       digital_upstream_is_online_owned(
+		       &call->state.data_path.digital);
+}
+
 static bool peer_b1_received(const struct pcm_call *call)
 {
 	if (call->stage != PCM_CALL_DATA_PATH)
 		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
-		v90_analog_path_downstream_is_online(
+		analog_downstream_is_online_owned(
 			&call->state.data_path.analog) :
-		v90_digital_path_upstream_is_online(
+		digital_upstream_is_online_owned(
 			&call->state.data_path.digital);
 }
 
@@ -931,14 +982,7 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 
 bool pcm_call_is_online(const struct pcm_call *call)
 {
-	if (!pcm_call_is_valid(call) || call->failed ||
-	    call->stage != PCM_CALL_DATA_PATH)
-		return false;
-	return call->local_role == V90_ANALOG_MODEM ?
-		       v90_analog_path_is_online(
-			       &call->state.data_path.analog) :
-		       v90_digital_path_is_online(
-			       &call->state.data_path.digital);
+	return pcm_call_is_valid(call) && data_path_is_online_owned(call);
 }
 
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call)
@@ -1257,7 +1301,7 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 	if (call->stage == PCM_CALL_PHASE4)
 		return false;
 	if (call->stage == PCM_CALL_DATA_PATH)
-		return pcm_call_is_online(call);
+		return data_path_is_online_owned(call);
 	return call->stage == PCM_CALL_PHASE2 &&
 	       call->retrain_active &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
@@ -2473,7 +2517,7 @@ bool pcm_call_get_data_rates(
 	return true;
 }
 
-enum pcm_call_result pcm_call_data_octet(
+static enum pcm_call_result data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
@@ -2491,13 +2535,6 @@ enum pcm_call_result pcm_call_data_octet(
 	uint8_t generated;
 	enum pcm_call_result result;
 
-	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
-	    event == NULL || data_outputs_overlap(call, transmit_octet, event))
-		return PCM_CALL_INVALID_ARGUMENT;
-	if (call->failed)
-		return PCM_CALL_FAILED;
-	if (call->stage != PCM_CALL_DATA_PATH)
-		return PCM_CALL_INVALID_STATE;
 	if (sources == NULL)
 		sources = &idle;
 	retrain_detection_active = retrain_detection_is_active(call);
@@ -2519,7 +2556,7 @@ enum pcm_call_result pcm_call_data_octet(
 			&generated);
 		result = digital_path_result(digital_result);
 	} else {
-		digital_result = v90_digital_path_sample(
+		digital_result = v90_digital_path_sample_owned(
 			&call->state.data_path.digital, received_sample,
 			sources->downstream, sources->downstream_context,
 			&generated, &upstream_frame);
@@ -2554,12 +2591,40 @@ enum pcm_call_result pcm_call_data_octet(
 	}
 	if (result == PCM_CALL_OK && retrain_detected)
 		result = begin_retrain(call, true);
-	else if (result == PCM_CALL_OK && pcm_call_is_online(call))
+	else if (result == PCM_CALL_OK && call->retrain_active &&
+		 data_path_is_online_owned(call))
 		call->retrain_active = false;
 	if (result == PCM_CALL_OK)
 		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK)
 		call->failed = true;
+	*transmit_octet = generated;
+	*event = emitted;
+	return result;
+}
+
+enum pcm_call_result pcm_call_data_octet(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	const struct pcm_call_data_sources *sources,
+	uint8_t *transmit_octet,
+	struct pcm_call_data_event *event)
+{
+	struct pcm_call_data_event emitted;
+	uint8_t generated;
+	enum pcm_call_result result;
+
+	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
+	    event == NULL || data_outputs_overlap(call, transmit_octet, event))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed)
+		return PCM_CALL_FAILED;
+	if (call->stage != PCM_CALL_DATA_PATH)
+		return PCM_CALL_INVALID_STATE;
+	result = data_octet_owned(
+		call, received_octet, received_sample, sources,
+		&generated, &emitted);
+	if (result == PCM_CALL_SOURCE_FAILURE)
+		return result;
 	if (!pcm_call_owned_state_is_valid(call)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -2567,6 +2632,24 @@ enum pcm_call_result pcm_call_data_octet(
 	*transmit_octet = generated;
 	*event = emitted;
 	return result;
+}
+
+enum pcm_call_result pcm_call_data_octet_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	const struct pcm_call_data_sources *sources,
+	uint8_t *transmit_octet,
+	struct pcm_call_data_event *event)
+{
+	if (call == NULL || transmit_octet == NULL || event == NULL ||
+	    data_outputs_overlap(call, transmit_octet, event))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (call->failed)
+		return PCM_CALL_FAILED;
+	if (call->stage != PCM_CALL_DATA_PATH)
+		return PCM_CALL_INVALID_STATE;
+	return data_octet_owned(
+		call, received_octet, received_sample, sources,
+		transmit_octet, event);
 }
 
 enum pcm_call_result pcm_call_octet(
