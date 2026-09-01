@@ -1216,6 +1216,209 @@ static bool test_initial_info1_retrain_guard(void)
 	return true;
 }
 
+static bool form_remote_retrain_trigger(
+	struct pcm_call *call, enum g711_law law,
+	struct v34_phase2_tone_transmitter *remote_tone,
+	uint8_t *trigger_octet, int16_t *trigger_sample)
+{
+	enum v34_station_role local_role =
+		call->local_role == V90_ANALOG_MODEM ?
+			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	bool detected;
+
+	if (call == NULL || remote_tone == NULL || trigger_octet == NULL ||
+	    trigger_sample == NULL ||
+	    v34_retrain_detector_reset(&call->retrain_detector) !=
+		    V34_PHASE2_TONE_OK ||
+	    v34_phase2_tone_transmitter_init(
+		    remote_tone, v34_station_peer_role(local_role),
+		    PHASE2_NOMINAL_AMPLITUDE) != V34_PHASE2_TONE_OK)
+		return false;
+	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
+	     ++index) {
+		if (v34_retrain_detector_sample(
+			    &call->retrain_detector,
+			    decode_octet(law, silence_octet(law)), &detected) !=
+			    V34_PHASE2_TONE_OK ||
+		    detected)
+			return false;
+	}
+	for (size_t index = 0;
+	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
+			     V34_RETRAIN_TONE_SAMPLES;
+	     ++index) {
+		struct v34_retrain_detector candidate = call->retrain_detector;
+		int16_t remote_sample;
+
+		if (v34_phase2_tone_transmitter_sample(
+			    remote_tone, &remote_sample) != V34_PHASE2_TONE_OK)
+			return false;
+		*trigger_octet = encode_octet(law, remote_sample);
+		*trigger_sample = decode_octet(law, *trigger_octet);
+		if (v34_retrain_detector_sample(
+			    &candidate, *trigger_sample, &detected) !=
+		    V34_PHASE2_TONE_OK)
+			return false;
+		if (detected)
+			return true;
+		call->retrain_detector = candidate;
+	}
+	return false;
+}
+
+static bool final_training_accepts_remote_retrain(
+	struct pcm_call *call, enum g711_law law,
+	enum pcm_call_stage expected_stage)
+{
+	union pcm_info0_record peer_info0 = call->peer_info0;
+	struct v34_phase2_tone_transmitter remote_tone;
+	struct v34_phase2_tone_detector retained;
+	struct pcm_call_observation observation;
+	uint16_t prior_round_trip_delay = call->round_trip_delay_samples;
+	uint8_t trigger_octet;
+	int16_t trigger_sample;
+	uint8_t transmitted;
+
+	CHECK((expected_stage == PCM_CALL_PHASE3 ||
+	       expected_stage == PCM_CALL_PHASE3_MIXED ||
+	       expected_stage == PCM_CALL_PHASE4) &&
+	      call->stage == expected_stage && !call->retrain_active &&
+	      call->peer_info0_stored && call->round_trip_delay_stored &&
+	      pcm_call_is_valid(call) &&
+	      form_remote_retrain_trigger(
+		      call, law, &remote_tone, &trigger_octet,
+		      &trigger_sample),
+	      "law %u role %u stage %u could not form remote retrain",
+	      (unsigned int)law, (unsigned int)call->local_role,
+	      (unsigned int)expected_stage);
+	CHECK(pcm_call_octet(
+		      call, trigger_octet, trigger_sample, &transmitted,
+		      &observation) == PCM_CALL_OK &&
+	      observation.processed == expected_stage &&
+	      observation.next == PCM_CALL_RETRAIN_SILENCE &&
+	      call->stage == PCM_CALL_RETRAIN_SILENCE &&
+	      call->retrain_active && call->retrain_peer_tone_retained &&
+	      call->peer_info0_stored && call->round_trip_delay_stored &&
+	      call->round_trip_delay_samples == prior_round_trip_delay &&
+	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
+	      pcm_call_is_valid(call),
+	      "law %u role %u stage %u ignored remote retrain",
+	      (unsigned int)law, (unsigned int)call->local_role,
+	      (unsigned int)expected_stage);
+	retained = call->retrain_detector.tone;
+	for (size_t index = 0; index < PCM_CALL_RETRAIN_SILENCE_SAMPLES;
+	     ++index) {
+		struct v34_phase2_tone_event tone_event;
+		int16_t remote_sample;
+		int16_t received_sample;
+		enum pcm_call_stage next =
+			index + 1u == PCM_CALL_RETRAIN_SILENCE_SAMPLES ?
+				PCM_CALL_PHASE2 : PCM_CALL_RETRAIN_SILENCE;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &remote_tone, &remote_sample) ==
+			      V34_PHASE2_TONE_OK,
+		      "law %u role %u retrain response tone stopped at %zu",
+		      (unsigned int)law, (unsigned int)call->local_role, index);
+		received_sample = decode_octet(law, encode_octet(law, remote_sample));
+		CHECK(v34_phase2_tone_detector_sample(
+			      &retained, received_sample, &tone_event) ==
+			      V34_PHASE2_TONE_OK &&
+		      pcm_call_octet(
+			      call, encode_octet(law, remote_sample),
+			      received_sample, &transmitted, &observation) ==
+			      PCM_CALL_OK &&
+		      transmitted == silence_octet(law) &&
+		      observation.processed == PCM_CALL_RETRAIN_SILENCE &&
+		      observation.next == next,
+		      "law %u role %u retrain response stopped at %zu",
+		      (unsigned int)law, (unsigned int)call->local_role, index);
+	}
+	CHECK(call->stage == PCM_CALL_PHASE2 && call->retrain_active &&
+	      !call->retrain_peer_tone_retained && call->peer_info0_stored &&
+	      call->round_trip_delay_stored &&
+	      call->round_trip_delay_samples == prior_round_trip_delay &&
+	      call->state.phase2.state.ranging.control
+			      .prior_round_trip_delay_samples ==
+		      prior_round_trip_delay &&
+	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
+	      memcmp(&call->state.phase2.state.ranging.info0_exchange.transport
+			      .tone_detector,
+		     &retained, sizeof(retained)) == 0 &&
+	      pcm_call_is_valid(call),
+	      "law %u role %u stage %u lost remote retrain context",
+	      (unsigned int)law, (unsigned int)call->local_role,
+	      (unsigned int)expected_stage);
+	return true;
+}
+
+static int tracked_final_training_stage(enum pcm_call_stage stage)
+{
+	if (stage == PCM_CALL_PHASE3)
+		return 0;
+	if (stage == PCM_CALL_PHASE3_MIXED)
+		return 1;
+	if (stage == PCM_CALL_PHASE4)
+		return 2;
+	return -1;
+}
+
+static bool check_final_training_remote_retrain(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	bool checked[2][3] = { { false } };
+	size_t checked_count = 0;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u final-training retrain endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0;
+	     clock < CALL_SAMPLE_LIMIT && checked_count != 6u; ++clock) {
+		struct endpoint *endpoints[] = { &analog, &digital };
+
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u final-training retrain setup stopped at %zu",
+		      (unsigned int)law, clock);
+		for (size_t role = 0; role < ARRAY_LENGTH(endpoints); ++role) {
+			struct pcm_call candidate;
+			int stage = tracked_final_training_stage(
+				endpoints[role]->call.stage);
+
+			if (stage < 0 || checked[role][stage])
+				continue;
+			candidate = endpoints[role]->call;
+			CHECK(final_training_accepts_remote_retrain(
+				      &candidate, law, candidate.stage),
+			      "law %u role %zu stage %u remote retrain failed",
+			      (unsigned int)law, role,
+			      (unsigned int)candidate.stage);
+			checked[role][stage] = true;
+			checked_count++;
+		}
+	}
+	CHECK(checked_count == 6u,
+	      "law %u did not exercise every final-training stage (%zu/6)",
+	      (unsigned int)law, checked_count);
+	return true;
+}
+
+static bool test_final_training_remote_retrain(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law)
+		CHECK(check_final_training_remote_retrain(law),
+		      "law %u final-training retrain matrix failed",
+		      (unsigned int)law);
+	return true;
+}
+
 static bool rewind_downstream_b1(
 	struct pcm_call *call, uint8_t *stall_octet)
 {
@@ -2398,6 +2601,8 @@ int main(void)
 	} tests[] = {
 		{ "initial INFO1 retrain-tone ownership",
 		  test_initial_info1_retrain_guard },
+		{ "remote retrain during final PCM training",
+		  test_final_training_remote_retrain },
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "local and remote PCM full retrain", test_full_retrain },

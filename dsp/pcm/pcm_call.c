@@ -1294,14 +1294,14 @@ static enum pcm_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct pcm_call *call)
 {
-	/* Before data, a peer can only repeat the request that owns the current
-	 * full-retrain transaction. Initial Phase 2/3/4 waveforms are training,
-	 * not online retrain evidence. */
+	/* V.90 9.3 and 9.4 require a modem to honor the peer's Tone A/B full-
+	 * retrain request during both final training phases.  The detector's
+	 * silence preamble distinguishes that request from ordinary training. */
 	if (call->stage == PCM_CALL_PHASE3 ||
 	    call->stage == PCM_CALL_PHASE3_MIXED)
-		return call->retrain_active;
+		return true;
 	if (call->stage == PCM_CALL_PHASE4)
-		return false;
+		return true;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return data_path_is_online_owned(call);
 	return call->stage == PCM_CALL_PHASE2 &&
