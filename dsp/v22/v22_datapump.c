@@ -35,8 +35,8 @@ enum {
 	/* After 300 ms, resuming the old 2400-bit/s decisions is unsafe. */
 	V22BIS_CARRIER_RETRAIN_SAMPLES = MODEM_RATE * 3 / 10,
 	V22_MIN_LINE_POWER = 1000000,
-	V22BIS_ORIGINATE_ACQUISITION_SYMBOLS = 64,
-	V22BIS_ANSWER_ACQUISITION_SYMBOLS = 32,
+	V22_ORIGINATE_ACQUISITION_SYMBOLS = 64,
+	V22_ANSWER_ACQUISITION_SYMBOLS = 32,
 	V22BIS_RECEIVE_START_SAMPLES = MODEM_RATE * 450 / 1000,
 	V22BIS_TRANSMIT_START_SAMPLES = MODEM_RATE * 600 / 1000,
 	V22BIS_CONFIRM_BITS = 32,
@@ -360,19 +360,18 @@ static struct dp *create_v22(
 						   &v22_high_channel;
 	receive_channel = datapump->originator ? &v22_high_channel :
 						  &v22_low_channel;
+	/* Initial timing recovery is part of V.22's 155 +/- 50 ms originate
+	 * detection and 270 +/- 40 ms answer response intervals.  The generic
+	 * 256-symbol window alone exceeds both. */
 	if (qam_modulator_init(
 		    &datapump->modulator, transmit_channel,
 		    V22_TRANSMIT_AMPLITUDE) != QAM_OK ||
-	    ((id == DP_V22BIS &&
-	      qam_demodulator_init_with_timing_windows(
-		      &datapump->demodulator, receive_channel,
-		      datapump->originator ?
-			      V22BIS_ORIGINATE_ACQUISITION_SYMBOLS :
-			      V22BIS_ANSWER_ACQUISITION_SYMBOLS,
-		      QAM_DEFAULT_TIMING_WINDOW_SYMBOLS) != QAM_OK) ||
-	     (id != DP_V22BIS &&
-	      qam_demodulator_init(
-		      &datapump->demodulator, receive_channel) != QAM_OK)) ||
+	    qam_demodulator_init_with_timing_windows(
+		    &datapump->demodulator, receive_channel,
+		    datapump->originator ?
+			    V22_ORIGINATE_ACQUISITION_SYMBOLS :
+			    V22_ANSWER_ACQUISITION_SYMBOLS,
+		    QAM_DEFAULT_TIMING_WINDOW_SYMBOLS) != QAM_OK ||
 	    v22_symbol_encoder_init(&datapump->encoder, 0) !=
 		    V22_FRAMING_OK ||
 	    v22_symbol_decoder_init(&datapump->decoder, 0) !=
@@ -672,15 +671,21 @@ static int observe_bits(
 	struct v22_datapump *datapump, uint8_t *bits,
 	size_t bit_count)
 {
-	if (datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+	if ((datapump->training_state ==
+		     V22_TRAINING_WAIT_SCRAMBLED_MARK ||
+	     datapump->training_state == V22_TRAINING_CONNECT_HOLD) &&
 	    !datapump_uses_v22bis(datapump)) {
+		uint32_t target = scrambled_confirmation_target(datapump);
+
 		for (size_t index = 0; index < bit_count; ++index) {
-			if (bits[index] == 1)
+			if (bits[index] == 1 &&
+			    datapump->scrambled_mark_bits < target)
 				datapump->scrambled_mark_bits++;
-			else
+			else if (bits[index] == 0)
 				datapump->scrambled_mark_bits = 0;
-			if (datapump->scrambled_mark_bits >=
-			    scrambled_confirmation_target(datapump))
+			if (datapump->training_state ==
+				    V22_TRAINING_WAIT_SCRAMBLED_MARK &&
+			    datapump->scrambled_mark_bits >= target)
 				return begin_connect_hold(datapump);
 		}
 	} else if (datapump->training_state == V22_TRAINING_ONLINE) {
@@ -1585,7 +1590,8 @@ static int advance_training_timer(
 			datapump->scrambled_mark_bits = 0;
 		}
 	} else if (datapump->training_state == V22_TRAINING_CONNECT_HOLD) {
-		datapump->phase_samples++;
+		if (datapump->phase_samples < V22_CONNECT_HOLD_SAMPLES)
+			datapump->phase_samples++;
 		if (datapump_uses_v22bis(datapump) &&
 		    datapump->phase_samples >=
 			    V22BIS_TRANSMIT_START_SAMPLES) {
@@ -1593,7 +1599,11 @@ static int advance_training_timer(
 				return -1;
 		} else if (!datapump_uses_v22bis(datapump) &&
 			   datapump->phase_samples >=
-				   V22_CONNECT_HOLD_SAMPLES) {
+				   V22_CONNECT_HOLD_SAMPLES &&
+			   datapump->scrambled_mark_bits >=
+				   scrambled_confirmation_target(datapump)) {
+			/* The peer sends scrambled mark throughout this interval.  A
+			 * fixed timer must not promote an ended automode probe. */
 			if (enter_link(datapump) != 0) {
 				return -1;
 			} else {

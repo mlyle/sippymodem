@@ -1891,6 +1891,217 @@ static bool configure_recording_replay(
 	return true;
 }
 
+struct v22_signal_generator {
+	struct qam_modulator modulator;
+	struct v22_symbol_encoder encoder;
+	uint8_t quadrant;
+};
+
+static bool v22_signal_generator_init(
+	struct v22_signal_generator *generator, uint32_t carrier_hz)
+{
+	struct qam_channel channel = {
+		.sample_rate = MODEM_RATE,
+		.symbol_rate_numerator = 600,
+		.symbol_rate_denominator = 1,
+		.carrier_frequency_numerator = carrier_hz,
+		.carrier_frequency_denominator = 1,
+		.rolloff = 0.75,
+		.pulse_span_symbols = 6,
+	};
+
+	if (generator == NULL)
+		return false;
+	memset(generator, 0, sizeof(*generator));
+	return qam_modulator_init(
+		       &generator->modulator, &channel, 12000) == QAM_OK &&
+	       v22_symbol_encoder_init(&generator->encoder, 0) ==
+		       V22_FRAMING_OK;
+}
+
+static bool v22_signal_generate(
+	struct v22_signal_generator *generator, int16_t *samples,
+	size_t count, bool scrambled)
+{
+	static const struct qam_point quadrants[] = {
+		{ 1.0, 0.0 },
+		{ 0.0, 1.0 },
+		{ -1.0, 0.0 },
+		{ 0.0, -1.0 },
+	};
+
+	if (generator == NULL || samples == NULL)
+		return false;
+	for (size_t index = 0; index < count; ++index) {
+		bool can_accept = qam_modulator_can_accept_symbol(
+			&generator->modulator);
+		bool accepted;
+
+		if (can_accept && scrambled &&
+		    v22_symbol_encode(
+			    &generator->encoder, 1, 1,
+			    &generator->quadrant) != V22_FRAMING_OK)
+			return false;
+		if (can_accept && !scrambled)
+			generator->quadrant =
+				(uint8_t)((generator->quadrant + 3u) & 3u);
+		if (qam_modulator_sample(
+			    &generator->modulator,
+			    &quadrants[generator->quadrant], &samples[index],
+			    &accepted) != QAM_OK ||
+		    accepted != can_accept)
+			return false;
+	}
+	return true;
+}
+
+static bool start_v22_answer_replay(
+	struct integration_endpoint *endpoint);
+
+static bool run_v22_answer_response_deadline(void)
+{
+	enum {
+		V22_PROBE_START_SAMPLES = MODEM_RATE / 2,
+		V22_RESPONSE_MIN_SAMPLES = MODEM_RATE * 230 / 1000,
+		V22_RESPONSE_MAX_SAMPLES = MODEM_RATE * 310 / 1000,
+		V22_RESPONSE_TEST_SAMPLES =
+			V22_PROBE_START_SAMPLES + V22_RESPONSE_MAX_SAMPLES,
+	};
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	struct v22_signal_generator probe;
+	struct v22_signal_generator answer_mark;
+	int16_t expected[SIP_FRAME_SAMPLES];
+	size_t response_at = SIZE_MAX;
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      start_v22_answer_replay(&endpoint) &&
+		      v22_signal_generator_init(&probe, 1200) &&
+		      v22_signal_generator_init(&answer_mark, 2400),
+	      "V.22 answer-response replay did not initialize");
+	memset(endpoint.receive, 0, sizeof(endpoint.receive));
+	modem_process(
+		endpoint.modem, endpoint.receive, endpoint.transmit,
+		SIP_FRAME_SAMPLES);
+	CHECK(endpoint_drain(&endpoint),
+	      "V.22 answer-response delay did not complete");
+	endpoint.output_count = 0;
+	for (size_t offset = 0; offset < V22_RESPONSE_TEST_SAMPLES;
+	     offset += SIP_FRAME_SAMPLES) {
+		size_t count = V22_RESPONSE_TEST_SAMPLES - offset;
+
+		if (count > SIP_FRAME_SAMPLES)
+			count = SIP_FRAME_SAMPLES;
+		if (offset < V22_PROBE_START_SAMPLES) {
+			memset(endpoint.receive, 0,
+			       count * sizeof(*endpoint.receive));
+		} else {
+			CHECK(v22_signal_generate(
+				      &probe, endpoint.receive, count, true),
+			      "V.22 calling-probe generation failed");
+		}
+		modem_process(
+			endpoint.modem, endpoint.receive, endpoint.transmit,
+			(int)count);
+		CHECK(v22_signal_generate(
+			      &answer_mark, expected, count, false) &&
+			      endpoint_drain(&endpoint),
+		      "V.22 answer-response replay failed");
+		for (size_t index = 0; index < count; ++index) {
+			if (endpoint.transmit[index] == expected[index])
+				continue;
+			CHECK(offset + index >= V22_PROBE_START_SAMPLES,
+			      "V.22 answerer left mark before the calling probe");
+			if (response_at == SIZE_MAX)
+				response_at = offset + index -
+					V22_PROBE_START_SAMPLES;
+		}
+	}
+	CHECK(response_at >= V22_RESPONSE_MIN_SAMPLES &&
+		      response_at <= V22_RESPONSE_MAX_SAMPLES,
+	      "V.22 answer response missed its 270 +/- 40 ms window (sample %zu)",
+	      response_at);
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.22 answer-response registrations remained busy");
+	return true;
+}
+
+static bool start_v22_answer_replay(
+	struct integration_endpoint *endpoint)
+{
+	static const char *const commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT\\N0\r",
+		"AT+DS=0,0\r",
+		"AT+MS=22,0,1200,1200\r",
+	};
+
+	return endpoint_init(endpoint, "V.22 answer replay") &&
+	       configure_recording_replay(
+		       endpoint, commands, ARRAY_LENGTH(commands)) &&
+	       modem_set_sreg(endpoint->modem, SREG_ANS_DELAY, 0) == 0 &&
+	       modem_report_incoming_call(endpoint->modem) == 0 &&
+	       endpoint_drain(endpoint) && output_contains(endpoint, "RING") &&
+	       modem_answer(endpoint->modem) == 0;
+}
+
+static bool run_v22_abandoned_probe(void)
+{
+	enum {
+		V22_PROBE_ACTIVE_SAMPLES = MODEM_RATE * 4 / 5,
+		V22_PROBE_TOTAL_SAMPLES = MODEM_RATE * 2,
+	};
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	struct v22_signal_generator generator;
+	bool connected = false;
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      start_v22_answer_replay(&endpoint) &&
+		      v22_signal_generator_init(&generator, 1200),
+	      "V.22 abandoned-probe replay did not initialize");
+	endpoint.output_count = 0;
+	for (size_t offset = 0; offset < V22_PROBE_TOTAL_SAMPLES;
+	     offset += SIP_FRAME_SAMPLES) {
+		size_t count = V22_PROBE_TOTAL_SAMPLES - offset;
+
+		if (count > SIP_FRAME_SAMPLES)
+			count = SIP_FRAME_SAMPLES;
+		if (offset < V22_PROBE_ACTIVE_SAMPLES) {
+			size_t active = V22_PROBE_ACTIVE_SAMPLES - offset;
+
+			if (active > count)
+				active = count;
+			CHECK(v22_signal_generate(
+				      &generator, endpoint.receive, active, true),
+			      "V.22 probe generation failed");
+			memset(endpoint.receive + active, 0,
+			       (count - active) * sizeof(*endpoint.receive));
+		} else {
+			memset(endpoint.receive, 0,
+			       count * sizeof(*endpoint.receive));
+		}
+		modem_process(
+			endpoint.modem, endpoint.receive, endpoint.transmit,
+			(int)count);
+		CHECK(endpoint_drain(&endpoint),
+		      "V.22 abandoned-probe terminal output overflowed");
+		connected = connected ||
+			modem_is_online(endpoint.modem, DP_V22);
+	}
+	CHECK(!connected,
+	      "V.22 answerer connected after the calling probe disappeared");
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "V.22 abandoned-probe registrations remained busy");
+	return true;
+}
+
 static bool run_v32_recording_replay(const char *path)
 {
 	static const char dial_command[] = "ATDrecording\r";
@@ -2329,6 +2540,70 @@ static bool run_v22bis_recording_replay(
 	return true;
 }
 
+static bool run_v22_raw_answer_recording_replay(const char *path)
+{
+	static const char *const commands[] = {
+		"ATZ\r",
+		"ATE0\r",
+		"ATX3\r",
+		"AT\\N0\r",
+		"AT+DS=0,0\r",
+		"AT+MS=22,0,1200,1200\r",
+	};
+	struct channel_bench_recording recording = { 0 };
+	struct datapumps datapumps = { 0 };
+	struct integration_endpoint endpoint;
+	size_t connected_at = SIZE_MAX;
+
+	CHECK(channel_bench_recording_load(
+		      path, REPLAY_MAX_SAMPLES, &recording) ==
+		      CHANNEL_BENCH_OK,
+	      "optional raw V.22 answer recording could not be loaded");
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
+		      endpoint_init(&endpoint, "raw V.22 answer replay"),
+	      "raw V.22 answer recording replay did not initialize");
+	CHECK(configure_recording_replay(
+		      &endpoint, commands, ARRAY_LENGTH(commands)) &&
+		      modem_report_incoming_call(endpoint.modem) == 0 &&
+		      endpoint_drain(&endpoint) &&
+		      output_contains(&endpoint, "RING") &&
+		      modem_answer(endpoint.modem) == 0,
+	      "raw V.22 answer recording replay did not start the call");
+	endpoint.output_count = 0;
+	for (size_t offset = 0; offset < recording.count;) {
+		size_t count = recording.count - offset;
+
+		if (count > SIP_FRAME_SAMPLES)
+			count = SIP_FRAME_SAMPLES;
+		memcpy(endpoint.receive, recording.samples + offset,
+		       count * sizeof(*endpoint.receive));
+		modem_process(
+			endpoint.modem, endpoint.receive, endpoint.transmit,
+			(int)count);
+		offset += count;
+		CHECK(endpoint_drain(&endpoint),
+		      "raw V.22 answer replay terminal output overflowed");
+		if (connected_at == SIZE_MAX &&
+		    modem_is_online(endpoint.modem, DP_V22))
+			connected_at = offset;
+		if (connected_at != SIZE_MAX)
+			endpoint.output_count = 0;
+	}
+	CHECK(connected_at != SIZE_MAX &&
+		      connected_at <= V22_REPLAY_CONNECT_SAMPLES,
+	      "raw V.22 answer recording did not acquire promptly (sample %zu)",
+	      connected_at);
+	fprintf(stderr,
+		"[       OK ] raw V.22 answer recording replay (%zu samples, carrier at %zu)\n",
+		recording.count, connected_at);
+
+	endpoint_destroy(&endpoint);
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "raw V.22 answer recording replay registrations remained busy");
+	channel_bench_recording_release(&recording);
+	return true;
+}
+
 static bool load_octet_recording(
 	const char *path, uint8_t **octets, size_t *count)
 {
@@ -2672,6 +2947,8 @@ int main(void)
 		getenv("V22_REPLAY_RX_PCM");
 	const char *v22_answer_recording_path =
 		getenv("V22_ANSWER_REPLAY_RX_PCM");
+	const char *v22_raw_answer_recording_path =
+		getenv("V22_RAW_ANSWER_REPLAY_RX_PCM");
 	const char *v90_recording_path =
 		getenv("V90_REPLAY_RX_G711");
 	const char *v90_recording_law =
@@ -3002,6 +3279,18 @@ int main(void)
 
 	if (v34_matrix_filter != NULL && v34_matrix_filter[0] != '\0')
 		return run_v34_rate_matrix(v34_matrix_filter) ? 0 : 1;
+	fprintf(stderr, "[ RUN      ] V.22 answer response deadline\n");
+	if (!run_v22_answer_response_deadline()) {
+		fprintf(stderr, "[  FAILED  ] V.22 answer response deadline\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] V.22 answer response deadline\n");
+	fprintf(stderr, "[ RUN      ] abandoned V.22 calling probe\n");
+	if (!run_v22_abandoned_probe()) {
+		fprintf(stderr, "[  FAILED  ] abandoned V.22 calling probe\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] abandoned V.22 calling probe\n");
 	if (v32_recording_path == NULL || v32_recording_path[0] == '\0') {
 		fprintf(stderr,
 			"[  SKIPPED ] V.32 recording replay (V32_REPLAY_RX_PCM unset)\n");
@@ -3021,6 +3310,14 @@ int main(void)
 			"[  SKIPPED ] V.22bis answer recording replay (V22_ANSWER_REPLAY_RX_PCM unset)\n");
 	} else if (!run_v22bis_recording_replay(
 			   v22_answer_recording_path, true)) {
+		return 1;
+	}
+	if (v22_raw_answer_recording_path == NULL ||
+	    v22_raw_answer_recording_path[0] == '\0') {
+		fprintf(stderr,
+			"[  SKIPPED ] raw V.22 answer recording replay (V22_RAW_ANSWER_REPLAY_RX_PCM unset)\n");
+	} else if (!run_v22_raw_answer_recording_replay(
+			   v22_raw_answer_recording_path)) {
 		return 1;
 	}
 	if (v34_recording_path == NULL || v34_recording_path[0] == '\0') {
