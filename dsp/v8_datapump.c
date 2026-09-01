@@ -200,7 +200,11 @@ static int request_handoff(struct v8_datapump *datapump)
 		    handoff) != 0)
 		return DPSTAT_ERROR;
 	datapump->dp.modem->dsp_info.pcm_role = pcm_role;
-	datapump->dp.modem->cfg.ec = menu.lapm;
+	/* V.8 prot0 can select LAPM without ODP/ADP, but omitting prot0 does
+	 * not decline later V.42 negotiation.  Retain the local AT\N choice so
+	 * the ordinary detector can resolve the peer's selection. */
+	if (menu.lapm)
+		datapump->dp.modem->cfg.ec = 1;
 	datapump->dp.modem->dsp_info.qc_lapm = 0;
 	datapump->v34_fallback = v34_fallback;
 	datapump->handoff_requested = true;

@@ -851,15 +851,19 @@ static bool test_v8_handoff(void)
 		enum modem_pcm_role caller_role;
 		enum modem_pcm_role answerer_role;
 		bool caller_v34_fallback;
+		bool caller_lapm;
+		bool answerer_lapm;
 	} selections[] = {
 		{ DP_V34, DP_V34, DP_V34,
-		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, false },
+		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, false, true, true },
 		{ DP_V90, DP_V90, DP_V90,
-		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false },
+		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, true },
 		{ DP_V92, DP_V92, DP_V92,
-		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false },
+		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, true },
 		{ DP_V90, DP_V34, DP_V34,
-		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, true },
+		  MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE, true, true, true },
+		{ DP_V90, DP_V90, DP_V90,
+		  MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL, false, true, false },
 	};
 	struct modem_driver driver = {
 		.name = "V.8 handoff test",
@@ -899,6 +903,15 @@ static bool test_v8_handoff(void)
 		       (process_at_command(caller, "AT+V90D=1") == 0 &&
 			process_at_command(answerer, "AT+V90D=1") == 0)),
 		      "V.8 PCM endpoints did not accept head-end configuration");
+		caller->cfg.ec = selections[selection].caller_lapm;
+		answerer->cfg.ec = selections[selection].answerer_lapm;
+		CHECK(process_at_command(
+			      caller, selections[selection].caller_lapm ?
+				      "AT\\N4" : "AT\\N0") == 0 &&
+			      process_at_command(
+				      answerer, selections[selection].answerer_lapm ?
+					      "AT\\N4" : "AT\\N0") == 0,
+		      "V.8 endpoints did not accept error-control configuration");
 		calling_dp = operations->create(
 			caller, caller_requested, 1, MODEM_RATE, MODEM_FRAG,
 			operations);
@@ -938,7 +951,8 @@ static bool test_v8_handoff(void)
 				      selections[selection].caller_role &&
 			      answerer->dsp_info.pcm_role ==
 				      selections[selection].answerer_role &&
-			      caller->cfg.ec == 1 && answerer->cfg.ec == 1 &&
+			      caller->cfg.ec == selections[selection].caller_lapm &&
+			      answerer->cfg.ec == selections[selection].answerer_lapm &&
 			      caller->dsp_info.qc_lapm == 0 &&
 			      answerer->dsp_info.qc_lapm == 0 &&
 			      v8_datapump_selected_v34_fallback(calling_dp) ==
