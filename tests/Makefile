@@ -3277,6 +3277,7 @@ PYTHON_TESTS := \
 	test_fast_matrix.py \
 	test_fast_interop.py \
 	test_live_terminal.py \
+	test_live_peer_serial.py \
 	test_build_compiler.py \
 	test_revision_build.py \
 	test_live_campaign_profiles.py \

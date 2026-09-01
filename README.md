@@ -196,6 +196,17 @@ sequence may cross the data link after RETRAIN START. The runner treats those
 octets as in-band data and continues waiting for the matching END within the
 single retrain deadline.
 
+The peer must drain its modem-bound serial queue before starting the escape
+guard. In particular, keep CTS flow control enabled while flushing the START
+marker, wait the pre-escape guard, disable transmit flow control, write and
+flush `+++`, and then wait the post-escape guard before issuing `ATO1`. Merely
+sleeping after the marker's host write is insufficient: the 54-byte START
+marker takes about 1.8 seconds to drain over a 300-bit/s online modem link with
+8N1-equivalent framing. The dependency-free `tools/live_peer_serial.py` module
+provides this operation for an unattended serial peer; its caller restores
+hardware flow control after the fresh CONNECT. A failed escape still leaves
+any resulting `+++` as ordinary online payload at the other modem.
+
 The TTY summary clears and repaints every two seconds, names the active call
 stage and seconds spent there, and places originator and callback results next
 to each other on each modulation/transport row. Both roles use mutually
