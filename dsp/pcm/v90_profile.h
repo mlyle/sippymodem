@@ -15,6 +15,7 @@ enum {
 struct v90_upstream_policy {
 	unsigned int minimum_bit_rate;
 	unsigned int maximum_bit_rate;
+	/* Analogue INFO1a selection; digital INFO1d retains mandatory rates. */
 	unsigned int maximum_symbol_rate;
 };
 

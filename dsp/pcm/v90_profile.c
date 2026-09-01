@@ -87,7 +87,12 @@ static struct v34_info1c digital_info1(
 	for (size_t rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
 		uint8_t projected = projected_rates[rate];
 
-		if (upstream->custom && rate > (size_t)upstream->symbol_rate)
+		/* V.90 5.2 requires the digital modem to support both 3000 and
+		 * 3200 symbols/s.  The configured symbol-rate ceiling selects the
+		 * analogue modem's INFO1a preference; it must not withdraw the
+		 * mandatory 3200 fallback from digital INFO1d. */
+		if (upstream->custom && rate == V34_SYMBOL_RATE_3429 &&
+		    rate > (size_t)upstream->symbol_rate)
 			projected = 0;
 		info1.answer_transmit[rate] =
 			(struct v34_info1_probe_result){

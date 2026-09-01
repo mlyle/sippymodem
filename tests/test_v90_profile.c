@@ -257,8 +257,16 @@ static bool test_upstream_policy(void)
 		.maximum_symbol_rate = 3200,
 	};
 	const uint16_t expected_mask = UINT16_C(1) << (11u - 2u);
+	const struct v90_upstream_policy mandatory_fallback = {
+		.minimum_bit_rate = 19200,
+		.maximum_bit_rate = 19200,
+		.maximum_symbol_rate = 3000,
+	};
+	const uint16_t fallback_mask = UINT16_C(1) << (8u - 2u);
 	struct pcm_call_configuration analog;
 	struct pcm_call_configuration digital;
+	struct pcm_call_configuration fallback_analog;
+	struct pcm_call_configuration fallback_digital;
 	struct pcm_call_configuration rejected;
 	struct pcm_call_configuration saved;
 	const struct v90_upstream_policy impossible = {
@@ -305,6 +313,32 @@ static bool test_upstream_policy(void)
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_rate_capability_mask == expected_mask,
 	      "digital profile did not apply its upstream policy");
+	CHECK(v90_profile_init(
+		      &fallback_analog, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      28000, 28000, &mandatory_fallback) == V90_PROFILE_OK &&
+	      v90_profile_init(
+		      &fallback_digital, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      28000, 28000, &mandatory_fallback) == V90_PROFILE_OK &&
+	      fallback_analog.local_info1.analog.upstream_symbol_rate ==
+		      V34_SYMBOL_RATE_3000 &&
+	      fallback_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3000]
+		      .projected_data_rate_2400_bps_units == 12 &&
+	      fallback_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3200]
+		      .projected_data_rate_2400_bps_units == 13 &&
+	      fallback_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3429]
+		      .projected_data_rate_2400_bps_units == 0 &&
+	      fallback_analog.analog_phase4.training_parameters
+		      .upstream_rate_mask == fallback_mask &&
+	      fallback_analog.analog_phase4.data_parameters
+		      .upstream_rate_mask == fallback_mask &&
+	      fallback_digital.digital_phase4.initial_mp.parameters.type0
+		      .maximum_upstream_rate_2400_bps_units == 8 &&
+	      fallback_digital.digital_phase4.initial_mp.parameters.type0
+		      .upstream_rate_capability_mask == fallback_mask,
+	      "3000-symbol/s preference withdrew mandatory 3200 fallback");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	saved = rejected;
 	CHECK(v90_profile_init(
