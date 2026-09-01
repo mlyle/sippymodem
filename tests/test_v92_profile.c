@@ -13,8 +13,7 @@
 #include <string.h>
 
 enum {
-	ANALOG_PHASE2_AMPLITUDE = 12000,
-	DIGITAL_PHASE2_AMPLITUDE = 5320,
+	PHASE2_NOMINAL_AMPLITUDE = 5320,
 	DIGITAL_PHASE2_NOMINAL_POWER_CODE = 4,
 	DIGITAL_PHASE2_MAXIMUM_POWER_CODE = 23,
 };
@@ -91,9 +90,7 @@ static bool test_generated_profiles(void)
 				      configuration.enabled_downstream_rate_mask ==
 					      downstream.enabled_mask &&
 				      configuration.phase2_nominal_amplitude ==
-					      (role == V90_DIGITAL_MODEM ?
-						       DIGITAL_PHASE2_AMPLITUDE :
-						       ANALOG_PHASE2_AMPLITUDE) &&
+					      PHASE2_NOMINAL_AMPLITUDE &&
 				      call.phase2_nominal_amplitude ==
 					      configuration.phase2_nominal_amplitude,
 				      "role %u law %u rate %u profile did not initialize",
@@ -102,10 +99,10 @@ static bool test_generated_profiles(void)
 						.transport.tone_transmitter;
 				CHECK(role == V90_DIGITAL_MODEM ?
 					      tone->carrier_amplitude ==
-						      DIGITAL_PHASE2_AMPLITUDE &&
+						      PHASE2_NOMINAL_AMPLITUDE &&
 						      tone->guard_amplitude == 0 :
 					      tone->guard_amplitude ==
-						      ANALOG_PHASE2_AMPLITUDE,
+						      PHASE2_NOMINAL_AMPLITUDE,
 				      "role %u law %u rate %u Phase 2 level changed",
 				      role_index, law_index, rate);
 				if (role == V90_ANALOG_MODEM) {

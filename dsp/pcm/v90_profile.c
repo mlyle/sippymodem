@@ -6,9 +6,10 @@
 #include <stdint.h>
 
 enum {
-	V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE = 12000,
-	/* The digital head-end uses one lower level for Tone B and L1/L2. */
-	V90_PHASE2_DIGITAL_NOMINAL_AMPLITUDE = 5320,
+	/* Keep both roles at the calibrated PCM line level.  Tone A combines its
+	 * carrier and guard at their specified relative levels; giving it a QAM
+	 * peak level can overdrive a peer whose data-mode gain survives retrain. */
+	V90_PHASE2_NOMINAL_AMPLITUDE = 5320,
 	/* V.90 Table 7 encodes nominal power as -6 dBm0 minus this value. */
 	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 4,
 	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
@@ -310,10 +311,7 @@ enum v90_profile_result v90_profile_init(
 	struct pcm_call_configuration selected = {
 		.local_role = role,
 		.law = law,
-		.phase2_nominal_amplitude =
-			role == V90_DIGITAL_MODEM ?
-				V90_PHASE2_DIGITAL_NOMINAL_AMPLITUDE :
-				V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE,
+		.phase2_nominal_amplitude = V90_PHASE2_NOMINAL_AMPLITUDE,
 	};
 
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
