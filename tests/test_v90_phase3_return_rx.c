@@ -69,6 +69,17 @@ static bool seed_handoff(
 	return v34_equalizer_handoff_is_valid(handoff);
 }
 
+static bool seed_tracked_handoff(
+	unsigned int quarter_turns,
+	struct v34_equalizer_handoff *handoff)
+{
+	return seed_handoff(quarter_turns, handoff) &&
+	       qam_equalizer_enable_carrier_tracking(
+		       &handoff->equalizer, 1.0 / 4.0, 1.0 / 8192.0) ==
+		       QAM_EQUALIZER_OK &&
+	       v34_equalizer_handoff_is_valid(handoff);
+}
+
 static bool start_ja(struct v90_phase3_analog_tx *tx)
 {
 	if (v90_phase3_analog_tx_init(tx) != V90_PHASE3_ANALOG_TX_OK)
@@ -88,7 +99,8 @@ static bool start_ja(struct v90_phase3_analog_tx *tx)
 	return false;
 }
 
-static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
+static bool run_timeline(
+	unsigned int quarter_turns, uint32_t finish_after, bool tracked)
 {
 	static const unsigned int post_rotations[] = {
 		0, 2, 1, 3, 3, 1, 2, 0,
@@ -104,7 +116,9 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 	unsigned int post_consumed = 0;
 	uint32_t s_at_detection = 0;
 
-	CHECK(seed_handoff(quarter_turns, &initial) && start_ja(&ja) &&
+	CHECK((tracked ? seed_tracked_handoff(quarter_turns, &initial) :
+			 seed_handoff(quarter_turns, &initial)) &&
+	      start_ja(&ja) &&
 	      v90_phase3_return_rx_init(&rx, &initial, 0.05) ==
 		      V90_PHASE3_RETURN_RX_OK,
 	      "phase %u return receiver did not initialize", quarter_turns);
@@ -186,7 +200,10 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 	}
 	handoff_result = v90_phase3_return_rx_handoff(&rx, &handoff);
 	CHECK(s_events == 1 && s_bar_events == 1 &&
-	      s_at_detection == V90_PHASE3_RETURN_RX_ONSET_SYMBOLS +
+	      s_at_detection ==
+		      (tracked ?
+			       V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS :
+			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS) +
 					V34_EQUALIZER_DECISION_DELAY &&
 	      rx.marker.s_symbols ==
 		      V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS &&
@@ -235,10 +252,83 @@ static bool run_timeline(unsigned int quarter_turns, uint32_t finish_after)
 
 static bool test_generated_timelines(void)
 {
-	CHECK(run_timeline(0, V34_PHASE3_S_SYMBOLS) &&
-	      run_timeline(1, V34_PHASE3_S_SYMBOLS + 53u) &&
-	      run_timeline(3, V34_PHASE3_S_SYMBOLS + 18u),
+	CHECK(run_timeline(0, V34_PHASE3_S_SYMBOLS, false) &&
+	      run_timeline(1, V34_PHASE3_S_SYMBOLS + 53u, false) &&
+	      run_timeline(3, V34_PHASE3_S_SYMBOLS + 18u, false) &&
+	      run_timeline(2, V34_PHASE3_S_SYMBOLS + 31u, true),
 	      "generated return timelines failed");
+	return true;
+}
+
+static bool test_tracked_onset_confirmation(void)
+{
+	const unsigned int quarter_turns = 2;
+	struct v34_equalizer_handoff equalizer;
+	struct v90_phase3_return_rx rx;
+	unsigned int s_events = 0;
+
+	CHECK(seed_tracked_handoff(quarter_turns, &equalizer) &&
+	      v90_phase3_return_rx_init(&rx, &equalizer, 0.05) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      rx.equalizer.carrier_tracking,
+	      "tracked return receiver did not preserve carrier tracking");
+	for (size_t symbol = 0;
+	     symbol < V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS; ++symbol) {
+		struct qam_point point = v34_rotated_point_zero(2);
+
+		point = channel_point(point, quarter_turns);
+		CHECK(v90_phase3_return_rx_point(&rx, &point) ==
+			      V90_PHASE3_RETURN_RX_OK,
+		      "tracked pre-S fill reported an event at %zu", symbol);
+	}
+	CHECK(rx.confirmed_s_symbols == 0,
+	      "tracked pre-S fill created an onset candidate");
+	for (size_t symbol = 0;
+	     symbol < V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
+	     ++symbol) {
+		struct qam_point point = v34_rotated_point_zero((int)(symbol & 1u));
+
+		point = channel_point(point, quarter_turns);
+		CHECK(v90_phase3_return_rx_point(&rx, &point) ==
+			      V90_PHASE3_RETURN_RX_OK,
+		      "tracked tentative S reported an early event at %zu", symbol);
+	}
+	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.confirmed_s_symbols == 0,
+	      "delayed tracked S produced an early onset candidate");
+	for (size_t symbol = 0;
+	     symbol < V34_EQUALIZER_DECISION_DELAY +
+		      V90_PHASE3_RETURN_RX_ONSET_SYMBOLS + 3u;
+	     ++symbol) {
+		struct qam_point point = v34_rotated_point_zero(2);
+		enum v90_phase3_return_rx_result result;
+
+		point = channel_point(point, quarter_turns);
+		result = v90_phase3_return_rx_point(&rx, &point);
+		CHECK(result == V90_PHASE3_RETURN_RX_OK,
+		      "rejected tentative S returned %s at %zu",
+		      v90_phase3_return_rx_result_name(result), symbol);
+	}
+	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.confirmed_s_symbols == 0,
+	      "false tracked S was not rejected transactionally");
+	for (size_t symbol = 0; symbol < 64u && s_events == 0; ++symbol) {
+		struct qam_point point = v34_rotated_point_zero((int)(symbol & 1u));
+		enum v90_phase3_return_rx_result result;
+
+		point = channel_point(point, quarter_turns);
+		result = v90_phase3_return_rx_point(&rx, &point);
+		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
+			s_events++;
+		else
+			CHECK(result == V90_PHASE3_RETURN_RX_OK,
+			      "confirmed tracked S reported %s",
+			      v90_phase3_return_rx_result_name(result));
+	}
+	CHECK(s_events == 1 && rx.stage == V90_PHASE3_RETURN_RX_STAGE_S &&
+	      rx.confirmed_s_symbols ==
+		      V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS,
+	      "tracked S was not reported after confirmation");
 	return true;
 }
 
@@ -376,6 +466,7 @@ int main(void)
 		bool (*run)(void);
 		} tests[] = {
 			{ "generated timelines", test_generated_timelines },
+			{ "tracked onset confirmation", test_tracked_onset_confirmation },
 			{ "implicit first-return end", test_implicit_first_return_end },
 			{ "validation", test_validation },
 	};

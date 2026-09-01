@@ -15,6 +15,10 @@ enum {
 	 * limit; the longer suffix below remains responsible for the final S-bar
 	 * boundary. */
 	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS = 9,
+	/* Carrier correction can turn the structured signal following Ja into a
+	 * nine-decision alias of S. Require the following decision to agree before
+	 * a tracked receiver is allowed to terminate Jd. */
+	V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS = 10,
 	V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS =
 		V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS,
 	V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS =
@@ -48,8 +52,9 @@ enum v90_phase3_return_rx_result {
 /* Continue the digital modem's trained equalizer after Ja. A bounded
  * alternating-point correlation reports S early enough to finish Jd. The
  * same equalizer and hard decisions then locate the complete S-bar boundary.
- * Decision-directed adaptation begins only after S is qualified, avoiding
- * adaptation to the intervening silence. */
+ * A carrier-tracked handoff receives a short additional confirmation window;
+ * decision-directed adaptation begins only after S is qualified, avoiding
+ * adaptation to the intervening signal. */
 struct v90_phase3_return_rx {
 	struct qam_equalizer equalizer;
 	struct v34_phase3_s_receiver marker;

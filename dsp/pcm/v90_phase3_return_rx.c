@@ -11,9 +11,13 @@ _Static_assert(
 	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <= UINT8_MAX,
 	"V.90 S onset history must fit its counters");
 _Static_assert(
-	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <=
+	V90_PHASE3_RETURN_RX_ONSET_SYMBOLS <
+		V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS,
+	"tracked V.90 S onset must extend the ordinary onset");
+_Static_assert(
+	V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS <=
 		V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS,
-	"V.90 S onset must fit the retained marker suffix");
+	"tracked V.90 S onset must fit the retained marker suffix");
 
 static bool onset_history_is_valid(
 	const struct v90_phase3_return_rx *rx)
@@ -56,10 +60,27 @@ bool v90_phase3_return_rx_is_valid(
 		return false;
 	switch (rx->stage) {
 	case V90_PHASE3_RETURN_RX_STAGE_SEARCH_S:
-		return rx->onset_offset == 0 && rx->onset_errors == 0 &&
-		       rx->confirmed_s_symbols == 0 &&
+		if (rx->confirmed_s_symbols == 0)
+			return rx->onset_offset == 0 &&
+			       rx->onset_errors == 0 &&
+			       rx->exit_symbols == 0 &&
+			       rx->exit_errors == 0 &&
+			       rx->marker.buffered_decisions == 0 &&
+			       !v34_phase3_s_receiver_is_complete(
+				       &rx->marker);
+		return rx->equalizer.carrier_tracking &&
+		       rx->buffered_onset_decisions ==
+			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       rx->confirmed_s_symbols >=
+			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS &&
+		       rx->confirmed_s_symbols <
+			       V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS &&
+		       rx->onset_offset < 4u &&
+		       rx->onset_errors <=
+			       V90_PHASE3_RETURN_RX_MAX_ONSET_ERRORS &&
+		       rx->marker.buffered_decisions ==
+			       rx->confirmed_s_symbols &&
 		       rx->exit_symbols == 0 && rx->exit_errors == 0 &&
-		       rx->marker.buffered_decisions == 0 &&
 		       !v34_phase3_s_receiver_is_complete(&rx->marker);
 	case V90_PHASE3_RETURN_RX_STAGE_S:
 		return rx->buffered_onset_decisions ==
@@ -226,6 +247,23 @@ static bool seed_marker(struct v90_phase3_return_rx *rx)
 	return true;
 }
 
+static bool reset_onset_candidate(
+	struct v90_phase3_return_rx *rx, uint8_t rotation)
+{
+	if (v34_phase3_s_receiver_init_suffix(
+		    &rx->marker,
+		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS) !=
+	    V34_PHASE3_S_RECEIVER_OK)
+		return false;
+	rx->next_onset_decision = 0;
+	rx->buffered_onset_decisions = 0;
+	rx->onset_offset = 0;
+	rx->onset_errors = 0;
+	rx->confirmed_s_symbols = 0;
+	(void)remember_onset(rx, rotation);
+	return true;
+}
+
 static bool adapt_decision(
 	struct v90_phase3_return_rx *rx,
 	struct qam_equalizer_observation *observation,
@@ -288,13 +326,36 @@ static enum v90_phase3_return_rx_result receive_decision(
 	uint8_t rotation)
 {
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) {
+		if (rx->confirmed_s_symbols != 0) {
+			if (rotation != expected_s_rotation(
+						rx->confirmed_s_symbols,
+						rx->onset_offset))
+				return reset_onset_candidate(rx, rotation) ?
+					       V90_PHASE3_RETURN_RX_OK :
+					       V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+			if (v34_phase3_s_receiver_receive(
+				    &rx->marker, 0, rotation) !=
+				    V34_PHASE3_S_RECEIVER_OK)
+				return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+			rx->confirmed_s_symbols++;
+			if (rx->confirmed_s_symbols <
+			    V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS)
+				return V90_PHASE3_RETURN_RX_OK;
+			if (!adapt_decision(rx, observation, rotation))
+				return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
+			rx->stage = V90_PHASE3_RETURN_RX_STAGE_S;
+			return V90_PHASE3_RETURN_RX_S_DETECTED;
+		}
 		if (!remember_onset(rx, rotation))
 			return V90_PHASE3_RETURN_RX_OK;
-		if (!seed_marker(rx) ||
-		    !adapt_decision(rx, observation, rotation))
+		if (!seed_marker(rx))
 			return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 		rx->confirmed_s_symbols =
 			V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
+		if (rx->equalizer.carrier_tracking)
+			return V90_PHASE3_RETURN_RX_OK;
+		if (!adapt_decision(rx, observation, rotation))
+			return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_S;
 		return V90_PHASE3_RETURN_RX_S_DETECTED;
 	}
