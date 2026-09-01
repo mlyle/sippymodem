@@ -31,7 +31,9 @@ enum v90_phase3_analog_line_rx_result {
 struct v90_phase3_analog_line_rx {
 	struct qam_demodulator demodulator;
 	struct v90_phase3_analog_rx points;
+	struct v34_phase3_s_prefix s_prefix;
 	struct v34_phase3_profile transmitting_profile;
+	bool timing_rebased;
 	bool failed;
 };
 

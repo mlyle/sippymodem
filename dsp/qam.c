@@ -864,6 +864,27 @@ enum qam_result qam_demodulator_rebase_timing(
 	return QAM_OK;
 }
 
+enum qam_result qam_demodulator_rebase_adjacent_timing(
+	struct qam_demodulator *demodulator, bool forward)
+{
+	uint64_t phase;
+
+	if (!qam_demodulator_has_timing_lock(demodulator))
+		return QAM_INVALID_ARGUMENT;
+	phase = demodulator->locked_phase_units;
+	if (forward) {
+		phase += demodulator->timing_step_units;
+		if (phase >= demodulator->symbol_period_units)
+			phase -= demodulator->symbol_period_units;
+	} else if (phase >= demodulator->timing_step_units) {
+		phase -= demodulator->timing_step_units;
+	} else {
+		phase += demodulator->symbol_period_units -
+			 demodulator->timing_step_units;
+	}
+	return qam_demodulator_rebase_timing(demodulator, phase);
+}
+
 static bool track_recovery_step(
 	struct qam_demodulator *demodulator,
 	uint64_t reference_phase, uint64_t target_phase)

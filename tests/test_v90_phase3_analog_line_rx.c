@@ -50,21 +50,75 @@ static bool run_line(enum g711_law law)
 {
 	struct v34_phase3_profile selected = profile();
 	struct v90_phase3_analog_rx_configuration config = configuration();
+	struct v34_training_line pre_s_line;
 	struct v90_phase3_analog_line_tx tx;
 	struct v90_phase3_analog_line_rx rx;
 	struct v90_phase3_analog_line_handoff handoff;
 	unsigned int timing_events = 0;
 	unsigned int s_events = 0;
 	unsigned int pp_events = 0;
+	uint32_t pre_s_symbols = 0;
 	bool started_ja = false;
 	bool detected = false;
 
 	CHECK(v90_phase3_analog_line_tx_init(
 		      &tx, &selected, NOMINAL_AMPLITUDE) ==
 		      V90_PHASE3_ANALOG_LINE_TX_OK &&
+	      v34_training_line_init(
+		      &pre_s_line, &selected, V90_PHASE3_SAMPLE_RATE,
+		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
 	      v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK,
 	      "law %d analogue line pair did not initialize", law);
+	/* Timing may lock on the tail of Phase 2. A shaped QAM sequence with
+	 * repeated points is not the alternating S prefix, though, and must not
+	 * seed Phase 3 gain or history. */
+	for (uint32_t index = 0; index < 1600u; ++index) {
+		static const uint8_t rotations[4] = { 0, 0, 1, 1 };
+		struct qam_point point;
+		const struct qam_point *offered = NULL;
+		int16_t sample;
+		bool accepting = v34_training_line_needs_point(&pre_s_line);
+		bool accepted;
+		enum v90_phase3_analog_line_rx_result result =
+			V90_PHASE3_ANALOG_LINE_RX_OK;
+
+		if (accepting) {
+			point = v34_rotated_point_zero(
+				rotations[pre_s_symbols & 3u]);
+			offered = &point;
+		}
+		CHECK(v34_training_line_sample(
+			      &pre_s_line, offered, &sample, &accepted) ==
+			      V34_TRAINING_LINE_OK &&
+		      accepted == accepting,
+		      "law %d pre-S source stopped at sample %u", law, index);
+		if (accepted)
+			pre_s_symbols++;
+		result = v90_phase3_analog_line_rx_sample(
+			&rx, quantize(law, sample));
+
+		CHECK(result == V90_PHASE3_ANALOG_LINE_RX_OK ||
+			      result == V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED,
+		      "law %d pre-S QAM returned %s at sample %u",
+		      law, v90_phase3_analog_line_rx_result_name(result),
+		      index);
+		if (result == V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED)
+			timing_events++;
+	}
+	CHECK(timing_events == 1u && rx.demodulator.timing_locked &&
+	      !rx.s_prefix.complete &&
+	      rx.points.stage == V90_PHASE3_ANALOG_RX_STAGE_S &&
+	      !rx.points.state.s.gain_seeded &&
+	      rx.points.state.s.detector.buffered_decisions == 0u,
+	      "law %d pre-S carrier entered semantic Phase 3", law);
+	/* The two independently initialized transmitters do not share a carrier
+	 * phase timeline. Reset after the rejection check; retained call replay
+	 * covers continuous recovery across the real Phase 2/Phase 3 boundary. */
+	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+		      V90_PHASE3_ANALOG_LINE_RX_OK,
+	      "law %d receiver did not reset after the pre-S check", law);
+	timing_events = 0;
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t sample;
 		enum v90_phase3_analog_line_rx_result result;
@@ -114,7 +168,14 @@ static bool run_line(enum g711_law law)
 	      v90_phase3_analog_line_rx_handoff(&rx, &handoff) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK &&
 	      v90_phase3_analog_line_handoff_is_valid(&handoff),
-	      "law %d did not recover the line-level Ja boundary", law);
+	      "law %d did not recover the line-level Ja boundary "
+	      "(started %u detected %u timing %u S %u PP %u prefix %u/%u "
+	      "qam %u stage %u S-symbols %u)",
+	      law, started_ja, detected, timing_events, s_events, pp_events,
+	      rx.s_prefix.alternating_turns, rx.s_prefix.complete,
+	      rx.demodulator.timing_locked, rx.points.stage,
+	      rx.points.stage == V90_PHASE3_ANALOG_RX_STAGE_S ?
+		      rx.points.state.s.detector.s_symbols : 0u);
 	{
 		struct v90_phase3_analog_line_rx saved = rx;
 

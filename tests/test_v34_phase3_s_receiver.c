@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <string.h>
 
 static bool generate_marker(uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS])
@@ -63,6 +64,112 @@ static enum v34_phase3_s_receiver_result receive_adaptive_marker(
 	return v34_phase3_s_receiver_receive_adaptive(
 		receiver, quarter_point, clockwise_quarter_turns,
 		observation, &ignored);
+}
+
+static bool test_prefix_qualification(void)
+{
+	struct v34_phase3_s_prefix prefix;
+	struct v34_phase3_s_prefix saved;
+	struct v34_phase3_s_prefix corrupt;
+	struct qam_point quiet = { 0.1, 0.1 };
+	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point point = v34_rotated_point_zero(0);
+
+	CHECK(v34_phase3_s_prefix_init(&prefix) == V34_PHASE3_S_PREFIX_OK &&
+	      v34_phase3_s_prefix_is_valid(&prefix),
+	      "S prefix detector did not initialize");
+	for (unsigned int symbol = 0; symbol < 32; ++symbol)
+		CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+			      V34_PHASE3_S_PREFIX_OK,
+		      "constant carrier qualified at symbol %u", symbol);
+	CHECK(!prefix.complete && prefix.alternating_turns == 0u,
+	      "constant carrier changed S prefix progress");
+	for (unsigned int symbol = 0;
+	     symbol <= V34_PHASE3_S_PREFIX_TURNS; ++symbol) {
+		point = v34_rotated_point_zero((int)(symbol & 1u));
+		CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+			      (symbol == V34_PHASE3_S_PREFIX_TURNS ?
+				       V34_PHASE3_S_PREFIX_DETECTED :
+				       V34_PHASE3_S_PREFIX_OK),
+		      "alternating S prefix stopped at symbol %u", symbol);
+	}
+	CHECK(prefix.complete &&
+	      prefix.alternating_turns == V34_PHASE3_S_PREFIX_TURNS,
+	      "alternating S prefix did not qualify");
+	saved = prefix;
+	CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+		      V34_PHASE3_S_PREFIX_COMPLETE &&
+	      memcmp(&prefix, &saved, sizeof(prefix)) == 0,
+	      "completed S prefix detector consumed another point");
+
+	CHECK(v34_phase3_s_prefix_init(&prefix) == V34_PHASE3_S_PREFIX_OK,
+	      "S prefix reset fixture did not initialize");
+	point = v34_rotated_point_zero(0);
+	CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "S prefix reset fixture rejected its first point");
+	point = v34_rotated_point_zero(1);
+	CHECK(v34_phase3_s_prefix_receive(&prefix, &point, 0.5) ==
+		      V34_PHASE3_S_PREFIX_OK &&
+	      prefix.alternating_turns == 1u &&
+	      v34_phase3_s_prefix_receive(&prefix, &quiet, 0.5) ==
+		      V34_PHASE3_S_PREFIX_OK &&
+	      v34_phase3_s_prefix_is_valid(&prefix) &&
+	      !prefix.previous_valid,
+	      "low-power point did not reset S prefix progress");
+	saved = prefix;
+	CHECK(v34_phase3_s_prefix_receive(&prefix, &invalid, 0.5) ==
+		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT &&
+	      memcmp(&prefix, &saved, sizeof(prefix)) == 0 &&
+	      v34_phase3_s_prefix_receive(&prefix, &point, NAN) ==
+		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT &&
+	      memcmp(&prefix, &saved, sizeof(prefix)) == 0 &&
+	      v34_phase3_s_prefix_receive(NULL, &point, 0.5) ==
+		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT &&
+	      v34_phase3_s_prefix_init(NULL) ==
+		      V34_PHASE3_S_PREFIX_INVALID_ARGUMENT,
+	      "invalid S prefix call changed detector state");
+	corrupt = prefix;
+	corrupt.alternating_turns = V34_PHASE3_S_PREFIX_TURNS + 1u;
+	CHECK(!v34_phase3_s_prefix_is_valid(NULL) &&
+	      !v34_phase3_s_prefix_is_valid(&corrupt),
+	      "invalid S prefix state was accepted");
+	return true;
+}
+
+static bool test_prefix_timing_ambiguity(void)
+{
+	static const struct qam_point SAME_PHASE_PAIR[] = {
+		{ 3.0, 1.0 },
+		{ 2.0, 2.0 },
+	};
+	struct v34_phase3_s_prefix prefix;
+
+	CHECK(v34_phase3_s_prefix_init(&prefix) == V34_PHASE3_S_PREFIX_OK,
+	      "ambiguous S prefix detector did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+		      V34_PHASE3_S_PREFIX_RECURRENCE_HITS;
+	     ++symbol) {
+		enum v34_phase3_s_prefix_result expected =
+			symbol + 1u ==
+				V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+					V34_PHASE3_S_PREFIX_RECURRENCE_HITS ?
+				V34_PHASE3_S_PREFIX_REBASE_TIMING :
+				V34_PHASE3_S_PREFIX_OK;
+
+		CHECK(v34_phase3_s_prefix_receive(
+			      &prefix, &SAME_PHASE_PAIR[symbol & 1u], 0.5) ==
+			      expected,
+		      "ambiguous S timing stopped at symbol %u", symbol);
+	}
+	CHECK(prefix.recurrence_qualified && !prefix.complete &&
+	      prefix.alternating_turns == 0u &&
+	      v34_phase3_s_prefix_receive(
+		      &prefix, &SAME_PHASE_PAIR[0], 0.5) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "ambiguous S timing did not request exactly one rebase");
+	return true;
 }
 
 static bool test_generated_rotations(void)
@@ -828,6 +935,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "prefix qualification", test_prefix_qualification },
+		{ "prefix timing ambiguity", test_prefix_timing_ambiguity },
 		{ "generated rotations", test_generated_rotations },
 		{ "sliding window and tolerance",
 		  test_sliding_window_and_tolerance },

@@ -10,6 +10,12 @@
 #include <stdint.h>
 
 enum {
+	/* Five points provide four alternating quarter-turn transitions. */
+	V34_PHASE3_S_PREFIX_TURNS = 4,
+	/* If timing lands between alternating S decisions, points two symbols
+	 * apart still recur while adjacent points remain distinct. */
+	V34_PHASE3_S_PREFIX_RECURRENCE_LAG = 2,
+	V34_PHASE3_S_PREFIX_RECURRENCE_HITS = 8,
 	V34_PHASE3_S_RECEIVER_MAX_S_ERRORS = 8,
 	/* A companded line can smear the S-to-S-bar reversal across several
 	 * equalized decisions.  Keep this bound small relative to the 16T marker;
@@ -19,6 +25,38 @@ enum {
 	 * 32T before the 16T S-bar still gives a bounded correlation. */
 	V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS = 32,
 };
+
+enum v34_phase3_s_prefix_result {
+	V34_PHASE3_S_PREFIX_OK,
+	V34_PHASE3_S_PREFIX_DETECTED,
+	V34_PHASE3_S_PREFIX_REBASE_TIMING,
+	V34_PHASE3_S_PREFIX_COMPLETE,
+	V34_PHASE3_S_PREFIX_INVALID_ARGUMENT,
+};
+
+/* Qualify the alternating relative phase at the start of S without assuming
+ * the channel's absolute carrier phase. This early prefix gate lets a line
+ * receiver reject unrelated pre-S energy while retaining enough of the
+ * finite 128T S interval for timing and equalizer acquisition. */
+struct v34_phase3_s_prefix {
+	struct qam_point previous;
+	struct qam_point recurrence[V34_PHASE3_S_PREFIX_RECURRENCE_LAG];
+	uint8_t previous_turn;
+	uint8_t alternating_turns;
+	uint8_t recurrence_points;
+	uint8_t recurrence_hits;
+	bool previous_valid;
+	bool recurrence_qualified;
+	bool complete;
+};
+
+bool v34_phase3_s_prefix_is_valid(
+	const struct v34_phase3_s_prefix *prefix);
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init(
+	struct v34_phase3_s_prefix *prefix);
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
+	struct v34_phase3_s_prefix *prefix,
+	const struct qam_point *point, double minimum_point_power);
 
 enum v34_phase3_s_receiver_result {
 	V34_PHASE3_S_RECEIVER_OK,

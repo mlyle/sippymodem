@@ -6,6 +6,7 @@
 #include "v34_constellation.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 
 enum {
@@ -23,6 +24,180 @@ _Static_assert(
 	(unsigned int)V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS >=
 		(unsigned int)V34_PHASE3_S_BOUNDARY_ANCHOR_SYMBOLS,
 	"V.34 S suffix must retain its transition anchor");
+
+bool v34_phase3_s_prefix_is_valid(
+	const struct v34_phase3_s_prefix *prefix)
+{
+	if (prefix == NULL ||
+	    prefix->recurrence_points > V34_PHASE3_S_PREFIX_RECURRENCE_LAG ||
+	    prefix->recurrence_hits > V34_PHASE3_S_PREFIX_RECURRENCE_HITS ||
+	    prefix->recurrence_qualified !=
+		    (prefix->recurrence_hits ==
+		     V34_PHASE3_S_PREFIX_RECURRENCE_HITS) ||
+	    prefix->alternating_turns > V34_PHASE3_S_PREFIX_TURNS ||
+	    prefix->complete !=
+		    (prefix->alternating_turns == V34_PHASE3_S_PREFIX_TURNS))
+		return false;
+	for (uint8_t index = 0; index < prefix->recurrence_points; ++index)
+		if (!point_is_finite(&prefix->recurrence[index]))
+			return false;
+	for (uint8_t index = prefix->recurrence_points;
+	     index < V34_PHASE3_S_PREFIX_RECURRENCE_LAG; ++index)
+		if (prefix->recurrence[index].in_phase != 0.0 ||
+		    prefix->recurrence[index].quadrature != 0.0)
+			return false;
+	if (!prefix->previous_valid)
+		return prefix->previous.in_phase == 0.0 &&
+		       prefix->previous.quadrature == 0.0 &&
+		       prefix->previous_turn == 0u &&
+		       prefix->alternating_turns == 0u &&
+		       prefix->recurrence_points == 0u &&
+		       prefix->recurrence_hits == 0u &&
+		       !prefix->recurrence_qualified;
+	if (prefix->recurrence_points == 0u)
+		return false;
+	return point_is_finite(&prefix->previous) &&
+	       prefix->previous_turn < 4u &&
+	       (prefix->alternating_turns == 0u ||
+		(prefix->previous_turn == 1u ||
+		 prefix->previous_turn == 3u));
+}
+
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_init(
+	struct v34_phase3_s_prefix *prefix)
+{
+	if (prefix == NULL)
+		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
+	*prefix = (struct v34_phase3_s_prefix){ 0 };
+	return V34_PHASE3_S_PREFIX_OK;
+}
+
+static bool point_has_power(
+	const struct qam_point *point, double minimum_point_power)
+{
+	double power = point->in_phase * point->in_phase +
+		       point->quadrature * point->quadrature;
+
+	return isfinite(power) && power >= minimum_point_power;
+}
+
+static bool points_recur(
+	const struct qam_point *previous,
+	const struct qam_point *delayed,
+	const struct qam_point *point, double minimum_point_power)
+{
+	double point_power = point->in_phase * point->in_phase +
+			     point->quadrature * point->quadrature;
+	double previous_power = previous->in_phase * previous->in_phase +
+				 previous->quadrature * previous->quadrature;
+	double delayed_power = delayed->in_phase * delayed->in_phase +
+				delayed->quadrature * delayed->quadrature;
+	double point_scale = sqrt(point_power);
+	double delayed_scale = sqrt(delayed_power);
+	double correlation;
+	double delta_in_phase = point->in_phase - previous->in_phase;
+	double delta_quadrature = point->quadrature - previous->quadrature;
+	double transition_power =
+		delta_in_phase * delta_in_phase +
+		delta_quadrature * delta_quadrature;
+
+	if (!point_has_power(previous, minimum_point_power) ||
+	    !point_has_power(delayed, minimum_point_power) ||
+	    !isfinite(point_scale) || !isfinite(delayed_scale) ||
+	    point_scale == 0.0 || delayed_scale == 0.0 ||
+	    !isfinite(transition_power))
+		return false;
+	correlation =
+		(point->in_phase / point_scale) *
+			(delayed->in_phase / delayed_scale) +
+		(point->quadrature / point_scale) *
+			(delayed->quadrature / delayed_scale);
+	return isfinite(correlation) && correlation >= 0.98 &&
+	       transition_power >= 0.02 * (point_power + previous_power);
+}
+
+static void remember_recurrence(
+	struct v34_phase3_s_prefix *prefix,
+	const struct qam_point *point)
+{
+	if (prefix->recurrence_points < V34_PHASE3_S_PREFIX_RECURRENCE_LAG) {
+		prefix->recurrence[prefix->recurrence_points++] = *point;
+		return;
+	}
+	prefix->recurrence[0] = prefix->recurrence[1];
+	prefix->recurrence[1] = *point;
+}
+
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
+	struct v34_phase3_s_prefix *prefix,
+	const struct qam_point *point, double minimum_point_power)
+{
+	struct v34_phase3_s_prefix next;
+	uint8_t turn;
+	bool recurrence_just_qualified = false;
+
+	if (!v34_phase3_s_prefix_is_valid(prefix) ||
+	    !point_is_finite(point) || !isfinite(minimum_point_power) ||
+	    minimum_point_power <= 0.0)
+		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
+	if (prefix->complete)
+		return V34_PHASE3_S_PREFIX_COMPLETE;
+	if (!point_has_power(point, minimum_point_power)) {
+		*prefix = (struct v34_phase3_s_prefix){ 0 };
+		return V34_PHASE3_S_PREFIX_OK;
+	}
+	next = *prefix;
+	if (!next.previous_valid ||
+	    !point_has_power(&next.previous, minimum_point_power)) {
+		next = (struct v34_phase3_s_prefix){
+			.previous = *point,
+			.previous_valid = true,
+		};
+		remember_recurrence(&next, point);
+		*prefix = next;
+		return V34_PHASE3_S_PREFIX_OK;
+	}
+	if (qam_nearest_quarter_turn(&next.previous, point, &turn) != QAM_OK)
+		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
+	if (turn == 1u || turn == 3u) {
+		if (next.alternating_turns == 0u ||
+		    turn != next.previous_turn)
+			next.alternating_turns++;
+		else
+			next.alternating_turns = 1u;
+		next.previous_turn = turn;
+	} else {
+		next.previous_turn = 0u;
+		next.alternating_turns = 0u;
+	}
+	if (!next.recurrence_qualified &&
+	    next.recurrence_points == V34_PHASE3_S_PREFIX_RECURRENCE_LAG) {
+		if (points_recur(
+			    &next.previous, &next.recurrence[0], point,
+			    minimum_point_power)) {
+			next.recurrence_hits++;
+		} else {
+			next.recurrence_hits = 0u;
+		}
+		if (next.recurrence_hits ==
+		    V34_PHASE3_S_PREFIX_RECURRENCE_HITS) {
+			next.recurrence_qualified = true;
+			recurrence_just_qualified = true;
+		}
+	}
+	remember_recurrence(&next, point);
+	next.previous = *point;
+	next.complete =
+		next.alternating_turns == V34_PHASE3_S_PREFIX_TURNS;
+	if (!v34_phase3_s_prefix_is_valid(&next))
+		return V34_PHASE3_S_PREFIX_INVALID_ARGUMENT;
+	*prefix = next;
+	if (next.complete)
+		return V34_PHASE3_S_PREFIX_DETECTED;
+	return recurrence_just_qualified ?
+		       V34_PHASE3_S_PREFIX_REBASE_TIMING :
+		       V34_PHASE3_S_PREFIX_OK;
+}
 
 bool v34_phase3_s_detection_is_valid(
 	const struct v34_phase3_s_detection *detection)

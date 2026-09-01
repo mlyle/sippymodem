@@ -867,12 +867,24 @@ static bool test_timing_rebase(void)
 	      qam_demodulator_is_valid(&demodulator) &&
 	      memcmp(&demodulator, &expected, sizeof(demodulator)) == 0,
 	      "timing rebase did not preserve continuous tracking state");
+	phase = demodulator.locked_phase_units;
+	CHECK(qam_demodulator_rebase_adjacent_timing(
+		      &demodulator, true) == QAM_OK &&
+	      demodulator.locked_phase_units ==
+		      (phase + demodulator.timing_step_units) %
+			      demodulator.symbol_period_units &&
+	      qam_demodulator_rebase_adjacent_timing(
+		      &demodulator, false) == QAM_OK &&
+	      demodulator.locked_phase_units == phase,
+	      "adjacent timing rebase did not make a reversible step");
 	saved = demodulator;
 	CHECK(qam_demodulator_rebase_timing(
 		      &demodulator, demodulator.symbol_period_units) ==
 			      QAM_INVALID_ARGUMENT &&
 	      memcmp(&demodulator, &saved, sizeof(demodulator)) == 0 &&
 	      qam_demodulator_rebase_timing(NULL, phase) ==
+		      QAM_INVALID_ARGUMENT &&
+	      qam_demodulator_rebase_adjacent_timing(NULL, true) ==
 		      QAM_INVALID_ARGUMENT,
 	      "invalid timing rebase mutated state");
 	return true;

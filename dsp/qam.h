@@ -212,6 +212,12 @@ enum qam_result qam_demodulator_reset(
  * and matched-filter sample history owned by this stream. */
 enum qam_result qam_demodulator_rebase_timing(
 	struct qam_demodulator *demodulator, uint64_t phase_units);
+/* Move one timing-search candidate without resetting the carrier, matched
+ * filter, or accumulated tracking evidence. A mode-specific finite marker
+ * can use this after proving that the energy maximum lies between its symbol
+ * decisions. */
+enum qam_result qam_demodulator_rebase_adjacent_timing(
+	struct qam_demodulator *demodulator, bool forward);
 /* Ready points are unnormalized matched-filter coordinates interpolated at
  * the exact rational symbol-clock crossing. */
 enum qam_result qam_demodulator_sample(

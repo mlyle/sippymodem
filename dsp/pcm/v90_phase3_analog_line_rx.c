@@ -10,8 +10,13 @@ bool v90_phase3_analog_line_rx_is_valid(
 	if (rx == NULL ||
 	    !v90_phase3_demodulator_matches(
 		    &rx->demodulator, &rx->transmitting_profile) ||
-	    !v90_phase3_analog_rx_is_valid(&rx->points))
+	    !v90_phase3_analog_rx_is_valid(&rx->points) ||
+	    !v34_phase3_s_prefix_is_valid(&rx->s_prefix))
 		return false;
+	if (!rx->s_prefix.complete)
+		return rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_S &&
+		       !rx->points.state.s.gain_seeded &&
+		       rx->points.state.s.detector.buffered_decisions == 0u;
 	if (rx->points.stage == V90_PHASE3_ANALOG_RX_STAGE_S)
 		return rx->points.state.s.detector.s_symbols ==
 		       V90_PHASE3_LINE_S_SUFFIX_SYMBOLS;
@@ -52,6 +57,8 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_init(
 		    &initialized.points, configuration,
 		    V90_PHASE3_LINE_S_SUFFIX_SYMBOLS) !=
 		    V90_PHASE3_ANALOG_RX_OK ||
+	    v34_phase3_s_prefix_init(&initialized.s_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK ||
 	    !v90_phase3_analog_line_rx_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT;
 	*rx = initialized;
@@ -123,6 +130,43 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 				       &next.demodulator) ?
 			       V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED :
 			       V90_PHASE3_ANALOG_LINE_RX_OK;
+	}
+	if (!next.s_prefix.complete) {
+		struct qam_measurement measurement =
+			qam_demodulator_measure(&next.demodulator);
+		enum v34_phase3_s_prefix_result prefix_result =
+			v34_phase3_s_prefix_receive(
+				&next.s_prefix, &point,
+				measurement.symbol_power / 64.0);
+
+		if (prefix_result != V34_PHASE3_S_PREFIX_OK &&
+		    prefix_result != V34_PHASE3_S_PREFIX_DETECTED &&
+		    prefix_result != V34_PHASE3_S_PREFIX_REBASE_TIMING) {
+			rx->failed = true;
+			return V90_PHASE3_ANALOG_LINE_RX_NUMERIC_FAILURE;
+		}
+		if (prefix_result == V34_PHASE3_S_PREFIX_REBASE_TIMING &&
+		    !next.timing_rebased) {
+			/* S remains two-symbol periodic when an energy acquisition lands
+			 * between its decisions. Move to the preceding timing candidate,
+			 * then require the ordinary alternating prefix before training. */
+			if (qam_demodulator_rebase_adjacent_timing(
+				    &next.demodulator, false) != QAM_OK ||
+			    v34_phase3_s_prefix_init(&next.s_prefix) !=
+				    V34_PHASE3_S_PREFIX_OK) {
+				rx->failed = true;
+				return V90_PHASE3_ANALOG_LINE_RX_NUMERIC_FAILURE;
+			}
+			next.timing_rebased = true;
+		}
+		if (prefix_result != V34_PHASE3_S_PREFIX_DETECTED) {
+			if (!v90_phase3_analog_line_rx_is_valid(&next)) {
+				rx->failed = true;
+				return V90_PHASE3_ANALOG_LINE_RX_NUMERIC_FAILURE;
+			}
+			*rx = next;
+			return V90_PHASE3_ANALOG_LINE_RX_OK;
+		}
 	}
 	result = point_result(v90_phase3_analog_rx_point(&next.points, &point));
 	if (result_is_terminal(result)) {

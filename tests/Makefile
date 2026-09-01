@@ -1347,6 +1347,7 @@ V34_PHASE3_DECISION_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase3_decision_receiver
 V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase3_decision_receiver.o \
+	$(BUILD_DIR)/qam.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -1441,6 +1442,7 @@ V34_PHASE4_DECISION_RECEIVER_TEST_BINARY := \
 V34_PHASE4_DECISION_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase4_decision_receiver.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(BUILD_DIR)/qam.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/v34_constellation.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -2440,6 +2442,7 @@ V90_PHASE3_ANALOG_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_analog_rx
 V90_PHASE3_ANALOG_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase3_analog_rx.o \
+	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
@@ -2485,6 +2488,7 @@ V90_PHASE3_RETURN_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_return_rx
 V90_PHASE3_RETURN_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase3_return_rx.o \
+	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
