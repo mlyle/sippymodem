@@ -4,6 +4,7 @@
 #define V90_PHASE3_RETURN_LINE_TX_H
 
 #include "v34_training_line.h"
+#include "v34_training_sequence.h"
 #include "v90_phase3_return_tx.h"
 
 #include <stdbool.h>
@@ -19,16 +20,22 @@ enum v90_phase3_return_line_tx_result {
 };
 
 /* Continue the analogue modem's live 8 kHz QAM line after Ja. The caller
- * transfers an exact next-point boundary; this owner then emits silence,
- * open-ended S, and S-bar without restarting carrier or pulse shaping. */
+ * transfers an exact next-point boundary; this owner then emits silence or
+ * SCR, open-ended S, and S-bar without restarting carrier or pulse shaping. */
 struct v90_phase3_return_line_tx {
 	struct v34_training_line line;
 	struct v90_phase3_return_tx points;
+	struct v34_training_sequence idle_scr;
+	bool scr_during_idle;
 };
 
 enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init(
 	struct v90_phase3_return_line_tx *tx,
 	const struct v34_training_line *line);
+enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init_scr(
+	struct v90_phase3_return_line_tx *tx,
+	const struct v34_training_line *line,
+	enum v34_constellation_size constellation);
 bool v90_phase3_return_line_tx_is_valid(
 	const struct v90_phase3_return_line_tx *tx);
 bool v90_phase3_return_line_tx_is_handoff_ready(

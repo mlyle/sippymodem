@@ -2468,14 +2468,17 @@ V90_PHASE3_RETURN_LINE_TX_TEST_BINARY := \
 V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_return_line_tx.o \
 	$(CRC16_CCITT_FALSE_OBJECT) \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/v34_pulse_modulator.o \
 	$(BUILD_DIR)/v34_phase3_profile.o \
 	$(BUILD_DIR)/v34_phase3_s_sequence.o \
 	$(BUILD_DIR)/v34_training_line.o \
+	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v90_phase3_return_line_tx.o \
 	$(BUILD_DIR)/v90_phase3_return_tx.o
 V90_PHASE3_RETURN_RX_TEST_BINARY := \

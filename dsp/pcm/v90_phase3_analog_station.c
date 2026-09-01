@@ -210,7 +210,9 @@ static enum v90_phase3_analog_station_result enter_dil_return_transmit(
 	if (v90_phase3_return_line_tx_handoff(
 		    &station->transmit.returning, &line) !=
 		    V90_PHASE3_RETURN_LINE_TX_OK ||
-	    v90_phase3_return_line_tx_init(&returning, &line) !=
+	    v90_phase3_return_line_tx_init_scr(
+		    &returning, &line,
+		    station->receive.signs.jd.training_constellation) !=
 		    V90_PHASE3_RETURN_LINE_TX_OK)
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	station->transmit.returning = returning;

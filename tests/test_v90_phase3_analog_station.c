@@ -218,6 +218,12 @@ static bool run_exchange(
 		      (expected_dil_symbols == 0u ?
 			      V90_PHASE3_ANALOG_TRANSMIT_RETURN :
 			      V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN) &&
+	      analog.transmit.returning.scr_during_idle ==
+		      (expected_dil_symbols != 0u) &&
+	      (expected_dil_symbols == 0u ||
+	       (analog.transmit.returning.idle_scr.constellation ==
+			parameters.training_constellation &&
+		analog.transmit.returning.idle_scr.has_last_symbol)) &&
 	      analog.transmit.returning.points.s_symbols >=
 		      V34_PHASE3_S_SYMBOLS &&
 	      !v90_phase3_analog_station_has_failed(&analog) &&
