@@ -208,7 +208,7 @@ static bool test_selected_type1_stream(void)
 	configuration.nominal_peak_amplitude = e.line.nominal_peak_amplitude;
 	configuration.trellis_selection = V34_TRELLIS_64_STATE;
 	configuration.nonlinear_parameter = V34_NONLINEAR_THETA_5_OVER_16;
-	configuration.primary_data_rate_2400_bps_units = 10;
+	configuration.primary_data_rate_2400_bps_units = 12;
 	configuration.expanded_shaping = true;
 	memcpy(configuration.precoder_coefficients,
 	       mp.parameters.type1.precoder_coefficients,
@@ -222,9 +222,9 @@ static bool test_selected_type1_stream(void)
 		      &expected, &e.line, &configuration) ==
 		      V34_DATA_STREAM_OK &&
 	      actual.points.schedule.geometry
-			      .primary_data_rate_2400_bps_units == 10 &&
+			      .primary_data_rate_2400_bps_units == 12 &&
 	      actual.points.encoder.parameters.expanded_shaping &&
-	      direction.primary_data_rate_2400_bps_units == 10 &&
+	      direction.primary_data_rate_2400_bps_units == 12 &&
 	      direction.trellis_selection == V34_TRELLIS_64_STATE &&
 	      direction.nonlinear_parameter ==
 		      V34_NONLINEAR_THETA_5_OVER_16 &&
@@ -235,7 +235,7 @@ static bool test_selected_type1_stream(void)
 		     mp.parameters.type1.precoder_coefficients,
 		     sizeof(mp.parameters.type1.precoder_coefficients)) == 0 &&
 	      memcmp(&e, &saved_e, sizeof(e)) == 0,
-	      "Type 1 MP did not produce the selected V.34 stream");
+	      "final MP did not override the lower Phase 3 projection");
 	CHECK(streams_match_through_b1(&actual, &expected, &samples) &&
 	      samples != 0 && v34_data_stream_is_valid(&actual),
 	      "selected upstream B1 did not match its negotiated model");
@@ -258,7 +258,7 @@ static bool test_rate_intersection(void)
 	      stream.points.encoder.convolutional_encoder
 			      .selection == V34_TRELLIS_32_STATE &&
 	      !stream.points.encoder.parameters.expanded_shaping,
-	      "profile cap did not select the highest common rate");
+	      "final rate selection did not choose the highest common rate");
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 6;
 	CHECK(v90_upstream_data_start_after_e(&stream, &e, &mp) ==
 		      V90_UPSTREAM_DATA_OK &&

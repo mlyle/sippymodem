@@ -30,13 +30,13 @@ static bool profile_is_conventional_upstream(
 
 static uint8_t select_rate(
 	const struct v90_cp_parameters *cp,
-	const struct v90_mp_parameters *mp,
-	const struct v34_phase3_profile *profile)
+	const struct v90_mp_parameters *mp)
 {
 	uint8_t maximum = mp->maximum_upstream_rate_2400_bps_units;
 
-	if (maximum > profile->projected_data_rate_2400_bps_units)
-		maximum = profile->projected_data_rate_2400_bps_units;
+	/* INFO1's Phase 3 projection selects the trained line profile, but the
+	 * final upstream data rate is the highest CP/MP common rate below MP's
+	 * maximum.  The selected symbol rate supplies the remaining limit. */
 	for (int rate = maximum;
 	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
 		uint16_t bit = (uint16_t)(1u <<
@@ -68,7 +68,7 @@ enum v90_upstream_mode_result v90_upstream_mode_select(
 	common = common_parameters(mp);
 	if (common->maximum_upstream_rate_2400_bps_units == 0)
 		return V90_UPSTREAM_MODE_NO_COMMON_RATE;
-	rate = select_rate(cp, common, transmitting_profile);
+	rate = select_rate(cp, common);
 	if (rate == 0)
 		return V90_UPSTREAM_MODE_NO_COMMON_RATE;
 	selected.trellis_selection = common->upstream_trellis;
