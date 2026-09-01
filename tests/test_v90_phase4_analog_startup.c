@@ -286,10 +286,32 @@ static bool test_contracts(void)
 	      "startup did not acquire Ri before sequence check");
 	output = 0xa5;
 	CHECK(v90_phase4_analog_startup_octet(&startup, 0, &output) ==
-		      V90_PHASE4_STARTUP_SEQUENCE_MISMATCH &&
+		      V90_PHASE4_STARTUP_OK &&
 	      output != 0xa5 &&
+	      !v90_phase4_analog_startup_has_failed(&startup) &&
+	      !v90_phase4_ri_search_is_acquired(
+		      &startup.state.initial.receive),
+	      "recoverable Ri loss did not commit the accepted character");
+	for (size_t index = 0; index < V90_PHASE4_RI_SEARCH_SYMBOLS;
+	     ++index) {
+		uint8_t received;
+
+		CHECK(v90_phase4_digital_station_transmit(
+			      &digital_station, &received) ==
+			      V90_PHASE4_DIGITAL_STATION_OK &&
+		      v90_phase4_analog_startup_octet(
+			      &startup, received, &output) ==
+			      V90_PHASE4_STARTUP_OK,
+		      "Ri reacquisition stopped at %zu", index);
+	}
+	CHECK(v90_phase4_ri_search_is_acquired(
+		      &startup.state.initial.receive) &&
+	      !v90_phase4_analog_startup_has_failed(&startup),
+	      "startup did not reacquire Ri after recoverable loss");
+	startup.failed = true;
+	CHECK(v90_phase4_analog_startup_is_valid(&startup) &&
 	      v90_phase4_analog_startup_has_failed(&startup),
-	      "terminal receive failure did not expose accepted output");
+	      "failed startup fixture is invalid");
 	output = 0xa5;
 	CHECK(v90_phase4_analog_startup_octet(&startup, 0, &output) ==
 		      V90_PHASE4_STARTUP_FAILED &&

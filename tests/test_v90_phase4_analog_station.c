@@ -525,17 +525,27 @@ static bool test_contracts(void)
 	}
 	CHECK(v90_phase4_ri_search_is_acquired(&station.receive),
 	      "station did not acquire Ri before sequence check");
-	{
-		struct v90_phase4_analog_station expected = station;
+	CHECK(v90_phase4_analog_station_receive(&station, wrong.octet) ==
+		      V90_PHASE4_ANALOG_STATION_OK &&
+	      !v90_phase4_analog_station_has_failed(&station) &&
+	      !v90_phase4_ri_search_is_acquired(&station.receive) &&
+	      station.receive.history_count == 0u,
+	      "invalid Ri did not restart station acquisition");
+	for (size_t index = 0; index < V90_PHASE4_RI_SEARCH_SYMBOLS;
+	     ++index) {
+		uint8_t octet;
 
-		expected.failed = true;
-		CHECK(v90_phase4_analog_station_receive(
-			      &station, wrong.octet) ==
-			      V90_PHASE4_ANALOG_STATION_SEQUENCE_MISMATCH &&
-		      v90_phase4_analog_station_has_failed(&station) &&
-		      memcmp(&station, &expected, sizeof(station)) == 0,
-		      "invalid Ri did not latch a transactional failure");
+		CHECK(v90_phase4_ri_tx_next(&ri, &octet) == V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK,
+		      "station Ri reacquisition stopped at %zu", index);
 	}
+	CHECK(v90_phase4_ri_search_is_acquired(&station.receive),
+	      "station did not reacquire Ri after a malformed character");
+	station.failed = true;
+	CHECK(v90_phase4_analog_station_is_valid(&station) &&
+	      v90_phase4_analog_station_has_failed(&station),
+	      "failed station fixture was not valid");
 	CHECK(v90_phase4_analog_station_transmit(&station, &sample) ==
 		      V90_PHASE4_ANALOG_STATION_FAILED &&
 	      v90_phase4_analog_station_receive(&station, 0) ==

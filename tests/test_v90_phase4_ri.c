@@ -221,16 +221,6 @@ static bool check_search(
 	      search.stage == V90_PHASE4_RI_SEARCH_AMBIGUOUS &&
 	      v90_phase4_ri_search_is_acquired(&search),
 	      "Ri search did not retain both polarity hypotheses");
-	{
-		struct v90_phase4_ri_search saved = search;
-
-		CHECK(v90_phase4_ri_search_receive(
-			      &search,
-			      expected_octet(law, ucode + 1u, true)) ==
-			      V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE &&
-		      memcmp(&search, &saved, sizeof(search)) == 0,
-		      "acquired Ri search consumed a malformed character");
-	}
 	for (uint8_t phase = start_phase;
 	     phase != 0u; phase = (uint8_t)((phase + 1u) %
 					     V90_PHASE4_RI_PERIOD)) {
@@ -285,6 +275,80 @@ static bool check_search(
 	return true;
 }
 
+static bool check_search_reacquisition(enum g711_law law)
+{
+	struct v90_phase4_ri_search search;
+	uint8_t ucode = 91;
+	unsigned int acquisitions = 0;
+
+	CHECK(v90_phase4_ri_search_init(&search, law, ucode) ==
+		      V90_PHASE4_RI_SEARCH_OK,
+	      "Ri reacquisition did not initialize for law %u",
+	      (unsigned int)law);
+	for (size_t index = 0;
+	     index < V90_PHASE4_RI_SEARCH_SYMBOLS; ++index) {
+		bool positive = index % V90_PHASE4_RI_PERIOD < 3u;
+		enum v90_phase4_ri_search_result result =
+			v90_phase4_ri_search_receive(
+				&search, expected_octet(law, ucode, positive));
+
+		if (result == V90_PHASE4_RI_SEARCH_ACQUIRED)
+			acquisitions++;
+		else
+			CHECK(result == V90_PHASE4_RI_SEARCH_OK,
+			      "initial Ri search returned %s at %zu",
+			      v90_phase4_ri_search_result_name(result), index);
+	}
+	CHECK(acquisitions == 1u &&
+	      v90_phase4_ri_search_is_acquired(&search) &&
+	      v90_phase4_ri_search_receive(
+		      &search, expected_octet(law, ucode + 1u, true)) ==
+		      V90_PHASE4_RI_SEARCH_OK &&
+	      !v90_phase4_ri_search_is_acquired(&search) &&
+	      search.history_count == 0u,
+	      "malformed acquired Ri did not restart the sliding hunt");
+	for (size_t index = 0;
+	     index < V90_PHASE4_RI_SEARCH_SYMBOLS; ++index) {
+		bool positive = index % V90_PHASE4_RI_PERIOD < 3u;
+		enum v90_phase4_ri_search_result result =
+			v90_phase4_ri_search_receive(
+				&search, expected_octet(law, ucode, positive));
+
+		if (result == V90_PHASE4_RI_SEARCH_ACQUIRED)
+			acquisitions++;
+		else
+			CHECK(result == V90_PHASE4_RI_SEARCH_OK,
+			      "repeated Ri search returned %s at %zu",
+			      v90_phase4_ri_search_result_name(result), index);
+	}
+	CHECK(acquisitions == 2u &&
+	      v90_phase4_ri_search_is_acquired(&search),
+	      "Ri search did not reacquire after one malformed character");
+	for (size_t index = 0; index < V90_PHASE4_RI_BAR_SYMBOLS; ++index) {
+		bool positive = index % V90_PHASE4_RI_PERIOD >= 3u;
+		enum v90_phase4_ri_search_result result =
+			v90_phase4_ri_search_receive(
+				&search, expected_octet(law, ucode, positive));
+
+		if (index == 0u)
+			CHECK(result ==
+				      V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED,
+			      "reacquired Ri-bar transition returned %s",
+			      v90_phase4_ri_search_result_name(result));
+		else if (index + 1u == V90_PHASE4_RI_BAR_SYMBOLS)
+			CHECK(result == V90_PHASE4_RI_SEARCH_DONE,
+			      "reacquired Ri-bar completion returned %s",
+			      v90_phase4_ri_search_result_name(result));
+		else
+			CHECK(result == V90_PHASE4_RI_SEARCH_OK,
+			      "reacquired Ri-bar returned %s at %zu",
+			      v90_phase4_ri_search_result_name(result), index);
+	}
+	CHECK(v90_phase4_ri_search_is_complete(&search),
+	      "reacquired Ri search did not complete");
+	return true;
+}
+
 static bool test_unframed_search(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
@@ -295,6 +359,9 @@ static bool test_unframed_search(void)
 			      check_search(law, true, phase),
 			      "law %u phase %u Ri search failed",
 			      (unsigned int)law, phase);
+		CHECK(check_search_reacquisition(law),
+		      "law %u Ri reacquisition failed",
+		      (unsigned int)law);
 	}
 	return true;
 }

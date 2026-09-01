@@ -56,8 +56,9 @@ bool v90_phase4_ri_search_is_complete(
 	const struct v90_phase4_ri_search *search);
 
 /* Consume one raw G.711 character. Wrong magnitudes and non-Ri sign windows
- * remain ordinary search input. Once acquired, a malformed Ri/Ri-bar stream
- * is a protocol error and leaves the search state unchanged. */
+ * remain ordinary search input. A malformed character after acquisition
+ * returns the receiver to the sliding hunt so later Ri repetitions can
+ * reacquire without latching the call failed. */
 enum v90_phase4_ri_search_result v90_phase4_ri_search_receive(
 	struct v90_phase4_ri_search *search, uint8_t network_octet);
 

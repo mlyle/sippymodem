@@ -254,6 +254,20 @@ static enum v90_phase4_ri_search_result receive_bar(
 		       V90_PHASE4_RI_SEARCH_INVALID_STATE;
 }
 
+static enum v90_phase4_ri_search_result restart_hunt(
+	struct v90_phase4_ri_search *search, uint8_t network_octet)
+{
+	enum g711_law law = search->law;
+	uint8_t training_ucode = search->training_ucode;
+
+	if (v90_phase4_ri_search_init(search, law, training_ucode) !=
+	    V90_PHASE4_RI_SEARCH_OK)
+		return V90_PHASE4_RI_SEARCH_INVALID_STATE;
+	/* Retain a valid current sign as the first sliding-search sample.  A
+	 * wrong-magnitude character simply starts an empty hunt. */
+	return receive_hunt(search, network_octet);
+}
+
 enum v90_phase4_ri_search_result v90_phase4_ri_search_receive(
 	struct v90_phase4_ri_search *search, uint8_t network_octet)
 {
@@ -271,6 +285,13 @@ enum v90_phase4_ri_search_result v90_phase4_ri_search_receive(
 		result = receive_ambiguous(&next, network_octet);
 	else
 		result = receive_bar(&next, network_octet);
+	/* Ri is deliberately long and periodic.  A damaged network character
+	 * after acquisition is therefore loss of synchronization, not proof of
+	 * a terminal protocol error: return to the sliding detector and use the
+	 * remaining Ri repetitions to reacquire.  The same recovery also keeps a
+	 * false Ri-bar edge from permanently latching the call failed. */
+	if (result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE)
+		result = restart_hunt(&next, network_octet);
 	if (result == V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE ||
 	    result == V90_PHASE4_RI_SEARCH_INVALID_STATE)
 		return result;
