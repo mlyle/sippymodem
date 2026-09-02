@@ -267,6 +267,7 @@ struct pcm_call {
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t v92_peer_downstream_rate_mask;
 	uint32_t b1_deadline_remaining_samples;
+	uint32_t rate_renegotiation_deadline_remaining_samples;
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	enum pcm_protocol protocol;
@@ -278,6 +279,7 @@ struct pcm_call {
 	bool v92_peer_downstream_rate_stored;
 	bool round_trip_delay_stored;
 	bool b1_deadline_armed;
+	bool rate_renegotiation_deadline_armed;
 	bool retrain_active;
 	bool retrain_peer_tone_retained;
 	bool failed;

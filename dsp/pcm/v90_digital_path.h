@@ -14,6 +14,8 @@
 enum v90_digital_path_downstream_stage {
 	V90_DIGITAL_PATH_DOWNSTREAM_TRAINING,
 	V90_DIGITAL_PATH_DOWNSTREAM_DATA,
+	V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN,
+	V90_DIGITAL_PATH_DOWNSTREAM_RD,
 };
 
 enum v90_digital_path_upstream_stage {
@@ -42,15 +44,30 @@ enum {
 		V34_2D_SYMBOLS_PER_4D_INTERVAL,
 	/* The early gate fits inside survivor traceback, so only frames produced
 	 * while a candidate is active need buffering. */
-	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY =
+	V90_DIGITAL_PATH_CANDIDATE_FRAME_CAPACITY =
 		(1u + V34_DATA_RRN_CANDIDATE_SYMBOLS +
 		 V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS - 1u) /
 			V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS,
+	/* Once the peer finishes upstream B1, our downstream control can have at
+	 * most Ed plus B1d left. At the maximum 3429 symbol/s, this bounds the
+	 * complete post-B1 mapping frames that may need holding until both halves
+	 * are online. */
+	V90_DIGITAL_PATH_RRN_FRAME_CAPACITY =
+		((V90_PHASE4_ED_FRAMES + V90_PHASE4_B1D_FRAMES) *
+		 V90_CP_FRAME_INTERVALS * 3429u +
+		 8000u * V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS - 1u) /
+			(8000u * V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS),
+	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY =
+		V90_DIGITAL_PATH_CANDIDATE_FRAME_CAPACITY >
+				V90_DIGITAL_PATH_RRN_FRAME_CAPACITY ?
+			V90_DIGITAL_PATH_CANDIDATE_FRAME_CAPACITY :
+			V90_DIGITAL_PATH_RRN_FRAME_CAPACITY,
 };
 
 union v90_digital_path_downstream {
 	struct pcm_downstream_tx training;
 	struct v90_downstream_data_stream data;
+	struct v90_rd_tx rd;
 };
 
 union v90_digital_path_upstream {
@@ -68,20 +85,32 @@ struct v90_digital_path {
 	struct v34_received_mapping_frame
 		pending_upstream_frames[
 			V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY];
+	/* CPt fixes the Phase 4 constellations and K. Rate renegotiation reuses
+	 * those fields with the spectral-shaping parameters of the preceding
+	 * data mode. */
+	struct v90_pcm_mapping training_mapping;
+	struct v90_pcm_mapping control_mapping;
 	struct v90_pcm_mapping data_mapping;
+	struct v90_phase4_cp_rx control_symbols;
+	struct v90_mp_record local_mp;
+	uint32_t enabled_downstream_rate_mask;
 	enum g711_law law;
+	enum v34_constellation_size rate_renegotiation_constellation;
 	enum v90_digital_path_downstream_stage downstream_stage;
 	enum v90_digital_path_upstream_stage upstream_stage;
 	uint8_t pending_upstream_head;
 	uint8_t pending_upstream_count;
+	uint8_t upstream_rate_2400_bps_units;
 	bool data_mapping_ready;
+	bool rate_renegotiation_active;
 	bool failed;
 };
 
 enum v90_digital_path_result v90_digital_path_init(
 	struct v90_digital_path *path,
 	const struct v90_phase4_digital_handoff *handoff,
-	uint32_t enabled_downstream_rate_mask);
+	uint32_t enabled_downstream_rate_mask,
+	enum v34_constellation_size rate_renegotiation_constellation);
 
 bool v90_digital_path_is_valid(const struct v90_digital_path *path);
 bool v90_digital_path_has_failed(const struct v90_digital_path *path);

@@ -3,6 +3,7 @@
 #ifndef V90_PHASE4_CP_LINE_RX_H
 #define V90_PHASE4_CP_LINE_RX_H
 
+#include "v34_data_line_receiver.h"
 #include "v90_phase3_return_line_rx.h"
 #include "v90_phase4_cp_rx.h"
 
@@ -40,6 +41,17 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	struct v90_phase4_cp_line_rx *rx,
 	const struct v90_phase3_return_line_handoff *handoff,
 	enum v34_constellation_size constellation, double adaptation);
+
+/* Re-enter the continuous CP symbol stream after an online S/S-bar rate-
+ * renegotiation request. The live data receiver supplies carrier timing and
+ * equalizer history; control_symbols supplies the CP descrambler and
+ * differential state retained from the preceding CP-prime. Only the bounded
+ * CP record parser is reset. */
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_resume_online(
+	struct v90_phase4_cp_line_rx *rx,
+	const struct v34_data_line_receiver *online,
+	const struct v90_phase4_cp_rx *control_symbols,
+	enum v34_constellation_size constellation);
 bool v90_phase4_cp_line_rx_is_valid(
 	const struct v90_phase4_cp_line_rx *rx);
 bool v90_phase4_cp_line_rx_has_failed(

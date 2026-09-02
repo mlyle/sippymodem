@@ -2530,6 +2530,8 @@ V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_cp_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_cp_receiver.o \
+	$(filter-out $(BUILD_DIR)/test_v34_data_line_receiver.o, \
+		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_line_rx.o, \
 		$(V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_tx.o, \

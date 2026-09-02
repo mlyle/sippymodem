@@ -404,7 +404,8 @@ static bool verify_final_downstream_exchange(
 		      V90_ANALOG_PATH_OK &&
 	      v90_digital_path_init(
 		      &digital_path, &digital_handoff,
-		      enabled_downstream_rate_mask) ==
+		      enabled_downstream_rate_mask,
+		      cp_receive->symbols.constellation) ==
 		      V90_DIGITAL_PATH_OK,
 	      "online paths did not start at the CPt/Ri boundary");
 	{
@@ -817,15 +818,20 @@ static bool test_path_contracts(void)
 		     (enum v90_analog_path_result)99),
 		     "unknown") == 0 &&
 	      v90_digital_path_init(
-		      NULL, &handoff, V90_JD_RATE_CAPABILITY_MASK) ==
+		      NULL, &handoff, V90_JD_RATE_CAPABILITY_MASK,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      v90_digital_path_init(
-		      &path, NULL, V90_JD_RATE_CAPABILITY_MASK) ==
-		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
-	      v90_digital_path_init(&path, &handoff, 0) ==
+		      &path, NULL, V90_JD_RATE_CAPABILITY_MASK,
+		      V34_CONSTELLATION_4_POINT) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      v90_digital_path_init(
-		      &path, &handoff, V90_JD_RATE_CAPABILITY_MASK) ==
+		      &path, &handoff, 0,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
+	      v90_digital_path_init(
+		      &path, &handoff, V90_JD_RATE_CAPABILITY_MASK,
+		      (enum v34_constellation_size)99) ==
 		      V90_DIGITAL_PATH_INVALID_ARGUMENT &&
 	      memcmp(&path, &saved, sizeof(path)) == 0 &&
 	      v90_digital_path_sample(

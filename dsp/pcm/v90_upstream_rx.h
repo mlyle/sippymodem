@@ -48,6 +48,10 @@ union v90_upstream_rx_state {
  * exposing a replayable half-transition. */
 struct v90_upstream_rx {
 	union v90_upstream_rx_state state;
+	/* CP modulation is initialized only before the first CPt. Preserve its
+	 * self-synchronizing scrambler and differential phase after CP-prime so a
+	 * later rate renegotiation can reset only the frame parser. */
+	struct v90_phase4_cp_rx control_symbols;
 	struct v90_pcm_mapping training_mapping;
 	struct v90_cp_parameters data_parameters;
 	struct v90_mp_record local_mp;

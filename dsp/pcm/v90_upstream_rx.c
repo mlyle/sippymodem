@@ -101,6 +101,7 @@ static enum v90_upstream_rx_result validate_data_parameters(
 bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 {
 	if (receiver == NULL ||
+	    !v90_phase4_cp_rx_is_valid(&receiver->control_symbols) ||
 	    !v90_pcm_mapping_is_valid(&receiver->training_mapping) ||
 	    receiver->training_mapping.kind != V90_CP_TRAINING ||
 	    !initial_mp_is_valid(&receiver->local_mp) ||
@@ -123,6 +124,9 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	switch (receiver->stage) {
 	case V90_UPSTREAM_RX_STAGE_CP:
 		return v90_phase4_cp_line_rx_is_valid(&receiver->state.cp) &&
+		       memcmp(&receiver->control_symbols,
+			      &receiver->state.cp.symbols,
+			      sizeof(receiver->control_symbols)) == 0 &&
 		       !v90_phase4_cp_line_rx_has_pending_record(
 			       &receiver->state.cp);
 	case V90_UPSTREAM_RX_STAGE_E:
@@ -182,6 +186,7 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	    !downstream_rate_mask_is_valid(enabled_downstream_rate_mask))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
 	initialized.state.cp = *cp;
+	initialized.control_symbols = cp->symbols;
 	initialized.training_mapping = *training_mapping;
 	initialized.local_mp = *local_mp;
 	initialized.enabled_downstream_rate_mask =
@@ -290,6 +295,11 @@ static enum v90_upstream_rx_result receive_cp_sample(
 	enum v90_phase4_cp_line_rx_result result =
 		v90_phase4_cp_line_rx_sample(
 			&receiver->state.cp, sample, &event);
+
+	if (result == V90_PHASE4_CP_LINE_RX_OK ||
+	    result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
+	    result == V90_PHASE4_CP_LINE_RX_RECORD_READY)
+		receiver->control_symbols = receiver->state.cp.symbols;
 
 	switch (result) {
 	case V90_PHASE4_CP_LINE_RX_OK:

@@ -2,6 +2,7 @@
 
 #include "v90_phase4_cp_line_rx.h"
 
+#include "memory_region.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
@@ -86,6 +87,49 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	if (!v90_phase4_cp_line_rx_is_valid(&initialized))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	*rx = initialized;
+	return V90_PHASE4_CP_LINE_RX_OK;
+}
+
+enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_resume_online(
+	struct v90_phase4_cp_line_rx *rx,
+	const struct v34_data_line_receiver *online,
+	const struct v90_phase4_cp_rx *control_symbols,
+	enum v34_constellation_size constellation)
+{
+	struct v90_phase4_cp_line_rx resumed = { 0 };
+	const struct v34_data_rate_renegotiation_monitor *monitor;
+
+	if (rx == NULL || online == NULL || control_symbols == NULL ||
+	    memory_regions_overlap(rx, sizeof(*rx), online, sizeof(*online)) ||
+	    memory_regions_overlap(
+		    rx, sizeof(*rx), control_symbols,
+		    sizeof(*control_symbols)) ||
+	    !v34_data_line_receiver_is_valid(online) ||
+	    v34_data_line_receiver_has_failed(online) ||
+	    !v90_phase4_cp_rx_is_valid(control_symbols) ||
+	    !v34_constellation_size_is_valid(constellation) ||
+	    control_symbols->transmitting_role !=
+		    online->transmitting_profile.local_role)
+		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
+	monitor = &online->equalizer_receiver.rate_renegotiation;
+	if (!monitor->rate_renegotiation_enabled ||
+	    !v34_phase3_s_receiver_is_complete(
+		    &monitor->rate_renegotiation_marker) ||
+	    !qam_equalizer_is_handoff_ready(
+		    &online->equalizer_receiver.equalizer))
+		return V90_PHASE4_CP_LINE_RX_INVALID_STATE;
+
+	resumed.demodulator = online->line;
+	resumed.equalizer = online->equalizer_receiver.equalizer;
+	resumed.symbols = *control_symbols;
+	resumed.symbols.constellation = constellation;
+	if (v90_cp_receiver_init(&resumed.symbols.records) != V90_CP_OK)
+		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
+	resumed.transmitting_profile = online->transmitting_profile;
+	resumed.adaptation = online->equalizer_receiver.adaptation;
+	if (!v90_phase4_cp_line_rx_is_valid(&resumed))
+		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
+	*rx = resumed;
 	return V90_PHASE4_CP_LINE_RX_OK;
 }
 

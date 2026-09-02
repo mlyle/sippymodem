@@ -8,13 +8,29 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 _Static_assert(
 	V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS == 8,
 	"V.90 upstream control buffering follows the V.34 frame cadence");
 _Static_assert(
-	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY == 18,
-	"V.90 upstream control buffer must cover the complete candidate");
+	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY >=
+		V90_DIGITAL_PATH_CANDIDATE_FRAME_CAPACITY &&
+		V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY >=
+			V90_DIGITAL_PATH_RRN_FRAME_CAPACITY,
+	"V.90 upstream control buffer must cover both bounded epochs");
+
+static bool initial_mp_is_valid(const struct v90_mp_record *record)
+{
+	return v90_mp_record_is_valid(record) &&
+	       !v90_mp_record_acknowledges_cp(record);
+}
+
+static bool downstream_rate_mask_is_valid(uint32_t mask)
+{
+	return mask != 0u &&
+	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0u;
+}
 
 static bool pending_upstream_is_valid(const struct v90_digital_path *path)
 {
@@ -37,6 +53,38 @@ static bool data_mapping_matches(
 	       v90_pcm_mapping_equal(mapping, &expected);
 }
 
+static bool make_rate_renegotiation_training_mapping(
+	const struct v90_pcm_mapping *cpt,
+	const struct v90_pcm_mapping *preceding_data,
+	struct v90_pcm_mapping *mapping)
+{
+	struct v90_pcm_mapping generated;
+
+	if (!v90_pcm_mapping_is_valid(cpt) ||
+	    cpt->kind != V90_CP_TRAINING ||
+	    !v90_pcm_mapping_is_valid(preceding_data) ||
+	    preceding_data->kind != V90_CP_DATA || mapping == NULL ||
+	    cpt->law != preceding_data->law)
+		return false;
+	generated = *cpt;
+	/* V.90 8.6 retains the CPt constellation set and K while using every
+	 * spectral-shaping parameter from the preceding data mode. */
+	generated.sign_redundancy = preceding_data->sign_redundancy;
+	generated.sign_bits =
+		(uint8_t)(V90_CP_FRAME_INTERVALS - generated.sign_redundancy);
+	generated.frame_bits =
+		(uint8_t)(generated.modulus_bits + generated.sign_bits);
+	generated.spectral_lookahead = preceding_data->spectral_lookahead;
+	generated.shaping_a1_q1_6 = preceding_data->shaping_a1_q1_6;
+	generated.shaping_a2_q1_6 = preceding_data->shaping_a2_q1_6;
+	generated.shaping_b1_q1_6 = preceding_data->shaping_b1_q1_6;
+	generated.shaping_b2_q1_6 = preceding_data->shaping_b2_q1_6;
+	if (!v90_pcm_mapping_is_valid(&generated))
+		return false;
+	*mapping = generated;
+	return true;
+}
+
 static bool downstream_is_valid(const struct v90_digital_path *path)
 {
 	if (path->downstream_stage ==
@@ -47,6 +95,9 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 		return pcm_downstream_tx_is_valid(training) &&
 		       training->encoder.mapping.kind == V90_CP_TRAINING &&
 		       training->encoder.mapping.law == path->law &&
+		       v90_pcm_mapping_equal(
+			       &training->encoder.mapping,
+			       &path->control_mapping) &&
 		       (path->failed || !pcm_downstream_tx_is_complete(training));
 	}
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA) {
@@ -59,6 +110,20 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 			       &data->transmitter.encoder.mapping,
 			       &path->data_mapping);
 	}
+	if (path->downstream_stage ==
+	    V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN) {
+		const struct v90_downstream_data_stream *data =
+			&path->downstream.data;
+
+		return path->rate_renegotiation_active &&
+		       v90_downstream_data_stream_is_valid(data) &&
+		       data->transmitter.encoder.mapping.kind == V90_CP_DATA &&
+		       data->transmitter.encoder.mapping.law == path->law;
+	}
+	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RD)
+		return path->rate_renegotiation_active &&
+		       v90_rd_tx_is_valid(&path->downstream.rd) &&
+		       path->downstream.rd.mapping.law == path->law;
 	return false;
 }
 
@@ -75,12 +140,29 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 
 		return v90_upstream_rx_is_valid(startup) &&
 		       startup->training_mapping.law == path->law &&
+		       v90_pcm_mapping_equal(
+			       &startup->training_mapping,
+			       &path->training_mapping) &&
+		       v90_mp_record_equal(
+			       &startup->local_mp, &path->local_mp) &&
+		       startup->enabled_downstream_rate_mask ==
+			       path->enabled_downstream_rate_mask &&
+		       memcmp(&startup->control_symbols,
+			      &path->control_symbols,
+			      sizeof(path->control_symbols)) == 0 &&
 		       mapping_state_is_valid &&
+		       (path->rate_renegotiation_active ?
+				path->upstream_rate_2400_bps_units != 0u :
+				path->upstream_rate_2400_bps_units == 0u) &&
 		       (path->failed || !v90_upstream_rx_is_complete(startup));
 	}
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA)
 		return path->data_mapping_ready &&
+		       path->upstream_rate_2400_bps_units != 0u &&
 		       v34_data_line_receiver_is_valid(&path->upstream.data) &&
+		       path->upstream.data.geometry
+			       .primary_data_rate_2400_bps_units ==
+			       path->upstream_rate_2400_bps_units &&
 		       (path->failed ||
 			!v34_data_line_receiver_has_failed(
 				&path->upstream.data));
@@ -90,7 +172,22 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
+	    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
+	    path->training_mapping.kind != V90_CP_TRAINING ||
+	    path->training_mapping.law != path->law ||
+	    !v90_pcm_mapping_is_valid(&path->control_mapping) ||
+	    path->control_mapping.kind != V90_CP_TRAINING ||
+	    path->control_mapping.law != path->law ||
+	    !v90_phase4_cp_rx_is_valid(&path->control_symbols) ||
+	    !initial_mp_is_valid(&path->local_mp) ||
+	    !downstream_rate_mask_is_valid(
+		    path->enabled_downstream_rate_mask) ||
+	    !v34_constellation_size_is_valid(
+		    path->rate_renegotiation_constellation) ||
 	    !pending_upstream_is_valid(path) ||
+	    (path->rate_renegotiation_active &&
+	     path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+	     path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA) ||
 	    (path->data_mapping_ready &&
 	     (!v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	      path->data_mapping.kind != V90_CP_DATA ||
@@ -102,7 +199,8 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 enum v90_digital_path_result v90_digital_path_init(
 	struct v90_digital_path *path,
 	const struct v90_phase4_digital_handoff *handoff,
-	uint32_t enabled_downstream_rate_mask)
+	uint32_t enabled_downstream_rate_mask,
+	enum v34_constellation_size rate_renegotiation_constellation)
 {
 	struct v90_digital_path initialized = {
 		.downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_TRAINING,
@@ -111,9 +209,9 @@ enum v90_digital_path_result v90_digital_path_init(
 	const struct v90_pcm_mapping *training;
 
 	if (path == NULL || handoff == NULL ||
-	    enabled_downstream_rate_mask == 0 ||
-	    (enabled_downstream_rate_mask &
-	     ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) != 0 ||
+	    !downstream_rate_mask_is_valid(enabled_downstream_rate_mask) ||
+	    !v34_constellation_size_is_valid(
+		    rate_renegotiation_constellation) ||
 	    !v90_phase4_digital_transmit_handoff_is_valid(
 		    &handoff->transmit) ||
 	    !v90_phase4_cp_line_rx_is_valid(&handoff->receive) ||
@@ -123,6 +221,15 @@ enum v90_digital_path_result v90_digital_path_init(
 	initialized.downstream.training = handoff->transmit.transmitter;
 	training = &initialized.downstream.training.encoder.mapping;
 	initialized.law = training->law;
+	initialized.training_mapping = *training;
+	initialized.control_mapping = *training;
+	initialized.control_symbols = handoff->receive.symbols;
+	initialized.local_mp =
+		initialized.downstream.training.control.mp;
+	initialized.enabled_downstream_rate_mask =
+		enabled_downstream_rate_mask;
+	initialized.rate_renegotiation_constellation =
+		rate_renegotiation_constellation;
 	if (v90_upstream_rx_init(
 		    &initialized.upstream.startup, &handoff->receive,
 		    training,
@@ -158,8 +265,10 @@ bool v90_digital_path_upstream_is_online(
 
 bool v90_digital_path_is_online(const struct v90_digital_path *path)
 {
-	return v90_digital_path_downstream_is_online(path) &&
-	       v90_digital_path_upstream_is_online(path);
+	return v90_digital_path_is_valid(path) && !path->failed &&
+	       (path->rate_renegotiation_active ||
+		(v90_digital_path_downstream_is_online(path) &&
+		 v90_digital_path_upstream_is_online(path)));
 }
 
 static enum v90_digital_path_result stream_result(
@@ -214,14 +323,21 @@ static enum v90_digital_path_result emit_downstream(
 		{
 			struct v90_downstream_data_stream data;
 			struct v90_pcm_symbol pcm;
+			v90_downstream_frame_source effective_source = source;
+			void *effective_context = source_context;
 			enum v90_downstream_data_stream_result data_result =
 				v90_downstream_data_stream_start_after_ed(
 					&data, &training,
 					&path->data_mapping);
 
+			if (path->rate_renegotiation_active) {
+				effective_source = NULL;
+				effective_context = NULL;
+			}
 			if (data_result == V90_DOWNSTREAM_DATA_STREAM_OK)
 				data_result = v90_downstream_data_stream_next(
-					&data, source, source_context, &pcm);
+					&data, effective_source,
+					effective_context, &pcm);
 			if (data_result != V90_DOWNSTREAM_DATA_STREAM_OK)
 				return stream_result(data_result);
 			path->downstream =
@@ -229,16 +345,89 @@ static enum v90_digital_path_result emit_downstream(
 			path->downstream.data = data;
 			path->downstream_stage =
 				V90_DIGITAL_PATH_DOWNSTREAM_DATA;
+			if (path->rate_renegotiation_active &&
+			    path->upstream_stage ==
+				    V90_DIGITAL_PATH_UPSTREAM_DATA)
+				path->rate_renegotiation_active = false;
 			*octet = pcm.octet;
 			return V90_DIGITAL_PATH_OK;
 		}
 	}
-	{
+	if (path->downstream_stage ==
+	    V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN) {
 		struct v90_pcm_symbol pcm;
 		enum v90_downstream_data_stream_result result =
+			v90_downstream_data_stream_finish(
+				&path->downstream.data, &pcm);
+
+		if (result == V90_DOWNSTREAM_DATA_STREAM_OK) {
+			*octet = pcm.octet;
+			return V90_DIGITAL_PATH_OK;
+		}
+		if (result != V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
+			return stream_result(result);
+		{
+			struct v90_rd_tx rd;
+			const struct v90_pcm_mapping *mapping =
+				&path->downstream.data.transmitter.encoder.mapping;
+
+			if (v90_rd_tx_init(&rd, mapping) != V90_RD_TX_OK)
+				return V90_DIGITAL_PATH_INTERNAL_ERROR;
+			path->downstream =
+				(union v90_digital_path_downstream){ 0 };
+			path->downstream.rd = rd;
+			path->downstream_stage =
+				V90_DIGITAL_PATH_DOWNSTREAM_RD;
+			return emit_downstream(
+				path, NULL, NULL, octet);
+		}
+	}
+	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RD) {
+		struct v90_pcm_symbol pcm;
+		enum v90_rd_tx_result result =
+			v90_rd_tx_next(&path->downstream.rd, &pcm);
+
+		if (result == V90_RD_TX_OK) {
+			*octet = pcm.octet;
+			return V90_DIGITAL_PATH_OK;
+		}
+		if (result != V90_RD_TX_COMPLETE)
+			return result == V90_RD_TX_INVALID_PARAMETERS ?
+				       V90_DIGITAL_PATH_INVALID_PARAMETERS :
+				       V90_DIGITAL_PATH_INTERNAL_ERROR;
+		{
+			struct pcm_downstream_tx training;
+
+			if (pcm_downstream_tx_init(
+				    &training, PCM_PROTOCOL_V90,
+				    &path->control_mapping) !=
+					    PCM_DOWNSTREAM_TX_OK ||
+			    pcm_downstream_tx_start_mp(
+				    &training, &path->local_mp) !=
+					    PCM_DOWNSTREAM_TX_OK ||
+			    (path->data_mapping_ready &&
+			     pcm_downstream_tx_request_mp_prime(&training) !=
+				     PCM_DOWNSTREAM_TX_OK))
+				return V90_DIGITAL_PATH_INTERNAL_ERROR;
+			path->downstream =
+				(union v90_digital_path_downstream){ 0 };
+			path->downstream.training = training;
+			path->downstream_stage =
+				V90_DIGITAL_PATH_DOWNSTREAM_TRAINING;
+			return emit_downstream(
+				path, NULL, NULL, octet);
+		}
+	}
+	{
+		struct v90_pcm_symbol pcm;
+		v90_downstream_frame_source effective_source =
+			path->rate_renegotiation_active ? NULL : source;
+		void *effective_context =
+			path->rate_renegotiation_active ? NULL : source_context;
+		enum v90_downstream_data_stream_result result =
 			v90_downstream_data_stream_next(
-				&path->downstream.data, source,
-				source_context, &pcm);
+				&path->downstream.data, effective_source,
+				effective_context, &pcm);
 
 		if (result != V90_DOWNSTREAM_DATA_STREAM_OK)
 			return stream_result(result);
@@ -253,9 +442,16 @@ static enum v90_digital_path_result request_mp_prime(
 {
 	struct v90_pcm_mapping mapping;
 
-	if (path->downstream_stage !=
-		    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING ||
-	    path->data_mapping_ready)
+	if (path->data_mapping_ready ||
+	    (!path->rate_renegotiation_active &&
+	     path->downstream_stage !=
+		     V90_DIGITAL_PATH_DOWNSTREAM_TRAINING) ||
+	    (path->rate_renegotiation_active &&
+	     path->downstream_stage !=
+		     V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN &&
+	     path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_RD &&
+	     path->downstream_stage !=
+		     V90_DIGITAL_PATH_DOWNSTREAM_TRAINING))
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
 	if (v90_pcm_mapping_init(&mapping, parameters) !=
 	    V90_PCM_MAPPING_OK)
@@ -265,7 +461,12 @@ static enum v90_digital_path_result request_mp_prime(
 	 * an internal failure leaves one valid, diagnosable owner. */
 	path->data_mapping = mapping;
 	path->data_mapping_ready = true;
-	if (pcm_downstream_tx_request_mp_prime(
+	/* CP may arrive while the accepted data tail or Rd is still being sent.
+	 * Retain it there; the freshly initialized TRN2d/MP owner observes the
+	 * latch as soon as Rd-bar completes. */
+	if (path->downstream_stage ==
+		    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+	    pcm_downstream_tx_request_mp_prime(
 		    &path->downstream.training) != PCM_DOWNSTREAM_TX_OK)
 		return V90_DIGITAL_PATH_INTERNAL_ERROR;
 	return V90_DIGITAL_PATH_OK;
@@ -305,9 +506,15 @@ static enum v90_digital_path_result startup_result(
 			    &path->upstream.startup, &data) !=
 		    V90_UPSTREAM_RX_OK)
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
+		path->upstream_rate_2400_bps_units = data.geometry
+			.primary_data_rate_2400_bps_units;
 		path->upstream = (union v90_digital_path_upstream){ 0 };
 		path->upstream.data = data;
 		path->upstream_stage = V90_DIGITAL_PATH_UPSTREAM_DATA;
+		if (path->rate_renegotiation_active &&
+		    path->downstream_stage ==
+			    V90_DIGITAL_PATH_DOWNSTREAM_DATA)
+			path->rate_renegotiation_active = false;
 		return V90_DIGITAL_PATH_OK;
 	}
 	case V90_UPSTREAM_RX_FAILED:
@@ -330,16 +537,67 @@ static enum v90_digital_path_result startup_result(
 	return V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 
+static enum v90_digital_path_result begin_rate_renegotiation(
+	struct v90_digital_path *path)
+{
+	struct v90_pcm_mapping control_mapping;
+	struct v90_phase4_cp_line_rx cp;
+	struct v90_upstream_rx startup;
+	const struct v90_pcm_mapping *preceding_data;
+
+	if (path->rate_renegotiation_active ||
+	    path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA ||
+	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
+	    path->upstream_rate_2400_bps_units == 0u)
+		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
+	/* The 16-point online handoff does not yet retain sufficient equalizer
+	 * quality for a reliable B1/data restart. Report a bounded RRN event
+	 * without entering the in-place owner so pcm_call selects full retrain. */
+	if (path->rate_renegotiation_constellation !=
+	    V34_CONSTELLATION_4_POINT)
+		return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
+	preceding_data =
+		&path->downstream.data.transmitter.encoder.mapping;
+	if (!make_rate_renegotiation_training_mapping(
+		    &path->training_mapping, preceding_data,
+		    &control_mapping))
+		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
+	if (v90_phase4_cp_line_rx_resume_online(
+		    &cp, &path->upstream.data, &path->control_symbols,
+		    path->rate_renegotiation_constellation) !=
+	    V90_PHASE4_CP_LINE_RX_OK)
+		return V90_DIGITAL_PATH_INTERNAL_ERROR;
+	if (v90_upstream_rx_init(
+		    &startup, &cp, &path->training_mapping,
+		    &path->local_mp,
+		    path->enabled_downstream_rate_mask) != V90_UPSTREAM_RX_OK)
+		return V90_DIGITAL_PATH_INTERNAL_ERROR;
+
+	path->control_mapping = control_mapping;
+	path->control_symbols = startup.control_symbols;
+	path->upstream = (union v90_digital_path_upstream){ 0 };
+	path->upstream.startup = startup;
+	path->upstream_stage = V90_DIGITAL_PATH_UPSTREAM_STARTUP;
+	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
+	path->pending_upstream_head = 0u;
+	path->pending_upstream_count = 0u;
+	path->data_mapping_ready = false;
+	path->rate_renegotiation_active = true;
+	return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
+}
+
 static enum v90_digital_path_result receive_upstream(
 	struct v90_digital_path *path, int16_t sample,
 	struct v34_received_mapping_frame *received,
-	bool *frame_ready)
+	bool defer_host_frame, bool *frame_ready)
 {
 	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP) {
 		struct v90_cp_parameters event = { 0 };
 		enum v90_upstream_rx_result result = v90_upstream_rx_sample(
 			&path->upstream.startup, sample, &event);
 
+		path->control_symbols =
+			path->upstream.startup.control_symbols;
 		return startup_result(path, result, &event);
 	}
 	{
@@ -352,14 +610,14 @@ static enum v90_digital_path_result receive_upstream(
 		bool candidate_after =
 			v34_data_equalizer_receiver_has_rate_renegotiation_candidate(
 				&path->upstream.data.equalizer_receiver);
+		bool hold_frame = defer_host_frame || candidate_after ||
+			path->rate_renegotiation_active;
 		bool generated_frame =
 			result == V34_DATA_RECEIVE_MAPPING_FRAME_READY;
 		bool released_frame = false;
 
 		if (result == V34_DATA_RECEIVE_RATE_RENEGOTIATION) {
-			path->pending_upstream_head = 0u;
-			path->pending_upstream_count = 0u;
-			return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
+			return begin_rate_renegotiation(path);
 		}
 		switch (result) {
 		case V34_DATA_RECEIVE_OK:
@@ -379,10 +637,10 @@ static enum v90_digital_path_result receive_upstream(
 		case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		}
-		/* Survivor traceback hides the complete early prefix. Buffer only
-		 * while that prefix remains a candidate; rejected candidates drain in
-		 * order without delaying ordinary online data. */
-		if (!candidate_after && path->pending_upstream_count != 0u) {
+		/* Survivor traceback hides the complete early S/S-bar prefix. Also
+		 * retain post-B1 frames when the upstream half finishes RRN first;
+		 * neither kind belongs to the host until its control epoch resolves. */
+		if (!hold_frame && path->pending_upstream_count != 0u) {
 			*received = path->pending_upstream_frames[
 				path->pending_upstream_head];
 			path->pending_upstream_head = (uint8_t)(
@@ -394,7 +652,7 @@ static enum v90_digital_path_result receive_upstream(
 		if (generated_frame) {
 			size_t tail;
 
-			if (!candidate_after &&
+			if (!hold_frame &&
 			    path->pending_upstream_count == 0u &&
 			    !released_frame) {
 				*received = frame;
@@ -475,7 +733,8 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
 	result = receive_upstream(
-		path, received_sample, &frame, &frame_ready);
+		path, received_sample, &frame,
+		path->rate_renegotiation_active, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
 	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME &&
 	    result != V90_DIGITAL_PATH_RATE_RENEGOTIATION)
@@ -497,6 +756,8 @@ static enum v90_digital_path_result sample_owned(
 {
 	struct v34_received_mapping_frame frame = { 0 };
 	uint8_t generated;
+	bool rate_renegotiation_was_active =
+		path->rate_renegotiation_active;
 	bool frame_ready = false;
 	enum v90_digital_path_result result;
 
@@ -507,7 +768,8 @@ static enum v90_digital_path_result sample_owned(
 		return result;
 	if (result == V90_DIGITAL_PATH_OK)
 		result = receive_upstream(
-			path, received_sample, &frame, &frame_ready);
+			path, received_sample, &frame,
+			rate_renegotiation_was_active, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
 	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME &&
 	    result != V90_DIGITAL_PATH_RATE_RENEGOTIATION)
