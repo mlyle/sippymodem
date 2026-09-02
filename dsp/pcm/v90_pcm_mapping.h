@@ -55,6 +55,16 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters);
 
+/* Build the Phase 4 control mapping used after online rate renegotiation.
+ * V.90 8.6 retains the accepted CPt constellation set and K while taking all
+ * sign and spectral-shaping parameters from the preceding data mode.
+ * Rejected calls leave mapping unchanged. */
+enum v90_pcm_mapping_result
+v90_pcm_mapping_init_rate_renegotiation(
+	struct v90_pcm_mapping *mapping,
+	const struct v90_pcm_mapping *training,
+	const struct v90_pcm_mapping *preceding_data);
+
 /* Derive the shared Phase 4 training map from the common fields carried by
  * V.92 CPt. Rejected calls leave mapping unchanged. */
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(

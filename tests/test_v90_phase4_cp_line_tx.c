@@ -147,6 +147,105 @@ static bool model_e_sample(
 	       accepted == accepting;
 }
 
+static bool finish_cp_record(struct v90_phase4_cp_tx *symbols)
+{
+	while (!v90_phase4_cp_tx_record_is_complete(symbols)) {
+		struct qam_point point;
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+		bool complete;
+
+		if (v90_phase4_cp_tx_next(
+			    symbols, &point, &quarter_point,
+			    &clockwise_quarter_turns, &complete) !=
+		    V90_PHASE4_CP_TX_OK)
+			return false;
+	}
+	return true;
+}
+
+static bool verify_online_resume(
+	enum v34_constellation_size constellation, uint8_t variant)
+{
+	struct v34_phase3_profile selected = profile();
+	struct v90_cp_parameters training =
+		parameters(V90_CP_TRAINING, variant);
+	struct v90_cp_parameters preceding =
+		parameters(V90_CP_DATA, variant);
+	struct v90_cp_parameters next_parameters = preceding;
+	struct v34_training_line online_line;
+	struct v34_training_line model_line;
+	struct v90_phase4_cp_tx control_symbols;
+	struct v90_phase4_cp_tx model_symbols;
+	struct v90_phase4_cp_line_tx resumed;
+	bool complete = false;
+
+	next_parameters.upstream_rate_mask ^= 0x0200u;
+	next_parameters.acknowledges_peer = true;
+	CHECK(v34_training_line_init(
+		      &online_line, &selected, V90_PHASE3_SAMPLE_RATE,
+		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
+	      advance_to_nontrivial_boundary(&online_line) &&
+	      v90_phase4_cp_tx_init(
+		      &control_symbols, V34_ANSWERING_STATION,
+		      constellation, &training) == V90_PHASE4_CP_TX_OK &&
+	      finish_cp_record(&control_symbols) &&
+	      v90_phase4_cp_tx_start_next_record(
+		      &control_symbols, &preceding) == V90_PHASE4_CP_TX_OK &&
+	      finish_cp_record(&control_symbols),
+	      "online CP resume fixture did not reach its boundary");
+	model_line = online_line;
+	model_symbols = control_symbols;
+	CHECK(v90_phase4_cp_tx_start_next_record(
+		      &model_symbols, &next_parameters) == V90_PHASE4_CP_TX_OK &&
+	      v90_phase4_cp_line_tx_resume_online(
+		      &resumed, &online_line, &control_symbols,
+		      &next_parameters) == V90_PHASE4_CP_LINE_TX_OK &&
+	      memcmp(&resumed.line, &online_line, sizeof(online_line)) == 0 &&
+	      memcmp(&resumed.symbols, &model_symbols,
+		     sizeof(model_symbols)) == 0,
+	      "online CP resume did not preserve line and control histories");
+	for (size_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT; ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		if (v90_phase4_cp_line_tx_is_handoff_ready(&resumed)) {
+			complete = true;
+			break;
+		}
+		CHECK(model_sample(&model_line, &model_symbols, &expected) &&
+		      v90_phase4_cp_line_tx_sample(&resumed, &actual) ==
+			      V90_PHASE4_CP_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&resumed.line, &model_line,
+			     sizeof(model_line)) == 0 &&
+		      memcmp(&resumed.symbols, &model_symbols,
+			     sizeof(model_symbols)) == 0,
+		      "online CP continuation diverged at sample %zu",
+		      sample_index);
+	}
+	CHECK(complete &&
+	      v90_phase4_cp_line_tx_record_is_complete(&resumed),
+	      "online CP continuation did not complete");
+	return true;
+}
+
+static bool test_online_resume(void)
+{
+	for (uint8_t variant = 0; variant < 2u; ++variant) {
+		CHECK(verify_online_resume(
+			      V34_CONSTELLATION_4_POINT, variant),
+		      "four-point online CP resume failed for variant %u",
+		      variant);
+		CHECK(verify_online_resume(
+			      V34_CONSTELLATION_16_POINT, variant),
+		      "sixteen-point online CP resume failed for variant %u",
+		      variant);
+	}
+	return true;
+}
+
 static bool verify_continuation(
 	enum v34_constellation_size constellation)
 {
@@ -336,6 +435,52 @@ static bool test_transactional_contracts(void)
 		      &tx, &line, V34_CONSTELLATION_4_POINT,
 		      &training) == V90_PHASE4_CP_LINE_TX_OK,
 	      "valid CP line did not initialize");
+	{
+		struct v90_phase4_cp_tx control = tx.symbols;
+		struct v90_phase4_cp_tx incomplete;
+		struct v90_phase4_cp_line_tx resumed;
+		struct v90_phase4_cp_line_tx resumed_saved;
+		struct v34_training_line mid_point = line;
+
+		CHECK(finish_cp_record(&control),
+		      "resume contract cursor did not complete");
+		incomplete = control;
+		incomplete.bit_index = 0;
+		memset(&resumed, 0xa5, sizeof(resumed));
+		resumed_saved = resumed;
+		CHECK(v90_phase4_cp_line_tx_resume_online(
+			      &resumed, &line, &control, &data) ==
+			      V90_PHASE4_CP_LINE_TX_OK,
+		      "valid online resume was rejected");
+		saved = resumed;
+		CHECK(v90_phase4_cp_line_tx_resume_online(
+			      &resumed, &resumed.line, &control, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      &resumed, &line, &resumed.symbols, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+		      memcmp(&resumed, &saved, sizeof(resumed)) == 0,
+		      "overlapping online resume changed its destination");
+		CHECK(v34_training_line_sample(
+			      &mid_point, &point, &sample, &accepted) ==
+			      V34_TRAINING_LINE_OK && accepted &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      &resumed_saved, &mid_point, &control, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      &resumed_saved, &line, &incomplete, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      &resumed_saved, &line, &control, &training) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_PARAMETERS &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      NULL, &line, &control, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+		      memcmp(&resumed_saved, &untouched_saved,
+			     sizeof(resumed_saved)) == 0,
+		      "rejected online resume changed its destination");
+	}
+	sample = 777;
 	CHECK(v90_phase4_e_line_tx_init(NULL, &tx) ==
 		      V90_PHASE4_E_LINE_TX_INVALID_ARGUMENT &&
 	      v90_phase4_e_line_tx_init(&e_untouched, NULL) ==
@@ -396,6 +541,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous waveforms", test_continuous_waveforms },
+		{ "online resume", test_online_resume },
 		{ "transactional contracts", test_transactional_contracts },
 	};
 	unsigned int failures = 0;

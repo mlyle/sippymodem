@@ -53,38 +53,6 @@ static bool data_mapping_matches(
 	       v90_pcm_mapping_equal(mapping, &expected);
 }
 
-static bool make_rate_renegotiation_training_mapping(
-	const struct v90_pcm_mapping *cpt,
-	const struct v90_pcm_mapping *preceding_data,
-	struct v90_pcm_mapping *mapping)
-{
-	struct v90_pcm_mapping generated;
-
-	if (!v90_pcm_mapping_is_valid(cpt) ||
-	    cpt->kind != V90_CP_TRAINING ||
-	    !v90_pcm_mapping_is_valid(preceding_data) ||
-	    preceding_data->kind != V90_CP_DATA || mapping == NULL ||
-	    cpt->law != preceding_data->law)
-		return false;
-	generated = *cpt;
-	/* V.90 8.6 retains the CPt constellation set and K while using every
-	 * spectral-shaping parameter from the preceding data mode. */
-	generated.sign_redundancy = preceding_data->sign_redundancy;
-	generated.sign_bits =
-		(uint8_t)(V90_CP_FRAME_INTERVALS - generated.sign_redundancy);
-	generated.frame_bits =
-		(uint8_t)(generated.modulus_bits + generated.sign_bits);
-	generated.spectral_lookahead = preceding_data->spectral_lookahead;
-	generated.shaping_a1_q1_6 = preceding_data->shaping_a1_q1_6;
-	generated.shaping_a2_q1_6 = preceding_data->shaping_a2_q1_6;
-	generated.shaping_b1_q1_6 = preceding_data->shaping_b1_q1_6;
-	generated.shaping_b2_q1_6 = preceding_data->shaping_b2_q1_6;
-	if (!v90_pcm_mapping_is_valid(&generated))
-		return false;
-	*mapping = generated;
-	return true;
-}
-
 static bool downstream_is_valid(const struct v90_digital_path *path)
 {
 	if (path->downstream_stage ==
@@ -558,9 +526,9 @@ static enum v90_digital_path_result begin_rate_renegotiation(
 		return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
 	preceding_data =
 		&path->downstream.data.transmitter.encoder.mapping;
-	if (!make_rate_renegotiation_training_mapping(
-		    &path->training_mapping, preceding_data,
-		    &control_mapping))
+	if (v90_pcm_mapping_init_rate_renegotiation(
+		    &control_mapping, &path->training_mapping,
+		    preceding_data) != V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
 	if (v90_phase4_cp_line_rx_resume_online(
 		    &cp, &path->upstream.data, &path->control_symbols,

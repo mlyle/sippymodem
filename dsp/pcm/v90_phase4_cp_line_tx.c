@@ -2,6 +2,7 @@
 
 #include "v90_phase4_cp_line_tx.h"
 
+#include "memory_region.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
@@ -67,6 +68,45 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_init(
 	if (!v90_phase4_cp_line_tx_is_valid(&initialized))
 		return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
 	*tx = initialized;
+	return V90_PHASE4_CP_LINE_TX_OK;
+}
+
+enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
+	struct v90_phase4_cp_line_tx *tx,
+	const struct v34_training_line *online_line,
+	const struct v90_phase4_cp_tx *control_symbols,
+	const struct v90_cp_parameters *parameters)
+{
+	struct v90_phase4_cp_line_tx resumed = { 0 };
+	enum v90_phase4_cp_line_tx_result result;
+
+	if (tx == NULL || online_line == NULL || control_symbols == NULL ||
+	    parameters == NULL ||
+	    memory_regions_overlap(
+		    tx, sizeof(*tx), online_line, sizeof(*online_line)) ||
+	    memory_regions_overlap(
+		    tx, sizeof(*tx), control_symbols,
+		    sizeof(*control_symbols)) ||
+	    !v90_phase3_training_line_is_valid(online_line) ||
+	    !v90_phase4_cp_tx_is_valid(control_symbols) ||
+	    control_symbols->role != online_line->profile.local_role)
+		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
+	if (!v34_training_line_needs_point(online_line) ||
+	    !v90_phase4_cp_tx_record_is_complete(control_symbols))
+		return V90_PHASE4_CP_LINE_TX_INVALID_STATE;
+	if (!v90_cp_parameters_are_valid(parameters) ||
+	    parameters->kind != V90_CP_DATA)
+		return V90_PHASE4_CP_LINE_TX_INVALID_PARAMETERS;
+
+	resumed.line = *online_line;
+	resumed.symbols = *control_symbols;
+	result = symbol_result(v90_phase4_cp_tx_start_next_record(
+		&resumed.symbols, parameters));
+	if (result != V90_PHASE4_CP_LINE_TX_OK)
+		return result;
+	if (!v90_phase4_cp_line_tx_is_valid(&resumed))
+		return V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR;
+	*tx = resumed;
 	return V90_PHASE4_CP_LINE_TX_OK;
 }
 

@@ -188,6 +188,72 @@ static bool test_training_mapping(void)
 	return true;
 }
 
+static bool test_rate_renegotiation_mapping(void)
+{
+	struct v90_cp_parameters training_parameters =
+		parameters(V90_CP_TRAINING, 13, 0, 8, true);
+	struct v90_cp_parameters data_parameters =
+		parameters(V90_CP_DATA, 1, 1, 8, false);
+	struct v90_pcm_mapping training;
+	struct v90_pcm_mapping data;
+	struct v90_pcm_mapping derived;
+	struct v90_pcm_mapping expected;
+	struct v90_pcm_mapping saved;
+
+	data_parameters.spectral_lookahead = 3;
+	data_parameters.shaping_a1_q1_6 = 12;
+	data_parameters.shaping_a2_q1_6 = -23;
+	data_parameters.shaping_b1_q1_6 = 7;
+	data_parameters.shaping_b2_q1_6 = -4;
+	CHECK(v90_pcm_mapping_init(&training, &training_parameters) ==
+		      V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init(&data, &data_parameters) ==
+		      V90_PCM_MAPPING_OK,
+	      "rate-renegotiation fixtures did not initialize");
+	expected = training;
+	expected.sign_redundancy = data.sign_redundancy;
+	expected.sign_bits = data.sign_bits;
+	expected.frame_bits =
+		(uint8_t)(expected.modulus_bits + expected.sign_bits);
+	expected.spectral_lookahead = data.spectral_lookahead;
+	expected.shaping_a1_q1_6 = data.shaping_a1_q1_6;
+	expected.shaping_a2_q1_6 = data.shaping_a2_q1_6;
+	expected.shaping_b1_q1_6 = data.shaping_b1_q1_6;
+	expected.shaping_b2_q1_6 = data.shaping_b2_q1_6;
+	CHECK(v90_pcm_mapping_init_rate_renegotiation(
+		      &derived, &training, &data) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_equal(&derived, &expected) &&
+	      derived.kind == V90_CP_TRAINING &&
+	      derived.modulus_bits == training.modulus_bits &&
+	      memcmp(derived.transmit, training.transmit,
+		     sizeof(derived.transmit)) == 0 &&
+	      memcmp(derived.codec, training.codec,
+		     sizeof(derived.codec)) == 0,
+	      "rate renegotiation changed CPt constellations or data shaping");
+
+	memset(&derived, 0xa5, sizeof(derived));
+	saved = derived;
+	data.law = G711_LAW_PCMU;
+	CHECK(v90_pcm_mapping_init_rate_renegotiation(
+		      &derived, &training, &data) ==
+		      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+	      v90_pcm_mapping_init_rate_renegotiation(
+		      &derived, &training, &training) ==
+		      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+	      v90_pcm_mapping_init_rate_renegotiation(
+		      NULL, &training, &data) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_init_rate_renegotiation(
+		      &derived, NULL, &data) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_init_rate_renegotiation(
+		      &derived, &training, NULL) ==
+		      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      memcmp(&derived, &saved, sizeof(derived)) == 0,
+	      "rejected rate-renegotiation mapping changed its destination");
+	return true;
+}
+
 static struct v92_cpt_parameters v92_parameters(
 	const struct v90_cp_parameters *source)
 {
@@ -753,6 +819,8 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "training mapping", test_training_mapping },
+		{ "rate renegotiation mapping",
+		  test_rate_renegotiation_mapping },
 		{ "V.92 CPt mapping", test_v92_cpt_mapping },
 		{ "V.92 CPu mapping", test_v92_cpu_mapping },
 		{ "generated inverse mapping",

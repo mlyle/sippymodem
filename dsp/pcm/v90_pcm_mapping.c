@@ -206,6 +206,41 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	return V90_PCM_MAPPING_OK;
 }
 
+enum v90_pcm_mapping_result
+v90_pcm_mapping_init_rate_renegotiation(
+	struct v90_pcm_mapping *mapping,
+	const struct v90_pcm_mapping *training,
+	const struct v90_pcm_mapping *preceding_data)
+{
+	struct v90_pcm_mapping initialized;
+
+	if (mapping == NULL || training == NULL || preceding_data == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (!v90_pcm_mapping_is_valid(training) ||
+	    training->kind != V90_CP_TRAINING ||
+	    !v90_pcm_mapping_is_valid(preceding_data) ||
+	    preceding_data->kind != V90_CP_DATA ||
+	    training->law != preceding_data->law)
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+
+	initialized = *training;
+	initialized.sign_redundancy = preceding_data->sign_redundancy;
+	initialized.sign_bits =
+		(uint8_t)(V90_CP_FRAME_INTERVALS -
+			  initialized.sign_redundancy);
+	initialized.frame_bits =
+		(uint8_t)(initialized.modulus_bits + initialized.sign_bits);
+	initialized.spectral_lookahead = preceding_data->spectral_lookahead;
+	initialized.shaping_a1_q1_6 = preceding_data->shaping_a1_q1_6;
+	initialized.shaping_a2_q1_6 = preceding_data->shaping_a2_q1_6;
+	initialized.shaping_b1_q1_6 = preceding_data->shaping_b1_q1_6;
+	initialized.shaping_b2_q1_6 = preceding_data->shaping_b2_q1_6;
+	if (!v90_pcm_mapping_is_valid(&initialized))
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	*mapping = initialized;
+	return V90_PCM_MAPPING_OK;
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	struct v90_pcm_mapping *mapping,
 	const struct v92_cpt_parameters *parameters)
