@@ -66,6 +66,34 @@ static bool make_mapping(
 	return make_mapping_with_shaping(mapping, law, kind, 2, 2);
 }
 
+static bool make_rd_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_DATA,
+		.law = law,
+		.shaping_a1_q1_6 = 29,
+		.shaping_a2_q1_6 = -13,
+		.shaping_b1_q1_6 = 43,
+		.shaping_b2_q1_6 = -5,
+		.selected_rate_index = 1,
+		.sign_redundancy = 2,
+		.spectral_lookahead = 2,
+		.constellation_count = V90_CP_FRAME_INTERVALS,
+	};
+
+	for (uint8_t interval = 0;
+	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		parameters.frame_constellation[interval] = interval;
+		for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
+			add_ucode(
+				&parameters.transmit_constellations[interval],
+				(uint8_t)(16u + interval + 14u * ordinal));
+	}
+	return v90_pcm_mapping_init(mapping, &parameters) ==
+	       V90_PCM_MAPPING_OK;
+}
+
 static struct v90_mp_record make_record(bool type1)
 {
 	if (!type1) {
@@ -288,6 +316,111 @@ static bool verify_data_stream(
 		      v90_pcm_symbol_is_valid(&output, data_mapping->law),
 		      "idle frame source did not resume the stream");
 	}
+	{
+		struct v90_pcm_symbol output;
+		struct v90_pcm_symbol untouched;
+		size_t accepted_sources = source.frame_count;
+		size_t tail_symbols = 0;
+
+		while (tail_symbols <=
+		       V90_CP_FRAME_INTERVALS *
+			       (V90_SPECTRAL_MAX_LOOKAHEAD + 2u)) {
+			enum v90_downstream_data_stream_result result =
+				v90_downstream_data_stream_finish(
+					&transmit, &output);
+
+			if (result == V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
+				break;
+			CHECK(result == V90_DOWNSTREAM_DATA_STREAM_OK &&
+			      v90_pcm_symbol_is_valid(
+				      &output, data_mapping->law),
+			      "data tail stopped after %zu symbols",
+			      tail_symbols);
+			tail_symbols++;
+		}
+		CHECK(source.frame_count == accepted_sources &&
+		      transmit.queue_count == 0 &&
+		      transmit.transmitted_symbols ==
+			      transmit.accepted_frames *
+				      V90_CP_FRAME_INTERVALS &&
+		      transmit.transmitted_symbols %
+				      V90_CP_FRAME_INTERVALS == 0 &&
+		      v90_downstream_data_tx_is_complete(
+			      &transmit.transmitter) &&
+		      v90_downstream_data_stream_is_valid(&transmit),
+		      "data tail did not end at its accepted frame boundary");
+		memset(&untouched, 0xa5, sizeof(untouched));
+		output = untouched;
+		struct v90_downstream_data_stream saved = transmit;
+
+		CHECK(v90_downstream_data_stream_finish(
+			      &transmit, &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_COMPLETE &&
+		      v90_downstream_data_stream_next(
+			      &transmit, NULL, NULL, &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE &&
+		      memcmp(&transmit, &saved, sizeof(transmit)) == 0 &&
+		      memcmp(&output, &untouched, sizeof(output)) == 0,
+		      "completed data tail changed state or output");
+	}
+	return true;
+}
+
+static bool verify_rd_sequence(enum g711_law law)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_rd_tx transmitter;
+	struct v90_pcm_symbol symbol;
+
+	CHECK(make_rd_mapping(&mapping, law) &&
+	      v90_rd_tx_init(&transmitter, &mapping) == V90_RD_TX_OK &&
+	      v90_rd_tx_is_valid(&transmitter) &&
+	      !v90_rd_tx_is_complete(&transmitter),
+	      "law %u Rd fixture did not initialize", law);
+	for (size_t index = 0; index < V90_RD_SEQUENCE_SYMBOLS; ++index) {
+		size_t interval = index % V90_CP_FRAME_INTERVALS;
+		uint8_t expected_ucode = 0;
+		bool expected_positive =
+			interval < V90_CP_FRAME_INTERVALS / 2u;
+
+		if (index >= V90_RD_SYMBOLS)
+			expected_positive = !expected_positive;
+		CHECK(v90_pcm_mapping_ucode(
+			      &mapping, V90_PCM_MAPPING_TRANSMIT,
+			      interval, 0, &expected_ucode) ==
+			      V90_PCM_MAPPING_OK &&
+		      v90_rd_tx_next(&transmitter, &symbol) ==
+			      V90_RD_TX_OK &&
+		      symbol.ucode == expected_ucode &&
+		      symbol.positive == expected_positive &&
+		      v90_pcm_symbol_is_valid(&symbol, law),
+		      "law %u Rd symbol %zu changed", law, index);
+	}
+	CHECK(v90_rd_tx_is_complete(&transmitter) &&
+	      transmitter.transmitted_symbols == V90_RD_SYMBOLS +
+		      V90_RD_BAR_SYMBOLS,
+	      "law %u Rd/Rd-bar length changed", law);
+	{
+		struct v90_rd_tx saved = transmitter;
+		struct v90_pcm_symbol untouched;
+
+		memset(&untouched, 0xa5, sizeof(untouched));
+		symbol = untouched;
+		CHECK(v90_rd_tx_next(&transmitter, &symbol) ==
+			      V90_RD_TX_COMPLETE &&
+		      memcmp(&transmitter, &saved, sizeof(transmitter)) == 0 &&
+		      memcmp(&symbol, &untouched, sizeof(symbol)) == 0,
+		      "law %u completed Rd changed state or output", law);
+	}
+	return true;
+}
+
+static bool test_rd_sequence(void)
+{
+	CHECK(verify_rd_sequence(G711_LAW_PCMU),
+	      "PCMU Rd sequence failed");
+	CHECK(verify_rd_sequence(G711_LAW_PCMA),
+	      "PCMA Rd sequence failed");
 	return true;
 }
 
@@ -556,18 +689,57 @@ static bool test_continuous_streams(void)
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
+	struct v90_pcm_mapping data_mapping;
 	struct v90_mp_record record = make_record(false);
 	struct v90_mp_record changed = record;
 	struct v90_mp_record acknowledged = record;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_tx saved;
+	struct v90_downstream_data_stream stream;
+	struct v90_downstream_data_stream saved_stream;
+	struct v90_pcm_symbol symbol;
+	struct v90_pcm_symbol saved_symbol;
+	struct v90_rd_tx rd;
+	struct v90_rd_tx saved_rd;
 
 	CHECK(make_mapping(
 		      &mapping, G711_LAW_PCMU, V90_CP_TRAINING) &&
+	      make_mapping(&data_mapping, G711_LAW_PCMU, V90_CP_DATA) &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "contract fixture did not initialize");
+	memset(&stream, 0, sizeof(stream));
+	CHECK(v90_downstream_data_tx_init(
+		      &stream.transmitter, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK &&
+	      v90_downstream_data_stream_is_valid(&stream),
+	      "data-stream contract fixture did not initialize");
+	saved_stream = stream;
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_symbol = symbol;
+	CHECK(v90_downstream_data_stream_finish(NULL, &symbol) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+	      v90_downstream_data_stream_finish(&stream, NULL) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+	      v90_downstream_data_stream_finish(&stream, &symbol) ==
+		      V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE &&
+	      memcmp(&stream, &saved_stream, sizeof(stream)) == 0 &&
+	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+	      "data tail accepted an invalid pre-data boundary");
+	memset(&rd, 0xa5, sizeof(rd));
+	saved_rd = rd;
+	CHECK(v90_rd_tx_init(NULL, &data_mapping) ==
+		      V90_RD_TX_INVALID_ARGUMENT &&
+	      v90_rd_tx_init(&rd, NULL) == V90_RD_TX_INVALID_ARGUMENT &&
+	      v90_rd_tx_init(&rd, &mapping) ==
+		      V90_RD_TX_INVALID_PARAMETERS &&
+	      memcmp(&rd, &saved_rd, sizeof(rd)) == 0 &&
+	      v90_rd_tx_next(NULL, &symbol) ==
+		      V90_RD_TX_INVALID_ARGUMENT &&
+	      v90_rd_tx_next(&rd, NULL) ==
+		      V90_RD_TX_INVALID_ARGUMENT,
+	      "Rd accepted an invalid map or destination");
 	saved = transmitter;
 	set_acknowledgment(&acknowledged, true);
 	CHECK(pcm_downstream_tx_start_mp(NULL, &record) ==
@@ -713,6 +885,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous streams", test_continuous_streams },
+		{ "Rd and Rd-bar sequence", test_rd_sequence },
 		{ "record-boundary request", test_boundary_request },
 		{ "contracts", test_contracts },
 	};

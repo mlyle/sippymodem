@@ -60,7 +60,11 @@ bool v90_downstream_data_stream_is_valid(
 	if (stream == NULL ||
 	    !v90_downstream_data_tx_is_valid(&stream->transmitter) ||
 	    (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
-	     stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA) ||
+	     stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA &&
+	     stream->transmitter.stage !=
+		     V90_DOWNSTREAM_DATA_TX_STAGE_FINISHING &&
+	     stream->transmitter.stage !=
+		     V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE) ||
 	    !queue_is_valid(stream) ||
 	    stream->accepted_frames >
 		    UINT64_MAX / V90_CP_FRAME_INTERVALS ||
@@ -69,7 +73,7 @@ bool v90_downstream_data_stream_is_valid(
 			     stream->accepted_frames : V90_PHASE4_B1D_FRAMES) ||
 	    (stream->transmitter.stage == V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	     stream->accepted_frames >= V90_PHASE4_B1D_FRAMES) ||
-	    (stream->transmitter.stage == V90_DOWNSTREAM_DATA_TX_STAGE_DATA &&
+	    (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	     stream->accepted_frames < V90_PHASE4_B1D_FRAMES))
 		return false;
 	mapping = &stream->transmitter.encoder.mapping;
@@ -216,6 +220,9 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 
 	if (!v90_downstream_data_stream_is_valid(stream) || symbol == NULL)
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT;
+	if (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
+	    stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA)
+		return V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE;
 	next = *stream;
 	for (size_t attempt = 0;
 	     next.queue_count == 0 &&
@@ -242,12 +249,123 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	return V90_DOWNSTREAM_DATA_STREAM_OK;
 }
 
+enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(
+	struct v90_downstream_data_stream *stream,
+	struct v90_pcm_symbol *symbol)
+{
+	struct v90_downstream_data_stream next;
+	struct v90_pcm_symbol generated;
+
+	if (!v90_downstream_data_stream_is_valid(stream) || symbol == NULL)
+		return V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT;
+	if (stream->transmitter.stage == V90_DOWNSTREAM_DATA_TX_STAGE_B1D)
+		return V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE;
+	next = *stream;
+	if (next.queue_count == 0) {
+		struct v90_pcm_frame_output output;
+		enum v90_downstream_data_tx_result result =
+			v90_downstream_data_tx_finish(
+				&next.transmitter, &output);
+
+		if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY) {
+			if (!fill_queue(&next, &output))
+				return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
+		} else if (result == V90_DOWNSTREAM_DATA_TX_COMPLETE) {
+			if (next.transmitted_symbols %
+				    V90_CP_FRAME_INTERVALS != 0 ||
+			    !v90_downstream_data_stream_is_valid(&next))
+				return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
+			*stream = next;
+			return V90_DOWNSTREAM_DATA_STREAM_COMPLETE;
+		} else if (result == V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE) {
+			return V90_DOWNSTREAM_DATA_STREAM_NUMERIC_FAILURE;
+		} else {
+			return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
+		}
+	}
+	generated = pop_symbol(&next);
+	if (!v90_downstream_data_stream_is_valid(&next))
+		return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
+	*stream = next;
+	*symbol = generated;
+	return V90_DOWNSTREAM_DATA_STREAM_OK;
+}
+
+bool v90_rd_tx_is_valid(const struct v90_rd_tx *transmitter)
+{
+	return transmitter != NULL &&
+	       v90_pcm_mapping_is_valid(&transmitter->mapping) &&
+	       transmitter->mapping.kind == V90_CP_DATA &&
+	       transmitter->transmitted_symbols <= V90_RD_SEQUENCE_SYMBOLS;
+}
+
+bool v90_rd_tx_is_complete(const struct v90_rd_tx *transmitter)
+{
+	return v90_rd_tx_is_valid(transmitter) &&
+	       transmitter->transmitted_symbols == V90_RD_SEQUENCE_SYMBOLS;
+}
+
+enum v90_rd_tx_result v90_rd_tx_init(
+	struct v90_rd_tx *transmitter,
+	const struct v90_pcm_mapping *current_data_mapping)
+{
+	struct v90_rd_tx initialized = { 0 };
+
+	if (transmitter == NULL || current_data_mapping == NULL)
+		return V90_RD_TX_INVALID_ARGUMENT;
+	if (!v90_pcm_mapping_is_valid(current_data_mapping) ||
+	    current_data_mapping->kind != V90_CP_DATA)
+		return V90_RD_TX_INVALID_PARAMETERS;
+	initialized.mapping = *current_data_mapping;
+	if (!v90_rd_tx_is_valid(&initialized))
+		return V90_RD_TX_INTERNAL_ERROR;
+	*transmitter = initialized;
+	return V90_RD_TX_OK;
+}
+
+enum v90_rd_tx_result v90_rd_tx_next(
+	struct v90_rd_tx *transmitter, struct v90_pcm_symbol *symbol)
+{
+	struct v90_rd_tx next;
+	struct v90_pcm_symbol generated;
+	size_t interval;
+	uint8_t ucode;
+	bool positive;
+
+	if (!v90_rd_tx_is_valid(transmitter) || symbol == NULL)
+		return V90_RD_TX_INVALID_ARGUMENT;
+	if (v90_rd_tx_is_complete(transmitter))
+		return V90_RD_TX_COMPLETE;
+	next = *transmitter;
+	interval = next.transmitted_symbols % V90_CP_FRAME_INTERVALS;
+	if (v90_pcm_mapping_ucode(
+		    &next.mapping, V90_PCM_MAPPING_TRANSMIT,
+		    interval, 0, &ucode) != V90_PCM_MAPPING_OK)
+		return V90_RD_TX_INTERNAL_ERROR;
+	/* Descending-Ucode mapping makes label zero the normative
+	 * highest-power constellation member used by Rd. */
+	positive = interval < V90_CP_FRAME_INTERVALS / 2u;
+	if (next.transmitted_symbols >= V90_RD_SYMBOLS)
+		positive = !positive;
+	if (!v90_pcm_symbol_make(
+		    &generated, next.mapping.law, ucode, positive))
+		return V90_RD_TX_INTERNAL_ERROR;
+	next.transmitted_symbols++;
+	if (!v90_rd_tx_is_valid(&next))
+		return V90_RD_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	*symbol = generated;
+	return V90_RD_TX_OK;
+}
+
 const char *v90_downstream_data_stream_result_name(
 	enum v90_downstream_data_stream_result result)
 {
 	switch (result) {
 	case V90_DOWNSTREAM_DATA_STREAM_OK:
 		return "ok";
+	case V90_DOWNSTREAM_DATA_STREAM_COMPLETE:
+		return "complete";
 	case V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE:
 		return "frame source failure";
 	case V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT:
