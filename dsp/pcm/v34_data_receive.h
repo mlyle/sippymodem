@@ -14,6 +14,8 @@ enum v34_data_receive_result {
 	V34_DATA_RECEIVE_MAPPING_FRAME_READY,
 	V34_DATA_RECEIVE_B1_IN_PROGRESS,
 	V34_DATA_RECEIVE_B1_COMPLETE,
+	/* A complete online S followed by S-bar was qualified. */
+	V34_DATA_RECEIVE_RATE_RENEGOTIATION,
 	/* An earlier line sample reached an unrecoverable decoding boundary. */
 	V34_DATA_RECEIVE_FAILED,
 	V34_DATA_RECEIVE_INVALID_ARGUMENT,

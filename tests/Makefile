@@ -1027,6 +1027,8 @@ V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_data_channel_receiver.o \
 	$(BUILD_DIR)/v34_data_equalizer_receiver.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
+	$(BUILD_DIR)/v34_phase3_s_receiver.o \
+	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_decoder.o \

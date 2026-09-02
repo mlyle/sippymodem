@@ -368,6 +368,7 @@ static enum v90_upstream_rx_result receive_b1_sample(
 	case V34_DATA_RECEIVE_INVALID_STATE:
 	case V34_DATA_RECEIVE_NUMERIC_FAILURE:
 	case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
+	case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
 		break;
 	}
 	return V90_UPSTREAM_RX_NUMERIC_FAILURE;
@@ -503,6 +504,7 @@ enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 	configuration.equalizer_adaptation = completed_e->adaptation;
 	configuration.trellis_selection = direction.trellis_selection;
 	configuration.expanded_shaping = direction.expanded_shaping;
+	configuration.detect_rate_renegotiation = true;
 	memcpy(configuration.precoder_coefficients,
 	       direction.precoder_coefficients,
 	       sizeof(configuration.precoder_coefficients));

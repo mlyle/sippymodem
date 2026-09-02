@@ -4,9 +4,35 @@
 
 #include "g711.h"
 #include "memory_region.h"
+#include "v34_survivor.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+_Static_assert(
+	V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS == 8,
+	"V.90 upstream control buffering follows the V.34 frame cadence");
+_Static_assert(
+	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY == 22,
+	"V.90 upstream control buffer must cover the complete candidate");
+_Static_assert(
+	(V34_SURVIVOR_TRACEBACK_INTERVALS - 1u) *
+		V34_2D_SYMBOLS_PER_4D_INTERVAL +
+		V90_DIGITAL_PATH_ROLLING_FRAME_COUNT *
+			V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS >=
+		V34_DATA_RRN_PREFIX_SYMBOLS *
+			(V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u),
+	"V.90 host delay must cover the latest permitted recurrent S prefix");
+
+static bool pending_upstream_is_valid(const struct v90_digital_path *path)
+{
+	return path->pending_upstream_head <
+		       V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY &&
+	       path->pending_upstream_count <=
+		       V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY &&
+	       (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA ||
+		path->pending_upstream_count == 0u);
+}
 
 static bool data_mapping_matches(
 	const struct v90_pcm_mapping *mapping,
@@ -72,6 +98,7 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
+	    !pending_upstream_is_valid(path) ||
 	    (path->data_mapping_ready &&
 	     (!v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	      path->data_mapping.kind != V90_CP_DATA ||
@@ -328,15 +355,23 @@ static enum v90_digital_path_result receive_upstream(
 			v34_data_line_receiver_sample(
 				&path->upstream.data, sample,
 				&current, &frame);
+		bool candidate_after =
+			v34_data_equalizer_receiver_has_rate_renegotiation_candidate(
+				&path->upstream.data.equalizer_receiver);
+		bool generated_frame =
+			result == V34_DATA_RECEIVE_MAPPING_FRAME_READY;
+		bool released_frame = false;
 
+		if (result == V34_DATA_RECEIVE_RATE_RENEGOTIATION) {
+			path->pending_upstream_head = 0u;
+			path->pending_upstream_count = 0u;
+			return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
+		}
 		switch (result) {
 		case V34_DATA_RECEIVE_OK:
 		case V34_DATA_RECEIVE_INTERVAL_READY:
-			return V90_DIGITAL_PATH_OK;
 		case V34_DATA_RECEIVE_MAPPING_FRAME_READY:
-			*received = frame;
-			*frame_ready = true;
-			return V90_DIGITAL_PATH_UPSTREAM_FRAME;
+			break;
 		case V34_DATA_RECEIVE_FAILED:
 			return V90_DIGITAL_PATH_FAILED;
 		case V34_DATA_RECEIVE_OUT_OF_RANGE:
@@ -347,10 +382,44 @@ static enum v90_digital_path_result receive_upstream(
 		case V34_DATA_RECEIVE_INVALID_STATE:
 		case V34_DATA_RECEIVE_B1_IN_PROGRESS:
 		case V34_DATA_RECEIVE_B1_COMPLETE:
-			break;
+		case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
+			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		}
+		/* Keep a small rolling delay even outside a candidate. It covers the
+		 * latest recurrent prefix possible with all permitted S errors. */
+		if (!candidate_after &&
+		    (path->pending_upstream_count >
+			     V90_DIGITAL_PATH_ROLLING_FRAME_COUNT ||
+		     (generated_frame &&
+		      path->pending_upstream_count ==
+			      V90_DIGITAL_PATH_ROLLING_FRAME_COUNT))) {
+			*received = path->pending_upstream_frames[
+				path->pending_upstream_head];
+			path->pending_upstream_head = (uint8_t)(
+				(path->pending_upstream_head + 1u) %
+				V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY);
+			path->pending_upstream_count--;
+			released_frame = true;
+		}
+		if (generated_frame) {
+			size_t tail;
+
+			if (path->pending_upstream_count ==
+			    V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY)
+				return V90_DIGITAL_PATH_INTERNAL_ERROR;
+			tail = (path->pending_upstream_head +
+				path->pending_upstream_count) %
+			       V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY;
+			path->pending_upstream_frames[tail] = frame;
+			path->pending_upstream_count++;
+			result = V34_DATA_RECEIVE_INTERVAL_READY;
+		}
+		if (released_frame) {
+			*frame_ready = true;
+			return V90_DIGITAL_PATH_UPSTREAM_FRAME;
+		}
+		return V90_DIGITAL_PATH_OK;
 	}
-	return V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 
 static bool output_overlaps_path(
@@ -410,7 +479,8 @@ enum v90_digital_path_result v90_digital_path_receive_sample(
 	result = receive_upstream(
 		path, received_sample, &frame, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
-	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
+	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME &&
+	    result != V90_DIGITAL_PATH_RATE_RENEGOTIATION)
 		path->failed = true;
 	if (!v90_digital_path_is_valid(path)) {
 		path->failed = true;
@@ -441,7 +511,8 @@ static enum v90_digital_path_result sample_owned(
 		result = receive_upstream(
 			path, received_sample, &frame, &frame_ready);
 	if (result != V90_DIGITAL_PATH_OK &&
-	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME)
+	    result != V90_DIGITAL_PATH_UPSTREAM_FRAME &&
+	    result != V90_DIGITAL_PATH_RATE_RENEGOTIATION)
 		path->failed = true;
 	*transmit_octet = generated;
 	if (frame_ready)
@@ -508,6 +579,8 @@ const char *v90_digital_path_result_name(
 		return "ok";
 	case V90_DIGITAL_PATH_UPSTREAM_FRAME:
 		return "upstream frame";
+	case V90_DIGITAL_PATH_RATE_RENEGOTIATION:
+		return "rate renegotiation";
 	case V90_DIGITAL_PATH_SOURCE_FAILURE:
 		return "frame source failure";
 	case V90_DIGITAL_PATH_FAILED:

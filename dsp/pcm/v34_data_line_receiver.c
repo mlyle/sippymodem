@@ -70,6 +70,10 @@ enum v34_data_receive_result v34_data_line_receiver_init(
 		    configuration->transmitting_profile.local_role,
 		    configuration->equalizer_adaptation) !=
 		    V34_DATA_RECEIVE_OK ||
+	    (configuration->detect_rate_renegotiation &&
+	     v34_data_equalizer_receiver_enable_rate_renegotiation(
+		     &initialized.equalizer_receiver) !=
+		     V34_DATA_RECEIVE_OK) ||
 	    !v34_data_line_receiver_is_valid(&initialized))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	*receiver = initialized;

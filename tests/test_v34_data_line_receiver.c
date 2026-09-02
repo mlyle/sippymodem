@@ -375,7 +375,8 @@ struct handoff_fixture {
 };
 
 static bool prepare_handoff(
-	struct handoff_fixture *fixture, double equalizer_adaptation)
+	struct handoff_fixture *fixture, double equalizer_adaptation,
+	bool detect_rate_renegotiation)
 {
 	struct handoff_fixture prepared = {
 		.configuration = stream_configuration(),
@@ -405,6 +406,8 @@ static bool prepare_handoff(
 	receiver_config = receiver_configuration(
 		&prepared.stream, &prepared.configuration,
 		equalizer_adaptation);
+	receiver_config.detect_rate_renegotiation =
+		detect_rate_renegotiation;
 	if (v34_data_line_receiver_init(
 		    &prepared.receiver, &demodulator, &handoff,
 		    &receiver_config) != V34_DATA_RECEIVE_OK)
@@ -512,6 +515,164 @@ static int16_t apply_drifting_echo(
 	return (int16_t)mixed;
 }
 
+static bool rrn_symbol_is_error(size_t symbol)
+{
+	/* Exercise the complete permitted S error budget while delaying every
+	 * ten-symbol recurrent-prefix run, plus one bounded S-bar error. */
+	return (symbol < 80u && (symbol + 1u) % 10u == 0u) ||
+	       symbol == V34_PHASE3_S_SYMBOLS + 8u;
+}
+
+static struct qam_point rrn_point(size_t symbol)
+{
+	unsigned int turns = symbol < V34_PHASE3_S_SYMBOLS ?
+		(symbol & 1u) :
+		(2u + ((symbol - V34_PHASE3_S_SYMBOLS) & 1u));
+
+	if (rrn_symbol_is_error(symbol))
+		turns++;
+	return v34_rotated_point_zero((int)turns);
+}
+
+static bool recurrent_prefix_bound_is_exact(void)
+{
+	struct v34_phase3_s_prefix prefix;
+
+	CHECK(V34_DATA_RRN_PREFIX_SYMBOLS == 10u &&
+	      v34_phase3_s_prefix_init_recurrent(&prefix) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "online recurrent-prefix bound did not initialize");
+	for (size_t symbol = 0;
+	     symbol < V34_DATA_RRN_PREFIX_SYMBOLS; ++symbol) {
+		struct qam_point point = rrn_point(symbol + 80u);
+		enum v34_phase3_s_prefix_result result =
+			v34_phase3_s_prefix_receive(&prefix, &point, 0.25);
+
+		CHECK(result ==
+			      (symbol + 1u == V34_DATA_RRN_PREFIX_SYMBOLS ?
+				       V34_PHASE3_S_PREFIX_DETECTED :
+				       V34_PHASE3_S_PREFIX_OK),
+		      "online recurrent prefix completed at clean symbol %zu",
+		      symbol + 1u);
+	}
+	CHECK(v34_phase3_s_prefix_init_recurrent(&prefix) ==
+		      V34_PHASE3_S_PREFIX_OK,
+	      "late online recurrent prefix did not initialize");
+	for (size_t symbol = 0; symbol < 90u; ++symbol) {
+		struct qam_point point = rrn_point(symbol);
+		enum v34_phase3_s_prefix_result result =
+			v34_phase3_s_prefix_receive(&prefix, &point, 0.25);
+
+		CHECK(result ==
+			      (symbol == 89u ?
+				       V34_PHASE3_S_PREFIX_DETECTED :
+				       V34_PHASE3_S_PREFIX_OK),
+		      "error-bounded recurrent prefix completed at symbol %zu",
+		      symbol + 1u);
+	}
+	return true;
+}
+
+static bool test_online_rate_renegotiation_marker(void)
+{
+	struct handoff_fixture fixture;
+	struct source_fixture source = {
+		.delayed_primary_bits = UINT16_MAX,
+	};
+	struct drifting_echo channel = { 0 };
+	struct v34_phase3_s_detection detection = { 0 };
+	size_t ordinary_frames = 0;
+	size_t marker_symbol = 0;
+	uint32_t tail_state = UINT32_C(0x25c48173);
+	bool b1_complete = false;
+	bool candidate_seen = false;
+	bool detected = false;
+
+	CHECK(recurrent_prefix_bound_is_exact() &&
+	      prepare_handoff(
+		      &fixture, V34_DATA_EQUALIZER_TRACKING_STEP, true),
+	      "online rate-renegotiation fixture did not initialize");
+	for (size_t sample_index = 0;
+	     sample_index < LINE_SAMPLE_LIMIT && ordinary_frames < 32u;
+	     ++sample_index) {
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame received;
+		enum v34_data_receive_result result;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(v34_data_stream_sample(
+			      &fixture.stream, generated_source, &source,
+			      &sample, &accepted) == V34_DATA_STREAM_OK,
+		      "online changing-data source failed at %zu", sample_index);
+		(void)accepted;
+		result = v34_data_line_receiver_sample(
+			&fixture.receiver,
+			apply_drifting_echo(&channel, sample),
+			&current, &received);
+		CHECK(result != V34_DATA_RECEIVE_RATE_RENEGOTIATION &&
+		      result != V34_DATA_RECEIVE_FAILED &&
+		      result != V34_DATA_RECEIVE_NUMERIC_FAILURE &&
+		      result != V34_DATA_RECEIVE_OUT_OF_RANGE &&
+		      !v34_data_equalizer_receiver_has_rate_renegotiation_candidate(
+			      &fixture.receiver.equalizer_receiver),
+		      "changing data resembled online control at sample %zu",
+		      sample_index);
+		if (result == V34_DATA_RECEIVE_B1_COMPLETE)
+			b1_complete = true;
+		else if (result == V34_DATA_RECEIVE_MAPPING_FRAME_READY)
+			ordinary_frames++;
+	}
+	CHECK(b1_complete && ordinary_frames == 32u,
+	      "online changing-data rejection recovered %zu frames",
+	      ordinary_frames);
+
+	for (size_t sample_index = 0;
+	     sample_index < TRAINING_SAMPLE_LIMIT && !detected;
+	     ++sample_index) {
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame received;
+		struct qam_point point = marker_symbol <
+			V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+			rrn_point(marker_symbol) :
+			generated_training_point(&tail_state);
+		enum v34_data_receive_result result;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(training_line_sample(
+			      &fixture.stream, &point, &sample, &accepted),
+		      "online marker source failed at sample %zu", sample_index);
+		if (accepted && marker_symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS)
+			marker_symbol++;
+		result = v34_data_line_receiver_sample(
+			&fixture.receiver,
+			apply_drifting_echo(&channel, sample),
+			&current, &received);
+		CHECK(result != V34_DATA_RECEIVE_FAILED &&
+		      result != V34_DATA_RECEIVE_NUMERIC_FAILURE &&
+		      result != V34_DATA_RECEIVE_OUT_OF_RANGE,
+		      "online marker receiver failed at sample %zu: %d",
+		      sample_index, result);
+		candidate_seen |=
+			v34_data_equalizer_receiver_has_rate_renegotiation_candidate(
+				&fixture.receiver.equalizer_receiver);
+		detected = result == V34_DATA_RECEIVE_RATE_RENEGOTIATION;
+	}
+	CHECK(detected && candidate_seen &&
+	      marker_symbol == V34_PHASE3_S_SEQUENCE_SYMBOLS &&
+	      v34_phase3_s_receiver_get_detection(
+		      &fixture.receiver.equalizer_receiver.rate_renegotiation
+			       .rate_renegotiation_marker,
+		      &detection) &&
+	      detection.s_errors == V34_PHASE3_S_RECEIVER_MAX_S_ERRORS &&
+	      detection.s_bar_errors >= 1u &&
+	      !v34_data_line_receiver_has_failed(&fixture.receiver),
+	      "online marker was not qualified with bounded errors (%u/%u)",
+	      detection.s_errors, detection.s_bar_errors);
+	return true;
+}
+
 static bool test_generated_channel_drift(void)
 {
 	struct handoff_fixture fixture;
@@ -523,7 +684,7 @@ static bool test_generated_channel_drift(void)
 	bool b1_complete = false;
 
 	CHECK(prepare_handoff(
-		      &fixture, V34_DATA_EQUALIZER_TRACKING_STEP),
+		      &fixture, V34_DATA_EQUALIZER_TRACKING_STEP, false),
 	      "V.34 tracking fixture did not initialize");
 	for (size_t sample_index = 0;
 	     sample_index < LINE_SAMPLE_LIMIT &&
@@ -581,7 +742,7 @@ static bool test_generated_line_round_trip(void)
 	size_t expected_index = 0;
 	bool b1_complete = false;
 
-	CHECK(prepare_handoff(&fixture, 0.01),
+	CHECK(prepare_handoff(&fixture, 0.01, false),
 	      "V.34 line handoff fixture did not initialize");
 	for (size_t sample_index = 0;
 	     sample_index < LINE_SAMPLE_LIMIT &&
@@ -655,7 +816,7 @@ static bool test_validation_and_failure_latch(void)
 	struct v34_survivor_decision current;
 	struct v34_received_mapping_frame received;
 
-	CHECK(prepare_handoff(&fixture, 0.01),
+	CHECK(prepare_handoff(&fixture, 0.01, false),
 	      "V.34 line validation fixture did not initialize");
 	handoff.equalizer = fixture.receiver.equalizer_receiver.equalizer;
 	CHECK(v34_equalizer_handoff_is_valid(&handoff),
@@ -697,6 +858,33 @@ static bool test_validation_and_failure_latch(void)
 		      V34_LINE_CHANNEL_OUT_OF_RANGE &&
 	      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
 	      "V.34 waveform accepted an occupied band beyond Nyquist");
+	{
+		struct v34_data_line_receiver corrupted = fixture.receiver;
+		struct v34_data_line_receiver before;
+		struct v34_survivor_decision saved_current;
+		struct v34_received_mapping_frame saved_received;
+
+		corrupted.equalizer_receiver.rate_renegotiation
+			.rate_renegotiation_candidate = true;
+		before = corrupted;
+		memset(&current, 0x5a, sizeof(current));
+		memset(&received, 0x6b, sizeof(received));
+		saved_current = current;
+		saved_received = received;
+		CHECK(!v34_data_line_receiver_is_valid(&corrupted) &&
+		      v34_data_equalizer_receiver_enable_rate_renegotiation(
+			      &corrupted.equalizer_receiver) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      v34_data_line_receiver_sample(
+			      &corrupted, 0, &current, &received) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      memcmp(&corrupted, &before, sizeof(before)) == 0 &&
+		      memcmp(&current, &saved_current,
+			     sizeof(saved_current)) == 0 &&
+		      memcmp(&received, &saved_received,
+			     sizeof(saved_received)) == 0,
+		      "inactive online-control state changed ordinary receive");
+	}
 
 	for (size_t index = 0; index < 4096; ++index) {
 		enum v34_data_receive_result result =
@@ -744,6 +932,8 @@ int main(void)
 	} tests[] = {
 		{ "generated line round trip", test_generated_line_round_trip },
 		{ "generated channel drift", test_generated_channel_drift },
+		{ "online rate renegotiation marker",
+		  test_online_rate_renegotiation_marker },
 		{ "validation and failure latch", test_validation_and_failure_latch },
 	};
 	unsigned int failures = 0;

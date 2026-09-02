@@ -24,6 +24,7 @@ enum v90_digital_path_upstream_stage {
 enum v90_digital_path_result {
 	V90_DIGITAL_PATH_OK,
 	V90_DIGITAL_PATH_UPSTREAM_FRAME,
+	V90_DIGITAL_PATH_RATE_RENEGOTIATION,
 	V90_DIGITAL_PATH_SOURCE_FAILURE,
 	V90_DIGITAL_PATH_FAILED,
 	V90_DIGITAL_PATH_SEQUENCE_MISMATCH,
@@ -33,6 +34,23 @@ enum v90_digital_path_result {
 	V90_DIGITAL_PATH_OUT_OF_RANGE,
 	V90_DIGITAL_PATH_NUMERIC_FAILURE,
 	V90_DIGITAL_PATH_INTERNAL_ERROR,
+};
+
+enum {
+	V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS =
+		V34_4D_INTERVALS_PER_MAPPING_FRAME *
+		V34_2D_SYMBOLS_PER_4D_INTERVAL,
+	/* Retain four ordinary frames so a recurrent prefix delayed by every
+	 * permitted S error still precedes host publication. */
+	V90_DIGITAL_PATH_ROLLING_FRAME_COUNT = 4,
+	/* The prefix gate's own symbol plus the remaining bounded candidate can
+	 * cross this many fixed-size upstream mapping-frame boundaries in
+	 * addition to the ordinary rolling delay. */
+	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY =
+		V90_DIGITAL_PATH_ROLLING_FRAME_COUNT +
+		(1u + V34_DATA_RRN_CANDIDATE_SYMBOLS +
+		 V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS - 1u) /
+			V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS,
 };
 
 union v90_digital_path_downstream {
@@ -52,10 +70,15 @@ union v90_digital_path_upstream {
 struct v90_digital_path {
 	union v90_digital_path_downstream downstream;
 	union v90_digital_path_upstream upstream;
+	struct v34_received_mapping_frame
+		pending_upstream_frames[
+			V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY];
 	struct v90_pcm_mapping data_mapping;
 	enum g711_law law;
 	enum v90_digital_path_downstream_stage downstream_stage;
 	enum v90_digital_path_upstream_stage upstream_stage;
+	uint8_t pending_upstream_head;
+	uint8_t pending_upstream_count;
 	bool data_mapping_ready;
 	bool failed;
 };

@@ -2365,6 +2365,7 @@ static enum pcm_call_result digital_path_result(
 	switch (result) {
 	case V90_DIGITAL_PATH_OK:
 	case V90_DIGITAL_PATH_UPSTREAM_FRAME:
+	case V90_DIGITAL_PATH_RATE_RENEGOTIATION:
 		return PCM_CALL_OK;
 	case V90_DIGITAL_PATH_SOURCE_FAILURE:
 		return PCM_CALL_SOURCE_FAILURE;
@@ -2603,7 +2604,10 @@ static enum pcm_call_result data_octet_owned(
 			emitted.kind = PCM_CALL_UPSTREAM_FRAME;
 		}
 	}
-	if (result == PCM_CALL_OK && retrain_detection_active) {
+	if (result == PCM_CALL_OK &&
+	    digital_result == V90_DIGITAL_PATH_RATE_RENEGOTIATION)
+		result = begin_retrain(call, false);
+	else if (result == PCM_CALL_OK && retrain_detection_active) {
 		if (v34_retrain_detector_sample(
 			    &call->retrain_detector, received_sample,
 			    &retrain_detected) != V34_PHASE2_TONE_OK)

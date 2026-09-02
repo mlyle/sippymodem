@@ -3,7 +3,9 @@
 #include <pcm_call.h>
 
 #include <g711.h>
+#include <v34_constellation.h>
 #include <v34_phase2_selection.h>
+#include <v34_phase3_s_receiver.h>
 #include <v92_cpd_direct.h>
 
 #include "test.h"
@@ -1732,6 +1734,149 @@ static bool test_full_retrain(void)
 	return true;
 }
 
+static bool complete_rate_renegotiation_monitor(
+	struct v34_data_rate_renegotiation_monitor *monitor)
+{
+	struct v34_data_rate_renegotiation_monitor completed = { 0 };
+
+	if (monitor == NULL ||
+	    v34_phase3_s_receiver_init_suffix(
+		    &completed.rate_renegotiation_marker,
+		    V34_PHASE3_S_SYMBOLS) != V34_PHASE3_S_RECEIVER_OK ||
+	    v34_phase3_s_prefix_init_recurrent(
+		    &completed.rate_renegotiation_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK)
+		return false;
+	for (size_t symbol = 0;
+	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+		unsigned int turns = symbol < V34_PHASE3_S_SYMBOLS ?
+			(symbol & 1u) :
+			(2u + ((symbol - V34_PHASE3_S_SYMBOLS) & 1u));
+		struct qam_point point = v34_rotated_point_zero((int)turns);
+		uint8_t quarter_point;
+		uint8_t rotation;
+		enum v34_phase3_s_receiver_result marker_result;
+
+		if (v34_training_constellation_slice(
+			    V34_CONSTELLATION_4_POINT, &point,
+			    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
+		    quarter_point != 0u)
+			return false;
+		marker_result = v34_phase3_s_receiver_receive(
+			&completed.rate_renegotiation_marker,
+			quarter_point, rotation);
+		if (marker_result !=
+			    (symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+				     V34_PHASE3_S_RECEIVER_DETECTED :
+				     V34_PHASE3_S_RECEIVER_OK))
+			return false;
+		if (symbol < V34_DATA_RRN_PREFIX_SYMBOLS) {
+			enum v34_phase3_s_prefix_result prefix_result =
+				v34_phase3_s_prefix_receive(
+					&completed.rate_renegotiation_prefix,
+					&point, 0.25);
+
+			if (prefix_result !=
+				    (symbol + 1u == V34_DATA_RRN_PREFIX_SYMBOLS ?
+					     V34_PHASE3_S_PREFIX_DETECTED :
+					     V34_PHASE3_S_PREFIX_OK))
+				return false;
+		}
+	}
+	completed.rate_renegotiation_candidate_symbols =
+		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS + 1u;
+	completed.rate_renegotiation_enabled = true;
+	completed.rate_renegotiation_candidate = true;
+	*monitor = completed;
+	return true;
+}
+
+static bool run_rate_renegotiation_fallback(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	union pcm_info0_record peer_info0;
+	uint16_t prior_round_trip_delay;
+	bool initially_online = false;
+	bool retrain_started = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u rate-renegotiation endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u rate-renegotiation setup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (pcm_call_is_online(&analog.call) &&
+		    pcm_call_is_online(&digital.call) &&
+		    analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		    digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE) {
+			initially_online = true;
+			break;
+		}
+	}
+	CHECK(initially_online && digital.call.peer_info0_stored &&
+	      digital.call.round_trip_delay_stored &&
+	      digital.call.state.data_path.digital.pending_upstream_count ==
+		      V90_DIGITAL_PATH_ROLLING_FRAME_COUNT,
+	      "law %u rate-renegotiation pair did not reach buffered data",
+	      (unsigned int)law);
+	peer_info0 = digital.call.peer_info0;
+	prior_round_trip_delay = digital.call.round_trip_delay_samples;
+	CHECK(complete_rate_renegotiation_monitor(
+		      &digital.call.state.data_path.digital.upstream.data
+			       .equalizer_receiver.rate_renegotiation) &&
+	      pcm_call_is_valid(&digital.call),
+	      "law %u completed rate-renegotiation evidence was invalid",
+	      (unsigned int)law);
+
+	/* The generated-line test owns S/S-bar acquisition. Seed its completed
+	 * event here so this boundary tests only host suppression and call-state
+	 * recovery, without duplicating the line receiver's waveform fixture. */
+	for (size_t sample = 0; sample < 64u && !retrain_started; ++sample) {
+		struct pcm_call_data_event event;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_data_octet(
+			      &digital.call, silence_octet(law), 0, NULL,
+			      &transmitted, &event) == PCM_CALL_OK &&
+		      event.kind == PCM_CALL_DATA_NONE,
+		      "law %u rate-renegotiation control escaped at sample %zu",
+		      (unsigned int)law, sample);
+		retrain_started =
+			digital.call.stage == PCM_CALL_RETRAIN_SILENCE;
+	}
+	CHECK(retrain_started && digital.call.retrain_active &&
+	      !digital.call.retrain_peer_tone_retained &&
+	      digital.call.protocol == PCM_PROTOCOL_V90 &&
+	      digital.call.peer_info0_stored &&
+	      memcmp(&digital.call.peer_info0, &peer_info0,
+		     sizeof(peer_info0)) == 0 &&
+	      digital.call.round_trip_delay_stored &&
+	      digital.call.round_trip_delay_samples == prior_round_trip_delay &&
+	      !pcm_call_has_failed(&digital.call),
+	      "law %u rate renegotiation did not preserve full-retrain context",
+	      (unsigned int)law);
+	return true;
+}
+
+static bool test_rate_renegotiation_fallback(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_rate_renegotiation_fallback(law),
+		      "law %u rate-renegotiation fallback failed",
+		      (unsigned int)law);
+	}
+	return true;
+}
+
 static bool run_unusable_retrain_selection(enum g711_law law)
 {
 	struct channel channel;
@@ -2726,6 +2871,8 @@ int main(void)
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
 		{ "local and remote PCM full retrain", test_full_retrain },
+		{ "V.90 rate renegotiation falls back to full retrain",
+		  test_rate_renegotiation_fallback },
 		{ "unusable retrain selection restarts full training",
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },

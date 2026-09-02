@@ -543,6 +543,9 @@ static enum v34_phase34_receiver_result data_result(
 		return V34_PHASE34_RECEIVER_B1_IN_PROGRESS;
 	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_PHASE34_RECEIVER_B1_COMPLETE;
+	case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
+		/* Ordinary V.34 does not enable the V.90 online marker. */
+		break;
 	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V34_PHASE34_RECEIVER_OUT_OF_RANGE;
 	case V34_DATA_RECEIVE_FAILED:

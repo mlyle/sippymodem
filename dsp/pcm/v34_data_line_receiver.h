@@ -20,6 +20,7 @@ struct v34_data_line_receiver_configuration {
 	double equalizer_adaptation;
 	enum v34_trellis_selection trellis_selection;
 	bool expanded_shaping;
+	bool detect_rate_renegotiation;
 };
 
 /* Own the continuous sample-to-data path after Phase 4 has established
