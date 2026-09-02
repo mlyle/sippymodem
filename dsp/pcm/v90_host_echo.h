@@ -65,6 +65,11 @@ struct v90_host_echo {
 
 enum v90_host_echo_result v90_host_echo_init(
 	struct v90_host_echo *echo);
+
+/* Refine the initial delay hypothesis from the shared Phase-2 ranging result.
+ * Transmit history may already be present, but training must not have begun. */
+enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
+	struct v90_host_echo *echo, uint32_t round_trip_delay_samples);
 bool v90_host_echo_is_valid(const struct v90_host_echo *echo);
 bool v90_host_echo_is_ready(const struct v90_host_echo *echo);
 bool v90_host_echo_has_weak_margin(const struct v90_host_echo *echo);

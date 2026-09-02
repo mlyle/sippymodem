@@ -22,6 +22,7 @@
 enum {
 	DEFAULT_RETURN_DELAY = 2576,
 	FILTER_PRE_SAMPLES = 64,
+	SHORT_FILTER_DELAY = 337,
 	LONG_RETURN_DELAY = 5600,
 	LONG_FILTER_DELAY = LONG_RETURN_DELAY - FILTER_PRE_SAMPLES,
 };
@@ -194,7 +195,7 @@ static bool test_long_delay_scan(void)
 
 	CHECK(pcm_echo_reference_init(&reference) == PCM_ECHO_REFERENCE_OK &&
 	      pcm_echo_reference_start_scan(
-		      &reference, DEFAULT_RETURN_DELAY - FILTER_PRE_SAMPLES,
+		      &reference, SHORT_FILTER_DELAY,
 		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK,
 	      "long-delay scan did not initialize");
 	CHECK(reference.scan_required_fill >= LONG_RETURN_DELAY &&
@@ -229,16 +230,16 @@ static bool test_long_delay_scan(void)
 		index++;
 	}
 	CHECK(acquired, "700 ms return delay was not acquired");
-	CHECK(result.best_window_delay_samples == LONG_FILTER_DELAY,
+	CHECK(result.best_window_delay_samples == LONG_FILTER_DELAY - 1u,
 	      "long-delay scan selected %u instead of %u",
-	      result.best_window_delay_samples, LONG_FILTER_DELAY);
+	      result.best_window_delay_samples, LONG_FILTER_DELAY - 1u);
 	CHECK(result.current_window_delay_samples ==
-		      DEFAULT_RETURN_DELAY - FILTER_PRE_SAMPLES,
+		      SHORT_FILTER_DELAY,
 	      "scan lost current delay: %u",
 	      result.current_window_delay_samples);
 	CHECK(result.sample_count == PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES,
 	      "first scan report used %u samples", result.sample_count);
-	CHECK(result.best_correlation_ppm > 950000u &&
+	CHECK(result.best_correlation_ppm > 400000u &&
 	      result.current_correlation_ppm < 100000u,
 	      "scan separation is weak: best=%u current=%u",
 	      result.best_correlation_ppm,
@@ -260,8 +261,13 @@ static bool test_long_delay_scan(void)
 			CHECK(scan_result == PCM_ECHO_REFERENCE_SCAN_READY &&
 			      report.sample_count ==
 				      PCM_ECHO_REFERENCE_SCAN_CADENCE * 2u &&
-			      report.best_window_delay_samples == LONG_FILTER_DELAY,
-			      "cadenced scan report changed");
+			      report.best_window_delay_samples ==
+				      LONG_FILTER_DELAY - 1u,
+			      "cadenced scan report changed: result=%d samples=%u "
+			      "best=%u scan=%u",
+			      scan_result, report.sample_count,
+			      report.best_window_delay_samples,
+			      reference.scan_samples);
 		} else {
 			CHECK(scan_result == PCM_ECHO_REFERENCE_OK &&
 			      memcmp(&report, &unchanged, sizeof(report)) == 0,

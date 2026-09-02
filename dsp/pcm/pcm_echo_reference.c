@@ -37,6 +37,7 @@ static uint64_t i64_magnitude(int64_t value)
 static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 {
 	uint64_t last;
+	uint64_t required_fill;
 
 	if (reference->scan_count == 0)
 		return reference->scan_start == 0 && reference->scan_step == 0 &&
@@ -58,9 +59,12 @@ static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 		return false;
 	last = (uint64_t)reference->scan_start +
 	       (uint64_t)(reference->scan_count - 1u) * reference->scan_step;
+	required_fill = last + reference->scan_pre_samples +
+		reference->scan_step - 1u;
+	if (required_fill > PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
+		required_fill = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	return last <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
-	       last + reference->scan_pre_samples ==
-		       reference->scan_required_fill;
+	       required_fill == reference->scan_required_fill;
 }
 
 bool pcm_echo_reference_is_valid(
@@ -180,6 +184,7 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 {
 	uint32_t start;
 	uint32_t stop;
+	uint32_t required_stop;
 	uint32_t step = PCM_ECHO_REFERENCE_SCAN_STEP;
 	uint32_t count;
 	uint32_t remainder;
@@ -196,6 +201,13 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	stop = current_window_delay_samples + PCM_ECHO_REFERENCE_SCAN_SPAN;
 	if (stop > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
 		stop = PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES;
+	/* A short initial hypothesis must not narrow away the documented
+	 * returned-echo delay.  The scan identifies the first sample of a
+	 * window, so account for its known reference point here. */
+	required_stop = PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES > pre_samples ?
+		PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES - pre_samples : 1u;
+	if (stop < required_stop)
+		stop = required_stop;
 	if (stop > start) {
 		uint32_t minimum_step =
 			(stop - start) /
@@ -217,8 +229,15 @@ enum pcm_echo_reference_result pcm_echo_reference_start_scan(
 	reference->scan_current_index =
 		(current_window_delay_samples - start) / step;
 	reference->scan_pre_samples = pre_samples;
-	reference->scan_required_fill =
-		start + (count - 1u) * step + pre_samples;
+	{
+		uint64_t required_fill = (uint64_t)start +
+			(uint64_t)(count - 1u) * step + pre_samples + step - 1u;
+
+		reference->scan_required_fill = required_fill >
+				PCM_ECHO_REFERENCE_HISTORY_SAMPLES ?
+			PCM_ECHO_REFERENCE_HISTORY_SAMPLES :
+			(uint32_t)required_fill;
+	}
 	return PCM_ECHO_REFERENCE_OK;
 }
 
@@ -309,8 +328,18 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 		uint32_t age = reference->scan_start +
 			index * reference->scan_step +
 			reference->scan_pre_samples;
-		int16_t sample = sample_at_age(reference, age);
-		int64_t cross = (int64_t)sample * received_sample;
+		int32_t sum = 0;
+		uint32_t samples = 0;
+		int16_t sample;
+		int64_t cross;
+
+		for (uint32_t offset = 0; offset < reference->scan_step &&
+		     (uint64_t)age + offset <= reference->fill; ++offset) {
+			sum += sample_at_age(reference, age + offset);
+			samples++;
+		}
+		sample = (int16_t)(sum / (int32_t)samples);
+		cross = (int64_t)sample * received_sample;
 
 		reference->scan_reference_energy[index] = add_u64_saturating(
 			reference->scan_reference_energy[index],

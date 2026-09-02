@@ -26,6 +26,11 @@ enum {
 	TRAIN_SAMPLES = 16000,
 	VERIFY_SAMPLES = 4000,
 	FALSE_TRAIN_SAMPLES = 8000,
+	SHORT_RETURN_DELAY = 724,
+	SHORT_PHASE2_DELAY = 324,
+	SHORT_FILTER_DELAY =
+		SHORT_RETURN_DELAY - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+	SHORT_TRAIN_SAMPLES = 5000,
 };
 
 static int16_t generated_sample(size_t index, uint32_t salt, int16_t span)
@@ -71,6 +76,12 @@ static int16_t echo_sample(size_t index)
 		echo -= scale_q15(
 			transmit_sample(index - RETURN_DELAY - 23u), 2200);
 	return add_s16(echo);
+}
+
+static int16_t short_echo_sample(size_t index)
+{
+	return index >= SHORT_RETURN_DELAY ?
+		scale_q15(transmit_sample(index - SHORT_RETURN_DELAY), 11000) : 0;
 }
 
 static int16_t remote_sample(size_t index)
@@ -225,6 +236,61 @@ static bool test_long_delay_cancellation(void)
 	return true;
 }
 
+static bool test_phase2_delay_seed(void)
+{
+	struct v90_host_echo seeded;
+	struct v90_host_echo unseeded;
+	struct v90_host_echo saved;
+
+	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_init(&unseeded) == V90_HOST_ECHO_OK,
+	      "delay-seed owners did not initialize");
+	saved = seeded;
+	CHECK(v90_host_echo_seed_phase2_delay(NULL, SHORT_PHASE2_DELAY) ==
+		      V90_HOST_ECHO_INVALID_STATE &&
+	      v90_host_echo_seed_phase2_delay(&seeded, 0) ==
+		      V90_HOST_ECHO_INVALID_ARGUMENT &&
+	      memcmp(&seeded, &saved, sizeof(saved)) == 0,
+	      "invalid Phase-2 delay changed owner");
+	CHECK(v90_host_echo_seed_phase2_delay(
+		      &seeded, SHORT_PHASE2_DELAY) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_window_delay_samples(&seeded) ==
+		      SHORT_FILTER_DELAY,
+	      "Phase-2 delay did not seed host echo: %u",
+	      v90_host_echo_window_delay_samples(&seeded));
+	CHECK(seeded.reference.scan_required_fill >=
+		      PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES,
+	      "short seed narrowed long-delay coverage: %u",
+	      seeded.reference.scan_required_fill);
+
+	for (size_t index = 0; index < SHORT_TRAIN_SAMPLES; ++index) {
+		int16_t received = short_echo_sample(index);
+		int16_t seeded_cleaned;
+		int16_t unseeded_cleaned;
+
+		CHECK(echo_step(
+			      &seeded, V90_HOST_ECHO_TRAIN, index,
+			      received, &seeded_cleaned) &&
+		      echo_step(
+			      &unseeded, V90_HOST_ECHO_TRAIN, index,
+			      received, &unseeded_cleaned),
+		      "delay-seed training failed at sample %zu", index);
+	}
+	CHECK(v90_host_echo_is_ready(&seeded) &&
+	      !v90_host_echo_is_ready(&unseeded),
+	      "Phase-2 seed did not accelerate acquisition: seeded=%d "
+	      "unseeded=%d",
+	      v90_host_echo_is_ready(&seeded),
+	      v90_host_echo_is_ready(&unseeded));
+	saved = seeded;
+	CHECK(v90_host_echo_seed_phase2_delay(
+		      &seeded, SHORT_PHASE2_DELAY) ==
+		      V90_HOST_ECHO_INVALID_STATE &&
+	      memcmp(&seeded, &saved, sizeof(saved)) == 0,
+	      "trained owner accepted a new Phase-2 delay");
+	return true;
+}
+
 static bool test_weak_joint_margin(void)
 {
 	struct v90_host_echo echo;
@@ -338,6 +404,7 @@ int main(void)
 	CHECK(test_contracts(), "contracts failed");
 	CHECK(test_long_delay_cancellation(),
 	      "long-delay cancellation failed");
+	CHECK(test_phase2_delay_seed(), "Phase-2 delay seed failed");
 	CHECK(test_weak_joint_margin(), "weak joint margin failed");
 	CHECK(test_decimated_adjacent_correlation(),
 	      "decimated adjacent correlation failed");

@@ -16,6 +16,9 @@
 #define V90_HOST_ECHO_COEFFICIENT_MIN_SUM 0.010
 #define V90_HOST_ECHO_READY_CORRELATION_PPM 125000u
 #define V90_HOST_ECHO_SCAN_IMPROVEMENT 4u
+/* Allow a bounded local return path beyond the Phase-2 reversal interval. */
+#define V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES \
+	(PCM_ECHO_REFERENCE_SAMPLE_RATE / 20)
 
 struct training_step {
 	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
@@ -113,6 +116,45 @@ enum v90_host_echo_result v90_host_echo_init(
 	    !v90_host_echo_is_valid(&initialized))
 		return V90_HOST_ECHO_INVALID_STATE;
 	*echo = initialized;
+	return V90_HOST_ECHO_OK;
+}
+
+static bool training_is_pristine(const struct v90_host_echo *echo)
+{
+	if (echo->reference_energy != 0 || echo->input_energy != 0 ||
+	    echo->error_energy != 0 || echo->cross_energy != 0 ||
+	    echo->quiet_samples != 0 || echo->train_samples != 0 ||
+	    echo->train_peak != 0 || echo->delay_acquired ||
+	    echo->filter_ready || echo->weak_margin)
+		return false;
+	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
+		if (echo->coefficients[tap] != 0.0f)
+			return false;
+	}
+	return true;
+}
+
+enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
+	struct v90_host_echo *echo, uint32_t round_trip_delay_samples)
+{
+	uint64_t return_delay;
+	uint32_t window_delay;
+
+	if (!header_is_valid(echo) || !training_is_pristine(echo))
+		return V90_HOST_ECHO_INVALID_STATE;
+	if (round_trip_delay_samples == 0)
+		return V90_HOST_ECHO_INVALID_ARGUMENT;
+	return_delay = (uint64_t)round_trip_delay_samples +
+		V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES;
+	if (return_delay > V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES)
+		return_delay = V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES;
+	window_delay = return_delay > V90_HOST_ECHO_FILTER_PRE_SAMPLES ?
+		(uint32_t)return_delay - V90_HOST_ECHO_FILTER_PRE_SAMPLES : 1u;
+	if (pcm_echo_reference_start_scan(
+		    &echo->reference, window_delay,
+		    V90_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
+		return V90_HOST_ECHO_INVALID_STATE;
+	echo->window_delay_samples = window_delay;
 	return V90_HOST_ECHO_OK;
 }
 

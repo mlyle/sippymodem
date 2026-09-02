@@ -32,6 +32,7 @@ struct v90_datapump {
 	bool call_started;
 	bool fallback_ready;
 	bool host_echo_margin_evaluated;
+	bool host_echo_delay_seeded;
 };
 
 /* The integrated digital network currently uses the North American PCM
@@ -125,6 +126,10 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    (datapump->host_echo_margin_evaluated &&
 	     (!datapump->call_started || datapump->host_echo == NULL ||
 	      !v90_host_echo_is_ready(datapump->host_echo))) ||
+	    (datapump->host_echo_delay_seeded &&
+	     (datapump->host_echo == NULL || !datapump->call_started ||
+	      !datapump->call.round_trip_delay_stored ||
+	      datapump->call.round_trip_delay_samples == 0)) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    (datapump->fallback_ready &&
 	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
@@ -265,6 +270,7 @@ static int retrain_v90(struct dp *dp)
 	    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
 		return -1;
 	datapump->host_echo_margin_evaluated = false;
+	datapump->host_echo_delay_seeded = false;
 	datapump->call = call;
 	datapump->training = training;
 	return 0;
@@ -602,6 +608,20 @@ static enum v90_host_echo_mode host_echo_mode(
 	return V90_HOST_ECHO_BYPASS;
 }
 
+static bool seed_host_echo_delay(struct v90_datapump *datapump)
+{
+	if (datapump->host_echo == NULL || datapump->host_echo_delay_seeded ||
+	    !datapump->call.round_trip_delay_stored ||
+	    datapump->call.round_trip_delay_samples == 0)
+		return true;
+	if (v90_host_echo_seed_phase2_delay(
+		    datapump->host_echo,
+		    datapump->call.round_trip_delay_samples) != V90_HOST_ECHO_OK)
+		return false;
+	datapump->host_echo_delay_seeded = true;
+	return true;
+}
+
 static bool apply_host_echo_margin(struct v90_datapump *datapump)
 {
 	struct pcm_call limited;
@@ -699,9 +719,12 @@ static int process_v90_g711(
 				    V90_HOST_ECHO_OK)
 					goto failure;
 				datapump->host_echo_margin_evaluated = false;
+				datapump->host_echo_delay_seeded = false;
 			} else if (!apply_host_echo_margin(datapump)) {
 				goto failure;
 			}
+			if (!seed_host_echo_delay(datapump))
+				goto failure;
 		}
 		if (fallback) {
 			int remaining = count - index - 1;
