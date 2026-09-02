@@ -166,6 +166,10 @@ static bool test_continuous_g711_lines(void)
 {
 	CHECK(verify_line(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT),
 	      "PCMU four-point CP line failed");
+	CHECK(verify_line(G711_LAW_PCMU, V34_CONSTELLATION_16_POINT),
+	      "PCMU sixteen-point CP line failed");
+	CHECK(verify_line(G711_LAW_PCMA, V34_CONSTELLATION_4_POINT),
+	      "PCMA four-point CP line failed");
 	CHECK(verify_line(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT),
 	      "PCMA sixteen-point CP line failed");
 	return true;
