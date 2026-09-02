@@ -451,6 +451,7 @@ static enum v90_analog_path_result receive_training(
 	case PCM_DOWNSTREAM_RX_ED:
 		return start_downstream_data(path);
 	case PCM_DOWNSTREAM_RX_MP_REJECTED:
+		return V90_ANALOG_PATH_OK;
 	case PCM_DOWNSTREAM_RX_ED_REJECTED:
 	case PCM_DOWNSTREAM_RX_INVALID_SYMBOL:
 		return V90_ANALOG_PATH_FAILED;

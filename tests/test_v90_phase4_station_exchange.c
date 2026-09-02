@@ -221,6 +221,148 @@ static bool downstream_frame_matches(
 		       received->bits, expected, received->bit_count) == 0;
 }
 
+static bool alter_last_modulus_symbol(
+	const struct pcm_downstream_rx *receiver, uint8_t *network_octet)
+{
+	const struct v90_pcm_stream_rx *stream = &receiver->stream;
+	const struct v90_pcm_frame_decoder *decoder = &stream->decoder;
+	const struct v90_pcm_mapping *mapping = &decoder->mapping;
+	struct v90_pcm_symbol original;
+	uint8_t labels[V90_CP_FRAME_INTERVALS];
+	uint8_t decoded[V90_PCM_FRAME_MAX_BITS];
+
+	if (network_octet == NULL ||
+	    stream->pending_count != V90_CP_FRAME_INTERVALS - 1u ||
+	    !v90_pcm_symbol_parse(
+		    &original, mapping->law, *network_octet))
+		return false;
+	for (size_t interval = 0;
+	     interval < stream->pending_count; ++interval) {
+		if (v90_pcm_mapping_label(
+			    mapping, decoder->decision_plane, interval,
+			    stream->pending_ucodes[interval],
+			    &labels[interval]) != V90_PCM_MAPPING_OK)
+			return false;
+	}
+	if (v90_pcm_mapping_label(
+		    mapping, decoder->decision_plane,
+		    V90_CP_FRAME_INTERVALS - 1u, original.ucode,
+		    &labels[V90_CP_FRAME_INTERVALS - 1u]) !=
+	    V90_PCM_MAPPING_OK)
+		return false;
+	for (uint8_t alternative = 0;
+	     alternative < mapping->modulus[V90_CP_FRAME_INTERVALS - 1u];
+	     ++alternative) {
+		struct v90_pcm_symbol altered;
+		uint8_t altered_ucode;
+		uint8_t original_label =
+			labels[V90_CP_FRAME_INTERVALS - 1u];
+
+		if (alternative == original_label)
+			continue;
+		labels[V90_CP_FRAME_INTERVALS - 1u] = alternative;
+		if (v90_pcm_mapping_decode_modulus(
+			    mapping, labels, decoded,
+			    mapping->modulus_bits) != V90_PCM_MAPPING_OK ||
+		    v90_pcm_mapping_ucode(
+			    mapping, decoder->decision_plane,
+			    V90_CP_FRAME_INTERVALS - 1u, alternative,
+			    &altered_ucode) != V90_PCM_MAPPING_OK ||
+		    !v90_pcm_symbol_make(
+			    &altered, mapping->law, altered_ucode,
+			    original.positive)) {
+			labels[V90_CP_FRAME_INTERVALS - 1u] =
+				original_label;
+			continue;
+		}
+		*network_octet = altered.octet;
+		return true;
+	}
+	return false;
+}
+
+static bool verify_repeated_mp_recovery(
+	const struct v90_phase4_cp_line_tx *cp_transmit,
+	const struct v90_phase4_digital_transmit_handoff *digital,
+	const struct v90_phase4_analog_receive_handoff *analog,
+	const struct v90_cp_parameters *training)
+{
+	struct v90_cp_parameters data_cp = *training;
+	struct v90_phase4_analog_handoff handoff = {
+		.transmit = *cp_transmit,
+		.receive = analog->receiver,
+	};
+	struct pcm_downstream_tx transmitter = digital->transmitter;
+	struct v90_analog_path path;
+	bool mp_corrupted = false;
+	bool mp_rejection_seen = false;
+
+	data_cp.kind = V90_CP_DATA;
+	data_cp.selected_rate_index = 1;
+	data_cp.acknowledges_peer = false;
+	CHECK(v90_analog_path_init(&path, &handoff, &data_cp) ==
+		      V90_ANALOG_PATH_OK &&
+	      pcm_downstream_tx_is_valid(&transmitter),
+	      "repeated-MP fixture did not initialize");
+	for (size_t clock = 0;
+	     clock < DOWNSTREAM_TRAINING_CHARACTER_LIMIT; ++clock) {
+		struct pcm_downstream_symbol symbol;
+		struct v90_pcm_stream_frame received;
+		struct pcm_downstream_rx *receiver =
+			&path.downstream.training;
+		uint8_t upstream_octet;
+		enum v90_analog_path_result result;
+
+		CHECK(v90_analog_path_transmit(
+			      &path, NULL, NULL, &upstream_octet) ==
+			      V90_ANALOG_PATH_OK &&
+		      pcm_downstream_tx_next(&transmitter, &symbol) ==
+			      PCM_DOWNSTREAM_TX_OK,
+		      "repeated-MP line stopped at clock %zu", clock);
+		if (!mp_corrupted && !path.peer_mp_received &&
+		    receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
+		    receiver->stream.pending_count ==
+			    V90_CP_FRAME_INTERVALS - 1u &&
+		    receiver->control.mp.stage == V90_MP_RECEIVE_SEQUENCE &&
+		    receiver->control.mp.bit_index >
+			    V90_MP_FRAME_SYNC_BITS + 1u &&
+		    receiver->control.mp.bit_index +
+			    receiver->stream.decoder.mapping.frame_bits +
+			    V34_SCRAMBLER_BITS <
+			    receiver->control.mp.sequence_bit_count) {
+			CHECK(alter_last_modulus_symbol(
+				      receiver, &symbol.pcm.octet),
+			      "could not corrupt one valid MP symbol");
+			mp_corrupted = true;
+		}
+		{
+			struct pcm_downstream_rx shadow = *receiver;
+			struct pcm_downstream_event event;
+
+			if (pcm_downstream_rx_receive(
+				    &shadow, symbol.pcm.octet, &event) ==
+			    PCM_DOWNSTREAM_RX_MP_REJECTED)
+				mp_rejection_seen = true;
+		}
+		result = v90_analog_path_receive(
+			&path, symbol.pcm.octet, &received);
+		CHECK(result == V90_ANALOG_PATH_OK,
+		      "rejected MP stopped the analogue path at clock %zu: %s",
+		      clock, v90_analog_path_result_name(result));
+		if (!path.peer_mp_received)
+			continue;
+		CHECK(mp_corrupted && mp_rejection_seen &&
+		      v90_mp_record_equal(
+			      &path.peer_mp, &transmitter.control.mp) &&
+		      v90_analog_path_is_valid(&path) &&
+		      !v90_analog_path_has_failed(&path),
+		      "repeated MP did not recover the analogue path");
+		return true;
+	}
+	CHECK(false, "repeated MP was not accepted after one rejection");
+	return false;
+}
+
 static bool verify_final_downstream_exchange(
 	struct v90_phase4_cp_line_tx *cp_transmit,
 	struct v90_phase4_cp_line_rx *cp_receive,
@@ -604,7 +746,10 @@ static bool run_exchange(
 		      &digital_transmit.transmitter.encoder.mapping,
 		      &training),
 	      "paired owners disagreed about their Phase 4 handoffs");
-	CHECK(verify_final_downstream_exchange(
+	CHECK(verify_repeated_mp_recovery(
+		      &analog_transmit, &digital_transmit,
+		      &analog_receive, &training) &&
+	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
 		      V90_JD_RATE_CAPABILITY_MASK, false) &&
