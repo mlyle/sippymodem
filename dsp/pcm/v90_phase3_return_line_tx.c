@@ -9,11 +9,27 @@
 bool v90_phase3_return_line_tx_is_valid(
 	const struct v90_phase3_return_line_tx *tx)
 {
-	return tx != NULL && v90_phase3_training_line_is_valid(&tx->line) &&
-	       v90_phase3_return_tx_is_valid(&tx->points) &&
-	       (!tx->scr_during_idle ||
-		(v34_training_sequence_is_valid(&tx->idle_scr) &&
-		 tx->idle_scr.role == tx->line.profile.local_role));
+	if (tx == NULL || !v90_phase3_training_line_is_valid(&tx->line) ||
+	    !v90_phase3_return_tx_is_valid(&tx->points) ||
+	    (tx->scr_during_idle &&
+	     (!v34_training_sequence_is_valid(&tx->idle_scr) ||
+	      tx->idle_scr.role != tx->line.profile.local_role)))
+		return false;
+	if (!tx->automatic_rrn)
+		return !tx->draining_accepted_point;
+	if (tx->scr_during_idle ||
+	    tx->points.stage == V90_PHASE3_RETURN_TX_SILENCE ||
+	    tx->points.silence_symbols != 0u ||
+	    !tx->points.finish_s_requested)
+		return false;
+	if (!tx->draining_accepted_point)
+		return tx->points.stage != V90_PHASE3_RETURN_TX_S ||
+		       tx->points.s_symbols != 0u ||
+		       v34_training_line_needs_point(&tx->line);
+	return tx->points.stage == V90_PHASE3_RETURN_TX_S &&
+	       tx->points.s_symbols == 0u &&
+	       tx->points.s_bar_symbols == 0u &&
+	       !v34_training_line_needs_point(&tx->line);
 }
 
 bool v90_phase3_return_line_tx_is_handoff_ready(
@@ -27,14 +43,15 @@ bool v90_phase3_return_line_tx_is_handoff_ready(
 static enum v90_phase3_return_line_tx_result initialize(
 	struct v90_phase3_return_line_tx *tx,
 	const struct v34_training_line *line, bool scr_during_idle,
-	enum v34_constellation_size constellation)
+	enum v34_constellation_size constellation, bool require_point_boundary)
 {
 	struct v90_phase3_return_line_tx initialized = {
 		.scr_during_idle = scr_during_idle,
 	};
 
 	if (tx == NULL || !v90_phase3_training_line_is_valid(line) ||
-	    !v34_training_line_needs_point(line) ||
+	    (require_point_boundary &&
+	     !v34_training_line_needs_point(line)) ||
 	    (scr_during_idle &&
 	     !v34_constellation_size_is_valid(constellation)))
 		return V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT;
@@ -55,7 +72,8 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init(
 	struct v90_phase3_return_line_tx *tx,
 	const struct v34_training_line *line)
 {
-	return initialize(tx, line, false, V34_CONSTELLATION_4_POINT);
+	return initialize(
+		tx, line, false, V34_CONSTELLATION_4_POINT, true);
 }
 
 enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init_scr(
@@ -63,7 +81,35 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init_scr(
 	const struct v34_training_line *line,
 	enum v34_constellation_size constellation)
 {
-	return initialize(tx, line, true, constellation);
+	return initialize(tx, line, true, constellation, true);
+}
+
+enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_init_rrn(
+	struct v90_phase3_return_line_tx *tx,
+	const struct v34_training_line *online_line)
+{
+	struct v90_phase3_return_line_tx initialized;
+	enum v90_phase3_return_line_tx_result result;
+
+	if (tx == NULL)
+		return V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT;
+	result = initialize(
+		&initialized, online_line, false,
+		V34_CONSTELLATION_4_POINT, false);
+	if (result != V90_PHASE3_RETURN_LINE_TX_OK)
+		return result;
+	if (v90_phase3_return_tx_start_s(&initialized.points) !=
+		    V90_PHASE3_RETURN_TX_OK ||
+	    v90_phase3_return_tx_finish_s(&initialized.points) !=
+		    V90_PHASE3_RETURN_TX_OK)
+		return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
+	initialized.automatic_rrn = true;
+	initialized.draining_accepted_point =
+		!v34_training_line_needs_point(&initialized.line);
+	if (!v90_phase3_return_line_tx_is_valid(&initialized))
+		return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
+	*tx = initialized;
+	return V90_PHASE3_RETURN_LINE_TX_OK;
 }
 
 static enum v90_phase3_return_line_tx_result control_result(
@@ -86,6 +132,8 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_start_s(
 
 	if (!v90_phase3_return_line_tx_is_valid(tx))
 		return V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT;
+	if (tx->automatic_rrn)
+		return V90_PHASE3_RETURN_LINE_TX_INVALID_STATE;
 	next = *tx;
 	result = control_result(
 		&next, v90_phase3_return_tx_start_s(&next.points));
@@ -102,6 +150,8 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_finish_s(
 
 	if (!v90_phase3_return_line_tx_is_valid(tx))
 		return V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT;
+	if (tx->automatic_rrn)
+		return V90_PHASE3_RETURN_LINE_TX_INVALID_STATE;
 	next = *tx;
 	result = control_result(
 		&next, v90_phase3_return_tx_finish_s(&next.points));
@@ -125,6 +175,20 @@ enum v90_phase3_return_line_tx_result v90_phase3_return_line_tx_sample(
 	if (v90_phase3_return_line_tx_is_handoff_ready(tx))
 		return V90_PHASE3_RETURN_LINE_TX_COMPLETE;
 	next = *tx;
+	if (next.draining_accepted_point) {
+		if (v34_training_line_sample(
+			    &next.line, NULL, &generated, &accepted) !=
+			    V34_TRAINING_LINE_OK ||
+		    accepted)
+			return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
+		if (v34_training_line_needs_point(&next.line))
+			next.draining_accepted_point = false;
+		if (!v90_phase3_return_line_tx_is_valid(&next))
+			return V90_PHASE3_RETURN_LINE_TX_INTERNAL_ERROR;
+		*tx = next;
+		*sample = generated;
+		return V90_PHASE3_RETURN_LINE_TX_OK;
+	}
 	accepting = v34_training_line_needs_point(&next.line);
 	if (accepting) {
 		enum v90_phase3_return_tx_stage point_stage = next.points.stage;

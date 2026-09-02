@@ -204,6 +204,108 @@ static bool test_scr_idle_continuation(void)
 	return true;
 }
 
+static bool run_rrn_continuation(bool enter_mid_point)
+{
+	struct v34_phase3_profile selected = profile();
+	struct v34_training_line source;
+	struct v34_training_line model_line;
+	struct v34_training_line handoff;
+	struct v90_phase3_return_line_tx tx;
+	struct v90_phase3_return_tx model_points;
+	uint32_t drained_samples = 0u;
+	bool model_draining = enter_mid_point;
+	bool complete = false;
+
+	CHECK(v34_training_line_init(
+		      &source, &selected, V90_PHASE3_SAMPLE_RATE,
+		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK,
+	      "RRN source line did not initialize");
+	if (enter_mid_point) {
+		struct qam_point data_point = v34_rotated_point_zero(1);
+		int16_t ignored;
+		bool accepted;
+
+		CHECK(v34_training_line_sample(
+			      &source, &data_point, &ignored, &accepted) ==
+			      V34_TRAINING_LINE_OK &&
+		      accepted && !v34_training_line_needs_point(&source),
+		      "RRN fixture did not enter an accepted data point");
+	}
+	model_line = source;
+	CHECK(v90_phase3_return_line_tx_init_rrn(&tx, &source) ==
+		      V90_PHASE3_RETURN_LINE_TX_OK &&
+	      v90_phase3_return_tx_init(&model_points) ==
+		      V90_PHASE3_RETURN_TX_OK &&
+	      v90_phase3_return_tx_start_s(&model_points) ==
+		      V90_PHASE3_RETURN_TX_OK &&
+	      v90_phase3_return_tx_finish_s(&model_points) ==
+		      V90_PHASE3_RETURN_TX_OK,
+	      "automatic RRN return did not initialize");
+	for (uint32_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT; ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		if (v90_phase3_return_line_tx_is_handoff_ready(&tx)) {
+			complete = true;
+			break;
+		}
+		if (model_draining) {
+			bool accepted;
+
+			CHECK(v34_training_line_sample(
+				      &model_line, NULL, &expected,
+				      &accepted) == V34_TRAINING_LINE_OK &&
+			      !accepted,
+			      "RRN model could not drain its accepted point");
+			drained_samples++;
+			model_draining =
+				!v34_training_line_needs_point(&model_line);
+		} else {
+			CHECK(model_sample(
+				      &model_line, &model_points, NULL,
+				      &expected),
+			      "RRN model could not emit S/S-bar");
+		}
+		CHECK(v90_phase3_return_line_tx_sample(&tx, &actual) ==
+			      V90_PHASE3_RETURN_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      memcmp(&tx.points, &model_points,
+			     sizeof(model_points)) == 0,
+		      "automatic RRN waveform diverged at sample %u",
+		      sample_index);
+	}
+	CHECK(complete &&
+	      model_points.s_symbols == V34_PHASE3_S_SYMBOLS &&
+	      model_points.s_bar_symbols == V34_PHASE3_S_BAR_SYMBOLS &&
+	      v90_phase3_return_line_tx_handoff(&tx, &handoff) ==
+		      V90_PHASE3_RETURN_LINE_TX_OK &&
+	      memcmp(&handoff, &model_line, sizeof(handoff)) == 0 &&
+	      (enter_mid_point ? drained_samples > 0u :
+				 drained_samples == 0u),
+	      "automatic RRN did not preserve its exact 128T/16T handoff");
+	{
+		struct v90_phase3_return_line_tx saved = tx;
+		int16_t sample = 4321;
+
+		CHECK(v90_phase3_return_line_tx_sample(&tx, &sample) ==
+			      V90_PHASE3_RETURN_LINE_TX_COMPLETE &&
+		      v90_phase3_return_line_tx_start_s(&tx) ==
+			      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
+		      v90_phase3_return_line_tx_finish_s(&tx) ==
+			      V90_PHASE3_RETURN_LINE_TX_INVALID_STATE &&
+		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 4321,
+		      "complete automatic RRN changed state or output");
+	}
+	return true;
+}
+
+static bool test_rate_renegotiation_continuation(void)
+{
+	return run_rrn_continuation(false) && run_rrn_continuation(true);
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase3_profile selected = profile();
@@ -221,12 +323,17 @@ static bool test_validation(void)
 	line.profile.local_role = V34_CALLING_STATION;
 	CHECK(v90_phase3_return_line_tx_init(&tx, &line) ==
 		      V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase3_return_line_tx_init_rrn(&tx, &line) ==
+		      V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT &&
 	      memcmp(&tx, &saved, sizeof(tx)) == 0,
 	      "return line accepted the digital role");
 	CHECK(v34_training_line_init(
 		      &line, &selected, V90_PHASE3_SAMPLE_RATE,
 		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK,
 	      "valid return line source did not initialize");
+	CHECK(v90_phase3_return_line_tx_init_rrn(NULL, &line) ==
+		      V90_PHASE3_RETURN_LINE_TX_INVALID_ARGUMENT,
+	      "automatic RRN accepted a NULL destination");
 	saved = tx;
 	CHECK(v90_phase3_return_line_tx_init_scr(
 		      &tx, &line, (enum v34_constellation_size)99) ==
@@ -268,6 +375,8 @@ int main(void)
 	} tests[] = {
 		{ "exact continuation", test_exact_continuation },
 		{ "SCR idle continuation", test_scr_idle_continuation },
+		{ "rate-renegotiation continuation",
+		  test_rate_renegotiation_continuation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
