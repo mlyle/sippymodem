@@ -12,10 +12,20 @@ enum {
 };
 
 _Static_assert(
-	V34_DATA_RRN_PREFIX_SYMBOLS <
-		V34_SURVIVOR_TRACEBACK_INTERVALS *
-		V34_2D_SYMBOLS_PER_4D_INTERVAL,
-	"online S must be gated before traceback can publish its symbols");
+	V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+		(V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u) <=
+		(V34_SURVIVOR_TRACEBACK_INTERVALS - 1u) *
+			V34_2D_SYMBOLS_PER_4D_INTERVAL,
+	"error-bounded online S must be gated before traceback can publish it");
+
+static bool rate_renegotiation_prefix_is_candidate(
+	const struct v34_phase3_s_prefix *prefix)
+{
+	return v34_phase3_s_prefix_is_valid(prefix) &&
+	       prefix->alternating_turns == V34_PHASE3_S_PREFIX_TURNS &&
+	       prefix->recurrence_hits >=
+		       V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS;
+}
 
 bool v34_data_equalizer_receiver_is_valid(
 	const struct v34_data_equalizer_receiver *receiver)
@@ -40,7 +50,8 @@ bool v34_data_equalizer_receiver_is_valid(
 	      monitor->rate_renegotiation_candidate_symbols >
 		      V34_DATA_RRN_CANDIDATE_SYMBOLS ||
 	      monitor->rate_renegotiation_candidate !=
-		      monitor->rate_renegotiation_prefix.complete ||
+		      rate_renegotiation_prefix_is_candidate(
+			      &monitor->rate_renegotiation_prefix) ||
 	      (monitor->rate_renegotiation_candidate !=
 		       (monitor->rate_renegotiation_candidate_symbols != 0u)))))
 		return false;
@@ -184,7 +195,7 @@ static enum v34_data_receive_result observe_rate_renegotiation(
 	    prefix_result != V34_PHASE3_S_PREFIX_REBASE_TIMING)
 		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	monitor->rate_renegotiation_prefix = prefix;
-	if (prefix_result == V34_PHASE3_S_PREFIX_DETECTED) {
+	if (rate_renegotiation_prefix_is_candidate(&prefix)) {
 		monitor->rate_renegotiation_candidate = true;
 		monitor->rate_renegotiation_candidate_symbols =
 			V34_DATA_RRN_CANDIDATE_SYMBOLS;

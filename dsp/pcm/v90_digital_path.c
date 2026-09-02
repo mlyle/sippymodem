@@ -13,16 +13,8 @@ _Static_assert(
 	V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS == 8,
 	"V.90 upstream control buffering follows the V.34 frame cadence");
 _Static_assert(
-	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY == 22,
+	V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY == 18,
 	"V.90 upstream control buffer must cover the complete candidate");
-_Static_assert(
-	(V34_SURVIVOR_TRACEBACK_INTERVALS - 1u) *
-		V34_2D_SYMBOLS_PER_4D_INTERVAL +
-		V90_DIGITAL_PATH_ROLLING_FRAME_COUNT *
-			V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS >=
-		V34_DATA_RRN_PREFIX_SYMBOLS *
-			(V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u),
-	"V.90 host delay must cover the latest permitted recurrent S prefix");
 
 static bool pending_upstream_is_valid(const struct v90_digital_path *path)
 {
@@ -385,14 +377,10 @@ static enum v90_digital_path_result receive_upstream(
 		case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		}
-		/* Keep a small rolling delay even outside a candidate. It covers the
-		 * latest recurrent prefix possible with all permitted S errors. */
-		if (!candidate_after &&
-		    (path->pending_upstream_count >
-			     V90_DIGITAL_PATH_ROLLING_FRAME_COUNT ||
-		     (generated_frame &&
-		      path->pending_upstream_count ==
-			      V90_DIGITAL_PATH_ROLLING_FRAME_COUNT))) {
+		/* Survivor traceback hides the complete early prefix. Buffer only
+		 * while that prefix remains a candidate; rejected candidates drain in
+		 * order without delaying ordinary online data. */
+		if (!candidate_after && path->pending_upstream_count != 0u) {
 			*received = path->pending_upstream_frames[
 				path->pending_upstream_head];
 			path->pending_upstream_head = (uint8_t)(
@@ -403,6 +391,14 @@ static enum v90_digital_path_result receive_upstream(
 		}
 		if (generated_frame) {
 			size_t tail;
+
+			if (!candidate_after &&
+			    path->pending_upstream_count == 0u &&
+			    !released_frame) {
+				*received = frame;
+				*frame_ready = true;
+				return V90_DIGITAL_PATH_UPSTREAM_FRAME;
+			}
 
 			if (path->pending_upstream_count ==
 			    V90_DIGITAL_PATH_PENDING_FRAME_CAPACITY)

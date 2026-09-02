@@ -518,8 +518,12 @@ static int16_t apply_drifting_echo(
 static bool rrn_symbol_is_error(size_t symbol)
 {
 	/* Exercise the complete permitted S error budget while delaying every
-	 * ten-symbol recurrent-prefix run, plus one bounded S-bar error. */
-	return (symbol < 80u && (symbol + 1u) % 10u == 0u) ||
+	 * six-symbol early-prefix run, plus one bounded S-bar error. */
+	return (symbol <
+			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+			V34_PHASE3_S_RECEIVER_MAX_S_ERRORS &&
+		(symbol + 1u) %
+			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS == 0u) ||
 	       symbol == V34_PHASE3_S_SYMBOLS + 8u;
 }
 
@@ -538,35 +542,48 @@ static bool recurrent_prefix_bound_is_exact(void)
 {
 	struct v34_phase3_s_prefix prefix;
 
-	CHECK(V34_DATA_RRN_PREFIX_SYMBOLS == 10u &&
+	CHECK(V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS == 6u &&
 	      v34_phase3_s_prefix_init_recurrent(&prefix) ==
 		      V34_PHASE3_S_PREFIX_OK,
 	      "online recurrent-prefix bound did not initialize");
 	for (size_t symbol = 0;
-	     symbol < V34_DATA_RRN_PREFIX_SYMBOLS; ++symbol) {
+	     symbol < V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS; ++symbol) {
 		struct qam_point point = rrn_point(symbol + 80u);
 		enum v34_phase3_s_prefix_result result =
 			v34_phase3_s_prefix_receive(&prefix, &point, 0.25);
 
-		CHECK(result ==
-			      (symbol + 1u == V34_DATA_RRN_PREFIX_SYMBOLS ?
-				       V34_PHASE3_S_PREFIX_DETECTED :
-				       V34_PHASE3_S_PREFIX_OK),
+		CHECK(result == V34_PHASE3_S_PREFIX_OK &&
+		      prefix.recurrence_hits ==
+			      (symbol >=
+				       V34_PHASE3_S_PREFIX_RECURRENCE_LAG ?
+				       symbol + 1u -
+					       V34_PHASE3_S_PREFIX_RECURRENCE_LAG :
+				       0u),
 		      "online recurrent prefix completed at clean symbol %zu",
 		      symbol + 1u);
 	}
 	CHECK(v34_phase3_s_prefix_init_recurrent(&prefix) ==
 		      V34_PHASE3_S_PREFIX_OK,
 	      "late online recurrent prefix did not initialize");
-	for (size_t symbol = 0; symbol < 90u; ++symbol) {
+	for (size_t symbol = 0;
+	     symbol < V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+			      (V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u);
+	     ++symbol) {
 		struct qam_point point = rrn_point(symbol);
 		enum v34_phase3_s_prefix_result result =
 			v34_phase3_s_prefix_receive(&prefix, &point, 0.25);
+		bool candidate =
+			prefix.alternating_turns ==
+				V34_PHASE3_S_PREFIX_TURNS &&
+			prefix.recurrence_hits >=
+				V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS;
 
-		CHECK(result ==
-			      (symbol == 89u ?
-				       V34_PHASE3_S_PREFIX_DETECTED :
-				       V34_PHASE3_S_PREFIX_OK),
+		CHECK(result == V34_PHASE3_S_PREFIX_OK &&
+		      candidate ==
+			      (symbol + 1u ==
+			       V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+				       (V34_PHASE3_S_RECEIVER_MAX_S_ERRORS +
+					1u)),
 		      "error-bounded recurrent prefix completed at symbol %zu",
 		      symbol + 1u);
 	}

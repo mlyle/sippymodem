@@ -436,19 +436,23 @@ int main(void)
 	};
 	static const struct {
 		enum v34_symbol_rate symbol_rate;
+		uint8_t minimum_rate_2400_bps_units;
 		uint8_t maximum_rate_2400_bps_units;
 	} profiles[] = {
-		{ V34_SYMBOL_RATE_3000, 9 },
-		{ V34_SYMBOL_RATE_3200, 9 },
-		{ V34_SYMBOL_RATE_3429, 10 },
+		{ V34_SYMBOL_RATE_3000, V90_MP_MINIMUM_RATE_2400_BPS_UNITS, 9 },
+		{ V34_SYMBOL_RATE_3200, V90_MP_MINIMUM_RATE_2400_BPS_UNITS, 9 },
+		{ V34_SYMBOL_RATE_3429, V90_MP_MINIMUM_RATE_2400_BPS_UNITS, 10 },
+		{ V34_SYMBOL_RATE_3000, 10, 12 },
+		{ V34_SYMBOL_RATE_3200, 10, 13 },
+		{ V34_SYMBOL_RATE_3429, 11, 14 },
 	};
 
 	fprintf(stderr, "[ RUN      ] generated upstream entry\n");
 	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
 		for (size_t profile = 0;
 		     profile < ARRAY_LENGTH(profiles); ++profile)
-			for (uint8_t rate =
-				     V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
+			for (uint8_t rate = profiles[profile]
+						     .minimum_rate_2400_bps_units;
 			     rate <= profiles[profile]
 					     .maximum_rate_2400_bps_units;
 			     ++rate)

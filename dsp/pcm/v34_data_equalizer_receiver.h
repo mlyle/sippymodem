@@ -13,15 +13,18 @@
 #include <stdint.h>
 
 enum {
-	/* The recurrent gate completes on the tenth exact S symbol. */
-	V34_DATA_RRN_PREFIX_SYMBOLS =
+	/* Four lag-two recurrence hits plus the retained points gate an online S
+	 * candidate within the survivor traceback, even when every permitted S
+	 * error resets one complete prefix run. */
+	V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS = 4,
+	V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS =
 		V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
-		V34_PHASE3_S_PREFIX_RECURRENCE_HITS,
+		V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS,
 	/* Preserve a candidate through the complete remaining marker and the
 	 * detector's bounded post-boundary confirmation. */
 	V34_DATA_RRN_CANDIDATE_SYMBOLS =
 		V34_PHASE3_S_SEQUENCE_SYMBOLS -
-		V34_DATA_RRN_PREFIX_SYMBOLS +
+		V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS +
 		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
 };
 

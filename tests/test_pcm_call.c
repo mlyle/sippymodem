@@ -1770,16 +1770,13 @@ static bool complete_rate_renegotiation_monitor(
 				     V34_PHASE3_S_RECEIVER_DETECTED :
 				     V34_PHASE3_S_RECEIVER_OK))
 			return false;
-		if (symbol < V34_DATA_RRN_PREFIX_SYMBOLS) {
+		if (symbol < V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS) {
 			enum v34_phase3_s_prefix_result prefix_result =
 				v34_phase3_s_prefix_receive(
 					&completed.rate_renegotiation_prefix,
 					&point, 0.25);
 
-			if (prefix_result !=
-				    (symbol + 1u == V34_DATA_RRN_PREFIX_SYMBOLS ?
-					     V34_PHASE3_S_PREFIX_DETECTED :
-					     V34_PHASE3_S_PREFIX_OK))
+			if (prefix_result != V34_PHASE3_S_PREFIX_OK)
 				return false;
 		}
 	}
@@ -1791,6 +1788,62 @@ static bool complete_rate_renegotiation_monitor(
 	return true;
 }
 
+static bool start_error_bounded_rate_renegotiation_candidate(
+	struct v34_data_rate_renegotiation_monitor *monitor)
+{
+	enum {
+		CANDIDATE_BOUND =
+			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+			(V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u),
+		LAST_ERROR = CANDIDATE_BOUND -
+			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS,
+	};
+	struct v34_data_rate_renegotiation_monitor candidate = { 0 };
+
+	if (monitor == NULL ||
+	    v34_phase3_s_receiver_init_suffix(
+		    &candidate.rate_renegotiation_marker,
+		    V34_PHASE3_S_SYMBOLS) != V34_PHASE3_S_RECEIVER_OK ||
+	    v34_phase3_s_prefix_init_recurrent(
+		    &candidate.rate_renegotiation_prefix) !=
+		    V34_PHASE3_S_PREFIX_OK)
+		return false;
+	for (size_t symbol = 0; symbol < CANDIDATE_BOUND; ++symbol) {
+		unsigned int turns = symbol & 1u;
+		struct qam_point point;
+		uint8_t quarter_point;
+		uint8_t rotation;
+
+		if (symbol < LAST_ERROR &&
+		    (symbol + 1u) %
+			    V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS == 0u)
+			turns++;
+		point = v34_rotated_point_zero((int)turns);
+		if (v34_training_constellation_slice(
+			    V34_CONSTELLATION_4_POINT, &point,
+			    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
+		    quarter_point != 0u ||
+		    v34_phase3_s_receiver_receive(
+			    &candidate.rate_renegotiation_marker,
+			    quarter_point, rotation) != V34_PHASE3_S_RECEIVER_OK ||
+		    v34_phase3_s_prefix_receive(
+			    &candidate.rate_renegotiation_prefix,
+			    &point, 0.25) != V34_PHASE3_S_PREFIX_OK)
+			return false;
+	}
+	if (candidate.rate_renegotiation_prefix.alternating_turns !=
+		    V34_PHASE3_S_PREFIX_TURNS ||
+	    candidate.rate_renegotiation_prefix.recurrence_hits !=
+		    V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS)
+		return false;
+	candidate.rate_renegotiation_candidate_symbols =
+		V34_DATA_RRN_CANDIDATE_SYMBOLS;
+	candidate.rate_renegotiation_enabled = true;
+	candidate.rate_renegotiation_candidate = true;
+	*monitor = candidate;
+	return true;
+}
+
 static bool run_rate_renegotiation_fallback(enum g711_law law)
 {
 	struct channel channel;
@@ -1798,6 +1851,8 @@ static bool run_rate_renegotiation_fallback(enum g711_law law)
 	struct endpoint digital;
 	union pcm_info0_record peer_info0;
 	uint16_t prior_round_trip_delay;
+	size_t transmitted_before;
+	size_t received_before;
 	bool initially_online = false;
 	bool retrain_started = false;
 
@@ -1823,12 +1878,28 @@ static bool run_rate_renegotiation_fallback(enum g711_law law)
 	}
 	CHECK(initially_online && digital.call.peer_info0_stored &&
 	      digital.call.round_trip_delay_stored &&
-	      digital.call.state.data_path.digital.pending_upstream_count ==
-		      V90_DIGITAL_PATH_ROLLING_FRAME_COUNT,
-	      "law %u rate-renegotiation pair did not reach buffered data",
+	      digital.call.state.data_path.digital.pending_upstream_count == 0u,
+	      "law %u rate-renegotiation pair did not reach ordinary data",
 	      (unsigned int)law);
 	peer_info0 = digital.call.peer_info0;
 	prior_round_trip_delay = digital.call.round_trip_delay_samples;
+	transmitted_before = analog.upstream_source.frames;
+	received_before = digital.upstream_frames;
+	CHECK(start_error_bounded_rate_renegotiation_candidate(
+		      &digital.call.state.data_path.digital.upstream.data
+			       .equalizer_receiver.rate_renegotiation) &&
+	      pcm_call_is_valid(&digital.call),
+	      "law %u bounded rate-renegotiation prefix was invalid",
+	      (unsigned int)law);
+	for (size_t sample = 0; sample < 96u; ++sample)
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u candidate suppression stopped at %zu",
+		      (unsigned int)law, sample);
+	CHECK(analog.upstream_source.frames > transmitted_before &&
+	      digital.upstream_frames == received_before &&
+	      digital.call.state.data_path.digital.pending_upstream_count > 0u,
+	      "law %u candidate frames escaped to the host",
+	      (unsigned int)law);
 	CHECK(complete_rate_renegotiation_monitor(
 		      &digital.call.state.data_path.digital.upstream.data
 			       .equalizer_receiver.rate_renegotiation) &&
