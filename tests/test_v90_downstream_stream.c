@@ -2,6 +2,7 @@
 
 #include <v90_downstream_data_handoff.h>
 #include <v90_downstream_data_stream.h>
+#include <v90_downstream_rrn_rx.h>
 #include <pcm_downstream_rx.h>
 #include <pcm_downstream_tx.h>
 
@@ -80,6 +81,7 @@ static bool make_rd_mapping(
 		.sign_redundancy = 2,
 		.spectral_lookahead = 2,
 		.constellation_count = V90_CP_FRAME_INTERVALS,
+		.codec_constellations_differ = true,
 	};
 
 	for (uint8_t interval = 0;
@@ -88,7 +90,13 @@ static bool make_rd_mapping(
 		for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
 			add_ucode(
 				&parameters.transmit_constellations[interval],
-				(uint8_t)(16u + interval + 14u * ordinal));
+				(uint8_t)(12u + interval % 3u +
+					  14u * ordinal));
+		for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
+			add_ucode(
+				&parameters.codec_constellations[interval],
+				(uint8_t)(9u + 2u * (interval % 3u) +
+					  14u * ordinal));
 	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
 	       V90_PCM_MAPPING_OK;
@@ -421,6 +429,214 @@ static bool test_rd_sequence(void)
 	      "PCMU Rd sequence failed");
 	CHECK(verify_rd_sequence(G711_LAW_PCMA),
 	      "PCMA Rd sequence failed");
+	return true;
+}
+
+static bool make_rrn_octet(
+	const struct v90_pcm_mapping *mapping,
+	enum v90_pcm_mapping_plane plane, uint8_t interval,
+	bool inverted, bool bar, uint8_t *octet)
+{
+	uint8_t ucode;
+	bool positive = interval < V90_CP_FRAME_INTERVALS / 2u;
+
+	if (v90_pcm_mapping_ucode(
+		    mapping, plane, interval, 0, &ucode) !=
+	    V90_PCM_MAPPING_OK)
+		return false;
+	if (inverted)
+		positive = !positive;
+	if (bar)
+		positive = !positive;
+	return g711_ucode_octet(mapping->law, ucode, positive, octet);
+}
+
+static bool verify_rrn_detection(
+	enum g711_law law, enum v90_pcm_mapping_plane plane,
+	uint8_t offset, bool inverted)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_rrn_rx receiver;
+	uint8_t octet;
+	size_t rd_symbols = V90_RD_SYMBOLS - offset;
+
+	CHECK(make_rd_mapping(&mapping, law) &&
+	      v90_downstream_rrn_rx_init(&receiver, &mapping, plane) ==
+		      V90_DOWNSTREAM_RRN_RX_OK &&
+	      v90_downstream_rrn_rx_is_valid(&receiver) &&
+	      !v90_downstream_rrn_rx_rd_detected(&receiver) &&
+	      !v90_downstream_rrn_rx_is_complete(&receiver),
+	      "law %u plane %u offset %u polarity %u RRN init failed",
+	      law, plane, offset, inverted);
+	for (size_t index = 0; index < rd_symbols; ++index) {
+		uint8_t interval =
+			(uint8_t)((offset + index) %
+				  V90_CP_FRAME_INTERVALS);
+		enum v90_downstream_rrn_rx_result expected =
+			index + 1u == V90_DOWNSTREAM_RRN_RX_MIN_RD_SYMBOLS ?
+				V90_DOWNSTREAM_RRN_RX_RD_DETECTED :
+				V90_DOWNSTREAM_RRN_RX_BUFFERING;
+
+		CHECK(make_rrn_octet(
+			      &mapping, plane, interval, inverted, false,
+			      &octet) &&
+		      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      expected,
+		      "law %u plane %u offset %u polarity %u Rd %zu "
+		      "failed",
+		      law, plane, offset, inverted, index);
+	}
+	CHECK(v90_downstream_rrn_rx_rd_detected(&receiver) &&
+	      !v90_downstream_rrn_rx_is_complete(&receiver),
+	      "law %u plane %u offset %u polarity %u did not lock Rd",
+	      law, plane, offset, inverted);
+	for (size_t index = 0;
+	     index < V90_DOWNSTREAM_RRN_RX_RD_BAR_SYMBOLS; ++index) {
+		enum v90_downstream_rrn_rx_result expected =
+			index == 0 ? V90_DOWNSTREAM_RRN_RX_RD_BAR_STARTED :
+			index + 1u == V90_DOWNSTREAM_RRN_RX_RD_BAR_SYMBOLS ?
+				V90_DOWNSTREAM_RRN_RX_RD_BAR_COMPLETE :
+				V90_DOWNSTREAM_RRN_RX_BUFFERING;
+
+		CHECK(make_rrn_octet(
+			      &mapping, plane,
+			      (uint8_t)(index % V90_CP_FRAME_INTERVALS),
+			      inverted, true, &octet) &&
+		      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      expected,
+		      "law %u plane %u offset %u polarity %u Rd-bar %zu "
+		      "failed",
+		      law, plane, offset, inverted, index);
+	}
+	CHECK(v90_downstream_rrn_rx_is_complete(&receiver),
+	      "law %u plane %u offset %u polarity %u did not complete",
+	      law, plane, offset, inverted);
+	{
+		struct v90_downstream_rrn_rx saved = receiver;
+
+		CHECK(v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      V90_DOWNSTREAM_RRN_RX_INVALID_STATE &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "completed RRN receiver consumed the TRN2d boundary");
+	}
+	return true;
+}
+
+static bool test_rrn_detection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		for (enum v90_pcm_mapping_plane plane =
+			     V90_PCM_MAPPING_TRANSMIT;
+		     plane <= V90_PCM_MAPPING_CODEC; ++plane) {
+			for (uint8_t offset = 0;
+			     offset < V90_CP_FRAME_INTERVALS; ++offset) {
+				CHECK(verify_rrn_detection(
+					      law, plane, offset, false) &&
+				      verify_rrn_detection(
+					      law, plane, offset, true),
+				      "RRN detector matrix failed");
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_rrn_rejection(void)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_downstream_rrn_rx receiver;
+	uint8_t octet;
+
+	CHECK(make_rd_mapping(&mapping, G711_LAW_PCMU) &&
+	      v90_downstream_rrn_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RRN_RX_OK,
+	      "RRN rejection fixture did not initialize");
+	for (size_t index = 0; index < 234u; ++index) {
+		CHECK(make_rrn_octet(
+			      &mapping, V90_PCM_MAPPING_TRANSMIT,
+			      (uint8_t)(index % V90_CP_FRAME_INTERVALS),
+			      false, false, &octet) &&
+		      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      V90_DOWNSTREAM_RRN_RX_BUFFERING,
+		      "short Rd failed at %zu", index);
+	}
+	for (size_t index = 0;
+	     index < V90_DOWNSTREAM_RRN_RX_RD_BAR_SYMBOLS; ++index) {
+		CHECK(make_rrn_octet(
+			      &mapping, V90_PCM_MAPPING_TRANSMIT,
+			      (uint8_t)(index % V90_CP_FRAME_INTERVALS),
+			      false, true, &octet) &&
+		      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      V90_DOWNSTREAM_RRN_RX_BUFFERING,
+		      "short Rd-bar failed at %zu", index);
+	}
+	CHECK(!v90_downstream_rrn_rx_rd_detected(&receiver),
+	      "short Rd/Rd-bar sequence was accepted");
+	CHECK(v90_downstream_rrn_rx_init(
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RRN_RX_OK,
+	      "RRN mismatch fixture did not reset");
+	for (size_t index = 0;
+	     index < V90_DOWNSTREAM_RRN_RX_MIN_RD_SYMBOLS; ++index) {
+		enum v90_downstream_rrn_rx_result expected =
+			index + 1u == V90_DOWNSTREAM_RRN_RX_MIN_RD_SYMBOLS ?
+				V90_DOWNSTREAM_RRN_RX_RD_DETECTED :
+				V90_DOWNSTREAM_RRN_RX_BUFFERING;
+
+		CHECK(make_rrn_octet(
+			      &mapping, V90_PCM_MAPPING_TRANSMIT,
+			      (uint8_t)(index % V90_CP_FRAME_INTERVALS),
+			      false, false, &octet) &&
+		      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+			      expected,
+		      "RRN mismatch fixture stopped at %zu", index);
+	}
+	CHECK(make_rrn_octet(
+		      &mapping, V90_PCM_MAPPING_TRANSMIT, 1,
+		      false, true, &octet) &&
+	      v90_downstream_rrn_rx_receive(&receiver, octet) ==
+		      V90_DOWNSTREAM_RRN_RX_SEQUENCE_MISMATCH &&
+	      v90_downstream_rrn_rx_is_valid(&receiver) &&
+	      !v90_downstream_rrn_rx_rd_detected(&receiver),
+	      "off-boundary Rd-bar transition was accepted");
+	return true;
+}
+
+static bool test_rrn_contracts(void)
+{
+	struct v90_pcm_mapping training;
+	struct v90_pcm_mapping data;
+	struct v90_downstream_rrn_rx receiver;
+	struct v90_downstream_rrn_rx saved;
+
+	CHECK(make_mapping(
+		      &training, G711_LAW_PCMU, V90_CP_TRAINING) &&
+	      make_rd_mapping(&data, G711_LAW_PCMU),
+	      "RRN contract mappings did not initialize");
+	memset(&receiver, 0xa5, sizeof(receiver));
+	saved = receiver;
+	CHECK(v90_downstream_rrn_rx_init(
+		      NULL, &data, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_ARGUMENT &&
+	      v90_downstream_rrn_rx_init(
+		      &receiver, NULL, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_ARGUMENT &&
+	      v90_downstream_rrn_rx_init(
+		      &receiver, &training, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_PARAMETERS &&
+	      v90_downstream_rrn_rx_init(
+		      &receiver, &data,
+		      (enum v90_pcm_mapping_plane)2) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_PARAMETERS &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      v90_downstream_rrn_rx_receive(NULL, 0) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_ARGUMENT &&
+	      v90_downstream_rrn_rx_receive(&receiver, 0) ==
+		      V90_DOWNSTREAM_RRN_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "RRN receiver accepted an invalid contract");
 	return true;
 }
 
@@ -886,6 +1102,9 @@ int main(void)
 	} tests[] = {
 		{ "continuous streams", test_continuous_streams },
 		{ "Rd and Rd-bar sequence", test_rd_sequence },
+		{ "Rd and Rd-bar detection", test_rrn_detection },
+		{ "Rd and Rd-bar rejection", test_rrn_rejection },
+		{ "Rd receiver contracts", test_rrn_contracts },
 		{ "record-boundary request", test_boundary_request },
 		{ "contracts", test_contracts },
 	};

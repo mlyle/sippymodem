@@ -2187,6 +2187,7 @@ V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_downstream_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_handoff.o \
 	$(BUILD_DIR)/v90_downstream_data_stream.o \
+	$(BUILD_DIR)/v90_downstream_rrn_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_downstream_tx.o, \
@@ -5391,6 +5392,10 @@ $(BUILD_DIR)/v90_downstream_data_handoff.o: \
 
 $(BUILD_DIR)/v90_downstream_data_stream.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_stream.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_downstream_rrn_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_downstream_rrn_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_analog_path.o: \
