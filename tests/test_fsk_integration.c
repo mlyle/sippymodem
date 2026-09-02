@@ -2911,10 +2911,11 @@ static bool run_v90_recording_replay(
 		"ATX3\r",
 		"AT\\N0\r",
 		"AT+DS=0,0\r",
-		"AT+V90D=1\r",
 	};
+	static const char analog_command[] = "AT+V90D=0\r";
+	static const char digital_command[] = "AT+V90D=1\r";
 	static const char dial_command[] = "ATDpeer\r";
-	const char *commands[ARRAY_LENGTH(common_commands) + 2u];
+	const char *commands[ARRAY_LENGTH(common_commands) + 3u];
 	char downstream_command[48];
 	char upstream_command[48];
 	int downstream_command_length;
@@ -2960,8 +2961,10 @@ static bool run_v90_recording_replay(
 	      "optional V.90 G.711 recording could not be loaded");
 	for (size_t index = 0; index < ARRAY_LENGTH(common_commands); ++index)
 		commands[index] = common_commands[index];
-	commands[ARRAY_LENGTH(common_commands)] = downstream_command;
-	commands[ARRAY_LENGTH(common_commands) + 1u] = upstream_command;
+	commands[ARRAY_LENGTH(common_commands)] =
+		originator ? analog_command : digital_command;
+	commands[ARRAY_LENGTH(common_commands) + 1u] = downstream_command;
+	commands[ARRAY_LENGTH(common_commands) + 2u] = upstream_command;
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
 		      endpoint_init(&endpoint, "V.90 recording replay") &&
 		      configure_recording_replay(
