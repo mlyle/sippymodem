@@ -536,7 +536,8 @@ def _connect_error(
     receive_rate: int | None,
     transmit_rate: int | None,
     *,
-    minimum_rate: int | None = None,
+    minimum_receive_rate: int | None = None,
+    minimum_transmit_rate: int | None = None,
 ) -> str | None:
     if report.modulation not in modulations:
         expected = "/".join(modulations)
@@ -546,9 +547,9 @@ def _connect_error(
         actual = report.protocol or "unreported"
         return f"CONNECT selected {actual} protocol instead of {protocol}"
     rate_error = _connect_rate_error(
-        "RX", report.receive_bit_rate, receive_rate, minimum_rate
+        "RX", report.receive_bit_rate, receive_rate, minimum_receive_rate
     ) or _connect_rate_error(
-        "TX", report.transmit_bit_rate, transmit_rate, minimum_rate
+        "TX", report.transmit_bit_rate, transmit_rate, minimum_transmit_rate
     )
     if rate_error is not None:
         return rate_error
@@ -570,7 +571,8 @@ def _case_connect_error(
         protocol,
         case.receive_rate,
         case.transmit_rate,
-        minimum_rate=case.minimum_rate,
+        minimum_receive_rate=case.minimum_receive_rate,
+        minimum_transmit_rate=case.minimum_transmit_rate,
     )
 
 

@@ -597,6 +597,30 @@ class LiveCampaignTests(unittest.TestCase):
             ),
         )
 
+        raw_v90 = CASES_BY_NAME[
+            "v90-d56000-u31200-b3429-raw-originator"
+        ]
+        self.assertIsNone(
+            _case_connect_error(
+                raw_v90,
+                ConnectReport("V.90", "none", "none", 26400, 50667),
+            )
+        )
+        self.assertIn(
+            "RX",
+            _case_connect_error(
+                raw_v90,
+                ConnectReport("V.90", "none", "none", 2400, 50667),
+            ),
+        )
+        self.assertIn(
+            "TX",
+            _case_connect_error(
+                raw_v90,
+                ConnectReport("V.90", "none", "none", 26400, 26400),
+            ),
+        )
+
     def test_mismatched_connect_stops_before_online_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

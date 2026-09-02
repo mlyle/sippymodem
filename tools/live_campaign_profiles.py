@@ -49,6 +49,8 @@ RAW_LINK_PREFIX = (
 LINK_SUFFIX = ("ATE0V1Q0", "ATS95=7")
 RAW_ONLY_FAMILIES = frozenset({"bell103", "v21", "v23", "baudot"})
 V34_CAMPAIGN_MIN_RATE = 4800
+V90_CAMPAIGN_MIN_DOWNSTREAM_RATE = 28000
+V90_CAMPAIGN_MIN_UPSTREAM_RATE = 4800
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,8 @@ class CampaignCase:
     callback_features: tuple[str, ...]
     link_mode: str
     level: int
-    minimum_rate: int | None = None
+    minimum_receive_rate: int | None = None
+    minimum_transmit_rate: int | None = None
 
 
 def _commands(*specific: str) -> tuple[str, ...]:
@@ -111,7 +114,8 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
     stem = case.name[: -(len(case.role) + 1)]
     specific = case.at_commands[len(LAPM_LINK_PREFIX) : -len(LINK_SUFFIX)]
     callback_features = case.callback_features
-    minimum_rate = None
+    minimum_receive_rate = None
+    minimum_transmit_rate = None
     if link_mode == LINK_RAW:
         specific = tuple(
             command for command in specific if not command.startswith("AT+DSC=")
@@ -139,7 +143,46 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
             bounded_rate if command == exact_rate else command
             for command in specific
         )
-        minimum_rate = V34_CAMPAIGN_MIN_RATE
+        minimum_receive_rate = V34_CAMPAIGN_MIN_RATE
+        minimum_transmit_rate = V34_CAMPAIGN_MIN_RATE
+    if case.family in {"v90", "v92"} and case.feature in {
+        "digital-headend",
+        "quick-connect",
+    }:
+        if (
+            case.receive_rate is None
+            or case.transmit_rate is None
+            or case.symbol_rate is None
+        ):
+            raise RuntimeError("invalid PCM campaign rate ceiling")
+        datapump = 90 if case.family == "v90" else 92
+        exact_downstream = (
+            f"AT+MS={datapump},0,{case.transmit_rate},{case.transmit_rate}"
+        )
+        bounded_downstream = (
+            f"AT+MS={datapump},0,{V90_CAMPAIGN_MIN_DOWNSTREAM_RATE},"
+            f"{case.transmit_rate}"
+        )
+        exact_upstream = (
+            f"AT+V90U={case.receive_rate},{case.receive_rate},"
+            f"{case.symbol_rate}"
+        )
+        bounded_upstream = (
+            f"AT+V90U={V90_CAMPAIGN_MIN_UPSTREAM_RATE},"
+            f"{case.receive_rate},{case.symbol_rate}"
+        )
+        if exact_downstream not in specific or exact_upstream not in specific:
+            raise RuntimeError("missing PCM campaign rate command")
+        specific = tuple(
+            bounded_downstream
+            if command == exact_downstream
+            else bounded_upstream
+            if command == exact_upstream
+            else command
+            for command in specific
+        )
+        minimum_receive_rate = V90_CAMPAIGN_MIN_UPSTREAM_RATE
+        minimum_transmit_rate = V90_CAMPAIGN_MIN_DOWNSTREAM_RATE
     return replace(
         case,
         name=f"{stem}-{link_mode}-{case.role}",
@@ -150,7 +193,8 @@ def _link_variant(case: CampaignCase, link_mode: str) -> CampaignCase:
         + LINK_SUFFIX,
         callback_features=callback_features,
         link_mode=link_mode,
-        minimum_rate=minimum_rate,
+        minimum_receive_rate=minimum_receive_rate,
+        minimum_transmit_rate=minimum_transmit_rate,
     )
 
 

@@ -162,11 +162,34 @@ class LiveCampaignProfileTests(unittest.TestCase):
         lapm = CASES_BY_NAME["v34-26400-b3200-lapm-originator"]
 
         self.assertIn("AT+MS=34,0,4800,26400", raw.at_commands)
-        self.assertEqual(raw.minimum_rate, 4800)
+        self.assertEqual(raw.minimum_receive_rate, 4800)
+        self.assertEqual(raw.minimum_transmit_rate, 4800)
         self.assertIn("AT+MS=34,0,4800,26400", lapm.at_commands)
-        self.assertEqual(lapm.minimum_rate, 4800)
+        self.assertEqual(lapm.minimum_receive_rate, 4800)
+        self.assertEqual(lapm.minimum_transmit_rate, 4800)
         self.assertEqual(raw.feature, "v34-rate-ceiling")
         self.assertEqual(lapm.feature, "v34-rate-ceiling")
+
+    def test_pcm_cells_negotiate_below_their_rate_ceilings(self) -> None:
+        for link_mode in (LINK_RAW, LINK_LAPM):
+            case = CASES_BY_NAME[
+                f"v90-d56000-u31200-b3429-{link_mode}-callback"
+            ]
+            self.assertIn("AT+MS=90,0,28000,56000", case.at_commands)
+            self.assertIn("AT+V90U=4800,31200,3429", case.at_commands)
+            self.assertEqual(case.minimum_receive_rate, 4800)
+            self.assertEqual(case.minimum_transmit_rate, 28000)
+
+        quick = CASES_BY_NAME["v92-quick-connect-lapm-callback"]
+        self.assertIn("AT+MS=92,0,28000,56000", quick.at_commands)
+        self.assertIn("AT+V90U=4800,31200,3429", quick.at_commands)
+        self.assertEqual(quick.minimum_receive_rate, 4800)
+        self.assertEqual(quick.minimum_transmit_rate, 28000)
+
+        pcm_upstream = CASES_BY_NAME["v92-pcmup-36000-lapm-callback"]
+        self.assertIn("AT+MS=92,0,25000,56000", pcm_upstream.at_commands)
+        self.assertIsNone(pcm_upstream.minimum_receive_rate)
+        self.assertIsNone(pcm_upstream.minimum_transmit_rate)
 
 
 if __name__ == "__main__":
