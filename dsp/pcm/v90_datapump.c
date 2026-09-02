@@ -712,6 +712,12 @@ static int process_v90_g711(
 				    (unsigned int)remaining) !=
 				    TRAINING_SESSION_OK)
 				goto failure;
+			/* V.90 has completed the shared Phase 2 exchange.  Give the
+			 * V.34 owner a complete bounded Phase 3/4 interval instead of
+			 * charging it for the preceding PCM negotiation. */
+			if (training_session_transfer(&datapump->training) !=
+			    TRAINING_SESSION_OK)
+				goto failure;
 			datapump->fallback.training = datapump->training;
 			mute_output(
 				law, transmit_codewords + index + 1,

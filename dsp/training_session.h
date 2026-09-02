@@ -55,6 +55,12 @@ enum training_session_result training_session_advance(
 enum training_session_result training_session_note_progress(
 	struct training_session *session);
 
+/* Begin the same active training generation under a new datapump owner.  The
+ * origin and generation survive while the new owner receives one complete,
+ * bounded training interval. */
+enum training_session_result training_session_transfer(
+	struct training_session *session);
+
 enum training_session_result training_session_connect(
 	struct training_session *session);
 

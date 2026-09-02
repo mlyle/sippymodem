@@ -101,6 +101,19 @@ enum training_session_result training_session_note_progress(
 	return TRAINING_SESSION_OK;
 }
 
+enum training_session_result training_session_transfer(
+	struct training_session *session)
+{
+	if (!training_session_is_valid(session))
+		return TRAINING_SESSION_INVALID_ARGUMENT;
+	if (session->state != TRAINING_SESSION_ACTIVE)
+		return TRAINING_SESSION_INVALID_STATE;
+	session->elapsed_ticks = 0;
+	session->stalled_ticks = 0;
+	session->progress_events = 0;
+	return TRAINING_SESSION_OK;
+}
+
 enum training_session_result training_session_connect(
 	struct training_session *session)
 {

@@ -133,6 +133,44 @@ static bool test_retraining_lifecycle(void)
 	return true;
 }
 
+static bool test_training_owner_transfer(void)
+{
+	struct training_session session;
+	struct training_session unchanged;
+
+	CHECK(training_session_init(&session, 100) == TRAINING_SESSION_OK &&
+	      training_session_advance(&session, 90) == TRAINING_SESSION_OK &&
+	      training_session_note_progress(&session) == TRAINING_SESSION_OK &&
+	      training_session_advance(&session, 5) == TRAINING_SESSION_OK &&
+	      training_session_transfer(&session) == TRAINING_SESSION_OK &&
+	      session.deadline_ticks == 100 && session.elapsed_ticks == 0 &&
+	      session.stalled_ticks == 0 && session.progress_events == 0 &&
+	      session.generation == 1 && session.origin == TRAINING_INITIAL &&
+	      session.state == TRAINING_SESSION_ACTIVE,
+	      "initial owner transfer did not start a bounded interval");
+	CHECK(training_session_advance(&session, 100) == TRAINING_SESSION_OK &&
+	      training_session_connect(&session) == TRAINING_SESSION_OK,
+	      "transferred initial training did not connect at its deadline");
+	unchanged = session;
+	CHECK(training_session_transfer(&session) ==
+		      TRAINING_SESSION_INVALID_STATE &&
+	      memcmp(&session, &unchanged, sizeof(session)) == 0,
+	      "online owner transfer changed the session");
+	CHECK(training_session_start_retrain(
+		      &session, TRAINING_REMOTE_RETRAIN) == TRAINING_SESSION_OK &&
+	      training_session_advance(&session, 75) == TRAINING_SESSION_OK &&
+	      training_session_transfer(&session) == TRAINING_SESSION_OK &&
+	      session.elapsed_ticks == 0 && session.stalled_ticks == 0 &&
+	      session.progress_events == 0 && session.generation == 2 &&
+	      session.origin == TRAINING_REMOTE_RETRAIN &&
+	      training_session_is_retraining(&session),
+	      "retrain owner transfer lost its generation or origin");
+	CHECK(training_session_transfer(NULL) ==
+		      TRAINING_SESSION_INVALID_ARGUMENT,
+	      "missing owner transfer was accepted");
+	return true;
+}
+
 static bool test_invalid_and_full_width_sessions(void)
 {
 	struct training_session session = { .deadline_ticks = 7 };
@@ -174,6 +212,7 @@ int main(void)
 		{ "invalid modem", test_invalid_modem },
 		{ "initial training lifecycle", test_initial_training_lifecycle },
 		{ "retraining lifecycle", test_retraining_lifecycle },
+		{ "training owner transfer", test_training_owner_transfer },
 		{ "invalid and full-width sessions",
 		  test_invalid_and_full_width_sessions },
 	};
