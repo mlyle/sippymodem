@@ -24,8 +24,8 @@ from tools.live_profiles import (
 
 class LiveProfileTests(unittest.TestCase):
     def test_current_profiles_use_registered_controls(self) -> None:
-        self.assertEqual(len(PROFILES), 322)
-        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 69)
+        self.assertEqual(len(PROFILES), 324)
+        self.assertEqual(len(PROFILE_GROUPS["implemented"]), 71)
         self.assertEqual(len(PROFILE_GROUPS["analog-fallback"]), 5)
         self.assertEqual(
             LINK_MODE_AT_COMMANDS["raw"],
@@ -62,6 +62,20 @@ class LiveProfileTests(unittest.TestCase):
             PROFILES["v90_28000_19200_b3000"].readiness,
             READINESS_RUNNABLE,
         )
+        self.assertEqual(
+            PROFILES["v90_42667_26400_b3200"].at_commands,
+            (
+                "AT+MS=90,0,42667,42667",
+                "AT+V90U=26400,26400,3200",
+            ),
+        )
+        self.assertEqual(
+            PROFILES["v90_56000_31200_b3429"].at_commands,
+            (
+                "AT+MS=90,0,56000,56000",
+                "AT+V90U=31200,31200,3429",
+            ),
+        )
 
     def test_future_profiles_are_inert(self) -> None:
         unsupported = ("AT+V92Q", "AT+V92U")
@@ -71,7 +85,7 @@ class LiveProfileTests(unittest.TestCase):
             if profile.readiness == READINESS_RUNNABLE
         )
 
-        self.assertEqual(len(runnable), 70)
+        self.assertEqual(len(runnable), 72)
         for profile in runnable:
             self.assertTrue(profile.at_commands)
             self.assertTrue(

@@ -314,20 +314,28 @@ def _build_profiles() -> dict[str, ModemProfile]:
                     ),
                 )
 
-    _add(
-        profiles,
-        ModemProfile(
-            name="v90_28000_19200_b3000",
-            family="v90",
-            description=(
-                "V.90 at 28000 bit/s downstream and 19200 bit/s upstream"
+    for downstream, upstream, symbol_rate in (
+        (28000, 19200, 3000),
+        (42667, 26400, 3200),
+        (56000, 31200, 3429),
+    ):
+        _add(
+            profiles,
+            ModemProfile(
+                name=f"v90_{downstream}_{upstream}_b{symbol_rate}",
+                family="v90",
+                description=(
+                    f"V.90 at {downstream} bit/s downstream and "
+                    f"{upstream} bit/s upstream"
+                ),
+                at_commands=_v90_commands(
+                    90, downstream, upstream, symbol_rate
+                ),
+                receive_rate=downstream,
+                transmit_rate=upstream,
+                symbol_rate=symbol_rate,
             ),
-            at_commands=_v90_commands(90, 28000, 19200, 3000),
-            receive_rate=28000,
-            transmit_rate=19200,
-            symbol_rate=3000,
-        ),
-    )
+        )
 
     for datapump, family in ((90, "v90"), (92, "v92")):
         prerequisite = (
@@ -498,7 +506,11 @@ PROFILE_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "v34-rx": _named("v34_rx_"),
     "v34-tx": _named("v34_tx_"),
-    "v90-current": ("v90_28000_19200_b3000",),
+    "v90-current": (
+        "v90_28000_19200_b3000",
+        "v90_42667_26400_b3200",
+        "v90_56000_31200_b3429",
+    ),
     "v90-down": _named("v90_down_"),
     "v90-up": _named("v90_up_"),
     "v92-down": _named("v92_down_"),
