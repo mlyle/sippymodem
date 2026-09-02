@@ -595,7 +595,9 @@ static enum v90_host_echo_mode host_echo_mode(
 		return V90_HOST_ECHO_TRAIN;
 	if (call->stage == PCM_CALL_DATA_PATH ||
 	    (call->stage == PCM_CALL_PHASE4 &&
-	     pcm_call_phase4_is_ready(call)))
+	     pcm_call_phase4_is_ready(call)) ||
+	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
+	     call->retrain_peer_tone_retained))
 		return V90_HOST_ECHO_FILTER;
 	return V90_HOST_ECHO_BYPASS;
 }
@@ -687,8 +689,12 @@ static int process_v90_g711(
 				    receive_samples[index], cleaned_sample,
 				    transmit_samples[index]) != V90_HOST_ECHO_OK)
 				goto failure;
-			if (stage_before != PCM_CALL_RETRAIN_SILENCE &&
-			    datapump->call.stage == PCM_CALL_RETRAIN_SILENCE) {
+			/* A remotely requested retrain must retain Tone A/B while
+			 * output echo is still returning through the host path. Keep
+			 * the learned filter through that silence/tone handoff, then
+			 * clear it before the new Phase 2 training begins. */
+			if (stage_before == PCM_CALL_RETRAIN_SILENCE &&
+			    datapump->call.stage != PCM_CALL_RETRAIN_SILENCE) {
 				if (v90_host_echo_init(datapump->host_echo) !=
 				    V90_HOST_ECHO_OK)
 					goto failure;

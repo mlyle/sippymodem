@@ -687,6 +687,24 @@ static bool test_full_retrain_pairs(void)
 	return true;
 }
 
+static bool test_host_echo_retrain_pairs(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "host-echo retrain V.90 registration failed");
+	CHECK(run_pair_with_input_contract(
+		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      56000, 31200, 3429, true,
+		      MODEM_PCM_ROLE_ANALOG, false, false, true) &&
+	      run_pair_with_input_contract(
+		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      56000, 31200, 3429, true,
+		      MODEM_PCM_ROLE_DIGITAL, false, false, true),
+	      "V.90 retrain did not recover through returned host echo");
+	CHECK(v90_datapump_unregister() == 0,
+	      "host-echo retrain V.90 registration remained busy");
+	return true;
+}
+
 static bool test_independent_media_laws(void)
 {
 	CHECK(v90_datapump_register() == 0,
@@ -914,6 +932,8 @@ int main(void)
 		{ "weak host-echo upstream limit",
 		  test_weak_host_echo_limits_upstream_rate },
 		{ "local and remote full retrain", test_full_retrain_pairs },
+		{ "full retrain through returned host echo",
+		  test_host_echo_retrain_pairs },
 		{ "media-independent Phase 2 codebook",
 		  test_independent_media_laws },
 		{ "generated PCMU and PCMA data-pump pairs",
