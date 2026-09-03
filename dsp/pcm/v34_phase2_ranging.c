@@ -90,6 +90,7 @@ static bool control_has_ranging_epoch(
 	return control->phase == PHASE2_RESPONSE_DELAY ||
 	       control->phase == PHASE2_RESPONSE_TONE_TAIL ||
 	       control->phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL ||
+	       control->phase == PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE ||
 	       control->phase == PHASE2_SIGNAL_B_WAIT_PROBE_START ||
 	       control->phase == PHASE2_RANGING_PROBE_READY;
 }

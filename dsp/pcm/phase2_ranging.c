@@ -128,6 +128,13 @@ bool phase2_ranging_control_is_valid(
 		       control->measurement_elapsed_samples >=
 			       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       !control->round_trip_delay_valid;
+	case PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE:
+		return side_b && control->local_tone_samples == 0 &&
+		       control->response_delay_samples == 0 &&
+		       control->post_reversal_samples == 0 &&
+		       control->probe_start_delay_samples == 0 &&
+		       control->measurement_elapsed_samples == 0 &&
+		       !control->round_trip_delay_valid;
 	case PHASE2_SIGNAL_B_WAIT_PROBE_START:
 		return side_b && control->local_tone_samples == 0 &&
 		       control->response_delay_samples == 0 &&
@@ -511,25 +518,57 @@ static bool measurement_active(
 		!signal_is_b(exchange));
 }
 
-static void advance_measurement(
+static void recover_signal_b_after_remote_tone(
 	struct phase2_ranging_control *control,
-	const struct phase2_info0_exchange *exchange,
+	const struct phase2_info0_exchange *exchange)
+{
+	if (control->phase ==
+		    PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE &&
+	    exchange->tone_detector.carrier.tone_present)
+		control->phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
+}
+
+static bool advance_measurement(
+	struct phase2_ranging_control *control,
+	struct phase2_info0_exchange *exchange,
 	struct phase2_ranging_event *event)
 {
 	if (!measurement_active(control, exchange))
-		return;
+		return true;
 	if (control->measurement_elapsed_samples <
 	    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES) {
 		control->measurement_elapsed_samples++;
-		return;
+		return true;
 	}
-	control->phase = PHASE2_RANGING_TIMED_OUT;
 	control->response_delay_samples = 0;
 	control->post_reversal_samples = 0;
+	control->probe_start_delay_samples = 0;
 	control->measurement_elapsed_samples = 0;
 	control->round_trip_delay_samples = 0;
 	control->round_trip_delay_valid = false;
+	/* Signal B has already supplied nearly two seconds of silence while
+	 * waiting for the second remote reversal.  The shared V.34/PCM recovery
+	 * is to reacquire Tone A, resume Tone B, and begin a fresh reversal
+	 * exchange.  The owning training-session deadline remains the hard bound
+	 * on repeated attempts. */
+	if (signal_is_b(exchange)) {
+		if (exchange->tone_detector.carrier.tone_present) {
+			control->phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
+			return true;
+		}
+		/* Loss normally retains the old carrier phase so INFO interruptions
+		 * can classify their following edge.  This is a new ranging epoch:
+		 * reacquired Tone A establishes its own reference regardless of which
+		 * phase the peer resumes. */
+		if (v34_phase2_tone_detector_reset(
+			    &exchange->tone_detector) != V34_PHASE2_TONE_OK)
+			return false;
+		control->phase = PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE;
+		return true;
+	}
+	control->phase = PHASE2_RANGING_TIMED_OUT;
 	event->kind = PHASE2_RANGING_TIMEOUT;
+	return true;
 }
 
 static bool transmit_phase_is_valid(
@@ -597,7 +636,9 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	}
 	finish_tone_tail(
 		&next, exchange, transmit_phase_before, &emitted);
-	advance_measurement(&next, exchange, &emitted);
+	if (!advance_measurement(&next, exchange, &emitted))
+		return PHASE2_RANGING_INVALID_ARGUMENT;
+	recover_signal_b_after_remote_tone(&next, exchange);
 	advance_probe_start(&next, &emitted);
 	if (!phase2_ranging_control_is_valid(
 		    &next, exchange, peer_info0_received))

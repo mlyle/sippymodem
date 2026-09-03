@@ -769,15 +769,19 @@ static bool test_retrain_residual_reversal(void)
 	return true;
 }
 
-static bool test_missing_second_reversal_times_out(void)
+static bool test_missing_second_reversal_recovers(void)
 {
 	struct v34_info0 calling = calling_capabilities();
 	struct v34_info0 answering = answering_capabilities();
 	struct v34_phase2_ranging caller;
 	struct v34_phase2_ranging answerer;
+	struct v34_phase2_tone_transmitter peer_tone;
 	int16_t caller_line_sample = 0;
 	int16_t answer_line_sample = 0;
 	bool caller_reversed = false;
+	bool remote_tone_reacquired = false;
+	bool recovery_boundary_was_silent = false;
+	bool caller_tone_resumed = false;
 	size_t timeout_count = 0;
 
 	CHECK(v34_phase2_ranging_init(
@@ -809,23 +813,67 @@ static bool test_missing_second_reversal_times_out(void)
 			PHASE2_RESPONSE_TONE_TAIL;
 	}
 	CHECK(caller_reversed, "timeout fixture never reached caller reversal");
+	peer_tone = answerer.info0_exchange.transport.tone_transmitter;
+	CHECK(v34_phase2_tone_transmitter_reverse(&peer_tone) ==
+		      V34_PHASE2_TONE_OK,
+	      "opposite-phase recovery tone did not initialize");
 	for (size_t index = 0;
 	     index < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 4u;
 	     ++index) {
 		struct v34_phase2_ranging_event event;
+		int16_t discarded;
 		int16_t transmit;
 
-		CHECK(v34_phase2_ranging_sample(
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &discarded) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_ranging_sample(
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_RANGING_OK,
 		      "missing-reversal wait failed at sample %zu", index);
 		if (event.kind == PHASE2_RANGING_TIMEOUT)
 			timeout_count++;
 	}
-	CHECK(caller.control.phase == PHASE2_RANGING_TIMED_OUT &&
-	      timeout_count == 1 &&
+	CHECK(caller.control.phase ==
+		      PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE &&
+	      timeout_count == 0 &&
 	      v34_phase2_ranging_is_valid(&caller),
-	      "missing reversal did not produce one bounded timeout");
+	      "missing reversal did not enter muted recovery");
+	for (size_t index = 0;
+	     index < V34_PHASE2_TONE_ACQUIRE_SAMPLES +
+			     V34_PHASE2_TONE_WINDOW_SAMPLES;
+	     ++index) {
+		struct v34_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = caller.control.phase;
+		int16_t peer_line;
+		int16_t transmit;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &peer_line) == V34_PHASE2_TONE_OK &&
+		      v34_phase2_ranging_sample(
+			      &caller, peer_line, &transmit, &event) ==
+			      V34_PHASE2_RANGING_OK,
+		      "remote-tone reacquisition failed at sample %zu", index);
+		if (event.kind == PHASE2_RANGING_TIMEOUT)
+			timeout_count++;
+		if (phase_before ==
+			    PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE &&
+		    caller.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			remote_tone_reacquired =
+				event.exchange_event.tone_event.kind ==
+				V34_PHASE2_TONE_STARTED;
+			recovery_boundary_was_silent = transmit == 0;
+		}
+		if (remote_tone_reacquired && transmit != 0)
+			caller_tone_resumed = true;
+	}
+	CHECK(remote_tone_reacquired && recovery_boundary_was_silent &&
+	      caller_tone_resumed && timeout_count == 0 &&
+	      caller.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+	      v34_phase2_ranging_is_valid(&caller),
+	      "opposite-phase Tone A did not restart Signal B: acquired=%d silent=%d tone=%d timeouts=%zu phase=%d",
+	      remote_tone_reacquired, recovery_boundary_was_silent,
+	      caller_tone_resumed, timeout_count, caller.control.phase);
 	return true;
 }
 
@@ -1053,7 +1101,8 @@ int main(void)
 		{ "retrain residual reversal", test_retrain_residual_reversal },
 		{ "INFO0 recovery", test_info0_recovery },
 		{ "INFO0 recovery by tone", test_info0_tone_completion },
-		{ "missing second reversal", test_missing_second_reversal_times_out },
+		{ "missing second reversal recovery",
+		  test_missing_second_reversal_recovers },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -752,6 +752,145 @@ static bool test_retrain_early_second_reversal(void)
 	return true;
 }
 
+static bool test_second_reversal_timeout_recovery(void)
+{
+	struct v90_phase2_ranging ranging;
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t payload_bits = 0;
+	int16_t local_line = 0;
+	size_t recovery_tone_samples = 0;
+	size_t timeout_count = 0;
+	bool first_reversed = false;
+	bool first_response_started = false;
+	bool recovery_started = false;
+	bool recovery_boundary_was_silent = false;
+	bool recovery_tone_transmitted = false;
+	bool retry_first_reversed = false;
+	bool retry_first_accepted = false;
+	bool retry_response_started = false;
+	bool retry_second_reversed = false;
+	bool probe_ready = false;
+
+	CHECK(initialize_interrupted_ranging(
+		      &ranging, &peer, V90_DIGITAL_MODEM,
+		      PCM_PROTOCOL_V90, TEST_CODEC_PCMU,
+		      payload, &payload_bits),
+	      "second-reversal recovery fixture did not initialize");
+	ranging.control.prior_round_trip_delay_samples =
+		RETRAIN_PRIOR_RTD_SAMPLES;
+	CHECK(v90_phase2_ranging_is_valid(&ranging),
+	      "second-reversal recovery prior RTD was invalid");
+
+	for (size_t index = 0;
+	     index < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES +
+			     2u * TEST_SAMPLE_LIMIT;
+	     ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_ranging_phase phase_before = ranging.control.phase;
+		int16_t peer_line;
+
+		if (!first_reversed &&
+		    pcm_phase2_info0_exchange_complete(
+			    &ranging.info0_exchange) &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "initial peer reversal did not start");
+			first_reversed = true;
+		}
+		if (recovery_started && !retry_first_reversed &&
+		    recovery_tone_samples >=
+			    2u * V34_PHASE2_TONE_WINDOW_SAMPLES) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "recovery peer first reversal did not start");
+			retry_first_reversed = true;
+		}
+		if (retry_response_started && !retry_second_reversed &&
+		    ranging.control.measurement_elapsed_samples >=
+			    PHASE2_RANGING_TURNAROUND_SAMPLES) {
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) ==
+				      V34_PHASE2_TONE_OK,
+			      "recovery peer second reversal did not start");
+			retry_second_reversed = true;
+		}
+		CHECK(phase2_info0_exchange_sample(
+			      &peer,
+			      codec_round_trip(local_line, TEST_CODEC_PCMU),
+			      &peer_line, &peer_event) ==
+			      PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging,
+			      codec_round_trip(peer_line, TEST_CODEC_PCMU),
+			      &local_line, &event) ==
+			      V90_PHASE2_RANGING_OK,
+		      "second-reversal recovery failed at %zu", index);
+		if (event.kind == PHASE2_RANGING_TIMEOUT)
+			timeout_count++;
+		if (!first_response_started &&
+		    phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL)
+			first_response_started = true;
+		if (first_response_started && !recovery_started &&
+		    phase_before ==
+			    PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			recovery_started = true;
+			recovery_boundary_was_silent = local_line == 0;
+			CHECK(ranging.control.prior_round_trip_delay_samples ==
+				      RETRAIN_PRIOR_RTD_SAMPLES &&
+			      !ranging.control.round_trip_delay_valid,
+			      "recovery discarded prior RTD context");
+		}
+		if (recovery_started && !retry_first_reversed &&
+		    ranging.control.phase ==
+			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			recovery_tone_samples++;
+			recovery_tone_transmitted |= local_line != 0;
+		}
+		if (recovery_started && retry_first_reversed &&
+		    phase_before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    ranging.control.phase == PHASE2_RESPONSE_DELAY)
+			retry_first_accepted = true;
+		if (recovery_started &&
+		    phase_before == PHASE2_RESPONSE_DELAY &&
+		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL)
+			retry_response_started = true;
+		if (event.kind == PHASE2_PROBE_RECEIVE_READY) {
+			probe_ready = true;
+			break;
+		}
+	}
+
+	CHECK(first_reversed && first_response_started && recovery_started &&
+	      recovery_boundary_was_silent && recovery_tone_transmitted &&
+	      retry_first_reversed && retry_first_accepted &&
+	      retry_response_started && retry_second_reversed && probe_ready &&
+	      timeout_count == 0 &&
+	      ranging.control.phase == PHASE2_RANGING_PROBE_READY &&
+	      ranging.control.round_trip_delay_valid &&
+	      ranging.control.round_trip_delay_samples ==
+		      RETRAIN_PRIOR_RTD_SAMPLES,
+	      "second-reversal retry did not complete: first=%d response=%d "
+	      "recovery=%d silent=%d tone=%d retry=%d/%d/%d/%d probe=%d "
+	      "timeouts=%zu phase=%d delay=%u",
+	      first_reversed, first_response_started, recovery_started,
+	      recovery_boundary_was_silent, recovery_tone_transmitted,
+	      retry_first_reversed, retry_first_accepted,
+	      retry_response_started, retry_second_reversed, probe_ready,
+	      timeout_count,
+	      ranging.control.phase, ranging.control.round_trip_delay_samples);
+	return true;
+}
+
 static bool check_rejected_edge_before_info(
 	enum test_codec codec, enum pcm_protocol protocol)
 {
@@ -1044,6 +1183,8 @@ int main(void)
 		{ "deferred first reversal", test_deferred_first_reversal },
 		{ "retrain early second reversal",
 		  test_retrain_early_second_reversal },
+		{ "second reversal timeout recovery",
+		  test_second_reversal_timeout_recovery },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },
