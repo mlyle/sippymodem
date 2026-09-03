@@ -37,17 +37,23 @@ static bool select_initial_mp(
 	    selected == NULL)
 		return false;
 	parameters = mp_parameters(configured);
-	/* MP advertises the local receive-rate set. CPt and the Phase 3 probe
-	 * select its maximum without rewriting that capability set. */
+	/* MP advertises the local receive-rate set.  The Phase 3 probe and a
+	 * common CPt rate may lower its maximum without rewriting that set. */
 	common_mask = (uint16_t)(
 		parameters->upstream_rate_capability_mask &
 		station->peer_upstream_rate_mask);
+	limited = *configured;
 	maximum = parameters->maximum_upstream_rate_2400_bps_units;
 	if (maximum >
-	    station->receive.transmitting_profile
-		    .projected_data_rate_2400_bps_units)
-		maximum = station->receive.transmitting_profile
-			  .projected_data_rate_2400_bps_units;
+		    station->receive.transmitting_profile
+			    .projected_data_rate_2400_bps_units &&
+	    !v90_mp_record_limit_maximum_upstream_rate(
+		    &limited,
+		    station->receive.transmitting_profile
+			    .projected_data_rate_2400_bps_units))
+		return false;
+	parameters = mp_parameters(&limited);
+	maximum = parameters->maximum_upstream_rate_2400_bps_units;
 	for (int rate = maximum;
 	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
 		uint16_t bit = (uint16_t)(1u <<
@@ -55,14 +61,18 @@ static bool select_initial_mp(
 
 		if ((common_mask & bit) == 0u)
 			continue;
-		limited = *configured;
 		if (!v90_mp_record_limit_maximum_upstream_rate(
 			    &limited, (uint8_t)rate))
 			return false;
 		*selected = limited;
 		return true;
 	}
-	return false;
+	/* CPt describes the peer transmitter; it cannot make the digital
+	 * receiver's MP capability record invalid.  If no common rate is usable
+	 * under this maximum, send the local MP and let the analogue modem
+	 * perform the required final common-rate selection. */
+	*selected = limited;
+	return true;
 }
 
 static bool configured_mp_matches(

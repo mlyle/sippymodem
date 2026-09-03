@@ -160,7 +160,6 @@ static bool run_exchange(
 	bool cp_handed_off = false;
 	bool tracking_continuation = false;
 	bool complete = false;
-	bool unusable = false;
 
 	training.upstream_rate_mask = peer_rate_mask;
 	CHECK(prepare_stations(
@@ -217,11 +216,6 @@ static bool run_exchange(
 					decode_octet(law, to_digital),
 					&next_to_analog);
 
-			if (expected_maximum == 0u &&
-			    result == V90_PHASE4_STARTUP_INVALID_PARAMETERS) {
-				unusable = true;
-				break;
-			}
 			CHECK(result == V90_PHASE4_STARTUP_OK,
 			      "law %u digital startup stopped at %zu: %s",
 			      (unsigned int)law, clock,
@@ -254,16 +248,6 @@ static bool run_exchange(
 			break;
 		}
 	}
-	if (expected_maximum == 0u) {
-		CHECK(unusable && startup.failed &&
-		      startup.stage == V90_PHASE4_STARTUP_INITIAL &&
-		      startup.initial_mp.parameters.type0
-			      .maximum_upstream_rate_2400_bps_units == 12u,
-		      "law %u disjoint CPt rates emitted an MP",
-		      (unsigned int)law);
-		return true;
-	}
-
 	CHECK(complete && tracking_continuation && continued_octets > 0 &&
 	      startup.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units ==
@@ -307,6 +291,57 @@ static bool run_exchange(
 	return true;
 }
 
+static bool run_disjoint_cpt_selection(enum g711_law law)
+{
+	struct v90_cp_parameters training = training_parameters(law);
+	struct v90_mp_record mp = mp_parameters(false);
+	struct v90_phase4_analog_station analog_station;
+	struct v90_phase4_digital_station digital_station;
+	struct v90_phase4_digital_startup startup;
+	int16_t sample;
+	uint8_t output;
+
+	/* Reproduce a peer which advertises through 26.4 kbit/s after Phase 3
+	 * projected 28.8 kbit/s while the local receiver enables only 31.2. */
+	training.upstream_rate_mask = 0x03ffu;
+	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 13u;
+	mp.parameters.type0.upstream_rate_capability_mask = 0x0800u;
+	CHECK(prepare_stations(
+		      law, 12u, &training, &analog_station, &digital_station) &&
+	      v90_phase4_digital_startup_init(
+		      &startup, &digital_station, &mp) ==
+		      V90_PHASE4_STARTUP_OK,
+	      "law %u disjoint CPt fixture did not initialize",
+	      (unsigned int)law);
+
+	for (size_t clock = 0; clock < CHARACTER_LIMIT; ++clock) {
+		CHECK(v90_phase4_analog_station_transmit(
+			      &analog_station, &sample) ==
+			      V90_PHASE4_ANALOG_STATION_OK,
+		      "law %u disjoint CPt source stopped at %zu",
+		      (unsigned int)law, clock);
+		CHECK(v90_phase4_digital_startup_sample(
+			      &startup, sample, &output) ==
+			      V90_PHASE4_STARTUP_OK,
+		      "law %u digital modem rejected disjoint CPt at %zu",
+		      (unsigned int)law, clock);
+		if (startup.stage == V90_PHASE4_STARTUP_INITIAL)
+			continue;
+		CHECK(startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+		      !startup.failed &&
+		      startup.initial_mp.parameters.type0
+			      .maximum_upstream_rate_2400_bps_units == 13u &&
+		      startup.initial_mp.parameters.type0
+			      .upstream_rate_capability_mask == 0x0800u,
+		      "law %u disjoint CPt changed the local MP",
+		      (unsigned int)law);
+		return true;
+	}
+	CHECK(false, "law %u disjoint CPt was not decoded",
+	      (unsigned int)law);
+	return false;
+}
+
 static bool test_generated_exchange(void)
 {
 	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, 12u) &&
@@ -315,8 +350,8 @@ static bool test_generated_exchange(void)
 	      run_exchange(G711_LAW_PCMA, 8u, 0x1555u, 8u) &&
 	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, 6u) &&
 	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, 6u) &&
-	      run_exchange(G711_LAW_PCMU, 12u, 0x0002u, 0u) &&
-	      run_exchange(G711_LAW_PCMA, 12u, 0x0002u, 0u),
+	      run_disjoint_cpt_selection(G711_LAW_PCMU) &&
+	      run_disjoint_cpt_selection(G711_LAW_PCMA),
 	      "generated digital startup exchanges failed");
 	return true;
 }
