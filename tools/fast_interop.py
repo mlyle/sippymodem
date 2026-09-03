@@ -87,6 +87,7 @@ def _run_interop(
 @dataclass(frozen=True)
 class FastCaseResult:
     case: MatrixCase
+    link_mode: str
     outcome: str
     duration_seconds: float
     candidate_rates_verified: bool
@@ -101,6 +102,7 @@ class FastCaseResult:
             "family": self.case.profile.family,
             "media_codec": self.case.media_codec,
             "candidate_originates": self.case.candidate_originates,
+            "link_mode": self.link_mode,
             "outcome": self.outcome,
             "duration_seconds": round(self.duration_seconds, 3),
             "candidate_rates_verified": self.candidate_rates_verified,
@@ -114,6 +116,7 @@ def _matrix_endpoint(
     case: MatrixCase,
     *,
     pcm_digital: bool,
+    link_mode: str,
 ) -> EndpointConfig:
     environment = endpoint.environment_dict()
     environment.update(
@@ -136,7 +139,7 @@ def _matrix_endpoint(
         endpoint,
         environment=tuple(sorted(environment.items())),
         at_commands=scenario_commands(
-            case.profile, "raw", (), role_commands
+            case.profile, link_mode, (), role_commands
         ),
     )
 
@@ -178,16 +181,24 @@ def _fast_online_timeout(
     return min(base.online_timeout_seconds, fast_timeout)
 
 
-def case_config(base: InteropConfig, case: MatrixCase) -> InteropConfig:
+def case_config(
+    base: InteropConfig, case: MatrixCase, link_mode: str = "raw"
+) -> InteropConfig:
     """Bind one public matrix case to a private pair of executables."""
 
     # PCM profiles describe an analogue originator and digital answerer.
     # Changing call order swaps executable ownership, not those line roles.
     candidate = _matrix_endpoint(
-        base.originator, case, pcm_digital=not case.candidate_originates
+        base.originator,
+        case,
+        pcm_digital=not case.candidate_originates,
+        link_mode=link_mode,
     )
     baseline = _matrix_endpoint(
-        base.answerer, case, pcm_digital=case.candidate_originates
+        base.answerer,
+        case,
+        pcm_digital=case.candidate_originates,
+        link_mode=link_mode,
     )
     payloads = payload_pair(case, "initial")
     if case.candidate_originates:
@@ -200,7 +211,8 @@ def case_config(base: InteropConfig, case: MatrixCase) -> InteropConfig:
         answerer_payload = payloads.candidate
     return replace(
         base,
-        artifact_directory=base.artifact_directory / case.name,
+        artifact_directory=base.artifact_directory
+        / (case.name if link_mode == "raw" else f"{case.name}-{link_mode}"),
         originator=originator,
         answerer=answerer,
         originator_payload=originator_payload,
@@ -238,9 +250,10 @@ def run_case(
     base: InteropConfig,
     case: MatrixCase,
     ato1: bool = False,
+    link_mode: str = "raw",
     runner: CaseRunner = _run_interop,
 ) -> FastCaseResult:
-    configured = case_config(base, case)
+    configured = case_config(base, case, link_mode)
     ato1_role = None
     post_ato1_payloads = None
     if ato1:
@@ -265,6 +278,7 @@ def run_case(
         outcome = "baseline-rate-mismatch"
     return FastCaseResult(
         case=case,
+        link_mode=link_mode,
         outcome=outcome,
         duration_seconds=result.duration_seconds,
         candidate_rates_verified=candidate_rates,
@@ -294,6 +308,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument(
+        "--link-mode",
+        choices=("raw", "lapm"),
+        default="raw",
+        help="select raw or LAPM host framing (default: raw)",
+    )
+    parser.add_argument(
         "--ato1",
         action="store_true",
         help="return the candidate online with ATO1 and repeat the exchange",
@@ -317,7 +337,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
     failed = False
     try:
         for case in cases:
-            result = run_case(config, case, ato1=options.ato1)
+            result = run_case(
+                config,
+                case,
+                ato1=options.ato1,
+                link_mode=options.link_mode,
+            )
             print(json.dumps(result.public_dict(), sort_keys=True), flush=True)
             if result.outcome != "passed":
                 failed = True

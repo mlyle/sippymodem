@@ -132,6 +132,20 @@ class FastInteropTests(unittest.TestCase):
             self.assertEqual(baseline_call.originator_payload, payloads.baseline)
             self.assertEqual(baseline_call.answerer_payload, payloads.candidate)
 
+            lapm_call = case_config(
+                base, cases[CANDIDATE_ORIGINATES], link_mode="lapm"
+            )
+            for configured_endpoint in (
+                lapm_call.originator,
+                lapm_call.answerer,
+            ):
+                self.assertIn("AT+DS=3,1", configured_endpoint.at_commands)
+                self.assertNotIn("AT\\N0", configured_endpoint.at_commands)
+            self.assertEqual(
+                lapm_call.artifact_directory.name,
+                f"{cases[CANDIDATE_ORIGINATES].name}-lapm",
+            )
+
     def test_pcm_families_get_complementary_roles_and_evidence_window(
         self,
     ) -> None:
@@ -179,6 +193,7 @@ class FastInteropTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(passed.outcome, "passed")
+            self.assertEqual(passed.public_dict()["link_mode"], "raw")
             self.assertTrue(passed.candidate_rates_verified)
             self.assertTrue(passed.baseline_rates_verified)
 
