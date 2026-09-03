@@ -2589,6 +2589,315 @@ static bool test_rate_renegotiation_completion(void)
 	return true;
 }
 
+static bool pcm_frame_is_fill(const uint8_t *bits, size_t bit_count)
+{
+	if (bits == NULL || bit_count == 0u)
+		return false;
+	for (size_t bit = 0; bit < bit_count; ++bit)
+		if (bits[bit] != 1u)
+			return false;
+	return true;
+}
+
+static bool run_paired_remote_rate_renegotiation(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	struct pcm_call_data_sources analog_sources;
+	struct pcm_call_data_sources digital_sources;
+	size_t analog_resume_source = 0u;
+	size_t digital_resume_source;
+	size_t rd_high_water = 0u;
+	size_t s_high_water = 0u;
+	size_t s_bar_high_water = 0u;
+	uint16_t upstream_delay = UINT16_MAX;
+	uint32_t analog_rates[2];
+	uint32_t digital_rates[2];
+	uint32_t analog_deadline;
+	uint32_t digital_deadline;
+	bool initially_online = false;
+	bool digital_started = false;
+	bool analog_started = false;
+	bool rd_detected = false;
+	bool rd_bar_started = false;
+	bool rd_bar_complete = false;
+	bool analog_deadline_seen = false;
+	bool digital_deadline_seen = false;
+	bool timeout_checked = false;
+	bool cp_seen = false;
+	bool e_seen = false;
+	bool first_downstream_frame_seen = false;
+	bool downstream_resumed = false;
+	bool upstream_resumed = false;
+
+	CHECK(channel_init(&channel, law, 3u) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init_with_rate_renegotiation_constellation(
+		      &digital, law, V90_JD_RATE_CAPABILITY_MASK,
+		      V34_CONSTELLATION_4_POINT),
+	      "law %u paired RRN endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u paired RRN setup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (pcm_call_is_online(&analog.call) &&
+		    pcm_call_is_online(&digital.call) &&
+		    analog.downstream_frames >= DATA_FRAMES_TO_RECEIVE &&
+		    digital.upstream_frames >= DATA_FRAMES_TO_RECEIVE) {
+			initially_online = true;
+			break;
+		}
+	}
+	CHECK(initially_online &&
+	      pcm_call_get_data_rates(
+		      &analog.call, &analog_rates[0], &analog_rates[1]) &&
+	      pcm_call_get_data_rates(
+		      &digital.call, &digital_rates[0], &digital_rates[1]) &&
+	      analog_rates[0] == digital_rates[1] &&
+	      analog_rates[1] == digital_rates[0] &&
+	      complete_rate_renegotiation_monitor(
+		      &digital.call.state.data_path.digital.upstream.data
+			       .equalizer_receiver.rate_renegotiation) &&
+	      pcm_call_is_valid(&digital.call),
+	      "law %u paired RRN could not seed the digital request",
+	      (unsigned int)law);
+	for (size_t sample = 0; sample < 64u; ++sample) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u paired RRN trigger stopped at %zu",
+		      (unsigned int)law, sample);
+		if (digital.call.state.data_path.digital
+			    .rate_renegotiation_active) {
+			digital_started = true;
+			break;
+		}
+	}
+	digital_resume_source = digital.downstream_source.frames;
+	analog_deadline = V34_PHASE2_SAMPLE_RATE * 5u +
+		2u * (uint32_t)analog.call.round_trip_delay_samples;
+	digital_deadline = V34_PHASE2_SAMPLE_RATE * 5u +
+		2u * (uint32_t)digital.call.round_trip_delay_samples;
+	analog_sources = (struct pcm_call_data_sources){
+		.upstream = source_upstream_frame,
+		.upstream_context = &analog.upstream_source,
+	};
+	digital_sources = (struct pcm_call_data_sources){
+		.downstream = source_downstream_frame,
+		.downstream_context = &digital.downstream_source,
+	};
+	CHECK(digital_started && pcm_call_is_online(&digital.call),
+	      "law %u paired RRN did not enter digital control",
+	      (unsigned int)law);
+
+	for (size_t sample = 0; sample < CALL_SAMPLE_LIMIT; ++sample) {
+		struct pcm_call_data_event analog_event;
+		struct pcm_call_data_event digital_event;
+		struct v90_analog_path *analog_path =
+			&analog.call.state.data_path.analog;
+		struct v90_digital_path *digital_path =
+			&digital.call.state.data_path.digital;
+		uint8_t analog_received;
+		uint8_t digital_received;
+		uint8_t analog_transmitted;
+		uint8_t digital_transmitted;
+		size_t analog_source_before = analog.upstream_source.frames;
+		size_t digital_source_before = digital.downstream_source.frames;
+		bool analog_active_before =
+			analog_path->rate_renegotiation_active;
+		bool digital_active_before =
+			digital_path->rate_renegotiation_active;
+
+		channel_receive(
+			&channel, &analog_received, &digital_received);
+		CHECK(pcm_call_data_octet(
+			      &analog.call, analog_received,
+			      decode_octet(law, analog_received), &analog_sources,
+			      &analog_transmitted, &analog_event) == PCM_CALL_OK &&
+		      pcm_call_data_octet(
+			      &digital.call, digital_received,
+			      decode_octet(law, digital_received), &digital_sources,
+			      &digital_transmitted, &digital_event) == PCM_CALL_OK &&
+		      analog.call.stage == PCM_CALL_DATA_PATH &&
+		      digital.call.stage == PCM_CALL_DATA_PATH,
+		      "law %u paired RRN stopped at %zu",
+		      (unsigned int)law, sample);
+		analog_path = &analog.call.state.data_path.analog;
+		digital_path = &digital.call.state.data_path.digital;
+		if (analog_active_before)
+			CHECK(analog.upstream_source.frames == analog_source_before,
+			      "law %u paired RRN consumed analogue host input",
+			      (unsigned int)law);
+		if (digital_active_before)
+			CHECK(digital.downstream_source.frames ==
+				      digital_source_before,
+			      "law %u paired RRN consumed digital host input",
+			      (unsigned int)law);
+
+		rd_detected |= v90_downstream_rrn_rx_rd_detected(
+			&analog_path->rate_renegotiation);
+		rd_bar_started |= analog_path->rate_renegotiation.stage ==
+			V90_DOWNSTREAM_RRN_RX_RD_BAR;
+		rd_bar_complete |= v90_downstream_rrn_rx_is_complete(
+			&analog_path->rate_renegotiation);
+		if (!analog_started && analog_path->rate_renegotiation_active) {
+			analog_started = true;
+			analog_resume_source = analog.upstream_source.frames;
+			CHECK(analog_path->upstream_stage ==
+				      V90_ANALOG_PATH_UPSTREAM_RRN_RETURN &&
+			      analog.call.rate_renegotiation_deadline_armed &&
+			      analog.call
+				      .rate_renegotiation_deadline_remaining_samples ==
+				      analog_deadline,
+			      "law %u paired RRN missed the Rd-bar boundary",
+			      (unsigned int)law);
+		}
+		if (analog_path->rate_renegotiation_active) {
+			uint32_t rates[2];
+
+			CHECK(pcm_call_is_online(&analog.call) &&
+			      pcm_call_get_data_rates(
+				      &analog.call, &rates[0], &rates[1]) &&
+			      rates[0] == analog_rates[0] &&
+			      rates[1] == analog_rates[1] &&
+			      analog_event.kind == PCM_CALL_DATA_NONE,
+			      "law %u analogue RRN lost online ownership",
+			      (unsigned int)law);
+		}
+		if (analog_path->upstream_stage ==
+		    V90_ANALOG_PATH_UPSTREAM_RRN_RETURN) {
+			if (analog_path->upstream.rrn_return.points.s_symbols >
+			    s_high_water)
+				s_high_water = analog_path->upstream.rrn_return
+					.points.s_symbols;
+			if (analog_path->upstream.rrn_return.points.s_bar_symbols >
+			    s_bar_high_water)
+				s_bar_high_water = analog_path->upstream.rrn_return
+					.points.s_bar_symbols;
+		} else if (analog_started && analog_path->upstream_stage ==
+					   V90_ANALOG_PATH_UPSTREAM_CP) {
+			cp_seen = true;
+		} else if (analog_started && analog_path->upstream_stage ==
+					   V90_ANALOG_PATH_UPSTREAM_E) {
+			e_seen = true;
+		}
+		if (analog_started && !timeout_checked && analog_active_before) {
+			struct pcm_call stalled = analog.call;
+			struct pcm_call_data_event stalled_event;
+			uint8_t stalled_octet;
+
+			stalled.rate_renegotiation_deadline_remaining_samples = 1u;
+			CHECK(pcm_call_data_octet(
+				      &stalled, analog_received,
+				      decode_octet(law, analog_received), NULL,
+				      &stalled_octet, &stalled_event) == PCM_CALL_OK &&
+			      stalled.stage == PCM_CALL_RETRAIN_SILENCE &&
+			      stalled.retrain_active && pcm_call_is_valid(&stalled) &&
+			      !pcm_call_has_failed(&stalled),
+			      "law %u analogue RRN timeout was not bounded",
+			      (unsigned int)law);
+			timeout_checked = true;
+		}
+
+		if (digital_path->downstream_stage ==
+		    V90_DIGITAL_PATH_DOWNSTREAM_RD &&
+		    digital_path->downstream.rd.transmitted_symbols >
+			    rd_high_water)
+			rd_high_water =
+				digital_path->downstream.rd.transmitted_symbols;
+		if (!digital_deadline_seen &&
+		    digital.call.rate_renegotiation_deadline_armed) {
+			digital_deadline_seen = true;
+			CHECK(digital.call
+				      .rate_renegotiation_deadline_remaining_samples ==
+				      digital_deadline,
+			      "law %u digital RRN deadline began off boundary",
+			      (unsigned int)law);
+		}
+		analog_deadline_seen |=
+			analog.call.rate_renegotiation_deadline_armed;
+		if (digital_path->rate_renegotiation_active)
+			CHECK(pcm_call_is_online(&digital.call) &&
+			      digital_event.kind == PCM_CALL_DATA_NONE,
+			      "law %u digital RRN lost online ownership",
+			      (unsigned int)law);
+
+		if (analog_event.kind == PCM_CALL_DOWNSTREAM_FRAME &&
+		    analog_started && !analog_path->rate_renegotiation_active) {
+			bool matches = downstream_frame_matches(
+				&analog_event.frame.downstream,
+				digital_resume_source);
+
+			if (!first_downstream_frame_seen) {
+				CHECK(matches || pcm_frame_is_fill(
+					      analog_event.frame.downstream.bits,
+					      analog_event.frame.downstream.bit_count),
+				      "law %u first post-RRN downstream frame was stale",
+				      (unsigned int)law);
+				first_downstream_frame_seen = true;
+			}
+			downstream_resumed |= matches;
+		} else if (analog_path->rate_renegotiation_active) {
+			CHECK(analog_event.kind == PCM_CALL_DATA_NONE,
+			      "law %u analogue RRN exposed a host frame",
+			      (unsigned int)law);
+		}
+		if (digital_event.kind == PCM_CALL_UPSTREAM_FRAME &&
+		    analog_started && !digital_path->rate_renegotiation_active) {
+			bool matches = upstream_frame_matches(
+				&digital_event.frame.upstream, &upstream_delay,
+				analog_resume_source);
+
+			CHECK(matches || pcm_frame_is_fill(
+				      digital_event.frame.upstream.primary_bits,
+				      digital_event.frame.upstream.primary_bit_count),
+			      "law %u post-RRN upstream frame was stale",
+			      (unsigned int)law);
+			upstream_resumed |= matches;
+		} else if (digital_path->rate_renegotiation_active) {
+			CHECK(digital_event.kind == PCM_CALL_DATA_NONE,
+			      "law %u digital RRN exposed a host frame",
+			      (unsigned int)law);
+		}
+		channel_transmit(
+			&channel, analog_transmitted, digital_transmitted);
+		if (analog_started && !analog_path->rate_renegotiation_active &&
+		    !digital_path->rate_renegotiation_active &&
+		    downstream_resumed && upstream_resumed)
+			break;
+	}
+	CHECK(analog_started && rd_detected && rd_bar_started &&
+	      rd_bar_complete && analog_deadline_seen &&
+	      digital_deadline_seen && timeout_checked && cp_seen && e_seen &&
+	      rd_high_water == V90_RD_SEQUENCE_SYMBOLS &&
+	      s_high_water == V34_PHASE3_S_SYMBOLS &&
+	      s_bar_high_water == V34_PHASE3_S_BAR_SYMBOLS &&
+	      first_downstream_frame_seen && downstream_resumed &&
+	      upstream_resumed && pcm_call_is_online(&analog.call) &&
+	      pcm_call_is_online(&digital.call) &&
+	      !analog.call.state.data_path.analog.rate_renegotiation_active &&
+	      !digital.call.state.data_path.digital.rate_renegotiation_active &&
+	      !pcm_call_has_failed(&analog.call) &&
+	      !pcm_call_has_failed(&digital.call),
+	      "law %u paired RRN did not resume (Rd=%zu S=%zu/%zu "
+	      "detect=%u/%u/%u CP/E=%u/%u data=%u/%u)",
+	      (unsigned int)law, rd_high_water, s_high_water,
+	      s_bar_high_water, rd_detected, rd_bar_started, rd_bar_complete,
+	      cp_seen, e_seen, downstream_resumed, upstream_resumed);
+	return true;
+}
+
+static bool test_paired_remote_rate_renegotiation(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law)
+		CHECK(run_paired_remote_rate_renegotiation(law),
+		      "law %u paired remote RRN failed",
+		      (unsigned int)law);
+	return true;
+}
+
 static bool test_rate_renegotiation_16_point_fallback(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
@@ -3605,6 +3914,8 @@ int main(void)
 		{ "local and remote PCM full retrain", test_full_retrain },
 		{ "V.90 in-place rate-renegotiation completion and resume",
 		  test_rate_renegotiation_completion },
+		{ "paired V.90 remote rate renegotiation",
+		  test_paired_remote_rate_renegotiation },
 		{ "16-point rate renegotiation falls back to full retrain",
 		  test_rate_renegotiation_16_point_fallback },
 		{ "unusable retrain selection restarts full training",

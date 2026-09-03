@@ -165,7 +165,8 @@ static bool finish_cp_record(struct v90_phase4_cp_tx *symbols)
 }
 
 static bool verify_online_resume(
-	enum v34_constellation_size constellation, uint8_t variant)
+	enum v34_constellation_size initial_constellation,
+	enum v34_constellation_size resumed_constellation, uint8_t variant)
 {
 	struct v34_phase3_profile selected = profile();
 	struct v90_cp_parameters training =
@@ -188,7 +189,8 @@ static bool verify_online_resume(
 	      advance_to_nontrivial_boundary(&online_line) &&
 	      v90_phase4_cp_tx_init(
 		      &control_symbols, V34_ANSWERING_STATION,
-		      constellation, &training) == V90_PHASE4_CP_TX_OK &&
+		      initial_constellation, &training) ==
+		      V90_PHASE4_CP_TX_OK &&
 	      finish_cp_record(&control_symbols) &&
 	      v90_phase4_cp_tx_start_next_record(
 		      &control_symbols, &preceding) == V90_PHASE4_CP_TX_OK &&
@@ -196,10 +198,12 @@ static bool verify_online_resume(
 	      "online CP resume fixture did not reach its boundary");
 	model_line = online_line;
 	model_symbols = control_symbols;
+	model_symbols.constellation = resumed_constellation;
 	CHECK(v90_phase4_cp_tx_start_next_record(
 		      &model_symbols, &next_parameters) == V90_PHASE4_CP_TX_OK &&
 	      v90_phase4_cp_line_tx_resume_online(
 		      &resumed, &online_line, &control_symbols,
+		      resumed_constellation,
 		      &next_parameters) == V90_PHASE4_CP_LINE_TX_OK &&
 	      memcmp(&resumed.line, &online_line, sizeof(online_line)) == 0 &&
 	      memcmp(&resumed.symbols, &model_symbols,
@@ -235,12 +239,19 @@ static bool test_online_resume(void)
 {
 	for (uint8_t variant = 0; variant < 2u; ++variant) {
 		CHECK(verify_online_resume(
+			      V34_CONSTELLATION_4_POINT,
 			      V34_CONSTELLATION_4_POINT, variant),
 		      "four-point online CP resume failed for variant %u",
 		      variant);
 		CHECK(verify_online_resume(
+			      V34_CONSTELLATION_16_POINT,
 			      V34_CONSTELLATION_16_POINT, variant),
 		      "sixteen-point online CP resume failed for variant %u",
+		      variant);
+		CHECK(verify_online_resume(
+			      V34_CONSTELLATION_16_POINT,
+			      V34_CONSTELLATION_4_POINT, variant),
+		      "Jd four-point online CP resume failed for variant %u",
 		      variant);
 	}
 	return true;
@@ -449,15 +460,18 @@ static bool test_transactional_contracts(void)
 		memset(&resumed, 0xa5, sizeof(resumed));
 		resumed_saved = resumed;
 		CHECK(v90_phase4_cp_line_tx_resume_online(
-			      &resumed, &line, &control, &data) ==
+			      &resumed, &line, &control,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_OK,
 		      "valid online resume was rejected");
 		saved = resumed;
 		CHECK(v90_phase4_cp_line_tx_resume_online(
-			      &resumed, &resumed.line, &control, &data) ==
+			      &resumed, &resumed.line, &control,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 		      v90_phase4_cp_line_tx_resume_online(
-			      &resumed, &line, &resumed.symbols, &data) ==
+			      &resumed, &line, &resumed.symbols,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 		      memcmp(&resumed, &saved, sizeof(resumed)) == 0,
 		      "overlapping online resume changed its destination");
@@ -465,16 +479,24 @@ static bool test_transactional_contracts(void)
 			      &mid_point, &point, &sample, &accepted) ==
 			      V34_TRAINING_LINE_OK && accepted &&
 		      v90_phase4_cp_line_tx_resume_online(
-			      &resumed_saved, &mid_point, &control, &data) ==
+			      &resumed_saved, &line, &control,
+			      (enum v34_constellation_size)8, &data) ==
+			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+		      v90_phase4_cp_line_tx_resume_online(
+			      &resumed_saved, &mid_point, &control,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
 		      v90_phase4_cp_line_tx_resume_online(
-			      &resumed_saved, &line, &incomplete, &data) ==
+			      &resumed_saved, &line, &incomplete,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
 		      v90_phase4_cp_line_tx_resume_online(
-			      &resumed_saved, &line, &control, &training) ==
+			      &resumed_saved, &line, &control,
+			      V34_CONSTELLATION_4_POINT, &training) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_PARAMETERS &&
 		      v90_phase4_cp_line_tx_resume_online(
-			      NULL, &line, &control, &data) ==
+			      NULL, &line, &control,
+			      V34_CONSTELLATION_4_POINT, &data) ==
 			      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 		      memcmp(&resumed_saved, &untouched_saved,
 			     sizeof(resumed_saved)) == 0,

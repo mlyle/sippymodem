@@ -19,6 +19,7 @@ struct v90_phase4_analog_continuation {
 struct v90_phase4_analog_handoff {
 	struct v90_phase4_cp_line_tx transmit;
 	struct pcm_downstream_rx receive;
+	enum v34_constellation_size rate_renegotiation_constellation;
 };
 
 union v90_phase4_analog_startup_state {

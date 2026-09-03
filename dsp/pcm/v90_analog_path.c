@@ -21,6 +21,17 @@ static bool mapping_matches(
 	       v90_pcm_mapping_equal(mapping, &expected);
 }
 
+static bool control_mapping_matches(
+	const struct v90_analog_path *path)
+{
+	struct v90_pcm_mapping expected;
+
+	return v90_pcm_mapping_init_rate_renegotiation(
+		       &expected, &path->training_mapping,
+		       &path->data_mapping) == V90_PCM_MAPPING_OK &&
+	       v90_pcm_mapping_equal(&path->control_mapping, &expected);
+}
+
 static bool handoff_is_valid(
 	const struct v90_phase4_analog_handoff *handoff,
 	enum g711_law law)
@@ -30,6 +41,8 @@ static bool handoff_is_valid(
 	const struct v90_phase4_cp_tx *symbols;
 
 	if (handoff == NULL ||
+	    !v34_constellation_size_is_valid(
+		    handoff->rate_renegotiation_constellation) ||
 	    !v90_phase4_cp_line_tx_is_handoff_ready(&handoff->transmit) ||
 	    !pcm_downstream_rx_is_valid(&handoff->receive) ||
 	    handoff->receive.stage != PCM_DOWNSTREAM_RX_TRN2D)
@@ -54,6 +67,12 @@ static bool data_parameters_are_valid(
 	       !parameters->request_silence;
 }
 
+static bool decision_plane_is_valid(enum v90_pcm_mapping_plane plane)
+{
+	return plane == V90_PCM_MAPPING_TRANSMIT ||
+	       plane == V90_PCM_MAPPING_CODEC;
+}
+
 static bool upstream_is_valid(const struct v90_analog_path *path)
 {
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP)
@@ -68,7 +87,15 @@ static bool upstream_is_valid(const struct v90_analog_path *path)
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA)
 		return path->finishing_cp && path->cp_prime_sent &&
 		       path->peer_mp_prime_received &&
-		       v34_data_stream_is_valid(&path->upstream.data);
+		       path->upstream_rate_2400_bps_units != 0u &&
+		       v34_data_stream_is_valid(&path->upstream.data) &&
+		       path->upstream.data.points.schedule.geometry
+			       .primary_data_rate_2400_bps_units ==
+			       path->upstream_rate_2400_bps_units;
+	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_RRN_RETURN)
+		return path->rate_renegotiation_active &&
+		       v90_phase3_return_line_tx_is_valid(
+			       &path->upstream.rrn_return);
 	return false;
 }
 
@@ -83,7 +110,7 @@ static bool downstream_is_valid(const struct v90_analog_path *path)
 			!pcm_downstream_rx_is_complete(
 				&path->downstream.training));
 	if (path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA)
-		return path->ed_armed &&
+		return (path->ed_armed || path->rate_renegotiation_active) &&
 		       v90_downstream_data_rx_is_valid(&path->downstream.data) &&
 		       v90_pcm_mapping_equal(
 			       &path->downstream.data.stream.decoder.mapping,
@@ -94,12 +121,31 @@ static bool downstream_is_valid(const struct v90_analog_path *path)
 bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
+	    !v34_constellation_size_is_valid(
+		    path->rate_renegotiation_constellation) ||
+	    !decision_plane_is_valid(path->decision_plane) ||
+	    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
+	    path->training_mapping.kind != V90_CP_TRAINING ||
+	    path->training_mapping.law != path->law ||
+	    !v90_pcm_mapping_is_valid(&path->control_mapping) ||
+	    path->control_mapping.kind != V90_CP_TRAINING ||
+	    path->control_mapping.law != path->law ||
+	    !control_mapping_matches(path) ||
 	    !data_parameters_are_valid(&path->data_parameters) ||
 	    path->data_parameters.law != path->law ||
 	    !v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	    path->data_mapping.kind != V90_CP_DATA ||
 	    path->data_mapping.law != path->law ||
 	    !mapping_matches(&path->data_mapping, &path->data_parameters) ||
+	    !v90_phase4_cp_tx_is_valid(&path->control_symbols) ||
+	    !v90_phase4_cp_tx_record_is_complete(&path->control_symbols) ||
+	    !v90_downstream_rrn_rx_is_valid(&path->rate_renegotiation) ||
+	    path->rate_renegotiation.decision_plane != path->decision_plane ||
+	    !v90_pcm_mapping_equal(
+		    &path->rate_renegotiation.mapping,
+		    &path->data_mapping) ||
+	    (path->rate_renegotiation_active &&
+	     path->upstream_rate_2400_bps_units == 0u) ||
 	    (path->data_parameters.acknowledges_peer &&
 	     !path->peer_mp_received) ||
 	    (path->peer_mp_received &&
@@ -121,6 +167,7 @@ enum v90_analog_path_result v90_analog_path_init(
 	const struct v90_phase4_analog_handoff *handoff,
 	const struct v90_cp_parameters *data_parameters)
 {
+	struct v90_cp_parameters training_parameters;
 	struct v90_analog_path initialized = {
 		.upstream_stage = V90_ANALOG_PATH_UPSTREAM_CP,
 		.downstream_stage = V90_ANALOG_PATH_DOWNSTREAM_TRAINING,
@@ -135,9 +182,33 @@ enum v90_analog_path_result v90_analog_path_init(
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	initialized.law = data_parameters->law;
 	initialized.data_parameters = *data_parameters;
-	if (v90_pcm_mapping_init(
+	if (v90_cp_decode(
+		    handoff->transmit.symbols.frame,
+		    sizeof(handoff->transmit.symbols.frame),
+		    handoff->transmit.symbols.frame_bit_count,
+		    &training_parameters) != V90_CP_OK ||
+	    v90_pcm_mapping_init(
+		    &initialized.training_mapping,
+		    &training_parameters) != V90_PCM_MAPPING_OK ||
+	    v90_pcm_mapping_init(
 		    &initialized.data_mapping, data_parameters) !=
-	    V90_PCM_MAPPING_OK)
+		    V90_PCM_MAPPING_OK)
+		return V90_ANALOG_PATH_INVALID_PARAMETERS;
+	if (v90_pcm_mapping_init_rate_renegotiation(
+		    &initialized.control_mapping,
+		    &initialized.training_mapping,
+		    &initialized.data_mapping) != V90_PCM_MAPPING_OK)
+		return V90_ANALOG_PATH_INVALID_PARAMETERS;
+	initialized.control_symbols = handoff->transmit.symbols;
+	initialized.rate_renegotiation_constellation =
+		handoff->rate_renegotiation_constellation;
+	initialized.decision_plane =
+		handoff->receive.stream.decoder.decision_plane;
+	if (v90_downstream_rrn_rx_init(
+		    &initialized.rate_renegotiation,
+		    &initialized.data_mapping,
+		    initialized.decision_plane) !=
+	    V90_DOWNSTREAM_RRN_RX_OK)
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	initialized.upstream.cp = handoff->transmit;
 	initialized.downstream.training = handoff->receive;
@@ -174,8 +245,10 @@ bool v90_analog_path_downstream_is_online(
 
 bool v90_analog_path_is_online(const struct v90_analog_path *path)
 {
-	return v90_analog_path_upstream_is_online(path) &&
-	       v90_analog_path_downstream_is_online(path);
+	return v90_analog_path_is_valid(path) && !path->failed &&
+	       (path->rate_renegotiation_active ||
+		(v90_analog_path_upstream_is_online(path) &&
+		 v90_analog_path_downstream_is_online(path)));
 }
 
 static enum v90_analog_path_result cp_line_failure(
@@ -235,6 +308,7 @@ static enum v90_analog_path_result emit_cp(
 	if (v90_phase4_e_line_tx_init(&e, &path->upstream.cp) !=
 	    V90_PHASE4_E_LINE_TX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
+	path->control_symbols = path->upstream.cp.symbols;
 	path->upstream = (union v90_analog_path_upstream){ 0 };
 	path->upstream.e = e;
 	path->upstream_stage = V90_ANALOG_PATH_UPSTREAM_E;
@@ -292,6 +366,8 @@ static enum v90_analog_path_result emit_e(
 	}
 	path->upstream = (union v90_analog_path_upstream){ 0 };
 	path->upstream.data = data;
+	path->upstream_rate_2400_bps_units =
+		data.points.schedule.geometry.primary_data_rate_2400_bps_units;
 	path->upstream_stage = V90_ANALOG_PATH_UPSTREAM_DATA;
 	return V90_ANALOG_PATH_OK;
 }
@@ -312,6 +388,47 @@ static enum v90_analog_path_result data_stream_result(
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
 }
 
+static void finish_rate_renegotiation_if_online(
+	struct v90_analog_path *path)
+{
+	if (path->rate_renegotiation_active &&
+	    path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA &&
+	    !v34_data_stream_is_transmitting_b1(&path->upstream.data) &&
+	    path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
+	    v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+		path->rate_renegotiation_active = false;
+}
+
+static enum v90_analog_path_result emit_rrn_return(
+	struct v90_analog_path *path, int16_t *sample, bool *ready)
+{
+	struct v34_training_line line;
+	struct v90_phase4_cp_line_tx cp;
+	enum v90_phase3_return_line_tx_result result =
+		v90_phase3_return_line_tx_sample(
+			&path->upstream.rrn_return, sample);
+
+	if (result == V90_PHASE3_RETURN_LINE_TX_OK) {
+		*ready = true;
+		return V90_ANALOG_PATH_OK;
+	}
+	if (result == V90_PHASE3_RETURN_LINE_TX_OUT_OF_RANGE)
+		return V90_ANALOG_PATH_OUT_OF_RANGE;
+	if (result != V90_PHASE3_RETURN_LINE_TX_COMPLETE ||
+	    v90_phase3_return_line_tx_handoff(
+		    &path->upstream.rrn_return, &line) !=
+		    V90_PHASE3_RETURN_LINE_TX_OK ||
+	    v90_phase4_cp_line_tx_resume_online(
+		    &cp, &line, &path->control_symbols,
+		    path->rate_renegotiation_constellation,
+		    &path->data_parameters) != V90_PHASE4_CP_LINE_TX_OK)
+		return V90_ANALOG_PATH_INTERNAL_ERROR;
+	path->upstream = (union v90_analog_path_upstream){ 0 };
+	path->upstream.cp = cp;
+	path->upstream_stage = V90_ANALOG_PATH_UPSTREAM_CP;
+	return V90_ANALOG_PATH_OK;
+}
+
 static enum v90_analog_path_result emit_upstream(
 	struct v90_analog_path *path,
 	v34_mapping_frame_source source, void *source_context,
@@ -325,12 +442,23 @@ static enum v90_analog_path_result emit_upstream(
 			result = emit_cp(path, sample, &ready);
 		else if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_E)
 			result = emit_e(path, sample, &ready);
+		else if (path->upstream_stage ==
+			 V90_ANALOG_PATH_UPSTREAM_RRN_RETURN)
+			result = emit_rrn_return(path, sample, &ready);
 		else {
 			bool accepted;
+			enum v34_data_stream_result stream_result;
 
-			return data_stream_result(v34_data_stream_sample(
-				&path->upstream.data, source, source_context,
-				sample, &accepted));
+			stream_result = v34_data_stream_sample(
+				&path->upstream.data,
+				path->rate_renegotiation_active ? NULL : source,
+				path->rate_renegotiation_active ? NULL :
+					source_context,
+				sample, &accepted);
+			result = data_stream_result(stream_result);
+			if (result == V90_ANALOG_PATH_OK)
+				finish_rate_renegotiation_if_online(path);
+			return result;
 		}
 		if (result != V90_ANALOG_PATH_OK || ready)
 			return result;
@@ -415,6 +543,7 @@ static enum v90_analog_path_result start_downstream_data(
 	struct v90_analog_path *path)
 {
 	struct v90_downstream_data_rx data;
+	struct v90_downstream_rrn_rx rate_renegotiation;
 	enum v90_downstream_data_rx_result result;
 
 	if (!path->ed_armed)
@@ -425,9 +554,15 @@ static enum v90_analog_path_result start_downstream_data(
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	if (result != V90_DOWNSTREAM_DATA_RX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
+	if (v90_downstream_rrn_rx_init(
+		    &rate_renegotiation, &path->data_mapping,
+		    path->decision_plane) != V90_DOWNSTREAM_RRN_RX_OK)
+		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	path->downstream = (union v90_analog_path_downstream){ 0 };
 	path->downstream.data = data;
+	path->rate_renegotiation = rate_renegotiation;
 	path->downstream_stage = V90_ANALOG_PATH_DOWNSTREAM_DATA;
+	finish_rate_renegotiation_if_online(path);
 	return V90_ANALOG_PATH_OK;
 }
 
@@ -471,9 +606,65 @@ static enum v90_analog_path_result receive_training(
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
 }
 
-static enum v90_analog_path_result receive_data(
+static enum v90_analog_path_result begin_rate_renegotiation(
+	struct v90_analog_path *path)
+{
+	struct v90_pcm_mapping control_mapping;
+	struct v90_phase3_return_line_tx returning;
+
+	if (path->rate_renegotiation_active ||
+	    path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_DATA ||
+	    path->downstream_stage != V90_ANALOG_PATH_DOWNSTREAM_DATA ||
+	    v34_data_stream_is_transmitting_b1(&path->upstream.data) ||
+	    !v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+	if (v90_pcm_mapping_init_rate_renegotiation(
+		    &control_mapping, &path->training_mapping,
+		    &path->data_mapping) != V90_PCM_MAPPING_OK)
+		return V90_ANALOG_PATH_INVALID_PARAMETERS;
+	if (v90_phase3_return_line_tx_init_rrn(
+		    &returning, &path->upstream.data.line) !=
+	    V90_PHASE3_RETURN_LINE_TX_OK)
+		return V90_ANALOG_PATH_INTERNAL_ERROR;
+
+	path->control_mapping = control_mapping;
+	path->upstream = (union v90_analog_path_upstream){ 0 };
+	path->upstream.rrn_return = returning;
+	path->upstream_stage = V90_ANALOG_PATH_UPSTREAM_RRN_RETURN;
+	path->data_parameters.acknowledges_peer = false;
+	path->peer_mp_received = false;
+	path->peer_mp_prime_received = false;
+	path->cp_prime_sent = false;
+	path->finishing_cp = false;
+	path->ed_armed = false;
+	path->rate_renegotiation_active = true;
+	return V90_ANALOG_PATH_RATE_RENEGOTIATION;
+}
+
+static enum v90_analog_path_result start_rrn_downstream_training(
+	struct v90_analog_path *path)
+{
+	struct pcm_downstream_rx training;
+
+	if (!path->rate_renegotiation_active ||
+	    !v90_downstream_rrn_rx_is_complete(
+		    &path->rate_renegotiation))
+		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+	if (pcm_downstream_rx_init(
+		    &training, PCM_PROTOCOL_V90,
+		    &path->control_mapping, path->decision_plane) !=
+	    PCM_DOWNSTREAM_RX_OK)
+		return V90_ANALOG_PATH_INTERNAL_ERROR;
+	path->downstream = (union v90_analog_path_downstream){ 0 };
+	path->downstream.training = training;
+	path->downstream_stage = V90_ANALOG_PATH_DOWNSTREAM_TRAINING;
+	return V90_ANALOG_PATH_OK;
+}
+
+static enum v90_analog_path_result receive_data_frame(
 	struct v90_analog_path *path, uint8_t octet,
-	struct v90_pcm_stream_frame *frame, bool *frame_ready)
+	struct v90_pcm_stream_frame *frame, bool *frame_ready,
+	bool suppress_frame)
 {
 	struct v90_pcm_stream_frame decoded;
 	enum v90_downstream_data_rx_result result =
@@ -484,8 +675,12 @@ static enum v90_analog_path_result receive_data(
 	case V90_DOWNSTREAM_DATA_RX_BUFFERING:
 	case V90_DOWNSTREAM_DATA_RX_B1D_FRAME:
 	case V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE:
+		finish_rate_renegotiation_if_online(path);
 		return V90_ANALOG_PATH_OK;
 	case V90_DOWNSTREAM_DATA_RX_DATA_FRAME:
+		finish_rate_renegotiation_if_online(path);
+		if (suppress_frame || path->rate_renegotiation_active)
+			return V90_ANALOG_PATH_OK;
 		*frame = decoded;
 		*frame_ready = true;
 		return V90_ANALOG_PATH_DOWNSTREAM_FRAME;
@@ -502,6 +697,52 @@ static enum v90_analog_path_result receive_data(
 		break;
 	}
 	return V90_ANALOG_PATH_INTERNAL_ERROR;
+}
+
+static enum v90_analog_path_result receive_data(
+	struct v90_analog_path *path, uint8_t octet,
+	struct v90_pcm_stream_frame *frame, bool *frame_ready)
+{
+	enum v90_downstream_rrn_rx_result rrn_result;
+
+	if (!v90_downstream_data_rx_b1d_complete(&path->downstream.data))
+		return receive_data_frame(
+			path, octet, frame, frame_ready,
+			path->rate_renegotiation_active);
+	if (path->rate_renegotiation_active &&
+	    path->rate_renegotiation.stage ==
+		    V90_DOWNSTREAM_RRN_RX_SEARCH)
+		return receive_data_frame(
+			path, octet, frame, frame_ready, false);
+
+	rrn_result = v90_downstream_rrn_rx_receive(
+		&path->rate_renegotiation, octet);
+	switch (rrn_result) {
+	case V90_DOWNSTREAM_RRN_RX_BUFFERING:
+	case V90_DOWNSTREAM_RRN_RX_RD_DETECTED:
+		break;
+	case V90_DOWNSTREAM_RRN_RX_RD_BAR_STARTED:
+		return begin_rate_renegotiation(path);
+	case V90_DOWNSTREAM_RRN_RX_RD_BAR_COMPLETE:
+		return start_rrn_downstream_training(path);
+	case V90_DOWNSTREAM_RRN_RX_SEQUENCE_MISMATCH:
+		if (path->rate_renegotiation_active)
+			return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+		break;
+	case V90_DOWNSTREAM_RRN_RX_INVALID_PARAMETERS:
+		return V90_ANALOG_PATH_INVALID_PARAMETERS;
+	case V90_DOWNSTREAM_RRN_RX_INVALID_ARGUMENT:
+	case V90_DOWNSTREAM_RRN_RX_INVALID_STATE:
+	case V90_DOWNSTREAM_RRN_RX_INTERNAL_ERROR:
+	case V90_DOWNSTREAM_RRN_RX_OK:
+		return V90_ANALOG_PATH_INTERNAL_ERROR;
+	}
+	if (path->rate_renegotiation_active)
+		return V90_ANALOG_PATH_OK;
+	return receive_data_frame(
+		path, octet, frame, frame_ready,
+		v90_downstream_rrn_rx_rd_detected(
+			&path->rate_renegotiation));
 }
 
 static enum v90_analog_path_result arm_ed(struct v90_analog_path *path)
@@ -540,7 +781,8 @@ enum v90_analog_path_result v90_analog_path_receive(
 			 receive_data(
 				 path, received_octet, &frame, &frame_ready);
 	if (result == V90_ANALOG_PATH_OK ||
-	    result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+	    result == V90_ANALOG_PATH_DOWNSTREAM_FRAME ||
+	    result == V90_ANALOG_PATH_RATE_RENEGOTIATION) {
 		enum v90_analog_path_result armed = arm_ed(path);
 
 		if (armed != V90_ANALOG_PATH_OK)
@@ -548,7 +790,8 @@ enum v90_analog_path_result v90_analog_path_receive(
 	}
 	path->receive_pending = false;
 	if (result != V90_ANALOG_PATH_OK &&
-	    result != V90_ANALOG_PATH_DOWNSTREAM_FRAME)
+	    result != V90_ANALOG_PATH_DOWNSTREAM_FRAME &&
+	    result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
 		return fail_path(path, result);
 	if (!v90_analog_path_is_valid(path))
 		return fail_path(path, V90_ANALOG_PATH_INTERNAL_ERROR);
@@ -579,6 +822,8 @@ const char *v90_analog_path_result_name(
 		return "ok";
 	case V90_ANALOG_PATH_DOWNSTREAM_FRAME:
 		return "downstream frame";
+	case V90_ANALOG_PATH_RATE_RENEGOTIATION:
+		return "rate renegotiation";
 	case V90_ANALOG_PATH_SOURCE_FAILURE:
 		return "frame source failure";
 	case V90_ANALOG_PATH_FAILED:

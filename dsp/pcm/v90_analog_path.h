@@ -5,6 +5,8 @@
 
 #include "v34_data_stream.h"
 #include "v90_downstream_data_rx.h"
+#include "v90_downstream_rrn_rx.h"
+#include "v90_phase3_return_line_tx.h"
 #include "v90_phase4_analog_startup.h"
 #include "v90_phase4_e_line_tx.h"
 
@@ -15,6 +17,7 @@ enum v90_analog_path_upstream_stage {
 	V90_ANALOG_PATH_UPSTREAM_CP,
 	V90_ANALOG_PATH_UPSTREAM_E,
 	V90_ANALOG_PATH_UPSTREAM_DATA,
+	V90_ANALOG_PATH_UPSTREAM_RRN_RETURN,
 };
 
 enum v90_analog_path_downstream_stage {
@@ -25,6 +28,7 @@ enum v90_analog_path_downstream_stage {
 enum v90_analog_path_result {
 	V90_ANALOG_PATH_OK,
 	V90_ANALOG_PATH_DOWNSTREAM_FRAME,
+	V90_ANALOG_PATH_RATE_RENEGOTIATION,
 	V90_ANALOG_PATH_SOURCE_FAILURE,
 	V90_ANALOG_PATH_FAILED,
 	V90_ANALOG_PATH_SEQUENCE_MISMATCH,
@@ -42,6 +46,7 @@ union v90_analog_path_upstream {
 	struct v90_phase4_cp_line_tx cp;
 	struct v90_phase4_e_line_tx e;
 	struct v34_data_stream data;
+	struct v90_phase3_return_line_tx rrn_return;
 };
 
 union v90_analog_path_downstream {
@@ -56,17 +61,28 @@ union v90_analog_path_downstream {
 struct v90_analog_path {
 	union v90_analog_path_upstream upstream;
 	union v90_analog_path_downstream downstream;
+	/* CPt fixes the downstream control constellations and K. The completed
+	 * CP cursor fixes the continuous upstream scrambler/differential phase.
+	 * Both survive the online data unions for rate renegotiation. */
+	struct v90_pcm_mapping training_mapping;
+	struct v90_pcm_mapping control_mapping;
 	struct v90_cp_parameters data_parameters;
 	struct v90_pcm_mapping data_mapping;
+	struct v90_phase4_cp_tx control_symbols;
+	struct v90_downstream_rrn_rx rate_renegotiation;
 	struct v90_mp_record peer_mp;
 	enum g711_law law;
+	enum v34_constellation_size rate_renegotiation_constellation;
+	enum v90_pcm_mapping_plane decision_plane;
 	enum v90_analog_path_upstream_stage upstream_stage;
 	enum v90_analog_path_downstream_stage downstream_stage;
+	uint8_t upstream_rate_2400_bps_units;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool cp_prime_sent;
 	bool finishing_cp;
 	bool ed_armed;
+	bool rate_renegotiation_active;
 	bool receive_pending;
 	bool failed;
 };

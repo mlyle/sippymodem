@@ -23,6 +23,8 @@ bool v90_phase4_analog_station_is_valid(
 	if (station == NULL ||
 	    !v90_phase4_cp_line_tx_is_valid(&station->transmit) ||
 	    !v90_phase4_ri_search_is_valid(&station->receive) ||
+	    !v34_constellation_size_is_valid(
+		    station->rate_renegotiation_constellation) ||
 	    station->maximum_spectral_lookahead <
 		    V90_JD_MINIMUM_LOOKAHEAD ||
 	    station->maximum_spectral_lookahead >
@@ -101,6 +103,8 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_init(
 	initialized.receive = receive;
 	initialized.training_parameters = *training_parameters;
 	initialized.ri_wait_remaining_samples = round_trip_delay_samples;
+	initialized.rate_renegotiation_constellation =
+		jd->rate_renegotiation_constellation;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
 	if (!v90_phase4_analog_station_is_valid(&initialized))

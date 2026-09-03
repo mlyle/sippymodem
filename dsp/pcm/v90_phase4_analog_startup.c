@@ -13,7 +13,9 @@ static bool handoff_mappings_match(
 	struct v90_pcm_mapping expected;
 	const struct v90_phase4_cp_tx *symbols = &handoff->transmit.symbols;
 
-	return v90_cp_decode(
+	return v34_constellation_size_is_valid(
+		       handoff->rate_renegotiation_constellation) &&
+	       v90_cp_decode(
 		       symbols->frame, sizeof(symbols->frame),
 		       symbols->frame_bit_count, &parameters) == V90_CP_OK &&
 	       v90_pcm_mapping_init(&expected, &parameters) ==
@@ -235,6 +237,9 @@ static enum v90_phase4_startup_result advance_startup(
 		    &startup->state.continuing.station)) {
 		struct v90_phase4_analog_handoff complete = {
 			.receive = startup->state.continuing.receive,
+			.rate_renegotiation_constellation =
+				startup->state.continuing.station
+					.rate_renegotiation_constellation,
 		};
 
 		if (v90_phase4_analog_station_transmit_handoff(

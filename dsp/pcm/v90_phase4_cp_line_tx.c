@@ -75,6 +75,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
 	struct v90_phase4_cp_line_tx *tx,
 	const struct v34_training_line *online_line,
 	const struct v90_phase4_cp_tx *control_symbols,
+	enum v34_constellation_size constellation,
 	const struct v90_cp_parameters *parameters)
 {
 	struct v90_phase4_cp_line_tx resumed = { 0 };
@@ -87,6 +88,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
 	    memory_regions_overlap(
 		    tx, sizeof(*tx), control_symbols,
 		    sizeof(*control_symbols)) ||
+	    !v34_constellation_size_is_valid(constellation) ||
 	    !v90_phase3_training_line_is_valid(online_line) ||
 	    !v90_phase4_cp_tx_is_valid(control_symbols) ||
 	    control_symbols->role != online_line->profile.local_role)
@@ -100,6 +102,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
 
 	resumed.line = *online_line;
 	resumed.symbols = *control_symbols;
+	resumed.symbols.constellation = constellation;
 	result = symbol_result(v90_phase4_cp_tx_start_next_record(
 		&resumed.symbols, parameters));
 	if (result != V90_PHASE4_CP_LINE_TX_OK)

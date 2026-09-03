@@ -291,16 +291,29 @@ static bool verify_repeated_mp_recovery(
 	struct v90_phase4_analog_handoff handoff = {
 		.transmit = *cp_transmit,
 		.receive = analog->receiver,
+		.rate_renegotiation_constellation =
+			V34_CONSTELLATION_4_POINT,
 	};
+	struct v90_phase4_analog_handoff invalid_handoff = handoff;
 	struct pcm_downstream_tx transmitter = digital->transmitter;
 	struct v90_analog_path path;
+	struct v90_analog_path untouched;
+	struct v90_analog_path untouched_saved;
 	bool mp_corrupted = false;
 	bool mp_rejection_seen = false;
 
 	data_cp.kind = V90_CP_DATA;
 	data_cp.selected_rate_index = 1;
 	data_cp.acknowledges_peer = false;
-	CHECK(v90_analog_path_init(&path, &handoff, &data_cp) ==
+	memset(&untouched, 0xa5, sizeof(untouched));
+	untouched_saved = untouched;
+	invalid_handoff.rate_renegotiation_constellation =
+		(enum v34_constellation_size)8;
+	CHECK(v90_analog_path_init(
+		      &untouched, &invalid_handoff, &data_cp) ==
+		      V90_ANALOG_PATH_INVALID_ARGUMENT &&
+	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0 &&
+	      v90_analog_path_init(&path, &handoff, &data_cp) ==
 		      V90_ANALOG_PATH_OK &&
 	      pcm_downstream_tx_is_valid(&transmitter),
 	      "repeated-MP fixture did not initialize");
@@ -376,6 +389,8 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_analog_handoff analog_handoff = {
 		.transmit = *cp_transmit,
 		.receive = analog->receiver,
+		.rate_renegotiation_constellation =
+			V34_CONSTELLATION_4_POINT,
 	};
 	struct v90_phase4_digital_handoff digital_handoff = {
 		.transmit = *digital,

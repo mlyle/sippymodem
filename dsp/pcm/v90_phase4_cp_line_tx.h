@@ -40,11 +40,13 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_init(
  * renegotiation S/S-bar response. The live line supplies carrier and pulse-
  * shaper history; control_symbols supplies the completed CP scrambler and
  * differential cursor retained from the preceding CP-prime. The new data CP
- * record starts atomically at the exact next-point boundary. */
+ * record starts atomically at the exact next-point boundary using the
+ * rate-renegotiation constellation selected by Jd. */
 enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
 	struct v90_phase4_cp_line_tx *tx,
 	const struct v34_training_line *online_line,
 	const struct v90_phase4_cp_tx *control_symbols,
+	enum v34_constellation_size constellation,
 	const struct v90_cp_parameters *parameters);
 bool v90_phase4_cp_line_tx_is_valid(
 	const struct v90_phase4_cp_line_tx *tx);

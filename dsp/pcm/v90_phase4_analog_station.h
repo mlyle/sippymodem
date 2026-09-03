@@ -44,6 +44,7 @@ struct v90_phase4_analog_station {
 	struct v90_phase4_ri_search receive;
 	struct v90_cp_parameters training_parameters;
 	uint32_t ri_wait_remaining_samples;
+	enum v34_constellation_size rate_renegotiation_constellation;
 	uint8_t maximum_spectral_lookahead;
 	bool finish_cpt_requested;
 	bool failed;
