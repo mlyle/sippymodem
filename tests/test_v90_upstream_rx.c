@@ -112,7 +112,8 @@ static bool parameters_match(
 
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
-	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units)
+	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
+	bool acknowledged_first)
 {
 	struct v90_cp_parameters training =
 		cp_parameters(
@@ -124,6 +125,7 @@ static bool run_line(
 			rate_2400_bps_units);
 	struct v90_cp_parameters unadvertised = data;
 	struct v90_cp_parameters prime = data;
+	struct v90_cp_parameters expected_data;
 	struct v90_mp_record mp = local_mp(rate_2400_bps_units);
 	struct v90_pcm_mapping training_mapping;
 	struct v34_phase3_profile profile;
@@ -145,7 +147,10 @@ static bool run_line(
 	bool e_received = false;
 	bool b1_received = false;
 
+	data.acknowledges_peer = acknowledged_first;
 	prime.acknowledges_peer = true;
+	expected_data = data;
+	expected_data.acknowledges_peer = false;
 	unadvertised.selected_rate_index = 2;
 	CHECK(line_profile(symbol_rate, rate_2400_bps_units, &profile) &&
 	      v90_phase4_line_fixture_init_for_profile(
@@ -274,7 +279,7 @@ static bool run_line(
 			} else if (result ==
 				   V90_UPSTREAM_RX_REQUEST_MP_PRIME) {
 				CHECK(!mp_prime_requested && !ed_requested &&
-				      parameters_match(&event, &data),
+				      parameters_match(&event, &expected_data),
 				      "first data CP event changed");
 				mp_prime_requested = true;
 			} else if (result == V90_UPSTREAM_RX_REQUEST_ED) {
@@ -460,9 +465,15 @@ int main(void)
 					    paths[path].law,
 					    paths[path].constellation,
 					    profiles[profile].symbol_rate,
-					    rate))
+					    rate, false))
 					return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
+	fprintf(stderr, "[ RUN      ] CP-prime-first upstream entry\n");
+	if (!run_line(
+		    G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
+		    V34_SYMBOL_RATE_3429, 14, true))
+		return 1;
+	fprintf(stderr, "[       OK ] CP-prime-first upstream entry\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())
 		return 1;

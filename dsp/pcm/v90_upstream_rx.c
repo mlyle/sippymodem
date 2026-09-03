@@ -255,14 +255,19 @@ static enum v90_upstream_rx_result accept_cp_record(
 	if (!downstream_rate_is_enabled(receiver, &parameters))
 		return continue_cp(receiver);
 	if (!receiver->data_cp_received) {
-		if (parameters.acknowledges_peer)
-			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
+		/* CP prime repeats the same data parameters and additionally says
+		 * that the analogue modem has received MP. Receiver acquisition may
+		 * miss every preceding CP while the peer legitimately advances after
+		 * receiving our independently transmitted MP, so accept CP prime as
+		 * the first valid data record and retain its parameters without the
+		 * transient acknowledgement bit. */
 		receiver->data_cp_received = true;
 		receiver->data_parameters = parameters;
+		receiver->data_parameters.acknowledges_peer = false;
 		result = continue_cp(receiver);
 		if (result != V90_UPSTREAM_RX_OK)
 			return result;
-		*emitted = parameters;
+		*emitted = receiver->data_parameters;
 		*event_ready = true;
 		return V90_UPSTREAM_RX_REQUEST_MP_PRIME;
 	}

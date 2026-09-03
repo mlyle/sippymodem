@@ -2707,7 +2707,9 @@ static bool pcm_frame_is_fill(const uint8_t *bits, size_t bit_count)
 	return true;
 }
 
-static bool run_paired_remote_rate_renegotiation(enum g711_law law)
+static bool run_paired_remote_rate_renegotiation(
+	enum g711_law law,
+	enum v34_constellation_size rate_renegotiation_constellation)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -2744,9 +2746,10 @@ static bool run_paired_remote_rate_renegotiation(enum g711_law law)
 		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
 	      endpoint_init_with_rate_renegotiation_constellation(
 		      &digital, law, V90_JD_RATE_CAPABILITY_MASK,
-		      V34_CONSTELLATION_4_POINT),
-	      "law %u paired RRN endpoints did not initialize",
-	      (unsigned int)law);
+		      rate_renegotiation_constellation),
+	      "law %u constellation %u paired RRN endpoints did not initialize",
+	      (unsigned int)law,
+	      (unsigned int)rate_renegotiation_constellation);
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u paired RRN setup stopped at %zu",
@@ -2829,8 +2832,9 @@ static bool run_paired_remote_rate_renegotiation(enum g711_law law)
 			      &digital_transmitted, &digital_event) == PCM_CALL_OK &&
 		      analog.call.stage == PCM_CALL_DATA_PATH &&
 		      digital.call.stage == PCM_CALL_DATA_PATH,
-		      "law %u paired RRN stopped at %zu",
-		      (unsigned int)law, sample);
+		      "law %u constellation %u paired RRN stopped at %zu",
+		      (unsigned int)law,
+		      (unsigned int)rate_renegotiation_constellation, sample);
 		analog_path = &analog.call.state.data_path.analog;
 		digital_path = &digital.call.state.data_path.digital;
 		if (analog_active_before)
@@ -2998,11 +3002,25 @@ static bool run_paired_remote_rate_renegotiation(enum g711_law law)
 
 static bool test_paired_remote_rate_renegotiation(void)
 {
+	static const enum v34_constellation_size CONSTELLATIONS[] = {
+		V34_CONSTELLATION_4_POINT,
+		V34_CONSTELLATION_16_POINT,
+	};
+
 	for (enum g711_law law = G711_LAW_PCMU;
-	     law <= G711_LAW_PCMA; ++law)
-		CHECK(run_paired_remote_rate_renegotiation(law),
-		      "law %u paired remote RRN failed",
-		      (unsigned int)law);
+	     law <= G711_LAW_PCMA; ++law) {
+		for (size_t index = 0;
+		     index < ARRAY_LENGTH(CONSTELLATIONS); ++index) {
+			enum v34_constellation_size constellation =
+				CONSTELLATIONS[index];
+
+			CHECK(run_paired_remote_rate_renegotiation(
+				      law, constellation),
+			      "law %u constellation %u paired remote RRN failed",
+			      (unsigned int)law,
+			      (unsigned int)constellation);
+		}
+	}
 	return true;
 }
 
