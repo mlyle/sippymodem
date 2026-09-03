@@ -36,6 +36,7 @@ struct v90_phase4_digital_station {
 	struct v90_phase4_cp_line_rx receive;
 	struct v90_phase4_ri_tx transmit;
 	struct v90_pcm_mapping training_mapping;
+	struct v34_precoder_recommendation precoder;
 	uint16_t peer_upstream_rate_mask;
 	uint8_t maximum_spectral_lookahead;
 	bool cpt_received;

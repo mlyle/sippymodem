@@ -56,6 +56,7 @@ static bool ja_receiver_is_valid(
 	if (receiver == NULL ||
 	    !qam_equalizer_is_valid(&receiver->equalizer) ||
 	    receiver->equalizer.can_adapt ||
+	    !v34_precoder_trainer_is_valid(&receiver->precoder) ||
 	    !qam_adaptation_is_valid(receiver->adaptation) ||
 	    !v90_ja_search_is_valid(&receiver->search) ||
 	    v90_ja_search_is_complete(&receiver->search) != complete)
@@ -202,7 +203,9 @@ static enum v90_phase3_analog_rx_result receive_pp(
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 	ja.equalizer = handoff.equalizer;
 	ja.adaptation = rx->configuration.tracking_equalizer_adaptation;
-	if (v90_ja_search_init(&ja.search) != V90_JA_SEARCH_OK)
+	if (v34_precoder_trainer_init(&ja.precoder) !=
+		    V34_PRECODER_TRAINER_OK ||
+	    v90_ja_search_init(&ja.search) != V90_JA_SEARCH_OK)
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 	rx->state = (union v90_phase3_analog_rx_state){ .ja = ja };
 	rx->stage = V90_PHASE3_ANALOG_RX_STAGE_JA;
@@ -247,6 +250,9 @@ static enum v90_phase3_analog_rx_result receive_ja(
 	    v34_training_constellation_point(
 		    V34_CONSTELLATION_4_POINT, quarter_point, rotation,
 		    &target) != V34_CONSTELLATION_OK ||
+	    v34_precoder_trainer_observe(
+		    &rx->state.ja.precoder, &observation.output, &target) !=
+		    V34_PRECODER_TRAINER_OK ||
 	    qam_equalizer_adapt_observation(
 		    &rx->state.ja.equalizer, &observation, &target,
 		    rx->state.ja.adaptation) != QAM_EQUALIZER_OK)
@@ -311,6 +317,7 @@ bool v90_phase3_analog_handoff_is_valid(
 	return handoff != NULL &&
 	       v34_phase3_s_detection_is_valid(&handoff->s) &&
 	       v34_equalizer_handoff_is_valid(&handoff->equalizer) &&
+	       v34_precoder_recommendation_is_valid(&handoff->precoder) &&
 	       v90_dil_parameters_are_valid(&handoff->dil);
 }
 
@@ -326,7 +333,10 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_handoff(
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
 	generated.s = rx->s_detection;
 	generated.equalizer.equalizer = rx->state.ja.equalizer;
-	if (!v90_ja_search_parameters(
+	if (v34_precoder_trainer_finish(
+		    &rx->state.ja.precoder, &generated.precoder) !=
+		    V34_PRECODER_TRAINER_OK ||
+	    !v90_ja_search_parameters(
 		    &rx->state.ja.search, &generated.dil) ||
 	    !v90_phase3_analog_handoff_is_valid(&generated))
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;

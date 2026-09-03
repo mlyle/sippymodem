@@ -43,6 +43,23 @@ static bool select_initial_mp(
 		parameters->upstream_rate_capability_mask &
 		station->peer_upstream_rate_mask);
 	limited = *configured;
+	if (limited.type == V90_MP_RECORD_TYPE0 &&
+	    station->precoder.enabled) {
+		struct v90_mp_type1_parameters type1 = {
+			.common = limited.parameters.type0,
+		};
+
+		memcpy(type1.precoder_coefficients,
+		       station->precoder.coefficients,
+		       sizeof(type1.precoder_coefficients));
+		limited = (struct v90_mp_record){
+			.type = V90_MP_RECORD_TYPE1,
+			.parameters.type1 = type1,
+		};
+		if (!initial_mp_is_valid(&limited))
+			return false;
+		parameters = mp_parameters(&limited);
+	}
 	maximum = parameters->maximum_upstream_rate_2400_bps_units;
 	if (maximum >
 		    station->receive.transmitting_profile

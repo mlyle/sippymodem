@@ -45,6 +45,7 @@ bool v90_phase4_digital_station_is_valid(
 	if (station == NULL ||
 	    !v90_phase4_cp_line_rx_is_valid(&station->receive) ||
 	    !v90_phase4_ri_tx_is_valid(&station->transmit) ||
+	    !v34_precoder_recommendation_is_valid(&station->precoder) ||
 	    (station->peer_upstream_rate_mask &
 	     ~V90_CP_UPSTREAM_RATE_MASK) != 0u ||
 	    (!station->cpt_received && station->peer_upstream_rate_mask != 0u) ||
@@ -104,6 +105,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 		    equalizer_adaptation) != V90_PHASE4_CP_LINE_RX_OK)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	initialized.transmit = *transmit;
+	initialized.precoder = phase3_receive->phase3.precoder;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
 	if (!v90_phase4_digital_station_is_valid(&initialized))

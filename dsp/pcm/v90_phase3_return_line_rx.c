@@ -42,8 +42,9 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	initialized.demodulator = handoff->demodulator;
 	initialized.transmitting_profile = handoff->transmitting_profile;
-	if (v90_phase3_return_rx_init(
+	if (v90_phase3_return_rx_init_with_precoder(
 		    &initialized.points, &handoff->phase3.equalizer,
+		    &handoff->phase3.precoder,
 		    adaptation) != V90_PHASE3_RETURN_RX_OK ||
 	    v34_phase3_s_prefix_init_recurrent(&initialized.s_prefix) !=
 		    V34_PHASE3_S_PREFIX_OK ||

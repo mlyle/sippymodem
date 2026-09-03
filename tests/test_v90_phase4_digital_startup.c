@@ -342,6 +342,66 @@ static bool run_disjoint_cpt_selection(enum g711_law law)
 	return false;
 }
 
+static bool run_precoder_selection(enum g711_law law)
+{
+	static const struct v34_precoder_recommendation precoder = {
+		.coefficients = {
+			{ 0x1200, -0x0800 },
+			{ -0x0400, 0x0200 },
+			{ 0x0100, -0x0080 },
+		},
+		.enabled = true,
+	};
+	struct v90_cp_parameters training = training_parameters(law);
+	struct v90_mp_record mp = mp_parameters(false);
+	struct v90_phase4_analog_station analog_station;
+	struct v90_phase4_digital_station digital_station;
+	struct v90_phase4_digital_startup startup;
+	int16_t sample;
+	uint8_t output;
+
+	CHECK(prepare_stations(
+		      law, 12u, &training,
+		      &analog_station, &digital_station),
+	      "law %u precoder fixture did not initialize",
+	      (unsigned int)law);
+	digital_station.precoder = precoder;
+	CHECK(v90_phase4_digital_station_is_valid(&digital_station) &&
+	      v90_phase4_digital_startup_init(
+		      &startup, &digital_station, &mp) ==
+		      V90_PHASE4_STARTUP_OK,
+	      "law %u precoder startup did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CHARACTER_LIMIT; ++clock) {
+		CHECK(v90_phase4_analog_station_transmit(
+			      &analog_station, &sample) ==
+			      V90_PHASE4_ANALOG_STATION_OK &&
+		      v90_phase4_digital_startup_sample(
+			      &startup, sample, &output) ==
+			      V90_PHASE4_STARTUP_OK,
+		      "law %u precoder exchange stopped at %zu",
+		      (unsigned int)law, clock);
+		if (startup.stage == V90_PHASE4_STARTUP_INITIAL)
+			continue;
+		CHECK(startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+		      startup.initial_mp.type == V90_MP_RECORD_TYPE1 &&
+		      memcmp(startup.initial_mp.parameters.type1
+				     .precoder_coefficients,
+			     precoder.coefficients,
+			     sizeof(precoder.coefficients)) == 0 &&
+		      startup.initial_mp.parameters.type1.common
+			      .maximum_upstream_rate_2400_bps_units == 12u &&
+		      startup.initial_mp.parameters.type1.common
+			      .upstream_rate_capability_mask == 0x1555u,
+		      "law %u did not publish the trained Type-1 MP",
+		      (unsigned int)law);
+		return true;
+	}
+	CHECK(false, "law %u precoder CPt was not decoded",
+	      (unsigned int)law);
+	return false;
+}
+
 static bool test_generated_exchange(void)
 {
 	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, 12u) &&
@@ -351,7 +411,9 @@ static bool test_generated_exchange(void)
 	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, 6u) &&
 	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, 6u) &&
 	      run_disjoint_cpt_selection(G711_LAW_PCMU) &&
-	      run_disjoint_cpt_selection(G711_LAW_PCMA),
+	      run_disjoint_cpt_selection(G711_LAW_PCMA) &&
+	      run_precoder_selection(G711_LAW_PCMU) &&
+	      run_precoder_selection(G711_LAW_PCMA),
 	      "generated digital startup exchanges failed");
 	return true;
 }

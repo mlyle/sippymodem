@@ -6,6 +6,7 @@
 #include "test.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum { CHANNEL_TAPS = 3 };
@@ -133,6 +134,9 @@ static bool run_timeline(
 	      handoff.dil.segment_count == 0u,
 	      "TRN %u phase %u did not recover the complete Ja boundary",
 	      trn_symbols, quarter_turns);
+	CHECK(v34_precoder_recommendation_is_valid(&handoff.precoder),
+	      "TRN %u phase %u exported an invalid precoder recommendation",
+	      trn_symbols, quarter_turns);
 	{
 		struct v90_phase3_analog_rx saved = rx;
 		struct qam_point point = { 1.0, 1.0 };
@@ -143,6 +147,96 @@ static bool run_timeline(
 		      "TRN %u phase %u complete receiver consumed a point",
 		      trn_symbols, quarter_turns);
 	}
+	return true;
+}
+
+static double noise_component(uint32_t *state)
+{
+	*state = *state * UINT32_C(1664525) + UINT32_C(1013904223);
+	return ((double)((*state >> 8u) & UINT32_C(0xffff)) /
+		UINT16_MAX - 0.5) * 0.16;
+}
+
+static bool test_precoder_training(void)
+{
+	static const struct qam_point expected[V34_PRECODER_TAP_COUNT] = {
+		{ 0.31, 0.09 },
+		{ -0.12, 0.055 },
+		{ 0.045, -0.025 },
+	};
+	struct v34_precoder_trainer trainer;
+	struct v34_precoder_recommendation recommendation;
+	struct qam_point history[V34_PRECODER_TAP_COUNT] = { 0 };
+	uint32_t noise_state = UINT32_C(0x13579bdf);
+
+	CHECK(v34_precoder_trainer_init(&trainer) ==
+		      V34_PRECODER_TRAINER_OK,
+	      "precoder trainer did not initialize");
+	for (size_t symbol = 0; symbol < 60000; ++symbol) {
+		struct qam_point target =
+			v34_rotated_point_zero((int)(symbol & 3u));
+		struct qam_point error = {
+			.in_phase = noise_component(&noise_state),
+			.quadrature = noise_component(&noise_state),
+		};
+		struct qam_point decision;
+
+		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+			struct qam_point prediction = multiply(
+				&expected[tap], &history[tap]);
+
+			error.in_phase -= prediction.in_phase;
+			error.quadrature -= prediction.quadrature;
+		}
+		decision = (struct qam_point){
+			.in_phase = target.in_phase + error.in_phase,
+			.quadrature = target.quadrature + error.quadrature,
+		};
+		CHECK(v34_precoder_trainer_observe(
+			      &trainer, &decision, &target) ==
+			      V34_PRECODER_TRAINER_OK,
+		      "precoder trainer stopped at symbol %zu", symbol);
+		for (size_t tap = V34_PRECODER_TAP_COUNT - 1u;
+		     tap != 0; --tap)
+			history[tap] = history[tap - 1u];
+		history[0] = error;
+	}
+	CHECK(v34_precoder_trainer_finish(&trainer, &recommendation) ==
+		      V34_PRECODER_TRAINER_OK &&
+	      recommendation.enabled,
+	      "correlated decision errors did not select a precoder");
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		int expected_real = (int)lround(
+			expected[tap].in_phase * V34_Q14_SCALE);
+		int expected_imaginary = (int)lround(
+			expected[tap].quadrature * V34_Q14_SCALE);
+
+		CHECK(abs((int)recommendation.coefficients[tap].real -
+			  expected_real) < 900 &&
+		      abs((int)recommendation.coefficients[tap].imaginary -
+			  expected_imaginary) < 900,
+		      "precoder tap %zu did not converge: %d/%d expected %d/%d",
+		      tap, recommendation.coefficients[tap].real,
+		      recommendation.coefficients[tap].imaginary,
+		      expected_real, expected_imaginary);
+	}
+	CHECK(v34_precoder_trainer_init(&trainer) ==
+		      V34_PRECODER_TRAINER_OK,
+	      "flat-channel trainer did not initialize");
+	for (size_t symbol = 0; symbol < 600; ++symbol) {
+		struct qam_point target =
+			v34_rotated_point_zero((int)(symbol & 3u));
+
+		CHECK(v34_precoder_trainer_observe(
+			      &trainer, &target, &target) ==
+			      V34_PRECODER_TRAINER_OK,
+		      "flat-channel trainer stopped at symbol %zu", symbol);
+	}
+	CHECK(v34_precoder_trainer_finish(&trainer, &recommendation) ==
+		      V34_PRECODER_TRAINER_OK &&
+	      !recommendation.enabled &&
+	      v34_precoder_recommendation_is_valid(&recommendation),
+	      "flat decision errors selected a precoder");
 	return true;
 }
 
@@ -223,6 +317,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated timelines", test_generated_timelines },
+		{ "precoder training", test_precoder_training },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

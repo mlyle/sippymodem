@@ -2462,6 +2462,7 @@ V90_PHASE3_ANALOG_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/qam_gain.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
+	$(BUILD_DIR)/v34_precoder_trainer.o \
 	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v90_phase3_analog_rx.o \
@@ -2507,6 +2508,7 @@ V90_PHASE3_RETURN_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/qam_equalizer.o \
 	$(BUILD_DIR)/v34_equalizer_handoff.o \
+	$(BUILD_DIR)/v34_precoder_trainer.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v90_phase3_return_rx.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_tx.o, \
@@ -5075,6 +5077,10 @@ $(BUILD_DIR)/v34_equalizer.o: \
 
 $(BUILD_DIR)/v34_adaptive_equalizer.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_adaptive_equalizer.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_precoder_trainer.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_precoder_trainer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_data_quality.o: \

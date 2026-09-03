@@ -5,6 +5,7 @@
 
 #include "v34_equalizer_handoff.h"
 #include "v34_phase3_s_receiver.h"
+#include "v34_precoder_trainer.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -63,6 +64,7 @@ enum v90_phase3_return_rx_result {
  * adaptation to the intervening signal. */
 struct v90_phase3_return_rx {
 	struct qam_equalizer equalizer;
+	struct v34_precoder_recommendation precoder;
 	struct v34_phase3_s_receiver marker;
 	double adaptation;
 	uint8_t onset_decisions[V90_PHASE3_RETURN_RX_ONSET_SYMBOLS];
@@ -85,11 +87,17 @@ struct v90_phase3_return_rx {
 struct v90_phase3_return_handoff {
 	struct v34_phase3_s_detection marker;
 	struct v34_equalizer_handoff equalizer;
+	struct v34_precoder_recommendation precoder;
 };
 
 enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 	struct v90_phase3_return_rx *rx,
 	const struct v34_equalizer_handoff *equalizer,
+	double adaptation);
+enum v90_phase3_return_rx_result v90_phase3_return_rx_init_with_precoder(
+	struct v90_phase3_return_rx *rx,
+	const struct v34_equalizer_handoff *equalizer,
+	const struct v34_precoder_recommendation *precoder,
 	double adaptation);
 /* Permit a single interoperability fallback for the first V.90 return. The
  * fallback requires a qualified long S followed by a 16-symbol departure and

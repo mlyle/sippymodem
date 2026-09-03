@@ -52,6 +52,7 @@ bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
 	if (rx == NULL || !qam_adaptation_is_valid(rx->adaptation) ||
+	    !v34_precoder_recommendation_is_valid(&rx->precoder) ||
 	    (rx->equalizer_reacquiring ?
 		     !qam_equalizer_is_valid(&rx->equalizer) :
 		     !qam_equalizer_is_handoff_ready(&rx->equalizer)) ||
@@ -136,15 +137,29 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
 	const struct v34_equalizer_handoff *equalizer,
 	double adaptation)
 {
+	const struct v34_precoder_recommendation no_precoder = { 0 };
+
+	return v90_phase3_return_rx_init_with_precoder(
+		rx, equalizer, &no_precoder, adaptation);
+}
+
+enum v90_phase3_return_rx_result v90_phase3_return_rx_init_with_precoder(
+	struct v90_phase3_return_rx *rx,
+	const struct v34_equalizer_handoff *equalizer,
+	const struct v34_precoder_recommendation *precoder,
+	double adaptation)
+{
 	struct v90_phase3_return_rx initialized = {
 		.adaptation = adaptation,
 		.stage = V90_PHASE3_RETURN_RX_STAGE_SEARCH_S,
 	};
 
 	if (rx == NULL || !v34_equalizer_handoff_is_valid(equalizer) ||
+	    !v34_precoder_recommendation_is_valid(precoder) ||
 	    !qam_adaptation_is_valid(adaptation))
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	initialized.equalizer = equalizer->equalizer;
+	initialized.precoder = *precoder;
 	if (v34_phase3_s_receiver_init_suffix(
 		    &initialized.marker,
 		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS) !=
@@ -177,6 +192,7 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 	struct v90_phase3_return_rx *rx)
 {
 	struct v34_equalizer_handoff equalizer;
+	struct v34_precoder_recommendation precoder;
 	struct v90_phase3_return_rx restarted;
 	enum v90_phase3_return_rx_result result;
 	double adaptation;
@@ -187,9 +203,10 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	equalizer.equalizer = rx->equalizer;
+	precoder = rx->precoder;
 	adaptation = rx->adaptation;
-	result = v90_phase3_return_rx_init(
-		&restarted, &equalizer, adaptation);
+	result = v90_phase3_return_rx_init_with_precoder(
+		&restarted, &equalizer, &precoder, adaptation);
 	if (result != V90_PHASE3_RETURN_RX_OK)
 		return result;
 	restarted.second_return = true;
@@ -514,7 +531,8 @@ bool v90_phase3_return_handoff_is_valid(
 {
 	return handoff != NULL &&
 	       v34_phase3_s_detection_is_valid(&handoff->marker) &&
-	       v34_equalizer_handoff_is_valid(&handoff->equalizer);
+	       v34_equalizer_handoff_is_valid(&handoff->equalizer) &&
+	       v34_precoder_recommendation_is_valid(&handoff->precoder);
 }
 
 enum v90_phase3_return_rx_result v90_phase3_return_rx_handoff(
@@ -528,6 +546,7 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_handoff(
 	if (!v90_phase3_return_rx_is_complete(rx))
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	generated.equalizer.equalizer = rx->equalizer;
+	generated.precoder = rx->precoder;
 	if (!v34_phase3_s_receiver_get_detection(
 		    &rx->marker, &generated.marker) ||
 	    !v90_phase3_return_handoff_is_valid(&generated))

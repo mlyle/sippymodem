@@ -341,6 +341,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase34_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_path_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_precoder.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_precoder_trainer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_survivor.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_shell_mapper.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_symbol_power.c \
