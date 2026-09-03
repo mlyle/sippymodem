@@ -175,6 +175,73 @@ static bool test_all_grid_subsets(void)
 	return true;
 }
 
+static bool initialize_nonlinear_normalizer(
+	struct v34_power_normalizer *normalizer)
+{
+	struct v34_frame_geometry geometry;
+	struct v34_mapping_parameters parameters;
+	const struct v34_symbol_power_measurement precoded = {
+		.mean_squared_magnitude = 25.0,
+		.symbol_count = 256,
+	};
+	const struct v34_symbol_power_measurement projected = {
+		.mean_squared_magnitude = 30.0,
+		.symbol_count = 256,
+	};
+
+	return v34_frame_geometry_init(
+		       &geometry, V34_SYMBOL_RATE_3000, 8, false) ==
+		       V34_FRAME_SCHEDULE_OK &&
+	       v34_mapping_parameters_init(
+		       &parameters, &geometry, false) ==
+		       V34_MAPPING_PARAMETERS_OK &&
+	       v34_power_normalizer_init(
+		       normalizer, &parameters,
+		       V34_NONLINEAR_THETA_5_OVER_16, &precoded,
+		       &projected) == V34_SYMBOL_POWER_OK;
+}
+
+static bool test_nonlinear_signal_plane_metric(void)
+{
+	/* This observation lies on opposite sides of a subset decision boundary
+	 * before and after the radial nonlinear encoder. */
+	const struct qam_point projected_observation = {
+		-0.8867705582103556,
+		-3.2059170928206857,
+	};
+	struct v34_power_normalizer normalizer;
+	struct qam_point channel_estimate;
+	struct qam_point normalized_observation;
+	struct v34_subset_slice linear;
+	struct v34_subset_slice projected;
+
+	CHECK(initialize_nonlinear_normalizer(&normalizer) &&
+	      v34_nonlinear_unproject(
+		      normalizer.nonlinear_parameter,
+		      normalizer.precoded_mean_squared_magnitude,
+		      &projected_observation, &channel_estimate) ==
+		      V34_NONLINEAR_OK,
+	      "nonlinear metric fixture did not initialize");
+	normalized_observation = (struct qam_point){
+		.in_phase = projected_observation.in_phase *
+			normalizer.normalization_gain,
+		.quadrature = projected_observation.quadrature *
+			normalizer.normalization_gain,
+	};
+	CHECK(v34_slice_grid_subsets(&channel_estimate, &linear) ==
+		      V34_LATTICE_OK &&
+	      v34_slice_grid_subsets_projected(
+		      &channel_estimate, &normalized_observation, &normalizer,
+		      &projected) == V34_LATTICE_OK,
+	      "nonlinear signal-plane slicing failed");
+	CHECK(linear.subset[1].channel_output.in_phase == -3 &&
+	      linear.subset[1].channel_output.quadrature == -5 &&
+	      projected.subset[1].channel_output.in_phase == 1 &&
+	      projected.subset[1].channel_output.quadrature == -1,
+	      "nonlinear metric did not select the signal-plane neighbor");
+	return true;
+}
+
 static bool test_transactional_validation(void)
 {
 	const struct qam_point valid = { 1.0, 1.0 };
@@ -182,11 +249,15 @@ static bool test_transactional_validation(void)
 		{ NAN, 0.0 }, { 0.0, INFINITY },
 	};
 	const struct qam_point overflow = { DBL_MAX, 0.0 };
+	struct v34_power_normalizer normalizer;
+	struct v34_power_normalizer invalid_normalizer = { 0 };
 	struct v34_subset_slice subsets;
 	struct v34_subset_slice saved_subsets;
 
 	memset(&subsets, 0x5a, sizeof(subsets));
 	saved_subsets = subsets;
+	CHECK(initialize_nonlinear_normalizer(&normalizer),
+	      "transaction fixture did not initialize");
 	CHECK(v34_slice_grid_subsets(NULL, &subsets) ==
 		      V34_LATTICE_INVALID_ARGUMENT &&
 	      v34_slice_grid_subsets(&valid, NULL) ==
@@ -194,6 +265,21 @@ static bool test_transactional_validation(void)
 	      v34_slice_grid_subsets(&not_finite[0], &subsets) ==
 		      V34_LATTICE_INVALID_ARGUMENT &&
 	      v34_slice_grid_subsets(&overflow, &subsets) ==
+		      V34_LATTICE_NUMERIC_FAILURE &&
+	      v34_slice_grid_subsets_projected(
+		      &valid, NULL, &normalizer, &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets_projected(
+		      &valid, &valid, NULL, &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets_projected(
+		      &valid, &not_finite[1], &normalizer, &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets_projected(
+		      &valid, &valid, &invalid_normalizer, &subsets) ==
+		      V34_LATTICE_INVALID_ARGUMENT &&
+	      v34_slice_grid_subsets_projected(
+		      &valid, &overflow, &normalizer, &subsets) ==
 		      V34_LATTICE_NUMERIC_FAILURE &&
 	      memcmp(&subsets, &saved_subsets, sizeof(subsets)) == 0,
 	      "rejected estimate changed the subset slice");
@@ -207,6 +293,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "all grid subsets", test_all_grid_subsets },
+		{ "nonlinear signal-plane metric",
+		  test_nonlinear_signal_plane_metric },
 		{ "transactional validation", test_transactional_validation },
 	};
 	unsigned int failures = 0;

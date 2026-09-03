@@ -162,11 +162,13 @@ static bool advance_channel_cursor(
 	return load_next_channel_frame(decoder);
 }
 
-enum v34_channel_frame_decoder_result
-v34_channel_frame_decoder_advance(
+static enum v34_channel_frame_decoder_result advance(
 	struct v34_channel_frame_decoder *decoder,
 	const struct qam_point
 		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point
+		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
 	struct v34_survivor_decision *current,
 	struct v34_decided_4d_interval
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
@@ -191,9 +193,14 @@ v34_channel_frame_decoder_advance(
 		 decoder->next_channel_interval) &
 		1u);
 	next = *decoder;
-	result = v34_channel_decoder_advance(
-		&next.channel_decoder, estimates, inversion_bit,
-		&generated_current, &generated_decided, &decided_ready);
+	result = normalized == NULL ?
+		v34_channel_decoder_advance(
+			&next.channel_decoder, estimates, inversion_bit,
+			&generated_current, &generated_decided, &decided_ready) :
+		v34_channel_decoder_advance_projected(
+			&next.channel_decoder, estimates, normalized, normalizer,
+			inversion_bit, &generated_current, &generated_decided,
+			&decided_ready);
 	if (result != V34_CHANNEL_DECODER_OK)
 		return channel_result(result);
 	if (!advance_channel_cursor(&next))
@@ -217,4 +224,36 @@ v34_channel_frame_decoder_advance(
 	if (generated_frame_ready)
 		memcpy(decided_frame, generated_frame, sizeof(generated_frame));
 	return V34_CHANNEL_FRAME_DECODER_OK;
+}
+
+enum v34_channel_frame_decoder_result
+v34_channel_frame_decoder_advance(
+	struct v34_channel_frame_decoder *decoder,
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval
+		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	bool *frame_ready)
+{
+	return advance(
+		decoder, estimates, NULL, NULL, current, decided_frame,
+		frame_ready);
+}
+
+enum v34_channel_frame_decoder_result
+v34_channel_frame_decoder_advance_projected(
+	struct v34_channel_frame_decoder *decoder,
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
+	struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval
+		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	bool *frame_ready)
+{
+	if (normalized == NULL || !v34_power_normalizer_is_valid(normalizer))
+		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
+	return advance(
+		decoder, estimates, normalized, normalizer, current, decided_frame,
+		frame_ready);
 }

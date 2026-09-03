@@ -869,6 +869,13 @@ V34_TRELLIS_TEST_OBJECTS := \
 V34_LATTICE_TEST_BINARY := $(BUILD_DIR)/test_v34_lattice
 V34_LATTICE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_lattice.o \
+	$(SELF_SYNC_SCRAMBLER_OBJECT) \
+	$(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/v34_frame_schedule.o \
+	$(BUILD_DIR)/v34_mapping_parameters.o \
+	$(BUILD_DIR)/v34_constellation.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
+	$(BUILD_DIR)/v34_symbol_power.o \
 	$(BUILD_DIR)/v34_lattice.o \
 	$(BUILD_DIR)/v34_trellis.o
 V34_PRECODER_TEST_BINARY := $(BUILD_DIR)/test_v34_precoder
@@ -903,6 +910,8 @@ V34_BRANCHES_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_branches.o \
 	$(BUILD_DIR)/v34_branches.o \
 	$(BUILD_DIR)/v34_lattice.o \
+	$(BUILD_DIR)/v34_nonlinear.o \
+	$(BUILD_DIR)/v34_symbol_power.o \
 	$(filter-out $(BUILD_DIR)/test_v34_4d_encoder.o, \
 		$(V34_4D_ENCODER_TEST_OBJECTS))
 V34_SURVIVOR_TEST_BINARY := $(BUILD_DIR)/test_v34_survivor

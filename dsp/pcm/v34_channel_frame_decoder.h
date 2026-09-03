@@ -58,4 +58,19 @@ v34_channel_frame_decoder_advance(
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready);
 
+/* Equivalent framing with nonlinear signal-plane branch distances.  This
+ * form is valid when the negotiated precoder coefficients are all zero. */
+enum v34_channel_frame_decoder_result
+v34_channel_frame_decoder_advance_projected(
+	struct v34_channel_frame_decoder *decoder,
+	const struct qam_point
+		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point
+		normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
+	struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval
+		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
+	bool *frame_ready);
+
 #endif /* V34_CHANNEL_FRAME_DECODER_H */

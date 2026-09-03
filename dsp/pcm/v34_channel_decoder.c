@@ -98,6 +98,8 @@ static enum v34_channel_decoder_result path_result(
 static enum v34_channel_decoder_result advance_path(
 	struct v34_channel_decoder *decoder,
 	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
 	uint8_t inversion_bit, struct v34_survivor_decision *current,
 	struct v34_survivor_decision *traceback, bool *ready)
 {
@@ -106,8 +108,12 @@ static enum v34_channel_decoder_result advance_path(
 
 	for (uint8_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		enum v34_lattice_result result = v34_slice_grid_subsets(
-			&estimates[symbol], &slices[symbol]);
+		enum v34_lattice_result result = normalized == NULL ?
+			v34_slice_grid_subsets(
+				&estimates[symbol], &slices[symbol]) :
+			v34_slice_grid_subsets_projected(
+				&estimates[symbol], &normalized[symbol],
+				normalizer, &slices[symbol]);
 
 		if (result != V34_LATTICE_OK)
 			return lattice_result(result);
@@ -136,6 +142,8 @@ static enum v34_channel_decoder_result advance_path(
 static bool advance_regions_overlap(
 	const struct v34_channel_decoder *decoder,
 	const struct qam_point *estimates,
+	const struct qam_point *normalized,
+	const struct v34_power_normalizer *normalizer,
 	const struct v34_survivor_decision *current,
 	const struct v34_decided_4d_interval *decided, const bool *ready)
 {
@@ -144,6 +152,8 @@ static bool advance_regions_overlap(
 	const struct memory_region regions[] = {
 		{ decoder, sizeof(*decoder) },
 		{ estimates, estimates_size },
+		{ normalized, normalized == NULL ? 0u : estimates_size },
+		{ normalizer, normalizer == NULL ? 0u : sizeof(*normalizer) },
 		{ current, sizeof(*current) },
 		{ decided, sizeof(*decided) },
 		{ ready, sizeof(*ready) },
@@ -152,15 +162,13 @@ static bool advance_regions_overlap(
 	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
-enum v34_channel_decoder_result
-v34_channel_decoder_advance(
+static enum v34_channel_decoder_result advance(
 	struct v34_channel_decoder *decoder,
-	const struct qam_point
-		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
-	uint8_t inversion_bit,
-	struct v34_survivor_decision *current,
-	struct v34_decided_4d_interval *decided,
-	bool *decided_ready)
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
+	uint8_t inversion_bit, struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval *decided, bool *decided_ready)
 {
 	struct v34_channel_decoder next;
 	struct v34_survivor_decision generated_current;
@@ -170,26 +178,25 @@ v34_channel_decoder_advance(
 
 	if (decoder == NULL || estimates == NULL || current == NULL ||
 	    decided == NULL || decided_ready == NULL || inversion_bit > 1u ||
+	    ((normalized == NULL) != (normalizer == NULL)) ||
+	    (normalizer != NULL && !v34_power_normalizer_is_valid(normalizer)) ||
 	    advance_regions_overlap(
-		    decoder, estimates, current, decided, decided_ready) ||
+		    decoder, estimates, normalized, normalizer, current, decided,
+		    decided_ready) ||
 	    !v34_channel_decoder_is_valid(decoder))
 		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
 	next = *decoder;
 	{
-		enum v34_channel_decoder_result result =
-			advance_path(
-				&next, estimates, inversion_bit,
-				&generated_current, &traceback,
-				&generated_ready);
+		enum v34_channel_decoder_result result = advance_path(
+			&next, estimates, normalized, normalizer, inversion_bit,
+			&generated_current, &traceback, &generated_ready);
 
 		if (result != V34_CHANNEL_DECODER_OK)
 			return result;
 	}
 	if (generated_ready) {
-		enum v34_path_decoder_result result =
-			v34_decode_survivor_path(
-				&next.inverse_precoder, &traceback,
-				&generated_decided);
+		enum v34_path_decoder_result result = v34_decode_survivor_path(
+			&next.inverse_precoder, &traceback, &generated_decided);
 
 		if (result != V34_PATH_DECODER_OK)
 			return path_result(result);
@@ -202,4 +209,33 @@ v34_channel_decoder_advance(
 	if (generated_ready)
 		*decided = generated_decided;
 	return V34_CHANNEL_DECODER_OK;
+}
+
+enum v34_channel_decoder_result
+v34_channel_decoder_advance(
+	struct v34_channel_decoder *decoder,
+	const struct qam_point
+		estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	uint8_t inversion_bit,
+	struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval *decided,
+	bool *decided_ready)
+{
+	return advance(
+		decoder, estimates, NULL, NULL, inversion_bit, current, decided,
+		decided_ready);
+}
+
+enum v34_channel_decoder_result
+v34_channel_decoder_advance_projected(
+	struct v34_channel_decoder *decoder,
+	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
+	const struct v34_power_normalizer *normalizer,
+	uint8_t inversion_bit, struct v34_survivor_decision *current,
+	struct v34_decided_4d_interval *decided, bool *decided_ready)
+{
+	return advance(
+		decoder, estimates, normalized, normalizer, inversion_bit, current,
+		decided, decided_ready);
 }

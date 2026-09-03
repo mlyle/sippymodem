@@ -108,6 +108,16 @@ static enum v34_data_receive_result decoder_result(
 	return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 }
 
+static bool precoder_is_zero(const struct v34_precoder *precoder)
+{
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		if (precoder->coefficients[tap].real != 0 ||
+		    precoder->coefficients[tap].imaginary != 0)
+			return false;
+	}
+	return true;
+}
+
 static enum v34_data_receive_result
 correct_receive_history(
 	struct v34_precoder *receive_precoder,
@@ -200,9 +210,16 @@ v34_channel_frame_receiver_advance(
 		&tentative_precoder, precoded_estimates, channel_estimates);
 	if (prediction_result != V34_PRECODER_OK)
 		return precoder_result(prediction_result);
-	frame_result = v34_channel_frame_decoder_advance(
-		&next.frame_decoder, channel_estimates, &generated_current,
-		generated_frame, &generated_ready);
+	frame_result = next.conditioner.normalizer.nonlinear_parameter ==
+			       V34_NONLINEAR_THETA_5_OVER_16 &&
+		       precoder_is_zero(&next.receive_precoder) ?
+		v34_channel_frame_decoder_advance_projected(
+			&next.frame_decoder, channel_estimates, normalized,
+			&next.conditioner.normalizer, &generated_current,
+			generated_frame, &generated_ready) :
+		v34_channel_frame_decoder_advance(
+			&next.frame_decoder, channel_estimates, &generated_current,
+			generated_frame, &generated_ready);
 	if (frame_result != V34_CHANNEL_FRAME_DECODER_OK)
 		return decoder_result(frame_result);
 	{

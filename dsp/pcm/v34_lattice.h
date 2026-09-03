@@ -4,6 +4,7 @@
 #define V34_LATTICE_H
 
 #include "qam.h"
+#include "v34_symbol_power.h"
 #include "v34_trellis.h"
 
 #include <stdint.h>
@@ -32,6 +33,15 @@ struct v34_subset_slice {
  * failure. */
 enum v34_lattice_result v34_slice_grid_subsets(
 	const struct qam_point *channel_estimate,
+	struct v34_subset_slice *slice);
+
+/* Slice on the same odd lattice while scoring candidate symbols in the
+ * normalized, nonlinear-encoded signal plane.  This form applies when the
+ * precoder coefficients are zero, so channel_output is also x(n). */
+enum v34_lattice_result v34_slice_grid_subsets_projected(
+	const struct qam_point *channel_estimate,
+	const struct qam_point *normalized_observation,
+	const struct v34_power_normalizer *normalizer,
 	struct v34_subset_slice *slice);
 
 #endif /* V34_LATTICE_H */
