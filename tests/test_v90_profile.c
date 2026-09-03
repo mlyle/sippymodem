@@ -248,9 +248,9 @@ static bool test_generated_profiles(void)
 					      configuration.digital_phase4.initial_mp
 						      .parameters.type0
 						      .upstream_nonlinear_encoding &&
-					      !configuration.digital_phase4.initial_mp
-						       .parameters.type0
-						       .upstream_expanded_shaping &&
+					      configuration.digital_phase4.initial_mp
+					      .parameters.type0
+					      .upstream_expanded_shaping &&
 					      v90_mp_record_is_valid(
 						      &configuration.digital_phase4
 						       .initial_mp),
@@ -322,8 +322,8 @@ static bool test_upstream_policy(void)
 			      .upstream_trellis == V34_TRELLIS_16_STATE &&
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_nonlinear_encoding &&
-		      !digital.digital_phase4.initial_mp.parameters.type0
-			       .upstream_expanded_shaping &&
+		      digital.digital_phase4.initial_mp.parameters.type0
+			      .upstream_expanded_shaping &&
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_rate_capability_mask == expected_mask,
 	      "digital profile did not apply its upstream policy");
