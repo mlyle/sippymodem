@@ -3,6 +3,7 @@
 #include <v90_datapump.h>
 #include <v90_profile.h>
 
+#include <dc_remover.h>
 #include <g711.h>
 #include <modem.h>
 #include <modem_param.h>
@@ -25,7 +26,7 @@ enum {
 enum returned_echo_mode {
 	RETURNED_ECHO_NONE,
 	RETURNED_ECHO_STABLE,
-	RETURNED_ECHO_WEAK_MARGIN,
+	RETURNED_ECHO_DC_BIASED,
 };
 
 struct bit_endpoint {
@@ -257,7 +258,7 @@ static int16_t returned_echo(
 	sample -= scale_q15(
 		history_sample(history, write, fill, RETURNED_ECHO_TAP_2),
 		2200);
-	if (mode == RETURNED_ECHO_WEAK_MARGIN)
+	if (mode == RETURNED_ECHO_DC_BIASED)
 		sample += 1400;
 	return add_s16(sample);
 }
@@ -285,6 +286,7 @@ static bool run_pair_with_rate_window(
 		MODEM_PCM_ROLE_ANALOG, &analog_bits);
 	struct modem digital = endpoint_modem(
 		MODEM_PCM_ROLE_DIGITAL, &digital_bits);
+	struct dc_remover digital_frontend;
 	struct dp_operations *operations =
 		modem_dp_get_registered_ops(DP_V90);
 	struct dp *analog_dp;
@@ -318,6 +320,9 @@ static bool run_pair_with_rate_window(
 
 	CHECK(operations != NULL && operations->process_g711 != NULL,
 	      "V.90 exact-codeword operation was not registered");
+	/* This direct pair bypasses the modem-owned conventional receive path. */
+	CHECK(dc_remover_init(&digital_frontend) == DC_REMOVER_OK,
+	      "V.90 digital receive front end did not initialize");
 	analog_dp = operations->create(
 		&analog, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
 	digital_dp = operations->create(
@@ -354,6 +359,11 @@ static bool run_pair_with_rate_window(
 				returned_echo(
 					echo_history, echo_history_write,
 					echo_history_fill, echo_mode));
+		CHECK(dc_remover_process(
+			      &digital_frontend, &digital_receive, 1) ==
+			      DC_REMOVER_OK,
+		      "V.90 digital receive front end failed at octet %zu",
+		      octet);
 		digital_result = operations->process_g711(
 			digital_dp, law,
 			&digital_received_octet, &digital_receive,
@@ -617,19 +627,19 @@ static bool test_delayed_host_echo(void)
 	return true;
 }
 
-static bool test_weak_host_echo_limits_upstream_rate(void)
+static bool test_dc_biased_host_echo(void)
 {
 	CHECK(v90_datapump_register() == 0,
-	      "weak-margin V.90 registration failed");
+	      "DC-biased V.90 registration failed");
 	CHECK(run_pair_with_rate_window(
 		      G711_LAW_PCMU,
-		      56000, 28800, 33600, 28800, 3429,
-		      MINIMUM_RECEIVED_BITS, true,
+		      56000, 28800, 33600, 33600, 3429,
+		      SUSTAINED_RECEIVED_BITS, true,
 		      MODEM_PCM_ROLE_NONE, false,
-		      RETURNED_ECHO_WEAK_MARGIN),
-	      "weak digital host echo did not limit optional upstream rates");
+		      RETURNED_ECHO_DC_BIASED),
+	      "DC-biased digital host echo did not sustain exact upstream data");
 	CHECK(v90_datapump_unregister() == 0,
-	      "weak-margin V.90 registration remained busy");
+	      "DC-biased V.90 registration remained busy");
 	return true;
 }
 
@@ -879,8 +889,8 @@ int main(void)
 		  test_sustained_maximum_rate_pairs },
 		{ "sample-owned PCMA upstream", test_upstream_uses_media_samples },
 		{ "delayed digital-answerer host echo", test_delayed_host_echo },
-		{ "weak host-echo upstream limit",
-		  test_weak_host_echo_limits_upstream_rate },
+		{ "DC-biased digital-answerer host echo",
+		  test_dc_biased_host_echo },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "full retrain through returned host echo",
 		  test_host_echo_retrain_pairs },

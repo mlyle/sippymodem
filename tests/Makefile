@@ -345,6 +345,9 @@ MAIN_TEST_OBJECTS := $(BUILD_DIR)/test_main.o \
 AGC_TEST_BINARY := $(BUILD_DIR)/test_agc
 AGC_TEST_OBJECTS := $(BUILD_DIR)/test_agc.o \
 	$(BUILD_DIR)/agc.o
+DC_REMOVER_TEST_BINARY := $(BUILD_DIR)/test_dc_remover
+DC_REMOVER_TEST_OBJECTS := $(BUILD_DIR)/test_dc_remover.o \
+	$(BUILD_DIR)/dc_remover.o
 FRACTIONAL_DELAY_TEST_BINARY := $(BUILD_DIR)/test_fractional_delay
 FRACTIONAL_DELAY_TEST_OBJECTS := $(BUILD_DIR)/test_fractional_delay.o \
 	$(BUILD_DIR)/fractional_delay.o
@@ -394,6 +397,7 @@ NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
 	$(addsuffix .o, $(NATIVE_CORE_SOURCE_NAMES))) \
+	$(BUILD_DIR)/dc_remover.o \
 	$(BUILD_DIR)/lapm_v44_session.o \
 	$(BUILD_DIR)/v42_xid.o \
 	$(BUILD_DIR)/v44_character_path.o \
@@ -2763,6 +2767,7 @@ V92_PROFILE_TEST_OBJECTS := $(sort \
 		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
 V90_DATAPUMP_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/dc_remover.o \
 	$(BUILD_DIR)/modem_stubs.o \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/training_session.o \
@@ -3035,6 +3040,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(RUNTIME_TEST_BINARY) \
 	$(TERMINAL_TEST_BINARY) $(LOOP_TEST_BINARY) $(MAIN_TEST_BINARY) \
 	$(AGC_TEST_BINARY) \
+	$(DC_REMOVER_TEST_BINARY) \
 	$(FRACTIONAL_DELAY_TEST_BINARY) \
 	$(SINGLE_TONE_TEST_BINARY) \
 	$(DIFFERENTIAL_QPSK_TEST_BINARY) \
@@ -3348,6 +3354,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(RUNTIME_TEST_OBJECTS:.o=.d) $(TERMINAL_TEST_OBJECTS:.o=.d) \
 	$(LOOP_TEST_OBJECTS:.o=.d) $(MAIN_TEST_OBJECTS:.o=.d) \
 	$(AGC_TEST_OBJECTS:.o=.d) \
+	$(DC_REMOVER_TEST_OBJECTS:.o=.d) \
 	$(FRACTIONAL_DELAY_TEST_OBJECTS:.o=.d) \
 	$(SINGLE_TONE_TEST_OBJECTS:.o=.d) \
 	$(DIFFERENTIAL_QPSK_TEST_OBJECTS:.o=.d) \
@@ -3769,6 +3776,9 @@ $(MAIN_TEST_BINARY): $(MAIN_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(AGC_TEST_BINARY): $(AGC_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+$(DC_REMOVER_TEST_BINARY): $(DC_REMOVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(FRACTIONAL_DELAY_TEST_BINARY): $(FRACTIONAL_DELAY_TEST_OBJECTS)
@@ -5908,6 +5918,10 @@ $(BUILD_DIR)/qam.o: \
 
 $(BUILD_DIR)/agc.o: \
 	$(DSP_SOURCE_DIR)/agc.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/dc_remover.o: \
+	$(DSP_SOURCE_DIR)/dc_remover.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/mixed_radix.o: \

@@ -50,6 +50,7 @@
 #include <modem_homolog.h>
 #include <modem_dp.h>
 #include <modem_timer.h>
+#include <dc_remover.h>
 #include <lapm_v44_session.h>
 
 struct v44_character_path;
@@ -426,6 +427,7 @@ struct modem {
         unsigned dp_requested;
         unsigned automode_requested;
 	int update_delay;
+	struct dc_remover receive_dc;
 	void (*process)(struct modem *m,void *in,void *out,int cnt);
         /* process counter and sample timer */
         unsigned long count;

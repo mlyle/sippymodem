@@ -550,6 +550,79 @@ static bool test_g711_datapump_input(void)
 	return true;
 }
 
+static bool test_receive_dc_frontend(void)
+{
+	struct modem_driver driver = {
+		.name = "receive DC front-end test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations operations = {
+		.name = "receive DC front-end test",
+		.create = create_g711_dp,
+		.delete = delete_g711_dp,
+		.process = process_g711_dp,
+		.process_g711 = process_g711_codewords,
+	};
+	static const struct {
+		enum DP_ID id;
+		enum modem_pcm_role role;
+		bool pcm_upstream;
+		int16_t expected;
+		const char *name;
+	} cases[] = {
+		{ DP_CALLPROG, MODEM_PCM_ROLE_NONE, false, 0,
+		  "conventional receive" },
+		{ DP_V90, MODEM_PCM_ROLE_ANALOG, false, 1400,
+		  "V.90 downstream PCM" },
+		{ DP_V90, MODEM_PCM_ROLE_DIGITAL, false, 0,
+		  "V.90 conventional upstream" },
+		{ DP_V92, MODEM_PCM_ROLE_DIGITAL, true, 1400,
+		  "V.92 PCM upstream" },
+		{ DP_V92, MODEM_PCM_ROLE_DIGITAL, false, 0,
+		  "V.92 conventional upstream" },
+	};
+	uint8_t codeword = 0xff;
+	uint8_t transmit_codeword = 0;
+	int16_t receive;
+	int16_t transmit;
+	struct modem *modem;
+	bool exact_output;
+
+	memset(&g711_dp, 0, sizeof(g711_dp));
+	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
+	      "DC front-end data pump did not register");
+	modem = modem_create(&driver, "receive DC front-end test");
+	CHECK(modem != NULL && modem_dial(modem) == 0,
+	      "DC front-end call did not start");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		modem->dp->id = cases[index].id;
+		modem->dsp_info.pcm_role = cases[index].role;
+		modem->sregs[SREG_V92_PCM_UPSTREAM] = cases[index].pcm_upstream;
+		modem->receive_dc = (struct dc_remover){
+			.level = 1400,
+			.stage = DC_REMOVER_TRACKING,
+		};
+		receive = 1400;
+		transmit = 1;
+		exact_output = false;
+		modem_process_g711(
+			modem, G711_LAW_PCMU, &codeword, &receive,
+			&transmit_codeword, &transmit, 1, &exact_output);
+		CHECK(receive == cases[index].expected && exact_output,
+		      "%s DC policy changed sample to %d, expected %d",
+		      cases[index].name, receive, cases[index].expected);
+	}
+	modem->dp->id = DP_CALLPROG;
+	CHECK(modem_stop_now(modem) == 0 && operations.use_count == 0,
+	      "DC front-end data pump did not stop cleanly");
+	modem_delete(modem);
+	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
+	      "DC front-end data pump did not deregister");
+	return true;
+}
+
 static bool test_datapump_error_control_policy(void)
 {
 	struct modem_driver driver = {
@@ -2562,6 +2635,7 @@ int main(void)
 		{ "source-built core lifecycle",
 		  test_core_has_no_external_dsp_owner },
 		{ "G.711 data-pump input", test_g711_datapump_input },
+		{ "receive DC front end", test_receive_dc_frontend },
 		{ "truthful ATO1 lifecycle",
 		  test_ato1_waits_for_datapump_retrain },
 		{ "bounded AT dial destinations",

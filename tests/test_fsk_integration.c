@@ -680,13 +680,19 @@ static bool exercise_carrier_loss_limit(
 		return false;
 	if (id != DP_B103 && id != DP_V21 && id != DP_B212 &&
 	    id != DP_V22 && id != DP_V23) {
-		memset(endpoint->receive, 0, sizeof(endpoint->receive));
 		for (unsigned int frame = 0;
 		     frame * SIP_FRAME_SAMPLES <= carrier_loss_samples;
-		     ++frame)
+		     ++frame) {
+			/* Carrier loss removes AC energy, but not the learned channel
+			 * offset presented to the modem receive front end. */
+			for (size_t index = 0;
+			     index < ARRAY_LENGTH(endpoint->receive); ++index)
+				endpoint->receive[index] =
+					endpoint->modem->receive_dc.level;
 			modem_process(
 				endpoint->modem, endpoint->receive,
 				endpoint->transmit, SIP_FRAME_SAMPLES);
+		}
 		return endpoint->modem->process == NULL;
 	}
 	while (presented < carrier_loss_samples - 1u) {
@@ -695,6 +701,8 @@ static bool exercise_carrier_loss_limit(
 
 		if (count > remaining)
 			count = remaining;
+		for (unsigned int index = 0; index < count; ++index)
+			silence[index] = endpoint->modem->receive_dc.level;
 		modem_process(endpoint->modem, silence, transmit, (int)count);
 		if (endpoint->modem->process == NULL)
 			return false;
@@ -707,6 +715,7 @@ static bool exercise_carrier_loss_limit(
 	     sample < (id == DP_V22 || id == DP_B212 ? 1u :
 						      FSK_MAX_DETECTOR_WINDOW);
 	     ++sample) {
+		silence[0] = endpoint->modem->receive_dc.level;
 		modem_process(endpoint->modem, silence, transmit, 1);
 		if (endpoint->modem->process == NULL)
 			return true;

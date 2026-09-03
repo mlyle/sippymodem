@@ -832,6 +832,22 @@ static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 		m, G711_LAW_PCMU, NULL, NULL, NULL, in, out, count);
 }
 
+static bool modem_preserve_pcm_input(const struct modem *m)
+{
+	if (m == NULL || m->dp == NULL ||
+	    (m->dp->id != DP_V90 && m->dp->id != DP_V92))
+		return false;
+
+	/* The analogue-side receiver owns the downstream PCM constellation. */
+	if (m->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG)
+		return true;
+
+	/* The digital-side receiver owns V.92 PCM upstream when enabled. */
+	return m->dp->id == DP_V92 &&
+	       m->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL &&
+	       m->sregs[SREG_V92_PCM_UPSTREAM] != 0;
+}
+
 static void modem_process_frame(struct modem *m, enum g711_law law,
 				const u8 *receive_codewords,
 				u8 *transmit_codewords,
@@ -840,6 +856,13 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 {
 	if (exact_output != NULL)
 		*exact_output = false;
+	if (count > 0 && !modem_preserve_pcm_input(m) &&
+	    dc_remover_process(&m->receive_dc, in, (size_t)count) !=
+		    DC_REMOVER_OK) {
+		MODEM_ERR("receive DC removal failed.\n");
+		memset(out, 0, (size_t)count << MFMT_SHIFT(m->format));
+		return;
+	}
 	modem_debug_log_data(m,MODEM_DBG_RX_SAMPLES,in,count<<MFMT_SHIFT(m->format));
 	if(m->process) {
 		if (receive_codewords != NULL && m->process == modem_dp_process)
@@ -1351,6 +1374,8 @@ static int modem_start (struct modem *m)
 	m->result_code = 0;
 	m->retrain_pending = 0;
 	modem_setup_config(m);
+	if (dc_remover_init(&m->receive_dc) != DC_REMOVER_OK)
+		return -1;
         modem_set_state(m, STATE_ESTAB);
 
 	if(SPEAKER_CONTROL(m) == 1)
@@ -2174,6 +2199,10 @@ struct modem *modem_create(struct modem_driver *drv, const char *name)
 	if (!m)
 		return NULL;
 	memset(m,0,sizeof(*m));
+	if (dc_remover_init(&m->receive_dc) != DC_REMOVER_OK) {
+		free(m);
+		return NULL;
+	}
 
 	m->name = name;
 	m->driver = *drv;
