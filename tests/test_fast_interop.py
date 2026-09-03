@@ -57,21 +57,27 @@ def base_config(directory: Path, *, enabled: bool = True) -> InteropConfig:
     )
 
 
-def passed_result(case) -> InteropResult:
+def passed_result(
+    case,
+    candidate_rates: EndpointRates | None = None,
+    baseline_rates: EndpointRates | None = None,
+) -> InteropResult:
+    candidate_rates = candidate_rates or case.candidate_rates
+    baseline_rates = baseline_rates or case.baseline_rates
     candidate = EndpointState(
         connected=True,
         exchange_verified=True,
         connect_report=ConnectReport(
-            receive_bit_rate=case.candidate_rates.receive,
-            transmit_bit_rate=case.candidate_rates.transmit,
+            receive_bit_rate=candidate_rates.receive,
+            transmit_bit_rate=candidate_rates.transmit,
         ),
     )
     baseline = EndpointState(
         connected=True,
         exchange_verified=True,
         connect_report=ConnectReport(
-            receive_bit_rate=case.baseline_rates.receive,
-            transmit_bit_rate=case.baseline_rates.transmit,
+            receive_bit_rate=baseline_rates.receive,
+            transmit_bit_rate=baseline_rates.transmit,
         ),
     )
     if not case.candidate_originates:
@@ -180,6 +186,51 @@ class FastInteropTests(unittest.TestCase):
                         configured.answerer.at_commands[-3],
                         "AT+V90D=1",
                     )
+
+    def test_pcm_role_can_be_selected_independently_of_call_direction(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = base_config(Path(temporary))
+            cases = {
+                case.originator_order: case
+                for case in build_fast_matrix(("v90_28000_19200_b3000",))
+                if case.media_codec == "PCMU"
+            }
+            digital_rates = EndpointRates(19200, 28000)
+            analog_rates = EndpointRates(28000, 19200)
+            for order in (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES):
+                case = cases[order]
+                configured = case_config(
+                    base, case, candidate_pcm_role="digital"
+                )
+                endpoints = {
+                    endpoint.executable: endpoint
+                    for endpoint in (configured.originator, configured.answerer)
+                }
+                self.assertIn(
+                    "AT+V90D=1", endpoints[Path("/candidate")].at_commands
+                )
+                self.assertIn(
+                    "AT+V90D=0", endpoints[Path("/baseline")].at_commands
+                )
+                self.assertTrue(
+                    configured.artifact_directory.name.endswith(
+                        "-candidate-digital"
+                    )
+                )
+                result = run_case(
+                    base,
+                    case,
+                    candidate_pcm_role="digital",
+                    runner=lambda _config, _turn, _role, _payloads: passed_result(
+                        case, digital_rates, analog_rates
+                    ),
+                )
+                self.assertEqual(result.outcome, "passed")
+                self.assertEqual(result.candidate_pcm_role, "digital")
+                self.assertTrue(result.candidate_rates_verified)
+                self.assertTrue(result.baseline_rates_verified)
 
     def test_run_case_requires_data_and_both_reported_rates(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

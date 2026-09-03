@@ -68,6 +68,9 @@ FAST_PCM_ONLINE_MINIMUM_SECONDS = 5.0
 FAST_ONLINE_MARGIN_SECONDS = 1.0
 FAST_JITTER_BUFFER_MS = 60
 ATO1_ENDPOINTS = ("candidate", "baseline")
+PCM_FAMILIES = frozenset(("v90", "v92"))
+PCM_ROLE_BY_CALL = "by-call"
+PCM_ROLES = (PCM_ROLE_BY_CALL, "analog", "digital")
 
 
 def _run_interop(
@@ -89,6 +92,7 @@ def _run_interop(
 class FastCaseResult:
     case: MatrixCase
     link_mode: str
+    candidate_pcm_role: str | None
     ato1_endpoint: str | None
     outcome: str
     duration_seconds: float
@@ -105,6 +109,7 @@ class FastCaseResult:
             "media_codec": self.case.media_codec,
             "candidate_originates": self.case.candidate_originates,
             "link_mode": self.link_mode,
+            "candidate_pcm_role": self.candidate_pcm_role,
             "ato1_endpoint": self.ato1_endpoint,
             "outcome": self.outcome,
             "duration_seconds": round(self.duration_seconds, 3),
@@ -135,7 +140,7 @@ def _matrix_endpoint(
     )
     role_commands = (
         (f"AT+V90D={int(pcm_digital)}",)
-        if case.profile.family in {"v90", "v92"}
+        if case.profile.family in PCM_FAMILIES
         else ()
     )
     return replace(
@@ -150,15 +155,17 @@ def _matrix_endpoint(
 def _fast_online_timeout(
     base: InteropConfig,
     case: MatrixCase,
+    candidate_rates: EndpointRates,
+    baseline_rates: EndpointRates,
     originator_payload: bytes,
     answerer_payload: bytes,
 ) -> float:
     if case.candidate_originates:
-        originator_rates = case.candidate_rates
-        answerer_rates = case.baseline_rates
+        originator_rates = candidate_rates
+        answerer_rates = baseline_rates
     else:
-        originator_rates = case.baseline_rates
-        answerer_rates = case.candidate_rates
+        originator_rates = baseline_rates
+        answerer_rates = candidate_rates
     direction_times = (
         len(originator_payload)
         * ASYNC_BITS_PER_OCTET
@@ -174,7 +181,7 @@ def _fast_online_timeout(
     )
     minimum_seconds = (
         FAST_PCM_ONLINE_MINIMUM_SECONDS
-        if case.profile.family in {"v90", "v92"}
+        if case.profile.family in PCM_FAMILIES
         else FAST_ONLINE_MINIMUM_SECONDS
     )
     fast_timeout = max(
@@ -184,23 +191,56 @@ def _fast_online_timeout(
     return min(base.online_timeout_seconds, fast_timeout)
 
 
+def _pcm_roles(
+    case: MatrixCase, candidate_pcm_role: str
+) -> tuple[str | None, str | None]:
+    if candidate_pcm_role not in PCM_ROLES:
+        raise ValueError("invalid candidate PCM role")
+    if case.profile.family not in PCM_FAMILIES:
+        return None, None
+    selected = candidate_pcm_role
+    if selected == PCM_ROLE_BY_CALL:
+        selected = "analog" if case.candidate_originates else "digital"
+    baseline = "analog" if selected == "digital" else "digital"
+    return selected, baseline
+
+
+def _selected_rates(
+    case: MatrixCase, candidate_pcm_role: str | None
+) -> tuple[EndpointRates, EndpointRates]:
+    if candidate_pcm_role is None:
+        return case.candidate_rates, case.baseline_rates
+    receive_rate = case.profile.receive_rate
+    transmit_rate = case.profile.transmit_rate
+    if receive_rate is None or transmit_rate is None:
+        raise ValueError("PCM profiles need exact directional rates")
+    analog_rates = EndpointRates(receive_rate, transmit_rate)
+    digital_rates = EndpointRates(transmit_rate, receive_rate)
+    if candidate_pcm_role == "digital":
+        return digital_rates, analog_rates
+    return analog_rates, digital_rates
+
+
 def case_config(
-    base: InteropConfig, case: MatrixCase, link_mode: str = "raw"
+    base: InteropConfig,
+    case: MatrixCase,
+    link_mode: str = "raw",
+    candidate_pcm_role: str = PCM_ROLE_BY_CALL,
 ) -> InteropConfig:
     """Bind one public matrix case to a private pair of executables."""
 
-    # PCM profiles describe an analogue originator and digital answerer.
-    # Changing call order swaps executable ownership, not those line roles.
+    candidate_role, baseline_role = _pcm_roles(case, candidate_pcm_role)
+    candidate_rates, baseline_rates = _selected_rates(case, candidate_role)
     candidate = _matrix_endpoint(
         base.originator,
         case,
-        pcm_digital=not case.candidate_originates,
+        pcm_digital=candidate_role == "digital",
         link_mode=link_mode,
     )
     baseline = _matrix_endpoint(
         base.answerer,
         case,
-        pcm_digital=case.candidate_originates,
+        pcm_digital=baseline_role == "digital",
         link_mode=link_mode,
     )
     payloads = payload_pair(case, "initial")
@@ -212,10 +252,14 @@ def case_config(
         originator, answerer = baseline, candidate
         originator_payload = payloads.baseline
         answerer_payload = payloads.candidate
+    artifact_name = (
+        case.name if link_mode == "raw" else f"{case.name}-{link_mode}"
+    )
+    if candidate_pcm_role != PCM_ROLE_BY_CALL and candidate_role is not None:
+        artifact_name = f"{artifact_name}-candidate-{candidate_role}"
     return replace(
         base,
-        artifact_directory=base.artifact_directory
-        / (case.name if link_mode == "raw" else f"{case.name}-{link_mode}"),
+        artifact_directory=base.artifact_directory / artifact_name,
         originator=originator,
         answerer=answerer,
         originator_payload=originator_payload,
@@ -223,13 +267,19 @@ def case_config(
         online_timeout_seconds=_fast_online_timeout(
             base,
             case,
+            candidate_rates,
+            baseline_rates,
             originator_payload,
             answerer_payload,
         ),
     )
 
 
-def _rates_match(result: InteropResult, case: MatrixCase) -> tuple[bool, bool]:
+def _rates_match(
+    result: InteropResult,
+    case: MatrixCase,
+    candidate_pcm_role: str | None,
+) -> tuple[bool, bool]:
     if case.candidate_originates:
         candidate = result.originator.connect_report
         baseline = result.answerer.connect_report
@@ -243,10 +293,10 @@ def _rates_match(result: InteropResult, case: MatrixCase) -> tuple[bool, bool]:
             and report.transmit_bit_rate == rates.transmit
         )
 
-    return (
-        matches(candidate, case.candidate_rates),
-        matches(baseline, case.baseline_rates),
+    candidate_rates, baseline_rates = _selected_rates(
+        case, candidate_pcm_role
     )
+    return matches(candidate, candidate_rates), matches(baseline, baseline_rates)
 
 
 def run_case(
@@ -254,11 +304,15 @@ def run_case(
     case: MatrixCase,
     ato1_endpoint: str | None = None,
     link_mode: str = "raw",
+    candidate_pcm_role: str = PCM_ROLE_BY_CALL,
     runner: CaseRunner = _run_interop,
 ) -> FastCaseResult:
     if ato1_endpoint not in (None, *ATO1_ENDPOINTS):
         raise ValueError("invalid ATO1 endpoint")
-    configured = case_config(base, case, link_mode)
+    selected_pcm_role, _ = _pcm_roles(case, candidate_pcm_role)
+    configured = case_config(
+        base, case, link_mode, candidate_pcm_role
+    )
     ato1_role = None
     post_ato1_payloads = None
     if ato1_endpoint is not None:
@@ -280,7 +334,9 @@ def run_case(
         ato1_role,
         post_ato1_payloads,
     )
-    candidate_rates, baseline_rates = _rates_match(result, case)
+    candidate_rates, baseline_rates = _rates_match(
+        result, case, selected_pcm_role
+    )
     outcome = result.outcome
     if outcome == "passed" and not candidate_rates:
         outcome = "candidate-rate-mismatch"
@@ -289,6 +345,7 @@ def run_case(
     return FastCaseResult(
         case=case,
         link_mode=link_mode,
+        candidate_pcm_role=selected_pcm_role,
         ato1_endpoint=ato1_endpoint,
         outcome=outcome,
         duration_seconds=result.duration_seconds,
@@ -334,6 +391,15 @@ def _parser() -> argparse.ArgumentParser:
             "exchange (default endpoint: candidate)"
         ),
     )
+    parser.add_argument(
+        "--candidate-pcm-role",
+        choices=PCM_ROLES,
+        default=PCM_ROLE_BY_CALL,
+        help=(
+            "select the candidate's V.90/V.92 line role independently of "
+            "call direction (default: analogue originator, digital answerer)"
+        ),
+    )
     return parser
 
 
@@ -358,6 +424,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
                 case,
                 ato1_endpoint=options.ato1,
                 link_mode=options.link_mode,
+                candidate_pcm_role=options.candidate_pcm_role,
             )
             print(json.dumps(result.public_dict(), sort_keys=True), flush=True)
             if result.outcome != "passed":

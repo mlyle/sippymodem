@@ -311,10 +311,14 @@ V.90 receive recordings can likewise be replayed from the exact G.711 RTP
 payload stream with `V90_REPLAY_RX_G711`. Select `V90_REPLAY_LAW` as `PCMU` or
 `PCMA`, `V90_REPLAY_ROLE` as `answerer` or `originator`, and describe a forced
 call with `V90_REPLAY_DOWNSTREAM_RATE`, `V90_REPLAY_UPSTREAM_RATE`, and
-`V90_REPLAY_SYMBOL_RATE`. An answered-call replay can set
+`V90_REPLAY_SYMBOL_RATE`; select `V90_REPLAY_LINK_MODE` as `raw` or `lapm`.
+By default, call direction selects the conventional analogue-originator/
+digital-answerer topology; set `V90_REPLAY_PCM_ROLE` to `analog` or `digital`
+when a recording exercises the opposite line role. An answered call or an
+explicitly digital originating call must sustain carrier. Either can set
 `V90_REPLAY_EXPECT_TEXT` to require an exact decoded terminal substring after
-CONNECT. This distinguishes a sustained carrier from a usable receive data
-path while keeping the recording itself in the external evidence store.
+CONNECT. This distinguishes a sustained carrier from a usable receive data path
+while keeping the recording itself in the external evidence store.
 
 For short local iterations, `MODEM_INTEGRATION_FILTER` selects ordinary cases
 by name and `V34_MATRIX_FILTER` selects V.34 rate-matrix cases by name. Both

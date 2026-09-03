@@ -2387,7 +2387,7 @@ static bool v34_replay_bit_rate_parse(
 	return true;
 }
 
-static bool v34_replay_link_mode_parse(const char *value, bool *lapm)
+static bool replay_link_mode_parse(const char *value, bool *lapm)
 {
 	if (lapm == NULL)
 		return false;
@@ -2469,7 +2469,7 @@ static bool run_v34_recording_replay(
 	CHECK(v34_replay_bit_rate_parse(bit_rate_value, &bit_rate) &&
 		      v34_replay_symbol_rate_parse(
 			      symbol_rate_value, &symbol_rate) &&
-		      v34_replay_link_mode_parse(link_mode_value, &lapm) &&
+		      replay_link_mode_parse(link_mode_value, &lapm) &&
 		      v34_replay_sample_parse(
 			      retrain_sample_value, &retrain_sample),
 		      "optional V.34 recording replay parameter is invalid");
@@ -2849,6 +2849,26 @@ static bool v90_replay_role_parse(const char *value, bool *originator)
 	return false;
 }
 
+static bool v90_replay_pcm_role_parse(
+	const char *value, bool originator, enum v90_modem_role *role)
+{
+	if (role == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0' || strcmp(value, "by-call") == 0) {
+		*role = originator ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM;
+		return true;
+	}
+	if (strcmp(value, "analog") == 0) {
+		*role = V90_ANALOG_MODEM;
+		return true;
+	}
+	if (strcmp(value, "digital") == 0) {
+		*role = V90_DIGITAL_MODEM;
+		return true;
+	}
+	return false;
+}
+
 struct v90_replay_profile {
 	unsigned int downstream_rate;
 	unsigned int upstream_rate;
@@ -2878,6 +2898,7 @@ static bool v90_replay_unsigned_parse(
 static bool v90_replay_profile_parse(
 	const char *downstream_value, const char *upstream_value,
 	const char *symbol_value, enum g711_law law, bool originator,
+	enum v90_modem_role pcm_role,
 	struct v90_replay_profile *profile)
 {
 	struct v90_replay_profile selected;
@@ -2899,8 +2920,7 @@ static bool v90_replay_profile_parse(
 		.maximum_symbol_rate = selected.symbol_rate,
 	};
 	if (v90_profile_init(
-		    &configuration,
-		    originator ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, law,
+		    &configuration, pcm_role, law,
 		    selected.downstream_rate, selected.downstream_rate,
 		    &upstream) != V90_PROFILE_OK)
 		return false;
@@ -2910,21 +2930,31 @@ static bool v90_replay_profile_parse(
 
 static bool run_v90_recording_replay(
 	const char *path, enum media_codec codec, bool originator,
+	enum v90_modem_role pcm_role,
 	const char *downstream_value, const char *upstream_value,
-	const char *symbol_value, const char *expected_text)
+	const char *symbol_value, const char *link_mode_value,
+	const char *expected_text)
 {
 	enum { MINIMUM_ONLINE_SAMPLES = 3200 };
 	static const char *const common_commands[] = {
 		"ATZ\r",
 		"ATE0\r",
 		"ATX3\r",
+	};
+	static const char *const raw_commands[] = {
 		"AT\\N0\r",
 		"AT+DS=0,0\r",
+	};
+	static const char *const lapm_commands[] = {
+		"AT+DS=3,1\r",
+		"AT\\N4\r",
 	};
 	static const char analog_command[] = "AT+V90D=0\r";
 	static const char digital_command[] = "AT+V90D=1\r";
 	static const char dial_command[] = "ATDpeer\r";
-	const char *commands[ARRAY_LENGTH(common_commands) + 3u];
+	const char *commands[
+		ARRAY_LENGTH(common_commands) + ARRAY_LENGTH(raw_commands) + 3u];
+	const char *const *link_commands;
 	char downstream_command[48];
 	char upstream_command[48];
 	int downstream_command_length;
@@ -2940,18 +2970,20 @@ static bool run_v90_recording_replay(
 	size_t connected_at = SIZE_MAX;
 	bool v8_seen = false;
 	bool expected_text_seen = false;
+	bool lapm;
 	size_t expected_text_length =
 		expected_text != NULL ? strlen(expected_text) : 0;
+	bool require_carrier = !originator || pcm_role == V90_DIGITAL_MODEM ||
+			       expected_text_length != 0;
 
 	CHECK(codec_law(codec, &law) &&
+		      replay_link_mode_parse(link_mode_value, &lapm) &&
 		      v90_replay_profile_parse(
 			      downstream_value, upstream_value, symbol_value,
-			      law, originator, &profile),
+			      law, originator, pcm_role, &profile),
 		      "optional V.90 G.711 recording profile is invalid");
 	CHECK(expected_text_length < sizeof(endpoint.output),
 	      "optional V.90 recording replay text is too long");
-	CHECK(!originator || expected_text_length == 0,
-	      "outgoing V.90 V.8 replay cannot require terminal text");
 	downstream_command_length = snprintf(
 		downstream_command, sizeof(downstream_command),
 		"AT+MS=90,0,%u,%u\r", profile.downstream_rate,
@@ -2970,10 +3002,16 @@ static bool run_v90_recording_replay(
 	      "optional V.90 G.711 recording could not be loaded");
 	for (size_t index = 0; index < ARRAY_LENGTH(common_commands); ++index)
 		commands[index] = common_commands[index];
-	commands[ARRAY_LENGTH(common_commands)] =
-		originator ? analog_command : digital_command;
-	commands[ARRAY_LENGTH(common_commands) + 1u] = downstream_command;
-	commands[ARRAY_LENGTH(common_commands) + 2u] = upstream_command;
+	link_commands = lapm ? lapm_commands : raw_commands;
+	for (size_t index = 0; index < ARRAY_LENGTH(raw_commands); ++index)
+		commands[ARRAY_LENGTH(common_commands) + index] =
+			link_commands[index];
+	commands[ARRAY_LENGTH(common_commands) + ARRAY_LENGTH(raw_commands)] =
+		pcm_role == V90_DIGITAL_MODEM ? digital_command : analog_command;
+	commands[ARRAY_LENGTH(common_commands) + ARRAY_LENGTH(raw_commands) + 1u] =
+		downstream_command;
+	commands[ARRAY_LENGTH(common_commands) + ARRAY_LENGTH(raw_commands) + 2u] =
+		upstream_command;
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK &&
 		      endpoint_init(&endpoint, "V.90 recording replay") &&
 		      configure_recording_replay(
@@ -3053,7 +3091,7 @@ static bool run_v90_recording_replay(
 	CHECK(expected_text_length == 0 || expected_text_seen,
 	      "V.90 recording did not reproduce expected text '%s'",
 	      expected_text != NULL ? expected_text : "");
-	if (originator) {
+	if (!require_carrier) {
 		/* A recording captured from a peer that never received CJ cannot
 		 * contain the interactive Phase 2 response to a repaired caller.
 		 * It can still independently prove ANSam/JM acceptance and the
@@ -3147,16 +3185,21 @@ int main(void)
 		getenv("V90_REPLAY_LAW");
 	const char *v90_recording_role =
 		getenv("V90_REPLAY_ROLE");
+	const char *v90_recording_pcm_role =
+		getenv("V90_REPLAY_PCM_ROLE");
 	const char *v90_recording_downstream_rate =
 		getenv("V90_REPLAY_DOWNSTREAM_RATE");
 	const char *v90_recording_upstream_rate =
 		getenv("V90_REPLAY_UPSTREAM_RATE");
 	const char *v90_recording_symbol_rate =
 		getenv("V90_REPLAY_SYMBOL_RATE");
+	const char *v90_recording_link_mode =
+		getenv("V90_REPLAY_LINK_MODE");
 	const char *v90_recording_expected_text =
 		getenv("V90_REPLAY_EXPECT_TEXT");
 	enum media_codec v90_replay_codec;
 	bool v90_replay_originator;
+	enum v90_modem_role v90_replay_pcm_role;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
 		{
@@ -3564,15 +3607,19 @@ int main(void)
 	} else if (!v90_replay_codec_parse(
 			   v90_recording_law, &v90_replay_codec) ||
 		   !v90_replay_role_parse(
-			   v90_recording_role, &v90_replay_originator)) {
+			   v90_recording_role, &v90_replay_originator) ||
+		   !v90_replay_pcm_role_parse(
+			   v90_recording_pcm_role, v90_replay_originator,
+			   &v90_replay_pcm_role)) {
 		fprintf(stderr, "invalid V.90 recording replay configuration\n");
 		return 1;
 	} else if (!run_v90_recording_replay(
 			   v90_recording_path, v90_replay_codec,
-			   v90_replay_originator,
+			   v90_replay_originator, v90_replay_pcm_role,
 			   v90_recording_downstream_rate,
 			   v90_recording_upstream_rate,
 			   v90_recording_symbol_rate,
+			   v90_recording_link_mode,
 			   v90_recording_expected_text)) {
 		return 1;
 	}
