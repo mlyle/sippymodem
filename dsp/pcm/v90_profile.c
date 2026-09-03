@@ -31,6 +31,7 @@ struct v90_upstream_selection {
 	uint8_t maximum_rate_2400_bps_units;
 	enum v34_symbol_rate symbol_rate;
 	bool custom;
+	bool suppress_optional_info1d_3429;
 };
 
 static struct v90_info0 analog_info0(void)
@@ -96,8 +97,9 @@ static struct v34_info1c digital_info1(
 		 * 3200 symbols/s.  The configured symbol-rate ceiling selects the
 		 * analogue modem's INFO1a preference; it must not withdraw the
 		 * mandatory 3200 fallback from digital INFO1d. */
-		if (upstream->custom && rate == V34_SYMBOL_RATE_3429 &&
-		    rate > (size_t)upstream->symbol_rate)
+		if (rate == V34_SYMBOL_RATE_3429 &&
+		    (upstream->suppress_optional_info1d_3429 ||
+		     (upstream->custom && rate > (size_t)upstream->symbol_rate)))
 			projected = 0;
 		info1.answer_transmit[rate] =
 			(struct v34_info1_probe_result){
@@ -159,10 +161,15 @@ static enum v90_profile_result select_upstream(
 
 	if (selection == NULL)
 		return V90_PROFILE_INVALID_ARGUMENT;
-	if (policy == NULL ||
-	    (policy->minimum_bit_rate == 0 &&
+	if (policy == NULL) {
+		*selection = selected;
+		return V90_PROFILE_OK;
+	}
+	selected.suppress_optional_info1d_3429 =
+		policy->suppress_optional_info1d_3429;
+	if (policy->minimum_bit_rate == 0 &&
 	     policy->maximum_bit_rate == 0 &&
-	     policy->maximum_symbol_rate == 0)) {
+	     policy->maximum_symbol_rate == 0) {
 		*selection = selected;
 		return V90_PROFILE_OK;
 	}

@@ -29,6 +29,7 @@ struct v90_datapump {
 	enum pcm_protocol protocol;
 	enum g711_law media_law;
 	uint8_t maximum_pcm_upstream_data_rate_number;
+	bool caller;
 	bool call_started;
 	bool fallback_ready;
 	bool host_echo_margin_evaluated;
@@ -201,6 +202,7 @@ static struct dp *create_v90(
 		return NULL;
 	datapump->role = role;
 	datapump->protocol = protocol;
+	datapump->caller = caller != 0;
 	datapump->maximum_pcm_upstream_data_rate_number =
 		maximum_pcm_upstream_data_rate_number;
 	if (protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) {
@@ -420,6 +422,15 @@ static bool start_call(
 			datapump->dp.modem->v90_upstream_max_rate,
 		.maximum_symbol_rate =
 			datapump->dp.modem->v90_upstream_max_baud,
+		/* 3429 symbols/s is optional at both PCM endpoints.  A physical
+		 * analogue answerer in the interoperability corpus advertises it in
+		 * INFO0a but selects conventional V.34 whenever a digital caller's
+		 * INFO1d includes that probe.  Keep the mandatory 3000/3200 probes
+		 * and all ordinary digital-answerer behavior unchanged. */
+		.suppress_optional_info1d_3429 =
+			datapump->protocol == PCM_PROTOCOL_V90 &&
+			datapump->role == V90_DIGITAL_MODEM &&
+			datapump->caller,
 	};
 
 	if (datapump->call_started)

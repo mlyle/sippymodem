@@ -6,6 +6,8 @@
 #include "pcm_call.h"
 #include "pcm_rate.h"
 
+#include <stdbool.h>
+
 enum {
 	V90_PROFILE_MIN_DOWNSTREAM_BIT_RATE = 28000,
 	V90_PROFILE_MAX_DOWNSTREAM_BIT_RATE = 56000,
@@ -17,6 +19,9 @@ struct v90_upstream_policy {
 	unsigned int maximum_bit_rate;
 	/* Analogue INFO1a selection; digital INFO1d retains mandatory rates. */
 	unsigned int maximum_symbol_rate;
+	/* A digital station may omit the optional 3429-symbol/s INFO1d probe
+	 * without withdrawing the mandatory 3000- and 3200-symbol/s probes. */
+	bool suppress_optional_info1d_3429;
 };
 
 enum v90_profile_result {

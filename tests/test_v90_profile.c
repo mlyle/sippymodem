@@ -277,8 +277,15 @@ static bool test_upstream_policy(void)
 		.maximum_symbol_rate = 3000,
 	};
 	const uint16_t fallback_mask = UINT16_C(1) << (8u - 2u);
+	const struct v90_upstream_policy conservative_info1d = {
+		.minimum_bit_rate = 4800,
+		.maximum_bit_rate = 31200,
+		.maximum_symbol_rate = 3429,
+		.suppress_optional_info1d_3429 = true,
+	};
 	struct pcm_call_configuration analog;
 	struct pcm_call_configuration digital;
+	struct pcm_call_configuration conservative_digital;
 	struct pcm_call_configuration fallback_analog;
 	struct pcm_call_configuration fallback_digital;
 	struct pcm_call_configuration rejected;
@@ -353,6 +360,24 @@ static bool test_upstream_policy(void)
 	      fallback_digital.digital_phase4.initial_mp.parameters.type0
 		      .upstream_rate_capability_mask == fallback_mask,
 	      "3000-symbol/s preference withdrew mandatory 3200 fallback");
+	CHECK(v90_profile_init(
+		      &conservative_digital, V90_DIGITAL_MODEM,
+		      G711_LAW_PCMU, 28000, 56000,
+		      &conservative_info1d) == V90_PROFILE_OK &&
+	      conservative_digital.local_info0.digital.common
+		      .symbol_rate_3429_supported &&
+	      conservative_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3000]
+		      .projected_data_rate_2400_bps_units == 12 &&
+	      conservative_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3200]
+		      .projected_data_rate_2400_bps_units == 13 &&
+	      conservative_digital.local_info1.digital
+		      .answer_transmit[V34_SYMBOL_RATE_3429]
+		      .projected_data_rate_2400_bps_units == 0 &&
+	      conservative_digital.digital_phase4.initial_mp.parameters.type0
+		      .maximum_upstream_rate_2400_bps_units == 13,
+	      "conservative INFO1d policy changed mandatory upstream rates");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	saved = rejected;
 	CHECK(v90_profile_init(
