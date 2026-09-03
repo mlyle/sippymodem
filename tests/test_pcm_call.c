@@ -2273,6 +2273,7 @@ static bool run_rate_renegotiation_case(
 	uint32_t prior_transmit_rate;
 	uint32_t prior_receive_rate;
 	uint32_t expected_deadline;
+	double online_adaptation;
 	bool initially_online = false;
 	bool renegotiation_started = false;
 	bool deadline_started = false;
@@ -2311,6 +2312,8 @@ static bool run_rate_renegotiation_case(
 	received_before = digital.upstream_frames;
 	old_data_mapping =
 		digital.call.state.data_path.digital.data_mapping;
+	online_adaptation = digital.call.state.data_path.digital.upstream.data
+		.equalizer_receiver.adaptation;
 	control_before =
 		digital.call.state.data_path.digital.control_symbols;
 	CHECK(pcm_call_get_data_rates(
@@ -2404,6 +2407,10 @@ static bool run_rate_renegotiation_case(
 		      v90_cp_receiver_init(&reset_records) == V90_CP_OK &&
 		      resumed.symbols.constellation ==
 			      rate_renegotiation_constellation &&
+		      resumed.adaptation == online_adaptation &&
+		      resumed.tap_adaptation_held ==
+			      (rate_renegotiation_constellation ==
+			       V34_CONSTELLATION_16_POINT) &&
 		      memcmp(&resumed.symbols.descrambler,
 			     &path->control_symbols.descrambler,
 			     sizeof(resumed.symbols.descrambler)) == 0 &&
@@ -2448,20 +2455,6 @@ static bool run_rate_renegotiation_case(
 			digital.call.stage == PCM_CALL_DATA_PATH &&
 			digital.call.state.data_path.digital
 				.rate_renegotiation_active;
-	}
-	if (rate_renegotiation_constellation ==
-	    V34_CONSTELLATION_16_POINT) {
-		CHECK(!renegotiation_started &&
-		      digital.call.stage == PCM_CALL_RETRAIN_SILENCE &&
-		      digital.call.retrain_active &&
-		      !digital.call.rate_renegotiation_deadline_armed &&
-		      digital.call.rate_renegotiation_deadline_remaining_samples ==
-			      0u &&
-		      pcm_call_is_valid(&digital.call) &&
-		      !pcm_call_has_failed(&digital.call),
-		      "law %u unsupported 16-point RRN did not enter full retrain",
-		      (unsigned int)law);
-		return true;
 	}
 	CHECK(v90_cp_receiver_init(&reset_parser) == V90_CP_OK,
 	      "law %u rate-renegotiation parser fixture failed",
@@ -2667,6 +2660,8 @@ static bool run_rate_renegotiation_case(
 		      V90_DIGITAL_PATH_DOWNSTREAM_DATA &&
 	      digital.call.state.data_path.digital.upstream_stage ==
 		      V90_DIGITAL_PATH_UPSTREAM_DATA &&
+	      digital.call.state.data_path.digital.upstream.data
+		      .equalizer_receiver.adaptation == online_adaptation &&
 	      digital.downstream_source.frames > downstream_before &&
 	      analog.upstream_source.frames > transmitted_before &&
 	      digital.upstream_frames == received_before &&
@@ -3011,13 +3006,13 @@ static bool test_paired_remote_rate_renegotiation(void)
 	return true;
 }
 
-static bool test_rate_renegotiation_16_point_fallback(void)
+static bool test_rate_renegotiation_16_point_completion(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
 		CHECK(run_rate_renegotiation_case(
 			      law, V34_CONSTELLATION_16_POINT),
-		      "law %u 16-point rate-renegotiation fallback failed",
+		      "law %u 16-point rate-renegotiation completion failed",
 		      (unsigned int)law);
 	return true;
 }
@@ -4029,8 +4024,8 @@ int main(void)
 		  test_rate_renegotiation_completion },
 		{ "paired V.90 remote rate renegotiation",
 		  test_paired_remote_rate_renegotiation },
-		{ "16-point rate renegotiation falls back to full retrain",
-		  test_rate_renegotiation_16_point_fallback },
+		{ "16-point rate renegotiation completes in place",
+		  test_rate_renegotiation_16_point_completion },
 		{ "unusable retrain selection restarts full training",
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },

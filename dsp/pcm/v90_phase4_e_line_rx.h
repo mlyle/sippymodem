@@ -35,6 +35,7 @@ struct v90_phase4_e_line_rx {
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters cp;
 	double adaptation;
+	bool tap_adaptation_held;
 	bool failed;
 };
 

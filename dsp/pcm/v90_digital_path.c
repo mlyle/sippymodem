@@ -518,12 +518,6 @@ static enum v90_digital_path_result begin_rate_renegotiation(
 	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
 	    path->upstream_rate_2400_bps_units == 0u)
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
-	/* The 16-point online handoff does not yet retain sufficient equalizer
-	 * quality for a reliable B1/data restart. Report a bounded RRN event
-	 * without entering the in-place owner so pcm_call selects full retrain. */
-	if (path->rate_renegotiation_constellation !=
-	    V34_CONSTELLATION_4_POINT)
-		return V90_DIGITAL_PATH_RATE_RENEGOTIATION;
 	preceding_data =
 		&path->downstream.data.transmitter.encoder.mapping;
 	if (v90_pcm_mapping_init_rate_renegotiation(

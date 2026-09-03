@@ -127,6 +127,11 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_resume_online(
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	resumed.transmitting_profile = online->transmitting_profile;
 	resumed.adaptation = online->equalizer_receiver.adaptation;
+	/* A radial decision error in 16-point CP/E can pull the already-trained
+	 * online equalizer off the channel. Retain its taps through this bounded
+	 * control epoch; zero adaptation still permits carrier phase correction. */
+	resumed.tap_adaptation_held =
+		constellation == V34_CONSTELLATION_16_POINT;
 	if (!v90_phase4_cp_line_rx_is_valid(&resumed))
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	*rx = resumed;
@@ -214,7 +219,8 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		    clockwise_quarter_turns, &emitted) != V90_CP_OK ||
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
-		    next.adaptation) != QAM_EQUALIZER_OK)
+		    next.tap_adaptation_held ? 0.0 : next.adaptation) !=
+		    QAM_EQUALIZER_OK)
 		return fail_sample(rx, &next);
 	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
 		next.record_pending = true;

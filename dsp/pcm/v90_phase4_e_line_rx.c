@@ -65,6 +65,8 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
 	initialized.transmitting_profile =
 		completed_cp->transmitting_profile;
 	initialized.adaptation = completed_cp->adaptation;
+	initialized.tap_adaptation_held =
+		completed_cp->tap_adaptation_held;
 	initialized.symbols = (struct v34_phase4_e_receiver){
 		.descrambler = completed_cp->symbols.descrambler,
 		.transmitting_role =
@@ -142,7 +144,8 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_sample(
 		    V34_CONSTELLATION_OK ||
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
-		    next.adaptation) != QAM_EQUALIZER_OK)
+		    next.tap_adaptation_held ? 0.0 : next.adaptation) !=
+		    QAM_EQUALIZER_OK)
 		return fail_sample(
 			rx, &next, V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE);
 	symbol_result = v34_phase4_e_receive_decision(
