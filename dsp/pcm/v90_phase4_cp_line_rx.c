@@ -7,6 +7,8 @@
 
 #include <stddef.h>
 
+static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
+
 bool v90_phase4_cp_line_rx_is_valid(
 	const struct v90_phase4_cp_line_rx *rx)
 {
@@ -219,7 +221,9 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		    clockwise_quarter_turns, &emitted) != V90_CP_OK ||
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
-		    next.tap_adaptation_held ? 0.0 : next.adaptation) !=
+		    next.tap_adaptation_held ? 0.0 :
+			    next.adaptation *
+				    V90_PHASE4_CONTROL_ADAPTATION_SCALE) !=
 		    QAM_EQUALIZER_OK)
 		return fail_sample(rx, &next);
 	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {

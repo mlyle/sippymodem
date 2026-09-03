@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
+
 static bool cp_is_final(const struct v90_cp_parameters *cp)
 {
 	return v90_cp_parameters_are_valid(cp) &&
@@ -144,7 +146,9 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_sample(
 		    V34_CONSTELLATION_OK ||
 	    qam_equalizer_adapt_observation(
 		    &next.equalizer, &observation, &target,
-		    next.tap_adaptation_held ? 0.0 : next.adaptation) !=
+		    next.tap_adaptation_held ? 0.0 :
+			    next.adaptation *
+				    V90_PHASE4_CONTROL_ADAPTATION_SCALE) !=
 		    QAM_EQUALIZER_OK)
 		return fail_sample(
 			rx, &next, V90_PHASE4_E_LINE_RX_NUMERIC_FAILURE);

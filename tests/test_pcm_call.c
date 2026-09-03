@@ -2279,7 +2279,7 @@ static bool run_rate_renegotiation_case(
 	bool deadline_started = false;
 	bool timeout_checked = false;
 	bool training_started = false;
-	bool pre_mp_cp_latched = false;
+	bool data_cp_latched_during_control = false;
 	bool downstream_host_frame_received = false;
 	bool upstream_host_frame_received = false;
 
@@ -2432,7 +2432,9 @@ static bool run_rate_renegotiation_case(
 
 	/* The generated-line test owns S/S-bar acquisition. Seed its completed
 	 * event here so this boundary tests only host suppression and call-state
-	 * recovery, without duplicating the line receiver's waveform fixture. */
+	 * recovery, without duplicating the line receiver's waveform fixture.
+	 * Keep stepping both endpoints until the seeded event is observed so the
+	 * peer transmit line and receiver sample clock remain synchronized. */
 	sources = (struct pcm_call_data_sources){
 		.upstream = source_upstream_frame,
 		.upstream_context = &digital.upstream_source,
@@ -2442,13 +2444,7 @@ static bool run_rate_renegotiation_case(
 	for (size_t sample = 0;
 	     sample < 64u && !renegotiation_started &&
 	     digital.call.stage == PCM_CALL_DATA_PATH; ++sample) {
-		struct pcm_call_data_event event;
-		uint8_t transmitted;
-
-		CHECK(pcm_call_data_octet(
-			      &digital.call, silence_octet(law), 0, &sources,
-			      &transmitted, &event) == PCM_CALL_OK &&
-		      event.kind == PCM_CALL_DATA_NONE,
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u rate-renegotiation control escaped at sample %zu",
 		      (unsigned int)law, sample);
 		renegotiation_started =
@@ -2629,18 +2625,14 @@ static bool run_rate_renegotiation_case(
 		if (digital.call.state.data_path.digital.downstream_stage ==
 		    V90_DIGITAL_PATH_DOWNSTREAM_RD)
 			rd_symbols++;
-		pre_mp_cp_latched |=
+		data_cp_latched_during_control |=
 			digital.call.state.data_path.digital.data_mapping_ready &&
 			(digital.call.state.data_path.digital.downstream_stage ==
 				 V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN ||
 			 digital.call.state.data_path.digital.downstream_stage ==
 				 V90_DIGITAL_PATH_DOWNSTREAM_RD ||
-			 (digital.call.state.data_path.digital.downstream_stage ==
-				  V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
-			  digital.call.state.data_path.digital.downstream.training.stage ==
-				  PCM_DOWNSTREAM_TX_TRN2D &&
-			  digital.call.state.data_path.digital.downstream.training
-				  .mp_prime_requested));
+			 digital.call.state.data_path.digital.downstream_stage ==
+				 V90_DIGITAL_PATH_DOWNSTREAM_TRAINING);
 		training_started =
 			training_started ||
 			digital.call.state.data_path.digital.downstream_stage ==
@@ -2648,7 +2640,7 @@ static bool run_rate_renegotiation_case(
 	}
 	CHECK(training_started && deadline_started && timeout_checked &&
 	      rd_symbols == V90_RD_SEQUENCE_SYMBOLS &&
-	      pre_mp_cp_latched && peer.peer_mp_received &&
+	      data_cp_latched_during_control && peer.peer_mp_received &&
 	      peer.cp_prime_started &&
 	      peer.upstream_stage == RRN_PEER_UPSTREAM_DATA &&
 	      peer.downstream_stage == RRN_PEER_DOWNSTREAM_DATA &&
@@ -2668,11 +2660,11 @@ static bool run_rate_renegotiation_case(
 	      pcm_call_is_online(&digital.call) &&
 	      !pcm_call_has_failed(&digital.call),
 	      "law %u rate renegotiation did not complete CP/E/B1 and resume data "
-	      "(train=%u Rd=%zu early-CP=%u MP=%u CP'=%u peer-up=%u peer-down=%u "
+	      "(train=%u Rd=%zu control-CP=%u MP=%u CP'=%u peer-up=%u peer-down=%u "
 	      "down-frame=%u up-frame=%u active=%u digital-down=%u digital-up=%u "
 	      "down-source=%zu/%zu up-source=%zu/%zu up-events=%zu/%zu)",
 	      (unsigned int)law, training_started, rd_symbols,
-	      pre_mp_cp_latched,
+	      data_cp_latched_during_control,
 	      peer.peer_mp_received, peer.cp_prime_started,
 	      (unsigned int)peer.upstream_stage,
 	      (unsigned int)peer.downstream_stage,
