@@ -438,12 +438,23 @@ static bool map_common_event(
 		event->kind = PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT;
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
-		if (!pcm_phase2_info1_retry_pending(exchange))
+		return true;
+	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
+		/* V.90 9.2.1.2.6 permits one INFO1d retransmission after
+		 * INFOMARKSa; a repeated request starts a full retrain. */
+		if (exchange->protocol != PCM_PROTOCOL_V90 ||
+		    exchange->control.signal_role != PHASE2_SIGNAL_B ||
+		    exchange->control.phase != PHASE2_INFO1_RECOVERING)
 			return true;
-		if (phase2_info1_repeat_signal_b(&exchange->control) !=
-		    PHASE2_INFO1_OK)
-			return false;
-		exchange->info1d_resends++;
+		if (!pcm_phase2_info1_retry_pending(exchange))
+			event->kind =
+				PCM_PHASE2_INFO1_EVENT_RETRAIN_REQUESTED;
+		else {
+			if (phase2_info1_repeat_signal_b(&exchange->control) !=
+			    PHASE2_INFO1_OK)
+				return false;
+			exchange->info1d_resends++;
+		}
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_FRAME_PENDING:
 		return resolve_peer_frame(exchange, &common->frame_event, event);

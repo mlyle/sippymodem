@@ -384,7 +384,9 @@ static bool receive_peer_frame(
 	    V34_PHASE2_INFO_AUDIO_OK)
 		return false;
 	event->frame_event = frame;
-	if (frame.type == V34_PHASE2_INFO_FRAME_REJECTED)
+	if (frame.info_marks)
+		event->kind = PHASE2_INFO1_EVENT_PEER_INFOMARKS;
+	else if (frame.type == V34_PHASE2_INFO_FRAME_REJECTED)
 		event->kind = PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED;
 	else if (frame.type == V34_PHASE2_INFO_FRAME_RECEIVED) {
 		exchange->phase = PHASE2_INFO1_PEER_FRAME_PENDING;

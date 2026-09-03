@@ -1269,6 +1269,8 @@ static enum pcm_call_result advance_phase2(
 
 	if (event->kind == PCM_PHASE2_EVENT_FAILED)
 		return PCM_CALL_FAILED;
+	if (event->kind == PCM_PHASE2_EVENT_RETRAIN_REQUESTED)
+		return begin_retrain(call, false);
 	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
 		struct pcm_startup_selection startup;
 
@@ -1371,9 +1373,10 @@ static enum pcm_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct pcm_call *call)
 {
-	/* V.90 9.3 and 9.4 require a modem to honor the peer's Tone A/B full-
-	 * retrain request during both final training phases.  The detector's
-	 * silence preamble distinguishes that request from ordinary training. */
+	/* V.90 requires a modem to honor the peer's Tone A/B full-retrain
+	 * request during INFO1 recovery, final training, and online operation.
+	 * The detector's silence preamble distinguishes that request from
+	 * ordinary training. */
 	if (call->stage == PCM_CALL_PHASE3 ||
 	    call->stage == PCM_CALL_PHASE3_MIXED)
 		return true;
@@ -1381,13 +1384,11 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 		return true;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return data_path_is_online_owned(call);
-	return call->stage == PCM_CALL_PHASE2 &&
-	       call->retrain_active &&
+	return call->protocol == PCM_PROTOCOL_V90 &&
+	       call->stage == PCM_CALL_PHASE2 &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
 	       call->state.phase2.state.info1.control.phase ==
-		       PHASE2_INFO1_RECOVERING &&
-	       !pcm_phase2_info1_retry_pending(
-		       &call->state.phase2.state.info1);
+		       PHASE2_INFO1_RECOVERING;
 }
 
 static enum pcm_call_result sample_retrain_detector(

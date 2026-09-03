@@ -48,6 +48,9 @@ struct v34_phase2_info_event {
 	enum v34_phase2_info_event_type type;
 	uint8_t payload[V34_PHASE2_INFO_MAX_PAYLOAD_BYTES];
 	size_t payload_bit_count;
+	/* Set by the audio receiver after a qualified run of unframed DPSK
+	 * marks.  Frame-only users may ignore this independent observation. */
+	bool info_marks;
 };
 
 enum v34_phase2_info_receive_stage {

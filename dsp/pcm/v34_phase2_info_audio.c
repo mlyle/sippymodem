@@ -116,10 +116,12 @@ bool v34_phase2_info_audio_receiver_is_valid(
 {
 	if (receiver == NULL ||
 	    !v34_phase2_dpsk_receiver_is_valid(&receiver->modulation) ||
-	    !v34_phase2_info_receiver_is_valid(&receiver->frame))
+	    !v34_phase2_info_receiver_is_valid(&receiver->frame) ||
+	    receiver->consecutive_mark_bits >= V34_PHASE2_INFO_MARKS_BITS)
 		return false;
 	if (receiver->frame.stage != V34_PHASE2_INFO_SEARCH_SYNC)
-		return receiver->handoff_delay_samples == 0;
+		return receiver->handoff_delay_samples == 0 &&
+		       receiver->consecutive_mark_bits == 0;
 	return receiver->samples_since_sync == 0 &&
 	       receiver->handoff_delay_samples <=
 		       V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES;
@@ -172,6 +174,18 @@ v34_phase2_info_audio_receiver_sample(
 		     &next.frame, bit, &emitted) !=
 		     V34_PHASE2_INFO_OK))
 		return V34_PHASE2_INFO_AUDIO_INVALID_ARGUMENT;
+	if (bit_ready) {
+		if (stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
+		    next.frame.stage == V34_PHASE2_INFO_SEARCH_SYNC && bit != 0u) {
+			if (++next.consecutive_mark_bits ==
+			    V34_PHASE2_INFO_MARKS_BITS) {
+				emitted.info_marks = true;
+				next.consecutive_mark_bits = 0;
+			}
+		} else {
+			next.consecutive_mark_bits = 0;
+		}
+	}
 	if (stage_before == V34_PHASE2_INFO_SEARCH_SYNC &&
 	    next.frame.stage != V34_PHASE2_INFO_SEARCH_SYNC) {
 		next.samples_since_sync = 0;

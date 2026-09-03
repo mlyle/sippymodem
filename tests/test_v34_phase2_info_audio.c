@@ -252,6 +252,47 @@ static bool test_g711_frame_recovery(void)
 		       TEST_CODEC_PCMA);
 }
 
+static bool test_info_marks_detection(void)
+{
+	struct v34_phase2_dpsk_transmitter transmitter;
+	struct v34_phase2_info_audio_receiver receiver;
+	unsigned int detections = 0;
+
+	CHECK(v34_phase2_dpsk_transmitter_init(
+		      &transmitter, V34_ANSWERING_STATION,
+		      TEST_AMPLITUDE) == V34_PHASE2_DPSK_OK &&
+	      v34_phase2_info_audio_receiver_init(
+		      &receiver, V34_CALLING_STATION,
+		      TEST_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+	      "INFO marks endpoints did not initialize");
+	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		struct v34_phase2_info_event event;
+		uint8_t marks_before = receiver.consecutive_mark_bits;
+		int16_t sample;
+		bool bit_accepted;
+
+		CHECK(v34_phase2_dpsk_transmitter_sample(
+			      &transmitter, 1, &sample, &bit_accepted) ==
+			      V34_PHASE2_DPSK_OK &&
+		      v34_phase2_info_audio_receiver_sample(
+			      &receiver, sample, &event) ==
+			      V34_PHASE2_INFO_AUDIO_OK &&
+		      event.type == V34_PHASE2_INFO_NO_EVENT,
+		      "INFO marks path failed at sample %zu", index);
+		if (!event.info_marks)
+			continue;
+		CHECK(marks_before == V34_PHASE2_INFO_MARKS_BITS - 1u &&
+		      receiver.consecutive_mark_bits == 0,
+		      "INFO marks qualified away from the exact bit boundary");
+		if (++detections == 2u)
+			break;
+	}
+	CHECK(detections == 2u &&
+	      receiver.frame.stage == V34_PHASE2_INFO_SEARCH_SYNC,
+	      "continuous INFO marks did not produce bounded indications");
+	return true;
+}
+
 struct test_following_tone {
 	uint32_t carrier_phase;
 	uint32_t carrier_step;
@@ -576,6 +617,10 @@ static bool test_validation(void)
 	      "Phase 2 INFO receiver accepted an unbounded handoff delay");
 	receiver.handoff_delay_samples =
 		V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES;
+	receiver.consecutive_mark_bits = V34_PHASE2_INFO_MARKS_BITS;
+	CHECK(!v34_phase2_info_audio_receiver_is_valid(&receiver),
+	      "Phase 2 INFO receiver accepted an unbounded mark run");
+	receiver.consecutive_mark_bits = 0;
 	memcpy(receiver_snapshot, &receiver, sizeof(receiver_snapshot));
 	CHECK(v34_phase2_info_audio_receiver_sample(
 		      &receiver, 0, NULL) ==
@@ -608,6 +653,7 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional transmission", test_bidirectional_transmission },
 		{ "G.711 frame recovery", test_g711_frame_recovery },
+		{ "INFO marks detection", test_info_marks_detection },
 		{ "receiver handoff delay", test_receiver_handoff_delay },
 		{ "validation", test_validation },
 	};

@@ -1082,7 +1082,7 @@ static bool call_is_in_info1_exchange(const struct pcm_call *call)
 		       &call->state.phase2.state.info1);
 }
 
-static bool force_unowned_info1_recovery(
+static bool force_initial_info1_recovery(
 	struct pcm_call *call, enum g711_law law)
 {
 	struct pcm_phase2_info1_exchange *exchange;
@@ -1105,41 +1105,34 @@ static bool force_unowned_info1_recovery(
 	if (exchange->control.phase != PHASE2_INFO1_FAILED ||
 	    phase2_info1_recover(&exchange->control) != PHASE2_INFO1_OK)
 		return false;
-	/* The calling-side retry is already protected while its retained first
-	 * INFO1d is pending.  Model the subsequent recovery after that one bounded
-	 * resend, which is the unowned state that previously armed retrain. */
-	if (exchange->control.signal_role == PHASE2_SIGNAL_B)
-		exchange->info1d_resends = 1u;
 	return exchange->control.phase == PHASE2_INFO1_RECOVERING &&
-	       !pcm_phase2_info1_retry_pending(exchange) &&
 	       pcm_call_is_valid(call);
 }
 
-static bool call_is_in_unowned_info1_recovery(const struct pcm_call *call)
+static bool call_is_in_initial_info1_recovery(const struct pcm_call *call)
 {
 	return call_is_in_info1_exchange(call) && !call->retrain_active &&
 	       call->state.phase2.state.info1.control.phase ==
-		       PHASE2_INFO1_RECOVERING &&
-	       !pcm_phase2_info1_retry_pending(
-		       &call->state.phase2.state.info1);
+		       PHASE2_INFO1_RECOVERING;
 }
 
-static bool initial_info1_ignores_retrain_tone(
+static bool initial_info1_accepts_retrain_tone(
 	struct pcm_call *call, enum g711_law law)
 {
 	enum v34_station_role local_role =
 		call->local_role == V90_ANALOG_MODEM ?
 			V34_ANSWERING_STATION : V34_CALLING_STATION;
+	union pcm_info0_record peer_info0 = call->peer_info0;
 	struct v34_phase2_tone_transmitter remote_tone;
-	struct v34_retrain_detector before;
 	struct pcm_call_observation observation;
+	uint16_t round_trip_delay = call->round_trip_delay_samples;
 	int16_t trigger_sample = 0;
 	uint8_t trigger_octet = 0;
 	uint8_t transmitted;
 	bool trigger_found = false;
 	bool detected;
 
-	CHECK(call_is_in_unowned_info1_recovery(call) &&
+	CHECK(call_is_in_initial_info1_recovery(call) &&
 	      v34_retrain_detector_reset(&call->retrain_detector) ==
 		      V34_PHASE2_TONE_OK &&
 	      v34_phase2_tone_transmitter_init(
@@ -1187,26 +1180,142 @@ static bool initial_info1_ignores_retrain_tone(
 	CHECK(trigger_found && pcm_call_is_valid(call),
 	      "law %u role %u did not form an initial INFO1 retrain trigger",
 	      (unsigned int)law, (unsigned int)call->local_role);
-	before = call->retrain_detector;
 	CHECK(pcm_call_octet(
 		      call, trigger_octet, trigger_sample, &transmitted,
 		      &observation) == PCM_CALL_OK &&
 	      observation.processed == PCM_CALL_PHASE2 &&
-	      observation.next == PCM_CALL_PHASE2 &&
-	      call_is_in_unowned_info1_recovery(call) &&
-	      memcmp(&call->retrain_detector, &before, sizeof(before)) == 0 &&
+	      observation.next == PCM_CALL_RETRAIN_SILENCE &&
+	      call->stage == PCM_CALL_RETRAIN_SILENCE &&
+	      call->retrain_active && call->retrain_peer_tone_retained &&
+	      call->peer_info0_stored && call->round_trip_delay_stored &&
+	      call->round_trip_delay_samples == round_trip_delay &&
+	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
 	      pcm_call_is_valid(call),
-	      "law %u role %u treated initial INFO1 as online retrain",
+	      "law %u role %u ignored INFO1 recovery retrain tone",
 	      (unsigned int)law, (unsigned int)call->local_role);
 	return true;
 }
 
-static bool check_initial_info1_retrain_guard(enum g711_law law)
+static bool initial_info1_marks_request_retrain(
+	struct pcm_call *call, enum g711_law law)
+{
+	union pcm_info0_record peer_info0 = call->peer_info0;
+	struct v34_phase2_dpsk_transmitter marks;
+	uint16_t round_trip_delay = call->round_trip_delay_samples;
+	bool retried = false;
+	bool recovered = false;
+	bool requested = false;
+
+	CHECK(call->local_role == V90_DIGITAL_MODEM &&
+	      force_initial_info1_recovery(call, law) &&
+	      pcm_phase2_info1_retry_pending(&call->state.phase2.state.info1) &&
+	      v34_phase2_dpsk_transmitter_init(
+		      &marks, V34_ANSWERING_STATION,
+		      PHASE2_NOMINAL_AMPLITUDE) == V34_PHASE2_DPSK_OK,
+	      "law %u INFO1 marks fixture did not initialize",
+	      (unsigned int)law);
+	for (size_t index = 0; index < CALL_SAMPLE_LIMIT; ++index) {
+		struct pcm_call_observation observation;
+		int16_t remote_sample;
+		int16_t received_sample;
+		uint8_t transmitted;
+		uint8_t received;
+		bool bit_accepted;
+
+		CHECK(v34_phase2_dpsk_transmitter_sample(
+			      &marks, 1, &remote_sample, &bit_accepted) ==
+			      V34_PHASE2_DPSK_OK,
+		      "law %u INFO1 marks stopped at %zu",
+		      (unsigned int)law, index);
+		received = encode_octet(law, remote_sample);
+		received_sample = decode_octet(law, received);
+		CHECK(pcm_call_octet(
+			      call, received, received_sample, &transmitted,
+			      &observation) == PCM_CALL_OK &&
+		      call->stage == PCM_CALL_PHASE2,
+		      "law %u first INFOMARKSa stopped at %zu",
+		      (unsigned int)law, index);
+		if (call->state.phase2.state.info1.info1d_resends == 1u) {
+			retried = true;
+			break;
+		}
+	}
+	CHECK(retried &&
+	      call->state.phase2.state.info1.control.phase ==
+		      PHASE2_INFO1_TRANSMITTING,
+	      "law %u INFOMARKSa did not resend INFO1d",
+	      (unsigned int)law);
+	for (size_t index = 0; index < CALL_SAMPLE_LIMIT; ++index) {
+		struct pcm_call_observation observation;
+		uint8_t received = silence_octet(law);
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(
+			      call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      call->stage == PCM_CALL_PHASE2,
+		      "law %u repeated INFO1d stopped at %zu",
+		      (unsigned int)law, index);
+		if (call->state.phase2.state.info1.control.phase ==
+		    PHASE2_INFO1_RECOVERING) {
+			recovered = true;
+			break;
+		}
+	}
+	CHECK(recovered &&
+	      call->state.phase2.state.info1.info1d_resends == 1u &&
+	      v34_phase2_dpsk_transmitter_init(
+		      &marks, V34_ANSWERING_STATION,
+		      PHASE2_NOMINAL_AMPLITUDE) == V34_PHASE2_DPSK_OK,
+	      "law %u repeated INFO1d did not reach exhausted recovery",
+	      (unsigned int)law);
+	for (size_t index = 0; index < CALL_SAMPLE_LIMIT; ++index) {
+		struct pcm_call_observation observation;
+		int16_t remote_sample;
+		int16_t received_sample;
+		uint8_t transmitted;
+		uint8_t received;
+		bool bit_accepted;
+
+		CHECK(v34_phase2_dpsk_transmitter_sample(
+			      &marks, 1, &remote_sample, &bit_accepted) ==
+			      V34_PHASE2_DPSK_OK,
+		      "law %u exhausted INFO1 marks stopped at %zu",
+		      (unsigned int)law, index);
+		received = encode_octet(law, remote_sample);
+		received_sample = decode_octet(law, received);
+		CHECK(pcm_call_octet(
+			      call, received, received_sample, &transmitted,
+			      &observation) == PCM_CALL_OK,
+		      "law %u exhausted INFOMARKSa failed at %zu",
+		      (unsigned int)law, index);
+		if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
+			CHECK(observation.processed == PCM_CALL_PHASE2 &&
+			      observation.next == PCM_CALL_RETRAIN_SILENCE,
+			      "law %u INFOMARKSa lost its Phase 2 boundary",
+			      (unsigned int)law);
+			requested = true;
+			break;
+		}
+	}
+	CHECK(requested && call->retrain_active &&
+	      !call->retrain_peer_tone_retained && call->peer_info0_stored &&
+	      call->round_trip_delay_stored &&
+	      call->round_trip_delay_samples == round_trip_delay &&
+	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
+	      pcm_call_is_valid(call),
+	      "law %u persistent INFOMARKSa did not start full retrain",
+	      (unsigned int)law);
+	return true;
+}
+
+static bool check_initial_info1_retrain_tone(enum g711_law law)
 {
 	struct channel channel;
 	struct endpoint analog;
 	struct endpoint digital;
 	struct pcm_call retained[2];
+	struct pcm_call marks;
 	bool stored[2] = { false, false };
 
 	CHECK(channel_init(&channel, law, 3u) &&
@@ -1236,22 +1345,26 @@ static bool check_initial_info1_retrain_guard(enum g711_law law)
 			stored[1] = true;
 		}
 	}
-	CHECK(stored[0] && stored[1] &&
-	      force_unowned_info1_recovery(&retained[0], law) &&
-	      force_unowned_info1_recovery(&retained[1], law) &&
-	      initial_info1_ignores_retrain_tone(&retained[0], law) &&
-	      initial_info1_ignores_retrain_tone(&retained[1], law),
-	      "law %u initial INFO1 retrain guard failed",
+	CHECK(stored[0] && stored[1],
+	      "law %u initial INFO1 calls were not retained",
+	      (unsigned int)law);
+	marks = retained[1];
+	CHECK(initial_info1_marks_request_retrain(&marks, law) &&
+	      force_initial_info1_recovery(&retained[0], law) &&
+	      force_initial_info1_recovery(&retained[1], law) &&
+	      initial_info1_accepts_retrain_tone(&retained[0], law) &&
+	      initial_info1_accepts_retrain_tone(&retained[1], law),
+	      "law %u initial INFO1 retrain tone failed",
 	      (unsigned int)law);
 	return true;
 }
 
-static bool test_initial_info1_retrain_guard(void)
+static bool test_initial_info1_retrain_tone(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
-		CHECK(check_initial_info1_retrain_guard(law),
-		      "law %u initial INFO1 guard matrix failed",
+		CHECK(check_initial_info1_retrain_tone(law),
+		      "law %u initial INFO1 retrain matrix failed",
 		      (unsigned int)law);
 	return true;
 }
@@ -3903,8 +4016,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "initial INFO1 retrain-tone ownership",
-		  test_initial_info1_retrain_guard },
+		{ "initial INFO1 retrain-tone response",
+		  test_initial_info1_retrain_tone },
 		{ "remote retrain during final PCM training",
 		  test_final_training_remote_retrain },
 		{ "completed V.90 return drains DIL",

@@ -36,6 +36,10 @@ enum {
 	V34_PHASE2_INFO_SYNC_PIPELINE_DELAY_SAMPLES =
 		V34_PHASE2_INFO_TX_FILTER_DELAY_SAMPLES +
 		V34_PHASE2_INFO_RX_FILTER_DELAY_SAMPLES + 1,
+	/* V.90 8.2.3.3 defines INFOMARKS as binary ones applied to the
+	 * 600-bit/s DPSK modulator.  Thirty-two recovered marks qualify a
+	 * 53-ms indication while remaining well clear of an INFO prefix. */
+	V34_PHASE2_INFO_MARKS_BITS = 32,
 };
 
 enum v34_phase2_info_audio_result {
@@ -54,6 +58,7 @@ struct v34_phase2_info_audio_receiver {
 	struct v34_phase2_info_receiver frame;
 	uint16_t samples_since_sync;
 	uint16_t handoff_delay_samples;
+	uint8_t consecutive_mark_bits;
 };
 
 /* One transmitter emits one INFO sequence, including its arbitrary reference
@@ -82,8 +87,9 @@ v34_phase2_info_audio_receiver_init(
 bool v34_phase2_info_audio_receiver_is_valid(
 	const struct v34_phase2_info_audio_receiver *receiver);
 
-/* Each successful call emits either NO_EVENT or the typed frame event from
- * the first recovered bit boundary in this sample. */
+/* Each successful call emits the typed frame event from the first recovered
+ * bit boundary in this sample.  A qualified unframed mark run is reported
+ * independently through event.info_marks while event.type remains NO_EVENT. */
 enum v34_phase2_info_audio_result
 v34_phase2_info_audio_receiver_sample(
 	struct v34_phase2_info_audio_receiver *receiver,
