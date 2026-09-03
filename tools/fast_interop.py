@@ -67,6 +67,7 @@ FAST_ONLINE_MINIMUM_SECONDS = 1.0
 FAST_PCM_ONLINE_MINIMUM_SECONDS = 5.0
 FAST_ONLINE_MARGIN_SECONDS = 1.0
 FAST_JITTER_BUFFER_MS = 60
+ATO1_ENDPOINTS = ("candidate", "baseline")
 
 
 def _run_interop(
@@ -88,6 +89,7 @@ def _run_interop(
 class FastCaseResult:
     case: MatrixCase
     link_mode: str
+    ato1_endpoint: str | None
     outcome: str
     duration_seconds: float
     candidate_rates_verified: bool
@@ -103,6 +105,7 @@ class FastCaseResult:
             "media_codec": self.case.media_codec,
             "candidate_originates": self.case.candidate_originates,
             "link_mode": self.link_mode,
+            "ato1_endpoint": self.ato1_endpoint,
             "outcome": self.outcome,
             "duration_seconds": round(self.duration_seconds, 3),
             "candidate_rates_verified": self.candidate_rates_verified,
@@ -249,15 +252,22 @@ def _rates_match(result: InteropResult, case: MatrixCase) -> tuple[bool, bool]:
 def run_case(
     base: InteropConfig,
     case: MatrixCase,
-    ato1: bool = False,
+    ato1_endpoint: str | None = None,
     link_mode: str = "raw",
     runner: CaseRunner = _run_interop,
 ) -> FastCaseResult:
+    if ato1_endpoint not in (None, *ATO1_ENDPOINTS):
+        raise ValueError("invalid ATO1 endpoint")
     configured = case_config(base, case, link_mode)
     ato1_role = None
     post_ato1_payloads = None
-    if ato1:
-        ato1_role = "originator" if case.candidate_originates else "answerer"
+    if ato1_endpoint is not None:
+        endpoint_originates = (
+            case.candidate_originates
+            if ato1_endpoint == "candidate"
+            else not case.candidate_originates
+        )
+        ato1_role = "originator" if endpoint_originates else "answerer"
         payloads = payload_pair(case, "ato1")
         post_ato1_payloads = (
             (payloads.candidate, payloads.baseline)
@@ -279,13 +289,14 @@ def run_case(
     return FastCaseResult(
         case=case,
         link_mode=link_mode,
+        ato1_endpoint=ato1_endpoint,
         outcome=outcome,
         duration_seconds=result.duration_seconds,
         candidate_rates_verified=candidate_rates,
         baseline_rates_verified=baseline_rates,
         ato1_verified=(
             result.ato1_connected and result.post_ato1_exchange_verified
-            if ato1
+            if ato1_endpoint is not None
             else None
         ),
     )
@@ -315,8 +326,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--ato1",
-        action="store_true",
-        help="return the candidate online with ATO1 and repeat the exchange",
+        nargs="?",
+        choices=ATO1_ENDPOINTS,
+        const="candidate",
+        help=(
+            "return the selected endpoint online with ATO1 and repeat the "
+            "exchange (default endpoint: candidate)"
+        ),
     )
     return parser
 
@@ -340,7 +356,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             result = run_case(
                 config,
                 case,
-                ato1=options.ato1,
+                ato1_endpoint=options.ato1,
                 link_mode=options.link_mode,
             )
             print(json.dumps(result.public_dict(), sort_keys=True), flush=True)

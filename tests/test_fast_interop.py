@@ -239,7 +239,7 @@ class FastInteropTests(unittest.TestCase):
             )
             self.assertEqual(observed, [True])
 
-    def test_ato1_targets_the_candidate_and_uses_fresh_payloads(self) -> None:
+    def test_ato1_targets_selected_endpoint_and_uses_fresh_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             base = base_config(Path(temporary))
             cases = {
@@ -247,42 +247,53 @@ class FastInteropTests(unittest.TestCase):
                 for case in build_fast_matrix(("v21_300",))
                 if case.media_codec == "PCMU"
             }
-            observed = []
+            for ato1_endpoint in ("candidate", "baseline"):
+                observed = []
+                for order in (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES):
+                    case = cases[order]
 
-            def runner(
-                _config: InteropConfig,
-                _turn_taking: bool,
-                role: str | None,
-                payloads: tuple[bytes, bytes] | None,
-            ) -> InteropResult:
-                observed.append((role, payloads))
-                case = cases[
-                    CANDIDATE_ORIGINATES
-                    if role == "originator"
-                    else BASELINE_ORIGINATES
-                ]
-                return replace(
-                    passed_result(case),
-                    ato1_requested=True,
-                    ato1_connected=True,
-                    post_ato1_exchange_verified=True,
+                    def runner(
+                        _config: InteropConfig,
+                        _turn_taking: bool,
+                        role: str | None,
+                        payloads: tuple[bytes, bytes] | None,
+                    ) -> InteropResult:
+                        observed.append((role, payloads))
+                        return replace(
+                            passed_result(case),
+                            ato1_requested=True,
+                            ato1_connected=True,
+                            post_ato1_exchange_verified=True,
+                        )
+
+                    result = run_case(
+                        base,
+                        case,
+                        ato1_endpoint=ato1_endpoint,
+                        runner=runner,
+                    )
+                    self.assertEqual(result.outcome, "passed")
+                    self.assertEqual(result.ato1_endpoint, ato1_endpoint)
+                    self.assertTrue(result.ato1_verified)
+
+                expected_roles = (
+                    ["originator", "answerer"]
+                    if ato1_endpoint == "candidate"
+                    else ["answerer", "originator"]
                 )
+                self.assertEqual(
+                    [item[0] for item in observed], expected_roles
+                )
+                for order, (_, payloads) in zip(
+                    (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES), observed
+                ):
+                    assert payloads is not None
+                    initial = payload_pair(cases[order], "initial")
+                    self.assertNotIn(initial.candidate, payloads)
+                    self.assertNotIn(initial.baseline, payloads)
 
-            for order in (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES):
-                result = run_case(base, cases[order], ato1=True, runner=runner)
-                self.assertEqual(result.outcome, "passed")
-                self.assertTrue(result.ato1_verified)
-
-            self.assertEqual(
-                [item[0] for item in observed], ["originator", "answerer"]
-            )
-            for order, (_, payloads) in zip(
-                (CANDIDATE_ORIGINATES, BASELINE_ORIGINATES), observed
-            ):
-                assert payloads is not None
-                initial = payload_pair(cases[order], "initial")
-                self.assertNotIn(initial.candidate, payloads)
-                self.assertNotIn(initial.baseline, payloads)
+            with self.assertRaises(ValueError):
+                run_case(base, case, ato1_endpoint="other", runner=runner)
 
     def test_disabled_example_skips_without_exposing_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -306,7 +317,9 @@ class FastInteropTests(unittest.TestCase):
                 "answerer_payload_hex": "42",
             }
             path.write_text(json.dumps(payload), encoding="utf-8")
-            self.assertEqual(main(["--config", str(path)]), 77)
+            self.assertEqual(
+                main(["--config", str(path), "--ato1", "baseline"]), 77
+            )
 
 
 if __name__ == "__main__":
