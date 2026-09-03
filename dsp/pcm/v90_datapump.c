@@ -35,10 +35,6 @@ struct v90_datapump {
 	bool host_echo_delay_seeded;
 };
 
-/* The integrated digital network currently uses the North American PCM
- * codebook.  SIP companding is an independent transport choice. */
-static const enum g711_law v90_pcm_law = G711_LAW_PCMU;
-
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations);
@@ -145,7 +141,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      !pcm_call_is_valid(&datapump->call) ||
 	      datapump->call.protocol != datapump->protocol ||
 	      datapump->call.local_role != datapump->role ||
-	      datapump->call.law != v90_pcm_law ||
+	      datapump->call.law != datapump->media_law ||
 	      (pcm_call_has_failed(&datapump->call) &&
 	       !training_session_has_failed(&datapump->training)))) ||
 	    (!training_session_has_failed(&datapump->training) &&
@@ -428,15 +424,18 @@ static bool start_call(
 
 	if (datapump->call_started)
 		return datapump->media_law == media_law;
+	/* RTP G.711 characters are this integrated datapump's digital
+	 * interface.  Negotiate that law and pass its V.90 U-codes exactly;
+	 * transcoding would collapse distinct constellation points. */
 	if ((datapump->protocol == PCM_PROTOCOL_V90 &&
 	     v90_profile_init(
-		     &configuration, datapump->role, v90_pcm_law,
+		     &configuration, datapump->role, media_law,
 		     datapump->dp.modem->min_rate,
 		     datapump->dp.modem->max_rate,
 		     &upstream) != V90_PROFILE_OK) ||
 	    (datapump->protocol == PCM_PROTOCOL_V92 &&
 	     v92_pcm_profile_init(
-		     &configuration, datapump->role, v90_pcm_law,
+		     &configuration, datapump->role, media_law,
 		     datapump->dp.modem->min_rate,
 		     datapump->dp.modem->max_rate,
 		     datapump->maximum_pcm_upstream_data_rate_number) !=
@@ -446,66 +445,6 @@ static bool start_call(
 	datapump->media_law = media_law;
 	datapump->call_started = true;
 	return true;
-}
-
-static bool accepts_pcma_negative_zero_alias(
-	const struct v90_datapump *datapump,
-	enum g711_law media_law, uint8_t octet)
-{
-	uint8_t alias;
-
-	/* Some signed-linear bridges turn the PCMU -1 negative-zero sentinel
-	 * into negative A-law U-code 15.  It is unambiguous only while the
-	 * analogue V.90 endpoint is matching Sd's prescribed negative-zero
-	 * slot, so do not normalize that character in any later PCM stream.
-	 * U=127 makes Sd's other magnitude wrap to 15 and stays strict. */
-	return media_law == G711_LAW_PCMA &&
-	       g711_ucode_octet(G711_LAW_PCMA, 15u, false, &alias) &&
-	       octet == alias && datapump->protocol == PCM_PROTOCOL_V90 &&
-	       datapump->call.stage == PCM_CALL_PHASE3 &&
-	       datapump->call.local_role == V90_ANALOG_MODEM &&
-	       datapump->call.state.phase3.analog.receive_stage ==
-		       V90_PHASE3_ANALOG_RECEIVE_SD &&
-	       datapump->call.state.phase3.analog.receive.sd.training_ucode !=
-		       V90_INFO1A_MAX_TRAINING_UCODE;
-}
-
-static uint8_t media_to_pcm_octet(
-	const struct v90_datapump *datapump,
-	enum g711_law media_law, uint8_t octet)
-{
-	uint8_t pcmu;
-
-	if (media_law == v90_pcm_law)
-		return octet;
-	if (accepts_pcma_negative_zero_alias(datapump, media_law, octet))
-		return g711_encode_pcmu(-1);
-	/* A-law retains two signed minimum-magnitude characters.  Preserve
-	 * their sign as the two PCMU zero characters instead of rounding both
-	 * to PCMU magnitude one. */
-	if (octet == g711_encode_pcma(0))
-		return g711_encode_pcmu(0);
-	if (octet == g711_encode_pcma(-1))
-		return g711_encode_pcmu(-1);
-	pcmu = g711_encode_pcmu(g711_decode_pcma(octet));
-	if (g711_encode_pcma(g711_decode_pcmu(pcmu)) == octet)
-		return pcmu;
-	/* The negative A-law bias puts a small set of exact tandem levels on
-	 * the lower neighboring PCMU character.  Recover that character rather
-	 * than moving a valid V.90 U-code by one. */
-	if (pcmu != 0 &&
-	    g711_encode_pcma(g711_decode_pcmu((uint8_t)(pcmu - 1u))) == octet)
-		return (uint8_t)(pcmu - 1u);
-	return pcmu;
-}
-
-static uint8_t pcm_to_media_octet(enum g711_law media_law, uint8_t octet)
-{
-	if (media_law == v90_pcm_law)
-		return octet;
-	if (octet == g711_encode_pcmu(-1))
-		return g711_encode_pcma(-1);
-	return g711_encode_pcma(g711_decode_pcmu(octet));
 }
 
 static bool process_octet(
@@ -692,14 +631,11 @@ static int process_v90_g711(
 			    V90_HOST_ECHO_OK)
 			goto failure;
 		if (!process_octet(
-			    datapump,
-			    media_to_pcm_octet(
-				    datapump, law, receive_codewords[index]),
+			    datapump, receive_codewords[index],
 			    cleaned_sample,
 			    &pcm_transmit, &connected, &fallback))
 			goto failure;
-		transmit_codewords[index] =
-			pcm_to_media_octet(law, pcm_transmit);
+		transmit_codewords[index] = pcm_transmit;
 		transmit_samples[index] = law == G711_LAW_PCMA ?
 			g711_decode_pcma(transmit_codewords[index]) :
 			g711_decode_pcmu(transmit_codewords[index]);

@@ -15,6 +15,7 @@
 enum {
 	CALL_OCTET_LIMIT = 120000,
 	MINIMUM_RECEIVED_BITS = 128,
+	SUSTAINED_RECEIVED_BITS = 4096,
 	RETURNED_ECHO_DELAY = 5600,
 	RETURNED_ECHO_TAP_1 = RETURNED_ECHO_DELAY + 7,
 	RETURNED_ECHO_TAP_2 = RETURNED_ECHO_DELAY + 23,
@@ -217,43 +218,6 @@ static uint8_t encode(enum g711_law law, int16_t sample)
 		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 }
 
-static uint8_t transcode(
-	enum g711_law source, enum g711_law destination, uint8_t octet)
-{
-	uint8_t best;
-	int32_t best_error = INT32_MAX;
-	int16_t target;
-
-	if (source == destination)
-		return octet;
-	if (source == G711_LAW_PCMU)
-		return encode(destination, decode(source, octet));
-	if (octet == g711_encode_pcma(0))
-		return g711_encode_pcmu(0);
-	if (octet == g711_encode_pcma(-1))
-		return g711_encode_pcmu(-1);
-	target = g711_decode_pcma(octet);
-	best = g711_encode_pcmu(target);
-	/* Independently invert the finite tandem code space.  This models a
-	 * codec bridge without assuming the implementation's neighboring-code
-	 * shortcut. */
-	for (unsigned int candidate = 0; candidate <= UINT8_MAX; ++candidate) {
-		int16_t sample = g711_decode_pcmu((uint8_t)candidate);
-		int32_t error;
-
-		if (g711_encode_pcma(sample) != octet)
-			continue;
-		error = (int32_t)sample - target;
-		if (error < 0)
-			error = -error;
-		if (error < best_error) {
-			best = (uint8_t)candidate;
-			best_error = error;
-		}
-	}
-	return best;
-}
-
 static int16_t add_s16(int32_t sample)
 {
 	return sample > INT16_MAX ? INT16_MAX :
@@ -299,12 +263,13 @@ static int16_t returned_echo(
 }
 
 static bool run_pair_with_rate_window(
-	enum g711_law analog_law, enum g711_law digital_law,
+	enum g711_law law,
 	uint32_t downstream_rate,
 	uint32_t upstream_min_rate, uint32_t upstream_max_rate,
 	uint32_t expected_upstream_rate, uint32_t upstream_symbol_rate,
+	uint64_t minimum_received_bits,
 	bool require_online, enum modem_pcm_role retrain_role,
-	bool separate_upstream_sample, bool alias_pcma_negative_zero,
+	bool separate_upstream_sample,
 	enum returned_echo_mode echo_mode)
 {
 	int16_t echo_history[RETURNED_ECHO_HISTORY] = { 0 };
@@ -324,10 +289,10 @@ static bool run_pair_with_rate_window(
 		modem_dp_get_registered_ops(DP_V90);
 	struct dp *analog_dp;
 	struct dp *digital_dp;
-	uint8_t analog_to_digital = digital_law == G711_LAW_PCMA ?
+	uint8_t analog_to_digital = law == G711_LAW_PCMA ?
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
-	uint8_t digital_to_analog = analog_law == G711_LAW_PCMA ?
+	uint8_t digital_to_analog = law == G711_LAW_PCMA ?
 					     g711_encode_pcma(0) :
 					     g711_encode_pcmu(0);
 	bool data_enabled = false;
@@ -337,8 +302,6 @@ static bool run_pair_with_rate_window(
 	bool post_retrain_data_enabled = false;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE;
 	bool sample_codeword_separated = false;
-	uint8_t pcma_negative_zero = 0;
-	uint8_t pcma_negative_zero_alias = 0;
 	size_t echo_history_write = 0;
 	size_t echo_history_fill = 0;
 
@@ -362,14 +325,6 @@ static bool run_pair_with_rate_window(
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
-	CHECK(!alias_pcma_negative_zero ||
-	      (analog_law == G711_LAW_PCMA &&
-	       g711_ucode_octet(
-		       G711_LAW_PCMA, 0u, false, &pcma_negative_zero) &&
-	       g711_ucode_octet(
-		       G711_LAW_PCMA, 15u, false,
-		       &pcma_negative_zero_alias)),
-	      "PCMA negative-zero alias fixture failed");
 	for (size_t octet = 0;
 	     octet < (require_online ?
 			     CALL_OCTET_LIMIT * (exercise_retrain ? 2u : 1u) :
@@ -379,7 +334,7 @@ static bool run_pair_with_rate_window(
 		uint8_t next_analog;
 		uint8_t digital_received_octet = analog_to_digital;
 		int16_t digital_receive =
-			decode(digital_law, digital_received_octet);
+			decode(law, digital_received_octet);
 		int16_t analog_receive;
 		int16_t digital_transmit = 1;
 		int16_t analog_transmit = 1;
@@ -389,7 +344,7 @@ static bool run_pair_with_rate_window(
 		int digital_result;
 
 		if (separate_upstream_sample && data_enabled) {
-			digital_received_octet = encode(digital_law, 0);
+			digital_received_octet = encode(law, 0);
 			sample_codeword_separated |=
 				digital_received_octet != analog_to_digital;
 		}
@@ -400,13 +355,13 @@ static bool run_pair_with_rate_window(
 					echo_history, echo_history_write,
 					echo_history_fill, echo_mode));
 		digital_result = operations->process_g711(
-			digital_dp, digital_law,
+			digital_dp, law,
 			&digital_received_octet, &digital_receive,
 			&next_digital, &digital_transmit, 1, &digital_exact);
 
 		CHECK((digital_result == DPSTAT_OK ||
 		       digital_result == DPSTAT_CONNECT) && digital_exact &&
-		      digital_transmit == decode(digital_law, next_digital),
+		      digital_transmit == decode(law, next_digital),
 		      "digital V.90 path failed at octet %zu", octet);
 		if (echo_mode != RETURNED_ECHO_NONE) {
 			echo_history[echo_history_write] = digital_transmit;
@@ -416,27 +371,21 @@ static bool run_pair_with_rate_window(
 			if (echo_history_fill < RETURNED_ECHO_HISTORY)
 				echo_history_fill++;
 		}
-		next_digital = transcode(
-			digital_law, analog_law, next_digital);
-		if (alias_pcma_negative_zero &&
-		    next_digital == pcma_negative_zero)
-			next_digital = pcma_negative_zero_alias;
 		{
 			uint8_t delivered = digital_to_analog;
 
 			digital_to_analog = next_digital;
-			analog_receive = decode(analog_law, delivered);
+			analog_receive = decode(law, delivered);
 			analog_result = operations->process_g711(
-				analog_dp, analog_law, &delivered,
+				analog_dp, law, &delivered,
 				&analog_receive, &next_analog,
 				&analog_transmit, 1, &analog_exact);
 		}
 		CHECK((analog_result == DPSTAT_OK ||
 		       analog_result == DPSTAT_CONNECT) && analog_exact &&
-		      analog_transmit == decode(analog_law, next_analog),
+		      analog_transmit == decode(law, next_analog),
 		      "analogue V.90 path failed at octet %zu", octet);
-		analog_to_digital = transcode(
-			analog_law, digital_law, next_analog);
+		analog_to_digital = next_analog;
 		if (retrain_requested) {
 			analog_reconnected |= analog_result == DPSTAT_CONNECT;
 			digital_reconnected |= digital_result == DPSTAT_CONNECT;
@@ -462,8 +411,8 @@ static bool run_pair_with_rate_window(
 			data_enabled = true;
 		}
 		if (!data_enabled ||
-		    analog_bits.received_bits < MINIMUM_RECEIVED_BITS ||
-		    digital_bits.received_bits < MINIMUM_RECEIVED_BITS)
+		    analog_bits.received_bits < minimum_received_bits ||
+		    digital_bits.received_bits < minimum_received_bits)
 			continue;
 		if (!exercise_retrain)
 			break;
@@ -483,8 +432,8 @@ static bool run_pair_with_rate_window(
 			continue;
 		}
 		if (post_retrain_data_enabled &&
-		    analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
-		    digital_bits.received_bits >= MINIMUM_RECEIVED_BITS)
+		    analog_bits.received_bits >= minimum_received_bits &&
+		    digital_bits.received_bits >= minimum_received_bits)
 			break;
 	}
 	if (!require_online) {
@@ -510,10 +459,10 @@ static bool run_pair_with_rate_window(
 	      downstream_rate, expected_upstream_rate,
 	      analog.rx_rate, analog.tx_rate,
 	      digital.tx_rate, digital.rx_rate);
-	CHECK(analog_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
-	      digital_bits.supplied_bits >= MINIMUM_RECEIVED_BITS &&
-	      analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
-	      digital_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
+	CHECK(analog_bits.supplied_bits >= minimum_received_bits &&
+	      digital_bits.supplied_bits >= minimum_received_bits &&
+	      analog_bits.received_bits >= minimum_received_bits &&
+	      digital_bits.received_bits >= minimum_received_bits &&
 	      !analog_bits.mismatch && !digital_bits.mismatch,
 	      "V.90 host bits did not pass exactly in both directions "
 	      "(supplied %llu/%llu received %llu/%llu mismatch %d/%d)",
@@ -524,8 +473,8 @@ static bool run_pair_with_rate_window(
 	      analog_bits.mismatch, digital_bits.mismatch);
 	CHECK(!exercise_retrain ||
 	      (retrain_requested && post_retrain_data_enabled &&
-	       analog_bits.received_bits >= MINIMUM_RECEIVED_BITS &&
-	       digital_bits.received_bits >= MINIMUM_RECEIVED_BITS),
+	       analog_bits.received_bits >= minimum_received_bits &&
+	       digital_bits.received_bits >= minimum_received_bits),
 	      "V.90 role %u did not complete local and remote retrain",
 	      (unsigned int)retrain_role);
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
@@ -538,31 +487,44 @@ static bool run_pair_with_rate_window(
 }
 
 static bool run_pair_with_input_contract(
-	enum g711_law analog_law, enum g711_law digital_law,
+	enum g711_law law,
 	uint32_t downstream_rate,
 	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
 	bool require_online, enum modem_pcm_role retrain_role,
-	bool separate_upstream_sample, bool alias_pcma_negative_zero,
+	bool separate_upstream_sample,
 	bool add_returned_echo)
 {
 	return run_pair_with_rate_window(
-		analog_law, digital_law, downstream_rate,
+		law, downstream_rate,
 		upstream_rate, upstream_rate, upstream_rate,
-		upstream_symbol_rate, require_online, retrain_role,
-		separate_upstream_sample, alias_pcma_negative_zero,
+		upstream_symbol_rate, MINIMUM_RECEIVED_BITS,
+		require_online, retrain_role,
+		separate_upstream_sample,
 		add_returned_echo ? RETURNED_ECHO_STABLE : RETURNED_ECHO_NONE);
 }
 
+static bool run_pair_for_bits(
+	enum g711_law law, uint32_t downstream_rate,
+	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
+	uint64_t minimum_received_bits)
+{
+	return run_pair_with_rate_window(
+		law, downstream_rate,
+		upstream_rate, upstream_rate, upstream_rate,
+		upstream_symbol_rate, minimum_received_bits,
+		true, MODEM_PCM_ROLE_NONE, false, RETURNED_ECHO_NONE);
+}
+
 static bool run_pair(
-	enum g711_law analog_law, enum g711_law digital_law,
+	enum g711_law law,
 	uint32_t downstream_rate,
 	uint32_t upstream_rate, uint32_t upstream_symbol_rate,
 	bool require_online, enum modem_pcm_role retrain_role)
 {
 	return run_pair_with_input_contract(
-		analog_law, digital_law, downstream_rate,
+		law, downstream_rate,
 		upstream_rate, upstream_symbol_rate,
-		require_online, retrain_role, false, false, false);
+		require_online, retrain_role, false, false);
 }
 
 static bool test_generated_pairs(void)
@@ -576,10 +538,10 @@ static bool test_generated_pairs(void)
 			pcm_downstream_bit_rate(rate_index);
 
 		CHECK(run_pair(
-			      G711_LAW_PCMU, G711_LAW_PCMU,
+			      G711_LAW_PCMU,
 			      bit_rate, 0, 0, true, MODEM_PCM_ROLE_NONE) &&
 		      run_pair(
-			      G711_LAW_PCMA, G711_LAW_PCMA,
+			      G711_LAW_PCMA,
 			      bit_rate, 0, 0, true, MODEM_PCM_ROLE_NONE),
 		      "generated V.90 pair failed at %u bit/s", bit_rate);
 	}
@@ -594,10 +556,10 @@ static bool test_forced_upstream_pairs(void)
 	CHECK(v90_datapump_register() == 0,
 	      "forced-upstream V.90 registration failed");
 	CHECK(run_pair(
-		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      G711_LAW_PCMU,
 		      42667, 26400, 3200, true, MODEM_PCM_ROLE_NONE) &&
 		      run_pair(
-			      G711_LAW_PCMA, G711_LAW_PCMA,
+			      G711_LAW_PCMA,
 			      42667, 26400, 3200, true,
 			      MODEM_PCM_ROLE_NONE),
 	      "V.90 data pump did not honor a forced upstream profile");
@@ -606,32 +568,34 @@ static bool test_forced_upstream_pairs(void)
 	return true;
 }
 
+static bool test_sustained_maximum_rate_pairs(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "sustained maximum-rate V.90 registration failed");
+	CHECK(run_pair_for_bits(
+		      G711_LAW_PCMU, 56000, 31200, 3429,
+		      SUSTAINED_RECEIVED_BITS) &&
+	      run_pair_for_bits(
+		      G711_LAW_PCMA, 56000, 31200, 3429,
+		      SUSTAINED_RECEIVED_BITS),
+	      "maximum-rate V.90 payload was not exact in both PCM laws");
+	CHECK(v90_datapump_unregister() == 0,
+	      "sustained maximum-rate V.90 registration remained busy");
+	return true;
+}
+
 static bool test_upstream_uses_media_samples(void)
 {
 	CHECK(v90_datapump_register() == 0,
 	      "sample-owned V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
-		      G711_LAW_PCMA, G711_LAW_PCMA,
+		      G711_LAW_PCMA,
 		      42667, 26400, 3200, true,
-		      MODEM_PCM_ROLE_NONE, true, false, false),
+		      MODEM_PCM_ROLE_NONE, true, false),
 	      "digital upstream receiver used the PCMA codeword instead of "
 	      "the media sample");
 	CHECK(v90_datapump_unregister() == 0,
 	      "sample-owned V.90 registration remained busy");
-	return true;
-}
-
-static bool test_pcma_negative_zero_bridge(void)
-{
-	CHECK(v90_datapump_register() == 0,
-	      "PCMA negative-zero bridge registration failed");
-	CHECK(run_pair_with_input_contract(
-		      G711_LAW_PCMA, G711_LAW_PCMA,
-		      28000, 14400, 3000, true,
-		      MODEM_PCM_ROLE_NONE, false, true, false),
-	      "V.90 Sd did not survive the PCMA negative-zero bridge");
-	CHECK(v90_datapump_unregister() == 0,
-	      "PCMA negative-zero bridge registration remained busy");
 	return true;
 }
 
@@ -640,13 +604,13 @@ static bool test_delayed_host_echo(void)
 	CHECK(v90_datapump_register() == 0,
 	      "host-echo V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
-		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      G711_LAW_PCMU,
 		      28000, 14400, 3000, true,
-		      MODEM_PCM_ROLE_NONE, false, false, true) &&
+		      MODEM_PCM_ROLE_NONE, false, true) &&
 	      run_pair_with_input_contract(
-		      G711_LAW_PCMA, G711_LAW_PCMA,
+		      G711_LAW_PCMA,
 		      28000, 14400, 3000, true,
-		      MODEM_PCM_ROLE_NONE, false, false, true),
+		      MODEM_PCM_ROLE_NONE, false, true),
 	      "V.90 digital answerer did not cancel delayed host echo");
 	CHECK(v90_datapump_unregister() == 0,
 	      "host-echo V.90 registration remained busy");
@@ -658,9 +622,10 @@ static bool test_weak_host_echo_limits_upstream_rate(void)
 	CHECK(v90_datapump_register() == 0,
 	      "weak-margin V.90 registration failed");
 	CHECK(run_pair_with_rate_window(
-		      G711_LAW_PCMU, G711_LAW_PCMU,
-		      56000, 28800, 33600, 28800, 3429, true,
-		      MODEM_PCM_ROLE_NONE, false, false,
+		      G711_LAW_PCMU,
+		      56000, 28800, 33600, 28800, 3429,
+		      MINIMUM_RECEIVED_BITS, true,
+		      MODEM_PCM_ROLE_NONE, false,
 		      RETURNED_ECHO_WEAK_MARGIN),
 	      "weak digital host echo did not limit optional upstream rates");
 	CHECK(v90_datapump_unregister() == 0,
@@ -675,10 +640,10 @@ static bool test_full_retrain_pairs(void)
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law) {
 		CHECK(run_pair(
-			      law, law, 28000, 14400, 3000, true,
+			      law, 28000, 14400, 3000, true,
 			      MODEM_PCM_ROLE_ANALOG) &&
 		      run_pair(
-			      law, law, 28000, 14400, 3000, true,
+			      law, 28000, 14400, 3000, true,
 			      MODEM_PCM_ROLE_DIGITAL),
 		      "law %u V.90 retrain roles failed", (unsigned int)law);
 	}
@@ -692,32 +657,16 @@ static bool test_host_echo_retrain_pairs(void)
 	CHECK(v90_datapump_register() == 0,
 	      "host-echo retrain V.90 registration failed");
 	CHECK(run_pair_with_input_contract(
-		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      G711_LAW_PCMU,
 		      56000, 31200, 3429, true,
-		      MODEM_PCM_ROLE_ANALOG, false, false, true) &&
+		      MODEM_PCM_ROLE_ANALOG, false, true) &&
 	      run_pair_with_input_contract(
-		      G711_LAW_PCMU, G711_LAW_PCMU,
+		      G711_LAW_PCMU,
 		      56000, 31200, 3429, true,
-		      MODEM_PCM_ROLE_DIGITAL, false, false, true),
+		      MODEM_PCM_ROLE_DIGITAL, false, true),
 	      "V.90 retrain did not recover through returned host echo");
 	CHECK(v90_datapump_unregister() == 0,
 	      "host-echo retrain V.90 registration remained busy");
-	return true;
-}
-
-static bool test_independent_media_laws(void)
-{
-	CHECK(v90_datapump_register() == 0,
-	      "mixed-media V.90 registration failed");
-	CHECK(run_pair(
-		      G711_LAW_PCMU, G711_LAW_PCMA,
-		      28000, 14400, 3000, false, MODEM_PCM_ROLE_NONE) &&
-	      run_pair(
-		      G711_LAW_PCMA, G711_LAW_PCMU,
-		      28000, 14400, 3000, false, MODEM_PCM_ROLE_NONE),
-	      "V.90 PCM codebook changed with endpoint media companding");
-	CHECK(v90_datapump_unregister() == 0,
-	      "mixed-media V.90 registration remained busy");
 	return true;
 }
 
@@ -926,16 +875,15 @@ int main(void)
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
+		{ "sustained maximum-rate pairs",
+		  test_sustained_maximum_rate_pairs },
 		{ "sample-owned PCMA upstream", test_upstream_uses_media_samples },
-		{ "PCMA negative-zero bridge", test_pcma_negative_zero_bridge },
 		{ "delayed digital-answerer host echo", test_delayed_host_echo },
 		{ "weak host-echo upstream limit",
 		  test_weak_host_echo_limits_upstream_rate },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "full retrain through returned host echo",
 		  test_host_echo_retrain_pairs },
-		{ "media-independent Phase 2 codebook",
-		  test_independent_media_laws },
 		{ "generated PCMU and PCMA data-pump pairs",
 		  test_generated_pairs },
 		{ "training deadline", test_training_deadline },
