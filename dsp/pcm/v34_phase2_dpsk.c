@@ -110,6 +110,28 @@ static bool transmitter_metadata_is_valid(
 		       INT16_MAX - transmitter->guard_amplitude;
 }
 
+static bool normalize_info_carrier_power(
+	struct qam_modulator *carrier, long nominal_peak_amplitude)
+{
+	long shaped_peak_amplitude;
+
+	if (!qam_modulator_is_valid(carrier) || nominal_peak_amplitude <= 0 ||
+	    nominal_peak_amplitude > INT16_MAX)
+		return false;
+	/* The common QAM modulator divides by a conservative worst-case pulse
+	 * peak. INFO uses unit BPSK points, while V.34/V.90 specify its average
+	 * carrier power relative to an unshaped tone. Undo that peak bound so the
+	 * unit-energy root-raised-cosine pulse retains nominal carrier power. The
+	 * adjusted amplitude remains a safe peak bound for the common modulator. */
+	shaped_peak_amplitude = lround(
+		(double)nominal_peak_amplitude * carrier->pulse_normalization);
+	if (shaped_peak_amplitude <= 0 ||
+	    shaped_peak_amplitude > INT16_MAX)
+		return false;
+	carrier->amplitude = (int16_t)shaped_peak_amplitude;
+	return qam_modulator_is_valid(carrier);
+}
+
 bool v34_phase2_dpsk_transmitter_is_valid(
 	const struct v34_phase2_dpsk_transmitter *transmitter)
 {
@@ -163,6 +185,9 @@ v34_phase2_dpsk_transmitter_init(
 	if (qam_modulator_init(
 		    &initialized.carrier, &channel,
 		    (int16_t)carrier_amplitude) != QAM_OK ||
+	    (local_role == V34_CALLING_STATION &&
+	     !normalize_info_carrier_power(
+		     &initialized.carrier, carrier_amplitude)) ||
 	    !v34_phase2_dpsk_transmitter_is_valid(&initialized))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	*transmitter = initialized;

@@ -71,8 +71,9 @@ struct v34_phase2_dpsk_measurement {
 	bool timing_locked;
 };
 
-/* nominal_amplitude is the unadjusted Phase 2 peak level. The answering
- * carrier is reduced by 1 dB and its guard tone by 7 dB from this level. */
+/* nominal_amplitude is the unadjusted Phase 2 peak level. The calling
+ * pulse-shaped INFO carrier preserves its specified average power. The
+ * answering carrier is reduced by 1 dB and its guard tone by 7 dB. */
 enum v34_phase2_dpsk_result
 v34_phase2_dpsk_transmitter_init(
 	struct v34_phase2_dpsk_transmitter *transmitter,

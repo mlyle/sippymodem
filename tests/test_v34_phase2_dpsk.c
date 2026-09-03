@@ -34,6 +34,15 @@ static double tone_projection(
 	return in_phase * in_phase + quadrature * quadrature;
 }
 
+static double mean_square(const int16_t *samples, size_t count)
+{
+	double sum = 0.0;
+
+	for (size_t index = 0; index < count; ++index)
+		sum += (double)samples[index] * samples[index];
+	return sum / (double)count;
+}
+
 static bool render_station(
 	enum v34_station_role role,
 	int16_t samples[V34_PHASE2_SAMPLE_RATE],
@@ -60,9 +69,10 @@ static bool render_station(
 	CHECK(!transmitter.initial_point_pending,
 	      "Phase 2 transmitter omitted its reference point");
 	if (role == V34_CALLING_STATION) {
-		CHECK(transmitter.carrier.amplitude == TEST_AMPLITUDE &&
+		CHECK(transmitter.carrier.amplitude >= 17460 &&
+			      transmitter.carrier.amplitude <= 17475 &&
 			      transmitter.guard_amplitude == 0,
-		      "calling transmitter changed its nominal level");
+		      "calling transmitter changed its shaped peak bound");
 	} else {
 		CHECK(transmitter.carrier.amplitude >= 10690 &&
 			      transmitter.carrier.amplitude <= 10700 &&
@@ -94,6 +104,11 @@ static bool test_carriers_and_cadence(void)
 		      answering_accepted ==
 			      V34_PHASE2_DPSK_BIT_RATE - 1,
 	      "Phase 2 symbol clock drifted over one second");
+	CHECK(mean_square(calling + skip, count) >=
+		      (double)TEST_AMPLITUDE * TEST_AMPLITUDE * 0.49 &&
+		      mean_square(calling + skip, count) <=
+			      (double)TEST_AMPLITUDE * TEST_AMPLITUDE * 0.51,
+	      "calling Phase 2 INFO did not retain nominal average power");
 	CHECK(tone_projection(
 		      calling + skip, count,
 		      V34_PHASE2_CALLING_CARRIER_HZ) >
