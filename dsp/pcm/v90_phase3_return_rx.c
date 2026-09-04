@@ -48,6 +48,24 @@ static bool s_exit_is_valid(const struct v90_phase3_return_rx *rx)
 	return true;
 }
 
+static bool compact_equalizer_state_is_valid(
+	const struct v90_phase3_return_rx *rx)
+{
+	if (!rx->compact_equalizer_active)
+		return rx->compact_equalizer.tap_count == 0;
+	return rx->second_return &&
+	       rx->stage != V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END &&
+	       rx->equalizer.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
+	       rx->compact_equalizer.tap_count == V34_EQUALIZER_TAP_COUNT &&
+	       rx->compact_equalizer.decision_delay ==
+		       V34_EQUALIZER_DECISION_DELAY &&
+	       rx->compact_equalizer.fill == rx->equalizer.fill &&
+	       rx->compact_equalizer.carrier_tracking ==
+		       rx->equalizer.carrier_tracking &&
+	       qam_equalizer_is_valid(&rx->compact_equalizer) &&
+	       !rx->compact_equalizer.can_adapt;
+}
+
 bool v90_phase3_return_rx_is_valid(
 	const struct v90_phase3_return_rx *rx)
 {
@@ -59,7 +77,8 @@ bool v90_phase3_return_rx_is_valid(
 	    !v34_phase3_s_receiver_is_valid(&rx->marker) ||
 	    rx->marker.s_symbols !=
 		    V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS ||
-	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx))
+	    !onset_history_is_valid(rx) || !s_exit_is_valid(rx) ||
+	    !compact_equalizer_state_is_valid(rx))
 		return false;
 	if (rx->equalizer_reacquiring)
 		return rx->second_return && rx->equalizer.carrier_tracking &&
@@ -326,10 +345,17 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_reacquire_s(
 	integral_gain = next.equalizer.carrier_integral_gain;
 	if (qam_equalizer_init_geometry(
 		    &next.equalizer, received, &target,
-		    V34_EQUALIZER_TAP_COUNT,
+		    QAM_EQUALIZER_MAX_TAP_COUNT,
 		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK ||
 	    qam_equalizer_enable_carrier_tracking(
 		    &next.equalizer, proportional_gain,
+		    integral_gain) != QAM_EQUALIZER_OK ||
+	    qam_equalizer_init_geometry(
+		    &next.compact_equalizer, received, &target,
+		    V34_EQUALIZER_TAP_COUNT,
+		    V34_EQUALIZER_DECISION_DELAY) != QAM_EQUALIZER_OK ||
+	    qam_equalizer_enable_carrier_tracking(
+		    &next.compact_equalizer, proportional_gain,
 		    integral_gain) != QAM_EQUALIZER_OK ||
 	    v34_phase3_s_receiver_init_suffix(
 		    &next.marker,
@@ -344,16 +370,17 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_reacquire_s(
 	next.exit_symbols = 0;
 	next.exit_errors = 0;
 	next.equalizer_reacquiring = true;
+	next.compact_equalizer_active = true;
 	if (!v90_phase3_return_rx_is_valid(&next))
 		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	*rx = next;
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
-static bool adapt_decision(
-	struct v90_phase3_return_rx *rx,
+static bool adapt_equalizer_decision(
+	struct qam_equalizer *equalizer,
 	struct qam_equalizer_observation *observation,
-	uint8_t rotation)
+	uint8_t rotation, double adaptation)
 {
 	struct qam_point target;
 
@@ -361,8 +388,17 @@ static bool adapt_decision(
 		       V34_CONSTELLATION_4_POINT, 0, rotation, &target) ==
 		       V34_CONSTELLATION_OK &&
 	       qam_equalizer_adapt_observation(
-		       &rx->equalizer, observation, &target,
-		       rx->adaptation) == QAM_EQUALIZER_OK;
+		       equalizer, observation, &target,
+		       adaptation) == QAM_EQUALIZER_OK;
+}
+
+static bool adapt_decision(
+	struct v90_phase3_return_rx *rx,
+	struct qam_equalizer_observation *observation,
+	uint8_t rotation)
+{
+	return adapt_equalizer_decision(
+		&rx->equalizer, observation, rotation, rx->adaptation);
 }
 
 static bool expected_s_decision(
@@ -487,9 +523,11 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 {
 	struct v90_phase3_return_rx next;
 	struct qam_equalizer_observation observation = { 0 };
+	struct qam_equalizer_observation compact_observation = { 0 };
 	uint8_t quarter_point;
 	uint8_t rotation;
 	bool ready;
+	bool compact_ready = false;
 	enum v90_phase3_return_rx_result result;
 
 	if (!v90_phase3_return_rx_is_valid(rx) ||
@@ -502,7 +540,13 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 	next = *rx;
 	if (qam_equalizer_observe(
 		    &next.equalizer, received, &observation, &ready) !=
-		    QAM_EQUALIZER_OK)
+		    QAM_EQUALIZER_OK ||
+	    (next.compact_equalizer_active &&
+	     (qam_equalizer_observe(
+		      &next.compact_equalizer, received,
+		      &compact_observation, &compact_ready) !=
+		      QAM_EQUALIZER_OK ||
+	      compact_ready != ready)))
 		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (!ready) {
 		if (!next.equalizer_reacquiring ||
@@ -520,6 +564,12 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 	result = receive_decision(&next, &observation, rotation);
 	if (!result_commits(result))
 		return result;
+	if (next.compact_equalizer_active &&
+	    !qam_equalizer_observation_is_pending(&observation) &&
+	    !adapt_equalizer_decision(
+		    &next.compact_equalizer, &compact_observation,
+		    rotation, next.adaptation))
+		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	if (!v90_phase3_return_rx_is_valid(&next))
 		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	*rx = next;
@@ -529,23 +579,41 @@ enum v90_phase3_return_rx_result v90_phase3_return_rx_point(
 bool v90_phase3_return_handoff_is_valid(
 	const struct v90_phase3_return_handoff *handoff)
 {
-	return handoff != NULL &&
-	       v34_phase3_s_detection_is_valid(&handoff->marker) &&
-	       v34_equalizer_handoff_is_valid(&handoff->equalizer) &&
-	       v34_precoder_recommendation_is_valid(&handoff->precoder);
+	if (handoff == NULL ||
+	    !v34_phase3_s_detection_is_valid(&handoff->marker) ||
+	    !v34_equalizer_handoff_is_valid(&handoff->equalizer) ||
+	    !v34_precoder_recommendation_is_valid(&handoff->precoder))
+		return false;
+	if (!handoff->compact_equalizer_active)
+		return handoff->compact_equalizer.tap_count == 0;
+	return handoff->equalizer.equalizer.tap_count ==
+		       QAM_EQUALIZER_MAX_TAP_COUNT &&
+	       handoff->compact_equalizer.tap_count ==
+		       V34_EQUALIZER_TAP_COUNT &&
+	       handoff->compact_equalizer.decision_delay ==
+		       V34_EQUALIZER_DECISION_DELAY &&
+	       handoff->compact_equalizer.fill ==
+		       handoff->equalizer.equalizer.fill &&
+	       handoff->compact_equalizer.carrier_tracking ==
+		       handoff->equalizer.equalizer.carrier_tracking &&
+	       qam_equalizer_is_handoff_ready(
+		       &handoff->compact_equalizer);
 }
 
 enum v90_phase3_return_rx_result v90_phase3_return_rx_handoff(
 	const struct v90_phase3_return_rx *rx,
 	struct v90_phase3_return_handoff *handoff)
 {
-	struct v90_phase3_return_handoff generated;
+	struct v90_phase3_return_handoff generated = { 0 };
 
 	if (!v90_phase3_return_rx_is_valid(rx) || handoff == NULL)
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (!v90_phase3_return_rx_is_complete(rx))
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	generated.equalizer.equalizer = rx->equalizer;
+	generated.compact_equalizer = rx->compact_equalizer;
+	generated.compact_equalizer_active =
+		rx->compact_equalizer_active;
 	generated.precoder = rx->precoder;
 	if (!v34_phase3_s_receiver_get_detection(
 		    &rx->marker, &generated.marker) ||

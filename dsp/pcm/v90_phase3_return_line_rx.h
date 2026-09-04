@@ -22,8 +22,8 @@ enum v90_phase3_return_line_rx_result {
 };
 
 enum {
-	/* After the shared raw S prefix re-seeds the 31-tap equalizer, allow its
-	 * decision delay plus a complete tracked-onset window and bounded margin.
+	/* After the shared raw S prefix re-seeds the selected equalizer span, allow
+	 * its decision delay plus a complete tracked-onset window and bounded margin.
 	 * Failure to qualify inside this window rearms raw acquisition. */
 	V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS =
 		V34_EQUALIZER_DECISION_DELAY +

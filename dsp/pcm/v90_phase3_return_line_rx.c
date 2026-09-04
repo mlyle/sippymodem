@@ -217,9 +217,11 @@ v90_phase3_return_line_rx_advance_complete(
 {
 	struct v90_phase3_return_line_rx next;
 	struct qam_equalizer_observation observation = { 0 };
+	struct qam_equalizer_observation compact_observation = { 0 };
 	struct qam_point point;
 	bool carrier_ready;
 	bool equalizer_ready;
+	bool compact_ready = false;
 
 	if (!v90_phase3_return_line_rx_is_valid(rx))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
@@ -234,7 +236,13 @@ v90_phase3_return_line_rx_advance_complete(
 	     (qam_equalizer_observe(
 		      &next.points.equalizer, &point, &observation,
 		      &equalizer_ready) != QAM_EQUALIZER_OK ||
-	      !equalizer_ready))) {
+	      !equalizer_ready ||
+	      (next.points.compact_equalizer_active &&
+	       (qam_equalizer_observe(
+			      &next.points.compact_equalizer, &point,
+			      &compact_observation, &compact_ready) !=
+			      QAM_EQUALIZER_OK ||
+		compact_ready != equalizer_ready))))) {
 		next.failed = true;
 		if (v90_phase3_return_line_rx_is_valid(&next))
 			*rx = next;

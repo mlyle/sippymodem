@@ -113,7 +113,16 @@ static bool run_line(
 	unsigned int final_records = 0;
 
 	CHECK(v90_phase4_line_fixture_init(
-		      law, constellation, &training, &cp_tx, &phase3) &&
+		      law, constellation, &training, &cp_tx, &phase3),
+	      "CP/E fixture did not reach CPt law=%d constellation=%d",
+	      law, constellation);
+	phase3.phase3.compact_equalizer =
+		phase3.phase3.equalizer.equalizer;
+	phase3.phase3.compact_equalizer_active = true;
+	CHECK(qam_equalizer_extend_span(
+		      &phase3.phase3.equalizer.equalizer,
+		      QAM_EQUALIZER_MAX_TAP_COUNT) == QAM_EQUALIZER_OK &&
+	      v90_phase3_return_line_handoff_is_valid(&phase3) &&
 	      v90_phase4_cp_line_rx_init(
 		      &cp_rx, &phase3, constellation, 0.05) ==
 		      V90_PHASE4_CP_LINE_RX_OK,
@@ -298,8 +307,10 @@ static bool run_line(
 	      data_rx.line.timing_power_hysteresis == 1.01 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_integral_gain == 0.0 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_error_limit == 0.25 &&
+	      data_rx.equalizer_receiver.equalizer.tap_count ==
+		      V34_EQUALIZER_TAP_COUNT &&
 	      data_rx.equalizer_receiver.equalizer.carrier_frequency ==
-		      e_rx.equalizer.carrier_frequency &&
+		      e_rx.compact_equalizer.carrier_frequency &&
 	      data_rx.equalizer_receiver.data_receiver.data_receiver
 			      .b1_error_bits == 0,
 	      "CP/E/B1 path stopped law=%d constellation=%d "
@@ -315,11 +326,15 @@ static bool run_line(
 	{
 		struct v90_phase4_e_line_rx saved = e_rx;
 		struct v90_phase4_e_line_rx incomplete = e_rx;
+		struct v90_phase4_e_line_rx long_tail = e_rx;
 		struct v90_mp_record cleardown = mp;
 		struct v34_data_line_receiver rejected;
 		struct v34_data_line_receiver saved_rejected;
+		struct v34_data_line_receiver extended;
 
 		incomplete.symbols.received_bits--;
+		long_tail.equalizer.coefficients[V34_EQUALIZER_TAP_COUNT] =
+			(struct qam_point){ 1.0, 0.0 };
 		cleardown.parameters.type0
 			.maximum_upstream_rate_2400_bps_units = 0;
 		memset(&rejected, 0xa5, sizeof(rejected));
@@ -341,6 +356,13 @@ static bool run_line(
 		      v90_upstream_rx_start_after_e(
 			      &rejected, &e_rx, &cleardown) ==
 			      V90_UPSTREAM_DATA_NO_COMMON_RATE &&
+		      v90_upstream_rx_start_after_e(
+			      &extended, &long_tail, &mp) ==
+			      V90_UPSTREAM_DATA_OK &&
+		      extended.equalizer_receiver.equalizer.tap_count ==
+			      QAM_EQUALIZER_MAX_TAP_COUNT &&
+		      extended.equalizer_receiver.equalizer.carrier_frequency ==
+			      long_tail.equalizer.carrier_frequency &&
 		      memcmp(&rejected, &saved_rejected,
 			     sizeof(rejected)) == 0,
 		      "completed-E handoff contracts changed state");

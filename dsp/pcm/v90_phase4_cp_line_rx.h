@@ -28,6 +28,7 @@ enum v90_phase4_cp_line_rx_result {
 struct v90_phase4_cp_line_rx {
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
+	struct qam_equalizer compact_equalizer;
 	struct v90_phase4_cp_rx symbols;
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters pending_parameters;
@@ -38,6 +39,7 @@ struct v90_phase4_cp_line_rx {
 	bool record_pending;
 	bool pending_record_is_valid;
 	bool failed;
+	bool compact_equalizer_active;
 };
 
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(

@@ -25,12 +25,23 @@ enum {
 	RETURNED_ECHO_TAP_1 = RETURNED_ECHO_DELAY + 7,
 	RETURNED_ECHO_TAP_2 = RETURNED_ECHO_DELAY + 23,
 	RETURNED_ECHO_HISTORY = RETURNED_ECHO_TAP_2 + 1,
+	/* At 3429 symbols/s, 49 samples contain exactly 21 symbols. With the
+	 * fixed 16-symbol decision delay, this echo begins just beyond the
+	 * conventional 37-tap span. */
+	UPSTREAM_ECHO_DELAY = 49,
+	UPSTREAM_ECHO_HISTORY = UPSTREAM_ECHO_DELAY,
+	UPSTREAM_ECHO_GAIN_Q15 = 8000,
 };
 
 enum returned_echo_mode {
 	RETURNED_ECHO_NONE,
 	RETURNED_ECHO_STABLE,
 	RETURNED_ECHO_DC_BIASED,
+};
+
+enum upstream_channel_mode {
+	UPSTREAM_CHANNEL_CLEAN,
+	UPSTREAM_CHANNEL_DELAYED_ECHO,
 };
 
 struct bit_endpoint {
@@ -41,6 +52,8 @@ struct bit_endpoint {
 	bool enabled;
 	bool receive_started;
 	bool mismatch;
+	uint64_t mismatched_bits;
+	uint64_t first_mismatch_bit_plus_one;
 };
 
 static struct dp_operations *registered_v90;
@@ -188,8 +201,13 @@ static int sink_bits(
 		uint8_t expected = pattern_bit(
 			endpoint->receive_seed, endpoint->received_bits);
 
-		if (bits[index] != expected)
+		if (bits[index] != expected) {
 			endpoint->mismatch = true;
+			endpoint->mismatched_bits++;
+			if (endpoint->first_mismatch_bit_plus_one == 0)
+				endpoint->first_mismatch_bit_plus_one =
+					endpoint->received_bits + 1u;
+		}
 		endpoint->received_bits++;
 	}
 	return count;
@@ -240,16 +258,17 @@ static int16_t scale_uq15(int16_t sample, uint16_t gain)
 }
 
 static int16_t history_sample(
-	const int16_t history[RETURNED_ECHO_HISTORY], size_t write,
+	const int16_t *history, size_t capacity, size_t write,
 	size_t fill, size_t age)
 {
 	size_t index;
 
-	if (age == 0 || age > fill)
+	if (history == NULL || capacity == 0 || age == 0 ||
+	    age > fill || age > capacity)
 		return 0;
-	index = write + RETURNED_ECHO_HISTORY - age;
-	if (index >= RETURNED_ECHO_HISTORY)
-		index -= RETURNED_ECHO_HISTORY;
+	index = write + capacity - age;
+	if (index >= capacity)
+		index -= capacity;
 	return history[index];
 }
 
@@ -258,14 +277,20 @@ static int16_t returned_echo(
 	size_t fill, enum returned_echo_mode mode)
 {
 	int32_t sample = scale_q15(
-		history_sample(history, write, fill, RETURNED_ECHO_DELAY),
+		history_sample(
+			history, RETURNED_ECHO_HISTORY, write, fill,
+			RETURNED_ECHO_DELAY),
 		11000);
 
 	sample += scale_q15(
-		history_sample(history, write, fill, RETURNED_ECHO_TAP_1),
+		history_sample(
+			history, RETURNED_ECHO_HISTORY, write, fill,
+			RETURNED_ECHO_TAP_1),
 		4500);
 	sample -= scale_q15(
-		history_sample(history, write, fill, RETURNED_ECHO_TAP_2),
+		history_sample(
+			history, RETURNED_ECHO_HISTORY, write, fill,
+			RETURNED_ECHO_TAP_2),
 		2200);
 	if (mode == RETURNED_ECHO_DC_BIASED)
 		sample += 1400;
@@ -280,9 +305,11 @@ static bool run_pair_with_rate_window(
 	uint64_t minimum_received_bits,
 	bool require_online, enum modem_pcm_role retrain_role,
 	bool separate_upstream_sample, uint16_t digital_receive_gain_q15,
-	enum returned_echo_mode echo_mode)
+	enum returned_echo_mode echo_mode,
+	enum upstream_channel_mode upstream_channel)
 {
 	int16_t echo_history[RETURNED_ECHO_HISTORY] = { 0 };
+	int16_t upstream_history[UPSTREAM_ECHO_HISTORY] = { 0 };
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
 		.receive_seed = 0xa7,
@@ -315,6 +342,8 @@ static bool run_pair_with_rate_window(
 	bool sample_codeword_separated = false;
 	size_t echo_history_write = 0;
 	size_t echo_history_fill = 0;
+	size_t upstream_history_write = 0;
+	size_t upstream_history_fill = 0;
 
 	analog.min_rate = downstream_rate;
 	analog.max_rate = downstream_rate;
@@ -361,6 +390,26 @@ static bool run_pair_with_rate_window(
 			digital_received_octet = encode(law, 0);
 			sample_codeword_separated |=
 				digital_received_octet != analog_to_digital;
+		}
+		if (upstream_channel == UPSTREAM_CHANNEL_DELAYED_ECHO) {
+			int16_t source = digital_receive;
+
+			digital_receive = add_s16(
+				(int32_t)source +
+				scale_q15(
+					history_sample(
+						upstream_history,
+						UPSTREAM_ECHO_HISTORY,
+						upstream_history_write,
+						upstream_history_fill,
+						UPSTREAM_ECHO_DELAY),
+					UPSTREAM_ECHO_GAIN_Q15));
+			upstream_history[upstream_history_write] = source;
+			upstream_history_write++;
+			if (upstream_history_write == UPSTREAM_ECHO_HISTORY)
+				upstream_history_write = 0;
+			if (upstream_history_fill < UPSTREAM_ECHO_HISTORY)
+				upstream_history_fill++;
 		}
 		digital_receive = scale_uq15(
 			digital_receive, digital_receive_gain_q15);
@@ -486,12 +535,16 @@ static bool run_pair_with_rate_window(
 	      digital_bits.received_bits >= minimum_received_bits &&
 	      !analog_bits.mismatch && !digital_bits.mismatch,
 	      "V.90 host bits did not pass exactly in both directions "
-	      "(supplied %llu/%llu received %llu/%llu mismatch %d/%d)",
+	      "(supplied %llu/%llu received %llu/%llu mismatch %llu/%llu "
+	      "first %llu/%llu)",
 	      (unsigned long long)analog_bits.supplied_bits,
 	      (unsigned long long)digital_bits.supplied_bits,
 	      (unsigned long long)analog_bits.received_bits,
 	      (unsigned long long)digital_bits.received_bits,
-	      analog_bits.mismatch, digital_bits.mismatch);
+	      (unsigned long long)analog_bits.mismatched_bits,
+	      (unsigned long long)digital_bits.mismatched_bits,
+	      (unsigned long long)analog_bits.first_mismatch_bit_plus_one,
+	      (unsigned long long)digital_bits.first_mismatch_bit_plus_one);
 	CHECK(!exercise_retrain ||
 	      (retrain_requested && post_retrain_data_enabled &&
 	       analog_bits.received_bits >= minimum_received_bits &&
@@ -521,7 +574,8 @@ static bool run_pair_with_input_contract(
 		upstream_symbol_rate, MINIMUM_RECEIVED_BITS,
 		require_online, retrain_role,
 		separate_upstream_sample, UNITY_GAIN_Q15,
-		add_returned_echo ? RETURNED_ECHO_STABLE : RETURNED_ECHO_NONE);
+		add_returned_echo ? RETURNED_ECHO_STABLE : RETURNED_ECHO_NONE,
+		UPSTREAM_CHANNEL_CLEAN);
 }
 
 static bool run_pair_for_bits(
@@ -534,7 +588,7 @@ static bool run_pair_for_bits(
 		upstream_rate, upstream_rate, upstream_rate,
 		upstream_symbol_rate, minimum_received_bits,
 		true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
-		RETURNED_ECHO_NONE);
+		RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN);
 }
 
 static bool run_pair(
@@ -622,10 +676,26 @@ static bool test_attenuated_upstream(void)
 		      56000, 31200, 31200, 31200, 3429,
 		      SUSTAINED_RECEIVED_BITS, true,
 		      MODEM_PCM_ROLE_NONE, false, WEAK_UPSTREAM_GAIN_Q15,
-		      RETURNED_ECHO_NONE),
+		      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
 	      "attenuated V.90 upstream did not sustain exact data");
 	CHECK(v90_datapump_unregister() == 0,
 	      "attenuated-upstream V.90 registration remained busy");
+	return true;
+}
+
+static bool test_delayed_upstream_channel(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "delayed-channel V.90 registration failed");
+	CHECK(run_pair_with_rate_window(
+		      G711_LAW_PCMU,
+		      56000, 31200, 31200, 31200, 3429,
+		      SUSTAINED_RECEIVED_BITS, true,
+		      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+		      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_DELAYED_ECHO),
+	      "V.90 upstream did not sustain data through a delayed channel");
+	CHECK(v90_datapump_unregister() == 0,
+	      "delayed-channel V.90 registration remained busy");
 	return true;
 }
 
@@ -671,7 +741,7 @@ static bool test_dc_biased_host_echo(void)
 		      56000, 28800, 33600, 33600, 3429,
 		      SUSTAINED_RECEIVED_BITS, true,
 		      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
-		      RETURNED_ECHO_DC_BIASED),
+		      RETURNED_ECHO_DC_BIASED, UPSTREAM_CHANNEL_CLEAN),
 	      "DC-biased digital host echo did not sustain exact upstream data");
 	CHECK(v90_datapump_unregister() == 0,
 	      "DC-biased V.90 registration remained busy");
@@ -917,6 +987,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "long-delay upstream channel",
+		  test_delayed_upstream_channel },
 		{ "attenuated maximum-rate upstream",
 		  test_attenuated_upstream },
 		{ "V.92 PCM-upstream selection",

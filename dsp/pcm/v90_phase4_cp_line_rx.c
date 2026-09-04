@@ -9,6 +9,21 @@
 
 static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
 
+static bool compact_equalizer_state_is_valid(
+	const struct v90_phase4_cp_line_rx *rx)
+{
+	if (!rx->compact_equalizer_active)
+		return rx->compact_equalizer.tap_count == 0;
+	return rx->equalizer.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
+	       rx->compact_equalizer.tap_count == V34_EQUALIZER_TAP_COUNT &&
+	       rx->compact_equalizer.decision_delay ==
+		       V34_EQUALIZER_DECISION_DELAY &&
+	       rx->compact_equalizer.fill == rx->equalizer.fill &&
+	       rx->compact_equalizer.carrier_tracking ==
+		       rx->equalizer.carrier_tracking &&
+	       qam_equalizer_is_handoff_ready(&rx->compact_equalizer);
+}
+
 bool v90_phase4_cp_line_rx_is_valid(
 	const struct v90_phase4_cp_line_rx *rx)
 {
@@ -16,6 +31,7 @@ bool v90_phase4_cp_line_rx_is_valid(
 	       v90_phase3_demodulator_is_locked(
 		       &rx->demodulator, &rx->transmitting_profile) &&
 	       qam_equalizer_is_handoff_ready(&rx->equalizer) &&
+	       compact_equalizer_state_is_valid(rx) &&
 	       v90_phase4_cp_rx_is_valid(&rx->symbols) &&
 	       rx->symbols.transmitting_role ==
 		       rx->transmitting_profile.local_role &&
@@ -75,6 +91,10 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	initialized.demodulator = handoff->demodulator;
 	initialized.equalizer = handoff->phase3.equalizer.equalizer;
+	initialized.compact_equalizer =
+		handoff->phase3.compact_equalizer;
+	initialized.compact_equalizer_active =
+		handoff->phase3.compact_equalizer_active;
 	initialized.transmitting_profile = handoff->transmitting_profile;
 	if (v90_phase4_cp_rx_init(
 		    &initialized.symbols,
@@ -166,6 +186,9 @@ static enum v90_phase4_cp_line_rx_result fail_sample(
 	struct v90_phase4_cp_line_rx *next)
 {
 	next->failed = true;
+	next->equalizer.can_adapt = false;
+	if (next->compact_equalizer_active)
+		next->compact_equalizer.can_adapt = false;
 	if (v90_phase4_cp_line_rx_is_valid(next))
 		*rx = *next;
 	else
@@ -179,6 +202,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 {
 	struct v90_phase4_cp_line_rx next;
 	struct qam_equalizer_observation observation = { 0 };
+	struct qam_equalizer_observation compact_observation = { 0 };
 	struct v90_cp_receive_event emitted = { 0 };
 	struct qam_point received;
 	struct qam_point target;
@@ -186,6 +210,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	uint8_t clockwise_quarter_turns;
 	bool carrier_ready;
 	bool equalizer_ready;
+	bool compact_ready = false;
 
 	if (!v90_phase4_cp_line_rx_is_valid(rx) || event == NULL)
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
@@ -208,6 +233,12 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		    &next.equalizer, &received, &observation,
 		    &equalizer_ready) != QAM_EQUALIZER_OK ||
 	    !equalizer_ready ||
+	    (next.compact_equalizer_active &&
+	     (qam_equalizer_observe(
+		      &next.compact_equalizer, &received,
+		      &compact_observation, &compact_ready) !=
+			      QAM_EQUALIZER_OK ||
+	      compact_ready != equalizer_ready)) ||
 	    v34_training_constellation_slice(
 		    next.symbols.constellation, &observation.output,
 		    &quarter_point, &clockwise_quarter_turns) !=
@@ -224,7 +255,15 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		    next.tap_adaptation_held ? 0.0 :
 			    next.adaptation *
 				    V90_PHASE4_CONTROL_ADAPTATION_SCALE) !=
-		    QAM_EQUALIZER_OK)
+		    QAM_EQUALIZER_OK ||
+	    (next.compact_equalizer_active &&
+	     qam_equalizer_adapt_observation(
+		     &next.compact_equalizer, &compact_observation,
+		     &target,
+		     next.tap_adaptation_held ? 0.0 :
+			     next.adaptation *
+				     V90_PHASE4_CONTROL_ADAPTATION_SCALE) !=
+		     QAM_EQUALIZER_OK))
 		return fail_sample(rx, &next);
 	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
 		next.record_pending = true;

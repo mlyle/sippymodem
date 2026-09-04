@@ -288,6 +288,17 @@ static bool run_line(enum g711_law law)
 	      receive_return(
 		      law, &return_tx, &return_rx, &line, &return_handoff),
 	      "law %d did not reacquire the second return", law);
+	CHECK(return_rx.points.compact_equalizer_active &&
+	      return_rx.points.equalizer.tap_count ==
+		      QAM_EQUALIZER_MAX_TAP_COUNT &&
+	      return_rx.points.compact_equalizer.tap_count ==
+		      V34_EQUALIZER_TAP_COUNT &&
+	      return_handoff.phase3.compact_equalizer_active &&
+	      return_handoff.phase3.equalizer.equalizer.tap_count ==
+		      QAM_EQUALIZER_MAX_TAP_COUNT &&
+	      return_handoff.phase3.compact_equalizer.tap_count ==
+		      V34_EQUALIZER_TAP_COUNT,
+	      "law %d did not preserve both reacquired equalizers", law);
 	{
 		struct qam_demodulator demodulator = return_rx.demodulator;
 		struct v34_phase3_s_receiver marker = return_rx.points.marker;
@@ -308,7 +319,8 @@ static bool run_line(enum g711_law law)
 			     sizeof(marker)) == 0 &&
 		      v90_phase3_return_line_rx_handoff(
 			      &return_rx, &return_handoff) ==
-			      V90_PHASE3_RETURN_LINE_RX_OK,
+			      V90_PHASE3_RETURN_LINE_RX_OK &&
+		      return_handoff.phase3.compact_equalizer_active,
 		      "law %d completed return did not advance its line clock",
 		      law);
 	}

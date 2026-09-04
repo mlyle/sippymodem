@@ -64,6 +64,11 @@ enum v90_phase3_return_rx_result {
  * adaptation to the intervening signal. */
 struct v90_phase3_return_rx {
 	struct qam_equalizer equalizer;
+	/* Second-return reacquisition trains both spans from the same S targets.
+	 * The compact candidate remains isolated from the decision path until the
+	 * learned long tail is accepted or rejected after the complete E
+	 * training interval. */
+	struct qam_equalizer compact_equalizer;
 	struct v34_precoder_recommendation precoder;
 	struct v34_phase3_s_receiver marker;
 	double adaptation;
@@ -79,6 +84,7 @@ struct v90_phase3_return_rx {
 	bool allow_implicit_s_end;
 	bool second_return;
 	bool equalizer_reacquiring;
+	bool compact_equalizer_active;
 };
 
 /* The equalizer has already accepted its decision-delay points following the
@@ -87,7 +93,9 @@ struct v90_phase3_return_rx {
 struct v90_phase3_return_handoff {
 	struct v34_phase3_s_detection marker;
 	struct v34_equalizer_handoff equalizer;
+	struct qam_equalizer compact_equalizer;
 	struct v34_precoder_recommendation precoder;
+	bool compact_equalizer_active;
 };
 
 enum v90_phase3_return_rx_result v90_phase3_return_rx_init(
@@ -108,9 +116,10 @@ v90_phase3_return_rx_allow_implicit_s_end(
 enum v90_phase3_return_rx_result v90_phase3_return_rx_restart(
 	struct v90_phase3_return_rx *rx);
 /* A qualified raw S prefix may expose a changed symbol boundary that the
- * equalizer inherited from the first return cannot slice. Re-seed the same
- * bounded V.34 equalizer geometry on that known S point, retaining its
- * carrier-loop gains and requiring the ordinary complete marker afterward. */
+ * equalizer inherited from the first return cannot slice. Train bounded long
+ * and conventional spans from that known S point, retaining the carrier-loop
+ * gains and requiring the ordinary complete marker before handing both to
+ * Phase 4 training. */
 enum v90_phase3_return_rx_result v90_phase3_return_rx_reacquire_s(
 	struct v90_phase3_return_rx *rx,
 	const struct qam_point *received);

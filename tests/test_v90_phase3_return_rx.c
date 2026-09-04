@@ -563,7 +563,12 @@ static bool test_reacquisition_contract(void)
 	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &point) ==
 		      V90_PHASE3_RETURN_RX_OK &&
 	      v90_phase3_return_rx_is_valid(&rx) &&
-	      rx.equalizer_reacquiring && rx.equalizer.fill == 0 &&
+	      rx.equalizer_reacquiring &&
+	      rx.equalizer.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
+	      rx.equalizer.fill == 0 &&
+	      rx.compact_equalizer_active &&
+	      rx.compact_equalizer.tap_count == V34_EQUALIZER_TAP_COUNT &&
+	      rx.compact_equalizer.fill == 0 &&
 	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
 	      rx.confirmed_s_symbols == 0 &&
 	      rx.buffered_onset_decisions == 0,

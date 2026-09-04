@@ -825,6 +825,7 @@ static bool test_validation_and_failure_latch(void)
 	struct v34_data_line_receiver rejected;
 	struct v34_data_line_receiver_configuration configuration;
 	struct v34_equalizer_handoff handoff;
+	struct v34_equalizer_handoff extended_handoff;
 	struct v34_equalizer_handoff invalid_handoff;
 	struct qam_demodulator unlocked;
 	struct qam_channel channel;
@@ -836,8 +837,16 @@ static bool test_validation_and_failure_latch(void)
 	CHECK(prepare_handoff(&fixture, 0.01, false),
 	      "V.34 line validation fixture did not initialize");
 	handoff.equalizer = fixture.receiver.equalizer_receiver.equalizer;
-	CHECK(v34_equalizer_handoff_is_valid(&handoff),
-	      "V.34 line validation handoff is invalid");
+	extended_handoff = handoff;
+	CHECK(v34_equalizer_handoff_is_valid(&handoff) &&
+	      qam_equalizer_extend_span(
+		      &extended_handoff.equalizer,
+		      QAM_EQUALIZER_MAX_TAP_COUNT) == QAM_EQUALIZER_OK &&
+	      v34_equalizer_handoff_is_valid(&extended_handoff),
+	      "V.34 line validation rejected a bounded extended handoff");
+	extended_handoff.equalizer.decision_delay++;
+	CHECK(!v34_equalizer_handoff_is_valid(&extended_handoff),
+	      "V.34 line validation accepted a moved decision boundary");
 	configuration = receiver_configuration(
 		&fixture.stream, &fixture.configuration, 0.01);
 	CHECK(v34_line_channel_init(&profile, 8000, &channel) ==

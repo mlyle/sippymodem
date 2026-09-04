@@ -31,12 +31,14 @@ enum v90_phase4_e_line_rx_result {
 struct v90_phase4_e_line_rx {
 	struct qam_demodulator demodulator;
 	struct qam_equalizer equalizer;
+	struct qam_equalizer compact_equalizer;
 	struct v34_phase4_e_receiver symbols;
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters cp;
 	double adaptation;
 	bool tap_adaptation_held;
 	bool failed;
+	bool compact_equalizer_active;
 };
 
 enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
