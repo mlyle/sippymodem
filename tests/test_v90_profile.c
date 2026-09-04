@@ -393,9 +393,11 @@ static bool test_upstream_policy(void)
 		      V90_MP_RECORD_TYPE0 &&
 	      maximum_digital.digital_phase4.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units == 14u &&
-	      maximum_digital.digital_phase4.initial_mp.parameters.type0
-		      .upstream_nonlinear_encoding,
-	      "maximum upstream profile lost its nonlinear decision margin");
+	      maximum_digital.phase3.digital.receive
+		      .tracking_equalizer_adaptation == 0.06 &&
+	      !maximum_digital.digital_phase4.initial_mp.parameters.type0
+		       .upstream_nonlinear_encoding,
+	      "maximum upstream profile lost linear data-entry margin");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	saved = rejected;
 	CHECK(v90_profile_init(

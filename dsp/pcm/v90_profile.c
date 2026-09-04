@@ -16,7 +16,6 @@ enum {
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
-	V90_LINEAR_UPSTREAM_MAXIMUM_RATE_UNITS = 13,
 	V90_SIGN_REDUNDANCY = 1,
 	/* Depths zero and one are mandatory at the digital modem; deeper
 	 * spectral shaping is optional.  Use the deepest mandatory profile in
@@ -303,13 +302,11 @@ static struct v90_mp_record initial_mp(
 		.parameters.type0 = {
 			.maximum_upstream_rate_2400_bps_units =
 				upstream->maximum_rate_2400_bps_units,
-			/* Use the interoperable linear, Type-0 baseline through
-			 * 31.2 kbit/s. The densest 33.6 kbit/s mapping retains nonlinear
-			 * projection for decision margin under returned echo. */
+			/* Use the interoperable linear, Type-0 baseline at every rate.
+			 * Nonlinear projection remains available when an explicit MP
+			 * record selects it, but is not needed to reach 33.6 kbit/s. */
 			.upstream_trellis = V34_TRELLIS_16_STATE,
-			.upstream_nonlinear_encoding =
-				upstream->maximum_rate_2400_bps_units >
-				V90_LINEAR_UPSTREAM_MAXIMUM_RATE_UNITS,
+			.upstream_nonlinear_encoding = false,
 			.upstream_expanded_shaping = true,
 			.upstream_rate_capability_mask = upstream->rate_mask,
 		},
@@ -364,7 +361,9 @@ enum v90_profile_result v90_profile_init(
 			(struct v90_phase3_analog_rx_configuration){
 				.s_gain_adaptation = 0.15,
 				.pp_equalizer_adaptation = 0.2,
-				.tracking_equalizer_adaptation = 0.05,
+				/* Retain data-entry margin for linear 33.6 kbit/s
+				 * through a bounded returned-echo residual. */
+				.tracking_equalizer_adaptation = 0.06,
 			};
 		selected.phase3.digital.jd =
 			jd_parameters(downstream.enabled_mask);
