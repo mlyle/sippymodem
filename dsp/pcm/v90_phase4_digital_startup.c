@@ -7,6 +7,14 @@
 #include <stddef.h>
 #include <string.h>
 
+enum {
+	/* Automatic Type-1 use is deliberately limited to mild residual ISI.
+	 * Larger valid coefficients remain available through an explicitly
+	 * configured Type-1 MP, where the caller owns that interoperability
+	 * choice. */
+	V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14 = V34_Q14_SCALE / 32,
+};
+
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
@@ -19,6 +27,29 @@ static const struct v90_mp_parameters *mp_parameters(
 	return record->type == V90_MP_RECORD_TYPE0 ?
 		       &record->parameters.type0 :
 		       &record->parameters.type1.common;
+}
+
+static uint32_t coefficient_magnitude(int16_t coefficient)
+{
+	return coefficient < 0 ?
+		       (uint32_t)-(int32_t)coefficient : (uint32_t)coefficient;
+}
+
+static bool automatic_precoder_is_bounded(
+	const struct v34_precoder_recommendation *precoder)
+{
+	uint32_t magnitude = 0;
+
+	if (!v34_precoder_recommendation_is_valid(precoder) ||
+	    !precoder->enabled)
+		return false;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
+		magnitude += coefficient_magnitude(
+			precoder->coefficients[tap].real);
+		magnitude += coefficient_magnitude(
+			precoder->coefficients[tap].imaginary);
+	}
+	return magnitude <= V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14;
 }
 
 static bool select_initial_mp(
@@ -44,7 +75,7 @@ static bool select_initial_mp(
 		station->peer_upstream_rate_mask);
 	limited = *configured;
 	if (limited.type == V90_MP_RECORD_TYPE0 &&
-	    station->precoder.enabled) {
+	    automatic_precoder_is_bounded(&station->precoder)) {
 		struct v90_mp_type1_parameters type1 = {
 			.common = limited.parameters.type0,
 		};
