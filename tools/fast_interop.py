@@ -36,7 +36,11 @@ if __package__:
         InteropRunError,
         reserve_loopback_port_sets,
     )
-    from .live_profiles import scenario_commands
+    from .live_profiles import (
+        PROFILE_GROUPS,
+        scenario_commands,
+        select_profiles,
+    )
     from .live_terminal import ConnectReport, LiveTerminalError
     from .local_interop import (
         InteropResult,
@@ -64,7 +68,11 @@ else:
         InteropRunError,
         reserve_loopback_port_sets,
     )
-    from live_profiles import scenario_commands
+    from live_profiles import (
+        PROFILE_GROUPS,
+        scenario_commands,
+        select_profiles,
+    )
     from live_terminal import ConnectReport, LiveTerminalError
     from local_interop import (
         InteropResult,
@@ -534,6 +542,13 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="run one public profile; may be repeated",
     )
+    parser.add_argument(
+        "--group",
+        action="append",
+        choices=tuple(PROFILE_GROUPS),
+        default=[],
+        help="run one public profile group; may be repeated",
+    )
     parser.add_argument("--stop-on-failure", action="store_true")
     parser.add_argument(
         "--jobs",
@@ -583,7 +598,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
     options = _parser().parse_args(arguments)
     try:
         config = load_interop_config(options.config)
-        profiles = tuple(options.profile) or FAST_PROFILE_NAMES
+        selected = select_profiles(
+            tuple(options.profile), tuple(options.group)
+        )
+        profiles = tuple(profile.name for profile in selected)
+        profiles = profiles or FAST_PROFILE_NAMES
         cases = build_fast_matrix(profiles)
         if options.media_codec:
             selected_codecs = frozenset(options.media_codec)

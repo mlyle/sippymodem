@@ -85,7 +85,7 @@ class LiveProfileTests(unittest.TestCase):
             if profile.readiness == READINESS_RUNNABLE
         )
 
-        self.assertEqual(len(runnable), 72)
+        self.assertEqual(len(runnable), 130)
         for profile in runnable:
             self.assertTrue(profile.at_commands)
             self.assertTrue(
@@ -212,6 +212,18 @@ class LiveProfileTests(unittest.TestCase):
         self.assertEqual(len(PROFILE_GROUPS["v92-up"]), 36)
         self.assertEqual(len(PROFILE_GROUPS["v92-pcmup"]), 19)
         self.assertEqual(len(PROFILE_GROUPS["v92-headend"]), 2)
+        self.assertTrue(
+            all(
+                PROFILES[name].readiness == READINESS_RUNNABLE
+                for name in PROFILE_GROUPS["v90"]
+            )
+        )
+        self.assertTrue(
+            all(
+                PROFILES[name].readiness == READINESS_PREREQUISITE
+                for name in PROFILE_GROUPS["v92"]
+            )
+        )
         self.assertEqual(
             tuple(
                 PROFILES[name].receive_rate

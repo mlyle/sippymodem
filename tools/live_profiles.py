@@ -12,7 +12,9 @@ READINESS_RUNNABLE = "runnable"
 READINESS_PREREQUISITE = "prerequisite"
 V34_RECEIVE_PREREQUISITE = "directional V.34 receive-rate control"
 V34_TRANSMIT_PREREQUISITE = "AT+V90U directional transmit control"
-V90_PREREQUISITE = "V.90 datapump and AT+V90U control"
+V90_ANALOG_FALLBACK_PREREQUISITE = (
+    "V.90 interoperability with an analogue peer"
+)
 V92_PREREQUISITE = "V.92 datapump and AT+V92Q/AT+V92U controls"
 
 
@@ -153,6 +155,7 @@ def _add_digital_profile(
     receive_rate: int | None = None,
     transmit_rate: int | None = None,
     symbol_rate: int | None = None,
+    runnable: bool = False,
 ) -> None:
     _add(
         profiles,
@@ -164,9 +167,17 @@ def _add_digital_profile(
             receive_rate=receive_rate,
             transmit_rate=transmit_rate,
             symbol_rate=symbol_rate,
-            readiness=READINESS_PREREQUISITE,
+            readiness=(
+                READINESS_RUNNABLE if runnable else READINESS_PREREQUISITE
+            ),
             prerequisite=(
-                V90_PREREQUISITE if family == "v90" else V92_PREREQUISITE
+                ""
+                if runnable
+                else (
+                    V90_ANALOG_FALLBACK_PREREQUISITE
+                    if family == "v90"
+                    else V92_PREREQUISITE
+                )
             ),
         ),
     )
@@ -338,15 +349,15 @@ def _build_profiles() -> dict[str, ModemProfile]:
         )
 
     for datapump, family in ((90, "v90"), (92, "v92")):
-        prerequisite = (
-            V90_PREREQUISITE if datapump == 90 else V92_PREREQUISITE
-        )
+        description_prefix = "" if datapump == 90 else "future "
         for downstream in V90_DOWNSTREAM_RATES:
             _add_digital_profile(
                 profiles,
                 name=f"{family}_down_{downstream}",
                 family=family,
-                description=f"future V.{datapump} downstream cap sweep",
+                description=(
+                    f"{description_prefix}V.{datapump} downstream cap sweep"
+                ),
                 at_commands=_v90_commands(
                     datapump,
                     downstream,
@@ -356,6 +367,7 @@ def _build_profiles() -> dict[str, ModemProfile]:
                 receive_rate=downstream,
                 transmit_rate=V90_REPRESENTATIVE_UPSTREAM_RATE,
                 symbol_rate=V90_REPRESENTATIVE_UPSTREAM_SYMBOL_RATE,
+                runnable=datapump == 90,
             )
         for symbol_rate, upstream_rates in (
             V90_UPSTREAM_RATES_BY_SYMBOL_RATE.items()
@@ -366,7 +378,8 @@ def _build_profiles() -> dict[str, ModemProfile]:
                     name=f"{family}_up_{upstream}_b{symbol_rate}",
                     family=family,
                     description=(
-                        f"future V.{datapump} conventional upstream cap sweep"
+                        f"{description_prefix}V.{datapump} conventional "
+                        "upstream cap sweep"
                     ),
                     at_commands=_v90_commands(
                         datapump,
@@ -377,14 +390,8 @@ def _build_profiles() -> dict[str, ModemProfile]:
                     receive_rate=V90_REPRESENTATIVE_DOWNSTREAM_RATE,
                     transmit_rate=upstream,
                     symbol_rate=symbol_rate,
+                    runnable=datapump == 90,
                 )
-        if any(
-            profile.family == family
-            and profile.readiness == READINESS_PREREQUISITE
-            and profile.prerequisite != prerequisite
-            for profile in profiles.values()
-        ):
-            raise RuntimeError(f"inconsistent {family} profile prerequisite")
 
     for upstream in V92_PCM_UPSTREAM_RATES:
         _add_digital_profile(
@@ -545,8 +552,7 @@ PROFILE_GROUPS["implemented"] = (
     + PROFILE_GROUPS["v90-current"]
 )
 PROFILE_GROUPS["future-digital"] = (
-    PROFILE_GROUPS["v90"]
-    + PROFILE_GROUPS["v92"]
+    PROFILE_GROUPS["v92"]
     + PROFILE_GROUPS["v92-headend"]
     + PROFILE_GROUPS["analog-fallback"]
 )

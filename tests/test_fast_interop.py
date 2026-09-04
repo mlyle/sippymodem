@@ -479,6 +479,19 @@ class FastInteropTests(unittest.TestCase):
             self.assertEqual(
                 main(["--config", str(path), "--ato1", "baseline"]), 77
             )
+            self.assertEqual(
+                main(
+                    [
+                        "--config",
+                        str(path),
+                        "--group",
+                        "v90",
+                        "--media-codec",
+                        "PCMU",
+                    ]
+                ),
+                77,
+            )
 
 
 if __name__ == "__main__":

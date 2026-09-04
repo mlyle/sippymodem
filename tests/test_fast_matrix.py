@@ -170,7 +170,7 @@ class FastMatrixTests(unittest.TestCase):
 
     def test_invalid_profiles_and_epochs_fail_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "runnable"):
-            build_fast_matrix(("v90_down_28000",))
+            build_fast_matrix(("v92_down_28000",))
         with self.assertRaisesRegex(ValueError, "duplicate"):
             build_fast_matrix(("v21_300", "v21_300"))
         case = build_fast_matrix(("v21_300",))[0]

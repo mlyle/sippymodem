@@ -258,6 +258,11 @@ bounded JSON records. `--stop-on-failure` completes the current wave and does
 not schedule another one. Use `--media-codec PCMU` or `--media-codec PCMA` to
 limit a comparison to one tested G.711 path.
 
+Pass `--group v90 --media-codec PCMU` to sweep all 22 V.90 downstream rates
+and all 36 conventional-upstream rate/cadence profiles against a controlled
+digital peer. V.92 and analogue-peer fallback profiles remain unavailable
+until their respective interoperability paths are established.
+
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, and every valid fixed V.34
 bit-rate/symbol-rate pair selectable through `+MS` and `+V34B`. The fast
