@@ -115,6 +115,7 @@ static bool run_exchange(
 	uint32_t phase4_points = 0;
 	uint32_t receive_complete_at = UINT32_MAX;
 	uint32_t transmit_complete_at = UINT32_MAX;
+	uint32_t post_ja_silence_octets = 0;
 	bool phase4_line_active = false;
 	bool second_s_seen = false;
 	bool dil_completion_seen = false;
@@ -157,14 +158,27 @@ static bool run_exchange(
 			      "law %u Phase 4 continuation failed at %u",
 			      (unsigned int)law, index);
 		}
-		if (!v90_phase3_digital_station_transmit_complete(&digital))
+		if (!v90_phase3_digital_station_transmit_complete(&digital)) {
+			bool post_ja_silence = digital.transmit_started &&
+				digital.post_ja_silence_symbols_remaining != 0u;
+
 			CHECK(v90_phase3_digital_station_transmit(
 				      &digital, &digital_octet) ==
 				      V90_PHASE3_DIGITAL_STATION_OK,
 			      "law %u digital transmit failed at %u",
 			      (unsigned int)law, index);
-		else
+			if (post_ja_silence) {
+				CHECK(digital_octet ==
+					      (law == G711_LAW_PCMA ?
+						       g711_encode_pcma(0) :
+						       g711_encode_pcmu(0)),
+				      "law %u post-Ja guard was not quiet at %u",
+				      (unsigned int)law, index);
+				post_ja_silence_octets++;
+			}
+		} else {
 			digital_octet = 0;
+		}
 		if (!v90_phase3_analog_station_receive_complete(&analog)) {
 			CHECK(v90_phase3_analog_station_receive(
 				      &analog, digital_octet) ==
@@ -205,7 +219,8 @@ static bool run_exchange(
 		    v90_phase3_digital_station_transmit_complete(&digital))
 			break;
 	}
-	CHECK(receive_complete_at < transmit_complete_at &&
+	CHECK(post_ja_silence_octets == 160u &&
+	      receive_complete_at < transmit_complete_at &&
 	      phase4_line_active &&
 	      v90_phase3_digital_station_receive_complete(&digital) &&
 	      v90_phase3_digital_station_transmit_complete(&digital) &&

@@ -59,12 +59,15 @@ bool v90_phase3_digital_station_is_valid(
 	    !g711_law_is_valid(station->law) ||
 	    station->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    station->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
+	    station->post_ja_silence_symbols_remaining >
+		    V90_PHASE3_DIGITAL_POST_JA_SILENCE_SYMBOLS ||
 	    !finish_request_is_causal(station) ||
 	    (receive_has_failed(station) && !station->failed))
 		return false;
 	if (!station->transmit_started)
 		return station->receive_stage ==
-		       V90_PHASE3_DIGITAL_RECEIVE_INITIAL;
+			       V90_PHASE3_DIGITAL_RECEIVE_INITIAL &&
+		       station->post_ja_silence_symbols_remaining == 0u;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ||
 	    !pcm_phase3_digital_tx_is_valid(&station->transmit))
 		return false;
@@ -143,6 +146,17 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 		*network_octet = silence_octet(station->law);
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}
+	if (station->post_ja_silence_symbols_remaining != 0u) {
+		next = *station;
+		next.post_ja_silence_symbols_remaining--;
+		if (!v90_phase3_digital_station_is_valid(&next)) {
+			station->failed = true;
+			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+		}
+		*station = next;
+		*network_octet = silence_octet(station->law);
+		return V90_PHASE3_DIGITAL_STATION_OK;
+	}
 	next = *station;
 	if (pcm_phase3_digital_tx_next(&next.transmit, &symbol) !=
 		    PCM_PHASE3_DIGITAL_TX_OK ||
@@ -196,6 +210,8 @@ static enum v90_phase3_digital_station_result receive_initial(
 		station->receive.returning = returning;
 		station->transmit = transmit;
 		station->receive_stage = V90_PHASE3_DIGITAL_RECEIVE_RETURN;
+		station->post_ja_silence_symbols_remaining =
+			V90_PHASE3_DIGITAL_POST_JA_SILENCE_SYMBOLS;
 		station->transmit_started = true;
 		return V90_PHASE3_DIGITAL_STATION_OK;
 	}

@@ -16,6 +16,11 @@ enum v90_phase3_digital_receive_stage {
 	V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN,
 };
 
+enum {
+	/* Leave the peer a 20-ms settling interval after Ja before Sd. */
+	V90_PHASE3_DIGITAL_POST_JA_SILENCE_SYMBOLS = 160,
+};
+
 enum v90_phase3_digital_station_result {
 	V90_PHASE3_DIGITAL_STATION_OK,
 	V90_PHASE3_DIGITAL_STATION_COMPLETE,
@@ -44,15 +49,16 @@ struct v90_phase3_digital_transmit_handoff {
 };
 
 /* Owns both directions of the digital modem's Phase 3 exchange. Network
- * transmission remains silent until a valid Ja descriptor is received. A
- * nonzero DIL rearms the same trained line receiver for the second S/S-bar.
- * Calls on one instance must be serialized; transmit and receive reach their
- * independent Phase 4 boundaries at different times. */
+ * transmission remains silent until a valid Ja descriptor is received, then
+ * leaves a short settling interval before Sd. A nonzero DIL rearms the same
+ * trained line receiver for the second S/S-bar. Calls on one instance must be
+ * serialized; transmit and receive reach independent Phase 4 boundaries. */
 struct v90_phase3_digital_station {
 	union v90_phase3_digital_station_receive receive;
 	struct pcm_phase3_digital_tx transmit;
 	struct v90_jd_parameters jd;
 	enum v90_phase3_digital_receive_stage receive_stage;
+	uint16_t post_ja_silence_symbols_remaining;
 	enum g711_law law;
 	uint8_t training_ucode;
 	bool transmit_started;
