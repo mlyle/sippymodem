@@ -3115,6 +3115,9 @@ static bool run_v90_recording_replay(
 		    endpoint.modem->dp != NULL &&
 		    endpoint.modem->dp->id == DP_V34)
 			fallback_at = offset;
+		if (fallback_at != SIZE_MAX && expected_text_length == 0 &&
+		    modem_is_online(endpoint.modem, DP_V34))
+			endpoint.output_count = 0;
 		if (modem_is_online(endpoint.modem, DP_V90)) {
 			if (connected_at == SIZE_MAX)
 				connected_at = offset;
