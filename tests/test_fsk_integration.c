@@ -2870,7 +2870,9 @@ static bool v90_replay_pcm_role_parse(
 }
 
 struct v90_replay_profile {
+	unsigned int downstream_minimum_rate;
 	unsigned int downstream_rate;
+	unsigned int upstream_minimum_rate;
 	unsigned int upstream_rate;
 	unsigned int symbol_rate;
 };
@@ -2896,7 +2898,8 @@ static bool v90_replay_unsigned_parse(
 }
 
 static bool v90_replay_profile_parse(
-	const char *downstream_value, const char *upstream_value,
+	const char *downstream_minimum_value, const char *downstream_value,
+	const char *upstream_minimum_value, const char *upstream_value,
 	const char *symbol_value, enum g711_law law, bool originator,
 	enum v90_modem_role pcm_role,
 	struct v90_replay_profile *profile)
@@ -2909,19 +2912,26 @@ static bool v90_replay_profile_parse(
 	    !v90_replay_unsigned_parse(
 		    downstream_value, 28000u, &selected.downstream_rate) ||
 	    !v90_replay_unsigned_parse(
+		    downstream_minimum_value, selected.downstream_rate,
+		    &selected.downstream_minimum_rate) ||
+	    !v90_replay_unsigned_parse(
 		    upstream_value, originator ? 14400u : 19200u,
 		    &selected.upstream_rate) ||
+	    !v90_replay_unsigned_parse(
+		    upstream_minimum_value, selected.upstream_rate,
+		    &selected.upstream_minimum_rate) ||
 	    !v90_replay_unsigned_parse(
 		    symbol_value, 3000u, &selected.symbol_rate))
 		return false;
 	upstream = (struct v90_upstream_policy){
-		.minimum_bit_rate = selected.upstream_rate,
+		.minimum_bit_rate = selected.upstream_minimum_rate,
 		.maximum_bit_rate = selected.upstream_rate,
 		.maximum_symbol_rate = selected.symbol_rate,
 	};
 	if (v90_profile_init(
 		    &configuration, pcm_role, law,
-		    selected.downstream_rate, selected.downstream_rate,
+		    selected.downstream_minimum_rate,
+		    selected.downstream_rate,
 		    &upstream) != V90_PROFILE_OK)
 		return false;
 	*profile = selected;
@@ -2962,7 +2972,8 @@ static int16_t v90_replay_apply_gain(int16_t sample, double gain)
 static bool run_v90_recording_replay(
 	const char *path, enum media_codec codec, bool originator,
 	enum v90_modem_role pcm_role,
-	const char *downstream_value, const char *upstream_value,
+	const char *downstream_minimum_value, const char *downstream_value,
+	const char *upstream_minimum_value, const char *upstream_value,
 	const char *symbol_value, const char *link_mode_value,
 	const char *receive_gain_value,
 	const char *expected_text)
@@ -3013,18 +3024,19 @@ static bool run_v90_recording_replay(
 		      replay_link_mode_parse(link_mode_value, &lapm) &&
 		      v90_replay_gain_parse(receive_gain_value, &receive_gain) &&
 		      v90_replay_profile_parse(
-			      downstream_value, upstream_value, symbol_value,
+			      downstream_minimum_value, downstream_value,
+			      upstream_minimum_value, upstream_value, symbol_value,
 			      law, originator, pcm_role, &profile),
 		      "optional V.90 G.711 recording profile is invalid");
 	CHECK(expected_text_length < sizeof(endpoint.output),
 	      "optional V.90 recording replay text is too long");
 	downstream_command_length = snprintf(
 		downstream_command, sizeof(downstream_command),
-		"AT+MS=90,0,%u,%u\r", profile.downstream_rate,
+		"AT+MS=90,0,%u,%u\r", profile.downstream_minimum_rate,
 		profile.downstream_rate);
 	upstream_command_length = snprintf(
 		upstream_command, sizeof(upstream_command),
-		"AT+V90U=%u,%u,%u\r", profile.upstream_rate,
+		"AT+V90U=%u,%u,%u\r", profile.upstream_minimum_rate,
 		profile.upstream_rate, profile.symbol_rate);
 	CHECK(downstream_command_length > 0 &&
 		      (size_t)downstream_command_length <
@@ -3223,8 +3235,12 @@ int main(void)
 		getenv("V90_REPLAY_ROLE");
 	const char *v90_recording_pcm_role =
 		getenv("V90_REPLAY_PCM_ROLE");
+	const char *v90_recording_downstream_minimum_rate =
+		getenv("V90_REPLAY_DOWNSTREAM_MIN_RATE");
 	const char *v90_recording_downstream_rate =
 		getenv("V90_REPLAY_DOWNSTREAM_RATE");
+	const char *v90_recording_upstream_minimum_rate =
+		getenv("V90_REPLAY_UPSTREAM_MIN_RATE");
 	const char *v90_recording_upstream_rate =
 		getenv("V90_REPLAY_UPSTREAM_RATE");
 	const char *v90_recording_symbol_rate =
@@ -3654,7 +3670,9 @@ int main(void)
 	} else if (!run_v90_recording_replay(
 			   v90_recording_path, v90_replay_codec,
 			   v90_replay_originator, v90_replay_pcm_role,
+			   v90_recording_downstream_minimum_rate,
 			   v90_recording_downstream_rate,
+			   v90_recording_upstream_minimum_rate,
 			   v90_recording_upstream_rate,
 			   v90_recording_symbol_rate,
 			   v90_recording_link_mode,
