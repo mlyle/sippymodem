@@ -18,11 +18,6 @@ enum v34_call_stage {
 	V34_CALL_RETRAIN_SILENCE,
 };
 
-enum {
-	V34_CALL_RETRAIN_SILENCE_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
-};
-
 enum v34_call_result {
 	V34_CALL_OK,
 	V34_CALL_SOURCE_FAILURE,
@@ -57,9 +52,6 @@ union v34_call_state {
 	struct v34_phase2 phase2;
 	struct v34_phase3_exchange phase3;
 	struct v34_phase4_exchange phase4;
-	struct {
-		uint16_t samples_remaining;
-	} retrain_silence;
 };
 
 /* One observation describes the owner that consumed the sample and the owner
@@ -86,7 +78,7 @@ struct v34_call {
 	struct v34_info0 peer_info0;
 	struct v34_phase3_exchange_configuration phase3_configuration;
 	struct v34_phase4_exchange_configuration phase4_configuration;
-	struct v34_retrain_detector retrain_detector;
+	struct v34_full_retrain retrain;
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	enum v34_station_role local_role;
@@ -94,7 +86,6 @@ struct v34_call {
 	bool peer_info0_stored;
 	bool round_trip_delay_stored;
 	bool retrain_active;
-	bool retrain_peer_tone_retained;
 	bool failed;
 };
 

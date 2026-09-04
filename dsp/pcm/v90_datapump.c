@@ -553,7 +553,7 @@ static enum v90_host_echo_mode host_echo_mode(
 	    (call->stage == PCM_CALL_PHASE4 &&
 	     pcm_call_phase4_is_ready(call)) ||
 	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
-	     call->retrain_peer_tone_retained))
+	     call->retrain.peer_tone_retained))
 		return V90_HOST_ECHO_FILTER;
 	return V90_HOST_ECHO_BYPASS;
 }

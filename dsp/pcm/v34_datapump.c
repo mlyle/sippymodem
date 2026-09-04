@@ -607,7 +607,7 @@ static int process_v34(
 	if (training_session_is_online(&datapump->training) &&
 	    datapump->call.state.phase4.receive.data_erasure &&
 	    carrier_present && datapump->carrier_recovery_samples == 0u &&
-	    datapump->call.retrain_detector.silence_samples == 0u &&
+	    datapump->call.retrain.detector.silence_samples == 0u &&
 	    !set_data_erasure(datapump, false)) {
 		fail_training(datapump);
 		return DPSTAT_ERROR;

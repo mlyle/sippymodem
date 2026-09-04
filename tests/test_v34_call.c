@@ -372,7 +372,7 @@ static bool endpoint_sample(
 		fprintf(stderr,
 			"V.34 endpoint role=%d stage=%d tone=%u failed: %d\n",
 			endpoint->call.local_role, endpoint->call.stage,
-			endpoint->call.retrain_detector.tone_samples,
+			endpoint->call.retrain.detector.tone_samples,
 			result);
 	return result == V34_CALL_OK &&
 	       endpoint_accept_observation(endpoint, observation, &received);
@@ -922,7 +922,7 @@ static bool check_retrain_tone_guard(
 		      "retrain tone guard failed at sample %zu", samples);
 	}
 	CHECK(endpoint->call.stage == V34_CALL_PHASE4 &&
-	      endpoint->call.retrain_detector.silence_samples == 0,
+	      endpoint->call.retrain.detector.silence_samples == 0,
 	      "carrier without retrain silence restarted Phase 2");
 	return true;
 }
@@ -942,12 +942,13 @@ static bool complete_remote_retrain_silence(
 	struct v34_phase2_tone_transmitter *remote_tone, bool pcma)
 {
 	struct v34_phase2_tone_detector retained =
-		endpoint->call.retrain_detector.tone;
+		endpoint->call.retrain.detector.tone;
 
 	CHECK(endpoint->call.stage == V34_CALL_RETRAIN_SILENCE &&
-	      endpoint->call.retrain_peer_tone_retained,
+	      endpoint->call.retrain.peer_tone_retained,
 	      "remote retrain did not retain its peer tone");
-	for (size_t index = 0; index < V34_CALL_RETRAIN_SILENCE_SAMPLES;
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES;
 	     ++index) {
 		struct v34_phase2_tone_event tone_event;
 		struct v34_call_observation observation;
@@ -955,7 +956,8 @@ static bool complete_remote_retrain_silence(
 		int16_t received_sample;
 		int16_t transmitted;
 		enum v34_call_stage next =
-			index + 1u == V34_CALL_RETRAIN_SILENCE_SAMPLES ?
+			index + 1u ==
+					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
 				V34_CALL_PHASE2 : V34_CALL_RETRAIN_SILENCE;
 
 		CHECK(v34_phase2_tone_transmitter_sample(
@@ -973,7 +975,7 @@ static bool complete_remote_retrain_silence(
 		      observation.next == next,
 		      "remote retrain silence failed at sample %zu", index);
 	}
-	CHECK(!endpoint->call.retrain_peer_tone_retained &&
+	CHECK(!endpoint->call.retrain.peer_tone_retained &&
 	      memcmp(&endpoint->call.state.phase2.state.ranging.info0_exchange
 			      .transport.tone_detector,
 		     &retained, sizeof(retained)) == 0,
@@ -1037,7 +1039,7 @@ static bool check_retrain_tone_stage_guard(
 	      (target_stage != V34_CALL_PHASE4 ||
 	       v34_call_is_online(&endpoint->call) == online) &&
 	      v34_retrain_detector_reset(
-		      &endpoint->call.retrain_detector) ==
+		      &endpoint->call.retrain.detector) ==
 		      V34_PHASE2_TONE_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &remote_tone, remote_role, NOMINAL_AMPLITUDE) ==
@@ -1046,7 +1048,7 @@ static bool check_retrain_tone_stage_guard(
 	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
 	     ++index)
 		CHECK(v34_retrain_detector_sample(
-			      &endpoint->call.retrain_detector, 0, &detected) ==
+			      &endpoint->call.retrain.detector, 0, &detected) ==
 			      V34_PHASE2_TONE_OK && !detected,
 		      "retrain stage guard silence failed at sample %zu",
 		      index);
@@ -1055,7 +1057,7 @@ static bool check_retrain_tone_stage_guard(
 			     V34_RETRAIN_TONE_SAMPLES;
 	     ++index) {
 		struct v34_retrain_detector candidate =
-			endpoint->call.retrain_detector;
+			endpoint->call.retrain.detector;
 		int16_t remote_sample;
 
 		CHECK(v34_phase2_tone_transmitter_sample(
@@ -1070,10 +1072,10 @@ static bool check_retrain_tone_stage_guard(
 			trigger_found = true;
 			break;
 		}
-		endpoint->call.retrain_detector = candidate;
+		endpoint->call.retrain.detector = candidate;
 	}
 	CHECK(trigger_found, "retrain stage guard did not find a trigger");
-	before = endpoint->call.retrain_detector;
+	before = endpoint->call.retrain.detector;
 	CHECK(endpoint_sample(
 		      endpoint, trigger_sample, supply_mapping_frame,
 		      &transmitted, &observation) &&
@@ -1082,7 +1084,7 @@ static bool check_retrain_tone_stage_guard(
 		       observation.next == V34_CALL_RETRAIN_SILENCE &&
 			       endpoint->call.retrain_active :
 		       observation.next == target_stage &&
-			       memcmp(&endpoint->call.retrain_detector, &before,
+			       memcmp(&endpoint->call.retrain.detector, &before,
 				      sizeof(before)) == 0),
 	      "retrain stage %d produced the wrong detector transition",
 	      target_stage);
@@ -1177,7 +1179,8 @@ static bool check_unusable_info1_retrains(bool pcma)
 	CHECK(restarted && v34_call_is_valid(&answerer.call) &&
 	      !v34_call_has_failed(&answerer.call),
 	      "unusable INFO1 did not start a valid full retrain");
-	for (size_t index = 0; index < V34_CALL_RETRAIN_SILENCE_SAMPLES;
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES;
 	     ++index) {
 		struct v34_call_observation observation;
 		int16_t transmit;

@@ -31,11 +31,6 @@ enum pcm_call_stage {
 	PCM_CALL_RETRAIN_SILENCE,
 };
 
-enum {
-	PCM_CALL_RETRAIN_SILENCE_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
-};
-
 enum pcm_call_result {
 	PCM_CALL_OK,
 	PCM_CALL_PHASE4_READY,
@@ -205,9 +200,6 @@ union pcm_call_state {
 	union pcm_call_mixed_state mixed;
 	union pcm_call_phase4_state phase4;
 	union pcm_call_data_path_state data_path;
-	struct {
-		uint16_t samples_remaining;
-	} retrain_silence;
 };
 
 /* `processed` owns the accepted network character; `next` owns the following
@@ -263,7 +255,7 @@ struct pcm_call {
 		v92_analog_phase4_configuration;
 	struct pcm_call_v92_digital_phase4_configuration
 		v92_digital_phase4_configuration;
-	struct v34_retrain_detector retrain_detector;
+	struct v34_full_retrain retrain;
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t v92_peer_downstream_rate_mask;
 	uint32_t b1_deadline_remaining_samples;
@@ -281,7 +273,6 @@ struct pcm_call {
 	bool b1_deadline_armed;
 	bool rate_renegotiation_deadline_armed;
 	bool retrain_active;
-	bool retrain_peer_tone_retained;
 	bool failed;
 };
 

@@ -928,6 +928,113 @@ static bool test_full_retrain_request(void)
 	return true;
 }
 
+static bool check_full_retrain_response(
+	enum v34_station_role local_role, enum test_codec codec)
+{
+	struct v34_full_retrain retrain;
+	struct v34_phase2_tone_transmitter peer_tone;
+	struct v34_phase2_tone_detector retained;
+	bool detected = false;
+
+	CHECK(v34_full_retrain_init(&retrain, local_role) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &peer_tone, v34_station_peer_role(local_role),
+		      TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
+	      arm_retrain_silence(&retrain.detector, codec),
+	      "peer full-retrain response fixture did not initialize");
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES &&
+	     !detected;
+	     ++index) {
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &sample) == V34_PHASE2_TONE_OK &&
+		      feed_retrain_sample(
+			      &retrain.detector, sample, codec, &detected),
+		      "peer full-retrain request stopped at %zu", index);
+	}
+	CHECK(detected &&
+	      v34_full_retrain_begin_response(&retrain, true) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_full_retrain_response_is_active(&retrain),
+	      "peer full-retrain response did not begin");
+	retained = retrain.detector.tone;
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
+		struct v34_phase2_tone_event tone_event;
+		enum v34_full_retrain_response_event event;
+		int16_t sample;
+		int16_t received;
+		enum v34_full_retrain_response_event expected =
+			index + 1u ==
+					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
+				V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
+				V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &sample) == V34_PHASE2_TONE_OK,
+		      "peer retrain tone stopped during response at %zu", index);
+		received = codec_round_trip(sample, codec);
+		CHECK(v34_phase2_tone_detector_sample(
+			      &retained, received, &tone_event) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_full_retrain_sample_response(
+			      &retrain, received, &event) == V34_PHASE2_TONE_OK &&
+		      event == expected,
+		      "peer full-retrain response failed at %zu", index);
+	}
+	CHECK(v34_full_retrain_is_valid(&retrain) &&
+	      !v34_full_retrain_response_is_active(&retrain) &&
+	      !retrain.peer_tone_retained &&
+	      memcmp(&retrain.detector.tone, &retained, sizeof(retained)) == 0,
+	      "peer full-retrain response lost retained tone phase");
+
+	CHECK(v34_full_retrain_init(&retrain, local_role) ==
+		      V34_PHASE2_TONE_OK,
+	      "local full-retrain response fixture did not initialize");
+	detected = false;
+	for (size_t index = 0; index < 80; ++index)
+		CHECK(feed_retrain_sample(
+			      &retrain.detector, 0, codec, &detected),
+		      "local response detector prefix failed at %zu", index);
+	CHECK(v34_full_retrain_begin_response(&retrain, false) ==
+		      V34_PHASE2_TONE_OK,
+	      "local full-retrain response did not begin");
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
+		enum v34_full_retrain_response_event event;
+		enum v34_full_retrain_response_event expected =
+			index + 1u ==
+					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
+				V34_FULL_RETRAIN_RESPONSE_COMPLETES :
+				V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+
+		CHECK(v34_full_retrain_sample_response(
+			      &retrain, INT16_MAX, &event) ==
+			      V34_PHASE2_TONE_OK &&
+		      event == expected,
+		      "local full-retrain response failed at %zu", index);
+	}
+	return v34_full_retrain_is_valid(&retrain) &&
+	       !v34_full_retrain_response_is_active(&retrain) &&
+	       !retrain.peer_tone_retained &&
+	       retrain.detector.silence_samples == 0u;
+}
+
+static bool test_full_retrain_response(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum v34_station_role role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			CHECK(check_full_retrain_response(role, codec),
+			      "full-retrain response failed role=%d codec=%d",
+			      role, codec);
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase2_tone_transmitter transmitter;
@@ -936,6 +1043,10 @@ static bool test_validation(void)
 	struct v34_phase2_tone_detector detector_before;
 	struct v34_retrain_detector retrain;
 	struct v34_retrain_detector retrain_before;
+	struct v34_full_retrain full_retrain;
+	struct v34_full_retrain full_retrain_before;
+	enum v34_full_retrain_response_event response_event =
+		V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE;
 	struct v34_phase2_tone_event event = {
 		.kind = V34_PHASE2_TONE_ENDED,
 		.reversal_delay_samples = 99,
@@ -1022,6 +1133,37 @@ static bool test_validation(void)
 		      detected,
 		      "corrupt silence history was not transactional");
 	}
+	CHECK(v34_full_retrain_init(
+		      &full_retrain, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK &&
+	      !v34_full_retrain_response_is_active(&full_retrain),
+	      "full-retrain response validation fixture did not initialize");
+	full_retrain_before = full_retrain;
+	CHECK(v34_full_retrain_begin_response(&full_retrain, true) ==
+		      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+	      memcmp(&full_retrain, &full_retrain_before,
+		     sizeof(full_retrain)) == 0,
+	      "response without a peer tone changed caller-owned state");
+	CHECK(v34_full_retrain_begin_response(&full_retrain, false) ==
+		      V34_PHASE2_TONE_OK,
+	      "local full-retrain response validation did not begin");
+	full_retrain_before = full_retrain;
+	CHECK(v34_full_retrain_begin_response(&full_retrain, false) ==
+		      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+	      memcmp(&full_retrain, &full_retrain_before,
+		     sizeof(full_retrain)) == 0,
+	      "nested full-retrain response changed caller-owned state");
+	full_retrain.response_silence_samples_remaining =
+		V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES + 1u;
+	full_retrain_before = full_retrain;
+	CHECK(v34_full_retrain_sample_response(
+		      &full_retrain, 0, &response_event) ==
+		      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+	      memcmp(&full_retrain, &full_retrain_before,
+		     sizeof(full_retrain)) == 0 &&
+	      response_event ==
+		      V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE,
+	      "corrupt response state was not rejected transactionally");
 	return true;
 }
 
@@ -1039,6 +1181,7 @@ int main(void)
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
 		{ "full-retrain request", test_full_retrain_request },
+		{ "full-retrain response", test_full_retrain_response },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

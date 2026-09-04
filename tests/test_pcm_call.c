@@ -1133,7 +1133,7 @@ static bool initial_info1_accepts_retrain_tone(
 	bool detected;
 
 	CHECK(call_is_in_initial_info1_recovery(call) &&
-	      v34_retrain_detector_reset(&call->retrain_detector) ==
+	      v34_retrain_detector_reset(&call->retrain.detector) ==
 		      V34_PHASE2_TONE_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &remote_tone, v34_station_peer_role(local_role),
@@ -1143,7 +1143,7 @@ static bool initial_info1_accepts_retrain_tone(
 	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
 	     ++index)
 		CHECK(v34_retrain_detector_sample(
-			      &call->retrain_detector,
+			      &call->retrain.detector,
 			      decode_octet(law, silence_octet(law)),
 			      &detected) == V34_PHASE2_TONE_OK &&
 		      !detected,
@@ -1154,7 +1154,7 @@ static bool initial_info1_accepts_retrain_tone(
 	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
 			     V34_RETRAIN_TONE_SAMPLES;
 	     ++index) {
-		struct v34_retrain_detector candidate = call->retrain_detector;
+		struct v34_retrain_detector candidate = call->retrain.detector;
 		int16_t remote_sample;
 
 		CHECK(v34_phase2_tone_transmitter_sample(
@@ -1175,7 +1175,7 @@ static bool initial_info1_accepts_retrain_tone(
 			trigger_found = true;
 			break;
 		}
-		call->retrain_detector = candidate;
+		call->retrain.detector = candidate;
 	}
 	CHECK(trigger_found && pcm_call_is_valid(call),
 	      "law %u role %u did not form an initial INFO1 retrain trigger",
@@ -1186,7 +1186,7 @@ static bool initial_info1_accepts_retrain_tone(
 	      observation.processed == PCM_CALL_PHASE2 &&
 	      observation.next == PCM_CALL_RETRAIN_SILENCE &&
 	      call->stage == PCM_CALL_RETRAIN_SILENCE &&
-	      call->retrain_active && call->retrain_peer_tone_retained &&
+	      call->retrain_active && call->retrain.peer_tone_retained &&
 	      call->peer_info0_stored && call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == round_trip_delay &&
 	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
@@ -1299,7 +1299,7 @@ static bool initial_info1_marks_request_retrain(
 		}
 	}
 	CHECK(requested && call->retrain_active &&
-	      !call->retrain_peer_tone_retained && call->peer_info0_stored &&
+	      !call->retrain.peer_tone_retained && call->peer_info0_stored &&
 	      call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == round_trip_delay &&
 	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
@@ -1381,7 +1381,7 @@ static bool form_remote_retrain_trigger(
 
 	if (call == NULL || remote_tone == NULL || trigger_octet == NULL ||
 	    trigger_sample == NULL ||
-	    v34_retrain_detector_reset(&call->retrain_detector) !=
+	    v34_retrain_detector_reset(&call->retrain.detector) !=
 		    V34_PHASE2_TONE_OK ||
 	    v34_phase2_tone_transmitter_init(
 		    remote_tone, v34_station_peer_role(local_role),
@@ -1390,7 +1390,7 @@ static bool form_remote_retrain_trigger(
 	for (size_t index = 0; index < V34_RETRAIN_MIN_SILENCE_SAMPLES;
 	     ++index) {
 		if (v34_retrain_detector_sample(
-			    &call->retrain_detector,
+			    &call->retrain.detector,
 			    decode_octet(law, silence_octet(law)), &detected) !=
 			    V34_PHASE2_TONE_OK ||
 		    detected)
@@ -1400,7 +1400,7 @@ static bool form_remote_retrain_trigger(
 	     index < V34_PHASE2_TONE_WINDOW_SAMPLES +
 			     V34_RETRAIN_TONE_SAMPLES;
 	     ++index) {
-		struct v34_retrain_detector candidate = call->retrain_detector;
+		struct v34_retrain_detector candidate = call->retrain.detector;
 		int16_t remote_sample;
 
 		if (v34_phase2_tone_transmitter_sample(
@@ -1414,7 +1414,7 @@ static bool form_remote_retrain_trigger(
 			return false;
 		if (detected)
 			return true;
-		call->retrain_detector = candidate;
+		call->retrain.detector = candidate;
 	}
 	return false;
 }
@@ -1450,7 +1450,7 @@ static bool final_training_accepts_remote_retrain(
 	      observation.processed == expected_stage &&
 	      observation.next == PCM_CALL_RETRAIN_SILENCE &&
 	      call->stage == PCM_CALL_RETRAIN_SILENCE &&
-	      call->retrain_active && call->retrain_peer_tone_retained &&
+	      call->retrain_active && call->retrain.peer_tone_retained &&
 	      call->peer_info0_stored && call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == prior_round_trip_delay &&
 	      memcmp(&call->peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
@@ -1458,14 +1458,16 @@ static bool final_training_accepts_remote_retrain(
 	      "law %u role %u stage %u ignored remote retrain",
 	      (unsigned int)law, (unsigned int)call->local_role,
 	      (unsigned int)expected_stage);
-	retained = call->retrain_detector.tone;
-	for (size_t index = 0; index < PCM_CALL_RETRAIN_SILENCE_SAMPLES;
+	retained = call->retrain.detector.tone;
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES;
 	     ++index) {
 		struct v34_phase2_tone_event tone_event;
 		int16_t remote_sample;
 		int16_t received_sample;
 		enum pcm_call_stage next =
-			index + 1u == PCM_CALL_RETRAIN_SILENCE_SAMPLES ?
+			index + 1u ==
+					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
 				PCM_CALL_PHASE2 : PCM_CALL_RETRAIN_SILENCE;
 
 		CHECK(v34_phase2_tone_transmitter_sample(
@@ -1488,7 +1490,7 @@ static bool final_training_accepts_remote_retrain(
 		      (unsigned int)law, (unsigned int)call->local_role, index);
 	}
 	CHECK(call->stage == PCM_CALL_PHASE2 && call->retrain_active &&
-	      !call->retrain_peer_tone_retained && call->peer_info0_stored &&
+	      !call->retrain.peer_tone_retained && call->peer_info0_stored &&
 	      call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == prior_round_trip_delay &&
 	      call->state.phase2.state.ranging.control
@@ -3187,7 +3189,7 @@ static bool retrain_preserves_protocol(
 	    retraining.round_trip_delay_samples != prior_round_trip_delay)
 		return false;
 	for (size_t index = 0;
-	     index < PCM_CALL_RETRAIN_SILENCE_SAMPLES; ++index) {
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
 		struct pcm_call_observation observation;
 		uint8_t transmitted;
 

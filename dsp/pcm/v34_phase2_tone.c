@@ -533,3 +533,109 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	*detected = emitted;
 	return V34_PHASE2_TONE_OK;
 }
+
+static bool retrain_request_state_is_clear(
+	const struct v34_retrain_detector *detector)
+{
+	return detector->silence_samples == 0u &&
+	       detector->tone_samples == 0u && detector->edge_samples == 0u;
+}
+
+bool v34_full_retrain_is_valid(
+	const struct v34_full_retrain *retrain)
+{
+	if (retrain == NULL ||
+	    !v34_retrain_detector_is_valid(&retrain->detector) ||
+	    retrain->response_silence_samples_remaining >
+		    V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ||
+	    (retrain->response_silence_samples_remaining == 0u &&
+	     retrain->peer_tone_retained))
+		return false;
+	if (retrain->response_silence_samples_remaining == 0u)
+		return true;
+	return retrain_request_state_is_clear(&retrain->detector) &&
+	       (!retrain->peer_tone_retained ||
+		v34_phase2_tone_detector_measure(&retrain->detector.tone)
+			.tone_present);
+}
+
+bool v34_full_retrain_response_is_active(
+	const struct v34_full_retrain *retrain)
+{
+	return v34_full_retrain_is_valid(retrain) &&
+	       retrain->response_silence_samples_remaining != 0u;
+}
+
+enum v34_phase2_tone_result v34_full_retrain_init(
+	struct v34_full_retrain *retrain,
+	enum v34_station_role local_role)
+{
+	struct v34_full_retrain initialized = { 0 };
+
+	if (retrain == NULL ||
+	    v34_retrain_detector_init(&initialized.detector, local_role) !=
+		    V34_PHASE2_TONE_OK ||
+	    !v34_full_retrain_is_valid(&initialized))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*retrain = initialized;
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result v34_full_retrain_begin_response(
+	struct v34_full_retrain *retrain, bool retain_peer_tone)
+{
+	struct v34_full_retrain next;
+
+	if (!v34_full_retrain_is_valid(retrain) ||
+	    v34_full_retrain_response_is_active(retrain))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	next = *retrain;
+	if (retain_peer_tone) {
+		if (!retrain_request_state_is_clear(&next.detector) ||
+		    !v34_phase2_tone_detector_measure(&next.detector.tone)
+			     .tone_present)
+			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	} else if (v34_retrain_detector_reset(&next.detector) !=
+		   V34_PHASE2_TONE_OK) {
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	}
+	next.response_silence_samples_remaining =
+		V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES;
+	next.peer_tone_retained = retain_peer_tone;
+	if (!v34_full_retrain_is_valid(&next))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*retrain = next;
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result v34_full_retrain_sample_response(
+	struct v34_full_retrain *retrain, int16_t received_sample,
+	enum v34_full_retrain_response_event *event)
+{
+	struct v34_full_retrain next;
+	enum v34_full_retrain_response_event emitted =
+		V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+
+	if (!v34_full_retrain_response_is_active(retrain) || event == NULL)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	next = *retrain;
+	if (next.peer_tone_retained) {
+		struct v34_phase2_tone_event tone_event;
+
+		if (v34_phase2_tone_detector_sample(
+			    &next.detector.tone, received_sample,
+			    &tone_event) != V34_PHASE2_TONE_OK)
+			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	}
+	if (--next.response_silence_samples_remaining == 0u) {
+		emitted = next.peer_tone_retained ?
+			V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
+			V34_FULL_RETRAIN_RESPONSE_COMPLETES;
+		next.peer_tone_retained = false;
+	}
+	if (!v34_full_retrain_is_valid(&next))
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	*retrain = next;
+	*event = emitted;
+	return V34_PHASE2_TONE_OK;
+}

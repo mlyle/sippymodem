@@ -39,6 +39,10 @@ enum {
 	V34_RETRAIN_EDGE_SAMPLES =
 		V34_PHASE2_TONE_WINDOW_SAMPLES * 3 +
 		V34_PHASE2_TONE_ACQUIRE_SAMPLES,
+	/* V.34, V.90, and V.92 use the same full-retrain response: 70 ms
+	 * of silence before the role-selected Phase 2 tone. */
+	V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 70 / 1000,
 };
 
 enum v34_phase2_tone_result {
@@ -98,6 +102,21 @@ struct v34_retrain_detector {
 	uint16_t silence_glitch_samples;
 	uint16_t tone_samples;
 	uint16_t edge_samples;
+};
+
+/* Own the shared full-retrain request detector and response-silence epoch.
+ * A peer-initiated response retains the qualified Tone A/B phase so the
+ * restarted Phase 2 receiver can observe the following reversal. */
+struct v34_full_retrain {
+	struct v34_retrain_detector detector;
+	uint16_t response_silence_samples_remaining;
+	bool peer_tone_retained;
+};
+
+enum v34_full_retrain_response_event {
+	V34_FULL_RETRAIN_RESPONSE_CONTINUES,
+	V34_FULL_RETRAIN_RESPONSE_COMPLETES,
+	V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE,
 };
 
 /* Tone B is the calling station's 1200 Hz carrier. Tone A is the answering
@@ -172,5 +191,21 @@ enum v34_phase2_tone_result v34_retrain_detector_reset(
 enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	bool *detected);
+
+enum v34_phase2_tone_result v34_full_retrain_init(
+	struct v34_full_retrain *retrain,
+	enum v34_station_role local_role);
+bool v34_full_retrain_is_valid(
+	const struct v34_full_retrain *retrain);
+bool v34_full_retrain_response_is_active(
+	const struct v34_full_retrain *retrain);
+/* retain_peer_tone is true only after detector emitted a peer request. */
+enum v34_phase2_tone_result v34_full_retrain_begin_response(
+	struct v34_full_retrain *retrain, bool retain_peer_tone);
+/* On COMPLETE_WITH_PEER_TONE, detector.tone is the phase-continuous state
+ * to graft into the restarted Phase 2 receiver. */
+enum v34_phase2_tone_result v34_full_retrain_sample_response(
+	struct v34_full_retrain *retrain, int16_t received_sample,
+	enum v34_full_retrain_response_event *event);
 
 #endif
