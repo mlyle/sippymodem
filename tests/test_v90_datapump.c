@@ -17,6 +17,10 @@ enum {
 	CALL_OCTET_LIMIT = 120000,
 	MINIMUM_RECEIVED_BITS = 128,
 	SUSTAINED_RECEIVED_BITS = 4096,
+	UNITY_GAIN_Q15 = 32768,
+	/* Keep generated QAM between definite quiet and the detector's broader
+	 * retrain-silence ceiling. */
+	WEAK_UPSTREAM_GAIN_Q15 = 2400,
 	RETURNED_ECHO_DELAY = 5600,
 	RETURNED_ECHO_TAP_1 = RETURNED_ECHO_DELAY + 7,
 	RETURNED_ECHO_TAP_2 = RETURNED_ECHO_DELAY + 23,
@@ -230,6 +234,11 @@ static int16_t scale_q15(int16_t sample, int16_t gain)
 	return (int16_t)((int32_t)sample * gain / 32768);
 }
 
+static int16_t scale_uq15(int16_t sample, uint16_t gain)
+{
+	return (int16_t)((int32_t)sample * gain / 32768);
+}
+
 static int16_t history_sample(
 	const int16_t history[RETURNED_ECHO_HISTORY], size_t write,
 	size_t fill, size_t age)
@@ -270,7 +279,7 @@ static bool run_pair_with_rate_window(
 	uint32_t expected_upstream_rate, uint32_t upstream_symbol_rate,
 	uint64_t minimum_received_bits,
 	bool require_online, enum modem_pcm_role retrain_role,
-	bool separate_upstream_sample,
+	bool separate_upstream_sample, uint16_t digital_receive_gain_q15,
 	enum returned_echo_mode echo_mode)
 {
 	int16_t echo_history[RETURNED_ECHO_HISTORY] = { 0 };
@@ -353,6 +362,8 @@ static bool run_pair_with_rate_window(
 			sample_codeword_separated |=
 				digital_received_octet != analog_to_digital;
 		}
+		digital_receive = scale_uq15(
+			digital_receive, digital_receive_gain_q15);
 		if (echo_mode != RETURNED_ECHO_NONE)
 			digital_receive = add_s16(
 				(int32_t)digital_receive +
@@ -509,7 +520,7 @@ static bool run_pair_with_input_contract(
 		upstream_rate, upstream_rate, upstream_rate,
 		upstream_symbol_rate, MINIMUM_RECEIVED_BITS,
 		require_online, retrain_role,
-		separate_upstream_sample,
+		separate_upstream_sample, UNITY_GAIN_Q15,
 		add_returned_echo ? RETURNED_ECHO_STABLE : RETURNED_ECHO_NONE);
 }
 
@@ -522,7 +533,8 @@ static bool run_pair_for_bits(
 		law, downstream_rate,
 		upstream_rate, upstream_rate, upstream_rate,
 		upstream_symbol_rate, minimum_received_bits,
-		true, MODEM_PCM_ROLE_NONE, false, RETURNED_ECHO_NONE);
+		true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+		RETURNED_ECHO_NONE);
 }
 
 static bool run_pair(
@@ -594,6 +606,22 @@ static bool test_sustained_maximum_rate_pairs(void)
 	return true;
 }
 
+static bool test_attenuated_upstream(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "attenuated-upstream V.90 registration failed");
+	CHECK(run_pair_with_rate_window(
+		      G711_LAW_PCMU,
+		      56000, 31200, 31200, 31200, 3429,
+		      SUSTAINED_RECEIVED_BITS, true,
+		      MODEM_PCM_ROLE_NONE, false, WEAK_UPSTREAM_GAIN_Q15,
+		      RETURNED_ECHO_NONE),
+	      "attenuated V.90 upstream did not sustain exact data");
+	CHECK(v90_datapump_unregister() == 0,
+	      "attenuated-upstream V.90 registration remained busy");
+	return true;
+}
+
 static bool test_upstream_uses_media_samples(void)
 {
 	CHECK(v90_datapump_register() == 0,
@@ -635,7 +663,7 @@ static bool test_dc_biased_host_echo(void)
 		      G711_LAW_PCMU,
 		      56000, 28800, 33600, 33600, 3429,
 		      SUSTAINED_RECEIVED_BITS, true,
-		      MODEM_PCM_ROLE_NONE, false,
+		      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
 		      RETURNED_ECHO_DC_BIASED),
 	      "DC-biased digital host echo did not sustain exact upstream data");
 	CHECK(v90_datapump_unregister() == 0,
@@ -882,6 +910,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "attenuated maximum-rate upstream",
+		  test_attenuated_upstream },
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
 		{ "forced upstream pairs", test_forced_upstream_pairs },

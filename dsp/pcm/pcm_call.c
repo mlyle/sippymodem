@@ -1395,14 +1395,22 @@ static enum pcm_call_result sample_retrain_detector(
 static bool retrain_candidate_is_active(
 	const struct v34_retrain_detector *detector)
 {
-	/* Brief low-energy windows occur in ordinary online QAM.  Do not starve
-	 * its receiver on the first such sample: wait for a sustained gap that
-	 * is still shorter than the receiver's carrier-loss guard.  Once the
-	 * silence-to-tone preamble has advanced, silence_samples remains latched
-	 * until the request either completes or is rejected. */
-	return detector->silence_samples >=
-		       V34_RETRAIN_MIN_SILENCE_SAMPLES ||
-	       detector->tone_samples != 0u;
+	enum {
+		/* Match the minimum line power at which the shared Phase 2 detector
+		 * can acquire the following Tone A/B. */
+		DEFINITE_SILENCE_MAX_WINDOW_ENERGY =
+			256u * 256u * V34_RETRAIN_SILENCE_WINDOW_SAMPLES,
+	};
+
+	/* The retrain detector deliberately uses a generous silence ceiling so
+	 * that bounded line noise cannot break the 65 ms guard. Received QAM can
+	 * remain decodable below that ceiling, however, so pause the data decoder
+	 * only after either unambiguous quiet or the role-specific tone itself. */
+	return detector->tone_samples != 0u ||
+	       (detector->silence_samples >=
+			V34_RETRAIN_MIN_SILENCE_SAMPLES &&
+		detector->silence_energy <=
+			DEFINITE_SILENCE_MAX_WINDOW_ENERGY);
 }
 
 static enum pcm_call_result observe_retrain_tone(
