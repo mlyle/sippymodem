@@ -2928,11 +2928,43 @@ static bool v90_replay_profile_parse(
 	return true;
 }
 
+static bool v90_replay_gain_parse(const char *value, double *gain)
+{
+	char *end;
+	double parsed;
+
+	if (gain == NULL)
+		return false;
+	if (value == NULL || value[0] == '\0') {
+		*gain = 1.0;
+		return true;
+	}
+	errno = 0;
+	parsed = strtod(value, &end);
+	if (errno != 0 || end == value || *end != '\0' ||
+	    !(parsed >= 0.0 && parsed <= 4.0))
+		return false;
+	*gain = parsed;
+	return true;
+}
+
+static int16_t v90_replay_apply_gain(int16_t sample, double gain)
+{
+	double scaled = (double)sample * gain;
+
+	if (scaled >= INT16_MAX)
+		return INT16_MAX;
+	if (scaled <= INT16_MIN)
+		return INT16_MIN;
+	return (int16_t)(scaled + (scaled >= 0.0 ? 0.5 : -0.5));
+}
+
 static bool run_v90_recording_replay(
 	const char *path, enum media_codec codec, bool originator,
 	enum v90_modem_role pcm_role,
 	const char *downstream_value, const char *upstream_value,
 	const char *symbol_value, const char *link_mode_value,
+	const char *receive_gain_value,
 	const char *expected_text)
 {
 	enum { MINIMUM_ONLINE_SAMPLES = 3200 };
@@ -2971,6 +3003,7 @@ static bool run_v90_recording_replay(
 	bool v8_seen = false;
 	bool expected_text_seen = false;
 	bool lapm;
+	double receive_gain;
 	size_t expected_text_length =
 		expected_text != NULL ? strlen(expected_text) : 0;
 	bool require_carrier = !originator || pcm_role == V90_DIGITAL_MODEM ||
@@ -2978,6 +3011,7 @@ static bool run_v90_recording_replay(
 
 	CHECK(codec_law(codec, &law) &&
 		      replay_link_mode_parse(link_mode_value, &lapm) &&
+		      v90_replay_gain_parse(receive_gain_value, &receive_gain) &&
 		      v90_replay_profile_parse(
 			      downstream_value, upstream_value, symbol_value,
 			      law, originator, pcm_role, &profile),
@@ -3045,8 +3079,10 @@ static bool run_v90_recording_replay(
 		memcpy(endpoint.receive_codewords, recording + offset,
 		       frame_count);
 		for (size_t index = 0; index < frame_count; ++index)
-			endpoint.receive[index] = decode_codeword(
-				law, endpoint.receive_codewords[index]);
+			endpoint.receive[index] = v90_replay_apply_gain(
+				decode_codeword(
+					law, endpoint.receive_codewords[index]),
+				receive_gain);
 		v8_before = endpoint.modem->dp != NULL &&
 			endpoint.modem->dp->id == DP_V8;
 		v90_before = endpoint.modem->dp != NULL &&
@@ -3195,6 +3231,8 @@ int main(void)
 		getenv("V90_REPLAY_SYMBOL_RATE");
 	const char *v90_recording_link_mode =
 		getenv("V90_REPLAY_LINK_MODE");
+	const char *v90_recording_receive_gain =
+		getenv("V90_REPLAY_RX_GAIN");
 	const char *v90_recording_expected_text =
 		getenv("V90_REPLAY_EXPECT_TEXT");
 	enum media_codec v90_replay_codec;
@@ -3620,6 +3658,7 @@ int main(void)
 			   v90_recording_upstream_rate,
 			   v90_recording_symbol_rate,
 			   v90_recording_link_mode,
+			   v90_recording_receive_gain,
 			   v90_recording_expected_text)) {
 		return 1;
 	}

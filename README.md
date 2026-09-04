@@ -320,6 +320,9 @@ payload stream with `V90_REPLAY_RX_G711`. Select `V90_REPLAY_LAW` as `PCMU` or
 `PCMA`, `V90_REPLAY_ROLE` as `answerer` or `originator`, and describe a forced
 call with `V90_REPLAY_DOWNSTREAM_RATE`, `V90_REPLAY_UPSTREAM_RATE`, and
 `V90_REPLAY_SYMBOL_RATE`; select `V90_REPLAY_LINK_MODE` as `raw` or `lapm`.
+Set `V90_REPLAY_RX_GAIN` to apply a bounded linear gain to decoded receive
+samples while preserving the exact recorded G.711 codewords; it defaults to
+1.0.
 By default, call direction selects the conventional analogue-originator/
 digital-answerer topology; set `V90_REPLAY_PCM_ROLE` to `analog` or `digital`
 when a recording exercises the opposite line role. An answered call or an
