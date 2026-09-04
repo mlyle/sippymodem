@@ -384,8 +384,10 @@ static bool reject_peer_info0(
 	struct pcm_phase2_info0_exchange_event *event)
 {
 	event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
-	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT)
+	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
+		event->recovery_event = PCM_INFO0_RECOVERY_REJECTED;
 		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
+	}
 	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE &&
 	    !state_is_retrain(exchange->state))
 		clear_completion_tone(exchange, event);
@@ -427,6 +429,7 @@ static bool retain_peer_info0(
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0 = decoded_ack;
 		clear_completion_tone(exchange, event);
+		event->recovery_event = PCM_INFO0_RECOVERY_ACCEPTED;
 		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
 		return true;
 	}
@@ -517,6 +520,7 @@ static bool begin_repeat_verification(
 	if (!restart_local_info0(exchange, true))
 		return false;
 	exchange->state = PCM_PHASE2_INFO0_VERIFY_REPEAT;
+	event->recovery_event = PCM_INFO0_RECOVERY_STARTED;
 	return true;
 }
 

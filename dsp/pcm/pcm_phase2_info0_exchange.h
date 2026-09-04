@@ -21,6 +21,13 @@ enum pcm_peer_info0_event {
 	PCM_PEER_INFO0_REJECTED,
 };
 
+enum pcm_info0_recovery_event {
+	PCM_INFO0_RECOVERY_NO_EVENT,
+	PCM_INFO0_RECOVERY_STARTED,
+	PCM_INFO0_RECOVERY_ACCEPTED,
+	PCM_INFO0_RECOVERY_REJECTED,
+};
+
 enum pcm_phase2_info0_exchange_state {
 	PCM_PHASE2_INFO0_INITIAL,
 	/* Opposite tone arrived before a valid record; repeat without ACK. */
@@ -51,6 +58,9 @@ struct pcm_phase2_info0_exchange_event {
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_tone_event tone_event;
 	enum pcm_protocol protocol;
+	/* A repeated peer INFO0 temporarily interrupts an established ranging
+	 * epoch. The event names the exact start and validation boundaries. */
+	enum pcm_info0_recovery_event recovery_event;
 };
 
 struct pcm_phase2_info0_exchange {

@@ -424,6 +424,9 @@ static bool check_following_tone(
 	size_t completed = SIZE_MAX;
 	size_t first_completion = SIZE_MAX;
 	size_t received_records = 0;
+	size_t recovery_starts = 0;
+	size_t recovery_accepts = 0;
+	size_t recovery_rejects = 0;
 	bool tone_during_ack = false;
 	bool tone_retained = false;
 	bool tone_invalidated = false;
@@ -528,6 +531,12 @@ static bool check_following_tone(
 			      &ignored, &event) == PCM_PHASE2_INFO0_EXCHANGE_OK,
 		      "following-tone exchange failed at %zu for %d/%d/%d/%d",
 		      index, mode, codec, test_case, digital_local);
+		if (event.recovery_event == PCM_INFO0_RECOVERY_STARTED)
+			recovery_starts++;
+		else if (event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED)
+			recovery_accepts++;
+		else if (event.recovery_event == PCM_INFO0_RECOVERY_REJECTED)
+			recovery_rejects++;
 		if (repeated && transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
 		    exchange.transport.transmit_phase == PHASE2_INFO0_TONE &&
 		    (peer.transmit_phase == PHASE2_INFO0_SEQUENCE ||
@@ -682,7 +691,8 @@ static bool check_following_tone(
 	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION)
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
 		      reopened_after_completion && early_acknowledgment &&
-		      acknowledge_starts == 2 &&
+		      acknowledge_starts == 2 && recovery_starts == 1 &&
+		      recovery_accepts == 1 && recovery_rejects == 0 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen,
 		      "valid completed-state repeat did not reopen/recover for %d/%d/%d: records %zu complete %zu reopened %d early %d ACK %zu state %d tone %d",
@@ -694,6 +704,8 @@ static bool check_following_tone(
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
 		      rejected_after_completion && reopened_after_completion &&
 		      early_acknowledgment && acknowledge_starts == 2 &&
+		      recovery_starts == 1 && recovery_accepts == 0 &&
+		      recovery_rejects == 1 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen,
 		      "rejected completed-state repeat did not recover for %d/%d/%d: records %zu complete %zu rejected %d reopened %d early %d ACK %zu state %d tone %d",
@@ -701,6 +713,10 @@ static bool check_following_tone(
 		      rejected_after_completion, reopened_after_completion,
 		      early_acknowledgment, acknowledge_starts, exchange.state,
 		      exchange.fresh_peer_tone_seen);
+	if (test_case < TEST_TONE_REPEAT_AFTER_COMPLETION)
+		CHECK(recovery_starts == 0 && recovery_accepts == 0 &&
+		      recovery_rejects == 0,
+		      "ordinary INFO0 exchange emitted recovery boundaries");
 	return true;
 }
 
@@ -795,6 +811,7 @@ static bool test_validation(void)
 	struct pcm_phase2_info0_exchange before;
 	struct pcm_phase2_info0_exchange_event event = {
 		.peer_info0_event = PCM_PEER_INFO0_REJECTED,
+		.recovery_event = PCM_INFO0_RECOVERY_REJECTED,
 	};
 	int16_t sample = 1234;
 
@@ -826,7 +843,8 @@ static bool test_validation(void)
 		      PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
 	      sample == 1234 &&
-	      event.peer_info0_event == PCM_PEER_INFO0_REJECTED,
+	      event.peer_info0_event == PCM_PEER_INFO0_REJECTED &&
+	      event.recovery_event == PCM_INFO0_RECOVERY_REJECTED,
 	      "invalid PCM protocol tag mutated caller state");
 	CHECK(pcm_phase2_info0_exchange_init_v90_analog(
 		      &exchange, TEST_AMPLITUDE, &analog) ==
@@ -840,6 +858,7 @@ static bool test_validation(void)
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
 	      sample == 1234 &&
 	      event.peer_info0_event == PCM_PEER_INFO0_REJECTED &&
+	      event.recovery_event == PCM_INFO0_RECOVERY_REJECTED &&
 	      strcmp(pcm_phase2_info0_exchange_result_name(
 		     PCM_PHASE2_INFO0_EXCHANGE_OK), "ok") == 0 &&
 	      strcmp(pcm_phase2_info0_exchange_result_name(

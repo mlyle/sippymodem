@@ -80,8 +80,8 @@ bool phase2_ranging_control_is_valid(
 		       !control->round_trip_delay_valid &&
 		       (control->deferred_reversal_samples == 0 ||
 			(side_b &&
-			 exchange->transmit_phase ==
-				 PHASE2_INFO0_CARRIER_TAIL)) &&
+			 exchange->transmit_phase !=
+				 PHASE2_INFO0_POST_V8_SILENCE)) &&
 		       (!side_b || control->local_tone_samples == 0);
 	case PHASE2_SIGNAL_A_WAIT_INITIAL_TONE:
 		return !side_b && control->response_delay_samples == 0 &&
@@ -334,7 +334,7 @@ static bool resume_deferred_response(
 	    signal_is_b(exchange))
 		return schedule_response(control, elapsed);
 	if (control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
-	    exchange->transmit_phase == PHASE2_INFO0_CARRIER_TAIL)
+	    exchange->transmit_phase != PHASE2_INFO0_TONE)
 		return true;
 	control->deferred_reversal_samples = 0;
 	return true;
@@ -405,6 +405,7 @@ static void schedule_probe_start(
 static bool handle_reversal(
 	struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange,
+	bool peer_info0_received,
 	enum phase2_info0_transmit_phase transmit_phase_before,
 	uint16_t detector_delay_samples,
 	struct phase2_ranging_event *event)
@@ -414,9 +415,9 @@ static bool handle_reversal(
 
 	switch (control->phase) {
 	case PHASE2_RANGING_INFO0_EXCHANGE:
-		if (signal_is_b(exchange) &&
-		    transmit_phase_before == PHASE2_INFO0_CARRIER_TAIL &&
-		    exchange->transmit_phase == PHASE2_INFO0_CARRIER_TAIL) {
+		if (signal_is_b(exchange) && peer_info0_received &&
+		    transmit_phase_before != PHASE2_INFO0_POST_V8_SILENCE &&
+		    exchange->transmit_phase != PHASE2_INFO0_POST_V8_SILENCE) {
 			accepted = defer_response(
 				&next, detector_delay_samples);
 		}
@@ -624,7 +625,7 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	if (tone_event->kind == V34_PHASE2_TONE_PHASE_REVERSED &&
 	    !handle_reversal(
-		    &next, exchange, transmit_phase_before,
+		    &next, exchange, peer_info0_received, transmit_phase_before,
 		    tone_event->reversal_delay_samples,
 		    &emitted)) {
 		rejected_detector = exchange->tone_detector;
