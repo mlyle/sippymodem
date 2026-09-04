@@ -283,9 +283,15 @@ static bool test_upstream_policy(void)
 		.maximum_symbol_rate = 3429,
 		.suppress_optional_info1d_3429 = true,
 	};
+	const struct v90_upstream_policy maximum_upstream = {
+		.minimum_bit_rate = 33600,
+		.maximum_bit_rate = 33600,
+		.maximum_symbol_rate = 3429,
+	};
 	struct pcm_call_configuration analog;
 	struct pcm_call_configuration digital;
 	struct pcm_call_configuration conservative_digital;
+	struct pcm_call_configuration maximum_digital;
 	struct pcm_call_configuration fallback_analog;
 	struct pcm_call_configuration fallback_digital;
 	struct pcm_call_configuration rejected;
@@ -377,9 +383,19 @@ static bool test_upstream_policy(void)
 		      .projected_data_rate_2400_bps_units == 0 &&
 	      conservative_digital.digital_phase4.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units == 13 &&
-	      conservative_digital.digital_phase4.initial_mp.parameters.type0
-		      .upstream_nonlinear_encoding,
+	      !conservative_digital.digital_phase4.initial_mp.parameters.type0
+		       .upstream_nonlinear_encoding,
 	      "conservative INFO1d policy changed mandatory upstream rates");
+	CHECK(v90_profile_init(
+		      &maximum_digital, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      28000, 56000, &maximum_upstream) == V90_PROFILE_OK &&
+	      maximum_digital.digital_phase4.initial_mp.type ==
+		      V90_MP_RECORD_TYPE0 &&
+	      maximum_digital.digital_phase4.initial_mp.parameters.type0
+		      .maximum_upstream_rate_2400_bps_units == 14u &&
+	      maximum_digital.digital_phase4.initial_mp.parameters.type0
+		      .upstream_nonlinear_encoding,
+	      "maximum upstream profile lost its nonlinear decision margin");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	saved = rejected;
 	CHECK(v90_profile_init(

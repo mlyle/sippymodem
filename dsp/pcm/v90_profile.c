@@ -16,6 +16,7 @@ enum {
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
+	V90_LINEAR_UPSTREAM_MAXIMUM_RATE_UNITS = 13,
 	V90_SIGN_REDUNDANCY = 1,
 	/* Depths zero and one are mandatory at the digital modem; deeper
 	 * spectral shaping is optional.  Use the deepest mandatory profile in
@@ -302,14 +303,13 @@ static struct v90_mp_record initial_mp(
 		.parameters.type0 = {
 			.maximum_upstream_rate_2400_bps_units =
 				upstream->maximum_rate_2400_bps_units,
-			/* Keep the mandatory upstream range on the linear, 16-state
-			 * baseline used by ordinary peers.  The denser optional rates
-			 * need nonlinear projection to retain decision margin under
-			 * returned echo and bounded line offsets. */
+			/* Use the interoperable linear, Type-0 baseline through
+			 * 31.2 kbit/s. The densest 33.6 kbit/s mapping retains nonlinear
+			 * projection for decision margin under returned echo. */
 			.upstream_trellis = V34_TRELLIS_16_STATE,
 			.upstream_nonlinear_encoding =
 				upstream->maximum_rate_2400_bps_units >
-				V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS,
+				V90_LINEAR_UPSTREAM_MAXIMUM_RATE_UNITS,
 			.upstream_expanded_shaping = true,
 			.upstream_rate_capability_mask = upstream->rate_mask,
 		},

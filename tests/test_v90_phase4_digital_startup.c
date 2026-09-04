@@ -345,7 +345,7 @@ static bool run_disjoint_cpt_selection(enum g711_law law)
 static bool run_precoder_selection(
 	enum g711_law law,
 	const struct v34_precoder_recommendation *precoder,
-	uint8_t maximum_rate, bool configure_type1, bool expect_type1)
+	uint8_t maximum_rate, bool configure_type1)
 {
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_mp_record mp = mp_parameters(false);
@@ -395,7 +395,7 @@ static bool run_precoder_selection(
 		CHECK(startup.stage == V90_PHASE4_STARTUP_CONTINUING,
 		      "law %u precoder startup did not continue",
 		      (unsigned int)law);
-		if (expect_type1) {
+		if (configure_type1) {
 			CHECK(startup.initial_mp.type == V90_MP_RECORD_TYPE1 &&
 			      memcmp(startup.initial_mp.parameters.type1
 					     .precoder_coefficients,
@@ -445,21 +445,21 @@ static bool test_generated_exchange(void)
 	      run_disjoint_cpt_selection(G711_LAW_PCMU) &&
 	      run_disjoint_cpt_selection(G711_LAW_PCMA) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &learned_precoder, 12u, false, false) &&
+		      G711_LAW_PCMU, &learned_precoder, 12u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &learned_precoder, 12u, false, false) &&
+		      G711_LAW_PCMA, &learned_precoder, 12u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &learned_precoder, 14u, false, true) &&
+		      G711_LAW_PCMU, &learned_precoder, 14u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &learned_precoder, 14u, false, true) &&
+		      G711_LAW_PCMA, &learned_precoder, 14u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &excessive_precoder, 14u, false, false) &&
+		      G711_LAW_PCMU, &excessive_precoder, 14u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &excessive_precoder, 14u, false, false) &&
+		      G711_LAW_PCMA, &excessive_precoder, 14u, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &learned_precoder, 12u, true, true) &&
+		      G711_LAW_PCMU, &learned_precoder, 12u, true) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &learned_precoder, 12u, true, true),
+		      G711_LAW_PCMA, &learned_precoder, 12u, true),
 	      "generated digital startup exchanges failed");
 	return true;
 }

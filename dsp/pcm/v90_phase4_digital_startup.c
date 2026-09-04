@@ -4,15 +4,6 @@
 
 #include "memory_region.h"
 
-#include <stddef.h>
-#include <string.h>
-
-enum {
-	/* Automatic Type-1 use is limited to mild residual ISI at optional
-	 * upstream rates. Mandatory-rate interoperability stays on Type 0. */
-	V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14 = V34_Q14_SCALE / 32,
-};
-
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
@@ -25,52 +16,6 @@ static const struct v90_mp_parameters *mp_parameters(
 	return record->type == V90_MP_RECORD_TYPE0 ?
 		       &record->parameters.type0 :
 		       &record->parameters.type1.common;
-}
-
-static uint32_t coefficient_magnitude(int16_t coefficient)
-{
-	return coefficient < 0 ?
-		       (uint32_t)-(int32_t)coefficient : (uint32_t)coefficient;
-}
-
-static bool automatic_precoder_is_bounded(
-	const struct v34_precoder_recommendation *precoder)
-{
-	uint32_t magnitude = 0;
-
-	if (!v34_precoder_recommendation_is_valid(precoder) ||
-	    !precoder->enabled)
-		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		magnitude += coefficient_magnitude(
-			precoder->coefficients[tap].real);
-		magnitude += coefficient_magnitude(
-			precoder->coefficients[tap].imaginary);
-	}
-	return magnitude <= V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14;
-}
-
-static bool promote_optional_precoder(
-	struct v90_mp_record *record,
-	const struct v34_precoder_recommendation *precoder)
-{
-	struct v90_mp_type1_parameters type1;
-
-	if (record->type != V90_MP_RECORD_TYPE0 ||
-	    record->parameters.type0.maximum_upstream_rate_2400_bps_units <=
-		    V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS ||
-	    !automatic_precoder_is_bounded(precoder))
-		return true;
-	type1 = (struct v90_mp_type1_parameters){
-		.common = record->parameters.type0,
-	};
-	memcpy(type1.precoder_coefficients, precoder->coefficients,
-	       sizeof(type1.precoder_coefficients));
-	*record = (struct v90_mp_record){
-		.type = V90_MP_RECORD_TYPE1,
-		.parameters.type1 = type1,
-	};
-	return initial_mp_is_valid(record);
 }
 
 static bool select_initial_mp(
@@ -122,8 +67,6 @@ static bool select_initial_mp(
 	 * receiver's MP capability record invalid.  If no common rate is usable
 	 * under this maximum, send the local MP and let the analogue modem
 	 * perform the required final common-rate selection. */
-	if (!promote_optional_precoder(&limited, &station->precoder))
-		return false;
 	*selected = limited;
 	return true;
 }
