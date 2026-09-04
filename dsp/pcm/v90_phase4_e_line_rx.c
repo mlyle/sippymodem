@@ -7,6 +7,12 @@
 #include <stddef.h>
 
 static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
+/* B1 is a long, highly structured all-ones sequence.  Its matched-filter
+ * energy can give an adjacent timing candidate a tiny repeatable advantage
+ * even when the recovered 8 kHz clock is exact.  Require a full one-percent
+ * improvement before moving the established Phase 4 timing reference into
+ * B1 and online data. */
+static const double V90_DATA_TIMING_POWER_HYSTERESIS = 1.01;
 
 static bool cp_is_final(const struct v90_cp_parameters *cp)
 {
@@ -173,6 +179,7 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 	const struct v34_data_line_receiver_configuration *configuration)
 {
 	struct v34_equalizer_handoff handoff;
+	struct qam_demodulator demodulator;
 
 	if (!v90_phase4_e_line_rx_is_valid(rx) || data_rx == NULL ||
 	    configuration == NULL)
@@ -181,15 +188,18 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 		return V90_PHASE4_E_LINE_RX_FAILED;
 	if (!v90_phase4_e_line_rx_is_complete(rx))
 		return V90_PHASE4_E_LINE_RX_INVALID_STATE;
+	demodulator = rx->demodulator;
 	handoff.equalizer = rx->equalizer;
 	/* E ends the known-symbol carrier-training epoch. Keep its oscillator
 	 * estimate for B1 and data, while the proportional loop continues to
 	 * follow residual phase without integrating tentative trellis decisions. */
-	if (qam_equalizer_hold_carrier_frequency(&handoff.equalizer) !=
+	if (qam_demodulator_set_timing_power_hysteresis(
+		    &demodulator, V90_DATA_TIMING_POWER_HYSTERESIS) != QAM_OK ||
+	    qam_equalizer_hold_carrier_frequency(&handoff.equalizer) !=
 		    QAM_EQUALIZER_OK ||
 	    !v34_equalizer_handoff_is_valid(&handoff) ||
 	    v34_data_line_receiver_init(
-		    data_rx, &rx->demodulator, &handoff,
+		    data_rx, &demodulator, &handoff,
 		    configuration) != V34_DATA_RECEIVE_OK)
 		return V90_PHASE4_E_LINE_RX_INVALID_ARGUMENT;
 	return V90_PHASE4_E_LINE_RX_OK;
