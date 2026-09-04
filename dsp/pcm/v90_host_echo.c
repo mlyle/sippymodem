@@ -249,27 +249,6 @@ enum v90_host_echo_result v90_host_echo_predict(
 	return V90_HOST_ECHO_OK;
 }
 
-static uint64_t add_u64_saturating(uint64_t left, uint64_t right)
-{
-	return UINT64_MAX - left < right ? UINT64_MAX : left + right;
-}
-
-static int64_t add_i64_saturating(int64_t left, int64_t right)
-{
-	if (right > 0 && left > INT64_MAX - right)
-		return INT64_MAX;
-	if (right < 0 && left < INT64_MIN - right)
-		return INT64_MIN;
-	return left + right;
-}
-
-static uint64_t i16_energy(int16_t sample)
-{
-	int64_t value = sample;
-
-	return (uint64_t)(value * value);
-}
-
 static uint64_t double_square_u64(double value)
 {
 	long double square = (long double)value * value;
@@ -321,10 +300,10 @@ static enum v90_host_echo_result prepare_training_step(
 		return V90_HOST_ECHO_NUMERIC_FAILURE;
 	step->reference_energy = add_u64_saturating(
 		echo->reference_energy,
-		i16_energy(references[V90_HOST_ECHO_FILTER_PRE_SAMPLES]));
+		square_s16(references[V90_HOST_ECHO_FILTER_PRE_SAMPLES]));
 	step->input_energy = add_u64_saturating(
-		echo->input_energy, i16_energy(received_sample));
-	step->cross_energy = add_i64_saturating(
+		echo->input_energy, square_s16(received_sample));
+	step->cross_energy = add_s64_saturating(
 		echo->cross_energy,
 		(int64_t)references[V90_HOST_ECHO_FILTER_PRE_SAMPLES] *
 			received_sample);
@@ -340,12 +319,6 @@ static enum v90_host_echo_result prepare_training_step(
 	return V90_HOST_ECHO_OK;
 }
 
-static uint64_t i64_magnitude(int64_t value)
-{
-	return value >= 0 ? (uint64_t)value :
-		(uint64_t)(-(value + 1)) + 1u;
-}
-
 static bool correlation_at_least(
 	uint64_t reference_energy, uint64_t input_energy,
 	int64_t cross_energy)
@@ -356,7 +329,7 @@ static bool correlation_at_least(
 
 	if (reference_energy == 0 || input_energy == 0)
 		return false;
-	cross = i64_magnitude(cross_energy);
+	cross = magnitude_s64(cross_energy);
 	left = (__uint128_t)cross * cross;
 	right = (__uint128_t)reference_energy * input_energy;
 	return left >= right / 8u + (right % 8u != 0);

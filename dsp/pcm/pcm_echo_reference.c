@@ -2,37 +2,10 @@
 
 #include "pcm_echo_reference.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <string.h>
-
-static uint64_t add_u64_saturating(uint64_t left, uint64_t right)
-{
-	return UINT64_MAX - left < right ? UINT64_MAX : left + right;
-}
-
-static int64_t add_i64_saturating(int64_t left, int64_t right)
-{
-	if (right > 0 && left > INT64_MAX - right)
-		return INT64_MAX;
-	if (right < 0 && left < INT64_MIN - right)
-		return INT64_MIN;
-	return left + right;
-}
-
-static uint64_t sample_energy(int16_t sample)
-{
-	int64_t value = sample;
-
-	return (uint64_t)(value * value);
-}
-
-static uint64_t i64_magnitude(int64_t value)
-{
-	return value >= 0 ? (uint64_t)value :
-		(uint64_t)(-(value + 1)) + 1u;
-}
 
 static bool scan_state_is_valid(const struct pcm_echo_reference *reference)
 {
@@ -245,7 +218,7 @@ static long double correlation_score(
 	uint64_t reference_energy, uint64_t input_energy,
 	int64_t cross_energy)
 {
-	long double cross = (long double)i64_magnitude(cross_energy);
+	long double cross = (long double)magnitude_s64(cross_energy);
 
 	if (reference_energy == 0 || input_energy == 0)
 		return -1.0L;
@@ -321,7 +294,7 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 	if (reference->fill < reference->scan_required_fill)
 		return PCM_ECHO_REFERENCE_NOT_READY;
 
-	input_energy = sample_energy(received_sample);
+	input_energy = square_s16(received_sample);
 	reference->scan_input_energy = add_u64_saturating(
 		reference->scan_input_energy, input_energy);
 	for (uint32_t index = 0; index < reference->scan_count; ++index) {
@@ -343,8 +316,8 @@ enum pcm_echo_reference_result pcm_echo_reference_scan_observe(
 
 		reference->scan_reference_energy[index] = add_u64_saturating(
 			reference->scan_reference_energy[index],
-			sample_energy(sample));
-		reference->scan_cross_energy[index] = add_i64_saturating(
+			square_s16(sample));
+		reference->scan_cross_energy[index] = add_s64_saturating(
 			reference->scan_cross_energy[index], cross);
 	}
 	if (reference->scan_samples < UINT32_MAX)

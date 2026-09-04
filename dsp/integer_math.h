@@ -36,6 +36,32 @@ static inline int32_t magnitude_s16(int16_t value)
 	return value < 0 ? -(int32_t)value : value;
 }
 
+static inline uint64_t magnitude_s64(int64_t value)
+{
+	return value < 0 ? UINT64_C(0) - (uint64_t)value : (uint64_t)value;
+}
+
+static inline uint64_t square_s16(int16_t value)
+{
+	int64_t widened = value;
+
+	return (uint64_t)(widened * widened);
+}
+
+static inline uint64_t add_u64_saturating(uint64_t left, uint64_t right)
+{
+	return UINT64_MAX - left < right ? UINT64_MAX : left + right;
+}
+
+static inline int64_t add_s64_saturating(int64_t left, int64_t right)
+{
+	if (right > 0 && left > INT64_MAX - right)
+		return INT64_MAX;
+	if (right < 0 && left < INT64_MIN - right)
+		return INT64_MIN;
+	return left + right;
+}
+
 /* Return the low two's-complement word of a signed product. */
 static inline uint32_t multiply_low_s32(int32_t left, int32_t right)
 {

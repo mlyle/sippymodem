@@ -111,6 +111,30 @@ static bool test_fixed_width_words(void)
 	return true;
 }
 
+static bool test_wide_energy_arithmetic(void)
+{
+	CHECK(magnitude_s64(0) == 0u &&
+		      magnitude_s64(INT64_MAX) == (uint64_t)INT64_MAX &&
+		      magnitude_s64(INT64_MIN) == (UINT64_C(1) << 63) &&
+		      square_s16(0) == 0u &&
+		      square_s16(INT16_MAX) == UINT64_C(1073676289) &&
+		      square_s16(INT16_MIN) == UINT64_C(1073741824),
+	      "wide magnitude or sample energy changed");
+	CHECK(add_u64_saturating(7u, 9u) == 16u &&
+		      add_u64_saturating(UINT64_MAX - 9u, 9u) ==
+			      UINT64_MAX &&
+		      add_u64_saturating(UINT64_MAX - 9u, 10u) ==
+			      UINT64_MAX,
+	      "unsigned saturation changed");
+	CHECK(add_s64_saturating(7, -9) == -2 &&
+		      add_s64_saturating(INT64_MAX - 9, 9) == INT64_MAX &&
+		      add_s64_saturating(INT64_MAX - 9, 10) == INT64_MAX &&
+		      add_s64_saturating(INT64_MIN + 9, -9) == INT64_MIN &&
+		      add_s64_saturating(INT64_MIN + 9, -10) == INT64_MIN,
+	      "signed saturation changed");
+	return true;
+}
+
 static bool test_arithmetic_shift(void)
 {
 	static const struct {
@@ -164,6 +188,7 @@ int main(void)
 		{ "full-width values", test_full_width_values },
 		{ "signed rounding", test_signed_rounding },
 		{ "fixed-width words", test_fixed_width_words },
+		{ "wide energy arithmetic", test_wide_energy_arithmetic },
 		{ "arithmetic shift", test_arithmetic_shift },
 	};
 	unsigned int failures = 0;

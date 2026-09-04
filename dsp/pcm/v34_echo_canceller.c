@@ -252,14 +252,6 @@ static void push_reference(
 		canceller->training_started = true;
 }
 
-static uint64_t add_energy(uint64_t accumulated, int16_t sample)
-{
-	uint64_t energy = (uint64_t)((int32_t)sample * sample);
-
-	return UINT64_MAX - accumulated < energy ?
-		       UINT64_MAX : accumulated + energy;
-}
-
 enum v34_echo_canceller_result v34_echo_canceller_advance(
 	struct v34_echo_canceller *canceller,
 	int16_t received_sample, int16_t cleaned_sample,
@@ -274,10 +266,12 @@ enum v34_echo_canceller_result v34_echo_canceller_advance(
 		return V34_ECHO_CANCELLER_SEQUENCE_MISMATCH;
 	if (canceller->adapting && canceller->training_started &&
 	    step.sample_count >= V34_ECHO_VALIDATION_START_SAMPLE) {
-		canceller->validation_input_energy = add_energy(
-			canceller->validation_input_energy, received_sample);
-		canceller->validation_residual_energy = add_energy(
-			canceller->validation_residual_energy, step.residual);
+		canceller->validation_input_energy = add_u64_saturating(
+			canceller->validation_input_energy,
+			square_s16(received_sample));
+		canceller->validation_residual_energy = add_u64_saturating(
+			canceller->validation_residual_energy,
+			square_s16(step.residual));
 		if (canceller->validation_samples != UINT32_MAX)
 			canceller->validation_samples++;
 	}
