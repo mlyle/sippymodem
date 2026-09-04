@@ -44,6 +44,7 @@ else:
 STARTUP_LINE_MAX = 4096
 UNSOLICITED_LINE_MAX = 512
 DAEMON_LOG_MAX = 4 * 1024 * 1024
+MAX_LOOPBACK_PORT_SETS = 32
 DEVICE_LINE_RE = re.compile(rb"/dev/pts/[0-9]+\Z")
 TTY_ANNOUNCEMENT_RE = re.compile(
     rb"\bTTY[ \t]+is[ \t]+[`'](/dev/pts/[0-9]+)[`']",
@@ -125,13 +126,17 @@ class RunArtifacts:
             stream.write("\n")
 
 
-def reserve_loopback_ports() -> InteropPorts:
-    """Select four distinct UDP ports while holding every earlier choice."""
+def reserve_loopback_port_sets(count: int) -> tuple[InteropPorts, ...]:
+    """Select disjoint UDP port sets while holding every earlier choice."""
+
+    if not 1 <= count <= MAX_LOOPBACK_PORT_SETS:
+        raise ValueError("loopback port-set count is out of range")
 
     sockets: list[socket.socket] = []
     numbers: list[int] = []
+    needed = len(PORT_NAMES) * count
     try:
-        while len(numbers) < len(PORT_NAMES):
+        while len(numbers) < needed:
             reservation = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             try:
                 reservation.bind((LOOPBACK_ADDRESS, 0))
@@ -149,7 +154,23 @@ def reserve_loopback_ports() -> InteropPorts:
     finally:
         for reservation in sockets:
             reservation.close()
-    return InteropPorts(**dict(zip(PORT_NAMES, numbers)))
+    return tuple(
+        InteropPorts(
+            **dict(
+                zip(
+                    PORT_NAMES,
+                    numbers[offset : offset + len(PORT_NAMES)],
+                )
+            )
+        )
+        for offset in range(0, needed, len(PORT_NAMES))
+    )
+
+
+def reserve_loopback_ports() -> InteropPorts:
+    """Select one set of four distinct loopback UDP ports."""
+
+    return reserve_loopback_port_sets(1)[0]
 
 
 class InteropTerminal(ModemTerminal):

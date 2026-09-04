@@ -6,12 +6,18 @@ from dataclasses import replace
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from tools.fast_interop import case_config, main, run_case  # noqa: E402
+from tools.fast_interop import (  # noqa: E402
+    case_config,
+    main,
+    run_case,
+    run_case_waves,
+)
 from tools.fast_matrix import (  # noqa: E402
     BASELINE_ORIGINATES,
     CANDIDATE_ORIGINATES,
@@ -345,6 +351,108 @@ class FastInteropTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 run_case(base, case, ato1_endpoint="other", runner=runner)
+
+    def test_parallel_waves_use_disjoint_ports_and_keep_matrix_order(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = base_config(Path(temporary))
+            cases = tuple(
+                case
+                for case in build_fast_matrix(("v21_300", "v23_1200_75"))
+                if case.media_codec == "PCMU"
+            )
+            by_name = {case.name: case for case in cases}
+            barrier = threading.Barrier(len(cases))
+            observed_ports: list[tuple[int, ...]] = []
+            lock = threading.Lock()
+
+            def reserve(count: int) -> tuple[InteropPorts, ...]:
+                self.assertEqual(count, len(cases))
+                return tuple(
+                    InteropPorts(*(41000 + index * 4 + item for item in range(4)))
+                    for index in range(count)
+                )
+
+            def runner(
+                config: InteropConfig,
+                _turn_taking: bool,
+                _role: str | None,
+                _payloads: tuple[bytes, bytes] | None,
+            ) -> InteropResult:
+                with lock:
+                    observed_ports.append(config.ports.values())
+                barrier.wait(timeout=1)
+                return passed_result(by_name[config.artifact_directory.name])
+
+            waves = list(
+                run_case_waves(
+                    base,
+                    cases,
+                    jobs=4,
+                    runner=runner,
+                    port_set_reserver=reserve,
+                )
+            )
+
+            self.assertEqual(len(waves), 1)
+            self.assertEqual(
+                tuple(result.case for result in waves[0]), cases
+            )
+            self.assertTrue(
+                all(result.outcome == "passed" for result in waves[0])
+            )
+            flattened = tuple(
+                port for port_set in observed_ports for port in port_set
+            )
+            self.assertEqual(len(flattened), 16)
+            self.assertEqual(len(set(flattened)), 16)
+
+    def test_infrastructure_error_is_attributed_and_stops_later_waves(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = base_config(Path(temporary))
+            cases = tuple(
+                case
+                for case in build_fast_matrix(("v21_300", "v23_1200_75"))
+                if case.media_codec == "PCMU"
+            )
+            by_name = {case.name: case for case in cases}
+
+            def reserve(count: int) -> tuple[InteropPorts, ...]:
+                return tuple(
+                    InteropPorts(*(42000 + index * 4 + item for item in range(4)))
+                    for index in range(count)
+                )
+
+            def runner(
+                config: InteropConfig,
+                _turn_taking: bool,
+                _role: str | None,
+                _payloads: tuple[bytes, bytes] | None,
+            ) -> InteropResult:
+                case = by_name[config.artifact_directory.name]
+                if case == cases[0]:
+                    raise OSError("private diagnostic detail")
+                return passed_result(case)
+
+            waves = list(
+                run_case_waves(
+                    base,
+                    cases,
+                    jobs=2,
+                    runner=runner,
+                    port_set_reserver=reserve,
+                )
+            )
+
+            self.assertEqual(len(waves), 1)
+            self.assertEqual(
+                tuple(result.case for result in waves[0]), cases[:2]
+            )
+            self.assertEqual(waves[0][0].outcome, "infrastructure-error")
+            self.assertEqual(waves[0][1].outcome, "passed")
 
     def test_disabled_example_skips_without_exposing_configuration(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

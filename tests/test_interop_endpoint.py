@@ -23,6 +23,7 @@ from tools.interop_endpoint import (  # noqa: E402
     InteropRunError,
     RunArtifacts,
     published_device,
+    reserve_loopback_port_sets,
     reserve_loopback_ports,
 )
 
@@ -112,12 +113,26 @@ class InteropEndpointTests(unittest.TestCase):
         with mock.patch(
             "tools.interop_endpoint.socket.socket", side_effect=FakeReservation
         ):
-            ports = reserve_loopback_ports().values()
-        self.assertEqual(len(ports), 4)
-        self.assertEqual(len(set(ports)), 4)
+            port_sets = reserve_loopback_port_sets(3)
+        ports = tuple(
+            port for port_set in port_sets for port in port_set.values()
+        )
+        self.assertEqual(len(port_sets), 3)
+        self.assertEqual(len(ports), 12)
+        self.assertEqual(len(set(ports)), 12)
         self.assertTrue(all(1024 <= port <= 65535 for port in ports))
         self.assertTrue(all(item.bound == ("127.0.0.1", 0) for item in reservations))
         self.assertTrue(all(item.closed for item in reservations))
+        with self.assertRaises(ValueError):
+            reserve_loopback_port_sets(0)
+        with self.assertRaises(ValueError):
+            reserve_loopback_port_sets(33)
+
+        reservations.clear()
+        with mock.patch(
+            "tools.interop_endpoint.socket.socket", side_effect=FakeReservation
+        ):
+            self.assertEqual(len(reserve_loopback_ports().values()), 4)
 
     def test_process_owns_capture_terminal_and_forced_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

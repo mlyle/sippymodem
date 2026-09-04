@@ -6,25 +6,36 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 import subprocess
 import sys
-from typing import Callable, Sequence
+import time
+from typing import Callable, Iterator, Sequence
 
 
 if __package__:
     from .fast_matrix import (
         FAST_PROFILE_NAMES,
+        MEDIA_CODECS,
         EndpointRates,
         MatrixCase,
         TURN_TAKING,
         build_fast_matrix,
         payload_pair,
     )
-    from .interop_config import EndpointConfig, InteropConfig, InteropConfigError
-    from .interop_endpoint import InteropRunError
+    from .interop_config import (
+        EndpointConfig,
+        InteropConfig,
+        InteropConfigError,
+        InteropPorts,
+    )
+    from .interop_endpoint import (
+        InteropRunError,
+        reserve_loopback_port_sets,
+    )
     from .live_profiles import scenario_commands
     from .live_terminal import ConnectReport, LiveTerminalError
     from .local_interop import (
@@ -36,14 +47,23 @@ if __package__:
 else:
     from fast_matrix import (
         FAST_PROFILE_NAMES,
+        MEDIA_CODECS,
         EndpointRates,
         MatrixCase,
         TURN_TAKING,
         build_fast_matrix,
         payload_pair,
     )
-    from interop_config import EndpointConfig, InteropConfig, InteropConfigError
-    from interop_endpoint import InteropRunError
+    from interop_config import (
+        EndpointConfig,
+        InteropConfig,
+        InteropConfigError,
+        InteropPorts,
+    )
+    from interop_endpoint import (
+        InteropRunError,
+        reserve_loopback_port_sets,
+    )
     from live_profiles import scenario_commands
     from live_terminal import ConnectReport, LiveTerminalError
     from local_interop import (
@@ -58,6 +78,7 @@ CaseRunner = Callable[
     [InteropConfig, bool, str | None, tuple[bytes, bytes] | None],
     InteropResult,
 ]
+PortSetReserver = Callable[[int], tuple[InteropPorts, ...]]
 
 ASYNC_BITS_PER_OCTET = 10
 FAST_ONLINE_MINIMUM_SECONDS = 1.0
@@ -71,6 +92,14 @@ ATO1_ENDPOINTS = ("candidate", "baseline")
 PCM_FAMILIES = frozenset(("v90", "v92"))
 PCM_ROLE_BY_CALL = "by-call"
 PCM_ROLES = (PCM_ROLE_BY_CALL, "analog", "digital")
+MAX_PARALLEL_CASES = 8
+INTEROP_EXCEPTIONS = (
+    InteropRunError,
+    LiveTerminalError,
+    OSError,
+    subprocess.SubprocessError,
+    TimeoutError,
+)
 
 
 def _run_interop(
@@ -359,6 +388,137 @@ def run_case(
     )
 
 
+def _infrastructure_result(
+    case: MatrixCase,
+    ato1_endpoint: str | None,
+    link_mode: str,
+    candidate_pcm_role: str,
+    duration_seconds: float,
+) -> FastCaseResult:
+    selected_pcm_role, _ = _pcm_roles(case, candidate_pcm_role)
+    return FastCaseResult(
+        case=case,
+        link_mode=link_mode,
+        candidate_pcm_role=selected_pcm_role,
+        ato1_endpoint=ato1_endpoint,
+        outcome="infrastructure-error",
+        duration_seconds=duration_seconds,
+        candidate_rates_verified=False,
+        baseline_rates_verified=False,
+        ato1_verified=False if ato1_endpoint is not None else None,
+    )
+
+
+def _run_case_safely(
+    base: InteropConfig,
+    case: MatrixCase,
+    ato1_endpoint: str | None,
+    link_mode: str,
+    candidate_pcm_role: str,
+    runner: CaseRunner,
+) -> FastCaseResult:
+    started = time.monotonic()
+    try:
+        return run_case(
+            base,
+            case,
+            ato1_endpoint=ato1_endpoint,
+            link_mode=link_mode,
+            candidate_pcm_role=candidate_pcm_role,
+            runner=runner,
+        )
+    except INTEROP_EXCEPTIONS:
+        return _infrastructure_result(
+            case,
+            ato1_endpoint,
+            link_mode,
+            candidate_pcm_role,
+            time.monotonic() - started,
+        )
+
+
+def run_case_waves(
+    base: InteropConfig,
+    cases: Sequence[MatrixCase],
+    *,
+    jobs: int = 1,
+    stop_on_failure: bool = False,
+    ato1_endpoint: str | None = None,
+    link_mode: str = "raw",
+    candidate_pcm_role: str = PCM_ROLE_BY_CALL,
+    runner: CaseRunner = _run_interop,
+    port_set_reserver: PortSetReserver = reserve_loopback_port_sets,
+) -> Iterator[tuple[FastCaseResult, ...]]:
+    """Run bounded waves and yield each wave in matrix order."""
+
+    if not 1 <= jobs <= MAX_PARALLEL_CASES:
+        raise ValueError("parallel case count is out of range")
+    for offset in range(0, len(cases), jobs):
+        wave = tuple(cases[offset : offset + jobs])
+        bases = (base,) * len(wave)
+        if jobs > 1:
+            port_sets = port_set_reserver(len(wave))
+            numbers = tuple(
+                port for ports in port_sets for port in ports.values()
+            )
+            if (
+                len(port_sets) != len(wave)
+                or not all(numbers)
+                or len(set(numbers)) != len(numbers)
+            ):
+                raise InteropRunError("parallel loopback ports are not disjoint")
+            bases = tuple(
+                replace(base, ports=ports) for ports in port_sets
+            )
+
+        if len(wave) == 1:
+            results = (
+                _run_case_safely(
+                    bases[0],
+                    wave[0],
+                    ato1_endpoint,
+                    link_mode,
+                    candidate_pcm_role,
+                    runner,
+                ),
+            )
+        else:
+            with ThreadPoolExecutor(max_workers=len(wave)) as executor:
+                futures = tuple(
+                    executor.submit(
+                        _run_case_safely,
+                        configured,
+                        case,
+                        ato1_endpoint,
+                        link_mode,
+                        candidate_pcm_role,
+                        runner,
+                    )
+                    for configured, case in zip(bases, wave)
+                )
+                results = tuple(future.result() for future in futures)
+
+        yield results
+        if any(
+            result.outcome == "infrastructure-error"
+            or (stop_on_failure and result.outcome != "passed")
+            for result in results
+        ):
+            break
+
+
+def _parallelism(value: str) -> int:
+    try:
+        jobs = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("jobs must be an integer") from error
+    if not 1 <= jobs <= MAX_PARALLEL_CASES:
+        raise argparse.ArgumentTypeError(
+            f"jobs must be between 1 and {MAX_PARALLEL_CASES}"
+        )
+    return jobs
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -375,6 +535,22 @@ def _parser() -> argparse.ArgumentParser:
         help="run one public profile; may be repeated",
     )
     parser.add_argument("--stop-on-failure", action="store_true")
+    parser.add_argument(
+        "--jobs",
+        type=_parallelism,
+        default=1,
+        help=(
+            "run this many isolated calls at once; parallel waves use "
+            "dynamically selected ports (default: 1, maximum: 8)"
+        ),
+    )
+    parser.add_argument(
+        "--media-codec",
+        action="append",
+        choices=MEDIA_CODECS,
+        default=[],
+        help="run only this G.711 law; may be repeated",
+    )
     parser.add_argument(
         "--link-mode",
         choices=("raw", "lapm"),
@@ -409,6 +585,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         config = load_interop_config(options.config)
         profiles = tuple(options.profile) or FAST_PROFILE_NAMES
         cases = build_fast_matrix(profiles)
+        if options.media_codec:
+            selected_codecs = frozenset(options.media_codec)
+            cases = tuple(
+                case for case in cases if case.media_codec in selected_codecs
+            )
     except (InteropConfigError, KeyError, ValueError):
         print(json.dumps({"schema": 1, "outcome": "configuration-error"}))
         return 2
@@ -418,26 +599,25 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     failed = False
     try:
-        for case in cases:
-            result = run_case(
-                config,
-                case,
-                ato1_endpoint=options.ato1,
-                link_mode=options.link_mode,
-                candidate_pcm_role=options.candidate_pcm_role,
+        for wave in run_case_waves(
+            config,
+            cases,
+            jobs=options.jobs,
+            stop_on_failure=options.stop_on_failure,
+            ato1_endpoint=options.ato1,
+            link_mode=options.link_mode,
+            candidate_pcm_role=options.candidate_pcm_role,
+        ):
+            print(
+                "\n".join(
+                    json.dumps(result.public_dict(), sort_keys=True)
+                    for result in wave
+                ),
+                flush=True,
             )
-            print(json.dumps(result.public_dict(), sort_keys=True), flush=True)
-            if result.outcome != "passed":
+            if any(result.outcome != "passed" for result in wave):
                 failed = True
-                if options.stop_on_failure:
-                    break
-    except (
-        InteropRunError,
-        LiveTerminalError,
-        OSError,
-        subprocess.SubprocessError,
-        TimeoutError,
-    ):
+    except INTEROP_EXCEPTIONS:
         print(json.dumps({"schema": 1, "outcome": "infrastructure-error"}))
         return 1
     except KeyboardInterrupt:

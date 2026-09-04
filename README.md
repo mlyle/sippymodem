@@ -250,6 +250,14 @@ returns online. The runner allows one second after the retrain CONNECT before
 that fresh exchange because the peer's decoder and error-control path may
 become data-ready slightly after its terminal result.
 
+Pass `--jobs 4` to run four calls at once. Each wave reserves a disjoint set of
+loopback SIP and RTP ports before starting any endpoint, even when the private
+configuration contains fixed ports. Results are buffered for the wave and
+printed in matrix order, so concurrent endpoint activity cannot interleave the
+bounded JSON records. `--stop-on-failure` completes the current wave and does
+not schedule another one. Use `--media-codec PCMU` or `--media-codec PCMA` to
+limit a comparison to one tested G.711 path.
+
 The public profile catalog covers Bell 103/212A, V.21, V.22/V.22bis, V.23,
 Baudot at both supported rates, V.32/V.32bis, and every valid fixed V.34
 bit-rate/symbol-rate pair selectable through `+MS` and `+V34B`. The fast
