@@ -32,6 +32,8 @@ static bool carrier_state_is_valid(const struct qam_equalizer *equalizer)
 	    equalizer->carrier_phase > QAM_CARRIER_PI ||
 	    !isfinite(equalizer->carrier_frequency) ||
 	    fabs(equalizer->carrier_frequency) > QAM_CARRIER_MAX_FREQUENCY ||
+	    !isfinite(equalizer->carrier_error_limit) ||
+	    equalizer->carrier_error_limit < 0.0 ||
 	    !isfinite(equalizer->last_carrier_phase) ||
 	    equalizer->last_carrier_phase < -QAM_CARRIER_PI ||
 	    equalizer->last_carrier_phase > QAM_CARRIER_PI)
@@ -277,6 +279,24 @@ enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
 	return QAM_EQUALIZER_OK;
 }
 
+enum qam_equalizer_result qam_equalizer_set_carrier_error_limit(
+	struct qam_equalizer *equalizer, double maximum_error)
+{
+	struct qam_equalizer next;
+
+	if (!qam_equalizer_is_valid(equalizer) ||
+	    !isfinite(maximum_error) || maximum_error <= 0.0)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (!equalizer->carrier_tracking)
+		return QAM_EQUALIZER_INVALID_STATE;
+	next = *equalizer;
+	next.carrier_error_limit = maximum_error;
+	if (!qam_equalizer_is_valid(&next))
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	*equalizer = next;
+	return QAM_EQUALIZER_OK;
+}
+
 enum qam_equalizer_result qam_equalizer_push(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,
@@ -433,6 +453,12 @@ static bool prepare_carrier_target(
 	/* The V.34 decision-directed detector is a cross product. Unlike a
 	 * unit-angle error, it naturally gives weak decisions less authority. */
 	error = cross;
+	if (equalizer->carrier_error_limit > 0.0) {
+		if (error > equalizer->carrier_error_limit)
+			error = equalizer->carrier_error_limit;
+		else if (error < -equalizer->carrier_error_limit)
+			error = -equalizer->carrier_error_limit;
+	}
 	if (!isfinite(error))
 		return false;
 	frequency = equalizer->carrier_frequency +

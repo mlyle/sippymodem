@@ -297,6 +297,7 @@ static bool run_line(
 	      !v34_data_line_receiver_has_failed(&data_rx) &&
 	      data_rx.line.timing_power_hysteresis == 1.01 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_integral_gain == 0.0 &&
+	      data_rx.equalizer_receiver.equalizer.carrier_error_limit == 0.25 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_frequency ==
 		      e_rx.equalizer.carrier_frequency &&
 	      data_rx.equalizer_receiver.data_receiver.data_receiver

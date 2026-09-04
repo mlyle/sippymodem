@@ -436,6 +436,65 @@ static bool test_carrier_frequency_tracking(void)
 	return true;
 }
 
+static bool test_carrier_error_limit(void)
+{
+	static const double unit_coordinate =
+		0.70710678118654752440084436210485;
+	const struct qam_point reference = {
+		unit_coordinate,
+		unit_coordinate,
+	};
+	const struct qam_point wrong = {
+		-unit_coordinate,
+		unit_coordinate,
+	};
+	struct qam_equalizer unbounded;
+	struct qam_equalizer bounded;
+	struct qam_equalizer_observation unbounded_observation = { 0 };
+	struct qam_equalizer_observation bounded_observation = { 0 };
+	bool unbounded_ready = false;
+	bool bounded_ready = false;
+
+	CHECK(qam_equalizer_init(&unbounded, &reference, &reference) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_enable_carrier_tracking(
+		      &unbounded, 0.25, 1.0 / 8192.0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_hold_carrier_frequency(&unbounded) ==
+		      QAM_EQUALIZER_OK,
+	      "carrier-error fixtures did not initialize");
+	bounded = unbounded;
+	CHECK(qam_equalizer_set_carrier_error_limit(&bounded, 0.25) ==
+		      QAM_EQUALIZER_OK &&
+	      bounded.carrier_error_limit == 0.25,
+	      "carrier-error limit was rejected");
+	for (unsigned int index = 0;
+	     index <= QAM_EQUALIZER_DELAY; ++index) {
+		CHECK(qam_equalizer_observe(
+			      &unbounded, &reference,
+			      &unbounded_observation, &unbounded_ready) ==
+			      QAM_EQUALIZER_OK &&
+		      qam_equalizer_observe(
+			      &bounded, &reference,
+			      &bounded_observation, &bounded_ready) ==
+			      QAM_EQUALIZER_OK &&
+		      unbounded_ready == bounded_ready,
+		      "carrier-error fixture rejected symbol %u", index);
+	}
+	CHECK(unbounded_ready &&
+	      qam_equalizer_adapt_observation(
+		      &unbounded, &unbounded_observation, &wrong, 0.0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_adapt_observation(
+		      &bounded, &bounded_observation, &wrong, 0.0) ==
+		      QAM_EQUALIZER_OK &&
+	      fabs(unbounded.carrier_phase - 0.25) < 1e-12 &&
+	      fabs(bounded.carrier_phase - 0.0625) < 1e-12,
+	      "carrier-error limit produced phases %.12g and %.12g",
+	      unbounded.carrier_phase, bounded.carrier_phase);
+	return true;
+}
+
 static bool test_instance_selected_span(void)
 {
 	const struct qam_point reference = { 1.0, 1.0 };
@@ -777,8 +836,12 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      qam_equalizer_hold_carrier_frequency(&equalizer) ==
 		      QAM_EQUALIZER_INVALID_STATE &&
+	      qam_equalizer_set_carrier_error_limit(NULL, 0.25) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_set_carrier_error_limit(&equalizer, 0.25) ==
+		      QAM_EQUALIZER_INVALID_STATE &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
-	      "invalid carrier frequency hold changed the equalizer");
+	      "invalid carrier tracking policy changed the equalizer");
 	carrier = equalizer;
 	CHECK(qam_equalizer_enable_carrier_tracking(
 		      &carrier, 0.25, 0.001) == QAM_EQUALIZER_OK &&
@@ -788,8 +851,14 @@ static bool test_validation(void)
 	CHECK(qam_equalizer_enable_carrier_tracking(
 		      &carrier, 0.25, 0.001) ==
 		      QAM_EQUALIZER_INVALID_STATE &&
+	      qam_equalizer_set_carrier_error_limit(&carrier, NAN) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_set_carrier_error_limit(&carrier, 0.0) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_set_carrier_error_limit(&carrier, -0.25) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&carrier, &saved, sizeof(carrier)) == 0,
-	      "re-enabling carrier tracking was not transactional");
+	      "invalid carrier policy was not transactional");
 	CHECK(qam_equalizer_hold_carrier_frequency(&carrier) ==
 		      QAM_EQUALIZER_OK &&
 	      carrier.carrier_integral_gain == 0.0 &&
@@ -840,6 +909,7 @@ int main(void)
 		{ "instance-selected decision delay", test_instance_selected_delay },
 		{ "generated ISI channel", test_generated_isi_channel },
 		{ "carrier-frequency tracking", test_carrier_frequency_tracking },
+		{ "carrier-error limit", test_carrier_error_limit },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
 		{ "span extension", test_span_extension },

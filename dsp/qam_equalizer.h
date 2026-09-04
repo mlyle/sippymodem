@@ -36,6 +36,9 @@ struct qam_equalizer {
 	double carrier_frequency;
 	double carrier_proportional_gain;
 	double carrier_integral_gain;
+	/* Optional absolute bound on one decision detector error. Zero leaves
+	 * known-symbol acquisition unrestricted. */
+	double carrier_error_limit;
 	double last_carrier_phase;
 	unsigned int tap_count;
 	unsigned int decision_delay;
@@ -103,6 +106,13 @@ enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
  * frequency estimate. */
 enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
 	struct qam_equalizer *equalizer);
+
+/* Bound each subsequent carrier detector cross product in the equalizer's
+ * point-power units. This is intended for decision-directed tracking after
+ * known-symbol acquisition, where one bad hard decision must not make a large
+ * proportional phase jump. */
+enum qam_equalizer_result qam_equalizer_set_carrier_error_limit(
+	struct qam_equalizer *equalizer, double maximum_error);
 bool qam_equalizer_is_valid(
 	const struct qam_equalizer *equalizer);
 

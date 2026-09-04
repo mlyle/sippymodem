@@ -6,6 +6,8 @@
 
 #include <stddef.h>
 
+static const double V90_DATA_CARRIER_ERROR_LIMIT = 1.0 / 4.0;
+
 static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
 /* B1 is a long, highly structured all-ones sequence.  Its matched-filter
  * energy can give an adjacent timing candidate a tiny repeatable advantage
@@ -196,6 +198,9 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 	if (qam_demodulator_set_timing_power_hysteresis(
 		    &demodulator, V90_DATA_TIMING_POWER_HYSTERESIS) != QAM_OK ||
 	    qam_equalizer_hold_carrier_frequency(&handoff.equalizer) !=
+		    QAM_EQUALIZER_OK ||
+	    qam_equalizer_set_carrier_error_limit(
+		    &handoff.equalizer, V90_DATA_CARRIER_ERROR_LIMIT) !=
 		    QAM_EQUALIZER_OK ||
 	    !v34_equalizer_handoff_is_valid(&handoff) ||
 	    v34_data_line_receiver_init(
