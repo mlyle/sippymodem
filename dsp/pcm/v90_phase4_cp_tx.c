@@ -165,6 +165,37 @@ static uint8_t frame_dibit(
 			 packed_msb_bit(frame, first_bit + 1u));
 }
 
+static enum v90_phase4_cp_tx_result map_symbol(
+	struct v90_phase4_cp_tx *tx,
+	uint8_t differential_dibit, uint8_t mapped_dibit,
+	struct qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns)
+{
+	struct qam_point next_point;
+	uint8_t next_quarter_point = 0;
+	uint8_t next_rotation;
+
+	if (v34_scramble_differential_dibit(
+		    &tx->scrambler, differential_dibit,
+		    tx->previous_clockwise_quarter_turns,
+		    &next_rotation) != V34_FRAMING_OK)
+		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	if (tx->constellation == V34_CONSTELLATION_16_POINT &&
+	    v34_scramble_mapped_dibit(
+		    &tx->scrambler, mapped_dibit,
+		    &next_quarter_point) != V34_FRAMING_OK)
+		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	if (v34_training_constellation_point(
+		    tx->constellation, next_quarter_point, next_rotation,
+		    &next_point) != V34_CONSTELLATION_OK)
+		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	tx->previous_clockwise_quarter_turns = next_rotation;
+	*point = next_point;
+	*quarter_point = next_quarter_point;
+	*clockwise_quarter_turns = next_rotation;
+	return V90_PHASE4_CP_TX_OK;
+}
+
 enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 	struct v90_phase4_cp_tx *tx,
 	struct qam_point *point, uint8_t *quarter_point,
@@ -172,7 +203,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 {
 	struct v90_phase4_cp_tx next;
 	struct qam_point next_point;
-	uint8_t next_quarter_point = 0;
+	uint8_t next_quarter_point;
 	uint8_t next_rotation;
 	bool complete;
 
@@ -183,23 +214,14 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 	if (tx->bit_index == tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
 	next = *tx;
-	if (v34_scramble_differential_dibit(
-		    &next.scrambler,
-		    frame_dibit(next.frame, next.bit_index),
-		    next.previous_clockwise_quarter_turns,
-		    &next_rotation) != V34_FRAMING_OK)
+	if (map_symbol(
+		    &next, frame_dibit(next.frame, next.bit_index),
+		    next.constellation == V34_CONSTELLATION_16_POINT ?
+			    frame_dibit(next.frame, next.bit_index + 2u) :
+			    0u,
+		    &next_point, &next_quarter_point, &next_rotation) !=
+	    V90_PHASE4_CP_TX_OK)
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	if (next.constellation == V34_CONSTELLATION_16_POINT &&
-	    v34_scramble_mapped_dibit(
-		    &next.scrambler,
-		    frame_dibit(next.frame, next.bit_index + 2u),
-		    &next_quarter_point) != V34_FRAMING_OK)
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	if (v34_training_constellation_point(
-		    next.constellation, next_quarter_point, next_rotation,
-		    &next_point) != V34_CONSTELLATION_OK)
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	next.previous_clockwise_quarter_turns = next_rotation;
 	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
 	if (!v90_phase4_cp_tx_is_valid(&next))
@@ -209,6 +231,35 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 	*quarter_point = next_quarter_point;
 	*clockwise_quarter_turns = next_rotation;
 	*record_complete = complete;
+	return V90_PHASE4_CP_TX_OK;
+}
+
+enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next(
+	struct v90_phase4_cp_tx *tx,
+	struct qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns)
+{
+	struct v90_phase4_cp_tx next;
+	struct qam_point next_point;
+	uint8_t next_quarter_point;
+	uint8_t next_rotation;
+
+	if (!v90_phase4_cp_tx_is_valid(tx) || point == NULL ||
+	    quarter_point == NULL || clockwise_quarter_turns == NULL)
+		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	if (!v90_phase4_cp_tx_record_is_complete(tx))
+		return V90_PHASE4_CP_TX_RECORD_IN_PROGRESS;
+	next = *tx;
+	if (map_symbol(
+		    &next, 3u, 3u, &next_point,
+		    &next_quarter_point, &next_rotation) !=
+	    V90_PHASE4_CP_TX_OK ||
+	    !v90_phase4_cp_tx_is_valid(&next))
+		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	*tx = next;
+	*point = next_point;
+	*quarter_point = next_quarter_point;
+	*clockwise_quarter_turns = next_rotation;
 	return V90_PHASE4_CP_TX_OK;
 }
 

@@ -24,6 +24,27 @@ static bool handoff_mappings_match(
 		       &handoff->receive.stream.decoder.mapping, &expected);
 }
 
+static bool continuation_receive_is_valid(
+	const struct v90_phase4_analog_continuation *state)
+{
+	struct v90_pcm_mapping expected;
+
+	if (!state->receive_ready)
+		return !v90_phase4_analog_station_receive_complete(
+			       &state->station) &&
+		       memory_region_is_zero(
+			       &state->receive, sizeof(state->receive));
+	return v90_phase4_analog_station_receive_complete(
+		       &state->station) &&
+	       pcm_downstream_rx_is_valid(&state->receive) &&
+	       state->receive.stage == PCM_DOWNSTREAM_RX_TRN2D &&
+	       v90_pcm_mapping_init(
+		       &expected, &state->station.training_parameters) ==
+		       V90_PCM_MAPPING_OK &&
+	       v90_pcm_mapping_equal(
+		       &state->receive.stream.decoder.mapping, &expected);
+}
+
 bool v90_phase4_analog_startup_is_valid(
 	const struct v90_phase4_analog_startup *startup)
 {
@@ -44,27 +65,19 @@ bool v90_phase4_analog_startup_is_valid(
 	case V90_PHASE4_STARTUP_CONTINUING: {
 		const struct v90_phase4_analog_continuation *state =
 			&startup->state.continuing;
-		struct v90_pcm_mapping expected;
 
 		return v90_phase4_analog_station_is_valid(&state->station) &&
-		       v90_phase4_analog_station_receive_complete(
-			       &state->station) &&
+		       continuation_receive_is_valid(state) &&
 		       (startup->failed ||
-			!v90_phase4_analog_station_transmit_complete(
-				&state->station)) &&
-		       pcm_downstream_rx_is_valid(&state->receive) &&
-		       (startup->failed ||
-			state->receive.stage == PCM_DOWNSTREAM_RX_TRN2D) &&
-		       v90_pcm_mapping_init(
-			       &expected,
-			       &state->station.training_parameters) ==
-			       V90_PCM_MAPPING_OK &&
-		       v90_pcm_mapping_equal(
-			       &state->receive.stream.decoder.mapping,
-			       &expected) &&
-		       (startup->failed ||
-			!v90_phase4_analog_station_has_failed(
-				&state->station));
+			(!v90_phase4_analog_station_has_failed(
+				 &state->station) &&
+			 (!state->receive_ready ||
+			  !v90_phase4_analog_station_transmit_complete(
+				  &state->station)) &&
+			 (state->receive_ready ||
+			  (state->station.finish_cpt_requested &&
+			   v90_phase4_cp_line_tx_record_is_complete(
+				   &state->station.transmit)))));
 	}
 	case V90_PHASE4_STARTUP_COMPLETE:
 		return !startup->failed &&
@@ -149,14 +162,47 @@ static struct v90_phase4_analog_station *active_station(
 		       &startup->state.continuing.station;
 }
 
+static enum v90_phase4_startup_result line_result(
+	enum v90_phase4_cp_line_tx_result result)
+{
+	switch (result) {
+	case V90_PHASE4_CP_LINE_TX_OK:
+		return V90_PHASE4_STARTUP_OK;
+	case V90_PHASE4_CP_LINE_TX_INVALID_PARAMETERS:
+		return V90_PHASE4_STARTUP_INVALID_PARAMETERS;
+	case V90_PHASE4_CP_LINE_TX_OUT_OF_RANGE:
+		return V90_PHASE4_STARTUP_OUT_OF_RANGE;
+	case V90_PHASE4_CP_LINE_TX_CLIPPING_RISK:
+		return V90_PHASE4_STARTUP_CLIPPING_RISK;
+	case V90_PHASE4_CP_LINE_TX_COMPLETE:
+	case V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS:
+	case V90_PHASE4_CP_LINE_TX_INVALID_STATE:
+		return V90_PHASE4_STARTUP_INVALID_STATE;
+	case V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT:
+	case V90_PHASE4_CP_LINE_TX_INTERNAL_ERROR:
+		break;
+	}
+	return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
+}
+
 static enum v90_phase4_startup_result transmit_character(
 	struct v90_phase4_analog_startup *startup, uint8_t *octet)
 {
 	struct v90_phase4_analog_station *station =
 		active_station(startup);
 	int16_t sample;
-	enum v90_phase4_startup_result result = station_result(
-		v90_phase4_analog_station_transmit(station, &sample));
+	enum v90_phase4_startup_result result;
+
+	if (startup->stage == V90_PHASE4_STARTUP_CONTINUING &&
+	    v90_phase4_cp_line_tx_record_is_complete(
+		    &station->transmit) &&
+	    station->finish_cpt_requested)
+		result = line_result(v90_phase4_cp_line_tx_scr_sample(
+			&station->transmit,
+			startup->state.continuing.receive_ready, &sample));
+	else
+		result = station_result(
+			v90_phase4_analog_station_transmit(station, &sample));
 
 	if (result == V90_PHASE4_STARTUP_OK)
 		*octet = station->receive.law == G711_LAW_PCMA ?
@@ -205,34 +251,71 @@ static enum v90_phase4_startup_result receive_downstream(
 static enum v90_phase4_startup_result receive_character(
 	struct v90_phase4_analog_startup *startup, uint8_t octet)
 {
-	if (startup->stage == V90_PHASE4_STARTUP_INITIAL)
-		return station_result(v90_phase4_analog_station_receive(
-			&startup->state.initial, octet));
-	return receive_downstream(
-		&startup->state.continuing.receive, octet);
+	if (startup->stage == V90_PHASE4_STARTUP_CONTINUING &&
+	    startup->state.continuing.receive_ready)
+		return receive_downstream(
+			&startup->state.continuing.receive, octet);
+	return station_result(v90_phase4_analog_station_receive(
+		active_station(startup), octet));
+}
+
+static enum v90_phase4_startup_result prepare_receive(
+	struct v90_phase4_analog_continuation *continuing)
+{
+	struct v90_phase4_analog_receive_handoff handoff;
+
+	if (continuing->receive_ready)
+		return V90_PHASE4_STARTUP_OK;
+	if (v90_phase4_analog_station_receive_handoff(
+		    &continuing->station, &handoff) !=
+	    V90_PHASE4_ANALOG_STATION_OK)
+		return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
+	continuing->receive = handoff.receiver;
+	continuing->receive_ready = true;
+	return V90_PHASE4_STARTUP_OK;
 }
 
 static enum v90_phase4_startup_result advance_startup(
 	struct v90_phase4_analog_startup *startup)
 {
 	if (startup->stage == V90_PHASE4_STARTUP_INITIAL &&
-	    v90_phase4_analog_station_receive_complete(
-		    &startup->state.initial)) {
-		struct v90_phase4_analog_receive_handoff handoff;
+	    (v90_phase4_analog_station_receive_complete(
+		     &startup->state.initial) ||
+	     v90_phase4_analog_station_transmit_complete(
+		     &startup->state.initial))) {
 		struct v90_phase4_analog_continuation continuing = {
 			.station = startup->state.initial,
 		};
 
-		if (v90_phase4_analog_station_receive_handoff(
-			    &continuing.station, &handoff) !=
-		    V90_PHASE4_ANALOG_STATION_OK)
+		if (v90_phase4_analog_station_receive_complete(
+			    &continuing.station) &&
+		    prepare_receive(&continuing) !=
+			    V90_PHASE4_STARTUP_OK)
 			return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
-		continuing.receive = handoff.receiver;
 		startup->state = (union v90_phase4_analog_startup_state){ 0 };
 		startup->state.continuing = continuing;
 		startup->stage = V90_PHASE4_STARTUP_CONTINUING;
 	}
 	if (startup->stage == V90_PHASE4_STARTUP_CONTINUING &&
+	    !startup->state.continuing.receive_ready &&
+	    !startup->state.continuing.station.finish_cpt_requested) {
+		struct v90_phase4_analog_station initial =
+			startup->state.continuing.station;
+
+		startup->state = (union v90_phase4_analog_startup_state){ 0 };
+		startup->state.initial = initial;
+		startup->stage = V90_PHASE4_STARTUP_INITIAL;
+		return V90_PHASE4_STARTUP_OK;
+	}
+	if (startup->stage == V90_PHASE4_STARTUP_CONTINUING &&
+	    !startup->state.continuing.receive_ready &&
+	    v90_phase4_analog_station_receive_complete(
+		    &startup->state.continuing.station) &&
+	    prepare_receive(&startup->state.continuing) !=
+		    V90_PHASE4_STARTUP_OK)
+		return V90_PHASE4_STARTUP_NUMERIC_FAILURE;
+	if (startup->stage == V90_PHASE4_STARTUP_CONTINUING &&
+	    startup->state.continuing.receive_ready &&
 	    v90_phase4_analog_station_transmit_complete(
 		    &startup->state.continuing.station)) {
 		struct v90_phase4_analog_handoff complete = {

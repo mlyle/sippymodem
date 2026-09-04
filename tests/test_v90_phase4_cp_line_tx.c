@@ -121,6 +121,32 @@ static bool model_sample(
 	       accepted == accepting;
 }
 
+static bool model_scr_sample(
+	struct v34_training_line *line,
+	struct v90_phase4_cp_tx *symbols, int16_t *sample)
+{
+	struct qam_point point;
+	const struct qam_point *supplied = NULL;
+	bool accepting = v34_training_line_needs_point(line);
+	bool accepted;
+
+	if (accepting) {
+		uint8_t quarter_point;
+		uint8_t clockwise_quarter_turns;
+
+		if (v90_phase4_cp_tx_scr_next(
+			    symbols, &point, &quarter_point,
+			    &clockwise_quarter_turns) !=
+		    V90_PHASE4_CP_TX_OK)
+			return false;
+		supplied = &point;
+	}
+	return v34_training_line_sample(
+		       line, supplied, sample, &accepted) ==
+		       V34_TRAINING_LINE_OK &&
+	       accepted == accepting;
+}
+
 static bool model_e_sample(
 	struct v34_training_line *line,
 	struct v34_phase4_e_sequence *sequence, int16_t *sample)
@@ -254,6 +280,118 @@ static bool test_online_resume(void)
 		      "Jd four-point online CP resume failed for variant %u",
 		      variant);
 	}
+	return true;
+}
+
+static bool verify_scr_bridge(
+	enum v34_constellation_size constellation)
+{
+	struct v34_phase3_profile selected = profile();
+	struct v90_cp_parameters training = parameters(V90_CP_TRAINING, 0);
+	struct v90_cp_parameters data = parameters(V90_CP_DATA, 1);
+	struct v34_training_line source;
+	struct v34_training_line model_line;
+	struct v90_phase4_cp_tx model_symbols;
+	struct v90_phase4_cp_line_tx tx;
+
+	data.request_silence = false;
+	CHECK(v34_training_line_init(
+		      &source, &selected, V90_PHASE3_SAMPLE_RATE,
+		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
+	      advance_to_nontrivial_boundary(&source) &&
+	      v90_phase4_cp_line_tx_init(
+		      &tx, &source, constellation, &training) ==
+		      V90_PHASE4_CP_LINE_TX_OK,
+	      "SCR line fixture did not initialize");
+	model_line = source;
+	model_symbols = tx.symbols;
+	for (size_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT &&
+	     !v90_phase4_cp_line_tx_is_handoff_ready(&tx);
+	     ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		CHECK(model_sample(&model_line, &model_symbols, &expected) &&
+		      v90_phase4_cp_line_tx_sample(&tx, &actual) ==
+			      V90_PHASE4_CP_LINE_TX_OK &&
+		      actual == expected,
+		      "CPt before SCR diverged at sample %zu", sample_index);
+	}
+	CHECK(v90_phase4_cp_line_tx_is_handoff_ready(&tx) &&
+	      v34_training_line_needs_point(&model_line),
+	      "CPt before SCR did not reach a point boundary");
+	{
+		int16_t actual;
+		int16_t expected;
+
+		CHECK(model_scr_sample(
+			      &model_line, &model_symbols, &expected) &&
+		      v90_phase4_cp_line_tx_scr_sample(
+			      &tx, false, &actual) ==
+			      V90_PHASE4_CP_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      memcmp(&tx.symbols, &model_symbols,
+			     sizeof(model_symbols)) == 0 &&
+		      !v34_training_line_needs_point(&tx.line),
+		      "SCR did not continue CPt at the point boundary");
+	}
+	for (size_t sample_index = 0;
+	     sample_index < SAMPLE_LIMIT &&
+	     !v34_training_line_needs_point(&model_line);
+	     ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		CHECK(model_scr_sample(
+			      &model_line, &model_symbols, &expected) &&
+		      v90_phase4_cp_line_tx_scr_sample(
+			      &tx, true, &actual) ==
+			      V90_PHASE4_CP_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      memcmp(&tx.symbols, &model_symbols,
+			     sizeof(model_symbols)) == 0,
+		      "SCR tail diverged at sample %zu", sample_index);
+	}
+	{
+		struct v90_phase4_cp_line_tx saved = tx;
+		int16_t sample = 1234;
+
+		CHECK(v90_phase4_cp_line_tx_scr_sample(
+			      &tx, true, &sample) ==
+			      V90_PHASE4_CP_LINE_TX_COMPLETE &&
+		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234,
+		      "completed SCR emitted an extra sample");
+	}
+	CHECK(v90_phase4_cp_line_tx_start_next_record(&tx, &data) ==
+		      V90_PHASE4_CP_LINE_TX_OK &&
+	      v90_phase4_cp_tx_start_next_record(
+		      &model_symbols, &data) == V90_PHASE4_CP_TX_OK,
+	      "CP did not start from the SCR coding history");
+	for (size_t sample_index = 0; sample_index < 24u; ++sample_index) {
+		int16_t actual;
+		int16_t expected;
+
+		CHECK(model_sample(&model_line, &model_symbols, &expected) &&
+		      v90_phase4_cp_line_tx_sample(&tx, &actual) ==
+			      V90_PHASE4_CP_LINE_TX_OK &&
+		      actual == expected &&
+		      memcmp(&tx.line, &model_line, sizeof(model_line)) == 0 &&
+		      memcmp(&tx.symbols, &model_symbols,
+			     sizeof(model_symbols)) == 0,
+		      "CP after SCR diverged at sample %zu", sample_index);
+	}
+	return true;
+}
+
+static bool test_scr_bridge(void)
+{
+	CHECK(verify_scr_bridge(V34_CONSTELLATION_4_POINT),
+	      "four-point SCR bridge failed");
+	CHECK(verify_scr_bridge(V34_CONSTELLATION_16_POINT),
+	      "sixteen-point SCR bridge failed");
 	return true;
 }
 
@@ -522,6 +660,12 @@ static bool test_transactional_contracts(void)
 		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_tx_sample(&tx, NULL) ==
 		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_tx_scr_sample(&tx, false, &sample) ==
+		      V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS &&
+	      v90_phase4_cp_line_tx_scr_sample(NULL, false, &sample) ==
+		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_tx_scr_sample(&tx, false, NULL) ==
+		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_tx_handoff(&tx, &saved_line) ==
 		      V90_PHASE4_CP_LINE_TX_INVALID_STATE &&
 	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
@@ -563,6 +707,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "continuous waveforms", test_continuous_waveforms },
+		{ "optional SCR bridge", test_scr_bridge },
 		{ "online resume", test_online_resume },
 		{ "transactional contracts", test_transactional_contracts },
 	};

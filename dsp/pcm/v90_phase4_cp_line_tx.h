@@ -66,6 +66,13 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_start_next_record(
 enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample(
 	struct v90_phase4_cp_line_tx *tx, int16_t *sample);
 
+/* Continue a completed CPt with optional SCR. When stop_at_boundary is set,
+ * finish the current SCR symbol without starting another and return COMPLETE
+ * on the following call at the exact CP handoff boundary. */
+enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_scr_sample(
+	struct v90_phase4_cp_line_tx *tx, bool stop_at_boundary,
+	int16_t *sample);
+
 enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_handoff(
 	const struct v90_phase4_cp_line_tx *tx,
 	struct v34_training_line *line);

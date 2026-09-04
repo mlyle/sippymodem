@@ -542,6 +542,39 @@ static bool test_contracts(void)
 	}
 	CHECK(v90_phase4_ri_search_is_acquired(&station.receive),
 	      "station did not reacquire Ri after a malformed character");
+	while (ri.ri_symbols < V90_PHASE4_RI_MIN_SYMBOLS) {
+		uint8_t octet;
+
+		CHECK(v90_phase4_ri_tx_next(&ri, &octet) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK,
+		      "Ri continuation stopped before its minimum");
+	}
+	CHECK(v90_phase4_ri_tx_request_finish(&ri) == V90_PHASE4_RI_OK,
+	      "false-edge fixture did not request Ri-bar");
+	for (size_t index = 0;
+	     index <= V90_PHASE4_RI_PERIOD &&
+	     !station.finish_cpt_requested;
+	     ++index) {
+		uint8_t octet;
+
+		CHECK(v90_phase4_ri_tx_next(&ri, &octet) ==
+			      V90_PHASE4_RI_OK &&
+		      v90_phase4_analog_station_receive(&station, octet) ==
+			      V90_PHASE4_ANALOG_STATION_OK,
+		      "Ri-bar transition stopped at %zu", index);
+	}
+	CHECK(station.finish_cpt_requested &&
+	      station.receive.stage == V90_PHASE4_RI_SEARCH_BAR,
+	      "station did not act on the tentative Ri-bar edge");
+	CHECK(v90_phase4_analog_station_receive(&station, wrong.octet) ==
+		      V90_PHASE4_ANALOG_STATION_OK &&
+	      v90_phase4_analog_station_is_valid(&station) &&
+	      !v90_phase4_analog_station_has_failed(&station) &&
+	      !station.finish_cpt_requested &&
+	      station.receive.stage == V90_PHASE4_RI_SEARCH_HUNT,
+	      "false Ri-bar edge left CPt stopped during reacquisition");
 	station.failed = true;
 	CHECK(v90_phase4_analog_station_is_valid(&station) &&
 	      v90_phase4_analog_station_has_failed(&station),

@@ -579,6 +579,13 @@ static bool test_forced_upstream_pairs(void)
 	      "forced-upstream V.90 registration failed");
 	CHECK(run_pair(
 		      G711_LAW_PCMU,
+		      28000, 19200, 3000, true, MODEM_PCM_ROLE_NONE) &&
+		      run_pair(
+			      G711_LAW_PCMA,
+			      28000, 19200, 3000, true,
+			      MODEM_PCM_ROLE_NONE) &&
+	      run_pair(
+		      G711_LAW_PCMU,
 		      42667, 26400, 3200, true, MODEM_PCM_ROLE_NONE) &&
 		      run_pair(
 			      G711_LAW_PCMA,

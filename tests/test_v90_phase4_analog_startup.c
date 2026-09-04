@@ -4,6 +4,8 @@
 #include <v90_phase4_digital_station.h>
 
 #include <g711.h>
+#include <pcm_downstream_tx.h>
+#include <v90_phase4_ri.h>
 
 #include "test.h"
 #include "v90_phase4_station_fixture.h"
@@ -108,7 +110,7 @@ static bool run_exchange(enum g711_law law)
 	struct v90_phase4_analog_handoff analog_handoff;
 	struct v90_phase4_digital_transmit_handoff digital_handoff;
 	struct v90_mp_record mp = mp_parameters();
-	size_t continued_octets = 0;
+	size_t downstream_octets = 0;
 	uint8_t to_analog;
 	uint8_t to_digital;
 	bool digital_handed_off = false;
@@ -136,7 +138,9 @@ static bool run_exchange(enum g711_law law)
 	      (unsigned int)law);
 
 	for (size_t clock = 0; clock < CHARACTER_LIMIT; ++clock) {
-		enum v90_phase4_startup_stage before = startup.stage;
+		bool was_downstream =
+			startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+			startup.state.continuing.receive_ready;
 		uint8_t next_to_analog;
 		uint8_t next_to_digital;
 
@@ -145,7 +149,7 @@ static bool run_exchange(enum g711_law law)
 			      V90_PHASE4_STARTUP_OK,
 		      "law %u analogue startup stopped at %zu",
 		      (unsigned int)law, clock);
-		continued_octets += before == V90_PHASE4_STARTUP_CONTINUING;
+		downstream_octets += was_downstream;
 
 		if (!digital_handed_off) {
 			CHECK(v90_phase4_digital_station_transmit(
@@ -191,17 +195,17 @@ static bool run_exchange(enum g711_law law)
 		}
 	}
 
-	CHECK(complete && digital_handed_off && continued_octets > 0 &&
+	CHECK(complete && digital_handed_off && downstream_octets > 0 &&
 	      v90_phase4_analog_startup_handoff(
 		      &startup, &analog_handoff) ==
 		      V90_PHASE4_STARTUP_OK &&
 	      analog_handoff.receive.stream.received_symbols ==
-		      continued_octets &&
+		      downstream_octets &&
 	      v90_phase4_cp_line_tx_is_handoff_ready(
 		      &analog_handoff.transmit) &&
 	      pcm_downstream_rx_is_valid(&analog_handoff.receive),
 	      "law %u analogue startup lost a character: %zu/%llu",
-	      (unsigned int)law, continued_octets,
+	      (unsigned int)law, downstream_octets,
 	      (unsigned long long)
 		      analog_handoff.receive.stream.received_symbols);
 	{
@@ -234,6 +238,147 @@ static bool test_generated_exchange(void)
 {
 	CHECK(run_exchange(G711_LAW_PCMU) && run_exchange(G711_LAW_PCMA),
 	      "generated analogue startup exchanges failed");
+	return true;
+}
+
+static const struct v90_phase4_analog_station *active_station(
+	const struct v90_phase4_analog_startup *startup)
+{
+	return startup->stage == V90_PHASE4_STARTUP_INITIAL ?
+		       &startup->state.initial :
+		       &startup->state.continuing.station;
+}
+
+static bool run_cpt_first_exchange(enum g711_law law)
+{
+	struct v90_phase4_analog_station analog_station;
+	struct v90_phase4_digital_station unused_digital;
+	struct v90_phase4_analog_startup startup;
+	struct v90_phase4_analog_handoff handoff;
+	struct v90_phase4_ri_tx ri;
+	struct v90_cp_parameters training = training_parameters(law);
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx downstream;
+	size_t early_scr_octets = 0;
+	size_t downstream_octets = 0;
+	bool finish_requested = false;
+	bool cpt_finished_first = false;
+	bool scrambled_ones_seen = false;
+	bool false_edge_checked = false;
+	bool complete = false;
+
+	CHECK(prepare_stations(
+		      law, &analog_station, &unused_digital) &&
+	      v90_phase4_analog_startup_init(
+		      &startup, &analog_station) == V90_PHASE4_STARTUP_OK &&
+	      v90_phase4_ri_tx_init(&ri, law, TRAINING_UCODE) ==
+		      V90_PHASE4_RI_OK &&
+	      v90_pcm_mapping_init(&mapping, &training) ==
+		      V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(
+		      &downstream, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK,
+	      "law %u CPt-first fixture did not initialize",
+	      (unsigned int)law);
+
+	for (size_t clock = 0; clock < CHARACTER_LIMIT; ++clock) {
+		const struct v90_phase4_analog_station *station =
+			active_station(&startup);
+		struct pcm_downstream_symbol symbol;
+		uint8_t received;
+		uint8_t transmitted;
+		uint32_t history_before = station->transmit.symbols
+			.scrambler.history;
+		bool was_early_scr =
+			startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+			!startup.state.continuing.receive_ready;
+		bool was_downstream =
+			startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+			startup.state.continuing.receive_ready;
+
+		if (!finish_requested &&
+		    ri.ri_symbols == V90_PHASE4_RI_MIN_SYMBOLS &&
+		    ri.phase == 0u &&
+		    !v90_phase4_cp_line_tx_record_is_complete(
+			    &station->transmit) &&
+		    station->transmit.symbols.frame_bit_count -
+			    station->transmit.symbols.bit_index <= 24u) {
+			CHECK(v90_phase4_ri_tx_request_finish(&ri) ==
+				      V90_PHASE4_RI_OK,
+			      "law %u Ri did not accept the early finish",
+			      (unsigned int)law);
+			finish_requested = true;
+		}
+		if (!v90_phase4_ri_tx_is_complete(&ri)) {
+			CHECK(v90_phase4_ri_tx_next(&ri, &received) ==
+				      V90_PHASE4_RI_OK,
+			      "law %u Ri stopped at %zu",
+			      (unsigned int)law, clock);
+		} else {
+			CHECK(pcm_downstream_tx_next(&downstream, &symbol) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "law %u TRN2d stopped at %zu",
+			      (unsigned int)law, clock);
+			received = symbol.pcm.octet;
+		}
+		CHECK(v90_phase4_analog_startup_octet(
+			      &startup, received, &transmitted) ==
+			      V90_PHASE4_STARTUP_OK,
+		      "law %u CPt-first startup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (was_early_scr) {
+			const struct v90_phase4_cp_tx *symbols_after =
+				startup.stage == V90_PHASE4_STARTUP_COMPLETE ?
+					&startup.state.complete.transmit.symbols :
+					&active_station(&startup)->transmit.symbols;
+
+			early_scr_octets++;
+			scrambled_ones_seen |=
+				symbols_after->scrambler.history != history_before;
+		}
+		downstream_octets += was_downstream;
+		if (startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
+		    !startup.state.continuing.receive_ready) {
+			cpt_finished_first = true;
+			if (!false_edge_checked) {
+				struct v90_phase4_analog_startup retry = startup;
+				uint8_t retry_output;
+
+				CHECK(v90_phase4_analog_startup_octet(
+					      &retry, encode_sample(law, 0),
+					      &retry_output) ==
+					      V90_PHASE4_STARTUP_OK &&
+				      retry.stage == V90_PHASE4_STARTUP_INITIAL &&
+				      !retry.state.initial.finish_cpt_requested &&
+				      v90_phase4_analog_startup_is_valid(&retry),
+				      "law %u false Ri-bar edge did not resume CPt",
+				      (unsigned int)law);
+				false_edge_checked = true;
+			}
+		}
+		if (v90_phase4_analog_startup_is_complete(&startup)) {
+			complete = true;
+			break;
+		}
+	}
+	CHECK(complete && finish_requested && cpt_finished_first &&
+	      early_scr_octets > 0 && scrambled_ones_seen &&
+	      false_edge_checked &&
+	      v90_phase4_ri_tx_is_complete(&ri) &&
+	      v90_phase4_analog_startup_handoff(&startup, &handoff) ==
+		      V90_PHASE4_STARTUP_OK &&
+	      handoff.receive.stream.received_symbols == downstream_octets &&
+	      v90_phase4_cp_line_tx_is_handoff_ready(&handoff.transmit),
+	      "law %u CPt-first SCR bridge failed: scr=%zu data=%zu",
+	      (unsigned int)law, early_scr_octets, downstream_octets);
+	return true;
+}
+
+static bool test_cpt_first_exchange(void)
+{
+	CHECK(run_cpt_first_exchange(G711_LAW_PCMU) &&
+	      run_cpt_first_exchange(G711_LAW_PCMA),
+	      "CPt-first startup exchanges failed");
 	return true;
 }
 
@@ -353,6 +498,8 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU and PCMA continuation",
 		  test_generated_exchange },
+		{ "CPt-first optional SCR continuation",
+		  test_cpt_first_exchange },
 		{ "contracts and failure", test_contracts },
 		{ "result names", test_result_names },
 	};

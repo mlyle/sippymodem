@@ -200,8 +200,12 @@ enum v90_phase4_analog_station_result v90_phase4_analog_station_receive(
 		station->failed = true;
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;
 	}
-	if (receive_result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED)
-		next.finish_cpt_requested = true;
+	/* A tentative Ri-bar edge asks the conventional transmitter to finish
+	 * its current CPt record.  The sliding Ri receiver may subsequently
+	 * reject that edge and return to its long Ri hunt; resume CPt in that
+	 * case so a later, genuine edge still has a continuous response. */
+	next.finish_cpt_requested =
+		next.receive.stage >= V90_PHASE4_RI_SEARCH_BAR;
 	if (!v90_phase4_analog_station_is_valid(&next)) {
 		station->failed = true;
 		return V90_PHASE4_ANALOG_STATION_NUMERIC_FAILURE;

@@ -219,6 +219,44 @@ static bool verify_record(
 	return true;
 }
 
+static bool verify_scr(
+	struct v90_phase4_cp_tx *tx,
+	struct reference_mapper *reference, size_t symbol_count)
+{
+	size_t saved_bit_index = tx->bit_index;
+
+	CHECK(v90_phase4_cp_tx_record_is_complete(tx),
+	      "SCR fixture did not start after CPt");
+	for (size_t index = 0; index < symbol_count; ++index) {
+		uint8_t increment = reference_mapped_dibit(reference, 3u);
+		uint8_t rotation = (uint8_t)(
+			(reference->previous_clockwise_quarter_turns + increment) &
+			3u);
+		uint8_t quarter = 0;
+		struct qam_point expected;
+		struct qam_point emitted = { 7.0, -9.0 };
+		uint8_t emitted_quarter = UINT8_MAX;
+		uint8_t emitted_rotation = UINT8_MAX;
+
+		if (tx->constellation == V34_CONSTELLATION_16_POINT)
+			quarter = reference_mapped_dibit(reference, 3u);
+		reference->previous_clockwise_quarter_turns = rotation;
+		expected = reference_point(tx->constellation, quarter, rotation);
+		CHECK(v90_phase4_cp_tx_scr_next(
+			      tx, &emitted, &emitted_quarter,
+			      &emitted_rotation) == V90_PHASE4_CP_TX_OK &&
+		      emitted_quarter == quarter &&
+		      emitted_rotation == rotation &&
+		      points_are_close(&emitted, &expected) &&
+		      tx->scrambler.history == reference->history &&
+		      tx->previous_clockwise_quarter_turns == rotation &&
+		      tx->bit_index == saved_bit_index &&
+		      v90_phase4_cp_tx_record_is_complete(tx),
+		      "SCR symbol changed at index %zu", index);
+	}
+	return true;
+}
+
 static bool test_roles_constellations_and_continuity(void)
 {
 	static const enum v34_station_role roles[] = {
@@ -258,7 +296,8 @@ static bool test_roles_constellations_and_continuity(void)
 				      &training) == V90_PHASE4_CP_TX_OK &&
 			      tx.scrambler.history == 0 &&
 			      tx.previous_clockwise_quarter_turns == 0 &&
-			      verify_record(&tx, &reference, &training),
+			      verify_record(&tx, &reference, &training) &&
+			      verify_scr(&tx, &reference, 11u),
 			      "first CPt failed for role/constellation %zu/%zu",
 			      role, constellation);
 			history = tx.scrambler.history;
@@ -342,6 +381,17 @@ static bool test_transactional_contracts(void)
 	      !v90_phase4_cp_tx_record_is_complete(NULL),
 	      "CP transmitter contract fixture did not initialize");
 	saved = tx;
+	saved_point = point;
+	saved_quarter = quarter;
+	saved_rotation = rotation;
+	CHECK(v90_phase4_cp_tx_scr_next(
+		      &tx, &point, &quarter, &rotation) ==
+		      V90_PHASE4_CP_TX_RECORD_IN_PROGRESS &&
+	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+	      point.in_phase == saved_point.in_phase &&
+	      point.quadrature == saved_point.quadrature &&
+	      quarter == saved_quarter && rotation == saved_rotation,
+	      "SCR entered before the CPt record boundary");
 	CHECK(v90_phase4_cp_tx_start_next_record(NULL, &data) ==
 		      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_tx_start_next_record(&tx, NULL) ==

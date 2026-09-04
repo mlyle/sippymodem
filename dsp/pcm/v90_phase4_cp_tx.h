@@ -68,6 +68,14 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 	struct qam_point *point, uint8_t *quarter_point,
 	uint8_t *clockwise_quarter_turns, bool *record_complete);
 
+/* Emit one SCR symbol after a completed CPt. SCR is scrambled binary ones
+ * using the same continuous differential and scrambler histories as CPt and
+ * the following CP. Rejected calls leave state and every output unchanged. */
+enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next(
+	struct v90_phase4_cp_tx *tx,
+	struct qam_point *point, uint8_t *quarter_point,
+	uint8_t *clockwise_quarter_turns);
+
 const char *v90_phase4_cp_tx_result_name(
 	enum v90_phase4_cp_tx_result result);
 

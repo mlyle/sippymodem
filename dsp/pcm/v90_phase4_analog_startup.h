@@ -12,6 +12,7 @@
 struct v90_phase4_analog_continuation {
 	struct v90_phase4_analog_station station;
 	struct pcm_downstream_rx receive;
+	bool receive_ready;
 };
 
 /* Exact continuous owners at the boundary after the initial CPt/Ri exchange.
@@ -28,8 +29,9 @@ union v90_phase4_analog_startup_state {
 	struct v90_phase4_analog_handoff complete;
 };
 
-/* Once Ri-bar finishes, later characters enter the downstream decoder while
- * the current CPt record drains on the continuous conventional line. */
+/* Whichever side finishes first remains owned here. After CPt, optional SCR
+ * keeps the conventional stream continuous until Ri-bar finishes; after
+ * Ri-bar, later characters enter the downstream decoder while CPt drains. */
 struct v90_phase4_analog_startup {
 	union v90_phase4_analog_startup_state state;
 	enum v90_phase4_startup_stage stage;
