@@ -302,10 +302,14 @@ static struct v90_mp_record initial_mp(
 		.parameters.type0 = {
 			.maximum_upstream_rate_2400_bps_units =
 				upstream->maximum_rate_2400_bps_units,
-			/* Expanded shaping keeps dense upstream mappings interoperable
-			 * while retaining mandatory 16-state and nonlinear coding. */
+			/* Keep the mandatory upstream range on the linear, 16-state
+			 * baseline used by ordinary peers.  The denser optional rates
+			 * need nonlinear projection to retain decision margin under
+			 * returned echo and bounded line offsets. */
 			.upstream_trellis = V34_TRELLIS_16_STATE,
-			.upstream_nonlinear_encoding = true,
+			.upstream_nonlinear_encoding =
+				upstream->maximum_rate_2400_bps_units >
+				V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS,
 			.upstream_expanded_shaping = true,
 			.upstream_rate_capability_mask = upstream->rate_mask,
 		},

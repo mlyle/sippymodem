@@ -8,10 +8,8 @@
 #include <string.h>
 
 enum {
-	/* Automatic Type-1 use is deliberately limited to mild residual ISI.
-	 * Larger valid coefficients remain available through an explicitly
-	 * configured Type-1 MP, where the caller owns that interoperability
-	 * choice. */
+	/* Automatic Type-1 use is limited to mild residual ISI at optional
+	 * upstream rates. Mandatory-rate interoperability stays on Type 0. */
 	V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14 = V34_Q14_SCALE / 32,
 };
 
@@ -52,6 +50,29 @@ static bool automatic_precoder_is_bounded(
 	return magnitude <= V90_AUTOMATIC_PRECODER_MAGNITUDE_LIMIT_Q14;
 }
 
+static bool promote_optional_precoder(
+	struct v90_mp_record *record,
+	const struct v34_precoder_recommendation *precoder)
+{
+	struct v90_mp_type1_parameters type1;
+
+	if (record->type != V90_MP_RECORD_TYPE0 ||
+	    record->parameters.type0.maximum_upstream_rate_2400_bps_units <=
+		    V90_MP_MANDATORY_MAXIMUM_RATE_2400_BPS_UNITS ||
+	    !automatic_precoder_is_bounded(precoder))
+		return true;
+	type1 = (struct v90_mp_type1_parameters){
+		.common = record->parameters.type0,
+	};
+	memcpy(type1.precoder_coefficients, precoder->coefficients,
+	       sizeof(type1.precoder_coefficients));
+	*record = (struct v90_mp_record){
+		.type = V90_MP_RECORD_TYPE1,
+		.parameters.type1 = type1,
+	};
+	return initial_mp_is_valid(record);
+}
+
 static bool select_initial_mp(
 	const struct v90_mp_record *configured,
 	const struct v90_phase4_digital_station *station,
@@ -74,23 +95,6 @@ static bool select_initial_mp(
 		parameters->upstream_rate_capability_mask &
 		station->peer_upstream_rate_mask);
 	limited = *configured;
-	if (limited.type == V90_MP_RECORD_TYPE0 &&
-	    automatic_precoder_is_bounded(&station->precoder)) {
-		struct v90_mp_type1_parameters type1 = {
-			.common = limited.parameters.type0,
-		};
-
-		memcpy(type1.precoder_coefficients,
-		       station->precoder.coefficients,
-		       sizeof(type1.precoder_coefficients));
-		limited = (struct v90_mp_record){
-			.type = V90_MP_RECORD_TYPE1,
-			.parameters.type1 = type1,
-		};
-		if (!initial_mp_is_valid(&limited))
-			return false;
-		parameters = mp_parameters(&limited);
-	}
 	maximum = parameters->maximum_upstream_rate_2400_bps_units;
 	if (maximum >
 		    station->receive.transmitting_profile
@@ -112,13 +116,14 @@ static bool select_initial_mp(
 		if (!v90_mp_record_limit_maximum_upstream_rate(
 			    &limited, (uint8_t)rate))
 			return false;
-		*selected = limited;
-		return true;
+		break;
 	}
 	/* CPt describes the peer transmitter; it cannot make the digital
 	 * receiver's MP capability record invalid.  If no common rate is usable
 	 * under this maximum, send the local MP and let the analogue modem
 	 * perform the required final common-rate selection. */
+	if (!promote_optional_precoder(&limited, &station->precoder))
+		return false;
 	*selected = limited;
 	return true;
 }

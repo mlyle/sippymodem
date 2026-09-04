@@ -345,7 +345,7 @@ static bool run_disjoint_cpt_selection(enum g711_law law)
 static bool run_precoder_selection(
 	enum g711_law law,
 	const struct v34_precoder_recommendation *precoder,
-	bool expect_type1)
+	uint8_t maximum_rate, bool configure_type1, bool expect_type1)
 {
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_mp_record mp = mp_parameters(false);
@@ -355,8 +355,22 @@ static bool run_precoder_selection(
 	int16_t sample;
 	uint8_t output;
 
+	mp.parameters.type0.maximum_upstream_rate_2400_bps_units =
+		maximum_rate;
+	if (configure_type1) {
+		struct v90_mp_parameters common = mp.parameters.type0;
+
+		mp = (struct v90_mp_record){
+			.type = V90_MP_RECORD_TYPE1,
+			.parameters.type1.common = common,
+		};
+		memcpy(mp.parameters.type1.precoder_coefficients,
+		       precoder->coefficients,
+		       sizeof(precoder->coefficients));
+	}
+
 	CHECK(prepare_stations(
-		      law, 12u, &training,
+		      law, maximum_rate, &training,
 		      &analog_station, &digital_station),
 	      "law %u precoder fixture did not initialize",
 	      (unsigned int)law);
@@ -389,15 +403,15 @@ static bool run_precoder_selection(
 				     sizeof(precoder->coefficients)) == 0 &&
 			      startup.initial_mp.parameters.type1.common
 					      .maximum_upstream_rate_2400_bps_units ==
-				      12u &&
+					      maximum_rate &&
 			      startup.initial_mp.parameters.type1.common
 					      .upstream_rate_capability_mask ==
 				      0x1555u,
-			      "law %u did not publish the bounded Type-1 MP",
+			      "law %u did not select the expected Type-1 MP",
 			      (unsigned int)law);
 		} else {
 			CHECK(v90_mp_record_equal(&startup.initial_mp, &mp),
-			      "law %u automatically published an excessive Type-1 MP",
+			      "law %u automatically published a trained Type-1 MP",
 			      (unsigned int)law);
 		}
 		return true;
@@ -409,7 +423,7 @@ static bool run_precoder_selection(
 
 static bool test_generated_exchange(void)
 {
-	static const struct v34_precoder_recommendation bounded_precoder = {
+	static const struct v34_precoder_recommendation learned_precoder = {
 		.coefficients = {
 			{ 31, 17 }, { 1, 15 }, { 25, -10 },
 		},
@@ -431,13 +445,21 @@ static bool test_generated_exchange(void)
 	      run_disjoint_cpt_selection(G711_LAW_PCMU) &&
 	      run_disjoint_cpt_selection(G711_LAW_PCMA) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &bounded_precoder, true) &&
+		      G711_LAW_PCMU, &learned_precoder, 12u, false, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &bounded_precoder, true) &&
+		      G711_LAW_PCMA, &learned_precoder, 12u, false, false) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMU, &excessive_precoder, false) &&
+		      G711_LAW_PCMU, &learned_precoder, 14u, false, true) &&
 	      run_precoder_selection(
-		      G711_LAW_PCMA, &excessive_precoder, false),
+		      G711_LAW_PCMA, &learned_precoder, 14u, false, true) &&
+	      run_precoder_selection(
+		      G711_LAW_PCMU, &excessive_precoder, 14u, false, false) &&
+	      run_precoder_selection(
+		      G711_LAW_PCMA, &excessive_precoder, 14u, false, false) &&
+	      run_precoder_selection(
+		      G711_LAW_PCMU, &learned_precoder, 12u, true, true) &&
+	      run_precoder_selection(
+		      G711_LAW_PCMA, &learned_precoder, 12u, true, true),
 	      "generated digital startup exchanges failed");
 	return true;
 }

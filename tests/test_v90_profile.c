@@ -245,9 +245,9 @@ static bool test_generated_profiles(void)
 						      (UINT32_C(1) <<
 						       (rate_index - 1u)) &&
 					      jd_matches &&
-					      configuration.digital_phase4.initial_mp
-						      .parameters.type0
-						      .upstream_nonlinear_encoding &&
+					      !configuration.digital_phase4.initial_mp
+					       .parameters.type0
+					       .upstream_nonlinear_encoding &&
 					      configuration.digital_phase4.initial_mp
 					      .parameters.type0
 					      .upstream_expanded_shaping &&
@@ -327,8 +327,8 @@ static bool test_upstream_policy(void)
 			      .maximum_upstream_rate_2400_bps_units == 11 &&
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_trellis == V34_TRELLIS_16_STATE &&
-		      digital.digital_phase4.initial_mp.parameters.type0
-			      .upstream_nonlinear_encoding &&
+		      !digital.digital_phase4.initial_mp.parameters.type0
+			       .upstream_nonlinear_encoding &&
 		      digital.digital_phase4.initial_mp.parameters.type0
 			      .upstream_expanded_shaping &&
 		      digital.digital_phase4.initial_mp.parameters.type0
@@ -376,7 +376,9 @@ static bool test_upstream_policy(void)
 		      .answer_transmit[V34_SYMBOL_RATE_3429]
 		      .projected_data_rate_2400_bps_units == 0 &&
 	      conservative_digital.digital_phase4.initial_mp.parameters.type0
-		      .maximum_upstream_rate_2400_bps_units == 13,
+		      .maximum_upstream_rate_2400_bps_units == 13 &&
+	      conservative_digital.digital_phase4.initial_mp.parameters.type0
+		      .upstream_nonlinear_encoding,
 	      "conservative INFO1d policy changed mandatory upstream rates");
 	memset(&rejected, 0xa5, sizeof(rejected));
 	saved = rejected;
