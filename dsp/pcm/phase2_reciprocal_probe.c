@@ -5,8 +5,10 @@
 #include <stddef.h>
 
 _Static_assert(
-	PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES <= UINT16_MAX,
-	"reciprocal-probe Tone-A wait must fit its owner");
+	PHASE2_RECIPROCAL_PROBE_TONE_A_DEADLINE_SAMPLES == 5200 &&
+		PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES == 800 &&
+		PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES <= UINT16_MAX,
+	"reciprocal-probe Tone-A deadline must retain its 8 kHz duration");
 
 static bool signal_is_b(const struct phase2_info0_exchange *exchange)
 {

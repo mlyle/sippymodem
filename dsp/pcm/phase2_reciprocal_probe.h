@@ -11,10 +11,15 @@
 #include <stdint.h>
 
 enum {
-	/* Tone A is sent for at least 50 ms after the answering station receives
-	 * L2. Keep listening for that bounded response after local L2 stops. */
+	/* V.34 11.2.2.1.5 and V.90 9.2.1.2.5 allow 650 ms plus one
+	 * round-trip delay from the beginning of L2 to detect final Tone A. The
+	 * probe sequence becomes silent after 550 ms plus that same delay, so
+	 * retain the detector for the remaining 100 ms. */
+	PHASE2_RECIPROCAL_PROBE_TONE_A_DEADLINE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 650 / 1000,
 	PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 50 / 1000,
+		PHASE2_RECIPROCAL_PROBE_TONE_A_DEADLINE_SAMPLES -
+		V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES,
 };
 
 enum phase2_reciprocal_probe_phase {

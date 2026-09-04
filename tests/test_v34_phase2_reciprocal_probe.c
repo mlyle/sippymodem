@@ -503,6 +503,10 @@ static bool test_bounded_failures(void)
 		      &answerer, &answerer_turnaround) ==
 		      PHASE2_RECIPROCAL_PROBE_OK,
 	      "reciprocal-probe failure fixtures did not initialize");
+	CHECK(PHASE2_RECIPROCAL_PROBE_TONE_A_DEADLINE_SAMPLES ==
+		      V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
+			      PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES,
+	      "final Tone-A response window no longer ends at 650 ms plus RTD");
 	caller_l2_limit =
 		(uint32_t)V34_PHASE2_PROBE_L2_ECHO_LIMIT_BASE_SAMPLES +
 		caller_turnaround.initial_probe.ranging.control
