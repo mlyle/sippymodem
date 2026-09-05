@@ -440,7 +440,9 @@ def render_dashboard(
         for index in range(len(results) - 1, first - 1, -1):
             result = results[index]
             case = cases_by_name.get(result.case_name)
-            family = FAMILY_LABELS.get(result.family, result.family)[:7]
+            modulation = (
+                result.modulation if result.connected else None
+            ) or FAMILY_LABELS.get(result.family, result.family)
             role = "o" if result.role == "originator" else "c"
             if result.connected:
                 mode = {"LAPM": "l", "none": "r"}.get(
@@ -479,7 +481,7 @@ def render_dashboard(
                 }.get(result.outcome, result.outcome)
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
             rows.append(
-                f"{sequence} {role} {family:<7} {rates:<17} {mode} "
+                f"{sequence} {role} {modulation[:7]:<7} {rates:<17} {mode} "
                 f"p{result.physical_try:<2} "
                 f"Q{int(result.callback_request_maturity == MATURITY_REQUEST)} "
                 f"C{int(result.connected)} D{int(result.initial_data)} "

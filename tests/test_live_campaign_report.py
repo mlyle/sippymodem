@@ -479,9 +479,58 @@ class LiveCampaignReportTests(unittest.TestCase):
             recent_limit=1,
         )
         recent = dashboard.splitlines()[-1]
+        self.assertEqual(recent.split()[2], "V.22")
         self.assertIn("1200/1200@600", recent)
         self.assertIn(" r ", recent)
         self.assertTrue(recent.endswith("profile-mismatch"))
+
+    def test_recent_pcm_fallback_shows_v34_without_regrouping_attempt(self) -> None:
+        cases = cases_for_suite("standard")
+        for feature in ("analogue-fallback", "digital-headend"):
+            with self.subTest(feature=feature):
+                case = next(
+                    case for case in cases
+                    if case.family == "v90"
+                    and case.role == "originator"
+                    and case.link_mode == "raw"
+                    and case.feature == feature
+                )
+                expected_fallback = feature == "analogue-fallback"
+                result = self.result(
+                    case_name=case.name,
+                    family=case.family,
+                    role=case.role,
+                    link_mode=case.link_mode,
+                    connected=True,
+                    modulation="V.34",
+                    protocol="none",
+                    receive_rate=28800,
+                    transmit_rate=28800,
+                    initial_data=expected_fallback,
+                    remote_retrain=expected_fallback,
+                    retrain_connected=expected_fallback,
+                    retrain_data=expected_fallback,
+                    detail="" if expected_fallback else
+                        "CONNECT selected V.34 instead of V.90",
+                )
+                dashboard = render_dashboard(
+                    (case,), 1, (result,), revision="e" * 40,
+                    seed=17, elapsed_seconds=3, recent_limit=1,
+                )
+                recent = dashboard.splitlines()[-1]
+                self.assertEqual(recent.split()[2], "V.34")
+                self.assertTrue(recent.endswith(
+                    "full" if expected_fallback else "profile-mismatch"
+                ))
+                row = next(
+                    line for line in dashboard.splitlines()
+                    if line.startswith("V.90/r")
+                )
+                self.assertEqual(row[13:46].split()[:2], ["1/1", "+0"])
+                self.assertFalse(any(
+                    line.startswith("V.34/")
+                    for line in dashboard.splitlines()
+                ))
 
     def test_recent_unconnected_call_shows_requested_profile(self) -> None:
         case = next(
@@ -508,6 +557,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             recent_limit=1,
         )
         recent = dashboard.splitlines()[-1]
+        self.assertEqual(recent.split()[2], "V.22bis")
         self.assertIn("2400/2400@600", recent)
         self.assertIn(" l ", recent)
 
