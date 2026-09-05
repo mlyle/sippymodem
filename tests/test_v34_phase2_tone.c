@@ -928,6 +928,135 @@ static bool test_full_retrain_request(void)
 	return true;
 }
 
+static bool test_receiver_silence_ceiling(void)
+{
+	const uint32_t ceiling = V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY / 256u;
+
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		struct v34_retrain_detector trained;
+		struct v34_retrain_detector nominal;
+		struct v34_retrain_detector explicit_nominal;
+		struct v34_phase2_tone_transmitter tone;
+		bool detected = false;
+		bool nominal_detected = false;
+		bool explicit_detected = false;
+
+		CHECK(v34_retrain_detector_init(&trained, V34_ANSWERING_STATION) ==
+			      V34_PHASE2_TONE_OK,
+		      "trained silence fixture did not initialize");
+		nominal = trained;
+		explicit_nominal = nominal;
+		for (size_t index = 0;
+		     index < V34_RETRAIN_MIN_SILENCE_SAMPLES + 1600u; ++index) {
+			/* Quiet arms both detectors. This following weak non-tone
+			 * stream must expire, not indefinitely preserve, that guard. */
+			int16_t sample = index < V34_RETRAIN_MIN_SILENCE_SAMPLES ?
+				0 : (index & 1u) != 0u ? 200 : -200;
+
+			sample = codec_round_trip(sample, codec);
+			CHECK(v34_retrain_detector_sample_with_power_limit(
+				      &trained, sample, ceiling, &detected) ==
+				      V34_PHASE2_TONE_OK && !detected &&
+			      v34_retrain_detector_sample(
+				      &nominal, sample, &nominal_detected) ==
+				      V34_PHASE2_TONE_OK && !nominal_detected &&
+			      v34_retrain_detector_sample_with_power_limit(
+				      &explicit_nominal, sample,
+				      V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY,
+				      &explicit_detected) == V34_PHASE2_TONE_OK &&
+			      explicit_detected == nominal_detected &&
+			      memcmp(&nominal, &explicit_nominal, sizeof(nominal)) == 0,
+			      "silence ceiling changed defaults or invented a tone");
+			if (index + 1u == V34_RETRAIN_MIN_SILENCE_SAMPLES)
+				CHECK(trained.silence_samples ==
+					      V34_RETRAIN_MIN_SILENCE_SAMPLES,
+				      "trained silence guard did not arm on real quiet");
+		}
+		CHECK(trained.silence_samples == 0u && trained.tone_samples == 0u &&
+		      nominal.silence_samples == V34_RETRAIN_MIN_SILENCE_SAMPLES,
+		      "weak input retained an armed trained silence guard");
+		for (size_t index = 0;
+		     index < V34_RETRAIN_MIN_SILENCE_SAMPLES +
+			     V34_RETRAIN_SILENCE_WINDOW_SAMPLES; ++index)
+			CHECK(v34_retrain_detector_sample_with_power_limit(
+				      &trained, codec_round_trip(0, codec), ceiling,
+				      &detected) == V34_PHASE2_TONE_OK && !detected,
+			      "trained guard did not observe subsequent real quiet");
+		CHECK(trained.silence_samples == V34_RETRAIN_MIN_SILENCE_SAMPLES &&
+		      v34_phase2_tone_transmitter_init(
+			      &tone, V34_CALLING_STATION, 200) == V34_PHASE2_TONE_OK,
+		      "weak Tone B fixture did not initialize after real quiet");
+		for (size_t index = 0; !detected &&
+		     index < V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES;
+		     ++index) {
+			int16_t sample;
+
+			CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+				      V34_PHASE2_TONE_OK &&
+			      v34_retrain_detector_sample_with_power_limit(
+				      &trained, codec_round_trip(sample, codec), ceiling,
+				      &detected) == V34_PHASE2_TONE_OK,
+			      "trained ceiling rejected a genuine raw tone");
+		}
+		CHECK(detected, "trained silence ceiling hid genuine retraining");
+		{
+			struct v34_full_retrain response = { .detector = trained };
+			struct v34_phase2_tone_detector resumed;
+			double minimum_power = trained.tone.carrier.profile.minimum_line_power;
+			unsigned int reversals = 0u;
+
+			CHECK(minimum_power == 256.0 &&
+			      v34_full_retrain_begin_response(&response, true) ==
+				      V34_PHASE2_TONE_OK,
+			      "weak request did not retain its raw tone level");
+			for (size_t index = 0;
+			     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
+				int16_t sample;
+				enum v34_full_retrain_response_event event;
+
+				CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+					      V34_PHASE2_TONE_OK &&
+				      v34_full_retrain_sample_response(
+					      &response, codec_round_trip(sample, codec), &event) ==
+					      V34_PHASE2_TONE_OK &&
+				      event == (index + 1u == V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
+					      V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
+					      V34_FULL_RETRAIN_RESPONSE_CONTINUES),
+				      "weak tone lost its 70-ms response ownership");
+			}
+			resumed = response.detector.tone;
+			CHECK(resumed.carrier.profile.minimum_line_power == minimum_power &&
+			      v34_phase2_tone_transmitter_reverse(&tone) == V34_PHASE2_TONE_OK,
+			      "weak Phase 2 handoff changed its raw amplitude domain");
+			for (size_t index = 0; index < 160u; ++index) {
+				int16_t sample;
+				struct v34_phase2_tone_event event;
+
+				CHECK(v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+					      V34_PHASE2_TONE_OK &&
+				      v34_phase2_tone_detector_sample(
+					      &resumed, codec_round_trip(sample, codec), &event) ==
+					      V34_PHASE2_TONE_OK,
+				      "weak retained phase did not continue");
+				reversals += event.kind == V34_PHASE2_TONE_PHASE_REVERSED;
+			}
+			CHECK(reversals == 1u &&
+			      v34_phase2_tone_detector_reset(&resumed) == V34_PHASE2_TONE_OK &&
+			      resumed.carrier.profile.minimum_line_power == minimum_power &&
+			      !v34_phase2_tone_detector_measure(&resumed).ready &&
+			      v34_retrain_detector_reset(&trained) == V34_PHASE2_TONE_OK &&
+			      trained.tone.carrier.profile.minimum_line_power == minimum_power &&
+			      v34_retrain_detector_sample(&trained, 0, &detected) ==
+				      V34_PHASE2_TONE_OK &&
+			      trained.tone.carrier.profile.minimum_line_power ==
+				      nominal.tone.carrier.profile.minimum_line_power,
+			      "weak receive-level reset/default rules changed");
+		}
+	}
+	return true;
+}
+
 static bool check_full_retrain_response(
 	enum v34_station_role local_role, enum test_codec codec)
 {
@@ -1105,6 +1234,21 @@ static bool test_validation(void)
 		      &retrain, V34_CALLING_STATION) ==
 		      V34_PHASE2_TONE_OK,
 	      "full-retrain validation fixture did not initialize");
+	retrain_before = retrain;
+	{
+		bool detected = true;
+
+		CHECK(v34_retrain_detector_sample_with_power_limit(
+			      &retrain, 0, 0u, &detected) ==
+			      V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      v34_retrain_detector_sample_with_power_limit(
+			      &retrain, 0,
+			      V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY + 1u,
+			      &detected) == V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      memcmp(&retrain, &retrain_before, sizeof(retrain)) == 0 &&
+		      detected,
+		      "invalid retrain silence ceiling was not transactional");
+	}
 	retrain.silence_samples = V34_RETRAIN_MIN_SILENCE_SAMPLES + 1u;
 	retrain_before = retrain;
 	{
@@ -1181,6 +1325,7 @@ int main(void)
 		{ "wrong tone rejection", test_wrong_tone_rejection },
 		{ "frequency tolerance", test_frequency_tolerance },
 		{ "full-retrain request", test_full_retrain_request },
+		{ "trained receiver silence ceiling", test_receiver_silence_ceiling },
 		{ "full-retrain response", test_full_retrain_response },
 		{ "validation", test_validation },
 	};

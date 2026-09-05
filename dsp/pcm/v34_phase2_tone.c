@@ -14,9 +14,6 @@ static const double V34_PHASE2_TONE_MIN_LINE_POWER = 256.0 * 256.0;
 static const double V34_PHASE2_TONE_MIN_CALLING_CARRIER_SHARE = 0.70;
 static const double V34_PHASE2_TONE_MIN_ANSWERING_CARRIER_SHARE = 0.30;
 static const double V34_PHASE2_TONE_MAX_CARRIER_SHARE = 1.20;
-static const double V34_RETRAIN_SILENCE_MAX_LINE_POWER = 150000.0;
-static const uint64_t V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY =
-	UINT64_C(9600000);
 static const uint32_t V34_RETRAIN_MAX_SAMPLE_ENERGY =
 	UINT32_C(1) << 30;
 static const double V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE = 0.60;
@@ -164,7 +161,8 @@ static bool profile_matches_role(
 	struct single_tone_detector_profile expected =
 		detector_profile(local_role);
 
-	return profile->minimum_line_power == expected.minimum_line_power &&
+	return profile->minimum_line_power > 0.0 &&
+	       profile->minimum_line_power <= expected.minimum_line_power &&
 	       profile->minimum_carrier_share ==
 		       expected.minimum_carrier_share &&
 	       profile->maximum_carrier_share ==
@@ -219,11 +217,17 @@ v34_phase2_tone_detector_reset(
 	struct v34_phase2_tone_detector *detector)
 {
 	enum v34_station_role local_role;
+	double minimum_line_power;
 
 	if (!v34_phase2_tone_detector_is_valid(detector))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	local_role = detector->local_role;
-	return v34_phase2_tone_detector_init(detector, local_role);
+	minimum_line_power = detector->carrier.profile.minimum_line_power;
+	if (v34_phase2_tone_detector_init(detector, local_role) !=
+	    V34_PHASE2_TONE_OK)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	detector->carrier.profile.minimum_line_power = minimum_line_power;
+	return V34_PHASE2_TONE_OK;
 }
 
 static void export_event(
@@ -380,7 +384,8 @@ bool v34_retrain_detector_is_valid(
 }
 
 static void add_retrain_silence_observation(
-	struct v34_retrain_detector *detector, int16_t sample)
+	struct v34_retrain_detector *detector, int16_t sample,
+	uint32_t maximum_window_energy)
 {
 	uint32_t sample_energy = (uint32_t)((int32_t)sample * sample);
 	uint32_t old_energy =
@@ -401,8 +406,7 @@ static void add_retrain_silence_observation(
 	if (detector->silence_history_count !=
 	    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
 		return;
-	if (detector->silence_energy <=
-	    V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY) {
+	if (detector->silence_energy <= maximum_window_energy) {
 		detector->silence_glitch_samples = 0;
 		if (detector->silence_samples <
 		    V34_RETRAIN_SILENCE_WINDOW_SAMPLES)
@@ -444,11 +448,16 @@ enum v34_phase2_tone_result v34_retrain_detector_reset(
 	struct v34_retrain_detector *detector)
 {
 	enum v34_station_role local_role;
+	double minimum_line_power;
 
 	if (!v34_retrain_detector_is_valid(detector))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	local_role = detector->tone.local_role;
-	return v34_retrain_detector_init(detector, local_role);
+	minimum_line_power = detector->tone.carrier.profile.minimum_line_power;
+	if (v34_retrain_detector_init(detector, local_role) != V34_PHASE2_TONE_OK)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	detector->tone.carrier.profile.minimum_line_power = minimum_line_power;
+	return V34_PHASE2_TONE_OK;
 }
 
 static bool retrain_tone_matches(
@@ -466,26 +475,36 @@ static bool retrain_tone_matches(
 		       V34_RETRAIN_TONE_A_MAX_CARRIER_SHARE;
 }
 
-static enum v34_phase2_tone_result reset_retrain_candidate(
-	struct v34_retrain_detector *detector)
-{
-	enum v34_station_role local_role = detector->tone.local_role;
-
-	return v34_retrain_detector_init(detector, local_role);
-}
-
 enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	bool *detected)
+{
+	return v34_retrain_detector_sample_with_power_limit(
+		detector, sample, V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY,
+		detected);
+}
+
+enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
+	struct v34_retrain_detector *detector, int16_t sample,
+	uint32_t maximum_window_energy, bool *detected)
 {
 	struct v34_phase2_tone_measurement measurement;
 	struct v34_phase2_tone_event event;
 	bool emitted = false;
 
-	if (!v34_retrain_detector_is_valid(detector) || detected == NULL)
+	if (!v34_retrain_detector_is_valid(detector) || detected == NULL ||
+	    maximum_window_energy == 0u ||
+	    maximum_window_energy > V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY)
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	/* Keep observations in raw physical units, including any retained phase.
+	 * Uniform power scaling changes sensitivity without waveform clipping or
+	 * a gain-domain discontinuity when a retrain hands its tone to Phase 2. */
+	detector->tone.carrier.profile.minimum_line_power =
+		V34_PHASE2_TONE_MIN_LINE_POWER * maximum_window_energy /
+		V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY;
 	if (detector->silence_samples < V34_RETRAIN_MIN_SILENCE_SAMPLES) {
-		add_retrain_silence_observation(detector, sample);
+		add_retrain_silence_observation(
+			detector, sample, maximum_window_energy);
 		if (detector->silence_samples ==
 		    V34_RETRAIN_MIN_SILENCE_SAMPLES &&
 		    v34_phase2_tone_detector_reset(&detector->tone) !=
@@ -509,7 +528,7 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 			struct v34_phase2_tone_detector retained = detector->tone;
 
 			emitted = true;
-			if (reset_retrain_candidate(detector) !=
+			if (v34_retrain_detector_reset(detector) !=
 			    V34_PHASE2_TONE_OK)
 				return V34_PHASE2_TONE_INVALID_ARGUMENT;
 			/* A responding modem must retain the qualified peer tone's
@@ -520,14 +539,15 @@ enum v34_phase2_tone_result v34_retrain_detector_sample(
 	} else if (detector->tone_samples != 0) {
 		/* A qualified request is continuous.  Once its tone breaks, a new
 		 * silence preamble is required. */
-		if (reset_retrain_candidate(detector) != V34_PHASE2_TONE_OK)
+		if (v34_retrain_detector_reset(detector) != V34_PHASE2_TONE_OK)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	} else if (measurement.ready &&
 		   measurement.line_power <=
-			   V34_RETRAIN_SILENCE_MAX_LINE_POWER) {
+			   (double)maximum_window_energy /
+				   V34_RETRAIN_SILENCE_WINDOW_SAMPLES) {
 		detector->edge_samples = 0;
 	} else if (++detector->edge_samples >= V34_RETRAIN_EDGE_SAMPLES) {
-		if (reset_retrain_candidate(detector) != V34_PHASE2_TONE_OK)
+		if (v34_retrain_detector_reset(detector) != V34_PHASE2_TONE_OK)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	}
 	*detected = emitted;

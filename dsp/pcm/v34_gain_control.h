@@ -11,6 +11,7 @@
 enum {
 	V34_GAIN_HISTORY_SAMPLES = 36,
 	V34_GAIN_UPDATE_SAMPLES = 4,
+	V34_GAIN_FRACTION_BITS = 10,
 };
 
 enum v34_gain_control_result {
@@ -31,7 +32,7 @@ struct v34_gain_control {
 	uint16_t history_index;
 	uint16_t energy_count;
 	uint16_t average_energy;
-	int16_t gain;
+	int16_t gain; /* Nonnegative Q5.10 sample multiplier. */
 	int16_t correction;
 	enum v34_gain_mode mode;
 	bool initialized;

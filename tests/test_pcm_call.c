@@ -1881,6 +1881,7 @@ static bool run_full_retrain(
 	size_t upstream_before;
 	uint16_t initiator_prior_rtd;
 	uint16_t responder_prior_rtd;
+	double initiator_receive_floor;
 	bool initially_online = false;
 	bool remote_retrain_started = false;
 	bool initiator_prior_handed_off = false;
@@ -1913,6 +1914,13 @@ static bool run_full_retrain(
 	responder = initiating_role == V90_ANALOG_MODEM ? &digital : &analog;
 	initiator_prior_rtd = initiator->call.round_trip_delay_samples;
 	responder_prior_rtd = responder->call.round_trip_delay_samples;
+	/* Pin a distinct trained level so the local handoff cannot pass by
+	 * accidentally restoring the initial-acquisition default. */
+	if (initiating_role == V90_DIGITAL_MODEM)
+		initiator->call.retrain.detector.tone.carrier.profile
+			.minimum_line_power = 4096.0;
+	initiator_receive_floor = initiator->call.retrain.detector.tone
+		.carrier.profile.minimum_line_power;
 	CHECK(pcm_call_start_retrain(&initiator->call) == PCM_CALL_OK &&
 	      initiator->call.stage == PCM_CALL_RETRAIN_SILENCE &&
 	      initiator->call.retrain_active &&
@@ -1940,6 +1948,19 @@ static bool run_full_retrain(
 		      (unsigned int)law, (unsigned int)initiating_role, clock);
 		if (initiator->call.stage == PCM_CALL_PHASE2 &&
 		    initiator->call.retrain_active) {
+			if (!initiator_prior_handed_off) {
+				const struct v34_phase2_tone_detector *tone =
+					&initiator->call.state.phase2.state.ranging
+						.info0_exchange.transport.tone_detector;
+
+				CHECK(tone->carrier.profile.minimum_line_power ==
+					      initiator_receive_floor &&
+				      tone->carrier.history_count == 0u &&
+				      !tone->carrier.tone_present &&
+				      tone->carrier.reference_in_phase == 0.0 &&
+				      tone->carrier.reference_quadrature == 0.0,
+				      "local retrain lost sensitivity or retained stale peer phase");
+			}
 			CHECK(initiator->call.round_trip_delay_stored &&
 			      initiator->call.state.phase2.state.ranging.control
 				      .prior_round_trip_delay_samples ==

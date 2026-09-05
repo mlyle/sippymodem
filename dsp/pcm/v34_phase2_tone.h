@@ -20,6 +20,7 @@ enum {
 	V34_PHASE2_TONE_LOSS_SAMPLES =
 		V34_PHASE2_TONE_WINDOW_SAMPLES * 2,
 	V34_RETRAIN_SILENCE_WINDOW_SAMPLES = 64,
+	V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY = 9600000,
 	/* V.34 full retrain begins with 70 +/- 5 ms of silence and more than
 	 * 50 ms of the role-selected Tone A/B.  Use the lower silence edge and
 	 * allow one native sample at each sampled transition of that physical
@@ -147,6 +148,9 @@ v34_phase2_tone_detector_init(
 	enum v34_station_role local_role);
 bool v34_phase2_tone_detector_is_valid(
 	const struct v34_phase2_tone_detector *detector);
+/* Reset clears observations while retaining the instance's receive level.
+ * Initialization restores the default level. Copies retain both level and
+ * raw physical reference phase. */
 enum v34_phase2_tone_result
 v34_phase2_tone_detector_reset(
 	struct v34_phase2_tone_detector *detector);
@@ -191,6 +195,16 @@ enum v34_phase2_tone_result v34_retrain_detector_reset(
 enum v34_phase2_tone_result v34_retrain_detector_sample(
 	struct v34_retrain_detector *detector, int16_t sample,
 	bool *detected);
+/* A trained receiver may scale raw silence and tone power to its signal level.
+ * The inclusive range is 1..V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY. This affects
+ * silence qualification/expiry and proportionally lowers the raw tone-power
+ * floor; carrier shares and every timing bound remain unchanged. The selected
+ * level follows retained Tone A/B through response and Phase 2 handoff/reset.
+ * The ordinary sample entry point restores the default receive level.
+ * Invalid input leaves the detector and detected output unchanged. */
+enum v34_phase2_tone_result v34_retrain_detector_sample_with_power_limit(
+	struct v34_retrain_detector *detector, int16_t sample,
+	uint32_t maximum_window_energy, bool *detected);
 
 enum v34_phase2_tone_result v34_full_retrain_init(
 	struct v34_full_retrain *retrain,

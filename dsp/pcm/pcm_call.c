@@ -1367,9 +1367,15 @@ static enum pcm_call_result sample_retrain_silence(
 	    V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE) {
 		restarted.state.ranging.info0_exchange.transport.tone_detector =
 			next_retrain.detector.tone;
-		if (!pcm_phase2_is_valid(&restarted))
-			return PCM_CALL_NUMERIC_FAILURE;
+	} else {
+		/* A local request has no peer phase to retain, but still listens
+		 * at the successfully trained line level for the weak response. */
+		restarted.state.ranging.info0_exchange.transport.tone_detector
+			.carrier.profile.minimum_line_power = next_retrain.detector
+				.tone.carrier.profile.minimum_line_power;
 	}
+	if (!pcm_phase2_is_valid(&restarted))
+		return PCM_CALL_NUMERIC_FAILURE;
 	call->retrain = next_retrain;
 	call->state.phase2 = restarted;
 	call->stage = PCM_CALL_PHASE2;
@@ -1407,16 +1413,33 @@ static enum pcm_call_result sample_retrain_detector(
 		       PCM_CALL_OK : PCM_CALL_NUMERIC_FAILURE;
 }
 
-static bool retrain_candidate_is_active(
-	const struct v34_retrain_detector *detector)
+static uint32_t retrain_silence_ceiling(
+	const struct pcm_call *call, uint32_t nominal_window_energy)
 {
-	enum {
-		/* Match the minimum line power at which the shared Phase 2 detector
-		 * can acquire the following Tone A/B. */
-		DEFINITE_SILENCE_MAX_WINDOW_ENERGY =
-			256u * 256u * V34_RETRAIN_SILENCE_WINDOW_SAMPLES,
-	};
+	uint64_t gain;
+	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
 
+	if (call->local_role != V90_DIGITAL_MODEM ||
+	    call->stage != PCM_CALL_DATA_PATH ||
+	    call->state.data_path.digital.upstream_stage !=
+		    V90_DIGITAL_PATH_UPSTREAM_DATA)
+		return nominal_window_energy;
+	gain = (uint16_t)call->state.data_path.digital.upstream.data
+		       .line.timing.gain.gain;
+	if (gain <= unity)
+		return nominal_window_energy;
+	/* The trained Q5.10 multiplier compensates conventional upstream loss.
+	 * Scale guard, pause, and raw tone power by its square; otherwise decodable
+	 * weak QAM can retain a silence-only pause and weak Tone A is never heard.
+	 * The largest numerator is 9600000 * 1024^2 (<2^44); positive int16 gain
+	 * leaves even the smaller pause ceiling >=4096. No rounding can yield 0. */
+	return (uint32_t)(nominal_window_energy * unity * unity / (gain * gain));
+}
+
+static bool retrain_candidate_is_active(
+	const struct v34_retrain_detector *detector,
+	uint32_t maximum_window_energy)
+{
 	/* The retrain detector deliberately uses a generous silence ceiling so
 	 * that bounded line noise cannot break the 65 ms guard. Received QAM can
 	 * remain decodable below that ceiling, however, so pause the data decoder
@@ -1424,8 +1447,7 @@ static bool retrain_candidate_is_active(
 	return detector->tone_samples != 0u ||
 	       (detector->silence_samples >=
 			V34_RETRAIN_MIN_SILENCE_SAMPLES &&
-		detector->silence_energy <=
-			DEFINITE_SILENCE_MAX_WINDOW_ENERGY);
+		detector->silence_energy <= maximum_window_energy);
 }
 
 static enum pcm_call_result observe_retrain_tone(
@@ -2739,6 +2761,7 @@ static enum pcm_call_result data_octet_owned(
 	bool retrain_detection_active;
 	bool retrain_candidate = false;
 	bool retrain_detected = false;
+	uint32_t silence_ceiling;
 	uint8_t generated;
 	enum pcm_call_result result;
 
@@ -2767,8 +2790,14 @@ static enum pcm_call_result data_octet_owned(
 	if (sources == NULL)
 		sources = &idle;
 	retrain_detection_active = retrain_detection_is_active(call);
+	silence_ceiling = retrain_silence_ceiling(
+		call, V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY);
 	retrain_candidate = retrain_detection_active &&
-		(retrain_candidate_is_active(&call->retrain.detector) ||
+		(retrain_candidate_is_active(
+			 &call->retrain.detector,
+			 retrain_silence_ceiling(
+				 call, 256u * 256u *
+				       V34_RETRAIN_SILENCE_WINDOW_SAMPLES)) ||
 		(call->local_role == V90_ANALOG_MODEM &&
 		 received_octet == encode_sample(call->law, 0)));
 	generated = encode_sample(call->law, 0);
@@ -2828,9 +2857,9 @@ static enum pcm_call_result data_octet_owned(
 	} else if (result == PCM_CALL_OK &&
 		   call->stage == PCM_CALL_DATA_PATH &&
 		   retrain_detection_active) {
-		if (v34_retrain_detector_sample(
+		if (v34_retrain_detector_sample_with_power_limit(
 			    &call->retrain.detector, received_sample,
-			    &retrain_detected) != V34_PHASE2_TONE_OK)
+			    silence_ceiling, &retrain_detected) != V34_PHASE2_TONE_OK)
 			result = PCM_CALL_NUMERIC_FAILURE;
 	}
 	if (result == PCM_CALL_OK && retrain_detected)

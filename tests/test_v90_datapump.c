@@ -717,15 +717,34 @@ static bool test_sustained_maximum_rate_pairs(void)
 
 static bool test_attenuated_upstream(void)
 {
+	static const uint16_t GAINS_Q15[] = {
+		WEAK_UPSTREAM_GAIN_Q15,
+		/* Decodable QAM below the fixed raw retrain-quiet ceiling. */
+		1600u,
+	};
+
 	CHECK(v90_datapump_register() == 0,
 	      "attenuated-upstream V.90 registration failed");
-	CHECK(run_pair_with_rate_window(
-		      G711_LAW_PCMU,
-		      56000, 31200, 31200, 31200, 3429,
-		      SUSTAINED_RECEIVED_BITS, true,
-		      MODEM_PCM_ROLE_NONE, false, WEAK_UPSTREAM_GAIN_Q15,
-		      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
-	      "attenuated V.90 upstream did not sustain exact data");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t index = 0; index < ARRAY_LENGTH(GAINS_Q15); ++index) {
+			CHECK(run_pair_with_rate_window(
+				      law, 56000, 31200, 31200, 31200, 3429,
+				      SUSTAINED_RECEIVED_BITS, true,
+				      MODEM_PCM_ROLE_NONE, false, GAINS_Q15[index],
+				      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u gain %u attenuated V.90 upstream lost exact data",
+			      (unsigned int)law, GAINS_Q15[index]);
+		}
+		for (enum modem_pcm_role initiator = MODEM_PCM_ROLE_ANALOG;
+		     initiator <= MODEM_PCM_ROLE_DIGITAL; ++initiator)
+			CHECK(run_pair_with_rate_window(
+				      law, 56000, 31200, 31200, 31200, 3429,
+				      SUSTAINED_RECEIVED_BITS, true,
+				      initiator, false, GAINS_Q15[1],
+				      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u weak upstream lost retraining",
+			      (unsigned int)law, (unsigned int)initiator);
+	}
 	CHECK(v90_datapump_unregister() == 0,
 	      "attenuated-upstream V.90 registration remained busy");
 	return true;

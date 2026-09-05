@@ -31,7 +31,7 @@ static int16_t scale_sample(int16_t gain, int16_t sample)
 
 	if (top == 0 || top == 0x7f)
 		return wrap_s16_from_s32(arithmetic_shift_right_u32(
-			product + V34_GAIN_ROUNDING, 10));
+			product + V34_GAIN_ROUNDING, V34_GAIN_FRACTION_BITS));
 	return overflow <= 0 ? (int16_t)0x8100 : (int16_t)0x7f00;
 }
 
