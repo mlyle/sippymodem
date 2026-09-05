@@ -16,6 +16,8 @@
 
 #include "test.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -461,6 +463,7 @@ enum ath0_test_completion {
 	ATH0_TIMED_OUT,
 	ATH0_REMOTE_END,
 	ATH0_RESET,
+	HANGUP_WITHOUT_COMMAND,
 };
 
 static bool run_ath0_cleardown(enum ath0_test_completion completion)
@@ -501,6 +504,11 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	frame_t *disconnect;
 	struct modem *modem;
 	char command[] = "ATH0";
+	int result_pipe[2];
+	char result_text[32];
+	const char *expected_result =
+		completion == ATH0_RESET || completion == HANGUP_WITHOUT_COMMAND ?
+			"NO CARRIER\r\n" : "OK\r\n";
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
 	hangup_driver_stop_calls = 0;
@@ -510,6 +518,10 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	modem = modem_create(&driver, "ATH0 cleardown test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATH0 test call did not start");
+	CHECK(pipe(result_pipe) == 0 &&
+	      fcntl(result_pipe[0], F_SETFL, O_NONBLOCK) == 0,
+	      "ATH0 result pipe could not be opened");
+	modem->pty = result_pipe[1];
 	/* Build an already-established answer-side LAPM owner without running a
 	 * second datapump through the negotiation fixture. */
 	modem_ec_exit(modem);
@@ -545,14 +557,21 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		      "ATH0 fixture did not fill the LAPM control queue");
 		modem->ec.lapm.rtx_count = 3;
 	}
-	CHECK(process_at_command(modem, command) == 1 &&
-		      modem->state == TEST_STATE_EC_DISC &&
+	if (completion == HANGUP_WITHOUT_COMMAND)
+		modem_hangup(modem);
+	else
+		CHECK(process_at_command(modem, command) == 1,
+		      "ATH0 was acknowledged before its line shutdown");
+	CHECK(modem->state == TEST_STATE_EC_DISC &&
 		      modem->ec.lapm.state == LAPM_DISC_STATE &&
 		      retrain_dp.hangup_calls == 0 &&
 		      hangup_driver_stop_calls == 0 &&
 		      modem->hook == MODEM_HOOK_OFF &&
 		      modem->sample_timer > modem->count,
 	      "ATH0 did not wait for LAPM disconnect");
+	CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == -1 &&
+	      errno == EAGAIN,
+	      "ATH0 emitted a result before LAPM release");
 	CHECK(modem->ec.lapm.rtx_count == 0,
 	      "LAPM disconnect inherited the data retry counter");
 	if (completion == ATH0_ACKNOWLEDGED) {
@@ -571,7 +590,8 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		modem_update_status(modem, STATUS_DP_LINK);
 		modem_update_status(modem, STATUS_PACK_LINK);
 		modem_update_status(modem, STATUS_EC_LINK);
-		CHECK(process_at_command(modem, command) == 1 &&
+		CHECK((completion == HANGUP_WITHOUT_COMMAND ||
+		       process_at_command(modem, command) == 1) &&
 		      modem->sample_timer == deadline &&
 		      modem->state == TEST_STATE_EC_DISC &&
 		      retrain_dp.hangup_calls == 0,
@@ -662,6 +682,9 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		      transmit_codewords[MODEM_FRAG - 1] == 0x7f &&
 		      transmit_codewords[MODEM_FRAG] == 0xff,
 	      "datapump completion did not leave its final media frame to drain");
+	CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == -1 &&
+	      errno == EAGAIN,
+	      "ATH0 emitted a result before the final media frame drained");
 	modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
 stopped:
 	CHECK(modem->state == TEST_STATE_MODEM_IDLE &&
@@ -673,6 +696,18 @@ stopped:
 	      modem->state, hangup_driver_stop_calls, modem->hook,
 	      operations.use_count, modem->sample_timer, modem->count,
 	      (void *)modem->process);
+	CHECK(modem->hangup_command_pending == 0 &&
+	      modem->result_code == 0 &&
+	      read(result_pipe[0], result_text, sizeof(result_text)) ==
+		      (ssize_t)strlen(expected_result) &&
+	      memcmp(result_text, expected_result, strlen(expected_result)) == 0,
+	      "hangup did not emit exactly its final command/carrier result");
+	CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == -1 &&
+	      errno == EAGAIN,
+	      "hangup repeated its final result");
+	modem->pty = -1;
+	close(result_pipe[0]);
+	close(result_pipe[1]);
 	modem_delete(modem);
 	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
 	      "ATH0 test data pump did not deregister");
@@ -684,7 +719,8 @@ static bool test_ath0_drains_link_cleardown(void)
 	return run_ath0_cleardown(ATH0_ACKNOWLEDGED) &&
 	       run_ath0_cleardown(ATH0_TIMED_OUT) &&
 	       run_ath0_cleardown(ATH0_REMOTE_END) &&
-	       run_ath0_cleardown(ATH0_RESET);
+	       run_ath0_cleardown(ATH0_RESET) &&
+	       run_ath0_cleardown(HANGUP_WITHOUT_COMMAND);
 }
 
 static struct {

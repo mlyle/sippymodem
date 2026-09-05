@@ -295,6 +295,7 @@ struct modem {
 	unsigned started;
 	unsigned command;
 	unsigned retrain_pending;
+	unsigned hangup_command_pending;
 	unsigned result_code;
         unsigned hook;
         unsigned caller;

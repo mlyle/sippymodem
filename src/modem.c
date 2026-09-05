@@ -1569,10 +1569,13 @@ static int modem_stop (struct modem *m)
 	}
 #endif
         modem_set_state(m, STATE_MODEM_IDLE);
-	if (m->result_code) {
+	if (m->hangup_command_pending) {
+		m->hangup_command_pending = 0;
+		modem_report_result(m, RESULT_OK);
+	} else if (m->result_code) {
 		modem_report_result(m, m->result_code);
-		m->result_code = 0;
 	}
+	m->result_code = 0;
 
 	m->count = 0;
 	return m->started;
@@ -1980,9 +1983,11 @@ int modem_hook(struct modem *m, unsigned hook_state)
 {
 	MODEM_DBG("modem hook...\n");
 	if (!IS_STATE_IDLE(m->state) && hook_state == MODEM_HOOK_ON) {
+		m->hangup_command_pending = 1;
 		modem_hup(m, 1);
 		/* Keep media and the physical hook owned until the bounded LAPM and
-		 * datapump cleardown sequence completes. */
+		 * datapump cleardown sequence completes, then acknowledge H with OK
+		 * rather than the unsolicited NO CARRIER result (V.250 6.3.6). */
 		return 1;
 	}
 	if (m->hook == hook_state)
@@ -2086,6 +2091,7 @@ int  modem_set_mode(struct modem *m, enum MODEM_MODE mode)
 int modem_reset(struct modem *m)
 {
 	MODEM_DBG("modem reset...\n");
+	m->hangup_command_pending = 0;
 	/* Reset invalidates the data-link configuration immediately. It cannot
 	 * leave an asynchronous disconnect using that configuration behind. */
 	if(m->state != STATE_MODEM_IDLE || m->started)
