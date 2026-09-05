@@ -270,7 +270,7 @@ static bool test_generated_pair_path(void)
 				struct v34_survivor_decision model_current;
 				struct v34_received_mapping_frame model_received;
 				struct qam_point targets[2];
-				struct v34_analytic_sample fixed_target;
+				struct v34_analytic_sample fixed_target[2];
 				enum v34_data_receive_result model_result;
 				enum v34_data_receive_result result;
 
@@ -313,13 +313,14 @@ static bool test_generated_pair_path(void)
 				CHECK(result == V34_DATA_RECEIVE_OK,
 				      "mode %zu frame %zu interval %zu first result %d",
 				      mode, frame_index, interval, result);
-				CHECK(observations_match(
-					      &output.equalizer.observation, &input[0]) &&
-				      output.equalizer.target.in_phase == 0 &&
-				      output.equalizer.target.quadrature == 0 &&
-				      output.equalizer.decoder_power_q15 == 0u &&
-				      output.equalizer.adaptation ==
-					      V34_ADAPTIVE_EQUALIZER_SKIP,
+				CHECK(memcmp(
+					      output.equalizer,
+					      (const struct
+					       v34_adaptive_equalizer_decision[2]){
+						      [0] = { .observation = input[0],
+							.adaptation =
+								V34_ADAPTIVE_EQUALIZER_SKIP } },
+					      sizeof(output.equalizer)) == 0,
 				      "mode %zu frame %zu interval %zu first decision changed",
 				      mode, frame_index, interval);
 				CHECK(memcmp(
@@ -343,23 +344,42 @@ static bool test_generated_pair_path(void)
 				result = v34_data_decision_receiver_observe(
 					&fixture.receiver, &input[1], &output);
 				CHECK(fixed_coordinate(
+					      targets[0].in_phase,
+					      &fixed_target[0].in_phase) &&
+				      fixed_coordinate(
+					      targets[0].quadrature,
+					      &fixed_target[0].quadrature) &&
+				      fixed_coordinate(
 					      targets[1].in_phase,
-					      &fixed_target.in_phase) &&
+					      &fixed_target[1].in_phase) &&
 				      fixed_coordinate(
 					      targets[1].quadrature,
-					      &fixed_target.quadrature) &&
+					      &fixed_target[1].quadrature) &&
 				      result ==
 					      (model_result == V34_DATA_RECEIVE_OK ?
 						       V34_DATA_RECEIVE_INTERVAL_READY :
 						       model_result) &&
 				      observations_match(
-					      &output.equalizer.observation, &input[1]) &&
-				      output.equalizer.target.in_phase ==
-					      fixed_target.in_phase &&
-				      output.equalizer.target.quadrature ==
-					      fixed_target.quadrature &&
-				      output.equalizer.decoder_power_q15 == 0x2000u &&
-				      output.equalizer.adaptation ==
+					      &output.equalizer[0].observation,
+					      &input[0]) &&
+				      observations_match(
+					      &output.equalizer[1].observation,
+					      &input[1]) &&
+				      output.equalizer[0].target.in_phase ==
+					      fixed_target[0].in_phase &&
+				      output.equalizer[0].target.quadrature ==
+					      fixed_target[0].quadrature &&
+				      output.equalizer[1].target.in_phase ==
+					      fixed_target[1].in_phase &&
+				      output.equalizer[1].target.quadrature ==
+					      fixed_target[1].quadrature &&
+				      output.equalizer[0].decoder_power_q15 ==
+					      V34_DATA_DECISION_DECODER_POWER_Q15 &&
+				      output.equalizer[1].decoder_power_q15 ==
+					      V34_DATA_DECISION_DECODER_POWER_Q15 &&
+				      output.equalizer[0].adaptation ==
+					      V34_ADAPTIVE_EQUALIZER_FULL &&
+				      output.equalizer[1].adaptation ==
 					      V34_ADAPTIVE_EQUALIZER_FULL &&
 				      current_matches(
 					      &output.current, &model_current) &&
@@ -417,6 +437,42 @@ static bool rejected_call_preserves_outputs(
 	       memcmp(output, &saved_output, sizeof(*output)) == 0;
 }
 
+static bool test_cancel_interval(void)
+{
+	struct fixture fixture;
+	struct v34_data_decision_receiver saved;
+	struct v34_data_decision_output output;
+	const struct v34_adaptive_equalizer_observation input = {
+		.decision = { 3238, -3238 },
+		.epoch = 1u,
+		.lineage = 2u,
+	};
+
+	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]),
+	      "cancellation fixture did not initialize");
+	saved = fixture.receiver;
+	CHECK(v34_data_decision_receiver_cancel_interval(NULL) ==
+		      V34_DATA_RECEIVE_INVALID_STATE &&
+	      v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
+		      V34_DATA_RECEIVE_INVALID_STATE &&
+	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      "empty-interval cancellation changed the receiver");
+	CHECK(v34_data_decision_receiver_observe(
+		      &fixture.receiver, &input, &output) == V34_DATA_RECEIVE_OK &&
+	      fixture.receiver.has_first_symbol &&
+	      v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
+		      V34_DATA_RECEIVE_OK &&
+	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      "cancellation retained a partial symbol or advanced the decoder");
+	fixture.receiver.first_observation.epoch = 1u;
+	saved = fixture.receiver;
+	CHECK(v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
+		      V34_DATA_RECEIVE_INVALID_STATE &&
+	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
+	      "invalid-interval cancellation changed the receiver");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct fixture fixture;
@@ -472,7 +528,7 @@ static bool test_validation_and_transactionality(void)
 		     sizeof(fixture.receiver)) == 0,
 	      "overlapping regions changed the receiver");
 	corrupt = fixture.receiver;
-	corrupt.first_normalized.in_phase = NAN;
+	corrupt.first_observation.epoch = 1u;
 	CHECK(!v34_data_decision_receiver_is_valid(NULL) &&
 	      !v34_data_decision_receiver_is_valid(&corrupt) &&
 	      rejected_call_preserves_outputs(
@@ -498,6 +554,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated pair path", test_generated_pair_path },
+		{ "cancel partial interval", test_cancel_interval },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

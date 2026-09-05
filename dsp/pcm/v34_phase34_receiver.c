@@ -520,6 +520,7 @@ static enum v34_phase34_receiver_result receive_data(
 {
 	struct v34_data_decision_receiver data = receiver->semantic.data;
 	struct v34_data_decision_output decoded;
+	struct v34_adaptive_equalizer_decision decision;
 	enum v34_data_receive_result result =
 		v34_data_decision_receiver_observe(
 			&data, observation, &decoded);
@@ -527,8 +528,13 @@ static enum v34_phase34_receiver_result receive_data(
 
 	if (!semantic_result_consumed(mapped))
 		return discard_and_fail(receiver, observation, mapped);
+	/* Preserve the established V.34 schedule: advance the first symbol
+	 * without adaptation, then train from the current 4-D decision. */
+	decision = decoded.equalizer[result == V34_DATA_RECEIVE_OK ? 0u : 1u];
+	if (decision.adaptation != V34_ADAPTIVE_EQUALIZER_SKIP)
+		decision.decoder_power_q15 = V34_PHASE34_FINAL_DECODER_POWER_Q15;
 	if (v34_adaptive_equalizer_commit(
-		    &receiver->line.equalizer, &decoded.equalizer) !=
+		    &receiver->line.equalizer, &decision) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	advance_tracking(receiver);
