@@ -68,7 +68,6 @@ struct v90_phase3_digital_station {
 enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 	struct v90_phase3_digital_station *station,
 	const struct v34_phase3_profile *analog_profile,
-	const struct v90_phase3_analog_rx_configuration *receive_configuration,
 	int16_t initial_receive_gain, enum g711_law law, uint8_t training_ucode,
 	const struct v90_jd_parameters *jd);
 bool v90_phase3_digital_station_is_valid(
@@ -89,7 +88,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 
 /* Consume a conventional physical sample in the fixed upstream receiver after
  * the final return completes while the independent DIL transmitter reaches its
- * segment boundary. The completed floating parser is frozen. The ordinary
+ * segment boundary. The completed return marker is frozen. The ordinary
  * receive entry point continues to reject calls after completion. */
 enum v90_phase3_digital_station_result
 v90_phase3_digital_station_advance_completed_receive(

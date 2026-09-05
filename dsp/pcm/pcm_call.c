@@ -141,8 +141,6 @@ static bool digital_configuration_is_valid(
 	if (!v90_mp_record_is_valid(mp))
 		return false;
 	return v34_info1c_is_valid(&info1->digital) &&
-	       v90_phase3_analog_rx_configuration_is_valid(
-		       &phase3->digital.receive) &&
 	       v90_jd_parameters_are_valid(&phase3->digital.jd) &&
 	       !v90_mp_record_acknowledges_cp(mp);
 }
@@ -353,8 +351,8 @@ static bool digital_mixed_is_valid(const struct pcm_call *call)
 	bool receive_complete =
 		mixed->phase3.receive_stage ==
 			V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
-		v90_phase3_return_rx_is_complete(
-			&mixed->phase3.receive.returning.points);
+		v90_phase3_return_marker_is_complete(
+			&mixed->phase3.receive.returning.marker);
 
 	return v90_phase3_digital_station_is_valid(&mixed->phase3) &&
 	       mixed->phase3.transmit_started &&
@@ -1221,7 +1219,6 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 			return PCM_CALL_NUMERIC_FAILURE;
 		result = pcm_phase3_entry_start_v90_digital(
 			&entry,
-			&call->phase3_configuration.digital.receive,
 			receive_gain, &call->phase3_configuration.digital.jd,
 			&station);
 		if (result != PCM_PHASE3_ENTRY_OK)
@@ -1311,14 +1308,13 @@ static enum pcm_call_result advance_phase2(
 }
 
 static enum pcm_call_result sample_phase2(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, int16_t received_sample,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
 	enum pcm_call_result call_result;
 	int16_t transmitted_sample;
 	enum pcm_phase2_result result = pcm_phase2_sample(
-		&call->state.phase2,
-		decode_octet(call->law, received_octet),
+		&call->state.phase2, received_sample,
 		&transmitted_sample, &observation->phase2);
 
 	if (result != PCM_PHASE2_OK)
@@ -1976,10 +1972,8 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.digital);
 
 		/* The second return can finish while the independently owned DIL
-		 * transmitter completes its current segment. Only the fixed upstream
-		 * line consumes conventional samples now; the completed floating
-		 * S/S-bar parser remains frozen. Initial/return acquisition below
-		 * still uses its existing normalized-codeword frontend. */
+		 * transmitter completes its current segment. Keep advancing the same
+		 * conventional-sample receiver while the completed marker stays frozen. */
 		if (receive_complete) {
 			result = digital_phase3_result(
 				v90_phase3_digital_station_advance_completed_receive(
@@ -1997,8 +1991,7 @@ static enum pcm_call_result sample_phase3(
 			result = digital_phase3_result(
 				v90_phase3_digital_station_receive(
 					&call->state.phase3.digital,
-					decode_octet(
-						call->law, received_octet)));
+					received_sample));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
@@ -2122,7 +2115,7 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 }
 
 static enum pcm_call_result sample_mixed_phase3(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
@@ -2152,8 +2145,7 @@ static enum pcm_call_result sample_mixed_phase3(
 			return PCM_CALL_NUMERIC_FAILURE;
 		result = digital_phase3_result(
 			v90_phase3_digital_station_receive(
-				&mixed->phase3,
-				decode_octet(call->law, received_octet)));
+				&mixed->phase3, received_sample));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
@@ -2956,7 +2948,12 @@ enum pcm_call_result pcm_call_octet(
 	switch (call->stage) {
 	case PCM_CALL_PHASE2:
 		result = sample_phase2(
-			call, received_octet, &generated, &emitted);
+			call,
+			call->protocol == PCM_PROTOCOL_V90 &&
+				call->local_role == V90_DIGITAL_MODEM ?
+				received_sample :
+				decode_octet(call->law, received_octet),
+			&generated, &emitted);
 		break;
 	case PCM_CALL_PHASE3:
 		result = sample_phase3(
@@ -2964,7 +2961,7 @@ enum pcm_call_result pcm_call_octet(
 		break;
 	case PCM_CALL_PHASE3_MIXED:
 		result = sample_mixed_phase3(
-			call, received_octet, &generated);
+			call, received_octet, received_sample, &generated);
 		break;
 	case PCM_CALL_PHASE4:
 		result = sample_phase4(

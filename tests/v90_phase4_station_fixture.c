@@ -58,7 +58,7 @@ bool v90_phase4_station_fixture_init(
 				    V90_PHASE3_RETURN_LINE_RX_OK ||
 			    memcmp(&generated_receive.upstream, &return_receive.upstream,
 				   sizeof(generated_receive.upstream)) != 0 ||
-			    memcmp(&generated_receive.precoder, &return_receive.points.precoder,
+			    memcmp(&generated_receive.precoder, &return_receive.precoder,
 				   sizeof(generated_receive.precoder)) != 0)
 				return false;
 			*analog = generated_analog;

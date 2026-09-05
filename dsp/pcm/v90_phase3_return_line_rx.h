@@ -4,7 +4,7 @@
 #define V90_PHASE3_RETURN_LINE_RX_H
 
 #include "v90_phase3_analog_line_rx.h"
-#include "v90_phase3_return_rx.h"
+#include "v90_phase3_return_marker.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,33 +21,19 @@ enum v90_phase3_return_line_rx_result {
 	V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE,
 };
 
-enum {
-	/* After the shared raw S prefix re-seeds the selected equalizer span, allow
-	 * its decision delay plus a complete tracked-onset window and bounded margin.
-	 * Failure to qualify inside this window rearms raw acquisition. */
-	V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS =
-		V34_EQUALIZER_DECISION_DELAY +
-		V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS + 8,
-};
-
 /* Continue the digital modem's V.90 return parser and fixed V.34 physical
  * receiver after Ja while the analogue modem finishes Ja, goes silent, and
  * returns S followed by S-bar. */
 struct v90_phase3_return_line_rx {
-	struct qam_demodulator demodulator;
-	struct v90_phase3_return_rx points;
 	struct v90_upstream_training_rx upstream;
-	struct v34_phase3_s_prefix s_prefix;
-	struct v34_phase3_profile transmitting_profile;
-	uint8_t reacquisition_symbols;
-	bool reacquiring_equalizer;
+	struct v90_phase3_return_marker marker;
+	struct v34_precoder_recommendation precoder;
 	bool handoff_draining;
 	bool failed;
 };
 
 /* The fixed upstream owns the current sample boundary and bounded CP prefix.
- * Only completed protocol metadata crosses from the return parser; its
- * floating demodulator and equalizers remain private to the live receiver. */
+ * The return parser contributes only completed protocol metadata. */
 struct v90_phase3_return_line_handoff {
 	struct v90_upstream_training_rx upstream;
 	struct v34_phase3_s_detection marker;
@@ -56,8 +42,7 @@ struct v90_phase3_return_line_handoff {
 
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
 	struct v90_phase3_return_line_rx *rx,
-	const struct v90_phase3_analog_line_handoff *handoff,
-	double adaptation);
+	const struct v90_phase3_analog_line_handoff *handoff);
 enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_allow_implicit_s_end(
 	struct v90_phase3_return_line_rx *rx);
@@ -66,7 +51,7 @@ v90_phase3_return_line_rx_allow_implicit_s_end(
  * continuous demodulator, trained equalizer, and exact next-sample boundary.
  * This is the V.90 nonzero-DIL transition between its two return signals.
  * Once advance_complete has begun the final handoff drain, restarting is
- * rejected: the completed floating parser no longer owns physical samples. */
+ * rejected: the completed marker no longer owns decisions from that epoch. */
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 	struct v90_phase3_return_line_rx *rx);
 bool v90_phase3_return_line_rx_is_valid(
@@ -82,9 +67,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 /* After the complete final S-bar, consume one conventional physical sample
  * only in the fixed upstream receiver. Its retained decisions and line clock
  * remain sample-exact while the independent digital DIL segment drains.
- * Freeze the completed floating parser, including its demodulator/equalizers;
- * Phase 4 uses the fixed line and only the completed protocol metadata. The
- * earlier Ja and return acquisition still use their existing paired receivers. */
+ * Freeze the completed marker; Phase 4 uses the fixed line and only the
+ * completed protocol metadata. */
 enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);

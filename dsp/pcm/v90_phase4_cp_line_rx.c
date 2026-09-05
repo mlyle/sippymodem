@@ -323,8 +323,8 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	if (v34_receive_timing_set_feedback_held(
 		    &initialized.line.timing, false) != V34_RECEIVE_TIMING_OK)
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
-	/* Continue conventional-sample level acquisition after the Phase 3
-	 * codeword parser and any final-return drain. Freeze the gain only at a
+	/* Continue conventional-sample level acquisition after Phase 3 training
+	 * and any final-return drain. Freeze the gain only at a
 	 * verified record, so a frontend gain change cannot poison E/B1. */
 	if (v34_gain_control_set_mode(
 		    &initialized.line.timing.gain, V34_GAIN_TRACKING) !=

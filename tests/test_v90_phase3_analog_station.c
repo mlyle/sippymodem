@@ -16,7 +16,7 @@ enum {
 	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 	POST_POINT_LIMIT =
 		2 * V34_LINE_PULSE_SPAN_SYMBOLS +
-		V34_EQUALIZER_DECISION_DELAY +
+		V90_UPSTREAM_TRAINING_RX_DECISION_DELAY +
 		V90_DIL_MAX_SEGMENT_SYMBOLS,
 };
 
@@ -32,15 +32,6 @@ static struct v34_phase3_profile profile(void)
 		.preemphasis_filter_index = 0,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
-	};
-}
-
-static struct v90_phase3_analog_rx_configuration receive_configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
 	};
 }
 
@@ -101,8 +92,6 @@ static bool run_exchange(
 	enum g711_law law, enum v90_dil_profile dil_profile)
 {
 	struct v34_phase3_profile selected = profile();
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
 	struct v90_jd_parameters parameters = jd_parameters();
 	struct v90_phase3_analog_station analog;
 	struct v90_phase3_digital_station digital;
@@ -129,8 +118,7 @@ static bool run_exchange(
 		      NOMINAL_AMPLITUDE, dil_profile) ==
 		      V90_PHASE3_ANALOG_STATION_OK &&
 	      v90_phase3_digital_station_init(
-		      &digital, &selected, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN, law,
+		      &digital, &selected, TEST_INITIAL_RECEIVE_GAIN, law,
 		      training_ucode, &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_OK,
 	      "law %u endpoints did not initialize", (unsigned int)law);
@@ -202,7 +190,7 @@ static bool run_exchange(
 			    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN) {
 			if (!v90_phase3_digital_station_receive_complete(
 				    &digital) &&
-			    digital.receive.returning.points.semantic.stage ==
+			    digital.receive.returning.marker.stage ==
 				    V90_PHASE3_RETURN_RX_STAGE_S) {
 				second_s_seen = true;
 				CHECK(!digital.transmit.dil.finish_requested,
@@ -226,7 +214,7 @@ static bool run_exchange(
 	      phase4_line_active &&
 	      v90_phase3_digital_station_receive_complete(&digital) &&
 	      v90_phase3_digital_station_transmit_complete(&digital) &&
-	      phase4_points >= V34_EQUALIZER_DECISION_DELAY &&
+	      phase4_points >= V90_UPSTREAM_TRAINING_RX_DECISION_DELAY &&
 	      v90_phase3_analog_station_receive_handoff(
 		      &analog, &receive_handoff) ==
 		      V90_PHASE3_ANALOG_STATION_OK &&
@@ -315,8 +303,6 @@ static bool test_generated_exchange(void)
 static bool test_validation(void)
 {
 	struct v34_phase3_profile selected = profile();
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
 	struct v90_jd_parameters parameters = jd_parameters();
 	struct v90_phase3_analog_station station;
 	struct v90_phase3_analog_station saved;
@@ -395,20 +381,17 @@ static bool test_validation(void)
 	memset(&digital, 0xa5, sizeof(digital));
 	saved_digital = digital;
 	CHECK(v90_phase3_digital_station_init(
-		      NULL, &selected, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
+		      NULL, &selected, TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
 		      &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase3_digital_station_init(
-		      &digital, &selected, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN,
+		      &digital, &selected, TEST_INITIAL_RECEIVE_GAIN,
 		      (enum g711_law)99, 91, &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital initialization changed state");
 	CHECK(v90_phase3_digital_station_init(
-		      &digital, &selected, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
+		      &digital, &selected, TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
 		      &parameters) == V90_PHASE3_DIGITAL_STATION_OK,
 	      "validation digital station did not initialize");
 	saved_digital = digital;

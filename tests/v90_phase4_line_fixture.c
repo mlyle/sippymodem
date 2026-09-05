@@ -33,15 +33,6 @@ static struct v34_phase3_profile default_profile(void)
 	};
 }
 
-static struct v90_phase3_analog_rx_configuration configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
-}
-
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -54,7 +45,6 @@ static bool establish_ja(
 	struct v90_phase3_analog_line_tx *transmit,
 	struct v90_phase3_analog_line_handoff *handoff)
 {
-	struct v90_phase3_analog_rx_configuration config = configuration();
 	struct v90_phase3_analog_line_rx receive;
 	bool started_ja = false;
 
@@ -62,8 +52,7 @@ static bool establish_ja(
 		    transmit, profile, NOMINAL_AMPLITUDE) !=
 		    V90_PHASE3_ANALOG_LINE_TX_OK ||
 	    v90_phase3_analog_line_rx_init(
-		    &receive, profile, &config,
-		    TEST_INITIAL_RECEIVE_GAIN) !=
+		    &receive, profile, TEST_INITIAL_RECEIVE_GAIN) !=
 		    V90_PHASE3_ANALOG_LINE_RX_OK)
 		return false;
 	for (uint32_t index = 0;
@@ -199,7 +188,7 @@ static bool prepare_boundary(
 	return establish_ja(
 		       profile, law, &prefix_transmit, &prefix_handoff) &&
 	       v90_phase3_return_line_rx_init(
-		       receive, &prefix_handoff, 0.05) ==
+		       receive, &prefix_handoff) ==
 		       V90_PHASE3_RETURN_LINE_RX_OK &&
 	       finish_ja(law, &prefix_transmit, receive, line) &&
 	       v90_phase3_return_line_tx_init(&return_transmit, line) ==
@@ -257,7 +246,7 @@ bool v90_phase4_line_fixture_init_for_profile(
 				    V90_PHASE3_RETURN_LINE_RX_OK ||
 			    memcmp(&generated_receive.upstream, &return_receive.upstream,
 				   sizeof(generated_receive.upstream)) != 0 ||
-			    memcmp(&generated_receive.precoder, &return_receive.points.precoder,
+			    memcmp(&generated_receive.precoder, &return_receive.precoder,
 				   sizeof(generated_receive.precoder)) != 0)
 				return false;
 			*transmit = generated_transmit;

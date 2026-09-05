@@ -239,10 +239,10 @@ static bool test_transactional_contracts(void)
 	      v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
-	      v34_phase3_s_receiver_is_valid(&rx.boundary) &&
-	      rx.boundary_complete ==
-		      v34_phase3_s_receiver_is_complete(
-		      &rx.boundary) &&
+	      v90_phase4_cp_line_rx_is_valid(&rx) &&
+	      (rx.boundary_complete ||
+	       (v34_phase3_s_receiver_is_valid(&rx.boundary) &&
+		!v34_phase3_s_receiver_is_complete(&rx.boundary))) &&
 	      memcmp(&rx.line, &expected_line,
 		     sizeof(rx.line)) == 0 &&
 	      rx.decoder_power_q15 == handoff.upstream.decoder_power_q15 &&

@@ -12,7 +12,6 @@ enum {
 	/* Preserve 48 symbols of past-channel span for delayed upstream echoes,
 	 * while ordinary V.34 retains its 80-tap/20-symbol geometry. */
 	V90_UPSTREAM_EQUALIZER_TAPS = 128,
-	V90_UPSTREAM_EQUALIZER_DELAY = 16,
 	V90_UPSTREAM_INITIAL_DECODER_POWER_Q15 = 0x7000,
 	V90_UPSTREAM_MIDDLE_DECODER_POWER_Q15 = 0x4000,
 	V90_UPSTREAM_FINAL_DECODER_POWER_Q15 = 0x2000,
@@ -145,7 +144,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 	    v34_equalizer_init_geometry(
 		    &initialized.line.equalizer.equalizer,
 		    V90_UPSTREAM_EQUALIZER_TAPS,
-		    V90_UPSTREAM_EQUALIZER_DELAY) != V34_EQUALIZER_OK ||
+		    V90_UPSTREAM_TRAINING_RX_DECISION_DELAY) != V34_EQUALIZER_OK ||
 	    !v90_upstream_training_rx_is_valid(&initialized))
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	*receiver = initialized;
@@ -248,9 +247,15 @@ static enum v90_upstream_training_rx_result receive_tracking(
 	}
 	if (observation_power(observation) <
 	    V90_UPSTREAM_MIN_TRACKING_POWER) {
+		if (v34_receive_timing_set_feedback_held(
+			    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
+			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 		action = v34_receive_action_only(V34_RECEIVE_DISCARD);
 		return resolve_action(receiver, observation, &action);
 	}
+	if (v34_receive_timing_set_feedback_held(
+		    &receiver->line.timing, false) != V34_RECEIVE_TIMING_OK)
+		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	{
 		struct v34_fixed_training_decision hard;
 
@@ -294,6 +299,16 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 	was_tracking = next.stage == V90_UPSTREAM_TRAINING_RX_TRACKING;
 	line_result = v34_line_receiver_sample(
 		&next.line, sample, &observation);
+	/* The lower S-carrier edge has a qualified raw analytic window. Bring
+	 * an insufficient Phase 2 gain seed into that measured receive domain
+	 * before the short qualified S suffix, without training on pre-S echo. */
+	if (!receiver->line.timing.s_detector.acquired &&
+	    next.line.timing.s_detector.acquired &&
+	    v34_gain_control_refresh_level(&next.line.timing.gain) !=
+		    V34_GAIN_CONTROL_OK) {
+		receiver->failed = true;
+		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
+	}
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		*receiver = next;
 		return V90_UPSTREAM_TRAINING_RX_OK;

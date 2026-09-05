@@ -11,6 +11,8 @@
 #include <stdint.h>
 
 enum {
+	/* The continuous conventional-upstream equalizer's whole-symbol delay. */
+	V90_UPSTREAM_TRAINING_RX_DECISION_DELAY = 16,
 	/* The return detector can report S-bar after CPt is already in flight.
 	 * Retain enough fixed decisions to recover the bounded semantic prefix
 	 * without replaying samples through the physical receiver. */

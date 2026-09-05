@@ -357,14 +357,6 @@ enum v90_profile_result v90_profile_init(
 	} else {
 		selected.local_info0.digital = digital_info0(law);
 		selected.local_info1.digital = digital_info1(&upstream);
-		selected.phase3.digital.receive =
-			(struct v90_phase3_analog_rx_configuration){
-				.s_gain_adaptation = 0.15,
-				.pp_equalizer_adaptation = 0.2,
-				/* Retain data-entry margin for linear 33.6 kbit/s
-				 * through a bounded returned-echo residual. */
-				.tracking_equalizer_adaptation = 0.06,
-			};
 		selected.phase3.digital.jd =
 			jd_parameters(downstream.enabled_mask);
 		selected.digital_phase4.initial_mp = initial_mp(&upstream);

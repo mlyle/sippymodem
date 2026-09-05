@@ -266,11 +266,15 @@ static int retrain_v90(struct dp *dp)
 	    training_session_start_retrain(
 		    &training, TRAINING_LOCAL_RETRAIN) != TRAINING_SESSION_OK)
 		return -1;
+	/* Already transmitted data still returns while the peer starts Tone A.
+	 * Retain a qualified in-call model through the new ranging exchange. */
 	if (datapump->host_echo != NULL &&
-	    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
-		return -1;
-	datapump->host_echo_margin_evaluated = false;
-	datapump->host_echo_delay_seeded = false;
+	    !v90_host_echo_is_ready(datapump->host_echo)) {
+		if (v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
+			return -1;
+		datapump->host_echo_margin_evaluated = false;
+		datapump->host_echo_delay_seeded = false;
+	}
 	datapump->call = call;
 	datapump->training = training;
 	return 0;
@@ -564,16 +568,16 @@ static enum v90_host_echo_mode host_echo_mode(
 	    call->state.phase3.digital.transmit.sequence.prefix.stage ==
 		    PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
 		return V90_HOST_ECHO_TRAIN;
-	/* The fixed upstream receiver owns conventional samples from the final
-	 * return drain through Phase 4 and data. Cancel returned local DIL before
-	 * it consumes the samples that the CP receiver will inherit. */
-	if ((call->stage == PCM_CALL_PHASE3 &&
-	     v90_phase3_digital_station_receive_complete(
-		     &call->state.phase3.digital)) ||
+	/* The conventional receiver owns physical samples through retrain
+	 * ranging, both return markers, and the completed-return drain. A ready
+	 * filter removes returning data or local Jd/DIL in those intervals;
+	 * FILTER leaves samples unchanged while readiness is incomplete. */
+	if (call->stage == PCM_CALL_PHASE2 ||
+	    call->stage == PCM_CALL_PHASE3 ||
+	    call->stage == PCM_CALL_PHASE3_MIXED ||
 	    call->stage == PCM_CALL_PHASE4 ||
 	    call->stage == PCM_CALL_DATA_PATH ||
-	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
-	     call->retrain.peer_tone_retained))
+	    call->stage == PCM_CALL_RETRAIN_SILENCE)
 		return V90_HOST_ECHO_FILTER;
 	return V90_HOST_ECHO_BYPASS;
 }
@@ -581,6 +585,7 @@ static enum v90_host_echo_mode host_echo_mode(
 static bool seed_host_echo_delay(struct v90_datapump *datapump)
 {
 	if (datapump->host_echo == NULL || datapump->host_echo_delay_seeded ||
+	    v90_host_echo_is_ready(datapump->host_echo) ||
 	    !datapump->call.round_trip_delay_stored ||
 	    datapump->call.round_trip_delay_samples == 0)
 		return true;
@@ -683,12 +688,16 @@ static int process_v90_g711(
 				    receive_samples[index], cleaned_sample,
 				    transmit_samples[index]) != V90_HOST_ECHO_OK)
 				goto failure;
-			/* A remotely requested retrain must retain Tone A/B while
-			 * output echo is still returning through the host path. Keep
-			 * the learned filter through that silence/tone handoff, then
-			 * clear it before the new Phase 2 training begins. */
-			if (stage_before == PCM_CALL_RETRAIN_SILENCE &&
-			    datapump->call.stage != PCM_CALL_RETRAIN_SILENCE) {
+			/* Retain qualified cancellation through retrain ranging, but
+			 * reacquire it for the new Phase 3/TRN1d epoch. Old margin and
+			 * delay qualification must not survive that new training.
+			 * Unqualified models still clear at the silence/tone handoff. */
+			if ((stage_before == PCM_CALL_RETRAIN_SILENCE &&
+			     datapump->call.stage != PCM_CALL_RETRAIN_SILENCE &&
+			     !v90_host_echo_is_ready(datapump->host_echo)) ||
+			    (stage_before == PCM_CALL_PHASE2 &&
+			     datapump->call.stage != PCM_CALL_PHASE2 &&
+			     datapump->call.retrain_active)) {
 				if (v90_host_echo_init(datapump->host_echo) !=
 				    V90_HOST_ECHO_OK)
 					goto failure;

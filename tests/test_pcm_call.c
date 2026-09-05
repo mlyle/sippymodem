@@ -169,15 +169,6 @@ static struct v90_info1a analog_info1(void)
 	};
 }
 
-static struct v90_phase3_analog_rx_configuration receive_configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
-}
-
 static struct v90_jd_parameters jd_parameters(void)
 {
 	return (struct v90_jd_parameters){
@@ -442,11 +433,83 @@ static struct pcm_call_configuration configuration(
 	} else {
 		configuration.local_info0.digital = digital_info0(law);
 		configuration.local_info1.digital = digital_info1();
-		configuration.phase3.digital.receive = receive_configuration();
 		configuration.phase3.digital.jd = jd_parameters();
 		configuration.digital_phase4.initial_mp = initial_mp();
 	}
 	return configuration;
+}
+
+static bool check_phase2_input_ownership(
+	enum pcm_protocol protocol, enum v90_modem_role role, enum g711_law law)
+{
+	struct pcm_call_configuration selected = protocol == PCM_PROTOCOL_V90 ?
+		configuration(role, law) : v92_configuration(role, law);
+	struct pcm_call call;
+	struct pcm_phase2 expected;
+	struct v34_phase2_tone_transmitter peer;
+	bool physical = protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM;
+	size_t distinct_inputs = 0u;
+	size_t noncodeword_samples = 0u;
+
+	CHECK(pcm_call_init(&call, &selected) == PCM_CALL_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &peer, role == V90_DIGITAL_MODEM ?
+			      V34_ANSWERING_STATION : V34_CALLING_STATION,
+		      PHASE2_NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "Phase 2 input owners did not initialize");
+	expected = call.state.phase2;
+	for (size_t index = 0u; index < 320u; ++index) {
+		struct pcm_phase2_event phase2;
+		struct pcm_call_observation observed;
+		int16_t sample;
+		int16_t generated;
+		int16_t owned_input;
+		uint8_t octet;
+		uint8_t transmitted;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) ==
+			      V34_PHASE2_TONE_OK,
+		      "Phase 2 ownership tone stopped");
+		noncodeword_samples += sample !=
+			decode_octet(law, encode_octet(law, sample));
+		/* Deliberately disagree at the two inputs. The physical owner must
+		 * neither reconstruct nor requantize its conventional sample. */
+		octet = physical ? silence_octet(law) : encode_octet(law, sample);
+		sample = physical ? sample : 0;
+		distinct_inputs += sample != decode_octet(law, octet);
+		owned_input = physical ? sample : decode_octet(law, octet);
+		CHECK(pcm_phase2_sample(
+			      &expected, owned_input, &generated, &phase2) ==
+			      PCM_PHASE2_OK &&
+		      pcm_call_octet(
+			      &call, octet, sample, &transmitted, &observed) ==
+			      PCM_CALL_OK &&
+		      observed.processed == PCM_CALL_PHASE2 &&
+		      observed.next == PCM_CALL_PHASE2 &&
+		      transmitted == encode_octet(law, generated) &&
+		      memcmp(&phase2, &observed.phase2, sizeof(phase2)) == 0 &&
+		      memcmp(&expected, &call.state.phase2, sizeof(expected)) == 0,
+		      "protocol %u role %u law %u Phase 2 changed its input "
+		      "or consumed it twice at %zu",
+		      (unsigned int)protocol, (unsigned int)role,
+		      (unsigned int)law, index);
+	}
+	CHECK(distinct_inputs != 0u && noncodeword_samples != 0u,
+	      "Phase 2 ownership inputs did not diverge");
+	return true;
+}
+
+static bool test_phase2_input_ownership(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+	     protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum v90_modem_role role = V90_ANALOG_MODEM;
+		     role <= V90_DIGITAL_MODEM; ++role)
+			for (enum g711_law law = G711_LAW_PCMU;
+			     law <= G711_LAW_PCMA; ++law)
+				CHECK(check_phase2_input_ownership(protocol, role, law),
+				      "Phase 2 input ownership failed");
+	return true;
 }
 
 static void generate_data_bits(
@@ -1031,7 +1094,7 @@ static bool run_configured_call(
 	struct endpoint analog;
 	struct endpoint digital;
 	bool milestone_reached = false;
-	bool replacement_exercised = false;
+	unsigned int replacement_stages = 0;
 
 	CHECK(channel_init(&channel, law, delay) &&
 	      endpoint_init(
@@ -1054,11 +1117,15 @@ static bool run_configured_call(
 		analog_received_sample = decode_octet(law, analog_received);
 		digital_received_sample = decode_octet(law, digital_received);
 		if (replace_digital_codeword &&
-		    (pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE4 ||
+		    (pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE2 ||
+		     pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE3 ||
+		     pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE3_MIXED ||
+		     pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE4 ||
 		     pcm_call_current_stage(&digital.call) == PCM_CALL_DATA_PATH)) {
 			uint8_t replacement = silence_octet(law);
 
-			replacement_exercised |= replacement != digital_received;
+			if (replacement != digital_received)
+				replacement_stages |= 1u << digital.call.stage;
 			digital_received = replacement;
 		}
 		CHECK(endpoint_octet(
@@ -1076,8 +1143,15 @@ static bool run_configured_call(
 			break;
 		}
 	}
+	CHECK(!replace_digital_codeword ||
+	      replacement_stages == ((1u << PCM_CALL_PHASE2) |
+				     (1u << PCM_CALL_PHASE3) |
+				     (1u << PCM_CALL_PHASE3_MIXED) |
+				     (1u << PCM_CALL_PHASE4) |
+				     (1u << PCM_CALL_DATA_PATH)),
+	      "law %u physical receive did not exercise every owned stage: %x",
+	      (unsigned int)law, replacement_stages);
 	CHECK(milestone_reached &&
-	      (!replace_digital_codeword || replacement_exercised) &&
 	      analog.entered_phase3 && digital.entered_phase3 &&
 	      analog.entered_mixed && digital.entered_mixed &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
@@ -3932,11 +4006,14 @@ static bool test_generated_calls(void)
 	CHECK(run_call(G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA) &&
 	      run_call(G711_LAW_PCMA, 1, CALL_GOAL_ONLINE_DATA),
 	      "generated V.90 online data calls failed");
-	CHECK(run_configured_call(
-		      G711_LAW_PCMA, 1, CALL_GOAL_ONLINE_DATA,
-		      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
-		      DATA_DOWNSTREAM_RATE, true),
-	      "digital Phase 4 depended on a reconstructed codeword");
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law)
+		CHECK(run_configured_call(
+			      law, 1, CALL_GOAL_ONLINE_DATA,
+			      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+			      DATA_DOWNSTREAM_RATE, true),
+		      "law %u digital training/data depended on a reconstructed "
+		      "codeword", (unsigned int)law);
 	/* Retain the longer-delay pre-Phase-4 handoff regression separately
 	 * from the carrier-phase combinations covered through CPt/Ri above. */
 	CHECK(run_call(G711_LAW_PCMU, 13, CALL_GOAL_PHASE4_ENTRY) &&
@@ -4213,6 +4290,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
 		{ "remote retrain during final PCM training",

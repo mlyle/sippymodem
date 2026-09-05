@@ -109,15 +109,12 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	const struct pcm_phase3_entry *entry,
-	const struct v90_phase3_analog_rx_configuration *receive_configuration,
 	int16_t initial_receive_gain, const struct v90_jd_parameters *jd,
 	struct v90_phase3_digital_station *station)
 {
 	enum v90_phase3_digital_station_result result;
 
 	if (!pcm_phase3_entry_is_valid(entry) || station == NULL ||
-	    !v90_phase3_analog_rx_configuration_is_valid(
-		    receive_configuration) ||
 	    initial_receive_gain <= 0 ||
 	    !v90_jd_parameters_are_valid(jd))
 		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
@@ -127,7 +124,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	    entry->selection.upstream != PCM_UPSTREAM_V34)
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	result = v90_phase3_digital_station_init(
-		station, &entry->conventional_profile, receive_configuration,
+		station, &entry->conventional_profile,
 		initial_receive_gain, entry->law,
 		entry->selection.analog.conventional.training_ucode, jd);
 	switch (result) {

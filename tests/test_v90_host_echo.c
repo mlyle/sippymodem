@@ -233,6 +233,25 @@ static bool test_long_delay_cancellation(void)
 		      unchanged == 321,
 		      "non-finite active model changed output");
 	}
+	{
+		struct v90_host_echo fresh;
+		int16_t cleaned = 321;
+
+		CHECK(v90_host_echo_init(&fresh) == V90_HOST_ECHO_OK &&
+		      v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
+		      !v90_host_echo_is_ready(&echo) &&
+		      memcmp(&echo, &fresh, sizeof(echo)) == 0,
+		      "new training epoch retained old model or readiness");
+		CHECK(v90_host_echo_predict(
+			      &echo, V90_HOST_ECHO_FILTER, 1234, &cleaned) ==
+			      V90_HOST_ECHO_OK && cleaned == 1234,
+		      "reset model filtered input before new training");
+		CHECK(v90_host_echo_seed_phase2_delay(
+			      &echo, SHORT_PHASE2_DELAY) == V90_HOST_ECHO_OK &&
+		      v90_host_echo_window_delay_samples(&echo) ==
+			      SHORT_FILTER_DELAY,
+		      "new training epoch rejected a fresh ranging delay");
+	}
 	return true;
 }
 

@@ -41,13 +41,13 @@ static bool finish_request_is_causal(
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL)
 		return false;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
-	    station->receive.returning.points.semantic.stage <
+	    station->receive.returning.marker.stage <
 		    V90_PHASE3_RETURN_RX_STAGE_S)
 		return false;
 	return !station->transmit.dil.finish_requested ||
 	       (station->receive_stage ==
 			V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN &&
-		station->receive.returning.points.semantic.stage >=
+		station->receive.returning.marker.stage >=
 			V90_PHASE3_RETURN_RX_STAGE_S);
 }
 
@@ -86,7 +86,6 @@ bool v90_phase3_digital_station_has_failed(
 enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 	struct v90_phase3_digital_station *station,
 	const struct v34_phase3_profile *analog_profile,
-	const struct v90_phase3_analog_rx_configuration *receive_configuration,
 	int16_t initial_receive_gain, enum g711_law law, uint8_t training_ucode,
 	const struct v90_jd_parameters *jd)
 {
@@ -103,7 +102,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	result = v90_phase3_analog_line_rx_init(
 		&initialized.receive.initial, analog_profile,
-		receive_configuration, initial_receive_gain);
+		initial_receive_gain);
 	if (result == V90_PHASE3_ANALOG_LINE_RX_OUT_OF_RANGE)
 		return V90_PHASE3_DIGITAL_STATION_OUT_OF_RANGE;
 	if (result != V90_PHASE3_ANALOG_LINE_RX_OK)
@@ -187,21 +186,18 @@ static enum v90_phase3_digital_station_result receive_initial(
 		struct v90_phase3_analog_line_handoff handoff;
 		struct v90_phase3_return_line_rx returning;
 		struct pcm_phase3_digital_tx transmit;
-		double adaptation = station->receive.initial.points.configuration
-					    .tracking_equalizer_adaptation;
-
 		if (v90_phase3_analog_line_rx_handoff(
 			    &station->receive.initial, &handoff) !=
 			    V90_PHASE3_ANALOG_LINE_RX_OK ||
 		    v90_phase3_return_line_rx_init(
-			    &returning, &handoff, adaptation) !=
+			    &returning, &handoff) !=
 			    V90_PHASE3_RETURN_LINE_RX_OK ||
 		    pcm_phase3_digital_tx_init_v90(
 			    &transmit, station->law, station->training_ucode,
-			    &station->jd, &handoff.phase3.dil) !=
+			    &station->jd, &handoff.ja.dil) !=
 			    PCM_PHASE3_DIGITAL_TX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
-		if (handoff.phase3.dil.segment_count != 0u &&
+		if (handoff.ja.dil.segment_count != 0u &&
 		    v90_phase3_return_line_rx_allow_implicit_s_end(
 			    &returning) != V90_PHASE3_RETURN_LINE_RX_OK)
 			return V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
@@ -298,8 +294,8 @@ bool v90_phase3_digital_station_receive_complete(
 {
 	return v90_phase3_digital_station_is_valid(station) &&
 	       !station->failed && station->transmit_started &&
-	       v90_phase3_return_rx_is_complete(
-		       &station->receive.returning.points);
+	       v90_phase3_return_marker_is_complete(
+		       &station->receive.returning.marker);
 }
 
 enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(

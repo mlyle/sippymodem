@@ -13,7 +13,6 @@
 #include <stdint.h>
 
 struct v90_jd_parameters;
-struct v90_phase3_analog_rx_configuration;
 struct v90_phase3_analog_station;
 struct v90_phase3_digital_station;
 struct v92_phase3_analog_station;
@@ -69,7 +68,6 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	const struct pcm_phase3_entry *entry,
-	const struct v90_phase3_analog_rx_configuration *receive_configuration,
 	int16_t initial_receive_gain, const struct v90_jd_parameters *jd,
 	struct v90_phase3_digital_station *station);
 

@@ -11,15 +11,26 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 enum {
 	TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 173,
 	RETURN_SILENCE_SYMBOLS = 350,
 	RETURN_S_FINISH_SYMBOL = V34_PHASE3_S_SYMBOLS + 17,
+	TEST_SYMBOL_RATE = 3000,
+	/* TX pulse half-span, 30-sample analytic group delay, half of the
+	 * four-samples/symbol timing FIR, fixed EQ delay, and one boundary
+	 * observation. The old floating receiver's 44T allowance omitted the
+	 * fixed front end. This profile emits its exact final marker at 50T. */
 	POST_POINT_LIMIT =
-		2 * V34_LINE_PULSE_SPAN_SYMBOLS +
-		V34_EQUALIZER_DECISION_DELAY,
+		V34_PULSE_TAPS / 2 +
+		(V34_ANALYTIC_FILTER_GROUP_DELAY_SAMPLES * TEST_SYMBOL_RATE +
+		 V90_PHASE3_SAMPLE_RATE - 1) / V90_PHASE3_SAMPLE_RATE +
+		(V34_TIMING_FILTER_FIR_TAPS - 1 +
+		 2 * V34_RECEIVE_TIMING_OUTPUTS - 1) /
+			(2 * V34_RECEIVE_TIMING_OUTPUTS) +
+		V90_UPSTREAM_TRAINING_RX_DECISION_DELAY + 1,
 	SAMPLE_LIMIT = 40000,
 	NOMINAL_AMPLITUDE = 6000,
 	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
@@ -28,7 +39,7 @@ enum {
 static struct v34_phase3_profile profile(void)
 {
 	return (struct v34_phase3_profile){
-		.symbol_rate_numerator = 3000,
+		.symbol_rate_numerator = TEST_SYMBOL_RATE,
 		.symbol_rate_denominator = 1,
 		.carrier_frequency_numerator = 2000,
 		.carrier_frequency_denominator = 1,
@@ -37,15 +48,6 @@ static struct v34_phase3_profile profile(void)
 		.preemphasis_filter_index = 0,
 		.projected_data_rate_2400_bps_units = 8,
 		.high_carrier = true,
-	};
-}
-
-static struct v90_phase3_analog_rx_configuration configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
 	};
 }
 
@@ -61,7 +63,6 @@ static bool establish_ja(
 	struct v90_phase3_analog_line_handoff *handoff)
 {
 	struct v34_phase3_profile selected = profile();
-	struct v90_phase3_analog_rx_configuration config = configuration();
 	struct v90_phase3_analog_line_rx rx;
 	bool started_ja = false;
 
@@ -69,7 +70,7 @@ static bool establish_ja(
 		    tx, &selected, NOMINAL_AMPLITUDE) !=
 		    V90_PHASE3_ANALOG_LINE_TX_OK ||
 	    v90_phase3_analog_line_rx_init(
-		    &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) !=
+		    &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) !=
 		    V90_PHASE3_ANALOG_LINE_RX_OK)
 		return false;
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
@@ -109,7 +110,7 @@ static bool establish_ja(
 static bool receive_return(
 	enum g711_law law, struct v90_phase3_return_line_tx *tx,
 	struct v90_phase3_return_line_rx *rx, struct v34_training_line *line,
-	struct v90_phase3_return_line_handoff *handoff)
+	struct v90_phase3_return_line_handoff *handoff, uint16_t gain_q15)
 {
 	unsigned int s_events = 0;
 	unsigned int s_bar_events = 0;
@@ -141,7 +142,7 @@ static bool receive_return(
 			      V90_PHASE3_RETURN_LINE_TX_OK,
 		      "law %d return line stopped", law);
 		result = v90_phase3_return_line_rx_sample(
-			rx, quantize(law, sample));
+			rx, quantize(law, (int16_t)((int32_t)sample * gain_q15 / 32768)));
 		if (result == V90_PHASE3_RETURN_LINE_RX_S_DETECTED)
 			s_events++;
 		else
@@ -177,7 +178,7 @@ static bool receive_return(
 		if (accepted)
 			post_points++;
 		result = v90_phase3_return_line_rx_sample(
-			rx, quantize(law, sample));
+			rx, quantize(law, (int16_t)((int32_t)sample * gain_q15 / 32768)));
 		if (result == V90_PHASE3_RETURN_LINE_RX_S_BAR_DETECTED)
 			s_bar_events++;
 		else
@@ -186,7 +187,7 @@ static bool receive_return(
 			      v90_phase3_return_line_rx_result_name(result));
 	}
 	CHECK(s_bar_events == 1 &&
-	      post_points >= V34_EQUALIZER_DECISION_DELAY &&
+	      post_points >= V90_UPSTREAM_TRAINING_RX_DECISION_DELAY &&
 	      !v90_phase3_return_line_rx_has_failed(rx) &&
 	      v90_phase3_return_line_rx_handoff(rx, handoff) ==
 		      V90_PHASE3_RETURN_LINE_RX_OK &&
@@ -208,7 +209,7 @@ static bool run_line(enum g711_law law)
 
 	CHECK(establish_ja(law, &prefix_tx, &prefix_handoff) &&
 	      v90_phase3_return_line_rx_init(
-		      &return_rx, &prefix_handoff, 0.05) ==
+		      &return_rx, &prefix_handoff) ==
 		      V90_PHASE3_RETURN_LINE_RX_OK,
 	      "law %d could not hand Ja to the return receiver", law);
 	finish_ja_at = prefix_tx.symbols.ja_symbols +
@@ -242,7 +243,7 @@ static bool run_line(enum g711_law law)
 		      V90_PHASE3_RETURN_LINE_TX_OK,
 	      "law %d did not preserve the Ja line boundary", law);
 	CHECK(receive_return(
-		      law, &return_tx, &return_rx, &line, &return_handoff),
+		      law, &return_tx, &return_rx, &line, &return_handoff, 32768),
 	      "law %d first return failed", law);
 	{
 		struct v90_phase3_return_line_rx saved = return_rx;
@@ -252,11 +253,19 @@ static bool run_line(enum g711_law law)
 		      memcmp(&return_rx, &saved, sizeof(return_rx)) == 0,
 		      "law %d complete receiver consumed a sample", law);
 	}
-	CHECK(v90_phase3_return_line_rx_restart(&return_rx) ==
-		      V90_PHASE3_RETURN_LINE_RX_OK &&
-	      v90_phase3_return_line_rx_is_valid(&return_rx) &&
-	      !v90_phase3_return_rx_is_complete(&return_rx.points),
-	      "law %d receiver did not restart", law);
+	{
+		struct v90_phase3_return_line_rx saved = return_rx;
+
+		CHECK(v90_phase3_return_line_rx_restart(&return_rx) ==
+			      V90_PHASE3_RETURN_LINE_RX_OK &&
+		      v90_phase3_return_line_rx_is_valid(&return_rx) &&
+		      !v90_phase3_return_marker_is_complete(&return_rx.marker) &&
+		      memcmp(&return_rx.upstream, &saved.upstream,
+			     sizeof(saved.upstream)) == 0 &&
+		      memcmp(&return_rx.precoder, &saved.precoder,
+			     sizeof(saved.precoder)) == 0,
+		      "law %d marker restart changed its physical owner", law);
+	}
 	for (uint32_t index = 0;
 	     index < SAMPLE_LIMIT && !v34_training_line_needs_point(&line);
 	     ++index) {
@@ -273,37 +282,29 @@ static bool run_line(enum g711_law law)
 		      "law %d could not preserve the inter-return boundary", law);
 	}
 	CHECK(v34_training_line_needs_point(&line) &&
-	      qam_equalizer_is_handoff_ready(&return_rx.points.equalizer),
+	      v90_upstream_training_rx_is_tracking(&return_rx.upstream) &&
+	      !return_rx.upstream.line.equalizer.decision_pending,
 	      "law %d did not reach the second-return boundary", law);
-	{
-		struct qam_equalizer *equalizer =
-			&return_rx.points.equalizer;
-
-		for (size_t tap = 0; tap < equalizer->tap_count; ++tap)
-			equalizer->coefficients[tap] = (struct qam_point){ 0 };
-		equalizer->coefficients[equalizer->decision_delay] =
-			(struct qam_point){ 0.5, 0.0 };
-		equalizer->coefficients[equalizer->decision_delay + 1u] =
-			(struct qam_point){ 0.5, 0.0 };
-	}
+	/* Change the physical receive level before the second return, without
+	 * replacing any learned timing, carrier, equalizer, or sample history. */
 	CHECK(v90_phase3_return_line_rx_is_valid(&return_rx) &&
 	      v90_phase3_return_line_tx_init(&return_tx, &line) ==
 		      V90_PHASE3_RETURN_LINE_TX_OK &&
 	      receive_return(
-		      law, &return_tx, &return_rx, &line, &return_handoff),
+		      law, &return_tx, &return_rx, &line, &return_handoff, 24576),
 	      "law %d did not reacquire the second return", law);
-	CHECK(return_rx.points.compact_equalizer_active &&
-	      return_rx.points.equalizer.tap_count ==
-		      QAM_EQUALIZER_MAX_TAP_COUNT &&
-	      return_rx.points.compact_equalizer.tap_count ==
-		      V34_EQUALIZER_TAP_COUNT &&
+	CHECK(return_rx.upstream.line.equalizer.equalizer.tap_count ==
+		      prefix_handoff.upstream.line.equalizer.equalizer.tap_count &&
+	      return_rx.upstream.line.equalizer.equalizer.identity_tap ==
+		      return_rx.upstream.line.equalizer.equalizer.tap_count -
+		      2u * V90_UPSTREAM_TRAINING_RX_DECISION_DELAY &&
 	      memcmp(&return_handoff.upstream, &return_rx.upstream,
 		     sizeof(return_handoff.upstream)) == 0 &&
-	      memcmp(&return_handoff.precoder, &return_rx.points.precoder,
+	      memcmp(&return_handoff.precoder, &return_rx.precoder,
 		     sizeof(return_handoff.precoder)) == 0 &&
-	      memcmp(&return_handoff.marker, &return_rx.points.semantic.marker.detection,
+	      memcmp(&return_handoff.marker, &return_rx.marker.marker.detection,
 		     sizeof(return_handoff.marker)) == 0,
-	      "law %d did not preserve live equalizers and export fixed state", law);
+	      "law %d did not preserve and export its continuous fixed state", law);
 	{
 		struct v90_phase3_return_line_rx saved = return_rx;
 
@@ -339,10 +340,10 @@ static bool run_line(enum g711_law law)
 		}
 		CHECK(
 		      return_rx.handoff_draining &&
-		      memcmp(&return_rx.demodulator, &saved.demodulator,
-			     sizeof(saved.demodulator)) == 0 &&
-		      memcmp(&return_rx.points, &saved.points,
-			     sizeof(saved.points)) == 0 &&
+		      memcmp(&return_rx.marker, &saved.marker,
+			     sizeof(saved.marker)) == 0 &&
+		      memcmp(&return_rx.precoder, &saved.precoder,
+			     sizeof(saved.precoder)) == 0 &&
 		      memcmp(&return_rx.upstream, &expected,
 			     sizeof(expected)) == 0 &&
 		      memcmp(&return_rx.upstream.line, &saved.upstream.line,
@@ -356,9 +357,9 @@ static bool run_line(enum g711_law law)
 			      V90_PHASE3_RETURN_LINE_RX_OK &&
 		      memcmp(&return_handoff.upstream, &expected,
 			     sizeof(expected)) == 0 &&
-		      memcmp(&return_handoff.precoder, &saved.points.precoder,
+		      memcmp(&return_handoff.precoder, &saved.precoder,
 			     sizeof(return_handoff.precoder)) == 0 &&
-		      memcmp(&return_handoff.marker, &saved.points.semantic.marker.detection,
+		      memcmp(&return_handoff.marker, &saved.marker.marker.detection,
 			     sizeof(return_handoff.marker)) == 0,
 		      "law %d completed return did not advance only its fixed line",
 		      law);
@@ -379,20 +380,18 @@ static bool test_g711_lines(void)
 }
 
 /* The fixed line is trained once by S/PP and never restarted at either return.
- * This proves the protocol-only seam without changing the runtime floating
- * acquisition/return route. The nonperiodic suffix detects a lost or repeated
- * first post-S-bar decision independently of a CP frame resynchronizer. */
-static bool run_fixed_returns(enum g711_law law)
+ * The independently observed marker must match the runtime semantic owner.
+ * The nonperiodic suffix detects a lost or repeated first post-S-bar decision
+ * independently of a CP frame resynchronizer. */
+static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 {
 	static const uint8_t post_rotations[] = {
 		0, 2, 1, 3, 3, 1, 2, 0, 1, 1, 3, 0, 2, 3, 2, 0,
 	};
-	enum {
-		FIRST_S_END = RETURN_SILENCE_SYMBOLS + 192,
-		SECOND_S_START = FIRST_S_END + 192,
-		SECOND_S_END = SECOND_S_START + V34_PHASE3_S_SYMBOLS,
-		POST_START = SECOND_S_END + V34_PHASE3_S_BAR_SYMBOLS,
-	};
+	const unsigned int first_s_end = silence_symbols + 192;
+	const unsigned int second_s_start = first_s_end + 192;
+	const unsigned int second_s_end = second_s_start + V34_PHASE3_S_SYMBOLS;
+	const unsigned int post_start = second_s_end + V34_PHASE3_S_BAR_SYMBOLS;
 	struct v90_phase3_analog_line_tx prefix;
 	struct v90_phase3_analog_line_handoff handoff;
 	struct v90_phase3_return_marker marker;
@@ -402,6 +401,8 @@ static bool run_fixed_returns(enum g711_law law)
 	unsigned int post_received = 0;
 	unsigned int onset_events = 0;
 	unsigned int unsaturated_quiet_decisions = 0;
+	unsigned int held_samples = 0;
+	unsigned int advancing_held_samples = 0;
 	bool first_ended = false;
 	bool second_ended = false;
 
@@ -441,6 +442,8 @@ static bool run_fixed_returns(enum g711_law law)
 		struct v34_fixed_training_decision hard;
 		uint16_t previous = handoff.upstream.next_recent_decision;
 		uint32_t previous_tracking = handoff.upstream.tracking_symbols;
+		struct v34_timing_control timing_before =
+			handoff.upstream.line.timing.timing;
 		bool accepting = v34_training_line_needs_point(&tx);
 		bool accepted;
 		bool adapt;
@@ -448,20 +451,20 @@ static bool run_fixed_returns(enum g711_law law)
 		enum v90_upstream_training_rx_result sampled;
 		enum v90_phase3_return_rx_result result;
 
-		if (supplied >= POST_START)
+		if (supplied >= post_start)
 			point = v34_rotated_point_zero(post_rotations[
-				(supplied - POST_START) % ARRAY_LENGTH(post_rotations)]);
-		else if (supplied >= SECOND_S_END)
+				(supplied - post_start) % ARRAY_LENGTH(post_rotations)]);
+		else if (supplied >= second_s_end)
 			point = v34_rotated_point_zero(
-				(int)(2u + ((supplied - SECOND_S_END) & 1u)));
-		else if (supplied >= SECOND_S_START)
+				(int)(2u + ((supplied - second_s_end) & 1u)));
+		else if (supplied >= second_s_start)
 			point = v34_rotated_point_zero(
-				(int)((supplied - SECOND_S_START) & 1u));
-		else if (supplied >= FIRST_S_END)
+				(int)((supplied - second_s_start) & 1u));
+		else if (supplied >= first_s_end)
 			point = v34_rotated_point_zero(2);
-		else if (supplied >= RETURN_SILENCE_SYMBOLS)
+		else if (supplied >= silence_symbols)
 			point = v34_rotated_point_zero(
-				(int)((supplied - RETURN_SILENCE_SYMBOLS) & 1u));
+				(int)((supplied - silence_symbols) & 1u));
 		CHECK(v34_training_line_sample(
 			      &tx, accepting ? &point : NULL, &sample, &accepted) ==
 			      V34_TRAINING_LINE_OK && accepted == accepting,
@@ -473,6 +476,33 @@ static bool run_fixed_returns(enum g711_law law)
 		      "law %d fixed return stopped at sample %u", law, index);
 		if (accepted)
 			supplied++;
+		if (timing_before.feedback_held) {
+			const struct v34_timing_control *timing =
+				&handoff.upstream.line.timing.timing;
+			struct v34_timing_control expected = timing_before;
+
+			held_samples++;
+			advancing_held_samples += timing->phase != timing_before.phase;
+			expected.phase = timing->phase;
+			expected.phase_increment = timing->phase_increment;
+			expected.phase_residue = timing->phase_residue;
+			expected.accumulated_delta = timing->accumulated_delta;
+			expected.accumulated_count = timing->accumulated_count;
+			expected.offset_ppm = timing->offset_ppm;
+			expected.feedback_held = timing->feedback_held;
+			/* A copied subobject need not preserve its trailing padding. */
+			CHECK(memcmp(timing, &expected,
+				      offsetof(struct v34_timing_control, initialized) +
+				      sizeof(expected.initialized)) == 0,
+			      "law %d quiet feedback changed timing: mode=%u/%u "
+			      "count=%u/%u integrator=%d/%d held=%u/%u gains=%d,%d/%d,%d",
+			      law, timing->mode, expected.mode,
+			      timing->state_count, expected.state_count,
+			      timing->integrator, expected.integrator,
+			      timing->feedback_held, expected.feedback_held,
+			      timing->proportional_gain, timing->integral_gain,
+			      expected.proportional_gain, expected.integral_gain);
+		}
 		if (sampled == V90_UPSTREAM_TRAINING_RX_OK) {
 			CHECK(handoff.upstream.next_recent_decision == previous &&
 			      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
@@ -496,7 +526,8 @@ static bool run_fixed_returns(enum g711_law law)
 			if (previous_tracking <
 			    handoff.upstream.line.timing.timing.nominal_symbol_rate)
 				unsaturated_quiet_decisions++;
-			CHECK(handoff.upstream.tracking_symbols == previous_tracking,
+			CHECK(handoff.upstream.tracking_symbols == previous_tracking &&
+			      handoff.upstream.line.timing.timing.feedback_held,
 			      "law %d quiet decision advanced tracking", law);
 		}
 		if (second_ended) {
@@ -533,6 +564,9 @@ static bool run_fixed_returns(enum g711_law law)
 		}
 	}
 	CHECK(first_ended && second_ended && unsaturated_quiet_decisions > 0 &&
+	      held_samples > silence_symbols &&
+	      advancing_held_samples > silence_symbols &&
+	      !handoff.upstream.line.timing.timing.feedback_held &&
 	      post_received == ARRAY_LENGTH(post_rotations),
 	      "law %d fixed line did not complete both return epochs", law);
 	return true;
@@ -540,8 +574,11 @@ static bool run_fixed_returns(enum g711_law law)
 
 static bool test_fixed_returns(void)
 {
-	CHECK(run_fixed_returns(G711_LAW_PCMU) && run_fixed_returns(G711_LAW_PCMA),
-	      "fixed G.711 return semantics failed");
+	CHECK(run_fixed_returns(G711_LAW_PCMU, RETURN_SILENCE_SYMBOLS) &&
+	      run_fixed_returns(G711_LAW_PCMA, RETURN_SILENCE_SYMBOLS) &&
+	      run_fixed_returns(G711_LAW_PCMU, 6000u) &&
+	      run_fixed_returns(G711_LAW_PCMA, 6000u),
+	      "fixed G.711 return semantics or long quiet hold failed");
 	return true;
 }
 
@@ -558,11 +595,16 @@ static bool test_validation(void)
 	      "validation source did not establish Ja");
 	memset(&rx, 0xa5, sizeof(rx));
 	saved = rx;
-	CHECK(v90_phase3_return_line_rx_init(&rx, &source, NAN) ==
-		      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
-	      memcmp(&rx, &saved, sizeof(rx)) == 0,
-	      "invalid line configuration changed state");
-	CHECK(v90_phase3_return_line_rx_init(&rx, &source, 0.05) ==
+	{
+		struct v90_phase3_analog_line_handoff invalid = source;
+
+		invalid.upstream.line.initialized = false;
+		CHECK(v90_phase3_return_line_rx_init(&rx, &invalid) ==
+			      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&rx, &saved, sizeof(rx)) == 0,
+		      "invalid fixed handoff changed state");
+	}
+	CHECK(v90_phase3_return_line_rx_init(&rx, &source) ==
 		      V90_PHASE3_RETURN_LINE_RX_OK,
 	      "valid return line receiver did not initialize");
 	saved = rx;
@@ -589,7 +631,7 @@ static bool test_validation(void)
 	CHECK(!v90_phase3_return_line_rx_is_valid(&rx),
 	      "incomplete return was allowed to drain its handoff");
 	rx = saved;
-	rx.demodulator.tracking_window_symbols++;
+	rx.upstream.line.initialized = false;
 	CHECK(!v90_phase3_return_line_rx_is_valid(&rx) &&
 	      !v90_phase3_return_line_rx_has_failed(&rx) &&
 	      !v90_phase3_return_line_handoff_is_valid(NULL) &&

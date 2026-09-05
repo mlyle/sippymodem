@@ -31,15 +31,6 @@ static struct v34_phase3_profile profile(void)
 	};
 }
 
-static struct v90_phase3_analog_rx_configuration configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
-}
-
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
@@ -50,7 +41,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 static bool run_line(enum g711_law law)
 {
 	struct v34_phase3_profile selected = profile();
-	struct v90_phase3_analog_rx_configuration config = configuration();
 	struct v34_training_line pre_s_line;
 	struct v90_phase3_analog_line_tx tx;
 	struct v90_phase3_analog_line_rx rx;
@@ -69,12 +59,12 @@ static bool run_line(enum g711_law law)
 		      &pre_s_line, &selected, V90_PHASE3_SAMPLE_RATE,
 		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
 	      v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK,
 	      "law %d analogue line pair did not initialize", law);
 	/* Timing may lock on the tail of Phase 2. A shaped QAM sequence with
 	 * repeated points is not the alternating S prefix, though, and must not
-	 * seed Phase 3 gain or history. */
+	 * complete S/PP or seed Ja/decision history. */
 	for (uint32_t index = 0; index < 1600u; ++index) {
 		static const uint8_t rotations[4] = { 0, 0, 1, 1 };
 		struct qam_point point;
@@ -108,17 +98,21 @@ static bool run_line(enum g711_law law)
 		if (result == V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED)
 			timing_events++;
 	}
-	CHECK(timing_events == 1u && rx.demodulator.timing_locked &&
-	      !rx.s_prefix.complete &&
-	      rx.points.stage == V90_PHASE3_ANALOG_RX_STAGE_S &&
-	      !rx.points.state.s.gain_seeded &&
-	      rx.points.state.s.detector.buffered_decisions == 0u,
-	      "law %d pre-S carrier entered semantic Phase 3", law);
+	CHECK(timing_events == 1u &&
+	      v34_receive_timing_is_acquired(&rx.upstream.line.timing) &&
+	      rx.upstream.initial.stage == V34_PHASE3_DECISION_RECEIVER_S &&
+	      rx.ja.precoder.observed_symbols == 0u &&
+	      rx.upstream.recent_decision_count == 0u,
+	      "law %d pre-S state timing=%u acquired=%u stage=%u Ja=%u history=%u",
+	      law, timing_events,
+	      v34_receive_timing_is_acquired(&rx.upstream.line.timing),
+	      rx.upstream.initial.stage, rx.ja.precoder.observed_symbols,
+	      rx.upstream.recent_decision_count);
 	/* The two independently initialized transmitters do not share a carrier
 	 * phase timeline. Reset after the rejection check; retained call replay
 	 * covers continuous recovery across the real Phase 2/Phase 3 boundary. */
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK,
 	      "law %d receiver did not reset after the pre-S check", law);
 	timing_events = 0;
@@ -172,13 +166,9 @@ static bool run_line(enum g711_law law)
 		      V90_PHASE3_ANALOG_LINE_RX_OK &&
 	      v90_phase3_analog_line_handoff_is_valid(&handoff),
 	      "law %d did not recover the line-level Ja boundary "
-	      "(started %u detected %u timing %u S %u PP %u prefix %u/%u "
-	      "qam %u stage %u S-symbols %u)",
+	      "(started %u detected %u timing %u S %u PP %u stage %u TRN %u)",
 	      law, started_ja, detected, timing_events, s_events, pp_events,
-	      rx.s_prefix.alternating_turns, rx.s_prefix.complete,
-	      rx.demodulator.timing_locked, rx.points.stage,
-	      rx.points.stage == V90_PHASE3_ANALOG_RX_STAGE_S ?
-		      rx.points.state.s.detector.s_symbols : 0u);
+	      rx.upstream.initial.stage, rx.upstream.initial.j.received_symbols);
 	{
 		struct v90_phase3_analog_line_rx saved = rx;
 
@@ -412,7 +402,6 @@ static bool test_fixed_ja_lines(void)
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_phase3_profile selected = profile();
-	struct v90_phase3_analog_rx_configuration config = configuration();
 	struct v90_phase3_analog_line_rx rx;
 	struct v90_phase3_analog_line_rx saved;
 	struct v90_phase3_analog_line_handoff handoff;
@@ -422,7 +411,7 @@ static bool test_validation_and_transactionality(void)
 	saved = rx;
 	selected.local_role = V34_CALLING_STATION;
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT &&
 	      memcmp(&rx, &saved, sizeof(rx)) == 0,
 	      "line receiver accepted the digital station profile");
@@ -430,23 +419,21 @@ static bool test_validation_and_transactionality(void)
 	selected.md_length_35_ms_units = 1;
 	selected.md_symbol_count = 105;
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT,
 	      "line receiver accepted nonzero MD");
 	selected = profile();
-	config.tracking_equalizer_adaptation = NAN;
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, NULL, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT,
-	      "line receiver accepted invalid adaptation");
-	config = configuration();
+	      "line receiver accepted a missing profile");
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, 0) ==
+		      &rx, &selected, 0) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT &&
 	      memcmp(&rx, &saved, sizeof(rx)) == 0,
 	      "line receiver accepted zero gain or changed state");
 	CHECK(v90_phase3_analog_line_rx_init(
-		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK &&
 	      v90_phase3_analog_line_rx_is_valid(&rx),
 	      "valid line receiver did not initialize");
@@ -458,7 +445,7 @@ static bool test_validation_and_transactionality(void)
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_STATE &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid line receive calls changed their destination");
-	rx.demodulator.acquisition_window_symbols++;
+	rx.upstream.line.initialized = false;
 	CHECK(!v90_phase3_analog_line_rx_is_valid(&rx) &&
 	      !v90_phase3_analog_line_rx_has_failed(&rx) &&
 	      !v90_phase3_analog_line_handoff_is_valid(NULL) &&

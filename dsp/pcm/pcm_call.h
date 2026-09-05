@@ -62,7 +62,6 @@ struct pcm_call_analog_phase3_configuration {
 };
 
 struct pcm_call_digital_phase3_configuration {
-	struct v90_phase3_analog_rx_configuration receive;
 	struct v90_jd_parameters jd;
 };
 
@@ -306,10 +305,13 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character.
  * `received_octet` retains exact PCM codeword semantics while
- * `received_sample` is the decoded physical line sample. Phase 2 and Phase 3
- * acquisition retain their existing normalized-codeword frontends. The V.90
- * digital final-return drain, digital Phase 4, and retrain observation consume
- * the physical sample. A phase change takes effect
+ * `received_sample` is the conventional physical line sample. V.90 digital
+ * Phase 2, conventional upstream Phase 3, its final return drain, digital
+ * Phase 4, and retrain observation consume that sample without G.711
+ * requantization. Phase 2 gain measurements thus describe the same physical
+ * input inherited by Phase 3. Analogue PCM downstream and V.92 PCM upstream,
+ * including their Phase 2 frontends, retain exact octets.
+ * A phase change takes effect
  * on the following call. PHASE4_READY stops V.90 after its
  * initial Phase 4 exchange and V.92 after its role-local E2u interval. The
  * peer may still need continuous media before reaching its own handoff. This

@@ -125,15 +125,6 @@ static struct v90_info0d digital_info0(enum g711_law law)
 	};
 }
 
-static struct v90_phase3_analog_rx_configuration receive_configuration(void)
-{
-	return (struct v90_phase3_analog_rx_configuration){
-		.s_gain_adaptation = 0.15,
-		.pp_equalizer_adaptation = 0.2,
-		.tracking_equalizer_adaptation = 0.05,
-	};
-}
-
 static struct v90_jd_parameters jd_parameters(void)
 {
 	return (struct v90_jd_parameters){
@@ -229,8 +220,6 @@ static bool profiles_equal(
 
 static bool test_generated_entries(void)
 {
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
 	struct v90_jd_parameters jd = jd_parameters();
 
 	for (unsigned int law_index = G711_LAW_PCMU;
@@ -291,8 +280,7 @@ static bool test_generated_entries(void)
 						      v90_phase3_analog_station_is_valid(
 							      &analog) &&
 						      pcm_phase3_entry_start_v90_digital(
-							      &entry, &configuration,
-							      TEST_INITIAL_RECEIVE_GAIN, &jd,
+							      &entry, TEST_INITIAL_RECEIVE_GAIN, &jd,
 							      &digital) ==
 							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 						      memcmp(&digital, &saved_digital,
@@ -300,8 +288,7 @@ static bool test_generated_entries(void)
 						      "analogue entry selected the wrong owner");
 					} else {
 						CHECK(pcm_phase3_entry_start_v90_digital(
-							      &entry, &configuration,
-							      TEST_INITIAL_RECEIVE_GAIN, &jd,
+							      &entry, TEST_INITIAL_RECEIVE_GAIN, &jd,
 							      &digital) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_digital_station_is_valid(
 							      &digital) &&
@@ -401,8 +388,6 @@ static bool test_station_validation(void)
 	struct pcm_info1_selection selected = conventional_selection(
 		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3000, false);
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
 	struct v90_jd_parameters jd = jd_parameters();
 	struct pcm_phase3_entry analog_entry;
 	struct pcm_phase3_entry digital_entry;
@@ -439,23 +424,17 @@ static bool test_station_validation(void)
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid or clipping analogue start changed state");
 	CHECK(pcm_phase3_entry_start_v90_digital(
-		      NULL, &configuration, TEST_INITIAL_RECEIVE_GAIN, &jd,
+		      NULL, TEST_INITIAL_RECEIVE_GAIN, &jd,
 		      &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, NULL, TEST_INITIAL_RECEIVE_GAIN, &jd,
-		      &digital) ==
+		      &digital_entry, 0, &jd, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, &configuration, 0, &jd, &digital) ==
+		      &digital_entry, TEST_INITIAL_RECEIVE_GAIN, NULL, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN, NULL, &digital) ==
-		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
-	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, &configuration,
-		      TEST_INITIAL_RECEIVE_GAIN, &jd, NULL) ==
+		      &digital_entry, TEST_INITIAL_RECEIVE_GAIN, &jd, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital start changed state");
@@ -474,8 +453,6 @@ static bool test_station_validation(void)
 static bool test_v90_branch_guards(void)
 {
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
-	struct v90_phase3_analog_rx_configuration configuration =
-		receive_configuration();
 	struct v90_jd_parameters jd = jd_parameters();
 
 	for (unsigned int upstream_index = PCM_UPSTREAM_V34;
@@ -525,8 +502,7 @@ static bool test_v90_branch_guards(void)
 				      upstream_index);
 			} else {
 				CHECK(pcm_phase3_entry_start_v90_digital(
-					      &entry, &configuration,
-					      TEST_INITIAL_RECEIVE_GAIN, &jd,
+					      &entry, TEST_INITIAL_RECEIVE_GAIN, &jd,
 					      &digital) ==
 					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 				      memcmp(&digital, &saved_digital,
