@@ -56,8 +56,7 @@ static bool receive_matches_direction(
 	       receive->expanded_shaping == direction->expanded_shaping &&
 	       memcmp(receive->precoder_coefficients,
 		      direction->precoder_coefficients,
-		      sizeof(direction->precoder_coefficients)) == 0 &&
-	       qam_adaptation_is_valid(receive->equalizer_adaptation);
+		      sizeof(direction->precoder_coefficients)) == 0;
 }
 
 bool v34_data_startup_is_valid(
@@ -95,8 +94,7 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	struct v34_data_startup *startup,
 	const struct v34_data_mode *mode,
 	const struct v34_phase3_profile *transmit_profile,
-	const struct v34_phase3_profile *receive_profile,
-	double equalizer_adaptation)
+	const struct v34_phase3_profile *receive_profile)
 {
 	struct v34_data_startup prepared = { 0 };
 	struct v34_data_mapping receive_mapping;
@@ -106,8 +104,7 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	    !v34_phase3_profile_is_valid(transmit_profile) ||
 	    !v34_phase3_profile_is_valid(receive_profile) ||
 	    receive_profile->local_role !=
-		    v34_station_peer_role(transmit_profile->local_role) ||
-	    !qam_adaptation_is_valid(equalizer_adaptation))
+		    v34_station_peer_role(transmit_profile->local_role))
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
 	result = v34_data_mapping_prepare(
 		&prepared.transmit, transmit_profile, &mode->transmit,
@@ -126,7 +123,6 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	memcpy(prepared.receive.precoder_coefficients,
 	       mode->receive.precoder_coefficients,
 	       sizeof(prepared.receive.precoder_coefficients));
-	prepared.receive.equalizer_adaptation = equalizer_adaptation;
 	prepared.receive.trellis_selection = mode->receive.trellis_selection;
 	prepared.receive.expanded_shaping = mode->receive.expanded_shaping;
 	if (!v34_data_startup_is_valid(&prepared))

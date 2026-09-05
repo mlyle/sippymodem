@@ -45,7 +45,7 @@ struct v90_phase4_cp_line_rx {
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	struct v90_phase4_cp_line_rx *rx,
 	const struct v90_phase3_return_line_handoff *handoff,
-	enum v34_constellation_size constellation, double adaptation);
+	enum v34_constellation_size constellation);
 
 /* Preserve the fixed physical receive state after the online S/S-bar request
  * marker and admit the immediately following CP symbols.

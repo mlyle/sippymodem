@@ -11,25 +11,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	/* Four lag-two recurrence hits plus the retained points gate an online S
-	 * candidate before survivor traceback can publish it. */
-	V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS = 4,
-	V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS =
-		V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS,
-	V34_DATA_RRN_CANDIDATE_SYMBOLS =
-		V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS,
-};
-
 struct v34_data_line_receiver_configuration {
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_frame_geometry geometry;
 	struct v34_power_normalizer normalizer;
 	struct v34_q14_coefficient
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
-	/* Retained while ordinary V.34 startup still carries the old tuning
-	 * parameter. The fixed receive path owns its adaptation schedule. */
-	double equalizer_adaptation;
 	enum v34_trellis_selection trellis_selection;
 	bool expanded_shaping;
 	bool detect_rate_renegotiation;

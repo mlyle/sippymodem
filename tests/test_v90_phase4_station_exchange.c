@@ -663,7 +663,7 @@ static bool run_exchange(
 	      "paired Phase 4 fixture did not reach CPt");
 	CHECK(v90_phase4_digital_station_init(
 		      &digital, &phase3_receive, &jd, law,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_OK,
 	      "digital station did not continue the paired line");
 

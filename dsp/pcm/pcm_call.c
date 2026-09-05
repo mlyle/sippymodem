@@ -1736,9 +1736,7 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 		if (v90_phase4_digital_station_resume(
 			    &station, &receive_handoff,
 			    &call->phase3_configuration.digital.jd,
-			    &mixed->transmit,
-			    call->phase3_configuration.digital.receive
-				    .tracking_equalizer_adaptation) !=
+			    &mixed->transmit) !=
 			    V90_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		if (v90_phase4_digital_startup_init(

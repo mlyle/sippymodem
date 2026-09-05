@@ -215,8 +215,6 @@ enum v34_profile_result v34_profile_init(
 		},
 		.phase4 = {
 			.transmit_mp = local_mp(rate_mask, highest_rate_units),
-			.data_equalizer_adaptation =
-				V34_DATA_EQUALIZER_TRACKING_STEP,
 		},
 	};
 	*configuration = selected;

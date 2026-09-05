@@ -74,7 +74,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,
 	const struct v90_jd_parameters *jd, enum g711_law law,
-	uint8_t training_ucode, double equalizer_adaptation)
+	uint8_t training_ucode)
 {
 	struct v90_phase4_ri_tx transmit;
 
@@ -82,16 +82,14 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 	    V90_PHASE4_RI_OK)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	return v90_phase4_digital_station_resume(
-		station, phase3_receive, jd, &transmit,
-		equalizer_adaptation);
+		station, phase3_receive, jd, &transmit);
 }
 
 enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,
 	const struct v90_jd_parameters *jd,
-	const struct v90_phase4_ri_tx *transmit,
-	double equalizer_adaptation)
+	const struct v90_phase4_ri_tx *transmit)
 {
 	struct v90_phase4_digital_station initialized = { 0 };
 
@@ -101,8 +99,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (v90_phase4_cp_line_rx_init(
 		    &initialized.receive, phase3_receive,
-		    jd->training_constellation,
-		    equalizer_adaptation) != V90_PHASE4_CP_LINE_RX_OK)
+		    jd->training_constellation) != V90_PHASE4_CP_LINE_RX_OK)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	initialized.transmit = *transmit;
 	initialized.precoder = phase3_receive->phase3.precoder;

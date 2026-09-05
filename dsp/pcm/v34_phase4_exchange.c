@@ -207,8 +207,6 @@ static bool data_state_is_valid(
 {
 	bool record_pending;
 
-	if (!qam_adaptation_is_valid(exchange->data_equalizer_adaptation))
-		return false;
 	if (!exchange->peer_mp_received)
 		return !exchange->data_preparation_required &&
 		       !exchange->data_startup_prepared &&
@@ -225,9 +223,7 @@ static bool data_state_is_valid(
 		       !exchange->receive_data_active;
 	}
 	if (!exchange->data_startup_prepared ||
-	    !v34_data_startup_is_valid(&exchange->data_startup) ||
-	    exchange->data_startup.receive.equalizer_adaptation !=
-		    exchange->data_equalizer_adaptation)
+	    !v34_data_startup_is_valid(&exchange->data_startup))
 		return false;
 	if (exchange->transmit_data_active) {
 		if (!v34_data_stream_is_valid(&exchange->transmit.data) ||
@@ -461,9 +457,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 	    !v34_phase3_exchange_handoff_is_valid(handoff) ||
 	    configuration == NULL ||
 	    !v34_mp_record_is_valid(&configuration->transmit_mp) ||
-	    record_is_acknowledged(&configuration->transmit_mp) ||
-	    !qam_adaptation_is_valid(
-		    configuration->data_equalizer_adaptation))
+	    record_is_acknowledged(&configuration->transmit_mp))
 		return V34_PHASE4_EXCHANGE_INVALID_ARGUMENT;
 	/* Each J selects the other station's Phase 4 transmitter. */
 	local_transmit_constellation = detected_j_constellation(handoff);
@@ -486,8 +480,6 @@ enum v34_phase4_exchange_result v34_phase4_exchange_init(
 		    V34_PHASE34_RECEIVER_OK)
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 	initialized.transmit_mp = configuration->transmit_mp;
-	initialized.data_equalizer_adaptation =
-		configuration->data_equalizer_adaptation;
 	if (!v34_phase4_mp_transition_symbols(
 		    &initialized.transmit.training.line.profile,
 		    round_trip_delay_samples,
@@ -774,8 +766,7 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	startup_result = v34_data_startup_prepare(
 		&startup, &mode, &exchange->transmit.training.line.profile,
-		peer_transmit_profile(exchange),
-		exchange->data_equalizer_adaptation);
+		peer_transmit_profile(exchange));
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?
 			V34_PHASE4_EXCHANGE_OUT_OF_RANGE :

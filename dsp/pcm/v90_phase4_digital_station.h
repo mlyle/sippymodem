@@ -47,7 +47,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,
 	const struct v90_jd_parameters *jd, enum g711_law law,
-	uint8_t training_ucode, double equalizer_adaptation);
+	uint8_t training_ucode);
 
 /* Join a Phase 3 receive handoff to a Phase 4 Ri transmitter that has already
  * produced the intervening network characters. A finish request is rejected:
@@ -56,8 +56,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,
 	const struct v90_jd_parameters *jd,
-	const struct v90_phase4_ri_tx *transmit,
-	double equalizer_adaptation);
+	const struct v90_phase4_ri_tx *transmit);
 bool v90_phase4_digital_station_is_valid(
 	const struct v90_phase4_digital_station *station);
 bool v90_phase4_digital_station_has_failed(

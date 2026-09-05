@@ -55,9 +55,7 @@ static bool profile_common_is_expected(
 	       mp->maximum_call_to_answer_rate_2400_bps_units == highest &&
 	       mp->maximum_answer_to_call_rate_2400_bps_units == highest &&
 	       mp->remote_transmitter_trellis == V34_TRELLIS_16_STATE &&
-	       mp->data_rate_capability_mask == rate_mask &&
-	       configuration->phase4.data_equalizer_adaptation ==
-		       V34_DATA_EQUALIZER_TRACKING_STEP;
+	       mp->data_rate_capability_mask == rate_mask;
 }
 
 static bool test_fixed_symbol_rates(void)

@@ -8,7 +8,6 @@
 #include "test.h"
 #include "v90_phase4_line_fixture.h"
 
-#include <math.h>
 #include <string.h>
 
 enum {
@@ -143,7 +142,7 @@ static bool run_exchange(
 	      "Phase 4 digital fixture did not reach CPt");
 	CHECK(v90_phase4_digital_station_init(
 		      &station, &phase3_receive, &jd, law,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_OK &&
 	      v90_phase4_ri_tx_init(&model_ri, law, TRAINING_UCODE) ==
 		      V90_PHASE4_RI_OK,
@@ -292,7 +291,7 @@ static bool resume_after_ri_prefix(enum g711_law law)
 	}
 	CHECK(v90_phase4_digital_station_resume(
 		      &station, &phase3_receive, &jd,
-		      &transmit, 0.05) == V90_PHASE4_DIGITAL_STATION_OK &&
+		      &transmit) == V90_PHASE4_DIGITAL_STATION_OK &&
 	      ri_transmit_matches(&station.transmit, &transmit),
 	      "law %u advanced Ri transmitter was not preserved",
 	      (unsigned int)law);
@@ -322,7 +321,7 @@ static bool resume_after_ri_prefix(enum g711_law law)
 			      V90_PHASE4_RI_OK &&
 		      v90_phase4_digital_station_resume(
 			      &untouched, &phase3_receive, &jd,
-			      &requested, 0.05) ==
+			      &requested) ==
 			      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 		      memcmp(&untouched, &saved, sizeof(saved)) == 0,
 		      "law %u resume accepted an unexplained finish request",
@@ -380,34 +379,30 @@ static bool test_contracts(void)
 	untouched_saved = untouched;
 	CHECK(v90_phase4_digital_station_init(
 		      NULL, &phase3_receive, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_digital_station_init(
 		      &untouched, &phase3_receive, NULL, G711_LAW_PCMU,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_digital_station_init(
 		      &untouched, &phase3_receive, &bad_jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_digital_station_init(
 		      &untouched, &bad_receive, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase4_digital_station_init(
 		      &untouched, &phase3_receive, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, NAN) ==
-		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
-	      v90_phase4_digital_station_init(
-		      &untouched, &phase3_receive, &jd, G711_LAW_PCMU,
-		      V90_INFO1A_MIN_TRAINING_UCODE - 1u, 0.05) ==
+		      V90_INFO1A_MIN_TRAINING_UCODE - 1u) ==
 		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
 	      "rejected digital initialization changed its destination");
 
 	CHECK(v90_phase4_digital_station_init(
 		      &station, &phase3_receive, &jd, G711_LAW_PCMU,
-		      TRAINING_UCODE, 0.05) ==
+		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_OK,
 	      "valid digital station did not initialize");
 	{

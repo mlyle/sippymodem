@@ -33,7 +33,6 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	struct v34_data_startup *startup,
 	const struct v34_data_mode *mode,
 	const struct v34_phase3_profile *transmit_profile,
-	const struct v34_phase3_profile *receive_profile,
-	double equalizer_adaptation);
+	const struct v34_phase3_profile *receive_profile);
 
 #endif /* V34_DATA_STARTUP_H */

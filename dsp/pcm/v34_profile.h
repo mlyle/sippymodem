@@ -13,10 +13,6 @@ enum {
 	V34_RATE_STEP = 2400,
 };
 
-/* Decision-directed tracking after Phase 4 is deliberately stronger than
- * initial equalizer settling because the far-end transmitter keeps drifting. */
-#define V34_DATA_EQUALIZER_TRACKING_STEP 0.05
-
 enum v34_profile_result {
 	V34_PROFILE_OK,
 	V34_PROFILE_INVALID_ARGUMENT,

@@ -46,7 +46,7 @@ enum {
 	/* The early gate fits inside survivor traceback, so only frames produced
 	 * while a candidate is active need buffering. */
 	V90_DIGITAL_PATH_CANDIDATE_FRAME_CAPACITY =
-		(1u + V34_DATA_RRN_CANDIDATE_SYMBOLS +
+		(1u + V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS +
 		 V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS - 1u) /
 			V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS,
 	/* Once the peer finishes upstream B1, our downstream control can have at

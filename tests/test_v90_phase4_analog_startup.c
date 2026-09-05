@@ -98,7 +98,7 @@ static bool prepare_stations(
 		       analog, &receive) &&
 	       v90_phase4_digital_station_init(
 		       digital, &receive, &jd, law,
-		       TRAINING_UCODE, 0.05) ==
+		       TRAINING_UCODE) ==
 		       V90_PHASE4_DIGITAL_STATION_OK;
 }
 

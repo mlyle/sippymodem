@@ -4,7 +4,6 @@
 
 #include "test.h"
 
-#include <math.h>
 #include <string.h>
 
 enum {
@@ -203,7 +202,6 @@ phase4_configuration(enum v34_station_role role)
 {
 	return (struct v34_phase4_exchange_configuration){
 		.transmit_mp = mp_record(role),
-		.data_equalizer_adaptation = 0.02,
 	};
 }
 
@@ -1057,14 +1055,6 @@ static bool test_validation_and_transactionality(void)
 	exchange.mp_transition_symbols = 0u;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
 	      "Phase 4 accepted a changed MP transition target");
-	invalid.data_equalizer_adaptation = NAN;
-	memset(&exchange, 0xa5, sizeof(exchange));
-	saved = exchange;
-	CHECK(v34_phase4_exchange_init(
-		      &exchange, &caller.handoff, &invalid, 0u) ==
-		      V34_PHASE4_EXCHANGE_INVALID_ARGUMENT &&
-	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
-	      "invalid data adaptation changed the Phase 4 destination");
 	invalid = phase4_configuration(V34_CALLING_STATION);
 	invalid.transmit_mp.parameters.type1.common.acknowledges_peer_mp = true;
 	memset(&exchange, 0xa5, sizeof(exchange));

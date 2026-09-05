@@ -8,7 +8,6 @@
 #include "test.h"
 #include "v90_phase4_line_fixture.h"
 
-#include <math.h>
 #include <string.h>
 
 enum {
@@ -93,7 +92,7 @@ static bool verify_line(
 	      "law/constellation %d/%d did not reach CPt", law,
 	      constellation);
 	CHECK(v90_phase4_cp_line_rx_init(
-		      &rx, &handoff, constellation, 0.05) ==
+		      &rx, &handoff, constellation) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
 	      rx.line.timing.gain.mode == V34_GAIN_TRACKING,
 	      "CP line receiver did not accept the delayed handoff");
@@ -213,20 +212,16 @@ static bool test_transactional_contracts(void)
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
 	CHECK(v90_phase4_cp_line_rx_init(
-		      NULL, &handoff, V34_CONSTELLATION_4_POINT, 0.05) ==
+		      NULL, &handoff, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_rx_init(
 		      &untouched, &handoff,
-		      (enum v34_constellation_size)8, 0.05) ==
-		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
-	      v90_phase4_cp_line_rx_init(
-		      &untouched, &handoff,
-		      V34_CONSTELLATION_4_POINT, NAN) ==
+		      (enum v34_constellation_size)8) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &untouched_saved,
 		     sizeof(untouched)) == 0 &&
 	      v90_phase4_cp_line_rx_init(
-		      &rx, &handoff, V34_CONSTELLATION_4_POINT, 0.05) ==
+		      &rx, &handoff, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
 	      v34_phase3_s_receiver_is_valid(&rx.boundary) &&
 	      rx.boundary_complete ==

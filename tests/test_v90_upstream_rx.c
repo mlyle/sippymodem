@@ -160,7 +160,7 @@ static bool run_line(
 	      "symbol_rate=%d rate=%u",
 	      law, constellation, symbol_rate, rate_2400_bps_units);
 	CHECK(v90_phase4_cp_line_rx_init(
-		      &cp_rx, &phase3, constellation, 0.05) ==
+		      &cp_rx, &phase3, constellation) ==
 		      V90_PHASE4_CP_LINE_RX_OK,
 	      "CP receiver did not initialize law=%d constellation=%d",
 	      law, constellation);
@@ -374,7 +374,7 @@ static bool test_contracts(void)
 		      G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
 		      &training, &cp_tx, &phase3) &&
 	      v90_phase4_cp_line_rx_init(
-		      &cp_rx, &phase3, V34_CONSTELLATION_4_POINT, 0.05) ==
+		      &cp_rx, &phase3, V34_CONSTELLATION_4_POINT) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
 	      v90_pcm_mapping_init(&mapping, &training) ==
 		      V90_PCM_MAPPING_OK,

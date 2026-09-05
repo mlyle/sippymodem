@@ -24,9 +24,7 @@ static bool configuration_is_valid(
 	    !v34_mp_record_is_valid(&configuration->phase4.transmit_mp) ||
 	    v34_mp_record_common_parameters(
 		    &configuration->phase4.transmit_mp)
-		    ->acknowledges_peer_mp ||
-	    !qam_adaptation_is_valid(
-		    configuration->phase4.data_equalizer_adaptation))
+		    ->acknowledges_peer_mp)
 		return false;
 	return configuration->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(
@@ -59,9 +57,7 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 		    &call->phase4_configuration.transmit_mp) ||
 	    v34_mp_record_common_parameters(
 		    &call->phase4_configuration.transmit_mp)
-		    ->acknowledges_peer_mp ||
-	    !qam_adaptation_is_valid(
-		    call->phase4_configuration.data_equalizer_adaptation))
+		    ->acknowledges_peer_mp)
 		return false;
 	return call->local_role == V34_CALLING_STATION ?
 		       v34_info1c_is_valid(&call->local_info1.calling) :

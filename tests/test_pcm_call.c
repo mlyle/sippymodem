@@ -2056,10 +2056,10 @@ static bool start_error_bounded_candidate(
 {
 	enum {
 		CANDIDATE_BOUND =
-			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS *
+			V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS *
 			(V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u),
 		LAST_ERROR = CANDIDATE_BOUND -
-			V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS,
+			V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS,
 	};
 	struct v34_data_rate_renegotiation_monitor candidate = { 0 };
 
@@ -2075,7 +2075,7 @@ static bool start_error_bounded_candidate(
 
 		if (symbol < LAST_ERROR &&
 		    (symbol + 1u) %
-			    V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS == 0u)
+			    V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS == 0u)
 			turns++;
 		if (v34_training_constellation_fixed_point(
 			    V34_CONSTELLATION_4_POINT, 0u,
@@ -2089,7 +2089,7 @@ static bool start_error_bounded_candidate(
 	if (candidate.s.prefix.alternating_turns !=
 		    V34_PHASE3_S_PREFIX_TURNS ||
 	    candidate.s.prefix.recurrence_hits !=
-		    V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS ||
+		    V34_PHASE3_S_HUNT_CANDIDATE_RECURRENCE_HITS ||
 	    !candidate.s.candidate)
 		return false;
 	candidate.enabled = true;

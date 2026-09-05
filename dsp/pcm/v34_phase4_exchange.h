@@ -59,7 +59,6 @@ struct v34_phase4_exchange_configuration {
 	/* Supply an ordinary MP. The exchange sets the acknowledgment bit only
 	 * after receiving a valid peer record. */
 	struct v34_mp_record transmit_mp;
-	double data_equalizer_adaptation;
 };
 
 /* Derive the TRN-to-MP transition. The measured Phase 2 round-trip delay
@@ -94,7 +93,6 @@ struct v34_phase4_exchange {
 	struct v34_data_startup data_startup;
 	struct v34_mp_record transmit_mp;
 	struct v34_mp_record peer_mp;
-	double data_equalizer_adaptation;
 	uint32_t mp_transition_symbols;
 	bool peer_s_detected;
 	bool transmit_trn_started;

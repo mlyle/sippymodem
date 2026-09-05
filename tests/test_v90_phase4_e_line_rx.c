@@ -248,7 +248,7 @@ static bool run_line(
 	      "CP/E fixture did not reach CPt law=%d constellation=%d",
 	      law, constellation);
 	CHECK(v90_phase4_cp_line_rx_init(
-		      &cp_rx, &phase3, constellation, 0.05) ==
+		      &cp_rx, &phase3, constellation) ==
 		      V90_PHASE4_CP_LINE_RX_OK,
 	      "CP/E fixture did not initialize law=%d constellation=%d",
 	      law, constellation);
@@ -521,8 +521,8 @@ static bool test_contracts(void)
 		      G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
 		      &training, &cp_tx, &phase3) &&
 	      v90_phase4_cp_line_rx_init(
-		      &cp_rx, &phase3, V34_CONSTELLATION_4_POINT,
-		      0.05) == V90_PHASE4_CP_LINE_RX_OK,
+		      &cp_rx, &phase3, V34_CONSTELLATION_4_POINT) ==
+		      V90_PHASE4_CP_LINE_RX_OK,
 	      "contract fixture did not initialize");
 	memset(&untouched, 0xa5, sizeof(untouched));
 	saved = untouched;

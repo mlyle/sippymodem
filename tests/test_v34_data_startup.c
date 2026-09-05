@@ -5,7 +5,6 @@
 #include "test.h"
 #include "v34_encoder_test_helpers.h"
 
-#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -126,11 +125,11 @@ static bool test_complementary_paths(void)
 	struct v34_data_startup answerer_startup;
 
 	CHECK(v34_data_startup_prepare(
-		      &caller_startup, &caller_selection, &caller, &answerer,
-		      0.01) == V34_DATA_STARTUP_OK &&
+		      &caller_startup, &caller_selection, &caller, &answerer) ==
+		      V34_DATA_STARTUP_OK &&
 	      v34_data_startup_prepare(
-		      &answerer_startup, &answerer_selection, &answerer, &caller,
-		      0.02) == V34_DATA_STARTUP_OK &&
+		      &answerer_startup, &answerer_selection, &answerer, &caller) ==
+		      V34_DATA_STARTUP_OK &&
 	      v34_data_startup_is_valid(&caller_startup) &&
 	      v34_data_startup_is_valid(&answerer_startup),
 	      "complementary startup paths did not initialize");
@@ -142,10 +141,8 @@ static bool test_complementary_paths(void)
 	CHECK(caller_startup.transmit.schedule.geometry
 			      .primary_data_rate_2400_bps_units == 8 &&
 	      caller_startup.receive.geometry
-			      .primary_data_rate_2400_bps_units == 9 &&
-	      caller_startup.receive.equalizer_adaptation == 0.01 &&
-	      answerer_startup.receive.equalizer_adaptation == 0.02,
-	      "startup did not retain directional rates or adaptation");
+			      .primary_data_rate_2400_bps_units == 9,
+	      "startup did not retain directional rates");
 	return true;
 }
 
@@ -172,7 +169,7 @@ static bool test_validation_and_transactionality(void)
 	caller.projected_data_rate_2400_bps_units = 4;
 	answerer.projected_data_rate_2400_bps_units = 5;
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 0.01) ==
+		      &prepared, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_OK &&
 	      v34_data_startup_is_valid(&prepared) &&
 	      prepared.transmit.schedule.geometry
@@ -184,29 +181,26 @@ static bool test_validation_and_transactionality(void)
 	answerer = answerer_profile();
 	memset(&destination, 0xa5, sizeof(destination));
 	CHECK(v34_data_startup_prepare(
-		      NULL, &mode, &caller, &answerer, 0.01) ==
+		      NULL, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, NULL, &caller, &answerer, 0.01) ==
+		      &destination, NULL, &caller, &answerer) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, NULL, &answerer, 0.01) ==
+		      &destination, &mode, NULL, &answerer) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, NULL, 0.01) ==
+		      &destination, &mode, &caller, NULL) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, &caller, 0.01) ==
-		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
-	      v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, NAN) ==
+		      &destination, &mode, &caller, &caller) ==
 		      V34_DATA_STARTUP_INVALID_ARGUMENT &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "invalid startup input changed the destination");
 	mode.transmit.primary_data_rate_2400_bps_units = 14;
 	caller.projected_data_rate_2400_bps_units = 14;
 	CHECK(v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 0.01) ==
+		      &destination, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "unsupported transmit geometry changed the destination");
@@ -214,7 +208,7 @@ static bool test_validation_and_transactionality(void)
 	mode.receive.primary_data_rate_2400_bps_units = 14;
 	answerer.projected_data_rate_2400_bps_units = 14;
 	CHECK(v34_data_startup_prepare(
-		      &destination, &mode, &caller, &answerer, 0.01) ==
+		      &destination, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_OUT_OF_RANGE &&
 	      object_is_filled(&destination, sizeof(destination), 0xa5),
 	      "receive failure exposed a partially prepared path");
@@ -223,15 +217,15 @@ static bool test_validation_and_transactionality(void)
 	caller = caller_profile();
 	answerer = answerer_profile();
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 0.01) ==
+		      &prepared, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_OK,
 	      "startup validation fixture did not initialize");
-	prepared.receive.equalizer_adaptation = NAN;
+	prepared.receive.geometry.symbol_rate = V34_SYMBOL_RATE_2400;
 	CHECK(!v34_data_startup_is_valid(NULL) &&
 	      !v34_data_startup_is_valid(&prepared),
-	      "invalid receive adaptation was accepted");
+	      "mismatched receive geometry was accepted");
 	CHECK(v34_data_startup_prepare(
-		      &prepared, &mode, &caller, &answerer, 0.01) ==
+		      &prepared, &mode, &caller, &answerer) ==
 		      V34_DATA_STARTUP_OK,
 	      "startup validation fixture did not reinitialize");
 	prepared.transmit.encoder.previous_differential_output = 1;

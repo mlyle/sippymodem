@@ -182,7 +182,6 @@ static struct v34_call_configuration configuration(
 		},
 		.phase4 = {
 			.transmit_mp = mp_record(role),
-			.data_equalizer_adaptation = 0.02,
 		},
 	};
 }
@@ -1338,11 +1337,6 @@ static bool test_validation(void)
 
 	memset(&call, 0xa5, sizeof(call));
 	saved = call;
-	config.phase4.data_equalizer_adaptation = -0.1;
-	CHECK(v34_call_init(&call, &config) == V34_CALL_INVALID_ARGUMENT &&
-	      memcmp(&call, &saved, sizeof(call)) == 0,
-	      "invalid data adaptation changed the destination");
-	config = configuration(V34_CALLING_STATION);
 	config.phase3.nominal_peak_amplitude = 0;
 	CHECK(v34_call_init(&call, &config) == V34_CALL_INVALID_ARGUMENT &&
 	      memcmp(&call, &saved, sizeof(call)) == 0,
