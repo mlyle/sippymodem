@@ -41,13 +41,13 @@ static bool finish_request_is_causal(
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL)
 		return false;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
-	    station->receive.returning.points.stage <
+	    station->receive.returning.points.semantic.stage <
 		    V90_PHASE3_RETURN_RX_STAGE_S)
 		return false;
 	return !station->transmit.dil.finish_requested ||
 	       (station->receive_stage ==
 			V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN &&
-		station->receive.returning.points.stage >=
+		station->receive.returning.points.semantic.stage >=
 			V90_PHASE3_RETURN_RX_STAGE_S);
 }
 

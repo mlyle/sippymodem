@@ -202,7 +202,7 @@ static bool run_exchange(
 			    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN) {
 			if (!v90_phase3_digital_station_receive_complete(
 				    &digital) &&
-			    digital.receive.returning.points.stage ==
+			    digital.receive.returning.points.semantic.stage ==
 				    V90_PHASE3_RETURN_RX_STAGE_S) {
 				second_s_seen = true;
 				CHECK(!digital.transmit.dil.finish_requested,

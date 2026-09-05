@@ -206,7 +206,7 @@ static bool run_timeline(
 			       V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS :
 			       V90_PHASE3_RETURN_RX_ONSET_SYMBOLS) +
 					V34_EQUALIZER_DECISION_DELAY &&
-	      rx.marker.s_symbols ==
+	      rx.semantic.marker.s_symbols ==
 		      V90_PHASE3_RETURN_RX_MARKER_SUFFIX_SYMBOLS &&
 	      post_consumed == V34_EQUALIZER_DECISION_DELAY &&
 	      handoff_result == V90_PHASE3_RETURN_RX_OK &&
@@ -214,7 +214,7 @@ static bool run_timeline(
 	      "phase %u boundaries: S=%u Sbar=%u onset=%u post=%u "
 	      "stage=%d handoff=%s",
 	      quarter_turns, s_events, s_bar_events, s_at_detection,
-	      post_consumed, rx.stage,
+	      post_consumed, rx.semantic.stage,
 	      v90_phase3_return_rx_result_name(handoff_result));
 	{
 		struct qam_point point = v34_rotated_point_zero(
@@ -282,7 +282,7 @@ static bool test_tracked_onset_confirmation(void)
 			      V90_PHASE3_RETURN_RX_OK,
 		      "tracked pre-S fill reported an event at %zu", symbol);
 	}
-	CHECK(rx.confirmed_s_symbols == 0,
+	CHECK(rx.semantic.confirmed_s_symbols == 0,
 	      "tracked pre-S fill created an onset candidate");
 	for (size_t symbol = 0;
 	     symbol < V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
@@ -294,8 +294,8 @@ static bool test_tracked_onset_confirmation(void)
 			      V90_PHASE3_RETURN_RX_OK,
 		      "tracked tentative S reported an early event at %zu", symbol);
 	}
-	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
-	      rx.confirmed_s_symbols == 0,
+	CHECK(rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.semantic.confirmed_s_symbols == 0,
 	      "delayed tracked S produced an early onset candidate");
 	for (size_t symbol = 0;
 	     symbol < V34_EQUALIZER_DECISION_DELAY +
@@ -310,8 +310,8 @@ static bool test_tracked_onset_confirmation(void)
 		      "rejected tentative S returned %s at %zu",
 		      v90_phase3_return_rx_result_name(result), symbol);
 	}
-	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
-	      rx.confirmed_s_symbols == 0,
+	CHECK(rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.semantic.confirmed_s_symbols == 0,
 	      "false tracked S was not rejected transactionally");
 	for (size_t symbol = 0; symbol < 64u && s_events == 0; ++symbol) {
 		struct qam_point point = v34_rotated_point_zero((int)(symbol & 1u));
@@ -326,8 +326,8 @@ static bool test_tracked_onset_confirmation(void)
 			      "confirmed tracked S reported %s",
 			      v90_phase3_return_rx_result_name(result));
 	}
-	CHECK(s_events == 1 && rx.stage == V90_PHASE3_RETURN_RX_STAGE_S &&
-	      rx.confirmed_s_symbols ==
+	CHECK(s_events == 1 && rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_S &&
+	      rx.semantic.confirmed_s_symbols ==
 		      V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS,
 	      "tracked S was not reported after confirmation");
 	return true;
@@ -388,8 +388,8 @@ static bool test_implicit_first_return_end(void)
 		      V90_PHASE3_RETURN_RX_OK &&
 	      feed_implicit_return(&rx, 1, true),
 	      "implicit first return did not initialize or finish");
-	CHECK(rx.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END &&
-	      !rx.allow_implicit_s_end && !v90_phase3_return_rx_is_complete(&rx),
+	CHECK(rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END &&
+	      !rx.semantic.allow_implicit_s_end && !v90_phase3_return_rx_is_complete(&rx),
 	      "implicit first return exposed the wrong terminal state");
 	saved = rx;
 	memset(&handoff, 0x5a, sizeof(handoff));
@@ -404,9 +404,9 @@ static bool test_implicit_first_return_end(void)
 	      "implicit boundary consumed input or exposed an S-bar handoff");
 	CHECK(v90_phase3_return_rx_restart(&rx) == V90_PHASE3_RETURN_RX_OK &&
 	      v90_phase3_return_rx_is_valid(&rx) &&
-	      !rx.allow_implicit_s_end &&
+	      !rx.semantic.allow_implicit_s_end &&
 	      feed_implicit_return(&rx, 1, false) &&
-	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_S,
+	      rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_S,
 	      "restart did not restore strict second-return detection");
 	return true;
 }
@@ -424,7 +424,7 @@ static bool prepare_second_return(
 	       feed_implicit_return(rx, quarter_turns, true) &&
 	       v90_phase3_return_rx_restart(rx) ==
 		       V90_PHASE3_RETURN_RX_OK &&
-	       rx->second_return;
+	       rx->semantic.second_return;
 }
 
 static bool feed_second_marker(
@@ -485,7 +485,7 @@ static bool test_second_return_bounds(void)
 	      s_events == 1 && s_bar_events == 0 &&
 	      !v90_phase3_return_rx_is_complete(&rx),
 	      "short second S was accepted: S=%u Sbar=%u stage=%d",
-	      s_events, s_bar_events, rx.stage);
+	      s_events, s_bar_events, rx.semantic.stage);
 	CHECK(prepare_second_return(quarter_turns, &rx) &&
 	      feed_second_marker(
 		      &rx, quarter_turns,
@@ -494,7 +494,7 @@ static bool test_second_return_bounds(void)
 	      s_events == 1 && s_bar_events == 1 &&
 	      v90_phase3_return_rx_is_complete(&rx),
 	      "minimum second S was rejected: S=%u Sbar=%u stage=%d",
-	      s_events, s_bar_events, rx.stage);
+	      s_events, s_bar_events, rx.semantic.stage);
 	CHECK(prepare_second_return(quarter_turns, &rx) &&
 	      feed_second_marker(
 		      &rx, quarter_turns,
@@ -503,7 +503,7 @@ static bool test_second_return_bounds(void)
 	      s_events == 1 && s_bar_events == 1 &&
 	      v90_phase3_return_rx_is_complete(&rx),
 	      "maximum second S was rejected: S=%u Sbar=%u stage=%d",
-	      s_events, s_bar_events, rx.stage);
+	      s_events, s_bar_events, rx.semantic.stage);
 	CHECK(prepare_second_return(quarter_turns, &rx) &&
 	      feed_second_marker(
 		      &rx, quarter_turns,
@@ -511,14 +511,14 @@ static bool test_second_return_bounds(void)
 		      &s_events, &s_bar_events) &&
 	      s_bar_events == 0 && !v90_phase3_return_rx_is_complete(&rx),
 	      "overlong second S was accepted: S=%u Sbar=%u stage=%d",
-	      s_events, s_bar_events, rx.stage);
+	      s_events, s_bar_events, rx.semantic.stage);
 	CHECK(feed_second_marker(
 		      &rx, quarter_turns, V34_PHASE3_S_SYMBOLS,
 		      &s_events, &s_bar_events) &&
 	      s_events == 1 && s_bar_events == 1 &&
 	      v90_phase3_return_rx_is_complete(&rx),
 	      "overlong second S poisoned reacquisition: S=%u Sbar=%u stage=%d",
-	      s_events, s_bar_events, rx.stage);
+	      s_events, s_bar_events, rx.semantic.stage);
 	return true;
 }
 
@@ -553,7 +553,7 @@ static bool test_reacquisition_contract(void)
 	      feed_implicit_return(&rx, quarter_turns, true) &&
 	      v90_phase3_return_rx_restart(&rx) ==
 		      V90_PHASE3_RETURN_RX_OK &&
-	      rx.second_return && rx.equalizer.carrier_tracking,
+	      rx.semantic.second_return && rx.equalizer.carrier_tracking,
 	      "reacquisition receiver did not reach the second return");
 	saved = rx;
 	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &unscalable) ==
@@ -569,9 +569,9 @@ static bool test_reacquisition_contract(void)
 	      rx.compact_equalizer_active &&
 	      rx.compact_equalizer.tap_count == V34_EQUALIZER_TAP_COUNT &&
 	      rx.compact_equalizer.fill == 0 &&
-	      rx.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
-	      rx.confirmed_s_symbols == 0 &&
-	      rx.buffered_onset_decisions == 0,
+	      rx.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	      rx.semantic.confirmed_s_symbols == 0 &&
+	      rx.semantic.buffered_onset_decisions == 0,
 	      "valid S point did not begin bounded equalizer reacquisition");
 	saved = rx;
 	CHECK(v90_phase3_return_rx_reacquire_s(&rx, &point) ==
@@ -615,7 +615,7 @@ static bool test_validation(void)
 	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "rejected return operation changed state or output");
-	rx.stage = (enum v90_phase3_return_rx_stage)99;
+	rx.semantic.stage = (enum v90_phase3_return_rx_stage)99;
 	CHECK(!v90_phase3_return_rx_is_valid(NULL) &&
 	      !v90_phase3_return_rx_is_valid(&rx) &&
 	      !v90_phase3_return_rx_is_complete(&rx) &&
@@ -630,6 +630,211 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool run_marker_timeline(bool confirm_onset, bool implicit_first)
+{
+	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
+	struct v34_phase3_s_detection detection;
+	const unsigned int onset = confirm_onset ?
+		V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS :
+		V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
+	bool adapt = true;
+
+	CHECK(v90_phase3_return_marker_init(&rx, confirm_onset) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "return marker did not initialize its first-return permission");
+	for (unsigned int epoch = 0; epoch < 2u; ++epoch) {
+		for (unsigned int symbol = 0; symbol < V34_PHASE3_S_SYMBOLS;
+		     ++symbol) {
+			uint8_t rotation = (uint8_t)((4u - (symbol & 1u)) & 3u);
+			enum v90_phase3_return_rx_result expected =
+				symbol + 1u == onset ? V90_PHASE3_RETURN_RX_S_DETECTED :
+				V90_PHASE3_RETURN_RX_OK;
+
+			CHECK(v90_phase3_return_marker_observe(&rx, rotation, &adapt) ==
+				      expected && adapt == (symbol + 1u >= onset),
+			      "epoch %u onset/adaptation changed at symbol %u", epoch, symbol);
+			if (symbol + 1u == onset) {
+				saved = rx;
+				CHECK(v90_phase3_return_marker_allow_implicit_s_end(&rx) ==
+					      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+				      memcmp(&rx, &saved, sizeof(rx)) == 0,
+				      "qualified S changed implicit-end permission");
+			}
+		}
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE3_S_BAR_SYMBOLS; ++symbol) {
+			bool implicit = epoch == 0u && implicit_first;
+			uint8_t rotation = implicit ? 1u :
+				(uint8_t)((6u - (symbol & 1u)) & 3u);
+			enum v90_phase3_return_rx_result expected =
+				symbol + 1u != V34_PHASE3_S_BAR_SYMBOLS ?
+					V90_PHASE3_RETURN_RX_OK :
+				implicit ? V90_PHASE3_RETURN_RX_S_ENDED :
+					V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
+
+			CHECK(v90_phase3_return_marker_observe(&rx, rotation, &adapt) ==
+				      expected && adapt,
+			      "epoch %u return boundary changed at symbol %u", epoch, symbol);
+		}
+		saved = rx;
+		adapt = false;
+		CHECK(v90_phase3_return_marker_observe(&rx, 0, &adapt) ==
+			      (epoch == 0u && implicit_first ?
+				       V90_PHASE3_RETURN_RX_INVALID_STATE :
+				       V90_PHASE3_RETURN_RX_COMPLETE) &&
+		      !adapt && memcmp(&rx, &saved, sizeof(rx)) == 0,
+		      "epoch %u terminal marker consumed the next decision", epoch);
+		CHECK(v90_phase3_return_marker_get_detection(&rx, &detection) ==
+			      !(epoch == 0u && implicit_first),
+		      "epoch %u marker handoff confused implicit end and S-bar", epoch);
+		if (epoch == 0u)
+			CHECK(v90_phase3_return_marker_restart(&rx) ==
+				      V90_PHASE3_RETURN_RX_OK && rx.second_return &&
+			      rx.confirm_onset == confirm_onset &&
+			      !rx.allow_implicit_s_end && rx.confirmed_s_symbols == 0,
+			      "first return did not restart with strict second semantics");
+	}
+	CHECK(detection.clockwise_quarter_turn_offset == 0 &&
+	      rx.marker.post_marker_symbols == 0 &&
+	      v90_phase3_return_marker_is_complete(&rx),
+	      "second return did not retain the exact first CPt decision boundary");
+	return true;
+}
+
+static bool test_marker_semantics(void)
+{
+	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
+	struct v34_phase3_s_detection detection = { 2, 1, 1 };
+	struct v34_phase3_s_detection saved_detection = detection;
+	bool adapt = true;
+
+	CHECK(run_marker_timeline(false, false) &&
+	      run_marker_timeline(false, true) &&
+	      run_marker_timeline(true, false) &&
+	      run_marker_timeline(true, true),
+	      "return marker timelines failed");
+	CHECK(v90_phase3_return_marker_init(&rx, true) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "marker validation receiver did not initialize");
+	saved = rx;
+	CHECK(v90_phase3_return_marker_init(NULL, false) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_marker_observe(NULL, 0, &adapt) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_marker_observe(&rx, 4, &adapt) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_marker_observe(&rx, 0, NULL) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_marker_observe(&rx, 0, &rx.confirm_onset) ==
+		      V90_PHASE3_RETURN_RX_INVALID_ARGUMENT &&
+	      v90_phase3_return_marker_restart(&rx) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      v90_phase3_return_marker_reacquire_s(&rx) ==
+		      V90_PHASE3_RETURN_RX_INVALID_STATE &&
+	      !v90_phase3_return_marker_get_detection(&rx, &detection) &&
+	      adapt && memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&detection, &saved_detection, sizeof(detection)) == 0,
+	      "invalid marker call changed state or output");
+	return true;
+}
+
+static bool test_marker_confirmation_tail(void)
+{
+	struct v90_phase3_return_marker rx;
+	struct v90_phase3_return_marker saved;
+	struct v34_phase3_s_detection detection;
+	bool adapt;
+
+	CHECK(v90_phase3_return_marker_init(&rx, true) == V90_PHASE3_RETURN_RX_OK,
+	      "confirmation-tail marker did not initialize");
+	for (unsigned int symbol = 0;
+	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS +
+		     V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS; ++symbol) {
+		uint8_t rotation = (uint8_t)((4u - (symbol & 1u)) & 3u);
+		enum v90_phase3_return_rx_result expected = V90_PHASE3_RETURN_RX_OK;
+
+		if (symbol >= V34_PHASE3_S_SEQUENCE_SYMBOLS)
+			rotation = (uint8_t)(symbol - V34_PHASE3_S_SEQUENCE_SYMBOLS);
+		else if (symbol >= V34_PHASE3_S_SYMBOLS) {
+			rotation = (uint8_t)((rotation + 2u) & 3u);
+			if (symbol < V34_PHASE3_S_SYMBOLS +
+				     V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
+				rotation = (uint8_t)((rotation + 1u) & 3u);
+		}
+		if (symbol + 1u == V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS)
+			expected = V90_PHASE3_RETURN_RX_S_DETECTED;
+		if (symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS +
+				   V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS)
+			expected = V90_PHASE3_RETURN_RX_S_BAR_DETECTED;
+		CHECK(v90_phase3_return_marker_observe(&rx, rotation, &adapt) == expected,
+		      "confirmation-tail ownership changed at symbol %u", symbol);
+	}
+	CHECK(v90_phase3_return_marker_get_detection(&rx, &detection) &&
+	      detection.clockwise_quarter_turn_offset == 0u &&
+	      detection.s_errors == 0u &&
+	      detection.s_bar_errors == V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS &&
+	      rx.marker.post_marker_symbols == V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	      "damaged S-bar did not retain its bounded post-marker tail");
+	saved = rx;
+	CHECK(!v90_phase3_return_marker_get_detection(&rx, &rx.marker.detection) &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "marker handoff accepted a state-aliasing destination");
+	return true;
+}
+
+static bool test_adaptation_failure_rolls_back_marker(void)
+{
+	struct v34_equalizer_handoff equalizer;
+	struct v90_phase3_return_rx rx;
+	struct v90_phase3_return_rx saved;
+	struct v90_phase3_return_marker accepted;
+	struct qam_equalizer trial;
+	struct qam_equalizer_observation observation = { 0 };
+	struct qam_point point = channel_point(v34_rotated_point_zero(0), 0);
+	struct qam_point target;
+	uint8_t quarter;
+	uint8_t rotation;
+	bool ready;
+	bool adapt;
+
+	CHECK(seed_handoff(0, &equalizer) &&
+	      v90_phase3_return_rx_init(&rx, &equalizer, 0.05) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "adaptation-failure receiver did not initialize");
+	/* A zero-weight tap keeps this finite input out of the current decision,
+	 * but its squared energy overflows only when adaptation is attempted. */
+	rx.equalizer.history[0] = (struct qam_point){ DBL_MAX, 0 };
+	trial = rx.equalizer;
+	CHECK(qam_equalizer_observe(&trial, &point, &observation, &ready) ==
+		      QAM_EQUALIZER_OK && ready &&
+	      v34_training_constellation_slice(V34_CONSTELLATION_4_POINT,
+		      &observation.output, &quarter, &rotation) == V34_CONSTELLATION_OK &&
+	      v34_training_constellation_point(V34_CONSTELLATION_4_POINT,
+		      quarter, rotation, &target) == V34_CONSTELLATION_OK,
+	      "adaptation failure occurred before a finite decision");
+	for (unsigned int symbol = 0;
+	     symbol < V90_PHASE3_RETURN_RX_ONSET_SYMBOLS - 1u; ++symbol)
+		CHECK(v90_phase3_return_marker_observe(&rx.semantic,
+			      (uint8_t)((rotation + 4u - (symbol & 1u)) & 3u),
+			      &adapt) == V90_PHASE3_RETURN_RX_OK && !adapt,
+		      "adaptation-failure onset seeded too early");
+	saved = rx;
+	accepted = rx.semantic;
+	CHECK(v90_phase3_return_marker_observe(&accepted, rotation, &adapt) ==
+		      V90_PHASE3_RETURN_RX_S_DETECTED && adapt &&
+	      qam_equalizer_adapt_observation(&trial, &observation, &target, 0.05) !=
+		      QAM_EQUALIZER_OK &&
+	      v90_phase3_return_rx_point(&rx, &point) ==
+		      V90_PHASE3_RETURN_RX_NUMERIC_FAILURE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "equalizer failure committed a tentative semantic S boundary");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -641,6 +846,10 @@ int main(void)
 			{ "implicit first-return end", test_implicit_first_return_end },
 			{ "second-return bounds", test_second_return_bounds },
 			{ "reacquisition contract", test_reacquisition_contract },
+			{ "marker semantics", test_marker_semantics },
+			{ "marker confirmation tail", test_marker_confirmation_tail },
+			{ "adaptation failure rolls back marker",
+			  test_adaptation_failure_rolls_back_marker },
 			{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

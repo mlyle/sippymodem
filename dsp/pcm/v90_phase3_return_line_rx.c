@@ -23,8 +23,8 @@ bool v90_phase3_return_line_rx_is_valid(
 	       rx->reacquisition_symbols <=
 		       V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS &&
 	       (rx->reacquiring_equalizer ?
-			(rx->points.second_return && rx->s_prefix.complete &&
-			 rx->points.stage ==
+			(rx->points.semantic.second_return && rx->s_prefix.complete &&
+			 rx->points.semantic.stage ==
 				 V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) :
 			(rx->reacquisition_symbols == 0 &&
 			 !rx->points.equalizer_reacquiring));
@@ -140,7 +140,7 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
 	if (v90_phase3_return_rx_is_complete(&rx->points))
 		return V90_PHASE3_RETURN_LINE_RX_COMPLETE;
-	if (rx->points.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
+	if (rx->points.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
 	upstream_result = v90_upstream_training_rx_sample(
@@ -154,8 +154,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	}
 	result = V90_PHASE3_RETURN_LINE_RX_OK;
-	if (ready && next.points.second_return &&
-	    next.points.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+	if (ready && next.points.semantic.second_return &&
+	    next.points.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
 	    !next.reacquiring_equalizer) {
 		struct qam_measurement measurement =
 			qam_demodulator_measure(&next.demodulator);
@@ -181,7 +181,7 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 			}
 		}
 	}
-	previous_stage = next.points.stage;
+	previous_stage = next.points.semantic.stage;
 	if (ready && result == V90_PHASE3_RETURN_LINE_RX_OK &&
 	    !point_consumed)
 		result = point_result(
@@ -203,7 +203,7 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 		}
 	}
 	if (ready && previous_stage == V90_PHASE3_RETURN_RX_STAGE_S &&
-	    next.points.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) {
+	    next.points.semantic.stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) {
 		if (v34_phase3_s_prefix_init_recurrent(&next.s_prefix) !=
 		    V34_PHASE3_S_PREFIX_OK)
 			result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;

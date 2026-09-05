@@ -2505,6 +2505,7 @@ V90_PHASE3_RETURN_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v34_precoder_trainer.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v90_phase3_return_rx.o \
+	$(BUILD_DIR)/v90_phase3_return_marker.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_tx.o, \
 		$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_tx.o, \
@@ -5644,6 +5645,10 @@ $(BUILD_DIR)/v90_phase3_return_line_tx.o: \
 
 $(BUILD_DIR)/v90_phase3_return_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase3_return_marker.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_marker.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_return_tx.o: \

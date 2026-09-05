@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
+#include <v34_constellation.h>
 #include <v90_phase3_analog_line_rx.h>
 #include <v90_phase3_analog_line_tx.h>
 #include <v90_phase3_return_line_rx.h>
@@ -361,6 +362,145 @@ static bool test_g711_lines(void)
 	return true;
 }
 
+/* The fixed line is trained once by S/PP and never restarted at either return.
+ * This proves the protocol-only seam without changing the runtime floating
+ * acquisition/return route. The nonperiodic suffix detects a lost or repeated
+ * first post-S-bar decision independently of a CP frame resynchronizer. */
+static bool run_fixed_returns(enum g711_law law)
+{
+	static const uint8_t post_rotations[] = {
+		0, 2, 1, 3, 3, 1, 2, 0, 1, 1, 3, 0, 2, 3, 2, 0,
+	};
+	enum {
+		FIRST_S_END = RETURN_SILENCE_SYMBOLS + 192,
+		SECOND_S_START = FIRST_S_END + 192,
+		SECOND_S_END = SECOND_S_START + V34_PHASE3_S_SYMBOLS,
+		POST_START = SECOND_S_END + V34_PHASE3_S_BAR_SYMBOLS,
+	};
+	struct v90_phase3_analog_line_tx prefix;
+	struct v90_phase3_analog_line_handoff handoff;
+	struct v90_phase3_return_marker marker;
+	struct v34_training_line tx;
+	struct v34_phase3_s_detection detection = { 0 };
+	unsigned int supplied = 0;
+	unsigned int post_received = 0;
+	unsigned int onset_events = 0;
+	bool first_ended = false;
+	bool second_ended = false;
+
+	CHECK(establish_ja(law, &prefix, &handoff) &&
+	      v90_phase3_analog_line_tx_finish_ja(&prefix) ==
+		      V90_PHASE3_ANALOG_LINE_TX_OK,
+	      "law %d fixed return could not finish Ja", law);
+	for (unsigned int index = 0; index < SAMPLE_LIMIT &&
+	     !v90_phase3_analog_line_tx_is_handoff_ready(&prefix); ++index) {
+		int16_t sample;
+
+		CHECK(v90_phase3_analog_line_tx_sample(&prefix, &sample) ==
+			      V90_PHASE3_ANALOG_LINE_TX_OK &&
+		      v90_upstream_training_rx_sample(
+			      &handoff.upstream, quantize(law, sample)) ==
+			      V90_UPSTREAM_TRAINING_RX_OK,
+		      "law %d fixed return lost its Ja line", law);
+	}
+	CHECK(v90_phase3_analog_line_tx_handoff(&prefix, &tx) ==
+		      V90_PHASE3_ANALOG_LINE_TX_OK &&
+	      v90_phase3_return_marker_init(&marker, true) ==
+		      V90_PHASE3_RETURN_RX_OK &&
+	      v90_phase3_return_marker_allow_implicit_s_end(&marker) ==
+		      V90_PHASE3_RETURN_RX_OK,
+	      "law %d fixed return did not initialize", law);
+	for (unsigned int index = 0;
+	     index < SAMPLE_LIMIT && post_received < ARRAY_LENGTH(post_rotations);
+	     ++index) {
+		struct qam_point point = { 0 };
+		struct v34_analytic_sample decision;
+		struct v34_fixed_training_decision hard;
+		uint16_t previous = handoff.upstream.next_recent_decision;
+		bool accepting = v34_training_line_needs_point(&tx);
+		bool accepted;
+		bool adapt;
+		int16_t sample;
+		enum v90_phase3_return_rx_result result;
+
+		if (supplied >= POST_START)
+			point = v34_rotated_point_zero(post_rotations[
+				(supplied - POST_START) % ARRAY_LENGTH(post_rotations)]);
+		else if (supplied >= SECOND_S_END)
+			point = v34_rotated_point_zero(
+				(int)(2u + ((supplied - SECOND_S_END) & 1u)));
+		else if (supplied >= SECOND_S_START)
+			point = v34_rotated_point_zero(
+				(int)((supplied - SECOND_S_START) & 1u));
+		else if (supplied >= FIRST_S_END)
+			point = v34_rotated_point_zero(2);
+		else if (supplied >= RETURN_SILENCE_SYMBOLS)
+			point = v34_rotated_point_zero(
+				(int)((supplied - RETURN_SILENCE_SYMBOLS) & 1u));
+		CHECK(v34_training_line_sample(
+			      &tx, accepting ? &point : NULL, &sample, &accepted) ==
+			      V34_TRAINING_LINE_OK && accepted == accepting &&
+		      v90_upstream_training_rx_sample(
+			      &handoff.upstream, quantize(law, sample)) ==
+			      V90_UPSTREAM_TRAINING_RX_OK,
+		      "law %d fixed return stopped at sample %u", law, index);
+		if (accepted)
+			supplied++;
+		if (previous == handoff.upstream.next_recent_decision)
+			continue;
+		CHECK(v90_upstream_training_rx_recent_decision(
+			      &handoff.upstream,
+			      handoff.upstream.recent_decision_count - 1u, &decision) &&
+		      v34_training_constellation_fixed_slice(
+			      V34_CONSTELLATION_4_POINT, decision, &hard) ==
+			      V34_CONSTELLATION_OK,
+		      "law %d fixed return did not export a decision", law);
+		if (second_ended) {
+			CHECK(((hard.clockwise_quarter_turns + 4u -
+				detection.clockwise_quarter_turn_offset) & 3u) ==
+				      ((4u - post_rotations[post_received]) & 3u),
+			      "law %d fixed return displaced post decision %u",
+			      law, post_received);
+			post_received++;
+			continue;
+		}
+		result = v90_phase3_return_marker_observe(
+			&marker, hard.clockwise_quarter_turns, &adapt);
+		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
+			onset_events++;
+		else if (result == V90_PHASE3_RETURN_RX_S_ENDED) {
+			CHECK(!first_ended && onset_events == 1u &&
+			      marker.confirmed_s_symbols >=
+				      V90_PHASE3_RETURN_RX_MIN_IMPLICIT_S_SYMBOLS &&
+			      v90_phase3_return_marker_restart(&marker) ==
+				      V90_PHASE3_RETURN_RX_OK,
+			      "law %d fixed first return did not end implicitly", law);
+			first_ended = true;
+		} else if (result == V90_PHASE3_RETURN_RX_S_BAR_DETECTED) {
+			CHECK(first_ended && onset_events == 2u &&
+			      marker.confirmed_s_symbols == V34_PHASE3_S_SYMBOLS &&
+			      marker.marker.post_marker_symbols == 0u &&
+			      v90_phase3_return_marker_get_detection(&marker, &detection),
+			      "law %d fixed second return lost its exact boundary", law);
+			second_ended = true;
+		} else {
+			CHECK(result == V90_PHASE3_RETURN_RX_OK,
+			      "law %d fixed return reported %d", law, result);
+		}
+	}
+	CHECK(first_ended && second_ended &&
+	      post_received == ARRAY_LENGTH(post_rotations),
+	      "law %d fixed line did not complete both return epochs", law);
+	return true;
+}
+
+static bool test_fixed_returns(void)
+{
+	CHECK(run_fixed_returns(G711_LAW_PCMU) && run_fixed_returns(G711_LAW_PCMA),
+	      "fixed G.711 return semantics failed");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v90_phase3_analog_line_tx tx;
@@ -426,6 +566,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "G.711 lines", test_g711_lines },
+		{ "fixed return decisions", test_fixed_returns },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

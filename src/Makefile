@@ -300,6 +300,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_marker.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd_receiver.c \
