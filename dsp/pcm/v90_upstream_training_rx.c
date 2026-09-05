@@ -8,6 +8,10 @@
 #include <string.h>
 
 enum {
+	/* Preserve 48 symbols of past-channel span for delayed upstream echoes,
+	 * while ordinary V.34 retains its 80-tap/20-symbol geometry. */
+	V90_UPSTREAM_EQUALIZER_TAPS = 128,
+	V90_UPSTREAM_EQUALIZER_DELAY = 16,
 	V90_UPSTREAM_INITIAL_DECODER_POWER_Q15 = 0x7000,
 	V90_UPSTREAM_MIDDLE_DECODER_POWER_Q15 = 0x4000,
 	V90_UPSTREAM_FINAL_DECODER_POWER_Q15 = 0x2000,
@@ -49,6 +53,19 @@ static bool semantic_state_is_valid(
 		       V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 }
 
+static bool history_is_valid(
+	const struct v90_upstream_training_rx *receiver)
+{
+	return receiver->next_recent_decision <
+		       V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
+	       receiver->recent_decision_count <=
+		       V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
+	       (receiver->recent_decision_count ==
+			V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS ||
+		receiver->next_recent_decision ==
+			receiver->recent_decision_count);
+}
+
 bool v90_upstream_training_rx_is_valid(
 	const struct v90_upstream_training_rx *receiver)
 {
@@ -59,10 +76,29 @@ bool v90_upstream_training_rx_is_valid(
 	    receiver->line.equalizer.feedback_mode !=
 		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE ||
 	    !semantic_state_is_valid(receiver) ||
+	    !history_is_valid(receiver) ||
 	    receiver->decoder_power_q15 != decoder_power(receiver))
 		return false;
 	if (receiver->initial.stage == V34_PHASE3_DECISION_RECEIVER_S)
 		return receiver->tracking_symbols == 0u;
+	return true;
+}
+
+bool v90_upstream_training_rx_recent_decision(
+	const struct v90_upstream_training_rx *receiver, size_t index,
+	struct v34_analytic_sample *decision)
+{
+	size_t oldest;
+
+	if (!v90_upstream_training_rx_is_valid(receiver) || decision == NULL ||
+	    index >= receiver->recent_decision_count)
+		return false;
+	oldest = (receiver->next_recent_decision +
+		  V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS -
+		  receiver->recent_decision_count) %
+		 V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS;
+	*decision = receiver->recent_decisions[
+		(oldest + index) % V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS];
 	return true;
 }
 
@@ -105,6 +141,10 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 		    transmitting_profile->local_role, 0u,
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_DECISION_RECEIVER_OK ||
+	    v34_equalizer_init_geometry(
+		    &initialized.line.equalizer.equalizer,
+		    V90_UPSTREAM_EQUALIZER_TAPS,
+		    V90_UPSTREAM_EQUALIZER_DELAY) != V34_EQUALIZER_OK ||
 	    !v90_upstream_training_rx_is_valid(&initialized))
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	*receiver = initialized;
@@ -118,6 +158,20 @@ static void advance_tracking(struct v90_upstream_training_rx *receiver)
 	if (receiver->tracking_symbols < period)
 		receiver->tracking_symbols++;
 	receiver->decoder_power_q15 = decoder_power(receiver);
+}
+
+static void remember_decision(
+	struct v90_upstream_training_rx *receiver,
+	struct v34_analytic_sample decision)
+{
+	receiver->recent_decisions[receiver->next_recent_decision] = decision;
+	receiver->next_recent_decision++;
+	if (receiver->next_recent_decision ==
+	    V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS)
+		receiver->next_recent_decision = 0;
+	if (receiver->recent_decision_count <
+	    V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS)
+		receiver->recent_decision_count++;
 }
 
 static enum v90_upstream_training_rx_result resolve_action(
@@ -223,15 +277,17 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 	struct v90_upstream_training_rx *receiver, int16_t sample)
 {
 	struct v90_upstream_training_rx next;
-	struct v34_adaptive_equalizer_observation observation;
+	struct v34_adaptive_equalizer_observation observation = { 0 };
 	enum v34_line_receiver_result line_result;
 	enum v90_upstream_training_rx_result result;
+	bool was_tracking;
 
 	if (!v90_upstream_training_rx_is_valid(receiver))
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V90_UPSTREAM_TRAINING_RX_FAILED;
 	next = *receiver;
+	was_tracking = next.stage == V90_UPSTREAM_TRAINING_RX_TRACKING;
 	line_result = v34_line_receiver_sample(
 		&next.line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
@@ -256,6 +312,12 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 			receiver->failed = true;
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	}
+	if (was_tracking)
+		remember_decision(&next, observation.decision);
+	if (!v90_upstream_training_rx_is_valid(&next)) {
+		receiver->failed = true;
+		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
+	}
 	*receiver = next;
 	return result;
 }
@@ -264,7 +326,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
 	struct v90_upstream_training_rx *receiver, int16_t sample)
 {
 	struct v90_upstream_training_rx next;
-	struct v34_adaptive_equalizer_observation observation;
+	struct v34_adaptive_equalizer_observation observation = { 0 };
 	struct v34_receive_action discard =
 		v34_receive_action_only(V34_RECEIVE_DISCARD);
 	enum v34_line_receiver_result line_result;
@@ -290,6 +352,8 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
 			receiver->failed = true;
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	}
+	if (v34_adaptive_equalizer_observation_is_valid(&observation))
+		remember_decision(&next, observation.decision);
 	if (!v90_upstream_training_rx_is_valid(&next)) {
 		receiver->failed = true;
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;

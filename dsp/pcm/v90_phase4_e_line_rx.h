@@ -25,21 +25,17 @@ enum v90_phase4_e_line_rx_result {
 };
 
 /* Own the digital modem's continuous conventional-upstream line after an
- * accepted CP-prime record. Carrier timing, equalizer delay, adaptation,
- * descrambler history, and differential phase cross the boundary unchanged.
- * The equalizer already owns the first delayed E inputs. */
+ * accepted CP-prime record. Fixed timing, equalizer delay, descrambler
+ * history, and differential phase cross the boundary unchanged. The
+ * equalizer already owns the first delayed E inputs. */
 struct v90_phase4_e_line_rx {
-	struct qam_demodulator demodulator;
-	struct qam_equalizer equalizer;
-	struct qam_equalizer compact_equalizer;
+	struct v34_line_receiver line;
 	struct v34_phase4_e_receiver symbols;
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters cp;
-	double adaptation;
-	bool adaptation_is_data_mode;
-	bool tap_adaptation_held;
+	uint16_t decoder_power_q15;
+	enum v34_adaptive_equalizer_adaptation adaptation;
 	bool failed;
-	bool compact_equalizer_active;
 };
 
 enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(

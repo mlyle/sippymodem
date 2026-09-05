@@ -1038,11 +1038,6 @@ V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_channel_frame_receiver.o \
 	$(BUILD_DIR)/v34_data_channel_receiver.o \
-	$(BUILD_DIR)/v34_data_equalizer_receiver.o \
-	$(BUILD_DIR)/v34_equalizer_handoff.o \
-	$(BUILD_DIR)/v34_phase3_s_receiver.o \
-	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/qam_equalizer.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_decoder.o \
 		$(BUILD_DIR)/test_v34_channel_conditioner.o, \
@@ -1057,10 +1052,7 @@ V34_DATA_DECISION_RECEIVER_TEST_OBJECTS = \
 		$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
 		$(BUILD_DIR)/test_v34_data_mapping.o \
 		$(BUILD_DIR)/test_v34_data_carrier.o \
-		$(BUILD_DIR)/test_v34_power_calibration.o \
-		$(BUILD_DIR)/v34_data_equalizer_receiver.o \
-		$(BUILD_DIR)/v34_equalizer_handoff.o \
-		$(BUILD_DIR)/qam_equalizer.o, \
+		$(BUILD_DIR)/test_v34_power_calibration.o, \
 		$(V34_CHANNEL_FRAME_RECEIVER_TEST_OBJECTS) \
 		$(V34_DATA_MAPPING_TEST_OBJECTS)))
 V34_MAPPING_FRAME_TRANSMITTER_TEST_BINARY := \
@@ -1193,11 +1185,11 @@ V34_RECEIVE_PRIMITIVE_OBJECTS := \
 	$(BUILD_DIR)/v34_info1.o \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/fixed_phase.o
-V34_DATA_LINE_RECEIVER_TEST_BINARY := \
-	$(BUILD_DIR)/test_v34_data_line_receiver
-V34_DATA_LINE_RECEIVER_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v34_data_line_receiver.o \
+V34_DATA_LINE_RECEIVER_OBJECTS := \
 	$(sort $(BUILD_DIR)/v34_data_line_receiver.o \
+		$(BUILD_DIR)/v34_data_decision_receiver.o \
+		$(BUILD_DIR)/v34_phase3_s_receiver.o \
+		$(BUILD_DIR)/qam.o \
 		$(V34_RECEIVE_PRIMITIVE_OBJECTS) \
 		$(filter-out \
 		$(BUILD_DIR)/test_v34_channel_frame_receiver.o \
@@ -2555,8 +2547,7 @@ V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase4_cp_line_rx.o \
 	$(BUILD_DIR)/v90_phase4_cp_rx.o \
 	$(BUILD_DIR)/v90_cp_receiver.o \
-	$(filter-out $(BUILD_DIR)/test_v34_data_line_receiver.o, \
-		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)) \
+	$(V34_DATA_LINE_RECEIVER_OBJECTS) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_line_rx.o, \
 		$(V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_cp_line_tx.o, \
@@ -2575,8 +2566,7 @@ V90_PHASE4_E_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_upstream_data.o, \
 		$(V90_UPSTREAM_DATA_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_v34_data_line_receiver.o, \
-		$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)))
+	$(V34_DATA_LINE_RECEIVER_OBJECTS))
 V90_UPSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_v90_upstream_rx
 V90_UPSTREAM_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_upstream_rx.o \
@@ -3139,7 +3129,6 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_DATA_MAPPING_TEST_BINARY) \
 	$(V34_DATA_STARTUP_TEST_BINARY) \
 	$(V34_DATA_STREAM_TEST_BINARY) \
-	$(V34_DATA_LINE_RECEIVER_TEST_BINARY) \
 	$(V34_ANALYTIC_FILTER_TEST_BINARY) \
 	$(V34_GAIN_CONTROL_TEST_BINARY) \
 	$(V34_S_TONE_DETECTOR_TEST_BINARY) \
@@ -3457,7 +3446,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_DATA_MAPPING_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_STARTUP_TEST_OBJECTS:.o=.d) \
 	$(V34_DATA_STREAM_TEST_OBJECTS:.o=.d) \
-	$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS:.o=.d) \
+	$(V34_DATA_LINE_RECEIVER_OBJECTS:.o=.d) \
 	$(V34_ANALYTIC_FILTER_TEST_OBJECTS:.o=.d) \
 	$(V34_GAIN_CONTROL_TEST_OBJECTS:.o=.d) \
 	$(V34_S_TONE_DETECTOR_TEST_OBJECTS:.o=.d) \
@@ -4066,10 +4055,6 @@ $(V34_DATA_STARTUP_TEST_BINARY): $(V34_DATA_STARTUP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_STREAM_TEST_BINARY): $(V34_DATA_STREAM_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
-
-$(V34_DATA_LINE_RECEIVER_TEST_BINARY): \
-	$(V34_DATA_LINE_RECEIVER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_ANALYTIC_FILTER_TEST_BINARY): \
@@ -5051,10 +5036,6 @@ $(BUILD_DIR)/v34_data_channel_receiver.o: \
 
 $(BUILD_DIR)/v34_data_decision_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_decision_receiver.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v34_data_equalizer_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_data_line_receiver.o: \

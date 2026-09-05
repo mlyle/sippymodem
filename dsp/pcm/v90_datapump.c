@@ -564,9 +564,10 @@ static enum v90_host_echo_mode host_echo_mode(
 	    call->state.phase3.digital.transmit.sequence.prefix.stage ==
 		    PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
 		return V90_HOST_ECHO_TRAIN;
-	if (call->stage == PCM_CALL_DATA_PATH ||
-	    (call->stage == PCM_CALL_PHASE4 &&
-	     pcm_call_phase4_is_ready(call)) ||
+	/* The upstream CP receiver owns conventional samples throughout Phase 4;
+	 * it needs the trained echo filter before declaring the phase ready. */
+	if (call->stage == PCM_CALL_PHASE4 ||
+	    call->stage == PCM_CALL_DATA_PATH ||
 	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
 	     call->retrain.peer_tone_retained))
 		return V90_HOST_ECHO_FILTER;

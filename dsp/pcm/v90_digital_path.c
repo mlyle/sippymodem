@@ -611,8 +611,8 @@ static enum v90_digital_path_result receive_upstream(
 				&path->upstream.data, sample,
 				&current, &frame);
 		bool candidate_after =
-			v34_data_equalizer_receiver_has_rate_renegotiation_candidate(
-				&path->upstream.data.equalizer_receiver);
+			v34_data_line_receiver_has_rate_renegotiation_candidate(
+				&path->upstream.data);
 		bool hold_frame = defer_host_frame || candidate_after ||
 			path->rate_renegotiation_active;
 		bool generated_frame =

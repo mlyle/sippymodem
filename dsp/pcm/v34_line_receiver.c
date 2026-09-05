@@ -106,7 +106,9 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	/* A fresh identity equalizer initially publishes its zero-filled delay
 	 * line. Keep that physical prefix out of every semantic receiver. */
 	if (receiver->equalizer.epoch <
-	    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH) {
+	    ((unsigned int)receiver->equalizer.equalizer.tap_count -
+	     receiver->equalizer.equalizer.identity_tap) /
+		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION) {
 		if (v34_adaptive_equalizer_discard(
 			    &receiver->equalizer, &generated) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)

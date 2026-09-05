@@ -2020,55 +2020,38 @@ static bool complete_rate_renegotiation_monitor(
 	struct v34_data_rate_renegotiation_monitor completed = { 0 };
 
 	if (monitor == NULL ||
-	    v34_phase3_s_receiver_init_suffix(
-		    &completed.rate_renegotiation_marker,
-		    V34_PHASE3_S_SYMBOLS) != V34_PHASE3_S_RECEIVER_OK ||
-	    v34_phase3_s_prefix_init_recurrent(
-		    &completed.rate_renegotiation_prefix) !=
-		    V34_PHASE3_S_PREFIX_OK)
+	    v34_phase3_s_hunt_init(&completed.s) !=
+		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
 	for (size_t symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 		unsigned int turns = symbol < V34_PHASE3_S_SYMBOLS ?
 			(symbol & 1u) :
 			(2u + ((symbol - V34_PHASE3_S_SYMBOLS) & 1u));
-		struct qam_point point = v34_rotated_point_zero((int)turns);
-		uint8_t quarter_point;
-		uint8_t rotation;
+		struct v34_analytic_sample fixed_point;
+		struct v34_phase3_s_adaptation adaptation;
+		bool control;
 		enum v34_phase3_s_receiver_result marker_result;
 
-		if (v34_training_constellation_slice(
-			    V34_CONSTELLATION_4_POINT, &point,
-			    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
-		    quarter_point != 0u)
+		if (v34_training_constellation_fixed_point(
+			    V34_CONSTELLATION_4_POINT, 0u,
+			    (uint8_t)((4u - turns) & 3u),
+			    &fixed_point) != V34_CONSTELLATION_OK)
 			return false;
-		marker_result = v34_phase3_s_receiver_receive(
-			&completed.rate_renegotiation_marker,
-			quarter_point, rotation);
+		marker_result = v34_phase3_s_hunt_receive(
+			&completed.s, fixed_point, &adaptation, &control);
 		if (marker_result !=
 			    (symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
 				     V34_PHASE3_S_RECEIVER_DETECTED :
 				     V34_PHASE3_S_RECEIVER_OK))
 			return false;
-		if (symbol < V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS) {
-			enum v34_phase3_s_prefix_result prefix_result =
-				v34_phase3_s_prefix_receive(
-					&completed.rate_renegotiation_prefix,
-					&point, 0.25);
-
-			if (prefix_result != V34_PHASE3_S_PREFIX_OK)
-				return false;
-		}
 	}
-	completed.rate_renegotiation_candidate_symbols =
-		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS + 1u;
-	completed.rate_renegotiation_enabled = true;
-	completed.rate_renegotiation_candidate = true;
+	completed.enabled = true;
 	*monitor = completed;
 	return true;
 }
 
-static bool start_error_bounded_rate_renegotiation_candidate(
+static bool start_error_bounded_candidate(
 	struct v34_data_rate_renegotiation_monitor *monitor)
 {
 	enum {
@@ -2081,45 +2064,35 @@ static bool start_error_bounded_rate_renegotiation_candidate(
 	struct v34_data_rate_renegotiation_monitor candidate = { 0 };
 
 	if (monitor == NULL ||
-	    v34_phase3_s_receiver_init_suffix(
-		    &candidate.rate_renegotiation_marker,
-		    V34_PHASE3_S_SYMBOLS) != V34_PHASE3_S_RECEIVER_OK ||
-	    v34_phase3_s_prefix_init_recurrent(
-		    &candidate.rate_renegotiation_prefix) !=
-		    V34_PHASE3_S_PREFIX_OK)
+	    v34_phase3_s_hunt_init(&candidate.s) !=
+		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
 	for (size_t symbol = 0; symbol < CANDIDATE_BOUND; ++symbol) {
 		unsigned int turns = symbol & 1u;
-		struct qam_point point;
-		uint8_t quarter_point;
-		uint8_t rotation;
+		struct v34_analytic_sample fixed_point;
+		struct v34_phase3_s_adaptation adaptation;
+		bool control;
 
 		if (symbol < LAST_ERROR &&
 		    (symbol + 1u) %
 			    V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS == 0u)
 			turns++;
-		point = v34_rotated_point_zero((int)turns);
-		if (v34_training_constellation_slice(
-			    V34_CONSTELLATION_4_POINT, &point,
-			    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
-		    quarter_point != 0u ||
-		    v34_phase3_s_receiver_receive(
-			    &candidate.rate_renegotiation_marker,
-			    quarter_point, rotation) != V34_PHASE3_S_RECEIVER_OK ||
-		    v34_phase3_s_prefix_receive(
-			    &candidate.rate_renegotiation_prefix,
-			    &point, 0.25) != V34_PHASE3_S_PREFIX_OK)
+		if (v34_training_constellation_fixed_point(
+			    V34_CONSTELLATION_4_POINT, 0u,
+			    (uint8_t)((4u - turns) & 3u),
+			    &fixed_point) != V34_CONSTELLATION_OK ||
+		    v34_phase3_s_hunt_receive(
+			    &candidate.s, fixed_point,
+			    &adaptation, &control) != V34_PHASE3_S_RECEIVER_OK)
 			return false;
 	}
-	if (candidate.rate_renegotiation_prefix.alternating_turns !=
+	if (candidate.s.prefix.alternating_turns !=
 		    V34_PHASE3_S_PREFIX_TURNS ||
-	    candidate.rate_renegotiation_prefix.recurrence_hits !=
-		    V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS)
+	    candidate.s.prefix.recurrence_hits !=
+		    V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS ||
+	    !candidate.s.candidate)
 		return false;
-	candidate.rate_renegotiation_candidate_symbols =
-		V34_DATA_RRN_CANDIDATE_SYMBOLS;
-	candidate.rate_renegotiation_enabled = true;
-	candidate.rate_renegotiation_candidate = true;
+	candidate.enabled = true;
 	*monitor = candidate;
 	return true;
 }
@@ -2414,7 +2387,6 @@ static bool run_rate_renegotiation_case(
 	uint32_t prior_transmit_rate;
 	uint32_t prior_receive_rate;
 	uint32_t expected_deadline;
-	double online_adaptation;
 	bool initially_online = false;
 	bool renegotiation_started = false;
 	bool deadline_started = false;
@@ -2453,8 +2425,6 @@ static bool run_rate_renegotiation_case(
 	received_before = digital.upstream_frames;
 	old_data_mapping =
 		digital.call.state.data_path.digital.data_mapping;
-	online_adaptation = digital.call.state.data_path.digital.upstream.data
-		.equalizer_receiver.adaptation;
 	control_before =
 		digital.call.state.data_path.digital.control_symbols;
 	CHECK(pcm_call_get_data_rates(
@@ -2462,9 +2432,9 @@ static bool run_rate_renegotiation_case(
 		      &prior_receive_rate),
 	      "law %u rate-renegotiation rates were unavailable",
 	      (unsigned int)law);
-	CHECK(start_error_bounded_rate_renegotiation_candidate(
+	CHECK(start_error_bounded_candidate(
 		      &digital.call.state.data_path.digital.upstream.data
-			       .equalizer_receiver.rate_renegotiation) &&
+			       .rate_renegotiation) &&
 	      pcm_call_is_valid(&digital.call),
 	      "law %u bounded rate-renegotiation prefix was invalid",
 	      (unsigned int)law);
@@ -2479,7 +2449,7 @@ static bool run_rate_renegotiation_case(
 	      (unsigned int)law);
 	CHECK(complete_rate_renegotiation_monitor(
 		      &digital.call.state.data_path.digital.upstream.data
-			       .equalizer_receiver.rate_renegotiation) &&
+			       .rate_renegotiation) &&
 	      pcm_call_is_valid(&digital.call),
 	      "law %u completed rate-renegotiation evidence was invalid",
 	      (unsigned int)law);
@@ -2495,6 +2465,7 @@ static bool run_rate_renegotiation_case(
 		struct v90_phase4_cp_line_rx untouched;
 		struct v90_phase4_cp_line_rx saved_untouched;
 		struct v90_cp_receiver reset_records;
+		struct v34_line_receiver expected_line = path->upstream.data.line;
 		union resume_alias online_alias = { 0 };
 		union resume_alias saved_online_alias;
 		union resume_alias control_alias = { 0 };
@@ -2506,6 +2477,12 @@ static bool run_rate_renegotiation_case(
 		saved_online_alias = online_alias;
 		control_alias.control = path->control_symbols;
 		saved_control_alias = control_alias;
+		CHECK(v34_adaptive_equalizer_set_data_carrier_tracking(
+			      &expected_line.equalizer,
+			      rate_renegotiation_constellation ==
+				      V34_CONSTELLATION_16_POINT) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "online CP carrier mode did not resume");
 		CHECK(v90_phase4_cp_line_rx_resume_online(
 			      NULL, &path->upstream.data,
 			      &path->control_symbols,
@@ -2548,11 +2525,15 @@ static bool run_rate_renegotiation_case(
 		      v90_cp_receiver_init(&reset_records) == V90_CP_OK &&
 		      resumed.symbols.constellation ==
 			      rate_renegotiation_constellation &&
-		      resumed.adaptation == online_adaptation &&
-		      resumed.adaptation_is_data_mode &&
-		      resumed.tap_adaptation_held ==
+		      resumed.boundary_complete &&
+		      !v34_phase3_s_receiver_is_valid(&resumed.boundary) &&
+		      resumed.adaptation ==
 			      (rate_renegotiation_constellation ==
-			       V34_CONSTELLATION_16_POINT) &&
+				       V34_CONSTELLATION_16_POINT ?
+				       V34_ADAPTIVE_EQUALIZER_CARRIER :
+				       V34_ADAPTIVE_EQUALIZER_FULL) &&
+		      memcmp(&resumed.line, &expected_line,
+			     sizeof(resumed.line)) == 0 &&
 		      memcmp(&resumed.symbols.descrambler,
 			     &path->control_symbols.descrambler,
 			     sizeof(resumed.symbols.descrambler)) == 0 &&
@@ -2794,8 +2775,6 @@ static bool run_rate_renegotiation_case(
 		      V90_DIGITAL_PATH_DOWNSTREAM_DATA &&
 	      digital.call.state.data_path.digital.upstream_stage ==
 		      V90_DIGITAL_PATH_UPSTREAM_DATA &&
-	      digital.call.state.data_path.digital.upstream.data
-		      .equalizer_receiver.adaptation == online_adaptation &&
 	      digital.downstream_source.frames > downstream_before &&
 	      analog.upstream_source.frames > transmitted_before &&
 	      digital.upstream_frames == received_before &&
@@ -2905,16 +2884,37 @@ static bool run_paired_remote_rate_renegotiation(
 	      analog_rates[1] == digital_rates[0] &&
 	      complete_rate_renegotiation_monitor(
 		      &digital.call.state.data_path.digital.upstream.data
-			       .equalizer_receiver.rate_renegotiation) &&
+			       .rate_renegotiation) &&
 	      pcm_call_is_valid(&digital.call),
 	      "law %u paired RRN could not seed the digital request",
 	      (unsigned int)law);
 	for (size_t sample = 0; sample < 64u; ++sample) {
+		struct v34_line_receiver expected =
+			digital.call.state.data_path.digital.upstream.data.line;
+		struct v34_adaptive_equalizer_observation observation;
+		uint8_t ignored_analog;
+		uint8_t digital_received;
+		enum v34_line_receiver_result expected_result;
+
+		channel_receive(&channel, &ignored_analog, &digital_received);
+		expected_result = v34_line_receiver_sample(
+			&expected, decode_octet(law, digital_received), &observation);
+		CHECK(expected_result == V34_LINE_RECEIVER_OK ||
+		      expected_result == V34_LINE_RECEIVER_OBSERVATION_READY,
+		      "law %u RRN handoff could not advance one physical sample",
+		      (unsigned int)law);
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u paired RRN trigger stopped at %zu",
 		      (unsigned int)law, sample);
 		if (digital.call.state.data_path.digital
 			    .rate_renegotiation_active) {
+			CHECK(memcmp(
+				      &expected.timing,
+				      &digital.call.state.data_path.digital.upstream
+					       .startup.state.cp.line.timing,
+				      sizeof(expected.timing)) == 0,
+			      "law %u latched RRN marker dropped its input sample",
+			      (unsigned int)law);
 			digital_started = true;
 			break;
 		}

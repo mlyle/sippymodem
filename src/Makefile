@@ -331,7 +331,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_carrier_demodulator.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_channel_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_decision_receiver.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_equalizer_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_equalizer_handoff.c \

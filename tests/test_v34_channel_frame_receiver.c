@@ -3,7 +3,6 @@
 #include <v34_mapping_frame_transmitter.h>
 #include <v34_symbol_power.h>
 #include <v34_data_channel_receiver.h>
-#include <v34_data_equalizer_receiver.h>
 
 #include "test.h"
 
@@ -374,99 +373,6 @@ static bool test_generated_channel_round_trip(void)
 	return true;
 }
 
-static bool test_buffered_equalizer_handoff(void)
-{
-	static const struct qam_point reference = { 1.0, 0.0 };
-	static const struct qam_point
-		lookahead[V34_EQUALIZER_DECISION_DELAY + 1] = {
-		{ 0.25, -0.50 },
-		{ -0.75, 0.25 },
-		{ 0.50, 0.75 },
-		{ -0.25, -0.75 },
-		{ 0.75, -0.50 },
-		{ -0.50, -0.25 },
-		{ 0.25, 0.50 },
-		{ -0.75, 0.75 },
-	};
-	struct v34_data_equalizer_receiver receiver;
-	struct v34_data_equalizer_receiver saved_receiver;
-	struct v34_equalizer_handoff handoff;
-	struct v34_equalizer_handoff invalid_handoff;
-	struct qam_equalizer equalizer;
-	struct fixture fixture;
-	struct v34_survivor_decision current;
-	struct v34_survivor_decision saved_current;
-	struct v34_received_mapping_frame received;
-	struct v34_received_mapping_frame saved_received;
-
-	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      qam_equalizer_init_geometry(
-		      &equalizer, &reference, &reference,
-		      V34_EQUALIZER_TAP_COUNT,
-		      V34_EQUALIZER_DECISION_DELAY) ==
-		      QAM_EQUALIZER_OK,
-	      "buffered handoff fixture did not initialize");
-	for (size_t index = 0;
-	     index < V34_EQUALIZER_DECISION_DELAY + 1u +
-			     V34_EQUALIZER_DECISION_DELAY;
-	     ++index) {
-		struct qam_equalizer_observation observation = { 0 };
-		const struct qam_point *point =
-			index < V34_EQUALIZER_DECISION_DELAY + 1u ?
-				&reference :
-				&lookahead[index -
-					   (V34_EQUALIZER_DECISION_DELAY + 1u)];
-		bool ready;
-
-		CHECK(qam_equalizer_observe(
-			      &equalizer, point, &observation, &ready) ==
-			      QAM_EQUALIZER_OK &&
-		      (!ready ||
-		       qam_equalizer_adapt_observation(
-			       &equalizer, &observation,
-			       &observation.output, 0.0) == QAM_EQUALIZER_OK),
-		      "buffered handoff equalizer stopped at point %zu", index);
-	}
-	handoff.equalizer = equalizer;
-	CHECK(v34_equalizer_handoff_is_valid(&handoff) &&
-	      v34_data_equalizer_receiver_init_from_handoff(
-		      &receiver, &handoff, &fixture.normalizer,
-		      &fixture.geometry, CONFIGURATIONS[0].expanded,
-		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
-		      CONFIGURATIONS[0].transmitting_role, 0.0) ==
-		      V34_DATA_RECEIVE_OK,
-	      "buffered equalizer handoff was rejected");
-	memset(&current, 0xa5, sizeof(current));
-	saved_current = current;
-	memset(&received, 0x5a, sizeof(received));
-	saved_received = received;
-	CHECK(v34_data_equalizer_receive_point(
-		      &receiver, &lookahead[V34_EQUALIZER_DECISION_DELAY],
-		      &current, &received) == V34_DATA_RECEIVE_OK &&
-	      qam_equalizer_observation_is_pending(
-		      &receiver.first_observation) &&
-	      point_matches(
-		      &receiver.first_observation.output, &lookahead[0]) &&
-	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
-	      memcmp(&received, &saved_received, sizeof(received)) == 0,
-	      "buffered handoff did not make the first B1 point next");
-	saved_receiver = receiver;
-	invalid_handoff = handoff;
-	invalid_handoff.equalizer.fill =
-		handoff.equalizer.decision_delay;
-	CHECK(!v34_equalizer_handoff_is_valid(NULL) &&
-	      !v34_equalizer_handoff_is_valid(&invalid_handoff) &&
-	      v34_data_equalizer_receiver_init_from_handoff(
-		      &receiver, &invalid_handoff, &fixture.normalizer,
-		      &fixture.geometry, CONFIGURATIONS[0].expanded,
-		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
-		      CONFIGURATIONS[0].transmitting_role, 0.0) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
-	      "invalid buffered handoff changed the data receiver");
-	return true;
-}
-
 static bool outputs_are_unchanged_after(
 	struct v34_data_channel_receiver *receiver,
 	const struct qam_point
@@ -582,92 +488,6 @@ static bool test_validation_and_rollback(void)
 	return true;
 }
 
-static bool test_equalizer_receiver_validation(void)
-{
-	const struct qam_point reference = { 1.0, 0.0 };
-	const struct qam_point received_reference = { 0.8, -0.2 };
-	const struct qam_point invalid = { NAN, 0.0 };
-	struct v34_equalizer_handoff handoff;
-	struct v34_equalizer_handoff invalid_handoff;
-	struct v34_data_equalizer_receiver receiver;
-	struct v34_data_equalizer_receiver saved_receiver;
-	struct v34_data_equalizer_receiver corrupt;
-	struct v34_survivor_decision current;
-	struct v34_survivor_decision saved_current;
-	struct v34_received_mapping_frame received;
-	struct v34_received_mapping_frame saved_received;
-	struct fixture fixture;
-
-	CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[0]) &&
-	      qam_equalizer_init_geometry(
-		      &handoff.equalizer, &received_reference, &reference,
-		      V34_EQUALIZER_TAP_COUNT,
-		      V34_EQUALIZER_DECISION_DELAY) == QAM_EQUALIZER_OK,
-	      "equalizer validation fixture did not initialize");
-	for (size_t index = 0;
-	     index <= V34_EQUALIZER_DECISION_DELAY; ++index) {
-		struct qam_equalizer_observation observation = { 0 };
-		bool ready = false;
-
-		CHECK(qam_equalizer_observe(
-			      &handoff.equalizer, &received_reference,
-			      &observation, &ready) == QAM_EQUALIZER_OK &&
-		      ready == (index == V34_EQUALIZER_DECISION_DELAY),
-		      "equalizer handoff stopped at point %zu", index);
-	}
-	CHECK(v34_equalizer_handoff_is_valid(&handoff) &&
-	      v34_data_equalizer_receiver_init_from_handoff(
-		      &receiver, &handoff, &fixture.normalizer,
-		      &fixture.geometry, CONFIGURATIONS[0].expanded,
-		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
-		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      V34_DATA_RECEIVE_OK,
-	      "valid equalizer handoff was rejected");
-	saved_receiver = receiver;
-	memset(&current, 0xa5, sizeof(current));
-	saved_current = current;
-	memset(&received, 0x5a, sizeof(received));
-	saved_received = received;
-	CHECK(v34_data_equalizer_receive_point(
-		      &receiver, &invalid, &current, &received) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
-	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
-	      memcmp(&received, &saved_received, sizeof(received)) == 0,
-	      "invalid equalizer point was not transactional");
-	invalid_handoff = handoff;
-	invalid_handoff.equalizer.coefficients[0].in_phase = INFINITY;
-	CHECK(v34_data_equalizer_receiver_init_from_handoff(
-		      &receiver, &handoff, &fixture.normalizer,
-		      &fixture.geometry, CONFIGURATIONS[0].expanded,
-		      COEFFICIENTS, CONFIGURATIONS[0].trellis,
-		      CONFIGURATIONS[0].transmitting_role, NAN) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      v34_data_equalizer_receiver_init_from_handoff(
-		      &receiver, &invalid_handoff, &fixture.normalizer,
-		      &fixture.geometry, CONFIGURATIONS[0].expanded, COEFFICIENTS,
-		      CONFIGURATIONS[0].trellis,
-		      CONFIGURATIONS[0].transmitting_role, 0.05) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
-	      "invalid equalizer initialization changed the receiver");
-	corrupt = receiver;
-	corrupt.first_observation.pending = true;
-	CHECK(!v34_data_equalizer_receiver_is_valid(NULL) &&
-	      !v34_data_equalizer_receiver_is_valid(&corrupt) &&
-	      v34_data_equalizer_receive_point(
-		      NULL, &reference, &current, &received) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      v34_data_equalizer_receive_point(
-		      &receiver, &reference, NULL, &received) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
-	      v34_data_equalizer_receive_point(
-		      &receiver, &reference, &current, NULL) ==
-		      V34_DATA_RECEIVE_INVALID_ARGUMENT,
-	      "invalid equalizer receiver arguments were accepted");
-	return true;
-}
-
 int main(void)
 {
 	static const struct {
@@ -676,11 +496,7 @@ int main(void)
 	} tests[] = {
 		{ "generated channel round trip",
 		  test_generated_channel_round_trip },
-		{ "buffered equalizer handoff",
-		  test_buffered_equalizer_handoff },
 		{ "validation and rollback", test_validation_and_rollback },
-		{ "equalizer receiver validation",
-		  test_equalizer_receiver_validation },
 	};
 	unsigned int failures = 0;
 

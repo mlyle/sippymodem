@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
+#include <v90_phase3_return_line_tx.h>
 #include <v90_phase4_e_line_rx.h>
 #include <v90_phase4_e_line_tx.h>
 #include <v90_upstream_data.h>
@@ -87,6 +88,135 @@ static bool parameters_match(
 	       memcmp(left_frame, right_frame, sizeof(left_frame)) == 0;
 }
 
+static bool fixed_data_handoff_matches(
+	const struct v34_line_receiver *data,
+	const struct v34_line_receiver *control)
+{
+	struct v34_line_receiver expected = *control;
+
+	return v34_adaptive_equalizer_set_data_carrier_tracking(
+		       &expected.equalizer, true) == V34_ADAPTIVE_EQUALIZER_OK &&
+	       memcmp(data, &expected, sizeof(*data)) == 0;
+}
+
+static bool verify_online_marker(
+	struct v34_data_stream *data_tx,
+	struct v34_data_line_receiver *data_rx,
+	const struct v90_phase4_cp_tx *control_symbols,
+	const struct v90_cp_parameters *parameters,
+	enum g711_law law, enum v34_constellation_size constellation)
+{
+	struct v90_phase3_return_line_tx returning;
+	struct v90_phase4_cp_line_tx control_tx;
+	struct v34_phase3_s_detection detection;
+	unsigned int data_frames = 0;
+	bool transmitting_cp = false;
+	bool candidate_seen = false;
+	bool detected = false;
+
+	for (size_t clock = 0; clock < SAMPLE_LIMIT && data_frames < 8u;
+	     ++clock) {
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame received;
+		int16_t sample;
+		bool accepted;
+		enum v34_data_receive_result result;
+
+		CHECK(v34_data_stream_sample(
+			      data_tx, NULL, NULL, &sample, &accepted) ==
+			      V34_DATA_STREAM_OK,
+		      "online data source stopped at sample %zu", clock);
+		result = v34_data_line_receiver_sample(
+			data_rx, quantize(law, sample), &current, &received);
+		CHECK(result == V34_DATA_RECEIVE_OK ||
+		      result == V34_DATA_RECEIVE_INTERVAL_READY ||
+		      result == V34_DATA_RECEIVE_MAPPING_FRAME_READY,
+		      "online data receiver stopped at sample %zu: %d", clock,
+		      result);
+		CHECK(!v34_data_line_receiver_has_rate_renegotiation_candidate(
+			      data_rx),
+		      "scrambled data qualified as an online S candidate");
+		if (result == V34_DATA_RECEIVE_MAPPING_FRAME_READY)
+			data_frames++;
+	}
+	CHECK(data_frames == 8u,
+	      "online marker fixture recovered only %u data frames", data_frames);
+	{
+		struct v34_data_line_receiver rejected = *data_rx;
+		struct v34_data_line_receiver saved = rejected;
+		struct v34_survivor_decision current = { 0 };
+		struct v34_received_mapping_frame received = { 0 };
+
+		CHECK(v34_data_line_receiver_sample(
+			      &rejected, 123, NULL, &received) ==
+			      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      "invalid data sample changed the physical receiver");
+		rejected.failed = true;
+		saved = rejected;
+		CHECK(v34_data_line_receiver_sample(
+			      &rejected, 123, &current, &received) ==
+			      V34_DATA_RECEIVE_FAILED &&
+		      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+		      "failed data receiver consumed another sample");
+	}
+	CHECK(v90_phase3_return_line_tx_init_rrn(
+		      &returning, &data_tx->line) == V90_PHASE3_RETURN_LINE_TX_OK,
+	      "online S/S-bar transmitter did not initialize");
+	for (size_t clock = 0; clock < 2048u && !detected; ++clock) {
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame received;
+		int16_t sample;
+		enum v34_data_receive_result result;
+
+		if (!transmitting_cp) {
+			enum v90_phase3_return_line_tx_result emitted =
+				v90_phase3_return_line_tx_sample(&returning, &sample);
+
+			CHECK(emitted == V90_PHASE3_RETURN_LINE_TX_OK ||
+			      emitted == V90_PHASE3_RETURN_LINE_TX_COMPLETE,
+			      "online S/S-bar source stopped at %zu", clock);
+			if (emitted == V90_PHASE3_RETURN_LINE_TX_COMPLETE) {
+				struct v34_training_line line;
+
+				CHECK(v90_phase3_return_line_tx_handoff(
+					      &returning, &line) ==
+					      V90_PHASE3_RETURN_LINE_TX_OK &&
+				      v90_phase4_cp_line_tx_resume_online(
+					      &control_tx, &line, control_symbols,
+					      constellation, parameters) ==
+					      V90_PHASE4_CP_LINE_TX_OK,
+				      "online S/S-bar did not continue into CP");
+				transmitting_cp = true;
+			}
+		}
+		if (transmitting_cp)
+			CHECK(v90_phase4_cp_line_tx_sample(&control_tx, &sample) ==
+				      V90_PHASE4_CP_LINE_TX_OK,
+			      "post-marker CP stopped at sample %zu", clock);
+		result = v34_data_line_receiver_sample(
+			data_rx, quantize(law, sample), &current, &received);
+		CHECK(result == V34_DATA_RECEIVE_OK ||
+		      result == V34_DATA_RECEIVE_INTERVAL_READY ||
+		      result == V34_DATA_RECEIVE_MAPPING_FRAME_READY ||
+		      result == V34_DATA_RECEIVE_RATE_RENEGOTIATION,
+		      "online S/S-bar receiver stopped at sample %zu: %d", clock,
+		      result);
+		candidate_seen |=
+			v34_data_line_receiver_has_rate_renegotiation_candidate(
+				data_rx);
+		detected = result == V34_DATA_RECEIVE_RATE_RENEGOTIATION;
+	}
+	CHECK(detected && transmitting_cp && candidate_seen &&
+	      v34_data_line_receiver_get_rate_renegotiation_detection(
+		      data_rx, &detection) &&
+	      !data_rx->line.equalizer.retained.pending &&
+	      !data_rx->line.equalizer.decision_pending &&
+	      !data_rx->decisions.has_first_symbol,
+	      "online S/S-bar did not publish a resolved receive boundary");
+	return true;
+}
+
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation)
 {
@@ -110,20 +240,14 @@ static bool run_line(
 	bool e_rx_started = false;
 	bool data_rx_started = false;
 	bool b1_complete = false;
+	bool fixed_handoff_preserved = false;
 	unsigned int final_records = 0;
 
 	CHECK(v90_phase4_line_fixture_init(
 		      law, constellation, &training, &cp_tx, &phase3),
 	      "CP/E fixture did not reach CPt law=%d constellation=%d",
 	      law, constellation);
-	phase3.phase3.compact_equalizer =
-		phase3.phase3.equalizer.equalizer;
-	phase3.phase3.compact_equalizer_active = true;
-	CHECK(qam_equalizer_extend_span(
-		      &phase3.phase3.equalizer.equalizer,
-		      QAM_EQUALIZER_MAX_TAP_COUNT) == QAM_EQUALIZER_OK &&
-	      v90_phase3_return_line_handoff_is_valid(&phase3) &&
-	      v90_phase4_cp_line_rx_init(
+	CHECK(v90_phase4_cp_line_rx_init(
 		      &cp_rx, &phase3, constellation, 0.05) ==
 		      V90_PHASE4_CP_LINE_RX_OK,
 	      "CP/E fixture did not initialize law=%d constellation=%d",
@@ -280,6 +404,9 @@ static bool run_line(
 					      &data_rx, &e_rx, &mp) ==
 					      V90_UPSTREAM_DATA_OK,
 				      "E receiver did not hand off to B1");
+				fixed_handoff_preserved =
+					fixed_data_handoff_matches(
+						&data_rx.line, &e_rx.line);
 				data_rx_started = true;
 			}
 		} else {
@@ -304,16 +431,11 @@ static bool run_line(
 	      b1_complete && v90_phase4_e_line_rx_is_complete(&e_rx) &&
 	      !v90_phase4_e_line_rx_has_failed(&e_rx) &&
 	      !v34_data_line_receiver_has_failed(&data_rx) &&
-	      data_rx.line.timing_power_hysteresis == 1.01 &&
-	      data_rx.equalizer_receiver.equalizer.carrier_integral_gain == 0.0 &&
-	      data_rx.equalizer_receiver.equalizer.carrier_proportional_gain ==
-		      0.05 &&
-	      data_rx.equalizer_receiver.equalizer.carrier_error_limit == 0.25 &&
-	      data_rx.equalizer_receiver.equalizer.tap_count ==
-		      V34_EQUALIZER_TAP_COUNT &&
-	      data_rx.equalizer_receiver.equalizer.carrier_frequency ==
-		      e_rx.compact_equalizer.carrier_frequency &&
-	      data_rx.equalizer_receiver.data_receiver.data_receiver
+	      fixed_handoff_preserved &&
+	      data_rx.line.equalizer.feedback_mode ==
+		      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+	      !data_rx.line.equalizer.decision_pending &&
+	      data_rx.decisions.data_receiver.data_receiver
 			      .b1_error_bits == 0,
 	      "CP/E/B1 path stopped law=%d constellation=%d "
 	      "tx=%d/%d/%d rx=%d/%d/%d/%d Ebits=%u B1errors=%u",
@@ -322,24 +444,18 @@ static bool run_line(
 	      data_rx_started, b1_complete,
 	      e_rx_started ? e_rx.symbols.received_bits : 0,
 	      (unsigned int)(data_rx_started ?
-		      data_rx.equalizer_receiver.data_receiver.data_receiver
+		      data_rx.decisions.data_receiver.data_receiver
 			      .b1_error_bits :
 		      0));
 	{
 		struct v90_phase4_e_line_rx saved = e_rx;
 		struct v90_phase4_e_line_rx incomplete = e_rx;
-		struct v90_phase4_e_line_rx long_tail = e_rx;
-		struct v90_phase4_e_line_rx online = e_rx;
 		struct v90_mp_record cleardown = mp;
 		struct v34_data_line_receiver rejected;
 		struct v34_data_line_receiver saved_rejected;
-		struct v34_data_line_receiver extended;
-		struct v34_data_line_receiver resumed;
+		struct v34_data_line_receiver continued;
 
 		incomplete.symbols.received_bits--;
-		long_tail.equalizer.coefficients[V34_EQUALIZER_TAP_COUNT] =
-			(struct qam_point){ 1.0, 0.0 };
-		online.adaptation_is_data_mode = true;
 		cleardown.parameters.type0
 			.maximum_upstream_rate_2400_bps_units = 0;
 		memset(&rejected, 0xa5, sizeof(rejected));
@@ -362,21 +478,22 @@ static bool run_line(
 			      &rejected, &e_rx, &cleardown) ==
 			      V90_UPSTREAM_DATA_NO_COMMON_RATE &&
 		      v90_upstream_rx_start_after_e(
-			      &extended, &long_tail, &mp) ==
+			      &continued, &e_rx, &mp) ==
 			      V90_UPSTREAM_DATA_OK &&
-		      v90_upstream_rx_start_after_e(
-			      &resumed, &online, &mp) ==
-			      V90_UPSTREAM_DATA_OK &&
-		      resumed.equalizer_receiver.adaptation ==
-			      online.adaptation &&
-		      extended.equalizer_receiver.equalizer.tap_count ==
-			      QAM_EQUALIZER_MAX_TAP_COUNT &&
-		      extended.equalizer_receiver.equalizer.carrier_frequency ==
-			      long_tail.equalizer.carrier_frequency &&
+		      v34_data_line_receiver_is_valid(&continued) &&
+		      v34_data_line_receiver_is_receiving_b1(&continued) &&
+		      v34_data_line_receiver_detects_rate_renegotiation(
+			      &continued) &&
+		      fixed_data_handoff_matches(&continued.line, &e_rx.line) &&
 		      memcmp(&rejected, &saved_rejected,
 			     sizeof(rejected)) == 0,
 		      "completed-E handoff contracts changed state");
 	}
+	CHECK(verify_online_marker(
+		      &data_tx, &data_rx, &cp_tx.symbols, &final, law,
+		      constellation),
+	      "online fixed-line marker failed law=%d constellation=%d",
+	      law, constellation);
 	return true;
 }
 

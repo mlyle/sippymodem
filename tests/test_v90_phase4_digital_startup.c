@@ -151,7 +151,6 @@ static bool run_exchange(
 	struct v90_phase4_digital_handoff handoff;
 	struct v90_phase4_cp_line_tx continued_cp;
 	size_t continued_octets = 0;
-	size_t expected_history_index = 0;
 	uint32_t expected_carrier_phase = 0;
 	uint8_t to_analog;
 	uint8_t to_digital;
@@ -190,21 +189,16 @@ static bool run_exchange(
 		uint8_t next_to_digital;
 
 		if (before == V90_PHASE4_STARTUP_CONTINUING) {
-			const struct qam_demodulator *demodulator =
-				&startup.state.continuing.receive.demodulator;
+			const struct v34_carrier_demodulator *carrier =
+				&startup.state.continuing.receive.line.timing.carrier;
 
 			if (!tracking_continuation) {
 				expected_carrier_phase =
-					demodulator->carrier_phase;
-				expected_history_index =
-					demodulator->history_index;
+					carrier->phase;
 				tracking_continuation = true;
 			}
 			expected_carrier_phase +=
-				demodulator->carrier_phase_step;
-			expected_history_index =
-				(expected_history_index + 1u) %
-				demodulator->matched_filter_count;
+				carrier->phase_step;
 			continued_octets++;
 		}
 		{
@@ -254,10 +248,8 @@ static bool run_exchange(
 		      .upstream_rate_capability_mask == 0x1555u &&
 	      v90_phase4_digital_startup_handoff(
 		      &startup, &handoff) == V90_PHASE4_STARTUP_OK &&
-	      handoff.receive.demodulator.carrier_phase ==
+	      handoff.receive.line.timing.carrier.phase ==
 		      expected_carrier_phase &&
-	      handoff.receive.demodulator.history_index ==
-		      expected_history_index &&
 	      v90_phase4_digital_transmit_handoff_is_valid(
 		      &handoff.transmit) &&
 	      v90_phase4_cp_line_rx_is_valid(&handoff.receive) &&

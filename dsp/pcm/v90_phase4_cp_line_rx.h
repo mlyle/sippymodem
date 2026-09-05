@@ -21,27 +21,25 @@ enum v90_phase4_cp_line_rx_result {
 	V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE,
 };
 
-/* Continue the digital modem's locked carrier and trained equalizer after
- * S-bar. The inherited equalizer delay owns the first CPt points, so the next
- * carrier point produces the first undelivered CP decision without replay.
+/* Continue the digital modem's fixed timing and trained equalizer after
+ * S-bar. The inherited delay line owns the first CPt points, so the next
+ * observation produces the first undelivered CP decision without replay.
  * The S/S-bar phase ambiguity seeds the first differential CP decision. */
 struct v90_phase4_cp_line_rx {
-	struct qam_demodulator demodulator;
-	struct qam_equalizer equalizer;
-	struct qam_equalizer compact_equalizer;
+	struct v34_line_receiver line;
+	struct v34_phase3_s_receiver boundary;
+	struct v34_analytic_sample
+		boundary_tail[V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS];
 	struct v90_phase4_cp_rx symbols;
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters pending_parameters;
-	double adaptation;
-	/* An online rate renegotiation already carries the reduced data-mode
-	 * adaptation. Preserve that identity through CP/E so the B1 handoff does
-	 * not reduce the step a second time. */
-	bool adaptation_is_data_mode;
-	bool tap_adaptation_held;
+	uint16_t decoder_power_q15;
+	uint8_t boundary_tail_count;
+	enum v34_adaptive_equalizer_adaptation adaptation;
 	bool record_pending;
 	bool pending_record_is_valid;
+	bool boundary_complete;
 	bool failed;
-	bool compact_equalizer_active;
 };
 
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
@@ -49,12 +47,10 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	const struct v90_phase3_return_line_handoff *handoff,
 	enum v34_constellation_size constellation, double adaptation);
 
-/* Re-enter the continuous CP symbol stream after an online S/S-bar rate-
- * renegotiation request. The live data receiver supplies carrier timing and
- * equalizer history; control_symbols supplies the CP descrambler and
- * differential state retained from the preceding CP-prime. Only the bounded
- * CP record parser is reset. A 16-point control epoch retains the trained
- * channel taps while carrier phase correction remains active. */
+/* Preserve the fixed physical receive state after the online S/S-bar request
+ * marker and admit the immediately following CP symbols.
+ * control_symbols supplies the CP descrambler and differential state retained
+ * from the preceding CP-prime. Only the bounded record parser is reset. */
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_resume_online(
 	struct v90_phase4_cp_line_rx *rx,
 	const struct v34_data_line_receiver *online,

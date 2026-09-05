@@ -86,6 +86,7 @@ static bool verify_line(
 	struct v90_phase4_cp_line_rx rx;
 	unsigned int started_records = 1;
 	unsigned int received_records = 0;
+	int16_t frozen_gain = 0;
 
 	CHECK(v90_phase4_line_fixture_init(
 		      law, constellation, &training, &tx, &handoff),
@@ -93,7 +94,8 @@ static bool verify_line(
 	      constellation);
 	CHECK(v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, constellation, 0.05) ==
-		      V90_PHASE4_CP_LINE_RX_OK,
+		      V90_PHASE4_CP_LINE_RX_OK &&
+	      rx.line.timing.gain.mode == V34_GAIN_TRACKING,
 	      "CP line receiver did not accept the delayed handoff");
 	for (uint32_t sample_index = 0;
 	     sample_index < SAMPLE_LIMIT; ++sample_index) {
@@ -123,6 +125,12 @@ static bool verify_line(
 			      "CP line receiver reported %s at sample %u",
 			      v90_phase4_cp_line_rx_result_name(result),
 			      sample_index);
+			CHECK(rx.line.timing.gain.mode ==
+				      (received_records == 0 ?
+					       V34_GAIN_TRACKING : V34_GAIN_FROZEN) &&
+			      (received_records == 0 ||
+			       rx.line.timing.gain.gain == frozen_gain),
+			      "CP gain did not freeze at the first verified record");
 			continue;
 		}
 		CHECK(received_records < ARRAY_LENGTH(expected) &&
@@ -134,8 +142,12 @@ static bool verify_line(
 			      &event.parameters,
 			      expected[received_records]) &&
 		      v90_phase4_cp_line_rx_has_pending_record(&rx) &&
-		      v90_phase4_cp_line_rx_pending_record_is_valid(&rx),
+		      v90_phase4_cp_line_rx_pending_record_is_valid(&rx) &&
+		      rx.line.timing.gain.mode == V34_GAIN_FROZEN &&
+		      (received_records == 0 ||
+		       rx.line.timing.gain.gain == frozen_gain),
 		      "CP line record %u changed", received_records);
+		frozen_gain = rx.line.timing.gain.gain;
 		{
 			struct v90_phase4_cp_line_rx saved = rx;
 			struct v90_cp_receive_event sentinel = {
@@ -186,11 +198,17 @@ static bool test_transactional_contracts(void)
 	struct v90_phase4_cp_line_rx untouched;
 	struct v90_phase4_cp_line_rx untouched_saved;
 	struct v90_cp_receive_event event = { 0 };
+	struct v34_line_receiver expected_line;
 
 	CHECK(v90_phase4_line_fixture_init(
 		      G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
 		      &training, &tx, &handoff),
 	      "CP validation fixture did not reach CPt");
+	expected_line = handoff.upstream.line;
+	CHECK(v34_gain_control_set_mode(
+		      &expected_line.timing.gain, V34_GAIN_TRACKING) ==
+		      V34_GAIN_CONTROL_OK,
+	      "CP input gain did not enter acquisition");
 	handoff.phase3.marker.clockwise_quarter_turn_offset = 3;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
@@ -210,8 +228,14 @@ static bool test_transactional_contracts(void)
 	      v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, V34_CONSTELLATION_4_POINT, 0.05) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
-	      rx.symbols.previous_clockwise_quarter_turns ==
-		      handoff.phase3.marker.clockwise_quarter_turn_offset,
+	      v34_phase3_s_receiver_is_valid(&rx.boundary) &&
+	      rx.boundary_complete ==
+		      v34_phase3_s_receiver_is_complete(
+		      &rx.boundary) &&
+	      memcmp(&rx.line, &expected_line,
+		     sizeof(rx.line)) == 0 &&
+	      rx.decoder_power_q15 == handoff.upstream.decoder_power_q15 &&
+	      rx.adaptation == V34_ADAPTIVE_EQUALIZER_FULL,
 	      "CP line initialization contract changed");
 	saved = rx;
 	CHECK(v90_phase4_cp_line_rx_sample(NULL, 0, &event) ==

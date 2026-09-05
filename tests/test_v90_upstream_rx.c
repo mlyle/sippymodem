@@ -311,13 +311,16 @@ static bool run_line(
 		      data_handoff.geometry
 			      .primary_data_rate_2400_bps_units ==
 			      rate_2400_bps_units &&
-		      data_handoff.equalizer_receiver.adaptation ==
-			      0.05 * (2.0 / 3.0) &&
-		      data_handoff.equalizer_receiver.data_receiver.data_receiver
+		      v34_line_receiver_matches_profile(
+			      &data_handoff.line,
+			      &data_handoff.transmitting_profile) &&
+		      data_handoff.line.equalizer.feedback_mode ==
+			      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+		      data_handoff.decisions.data_receiver.data_receiver
 			      .b1_error_bits == 0,
 		      "upstream entry at rate %u stopped: source=%d/%d/%d/%d/%d/%d "
 		      "events=%d/%d/%d/%d stage=%d failed=%d handoff=%s "
-		      "valid=%d rate=%u adaptation=%g errors=%u",
+		      "valid=%d rate=%u errors=%u",
 		      rate_2400_bps_units,
 		      unadvertised_started, data_started, prime_started,
 		      cp_finished, e_started,
@@ -329,9 +332,7 @@ static bool run_line(
 			      data_handoff.geometry
 				      .primary_data_rate_2400_bps_units : 0,
 		      handoff_valid ?
-			      data_handoff.equalizer_receiver.adaptation : 0.0,
-		      handoff_valid ?
-			      (unsigned int)data_handoff.equalizer_receiver
+			      (unsigned int)data_handoff.decisions
 				      .data_receiver.data_receiver.b1_error_bits : 0);
 	}
 	{

@@ -3,13 +3,23 @@
 #ifndef V34_DATA_LINE_RECEIVER_H
 #define V34_DATA_LINE_RECEIVER_H
 
-#include "v34_data_carrier.h"
-#include "v34_data_equalizer_receiver.h"
+#include "v34_data_decision_receiver.h"
 #include "v34_data_receive.h"
-#include "qam.h"
+#include "v34_line_receiver.h"
+#include "v34_phase3_s_receiver.h"
 
 #include <stdbool.h>
 #include <stdint.h>
+
+enum {
+	/* Four lag-two recurrence hits plus the retained points gate an online S
+	 * candidate before survivor traceback can publish it. */
+	V34_DATA_RRN_CANDIDATE_RECURRENCE_HITS = 4,
+	V34_DATA_RRN_CANDIDATE_PREFIX_SYMBOLS =
+		V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS,
+	V34_DATA_RRN_CANDIDATE_SYMBOLS =
+		V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS,
+};
 
 struct v34_data_line_receiver_configuration {
 	struct v34_phase3_profile transmitting_profile;
@@ -17,32 +27,38 @@ struct v34_data_line_receiver_configuration {
 	struct v34_power_normalizer normalizer;
 	struct v34_q14_coefficient
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
+	/* Retained while ordinary V.34 startup still carries the old tuning
+	 * parameter. The fixed receive path owns its adaptation schedule. */
 	double equalizer_adaptation;
 	enum v34_trellis_selection trellis_selection;
 	bool expanded_shaping;
 	bool detect_rate_renegotiation;
 };
 
-/* Own the continuous sample-to-data path after Phase 4 has established
- * carrier timing and trained the symbol equalizer. A terminal decoding error
- * is latched because its line sample has already advanced carrier timing and
- * cannot be replayed safely. */
+struct v34_data_rate_renegotiation_monitor {
+	struct v34_phase3_s_hunt s;
+	bool enabled;
+};
+
+/* Own the continuous fixed sample-to-data path after Phase 4 E. The timing,
+ * carrier, and fractionally spaced equalizer are copied at one exact sample
+ * boundary and remain the same physical lineage through B1, payload, and an
+ * optional online S/S-bar rate-renegotiation marker. */
 struct v34_data_line_receiver {
-	struct qam_demodulator line;
-	struct v34_data_equalizer_receiver equalizer_receiver;
+	struct v34_line_receiver line;
+	struct v34_data_decision_receiver decisions;
+	struct v34_data_rate_renegotiation_monitor rate_renegotiation;
 	struct v34_phase3_profile transmitting_profile;
 	struct v34_frame_geometry geometry;
+	struct v34_phase3_s_adaptation first_symbol_adaptation;
+	bool first_symbol_freezes_adaptation;
+	bool first_symbol_is_control;
 	bool failed;
 };
 
-/* Begin after Phase 4 has decoded E and retained the first equalizer-delay B1
- * inputs. The demodulator and handoff must describe that same sample boundary.
- * Both trained values and the negotiated configuration are copied; the
- * demodulator must hold timing lock for the exact waveform. */
 enum v34_data_receive_result v34_data_line_receiver_init(
 	struct v34_data_line_receiver *receiver,
-	const struct qam_demodulator *demodulator,
-	const struct v34_equalizer_handoff *handoff,
+	const struct v34_line_receiver *line,
 	const struct v34_data_line_receiver_configuration *configuration);
 
 bool v34_data_line_receiver_is_valid(
@@ -51,6 +67,15 @@ bool v34_data_line_receiver_has_failed(
 	const struct v34_data_line_receiver *receiver);
 bool v34_data_line_receiver_is_receiving_b1(
 	const struct v34_data_line_receiver *receiver);
+bool v34_data_line_receiver_detects_rate_renegotiation(
+	const struct v34_data_line_receiver *receiver);
+bool v34_data_line_receiver_has_rate_renegotiation_candidate(
+	const struct v34_data_line_receiver *receiver);
+bool v34_data_line_receiver_rate_renegotiation_is_complete(
+	const struct v34_data_line_receiver *receiver);
+bool v34_data_line_receiver_get_rate_renegotiation_detection(
+	const struct v34_data_line_receiver *receiver,
+	struct v34_phase3_s_detection *detection);
 
 /* Consume one signed line sample. `current` changes for every interval result;
  * `received` changes only for a mapping-frame or B1 result. Invalid calls and
