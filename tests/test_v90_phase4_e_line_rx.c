@@ -306,6 +306,8 @@ static bool run_line(
 	      !v34_data_line_receiver_has_failed(&data_rx) &&
 	      data_rx.line.timing_power_hysteresis == 1.01 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_integral_gain == 0.0 &&
+	      data_rx.equalizer_receiver.equalizer.carrier_proportional_gain ==
+		      0.05 &&
 	      data_rx.equalizer_receiver.equalizer.carrier_error_limit == 0.25 &&
 	      data_rx.equalizer_receiver.equalizer.tap_count ==
 		      V34_EQUALIZER_TAP_COUNT &&

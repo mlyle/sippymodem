@@ -6,6 +6,7 @@
 
 #include <stddef.h>
 
+static const double V90_DATA_CARRIER_PROPORTIONAL_GAIN = 1.0 / 20.0;
 static const double V90_DATA_CARRIER_ERROR_LIMIT = 1.0 / 4.0;
 
 static const double V90_PHASE4_CONTROL_ADAPTATION_SCALE = 0.8;
@@ -267,6 +268,9 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_start_data(
 		    &demodulator, V90_DATA_TIMING_POWER_HYSTERESIS) != QAM_OK ||
 	    qam_equalizer_hold_carrier_frequency(&handoff.equalizer) !=
 		    QAM_EQUALIZER_OK ||
+	    qam_equalizer_set_carrier_proportional_gain(
+		    &handoff.equalizer,
+		    V90_DATA_CARRIER_PROPORTIONAL_GAIN) != QAM_EQUALIZER_OK ||
 	    qam_equalizer_set_carrier_error_limit(
 		    &handoff.equalizer, V90_DATA_CARRIER_ERROR_LIMIT) !=
 		    QAM_EQUALIZER_OK ||

@@ -107,6 +107,12 @@ enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
 enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
 	struct qam_equalizer *equalizer);
 
+/* Select the proportional carrier correction used by subsequent decisions
+ * without changing the learned frequency. The gain must remain large enough
+ * for any active integral term. */
+enum qam_equalizer_result qam_equalizer_set_carrier_proportional_gain(
+	struct qam_equalizer *equalizer, double proportional_gain);
+
 /* Bound each subsequent carrier detector cross product in the equalizer's
  * point-power units. This is intended for decision-directed tracking after
  * known-symbol acquisition, where one bad hard decision must not make a large

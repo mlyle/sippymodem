@@ -279,6 +279,27 @@ enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
 	return QAM_EQUALIZER_OK;
 }
 
+enum qam_equalizer_result qam_equalizer_set_carrier_proportional_gain(
+	struct qam_equalizer *equalizer, double proportional_gain)
+{
+	struct qam_equalizer next;
+
+	if (!qam_equalizer_is_valid(equalizer) ||
+	    !isfinite(proportional_gain) || proportional_gain <= 0.0 ||
+	    proportional_gain > 1.0)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	if (!equalizer->carrier_tracking)
+		return QAM_EQUALIZER_INVALID_STATE;
+	if (proportional_gain < equalizer->carrier_integral_gain)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	next = *equalizer;
+	next.carrier_proportional_gain = proportional_gain;
+	if (!qam_equalizer_is_valid(&next))
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	*equalizer = next;
+	return QAM_EQUALIZER_OK;
+}
+
 enum qam_equalizer_result qam_equalizer_set_carrier_error_limit(
 	struct qam_equalizer *equalizer, double maximum_error)
 {
