@@ -2410,6 +2410,7 @@ static bool run_rate_renegotiation_case(
 		      resumed.symbols.constellation ==
 			      rate_renegotiation_constellation &&
 		      resumed.adaptation == online_adaptation &&
+		      resumed.adaptation_is_data_mode &&
 		      resumed.tap_adaptation_held ==
 			      (rate_renegotiation_constellation ==
 			       V34_CONSTELLATION_16_POINT) &&

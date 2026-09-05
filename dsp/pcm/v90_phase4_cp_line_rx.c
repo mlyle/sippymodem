@@ -149,6 +149,7 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_resume_online(
 		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	resumed.transmitting_profile = online->transmitting_profile;
 	resumed.adaptation = online->equalizer_receiver.adaptation;
+	resumed.adaptation_is_data_mode = true;
 	/* A radial decision error in 16-point CP/E can pull the already-trained
 	 * online equalizer off the channel. Retain its taps through this bounded
 	 * control epoch; zero adaptation still permits carrier phase correction. */

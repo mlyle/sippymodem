@@ -98,6 +98,8 @@ enum v90_phase4_e_line_rx_result v90_phase4_e_line_rx_init(
 	initialized.transmitting_profile =
 		completed_cp->transmitting_profile;
 	initialized.adaptation = completed_cp->adaptation;
+	initialized.adaptation_is_data_mode =
+		completed_cp->adaptation_is_data_mode;
 	initialized.tap_adaptation_held =
 		completed_cp->tap_adaptation_held;
 	initialized.symbols = (struct v34_phase4_e_receiver){

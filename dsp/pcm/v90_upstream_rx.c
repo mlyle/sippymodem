@@ -11,6 +11,12 @@
 #include <stdint.h>
 #include <string.h>
 
+/* Known Phase 3/4 symbols can support a faster equalizer step than tentative
+ * trellis decisions. Reduce the learned training step at the B1 boundary so
+ * one bad online decision cannot pull every channel tap away from the trained
+ * solution before the survivor path recovers. */
+static const double V90_DATA_EQUALIZER_ADAPTATION_SCALE = 2.0 / 3.0;
+
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
@@ -517,6 +523,9 @@ enum v90_upstream_data_result v90_upstream_rx_start_after_e(
 	configuration.geometry = mapping.schedule.geometry;
 	configuration.normalizer = mapping.normalizer;
 	configuration.equalizer_adaptation = completed_e->adaptation;
+	if (!completed_e->adaptation_is_data_mode)
+		configuration.equalizer_adaptation *=
+			V90_DATA_EQUALIZER_ADAPTATION_SCALE;
 	configuration.trellis_selection = direction.trellis_selection;
 	configuration.expanded_shaping = direction.expanded_shaping;
 	configuration.detect_rate_renegotiation = true;

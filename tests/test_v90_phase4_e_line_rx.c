@@ -327,14 +327,17 @@ static bool run_line(
 		struct v90_phase4_e_line_rx saved = e_rx;
 		struct v90_phase4_e_line_rx incomplete = e_rx;
 		struct v90_phase4_e_line_rx long_tail = e_rx;
+		struct v90_phase4_e_line_rx online = e_rx;
 		struct v90_mp_record cleardown = mp;
 		struct v34_data_line_receiver rejected;
 		struct v34_data_line_receiver saved_rejected;
 		struct v34_data_line_receiver extended;
+		struct v34_data_line_receiver resumed;
 
 		incomplete.symbols.received_bits--;
 		long_tail.equalizer.coefficients[V34_EQUALIZER_TAP_COUNT] =
 			(struct qam_point){ 1.0, 0.0 };
+		online.adaptation_is_data_mode = true;
 		cleardown.parameters.type0
 			.maximum_upstream_rate_2400_bps_units = 0;
 		memset(&rejected, 0xa5, sizeof(rejected));
@@ -359,6 +362,11 @@ static bool run_line(
 		      v90_upstream_rx_start_after_e(
 			      &extended, &long_tail, &mp) ==
 			      V90_UPSTREAM_DATA_OK &&
+		      v90_upstream_rx_start_after_e(
+			      &resumed, &online, &mp) ==
+			      V90_UPSTREAM_DATA_OK &&
+		      resumed.equalizer_receiver.adaptation ==
+			      online.adaptation &&
 		      extended.equalizer_receiver.equalizer.tap_count ==
 			      QAM_EQUALIZER_MAX_TAP_COUNT &&
 		      extended.equalizer_receiver.equalizer.carrier_frequency ==

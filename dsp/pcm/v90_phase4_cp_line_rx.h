@@ -32,9 +32,11 @@ struct v90_phase4_cp_line_rx {
 	struct v90_phase4_cp_rx symbols;
 	struct v34_phase3_profile transmitting_profile;
 	struct v90_cp_parameters pending_parameters;
-	/* Preserve the data-mode adaptation for the B1 handoff even when an
-	 * online control constellation cannot safely train the channel taps. */
 	double adaptation;
+	/* An online rate renegotiation already carries the reduced data-mode
+	 * adaptation. Preserve that identity through CP/E so the B1 handoff does
+	 * not reduce the step a second time. */
+	bool adaptation_is_data_mode;
 	bool tap_adaptation_held;
 	bool record_pending;
 	bool pending_record_is_valid;
