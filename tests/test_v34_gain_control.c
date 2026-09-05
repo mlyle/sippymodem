@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <agc.h>
 #include <v34_gain_control.h>
 
 #include "test.h"
@@ -203,6 +204,175 @@ static bool test_ownership(void)
 	return true;
 }
 
+static bool test_measured_refresh(void)
+{
+	static const struct {
+		int16_t sample;
+		bool alternating;
+		unsigned int nonzero_samples;
+		int16_t level;
+		int16_t initial_gain;
+		int16_t refreshed_gain;
+	} cases[] = {
+		{ 0, false, 36, 0, 468, 468 },
+		{ 8, false, 36, 0, 468, 468 },
+		{ 37, false, 26, 31, 468, 468 },
+		{ 37, false, 28, 32, 468, 27136 },
+		{ 100, false, 36, 85, 468, 27136 },
+		{ 129, false, 36, 118, 468, 27136 },
+		{ 132, false, 36, 119, 468, 26979 },
+		/* The owned target RMS is sqrt(9,830,000). Dividing its Q10
+		 * value by these measured levels rounds up and down respectively. */
+		{ 347, false, 36, 335, 468, 9584 },
+		{ 4063, false, 36, 4047, 468, 793 },
+		{ 1000, false, 36, 985, 468, 3259 },
+		{ 347, false, 36, 335, 0, 9584 },
+		{ -347, false, 36, 353, 468, 9095 },
+		{ 347, true, 36, 344, 468, 9333 },
+		/* Adjacent Q10 gains straddle the lower energy deadband. */
+		{ 1000, false, 36, 985, 2727, 3259 },
+		{ 1000, false, 36, 985, 2728, 2728 },
+		{ 8000, false, 36, 7997, 335, 401 },
+		{ 8000, false, 36, 7997, 336, 336 },
+		/* The current gain is inside, or above, the energy deadband. */
+		{ 8000, false, 36, 7997, 400, 400 },
+		{ 8000, false, 36, 7997, 1000, 1000 },
+		{ 37, false, 36, 36, 27136, 27136 },
+		{ 37, false, 36, 36, 30000, 30000 },
+		{ INT16_MIN, false, 36, 32703, 468, 468 },
+		{ INT16_MAX, true, 36, 32703, 0, 98 },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v34_gain_control control;
+		struct v34_gain_control expected;
+		int16_t level = -1;
+
+		CHECK(v34_gain_control_init(&control, 468) ==
+			      V34_GAIN_CONTROL_OK &&
+		      v34_gain_control_set_mode(&control, V34_GAIN_FROZEN) ==
+			      V34_GAIN_CONTROL_OK,
+		      "refresh case %zu did not initialize", index);
+		for (unsigned int count = 0; count < V34_GAIN_HISTORY_SAMPLES;
+		     ++count) {
+			struct v34_analytic_sample output;
+			struct v34_analytic_sample input = {
+				.in_phase = count < cases[index].nonzero_samples ?
+					cases[index].sample : 0,
+			};
+
+			if (cases[index].alternating && (count & 1u) != 0u)
+				input.in_phase = (int16_t)-input.in_phase;
+			CHECK(v34_gain_control_process(&control, input, &output) ==
+				      V34_GAIN_CONTROL_OK,
+			      "refresh case %zu could not fill history", index);
+		}
+		CHECK(agc_measure_level_s16(control.history,
+			      V34_GAIN_HISTORY_SAMPLES, &level) == AGC_OK &&
+		      level == cases[index].level,
+		      "refresh case %zu has level %d, expected %d",
+		      index, level, cases[index].level);
+		/* Refresh only the gain, including while a correction is partly
+		 * accumulated. The running correction owner keeps its lineage. */
+		control.energy_count = 2;
+		control.energy_accumulator = 329981;
+		control.average_energy = 1200;
+		control.correction = -173;
+		for (unsigned int mode = 0; mode < 2u; ++mode) {
+			control.gain = cases[index].initial_gain;
+			control.mode = mode == 0u ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
+			expected = control;
+			expected.gain = cases[index].refreshed_gain;
+			CHECK(v34_gain_control_refresh_level(&control) ==
+				      V34_GAIN_CONTROL_OK &&
+			      memcmp(&control, &expected, sizeof(control)) == 0 &&
+			      v34_gain_control_refresh_level(&control) ==
+				      V34_GAIN_CONTROL_OK &&
+			      memcmp(&control, &expected, sizeof(control)) == 0,
+			      "refresh case %zu mode %u gave gain %d, expected %d",
+			      index, mode, control.gain, expected.gain);
+		}
+	}
+	{
+		struct v34_gain_control invalid = { 0 };
+		struct v34_gain_control saved = invalid;
+
+		CHECK(v34_gain_control_refresh_level(NULL) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      v34_gain_control_refresh_level(&invalid) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&invalid, &saved, sizeof(invalid)) == 0 &&
+		      v34_gain_control_init(&invalid, 468) == V34_GAIN_CONTROL_OK,
+		      "refresh accepted an uninitialized owner");
+		invalid.history_index = V34_GAIN_HISTORY_SAMPLES;
+		saved = invalid;
+		CHECK(v34_gain_control_refresh_level(&invalid) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&invalid, &saved, sizeof(invalid)) == 0,
+		      "invalid refresh history changed state");
+	}
+	return true;
+}
+
+static bool test_refresh_continuation(void)
+{
+	static const uint16_t expected_energy[] = { 1503, 1342, 1182 };
+	const struct v34_analytic_sample input = { .in_phase = 347 };
+
+	for (unsigned int mode = 0; mode < 2u; ++mode)
+		for (uint16_t consumed = 1; consumed < V34_GAIN_UPDATE_SAMPLES;
+		     ++consumed) {
+			struct v34_gain_control control;
+			struct v34_analytic_sample output;
+			uint16_t remaining = V34_GAIN_UPDATE_SAMPLES - consumed;
+
+			CHECK(v34_gain_control_init(&control, 468) ==
+				      V34_GAIN_CONTROL_OK &&
+			      v34_gain_control_set_mode(&control, V34_GAIN_FROZEN) ==
+				      V34_GAIN_CONTROL_OK,
+			      "continuation owner did not initialize");
+			for (unsigned int count = 0; count < V34_GAIN_HISTORY_SAMPLES;
+			     ++count)
+				CHECK(v34_gain_control_process(&control, input, &output) ==
+					      V34_GAIN_CONTROL_OK,
+				      "continuation history did not advance");
+			control.mode = mode == 0u ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
+			control.average_energy = 1200;
+			control.correction = -173;
+			control.energy_count = consumed;
+			/* The first samples were actually emitted with the old gain;
+			 * preserve their 159^2 energy, not a rescaled fiction. */
+			control.energy_accumulator = consumed * UINT32_C(159) * 159u;
+			CHECK(v34_gain_control_refresh_level(&control) ==
+				      V34_GAIN_CONTROL_OK && control.gain == 9584,
+			      "continuation gain did not refresh");
+			for (uint16_t count = 0; count < remaining; ++count) {
+				CHECK(v34_gain_control_process(&control, input, &output) ==
+					      V34_GAIN_CONTROL_OK &&
+				      output.in_phase == 3248 && output.quadrature == 0,
+				      "continuation output changed before correction");
+				if (count + 1u < remaining)
+					CHECK(control.gain == 9584 &&
+					      control.energy_count == consumed + count + 1u &&
+					      control.energy_accumulator ==
+						consumed * UINT32_C(159) * 159u +
+						(count + 1u) * UINT32_C(3248) * 3248u &&
+					      control.average_energy == 1200 &&
+					      control.correction == -173,
+					      "partial mixed-gain energy was reset or rescaled");
+			}
+			CHECK(control.energy_count == 0u &&
+			      control.energy_accumulator == 0u &&
+			      control.history_index == remaining &&
+			      control.average_energy == (mode == 0u ?
+				      1200 : expected_energy[consumed - 1u]) &&
+			      control.gain == (mode == 0u ? 9584 : 10753) &&
+			      control.correction == (mode == 0u ? -173 : 0),
+			      "refresh continuation changed the existing correction clock");
+		}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -212,6 +382,8 @@ int main(void)
 		{ "exact profile", test_exact_profile },
 		{ "saturation", test_saturation },
 		{ "ownership", test_ownership },
+		{ "measured acquisition refresh", test_measured_refresh },
+		{ "refresh correction continuation", test_refresh_continuation },
 	};
 	unsigned int failures = 0;
 

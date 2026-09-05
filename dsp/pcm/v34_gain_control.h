@@ -45,6 +45,16 @@ bool v34_gain_control_is_valid(
 enum v34_gain_control_result v34_gain_control_set_mode(
 	struct v34_gain_control *control, enum v34_gain_mode mode);
 
+/* Refresh an insufficient gain from the owned 36-sample raw analytic history
+ * at a caller-qualified carrier acquisition boundary. Raise only below the
+ * existing energy deadband, round to the nearest Q10 gain, and retain the
+ * ordinary increase ceiling. Quiet history, sufficient gain, and gain already
+ * above the ceiling are unchanged. History, correction clock, learned energy,
+ * and tracking/frozen mode are always preserved; invalid state is rejected
+ * without mutation. Ordinary sample processing never invokes this policy. */
+enum v34_gain_control_result v34_gain_control_refresh_level(
+	struct v34_gain_control *control);
+
 /* Scale one analytic sample and advance the four-sample correction clock.
  * Rejected calls leave the owner and output unchanged. */
 enum v34_gain_control_result v34_gain_control_process(

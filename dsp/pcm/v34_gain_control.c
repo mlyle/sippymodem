@@ -117,6 +117,52 @@ enum v34_gain_control_result v34_gain_control_set_mode(
 	return V34_GAIN_CONTROL_OK;
 }
 
+enum v34_gain_control_result v34_gain_control_refresh_level(
+	struct v34_gain_control *control)
+{
+	int16_t level;
+	uint64_t denominator;
+	uint64_t target;
+	uint32_t gain;
+	uint32_t rounding_boundary;
+	/* The level helper estimates RMS from 36 samples weighted by 910/32768
+	 * and a quantized square root. Ignoring rounding, the ideal four-sample
+	 * steady energy recurrence is
+	 * A = A * pole / 2^15 + 4 * RMS^2 / 2^16. Thus the target gain squared
+	 * is A * 2 * (2^15 - pole) * 2^20 / (4 * raw_RMS^2); 2^20 converts
+	 * squared Q10 gain. Keep this ratio exact until final nearest rounding. */
+	const uint64_t energy_scale = UINT64_C(2) *
+		(0x8000 - V34_GAIN_ENERGY_HISTORY_Q15) *
+		(UINT64_C(1) << (2 * V34_GAIN_FRACTION_BITS));
+
+	if (!v34_gain_control_is_valid(control))
+		return V34_GAIN_CONTROL_INVALID_STATE;
+	if (agc_measure_level_s16(control->history,
+				  V34_GAIN_HISTORY_SAMPLES, &level) != AGC_OK)
+		return V34_GAIN_CONTROL_INVALID_STATE;
+	if (level <= V34_GAIN_MINIMUM_LEVEL ||
+	    control->gain >= V34_GAIN_INCREASE_CEILING)
+		return V34_GAIN_CONTROL_OK;
+	denominator = (uint64_t)level * level * V34_GAIN_UPDATE_SAMPLES;
+	if ((uint64_t)control->gain * control->gain * denominator >=
+	    (V34_GAIN_TARGET_ENERGY - V34_GAIN_ENERGY_DEADBAND) * energy_scale)
+		return V34_GAIN_CONTROL_OK;
+	target = V34_GAIN_TARGET_ENERGY * energy_scale;
+	if (target >= denominator * V34_GAIN_INCREASE_CEILING *
+			      V34_GAIN_INCREASE_CEILING) {
+		gain = V34_GAIN_INCREASE_CEILING;
+	} else {
+		/* The ceiling bounds this quotient to a 32-bit square. */
+		gain = integer_square_root_u32((uint32_t)(target / denominator));
+		rounding_boundary = 2u * gain + 1u;
+		if (4u * target >=
+		    denominator * rounding_boundary * rounding_boundary)
+			gain++;
+	}
+	control->gain = (int16_t)gain;
+	return V34_GAIN_CONTROL_OK;
+}
+
 enum v34_gain_control_result v34_gain_control_process(
 	struct v34_gain_control *control,
 	struct v34_analytic_sample input,
