@@ -45,10 +45,12 @@ bool v34_mp_parameters_are_valid(
 	const struct v34_mp_parameters *parameters)
 {
 	return parameters != NULL &&
-	       rate_is_valid(
-		       parameters->maximum_call_to_answer_rate_2400_bps_units) &&
-	       rate_is_valid(
-		       parameters->maximum_answer_to_call_rate_2400_bps_units) &&
+	       ((parameters->maximum_call_to_answer_rate_2400_bps_units == 0u &&
+		 parameters->maximum_answer_to_call_rate_2400_bps_units == 0u) ||
+		(rate_is_valid(
+			 parameters->maximum_call_to_answer_rate_2400_bps_units) &&
+		 rate_is_valid(
+			 parameters->maximum_answer_to_call_rate_2400_bps_units))) &&
 	       v34_trellis_selection_is_valid(
 		       parameters->remote_transmitter_trellis) &&
 	       (parameters->data_rate_capability_mask &

@@ -36,8 +36,9 @@ enum v34_mp_result {
 	V34_MP_CRC_MISMATCH,
 };
 
-/* Rate fields are multiples of 2400 bit/s. Rates 13 and 14 require separate
- * knowledge that the peer supports the 1664-point constellation. */
+/* Rate fields are multiples of 2400 bit/s. Both zero is the V.34 11.7
+ * cleardown request, not a data-mode selection. Rates 13 and 14 require
+ * separate knowledge that the peer supports the 1664-point constellation. */
 struct v34_mp_parameters {
 	uint8_t maximum_call_to_answer_rate_2400_bps_units;
 	uint8_t maximum_answer_to_call_rate_2400_bps_units;

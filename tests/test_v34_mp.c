@@ -845,6 +845,61 @@ static bool test_rate_selection(void)
 	return true;
 }
 
+static bool test_cleardown_records(void)
+{
+	for (unsigned int prime = 0u; prime <= 1u; ++prime) {
+		struct v34_mp_parameters zero = base_parameters(prime != 0u);
+		struct v34_mp_parameters decoded;
+		struct v34_mp_type1_parameters extended = type1_parameters();
+		struct v34_mp_type1_parameters decoded_extended;
+		struct v34_mp_record local;
+		struct v34_mp_record peer;
+		struct v34_mp_parameters ordinary = base_parameters(false);
+		struct v34_mp_rates selected = { 0 };
+		struct v34_mp_rates unchanged = selected;
+		struct v34_mp_receiver receiver;
+		struct v34_mp_receive_event event;
+		uint8_t frame[V34_MP_TYPE1_FRAME_BYTES];
+
+		zero.maximum_call_to_answer_rate_2400_bps_units = 0u;
+		zero.maximum_answer_to_call_rate_2400_bps_units = 0u;
+		extended.common = zero;
+		CHECK(v34_mp_type0_encode(&zero, frame, sizeof(frame)) ==
+			      V34_MP_OK &&
+		      v34_mp_type0_decode(
+			      frame, V34_MP_TYPE0_FRAME_BYTES, &decoded) ==
+			      V34_MP_OK &&
+		      parameters_are_equal(&zero, &decoded),
+		      "zero-rate MP/MP-prime did not round trip");
+		CHECK(v34_mp_receiver_init(&receiver) == V34_MP_OK &&
+		      receive_packed_frame(
+			      &receiver, frame, V34_MP_TYPE0_FRAME_BITS, &event) &&
+		      event.type == V34_MP_RECEIVE_TYPE0 &&
+		      parameters_are_equal(&zero, &event.parameters.type0),
+		      "stream receiver rejected a zero-rate MP/MP-prime");
+		CHECK(v34_mp_type1_encode(&extended, frame, sizeof(frame)) ==
+			      V34_MP_OK &&
+		      v34_mp_type1_decode(
+			      frame, sizeof(frame), &decoded_extended) ==
+			      V34_MP_OK &&
+		      type1_parameters_are_equal(&extended, &decoded_extended),
+		      "zero-rate Type 1 MP/MP-prime did not round trip");
+		CHECK(v34_mp_receiver_init(&receiver) == V34_MP_OK &&
+		      receive_packed_frame(
+			      &receiver, frame, V34_MP_TYPE1_FRAME_BITS, &event) &&
+		      event.type == V34_MP_RECEIVE_TYPE1 &&
+		      type1_parameters_are_equal(&extended, &event.parameters.type1),
+		      "stream receiver rejected a zero-rate Type 1 MP/MP-prime");
+		local = type0_record(&zero);
+		peer = type1_record(&ordinary);
+		CHECK(v34_mp_select_rates(&local, &peer, &selected) ==
+			      V34_MP_RATE_NO_COMMON_RATE &&
+		      memcmp(&selected, &unchanged, sizeof(selected)) == 0,
+		      "cleardown was accepted as a data rate");
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_mp_parameters valid = base_parameters(false);
@@ -862,7 +917,7 @@ static bool test_validation(void)
 		      &invalid, frame, sizeof(frame)) ==
 		      V34_MP_INVALID_PARAMETERS &&
 	      memcmp(frame, saved_frame, sizeof(frame)) == 0,
-	      "Type 0 MP accepted a zero maximum rate");
+	      "Type 0 MP accepted a one-direction-only zero maximum rate");
 	invalid = valid;
 	invalid.maximum_answer_to_call_rate_2400_bps_units = 15;
 	CHECK(!v34_mp_parameters_are_valid(&invalid),
@@ -923,6 +978,7 @@ int main(void)
 		  test_type1_reserved_bits_and_frame_rejection },
 		{ "Type 1 validation", test_type1_validation },
 		{ "data rate selection", test_rate_selection },
+		{ "cleardown records", test_cleardown_records },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
