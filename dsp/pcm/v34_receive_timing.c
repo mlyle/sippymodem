@@ -132,6 +132,16 @@ enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 	return V34_RECEIVE_TIMING_OK;
 }
 
+enum v34_receive_timing_result v34_receive_timing_set_feedback_held(
+	struct v34_receive_timing *timing, bool held)
+{
+	if (!v34_receive_timing_is_acquired(timing) ||
+	    v34_timing_control_set_feedback_held(&timing->timing, held) !=
+		    V34_TIMING_CONTROL_OK)
+		return V34_RECEIVE_TIMING_INVALID_STATE;
+	return V34_RECEIVE_TIMING_OK;
+}
+
 static struct v34_analytic_sample queue_pop(
 	struct v34_receive_timing *timing)
 {

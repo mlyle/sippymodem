@@ -91,11 +91,27 @@ static bool verify_line(
 		      law, constellation, &training, &tx, &handoff),
 	      "law/constellation %d/%d did not reach CPt", law,
 	      constellation);
+	/* A final drain may have stopped on a quiet observation. The new CP
+	 * owner must release that policy without resetting its trained clock. */
+	CHECK(v34_receive_timing_set_feedback_held(
+		      &handoff.upstream.line.timing, true) == V34_RECEIVE_TIMING_OK,
+	      "CP fixture could not retain a quiet training hold");
 	CHECK(v90_phase4_cp_line_rx_init(
 		      &rx, &handoff, constellation) ==
 		      V90_PHASE4_CP_LINE_RX_OK &&
 	      rx.line.timing.gain.mode == V34_GAIN_TRACKING,
 	      "CP line receiver did not accept the delayed handoff");
+	{
+		struct v34_timing_control expected =
+			handoff.upstream.line.timing.timing;
+
+		expected.feedback_held = false;
+		CHECK(handoff.upstream.line.timing.timing.feedback_held &&
+		      !rx.line.timing.timing.feedback_held &&
+		      memcmp(&rx.line.timing.timing, &expected,
+			     sizeof(expected)) == 0,
+		      "CP did not release only the old quiet timing policy");
+	}
 	for (uint32_t sample_index = 0;
 	     sample_index < SAMPLE_LIMIT; ++sample_index) {
 		struct v90_cp_receive_event event = { 0 };

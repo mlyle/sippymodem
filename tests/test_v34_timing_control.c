@@ -364,6 +364,128 @@ static bool test_data_freeze(void)
 	return true;
 }
 
+static bool test_feedback_hold(void)
+{
+	struct v34_timing_control invalid = { 0 };
+	struct v34_timing_control invalid_saved = invalid;
+	uint32_t random = UINT32_C(0x031932cd);
+
+	CHECK(v34_timing_control_set_feedback_held(NULL, true) ==
+		      V34_TIMING_CONTROL_INVALID_STATE &&
+	      v34_timing_control_set_feedback_held(&invalid, true) ==
+		      V34_TIMING_CONTROL_INVALID_STATE &&
+	      memcmp(&invalid, &invalid_saved, sizeof(invalid)) == 0,
+	      "timing feedback hold accepted an absent owner");
+	for (unsigned int mode = V34_TIMING_CONTROL_LOCKED;
+	     mode <= V34_TIMING_CONTROL_HOLD; ++mode) {
+		struct v34_timing_control control;
+		struct v34_timing_control saved;
+		struct v34_timing_control expected;
+		uint16_t minimum = UINT16_MAX;
+		uint16_t maximum = 0;
+
+		CHECK(v34_timing_control_init(&control, 8000, 3000, 1,
+			      V34_ANSWERING_STATION) == V34_TIMING_CONTROL_OK,
+		      "timing feedback owner did not initialize");
+		if (mode != V34_TIMING_CONTROL_LOCKED)
+			CHECK(v34_timing_control_begin_acquisition(&control, true) ==
+				      V34_TIMING_CONTROL_OK,
+			      "timing feedback owner did not start acquisition");
+		for (unsigned int step = 0; (unsigned int)control.mode < mode &&
+		     step < 12000u; ++step) {
+			int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS];
+			uint16_t increment;
+
+			generate_observations(&random, step, observations);
+			CHECK(v34_timing_control_process(&control, observations,
+				      &increment) == V34_TIMING_CONTROL_OK,
+			      "timing feedback owner did not reach mode %u", mode);
+		}
+		CHECK((unsigned int)control.mode == mode,
+		      "timing feedback fixture missed mode %u", mode);
+		/* A nonintegral learned frequency must keep accumulating while
+		 * feedback is held, not become a constant rounded increment. */
+		control.integrator = 0x1c001;
+		saved = control;
+		expected = saved;
+		expected.feedback_held = true;
+		CHECK(v34_timing_control_set_feedback_held(&control, true) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0 &&
+		      v34_timing_control_set_feedback_held(&control, true) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "timing feedback hold changed the acquired state %u", mode);
+		for (unsigned int step = 0; step < 512u; ++step) {
+			int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS];
+			int32_t accumulator = control.integrator + control.phase_residue;
+			int32_t delta = (accumulator + 0x4000) >> 15;
+			uint16_t increment;
+
+			generate_observations(&random, step + 1u, observations);
+			expected = control;
+			CHECK(v34_timing_control_process(&control, observations,
+				      &increment) == V34_TIMING_CONTROL_OK &&
+			      increment == control.nominal_increment + delta &&
+			      control.phase_residue == accumulator - delta * 0x8000,
+			      "held clock lost its fractional frequency %u/%u", mode, step);
+			/* Offset reporting advances with the oscillator; acquisition,
+			 * learned frequency, gains and physical phase do not change. */
+			expected.phase_increment = control.phase_increment;
+			expected.phase_residue = control.phase_residue;
+			expected.accumulated_delta = control.accumulated_delta;
+			expected.accumulated_count = control.accumulated_count;
+			expected.offset_ppm = control.offset_ppm;
+			CHECK(memcmp(&control, &expected, sizeof(control)) == 0,
+			      "quiet observations changed acquisition %u/%u", mode, step);
+			if (increment < minimum)
+				minimum = increment;
+			if (increment > maximum)
+				maximum = increment;
+		}
+		CHECK(minimum < maximum && control.integrator == saved.integrator,
+		      "held clock did not retain fractional frequency %u", mode);
+		expected = control;
+		expected.feedback_held = false;
+		CHECK(v34_timing_control_set_feedback_held(&control, false) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "timing feedback release changed its retained state %u", mode);
+		{
+			int16_t observations[V34_TIMING_CONTROL_OBSERVATIONS];
+			uint16_t increment;
+			uint16_t expected_increment;
+
+			generate_observations(&random, 0, observations);
+			CHECK(v34_timing_control_process(&control, observations,
+				      &increment) == V34_TIMING_CONTROL_OK &&
+			      v34_timing_control_process(&expected, observations,
+				      &expected_increment) == V34_TIMING_CONTROL_OK &&
+			      increment == expected_increment &&
+			      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "timing feedback did not resume its retained epoch %u", mode);
+		}
+		CHECK(v34_timing_control_set_feedback_held(&control, true) ==
+			      V34_TIMING_CONTROL_OK,
+		      "timing feedback fixture could not hold before restart");
+		expected = control;
+		expected.mode = V34_TIMING_CONTROL_INITIAL_PHASE;
+		expected.full_pull_in = false;
+		expected.feedback_held = false;
+		CHECK(v34_timing_control_begin_acquisition(&control, false) ==
+			      V34_TIMING_CONTROL_OK &&
+		      memcmp(&control, &expected, sizeof(control)) == 0,
+		      "new acquisition retained an old quiet hold %u", mode);
+		CHECK(v34_timing_control_set_feedback_held(&control, true) ==
+			      V34_TIMING_CONTROL_OK &&
+		      v34_timing_control_init(&control, 8000, 3000, 1,
+			      V34_ANSWERING_STATION) == V34_TIMING_CONTROL_OK &&
+		      !control.feedback_held && control.integrator == 0,
+		      "new timing owner retained the old epoch %u", mode);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -373,6 +495,7 @@ int main(void)
 		{ "exact control", test_exact_control },
 		{ "ownership", test_ownership },
 		{ "data freeze", test_data_freeze },
+		{ "feedback hold", test_feedback_hold },
 	};
 	unsigned int failures = 0;
 

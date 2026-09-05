@@ -318,6 +318,11 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	initialized.transmitting_profile = handoff->upstream.transmitting_profile;
 	initialized.decoder_power_q15 = handoff->upstream.decoder_power_q15;
 	initialized.adaptation = V34_ADAPTIVE_EQUALIZER_FULL;
+	/* The training owner qualifies quiet return intervals. CP owns live
+	 * control symbols, so do not inherit that owner's temporary hold. */
+	if (v34_receive_timing_set_feedback_held(
+		    &initialized.line.timing, false) != V34_RECEIVE_TIMING_OK)
+		return V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE;
 	/* Continue conventional-sample level acquisition after the Phase 3
 	 * codeword parser and any final-return drain. Freeze the gain only at a
 	 * verified record, so a frontend gain change cannot poison E/B1. */

@@ -85,6 +85,12 @@ enum v34_receive_timing_result v34_receive_timing_freeze_gain(
 enum v34_receive_timing_result v34_receive_timing_set_data_frozen(
 	struct v34_receive_timing *timing, bool frozen);
 
+/* Hold only the acquired clock's error feedback during a qualified quiet
+ * interval. Samples, filters, oscillator and fractional timing still advance;
+ * releasing the hold resumes the same acquisition/tracking schedule. */
+enum v34_receive_timing_result v34_receive_timing_set_feedback_held(
+	struct v34_receive_timing *timing, bool held);
+
 /* Consume one line sample. SAMPLES_READY publishes the one or two recovered
  * samples produced before this call exhausts its input or completes a symbol
  * interval. symbol_complete identifies the exact second-sample boundary. OK

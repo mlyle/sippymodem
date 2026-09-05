@@ -140,6 +140,7 @@ enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	next = *control;
 	next.mode = V34_TIMING_CONTROL_INITIAL_PHASE;
 	next.full_pull_in = full_pull_in;
+	next.feedback_held = false;
 	*control = next;
 	return V34_TIMING_CONTROL_OK;
 }
@@ -348,6 +349,15 @@ static int32_t timing_phase_error(
 	return divide_s32(numerator, (int32_t)sum);
 }
 
+enum v34_timing_control_result v34_timing_control_set_feedback_held(
+	struct v34_timing_control *control, bool held)
+{
+	if (!v34_timing_control_is_valid(control))
+		return V34_TIMING_CONTROL_INVALID_STATE;
+	control->feedback_held = held;
+	return V34_TIMING_CONTROL_OK;
+}
+
 static void update_offset(struct v34_timing_control *control,
 			  int16_t phase_delta)
 {
@@ -394,7 +404,7 @@ enum v34_timing_control_result v34_timing_control_process(
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_TIMING_CONTROL_INVALID_ARGUMENT;
 	next = *control;
-	if (next.mode == V34_TIMING_CONTROL_INITIAL_PHASE) {
+	if (!next.feedback_held && next.mode == V34_TIMING_CONTROL_INITIAL_PHASE) {
 		next.state_count = 0;
 		set_initial_phase(&next, observations);
 		next.mode = next.full_pull_in ?
@@ -403,7 +413,8 @@ enum v34_timing_control_result v34_timing_control_process(
 		next.full_pull_in = false;
 		set_mode_parameters(&next);
 	}
-	if (next.timeout != -1 && next.mode != V34_TIMING_CONTROL_LOCKED) {
+	if (!next.feedback_held && next.timeout != -1 &&
+	    next.mode != V34_TIMING_CONTROL_LOCKED) {
 		uint16_t count = (uint16_t)(next.state_count + 1u);
 
 		if (count == (uint16_t)next.timeout) {
@@ -414,7 +425,7 @@ enum v34_timing_control_result v34_timing_control_process(
 			next.state_count = count;
 		}
 	}
-	if (next.mode == V34_TIMING_CONTROL_LOCKED) {
+	if (next.feedback_held || next.mode == V34_TIMING_CONTROL_LOCKED) {
 		timing_step = next.integrator;
 	} else {
 		int32_t error = timing_phase_error(&next, observations);

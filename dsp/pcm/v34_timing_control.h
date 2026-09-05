@@ -55,6 +55,7 @@ struct v34_timing_control {
 	enum v34_station_role local_role;
 	enum v34_timing_control_mode mode;
 	bool full_pull_in;
+	bool feedback_held;
 	bool initialized;
 };
 
@@ -77,6 +78,14 @@ enum v34_timing_control_result v34_timing_control_begin_acquisition(
  * Earlier acquisition/tracking modes continue unchanged. */
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen);
+
+/* Temporarily suppress timing-error feedback and acquisition-schedule
+ * progress when no usable signal is present. Keep the learned frequency,
+ * mode and gains; processing still advances its fractional increment from
+ * the integrator and residue. Release resumes the same acquisition epoch;
+ * initialization or explicit new acquisition clears the temporary hold. */
+enum v34_timing_control_result v34_timing_control_set_feedback_held(
+	struct v34_timing_control *control, bool held);
 
 /* Consume one complete timing-error group and publish the increment for the
  * next symbol interval. Rejected calls leave the owner and output unchanged. */
