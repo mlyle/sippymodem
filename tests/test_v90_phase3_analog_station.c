@@ -13,6 +13,7 @@
 enum {
 	SAMPLE_LIMIT = 70000,
 	NOMINAL_AMPLITUDE = 6000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 	POST_POINT_LIMIT =
 		2 * V34_LINE_PULSE_SPAN_SYMBOLS +
 		V34_EQUALIZER_DECISION_DELAY +
@@ -128,7 +129,8 @@ static bool run_exchange(
 		      NOMINAL_AMPLITUDE, dil_profile) ==
 		      V90_PHASE3_ANALOG_STATION_OK &&
 	      v90_phase3_digital_station_init(
-		      &digital, &selected, &configuration, law,
+		      &digital, &selected, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN, law,
 		      training_ucode, &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_OK,
 	      "law %u endpoints did not initialize", (unsigned int)law);
@@ -393,17 +395,20 @@ static bool test_validation(void)
 	memset(&digital, 0xa5, sizeof(digital));
 	saved_digital = digital;
 	CHECK(v90_phase3_digital_station_init(
-		      NULL, &selected, &configuration, G711_LAW_PCMU, 91,
+		      NULL, &selected, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
 		      &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v90_phase3_digital_station_init(
 		      &digital, &selected, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN,
 		      (enum g711_law)99, 91, &parameters) ==
 		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital initialization changed state");
 	CHECK(v90_phase3_digital_station_init(
-		      &digital, &selected, &configuration, G711_LAW_PCMU, 91,
+		      &digital, &selected, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN, G711_LAW_PCMU, 91,
 		      &parameters) == V90_PHASE3_DIGITAL_STATION_OK,
 	      "validation digital station did not initialize");
 	saved_digital = digital;

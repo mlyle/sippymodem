@@ -9,11 +9,6 @@
 
 #include <stdbool.h>
 
-enum {
-	/* Unit-power Phase 3/4 points occupy this fixed receive radius. */
-	V34_DATA_DECISION_FIXED_AMPLITUDE = 3238,
-};
-
 /* Own the fixed-observation semantic data path. The first point of each 4-D
  * interval is retained until the second permits one joint channel decision. */
 struct v34_data_decision_receiver {

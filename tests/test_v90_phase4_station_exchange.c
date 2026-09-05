@@ -658,7 +658,7 @@ static bool run_exchange(
 	bool complete = false;
 
 	CHECK(v90_phase4_station_fixture_init(
-		      law, &jd, TRAINING_UCODE, &training,
+		      law, 8u, &jd, TRAINING_UCODE, &training,
 		      &analog, &phase3_receive),
 	      "paired Phase 4 fixture did not reach CPt");
 	CHECK(v90_phase4_digital_station_init(

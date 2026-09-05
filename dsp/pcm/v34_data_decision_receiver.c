@@ -61,15 +61,15 @@ static struct qam_point normalized_observation(
 {
 	return (struct qam_point){
 		.in_phase = observation->decision.in_phase /
-			(double)V34_DATA_DECISION_FIXED_AMPLITUDE,
+			(double)V34_TRAINING_FIXED_AMPLITUDE,
 		.quadrature = observation->decision.quadrature /
-			(double)V34_DATA_DECISION_FIXED_AMPLITUDE,
+			(double)V34_TRAINING_FIXED_AMPLITUDE,
 	};
 }
 
 static bool fixed_coordinate(double normalized, int16_t *fixed)
 {
-	double scaled = normalized * V34_DATA_DECISION_FIXED_AMPLITUDE;
+	double scaled = normalized * V34_TRAINING_FIXED_AMPLITUDE;
 	long rounded;
 
 	if (!isfinite(scaled) || scaled < (double)INT16_MIN - 0.5 ||

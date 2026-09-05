@@ -151,7 +151,7 @@ static bool transmit_frame(
 
 static bool fixed_coordinate(double normalized, int16_t *fixed)
 {
-	double scaled = normalized * V34_DATA_DECISION_FIXED_AMPLITUDE;
+	double scaled = normalized * V34_TRAINING_FIXED_AMPLITUDE;
 	long rounded;
 
 	if (!isfinite(scaled) || scaled < INT16_MIN || scaled > INT16_MAX)
@@ -175,9 +175,9 @@ static bool make_observation(
 		    &observation->decision.quadrature))
 		return false;
 	quantized->in_phase = observation->decision.in_phase /
-		(double)V34_DATA_DECISION_FIXED_AMPLITUDE;
+		(double)V34_TRAINING_FIXED_AMPLITUDE;
 	quantized->quadrature = observation->decision.quadrature /
-		(double)V34_DATA_DECISION_FIXED_AMPLITUDE;
+		(double)V34_TRAINING_FIXED_AMPLITUDE;
 	fixture->epoch++;
 	fixture->lineage =
 		(fixture->lineage ^
@@ -300,11 +300,11 @@ static bool test_generated_pair_path(void)
 							.in_phase =
 								input[symbol].decision.in_phase /
 								(double)
-									V34_DATA_DECISION_FIXED_AMPLITUDE,
+									V34_TRAINING_FIXED_AMPLITUDE,
 							.quadrature =
 								input[symbol].decision.quadrature /
 								(double)
-									V34_DATA_DECISION_FIXED_AMPLITUDE,
+									V34_TRAINING_FIXED_AMPLITUDE,
 						};
 					}
 				}

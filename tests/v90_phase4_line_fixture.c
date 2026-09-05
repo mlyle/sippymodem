@@ -13,6 +13,7 @@ enum {
 	RETURN_S_FINISH_SYMBOL = V34_PHASE3_S_SYMBOLS + 17,
 	FIXTURE_SAMPLE_LIMIT = 50000,
 	NOMINAL_AMPLITUDE = 6000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 static struct v34_phase3_profile default_profile(void)
@@ -59,7 +60,8 @@ static bool establish_ja(
 		    transmit, profile, NOMINAL_AMPLITUDE) !=
 		    V90_PHASE3_ANALOG_LINE_TX_OK ||
 	    v90_phase3_analog_line_rx_init(
-		    &receive, profile, &config) !=
+		    &receive, profile, &config,
+		    TEST_INITIAL_RECEIVE_GAIN) !=
 		    V90_PHASE3_ANALOG_LINE_RX_OK)
 		return false;
 	for (uint32_t index = 0;
@@ -204,11 +206,14 @@ static bool prepare_boundary(
 }
 
 bool v90_phase4_fixture_prepare_boundary(
-	enum g711_law law, struct v34_training_line *line,
+	enum g711_law law, uint8_t projected_data_rate_2400_bps_units,
+	struct v34_training_line *line,
 	struct v90_phase3_return_line_rx *receive)
 {
 	struct v34_phase3_profile profile = default_profile();
 
+	profile.projected_data_rate_2400_bps_units =
+		projected_data_rate_2400_bps_units;
 	return prepare_boundary(&profile, law, line, receive);
 }
 

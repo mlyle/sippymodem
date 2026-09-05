@@ -14,6 +14,7 @@
 
 enum {
 	NOMINAL_AMPLITUDE = 6000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 static const enum v34_symbol_rate symbol_rates[] = {
@@ -290,7 +291,8 @@ static bool test_generated_entries(void)
 						      v90_phase3_analog_station_is_valid(
 							      &analog) &&
 						      pcm_phase3_entry_start_v90_digital(
-							      &entry, &configuration, &jd,
+							      &entry, &configuration,
+							      TEST_INITIAL_RECEIVE_GAIN, &jd,
 							      &digital) ==
 							      PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 						      memcmp(&digital, &saved_digital,
@@ -298,7 +300,8 @@ static bool test_generated_entries(void)
 						      "analogue entry selected the wrong owner");
 					} else {
 						CHECK(pcm_phase3_entry_start_v90_digital(
-							      &entry, &configuration, &jd,
+							      &entry, &configuration,
+							      TEST_INITIAL_RECEIVE_GAIN, &jd,
 							      &digital) == PCM_PHASE3_ENTRY_OK &&
 						      v90_phase3_digital_station_is_valid(
 							      &digital) &&
@@ -436,16 +439,23 @@ static bool test_station_validation(void)
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid or clipping analogue start changed state");
 	CHECK(pcm_phase3_entry_start_v90_digital(
-		      NULL, &configuration, &jd, &digital) ==
+		      NULL, &configuration, TEST_INITIAL_RECEIVE_GAIN, &jd,
+		      &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, NULL, &jd, &digital) ==
+		      &digital_entry, NULL, TEST_INITIAL_RECEIVE_GAIN, &jd,
+		      &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, &configuration, NULL, &digital) ==
+		      &digital_entry, &configuration, 0, &jd, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v90_digital(
-		      &digital_entry, &configuration, &jd, NULL) ==
+		      &digital_entry, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN, NULL, &digital) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      pcm_phase3_entry_start_v90_digital(
+		      &digital_entry, &configuration,
+		      TEST_INITIAL_RECEIVE_GAIN, &jd, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid digital start changed state");
@@ -515,7 +525,8 @@ static bool test_v90_branch_guards(void)
 				      upstream_index);
 			} else {
 				CHECK(pcm_phase3_entry_start_v90_digital(
-					      &entry, &configuration, &jd,
+					      &entry, &configuration,
+					      TEST_INITIAL_RECEIVE_GAIN, &jd,
 					      &digital) ==
 					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 				      memcmp(&digital, &saved_digital,

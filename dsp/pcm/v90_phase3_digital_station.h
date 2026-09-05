@@ -69,7 +69,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 	struct v90_phase3_digital_station *station,
 	const struct v34_phase3_profile *analog_profile,
 	const struct v90_phase3_analog_rx_configuration *receive_configuration,
-	enum g711_law law, uint8_t training_ucode,
+	int16_t initial_receive_gain, enum g711_law law, uint8_t training_ucode,
 	const struct v90_jd_parameters *jd);
 bool v90_phase3_digital_station_is_valid(
 	const struct v90_phase3_digital_station *station);

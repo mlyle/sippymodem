@@ -70,7 +70,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 	const struct pcm_phase3_entry *entry,
 	const struct v90_phase3_analog_rx_configuration *receive_configuration,
-	const struct v90_jd_parameters *jd,
+	int16_t initial_receive_gain, const struct v90_jd_parameters *jd,
 	struct v90_phase3_digital_station *station);
 
 /* Start the V.92 PCM-upstream children. The analogue configuration supplies

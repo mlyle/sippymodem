@@ -20,6 +20,7 @@ enum {
 		V34_EQUALIZER_DECISION_DELAY,
 	SAMPLE_LIMIT = 40000,
 	NOMINAL_AMPLITUDE = 6000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 static struct v34_phase3_profile profile(void)
@@ -65,7 +66,8 @@ static bool establish_ja(
 	if (v90_phase3_analog_line_tx_init(
 		    tx, &selected, NOMINAL_AMPLITUDE) !=
 		    V90_PHASE3_ANALOG_LINE_TX_OK ||
-	    v90_phase3_analog_line_rx_init(&rx, &selected, &config) !=
+	    v90_phase3_analog_line_rx_init(
+		    &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) !=
 		    V90_PHASE3_ANALOG_LINE_RX_OK)
 		return false;
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {

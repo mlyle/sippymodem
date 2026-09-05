@@ -1203,11 +1203,15 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		next.state.phase3.analog = station;
 	} else {
 		struct v90_phase3_digital_station station;
+		int16_t receive_gain;
 
+		if (pcm_phase2_receive_gain(
+			    &call->state.phase2, &receive_gain) != PCM_PHASE2_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
 		result = pcm_phase3_entry_start_v90_digital(
 			&entry,
 			&call->phase3_configuration.digital.receive,
-			&call->phase3_configuration.digital.jd,
+			receive_gain, &call->phase3_configuration.digital.jd,
 			&station);
 		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);

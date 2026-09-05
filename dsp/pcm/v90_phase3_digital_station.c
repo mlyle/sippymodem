@@ -87,7 +87,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 	struct v90_phase3_digital_station *station,
 	const struct v34_phase3_profile *analog_profile,
 	const struct v90_phase3_analog_rx_configuration *receive_configuration,
-	enum g711_law law, uint8_t training_ucode,
+	int16_t initial_receive_gain, enum g711_law law, uint8_t training_ucode,
 	const struct v90_jd_parameters *jd)
 {
 	struct v90_phase3_digital_station initialized = {
@@ -103,7 +103,7 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_init(
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	result = v90_phase3_analog_line_rx_init(
 		&initialized.receive.initial, analog_profile,
-		receive_configuration);
+		receive_configuration, initial_receive_gain);
 	if (result == V90_PHASE3_ANALOG_LINE_RX_OUT_OF_RANGE)
 		return V90_PHASE3_DIGITAL_STATION_OUT_OF_RANGE;
 	if (result != V90_PHASE3_ANALOG_LINE_RX_OK)

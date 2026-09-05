@@ -94,11 +94,9 @@ static bool prepare_stations(
 	struct v90_phase3_return_line_handoff receive;
 
 	if (!v90_phase4_station_fixture_init(
-		    law, &jd, TRAINING_UCODE, training,
+		    law, projected_rate, &jd, TRAINING_UCODE, training,
 		    analog, &receive))
 		return false;
-	receive.transmitting_profile.projected_data_rate_2400_bps_units =
-		projected_rate;
 	return v90_phase3_return_line_handoff_is_valid(&receive) &&
 	       v90_phase4_digital_station_init(
 		       digital, &receive, &jd, law,

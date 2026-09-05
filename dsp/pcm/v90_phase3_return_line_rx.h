@@ -30,11 +30,13 @@ enum {
 		V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS + 8,
 };
 
-/* Continue the digital modem's locked 8 kHz line receiver after Ja while the
- * analogue modem finishes Ja, goes silent, and returns S followed by S-bar. */
+/* Continue the digital modem's V.90 return parser and fixed V.34 physical
+ * receiver after Ja while the analogue modem finishes Ja, goes silent, and
+ * returns S followed by S-bar. */
 struct v90_phase3_return_line_rx {
 	struct qam_demodulator demodulator;
 	struct v90_phase3_return_rx points;
+	struct v90_upstream_training_rx upstream;
 	struct v34_phase3_s_prefix s_prefix;
 	struct v34_phase3_profile transmitting_profile;
 	uint8_t reacquisition_symbols;
@@ -45,6 +47,7 @@ struct v90_phase3_return_line_rx {
 struct v90_phase3_return_line_handoff {
 	struct qam_demodulator demodulator;
 	struct v90_phase3_return_handoff phase3;
+	struct v90_upstream_training_rx upstream;
 	struct v34_phase3_profile transmitting_profile;
 };
 
@@ -71,10 +74,10 @@ bool v90_phase3_return_line_rx_has_failed(
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);
 
-/* After the complete S-bar has fixed the Phase 4 handoff, advance the
- * continuous demodulator/equalizer clock without interpreting or adapting to
- * the following CPt samples. This keeps a later handoff sample-exact while an
- * independently owned digital DIL segment drains. */
+/* After the complete S-bar has fixed the Phase 4 handoff, advance both line
+ * clocks without interpreting the following CPt samples. This keeps a later
+ * handoff sample-exact while an independently owned digital DIL segment
+ * drains. */
 enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);

@@ -2516,11 +2516,19 @@ V90_PHASE3_RETURN_RX_TEST_OBJECTS := $(sort \
 		$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_tx.o, \
 		$(V90_PHASE3_RETURN_TX_TEST_OBJECTS)))
+V90_UPSTREAM_TRAINING_RX_OBJECTS := $(sort \
+	$(BUILD_DIR)/v90_upstream_training_rx.o \
+	$(BUILD_DIR)/v34_line_receiver.o \
+	$(BUILD_DIR)/v34_adaptive_equalizer.o \
+	$(V34_RECEIVE_PRIMITIVE_OBJECTS) \
+	$(filter-out $(BUILD_DIR)/test_v34_phase3_decision_receiver.o, \
+		$(V34_PHASE3_DECISION_RECEIVER_TEST_OBJECTS)))
 V90_PHASE3_ANALOG_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase3_analog_line_rx
 V90_PHASE3_ANALOG_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase3_analog_line_rx.o \
 	$(BUILD_DIR)/v90_phase3_analog_line_rx.o \
+	$(V90_UPSTREAM_TRAINING_RX_OBJECTS) \
 	$(BUILD_DIR)/g711.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_rx.o, \
 		$(V90_PHASE3_ANALOG_RX_TEST_OBJECTS)) \
@@ -5591,6 +5599,10 @@ $(BUILD_DIR)/v90_phase3_analog_rx.o: \
 
 $(BUILD_DIR)/v90_phase3_analog_line_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_line_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_upstream_training_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_upstream_training_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_analog_line_tx.o: \

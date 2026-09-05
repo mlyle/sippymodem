@@ -16,7 +16,8 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 }
 
 bool v90_phase4_station_fixture_init(
-	enum g711_law law, const struct v90_jd_parameters *jd,
+	enum g711_law law, uint8_t projected_data_rate_2400_bps_units,
+	const struct v90_jd_parameters *jd,
 	uint8_t training_ucode,
 	const struct v90_cp_parameters *training,
 	struct v90_phase4_analog_station *analog,
@@ -29,7 +30,8 @@ bool v90_phase4_station_fixture_init(
 
 	if (analog == NULL || receive == NULL ||
 	    !v90_phase4_fixture_prepare_boundary(
-		    law, &line, &return_receive) ||
+		    law, projected_data_rate_2400_bps_units,
+		    &line, &return_receive) ||
 	    v90_phase4_analog_station_init(
 		    &generated_analog, &line, jd, law, training_ucode,
 		    0u, training) != V90_PHASE4_ANALOG_STATION_OK)

@@ -94,7 +94,7 @@ static bool prepare_stations(
 	struct v90_phase3_return_line_handoff receive;
 
 	return v90_phase4_station_fixture_init(
-		       law, &jd, TRAINING_UCODE, &training,
+		       law, 8u, &jd, TRAINING_UCODE, &training,
 		       analog, &receive) &&
 	       v90_phase4_digital_station_init(
 		       digital, &receive, &jd, law,

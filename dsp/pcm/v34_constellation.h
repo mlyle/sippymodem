@@ -14,6 +14,8 @@ enum {
 	V34_QUARTER_SUPERCONSTELLATION_POINT_COUNT = 416,
 	V34_CHANNEL_COORDINATE_LIMIT = 255,
 	V34_2D_SYMBOLS_PER_4D_INTERVAL = 2,
+	/* Unit-power Phase 3/4 points occupy this fixed receive radius. */
+	V34_TRAINING_FIXED_AMPLITUDE = 3238,
 };
 
 struct v34_grid_point {

@@ -13,6 +13,7 @@ enum {
 	TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 173,
 	SAMPLE_LIMIT = 40000,
 	NOMINAL_AMPLITUDE = 6000,
+	TEST_INITIAL_RECEIVE_GAIN = 0x0600,
 };
 
 static struct v34_phase3_profile profile(void)
@@ -67,7 +68,8 @@ static bool run_line(enum g711_law law)
 	      v34_training_line_init(
 		      &pre_s_line, &selected, V90_PHASE3_SAMPLE_RATE,
 		      NOMINAL_AMPLITUDE) == V34_TRAINING_LINE_OK &&
-	      v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	      v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK,
 	      "law %d analogue line pair did not initialize", law);
 	/* Timing may lock on the tail of Phase 2. A shaped QAM sequence with
@@ -115,7 +117,8 @@ static bool run_line(enum g711_law law)
 	/* The two independently initialized transmitters do not share a carrier
 	 * phase timeline. Reset after the rejection check; retained call replay
 	 * covers continuous recovery across the real Phase 2/Phase 3 boundary. */
-	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK,
 	      "law %d receiver did not reset after the pre-S check", law);
 	timing_events = 0;
@@ -206,23 +209,32 @@ static bool test_validation_and_transactionality(void)
 	memset(&rx, 0xa5, sizeof(rx));
 	saved = rx;
 	selected.local_role = V34_CALLING_STATION;
-	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT &&
 	      memcmp(&rx, &saved, sizeof(rx)) == 0,
 	      "line receiver accepted the digital station profile");
 	selected = profile();
 	selected.md_length_35_ms_units = 1;
 	selected.md_symbol_count = 105;
-	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT,
 	      "line receiver accepted nonzero MD");
 	selected = profile();
 	config.tracking_equalizer_adaptation = NAN;
-	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT,
 	      "line receiver accepted invalid adaptation");
 	config = configuration();
-	CHECK(v90_phase3_analog_line_rx_init(&rx, &selected, &config) ==
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, 0) ==
+		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "line receiver accepted zero gain or changed state");
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, &config, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_OK &&
 	      v90_phase3_analog_line_rx_is_valid(&rx),
 	      "valid line receiver did not initialize");
