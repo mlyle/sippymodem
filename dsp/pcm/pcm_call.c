@@ -1904,7 +1904,7 @@ static enum pcm_call_result retain_v92_peer_downstream_rates(
 }
 
 static enum pcm_call_result sample_phase3(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
@@ -1954,14 +1954,15 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.digital);
 
 		/* The second return can finish while the independently owned DIL
-		 * transmitter completes its current segment. Keep the inherited line
-		 * clock current without re-entering the completed S/S-bar receiver. */
+		 * transmitter completes its current segment. Only the fixed upstream
+		 * line consumes conventional samples now; the completed floating
+		 * S/S-bar parser remains frozen. Initial/return acquisition below
+		 * still uses its existing normalized-codeword frontend. */
 		if (receive_complete) {
 			result = digital_phase3_result(
 				v90_phase3_digital_station_advance_completed_receive(
 					&call->state.phase3.digital,
-					decode_octet(
-						call->law, received_octet)));
+					received_sample));
 			if (result != PCM_CALL_OK)
 				return result;
 		}
@@ -2930,7 +2931,7 @@ enum pcm_call_result pcm_call_octet(
 		break;
 	case PCM_CALL_PHASE3:
 		result = sample_phase3(
-			call, received_octet, &generated);
+			call, received_octet, received_sample, &generated);
 		break;
 	case PCM_CALL_PHASE3_MIXED:
 		result = sample_mixed_phase3(

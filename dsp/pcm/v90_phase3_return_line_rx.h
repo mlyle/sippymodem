@@ -41,9 +41,12 @@ struct v90_phase3_return_line_rx {
 	struct v34_phase3_profile transmitting_profile;
 	uint8_t reacquisition_symbols;
 	bool reacquiring_equalizer;
+	bool handoff_draining;
 	bool failed;
 };
 
+/* Only upstream carries the current physical sample boundary. The floating
+ * fields are the completed return snapshot, not a continuation receiver. */
 struct v90_phase3_return_line_handoff {
 	struct qam_demodulator demodulator;
 	struct v90_phase3_return_handoff phase3;
@@ -61,7 +64,9 @@ v90_phase3_return_line_rx_allow_implicit_s_end(
 
 /* Rearm S/S-bar detection after one complete return while preserving the
  * continuous demodulator, trained equalizer, and exact next-sample boundary.
- * This is the V.90 nonzero-DIL transition between its two return signals. */
+ * This is the V.90 nonzero-DIL transition between its two return signals.
+ * Once advance_complete has begun the final handoff drain, restarting is
+ * rejected: the completed floating parser no longer owns physical samples. */
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 	struct v90_phase3_return_line_rx *rx);
 bool v90_phase3_return_line_rx_is_valid(
@@ -74,10 +79,12 @@ bool v90_phase3_return_line_rx_has_failed(
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);
 
-/* After the complete S-bar has fixed the Phase 4 handoff, advance both line
- * clocks without interpreting the following CPt samples. This keeps a later
- * handoff sample-exact while an independently owned digital DIL segment
- * drains. */
+/* After the complete final S-bar, consume one conventional physical sample
+ * only in the fixed upstream receiver. Its retained decisions and line clock
+ * remain sample-exact while the independent digital DIL segment drains.
+ * Freeze the completed floating parser, including its demodulator/equalizers;
+ * Phase 4 uses the fixed line and only the completed protocol metadata. The
+ * earlier Ja and return acquisition still use their existing paired receivers. */
 enum v90_phase3_return_line_rx_result
 v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample);

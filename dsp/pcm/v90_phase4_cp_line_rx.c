@@ -317,9 +317,9 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	initialized.transmitting_profile = handoff->transmitting_profile;
 	initialized.decoder_power_q15 = handoff->upstream.decoder_power_q15;
 	initialized.adaptation = V34_ADAPTIVE_EQUALIZER_FULL;
-	/* CP is the first conventional-sample owner after the Phase 3
-	 * codeword parser. Acquire its actual level before freezing the gain at
-	 * a verified record, so a frontend gain change cannot poison E/B1. */
+	/* Continue conventional-sample level acquisition after the Phase 3
+	 * codeword parser and any final-return drain. Freeze the gain only at a
+	 * verified record, so a frontend gain change cannot poison E/B1. */
 	if (v34_gain_control_set_mode(
 		    &initialized.line.timing.gain, V34_GAIN_TRACKING) !=
 	    V34_GAIN_CONTROL_OK)

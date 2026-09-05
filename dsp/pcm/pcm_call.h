@@ -307,8 +307,9 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character.
  * `received_octet` retains exact PCM codeword semantics while
  * `received_sample` is the decoded physical line sample. Phase 2 and Phase 3
- * retain their existing normalized-codeword frontends; digital Phase 4 and
- * retrain observation consume the physical sample. A phase change takes effect
+ * acquisition retain their existing normalized-codeword frontends. The V.90
+ * digital final-return drain, digital Phase 4, and retrain observation consume
+ * the physical sample. A phase change takes effect
  * on the following call. PHASE4_READY stops V.90 after its
  * initial Phase 4 exchange and V.92 after its role-local E2u interval. The
  * peer may still need continuous media before reaching its own handoff. This

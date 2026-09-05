@@ -3779,6 +3779,8 @@ static bool check_completed_dil_return_drains(enum g711_law law)
 	bool boundary_seen = false;
 	bool online_data_seen = false;
 	size_t drain_octets = 0u;
+	size_t distinct_drain_samples = 0u;
+	size_t verified_drain_samples = 0u;
 
 	CHECK(channel_init(&channel, law, 3u) &&
 	      endpoint_init_with_dil(
@@ -3790,6 +3792,7 @@ static bool check_completed_dil_return_drains(enum g711_law law)
 	      "law %u DIL-drain endpoints did not initialize",
 	      (unsigned int)law);
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct v90_upstream_training_rx expected;
 		const struct v90_dil_sequence *dil = NULL;
 		uint16_t segment_symbols = 0u;
 		uint16_t segment_symbol = 0u;
@@ -3797,10 +3800,12 @@ static bool check_completed_dil_return_drains(enum g711_law law)
 		uint8_t digital_received;
 		uint8_t analog_transmitted;
 		uint8_t digital_transmitted;
+		int16_t digital_sample;
 		bool draining = false;
 
 		channel_receive(
 			&channel, &analog_received, &digital_received);
+		digital_sample = decode_octet(law, digital_received);
 		CHECK(endpoint_octet(
 			      &analog, analog_received,
 			      decode_octet(law, analog_received), law,
@@ -3825,13 +3830,35 @@ static bool check_completed_dil_return_drains(enum g711_law law)
 			      "law %u invalid DIL drain state at %zu: %u/%u",
 			      (unsigned int)law, clock, segment_symbol,
 			      segment_symbols);
+			/* After final S-bar, only the conventional sample belongs to
+			 * the fixed upstream owner. A divergent PCM codeword must not
+			 * replace or double-consume the inherited CP sample stream. */
+			digital_received = silence_octet(law);
+			if (digital_sample != decode_octet(law, digital_received))
+				distinct_drain_samples++;
+			expected = digital.call.state.phase3.digital.receive.
+				returning.upstream;
+			CHECK(v90_upstream_training_rx_advance(
+				      &expected, digital_sample) ==
+				      V90_UPSTREAM_TRAINING_RX_OK,
+			      "law %u expected DIL drain stopped at %zu",
+			      (unsigned int)law, clock);
 		}
 		CHECK(endpoint_octet(
 			      &digital, digital_received,
-			      decode_octet(law, digital_received), law,
+			      digital_sample, law,
 			      &digital_transmitted),
 		      "law %u completed return was reused at %zu",
 		      (unsigned int)law, clock);
+		if (draining && !digital.entered_phase4) {
+			CHECK(memcmp(&expected,
+				     &digital.call.state.phase3.digital.receive.
+					     returning.upstream,
+				     sizeof(expected)) == 0,
+			      "law %u DIL drain did not consume its physical sample "
+			      "exactly once at %zu", (unsigned int)law, clock);
+			verified_drain_samples++;
+		}
 		if (draining && digital.entered_phase4) {
 			boundary_seen = true;
 			CHECK((uint16_t)(segment_symbol + 1u) == segment_symbols,
@@ -3846,7 +3873,8 @@ static bool check_completed_dil_return_drains(enum g711_law law)
 			break;
 		}
 	}
-	CHECK(drain_seen && drain_octets > 0u && boundary_seen &&
+	CHECK(drain_seen && drain_octets > 0u && distinct_drain_samples > 0u &&
+	      verified_drain_samples > 0u && boundary_seen &&
 	      analog.entered_phase4 && digital.entered_phase4 &&
 	      online_data_seen &&
 	      !pcm_call_has_failed(&analog.call) &&

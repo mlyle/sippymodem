@@ -302,12 +302,8 @@ static bool run_line(enum g711_law law)
 		      V34_EQUALIZER_TAP_COUNT,
 	      "law %d did not preserve both reacquired equalizers", law);
 	{
-		struct qam_demodulator demodulator = return_rx.demodulator;
-		struct v34_phase3_s_receiver marker = return_rx.points.marker;
-		struct v34_phase3_decision_receiver semantic =
-			return_rx.upstream.initial;
-		uint32_t tracking_symbols =
-			return_rx.upstream.tracking_symbols;
+		struct v90_phase3_return_line_rx saved = return_rx;
+		struct v90_upstream_training_rx expected = return_rx.upstream;
 
 		for (unsigned int index = 0; index < 32; ++index) {
 			struct qam_point point = v34_rotated_point_zero(
@@ -321,26 +317,39 @@ static bool run_line(enum g711_law law)
 					      &point : NULL,
 				      &sample, &accepted) ==
 				      V34_TRAINING_LINE_OK &&
+			      v90_upstream_training_rx_advance(
+				      &expected, quantize(law, sample)) ==
+				      V90_UPSTREAM_TRAINING_RX_OK &&
 			      v90_phase3_return_line_rx_advance_complete(
 				      &return_rx, quantize(law, sample)) ==
 				      V90_PHASE3_RETURN_LINE_RX_OK,
 			      "law %d could not drain post-S-bar samples", law);
 		}
 		CHECK(
-		      memcmp(&return_rx.demodulator, &demodulator,
-			     sizeof(demodulator)) != 0 &&
-		      memcmp(&return_rx.points.marker, &marker,
-			     sizeof(marker)) == 0 &&
-		      memcmp(&return_rx.upstream.initial, &semantic,
-			     sizeof(semantic)) == 0 &&
+		      return_rx.handoff_draining &&
+		      memcmp(&return_rx.demodulator, &saved.demodulator,
+			     sizeof(saved.demodulator)) == 0 &&
+		      memcmp(&return_rx.points, &saved.points,
+			     sizeof(saved.points)) == 0 &&
+		      memcmp(&return_rx.upstream, &expected,
+			     sizeof(expected)) == 0 &&
+		      memcmp(&return_rx.upstream.line, &saved.upstream.line,
+			     sizeof(saved.upstream.line)) != 0 &&
+		      memcmp(&return_rx.upstream.initial, &saved.upstream.initial,
+			     sizeof(saved.upstream.initial)) == 0 &&
 		      return_rx.upstream.tracking_symbols ==
-			      tracking_symbols &&
+			      saved.upstream.tracking_symbols &&
 		      v90_phase3_return_line_rx_handoff(
 			      &return_rx, &return_handoff) ==
 			      V90_PHASE3_RETURN_LINE_RX_OK &&
 		      return_handoff.phase3.compact_equalizer_active,
-		      "law %d completed return did not advance its line clock",
+		      "law %d completed return did not advance only its fixed line",
 		      law);
+		saved = return_rx;
+		CHECK(v90_phase3_return_line_rx_restart(&return_rx) ==
+			      V90_PHASE3_RETURN_LINE_RX_INVALID_STATE &&
+		      memcmp(&return_rx, &saved, sizeof(return_rx)) == 0,
+		      "law %d restarted the frozen completed parser", law);
 	}
 	return true;
 }
@@ -392,6 +401,10 @@ static bool test_validation(void)
 		      V90_PHASE3_RETURN_LINE_RX_INVALID_STATE &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid return-line call changed its destination");
+	rx.handoff_draining = true;
+	CHECK(!v90_phase3_return_line_rx_is_valid(&rx),
+	      "incomplete return was allowed to drain its handoff");
+	rx = saved;
 	rx.demodulator.tracking_window_symbols++;
 	CHECK(!v90_phase3_return_line_rx_is_valid(&rx) &&
 	      !v90_phase3_return_line_rx_has_failed(&rx) &&

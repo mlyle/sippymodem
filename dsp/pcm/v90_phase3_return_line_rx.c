@@ -18,6 +18,8 @@ bool v90_phase3_return_line_rx_is_valid(
 		       &rx->upstream.transmitting_profile,
 		       &rx->transmitting_profile) &&
 	       v34_phase3_s_prefix_is_valid(&rx->s_prefix) &&
+	       (!rx->handoff_draining ||
+		v90_phase3_return_rx_is_complete(&rx->points)) &&
 	       rx->reacquisition_symbols <=
 		       V90_PHASE3_RETURN_LINE_RX_REACQUISITION_SYMBOLS &&
 	       (rx->reacquiring_equalizer ?
@@ -85,6 +87,8 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_restart(
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	if (rx->failed)
 		return V90_PHASE3_RETURN_LINE_RX_FAILED;
+	if (rx->handoff_draining)
+		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	restarted = *rx;
 	result = v90_phase3_return_rx_restart(&restarted.points);
 	if (result == V90_PHASE3_RETURN_RX_INVALID_STATE)
@@ -227,13 +231,7 @@ v90_phase3_return_line_rx_advance_complete(
 	struct v90_phase3_return_line_rx *rx, int16_t sample)
 {
 	struct v90_phase3_return_line_rx next;
-	struct qam_equalizer_observation observation = { 0 };
-	struct qam_equalizer_observation compact_observation = { 0 };
-	struct qam_point point;
 	enum v90_upstream_training_rx_result upstream_result;
-	bool carrier_ready;
-	bool equalizer_ready;
-	bool compact_ready = false;
 
 	if (!v90_phase3_return_line_rx_is_valid(rx))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
@@ -242,24 +240,12 @@ v90_phase3_return_line_rx_advance_complete(
 	if (!v90_phase3_return_rx_is_complete(&rx->points))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
+	next.handoff_draining = true;
 	upstream_result = v90_upstream_training_rx_advance(
 		&next.upstream, sample);
 	if (upstream_result == V90_UPSTREAM_TRAINING_RX_FAILED ||
 	    upstream_result == V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT ||
-	    upstream_result == V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE ||
-	    qam_demodulator_sample(
-		    &next.demodulator, sample, &point, &carrier_ready) != QAM_OK ||
-	    (carrier_ready &&
-	     (qam_equalizer_observe(
-		      &next.points.equalizer, &point, &observation,
-		      &equalizer_ready) != QAM_EQUALIZER_OK ||
-	      !equalizer_ready ||
-	      (next.points.compact_equalizer_active &&
-	       (qam_equalizer_observe(
-			      &next.points.compact_equalizer, &point,
-			      &compact_observation, &compact_ready) !=
-			      QAM_EQUALIZER_OK ||
-		compact_ready != equalizer_ready))))) {
+	    upstream_result == V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE) {
 		next.failed = true;
 		if (v90_phase3_return_line_rx_is_valid(&next))
 			*rx = next;

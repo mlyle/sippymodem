@@ -564,9 +564,13 @@ static enum v90_host_echo_mode host_echo_mode(
 	    call->state.phase3.digital.transmit.sequence.prefix.stage ==
 		    PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
 		return V90_HOST_ECHO_TRAIN;
-	/* The upstream CP receiver owns conventional samples throughout Phase 4;
-	 * it needs the trained echo filter before declaring the phase ready. */
-	if (call->stage == PCM_CALL_PHASE4 ||
+	/* The fixed upstream receiver owns conventional samples from the final
+	 * return drain through Phase 4 and data. Cancel returned local DIL before
+	 * it consumes the samples that the CP receiver will inherit. */
+	if ((call->stage == PCM_CALL_PHASE3 &&
+	     v90_phase3_digital_station_receive_complete(
+		     &call->state.phase3.digital)) ||
+	    call->stage == PCM_CALL_PHASE4 ||
 	    call->stage == PCM_CALL_DATA_PATH ||
 	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
 	     call->retrain.peer_tone_retained))
