@@ -259,3 +259,41 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 	*receiver = next;
 	return result;
 }
+
+enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
+	struct v90_upstream_training_rx *receiver, int16_t sample)
+{
+	struct v90_upstream_training_rx next;
+	struct v34_adaptive_equalizer_observation observation;
+	struct v34_receive_action discard =
+		v34_receive_action_only(V34_RECEIVE_DISCARD);
+	enum v34_line_receiver_result line_result;
+
+	if (!v90_upstream_training_rx_is_valid(receiver))
+		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
+	if (receiver->failed)
+		return V90_UPSTREAM_TRAINING_RX_FAILED;
+	if (receiver->stage != V90_UPSTREAM_TRAINING_RX_TRACKING)
+		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
+	next = *receiver;
+	line_result = v34_line_receiver_sample(
+		&next.line, sample, &observation);
+	if (line_result == V34_LINE_RECEIVER_OBSERVATION_READY)
+		line_result = v34_line_receiver_resolve(
+			&next.line, &observation, &discard,
+			next.decoder_power_q15);
+	if (line_result != V34_LINE_RECEIVER_OK) {
+		next.failed = true;
+		if (v90_upstream_training_rx_is_valid(&next))
+			*receiver = next;
+		else
+			receiver->failed = true;
+		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
+	}
+	if (!v90_upstream_training_rx_is_valid(&next)) {
+		receiver->failed = true;
+		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
+	}
+	*receiver = next;
+	return V90_UPSTREAM_TRAINING_RX_OK;
+}

@@ -51,4 +51,10 @@ bool v90_upstream_training_rx_is_tracking(
 enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 	struct v90_upstream_training_rx *receiver, int16_t sample);
 
+/* Advance the trained physical clock without interpreting a symbol. This is
+ * used after the return S-bar boundary while the peer has already begun CPt
+ * but the local digital DIL segment is still draining. */
+enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
+	struct v90_upstream_training_rx *receiver, int16_t sample);
+
 #endif /* V90_UPSTREAM_TRAINING_RX_H */

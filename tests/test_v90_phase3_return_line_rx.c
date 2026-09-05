@@ -304,21 +304,37 @@ static bool run_line(enum g711_law law)
 	{
 		struct qam_demodulator demodulator = return_rx.demodulator;
 		struct v34_phase3_s_receiver marker = return_rx.points.marker;
-		struct qam_point point = v34_rotated_point_zero(1);
-		int16_t sample;
-		bool accepted;
+		struct v34_phase3_decision_receiver semantic =
+			return_rx.upstream.initial;
+		uint32_t tracking_symbols =
+			return_rx.upstream.tracking_symbols;
 
-		CHECK(v34_training_line_sample(
-			      &line,
-			      v34_training_line_needs_point(&line) ? &point : NULL,
-			      &sample, &accepted) == V34_TRAINING_LINE_OK &&
-		      v90_phase3_return_line_rx_advance_complete(
-			      &return_rx, quantize(law, sample)) ==
-			      V90_PHASE3_RETURN_LINE_RX_OK &&
+		for (unsigned int index = 0; index < 32; ++index) {
+			struct qam_point point = v34_rotated_point_zero(
+				(int)((index * 3u) & 3u));
+			int16_t sample;
+			bool accepted;
+
+			CHECK(v34_training_line_sample(
+				      &line,
+				      v34_training_line_needs_point(&line) ?
+					      &point : NULL,
+				      &sample, &accepted) ==
+				      V34_TRAINING_LINE_OK &&
+			      v90_phase3_return_line_rx_advance_complete(
+				      &return_rx, quantize(law, sample)) ==
+				      V90_PHASE3_RETURN_LINE_RX_OK,
+			      "law %d could not drain post-S-bar samples", law);
+		}
+		CHECK(
 		      memcmp(&return_rx.demodulator, &demodulator,
 			     sizeof(demodulator)) != 0 &&
 		      memcmp(&return_rx.points.marker, &marker,
 			     sizeof(marker)) == 0 &&
+		      memcmp(&return_rx.upstream.initial, &semantic,
+			     sizeof(semantic)) == 0 &&
+		      return_rx.upstream.tracking_symbols ==
+			      tracking_symbols &&
 		      v90_phase3_return_line_rx_handoff(
 			      &return_rx, &return_handoff) ==
 			      V90_PHASE3_RETURN_LINE_RX_OK &&

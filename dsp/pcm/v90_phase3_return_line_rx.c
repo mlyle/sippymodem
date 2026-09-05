@@ -242,7 +242,7 @@ v90_phase3_return_line_rx_advance_complete(
 	if (!v90_phase3_return_rx_is_complete(&rx->points))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
 	next = *rx;
-	upstream_result = v90_upstream_training_rx_sample(
+	upstream_result = v90_upstream_training_rx_advance(
 		&next.upstream, sample);
 	if (upstream_result == V90_UPSTREAM_TRAINING_RX_FAILED ||
 	    upstream_result == V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT ||
