@@ -111,6 +111,7 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 {
 	struct v90_phase3_analog_line_rx next;
 	struct qam_point point;
+	struct v34_analytic_sample decision;
 	enum v90_phase3_analog_line_rx_result result;
 	enum v90_upstream_training_rx_result upstream_result;
 	bool was_locked;
@@ -124,10 +125,9 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 		return V90_PHASE3_ANALOG_LINE_RX_COMPLETE;
 	next = *rx;
 	upstream_result = v90_upstream_training_rx_sample(
-		&next.upstream, sample);
-	if (upstream_result == V90_UPSTREAM_TRAINING_RX_FAILED ||
-	    upstream_result == V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT ||
-	    upstream_result == V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE) {
+		&next.upstream, sample, &decision);
+	if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK &&
+	    upstream_result != V90_UPSTREAM_TRAINING_RX_DECISION_READY) {
 		rx->failed = true;
 		return V90_PHASE3_ANALOG_LINE_RX_NUMERIC_FAILURE;
 	}

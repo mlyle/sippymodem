@@ -24,6 +24,7 @@ enum v90_upstream_training_rx_stage {
 
 enum v90_upstream_training_rx_result {
 	V90_UPSTREAM_TRAINING_RX_OK,
+	V90_UPSTREAM_TRAINING_RX_DECISION_READY,
 	V90_UPSTREAM_TRAINING_RX_FAILED,
 	V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT,
 	V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE,
@@ -64,10 +65,19 @@ bool v90_upstream_training_rx_recent_decision(
 	const struct v90_upstream_training_rx *receiver, size_t index,
 	struct v34_analytic_sample *decision);
 
-/* Consume exactly one signed 8-kHz sample. Once PP completes, later calls
- * continue bounded decision-directed tracking and normally return OK. */
+/* Consume exactly one signed 8-kHz sample. DECISION_READY publishes the newly
+ * resolved post-PP equalized decision once, including all 512 known TRN
+ * symbols and later observations discarded from adaptation during silence.
+ * The final PP observation itself is not published. The decision is observed
+ * before adaptation; physical resolution and history retention are complete
+ * when it is published, and the consumer must not repeat them.
+ *
+ * The output is required and must be disjoint from the receiver. OK and errors
+ * leave it unchanged. Invalid arguments and FAILED leave the receiver
+ * unchanged. Numeric failures latch receiver failure without publishing. */
 enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
-	struct v90_upstream_training_rx *receiver, int16_t sample);
+	struct v90_upstream_training_rx *receiver, int16_t sample,
+	struct v34_analytic_sample *decision);
 
 /* Advance the trained physical clock without interpreting a symbol. This is
  * used after the return S-bar boundary while the peer has already begun CPt

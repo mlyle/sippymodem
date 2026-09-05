@@ -197,6 +197,66 @@ static bool test_g711_lines(void)
 	return true;
 }
 
+static bool check_fixed_sample_rejection(
+	const struct v90_upstream_training_rx *trained)
+{
+	struct v90_upstream_training_rx rx = *trained;
+	struct v90_upstream_training_rx saved = rx;
+	struct v34_analytic_sample decision = { INT16_MIN, INT16_MAX };
+	struct v34_analytic_sample saved_decision = decision;
+	struct v34_adaptive_equalizer_observation observation = { 0 };
+	bool pending = false;
+
+	CHECK(v90_upstream_training_rx_sample(NULL, 0, &decision) ==
+		      V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT &&
+	      v90_upstream_training_rx_sample(&rx, 0, NULL) ==
+		      V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT &&
+	      v90_upstream_training_rx_sample(
+		      &rx, 0, &rx.recent_decisions[0]) ==
+		      V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "invalid or aliased fixed sample changed owner or output");
+	rx.line.initialized = false;
+	saved = rx;
+	CHECK(v90_upstream_training_rx_sample(&rx, 0, &decision) ==
+		      V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "invalid fixed receiver changed owner or output");
+	rx = *trained;
+	rx.failed = true;
+	saved = rx;
+	CHECK(v90_upstream_training_rx_sample(&rx, 0, &decision) ==
+		      V90_UPSTREAM_TRAINING_RX_FAILED &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "failed fixed receiver published or consumed another decision");
+
+	/* Leave a real physical observation unresolved. The existing numeric
+	 * failure latches on the next sample; it must not publish that decision. */
+	rx = *trained;
+	for (unsigned int index = 0; index < 8u && !pending; ++index) {
+		enum v34_line_receiver_result result =
+			v34_line_receiver_sample(&rx.line, 0, &observation);
+
+		CHECK(result == V34_LINE_RECEIVER_OK ||
+		      result == V34_LINE_RECEIVER_OBSERVATION_READY,
+		      "could not leave a fixed observation pending");
+		pending = result == V34_LINE_RECEIVER_OBSERVATION_READY;
+	}
+	CHECK(pending && v90_upstream_training_rx_is_tracking(&rx),
+	      "unresolved fixed observation did not remain valid");
+	saved = rx;
+	saved.failed = true;
+	CHECK(v90_upstream_training_rx_sample(&rx, 0, &decision) ==
+		      V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+	      "numeric fixed failure changed its latch or published a decision");
+	return true;
+}
+
 static bool run_fixed_ja_line(enum g711_law law)
 {
 	struct v34_phase3_profile selected = profile();
@@ -212,6 +272,8 @@ static bool run_fixed_ja_line(enum g711_law law)
 	size_t expected_count;
 	size_t received_count;
 	double decision_scale;
+	unsigned int decisions = 0;
+	unsigned int pp_events = 0;
 	bool started_ja = false;
 	bool detected = false;
 
@@ -234,11 +296,16 @@ static bool run_fixed_ja_line(enum g711_law law)
 	/* Physical acquisition belongs solely to the fixed receiver. Observe each
 	 * new post-PP decision once; its final PP decision is not a TRN symbol. */
 	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
-		struct v34_analytic_sample decision;
+		struct v34_analytic_sample decision = { INT16_MIN, INT16_MAX };
+		struct v34_analytic_sample saved_decision = decision;
+		struct v34_analytic_sample retained;
 		struct qam_point normalized;
 		struct qam_point target;
 		uint16_t previous = line.next_recent_decision;
+		uint16_t previous_trn = line.initial.j.received_symbols;
+		bool was_tracking = v90_upstream_training_rx_is_tracking(&line);
 		int16_t sample;
+		enum v90_upstream_training_rx_result sampled;
 		enum v90_phase3_ja_rx_result result;
 
 		if (!started_ja &&
@@ -252,17 +319,39 @@ static bool run_fixed_ja_line(enum g711_law law)
 			started_ja = true;
 		}
 		CHECK(v90_phase3_analog_line_tx_sample(&tx, &sample) ==
-			      V90_PHASE3_ANALOG_LINE_TX_OK &&
-		      v90_upstream_training_rx_sample(
-			      &line, quantize(law, sample)) ==
-			      V90_UPSTREAM_TRAINING_RX_OK,
+			      V90_PHASE3_ANALOG_LINE_TX_OK,
+		      "law %d fixed source stopped at sample %u", law, index);
+		sampled = v90_upstream_training_rx_sample(
+			&line, quantize(law, sample), &decision);
+		CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK ||
+		      sampled == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
 		      "law %d fixed path stopped at sample %u", law, index);
-		if (previous == line.next_recent_decision)
+		if (!was_tracking && v90_upstream_training_rx_is_tracking(&line)) {
+			pp_events++;
+			CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK &&
+			      line.initial.j.received_symbols == 0 && decisions == 0,
+			      "law %d final PP observation was published as TRN", law);
+		}
+		if (sampled == V90_UPSTREAM_TRAINING_RX_OK) {
+			CHECK(previous == line.next_recent_decision &&
+			      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+			      "law %d nonready sample published a decision", law);
 			continue;
-		CHECK(v90_upstream_training_rx_is_tracking(&line) &&
+		}
+		decisions++;
+		CHECK(was_tracking && v90_upstream_training_rx_is_tracking(&line) &&
+		      line.next_recent_decision == (previous + 1u) %
+			      V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
 		      v90_upstream_training_rx_recent_decision(
-			      &line, line.recent_decision_count - 1u, &decision),
-		      "law %d fixed path did not export a post-PP decision", law);
+			      &line, line.recent_decision_count - 1u, &retained) &&
+		      memcmp(&decision, &retained, sizeof(decision)) == 0,
+		      "law %d fixed event and retained decision differ", law);
+		CHECK(line.initial.j.received_symbols ==
+			      (decisions < V34_TRAINING_SEQUENCE_MIN_SYMBOLS ?
+			       decisions : V34_TRAINING_SEQUENCE_MIN_SYMBOLS) &&
+		      (decisions > V34_TRAINING_SEQUENCE_MIN_SYMBOLS ||
+		       previous_trn + 1u == decisions),
+		      "law %d fixed decision %u displaced known TRN", law, decisions);
 		normalized = (struct qam_point){
 			decision.in_phase / decision_scale,
 			decision.quadrature / decision_scale,
@@ -282,7 +371,8 @@ static bool run_fixed_ja_line(enum g711_law law)
 			break;
 		}
 	}
-	CHECK(started_ja && detected &&
+	CHECK(started_ja && detected && pp_events == 1u &&
+	      decisions > V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      v90_phase3_ja_rx_handoff(&semantic, &handoff) ==
 		      V90_PHASE3_JA_RX_OK &&
 	      v34_precoder_recommendation_is_valid(&handoff.precoder) &&
@@ -306,6 +396,8 @@ static bool run_fixed_ja_line(enum g711_law law)
 		      memcmp(&target, &saved_target, sizeof(target)) == 0,
 		      "law %d complete Ja consumed another decision", law);
 	}
+	CHECK(check_fixed_sample_rejection(&line),
+	      "law %d fixed sample rejection contract failed", law);
 	return true;
 }
 

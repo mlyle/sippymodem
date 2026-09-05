@@ -10,6 +10,7 @@
 #include "test.h"
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -400,6 +401,7 @@ static bool run_fixed_returns(enum g711_law law)
 	unsigned int supplied = 0;
 	unsigned int post_received = 0;
 	unsigned int onset_events = 0;
+	unsigned int unsaturated_quiet_decisions = 0;
 	bool first_ended = false;
 	bool second_ended = false;
 
@@ -409,13 +411,17 @@ static bool run_fixed_returns(enum g711_law law)
 	      "law %d fixed return could not finish Ja", law);
 	for (unsigned int index = 0; index < SAMPLE_LIMIT &&
 	     !v90_phase3_analog_line_tx_is_handoff_ready(&prefix); ++index) {
+		struct v34_analytic_sample decision;
+		enum v90_upstream_training_rx_result sampled;
 		int16_t sample;
 
 		CHECK(v90_phase3_analog_line_tx_sample(&prefix, &sample) ==
-			      V90_PHASE3_ANALOG_LINE_TX_OK &&
-		      v90_upstream_training_rx_sample(
-			      &handoff.upstream, quantize(law, sample)) ==
-			      V90_UPSTREAM_TRAINING_RX_OK,
+			      V90_PHASE3_ANALOG_LINE_TX_OK,
+		      "law %d fixed return could not finish its Ja source", law);
+		sampled = v90_upstream_training_rx_sample(
+			&handoff.upstream, quantize(law, sample), &decision);
+		CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK ||
+		      sampled == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
 		      "law %d fixed return lost its Ja line", law);
 	}
 	CHECK(v90_phase3_analog_line_tx_handoff(&prefix, &tx) ==
@@ -429,13 +435,17 @@ static bool run_fixed_returns(enum g711_law law)
 	     index < SAMPLE_LIMIT && post_received < ARRAY_LENGTH(post_rotations);
 	     ++index) {
 		struct qam_point point = { 0 };
-		struct v34_analytic_sample decision;
+		struct v34_analytic_sample decision = { INT16_MIN, INT16_MAX };
+		struct v34_analytic_sample saved_decision = decision;
+		struct v34_analytic_sample retained;
 		struct v34_fixed_training_decision hard;
 		uint16_t previous = handoff.upstream.next_recent_decision;
+		uint32_t previous_tracking = handoff.upstream.tracking_symbols;
 		bool accepting = v34_training_line_needs_point(&tx);
 		bool accepted;
 		bool adapt;
 		int16_t sample;
+		enum v90_upstream_training_rx_result sampled;
 		enum v90_phase3_return_rx_result result;
 
 		if (supplied >= POST_START)
@@ -454,22 +464,41 @@ static bool run_fixed_returns(enum g711_law law)
 				(int)((supplied - RETURN_SILENCE_SYMBOLS) & 1u));
 		CHECK(v34_training_line_sample(
 			      &tx, accepting ? &point : NULL, &sample, &accepted) ==
-			      V34_TRAINING_LINE_OK && accepted == accepting &&
-		      v90_upstream_training_rx_sample(
-			      &handoff.upstream, quantize(law, sample)) ==
-			      V90_UPSTREAM_TRAINING_RX_OK,
+			      V34_TRAINING_LINE_OK && accepted == accepting,
+		      "law %d fixed return source stopped at sample %u", law, index);
+		sampled = v90_upstream_training_rx_sample(
+			&handoff.upstream, quantize(law, sample), &decision);
+		CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK ||
+		      sampled == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
 		      "law %d fixed return stopped at sample %u", law, index);
 		if (accepted)
 			supplied++;
-		if (previous == handoff.upstream.next_recent_decision)
+		if (sampled == V90_UPSTREAM_TRAINING_RX_OK) {
+			CHECK(handoff.upstream.next_recent_decision == previous &&
+			      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+			      "law %d fixed return changed a nonready decision", law);
 			continue;
-		CHECK(v90_upstream_training_rx_recent_decision(
+		}
+		CHECK(handoff.upstream.next_recent_decision == (previous + 1u) %
+			      V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS &&
+		      v90_upstream_training_rx_recent_decision(
 			      &handoff.upstream,
-			      handoff.upstream.recent_decision_count - 1u, &decision) &&
+			      handoff.upstream.recent_decision_count - 1u, &retained) &&
+		      memcmp(&decision, &retained, sizeof(decision)) == 0 &&
 		      v34_training_constellation_fixed_slice(
 			      V34_CONSTELLATION_4_POINT, decision, &hard) ==
 			      V34_CONSTELLATION_OK,
 		      "law %d fixed return did not export a decision", law);
+		/* Quiet decisions still belong to the semantic timeline and history,
+		 * even though they must not advance decision-directed adaptation. */
+		if (abs(decision.in_phase) < V34_TRAINING_FIXED_AMPLITUDE / 4 &&
+		    abs(decision.quadrature) < V34_TRAINING_FIXED_AMPLITUDE / 4) {
+			if (previous_tracking <
+			    handoff.upstream.line.timing.timing.nominal_symbol_rate)
+				unsaturated_quiet_decisions++;
+			CHECK(handoff.upstream.tracking_symbols == previous_tracking,
+			      "law %d quiet decision advanced tracking", law);
+		}
 		if (second_ended) {
 			CHECK(((hard.clockwise_quarter_turns + 4u -
 				detection.clockwise_quarter_turn_offset) & 3u) ==
@@ -503,7 +532,7 @@ static bool run_fixed_returns(enum g711_law law)
 			      "law %d fixed return reported %d", law, result);
 		}
 	}
-	CHECK(first_ended && second_ended &&
+	CHECK(first_ended && second_ended && unsaturated_quiet_decisions > 0 &&
 	      post_received == ARRAY_LENGTH(post_rotations),
 	      "law %d fixed line did not complete both return epochs", law);
 	return true;

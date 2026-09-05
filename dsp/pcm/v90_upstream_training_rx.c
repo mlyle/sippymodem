@@ -2,6 +2,7 @@
 
 #include "v90_upstream_training_rx.h"
 
+#include "memory_region.h"
 #include "v34_constellation.h"
 
 #include <stddef.h>
@@ -274,7 +275,8 @@ static enum v90_upstream_training_rx_result receive_observation(
 }
 
 enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
-	struct v90_upstream_training_rx *receiver, int16_t sample)
+	struct v90_upstream_training_rx *receiver, int16_t sample,
+	struct v34_analytic_sample *decision)
 {
 	struct v90_upstream_training_rx next;
 	struct v34_adaptive_equalizer_observation observation = { 0 };
@@ -282,7 +284,9 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 	enum v90_upstream_training_rx_result result;
 	bool was_tracking;
 
-	if (!v90_upstream_training_rx_is_valid(receiver))
+	if (!v90_upstream_training_rx_is_valid(receiver) || decision == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   decision, sizeof(*decision)))
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V90_UPSTREAM_TRAINING_RX_FAILED;
@@ -319,6 +323,10 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_sample(
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	}
 	*receiver = next;
+	if (was_tracking) {
+		*decision = observation.decision;
+		return V90_UPSTREAM_TRAINING_RX_DECISION_READY;
+	}
 	return result;
 }
 
