@@ -7,6 +7,8 @@
 
 #include <string.h>
 
+enum { CLEARDOWN_RECORDS = 2 };
+
 static bool stage_is_valid(enum pcm_downstream_tx_stage stage)
 {
 	return stage == PCM_DOWNSTREAM_TX_TRN2D ||
@@ -42,6 +44,17 @@ static struct v90_mp_parameters *record_common(
 	return record->type == V90_MP_RECORD_TYPE0 ?
 		       &record->parameters.type0 :
 		       &record->parameters.type1.common;
+}
+
+static bool requests_cleardown(const struct pcm_downstream_tx *transmitter)
+{
+	const struct v90_mp_record *mp = &transmitter->control.mp;
+
+	return transmitter->control_configured &&
+	       transmitter->protocol == PCM_PROTOCOL_V90 &&
+	       (mp->type == V90_MP_RECORD_TYPE0 ?
+			mp->parameters.type0.maximum_upstream_rate_2400_bps_units :
+			mp->parameters.type1.common.maximum_upstream_rate_2400_bps_units) == 0u;
 }
 
 static bool encode_mp_sequence(
@@ -198,6 +211,16 @@ static bool v90_control_is_valid(
 			    (transmitter->ed_frames == V90_PHASE4_ED_FRAMES) ||
 		    (transmitter->complete &&
 		     !transmitter->finish_requested))
+			return false;
+	} else if (requests_cleardown(transmitter)) {
+		if (transmitter->ed_requested || transmitter->ed_frames != 0u ||
+		    transmitter->mp_prime_requested ||
+		    transmitter->cleardown_records > CLEARDOWN_RECORDS ||
+		    transmitter->finish_requested !=
+			    (transmitter->cleardown_records == CLEARDOWN_RECORDS) ||
+		    (transmitter->finish_requested &&
+		     transmitter->control_bit_index != 0u) ||
+		    (transmitter->complete && !transmitter->finish_requested))
 			return false;
 	} else if (transmitter->ed_frames != 0 ||
 		   transmitter->finish_requested || transmitter->complete ||
@@ -417,6 +440,8 @@ bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter)
 	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
 	    (transmitter->encoder.finishing &&
 	     !transmitter->finish_requested) ||
+	    (transmitter->cleardown_records != 0u &&
+	     !requests_cleardown(transmitter)) ||
 	    !control_state_is_valid(transmitter) ||
 	    !queue_is_valid(transmitter) ||
 	    !symbol_accounting_is_valid(transmitter))
@@ -633,7 +658,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_mp_prime(
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
 	if (!pcm_downstream_tx_is_valid(transmitter) ||
 	    transmitter->protocol != PCM_PROTOCOL_V90 ||
-	    !transmitter->control_configured)
+	    !transmitter->control_configured || requests_cleardown(transmitter))
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->mp_prime_requested)
 		return PCM_DOWNSTREAM_TX_OK;
@@ -830,7 +855,11 @@ static enum pcm_downstream_tx_result generate_frame(
 		if (transmitter->control_bit_index ==
 		    transmitter->control_sequence_bits) {
 			transmitter->control_bit_index = 0;
-			if (transmitter->stage == PCM_DOWNSTREAM_TX_MP &&
+			if (requests_cleardown(transmitter)) {
+				transmitter->cleardown_records++;
+				transmitter->finish_requested =
+					transmitter->cleardown_records == CLEARDOWN_RECORDS;
+			} else if (transmitter->stage == PCM_DOWNSTREAM_TX_MP &&
 			    transmitter->mp_prime_requested) {
 				transmitter->stage =
 					PCM_DOWNSTREAM_TX_MP_PRIME;

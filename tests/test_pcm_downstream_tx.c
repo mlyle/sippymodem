@@ -1048,6 +1048,85 @@ struct test_case {
 	bool (*run)(void);
 };
 
+static bool test_zero_rate_cleardown(void)
+{
+	const struct v90_mp_record mp = {
+		.type = V90_MP_RECORD_TYPE0,
+		.parameters.type0 = {
+			.maximum_upstream_rate_2400_bps_units = 0u,
+			.upstream_trellis = V34_TRELLIS_16_STATE,
+			.upstream_rate_capability_mask =
+				V90_MP_RATE_CAPABILITY_MASK,
+		},
+	};
+
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead) {
+			struct v90_pcm_mapping mapping;
+			struct pcm_downstream_tx tx;
+			struct pcm_downstream_rx rx;
+			size_t sequence_bits = 0u;
+			unsigned int received_records = 0u;
+			unsigned int symbols = 0u;
+			bool completed = false;
+
+			CHECK(make_mapping(
+				      &mapping, V90_CP_TRAINING,
+				      (enum g711_law)law, 3u, lookahead) &&
+			      pcm_downstream_tx_init(
+				      &tx, PCM_PROTOCOL_V90, &mapping) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_start_mp(&tx, &mp) ==
+				      PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_rx_init(
+				      &rx, PCM_PROTOCOL_V90, &mapping,
+				      V90_PCM_MAPPING_TRANSMIT) ==
+				      PCM_DOWNSTREAM_RX_OK &&
+			      v90_mp_sequence_size(
+				      mp.type, mapping.frame_bits, &sequence_bits) ==
+				      V90_MP_OK,
+			      "cleardown fixture did not initialize");
+			CHECK(pcm_downstream_tx_request_mp_prime(&tx) ==
+				      PCM_DOWNSTREAM_TX_INVALID_STATE,
+			      "cleardown entered data acknowledgement");
+			for (; symbols < 10000u; ++symbols) {
+				struct pcm_downstream_symbol symbol;
+				struct pcm_downstream_event event;
+				enum pcm_downstream_tx_result sent =
+					pcm_downstream_tx_next(&tx, &symbol);
+				enum pcm_downstream_rx_result received;
+
+				if (sent == PCM_DOWNSTREAM_TX_COMPLETE) {
+					completed = true;
+					break;
+				}
+				CHECK(sent == PCM_DOWNSTREAM_TX_OK,
+				      "cleardown transmitter failed");
+				received = pcm_downstream_rx_receive(
+					&rx, symbol.pcm.octet, &event);
+				if (received == PCM_DOWNSTREAM_RX_MP) {
+					CHECK(v90_mp_record_equal(&event.mp.record, &mp),
+					      "cleardown rate record changed");
+					received_records++;
+				} else {
+					CHECK(received == PCM_DOWNSTREAM_RX_OK ||
+					      received == PCM_DOWNSTREAM_RX_BUFFERING ||
+					      received == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
+					      "cleardown emitted an unexpected control event");
+				}
+			}
+			CHECK(completed && received_records == 2u &&
+			      symbols == (V90_PHASE4_TRN2D_INITIAL_FRAMES +
+					  2u * sequence_bits / mapping.frame_bits) *
+					 V90_CP_FRAME_INTERVALS &&
+			      pcm_downstream_tx_is_complete(&tx) &&
+			      tx.queue_count == 0u,
+			      "cleardown truncated its records or spectral tail");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
@@ -1056,6 +1135,7 @@ int main(void)
 		{ "V.92 switch contracts", test_v92_switch_contracts },
 		{ "source-record contracts", test_source_record_contracts },
 		{ "empty finish", test_empty_finish },
+		{ "zero-rate cleardown", test_zero_rate_cleardown },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

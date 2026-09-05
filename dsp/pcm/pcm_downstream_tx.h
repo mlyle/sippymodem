@@ -100,6 +100,7 @@ struct pcm_downstream_tx {
 	enum pcm_downstream_v92_control_kind v92_control_kind;
 	uint8_t queue_count;
 	uint8_t ed_frames;
+	uint8_t cleardown_records;
 	bool control_configured;
 	bool mp_prime_requested;
 	bool mp_prime_record_accepted;
@@ -118,7 +119,9 @@ bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 
 /* Queue immutable MP parameters. Acknowledgement must be clear; initial V.90
  * MP begins at the first source-frame boundary after the one-second TRN2d
- * conditioning interval. Repeating an identical request is harmless. */
+ * conditioning interval. Repeating an identical request is harmless. A
+ * zero-rate MP sends two complete records, then drains the spectral coder
+ * without Ed/B1d: V.90 9.7 terminates the link through that rate sequence. */
 enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record);
