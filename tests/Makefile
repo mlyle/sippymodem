@@ -2459,6 +2459,7 @@ V90_PHASE3_ANALOG_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
 	$(BUILD_DIR)/v90_phase3_analog_rx.o \
+	$(BUILD_DIR)/v90_phase3_ja_rx.o \
 	$(BUILD_DIR)/v90_ja_search.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_tx.o, \
 		$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)))
@@ -5577,6 +5578,10 @@ $(BUILD_DIR)/v90_phase3_analog_tx.o: \
 
 $(BUILD_DIR)/v90_phase3_analog_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v90_phase3_ja_rx.o: \
+	$(DSP_PCM_SOURCE_DIR)/v90_phase3_ja_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_analog_line_rx.o: \

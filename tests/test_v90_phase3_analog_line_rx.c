@@ -197,6 +197,126 @@ static bool test_g711_lines(void)
 	return true;
 }
 
+static bool run_fixed_ja_line(enum g711_law law)
+{
+	struct v34_phase3_profile selected = profile();
+	struct v90_phase3_analog_line_tx tx;
+	struct v90_upstream_training_rx line;
+	struct v90_phase3_ja_rx semantic;
+	struct v90_phase3_ja_handoff handoff;
+	struct v90_dil_parameters expected;
+	struct v34_analytic_sample fixed_target;
+	struct qam_point unit_target = v34_rotated_point_zero(0);
+	uint8_t expected_bits[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	uint8_t received_bits[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	size_t expected_count;
+	size_t received_count;
+	double decision_scale;
+	bool started_ja = false;
+	bool detected = false;
+
+	CHECK(v90_phase3_analog_line_tx_init(
+		      &tx, &selected, NOMINAL_AMPLITUDE) ==
+		      V90_PHASE3_ANALOG_LINE_TX_OK &&
+	      v90_upstream_training_rx_init(
+		      &line, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
+		      V90_UPSTREAM_TRAINING_RX_OK &&
+	      v90_phase3_ja_rx_init(&semantic) == V90_PHASE3_JA_RX_OK &&
+	      v90_dil_profile_init(&expected, V90_DIL_PROFILE_CONVENTIONAL) ==
+		      V90_DIL_OK &&
+	      v34_training_constellation_fixed_point(
+		      V34_CONSTELLATION_4_POINT, 0, 0, &fixed_target) ==
+		      V34_CONSTELLATION_OK,
+	      "law %d fixed Ja receive path did not initialize", law);
+	/* Use the matching generators' actual four-point scale, not the rounded
+	 * nominal receive radius. This is also the precoder learner's scale. */
+	decision_scale = fixed_target.in_phase / unit_target.in_phase;
+	/* Physical acquisition belongs solely to the fixed receiver. Observe each
+	 * new post-PP decision once; its final PP decision is not a TRN symbol. */
+	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		struct v34_analytic_sample decision;
+		struct qam_point normalized;
+		struct qam_point target;
+		uint16_t previous = line.next_recent_decision;
+		int16_t sample;
+		enum v90_phase3_ja_rx_result result;
+
+		if (!started_ja &&
+		    tx.symbols.stage == V90_PHASE3_ANALOG_TX_PREFIX &&
+		    tx.symbols.sequence.prefix.stage ==
+			    V34_PHASE3_TRANSMITTER_TRN &&
+		    tx.symbols.sequence.prefix.trn_symbols == TRN_SYMBOLS) {
+			CHECK(v90_phase3_analog_line_tx_start_dil_ja(
+				      &tx, &expected) == V90_PHASE3_ANALOG_LINE_TX_OK,
+			      "law %d fixed path could not start Ja", law);
+			started_ja = true;
+		}
+		CHECK(v90_phase3_analog_line_tx_sample(&tx, &sample) ==
+			      V90_PHASE3_ANALOG_LINE_TX_OK &&
+		      v90_upstream_training_rx_sample(
+			      &line, quantize(law, sample)) ==
+			      V90_UPSTREAM_TRAINING_RX_OK,
+		      "law %d fixed path stopped at sample %u", law, index);
+		if (previous == line.next_recent_decision)
+			continue;
+		CHECK(v90_upstream_training_rx_is_tracking(&line) &&
+		      v90_upstream_training_rx_recent_decision(
+			      &line, line.recent_decision_count - 1u, &decision),
+		      "law %d fixed path did not export a post-PP decision", law);
+		normalized = (struct qam_point){
+			decision.in_phase / decision_scale,
+			decision.quadrature / decision_scale,
+		};
+		result = v90_phase3_ja_rx_observe(&semantic, &normalized, &target);
+		CHECK(result == V90_PHASE3_JA_RX_OK ||
+		      result == V90_PHASE3_JA_RX_REJECTED ||
+		      result == V90_PHASE3_JA_RX_DETECTED,
+		      "law %d fixed Ja returned %d at sample %u", law, result, index);
+		if (semantic.precoder.observed_symbols <=
+		    V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
+			CHECK(line.initial.j.received_symbols ==
+				      semantic.precoder.observed_symbols,
+			      "law %d fixed and semantic TRN boundaries differ", law);
+		if (result == V90_PHASE3_JA_RX_DETECTED) {
+			detected = true;
+			break;
+		}
+	}
+	CHECK(started_ja && detected &&
+	      v90_phase3_ja_rx_handoff(&semantic, &handoff) ==
+		      V90_PHASE3_JA_RX_OK &&
+	      v34_precoder_recommendation_is_valid(&handoff.precoder) &&
+	      v90_dil_encode(&expected, expected_bits, sizeof(expected_bits),
+		      &expected_count) == V90_DIL_OK &&
+	      v90_dil_encode(&handoff.dil, received_bits, sizeof(received_bits),
+		      &received_count) == V90_DIL_OK &&
+	      expected_count == 1702u && received_count == expected_count &&
+	      memcmp(expected_bits, received_bits, (expected_count + 7u) / 8u) == 0,
+	      "law %d fixed decisions did not recover the exact Ja descriptor",
+	      law);
+	{
+		struct v90_phase3_ja_rx saved = semantic;
+		struct qam_point decision = { 0.5, 0.5 };
+		struct qam_point target = { 9.0, 7.0 };
+		struct qam_point saved_target = target;
+
+		CHECK(v90_phase3_ja_rx_observe(&semantic, &decision, &target) ==
+			      V90_PHASE3_JA_RX_COMPLETE &&
+		      memcmp(&semantic, &saved, sizeof(semantic)) == 0 &&
+		      memcmp(&target, &saved_target, sizeof(target)) == 0,
+		      "law %d complete Ja consumed another decision", law);
+	}
+	return true;
+}
+
+static bool test_fixed_ja_lines(void)
+{
+	CHECK(run_fixed_ja_line(G711_LAW_PCMU) &&
+	      run_fixed_ja_line(G711_LAW_PCMA),
+	      "fixed G.711 Ja timelines failed");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_phase3_profile selected = profile();
@@ -267,6 +387,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "G.711 lines", test_g711_lines },
+		{ "fixed G.711 Ja lines", test_fixed_ja_lines },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

@@ -3,7 +3,6 @@
 #include "v90_phase3_analog_rx.h"
 
 #include "v34_constellation.h"
-#include "v34_training_sequence.h"
 
 #include <stddef.h>
 
@@ -40,30 +39,15 @@ static bool s_receiver_is_valid(
 	       receiver->gain.adaptation == 0.0;
 }
 
-static bool search_is_initial(const struct v90_ja_search *search)
-{
-	return search->descrambler.history == 0 &&
-	       search->descrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	       search->bit_index == 0 && search->warmup_bits == 0 &&
-	       search->consecutive_ones == 0 &&
-	       !search->has_previous_rotation && !search->collecting &&
-	       !search->complete;
-}
-
 static bool ja_receiver_is_valid(
 	const struct v90_phase3_ja_point_receiver *receiver, bool complete)
 {
-	if (receiver == NULL ||
-	    !qam_equalizer_is_valid(&receiver->equalizer) ||
-	    receiver->equalizer.can_adapt ||
-	    !v34_precoder_trainer_is_valid(&receiver->precoder) ||
-	    !qam_adaptation_is_valid(receiver->adaptation) ||
-	    !v90_ja_search_is_valid(&receiver->search) ||
-	    v90_ja_search_is_complete(&receiver->search) != complete)
-		return false;
-	if (receiver->decisions <= V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
-		return search_is_initial(&receiver->search);
-	return receiver->search.has_previous_rotation;
+	return receiver != NULL &&
+	       qam_equalizer_is_valid(&receiver->equalizer) &&
+	       !receiver->equalizer.can_adapt &&
+	       qam_adaptation_is_valid(receiver->adaptation) &&
+	       v90_phase3_ja_rx_is_valid(&receiver->semantic) &&
+	       v90_phase3_ja_rx_is_complete(&receiver->semantic) == complete;
 }
 
 bool v90_phase3_analog_rx_is_valid(
@@ -203,27 +187,29 @@ static enum v90_phase3_analog_rx_result receive_pp(
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 	ja.equalizer = handoff.equalizer;
 	ja.adaptation = rx->configuration.tracking_equalizer_adaptation;
-	if (v34_precoder_trainer_init(&ja.precoder) !=
-		    V34_PRECODER_TRAINER_OK ||
-	    v90_ja_search_init(&ja.search) != V90_JA_SEARCH_OK)
+	if (v90_phase3_ja_rx_init(&ja.semantic) != V90_PHASE3_JA_RX_OK)
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
 	rx->state = (union v90_phase3_analog_rx_state){ .ja = ja };
 	rx->stage = V90_PHASE3_ANALOG_RX_STAGE_JA;
 	return V90_PHASE3_ANALOG_RX_PP_COMPLETE;
 }
 
-static enum v90_phase3_analog_rx_result search_result(
-	enum v90_ja_search_result result)
+static enum v90_phase3_analog_rx_result ja_result(
+	enum v90_phase3_ja_rx_result result)
 {
 	switch (result) {
-	case V90_JA_SEARCH_OK:
+	case V90_PHASE3_JA_RX_OK:
 		return V90_PHASE3_ANALOG_RX_OK;
-	case V90_JA_SEARCH_DETECTED:
+	case V90_PHASE3_JA_RX_DETECTED:
 		return V90_PHASE3_ANALOG_RX_JA_DETECTED;
-	case V90_JA_SEARCH_REJECTED:
+	case V90_PHASE3_JA_RX_REJECTED:
 		return V90_PHASE3_ANALOG_RX_JA_REJECTED;
-	case V90_JA_SEARCH_COMPLETE:
-	case V90_JA_SEARCH_INVALID_ARGUMENT:
+	case V90_PHASE3_JA_RX_OUT_OF_RANGE:
+		return V90_PHASE3_ANALOG_RX_OUT_OF_RANGE;
+	case V90_PHASE3_JA_RX_COMPLETE:
+	case V90_PHASE3_JA_RX_INVALID_ARGUMENT:
+	case V90_PHASE3_JA_RX_INVALID_STATE:
+	case V90_PHASE3_JA_RX_NUMERIC_FAILURE:
 		break;
 	}
 	return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
@@ -234,34 +220,25 @@ static enum v90_phase3_analog_rx_result receive_ja(
 {
 	struct qam_equalizer_observation observation = { 0 };
 	struct qam_point target;
-	uint8_t quarter_point;
-	uint8_t rotation;
 	bool ready;
+	enum v90_phase3_ja_rx_result result;
 
-	if (rx->state.ja.decisions == UINT32_MAX)
-		return V90_PHASE3_ANALOG_RX_OUT_OF_RANGE;
 	if (qam_equalizer_observe(
 		    &rx->state.ja.equalizer, received, &observation, &ready) !=
 		    QAM_EQUALIZER_OK ||
-	    !ready ||
-	    v34_training_constellation_slice(
-		    V34_CONSTELLATION_4_POINT, &observation.output,
-		    &quarter_point, &rotation) != V34_CONSTELLATION_OK ||
-	    v34_training_constellation_point(
-		    V34_CONSTELLATION_4_POINT, quarter_point, rotation,
-		    &target) != V34_CONSTELLATION_OK ||
-	    v34_precoder_trainer_observe(
-		    &rx->state.ja.precoder, &observation.output, &target) !=
-		    V34_PRECODER_TRAINER_OK ||
-	    qam_equalizer_adapt_observation(
+	    !ready)
+		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
+	result = v90_phase3_ja_rx_observe(
+		&rx->state.ja.semantic, &observation.output, &target);
+	if (result != V90_PHASE3_JA_RX_OK &&
+	    result != V90_PHASE3_JA_RX_DETECTED &&
+	    result != V90_PHASE3_JA_RX_REJECTED)
+		return ja_result(result);
+	if (qam_equalizer_adapt_observation(
 		    &rx->state.ja.equalizer, &observation, &target,
 		    rx->state.ja.adaptation) != QAM_EQUALIZER_OK)
 		return V90_PHASE3_ANALOG_RX_NUMERIC_FAILURE;
-	rx->state.ja.decisions++;
-	if (rx->state.ja.decisions <= V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
-		return V90_PHASE3_ANALOG_RX_OK;
-	return search_result(v90_ja_search_receive(
-		&rx->state.ja.search, rotation));
+	return ja_result(result);
 }
 
 static bool result_commits(enum v90_phase3_analog_rx_result result)
@@ -326,6 +303,7 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_handoff(
 	struct v90_phase3_analog_handoff *handoff)
 {
 	struct v90_phase3_analog_handoff generated;
+	struct v90_phase3_ja_handoff ja;
 
 	if (!v90_phase3_analog_rx_is_valid(rx) || handoff == NULL)
 		return V90_PHASE3_ANALOG_RX_INVALID_ARGUMENT;
@@ -333,12 +311,12 @@ enum v90_phase3_analog_rx_result v90_phase3_analog_rx_handoff(
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
 	generated.s = rx->s_detection;
 	generated.equalizer.equalizer = rx->state.ja.equalizer;
-	if (v34_precoder_trainer_finish(
-		    &rx->state.ja.precoder, &generated.precoder) !=
-		    V34_PRECODER_TRAINER_OK ||
-	    !v90_ja_search_parameters(
-		    &rx->state.ja.search, &generated.dil) ||
-	    !v90_phase3_analog_handoff_is_valid(&generated))
+	if (v90_phase3_ja_rx_handoff(&rx->state.ja.semantic, &ja) !=
+	    V90_PHASE3_JA_RX_OK)
+		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
+	generated.precoder = ja.precoder;
+	generated.dil = ja.dil;
+	if (!v90_phase3_analog_handoff_is_valid(&generated))
 		return V90_PHASE3_ANALOG_RX_INVALID_STATE;
 	*handoff = generated;
 	return V90_PHASE3_ANALOG_RX_OK;

@@ -4,10 +4,9 @@
 #define V90_PHASE3_ANALOG_RX_H
 
 #include "qam_gain.h"
-#include "v34_precoder_trainer.h"
 #include "v34_phase3_pp_receiver.h"
 #include "v34_phase3_s_receiver.h"
-#include "v90_ja_search.h"
+#include "v90_phase3_ja_rx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,10 +39,8 @@ struct v90_phase3_analog_rx_configuration {
 
 struct v90_phase3_ja_point_receiver {
 	struct qam_equalizer equalizer;
-	struct v34_precoder_trainer precoder;
-	struct v90_ja_search search;
+	struct v90_phase3_ja_rx semantic;
 	double adaptation;
-	uint32_t decisions;
 };
 
 struct v90_phase3_s_point_receiver {

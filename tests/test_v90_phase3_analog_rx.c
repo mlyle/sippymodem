@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,7 +128,8 @@ static bool run_timeline(
 	}
 	CHECK(started_ja && s_events == 1 && pp_events == 1 &&
 	      v90_phase3_analog_rx_is_complete(&rx) &&
-	      rx.state.ja.decisions > V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+	      rx.state.ja.semantic.precoder.observed_symbols >
+		      V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      v90_phase3_analog_rx_handoff(&rx, &handoff) ==
 		      V90_PHASE3_ANALOG_RX_OK &&
 	      v90_phase3_analog_handoff_is_valid(&handoff) &&
@@ -310,6 +312,84 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_ja_semantic_boundary(void)
+{
+	struct v90_phase3_ja_rx rx;
+	struct v90_phase3_ja_rx saved;
+	struct v90_phase3_ja_handoff handoff;
+	struct v90_phase3_ja_handoff saved_handoff;
+	struct qam_point decision = v34_rotated_point_zero(0);
+	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point target = { 9.0, 7.0 };
+	struct qam_point saved_target = target;
+
+	CHECK(v90_phase3_ja_rx_init(NULL) == V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_init(&rx) == V90_PHASE3_JA_RX_OK &&
+	      v90_phase3_ja_rx_is_valid(&rx) &&
+	      !v90_phase3_ja_rx_is_complete(&rx),
+	      "Ja semantic owner did not initialize");
+	saved = rx;
+	memset(&handoff, 0xa5, sizeof(handoff));
+	saved_handoff = handoff;
+	CHECK(v90_phase3_ja_rx_observe(NULL, &decision, &target) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(&rx, &invalid, &target) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(&rx, NULL, &target) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(&rx, &decision, NULL) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(&rx, &decision, &decision) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(
+		      &rx, &rx.precoder.error_history[0], &target) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_observe(
+		      &rx, &decision, &rx.precoder.error_history[0]) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_handoff(&rx, &handoff) ==
+		      V90_PHASE3_JA_RX_INVALID_STATE &&
+	      v90_phase3_ja_rx_handoff(&rx, NULL) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      v90_phase3_ja_rx_handoff(
+		      &rx, (struct v90_phase3_ja_handoff *)(void *)&rx) ==
+		      V90_PHASE3_JA_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&target, &saved_target, sizeof(target)) == 0 &&
+	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
+	      "rejected Ja call changed its receiver or destination");
+	invalid = (struct qam_point){ DBL_MAX, DBL_MAX };
+	CHECK(v90_phase3_ja_rx_observe(&rx, &invalid, &target) ==
+		      V90_PHASE3_JA_RX_NUMERIC_FAILURE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&target, &saved_target, sizeof(target)) == 0,
+	      "numeric Ja failure changed its receiver or destination");
+	for (unsigned int index = 0;
+	     index < V34_TRAINING_SEQUENCE_MIN_SYMBOLS; ++index) {
+		CHECK(v90_phase3_ja_rx_observe(&rx, &decision, &target) ==
+			      V90_PHASE3_JA_RX_OK &&
+		      rx.precoder.observed_symbols == index + 1u &&
+		      memcmp(&rx.search, &saved.search, sizeof(rx.search)) == 0,
+		      "Ja search consumed required TRN decision %u", index);
+	}
+	CHECK(v90_phase3_ja_rx_observe(&rx, &decision, &target) ==
+		      V90_PHASE3_JA_RX_OK &&
+	      rx.search.has_previous_rotation && rx.search.warmup_bits == 0u,
+	      "first decision after 512 TRN symbols did not seed Ja search");
+	rx.precoder.observed_symbols = UINT32_MAX;
+	rx.precoder.measured_symbols = UINT32_MAX -
+		V34_PRECODER_TRAINER_SETTLING_SYMBOLS + 1u;
+	saved = rx;
+	saved_target = target;
+	CHECK(v90_phase3_ja_rx_is_valid(&rx) &&
+	      v90_phase3_ja_rx_observe(&rx, &decision, &target) ==
+		      V90_PHASE3_JA_RX_OUT_OF_RANGE &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&target, &saved_target, sizeof(target)) == 0,
+	      "exhausted Ja owner wrapped its symbol count");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -318,6 +398,7 @@ int main(void)
 	} tests[] = {
 		{ "generated timelines", test_generated_timelines },
 		{ "precoder training", test_precoder_training },
+		{ "Ja semantic boundary", test_ja_semantic_boundary },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};
