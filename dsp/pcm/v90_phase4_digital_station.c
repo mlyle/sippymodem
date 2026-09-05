@@ -2,6 +2,8 @@
 
 #include "v90_phase4_digital_station.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
@@ -93,7 +95,10 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 {
 	struct v90_phase4_digital_station initialized = { 0 };
 
-	if (station == NULL || !v90_jd_parameters_are_valid(jd) ||
+	if (station == NULL || phase3_receive == NULL ||
+	    memory_regions_overlap(
+		    station, sizeof(*station), phase3_receive, sizeof(*phase3_receive)) ||
+	    !v90_jd_parameters_are_valid(jd) ||
 	    !v90_phase4_ri_tx_is_valid(transmit) ||
 	    transmit->finish_requested)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
@@ -102,7 +107,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 		    jd->training_constellation) != V90_PHASE4_CP_LINE_RX_OK)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	initialized.transmit = *transmit;
-	initialized.precoder = phase3_receive->phase3.precoder;
+	initialized.precoder = phase3_receive->precoder;
 	initialized.maximum_spectral_lookahead =
 		jd->maximum_spectral_shaping_lookahead;
 	if (!v90_phase4_digital_station_is_valid(&initialized))

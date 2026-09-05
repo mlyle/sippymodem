@@ -42,6 +42,8 @@ struct v90_phase4_cp_line_rx {
 	bool failed;
 };
 
+/* Import a disjoint fixed handoff. Recover any in-flight CP prefix from its
+ * bounded decision history without consuming another physical sample. */
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 	struct v90_phase4_cp_line_rx *rx,
 	const struct v90_phase3_return_line_handoff *handoff,

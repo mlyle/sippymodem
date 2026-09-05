@@ -45,13 +45,13 @@ struct v90_phase3_return_line_rx {
 	bool failed;
 };
 
-/* Only upstream carries the current physical sample boundary. The floating
- * fields are the completed return snapshot, not a continuation receiver. */
+/* The fixed upstream owns the current sample boundary and bounded CP prefix.
+ * Only completed protocol metadata crosses from the return parser; its
+ * floating demodulator and equalizers remain private to the live receiver. */
 struct v90_phase3_return_line_handoff {
-	struct qam_demodulator demodulator;
-	struct v90_phase3_return_handoff phase3;
 	struct v90_upstream_training_rx upstream;
-	struct v34_phase3_profile transmitting_profile;
+	struct v34_phase3_s_detection marker;
+	struct v34_precoder_recommendation precoder;
 };
 
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_init(
@@ -91,6 +91,8 @@ v90_phase3_return_line_rx_advance_complete(
 
 bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff);
+/* The output must be disjoint from the receiver. Rejected handoffs leave both
+ * unchanged; no unresolved physical observation may cross the boundary. */
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_handoff(
 	const struct v90_phase3_return_line_rx *rx,
 	struct v90_phase3_return_line_handoff *handoff);

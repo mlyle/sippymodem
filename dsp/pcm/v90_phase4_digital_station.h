@@ -43,6 +43,7 @@ struct v90_phase4_digital_station {
 	bool failed;
 };
 
+/* The destination must be disjoint from the fixed receive handoff. */
 enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,
@@ -51,7 +52,8 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_init(
 
 /* Join a Phase 3 receive handoff to a Phase 4 Ri transmitter that has already
  * produced the intervening network characters. A finish request is rejected:
- * it can only be caused by CPt, whose receiver starts at this boundary. */
+ * it can only be caused by CPt, whose receiver starts at this boundary.
+ * The destination must be disjoint from the fixed receive handoff. */
 enum v90_phase4_digital_station_result v90_phase4_digital_station_resume(
 	struct v90_phase4_digital_station *station,
 	const struct v90_phase3_return_line_handoff *phase3_receive,

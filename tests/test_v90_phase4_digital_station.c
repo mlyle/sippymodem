@@ -366,6 +366,10 @@ static bool test_contracts(void)
 	struct v90_phase4_digital_transmit_handoff transmit_handoff;
 	struct v90_phase4_digital_transmit_handoff transmit_saved;
 	struct v90_pcm_mapping training_mapping;
+	union {
+		struct v90_phase3_return_line_handoff handoff;
+		struct v90_phase4_digital_station station;
+	} aliased;
 	uint8_t octet = 0xa5;
 
 	CHECK(v90_phase4_line_fixture_init(
@@ -373,7 +377,7 @@ static bool test_contracts(void)
 		      &training, &analog_transmit, &phase3_receive),
 	      "digital validation fixture did not initialize");
 	bad_receive = phase3_receive;
-	bad_receive.phase3.equalizer.equalizer.fill = 0;
+	bad_receive.upstream.line.initialized = false;
 	bad_jd.maximum_spectral_shaping_lookahead = 0;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
@@ -405,6 +409,16 @@ static bool test_contracts(void)
 		      TRAINING_UCODE) ==
 		      V90_PHASE4_DIGITAL_STATION_OK,
 	      "valid digital station did not initialize");
+	aliased.handoff = phase3_receive;
+	CHECK(v90_phase4_digital_station_init(&aliased.station, &aliased.handoff,
+		      &jd, G711_LAW_PCMU, TRAINING_UCODE) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      memcmp(&aliased.handoff, &phase3_receive, sizeof(phase3_receive)) == 0 &&
+	      v90_phase4_digital_station_resume(&aliased.station, &aliased.handoff,
+		      &jd, &station.transmit) ==
+		      V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      memcmp(&aliased.handoff, &phase3_receive, sizeof(phase3_receive)) == 0,
+	      "digital station overwrote its aliased fixed handoff");
 	{
 		struct v90_phase4_digital_station mismatched = station;
 

@@ -311,10 +311,11 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 {
 	struct v90_phase4_cp_line_rx initialized = { 0 };
 
-	if (rx == NULL || !v90_phase3_return_line_handoff_is_valid(handoff))
+	if (rx == NULL || !v90_phase3_return_line_handoff_is_valid(handoff) ||
+	    memory_regions_overlap(rx, sizeof(*rx), handoff, sizeof(*handoff)))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	initialized.line = handoff->upstream.line;
-	initialized.transmitting_profile = handoff->transmitting_profile;
+	initialized.transmitting_profile = handoff->upstream.transmitting_profile;
 	initialized.decoder_power_q15 = handoff->upstream.decoder_power_q15;
 	initialized.adaptation = V34_ADAPTIVE_EQUALIZER_FULL;
 	/* Continue conventional-sample level acquisition after the Phase 3

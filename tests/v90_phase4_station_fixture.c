@@ -6,6 +6,8 @@
 
 #include <g711.h>
 
+#include <string.h>
+
 enum { FIXTURE_SAMPLE_LIMIT = 50000 };
 
 static int16_t quantize(enum g711_law law, int16_t sample)
@@ -53,7 +55,11 @@ bool v90_phase4_station_fixture_init(
 				    generated_analog.transmit.symbols.frame_bit_count ||
 			    v90_phase3_return_line_rx_handoff(
 				    &return_receive, &generated_receive) !=
-				    V90_PHASE3_RETURN_LINE_RX_OK)
+				    V90_PHASE3_RETURN_LINE_RX_OK ||
+			    memcmp(&generated_receive.upstream, &return_receive.upstream,
+				   sizeof(generated_receive.upstream)) != 0 ||
+			    memcmp(&generated_receive.precoder, &return_receive.points.precoder,
+				   sizeof(generated_receive.precoder)) != 0)
 				return false;
 			*analog = generated_analog;
 			*receive = generated_receive;

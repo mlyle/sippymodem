@@ -208,7 +208,7 @@ static bool test_transactional_contracts(void)
 		      &expected_line.timing.gain, V34_GAIN_TRACKING) ==
 		      V34_GAIN_CONTROL_OK,
 	      "CP input gain did not enter acquisition");
-	handoff.phase3.marker.clockwise_quarter_turn_offset = 3;
+	handoff.marker.clockwise_quarter_turn_offset = 3;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_saved = untouched;
 	CHECK(v90_phase4_cp_line_rx_init(
@@ -259,6 +259,97 @@ static bool test_transactional_contracts(void)
 	return true;
 }
 
+static bool test_fixed_handoff_contract(void)
+{
+	struct v90_cp_parameters training =
+		parameters(V90_CP_TRAINING, G711_LAW_PCMU, 0);
+	struct v90_phase3_return_line_handoff handoff;
+	struct v90_phase3_return_line_handoff invalid;
+	struct v90_phase4_cp_line_tx tx;
+	struct v90_phase4_cp_line_rx rx;
+	struct v90_phase4_cp_line_rx saved;
+	struct v34_adaptive_equalizer_observation observation = { 0 };
+	bool observed = false;
+	union {
+		struct v90_phase3_return_line_handoff handoff;
+		struct v90_phase4_cp_line_rx receiver;
+	} aliased;
+
+	CHECK(v90_phase4_line_fixture_init(G711_LAW_PCMU,
+		      V34_CONSTELLATION_4_POINT, &training, &tx, &handoff),
+	      "fixed handoff fixture did not reach CPt");
+	memset(&rx, 0xa5, sizeof(rx));
+	saved = rx;
+	for (unsigned int fault = 0; fault < 8u; ++fault) {
+		invalid = handoff;
+		switch (fault) {
+		case 0: invalid.upstream.line.initialized = false; break;
+		case 1: invalid.upstream.failed = true; break;
+		case 2: invalid.marker.clockwise_quarter_turn_offset = 4; break;
+		case 3: invalid.precoder.coefficients[0].real = INT16_MIN; break;
+		case 4:
+			invalid.upstream.recent_decision_count =
+				V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS + 1u;
+			break;
+		case 5:
+			invalid.upstream.transmitting_profile.local_role =
+				V34_CALLING_STATION;
+			break;
+		case 6: ++invalid.upstream.transmitting_profile.md_symbol_count; break;
+		case 7: invalid.upstream.line.timing.s_detector.detected = false; break;
+		}
+		CHECK(!v90_phase3_return_line_handoff_is_valid(&invalid) &&
+		      v90_phase4_cp_line_rx_init(&rx, &invalid,
+			      V34_CONSTELLATION_4_POINT) ==
+			      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&rx, &saved, sizeof(rx)) == 0,
+		      "fixed handoff fault %u changed the CP receiver", fault);
+	}
+	aliased.handoff = handoff;
+	CHECK(v90_phase4_cp_line_rx_init(&aliased.receiver, &aliased.handoff,
+		      V34_CONSTELLATION_4_POINT) ==
+		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&aliased.handoff, &handoff, sizeof(handoff)) == 0,
+	      "CP handoff overwrote its aliased input");
+
+	/* Produce a real unresolved observation, then retain it. Both are valid
+	 * equalizer states, but neither transfers ownership of the next sample. */
+	invalid = handoff;
+	for (unsigned int index = 0; index < 8u && !observed; ++index) {
+		int16_t sample;
+		enum v34_line_receiver_result result;
+
+		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) ==
+			      V90_PHASE4_CP_LINE_TX_OK,
+		      "fixed handoff could not produce a CP sample");
+		result = v34_line_receiver_sample(&invalid.upstream.line,
+			quantize(G711_LAW_PCMU, sample), &observation);
+		CHECK(result == V34_LINE_RECEIVER_OK ||
+		      result == V34_LINE_RECEIVER_OBSERVATION_READY,
+		      "fixed handoff could not produce a pending observation");
+		observed = result == V34_LINE_RECEIVER_OBSERVATION_READY;
+	}
+	CHECK(observed && invalid.upstream.line.equalizer.decision_pending &&
+	      v90_upstream_training_rx_is_tracking(&invalid.upstream) &&
+	      !v90_phase3_return_line_handoff_is_valid(&invalid) &&
+	      v90_phase4_cp_line_rx_init(&rx, &invalid, V34_CONSTELLATION_4_POINT) ==
+		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "CP accepted an unresolved fixed observation");
+	CHECK(v34_adaptive_equalizer_retain_observation(
+		      &invalid.upstream.line.equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      invalid.upstream.line.equalizer.retained.pending &&
+	      !invalid.upstream.line.equalizer.decision_pending &&
+	      v90_upstream_training_rx_is_tracking(&invalid.upstream) &&
+	      !v90_phase3_return_line_handoff_is_valid(&invalid) &&
+	      v90_phase4_cp_line_rx_init(&rx, &invalid, V34_CONSTELLATION_4_POINT) ==
+		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "CP accepted a retained fixed observation");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -267,6 +358,7 @@ int main(void)
 	} tests[] = {
 		{ "continuous G.711 lines", test_continuous_g711_lines },
 		{ "transactional contracts", test_transactional_contracts },
+		{ "fixed handoff contract", test_fixed_handoff_contract },
 	};
 	unsigned int failures = 0;
 

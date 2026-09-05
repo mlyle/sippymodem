@@ -296,12 +296,22 @@ static bool run_line(enum g711_law law)
 		      QAM_EQUALIZER_MAX_TAP_COUNT &&
 	      return_rx.points.compact_equalizer.tap_count ==
 		      V34_EQUALIZER_TAP_COUNT &&
-	      return_handoff.phase3.compact_equalizer_active &&
-	      return_handoff.phase3.equalizer.equalizer.tap_count ==
-		      QAM_EQUALIZER_MAX_TAP_COUNT &&
-	      return_handoff.phase3.compact_equalizer.tap_count ==
-		      V34_EQUALIZER_TAP_COUNT,
-	      "law %d did not preserve both reacquired equalizers", law);
+	      memcmp(&return_handoff.upstream, &return_rx.upstream,
+		     sizeof(return_handoff.upstream)) == 0 &&
+	      memcmp(&return_handoff.precoder, &return_rx.points.precoder,
+		     sizeof(return_handoff.precoder)) == 0 &&
+	      memcmp(&return_handoff.marker, &return_rx.points.semantic.marker.detection,
+		     sizeof(return_handoff.marker)) == 0,
+	      "law %d did not preserve live equalizers and export fixed state", law);
+	{
+		struct v90_phase3_return_line_rx saved = return_rx;
+
+		CHECK(v90_phase3_return_line_rx_handoff(&return_rx,
+			      (struct v90_phase3_return_line_handoff *)&return_rx) ==
+			      V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&return_rx, &saved, sizeof(return_rx)) == 0,
+		      "law %d return handoff overwrote its source receiver", law);
+	}
 	{
 		struct v90_phase3_return_line_rx saved = return_rx;
 		struct v90_upstream_training_rx expected = return_rx.upstream;
@@ -343,7 +353,12 @@ static bool run_line(enum g711_law law)
 		      v90_phase3_return_line_rx_handoff(
 			      &return_rx, &return_handoff) ==
 			      V90_PHASE3_RETURN_LINE_RX_OK &&
-		      return_handoff.phase3.compact_equalizer_active,
+		      memcmp(&return_handoff.upstream, &expected,
+			     sizeof(expected)) == 0 &&
+		      memcmp(&return_handoff.precoder, &saved.points.precoder,
+			     sizeof(return_handoff.precoder)) == 0 &&
+		      memcmp(&return_handoff.marker, &saved.points.semantic.marker.detection,
+			     sizeof(return_handoff.marker)) == 0,
 		      "law %d completed return did not advance only its fixed line",
 		      law);
 		saved = return_rx;

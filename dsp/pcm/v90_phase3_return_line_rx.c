@@ -2,6 +2,7 @@
 
 #include "v90_phase3_return_line_rx.h"
 
+#include "memory_region.h"
 #include "v90_phase3.h"
 
 #include <stddef.h>
@@ -265,33 +266,32 @@ bool v90_phase3_return_line_handoff_is_valid(
 	const struct v90_phase3_return_line_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v90_phase3_demodulator_is_locked(
-		       &handoff->demodulator,
-		       &handoff->transmitting_profile) &&
-	       v90_phase3_return_handoff_is_valid(&handoff->phase3) &&
+	       v90_phase3_analog_profile_is_valid(
+		       &handoff->upstream.transmitting_profile) &&
 	       v90_upstream_training_rx_is_tracking(&handoff->upstream) &&
-	       v34_phase3_profile_is_equal(
-		       &handoff->upstream.transmitting_profile,
-		       &handoff->transmitting_profile);
+	       v34_receive_timing_is_acquired(&handoff->upstream.line.timing) &&
+	       !handoff->upstream.line.equalizer.decision_pending &&
+	       !handoff->upstream.line.equalizer.retained.pending &&
+	       v34_phase3_s_detection_is_valid(&handoff->marker) &&
+	       v34_precoder_recommendation_is_valid(&handoff->precoder);
 }
 
 enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_handoff(
 	const struct v90_phase3_return_line_rx *rx,
 	struct v90_phase3_return_line_handoff *handoff)
 {
-	struct v90_phase3_return_line_handoff generated;
+	struct v90_phase3_return_line_handoff generated = { 0 };
 
-	if (!v90_phase3_return_line_rx_is_valid(rx) || handoff == NULL)
+	if (!v90_phase3_return_line_rx_is_valid(rx) || handoff == NULL ||
+	    memory_regions_overlap(rx, sizeof(*rx), handoff, sizeof(*handoff)))
 		return V90_PHASE3_RETURN_LINE_RX_INVALID_ARGUMENT;
 	if (rx->failed || !v90_phase3_return_rx_is_complete(&rx->points))
 		return rx->failed ? V90_PHASE3_RETURN_LINE_RX_FAILED :
 				    V90_PHASE3_RETURN_LINE_RX_INVALID_STATE;
-	generated.demodulator = rx->demodulator;
 	generated.upstream = rx->upstream;
-	generated.transmitting_profile = rx->transmitting_profile;
-	if (v90_phase3_return_rx_handoff(
-		    &rx->points, &generated.phase3) !=
-		    V90_PHASE3_RETURN_RX_OK ||
+	generated.precoder = rx->points.precoder;
+	if (!v90_phase3_return_marker_get_detection(
+		    &rx->points.semantic, &generated.marker) ||
 	    !v90_phase3_return_line_handoff_is_valid(&generated))
 		return V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	*handoff = generated;

@@ -7,6 +7,8 @@
 #include <v90_phase3_analog_line_tx.h>
 #include <v90_phase3_return_line_tx.h>
 
+#include <string.h>
+
 enum {
 	TRN_SYMBOLS = V34_TRAINING_SEQUENCE_MIN_SYMBOLS + 173,
 	RETURN_SILENCE_SYMBOLS = 350,
@@ -252,7 +254,11 @@ bool v90_phase4_line_fixture_init_for_profile(
 				    generated_transmit.symbols.frame_bit_count ||
 			    v90_phase3_return_line_rx_handoff(
 				    &return_receive, &generated_receive) !=
-				    V90_PHASE3_RETURN_LINE_RX_OK)
+				    V90_PHASE3_RETURN_LINE_RX_OK ||
+			    memcmp(&generated_receive.upstream, &return_receive.upstream,
+				   sizeof(generated_receive.upstream)) != 0 ||
+			    memcmp(&generated_receive.precoder, &return_receive.points.precoder,
+				   sizeof(generated_receive.precoder)) != 0)
 				return false;
 			*transmit = generated_transmit;
 			*receive = generated_receive;
