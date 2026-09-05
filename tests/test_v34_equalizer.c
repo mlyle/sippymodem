@@ -38,6 +38,8 @@ static void seed_equalizer(
 			(uint16_t)patterned_word(tap + 320u, seed + 5u);
 	}
 	equalizer->index = index;
+	equalizer->tap_count = V34_EQUALIZER_TAPS;
+	equalizer->identity_tap = V34_EQUALIZER_IDENTITY_TAP;
 	equalizer->initialized = true;
 }
 
@@ -67,11 +69,11 @@ static void reference_filter(
 	uint32_t quadrature = 0;
 
 	for (size_t coefficient = 0;
-	     coefficient < V34_EQUALIZER_TAPS; ++coefficient) {
+	     coefficient < equalizer->tap_count; ++coefficient) {
 		size_t sample = equalizer->index + coefficient;
 
-		if (sample >= V34_EQUALIZER_TAPS)
-			sample -= V34_EQUALIZER_TAPS;
+		if (sample >= equalizer->tap_count)
+			sample -= equalizer->tap_count;
 		in_phase += product_low(equalizer->in_phase_delay[sample],
 					equalizer->in_phase_coefficient[coefficient]);
 		in_phase -= product_low(equalizer->quadrature_delay[sample],
@@ -123,22 +125,23 @@ static void reference_adapt(
 	if (center_only) {
 		for (size_t offset = 0;
 		     offset < V34_EQUALIZER_CENTER_TAPS; ++offset) {
-			size_t coefficient = V34_EQUALIZER_CENTER_FIRST + offset;
+			size_t coefficient = equalizer->identity_tap -
+				V34_EQUALIZER_CENTER_TAPS / 2u + offset;
 			size_t sample = equalizer->index + coefficient;
 
-			if (sample >= V34_EQUALIZER_TAPS)
-				sample -= V34_EQUALIZER_TAPS;
+			if (sample >= equalizer->tap_count)
+				sample -= equalizer->tap_count;
 			reference_adapt_tap(
 				equalizer, sample, coefficient, error, false);
 		}
 		return;
 	}
 	for (size_t coefficient = 0;
-	     coefficient < V34_EQUALIZER_TAPS; ++coefficient) {
+	     coefficient < equalizer->tap_count; ++coefficient) {
 		size_t sample = equalizer->index + coefficient;
 
-		if (sample >= V34_EQUALIZER_TAPS)
-			sample -= V34_EQUALIZER_TAPS;
+		if (sample >= equalizer->tap_count)
+			sample -= equalizer->tap_count;
 		reference_adapt_tap(
 			equalizer, sample, coefficient, error, true);
 	}
@@ -155,6 +158,8 @@ static bool test_lifecycle(void)
 	      "equalizer did not initialize");
 	memset(&expected, 0, sizeof(expected));
 	expected.in_phase_coefficient[V34_EQUALIZER_IDENTITY_TAP] = 0x1000;
+	expected.tap_count = V34_EQUALIZER_TAPS;
+	expected.identity_tap = V34_EQUALIZER_IDENTITY_TAP;
 	expected.initialized = true;
 	CHECK(memcmp(&equalizer, &expected, sizeof(equalizer)) == 0,
 	      "equalizer identity state changed");
@@ -232,6 +237,96 @@ static bool test_filter_and_adaptation(void)
 	return true;
 }
 
+static bool test_bounded_geometry(void)
+{
+	static const struct {
+		uint16_t taps;
+		uint16_t delay;
+	} geometries[] = { { 80, 20 }, { 80, 16 }, { 128, 16 } };
+
+	for (size_t geometry = 0; geometry < ARRAY_LENGTH(geometries);
+	     ++geometry) {
+		struct v34_equalizer actual;
+		struct v34_equalizer expected;
+		struct v34_equalizer saved;
+		struct v34_equalizer_accumulator filtered;
+		struct v34_equalizer_accumulator reference;
+		uint16_t taps = geometries[geometry].taps;
+		uint16_t delay = geometries[geometry].delay;
+
+		CHECK(v34_equalizer_init_geometry(&actual, taps, delay) ==
+			      V34_EQUALIZER_OK &&
+		      v34_equalizer_is_valid(&actual) &&
+		      actual.tap_count == taps &&
+		      actual.identity_tap == taps - 2u * delay,
+		      "geometry %u/%u did not initialize", taps, delay);
+		for (size_t input = 0; input < taps * 2u; ++input) {
+			struct v34_analytic_sample sample = {
+				.in_phase = input == 0 ? 7000 : 0,
+				.quadrature = input == 0 ? -2300 : 0,
+			};
+			bool impulse = input + 1u == 2u * delay;
+
+			CHECK(v34_equalizer_push(&actual, sample) ==
+				      V34_EQUALIZER_OK &&
+			      v34_equalizer_filter(&actual, &filtered) ==
+				      V34_EQUALIZER_OK &&
+			      filtered.in_phase == (impulse ? 7000 * 4096 : 0) &&
+			      filtered.quadrature == (impulse ? -2300 * 4096 : 0),
+			      "geometry %u/%u changed output delay at %zu",
+			      taps, delay, input);
+		}
+		for (size_t input = 0; input < taps + 1u; ++input) {
+			struct v34_analytic_sample sample = {
+				.in_phase = patterned_word(input, 0x15),
+				.quadrature = patterned_word(input, 0x27),
+			};
+			struct v34_analytic_sample error = { 61, -43 };
+
+			CHECK(v34_equalizer_push(&actual, sample) ==
+				      V34_EQUALIZER_OK,
+			      "geometry sample rejected");
+			for (unsigned int center = 0; center < 2u; ++center) {
+				expected = actual;
+				reference_adapt(&expected, error, center != 0);
+				CHECK((center ?
+					       v34_equalizer_adapt_center(&actual, error) :
+					       v34_equalizer_adapt(&actual, error)) ==
+					      V34_EQUALIZER_OK &&
+				      memcmp(&actual, &expected, sizeof(actual)) == 0,
+				      "geometry %u/%u adaptation changed at %zu",
+				      taps, delay, input);
+			}
+			reference_filter(&actual, &reference);
+			CHECK(v34_equalizer_filter(&actual, &filtered) ==
+				      V34_EQUALIZER_OK &&
+			      memcmp(&filtered, &reference, sizeof(filtered)) == 0,
+			      "geometry %u/%u filtering changed at %zu",
+			      taps, delay, input);
+		}
+		expected = actual;
+		for (size_t tap = actual.identity_tap - 4u;
+		     tap < actual.identity_tap + 4u; ++tap) {
+			expected.in_phase_coefficient[tap] = 0;
+			expected.quadrature_coefficient[tap] = 0;
+		}
+		CHECK(v34_equalizer_clear_center(&actual) == V34_EQUALIZER_OK &&
+		      memcmp(&actual, &expected, sizeof(actual)) == 0,
+		      "geometry %u/%u cleared outside the acquisition span",
+		      taps, delay);
+		saved = actual;
+		CHECK(v34_equalizer_init_geometry(&actual, 129, 16) ==
+			      V34_EQUALIZER_INVALID_ARGUMENT &&
+		      v34_equalizer_init_geometry(&actual, 80, 0) ==
+			      V34_EQUALIZER_INVALID_ARGUMENT &&
+		      v34_equalizer_init_geometry(&actual, 80, 39) ==
+			      V34_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&actual, &saved, sizeof(actual)) == 0,
+		      "invalid geometry changed the trained owner");
+	}
+	return true;
+}
+
 static bool test_transactionality(void)
 {
 	struct v34_equalizer equalizer;
@@ -280,6 +375,7 @@ int main(void)
 	} tests[] = {
 		{ "lifecycle", test_lifecycle },
 		{ "filter and adaptation", test_filter_and_adaptation },
+		{ "bounded geometry", test_bounded_geometry },
 		{ "transactionality", test_transactionality },
 	};
 	unsigned int failures = 0;

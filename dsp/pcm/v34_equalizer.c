@@ -26,18 +26,39 @@ static uint32_t coefficient_word(int16_t coefficient, uint16_t residue)
 bool v34_equalizer_is_valid(const struct v34_equalizer *equalizer)
 {
 	return equalizer != NULL && equalizer->initialized &&
-	       equalizer->index < V34_EQUALIZER_TAPS;
+	       equalizer->tap_count >= V34_EQUALIZER_CENTER_TAPS &&
+	       equalizer->tap_count <= V34_EQUALIZER_MAX_TAPS &&
+	       equalizer->identity_tap >= V34_EQUALIZER_CENTER_TAPS / 2u &&
+	       equalizer->identity_tap <=
+		       equalizer->tap_count - V34_EQUALIZER_CENTER_TAPS / 2u &&
+	       (equalizer->tap_count - equalizer->identity_tap) % 2u == 0u &&
+	       equalizer->index < equalizer->tap_count;
 }
 
 enum v34_equalizer_result v34_equalizer_init(
 	struct v34_equalizer *equalizer)
 {
+	return v34_equalizer_init_geometry(
+		equalizer, V34_EQUALIZER_TAPS,
+		(V34_EQUALIZER_TAPS - V34_EQUALIZER_IDENTITY_TAP) / 2u);
+}
+
+enum v34_equalizer_result v34_equalizer_init_geometry(
+	struct v34_equalizer *equalizer, uint16_t tap_count,
+	uint16_t decision_delay_symbols)
+{
 	struct v34_equalizer initialized;
 
-	if (equalizer == NULL)
+	if (equalizer == NULL || tap_count < V34_EQUALIZER_CENTER_TAPS ||
+	    tap_count > V34_EQUALIZER_MAX_TAPS ||
+	    decision_delay_symbols < V34_EQUALIZER_CENTER_TAPS / 4u ||
+	    decision_delay_symbols >
+		    (tap_count - V34_EQUALIZER_CENTER_TAPS / 2u) / 2u)
 		return V34_EQUALIZER_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
-	initialized.in_phase_coefficient[V34_EQUALIZER_IDENTITY_TAP] = 0x1000;
+	initialized.tap_count = tap_count;
+	initialized.identity_tap = tap_count - 2u * decision_delay_symbols;
+	initialized.in_phase_coefficient[initialized.identity_tap] = 0x1000;
 	initialized.initialized = true;
 	*equalizer = initialized;
 	return V34_EQUALIZER_OK;
@@ -51,8 +72,8 @@ enum v34_equalizer_result v34_equalizer_clear_center(
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
-	for (size_t tap = V34_EQUALIZER_CENTER_FIRST;
-	     tap < V34_EQUALIZER_CENTER_FIRST + V34_EQUALIZER_CENTER_TAPS;
+	for (size_t tap = next.identity_tap - V34_EQUALIZER_CENTER_TAPS / 2u;
+	     tap < next.identity_tap + V34_EQUALIZER_CENTER_TAPS / 2u;
 	     ++tap) {
 		next.in_phase_coefficient[tap] = 0;
 		next.quadrature_coefficient[tap] = 0;
@@ -71,7 +92,7 @@ enum v34_equalizer_result v34_equalizer_push(
 	index = equalizer->index;
 	equalizer->in_phase_delay[index] = sample.in_phase;
 	equalizer->quadrature_delay[index] = sample.quadrature;
-	equalizer->index = index + 1u == V34_EQUALIZER_TAPS ? 0 : index + 1u;
+	equalizer->index = index + 1u == equalizer->tap_count ? 0 : index + 1u;
 	return V34_EQUALIZER_OK;
 }
 
@@ -109,7 +130,7 @@ enum v34_equalizer_result v34_equalizer_filter(
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
 	for (size_t sample = equalizer->index;
-	     sample < V34_EQUALIZER_TAPS; ++sample, ++coefficient)
+	     sample < equalizer->tap_count; ++sample, ++coefficient)
 		accumulate_tap(equalizer, sample, coefficient,
 			       &in_phase, &quadrature);
 	for (size_t sample = 0; sample < equalizer->index;
@@ -164,7 +185,7 @@ enum v34_equalizer_result v34_equalizer_adapt(
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
 	for (size_t sample = equalizer->index;
-	     sample < V34_EQUALIZER_TAPS; ++sample, ++coefficient)
+	     sample < equalizer->tap_count; ++sample, ++coefficient)
 		adapt_tap(equalizer, sample, coefficient, error, true);
 	for (size_t sample = 0; sample < equalizer->index;
 	     ++sample, ++coefficient)
@@ -179,11 +200,12 @@ enum v34_equalizer_result v34_equalizer_adapt_center(
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
 	for (size_t offset = 0; offset < V34_EQUALIZER_CENTER_TAPS; ++offset) {
-		size_t coefficient = V34_EQUALIZER_CENTER_FIRST + offset;
+		size_t coefficient = equalizer->identity_tap -
+			V34_EQUALIZER_CENTER_TAPS / 2u + offset;
 		size_t sample = equalizer->index + coefficient;
 
-		if (sample >= V34_EQUALIZER_TAPS)
-			sample -= V34_EQUALIZER_TAPS;
+		if (sample >= equalizer->tap_count)
+			sample -= equalizer->tap_count;
 		adapt_tap(equalizer, sample, coefficient, error, false);
 	}
 	return V34_EQUALIZER_OK;

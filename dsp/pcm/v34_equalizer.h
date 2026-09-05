@@ -10,6 +10,7 @@
 
 enum {
 	V34_EQUALIZER_TAPS = 80,
+	V34_EQUALIZER_MAX_TAPS = 128,
 	V34_EQUALIZER_CENTER_FIRST = 36,
 	V34_EQUALIZER_CENTER_TAPS = 8,
 	V34_EQUALIZER_IDENTITY_TAP = 40,
@@ -29,18 +30,25 @@ struct v34_equalizer_accumulator {
 /* Owned two-samples-per-symbol complex equalizer. Coefficients are Q12;
  * residues retain the low half of each Q16 adaptation word. */
 struct v34_equalizer {
-	int16_t in_phase_delay[V34_EQUALIZER_TAPS];
-	int16_t quadrature_delay[V34_EQUALIZER_TAPS];
-	int16_t in_phase_coefficient[V34_EQUALIZER_TAPS];
-	int16_t quadrature_coefficient[V34_EQUALIZER_TAPS];
-	uint16_t in_phase_residue[V34_EQUALIZER_TAPS];
-	uint16_t quadrature_residue[V34_EQUALIZER_TAPS];
+	int16_t in_phase_delay[V34_EQUALIZER_MAX_TAPS];
+	int16_t quadrature_delay[V34_EQUALIZER_MAX_TAPS];
+	int16_t in_phase_coefficient[V34_EQUALIZER_MAX_TAPS];
+	int16_t quadrature_coefficient[V34_EQUALIZER_MAX_TAPS];
+	uint16_t in_phase_residue[V34_EQUALIZER_MAX_TAPS];
+	uint16_t quadrature_residue[V34_EQUALIZER_MAX_TAPS];
 	uint32_t index;
+	uint16_t tap_count;
+	uint16_t identity_tap;
 	bool initialized;
 };
 
 enum v34_equalizer_result v34_equalizer_init(
 	struct v34_equalizer *equalizer);
+/* Select a bounded half-symbol span and whole-symbol output delay. The
+ * eight-tap acquisition span remains centered on the identity tap. */
+enum v34_equalizer_result v34_equalizer_init_geometry(
+	struct v34_equalizer *equalizer, uint16_t tap_count,
+	uint16_t decision_delay_symbols);
 bool v34_equalizer_is_valid(const struct v34_equalizer *equalizer);
 
 /* Clear only the eight center coefficients while preserving their residues. */
