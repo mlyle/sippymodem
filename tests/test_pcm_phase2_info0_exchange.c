@@ -437,6 +437,7 @@ static bool check_following_tone(
 	bool rejected_after_completion = false;
 	bool early_acknowledgment = false;
 	bool initialized;
+	double retained_power = 0.0;
 
 	analog.v90.acknowledges_peer_info0 = false;
 	digital.v90.common.acknowledges_peer_info0 = false;
@@ -531,6 +532,18 @@ static bool check_following_tone(
 			      &ignored, &event) == PCM_PHASE2_INFO0_EXCHANGE_OK,
 		      "following-tone exchange failed at %zu for %d/%d/%d/%d",
 		      index, mode, codec, test_case, digital_local);
+		if (retained_power != 0.0)
+			CHECK(exchange.transport.tone_detector.carrier.profile
+				.minimum_line_power == retained_power,
+			      "repeated/rejected INFO0 replaced tone level");
+		else if (exchange.state == PCM_PHASE2_INFO0_ACKNOWLEDGING) {
+			CHECK(v34_phase2_tone_detector_set_receive_gain(
+				&exchange.transport.tone_detector, 8192) ==
+				V34_PHASE2_TONE_OK,
+			      "qualified level fixture failed");
+			retained_power = exchange.transport.tone_detector.carrier
+				.profile.minimum_line_power;
+		}
 		if (event.recovery_event == PCM_INFO0_RECOVERY_STARTED)
 			recovery_starts++;
 		else if (event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED)
@@ -743,7 +756,7 @@ static bool test_info0_following_tone_orderings(void)
 	return true;
 }
 
-static bool test_retrain_record_is_immutable(void)
+static bool check_retrain_record_is_immutable(bool mismatch)
 {
 	struct v90_info0 analog = analog_capabilities();
 	struct v90_info0d retained =
@@ -754,8 +767,10 @@ static bool test_retrain_record_is_immutable(void)
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
 	int16_t peer_line = 0;
 	bool rejected = false;
+	bool received = false;
 
-	changed.nominal_transmit_power++;
+	if (mismatch)
+		changed.nominal_transmit_power++;
 	changed.common.acknowledges_peer_info0 = false;
 	CHECK(pcm_phase2_info0_exchange_init_v90_analog(
 		      &exchange, TEST_AMPLITUDE, &analog) ==
@@ -771,11 +786,16 @@ static bool test_retrain_record_is_immutable(void)
 	exchange.state = PCM_PHASE2_INFO0_RETRAIN;
 	CHECK(phase2_info0_exchange_start_tone(&exchange.transport) ==
 		      PHASE2_INFO0_EXCHANGE_OK &&
+	      v34_phase2_tone_detector_set_receive_gain(
+		      &exchange.transport.tone_detector, 8192) ==
+		      V34_PHASE2_TONE_OK &&
 	      pcm_phase2_info0_exchange_complete(&exchange),
 	      "retained INFO0 did not initialize explicit retrain state");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
 		struct pcm_phase2_info0_exchange_event event;
+		enum v34_phase2_info_receive_stage before =
+			exchange.transport.info_receiver.frame.stage;
 		int16_t ignored;
 
 		CHECK(phase2_info0_exchange_sample(
@@ -786,17 +806,94 @@ static bool test_retrain_record_is_immutable(void)
 			      codec_round_trip(peer_line, TEST_CODEC_PCMU),
 			      &ignored, &event) == PCM_PHASE2_INFO0_EXCHANGE_OK,
 		      "retrain mismatch injection failed at sample %zu", index);
+		CHECK(exchange.transport.tone_detector.carrier.profile
+			.minimum_line_power == 1024.0,
+		      "retrain INFO0 replaced trained receive level");
+		received = before == V34_PHASE2_INFO_RECEIVE_TAIL &&
+			exchange.transport.info_receiver.frame.stage ==
+				V34_PHASE2_INFO_SEARCH_SYNC;
 		if (event.peer_info0_event == PCM_PEER_INFO0_REJECTED) {
 			rejected = true;
 			break;
 		}
 		CHECK(event.peer_info0_event != PCM_PEER_INFO0_RECEIVED,
 		      "retrain INFO0 unexpectedly replaced its retained record");
+		if (received)
+			break;
 	}
-	CHECK(rejected && exchange.state == PCM_PHASE2_INFO0_RETRAIN &&
+	CHECK((mismatch ? rejected : received && !rejected) &&
+	      exchange.state == PCM_PHASE2_INFO0_RETRAIN &&
 	      pcm_phase2_info0_exchange_complete(&exchange) &&
 	      digital_equal(&exchange.peer_info0.digital, &retained),
 	      "mismatched repeat changed terminal retrain state");
+	return true;
+}
+
+static bool test_retrain_record_is_immutable(void)
+{
+	return check_retrain_record_is_immutable(false) &&
+	       check_retrain_record_is_immutable(true);
+}
+
+static bool test_rejected_initial_level(void)
+{
+	for (unsigned int bad_crc = 0; bad_crc < 2; ++bad_crc) {
+		struct v90_info0 analog = analog_capabilities();
+		struct v90_info0d digital = digital_capabilities(TEST_CODEC_PCMU);
+		struct pcm_phase2_info0_exchange exchange;
+		struct phase2_info0_exchange peer;
+		uint8_t payload[V90_INFO0A_PAYLOAD_BYTES];
+		bool corrupted = false;
+		bool rejected = false;
+
+		CHECK(v90_info0a_encode(&analog, payload, sizeof(payload)) ==
+			V90_INFO0_OK, "rejected level payload did not encode");
+		if (!bad_crc)
+			payload[1] |= 0x70; /* Invalid symbol-rate difference 7. */
+		CHECK(pcm_phase2_info0_exchange_init_v90_digital(
+			&exchange, TEST_AMPLITUDE, &digital) ==
+			PCM_PHASE2_INFO0_EXCHANGE_OK &&
+		      phase2_info0_exchange_init(
+			&peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE, payload,
+			V90_INFO0A_PAYLOAD_BITS, V90_INFO0D_PAYLOAD_BITS) ==
+			PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_tone_detector_set_receive_gain(
+			&exchange.transport.tone_detector, 8192) ==
+			V34_PHASE2_TONE_OK,
+		      "rejected level fixture did not initialize");
+		for (size_t i = 0; i < TEST_SAMPLE_LIMIT && !rejected; ++i) {
+			struct phase2_info0_exchange_event peer_event;
+			struct pcm_phase2_info0_exchange_event event;
+			struct v34_phase2_info_receiver *frame =
+				&exchange.transport.info_receiver.frame;
+			int16_t sample, ignored;
+
+			if (bad_crc && !corrupted &&
+			    frame->stage == V34_PHASE2_INFO_RECEIVE_CRC &&
+			    frame->crc_bit_count == 1) {
+				/* Corrupt one received CRC bit. */
+				frame->received_crc ^= 1;
+				corrupted = true;
+			}
+			CHECK(phase2_info0_exchange_sample(
+				&peer, 0, &sample, &peer_event) ==
+				PHASE2_INFO0_EXCHANGE_OK &&
+			      pcm_phase2_info0_exchange_sample(
+				&exchange,
+				codec_round_trip(sample, TEST_CODEC_PCMU),
+				&ignored, &event) ==
+				PCM_PHASE2_INFO0_EXCHANGE_OK,
+			      "rejected level input failed");
+			rejected = event.peer_info0_event ==
+				PCM_PEER_INFO0_REJECTED;
+			CHECK(event.peer_info0_event != PCM_PEER_INFO0_RECEIVED &&
+			      exchange.transport.tone_detector.carrier.profile
+				.minimum_line_power == 1024.0,
+			      "unqualified INFO0 replaced receive level");
+		}
+		CHECK(rejected && (!bad_crc || corrupted),
+		      "invalid INFO0 did not exercise rejection");
+	}
 	return true;
 }
 
@@ -878,6 +975,7 @@ int main(void)
 		{ "INFO0 following-tone orderings",
 		  test_info0_following_tone_orderings },
 		{ "retrain record is immutable", test_retrain_record_is_immutable },
+		{ "rejected initial INFO0 level", test_rejected_initial_level },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

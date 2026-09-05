@@ -341,6 +341,81 @@ static bool test_reversal_during_recovery_info(void)
 	return true;
 }
 
+static bool test_retained_receive_level(void)
+{
+	enum { REPEAT, MISMATCH, INVALID_INITIAL, BAD_CRC_INITIAL };
+
+	for (unsigned int test_case = REPEAT;
+	     test_case <= BAD_CRC_INITIAL; ++test_case) {
+		struct v34_info0 local = calling_capabilities();
+		struct v34_info0 retained = answering_capabilities();
+		struct v34_info0 peer_record = retained;
+		struct v34_phase2_info0_exchange exchange;
+		struct phase2_info0_exchange peer;
+		uint8_t payload[V34_INFO0_PAYLOAD_BYTES];
+		bool received = false;
+		bool corrupted = false;
+		bool initial = test_case >= INVALID_INITIAL;
+		enum v34_phase2_info0_exchange_result initialized = initial ?
+			v34_phase2_info0_exchange_init(&exchange,
+				V34_CALLING_STATION, TEST_AMPLITUDE, &local) :
+			v34_phase2_info0_exchange_init_retrain(&exchange,
+				V34_CALLING_STATION, TEST_AMPLITUDE,
+				&local, &retained);
+
+		if (test_case == MISMATCH)
+			peer_record.symbol_rate_2743_supported =
+				!peer_record.symbol_rate_2743_supported;
+		CHECK(initialized == V34_PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_info0_encode(&peer_record, payload, sizeof(payload)) ==
+			V34_INFO0_OK, "receive level fixture did not encode");
+		if (test_case == INVALID_INITIAL)
+			payload[1] |= 0x70; /* Invalid symbol-rate difference 7. */
+		CHECK(phase2_info0_exchange_init(
+			&peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE, payload,
+			V34_INFO0_PAYLOAD_BITS, V34_INFO0_PAYLOAD_BITS) ==
+			PHASE2_INFO0_EXCHANGE_OK &&
+		      v34_phase2_tone_detector_set_receive_gain(
+			&exchange.transport.tone_detector, 8192) ==
+			V34_PHASE2_TONE_OK,
+		      "retained receive level fixture did not initialize");
+		for (size_t i = 0; i < TEST_SAMPLE_LIMIT && !received; ++i) {
+			struct phase2_info0_exchange_event peer_event;
+			struct v34_phase2_info0_exchange_event event;
+			struct v34_phase2_info_receiver *frame =
+				&exchange.transport.info_receiver.frame;
+			int16_t sample, ignored;
+
+			if (test_case == BAD_CRC_INITIAL && !corrupted &&
+			    frame->stage == V34_PHASE2_INFO_RECEIVE_CRC &&
+			    frame->crc_bit_count == 1) {
+				frame->received_crc ^= 1;
+				corrupted = true;
+			}
+			CHECK(phase2_info0_exchange_sample(
+				&peer, 0, &sample, &peer_event) ==
+				PHASE2_INFO0_EXCHANGE_OK &&
+			      v34_phase2_info0_exchange_sample(
+				&exchange,
+				codec_round_trip(sample, TEST_CODEC_PCMU),
+				&ignored, &event) ==
+				V34_PHASE2_INFO0_EXCHANGE_OK,
+			      "retained receive level input failed");
+			CHECK(exchange.transport.tone_detector.carrier.profile
+				.minimum_line_power == 1024.0 &&
+			      (initial ? !exchange.peer_info0_received :
+				info0_matches(&exchange.peer_info0, &retained)),
+			      "unqualified INFO0 changed receive level or record");
+			received = event.peer_info0_event == (test_case == REPEAT ?
+				V34_PHASE2_PEER_INFO0_RECEIVED :
+				V34_PHASE2_PEER_INFO0_REJECTED);
+		}
+		CHECK(received && (test_case != BAD_CRC_INITIAL || corrupted),
+		      "receive level case %u missed expected event", test_case);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_info0 capabilities = calling_capabilities();
@@ -401,6 +476,7 @@ int main(void)
 		{ "bidirectional exchange", test_bidirectional_exchange },
 		{ "reversal during recovery INFO",
 		  test_reversal_during_recovery_info },
+		{ "retained receive level", test_retained_receive_level },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

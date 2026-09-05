@@ -158,7 +158,9 @@ static size_t absolute_difference(size_t left, size_t right)
 	return left > right ? left - right : right - left;
 }
 
-static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
+static bool check_ranging(
+	enum test_codec codec, size_t line_delay_samples, int16_t amplitude,
+	uint16_t calling_gain_q15, uint16_t answering_gain_q15)
 {
 	struct v34_info0 calling = calling_capabilities();
 	struct v34_info0 answering = answering_capabilities();
@@ -179,11 +181,11 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 	      "invalid ranging-test line delay");
 	CHECK(v34_phase2_ranging_init(
 		      &caller, V34_CALLING_STATION,
-		      TEST_AMPLITUDE, &calling) ==
+		      amplitude, &calling) ==
 		      V34_PHASE2_RANGING_OK &&
 	      v34_phase2_ranging_init(
 		      &answerer, V34_ANSWERING_STATION,
-		      TEST_AMPLITUDE, &answering) ==
+		      amplitude, &answering) ==
 		      V34_PHASE2_RANGING_OK,
 	      "ranging endpoints did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
@@ -224,10 +226,12 @@ static bool check_ranging(enum test_codec codec, size_t line_delay_samples)
 			      "answerer emitted placeholder audio at its probe boundary");
 		delay_line_transmit(
 			&caller_to_answer,
-			codec_round_trip(caller_transmit, codec));
+			codec_round_trip((int16_t)((int32_t)caller_transmit *
+				calling_gain_q15 / 32768), codec));
 		delay_line_transmit(
 			&answer_to_caller,
-			codec_round_trip(answer_transmit, codec));
+			codec_round_trip((int16_t)((int32_t)answer_transmit *
+				answering_gain_q15 / 32768), codec));
 		observe_phase_transition(
 			caller_before, caller_transmit_before, &caller, true, index,
 			&observation);
@@ -304,8 +308,22 @@ static bool test_bidirectional_ranging(void)
 	for (enum test_codec codec = TEST_CODEC_LINEAR;
 	     codec <= TEST_CODEC_PCMA; ++codec)
 		for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index)
-			CHECK(check_ranging(codec, delays[index]),
+			CHECK(check_ranging(codec, delays[index], TEST_AMPLITUDE,
+				32768, 32768),
 			      "ranging failed for codec %d", codec);
+	return true;
+}
+
+static bool test_weak_ranging(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (unsigned int weak_caller = 0; weak_caller < 2; ++weak_caller)
+			CHECK(check_ranging(codec, 13, 5320,
+				weak_caller ? 1600 : 32768,
+				weak_caller ? 32768 : 1600),
+			      "weak ranging failed for codec %d caller=%u",
+			      codec, weak_caller);
 	return true;
 }
 
@@ -1093,6 +1111,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bidirectional ranging", test_bidirectional_ranging },
+		{ "weak bidirectional ranging", test_weak_ranging },
 		{ "early turnaround tolerance", test_early_turnaround_tolerance },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
 		{ "unanswered reversal recovery",

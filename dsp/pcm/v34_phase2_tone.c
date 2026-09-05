@@ -3,6 +3,7 @@
 #include "v34_phase2_tone.h"
 
 #include "phase.h"
+#include "v34_gain_control.h"
 
 #include <limits.h>
 #include <math.h>
@@ -209,6 +210,26 @@ v34_phase2_tone_detector_init(
 	    !v34_phase2_tone_detector_is_valid(&initialized))
 		return V34_PHASE2_TONE_INVALID_ARGUMENT;
 	*detector = initialized;
+	return V34_PHASE2_TONE_OK;
+}
+
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_set_receive_gain(
+	struct v34_phase2_tone_detector *detector, int16_t receive_gain)
+{
+	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
+	uint64_t gain;
+
+	if (!v34_phase2_tone_detector_is_valid(detector) || receive_gain <= 0)
+		return V34_PHASE2_TONE_INVALID_ARGUMENT;
+	gain = (uint64_t)receive_gain < unity ? unity : (uint64_t)receive_gain;
+	/* Keep raw observations and phase; express the normalized power floor
+	 * in their amplitude domain. Positive signed-Q10 gains bound the squared
+	 * denominator by 32767^2 and the numerator by 256^2 * 1024^2 = 2^36.
+	 * Gain below unity must not raise the default acquisition floor. */
+	detector->carrier.profile.minimum_line_power =
+		V34_PHASE2_TONE_MIN_LINE_POWER * (double)(unity * unity) /
+		(double)(gain * gain);
 	return V34_PHASE2_TONE_OK;
 }
 

@@ -148,6 +148,12 @@ v34_phase2_tone_detector_init(
 	enum v34_station_role local_role);
 bool v34_phase2_tone_detector_is_valid(
 	const struct v34_phase2_tone_detector *detector);
+/* Adopt a positive Q10 gain qualified by the receive owner. Only the raw
+ * power floor changes; histories, reference phase, carrier shares and timing
+ * remain intact. This does not run or reset an AGC. */
+enum v34_phase2_tone_result
+v34_phase2_tone_detector_set_receive_gain(
+	struct v34_phase2_tone_detector *detector, int16_t receive_gain);
 /* Reset clears observations while retaining the instance's receive level.
  * Initialization restores the default level. Copies retain both level and
  * raw physical reference phase. */

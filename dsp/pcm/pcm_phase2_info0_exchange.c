@@ -423,6 +423,13 @@ static bool retain_peer_info0(
 		->acknowledges_peer_info0;
 	if (state_is_retrain(exchange->state))
 		return true;
+	/* Qualify the following raw Tone A/B at the first accepted initial INFO0.
+	 * Repeats and retrain retain their already qualified receive level. */
+	if (!retained && v34_phase2_tone_detector_set_receive_gain(
+		    &exchange->transport.tone_detector,
+		    exchange->transport.info_receiver.modulation.gain.gain) !=
+		    V34_PHASE2_TONE_OK)
+		return false;
 	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
 		record_common(
 			&exchange->peer_info0, exchange->protocol,

@@ -1164,6 +1164,61 @@ static bool test_full_retrain_response(void)
 	return true;
 }
 
+static bool test_receive_gain_handoff(void)
+{
+	static const int16_t gains[] = { 1, 512, 1024, 8192, INT16_MAX };
+
+	for (enum v34_station_role role = V34_CALLING_STATION;
+	     role <= V34_ANSWERING_STATION; ++role) {
+		struct v34_phase2_tone_detector detector;
+		struct v34_phase2_tone_detector before;
+		struct v34_phase2_tone_event event;
+
+		CHECK(v34_phase2_tone_detector_init(&detector, role) ==
+			V34_PHASE2_TONE_OK, "gain fixture did not initialize");
+		for (size_t i = 0; i < 99; ++i)
+			CHECK(v34_phase2_tone_detector_sample(
+				&detector, (int16_t)(i * 19), &event) ==
+				V34_PHASE2_TONE_OK, "gain fixture lost sample");
+		before = detector;
+		for (size_t i = 0; i < ARRAY_LENGTH(gains); ++i) {
+			struct v34_phase2_tone_detector expected = before;
+			double gain = gains[i] > 1024 ? gains[i] / 1024.0 : 1.0;
+
+			detector = before;
+			expected.carrier.profile.minimum_line_power /= gain * gain;
+			CHECK(v34_phase2_tone_detector_set_receive_gain(
+				&detector, gains[i]) == V34_PHASE2_TONE_OK &&
+			      memcmp(&detector, &expected, sizeof(detector)) == 0 &&
+			      v34_phase2_tone_detector_is_valid(&detector),
+			      "gain %d changed phase/history or tone contract",
+			      gains[i]);
+			CHECK(v34_phase2_tone_detector_reset(&detector) ==
+				V34_PHASE2_TONE_OK &&
+			      detector.carrier.profile.minimum_line_power ==
+				expected.carrier.profile.minimum_line_power,
+			      "reset dropped qualified receive level");
+		}
+		detector = before;
+		CHECK(v34_phase2_tone_detector_set_receive_gain(&detector, 0) ==
+			V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      v34_phase2_tone_detector_set_receive_gain(&detector, -1) ==
+			V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      v34_phase2_tone_detector_set_receive_gain(NULL, 1024) ==
+			V34_PHASE2_TONE_INVALID_ARGUMENT &&
+		      memcmp(&detector, &before, sizeof(detector)) == 0,
+		      "invalid receive gain changed detector");
+		CHECK(v34_phase2_tone_detector_set_receive_gain(&detector, 8192) ==
+			V34_PHASE2_TONE_OK &&
+		      v34_phase2_tone_detector_init(&detector, role) ==
+			V34_PHASE2_TONE_OK &&
+		      detector.carrier.profile.minimum_line_power ==
+			before.carrier.profile.minimum_line_power,
+		      "fresh call inherited old receive level");
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase2_tone_transmitter transmitter;
@@ -1327,6 +1382,7 @@ int main(void)
 		{ "full-retrain request", test_full_retrain_request },
 		{ "trained receiver silence ceiling", test_receiver_silence_ceiling },
 		{ "full-retrain response", test_full_retrain_response },
+		{ "receive gain handoff", test_receive_gain_handoff },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -230,6 +230,14 @@ v34_phase2_info0_exchange_sample(
 		    PHASE2_INFO0_EXCHANGE_OK)
 		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	repeated_peer_info0 = decode_event(&next, &raw_event, &emitted);
+	/* Initial INFO0 owns this level handoff. Rejected/repeated records and
+	 * retrain, which already retains peer INFO0, cannot replace it. */
+	if (!exchange->peer_info0_received && next.peer_info0_received &&
+	    v34_phase2_tone_detector_set_receive_gain(
+		    &next.transport.tone_detector,
+		    next.transport.info_receiver.modulation.gain.gain) !=
+		    V34_PHASE2_TONE_OK)
+		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	if (!advance_recovery(
 		    &next, repeated_peer_info0, &emitted))
 		return V34_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;

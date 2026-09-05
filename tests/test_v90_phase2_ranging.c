@@ -86,7 +86,9 @@ static size_t absolute_difference(size_t left, size_t right)
 	return left > right ? left - right : right - left;
 }
 
-static bool check_ranging(enum test_codec codec)
+static bool check_ranging(
+	enum test_codec codec, int16_t amplitude,
+	uint16_t analog_gain_q15, uint16_t digital_gain_q15)
 {
 	struct v90_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
@@ -105,10 +107,10 @@ static bool check_ranging(enum test_codec codec)
 	size_t analog_first_reversal = SIZE_MAX;
 
 	CHECK(v90_phase2_ranging_init_analog(
-		      &analog_end, TEST_AMPLITUDE, &analog) ==
+		      &analog_end, amplitude, &analog) ==
 		      V90_PHASE2_RANGING_OK &&
 	      v90_phase2_ranging_init_digital(
-		      &digital_end, TEST_AMPLITUDE, &digital) ==
+		      &digital_end, amplitude, &digital) ==
 		      V90_PHASE2_RANGING_OK &&
 	      analog_end.info0_exchange.transport.signal_role ==
 		      PHASE2_SIGNAL_A &&
@@ -140,10 +142,12 @@ static bool check_ranging(enum test_codec codec)
 		      codec, index, analog_result, digital_result);
 		delay_line_transmit(
 			&analog_to_digital,
-			codec_round_trip(analog_transmit, codec));
+			codec_round_trip((int16_t)((int32_t)analog_transmit *
+				analog_gain_q15 / 32768), codec));
 		delay_line_transmit(
 			&digital_to_analog,
-			codec_round_trip(digital_transmit, codec));
+			codec_round_trip((int16_t)((int32_t)digital_transmit *
+				digital_gain_q15 / 32768), codec));
 		if (analog_transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
 		    analog_end.info0_exchange.transport.transmit_phase ==
 			    PHASE2_INFO0_TONE &&
@@ -206,8 +210,24 @@ static bool test_pcm_ranging(void)
 {
 	for (enum test_codec codec = TEST_CODEC_PCMU;
 	     codec <= TEST_CODEC_PCMA; ++codec)
-		CHECK(check_ranging(codec),
+		CHECK(check_ranging(codec, TEST_AMPLITUDE, 32768, 32768),
 		      "V.90 ranging failed for codec %d", codec);
+	return true;
+}
+
+static bool test_weak_pcm_ranging(void)
+{
+	/* The normal PCM profile's 5320 peak, attenuated before G.711, leaves
+	 * Tone A/B below the unqualified detector floor while INFO still decodes.
+	 * Exercise each physical direction, including actual phase reversals. */
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (unsigned int weak_analog = 0; weak_analog < 2; ++weak_analog)
+			CHECK(check_ranging(codec, 5320,
+				weak_analog ? 1600 : 32768,
+				weak_analog ? 32768 : 1600),
+			      "weak ranging failed for codec %d analog=%u",
+			      codec, weak_analog);
 	return true;
 }
 
@@ -1228,6 +1248,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "PCMU and PCMA ranging", test_pcm_ranging },
+		{ "weak PCMU and PCMA ranging", test_weak_pcm_ranging },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
 		{ "response during INFO repeat", test_response_during_repeat },
 		{ "deferred first reversal", test_deferred_first_reversal },
