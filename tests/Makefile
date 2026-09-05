@@ -2668,6 +2668,8 @@ PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_pcm_phase2_info0_exchange
 PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_phase2_info0_exchange.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v90_info0.o \
@@ -2683,6 +2685,8 @@ V90_PHASE2_RANGING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase2_ranging
 V90_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase2_ranging.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v90_info0.o \
@@ -2795,12 +2799,16 @@ V34_PHASE2_DPSK_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_dpsk
 V34_PHASE2_DPSK_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_dpsk.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o
 V34_PHASE2_INFO_AUDIO_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_info_audio
 V34_PHASE2_INFO_AUDIO_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_info_audio.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_phase2_dpsk.o \
@@ -2811,6 +2819,8 @@ V34_PHASE2_INFO0_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_info0_exchange
 V34_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_info0_exchange.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info0.o \
@@ -2825,6 +2835,8 @@ V34_PHASE2_RANGING_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_ranging
 V34_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_ranging.o \
+	$(BUILD_DIR)/agc.o \
+	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/qam.o \
 	$(BUILD_DIR)/v34_info0.o \

@@ -12,6 +12,7 @@
 
 enum {
 	TEST_AMPLITUDE = 12000,
+	TEST_PCM_AMPLITUDE = 5320,
 	TEST_PAYLOAD_BITS = 17,
 	TEST_SAMPLE_LIMIT = 1000,
 	TEST_TONE_SAMPLES = V34_PHASE2_SAMPLE_RATE / 10,
@@ -156,7 +157,8 @@ static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 
 static bool check_frame_recovery(
 	enum v34_station_role transmit_role,
-	enum test_codec codec)
+	enum test_codec codec, uint16_t receive_gain_q15,
+	int16_t amplitude)
 {
 	static const uint8_t payload[] = { 0xa5, 0x5a, 0x80 };
 	enum v34_station_role receive_role =
@@ -170,7 +172,7 @@ static bool check_frame_recovery(
 	bool frame_received = false;
 
 	CHECK(v34_phase2_info_audio_transmitter_init(
-		      &transmitter, transmit_role, TEST_AMPLITUDE, payload,
+		      &transmitter, transmit_role, amplitude, payload,
 		      TEST_PAYLOAD_BITS) ==
 		      V34_PHASE2_INFO_AUDIO_OK &&
 		      v34_phase2_info_audio_receiver_init(
@@ -208,6 +210,9 @@ static bool check_frame_recovery(
 				      V34_PHASE2_DPSK_OK,
 			      "Phase 2 post-INFO carrier failed at %zu", index);
 		}
+		/* Attenuate the physical signal before companding, not a parallel
+		 * post-codec lane unavailable to the INFO receiver. */
+		sample = (int16_t)((int32_t)sample * receive_gain_q15 / 32767);
 		sample = codec_round_trip(sample, codec);
 		CHECK(v34_phase2_info_audio_receiver_sample(
 			      &receiver, sample, &event) ==
@@ -227,7 +232,8 @@ static bool check_frame_recovery(
 		      received_event.payload_bit_count == TEST_PAYLOAD_BITS &&
 		      memcmp(received_event.payload, payload,
 			     sizeof(payload)) == 0,
-	      "Phase 2 INFO payload changed across G.711 audio");
+	      "Phase 2 INFO payload changed for role %d codec %d gain %u",
+	      transmit_role, codec, receive_gain_q15);
 	measurement = v34_phase2_dpsk_receiver_measure(
 		&receiver.modulation);
 	CHECK(measurement.timing_locked && measurement.line_power > 1.0 &&
@@ -240,16 +246,75 @@ static bool test_g711_frame_recovery(void)
 {
 	return check_frame_recovery(
 		       V34_CALLING_STATION,
-		       TEST_CODEC_PCMU) &&
+		       TEST_CODEC_PCMU, 32767, TEST_AMPLITUDE) &&
 	       check_frame_recovery(
 		       V34_ANSWERING_STATION,
-		       TEST_CODEC_PCMU) &&
+		       TEST_CODEC_PCMU, 32767, TEST_AMPLITUDE) &&
 	       check_frame_recovery(
 		       V34_CALLING_STATION,
-		       TEST_CODEC_PCMA) &&
+		       TEST_CODEC_PCMA, 32767, TEST_AMPLITUDE) &&
 	       check_frame_recovery(
 		       V34_ANSWERING_STATION,
-		       TEST_CODEC_PCMA);
+		       TEST_CODEC_PCMA, 32767, TEST_AMPLITUDE);
+}
+
+static bool test_weak_frame_recovery(void)
+{
+	static const uint16_t gains[] = { 1600, 2048, 2400 };
+
+	for (size_t gain = 0; gain < ARRAY_LENGTH(gains); ++gain)
+		for (int role = V34_CALLING_STATION;
+		     role <= V34_ANSWERING_STATION; ++role)
+			for (int codec = TEST_CODEC_LINEAR;
+			     codec <= TEST_CODEC_PCMA; ++codec)
+				/* Use the calibrated PCM call level, whose INFO energy
+				 * exposes fixed differential quantization without AGC. */
+				CHECK(check_frame_recovery(role, codec, gains[gain],
+						  TEST_PCM_AMPLITUDE),
+				      "weak INFO recovery failed");
+	return true;
+}
+
+static bool test_nonframe_input(void)
+{
+	static const unsigned int noise_peaks[] = { 0, 400, 4000 };
+
+	for (int role = V34_CALLING_STATION;
+	     role <= V34_ANSWERING_STATION; ++role)
+		for (int codec = TEST_CODEC_LINEAR;
+		     codec <= TEST_CODEC_PCMA; ++codec)
+			for (size_t noise = 0; noise < ARRAY_LENGTH(noise_peaks);
+			     ++noise) {
+				struct v34_phase2_info_audio_receiver receiver;
+				uint32_t random = UINT32_C(0x7612d408);
+				unsigned int noise_peak = noise_peaks[noise];
+
+				CHECK(v34_phase2_info_audio_receiver_init(&receiver,
+					role, TEST_PAYLOAD_BITS) ==
+					V34_PHASE2_INFO_AUDIO_OK,
+				      "nonframe INFO receiver did not initialize");
+				for (size_t index = 0; index < 8000; ++index) {
+					struct v34_phase2_info_event event;
+					int16_t sample = 0;
+
+					if (noise_peak != 0) {
+						random = random * UINT32_C(1664525) +
+							UINT32_C(1013904223);
+						sample = (int16_t)((int32_t)(random %
+							(2u * noise_peak + 1u)) -
+							(int32_t)noise_peak);
+					}
+					CHECK(v34_phase2_info_audio_receiver_sample(
+						&receiver, codec_round_trip(sample, codec),
+						&event) == V34_PHASE2_INFO_AUDIO_OK &&
+					      event.type != V34_PHASE2_INFO_FRAME_RECEIVED,
+					      "nonframe input produced a valid INFO frame");
+				}
+				if (noise_peak == 400)
+					CHECK(receiver.modulation.gain.gain > 0x0600,
+					      "weak-noise control did not exercise gain increase");
+			}
+	return true;
 }
 
 static bool test_info_marks_detection(void)
@@ -653,6 +718,8 @@ int main(void)
 	} tests[] = {
 		{ "bidirectional transmission", test_bidirectional_transmission },
 		{ "G.711 frame recovery", test_g711_frame_recovery },
+		{ "weak physical frame recovery", test_weak_frame_recovery },
+		{ "silence and noise rejection", test_nonframe_input },
 		{ "INFO marks detection", test_info_marks_detection },
 		{ "receiver handoff delay", test_receiver_handoff_delay },
 		{ "validation", test_validation },

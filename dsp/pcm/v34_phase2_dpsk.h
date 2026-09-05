@@ -5,6 +5,7 @@
 
 #include "qam.h"
 #include "v34_phase2_signal.h"
+#include "v34_gain_control.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -45,6 +46,7 @@ struct v34_phase2_dpsk_transmitter {
 };
 
 struct v34_phase2_dpsk_receiver {
+	struct v34_gain_control gain;
 	int16_t input[V34_PHASE2_DPSK_INPUT_BLOCK];
 	int16_t carrier_history[V34_PHASE2_DPSK_CARRIER_FILTER_TAPS];
 	int16_t interpolation_history[

@@ -12,6 +12,7 @@
 enum {
 	V34_GAIN_ROUNDING = 0x0200,
 	V34_GAIN_CORRECTION_Q15 = 0x3333,
+	V34_GAIN_INFO_CORRECTION_Q15 = 0x199a,
 	V34_GAIN_TARGET_ENERGY = 0x0fa0,
 	V34_GAIN_ENERGY_DEADBAND = 0x04b0,
 	V34_GAIN_CORRECTION_LIMIT = 0x01f4,
@@ -22,7 +23,8 @@ enum {
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
 
-static int16_t scale_sample(int16_t gain, int16_t sample)
+static int16_t scale_sample(
+	int16_t gain, int16_t sample, uint32_t rounding)
 {
 	uint32_t product = (uint32_t)((int32_t)gain * sample);
 	uint32_t top = product >> 25;
@@ -31,7 +33,7 @@ static int16_t scale_sample(int16_t gain, int16_t sample)
 
 	if (top == 0 || top == 0x7f)
 		return wrap_s16_from_s32(arithmetic_shift_right_u32(
-			product + V34_GAIN_ROUNDING, V34_GAIN_FRACTION_BITS));
+			product + rounding, V34_GAIN_FRACTION_BITS));
 	return overflow <= 0 ? (int16_t)0x8100 : (int16_t)0x7f00;
 }
 
@@ -48,7 +50,8 @@ static uint16_t smooth_energy(uint16_t average, uint32_t energy)
 		       (uint16_t)combined : UINT16_C(0x7f00);
 }
 
-static void correct_gain(struct v34_gain_control *control)
+static void correct_gain(
+	struct v34_gain_control *control, int16_t correction_gain)
 {
 	int16_t delta = wrap_s16_from_s32(
 		(int32_t)control->average_energy - V34_GAIN_TARGET_ENERGY);
@@ -62,7 +65,7 @@ static void correct_gain(struct v34_gain_control *control)
 		     V34_GAIN_ENERGY_DEADBAND) <= 0)
 		return;
 	correction_step = arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)V34_GAIN_CORRECTION_Q15 * delta), 16);
+		(uint32_t)((int32_t)correction_gain * delta), 16);
 	next_correction = wrap_s16_from_s32(
 		(int32_t)control->correction + correction_step);
 	correction_magnitude = absolute_wrap_s16(next_correction);
@@ -163,10 +166,11 @@ enum v34_gain_control_result v34_gain_control_refresh_level(
 	return V34_GAIN_CONTROL_OK;
 }
 
-enum v34_gain_control_result v34_gain_control_process(
+static enum v34_gain_control_result process(
 	struct v34_gain_control *control,
 	struct v34_analytic_sample input,
-	struct v34_analytic_sample *output)
+	struct v34_analytic_sample *output,
+	uint32_t rounding, int16_t correction_gain)
 {
 	struct v34_gain_control next;
 	struct v34_analytic_sample generated;
@@ -184,8 +188,8 @@ enum v34_gain_control_result v34_gain_control_process(
 	if (next.history_index == V34_GAIN_HISTORY_SAMPLES)
 		next.history_index = 0;
 	generated = (struct v34_analytic_sample){
-		.in_phase = scale_sample(next.gain, input.in_phase),
-		.quadrature = scale_sample(next.gain, input.quadrature),
+		.in_phase = scale_sample(next.gain, input.in_phase, rounding),
+		.quadrature = scale_sample(next.gain, input.quadrature, rounding),
 	};
 	next_count = (uint16_t)(next.energy_count + 1u);
 	next_energy = (uint32_t)((int32_t)generated.in_phase *
@@ -205,7 +209,7 @@ enum v34_gain_control_result v34_gain_control_process(
 			if (level > V34_GAIN_MINIMUM_LEVEL) {
 				next.average_energy = smooth_energy(
 					next.average_energy, next_energy);
-				correct_gain(&next);
+				correct_gain(&next, correction_gain);
 			}
 		}
 		next.energy_count = 0;
@@ -215,5 +219,34 @@ enum v34_gain_control_result v34_gain_control_process(
 		return V34_GAIN_CONTROL_INVALID_STATE;
 	*control = next;
 	*output = generated;
+	return V34_GAIN_CONTROL_OK;
+}
+
+enum v34_gain_control_result v34_gain_control_process(
+	struct v34_gain_control *control,
+	struct v34_analytic_sample input,
+	struct v34_analytic_sample *output)
+{
+	return process(control, input, output, V34_GAIN_ROUNDING,
+		V34_GAIN_CORRECTION_Q15);
+}
+
+enum v34_gain_control_result v34_gain_control_process_info(
+	struct v34_gain_control *control, int16_t input, int16_t *output)
+{
+	struct v34_analytic_sample generated;
+	enum v34_gain_control_result result;
+
+	if (!v34_gain_control_is_valid(control))
+		return V34_GAIN_CONTROL_INVALID_STATE;
+	if (output == NULL || memory_regions_overlap(
+			control, sizeof(*control), output, sizeof(*output)))
+		return V34_GAIN_CONTROL_INVALID_ARGUMENT;
+	result = process(control,
+		(struct v34_analytic_sample){ .in_phase = input }, &generated,
+		0, V34_GAIN_INFO_CORRECTION_Q15);
+	if (result != V34_GAIN_CONTROL_OK)
+		return result;
+	*output = generated.in_phase;
 	return V34_GAIN_CONTROL_OK;
 }

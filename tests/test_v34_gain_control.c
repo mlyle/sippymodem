@@ -373,6 +373,97 @@ static bool test_refresh_continuation(void)
 	return true;
 }
 
+static bool test_info_profile(void)
+{
+	struct v34_gain_control control;
+	int16_t output;
+
+	CHECK(v34_gain_control_init(&control, 0x0400) ==
+		      V34_GAIN_CONTROL_OK,
+	      "INFO gain owner did not initialize");
+	for (unsigned int index = 0; index < 8; ++index) {
+		CHECK(v34_gain_control_process_info(&control, 4096, &output) ==
+			      V34_GAIN_CONTROL_OK && output == 4096 &&
+			      control.history_index == index + 1u &&
+			      control.energy_count == (index + 1u) % 4u,
+		      "INFO gain changed the four-sample correction boundary");
+		if (index == 3)
+			CHECK(control.average_energy == 1024 &&
+				      control.correction == -298 && control.gain == 1024,
+			      "INFO correction did not retain its slower first step");
+	}
+	CHECK(control.average_energy == 1894 &&
+		      control.correction == 0 && control.gain == 1148,
+	      "INFO correction did not use the second four-sample block");
+	CHECK(v34_gain_control_set_mode(&control, V34_GAIN_FROZEN) ==
+		      V34_GAIN_CONTROL_OK,
+	      "INFO gain owner did not freeze");
+	for (unsigned int index = 0; index < 6; ++index)
+		CHECK(v34_gain_control_process_info(&control, 2048, &output) ==
+			      V34_GAIN_CONTROL_OK && output == 2296 &&
+			      control.gain == 1148 && control.average_energy == 1894 &&
+			      control.correction == 0 &&
+			      control.history_index == index + 9u &&
+			      control.energy_count == (index + 1u) % 4u,
+		      "frozen INFO gain changed learned state or stopped history");
+	CHECK(v34_gain_control_init(&control, 0x0600) ==
+		      V34_GAIN_CONTROL_OK &&
+		      v34_gain_control_process_info(&control, -1, &output) ==
+			      V34_GAIN_CONTROL_OK && output == -2 &&
+		      v34_gain_control_process_info(&control, 1, &output) ==
+			      V34_GAIN_CONTROL_OK && output == 1,
+	      "INFO Q10 scaling did not truncate signed samples");
+	for (unsigned int index = 0; index < 400; ++index)
+		CHECK(v34_gain_control_process_info(&control, 8, &output) ==
+			      V34_GAIN_CONTROL_OK && output == 12 &&
+			      control.gain == 0x0600 && control.average_energy == 0 &&
+			      control.correction == 0,
+		      "quiet INFO input adapted its gain");
+	CHECK(v34_gain_control_init(&control, INT16_MAX) ==
+		      V34_GAIN_CONTROL_OK &&
+		      v34_gain_control_process_info(&control, INT16_MAX, &output) ==
+			      V34_GAIN_CONTROL_OK && output == 0x7f00 &&
+		      v34_gain_control_process_info(&control, INT16_MIN, &output) ==
+			      V34_GAIN_CONTROL_OK && output == (int16_t)0x8100,
+	      "INFO saturation changed");
+	return true;
+}
+
+static bool test_info_ownership(void)
+{
+	struct v34_gain_control control = { 0 };
+	struct v34_gain_control snapshot = control;
+	int16_t output = 137;
+
+	CHECK(v34_gain_control_process_info(NULL, 2048, &output) ==
+		      V34_GAIN_CONTROL_INVALID_STATE && output == 137 &&
+		      v34_gain_control_process_info(&control, 2048, &output) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &snapshot, sizeof(control)) == 0 && output == 137,
+	      "uninitialized INFO gain mutated state or output");
+	CHECK(v34_gain_control_init(&control, 0x0600) ==
+		      V34_GAIN_CONTROL_OK,
+	      "INFO ownership fixture did not initialize");
+	snapshot = control;
+	CHECK(v34_gain_control_process_info(&control, 2048, NULL) ==
+		      V34_GAIN_CONTROL_INVALID_ARGUMENT &&
+		      memcmp(&control, &snapshot, sizeof(control)) == 0 &&
+		      v34_gain_control_process_info(&control, 2048, &control.gain) ==
+			      V34_GAIN_CONTROL_INVALID_ARGUMENT &&
+		      memcmp(&control, &snapshot, sizeof(control)) == 0 &&
+		      v34_gain_control_process_info(&control, 2048,
+			      &control.history[35]) == V34_GAIN_CONTROL_INVALID_ARGUMENT &&
+		      memcmp(&control, &snapshot, sizeof(control)) == 0,
+	      "INFO gain accepted an absent or aliased output");
+	control.energy_count = V34_GAIN_UPDATE_SAMPLES;
+	snapshot = control;
+	CHECK(v34_gain_control_process_info(&control, 2048, &output) ==
+		      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &snapshot, sizeof(control)) == 0 && output == 137,
+	      "invalid INFO gain mutated state or output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -380,6 +471,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "exact profile", test_exact_profile },
+		{ "INFO scalar profile", test_info_profile },
+		{ "INFO scalar ownership", test_info_ownership },
 		{ "saturation", test_saturation },
 		{ "ownership", test_ownership },
 		{ "measured acquisition refresh", test_measured_refresh },

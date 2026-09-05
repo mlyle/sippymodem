@@ -11,6 +11,7 @@
 #include <string.h>
 
 static const double V34_PHASE2_DPSK_ROLLOFF = 0.75;
+enum { V34_PHASE2_DPSK_INITIAL_GAIN = 0x0600 };
 static const double V34_PHASE2_ANSWERING_CARRIER_GAIN =
 	0.8912509381337456; /* -1 dB. */
 static const double V34_PHASE2_ANSWERING_GUARD_GAIN =
@@ -247,6 +248,8 @@ bool v34_phase2_dpsk_receiver_is_valid(
 	const struct v34_phase2_dpsk_receiver *receiver)
 {
 	return receiver != NULL &&
+	       v34_gain_control_is_valid(&receiver->gain) &&
+	       receiver->gain.mode == V34_GAIN_TRACKING &&
 	       v34_station_role_is_valid(receiver->local_role) &&
 	       receiver->input_count < V34_PHASE2_DPSK_INPUT_BLOCK &&
 	       receiver->carrier_index <
@@ -276,6 +279,10 @@ v34_phase2_dpsk_receiver_init(
 	};
 
 	if (receiver == NULL || !v34_station_role_is_valid(local_role))
+		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	if (v34_gain_control_init(&initialized.gain,
+				  V34_PHASE2_DPSK_INITIAL_GAIN) !=
+			V34_GAIN_CONTROL_OK)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
 	if (!v34_phase2_dpsk_receiver_is_valid(&initialized))
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
@@ -460,13 +467,20 @@ v34_phase2_dpsk_receiver_sample(
 {
 	uint8_t received = 0;
 	bool ready = false;
+	int16_t normalized;
 
 	if (!v34_phase2_dpsk_receiver_is_valid(receiver) ||
 	    bit == NULL ||
 	    bit_ready == NULL)
 		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
-	receiver->input[receiver->input_count++] =
-		select_carrier(receiver, sample);
+	/* The fixed differential product needs normalized carrier energy.
+	 * Exclude the other carrier and answering guard before gain tracking;
+	 * retain the unscaled line measurement for the Phase 2 controller. */
+	if (v34_gain_control_process_info(&receiver->gain,
+			select_carrier(receiver, sample), &normalized) !=
+			V34_GAIN_CONTROL_OK)
+		return V34_PHASE2_DPSK_INVALID_ARGUMENT;
+	receiver->input[receiver->input_count++] = normalized;
 	receiver->line_power +=
 		((double)sample * sample - receiver->line_power) / 256.0;
 	if (receiver->input_count == V34_PHASE2_DPSK_INPUT_BLOCK) {

@@ -25,7 +25,7 @@ enum v34_gain_mode {
 	V34_GAIN_FROZEN,
 };
 
-/* V.34 analytic-sample gain ownership. */
+/* V.34 receive-gain ownership for scalar INFO and analytic samples. */
 struct v34_gain_control {
 	int16_t history[V34_GAIN_HISTORY_SAMPLES];
 	uint32_t energy_accumulator;
@@ -61,5 +61,12 @@ enum v34_gain_control_result v34_gain_control_process(
 	struct v34_gain_control *control,
 	struct v34_analytic_sample input,
 	struct v34_analytic_sample *output);
+
+/* Normalize a scalar INFO sample after the role-selected carrier filter.
+ * Retain the same raw history, quiet qualification, saturation, and correction
+ * clock, with the Phase 2 truncating Q10 scale and slower correction. Rejected
+ * calls leave the owner and output unchanged. */
+enum v34_gain_control_result v34_gain_control_process_info(
+	struct v34_gain_control *control, int16_t input, int16_t *output);
 
 #endif /* V34_GAIN_CONTROL_H */
