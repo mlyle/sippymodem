@@ -528,6 +528,23 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	modem->hook = MODEM_HOOK_OFF;
+	if (completion == ATH0_ACKNOWLEDGED) {
+		uint8_t poll_bytes[] = { modem->ec.lapm.rsp_addr, 0x01, 0x01 };
+		frame_t poll = { .buf = poll_bytes, .count = sizeof(poll_bytes) };
+
+		/* Hold one RR in HDLC and fill the remaining control queue. */
+		for (unsigned int i = 0; i < LAPM_CTRL_FRAMES; ++i) {
+			modem->packer.hdlc.rx_complete(
+				modem->packer.hdlc.framer, &poll);
+			if (i == 0)
+				modem->packer.hdlc.tx_frame =
+					modem->packer.hdlc.get_tx_frame(
+						modem->packer.hdlc.framer);
+		}
+		CHECK(modem->ec.lapm.ctrl_list->next == modem->ec.lapm.tx_ctrl,
+		      "ATH0 fixture did not fill the LAPM control queue");
+		modem->ec.lapm.rtx_count = 3;
+	}
 	CHECK(process_at_command(modem, command) == 1 &&
 		      modem->state == TEST_STATE_EC_DISC &&
 		      modem->ec.lapm.state == LAPM_DISC_STATE &&
@@ -536,6 +553,18 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		      modem->hook == MODEM_HOOK_OFF &&
 		      modem->sample_timer > modem->count,
 	      "ATH0 did not wait for LAPM disconnect");
+	CHECK(modem->ec.lapm.rtx_count == 0,
+	      "LAPM disconnect inherited the data retry counter");
+	if (completion == ATH0_ACKNOWLEDGED) {
+		frame_t *active = modem->packer.hdlc.tx_frame;
+
+		CHECK(active != NULL && active->size == 3 &&
+		      active->buf[0] == modem->ec.lapm.rsp_addr &&
+		      active->buf[1] == 0x01 && active->buf[2] == 0x01,
+		      "LAPM disconnect overwrote the control frame still in HDLC");
+		modem->packer.hdlc.tx_complete(modem->packer.hdlc.framer, active);
+		modem->packer.hdlc.tx_frame = NULL;
+	}
 	{
 		unsigned long deadline = modem->sample_timer;
 
@@ -547,6 +576,31 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		      modem->state == TEST_STATE_EC_DISC &&
 		      retrain_dp.hangup_calls == 0,
 		      "late link status or repeated ATH0 changed LAPM disconnect");
+	}
+	if (completion == ATH0_ACKNOWLEDGED) {
+		static const uint8_t controls[] = { 0x00, 0x01, 0x05, 0x09 };
+		uint8_t late_bytes[] = { modem->ec.lapm.rsp_addr, 0, 0 };
+		frame_t late = { .buf = late_bytes, .count = sizeof(late_bytes) };
+		unsigned long deadline = modem->sample_timer;
+
+		for (size_t i = 0; i < ARRAY_LENGTH(controls); ++i) {
+			late_bytes[1] = controls[i];
+			modem->packer.hdlc.rx_complete(
+				modem->packer.hdlc.framer, &late);
+			CHECK(modem->state == TEST_STATE_EC_DISC &&
+			      modem->ec.lapm.state == LAPM_DISC_STATE &&
+			      modem->sample_timer == deadline &&
+			      retrain_dp.hangup_calls == 0,
+			      "ordinary frame 0x%02x acknowledged LAPM DISC", controls[i]);
+		}
+		response_bytes[0] = modem->ec.lapm.cmd_addr;
+		response_bytes[1] = UA_CONTROL & ~0x10u;
+		modem->packer.hdlc.rx_complete(
+			modem->packer.hdlc.framer, &response);
+		CHECK(modem->state == TEST_STATE_EC_DISC &&
+		      modem->ec.lapm.state == LAPM_DISC_STATE &&
+		      modem->sample_timer == deadline && retrain_dp.hangup_calls == 0,
+		      "UA without the final bit acknowledged LAPM DISC");
 	}
 	if (completion == ATH0_REMOTE_END || completion == ATH0_RESET) {
 		char reset[] = "ATZ";

@@ -1458,7 +1458,8 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			modem_update_status(l->modem,STATUS_EC_LINK);
 			break;
 		case LAPM_DISC:
-			// TBD
+			if (!FRAME_U_PF(f))
+				break;
 			l->state = LAPM_IDLE;
 			reset_lapm_sequence(l);
 			T401_STOP(l);
@@ -1578,9 +1579,7 @@ static int valid_data_state(struct lapm_state *l)
 	case LAPM_DATA:
 		return 1;
 	case LAPM_DISC:
-		reset_lapm_sequence(l);
-		l->state = LAPM_IDLE;
-		modem_update_status(l->modem,STATUS_EC_RELEASE);
+		/* V.42 8.7: ordinary traffic cannot acknowledge a DISC. */
 		return 0;
 	case LAPM_IDLE:
 		return 0;
@@ -1659,6 +1658,17 @@ static int lapm_config(struct lapm_state *l)
 
 static int lapm_disconnect(struct lapm_state *l)
 {
+	frame_t *queued = l->tx_ctrl;
+
+	/* Discard queued control traffic without reusing the frame that HDLC
+	 * may still be serializing. DISC takes the next available wire slot. */
+	while (queued != l->ctrl_list) {
+		queued = queued->next;
+		l->ctrl_count++;
+	}
+	l->ctrl_list = l->tx_ctrl;
+	l->config = 0;
+	l->rtx_count = 0;
 	l->state = LAPM_DISC;
 	TX_DISC(l);
 	/* start T401 (and not T403) */
