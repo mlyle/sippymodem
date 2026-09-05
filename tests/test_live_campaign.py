@@ -68,6 +68,7 @@ print(os.ttyname(slave), flush=True)
 buffer = bytearray()
 online = False
 ring_sent = False
+callback_requested = False
 callback_nonce = b"0123456789abcdef0123456789abcdef"
 raw_transport = False
 
@@ -127,8 +128,7 @@ while True:
                 master,
                 b"\r\nGETTY:CALLBACK:START:" + callback_nonce + b":ready\r\n",
             )
-            assert barrier is not None
-            barrier.touch()
+            callback_requested = True
         elif b"+++" in buffer:
             _, _, remainder = buffer.partition(b"+++")
             buffer = bytearray(remainder)
@@ -160,7 +160,9 @@ while True:
         if not command:
             continue
         if command == b"ATD":
-            if mode == "busy":
+            if mode == "connect-timeout":
+                continue
+            elif mode == "busy":
                 os.write(master, b"\r\nBUSY\r\n")
             elif mode == "early-no-carrier":
                 os.write(master, b"\r\nNO CARRIER\r\n")
@@ -185,6 +187,12 @@ while True:
         elif command == b"ATO1":
             os.write(master, b"\r\nOK\r\n" + connect_response())
             online = True
+        elif command == b"ATH0":
+            print("ATH0", flush=True)
+            if callback_requested:
+                assert barrier is not None
+                barrier.touch()
+            os.write(master, b"\r\nOK\r\n")
         else:
             if command == b"ATZ":
                 raw_transport = False
@@ -511,6 +519,7 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertNotIn(b"0123456789", transmitted)
             self.assertEqual(transmitted.count(b"RETRAIN"), 1)
             self.assertEqual(transmitted.count(b"PING"), 1)
+            self.assertIn(b"ATH0\n", artifacts.daemon_log("modem").read_bytes())
             stages = [call.args[0] for call in set_stage.call_args_list]
             self.assertIn("waiting for remote retrain END", stages)
             self.assertFalse(any("nonce=" in stage for stage in stages))
@@ -521,6 +530,101 @@ class LiveCampaignTests(unittest.TestCase):
             for path in artifacts.directory.rglob("*"):
                 if path.is_file():
                     self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+    def test_cleanup_hangs_up_even_when_the_call_body_does_not_return(self) -> None:
+        for failure in (None, OSError, KeyboardInterrupt):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                case = CASES_BY_NAME["v21-300-originator"]
+                endpoint = mock.Mock()
+                endpoint.terminal.escape_and_hang_up.return_value = True
+                endpoint.stop.return_value = True
+
+                def body(
+                    _config, _frozen, _scheduled, _artifacts, state,
+                    _retrain, endpoints, _progress,
+                ):
+                    endpoints.append(endpoint)
+                    state.detail = "outbound CONNECT timed out"
+                    if failure is not None:
+                        raise failure
+
+                scheduled = ScheduledAttempt(case, 1)
+                with mock.patch("tools.live_campaign._outbound_body", side_effect=body):
+                    arguments = (
+                        self.config(root, root / "unused.py", "pass"),
+                        mock.sentinel.frozen,
+                        scheduled,
+                        1,
+                        self.artifacts(root, scheduled),
+                        False,
+                    )
+                    if failure is KeyboardInterrupt:
+                        with self.assertRaises(KeyboardInterrupt):
+                            run_physical_attempt(*arguments)
+                    else:
+                        run_physical_attempt(*arguments)
+                self.assertEqual(endpoint.mock_calls, [
+                    mock.call.terminal.escape_and_hang_up(),
+                    mock.call.stop(1),
+                ])
+
+    def test_failed_hangup_still_stops_all_endpoints_and_preserves_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            case = CASES_BY_NAME["v21-300-originator"]
+            scheduled = ScheduledAttempt(case, 1)
+            endpoints = [mock.Mock(), mock.Mock()]
+            for endpoint in endpoints:
+                endpoint.terminal.escape_and_hang_up.return_value = False
+                endpoint.stop.return_value = True
+
+            def body(
+                _config, _frozen, _scheduled, _artifacts, state,
+                _retrain, owned_endpoints, _progress,
+            ):
+                owned_endpoints.extend(endpoints)
+                state.detail = "outbound CONNECT timed out"
+
+            with mock.patch("tools.live_campaign._outbound_body", side_effect=body):
+                result = run_physical_attempt(
+                    self.config(root, root / "unused.py", "pass"),
+                    mock.sentinel.frozen,
+                    scheduled,
+                    1,
+                    self.artifacts(root, scheduled),
+                    False,
+                )
+            self.assertEqual(
+                result.detail,
+                "outbound CONNECT timed out; modem hangup or cleanup did not complete",
+            )
+            for endpoint in endpoints:
+                self.assertEqual(endpoint.mock_calls, [
+                    mock.call.terminal.escape_and_hang_up(),
+                    mock.call.stop(1),
+                ])
+
+    def test_connect_timeout_still_sends_ath0(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "fake.py"
+            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+            scheduled = ScheduledAttempt(CASES_BY_NAME["v21-300-originator"], 1)
+            artifacts = self.artifacts(root, scheduled)
+            result = run_physical_attempt(
+                replace(
+                    self.config(root, script, "connect-timeout"),
+                    connect_timeout_seconds=0.05,
+                ),
+                FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                scheduled,
+                1,
+                artifacts,
+                False,
+            )
+            self.assertEqual(result.detail, "outbound CONNECT timed out")
+            self.assertIn(b"ATH0\n", artifacts.daemon_log("modem").read_bytes())
 
     def test_connect_profile_requires_requested_mode_rates_and_protocol(
         self,
@@ -825,6 +929,8 @@ class LiveCampaignTests(unittest.TestCase):
                 "0123456789abcdef0123456789abcdef",
             )
             self.assertTrue(barrier.exists())
+            for leg in ("request", "answer"):
+                self.assertIn(b"ATH0\n", artifacts.daemon_log(leg).read_bytes())
             request_rx = (
                 artifacts.legs["request"] / "terminal-rx.bin"
             ).read_bytes()

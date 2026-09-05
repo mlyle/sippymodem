@@ -674,6 +674,16 @@ def _exercise_online(
         state.detail = "post-retrain online exchange failed"
 
 
+def _stop_endpoint(endpoint: EndpointProcess, timeout_seconds: float) -> bool:
+    hangup_ok = True
+    try:
+        if endpoint.terminal is not None:
+            hangup_ok = endpoint.terminal.escape_and_hang_up()
+    finally:
+        stopped = endpoint.stop(timeout_seconds)
+    return hangup_ok and stopped
+
+
 def _outbound_body(
     config: CampaignConfig,
     frozen: FrozenBinary,
@@ -683,7 +693,7 @@ def _outbound_body(
     retrain: bool,
     endpoints: list[EndpointProcess],
     progress: _AttemptProgress,
-) -> EndpointProcess | None:
+) -> None:
     endpoint = EndpointProcess(
         "originator",
         _endpoint_config(
@@ -725,7 +735,7 @@ def _outbound_body(
     state.report = endpoint.terminal.connect_report
     state.detail = _case_connect_error(scheduled.case, state.report) or ""
     if state.detail:
-        return endpoint
+        return
     if not _wake_raw_link(
         endpoint.terminal,
         scheduled.case,
@@ -734,7 +744,7 @@ def _outbound_body(
         state,
         progress,
     ):
-        return endpoint
+        return
     _exercise_online(
         endpoint.terminal,
         state,
@@ -743,7 +753,6 @@ def _outbound_body(
         retrain,
         progress,
     )
-    return endpoint
 
 
 def _callback_command(case: CampaignCase) -> bytes:
@@ -765,7 +774,7 @@ def _callback_body(
     endpoints: list[EndpointProcess],
     stopped: set[int],
     progress: _AttemptProgress,
-) -> EndpointProcess | None:
+) -> None:
     answer_commands = tuple(scheduled.case.at_commands[:-2]) + (
         "ATS0=0",
         *scheduled.case.at_commands[-2:],
@@ -885,8 +894,8 @@ def _callback_body(
     nonce = match.group("nonce").lower()
     state.callback_request_maturity = MATURITY_REQUEST
     progress.set("releasing request call")
-    if not request.stop(config.cleanup_timeout_seconds):
-        state.detail = "callback request leg did not stop cleanly"
+    if not _stop_endpoint(request, config.cleanup_timeout_seconds):
+        state.detail = "callback request hangup or cleanup did not complete"
         return None
     stopped.add(id(request))
     time.sleep(config.callback_release_seconds)
@@ -923,7 +932,7 @@ def _callback_body(
     state.report = answer.terminal.connect_report
     state.detail = _case_connect_error(scheduled.case, state.report) or ""
     if state.detail:
-        return answer
+        return
     if not _wake_raw_link(
         answer.terminal,
         scheduled.case,
@@ -932,7 +941,7 @@ def _callback_body(
         state,
         progress,
     ):
-        return answer
+        return
     connect_pattern = re.compile(
         rb"GETTY:CALLBACK:CONNECT:"
         + re.escape(nonce)
@@ -956,7 +965,6 @@ def _callback_body(
         progress,
         initial_verified=marker_verified,
     )
-    return answer
 
 
 def run_physical_attempt(
@@ -973,11 +981,10 @@ def run_physical_attempt(
     state = _AttemptState()
     endpoints: list[EndpointProcess] = []
     stopped: set[int] = set()
-    connected_endpoint: EndpointProcess | None = None
     started = time.monotonic()
     try:
         if scheduled.case.role == "originator":
-            connected_endpoint = _outbound_body(
+            _outbound_body(
                 config,
                 frozen,
                 scheduled,
@@ -988,7 +995,7 @@ def run_physical_attempt(
                 progress,
             )
         else:
-            connected_endpoint = _callback_body(
+            _callback_body(
                 config,
                 frozen,
                 scheduled,
@@ -1007,15 +1014,17 @@ def run_physical_attempt(
         state.detail = "modem process or terminal infrastructure failed"
     finally:
         progress.set("cleaning up")
-        if connected_endpoint is not None and connected_endpoint.terminal is not None:
-            connected_endpoint.terminal.escape_and_hang_up()
         cleanup_ok = True
         for endpoint in reversed(endpoints):
             if id(endpoint) in stopped:
                 continue
-            cleanup_ok = endpoint.stop(config.cleanup_timeout_seconds) and cleanup_ok
-        if not cleanup_ok and not state.detail:
-            state.detail = "modem cleanup did not complete"
+            cleanup_ok = (
+                _stop_endpoint(endpoint, config.cleanup_timeout_seconds) and cleanup_ok
+            )
+        if not cleanup_ok:
+            if state.detail:
+                state.detail += "; "
+            state.detail += "modem hangup or cleanup did not complete"
 
     result = AttemptResult(
         case_name=scheduled.case.name,

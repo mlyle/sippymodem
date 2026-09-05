@@ -35,16 +35,86 @@ class LiveTerminalTests(unittest.TestCase):
                 self.assertEqual(decoder.pop(), "connect")
                 self.assertEqual(decoder.connect_report.modulation, expected)
 
-    def test_escape_cleanup_tolerates_a_missing_response(self) -> None:
+    def test_hangup_escapes_online_before_ath0(self) -> None:
         terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 300\r\n")
         with (
-            mock.patch("tools.live_terminal.time.sleep"),
-            mock.patch.object(terminal, "_write"),
+            mock.patch("tools.live_terminal.time.sleep") as sleep,
+            mock.patch.object(terminal, "_write") as write,
             mock.patch.object(
-                terminal, "_read_result", side_effect=TimeoutError
+                terminal, "_read_result", side_effect=("ok", "ok")
             ),
         ):
-            terminal.escape_and_hang_up()
+            self.assertTrue(terminal.escape_and_hang_up())
+        sleep.assert_called_once_with(1.1)
+        self.assertEqual(
+            [call.args[0] for call in write.call_args_list],
+            [b"+++", b"ATH0\r"],
+        )
+
+    def test_hangup_in_command_mode_or_training_does_not_escape(self) -> None:
+        for response in ("ok", "no-carrier", "error"):
+            with self.subTest(response=response):
+                terminal = ModemTerminal(-1)
+                with (
+                    mock.patch("tools.live_terminal.time.sleep") as sleep,
+                    mock.patch.object(terminal, "_write") as write,
+                    mock.patch.object(
+                        terminal, "_read_result", return_value=response
+                    ),
+                ):
+                    self.assertEqual(
+                        terminal.escape_and_hang_up(), response != "error"
+                    )
+                sleep.assert_not_called()
+                self.assertEqual(write.call_args.args[0], b"ATH0\r")
+                self.assertEqual(write.call_count, 1)
+
+    def test_online_hangup_reports_escape_and_command_failures(self) -> None:
+        for responses, expected, writes in (
+            (("no-carrier",), True, [b"+++"]),
+            (("error",), False, [b"+++"]),
+            ((TimeoutError,), False, [b"+++"]),
+            (("ok", "error"), False, [b"+++", b"ATH0\r"]),
+            (("ok", TimeoutError), False, [b"+++", b"ATH0\r"]),
+        ):
+            with self.subTest(responses=responses):
+                terminal = ModemTerminal(-1)
+                terminal._decoder.feed(b"CONNECT 300\r\n")
+                with (
+                    mock.patch("tools.live_terminal.time.sleep"),
+                    mock.patch.object(terminal, "_write") as write,
+                    mock.patch.object(
+                        terminal, "_read_result", side_effect=responses
+                    ),
+                ):
+                    self.assertEqual(terminal.escape_and_hang_up(), expected)
+                self.assertEqual(
+                    [call.args[0] for call in write.call_args_list], writes
+                )
+
+    def test_hangup_requires_a_fresh_response(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"OK\r\n")
+        with (
+            mock.patch.object(terminal, "_write"),
+            mock.patch(
+                "tools.live_terminal._wait_for_descriptor",
+                side_effect=TimeoutError,
+            ),
+        ):
+            self.assertFalse(terminal.escape_and_hang_up())
+
+    def test_hangup_allows_both_link_release_deadlines(self) -> None:
+        terminal = ModemTerminal(-1)
+        with mock.patch.object(terminal, "command", return_value="ok") as command:
+            self.assertTrue(terminal.escape_and_hang_up())
+        command.assert_called_once_with("ATH0", 5.0)
+
+    def test_hangup_reports_a_closed_terminal(self) -> None:
+        terminal = ModemTerminal(-1)
+        with mock.patch.object(terminal, "_write", side_effect=OSError):
+            self.assertFalse(terminal.escape_and_hang_up())
 
     def test_ping_probe_requires_a_complete_structured_response(self) -> None:
         terminal = ModemTerminal(-1)

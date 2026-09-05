@@ -295,16 +295,27 @@ class ModemTerminal:
         self._write(encoded, deadline)
         return self._read_result(deadline)
 
-    def escape_and_hang_up(self) -> None:
-        time.sleep(1.1)
-        deadline = time.monotonic() + 3.0
+    def escape_and_hang_up(self) -> bool:
+        """Attempt a bounded local hangup before the owner stops the process."""
         try:
+            if self._decoder.online:
+                time.sleep(1.1)
+                deadline = time.monotonic() + 3.0
+                self._decoder.begin_command_response()
+                self._write(b"+++", deadline)
+                response = self._read_result(deadline)
+                if response == "no-carrier":
+                    return True
+                if response != "ok":
+                    return False
             self._decoder.begin_command_response()
-            self._write(b"+++", deadline)
-            if self._read_result(deadline) == "ok":
-                self.command("ATH", 3.0)
+            # During training, terminal input aborts the call and may return
+            # NO CARRIER instead of the command-mode OK acknowledgement.
+            # Allow the core's 1.5s LAPM and 3s datapump release bounds,
+            # plus delivery of the final media block and terminal response.
+            return self.command("ATH0", 5.0) in {"ok", "no-carrier"}
         except (LiveTerminalError, OSError, TimeoutError):
-            pass
+            return False
 
     def exchange_online(
         self, send: bytes, expected: bytes, timeout_seconds: float
