@@ -1003,6 +1003,165 @@ static bool test_completion_and_validation(void)
 	return true;
 }
 
+static bool hunt_marker(uint8_t offset, size_t skip, bool errors)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+	struct v34_phase3_s_hunt hunt;
+	struct v34_phase3_s_detection detection;
+	struct v34_analytic_sample tail[
+		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS] = { 0 };
+	uint8_t post_symbols = UINT8_MAX;
+	size_t first_candidate = 0;
+	size_t received = 0;
+	bool detected = false;
+
+	CHECK(generate_marker(rotations) &&
+	      v34_phase3_s_hunt_init(&hunt) == V34_PHASE3_S_RECEIVER_OK,
+	      "online S hunt did not initialize");
+	for (size_t symbol = skip;
+	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS + ARRAY_LENGTH(tail) &&
+	     !detected; ++symbol) {
+		struct v34_phase3_s_adaptation adaptation = { 0 };
+		struct v34_analytic_sample observation;
+		uint8_t rotation = symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS ?
+			rotations[symbol] : 1u;
+		bool control = false;
+		enum v34_phase3_s_receiver_result result;
+
+		/* Delay qualification through the complete S error budget, then
+		 * require bounded confirmation for one damaged S-bar decision. */
+		if (errors &&
+		    (symbol < V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS *
+				       V34_PHASE3_S_RECEIVER_MAX_S_ERRORS &&
+		      (symbol + 1u) %
+			      V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS == 0u))
+			rotation = (uint8_t)((rotation + 1u) & 3u);
+		if (errors && symbol == V34_PHASE3_S_SYMBOLS)
+			rotation = (uint8_t)((rotation + 1u) & 3u);
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0,
+			      (uint8_t)((rotation + offset) & 3u),
+			      &observation) == V34_CONSTELLATION_OK,
+		      "online S point did not generate");
+		for (size_t index = 1; index < ARRAY_LENGTH(tail); ++index)
+			tail[index - 1u] = tail[index];
+		tail[ARRAY_LENGTH(tail) - 1u] = observation;
+		result = v34_phase3_s_hunt_receive(
+			&hunt, observation, &adaptation, &control);
+		received++;
+		CHECK(result == V34_PHASE3_S_RECEIVER_OK ||
+		      result == V34_PHASE3_S_RECEIVER_DETECTED,
+		      "online S hunt stopped at symbol %zu: %d", symbol, result);
+		if (control && first_candidate == 0)
+			first_candidate = received;
+		CHECK(!adaptation.adapt || control,
+		      "unqualified online data became equalizer feedback");
+		if (symbol >= (size_t)V34_PHASE3_S_SYMBOLS + (errors ? 1u : 0u))
+			CHECK(!adaptation.adapt,
+			      "S-bar or its confirmation tail became feedback");
+		detected = result == V34_PHASE3_S_RECEIVER_DETECTED;
+	}
+	CHECK(detected &&
+	      first_candidate == V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS *
+		      (errors ? V34_PHASE3_S_RECEIVER_MAX_S_ERRORS + 1u : 1u) &&
+	      v34_phase3_s_hunt_get_detection(&hunt, &detection) &&
+	      v34_phase3_s_hunt_get_post_marker_symbols(&hunt, &post_symbols) &&
+	      (errors ?
+		      received + skip >= V34_PHASE3_S_SEQUENCE_SYMBOLS &&
+			      received + skip <= V34_PHASE3_S_SEQUENCE_SYMBOLS +
+				      ARRAY_LENGTH(tail) :
+		      received + skip == V34_PHASE3_S_SEQUENCE_SYMBOLS) &&
+	      post_symbols == (errors ?
+		      V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS : 0u),
+	      "online S boundary changed offset=%u skip=%zu errors=%u "
+	      "candidate=%zu received=%zu post=%u",
+	      offset, skip, errors, first_candidate, received, post_symbols);
+	for (uint8_t index = 0; index < post_symbols; ++index) {
+		struct v34_analytic_sample observation = { 0 };
+
+		CHECK(v34_phase3_s_hunt_get_post_marker_observation(
+			      &hunt, index, &observation) &&
+		      memcmp(&observation,
+			     &tail[ARRAY_LENGTH(tail) - post_symbols + index],
+			     sizeof(observation)) == 0,
+		      "post-marker observation %u was lost or reordered", index);
+	}
+	{
+		struct v34_phase3_s_hunt saved = hunt;
+		struct v34_phase3_s_adaptation adaptation = { 0 };
+		struct v34_phase3_s_adaptation saved_adaptation = adaptation;
+		struct v34_analytic_sample observation = { 1, 2 };
+		bool control = false;
+
+		CHECK(v34_phase3_s_hunt_receive(
+			      &hunt, observation, &adaptation, &control) ==
+			      V34_PHASE3_S_RECEIVER_COMPLETE &&
+		      memcmp(&hunt, &saved, sizeof(hunt)) == 0 &&
+		      memcmp(&adaptation, &saved_adaptation,
+			     sizeof(adaptation)) == 0 && !control &&
+		      !v34_phase3_s_hunt_get_post_marker_observation(
+			      &hunt, post_symbols, &observation) &&
+		      observation.in_phase == 1 && observation.quadrature == 2,
+		      "completed hunt consumed a point or changed an output");
+	}
+	return true;
+}
+
+static bool test_online_hunt_boundaries(void)
+{
+	for (uint8_t offset = 0; offset < 4u; ++offset) {
+		CHECK(hunt_marker(offset, 0, false) &&
+		      hunt_marker(offset, 1, false) &&
+		      hunt_marker(offset, 0, true),
+		      "online S hunt failed at rotation %u", offset);
+	}
+	return true;
+}
+
+static bool test_online_hunt_reset_and_validation(void)
+{
+	struct v34_phase3_s_hunt hunt;
+	struct v34_phase3_s_hunt saved;
+	struct v34_phase3_s_adaptation adaptation = { 0 };
+	struct v34_analytic_sample observation = { 0 };
+	bool control = false;
+
+	CHECK(v34_phase3_s_hunt_init(&hunt) == V34_PHASE3_S_RECEIVER_OK,
+	      "online S reset fixture did not initialize");
+	for (size_t symbol = 0;
+	     symbol < V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS; ++symbol) {
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0, (uint8_t)(symbol & 1u),
+			      &observation) == V34_CONSTELLATION_OK &&
+		      v34_phase3_s_hunt_receive(
+			      &hunt, observation, &adaptation, &control) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "online S candidate did not start");
+	}
+	CHECK(control && hunt.candidate,
+	      "online S prefix did not qualify");
+	for (size_t symbol = 0;
+	     symbol < V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS; ++symbol)
+		CHECK(v34_phase3_s_hunt_receive(
+			      &hunt, observation, &adaptation, &control) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "uncompleted online S candidate did not expire");
+	CHECK(!hunt.candidate && !hunt.complete &&
+	      v34_phase3_s_hunt_is_valid(&hunt),
+	      "expired online S candidate kept protocol state");
+	saved = hunt;
+	CHECK(v34_phase3_s_hunt_receive(
+		      &hunt, observation, NULL, &control) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase3_s_hunt_receive(
+		      &hunt, observation, &adaptation, &hunt.candidate) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&hunt, &saved, sizeof(hunt)) == 0 &&
+	      !v34_phase3_s_hunt_is_valid(NULL),
+	      "invalid online S call changed the hunt");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1030,6 +1189,9 @@ int main(void)
 		  test_fixed_metric_api_ownership },
 		{ "fixed metric margin", test_fixed_metric_margin },
 		{ "completion and validation", test_completion_and_validation },
+		{ "online S hunt boundaries", test_online_hunt_boundaries },
+		{ "online S hunt reset and validation",
+		  test_online_hunt_reset_and_validation },
 	};
 	unsigned int failures = 0;
 

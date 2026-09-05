@@ -24,6 +24,22 @@ enum {
 	/* A sample-domain receiver may lock after S begins. Retaining at least
 	 * 32T before the 16T S-bar still gives a bounded correlation. */
 	V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS = 32,
+	/* Four lag-two recurrence hits plus the retained points qualify an
+	 * online S candidate without assuming absolute carrier phase. */
+	V34_PHASE3_S_HUNT_CANDIDATE_RECURRENCE_HITS = 4,
+	V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS =
+		V34_PHASE3_S_PREFIX_RECURRENCE_LAG +
+		V34_PHASE3_S_HUNT_CANDIDATE_RECURRENCE_HITS,
+	V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS =
+		V34_PHASE3_S_SEQUENCE_SYMBOLS -
+		V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS +
+		V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS,
+	/* Preserve a complete suffix before the S-bar boundary from adaptive
+	 * feedback. A fractionally spaced equalizer is non-causal at its decision
+	 * point, so the visible transition can precede the hard marker. */
+	V34_PHASE3_S_HUNT_ADAPTATION_SYMBOLS =
+		V34_PHASE3_S_SYMBOLS -
+		V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS,
 };
 
 enum v34_phase3_s_prefix_result {
@@ -123,6 +139,51 @@ struct v34_phase3_s_receiver {
 	bool target_seeded;
 	bool complete;
 };
+
+/* Locate S/S-bar in an arbitrary online symbol stream. The recurrence gate
+ * prevents ordinary data from becoming equalizer feedback; once qualified,
+ * the bounded suffix receiver supplies known S targets and stops adapting at
+ * S-bar. */
+struct v34_phase3_s_hunt {
+	struct v34_phase3_s_receiver marker[2];
+	struct v34_phase3_s_prefix prefix;
+	struct v34_phase3_s_detection detection;
+	/* Keep the detector's bounded confirmation tail so the next protocol
+	 * owner can replay decisions consumed beyond the exact S-bar boundary. */
+	struct v34_analytic_sample
+		recent_observation[V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS];
+	uint16_t candidate_symbols;
+	uint8_t candidate_rotation[2];
+	uint8_t post_marker_symbols;
+	uint8_t next_target_rotation;
+	uint8_t recent_observation_count;
+	bool candidate;
+	bool s_bar_seen;
+	bool complete;
+};
+
+bool v34_phase3_s_hunt_is_valid(
+	const struct v34_phase3_s_hunt *hunt);
+enum v34_phase3_s_receiver_result v34_phase3_s_hunt_init(
+	struct v34_phase3_s_hunt *hunt);
+bool v34_phase3_s_hunt_is_complete(
+	const struct v34_phase3_s_hunt *hunt);
+/* `control` is true when this observation belongs to a qualified candidate;
+ * `adaptation` then supplies its known S target when adaptation is safe. */
+enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
+	struct v34_phase3_s_hunt *hunt,
+	struct v34_analytic_sample observation,
+	struct v34_phase3_s_adaptation *adaptation, bool *control);
+bool v34_phase3_s_hunt_get_detection(
+	const struct v34_phase3_s_hunt *hunt,
+	struct v34_phase3_s_detection *detection);
+bool v34_phase3_s_hunt_get_post_marker_symbols(
+	const struct v34_phase3_s_hunt *hunt, uint8_t *symbols);
+/* Copy one observation consumed after the exact S-bar boundary. `index` is
+ * ordered from the first post-marker observation. */
+bool v34_phase3_s_hunt_get_post_marker_observation(
+	const struct v34_phase3_s_hunt *hunt, uint8_t index,
+	struct v34_analytic_sample *observation);
 
 /* Detect a suffix of S followed by the complete S-bar. This is for receivers
  * whose carrier and symbol timing lock after S has already begun. */
