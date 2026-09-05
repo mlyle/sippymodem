@@ -182,6 +182,274 @@ static bool test_initial_state_and_carrier_profile(void)
 	return true;
 }
 
+static bool test_carrier_only_commit(void)
+{
+	const struct v34_analytic_sample input = { 3000, -1000 };
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer saved;
+	struct v34_adaptive_equalizer_observation observation;
+
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "carrier-only owner did not initialize");
+	for (size_t epoch = 0;
+	     epoch <= V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH; ++epoch) {
+		struct v34_adaptive_equalizer_decision decision;
+
+		CHECK(v34_adaptive_equalizer_push(&equalizer, input) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_push(&equalizer, input) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_observe(
+			      &equalizer, &observation) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "carrier-only observation failed at %zu", epoch);
+		decision = (struct v34_adaptive_equalizer_decision){
+			.observation = observation,
+			.target = observation.decision,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_SKIP,
+		};
+		if (epoch == V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH) {
+			decision.target = (struct v34_analytic_sample){
+				.in_phase = (int16_t)-observation.decision.quadrature,
+				.quadrature = observation.decision.in_phase,
+			};
+			decision.decoder_power_q15 = 0x4000;
+			decision.adaptation = V34_ADAPTIVE_EQUALIZER_CARRIER;
+			saved = equalizer;
+		}
+		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "carrier-only commit failed at %zu", epoch);
+	}
+	CHECK(memcmp(&equalizer.equalizer, &saved.equalizer,
+		     sizeof(equalizer.equalizer)) == 0 &&
+	      equalizer.phase_accumulator != saved.phase_accumulator &&
+	      !equalizer.decision_pending &&
+	      v34_adaptive_equalizer_is_valid(&equalizer),
+	      "carrier-only commit changed the FIR or missed carrier tracking");
+	return true;
+}
+
+static bool test_retained_pair_geometry(uint16_t taps, uint16_t delay)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer first;
+	struct v34_adaptive_equalizer expected;
+	struct v34_adaptive_equalizer saved;
+	struct v34_adaptive_equalizer_observation observation;
+	struct v34_adaptive_equalizer_decision decisions[2];
+	uint32_t generator = UINT32_C(0x42ac9581);
+
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_equalizer_init_geometry(
+		      &equalizer.equalizer, taps, delay) == V34_EQUALIZER_OK,
+	      "retained-pair geometry did not initialize");
+	for (size_t epoch = 0; epoch < V34_EQUALIZER_MAX_TAPS + 2u; ++epoch) {
+		for (size_t input = 0; input < 2u; ++input) {
+			struct v34_analytic_sample point = {
+				.in_phase = (int16_t)(next_sample(&generator) / 4),
+				.quadrature = (int16_t)(next_sample(&generator) / 4),
+			};
+
+			CHECK(v34_adaptive_equalizer_push(&equalizer, point) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "retained-pair input failed");
+		}
+		CHECK(v34_adaptive_equalizer_observe(
+			      &equalizer, &observation) == V34_ADAPTIVE_EQUALIZER_OK,
+		      "retained-pair observation failed");
+		if (epoch < V34_EQUALIZER_MAX_TAPS) {
+			CHECK(v34_adaptive_equalizer_discard(
+				      &equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "retained-pair prefix failed");
+			continue;
+		}
+		decisions[epoch - V34_EQUALIZER_MAX_TAPS] =
+			(struct v34_adaptive_equalizer_decision){
+				.observation = observation,
+				.target = { 2289, -2290 },
+				.decoder_power_q15 = 0x1000,
+				.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
+			};
+		if (epoch == V34_EQUALIZER_MAX_TAPS) {
+			first = equalizer;
+			CHECK(v34_adaptive_equalizer_retain_observation(
+				      &equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_OK &&
+			      equalizer.retained.pending &&
+			      !equalizer.decision_pending &&
+			      memcmp(&equalizer.equalizer, &first.equalizer,
+				     sizeof(first.equalizer)) == 0,
+			      "retaining a decision changed its FIR history");
+			saved = equalizer;
+			CHECK(v34_adaptive_equalizer_retain_observation(
+				      &equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+			      v34_adaptive_equalizer_begin_tracking(&equalizer) ==
+				      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+			      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
+			      "a retained decision allowed a conflicting transition");
+		}
+	}
+	decisions[1].target = (struct v34_analytic_sample){ -2290, -2290 };
+	expected = equalizer;
+	memset(&expected.retained, 0, sizeof(expected.retained));
+	CHECK(v34_adaptive_equalizer_commit(&first, &decisions[0]) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "first independent gradient failed");
+	/* Apply that historical gradient without replacing the second input
+	 * window or its captured carrier frame. The second target was decided
+	 * before the first target's carrier correction was committed. */
+	memcpy(expected.equalizer.in_phase_coefficient,
+	       first.equalizer.in_phase_coefficient,
+	       sizeof(expected.equalizer.in_phase_coefficient));
+	memcpy(expected.equalizer.quadrature_coefficient,
+	       first.equalizer.quadrature_coefficient,
+	       sizeof(expected.equalizer.quadrature_coefficient));
+	memcpy(expected.equalizer.in_phase_residue,
+	       first.equalizer.in_phase_residue,
+	       sizeof(expected.equalizer.in_phase_residue));
+	memcpy(expected.equalizer.quadrature_residue,
+	       first.equalizer.quadrature_residue,
+	       sizeof(expected.equalizer.quadrature_residue));
+	expected.phase_accumulator = first.phase_accumulator;
+	expected.carrier_phase_low = first.carrier_phase_low;
+	expected.carrier_phase_fraction = first.carrier_phase_fraction;
+	expected.rotate_in_phase = first.rotate_in_phase;
+	expected.rotate_quadrature = first.rotate_quadrature;
+	expected.quality = first.quality;
+	CHECK(v34_adaptive_equalizer_commit(&expected, &decisions[1]) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "second independent gradient failed");
+	saved = equalizer;
+	decisions[0].observation.epoch++;
+	CHECK(v34_adaptive_equalizer_commit_pair(&equalizer, decisions) ==
+		      V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
+	      "a stale paired decision changed the receiver");
+	decisions[0].observation.epoch--;
+	CHECK(v34_adaptive_equalizer_commit_pair(&equalizer, decisions) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      !equalizer.retained.pending && !equalizer.decision_pending &&
+	      memcmp(&equalizer.equalizer, &expected.equalizer,
+		     sizeof(expected.equalizer)) == 0 &&
+	      memcmp(&equalizer.quality, &expected.quality,
+		     sizeof(expected.quality)) == 0 &&
+	      equalizer.phase_accumulator == expected.phase_accumulator &&
+	      equalizer.carrier_phase_low == expected.carrier_phase_low &&
+	      equalizer.carrier_phase_fraction == expected.carrier_phase_fraction &&
+	      equalizer.rotate_in_phase == expected.rotate_in_phase &&
+	      equalizer.rotate_quadrature == expected.rotate_quadrature,
+	      "paired gradients lost their FIR window or carrier frame");
+	return true;
+}
+
+static bool test_data_carrier_tracking(void)
+{
+	const struct v34_analytic_sample input = { 12000, -4000 };
+	const int16_t target_quadrature[] = { 0, -16000, -32000, 16000, 32000 };
+	const uint32_t phase_mask = UINT32_C(0x1fffffff);
+	const int32_t bounded_step =
+		V34_TRAINING_FIXED_AMPLITUDE * V34_TRAINING_FIXED_AMPLITUDE / 20;
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer saved;
+	struct v34_adaptive_equalizer_observation observation;
+	int32_t learned_frequency;
+	uint32_t uncorrected_phase = 0;
+
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "data-carrier fixture did not initialize");
+	for (size_t epoch = 0;
+	     epoch <= V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH; ++epoch) {
+		CHECK(v34_adaptive_equalizer_push(&equalizer, input) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_push(&equalizer, input) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "data-carrier acquisition failed at epoch %zu", epoch);
+		if (epoch != V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
+			CHECK(v34_adaptive_equalizer_discard(
+				      &equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "data-carrier acquisition prefix did not advance");
+	}
+	{
+		const struct v34_adaptive_equalizer_decision training = {
+			.observation = observation,
+			.target = { observation.decision.in_phase,
+				    (int16_t)(observation.decision.quadrature + 1) },
+			.decoder_power_q15 = 0x1000,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_CARRIER,
+		};
+
+		CHECK(v34_adaptive_equalizer_commit(&equalizer, &training) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "data-carrier fixture did not learn frequency");
+	}
+	learned_frequency = equalizer.phase_accumulator;
+	CHECK(learned_frequency != 0,
+	      "carrier fixture learned no frequency from %d/%d",
+	      observation.decision.in_phase, observation.decision.quadrature);
+	CHECK(v34_adaptive_equalizer_set_data_carrier_tracking(
+		      &equalizer, true) == V34_ADAPTIVE_EQUALIZER_OK &&
+	      equalizer.phase_accumulator == learned_frequency,
+	      "data-carrier transition lost its learned frequency");
+	CHECK(v34_adaptive_equalizer_push(&equalizer, input) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_adaptive_equalizer_push(&equalizer, input) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      observation.decision.in_phase > 1000,
+	      "data-carrier fixture did not produce an in-phase decision: %d/%d",
+	      observation.decision.in_phase, observation.decision.quadrature);
+	saved = equalizer;
+	CHECK(v34_adaptive_equalizer_set_data_carrier_tracking(
+		      &equalizer, false) == V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "pending observation allowed a carrier-policy transition");
+	for (size_t index = 0; index < ARRAY_LENGTH(target_quadrature); ++index) {
+		struct v34_adaptive_equalizer corrected = equalizer;
+		const struct v34_adaptive_equalizer_decision decision = {
+			.observation = observation,
+			.target = { 0, target_quadrature[index] },
+			.decoder_power_q15 = 0x1000,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_CARRIER,
+		};
+		uint32_t phase;
+		uint32_t expected_delta = (uint32_t)(index == 0 ? 0 :
+			(target_quadrature[index] < 0 ? bounded_step : -bounded_step));
+
+		CHECK(v34_adaptive_equalizer_commit(&corrected, &decision) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      corrected.phase_accumulator == learned_frequency &&
+		      memcmp(&corrected.equalizer, &equalizer.equalizer,
+			     sizeof(equalizer.equalizer)) == 0,
+		      "data-carrier feedback changed learned frequency or FIR");
+		phase = ((uint32_t)corrected.carrier_phase_fraction << 16u) |
+			corrected.carrier_phase_low;
+		if (index == 0)
+			uncorrected_phase = phase;
+		CHECK(((phase - uncorrected_phase) & phase_mask) ==
+			      (expected_delta & phase_mask),
+		      "data-carrier phase feedback exceeded its bound at %zu", index);
+	}
+	CHECK(v34_adaptive_equalizer_retain_observation(
+		      &equalizer, &observation) == V34_ADAPTIVE_EQUALIZER_OK,
+	      "data-carrier observation could not be retained");
+	saved = equalizer;
+	CHECK(v34_adaptive_equalizer_set_data_carrier_tracking(
+		      &equalizer, false) == V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "retained observation allowed a carrier-policy transition");
+	return true;
+}
+
 static bool test_exact_decision_feedback_oracle(void)
 {
 	static const struct v34_analytic_sample targets[] = {
@@ -1055,6 +1323,10 @@ static bool test_data_quality_transactionality(void)
 int main(void)
 {
 	if (!test_initial_state_and_carrier_profile() ||
+	    !test_carrier_only_commit() ||
+	    !test_retained_pair_geometry(V34_EQUALIZER_TAPS, 20u) ||
+	    !test_retained_pair_geometry(V34_EQUALIZER_MAX_TAPS, 16u) ||
+	    !test_data_carrier_tracking() ||
 	    !test_exact_decision_feedback_oracle() ||
 	    !test_feedback_history_lineage() ||
 	    !test_feedback_and_discard_lifecycle() ||

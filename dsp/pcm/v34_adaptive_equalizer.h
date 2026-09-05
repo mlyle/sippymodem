@@ -29,6 +29,10 @@ enum v34_adaptive_equalizer_adaptation {
 	V34_ADAPTIVE_EQUALIZER_SKIP,
 	V34_ADAPTIVE_EQUALIZER_CENTER,
 	V34_ADAPTIVE_EQUALIZER_FULL,
+	/* Track carrier phase while preserving the trained FIR taps. */
+	V34_ADAPTIVE_EQUALIZER_CARRIER,
+	/* Track the center FIR span without rotating the carrier reference. */
+	V34_ADAPTIVE_EQUALIZER_CENTER_TAPS,
 };
 
 enum v34_adaptive_equalizer_feedback_mode {
@@ -134,6 +138,10 @@ static inline bool v34_receive_action_is_valid(
 			       &action->equalizer.observation, observation) &&
 		       action->equalizer.decoder_power_q15 == decoder_power_q15 &&
 		       (action->equalizer.adaptation ==
+				V34_ADAPTIVE_EQUALIZER_CARRIER ||
+			action->equalizer.adaptation ==
+				V34_ADAPTIVE_EQUALIZER_CENTER_TAPS ||
+			action->equalizer.adaptation ==
 				V34_ADAPTIVE_EQUALIZER_CENTER ||
 			action->equalizer.adaptation ==
 				V34_ADAPTIVE_EQUALIZER_FULL);
@@ -167,25 +175,45 @@ struct v34_adaptive_equalizer_quality {
 	int16_t feedback_metric;
 };
 
+/* Exact FIR inputs and carrier frame for one observation whose semantic
+ * target depends on the following observation.  V.34 data decisions are
+ * four-dimensional, so the physical equalizer must retain this bounded
+ * gradient until both two-dimensional symbols can be decided together. */
+struct v34_adaptive_equalizer_retained {
+	struct v34_adaptive_equalizer_observation observation;
+	struct v34_analytic_sample demodulated;
+	int16_t in_phase_delay[V34_EQUALIZER_MAX_TAPS];
+	int16_t quadrature_delay[V34_EQUALIZER_MAX_TAPS];
+	int16_t rotate_in_phase;
+	int16_t rotate_quadrature;
+	uint32_t equalizer_index;
+	bool pending;
+};
+
 /* Own the fixed V.34 fractionally spaced equalizer and the decision feedback
- * that must remain continuous across Phase 3, Phase 4, B1, and data.  One
- * observation is completed or discarded before another input is accepted. */
+ * that must remain continuous across Phase 3, Phase 4, B1, and data. Resolve
+ * each observation before accepting more input, either by committing or
+ * discarding it, or by retaining the first point for a joint 4-D decision. */
 struct v34_adaptive_equalizer {
 	struct v34_equalizer equalizer;
 	struct v34_adaptive_equalizer_feedback feedback;
 	struct v34_adaptive_equalizer_quality quality;
+	struct v34_adaptive_equalizer_retained retained;
 	struct v34_adaptive_equalizer_observation pending_observation;
 	struct v34_analytic_sample pending_demodulated;
 	int32_t phase_accumulator;
 	int32_t phase_error;
 	int16_t rotate_in_phase;
 	int16_t rotate_quadrature;
+	int16_t pending_rotate_in_phase;
+	int16_t pending_rotate_quadrature;
 	uint16_t carrier_phase_low;
 	uint16_t carrier_phase_fraction;
 	uint64_t epoch;
 	uint64_t lineage;
 	uint8_t inputs_since_observation;
 	uint8_t feedback_mode;
+	bool data_carrier_tracking;
 	bool decision_pending;
 	bool initialized;
 };
@@ -203,6 +231,15 @@ enum v34_adaptive_equalizer_result
 v34_adaptive_equalizer_set_feedback_mode(
 	struct v34_adaptive_equalizer *equalizer,
 	enum v34_adaptive_equalizer_feedback_mode mode);
+
+/* Freeze the frequency estimate learned from known training symbols while
+ * retaining bounded, low-gain phase tracking for tentative data decisions.
+ * Disabling the policy restores the ordinary acquisition loop without
+ * changing any learned carrier state.  Transitions occur only at a complete
+ * semantic observation boundary. */
+enum v34_adaptive_equalizer_result
+v34_adaptive_equalizer_set_data_carrier_tracking(
+	struct v34_adaptive_equalizer *equalizer, bool data_tracking);
 
 /* Freeze the learned decision-feedback filter at the local MP boundary and
  * return its three transmitter-precoder coefficients in h(1)..h(3) order.
@@ -234,9 +271,25 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 	struct v34_adaptive_equalizer *equalizer,
 	struct v34_adaptive_equalizer_observation *observation);
 
-/* Commit the semantic target.  SKIP retains the V.34 data-demapper
- * behavior: decision feedback advances, while carrier and FIR adaptation do
- * not.  CENTER and FULL update the corresponding FIR span. */
+/* Retain the pending observation while admitting exactly one following
+ * observation.  This is available only without decision feedback, whose
+ * mutable history cannot be replayed after a delayed decision. */
+enum v34_adaptive_equalizer_result
+v34_adaptive_equalizer_retain_observation(
+	struct v34_adaptive_equalizer *equalizer,
+	const struct v34_adaptive_equalizer_observation *observation);
+
+/* Resolve the retained and current observations atomically and in signal
+ * order.  Both decisions use the FIR inputs and carrier frame captured when
+ * their observations were produced. */
+enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit_pair(
+	struct v34_adaptive_equalizer *equalizer,
+	const struct v34_adaptive_equalizer_decision decisions[2]);
+
+/* Commit the semantic target. SKIP retains the V.34 data-demapper behavior:
+ * decision feedback advances, while carrier and FIR adaptation do not.
+ * CARRIER updates only carrier phase; CENTER_TAPS updates the center FIR span
+ * without moving the carrier reference; CENTER and FULL update both. */
 enum v34_adaptive_equalizer_result v34_adaptive_equalizer_commit(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_decision *decision);

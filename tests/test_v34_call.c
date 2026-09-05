@@ -50,6 +50,45 @@ struct endpoint {
 	bool suppress_failure_diagnostic;
 };
 
+static bool cleardown_rejects_retained_observation(
+	const struct v34_cleardown *ready)
+{
+	struct v34_cleardown pending = *ready;
+	struct v34_cleardown rejected;
+	struct v34_cleardown saved;
+	bool retained = false;
+
+	for (unsigned int index = 0u; index < 16u && !retained; ++index) {
+		struct v34_adaptive_equalizer_observation observation;
+		enum v34_line_receiver_result result = v34_line_receiver_sample(
+			&pending.receive_line, 0, &observation);
+
+		CHECK(result == V34_LINE_RECEIVER_OK ||
+		      result == V34_LINE_RECEIVER_OBSERVATION_READY,
+		      "cleardown boundary fixture could not observe the line");
+		if (result == V34_LINE_RECEIVER_OBSERVATION_READY) {
+			CHECK(v34_adaptive_equalizer_retain_observation(
+				      &pending.receive_line.equalizer, &observation) ==
+				      V34_ADAPTIVE_EQUALIZER_OK,
+			      "cleardown boundary fixture could not retain a decision");
+			retained = true;
+		}
+	}
+	CHECK(retained && v34_line_receiver_is_valid(&pending.receive_line) &&
+	      !pending.receive_line.equalizer.decision_pending &&
+	      pending.receive_line.equalizer.retained.pending &&
+	      !v34_cleardown_is_valid(&pending),
+	      "cleardown accepted an unresolved paired observation");
+	memset(&rejected, 0xa5, sizeof(rejected));
+	saved = rejected;
+	CHECK(v34_cleardown_init(
+		      &rejected, &pending.transmit_line, &pending.receive_line,
+		      &pending.parameters) == V34_CLEARDOWN_INVALID_ARGUMENT &&
+	      memcmp(&rejected, &saved, sizeof(rejected)) == 0,
+	      "rejected cleardown handoff changed its destination");
+	return true;
+}
+
 static bool clear_online_pair(
 	struct endpoint *caller, struct endpoint *answerer,
 	struct channel *channel);
@@ -1362,6 +1401,8 @@ static bool clear_online_pair(
 		      memcmp(&transmit_line, &cleardown->transmit_line,
 			     sizeof(transmit_line)) == 0,
 		      "role %u cleardown reset or shared the physical line", role);
+		CHECK(cleardown_rejects_retained_observation(cleardown),
+		      "role %u cleardown accepted an unresolved receive boundary", role);
 	}
 	for (unsigned int index = 0u; index < 16000u; ++index) {
 		int16_t receive[2];

@@ -25,6 +25,7 @@ bool v34_cleardown_is_valid(const struct v34_cleardown *cleardown)
 	       v34_line_receiver_is_valid(&cleardown->receive_line) &&
 	       v34_receive_timing_is_acquired(&cleardown->receive_line.timing) &&
 	       !cleardown->receive_line.equalizer.decision_pending &&
+	       !cleardown->receive_line.equalizer.retained.pending &&
 	       v34_phase3_s_sequence_is_valid(&cleardown->transmit_s) &&
 	       v34_phase3_s_receiver_is_valid(&cleardown->receive_s) &&
 	       v34_phase4_mp_is_valid(&cleardown->transmit_mp) &&
@@ -78,6 +79,7 @@ enum v34_cleardown_result v34_cleardown_init(
 	    !v34_training_line_is_valid(transmit_line) ||
 	    !v34_line_receiver_is_valid(receive_line) ||
 	    receive_line->equalizer.decision_pending ||
+	    receive_line->equalizer.retained.pending ||
 	    !v34_mp_parameters_are_valid(parameters) ||
 	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_CLEARDOWN_INVALID_ARGUMENT;
