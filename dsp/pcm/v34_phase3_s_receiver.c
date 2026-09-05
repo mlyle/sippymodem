@@ -1013,11 +1013,9 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		    --next.candidate_symbols == 0u && !reset_hunt(&next))
 			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	} else {
+		/* Qualify recurrence from measured points. Slicing first would make
+		 * unrelated data in alternating quadrants look perfectly periodic. */
 		normalized = normalized_fixed_observation(observation);
-		if (point_has_power(
-			    &normalized,
-			    (double)MINIMUM_POINT_POWER_Q8 / 256.0))
-			normalized = normalized_fixed_observation(hard.target);
 		prefix_result = v34_phase3_s_prefix_receive(
 			&next.prefix, &normalized,
 			(double)MINIMUM_POINT_POWER_Q8 / 256.0);

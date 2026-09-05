@@ -1118,6 +1118,49 @@ static bool test_online_hunt_boundaries(void)
 	return true;
 }
 
+static bool test_online_hunt_requires_physical_recurrence(void)
+{
+	/* These points alternate between adjacent quadrants, but their actual
+	 * phases do not recur after two symbols. Replacing them with four-point
+	 * hard targets would invent an S prefix and train the live equalizer
+	 * against ordinary higher-order QAM data. */
+	static const struct v34_analytic_sample points[] = {
+		{ 4000, 1000 }, { -1000, 4000 },
+		{ 1000, 4000 }, { -4000, 1000 },
+	};
+	struct v34_phase3_s_hunt hunt;
+	uint8_t rotations[2] = { 0 };
+
+	CHECK(v34_phase3_s_hunt_init(&hunt) == V34_PHASE3_S_RECEIVER_OK,
+	      "physical recurrence hunt did not initialize");
+	for (size_t symbol = 0;
+	     symbol < V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS; ++symbol) {
+		struct v34_analytic_sample observation =
+			points[symbol % ARRAY_LENGTH(points)];
+		struct v34_fixed_training_decision hard;
+		struct v34_phase3_s_adaptation adaptation = { 0 };
+		bool control = false;
+
+		CHECK(v34_training_constellation_fixed_slice(
+			      V34_CONSTELLATION_4_POINT, observation, &hard) ==
+			      V34_CONSTELLATION_OK,
+		      "physical recurrence observation did not slice");
+		if (symbol < 2u)
+			rotations[symbol] = hard.clockwise_quarter_turns;
+		CHECK(hard.clockwise_quarter_turns == rotations[symbol & 1u] &&
+		      (symbol == 0u ||
+		       ((rotations[1] + 4u - rotations[0]) & 1u) != 0u),
+		      "physical recurrence fixture lost alternating hard quadrants");
+		CHECK(v34_phase3_s_hunt_receive(
+			      &hunt, observation, &adaptation, &control) ==
+			      V34_PHASE3_S_RECEIVER_OK &&
+		      !control && !adaptation.adapt && !hunt.candidate &&
+		      !v34_phase3_s_hunt_is_complete(&hunt),
+		      "non-recurrent data armed S adaptation at symbol %zu", symbol);
+	}
+	return true;
+}
+
 static bool test_online_hunt_reset_and_validation(void)
 {
 	struct v34_phase3_s_hunt hunt;
@@ -1190,6 +1233,8 @@ int main(void)
 		{ "fixed metric margin", test_fixed_metric_margin },
 		{ "completion and validation", test_completion_and_validation },
 		{ "online S hunt boundaries", test_online_hunt_boundaries },
+		{ "online S hunt physical recurrence",
+		  test_online_hunt_requires_physical_recurrence },
 		{ "online S hunt reset and validation",
 		  test_online_hunt_reset_and_validation },
 	};
