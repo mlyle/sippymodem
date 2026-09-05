@@ -365,53 +365,23 @@ static bool execute_receive_action(
 {
 	bool was_tracking = receiver->tracking_started;
 
-	switch (output->action) {
-	case V34_RECEIVE_COMMIT:
-		if (v34_adaptive_equalizer_commit(
-			    &receiver->line.equalizer, &output->equalizer) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return false;
-		break;
-	case V34_RECEIVE_DISCARD:
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->line.equalizer, observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return false;
-		break;
-	case V34_RECEIVE_BEGIN_TRACKING:
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->line.equalizer, observation) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_receive_timing_freeze_gain(&receiver->line.timing) !=
-			    V34_RECEIVE_TIMING_OK ||
-		    v34_adaptive_equalizer_begin_tracking(
-			    &receiver->line.equalizer) !=
-			    V34_ADAPTIVE_EQUALIZER_OK)
-			return false;
+	if (v34_line_receiver_resolve(
+		    &receiver->line, observation, output,
+		    receiver->decoder_power_q15) != V34_LINE_RECEIVER_OK)
+		return false;
+	if (output->action == V34_RECEIVE_BEGIN_TRACKING) {
 		receiver->tracking_started = true;
 		receiver->tracking_symbols = 0u;
 		receiver->decoder_power_q15 =
 			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
-	case V34_RECEIVE_RESTART_PATH: {
-		struct v34_line_receiver line;
-
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->line.equalizer, observation) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_line_receiver_init(
-			    &line, &receiver->transmitting_profile,
-			    receiver->line.timing.gain.gain, false,
-			    V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) !=
-			    V34_LINE_RECEIVER_OK)
-			return false;
-		receiver->line = line;
+	}
+	if (output->action == V34_RECEIVE_RESTART_PATH) {
 		receiver->tracking_started = false;
 		receiver->tracking_symbols = 0u;
 		receiver->decoder_power_q15 =
 			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
-	}
 	}
 	if (was_tracking)
 		advance_tracking(receiver);

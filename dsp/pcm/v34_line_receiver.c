@@ -118,3 +118,71 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 	*observation = generated;
 	return V34_LINE_RECEIVER_OBSERVATION_READY;
 }
+
+enum v34_line_receiver_result v34_line_receiver_resolve(
+	struct v34_line_receiver *receiver,
+	const struct v34_adaptive_equalizer_observation *observation,
+	const struct v34_receive_action *action,
+	uint16_t decoder_power_q15)
+{
+	const struct memory_region regions[] = {
+		{ receiver, receiver == NULL ? 0 : sizeof(*receiver) },
+		{ observation, observation == NULL ? 0 : sizeof(*observation) },
+		{ action, action == NULL ? 0 : sizeof(*action) },
+	};
+	struct v34_line_receiver next;
+	enum v34_adaptive_equalizer_feedback_mode feedback_mode;
+
+	if (observation == NULL || action == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions) ||
+	    !v34_receive_action_is_valid(
+		    action, observation, decoder_power_q15))
+		return V34_LINE_RECEIVER_INVALID_ARGUMENT;
+	if (!v34_line_receiver_is_valid(receiver) ||
+	    !receiver->equalizer.decision_pending)
+		return V34_LINE_RECEIVER_INVALID_STATE;
+	next = *receiver;
+	switch (action->action) {
+	case V34_RECEIVE_COMMIT:
+		if (v34_adaptive_equalizer_commit(
+			    &next.equalizer, &action->equalizer) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		break;
+	case V34_RECEIVE_DISCARD:
+		if (v34_adaptive_equalizer_discard(
+			    &next.equalizer, observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		break;
+	case V34_RECEIVE_BEGIN_TRACKING:
+		if (v34_adaptive_equalizer_discard(
+			    &next.equalizer, observation) !=
+			    V34_ADAPTIVE_EQUALIZER_OK ||
+		    v34_receive_timing_freeze_gain(&next.timing) !=
+			    V34_RECEIVE_TIMING_OK ||
+		    v34_adaptive_equalizer_begin_tracking(&next.equalizer) !=
+			    V34_ADAPTIVE_EQUALIZER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		break;
+	case V34_RECEIVE_RESTART_PATH: {
+		struct v34_line_receiver restarted;
+
+		feedback_mode = next.equalizer.feedback_mode;
+		if (v34_adaptive_equalizer_discard(
+			    &next.equalizer, observation) !=
+			    V34_ADAPTIVE_EQUALIZER_OK ||
+		    v34_line_receiver_init(
+			    &restarted, &next.timing.transmitting_profile,
+			    next.timing.gain.gain, false, feedback_mode) !=
+			    V34_LINE_RECEIVER_OK)
+			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+		next = restarted;
+		break;
+	}
+	}
+	if (!v34_line_receiver_is_valid(&next))
+		return V34_LINE_RECEIVER_NUMERIC_FAILURE;
+	*receiver = next;
+	return V34_LINE_RECEIVER_OK;
+}
