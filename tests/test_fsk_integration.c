@@ -69,6 +69,7 @@ struct integration_endpoint {
 	size_t output_count;
 	size_t exact_frames;
 	size_t delayed_codeword_cursor;
+	size_t stops;
 	bool delay_codewords;
 };
 
@@ -121,6 +122,7 @@ struct modem_test_case {
 	bool requires_exact_g711;
 	bool test_prelink;
 	bool test_retrain;
+	bool test_cleardown;
 	bool raw_transport;
 	bool require_lapm;
 	bool digital_caller;
@@ -137,7 +139,10 @@ static int start_modem(struct modem *modem)
 
 static int stop_modem(struct modem *modem)
 {
-	(void)modem;
+	struct integration_endpoint *endpoint = modem->dev_data;
+
+	if (endpoint != NULL)
+		endpoint->stops++;
 	return 0;
 }
 
@@ -183,6 +188,7 @@ static bool endpoint_init(
 	endpoint->modem_fd = sockets[0];
 	endpoint->client_fd = sockets[1];
 	endpoint->modem->pty = endpoint->modem_fd;
+	endpoint->modem->dev_data = endpoint;
 	return true;
 }
 
@@ -1353,6 +1359,63 @@ static bool exercise_low_speed_carrier_recovery(
 	return true;
 }
 
+static bool exercise_v34_cleardown(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	enum { TEST_STATE_COMMAND_ONLINE = 6 };
+	struct integration_endpoint *endpoints[] = { caller, answerer };
+	bool completed = false;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(endpoints); ++index) {
+		struct integration_endpoint *endpoint = endpoints[index];
+		char command[] = "ATH0";
+
+		CHECK(modem_is_online(endpoint->modem, DP_V34) &&
+		      endpoint->stops == 0u,
+		      "V.34 cleardown did not start on a live line");
+		endpoint->output_count = 0u;
+		endpoint->modem->state = TEST_STATE_COMMAND_ONLINE;
+		endpoint->modem->command = 1;
+		CHECK(process_at_command(endpoint->modem, command) == 1 &&
+		      endpoint_drain(endpoint) && endpoint->output_count == 0u &&
+		      endpoint->modem->dp != NULL && endpoint->stops == 0u,
+		      "ATH0 completed before its V.34 line sequence");
+	}
+	for (unsigned int frame = 0u; frame < 100u; ++frame) {
+		CHECK(process_sip_frame(caller, answerer, codec, recorder),
+		      "V.34 cleardown failed at the SIP media boundary");
+		for (size_t index = 0; index < ARRAY_LENGTH(endpoints); ++index) {
+			struct integration_endpoint *endpoint = endpoints[index];
+
+			CHECK(endpoint_drain(endpoint) && endpoint->stops <= 1u &&
+			      (endpoint->stops == 0u ?
+				(endpoint->modem->dp != NULL &&
+				 endpoint->output_count == 0u) :
+				(endpoint->modem->dp == NULL &&
+				 !endpoint->modem->started &&
+				 output_contains(endpoint, "OK") &&
+				 !output_contains(endpoint, "NO CARRIER"))),
+			      "ATH0 final boundary frame=%u side=%zu stops=%zu "
+			      "dp=%p started=%d output=%.*s",
+			      frame, index, endpoint->stops,
+			      (void *)endpoint->modem->dp,
+			      endpoint->modem->started, (int)endpoint->output_count,
+			      endpoint->output);
+		}
+		if (caller->stops != 0u && answerer->stops != 0u) {
+			CHECK(frame > 2u,
+			      "V.34 ATH0 retained the old immediate teardown");
+			completed = true;
+			break;
+		}
+	}
+	CHECK(completed,
+	      "V.34 ATH0 did not finish before the missing-peer safety deadline");
+	return true;
+}
+
 static bool run_media_call(
 	const struct modem_test_case *test_case,
 	enum media_codec codec)
@@ -1791,6 +1854,10 @@ static bool run_media_call(
 		      "%s carrier loss did not honor the fragmented S10 boundary",
 		      test_case->name);
 	}
+	if (test_case->test_cleardown)
+		CHECK(exercise_v34_cleardown(
+			      &caller, &answerer, codec, &recorder),
+		      "%s did not complete protocol ATH0 cleardown", test_case->name);
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
@@ -3483,6 +3550,32 @@ int main(void)
 			.automode = true,
 			.test_retrain = true,
 			.raw_transport = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 9600 raw ATH0 cleardown",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
+			.training_frame_limit = 1500,
+			.automode = true,
+			.test_cleardown = true,
+			.raw_transport = true,
+		},
+		{
+			.id = DP_V34,
+			.name = "V.34 9600 LAPM ATH0 cleardown",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.caller_tx_rate = 9600,
+			.caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600,
+			.answerer_rx_rate = 9600,
+			.training_frame_limit = 1500,
+			.automode = true,
+			.test_cleardown = true,
+			.require_lapm = true,
 		},
 		{
 			.id = DP_V34,

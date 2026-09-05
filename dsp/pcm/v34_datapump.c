@@ -49,6 +49,7 @@ static int delete_v34(struct dp *dp);
 static int process_v34(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int retrain_v34(struct dp *dp);
+static int hangup_v34(struct dp *dp);
 
 static struct dp_operations v34_operations = {
 	.name = "V.34",
@@ -56,6 +57,7 @@ static struct dp_operations v34_operations = {
 	.delete = delete_v34,
 	.process = process_v34,
 	.retrain = retrain_v34,
+	.hangup = hangup_v34,
 };
 
 static enum v34_station_role station_role(bool caller)
@@ -116,11 +118,14 @@ static enum v34_profile_result v8_fallback_profile(
 static struct v34_datapump *v34_from_dp(struct dp *dp)
 {
 	struct v34_datapump *datapump;
+	bool linked;
 
 	if (dp == NULL || dp->id != DP_V34 || dp->op != &v34_operations ||
 	    dp->modem == NULL || dp->dp_data == NULL)
 		return NULL;
 	datapump = dp->dp_data;
+	linked = v34_call_is_online(&datapump->call) ||
+		 datapump->call.stage == V34_CALL_CLEARDOWN;
 	if (&datapump->dp != dp || datapump->rate_mask == 0 ||
 	    !v34_data_quality_is_valid(&datapump->data_quality) ||
 	    !training_session_is_valid(&datapump->training) ||
@@ -132,15 +137,14 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	    (v34_call_has_failed(&datapump->call) &&
 	     !training_session_has_failed(&datapump->training)) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     training_session_is_online(&datapump->training) !=
-		     v34_call_is_online(&datapump->call) &&
+	     training_session_is_online(&datapump->training) != linked &&
 	     !(training_session_is_retraining(&datapump->training) &&
-	       !v34_call_is_online(&datapump->call))) ||
+	       !linked)) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     v34_call_is_online(&datapump->call) &&
+	     linked &&
 	     dp->status != DPSTAT_CONNECT) ||
 	    (!training_session_has_failed(&datapump->training) &&
-	     !v34_call_is_online(&datapump->call) &&
+	     !linked &&
 	     dp->status == DPSTAT_CONNECT &&
 	     !training_session_is_retraining(&datapump->training)))
 		return NULL;
@@ -265,6 +269,14 @@ static int retrain_v34(struct dp *dp)
 	if (training_session_is_retraining(&datapump->training))
 		return 0;
 	return start_local_retrain(datapump);
+}
+
+static int hangup_v34(struct dp *dp)
+{
+	struct v34_datapump *datapump = v34_from_dp(dp);
+
+	return datapump != NULL &&
+	       v34_call_start_cleardown(&datapump->call) == V34_CALL_OK ? 0 : -1;
 }
 
 static bool source_mapping_frame(
@@ -495,6 +507,27 @@ static int process_v34(
 	if (training_session_has_failed(&datapump->training)) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
+	}
+	if (datapump->call.stage == V34_CALL_CLEARDOWN) {
+		for (int index = 0; index < count; ++index) {
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame ignored;
+			enum v34_call_result result = v34_call_sample(
+				&datapump->call, receive[index], NULL, NULL,
+				&transmit[index], &observation, &ignored);
+
+			if (result == V34_CALL_CLEARDOWN_COMPLETE) {
+				memset(transmit + index + 1, 0,
+				       (size_t)(count - index - 1) * sizeof(*transmit));
+				return DPSTAT_DISCONNECT;
+			}
+			if (result != V34_CALL_OK) {
+				fail_training(datapump);
+				memset(transmit, 0, (size_t)count * sizeof(*transmit));
+				return DPSTAT_ERROR;
+			}
+		}
+		return DPSTAT_OK;
 	}
 	carrier_present = fragment_has_carrier(receive, count);
 	if (training_session_is_online(&datapump->training)) {
