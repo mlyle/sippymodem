@@ -27,6 +27,7 @@ enum v90_digital_path_result {
 	V90_DIGITAL_PATH_OK,
 	V90_DIGITAL_PATH_UPSTREAM_FRAME,
 	V90_DIGITAL_PATH_RATE_RENEGOTIATION,
+	V90_DIGITAL_PATH_CLEARDOWN_COMPLETE,
 	V90_DIGITAL_PATH_SOURCE_FAILURE,
 	V90_DIGITAL_PATH_FAILED,
 	V90_DIGITAL_PATH_SEQUENCE_MISMATCH,
@@ -103,6 +104,7 @@ struct v90_digital_path {
 	uint8_t upstream_rate_2400_bps_units;
 	bool data_mapping_ready;
 	bool rate_renegotiation_active;
+	bool cleardown_requested;
 	bool failed;
 };
 
@@ -119,6 +121,11 @@ bool v90_digital_path_downstream_is_online(
 bool v90_digital_path_upstream_is_online(
 	const struct v90_digital_path *path);
 bool v90_digital_path_is_online(const struct v90_digital_path *path);
+
+/* Drain accepted data, send Rd/Rd-bar, then a zero-rate MP. COMPLETE is
+ * reported only after both complete MP records and spectral output drain. */
+enum v90_digital_path_result v90_digital_path_start_cleardown(
+	struct v90_digital_path *path);
 
 /* Clock the independent downstream transmitter or upstream receiver.  These
  * directional operations let a call controller keep outgoing data continuous

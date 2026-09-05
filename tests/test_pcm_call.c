@@ -885,6 +885,142 @@ static bool goal_is_reached(
 		digital->source_failure_checked);
 }
 
+static bool check_zero_rate_cleardown(
+	struct pcm_call *call, const struct pcm_call *peer,
+	struct channel *channel)
+{
+	struct pcm_downstream_rx downstream;
+	struct v34_data_line_receiver data_receive;
+	struct v90_phase4_cp_line_rx cp_receive;
+	bool receiver_started = false;
+	bool cp_started = false;
+	unsigned int cp_records = 0u;
+	unsigned int mp_records = 0u;
+	bool complete = false;
+
+	if (call->local_role == V90_ANALOG_MODEM)
+		data_receive = peer->state.data_path.digital.upstream.data;
+	CHECK(pcm_call_start_cleardown(call) == PCM_CALL_OK &&
+	      pcm_call_start_cleardown(call) == PCM_CALL_OK &&
+	      pcm_call_start_retrain(call) == PCM_CALL_INVALID_STATE,
+	      "cleardown did not retain exclusive line ownership");
+	for (unsigned int clock = 0u; clock < 16000u; ++clock) {
+		struct pcm_call_data_event event;
+		uint8_t analog_input;
+		uint8_t digital_input;
+		uint8_t output = 0u;
+		enum pcm_call_result result = pcm_call_data_octet(
+			call, silence_octet(call->law), 0, NULL, &output, &event);
+
+		CHECK((result == PCM_CALL_OK ||
+		       result == PCM_CALL_CLEARDOWN_COMPLETE) &&
+		      event.kind == PCM_CALL_DATA_NONE && pcm_call_is_valid(call),
+		      "cleardown failed at sample %u: %s",
+		      clock, pcm_call_result_name(result));
+		if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+			complete = true;
+			if (call->local_role == V90_DIGITAL_MODEM ||
+			    cp_records != 0u)
+				break;
+		}
+		if (call->local_role == V90_ANALOG_MODEM) {
+			int16_t sample;
+
+			channel_receive(channel, &analog_input, &digital_input);
+			channel_transmit(
+				channel, output, silence_octet(call->law));
+			sample = decode_octet(call->law, digital_input);
+			if (!cp_started) {
+				struct v34_survivor_decision decision;
+				struct v34_received_mapping_frame frame;
+				enum v34_data_receive_result received =
+					v34_data_line_receiver_sample(
+						&data_receive, sample, &decision, &frame);
+
+				if (received == V34_DATA_RECEIVE_RATE_RENEGOTIATION) {
+					const struct v90_digital_path *path =
+						&peer->state.data_path.digital;
+
+					CHECK(v90_phase4_cp_line_rx_resume_online(
+						      &cp_receive, &data_receive,
+						      &path->control_symbols,
+						      path->rate_renegotiation_constellation) ==
+						      V90_PHASE4_CP_LINE_RX_OK,
+					      "cleardown S/S-bar did not hand off the peer receiver");
+					cp_started = true;
+				} else {
+					CHECK(received == V34_DATA_RECEIVE_OK ||
+					      received == V34_DATA_RECEIVE_INTERVAL_READY ||
+					      received == V34_DATA_RECEIVE_MAPPING_FRAME_READY,
+					      "cleardown preamble damaged peer receiver");
+				}
+			} else {
+				struct v90_cp_receive_event received;
+				enum v90_phase4_cp_line_rx_result decoded =
+					v90_phase4_cp_line_rx_sample(
+						&cp_receive, sample, &received);
+
+				if (decoded == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
+					if (v90_phase4_cp_line_rx_pending_record_is_valid(
+						    &cp_receive)) {
+						CHECK(received.parameters.kind == V90_CP_DATA &&
+						      received.parameters.selected_rate_index == 0u,
+						      "analogue cleardown rate changed on the QAM wire");
+						cp_records++;
+					}
+					CHECK(v90_phase4_cp_line_rx_continue(
+						      &cp_receive) ==
+						      V90_PHASE4_CP_LINE_RX_OK,
+					      "cleardown peer CP receiver did not resume");
+				} else {
+					CHECK(decoded == V90_PHASE4_CP_LINE_RX_OK ||
+					      decoded == V90_PHASE4_CP_LINE_RX_SYMBOL,
+					      "cleardown CP receiver failed");
+				}
+			}
+		} else {
+			struct v90_digital_path *path =
+				&call->state.data_path.digital;
+			struct pcm_downstream_event received;
+			enum pcm_downstream_rx_result decoded;
+
+			if (path->downstream_stage !=
+			    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING)
+				continue;
+			if (!receiver_started) {
+				CHECK(path->downstream.training.transmitted_symbols == 1u &&
+				      pcm_downstream_rx_init(
+					      &downstream, PCM_PROTOCOL_V90,
+					      &path->control_mapping,
+					      V90_PCM_MAPPING_TRANSMIT) ==
+					      PCM_DOWNSTREAM_RX_OK,
+				      "cleardown control boundary skipped a PCM character");
+				receiver_started = true;
+			}
+			decoded = pcm_downstream_rx_receive(
+				&downstream, output, &received);
+			if (decoded == PCM_DOWNSTREAM_RX_MP) {
+				CHECK(v90_mp_record_equal(
+					      &received.mp.record, &path->local_mp),
+				      "zero-rate MP changed on the PCM wire");
+				mp_records++;
+			} else {
+				CHECK(decoded == PCM_DOWNSTREAM_RX_OK ||
+				      decoded == PCM_DOWNSTREAM_RX_BUFFERING ||
+				      decoded == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
+				      "cleardown emitted a malformed MP or unexpected Ed");
+			}
+		}
+	}
+	CHECK(complete && (call->local_role == V90_ANALOG_MODEM ?
+		(cp_records != 0u &&
+		 call->state.data_path.analog.cleardown_records == 2u &&
+		 call->state.data_path.analog.cleardown_tail_samples == 0u) :
+		mp_records == 2u),
+	      "cleardown did not drain complete zero-rate records");
+	return true;
+}
+
 static bool run_configured_call(
 	enum g711_law law, size_t delay, enum call_goal goal,
 	uint32_t analog_rate_mask, uint8_t analog_selected_rate_index,
@@ -1041,6 +1177,9 @@ static bool run_configured_call(
 			       &analog.call, &aliased_rate, &aliased_rate) &&
 		      aliased_rate == UINT32_C(0xa5a55a5a),
 		      "overlapping V.90 rate outputs were changed");
+		CHECK(check_zero_rate_cleardown(&analog.call, &digital.call, &channel) &&
+		      check_zero_rate_cleardown(&digital.call, &analog.call, &channel),
+		      "online V.90 endpoints did not complete zero-rate cleardown");
 	}
 	return true;
 }
@@ -3992,6 +4131,7 @@ static bool test_result_names(void)
 		"ok",
 		"phase 4 ready",
 		"V.34 fallback ready",
+		"cleardown complete",
 		"frame source failure",
 		"failed",
 		"invalid argument",

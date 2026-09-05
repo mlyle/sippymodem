@@ -297,6 +297,45 @@ static int16_t returned_echo(
 	return add_s16(sample);
 }
 
+static bool check_cleardown(struct dp *dp, enum g711_law law)
+{
+	uint8_t input[MODEM_FRAG];
+	int16_t samples[MODEM_FRAG] = { 0 };
+	bool complete = false;
+	unsigned int elapsed = 0u;
+
+	memset(input, encode(law, 0), sizeof(input));
+	CHECK(dp->op->hangup != NULL && dp->op->hangup(dp) == 0 &&
+	      dp->op->hangup(dp) == 0,
+	      "V.90 hangup did not start idempotently");
+	for (; elapsed < 2u * MODEM_RATE; elapsed += MODEM_FRAG) {
+		uint8_t output[MODEM_FRAG];
+		int16_t generated[MODEM_FRAG];
+		bool exact = false;
+		int result = dp->op->process_g711(
+			dp, law, input, samples, output, generated, MODEM_FRAG,
+			&exact);
+
+		CHECK((result == DPSTAT_OK || result == DPSTAT_DISCONNECT) &&
+		      exact,
+		      "V.90 cleardown failed after %u samples, status %d",
+		      elapsed, result);
+		for (unsigned int index = 0u; index < MODEM_FRAG; ++index)
+			CHECK(generated[index] == decode(law, output[index]) ||
+			      (result == DPSTAT_DISCONNECT &&
+			       generated[index] == 0 &&
+			       output[index] == encode(law, 0)),
+			      "V.90 cleardown lost exact network character");
+		if (result == DPSTAT_DISCONNECT) {
+			complete = true;
+			break;
+		}
+	}
+	CHECK(complete && elapsed > MODEM_RATE / 20u,
+	      "V.90 cleardown did not emit a bounded protocol sequence");
+	return true;
+}
+
 static bool run_pair_with_rate_window(
 	enum g711_law law,
 	uint32_t downstream_rate,
@@ -553,6 +592,15 @@ static bool run_pair_with_rate_window(
 	      (unsigned int)retrain_role);
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
+	{
+		uint64_t analog_supplied = analog_bits.supplied_bits;
+		uint64_t digital_supplied = digital_bits.supplied_bits;
+
+		CHECK(check_cleardown(analog_dp, law) && check_cleardown(digital_dp, law) &&
+		      analog_supplied == analog_bits.supplied_bits &&
+		      digital_supplied == digital_bits.supplied_bits,
+		      "V.90 cleardown consumed new host payload");
+	}
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
@@ -946,7 +994,7 @@ static bool test_validation(void)
 	CHECK(operations != NULL && operations->create != NULL &&
 	      operations->delete != NULL && operations->process != NULL &&
 	      operations->process_g711 != NULL && operations->retrain != NULL &&
-	      operations->hangup == NULL,
+	      operations->hangup != NULL,
 	      "V.90 operation surface is incomplete");
 	modem.dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	CHECK(operations->create(

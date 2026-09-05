@@ -10,6 +10,14 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum {
+	CLEARDOWN_RECORDS = 2,
+	/* The slowest admitted upstream is 2400 symbols/s. */
+	CLEARDOWN_MAX_TAIL_SAMPLES =
+		((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) * 8000u +
+		 2399u) / 2400u + V34_TRAINING_LINE_FILTER_TAIL_SAMPLES,
+};
+
 static bool mapping_matches(
 	const struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters)
@@ -121,6 +129,14 @@ static bool downstream_is_valid(const struct v90_analog_path *path)
 bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 {
 	if (path == NULL || !g711_law_is_valid(path->law) ||
+	    path->cleardown_records > CLEARDOWN_RECORDS ||
+	    path->cleardown_tail_samples > CLEARDOWN_MAX_TAIL_SAMPLES ||
+	    (path->cleardown_records != 0u &&
+	     path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) ||
+	    (path->cleardown_requested && !path->rate_renegotiation_active) ||
+	    (!path->cleardown_requested &&
+	     (path->cleardown_records != 0u ||
+	      path->cleardown_tail_samples != 0u)) ||
 	    !v34_constellation_size_is_valid(
 		    path->rate_renegotiation_constellation) ||
 	    !decision_plane_is_valid(path->decision_plane) ||
@@ -271,6 +287,18 @@ static enum v90_analog_path_result prepare_cp_record(
 	if (!v90_phase4_cp_line_tx_record_is_complete(&path->upstream.cp) ||
 	    path->finishing_cp)
 		return V90_ANALOG_PATH_OK;
+	if (path->cleardown_requested) {
+		if (path->cleardown_records < CLEARDOWN_RECORDS)
+			path->cleardown_records++;
+		if (path->cleardown_records == CLEARDOWN_RECORDS)
+			return V90_ANALOG_PATH_OK;
+		parameters = path->data_parameters;
+		parameters.selected_rate_index = 0u;
+		return v90_phase4_cp_line_tx_start_next_record(
+			       &path->upstream.cp, &parameters) ==
+				       V90_PHASE4_CP_LINE_TX_OK ?
+			       V90_ANALOG_PATH_OK : V90_ANALOG_PATH_INTERNAL_ERROR;
+	}
 	if (path->data_parameters.acknowledges_peer)
 		path->cp_prime_sent = true;
 	if (path->cp_prime_sent && path->peer_mp_prime_received) {
@@ -296,6 +324,22 @@ static enum v90_analog_path_result emit_cp(
 
 	if (prepared != V90_ANALOG_PATH_OK)
 		return prepared;
+	if (path->cleardown_requested &&
+	    path->cleardown_records == CLEARDOWN_RECORDS) {
+		const struct qam_point zero = { 0 };
+		struct v34_training_line *line = &path->upstream.cp.line;
+		bool accepted;
+
+		if (path->cleardown_tail_samples == 0u)
+			return V90_ANALOG_PATH_CLEARDOWN_COMPLETE;
+		if (v34_training_line_sample(line,
+			    v34_training_line_needs_point(line) ? &zero : NULL,
+			    sample, &accepted) != V34_TRAINING_LINE_OK)
+			return V90_ANALOG_PATH_INTERNAL_ERROR;
+		path->cleardown_tail_samples--;
+		*ready = true;
+		return V90_ANALOG_PATH_OK;
+	}
 	result = v90_phase4_cp_line_tx_sample(&path->upstream.cp, sample);
 	if (result == V90_PHASE4_CP_LINE_TX_OK) {
 		*ready = true;
@@ -404,6 +448,7 @@ static enum v90_analog_path_result emit_rrn_return(
 {
 	struct v34_training_line line;
 	struct v90_phase4_cp_line_tx cp;
+	struct v90_cp_parameters parameters = path->data_parameters;
 	enum v90_phase3_return_line_tx_result result =
 		v90_phase3_return_line_tx_sample(
 			&path->upstream.rrn_return, sample);
@@ -414,6 +459,8 @@ static enum v90_analog_path_result emit_rrn_return(
 	}
 	if (result == V90_PHASE3_RETURN_LINE_TX_OUT_OF_RANGE)
 		return V90_ANALOG_PATH_OUT_OF_RANGE;
+	if (path->cleardown_requested)
+		parameters.selected_rate_index = 0u;
 	if (result != V90_PHASE3_RETURN_LINE_TX_COMPLETE ||
 	    v90_phase3_return_line_tx_handoff(
 		    &path->upstream.rrn_return, &line) !=
@@ -421,7 +468,7 @@ static enum v90_analog_path_result emit_rrn_return(
 	    v90_phase4_cp_line_tx_resume_online(
 		    &cp, &line, &path->control_symbols,
 		    path->rate_renegotiation_constellation,
-		    &path->data_parameters) != V90_PHASE4_CP_LINE_TX_OK)
+		    &parameters) != V90_PHASE4_CP_LINE_TX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	path->upstream = (union v90_analog_path_upstream){ 0 };
 	path->upstream.cp = cp;
@@ -506,6 +553,10 @@ enum v90_analog_path_result v90_analog_path_transmit(
 	result = emit_upstream(path, source, source_context, &sample);
 	if (result == V90_ANALOG_PATH_SOURCE_FAILURE)
 		return result;
+	if (result == V90_ANALOG_PATH_CLEARDOWN_COMPLETE) {
+		*transmit_octet = encode_sample(path->law, 0);
+		return result;
+	}
 	if (result != V90_ANALOG_PATH_OK)
 		return fail_path(path, result);
 	path->receive_pending = true;
@@ -639,6 +690,36 @@ static enum v90_analog_path_result begin_rate_renegotiation(
 	path->ed_armed = false;
 	path->rate_renegotiation_active = true;
 	return V90_ANALOG_PATH_RATE_RENEGOTIATION;
+}
+
+enum v90_analog_path_result v90_analog_path_start_cleardown(
+	struct v90_analog_path *path)
+{
+	const struct v34_phase3_profile *profile;
+	uint32_t tail_samples;
+	enum v90_analog_path_result result;
+
+	if (!v90_analog_path_is_valid(path) || path->failed)
+		return V90_ANALOG_PATH_INVALID_ARGUMENT;
+	if (path->cleardown_requested)
+		return V90_ANALOG_PATH_OK;
+	if (!v90_analog_path_is_online(path) || path->receive_pending ||
+	    path->rate_renegotiation_active)
+		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+	profile = &path->upstream.data.line.profile;
+	/* Include the already accepted final CP point, then flush every pulse
+	 * history point and the sample-rate pre-emphasis filter. */
+	tail_samples = ((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) *
+		8000u * profile->symbol_rate_denominator +
+		profile->symbol_rate_numerator - 1u) /
+		profile->symbol_rate_numerator +
+		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES;
+	result = begin_rate_renegotiation(path);
+	if (result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
+		return result;
+	path->cleardown_requested = true;
+	path->cleardown_tail_samples = (uint16_t)tail_samples;
+	return V90_ANALOG_PATH_OK;
 }
 
 static enum v90_analog_path_result start_rrn_downstream_training(
@@ -775,6 +856,10 @@ enum v90_analog_path_result v90_analog_path_receive(
 		return V90_ANALOG_PATH_FAILED;
 	if (!path->receive_pending)
 		return V90_ANALOG_PATH_INVALID_STATE;
+	if (path->cleardown_requested) {
+		path->receive_pending = false;
+		return V90_ANALOG_PATH_OK;
+	}
 	result = path->downstream_stage ==
 				 V90_ANALOG_PATH_DOWNSTREAM_TRAINING ?
 			 receive_training(path, received_octet) :
@@ -824,6 +909,8 @@ const char *v90_analog_path_result_name(
 		return "downstream frame";
 	case V90_ANALOG_PATH_RATE_RENEGOTIATION:
 		return "rate renegotiation";
+	case V90_ANALOG_PATH_CLEARDOWN_COMPLETE:
+		return "cleardown complete";
 	case V90_ANALOG_PATH_SOURCE_FAILURE:
 		return "frame source failure";
 	case V90_ANALOG_PATH_FAILED:

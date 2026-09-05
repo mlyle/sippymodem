@@ -493,11 +493,21 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 	       timer_valid;
 }
 
+static bool cleardown_is_active_owned(const struct pcm_call *call)
+{
+	return call->protocol == PCM_PROTOCOL_V90 &&
+	       call->stage == PCM_CALL_DATA_PATH &&
+	       (call->local_role == V90_ANALOG_MODEM ?
+			call->state.data_path.analog.cleardown_requested :
+			call->state.data_path.digital.cleardown_requested);
+}
+
 static bool rate_renegotiation_is_active_owned(
 	const struct pcm_call *call)
 {
 	if (call->protocol != PCM_PROTOCOL_V90 ||
-	    call->stage != PCM_CALL_DATA_PATH)
+	    call->stage != PCM_CALL_DATA_PATH ||
+	    cleardown_is_active_owned(call))
 		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
 		       call->state.data_path.analog.rate_renegotiation_active :
@@ -1013,6 +1023,7 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed || !call->peer_info0_stored ||
+	    cleardown_is_active_owned(call) ||
 	    call->stage == PCM_CALL_PHASE2 ||
 	    call->stage == PCM_CALL_RETRAIN_SILENCE)
 		return PCM_CALL_INVALID_STATE;
@@ -2419,6 +2430,8 @@ static enum pcm_call_result analog_path_result(
 	case V90_ANALOG_PATH_DOWNSTREAM_FRAME:
 	case V90_ANALOG_PATH_RATE_RENEGOTIATION:
 		return PCM_CALL_OK;
+	case V90_ANALOG_PATH_CLEARDOWN_COMPLETE:
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	case V90_ANALOG_PATH_SOURCE_FAILURE:
 		return PCM_CALL_SOURCE_FAILURE;
 	case V90_ANALOG_PATH_FAILED:
@@ -2449,6 +2462,8 @@ static enum pcm_call_result digital_path_result(
 	case V90_DIGITAL_PATH_UPSTREAM_FRAME:
 	case V90_DIGITAL_PATH_RATE_RENEGOTIATION:
 		return PCM_CALL_OK;
+	case V90_DIGITAL_PATH_CLEARDOWN_COMPLETE:
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	case V90_DIGITAL_PATH_SOURCE_FAILURE:
 		return PCM_CALL_SOURCE_FAILURE;
 	case V90_DIGITAL_PATH_FAILED:
@@ -2466,6 +2481,27 @@ static enum pcm_call_result digital_path_result(
 		break;
 	}
 	return PCM_CALL_NUMERIC_FAILURE;
+}
+
+enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
+{
+	enum pcm_call_result result;
+
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (cleardown_is_active_owned(call))
+		return PCM_CALL_OK;
+	if (!pcm_call_is_online(call) || call->protocol != PCM_PROTOCOL_V90 ||
+	    rate_renegotiation_is_active_owned(call))
+		return PCM_CALL_INVALID_STATE;
+	result = call->local_role == V90_ANALOG_MODEM ?
+		analog_path_result(v90_analog_path_start_cleardown(
+			&call->state.data_path.analog)) :
+		digital_path_result(v90_digital_path_start_cleardown(
+			&call->state.data_path.digital));
+	if (result == PCM_CALL_OK && !pcm_call_is_valid(call))
+		return PCM_CALL_NUMERIC_FAILURE;
+	return result;
 }
 
 enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
@@ -2707,6 +2743,28 @@ static enum pcm_call_result data_octet_owned(
 	uint8_t generated;
 	enum pcm_call_result result;
 
+	if (cleardown_is_active_owned(call)) {
+		generated = encode_sample(call->law, 0);
+		if (call->local_role == V90_ANALOG_MODEM) {
+			result = analog_path_result(v90_analog_path_transmit(
+				&call->state.data_path.analog,
+				NULL, NULL, &generated));
+			if (result == PCM_CALL_OK)
+				result = analog_path_result(
+					v90_analog_path_discard_receive(
+						&call->state.data_path.analog));
+		} else {
+			result = digital_path_result(v90_digital_path_transmit(
+				&call->state.data_path.digital,
+				NULL, NULL, &generated));
+		}
+		*transmit_octet = generated;
+		*event = emitted;
+		if (result != PCM_CALL_OK &&
+		    result != PCM_CALL_CLEARDOWN_COMPLETE)
+			call->failed = true;
+		return result;
+	}
 	if (sources == NULL)
 		sources = &idle;
 	retrain_detection_active = retrain_detection_is_active(call);
@@ -2922,6 +2980,8 @@ const char *pcm_call_result_name(enum pcm_call_result result)
 		return "ok";
 	case PCM_CALL_PHASE4_READY:
 		return "phase 4 ready";
+	case PCM_CALL_CLEARDOWN_COMPLETE:
+		return "cleardown complete";
 	case PCM_CALL_V34_FALLBACK_READY:
 		return "V.34 fallback ready";
 	case PCM_CALL_SOURCE_FAILURE:

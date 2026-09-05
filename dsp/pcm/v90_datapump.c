@@ -48,6 +48,7 @@ static int process_v90_g711(
 	uint8_t *transmit_codewords, void *transmit_samples,
 	int count, bool *exact_output);
 static int retrain_v90(struct dp *dp);
+static int hangup_v90(struct dp *dp);
 
 static struct dp_operations v90_operations = {
 	.name = "PCM V.90/V.92",
@@ -56,6 +57,7 @@ static struct dp_operations v90_operations = {
 	.process = process_v90,
 	.process_g711 = process_v90_g711,
 	.retrain = retrain_v90,
+	.hangup = hangup_v90,
 };
 
 static bool protocol_from_id(enum DP_ID id, enum pcm_protocol *protocol)
@@ -411,6 +413,15 @@ static bool enter_link(struct v90_datapump *datapump)
 	return true;
 }
 
+static int hangup_v90(struct dp *dp)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+
+	if (datapump == NULL || !datapump->call_started)
+		return -1;
+	return pcm_call_start_cleardown(&datapump->call) == PCM_CALL_OK ? 0 : -1;
+}
+
 static bool start_call(
 	struct v90_datapump *datapump, enum g711_law media_law)
 {
@@ -461,7 +472,7 @@ static bool start_call(
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
 	int16_t received_sample,
-	uint8_t *transmitted, bool *connected, bool *fallback)
+	uint8_t *transmitted, bool *connected, bool *fallback, bool *disconnected)
 {
 	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
@@ -501,6 +512,10 @@ static bool process_octet(
 		datapump->fallback.training = datapump->training;
 		datapump->fallback_ready = true;
 		*fallback = true;
+		return true;
+	}
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		*disconnected = true;
 		return true;
 	}
 	if (result != PCM_CALL_OK)
@@ -609,6 +624,7 @@ static int process_v90_g711(
 	int16_t *transmit_samples = transmit_samples_buffer;
 	bool connected = false;
 	bool fallback = false;
+	bool disconnected = false;
 
 	if (exact_output != NULL)
 		*exact_output = false;
@@ -644,12 +660,18 @@ static int process_v90_g711(
 		if (!process_octet(
 			    datapump, receive_codewords[index],
 			    cleaned_sample,
-			    &pcm_transmit, &connected, &fallback))
+			    &pcm_transmit, &connected, &fallback, &disconnected))
 			goto failure;
 		transmit_codewords[index] = pcm_transmit;
 		transmit_samples[index] = law == G711_LAW_PCMA ?
 			g711_decode_pcma(transmit_codewords[index]) :
 			g711_decode_pcmu(transmit_codewords[index]);
+		if (disconnected) {
+			mute_output(law, transmit_codewords + index + 1,
+				    transmit_samples + index + 1, count - index - 1);
+			*exact_output = true;
+			return DPSTAT_DISCONNECT;
+		}
 		if (datapump->host_echo != NULL) {
 			if (v90_host_echo_advance(
 				    datapump->host_echo, echo_mode,

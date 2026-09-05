@@ -29,6 +29,7 @@ enum v90_analog_path_result {
 	V90_ANALOG_PATH_OK,
 	V90_ANALOG_PATH_DOWNSTREAM_FRAME,
 	V90_ANALOG_PATH_RATE_RENEGOTIATION,
+	V90_ANALOG_PATH_CLEARDOWN_COMPLETE,
 	V90_ANALOG_PATH_SOURCE_FAILURE,
 	V90_ANALOG_PATH_FAILED,
 	V90_ANALOG_PATH_SEQUENCE_MISMATCH,
@@ -77,12 +78,15 @@ struct v90_analog_path {
 	enum v90_analog_path_upstream_stage upstream_stage;
 	enum v90_analog_path_downstream_stage downstream_stage;
 	uint8_t upstream_rate_2400_bps_units;
+	uint8_t cleardown_records;
+	uint16_t cleardown_tail_samples;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool cp_prime_sent;
 	bool finishing_cp;
 	bool ed_armed;
 	bool rate_renegotiation_active;
+	bool cleardown_requested;
 	bool receive_pending;
 	bool failed;
 };
@@ -99,6 +103,11 @@ bool v90_analog_path_upstream_is_online(
 bool v90_analog_path_downstream_is_online(
 	const struct v90_analog_path *path);
 bool v90_analog_path_is_online(const struct v90_analog_path *path);
+
+/* Preserve the live QAM line through S/S-bar and two zero-rate CP records.
+ * COMPLETE follows the final pulse/pre-emphasis tail, without E or B1. */
+enum v90_analog_path_result v90_analog_path_start_cleardown(
+	struct v90_analog_path *path);
 
 /* Generate the analogue station's character for one clock interval. An OK
  * result commits that half of the interval and requires one receive call.

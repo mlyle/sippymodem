@@ -35,6 +35,7 @@ enum pcm_call_result {
 	PCM_CALL_OK,
 	PCM_CALL_PHASE4_READY,
 	PCM_CALL_V34_FALLBACK_READY,
+	PCM_CALL_CLEARDOWN_COMPLETE,
 	PCM_CALL_SOURCE_FAILURE,
 	PCM_CALL_FAILED,
 	PCM_CALL_INVALID_ARGUMENT,
@@ -283,6 +284,12 @@ enum pcm_call_result pcm_call_init(
 /* Start a full retrain while retaining the negotiated PCM protocol and INFO0
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
+
+/* Begin V.90 zero-rate cleardown on the current continuous data line.
+ * Subsequent data_octet calls ignore host sources and return
+ * CLEARDOWN_COMPLETE only after the final control/filter output drains.
+ * Native V.92 currently has no B1/data owner and is rejected here. */
+enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 
 bool pcm_call_is_valid(const struct pcm_call *call);
 bool pcm_call_has_failed(const struct pcm_call *call);
