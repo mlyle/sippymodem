@@ -1477,6 +1477,7 @@ V34_PHASE34_RECEIVER_TEST_BINARY := \
 V34_PHASE34_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase34_receiver.o \
 	$(BUILD_DIR)/v34_phase34_receiver.o \
+	$(BUILD_DIR)/v34_line_receiver.o \
 	$(BUILD_DIR)/v34_adaptive_equalizer.o \
 	$(sort $(V34_RECEIVE_PRIMITIVE_OBJECTS) \
 		$(filter-out \
@@ -5101,6 +5102,10 @@ $(BUILD_DIR)/v34_s_tone_detector.o: \
 
 $(BUILD_DIR)/v34_phase34_receiver.o: \
 	$(DSP_PCM_SOURCE_DIR)/v34_phase34_receiver.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v34_line_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/v34_line_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v34_equalizer_handoff.o: \

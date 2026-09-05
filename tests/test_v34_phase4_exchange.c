@@ -1023,13 +1023,13 @@ static bool test_validation_and_transactionality(void)
 			      &expected_receive) ==
 			      V34_PHASE34_RECEIVER_OK &&
 		      exchange.receive.phase4_s_rearmed &&
-		      v34_receive_timing_is_acquired(&exchange.receive.timing) &&
-		      memcmp(&exchange.receive.timing,
-			     &caller.handoff.receive.timing,
-			     sizeof(exchange.receive.timing)) == 0 &&
-		      memcmp(&exchange.receive.equalizer,
-			     &caller.handoff.receive.equalizer,
-			     sizeof(exchange.receive.equalizer)) == 0 &&
+		      v34_receive_timing_is_acquired(&exchange.receive.line.timing) &&
+		      memcmp(&exchange.receive.line.timing,
+			     &caller.handoff.receive.line.timing,
+			     sizeof(exchange.receive.line.timing)) == 0 &&
+		      memcmp(&exchange.receive.line.equalizer,
+			     &caller.handoff.receive.line.equalizer,
+			     sizeof(exchange.receive.line.equalizer)) == 0 &&
 		      memcmp(&exchange.receive, &expected_receive,
 			     sizeof(exchange.receive)) == 0,
 		      "caller Phase 4 did not retain the receive lineage");
@@ -1039,7 +1039,7 @@ static bool test_validation_and_transactionality(void)
 			      &exchange, &answerer.handoff, &configuration, 17u) ==
 			      V34_PHASE4_EXCHANGE_OK &&
 		      !exchange.receive.phase4_s_rearmed &&
-		      !exchange.receive.timing.reanchor_at_s &&
+		      !exchange.receive.line.timing.reanchor_at_s &&
 		      memcmp(&exchange.receive, &answerer.handoff.receive,
 			     sizeof(exchange.receive)) == 0,
 		      "answerer incorrectly applied the caller-only S rearm");

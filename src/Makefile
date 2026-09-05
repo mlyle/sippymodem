@@ -335,6 +335,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_equalizer_handoff.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_gain_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_lattice.c \
+	$(DSP_PCM_SOURCE_DIR)/v34_line_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_receive_timing.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_s_tone_detector.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_adaptive_equalizer.c \

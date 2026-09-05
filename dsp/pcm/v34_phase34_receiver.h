@@ -3,12 +3,11 @@
 #ifndef V34_PHASE34_RECEIVER_H
 #define V34_PHASE34_RECEIVER_H
 
-#include "v34_adaptive_equalizer.h"
 #include "v34_data_decision_receiver.h"
+#include "v34_line_receiver.h"
 #include "v34_phase3_decision_receiver.h"
 #include "v34_phase3_profile.h"
 #include "v34_phase4_decision_receiver.h"
-#include "v34_receive_timing.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -55,13 +54,12 @@ struct v34_phase34_receive_output {
 	struct v34_received_mapping_frame received;
 };
 
-/* Own the fixed-point receive lineage from the peer's Phase 3 S through
+/* Own the V.34 semantic receive lineage from the peer's Phase 3 S through
  * mapped data. At local J the caller starts a distinct Phase 4 S semantic
- * window while preserving the learned timing and equalizer; all other
- * semantic boundaries preserve that physical lineage too. */
+ * window over the same line receiver; every later boundary preserves that
+ * physical lineage too. */
 struct v34_phase34_receiver {
-	struct v34_receive_timing timing;
-	struct v34_adaptive_equalizer equalizer;
+	struct v34_line_receiver line;
 	union v34_phase34_receiver_semantic_state semantic;
 	struct v34_phase3_decision_handoff phase3_handoff;
 	struct v34_q14_coefficient

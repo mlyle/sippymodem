@@ -29,7 +29,7 @@ static bool handoff_is_clear(
 static uint16_t decoder_power(
 	const struct v34_phase34_receiver *receiver, uint32_t symbols)
 {
-	uint16_t period = receiver->timing.timing.nominal_symbol_rate;
+	uint16_t period = receiver->line.timing.timing.nominal_symbol_rate;
 
 	if (symbols >= period)
 		return V34_PHASE34_FINAL_DECODER_POWER_Q15;
@@ -184,11 +184,9 @@ bool v34_phase34_receiver_is_valid(
 	if (receiver == NULL || !receiver->initialized ||
 	    !v34_phase3_profile_is_valid(&receiver->transmitting_profile) ||
 	    !v34_constellation_size_is_valid(receiver->phase4_constellation) ||
-	    !v34_receive_timing_is_valid(&receiver->timing) ||
-	    !v34_receive_timing_matches_profile(
-		    &receiver->timing, &receiver->transmitting_profile) ||
-	    !v34_adaptive_equalizer_is_valid(&receiver->equalizer) ||
-	    receiver->equalizer.feedback_mode !=
+	    !v34_line_receiver_matches_profile(
+		    &receiver->line, &receiver->transmitting_profile) ||
+	    receiver->line.equalizer.feedback_mode !=
 		    expected_feedback_mode(receiver) ||
 	    !semantic_state_is_valid(receiver) ||
 	    !phase4_s_rearm_state_is_valid(receiver) ||
@@ -210,10 +208,10 @@ bool v34_phase34_receiver_is_valid(
 		     receiver->semantic.data.data_receiver.channel_receiver
 			     .receive_precoder.coefficients)))
 		return false;
-	if (!v34_receive_timing_is_acquired(&receiver->timing))
-		return receiver->equalizer.epoch == 0u &&
-		       receiver->equalizer.inputs_since_observation == 0u &&
-		       !receiver->equalizer.decision_pending &&
+	if (!v34_receive_timing_is_acquired(&receiver->line.timing))
+		return receiver->line.equalizer.epoch == 0u &&
+		       receiver->line.equalizer.inputs_since_observation == 0u &&
+		       !receiver->line.equalizer.decision_pending &&
 		       receiver->stage == V34_PHASE34_RECEIVER_PHASE3 &&
 		       (receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_S ||
@@ -258,16 +256,11 @@ enum v34_phase34_receiver_result v34_phase34_receiver_init(
 	initialized.decoder_power_q15 =
 		V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 	initialized.stage = V34_PHASE34_RECEIVER_PHASE3;
-	if (v34_receive_timing_init(
-		    &initialized.timing, transmitting_profile,
-		    initial_receive_gain, false) !=
-		    V34_RECEIVE_TIMING_OK ||
-	    v34_adaptive_equalizer_init(&initialized.equalizer) !=
-		    V34_ADAPTIVE_EQUALIZER_OK ||
-	    v34_adaptive_equalizer_set_feedback_mode(
-		    &initialized.equalizer,
+	if (v34_line_receiver_init(
+		    &initialized.line, transmitting_profile,
+		    initial_receive_gain, false,
 		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) !=
-		    V34_ADAPTIVE_EQUALIZER_OK ||
+		    V34_LINE_RECEIVER_OK ||
 	    v34_phase3_decision_receiver_init_suffix(
 		    &initialized.semantic.phase3,
 		    transmitting_profile->local_role,
@@ -296,7 +289,7 @@ static enum v34_phase34_receiver_result discard_and_fail(
 	enum v34_phase34_receiver_result result)
 {
 	if (v34_adaptive_equalizer_discard(
-		    &receiver->equalizer, observation) !=
+		    &receiver->line.equalizer, observation) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		result = V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 	return fail(receiver, result);
@@ -308,7 +301,7 @@ static void advance_tracking(struct v34_phase34_receiver *receiver)
 
 	if (!receiver->tracking_started)
 		return;
-	period = receiver->timing.timing.nominal_symbol_rate;
+	period = receiver->line.timing.timing.nominal_symbol_rate;
 	if (receiver->tracking_symbols < period)
 		receiver->tracking_symbols++;
 	receiver->decoder_power_q15 =
@@ -375,24 +368,24 @@ static bool execute_receive_action(
 	switch (output->action) {
 	case V34_RECEIVE_COMMIT:
 		if (v34_adaptive_equalizer_commit(
-			    &receiver->equalizer, &output->equalizer) !=
+			    &receiver->line.equalizer, &output->equalizer) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return false;
 		break;
 	case V34_RECEIVE_DISCARD:
 		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, observation) !=
+			    &receiver->line.equalizer, observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return false;
 		break;
 	case V34_RECEIVE_BEGIN_TRACKING:
 		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, observation) !=
+			    &receiver->line.equalizer, observation) !=
 			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_receive_timing_freeze_gain(&receiver->timing) !=
+		    v34_receive_timing_freeze_gain(&receiver->line.timing) !=
 			    V34_RECEIVE_TIMING_OK ||
 		    v34_adaptive_equalizer_begin_tracking(
-			    &receiver->equalizer) !=
+			    &receiver->line.equalizer) !=
 			    V34_ADAPTIVE_EQUALIZER_OK)
 			return false;
 		receiver->tracking_started = true;
@@ -401,25 +394,18 @@ static bool execute_receive_action(
 			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
 	case V34_RECEIVE_RESTART_PATH: {
-		struct v34_receive_timing timing;
-		struct v34_adaptive_equalizer equalizer;
+		struct v34_line_receiver line;
 
 		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, observation) !=
+			    &receiver->line.equalizer, observation) !=
 			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_receive_timing_init(
-			    &timing, &receiver->transmitting_profile,
-			    receiver->timing.gain.gain, false) !=
-			    V34_RECEIVE_TIMING_OK ||
-		    v34_adaptive_equalizer_init(&equalizer) !=
-			    V34_ADAPTIVE_EQUALIZER_OK ||
-		    v34_adaptive_equalizer_set_feedback_mode(
-			    &equalizer,
+		    v34_line_receiver_init(
+			    &line, &receiver->transmitting_profile,
+			    receiver->line.timing.gain.gain, false,
 			    V34_ADAPTIVE_EQUALIZER_FEEDBACK_LEARN) !=
-			    V34_ADAPTIVE_EQUALIZER_OK)
+			    V34_LINE_RECEIVER_OK)
 			return false;
-		receiver->timing = timing;
-		receiver->equalizer = equalizer;
+		receiver->line = line;
 		receiver->tracking_started = false;
 		receiver->tracking_symbols = 0u;
 		receiver->decoder_power_q15 =
@@ -572,7 +558,7 @@ static enum v34_phase34_receiver_result receive_data(
 	if (!semantic_result_consumed(mapped))
 		return discard_and_fail(receiver, observation, mapped);
 	if (v34_adaptive_equalizer_commit(
-		    &receiver->equalizer, &decoded.equalizer) !=
+		    &receiver->line.equalizer, &decoded.equalizer) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	advance_tracking(receiver);
@@ -605,65 +591,28 @@ static enum v34_phase34_receiver_result receive_line_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output)
 {
-	struct v34_receive_timing_samples recovered = { 0 };
 	struct v34_adaptive_equalizer_observation observation;
-	enum v34_receive_timing_result timing_result;
+	enum v34_line_receiver_result line_result;
 	enum v34_phase34_receiver_result result;
-	bool was_acquired;
-	bool acquired;
 
-	was_acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	timing_result = v34_receive_timing_sample(
-		&receiver->timing, sample, &recovered);
-	if (timing_result != V34_RECEIVE_TIMING_OK &&
-	    timing_result != V34_RECEIVE_TIMING_SAMPLES_READY)
-		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	acquired = v34_receive_timing_is_acquired(&receiver->timing);
-	/* Carrier confirmation owns the physical start of S/S-bar reception.
-	 * Keep the equalizer and semantic window pristine while the timing and
-	 * gain loops acquire; otherwise pre-S energy trains a false lineage. */
-	if (!was_acquired)
-		return acquired ? V34_PHASE34_RECEIVER_TIMING_ACQUIRED :
-				  V34_PHASE34_RECEIVER_OK;
-	if (timing_result == V34_RECEIVE_TIMING_OK)
-		return !was_acquired && acquired ?
-			V34_PHASE34_RECEIVER_TIMING_ACQUIRED :
-			V34_PHASE34_RECEIVER_OK;
-	for (uint8_t index = 0; index < recovered.count; ++index)
-		if (v34_adaptive_equalizer_push(
-			    &receiver->equalizer, recovered.sample[index]) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	if (!recovered.symbol_complete)
+	line_result = v34_line_receiver_sample(
+		&receiver->line, sample, &observation);
+	if (line_result == V34_LINE_RECEIVER_OK)
 		return V34_PHASE34_RECEIVER_OK;
-	if (v34_adaptive_equalizer_observe(
-		    &receiver->equalizer, &observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
+	if (line_result == V34_LINE_RECEIVER_TIMING_ACQUIRED)
+		return V34_PHASE34_RECEIVER_TIMING_ACQUIRED;
+	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
 	    receiver->data_erasure) {
 		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, &observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return fail(
-				receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-		return V34_PHASE34_RECEIVER_OK;
-	}
-	/* A fresh identity equalizer first publishes its zero-filled delay-line
-	 * prefix.  Consume that prefix without letting it seed the known S target
-	 * in an arbitrary quadrant; epoch 20 is the first signal-bearing symbol. */
-	if (receiver->equalizer.epoch <
-	    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH) {
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->equalizer, &observation) !=
+			    &receiver->line.equalizer, &observation) !=
 		    V34_ADAPTIVE_EQUALIZER_OK)
 			return fail(
 				receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
 		return V34_PHASE34_RECEIVER_OK;
 	}
 	result = receive_observation(receiver, &observation, output);
-	if (result == V34_PHASE34_RECEIVER_OK && !was_acquired && acquired)
-		result = V34_PHASE34_RECEIVER_TIMING_ACQUIRED;
 	if (!v34_phase34_receiver_is_valid(receiver))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	return result;
@@ -704,10 +653,11 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4 ||
 	    receiver->semantic.phase4.stage !=
 		    V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
-	    receiver->phase4_s_rearmed || receiver->equalizer.decision_pending ||
-	    receiver->equalizer.inputs_since_observation != 0u ||
-	    !v34_receive_timing_is_acquired(&receiver->timing) ||
-	    receiver->equalizer.epoch <
+	    receiver->phase4_s_rearmed ||
+	    receiver->line.equalizer.decision_pending ||
+	    receiver->line.equalizer.inputs_since_observation != 0u ||
+	    !v34_receive_timing_is_acquired(&receiver->line.timing) ||
+	    receiver->line.equalizer.epoch <
 		    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next = *receiver;
@@ -770,10 +720,10 @@ v34_phase34_receiver_finish_feedback_training(
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	if (v34_adaptive_equalizer_finish_feedback_training(
-		    &next.equalizer, learned) != V34_ADAPTIVE_EQUALIZER_OK)
+		    &next.line.equalizer, learned) != V34_ADAPTIVE_EQUALIZER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	select_precoder = allow_precoder &&
-		feedback_training_supports_precoding(&next.equalizer, learned);
+		feedback_training_supports_precoding(&next.line.equalizer, learned);
 	if (select_precoder)
 		memcpy(selected, learned, sizeof(selected));
 	memcpy(next.precoder_coefficients, selected, sizeof(selected));
@@ -828,7 +778,7 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 	 * the active timing schedule and its learned fractional-clock state
 	 * continuous through B1. */
 	if (v34_adaptive_equalizer_set_feedback_mode(
-		    &next.equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) !=
+		    &next.line.equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next.semantic =
@@ -850,7 +800,7 @@ v34_phase34_receiver_set_data_timing_frozen(
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next = *receiver;
-	if (v34_receive_timing_set_data_frozen(&next.timing, frozen) !=
+	if (v34_receive_timing_set_data_frozen(&next.line.timing, frozen) !=
 		    V34_RECEIVE_TIMING_OK ||
 	    !v34_phase34_receiver_is_valid(&next))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
@@ -866,7 +816,7 @@ v34_phase34_receiver_set_data_erasure(
 
 	if (!v34_phase34_receiver_is_valid(receiver) ||
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA ||
-	    receiver->equalizer.decision_pending)
+	    receiver->line.equalizer.decision_pending)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next = *receiver;
 	next.data_erasure = erasure;

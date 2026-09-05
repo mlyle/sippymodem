@@ -230,9 +230,9 @@ static bool run_generated_duplex_exchange(
 		enum v34_phase3_exchange_result answerer_result;
 		bool answerer_was_transmitting = answerer.transmit_started;
 		bool caller_timing_was_acquired =
-			v34_receive_timing_is_acquired(&caller.receive.timing);
+			v34_receive_timing_is_acquired(&caller.receive.line.timing);
 		bool answerer_timing_was_acquired =
-			v34_receive_timing_is_acquired(&answerer.receive.timing);
+			v34_receive_timing_is_acquired(&answerer.receive.line.timing);
 		bool answerer_starting_j =
 			answerer.transmit.phase3.stage ==
 				V34_PHASE3_TRANSMITTER_TRN &&
@@ -267,13 +267,13 @@ static bool run_generated_duplex_exchange(
 		      record_events(answerer_events, &answerer_seen),
 		      "Phase 3 event repeated at sample %zu", index);
 		if (!caller_timing_was_acquired &&
-		    v34_receive_timing_is_acquired(&caller.receive.timing))
+		    v34_receive_timing_is_acquired(&caller.receive.line.timing))
 			caller_signal_start = index;
 		if (!answerer_timing_was_acquired &&
-		    v34_receive_timing_is_acquired(&answerer.receive.timing)) {
+		    v34_receive_timing_is_acquired(&answerer.receive.line.timing)) {
 			answerer_signal_start = index;
 			answerer_signal_phase =
-				answerer.receive.timing.carrier.phase;
+				answerer.receive.line.timing.carrier.phase;
 		}
 		if ((answerer_events &
 		     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STOPPED) != 0)
@@ -286,8 +286,8 @@ static bool run_generated_duplex_exchange(
 			      answerer.receive.stage ==
 				      V34_PHASE34_RECEIVER_PHASE3 &&
 			      !v34_receive_timing_is_acquired(
-				      &answerer.receive.timing) &&
-			      answerer.receive.equalizer.epoch == 0u,
+				      &answerer.receive.line.timing) &&
+			      answerer.receive.line.equalizer.epoch == 0u,
 			      "answerer did not start S reception at local J");
 		}
 		if ((caller_events &
@@ -298,7 +298,7 @@ static bool run_generated_duplex_exchange(
 				      V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 			      !caller.receive.phase4_s_rearmed &&
 			      v34_receive_timing_is_acquired(
-				      &caller.receive.timing) &&
+				      &caller.receive.line.timing) &&
 			      caller.receive.tracking_started,
 			      "caller changed Phase 3 reception at local J");
 		if ((caller_events &
@@ -327,12 +327,12 @@ static bool run_generated_duplex_exchange(
 	      answerer_seen);
 	CHECK(caller_signal_start < exchanged_samples &&
 	      !caller.receive.phase4_s_rearmed &&
-	      v34_receive_timing_is_acquired(&caller.receive.timing) &&
+	      v34_receive_timing_is_acquired(&caller.receive.line.timing) &&
 	      answerer_receive_start < exchanged_samples &&
 	      answerer_signal_start < exchanged_samples &&
-	      answerer.receive.timing.carrier.phase ==
+	      answerer.receive.line.timing.carrier.phase ==
 		      answerer_signal_phase +
-			      (uint32_t)((uint64_t)answerer.receive.timing.carrier.phase_step *
+			      (uint32_t)((uint64_t)answerer.receive.line.timing.carrier.phase_step *
 				 (exchanged_samples - answerer_signal_start - 1u)),
 	      "Phase 3 receivers did not reach the expected handoff timeline");
 	CHECK(answer_silence ==
@@ -377,9 +377,9 @@ static bool run_generated_duplex_exchange(
 		      V34_CONSTELLATION_4_POINT &&
 	      !caller_handoff.receive.phase4_s_rearmed &&
 	      v34_receive_timing_is_acquired(
-		      &caller_handoff.receive.timing) &&
+		      &caller_handoff.receive.line.timing) &&
 	      v34_receive_timing_is_acquired(
-		      &answerer_handoff.receive.timing),
+		      &answerer_handoff.receive.line.timing),
 	      "Phase 3 handoff lost either J constellation selection");
 	return true;
 }

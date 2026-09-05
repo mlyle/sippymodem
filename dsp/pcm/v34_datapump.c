@@ -329,7 +329,7 @@ static bool enter_link(struct v34_datapump *datapump)
 
 	if (!v34_call_get_data_startup(&datapump->call, &startup))
 		return false;
-	measurement = &datapump->call.state.phase4.receive.equalizer.quality;
+	measurement = &datapump->call.state.phase4.receive.line.equalizer.quality;
 	data_quality = datapump->data_quality;
 	if (v34_data_quality_start(
 		    &data_quality, startup.receive.geometry.symbol_rate,
@@ -392,7 +392,7 @@ static bool observe_online_quality(struct v34_datapump *datapump)
 {
 	struct v34_data_quality next = datapump->data_quality;
 	const struct v34_adaptive_equalizer_quality *measurement =
-		&datapump->call.state.phase4.receive.equalizer.quality;
+		&datapump->call.state.phase4.receive.line.equalizer.quality;
 	enum v34_data_quality_result result =
 		v34_data_quality_observe(&next, measurement);
 

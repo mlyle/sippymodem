@@ -575,7 +575,7 @@ static enum v34_phase4_exchange_result prepare_local_mp(
 	if (v34_data_quality_select_receive_rate(
 		    peer_transmit_profile(exchange)->symbol_rate,
 		    parameters->data_rate_capability_mask, *maximum,
-		    &exchange->receive.equalizer.quality, &selected) !=
+		    &exchange->receive.line.equalizer.quality, &selected) !=
 	    V34_DATA_QUALITY_OK)
 		return V34_PHASE4_EXCHANGE_NUMERIC_FAILURE;
 	*maximum = selected;

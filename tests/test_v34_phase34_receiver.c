@@ -230,14 +230,14 @@ static bool test_validation(void)
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
-	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
-	      receiver.timing.gain.mode == V34_GAIN_FROZEN,
+	      receiver.line.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
+	      receiver.line.timing.gain.mode == V34_GAIN_FROZEN,
 	      "valid receiver did not initialize");
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &reduced, V34_CONSTELLATION_16_POINT,
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK &&
-	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN,
+	      receiver.line.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN,
 	      "profile-independent receive gain changed");
 	CHECK(v34_phase34_receiver_init(
 		      &receiver, &valid, V34_CONSTELLATION_16_POINT,
@@ -251,11 +251,11 @@ static bool test_validation(void)
 		CHECK(v34_phase34_receiver_sample(&receiver, 0, &output) ==
 			      V34_PHASE34_RECEIVER_OK,
 		      "leading silence failed at sample %u", sample);
-	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
-	      receiver.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
-	      receiver.timing.gain.mode == V34_GAIN_FROZEN &&
-	      memcmp(&receiver.equalizer, &saved.equalizer,
-		     sizeof(receiver.equalizer)) == 0 &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.line.timing) &&
+	      receiver.line.timing.gain.gain == TEST_INITIAL_RECEIVE_GAIN &&
+	      receiver.line.timing.gain.mode == V34_GAIN_FROZEN &&
+	      memcmp(&receiver.line.equalizer, &saved.line.equalizer,
+		     sizeof(receiver.line.equalizer)) == 0 &&
 	      memcmp(&receiver.semantic, &saved.semantic,
 		     sizeof(receiver.semantic)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
@@ -315,41 +315,41 @@ static bool test_data_erasure(
 		     sizeof(receiver->semantic)) == 0 &&
 	      receiver->tracking_symbols == saved.tracking_symbols &&
 	      receiver->decoder_power_q15 == saved.decoder_power_q15 &&
-	      memcmp(&receiver->equalizer.feedback, &saved.equalizer.feedback,
-		     sizeof(receiver->equalizer.feedback)) == 0 &&
-	      memcmp(&receiver->equalizer.quality, &saved.equalizer.quality,
-		     sizeof(receiver->equalizer.quality)) == 0 &&
-	      memcmp(receiver->equalizer.equalizer.in_phase_coefficient,
-		     saved.equalizer.equalizer.in_phase_coefficient,
-		     sizeof(receiver->equalizer.equalizer
+	      memcmp(&receiver->line.equalizer.feedback, &saved.line.equalizer.feedback,
+		     sizeof(receiver->line.equalizer.feedback)) == 0 &&
+	      memcmp(&receiver->line.equalizer.quality, &saved.line.equalizer.quality,
+		     sizeof(receiver->line.equalizer.quality)) == 0 &&
+	      memcmp(receiver->line.equalizer.equalizer.in_phase_coefficient,
+		     saved.line.equalizer.equalizer.in_phase_coefficient,
+		     sizeof(receiver->line.equalizer.equalizer
 				    .in_phase_coefficient)) == 0 &&
-	      memcmp(receiver->equalizer.equalizer.quadrature_coefficient,
-		     saved.equalizer.equalizer.quadrature_coefficient,
-		     sizeof(receiver->equalizer.equalizer
+	      memcmp(receiver->line.equalizer.equalizer.quadrature_coefficient,
+		     saved.line.equalizer.equalizer.quadrature_coefficient,
+		     sizeof(receiver->line.equalizer.equalizer
 				    .quadrature_coefficient)) == 0 &&
-	      memcmp(receiver->equalizer.equalizer.in_phase_residue,
-		     saved.equalizer.equalizer.in_phase_residue,
-		     sizeof(receiver->equalizer.equalizer.in_phase_residue)) == 0 &&
-	      memcmp(receiver->equalizer.equalizer.quadrature_residue,
-		     saved.equalizer.equalizer.quadrature_residue,
-		     sizeof(receiver->equalizer.equalizer
+	      memcmp(receiver->line.equalizer.equalizer.in_phase_residue,
+		     saved.line.equalizer.equalizer.in_phase_residue,
+		     sizeof(receiver->line.equalizer.equalizer.in_phase_residue)) == 0 &&
+	      memcmp(receiver->line.equalizer.equalizer.quadrature_residue,
+		     saved.line.equalizer.equalizer.quadrature_residue,
+		     sizeof(receiver->line.equalizer.equalizer
 				    .quadrature_residue)) == 0 &&
-	      receiver->equalizer.phase_accumulator ==
-		      saved.equalizer.phase_accumulator &&
-	      receiver->equalizer.phase_error == saved.equalizer.phase_error &&
-	      receiver->equalizer.rotate_in_phase ==
-		      saved.equalizer.rotate_in_phase &&
-	      receiver->equalizer.rotate_quadrature ==
-		      saved.equalizer.rotate_quadrature &&
-	      receiver->equalizer.carrier_phase_low ==
-		      saved.equalizer.carrier_phase_low &&
-	      receiver->equalizer.carrier_phase_fraction ==
-		      saved.equalizer.carrier_phase_fraction &&
-	      receiver->equalizer.epoch > saved.equalizer.epoch &&
-	      receiver->equalizer.lineage != saved.equalizer.lineage &&
-	      memcmp(&receiver->timing, &saved.timing,
-		     sizeof(receiver->timing)) != 0 &&
-	      !receiver->equalizer.decision_pending &&
+	      receiver->line.equalizer.phase_accumulator ==
+		      saved.line.equalizer.phase_accumulator &&
+	      receiver->line.equalizer.phase_error == saved.line.equalizer.phase_error &&
+	      receiver->line.equalizer.rotate_in_phase ==
+		      saved.line.equalizer.rotate_in_phase &&
+	      receiver->line.equalizer.rotate_quadrature ==
+		      saved.line.equalizer.rotate_quadrature &&
+	      receiver->line.equalizer.carrier_phase_low ==
+		      saved.line.equalizer.carrier_phase_low &&
+	      receiver->line.equalizer.carrier_phase_fraction ==
+		      saved.line.equalizer.carrier_phase_fraction &&
+	      receiver->line.equalizer.epoch > saved.line.equalizer.epoch &&
+	      receiver->line.equalizer.lineage != saved.line.equalizer.lineage &&
+	      memcmp(&receiver->line.timing, &saved.line.timing,
+		     sizeof(receiver->line.timing)) != 0 &&
+	      !receiver->line.equalizer.decision_pending &&
 	      v34_phase34_receiver_is_valid(receiver),
 	      "role %u rate %u data erasure changed adaptive or semantic state",
 	      role, rate);
@@ -360,16 +360,16 @@ static bool test_data_erasure(
 	      "role %u rate %u did not leave data erasure", role, rate);
 
 	pending = *receiver;
-	while (pending.equalizer.inputs_since_observation <
+	while (pending.line.equalizer.inputs_since_observation <
 	       V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION)
 		CHECK(v34_adaptive_equalizer_push(
-			      &pending.equalizer,
+			      &pending.line.equalizer,
 			      (struct v34_analytic_sample){ 0, 0 }) ==
 			      V34_ADAPTIVE_EQUALIZER_OK,
 		      "role %u rate %u could not prepare a pending decision", role,
 		      rate);
 	CHECK(v34_adaptive_equalizer_observe(
-		      &pending.equalizer, &observation) ==
+		      &pending.line.equalizer, &observation) ==
 		      V34_ADAPTIVE_EQUALIZER_OK &&
 	      v34_phase34_receiver_is_valid(&pending),
 	      "role %u rate %u pending receiver became invalid", role, rate);
@@ -399,7 +399,7 @@ static bool test_tone_owned_acquisition(void)
 		      TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "tone-owned receiver did not initialize");
-	saved_equalizer = receiver.equalizer;
+	saved_equalizer = receiver.line.equalizer;
 	saved_semantic = receiver.semantic;
 	memset(&output, 0x6d, sizeof(output));
 	saved_output = output;
@@ -410,9 +410,9 @@ static bool test_tone_owned_acquisition(void)
 			      V34_PHASE34_RECEIVER_OK,
 		      "codec noise failed at sample %u", index);
 	}
-	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.line.timing) &&
 	      memcmp(
-		      &receiver.equalizer, &saved_equalizer,
+		      &receiver.line.equalizer, &saved_equalizer,
 		      sizeof(saved_equalizer)) == 0 &&
 	      memcmp(
 		      &receiver.semantic, &saved_semantic,
@@ -434,7 +434,7 @@ static bool test_tone_owned_acquisition(void)
 			      V34_PHASE34_RECEIVER_OK,
 		      "isolated impulse failed at sample %u", index);
 	}
-	CHECK(!v34_receive_timing_is_acquired(&receiver.timing) &&
+	CHECK(!v34_receive_timing_is_acquired(&receiver.line.timing) &&
 	      v34_phase34_receiver_is_valid(&receiver),
 	      "isolated impulse acquired S timing");
 
@@ -446,7 +446,7 @@ static bool test_tone_owned_acquisition(void)
 	      v34_phase34_receiver_sample(&receiver, 400, &output) ==
 		      V34_PHASE34_RECEIVER_OK,
 	      "corrupt-state receiver did not initialize");
-	receiver.timing.s_detector.carrier = V34_S_TONE_CARRIER_COUNT;
+	receiver.line.timing.s_detector.carrier = V34_S_TONE_CARRIER_COUNT;
 	{
 		struct v34_phase34_receiver saved = receiver;
 
@@ -508,23 +508,23 @@ static bool test_training_case(
 		memset(&output, 0x5d, sizeof(output));
 		saved_output = output;
 		result = v34_phase34_receiver_sample(&receiver, sample, &output);
-		if (receiver.equalizer.epoch > 0u &&
-		    receiver.equalizer.epoch <
+		if (receiver.line.equalizer.epoch > 0u &&
+		    receiver.line.equalizer.epoch <
 			    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH &&
 		    receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
 		    receiver.semantic.phase3.stage ==
 			    V34_PHASE3_DECISION_RECEIVER_S) {
 			CHECK(receiver.semantic.phase3.s.buffered_decisions == 0u &&
 			      !receiver.semantic.phase3.s.target_seeded &&
-			      !receiver.equalizer.decision_pending,
+			      !receiver.line.equalizer.decision_pending,
 			      "role %u rate %u changed Phase 3 S during preroll",
 			      role, rate);
-			if (phase3_preroll_epoch != receiver.equalizer.epoch) {
-				CHECK(receiver.equalizer.epoch ==
+			if (phase3_preroll_epoch != receiver.line.equalizer.epoch) {
+				CHECK(receiver.line.equalizer.epoch ==
 					      phase3_preroll_epoch + 1u,
 				      "role %u rate %u skipped Phase 3 preroll epoch",
 				      role, rate);
-				phase3_preroll_epoch = receiver.equalizer.epoch;
+				phase3_preroll_epoch = receiver.line.equalizer.epoch;
 			}
 		}
 		switch (result) {
@@ -532,10 +532,10 @@ static bool test_training_case(
 			break;
 		case V34_PHASE34_RECEIVER_TIMING_ACQUIRED:
 			CHECK(receiver.stage == V34_PHASE34_RECEIVER_PHASE3 &&
-			      receiver.timing.gain.mode == V34_GAIN_TRACKING &&
-			      receiver.equalizer.epoch == 0u &&
-			      receiver.equalizer.inputs_since_observation == 0u &&
-			      !receiver.equalizer.decision_pending &&
+			      receiver.line.timing.gain.mode == V34_GAIN_TRACKING &&
+			      receiver.line.equalizer.epoch == 0u &&
+			      receiver.line.equalizer.inputs_since_observation == 0u &&
+			      !receiver.line.equalizer.decision_pending &&
 			      receiver.semantic.phase3.stage ==
 					V34_PHASE3_DECISION_RECEIVER_S &&
 			      receiver.semantic.phase3.s.buffered_decisions == 0u &&
@@ -555,8 +555,8 @@ static bool test_training_case(
 			break;
 		case V34_PHASE34_RECEIVER_J_DETECTED:
 			if (role == V34_ANSWERING_STATION) {
-				phase4_rearm_equalizer = receiver.equalizer;
-				phase4_rearm_timing = receiver.timing;
+				phase4_rearm_equalizer = receiver.line.equalizer;
+				phase4_rearm_timing = receiver.line.timing;
 				phase4_equalizer_saved = true;
 				CHECK(receiver.stage ==
 					      V34_PHASE34_RECEIVER_PHASE4 &&
@@ -568,12 +568,12 @@ static bool test_training_case(
 					      &receiver) ==
 					      V34_PHASE34_RECEIVER_OK &&
 				      receiver.phase4_s_rearmed &&
-				      memcmp(&receiver.timing,
+				      memcmp(&receiver.line.timing,
 					     &phase4_rearm_timing,
-					     sizeof(receiver.timing)) == 0 &&
-				      memcmp(&receiver.equalizer,
+					     sizeof(receiver.line.timing)) == 0 &&
+				      memcmp(&receiver.line.equalizer,
 					     &phase4_rearm_equalizer,
-					     sizeof(receiver.equalizer)) == 0 &&
+					     sizeof(receiver.line.equalizer)) == 0 &&
 				      !receiver.tracking_started,
 				      "role %u rate %u lost the Phase 4 receive lineage",
 				      role, rate);
@@ -645,16 +645,16 @@ static bool test_training_case(
 						V34_SYMBOL_RATE_2800 ?
 					V34_SYMBOL_RATE_3000 :
 					V34_SYMBOL_RATE_2800;
-			feedback_receiver.equalizer.quality.decision_metric = 2;
-			feedback_receiver.equalizer.quality.feedback_metric = 1;
-			receiver.equalizer.quality.decision_metric = 1;
-			receiver.equalizer.quality.feedback_metric = 1;
-			unstable_receiver.equalizer.quality.decision_metric = 300;
-			unstable_receiver.equalizer.quality.feedback_metric = 1;
+			feedback_receiver.line.equalizer.quality.decision_metric = 2;
+			feedback_receiver.line.equalizer.quality.feedback_metric = 1;
+			receiver.line.equalizer.quality.decision_metric = 1;
+			receiver.line.equalizer.quality.feedback_metric = 1;
+			unstable_receiver.line.equalizer.quality.decision_metric = 300;
+			unstable_receiver.line.equalizer.quality.feedback_metric = 1;
 			for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-				unstable_receiver.equalizer.feedback.coefficient_a[tap] =
+				unstable_receiver.line.equalizer.feedback.coefficient_a[tap] =
 					6000;
-				unstable_receiver.equalizer.feedback.coefficient_b[tap] =
+				unstable_receiver.line.equalizer.feedback.coefficient_b[tap] =
 					6000;
 			}
 			saved = receiver;
@@ -711,14 +711,14 @@ static bool test_training_case(
 			      memcmp(unstable_coefficients,
 				     source.parameters.precoder_coefficients,
 				     sizeof(unstable_coefficients)) == 0 &&
-			      !feedback_receiver.equalizer.decision_pending &&
+			      !feedback_receiver.line.equalizer.decision_pending &&
 			      feedback_receiver.feedback_training_complete &&
 			      receiver.feedback_training_complete &&
 			      unstable_receiver.feedback_training_complete,
 			      "role %u rate %u selected unhelpful feedback", role,
 			      rate);
-			feedback_timing = feedback_receiver.timing;
-			zero_timing = receiver.timing;
+			feedback_timing = feedback_receiver.line.timing;
+			zero_timing = receiver.line.timing;
 			changed_coefficients[0] = feedback_coefficients[0];
 			changed_coefficients[1] = feedback_coefficients[1];
 			changed_coefficients[2] = feedback_coefficients[2];
@@ -748,9 +748,9 @@ static bool test_training_case(
 				      feedback_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_OK &&
-			      feedback_receiver.equalizer.feedback_mode ==
+			      feedback_receiver.line.equalizer.feedback_mode ==
 				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
-			      memcmp(&feedback_receiver.timing, &feedback_timing,
+			      memcmp(&feedback_receiver.line.timing, &feedback_timing,
 				     sizeof(feedback_timing)) == 0 &&
 			      v34_phase34_receiver_is_valid(
 				      &feedback_receiver) &&
@@ -762,9 +762,9 @@ static bool test_training_case(
 				      source.parameters.precoder_coefficients,
 				      source.parameters.trellis_selection) ==
 				      V34_PHASE34_RECEIVER_OK &&
-			      receiver.equalizer.feedback_mode ==
+			      receiver.line.equalizer.feedback_mode ==
 				      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
-			      memcmp(&receiver.timing, &zero_timing,
+			      memcmp(&receiver.line.timing, &zero_timing,
 				     sizeof(zero_timing)) == 0,
 			      "role %u rate %u did not enter data at E", role,
 			      rate);
@@ -844,7 +844,7 @@ static bool test_training_case(
 	      source.completed_records >= 3u && source.data_started &&
 	      v34_phase34_receiver_is_valid(&receiver) &&
 	      receiver.stage == V34_PHASE34_RECEIVER_DATA &&
-	      receiver.equalizer.feedback_mode ==
+	      receiver.line.equalizer.feedback_mode ==
 		      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
 	      !v34_phase34_receiver_is_complete(&receiver) &&
 	      !v34_phase34_receiver_has_failed(&receiver),
@@ -860,8 +860,8 @@ static bool test_training_case(
 	CHECK(v34_phase3_decision_handoff_is_valid(
 		      &receiver.phase3_handoff) &&
 	      receiver.tracking_started && receiver.tracking_symbols != 0u &&
-	      receiver.equalizer.epoch != 0u &&
-	      !receiver.equalizer.decision_pending,
+	      receiver.line.equalizer.epoch != 0u &&
+	      !receiver.line.equalizer.decision_pending,
 	      "role %u rate %u receiver did not retain its physical lineage",
 	      role, rate);
 	return test_data_erasure(&receiver, &source, role, rate);
