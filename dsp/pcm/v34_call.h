@@ -7,6 +7,7 @@
 #include "v34_phase3_exchange.h"
 #include "v34_phase4_exchange.h"
 #include "v34_echo_canceller.h"
+#include "v34_cleardown.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -16,6 +17,7 @@ enum v34_call_stage {
 	V34_CALL_PHASE3,
 	V34_CALL_PHASE4,
 	V34_CALL_RETRAIN_SILENCE,
+	V34_CALL_CLEARDOWN,
 };
 
 enum v34_call_result {
@@ -29,6 +31,7 @@ enum v34_call_result {
 	V34_CALL_CLIPPING_RISK,
 	V34_CALL_SEQUENCE_MISMATCH,
 	V34_CALL_NUMERIC_FAILURE,
+	V34_CALL_CLEARDOWN_COMPLETE,
 };
 
 union v34_local_info1 {
@@ -52,6 +55,7 @@ union v34_call_state {
 	struct v34_phase2 phase2;
 	struct v34_phase3_exchange phase3;
 	struct v34_phase4_exchange phase4;
+	struct v34_cleardown cleardown;
 };
 
 /* One observation describes the owner that consumed the sample and the owner
@@ -101,6 +105,10 @@ enum v34_call_result v34_call_init_from_phase2(
 /* Begin the role-specific full retrain with 70 ms of line silence. The
  * negotiated INFO0 capability records remain owned by the call. */
 enum v34_call_result v34_call_start_retrain(struct v34_call *call);
+
+/* Transfer the online line owners to the reciprocal MP-prime cleardown.
+ * The outer modem lifecycle supplies the bounded peer-response deadline. */
+enum v34_call_result v34_call_start_cleardown(struct v34_call *call);
 
 bool v34_call_is_valid(const struct v34_call *call);
 bool v34_call_has_failed(const struct v34_call *call);

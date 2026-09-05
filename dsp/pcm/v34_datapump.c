@@ -378,6 +378,7 @@ static bool observation_has_progress(
 	case V34_CALL_PHASE4:
 		return observation->events.phase4 != 0;
 	case V34_CALL_RETRAIN_SILENCE:
+	case V34_CALL_CLEARDOWN:
 		return false;
 	}
 	return false;

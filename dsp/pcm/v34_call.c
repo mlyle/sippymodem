@@ -166,6 +166,11 @@ bool v34_call_is_valid(const struct v34_call *call)
 		child_failed = false;
 		child_role = call->local_role;
 		break;
+	case V34_CALL_CLEARDOWN:
+		child_valid = v34_cleardown_is_valid(&call->state.cleardown);
+		child_failed = call->state.cleardown.failed;
+		child_role = call->state.cleardown.transmit_line.profile.local_role;
+		break;
 	default:
 		return false;
 	}
@@ -320,6 +325,29 @@ enum v34_call_result v34_call_start_retrain(struct v34_call *call)
 	if (!v34_call_is_online(call))
 		return V34_CALL_INVALID_STATE;
 	return begin_retrain(call, false);
+}
+
+enum v34_call_result v34_call_start_cleardown(struct v34_call *call)
+{
+	struct v34_cleardown cleardown;
+	const struct v34_phase4_exchange *online;
+
+	if (!v34_call_is_valid(call))
+		return V34_CALL_INVALID_ARGUMENT;
+	if (call->stage == V34_CALL_CLEARDOWN && !call->failed)
+		return V34_CALL_OK;
+	if (!v34_call_is_online(call))
+		return V34_CALL_INVALID_STATE;
+	online = &call->state.phase4;
+	if (v34_cleardown_init(
+		    &cleardown, &online->transmit.data.line,
+		    &online->receive.line,
+		    v34_mp_record_common_parameters(&online->transmit_mp)) !=
+		    V34_CLEARDOWN_OK)
+		return V34_CALL_NUMERIC_FAILURE;
+	call->state = (union v34_call_state){ .cleardown = cleardown };
+	call->stage = V34_CALL_CLEARDOWN;
+	return V34_CALL_OK;
 }
 
 bool v34_call_has_failed(const struct v34_call *call)
@@ -720,7 +748,8 @@ enum v34_call_result v34_call_sample(
 		return V34_CALL_FAILED;
 	emitted.processed = call->stage;
 	echo_processed = (emitted.processed == V34_CALL_PHASE3 ||
-			  emitted.processed == V34_CALL_PHASE4) &&
+			  emitted.processed == V34_CALL_PHASE4 ||
+			  emitted.processed == V34_CALL_CLEARDOWN) &&
 			 (call->echo.adapting || call->echo.filtering);
 	if (echo_processed &&
 	    v34_echo_canceller_predict(
@@ -751,6 +780,17 @@ enum v34_call_result v34_call_sample(
 	case V34_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(
 			call, received_sample, &generated);
+		break;
+	case V34_CALL_CLEARDOWN:
+		{
+			enum v34_cleardown_result cleared = v34_cleardown_sample(
+				&call->state.cleardown, conditioned, &generated);
+
+			result = cleared == V34_CLEARDOWN_OK ? V34_CALL_OK :
+				cleared == V34_CLEARDOWN_COMPLETE ?
+					V34_CALL_CLEARDOWN_COMPLETE :
+					V34_CALL_NUMERIC_FAILURE;
+		}
 		break;
 	default:
 		return V34_CALL_INVALID_STATE;
@@ -786,7 +826,7 @@ enum v34_call_result v34_call_sample(
 	else if (result == V34_CALL_OK && emitted.processed == call->stage &&
 		 retrain_detection_is_active(call))
 		result = observe_retrain_tone(call, conditioned);
-	if (result != V34_CALL_OK)
+	if (result != V34_CALL_OK && result != V34_CALL_CLEARDOWN_COMPLETE)
 		call->failed = true;
 	emitted.next = call->stage;
 	if (!v34_call_is_valid(call)) {

@@ -50,6 +50,10 @@ struct endpoint {
 	bool suppress_failure_diagnostic;
 };
 
+static bool clear_online_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	struct channel *channel);
+
 static struct v34_info0 info0(enum v34_station_role role)
 {
 	if (role == V34_CALLING_STATION)
@@ -630,6 +634,8 @@ static bool check_symmetric_call(
 	      answerer.call.local_info1.answering.call_transmit
 		      .preemphasis_filter_index == 6,
 	      "rate %u call lost data or measured pre-emphasis", symbol_rate);
+	CHECK(clear_online_pair(&caller, &answerer, &channel),
+	      "rate %u call did not clear the trained line", symbol_rate);
 	return true;
 }
 
@@ -1321,8 +1327,201 @@ static bool test_validation(void)
 	      !v34_call_get_data_startup(NULL, NULL) &&
 	      !v34_call_get_data_startup(
 		      &call, (struct v34_data_startup *)&call) &&
-	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE,
+	      v34_call_start_retrain(&call) == V34_CALL_INVALID_STATE &&
+	      v34_call_start_cleardown(&call) == V34_CALL_INVALID_STATE &&
+	      v34_call_start_cleardown(NULL) == V34_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &saved, sizeof(call)) == 0,
 	      "rejected call-controller operations were not transactional");
+	return true;
+}
+
+static bool clear_online_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	struct channel *channel)
+{
+	struct endpoint *endpoints[] = { caller, answerer };
+	unsigned int supplied[2];
+	bool completed[2] = { false, false };
+
+	for (unsigned int role = 0u; role < 2u; ++role) {
+		struct endpoint *endpoint = endpoints[role];
+		struct v34_line_receiver receive_line =
+			endpoint->call.state.phase4.receive.line;
+		struct v34_training_line transmit_line =
+			endpoint->call.state.phase4.transmit.data.line;
+		const struct v34_cleardown *cleardown =
+			&endpoint->call.state.cleardown;
+
+		supplied[role] = endpoint->mapping_frames_supplied;
+		CHECK(v34_call_start_cleardown(&endpoint->call) == V34_CALL_OK &&
+		      v34_call_start_cleardown(&endpoint->call) == V34_CALL_OK &&
+		      v34_call_start_retrain(&endpoint->call) ==
+			      V34_CALL_INVALID_STATE &&
+		      memcmp(&receive_line, &cleardown->receive_line,
+			     sizeof(receive_line)) == 0 &&
+		      memcmp(&transmit_line, &cleardown->transmit_line,
+			     sizeof(transmit_line)) == 0,
+		      "role %u cleardown reset or shared the physical line", role);
+	}
+	for (unsigned int index = 0u; index < 16000u; ++index) {
+		int16_t receive[2];
+		int16_t transmit[2];
+
+		channel_receive(channel, &receive[0], &receive[1]);
+		for (unsigned int role = 0u; role < 2u; ++role) {
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			enum v34_call_result result = v34_call_sample(
+				&endpoints[role]->call, receive[role],
+				supply_mapping_frame, endpoints[role], &transmit[role],
+				&observation, &received);
+
+			CHECK(result == V34_CALL_OK ||
+			      result == V34_CALL_CLEARDOWN_COMPLETE,
+			      "role %u cleardown failed at %u: %d", role, index, result);
+			completed[role] = result == V34_CALL_CLEARDOWN_COMPLETE;
+		}
+		channel_transmit(channel, transmit[0], transmit[1]);
+		if (completed[0] && completed[1])
+			break;
+	}
+	for (unsigned int role = 0u; role < 2u; ++role) {
+		const struct v34_cleardown *cleardown =
+			&endpoints[role]->call.state.cleardown;
+		const struct v34_mp_parameters *peer = &cleardown->peer_parameters;
+
+		CHECK(completed[role] && cleardown->peer_mp_received &&
+		      cleardown->mp_prime_sent && peer->acknowledges_peer_mp &&
+		      peer->maximum_call_to_answer_rate_2400_bps_units == 0u &&
+		      peer->maximum_answer_to_call_rate_2400_bps_units == 0u &&
+		      cleardown->tail_samples == 0u,
+		      "role %u did not decode and drain reciprocal zero-rate MP-prime "
+		      "(stage %u, S %u, MP %u, peer ack %u)", role,
+		      cleardown->stage, cleardown->receive_s.complete,
+		      cleardown->peer_mp_received, peer->acknowledges_peer_mp);
+		CHECK(supplied[role] == endpoints[role]->mapping_frames_supplied,
+		      "role %u cleardown sourced another host data frame", role);
+	}
+	return true;
+}
+
+static bool test_cleardown(void)
+{
+	for (unsigned int pcma = 0u; pcma <= 1u; ++pcma) {
+		struct endpoint caller;
+		struct endpoint answerer;
+		struct channel channel;
+
+		CHECK(run_online_pair(&caller, &answerer, &channel, pcma != 0u) &&
+		      clear_online_pair(&caller, &answerer, &channel),
+		      "law %u asymmetric cleardown failed", pcma);
+	}
+	return true;
+}
+
+struct cleardown_peer {
+	struct v34_training_line line;
+	struct v34_phase3_s_sequence s;
+	struct v34_phase4_mp mp;
+	struct v34_mp_parameters parameters;
+};
+
+static bool cleardown_peer_sample(struct cleardown_peer *peer, int16_t *sample)
+{
+	struct qam_point point;
+	bool accepted;
+	bool needs_point = v34_training_line_needs_point(&peer->line);
+
+	if (needs_point) {
+		if (!v34_phase3_s_sequence_is_complete(&peer->s)) {
+			enum v34_phase3_s_section section;
+
+			CHECK(v34_phase3_s_sequence_next(&peer->s, &point, &section) ==
+				      V34_PHASE3_S_SEQUENCE_OK,
+			      "scripted cleardown peer did not emit S/S-bar");
+		} else {
+			uint8_t quarter_point;
+			uint8_t rotation;
+			bool complete;
+
+			if (v34_phase4_mp_record_is_complete(&peer->mp))
+				CHECK(v34_phase4_mp_start_next_type0_record(
+					      &peer->mp, &peer->parameters) ==
+					      V34_PHASE4_MP_OK,
+				      "scripted peer did not repeat its MP");
+			CHECK(v34_phase4_mp_next(
+				      &peer->mp, &point, &quarter_point, &rotation,
+				      &complete) == V34_PHASE4_MP_OK,
+			      "scripted peer MP encoder failed");
+		}
+	}
+	return v34_training_line_sample(
+		       &peer->line, needs_point ? &point : NULL, sample,
+		       &accepted) == V34_TRAINING_LINE_OK;
+}
+
+static bool test_cleardown_waits_for_prime(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+	struct cleardown_peer peer = { 0 };
+	const struct v34_cleardown *cleardown = &caller.call.state.cleardown;
+	const struct v34_mp_parameters *received_mp = &cleardown->peer_parameters;
+	bool completed = false;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, false),
+	      "delayed acknowledgement call did not reach data");
+	peer.line = answerer.call.state.phase4.transmit.data.line;
+	peer.parameters = *v34_mp_record_common_parameters(
+		&answerer.call.state.phase4.transmit_mp);
+	peer.mp.role = V34_ANSWERING_STATION;
+	peer.mp.constellation = V34_CONSTELLATION_4_POINT;
+	peer.mp.frame_bit_count = V34_MP_TYPE0_FRAME_BITS;
+	peer.mp.previous_clockwise_quarter_turns = 3u;
+	CHECK(v34_transmit_scrambler_init(&peer.mp.scrambler, peer.mp.role) ==
+		      V34_FRAMING_OK &&
+	      v34_mp_type0_encode(&peer.parameters, peer.mp.frame,
+				  sizeof(peer.mp.frame)) == V34_MP_OK &&
+	      v34_call_start_cleardown(&caller.call) == V34_CALL_OK,
+	      "delayed acknowledgement fixture did not initialize");
+	for (unsigned int index = 0u; index < 16000u; ++index) {
+		struct v34_call_observation observation;
+		struct v34_received_mapping_frame received;
+		int16_t caller_receive;
+		int16_t ignored;
+		int16_t caller_transmit;
+		int16_t peer_transmit;
+		enum v34_call_result result;
+
+		if (index == 10000u) {
+			CHECK(cleardown->stage == V34_CLEARDOWN_MP &&
+			      cleardown->peer_mp_received && cleardown->mp_prime_sent &&
+			      !cleardown->peer_parameters.acknowledges_peer_mp,
+			      "cleardown did not wait for the reciprocal MP-prime");
+			peer.parameters.acknowledges_peer_mp = true;
+		}
+		channel_receive(&channel, &caller_receive, &ignored);
+		result = v34_call_sample(
+			&caller.call, caller_receive, NULL, NULL, &caller_transmit,
+			&observation, &received);
+		CHECK(cleardown_peer_sample(&peer, &peer_transmit),
+		      "delayed acknowledgement peer stopped");
+		channel_transmit(&channel, caller_transmit, peer_transmit);
+		CHECK(result == V34_CALL_OK ||
+		      (index > 10000u && result == V34_CALL_CLEARDOWN_COMPLETE),
+		      "cleardown completed or failed before MP-prime at %u: %d",
+		      index, result);
+		if (result == V34_CALL_CLEARDOWN_COMPLETE) {
+			completed = true;
+			break;
+		}
+	}
+	CHECK(completed && cleardown->peer_mp_received &&
+	      received_mp->acknowledges_peer_mp &&
+	      received_mp->maximum_call_to_answer_rate_2400_bps_units ==
+		      peer.parameters.maximum_call_to_answer_rate_2400_bps_units,
+	      "cleardown did not accept the responding modem's ordinary-rate MP-prime");
 	return true;
 }
 
@@ -1374,6 +1573,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "reciprocal zero-rate cleardown", test_cleardown },
+		{ "cleardown waits for peer MP-prime", test_cleardown_waits_for_prime },
 		{ "completed Phase 2 handoff", test_phase2_handoff },
 		{ "generated PCMU call", test_pcmu_call },
 		{ "generated station echo", test_echo_calls },
