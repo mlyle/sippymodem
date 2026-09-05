@@ -464,9 +464,42 @@ static void run_modem_stop(struct modem *m)
 	modem_stop(m);
 }
 
-/* FIXME */
-#define schedule_modem_stop(m) { m->sample_timer_func = run_modem_stop; \
-		                 m->sample_timer = m->count + 48; }
+enum {
+	MODEM_STOP_DELAY_SAMPLES = 48,
+	/* DISC is a very small frame even at 300 bit/s.  This leaves room for
+	 * serialization and a SIP round trip without inheriting LAPM's ordinary
+	 * multi-retry data timeout. */
+	MODEM_EC_DISCONNECT_TIMEOUT_MS = 1500,
+	/* Protocol cleardown is normally well below a second.  Keep a hard owner
+	 * deadline so a broken peer or datapump cannot retain the call forever. */
+	MODEM_DP_DISCONNECT_TIMEOUT_MS = 3000,
+};
+
+static void schedule_modem_timer(
+	struct modem *m, void (*function)(struct modem *),
+	unsigned int delay_samples)
+{
+	unsigned long maximum_delay = ULONG_MAX - m->count;
+
+	if ((unsigned long)delay_samples > maximum_delay)
+		delay_samples = (unsigned int)maximum_delay;
+	m->sample_timer_func = function;
+	m->sample_timer = m->count + delay_samples;
+}
+
+static unsigned int modem_timeout_samples(
+	const struct modem *m, unsigned int milliseconds)
+{
+	uint64_t sample_rate = m->srate != 0 ? m->srate : MODEM_RATE;
+	uint64_t samples = (sample_rate * milliseconds + 999u) / 1000u;
+
+	return samples > UINT_MAX ? UINT_MAX : (unsigned int)samples;
+}
+
+static void schedule_modem_stop(struct modem *m)
+{
+	schedule_modem_timer(m, run_modem_stop, MODEM_STOP_DELAY_SAMPLES);
+}
 
 static int run_pending_modem_stop(struct modem *m)
 {
@@ -475,6 +508,29 @@ static int run_pending_modem_stop(struct modem *m)
 	m->sample_timer = 0;
 	m->sample_timer_func = NULL;
 	return modem_stop(m);
+}
+
+static void start_datapump_disconnect(struct modem *m)
+{
+	bool pending = false;
+
+	if (m->dp != NULL && m->dp->op != NULL && m->dp->op->hangup != NULL)
+		pending = m->dp->op->hangup(m->dp) == 0;
+	modem_set_state(m, STATE_DP_DISC);
+	if (!pending) {
+		schedule_modem_stop(m);
+		return;
+	}
+	schedule_modem_timer(
+		m, run_modem_stop,
+		modem_timeout_samples(m, MODEM_DP_DISCONNECT_TIMEOUT_MS));
+}
+
+static void expire_ec_disconnect(struct modem *m)
+{
+	if (m->state != STATE_EC_DISC)
+		return;
+	start_datapump_disconnect(m);
 }
 
 
@@ -486,12 +542,14 @@ static void modem_hup(struct modem *m, unsigned local)
 	case STATE_MODEM_IDLE:
 		return;
 	case STATE_DP_ESTAB:
-		if(local && m->dp && m->dp->op->hangup )
-			m->dp->op->hangup(m->dp);
-		modem_set_state(m,STATE_DP_DISC);
 		if (m->result_code == 0)
 			m->result_code = RESULT_NOCARRIER;
-		schedule_modem_stop(m);
+		if (local)
+			start_datapump_disconnect(m);
+		else {
+			modem_set_state(m, STATE_DP_DISC);
+			schedule_modem_stop(m);
+		}
 		break;
 	case STATE_EC_ESTAB:
 	case STATE_MODEM_ONLINE:
@@ -499,15 +557,21 @@ static void modem_hup(struct modem *m, unsigned local)
 		if(local && m->cfg.ec) {
 			modem_ec_stop(m);
 			modem_set_state(m,STATE_EC_DISC);
+			schedule_modem_timer(
+				m, expire_ec_disconnect,
+				modem_timeout_samples(
+					m, MODEM_EC_DISCONNECT_TIMEOUT_MS));
 		}
 		else {
-			if(local && m->dp && m->dp->op->hangup)
-				m->dp->op->hangup(m->dp);
-			modem_set_state(m,STATE_DP_DISC);
+			if (local)
+				start_datapump_disconnect(m);
+			else {
+				modem_set_state(m, STATE_DP_DISC);
+				schedule_modem_stop(m);
+			}
 		}
 		if (m->result_code == 0)
 			m->result_code = RESULT_NOCARRIER;
-		schedule_modem_stop(m);
 #if ALREADY_DONE
 		if(m->modem_info&TIOCM_CD && m->tty &&
 		   !m->termios->c_cflag&CLOCAL /* !C_CLOCAL(m->tty) */) {
@@ -518,9 +582,10 @@ static void modem_hup(struct modem *m, unsigned local)
 		m->modem_info &= ~TIOCM_CD;
 		break;
 	case STATE_EC_DISC:
-		if(local && m->dp && m->dp->op->hangup )
-			m->dp->op->hangup(m->dp);
-		modem_set_state(m,STATE_DP_DISC);
+		if (!local) {
+			modem_set_state(m, STATE_DP_DISC);
+			schedule_modem_stop(m);
+		}
 		break;
 	case STATE_DP_DISC:
 	default:
@@ -531,6 +596,12 @@ static void modem_hup(struct modem *m, unsigned local)
 
 void modem_update_status(struct modem *m, unsigned status)
 {
+	/* A late training or link acknowledgement cannot reopen a closing call. */
+	if (IS_STATE_DISC(m->state) &&
+	    (status == STATUS_DP_LINK || status == STATUS_PACK_LINK ||
+	     status == STATUS_EC_LINK))
+		return;
+
 	MODEM_DBG("modem_update_status: %d\n", status);
 	switch(status) {
 	case STATUS_OK:
@@ -588,7 +659,10 @@ void modem_update_status(struct modem *m, unsigned status)
 	case STATUS_EC_ERROR:
 		MODEM_DBG("--> EC UNLINK\n");
 		m->result_code = RESULT_NOCARRIER;
-		modem_hup(m,(m->state == STATE_EC_DISC));
+		if (m->state == STATE_EC_DISC)
+			start_datapump_disconnect(m);
+		else
+			modem_hup(m, 0);
 		break;
 	case STATUS_ERROR:
 	case STATUS_DP_ERROR:
@@ -713,6 +787,7 @@ static unsigned dpstat2status(unsigned dpstat)
 	case DPSTAT_BUSY: return STATUS_BUSY;
 	case DPSTAT_NOANSWER: return STATUS_NOANSWER;
 	case DPSTAT_CHANGEDP: return STATUS_OK;
+	case DPSTAT_DISCONNECT: return STATUS_OK;
 	default: return STATUS_ERROR;
 	}
 }
@@ -770,6 +845,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 {
 	int ret;
 	unsigned cnt;
+	unsigned int frame_samples = count;
 	bool all_exact = receive_codewords != NULL &&
 		transmit_codewords != NULL && exact_output != NULL;
 
@@ -778,6 +854,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 	//MODEM_DBG("modem_process %d: %d...\n", m->count,count);
 	while(count && m->dp) {
 		bool fragment_exact = false;
+		bool stop_processing = false;
 
 		cnt = count;
 		if (cnt > m->frag)
@@ -803,10 +880,27 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		case DPSTAT_CHANGEDP:
 			do_modem_change_dp(m);
 			break;
+		case DPSTAT_DISCONNECT:
+			if (m->state == STATE_DP_DISC) {
+				m->process = NULL;
+				/* m->count still denotes the start of this media block.
+				 * Keep the final block alive until its caller sends it. */
+				schedule_modem_timer(
+					m, run_modem_stop,
+					frame_samples + MODEM_STOP_DELAY_SAMPLES);
+				stop_processing = true;
+			} else {
+				modem_update_status(m, STATUS_DP_ERROR);
+			}
+			break;
 		default: /* errors */
 			all_exact = false;
-			modem_update_status(m,dpstat2status(ret));
+			if (m->state == STATE_DP_DISC)
+				schedule_modem_stop(m);
+			else
+				modem_update_status(m,dpstat2status(ret));
 			m->process = NULL;
+			stop_processing = true;
 			break;
 		}
 
@@ -817,10 +911,14 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			receive_codewords += cnt;
 		if (transmit_codewords != NULL)
 			transmit_codewords += cnt;
+		if (stop_processing)
+			break;
 	}
 	if(count) {
 		memset(out,0,count<<MFMT_SHIFT(m->format));
-		all_exact = false;
+		if (all_exact)
+			memset(transmit_codewords,
+			       law == G711_LAW_PCMA ? 0xd5 : 0xff, count);
 	}
 	if (exact_output != NULL)
 		*exact_output = all_exact;
@@ -1420,6 +1518,8 @@ static int modem_stop (struct modem *m)
 
 	m->process = NULL;
 	m->retrain_pending = 0;
+	m->sample_timer = 0;
+	m->sample_timer_func = NULL;
 
 	if(m->started) {
 		ret = m->driver.stop(m);
@@ -1879,10 +1979,14 @@ int modem_report_outgoing_call_connected(struct modem *m)
 int modem_hook(struct modem *m, unsigned hook_state)
 {
 	MODEM_DBG("modem hook...\n");
-        if ( m->hook == hook_state )
-                return 0;
-        if (!IS_STATE_IDLE(m->state))
-		modem_hup(m,1);
+	if (!IS_STATE_IDLE(m->state) && hook_state == MODEM_HOOK_ON) {
+		modem_hup(m, 1);
+		/* Keep media and the physical hook owned until the bounded LAPM and
+		 * datapump cleardown sequence completes. */
+		return 1;
+	}
+	if (m->hook == hook_state)
+		return 0;
         return modem_set_hook(m,hook_state);
 }
 
@@ -1982,9 +2086,9 @@ int  modem_set_mode(struct modem *m, enum MODEM_MODE mode)
 int modem_reset(struct modem *m)
 {
 	MODEM_DBG("modem reset...\n");
-	if(m->state != STATE_MODEM_IDLE)
-		modem_hup(m,1);
-	else if(m->started)
+	/* Reset invalidates the data-link configuration immediately. It cannot
+	 * leave an asynchronous disconnect using that configuration behind. */
+	if(m->state != STATE_MODEM_IDLE || m->started)
 		modem_stop(m);
 	else if(m->hook)
 		modem_set_hook(m,MODEM_HOOK_ON);

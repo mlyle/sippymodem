@@ -373,6 +373,7 @@ enum modem_pcm_role {
 #define DPSTAT_BUSY       7
 #define DPSTAT_NOANSWER   8
 #define DPSTAT_CHANGEDP   10
+#define DPSTAT_DISCONNECT 11
 
 /* dsp info structure */
 struct dsp_info {

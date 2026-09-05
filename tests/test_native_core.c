@@ -269,7 +269,9 @@ static int unused_dp_process(
 static struct {
 	struct dp datapump;
 	unsigned int retrain_calls;
+	unsigned int hangup_calls;
 	int retrain_result;
+	int hangup_result;
 	int process_result;
 } retrain_dp;
 
@@ -320,6 +322,29 @@ static int request_retrain_dp(struct dp *datapump)
 	if (retrain_dp.retrain_result == 0)
 		datapump->status = DPSTAT_OK;
 	return retrain_dp.retrain_result;
+}
+
+static int request_hangup_dp(struct dp *datapump)
+{
+	if (datapump != &retrain_dp.datapump)
+		return -1;
+	retrain_dp.hangup_calls++;
+	return retrain_dp.hangup_result;
+}
+
+static int process_hangup_g711(
+	struct dp *datapump, enum g711_law law, const uint8_t *receive_codewords,
+	void *receive, uint8_t *transmit_codewords, void *transmit, int count,
+	bool *exact_output)
+{
+	int result = process_retrain_dp(datapump, receive, transmit, count);
+
+	(void)law;
+	(void)receive_codewords;
+	/* Negative zero must survive the final exact PCM fragment. */
+	memset(transmit_codewords, 0x7f, count);
+	*exact_output = true;
+	return result;
 }
 
 static bool test_ato1_waits_for_datapump_retrain(void)
@@ -420,6 +445,192 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
 	      "ATO1 test data pump did not deregister");
 	return true;
+}
+
+static unsigned int hangup_driver_stop_calls;
+
+static int count_hangup_driver_stop(struct modem *modem)
+{
+	(void)modem;
+	hangup_driver_stop_calls++;
+	return 0;
+}
+
+enum ath0_test_completion {
+	ATH0_ACKNOWLEDGED,
+	ATH0_TIMED_OUT,
+	ATH0_REMOTE_END,
+	ATH0_RESET,
+};
+
+static bool run_ath0_cleardown(enum ath0_test_completion completion)
+{
+	enum {
+		TEST_STATE_MODEM_IDLE = 1,
+		TEST_STATE_COMMAND_ONLINE = 6,
+		TEST_STATE_EC_DISC = 7,
+		TEST_STATE_DP_DISC = 9,
+		LAPM_DATA_STATE = 2,
+		LAPM_DISC_STATE = 3,
+		UA_CONTROL = 0x73,
+	};
+	struct modem_driver driver = {
+		.name = "ATH0 cleardown test",
+		.start = unused_start,
+		.stop = count_hangup_driver_stop,
+		.ioctl = unused_control,
+	};
+	struct dp_operations operations = {
+		.name = "ATH0 cleardown test",
+		.create = create_retrain_dp,
+		.delete = delete_retrain_dp,
+		.process = process_retrain_dp,
+		.process_g711 = process_hangup_g711,
+		.hangup = request_hangup_dp,
+	};
+	int16_t receive[MODEM_FRAG * 4] = { 0 };
+	int16_t transmit[ARRAY_LENGTH(receive)];
+	uint8_t receive_codewords[ARRAY_LENGTH(receive)] = { 0 };
+	uint8_t transmit_codewords[ARRAY_LENGTH(receive)];
+	bool exact_output;
+	uint8_t response_bytes[2];
+	frame_t response = {
+		.buf = response_bytes,
+		.count = sizeof(response_bytes),
+	};
+	frame_t *disconnect;
+	struct modem *modem;
+	char command[] = "ATH0";
+
+	memset(&retrain_dp, 0, sizeof(retrain_dp));
+	hangup_driver_stop_calls = 0;
+	retrain_dp.process_result = DPSTAT_OK;
+	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
+	      "ATH0 test data pump did not register");
+	modem = modem_create(&driver, "ATH0 cleardown test");
+	CHECK(modem != NULL && modem_dial(modem) == 0,
+	      "ATH0 test call did not start");
+	/* Build an already-established answer-side LAPM owner without running a
+	 * second datapump through the negotiation fixture. */
+	modem_ec_exit(modem);
+	modem->caller = 0;
+	modem->cfg.ec = 1;
+	modem->cfg.comp = 0;
+	modem->cfg.ec_tx_win_size = 15;
+	modem->cfg.ec_rx_win_size = 15;
+	modem->cfg.ec_tx_info_size = 128;
+	modem->cfg.ec_rx_info_size = 128;
+	CHECK(modem_ec_init(modem) == 0,
+	      "ATH0 LAPM owner did not initialize");
+	modem_hdlc_start(modem);
+	modem_ec_start(modem);
+	modem->ec.lapm.state = LAPM_DATA_STATE;
+	modem->state = TEST_STATE_COMMAND_ONLINE;
+	modem->command = 1;
+	modem->hook = MODEM_HOOK_OFF;
+	CHECK(process_at_command(modem, command) == 1 &&
+		      modem->state == TEST_STATE_EC_DISC &&
+		      modem->ec.lapm.state == LAPM_DISC_STATE &&
+		      retrain_dp.hangup_calls == 0 &&
+		      hangup_driver_stop_calls == 0 &&
+		      modem->hook == MODEM_HOOK_OFF &&
+		      modem->sample_timer > modem->count,
+	      "ATH0 did not wait for LAPM disconnect");
+	{
+		unsigned long deadline = modem->sample_timer;
+
+		modem_update_status(modem, STATUS_DP_LINK);
+		modem_update_status(modem, STATUS_PACK_LINK);
+		modem_update_status(modem, STATUS_EC_LINK);
+		CHECK(process_at_command(modem, command) == 1 &&
+		      modem->sample_timer == deadline &&
+		      modem->state == TEST_STATE_EC_DISC &&
+		      retrain_dp.hangup_calls == 0,
+		      "late link status or repeated ATH0 changed LAPM disconnect");
+	}
+	if (completion == ATH0_REMOTE_END || completion == ATH0_RESET) {
+		char reset[] = "ATZ";
+
+		CHECK((completion == ATH0_REMOTE_END ?
+		       modem_report_remote_call_end(modem) :
+		       process_at_command(modem, reset)) == 0,
+		      "external call termination failed during ATH0");
+		goto stopped;
+	}
+	disconnect = modem->packer.hdlc.get_tx_frame(
+		modem->packer.hdlc.framer);
+	CHECK(disconnect != NULL &&
+		      (disconnect->buf[1] & 0xefu) == 0x43u,
+	      "ATH0 did not queue LAPM DISC");
+	modem->packer.hdlc.tx_complete(
+		modem->packer.hdlc.framer, disconnect);
+	if (completion == ATH0_ACKNOWLEDGED) {
+		response_bytes[0] = modem->ec.lapm.cmd_addr;
+		response_bytes[1] = UA_CONTROL;
+		modem->packer.hdlc.rx_complete(
+			modem->packer.hdlc.framer, &response);
+	} else {
+		unsigned int samples = 0;
+
+		while (modem->state == TEST_STATE_EC_DISC && samples < MODEM_RATE * 2) {
+			modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
+			samples += ARRAY_LENGTH(receive);
+		}
+		CHECK(samples >= MODEM_RATE * 3 / 2 && samples < MODEM_RATE * 2,
+		      "LAPM disconnect did not respect its bounded wait");
+	}
+	CHECK(modem->state == TEST_STATE_DP_DISC &&
+		      retrain_dp.hangup_calls == 1 &&
+		      hangup_driver_stop_calls == 0 &&
+		      modem->hook == MODEM_HOOK_OFF &&
+		      modem->sample_timer > modem->count,
+	      "LAPM UA did not begin datapump cleardown");
+	modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
+	CHECK(modem->state == TEST_STATE_DP_DISC &&
+		      hangup_driver_stop_calls == 0,
+	      "ATH0 released the call before datapump completion");
+	if (completion == ATH0_TIMED_OUT) {
+		unsigned int samples = ARRAY_LENGTH(receive);
+
+		while (modem->started && samples < MODEM_RATE * 4) {
+			modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
+			samples += ARRAY_LENGTH(receive);
+		}
+		CHECK(samples >= MODEM_RATE * 3 && samples < MODEM_RATE * 4,
+		      "datapump disconnect did not respect its bounded wait");
+		goto stopped;
+	}
+	retrain_dp.process_result = DPSTAT_DISCONNECT;
+	modem_process_g711(modem, G711_LAW_PCMU, receive_codewords, receive,
+		transmit_codewords, transmit, ARRAY_LENGTH(receive), &exact_output);
+	CHECK(modem->state == TEST_STATE_DP_DISC && modem->process == NULL &&
+		      hangup_driver_stop_calls == 0 && exact_output &&
+		      transmit_codewords[MODEM_FRAG - 1] == 0x7f &&
+		      transmit_codewords[MODEM_FRAG] == 0xff,
+	      "datapump completion did not leave its final media frame to drain");
+	modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
+stopped:
+	CHECK(modem->state == TEST_STATE_MODEM_IDLE &&
+		      hangup_driver_stop_calls == 1 &&
+		      modem->sample_timer == 0 && modem->sample_timer_func == NULL &&
+		      modem->hook == MODEM_HOOK_ON && operations.use_count == 0,
+	      "datapump cleardown did not complete ATH0: state=%u stop=%u "
+	      "hook=%u uses=%d timer=%lu count=%lu process=%p",
+	      modem->state, hangup_driver_stop_calls, modem->hook,
+	      operations.use_count, modem->sample_timer, modem->count,
+	      (void *)modem->process);
+	modem_delete(modem);
+	CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0,
+	      "ATH0 test data pump did not deregister");
+	return true;
+}
+
+static bool test_ath0_drains_link_cleardown(void)
+{
+	return run_ath0_cleardown(ATH0_ACKNOWLEDGED) &&
+	       run_ath0_cleardown(ATH0_TIMED_OUT) &&
+	       run_ath0_cleardown(ATH0_REMOTE_END) &&
+	       run_ath0_cleardown(ATH0_RESET);
 }
 
 static struct {
@@ -2638,6 +2849,8 @@ int main(void)
 		{ "receive DC front end", test_receive_dc_frontend },
 		{ "truthful ATO1 lifecycle",
 		  test_ato1_waits_for_datapump_retrain },
+		{ "bounded ATH0 link cleardown",
+		  test_ath0_drains_link_cleardown },
 		{ "bounded AT dial destinations",
 		  test_at_dial_destinations_are_bounded },
 		{ "AT compression profile", test_at_compression_profile },

@@ -304,7 +304,7 @@ static int process_H(struct modem *m, char *p, int *len)
 		ret = modem_hook(m, MODEM_HOOK_ON);
 		break;
 	}
-	return ret ? -1 : 0;
+	return ret < 0 ? -1 : ret;
 }
 
 static int process_I(struct modem *m, char *p, int *len)
@@ -1326,6 +1326,8 @@ int process_at_command(struct modem *m, char *cmd)
 			break;
 		case 'H': /* ATH */
 			ret = process_H(m,p,&len);
+			if (ret != 0)
+				return ret;
 			break;
 		case 'I': /* ATI */
 			ret = process_I(m,p,&len);
