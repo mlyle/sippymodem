@@ -82,7 +82,7 @@ bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
 	return true;
 }
 
-static void restart_training(struct v90_host_echo *echo)
+static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
 {
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
 	echo->reference_energy = 0;
@@ -94,6 +94,14 @@ static void restart_training(struct v90_host_echo *echo)
 	echo->train_peak = 0;
 	echo->filter_ready = false;
 	echo->weak_margin = false;
+	/* A rejected window can contain the peer's preceding signal. Its
+	 * energy must not dilute later acquisition after the peer becomes quiet.
+	 * Retain TX history and the delay hypothesis, but restart both sets of
+	 * evidence together, whether retrying this delay or acquiring a new one. */
+	return pcm_echo_reference_start_scan(
+		       &echo->reference, echo->window_delay_samples,
+		       V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK ?
+		V90_HOST_ECHO_OK : V90_HOST_ECHO_INVALID_STATE;
 }
 
 enum v90_host_echo_result v90_host_echo_init(
@@ -481,12 +489,7 @@ enum v90_host_echo_result v90_host_echo_advance(
 				echo->window_delay_samples =
 					scan.best_window_delay_samples;
 				echo->delay_acquired = true;
-				restart_training(echo);
-				if (pcm_echo_reference_start_scan(
-					    &echo->reference,
-					    echo->window_delay_samples,
-					    V90_HOST_ECHO_FILTER_PRE_SAMPLES) !=
-					    PCM_ECHO_REFERENCE_OK)
+				if (restart_training(echo) != V90_HOST_ECHO_OK)
 					return V90_HOST_ECHO_INVALID_STATE;
 				goto push_reference;
 			}
@@ -497,8 +500,9 @@ enum v90_host_echo_result v90_host_echo_advance(
 			maybe_mark_ready(echo);
 		}
 		if (!echo->filter_ready &&
-		    echo->train_samples >= V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES)
-			restart_training(echo);
+		    echo->train_samples >= V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES &&
+		    restart_training(echo) != V90_HOST_ECHO_OK)
+			return V90_HOST_ECHO_INVALID_STATE;
 	}
 
 push_reference:

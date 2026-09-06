@@ -418,17 +418,70 @@ static bool test_unrelated_input_does_not_train(void)
 	return true;
 }
 
+static bool test_acquisition_after_unrelated_prefix(void)
+{
+	struct v90_host_echo echo;
+	const size_t prefix = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES +
+		V90_HOST_ECHO_QUIET_SAMPLES;
+	const size_t training = 3u * prefix;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	uint64_t echo_energy = 0;
+	uint64_t residual_energy = 0;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "prefix owner did not initialize");
+	/* The peer can still be transmitting strongly when local TRN1d starts.
+	 * Keep ordinary TX history, then let that unrelated input subside after
+	 * one rejected training window. The later echo has a different delay
+	 * from our initial hypothesis and must be acquired from fresh evidence. */
+	for (size_t index = 0; index < history + training; ++index) {
+		int16_t received = echo_sample(index);
+		int16_t cleaned;
+		enum v90_host_echo_mode mode = index < history ?
+			V90_HOST_ECHO_BYPASS : V90_HOST_ECHO_TRAIN;
+
+		if (index >= history && index < history + prefix)
+			received = add_s16((int32_t)received + generated_sample(
+				index, UINT32_C(0x31415927), 30000));
+		CHECK(echo_step(&echo, mode, index, received, &cleaned),
+		      "prefix training failed at sample %zu", index);
+		CHECK(cleaned == received,
+		      "unqualified/training sample was filtered at %zu", index);
+		if (index < history + prefix)
+			CHECK(!v90_host_echo_is_ready(&echo),
+			      "unrelated prefix qualified a model at %zu", index);
+	}
+	CHECK(v90_host_echo_is_ready(&echo) && echo.delay_acquired &&
+	      echo.window_delay_samples == FILTER_DELAY,
+	      "clean training retained rejected correlation: ready=%d delay=%u",
+	      v90_host_echo_is_ready(&echo), echo.window_delay_samples);
+	for (size_t index = history + training;
+	     index < history + training + VERIFY_SAMPLES; ++index) {
+		int16_t remote = remote_sample(index);
+		int16_t returned = echo_sample(index);
+		int16_t cleaned;
+
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+			       add_s16((int32_t)returned + remote), &cleaned),
+		      "post-prefix filtering failed at sample %zu", index);
+		echo_energy = energy_add(echo_energy, returned);
+		residual_energy = energy_add(
+			residual_energy, (int32_t)cleaned - remote);
+	}
+	CHECK(residual_energy * 100u < echo_energy,
+	      "post-prefix suppression too small: residual=%" PRIu64
+	      " source=%" PRIu64, residual_energy, echo_energy);
+	return true;
+}
+
 int main(void)
 {
-	CHECK(test_contracts(), "contracts failed");
-	CHECK(test_long_delay_cancellation(),
-	      "long-delay cancellation failed");
-	CHECK(test_phase2_delay_seed(), "Phase-2 delay seed failed");
-	CHECK(test_weak_joint_margin(), "weak joint margin failed");
-	CHECK(test_decimated_adjacent_correlation(),
-	      "decimated adjacent correlation failed");
-	CHECK(test_unrelated_input_does_not_train(),
-	      "uncorrelated-input gate failed");
+	if (!test_contracts() || !test_long_delay_cancellation() ||
+	    !test_phase2_delay_seed() || !test_weak_joint_margin() ||
+	    !test_decimated_adjacent_correlation() ||
+	    !test_unrelated_input_does_not_train() ||
+	    !test_acquisition_after_unrelated_prefix())
+		return 1;
 	puts("V.90 host echo tests passed");
 	return 0;
 }
