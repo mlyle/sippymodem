@@ -859,6 +859,26 @@ static bool test_host_echo_retrain_pairs(void)
 	return true;
 }
 
+static bool test_sustained_maximum_rate_retrains(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "sustained-retrain V.90 registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (enum modem_pcm_role initiator = MODEM_PCM_ROLE_ANALOG;
+		     initiator <= MODEM_PCM_ROLE_DIGITAL; ++initiator)
+			CHECK(run_pair_with_rate_window(
+				      law, 56000, 31200, 31200, 31200, 3429,
+				      MAXIMUM_RATE_RECEIVED_BITS, true,
+				      initiator, false, UNITY_GAIN_Q15,
+				      RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u lost sustained data through retrain",
+			      (unsigned int)law, (unsigned int)initiator);
+	}
+	CHECK(v90_datapump_unregister() == 0,
+	      "sustained-retrain V.90 registration remained busy");
+	return true;
+}
+
 static bool test_training_deadline(void)
 {
 	struct bit_endpoint bits = { 0 };
@@ -1075,6 +1095,8 @@ int main(void)
 		{ "DC-biased digital-answerer host echo",
 		  test_dc_biased_host_echo },
 		{ "local and remote full retrain", test_full_retrain_pairs },
+		{ "sustained maximum-rate retrains",
+		  test_sustained_maximum_rate_retrains },
 		{ "full retrain through returned host echo",
 		  test_host_echo_retrain_pairs },
 		{ "generated PCMU and PCMA data-pump pairs",
