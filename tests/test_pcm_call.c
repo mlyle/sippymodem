@@ -1647,22 +1647,60 @@ static bool final_training_accepts_remote_retrain(
 
 	CHECK((expected_stage == PCM_CALL_PHASE3 ||
 	       expected_stage == PCM_CALL_PHASE3_MIXED ||
-	       expected_stage == PCM_CALL_PHASE4) &&
+	       expected_stage == PCM_CALL_PHASE4 ||
+	       expected_stage == PCM_CALL_DATA_PATH) &&
 	      call->stage == expected_stage && !call->retrain_active &&
 	      call->peer_info0_stored && call->round_trip_delay_stored &&
-	      pcm_call_is_valid(call) &&
-	      form_remote_retrain_trigger(
-		      call, law, &remote_tone, &trigger_octet,
-		      &trigger_sample),
-	      "law %u role %u stage %u could not form remote retrain",
+	      pcm_call_is_valid(call) && !pcm_call_is_online(call),
+	      "law %u role %u stage %u is not final training",
 	      (unsigned int)law, (unsigned int)call->local_role,
 	      (unsigned int)expected_stage);
-	CHECK(pcm_call_octet(
-		      call, trigger_octet, trigger_sample, &transmitted,
-		      &observation) == PCM_CALL_OK &&
-	      observation.processed == expected_stage &&
-	      observation.next == PCM_CALL_RETRAIN_SILENCE &&
-	      call->stage == PCM_CALL_RETRAIN_SILENCE &&
+	if (expected_stage == PCM_CALL_DATA_PATH) {
+		enum v34_station_role peer_role =
+			call->local_role == V90_ANALOG_MODEM ?
+				V34_CALLING_STATION : V34_ANSWERING_STATION;
+		const size_t quiet = V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES;
+		const size_t limit = quiet + V34_RETRAIN_TONE_SAMPLES +
+				     V34_PHASE2_TONE_WINDOW_SAMPLES;
+
+		CHECK(v34_phase2_tone_transmitter_init(
+			      &remote_tone, peer_role, PHASE2_NOMINAL_AMPLITUDE) ==
+			      V34_PHASE2_TONE_OK,
+		      "could not initialize final-training peer tone");
+		/* Feed the complete physical request through the live call owner;
+		 * do not seed its detector or skip the CP/E/B1 receive path. */
+		for (size_t index = 0; index < limit; ++index) {
+			struct pcm_call_data_event event;
+			int16_t sample = 0;
+			uint8_t received;
+
+			if (index >= quiet)
+				CHECK(v34_phase2_tone_transmitter_sample(
+					      &remote_tone, &sample) == V34_PHASE2_TONE_OK,
+				      "final-training peer tone stopped");
+			received = encode_octet(law, sample);
+			CHECK(pcm_call_data_octet(
+				      call, received, decode_octet(law, received),
+				      NULL, &transmitted, &event) == PCM_CALL_OK,
+			      "law %u role %u retrain input failed at %zu",
+			      (unsigned int)law, (unsigned int)call->local_role, index);
+			if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
+				CHECK(index >= quiet + V34_RETRAIN_TONE_SAMPLES - 1u,
+				      "final training retrained before the complete guard");
+				break;
+			}
+		}
+	} else {
+		CHECK(form_remote_retrain_trigger(
+			      call, law, &remote_tone, &trigger_octet, &trigger_sample) &&
+		      pcm_call_octet(
+			      call, trigger_octet, trigger_sample, &transmitted,
+			      &observation) == PCM_CALL_OK &&
+		      observation.processed == expected_stage &&
+		      observation.next == PCM_CALL_RETRAIN_SILENCE,
+		      "could not deliver final-training retrain trigger");
+	}
+	CHECK(call->stage == PCM_CALL_RETRAIN_SILENCE &&
 	      call->retrain_active && call->retrain.peer_tone_retained &&
 	      call->peer_info0_stored && call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == prior_round_trip_delay &&
@@ -1720,14 +1758,38 @@ static bool final_training_accepts_remote_retrain(
 	return true;
 }
 
-static int tracked_final_training_stage(enum pcm_call_stage stage)
+static int tracked_final_training_stage(const struct pcm_call *call)
 {
-	if (stage == PCM_CALL_PHASE3)
+	if (call->stage == PCM_CALL_PHASE3)
 		return 0;
-	if (stage == PCM_CALL_PHASE3_MIXED)
+	if (call->stage == PCM_CALL_PHASE3_MIXED)
 		return 1;
-	if (stage == PCM_CALL_PHASE4)
+	if (call->stage == PCM_CALL_PHASE4)
 		return 2;
+	if (call->stage != PCM_CALL_DATA_PATH)
+		return -1;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v90_analog_path *path = &call->state.data_path.analog;
+
+		if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP)
+			return 3;
+		if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_E)
+			return 4;
+		if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA &&
+		    path->upstream.data.b1_active)
+			return 5;
+	} else {
+		const struct v90_digital_path *path = &call->state.data_path.digital;
+
+		if (path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP)
+			return -1;
+		if (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CP)
+			return 3;
+		if (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_E)
+			return 4;
+		if (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_B1)
+			return 5;
+	}
 	return -1;
 }
 
@@ -1736,7 +1798,7 @@ static bool check_final_training_remote_retrain(enum g711_law law)
 	struct channel channel;
 	struct endpoint analog;
 	struct endpoint digital;
-	bool checked[2][3] = { { false } };
+	bool checked[2][6] = { { false } };
 	size_t checked_count = 0;
 
 	CHECK(channel_init(&channel, law, 3u) &&
@@ -1748,7 +1810,7 @@ static bool check_final_training_remote_retrain(enum g711_law law)
 	      "law %u final-training retrain endpoints did not initialize",
 	      (unsigned int)law);
 	for (size_t clock = 0;
-	     clock < CALL_SAMPLE_LIMIT && checked_count != 6u; ++clock) {
+	     clock < CALL_SAMPLE_LIMIT && checked_count != 12u; ++clock) {
 		struct endpoint *endpoints[] = { &analog, &digital };
 
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
@@ -1757,7 +1819,7 @@ static bool check_final_training_remote_retrain(enum g711_law law)
 		for (size_t role = 0; role < ARRAY_LENGTH(endpoints); ++role) {
 			struct pcm_call candidate;
 			int stage = tracked_final_training_stage(
-				endpoints[role]->call.stage);
+				&endpoints[role]->call);
 
 			if (stage < 0 || checked[role][stage])
 				continue;
@@ -1771,8 +1833,8 @@ static bool check_final_training_remote_retrain(enum g711_law law)
 			checked_count++;
 		}
 	}
-	CHECK(checked_count == 6u,
-	      "law %u did not exercise every final-training stage (%zu/6)",
+	CHECK(checked_count == 12u,
+	      "law %u did not exercise every final-training stage (%zu/12)",
 	      (unsigned int)law, checked_count);
 	return true;
 }

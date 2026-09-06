@@ -1389,8 +1389,10 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 		return true;
 	if (call->stage == PCM_CALL_PHASE4)
 		return true;
+	/* The data-path owner also clocks CP/MP, E and B1 before carrier opens.
+	 * Waiting for online data would ignore a peer's Phase 4 retrain request. */
 	if (call->stage == PCM_CALL_DATA_PATH)
-		return data_path_is_online_owned(call);
+		return true;
 	return call->protocol == PCM_PROTOCOL_V90 &&
 	       call->stage == PCM_CALL_PHASE2 &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
@@ -1412,16 +1414,30 @@ static enum pcm_call_result sample_retrain_detector(
 static uint32_t retrain_silence_ceiling(
 	const struct pcm_call *call, uint32_t nominal_window_energy)
 {
+	const struct v90_digital_path *path;
+	const struct v34_line_receiver *line;
 	uint64_t gain;
 	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
 
 	if (call->local_role != V90_DIGITAL_MODEM ||
-	    call->stage != PCM_CALL_DATA_PATH ||
-	    call->state.data_path.digital.upstream_stage !=
-		    V90_DIGITAL_PATH_UPSTREAM_DATA)
+	    call->stage != PCM_CALL_DATA_PATH)
 		return nominal_window_energy;
-	gain = (uint16_t)call->state.data_path.digital.upstream.data
-		       .line.timing.gain.gain;
+	path = &call->state.data_path.digital;
+	if (path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA) {
+		line = &path->upstream.data.line;
+	} else {
+		const struct v90_upstream_rx *startup = &path->upstream.startup;
+
+		/* CP, E and B1 retain the same trained physical receive level.
+		 * A fixed raw quiet ceiling can stop decodable weak training. */
+		if (startup->stage == V90_UPSTREAM_RX_STAGE_CP)
+			line = &startup->state.cp.line;
+		else if (startup->stage == V90_UPSTREAM_RX_STAGE_E)
+			line = &startup->state.e.line;
+		else
+			line = &startup->state.data.line;
+	}
+	gain = (uint16_t)line->timing.gain.gain;
 	if (gain <= unity)
 		return nominal_window_energy;
 	/* The trained Q5.10 multiplier compensates conventional upstream loss.
