@@ -875,7 +875,7 @@ static bool test_retrain_selects_new_rate(void)
 	return true;
 }
 
-static bool test_failed_probe(void)
+static bool test_probe_recovery(void)
 {
 	struct endpoint caller;
 	struct endpoint answerer;
@@ -911,20 +911,19 @@ static bool test_failed_probe(void)
 		result = v34_call_sample(
 			&answerer.call, 0, NULL, NULL, &transmit,
 			&observation, &received);
-		if (result == V34_CALL_OK)
-			continue;
-		CHECK(result == V34_CALL_FAILED &&
+		CHECK(result == V34_CALL_OK &&
 		      observation.processed == V34_CALL_PHASE2 &&
-		      observation.events.phase2.kind ==
-			      V34_PHASE2_EVENT_FAILED &&
-		      observation.events.phase2.failure ==
-			      V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT &&
 		      v34_call_is_valid(&answerer.call) &&
-		      v34_call_has_failed(&answerer.call),
-		      "local probe failure did not leave valid terminal state");
-		return true;
+		      !v34_call_has_failed(&answerer.call),
+		      "missing Tone B aborted the call instead of restarting ranging");
+		if (answerer.call.state.phase2.stage == V34_PHASE2_RANGING) {
+			CHECK(answerer.call.state.phase2.state.ranging.control.phase ==
+				      PHASE2_SIGNAL_A_WAIT_INITIAL_TONE,
+			      "probe recovery did not return to first ranging");
+			return true;
+		}
 	}
-	CHECK(false, "missing remote Tone B did not exhaust the local probe");
+	CHECK(false, "missing Tone B did not reach bounded ranging recovery");
 }
 
 static bool check_retrain_tone_guard(
@@ -1617,7 +1616,7 @@ int main(void)
 		{ "local and remote full retrain", test_full_retrain },
 		{ "retrain selects new INFO1a rate pair",
 		  test_retrain_selects_new_rate },
-		{ "failed probe", test_failed_probe },
+		{ "unanswered probe recovery", test_probe_recovery },
 		{ "retrain tone guard", test_retrain_tone_guard },
 		{ "retrain tone stage guard",
 		  test_retrain_tone_stage_guard },

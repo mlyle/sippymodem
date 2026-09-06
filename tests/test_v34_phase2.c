@@ -930,6 +930,58 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_probe_recovery(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU; codec <= TEST_CODEC_PCMA; ++codec) {
+		struct owned_pair pair;
+		struct v34_phase2_event caller_event, event;
+		int16_t caller_transmit, transmit;
+		bool started = false;
+
+		CHECK(pair_init(&pair, codec, 13u), "probe recovery pair did not initialize");
+		for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+			CHECK(pair_sample(&pair, &caller_event, &event,
+					  &caller_transmit, &transmit), "probe recovery setup failed");
+			if (pair.answerer.stage == V34_PHASE2_INITIAL_PROBE) {
+				started = true;
+				break;
+			}
+		}
+		CHECK(started, "probe recovery did not reach L1");
+		uint16_t delay = pair.answerer.state.initial_probe.ranging.control
+			.round_trip_delay_samples;
+		struct v34_info0 peer = pair.answerer.peer_info0;
+		uint32_t deadline = (160u + 600u) * 8u + delay;
+
+		for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed)
+			CHECK(v34_phase2_sample(&pair.answerer, 0, &transmit, &event) ==
+				      V34_PHASE2_OK && !v34_phase2_has_failed(&pair.answerer) &&
+			      pair.answerer.stage == (elapsed < deadline ?
+				      V34_PHASE2_INITIAL_PROBE : V34_PHASE2_RANGING),
+			      "answerer probe recovery failed at %u/%u", elapsed, deadline);
+		const struct v34_phase2_ranging *ranging = &pair.answerer.state.ranging;
+		struct v34_phase2_tone_transmitter expected =
+			ranging->info0_exchange.transport.tone_transmitter;
+
+		CHECK(ranging->control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		      ranging->control.prior_round_trip_delay_samples == delay &&
+		      ranging->control.local_tone_samples == 0u &&
+		      !ranging->control.round_trip_delay_valid &&
+		      !ranging->info0_exchange.transport.tone_detector.carrier.tone_present &&
+		      !pair.answerer.remote_probe_stored && pair.answerer.peer_info0_stored &&
+		      memcmp(&peer, &pair.answerer.peer_info0, sizeof(peer)) == 0,
+		      "answerer recovery lost INFO0 or retained a stale ranging epoch");
+		for (size_t index = 0; index < 400u; ++index) {
+			int16_t tone;
+
+			CHECK(v34_phase2_tone_transmitter_sample(&expected, &tone) == V34_PHASE2_TONE_OK &&
+			      v34_phase2_sample(&pair.answerer, 0, &transmit, &event) == V34_PHASE2_OK &&
+			      transmit == tone, "answerer recovery did not send fresh Tone A");
+		}
+	}
+	return true;
+}
+
 static bool test_info1_recovery(void)
 {
 	struct v34_info1c local_info1c = caller_info1c(false);
@@ -995,6 +1047,7 @@ int main(void)
 		{ "generated retrain timeline", test_retrain_timeline },
 		{ "retrain probe boundaries", test_retrain_probe_boundaries },
 		{ "validation", test_validation },
+		{ "initial probe ranging recovery", test_probe_recovery },
 		{ "INFO1 recovery", test_info1_recovery },
 	};
 	unsigned int failures = 0;

@@ -74,6 +74,7 @@ static bool signal_b_path_is_valid(
 		}
 		return false;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
 		return false;
 	}
@@ -86,24 +87,30 @@ static bool signal_a_path_is_valid(
 	const struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
 
-	if (!v34_phase2_probe_sequence_is_valid(transmit) ||
-	    probe->tone_wait_samples != 0)
+	if (!v34_phase2_probe_sequence_is_valid(transmit))
 		return false;
 	switch (probe->phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
-		return probe->failure ==
+		return probe->tone_wait_samples == 0 && probe->failure ==
 			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
 		       (transmit->phase ==
 				V34_PHASE2_PROBE_SEQUENCE_PHASE_L1 ||
 			transmit->phase ==
 				V34_PHASE2_PROBE_SEQUENCE_PHASE_L2);
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
+		return probe->tone_wait_samples <
+			       PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES &&
+		       probe->failure == PHASE2_INITIAL_PROBE_NO_FAILURE &&
+		       transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
-		return probe->failure ==
+		return probe->tone_wait_samples == 0 && probe->failure ==
 			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE;
 	case PHASE2_INITIAL_PROBE_FAILED:
-		return probe->failure ==
+		return probe->tone_wait_samples ==
+			       PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES &&
+		       probe->failure ==
 			       PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
@@ -264,7 +271,8 @@ static bool transmit_local_probe(
 		&probe->path.transmit;
 	bool remote_tone_started;
 
-	if (transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2) {
+	if (transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 ||
+	    transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED) {
 		if (transmit->samples_emitted ==
 			    V34_PHASE2_PROBE_L1_SAMPLES &&
 		    !reset_remote_tone_detector(exchange))
@@ -275,7 +283,6 @@ static bool transmit_local_probe(
 	remote_tone_started = event->tone_event.kind ==
 			      V34_PHASE2_TONE_STARTED;
 	if (remote_tone_started &&
-	    transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_L2 &&
 	    transmit->samples_emitted > V34_PHASE2_PROBE_L1_SAMPLES) {
 		if (v34_phase2_probe_sequence_sample(
 			    transmit, true, transmit_sample,
@@ -284,6 +291,7 @@ static bool transmit_local_probe(
 			return false;
 		probe->phase =
 			PHASE2_INITIAL_PROBE_SIGNAL_A_TONE;
+		probe->tone_wait_samples = 0;
 		event->kind =
 			PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
 		return true;
@@ -294,6 +302,21 @@ static bool transmit_local_probe(
 		return false;
 	if (event->transmit_event.kind ==
 	    V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED)
+		probe->phase = PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE;
+	return true;
+}
+
+static bool wait_for_remote_tone(
+	struct phase2_initial_probe *probe,
+	struct phase2_info0_exchange *exchange,
+	int16_t received_sample, int16_t *transmit_sample,
+	struct phase2_initial_probe_event *event)
+{
+	if (!transmit_local_probe(probe, exchange, received_sample,
+				  transmit_sample, event))
+		return false;
+	if (probe->phase == PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE &&
+	    ++probe->tone_wait_samples == PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES)
 		fail_probe(
 			probe,
 			PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT,
@@ -361,6 +384,11 @@ phase2_initial_probe_sample(
 		break;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
 		accepted = transmit_local_probe(
+			&next, &next_exchange, received_sample,
+			&generated, &emitted);
+		break;
+	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
+		accepted = wait_for_remote_tone(
 			&next, &next_exchange, received_sample,
 			&generated, &emitted);
 		break;

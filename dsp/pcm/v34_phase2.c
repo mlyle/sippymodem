@@ -676,6 +676,23 @@ static bool sample_initial_probe(
 		 child.receive_event.kind ==
 			 V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED);
 	if (child.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED) {
+		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
+			struct v34_phase2_ranging next =
+				phase2->state.initial_probe.ranging;
+
+			if (phase2_ranging_restart_after_probe(
+				    &next.control, &next.info0_exchange.transport) !=
+			    PHASE2_RANGING_OK)
+				return false;
+			next.recovery_control = (struct phase2_ranging_control){ 0 };
+			next.recovery_paused = false;
+			phase2->state.ranging = next;
+			phase2->stage = V34_PHASE2_RANGING;
+			phase2->concurrent_probe_receive = false;
+			phase2->remote_probe_stored = false;
+			phase2->remote_receive_gain = 0;
+			return true;
+		}
 		phase2->failure = initial_probe_failure(child.failure);
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;

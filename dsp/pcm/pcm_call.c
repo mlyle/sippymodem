@@ -1336,10 +1336,8 @@ static enum pcm_call_result sample_phase2(
 	if (observation->phase2.kind == PCM_PHASE2_EVENT_ROUND_TRIP_DELAY ||
 	    observation->phase2.kind ==
 		    PCM_PHASE2_EVENT_INITIAL_PROBE_STARTED) {
-		if (call->round_trip_delay_stored && !call->retrain_active &&
-		    call->round_trip_delay_samples !=
-			    observation->phase2.round_trip_delay_samples)
-			return PCM_CALL_SEQUENCE_MISMATCH;
+		/* First-ranging recovery can refine the measured delay without a
+		 * full retrain. The shared ranging owner validates each new epoch. */
 		call->round_trip_delay_samples =
 			observation->phase2.round_trip_delay_samples;
 		call->round_trip_delay_stored = true;

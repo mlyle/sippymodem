@@ -1084,16 +1084,24 @@ static bool check_zero_rate_cleardown(
 	return true;
 }
 
+enum call_impairment {
+	CALL_CHANNEL_CLEAN,
+	CALL_CODEWORD_REPLACED,
+	CALL_INITIAL_TONE_B_LOST,
+};
+
 static bool run_configured_call(
 	enum g711_law law, size_t delay, enum call_goal goal,
 	uint32_t analog_rate_mask, uint8_t analog_selected_rate_index,
 	uint32_t digital_rate_mask, uint32_t expected_downstream_rate,
-	bool replace_digital_codeword)
+	enum call_impairment impairment)
 {
 	struct channel channel;
 	struct endpoint analog;
 	struct endpoint digital;
 	bool milestone_reached = false;
+	bool probe_interrupted = false;
+	bool ranging_recovered = false;
 	unsigned int replacement_stages = 0;
 
 	CHECK(channel_init(&channel, law, delay) &&
@@ -1114,9 +1122,19 @@ static bool run_configured_call(
 
 		channel_receive(
 			&channel, &analog_received, &digital_received);
+		if (impairment == CALL_INITIAL_TONE_B_LOST &&
+		    analog.call.stage == PCM_CALL_PHASE2) {
+			if (analog.call.state.phase2.stage == PCM_PHASE2_INITIAL_PROBE)
+				probe_interrupted = true;
+			else if (probe_interrupted &&
+				 analog.call.state.phase2.stage == PCM_PHASE2_RANGING)
+				ranging_recovered = true;
+			if (probe_interrupted && !ranging_recovered)
+				analog_received = silence_octet(law);
+		}
 		analog_received_sample = decode_octet(law, analog_received);
 		digital_received_sample = decode_octet(law, digital_received);
-		if (replace_digital_codeword &&
+		if (impairment == CALL_CODEWORD_REPLACED &&
 		    (pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE2 ||
 		     pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE3 ||
 		     pcm_call_current_stage(&digital.call) == PCM_CALL_PHASE3_MIXED ||
@@ -1143,7 +1161,9 @@ static bool run_configured_call(
 			break;
 		}
 	}
-	CHECK(!replace_digital_codeword ||
+	CHECK(impairment != CALL_INITIAL_TONE_B_LOST || ranging_recovered,
+	      "lost Tone B did not exercise initial-probe ranging recovery");
+	CHECK(impairment != CALL_CODEWORD_REPLACED ||
 	      replacement_stages == ((1u << PCM_CALL_PHASE2) |
 				     (1u << PCM_CALL_PHASE3) |
 				     (1u << PCM_CALL_PHASE3_MIXED) |
@@ -1263,7 +1283,7 @@ static bool run_call(
 {
 	return run_configured_call(
 		law, delay, goal, UINT32_C(1), 1,
-		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE, false);
+		V90_JD_RATE_CAPABILITY_MASK, DATA_DOWNSTREAM_RATE, CALL_CHANNEL_CLEAN);
 }
 
 static bool step_endpoints(
@@ -2006,7 +2026,8 @@ static bool test_b1_timeout(void)
 }
 
 static bool run_probe_response_timeout(
-	enum pcm_protocol protocol, enum g711_law law, size_t delay)
+	enum pcm_protocol protocol, enum g711_law law, size_t delay,
+	enum v90_modem_role role)
 {
 	struct pcm_call_configuration analog_configuration =
 		protocol == PCM_PROTOCOL_V90 ?
@@ -2019,6 +2040,8 @@ static bool run_probe_response_timeout(
 	struct pcm_call analog;
 	struct pcm_call digital;
 	struct pcm_call waiting;
+	const struct pcm_call *source =
+		role == V90_ANALOG_MODEM ? &analog : &digital;
 	struct channel channel;
 	uint8_t silence = silence_octet(law);
 	uint32_t deadline;
@@ -2044,20 +2067,25 @@ static bool run_probe_response_timeout(
 			      &digital_transmitted, &observed) == PCM_CALL_OK,
 		      "probe-timeout setup stopped at %zu", clock);
 		channel_transmit(&channel, analog_transmitted, digital_transmitted);
-		if (digital.stage == PCM_CALL_PHASE2 &&
-		    digital.state.phase2.stage == PCM_PHASE2_RECIPROCAL_PROBE) {
+		if (source->stage == PCM_CALL_PHASE2 &&
+		    source->state.phase2.stage == (role == V90_ANALOG_MODEM ?
+			    PCM_PHASE2_INITIAL_PROBE : PCM_PHASE2_RECIPROCAL_PROBE)) {
 			probe_started = true;
 			break;
 		}
 	}
-	CHECK(probe_started && digital.round_trip_delay_stored &&
-	      digital.state.phase2.state.reciprocal_probe.control.path.transmit
-		      .samples_emitted == 0u,
+	CHECK(probe_started && source->round_trip_delay_stored &&
+	      (role == V90_ANALOG_MODEM ?
+		      source->state.phase2.state.initial_probe.control.path.transmit
+			      .samples_emitted :
+		      source->state.phase2.state.reciprocal_probe.control.path.transmit
+			      .samples_emitted) == 0u,
 	      "probe-timeout test missed the first L1 sample");
-	waiting = digital;
-	/* V.90 9.2.1.2.5: 650 ms plus RTD after the 160-ms L1. The
+	waiting = *source;
+	/* V.90 9.2.1.2.5 / 9.2.2.2.3: 650 / 600 ms plus RTD after L1. The
 	 * shared PCM Phase 2 must expire naturally, without rebasing counters. */
-	deadline = (160u + 650u) * 8u + waiting.round_trip_delay_samples;
+	deadline = (160u + (role == V90_ANALOG_MODEM ? 600u : 650u)) * 8u +
+		waiting.round_trip_delay_samples;
 	for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
 		struct pcm_call_observation observed;
 		uint8_t transmitted;
@@ -2067,19 +2095,77 @@ static bool run_probe_response_timeout(
 
 		CHECK(result == PCM_CALL_OK &&
 		      observed.processed == PCM_CALL_PHASE2 &&
-		      observed.next == (elapsed < deadline ?
+		      observed.next == (elapsed < deadline || role == V90_ANALOG_MODEM ?
 			      PCM_CALL_PHASE2 : PCM_CALL_RETRAIN_SILENCE),
-		      "protocol %u law %u delay %zu probe deadline %u/%u: %s",
-		      (unsigned int)protocol, (unsigned int)law, delay,
+		      "protocol %u role %u law %u delay %zu probe deadline %u/%u: %s",
+		      (unsigned int)protocol, (unsigned int)role, (unsigned int)law, delay,
 		      elapsed, deadline, pcm_call_result_name(result));
-		if (elapsed > deadline - 800u)
+		if (elapsed > (160u + 550u) * 8u + waiting.round_trip_delay_samples)
 			CHECK(transmitted == silence,
 			      "probe exceeded its L2 wire limit");
-		if (elapsed == deadline)
+		if (elapsed == deadline && role == V90_DIGITAL_MODEM)
 			CHECK(observed.phase2.kind == PCM_PHASE2_EVENT_FAILED &&
 			      observed.phase2.failure ==
 				      PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT,
 			      "probe deadline lost its failure observation");
+	}
+	if (role == V90_ANALOG_MODEM) {
+		const struct v90_phase2_ranging *ranging =
+			&waiting.state.phase2.state.ranging;
+		struct v34_phase2_tone_transmitter expected =
+			ranging->info0_exchange.transport.tone_transmitter;
+
+		CHECK(waiting.stage == PCM_CALL_PHASE2 &&
+		      waiting.state.phase2.stage == PCM_PHASE2_RANGING &&
+		      ranging->control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		      ranging->control.local_tone_samples == 0u &&
+		      ranging->control.prior_round_trip_delay_samples ==
+			      source->round_trip_delay_samples &&
+		      !ranging->control.round_trip_delay_valid &&
+		      !ranging->info0_exchange.transport.tone_detector.carrier.tone_present &&
+		      !waiting.retrain_active && !waiting.failed &&
+		      waiting.protocol == protocol && waiting.peer_info0_stored &&
+		      memcmp(&waiting.peer_info0, &source->peer_info0,
+			     sizeof(waiting.peer_info0)) == 0,
+		      "unanswered initial probe did not restart a fresh ranging epoch");
+		for (size_t index = 0; index < 400u; ++index) {
+			struct pcm_call_observation observed;
+			uint8_t transmitted;
+			int16_t tone;
+
+			CHECK(v34_phase2_tone_transmitter_sample(&expected, &tone) ==
+				      V34_PHASE2_TONE_OK &&
+			      pcm_call_octet(&waiting, silence, decode_octet(law, silence),
+				      &transmitted, &observed) == PCM_CALL_OK &&
+			      transmitted == encode_octet(law, tone),
+			      "initial-probe recovery did not send Tone A immediately");
+		}
+		struct v34_phase2_tone_transmitter tone_b;
+		bool reversed = false;
+
+		CHECK(v34_phase2_tone_transmitter_init(
+			      &tone_b, V34_CALLING_STATION, 12000) == V34_PHASE2_TONE_OK,
+		      "recovery Tone B did not initialize");
+		for (size_t index = 0; index < 400u; ++index) {
+			struct pcm_call_observation observed;
+			uint8_t transmitted;
+			int16_t tone;
+
+			CHECK(v34_phase2_tone_transmitter_sample(&tone_b, &tone) == V34_PHASE2_TONE_OK,
+			      "recovery Tone B generation failed");
+			uint8_t received = encode_octet(law, tone);
+			CHECK(pcm_call_octet(&waiting, received, decode_octet(law, received),
+				      &transmitted, &observed) == PCM_CALL_OK,
+			      "initial-probe recovery did not accept fresh Tone B");
+			if (ranging->control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+				reversed = true;
+				break;
+			}
+		}
+		CHECK(reversed && ranging->control.local_tone_samples == 400u &&
+		      ranging->control.measurement_elapsed_samples != 0u,
+		      "initial-probe recovery did not begin first ranging");
+		return true;
 	}
 	CHECK(waiting.retrain_active && !waiting.retrain.peer_tone_retained &&
 	      !waiting.failed && waiting.peer_info0_stored &&
@@ -2114,9 +2200,11 @@ static bool test_probe_response_timeout(void)
 	     protocol <= PCM_PROTOCOL_V92; ++protocol)
 		for (enum g711_law law = G711_LAW_PCMU;
 		     law <= G711_LAW_PCMA; ++law)
-			CHECK(run_probe_response_timeout(protocol, law, 3u) &&
-			      run_probe_response_timeout(protocol, law, 13u),
-			      "PCM probe-timeout recovery failed");
+			for (enum v90_modem_role role = V90_ANALOG_MODEM;
+			     role <= V90_DIGITAL_MODEM; ++role)
+				CHECK(run_probe_response_timeout(protocol, law, 3u, role) &&
+				      run_probe_response_timeout(protocol, law, 13u, role),
+				      "PCM probe-timeout recovery failed");
 	return true;
 }
 
@@ -4174,7 +4262,7 @@ static bool test_downstream_rate_negotiation(void)
 	CHECK(run_configured_call(
 		      G711_LAW_PCMU, 1, CALL_GOAL_ONLINE_DATA,
 		      UINT32_C(3), 2, UINT32_C(1), DATA_DOWNSTREAM_RATE,
-		      false),
+		      CALL_CHANNEL_CLEAN),
 	      "call did not select the highest mutually enabled rate");
 	return true;
 }
@@ -4313,6 +4401,16 @@ static bool test_completed_dil_return_drains(void)
 	       check_completed_dil_return_drains(G711_LAW_PCMA);
 }
 
+static bool test_initial_probe_loss(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_configured_call(law, 13u, CALL_GOAL_ONLINE_DATA,
+			      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+			      DATA_DOWNSTREAM_RATE, CALL_INITIAL_TONE_B_LOST),
+		      "law %u lost Tone B did not recover online V.90 data", (unsigned int)law);
+	return true;
+}
+
 static bool test_generated_calls(void)
 {
 	static const size_t complete_delays[] = {
@@ -4336,7 +4434,7 @@ static bool test_generated_calls(void)
 		CHECK(run_configured_call(
 			      law, 1, CALL_GOAL_ONLINE_DATA,
 			      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
-			      DATA_DOWNSTREAM_RATE, true),
+			      DATA_DOWNSTREAM_RATE, CALL_CODEWORD_REPLACED),
 		      "law %u digital training/data depended on a reconstructed "
 		      "codeword", (unsigned int)law);
 	/* Retain the longer-delay pre-Phase-4 handoff regression separately
@@ -4616,7 +4714,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
-		{ "PCM probe-response timeout retrains", test_probe_response_timeout },
+		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
+		{ "lost initial Tone B recovers online data", test_initial_probe_loss },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
 		{ "remote retrain during final PCM training",

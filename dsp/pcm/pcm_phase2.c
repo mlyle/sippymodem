@@ -899,6 +899,18 @@ static bool sample_initial_probe(
 	case PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE:
 		return child.kind == ready && enter_turnaround(phase2, event);
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
+		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
+			struct v90_phase2_ranging next =
+				phase2->state.initial_probe.ranging;
+
+			if (phase2_ranging_restart_after_probe(
+				    &next.control, &next.info0_exchange.transport) !=
+			    PHASE2_RANGING_OK)
+				return false;
+			phase2->state.ranging = next;
+			phase2->stage = PCM_PHASE2_RANGING;
+			return true;
+		}
 		phase2->failure = initial_probe_failure(child.failure);
 		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;

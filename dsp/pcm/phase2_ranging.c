@@ -171,6 +171,38 @@ enum phase2_ranging_result phase2_ranging_control_init(
 	return PHASE2_RANGING_OK;
 }
 
+enum phase2_ranging_result phase2_ranging_restart_after_probe(
+	struct phase2_ranging_control *control,
+	struct phase2_info0_exchange *exchange)
+{
+	struct phase2_ranging_control next = {
+		.phase = PHASE2_SIGNAL_A_WAIT_INITIAL_TONE,
+	};
+	struct phase2_info0_exchange transport;
+
+	if (!phase2_ranging_control_is_valid(control, exchange, true) ||
+	    control->phase != PHASE2_RANGING_PROBE_READY ||
+	    exchange->signal_role != PHASE2_SIGNAL_A ||
+	    exchange->transmit_phase != PHASE2_INFO0_TONE)
+		return PHASE2_RANGING_INVALID_ARGUMENT;
+	transport = *exchange;
+	next.prior_round_trip_delay_samples = control->round_trip_delay_samples;
+	/* The INFO receiver was idle during probing. Discard its old sample
+	 * history together with the Tone-B detector's previous reversal epoch. */
+	if (v34_phase2_tone_detector_reset(&transport.tone_detector) !=
+		    V34_PHASE2_TONE_OK ||
+	    v34_phase2_info_audio_receiver_init(
+		    &transport.info_receiver,
+		    v34_phase2_station_for_signal(transport.signal_role),
+		    transport.info_receiver.frame.expected_payload_bit_count) !=
+		    V34_PHASE2_INFO_AUDIO_OK ||
+	    !phase2_ranging_control_is_valid(&next, &transport, true))
+		return PHASE2_RANGING_INVALID_ARGUMENT;
+	*control = next;
+	*exchange = transport;
+	return PHASE2_RANGING_OK;
+}
+
 static bool prepared_control_is_valid(
 	const struct phase2_ranging_control *control,
 	const struct phase2_info0_exchange *exchange,

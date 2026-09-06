@@ -862,20 +862,61 @@ static bool test_bounded_failures(void)
 		      &answerer, &answerer_ranging, false) ==
 		      V34_PHASE2_INITIAL_PROBE_OK,
 	      "transmit-limit fixture did not initialize");
-	for (samples = 0; samples < 7000 &&
-			  answerer.control.phase !=
-				  PHASE2_INITIAL_PROBE_FAILED;
-	     ++samples)
+	const size_t wire_limit = (160u + 550u) * 8u +
+		answerer_ranging.control.round_trip_delay_samples;
+	for (samples = 0; samples < wire_limit; ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      V34_PHASE2_INITIAL_PROBE_OK,
 		      "probe transmit limit failed at sample %zu", samples);
+	CHECK(answerer.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE &&
+	      answerer.control.tone_wait_samples == 0 &&
+	      event.kind == PHASE2_INITIAL_PROBE_EVENT_NONE &&
+	      event.transmit_event.kind == V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED,
+	      "L2 wire limit did not leave the 50-ms Tone-B response window");
+	{
+		struct v34_phase2_initial_probe late = answerer;
+		struct v34_phase2_tone_transmitter tone_b;
+		bool completed = false;
+
+		CHECK(v34_phase2_tone_transmitter_init(
+			      &tone_b, V34_CALLING_STATION, TEST_AMPLITUDE) ==
+			      V34_PHASE2_TONE_OK, "late Tone B did not initialize");
+		for (samples = 0; samples < 400u; ++samples) {
+			int16_t received = 0;
+
+			if (samples >= 240u)
+				CHECK(v34_phase2_tone_transmitter_sample(&tone_b, &received) ==
+					      V34_PHASE2_TONE_OK, "late Tone B failed");
+			CHECK(v34_phase2_initial_probe_sample(
+				      &late, received, &transmit, &event) ==
+				      V34_PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
+			      late.control.phase != PHASE2_INITIAL_PROBE_FAILED,
+			      "late Tone B was rejected at sample %zu", samples);
+			if (event.kind == PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
+				completed = true;
+				break;
+			}
+		}
+		CHECK(completed && late.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_A_TONE &&
+		      late.control.tone_wait_samples == 0 &&
+		      late.control.path.transmit.samples_emitted == wire_limit &&
+		      event.transmit_event.kind == V34_PHASE2_PROBE_SEQUENCE_EVENT_COMPLETED,
+		      "late Tone B did not complete the capped probe");
+	}
+	for (samples = 1; samples <= 400u; ++samples)
+		CHECK(v34_phase2_initial_probe_sample(
+			      &answerer, 0, &transmit, &event) ==
+			      V34_PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
+		      event.kind == (samples < 400u ? PHASE2_INITIAL_PROBE_EVENT_NONE :
+			      PHASE2_INITIAL_PROBE_EVENT_FAILED),
+		      "silent Tone-B deadline failed at sample %zu", samples);
 	CHECK(answerer.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
 	      answerer.control.failure ==
 		      PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED &&
 	      event.transmit_event.kind ==
-		      V34_PHASE2_PROBE_SEQUENCE_EVENT_LIMIT_REACHED,
+		      V34_PHASE2_PROBE_SEQUENCE_EVENT_NONE,
 	      "unanswered local probe did not reach its RTD-adjusted limit");
 
 	CHECK(v34_phase2_initial_probe_init(
