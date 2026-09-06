@@ -60,7 +60,6 @@ static enum v90_phase3_analog_line_rx_result observe_ja(
 	struct v34_analytic_sample fixed_target;
 	struct qam_point unit_target = v34_rotated_point_zero(0);
 	struct qam_point normalized;
-	struct qam_point target;
 	double scale;
 	enum v90_phase3_ja_rx_result result;
 
@@ -76,7 +75,7 @@ static enum v90_phase3_analog_line_rx_result observe_ja(
 	};
 	/* The fixed owner has already resolved this observation exactly once;
 	 * Ja owns only the precoder recommendation and descriptor semantics. */
-	result = v90_phase3_ja_rx_observe(ja, &normalized, &target);
+	result = v90_phase3_ja_rx_observe(ja, &normalized);
 	switch (result) {
 	case V90_PHASE3_JA_RX_OK:
 		return V90_PHASE3_ANALOG_LINE_RX_OK;

@@ -47,14 +47,8 @@ enum v90_phase3_ja_rx_result v90_phase3_ja_rx_init(
 }
 
 enum v90_phase3_ja_rx_result v90_phase3_ja_rx_observe(
-	struct v90_phase3_ja_rx *rx, const struct qam_point *decision,
-	struct qam_point *target)
+	struct v90_phase3_ja_rx *rx, const struct qam_point *decision)
 {
-	const struct memory_region regions[] = {
-		{ rx, sizeof(*rx) },
-		{ decision, sizeof(*decision) },
-		{ target, sizeof(*target) },
-	};
 	struct v90_phase3_ja_rx next;
 	struct qam_point sliced;
 	uint8_t quarter_point;
@@ -62,8 +56,7 @@ enum v90_phase3_ja_rx_result v90_phase3_ja_rx_observe(
 	enum v90_ja_search_result result = V90_JA_SEARCH_OK;
 
 	if (!v90_phase3_ja_rx_is_valid(rx) || !point_is_finite(decision) ||
-	    target == NULL || memory_region_set_overlaps(
-		    regions, sizeof(regions) / sizeof(regions[0])))
+	    memory_regions_overlap(rx, sizeof(*rx), decision, sizeof(*decision)))
 		return V90_PHASE3_JA_RX_INVALID_ARGUMENT;
 	if (rx->search.complete)
 		return V90_PHASE3_JA_RX_COMPLETE;
@@ -87,7 +80,6 @@ enum v90_phase3_ja_rx_result v90_phase3_ja_rx_observe(
 	    !v90_phase3_ja_rx_is_valid(&next))
 		return V90_PHASE3_JA_RX_NUMERIC_FAILURE;
 	*rx = next;
-	*target = sliced;
 	if (result == V90_JA_SEARCH_DETECTED)
 		return V90_PHASE3_JA_RX_DETECTED;
 	return result == V90_JA_SEARCH_REJECTED ? V90_PHASE3_JA_RX_REJECTED :

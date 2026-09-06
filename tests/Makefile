@@ -2447,18 +2447,12 @@ V90_PHASE3_ANALOG_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/v90_ja.o \
 	$(BUILD_DIR)/v90_phase3_analog_tx.o
-V90_PHASE3_ANALOG_RX_TEST_BINARY := \
-	$(BUILD_DIR)/test_v90_phase3_analog_rx
-V90_PHASE3_ANALOG_RX_TEST_OBJECTS := $(sort \
-	$(BUILD_DIR)/test_v90_phase3_analog_rx.o \
+V90_PHASE3_JA_RX_TEST_BINARY := \
+	$(BUILD_DIR)/test_v90_phase3_ja_rx
+V90_PHASE3_JA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/test_v90_phase3_ja_rx.o \
 	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/qam_gain.o \
-	$(BUILD_DIR)/v34_equalizer_handoff.o \
 	$(BUILD_DIR)/v34_precoder_trainer.o \
-	$(BUILD_DIR)/v34_phase3_pp_receiver.o \
-	$(BUILD_DIR)/v34_phase3_s_receiver.o \
-	$(BUILD_DIR)/v90_phase3_analog_rx.o \
 	$(BUILD_DIR)/v90_phase3_ja_rx.o \
 	$(BUILD_DIR)/v90_ja_search.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_tx.o, \
@@ -2495,21 +2489,16 @@ V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v34_training_sequence.o \
 	$(BUILD_DIR)/v90_phase3_return_line_tx.o \
 	$(BUILD_DIR)/v90_phase3_return_tx.o
-V90_PHASE3_RETURN_RX_TEST_BINARY := \
-	$(BUILD_DIR)/test_v90_phase3_return_rx
-V90_PHASE3_RETURN_RX_TEST_OBJECTS := $(sort \
-	$(BUILD_DIR)/test_v90_phase3_return_rx.o \
+V90_PHASE3_RETURN_MARKER_TEST_BINARY := \
+	$(BUILD_DIR)/test_v90_phase3_return_marker
+V90_PHASE3_RETURN_MARKER_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/test_v90_phase3_return_marker.o \
 	$(BUILD_DIR)/qam.o \
-	$(BUILD_DIR)/qam_equalizer.o \
-	$(BUILD_DIR)/v34_equalizer_handoff.o \
-	$(BUILD_DIR)/v34_precoder_trainer.o \
 	$(BUILD_DIR)/v34_phase3_s_receiver.o \
-	$(BUILD_DIR)/v90_phase3_return_rx.o \
 	$(BUILD_DIR)/v90_phase3_return_marker.o \
+	$(BUILD_DIR)/v90_phase3_return_tx.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_tx.o, \
-		$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_tx.o, \
-		$(V90_PHASE3_RETURN_TX_TEST_OBJECTS)))
+		$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)))
 V90_UPSTREAM_TRAINING_RX_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_upstream_training_rx.o \
 	$(BUILD_DIR)/v34_line_receiver.o \
@@ -2524,8 +2513,8 @@ V90_PHASE3_ANALOG_LINE_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase3_analog_line_rx.o \
 	$(V90_UPSTREAM_TRAINING_RX_OBJECTS) \
 	$(BUILD_DIR)/g711.o \
-	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_rx.o, \
-		$(V90_PHASE3_ANALOG_RX_TEST_OBJECTS)) \
+	$(filter-out $(BUILD_DIR)/test_v90_phase3_ja_rx.o, \
+		$(V90_PHASE3_JA_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_analog_line_tx.o, \
 		$(V90_PHASE3_ANALOG_LINE_TX_TEST_OBJECTS)))
 V90_PHASE3_RETURN_LINE_RX_TEST_BINARY := \
@@ -2539,8 +2528,8 @@ V90_PHASE3_RETURN_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V90_PHASE3_ANALOG_LINE_RX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_line_tx.o, \
 		$(V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS)) \
-	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_rx.o, \
-		$(V90_PHASE3_RETURN_RX_TEST_OBJECTS)))
+	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_marker.o, \
+		$(V90_PHASE3_RETURN_MARKER_TEST_OBJECTS)))
 V90_PHASE4_CP_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_cp_line_rx
 V90_PHASE4_CP_LINE_RX_TEST_OBJECTS := $(sort \
@@ -3266,7 +3255,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE3_SD_TEST_BINARY) \
 	$(V90_PHASE3_SIGNS_TEST_BINARY) \
 	$(V90_PHASE3_ANALOG_TX_TEST_BINARY) \
-	$(V90_PHASE3_ANALOG_RX_TEST_BINARY) \
+	$(V90_PHASE3_JA_RX_TEST_BINARY) \
 	$(V90_PHASE3_ANALOG_LINE_TX_TEST_BINARY) \
 	$(V90_PHASE3_ANALOG_LINE_RX_TEST_BINARY) \
 	$(V90_PHASE3_DIGITAL_TX_TEST_BINARY) \
@@ -3277,7 +3266,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE4_CP_LINE_RX_TEST_BINARY) \
 	$(V90_PHASE4_E_LINE_RX_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_LINE_TX_TEST_BINARY) \
-	$(V90_PHASE3_RETURN_RX_TEST_BINARY) \
+	$(V90_PHASE3_RETURN_MARKER_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_TX_TEST_BINARY) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
 	$(V90_PHASE2_RANGING_TEST_BINARY) \
@@ -3583,7 +3572,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE3_SD_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_SIGNS_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS:.o=.d) \
-	$(V90_PHASE3_ANALOG_RX_TEST_OBJECTS:.o=.d) \
+	$(V90_PHASE3_JA_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_ANALOG_LINE_TX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_ANALOG_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_DIGITAL_TX_TEST_OBJECTS:.o=.d) \
@@ -3594,7 +3583,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE4_CP_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE4_E_LINE_RX_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS:.o=.d) \
-	$(V90_PHASE3_RETURN_RX_TEST_OBJECTS:.o=.d) \
+	$(V90_PHASE3_RETURN_MARKER_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_TX_TEST_OBJECTS:.o=.d) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
@@ -4472,8 +4461,8 @@ $(V90_PHASE3_ANALOG_TX_TEST_BINARY): \
 	$(V90_PHASE3_ANALOG_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(V90_PHASE3_ANALOG_RX_TEST_BINARY): \
-	$(V90_PHASE3_ANALOG_RX_TEST_OBJECTS)
+$(V90_PHASE3_JA_RX_TEST_BINARY): \
+	$(V90_PHASE3_JA_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PHASE3_ANALOG_LINE_TX_TEST_BINARY): \
@@ -4534,8 +4523,8 @@ $(V90_PHASE3_RETURN_LINE_TX_TEST_BINARY): \
 	$(V90_PHASE3_RETURN_LINE_TX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_PHASE3_RETURN_RX_TEST_BINARY): \
-	$(V90_PHASE3_RETURN_RX_TEST_OBJECTS)
+$(V90_PHASE3_RETURN_MARKER_TEST_BINARY): \
+	$(V90_PHASE3_RETURN_MARKER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_PHASE3_RETURN_TX_TEST_BINARY): \
@@ -5589,10 +5578,6 @@ $(BUILD_DIR)/v90_phase3_analog_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase3_analog_rx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_analog_rx.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
 $(BUILD_DIR)/v90_phase3_ja_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_ja_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
@@ -5653,10 +5638,6 @@ $(BUILD_DIR)/v90_phase3_return_line_rx.o: \
 
 $(BUILD_DIR)/v90_phase3_return_line_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_line_tx.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v90_phase3_return_rx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase3_return_marker.o: \

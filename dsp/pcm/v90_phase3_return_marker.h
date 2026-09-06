@@ -87,15 +87,9 @@ v90_phase3_return_marker_allow_implicit_s_end(
 	struct v90_phase3_return_marker *rx);
 enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 	struct v90_phase3_return_marker *rx);
-/* Clear a second-return search when its physical owner reacquires S. */
-enum v90_phase3_return_rx_result v90_phase3_return_marker_reacquire_s(
-	struct v90_phase3_return_marker *rx);
-
-/* Receiver and adapt must be disjoint. Successful results report whether the
- * caller should adapt this decision; errors and COMPLETE leave both unchanged.
- * The physical owner must commit the marker and adaptation transactionally. */
+/* Errors and COMPLETE leave the receiver unchanged. */
 enum v90_phase3_return_rx_result v90_phase3_return_marker_observe(
-	struct v90_phase3_return_marker *rx, uint8_t rotation, bool *adapt);
+	struct v90_phase3_return_marker *rx, uint8_t rotation);
 
 /* Return only a complete, distinct S/S-bar marker. No physical decision delay
  * is consumed here. The caller retains any marker.post_marker_symbols already

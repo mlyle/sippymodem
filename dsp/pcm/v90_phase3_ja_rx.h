@@ -36,12 +36,10 @@ enum v90_phase3_ja_rx_result v90_phase3_ja_rx_init(
 bool v90_phase3_ja_rx_is_valid(const struct v90_phase3_ja_rx *rx);
 bool v90_phase3_ja_rx_is_complete(const struct v90_phase3_ja_rx *rx);
 
-/* Return the sliced unit-power target for the caller's equalizer adaptation.
- * Receiver, input and output must be disjoint. Errors and COMPLETE leave all
- * objects unchanged; REJECTED consumes a bad descriptor and keeps searching. */
+/* Receiver and input must be disjoint. Errors and COMPLETE leave both
+ * unchanged; REJECTED consumes a bad descriptor and keeps searching. */
 enum v90_phase3_ja_rx_result v90_phase3_ja_rx_observe(
-	struct v90_phase3_ja_rx *rx, const struct qam_point *decision,
-	struct qam_point *target);
+	struct v90_phase3_ja_rx *rx, const struct qam_point *decision);
 
 /* Export only protocol semantics, not a second physical-receiver handoff.
  * Receiver and destination must be disjoint. Errors leave both unchanged. */

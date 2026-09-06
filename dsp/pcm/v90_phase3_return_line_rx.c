@@ -116,7 +116,6 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 	struct v90_phase3_return_line_rx next;
 	struct v34_analytic_sample decision;
 	struct v34_fixed_training_decision hard;
-	bool adapt;
 	enum v90_upstream_training_rx_result upstream_result;
 	enum v90_phase3_return_line_rx_result result =
 		V90_PHASE3_RETURN_LINE_RX_OK;
@@ -141,7 +140,7 @@ enum v90_phase3_return_line_rx_result v90_phase3_return_line_rx_sample(
 			/* Physical adaptation is already complete. The marker owns
 			 * only the first/second return semantic boundary. */
 			result = marker_result(v90_phase3_return_marker_observe(
-				&next.marker, hard.clockwise_quarter_turns, &adapt));
+				&next.marker, hard.clockwise_quarter_turns));
 	} else if (upstream_result != V90_UPSTREAM_TRAINING_RX_OK) {
 		result = V90_PHASE3_RETURN_LINE_RX_NUMERIC_FAILURE;
 	}

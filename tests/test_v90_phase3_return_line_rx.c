@@ -446,7 +446,6 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 			handoff.upstream.line.timing.timing;
 		bool accepting = v34_training_line_needs_point(&tx);
 		bool accepted;
-		bool adapt;
 		int16_t sample;
 		enum v90_upstream_training_rx_result sampled;
 		enum v90_phase3_return_rx_result result;
@@ -540,7 +539,7 @@ static bool run_fixed_returns(enum g711_law law, unsigned int silence_symbols)
 			continue;
 		}
 		result = v90_phase3_return_marker_observe(
-			&marker, hard.clockwise_quarter_turns, &adapt);
+			&marker, hard.clockwise_quarter_turns);
 		if (result == V90_PHASE3_RETURN_RX_S_DETECTED)
 			onset_events++;
 		else if (result == V90_PHASE3_RETURN_RX_S_ENDED) {

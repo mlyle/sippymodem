@@ -173,25 +173,6 @@ enum v90_phase3_return_rx_result v90_phase3_return_marker_restart(
 	return V90_PHASE3_RETURN_RX_OK;
 }
 
-enum v90_phase3_return_rx_result v90_phase3_return_marker_reacquire_s(
-	struct v90_phase3_return_marker *rx)
-{
-	struct v90_phase3_return_marker restarted;
-
-	if (!v90_phase3_return_marker_is_valid(rx))
-		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
-	if (!rx->second_return || !rx->confirm_onset ||
-	    rx->stage != V90_PHASE3_RETURN_RX_STAGE_SEARCH_S)
-		return V90_PHASE3_RETURN_RX_INVALID_STATE;
-	if (v90_phase3_return_marker_init(&restarted, rx->confirm_onset) !=
-	    V90_PHASE3_RETURN_RX_OK)
-		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
-	restarted.second_return = true;
-	restarted.allow_implicit_s_end = rx->allow_implicit_s_end;
-	*rx = restarted;
-	return V90_PHASE3_RETURN_RX_OK;
-}
-
 static uint8_t onset_decision(
 	const struct v90_phase3_return_marker *rx, size_t index)
 {
@@ -329,9 +310,7 @@ static enum v90_phase3_return_rx_result observe_s_exit(
 }
 
 static enum v90_phase3_return_rx_result receive_decision(
-	struct v90_phase3_return_marker *rx,
-	bool *adapt,
-	uint8_t rotation)
+	struct v90_phase3_return_marker *rx, uint8_t rotation)
 {
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_SEARCH_S) {
 		if (rx->confirmed_s_symbols != 0) {
@@ -349,7 +328,6 @@ static enum v90_phase3_return_rx_result receive_decision(
 			if (rx->confirmed_s_symbols <
 			    V90_PHASE3_RETURN_RX_TRACKED_ONSET_SYMBOLS)
 				return V90_PHASE3_RETURN_RX_OK;
-			*adapt = true;
 			rx->stage = V90_PHASE3_RETURN_RX_STAGE_S;
 			return V90_PHASE3_RETURN_RX_S_DETECTED;
 		}
@@ -361,11 +339,9 @@ static enum v90_phase3_return_rx_result receive_decision(
 			V90_PHASE3_RETURN_RX_ONSET_SYMBOLS;
 		if (rx->confirm_onset)
 			return V90_PHASE3_RETURN_RX_OK;
-		*adapt = true;
 		rx->stage = V90_PHASE3_RETURN_RX_STAGE_S;
 		return V90_PHASE3_RETURN_RX_S_DETECTED;
 	}
-	*adapt = true;
 	switch (v34_phase3_s_receiver_receive(
 		&rx->marker, 0, rotation)) {
 	case V34_PHASE3_S_RECEIVER_OK:
@@ -395,28 +371,24 @@ static bool result_commits(enum v90_phase3_return_rx_result result)
 }
 
 enum v90_phase3_return_rx_result v90_phase3_return_marker_observe(
-	struct v90_phase3_return_marker *rx, uint8_t rotation, bool *adapt)
+	struct v90_phase3_return_marker *rx, uint8_t rotation)
 {
 	struct v90_phase3_return_marker next;
-	bool generated_adapt = false;
 	enum v90_phase3_return_rx_result result;
 
-	if (!v90_phase3_return_marker_is_valid(rx) || rotation >= 4u ||
-	    adapt == NULL || memory_regions_overlap(
-		    rx, sizeof(*rx), adapt, sizeof(*adapt)))
+	if (!v90_phase3_return_marker_is_valid(rx) || rotation >= 4u)
 		return V90_PHASE3_RETURN_RX_INVALID_ARGUMENT;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_COMPLETE)
 		return V90_PHASE3_RETURN_RX_COMPLETE;
 	if (rx->stage == V90_PHASE3_RETURN_RX_STAGE_IMPLICIT_END)
 		return V90_PHASE3_RETURN_RX_INVALID_STATE;
 	next = *rx;
-	result = receive_decision(&next, &generated_adapt, rotation);
+	result = receive_decision(&next, rotation);
 	if (!result_commits(result))
 		return result;
 	if (!v90_phase3_return_marker_is_valid(&next))
 		return V90_PHASE3_RETURN_RX_NUMERIC_FAILURE;
 	*rx = next;
-	*adapt = generated_adapt;
 	return result;
 }
 

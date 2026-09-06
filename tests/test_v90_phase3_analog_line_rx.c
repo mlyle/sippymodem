@@ -290,7 +290,6 @@ static bool run_fixed_ja_line(enum g711_law law)
 		struct v34_analytic_sample saved_decision = decision;
 		struct v34_analytic_sample retained;
 		struct qam_point normalized;
-		struct qam_point target;
 		uint16_t previous = line.next_recent_decision;
 		uint16_t previous_trn = line.initial.j.received_symbols;
 		bool was_tracking = v90_upstream_training_rx_is_tracking(&line);
@@ -346,7 +345,7 @@ static bool run_fixed_ja_line(enum g711_law law)
 			decision.in_phase / decision_scale,
 			decision.quadrature / decision_scale,
 		};
-		result = v90_phase3_ja_rx_observe(&semantic, &normalized, &target);
+		result = v90_phase3_ja_rx_observe(&semantic, &normalized);
 		CHECK(result == V90_PHASE3_JA_RX_OK ||
 		      result == V90_PHASE3_JA_RX_REJECTED ||
 		      result == V90_PHASE3_JA_RX_DETECTED,
@@ -377,13 +376,12 @@ static bool run_fixed_ja_line(enum g711_law law)
 	{
 		struct v90_phase3_ja_rx saved = semantic;
 		struct qam_point decision = { 0.5, 0.5 };
-		struct qam_point target = { 9.0, 7.0 };
-		struct qam_point saved_target = target;
+		struct qam_point saved_decision = decision;
 
-		CHECK(v90_phase3_ja_rx_observe(&semantic, &decision, &target) ==
+		CHECK(v90_phase3_ja_rx_observe(&semantic, &decision) ==
 			      V90_PHASE3_JA_RX_COMPLETE &&
 		      memcmp(&semantic, &saved, sizeof(semantic)) == 0 &&
-		      memcmp(&target, &saved_target, sizeof(target)) == 0,
+		      memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
 		      "law %d complete Ja consumed another decision", law);
 	}
 	CHECK(check_fixed_sample_rejection(&line),
