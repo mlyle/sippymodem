@@ -8,6 +8,7 @@
 #include "test.h"
 #include "v90_phase4_station_fixture.h"
 
+#include <limits.h>
 #include <string.h>
 
 enum {
@@ -141,7 +142,8 @@ static bool next_cp_octet(
 
 static bool run_exchange(
 	enum g711_law law, uint8_t projected_rate,
-	uint16_t peer_rate_mask, uint8_t expected_maximum)
+	uint16_t peer_rate_mask, int16_t decision_metric,
+	uint8_t expected_maximum)
 {
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_mp_record mp = mp_parameters(false);
@@ -188,6 +190,13 @@ static bool run_exchange(
 		uint8_t next_to_analog;
 		uint8_t next_to_digital;
 
+		/* Exercise MP selection with a completed training measurement, not
+		 * a noisy waveform.  Negative leaves the fixture's metric intact. */
+		if (before == V90_PHASE4_STARTUP_INITIAL && decision_metric >= 0)
+			startup.state.initial.receive.line.equalizer.quality =
+				(struct v34_adaptive_equalizer_quality){
+					.decision_metric = decision_metric,
+				};
 		if (before == V90_PHASE4_STARTUP_CONTINUING) {
 			const struct v34_carrier_demodulator *carrier =
 				&startup.state.continuing.receive.line.timing.carrier;
@@ -240,12 +249,17 @@ static bool run_exchange(
 			break;
 		}
 	}
-	CHECK(complete && tracking_continuation && continued_octets > 0 &&
-	      startup.initial_mp.parameters.type0
+	CHECK(startup.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units ==
 		      expected_maximum &&
 	      startup.initial_mp.parameters.type0
-		      .upstream_rate_capability_mask == 0x1555u &&
+		      .upstream_rate_capability_mask == 0x1555u,
+	      "law %u metric %d selected rate %u instead of %u or changed mask",
+	      (unsigned int)law, decision_metric,
+	      startup.initial_mp.parameters.type0
+		      .maximum_upstream_rate_2400_bps_units,
+	      expected_maximum);
+	CHECK(complete && tracking_continuation && continued_octets > 0 &&
 	      v90_phase4_digital_startup_handoff(
 		      &startup, &handoff) == V90_PHASE4_STARTUP_OK &&
 	      handoff.receive.line.timing.carrier.phase ==
@@ -281,7 +295,9 @@ static bool run_exchange(
 	return true;
 }
 
-static bool run_disjoint_cpt_selection(enum g711_law law)
+static bool run_unusable_cpt_selection(
+	enum g711_law law, uint8_t local_maximum,
+	uint16_t local_mask, uint16_t peer_mask)
 {
 	struct v90_cp_parameters training = training_parameters(law);
 	struct v90_mp_record mp = mp_parameters(false);
@@ -291,11 +307,9 @@ static bool run_disjoint_cpt_selection(enum g711_law law)
 	int16_t sample;
 	uint8_t output;
 
-	/* Reproduce a peer which advertises through 26.4 kbit/s after Phase 3
-	 * projected 28.8 kbit/s while the local receiver enables only 31.2. */
-	training.upstream_rate_mask = 0x03ffu;
-	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 13u;
-	mp.parameters.type0.upstream_rate_capability_mask = 0x0800u;
+	training.upstream_rate_mask = peer_mask;
+	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = local_maximum;
+	mp.parameters.type0.upstream_rate_capability_mask = local_mask;
 	CHECK(prepare_stations(
 		      law, 12u, &training, &analog_station, &digital_station) &&
 	      v90_phase4_digital_startup_init(
@@ -319,11 +333,8 @@ static bool run_disjoint_cpt_selection(enum g711_law law)
 			continue;
 		CHECK(startup.stage == V90_PHASE4_STARTUP_CONTINUING &&
 		      !startup.failed &&
-		      startup.initial_mp.parameters.type0
-			      .maximum_upstream_rate_2400_bps_units == 13u &&
-		      startup.initial_mp.parameters.type0
-			      .upstream_rate_capability_mask == 0x0800u,
-		      "law %u disjoint CPt changed the local MP",
+		      v90_mp_record_equal(&startup.initial_mp, &mp),
+		      "law %u unusable CPt changed the local MP",
 		      (unsigned int)law);
 		return true;
 	}
@@ -342,9 +353,15 @@ static bool run_precoder_selection(
 	struct v90_phase4_analog_station analog_station;
 	struct v90_phase4_digital_station digital_station;
 	struct v90_phase4_digital_startup startup;
+	/* The short 3000-baud fixture supports 28.8 kbit/s with PCMU, and its
+	 * measured PCMA error selects the next locally enabled rate, 24 kbit/s.
+	 * A higher configured rate cannot override that measured limit. */
+	uint8_t expected_maximum = law == G711_LAW_PCMA ? 10u : 12u;
 	int16_t sample;
 	uint8_t output;
 
+	if (expected_maximum > maximum_rate)
+		expected_maximum = maximum_rate;
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units =
 		maximum_rate;
 	if (configure_type1) {
@@ -393,13 +410,15 @@ static bool run_precoder_selection(
 				     sizeof(precoder->coefficients)) == 0 &&
 			      startup.initial_mp.parameters.type1.common
 					      .maximum_upstream_rate_2400_bps_units ==
-					      maximum_rate &&
+					      expected_maximum &&
 			      startup.initial_mp.parameters.type1.common
 					      .upstream_rate_capability_mask ==
 				      0x1555u,
 			      "law %u did not select the expected Type-1 MP",
 			      (unsigned int)law);
 		} else {
+			mp.parameters.type0.maximum_upstream_rate_2400_bps_units =
+				expected_maximum;
 			CHECK(v90_mp_record_equal(&startup.initial_mp, &mp),
 			      "law %u automatically published a trained Type-1 MP",
 			      (unsigned int)law);
@@ -426,14 +445,12 @@ static bool test_generated_exchange(void)
 		.enabled = true,
 	};
 
-	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, 12u) &&
-	      run_exchange(G711_LAW_PCMA, 12u, 0x1555u, 12u) &&
-	      run_exchange(G711_LAW_PCMU, 8u, 0x1555u, 8u) &&
-	      run_exchange(G711_LAW_PCMA, 8u, 0x1555u, 8u) &&
-	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, 6u) &&
-	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, 6u) &&
-	      run_disjoint_cpt_selection(G711_LAW_PCMU) &&
-	      run_disjoint_cpt_selection(G711_LAW_PCMA) &&
+	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, -1, 12u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x1555u, -1, 10u) &&
+	      run_exchange(G711_LAW_PCMU, 8u, 0x1555u, -1, 8u) &&
+	      run_exchange(G711_LAW_PCMA, 8u, 0x1555u, -1, 8u) &&
+	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, -1, 6u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, -1, 6u) &&
 	      run_precoder_selection(
 		      G711_LAW_PCMU, &learned_precoder, 12u, false) &&
 	      run_precoder_selection(
@@ -451,6 +468,47 @@ static bool test_generated_exchange(void)
 	      run_precoder_selection(
 		      G711_LAW_PCMA, &learned_precoder, 12u, true),
 	      "generated digital startup exchanges failed");
+	return true;
+}
+
+static bool test_receive_quality_selection(void)
+{
+	static const struct {
+		uint16_t peer_mask;
+		int16_t metric;
+		uint8_t maximum;
+	} cases[] = {
+		/* At 3000 baud the shared 28.8-kbit/s quality threshold is 58.
+		 * Local rates are sparse: 4.8, 9.6, 14.4, 19.2, 24, 28.8, 33.6. */
+		{ 0x1555u, 57, 12u },
+		{ 0x1555u, 58, 10u },
+		{ 0x1555u, 179, 8u },
+		{ 0x1555u, 918, 6u },
+		{ 0x1555u, INT16_MAX, 2u },
+		/* Poor quality cannot enable a rate absent from either modem. */
+		{ 0x0014u, INT16_MAX, 4u },
+		{ 0x0400u, INT16_MAX, 12u },
+	};
+	static const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+
+	for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law)
+		for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
+			CHECK(run_exchange(
+				      laws[law], 12u, cases[index].peer_mask,
+				      cases[index].metric, cases[index].maximum),
+			      "law %u quality selection case %zu failed",
+			      (unsigned int)laws[law], index);
+	for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law)
+		CHECK(
+			/* Disjoint capabilities, or common 31.2 at unsupported
+			 * 3000 baud, must not invalidate the local MP. */
+			run_unusable_cpt_selection(laws[law], 13u, 0x0800u, 0x03ffu) &&
+			run_unusable_cpt_selection(laws[law], 13u, 0x0800u, 0x0800u) &&
+			/* Nor enable an above-ceiling rate or undo cleardown. */
+			run_unusable_cpt_selection(laws[law], 12u, 0x1555u, 0x1000u) &&
+			run_unusable_cpt_selection(laws[law], 0u, 0x1555u, 0x1555u),
+			"law %u no-rate selection changed MP semantics",
+			(unsigned int)laws[law]);
 	return true;
 }
 
@@ -528,6 +586,8 @@ int main(void)
 	} tests[] = {
 		{ "generated PCMU and PCMA continuation",
 		  test_generated_exchange },
+		{ "receive quality selects the common upstream rate",
+		  test_receive_quality_selection },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

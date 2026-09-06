@@ -801,6 +801,9 @@ static bool test_tracking_boundary(void)
 			(int16_t)(523 + (int)sample);
 	}
 	equalizer.quality = (struct v34_adaptive_equalizer_quality){
+		.recent_error_blocks = { [3] = 593 },
+		.recent_symbol_count = 512,
+		.recent_decision_metric = 587,
 		.decision_accumulator = 601,
 		.feedback_accumulator = 607,
 		.reference_accumulator = 613,
@@ -863,7 +866,8 @@ static bool test_decision_quality_window(void)
 	      equalizer.quality.feedback_accumulator == UINT32_C(1002001) &&
 	      equalizer.quality.decision_accumulator == 0 &&
 	      equalizer.quality.reference_accumulator == 0 &&
-	      equalizer.quality.window_position == 0,
+	      equalizer.quality.window_position == 0 &&
+	      equalizer.quality.recent_symbol_count == 0u,
 	      "skipped decision changed the quality window: %d/%u/%u/%u/%u at %d,%d",
 	      result, equalizer.quality.feedback_accumulator,
 	      equalizer.quality.decision_accumulator,
@@ -894,8 +898,15 @@ static bool test_decision_quality_window(void)
 		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
 			      V34_ADAPTIVE_EQUALIZER_OK,
 		      "quality commit failed at %zu", symbol);
+		CHECK(equalizer.quality.recent_symbol_count ==
+			      (symbol < 512u ? symbol + 1u : 512u) &&
+		      equalizer.quality.recent_decision_metric ==
+			      (symbol < 511u ? 0 : 15625),
+		      "recent quality published before a complete window at %zu", symbol);
 	}
 	CHECK(equalizer.quality.decision_metric == 15625 &&
+	      equalizer.quality.recent_symbol_count == 512u &&
+	      equalizer.quality.recent_decision_metric == 15625 &&
 	      equalizer.quality.feedback_metric == 15 &&
 	      equalizer.quality.reference_metric == UINT32_C(15624) &&
 	      equalizer.quality.window_position == 0 &&
@@ -903,6 +914,32 @@ static bool test_decision_quality_window(void)
 	      equalizer.quality.feedback_accumulator == 0 &&
 	      equalizer.quality.reference_accumulator == 0,
 	      "published quality window changed");
+	/* A 512-symbol estimate advances every 64 symbols without waiting for
+	 * the old 1024-symbol window to wrap. A short tail never replaces it. */
+	for (unsigned int symbol = 1u; symbol <= 1024u; ++symbol) {
+		unsigned int quiet_symbols = symbol / 64u * 64u;
+		int16_t expected = symbol <= 512u ?
+			(int16_t)((uint64_t)(512u - quiet_symbols) * 1000000u >> 15) :
+			symbol < 576u ? 0 : INT16_MAX;
+		CHECK(push_zero_symbol(&equalizer) &&
+		      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+			      V34_ADAPTIVE_EQUALIZER_OK,
+		      "rolling quality observation failed at %u", symbol);
+		decision = (struct v34_adaptive_equalizer_decision){
+			.observation = observation,
+			.target = symbol <= 512u ?
+				(struct v34_analytic_sample){ 0, 0 } :
+				(struct v34_analytic_sample){ INT16_MAX, INT16_MAX },
+			.decoder_power_q15 = 0x4000,
+			.adaptation = V34_ADAPTIVE_EQUALIZER_FULL,
+		};
+		CHECK(v34_adaptive_equalizer_commit(&equalizer, &decision) ==
+			      V34_ADAPTIVE_EQUALIZER_OK &&
+		      equalizer.quality.recent_decision_metric == expected &&
+		      (symbol == 1024u || equalizer.quality.decision_metric == 15625),
+		      "rolling quality changed at %u: %d, expected %d",
+		      symbol, equalizer.quality.recent_decision_metric, expected);
+	}
 	CHECK(v34_adaptive_equalizer_begin_tracking(&equalizer) ==
 		      V34_ADAPTIVE_EQUALIZER_OK &&
 	      memcmp(&equalizer.quality,
@@ -1061,6 +1098,15 @@ static bool test_transactionality(void)
 	invalid.quality.decision_metric = -1;
 	CHECK(!v34_adaptive_equalizer_is_valid(&invalid),
 	      "negative published quality metric was accepted");
+	invalid = equalizer;
+	invalid.quality.recent_symbol_count =
+		V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS + 1u;
+	CHECK(!v34_adaptive_equalizer_is_valid(&invalid),
+	      "out-of-domain recent quality window was accepted");
+	invalid = equalizer;
+	invalid.quality.recent_decision_metric = -1;
+	CHECK(!v34_adaptive_equalizer_is_valid(&invalid),
+	      "negative recent quality metric was accepted");
 	return true;
 }
 
@@ -1287,6 +1333,53 @@ static bool test_data_quality_policy(void)
 	return true;
 }
 
+static bool test_recent_rate_measurement(void)
+{
+	static const struct {
+		uint16_t position;
+		uint16_t recent_symbols;
+		int16_t published;
+		int16_t recent;
+		uint8_t expected_rate;
+	} cases[] = {
+		{ 0u, 0u, 50, 0, 13u },
+		{ 511u, 511u, 50, 0, 13u },
+		{ 511u, 511u, 49, INT16_MAX, 14u },
+		{ 512u, 512u, INT16_MAX, 49, 14u },
+		{ 493u, 512u, INT16_MAX, 49, 14u },
+		{ 0u, 512u, 0, 50, 13u },
+		{ 1023u, 512u, 0, 88, 12u },
+		{ 512u, 512u, 0, INT16_MAX, 2u },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v34_adaptive_equalizer_quality measurement = {
+			.window_position = cases[index].position,
+			.recent_symbol_count = cases[index].recent_symbols,
+			.recent_decision_metric = cases[index].recent,
+			.decision_metric = cases[index].published,
+		};
+		struct v34_adaptive_equalizer_quality saved = measurement;
+		struct v34_data_quality online;
+		uint8_t selected = 0;
+
+		CHECK(v34_data_quality_select_receive_rate(
+			      V34_SYMBOL_RATE_3429, 0x3fffu, 14u,
+			      &measurement, &selected) == V34_DATA_QUALITY_OK &&
+		      selected == cases[index].expected_rate &&
+		      memcmp(&measurement, &saved, sizeof(saved)) == 0,
+		      "recent training metric changed at case %zu: rate %u",
+		      index, selected);
+		CHECK(v34_data_quality_init(&online) == V34_DATA_QUALITY_OK &&
+		      v34_data_quality_start(
+			      &online, V34_SYMBOL_RATE_3429, 14u,
+			      &measurement) == V34_DATA_QUALITY_OK &&
+		      online.baseline == cases[index].published,
+		      "rate selection published a partial online window");
+	}
+	return true;
+}
+
 static bool test_paired_data_quality_windows(void)
 {
 	for (uint16_t phase = 0; phase < 2; ++phase) {
@@ -1406,6 +1499,7 @@ int main(void)
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||
+	    !test_recent_rate_measurement() ||
 	    !test_paired_data_quality_windows() || !test_data_quality_transactionality())
 		return 1;
 	return 0;

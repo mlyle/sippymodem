@@ -11,6 +11,11 @@
 
 enum {
 	V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS = 1024,
+	V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS = 512,
+	V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS = 64,
+	V34_ADAPTIVE_EQUALIZER_RECENT_BLOCKS =
+		V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS /
+		V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS,
 	V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION = 2,
 	/* The identity tap first reaches a complete semantic observation at
 	 * this epoch after a fresh delay line. */
@@ -176,14 +181,19 @@ struct v34_adaptive_equalizer_feedback {
 	int16_t quadrature_history[4];
 };
 
-/* One 1024-symbol decision-quality window.  The published metrics remain
- * available while the next window is accumulated. */
+/* The 1024-symbol online quality window is independent of the recent
+ * 512-symbol training estimate, published every 64 committed decisions.
+ * Both use the same full-window scale. Keeping short block sums avoids
+ * either retaining acquisition transients or estimating from a tiny tail. */
 struct v34_adaptive_equalizer_quality {
+	uint32_t recent_error_blocks[V34_ADAPTIVE_EQUALIZER_RECENT_BLOCKS];
 	uint32_t decision_accumulator;
 	uint32_t feedback_accumulator;
 	uint32_t reference_accumulator;
 	uint32_t reference_metric;
 	uint16_t window_position;
+	uint16_t recent_symbol_count;
+	int16_t recent_decision_metric;
 	int16_t decision_metric;
 	int16_t feedback_metric;
 };

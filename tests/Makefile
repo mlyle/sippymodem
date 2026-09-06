@@ -2615,6 +2615,7 @@ V90_PHASE4_DIGITAL_STARTUP_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_digital_startup
 V90_PHASE4_DIGITAL_STARTUP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_digital_startup.o \
+	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v90_phase4_startup.o \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_station_exchange.o, \
@@ -2737,6 +2738,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_pcm_call.o \
+	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/pcm_call.o \
 	$(BUILD_DIR)/v34_info0.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \

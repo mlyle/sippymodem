@@ -866,15 +866,22 @@ static bool test_delayed_host_echo(void)
 
 static bool test_dc_biased_host_echo(void)
 {
+	static const uint32_t MINIMUM_RATES[] = { 28800, 33600 };
+
 	CHECK(v90_datapump_register() == 0,
 	      "DC-biased V.90 registration failed");
-	CHECK(run_pair_with_rate_window(
-		      G711_LAW_PCMU,
-		      56000, 28800, 33600, 33600, 3429,
-		      SUSTAINED_RECEIVED_BITS, true,
-		      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
-		      RETURNED_ECHO_DC_BIASED, UPSTREAM_CHANNEL_CLEAN),
-	      "DC-biased digital host echo did not sustain exact upstream data");
+	/* Residual training error selects 28.8 when a lower rate is enabled.
+	 * Also retain exact-data coverage with the receiver fixed at 33.6. */
+	for (size_t index = 0; index < ARRAY_LENGTH(MINIMUM_RATES); ++index)
+		CHECK(run_pair_with_rate_window(
+			      G711_LAW_PCMU,
+			      56000, MINIMUM_RATES[index], 33600,
+			      MINIMUM_RATES[index], 3429,
+			      SUSTAINED_RECEIVED_BITS, true,
+			      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+			      RETURNED_ECHO_DC_BIASED, UPSTREAM_CHANNEL_CLEAN),
+		      "DC-biased digital host echo lost exact upstream data at %u",
+		      MINIMUM_RATES[index]);
 	CHECK(v90_datapump_unregister() == 0,
 	      "DC-biased V.90 registration remained busy");
 	return true;

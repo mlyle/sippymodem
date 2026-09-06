@@ -76,6 +76,9 @@ static bool measurement_is_valid(
 	return measurement != NULL &&
 	       measurement->window_position <
 		       V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS &&
+	       measurement->recent_symbol_count <=
+		       V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
+	       measurement->recent_decision_metric >= 0 &&
 	       measurement->decision_metric >= 0 &&
 	       measurement->feedback_metric >= 0;
 }
@@ -125,6 +128,7 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	uint8_t *selected_rate_2400_bps_units)
 {
 	uint8_t selected;
+	int16_t metric;
 
 	if (measurement == NULL ||
 	    selected_rate_2400_bps_units == NULL ||
@@ -141,13 +145,16 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 		symbol_rate, enabled_rate_mask, maximum_rate_2400_bps_units);
 	if (selected == 0u)
 		return V34_DATA_QUALITY_INVALID_ARGUMENT;
+	metric = measurement->recent_symbol_count ==
+			 V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS ?
+		 measurement->recent_decision_metric : measurement->decision_metric;
 	for (;;) {
 		uint8_t lower = next_enabled_rate(
 			symbol_rate, enabled_rate_mask, (uint8_t)(selected - 1u));
 		int16_t threshold = rate_threshold(
 			receive_rate_level(symbol_rate, selected), selected);
 
-		if (lower == 0u || measurement->decision_metric < threshold)
+		if (lower == 0u || metric < threshold)
 			break;
 		selected = lower;
 	}

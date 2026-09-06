@@ -3,6 +3,7 @@
 #include "v90_phase4_digital_startup.h"
 
 #include "memory_region.h"
+#include "v34_data_quality.h"
 
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
@@ -34,8 +35,8 @@ static bool select_initial_mp(
 	    selected == NULL)
 		return false;
 	parameters = mp_parameters(configured);
-	/* MP advertises the local receive-rate set.  The Phase 3 probe and a
-	 * common CPt rate may lower its maximum without rewriting that set. */
+	/* MP advertises the local receive-rate set.  The Phase 3 probe, CPt
+	 * and trained receive quality limit its maximum, not that set. */
 	common_mask = (uint16_t)(
 		parameters->upstream_rate_capability_mask &
 		station->peer_upstream_rate_mask);
@@ -51,17 +52,19 @@ static bool select_initial_mp(
 		return false;
 	parameters = mp_parameters(&limited);
 	maximum = parameters->maximum_upstream_rate_2400_bps_units;
-	for (int rate = maximum;
-	     rate >= V90_MP_MINIMUM_RATE_2400_BPS_UNITS; --rate) {
-		uint16_t bit = (uint16_t)(1u <<
-			(rate - V90_MP_MINIMUM_RATE_2400_BPS_UNITS));
+	if (common_mask != 0u && maximum != 0u) {
+		uint8_t selected_rate;
 
-		if ((common_mask & bit) == 0u)
-			continue;
-		if (!v90_mp_record_limit_maximum_upstream_rate(
-			    &limited, (uint8_t)rate))
+		/* V.90's mask starts at 4800; the shared upstream QAM policy
+		 * starts at 2400.  Retain only mutually enabled receive rates. */
+		if (v34_data_quality_select_receive_rate(
+			    station->receive.transmitting_profile.symbol_rate,
+			    (uint16_t)(common_mask << 1u), maximum,
+			    &station->receive.line.equalizer.quality,
+			    &selected_rate) == V34_DATA_QUALITY_OK &&
+		    !v90_mp_record_limit_maximum_upstream_rate(
+			    &limited, selected_rate))
 			return false;
-		break;
 	}
 	/* CPt describes the peer transmitter; it cannot make the digital
 	 * receiver's MP capability record invalid.  If no common rate is usable

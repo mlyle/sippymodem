@@ -40,9 +40,11 @@ enum v34_data_quality_result v34_data_quality_init(
 	struct v34_data_quality *quality);
 bool v34_data_quality_is_valid(const struct v34_data_quality *quality);
 
-/* Select the highest enabled receive rate supported by the completed
- * training metric.  A metric at or above a rate threshold steps down to the
- * next enabled rate; the lowest enabled rate remains the bounded fallback. */
+/* Select the highest enabled receive rate supported by training quality.
+ * Use the recent training window once available, otherwise the last online
+ * window. A metric at or above a rate threshold steps down to the
+ * next enabled rate; the lowest enabled rate remains the bounded fallback.
+ * This does not change the measurement or the online recovery window. */
 enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	enum v34_symbol_rate symbol_rate, uint16_t enabled_rate_mask,
 	uint8_t maximum_rate_2400_bps_units,

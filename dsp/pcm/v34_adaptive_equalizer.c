@@ -29,6 +29,13 @@ _Static_assert(
 	 (V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS - 1u)) == 0,
 	"V.34 quality window must remain a power of two");
 
+_Static_assert(
+	V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS %
+		V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS == 0 &&
+	V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS %
+		V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS == 0,
+	"Recent quality blocks must divide both measurement windows");
+
 /* One bounded quarter cycle reconstructs the exact 256-step Q14 receive
  * carrier profile.  Its negative real-axis endpoint is deliberately -16383. */
 static const int16_t CARRIER_COSINE_QUARTER_Q14[65] = {
@@ -83,6 +90,9 @@ static bool quality_is_valid(
 {
 	return quality->window_position <
 		       V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS &&
+	       quality->recent_symbol_count <=
+		       V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
+	       quality->recent_decision_metric >= 0 &&
 	       quality->decision_metric >= 0 && quality->feedback_metric >= 0;
 }
 
@@ -506,19 +516,50 @@ static int16_t published_metric(uint32_t accumulator)
 		       INT16_MAX : (int16_t)(uint16_t)(accumulator >> 16);
 }
 
+static void update_recent_quality(
+	struct v34_adaptive_equalizer_quality *quality, uint32_t error)
+{
+	unsigned int position = quality->window_position;
+	unsigned int block = position /
+		V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS %
+		V34_ADAPTIVE_EQUALIZER_RECENT_BLOCKS;
+	uint64_t accumulated;
+
+	if (position % V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS == 0u)
+		quality->recent_error_blocks[block] = 0u;
+	accumulated = (uint64_t)quality->recent_error_blocks[block] + error;
+	quality->recent_error_blocks[block] = accumulated > UINT32_MAX ?
+		UINT32_MAX : (uint32_t)accumulated;
+	if (quality->recent_symbol_count < V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS)
+		quality->recent_symbol_count++;
+	if (quality->recent_symbol_count == V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS &&
+	    (position + 1u) % V34_ADAPTIVE_EQUALIZER_QUALITY_BLOCK_SYMBOLS == 0u) {
+		uint64_t metric = 0u;
+
+		for (unsigned int index = 0u;
+		     index < V34_ADAPTIVE_EQUALIZER_RECENT_BLOCKS; ++index)
+			metric += quality->recent_error_blocks[index];
+		metric = metric * V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS /
+			V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS >> 16;
+		quality->recent_decision_metric = metric > INT16_MAX ?
+			INT16_MAX : (int16_t)metric;
+	}
+}
+
 static void update_quality(
 	struct v34_adaptive_equalizer_quality *quality,
 	struct v34_analytic_sample demodulated,
 	struct v34_analytic_sample rotated_target)
 {
-	uint32_t metric = quality->decision_accumulator +
-		distance_squared(demodulated, rotated_target);
+	uint32_t error = distance_squared(demodulated, rotated_target);
+	uint32_t metric = quality->decision_accumulator + error;
 	uint32_t reference = distance_squared(
 		rotated_target, (struct v34_analytic_sample){ 0 });
 	uint16_t position = (uint16_t)(
 		(quality->window_position + 1u) &
 		(V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS - 1u));
 
+	update_recent_quality(quality, error);
 	quality->reference_accumulator += reference >> 8;
 	quality->window_position = position;
 	if (position != 0u) {
