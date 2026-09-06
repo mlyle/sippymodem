@@ -307,6 +307,80 @@ static bool test_phase2_delay_seed(void)
 		      V90_HOST_ECHO_INVALID_STATE &&
 	      memcmp(&seeded, &saved, sizeof(saved)) == 0,
 	      "trained owner accepted a new Phase-2 delay");
+	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_seed_phase2_delay(
+		      &seeded, PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
+			       V90_HOST_ECHO_FILTER_PRE_SAMPLES) ==
+		      V90_HOST_ECHO_OK && v90_host_echo_is_valid(&seeded) &&
+	      seeded.window_delay_samples ==
+		      PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES,
+	      "last representable measured delay was not retained");
+	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_seed_phase2_delay(&seeded, UINT32_MAX) ==
+		      V90_HOST_ECHO_OK && v90_host_echo_is_valid(&seeded) &&
+	      seeded.window_delay_samples ==
+		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
+	      "out-of-history ranging broke the default search");
+	return true;
+}
+
+static bool test_long_phase2_delay_seed(void)
+{
+	static const uint32_t delays[] = { 2640, 3128, 5600 };
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const size_t training = 4000;
+
+	for (size_t trial = 0; trial < sizeof(delays) / sizeof(delays[0]);
+	     ++trial) {
+		struct v90_host_echo echo;
+		uint32_t delay = delays[trial];
+		uint64_t echo_energy = 0;
+		uint64_t residual_energy = 0;
+
+		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
+		      v90_host_echo_seed_phase2_delay(&echo, delay) ==
+			      V90_HOST_ECHO_OK,
+		      "long ranging seed failed: %u", delay);
+		/* Phase 2 has already supplied TX history. A measured return inside
+		 * that history should train without first searching from the default
+		 * short delay; readiness must still require actual correlated echo. */
+		for (size_t index = 0; index < history + training; ++index) {
+			bool train = index >= history;
+			int16_t received = train ? scale_q15(
+				transmit_sample(index - delay), 11000) : 0;
+			int16_t cleaned;
+
+			CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
+						     V90_HOST_ECHO_BYPASS,
+					index, received, &cleaned) &&
+			      cleaned == received,
+			      "long seed changed training input: %u/%zu", delay, index);
+			CHECK(train || !v90_host_echo_is_ready(&echo),
+			      "ranging alone qualified an echo filter: %u", delay);
+		}
+		CHECK(v90_host_echo_is_ready(&echo) && !echo.delay_acquired &&
+		      echo.window_delay_samples ==
+			      delay - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+		      "long measured delay needed a fresh search: %u ready=%d window=%u",
+		      delay, v90_host_echo_is_ready(&echo), echo.window_delay_samples);
+		for (size_t index = history + training;
+		     index < history + training + VERIFY_SAMPLES; ++index) {
+			int16_t remote = remote_sample(index);
+			int16_t returned = scale_q15(
+				transmit_sample(index - delay), 11000);
+			int16_t cleaned;
+
+			CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+					add_s16((int32_t)remote + returned), &cleaned),
+			      "long seeded filtering failed: %u/%zu", delay, index);
+			echo_energy = energy_add(echo_energy, returned);
+			residual_energy = energy_add(
+				residual_energy, (int32_t)cleaned - remote);
+		}
+		CHECK(residual_energy * 100u < echo_energy,
+		      "long seeded suppression too small: %u residual=%" PRIu64
+		      " source=%" PRIu64, delay, residual_energy, echo_energy);
+	}
 	return true;
 }
 
@@ -477,7 +551,8 @@ static bool test_acquisition_after_unrelated_prefix(void)
 int main(void)
 {
 	if (!test_contracts() || !test_long_delay_cancellation() ||
-	    !test_phase2_delay_seed() || !test_weak_joint_margin() ||
+	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
+	    !test_weak_joint_margin() ||
 	    !test_decimated_adjacent_correlation() ||
 	    !test_unrelated_input_does_not_train() ||
 	    !test_acquisition_after_unrelated_prefix())

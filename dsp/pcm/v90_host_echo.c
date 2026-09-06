@@ -156,6 +156,15 @@ enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
 		V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES;
 	if (return_delay > V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES)
 		return_delay = V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES;
+	/* A representable measured delay is a better starting hypothesis than
+	 * the short default. Keep the scan and filter-readiness checks: ranging
+	 * is not proof of the echo path, and out-of-history estimates still need
+	 * the ordinary bounded search. */
+	if (round_trip_delay_samples > return_delay &&
+	    round_trip_delay_samples <=
+		    PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
+			    V90_HOST_ECHO_FILTER_PRE_SAMPLES)
+		return_delay = round_trip_delay_samples;
 	window_delay = return_delay > V90_HOST_ECHO_FILTER_PRE_SAMPLES ?
 		(uint32_t)return_delay - V90_HOST_ECHO_FILTER_PRE_SAMPLES : 1u;
 	if (pcm_echo_reference_start_scan(
