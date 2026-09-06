@@ -26,14 +26,16 @@ enum pcm_info0_recovery_event {
 	PCM_INFO0_RECOVERY_STARTED,
 	PCM_INFO0_RECOVERY_ACCEPTED,
 	PCM_INFO0_RECOVERY_REJECTED,
+	/* The first acknowledgment arrived after completion on a peer tone. */
+	PCM_INFO0_LATE_ACK_RECEIVED,
 };
 
 enum pcm_phase2_info0_exchange_state {
 	PCM_PHASE2_INFO0_INITIAL,
 	/* Opposite tone arrived before a valid record; repeat without ACK. */
 	PCM_PHASE2_INFO0_REPEAT,
-	/* A completed peer started another record.  Acknowledge the retained
-	 * selection immediately while the repeated record is verified. */
+	/* Validate another peer record before deciding whether it needs a reply
+	 * and a new ranging exchange, or only acknowledges the preceding one. */
 	PCM_PHASE2_INFO0_VERIFY_REPEAT,
 	/* A peer record is retained; its local ACK is pending or in flight. */
 	PCM_PHASE2_INFO0_ACKNOWLEDGING,
@@ -58,8 +60,7 @@ struct pcm_phase2_info0_exchange_event {
 	union pcm_info0_record peer_info0;
 	struct v34_phase2_tone_event tone_event;
 	enum pcm_protocol protocol;
-	/* A repeated peer INFO0 temporarily interrupts an established ranging
-	 * epoch. The event names the exact start and validation boundaries. */
+	/* Exact start and validation boundaries of a repeated peer INFO0. */
 	enum pcm_info0_recovery_event recovery_event;
 };
 

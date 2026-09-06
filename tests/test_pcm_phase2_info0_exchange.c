@@ -564,7 +564,8 @@ static bool check_following_tone(
 		    exchange.transport.transmit_phase == PHASE2_INFO0_SEQUENCE) {
 			acknowledge_starts++;
 			early_acknowledgment |= repeated &&
-				event.peer_info0_event == PCM_PEER_INFO0_NO_EVENT;
+				exchange.transport.info_receiver.frame.stage !=
+					V34_PHASE2_INFO_SEARCH_SYNC;
 		}
 		if (state_before != PCM_PHASE2_INFO0_WAIT_COMPLETION &&
 		    exchange.state == PCM_PHASE2_INFO0_WAIT_COMPLETION) {
@@ -703,7 +704,7 @@ static bool check_following_tone(
 		      overlapping_repeat);
 	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION)
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
-		      reopened_after_completion && early_acknowledgment &&
+		      reopened_after_completion && !early_acknowledgment &&
 		      acknowledge_starts == 2 && recovery_starts == 1 &&
 		      recovery_accepts == 1 && recovery_rejects == 0 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
@@ -714,9 +715,9 @@ static bool check_following_tone(
 		      acknowledge_starts, exchange.state,
 		      exchange.fresh_peer_tone_seen);
 	else
-		CHECK(received_records == 2 && completed != SIZE_MAX &&
+		CHECK(received_records == 1 && completed != SIZE_MAX &&
 		      rejected_after_completion && reopened_after_completion &&
-		      early_acknowledgment && acknowledge_starts == 2 &&
+		      !early_acknowledgment && acknowledge_starts == 1 &&
 		      recovery_starts == 1 && recovery_accepts == 0 &&
 		      recovery_rejects == 1 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&

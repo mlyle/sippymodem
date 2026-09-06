@@ -23,11 +23,6 @@ struct v90_phase2_ranging_event {
 struct v90_phase2_ranging {
 	struct pcm_phase2_info0_exchange info0_exchange;
 	struct phase2_ranging_control control;
-	/* A peer INFO0 repeat temporarily owns the common phase detector. Keep
-	 * only a ranging epoch which had already reached the wire. */
-	struct phase2_ranging_control recovery_control;
-	uint16_t recovery_elapsed_samples;
-	bool recovery_paused;
 };
 
 /* V.90 assigns Signal A to the analog modem and Signal B to the digital

@@ -386,7 +386,8 @@ static bool reject_peer_info0(
 	event->peer_info0_event = PCM_PEER_INFO0_REJECTED;
 	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
 		event->recovery_event = PCM_INFO0_RECOVERY_REJECTED;
-		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
+		exchange->state = PCM_PHASE2_INFO0_COMPLETE;
+		exchange->fresh_peer_tone_seen = !peer_acknowledges_local(exchange);
 	}
 	if (exchange->state != PCM_PHASE2_INFO0_COMPLETE &&
 	    !state_is_retrain(exchange->state))
@@ -431,13 +432,17 @@ static bool retain_peer_info0(
 		    V34_PHASE2_TONE_OK)
 		return false;
 	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
+		bool late_ack = decoded_ack && !peer_acknowledges_local(exchange);
+
 		record_common(
 			&exchange->peer_info0, exchange->protocol,
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0 = decoded_ack;
 		clear_completion_tone(exchange, event);
-		event->recovery_event = PCM_INFO0_RECOVERY_ACCEPTED;
-		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
+		event->recovery_event = late_ack ? PCM_INFO0_LATE_ACK_RECEIVED :
+			PCM_INFO0_RECOVERY_ACCEPTED;
+		exchange->state = decoded_ack ? PCM_PHASE2_INFO0_ACKNOWLEDGING :
+			PCM_PHASE2_INFO0_ACK_REPEAT;
 		return true;
 	}
 	if (!retained) {
@@ -515,20 +520,18 @@ static bool restart_local_info0(
 		       PHASE2_INFO0_EXCHANGE_OK;
 }
 
-static bool begin_repeat_verification(
+static void begin_repeat_verification(
 	struct pcm_phase2_info0_exchange *exchange,
 	struct pcm_phase2_info0_exchange_event *event)
 {
-	record_common(
-		&exchange->peer_info0, exchange->protocol,
-		opposite_role(exchange->local_role))
-		->acknowledges_peer_info0 = false;
 	clear_completion_tone(exchange, event);
-	if (!restart_local_info0(exchange, true))
-		return false;
+	/* The local record already acknowledged this peer. An in-flight peer
+	 * acknowledgment needs no new reply: replying at sync before decoding
+	 * its acknowledgment bit can keep two delayed stations repeating INFO0
+	 * indefinitely. Leave the current transmission unchanged until the
+	 * record has been validated. */
 	exchange->state = PCM_PHASE2_INFO0_VERIFY_REPEAT;
 	event->recovery_event = PCM_INFO0_RECOVERY_STARTED;
-	return true;
 }
 
 static void complete_exchange(
@@ -626,8 +629,7 @@ pcm_phase2_info0_exchange_sample(
 	       next.transport.info_receiver.frame.stage !=
 		       V34_PHASE2_INFO_SEARCH_SYNC;
 	if (info_started && next.state == PCM_PHASE2_INFO0_COMPLETE) {
-		if (!begin_repeat_verification(&next, &emitted))
-			return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
+		begin_repeat_verification(&next, &emitted);
 	} else if (info_started) {
 		next.fresh_peer_tone_seen = false;
 	}

@@ -4,34 +4,6 @@
 
 #include <stddef.h>
 
-static bool control_is_clear(const struct phase2_ranging_control *control)
-{
-	return control->phase == PHASE2_RANGING_INFO0_EXCHANGE &&
-	       control->local_tone_samples == 0 &&
-	       control->deferred_reversal_samples == 0 &&
-	       control->response_delay_samples == 0 &&
-	       control->post_reversal_samples == 0 &&
-	       control->probe_start_delay_samples == 0 &&
-	       control->measurement_elapsed_samples == 0 &&
-	       control->round_trip_delay_samples == 0 &&
-	       !control->round_trip_delay_valid;
-}
-
-static bool control_is_empty(const struct phase2_ranging_control *control)
-{
-	return control_is_clear(control) &&
-	       control->prior_round_trip_delay_samples == 0;
-}
-
-static bool control_has_signal_b_epoch(
-	const struct phase2_ranging_control *control)
-{
-	return control->phase == PHASE2_RESPONSE_TONE_TAIL ||
-	       control->phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL ||
-	       control->phase == PHASE2_SIGNAL_B_WAIT_PROBE_START ||
-	       control->phase == PHASE2_RANGING_PROBE_READY;
-}
-
 static bool ranging_context_is_retained(
 	const struct v90_phase2_ranging *ranging)
 {
@@ -53,97 +25,29 @@ static bool ranging_context_is_retained(
 bool v90_phase2_ranging_is_valid(
 	const struct v90_phase2_ranging *ranging)
 {
-	if (ranging == NULL ||
-	    !pcm_phase2_info0_exchange_is_valid(
-		    &ranging->info0_exchange) ||
-	    !phase2_ranging_control_is_valid(
-		    &ranging->control,
-		    &ranging->info0_exchange.transport,
-		    ranging_context_is_retained(ranging)) ||
-	    ranging->recovery_elapsed_samples >
-		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES)
-		return false;
-	if (!ranging->recovery_paused)
-		return ranging->recovery_elapsed_samples == 0 &&
-		       control_is_empty(&ranging->recovery_control);
-	return ranging->info0_exchange.transport.signal_role == PHASE2_SIGNAL_B &&
-	       control_is_clear(&ranging->control) &&
-	       control_has_signal_b_epoch(&ranging->recovery_control) &&
+	return ranging != NULL &&
+	       pcm_phase2_info0_exchange_is_valid(
+		       &ranging->info0_exchange) &&
 	       phase2_ranging_control_is_valid(
-		       &ranging->recovery_control,
-		       &ranging->info0_exchange.transport, true) &&
-	       ranging->info0_exchange.state ==
-		       PCM_PHASE2_INFO0_VERIFY_REPEAT;
+		       &ranging->control,
+		       &ranging->info0_exchange.transport,
+		       ranging_context_is_retained(ranging));
 }
 
-static bool pause_for_repeated_info0(struct v90_phase2_ranging *ranging)
+static bool restart_after_repeated_info0(struct v90_phase2_ranging *ranging)
 {
-	struct phase2_ranging_control retained = ranging->control;
+	uint16_t prior_delay = ranging->control.prior_round_trip_delay_samples;
 
-	/* Signal A keeps its active reversal detector across an INFO0d repeat.
-	 * Only Signal B has an established first-to-second-reversal epoch whose
-	 * receive interval must be excluded while INFO0a owns the detector. */
-	if (ranging->info0_exchange.transport.signal_role != PHASE2_SIGNAL_B)
-		return true;
+	/* V.90 9.2.1.2.1 and 9.2.2.2.1 restart the first-reversal exchange
+	 * after repeated INFO0. Neither role may retain a reversal from before
+	 * that interruption: Signal A must send a fresh initial tone and Signal
+	 * B must answer its new first reversal before either can begin probing. */
 	if (phase2_ranging_control_init(
 		    &ranging->control,
 		    &ranging->info0_exchange.transport) != PHASE2_RANGING_OK)
 		return false;
-	ranging->control.prior_round_trip_delay_samples =
-		retained.prior_round_trip_delay_samples;
-	if (!control_has_signal_b_epoch(&retained))
-		return true;
-	ranging->recovery_control = retained;
-	ranging->recovery_elapsed_samples = 0;
-	ranging->recovery_paused = true;
+	ranging->control.prior_round_trip_delay_samples = prior_delay;
 	return true;
-}
-
-static void discard_recovery(struct v90_phase2_ranging *ranging)
-{
-	ranging->recovery_control = (struct phase2_ranging_control){ 0 };
-	ranging->recovery_elapsed_samples = 0;
-	ranging->recovery_paused = false;
-}
-
-static void count_recovery_sample(struct v90_phase2_ranging *ranging)
-{
-	if (!ranging->recovery_paused)
-		return;
-	if (ranging->recovery_elapsed_samples ==
-	    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES) {
-		discard_recovery(ranging);
-		return;
-	}
-	ranging->recovery_elapsed_samples++;
-}
-
-static void resume_after_repeated_info0(struct v90_phase2_ranging *ranging)
-{
-	struct phase2_ranging_control retained;
-	uint32_t elapsed;
-
-	if (!ranging->recovery_paused)
-		return;
-	retained = ranging->recovery_control;
-	elapsed = (uint32_t)retained.measurement_elapsed_samples +
-		ranging->recovery_elapsed_samples;
-	if ((retained.phase == PHASE2_RESPONSE_TONE_TAIL ||
-	     retained.phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL) &&
-	    elapsed > PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES) {
-		discard_recovery(ranging);
-		return;
-	}
-	if (retained.phase == PHASE2_RESPONSE_TONE_TAIL ||
-	    retained.phase == PHASE2_SIGNAL_B_WAIT_SECOND_REMOTE_REVERSAL)
-		retained.measurement_elapsed_samples = (uint16_t)elapsed;
-	/* A repeated INFO0 record interrupts the physical Tone-B tail. Resume
-	 * with the complete required 10 ms, while retaining its elapsed ranging
-	 * epoch. */
-	if (retained.phase == PHASE2_RESPONSE_TONE_TAIL)
-		retained.post_reversal_samples = 0;
-	ranging->control = retained;
-	discard_recovery(ranging);
 }
 
 static enum v90_phase2_ranging_result finish_initialization(
@@ -219,21 +123,15 @@ enum v90_phase2_ranging_result v90_phase2_ranging_sample(
 		    &next.info0_exchange, received_sample, &generated,
 		    &exchange_event) != PCM_PHASE2_INFO0_EXCHANGE_OK)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	if (exchange_event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED) {
-		resume_after_repeated_info0(&next);
-	} else if (exchange_event.recovery_event ==
-		   PCM_INFO0_RECOVERY_REJECTED)
-		discard_recovery(&next);
+	if (exchange_event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED &&
+	    !restart_after_repeated_info0(&next))
+		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
 	if (phase2_ranging_finish_sample(
 		    &next.control, &next.info0_exchange.transport,
 		    ranging_context_is_retained(&next),
 		    transmit_phase_before, &exchange_event.tone_event,
-		    &generated, &ranging_event) != PHASE2_RANGING_OK ||
-	    (exchange_event.recovery_event == PCM_INFO0_RECOVERY_STARTED &&
-	     !pause_for_repeated_info0(&next)))
+		    &generated, &ranging_event) != PHASE2_RANGING_OK)
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
-	if (exchange_event.recovery_event == PCM_INFO0_RECOVERY_NO_EVENT)
-		count_recovery_sample(&next);
 	if (!v90_phase2_ranging_is_valid(&next))
 		return V90_PHASE2_RANGING_INVALID_ARGUMENT;
 	emitted = (struct v90_phase2_ranging_event){
