@@ -11,6 +11,11 @@
 
 enum {
 	FRACTIONAL_DELAY_Q15_ONE = 32768,
+	/* Unity DC gain constrains the sum, not each quantized tap. Rounding
+	 * all taps can leave up to half their count in Q15 units for the
+	 * central correction, including near an exact integer delay. */
+	FRACTIONAL_DELAY_COEFFICIENT_LIMIT =
+		FRACTIONAL_DELAY_Q15_ONE + FRACTIONAL_DELAY_TAPS / 2,
 };
 
 static bool phase_is_valid(int32_t phase_q16)
@@ -123,9 +128,9 @@ bool fractional_delay_is_valid(const struct fractional_delay *delay)
 		return false;
 	for (size_t tap = 0; tap < FRACTIONAL_DELAY_TAPS; ++tap)
 		if (delay->coefficients_q15[tap] <
-			    -FRACTIONAL_DELAY_Q15_ONE ||
+			    -FRACTIONAL_DELAY_COEFFICIENT_LIMIT ||
 		    delay->coefficients_q15[tap] >
-			    FRACTIONAL_DELAY_Q15_ONE)
+			    FRACTIONAL_DELAY_COEFFICIENT_LIMIT)
 			return false;
 	return true;
 }

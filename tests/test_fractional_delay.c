@@ -74,6 +74,36 @@ static bool test_fractional_phases_preserve_dc(void)
 	return true;
 }
 
+static bool test_all_phases_preserve_valid_stream(void)
+{
+	struct fractional_delay delay;
+	int16_t output = 0;
+
+	fractional_delay_init(&delay);
+	for (size_t index = 0; index < FRACTIONAL_DELAY_TAPS; ++index)
+		CHECK(fractional_delay_process(&delay, 3000, &output) ==
+			      FRACTIONAL_DELAY_OK,
+		      "phase sweep history setup failed");
+	for (int32_t phase = -FRACTIONAL_DELAY_ONE_SAMPLE_Q16;
+	     phase <= FRACTIONAL_DELAY_ONE_SAMPLE_Q16; ++phase) {
+		struct fractional_delay before = delay;
+
+		CHECK(fractional_delay_set_phase(&delay, phase) ==
+			      FRACTIONAL_DELAY_OK &&
+		      fractional_delay_is_valid(&delay),
+		      "accepted phase %d left an invalid filter", phase);
+		CHECK(delay.phase_q16 == phase &&
+		      delay.history_position == before.history_position &&
+		      memcmp(delay.history, before.history,
+			     sizeof(delay.history)) == 0,
+		      "phase %d changed stream history", phase);
+		CHECK(fractional_delay_process(&delay, 3000, &output) ==
+			      FRACTIONAL_DELAY_OK && output == 3000,
+		      "phase %d could not preserve steady DC: %d", phase, output);
+	}
+	return true;
+}
+
 static bool test_half_sample_preserves_voice_band_energy(void)
 {
 	static const double pi = 3.14159265358979323846264338327950288;
@@ -151,6 +181,17 @@ static bool test_reconfiguration_is_continuous_and_transactional(void)
 		      output == 1234 &&
 		      memcmp(&invalid, &snapshot, sizeof(invalid)) == 0,
 	      "invalid delay state consumed input or changed output");
+	invalid = delay;
+	invalid.coefficients_q15[0] += INT32_MAX / 2;
+	invalid.coefficients_q15[1] -= INT32_MAX / 2;
+	snapshot = invalid;
+	CHECK(!fractional_delay_is_valid(&invalid) &&
+	      fractional_delay_set_phase(&invalid, 0) ==
+		      FRACTIONAL_DELAY_INVALID_STATE &&
+	      fractional_delay_process(&invalid, 42, &output) ==
+		      FRACTIONAL_DELAY_INVALID_STATE && output == 1234 &&
+	      memcmp(&invalid, &snapshot, sizeof(invalid)) == 0,
+	      "unity-sum invalid coefficients escaped validation");
 	CHECK(fractional_delay_set_phase(NULL, 0) ==
 		      FRACTIONAL_DELAY_INVALID_ARGUMENT &&
 		      fractional_delay_process(NULL, 0, &output) ==
@@ -231,6 +272,8 @@ int main(void)
 	} tests[] = {
 		{ "exact integer endpoints", test_integer_endpoints_are_exact },
 		{ "fractional DC gain", test_fractional_phases_preserve_dc },
+		{ "all phases preserve a valid stream",
+		  test_all_phases_preserve_valid_stream },
 		{ "voice-band energy", test_half_sample_preserves_voice_band_energy },
 		{ "continuous reconfiguration",
 		  test_reconfiguration_is_continuous_and_transactional },
