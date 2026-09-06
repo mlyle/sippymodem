@@ -66,7 +66,6 @@ struct v34_phase34_receiver {
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
 	struct v34_phase3_profile transmitting_profile;
 	uint32_t tracking_symbols;
-	uint16_t decoder_power_q15;
 	enum v34_constellation_size phase4_constellation;
 	enum v34_phase34_receiver_stage stage;
 	bool tracking_started;

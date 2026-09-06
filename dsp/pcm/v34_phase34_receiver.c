@@ -10,9 +10,7 @@
 #include <string.h>
 
 enum {
-	V34_PHASE34_INITIAL_DECODER_POWER_Q15 = 0x7000,
-	V34_PHASE34_MIDDLE_DECODER_POWER_Q15 = 0x4000,
-	V34_PHASE34_FINAL_DECODER_POWER_Q15 = 0x2000,
+	V34_PHASE34_DATA_DECODER_POWER_Q15 = 0x2000,
 };
 
 static bool handoff_is_clear(
@@ -27,15 +25,11 @@ static bool handoff_is_clear(
 }
 
 static uint16_t decoder_power(
-	const struct v34_phase34_receiver *receiver, uint32_t symbols)
+	const struct v34_phase34_receiver *receiver)
 {
-	uint16_t period = receiver->line.timing.timing.nominal_symbol_rate;
-
-	if (symbols >= period)
-		return V34_PHASE34_FINAL_DECODER_POWER_Q15;
-	if (symbols >= (uint16_t)(period >> 1u))
-		return V34_PHASE34_MIDDLE_DECODER_POWER_Q15;
-	return V34_PHASE34_INITIAL_DECODER_POWER_Q15;
+	return v34_training_decoder_power(
+		receiver->line.timing.timing.nominal_symbol_rate,
+		receiver->tracking_symbols);
 }
 
 static bool semantic_state_is_valid(
@@ -154,12 +148,7 @@ static bool tracking_state_is_valid(
 
 	if (receiver->tracking_started != expected)
 		return false;
-	if (!receiver->tracking_started)
-		return receiver->tracking_symbols == 0u &&
-		       receiver->decoder_power_q15 ==
-			       V34_PHASE34_INITIAL_DECODER_POWER_Q15;
-	return receiver->decoder_power_q15 ==
-	       decoder_power(receiver, receiver->tracking_symbols);
+	return receiver->tracking_started || receiver->tracking_symbols == 0u;
 }
 
 static bool phase4_s_rearm_state_is_valid(
@@ -253,8 +242,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_init(
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.transmitting_profile = *transmitting_profile;
 	initialized.phase4_constellation = phase4_constellation;
-	initialized.decoder_power_q15 =
-		V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 	initialized.stage = V34_PHASE34_RECEIVER_PHASE3;
 	if (v34_line_receiver_init(
 		    &initialized.line, transmitting_profile,
@@ -304,8 +291,6 @@ static void advance_tracking(struct v34_phase34_receiver *receiver)
 	period = receiver->line.timing.timing.nominal_symbol_rate;
 	if (receiver->tracking_symbols < period)
 		receiver->tracking_symbols++;
-	receiver->decoder_power_q15 =
-		decoder_power(receiver, receiver->tracking_symbols);
 }
 
 static enum v34_phase34_receiver_result phase3_result(
@@ -367,20 +352,16 @@ static bool execute_receive_action(
 
 	if (v34_line_receiver_resolve(
 		    &receiver->line, observation, output,
-		    receiver->decoder_power_q15) != V34_LINE_RECEIVER_OK)
+		    decoder_power(receiver)) != V34_LINE_RECEIVER_OK)
 		return false;
 	if (output->action == V34_RECEIVE_BEGIN_TRACKING) {
 		receiver->tracking_started = true;
 		receiver->tracking_symbols = 0u;
-		receiver->decoder_power_q15 =
-			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
 	}
 	if (output->action == V34_RECEIVE_RESTART_PATH) {
 		receiver->tracking_started = false;
 		receiver->tracking_symbols = 0u;
-		receiver->decoder_power_q15 =
-			V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 		return true;
 	}
 	if (was_tracking)
@@ -418,7 +399,7 @@ static enum v34_phase34_receiver_result receive_phase3(
 	struct v34_receive_action output;
 	enum v34_phase3_decision_receiver_result result =
 		v34_phase3_decision_receiver_observe(
-			&phase3, observation, receiver->decoder_power_q15,
+			&phase3, observation, decoder_power(receiver),
 			&output);
 	enum v34_phase34_receiver_result mapped = phase3_result(result);
 
@@ -471,7 +452,7 @@ static enum v34_phase34_receiver_result receive_phase4(
 	struct v34_mp_receive_event emitted = { 0 };
 	enum v34_phase4_decision_receiver_result result =
 		v34_phase4_decision_receiver_observe(
-			&phase4, observation, receiver->decoder_power_q15,
+			&phase4, observation, decoder_power(receiver),
 			&decision, &emitted);
 	enum v34_phase34_receiver_result mapped = phase4_result(result);
 
@@ -532,7 +513,7 @@ static enum v34_phase34_receiver_result receive_data(
 	 * without adaptation, then train from the current 4-D decision. */
 	decision = decoded.equalizer[result == V34_DATA_RECEIVE_OK ? 0u : 1u];
 	if (decision.adaptation != V34_ADAPTIVE_EQUALIZER_SKIP)
-		decision.decoder_power_q15 = V34_PHASE34_FINAL_DECODER_POWER_Q15;
+		decision.decoder_power_q15 = V34_PHASE34_DATA_DECODER_POWER_Q15;
 	if (v34_adaptive_equalizer_commit(
 		    &receiver->line.equalizer, &decision) !=
 	    V34_ADAPTIVE_EQUALIZER_OK)
@@ -639,7 +620,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 	next = *receiver;
 	next.tracking_started = false;
 	next.tracking_symbols = 0u;
-	next.decoder_power_q15 = V34_PHASE34_INITIAL_DECODER_POWER_Q15;
 	next.phase4_s_rearmed = true;
 	if (!v34_phase34_receiver_is_valid(&next))
 		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;

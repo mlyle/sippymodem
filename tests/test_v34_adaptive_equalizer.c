@@ -16,6 +16,33 @@ enum {
 	FEEDBACK_START_SYMBOL = 12,
 };
 
+static bool test_training_decoder_power(void)
+{
+	static const struct {
+		uint16_t rate;
+		uint16_t middle;
+	} schedules[] = {
+		{ 2400, 1200 }, { 2743, 1371 }, { 2800, 1400 },
+		{ 3000, 1500 }, { 3200, 1600 }, { 3429, 1714 },
+	};
+
+	for (size_t index = 0; index < sizeof(schedules) / sizeof(*schedules);
+	     ++index) {
+		uint16_t rate = schedules[index].rate;
+		uint16_t middle = schedules[index].middle;
+
+		CHECK(v34_training_decoder_power(rate, 0u) == 0x7000 &&
+		      v34_training_decoder_power(rate, middle - 1u) == 0x7000 &&
+		      v34_training_decoder_power(rate, middle) == 0x4000 &&
+		      v34_training_decoder_power(rate, rate - 1u) == 0x4000 &&
+		      v34_training_decoder_power(rate, rate) == 0x2000 &&
+		      v34_training_decoder_power(rate, rate + 1u) == 0x2000 &&
+		      v34_training_decoder_power(rate, UINT32_MAX) == 0x2000,
+		      "training power boundaries changed at %u symbols/s", rate);
+	}
+	return true;
+}
+
 static uint64_t hash_word(uint64_t hash, uint16_t word)
 {
 	return (hash ^ word) * UINT64_C(1099511628211);
@@ -1322,7 +1349,8 @@ static bool test_data_quality_transactionality(void)
 
 int main(void)
 {
-	if (!test_initial_state_and_carrier_profile() ||
+	if (!test_training_decoder_power() ||
+	    !test_initial_state_and_carrier_profile() ||
 	    !test_carrier_only_commit() ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_TAPS, 20u) ||
 	    !test_retained_pair_geometry(V34_EQUALIZER_MAX_TAPS, 16u) ||

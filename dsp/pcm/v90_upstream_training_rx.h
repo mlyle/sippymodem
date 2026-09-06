@@ -43,12 +43,21 @@ struct v90_upstream_training_rx {
 	struct v34_analytic_sample
 		recent_decisions[V90_UPSTREAM_TRAINING_RX_HISTORY_SYMBOLS];
 	uint32_t tracking_symbols;
-	uint16_t decoder_power_q15;
 	uint16_t next_recent_decision;
 	uint16_t recent_decision_count;
 	enum v90_upstream_training_rx_stage stage;
 	bool failed;
 };
+
+/* The caller must supply a valid receiver. CP snapshots this power when it
+ * takes ownership of the trained line; it does not restart the schedule. */
+static inline uint16_t v90_upstream_training_rx_decoder_power(
+	const struct v90_upstream_training_rx *receiver)
+{
+	return v34_training_decoder_power(
+		receiver->line.timing.timing.nominal_symbol_rate,
+		receiver->tracking_symbols);
+}
 
 enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 	struct v90_upstream_training_rx *receiver,

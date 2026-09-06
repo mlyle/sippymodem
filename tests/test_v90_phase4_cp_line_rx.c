@@ -245,7 +245,8 @@ static bool test_transactional_contracts(void)
 		!v34_phase3_s_receiver_is_complete(&rx.boundary))) &&
 	      memcmp(&rx.line, &expected_line,
 		     sizeof(rx.line)) == 0 &&
-	      rx.decoder_power_q15 == handoff.upstream.decoder_power_q15 &&
+	      rx.decoder_power_q15 ==
+		      v90_upstream_training_rx_decoder_power(&handoff.upstream) &&
 	      rx.adaptation == V34_ADAPTIVE_EQUALIZER_FULL,
 	      "CP line initialization contract changed");
 	saved = rx;

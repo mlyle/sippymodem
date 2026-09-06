@@ -314,7 +314,6 @@ static bool test_data_erasure(
 	CHECK(memcmp(&receiver->semantic, &saved.semantic,
 		     sizeof(receiver->semantic)) == 0 &&
 	      receiver->tracking_symbols == saved.tracking_symbols &&
-	      receiver->decoder_power_q15 == saved.decoder_power_q15 &&
 	      memcmp(&receiver->line.equalizer.feedback, &saved.line.equalizer.feedback,
 		     sizeof(receiver->line.equalizer.feedback)) == 0 &&
 	      memcmp(&receiver->line.equalizer.quality, &saved.line.equalizer.quality,

@@ -12,27 +12,12 @@ enum {
 	/* Preserve 48 symbols of past-channel span for delayed upstream echoes,
 	 * while ordinary V.34 retains its 80-tap/20-symbol geometry. */
 	V90_UPSTREAM_EQUALIZER_TAPS = 128,
-	V90_UPSTREAM_INITIAL_DECODER_POWER_Q15 = 0x7000,
-	V90_UPSTREAM_MIDDLE_DECODER_POWER_Q15 = 0x4000,
-	V90_UPSTREAM_FINAL_DECODER_POWER_Q15 = 0x2000,
 	/* Silence between the analogue modem's V.90 return intervals must not
 	 * pull the trained equalizer toward an arbitrary constellation point. */
 	V90_UPSTREAM_MIN_TRACKING_POWER =
 		(V34_TRAINING_FIXED_AMPLITUDE / 2) *
 		(V34_TRAINING_FIXED_AMPLITUDE / 2),
 };
-
-static uint16_t decoder_power(
-	const struct v90_upstream_training_rx *receiver)
-{
-	uint16_t period = receiver->line.timing.timing.nominal_symbol_rate;
-
-	if (receiver->tracking_symbols >= period)
-		return V90_UPSTREAM_FINAL_DECODER_POWER_Q15;
-	if (receiver->tracking_symbols >= (uint16_t)(period >> 1u))
-		return V90_UPSTREAM_MIDDLE_DECODER_POWER_Q15;
-	return V90_UPSTREAM_INITIAL_DECODER_POWER_Q15;
-}
 
 static bool semantic_state_is_valid(
 	const struct v90_upstream_training_rx *receiver)
@@ -76,8 +61,7 @@ bool v90_upstream_training_rx_is_valid(
 	    receiver->line.equalizer.feedback_mode !=
 		    V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE ||
 	    !semantic_state_is_valid(receiver) ||
-	    !history_is_valid(receiver) ||
-	    receiver->decoder_power_q15 != decoder_power(receiver))
+	    !history_is_valid(receiver))
 		return false;
 	if (receiver->initial.stage == V34_PHASE3_DECISION_RECEIVER_S)
 		return receiver->tracking_symbols == 0u;
@@ -128,8 +112,6 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 		return V90_UPSTREAM_TRAINING_RX_INVALID_ARGUMENT;
 	memset(&initialized, 0, sizeof(initialized));
 	initialized.transmitting_profile = *transmitting_profile;
-	initialized.decoder_power_q15 =
-		V90_UPSTREAM_INITIAL_DECODER_POWER_Q15;
 	initialized.stage = V90_UPSTREAM_TRAINING_RX_INITIAL;
 	if (v34_line_receiver_init(
 		    &initialized.line, transmitting_profile,
@@ -157,7 +139,6 @@ static void advance_tracking(struct v90_upstream_training_rx *receiver)
 
 	if (receiver->tracking_symbols < period)
 		receiver->tracking_symbols++;
-	receiver->decoder_power_q15 = decoder_power(receiver);
 }
 
 static void remember_decision(
@@ -184,7 +165,8 @@ static enum v90_upstream_training_rx_result resolve_action(
 
 	if (v34_line_receiver_resolve(
 		    &receiver->line, observation, action,
-		    receiver->decoder_power_q15) != V34_LINE_RECEIVER_OK)
+		    v90_upstream_training_rx_decoder_power(receiver)) !=
+	    V34_LINE_RECEIVER_OK)
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	if (was_tracking && action->action == V34_RECEIVE_COMMIT)
 		advance_tracking(receiver);
@@ -201,7 +183,7 @@ static enum v90_upstream_training_rx_result receive_initial(
 
 	result = v34_phase3_decision_receiver_observe(
 		&receiver->initial, observation,
-		receiver->decoder_power_q15, &action);
+		v90_upstream_training_rx_decoder_power(receiver), &action);
 	if (result != V34_PHASE3_DECISION_RECEIVER_OK &&
 	    result != V34_PHASE3_DECISION_RECEIVER_S_DETECTED &&
 	    result != V34_PHASE3_DECISION_RECEIVER_PP_COMPLETE)
@@ -239,7 +221,8 @@ static enum v90_upstream_training_rx_result receive_tracking(
 		enum v34_phase3_decision_receiver_result result =
 			v34_phase3_decision_receiver_observe(
 				&receiver->initial, observation,
-				receiver->decoder_power_q15, &action);
+				v90_upstream_training_rx_decoder_power(receiver),
+				&action);
 
 		if (result != V34_PHASE3_DECISION_RECEIVER_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
@@ -264,7 +247,8 @@ static enum v90_upstream_training_rx_result receive_tracking(
 			    &hard) != V34_CONSTELLATION_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 		action = v34_receive_action_commit(
-			observation, hard.target, receiver->decoder_power_q15,
+			observation, hard.target,
+			v90_upstream_training_rx_decoder_power(receiver),
 			V34_ADAPTIVE_EQUALIZER_FULL);
 	}
 	return resolve_action(receiver, observation, &action);
@@ -366,7 +350,7 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_advance(
 	if (line_result == V34_LINE_RECEIVER_OBSERVATION_READY)
 		line_result = v34_line_receiver_resolve(
 			&next.line, &observation, &discard,
-			next.decoder_power_q15);
+			v90_upstream_training_rx_decoder_power(&next));
 	if (line_result != V34_LINE_RECEIVER_OK) {
 		next.failed = true;
 		if (v90_upstream_training_rx_is_valid(&next))

@@ -316,7 +316,8 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_init(
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	initialized.line = handoff->upstream.line;
 	initialized.transmitting_profile = handoff->upstream.transmitting_profile;
-	initialized.decoder_power_q15 = handoff->upstream.decoder_power_q15;
+	initialized.decoder_power_q15 =
+		v90_upstream_training_rx_decoder_power(&handoff->upstream);
 	initialized.adaptation = V34_ADAPTIVE_EQUALIZER_FULL;
 	/* The training owner qualifies quiet return intervals. CP owns live
 	 * control symbols, so do not inherit that owner's temporary hold. */

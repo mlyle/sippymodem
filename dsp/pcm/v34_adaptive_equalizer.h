@@ -78,6 +78,19 @@ struct v34_receive_action {
 	enum v34_receive_action_kind action;
 };
 
+/* Shared training adaptation schedule, using the valid line timing's nominal
+ * symbol rate. The protocol owner decides when tracking starts or pauses;
+ * deriving the power from its count avoids a second mutable training state. */
+static inline uint16_t v34_training_decoder_power(
+	uint16_t nominal_symbol_rate, uint32_t tracking_symbols)
+{
+	if (tracking_symbols >= nominal_symbol_rate)
+		return 0x2000;
+	if (tracking_symbols >= (uint16_t)(nominal_symbol_rate >> 1u))
+		return 0x4000;
+	return 0x7000;
+}
+
 static inline struct v34_receive_action v34_receive_action_only(
 	enum v34_receive_action_kind action)
 {
