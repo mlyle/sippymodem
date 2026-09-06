@@ -2005,6 +2005,154 @@ static bool test_b1_timeout(void)
 	return true;
 }
 
+static bool run_phase3_return_timeout(enum g711_law law, size_t delay)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	struct pcm_call waiting;
+	uint8_t silence = silence_octet(law);
+	uint32_t deadline;
+	bool trn1d_started = false;
+	bool return_seen = false;
+
+	CHECK(channel_init(&channel, law, delay) &&
+	      endpoint_init(
+		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(
+		      &digital, V90_DIGITAL_MODEM, law,
+		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "law %u return-timeout endpoints did not initialize",
+	      (unsigned int)law);
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		const struct pcm_phase3_digital_tx *tx;
+
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u return-timeout setup stopped at %zu",
+		      (unsigned int)law, clock);
+		if (digital.call.stage != PCM_CALL_PHASE3)
+			continue;
+		tx = &digital.call.state.phase3.digital.transmit;
+		if (digital.call.state.phase3.digital.transmit_started &&
+		    tx->stage == PCM_PHASE3_DIGITAL_TX_PREFIX &&
+		    tx->sequence.prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_TRN1D &&
+		    tx->sequence.prefix.sequence.signs.trn1d_symbols == 0u) {
+			trn1d_started = true;
+			break;
+		}
+	}
+	CHECK(trn1d_started && digital.call.round_trip_delay_stored,
+	      "law %u return-timeout test missed the TRN1d boundary",
+	      (unsigned int)law);
+	waiting = digital.call;
+	/* V.90 9.3.1.5 starts at TRN1d, not at Ja or the first Jd record. */
+	deadline = 40800u + waiting.round_trip_delay_samples;
+	for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
+		struct pcm_call_observation observation;
+		uint8_t transmitted;
+		enum pcm_call_result result = pcm_call_octet(
+			&waiting, silence, decode_octet(law, silence),
+			&transmitted, &observation);
+
+		CHECK(result == PCM_CALL_OK &&
+		      observation.processed == PCM_CALL_PHASE3 &&
+		      observation.next == (elapsed < deadline ?
+			      PCM_CALL_PHASE3 : PCM_CALL_RETRAIN_SILENCE),
+		      "law %u delay %zu return deadline at %u/%u: %s stage %u",
+		      (unsigned int)law, delay, elapsed, deadline,
+		      pcm_call_result_name(result), (unsigned int)waiting.stage);
+	}
+	{
+		struct pcm_call_observation observation;
+		uint8_t transmitted;
+
+		CHECK(waiting.retrain_active && waiting.peer_info0_stored &&
+		      !waiting.b1_deadline_armed && !pcm_call_has_failed(&waiting) &&
+		      pcm_call_octet(
+			      &waiting, silence, decode_octet(law, silence),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      transmitted == silence &&
+		      observation.processed == PCM_CALL_RETRAIN_SILENCE &&
+		      pcm_call_is_valid(&waiting),
+		      "law %u return timeout did not start protocol retrain silence",
+		      (unsigned int)law);
+	}
+	/* The original, un-stalled pair supplies real S detection. A latched
+	 * response must suppress expiry while the final Jd record drains. */
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_phase3_digital_tx *tx;
+		uint8_t received = channel.analog_to_digital[channel.cursor];
+
+		waiting = digital.call;
+
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u timely return stopped at %zu",
+		      (unsigned int)law, clock);
+		if (digital.call.stage != PCM_CALL_PHASE3)
+			continue;
+		tx = &digital.call.state.phase3.digital.transmit;
+		if (tx->stage == PCM_PHASE3_DIGITAL_TX_JD &&
+		    tx->finish_jd_requested) {
+			struct pcm_call_observation observation;
+			struct pcm_call detected = digital.call;
+			uint8_t transmitted;
+			uint32_t jd_symbols;
+
+			CHECK(waiting.stage == PCM_CALL_PHASE3 &&
+			      waiting.state.phase3.digital.transmit.stage ==
+				      PCM_PHASE3_DIGITAL_TX_JD &&
+			      !waiting.state.phase3.digital.transmit.finish_jd_requested,
+			      "law %u timely-return control missed the detection edge",
+			      (unsigned int)law);
+			tx = &waiting.state.phase3.digital.transmit;
+			/* Put the generated S-detection sample on the last allowed
+			 * tick. Only transmitter counts move; receive history is exact. */
+			jd_symbols = deadline - 1u - tx->sequence.signs.trn1d_symbols;
+			tx->jd_records = jd_symbols / PCM_J_FRAME_BITS;
+			tx->bit_index = (uint8_t)(jd_symbols % PCM_J_FRAME_BITS);
+			CHECK(pcm_call_is_valid(&waiting) &&
+			      pcm_call_octet(
+				      &waiting, received, decode_octet(law, received),
+				      &transmitted, &observation) == PCM_CALL_OK &&
+			      waiting.stage == PCM_CALL_PHASE3 &&
+			      !waiting.retrain_active &&
+			      waiting.state.phase3.digital.transmit.finish_jd_requested,
+			      "law %u S on the deadline lost to timeout",
+			      (unsigned int)law);
+			waiting = detected;
+			/* Rebase only the completed-record count past the deadline;
+			 * keep the generated receive state and pending Jd tail. */
+			waiting.state.phase3.digital.transmit.jd_records +=
+				deadline / PCM_J_FRAME_BITS + 1u;
+			CHECK(pcm_call_is_valid(&waiting) &&
+			      pcm_call_octet(
+				      &waiting, silence, decode_octet(law, silence),
+				      &transmitted, &observation) == PCM_CALL_OK &&
+			      waiting.stage == PCM_CALL_PHASE3 &&
+			      !waiting.retrain_active &&
+			      waiting.state.phase3.digital.transmit.finish_jd_requested,
+			      "law %u detected S did not cancel the return deadline",
+			      (unsigned int)law);
+			return_seen = true;
+			break;
+		}
+	}
+	CHECK(return_seen, "law %u return-timeout control did not detect S",
+	      (unsigned int)law);
+	return true;
+}
+
+static bool test_phase3_return_timeout(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU;
+	     law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_phase3_return_timeout(law, 3u) &&
+		      run_phase3_return_timeout(law, 13u),
+		      "law %u V.90 return timeout failed", (unsigned int)law);
+	}
+	return true;
+}
+
 static bool run_full_retrain(
 	enum g711_law law, enum v90_modem_role initiating_role)
 {
@@ -4371,6 +4519,7 @@ int main(void)
 		{ "unusable retrain selection restarts full training",
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
+		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",

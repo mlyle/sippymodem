@@ -14,6 +14,8 @@
 enum {
 	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
 	V90_UPSTREAM_RATE_UNIT = 2400,
+	V90_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 51 / 10,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
@@ -1937,6 +1939,31 @@ static enum pcm_call_result retain_v92_peer_downstream_rates(
 		       PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
 }
 
+static bool phase3_return_timed_out(const struct pcm_call *call)
+{
+	const struct pcm_phase3_digital_tx *transmit;
+	uint64_t elapsed;
+
+	if (call->protocol != PCM_PROTOCOL_V90 ||
+	    call->local_role != V90_DIGITAL_MODEM)
+		return false;
+	transmit = &call->state.phase3.digital.transmit;
+	if (!call->state.phase3.digital.transmit_started ||
+	    transmit->stage != PCM_PHASE3_DIGITAL_TX_JD ||
+	    transmit->finish_jd_requested)
+		return false;
+	/* V.90 9.3.1.5 allows 5100 ms plus RTD from the start of TRN1d
+	 * to detection of S. The shared transmitter already owns the complete
+	 * elapsed-symbol count, so no parallel timer or reset state is needed.
+	 * Receive runs first: S on the final sample cancels this deadline even
+	 * while the remainder of the current Jd record is still being sent. */
+	elapsed = (uint64_t)transmit->sequence.signs.trn1d_symbols +
+		  (uint64_t)transmit->jd_records * PCM_J_FRAME_BITS +
+		  transmit->bit_index;
+	return elapsed >= V90_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
+			  (uint32_t)call->round_trip_delay_samples;
+}
+
 static enum pcm_call_result sample_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
@@ -2009,6 +2036,8 @@ static enum pcm_call_result sample_phase3(
 					&call->state.phase3.digital,
 					received_sample));
 	}
+	if (result == PCM_CALL_OK && phase3_return_timed_out(call))
+		return begin_retrain(call, false);
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
 
