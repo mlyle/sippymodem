@@ -858,7 +858,6 @@ static bool test_validation(void)
 	int16_t transmit = 1234;
 	int16_t receive_gain = 4321;
 	bool ranging_active = false;
-	bool failed = false;
 
 	memset(&phase2, 0xa5, sizeof(phase2));
 	saved = phase2;
@@ -920,14 +919,14 @@ static bool test_validation(void)
 		CHECK(v34_phase2_sample(&phase2, 0, &transmit, &event) ==
 			      V34_PHASE2_OK,
 		      "isolated ranging failed at %zu", index);
-		if (event.kind == V34_PHASE2_EVENT_FAILED) {
-			failed = true;
-			break;
-		}
+		CHECK(event.kind != V34_PHASE2_EVENT_FAILED,
+		      "missing ranging response aborted instead of reacquiring Tone B");
 	}
-	CHECK(failed && v34_phase2_has_failed(&phase2) &&
-	      event.failure == V34_PHASE2_FAILURE_RANGING_TIMEOUT,
-	      "Phase 2 did not retain a child ranging failure");
+	CHECK(!v34_phase2_has_failed(&phase2) &&
+	      phase2.stage == V34_PHASE2_RANGING &&
+	      phase2.state.ranging.control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+	      phase2.state.ranging.control.measurement_elapsed_samples == 0,
+	      "Phase 2 did not retain the first-reversal recovery wait");
 	return true;
 }
 

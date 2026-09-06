@@ -85,6 +85,7 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality == NULL ||
 	    quality->bad_windows > V34_DATA_QUALITY_LOSS_WINDOWS ||
 	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
+	    quality->window_position >= V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS ||
 	    quality->baseline < 0 || quality->threshold < 0 ||
 	    (quality->timing_frozen &&
 	     (quality->threshold <= quality->baseline ||
@@ -93,7 +94,7 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality->active)
 		return true;
 	return quality->baseline == 0 && quality->threshold == 0 &&
-	       quality->bad_windows == 0 && !quality->window_latched &&
+	       quality->bad_windows == 0 && quality->window_position == 0 &&
 	       !quality->timing_frozen;
 }
 
@@ -177,7 +178,7 @@ enum v34_data_quality_result v34_data_quality_start(
 	next.baseline = measurement->decision_metric;
 	next.threshold = threshold;
 	next.bad_windows = 0;
-	next.window_latched = measurement->window_position == 0;
+	next.window_position = measurement->window_position;
 	next.timing_frozen = false;
 	next.active = true;
 	*quality = next;
@@ -224,10 +225,7 @@ enum v34_data_quality_result v34_data_quality_observe(
 	if (!v34_data_quality_is_valid(quality) || !quality->active)
 		return V34_DATA_QUALITY_INVALID_STATE;
 	next = *quality;
-	if (measurement->window_position != 0) {
-		next.window_latched = false;
-	} else if (!next.window_latched) {
-		next.window_latched = true;
+	if (measurement->window_position < next.window_position) {
 		timing_result = update_timing_gate(
 			&next, measurement->decision_metric);
 		if (next.threshold == 0 ||
@@ -237,13 +235,14 @@ enum v34_data_quality_result v34_data_quality_observe(
 			next.bad_windows++;
 		}
 	}
+	next.window_position = measurement->window_position;
 	if (next.bad_windows == V34_DATA_QUALITY_LOSS_WINDOWS &&
 	    next.automatic_retrains < V34_DATA_QUALITY_MAX_RETRAINS) {
 		next.automatic_retrains++;
 		next.baseline = 0;
 		next.threshold = 0;
 		next.bad_windows = 0;
-		next.window_latched = false;
+		next.window_position = 0;
 		next.timing_frozen = false;
 		next.active = false;
 		*quality = next;

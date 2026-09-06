@@ -28,7 +28,7 @@ static bool bounds_are_valid(
 	const struct phase2_ranging_control *control)
 {
 	return control != NULL &&
-	       (unsigned int)control->phase <= PHASE2_RANGING_TIMED_OUT &&
+	       (unsigned int)control->phase <= PHASE2_RANGING_PROBE_READY &&
 	       control->local_tone_samples <=
 		       PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
 	       control->deferred_reversal_samples <
@@ -67,7 +67,6 @@ bool phase2_ranging_control_is_valid(
 	    control->deferred_reversal_samples != 0)
 		return false;
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE &&
-	    control->phase != PHASE2_RANGING_TIMED_OUT &&
 	    !retains_ranging_context(exchange, peer_info0_received))
 		return false;
 
@@ -152,16 +151,6 @@ bool phase2_ranging_control_is_valid(
 		       control->probe_start_delay_samples == 0 &&
 		       control->measurement_elapsed_samples == 0 &&
 		       control->round_trip_delay_valid;
-	case PHASE2_RANGING_TIMED_OUT:
-		return control->response_delay_samples == 0 &&
-		       control->post_reversal_samples == 0 &&
-		       control->probe_start_delay_samples == 0 &&
-		       control->measurement_elapsed_samples == 0 &&
-		       !control->round_trip_delay_valid &&
-		       (side_b ?
-				control->local_tone_samples == 0 :
-				control->local_tone_samples ==
-					PHASE2_RANGING_INITIAL_TONE_SAMPLES);
 	}
 	return false;
 }
@@ -247,6 +236,7 @@ enum phase2_ranging_result phase2_ranging_prepare_sample(
 		V34_PHASE2_INFO_SEARCH_SYNC;
 	if (next.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
 	    next.local_tone_samples == PHASE2_RANGING_INITIAL_TONE_SAMPLES &&
+	    exchange->tone_detector.carrier.tone_present &&
 	    !peer_info0_in_progress) {
 		next.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
 		reverse = true;
@@ -531,8 +521,7 @@ static void recover_signal_b_after_remote_tone(
 
 static bool advance_measurement(
 	struct phase2_ranging_control *control,
-	struct phase2_info0_exchange *exchange,
-	struct phase2_ranging_event *event)
+	struct phase2_info0_exchange *exchange)
 {
 	if (!measurement_active(control, exchange))
 		return true;
@@ -567,8 +556,15 @@ static bool advance_measurement(
 		control->phase = PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE;
 		return true;
 	}
-	control->phase = PHASE2_RANGING_TIMED_OUT;
-	event->kind = PHASE2_RANGING_TIMEOUT;
+	/* V.34 11.2.2.2.2 / V.90 9.2.2.2.2: an unanswered first reversal
+	 * restarts Tone-B acquisition, not the call. Tone A has remained on;
+	 * retain its completed guard but qualify a fresh remote phase before
+	 * sending another reversal. The training-session deadline still bounds
+	 * a peer that never responds. */
+	if (v34_phase2_tone_detector_reset(
+		    &exchange->tone_detector) != V34_PHASE2_TONE_OK)
+		return false;
+	control->phase = PHASE2_SIGNAL_A_WAIT_INITIAL_TONE;
 	return true;
 }
 
@@ -590,10 +586,8 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 	int16_t *transmit_sample, struct phase2_ranging_event *event)
 {
 	struct phase2_ranging_control next;
-	struct v34_phase2_tone_detector rejected_detector;
 	struct phase2_ranging_event emitted = { 0 };
 	int16_t generated;
-	bool reversal_rejected = false;
 
 	if (!prepared_control_is_valid(
 		    control, exchange, peer_info0_received) ||
@@ -628,24 +622,22 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 		    &next, exchange, peer_info0_received, transmit_phase_before,
 		    tone_event->reversal_delay_samples,
 		    &emitted)) {
-		rejected_detector = exchange->tone_detector;
+		/* The owner supplies a candidate transport. Reject this edge before
+		 * timeout recovery can establish a fresh detector epoch below. */
 		if (v34_phase2_tone_detector_reject_reversal(
-			    &rejected_detector, tone_event) !=
+			    &exchange->tone_detector, tone_event) !=
 		    V34_PHASE2_TONE_OK)
 			return PHASE2_RANGING_INVALID_ARGUMENT;
-		reversal_rejected = true;
 	}
 	finish_tone_tail(
 		&next, exchange, transmit_phase_before, &emitted);
-	if (!advance_measurement(&next, exchange, &emitted))
+	if (!advance_measurement(&next, exchange))
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	recover_signal_b_after_remote_tone(&next, exchange);
 	advance_probe_start(&next, &emitted);
 	if (!phase2_ranging_control_is_valid(
 		    &next, exchange, peer_info0_received))
 		return PHASE2_RANGING_INVALID_ARGUMENT;
-	if (reversal_rejected)
-		exchange->tone_detector = rejected_detector;
 	*control = next;
 	*transmit_sample = generated;
 	*event = emitted;

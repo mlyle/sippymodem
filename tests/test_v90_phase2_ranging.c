@@ -853,6 +853,98 @@ static bool test_retrain_early_second_reversal(void)
 	return true;
 }
 
+static bool check_first_reversal_timeout_recovery(
+	enum test_codec codec, enum pcm_protocol protocol, bool interrupt_tone)
+{
+	struct v90_phase2_ranging ranging = { 0 };
+	struct phase2_info0_exchange peer;
+	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
+	size_t payload_bits = 0;
+	size_t first_edge = SIZE_MAX;
+	size_t retry_edge = SIZE_MAX;
+	size_t recovery_at = SIZE_MAX;
+	bool probe_ready = false;
+
+	CHECK(initialize_interrupted_ranging(
+		      &ranging, &peer, V90_ANALOG_MODEM, protocol, codec,
+		      payload, &payload_bits),
+	      "first-reversal recovery fixture did not initialize");
+	ranging.control.prior_round_trip_delay_samples =
+		RETRAIN_PRIOR_RTD_SAMPLES;
+	for (size_t index = 0;
+	     index < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 2u * TEST_SAMPLE_LIMIT;
+	     ++index) {
+		struct phase2_info0_exchange_event peer_event;
+		struct v90_phase2_ranging_event event;
+		enum phase2_ranging_phase before = ranging.control.phase;
+		bool muted = interrupt_tone && first_edge != SIZE_MAX &&
+			index - first_edge >= PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES - 100u &&
+			index - first_edge < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 300u;
+		int16_t peer_line;
+		int16_t local_line;
+
+		/* Ignore the first Tone-A edge; answer only its fresh retry. */
+		if (retry_edge != SIZE_MAX &&
+		    index - retry_edge == PHASE2_RANGING_TURNAROUND_SAMPLES)
+			CHECK(v34_phase2_tone_transmitter_reverse(
+				      &peer.tone_transmitter) == V34_PHASE2_TONE_OK,
+			      "peer did not answer the retried first reversal");
+		CHECK(phase2_info0_exchange_sample(
+			      &peer, 0, &peer_line, &peer_event) == PHASE2_INFO0_EXCHANGE_OK &&
+		      v90_phase2_ranging_sample(
+			      &ranging, muted ? 0 : codec_round_trip(peer_line, codec),
+			      &local_line, &event) == V90_PHASE2_RANGING_OK,
+		      "missing first response aborted at %zu for %d/%d/%d",
+		      index, codec, protocol, interrupt_tone);
+		if (before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    ranging.control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE) {
+			recovery_at = index;
+			CHECK(ranging.control.measurement_elapsed_samples == 0 &&
+			      !ranging.control.round_trip_delay_valid &&
+			      ranging.control.prior_round_trip_delay_samples == RETRAIN_PRIOR_RTD_SAMPLES &&
+			      !ranging.info0_exchange.transport.tone_detector.carrier.tone_present,
+			      "recovery retained stale ranging or lost prior RTD");
+		}
+		if (before == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
+		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL) {
+			if (first_edge == SIZE_MAX) {
+				first_edge = index;
+			} else {
+				CHECK(recovery_at != SIZE_MAX && !muted &&
+				      index > recovery_at + V34_PHASE2_TONE_WINDOW_SAMPLES,
+				      "retry did not reacquire the remote tone");
+				retry_edge = index;
+			}
+		}
+		if (event.kind == PHASE2_PROBE_TRANSMIT_READY) {
+			probe_ready = true;
+			break;
+		}
+	}
+	CHECK(first_edge != SIZE_MAX && retry_edge != SIZE_MAX && probe_ready &&
+	      recovery_at - first_edge == PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES &&
+	      ranging.control.round_trip_delay_valid &&
+	      ranging.control.round_trip_delay_samples == RETRAIN_PRIOR_RTD_SAMPLES,
+	      "first-reversal recovery did not complete for %d/%d/%d: "
+	      "first=%zu recovery=%zu retry=%zu probe=%d delay=%u",
+	      codec, protocol, interrupt_tone, first_edge, recovery_at,
+	      retry_edge, probe_ready, ranging.control.round_trip_delay_samples);
+	return true;
+}
+
+static bool test_first_reversal_timeout_recovery(void)
+{
+	for (enum test_codec codec = TEST_CODEC_PCMU;
+	     codec <= TEST_CODEC_PCMA; ++codec)
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			for (unsigned int silence = 0; silence < 2; ++silence)
+				CHECK(check_first_reversal_timeout_recovery(
+					      codec, protocol, silence != 0),
+				      "first-reversal recovery failed");
+	return true;
+}
+
 static bool test_second_reversal_timeout_recovery(void)
 {
 	struct v90_phase2_ranging ranging = { 0 };
@@ -861,7 +953,6 @@ static bool test_second_reversal_timeout_recovery(void)
 	size_t payload_bits = 0;
 	int16_t local_line = 0;
 	size_t recovery_tone_samples = 0;
-	size_t timeout_count = 0;
 	bool first_reversed = false;
 	bool first_response_started = false;
 	bool recovery_started = false;
@@ -933,8 +1024,6 @@ static bool test_second_reversal_timeout_recovery(void)
 			      &local_line, &event) ==
 			      V90_PHASE2_RANGING_OK,
 		      "second-reversal recovery failed at %zu", index);
-		if (event.kind == PHASE2_RANGING_TIMEOUT)
-			timeout_count++;
 		if (!first_response_started &&
 		    phase_before == PHASE2_RESPONSE_DELAY &&
 		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL)
@@ -975,19 +1064,17 @@ static bool test_second_reversal_timeout_recovery(void)
 	      recovery_boundary_was_silent && recovery_tone_transmitted &&
 	      retry_first_reversed && retry_first_accepted &&
 	      retry_response_started && retry_second_reversed && probe_ready &&
-	      timeout_count == 0 &&
 	      ranging.control.phase == PHASE2_RANGING_PROBE_READY &&
 	      ranging.control.round_trip_delay_valid &&
 	      ranging.control.round_trip_delay_samples ==
 		      RETRAIN_PRIOR_RTD_SAMPLES,
 	      "second-reversal retry did not complete: first=%d response=%d "
 	      "recovery=%d silent=%d tone=%d retry=%d/%d/%d/%d probe=%d "
-	      "timeouts=%zu phase=%d delay=%u",
+	      "phase=%d delay=%u",
 	      first_reversed, first_response_started, recovery_started,
 	      recovery_boundary_was_silent, recovery_tone_transmitted,
 	      retry_first_reversed, retry_first_accepted,
 	      retry_response_started, retry_second_reversed, probe_ready,
-	      timeout_count,
 	      ranging.control.phase, ranging.control.round_trip_delay_samples);
 	return true;
 }
@@ -1262,7 +1349,7 @@ static bool test_validation(void)
 	struct v90_phase2_ranging ranging;
 	struct v90_phase2_ranging before;
 	struct v90_phase2_ranging_event event = {
-		.kind = PHASE2_RANGING_TIMEOUT,
+		.kind = PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	};
 	int16_t sample = 1234;
 
@@ -1277,7 +1364,7 @@ static bool test_validation(void)
 		      &ranging, 0, &sample, &event) ==
 		      V90_PHASE2_RANGING_INVALID_ARGUMENT &&
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
-	      sample == 1234 && event.kind == PHASE2_RANGING_TIMEOUT,
+	      sample == 1234 && event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	      "invalid V.90 ranging state mutated state or outputs");
 	CHECK(strcmp(
 		      v90_phase2_ranging_result_name(V90_PHASE2_RANGING_OK),
@@ -1304,6 +1391,8 @@ int main(void)
 		  test_retrain_early_second_reversal },
 		{ "second reversal timeout recovery",
 		  test_second_reversal_timeout_recovery },
+		{ "first reversal timeout recovery",
+		  test_first_reversal_timeout_recovery },
 		{ "rejected edge before INFO", test_rejected_edge_before_info },
 		{ "completed INFO0 repeat ordering",
 		  test_completed_exchange_repeat },

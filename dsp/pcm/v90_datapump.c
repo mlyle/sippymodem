@@ -8,6 +8,7 @@
 #include "modem_param.h"
 #include "pcm_call.h"
 #include "training_session.h"
+#include "v34_data_quality.h"
 #include "v90_host_echo.h"
 #include "v90_info1.h"
 #include "v90_mp.h"
@@ -23,6 +24,7 @@ struct v90_datapump {
 	struct dp dp;
 	struct pcm_call call;
 	struct training_session training;
+	struct v34_data_quality upstream_quality;
 	struct v90_v34_fallback_handoff fallback;
 	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
@@ -34,6 +36,7 @@ struct v90_datapump {
 	bool fallback_ready;
 	bool host_echo_margin_evaluated;
 	bool host_echo_delay_seeded;
+	bool upstream_quality_ready;
 };
 
 static struct dp *create_v90(
@@ -130,6 +133,9 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      !datapump->call.round_trip_delay_stored ||
 	      datapump->call.round_trip_delay_samples == 0)) ||
 	    !training_session_is_valid(&datapump->training) ||
+	    !v34_data_quality_is_valid(&datapump->upstream_quality) ||
+	    (datapump->upstream_quality_ready &&
+	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM)) ||
 	    (datapump->fallback_ready &&
 	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
 	      !datapump->call_started ||
@@ -219,7 +225,9 @@ static struct dp *create_v90(
 	if (training_session_init(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
-	    TRAINING_SESSION_OK) {
+	    TRAINING_SESSION_OK ||
+	    v34_data_quality_init(&datapump->upstream_quality) !=
+		    V34_DATA_QUALITY_OK) {
 		free(datapump->host_echo);
 		free(datapump);
 		return NULL;
@@ -277,7 +285,57 @@ static int retrain_v90(struct dp *dp)
 	}
 	datapump->call = call;
 	datapump->training = training;
+	datapump->upstream_quality_ready = false;
 	return 0;
+}
+
+static bool observe_upstream_quality(struct v90_datapump *datapump)
+{
+	struct v90_digital_path *path = &datapump->call.state.data_path.digital;
+	struct v34_data_quality next = datapump->upstream_quality;
+	struct v34_data_line_receiver *receiver;
+	enum v34_data_quality_result result;
+
+	/* V.90 uses the conventional V.34 receiver upstream. Do not carry a
+	 * quality baseline across CP/E/B1, rate renegotiation or full retrain;
+	 * only the call's bounded automatic-retrain budget survives. */
+	if (datapump->protocol != PCM_PROTOCOL_V90 ||
+	    datapump->role != V90_DIGITAL_MODEM ||
+	    datapump->call.stage != PCM_CALL_DATA_PATH ||
+	    !training_session_is_online(&datapump->training) ||
+	    path->rate_renegotiation_active || path->cleardown_requested ||
+	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
+	    path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_DATA) {
+		datapump->upstream_quality_ready = false;
+		return true;
+	}
+	receiver = &path->upstream.data;
+	if (!datapump->upstream_quality_ready) {
+		if (v34_data_quality_start(
+			    &next, receiver->geometry.symbol_rate,
+			    receiver->geometry.primary_data_rate_2400_bps_units,
+			    &receiver->line.equalizer.quality) != V34_DATA_QUALITY_OK)
+			return false;
+		datapump->upstream_quality_ready = true;
+	} else {
+		result = v34_data_quality_observe(
+			&next, &receiver->line.equalizer.quality);
+		if (result == V34_DATA_QUALITY_FREEZE_TIMING ||
+		    result == V34_DATA_QUALITY_RESUME_TIMING) {
+			if (v34_receive_timing_set_data_frozen(
+				    &receiver->line.timing,
+				    result == V34_DATA_QUALITY_FREEZE_TIMING) !=
+			    V34_RECEIVE_TIMING_OK)
+				return false;
+		} else if (result == V34_DATA_QUALITY_RETRAIN) {
+			if (retrain_v90(&datapump->dp) != 0)
+				return false;
+		} else if (result != V34_DATA_QUALITY_OK) {
+			return false;
+		}
+	}
+	datapump->upstream_quality = next;
+	return true;
 }
 
 static int process_v90(
@@ -536,7 +594,7 @@ static bool process_octet(
 			return false;
 		*connected = true;
 	}
-	return deliver_event(datapump, &event);
+	return deliver_event(datapump, &event) && observe_upstream_quality(datapump);
 }
 
 static void mute_output(

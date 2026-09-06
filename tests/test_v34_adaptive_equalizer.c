@@ -1217,7 +1217,7 @@ static bool test_data_quality_policy(void)
 	measurement.window_position = 0;
 	CHECK(v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_FREEZE_TIMING &&
-	      quality.bad_windows == 1 && quality.window_latched &&
+	      quality.bad_windows == 1 && quality.window_position == 0 &&
 	      quality.timing_frozen &&
 	      v34_data_quality_observe(&quality, &measurement) ==
 		      V34_DATA_QUALITY_OK &&
@@ -1287,6 +1287,47 @@ static bool test_data_quality_policy(void)
 	return true;
 }
 
+static bool test_paired_data_quality_windows(void)
+{
+	for (uint16_t phase = 0; phase < 2; ++phase) {
+		struct v34_adaptive_equalizer_quality measurement = {
+			.decision_metric = 40,
+			.window_position = (uint16_t)(1022u + phase),
+		};
+		struct v34_data_quality quality;
+
+		CHECK(v34_data_quality_init(&quality) == V34_DATA_QUALITY_OK &&
+		      v34_data_quality_start(
+			      &quality, V34_SYMBOL_RATE_3200, 11, &measurement) ==
+			      V34_DATA_QUALITY_OK,
+		      "paired quality phase %u did not start", phase);
+		for (unsigned int window = 0;
+		     window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window) {
+			enum v34_data_quality_result expected = window == 0 ?
+				V34_DATA_QUALITY_FREEZE_TIMING :
+				(window + 1 == V34_DATA_QUALITY_LOSS_WINDOWS ?
+				 V34_DATA_QUALITY_RETRAIN : V34_DATA_QUALITY_OK);
+
+			measurement.window_position = (uint16_t)(1022u + phase);
+			CHECK(v34_data_quality_observe(&quality, &measurement) ==
+				      V34_DATA_QUALITY_OK && quality.bad_windows == window,
+			      "an incomplete paired window changed quality");
+			measurement.window_position = phase;
+			measurement.decision_metric = 480;
+			CHECK(v34_data_quality_observe(&quality, &measurement) == expected,
+			      "paired quality phase %u lost completed window %u", phase, window);
+			if (expected != V34_DATA_QUALITY_RETRAIN)
+				CHECK(v34_data_quality_observe(&quality, &measurement) ==
+					      V34_DATA_QUALITY_OK && quality.bad_windows == window + 1,
+				      "paired quality counted a window twice");
+		}
+		CHECK(!quality.active && quality.automatic_retrains == 1 &&
+		      v34_data_quality_is_valid(&quality),
+		      "paired quality did not retain its recovery budget");
+	}
+	return true;
+}
+
 static bool test_data_quality_transactionality(void)
 {
 	struct v34_adaptive_equalizer_quality measurement = {
@@ -1344,6 +1385,10 @@ static bool test_data_quality_transactionality(void)
 	quality.automatic_retrains = V34_DATA_QUALITY_MAX_RETRAINS + 1u;
 	CHECK(!v34_data_quality_is_valid(&quality),
 	      "invalid quality retrain count was accepted");
+	quality = saved;
+	quality.window_position = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS;
+	CHECK(!v34_data_quality_is_valid(&quality),
+	      "invalid completed-window position was accepted");
 	return true;
 }
 
@@ -1361,7 +1406,7 @@ int main(void)
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||
-	    !test_data_quality_transactionality())
+	    !test_paired_data_quality_windows() || !test_data_quality_transactionality())
 		return 1;
 	return 0;
 }

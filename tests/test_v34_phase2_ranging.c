@@ -800,7 +800,6 @@ static bool test_missing_second_reversal_recovers(void)
 	bool remote_tone_reacquired = false;
 	bool recovery_boundary_was_silent = false;
 	bool caller_tone_resumed = false;
-	size_t timeout_count = 0;
 
 	CHECK(v34_phase2_ranging_init(
 		      &caller, V34_CALLING_STATION,
@@ -848,12 +847,11 @@ static bool test_missing_second_reversal_recovers(void)
 			      &caller, 0, &transmit, &event) ==
 			      V34_PHASE2_RANGING_OK,
 		      "missing-reversal wait failed at sample %zu", index);
-		if (event.kind == PHASE2_RANGING_TIMEOUT)
-			timeout_count++;
+		CHECK(event.kind == PHASE2_RANGING_NO_EVENT,
+		      "missing second reversal emitted a ranging event");
 	}
 	CHECK(caller.control.phase ==
 		      PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE &&
-	      timeout_count == 0 &&
 	      v34_phase2_ranging_is_valid(&caller),
 	      "missing reversal did not enter muted recovery");
 	for (size_t index = 0;
@@ -871,8 +869,6 @@ static bool test_missing_second_reversal_recovers(void)
 			      &caller, peer_line, &transmit, &event) ==
 			      V34_PHASE2_RANGING_OK,
 		      "remote-tone reacquisition failed at sample %zu", index);
-		if (event.kind == PHASE2_RANGING_TIMEOUT)
-			timeout_count++;
 		if (phase_before ==
 			    PHASE2_SIGNAL_B_RECOVERY_WAIT_REMOTE_TONE &&
 		    caller.control.phase ==
@@ -886,12 +882,13 @@ static bool test_missing_second_reversal_recovers(void)
 			caller_tone_resumed = true;
 	}
 	CHECK(remote_tone_reacquired && recovery_boundary_was_silent &&
-	      caller_tone_resumed && timeout_count == 0 &&
+	      caller_tone_resumed &&
 	      caller.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
 	      v34_phase2_ranging_is_valid(&caller),
-	      "opposite-phase Tone A did not restart Signal B: acquired=%d silent=%d tone=%d timeouts=%zu phase=%d",
+	      "opposite-phase Tone A did not restart Signal B: "
+	      "acquired=%d silent=%d tone=%d phase=%d",
 	      remote_tone_reacquired, recovery_boundary_was_silent,
-	      caller_tone_resumed, timeout_count, caller.control.phase);
+	      caller_tone_resumed, caller.control.phase);
 	return true;
 }
 
@@ -1082,7 +1079,7 @@ static bool test_validation(void)
 	struct v34_phase2_ranging ranging;
 	struct v34_phase2_ranging before;
 	struct v34_phase2_ranging_event event = {
-		.kind = PHASE2_RANGING_TIMEOUT,
+		.kind = PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	};
 	int16_t sample = 1234;
 
@@ -1099,7 +1096,7 @@ static bool test_validation(void)
 		      V34_PHASE2_RANGING_INVALID_ARGUMENT &&
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
 	      sample == 1234 &&
-	      event.kind == PHASE2_RANGING_TIMEOUT,
+	      event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	      "invalid ranging state mutated state or outputs");
 	return true;
 }

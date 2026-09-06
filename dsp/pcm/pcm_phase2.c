@@ -169,10 +169,7 @@ static enum pcm_phase2_failure active_failure(
 {
 	switch (phase2->stage) {
 	case PCM_PHASE2_RANGING:
-		return phase2->state.ranging.control.phase ==
-			       PHASE2_RANGING_TIMED_OUT ?
-			       PCM_PHASE2_FAILURE_RANGING_TIMEOUT :
-			       PCM_PHASE2_FAILURE_NONE;
+		return PCM_PHASE2_FAILURE_NONE;
 	case PCM_PHASE2_INITIAL_PROBE:
 		return initial_probe_failure(
 			phase2->state.initial_probe.control.failure);
@@ -861,11 +858,6 @@ static bool sample_ranging(
 		event->round_trip_delay_samples =
 			child.round_trip_delay_samples;
 		return true;
-	case PHASE2_RANGING_TIMEOUT:
-		phase2->failure = PCM_PHASE2_FAILURE_RANGING_TIMEOUT;
-		event->kind = PCM_PHASE2_EVENT_FAILED;
-		event->failure = phase2->failure;
-		return true;
 	}
 	return false;
 }
@@ -1126,8 +1118,6 @@ const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure)
 	switch (failure) {
 	case PCM_PHASE2_FAILURE_NONE:
 		return "none";
-	case PCM_PHASE2_FAILURE_RANGING_TIMEOUT:
-		return "ranging timeout";
 	case PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND:
 		return "remote probe not found";
 	case PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT:

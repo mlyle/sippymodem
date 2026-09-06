@@ -32,6 +32,7 @@ enum {
 	UPSTREAM_ECHO_DELAY = 49,
 	UPSTREAM_ECHO_HISTORY = UPSTREAM_ECHO_DELAY,
 	UPSTREAM_ECHO_GAIN_Q15 = 8000,
+	UPSTREAM_NOISE_SAMPLES = 16000,
 };
 
 enum returned_echo_mode {
@@ -43,6 +44,7 @@ enum returned_echo_mode {
 enum upstream_channel_mode {
 	UPSTREAM_CHANNEL_CLEAN,
 	UPSTREAM_CHANNEL_DELAYED_ECHO,
+	UPSTREAM_CHANNEL_NOISE_BURST,
 };
 
 struct bit_endpoint {
@@ -378,7 +380,10 @@ static bool run_pair_with_rate_window(
 	bool analog_reconnected = false;
 	bool digital_reconnected = false;
 	bool post_retrain_data_enabled = false;
-	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE;
+	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST;
+	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE || automatic_retrain;
+	uint32_t noise_state = UINT32_C(0x197bc485);
+	unsigned int noise_samples = 0;
 	bool sample_codeword_separated = false;
 	size_t echo_history_write = 0;
 	size_t echo_history_fill = 0;
@@ -453,6 +458,20 @@ static bool run_pair_with_rate_window(
 		}
 		digital_receive = scale_uq15(
 			digital_receive, digital_receive_gain_q15);
+		if (automatic_retrain && retrain_requested &&
+		    noise_samples < UPSTREAM_NOISE_SAMPLES) {
+			/* A bounded physical disturbance after verified initial data.
+			 * Preserve network sample time and require automatic recovery;
+			 * neither peer's retrain operation is called by this case. */
+			noise_state ^= noise_state << 13;
+			noise_state ^= noise_state >> 17;
+			noise_state ^= noise_state << 5;
+			digital_received_octet = encode(law, add_s16(
+				(int32_t)digital_receive +
+				(int32_t)(noise_state % 2001u) - 1000));
+			digital_receive = decode(law, digital_received_octet);
+			noise_samples++;
+		}
 		if (echo_mode != RETURNED_ECHO_NONE)
 			digital_receive = add_s16(
 				(int32_t)digital_receive +
@@ -532,8 +551,9 @@ static bool run_pair_with_rate_window(
 					analog_dp : digital_dp;
 
 			CHECK(!analog_bits.mismatch && !digital_bits.mismatch &&
-			      operations->retrain != NULL &&
-			      operations->retrain(selected) == 0,
+			      (automatic_retrain ||
+			       (operations->retrain != NULL &&
+			        operations->retrain(selected) == 0)),
 			      "V.90 role %u local retrain request failed",
 			      (unsigned int)retrain_role);
 			analog_bits.enabled = false;
@@ -591,6 +611,8 @@ static bool run_pair_with_rate_window(
 	       digital_bits.received_bits >= minimum_received_bits),
 	      "V.90 role %u did not complete local and remote retrain",
 	      (unsigned int)retrain_role);
+	CHECK(!automatic_retrain || noise_samples == UPSTREAM_NOISE_SAMPLES,
+	      "quality recovery did not consume the complete noise burst");
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
 	{
@@ -606,6 +628,22 @@ static bool run_pair_with_rate_window(
 	      operations->delete(digital_dp) == 0 &&
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
 	      "V.90 data pumps did not release their call state");
+	return true;
+}
+
+static bool test_upstream_quality_recovery(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "quality-recovery V.90 registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_pair_with_rate_window(
+			      law, 42667, 26400, 26400, 26400, 3200,
+			      SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
+			      false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
+			      UPSTREAM_CHANNEL_NOISE_BURST),
+		      "law %u did not recover upstream data after noise", (unsigned int)law);
+	CHECK(v90_datapump_unregister() == 0,
+	      "quality-recovery V.90 registration remained busy");
 	return true;
 }
 
@@ -1081,6 +1119,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },
 		{ "attenuated maximum-rate upstream",

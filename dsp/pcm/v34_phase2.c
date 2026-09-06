@@ -70,10 +70,7 @@ static enum v34_phase2_failure active_failure(
 {
 	switch (phase2->stage) {
 	case V34_PHASE2_RANGING:
-		return phase2->state.ranging.control.phase ==
-			       PHASE2_RANGING_TIMED_OUT ?
-			       V34_PHASE2_FAILURE_RANGING_TIMEOUT :
-			       V34_PHASE2_FAILURE_NONE;
+		return V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_INITIAL_PROBE:
 		return initial_probe_failure(
 			phase2->state.initial_probe.control.failure);
@@ -653,11 +650,6 @@ static bool sample_ranging(
 	case PHASE2_PROBE_RECEIVE_READY:
 	case PHASE2_PROBE_TRANSMIT_READY:
 		return enter_initial_probe(phase2, event);
-	case PHASE2_RANGING_TIMEOUT:
-		phase2->failure = V34_PHASE2_FAILURE_RANGING_TIMEOUT;
-		event->kind = V34_PHASE2_EVENT_FAILED;
-		event->failure = phase2->failure;
-		break;
 	case PHASE2_RANGING_NO_EVENT:
 		break;
 	}

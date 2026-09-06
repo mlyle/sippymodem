@@ -29,9 +29,9 @@ enum v34_data_quality_result {
 struct v34_data_quality {
 	int16_t baseline;
 	int16_t threshold;
+	uint16_t window_position;
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
-	bool window_latched;
 	bool timing_frozen;
 	bool active;
 };
@@ -50,15 +50,16 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	uint8_t *selected_rate_2400_bps_units);
 
 /* Start a new data generation while retaining the automatic-retrain budget.
- * The current window is deliberately latched when it ends exactly at the B1
- * boundary; only a subsequently completed online window affects policy. */
+ * Only a subsequently completed online window affects policy. */
 enum v34_data_quality_result v34_data_quality_start(
 	struct v34_data_quality *quality,
 	enum v34_symbol_rate symbol_rate,
 	uint8_t primary_data_rate_2400_bps_units,
 	const struct v34_adaptive_equalizer_quality *measurement);
 
-/* A completed window can first request that the trained sample clock be
+/* Observe after each single or paired decision. A window may finish between
+ * the two decisions, so completion is a counter wrap, not an exact zero.
+ * A completed window can first request that the trained sample clock be
  * frozen as quality approaches the rate-down threshold, then resume its
  * low-gain tracking profile after recovery.  Return RETRAIN once after three
  * consecutive complete bad windows.  The owner becomes inactive in that
