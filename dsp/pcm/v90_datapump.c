@@ -130,8 +130,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      !v90_host_echo_is_ready(datapump->host_echo))) ||
 	    (datapump->host_echo_delay_seeded &&
 	     (datapump->host_echo == NULL || !datapump->call_started ||
-	      !datapump->call.round_trip_delay_stored ||
-	      datapump->call.round_trip_delay_samples == 0)) ||
+	      !datapump->call.round_trip_delay_stored)) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    !v34_data_quality_is_valid(&datapump->upstream_quality) ||
 	    (datapump->upstream_quality_ready &&
@@ -642,6 +641,8 @@ static enum v90_host_echo_mode host_echo_mode(
 
 static bool seed_host_echo_delay(struct v90_datapump *datapump)
 {
+	/* The seed belongs to this echo model. Retrain can replace the call's
+	 * ranging measurement, including with zero, before the model resets. */
 	if (datapump->host_echo == NULL || datapump->host_echo_delay_seeded ||
 	    v90_host_echo_is_ready(datapump->host_echo) ||
 	    !datapump->call.round_trip_delay_stored ||

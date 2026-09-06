@@ -491,7 +491,8 @@ static bool run_pair_with_rate_window(
 		CHECK((digital_result == DPSTAT_OK ||
 		       digital_result == DPSTAT_CONNECT) && digital_exact &&
 		      digital_transmit == decode(law, next_digital),
-		      "digital V.90 path failed at octet %zu", octet);
+		      "digital V.90 path failed at octet %zu (status %d, exact %u)",
+		      octet, digital_result, (unsigned int)digital_exact);
 		if (echo_mode != RETURNED_ECHO_NONE) {
 			echo_history[echo_history_write] = digital_transmit;
 			echo_history_write++;
@@ -633,15 +634,34 @@ static bool run_pair_with_rate_window(
 
 static bool test_upstream_quality_recovery(void)
 {
+	static const struct {
+		uint32_t downstream_rate;
+		uint32_t upstream_rate;
+		uint32_t symbol_rate;
+	} profiles[] = {
+		{ 28000, 19200, 3000 },
+		{ 42667, 26400, 3200 },
+		{ 56000, 31200, 3200 },
+		{ 56000, 31200, 3429 },
+	};
+
 	CHECK(v90_datapump_register() == 0,
 	      "quality-recovery V.90 registration failed");
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		CHECK(run_pair_with_rate_window(
-			      law, 42667, 26400, 26400, 26400, 3200,
-			      SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
-			      false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
-			      UPSTREAM_CHANNEL_NOISE_BURST),
-		      "law %u did not recover upstream data after noise", (unsigned int)law);
+	/* Quality thresholds depend on constellation density, not just baud. */
+	for (size_t index = 0; index < ARRAY_LENGTH(profiles); ++index) {
+		uint32_t upstream_rate = profiles[index].upstream_rate;
+
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			CHECK(run_pair_with_rate_window(
+				      law, profiles[index].downstream_rate,
+				      upstream_rate, upstream_rate, upstream_rate,
+				      profiles[index].symbol_rate,
+				      SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
+				      false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
+				      UPSTREAM_CHANNEL_NOISE_BURST),
+			      "law %u did not recover %u bit/s upstream at %u symbols/s after noise",
+			      (unsigned int)law, upstream_rate, profiles[index].symbol_rate);
+	}
 	CHECK(v90_datapump_unregister() == 0,
 	      "quality-recovery V.90 registration remained busy");
 	return true;
