@@ -27,6 +27,8 @@ enum recording_stream {
 	RECORD_TX_LINE_PCM,
 	RECORD_TX_RTP_PAYLOAD_PREPARED,
 	RECORD_TX_RTP_PAYLOAD_SENT,
+	/* Structured packet metadata uses the recorder's packet callback. */
+	RECORD_RTP_PACKETS,
 };
 
 enum recording_format {
@@ -42,12 +44,39 @@ struct recording_block {
 	size_t count;
 };
 
+enum recording_packet_event {
+	RECORD_PACKET_SENT,
+	RECORD_PACKET_SEND_FAILED,
+	RECORD_PACKET_ACCEPTED,
+	RECORD_PACKET_LATE,
+	RECORD_PACKET_EARLY,
+	RECORD_PACKET_REJECTED,
+};
+
+/* Application socket-observation time, not kernel arrival or remote playout.
+ * A zero time means the monotonic clock was unavailable. No payload or network
+ * address is retained. Playout counters identify the local receive timeline. */
+struct recording_packet {
+	enum recording_packet_event event;
+	uint64_t monotonic_ns;
+	uint64_t playout_samples;
+	uint64_t concealed_samples;
+	uint32_t timestamp;
+	uint32_t ssrc;
+	uint32_t payload_octets;
+	uint16_t sequence;
+	uint8_t payload_type;
+	bool marker;
+};
+
 /* The callback is synchronous.  Both the block and its data are borrowed for
- * the duration of the call; a recorder that needs them later must copy them. */
+ * the duration of the call; a recorder that needs them later must copy them.
+ * The optional packet callback has the same ownership and lifetime contract. */
 struct media_recorder {
 	void *context;
 	void (*write)(void *context,
 		      const struct recording_block *block);
+	void (*packet)(void *context, const struct recording_packet *packet);
 };
 
 bool recording_emit(

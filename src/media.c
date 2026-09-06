@@ -62,6 +62,8 @@ const char *recording_stream_name(
 		return "tx.rtp_payload.prepared";
 	case RECORD_TX_RTP_PAYLOAD_SENT:
 		return "tx.rtp_payload.sent";
+	case RECORD_RTP_PACKETS:
+		return "rtp.packets";
 	}
 	return NULL;
 }

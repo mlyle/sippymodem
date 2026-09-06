@@ -16,7 +16,7 @@
 #include <unistd.h>
 
 enum {
-	TEST_STREAM_COUNT = RECORD_TX_RTP_PAYLOAD_SENT + 1,
+	TEST_STREAM_COUNT = RECORD_RTP_PACKETS + 1,
 };
 
 struct recording_fixture {
@@ -120,7 +120,8 @@ static bool test_creates_one_private_file_per_evidence_stream(void)
 		     ".rx.line_pcm.8000hz.s16le") != NULL &&
 		      strstr(fixture.paths[
 			     RECORD_TX_RTP_PAYLOAD_SENT],
-			     ".tx.rtp_payload.sent.8000hz.octets") != NULL,
+			     ".tx.rtp_payload.sent.8000hz.octets") != NULL &&
+		      strstr(fixture.paths[RECORD_RTP_PACKETS], ".rtp.packets.tsv") != NULL,
 	      "recording paths do not identify their evidence format");
 	errno = 0;
 	duplicate = recording_files_create(fixture.prefix);
@@ -262,6 +263,69 @@ static bool test_latches_ambiguous_evidence(void)
 	return true;
 }
 
+static bool test_packet_journal(void)
+{
+	static const char expected[] =
+		"sent\t18446744073709551615\t65535\t4294967295\t4294967295\t127\t1\t160\t18446744073709551615\t42\n"
+		"late\t0\t0\t0\t4294967295\t127\t1\t160\t18446744073709551615\t42\n";
+	struct recording_fixture fixture;
+	struct recording_files_stats stats;
+	struct recording_packet packet = {
+		.event = RECORD_PACKET_SENT, .monotonic_ns = UINT64_MAX,
+		.sequence = UINT16_MAX, .timestamp = UINT32_MAX, .ssrc = UINT32_MAX,
+		.payload_type = 127, .marker = true, .payload_octets = 160,
+		.playout_samples = UINT64_MAX, .concealed_samples = 42,
+	};
+	const struct media_recorder *recorder;
+	char actual[sizeof(expected) - 1];
+	bool passed;
+
+	CHECK(fixture_open(&fixture), "could not create packet journal fixture");
+	recorder = recording_files_recorder(fixture.files);
+	CHECK(recorder->packet != NULL, "packet journal callback is missing");
+	recorder->packet(recorder->context, &packet);
+	packet.event = RECORD_PACKET_LATE;
+	packet.monotonic_ns = 0;
+	packet.sequence = 0;
+	packet.timestamp = 0;
+	recorder->packet(recorder->context, &packet);
+	recording_files_get_stats(fixture.files, &stats);
+	passed = read_exact_file(fixture.paths[RECORD_RTP_PACKETS], actual, sizeof(actual)) &&
+		memcmp(actual, expected, sizeof(actual)) == 0 &&
+		stats.blocks_written == 2 && stats.bytes_written == sizeof(actual);
+	packet.event = (enum recording_packet_event)99;
+	recorder->packet(recorder->context, &packet);
+	packet.event = RECORD_PACKET_SENT;
+	recorder->packet(recorder->context, &packet);
+	passed &= recording_files_last_result(fixture.files) == RECORDING_FILES_INVALID_BLOCK &&
+		read_exact_file(fixture.paths[RECORD_RTP_PACKETS], actual, sizeof(actual));
+	fixture_close(&fixture);
+	CHECK(passed, "packet journal changed fields or ignored a latched error");
+	return true;
+}
+
+static bool test_packet_journal_collision(void)
+{
+	struct recording_fixture fixture;
+	bool passed = true;
+
+	CHECK(fixture_open(&fixture), "could not create packet collision fixture");
+	recording_files_destroy(fixture.files);
+	fixture.files = NULL;
+	/* Leave only the last file, so creation must unwind the earlier files. */
+	for (size_t i = 0; i < RECORD_RTP_PACKETS; ++i)
+		CHECK(unlink(fixture.paths[i]) == 0, "could not prepare journal collision");
+	errno = 0;
+	fixture.files = recording_files_create(fixture.prefix);
+	passed = fixture.files == NULL && errno == EEXIST &&
+		file_is_private_and_empty(fixture.paths[RECORD_RTP_PACKETS]);
+	for (size_t i = 0; i < RECORD_RTP_PACKETS; ++i)
+		passed &= access(fixture.paths[i], F_OK) < 0 && errno == ENOENT;
+	fixture_close(&fixture);
+	CHECK(passed, "journal collision left partial files or removed existing evidence");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -275,6 +339,8 @@ int main(void)
 		{ "prefix and path validation", test_validates_prefix_and_paths },
 		{ "canonical evidence", test_writes_bounded_canonical_evidence },
 		{ "ambiguous evidence", test_latches_ambiguous_evidence },
+		{ "packet journal", test_packet_journal },
+		{ "packet journal collision", test_packet_journal_collision },
 	};
 	unsigned int failures = 0;
 

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <rtp_endpoint.h>
+#include <g711.h>
 
 #include "test.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdint.h>
@@ -24,6 +26,8 @@ struct recording_capture {
 	size_t counts[TEST_RECORDINGS];
 	uint8_t data[TEST_RECORDINGS][16];
 	size_t calls;
+	struct recording_packet packets[TEST_RECORDINGS];
+	size_t packet_calls;
 };
 
 struct endpoint_fixture {
@@ -53,6 +57,16 @@ static void capture_recording(
 	capture->calls++;
 }
 
+static void capture_packet(void *context, const struct recording_packet *packet)
+{
+	struct recording_capture *capture = context;
+
+	if (capture->packet_calls < ARRAY_LENGTH(capture->packets))
+		capture->packets[capture->packet_calls++] = *packet;
+	/* Evidence writes must not replace the socket operation's error. */
+	errno = EDOM;
+}
+
 static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed,
 			 bool learn_remote, bool symmetric_rtp)
 {
@@ -65,6 +79,7 @@ static bool open_fixture(struct endpoint_fixture *fixture, uint32_t seed,
 		.recorder = {
 			.context = &fixture->recordings,
 			.write = capture_recording,
+			.packet = capture_packet,
 		},
 	};
 	const struct sockaddr_in local_address = {
@@ -210,6 +225,18 @@ static bool test_loopback_media_and_recording(void)
 		      receiver.endpoint.stats.receive_datagrams == 1 &&
 		      receiver.endpoint.stats.receive_routed == 1,
 	      "endpoint statistics are wrong");
+	CHECK(sender.recordings.packet_calls == 1 && receiver.recordings.packet_calls == 1,
+	      "missing packet observations");
+	const struct recording_packet *sent = &sender.recordings.packets[0];
+	const struct recording_packet *arrived = &receiver.recordings.packets[0];
+	CHECK(sent->event == RECORD_PACKET_SENT && arrived->event == RECORD_PACKET_ACCEPTED &&
+		      sent->monotonic_ns != 0 && arrived->monotonic_ns >= sent->monotonic_ns &&
+		      sent->sequence == 1 && arrived->sequence == 1 &&
+		      sent->timestamp == 80 && arrived->timestamp == 80 &&
+		      sent->ssrc == 0x10000001u && arrived->ssrc == sent->ssrc &&
+		      sent->payload_type == 0 && arrived->payload_type == 0 &&
+		      sent->payload_octets == 4 && arrived->payload_octets == 4,
+	      "packet journal lost actual wire headers or socket timing");
 
 	rtp_endpoint_close(&receiver.endpoint);
 	rtp_endpoint_close(&sender.endpoint);
@@ -428,6 +455,82 @@ static bool test_lifecycle_validation(void)
 	return true;
 }
 
+static bool test_packet_timeline(void)
+{
+	struct endpoint_fixture sender, receiver;
+	struct sockaddr_in sender_address, receiver_address;
+	uint8_t packet[TEST_PACKET_SIZE];
+	const uint8_t codes[] = { 0xff, 0x00, 0x80, 0x55 };
+	int16_t samples[ARRAY_LENGTH(codes)];
+	int16_t played[8];
+	struct rtp_header header = { .ssrc = 44, .sequence = UINT16_MAX,
+		.timestamp = UINT32_MAX - 3, .marker = true };
+	size_t packet_size;
+	const struct {
+		uint32_t timestamp;
+		uint8_t payload_type;
+		enum recording_packet_event event;
+	} trials[] = {
+		{ UINT32_MAX - 3, 0, RECORD_PACKET_LATE },
+		{ 100, 0, RECORD_PACKET_EARLY },
+		{ 4, 8, RECORD_PACKET_REJECTED },
+		{ 4, 0, RECORD_PACKET_ACCEPTED },
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(codes); ++i)
+		samples[i] = g711_decode_pcmu(codes[i]);
+	CHECK(open_fixture(&sender, 1, false, false) && open_fixture(&receiver, 2, false, false),
+	      "could not create timeline endpoints");
+	sender_address = fixture_address(&sender);
+	receiver_address = fixture_address(&receiver);
+	CHECK(rtp_endpoint_set_remote(&sender.endpoint, &receiver_address) == RTP_ENDPOINT_OK &&
+		      rtp_endpoint_set_remote(&receiver.endpoint, &sender_address) == RTP_ENDPOINT_OK,
+	      "could not set timeline remotes");
+	sender.stream.transmit_header = header;
+	CHECK(rtp_endpoint_send_g711(&sender.endpoint, codes, samples, ARRAY_LENGTH(codes),
+		packet, sizeof(packet)) == RTP_ENDPOINT_OK && wait_for_datagram(&receiver.endpoint) &&
+		rtp_endpoint_drain(&receiver.endpoint, NULL) == RTP_ENDPOINT_OK &&
+		rtp_stream_play(&receiver.stream, played, NULL, ARRAY_LENGTH(played), NULL) == MEDIA_OK,
+	      "could not establish wrapped playout timeline");
+	CHECK(sender.recordings.packets[0].sequence == UINT16_MAX &&
+		      sender.recordings.packets[0].timestamp == UINT32_MAX - 3 &&
+		      sender.recordings.packets[0].marker &&
+		      memcmp(sender.recordings.data[2], codes, sizeof(codes)) == 0,
+	      "packet observation changed exact G.711 or its wrapped header");
+	header.sequence = 0;
+	for (size_t i = 0; i < ARRAY_LENGTH(trials); ++i) {
+		header.timestamp = trials[i].timestamp;
+		header.payload_type = trials[i].payload_type;
+		CHECK(rtp_packet_write(packet, sizeof(packet), &header, codes, sizeof(codes),
+			&packet_size) == RTP_OK &&
+			send_raw(rtp_endpoint_fd(&sender.endpoint), &receiver_address, packet, packet_size) &&
+			wait_for_datagram(&receiver.endpoint) &&
+			rtp_endpoint_drain(&receiver.endpoint, NULL) == RTP_ENDPOINT_OK,
+		      "could not deliver timeline observation");
+		const struct recording_packet *observed = &receiver.recordings.packets[i+1];
+		CHECK(receiver.recordings.packet_calls == i+2 && observed->event == trials[i].event &&
+			      observed->sequence == 0 && observed->timestamp == header.timestamp &&
+			      observed->payload_type == header.payload_type &&
+			      observed->playout_samples == 8 && observed->concealed_samples == 4 &&
+			      observed->monotonic_ns >= receiver.recordings.packets[i].monotonic_ns,
+		      "packet event lost timing, wrapping, rejection or concealed media");
+	}
+	/* A failed send is evidence, but must keep EBADF despite the callback. */
+	CHECK(close(sender.endpoint.socket_fd) == 0, "could not close test sender socket");
+	CHECK(rtp_endpoint_send_g711(&sender.endpoint, codes, samples, ARRAY_LENGTH(codes),
+		packet, sizeof(packet)) == RTP_ENDPOINT_SYSTEM_ERROR &&
+		sender.endpoint.last_system_error == EBADF &&
+		sender.recordings.packet_calls == 2 &&
+		sender.recordings.packets[1].event == RECORD_PACKET_SEND_FAILED &&
+		sender.recordings.packets[1].sequence == 0 &&
+		sender.recordings.packets[1].timestamp == 0,
+	      "packet recorder changed send failure or failed to observe wrapped sequence");
+	sender.endpoint.socket_fd = -1;
+	rtp_endpoint_close(&sender.endpoint);
+	rtp_endpoint_close(&receiver.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -442,6 +545,7 @@ int main(void)
 		  test_source_filter_and_malformed_input },
 		{ "symmetric remote learning", test_symmetric_remote_learning },
 		{ "lifecycle validation", test_lifecycle_validation },
+		{ "packet timeline", test_packet_timeline },
 	};
 	unsigned int failures = 0;
 

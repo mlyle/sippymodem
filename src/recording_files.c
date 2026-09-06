@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,7 +16,7 @@
 
 enum {
 	RECORDING_STREAM_COUNT =
-		RECORD_TX_RTP_PAYLOAD_SENT + 1,
+		RECORD_RTP_PACKETS + 1,
 	PCM_CHUNK_SAMPLES = 256,
 };
 
@@ -31,7 +32,7 @@ struct recording_files {
 static bool stream_is_valid(enum recording_stream stream)
 {
 	return stream >= RECORD_RX_RTP_PAYLOAD_ARRIVAL &&
-	       stream <= RECORD_TX_RTP_PAYLOAD_SENT;
+	       stream <= RECORD_RTP_PACKETS;
 }
 
 static bool stream_contains_pcm(enum recording_stream stream)
@@ -56,8 +57,8 @@ static bool build_path(
 	name = recording_stream_name(stream);
 	if (name == NULL)
 		return false;
-	extension = stream_contains_pcm(stream) ? "8000hz.s16le" :
-						  "8000hz.octets";
+	extension = stream == RECORD_RTP_PACKETS ? "tsv" :
+		stream_contains_pcm(stream) ? "8000hz.s16le" : "8000hz.octets";
 	length = snprintf(path, capacity, "%s.%s.%s", prefix, name, extension);
 	return length >= 0 && (size_t)length < capacity;
 }
@@ -129,6 +130,7 @@ static void record_block(
 	pcm = block != NULL && stream_is_valid(block->stream) &&
 	      stream_contains_pcm(block->stream);
 	if (block == NULL || !stream_is_valid(block->stream) ||
+	    block->stream == RECORD_RTP_PACKETS ||
 	    block->format != (pcm ? RECORD_S16_NATIVE :
 				   RECORD_OCTETS) ||
 	    block->sample_rate != MEDIA_SAMPLE_RATE ||
@@ -154,6 +156,48 @@ static void record_block(
 	}
 	add_saturated(&files->stats.blocks_written, 1);
 	add_saturated(&files->stats.bytes_written, bytes);
+}
+
+static void record_packet(void *context, const struct recording_packet *packet)
+{
+	static const char *const events[] = {
+		[RECORD_PACKET_SENT] = "sent",
+		[RECORD_PACKET_SEND_FAILED] = "send-failed",
+		[RECORD_PACKET_ACCEPTED] = "accepted",
+		[RECORD_PACKET_LATE] = "late",
+		[RECORD_PACKET_EARLY] = "early",
+		[RECORD_PACKET_REJECTED] = "rejected",
+	};
+	struct recording_files *files = context;
+	char line[192];
+	int length;
+
+	if (files->last_result != RECORDING_FILES_OK)
+		return;
+	if (packet == NULL || packet->event < RECORD_PACKET_SENT ||
+	    packet->event > RECORD_PACKET_REJECTED || packet->payload_type > 127) {
+		files->last_result = RECORDING_FILES_INVALID_BLOCK;
+		return;
+	}
+	length = snprintf(line, sizeof(line),
+		"%s\t%" PRIu64 "\t%u\t%" PRIu32 "\t%" PRIu32
+		"\t%u\t%u\t%" PRIu32 "\t%" PRIu64 "\t%" PRIu64 "\n",
+		events[packet->event], packet->monotonic_ns,
+		(unsigned)packet->sequence, packet->timestamp, packet->ssrc,
+		(unsigned)packet->payload_type, (unsigned)packet->marker,
+		packet->payload_octets, packet->playout_samples,
+		packet->concealed_samples);
+	if (length < 0 || (size_t)length >= sizeof(line)) {
+		files->last_result = RECORDING_FILES_INVALID_BLOCK;
+		return;
+	}
+	if (!write_all(files->descriptors[RECORD_RTP_PACKETS], line, (size_t)length)) {
+		files->last_result = RECORDING_FILES_WRITE_ERROR;
+		files->system_error = errno;
+		return;
+	}
+	add_saturated(&files->stats.blocks_written, 1);
+	add_saturated(&files->stats.bytes_written, (uint64_t)length);
 }
 
 static void close_descriptors(struct recording_files *files)
@@ -205,6 +249,7 @@ struct recording_files *recording_files_create(
 		files->descriptors[index] = -1;
 	files->recorder.context = files;
 	files->recorder.write = record_block;
+	files->recorder.packet = record_packet;
 
 	while (created < RECORDING_STREAM_COUNT) {
 		if (!build_path(

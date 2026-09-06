@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 static bool address_is_valid(const struct sockaddr_in *address,
@@ -261,6 +262,38 @@ static bool source_is_allowed(struct rtp_endpoint *endpoint,
 	return true;
 }
 
+static void record_packet(
+	struct rtp_endpoint *endpoint, const uint8_t *packet, size_t packet_size,
+	enum recording_packet_event event)
+{
+	const struct media_recorder *recorder = &endpoint->stream->recorder;
+	const struct rtp_receiver_stats *stats = &endpoint->stream->receiver.stats;
+	struct rtp_packet_view view;
+	struct recording_packet observation = { .event = event };
+	struct timespec now;
+	int saved_error = errno;
+
+	if (recorder->packet == NULL)
+		return;
+	/* Take the timestamp before any potentially blocking evidence write. */
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+		observation.monotonic_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+			(uint64_t)now.tv_nsec;
+	if (rtp_packet_parse(packet, packet_size, &view) == RTP_OK) {
+		observation.sequence = view.header.sequence;
+		observation.timestamp = view.header.timestamp;
+		observation.ssrc = view.header.ssrc;
+		observation.payload_type = view.header.payload_type;
+		observation.marker = view.header.marker;
+		observation.payload_octets = (uint32_t)view.payload_size;
+		observation.playout_samples = stats->samples_played + stats->samples_concealed +
+			stats->samples_prefilled + stats->samples_idle;
+		observation.concealed_samples = stats->samples_concealed;
+		recorder->packet(recorder->context, &observation);
+	}
+	errno = saved_error;
+}
+
 static void record_arriving_payload(
 	struct rtp_endpoint *endpoint,
 	const uint8_t *packet,
@@ -287,6 +320,11 @@ static void route_datagram(struct rtp_endpoint *endpoint,
 					       packet_size, &packet_result);
 
 	endpoint->stats.receive_routed++;
+	record_packet(endpoint, packet, packet_size,
+		receive_result == RTP_RECEIVE_ACCEPTED ? RECORD_PACKET_ACCEPTED :
+		receive_result == RTP_RECEIVE_LATE ? RECORD_PACKET_LATE :
+		receive_result == RTP_RECEIVE_TOO_EARLY ? RECORD_PACKET_EARLY :
+		RECORD_PACKET_REJECTED);
 	if (receive_result == RTP_RECEIVE_ACCEPTED ||
 	    receive_result == RTP_RECEIVE_LATE ||
 	    receive_result == RTP_RECEIVE_TOO_EARLY)
@@ -386,6 +424,9 @@ static enum rtp_endpoint_result send_frame(
 			      (const struct sockaddr *)&remote_address,
 			      sizeof(remote_address));
 	} while (sent < 0 && errno == EINTR);
+	record_packet(endpoint, packet_workspace, packet_size,
+		sent == (ssize_t)packet_size ? RECORD_PACKET_SENT :
+		RECORD_PACKET_SEND_FAILED);
 	if (sent != (ssize_t)packet_size) {
 		endpoint->last_system_error = sent < 0 ? errno : EIO;
 		endpoint->stats.transmit_errors++;

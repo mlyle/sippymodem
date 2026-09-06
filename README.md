@@ -55,12 +55,24 @@ which may be attached as an optional submodule. Tests and harnesses for that
 corpus may remain here, but they will skip cleanly when their vectors are not
 present.
 
-The recording file-set owner pre-creates a fixed set of eight evidence files
+The recording file-set owner pre-creates a fixed set of nine evidence files
 with private permissions and refuses to overwrite an existing capture. Tests
 write only tiny temporary captures and remove them. RTP payload evidence is
 preserved as exact octets, while native PCM is normalized to canonical
 little-endian samples; a metadata or write error latches instead of silently
 creating gaps or mixing formats.
+
+`<prefix>.rtp.packets.tsv` adds one headerless row per valid RTP packet sent
+or routed from the allowed peer. Columns are event (`sent`, `send-failed`,
+`accepted`, `late`, `early`, `rejected`), monotonic nanoseconds, sequence,
+RTP timestamp, SSRC, payload type, marker (0/1), payload octets, local receive
+playout samples (including idle/prefill/concealment), and local samples
+concealed. Sequence/timestamp wrap is kept
+intact; time 0 means the clock was unavailable. Times mark application socket
+observations before evidence writes, not kernel arrival or remote playout.
+Together with the exact media, these rows expose local pauses, bursts, late
+media and concealment. They contain no payload, addresses or credentials.
+The journal is enabled by the existing recording option, not in normal calls.
 
 Run the native tests with `make test`. The suite exercises asynchronous and
 HDLC framing, validated SIP/media configuration, safe SIP URI construction,
