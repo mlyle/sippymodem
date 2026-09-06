@@ -813,7 +813,7 @@ static struct qam_point normalized_fixed_observation(
 	};
 }
 
-static bool start_hunt_candidate(
+static bool try_start_hunt_candidate(
 	struct v34_phase3_s_hunt *hunt,
 	const struct v34_fixed_training_decision *current)
 {
@@ -831,8 +831,10 @@ static bool start_hunt_candidate(
 		return false;
 	delta = (uint8_t)((previous_rotation + 4u -
 			   current->clockwise_quarter_turns) & 3u);
+	/* Measured near-quarter turns need not slice to adjacent quadrants.
+	 * That rejects the S hypothesis, not the ordinary data carrying it. */
 	if (delta != 1u && delta != 3u)
-		return false;
+		return reset_hunt(hunt);
 	if (v34_phase3_s_receiver_init_suffix(
 		    &hunt->marker[0],
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
@@ -1024,9 +1026,10 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		    prefix_result != V34_PHASE3_S_PREFIX_REBASE_TIMING)
 			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 		result = V34_PHASE3_S_RECEIVER_OK;
-		if (hunt_prefix_is_candidate(&next.prefix)) {
-			if (!start_hunt_candidate(&next, &hard))
-				return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
+		if (hunt_prefix_is_candidate(&next.prefix) &&
+		    !try_start_hunt_candidate(&next, &hard))
+			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
+		if (next.candidate) {
 			result = receive_hunt_candidate(&next, &hard);
 			if (result != V34_PHASE3_S_RECEIVER_OK)
 				return result;

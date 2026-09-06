@@ -1161,6 +1161,65 @@ static bool test_online_hunt_requires_physical_recurrence(void)
 	return true;
 }
 
+static bool test_online_hunt_rejects_non_s_recurrence(void)
+{
+	/* Relative near-quarter turns can recur within the same quadrant or
+	 * across opposite quadrants. Neither pair is an absolute S hypothesis,
+	 * but both are ordinary online observations, not invalid API input. */
+	static const struct v34_analytic_sample pairs[][2] = {
+		{ { 4000, 1000 }, { 1000, 4000 } },
+		{ { 4000, 1000 }, { -1000, -4000 } },
+	};
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+
+	CHECK(generate_marker(rotations), "recovery S marker did not generate");
+	for (size_t pair = 0; pair < ARRAY_LENGTH(pairs); ++pair) {
+		struct v34_phase3_s_hunt hunt;
+		struct v34_phase3_s_adaptation adaptation = { 0 };
+		bool control = false;
+
+		CHECK(v34_phase3_s_hunt_init(&hunt) == V34_PHASE3_S_RECEIVER_OK,
+		      "non-S recurrence hunt did not initialize");
+		for (size_t symbol = 0;
+		     symbol < 2u * V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS;
+		     ++symbol) {
+			CHECK(v34_phase3_s_hunt_receive(
+				      &hunt, pairs[pair][symbol & 1u],
+				      &adaptation, &control) ==
+				      V34_PHASE3_S_RECEIVER_OK &&
+			      !control && !adaptation.adapt && !hunt.candidate &&
+			      !v34_phase3_s_hunt_is_complete(&hunt),
+			      "non-S pair %zu interrupted data at symbol %zu",
+			      pair, symbol);
+			if (symbol + 2u ==
+			    V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS)
+				CHECK(hunt.prefix.alternating_turns ==
+					      V34_PHASE3_S_PREFIX_TURNS &&
+				      hunt.prefix.recurrence_hits + 1u ==
+					      V34_PHASE3_S_HUNT_CANDIDATE_RECURRENCE_HITS,
+				      "non-S fixture did not approach qualification");
+		}
+		/* Rejecting data must not prevent the next genuine retrain marker. */
+		for (size_t symbol = 0;
+		     symbol < ARRAY_LENGTH(rotations); ++symbol) {
+			struct v34_analytic_sample observation;
+
+			CHECK(v34_training_constellation_fixed_point(
+				      V34_CONSTELLATION_4_POINT, 0u,
+				      rotations[symbol], &observation) ==
+				      V34_CONSTELLATION_OK &&
+			      v34_phase3_s_hunt_receive(
+				      &hunt, observation, &adaptation, &control) ==
+				      (symbol + 1u == ARRAY_LENGTH(rotations) ?
+					       V34_PHASE3_S_RECEIVER_DETECTED :
+					       V34_PHASE3_S_RECEIVER_OK),
+			      "S marker after rejected pair %zu failed at symbol %zu",
+			      pair, symbol);
+		}
+	}
+	return true;
+}
+
 static bool test_online_hunt_reset_and_validation(void)
 {
 	struct v34_phase3_s_hunt hunt;
@@ -1235,6 +1294,8 @@ int main(void)
 		{ "online S hunt boundaries", test_online_hunt_boundaries },
 		{ "online S hunt physical recurrence",
 		  test_online_hunt_requires_physical_recurrence },
+		{ "online S hunt non-S recurrence",
+		  test_online_hunt_rejects_non_s_recurrence },
 		{ "online S hunt reset and validation",
 		  test_online_hunt_reset_and_validation },
 	};

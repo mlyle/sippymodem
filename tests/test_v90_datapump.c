@@ -17,6 +17,7 @@ enum {
 	CALL_OCTET_LIMIT = 120000,
 	MINIMUM_RECEIVED_BITS = 128,
 	SUSTAINED_RECEIVED_BITS = 4096,
+	MAXIMUM_RATE_RECEIVED_BITS = 32768,
 	UNITY_GAIN_Q15 = 32768,
 	/* Keep generated QAM between definite quiet and the detector's broader
 	 * retrain-silence ceiling. */
@@ -701,15 +702,21 @@ static bool test_forced_upstream_pairs(void)
 
 static bool test_sustained_maximum_rate_pairs(void)
 {
+	static const uint32_t SYMBOL_RATES[] = { 3200, 3429 };
+
 	CHECK(v90_datapump_register() == 0,
 	      "sustained maximum-rate V.90 registration failed");
-	CHECK(run_pair_for_bits(
-		      G711_LAW_PCMU, 56000, 31200, 3429,
-		      SUSTAINED_RECEIVED_BITS) &&
-	      run_pair_for_bits(
-		      G711_LAW_PCMA, 56000, 31200, 3429,
-		      SUSTAINED_RECEIVED_BITS),
-	      "maximum-rate V.90 payload was not exact in both PCM laws");
+	/* 31200 at 3200 symbols/s uses a denser upstream constellation than
+	 * at 3429. A short payload can miss errors after an intact prefix. */
+	for (size_t index = 0; index < ARRAY_LENGTH(SYMBOL_RATES); ++index) {
+		for (enum g711_law law = G711_LAW_PCMU;
+		     law <= G711_LAW_PCMA; ++law)
+			CHECK(run_pair_for_bits(
+				      law, 56000, 31200, SYMBOL_RATES[index],
+				      MAXIMUM_RATE_RECEIVED_BITS),
+			      "law %u maximum-rate V.90 payload failed at %u symbols/s",
+			      (unsigned int)law, SYMBOL_RATES[index]);
+	}
 	CHECK(v90_datapump_unregister() == 0,
 	      "sustained maximum-rate V.90 registration remained busy");
 	return true;
