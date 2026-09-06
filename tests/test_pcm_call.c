@@ -2005,6 +2005,121 @@ static bool test_b1_timeout(void)
 	return true;
 }
 
+static bool run_probe_response_timeout(
+	enum pcm_protocol protocol, enum g711_law law, size_t delay)
+{
+	struct pcm_call_configuration analog_configuration =
+		protocol == PCM_PROTOCOL_V90 ?
+			configuration(V90_ANALOG_MODEM, law) :
+			v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration =
+		protocol == PCM_PROTOCOL_V90 ?
+			configuration(V90_DIGITAL_MODEM, law) :
+			v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog;
+	struct pcm_call digital;
+	struct pcm_call waiting;
+	struct channel channel;
+	uint8_t silence = silence_octet(law);
+	uint32_t deadline;
+	bool probe_started = false;
+
+	CHECK(channel_init(&channel, law, delay) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "probe-timeout endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation observed;
+		uint8_t analog_received, digital_received;
+		uint8_t analog_transmitted, digital_transmitted;
+
+		channel_receive(&channel, &analog_received, &digital_received);
+		CHECK(pcm_call_octet(
+			      &analog, analog_received,
+			      decode_octet(law, analog_received),
+			      &analog_transmitted, &observed) == PCM_CALL_OK &&
+		      pcm_call_octet(
+			      &digital, digital_received,
+			      decode_octet(law, digital_received),
+			      &digital_transmitted, &observed) == PCM_CALL_OK,
+		      "probe-timeout setup stopped at %zu", clock);
+		channel_transmit(&channel, analog_transmitted, digital_transmitted);
+		if (digital.stage == PCM_CALL_PHASE2 &&
+		    digital.state.phase2.stage == PCM_PHASE2_RECIPROCAL_PROBE) {
+			probe_started = true;
+			break;
+		}
+	}
+	CHECK(probe_started && digital.round_trip_delay_stored &&
+	      digital.state.phase2.state.reciprocal_probe.control.path.transmit
+		      .samples_emitted == 0u,
+	      "probe-timeout test missed the first L1 sample");
+	waiting = digital;
+	/* V.90 9.2.1.2.5: 650 ms plus RTD after the 160-ms L1. The
+	 * shared PCM Phase 2 must expire naturally, without rebasing counters. */
+	deadline = (160u + 650u) * 8u + waiting.round_trip_delay_samples;
+	for (uint32_t elapsed = 1u; elapsed <= deadline; ++elapsed) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+		enum pcm_call_result result = pcm_call_octet(
+			&waiting, silence, decode_octet(law, silence),
+			&transmitted, &observed);
+
+		CHECK(result == PCM_CALL_OK &&
+		      observed.processed == PCM_CALL_PHASE2 &&
+		      observed.next == (elapsed < deadline ?
+			      PCM_CALL_PHASE2 : PCM_CALL_RETRAIN_SILENCE),
+		      "protocol %u law %u delay %zu probe deadline %u/%u: %s",
+		      (unsigned int)protocol, (unsigned int)law, delay,
+		      elapsed, deadline, pcm_call_result_name(result));
+		if (elapsed > deadline - 800u)
+			CHECK(transmitted == silence,
+			      "probe exceeded its L2 wire limit");
+		if (elapsed == deadline)
+			CHECK(observed.phase2.kind == PCM_PHASE2_EVENT_FAILED &&
+			      observed.phase2.failure ==
+				      PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT,
+			      "probe deadline lost its failure observation");
+	}
+	CHECK(waiting.retrain_active && !waiting.retrain.peer_tone_retained &&
+	      !waiting.failed && waiting.peer_info0_stored &&
+	      waiting.round_trip_delay_samples == digital.round_trip_delay_samples &&
+	      memcmp(&waiting.peer_info0, &digital.peer_info0,
+		     sizeof(waiting.peer_info0)) == 0,
+	      "probe timeout lost the established call agreement");
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(
+			      &waiting, silence, decode_octet(law, silence),
+			      &transmitted, &observed) == PCM_CALL_OK &&
+		      transmitted == silence,
+		      "probe timeout did not send full-retrain silence");
+	}
+	CHECK(waiting.stage == PCM_CALL_PHASE2 && waiting.retrain_active &&
+	      waiting.protocol == protocol && waiting.peer_info0_stored &&
+	      waiting.state.phase2.info0_protocol == protocol &&
+	      waiting.state.phase2.state.ranging.control.prior_round_trip_delay_samples ==
+		      digital.round_trip_delay_samples &&
+	      pcm_call_is_valid(&waiting),
+	      "probe timeout did not restart the selected PCM ranging");
+	return true;
+}
+
+static bool test_probe_response_timeout(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+	     protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU;
+		     law <= G711_LAW_PCMA; ++law)
+			CHECK(run_probe_response_timeout(protocol, law, 3u) &&
+			      run_probe_response_timeout(protocol, law, 13u),
+			      "PCM probe-timeout recovery failed");
+	return true;
+}
+
 static bool run_phase3_return_timeout(enum g711_law law, size_t delay)
 {
 	struct channel channel;
@@ -4501,6 +4616,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
+		{ "PCM probe-response timeout retrains", test_probe_response_timeout },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
 		{ "remote retrain during final PCM training",

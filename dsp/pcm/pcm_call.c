@@ -1263,8 +1263,15 @@ static enum pcm_call_result advance_phase2(
 	enum pcm_call_result call_result;
 	enum pcm_phase2_result result;
 
-	if (event->kind == PCM_PHASE2_EVENT_FAILED)
+	if (event->kind == PCM_PHASE2_EVENT_FAILED) {
+		/* V.90 9.2.1.2.5 restarts training when final Tone A misses
+		 * the reciprocal-probe deadline. Keep the INFO0/RTD agreement
+		 * and use the shared full-retrain path, not terminal hangup. */
+		if (call->local_role == V90_DIGITAL_MODEM &&
+		    event->failure == PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT)
+			return begin_retrain(call, false);
 		return PCM_CALL_FAILED;
+	}
 	if (event->kind == PCM_PHASE2_EVENT_RETRAIN_REQUESTED)
 		return begin_retrain(call, false);
 	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
