@@ -51,6 +51,8 @@ struct rtp_receiver {
 	uint16_t highest_sequence;
 	uint32_t play_timestamp;
 	size_t prefill_remaining;
+	uint32_t clock_timestamp;
+	size_t clock_pending_samples;
 };
 
 enum rtp_receive_result {
@@ -92,6 +94,13 @@ enum rtp_receive_result rtp_receiver_receive(
 	const uint8_t *packet,
 	size_t packet_size,
 	enum rtp_result *packet_result);
+
+/* Take complete frames of newly observed RTP sample time, including gaps.
+ * Reordered/duplicate payload does not advance time. Partial frames remain
+ * owned by the stream and are discarded on restart. Pending clock credit is
+ * bounded by the receive window; callers must consume it each drain. */
+size_t rtp_receiver_take_clock_frames(
+	struct rtp_receiver *receiver, size_t frame_samples);
 
 /* Playout always fills count octets on success.  Missing media and time before
  * the first stream are represented by the configured silence octet. */

@@ -224,6 +224,114 @@ static bool test_validation_and_idle(void)
 	return true;
 }
 
+static bool test_remote_clock_tracks_timestamp_extent(void)
+{
+	struct rtp_jitter_slot slots[TEST_SLOT_COUNT];
+	struct rtp_receiver receiver;
+	const uint8_t payload[] = { 1, 2, 3, 4 };
+	struct rtp_packet_view packet;
+
+	CHECK(init_receiver(&receiver, slots, 0), "clock receiver init failed");
+	packet = packet_view(1, 1, UINT32_MAX - 1, payload, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 3) == 0 &&
+		      rtp_receiver_take_clock_frames(&receiver, 3) == 0,
+	      "a partial clock frame was emitted or forgotten");
+	packet = packet_view(1, 3, 0, payload, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 3) == 1,
+	      "clock gap, timestamp wrap, or retained partial frame failed");
+	packet = packet_view(1, 2, UINT32_MAX, payload, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 1) == 0 &&
+		      rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 1) == 0,
+	      "reordering or duplication advanced the remote clock twice");
+	packet = packet_view(1, 4, 6, payload, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_TOO_EARLY &&
+		      rtp_receiver_take_clock_frames(&receiver, 1) == 0,
+	      "out-of-window timestamp supplied clock credit");
+	packet = packet_view(1, 4, 5, payload, sizeof(payload));
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 2) == 2 &&
+		      receiver.clock_pending_samples == 1,
+	      "partially buffered packet clocked its rejected tail");
+	rtp_receiver_restart(&receiver);
+	CHECK(rtp_receiver_take_clock_frames(&receiver, 1) == 0,
+	      "stream restart retained partial clock credit");
+	packet = packet_view(1, 1, 100, payload, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 2) == 0,
+	      "new stream did not retain its partial frame");
+	packet = packet_view(2, 1, 200, payload, 2);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 2) == 1 &&
+		      receiver.clock_pending_samples == 0,
+	      "SSRC restart combined old and new partial clock frames");
+	packet = packet_view(2, 2, 204, NULL, 0);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+		      rtp_receiver_take_clock_frames(&receiver, 1) == 0 &&
+		      rtp_receiver_take_clock_frames(NULL, 1) == 0 &&
+		      rtp_receiver_take_clock_frames(&receiver, 0) == 0,
+	      "empty packet or invalid clock request supplied credit");
+	return true;
+}
+
+static bool test_remote_clock_preserves_time_through_repeated_loss(void)
+{
+	enum { FRAME_SAMPLES = 80, FRAME_COUNT = 240, WINDOW_SAMPLES = 640 };
+	const struct rtp_receiver_config config = {
+		.payload_type = TEST_PAYLOAD_TYPE,
+		.silence_octet = TEST_SILENCE,
+	};
+	struct rtp_jitter_slot slots[WINDOW_SAMPLES];
+	struct rtp_receiver receiver;
+	uint8_t payload[FRAME_SAMPLES];
+	uint8_t played[FRAME_SAMPLES];
+	size_t clocked = 0;
+
+	memset(payload, 0x80, sizeof(payload));
+	CHECK(rtp_receiver_init(&receiver, &config, slots, ARRAY_LENGTH(slots)),
+	      "loss clock receiver init failed");
+	for (unsigned int frame = 0; frame < FRAME_COUNT; ++frame) {
+		struct rtp_packet_view packet = packet_view(
+			1, (uint16_t)frame, frame * FRAME_SAMPLES,
+			payload, sizeof(payload));
+		size_t due;
+
+		if (frame % 12 == 5)
+			continue;
+		CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED,
+		      "post-loss packet %u was rejected", frame);
+		due = rtp_receiver_take_clock_frames(&receiver, FRAME_SAMPLES);
+		CHECK(due == (frame % 12 == 6 ? 2u : 1u),
+		      "packet %u lost or duplicated a clock interval", frame);
+		clocked += due;
+		for (size_t index = 0; index < due; ++index)
+			CHECK(rtp_receiver_play(&receiver, played, sizeof(played), NULL),
+			      "post-loss playout failed");
+		CHECK(memcmp(played, payload, sizeof(payload)) == 0,
+		      "packet %u remained delayed behind its missing predecessor", frame);
+	}
+	CHECK(clocked == FRAME_COUNT && receiver.stats.samples_concealed == 1600 &&
+		      receiver.play_timestamp == FRAME_COUNT * FRAME_SAMPLES,
+	      "twenty missing packets changed elapsed RTP time");
+	/* Unconsumed clock credit may not grow beyond the owned receive window. */
+	for (unsigned int frame = FRAME_COUNT; frame < FRAME_COUNT + 20; ++frame) {
+		struct rtp_packet_view packet = packet_view(
+			1, (uint16_t)frame, frame * FRAME_SAMPLES,
+			payload, sizeof(payload));
+
+		CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
+			      rtp_receiver_play(&receiver, played, sizeof(played), NULL),
+		      "unused clock credit test failed");
+	}
+	CHECK(rtp_receiver_take_clock_frames(&receiver, FRAME_SAMPLES) ==
+		      WINDOW_SAMPLES / FRAME_SAMPLES,
+	      "unused remote clock credit exceeded the receive window");
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -238,6 +346,10 @@ int main(void)
 		{ "SSRC restart and timestamp wrap",
 		  test_ssrc_restart_and_wrap },
 		{ "validation and idle", test_validation_and_idle },
+		{ "remote timestamp clock",
+		  test_remote_clock_tracks_timestamp_extent },
+		{ "remote clock repeated loss",
+		  test_remote_clock_preserves_time_through_repeated_loss },
 	};
 	unsigned int failures = 0;
 

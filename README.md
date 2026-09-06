@@ -241,9 +241,10 @@ python3 tools/local_interop.py \
 
 The runner starts both modems, constructs loopback-only SIP and RTP routing,
 waits for RING before issuing ATA, and verifies distinct terminal payloads in
-both directions under shared deadlines. Accepted RTP packets clock this local
-media loop so host scheduling jitter cannot insert silence into a modem
-waveform. It lets the RTP path run for 100 ms
+both directions under shared deadlines. Accepted RTP timestamps clock this local
+media loop. Missing packets still advance sample time, so loss does not also
+slow the transmit clock; reordered packets do not clock the modem twice.
+Catch-up remains bounded by the receive window. It lets the RTP path run for 100 ms
 after CONNECT before injecting terminal data, because some peers announce the
 connection before their datapump can safely accept its first character. Raw
 daemon logs, terminal traffic, and media recordings remain in owner-only

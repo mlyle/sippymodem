@@ -36,7 +36,7 @@ uint16_t rtp_runtime_local_port(
 enum rtp_endpoint_result rtp_runtime_drain(
 	struct rtp_runtime *runtime,
 	size_t *datagrams_received);
-/* Complete media frames newly buffered by the most recent drain. */
+/* Complete frames of remote RTP time observed by the most recent drain. */
 size_t rtp_runtime_remote_clock_frames(
 	const struct rtp_runtime *runtime);
 enum media_result rtp_runtime_play(

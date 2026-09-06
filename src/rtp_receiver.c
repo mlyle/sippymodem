@@ -27,6 +27,8 @@ static void start_stream(struct rtp_receiver *receiver,
 	receiver->highest_sequence = 0;
 	receiver->play_timestamp = packet->header.timestamp;
 	receiver->prefill_remaining = receiver->config.prefill_samples;
+	receiver->clock_timestamp = packet->header.timestamp;
+	receiver->clock_pending_samples = 0;
 }
 
 static void note_sequence(struct rtp_receiver *receiver,
@@ -86,6 +88,8 @@ void rtp_receiver_restart(
 	receiver->highest_sequence = 0;
 	receiver->play_timestamp = 0;
 	receiver->prefill_remaining = 0;
+	receiver->clock_timestamp = 0;
+	receiver->clock_pending_samples = 0;
 }
 
 void rtp_receiver_reset(
@@ -105,6 +109,7 @@ enum rtp_receive_result rtp_receiver_push(
 	bool duplicate = false;
 	bool late = false;
 	bool early = false;
+	uint32_t buffered_end = 0;
 
 	if (receiver == NULL || receiver->slots == NULL || packet == NULL ||
 	    (packet->payload == NULL && packet->payload_size != 0) ||
@@ -152,6 +157,19 @@ enum rtp_receive_result rtp_receiver_push(
 		slot->occupied = true;
 		receiver->stats.samples_buffered++;
 		buffered = true;
+		buffered_end = timestamp + 1;
+	}
+	if (buffered &&
+	    timestamp_is_before(receiver->clock_timestamp, buffered_end)) {
+		uint32_t elapsed = buffered_end - receiver->clock_timestamp;
+		size_t available = receiver->slot_count -
+				   receiver->clock_pending_samples;
+
+		/* Only successfully buffered timestamps can supply clock credit.
+		 * A lost packet costs receive audio, not elapsed transmit time. */
+		receiver->clock_pending_samples +=
+			elapsed < available ? elapsed : available;
+		receiver->clock_timestamp = buffered_end;
 	}
 
 	if (packet->payload_size == 0 || buffered || duplicate) {
@@ -163,6 +181,18 @@ enum rtp_receive_result rtp_receiver_push(
 	if (early)
 		return RTP_RECEIVE_TOO_EARLY;
 	return RTP_RECEIVE_ACCEPTED;
+}
+
+size_t rtp_receiver_take_clock_frames(
+	struct rtp_receiver *receiver, size_t frame_samples)
+{
+	size_t frames;
+
+	if (receiver == NULL || frame_samples == 0)
+		return 0;
+	frames = receiver->clock_pending_samples / frame_samples;
+	receiver->clock_pending_samples %= frame_samples;
+	return frames;
 }
 
 enum rtp_receive_result rtp_receiver_receive(

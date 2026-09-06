@@ -395,7 +395,7 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	return true;
 }
 
-static bool test_remote_media_clocks_each_buffered_frame(void)
+static bool test_remote_media_clocks_elapsed_time(void)
 {
 	struct core_capture core = { 0 };
 	struct modem_host *host;
@@ -460,6 +460,37 @@ static bool test_remote_media_clocks_each_buffered_frame(void)
 		      MODEM_HOST_IDLE &&
 		      datagrams == 0 && frames == 0 && core.calls == 2,
 	      "remote-clock host advanced from wall time alone");
+	/* One lost inbound packet must not also remove an outbound clock tick. */
+	rtp_header.sequence += 2;
+	rtp_header.timestamp += 16;
+	memset(payload, 0x00, sizeof(payload));
+	CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header,
+			       payload, sizeof(payload), &packet_size) == RTP_OK &&
+		      sendto(peer_fd, packet, packet_size, 0,
+			     (struct sockaddr *)&host_address,
+			     sizeof(host_address)) == (ssize_t)packet_size,
+	      "RTP packet following a clock gap was not sent");
+	CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+		      MODEM_HOST_OK && datagrams == 1 && frames == 2 &&
+		      core.calls == 4 && !core.received_silence,
+	      "lost inbound RTP time delayed the modem's transmit clock");
+	/* Packet boundaries need not coincide with the modem's frame boundary. */
+	for (unsigned int part = 0; part < 2; ++part) {
+		size_t count = part == 0 ? 3 : 5;
+
+		rtp_header.sequence++;
+		rtp_header.timestamp += part == 0 ? 8 : 3;
+		CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header,
+				       payload, count, &packet_size) == RTP_OK &&
+			      sendto(peer_fd, packet, packet_size, 0,
+				     (struct sockaddr *)&host_address,
+				     sizeof(host_address)) == (ssize_t)packet_size,
+		      "partial RTP clock frame was not sent");
+		CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+			      (part == 0 ? MODEM_HOST_IDLE : MODEM_HOST_OK) &&
+			      datagrams == 1 && frames == part && core.calls == 4 + part,
+		      "partial frame credit did not survive separate socket drains");
+	}
 	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "remote-clock host did not close");
 	modem_host_destroy(host);
@@ -568,7 +599,7 @@ int main(void)
 		  test_creation_validation_is_transactional },
 		{ "recorded frame clock",
 		  test_steps_recorded_media_on_the_frame_clock },
-		{ "remote RTP clock", test_remote_media_clocks_each_buffered_frame },
+		{ "remote RTP clock", test_remote_media_clocks_elapsed_time },
 		{ "audio failure lifecycle",
 		  test_audio_failure_waits_for_a_new_media_lifecycle },
 		{ "open destroy", test_destroy_closes_an_open_host },

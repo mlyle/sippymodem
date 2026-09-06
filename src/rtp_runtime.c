@@ -214,21 +214,17 @@ uint16_t rtp_runtime_local_port(
 enum rtp_endpoint_result rtp_runtime_drain(
 	struct rtp_runtime *runtime, size_t *datagrams_received)
 {
-	uint64_t buffered_before;
-	uint64_t buffered_after;
 	enum rtp_endpoint_result result;
 
 	if (runtime == NULL)
 		return RTP_ENDPOINT_INVALID_ARGUMENT;
 	runtime->remote_clock_frames = 0;
-	buffered_before = runtime->stream.receiver.stats.samples_buffered;
 	result = rtp_endpoint_drain(
 		&runtime->endpoint, datagrams_received);
-	buffered_after = runtime->stream.receiver.stats.samples_buffered;
-	if (result == RTP_ENDPOINT_OK && buffered_after >= buffered_before)
+	if (result == RTP_ENDPOINT_OK)
 		runtime->remote_clock_frames =
-			(size_t)((buffered_after - buffered_before) /
-				 runtime->frame_samples);
+			rtp_receiver_take_clock_frames(
+				&runtime->stream.receiver, runtime->frame_samples);
 	return result;
 }
 
