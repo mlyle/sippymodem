@@ -28,7 +28,7 @@ enum v90_phase3_analog_line_rx_result {
 
 /* Own the V.90 Ja parser and the persistent fixed V.34 physical receiver for
  * one conventional upstream. The copied profile must describe the analogue
- * modem's zero-MD 8 kHz training waveform. */
+ * modem's 8 kHz training waveform, including its advertised MD duration. */
 struct v90_phase3_analog_line_rx {
 	struct v90_upstream_training_rx upstream;
 	struct v90_phase3_ja_rx ja;

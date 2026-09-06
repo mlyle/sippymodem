@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v90_upstream_mode.h"
+#include "v90_phase3.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -18,14 +19,6 @@ static bool cp_is_final(const struct v90_cp_parameters *cp)
 	return v90_cp_parameters_are_valid(cp) && cp->kind == V90_CP_DATA &&
 	       cp->selected_rate_index != 0 && cp->acknowledges_peer &&
 	       !cp->request_silence;
-}
-
-static bool profile_is_conventional_upstream(
-	const struct v34_phase3_profile *profile)
-{
-	return v34_phase3_profile_is_valid(profile) &&
-	       profile->local_role == V34_ANSWERING_STATION &&
-	       profile->md_symbol_count == 0;
 }
 
 static uint8_t select_rate(
@@ -63,7 +56,7 @@ enum v90_upstream_mode_result v90_upstream_mode_select(
 	    direction == NULL)
 		return V90_UPSTREAM_MODE_INVALID_ARGUMENT;
 	if (!cp_is_final(cp) || !v90_mp_record_is_valid(mp) ||
-	    !profile_is_conventional_upstream(transmitting_profile))
+	    !v90_phase3_analog_profile_is_valid(transmitting_profile))
 		return V90_UPSTREAM_MODE_INVALID_PARAMETERS;
 	common = common_parameters(mp);
 	if (common->maximum_upstream_rate_2400_bps_units == 0)

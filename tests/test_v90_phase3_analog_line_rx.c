@@ -247,11 +247,61 @@ static bool check_fixed_sample_rejection(
 	return true;
 }
 
-static bool run_fixed_ja_line(enum g711_law law)
+/* A peer's MD waveform is manufacturer-defined. Prepend S/Sbar and a bounded
+ * scrambled four-point interval to the normal S/Sbar/PP/TRN/Ja generator, using
+ * one continuous line filter and carrier. The local transmitter still chooses
+ * zero MD; only the receiver is given the peer's advertised nonzero duration. */
+static bool sample_with_md(
+	struct v90_phase3_analog_line_tx *tx,
+	struct v34_phase3_s_sequence *s, struct v34_training_sequence *md,
+	uint32_t *remaining, int16_t *sample)
 {
-	struct v34_phase3_profile selected = profile();
+	struct qam_point point;
+	const struct qam_point *offered = NULL;
+	bool accepting;
+	bool accepted;
+
+	if (*remaining == 0 || tx->leading_silence_samples != 0)
+		return v90_phase3_analog_line_tx_sample(tx, sample) ==
+			V90_PHASE3_ANALOG_LINE_TX_OK;
+	accepting = v34_training_line_needs_point(&tx->line);
+	if (accepting) {
+		if (!v34_phase3_s_sequence_is_complete(s)) {
+			enum v34_phase3_s_section section;
+
+			CHECK(v34_phase3_s_sequence_next(s, &point, &section) ==
+				      V34_PHASE3_S_SEQUENCE_OK,
+			      "peer MD prefix S generator stopped");
+		} else {
+			uint8_t quarter;
+			uint8_t rotation;
+
+			CHECK(v34_training_sequence_next(
+				      md, &point, &quarter, &rotation) ==
+				      V34_TRAINING_SEQUENCE_OK,
+			      "peer MD generator stopped");
+			--*remaining;
+		}
+		offered = &point;
+	}
+	return v34_training_line_sample(&tx->line, offered, sample, &accepted) ==
+		       V34_TRAINING_LINE_OK && accepted == accepting;
+}
+
+static bool run_fixed_ja_line(
+	enum g711_law law, enum v34_symbol_rate rate, uint8_t md_units)
+{
+	const struct v34_info1_probe_result probe = {
+		.high_carrier = true,
+		.projected_data_rate_2400_bps_units = 8,
+	};
+	struct v34_phase3_profile selected;
 	struct v90_phase3_analog_line_tx tx;
+	struct v34_phase3_s_sequence first_s;
+	struct v34_training_sequence md;
 	struct v90_upstream_training_rx line;
+	struct v90_phase3_analog_line_rx rx;
+	struct v90_phase3_analog_line_handoff line_handoff;
 	struct v90_phase3_ja_rx semantic;
 	struct v90_phase3_ja_handoff handoff;
 	struct v90_dil_parameters expected;
@@ -264,12 +314,32 @@ static bool run_fixed_ja_line(enum g711_law law)
 	double decision_scale;
 	unsigned int decisions = 0;
 	unsigned int pp_events = 0;
+	unsigned int md_events = 0;
+	unsigned int repeated_s_events = 0;
+	uint32_t md_remaining;
 	bool started_ja = false;
 	bool detected = false;
 
-	CHECK(v90_phase3_analog_line_tx_init(
+	CHECK(v34_phase3_profile_init(
+		      &selected, V34_ANSWERING_STATION, rate, &probe, 0, 0) ==
+		      V34_PHASE3_PROFILE_OK &&
+	      v90_phase3_analog_line_tx_init(
 		      &tx, &selected, NOMINAL_AMPLITUDE) ==
 		      V90_PHASE3_ANALOG_LINE_TX_OK &&
+	      v34_phase3_s_sequence_init(&first_s) ==
+		      V34_PHASE3_S_SEQUENCE_OK &&
+	      v34_training_sequence_init(
+		      &md, selected.local_role, V34_CONSTELLATION_4_POINT) ==
+		      V34_TRAINING_SEQUENCE_OK,
+	      "law %d peer MD %u source did not initialize", law, md_units);
+	CHECK(v34_phase3_profile_init(
+		      &selected, V34_ANSWERING_STATION, rate, &probe, 0,
+		      md_units) == V34_PHASE3_PROFILE_OK,
+	      "peer MD profile did not initialize");
+	md_remaining = selected.md_symbol_count;
+	CHECK(v90_phase3_analog_line_rx_init(
+		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
+		      V90_PHASE3_ANALOG_LINE_RX_OK &&
 	      v90_upstream_training_rx_init(
 		      &line, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_UPSTREAM_TRAINING_RX_OK &&
@@ -285,7 +355,8 @@ static bool run_fixed_ja_line(enum g711_law law)
 	decision_scale = fixed_target.in_phase / unit_target.in_phase;
 	/* Physical acquisition belongs solely to the fixed receiver. Observe each
 	 * new post-PP decision once; its final PP decision is not a TRN symbol. */
-	for (uint32_t index = 0; index < SAMPLE_LIMIT; ++index) {
+	for (uint32_t index = 0;
+	     index < SAMPLE_LIMIT + 280u * md_units; ++index) {
 		struct v34_analytic_sample decision = { INT16_MIN, INT16_MAX };
 		struct v34_analytic_sample saved_decision = decision;
 		struct v34_analytic_sample retained;
@@ -293,8 +364,11 @@ static bool run_fixed_ja_line(enum g711_law law)
 		uint16_t previous = line.next_recent_decision;
 		uint16_t previous_trn = line.initial.j.received_symbols;
 		bool was_tracking = v90_upstream_training_rx_is_tracking(&line);
+		enum v34_phase3_decision_receiver_stage previous_stage =
+			line.initial.stage;
 		int16_t sample;
 		enum v90_upstream_training_rx_result sampled;
+		enum v90_phase3_analog_line_rx_result received;
 		enum v90_phase3_ja_rx_result result;
 
 		if (!started_ja &&
@@ -307,14 +381,40 @@ static bool run_fixed_ja_line(enum g711_law law)
 			      "law %d fixed path could not start Ja", law);
 			started_ja = true;
 		}
-		CHECK(v90_phase3_analog_line_tx_sample(&tx, &sample) ==
-			      V90_PHASE3_ANALOG_LINE_TX_OK,
+		CHECK(sample_with_md(&tx, &first_s, &md, &md_remaining, &sample),
 		      "law %d fixed source stopped at sample %u", law, index);
+		received = v90_phase3_analog_line_rx_sample(&rx, quantize(law, sample));
+		CHECK(received == V90_PHASE3_ANALOG_LINE_RX_OK ||
+		      received == V90_PHASE3_ANALOG_LINE_RX_TIMING_ACQUIRED ||
+		      received == V90_PHASE3_ANALOG_LINE_RX_S_DETECTED ||
+		      received == V90_PHASE3_ANALOG_LINE_RX_PP_COMPLETE ||
+		      received == V90_PHASE3_ANALOG_LINE_RX_JA_REJECTED ||
+		      received == V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED,
+		      "law %d rate %d MD %u line receiver stopped at sample %u",
+		      law, rate, md_units, index);
 		sampled = v90_upstream_training_rx_sample(
 			&line, quantize(law, sample), &decision);
 		CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK ||
 		      sampled == V90_UPSTREAM_TRAINING_RX_DECISION_READY,
-		      "law %d fixed path stopped at sample %u", law, index);
+		      "law %d MD %u fixed path stopped at sample %u (stage %u)",
+		      law, md_units, index, previous_stage);
+		if (line.initial.stage != previous_stage) {
+			if (line.initial.stage == V34_PHASE3_DECISION_RECEIVER_MD)
+				md_events++;
+			if (line.initial.stage ==
+			    V34_PHASE3_DECISION_RECEIVER_REPEATED_S) {
+				repeated_s_events++;
+				CHECK(!v34_receive_timing_is_acquired(&line.line.timing) &&
+				      line.line.equalizer.equalizer.tap_count == 128 &&
+				      line.line.equalizer.equalizer.identity_tap ==
+					      128 - 2 *
+					      V90_UPSTREAM_TRAINING_RX_DECISION_DELAY,
+				      "MD restart lost the V.90 equalizer geometry");
+			}
+		}
+		if (line.initial.stage < V34_PHASE3_DECISION_RECEIVER_PP)
+			CHECK(line.tracking_symbols == 0 && decisions == 0,
+			      "MD or repeated S contaminated equalizer training");
 		if (!was_tracking && v90_upstream_training_rx_is_tracking(&line)) {
 			pp_events++;
 			CHECK(sampled == V90_UPSTREAM_TRAINING_RX_OK &&
@@ -356,11 +456,20 @@ static bool run_fixed_ja_line(enum g711_law law)
 				      semantic.precoder.observed_symbols,
 			      "law %d fixed and semantic TRN boundaries differ", law);
 		if (result == V90_PHASE3_JA_RX_DETECTED) {
+			CHECK(received == V90_PHASE3_ANALOG_LINE_RX_JA_DETECTED &&
+			      v90_phase3_analog_line_rx_handoff(&rx, &line_handoff) ==
+				      V90_PHASE3_ANALOG_LINE_RX_OK &&
+			      v34_phase3_profile_is_equal(
+				      &line_handoff.upstream.transmitting_profile,
+				      &selected),
+			      "line handoff lost the peer MD profile");
 			detected = true;
 			break;
 		}
 	}
-	CHECK(started_ja && detected && pp_events == 1u &&
+	CHECK(started_ja && detected && pp_events == 1u && md_remaining == 0 &&
+	      md_events == (md_units != 0) &&
+	      repeated_s_events == (md_units != 0) &&
 	      decisions > V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      v90_phase3_ja_rx_handoff(&semantic, &handoff) ==
 		      V90_PHASE3_JA_RX_OK &&
@@ -371,8 +480,9 @@ static bool run_fixed_ja_line(enum g711_law law)
 		      &received_count) == V90_DIL_OK &&
 	      expected_count == 1702u && received_count == expected_count &&
 	      memcmp(expected_bits, received_bits, (expected_count + 7u) / 8u) == 0,
-	      "law %d fixed decisions did not recover the exact Ja descriptor",
-	      law);
+	      "law %d rate %d MD %u did not recover the exact Ja descriptor "
+	      "(MD %u repeated S %u PP %u)",
+	      law, rate, md_units, md_events, repeated_s_events, pp_events);
 	{
 		struct v90_phase3_ja_rx saved = semantic;
 		struct qam_point decision = { 0.5, 0.5 };
@@ -391,9 +501,22 @@ static bool run_fixed_ja_line(enum g711_law law)
 
 static bool test_fixed_ja_lines(void)
 {
-	CHECK(run_fixed_ja_line(G711_LAW_PCMU) &&
-	      run_fixed_ja_line(G711_LAW_PCMA),
+	CHECK(run_fixed_ja_line(G711_LAW_PCMU, V34_SYMBOL_RATE_3000, 0) &&
+	      run_fixed_ja_line(G711_LAW_PCMA, V34_SYMBOL_RATE_3000, 0),
 	      "fixed G.711 Ja timelines failed");
+	return true;
+}
+
+static bool test_peer_md_lines(void)
+{
+	static const uint8_t md_units[] = { 1, 9, 127 };
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate)
+		for (size_t index = 0; index < ARRAY_LENGTH(md_units); ++index)
+			CHECK(run_fixed_ja_line(G711_LAW_PCMU, rate, md_units[index]) &&
+			      run_fixed_ja_line(G711_LAW_PCMA, rate, md_units[index]),
+			      "peer MD %u rate %u G.711 Ja timelines failed",
+			      md_units[index], rate);
 	return true;
 }
 
@@ -415,11 +538,11 @@ static bool test_validation_and_transactionality(void)
 	      "line receiver accepted the digital station profile");
 	selected = profile();
 	selected.md_length_35_ms_units = 1;
-	selected.md_symbol_count = 105;
+	selected.md_symbol_count = 104;
 	CHECK(v90_phase3_analog_line_rx_init(
 		      &rx, &selected, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V90_PHASE3_ANALOG_LINE_RX_INVALID_ARGUMENT,
-	      "line receiver accepted nonzero MD");
+	      "line receiver accepted inconsistent MD duration");
 	selected = profile();
 	CHECK(v90_phase3_analog_line_rx_init(
 		      &rx, NULL, TEST_INITIAL_RECEIVE_GAIN) ==
@@ -465,6 +588,7 @@ int main(void)
 	} tests[] = {
 		{ "G.711 lines", test_g711_lines },
 		{ "fixed G.711 Ja lines", test_fixed_ja_lines },
+		{ "peer MD G.711 Ja lines", test_peer_md_lines },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

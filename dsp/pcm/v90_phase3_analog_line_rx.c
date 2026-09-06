@@ -124,7 +124,7 @@ enum v90_phase3_analog_line_rx_result v90_phase3_analog_line_rx_sample(
 		 next.upstream.initial.stage == V34_PHASE3_DECISION_RECEIVER_J)
 		result = V90_PHASE3_ANALOG_LINE_RX_PP_COMPLETE;
 	else if (previous == V34_PHASE3_DECISION_RECEIVER_S &&
-		 next.upstream.initial.stage == V34_PHASE3_DECISION_RECEIVER_PP)
+		 next.upstream.initial.stage != V34_PHASE3_DECISION_RECEIVER_S)
 		result = V90_PHASE3_ANALOG_LINE_RX_S_DETECTED;
 	else if (!acquired &&
 		 v34_receive_timing_is_acquired(&next.upstream.line.timing))

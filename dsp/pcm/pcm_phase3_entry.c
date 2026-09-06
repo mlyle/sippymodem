@@ -29,8 +29,11 @@ bool pcm_phase3_entry_is_valid(
 		       &entry->conventional_profile) &&
 	       entry->conventional_profile.local_role ==
 		       V34_ANSWERING_STATION &&
-	       entry->conventional_profile.md_length_35_ms_units == 0 &&
-	       entry->conventional_profile.md_symbol_count == 0;
+	       entry->conventional_profile.md_length_35_ms_units ==
+		       entry->selection.analog.conventional
+			       .local_md_length_35_ms_units &&
+	       (entry->local_role == V90_DIGITAL_MODEM ||
+		entry->conventional_profile.md_symbol_count == 0);
 }
 
 enum pcm_phase3_entry_result pcm_phase3_entry_init(
@@ -61,7 +64,8 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 			return PCM_PHASE3_ENTRY_UNUSABLE_SELECTION;
 		if (profile_result != V34_PHASE3_PROFILE_OK)
 			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
-		if (initialized.conventional_profile.md_symbol_count != 0)
+		if (local_role == V90_ANALOG_MODEM &&
+		    initialized.conventional_profile.md_symbol_count != 0)
 			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	}
 	if (!pcm_phase3_entry_is_valid(&initialized))

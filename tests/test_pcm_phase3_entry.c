@@ -450,6 +450,32 @@ static bool test_station_validation(void)
 	return true;
 }
 
+static bool test_peer_md_entry(void)
+{
+	struct pcm_info1_selection selected = conventional_selection(
+		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3000, true);
+	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
+	struct v90_jd_parameters jd = jd_parameters();
+	struct pcm_phase3_entry entry;
+	struct v90_phase3_digital_station digital;
+
+	selected.analog.conventional.local_md_length_35_ms_units = 9;
+	CHECK(pcm_phase3_entry_init(
+		      &entry, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      &info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+	      entry.conventional_profile.md_symbol_count == 945 &&
+	      pcm_phase3_entry_start_v90_digital(
+		      &entry, TEST_INITIAL_RECEIVE_GAIN, &jd, &digital) ==
+		      PCM_PHASE3_ENTRY_OK &&
+	      v90_phase3_digital_station_is_valid(&digital) &&
+	      digital.receive.initial.upstream.initial.md_symbols == 945,
+	      "digital entry did not retain the peer's advertised MD interval");
+	entry.selection.analog.conventional.local_md_length_35_ms_units = 0;
+	CHECK(!pcm_phase3_entry_is_valid(&entry),
+	      "entry accepted a profile that disagreed with INFO1a's MD interval");
+	return true;
+}
+
 static bool test_v90_branch_guards(void)
 {
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
@@ -642,6 +668,7 @@ int main(void)
 		{ "generated role and media entries", test_generated_entries },
 		{ "selection rejection", test_selection_rejection },
 		{ "station validation", test_station_validation },
+		{ "peer MD entry", test_peer_md_entry },
 		{ "V.90 branch guards", test_v90_branch_guards },
 		{ "V.92 PCM station starts", test_v92_pcm_starts },
 		{ "result names", test_result_names },

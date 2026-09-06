@@ -33,9 +33,9 @@ enum v90_upstream_training_rx_result {
 };
 
 /* Train the conventional upstream's fixed V.34 physical receiver from its
- * initial S through PP, then retain decision-directed tracking across the
- * V.90-specific Ja and return epochs. Protocol parsers remain separate from
- * this physical owner. */
+ * initial S, optional MD/repeated S, and PP, then retain decision-directed
+ * tracking across the V.90-specific Ja and return epochs. Protocol parsers
+ * remain separate from this physical owner. */
 struct v90_upstream_training_rx {
 	struct v34_line_receiver line;
 	struct v34_phase3_decision_receiver initial;

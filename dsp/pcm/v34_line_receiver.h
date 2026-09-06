@@ -50,9 +50,9 @@ enum v34_line_receiver_result v34_line_receiver_sample(
 
 /* Resolve the one pending observation using a semantic receiver's action.
  * BEGIN_TRACKING also freezes the trained gain. RESTART_PATH preserves the
- * selected profile, current gain, and feedback policy while starting a fresh
- * physical receive epoch. Successful calls consume the observation; rejected
- * calls leave the receiver unchanged. */
+ * selected profile, current gain, equalizer geometry, and feedback policy while
+ * starting a fresh physical receive epoch. Successful calls consume the
+ * observation; rejected calls leave the receiver unchanged. */
 enum v34_line_receiver_result v34_line_receiver_resolve(
 	struct v34_line_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,

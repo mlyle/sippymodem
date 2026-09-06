@@ -25,13 +25,11 @@ static bool semantic_state_is_valid(
 	if (!v34_phase3_decision_receiver_is_valid(&receiver->initial) ||
 	    receiver->initial.transmitting_role !=
 		    receiver->transmitting_profile.local_role ||
-	    receiver->initial.md_symbols != 0u)
+	    receiver->initial.md_symbols !=
+		    receiver->transmitting_profile.md_symbol_count)
 		return false;
 	if (receiver->stage == V90_UPSTREAM_TRAINING_RX_INITIAL)
-		return receiver->initial.stage ==
-			       V34_PHASE3_DECISION_RECEIVER_S ||
-		       receiver->initial.stage ==
-			       V34_PHASE3_DECISION_RECEIVER_PP;
+		return receiver->initial.stage <= V34_PHASE3_DECISION_RECEIVER_PP;
 	return receiver->stage == V90_UPSTREAM_TRAINING_RX_TRACKING &&
 	       receiver->initial.stage == V34_PHASE3_DECISION_RECEIVER_J &&
 	       receiver->initial.j.received_symbols <=
@@ -63,7 +61,7 @@ bool v90_upstream_training_rx_is_valid(
 	    !semantic_state_is_valid(receiver) ||
 	    !history_is_valid(receiver))
 		return false;
-	if (receiver->initial.stage == V34_PHASE3_DECISION_RECEIVER_S)
+	if (receiver->initial.stage < V34_PHASE3_DECISION_RECEIVER_PP)
 		return receiver->tracking_symbols == 0u;
 	return true;
 }
@@ -120,7 +118,8 @@ enum v90_upstream_training_rx_result v90_upstream_training_rx_init(
 		    V34_LINE_RECEIVER_OK ||
 	    v34_phase3_decision_receiver_init_suffix(
 		    &initialized.initial,
-		    transmitting_profile->local_role, 0u,
+		    transmitting_profile->local_role,
+		    transmitting_profile->md_symbol_count,
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_DECISION_RECEIVER_OK ||
 	    v34_equalizer_init_geometry(
@@ -186,6 +185,8 @@ static enum v90_upstream_training_rx_result receive_initial(
 		v90_upstream_training_rx_decoder_power(receiver), &action);
 	if (result != V34_PHASE3_DECISION_RECEIVER_OK &&
 	    result != V34_PHASE3_DECISION_RECEIVER_S_DETECTED &&
+	    result != V34_PHASE3_DECISION_RECEIVER_MD_COMPLETE &&
+	    result != V34_PHASE3_DECISION_RECEIVER_REPEATED_S_DETECTED &&
 	    result != V34_PHASE3_DECISION_RECEIVER_PP_COMPLETE)
 		return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 	resolved = resolve_action(receiver, observation, &action);

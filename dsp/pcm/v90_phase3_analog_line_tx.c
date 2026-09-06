@@ -63,7 +63,8 @@ enum v90_phase3_analog_line_tx_result v90_phase3_analog_line_tx_init(
 	enum v90_phase3_analog_line_tx_result result;
 
 	if (tx == NULL ||
-	    !v90_phase3_analog_profile_is_valid(analog_profile))
+	    !v90_phase3_analog_profile_is_valid(analog_profile) ||
+	    analog_profile->md_symbol_count != 0)
 		return V90_PHASE3_ANALOG_LINE_TX_INVALID_ARGUMENT;
 	result = line_result(v34_training_line_init(
 		&initialized.line, analog_profile, V90_PHASE3_SAMPLE_RATE,

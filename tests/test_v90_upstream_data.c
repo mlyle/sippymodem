@@ -283,7 +283,7 @@ static bool test_contracts(void)
 	struct v34_data_direction_parameters untouched_direction;
 	struct v34_data_direction_parameters saved_direction;
 	struct v34_phase3_profile wrong_role;
-	struct v34_phase3_profile active_md;
+	struct v34_phase3_profile peer_md;
 
 	CHECK(completed_e_fixture(&complete, 8, cp_rates),
 	      "contract fixture did not complete E");
@@ -295,9 +295,9 @@ static bool test_contracts(void)
 	saved_direction = untouched_direction;
 	wrong_role = complete.line.profile;
 	wrong_role.local_role = V34_CALLING_STATION;
-	active_md = complete.line.profile;
-	active_md.md_length_35_ms_units = 1;
-	active_md.md_symbol_count = 105;
+	peer_md = complete.line.profile;
+	peer_md.md_length_35_ms_units = 1;
+	peer_md.md_symbol_count = 105;
 	malformed.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
 	CHECK(v90_upstream_data_start_after_e(NULL, &complete, &mp) ==
 		      V90_UPSTREAM_DATA_INVALID_ARGUMENT &&
@@ -341,13 +341,20 @@ static bool test_contracts(void)
 		      &complete.cp, &mp, &wrong_role,
 		      &untouched_direction) ==
 		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
-	      v90_upstream_mode_select(
-		      &complete.cp, &mp, &active_md,
-		      &untouched_direction) ==
-		      V90_UPSTREAM_MODE_INVALID_PARAMETERS &&
 	      memcmp(&untouched_direction, &saved_direction,
 		     sizeof(untouched_direction)) == 0,
 	      "rejected upstream selection changed its output");
+	/* MD described the completed training prefix, not an active interval
+	 * that could prevent the digital receiver from selecting upstream data. */
+	CHECK(v90_upstream_mode_select(
+		      &complete.cp, &mp, &peer_md, &untouched_direction) ==
+		      V90_UPSTREAM_MODE_OK &&
+	      v90_upstream_mode_select(
+		      &complete.cp, &mp, &complete.line.profile,
+		      &saved_direction) == V90_UPSTREAM_MODE_OK &&
+	      memcmp(&untouched_direction, &saved_direction,
+		     sizeof(untouched_direction)) == 0,
+	      "completed peer MD changed the negotiated upstream data mode");
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units = 0;
 	CHECK(v90_upstream_data_start_after_e(
 		      &untouched, &complete, &mp) ==

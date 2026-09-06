@@ -169,6 +169,7 @@ enum v34_line_receiver_result v34_line_receiver_resolve(
 		break;
 	case V34_RECEIVE_RESTART_PATH: {
 		struct v34_line_receiver restarted;
+		const struct v34_equalizer *geometry = &next.equalizer.equalizer;
 
 		feedback_mode = next.equalizer.feedback_mode;
 		if (v34_adaptive_equalizer_discard(
@@ -177,7 +178,11 @@ enum v34_line_receiver_result v34_line_receiver_resolve(
 		    v34_line_receiver_init(
 			    &restarted, &next.timing.transmitting_profile,
 			    next.timing.gain.gain, false, feedback_mode) !=
-			    V34_LINE_RECEIVER_OK)
+			    V34_LINE_RECEIVER_OK ||
+		    v34_equalizer_init_geometry(
+			    &restarted.equalizer.equalizer, geometry->tap_count,
+			    (geometry->tap_count - geometry->identity_tap) / 2u) !=
+			    V34_EQUALIZER_OK)
 			return V34_LINE_RECEIVER_NUMERIC_FAILURE;
 		next = restarted;
 		break;
