@@ -426,6 +426,7 @@ class _AttemptState:
     initial_data: bool = False
     callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
+    callback_request_report: ConnectReport = field(default_factory=ConnectReport)
     callback_return_attempted: bool = False
     remote_retrain_nonce: str | None = None
     remote_retrain: bool = False
@@ -843,6 +844,7 @@ def _callback_body(
         state.detail = f"callback request ended with {response}"
         return None
     state.callback_request_maturity = MATURITY_CONNECT
+    state.callback_request_report = request.terminal.connect_report
     request_error = _connect_error(
         request.terminal.connect_report,
         ("V.22bis",),
@@ -1040,6 +1042,10 @@ def run_physical_attempt(
         initial_data=state.initial_data,
         callback_request_attempted=state.callback_request_attempted,
         callback_request_maturity=state.callback_request_maturity,
+        callback_request_modulation=state.callback_request_report.modulation,
+        callback_request_protocol=state.callback_request_report.protocol,
+        callback_request_receive_rate=state.callback_request_report.receive_bit_rate,
+        callback_request_transmit_rate=state.callback_request_report.transmit_bit_rate,
         callback_return_attempted=state.callback_return_attempted,
         remote_retrain_nonce=state.remote_retrain_nonce,
         remote_retrain=state.remote_retrain,

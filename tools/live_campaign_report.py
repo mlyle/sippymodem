@@ -93,6 +93,10 @@ class AttemptResult:
     initial_data: bool = False
     callback_request_attempted: bool = False
     callback_request_maturity: str | None = None
+    callback_request_modulation: str | None = None
+    callback_request_protocol: str | None = None
+    callback_request_receive_rate: int | None = None
+    callback_request_transmit_rate: int | None = None
     callback_return_attempted: bool = False
     remote_retrain_nonce: str | None = None
     remote_retrain: bool = False
@@ -107,6 +111,12 @@ class AttemptResult:
     transmit_rate: int | None = None
     detail: str = ""
     artifact: str = ""
+
+    @property
+    def profile_mismatch(self) -> bool:
+        return self.detail.startswith((
+            "CONNECT selected ", "callback request CONNECT selected "
+        ))
 
     @property
     def maturity(self) -> str | None:
@@ -320,6 +330,7 @@ def render_dashboard(
         "F=full R=retrain D=data C=connect Q=request N=no-connect E=error"
     )
     rows.append("r=raw l=LAPM; + includes failure extras and request legs")
+    rows.append("mismatch rows are subsets of the F/R/D/C counts above them")
     role_columns = "done/exp+x   F  R  D  C  Q  N  E"
     role_width = len(role_columns)
     rows.append(
@@ -342,7 +353,7 @@ def render_dashboard(
         for role in roles
     }
 
-    def role_fields(family: str, link_mode: str, role: str) -> str:
+    def role_fields(family: str, link_mode: str, role: str) -> tuple[str, str]:
         role_results = [
             result
             for result in results
@@ -355,6 +366,17 @@ def render_dashboard(
             maturity: sum(result.maturity == maturity for result in role_results)
             for maturity in MATURITY_ORDER
         }
+        mismatches = {
+            maturity: sum(
+                result.maturity == maturity and result.profile_mismatch
+                for result in role_results
+            )
+            for maturity in MATURITY_ORDER[:4]
+        }
+        request_applicable = (
+            family == "v22bis" and link_mode == LINK_LAPM
+            and role == ROLE_ORIGINATOR
+        )
         request_results = (
             [
                 result
@@ -362,9 +384,7 @@ def render_dashboard(
                 if result.callback_request_attempted
                 and result.outcome != OUTCOME_BUSY
             ]
-            if family == "v22bis"
-            and link_mode == LINK_LAPM
-            and role == "originator"
+            if request_applicable
             else []
         )
         request_observations = [
@@ -375,6 +395,12 @@ def render_dashboard(
         for maturity in request_observations:
             if maturity in counts:
                 counts[maturity] += 1
+        for result in request_results:
+            if (
+                result.profile_mismatch
+                and result.callback_request_maturity in mismatches
+            ):
+                mismatches[result.callback_request_maturity] += 1
         requests = sum(
             maturity == MATURITY_REQUEST for maturity in request_observations
         )
@@ -398,30 +424,47 @@ def render_dashboard(
         total[MATURITY_REQUEST] += requests
         for maturity in MATURITY_ORDER:
             total[maturity] += counts[maturity]
-        return (
+        request_cell = str(requests) if request_applicable else ""
+        fields = (
             f" {done:>3}/{expected:<3}+{extras:<2} "
             f"{counts[MATURITY_FULL]:>2} {counts[MATURITY_RETRAIN]:>2} "
             f"{counts[MATURITY_DATA]:>2} {counts[MATURITY_CONNECT]:>2} "
-            f"{requests:>2} "
+            f"{request_cell:>2} "
             f"{counts[MATURITY_NO_CONNECT]:>2} {errors:>2}"
         )
+        mismatch_fields = " " * 12 + " ".join(
+            f"{mismatches[maturity]:>2}" for maturity in MATURITY_ORDER[:4]
+        ) + " " * 9
+        return fields, mismatch_fields
 
     for family, link_mode in groups:
         mode_label = "l" if link_mode == LINK_LAPM else "r"
         label = f"{FAMILY_LABELS.get(family, family)}/{mode_label}"
+        originator, originator_mismatches = role_fields(
+            family, link_mode, ROLE_ORIGINATOR
+        )
+        callback, callback_mismatches = role_fields(
+            family, link_mode, ROLE_CALLBACK
+        )
         rows.append(
-            f"{label:<12} "
-            f"{role_fields(family, link_mode, 'originator')} | "
-            f"{role_fields(family, link_mode, 'callback')}"
+            f"{label:<12} {originator} | {callback}"
+        )
+        rows.append(
+            f"{'  mismatch':<12} {originator_mismatches} | {callback_mismatches}"
         )
 
     def total_fields(role: str) -> str:
         total = totals[role]
+        request_cell = (
+            str(total[MATURITY_REQUEST])
+            if role == ROLE_ORIGINATOR and ("v22bis", LINK_LAPM) in groups
+            else ""
+        )
         return (
             f" {total['done']:>3}/{total['expected']:<3}+{total['extra']:<2} "
             f"{total[MATURITY_FULL]:>2} {total[MATURITY_RETRAIN]:>2} "
             f"{total[MATURITY_DATA]:>2} {total[MATURITY_CONNECT]:>2} "
-            f"{total[MATURITY_REQUEST]:>2} "
+            f"{request_cell:>2} "
             f"{total[MATURITY_NO_CONNECT]:>2} {total['error']:>2}"
         )
 
@@ -432,14 +475,31 @@ def render_dashboard(
     if recent_limit > 0 and results:
         rows.extend(
             (
-                "Recent calls (newest first): o=originator c=callback l=LAPM r=raw",
+                "Recent calls (newest first): o=originator c=callback q=request l=LAPM r=raw",
                 "Q=request C=connect D=initial R=remote L=local P=post",
             )
         )
-        first = max(0, len(results) - recent_limit)
-        for index in range(len(results) - 1, first - 1, -1):
+        history = (
+            (index, request)
+            for index in range(len(results) - 1, -1, -1)
+            for request in (False, True)
+            if (results[index].callback_request_attempted if request
+                else not results[index].callback_request_only)
+        )
+        for index, request in history:
             result = results[index]
             case = cases_by_name.get(result.case_name)
+            connected = result.connected
+            initial_data = result.initial_data
+            profile_mismatch = result.profile_mismatch and (
+                result.detail.startswith("callback request ") == request
+            )
+            # Keep the actual and requested profiles together within the
+            # available terminal rows; never leave an orphaned annotation.
+            history_rows = 1 + int(profile_mismatch)
+            if history_rows > recent_limit:
+                break
+            recent_limit -= history_rows
             modulation = (
                 result.modulation if result.connected else None
             ) or FAMILY_LABELS.get(result.family, result.family)
@@ -460,34 +520,85 @@ def render_dashboard(
                 symbol_rate = case.symbol_rate
             else:
                 symbol_rate = None
-            rates = f"{receive_rate or '-'}/{transmit_rate or '-'}@{symbol_rate or '-'}"
-            profile_mismatch = (
-                result.detail.startswith("CONNECT selected")
-                or result.detail.startswith(
-                    "callback request CONNECT selected"
+            if request:
+                role = "q"
+                connected = result.callback_request_maturity in {
+                    MATURITY_CONNECT, MATURITY_REQUEST
+                }
+                initial_data = result.callback_request_maturity == MATURITY_REQUEST
+                # A successful legacy request validated this exact profile.
+                # A failed legacy CONNECT may not have saved its actual one.
+                known_profile = initial_data or not connected
+                modulation = result.callback_request_modulation or (
+                    "V.22bis" if known_profile else "?"
                 )
-            )
+                mode = {"LAPM": "l", "none": "r"}.get(
+                    result.callback_request_protocol,
+                    "l" if known_profile else "?",
+                )
+                receive_rate = result.callback_request_receive_rate or (
+                    2400 if known_profile else None
+                )
+                transmit_rate = result.callback_request_transmit_rate or (
+                    2400 if known_profile else None
+                )
+                symbol_rate = 600
+            if connected:
+                # CONNECT reports do not include a measured symbol rate.
+                symbol_rate = None
+            rates = f"{receive_rate or '-'}/{transmit_rate or '-'}@{symbol_rate or '-'}"
             if profile_mismatch:
                 status = "profile-mismatch"
-            elif result.callback_request_only:
+            elif request:
                 request_status = (
                     result.callback_request_maturity or result.outcome
                 )
-                status = f"request-{request_status}"
+                status = (
+                    MATURITY_REQUEST if request_status == MATURITY_REQUEST
+                    else f"request-{request_status}"
+                )
             else:
                 status = result.maturity or {
                     OUTCOME_INFRASTRUCTURE_ERROR: "infra-error",
                     OUTCOME_UNAVAILABLE: "unavailable",
                 }.get(result.outcome, result.outcome)
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
+            request_cell = (
+                str(int(result.callback_request_maturity == MATURITY_REQUEST))
+                if request else " "
+            )
+            duration = "   -s" if request else f"{result.duration_seconds:>4.0f}s"
             rows.append(
                 f"{sequence} {role} {modulation[:7]:<7} {rates:<17} {mode} "
                 f"p{result.physical_try:<2} "
-                f"Q{int(result.callback_request_maturity == MATURITY_REQUEST)} "
-                f"C{int(result.connected)} D{int(result.initial_data)} "
-                f"R{int(result.remote_retrain)} "
-                f"L{int(result.retrain_connected)} "
-                f"P{int(result.retrain_data)} "
-                f"{result.duration_seconds:>4.0f}s {status}"
+                f"Q{request_cell} "
+                f"C{int(connected)} D{int(initial_data)} "
+                f"R{int(not request and result.remote_retrain)} "
+                f"L{int(not request and result.retrain_connected)} "
+                f"P{int(not request and result.retrain_data)} "
+                f"{duration} {status}"
             )
+            if profile_mismatch:
+                if request:
+                    tried = "V.22bis 2400/2400@600 l (callback request)"
+                elif case is None:
+                    tried = "profile unavailable"
+                else:
+                    def rate_range(minimum: int | None, maximum: int | None) -> str:
+                        return (
+                            f"{minimum}-{maximum}"
+                            if minimum is not None and minimum != maximum
+                            else str(maximum or "-")
+                        )
+
+                    tried = (
+                        f"{FAMILY_LABELS.get(case.family, case.family)} "
+                        f"{rate_range(case.minimum_receive_rate, case.receive_rate)}/"
+                        f"{rate_range(case.minimum_transmit_rate, case.transmit_rate)}"
+                        f"@{case.symbol_rate or '-'} "
+                        f"{'l' if case.link_mode == LINK_LAPM else 'r'}"
+                    )
+                    if case.feature == "analogue-fallback":
+                        tried += " (analogue fallback)"
+                rows.append(f"     tried: {tried}")
     return "\n".join(rows)

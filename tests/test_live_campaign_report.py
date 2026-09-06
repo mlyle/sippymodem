@@ -235,7 +235,9 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertTrue(all(len(line) == 80 for line in table_lines))
         self.assertTrue(any(line.startswith("V.22bis/r") for line in lines))
         self.assertTrue(any(line.startswith("V.22bis/l") for line in lines))
-        self.assertLessEqual(len(lines), 22)
+        self.assertEqual(
+            len(lines), 2 * len({(case.family, case.link_mode) for case in cases}) + 8
+        )
         self.assertLessEqual(max(map(len, dashboard.splitlines())), 100)
 
     def test_callback_request_has_a_separate_v22bis_lapm_bucket(self) -> None:
@@ -277,7 +279,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )[48:80].split()
         self.assertEqual(
             callback,
-            ["0/1", "+0", "0", "0", "0", "0", "0", "0", "0"],
+            ["0/1", "+0", "0", "0", "0", "0", "0", "0"],
         )
         self.assertEqual(extra_schedule((case,), (result,), 1, 1, 9), ())
         self.assertIn(
@@ -315,7 +317,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )[48:80].split()
         self.assertEqual(
             callback,
-            ["1/1", "+0", "0", "0", "0", "0", "0", "1", "0"],
+            ["1/1", "+0", "0", "0", "0", "0", "1", "0"],
         )
 
     def test_return_error_does_not_also_become_request_error(self) -> None:
@@ -358,7 +360,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )[48:80].split()
         self.assertEqual(
             callback,
-            ["1/1", "+0", "0", "0", "0", "0", "0", "0", "1"],
+            ["1/1", "+0", "0", "0", "0", "0", "0", "1"],
         )
 
     def test_raw_and_lapm_results_have_independent_rows(self) -> None:
@@ -408,7 +410,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )[13:46].split()
         self.assertEqual(
             raw_fields,
-            ["1/1", "+0", "0", "0", "1", "0", "0", "0", "0"],
+            ["1/1", "+0", "0", "0", "1", "0", "0", "0"],
         )
         self.assertEqual(
             lapm_fields,
@@ -441,7 +443,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )
         lines = dashboard.splitlines()
         recent = lines[lines.index(
-            "Recent calls (newest first): o=originator c=callback l=LAPM r=raw"
+            "Recent calls (newest first): o=originator c=callback q=request l=LAPM r=raw"
         ) + 2 :]
         self.assertEqual(len(recent), 2)
         self.assertTrue(recent[0].startswith("003"))
@@ -476,13 +478,14 @@ class LiveCampaignReportTests(unittest.TestCase):
             revision="e" * 40,
             seed=17,
             elapsed_seconds=3,
-            recent_limit=1,
+            recent_limit=2,
         )
-        recent = dashboard.splitlines()[-1]
+        recent, tried = dashboard.splitlines()[-2:]
         self.assertEqual(recent.split()[2], "V.22")
-        self.assertIn("1200/1200@600", recent)
+        self.assertIn("1200/1200@-", recent)
         self.assertIn(" r ", recent)
         self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertEqual(tried, "     tried: V.22bis 2400/2400@600 l")
 
     def test_recent_pcm_fallback_shows_v34_without_regrouping_attempt(self) -> None:
         cases = cases_for_suite("standard")
@@ -515,9 +518,11 @@ class LiveCampaignReportTests(unittest.TestCase):
                 )
                 dashboard = render_dashboard(
                     (case,), 1, (result,), revision="e" * 40,
-                    seed=17, elapsed_seconds=3, recent_limit=1,
+                    seed=17, elapsed_seconds=3, recent_limit=2,
                 )
-                recent = dashboard.splitlines()[-1]
+                recent = next(
+                    line for line in dashboard.splitlines() if line.startswith("001")
+                )
                 self.assertEqual(recent.split()[2], "V.34")
                 self.assertTrue(recent.endswith(
                     "full" if expected_fallback else "profile-mismatch"
@@ -586,11 +591,125 @@ class LiveCampaignReportTests(unittest.TestCase):
             revision="1" * 40,
             seed=23,
             elapsed_seconds=3,
-            recent_limit=1,
+            recent_limit=2,
         )
-        self.assertTrue(
-            dashboard.splitlines()[-1].endswith("profile-mismatch")
+        recent, tried = dashboard.splitlines()[-2:]
+        self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertEqual(recent.split()[1:4], ["q", "?", "-/-@-"])
+        self.assertEqual(
+            tried, "     tried: V.22bis 2400/2400@600 l (callback request)"
         )
+        lines = dashboard.splitlines()
+        index = next(index for index, line in enumerate(lines)
+                     if line.startswith("V.22bis/l"))
+        self.assertEqual(lines[index + 1][25:36].split(), ["0", "0", "0", "1"])
+
+    def test_mismatch_rows_count_only_counted_bucket_subsets(self) -> None:
+        cases = tuple(case for case in cases_for_suite("standard")
+                      if case.family == "v90" and case.link_mode == "raw"
+                      and case.feature == "digital-headend")[:2]
+        self.assertEqual({case.role for case in cases}, {"originator", "callback"})
+        results = []
+        for case in cases:
+            for maturity in (MATURITY_FULL, MATURITY_RETRAIN, MATURITY_DATA, MATURITY_CONNECT):
+                results.append(self.result(
+                    case_name=case.name, family=case.family, role=case.role,
+                    link_mode=case.link_mode, connected=True,
+                    initial_data=maturity != MATURITY_CONNECT,
+                    remote_retrain=maturity in {MATURITY_FULL, MATURITY_RETRAIN},
+                    retrain_connected=maturity in {MATURITY_FULL, MATURITY_RETRAIN},
+                    retrain_data=maturity == MATURITY_FULL,
+                    extra=maturity == MATURITY_DATA,
+                    detail="CONNECT selected V.34 instead of V.90",
+                ))
+            for outcome in (OUTCOME_BUSY, OUTCOME_INFRASTRUCTURE_ERROR):
+                results.append(self.result(
+                    case_name=case.name, family=case.family, role=case.role,
+                    outcome=outcome, connected=True,
+                    detail="CONNECT selected V.34 instead of V.90",
+                ))
+        dashboard = render_dashboard(
+            cases, 3, results, revision="a", seed=1, elapsed_seconds=1,
+        )
+        lines = dashboard.splitlines()
+        index = next(i for i, line in enumerate(lines) if line.startswith("V.90/r"))
+        mismatch = lines[index + 1]
+        self.assertTrue(mismatch.startswith("  mismatch"))
+        self.assertEqual(len(mismatch), 80)
+        self.assertEqual(mismatch[13:45].split(), ["1", "1", "1", "1"])
+        self.assertEqual(mismatch[48:80].split(), ["1", "1", "1", "1"])
+        self.assertEqual(lines[index][13:45].split(),
+                         ["4/3", "+1", "1", "1", "1", "1", "0", "1"])
+
+    def test_request_cells_are_blank_only_where_inapplicable(self) -> None:
+        cases = cases_for_suite("smoke")
+        dashboard = render_dashboard(
+            cases, 1, (), revision="a", seed=1, elapsed_seconds=0,
+        )
+        for line in dashboard.splitlines():
+            if "/" not in line[:12] and not line.startswith("TOTAL"):
+                continue
+            self.assertEqual(line[72:74], "  ")
+            self.assertEqual(
+                line[37:39],
+                " 0" if line.startswith(("V.22bis/l", "TOTAL")) else "  ",
+            )
+
+    def test_history_includes_request_legs_with_a_row_limit(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v90" and case.role == "callback"
+                    and case.feature == "digital-headend")
+        results = (
+            self.result(case_name=case.name, family=case.family, role=case.role,
+                        callback_request_attempted=True, outcome=OUTCOME_BUSY),
+            self.result(case_name=case.name, family=case.family, role=case.role,
+                        callback_request_attempted=True,
+                        callback_request_maturity=MATURITY_REQUEST,
+                        callback_return_attempted=True, connected=True,
+                        modulation="V.34", protocol="none",
+                        receive_rate=28800, transmit_rate=28800,
+                        detail="CONNECT selected V.34 instead of V.90"),
+        )
+        dashboard = render_dashboard(
+            (case,), 1, results, revision="a", seed=1, elapsed_seconds=1,
+            recent_limit=4,
+        )
+        recent = [line for line in dashboard.splitlines() if line[:1].isdigit()]
+        self.assertEqual([line.split()[:3] for line in recent],
+                         [["002", "c", "V.34"], ["002", "q", "V.22bis"],
+                          ["001", "q", "V.22bis"]])
+        self.assertIn("Q1 C1 D1 R0 L0 P0", recent[1])
+        self.assertTrue(recent[1].endswith(" request"))
+        self.assertTrue(recent[2].endswith("request-busy"))
+        self.assertIn("     tried: V.90 4800-14400/28000@3000 r", dashboard)
+        bounded = render_dashboard(
+            (case,), 1, results, revision="a", seed=1, elapsed_seconds=1,
+            recent_limit=2,
+        )
+        self.assertEqual(sum(line[:1].isdigit() for line in bounded.splitlines()), 1)
+        self.assertTrue(bounded.splitlines()[-1].startswith("     tried:"))
+
+    def test_history_uses_the_saved_request_profile(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v90" and case.role == "callback")
+        result = self.result(
+            case_name=case.name, family=case.family, role=case.role,
+            callback_request_attempted=True,
+            callback_request_maturity=MATURITY_CONNECT,
+            callback_request_modulation="V.22",
+            callback_request_protocol="none",
+            callback_request_receive_rate=1200,
+            callback_request_transmit_rate=1200,
+            detail="callback request CONNECT selected V.22 instead of V.22bis",
+        )
+        dashboard = render_dashboard(
+            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+            recent_limit=2,
+        )
+        recent, tried = dashboard.splitlines()[-2:]
+        self.assertEqual(recent.split()[1:5], ["q", "V.22", "1200/1200@-", "r"])
+        self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertEqual(tried, "     tried: V.22bis 2400/2400@600 l (callback request)")
 
 
 if __name__ == "__main__":

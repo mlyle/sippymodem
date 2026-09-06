@@ -251,9 +251,37 @@ class LiveCampaignTests(unittest.TestCase):
                 live=False,
             )
         recent = [line for line in dashboard.splitlines() if line[:3].isdigit()]
-        self.assertEqual(len(recent), 3)
+        self.assertEqual(len(recent), 1)
         self.assertLessEqual(len(dashboard.splitlines()), 13)
         self.assertTrue(recent[0].startswith("005"))
+
+    def test_display_keeps_mismatch_profiles_together_within_terminal(self) -> None:
+        case = CASES_BY_NAME["v21-300-originator"]
+        result = AttemptResult(
+            case_name=case.name, family=case.family, role=case.role,
+            ordinal=1, extra=False, physical_try=1, outcome="complete",
+            connected=True, modulation="Bell 103", protocol="none",
+            receive_rate=300, transmit_rate=300,
+            detail="CONNECT selected Bell 103 instead of V.21",
+        )
+        for terminal_rows, expected_calls in ((14, 0), (15, 1), (16, 1)):
+            with self.subTest(terminal_rows=terminal_rows), mock.patch(
+                "tools.live_campaign.shutil.get_terminal_size",
+                return_value=os.terminal_size((80, terminal_rows)),
+            ):
+                dashboard = _display(
+                    (case,), 1, (result,), revision="a" * 40, seed=1,
+                    started=time.monotonic(), current="complete", live=False,
+                )
+            lines = dashboard.splitlines()
+            self.assertLessEqual(len(lines), terminal_rows - 1)
+            self.assertEqual(
+                sum(line[:3].isdigit() for line in lines), expected_calls
+            )
+            self.assertEqual(
+                sum(line.startswith("     tried:") for line in lines),
+                expected_calls,
+            )
 
     def test_live_ticker_refreshes_until_its_context_exits(self) -> None:
         refreshes: list[float] = []
@@ -923,6 +951,10 @@ class LiveCampaignTests(unittest.TestCase):
                 result.callback_request_maturity,
                 MATURITY_REQUEST,
             )
+            self.assertEqual(result.callback_request_modulation, "V.22bis")
+            self.assertEqual(result.callback_request_protocol, "LAPM")
+            self.assertEqual(result.callback_request_receive_rate, 2400)
+            self.assertEqual(result.callback_request_transmit_rate, 2400)
             self.assertTrue(result.callback_return_attempted)
             self.assertEqual(
                 result.remote_retrain_nonce,
@@ -1008,6 +1040,10 @@ class LiveCampaignTests(unittest.TestCase):
             )
 
             self.assertEqual(result.callback_request_maturity, MATURITY_CONNECT)
+            self.assertEqual(result.callback_request_modulation, "V.21")
+            self.assertEqual(result.callback_request_protocol, "LAPM")
+            self.assertEqual(result.callback_request_receive_rate, 300)
+            self.assertEqual(result.callback_request_transmit_rate, 300)
             self.assertFalse(result.callback_return_attempted)
             self.assertTrue(result.callback_request_only)
             self.assertIn("callback request CONNECT selected V.21", result.detail)
