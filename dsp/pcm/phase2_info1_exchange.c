@@ -175,6 +175,14 @@ bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange)
 	       signal_a_state_is_valid(exchange, deadline);
 }
 
+bool phase2_info1_is_waiting_for_peer(
+	const struct phase2_info1_exchange *exchange)
+{
+	return exchange != NULL &&
+	       (exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER ||
+		exchange->phase == PHASE2_INFO1_RECOVERING);
+}
+
 enum phase2_info1_result phase2_info1_init_signal_b(
 	struct phase2_info1_exchange *exchange,
 	int16_t nominal_amplitude, uint16_t round_trip_delay_samples,
@@ -490,8 +498,7 @@ enum phase2_info1_result phase2_info1_sample(
 	    event == NULL || exchange->phase == PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
-	waited_for_peer = next.phase == PHASE2_INFO1_WAITING_FOR_PEER ||
-			  next.phase == PHASE2_INFO1_RECOVERING;
+	waited_for_peer = phase2_info1_is_waiting_for_peer(&next);
 	if ((waited_for_peer &&
 	     !receive_peer_frame(&next, received_sample, &emitted)) ||
 	    !generate_transmit_sample(&next, &generated, &emitted))

@@ -698,8 +698,8 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 		       call->state.phase4.online_announced;
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
-	       call->state.phase2.state.info1.control.phase ==
-		       PHASE2_INFO1_RECOVERING;
+	       phase2_info1_is_waiting_for_peer(
+		       &call->state.phase2.state.info1.control);
 }
 
 static enum v34_call_result observe_retrain_tone(

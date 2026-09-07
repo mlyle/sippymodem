@@ -1026,6 +1026,124 @@ static bool complete_remote_retrain_silence(
 	return true;
 }
 
+static bool info1_retrain_before_deadline(
+	const struct endpoint *initial, bool pcma, uint32_t remaining_samples)
+{
+	struct endpoint endpoint = *initial;
+	struct v34_phase2_tone_transmitter remote_tone;
+	bool reached_boundary = false;
+	bool recovered = false;
+	bool responded = false;
+
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &remote_tone, v34_station_peer_role(endpoint.call.local_role),
+		      NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "INFO1 peer tone did not initialize");
+	/* Let the real INFO1 deadline run while the peer is quiet. No detector
+	 * state or deadline is injected at the wait/recovery boundary. */
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		const struct phase2_info1_exchange *exchange =
+			&endpoint.call.state.phase2.state.info1.control;
+		uint32_t deadline = exchange->signal_role == PHASE2_SIGNAL_B ?
+			(uint32_t)PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
+				exchange->round_trip_delay_samples :
+			(uint32_t)PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
+				2u * exchange->round_trip_delay_samples;
+		struct v34_call_observation observation;
+		int16_t transmitted;
+
+		if (exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+		    deadline - exchange->peer_deadline_elapsed_samples ==
+			    remaining_samples) {
+			reached_boundary = true;
+			break;
+		}
+		CHECK(endpoint_sample(
+			      &endpoint, codec_round_trip(0, pcma),
+			      supply_mapping_frame, &transmitted, &observation) &&
+		      endpoint.call.stage == V34_CALL_PHASE2 &&
+		      endpoint.call.state.phase2.stage == V34_PHASE2_INFO1,
+		      "INFO1 silence left its exchange at sample %zu", index);
+	}
+	CHECK(reached_boundary, "INFO1 deadline boundary was not reached");
+	for (size_t index = 0;
+	     index < V34_RETRAIN_TONE_SAMPLES +
+			     2u * V34_PHASE2_TONE_WINDOW_SAMPLES; ++index) {
+		struct v34_call_observation observation;
+		int16_t remote_sample;
+		int16_t transmitted;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &remote_tone, &remote_sample) == V34_PHASE2_TONE_OK &&
+		      endpoint_sample(
+			      &endpoint, codec_round_trip(remote_sample, pcma),
+			      supply_mapping_frame, &transmitted, &observation),
+		      "INFO1 peer tone failed at sample %zu", index);
+		if (endpoint.call.stage == V34_CALL_RETRAIN_SILENCE) {
+			responded = true;
+			break;
+		}
+		CHECK(endpoint.call.stage == V34_CALL_PHASE2 &&
+		      endpoint.call.state.phase2.stage == V34_PHASE2_INFO1,
+		      "INFO1 peer tone left its exchange before retrain");
+		recovered |= endpoint.call.state.phase2.state.info1.control.phase ==
+			     PHASE2_INFO1_RECOVERING;
+	}
+	CHECK(responded && endpoint.call.retrain_active &&
+	      recovered == (remaining_samples < V34_RETRAIN_TONE_SAMPLES),
+	      "INFO1 role=%d pcma=%d remaining=%u recovery=%d response=%d",
+	      initial->call.local_role, pcma, remaining_samples,
+	      recovered, responded);
+	return complete_remote_retrain_silence(&endpoint, &remote_tone, pcma);
+}
+
+static bool test_info1_retrain_preamble(void)
+{
+	for (unsigned int law = 0; law < 2; ++law) {
+		struct channel channel = { .pcma = law != 0 };
+		struct endpoint caller;
+		struct endpoint answerer;
+		struct endpoint retained[2];
+		bool stored[2] = { false, false };
+
+		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+		      endpoint_init(&answerer, V34_ANSWERING_STATION),
+		      "INFO1 preamble endpoints did not initialize");
+		for (size_t index = 0;
+		     index < SAMPLE_LIMIT && !(stored[0] && stored[1]); ++index) {
+			struct v34_call_observation caller_observation;
+			struct v34_call_observation answerer_observation;
+			const struct endpoint *endpoints[] = { &caller, &answerer };
+
+			CHECK(channel_sample_pair(
+				      &channel, &caller, &answerer,
+				      &caller_observation, &answerer_observation),
+			      "INFO1 preamble setup stopped at sample %zu", index);
+			for (size_t role = 0; role < ARRAY_LENGTH(endpoints); ++role) {
+				const struct v34_call *call = &endpoints[role]->call;
+
+				if (!stored[role] && call->stage == V34_CALL_PHASE2 &&
+				    call->state.phase2.stage == V34_PHASE2_INFO1 &&
+				    call->state.phase2.state.info1.control.phase ==
+					    PHASE2_INFO1_WAITING_FOR_PEER) {
+					retained[role] = *endpoints[role];
+					stored[role] = true;
+				}
+			}
+		}
+		CHECK(stored[0] && stored[1], "INFO1 calls were not retained");
+		for (size_t role = 0; role < ARRAY_LENGTH(retained); ++role)
+			CHECK(info1_retrain_before_deadline(
+				      &retained[role], law != 0,
+				      2u * V34_RETRAIN_TONE_SAMPLES) &&
+			      info1_retrain_before_deadline(
+				      &retained[role], law != 0,
+				      V34_PHASE2_TONE_ACQUIRE_SAMPLES / 2u),
+			      "INFO1 retrain preamble failed law=%u role=%zu", law, role);
+	}
+	return true;
+}
+
 static bool check_retrain_tone_stage_guard(
 	enum v34_station_role local_role, bool pcma,
 	enum v34_call_stage target_stage, bool retraining,
@@ -1618,6 +1736,7 @@ int main(void)
 		  test_retrain_selects_new_rate },
 		{ "unanswered probe recovery", test_probe_recovery },
 		{ "retrain tone guard", test_retrain_tone_guard },
+		{ "INFO1 retrain preamble", test_info1_retrain_preamble },
 		{ "retrain tone stage guard",
 		  test_retrain_tone_stage_guard },
 		{ "unusable INFO1 starts full retrain",

@@ -99,6 +99,12 @@ enum phase2_info1_result phase2_info1_init_signal_a(
 
 bool phase2_info1_is_valid(const struct phase2_info1_exchange *exchange);
 
+/* Reception continues across the timeout-recovery boundary. Call owners use
+ * the same interval for retrain-tone observation so a pre-deadline preamble
+ * cannot lose its qualifying silence. This query does not validate state. */
+bool phase2_info1_is_waiting_for_peer(
+	const struct phase2_info1_exchange *exchange);
+
 /* A mode adapter must resolve each pending peer frame exactly once. Accepting
  * advances the role-specific sequence; rejecting resumes acquisition and
  * charges the current sample to the peer deadline. */

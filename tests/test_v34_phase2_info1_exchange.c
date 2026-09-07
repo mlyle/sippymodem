@@ -377,6 +377,9 @@ static bool test_exact_deadlines(void)
 		      &answerer, &probes.answerer.reciprocal_probe) ==
 		      PHASE2_INFO1_OK,
 	      "INFO1 timeout fixtures did not initialize");
+	CHECK(!phase2_info1_is_waiting_for_peer(&caller.control) &&
+	      phase2_info1_is_waiting_for_peer(&answerer.control),
+	      "INFO1 listening interval did not distinguish transmit from wait");
 	caller_deadline =
 		(uint32_t)PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
 		caller.control.round_trip_delay_samples;
@@ -400,6 +403,7 @@ static bool test_exact_deadlines(void)
 	CHECK(caller_wait_samples == caller_deadline &&
 	      caller.control.peer_deadline_elapsed_samples == caller_deadline &&
 	      caller.control.failure == PHASE2_INFO1_PEER_TIMEOUT &&
+	      !phase2_info1_is_waiting_for_peer(&caller.control) &&
 	      event.kind == V34_PHASE2_INFO1_EVENT_FAILED,
 	      "caller did not fail exactly 700 ms plus RTD after INFO1c");
 
@@ -432,9 +436,11 @@ static bool test_exact_deadlines(void)
 		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      memcmp(&caller, &terminal, sizeof(caller)) == 0 &&
 	      phase2_info1_recover(&caller.control) == PHASE2_INFO1_OK &&
+	      phase2_info1_is_waiting_for_peer(&caller.control) &&
 	      phase2_info1_repeat_signal_b(&caller.control) ==
 		      PHASE2_INFO1_OK &&
 	      caller.control.phase == PHASE2_INFO1_TRANSMITTING &&
+	      !phase2_info1_is_waiting_for_peer(&caller.control) &&
 	      caller.control.peer_deadline_elapsed_samples == 0u &&
 	      caller.control.carrier_tail_symbols == 0u &&
 	      caller.control.receiver.frame.stage ==
@@ -545,6 +551,8 @@ static bool test_validation(void)
 
 	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 1),
 	      "INFO1 validation probes did not complete");
+	CHECK(!phase2_info1_is_waiting_for_peer(NULL),
+	      "absent INFO1 exchange reported an active receiver");
 	invalid_info1c.common.frequency_offset_1_50_hz_units = -513;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	before = exchange;
