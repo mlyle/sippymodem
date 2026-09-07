@@ -243,6 +243,102 @@ static bool output_contains(
 	return false;
 }
 
+/* Online recordings have no terminal consumer. Search each bounded read and
+ * retain only a possible partial match, including when the next read fills
+ * the buffer. Raw data may contain NUL bytes. */
+static bool recording_replay_drain_online(
+	struct integration_endpoint *endpoint, const char *expected_text,
+	bool *expected_text_seen)
+{
+	size_t length = expected_text != NULL ? strlen(expected_text) : 0;
+
+	if (length >= sizeof(endpoint->output))
+		return false;
+	for (;;) {
+		size_t retained = 0;
+		ssize_t count;
+
+		if (length != 0 && !*expected_text_seen) {
+			*expected_text_seen = output_contains(endpoint, expected_text);
+			if (!*expected_text_seen) {
+				retained = length - 1u;
+				if (retained > endpoint->output_count)
+					retained = endpoint->output_count;
+			}
+		}
+		memmove(endpoint->output,
+			endpoint->output + endpoint->output_count - retained,
+			retained);
+		endpoint->output_count = retained;
+		count = read(endpoint->client_fd,
+			     endpoint->output + retained,
+			     sizeof(endpoint->output) - retained);
+		if (count > 0) {
+			endpoint->output_count += (size_t)count;
+			continue;
+		}
+		if (count == 0)
+			return true;
+		if (errno == EINTR)
+			continue;
+		return errno == EAGAIN || errno == EWOULDBLOCK;
+	}
+}
+
+static bool run_recording_replay_output(void)
+{
+	struct integration_endpoint endpoint = { 0 };
+	char long_text[ENDPOINT_OUTPUT_CAPACITY];
+	const char *texts[] = { NULL, "", "nonce", long_text };
+	uint8_t noise[ENDPOINT_OUTPUT_CAPACITY * 3u] = { 0 };
+	int sockets[2];
+	int flags;
+	bool seen = false;
+
+	memset(long_text, 'x', sizeof(long_text) - 2u);
+	long_text[sizeof(long_text) - 2u] = 'y';
+	long_text[sizeof(long_text) - 1u] = '\0';
+	CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) == 0,
+	      "recording replay output sockets failed");
+	endpoint.client_fd = sockets[1];
+	flags = fcntl(endpoint.client_fd, F_GETFL);
+	CHECK(flags >= 0 &&
+		      fcntl(endpoint.client_fd, F_SETFL, flags | O_NONBLOCK) == 0,
+	      "recording replay output socket is not nonblocking");
+	for (size_t index = 0; index < ARRAY_LENGTH(texts); ++index) {
+		const char *text = texts[index];
+		size_t length = text != NULL ? strlen(text) : 0;
+
+		endpoint.output_count = 0;
+		seen = false;
+		CHECK(write(sockets[0], noise, sizeof(noise)) == sizeof(noise) &&
+			      recording_replay_drain_online(&endpoint, text, &seen) &&
+			      !seen && endpoint.output_count ==
+				      (length != 0 ? length - 1u : 0),
+		      "recording replay did not bound unmatched binary output");
+		if (length != 0) {
+			size_t prefix = length / 2u;
+
+			CHECK(write(sockets[0], text, prefix) == (ssize_t)prefix &&
+				      recording_replay_drain_online(&endpoint, text, &seen) &&
+				      !seen &&
+				      write(sockets[0], text + prefix, length - prefix) ==
+					      (ssize_t)(length - prefix) &&
+				      write(sockets[0], noise, sizeof(noise)) == sizeof(noise) &&
+				      recording_replay_drain_online(&endpoint, text, &seen) &&
+				      seen && endpoint.output_count == 0,
+			      "recording replay lost a split substring or retained consumed data");
+		}
+	}
+	close(sockets[0]);
+	CHECK(recording_replay_drain_online(&endpoint, "nonce", &seen),
+	      "recording replay rejected terminal EOF");
+	close(sockets[1]);
+	CHECK(!recording_replay_drain_online(&endpoint, "nonce", &seen),
+	      "recording replay hid a terminal read error");
+	return true;
+}
+
 static bool output_contains_bytes(
 	const struct integration_endpoint *endpoint,
 	const uint8_t *bytes, size_t byte_count)
@@ -3171,45 +3267,44 @@ static bool run_v90_recording_replay(
 			endpoint.receive, endpoint.transmit_codewords,
 			endpoint.transmit, (int)frame_count, &exact_output);
 		offset += frame_count;
-		CHECK(endpoint_drain(&endpoint),
-		      "V.90 recording replay terminal output overflowed");
+		if (modem_is_online(endpoint.modem, DP_V90) ||
+		    modem_is_online(endpoint.modem, DP_V34)) {
+			CHECK(recording_replay_drain_online(
+				      &endpoint, expected_text, &expected_text_seen),
+			      "V.90 recording replay could not drain online output");
+		} else {
+			CHECK(endpoint_drain(&endpoint),
+			      "V.90 recording replay terminal output overflowed");
+		}
 		v8_seen = v8_seen || v8_before;
 		if (handoff_at == SIZE_MAX && v8_before &&
 		    endpoint.modem->dp != NULL &&
 		    endpoint.modem->dp->id == DP_V90)
 			handoff_at = offset;
-		if (fallback_at == SIZE_MAX && v90_before &&
+		if (fallback_at == SIZE_MAX && (v8_before || v90_before) &&
 		    endpoint.modem->dp != NULL &&
 		    endpoint.modem->dp->id == DP_V34)
 			fallback_at = offset;
-		if (fallback_at != SIZE_MAX && expected_text_length == 0 &&
-		    modem_is_online(endpoint.modem, DP_V34))
-			endpoint.output_count = 0;
-		if (modem_is_online(endpoint.modem, DP_V90)) {
-			if (connected_at == SIZE_MAX)
-				connected_at = offset;
-			if (expected_text_length != 0 &&
-			    output_contains(&endpoint, expected_text))
-				expected_text_seen = true;
-			/* The external recording may continue with arbitrary data,
-			 * while this replay has no terminal consumer. Preserve only
-			 * enough output to find an expected substring across frames. */
-			if (expected_text_length == 0 || expected_text_seen) {
-				endpoint.output_count = 0;
-			} else if (endpoint.output_count >= expected_text_length) {
-				size_t retained = expected_text_length - 1u;
-
-				memmove(endpoint.output,
-					endpoint.output + endpoint.output_count - retained,
-					retained);
-				endpoint.output_count = retained;
-			}
-		}
+		if (connected_at == SIZE_MAX &&
+		    modem_is_online(endpoint.modem, DP_V90))
+			connected_at = offset;
 	}
 	CHECK(expected_text_length == 0 || expected_text_seen,
 	      "V.90 recording did not reproduce expected text '%s'",
 	      expected_text != NULL ? expected_text : "");
-	if (!require_carrier) {
+	if (fallback_at != SIZE_MAX) {
+		CHECK(endpoint.modem->dp != NULL &&
+			      endpoint.modem->dp->id == DP_V34,
+		      "V.90 recording lost its V.34 fallback owner (handoff %zu, fallback %zu, final DP %d/status %d)",
+		      handoff_at, fallback_at,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->id : -1,
+		      endpoint.modem->dp != NULL ?
+			      (int)endpoint.modem->dp->status : -1);
+		fprintf(stderr,
+			"[       OK ] V.90 recording selected V.34 fallback over %s (%zu octets, fallback at %zu)\n",
+			codec_name(codec), recording_count, fallback_at);
+	} else if (!require_carrier) {
 		/* A recording captured from a peer that never received CJ cannot
 		 * contain the interactive Phase 2 response to a repaired caller.
 		 * It can still independently prove ANSam/JM acceptance and the
@@ -3224,18 +3319,6 @@ static bool run_v90_recording_replay(
 		fprintf(stderr,
 			"[       OK ] outgoing V.90 V.8 recording replay over %s (%zu octets, handoff at %zu)\n",
 			codec_name(codec), recording_count, handoff_at);
-	} else if (fallback_at != SIZE_MAX) {
-		CHECK(endpoint.modem->dp != NULL &&
-			      endpoint.modem->dp->id == DP_V34,
-		      "V.90 recording lost its V.34 fallback owner (handoff %zu, fallback %zu, final DP %d/status %d)",
-		      handoff_at, fallback_at,
-		      endpoint.modem->dp != NULL ?
-			      (int)endpoint.modem->dp->id : -1,
-		      endpoint.modem->dp != NULL ?
-			      (int)endpoint.modem->dp->status : -1);
-		fprintf(stderr,
-			"[       OK ] V.90 recording selected V.34 fallback over %s (%zu octets, fallback at %zu)\n",
-			codec_name(codec), recording_count, fallback_at);
 	} else {
 		CHECK(connected_at != SIZE_MAX &&
 			      recording_count - connected_at >=
@@ -3686,6 +3769,12 @@ int main(void)
 
 	if (v34_matrix_filter != NULL && v34_matrix_filter[0] != '\0')
 		return run_v34_rate_matrix(v34_matrix_filter) ? 0 : 1;
+	fprintf(stderr, "[ RUN      ] bounded recording replay output\n");
+	if (!run_recording_replay_output()) {
+		fprintf(stderr, "[  FAILED  ] bounded recording replay output\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] bounded recording replay output\n");
 	fprintf(stderr, "[ RUN      ] V.22 answer response deadline\n");
 	if (!run_v22_answer_response_deadline()) {
 		fprintf(stderr, "[  FAILED  ] V.22 answer response deadline\n");

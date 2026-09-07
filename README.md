@@ -354,10 +354,14 @@ samples while preserving the exact recorded G.711 codewords; it defaults to
 By default, call direction selects the conventional analogue-originator/
 digital-answerer topology; set `V90_REPLAY_PCM_ROLE` to `analog` or `digital`
 when a recording exercises the opposite line role. An answered call or an
-explicitly digital originating call must sustain carrier. Either can set
+explicitly digital originating call must sustain PCM carrier unless it selects
+V.34 fallback. Fallback selected directly in V.8 or later in V.90 is reported
+separately as a selection check, not a PCM data pass. Any call can set
 `V90_REPLAY_EXPECT_TEXT` to require an exact decoded terminal substring after
-CONNECT. This distinguishes a sustained carrier from a usable receive data path
-while keeping the recording itself in the external evidence store.
+CONNECT, including after fallback. Online output is consumed with bounded
+storage while preserving matches across reads. This distinguishes a sustained
+carrier from a usable receive data path while keeping the recording itself in
+the external evidence store.
 
 For short local iterations, `MODEM_INTEGRATION_FILTER` selects ordinary cases
 by name and `V34_MATRIX_FILTER` selects V.34 rate-matrix cases by name. Both
