@@ -417,7 +417,9 @@ static bool observe_detector(
 			V34_PHASE2_DPSK_TIMING_OBSERVATIONS / 2u + 1u;
 	} else if (receiver->timing_locked &&
 		   --receiver->observations_until_bit == 0) {
-		*bit = current <= 0.0;
+		/* Zero contains no phase-reversal evidence. Keep clocking spaces
+		 * through carrier loss, not an all-mark recovery request. */
+		*bit = current < 0;
 		ready = true;
 		receiver->observations_until_bit =
 			V34_PHASE2_DPSK_TIMING_OBSERVATIONS;

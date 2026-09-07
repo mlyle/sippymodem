@@ -1336,6 +1336,11 @@ static enum pcm_call_result advance_phase2(
 	}
 	if (event->kind == PCM_PHASE2_EVENT_RETRAIN_REQUESTED)
 		return begin_retrain(call, false);
+	/* V.90 9.2.2.2.4, also used by V.92 full Phase 2: choose the
+	 * full-retrain recovery branch when the analogue modem misses INFO1d. */
+	if (event->kind == PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED &&
+	    call->local_role == V90_ANALOG_MODEM)
+		return begin_retrain(call, false);
 	if (pcm_phase2_is_ready_for_info1(&call->state.phase2)) {
 		struct pcm_startup_selection startup;
 

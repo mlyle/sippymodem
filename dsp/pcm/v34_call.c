@@ -546,6 +546,11 @@ static enum v34_call_result advance_phase2(
 
 	if (event->kind == V34_PHASE2_EVENT_FAILED)
 		return V34_CALL_FAILED;
+	/* V.34 11.2.2.2.4: an answerer missing INFO1c must initiate
+	 * full retrain or send INFOMARKSa, not retain Tone A indefinitely. */
+	if (event->kind == V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED &&
+	    call->local_role == V34_ANSWERING_STATION)
+		return begin_retrain(call, false);
 	if (v34_phase2_is_ready_for_info1(&call->state.phase2)) {
 		if (call->local_role == V34_CALLING_STATION &&
 		    !select_local_preemphasis(call, &call->local_info1))

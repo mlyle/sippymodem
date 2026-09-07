@@ -116,7 +116,9 @@ enum phase2_info1_result phase2_info1_reject_peer(
 /* A mode owner may replace the role-specific peer deadline with a recovery
  * procedure. Recovery preserves the INFO receiver and local waveform: Signal
  * B remains silent while Signal A retains Tone A. A late peer INFO frame can
- * therefore complete the same exchange without reconstructing Phase 2. */
+ * therefore complete the same exchange without reconstructing Phase 2.
+ * Retained Tone A is only an ownership handoff: a Signal A call owner must
+ * initiate full retrain or supply INFOMARKSa, not remain on steady tone. */
 enum phase2_info1_result phase2_info1_recover(
 	struct phase2_info1_exchange *exchange);
 

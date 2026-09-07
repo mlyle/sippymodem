@@ -1090,6 +1090,7 @@ enum call_impairment {
 	CALL_CODEWORD_REPLACED,
 	CALL_INITIAL_TONE_B_LOST,
 	CALL_INITIAL_TONE_A_LOST,
+	CALL_INITIAL_INFO1D_LOST,
 };
 
 static bool run_configured_call(
@@ -1105,6 +1106,8 @@ static bool run_configured_call(
 	bool probe_interrupted = false;
 	bool ranging_recovered = false;
 	bool reversal_recovered = false;
+	bool info1_interrupted = false;
+	bool info1_retrained = false;
 	size_t lost_a_samples = 0;
 	unsigned int replacement_stages = 0;
 
@@ -1154,6 +1157,13 @@ static bool run_configured_call(
 				lost_a_samples++;
 			}
 		}
+		if (impairment == CALL_INITIAL_INFO1D_LOST &&
+		    analog.call.stage == PCM_CALL_PHASE2 &&
+		    analog.call.state.phase2.stage == PCM_PHASE2_INFO1 &&
+		    !analog.call.retrain_active) {
+			analog_received = silence_octet(law);
+			info1_interrupted = true;
+		}
 		analog_received_sample = decode_octet(law, analog_received);
 		digital_received_sample = decode_octet(law, digital_received);
 		if (impairment == CALL_CODEWORD_REPLACED &&
@@ -1176,6 +1186,8 @@ static bool run_configured_call(
 			      &digital_transmitted),
 		      "law %u delay %zu V.90 call stopped at character %zu",
 		      (unsigned int)law, delay, clock);
+		info1_retrained |= info1_interrupted &&
+			analog.call.stage == PCM_CALL_RETRAIN_SILENCE;
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
 		if (goal_is_reached(goal, &analog, &digital)) {
@@ -1188,6 +1200,9 @@ static bool run_configured_call(
 	CHECK(impairment != CALL_INITIAL_TONE_A_LOST ||
 	      (lost_a_samples == 8000u && reversal_recovered),
 	      "lost Tone A did not exercise the one-second loss and timed reversal recovery");
+	CHECK(impairment != CALL_INITIAL_INFO1D_LOST ||
+	      (info1_interrupted && info1_retrained),
+	      "lost INFO1d did not exercise analogue timeout retraining");
 	CHECK(impairment != CALL_CODEWORD_REPLACED ||
 	      replacement_stages == ((1u << PCM_CALL_PHASE2) |
 				     (1u << PCM_CALL_PHASE3) |
@@ -1346,7 +1361,8 @@ static bool force_initial_info1_recovery(
 	struct pcm_phase2_info1_exchange *exchange;
 	int16_t transmitted;
 
-	if (!call_is_in_info1_exchange(call) || call->retrain_active)
+	if (!call_is_in_info1_exchange(call) || call->retrain_active ||
+	    call->local_role != V90_DIGITAL_MODEM)
 		return false;
 	exchange = &call->state.phase2.state.info1;
 	for (size_t sample = 0;
@@ -1567,8 +1583,91 @@ static bool initial_info1_marks_request_retrain(
 	return true;
 }
 
-static bool info1_retrain_preamble_crosses_deadline(
+static bool info1_timeout_restarts_analog(
 	const struct pcm_call *initial, enum g711_law law)
+{
+	struct pcm_call call = *initial;
+	const struct phase2_info1_exchange *exchange =
+		&initial->state.phase2.state.info1.control;
+	struct v34_retrain_detector detector;
+	bool detected;
+	bool qualified = false;
+	uint32_t remaining = PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
+		2u * exchange->round_trip_delay_samples -
+		exchange->peer_deadline_elapsed_samples;
+
+	CHECK(initial->local_role == V90_ANALOG_MODEM &&
+	      exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER && remaining > 0,
+	      "analogue INFO1 timeout fixture was not ready");
+	for (uint32_t sample = 0; sample < remaining; ++sample) {
+		struct pcm_call_observation observation;
+		uint8_t received = silence_octet(law);
+		uint8_t transmitted;
+		bool expired = sample + 1u == remaining;
+
+		CHECK(pcm_call_octet(
+			      &call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      observation.processed == PCM_CALL_PHASE2 &&
+		      observation.next == (expired ? PCM_CALL_RETRAIN_SILENCE :
+					     PCM_CALL_PHASE2) &&
+		      (observation.phase2.kind ==
+			       PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED) == expired,
+		      "analogue INFO1 timeout missed its deadline at %u/%u",
+		      sample + 1u, remaining);
+	}
+	CHECK(call.retrain_active && !call.retrain.peer_tone_retained &&
+	      call.peer_info0_stored &&
+	      memcmp(&call.peer_info0, &initial->peer_info0,
+		     sizeof(call.peer_info0)) == 0 &&
+	      call.round_trip_delay_samples == initial->round_trip_delay_samples &&
+	      v34_retrain_detector_init(&detector, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "analogue INFO1 timeout lost its retrain agreement");
+	for (size_t sample = 0;
+	     sample < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++sample) {
+		struct pcm_call_observation observation;
+		uint8_t received = silence_octet(law);
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(
+			      &call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      observation.processed == PCM_CALL_RETRAIN_SILENCE &&
+		      transmitted == received &&
+		      v34_retrain_detector_sample(
+			      &detector, decode_octet(law, transmitted), &detected) ==
+			      V34_PHASE2_TONE_OK && !detected,
+		      "analogue INFO1 timeout silence failed at %zu", sample);
+	}
+	CHECK(call.stage == PCM_CALL_PHASE2 &&
+	      call.state.phase2.stage == PCM_PHASE2_RANGING &&
+	      call.protocol == initial->protocol &&
+	      call.state.phase2.info0_protocol == initial->protocol,
+	      "analogue INFO1 timeout did not restart ranging");
+	for (size_t sample = 0;
+	     sample < V34_RETRAIN_TONE_SAMPLES + 2u * V34_PHASE2_TONE_WINDOW_SAMPLES;
+	     ++sample) {
+		struct pcm_call_observation observation;
+		uint8_t received = silence_octet(law);
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(
+			      &call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      v34_retrain_detector_sample(
+			      &detector, decode_octet(law, transmitted), &detected) ==
+			      V34_PHASE2_TONE_OK,
+		      "analogue INFO1 timeout Tone A failed at %zu", sample);
+		qualified |= detected;
+	}
+	CHECK(qualified, "analogue INFO1 timeout sent no qualifying retrain");
+	return true;
+}
+
+static bool info1_retrain_preamble(
+	const struct pcm_call *initial, enum g711_law law,
+	uint32_t remaining_samples)
 {
 	struct pcm_call call = *initial;
 	struct v34_phase2_tone_transmitter peer_tone;
@@ -1582,7 +1681,7 @@ static bool info1_retrain_preamble_crosses_deadline(
 		      PHASE2_NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
 	      "INFO1 boundary peer tone did not initialize");
 	/* The peer's silence arrives while INFO1 is still outstanding. Begin
-	 * its tone just before the local deadline, without seeding a detector. */
+	 * its tone before the local deadline, without seeding a detector. */
 	for (size_t sample = 0; sample < CALL_SAMPLE_LIMIT; ++sample) {
 		const struct phase2_info1_exchange *exchange =
 			&call.state.phase2.state.info1.control;
@@ -1597,7 +1696,7 @@ static bool info1_retrain_preamble_crosses_deadline(
 
 		if (exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
 		    deadline - exchange->peer_deadline_elapsed_samples ==
-			    V34_PHASE2_TONE_ACQUIRE_SAMPLES / 2u) {
+			    remaining_samples) {
 			before_deadline = true;
 			break;
 		}
@@ -1631,8 +1730,11 @@ static bool info1_retrain_preamble_crosses_deadline(
 			break;
 		}
 	}
-	CHECK(recovered && responded && call.retrain_active &&
-	      call.retrain.peer_tone_retained && pcm_call_is_valid(&call),
+	CHECK(recovered == (remaining_samples < V34_RETRAIN_TONE_SAMPLES) &&
+	      responded && call.retrain_active &&
+	      call.retrain.peer_tone_retained ==
+		      !(recovered && initial->local_role == V90_ANALOG_MODEM) &&
+	      pcm_call_is_valid(&call),
 	      "law %u role %u lost pre-timeout silence: recovery=%d response=%d",
 	      (unsigned int)law, (unsigned int)initial->local_role,
 	      recovered, responded);
@@ -1678,15 +1780,19 @@ static bool check_initial_info1_retrain_tone(enum g711_law law)
 	CHECK(stored[0] && stored[1],
 	      "law %u initial INFO1 calls were not retained",
 	      (unsigned int)law);
-	CHECK(info1_retrain_preamble_crosses_deadline(&retained[0], law) &&
-	      info1_retrain_preamble_crosses_deadline(&retained[1], law),
-	      "law %u INFO1 deadline lost the peer's retrain preamble",
-	      (unsigned int)law);
+	CHECK(info1_timeout_restarts_analog(&retained[0], law),
+	      "law %u analogue INFO1 timeout failed", (unsigned int)law);
+	for (size_t role = 0; role < ARRAY_LENGTH(retained); ++role)
+		CHECK(info1_retrain_preamble(
+			      &retained[role], law, 2u * V34_RETRAIN_TONE_SAMPLES) &&
+		      info1_retrain_preamble(
+			      &retained[role], law,
+			      V34_PHASE2_TONE_ACQUIRE_SAMPLES / 2u),
+		      "law %u role %zu INFO1 preamble failed",
+		      (unsigned int)law, role);
 	marks = retained[1];
 	CHECK(initial_info1_marks_request_retrain(&marks, law) &&
-	      force_initial_info1_recovery(&retained[0], law) &&
 	      force_initial_info1_recovery(&retained[1], law) &&
-	      initial_info1_accepts_retrain_tone(&retained[0], law) &&
 	      initial_info1_accepts_retrain_tone(&retained[1], law),
 	      "law %u initial INFO1 retrain tone failed",
 	      (unsigned int)law);
@@ -1700,6 +1806,47 @@ static bool test_initial_info1_retrain_tone(void)
 		CHECK(check_initial_info1_retrain_tone(law),
 		      "law %u initial INFO1 retrain matrix failed",
 		      (unsigned int)law);
+	return true;
+}
+
+static bool test_v92_info1_timeout(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration analog_configuration =
+			v92_configuration(V90_ANALOG_MODEM, law);
+		struct pcm_call_configuration digital_configuration =
+			v92_configuration(V90_DIGITAL_MODEM, law);
+		struct pcm_call analog;
+		struct pcm_call digital;
+		struct channel channel;
+		bool waiting = false;
+
+		CHECK(channel_init(&channel, law, 3u) &&
+		      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+		      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+		      "V.92 INFO1 timeout calls did not initialize");
+		for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+			struct pcm_call_observation observation;
+			uint8_t analog_received, digital_received;
+			uint8_t analog_transmitted, digital_transmitted;
+
+			channel_receive(&channel, &analog_received, &digital_received);
+			CHECK(pcm_call_octet(
+				      &analog, analog_received, decode_octet(law, analog_received),
+				      &analog_transmitted, &observation) == PCM_CALL_OK &&
+			      pcm_call_octet(
+				      &digital, digital_received, decode_octet(law, digital_received),
+				      &digital_transmitted, &observation) == PCM_CALL_OK,
+			      "V.92 INFO1 timeout setup failed at %zu", clock);
+			channel_transmit(&channel, analog_transmitted, digital_transmitted);
+			if (call_is_in_info1_exchange(&analog)) {
+				waiting = true;
+				break;
+			}
+		}
+		CHECK(waiting && info1_timeout_restarts_analog(&analog, law),
+		      "law %u V.92 full INFO1 timeout failed", (unsigned int)law);
+	}
 	return true;
 }
 
@@ -4859,6 +5006,17 @@ static bool test_initial_probe_loss(void)
 	return true;
 }
 
+static bool test_initial_info1_loss(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_configured_call(law, 13u, CALL_GOAL_ONLINE_DATA,
+			      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+			      DATA_DOWNSTREAM_RATE, CALL_INITIAL_INFO1D_LOST),
+		      "law %u lost INFO1d did not recover online V.90 data",
+		      (unsigned int)law);
+	return true;
+}
+
 static bool test_generated_calls(void)
 {
 	static const size_t complete_delays[] = {
@@ -5287,6 +5445,8 @@ int main(void)
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
+		{ "lost INFO1d recovers online data", test_initial_info1_loss },
+		{ "V.92 full INFO1 timeout", test_v92_info1_timeout },
 		{ "remote retrain during final PCM training",
 		  test_final_training_remote_retrain },
 		{ "completed V.90 return drains DIL",

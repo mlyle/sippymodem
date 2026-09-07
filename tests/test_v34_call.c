@@ -1026,6 +1026,87 @@ static bool complete_remote_retrain_silence(
 	return true;
 }
 
+static bool info1_timeout_restarts_answerer(
+	const struct endpoint *initial, bool pcma)
+{
+	struct endpoint endpoint = *initial;
+	const struct phase2_info1_exchange *exchange =
+		&initial->call.state.phase2.state.info1.control;
+	struct v34_info0 peer_info0;
+	struct v34_retrain_detector detector;
+	bool detected;
+	bool qualified = false;
+	uint32_t remaining = PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
+		2u * exchange->round_trip_delay_samples -
+		exchange->peer_deadline_elapsed_samples;
+
+	CHECK(initial->call.local_role == V34_ANSWERING_STATION &&
+	      exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+	      v34_phase2_peer_info0(&initial->call.state.phase2, &peer_info0) ==
+		      V34_PHASE2_OK && remaining > 0,
+	      "answerer INFO1 timeout fixture was not ready");
+	for (uint32_t sample = 0; sample < remaining; ++sample) {
+		struct v34_call_observation observation;
+		int16_t transmitted;
+		bool expired = sample + 1u == remaining;
+
+		CHECK(endpoint_sample(
+			      &endpoint, codec_round_trip(0, pcma),
+			      supply_mapping_frame, &transmitted, &observation) &&
+		      observation.processed == V34_CALL_PHASE2 &&
+		      observation.next == (expired ? V34_CALL_RETRAIN_SILENCE :
+					     V34_CALL_PHASE2) &&
+		      (observation.events.phase2.kind ==
+			       V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED) == expired,
+		      "answerer INFO1 timeout missed its deadline at %u/%u",
+		      sample + 1u, remaining);
+	}
+	CHECK(endpoint.call.retrain_active &&
+	      !endpoint.call.retrain.peer_tone_retained &&
+	      endpoint.call.peer_info0_stored &&
+	      memcmp(&endpoint.call.peer_info0, &peer_info0, sizeof(peer_info0)) == 0 &&
+	      endpoint.call.round_trip_delay_samples ==
+		      initial->call.round_trip_delay_samples &&
+	      v34_retrain_detector_init(&detector, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK,
+	      "answerer INFO1 timeout lost its retrain agreement");
+	for (size_t sample = 0;
+	     sample < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++sample) {
+		struct v34_call_observation observation;
+		int16_t transmitted;
+
+		CHECK(endpoint_sample(
+			      &endpoint, codec_round_trip(0, pcma),
+			      supply_mapping_frame, &transmitted, &observation) &&
+		      observation.processed == V34_CALL_RETRAIN_SILENCE &&
+		      transmitted == 0 &&
+		      v34_retrain_detector_sample(
+			      &detector, codec_round_trip(transmitted, pcma),
+			      &detected) == V34_PHASE2_TONE_OK && !detected,
+		      "answerer INFO1 timeout silence failed at %zu", sample);
+	}
+	CHECK(endpoint.call.stage == V34_CALL_PHASE2 &&
+	      endpoint.call.state.phase2.stage == V34_PHASE2_RANGING,
+	      "answerer INFO1 timeout did not restart ranging");
+	for (size_t sample = 0;
+	     sample < V34_RETRAIN_TONE_SAMPLES + 2u * V34_PHASE2_TONE_WINDOW_SAMPLES;
+	     ++sample) {
+		struct v34_call_observation observation;
+		int16_t transmitted;
+
+		CHECK(endpoint_sample(
+			      &endpoint, codec_round_trip(0, pcma),
+			      supply_mapping_frame, &transmitted, &observation) &&
+		      v34_retrain_detector_sample(
+			      &detector, codec_round_trip(transmitted, pcma),
+			      &detected) == V34_PHASE2_TONE_OK,
+		      "answerer INFO1 timeout Tone A failed at %zu", sample);
+		qualified |= detected;
+	}
+	CHECK(qualified, "answerer INFO1 timeout sent no qualifying retrain");
+	return true;
+}
+
 static bool info1_retrain_before_deadline(
 	const struct endpoint *initial, bool pcma, uint32_t remaining_samples)
 {
@@ -1079,6 +1160,8 @@ static bool info1_retrain_before_deadline(
 			      &endpoint, codec_round_trip(remote_sample, pcma),
 			      supply_mapping_frame, &transmitted, &observation),
 		      "INFO1 peer tone failed at sample %zu", index);
+		recovered |= observation.events.phase2.kind ==
+			     V34_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
 		if (endpoint.call.stage == V34_CALL_RETRAIN_SILENCE) {
 			responded = true;
 			break;
@@ -1086,14 +1169,17 @@ static bool info1_retrain_before_deadline(
 		CHECK(endpoint.call.stage == V34_CALL_PHASE2 &&
 		      endpoint.call.state.phase2.stage == V34_PHASE2_INFO1,
 		      "INFO1 peer tone left its exchange before retrain");
-		recovered |= endpoint.call.state.phase2.state.info1.control.phase ==
-			     PHASE2_INFO1_RECOVERING;
 	}
 	CHECK(responded && endpoint.call.retrain_active &&
 	      recovered == (remaining_samples < V34_RETRAIN_TONE_SAMPLES),
 	      "INFO1 role=%d pcma=%d remaining=%u recovery=%d response=%d",
 	      initial->call.local_role, pcma, remaining_samples,
 	      recovered, responded);
+	if (recovered && initial->call.local_role == V34_ANSWERING_STATION) {
+		CHECK(!endpoint.call.retrain.peer_tone_retained,
+		      "answerer timeout claimed a qualified peer tone");
+		return true;
+	}
 	return complete_remote_retrain_silence(&endpoint, &remote_tone, pcma);
 }
 
@@ -1132,6 +1218,8 @@ static bool test_info1_retrain_preamble(void)
 			}
 		}
 		CHECK(stored[0] && stored[1], "INFO1 calls were not retained");
+		CHECK(info1_timeout_restarts_answerer(&retained[1], law != 0),
+		      "INFO1 answerer timeout failed law=%u", law);
 		for (size_t role = 0; role < ARRAY_LENGTH(retained); ++role)
 			CHECK(info1_retrain_before_deadline(
 				      &retained[role], law != 0,

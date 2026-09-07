@@ -358,6 +358,57 @@ static bool test_info_marks_detection(void)
 	return true;
 }
 
+static bool test_carrier_loss_is_not_info_marks(void)
+{
+	for (int role = V34_CALLING_STATION;
+	     role <= V34_ANSWERING_STATION; ++role) {
+		for (int codec = TEST_CODEC_LINEAR;
+		     codec <= TEST_CODEC_PCMA; ++codec) {
+			struct v34_phase2_dpsk_transmitter transmitter;
+			struct v34_phase2_info_audio_receiver receiver;
+			const size_t quiet_begin = V34_PHASE2_SAMPLE_RATE;
+			const size_t quiet_end = quiet_begin + 560u;
+			unsigned int detections = 0;
+
+			CHECK(v34_phase2_dpsk_transmitter_init(
+				      &transmitter, role, TEST_PCM_AMPLITUDE) ==
+				      V34_PHASE2_DPSK_OK &&
+			      v34_phase2_info_audio_receiver_init(
+				      &receiver, v34_station_peer_role(role),
+				      TEST_PAYLOAD_BITS) == V34_PHASE2_INFO_AUDIO_OK,
+			      "carrier-loss endpoints did not initialize");
+			/* Tone, the full-retrain silence, then genuine INFOMARKS.
+			 * Keep the same receiver and its recovered bit clock. */
+			for (size_t index = 0;
+			     index < quiet_end + TEST_SAMPLE_LIMIT; ++index) {
+				struct v34_phase2_info_event event;
+				int16_t sample;
+				bool accepted;
+
+				CHECK(v34_phase2_dpsk_transmitter_sample(
+					      &transmitter, index >= quiet_end,
+					      &sample, &accepted) == V34_PHASE2_DPSK_OK,
+				      "carrier-loss transmitter stopped");
+				if (index >= quiet_begin && index < quiet_end)
+					sample = 0;
+				CHECK(v34_phase2_info_audio_receiver_sample(
+					      &receiver, codec_round_trip(sample, codec),
+					      &event) == V34_PHASE2_INFO_AUDIO_OK &&
+				      event.type == V34_PHASE2_INFO_NO_EVENT,
+				      "carrier-loss receiver stopped or reported a frame");
+				CHECK(index >= quiet_end || !event.info_marks,
+				      "role %d codec %d carrier loss became INFOMARKS at %zu",
+				      role, codec, index);
+				detections += event.info_marks;
+			}
+			CHECK(detections >= 2u,
+			      "role %d codec %d did not receive marks after silence",
+			      role, codec);
+		}
+	}
+	return true;
+}
+
 struct test_following_tone {
 	uint32_t carrier_phase;
 	uint32_t carrier_step;
@@ -721,6 +772,7 @@ int main(void)
 		{ "weak physical frame recovery", test_weak_frame_recovery },
 		{ "silence and noise rejection", test_nonframe_input },
 		{ "INFO marks detection", test_info_marks_detection },
+		{ "carrier loss is not INFO marks", test_carrier_loss_is_not_info_marks },
 		{ "receiver handoff delay", test_receiver_handoff_delay },
 		{ "validation", test_validation },
 	};
