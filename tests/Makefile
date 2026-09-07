@@ -2582,6 +2582,7 @@ V90_PHASE4_STATION_EXCHANGE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_station_exchange
 V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_station_exchange.o \
+	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v90_phase4_station_fixture.o \
 	$(BUILD_DIR)/v90_downstream_data_handoff.o \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
@@ -2615,7 +2616,6 @@ V90_PHASE4_DIGITAL_STARTUP_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase4_digital_startup
 V90_PHASE4_DIGITAL_STARTUP_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase4_digital_startup.o \
-	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v90_phase4_startup.o \
 	$(BUILD_DIR)/v90_phase4_digital_startup.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase4_station_exchange.o, \

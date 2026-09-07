@@ -395,6 +395,7 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_digital_handoff digital_handoff = {
 		.transmit = *digital,
 		.receive = *cp_receive,
+		.peer_upstream_rate_mask = training->upstream_rate_mask,
 	};
 	struct v90_analog_path analog_path;
 	struct v90_digital_path digital_path;

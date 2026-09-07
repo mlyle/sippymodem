@@ -3,7 +3,6 @@
 #include "v90_phase4_digital_startup.h"
 
 #include "memory_region.h"
-#include "v34_data_quality.h"
 
 static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
@@ -26,7 +25,6 @@ static bool select_initial_mp(
 {
 	struct v90_mp_record limited;
 	const struct v90_mp_parameters *parameters;
-	uint16_t common_mask;
 	uint8_t maximum;
 
 	if (!initial_mp_is_valid(configured) ||
@@ -35,11 +33,9 @@ static bool select_initial_mp(
 	    selected == NULL)
 		return false;
 	parameters = mp_parameters(configured);
-	/* MP advertises the local receive-rate set.  The Phase 3 probe, CPt
-	 * and trained receive quality limit its maximum, not that set. */
-	common_mask = (uint16_t)(
-		parameters->upstream_rate_capability_mask &
-		station->peer_upstream_rate_mask);
+	/* The probe supplies an initial ceiling. Receive quality is measured
+	 * under simultaneous TRN2d before the first MP is encoded, not under
+	 * the much quieter Ri signal at this CPt boundary. */
 	limited = *configured;
 	maximum = parameters->maximum_upstream_rate_2400_bps_units;
 	if (maximum >
@@ -50,22 +46,6 @@ static bool select_initial_mp(
 		    station->receive.transmitting_profile
 			    .projected_data_rate_2400_bps_units))
 		return false;
-	parameters = mp_parameters(&limited);
-	maximum = parameters->maximum_upstream_rate_2400_bps_units;
-	if (common_mask != 0u && maximum != 0u) {
-		uint8_t selected_rate;
-
-		/* V.90's mask starts at 4800; the shared upstream QAM policy
-		 * starts at 2400.  Retain only mutually enabled receive rates. */
-		if (v34_data_quality_select_receive_rate(
-			    station->receive.transmitting_profile.symbol_rate,
-			    (uint16_t)(common_mask << 1u), maximum,
-			    &station->receive.line.equalizer.quality,
-			    &selected_rate) == V34_DATA_QUALITY_OK &&
-		    !v90_mp_record_limit_maximum_upstream_rate(
-			    &limited, selected_rate))
-			return false;
-	}
 	/* CPt describes the peer transmitter; it cannot make the digital
 	 * receiver's MP capability record invalid.  If no common rate is usable
 	 * under this maximum, send the local MP and let the analogue modem
@@ -78,10 +58,8 @@ static bool configured_mp_matches(
 	const struct v90_phase4_digital_handoff *handoff,
 	const struct v90_mp_record *record)
 {
-	struct pcm_downstream_tx transmitter = handoff->transmit.transmitter;
-
-	return pcm_downstream_tx_start_mp(&transmitter, record) ==
-	       PCM_DOWNSTREAM_TX_OK;
+	return v90_mp_record_parameters_equal(
+		&handoff->transmit.transmitter.control.mp, record);
 }
 
 bool v90_phase4_digital_startup_is_valid(
@@ -121,6 +99,8 @@ bool v90_phase4_digital_startup_is_valid(
 	}
 	case V90_PHASE4_STARTUP_COMPLETE:
 		return !startup->failed &&
+		       (startup->state.complete.peer_upstream_rate_mask &
+			(uint16_t)~V90_MP_RATE_CAPABILITY_MASK) == 0u &&
 		       v90_phase4_digital_transmit_handoff_is_valid(
 			       &startup->state.complete.transmit) &&
 		       v90_phase4_cp_line_rx_is_valid(
@@ -293,6 +273,8 @@ static enum v90_phase4_startup_result advance_startup(
 		    &startup->state.continuing.station)) {
 		struct v90_phase4_digital_handoff complete = {
 			.receive = startup->state.continuing.receive,
+			.peer_upstream_rate_mask = startup->state.continuing
+				.station.peer_upstream_rate_mask,
 		};
 
 		if (v90_phase4_digital_station_transmit_handoff(

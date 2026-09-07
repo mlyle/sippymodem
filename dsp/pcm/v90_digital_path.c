@@ -4,6 +4,7 @@
 
 #include "g711.h"
 #include "memory_region.h"
+#include "v34_data_quality.h"
 #include "v34_survivor.h"
 
 #include <stddef.h>
@@ -150,6 +151,8 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 	    path->control_mapping.law != path->law ||
 	    !v90_phase4_cp_rx_is_valid(&path->control_symbols) ||
 	    !initial_mp_is_valid(&path->local_mp) ||
+	    (path->peer_upstream_rate_mask &
+	     (uint16_t)~V90_MP_RATE_CAPABILITY_MASK) != 0u ||
 	    !downstream_rate_mask_is_valid(
 		    path->enabled_downstream_rate_mask) ||
 	    !v34_constellation_size_is_valid(
@@ -202,6 +205,7 @@ enum v90_digital_path_result v90_digital_path_init(
 		initialized.downstream.training.control.mp;
 	initialized.enabled_downstream_rate_mask =
 		enabled_downstream_rate_mask;
+	initialized.peer_upstream_rate_mask = handoff->peer_upstream_rate_mask;
 	initialized.rate_renegotiation_constellation =
 		rate_renegotiation_constellation;
 	if (v90_upstream_rx_init(
@@ -299,6 +303,49 @@ static enum v90_digital_path_result stream_result(
 	return V90_DIGITAL_PATH_INTERNAL_ERROR;
 }
 
+static bool select_initial_receive_rate(struct v90_digital_path *path)
+{
+	struct pcm_downstream_tx *transmit = &path->downstream.training;
+	struct v90_upstream_rx *receive = &path->upstream.startup;
+	struct v90_mp_record selected = path->local_mp;
+	const struct v90_mp_parameters *parameters =
+		selected.type == V90_MP_RECORD_TYPE0 ?
+			&selected.parameters.type0 :
+			&selected.parameters.type1.common;
+	uint16_t common_mask = (uint16_t)(
+		parameters->upstream_rate_capability_mask &
+		path->peer_upstream_rate_mask);
+	uint8_t maximum = parameters->maximum_upstream_rate_2400_bps_units;
+	uint8_t rate;
+
+	/* Wait until the full conditioning interval has entered the coder.
+	 * After the next frame MP is immutable, including spectral look-ahead.
+	 * Online renegotiation retains its preceding MP and receive geometry. */
+	if (path->rate_renegotiation_active ||
+	    transmit->stage != PCM_DOWNSTREAM_TX_TRN2D ||
+	    transmit->accepted_frames < V90_PHASE4_TRN2D_INITIAL_FRAMES ||
+	    transmit->queue_count != 0u ||
+	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP ||
+	    receive->stage != V90_UPSTREAM_RX_STAGE_CP || maximum == 0u ||
+	    common_mask == 0u)
+		return true;
+	/* V.90's mask starts at 4800; the shared QAM quality policy starts
+	 * at 2400. Do not invent a rate if there is no usable intersection. */
+	if (v34_data_quality_select_receive_rate(
+		    receive->state.cp.transmitting_profile.symbol_rate,
+		    (uint16_t)(common_mask << 1u), maximum,
+		    &receive->state.cp.line.equalizer.quality, &rate) !=
+	    V34_DATA_QUALITY_OK)
+		return true;
+	if (!v90_mp_record_limit_maximum_upstream_rate(&selected, rate) ||
+	    pcm_downstream_tx_start_mp(transmit, &selected) !=
+		    PCM_DOWNSTREAM_TX_OK)
+		return false;
+	path->local_mp = selected;
+	receive->local_mp = selected;
+	return true;
+}
+
 static enum v90_digital_path_result emit_downstream(
 	struct v90_digital_path *path,
 	v90_downstream_frame_source source, void *source_context,
@@ -306,10 +353,14 @@ static enum v90_digital_path_result emit_downstream(
 {
 	if (path->downstream_stage ==
 	    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING) {
-		struct pcm_downstream_tx training = path->downstream.training;
+		struct pcm_downstream_tx training;
 		struct pcm_downstream_symbol symbol;
-		enum pcm_downstream_tx_result result =
-			pcm_downstream_tx_next(&training, &symbol);
+		enum pcm_downstream_tx_result result;
+
+		if (!select_initial_receive_rate(path))
+			return V90_DIGITAL_PATH_INTERNAL_ERROR;
+		training = path->downstream.training;
+		result = pcm_downstream_tx_next(&training, &symbol);
 
 		if (result == PCM_DOWNSTREAM_TX_OK) {
 			path->downstream.training = training;

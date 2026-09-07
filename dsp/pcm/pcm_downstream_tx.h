@@ -117,9 +117,11 @@ enum pcm_downstream_tx_result pcm_downstream_tx_init(
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter);
 bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 
-/* Queue immutable MP parameters. Acknowledgement must be clear; initial V.90
- * MP begins at the first source-frame boundary after the one-second TRN2d
- * conditioning interval. Repeating an identical request is harmless. A
+/* Configure MP parameters. They may be refined during TRN2d, but become
+ * immutable when the first MP source frame enters the coder, even if that
+ * frame is still in the spectral look-ahead. Acknowledgement must be clear;
+ * initial V.90 MP begins after the one-second TRN2d conditioning interval.
+ * Repeating an identical request is harmless. A
  * zero-rate MP sends two complete records, then drains the spectral coder
  * without Ed/B1d: V.90 9.7 terminates the link through that rate sequence. */
 enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(

@@ -513,10 +513,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	if (!v90_mp_record_is_valid(record) ||
 	    v90_mp_record_acknowledges_cp(record))
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
-	if (transmitter->control_configured)
-		return same_mp_record(transmitter, record) ?
-			       PCM_DOWNSTREAM_TX_OK :
-			       PCM_DOWNSTREAM_TX_INVALID_STATE;
+	if (transmitter->control_configured) {
+		if (same_mp_record(transmitter, record))
+			return PCM_DOWNSTREAM_TX_OK;
+		if (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D)
+			return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	}
 	if (!encode_mp_sequence(
 		    record, transmitter->encoder.mapping.frame_bits, false,
 		    sequence, &sequence_bits) ||

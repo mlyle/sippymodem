@@ -95,6 +95,7 @@ struct v90_digital_path {
 	struct v90_phase4_cp_rx control_symbols;
 	struct v90_mp_record local_mp;
 	uint32_t enabled_downstream_rate_mask;
+	uint16_t peer_upstream_rate_mask;
 	enum g711_law law;
 	enum v34_constellation_size rate_renegotiation_constellation;
 	enum v90_digital_path_downstream_stage downstream_stage;

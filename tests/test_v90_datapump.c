@@ -888,17 +888,18 @@ static bool test_dc_biased_host_echo(void)
 
 	CHECK(v90_datapump_register() == 0,
 	      "DC-biased V.90 registration failed");
-	/* Residual training error selects 28.8 when a lower rate is enabled.
-	 * Also retain exact-data coverage with the receiver fixed at 33.6. */
+	/* The conditioned receiver supports 33.6 despite the earlier Ri-era
+	 * residual error. Verify both an open and fixed rate window, with enough
+	 * exact data to cross several online quality windows after B1. */
 	for (size_t index = 0; index < ARRAY_LENGTH(MINIMUM_RATES); ++index)
 		CHECK(run_pair_with_rate_window(
 			      G711_LAW_PCMU,
 			      56000, MINIMUM_RATES[index], 33600,
-			      MINIMUM_RATES[index], 3429,
-			      SUSTAINED_RECEIVED_BITS, true,
+			      33600, 3429,
+			      2u * 33600u, true,
 			      MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
 			      RETURNED_ECHO_DC_BIASED, UPSTREAM_CHANNEL_CLEAN),
-		      "DC-biased digital host echo lost exact upstream data at %u",
+		      "DC-biased digital host echo lost exact data with minimum %u",
 		      MINIMUM_RATES[index]);
 	CHECK(v90_datapump_unregister() == 0,
 	      "DC-biased V.90 registration remained busy");

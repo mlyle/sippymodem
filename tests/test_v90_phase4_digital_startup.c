@@ -2,6 +2,7 @@
 
 #include <v90_phase4_analog_station.h>
 #include <v90_phase4_digital_startup.h>
+#include <v90_digital_path.h>
 
 #include <g711.h>
 
@@ -190,12 +191,11 @@ static bool run_exchange(
 		uint8_t next_to_analog;
 		uint8_t next_to_digital;
 
-		/* Exercise MP selection with a completed training measurement, not
-		 * a noisy waveform.  Negative leaves the fixture's metric intact. */
+		/* Ri-era quality must not freeze the final MP rate. */
 		if (before == V90_PHASE4_STARTUP_INITIAL && decision_metric >= 0)
 			startup.state.initial.receive.line.equalizer.quality =
 				(struct v34_adaptive_equalizer_quality){
-					.decision_metric = decision_metric,
+					.decision_metric = INT16_MAX,
 				};
 		if (before == V90_PHASE4_STARTUP_CONTINUING) {
 			const struct v34_carrier_demodulator *carrier =
@@ -251,14 +251,14 @@ static bool run_exchange(
 	}
 	CHECK(startup.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units ==
-		      expected_maximum &&
+		      projected_rate &&
 	      startup.initial_mp.parameters.type0
 		      .upstream_rate_capability_mask == 0x1555u,
 	      "law %u metric %d selected rate %u instead of %u or changed mask",
 	      (unsigned int)law, decision_metric,
 	      startup.initial_mp.parameters.type0
 		      .maximum_upstream_rate_2400_bps_units,
-	      expected_maximum);
+	      projected_rate);
 	CHECK(complete && tracking_continuation && continued_octets > 0 &&
 	      v90_phase4_digital_startup_handoff(
 		      &startup, &handoff) == V90_PHASE4_STARTUP_OK &&
@@ -270,6 +270,8 @@ static bool run_exchange(
 	      !v90_phase4_cp_line_rx_has_pending_record(&handoff.receive),
 	      "law %u digital startup lost a character: %zu",
 	      (unsigned int)law, continued_octets);
+	CHECK(handoff.peer_upstream_rate_mask == peer_rate_mask,
+	      "CPt upstream capabilities were lost in the handoff");
 	{
 		struct v90_phase4_digital_startup mismatched = startup;
 
@@ -291,6 +293,65 @@ static bool run_exchange(
 		      memcmp(&startup, &saved, sizeof(startup)) == 0,
 		      "law %u completed startup consumed a character",
 		      (unsigned int)law);
+	}
+	if (decision_metric >= 0) {
+		struct v90_digital_path path;
+		uint8_t output;
+		bool selected = false;
+
+		CHECK(v90_digital_path_init(
+			      &path, &handoff, V90_JD_RATE_CAPABILITY_MASK,
+			      V34_CONSTELLATION_4_POINT) == V90_DIGITAL_PATH_OK,
+		      "quality-selection path did not initialize");
+		for (size_t sample = 0; sample < CHARACTER_LIMIT; ++sample) {
+			struct pcm_downstream_tx *transmit = &path.downstream.training;
+			bool final_window = transmit->accepted_frames >=
+				V90_PHASE4_TRN2D_INITIAL_FRAMES - 10u;
+
+			path.upstream.startup.state.cp.line.equalizer.quality =
+				(struct v34_adaptive_equalizer_quality){
+					.decision_metric = 0,
+					.recent_decision_metric = final_window ?
+						decision_metric : 0,
+					.recent_symbol_count =
+						V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS,
+				};
+			CHECK(path.local_mp.parameters.type0
+				      .maximum_upstream_rate_2400_bps_units ==
+				      projected_rate &&
+			      v90_digital_path_transmit(&path, NULL, NULL, &output) ==
+				      V90_DIGITAL_PATH_OK,
+			      "MP was selected before the conditioning interval");
+			if (transmit->stage == PCM_DOWNSTREAM_TX_MP) {
+				selected = true;
+				break;
+			}
+		}
+		CHECK(selected && path.local_mp.parameters.type0
+			      .maximum_upstream_rate_2400_bps_units ==
+			      expected_maximum &&
+		      path.local_mp.parameters.type0.upstream_rate_capability_mask ==
+			      0x1555u &&
+		      v90_mp_record_equal(&path.local_mp,
+			      &path.downstream.training.control.mp) &&
+		      v90_mp_record_equal(&path.local_mp,
+			      &path.upstream.startup.local_mp),
+		      "law %u metric %d selected %u instead of %u after TRN2d",
+		      (unsigned int)law, decision_metric,
+		      path.local_mp.parameters.type0.maximum_upstream_rate_2400_bps_units,
+		      expected_maximum);
+		/* Later measurements cannot change a partly encoded MP. */
+		path.upstream.startup.state.cp.line.equalizer.quality =
+			(struct v34_adaptive_equalizer_quality){
+				.decision_metric = INT16_MAX,
+			};
+		for (size_t sample = 0; sample < 256u; ++sample)
+			CHECK(v90_digital_path_transmit(&path, NULL, NULL, &output) ==
+				      V90_DIGITAL_PATH_OK &&
+			      path.local_mp.parameters.type0
+				      .maximum_upstream_rate_2400_bps_units ==
+				      expected_maximum,
+			      "quality changed an MP after its first source frame");
 	}
 	return true;
 }
@@ -353,15 +414,10 @@ static bool run_precoder_selection(
 	struct v90_phase4_analog_station analog_station;
 	struct v90_phase4_digital_station digital_station;
 	struct v90_phase4_digital_startup startup;
-	/* The short 3000-baud fixture supports 28.8 kbit/s with PCMU, and its
-	 * measured PCMA error selects the next locally enabled rate, 24 kbit/s.
-	 * A higher configured rate cannot override that measured limit. */
-	uint8_t expected_maximum = law == G711_LAW_PCMA ? 10u : 12u;
+	uint8_t expected_maximum = maximum_rate;
 	int16_t sample;
 	uint8_t output;
 
-	if (expected_maximum > maximum_rate)
-		expected_maximum = maximum_rate;
 	mp.parameters.type0.maximum_upstream_rate_2400_bps_units =
 		maximum_rate;
 	if (configure_type1) {
@@ -446,11 +502,11 @@ static bool test_generated_exchange(void)
 	};
 
 	CHECK(run_exchange(G711_LAW_PCMU, 12u, 0x1555u, -1, 12u) &&
-	      run_exchange(G711_LAW_PCMA, 12u, 0x1555u, -1, 10u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x1555u, -1, 12u) &&
 	      run_exchange(G711_LAW_PCMU, 8u, 0x1555u, -1, 8u) &&
 	      run_exchange(G711_LAW_PCMA, 8u, 0x1555u, -1, 8u) &&
-	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, -1, 6u) &&
-	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, -1, 6u) &&
+	      run_exchange(G711_LAW_PCMU, 12u, 0x0015u, 0, 6u) &&
+	      run_exchange(G711_LAW_PCMA, 12u, 0x0015u, 0, 6u) &&
 	      run_precoder_selection(
 		      G711_LAW_PCMU, &learned_precoder, 12u, false) &&
 	      run_precoder_selection(

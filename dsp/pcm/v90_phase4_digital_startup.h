@@ -19,6 +19,7 @@ struct v90_phase4_digital_continuation {
 struct v90_phase4_digital_handoff {
 	struct v90_phase4_digital_transmit_handoff transmit;
 	struct v90_phase4_cp_line_rx receive;
+	uint16_t peer_upstream_rate_mask;
 };
 
 union v90_phase4_digital_startup_state {

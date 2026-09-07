@@ -646,6 +646,7 @@ static bool run_stream(
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_mp_record record = make_record(type1);
+	struct v90_mp_record offered = record;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_rx receiver;
 	size_t training_frames = 0;
@@ -657,6 +658,8 @@ static bool run_stream(
 	bool prime_requested = false;
 	bool ed_requested = false;
 	bool ed_received = false;
+	bool refined = false;
+	bool frozen_checked = false;
 
 	CHECK(make_mapping_with_shaping(
 		      &mapping, law, V90_CP_TRAINING,
@@ -674,6 +677,8 @@ static bool run_stream(
 	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "stream fixture did not initialize");
+	CHECK(v90_mp_record_limit_maximum_upstream_rate(&record, type1 ? 12u : 10u),
+	      "refined MP did not select the lower rate");
 	if (request_during_trn2d) {
 		CHECK(pcm_downstream_tx_request_mp_prime(&transmitter) ==
 			      PCM_DOWNSTREAM_TX_OK,
@@ -688,12 +693,30 @@ static bool run_stream(
 		enum pcm_downstream_tx_result transmit_result;
 		enum pcm_downstream_rx_result result;
 
+		if (!refined && transmitter.accepted_frames >=
+				V90_PHASE4_TRN2D_INITIAL_FRAMES) {
+			CHECK(transmitter.stage == PCM_DOWNSTREAM_TX_TRN2D &&
+			      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "MP could not be refined after conditioning");
+			refined = true;
+		}
 		transmit_result =
 			pcm_downstream_tx_next(&transmitter, &symbol);
 		if (transmit_result == PCM_DOWNSTREAM_TX_COMPLETE)
 			break;
 		CHECK(transmit_result == PCM_DOWNSTREAM_TX_OK,
 		      "stream transmitter stopped at symbol %zu", symbols);
+		if (!frozen_checked && transmitter.stage == PCM_DOWNSTREAM_TX_MP) {
+			struct pcm_downstream_tx saved = transmitter;
+
+			CHECK(refined &&
+			      pcm_downstream_tx_start_mp(&transmitter, &offered) ==
+				      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+			      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
+			      "MP changed after its first source frame entered the coder");
+			frozen_checked = true;
+		}
 		symbols++;
 		if (!prime_requested &&
 		    transmitter.stage == PCM_DOWNSTREAM_TX_MP &&
@@ -757,7 +780,8 @@ static bool run_stream(
 			ed_requested = true;
 		}
 	}
-	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS && prime_requested &&
+	CHECK(symbols < MAXIMUM_STREAM_SYMBOLS && refined && frozen_checked &&
+	      prime_requested &&
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      first_mp_symbol >= V90_PHASE4_TRN2D_INITIAL_SYMBOLS &&
@@ -983,7 +1007,9 @@ static bool test_contracts(void)
 	CHECK(pcm_downstream_tx_start_mp(&transmitter, &record) ==
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_mp(&transmitter, &changed) ==
-		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &record) ==
+		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_INVALID_STATE &&
 	      pcm_downstream_tx_request_finish(&transmitter) ==
