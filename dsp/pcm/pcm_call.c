@@ -540,42 +540,31 @@ static bool rate_renegotiation_response_is_pending_owned(
 	}
 }
 
-static bool rate_renegotiation_deadline_may_wait(
-	const struct pcm_call *call)
-{
-	if (!rate_renegotiation_response_is_pending_owned(call))
-		return false;
-	if (call->local_role == V90_ANALOG_MODEM) {
-		const struct v90_downstream_rrn_rx *receiver =
-			&call->state.data_path.analog.rate_renegotiation;
-
-		/* The path publishes the Rd-to-Rd-bar transition before its call
-		 * owner atomically arms the response deadline for that character. */
-		return receiver->stage == V90_DOWNSTREAM_RRN_RX_RD_BAR &&
-		       receiver->rd_bar_symbols == 1u;
-	}
-	{
-		const struct v90_digital_path *path =
-			&call->state.data_path.digital;
-
-		return path->downstream_stage ==
-			       V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN ||
-		       (path->downstream_stage ==
-				V90_DIGITAL_PATH_DOWNSTREAM_RD &&
-			path->downstream.rd.transmitted_symbols < V90_RD_SYMBOLS);
-	}
-}
-
 static bool rate_renegotiation_deadline_has_started(
 	const struct pcm_call *call)
 {
 	if (!rate_renegotiation_response_is_pending_owned(call))
 		return false;
-	/* The analogue receiver reports the first Rd-bar character as both the
-	 * protocol boundary and a transient event to its serialized call owner.
-	 * The digital transmitter reaches that boundary only after all 384T Rd. */
-	return call->local_role == V90_ANALOG_MODEM ||
-	       !rate_renegotiation_deadline_may_wait(call);
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v90_analog_path *path = &call->state.data_path.analog;
+
+		/* V.90 9.6.2 starts at our S-to-S-bar transition, not incoming
+		 * Rd-bar. The last S point advances the generator's stage before
+		 * the continuous line accepts the first S-bar point. */
+		return path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_RRN_RETURN ||
+		       path->upstream.rrn_return.points.s_bar_symbols != 0u;
+	}
+	{
+		const struct v90_digital_path *path =
+			&call->state.data_path.digital;
+
+		/* V.90 9.6.1 starts at our Rd-to-Rd-bar transition. */
+		return path->downstream_stage !=
+			       V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN &&
+		       (path->downstream_stage !=
+				V90_DIGITAL_PATH_DOWNSTREAM_RD ||
+			path->downstream.rd.transmitted_symbols >= V90_RD_SYMBOLS);
+	}
 }
 
 static bool call_is_valid(
@@ -623,11 +612,8 @@ static bool call_is_valid(
 		      V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES *
 			      (uint32_t)call->round_trip_delay_samples ||
 	      !rate_renegotiation_deadline_has_started(call))) ||
-	    (call->stage == PCM_CALL_DATA_PATH &&
-	     call->protocol == PCM_PROTOCOL_V90 &&
-	     rate_renegotiation_response_is_pending_owned(call) &&
-	     !call->rate_renegotiation_deadline_armed &&
-	     !rate_renegotiation_deadline_may_wait(call)) ||
+	    (!call->rate_renegotiation_deadline_armed &&
+	     rate_renegotiation_deadline_has_started(call)) ||
 	    (call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
 	     !call->peer_info0_stored) ||
@@ -2874,18 +2860,8 @@ static enum pcm_call_result update_rate_renegotiation_deadline(
 		return PCM_CALL_OK;
 	}
 	if (!call->rate_renegotiation_deadline_armed) {
-		/* V.90 9.6 measures the response interval from the transition
-		 * between Rd and Rd-bar, not from the preceding S/S-bar request. */
-		if (call->local_role == V90_DIGITAL_MODEM) {
-			const struct v90_digital_path *path =
-				&call->state.data_path.digital;
-
-			if (path->downstream_stage !=
-				    V90_DIGITAL_PATH_DOWNSTREAM_RD ||
-			    path->downstream.rd.transmitted_symbols <
-				    V90_RD_SYMBOLS)
-				return PCM_CALL_OK;
-		}
+		if (!rate_renegotiation_deadline_has_started(call))
+			return PCM_CALL_OK;
 		call->rate_renegotiation_deadline_remaining_samples =
 			V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES +
 			V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES *

@@ -4046,7 +4046,7 @@ static bool pcm_frame_is_fill(const uint8_t *bits, size_t bit_count)
 }
 
 static bool check_rrn_response_deadline(
-	const struct pcm_call *before, const struct pcm_call *after,
+	const struct pcm_call *before, struct pcm_call *after,
 	uint8_t received, uint8_t expected_transmitted)
 {
 	struct pcm_call last_sample = *before;
@@ -4067,11 +4067,12 @@ static bool check_rrn_response_deadline(
 	      last_sample.stage == PCM_CALL_DATA_PATH &&
 	      event.kind == PCM_CALL_DATA_NONE &&
 	      transmitted == expected_transmitted &&
-	      memcmp(&last_sample, after, sizeof(last_sample)) == 0 &&
 	      pcm_call_is_valid(&last_sample),
 	      "role %u retrained on an E/Ed response at the deadline",
 	      (unsigned int)after->local_role);
-	CHECK(!after->rate_renegotiation_deadline_armed &&
+	CHECK(!last_sample.rate_renegotiation_deadline_armed &&
+	      last_sample.rate_renegotiation_deadline_remaining_samples == 0u &&
+	      !after->rate_renegotiation_deadline_armed &&
 	      after->rate_renegotiation_deadline_remaining_samples == 0u,
 	      "role %u retained its RRN response deadline after E/Ed",
 	      (unsigned int)after->local_role);
@@ -4080,6 +4081,9 @@ static bool check_rrn_response_deadline(
 	CHECK(!pcm_call_is_valid(&stale_deadline),
 	      "role %u accepted an armed RRN response deadline during B1",
 	      (unsigned int)after->local_role);
+	/* Continue the paired exchange with the deadline-edge receiver through
+	 * exact fresh data, rather than comparing reinitialized struct padding. */
+	*after = last_sample;
 	return true;
 }
 
@@ -4291,15 +4295,23 @@ static bool run_paired_remote_rate_renegotiation(
 		rd_bar_complete |= v90_downstream_rrn_rx_is_complete(
 			&analog_path->rate_renegotiation);
 		if (!analog_started && analog_path->rate_renegotiation_active) {
+			struct pcm_call early_deadline = analog.call;
+
 			analog_started = true;
 			analog_resume_source = analog.upstream_source.frames;
 			CHECK(analog_path->upstream_stage ==
 				      V90_ANALOG_PATH_UPSTREAM_RRN_RETURN &&
-			      analog.call.rate_renegotiation_deadline_armed &&
+			      !analog.call.rate_renegotiation_deadline_armed &&
 			      analog.call
 				      .rate_renegotiation_deadline_remaining_samples ==
-				      analog_deadline,
-			      "law %u paired RRN missed the Rd-bar boundary",
+				      0u,
+			      "law %u analogue deadline began at incoming Rd-bar",
+			      (unsigned int)law);
+			early_deadline.rate_renegotiation_deadline_armed = true;
+			early_deadline.rate_renegotiation_deadline_remaining_samples =
+				analog_deadline;
+			CHECK(!pcm_call_is_valid(&early_deadline),
+			      "law %u analogue RRN accepted a deadline before S-bar",
 			      (unsigned int)law);
 		}
 		if (analog_path->rate_renegotiation_active) {
@@ -4316,6 +4328,13 @@ static bool run_paired_remote_rate_renegotiation(
 		}
 		if (analog_path->upstream_stage ==
 		    V90_ANALOG_PATH_UPSTREAM_RRN_RETURN) {
+			/* Accepting the last S point advances the point generator to
+			 * S-bar before the line has accepted its first S-bar point. */
+			CHECK(analog.call.rate_renegotiation_deadline_armed ==
+				      (analog_path->upstream.rrn_return
+					       .points.s_bar_symbols != 0u),
+			      "law %u analogue deadline missed the transmitted S-bar boundary",
+			      (unsigned int)law);
 			if (analog_path->upstream.rrn_return.points.s_symbols >
 			    s_high_water)
 				s_high_water = analog_path->upstream.rrn_return
@@ -4331,7 +4350,27 @@ static bool run_paired_remote_rate_renegotiation(
 					   V90_ANALOG_PATH_UPSTREAM_E) {
 			e_seen = true;
 		}
-		if (analog_started && !timeout_checked && analog_active_before) {
+		if (!analog_deadline_seen &&
+		    analog.call.rate_renegotiation_deadline_armed) {
+			struct pcm_call missing_deadline = analog.call;
+
+			CHECK(analog_path->upstream_stage ==
+				      V90_ANALOG_PATH_UPSTREAM_RRN_RETURN &&
+			      analog_path->upstream.rrn_return.points.s_bar_symbols == 1u &&
+			      analog.call
+				      .rate_renegotiation_deadline_remaining_samples ==
+				      analog_deadline,
+			      "law %u analogue RRN deadline began off boundary",
+			      (unsigned int)law);
+			missing_deadline.rate_renegotiation_deadline_armed = false;
+			missing_deadline.rate_renegotiation_deadline_remaining_samples = 0u;
+			CHECK(!pcm_call_is_valid(&missing_deadline),
+			      "law %u analogue RRN accepted no deadline after S-bar",
+			      (unsigned int)law);
+			analog_deadline_seen = true;
+		}
+		if (!timeout_checked &&
+		    analog.call.rate_renegotiation_deadline_armed) {
 			struct pcm_call stalled = analog.call;
 			struct pcm_call_data_event stalled_event;
 			uint8_t stalled_octet;
@@ -4364,8 +4403,6 @@ static bool run_paired_remote_rate_renegotiation(
 			      "law %u digital RRN deadline began off boundary",
 			      (unsigned int)law);
 		}
-		analog_deadline_seen |=
-			analog.call.rate_renegotiation_deadline_armed;
 		if (digital_path->rate_renegotiation_active)
 			CHECK(pcm_call_is_online(&digital.call) &&
 			      digital_event.kind == PCM_CALL_DATA_NONE,
