@@ -110,6 +110,66 @@ static bool parameters_match(
 		      (left_bits + 7u) / 8u) == 0;
 }
 
+static bool check_cleardown(
+	enum g711_law law, enum v34_constellation_size constellation,
+	enum v90_cp_kind kind)
+{
+	struct v90_cp_parameters training = cp_parameters(V90_CP_TRAINING, law, false, 6u);
+	struct v90_cp_parameters cleardown = training;
+	struct v90_mp_record mp = local_mp(6u);
+	struct v90_pcm_mapping mapping;
+	struct v34_phase3_profile profile;
+	struct v90_phase3_return_line_handoff phase3;
+	struct v90_phase4_cp_line_tx transmitter;
+	struct v90_phase4_cp_line_rx cp_receiver;
+	struct v90_upstream_rx receiver;
+	bool cleardown_started = false;
+
+	cleardown.kind = kind;
+	cleardown.selected_rate_index = 0u;
+	cleardown.upstream_rate_mask = 0u;
+	cleardown.acknowledges_peer = true;
+	cleardown.request_silence = true;
+	memset(cleardown.transmit_constellations, 0,
+	       sizeof(cleardown.transmit_constellations));
+	CHECK(line_profile(V34_SYMBOL_RATE_3000, 6u, &profile) &&
+	      v90_phase4_line_fixture_init_for_profile(
+		      &profile, law, constellation, &training, &transmitter, &phase3) &&
+	      v90_phase4_cp_line_rx_init(&cp_receiver, &phase3, constellation) ==
+		      V90_PHASE4_CP_LINE_RX_OK &&
+	      v90_pcm_mapping_init_transmit(&mapping, &training, law) == V90_PCM_MAPPING_OK &&
+	      v90_upstream_rx_init(&receiver, &cp_receiver, &mapping, &mp, 1u) ==
+		      V90_UPSTREAM_RX_OK,
+	      "cleardown line did not initialize");
+	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
+		struct v90_cp_parameters event;
+		struct v90_cp_parameters before;
+		int16_t sample;
+		enum v90_upstream_rx_result result;
+
+		if (v90_phase4_cp_line_tx_record_is_complete(&transmitter)) {
+			CHECK(v90_phase4_cp_line_tx_start_next_record(&transmitter, &cleardown) ==
+			      V90_PHASE4_CP_LINE_TX_OK, "zero-rate CP did not start");
+			cleardown_started = true;
+		}
+		CHECK(v90_phase4_cp_line_tx_sample(&transmitter, &sample) ==
+		      V90_PHASE4_CP_LINE_TX_OK, "cleardown source stopped");
+		memset(&event, 0xa5, sizeof(event));
+		memcpy(&before, &event, sizeof(before));
+		result = v90_upstream_rx_sample(&receiver, quantize(law, sample), &event);
+		CHECK((result == V90_UPSTREAM_RX_OK || result == V90_UPSTREAM_RX_CLEARDOWN) &&
+		      memcmp(&event, &before, sizeof(event)) == 0 &&
+		      v90_upstream_rx_is_valid(&receiver) && !receiver.failed &&
+		      !receiver.data_cp_received,
+		      "zero-rate CP became a data selection/control request: %s",
+		      v90_upstream_rx_result_name(result));
+		if (result == V90_UPSTREAM_RX_CLEARDOWN)
+			return cleardown_started;
+	}
+	CHECK(false, "zero-rate CP was not recognized");
+	return false;
+}
+
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
@@ -488,6 +548,12 @@ int main(void)
 		      V34_SYMBOL_RATE_3429, 14, true, true))
 		return 1;
 	fprintf(stderr, "[       OK ] differing peer codec through CP/E/B1\n");
+	fprintf(stderr, "[ RUN      ] zero-rate CP/CPt cleardown\n");
+	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
+		if (!check_cleardown(paths[path].law, paths[path].constellation, V90_CP_DATA) ||
+		    !check_cleardown(paths[path].law, paths[path].constellation, V90_CP_TRAINING))
+			return 1;
+	fprintf(stderr, "[       OK ] zero-rate CP/CPt cleardown\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())
 		return 1;

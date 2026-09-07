@@ -115,6 +115,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	struct v90_datapump *datapump;
 	enum pcm_protocol protocol;
 	enum v90_modem_role role;
+	bool closed;
 
 	if (dp == NULL || !protocol_from_id(dp->id, &protocol) ||
 	    dp->op != &v90_operations ||
@@ -122,7 +123,9 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    !role_from_modem(dp->modem, &role))
 		return NULL;
 	datapump = dp->dp_data;
+	closed = datapump->call_started && datapump->call.stage == PCM_CALL_CLOSED;
 	if (&datapump->dp != dp || datapump->role != role ||
+	    (closed && dp->status != DPSTAT_DISCONNECT) ||
 	    datapump->protocol != protocol ||
 	    ((protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) !=
 	     (datapump->host_echo != NULL)) ||
@@ -153,16 +156,16 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      datapump->call.law != datapump->media_law ||
 	      (pcm_call_has_failed(&datapump->call) &&
 	       !training_session_has_failed(&datapump->training)))) ||
-	    (!training_session_has_failed(&datapump->training) &&
+	    (!closed && !training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     (datapump->call_started &&
 		      pcm_call_is_online(&datapump->call)) &&
 	     !(training_session_is_retraining(&datapump->training) &&
 	       !pcm_call_is_online(&datapump->call))) ||
-	    (!training_session_has_failed(&datapump->training) &&
+	    (!closed && !training_session_has_failed(&datapump->training) &&
 	     datapump->call_started && pcm_call_is_online(&datapump->call) &&
 	     dp->status != DPSTAT_CONNECT) ||
-	    (!training_session_has_failed(&datapump->training) &&
+	    (!closed && !training_session_has_failed(&datapump->training) &&
 	     (!datapump->call_started || !pcm_call_is_online(&datapump->call)) &&
 	     dp->status == DPSTAT_CONNECT &&
 	     !training_session_is_retraining(&datapump->training)))
@@ -275,7 +278,7 @@ static int retrain_v90(struct dp *dp)
 	struct training_session training;
 	struct pcm_call call;
 
-	if (datapump == NULL)
+	if (datapump == NULL || datapump->call.stage == PCM_CALL_CLOSED)
 		return -1;
 	if (training_session_is_retraining(&datapump->training))
 		return 0;
@@ -591,6 +594,7 @@ static bool process_octet(
 		return true;
 	}
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		datapump->dp.status = DPSTAT_DISCONNECT;
 		*disconnected = true;
 		return true;
 	}
@@ -725,6 +729,11 @@ static int process_v90_g711(
 	}
 	if (!start_call(datapump, law))
 		goto failure;
+	if (datapump->call.stage == PCM_CALL_CLOSED) {
+		mute_output(law, transmit_codewords, transmit_samples, count);
+		*exact_output = true;
+		return DPSTAT_DISCONNECT;
+	}
 	for (int index = 0; index < count; ++index) {
 		enum pcm_call_stage stage_before = datapump->call.stage;
 		enum v90_host_echo_mode echo_mode = host_echo_mode(datapump);

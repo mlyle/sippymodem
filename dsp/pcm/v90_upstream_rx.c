@@ -236,6 +236,13 @@ static enum v90_upstream_rx_result accept_cp_record(
 		    V90_PHASE4_CP_LINE_RX_OK ||
 	    !parameters_are_equal(&parameters, &event->parameters))
 		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+	/* V.90 9.7: zero rate is a hangup, not a data selection. Its
+	 * constellation and capability fields do not constrain cleardown. */
+	if (parameters.selected_rate_index == 0u) {
+		result = continue_cp(receiver);
+		return result == V90_UPSTREAM_RX_OK ?
+			V90_UPSTREAM_RX_CLEARDOWN : result;
+	}
 	if (parameters.kind == V90_CP_TRAINING) {
 		if (receiver->data_cp_received ||
 		    v90_pcm_mapping_init_transmit(
@@ -545,6 +552,8 @@ const char *v90_upstream_rx_result_name(
 		return "B1 complete";
 	case V90_UPSTREAM_RX_COMPLETE:
 		return "complete";
+	case V90_UPSTREAM_RX_CLEARDOWN:
+		return "cleardown";
 	case V90_UPSTREAM_RX_FAILED:
 		return "failed";
 	case V90_UPSTREAM_RX_SEQUENCE_MISMATCH:

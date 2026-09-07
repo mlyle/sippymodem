@@ -554,6 +554,8 @@ static enum v90_digital_path_result startup_result(
 	case V90_UPSTREAM_RX_OK:
 	case V90_UPSTREAM_RX_E_COMPLETE:
 		return V90_DIGITAL_PATH_OK;
+	case V90_UPSTREAM_RX_CLEARDOWN:
+		return V90_DIGITAL_PATH_CLEARDOWN_COMPLETE;
 	case V90_UPSTREAM_RX_REQUEST_MP_PRIME:
 		return request_mp_prime(path, event);
 	case V90_UPSTREAM_RX_REQUEST_ED:

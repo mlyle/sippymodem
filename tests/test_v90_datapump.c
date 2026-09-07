@@ -354,6 +354,20 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 	}
 	CHECK(complete && elapsed > MODEM_RATE / 20u,
 	      "V.90 cleardown did not emit a bounded protocol sequence");
+	{
+		uint8_t output[MODEM_FRAG];
+		int16_t generated[MODEM_FRAG];
+		bool exact = false;
+
+		CHECK(dp->status == DPSTAT_DISCONNECT && dp->op->retrain(dp) != 0 &&
+		      dp->op->hangup(dp) == 0 &&
+		      dp->op->process_g711(dp, law, input, samples, output, generated,
+					  MODEM_FRAG, &exact) == DPSTAT_DISCONNECT && exact,
+		      "closed datapump lost ownership or attempted to restart");
+		for (unsigned int index = 0u; index < MODEM_FRAG; ++index)
+			CHECK(output[index] == encode(law, 0) && generated[index] == 0,
+			      "closed datapump generated further output");
+	}
 	return true;
 }
 

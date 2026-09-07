@@ -29,6 +29,8 @@ enum pcm_call_stage {
 	PCM_CALL_PHASE4,
 	PCM_CALL_DATA_PATH,
 	PCM_CALL_RETRAIN_SILENCE,
+	/* Local output has drained or the peer sent a zero-rate CP/MP. */
+	PCM_CALL_CLOSED,
 };
 
 enum pcm_call_result {
@@ -301,7 +303,8 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 /* Begin V.90 zero-rate cleardown on the current continuous data line.
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
- * Native V.92 currently has no B1/data owner and is rejected here. */
+ * Native V.92 currently has no B1/data owner and is rejected here.
+ * A completed local or peer cleardown is idempotent and cannot retrain. */
 enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 
 bool pcm_call_is_valid(const struct pcm_call *call);
@@ -367,7 +370,10 @@ bool pcm_call_get_data_rates(
  * a NULL sources object, transmits idle ones in that direction. SOURCE_FAILURE
  * consumes neither the received character nor the clock interval and leaves
  * both outputs unchanged. Once transmission succeeds, receive failures consume
- * the interval, expose its generated output, and latch call failure. */
+ * the interval, expose its generated output, and latch call failure.
+ * CLEARDOWN_COMPLETE is orderly termination, not failure. The call enters
+ * CLOSED; subsequent character calls return silence and no host event without
+ * consuming a source or advancing the retained diagnostic state. */
 enum pcm_call_result pcm_call_data_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,

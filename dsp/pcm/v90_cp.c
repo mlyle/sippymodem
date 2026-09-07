@@ -43,14 +43,31 @@ static bool kind_is_valid(enum v90_cp_kind kind)
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters)
 {
-	return parameters != NULL && kind_is_valid(parameters->kind) &&
-	       g711_law_is_valid(parameters->law) &&
-	       parameters->selected_rate_index <= V90_CP_RATE_INDEX_MAX &&
-	       parameters->sign_redundancy <= 3 &&
-	       parameters->spectral_lookahead <= 3 &&
-	       (parameters->upstream_rate_mask &
-		~V90_CP_UPSTREAM_RATE_MASK) == 0 &&
-	       pcm_constellations_are_canonical(
+	if (parameters == NULL || !kind_is_valid(parameters->kind) ||
+	    !g711_law_is_valid(parameters->law) ||
+	    parameters->selected_rate_index > V90_CP_RATE_INDEX_MAX ||
+	    parameters->sign_redundancy > 3 ||
+	    parameters->spectral_lookahead > 3 ||
+	    (parameters->upstream_rate_mask & ~V90_CP_UPSTREAM_RATE_MASK) != 0)
+		return false;
+	if (parameters->selected_rate_index == 0u) {
+		uint8_t declared_count = 1u;
+
+		/* V.90 9.7 ignores cleardown constellations. Retain the bounds
+		 * needed to frame and CRC-check the declared wire records. */
+		if (parameters->constellation_count == 0u ||
+		    parameters->constellation_count > V90_CP_MAX_CONSTELLATIONS)
+			return false;
+		for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
+			if (parameters->frame_constellation[interval] >=
+			    parameters->constellation_count)
+				return false;
+			if (parameters->frame_constellation[interval] >= declared_count)
+				declared_count = parameters->frame_constellation[interval] + 1u;
+		}
+		return declared_count == parameters->constellation_count;
+	}
+	return pcm_constellations_are_canonical(
 		       parameters->transmit_constellations,
 		       parameters->codec_constellations,
 		       parameters->frame_constellation,

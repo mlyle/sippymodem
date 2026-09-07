@@ -480,6 +480,44 @@ static bool rejected_decode_is_transactional(
 	return true;
 }
 
+static bool test_cleardown(void)
+{
+	struct v90_cp_parameters parameters = wire_parameters();
+	struct v90_cp_parameters decoded;
+	uint8_t frame[V90_CP_MAX_FRAME_BYTES];
+	size_t bits;
+
+	parameters.selected_rate_index = 0u;
+	parameters.constellation_count = V90_CP_MAX_CONSTELLATIONS;
+	parameters.frame_constellation[0] = V90_CP_MAX_CONSTELLATIONS - 1u;
+	parameters.codec_constellations_differ = true;
+	memset(parameters.transmit_constellations, 0,
+	       sizeof(parameters.transmit_constellations));
+	/* Empty, unreferenced, and unequal codec rows are unused in cleardown. */
+	add_ucode(&parameters.codec_constellations[1], 12u);
+	CHECK(v90_cp_parameters_are_valid(&parameters) &&
+	      v90_cp_encode(&parameters, frame, sizeof(frame), &bits) == V90_CP_OK &&
+	      v90_cp_decode(frame, sizeof(frame), bits, &decoded) == V90_CP_OK &&
+	      parameters_are_equal(&parameters, &decoded),
+	      "zero-rate CP interpreted its unused constellations");
+	/* Neither zero rate nor ignored constellation contents bypass integrity. */
+	replace_frame_bit(frame, CP_MASKS_FIRST_BIT + 1u, 1u);
+	CHECK(rejected_decode_is_transactional(frame, sizeof(frame), bits,
+					      V90_CP_CRC_MISMATCH),
+	      "zero-rate CP bypassed its CRC");
+	parameters.selected_rate_index = 1u;
+	CHECK(!v90_cp_parameters_are_valid(&parameters),
+	      "nonzero CP accepted unused cleardown constellations");
+	parameters.selected_rate_index = 0u;
+	parameters.frame_constellation[0] = V90_CP_MAX_CONSTELLATIONS;
+	CHECK(!v90_cp_parameters_are_valid(&parameters),
+	      "zero-rate CP bypassed wire-layout bounds");
+	parameters.frame_constellation[0] = 0u;
+	CHECK(!v90_cp_parameters_are_valid(&parameters),
+	      "zero-rate CP accepted a length not declared on the wire");
+	return true;
+}
+
 static bool test_call_contracts(void)
 {
 	struct v90_cp_parameters parameters = wire_parameters();
@@ -645,6 +683,7 @@ int main(void)
 		{ "canonical masks", test_canonical_masks },
 		{ "known wire image", test_known_wire_image },
 		{ "variable round trip", test_variable_round_trip },
+		{ "cleardown ignores unused constellations", test_cleardown },
 		{ "call contracts", test_call_contracts },
 		{ "corrupt frames", test_corrupt_frames },
 	};

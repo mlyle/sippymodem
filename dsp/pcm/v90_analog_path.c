@@ -570,6 +570,14 @@ static enum v90_analog_path_result accept_mp(
 	struct v90_analog_path *path,
 	const struct v90_mp_record *record, bool prime)
 {
+	const struct v90_mp_parameters *parameters =
+		record->type == V90_MP_RECORD_TYPE0 ?
+			&record->parameters.type0 : &record->parameters.type1.common;
+
+	/* A CRC-checked zero-rate MP ends either control epoch, even if its
+	 * acknowledgement does not match an ordinary rate negotiation. */
+	if (parameters->maximum_upstream_rate_2400_bps_units == 0u)
+		return V90_ANALOG_PATH_CLEARDOWN_COMPLETE;
 	if (prime) {
 		if (!path->peer_mp_received ||
 		    !v90_mp_record_acknowledges_cp(record) ||
@@ -876,6 +884,7 @@ enum v90_analog_path_result v90_analog_path_receive(
 	path->receive_pending = false;
 	if (result != V90_ANALOG_PATH_OK &&
 	    result != V90_ANALOG_PATH_DOWNSTREAM_FRAME &&
+	    result != V90_ANALOG_PATH_CLEARDOWN_COMPLETE &&
 	    result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
 		return fail_path(path, result);
 	if (!v90_analog_path_is_valid(path))

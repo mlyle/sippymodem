@@ -949,6 +949,77 @@ static bool goal_is_reached(
 		digital->source_failure_checked);
 }
 
+static bool check_peer_cleardown(
+	const struct pcm_call *analog, const struct pcm_call *digital,
+	const struct channel *line, unsigned int initiator)
+{
+	struct pcm_call calls[2] = { *analog, *digital };
+	struct channel channel = *line;
+	bool complete[2] = { false, false };
+
+	CHECK(pcm_call_start_cleardown(&calls[initiator]) == PCM_CALL_OK,
+	      "paired cleardown did not start");
+	for (size_t clock = 0; clock < 16000u && !(complete[0] && complete[1]); ++clock) {
+		uint8_t received[2];
+		uint8_t transmitted[2];
+
+		channel_receive(&channel, &received[0], &received[1]);
+		for (unsigned int side = 0; side < 2u; ++side) {
+			struct pcm_call_data_event event;
+			enum pcm_call_result result = pcm_call_data_octet(
+				&calls[side], received[side],
+				decode_octet(calls[side].law, received[side]), NULL,
+				&transmitted[side], &event);
+
+			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) &&
+			      !calls[side].failed && !calls[side].retrain_active &&
+			      pcm_call_is_valid(&calls[side]),
+			      "law %u initiator %u side %u sample %zu cleardown returned %s stage %u",
+			      (unsigned int)calls[side].law, initiator, side, clock,
+			      pcm_call_result_name(result), (unsigned int)calls[side].stage);
+			if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+				CHECK(event.kind == PCM_CALL_DATA_NONE &&
+				      calls[side].stage == PCM_CALL_CLOSED &&
+				      !pcm_call_is_online(&calls[side]) &&
+				      !calls[side].b1_deadline_armed &&
+				      !calls[side].rate_renegotiation_deadline_armed,
+				      "cleardown retained online data or an armed deadline");
+				complete[side] = true;
+			}
+		}
+		channel_transmit(&channel, transmitted[0], transmitted[1]);
+	}
+	CHECK(complete[0] && complete[1],
+	      "law %u initiator %u did not close both calls: %u/%u",
+	      (unsigned int)analog->law, initiator, complete[0], complete[1]);
+	for (unsigned int side = 0; side < 2u; ++side) {
+		struct pcm_call before;
+		struct pcm_call_data_event data_event;
+		struct pcm_call_observation sample_event;
+		const struct pcm_call_data_sources sources = {
+			.downstream = source_downstream_frame,
+			.upstream = source_upstream_frame,
+		}; /* NULL contexts fail if a closed call attempts to source data. */
+		uint8_t output = 0u;
+
+		memcpy(&before, &calls[side], sizeof(before));
+		CHECK(pcm_call_data_octet(&calls[side], 0u, INT16_MAX, &sources,
+					 &output, &data_event) == PCM_CALL_CLEARDOWN_COMPLETE &&
+		      output == silence_octet(calls[side].law) &&
+		      data_event.kind == PCM_CALL_DATA_NONE &&
+		      pcm_call_octet(&calls[side], 0u, INT16_MAX, &output,
+				     &sample_event) == PCM_CALL_CLEARDOWN_COMPLETE &&
+		      output == silence_octet(calls[side].law) &&
+		      sample_event.processed == PCM_CALL_CLOSED &&
+		      sample_event.next == PCM_CALL_CLOSED &&
+		      pcm_call_start_retrain(&calls[side]) == PCM_CALL_INVALID_STATE &&
+		      pcm_call_start_cleardown(&calls[side]) == PCM_CALL_OK &&
+		      memcmp(&before, &calls[side], sizeof(before)) == 0,
+		      "closed call consumed input, advanced state, or restarted");
+	}
+	return true;
+}
+
 static bool check_zero_rate_cleardown(
 	struct pcm_call *call, const struct pcm_call *peer,
 	struct channel *channel)
@@ -1341,6 +1412,9 @@ static bool run_configured_call(
 			       &analog.call, &aliased_rate, &aliased_rate) &&
 		      aliased_rate == UINT32_C(0xa5a55a5a),
 		      "overlapping V.90 rate outputs were changed");
+		CHECK(check_peer_cleardown(&analog.call, &digital.call, &channel, 0u) &&
+		      check_peer_cleardown(&analog.call, &digital.call, &channel, 1u),
+		      "online V.90 endpoints did not accept peer zero-rate cleardown");
 		CHECK(check_zero_rate_cleardown(&analog.call, &digital.call, &channel) &&
 		      check_zero_rate_cleardown(&digital.call, &analog.call, &channel),
 		      "online V.90 endpoints did not complete zero-rate cleardown");

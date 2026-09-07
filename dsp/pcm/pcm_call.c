@@ -574,6 +574,9 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    (call->stage == PCM_CALL_CLOSED &&
+	     (call->failed || call->retrain_active || call->b1_deadline_armed ||
+	      call->rate_renegotiation_deadline_armed)) ||
 	    (!call->v92_peer_downstream_rate_stored &&
 	     call->v92_peer_downstream_rate_mask != 0u) ||
 	    (call->v92_peer_downstream_rate_stored &&
@@ -725,6 +728,7 @@ static bool call_is_valid(
 		}
 		break;
 	case PCM_CALL_DATA_PATH:
+	case PCM_CALL_CLOSED:
 		if (call->protocol != PCM_PROTOCOL_V90)
 			return false;
 		if (call->local_role == V90_ANALOG_MODEM) {
@@ -1037,6 +1041,7 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
 	if (call->failed || !call->peer_info0_stored ||
 	    cleardown_is_active_owned(call) ||
 	    call->stage == PCM_CALL_PHASE2 ||
+	    call->stage == PCM_CALL_CLOSED ||
 	    call->stage == PCM_CALL_RETRAIN_SILENCE)
 		return PCM_CALL_INVALID_STATE;
 	return begin_retrain(call, false);
@@ -2664,7 +2669,7 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
-	if (cleardown_is_active_owned(call))
+	if (call->stage == PCM_CALL_CLOSED || cleardown_is_active_owned(call))
 		return PCM_CALL_OK;
 	if (!pcm_call_is_online(call) || call->protocol != PCM_PROTOCOL_V90 ||
 	    rate_renegotiation_is_active_owned(call))
@@ -2890,6 +2895,16 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 	return begin_retrain(call, false);
 }
 
+static void complete_cleardown(struct pcm_call *call)
+{
+	call->stage = PCM_CALL_CLOSED;
+	call->retrain_active = false;
+	call->b1_deadline_armed = false;
+	call->b1_deadline_remaining_samples = 0u;
+	call->rate_renegotiation_deadline_armed = false;
+	call->rate_renegotiation_deadline_remaining_samples = 0u;
+}
+
 static enum pcm_call_result data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,
@@ -2909,6 +2924,11 @@ static enum pcm_call_result data_octet_owned(
 	uint8_t generated;
 	enum pcm_call_result result;
 
+	if (call->stage == PCM_CALL_CLOSED) {
+		*transmit_octet = encode_sample(call->law, 0);
+		*event = emitted;
+		return PCM_CALL_CLEARDOWN_COMPLETE;
+	}
 	if (cleardown_is_active_owned(call)) {
 		generated = encode_sample(call->law, 0);
 		if (call->local_role == V90_ANALOG_MODEM) {
@@ -2926,8 +2946,9 @@ static enum pcm_call_result data_octet_owned(
 		}
 		*transmit_octet = generated;
 		*event = emitted;
-		if (result != PCM_CALL_OK &&
-		    result != PCM_CALL_CLEARDOWN_COMPLETE)
+		if (result == PCM_CALL_CLEARDOWN_COMPLETE)
+			complete_cleardown(call);
+		else if (result != PCM_CALL_OK)
 			call->failed = true;
 		return result;
 	}
@@ -3018,7 +3039,11 @@ static enum pcm_call_result data_octet_owned(
 	if (result == PCM_CALL_OK && call->protocol == PCM_PROTOCOL_V90 &&
 	    call->stage == PCM_CALL_DATA_PATH)
 		result = update_rate_renegotiation_deadline(call);
-	if (result != PCM_CALL_OK)
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		complete_cleardown(call);
+		generated = encode_sample(call->law, 0);
+		emitted = (struct pcm_call_data_event){ 0 };
+	} else if (result != PCM_CALL_OK)
 		call->failed = true;
 	*transmit_octet = generated;
 	*event = emitted;
@@ -3040,7 +3065,7 @@ enum pcm_call_result pcm_call_data_octet(
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
-	if (call->stage != PCM_CALL_DATA_PATH)
+	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	result = data_octet_owned(
 		call, received_octet, received_sample, sources,
@@ -3067,7 +3092,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
-	if (call->stage != PCM_CALL_DATA_PATH)
+	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	return data_octet_owned(
 		call, received_octet, received_sample, sources,
@@ -3100,6 +3125,9 @@ enum pcm_call_result pcm_call_octet(
 	generated = encode_sample(call->law, 0);
 	emitted.processed = call->stage;
 	switch (call->stage) {
+	case PCM_CALL_CLOSED:
+		result = PCM_CALL_CLEARDOWN_COMPLETE;
+		break;
 	case PCM_CALL_PHASE2:
 		result = sample_phase2(
 			call,
@@ -3140,6 +3168,7 @@ enum pcm_call_result pcm_call_octet(
 	if (result == PCM_CALL_OK && !deadline_started)
 		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK &&
+	    result != PCM_CALL_CLEARDOWN_COMPLETE &&
 	    result != PCM_CALL_V34_FALLBACK_READY)
 		call->failed = true;
 	emitted.next = call->stage;
