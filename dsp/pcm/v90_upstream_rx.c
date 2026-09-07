@@ -109,6 +109,8 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	    !downstream_rate_mask_is_valid(
 		    receiver->enabled_downstream_rate_mask) ||
 	    (receiver->stage != V90_UPSTREAM_RX_STAGE_CP &&
+	     receiver->stage != V90_UPSTREAM_RX_STAGE_CPS &&
+	     receiver->stage != V90_UPSTREAM_RX_STAGE_RECONDITION &&
 	     !receiver->data_cp_received) ||
 	    (receiver->data_cp_received &&
 	     (!v90_cp_parameters_are_valid(&receiver->data_parameters) ||
@@ -121,6 +123,17 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 		return false;
 
 	switch (receiver->stage) {
+	case V90_UPSTREAM_RX_STAGE_CPS:
+	case V90_UPSTREAM_RX_STAGE_RECONDITION:
+		if (receiver->data_cp_received ||
+		    !v90_cp_parameters_are_valid(&receiver->data_parameters) ||
+		    receiver->data_parameters.kind != V90_CP_DATA ||
+		    !receiver->data_parameters.request_silence ||
+		    receiver->data_parameters.acknowledges_peer ||
+		    receiver->data_parameters.selected_rate_index == 0u)
+			return false;
+		/* CP reception stays continuous through CPs-prime and SCR. */
+		/* fall through */
 	case V90_UPSTREAM_RX_STAGE_CP:
 		return v90_phase4_cp_line_rx_is_valid(&receiver->state.cp) &&
 		       memcmp(&receiver->control_symbols,
@@ -244,7 +257,8 @@ static enum v90_upstream_rx_result accept_cp_record(
 			V90_UPSTREAM_RX_CLEARDOWN : result;
 	}
 	if (parameters.kind == V90_CP_TRAINING) {
-		if (receiver->data_cp_received ||
+		if (receiver->stage != V90_UPSTREAM_RX_STAGE_CP ||
+		    receiver->data_cp_received ||
 		    v90_pcm_mapping_init_transmit(
 			    &mapping, &parameters, receiver->training_mapping.law) !=
 			    V90_PCM_MAPPING_OK ||
@@ -253,6 +267,34 @@ static enum v90_upstream_rx_result accept_cp_record(
 			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
 		return continue_cp(receiver);
 	}
+	/* CPs controls echo reconditioning, not a data-rate selection. In
+	 * particular its constellations need not admit a data mapping. */
+	if (parameters.request_silence) {
+		if (receiver->data_cp_received)
+			return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
+		if (receiver->stage == V90_UPSTREAM_RX_STAGE_CP) {
+			receiver->data_parameters = parameters;
+			receiver->data_parameters.acknowledges_peer = false;
+			receiver->stage = V90_UPSTREAM_RX_STAGE_CPS;
+			result = V90_UPSTREAM_RX_REQUEST_MP_PRIME;
+		} else {
+			if (!data_parameters_are_equal(
+				    &parameters, &receiver->data_parameters))
+				return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
+			if (receiver->stage == V90_UPSTREAM_RX_STAGE_RECONDITION ||
+			    !parameters.acknowledges_peer)
+				return continue_cp(receiver);
+			receiver->stage = V90_UPSTREAM_RX_STAGE_RECONDITION;
+			result = V90_UPSTREAM_RX_REQUEST_SILENCE;
+		}
+		if (continue_cp(receiver) != V90_UPSTREAM_RX_OK)
+			return V90_UPSTREAM_RX_NUMERIC_FAILURE;
+		*emitted = parameters;
+		*event_ready = true;
+		return result;
+	}
+	if (receiver->stage == V90_UPSTREAM_RX_STAGE_CPS)
+		return V90_UPSTREAM_RX_SEQUENCE_MISMATCH;
 	result = validate_data_parameters(receiver, &parameters);
 	if (result != V90_UPSTREAM_RX_OK)
 		return result;
@@ -262,6 +304,9 @@ static enum v90_upstream_rx_result accept_cp_record(
 	if (!downstream_rate_is_enabled(receiver, &parameters))
 		return continue_cp(receiver);
 	if (!receiver->data_cp_received) {
+		bool reconditioned =
+			receiver->stage == V90_UPSTREAM_RX_STAGE_RECONDITION;
+
 		/* CP prime repeats the same data parameters and additionally says
 		 * that the analogue modem has received MP. Receiver acquisition may
 		 * miss every preceding CP while the peer legitimately advances after
@@ -271,12 +316,14 @@ static enum v90_upstream_rx_result accept_cp_record(
 		receiver->data_cp_received = true;
 		receiver->data_parameters = parameters;
 		receiver->data_parameters.acknowledges_peer = false;
+		receiver->stage = V90_UPSTREAM_RX_STAGE_CP;
 		result = continue_cp(receiver);
 		if (result != V90_UPSTREAM_RX_OK)
 			return result;
 		*emitted = receiver->data_parameters;
 		*event_ready = true;
-		return V90_UPSTREAM_RX_REQUEST_MP_PRIME;
+		return reconditioned ? V90_UPSTREAM_RX_REQUEST_RT :
+			V90_UPSTREAM_RX_REQUEST_MP_PRIME;
 	}
 	if (!data_parameters_are_equal(
 		    &parameters, &receiver->data_parameters))
@@ -416,6 +463,8 @@ enum v90_upstream_rx_result v90_upstream_rx_sample(
 	next = *receiver;
 	switch (next.stage) {
 	case V90_UPSTREAM_RX_STAGE_CP:
+	case V90_UPSTREAM_RX_STAGE_CPS:
+	case V90_UPSTREAM_RX_STAGE_RECONDITION:
 		result = receive_cp_sample(
 			&next, sample, &emitted, &event_ready);
 		break;
@@ -546,6 +595,10 @@ const char *v90_upstream_rx_result_name(
 		return "request MP prime";
 	case V90_UPSTREAM_RX_REQUEST_ED:
 		return "request Ed";
+	case V90_UPSTREAM_RX_REQUEST_SILENCE:
+		return "request silence";
+	case V90_UPSTREAM_RX_REQUEST_RT:
+		return "request Rt";
 	case V90_UPSTREAM_RX_E_COMPLETE:
 		return "E complete";
 	case V90_UPSTREAM_RX_B1_COMPLETE:

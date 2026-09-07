@@ -91,6 +91,10 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	enum pcm_protocol protocol,
 	const struct v90_pcm_mapping *training_mapping,
 	enum v90_pcm_mapping_plane decision_plane);
+/* Resume the completed CPs/Ed decoder after Rt-bar. MP continues the
+ * preceding coding histories without initial TRN2d. */
+enum pcm_downstream_rx_result pcm_downstream_rx_resume_after_rt(
+	struct pcm_downstream_rx *receiver);
 bool pcm_downstream_rx_is_valid(
 	const struct pcm_downstream_rx *receiver);
 

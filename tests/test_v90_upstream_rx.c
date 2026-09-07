@@ -170,6 +170,72 @@ static bool check_cleardown(
 	return false;
 }
 
+static bool check_cps_requests(enum g711_law law, unsigned int final_case)
+{
+	struct v90_cp_parameters training = cp_parameters(V90_CP_TRAINING, law, false, 6u);
+	struct v90_cp_parameters data = cp_parameters(V90_CP_DATA, law, false, 6u);
+	struct v90_cp_parameters cps = data;
+	struct v90_mp_record mp = local_mp(6u);
+	struct v90_pcm_mapping mapping;
+	struct v34_phase3_profile profile;
+	struct v90_phase3_return_line_handoff phase3;
+	struct v90_phase4_cp_line_tx tx;
+	struct v90_phase4_cp_line_rx cp;
+	struct v90_upstream_rx rx;
+	unsigned int requests = 0u;
+
+	cps.request_silence = true;
+	cps.selected_rate_index = V90_CP_RATE_INDEX_MAX;
+	cps.upstream_rate_mask = 0u;
+	CHECK(v90_cp_parameters_are_valid(&cps) &&
+	      v90_pcm_mapping_init_transmit(&mapping, &cps, law) != V90_PCM_MAPPING_OK &&
+	      line_profile(V34_SYMBOL_RATE_3000, 6u, &profile) &&
+	      v90_phase4_line_fixture_init_for_profile(&profile, law,
+		      V34_CONSTELLATION_4_POINT, &training, &tx, &phase3) &&
+	      v90_phase4_cp_line_rx_init(&cp, &phase3, V34_CONSTELLATION_4_POINT) ==
+		      V90_PHASE4_CP_LINE_RX_OK &&
+	      v90_pcm_mapping_init_transmit(&mapping, &training, law) == V90_PCM_MAPPING_OK &&
+	      v90_upstream_rx_init(&rx, &cp, &mapping, &mp, 1u) == V90_UPSTREAM_RX_OK,
+	      "CPs admission fixture failed");
+	if (final_case == 1u)
+		data.selected_rate_index = 0u;
+	else if (final_case == 2u) {
+		data = cps;
+		data.request_silence = false;
+	}
+	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
+		struct v90_cp_parameters event;
+		int16_t sample;
+		enum v90_upstream_rx_result result;
+
+		if (v90_phase4_cp_line_tx_record_is_complete(&tx)) {
+			cps.acknowledges_peer = requests != 0u;
+			CHECK(v90_phase4_cp_line_tx_start_next_record(&tx,
+				      requests < 2u ? &cps : &data) == V90_PHASE4_CP_LINE_TX_OK,
+			      "CPs repetition failed");
+		}
+		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) == V90_PHASE4_CP_LINE_TX_OK,
+		      "CPs line stopped");
+		result = v90_upstream_rx_sample(&rx, quantize(law, sample), &event);
+		if (result == V90_UPSTREAM_RX_OK)
+			continue;
+		CHECK(v90_upstream_rx_is_valid(&rx) && rx.failed ==
+			      (requests == 2u && final_case == 2u),
+		      "CPs owner failed: %s", v90_upstream_rx_result_name(result));
+		CHECK(result == (requests == 0u ? V90_UPSTREAM_RX_REQUEST_MP_PRIME :
+			requests == 1u ? V90_UPSTREAM_RX_REQUEST_SILENCE :
+			final_case == 1u ? V90_UPSTREAM_RX_CLEARDOWN :
+			final_case == 2u ? V90_UPSTREAM_RX_INVALID_PARAMETERS : V90_UPSTREAM_RX_REQUEST_RT),
+		      "CPs request %u became %s", requests, v90_upstream_rx_result_name(result));
+		CHECK(rx.data_cp_received == (requests == 2u && final_case == 0u),
+		      "CPs installed a data selection or zero rate became data");
+		if (++requests == 3u)
+			return true;
+	}
+	CHECK(false, "CPs control did not complete");
+	return false;
+}
+
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
@@ -554,6 +620,12 @@ int main(void)
 		    !check_cleardown(paths[path].law, paths[path].constellation, V90_CP_TRAINING))
 			return 1;
 	fprintf(stderr, "[       OK ] zero-rate CP/CPt cleardown\n");
+	fprintf(stderr, "[ RUN      ] CPs control bypasses data admission\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int final_case = 0u; final_case < 3u; ++final_case)
+			if (!check_cps_requests(law, final_case))
+				return 1;
+	fprintf(stderr, "[       OK ] CPs control bypasses data admission\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())
 		return 1;

@@ -295,7 +295,6 @@ bool v90_rd_tx_is_valid(const struct v90_rd_tx *transmitter)
 {
 	return transmitter != NULL &&
 	       v90_pcm_mapping_is_valid(&transmitter->mapping) &&
-	       transmitter->mapping.kind == V90_CP_DATA &&
 	       transmitter->transmitted_symbols <= V90_RD_SEQUENCE_SYMBOLS;
 }
 
@@ -305,22 +304,35 @@ bool v90_rd_tx_is_complete(const struct v90_rd_tx *transmitter)
 	       transmitter->transmitted_symbols == V90_RD_SEQUENCE_SYMBOLS;
 }
 
-enum v90_rd_tx_result v90_rd_tx_init(
+static enum v90_rd_tx_result r_tx_init(
 	struct v90_rd_tx *transmitter,
-	const struct v90_pcm_mapping *current_data_mapping)
+	const struct v90_pcm_mapping *mapping, enum v90_cp_kind kind)
 {
 	struct v90_rd_tx initialized = { 0 };
 
-	if (transmitter == NULL || current_data_mapping == NULL)
+	if (transmitter == NULL || mapping == NULL)
 		return V90_RD_TX_INVALID_ARGUMENT;
-	if (!v90_pcm_mapping_is_valid(current_data_mapping) ||
-	    current_data_mapping->kind != V90_CP_DATA)
+	if (!v90_pcm_mapping_is_valid(mapping) || mapping->kind != kind)
 		return V90_RD_TX_INVALID_PARAMETERS;
-	initialized.mapping = *current_data_mapping;
+	initialized.mapping = *mapping;
 	if (!v90_rd_tx_is_valid(&initialized))
 		return V90_RD_TX_INTERNAL_ERROR;
 	*transmitter = initialized;
 	return V90_RD_TX_OK;
+}
+
+enum v90_rd_tx_result v90_rd_tx_init(
+	struct v90_rd_tx *transmitter,
+	const struct v90_pcm_mapping *current_data_mapping)
+{
+	return r_tx_init(transmitter, current_data_mapping, V90_CP_DATA);
+}
+
+enum v90_rd_tx_result v90_rt_tx_init(
+	struct v90_rd_tx *transmitter,
+	const struct v90_pcm_mapping *training_mapping)
+{
+	return r_tx_init(transmitter, training_mapping, V90_CP_TRAINING);
 }
 
 enum v90_rd_tx_result v90_rd_tx_next(
@@ -343,7 +355,7 @@ enum v90_rd_tx_result v90_rd_tx_next(
 		    interval, 0, &ucode) != V90_PCM_MAPPING_OK)
 		return V90_RD_TX_INTERNAL_ERROR;
 	/* Descending-Ucode mapping makes label zero the normative
-	 * highest-power constellation member used by Rd. */
+	 * highest-power constellation member used by Rd and Rt. */
 	positive = interval < V90_CP_FRAME_INTERVALS / 2u;
 	if (next.transmitted_symbols >= V90_RD_SYMBOLS)
 		positive = !positive;

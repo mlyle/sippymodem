@@ -157,6 +157,27 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	return PCM_DOWNSTREAM_RX_OK;
 }
 
+enum pcm_downstream_rx_result pcm_downstream_rx_resume_after_rt(
+	struct pcm_downstream_rx *receiver)
+{
+	struct pcm_downstream_rx resumed = {
+		.protocol = PCM_PROTOCOL_V90,
+		.stage = PCM_DOWNSTREAM_RX_MP_SEARCH,
+	};
+
+	if (!pcm_downstream_rx_is_complete(receiver) ||
+	    receiver->protocol != PCM_PROTOCOL_V90)
+		return PCM_DOWNSTREAM_RX_INVALID_STATE;
+	resumed.stream = receiver->stream;
+	if (v90_mp_receiver_init(
+		    &resumed.control.mp, resumed.stream.decoder.mapping.frame_bits) !=
+		    V90_MP_RECEIVER_OK ||
+	    !pcm_downstream_rx_is_valid(&resumed))
+		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
+	*receiver = resumed;
+	return PCM_DOWNSTREAM_RX_OK;
+}
+
 bool pcm_downstream_rx_is_fresh(
 	const struct pcm_downstream_rx *receiver)
 {

@@ -36,8 +36,8 @@ enum v90_rd_tx_result {
 	V90_RD_TX_INTERNAL_ERROR,
 };
 
-/* V.90 8.6.4 Rd/Rd-bar uses the highest-power member of each current
- * data-mode constellation. It is deliberately independent of the data
+/* V.90 8.6.4 Rd/Rd-bar and Rt/Rt-bar use the highest-power member of each
+ * current data or training constellation. They are independent of the data
  * encoder: neither signal is scrambled, differentially encoded, or shaped. */
 struct v90_rd_tx {
 	struct v90_pcm_mapping mapping;
@@ -94,10 +94,14 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 enum v90_rd_tx_result v90_rd_tx_init(
 	struct v90_rd_tx *transmitter,
 	const struct v90_pcm_mapping *current_data_mapping);
+/* Rt shares the R waveform and duration, but uses CPt constellations. */
+enum v90_rd_tx_result v90_rt_tx_init(
+	struct v90_rd_tx *transmitter,
+	const struct v90_pcm_mapping *training_mapping);
 bool v90_rd_tx_is_valid(const struct v90_rd_tx *transmitter);
 bool v90_rd_tx_is_complete(const struct v90_rd_tx *transmitter);
 
-/* Emit exactly 384T of Rd followed by 24T of Rd-bar. COMPLETE consumes no
+/* Emit exactly 384T of R followed by 24T of R-bar. COMPLETE consumes no
  * character and leaves symbol unchanged. */
 enum v90_rd_tx_result v90_rd_tx_next(
 	struct v90_rd_tx *transmitter, struct v90_pcm_symbol *symbol);

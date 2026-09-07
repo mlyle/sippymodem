@@ -12,6 +12,8 @@
 
 enum v90_upstream_rx_stage {
 	V90_UPSTREAM_RX_STAGE_CP,
+	V90_UPSTREAM_RX_STAGE_CPS,
+	V90_UPSTREAM_RX_STAGE_RECONDITION,
 	V90_UPSTREAM_RX_STAGE_E,
 	V90_UPSTREAM_RX_STAGE_B1,
 	V90_UPSTREAM_RX_STAGE_COMPLETE,
@@ -19,10 +21,14 @@ enum v90_upstream_rx_stage {
 
 enum v90_upstream_rx_result {
 	V90_UPSTREAM_RX_OK,
-	/* The first final CP authorizes MP prime. */
+	/* The first data CP or CPs authorizes MP prime. */
 	V90_UPSTREAM_RX_REQUEST_MP_PRIME,
 	/* CP prime authorizes Ed and starts continuous E reception. */
 	V90_UPSTREAM_RX_REQUEST_ED,
+	/* CPs prime authorizes Ed/silence, but not E or data reception. */
+	V90_UPSTREAM_RX_REQUEST_SILENCE,
+	/* A normal CP following CPs prime ends silence through Rt/Rt-bar. */
+	V90_UPSTREAM_RX_REQUEST_RT,
 	V90_UPSTREAM_RX_E_COMPLETE,
 	V90_UPSTREAM_RX_B1_COMPLETE,
 	V90_UPSTREAM_RX_COMPLETE,
@@ -55,6 +61,8 @@ struct v90_upstream_rx {
 	 * later rate renegotiation can reset only the frame parser. */
 	struct v90_phase4_cp_rx control_symbols;
 	struct v90_pcm_mapping training_mapping;
+	/* Retain CPs for matching its prime; only data_cp_received publishes a
+	 * final data selection. CPs never installs a data mapping. */
 	struct v90_cp_parameters data_parameters;
 	struct v90_mp_record local_mp;
 	/* Data CP rate indices admitted by the Jd sent on this call. */
@@ -74,7 +82,7 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_has_failed(const struct v90_upstream_rx *receiver);
 bool v90_upstream_rx_is_complete(const struct v90_upstream_rx *receiver);
 
-/* Consume one signed 8 kHz line sample. event changes only for the two
+/* Consume one signed 8 kHz line sample. event changes only for the
  * control requests. All other results leave event unchanged. A failure after
  * consumption is latched because carrier and equalizer history cannot be
  * replayed. */

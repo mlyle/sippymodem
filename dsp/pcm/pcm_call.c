@@ -536,6 +536,8 @@ static bool rate_renegotiation_response_is_pending_owned(
 
 		return path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
 		       (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CP ||
+			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CPS ||
+			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_RECONDITION ||
 			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_E);
 	}
 }
@@ -2889,9 +2891,8 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 	     result != PCM_CALL_SEQUENCE_MISMATCH) ||
 	    !rate_renegotiation_is_active_owned(call))
 		return result;
-	/* CPs/Rt echo reconditioning and a broken committed Rd/Rd-bar exchange
-	 * are not completed in place. Leave either bounded control epoch through
-	 * the standards-defined full-retrain path. */
+	/* Leave a broken committed rate exchange through the standards-defined
+	 * full-retrain path. */
 	return begin_retrain(call, false);
 }
 

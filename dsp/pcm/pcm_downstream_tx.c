@@ -539,6 +539,31 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	return PCM_DOWNSTREAM_TX_OK;
 }
 
+enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
+	struct pcm_downstream_tx *transmitter)
+{
+	struct pcm_downstream_tx next = { .protocol = PCM_PROTOCOL_V90 };
+	enum pcm_downstream_tx_result result;
+
+	if (!pcm_downstream_tx_is_complete(transmitter) ||
+	    transmitter->protocol != PCM_PROTOCOL_V90 ||
+	    transmitter->stage != PCM_DOWNSTREAM_TX_ED)
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	next.encoder = transmitter->encoder;
+	next.encoder.finishing = false;
+	next.encoder.shaper.finishing = false;
+	next.scrambler = transmitter->scrambler;
+	next.accepted_frames = transmitter->accepted_frames;
+	next.transmitted_symbols = transmitter->transmitted_symbols;
+	result = pcm_downstream_tx_start_mp(&next, &transmitter->control.mp);
+	if (result != PCM_DOWNSTREAM_TX_OK)
+		return result;
+	if (!pcm_downstream_tx_is_valid(&next))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	*transmitter = next;
+	return PCM_DOWNSTREAM_TX_OK;
+}
+
 static bool same_v92_control(
 	const struct pcm_downstream_tx *transmitter,
 	enum pcm_downstream_v92_control_kind kind,

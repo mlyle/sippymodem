@@ -128,6 +128,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record);
 
+/* V.90 9.6.1.2.6 resumes the completed CPs/Ed control coder with MP after
+ * Rt-bar. Preserve scrambling, differential and spectral histories; no
+ * intervening TRN2d starts a new coding epoch. */
+enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
+	struct pcm_downstream_tx *transmitter);
+
 /* Queue immutable SUVd parameters. SUVd begins at the first source-frame
  * boundary after at least 2040 TRN2d symbols have been accepted, then repeats
  * on complete six-symbol mapping-frame boundaries. */

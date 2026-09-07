@@ -3406,6 +3406,8 @@ enum rrn_peer_downstream_stage {
 	RRN_PEER_DOWNSTREAM_WAIT_TRN2D,
 	RRN_PEER_DOWNSTREAM_TRAINING,
 	RRN_PEER_DOWNSTREAM_DATA,
+	RRN_PEER_DOWNSTREAM_SILENCE,
+	RRN_PEER_DOWNSTREAM_RT,
 };
 
 union rrn_peer_upstream {
@@ -3431,11 +3433,14 @@ struct rrn_peer {
 	bool peer_mp_received;
 	bool acknowledge_pending;
 	bool cp_prime_started;
+	size_t silence_samples;
+	size_t scr_samples;
+	size_t rt_symbols;
 };
 
 static bool rrn_peer_init(
 	struct rrn_peer *peer, const struct pcm_call *analog,
-	const struct pcm_call *digital)
+	const struct pcm_call *digital, bool recondition)
 {
 	struct rrn_peer initialized = {
 		.law = analog->law,
@@ -3477,6 +3482,7 @@ static bool rrn_peer_init(
 	initialized.upstream.cp.symbols = symbols;
 	initialized.data_parameters = analog_path->data_parameters;
 	initialized.data_parameters.acknowledges_peer = false;
+	initialized.data_parameters.request_silence = recondition;
 	initialized.decision_plane = analog_path->downstream.data.stream.decoder
 		.decision_plane;
 	if (!v90_phase4_cp_line_tx_is_valid(&initialized.upstream.cp) ||
@@ -3494,7 +3500,7 @@ static bool rrn_peer_prepare_cp(struct rrn_peer *peer)
 
 	if (!v90_phase4_cp_line_tx_record_is_complete(cp))
 		return true;
-	if (peer->cp_prime_started)
+	if (peer->cp_prime_started && !peer->data_parameters.request_silence)
 		return true;
 	peer->data_parameters.acknowledges_peer =
 		peer->acknowledge_pending;
@@ -3515,6 +3521,21 @@ static bool rrn_peer_transmit(
 		if (peer->upstream_stage == RRN_PEER_UPSTREAM_CP) {
 			enum v90_phase4_cp_line_tx_result result;
 
+			if (peer->data_parameters.request_silence &&
+			    peer->downstream_stage == RRN_PEER_DOWNSTREAM_SILENCE &&
+			    v90_phase4_cp_line_tx_record_is_complete(&peer->upstream.cp)) {
+				result = v90_phase4_cp_line_tx_scr_sample(
+					&peer->upstream.cp, peer->scr_samples >= 1601u, &sample);
+				if (result == V90_PHASE4_CP_LINE_TX_OK) {
+					peer->scr_samples++;
+					break;
+				}
+				if (result != V90_PHASE4_CP_LINE_TX_COMPLETE)
+					return false;
+				peer->data_parameters.request_silence = false;
+				peer->acknowledge_pending = false;
+				peer->cp_prime_started = false;
+			}
 			if (!rrn_peer_prepare_cp(peer))
 				return false;
 			result = v90_phase4_cp_line_tx_sample(
@@ -3580,6 +3601,40 @@ static bool rrn_peer_receive(
 	struct rrn_peer *peer, const struct v90_digital_path *path,
 	uint8_t octet, size_t expected_frame, bool *host_frame_received)
 {
+	if (peer->downstream_stage == RRN_PEER_DOWNSTREAM_SILENCE) {
+		struct v90_pcm_symbol silence;
+
+		if (!v90_pcm_symbol_make(&silence, peer->law, 0u, true))
+			return false;
+		if (octet == silence.octet) {
+			peer->silence_samples++;
+			return true;
+		}
+		if (peer->silence_samples == 0u ||
+		    peer->silence_samples % V90_CP_FRAME_INTERVALS != 0u)
+			return false;
+		peer->downstream_stage = RRN_PEER_DOWNSTREAM_RT;
+	}
+	if (peer->downstream_stage == RRN_PEER_DOWNSTREAM_RT) {
+		struct v90_pcm_symbol expected;
+		uint8_t ucode;
+		size_t interval = peer->rt_symbols % V90_CP_FRAME_INTERVALS;
+		bool positive = interval < 3u;
+
+		if (peer->rt_symbols >= V90_RD_SYMBOLS)
+			positive = !positive;
+		if (v90_pcm_mapping_ucode(&path->training_mapping, peer->decision_plane,
+					 interval, 0u, &ucode) != V90_PCM_MAPPING_OK ||
+		    !v90_pcm_symbol_make(&expected, peer->law, ucode, positive) ||
+		    octet != expected.octet)
+			return false;
+		if (++peer->rt_symbols == V90_RD_SEQUENCE_SYMBOLS) {
+			if (pcm_downstream_rx_resume_after_rt(&peer->downstream.training) != PCM_DOWNSTREAM_RX_OK)
+				return false;
+			peer->downstream_stage = RRN_PEER_DOWNSTREAM_TRAINING;
+		}
+		return true;
+	}
 	if (peer->downstream_stage == RRN_PEER_DOWNSTREAM_WAIT_TRN2D) {
 		struct pcm_downstream_rx training;
 
@@ -3627,6 +3682,11 @@ static bool rrn_peer_receive(
 		if (result == PCM_DOWNSTREAM_RX_ED) {
 			struct v90_downstream_data_rx data;
 
+			if (peer->data_parameters.request_silence) {
+				peer->downstream_stage = RRN_PEER_DOWNSTREAM_SILENCE;
+				peer->peer_mp_received = false;
+				return true;
+			}
 			if (!peer->acknowledge_pending ||
 			    v90_downstream_data_rx_start_after_ed(
 				    &data, &peer->downstream.training,
@@ -3667,7 +3727,8 @@ static bool rrn_peer_receive(
 
 static bool run_rate_renegotiation_case(
 	enum g711_law law,
-	enum v34_constellation_size rate_renegotiation_constellation)
+	enum v34_constellation_size rate_renegotiation_constellation,
+	bool recondition)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -3692,6 +3753,7 @@ static bool run_rate_renegotiation_case(
 	bool timeout_checked = false;
 	bool training_started = false;
 	bool data_cp_latched_during_control = false;
+	bool recondition_timeout_checked = false;
 	bool downstream_host_frame_received = false;
 	bool upstream_host_frame_received = false;
 
@@ -3935,7 +3997,7 @@ static bool run_rate_renegotiation_case(
 		      .shaping_b2_q1_6 == old_data_mapping.shaping_b2_q1_6,
 	      "law %u rate renegotiation did not retain the preceding data shaper",
 	      (unsigned int)law);
-	CHECK(rrn_peer_init(&peer, &analog.call, &digital.call),
+	CHECK(rrn_peer_init(&peer, &analog.call, &digital.call, recondition),
 	      "law %u rate-renegotiation peer did not resume its trained line",
 	      (unsigned int)law);
 	upstream_before_resume = analog.upstream_source.frames;
@@ -3975,8 +4037,26 @@ static bool run_rate_renegotiation_case(
 		      (!was_active ||
 		       (event.kind == PCM_CALL_DATA_NONE &&
 			digital.downstream_source.frames == downstream_before)),
-		      "law %u rate-renegotiation control consumed host data at sample %zu",
-		      (unsigned int)law, sample);
+		      "law %u rate renegotiation lost online ownership or host gating "
+		      "at sample %zu (stage %u)",
+		      (unsigned int)law, sample, (unsigned int)digital.call.stage);
+		if (recondition && !recondition_timeout_checked &&
+		    digital.call.state.data_path.digital.downstream_stage ==
+			    V90_DIGITAL_PATH_DOWNSTREAM_SILENCE) {
+			struct pcm_call stalled = digital.call;
+			struct pcm_call_data_event ignored;
+			uint8_t output;
+
+			CHECK(stalled.rate_renegotiation_deadline_armed &&
+			      stalled.rate_renegotiation_deadline_remaining_samples < expected_deadline,
+			      "CPs retired or restarted the original response deadline");
+			stalled.rate_renegotiation_deadline_remaining_samples = 1u;
+			CHECK(pcm_call_data_octet(&stalled, digital_received,
+				      decode_octet(law, digital_received), NULL, &output, &ignored) == PCM_CALL_OK &&
+			      stalled.stage == PCM_CALL_RETRAIN_SILENCE && !stalled.failed &&
+			      pcm_call_is_valid(&stalled), "missing post-silence CP did not time out");
+			recondition_timeout_checked = true;
+		}
 		if (!deadline_started &&
 		    digital.call.rate_renegotiation_deadline_armed) {
 			struct pcm_call invalid = digital.call;
@@ -4095,6 +4175,11 @@ static bool run_rate_renegotiation_case(
 	      digital.downstream_source.frames, downstream_before,
 	      analog.upstream_source.frames, upstream_before_resume,
 	      digital.upstream_frames, received_before);
+	CHECK(!recondition || (recondition_timeout_checked &&
+			      peer.silence_samples > 0u && peer.scr_samples >= 1601u &&
+			      peer.rt_symbols == V90_RD_SEQUENCE_SYMBOLS),
+	      "CPs did not complete silence/SCR/Rt: %zu/%zu/%zu",
+	      peer.silence_samples, peer.scr_samples, peer.rt_symbols);
 	return true;
 }
 
@@ -4103,9 +4188,19 @@ static bool test_rate_renegotiation_completion(void)
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
 		CHECK(run_rate_renegotiation_case(
-			      law, V34_CONSTELLATION_4_POINT),
+			      law, V34_CONSTELLATION_4_POINT, false),
 		      "law %u rate-renegotiation completion failed",
 		      (unsigned int)law);
+	return true;
+}
+
+static bool test_echo_reconditioning(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int index = 0u; index < 2u; ++index)
+			CHECK(run_rate_renegotiation_case(law, index == 0u ?
+				V34_CONSTELLATION_4_POINT : V34_CONSTELLATION_16_POINT, true),
+			      "law %u constellation %u echo reconditioning failed", law, index);
 	return true;
 }
 
@@ -4578,7 +4673,7 @@ static bool test_rate_renegotiation_16_point_completion(void)
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
 		CHECK(run_rate_renegotiation_case(
-			      law, V34_CONSTELLATION_16_POINT),
+			      law, V34_CONSTELLATION_16_POINT, false),
 		      "law %u 16-point rate-renegotiation completion failed",
 		      (unsigned int)law);
 	return true;
@@ -5865,6 +5960,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains V.90 retrain agreement", test_v34_restart },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
