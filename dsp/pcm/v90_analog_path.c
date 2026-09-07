@@ -133,7 +133,8 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	    path->cleardown_tail_samples > CLEARDOWN_MAX_TAIL_SAMPLES ||
 	    (path->cleardown_records != 0u &&
 	     path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) ||
-	    (path->cleardown_requested && !path->rate_renegotiation_active) ||
+	    (path->cleardown_requested && !path->rate_renegotiation_active &&
+	     path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) ||
 	    (!path->cleardown_requested &&
 	     (path->cleardown_records != 0u ||
 	      path->cleardown_tail_samples != 0u)) ||
@@ -288,7 +289,16 @@ static enum v90_analog_path_result prepare_cp_record(
 	    path->finishing_cp)
 		return V90_ANALOG_PATH_OK;
 	if (path->cleardown_requested) {
-		if (path->cleardown_records < CLEARDOWN_RECORDS)
+		if (path->cleardown_records == CLEARDOWN_RECORDS)
+			return V90_ANALOG_PATH_OK;
+		/* Cancellation may have been requested in an ordinary CP. Only
+		 * count complete zero-rate records, never the preceding data CP. */
+		if (v90_cp_decode(path->upstream.cp.symbols.frame,
+			    sizeof(path->upstream.cp.symbols.frame),
+			    path->upstream.cp.symbols.frame_bit_count,
+			    &parameters) != V90_CP_OK)
+			return V90_ANALOG_PATH_INTERNAL_ERROR;
+		if (parameters.selected_rate_index == 0u)
 			path->cleardown_records++;
 		if (path->cleardown_records == CLEARDOWN_RECORDS)
 			return V90_ANALOG_PATH_OK;
@@ -711,10 +721,16 @@ enum v90_analog_path_result v90_analog_path_start_cleardown(
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	if (path->cleardown_requested)
 		return V90_ANALOG_PATH_OK;
-	if (!v90_analog_path_is_online(path) || path->receive_pending ||
-	    path->rate_renegotiation_active)
+	if (path->receive_pending)
 		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
-	profile = &path->upstream.data.line.profile;
+	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
+	    !path->finishing_cp) {
+		profile = &path->upstream.cp.line.profile;
+	} else {
+		if (!v90_analog_path_is_online(path) || path->rate_renegotiation_active)
+			return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
+		profile = &path->upstream.data.line.profile;
+	}
 	/* Include the already accepted final CP point, then flush every pulse
 	 * history point and the sample-rate pre-emphasis filter. */
 	tail_samples = ((V34_TRAINING_LINE_PULSE_TAIL_SYMBOLS + 1u) *
@@ -722,9 +738,11 @@ enum v90_analog_path_result v90_analog_path_start_cleardown(
 		profile->symbol_rate_numerator - 1u) /
 		profile->symbol_rate_numerator +
 		V34_TRAINING_LINE_FILTER_TAIL_SAMPLES;
-	result = begin_rate_renegotiation(path);
-	if (result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
-		return result;
+	if (path->upstream_stage != V90_ANALOG_PATH_UPSTREAM_CP) {
+		result = begin_rate_renegotiation(path);
+		if (result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
+			return result;
+	}
 	path->cleardown_requested = true;
 	path->cleardown_tail_samples = (uint16_t)tail_samples;
 	return V90_ANALOG_PATH_OK;

@@ -1048,7 +1048,8 @@ struct test_case {
 	bool (*run)(void);
 };
 
-static bool test_zero_rate_cleardown(void)
+static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
+	unsigned int replacement)
 {
 	const struct v90_mp_record mp = {
 		.type = V90_MP_RECORD_TYPE0,
@@ -1060,70 +1061,120 @@ static bool test_zero_rate_cleardown(void)
 		},
 	};
 
-	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead) {
-			struct v90_pcm_mapping mapping;
-			struct pcm_downstream_tx tx;
-			struct pcm_downstream_rx rx;
-			size_t sequence_bits = 0u;
-			unsigned int received_records = 0u;
-			unsigned int symbols = 0u;
-			bool completed = false;
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx tx;
+	struct pcm_downstream_rx rx;
+	struct v90_mp_record initial = mp;
+	size_t sequence_bits = 0u;
+	unsigned int received_records = 0u;
+	unsigned int preceding_records = 0u;
+	unsigned int symbols = 0u;
+	bool completed = false;
+	bool pending = false;
+	bool replaced = replacement == 0u;
 
-			CHECK(make_mapping(
-				      &mapping, V90_CP_TRAINING,
-				      (enum g711_law)law, 3u, lookahead) &&
-			      pcm_downstream_tx_init(
-				      &tx, PCM_PROTOCOL_V90, &mapping) ==
-				      PCM_DOWNSTREAM_TX_OK &&
-			      pcm_downstream_tx_start_mp(&tx, &mp) ==
-				      PCM_DOWNSTREAM_TX_OK &&
-			      pcm_downstream_rx_init(
-				      &rx, PCM_PROTOCOL_V90, &mapping,
-				      V90_PCM_MAPPING_TRANSMIT) ==
-				      PCM_DOWNSTREAM_RX_OK &&
-			      v90_mp_sequence_size(
-				      mp.type, mapping.frame_bits, &sequence_bits) ==
-				      V90_MP_OK,
-			      "cleardown fixture did not initialize");
-			CHECK(pcm_downstream_tx_request_mp_prime(&tx) ==
-				      PCM_DOWNSTREAM_TX_INVALID_STATE,
-			      "cleardown entered data acknowledgement");
-			for (; symbols < 10000u; ++symbols) {
-				struct pcm_downstream_symbol symbol;
-				struct pcm_downstream_event event;
-				enum pcm_downstream_tx_result sent =
-					pcm_downstream_tx_next(&tx, &symbol);
-				enum pcm_downstream_rx_result received;
+	if (replacement != 0u)
+		initial.parameters.type0.maximum_upstream_rate_2400_bps_units = 12u;
 
-				if (sent == PCM_DOWNSTREAM_TX_COMPLETE) {
-					completed = true;
-					break;
-				}
-				CHECK(sent == PCM_DOWNSTREAM_TX_OK,
-				      "cleardown transmitter failed");
-				received = pcm_downstream_rx_receive(
-					&rx, symbol.pcm.octet, &event);
-				if (received == PCM_DOWNSTREAM_RX_MP) {
-					CHECK(v90_mp_record_equal(&event.mp.record, &mp),
-					      "cleardown rate record changed");
-					received_records++;
-				} else {
-					CHECK(received == PCM_DOWNSTREAM_RX_OK ||
-					      received == PCM_DOWNSTREAM_RX_BUFFERING ||
-					      received == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
-					      "cleardown emitted an unexpected control event");
-				}
-			}
-			CHECK(completed && received_records == 2u &&
-			      symbols == (V90_PHASE4_TRN2D_INITIAL_FRAMES +
-					  2u * sequence_bits / mapping.frame_bits) *
-					 V90_CP_FRAME_INTERVALS &&
-			      pcm_downstream_tx_is_complete(&tx) &&
-			      tx.queue_count == 0u,
-			      "cleardown truncated its records or spectral tail");
+	CHECK(make_mapping(
+		      &mapping, V90_CP_TRAINING,
+		      (enum g711_law)law, 3u, lookahead) &&
+	      pcm_downstream_tx_init(
+		      &tx, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&tx, &initial) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(
+		      &rx, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
+		      PCM_DOWNSTREAM_RX_OK &&
+	      v90_mp_sequence_size(
+		      mp.type, mapping.frame_bits, &sequence_bits) ==
+		      V90_MP_OK,
+	      "cleardown fixture did not initialize");
+	if (replacement == 0u)
+		CHECK(pcm_downstream_tx_request_mp_prime(&tx) ==
+			      PCM_DOWNSTREAM_TX_INVALID_STATE,
+		      "cleardown entered data acknowledgement");
+	else if (replacement == 2u)
+		CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK,
+		      "MP-prime fixture did not start");
+	for (; symbols < 10000u; ++symbols) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		enum pcm_downstream_tx_result sent;
+		enum pcm_downstream_rx_result received;
+		enum pcm_downstream_tx_stage target = replacement == 1u ?
+			PCM_DOWNSTREAM_TX_MP : PCM_DOWNSTREAM_TX_MP_PRIME;
+
+		if (!replaced && !pending && tx.stage == target && tx.control_bit_index != 0u) {
+			struct pcm_downstream_tx before = tx;
+
+			CHECK(pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
+			      memcmp(&before, &tx, sizeof(tx)) == 0,
+			      "mid-record cleardown changed the current MP");
+			pending = true;
+		}
+		if (pending && tx.control_bit_index == 0u) {
+			struct pcm_downstream_tx before = tx;
+
+			CHECK(pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_OK &&
+			      memcmp(&before.encoder, &tx.encoder, sizeof(tx.encoder)) == 0 &&
+			      memcmp(&before.scrambler, &tx.scrambler, sizeof(tx.scrambler)) == 0 &&
+			      memcmp(before.queue, tx.queue, sizeof(tx.queue)) == 0 &&
+			      before.queue_count == tx.queue_count &&
+			      before.accepted_frames == tx.accepted_frames &&
+			      before.transmitted_symbols == tx.transmitted_symbols,
+			      "boundary cleardown reset or discarded encoded history");
+			pending = false;
+			replaced = true;
+		}
+		sent = pcm_downstream_tx_next(&tx, &symbol);
+
+		if (sent == PCM_DOWNSTREAM_TX_COMPLETE) {
+			completed = true;
+			break;
+		}
+		CHECK(sent == PCM_DOWNSTREAM_TX_OK,
+		      "cleardown transmitter failed");
+		received = pcm_downstream_rx_receive(
+			&rx, symbol.pcm.octet, &event);
+		if ((received == PCM_DOWNSTREAM_RX_MP || received == PCM_DOWNSTREAM_RX_MP_PRIME) &&
+		    event.mp.record.parameters.type0.maximum_upstream_rate_2400_bps_units != 0u) {
+			CHECK(received_records == 0u &&
+			      v90_mp_record_parameters_equal(&event.mp.record, &initial),
+			      "preceding MP was damaged by cancellation");
+			preceding_records++;
+		} else if (received == PCM_DOWNSTREAM_RX_MP) {
+			CHECK(v90_mp_record_equal(&event.mp.record, &mp),
+			      "cleardown rate record changed");
+			received_records++;
+		} else {
+			CHECK(received == PCM_DOWNSTREAM_RX_OK ||
+			      received == PCM_DOWNSTREAM_RX_BUFFERING ||
+			      received == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
+			      "cleardown emitted an unexpected control event");
 		}
 	}
+	CHECK(completed && replaced && received_records == 2u &&
+	      preceding_records == replacement &&
+	      symbols == (V90_PHASE4_TRN2D_INITIAL_FRAMES +
+			  (2u + replacement) * sequence_bits / mapping.frame_bits) *
+			 V90_CP_FRAME_INTERVALS &&
+	      pcm_downstream_tx_is_complete(&tx) &&
+	      tx.queue_count == 0u,
+	      "cleardown truncated its records or spectral tail");
+	return true;
+}
+
+static bool test_zero_rate_cleardown(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead)
+			for (unsigned int replacement = 0u; replacement <= 2u; ++replacement)
+				CHECK(verify_zero_rate_cleardown(law, lookahead, replacement),
+				      "law %u lookahead %u replacement %u cleardown failed",
+				      law, lookahead, replacement);
 	return true;
 }
 

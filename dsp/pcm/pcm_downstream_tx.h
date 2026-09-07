@@ -122,7 +122,9 @@ bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
  * frame is still in the spectral look-ahead. Acknowledgement must be clear;
  * initial V.90 MP begins after the one-second TRN2d conditioning interval.
  * Repeating an identical request is harmless. A
- * zero-rate MP sends two complete records, then drains the spectral coder
+ * zero-rate MP may also replace MP/MP-prime at a complete source-record
+ * boundary, retaining all queued symbols and coding histories. It sends
+ * two complete records, then drains the spectral coder
  * without Ed/B1d: V.90 9.7 terminates the link through that rate sequence. */
 enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,

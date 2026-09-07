@@ -300,7 +300,9 @@ enum pcm_call_result pcm_call_init(
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
-/* Begin V.90 zero-rate cleardown on the current continuous data line.
+/* Begin V.90 zero-rate cleardown on the current continuous data or CP/MP
+ * line. A rate exchange can be cancelled before CONNECT or during retrain;
+ * pre-control startup and an already committed E/Ed are not interrupted.
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
  * Native V.92 currently has no B1/data owner and is rejected here.

@@ -110,12 +110,22 @@ static bool role_from_modem(
 	return true;
 }
 
+static bool call_is_disconnecting(const struct pcm_call *call)
+{
+	return call->stage == PCM_CALL_CLOSED ||
+	       (call->protocol == PCM_PROTOCOL_V90 && call->stage == PCM_CALL_DATA_PATH &&
+		(call->local_role == V90_ANALOG_MODEM ?
+		 call->state.data_path.analog.cleardown_requested :
+		 call->state.data_path.digital.cleardown_requested));
+}
+
 static struct v90_datapump *v90_from_dp(struct dp *dp)
 {
 	struct v90_datapump *datapump;
 	enum pcm_protocol protocol;
 	enum v90_modem_role role;
 	bool closed;
+	bool disconnecting;
 
 	if (dp == NULL || !protocol_from_id(dp->id, &protocol) ||
 	    dp->op != &v90_operations ||
@@ -124,6 +134,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	closed = datapump->call_started && datapump->call.stage == PCM_CALL_CLOSED;
+	disconnecting = datapump->call_started && call_is_disconnecting(&datapump->call);
 	if (&datapump->dp != dp || datapump->role != role ||
 	    (closed && dp->status != DPSTAT_DISCONNECT) ||
 	    datapump->protocol != protocol ||
@@ -156,16 +167,16 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      datapump->call.law != datapump->media_law ||
 	      (pcm_call_has_failed(&datapump->call) &&
 	       !training_session_has_failed(&datapump->training)))) ||
-	    (!closed && !training_session_has_failed(&datapump->training) &&
+	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     (datapump->call_started &&
 		      pcm_call_is_online(&datapump->call)) &&
 	     !(training_session_is_retraining(&datapump->training) &&
 	       !pcm_call_is_online(&datapump->call))) ||
-	    (!closed && !training_session_has_failed(&datapump->training) &&
+	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
 	     datapump->call_started && pcm_call_is_online(&datapump->call) &&
 	     dp->status != DPSTAT_CONNECT) ||
-	    (!closed && !training_session_has_failed(&datapump->training) &&
+	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
 	     (!datapump->call_started || !pcm_call_is_online(&datapump->call)) &&
 	     dp->status == DPSTAT_CONNECT &&
 	     !training_session_is_retraining(&datapump->training)))
@@ -740,7 +751,10 @@ static int process_v90_g711(
 		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
 
-		if (!training_session_is_online(&datapump->training) &&
+		/* An accepted hangup owns the line until its bounded protocol
+		 * tail drains, even if the original CONNECT deadline expires. */
+		if (!call_is_disconnecting(&datapump->call) &&
+		    !training_session_is_online(&datapump->training) &&
 		    training_session_advance(&datapump->training, 1) !=
 			    TRAINING_SESSION_OK)
 			goto failure;

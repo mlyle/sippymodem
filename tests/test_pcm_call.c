@@ -956,9 +956,15 @@ static bool check_peer_cleardown(
 	struct pcm_call calls[2] = { *analog, *digital };
 	struct channel channel = *line;
 	bool complete[2] = { false, false };
+	enum pcm_call_result started = pcm_call_start_cleardown(&calls[initiator]);
 
-	CHECK(pcm_call_start_cleardown(&calls[initiator]) == PCM_CALL_OK,
-	      "paired cleardown did not start");
+	CHECK(started == PCM_CALL_OK,
+	      "law %u side %u paired cleardown did not start: %s",
+	      (unsigned int)analog->law, initiator, pcm_call_result_name(started));
+	CHECK(!pcm_call_is_online(&calls[initiator]) &&
+	      !calls[initiator].b1_deadline_armed &&
+	      !calls[initiator].rate_renegotiation_deadline_armed,
+	      "local cleardown retained CONNECT or training deadlines");
 	for (size_t clock = 0; clock < 16000u && !(complete[0] && complete[1]); ++clock) {
 		uint8_t received[2];
 		uint8_t transmitted[2];
@@ -1017,6 +1023,49 @@ static bool check_peer_cleardown(
 		      memcmp(&before, &calls[side], sizeof(before)) == 0,
 		      "closed call consumed input, advanced state, or restarted");
 	}
+	return true;
+}
+
+static bool check_training_cleardown(
+	const struct pcm_call *analog, const struct pcm_call *digital,
+	const struct channel *line)
+{
+	struct pcm_call calls[2] = { *analog, *digital };
+	struct channel channel = *line;
+	unsigned int checked = 0u;
+
+	CHECK(check_peer_cleardown(analog, digital, line, 0u) &&
+	      check_peer_cleardown(analog, digital, line, 1u),
+	      "initial control cancellation failed");
+	for (size_t clock = 0; clock < 16000u && checked != 3u; ++clock) {
+		uint8_t received[2], transmitted[2];
+		const struct v90_digital_path *path = &calls[1].state.data_path.digital;
+		const struct pcm_downstream_tx *tx = &path->downstream.training;
+
+		CHECK(path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_TRAINING,
+		      "control cancellation fixture left training too early");
+		unsigned int bit = tx->stage == PCM_DOWNSTREAM_TX_MP ? 1u :
+			tx->stage == PCM_DOWNSTREAM_TX_MP_PRIME ? 2u : 0u;
+
+		if (bit != 0u && !(checked & bit) && tx->control_bit_index != 0u) {
+			CHECK(check_peer_cleardown(&calls[0], &calls[1], &channel, 1u),
+			      "mid-MP cancellation failed at stage %u", (unsigned int)tx->stage);
+			if (bit == 1u)
+				CHECK(check_peer_cleardown(&calls[0], &calls[1], &channel, 0u),
+				      "mid-CP cancellation failed");
+			checked |= bit;
+		}
+		channel_receive(&channel, &received[0], &received[1]);
+		for (unsigned int side = 0; side < 2u; ++side) {
+			struct pcm_call_data_event event;
+			CHECK(pcm_call_data_octet(&calls[side], received[side],
+				      decode_octet(calls[side].law, received[side]), NULL,
+				      &transmitted[side], &event) == PCM_CALL_OK,
+			      "control cancellation fixture stopped at %zu", clock);
+		}
+		channel_transmit(&channel, transmitted[0], transmitted[1]);
+	}
+	CHECK(checked == 3u, "control cancellation missed MP or MP-prime");
 	return true;
 }
 
@@ -1135,8 +1184,14 @@ static bool check_zero_rate_cleardown(
 			decoded = pcm_downstream_rx_receive(
 				&downstream, output, &received);
 			if (decoded == PCM_DOWNSTREAM_RX_MP) {
+				struct v90_mp_record zero = path->local_mp;
+				struct v90_mp_parameters *parameters =
+					zero.type == V90_MP_RECORD_TYPE0 ?
+					&zero.parameters.type0 : &zero.parameters.type1.common;
+
+				parameters->maximum_upstream_rate_2400_bps_units = 0u;
 				CHECK(v90_mp_record_equal(
-					      &received.mp.record, &path->local_mp),
+					      &received.mp.record, &zero),
 				      "zero-rate MP changed on the PCM wire");
 				mp_records++;
 			} else {
@@ -1364,6 +1419,12 @@ static bool run_configured_call(
 			      PCM_CALL_DATA_PATH,
 		      "law %u delay %zu did not preserve Phase 4 handoffs",
 		      (unsigned int)law, delay);
+	if (goal == CALL_GOAL_DATA_PATH) {
+		CHECK(!pcm_call_is_online(&analog.call) &&
+		      !pcm_call_is_online(&digital.call) &&
+		      check_training_cleardown(&analog.call, &digital.call, &channel),
+		      "initial rate exchange did not honor local cleardown");
+	}
 	if (goal == CALL_GOAL_ONLINE_DATA) {
 		uint32_t analog_transmit_rate = 0;
 		uint32_t analog_receive_rate = 0;
@@ -4287,6 +4348,7 @@ static bool run_paired_remote_rate_renegotiation(
 	bool digital_deadline_seen = false;
 	bool analog_response_seen = false;
 	bool digital_response_seen = false;
+	bool cleardown_checked = false;
 	bool timeout_checked = false;
 	bool cp_seen = false;
 	bool e_seen = false;
@@ -4617,11 +4679,24 @@ static bool run_paired_remote_rate_renegotiation(
 		}
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
+		if (!cleardown_checked && analog.call.rate_renegotiation_deadline_armed &&
+		    digital.call.rate_renegotiation_deadline_armed &&
+		    analog_path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
+		    !analog_path->finishing_cp && digital_path->downstream_stage ==
+			V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+		    digital_path->downstream.training.stage == PCM_DOWNSTREAM_TX_MP &&
+		    digital_path->downstream.training.control_bit_index != 0u) {
+			CHECK(check_peer_cleardown(&analog.call, &digital.call, &channel, 0u) &&
+			      check_peer_cleardown(&analog.call, &digital.call, &channel, 1u),
+			      "active rate exchange did not honor local cleardown");
+			cleardown_checked = true;
+		}
 		if (analog_started && !analog_path->rate_renegotiation_active &&
 		    !digital_path->rate_renegotiation_active &&
 		    downstream_resumed && upstream_resumed)
 			break;
 	}
+	CHECK(cleardown_checked, "paired RRN never exercised control cancellation");
 	CHECK(analog_started && rd_detected && rd_bar_started &&
 	      rd_bar_complete && analog_deadline_seen &&
 	      analog_response_seen && digital_response_seen &&

@@ -105,6 +105,7 @@ bool v90_analog_path_downstream_is_online(
 bool v90_analog_path_is_online(const struct v90_analog_path *path);
 
 /* Preserve the live QAM line through S/S-bar and two zero-rate CP records.
+ * An existing CP exchange finishes its current record without S/S-bar.
  * COMPLETE follows the final pulse/pre-emphasis tail, without E or B1. */
 enum v90_analog_path_result v90_analog_path_start_cleardown(
 	struct v90_analog_path *path);

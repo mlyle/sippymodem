@@ -46,15 +46,18 @@ static struct v90_mp_parameters *record_common(
 		       &record->parameters.type1.common;
 }
 
+static bool record_requests_cleardown(const struct v90_mp_record *mp)
+{
+	return (mp->type == V90_MP_RECORD_TYPE0 ?
+		mp->parameters.type0.maximum_upstream_rate_2400_bps_units :
+		mp->parameters.type1.common.maximum_upstream_rate_2400_bps_units) == 0u;
+}
+
 static bool requests_cleardown(const struct pcm_downstream_tx *transmitter)
 {
-	const struct v90_mp_record *mp = &transmitter->control.mp;
-
 	return transmitter->control_configured &&
 	       transmitter->protocol == PCM_PROTOCOL_V90 &&
-	       (mp->type == V90_MP_RECORD_TYPE0 ?
-			mp->parameters.type0.maximum_upstream_rate_2400_bps_units :
-			mp->parameters.type1.common.maximum_upstream_rate_2400_bps_units) == 0u;
+	       record_requests_cleardown(&transmitter->control.mp);
 }
 
 static bool encode_mp_sequence(
@@ -516,7 +519,13 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	if (transmitter->control_configured) {
 		if (same_mp_record(transmitter, record))
 			return PCM_DOWNSTREAM_TX_OK;
-		if (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D)
+		/* A zero-rate request may replace MP at a complete source-record
+		 * boundary. Keep every already encoded symbol and coding history;
+		 * never splice a new record into the middle of the old one. */
+		if (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D &&
+		    !(record_requests_cleardown(record) &&
+		      transmitter->stage != PCM_DOWNSTREAM_TX_ED &&
+		      transmitter->control_bit_index == 0u))
 			return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	}
 	if (!encode_mp_sequence(
@@ -533,6 +542,13 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 		    &next, sequence, sizeof(sequence), sequence_bits))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	next.control_configured = true;
+	if (record_requests_cleardown(record)) {
+		if (next.stage != PCM_DOWNSTREAM_TX_TRN2D)
+			next.stage = PCM_DOWNSTREAM_TX_MP;
+		next.mp_prime_requested = false;
+		next.mp_prime_record_accepted = false;
+		next.ed_requested = false;
+	}
 	if (!pcm_downstream_tx_is_valid(&next))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = next;

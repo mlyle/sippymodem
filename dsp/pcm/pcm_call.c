@@ -994,7 +994,8 @@ static bool digital_upstream_is_online_owned(
 
 static bool data_path_is_online_owned(const struct pcm_call *call)
 {
-	if (call->failed || call->stage != PCM_CALL_DATA_PATH)
+	if (call->failed || call->stage != PCM_CALL_DATA_PATH ||
+	    cleardown_is_active_owned(call))
 		return false;
 	if (call->local_role == V90_ANALOG_MODEM)
 		return analog_upstream_is_online_owned(
@@ -2673,16 +2674,21 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->stage == PCM_CALL_CLOSED || cleardown_is_active_owned(call))
 		return PCM_CALL_OK;
-	if (!pcm_call_is_online(call) || call->protocol != PCM_PROTOCOL_V90 ||
-	    rate_renegotiation_is_active_owned(call))
+	if (call->stage != PCM_CALL_DATA_PATH || call->protocol != PCM_PROTOCOL_V90)
 		return PCM_CALL_INVALID_STATE;
 	result = call->local_role == V90_ANALOG_MODEM ?
 		analog_path_result(v90_analog_path_start_cleardown(
 			&call->state.data_path.analog)) :
 		digital_path_result(v90_digital_path_start_cleardown(
 			&call->state.data_path.digital));
-	if (result == PCM_CALL_OK && !pcm_call_is_valid(call))
-		return PCM_CALL_NUMERIC_FAILURE;
+	if (result == PCM_CALL_OK) {
+		call->b1_deadline_armed = false;
+		call->b1_deadline_remaining_samples = 0u;
+		call->rate_renegotiation_deadline_armed = false;
+		call->rate_renegotiation_deadline_remaining_samples = 0u;
+		if (!pcm_call_is_valid(call))
+			return PCM_CALL_NUMERIC_FAILURE;
+	}
 	return result;
 }
 

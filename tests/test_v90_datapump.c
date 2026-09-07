@@ -371,6 +371,72 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 	return true;
 }
 
+static bool run_training_cleardown(enum g711_law law, unsigned int initiator)
+{
+	struct bit_endpoint bits[2] = { 0 };
+	struct modem modems[2] = {
+		endpoint_modem(MODEM_PCM_ROLE_ANALOG, &bits[0]),
+		endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits[1]),
+	};
+	struct dp_operations *operations = modem_dp_get_registered_ops(DP_V90);
+	struct dp *pumps[2];
+	struct dc_remover frontend;
+	uint8_t received[2] = { encode(law, 0), encode(law, 0) };
+	bool started = false;
+
+	CHECK(operations != NULL && dc_remover_init(&frontend) == DC_REMOVER_OK,
+	      "training cleardown fixture did not initialize");
+	for (unsigned int side = 0; side < 2u; ++side) {
+		modems[side].min_rate = modems[side].max_rate = 28000;
+		pumps[side] = operations->create(&modems[side], DP_V90, side == 0u,
+			MODEM_RATE, MODEM_FRAG, operations);
+		CHECK(pumps[side] != NULL, "training cleardown datapump did not initialize");
+	}
+	/* Rejected early hangups must not disturb training. The first accepted
+	 * request must finish through the datapump API without ever CONNECTing. */
+	for (size_t clock = 0; clock < CALL_OCTET_LIMIT; ++clock) {
+		uint8_t transmitted[2];
+
+		if (clock % MODEM_FRAG == 0u && operations->hangup(pumps[initiator]) == 0) {
+			started = true;
+			break;
+		}
+		for (unsigned int side = 0; side < 2u; ++side) {
+			int16_t sample = decode(law, received[side]);
+			int16_t generated;
+			bool exact = false;
+
+			if (side == 1u)
+				CHECK(dc_remover_process(&frontend, &sample, 1) == DC_REMOVER_OK,
+				      "training cleardown receive conditioning failed");
+			CHECK(operations->process_g711(pumps[side], law, &received[side],
+				      &sample, &transmitted[side], &generated, 1, &exact) ==
+				      DPSTAT_OK && exact && pumps[side]->status != DPSTAT_CONNECT,
+			      "training cleardown missed control at %zu side %u", clock, side);
+		}
+		received[0] = transmitted[1];
+		received[1] = transmitted[0];
+	}
+	CHECK(started && check_cleardown(pumps[initiator], law) &&
+	      bits[0].supplied_bits == 0u && bits[1].supplied_bits == 0u,
+	      "training cleardown did not close before host data");
+	CHECK(operations->delete(pumps[0]) == 0 && operations->delete(pumps[1]) == 0 &&
+	      operations->use_count == 0,
+	      "training cleardown retained a datapump owner");
+	return true;
+}
+
+static bool test_training_cleardown(void)
+{
+	CHECK(v90_datapump_register() == 0, "training cleardown registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int side = 0; side < 2u; ++side)
+			CHECK(run_training_cleardown(law, side),
+			      "law %u side %u training cleardown failed", law, side);
+	CHECK(v90_datapump_unregister() == 0, "training cleardown registration leaked");
+	return true;
+}
+
 static bool run_pair_with_rate_window(
 	enum g711_law law,
 	uint32_t downstream_rate,
@@ -1432,6 +1498,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.90 retrain after V.34 fallback", test_fallback_restart },
+		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },

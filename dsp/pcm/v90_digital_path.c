@@ -179,8 +179,8 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 		    path->rate_renegotiation_constellation) ||
 	    !pending_upstream_is_valid(path) ||
 	    (path->cleardown_requested &&
-	     (!path->rate_renegotiation_active ||
-	      path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_DATA ||
+	     ((!path->rate_renegotiation_active &&
+	       path->downstream_stage != V90_DIGITAL_PATH_DOWNSTREAM_TRAINING) ||
 	      path->pending_upstream_count != 0u)) ||
 	    (path->rate_renegotiation_active &&
 	     path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
@@ -273,12 +273,23 @@ enum v90_digital_path_result v90_digital_path_start_cleardown(
 	struct v90_digital_path *path)
 {
 	struct v90_pcm_mapping control;
-	struct v90_mp_parameters *mp;
 
 	if (!v90_digital_path_is_valid(path) || path->failed)
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->cleardown_requested)
 		return V90_DIGITAL_PATH_OK;
+	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+	    path->downstream.training.stage != PCM_DOWNSTREAM_TX_ED &&
+	    !path->downstream.training.finish_requested) {
+		/* CP/MP is already available, either in initial training or a
+		 * renegotiation. Finish its current record instead of restarting
+		 * the control coder or interrupting the line with another Rd. */
+		path->pending_upstream_count = 0u;
+		path->pending_upstream_head = 0u;
+		path->downstream.training.ed_requested = false;
+		path->cleardown_requested = true;
+		return V90_DIGITAL_PATH_OK;
+	}
 	if (!v90_digital_path_is_online(path) ||
 	    path->rate_renegotiation_active)
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
@@ -286,10 +297,6 @@ enum v90_digital_path_result v90_digital_path_start_cleardown(
 		    &control, &path->training_mapping,
 		    &path->data_mapping) != V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
-	mp = path->local_mp.type == V90_MP_RECORD_TYPE0 ?
-		&path->local_mp.parameters.type0 :
-		&path->local_mp.parameters.type1.common;
-	mp->maximum_upstream_rate_2400_bps_units = 0u;
 	path->control_mapping = control;
 	path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN;
 	path->pending_upstream_count = 0u;
@@ -378,9 +385,21 @@ static enum v90_digital_path_result emit_downstream(
 		struct pcm_downstream_symbol symbol;
 		enum pcm_downstream_tx_result result;
 
-		if (!select_initial_receive_rate(path))
+		if (!path->cleardown_requested && !select_initial_receive_rate(path))
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		training = path->downstream.training;
+		if (path->cleardown_requested && training.control_bit_index == 0u &&
+		    !training.finish_requested) {
+			struct v90_mp_record zero = path->local_mp;
+			struct v90_mp_parameters *parameters =
+				zero.type == V90_MP_RECORD_TYPE0 ?
+				&zero.parameters.type0 : &zero.parameters.type1.common;
+
+			parameters->maximum_upstream_rate_2400_bps_units = 0u;
+			if (pcm_downstream_tx_start_mp(&training, &zero) !=
+			    PCM_DOWNSTREAM_TX_OK)
+				return V90_DIGITAL_PATH_INTERNAL_ERROR;
+		}
 		result = pcm_downstream_tx_next(&training, &symbol);
 
 		if (result == PCM_DOWNSTREAM_TX_OK) {
