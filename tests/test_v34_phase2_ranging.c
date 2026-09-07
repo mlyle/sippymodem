@@ -284,6 +284,13 @@ static bool check_ranging(
 	      "caller probe boundary did not follow the remote tone tail for codec %d delay %zu",
 	      codec, line_delay_samples);
 	CHECK(absolute_difference(
+		      observation.caller_probe_ready_sample -
+			      caller.control.probe_reversal_elapsed_samples,
+		      observation.second_answer_reversal_sample + line_delay_samples) <=
+		      TEST_EDGE_TOLERANCE_SAMPLES &&
+	      answerer.control.probe_reversal_elapsed_samples == 0,
+	      "probe handoff lost the physical second-reversal epoch");
+	CHECK(absolute_difference(
 		      observation.answer_round_trip_delay_samples,
 		      expected_round_trip) <= TEST_EDGE_TOLERANCE_SAMPLES &&
 	      absolute_difference(

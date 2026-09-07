@@ -72,6 +72,7 @@ static bool control_is_clear(const struct phase2_ranging_control *control)
 	       control->response_delay_samples == 0 &&
 	       control->post_reversal_samples == 0 &&
 	       control->probe_start_delay_samples == 0 &&
+	       control->probe_reversal_elapsed_samples == 0 &&
 	       control->measurement_elapsed_samples == 0 &&
 	       control->round_trip_delay_samples == 0 &&
 	       !control->round_trip_delay_valid;
@@ -263,6 +264,10 @@ static void accept_retrain_probe(
 		.phase = PHASE2_RANGING_PROBE_READY,
 		.post_reversal_samples =
 			PHASE2_RANGING_TONE_TAIL_SAMPLES,
+		/* The captured L1 edge dates the preceding 10 ms reversal tail. */
+		.probe_reversal_elapsed_samples = PHASE2_RANGING_TONE_TAIL_SAMPLES +
+			V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES -
+			ranging->retrain_probe.synchronizer.leading_samples,
 		.round_trip_delay_valid = true,
 	};
 	*event = (struct phase2_ranging_event){

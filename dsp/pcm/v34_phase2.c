@@ -34,8 +34,6 @@ static enum v34_phase2_failure initial_probe_failure(
 		return V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
 	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
 		return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-	case PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
-		return V34_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
 	}
 	return V34_PHASE2_FAILURE_INTERNAL;
 }
@@ -714,14 +712,14 @@ static bool sample_initial_probe(
 		phase2->remote_probe = measurement;
 		phase2->remote_receive_gain = receive_gain;
 		phase2->remote_probe_stored = true;
+		if (role == V34_CALLING_STATION && !enter_turnaround(phase2, event))
+			return false;
 		event->kind =
 			V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 	}
 	if (phase2->failure == V34_PHASE2_FAILURE_NONE &&
-	    ((role == V34_CALLING_STATION &&
-	      child.kind == PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) ||
-	     (role == V34_ANSWERING_STATION &&
-	      child.kind == PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE))) {
+	    role == V34_ANSWERING_STATION &&
+	    child.kind == PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
 		return enter_turnaround(phase2, event);
 	}
 	return true;

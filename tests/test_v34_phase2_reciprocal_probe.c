@@ -684,10 +684,10 @@ static bool test_validation(void)
 	CHECK(completed_turnaround_states(
 		      &caller_turnaround, &answerer_turnaround),
 	      "reciprocal-probe validation fixtures did not initialize");
-	unready = caller_turnaround;
-	unready.control.phase =
-		PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL;
-	CHECK(v34_phase2_probe_turnaround_is_valid(&unready),
+	CHECK(v34_phase2_probe_turnaround_init(
+		      &unready, &caller_turnaround.initial_probe) ==
+		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+	      v34_phase2_probe_turnaround_is_valid(&unready),
 	      "unready turnaround fixture is invalid");
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;

@@ -141,7 +141,7 @@ static bool endpoint_sample(
 		enum phase2_initial_probe_event_kind expected_ready =
 			endpoint->initial_probe.ranging.info0_exchange.local_role ==
 					V34_CALLING_STATION ?
-				PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE :
+				PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE :
 				PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE;
 
 		if (v34_phase2_initial_probe_sample(

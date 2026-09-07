@@ -158,8 +158,6 @@ static enum pcm_phase2_failure initial_probe_failure(
 		return PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
 	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
 		return PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-	case PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
-		return PCM_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT;
 	}
 	return PCM_PHASE2_FAILURE_INTERNAL;
 }
@@ -867,10 +865,6 @@ static bool sample_initial_probe(
 	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
 	struct phase2_initial_probe_event child;
-	enum phase2_initial_probe_event_kind ready =
-		phase2->local_role == V90_ANALOG_MODEM ?
-			PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE :
-			PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE;
 
 	if (v90_phase2_initial_probe_sample(
 		    &phase2->state.initial_probe, received_sample,
@@ -893,11 +887,13 @@ static bool sample_initial_probe(
 		    phase2->remote_receive_gain <= 0)
 			return false;
 		phase2->remote_probe_stored = true;
+		if (!enter_turnaround(phase2, event))
+			return false;
 		event->kind = PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 		return true;
 	case PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE:
-	case PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE:
-		return child.kind == ready && enter_turnaround(phase2, event);
+		return phase2->local_role == V90_ANALOG_MODEM &&
+		       enter_turnaround(phase2, event);
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
 		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
 			struct v90_phase2_ranging next =
@@ -1134,8 +1130,6 @@ const char *pcm_phase2_failure_name(enum pcm_phase2_failure failure)
 		return "remote probe not found";
 	case PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT:
 		return "local probe limit";
-	case PCM_PHASE2_FAILURE_REMOTE_TONE_TIMEOUT:
-		return "remote tone timeout";
 	case PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT:
 		return "remote reversal timeout";
 	case PCM_PHASE2_FAILURE_INFO1_TIMEOUT:

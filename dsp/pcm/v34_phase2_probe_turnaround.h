@@ -27,7 +27,8 @@ struct v34_phase2_probe_turnaround {
 
 /* Continue from a role-appropriate completed initial probe. The answerer is
  * handed off before its first Tone A sample; the caller is handed off after
- * acquiring that tone while its own Tone B remains continuous. */
+ * measuring the remote probe, without waiting for Tone A. Its own Tone B
+ * remains continuous through the handoff. */
 enum v34_phase2_probe_turnaround_result
 v34_phase2_probe_turnaround_init(
 	struct v34_phase2_probe_turnaround *turnaround,

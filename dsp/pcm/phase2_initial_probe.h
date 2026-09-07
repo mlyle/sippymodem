@@ -3,7 +3,7 @@
 #ifndef PHASE2_INITIAL_PROBE_H
 #define PHASE2_INITIAL_PROBE_H
 
-#include "phase2_info0_exchange.h"
+#include "phase2_ranging.h"
 #include "v34_phase2_probe_acquisition.h"
 #include "v34_phase2_probe_sequence.h"
 
@@ -11,8 +11,10 @@
 #include <stdint.h>
 
 enum {
-	PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES =
-		V34_PHASE2_SAMPLE_RATE * 2,
+	/* V.34 11.2.2.1.4 / V.90 9.2.1.2.4, from Signal A's second
+	 * ranging reversal, not from completion of the initial probe. */
+	PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES =
+		V34_PHASE2_SAMPLE_RATE * 900 / 1000,
 	/* V.34 11.2.2.2.3 / V.90 9.2.2.2.3: Tone B may arrive up to
 	 * 600 ms plus RTD after L2 begins, 50 ms beyond its wire limit. */
 	PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES =
@@ -23,7 +25,6 @@ enum {
 enum phase2_initial_probe_phase {
 	PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING,
 	PHASE2_INITIAL_PROBE_SIGNAL_B_TONE,
-	PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE,
 	PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING,
 	PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE,
 	PHASE2_INITIAL_PROBE_SIGNAL_A_TONE,
@@ -34,14 +35,12 @@ enum phase2_initial_probe_failure {
 	PHASE2_INITIAL_PROBE_NO_FAILURE,
 	PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND,
 	PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT,
-	PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT,
 };
 
 enum phase2_initial_probe_event_kind {
 	PHASE2_INITIAL_PROBE_EVENT_NONE,
 	PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE,
 	PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE,
-	PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE,
 	PHASE2_INITIAL_PROBE_EVENT_FAILED,
 };
 
@@ -68,15 +67,18 @@ struct phase2_initial_probe {
 	enum phase2_initial_probe_phase phase;
 	enum phase2_initial_probe_failure failure;
 	uint16_t tone_wait_samples;
+	uint16_t reversal_wait_samples_remaining;
 };
 
 /* Continue after first ranging reaches its role-appropriate probe boundary.
  * Signal A transmits L1/L2; Signal B measures it and responds with Tone B.
- * The transport owns the continuous Tone A/B phase and detector state. */
+ * REMOTE_PROBE_COMPLETE hands Signal B directly to turnaround, which owns
+ * both acquisition of Tone A and its reversal deadline. The transport owns
+ * the continuous Tone A/B phase and detector state. */
 enum phase2_initial_probe_result phase2_initial_probe_init(
 	struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange,
-	uint16_t round_trip_delay_samples);
+	const struct phase2_ranging_control *completed_ranging);
 bool phase2_initial_probe_is_valid(
 	const struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange);

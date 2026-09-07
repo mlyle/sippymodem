@@ -39,6 +39,8 @@ static bool bounds_are_valid(
 		       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 	       control->probe_start_delay_samples <
 		       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
+	       control->probe_reversal_elapsed_samples <=
+		       PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES &&
 	       control->measurement_elapsed_samples <=
 		       PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES &&
 	       control->prior_round_trip_delay_samples <=
@@ -63,6 +65,10 @@ bool phase2_ranging_control_is_valid(
 	    !phase2_info0_exchange_is_valid(exchange))
 		return false;
 	side_b = signal_is_b(exchange);
+	if ((control->probe_reversal_elapsed_samples != 0) !=
+	    (side_b && (control->phase == PHASE2_SIGNAL_B_WAIT_PROBE_START ||
+			control->phase == PHASE2_RANGING_PROBE_READY)))
+		return false;
 	if (control->phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    control->deferred_reversal_samples != 0)
 		return false;
@@ -415,6 +421,7 @@ static void schedule_probe_start(
 	uint16_t detector_delay_samples,
 	struct phase2_ranging_event *event)
 {
+	control->probe_reversal_elapsed_samples = detector_delay_samples;
 	if (detector_delay_samples >= PHASE2_RANGING_TONE_TAIL_SAMPLES) {
 		enter_probe_ready(control, event);
 		return;
@@ -629,6 +636,8 @@ enum phase2_ranging_result phase2_ranging_finish_sample(
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	next = *control;
 	generated = *transmit_sample;
+	if (next.phase == PHASE2_SIGNAL_B_WAIT_PROBE_START)
+		next.probe_reversal_elapsed_samples++;
 	if (exchange->transmit_phase == PHASE2_INFO0_TONE &&
 	    next.phase != PHASE2_RANGING_INFO0_EXCHANGE &&
 	    !phase_transmits_tone(next.phase))

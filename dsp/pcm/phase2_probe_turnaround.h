@@ -64,6 +64,8 @@ struct phase2_probe_turnaround {
 	enum phase2_probe_turnaround_phase phase;
 	enum phase2_probe_turnaround_failure failure;
 	uint16_t phase_samples_remaining;
+	/* Signal B inherits the remaining 900 ms + RTD deadline from ranging
+	 * and probing; Signal A counts its own unanswered reversal interval. */
 	uint16_t wait_samples;
 	/* Elapsed samples from the estimated Signal B reversal. Later owners may
 	 * retain this epoch for mode-specific recovery deadlines. */

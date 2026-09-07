@@ -785,14 +785,13 @@ static bool check_initial_probe(enum test_codec codec)
 		if (digital_event.kind ==
 		    PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE)
 			digital_probe_complete = true;
-		if (digital_event.kind ==
-		    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
+		if (digital_event.tone_event.kind == V34_PHASE2_TONE_STARTED)
 			tone_pair_active = true;
 		if (analog.probing && digital.probing &&
 		    analog.probe.control.phase ==
 			    PHASE2_INITIAL_PROBE_SIGNAL_A_TONE &&
-		    digital.probe.control.phase ==
-			    PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE)
+		    digital.probe.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_B_TONE &&
+		    tone_pair_active)
 			break;
 	}
 
@@ -1166,8 +1165,7 @@ static bool check_phase2_controller(
 			PCM_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED;
 		analog_turnaround |= analog_event.kind ==
 			PCM_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
-		digital_turnaround |= digital_event.kind ==
-			PCM_PHASE2_EVENT_PROBE_TURNAROUND_STARTED;
+		digital_turnaround |= digital.stage == PCM_PHASE2_PROBE_TURNAROUND;
 		analog_reciprocal |= analog_event.kind ==
 			PCM_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED;
 		digital_reciprocal |= digital_event.kind ==

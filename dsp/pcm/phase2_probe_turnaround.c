@@ -25,7 +25,7 @@ static bool completed_probe_matches_role(
 {
 	return signal_is_b(exchange) ?
 		       probe->phase ==
-			       PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE :
+			       PHASE2_INITIAL_PROBE_SIGNAL_B_TONE :
 		       probe->phase ==
 			       PHASE2_INITIAL_PROBE_SIGNAL_A_TONE;
 }
@@ -36,11 +36,13 @@ static bool signal_b_phase_is_valid(
 	switch (turnaround->phase) {
 	case PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL:
 		return turnaround->phase_samples_remaining == 0 &&
-		       turnaround->wait_samples <
-			       PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES;
+		       turnaround->wait_samples > 0 &&
+		       turnaround->wait_samples <=
+			       PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES +
+			       PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES;
 	case PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY:
 		return turnaround->phase_samples_remaining > 0 &&
-		       turnaround->phase_samples_remaining <
+		       turnaround->phase_samples_remaining <=
 			       PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES &&
 		       turnaround->wait_samples == 0;
 	case PHASE2_PROBE_TURNAROUND_SIGNAL_B_REVERSAL_TAIL:
@@ -58,9 +60,7 @@ static bool signal_b_phase_is_valid(
 	case PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY:
 		return false;
 	case PHASE2_PROBE_TURNAROUND_TIMED_OUT:
-		return turnaround->phase_samples_remaining == 0 &&
-		       turnaround->wait_samples ==
-			       PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES;
+		return false;
 	}
 	return false;
 }
@@ -153,6 +153,12 @@ phase2_probe_turnaround_init(
 	if (signal_is_b(exchange)) {
 		initialized.phase =
 			PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL;
+		initialized.wait_samples = completed_probe->reversal_wait_samples_remaining;
+		if (initialized.wait_samples == 0) {
+			initialized.phase = PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY;
+			initialized.phase_samples_remaining =
+				PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES;
+		}
 	} else {
 		initialized.phase =
 			PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
@@ -276,8 +282,7 @@ static void schedule_signal_b_response(
 	struct phase2_probe_turnaround *turnaround,
 	uint16_t detector_delay_samples)
 {
-	if (detector_delay_samples == 0 ||
-	    detector_delay_samples >=
+	if (detector_delay_samples >=
 		    PHASE2_PROBE_TURNAROUND_RESPONSE_SAMPLES)
 		return;
 	turnaround->phase =
@@ -316,6 +321,8 @@ static void handle_remote_reversal(
 	uint16_t detector_delay_samples,
 	struct phase2_probe_turnaround_event *event)
 {
+	if (detector_delay_samples == 0)
+		return;
 	if (turnaround->phase ==
 	    PHASE2_PROBE_TURNAROUND_SIGNAL_B_WAIT_A_REVERSAL)
 		schedule_signal_b_response(turnaround, detector_delay_samples);
@@ -357,6 +364,15 @@ static void advance_reversal_wait(
 
 	if (!phase_waits_for_reversal(turnaround->phase))
 		return;
+	if (signal_is_b(exchange)) {
+		if (--turnaround->wait_samples == 0) {
+			/* A missed Tone A or its reversal does not block reciprocal
+			 * probing. Reuse the normal 40 ms response and 10 ms tail. */
+			schedule_signal_b_response(turnaround, 0);
+			event->kind = PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED;
+		}
+		return;
+	}
 	if (++turnaround->wait_samples <
 	    PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES)
 		return;
@@ -366,7 +382,7 @@ static void advance_reversal_wait(
 	 * discarding its phase reference.  A missing peer tone remains a bounded
 	 * terminal failure. */
 	tone = v34_phase2_tone_detector_measure(&exchange->tone_detector);
-	if (!signal_is_b(exchange) && tone.ready && tone.tone_present) {
+	if (tone.ready && tone.tone_present) {
 		turnaround->phase =
 			PHASE2_PROBE_TURNAROUND_SIGNAL_A_INITIAL_TONE;
 		turnaround->phase_samples_remaining =

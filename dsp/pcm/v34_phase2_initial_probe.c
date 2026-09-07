@@ -71,7 +71,7 @@ enum v34_phase2_initial_probe_result v34_phase2_initial_probe_init(
 	if (phase2_initial_probe_init(
 		    &initialized.control,
 		    &initialized.ranging.info0_exchange.transport,
-		    initialized.ranging.control.round_trip_delay_samples) !=
+		    &initialized.ranging.control) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    (receive_concurrent_probe &&
 	     v34_phase2_probe_acquisition_init(

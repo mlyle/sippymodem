@@ -212,7 +212,6 @@ static bool check_timeline(
 {
 	const uint32_t common_events =
 		(UINT32_C(1) << V34_PHASE2_EVENT_INITIAL_PROBE_STARTED) |
-		(UINT32_C(1) << V34_PHASE2_EVENT_PROBE_TURNAROUND_STARTED) |
 		(UINT32_C(1) << V34_PHASE2_EVENT_RECIPROCAL_PROBE_STARTED) |
 		(UINT32_C(1) << V34_PHASE2_EVENT_READY_FOR_INFO1);
 	const uint32_t caller_info1_events =
@@ -271,6 +270,8 @@ static bool check_timeline(
 	      !v34_phase2_has_failed(&pair.answerer) &&
 	      (caller_events & common_events) == common_events &&
 	      (answerer_events & common_events) == common_events &&
+	      (answerer_events &
+	       (UINT32_C(1) << V34_PHASE2_EVENT_PROBE_TURNAROUND_STARTED)) != 0 &&
 	      (caller_events &
 	       (UINT32_C(1) <<
 		V34_PHASE2_EVENT_REMOTE_INITIAL_PROBE_MEASURED)) != 0 &&

@@ -5,8 +5,9 @@
 #include <stddef.h>
 
 _Static_assert(
-	PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES <= UINT16_MAX,
-	"Initial-probe tone deadline must fit its sample counter");
+	PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES +
+		PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES <= UINT16_MAX,
+	"Initial-probe reversal deadline must fit its sample counter");
 
 static bool signal_is_b(const struct phase2_info0_exchange *exchange)
 {
@@ -30,7 +31,11 @@ static bool signal_b_path_is_valid(
 	const struct v34_phase2_probe_acquisition *receive =
 		&probe->path.receive;
 
-	if (!v34_phase2_probe_acquisition_is_valid(receive))
+	if (!v34_phase2_probe_acquisition_is_valid(receive) ||
+	    probe->tone_wait_samples != 0 ||
+	    probe->reversal_wait_samples_remaining >
+		    PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES +
+		    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES)
 		return false;
 	switch (probe->phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
@@ -42,18 +47,7 @@ static bool signal_b_path_is_valid(
 			receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_RECEIVING);
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
-		return probe->tone_wait_samples > 0 &&
-		       probe->tone_wait_samples <
-			       PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-		       probe->failure ==
-			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
-		       receive->phase ==
-			       V34_PHASE2_PROBE_ACQUISITION_COMPLETE;
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE:
-		return probe->tone_wait_samples > 0 &&
-		       probe->tone_wait_samples <=
-			       PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-		       probe->failure ==
+		return probe->failure ==
 			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
 		       receive->phase ==
 			       V34_PHASE2_PROBE_ACQUISITION_COMPLETE;
@@ -63,11 +57,6 @@ static bool signal_b_path_is_valid(
 			return probe->tone_wait_samples == 0 &&
 			       receive->phase ==
 				       V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND;
-		case PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT:
-			return probe->tone_wait_samples ==
-				       PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-			       receive->phase ==
-				       V34_PHASE2_PROBE_ACQUISITION_COMPLETE;
 		case PHASE2_INITIAL_PROBE_NO_FAILURE:
 		case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
 			return false;
@@ -87,7 +76,8 @@ static bool signal_a_path_is_valid(
 	const struct v34_phase2_probe_sequence *transmit =
 		&probe->path.transmit;
 
-	if (!v34_phase2_probe_sequence_is_valid(transmit))
+	if (!v34_phase2_probe_sequence_is_valid(transmit) ||
+	    probe->reversal_wait_samples_remaining != 0)
 		return false;
 	switch (probe->phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
@@ -116,7 +106,6 @@ static bool signal_a_path_is_valid(
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE:
 		return false;
 	}
 	return false;
@@ -131,7 +120,7 @@ bool phase2_initial_probe_is_valid(
 	    (unsigned int)probe->phase >
 		    PHASE2_INITIAL_PROBE_FAILED ||
 	    (unsigned int)probe->failure >
-		    PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT)
+		    PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
 	return signal_is_b(exchange) ?
 		       signal_b_path_is_valid(probe) :
@@ -142,17 +131,24 @@ enum phase2_initial_probe_result
 phase2_initial_probe_init(
 	struct phase2_initial_probe *probe,
 	const struct phase2_info0_exchange *exchange,
-	uint16_t round_trip_delay_samples)
+	const struct phase2_ranging_control *completed_ranging)
 {
 	struct phase2_initial_probe initialized = { 0 };
 
 	if (probe == NULL ||
-	    !phase2_info0_exchange_is_valid(exchange) ||
+	    !phase2_ranging_control_is_valid(completed_ranging, exchange, true) ||
+	    completed_ranging->phase != PHASE2_RANGING_PROBE_READY ||
 	    exchange->transmit_phase != PHASE2_INFO0_TONE)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	if (signal_is_b(exchange)) {
+		uint32_t deadline = PHASE2_INITIAL_PROBE_REVERSAL_WAIT_BASE_SAMPLES +
+			completed_ranging->round_trip_delay_samples;
+		uint32_t elapsed = completed_ranging->probe_reversal_elapsed_samples;
+
 		initialized.phase =
 			PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING;
+		initialized.reversal_wait_samples_remaining =
+			deadline > elapsed ? deadline - elapsed : 0;
 		if (v34_phase2_probe_acquisition_init(
 			    &initialized.path.receive) !=
 		    V34_PHASE2_PROBE_ACQUISITION_OK)
@@ -163,7 +159,7 @@ phase2_initial_probe_init(
 		if (v34_phase2_probe_sequence_init(
 			    &initialized.path.transmit,
 			    nominal_amplitude(exchange),
-			    round_trip_delay_samples) !=
+			    completed_ranging->round_trip_delay_samples) !=
 		    V34_PHASE2_PROBE_SEQUENCE_OK)
 			return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	}
@@ -233,7 +229,6 @@ static bool receive_remote_probe(
 			return false;
 		probe->phase =
 			PHASE2_INITIAL_PROBE_SIGNAL_B_TONE;
-		probe->tone_wait_samples = 1;
 		event->kind =
 			PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE;
 		return true;
@@ -324,34 +319,6 @@ static bool wait_for_remote_tone(
 	return true;
 }
 
-static bool continue_signal_b_tone(
-	struct phase2_initial_probe *probe,
-	struct phase2_info0_exchange *exchange,
-	int16_t received_sample, int16_t *transmit_sample,
-	struct phase2_initial_probe_event *event)
-{
-	if (!observe_remote_tone(exchange, received_sample, event) ||
-	    !generate_local_tone(exchange, transmit_sample))
-		return false;
-	if (probe->phase ==
-	    PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE)
-		return true;
-	probe->tone_wait_samples++;
-	if (event->tone_event.kind == V34_PHASE2_TONE_STARTED) {
-		probe->phase =
-			PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE;
-		event->kind =
-			PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE;
-	} else if (probe->tone_wait_samples ==
-		   PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES) {
-		fail_probe(
-			probe,
-			PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT,
-			event);
-	}
-	return true;
-}
-
 enum phase2_initial_probe_result
 phase2_initial_probe_sample(
 	struct phase2_initial_probe *probe,
@@ -370,15 +337,12 @@ phase2_initial_probe_sample(
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	next = *probe;
 	next_exchange = *exchange;
+	if (next.reversal_wait_samples_remaining != 0 &&
+	    next.phase != PHASE2_INITIAL_PROBE_FAILED)
+		next.reversal_wait_samples_remaining--;
 	switch (next.phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
 		accepted = receive_remote_probe(
-			&next, &next_exchange, received_sample,
-			&generated, &emitted);
-		break;
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
-	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE:
-		accepted = continue_signal_b_tone(
 			&next, &next_exchange, received_sample,
 			&generated, &emitted);
 		break;
@@ -393,6 +357,7 @@ phase2_initial_probe_sample(
 			&generated, &emitted);
 		break;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
+	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
 		accepted = observe_remote_tone(
 				   &next_exchange, received_sample, &emitted) &&
 			   generate_local_tone(&next_exchange, &generated);

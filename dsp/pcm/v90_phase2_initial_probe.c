@@ -29,7 +29,7 @@ enum phase2_initial_probe_result v90_phase2_initial_probe_init(
 	if (phase2_initial_probe_init(
 		    &initialized.control,
 		    &initialized.ranging.info0_exchange.transport,
-		    initialized.ranging.control.round_trip_delay_samples) !=
+		    &initialized.ranging.control) !=
 		    PHASE2_INITIAL_PROBE_OK ||
 	    !v90_phase2_initial_probe_is_valid(&initialized))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;

@@ -63,6 +63,8 @@ struct phase2_ranging_control {
 	uint16_t response_delay_samples;
 	uint16_t post_reversal_samples;
 	uint16_t probe_start_delay_samples;
+	/* Age of Signal A's second reversal at the initial-probe handoff. */
+	uint16_t probe_reversal_elapsed_samples;
 	uint16_t measurement_elapsed_samples;
 	/* A completed call supplies its confirmed propagation delay when full
 	 * retrain re-enters ranging. It both disambiguates a qualified early

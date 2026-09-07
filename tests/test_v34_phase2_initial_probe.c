@@ -113,8 +113,7 @@ static void observe_turn(
 		observation->answerer_l2_samples =
 			event->answerer.initial_probe.transmit_event.l2_samples;
 	}
-	if (event->caller.initial_probe.kind ==
-	    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE)
+	if (event->caller.initial_probe.tone_event.kind == V34_PHASE2_TONE_STARTED)
 		observation->caller_tone_pair_active = sample_index;
 	if (pair->caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 	    pair->caller.initial_probe.control.phase !=
@@ -166,7 +165,9 @@ static bool check_initial_probe_turn(
 		if (pair.caller.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_INITIAL_PROBE &&
 		    pair.caller.initial_probe.control.phase ==
-			    PHASE2_INITIAL_PROBE_SIGNAL_B_TONE_PAIR_ACTIVE &&
+			    PHASE2_INITIAL_PROBE_SIGNAL_B_TONE &&
+		    pair.caller.initial_probe.ranging.info0_exchange.transport
+			    .tone_detector.carrier.tone_present &&
 		    pair.answerer.initial_probe.control.phase ==
 			    PHASE2_INITIAL_PROBE_SIGNAL_A_TONE) {
 			if (++stable_samples == TEST_STABLE_TONE_SAMPLES)
@@ -638,7 +639,7 @@ static bool completed_initial_probe_states(
 		}
 		if (!caller_ready &&
 		    event.caller.initial_probe.kind ==
-			    PHASE2_INITIAL_PROBE_EVENT_TONE_PAIR_ACTIVE) {
+			    PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE) {
 			*caller = pair.caller.initial_probe;
 			caller_ready = true;
 		}
@@ -945,21 +946,19 @@ static bool test_bounded_failures(void)
 	CHECK(caller.control.phase ==
 		      PHASE2_INITIAL_PROBE_SIGNAL_B_TONE,
 	      "caller did not begin Tone B after measuring the remote probe");
-	for (samples = 0;
-	     samples < PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	     caller.control.phase != PHASE2_INITIAL_PROBE_FAILED;
-	     ++samples)
-		CHECK(v34_phase2_initial_probe_sample(
-			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
-		      "remote-tone timeout failed at sample %zu", samples);
-	CHECK(samples + 1u ==
-		      PHASE2_INITIAL_PROBE_TONE_WAIT_SAMPLES &&
-	      caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
-	      caller.control.failure ==
-		      PHASE2_INITIAL_PROBE_REMOTE_TONE_TIMEOUT &&
-	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
-	      "missing Tone A did not reach the exact bounded timeout");
+	CHECK(caller.control.reversal_wait_samples_remaining + samples +
+	      caller_ranging.control.probe_reversal_elapsed_samples ==
+		      7200u + caller_ranging.control.round_trip_delay_samples,
+	      "probe measurement restarted the 900 ms plus RTD reversal deadline");
+	{
+		struct v34_phase2_probe_turnaround turnaround;
+
+		CHECK(v34_phase2_probe_turnaround_init(&turnaround, &caller) ==
+			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      turnaround.control.wait_samples ==
+			      caller.control.reversal_wait_samples_remaining,
+		      "missing Tone A blocked turnaround or reset its deadline");
+	}
 	return true;
 }
 
@@ -1047,22 +1046,32 @@ static bool test_turnaround_failures_and_validation(void)
 		      &answerer, &answerer_probe) ==
 		      V34_PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround failure fixtures did not initialize");
-	for (samples = 0;
-	     samples < PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	     caller.control.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT;
-	     ++samples)
+	const size_t remaining = caller.control.wait_samples;
+	for (samples = 0; samples < remaining; ++samples)
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK,
-		      "caller reversal timeout failed at sample %zu", samples);
-	CHECK(samples ==
-		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES &&
-	      caller.control.phase == PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
-	      caller.control.failure ==
-		      PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT &&
-	      event.kind ==
-		      PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
-	      "caller did not report its exact bounded reversal timeout");
+			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      event.kind == (samples + 1u == remaining ?
+			      PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED :
+			      PHASE2_PROBE_TURNAROUND_EVENT_NONE),
+		      "caller reversal recovery failed at sample %zu", samples);
+	CHECK(caller.control.phase == PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY &&
+	      caller.control.phase_samples_remaining == 320u &&
+	      caller.control.failure == PHASE2_PROBE_TURNAROUND_NO_FAILURE,
+	      "caller did not start the exact 40 ms recovery response");
+	for (samples = 1; samples < 400u; ++samples) {
+		CHECK(v34_phase2_probe_turnaround_sample(
+			      &caller, 0, &transmit, &event) ==
+			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      event.kind == (samples == 399u ?
+			      PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
+			      PHASE2_PROBE_TURNAROUND_EVENT_NONE),
+		      "caller recovery tail failed at sample %zu", samples);
+		if (samples == 320u)
+			CHECK(caller.control.phase == PHASE2_PROBE_TURNAROUND_SIGNAL_B_REVERSAL_TAIL &&
+			      caller.control.phase_samples_remaining == 79u,
+			      "recovery reversal did not leave an exact 10 ms tail");
+	}
 	before = caller;
 	transmit = 1234;
 	CHECK(v34_phase2_probe_turnaround_sample(
@@ -1071,7 +1080,7 @@ static bool test_turnaround_failures_and_validation(void)
 	      transmit == 0 &&
 	      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0,
-	      "timed-out caller was not silent and stable");
+	      "probe-ready caller was not silent and stable");
 
 	for (samples = 0;
 	     samples <

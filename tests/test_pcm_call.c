@@ -1088,6 +1088,7 @@ enum call_impairment {
 	CALL_CHANNEL_CLEAN,
 	CALL_CODEWORD_REPLACED,
 	CALL_INITIAL_TONE_B_LOST,
+	CALL_INITIAL_TONE_A_LOST,
 };
 
 static bool run_configured_call(
@@ -1102,6 +1103,8 @@ static bool run_configured_call(
 	bool milestone_reached = false;
 	bool probe_interrupted = false;
 	bool ranging_recovered = false;
+	bool reversal_recovered = false;
+	size_t lost_a_samples = 0;
 	unsigned int replacement_stages = 0;
 
 	CHECK(channel_init(&channel, law, delay) &&
@@ -1131,6 +1134,24 @@ static bool run_configured_call(
 				ranging_recovered = true;
 			if (probe_interrupted && !ranging_recovered)
 				analog_received = silence_octet(law);
+		}
+		if (impairment == CALL_INITIAL_TONE_A_LOST) {
+			if (digital.call.stage == PCM_CALL_PHASE2 &&
+			    digital.call.state.phase2.stage == PCM_PHASE2_PROBE_TURNAROUND &&
+			    digital.call.state.phase2.state.turnaround.control.phase ==
+				    PHASE2_PROBE_TURNAROUND_SIGNAL_B_RESPONSE_DELAY &&
+			    digital.call.state.phase2.state.turnaround.control.phase_samples_remaining == 320u)
+				reversal_recovered = true;
+			if (digital.call.stage == PCM_CALL_PHASE2 &&
+			    (digital.call.state.phase2.stage == PCM_PHASE2_PROBE_TURNAROUND ||
+			     (digital.call.state.phase2.stage == PCM_PHASE2_INITIAL_PROBE &&
+			      digital.call.state.phase2.state.initial_probe.control.phase ==
+				      PHASE2_INITIAL_PROBE_SIGNAL_B_TONE)))
+				probe_interrupted = true;
+			if (probe_interrupted && lost_a_samples < 8000u) {
+				digital_received = silence_octet(law);
+				lost_a_samples++;
+			}
 		}
 		analog_received_sample = decode_octet(law, analog_received);
 		digital_received_sample = decode_octet(law, digital_received);
@@ -1163,6 +1184,9 @@ static bool run_configured_call(
 	}
 	CHECK(impairment != CALL_INITIAL_TONE_B_LOST || ranging_recovered,
 	      "lost Tone B did not exercise initial-probe ranging recovery");
+	CHECK(impairment != CALL_INITIAL_TONE_A_LOST ||
+	      (lost_a_samples == 8000u && reversal_recovered),
+	      "lost Tone A did not exercise the one-second loss and timed reversal recovery");
 	CHECK(impairment != CALL_CODEWORD_REPLACED ||
 	      replacement_stages == ((1u << PCM_CALL_PHASE2) |
 				     (1u << PCM_CALL_PHASE3) |
@@ -4575,10 +4599,13 @@ static bool test_completed_dil_return_drains(void)
 static bool test_initial_probe_loss(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		CHECK(run_configured_call(law, 13u, CALL_GOAL_ONLINE_DATA,
-			      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
-			      DATA_DOWNSTREAM_RATE, CALL_INITIAL_TONE_B_LOST),
-		      "law %u lost Tone B did not recover online V.90 data", (unsigned int)law);
+		for (enum call_impairment loss = CALL_INITIAL_TONE_B_LOST;
+		     loss <= CALL_INITIAL_TONE_A_LOST; ++loss)
+			CHECK(run_configured_call(law, 13u, CALL_GOAL_ONLINE_DATA,
+				      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+				      DATA_DOWNSTREAM_RATE, loss),
+			      "law %u loss %u did not recover online V.90 data",
+			      (unsigned int)law, (unsigned int)loss);
 	return true;
 }
 
@@ -4886,7 +4913,7 @@ int main(void)
 	} tests[] = {
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
-		{ "lost initial Tone B recovers online data", test_initial_probe_loss },
+		{ "lost initial probe responses recover online data", test_initial_probe_loss },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
 		{ "remote retrain during final PCM training",
