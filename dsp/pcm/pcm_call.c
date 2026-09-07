@@ -16,6 +16,7 @@ enum {
 	V90_UPSTREAM_RATE_UNIT = 2400,
 	V90_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
+	V90_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
@@ -1947,14 +1948,40 @@ static enum pcm_call_result retain_v92_peer_downstream_rates(
 		       PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
 }
 
-static bool phase3_return_timed_out(const struct pcm_call *call)
+static bool phase3_response_timed_out(const struct pcm_call *call)
 {
 	const struct pcm_phase3_digital_tx *transmit;
 	uint64_t elapsed;
 
-	if (call->protocol != PCM_PROTOCOL_V90 ||
-	    call->local_role != V90_DIGITAL_MODEM)
+	if (call->protocol != PCM_PROTOCOL_V90)
 		return false;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v90_phase3_analog_station *station =
+			&call->state.phase3.analog;
+		const struct v90_phase3_analog_line_tx *initial;
+		const struct v34_pulse_modulator *carrier;
+
+		if (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_INITIAL ||
+		    station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SD ||
+		    station->receive.sd.stage >= V90_PHASE3_SD_RECEIVER_SD_BAR)
+			return false;
+		initial = &station->transmit.initial;
+		if (initial->symbols.stage != V90_PHASE3_ANALOG_TX_JA ||
+		    initial->symbols.ja_symbols == 0u)
+			return false;
+		/* V.90 9.3.2.4 allows 1500 ms from Ja to the Sd/Sd-bar
+		 * transition. Use the accepted Ja points and shared rational
+		 * line clock, including a crossing reached by this sample whose
+		 * next point has not yet been accepted. No parallel timer or
+		 * rounding of fractional baud is needed. */
+		carrier = &initial->line.carrier;
+		elapsed = (uint64_t)(initial->symbols.ja_symbols - 1u) *
+			  carrier->symbol_period_units + carrier->symbol_phase_units;
+		if (carrier->symbol_phase_units < carrier->channel.symbol_rate_numerator)
+			elapsed += carrier->symbol_period_units;
+		return elapsed >= (uint64_t)V90_PHASE3_SD_DEADLINE_SAMPLES *
+				  carrier->channel.symbol_rate_numerator;
+	}
 	transmit = &call->state.phase3.digital.transmit;
 	if (!call->state.phase3.digital.transmit_started ||
 	    transmit->stage != PCM_PHASE3_DIGITAL_TX_JD ||
@@ -2044,7 +2071,7 @@ static enum pcm_call_result sample_phase3(
 					&call->state.phase3.digital,
 					received_sample));
 	}
-	if (result == PCM_CALL_OK && phase3_return_timed_out(call))
+	if (result == PCM_CALL_OK && phase3_response_timed_out(call))
 		return begin_retrain(call, false);
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }

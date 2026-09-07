@@ -7,6 +7,7 @@
 #include <v34_phase2_selection.h>
 #include <v34_phase3_s_receiver.h>
 #include <v90_downstream_data_handoff.h>
+#include <v90_phase3_sd.h>
 #include <v90_upstream_data.h>
 #include <v92_cpd_direct.h>
 
@@ -2377,6 +2378,179 @@ static bool test_phase3_return_timeout(void)
 		      run_phase3_return_timeout(law, 13u),
 		      "law %u V.90 return timeout failed", (unsigned int)law);
 	}
+	return true;
+}
+
+static bool check_phase3_sd_deadline(
+	const struct pcm_call *started, const uint8_t *response,
+	uint32_t response_delay)
+{
+	struct pcm_call waiting = *started;
+	enum g711_law law = started->law;
+	uint8_t silence = silence_octet(law);
+	const uint32_t deadline = 12000u;
+	const uint32_t first_sd = deadline - V90_PHASE3_SD_SYMBOLS -
+		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS + 1u + response_delay;
+	const uint32_t tail = V90_PHASE3_SD_BAR_SYMBOLS -
+		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS;
+	bool timeout = response_delay != 0u;
+
+	/* The source has emitted exactly the first Ja sample. A full generated
+	 * Sd followed by 12 Sd-bar characters qualifies on the final allowed
+	 * sample, one sample late, or not at all within the deadline. */
+	for (uint32_t elapsed = 2u;
+	     elapsed <= deadline + (timeout ? 0u : tail); ++elapsed) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+		uint8_t received = elapsed < first_sd ? silence :
+			response[elapsed - first_sd];
+		enum pcm_call_result result = pcm_call_octet(
+			&waiting, received, decode_octet(law, received),
+			&transmitted, &observed);
+
+		CHECK(result == PCM_CALL_OK &&
+		      observed.processed == PCM_CALL_PHASE3 &&
+		      observed.next == (timeout && elapsed == deadline ?
+			      PCM_CALL_RETRAIN_SILENCE : PCM_CALL_PHASE3),
+		      "law %u Sd delay %u at sample %u: %s stage %u",
+		      (unsigned int)law, response_delay, elapsed,
+		      pcm_call_result_name(result), (unsigned int)waiting.stage);
+		if (!timeout && elapsed == deadline)
+			CHECK(waiting.state.phase3.analog.receive_stage ==
+				      V90_PHASE3_ANALOG_RECEIVE_SD &&
+			      waiting.state.phase3.analog.receive.sd.stage ==
+				      V90_PHASE3_SD_RECEIVER_SD_BAR &&
+			      !waiting.retrain_active,
+			      "Sd/Sd-bar detection did not win on the deadline");
+	}
+	if (!timeout) {
+		CHECK(!waiting.retrain_active &&
+		      waiting.state.phase3.analog.receive_stage ==
+			      V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
+		      waiting.state.phase3.analog.transmit_stage ==
+			      V90_PHASE3_ANALOG_TRANSMIT_RETURN &&
+		      pcm_call_is_valid(&waiting),
+		      "timely Sd/Sd-bar did not cancel expiry through the Ja tail");
+		return true;
+	}
+	CHECK(waiting.retrain_active && waiting.peer_info0_stored &&
+	      !waiting.b1_deadline_armed && !pcm_call_has_failed(&waiting) &&
+	      waiting.round_trip_delay_samples == started->round_trip_delay_samples &&
+	      memcmp(&waiting.peer_info0, &started->peer_info0,
+		     sizeof(waiting.peer_info0)) == 0,
+	      "missing Sd lost the established call agreement");
+	for (size_t index = 0;
+	     index < V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES; ++index) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(
+			      &waiting, silence, decode_octet(law, silence),
+			      &transmitted, &observed) == PCM_CALL_OK &&
+		      observed.processed == PCM_CALL_RETRAIN_SILENCE &&
+		      transmitted == silence,
+		      "Sd timeout did not send the complete retrain silence");
+	}
+	CHECK(waiting.stage == PCM_CALL_PHASE2 && waiting.retrain_active &&
+	      waiting.peer_info0_stored && pcm_call_is_valid(&waiting),
+	      "Sd timeout did not restart shared ranging");
+	return true;
+}
+
+static bool run_phase3_sd_timeout(
+	enum g711_law law, size_t delay, enum v34_symbol_rate rate)
+{
+	struct channel channel;
+	struct endpoint analog = { .upstream_received_delay = UINT16_MAX };
+	struct endpoint digital = { .upstream_received_delay = UINT16_MAX };
+	struct pcm_call_configuration analog_config =
+		configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_config =
+		configuration(V90_DIGITAL_MODEM, law);
+	uint8_t response[V90_PHASE3_SD_SYMBOLS + V90_PHASE3_SD_BAR_SYMBOLS];
+	bool ja_started = false;
+	bool sd_bar_seen = false;
+	size_t position = 0u;
+
+	analog_config.local_info1.analog.upstream_symbol_rate = rate;
+	/* Cover both integral and fractional baud, and both Ja descriptor forms. */
+	if (rate == V34_SYMBOL_RATE_3429) {
+		analog_config.phase3.analog.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
+		digital_config.local_info1.digital.answer_transmit[rate].high_carrier = false;
+	}
+	CHECK(channel_init(&channel, law, delay) &&
+	      pcm_call_init(&analog.call, &analog_config) == PCM_CALL_OK &&
+	      pcm_call_init(&digital.call, &digital_config) == PCM_CALL_OK,
+	      "Sd-timeout endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		const struct v90_phase3_analog_station *station;
+
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "Sd-timeout setup stopped at %zu", clock);
+		if (analog.call.stage != PCM_CALL_PHASE3)
+			continue;
+		station = &analog.call.state.phase3.analog;
+		if (station->transmit_stage == V90_PHASE3_ANALOG_TRANSMIT_INITIAL &&
+		    station->transmit.initial.symbols.stage == V90_PHASE3_ANALOG_TX_JA &&
+		    station->transmit.initial.symbols.ja_symbols == 1u) {
+			ja_started = true;
+			break;
+		}
+	}
+	CHECK(ja_started && analog.call.peer_info0_stored,
+	      "Sd-timeout test missed the first Ja sample");
+	for (enum v90_phase3_sd_kind kind = V90_PHASE3_SD;
+	     kind <= V90_PHASE3_SD_BAR; ++kind) {
+		struct v90_phase3_sd sequence;
+
+		CHECK(v90_phase3_sd_init(&sequence, law,
+			      analog_config.local_info1.analog.training_ucode, kind) ==
+			      V90_PHASE3_SD_OK,
+		      "Sd-timeout response did not initialize");
+		while (v90_phase3_sd_remaining(&sequence) != 0u) {
+			struct v90_pcm_symbol symbol;
+
+			CHECK(position < sizeof(response) &&
+			      v90_phase3_sd_next(&sequence, &symbol) == V90_PHASE3_SD_OK,
+			      "Sd-timeout response stopped at %zu", position);
+			response[position++] = symbol.octet;
+		}
+	}
+	CHECK(position == sizeof(response) &&
+	      check_phase3_sd_deadline(&analog.call, response, 12000u) &&
+	      check_phase3_sd_deadline(&analog.call, response, 1u) &&
+	      check_phase3_sd_deadline(&analog.call, response, 0u),
+	      "law %u delay %zu baud %u Sd deadline failed",
+	      (unsigned int)law, delay, (unsigned int)rate);
+	/* The original pair must also take its ordinary, timely response. */
+	for (size_t clock = 0; clock < 12000u; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "Sd-timeout control stopped at %zu", clock);
+		CHECK(analog.call.stage == PCM_CALL_PHASE3 && !analog.call.retrain_active,
+		      "timely Sd control unexpectedly left Phase 3");
+		if (analog.call.state.phase3.analog.receive_stage ==
+			    V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
+		    analog.call.state.phase3.analog.receive.sd.stage >=
+			    V90_PHASE3_SD_RECEIVER_SD_BAR) {
+			sd_bar_seen = true;
+			break;
+		}
+	}
+	CHECK(sd_bar_seen, "Sd-timeout control did not detect Sd/Sd-bar");
+	return true;
+}
+
+static bool test_phase3_sd_timeout(void)
+{
+	const enum v34_symbol_rate rates[] = {
+		V34_SYMBOL_RATE_3000, V34_SYMBOL_RATE_3429,
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate)
+			CHECK(run_phase3_sd_timeout(law, 3u, rates[rate]) &&
+			      run_phase3_sd_timeout(law, 13u, rates[rate]),
+			      "V.90 Sd timeout failed");
 	return true;
 }
 
@@ -4933,6 +5107,7 @@ int main(void)
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
+		{ "standards-timed V.90 Sd response", test_phase3_sd_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",
