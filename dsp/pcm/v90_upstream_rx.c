@@ -76,10 +76,11 @@ static enum v90_upstream_rx_result validate_data_parameters(
 	if (!v90_cp_parameters_are_valid(parameters) ||
 	    parameters->kind != V90_CP_DATA ||
 	    parameters->selected_rate_index == 0 ||
-	    parameters->request_silence ||
-	    parameters->law != receiver->training_mapping.law)
+	    parameters->request_silence)
 		return V90_UPSTREAM_RX_INVALID_PARAMETERS;
-	if (v90_pcm_mapping_init(&mapping, parameters) != V90_PCM_MAPPING_OK)
+	if (v90_pcm_mapping_init_transmit(
+		    &mapping, parameters, receiver->training_mapping.law) !=
+	    V90_PCM_MAPPING_OK)
 		return V90_UPSTREAM_RX_INVALID_PARAMETERS;
 	final.acknowledges_peer = true;
 	result = v90_upstream_mode_select(
@@ -116,9 +117,7 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	      receiver->data_parameters.request_silence ||
 	      receiver->data_parameters.selected_rate_index == 0 ||
 	      !downstream_rate_is_enabled(
-		      receiver, &receiver->data_parameters) ||
-	      receiver->data_parameters.law !=
-		      receiver->training_mapping.law)))
+		      receiver, &receiver->data_parameters))))
 		return false;
 
 	switch (receiver->stage) {
@@ -239,7 +238,8 @@ static enum v90_upstream_rx_result accept_cp_record(
 		return V90_UPSTREAM_RX_NUMERIC_FAILURE;
 	if (parameters.kind == V90_CP_TRAINING) {
 		if (receiver->data_cp_received ||
-		    v90_pcm_mapping_init(&mapping, &parameters) !=
+		    v90_pcm_mapping_init_transmit(
+			    &mapping, &parameters, receiver->training_mapping.law) !=
 			    V90_PCM_MAPPING_OK ||
 		    !v90_pcm_mapping_equal(
 			    &mapping, &receiver->training_mapping))

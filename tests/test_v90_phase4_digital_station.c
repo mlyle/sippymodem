@@ -78,8 +78,10 @@ static bool mapping_matches(
 	const struct v90_cp_parameters *parameters)
 {
 	struct v90_pcm_mapping expected;
+	struct v90_cp_parameters transmitted = *parameters;
 
-	return v90_pcm_mapping_init(&expected, parameters) ==
+	transmitted.law = mapping->law;
+	return v90_pcm_mapping_init(&expected, &transmitted) ==
 		       V90_PCM_MAPPING_OK &&
 	       memcmp(mapping, &expected, sizeof(expected)) == 0;
 }
@@ -105,11 +107,12 @@ static bool ri_transmit_matches(
 }
 
 static bool run_exchange(
-	enum g711_law law, enum v34_constellation_size constellation)
+	enum g711_law law, enum v34_constellation_size constellation,
+	enum g711_law codec_law)
 {
 	struct v90_jd_parameters jd = jd_parameters(constellation);
 	struct v90_mp_record mp = mp_parameters(false);
-	struct v90_cp_parameters records[8];
+	struct v90_cp_parameters records[7];
 	struct v90_phase3_return_line_handoff phase3_receive;
 	struct v90_phase4_cp_line_tx analog_transmit;
 	struct v90_phase4_digital_station station;
@@ -122,19 +125,17 @@ static bool run_exchange(
 	bool complete = false;
 
 	for (size_t index = 0; index < ARRAY_LENGTH(records); ++index)
-		records[index] = parameters(law);
+		records[index] = parameters(codec_law);
 	records[0].selected_rate_index = 0;
 	records[1].kind = V90_CP_DATA;
-	records[2].law = law == G711_LAW_PCMU ?
-			 G711_LAW_PCMA : G711_LAW_PCMU;
-	records[3].spectral_lookahead = 3;
-	records[4].request_silence = true;
-	records[5].acknowledges_peer = true;
-	memset(records[6].transmit_constellations[0].ucode_mask, 0,
-	       sizeof(records[6].transmit_constellations[0].ucode_mask));
-	add_ucode(&records[6].transmit_constellations[0], 12);
-	add_ucode(&records[6].transmit_constellations[0], TRAINING_UCODE);
-	add_ucode(&records[6].transmit_constellations[0], 119);
+	records[2].spectral_lookahead = 3;
+	records[3].request_silence = true;
+	records[4].acknowledges_peer = true;
+	memset(records[5].transmit_constellations[0].ucode_mask, 0,
+	       sizeof(records[5].transmit_constellations[0].ucode_mask));
+	add_ucode(&records[5].transmit_constellations[0], 12);
+	add_ucode(&records[5].transmit_constellations[0], TRAINING_UCODE);
+	add_ucode(&records[5].transmit_constellations[0], 119);
 
 	CHECK(v90_phase4_line_fixture_init(
 		      law, constellation, &records[0],
@@ -201,6 +202,7 @@ static bool run_exchange(
 			      "CPt receive path failed at clock %zu", clock);
 			if (!previously_received && station.cpt_received) {
 				CHECK(next_record == ARRAY_LENGTH(records) &&
+				      station.training_mapping.law == law &&
 				      station.peer_upstream_rate_mask ==
 					      records[ARRAY_LENGTH(records) - 1u]
 						      .upstream_rate_mask &&
@@ -340,10 +342,17 @@ static bool test_directional_resume(void)
 
 static bool test_initial_exchange(void)
 {
-	CHECK(run_exchange(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT),
+	CHECK(run_exchange(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
+			   G711_LAW_PCMU),
 	      "PCMU four-point digital exchange failed");
-	CHECK(run_exchange(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT),
+	CHECK(run_exchange(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
+			   G711_LAW_PCMA),
 	      "PCMA sixteen-point digital exchange failed");
+	CHECK(run_exchange(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
+			   G711_LAW_PCMA) &&
+	      run_exchange(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
+			   G711_LAW_PCMU),
+	      "peer codec type changed the negotiated digital encoding");
 	return true;
 }
 

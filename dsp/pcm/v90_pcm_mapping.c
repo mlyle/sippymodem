@@ -147,9 +147,9 @@ bool v90_pcm_mapping_equal(
 		      sizeof(left->modulus)) == 0;
 }
 
-enum v90_pcm_mapping_result v90_pcm_mapping_init(
+enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 	struct v90_pcm_mapping *mapping,
-	const struct v90_cp_parameters *parameters)
+	const struct v90_cp_parameters *parameters, enum g711_law law)
 {
 	struct v90_pcm_mapping initialized = { 0 };
 	uint8_t base;
@@ -157,13 +157,14 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 
 	if (mapping == NULL || parameters == NULL)
 		return V90_PCM_MAPPING_INVALID_ARGUMENT;
-	if (!v90_cp_parameters_are_valid(parameters) ||
+	if (!g711_law_is_valid(law) ||
+	    !v90_cp_parameters_are_valid(parameters) ||
 	    parameters->selected_rate_index == 0)
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	base = parameters->kind == V90_CP_TRAINING ?
 		       V90_PHASE4_RATE_BASE : V90_DATA_RATE_BASE;
 	initialized.kind = parameters->kind;
-	initialized.law = parameters->law;
+	initialized.law = law;
 	initialized.frame_bits =
 		(uint8_t)(base + parameters->selected_rate_index);
 	initialized.sign_redundancy = parameters->sign_redundancy;
@@ -204,6 +205,15 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 		return V90_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = initialized;
 	return V90_PCM_MAPPING_OK;
+}
+
+enum v90_pcm_mapping_result v90_pcm_mapping_init(
+	struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters)
+{
+	if (parameters == NULL)
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	return v90_pcm_mapping_init_transmit(mapping, parameters, parameters->law);
 }
 
 enum v90_pcm_mapping_result

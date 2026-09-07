@@ -55,7 +55,7 @@ struct v90_cp_parameters {
 	struct pcm_constellation
 		codec_constellations[V90_CP_MAX_CONSTELLATIONS];
 	enum v90_cp_kind kind;
-	enum g711_law law;
+	enum g711_law law; /* Table 14 codec type, not network-law negotiation. */
 	uint16_t upstream_rate_mask;
 	uint16_t trn1d_ratio_q3_13;
 	int8_t shaping_a1_q1_6;

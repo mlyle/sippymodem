@@ -48,7 +48,8 @@ static bool data_mapping_matches(
 {
 	struct v90_pcm_mapping expected;
 
-	return v90_pcm_mapping_init(&expected, parameters) ==
+	return v90_pcm_mapping_init_transmit(
+		       &expected, parameters, mapping->law) ==
 		       V90_PCM_MAPPING_OK &&
 	       v90_pcm_mapping_equal(mapping, &expected);
 }
@@ -460,7 +461,7 @@ static enum v90_digital_path_result request_mp_prime(
 	     path->downstream_stage !=
 		     V90_DIGITAL_PATH_DOWNSTREAM_TRAINING))
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
-	if (v90_pcm_mapping_init(&mapping, parameters) !=
+	if (v90_pcm_mapping_init_transmit(&mapping, parameters, path->law) !=
 	    V90_PCM_MAPPING_OK)
 		return V90_DIGITAL_PATH_INVALID_PARAMETERS;
 	/* The upstream owner has already committed the accepted CP. Publish its

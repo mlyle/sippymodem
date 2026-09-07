@@ -113,15 +113,17 @@ static bool parameters_match(
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
-	bool acknowledged_first)
+	bool acknowledged_first, bool different_codec)
 {
+	enum g711_law codec_law = different_codec ?
+		(law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU) : law;
 	struct v90_cp_parameters training =
 		cp_parameters(
-			V90_CP_TRAINING, law, false,
+			V90_CP_TRAINING, codec_law, false,
 			rate_2400_bps_units);
 	struct v90_cp_parameters data =
 		cp_parameters(
-			V90_CP_DATA, law, false,
+			V90_CP_DATA, codec_law, false,
 			rate_2400_bps_units);
 	struct v90_cp_parameters unadvertised = data;
 	struct v90_cp_parameters prime = data;
@@ -164,7 +166,7 @@ static bool run_line(
 		      V90_PHASE4_CP_LINE_RX_OK,
 	      "CP receiver did not initialize law=%d constellation=%d",
 	      law, constellation);
-	CHECK(v90_pcm_mapping_init(&training_mapping, &training) ==
+	CHECK(v90_pcm_mapping_init_transmit(&training_mapping, &training, law) ==
 		      V90_PCM_MAPPING_OK,
 	      "training mapping did not initialize law=%d", law);
 	CHECK(v90_upstream_rx_init(
@@ -470,15 +472,22 @@ int main(void)
 					    paths[path].law,
 					    paths[path].constellation,
 					    profiles[profile].symbol_rate,
-					    rate, false))
+					    rate, false, false))
 					return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
 	fprintf(stderr, "[ RUN      ] CP-prime-first upstream entry\n");
 	if (!run_line(
 		    G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
-		    V34_SYMBOL_RATE_3429, 14, true))
+		    V34_SYMBOL_RATE_3429, 14, true, false))
 		return 1;
 	fprintf(stderr, "[       OK ] CP-prime-first upstream entry\n");
+	fprintf(stderr, "[ RUN      ] differing peer codec through CP/E/B1\n");
+	if (!run_line(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
+		      V34_SYMBOL_RATE_3000, 6, false, true) ||
+	    !run_line(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
+		      V34_SYMBOL_RATE_3429, 14, true, true))
+		return 1;
+	fprintf(stderr, "[       OK ] differing peer codec through CP/E/B1\n");
 	fprintf(stderr, "[ RUN      ] contracts\n");
 	if (!test_contracts())
 		return 1;

@@ -55,6 +55,14 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters);
 
+/* The digital transmitter encodes the requested Ucodes in the network law
+ * advertised in INFO0d. CP's codec-type field describes the peer codec; it
+ * does not renegotiate that network law. Keep the received record unchanged
+ * and derive the same mapping with an explicitly owned transmit encoding. */
+enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
+	struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters, enum g711_law law);
+
 /* Build the Phase 4 control mapping used after online rate renegotiation.
  * V.90 8.6 retains the accepted CPt constellation set and K while taking all
  * sign and spectral-shaping parameters from the preceding data mode.

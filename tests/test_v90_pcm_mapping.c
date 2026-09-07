@@ -188,6 +188,59 @@ static bool test_training_mapping(void)
 	return true;
 }
 
+static bool test_transmit_encoding(void)
+{
+	static const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+
+	for (size_t encoding = 0; encoding < ARRAY_LENGTH(laws); ++encoding) {
+		enum g711_law law = laws[encoding];
+
+		for (unsigned int data = 0; data < 2; ++data) {
+			for (unsigned int codec_plane = 0;
+			     codec_plane < 2; ++codec_plane) {
+				struct v90_cp_parameters source = parameters(
+					data ? V90_CP_DATA : V90_CP_TRAINING,
+					data ? 1 : 13, 1, 8, codec_plane != 0);
+				struct v90_cp_parameters expected_parameters;
+				struct v90_cp_parameters saved;
+				struct v90_pcm_mapping expected;
+				struct v90_pcm_mapping mapping;
+
+				source.law = law == G711_LAW_PCMU ?
+					G711_LAW_PCMA : G711_LAW_PCMU;
+				saved = source;
+				expected_parameters = source;
+				expected_parameters.law = law;
+				CHECK(v90_pcm_mapping_init(
+					      &expected, &expected_parameters) ==
+					      V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_init_transmit(
+					      &mapping, &source, law) ==
+					      V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_equal(&mapping, &expected) &&
+				      memcmp(&source, &saved, sizeof(source)) == 0,
+				      "peer codec changed the transmit mapping or source CP");
+				source.law = (enum g711_law)99;
+				CHECK(v90_pcm_mapping_init_transmit(
+					      &mapping, &source, law) ==
+					      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+				      v90_pcm_mapping_init_transmit(
+					      &mapping, &saved, (enum g711_law)99) ==
+					      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+				      v90_pcm_mapping_init_transmit(
+					      &mapping, NULL, law) ==
+					      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+				      v90_pcm_mapping_init_transmit(
+					      NULL, &saved, law) ==
+					      V90_PCM_MAPPING_INVALID_ARGUMENT &&
+				      memcmp(&mapping, &expected, sizeof(mapping)) == 0,
+				      "invalid transmit encoding changed the mapping");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_rate_renegotiation_mapping(void)
 {
 	struct v90_cp_parameters training_parameters =
@@ -824,6 +877,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "training mapping", test_training_mapping },
+		{ "negotiated transmit encoding", test_transmit_encoding },
 		{ "rate renegotiation mapping",
 		  test_rate_renegotiation_mapping },
 		{ "V.92 CPt mapping", test_v92_cpt_mapping },

@@ -214,7 +214,8 @@ static bool mapping_matches(
 {
 	struct v90_pcm_mapping expected;
 
-	return v90_pcm_mapping_init(&expected, parameters) ==
+	return v90_pcm_mapping_init_transmit(
+		       &expected, parameters, mapping->law) ==
 		       V90_PCM_MAPPING_OK &&
 	       v90_pcm_mapping_equal(mapping, &expected);
 }

@@ -30,12 +30,11 @@ static bool initial_cpt_mapping(
 {
 	return parameters != NULL && mapping != NULL &&
 	       parameters->kind == V90_CP_TRAINING &&
-	       parameters->law == law &&
 	       parameters->spectral_lookahead <=
 		       maximum_spectral_lookahead &&
 	       !parameters->request_silence &&
 	       !parameters->acknowledges_peer &&
-	       v90_pcm_mapping_init(mapping, parameters) ==
+	       v90_pcm_mapping_init_transmit(mapping, parameters, law) ==
 		       V90_PCM_MAPPING_OK;
 }
 
