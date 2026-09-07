@@ -24,8 +24,9 @@ enum v34_power_calibration_result {
 	V34_POWER_CALIBRATION_NUMERIC_FAILURE,
 };
 
-/* Measure a generated data stream twice: first at the exact Q7 precoder
- * boundary, then after nonlinear projection using that raw mean. The selected
+/* Measure a generated data stream at the exact Q7 precoder boundary, then
+ * after nonlinear projection using that raw mean. Linear encoding reuses
+ * the first measurement because projection is the identity. The selected
  * normative rate level supplies the line-profile gain, corrected so nonlinear
  * projection preserves the same mean power. One complete schedule period is
  * visited four times from the supplied starting position.

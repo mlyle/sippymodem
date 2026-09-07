@@ -189,12 +189,18 @@ v34_calibrate_mapping_power(
 		mapping_frame_count, &precoded);
 	if (result != V34_POWER_CALIBRATION_OK)
 		return result;
-	result = measure_pass(
-		initial_schedule, initial_scrambler, initial_encoder,
-		nonlinear_parameter, precoded.mean_squared_magnitude, true,
-		mapping_frame_count, &projected);
-	if (result != V34_POWER_CALIBRATION_OK)
-		return result;
+	/* With theta zero, projection only converts Q7 coordinates to the
+	 * same doubles already measured above. Replaying the identical stream
+	 * would repeat all mapping, scrambling and precoding at the B1 edge. */
+	projected = precoded;
+	if (nonlinear_parameter != V34_NONLINEAR_THETA_ZERO) {
+		result = measure_pass(
+			initial_schedule, initial_scrambler, initial_encoder,
+			nonlinear_parameter, precoded.mean_squared_magnitude, true,
+			mapping_frame_count, &projected);
+		if (result != V34_POWER_CALIBRATION_OK)
+			return result;
+	}
 	result = symbol_power_result(v34_power_normalizer_init(
 		&generated, &initial_encoder->parameters, nonlinear_parameter,
 		&precoded, &projected));
