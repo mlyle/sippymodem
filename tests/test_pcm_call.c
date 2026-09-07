@@ -2356,6 +2356,88 @@ static bool test_phase3_return_timeout(void)
 	return true;
 }
 
+static bool idle_retrain_octet(
+	struct pcm_call *call, enum g711_law law, uint8_t received,
+	uint8_t *transmitted, struct pcm_call_data_event *data)
+{
+	struct pcm_call_observation observation;
+
+	*data = (struct pcm_call_data_event){ 0 };
+	if (call->stage == PCM_CALL_DATA_PATH)
+		return pcm_call_data_octet(
+			       call, received, decode_octet(law, received),
+			       NULL, transmitted, data) == PCM_CALL_OK;
+	return pcm_call_octet(
+		       call, received, decode_octet(law, received),
+		       transmitted, &observation) == PCM_CALL_OK;
+}
+
+static bool check_idle_retrain_receive(
+	const struct endpoint *analog, const struct endpoint *digital,
+	const struct channel *line, enum g711_law law,
+	enum v90_modem_role initiating_role)
+{
+	enum {
+		DRAIN_SAMPLES = V34_PHASE2_SAMPLE_RATE / 10,
+		IDLE_SAMPLES = V34_PHASE2_SAMPLE_RATE / 5,
+		RETRAIN_LIMIT_SAMPLES = V34_PHASE2_SAMPLE_RATE / 2,
+	};
+	struct pcm_call calls[] = { analog->call, digital->call };
+	struct channel channel = *line;
+	const size_t initiator = initiating_role == V90_ANALOG_MODEM ? 0u : 1u;
+	const size_t responder = 1u - initiator;
+	size_t idle_frames[2] = { 0u, 0u };
+	bool detected = false;
+
+	/* Drain the previously supplied payload into continuous all-one idle.
+	 * Keep auditing the receive output while the complete remote retrain
+	 * preamble is qualified; a post-retrain payload alone misses this gap. */
+	for (size_t clock = 0;
+	     clock < IDLE_SAMPLES + RETRAIN_LIMIT_SAMPLES; ++clock) {
+		uint8_t received[2];
+		uint8_t transmitted[2];
+
+		if (clock == IDLE_SAMPLES)
+			CHECK(pcm_call_start_retrain(&calls[initiator]) == PCM_CALL_OK,
+			      "idle retrain did not start");
+		channel_receive(&channel, &received[0], &received[1]);
+		for (size_t role = 0; role < ARRAY_LENGTH(calls); ++role) {
+			struct pcm_call_data_event event;
+			const uint8_t *bits = NULL;
+			size_t count = 0u;
+
+			CHECK(idle_retrain_octet(
+				      &calls[role], law, received[role],
+				      &transmitted[role], &event),
+			      "law %u role %zu idle retrain stopped at %zu",
+			      (unsigned int)law, role, clock);
+			if (event.kind == PCM_CALL_UPSTREAM_FRAME) {
+				bits = event.frame.upstream.primary_bits;
+				count = event.frame.upstream.primary_bit_count;
+			} else if (event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
+				bits = event.frame.downstream.bits;
+				count = event.frame.downstream.bit_count;
+			}
+			if (clock < DRAIN_SAMPLES || count == 0u)
+				continue;
+			for (size_t bit = 0; bit < count; ++bit)
+				CHECK(bits[bit] == 1u,
+				      "law %u initiator %zu receiver %zu leaked "
+				      "non-idle retrain data at sample %zu bit %zu",
+				      (unsigned int)law, initiator, role, clock, bit);
+			idle_frames[role]++;
+		}
+		channel_transmit(&channel, transmitted[0], transmitted[1]);
+		if (calls[responder].stage == PCM_CALL_RETRAIN_SILENCE) {
+			detected = true;
+			break;
+		}
+	}
+	CHECK(detected && idle_frames[0] != 0u && idle_frames[1] != 0u,
+	      "idle receive check did not exercise both data paths and retrain");
+	return true;
+}
+
 static bool run_full_retrain(
 	enum g711_law law, enum v90_modem_role initiating_role)
 {
@@ -2397,6 +2479,9 @@ static bool run_full_retrain(
 	}
 	CHECK(initially_online, "law %u retrain pair did not reach data",
 	      (unsigned int)law);
+	CHECK(check_idle_retrain_receive(
+		      &analog, &digital, &channel, law, initiating_role),
+	      "idle retrain receive boundary failed");
 	initiator = initiating_role == V90_ANALOG_MODEM ? &analog : &digital;
 	responder = initiating_role == V90_ANALOG_MODEM ? &digital : &analog;
 	initiator_prior_rtd = initiator->call.round_trip_delay_samples;

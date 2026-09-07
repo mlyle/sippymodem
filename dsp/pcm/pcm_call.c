@@ -1462,10 +1462,13 @@ static bool retrain_candidate_is_active(
 	/* The retrain detector deliberately uses a generous silence ceiling so
 	 * that bounded line noise cannot break the 65 ms guard. Received QAM can
 	 * remain decodable below that ceiling, however, so pause the data decoder
-	 * only after either unambiguous quiet or the role-specific tone itself. */
+	 * only after either unambiguous quiet or the role-specific tone itself.
+	 * A complete quiet window is enough to pause; waiting for the whole
+	 * retrain guard would decode its silence into spurious upstream bytes.
+	 * The detector still owns qualification of the full silence/tone request. */
 	return detector->tone_samples != 0u ||
-	       (detector->silence_samples >=
-			V34_RETRAIN_MIN_SILENCE_SAMPLES &&
+	       (detector->silence_history_count ==
+			V34_RETRAIN_SILENCE_WINDOW_SAMPLES &&
 		detector->silence_energy <= maximum_window_energy);
 }
 
