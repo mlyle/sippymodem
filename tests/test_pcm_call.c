@@ -2117,6 +2117,101 @@ static bool test_final_training_remote_retrain(void)
 	return true;
 }
 
+static bool digital_is_sending_ri_bar(const struct pcm_call *call)
+{
+	const struct v90_phase4_digital_startup *startup;
+	const struct v90_phase4_ri_tx *transmit;
+
+	if (call->local_role != V90_DIGITAL_MODEM ||
+	    call->stage != PCM_CALL_PHASE4)
+		return false;
+	startup = &call->state.phase4.digital;
+	if (startup->stage != V90_PHASE4_STARTUP_INITIAL &&
+	    startup->stage != V90_PHASE4_STARTUP_CONTINUING)
+		return false;
+	transmit = startup->stage == V90_PHASE4_STARTUP_INITIAL ?
+		&startup->state.initial.transmit :
+		&startup->state.continuing.station.transmit;
+	return transmit->stage == V90_PHASE4_RI_BAR ||
+	       (transmit->stage == V90_PHASE4_RI &&
+		transmit->finish_requested &&
+		transmit->ri_symbols == V90_PHASE4_RI_MIN_SYMBOLS &&
+		transmit->phase == 0u);
+}
+
+static bool missing_ri_bar_recovers_data(enum g711_law law)
+{
+	struct channel channel;
+	struct endpoint analog;
+	struct endpoint digital;
+	size_t erased = 0u;
+	bool analog_timed_out = false;
+	bool digital_timed_out = false;
+
+	CHECK(channel_init(&channel, law, 13u) &&
+	      endpoint_init(&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+	      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+			    V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      "lost Ri-bar endpoints did not initialize");
+	/* Lose only the first 24T reversal, then allow real audio time and both
+	 * reacting call owners to recover. Do not seed detectors, shorten a
+	 * deadline, restart either peer, or skip their second handshake. */
+	for (size_t clock = 0u; clock < 3u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t analog_received, digital_received;
+		uint8_t analog_transmitted, digital_transmitted;
+		uint32_t analog_remaining = analog.call.b1_deadline_remaining_samples;
+		uint32_t digital_remaining = digital.call.b1_deadline_remaining_samples;
+		bool erase = erased < V90_PHASE4_RI_BAR_SYMBOLS &&
+			digital_is_sending_ri_bar(&digital.call);
+
+		channel_receive(&channel, &analog_received, &digital_received);
+		CHECK(endpoint_octet(
+			      &analog, analog_received, decode_octet(law, analog_received),
+			      law, &analog_transmitted) &&
+		      endpoint_octet(
+			      &digital, digital_received, decode_octet(law, digital_received),
+			      law, &digital_transmitted),
+		      "law %u lost Ri-bar call stopped at %zu", (unsigned int)law, clock);
+		if (erase) {
+			/* Both G.711 laws put the sign in bit 7. Turn Ri-bar back into
+			 * uninterrupted Ri without changing its amplitude or duration. */
+			digital_transmitted ^= 0x80u;
+			erased++;
+		}
+		if (!analog_timed_out && analog.call.stage == PCM_CALL_RETRAIN_SILENCE) {
+			CHECK(analog_remaining == 1u && analog.call.peer_info0_stored &&
+			      !analog.call.b1_deadline_armed,
+			      "analogue missed the natural B1 timeout or lost INFO0");
+			analog_timed_out = true;
+		}
+		if (!digital_timed_out && digital.call.stage == PCM_CALL_RETRAIN_SILENCE) {
+			CHECK(digital_remaining == 1u && digital.call.peer_info0_stored &&
+			      !digital.call.b1_deadline_armed,
+			      "digital missed the natural B1 timeout or lost INFO0");
+			digital_timed_out = true;
+		}
+		channel_transmit(&channel, analog_transmitted, digital_transmitted);
+		if (goal_is_reached(CALL_GOAL_ONLINE_DATA, &analog, &digital)) {
+			CHECK(erased == V90_PHASE4_RI_BAR_SYMBOLS &&
+			      analog_timed_out && digital_timed_out &&
+			      pcm_call_is_online(&analog.call) &&
+			      pcm_call_is_online(&digital.call) &&
+			      !analog.call.retrain_active && !digital.call.retrain_active &&
+			      !analog.call.b1_deadline_armed && !digital.call.b1_deadline_armed,
+			      "lost Ri-bar did not retrain and resume both data directions");
+			return true;
+		}
+	}
+	CHECK(false, "law %u lost Ri-bar did not recover: erased=%zu stages=%u/%u",
+	      (unsigned int)law, erased, analog.call.stage, digital.call.stage);
+}
+
+static bool test_missing_ri_bar(void)
+{
+	return missing_ri_bar_recovers_data(G711_LAW_PCMU) &&
+	       missing_ri_bar_recovers_data(G711_LAW_PCMA);
+}
+
 static bool rewind_downstream_b1(
 	struct pcm_call *call, uint8_t *stall_octet)
 {
@@ -5463,6 +5558,7 @@ int main(void)
 		{ "unusable retrain selection restarts full training",
 		  test_unusable_retrain_selection },
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
+		{ "lost Ri-bar recovers online data", test_missing_ri_bar },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
 		{ "standards-timed V.90 Sd response", test_phase3_sd_timeout },
 		{ "downstream rate negotiation",
