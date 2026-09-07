@@ -2852,13 +2852,10 @@ static enum pcm_call_result data_octet_owned(
 			sources->upstream, sources->upstream_context,
 			&generated);
 		result = analog_path_result(analog_result);
-	} else if (retrain_candidate) {
-		digital_result = v90_digital_path_transmit(
-			&call->state.data_path.digital,
-			sources->downstream, sources->downstream_context,
-			&generated);
-		result = digital_path_result(digital_result);
 	} else {
+		/* A quiet candidate clamps host output below, not the upstream
+		 * sample clock. A short interruption may end without a retrain;
+		 * dropping its samples loses carrier and mapping-frame phase. */
 		digital_result = v90_digital_path_sample_owned(
 			&call->state.data_path.digital, received_sample,
 			sources->downstream, sources->downstream_context,

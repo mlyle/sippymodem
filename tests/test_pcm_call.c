@@ -2438,6 +2438,75 @@ static bool check_idle_retrain_receive(
 	return true;
 }
 
+static bool check_short_quiet_receive(
+	const struct endpoint *analog, const struct endpoint *digital,
+	const struct channel *line, enum g711_law law)
+{
+	enum {
+		IDLE_SAMPLES = V34_PHASE2_SAMPLE_RATE / 5,
+		RECOVERY_SAMPLES = V34_PHASE2_SAMPLE_RATE / 10,
+	};
+	const size_t quiet_lengths[] = { 80u, 160u, 320u };
+
+	for (size_t trial = 0; trial < ARRAY_LENGTH(quiet_lengths); ++trial) {
+		struct pcm_call calls[] = { analog->call, digital->call };
+		struct channel channel = *line;
+		const size_t quiet_end = IDLE_SAMPLES + quiet_lengths[trial];
+		size_t recovered_frames = 0u;
+
+		/* Erase an idle upstream interval, then resume the same carrier.
+		 * No ATO1 or complete silence/tone retrain preamble is supplied. */
+		for (size_t clock = 0;
+		     clock < quiet_end + 2u * RECOVERY_SAMPLES; ++clock) {
+			struct pcm_call_data_event events[2];
+			struct v34_line_receiver expected =
+				calls[1].state.data_path.digital.upstream.data.line;
+			struct v34_adaptive_equalizer_observation observation;
+			enum v34_line_receiver_result line_result;
+			uint8_t received[2];
+			uint8_t transmitted[2];
+
+			channel_receive(&channel, &received[0], &received[1]);
+			if (clock >= IDLE_SAMPLES && clock < quiet_end)
+				received[1] = silence_octet(law);
+			line_result = v34_line_receiver_sample(
+				&expected, decode_octet(law, received[1]),
+				&observation);
+			CHECK(line_result == V34_LINE_RECEIVER_OK ||
+			      line_result == V34_LINE_RECEIVER_OBSERVATION_READY,
+			      "short quiet reference sample failed");
+			for (size_t role = 0; role < ARRAY_LENGTH(calls); ++role)
+				CHECK(idle_retrain_octet(
+					      &calls[role], law, received[role],
+					      &transmitted[role], &events[role]) &&
+				      pcm_call_is_online(&calls[role]) &&
+				      !calls[role].retrain_active,
+				      "law %u role %zu quiet %zu stopped at %zu",
+				      (unsigned int)law, role, quiet_lengths[trial], clock);
+			CHECK(memcmp(
+				      &expected.timing,
+				      &calls[1].state.data_path.digital.upstream.data
+					       .line.timing,
+				      sizeof(expected.timing)) == 0,
+			      "law %u quiet %zu dropped receive sample %zu",
+			      (unsigned int)law, quiet_lengths[trial], clock);
+			channel_transmit(&channel, transmitted[0], transmitted[1]);
+			if (clock < quiet_end + RECOVERY_SAMPLES ||
+			    events[1].kind != PCM_CALL_UPSTREAM_FRAME)
+				continue;
+			for (size_t bit = 0;
+			     bit < events[1].frame.upstream.primary_bit_count; ++bit)
+				CHECK(events[1].frame.upstream.primary_bits[bit] == 1u,
+				      "law %u quiet %zu did not recover idle data at %zu",
+				      (unsigned int)law, quiet_lengths[trial], clock);
+			recovered_frames++;
+		}
+		CHECK(recovered_frames >= DATA_FRAMES_TO_RECEIVE,
+		      "short quiet receive check did not recover upstream data");
+	}
+	return true;
+}
+
 static bool run_full_retrain(
 	enum g711_law law, enum v90_modem_role initiating_role)
 {
@@ -2482,6 +2551,9 @@ static bool run_full_retrain(
 	CHECK(check_idle_retrain_receive(
 		      &analog, &digital, &channel, law, initiating_role),
 	      "idle retrain receive boundary failed");
+	if (initiating_role == V90_ANALOG_MODEM)
+		CHECK(check_short_quiet_receive(&analog, &digital, &channel, law),
+		      "short quiet receive boundary failed");
 	initiator = initiating_role == V90_ANALOG_MODEM ? &analog : &digital;
 	responder = initiating_role == V90_ANALOG_MODEM ? &digital : &analog;
 	initiator_prior_rtd = initiator->call.round_trip_delay_samples;
