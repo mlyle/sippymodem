@@ -515,10 +515,35 @@ static bool rate_renegotiation_is_active_owned(
 		       call->state.data_path.digital.rate_renegotiation_active;
 }
 
-static bool rate_renegotiation_deadline_may_wait(
+static bool rate_renegotiation_response_is_pending_owned(
 	const struct pcm_call *call)
 {
 	if (!rate_renegotiation_is_active_owned(call))
+		return false;
+	/* V.90 9.6.1/9.6.2 time E/Ed reception, not the following B1/B1d.
+	 * The path remains in its control epoch until both directions are ready
+	 * for host data, but that must not extend the response deadline. */
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v90_analog_path *path = &call->state.data_path.analog;
+
+		/* The old data receiver also remains present before Rd-bar ends;
+		 * ed_armed distinguishes it from the new post-Ed B1d receiver. */
+		return !path->ed_armed || path->downstream_stage !=
+					V90_ANALOG_PATH_DOWNSTREAM_DATA;
+	}
+	{
+		const struct v90_digital_path *path = &call->state.data_path.digital;
+
+		return path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+		       (path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CP ||
+			path->upstream.startup.stage == V90_UPSTREAM_RX_STAGE_E);
+	}
+}
+
+static bool rate_renegotiation_deadline_may_wait(
+	const struct pcm_call *call)
+{
+	if (!rate_renegotiation_response_is_pending_owned(call))
 		return false;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct v90_downstream_rrn_rx *receiver =
@@ -544,7 +569,7 @@ static bool rate_renegotiation_deadline_may_wait(
 static bool rate_renegotiation_deadline_has_started(
 	const struct pcm_call *call)
 {
-	if (!rate_renegotiation_is_active_owned(call))
+	if (!rate_renegotiation_response_is_pending_owned(call))
 		return false;
 	/* The analogue receiver reports the first Rd-bar character as both the
 	 * protocol boundary and a transient event to its serialized call owner.
@@ -600,7 +625,7 @@ static bool call_is_valid(
 	      !rate_renegotiation_deadline_has_started(call))) ||
 	    (call->stage == PCM_CALL_DATA_PATH &&
 	     call->protocol == PCM_PROTOCOL_V90 &&
-	     rate_renegotiation_is_active_owned(call) &&
+	     rate_renegotiation_response_is_pending_owned(call) &&
 	     !call->rate_renegotiation_deadline_armed &&
 	     !rate_renegotiation_deadline_may_wait(call)) ||
 	    (call->stage != PCM_CALL_PHASE2 &&
@@ -2843,7 +2868,7 @@ static enum pcm_call_result begin_rate_renegotiation_control(
 static enum pcm_call_result update_rate_renegotiation_deadline(
 	struct pcm_call *call)
 {
-	if (!rate_renegotiation_is_active_owned(call)) {
+	if (!rate_renegotiation_response_is_pending_owned(call)) {
 		call->rate_renegotiation_deadline_remaining_samples = 0u;
 		call->rate_renegotiation_deadline_armed = false;
 		return PCM_CALL_OK;

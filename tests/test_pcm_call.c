@@ -4045,6 +4045,44 @@ static bool pcm_frame_is_fill(const uint8_t *bits, size_t bit_count)
 	return true;
 }
 
+static bool check_rrn_response_deadline(
+	const struct pcm_call *before, const struct pcm_call *after,
+	uint8_t received, uint8_t expected_transmitted)
+{
+	struct pcm_call last_sample = *before;
+	struct pcm_call stale_deadline = *after;
+	struct pcm_call_data_event event;
+	uint8_t transmitted;
+
+	CHECK(before->rate_renegotiation_deadline_armed,
+	      "role %u retired its RRN response deadline before E/Ed",
+	      (unsigned int)before->local_role);
+	/* Replay the actual final E/Ed input character with only one deadline
+	 * sample left. This is a timer-boundary check, not a forced DSP event. */
+	last_sample.rate_renegotiation_deadline_remaining_samples = 1u;
+	CHECK(pcm_call_is_valid(&last_sample) &&
+	      pcm_call_data_octet(
+		      &last_sample, received, decode_octet(before->law, received),
+		      NULL, &transmitted, &event) == PCM_CALL_OK &&
+	      last_sample.stage == PCM_CALL_DATA_PATH &&
+	      event.kind == PCM_CALL_DATA_NONE &&
+	      transmitted == expected_transmitted &&
+	      memcmp(&last_sample, after, sizeof(last_sample)) == 0 &&
+	      pcm_call_is_valid(&last_sample),
+	      "role %u retrained on an E/Ed response at the deadline",
+	      (unsigned int)after->local_role);
+	CHECK(!after->rate_renegotiation_deadline_armed &&
+	      after->rate_renegotiation_deadline_remaining_samples == 0u,
+	      "role %u retained its RRN response deadline after E/Ed",
+	      (unsigned int)after->local_role);
+	stale_deadline.rate_renegotiation_deadline_armed = true;
+	stale_deadline.rate_renegotiation_deadline_remaining_samples = 1u;
+	CHECK(!pcm_call_is_valid(&stale_deadline),
+	      "role %u accepted an armed RRN response deadline during B1",
+	      (unsigned int)after->local_role);
+	return true;
+}
+
 static bool run_paired_remote_rate_renegotiation(
 	enum g711_law law,
 	enum v34_constellation_size rate_renegotiation_constellation)
@@ -4054,6 +4092,8 @@ static bool run_paired_remote_rate_renegotiation(
 	struct endpoint digital;
 	struct pcm_call_data_sources analog_sources;
 	struct pcm_call_data_sources digital_sources;
+	struct pcm_call analog_response_before;
+	struct pcm_call digital_response_before;
 	size_t analog_resume_source = 0u;
 	size_t digital_resume_source;
 	size_t rd_high_water = 0u;
@@ -4072,6 +4112,8 @@ static bool run_paired_remote_rate_renegotiation(
 	bool rd_bar_complete = false;
 	bool analog_deadline_seen = false;
 	bool digital_deadline_seen = false;
+	bool analog_response_seen = false;
+	bool digital_response_seen = false;
 	bool timeout_checked = false;
 	bool cp_seen = false;
 	bool e_seen = false;
@@ -4178,9 +4220,23 @@ static bool run_paired_remote_rate_renegotiation(
 			analog_path->rate_renegotiation_active;
 		bool digital_active_before =
 			digital_path->rate_renegotiation_active;
+		bool analog_receiving_ed = analog_active_before &&
+			analog_path->downstream_stage ==
+				V90_ANALOG_PATH_DOWNSTREAM_TRAINING &&
+			analog_path->downstream.training.stage ==
+				PCM_DOWNSTREAM_RX_ED_SEARCH;
+		bool digital_receiving_e = digital_active_before &&
+			digital_path->upstream_stage ==
+				V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+			digital_path->upstream.startup.stage ==
+				V90_UPSTREAM_RX_STAGE_E;
 
 		channel_receive(
 			&channel, &analog_received, &digital_received);
+		if (analog_receiving_ed)
+			analog_response_before = analog.call;
+		if (digital_receiving_e)
+			digital_response_before = digital.call;
 		CHECK(pcm_call_data_octet(
 			      &analog.call, analog_received,
 			      decode_octet(law, analog_received), &analog_sources,
@@ -4196,6 +4252,28 @@ static bool run_paired_remote_rate_renegotiation(
 		      (unsigned int)rate_renegotiation_constellation, sample);
 		analog_path = &analog.call.state.data_path.analog;
 		digital_path = &digital.call.state.data_path.digital;
+		if (analog_receiving_ed && analog_path->downstream_stage ==
+					 V90_ANALOG_PATH_DOWNSTREAM_DATA) {
+			CHECK(!analog_response_seen &&
+			      check_rrn_response_deadline(
+				      &analog_response_before, &analog.call,
+				      analog_received, analog_transmitted),
+			      "law %u analogue RRN response deadline failed",
+			      (unsigned int)law);
+			analog_response_seen = true;
+		}
+		if (digital_receiving_e && digital_path->upstream_stage ==
+					  V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+		    digital_path->upstream.startup.stage ==
+			    V90_UPSTREAM_RX_STAGE_B1) {
+			CHECK(!digital_response_seen &&
+			      check_rrn_response_deadline(
+				      &digital_response_before, &digital.call,
+				      digital_received, digital_transmitted),
+			      "law %u digital RRN response deadline failed",
+			      (unsigned int)law);
+			digital_response_seen = true;
+		}
 		if (analog_active_before)
 			CHECK(analog.upstream_source.frames == analog_source_before,
 			      "law %u paired RRN consumed analogue host input",
@@ -4340,6 +4418,7 @@ static bool run_paired_remote_rate_renegotiation(
 	}
 	CHECK(analog_started && rd_detected && rd_bar_started &&
 	      rd_bar_complete && analog_deadline_seen &&
+	      analog_response_seen && digital_response_seen &&
 	      digital_deadline_seen && timeout_checked && cp_seen && e_seen &&
 	      rd_high_water == V90_RD_SEQUENCE_SYMBOLS &&
 	      s_high_water == V34_PHASE3_S_SYMBOLS &&
