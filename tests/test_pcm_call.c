@@ -1091,6 +1091,8 @@ enum call_impairment {
 	CALL_INITIAL_TONE_B_LOST,
 	CALL_INITIAL_TONE_A_LOST,
 	CALL_INITIAL_INFO1D_LOST,
+	CALL_INITIAL_L1_LOST,
+	CALL_RECIPROCAL_L1_LOST,
 };
 
 static bool run_configured_call(
@@ -1108,6 +1110,7 @@ static bool run_configured_call(
 	bool reversal_recovered = false;
 	bool info1_interrupted = false;
 	bool info1_retrained = false;
+	bool probe_retrained = false;
 	size_t lost_a_samples = 0;
 	unsigned int replacement_stages = 0;
 
@@ -1164,6 +1167,23 @@ static bool run_configured_call(
 			analog_received = silence_octet(law);
 			info1_interrupted = true;
 		}
+		if (impairment == CALL_INITIAL_L1_LOST ||
+		    impairment == CALL_RECIPROCAL_L1_LOST) {
+			bool initial = impairment == CALL_INITIAL_L1_LOST;
+			const struct pcm_call *receiver = initial ?
+				&digital.call : &analog.call;
+			enum pcm_phase2_stage stage = initial ?
+				PCM_PHASE2_INITIAL_PROBE : PCM_PHASE2_RECIPROCAL_PROBE;
+
+			if (receiver->stage == PCM_CALL_PHASE2 &&
+			    receiver->state.phase2.stage == stage && !probe_retrained) {
+				if (initial)
+					digital_received = silence_octet(law);
+				else
+					analog_received = silence_octet(law);
+				probe_interrupted = true;
+			}
+		}
 		analog_received_sample = decode_octet(law, analog_received);
 		digital_received_sample = decode_octet(law, digital_received);
 		if (impairment == CALL_CODEWORD_REPLACED &&
@@ -1188,6 +1208,12 @@ static bool run_configured_call(
 		      (unsigned int)law, delay, clock);
 		info1_retrained |= info1_interrupted &&
 			analog.call.stage == PCM_CALL_RETRAIN_SILENCE;
+		if (impairment == CALL_INITIAL_L1_LOST ||
+		    impairment == CALL_RECIPROCAL_L1_LOST)
+			probe_retrained |= probe_interrupted &&
+				(impairment == CALL_INITIAL_L1_LOST ?
+					digital.call.stage == PCM_CALL_RETRAIN_SILENCE :
+					analog.call.stage == PCM_CALL_RETRAIN_SILENCE);
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
 		if (goal_is_reached(goal, &analog, &digital)) {
@@ -1203,6 +1229,10 @@ static bool run_configured_call(
 	CHECK(impairment != CALL_INITIAL_INFO1D_LOST ||
 	      (info1_interrupted && info1_retrained),
 	      "lost INFO1d did not exercise analogue timeout retraining");
+	CHECK((impairment != CALL_INITIAL_L1_LOST &&
+	       impairment != CALL_RECIPROCAL_L1_LOST) ||
+	      (probe_interrupted && probe_retrained),
+	      "lost L1 did not exercise full-retrain recovery");
 	CHECK(impairment != CALL_CODEWORD_REPLACED ||
 	      replacement_stages == ((1u << PCM_CALL_PHASE2) |
 				     (1u << PCM_CALL_PHASE3) |
@@ -5112,6 +5142,117 @@ static bool test_initial_info1_loss(void)
 	return true;
 }
 
+static bool check_missing_probe_boundary(
+	enum pcm_protocol protocol, enum g711_law law, enum v90_modem_role role)
+{
+	struct pcm_call_configuration analog_configuration =
+		protocol == PCM_PROTOCOL_V90 ? configuration(V90_ANALOG_MODEM, law) :
+			v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration =
+		protocol == PCM_PROTOCOL_V90 ? configuration(V90_DIGITAL_MODEM, law) :
+			v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital, waiting;
+	struct pcm_call *receiver = role == V90_DIGITAL_MODEM ? &digital : &analog;
+	struct channel channel;
+	bool probe_started = false;
+	bool restarted = false;
+	unsigned int missing_probe_limit;
+	uint8_t silence = silence_octet(law);
+
+	CHECK(channel_init(&channel, law, 13u) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "missing-probe boundary endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation observed;
+		uint8_t analog_received, digital_received;
+		uint8_t analog_transmitted, digital_transmitted;
+
+		channel_receive(&channel, &analog_received, &digital_received);
+		CHECK(pcm_call_octet(&analog, analog_received,
+			      decode_octet(law, analog_received), &analog_transmitted,
+			      &observed) == PCM_CALL_OK &&
+		      pcm_call_octet(&digital, digital_received,
+			      decode_octet(law, digital_received), &digital_transmitted,
+			      &observed) == PCM_CALL_OK,
+		      "missing-probe setup stopped at %zu", clock);
+		channel_transmit(&channel, analog_transmitted, digital_transmitted);
+		if (receiver->stage == PCM_CALL_PHASE2 &&
+		    receiver->state.phase2.stage == (role == V90_DIGITAL_MODEM ?
+			    PCM_PHASE2_INITIAL_PROBE : PCM_PHASE2_RECIPROCAL_PROBE)) {
+			probe_started = true;
+			break;
+		}
+	}
+	CHECK(probe_started && receiver->round_trip_delay_stored &&
+	      receiver->peer_info0_stored, "missing-probe test missed the receive boundary");
+	waiting = *receiver;
+	/* The reciprocal receiver searches successive L1 capture windows up to
+	 * the reversal deadline; the initial receiver uses one capture window. */
+	missing_probe_limit = role == V90_DIGITAL_MODEM ?
+		V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES :
+		PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES -
+			waiting.state.phase2.state.reciprocal_probe.control.
+				signal_a_reversal_elapsed_samples;
+	for (unsigned int clock = 0; clock < missing_probe_limit; ++clock) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(&waiting, silence, decode_octet(law, silence),
+			      &transmitted, &observed) == PCM_CALL_OK &&
+		      pcm_call_is_valid(&waiting) && !waiting.failed,
+		      "missing probe terminated protocol %u role %u law %u at %u",
+		      (unsigned int)protocol, (unsigned int)role, (unsigned int)law, clock);
+		if (observed.phase2.kind == PCM_PHASE2_EVENT_FAILED) {
+			CHECK(observed.phase2.failure == PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND &&
+			      clock + 1u == missing_probe_limit &&
+			      waiting.stage == PCM_CALL_RETRAIN_SILENCE && waiting.retrain_active &&
+			      waiting.protocol == protocol && waiting.local_role == role &&
+			      waiting.round_trip_delay_stored && waiting.peer_info0_stored &&
+			      waiting.round_trip_delay_samples == receiver->round_trip_delay_samples &&
+			      memcmp(&waiting.peer_info0, &receiver->peer_info0,
+				     sizeof(waiting.peer_info0)) == 0,
+			      "missing-probe restart lost the call agreement or failure observation");
+			restarted = true;
+			break;
+		}
+	}
+	CHECK(restarted, "protocol %u role %u law %u missed its L1 acquisition deadline",
+	      (unsigned int)protocol, (unsigned int)role, (unsigned int)law);
+	for (unsigned int clock = 0; clock < 70u * 8u; ++clock) {
+		struct pcm_call_observation observed;
+		uint8_t transmitted;
+
+		CHECK(pcm_call_octet(&waiting, silence, decode_octet(law, silence),
+			      &transmitted, &observed) == PCM_CALL_OK &&
+		      transmitted == silence && observed.processed == PCM_CALL_RETRAIN_SILENCE,
+		      "missing-probe retrain did not send its complete silent interval");
+	}
+	CHECK(waiting.stage == PCM_CALL_PHASE2 && waiting.retrain_active &&
+	      !waiting.failed, "missing-probe retrain did not return to Phase 2");
+	return true;
+}
+
+static bool test_missing_probe_recovery(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+	     protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (enum v90_modem_role role = V90_ANALOG_MODEM;
+			     role <= V90_DIGITAL_MODEM; ++role)
+				CHECK(check_missing_probe_boundary(protocol, law, role),
+				      "missing-probe retrain boundary failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum call_impairment loss = CALL_INITIAL_L1_LOST;
+		     loss <= CALL_RECIPROCAL_L1_LOST; ++loss)
+			CHECK(run_configured_call(law, 13u, CALL_GOAL_ONLINE_DATA,
+				      UINT32_C(1), 1, V90_JD_RATE_CAPABILITY_MASK,
+				      DATA_DOWNSTREAM_RATE, loss),
+			      "law %u loss %u did not recover online V.90 data",
+			      (unsigned int)law, (unsigned int)loss);
+	return true;
+}
+
 static bool test_generated_calls(void)
 {
 	static const size_t complete_delays[] = {
@@ -5538,6 +5679,7 @@ int main(void)
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },
+		{ "missing L1 probes recover online data", test_missing_probe_recovery },
 		{ "initial INFO1 retrain-tone response",
 		  test_initial_info1_retrain_tone },
 		{ "lost INFO1d recovers online data", test_initial_info1_loss },

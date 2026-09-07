@@ -1326,6 +1326,11 @@ static enum pcm_call_result advance_phase2(
 	enum pcm_phase2_result result;
 
 	if (event->kind == PCM_PHASE2_EVENT_FAILED) {
+		/* Missing L1 after a detected reversal can leave the peers in
+		 * different ranging epochs. Reuse full retrain to synchronize
+		 * them; the datapump's training deadline still bounds recovery. */
+		if (event->failure == PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND)
+			return begin_retrain(call, false);
 		/* V.90 9.2.1.2.5 restarts training when final Tone A misses
 		 * the reciprocal-probe deadline. Keep the INFO0/RTD agreement
 		 * and use the shared full-retrain path, not terminal hangup. */
