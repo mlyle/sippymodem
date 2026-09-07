@@ -244,6 +244,87 @@ static void generate_bits(
 			 (frame >> (bit % 3u))) & 1u);
 }
 
+static bool check_distinct_codec_plane(
+	enum v90_cp_kind kind, enum g711_law law,
+	uint8_t redundancy, uint8_t lookahead)
+{
+	struct v90_pcm_mapping mapping;
+	struct v90_pcm_frame_encoder transmit_only;
+	struct v90_pcm_frame_encoder with_codec;
+	size_t emitted = 0;
+	const size_t frames = 8;
+	bool complete = false;
+
+	CHECK(make_mapping(&mapping, kind, law, redundancy, lookahead) &&
+	      v90_pcm_frame_encoder_init(&transmit_only, &mapping) ==
+		      V90_PCM_FRAME_ENCODER_OK,
+	      "transmit-plane fixture did not initialize");
+	/* CP may describe different levels at the peer's D/A converter. They
+	 * are not the Ucodes to transmit. V.90 5.4.5.6 also bases shaping on
+	 * the transmitted codes, so neither the signs nor octets may change. */
+	memset(mapping.codec, 0, sizeof(mapping.codec));
+	for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval)
+		for (uint8_t label = 0; label < mapping.modulus[interval]; ++label)
+			add_ucode(&mapping.codec[interval],
+				  (uint8_t)(64u + interval * 8u + label));
+	mapping.codec_plane_differs = true;
+	CHECK(v90_pcm_mapping_is_valid(&mapping) &&
+	      v90_pcm_frame_encoder_init(&with_codec, &mapping) ==
+		      V90_PCM_FRAME_ENCODER_OK,
+	      "distinct codec-plane fixture did not initialize");
+	for (size_t frame = 0; frame < frames + lookahead + 1u; ++frame) {
+		struct v90_pcm_frame_output expected, actual;
+		enum v90_pcm_frame_encoder_result expected_result, actual_result;
+
+		if (frame < frames) {
+			uint8_t bits[V90_PCM_FRAME_MAX_BITS];
+
+			generate_bits(bits, mapping.frame_bits, frame, redundancy);
+			expected_result = v90_pcm_frame_encoder_process(
+				&transmit_only, bits, mapping.frame_bits, &expected);
+			actual_result = v90_pcm_frame_encoder_process(
+				&with_codec, bits, mapping.frame_bits, &actual);
+		} else {
+			expected_result = v90_pcm_frame_encoder_finish(
+				&transmit_only, &expected);
+			actual_result = v90_pcm_frame_encoder_finish(&with_codec, &actual);
+		}
+		CHECK(actual_result == expected_result,
+		      "codec-plane metadata changed encoder progress");
+		if (actual_result == V90_PCM_FRAME_ENCODER_COMPLETE) {
+			complete = true;
+			break;
+		}
+		if (actual_result == V90_PCM_FRAME_ENCODER_BUFFERING)
+			continue;
+		CHECK(actual_result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
+		      output_equal(&actual, &expected),
+		      "codec-plane metadata changed transmitted signs or octets");
+		for (size_t symbol = 0; symbol < actual.symbol_count; ++symbol)
+			CHECK(actual.symbols[symbol].ucode >= 10u &&
+			      actual.symbols[symbol].ucode < 10u + mapping.modulus[0],
+			      "encoder transmitted a codec-output level");
+		emitted += actual.symbol_count;
+	}
+	CHECK(complete && emitted == frames * V90_CP_FRAME_INTERVALS &&
+	      v90_pcm_frame_encoder_is_valid(&with_codec),
+	      "distinct codec-plane encoding lost buffered symbols");
+	return true;
+}
+
+static bool test_distinct_codec_plane(void)
+{
+	for (enum v90_cp_kind kind = V90_CP_TRAINING; kind <= V90_CP_DATA; ++kind)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (uint8_t redundancy = 0; redundancy <= 3; ++redundancy)
+				for (uint8_t lookahead = 0; lookahead <= 3; ++lookahead)
+					CHECK(check_distinct_codec_plane(
+						      kind, law, redundancy, lookahead),
+					      "codec-plane isolation failed for %u/%u/%u/%u",
+					      kind, law, redundancy, lookahead);
+	return true;
+}
+
 static bool test_shaped_pipeline(void)
 {
 	uint8_t first_ucodes[2][3][4][V90_CP_FRAME_INTERVALS] = { 0 };
@@ -455,6 +536,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "unshaped exact frame", test_unshaped_exact_frame },
+		{ "distinct transmit and codec planes", test_distinct_codec_plane },
 		{ "shaped pipeline", test_shaped_pipeline },
 		{ "contracts", test_contracts },
 	};
