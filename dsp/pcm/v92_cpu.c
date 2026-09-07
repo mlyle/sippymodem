@@ -33,52 +33,6 @@ enum {
 	CPU_CRC_BITS = 16,
 };
 
-static bool constellation_is_empty(
-	const struct pcm_constellation *constellation)
-{
-	for (size_t byte = 0;
-	     byte < PCM_CONSTELLATION_MASK_BYTES; ++byte) {
-		if (constellation->ucode_mask[byte] != 0u)
-			return false;
-	}
-	return true;
-}
-
-static bool constellations_are_canonical(
-	const struct v92_cpu_parameters *parameters)
-{
-	uint8_t used = 0u;
-
-	for (size_t interval = 0;
-	     interval < V92_CPU_FRAME_INTERVALS; ++interval) {
-		uint8_t index = parameters->frame_constellation[interval];
-
-		if (index >= parameters->constellation_count)
-			return false;
-		used |= (uint8_t)(1u << index);
-	}
-	if (used != (uint8_t)((1u << parameters->constellation_count) - 1u))
-		return false;
-	for (size_t index = 0;
-	     index < V92_CPU_MAX_CONSTELLATIONS; ++index) {
-		bool active = index < parameters->constellation_count;
-		bool transmit_empty = constellation_is_empty(
-			&parameters->transmit_constellations[index]);
-		bool codec_empty = constellation_is_empty(
-			&parameters->codec_constellations[index]);
-
-		if (active == transmit_empty)
-			return false;
-		if (parameters->codec_constellations_differ) {
-			if (active == codec_empty)
-				return false;
-		} else if (!codec_empty) {
-			return false;
-		}
-	}
-	return true;
-}
-
 bool v92_cpu_parameters_are_valid(
 	const struct v92_cpu_parameters *parameters)
 {
@@ -87,10 +41,12 @@ bool v92_cpu_parameters_are_valid(
 		       V92_CPU_MAX_DATA_RATE_NUMBER &&
 	       parameters->sign_redundancy <= 3u &&
 	       parameters->spectral_lookahead_frames <= 3u &&
-	       parameters->constellation_count >= 1u &&
-	       parameters->constellation_count <=
-		       V92_CPU_MAX_CONSTELLATIONS &&
-	       constellations_are_canonical(parameters);
+	       pcm_constellations_are_canonical(
+		       parameters->transmit_constellations,
+		       parameters->codec_constellations,
+		       parameters->frame_constellation,
+		       parameters->constellation_count,
+		       parameters->codec_constellations_differ);
 }
 
 static bool bits_per_symbol_is_valid(unsigned int bits_per_symbol)

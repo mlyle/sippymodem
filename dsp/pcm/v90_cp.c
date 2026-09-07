@@ -40,52 +40,6 @@ static bool kind_is_valid(enum v90_cp_kind kind)
 	return kind == V90_CP_TRAINING || kind == V90_CP_DATA;
 }
 
-static bool constellation_is_empty(
-	const struct pcm_constellation *constellation)
-{
-	for (size_t index = 0;
-	     index < V90_CP_CONSTELLATION_MASK_BYTES; ++index) {
-		if (constellation->ucode_mask[index] != 0)
-			return false;
-	}
-	return true;
-}
-
-static bool constellations_are_canonical(
-	const struct v90_cp_parameters *parameters)
-{
-	uint8_t used = 0;
-
-	for (size_t interval = 0;
-	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		uint8_t index = parameters->frame_constellation[interval];
-
-		if (index >= parameters->constellation_count)
-			return false;
-		used |= (uint8_t)(1u << index);
-	}
-	if (used != (uint8_t)((1u << parameters->constellation_count) - 1u))
-		return false;
-	for (size_t index = 0;
-	     index < V90_CP_MAX_CONSTELLATIONS; ++index) {
-		bool active = index < parameters->constellation_count;
-		bool transmit_empty = constellation_is_empty(
-			&parameters->transmit_constellations[index]);
-		bool codec_empty = constellation_is_empty(
-			&parameters->codec_constellations[index]);
-
-		if (active == transmit_empty)
-			return false;
-		if (parameters->codec_constellations_differ) {
-			if (active == codec_empty)
-				return false;
-		} else if (!codec_empty) {
-			return false;
-		}
-	}
-	return true;
-}
-
 bool v90_cp_parameters_are_valid(
 	const struct v90_cp_parameters *parameters)
 {
@@ -94,12 +48,14 @@ bool v90_cp_parameters_are_valid(
 	       parameters->selected_rate_index <= V90_CP_RATE_INDEX_MAX &&
 	       parameters->sign_redundancy <= 3 &&
 	       parameters->spectral_lookahead <= 3 &&
-	       parameters->constellation_count >= 1 &&
-	       parameters->constellation_count <=
-		       V90_CP_MAX_CONSTELLATIONS &&
 	       (parameters->upstream_rate_mask &
 		~V90_CP_UPSTREAM_RATE_MASK) == 0 &&
-	       constellations_are_canonical(parameters);
+	       pcm_constellations_are_canonical(
+		       parameters->transmit_constellations,
+		       parameters->codec_constellations,
+		       parameters->frame_constellation,
+		       parameters->constellation_count,
+		       parameters->codec_constellations_differ);
 }
 
 size_t v90_cp_frame_bits(const struct v90_cp_parameters *parameters)

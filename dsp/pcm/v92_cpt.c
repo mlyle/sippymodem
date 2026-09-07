@@ -32,52 +32,6 @@ enum {
 	CPT_CRC_BITS = 16,
 };
 
-static bool constellation_is_empty(
-	const struct pcm_constellation *constellation)
-{
-	for (size_t index = 0;
-	     index < PCM_CONSTELLATION_MASK_BYTES; ++index) {
-		if (constellation->ucode_mask[index] != 0)
-			return false;
-	}
-	return true;
-}
-
-static bool constellations_are_canonical(
-	const struct v92_cpt_parameters *parameters)
-{
-	uint8_t used = 0;
-
-	for (size_t interval = 0;
-	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		uint8_t index = parameters->frame_constellation[interval];
-
-		if (index >= parameters->constellation_count)
-			return false;
-		used |= (uint8_t)(1u << index);
-	}
-	if (used != (uint8_t)((1u << parameters->constellation_count) - 1u))
-		return false;
-	for (size_t index = 0;
-	     index < V92_CPT_MAX_CONSTELLATIONS; ++index) {
-		bool active = index < parameters->constellation_count;
-		bool transmit_empty = constellation_is_empty(
-			&parameters->transmit_constellations[index]);
-		bool codec_empty = constellation_is_empty(
-			&parameters->codec_constellations[index]);
-
-		if (active == transmit_empty)
-			return false;
-		if (parameters->codec_constellations_differ) {
-			if (active == codec_empty)
-				return false;
-		} else if (!codec_empty) {
-			return false;
-		}
-	}
-	return true;
-}
-
 bool v92_cpt_parameters_are_valid(
 	const struct v92_cpt_parameters *parameters)
 {
@@ -85,9 +39,12 @@ bool v92_cpt_parameters_are_valid(
 	       parameters->selected_rate_index <= V92_CPT_RATE_INDEX_MAX &&
 	       parameters->sign_redundancy <= 3 &&
 	       parameters->spectral_lookahead <= 3 &&
-	       parameters->constellation_count >= 1 &&
-	       parameters->constellation_count <= V92_CPT_MAX_CONSTELLATIONS &&
-	       constellations_are_canonical(parameters);
+	       pcm_constellations_are_canonical(
+		       parameters->transmit_constellations,
+		       parameters->codec_constellations,
+		       parameters->frame_constellation,
+		       parameters->constellation_count,
+		       parameters->codec_constellations_differ);
 }
 
 static size_t align_frame(size_t bit_count)

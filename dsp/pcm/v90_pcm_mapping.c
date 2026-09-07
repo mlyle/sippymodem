@@ -18,25 +18,6 @@ enum {
 	V90_SHAPING_COEFFICIENT_LIMIT_Q1_6 = 64,
 };
 
-static uint8_t constellation_count(
-	const struct pcm_constellation *constellation)
-{
-	unsigned int count = 0;
-
-	if (constellation == NULL)
-		return 0;
-	for (size_t index = 0;
-	     index < V90_CP_CONSTELLATION_MASK_BYTES; ++index) {
-		uint8_t bits = constellation->ucode_mask[index];
-
-		while (bits != 0) {
-			count += bits & 1u;
-			bits >>= 1;
-		}
-	}
-	return (uint8_t)count;
-}
-
 static bool modulus_bits_are_valid(
 	enum v90_cp_kind kind, uint8_t bits)
 {
@@ -111,9 +92,9 @@ bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping)
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (constellation_count(&mapping->transmit[interval]) !=
+		if (pcm_constellation_count(&mapping->transmit[interval]) !=
 			    mapping->modulus[interval] ||
-		    constellation_count(&mapping->codec[interval]) !=
+		    pcm_constellation_count(&mapping->codec[interval]) !=
 			    mapping->modulus[interval])
 			return false;
 	}
@@ -190,8 +171,8 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 				parameters->codec_constellations[index] :
 				initialized.transmit[interval];
 		initialized.modulus[interval] =
-			constellation_count(&initialized.transmit[interval]);
-		codec_count = constellation_count(&initialized.codec[interval]);
+			pcm_constellation_count(&initialized.transmit[interval]);
+		codec_count = pcm_constellation_count(&initialized.codec[interval]);
 		if (codec_count != initialized.modulus[interval])
 			codec_counts_match = false;
 	}

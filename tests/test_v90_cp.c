@@ -263,6 +263,41 @@ static bool test_constellation_membership(void)
 	return true;
 }
 
+static bool test_constellation_cardinality(void)
+{
+	struct pcm_constellation constellation;
+
+	CHECK(pcm_constellation_count(NULL) == 0 &&
+	      !pcm_constellation_is_empty(NULL),
+	      "missing constellation was accepted as an empty set");
+	/* Every byte value in every position, both isolated and surrounded by
+	 * set bits, covers the packed sum and the full 128-code boundary. */
+	for (unsigned int value = 0; value <= UINT8_MAX; ++value) {
+		unsigned int expected = 0;
+
+		for (unsigned int bit = 0; bit < 8u; ++bit)
+			expected += (value >> bit) & 1u;
+		for (size_t byte = 0;
+		     byte < PCM_CONSTELLATION_MASK_BYTES; ++byte) {
+			memset(&constellation, 0, sizeof(constellation));
+			constellation.ucode_mask[byte] = (uint8_t)value;
+			CHECK(pcm_constellation_count(&constellation) == expected &&
+			      pcm_constellation_is_empty(&constellation) ==
+				      (expected == 0),
+			      "isolated cardinality differs for byte %zu value %u",
+			      byte, value);
+			memset(&constellation, 0xff, sizeof(constellation));
+			constellation.ucode_mask[byte] = (uint8_t)value;
+			CHECK(pcm_constellation_count(&constellation) ==
+				      PCM_CONSTELLATION_UCODES - 8u + expected &&
+			      !pcm_constellation_is_empty(&constellation),
+			      "dense cardinality differs for byte %zu value %u",
+			      byte, value);
+		}
+	}
+	return true;
+}
+
 static bool test_scalar_validation(void)
 {
 	struct v90_cp_parameters valid = baseline();
@@ -314,6 +349,16 @@ static bool test_canonical_masks(void)
 	struct v90_cp_parameters valid = baseline();
 	struct v90_cp_parameters changed;
 
+	CHECK(!pcm_constellations_are_canonical(
+		      NULL, valid.codec_constellations,
+		      valid.frame_constellation, valid.constellation_count, false) &&
+	      !pcm_constellations_are_canonical(
+		      valid.transmit_constellations, NULL,
+		      valid.frame_constellation, valid.constellation_count, false) &&
+	      !pcm_constellations_are_canonical(
+		      valid.transmit_constellations, valid.codec_constellations,
+		      NULL, valid.constellation_count, false),
+	      "canonical layout accepted missing storage");
 	changed = valid;
 	memset(&changed.transmit_constellations[0], 0,
 	       sizeof(changed.transmit_constellations[0]));
@@ -595,6 +640,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "dimensions and boundaries", test_dimensions_and_boundaries },
 		{ "constellation membership", test_constellation_membership },
+		{ "constellation cardinality", test_constellation_cardinality },
 		{ "scalar validation", test_scalar_validation },
 		{ "canonical masks", test_canonical_masks },
 		{ "known wire image", test_known_wire_image },
