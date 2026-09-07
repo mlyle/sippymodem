@@ -283,8 +283,8 @@ static bool test_contracts(void)
 	frame_saved = frame;
 	CHECK(v90_pcm_symbol_make(
 		      &invalid, data_mapping.law, 1, false) &&
-	      v90_downstream_data_rx_receive_octet(
-		      &receiver, invalid.octet, &frame) ==
+	      v90_downstream_data_rx_receive_decision(
+		      &receiver, invalid.ucode, invalid.positive, &frame) ==
 		      V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL &&
 	      v90_downstream_data_rx_receive_decision(
 		      NULL, 0, false, &frame) ==

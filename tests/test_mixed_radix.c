@@ -104,6 +104,46 @@ static int test_differential_round_trip(void)
 	return 0;
 }
 
+static int test_received_low_bits(void)
+{
+	const uint32_t radices[] = { 5, 5 };
+	uint8_t bits[5];
+	uint8_t saved[5];
+	uint32_t digits[2];
+
+	/* The 4-bit encoder uses only 16 of the 25 possible decisions. Noise
+	 * can select any tuple; strict inversion must still reject the other 9. */
+	for (uint32_t value = 0; value < 25u; ++value) {
+		digits[0] = value % 5u;
+		digits[1] = value / 5u;
+		memset(bits, 0xa5, sizeof(bits));
+		memcpy(saved, bits, sizeof(bits));
+		CHECK(mixed_radix_decode(radices, 2, digits, bits, 4) ==
+			      (value < 16u ? MIXED_RADIX_OK : MIXED_RADIX_OUT_OF_RANGE),
+		      "strict inverse accepted unused tuple %u", value);
+		if (value >= 16u)
+			CHECK(memcmp(bits, saved, sizeof(bits)) == 0,
+			      "strict inverse changed unused tuple output");
+		CHECK(mixed_radix_decode_low_bits(radices, 2, digits, bits, 4) ==
+			      MIXED_RADIX_OK && bits[4] == 0xa5,
+		      "received tuple %u failed or wrote beyond its bits", value);
+		for (size_t bit = 0; bit < 4; ++bit)
+			CHECK(bits[bit] == ((value >> bit) & 1u),
+			      "received tuple %u bit %zu changed", value, bit);
+	}
+	memcpy(saved, bits, sizeof(bits));
+	digits[0] = 5;
+	CHECK(mixed_radix_decode_low_bits(radices, 2, digits, bits, 4) ==
+		      MIXED_RADIX_OUT_OF_RANGE &&
+	      mixed_radix_decode_low_bits(radices, 2, digits, bits, 5) ==
+		      MIXED_RADIX_INVALID_CONFIGURATION &&
+	      mixed_radix_decode_low_bits(radices, 2, NULL, bits, 4) ==
+		      MIXED_RADIX_INVALID_ARGUMENT &&
+	      memcmp(bits, saved, sizeof(bits)) == 0,
+	      "invalid received tuple changed its output");
+	return 0;
+}
+
 static int test_transactionality(void)
 {
 	static const uint32_t good_radices[] = { 2, 2, 2 };
@@ -174,6 +214,7 @@ int main(void)
 {
 	CHECK(test_uneven_round_trip() == 0, "uneven round trip failed");
 	CHECK(test_wide_round_trip() == 0, "wide round trip failed");
+	CHECK(test_received_low_bits() == 0, "received low bits failed");
 	CHECK(test_differential_round_trip() == 0,
 	      "differential round trip failed");
 	CHECK(test_transactionality() == 0, "transactionality failed");

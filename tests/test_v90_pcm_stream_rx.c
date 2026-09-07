@@ -77,8 +77,8 @@ static bool frame_is_expected(
 {
 	if (frame->bit_count != mapping->frame_bits ||
 	    frame->rule_count != mapping->sign_redundancy ||
-	    memcmp(frame->rules, expected_rules,
-		   frame->rule_count * sizeof(frame->rules[0])) != 0)
+	    (expected_rules != NULL && memcmp(frame->rules, expected_rules,
+		   frame->rule_count * sizeof(frame->rules[0])) != 0))
 		return false;
 	for (size_t bit = 0; bit < frame->bit_count; ++bit) {
 		if (frame->bits[bit] != 1)
@@ -99,7 +99,7 @@ static bool frame_is_expected(
 
 static bool run_sequence(
 	enum g711_law law, uint8_t redundancy,
-	uint8_t lookahead, size_t symbol_limit)
+	uint8_t lookahead, size_t symbol_limit, bool erase)
 {
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx transmitter;
@@ -149,6 +149,9 @@ static bool run_sequence(
 				      index % V90_CP_FRAME_INTERVALS,
 				      &octet),
 			      "plane %zu symbol %zu did not map", plane, index);
+			if (erase && index >= 65u && index < 82u)
+				CHECK(g711_ucode_octet(law, 0u, true, &octet),
+				      "erased octet did not encode");
 			memset(&frame, 0xa5, sizeof(frame));
 			sentinel = frame;
 			result = v90_pcm_stream_rx_receive_octet(
@@ -156,14 +159,20 @@ static bool run_sequence(
 			CHECK(result == expected_result,
 			      "plane %zu symbol %zu returned %s", plane, index,
 			      v90_pcm_stream_rx_result_name(result));
-			if (result == V90_PCM_STREAM_RX_FRAME_READY)
-				CHECK(frame_is_expected(
-					      &frame, &mapping, expected_rules),
+			if (result == V90_PCM_STREAM_RX_FRAME_READY) {
+				/* The shared GPC descrambler and sign histories must
+				 * recover the data after damaged decisions, without an
+				 * epoch reset. Absolute shaping-rule labels can differ
+				 * after sign errors; the differential data is unambiguous. */
+				if (!erase || index < 65u || index >= 130u)
+					CHECK(frame_is_expected(
+					      &frame, &mapping,
+					      erase && index >= 65u ? NULL : expected_rules),
 				      "plane %zu frame %llu did not decode",
 				      plane,
 				      (unsigned long long)
 					      receivers[plane].received_frames);
-			else
+			} else
 				CHECK(memcmp(&frame, &sentinel, sizeof(frame)) == 0,
 				      "buffering changed frame output");
 		}
@@ -195,7 +204,9 @@ static bool test_generated_sequences(void)
 			     lookahead <= 3; ++lookahead) {
 				CHECK(run_sequence(
 				      (enum g711_law)law, redundancy,
-				      lookahead, 48),
+				      lookahead, 48, false) &&
+				      run_sequence((enum g711_law)law, redundancy,
+						   lookahead, 180, true),
 				      "sequence failed for %u/%u/%u",
 				      law, redundancy, lookahead);
 			}
@@ -263,6 +274,92 @@ static bool labels_to_ucodes(
 	return true;
 }
 
+static bool check_noisy_octet(
+	const struct v90_pcm_stream_rx *prefix, uint8_t octet)
+{
+	const struct v90_pcm_mapping *mapping = &prefix->decoder.mapping;
+	enum v90_pcm_mapping_plane plane = prefix->decoder.decision_plane;
+	size_t phase = prefix->pending_count;
+	struct v90_pcm_stream_rx expected = *prefix, received = *prefix;
+	struct v90_pcm_stream_frame want = { 0 }, got = { 0 };
+	struct v90_pcm_symbol input;
+	uint8_t nearest = 0;
+	int32_t best_distance = INT32_MAX;
+
+	CHECK(v90_pcm_symbol_parse(&input, mapping->law, octet),
+	      "octet did not parse");
+	for (uint8_t label = 0; label < mapping->modulus[phase]; ++label) {
+		struct v90_pcm_symbol point;
+		uint8_t ucode;
+
+		CHECK(v90_pcm_mapping_ucode(mapping, plane, phase, label, &ucode) ==
+			      V90_PCM_MAPPING_OK &&
+		      v90_pcm_symbol_make(&point, mapping->law, ucode, input.positive),
+		      "decision oracle failed");
+		int32_t distance = point.sample - input.sample;
+		if (distance < 0)
+			distance = -distance;
+		if (distance < best_distance) {
+			best_distance = distance;
+			nearest = ucode;
+		}
+	}
+	enum v90_pcm_stream_rx_result result = v90_pcm_stream_rx_receive_decision(
+		&expected, nearest, input.positive, &want);
+	CHECK(result == (phase == V90_CP_FRAME_INTERVALS - 1u ?
+			 V90_PCM_STREAM_RX_FRAME_READY : V90_PCM_STREAM_RX_BUFFERING) &&
+	      v90_pcm_stream_rx_receive_octet(&received, octet, &got) == result &&
+	      memcmp(&expected, &received, sizeof(expected)) == 0 &&
+	      memcmp(&want, &got, sizeof(want)) == 0,
+	      "law %u plane %u phase %zu octet %02x decision differed",
+	      (unsigned int)mapping->law, (unsigned int)plane, phase, octet);
+	return true;
+}
+
+static bool test_noisy_octets(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_pcm_mapping mapping;
+
+		CHECK(make_mapping(&mapping, V90_CP_DATA, law, 3, 0),
+		      "noisy mapping failed");
+		/* Different, non-contiguous sets expose both mapper-phase and
+		 * linear-versus-companded distance mistakes, including ties. */
+		memset(mapping.transmit, 0, sizeof(mapping.transmit));
+		memset(mapping.codec, 0, sizeof(mapping.codec));
+		for (size_t phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase)
+			for (uint8_t point = 0; point < 8u; ++point) {
+				add_ucode(&mapping.transmit[phase],
+					  (uint8_t)(12u + phase + 3u * point));
+				add_ucode(&mapping.codec[phase],
+					  (uint8_t)(72u + phase + 3u * point));
+			}
+		CHECK(v90_pcm_mapping_is_valid(&mapping), "noisy sets are invalid");
+		for (size_t plane = 0; plane < 2u; ++plane) {
+			struct v90_pcm_stream_rx prefix;
+
+			CHECK(v90_pcm_stream_rx_init(&prefix, &mapping, plane) ==
+				      V90_PCM_STREAM_RX_OK, "noisy receiver failed");
+			for (size_t phase = 0; phase < V90_CP_FRAME_INTERVALS; ++phase) {
+				uint8_t first;
+				struct v90_pcm_stream_frame frame;
+
+				CHECK(v90_pcm_mapping_ucode(&mapping, plane, phase, 0, &first) ==
+					      V90_PCM_MAPPING_OK, "phase prefix failed");
+				for (unsigned int octet = 0; octet < 256u; ++octet)
+					CHECK(check_noisy_octet(&prefix, (uint8_t)octet),
+					      "noisy decision failed");
+				CHECK(v90_pcm_stream_rx_receive_decision(
+					      &prefix, first, true, &frame) ==
+					      (phase == V90_CP_FRAME_INTERVALS - 1u ?
+					       V90_PCM_STREAM_RX_FRAME_READY : V90_PCM_STREAM_RX_BUFFERING),
+				      "noisy phase prefix stopped");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -321,13 +418,13 @@ static bool test_contracts(void)
 		      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 		      "partial frame %zu changed output", interval);
 	}
-	saved_receiver = receiver;
 	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[V90_CP_FRAME_INTERVALS - 1u],
-		      false, &frame) == V90_PCM_STREAM_RX_INVALID_SYMBOL &&
-	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
-	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
-	      "unused tuple was not rejected transactionally");
+		      false, &frame) == V90_PCM_STREAM_RX_FRAME_READY &&
+	      receiver.received_symbols == V90_CP_FRAME_INTERVALS &&
+	      receiver.received_frames == 1u && receiver.pending_count == 0u,
+	      "unused received tuple stopped the stream clock");
+	saved_frame = frame;
 	CHECK(v90_pcm_stream_rx_receive_decision(
 		      NULL, ucodes[0], false, &frame) ==
 		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
@@ -392,6 +489,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
 		{ "descrambled bits", test_descrambled_bits },
+		{ "noisy octets", test_noisy_octets },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

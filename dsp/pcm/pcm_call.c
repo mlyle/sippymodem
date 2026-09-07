@@ -2867,7 +2867,12 @@ static enum pcm_call_result data_octet_owned(
 	result = recover_rate_renegotiation_failure(call, result);
 	if (result == PCM_CALL_OK && call->stage == PCM_CALL_DATA_PATH &&
 	    call->local_role == V90_ANALOG_MODEM) {
-		analog_result = retrain_candidate ?
+		/* Data decoding must retain the six-sample mapper phase through a
+		 * short gap. Only the host output is clamped; a qualified retrain
+		 * establishes a fresh epoch. Control acquisition still pauses. */
+		analog_result = retrain_candidate &&
+			call->state.data_path.analog.downstream_stage ==
+				V90_ANALOG_PATH_DOWNSTREAM_TRAINING ?
 			v90_analog_path_discard_receive(
 				&call->state.data_path.analog) :
 			v90_analog_path_receive(

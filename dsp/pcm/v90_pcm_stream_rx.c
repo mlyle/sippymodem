@@ -173,11 +173,52 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
 	return receive_valid_decision(receiver, ucode, positive, frame);
 }
 
+static bool slice_symbol(
+	const struct v90_pcm_stream_rx *receiver,
+	const struct v90_pcm_symbol *symbol, uint8_t *decision)
+{
+	const struct v90_pcm_mapping *mapping = &receiver->decoder.mapping;
+	const struct pcm_constellation *constellation =
+		receiver->decoder.decision_plane == V90_PCM_MAPPING_CODEC ?
+			&mapping->codec[receiver->pending_count] :
+			&mapping->transmit[receiver->pending_count];
+	int32_t magnitude = symbol->sample < 0 ? -symbol->sample : symbol->sample;
+	int32_t best_error = INT32_MAX;
+
+	if (pcm_constellation_contains(constellation, symbol->ucode)) {
+		*decision = symbol->ucode;
+		return true;
+	}
+	/* Preserve exact codewords, including signed zero. For noisy input use
+	 * linear distance, not companded-code distance; ties select the larger
+	 * level (lower mapper label). Every sample still occupies one interval. */
+	for (unsigned int candidate = PCM_CONSTELLATION_UCODES;
+	     candidate > 0; --candidate) {
+		uint8_t ucode = (uint8_t)(candidate - 1u);
+		int16_t level;
+		int32_t error;
+
+		if (!pcm_constellation_contains(constellation, ucode))
+			continue;
+		if (!g711_ucode_sample(mapping->law, ucode, true, &level))
+			return false;
+		error = level - magnitude;
+		if (error < 0)
+			error = -error;
+		if (error < best_error) {
+			best_error = error;
+			*decision = ucode;
+		}
+	}
+	return best_error != INT32_MAX;
+}
+
 enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame)
 {
 	struct v90_pcm_symbol symbol;
+	uint8_t decision;
 
 	if (receiver == NULL || frame == NULL)
 		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
@@ -186,8 +227,10 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	if (!v90_pcm_symbol_parse(
 		    &symbol, receiver->decoder.mapping.law, network_octet))
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
+	if (!slice_symbol(receiver, &symbol, &decision))
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	return receive_valid_decision(
-		receiver, symbol.ucode, symbol.positive, frame);
+		receiver, decision, symbol.positive, frame);
 }
 
 const char *v90_pcm_stream_rx_result_name(

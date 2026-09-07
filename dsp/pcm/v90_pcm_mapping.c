@@ -360,7 +360,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 		radices[interval] = mapping->modulus[interval];
 		digits[interval] = labels[interval];
 	}
-	result = mixed_radix_decode(
+	result = mixed_radix_decode_low_bits(
 		radices, V90_CP_FRAME_INTERVALS, digits,
 		decoded, bit_count);
 	if (result == MIXED_RADIX_OUT_OF_RANGE)

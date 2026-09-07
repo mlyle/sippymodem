@@ -566,9 +566,14 @@ static bool test_inverse_rejection(void)
 		      (UINT64_C(1) << mapping.modulus_bits) &&
 	      v90_pcm_mapping_decode_modulus(
 		      &mapping, labels, bits, mapping.modulus_bits) ==
-		      V90_PCM_MAPPING_OUT_OF_RANGE &&
-	      memcmp(bits, saved_bits, sizeof(bits)) == 0,
-	      "unused mixed-radix tuple was not rejected transactionally");
+		      V90_PCM_MAPPING_OK,
+	      "unused received mixed-radix tuple stopped decoding");
+	for (size_t bit = 0; bit < sizeof(bits); ++bit)
+		CHECK(bits[bit] == (bit < mapping.modulus_bits ?
+			      (uint8_t)((labels_value(&mapping, labels) >> bit) & 1u) :
+			      saved_bits[bit]),
+		      "unused tuple bit %zu did not retain the low K bits", bit);
+	memcpy(saved_bits, bits, sizeof(bits));
 	labels[0] = mapping.modulus[0];
 	CHECK(v90_pcm_mapping_decode_modulus(
 		      &mapping, labels, bits, mapping.modulus_bits) ==

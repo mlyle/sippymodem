@@ -58,7 +58,8 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
 	struct v90_pcm_stream_frame *frame);
 
 /* Parse one authoritative G.711 network character, preserving the complete
- * PCMU and PCMA code spaces, then use the same hard-decision boundary. */
+ * PCMU and PCMA code spaces. Off-constellation samples select the nearest
+ * linear level at the current mapper phase before hard-decision decoding. */
 enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_stream_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame);

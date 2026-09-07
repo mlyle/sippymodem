@@ -46,8 +46,9 @@ bool v90_pcm_frame_decoder_is_valid(
 	const struct v90_pcm_frame_decoder *decoder);
 
 /* Decode exactly six phase-aligned hard decisions. A Ucode absent from its
- * interval, a non-binary sign, or an unused mixed-radix tuple is an invalid
- * symbol frame. Every rejected call leaves state and output unchanged. */
+ * interval or a non-binary sign is invalid. Unused mixed-radix tuples retain
+ * their low K bits so channel errors do not freeze coding histories. Every
+ * rejected call leaves state and output unchanged. */
 enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	struct v90_pcm_frame_decoder *decoder,
 	const uint8_t ucodes[V90_CP_FRAME_INTERVALS],

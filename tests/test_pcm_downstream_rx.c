@@ -1094,7 +1094,7 @@ static bool test_contracts(void)
 	struct pcm_downstream_rx untouched_saved;
 	struct pcm_downstream_event event;
 	struct pcm_downstream_event event_saved;
-	struct v90_pcm_symbol invalid;
+	struct v90_pcm_symbol noisy;
 
 	for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
 		add_ucode(
@@ -1155,18 +1155,19 @@ static bool test_contracts(void)
 	      memcmp(&event, &event_saved, sizeof(event)) == 0,
 	      "invalid receive call changed state or output");
 	CHECK(v90_pcm_symbol_make(
-		      &invalid, mapping.law, 1, false),
-	      "invalid mapping symbol did not initialize");
+		      &noisy, mapping.law, 1, false),
+	      "off-constellation symbol did not initialize");
 	CHECK(pcm_downstream_rx_receive(
-		      &receiver, invalid.octet, &event) ==
-		      PCM_DOWNSTREAM_RX_INVALID_SYMBOL &&
-	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+		      &receiver, noisy.octet, &event) ==
+		      PCM_DOWNSTREAM_RX_BUFFERING &&
+	      receiver.stream.received_symbols == 1u &&
+	      !pcm_downstream_rx_is_fresh(&receiver) &&
 	      memcmp(&event, &event_saved, sizeof(event)) == 0,
-	      "invalid mapping symbol changed state or output");
+	      "off-constellation sample lost its interval or produced an event");
 	receiver.stage = (enum pcm_downstream_rx_stage)99;
 	CHECK(!pcm_downstream_rx_is_valid(&receiver) &&
 	      pcm_downstream_rx_receive(
-		      &receiver, invalid.octet, &event) ==
+		      &receiver, noisy.octet, &event) ==
 		      PCM_DOWNSTREAM_RX_INVALID_STATE,
 	      "receiver accepted an unknown stage");
 	receiver = saved;

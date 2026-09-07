@@ -93,9 +93,10 @@ enum mixed_radix_result mixed_radix_encode(
 	return MIXED_RADIX_OK;
 }
 
-enum mixed_radix_result mixed_radix_decode(
+static enum mixed_radix_result decode(
 	const uint32_t *radices, size_t digit_count,
-	const uint32_t *digits, uint8_t *bits, size_t bit_count)
+	const uint32_t *digits, uint8_t *bits, size_t bit_count,
+	bool reject_unused)
 {
 	uint8_t decoded[MIXED_RADIX_MAX_BITS];
 	__uint128_t value = 0;
@@ -116,7 +117,7 @@ enum mixed_radix_result mixed_radix_decode(
 			    value, (__uint128_t)digit, &value))
 			return MIXED_RADIX_OUT_OF_RANGE;
 	}
-	if (bit_count < MIXED_RADIX_MAX_BITS &&
+	if (reject_unused && bit_count < MIXED_RADIX_MAX_BITS &&
 	    value >= ((__uint128_t)1 << bit_count))
 		return MIXED_RADIX_OUT_OF_RANGE;
 	for (size_t bit = 0; bit < bit_count; ++bit)
@@ -124,6 +125,20 @@ enum mixed_radix_result mixed_radix_decode(
 	if (bit_count != 0)
 		memcpy(bits, decoded, bit_count);
 	return MIXED_RADIX_OK;
+}
+
+enum mixed_radix_result mixed_radix_decode(
+	const uint32_t *radices, size_t digit_count,
+	const uint32_t *digits, uint8_t *bits, size_t bit_count)
+{
+	return decode(radices, digit_count, digits, bits, bit_count, true);
+}
+
+enum mixed_radix_result mixed_radix_decode_low_bits(
+	const uint32_t *radices, size_t digit_count,
+	const uint32_t *digits, uint8_t *bits, size_t bit_count)
+{
+	return decode(radices, digit_count, digits, bits, bit_count, false);
 }
 
 enum mixed_radix_result mixed_radix_encode_differential(

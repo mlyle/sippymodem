@@ -89,9 +89,10 @@ enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
 	const uint8_t *bits, size_t bit_count,
 	uint8_t labels[V90_CP_FRAME_INTERVALS]);
 
-/* Recover K LSB-first modulus bits from labels K0..K5. Label tuples outside
- * the 2^K input range are unused and rejected. Rejected calls leave the
- * destination unchanged. */
+/* Recover K LSB-first modulus bits from received labels K0..K5. Noise can
+ * select unused tuples above 2^K: retain their low K bits rather than losing
+ * frame synchronization. Out-of-constellation labels remain invalid, and
+ * rejected calls leave the destination unchanged. */
 enum v90_pcm_mapping_result v90_pcm_mapping_decode_modulus(
 	const struct v90_pcm_mapping *mapping,
 	const uint8_t labels[V90_CP_FRAME_INTERVALS],

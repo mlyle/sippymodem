@@ -357,17 +357,22 @@ static bool test_contracts(void)
 	      "valid Ucodes could not be restored");
 	CHECK(v90_pcm_frame_decoder_decode(
 		      &decoder, ucodes, signs, ARRAY_LENGTH(signs) - 1u,
-		      &output) == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS,
+		      &output) == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS &&
+	      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "short frame was accepted");
 	memset(labels, 7, sizeof(labels));
 	CHECK(labels_to_ucodes(
 		      &mapping, V90_PCM_MAPPING_CODEC, labels, ucodes) &&
 	      v90_pcm_frame_decoder_decode(
 		      &decoder, ucodes, signs, ARRAY_LENGTH(signs),
-		      &output) == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS &&
-	      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
-	      memcmp(&output, &saved_output, sizeof(output)) == 0,
-	      "rejected symbol frame was not transactional");
+		      &output) == V90_PCM_FRAME_DECODER_OK &&
+	      output.bit_count == mapping.frame_bits,
+	      "unused received tuple stopped the frame clock");
+	for (size_t bit = mapping.sign_bits; bit < output.bit_count; ++bit)
+		CHECK(output.bits[bit] == 1u,
+		      "unused tuple did not retain its low modulus bits");
+	saved_output = output;
 	CHECK(v90_pcm_frame_decoder_decode(
 		      NULL, ucodes, signs, ARRAY_LENGTH(signs), &output) ==
 		      V90_PCM_FRAME_DECODER_INVALID_ARGUMENT &&
