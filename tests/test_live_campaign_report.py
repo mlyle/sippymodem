@@ -484,10 +484,10 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertEqual(recent.split()[2], "V.22")
         self.assertIn("1200/1200@-", recent)
         self.assertIn(" r ", recent)
-        self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertTrue(recent.endswith("connect/mismatch"))
         self.assertEqual(tried, "     tried: V.22bis 2400/2400@600 l")
 
-    def test_recent_pcm_fallback_shows_v34_without_regrouping_attempt(self) -> None:
+    def test_pcm_fallback_credits_v34_without_regrouping_scheduled_progress(self) -> None:
         cases = cases_for_suite("standard")
         for feature in ("analogue-fallback", "digital-headend"):
             with self.subTest(feature=feature):
@@ -509,11 +509,11 @@ class LiveCampaignReportTests(unittest.TestCase):
                     protocol="none",
                     receive_rate=28800,
                     transmit_rate=28800,
-                    initial_data=expected_fallback,
-                    remote_retrain=expected_fallback,
-                    retrain_connected=expected_fallback,
-                    retrain_data=expected_fallback,
-                    detail="" if expected_fallback else
+                    initial_data=True,
+                    remote_retrain=True,
+                    retrain_connected=True,
+                    retrain_data=True,
+                    profile_error="" if expected_fallback else
                         "CONNECT selected V.34 instead of V.90",
                 )
                 dashboard = render_dashboard(
@@ -525,17 +525,21 @@ class LiveCampaignReportTests(unittest.TestCase):
                 )
                 self.assertEqual(recent.split()[2], "V.34")
                 self.assertTrue(recent.endswith(
-                    "full" if expected_fallback else "profile-mismatch"
+                    "full" if expected_fallback else "full/mismatch"
                 ))
                 row = next(
                     line for line in dashboard.splitlines()
                     if line.startswith("V.90/r")
                 )
                 self.assertEqual(row[13:46].split()[:2], ["1/1", "+0"])
-                self.assertFalse(any(
-                    line.startswith("V.34/")
-                    for line in dashboard.splitlines()
-                ))
+                self.assertEqual(row[25:36].split(), ["0"] * 4)
+                v34 = next(line for line in dashboard.splitlines()
+                           if line.startswith("V.34/r"))
+                self.assertEqual(v34[13:45].split(),
+                                 ["0/0", "+0", "1", "0", "0", "0", "0", "0"])
+                self.assertEqual(result.successful(), expected_fallback)
+                self.assertEqual(len(extra_schedule((case,), (result,), 1, 1, 7)),
+                                 int(not expected_fallback))
 
     def test_recent_unconnected_call_shows_requested_profile(self) -> None:
         case = next(
@@ -594,7 +598,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             recent_limit=2,
         )
         recent, tried = dashboard.splitlines()[-2:]
-        self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertTrue(recent.endswith("connect/mismatch"))
         self.assertEqual(recent.split()[1:4], ["q", "?", "-/-@-"])
         self.assertEqual(
             tried, "     tried: V.22bis 2400/2400@600 l (callback request)"
@@ -603,8 +607,11 @@ class LiveCampaignReportTests(unittest.TestCase):
         index = next(index for index, line in enumerate(lines)
                      if line.startswith("V.22bis/l"))
         self.assertEqual(lines[index + 1][25:36].split(), ["0", "0", "0", "1"])
+        self.assertEqual(lines[index][25:36].split(), ["0"] * 4)
+        unknown = next(line for line in lines if line.startswith("?/?"))
+        self.assertEqual(unknown[25:36].split(), ["0", "0", "0", "1"])
 
-    def test_mismatch_rows_count_only_counted_bucket_subsets(self) -> None:
+    def test_mismatch_rows_preserve_requested_buckets_and_credit_actual_once(self) -> None:
         cases = tuple(case for case in cases_for_suite("standard")
                       if case.family == "v90" and case.link_mode == "raw"
                       and case.feature == "digital-headend")[:2]
@@ -620,7 +627,8 @@ class LiveCampaignReportTests(unittest.TestCase):
                     retrain_connected=maturity in {MATURITY_FULL, MATURITY_RETRAIN},
                     retrain_data=maturity == MATURITY_FULL,
                     extra=maturity == MATURITY_DATA,
-                    detail="CONNECT selected V.34 instead of V.90",
+                    modulation="V.34", protocol="none",
+                    profile_error="CONNECT selected V.34 instead of V.90",
                 ))
             for outcome in (OUTCOME_BUSY, OUTCOME_INFRASTRUCTURE_ERROR):
                 results.append(self.result(
@@ -639,7 +647,14 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertEqual(mismatch[13:45].split(), ["1", "1", "1", "1"])
         self.assertEqual(mismatch[48:80].split(), ["1", "1", "1", "1"])
         self.assertEqual(lines[index][13:45].split(),
-                         ["4/3", "+1", "1", "1", "1", "1", "0", "1"])
+                         ["4/3", "+1", "0", "0", "0", "0", "0", "1"])
+        actual = next(line for line in lines if line.startswith("V.34/r"))
+        for side in (slice(13, 45), slice(48, 80)):
+            self.assertEqual(actual[side].split(),
+                             ["0/0", "+0", "1", "1", "1", "1", "0", "0"])
+            total = next(line for line in lines if line.startswith("TOTAL"))
+            self.assertEqual(total[side].split(),
+                             ["4/3", "+1", "1", "1", "1", "1", "0", "1"])
 
     def test_request_cells_are_blank_only_where_inapplicable(self) -> None:
         cases = cases_for_suite("smoke")
@@ -654,6 +669,86 @@ class LiveCampaignReportTests(unittest.TestCase):
                 line[37:39],
                 " 0" if line.startswith(("V.22bis/l", "TOTAL")) else "  ",
             )
+
+    def test_rate_and_link_mismatches_credit_the_actual_group_once(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v90" and case.role == "originator"
+                    and case.link_mode == "lapm" and case.feature == "digital-headend")
+        for protocol, label in (("LAPM", "V.90/l"), ("none", "V.90/r"),
+                                (None, "V.90/?")):
+            with self.subTest(protocol=protocol):
+                result = self.result(
+                    case_name=case.name, family=case.family, role=case.role,
+                    link_mode=case.link_mode, connected=True, initial_data=True,
+                    modulation="V.90", protocol=protocol, transmit_rate=24000,
+                    profile_error="CONNECT selected TX 24000 instead of 28000",
+                    detail="remote retrain END marker was not verified",
+                )
+                lines = render_dashboard(
+                    (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+                ).splitlines()
+                actual = next(line for line in lines if line.startswith(label))
+                self.assertEqual(actual[25:36].split(), ["0", "0", "1", "0"])
+                index = next(i for i, line in enumerate(lines) if line.startswith("V.90/l"))
+                self.assertEqual(lines[index + 1][25:36].split(), ["0", "0", "1", "0"])
+                total = next(line for line in lines if line.startswith("TOTAL"))
+                self.assertEqual(total[13:45].split(),
+                                 ["1/1", "+0", "0", "0", "1", "0", "0", "0"])
+
+    def test_request_and_return_mismatches_are_independent_observations(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v90" and case.role == "callback"
+                    and case.link_mode == "lapm" and case.feature == "digital-headend")
+        result = self.result(
+            case_name=case.name, family=case.family, role=case.role,
+            link_mode=case.link_mode, connected=True, initial_data=True,
+            modulation="V.34", protocol="none",
+            profile_error="CONNECT selected V.34 instead of V.90",
+            detail="remote retrain END marker was not verified",
+            callback_request_attempted=True, callback_return_attempted=True,
+            callback_request_maturity=MATURITY_REQUEST,
+            callback_request_modulation="V.22", callback_request_protocol="none",
+            callback_request_profile_error="CONNECT selected V.22 instead of V.22bis",
+        )
+        lines = render_dashboard(
+            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+            recent_limit=4,
+        ).splitlines()
+        index = next(i for i, line in enumerate(lines) if line.startswith("V.22bis/l"))
+        self.assertEqual(lines[index][13:45].split(),
+                         ["0/0", "+1", "0", "0", "0", "0", "0", "0", "0"])
+        self.assertEqual(lines[index + 1][25:39].split(), ["0", "0", "0", "0", "1"])
+        request = next(line for line in lines if line.startswith("V.22/r"))
+        self.assertEqual(request[37:39], " 1")
+        actual = next(line for line in lines if line.startswith("V.34/r"))
+        self.assertEqual(actual[60:71].split(), ["0", "0", "1", "0"])
+        index = next(i for i, line in enumerate(lines) if line.startswith("V.90/l"))
+        self.assertEqual(lines[index][60:71].split(), ["0"] * 4)
+        self.assertEqual(lines[index + 1][60:71].split(), ["0", "0", "1", "0"])
+        total = next(line for line in lines if line.startswith("TOTAL"))
+        self.assertEqual(total[13:45].split(),
+                         ["0/0", "+1", "0", "0", "0", "0", "1", "0", "0"])
+        self.assertEqual(total[48:80].split(),
+                         ["1/1", "+0", "0", "0", "1", "0", "0", "0"])
+        self.assertTrue(lines[-4].endswith("data/mismatch"))
+        self.assertTrue(lines[-2].endswith("request/mismatch"))
+        self.assertEqual(sum(line.startswith("     tried:") for line in lines), 2)
+
+    def test_bell_212_connect_label_maps_to_existing_family(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "bell212" and case.link_mode == "raw"
+                    and case.role == "originator")
+        result = self.result(
+            case_name=case.name, family=case.family, role=case.role,
+            link_mode=case.link_mode, connected=True,
+            modulation="Bell 212A", protocol="none",
+        )
+        lines = render_dashboard(
+            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+        ).splitlines()
+        row = next(line for line in lines if line.startswith("Bell 212/r"))
+        self.assertEqual(row[25:36].split(), ["0", "0", "0", "1"])
+        self.assertFalse(any(line.startswith("?/") for line in lines))
 
     def test_history_includes_request_legs_with_a_row_limit(self) -> None:
         case = next(case for case in cases_for_suite("standard")
@@ -708,7 +803,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         )
         recent, tried = dashboard.splitlines()[-2:]
         self.assertEqual(recent.split()[1:5], ["q", "V.22", "1200/1200@-", "r"])
-        self.assertTrue(recent.endswith("profile-mismatch"))
+        self.assertTrue(recent.endswith("connect/mismatch"))
         self.assertEqual(tried, "     tried: V.22bis 2400/2400@600 l (callback request)")
 
 

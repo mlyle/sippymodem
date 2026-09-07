@@ -29,6 +29,19 @@ FAMILY_ORDER = (
     "v90",
     "v92",
 )
+FAMILY_CONNECT_MODULATIONS = {
+    "bell103": ("Bell 103",),
+    "v21": ("V.21",),
+    "bell212": ("Bell 212A",),
+    "v22": ("V.22",),
+    "v22bis": ("V.22bis",),
+    "v23": ("V.23",),
+    "v32": ("V.32",),
+    "v32bis": ("V.32bis",),
+    "v34": ("V.34",),
+    "v90": ("V.90",),
+    "v92": ("V.92",),
+}
 
 LAPM_LINK_PREFIX = (
     "ATZ",

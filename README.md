@@ -156,6 +156,16 @@ replace a binary while a campaign is using it. Preparation has its own 0.5 Hz
 elapsed-time display because the first build includes the pinned SIP stack;
 `--prepare` performs only this frozen build.
 
+Profile mismatches do not stop online testing: a connected call still attempts
+data, remote and local retrain, and post-retrain data (unless retrain is disabled).
+The dashboard keeps `done/exp+x` against the requested cases, but credits F/R/D/C
+to the modulation and raw/LAPM protocol reported at CONNECT. Thus a V.90 attempt
+that falls back to V.34 adds a V.34 result and a mismatch beneath V.90, without
+counting twice in TOTAL. A rate-only mismatch stays in the same modulation/link
+row. Mismatches remain eligible for failure extras; explicitly permitted analogue
+fallbacks are not mismatches. Callback request legs appear separately as `q` in
+history, and mismatches show the attempted profile on an indented `tried:` line.
+
 The default standard campaign has 100 curated call configurations rather than
 a Cartesian matrix: 53 raw datapump baselines plus 47 LAPM variants. LAPM is
 omitted only for the 300-bit/s modes, V.23 1200/75, and Baudot. Three

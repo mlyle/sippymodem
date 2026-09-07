@@ -73,13 +73,16 @@ callback_nonce = b"0123456789abcdef0123456789abcdef"
 raw_transport = False
 
 def connect_response():
-    if mode == "wrong-profile":
+    if "wrong-profile" in mode:
         modulation = b"V22"
         rate = b"1200"
+    elif mode == "wrong-link":
+        modulation = b"V22BIS"
+        rate = b"2400"
     else:
         modulation = b"V21"
         rate = b"300"
-    protocol = b"NONE" if raw_transport else b"LAPM"
+    protocol = b"NONE" if raw_transport or mode == "wrong-link" else b"LAPM"
     return (
         b"\r\nModulation: " + modulation + b"\r\nProtocol: " + protocol
         + b"\r\nCompression: NONE\r\nTxRate: " + rate
@@ -88,9 +91,10 @@ def connect_response():
 def request_connect_response():
     modulation = b"V21" if mode == "callback-wrong-request" else b"V22BIS"
     rate = b"300" if mode == "callback-wrong-request" else b"2400"
+    protocol = b"NONE" if mode == "callback-wrong-request" else b"LAPM"
     return (
-        b"\r\nModulation: " + modulation + b"\r\nProtocol: LAPM\r\n"
-        b"Compression: NONE\r\nTxRate: " + rate
+        b"\r\nModulation: " + modulation + b"\r\nProtocol: " + protocol
+        + b"\r\nCompression: NONE\r\nTxRate: " + rate
         + b"\r\nCONNECT " + rate + b"\r\n"
     )
 initial_payload = b"DMODEM-PATTERN-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n"
@@ -119,7 +123,7 @@ while True:
         break
     buffer.extend(data)
     if online:
-        if mode == "raw-wakeup" and b"\r\r" in buffer:
+        if mode in ("raw-wakeup", "wrong-link") and b"\r\r" in buffer:
             buffer.clear()
             os.write(master, initial_payload)
         elif mode.startswith("callback") and role == "request" and b"DIAL" in buffer:
@@ -139,7 +143,7 @@ while True:
             os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
-            if mode == "online-prefix-before-retrain-end":
+            if mode in ("online-prefix-before-retrain-end", "wrong-profile-no-end"):
                 os.write(
                     master,
                     b"GETTY:RETRAIN:START:"
@@ -169,7 +173,7 @@ while True:
             elif mode.startswith("callback") and role == "request":
                 os.write(master, request_connect_response() + initial_payload)
                 online = True
-            elif mode == "raw-wakeup":
+            elif mode in ("raw-wakeup", "wrong-link"):
                 os.write(master, connect_response())
                 online = True
             else:
@@ -264,7 +268,7 @@ class LiveCampaignTests(unittest.TestCase):
             receive_rate=300, transmit_rate=300,
             detail="CONNECT selected Bell 103 instead of V.21",
         )
-        for terminal_rows, expected_calls in ((14, 0), (15, 1), (16, 1)):
+        for terminal_rows, expected_calls in ((16, 0), (17, 1), (18, 1)):
             with self.subTest(terminal_rows=terminal_rows), mock.patch(
                 "tools.live_campaign.shutil.get_terminal_size",
                 return_value=os.terminal_size((80, terminal_rows)),
@@ -753,32 +757,52 @@ class LiveCampaignTests(unittest.TestCase):
             ),
         )
 
-    def test_mismatched_connect_stops_before_online_data(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            script = root / "fake.py"
-            script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
-            case = CASES_BY_NAME["v21-300-originator"]
-            scheduled = ScheduledAttempt(case, 1)
-            result = run_physical_attempt(
-                self.config(root, script, "wrong-profile"),
-                FrozenBinary(
-                    root,
-                    Path(sys.executable),
-                    "a" * 40,
-                    "b" * 64,
-                    False,
-                ),
-                scheduled,
-                1,
-                self.artifacts(root, scheduled),
-                False,
-            )
-
-            self.assertTrue(result.connected)
-            self.assertFalse(result.initial_data)
-            self.assertEqual(result.maturity, "connect")
-            self.assertIn("V.22", result.detail)
+    def test_mismatched_calls_continue_data_and_both_retrains(self) -> None:
+        for mode, name in (
+            ("wrong-profile", "v21-300-originator"),
+            ("callback-wrong-profile", "v21-300-callback"),
+            ("wrong-link", "v22bis-2400-lapm-originator"),
+            ("wrong-profile-no-end", "v21-300-originator"),
+            ("wrong-profile-no-retrain", "v21-300-originator"),
+        ):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                scheduled = ScheduledAttempt(CASES_BY_NAME[name], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = self.config(root, script, mode, root / "callback-ready")
+                if mode.endswith("no-end"):
+                    config = replace(config, retrain_timeout_seconds=0.1)
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, not mode.endswith("no-retrain"),
+                    )
+                self.assertTrue(result.profile_mismatch)
+                self.assertFalse(result.successful())
+                self.assertTrue(result.initial_data)
+                self.assertFalse(result.callback_request_profile_mismatch)
+                detail = json.loads((artifacts.directory / "result.json").read_text())
+                self.assertEqual(detail["result"]["profile_error"], result.profile_error)
+                leg = "answer" if mode.startswith("callback") else "modem"
+                tx = (artifacts.legs[leg] / "terminal-tx.bin").read_bytes()
+                if mode.endswith("no-retrain"):
+                    self.assertEqual(result.maturity, MATURITY_DATA)
+                    self.assertNotIn(b"RETRAIN", tx)
+                    self.assertNotIn(b"ATO1", tx)
+                elif mode.endswith("no-end"):
+                    self.assertIn(b"RETRAIN", tx)
+                    self.assertEqual(result.maturity, MATURITY_DATA)
+                    self.assertIn("remote retrain END", result.detail)
+                    self.assertNotIn(b"ATO1", tx)
+                else:
+                    self.assertIn(b"RETRAIN", tx)
+                    self.assertEqual(result.maturity, MATURITY_FULL)
+                    self.assertEqual(result.detail, "")
+                    self.assertIn(b"ATO1", tx)
+                    self.assertIn(b"PING", tx)
 
     def test_online_bytes_before_retrain_end_are_ordinary_payload(
         self,
@@ -1016,7 +1040,7 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertIsNone(result.maturity)
             self.assertFalse(result.counts_as_attempt)
 
-    def test_callback_request_must_negotiate_its_fixed_profile(self) -> None:
+    def test_callback_request_mismatch_does_not_stop_returning_call(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             script = root / "fake.py"
@@ -1024,6 +1048,7 @@ class LiveCampaignTests(unittest.TestCase):
             barrier = root / "callback-ready"
             case = CASES_BY_NAME["v21-300-raw-callback"]
             scheduled = ScheduledAttempt(case, 1)
+            artifacts = self.artifacts(root, scheduled)
             result = run_physical_attempt(
                 self.config(root, script, "callback-wrong-request", barrier),
                 FrozenBinary(
@@ -1035,19 +1060,24 @@ class LiveCampaignTests(unittest.TestCase):
                 ),
                 scheduled,
                 1,
-                self.artifacts(root, scheduled),
+                artifacts,
                 False,
             )
 
-            self.assertEqual(result.callback_request_maturity, MATURITY_CONNECT)
+            self.assertEqual(result.callback_request_maturity, MATURITY_REQUEST)
             self.assertEqual(result.callback_request_modulation, "V.21")
-            self.assertEqual(result.callback_request_protocol, "LAPM")
+            self.assertEqual(result.callback_request_protocol, "none")
             self.assertEqual(result.callback_request_receive_rate, 300)
             self.assertEqual(result.callback_request_transmit_rate, 300)
-            self.assertFalse(result.callback_return_attempted)
-            self.assertTrue(result.callback_request_only)
-            self.assertIn("callback request CONNECT selected V.21", result.detail)
-            self.assertFalse(barrier.exists())
+            self.assertTrue(result.callback_return_attempted)
+            self.assertFalse(result.callback_request_only)
+            self.assertTrue(result.callback_request_profile_mismatch)
+            self.assertFalse(result.profile_mismatch)
+            self.assertIn("CONNECT selected V.21", result.callback_request_profile_error)
+            self.assertEqual(result.maturity, MATURITY_DATA)
+            self.assertTrue(barrier.exists())
+            tx = (artifacts.legs["request"] / "terminal-tx.bin").read_bytes()
+            self.assertTrue(tx.startswith(b"\r\r" + _callback_command(case)))
 
     def test_callback_answer_write_failure_remains_request_only(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
