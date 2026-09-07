@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_training_transmitter.h"
+#include "memory_region.h"
 
 #include <stddef.h>
 
@@ -8,16 +9,20 @@ static bool stage_is_valid(
 	const struct v34_training_transmitter *training)
 {
 	bool phase3_complete =
+		training->rate_renegotiation ||
 		training->phase3.stage == V34_PHASE3_TRANSMITTER_COMPLETE;
 	bool selected = v34_constellation_size_is_valid(
 		training->phase4_constellation);
-	enum v34_station_role role = training->phase3.local_role;
+	enum v34_station_role role = training->line.profile.local_role;
 
 	switch (training->stage) {
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return !phase3_complete && training->phase4_trn_symbols == 0;
 	case V34_TRAINING_TRANSMITTER_ANSWER_S:
-		return role == V34_ANSWERING_STATION && phase3_complete &&
+	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S:
+		return (training->stage == V34_TRAINING_TRANSMITTER_RENEGOTIATION_S ?
+			training->rate_renegotiation : role == V34_ANSWERING_STATION) &&
+		       phase3_complete &&
 		       training->phase4_trn_symbols == 0 &&
 		       v34_phase3_s_sequence_is_valid(
 			       &training->phase4.answer_s) &&
@@ -70,10 +75,37 @@ bool v34_training_transmitter_is_valid(
 	       (training->phase4_constellation == 0 ||
 		v34_constellation_size_is_valid(
 			training->phase4_constellation)) &&
-	       v34_phase3_transmitter_is_valid(&training->phase3) &&
-	       training->line.profile.local_role ==
-		       training->phase3.local_role &&
+	       (training->rate_renegotiation ?
+		(training->phase4_constellation == V34_CONSTELLATION_4_POINT &&
+		 training->stage != V34_TRAINING_TRANSMITTER_PHASE3 &&
+		 training->stage != V34_TRAINING_TRANSMITTER_ANSWER_S &&
+		 training->stage != V34_TRAINING_TRANSMITTER_J_PRIME) :
+		(v34_phase3_transmitter_is_valid(&training->phase3) &&
+		 training->line.profile.local_role == training->phase3.local_role)) &&
 	       stage_is_valid(training);
+}
+
+enum v34_training_transmitter_result
+v34_training_transmitter_resume_online(
+	struct v34_training_transmitter *training,
+	const struct v34_training_line *line)
+{
+	struct v34_training_transmitter next = {
+		.phase4_constellation = V34_CONSTELLATION_4_POINT,
+		.stage = V34_TRAINING_TRANSMITTER_RENEGOTIATION_S,
+		.rate_renegotiation = true,
+	};
+
+	if (training == NULL || !v34_training_line_is_valid(line) ||
+	    memory_regions_overlap(training, sizeof(*training), line, sizeof(*line)))
+		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
+	next.line = *line;
+	if (v34_phase3_s_sequence_init(&next.phase4.answer_s) !=
+		    V34_PHASE3_S_SEQUENCE_OK ||
+	    !v34_training_transmitter_is_valid(&next))
+		return V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT;
+	*training = next;
+	return V34_TRAINING_TRANSMITTER_OK;
 }
 
 static enum v34_training_transmitter_result line_result(
@@ -328,7 +360,7 @@ static enum v34_training_transmitter_result next_answer_s_point(
 		    &training->phase4.answer_s))
 		return V34_TRAINING_TRANSMITTER_OK;
 	if (v34_training_sequence_init(
-		    &trn, V34_ANSWERING_STATION,
+		    &trn, training->line.profile.local_role,
 		    training->phase4_constellation) != V34_TRAINING_SEQUENCE_OK)
 		return V34_TRAINING_TRANSMITTER_NUMERIC_FAILURE;
 	training->phase4 =
@@ -417,6 +449,7 @@ static enum v34_training_transmitter_result next_point(
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return next_phase3_point(training, point);
 	case V34_TRAINING_TRANSMITTER_ANSWER_S:
+	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S:
 		return next_answer_s_point(training, point);
 	case V34_TRAINING_TRANSMITTER_J_PRIME:
 		return next_j_prime_point(training, point);

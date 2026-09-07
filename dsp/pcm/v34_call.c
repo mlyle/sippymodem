@@ -171,6 +171,11 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
+	       call->rate_renegotiation_remaining_samples <= 30u * 8000u &&
+	       (call->rate_renegotiation_remaining_samples == 0u ||
+		(call->stage == V34_CALL_PHASE4 &&
+		 call->state.phase4.rate_renegotiation &&
+		 !call->state.phase4.receive_data_active)) &&
 	       v34_full_retrain_response_is_active(&call->retrain) ==
 		       (call->stage == V34_CALL_RETRAIN_SILENCE) &&
 	       v34_echo_canceller_is_adapting(&call->echo) ==
@@ -307,6 +312,7 @@ static enum v34_call_result begin_retrain(
 		    V34_ECHO_CANCELLER_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	next.retrain_active = true;
+	next.rate_renegotiation_remaining_samples = 0u;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -697,10 +703,12 @@ static bool retrain_detection_is_active(const struct v34_call *call)
 		return call->retrain_active;
 	/* A peer cannot request an online retrain while it is still sending its
 	 * Phase 4 E or B1.  Arm only after both local directions are online;
-	 * earlier Phase 4 waveforms can otherwise qualify as a retrain tone. */
+	 * earlier Phase 4 waveforms can otherwise qualify as a retrain tone.
+	 * An online rate renegotiation retains the full-retrain recovery path. */
 	if (call->stage == V34_CALL_PHASE4)
 		return !call->retrain_active &&
-		       call->state.phase4.online_announced;
+		       (call->state.phase4.online_announced ||
+			call->state.phase4.rate_renegotiation);
 	return call->stage == V34_CALL_PHASE2 &&
 	       call->state.phase2.stage == V34_PHASE2_INFO1 &&
 	       phase2_info1_is_waiting_for_peer(
@@ -777,6 +785,22 @@ enum v34_call_result v34_call_sample(
 		if (result != V34_CALL_OK &&
 		    phase4_receive_has_failed(&call->state.phase4))
 			retrain_requested = true;
+		if (result == V34_CALL_OK && call->state.phase4.rate_renegotiation) {
+			if (call->state.phase4.receive_data_active) {
+				call->rate_renegotiation_remaining_samples = 0u;
+			} else if ((emitted.events.phase4 &
+				    V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_S_BAR_STARTED) != 0) {
+				/* V.34 11.6.2.2: a responder waits 2500 ms plus
+				 * three measured round trips after S becomes S-bar for E.
+				 * CME operation instead permits 30 seconds. */
+				call->rate_renegotiation_remaining_samples =
+					(call->local_info0.cme_modem || call->peer_info0.cme_modem) ?
+					30u * 8000u : 20000u + 3u * call->round_trip_delay_samples;
+			} else if (call->rate_renegotiation_remaining_samples != 0u &&
+				   --call->rate_renegotiation_remaining_samples == 0u) {
+				retrain_requested = true;
+			}
+		}
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(

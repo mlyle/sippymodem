@@ -21,6 +21,7 @@ enum v34_training_transmitter_stage {
 	V34_TRAINING_TRANSMITTER_PHASE4_TRN,
 	V34_TRAINING_TRANSMITTER_PHASE4_MP,
 	V34_TRAINING_TRANSMITTER_PHASE4_E,
+	V34_TRAINING_TRANSMITTER_RENEGOTIATION_S,
 };
 
 enum v34_training_transmitter_result {
@@ -53,6 +54,7 @@ struct v34_training_transmitter {
 	enum v34_constellation_size phase4_constellation;
 	uint32_t phase4_trn_symbols;
 	enum v34_training_transmitter_stage stage;
+	bool rate_renegotiation;
 };
 
 /* Begin either station's normalized Phase 3 sequence on a new waveform. The
@@ -65,6 +67,13 @@ enum v34_training_transmitter_result v34_training_transmitter_init(
 
 bool v34_training_transmitter_is_valid(
 	const struct v34_training_transmitter *training);
+
+/* Start the four-point online S/TRN/MP/E exchange on the existing waveform.
+ * No Phase 3 sequence or physical line state is synthesized or reset. */
+enum v34_training_transmitter_result
+v34_training_transmitter_resume_online(
+	struct v34_training_transmitter *training,
+	const struct v34_training_line *line);
 
 /* Record the constellation selected by the peer's J without replacing the
  * waveform owner. A calling transmitter may receive the selection anywhere

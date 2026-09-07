@@ -40,12 +40,21 @@ enum v34_phase34_receiver_result {
 	V34_PHASE34_RECEIVER_INVALID_STATE,
 	V34_PHASE34_RECEIVER_NUMERIC_FAILURE,
 	V34_PHASE34_RECEIVER_OUT_OF_RANGE,
+	V34_PHASE34_RECEIVER_RATE_RENEGOTIATION,
 };
 
 union v34_phase34_receiver_semantic_state {
 	struct v34_phase3_decision_receiver phase3;
 	struct v34_phase4_decision_receiver phase4;
 	struct v34_data_decision_receiver data;
+};
+
+enum {
+	/* One candidate's frames plus a preceding rejected candidate draining
+	 * back to the terminal. Confirmed frames drain on every sample. */
+	V34_PHASE34_PENDING_FRAMES = 2u *
+		(2u + V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS /
+		 (V34_4D_INTERVALS_PER_MAPPING_FRAME * V34_2D_SYMBOLS_PER_4D_INTERVAL)),
 };
 
 struct v34_phase34_receive_output {
@@ -62,6 +71,11 @@ struct v34_phase34_receiver {
 	struct v34_line_receiver line;
 	union v34_phase34_receiver_semantic_state semantic;
 	struct v34_phase3_decision_handoff phase3_handoff;
+	struct v34_phase3_s_hunt rate_renegotiation;
+	struct v34_received_mapping_frame pending_frames[V34_PHASE34_PENDING_FRAMES];
+	uint8_t pending_head;
+	uint8_t pending_count;
+	uint8_t confirmed_count;
 	struct v34_q14_coefficient
 		precoder_coefficients[V34_PRECODER_TAP_COUNT];
 	struct v34_phase3_profile transmitting_profile;
@@ -89,9 +103,11 @@ bool v34_phase34_receiver_is_complete(
 	const struct v34_phase34_receiver *receiver);
 
 /* Consume one signed 8-kHz line sample. A terminal semantic or numeric error
- * consumes that physical sample and latches failure. `output` changes only
- * for RECORD_READY or a completed data interval; rejected, paused, complete,
- * and failed calls consume nothing. */
+ * consumes that physical sample and latches failure. `output` changes for
+ * RECORD_READY, a completed data interval, or delivery of a deferred mapping
+ * frame. `current` describes only an interval decoded on this sample; deferred
+ * frames update only `received`. Rejected, paused, complete, and failed calls
+ * consume nothing. */
 enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output);

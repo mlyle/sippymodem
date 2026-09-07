@@ -108,3 +108,31 @@ enum v34_data_mode_result v34_data_mode_select_startup(
 	*mode = selected;
 	return V34_DATA_MODE_OK;
 }
+
+enum v34_data_mode_result v34_data_mode_select_update(
+	enum v34_station_role local_role,
+	const struct v34_mp_record *local_record,
+	const struct v34_mp_record *peer_record,
+	const struct v34_data_mode *previous,
+	struct v34_data_mode *mode)
+{
+	struct v34_data_mode selected;
+	enum v34_data_mode_result result;
+
+	if (!v34_data_mode_is_valid(previous) || mode == NULL)
+		return V34_DATA_MODE_INVALID_ARGUMENT;
+	result = v34_data_mode_select_startup(local_role, local_record,
+		peer_record, &selected);
+	if (result != V34_DATA_MODE_OK)
+		return result;
+	if (peer_record->type == V34_MP_RECORD_TYPE0)
+		memcpy(selected.transmit.precoder_coefficients,
+		       previous->transmit.precoder_coefficients,
+		       sizeof(selected.transmit.precoder_coefficients));
+	if (local_record->type == V34_MP_RECORD_TYPE0)
+		memcpy(selected.receive.precoder_coefficients,
+		       previous->receive.precoder_coefficients,
+		       sizeof(selected.receive.precoder_coefficients));
+	*mode = selected;
+	return V34_DATA_MODE_OK;
+}

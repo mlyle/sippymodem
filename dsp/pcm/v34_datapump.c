@@ -620,8 +620,11 @@ static int process_v34(
 			return DPSTAT_ERROR;
 		}
 		if (training_session_is_online(&datapump->training) &&
-		    observation.processed != V34_CALL_RETRAIN_SILENCE &&
-		    observation.next == V34_CALL_RETRAIN_SILENCE) {
+		    ((observation.processed != V34_CALL_RETRAIN_SILENCE &&
+		      observation.next == V34_CALL_RETRAIN_SILENCE) ||
+		     (observation.processed == V34_CALL_PHASE4 &&
+		      (observation.events.phase4 &
+		       V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0))) {
 			if (training_session_start_retrain(
 				    &datapump->training,
 				    TRAINING_REMOTE_RETRAIN) !=

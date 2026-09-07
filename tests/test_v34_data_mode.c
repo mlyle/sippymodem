@@ -147,6 +147,48 @@ static bool test_symmetric_selection(void)
 	return true;
 }
 
+static bool test_online_precoder_updates(void)
+{
+	struct v34_mp_record calling = calling_record();
+	struct v34_mp_record answering = answering_record();
+	struct v34_data_mode original, updated, saved;
+
+	CHECK(v34_data_mode_select_startup(V34_CALLING_STATION,
+		      &calling, &answering, &original) == V34_DATA_MODE_OK,
+	      "online precoder fixture did not initialize");
+	original.transmit.precoder_coefficients[0].real = 1234;
+	calling = (struct v34_mp_record){
+		.type = V34_MP_RECORD_TYPE0,
+		.parameters.type0 = calling_parameters(),
+	};
+	calling.parameters.type0.maximum_call_to_answer_rate_2400_bps_units = 7;
+	CHECK(v34_data_mode_select_update(V34_CALLING_STATION,
+		      &calling, &answering, &original, &updated) == V34_DATA_MODE_OK &&
+	      updated.transmit.primary_data_rate_2400_bps_units == 7 &&
+	      memcmp(updated.transmit.precoder_coefficients,
+		     original.transmit.precoder_coefficients,
+		     sizeof(updated.transmit.precoder_coefficients)) == 0 &&
+	      memcmp(updated.receive.precoder_coefficients,
+		     original.receive.precoder_coefficients,
+		     sizeof(updated.receive.precoder_coefficients)) == 0,
+	      "Type 0 rate update discarded the active precoders");
+	answering = calling_record();
+	CHECK(v34_data_mode_select_update(V34_CALLING_STATION,
+		      &calling, &answering, &updated, &updated) == V34_DATA_MODE_OK &&
+	      memcmp(updated.transmit.precoder_coefficients,
+		     answering.parameters.type1.precoder_coefficients,
+		     sizeof(updated.transmit.precoder_coefficients)) == 0,
+	      "in-place Type 1 update did not replace its directional precoder");
+	saved = updated;
+	CHECK(v34_data_mode_select_update(V34_CALLING_STATION,
+		      &calling, &answering, NULL, &updated) == V34_DATA_MODE_INVALID_ARGUMENT &&
+	      v34_data_mode_select_update(V34_CALLING_STATION,
+		      NULL, &answering, &original, &updated) == V34_DATA_MODE_INVALID_ARGUMENT &&
+	      memcmp(&updated, &saved, sizeof(updated)) == 0,
+	      "invalid update changed the selected mode");
+	return true;
+}
+
 static bool test_validation_and_transactionality(void)
 {
 	struct v34_mp_record calling = calling_record();
@@ -227,6 +269,7 @@ int main(void)
 		{ "complementary startup modes",
 		  test_complementary_startup_modes },
 		{ "symmetric selection", test_symmetric_selection },
+		{ "online precoder updates", test_online_precoder_updates },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
 	};

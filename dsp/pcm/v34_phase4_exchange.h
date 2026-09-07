@@ -41,6 +41,8 @@ enum v34_phase4_exchange_event {
 	V34_PHASE4_EXCHANGE_EVENT_PEER_B1_RECEIVED = 1u << 13,
 	V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED = 1u << 14,
 	V34_PHASE4_EXCHANGE_EVENT_ONLINE = 1u << 15,
+	V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION = 1u << 16,
+	V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_S_BAR_STARTED = 1u << 17,
 };
 
 enum {
@@ -108,6 +110,8 @@ struct v34_phase4_exchange {
 	bool transmit_b1_complete;
 	bool receive_b1_complete;
 	bool online_announced;
+	/* This exchange started at an online S/S-bar, not at Phase 3 J. */
+	bool rate_renegotiation;
 	bool failed;
 };
 

@@ -160,7 +160,8 @@ static bool model_next_point(
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return v34_phase3_transmitter_next(&model->phase3, point) ==
 		       V34_PHASE3_TRANSMITTER_OK;
-	case V34_TRAINING_TRANSMITTER_ANSWER_S: {
+	case V34_TRAINING_TRANSMITTER_ANSWER_S:
+	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S: {
 		struct v34_training_sequence trn;
 		enum v34_phase3_s_section section;
 
@@ -172,7 +173,7 @@ static bool model_next_point(
 			    &model->phase4.answer_s))
 			return true;
 		if (v34_training_sequence_init(
-			    &trn, V34_ANSWERING_STATION,
+			    &trn, model->line.profile.local_role,
 			    model->phase4_constellation) !=
 		    V34_TRAINING_SEQUENCE_OK)
 			return false;
@@ -250,6 +251,7 @@ static bool protocol_state_matches(
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return true;
 	case V34_TRAINING_TRANSMITTER_ANSWER_S:
+	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S:
 		return actual->phase4.answer_s.emitted_symbols ==
 		       model->phase4.answer_s.emitted_symbols;
 	case V34_TRAINING_TRANSMITTER_J_PRIME:
@@ -564,6 +566,59 @@ static bool drain_to_point_boundary(struct v34_training_transmitter *training)
 	return false;
 }
 
+static bool test_online_resume(void)
+{
+	for (unsigned int calling = 0; calling < 2u; ++calling) {
+		struct v34_phase3_profile profile = profile_fixture(calling ?
+			V34_CALLING_STATION : V34_ANSWERING_STATION);
+		struct v34_training_transmitter actual, before;
+		struct model_training model = {
+			.phase4_constellation = V34_CONSTELLATION_4_POINT,
+			.stage = V34_TRAINING_TRANSMITTER_RENEGOTIATION_S,
+		};
+
+		CHECK(v34_training_transmitter_init(&actual, &profile,
+			      V34_CONSTELLATION_16_POINT, 8000, 5000) ==
+			      V34_TRAINING_TRANSMITTER_OK && advance_to_phase4(&actual),
+		      "online resume fixture did not establish a waveform");
+		model.line = actual.line;
+		CHECK(v34_phase3_s_sequence_init(&model.phase4.answer_s) ==
+			      V34_PHASE3_S_SEQUENCE_OK &&
+		      v34_training_transmitter_resume_online(&actual, &model.line) ==
+			      V34_TRAINING_TRANSMITTER_OK &&
+		      memcmp(&actual.line, &model.line, sizeof(model.line)) == 0,
+		      "online resume replaced the physical waveform state");
+		before = actual;
+		CHECK(v34_training_transmitter_resume_online(NULL, &model.line) ==
+			      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
+		      v34_training_transmitter_resume_online(&actual, NULL) ==
+			      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
+		      v34_training_transmitter_resume_online(&actual, &actual.line) ==
+			      V34_TRAINING_TRANSMITTER_INVALID_ARGUMENT &&
+		      memcmp(&actual, &before, sizeof(actual)) == 0,
+		      "rejected online resume mutated its source or destination");
+		for (unsigned int index = 0; index < 2048u; ++index) {
+			struct qam_point point;
+			bool needs_point = v34_training_line_needs_point(&model.line);
+			bool accepted;
+			int16_t expected, sample;
+
+			CHECK((!needs_point || model_next_point(&model, &point)) &&
+			      v34_training_line_sample(&model.line,
+				      needs_point ? &point : NULL, &expected, &accepted) ==
+				      V34_TRAINING_LINE_OK && accepted == needs_point &&
+			      v34_training_transmitter_sample(&actual, &sample) ==
+				      V34_TRAINING_TRANSMITTER_OK && sample == expected &&
+			      protocol_state_matches(&actual, &model) &&
+			      memcmp(&actual.line, &model.line, sizeof(model.line)) == 0,
+			      "online S/TRN waveform diverged: calling=%u sample=%u", calling, index);
+		}
+		CHECK(v34_training_transmitter_phase4_trn_ready(&actual),
+		      "online resume did not reach four-point TRN");
+	}
+	return true;
+}
+
 static bool test_copy_controls_and_overflow(void)
 {
 	struct v34_phase3_profile profile =
@@ -768,6 +823,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "composed line", test_composed_line },
+		{ "online resume retains waveform", test_online_resume },
 		{ "Phase 4 selection", test_phase4_selection },
 		{ "copy, controls, and overflow", test_copy_controls_and_overflow },
 		{ "Phase 4 controls", test_phase4_controls },

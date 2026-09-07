@@ -54,6 +54,7 @@ static bool semantic_state_is_valid(
 		       receiver->semantic.phase4.mp_receiver.constellation ==
 			       receiver->phase4_constellation;
 	return receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	       v34_phase3_s_hunt_is_valid(&receiver->rate_renegotiation) &&
 	       v34_data_decision_receiver_is_valid(
 		       &receiver->semantic.data) &&
 	       receiver->semantic.data.data_receiver.data_receiver
@@ -171,6 +172,10 @@ bool v34_phase34_receiver_is_valid(
 	const struct v34_phase34_receiver *receiver)
 {
 	if (receiver == NULL || !receiver->initialized ||
+	    receiver->pending_head >= V34_PHASE34_PENDING_FRAMES ||
+	    receiver->pending_count > V34_PHASE34_PENDING_FRAMES ||
+	    receiver->confirmed_count > receiver->pending_count ||
+	    (receiver->stage != V34_PHASE34_RECEIVER_DATA && receiver->pending_count != 0u) ||
 	    !v34_phase3_profile_is_valid(&receiver->transmitting_profile) ||
 	    !v34_constellation_size_is_valid(receiver->phase4_constellation) ||
 	    !v34_line_receiver_matches_profile(
@@ -481,7 +486,7 @@ static enum v34_phase34_receiver_result data_result(
 	case V34_DATA_RECEIVE_B1_COMPLETE:
 		return V34_PHASE34_RECEIVER_B1_COMPLETE;
 	case V34_DATA_RECEIVE_RATE_RENEGOTIATION:
-		/* Ordinary V.34 does not enable the V.90 online marker. */
+		/* The aggregate resolves online markers before data decisions. */
 		break;
 	case V34_DATA_RECEIVE_OUT_OF_RANGE:
 		return V34_PHASE34_RECEIVER_OUT_OF_RANGE;
@@ -502,6 +507,38 @@ static enum v34_phase34_receiver_result receive_data(
 	struct v34_data_decision_receiver data = receiver->semantic.data;
 	struct v34_data_decision_output decoded;
 	struct v34_adaptive_equalizer_decision decision;
+	struct v34_phase3_s_adaptation adaptation;
+	bool control = false;
+
+	if (!v34_data_decision_receiver_is_receiving_b1(&data)) {
+		enum v34_phase3_s_receiver_result marker =
+			v34_phase3_s_hunt_receive(&receiver->rate_renegotiation,
+				observation->decision, &adaptation, &control);
+
+		if (marker == V34_PHASE3_S_RECEIVER_DETECTED) {
+			struct v34_phase4_decision_receiver phase4;
+
+			if (v34_adaptive_equalizer_discard(&receiver->line.equalizer,
+				    observation) != V34_ADAPTIVE_EQUALIZER_OK ||
+			    v34_phase4_decision_receiver_resume_online(&phase4,
+				    receiver->transmitting_profile.local_role) !=
+				    V34_PHASE4_DECISION_RECEIVER_OK)
+				return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+			receiver->semantic = (union v34_phase34_receiver_semantic_state){
+				.phase4 = phase4,
+			};
+			receiver->phase4_constellation = V34_CONSTELLATION_4_POINT;
+			receiver->stage = V34_PHASE34_RECEIVER_PHASE4;
+			receiver->data_erasure = false;
+			receiver->pending_head = 0u;
+			receiver->pending_count = 0u;
+			receiver->confirmed_count = 0u;
+			return V34_PHASE34_RECEIVER_RATE_RENEGOTIATION;
+		}
+		if (marker != V34_PHASE3_S_RECEIVER_OK)
+			return discard_and_fail(receiver, observation,
+				V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+	}
 	enum v34_data_receive_result result =
 		v34_data_decision_receiver_observe(
 			&data, observation, &decoded);
@@ -575,6 +612,43 @@ static enum v34_phase34_receiver_result receive_line_sample(
 	return result;
 }
 
+static enum v34_phase34_receiver_result defer_control_frames(
+	struct v34_phase34_receiver *receiver,
+	enum v34_phase34_receiver_result result,
+	struct v34_phase34_receive_output *output)
+{
+	bool candidate = receiver->rate_renegotiation.candidate;
+
+	if (receiver->data_erasure)
+		return result;
+	if (result != V34_PHASE34_RECEIVER_OK &&
+	    result != V34_PHASE34_RECEIVER_INTERVAL_READY &&
+	    result != V34_PHASE34_RECEIVER_MAPPING_FRAME_READY)
+		return result;
+	if (result == V34_PHASE34_RECEIVER_MAPPING_FRAME_READY &&
+	    (candidate || receiver->pending_count != 0u)) {
+		if (receiver->pending_count == V34_PHASE34_PENDING_FRAMES)
+			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+		receiver->pending_frames[(receiver->pending_head + receiver->pending_count) %
+			V34_PHASE34_PENDING_FRAMES] = output->received;
+		receiver->pending_count++;
+		/* The current interval was decoded even though its completed
+		 * mapping frame must wait for the control hypothesis. */
+		result = V34_PHASE34_RECEIVER_INTERVAL_READY;
+	}
+	if (!candidate)
+		receiver->confirmed_count = receiver->pending_count;
+	if (receiver->confirmed_count != 0u) {
+		output->received = receiver->pending_frames[receiver->pending_head];
+		receiver->pending_head = (uint8_t)((receiver->pending_head + 1u) %
+			V34_PHASE34_PENDING_FRAMES);
+		receiver->pending_count--;
+		receiver->confirmed_count--;
+		result = V34_PHASE34_RECEIVER_MAPPING_FRAME_READY;
+	}
+	return result;
+}
+
 enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 	struct v34_phase34_receiver *receiver, int16_t sample,
 	struct v34_phase34_receive_output *output)
@@ -598,7 +672,13 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 		    V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 	    !receiver->phase4_s_rearmed)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	return receive_line_sample(receiver, sample, output);
+	enum v34_phase34_receiver_result result =
+		receive_line_sample(receiver, sample, output);
+
+	/* A rejected S hypothesis must delay data, not silently discard it.
+	 * Only a complete marker discards quarantined control frames. */
+	return receiver->stage == V34_PHASE34_RECEIVER_DATA ?
+		defer_control_frames(receiver, result, output) : result;
 }
 
 enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
@@ -739,6 +819,9 @@ enum v34_phase34_receiver_result v34_phase34_receiver_start_data(
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	next.semantic =
 		(union v34_phase34_receiver_semantic_state){ .data = data };
+	if (v34_phase3_s_hunt_init(&next.rate_renegotiation) !=
+	    V34_PHASE3_S_RECEIVER_OK)
+		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 	next.stage = V34_PHASE34_RECEIVER_DATA;
 	if (!v34_phase34_receiver_is_valid(&next))
 		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;

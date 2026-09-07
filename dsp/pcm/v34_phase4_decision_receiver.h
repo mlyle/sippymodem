@@ -68,6 +68,7 @@ struct v34_phase4_decision_receiver {
 	enum v34_phase4_decision_receiver_stage stage;
 	bool record_pending;
 	bool pending_record_is_valid;
+	bool rate_renegotiation;
 };
 
 enum v34_phase4_decision_receiver_result
@@ -75,6 +76,13 @@ v34_phase4_decision_receiver_init(
 	struct v34_phase4_decision_receiver *receiver,
 	const struct v34_phase3_j_sequence *j_sequence,
 	enum v34_constellation_size constellation);
+
+/* S/S-bar has already been consumed by the shared online detector. Optional
+ * TRN and repeated MP self-synchronize the four-point control receiver. */
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_resume_online(
+	struct v34_phase4_decision_receiver *receiver,
+	enum v34_station_role transmitting_role);
 
 bool v34_phase4_decision_receiver_is_valid(
 	const struct v34_phase4_decision_receiver *receiver);

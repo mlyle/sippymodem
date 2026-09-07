@@ -1807,12 +1807,74 @@ static bool test_phase2_handoff(void)
 	return true;
 }
 
+static bool test_rate_renegotiation_timeout(void)
+{
+	for (unsigned int variant = 0; variant < 3u; ++variant) {
+		bool calling_peer = variant == 1u;
+		bool cme = variant == 2u;
+		struct endpoint caller = { .verify_mapping_frames = true };
+		struct endpoint answerer = { .verify_mapping_frames = true, .transmit_bit = 1u };
+		struct endpoint *responder = calling_peer ? &answerer : &caller;
+		struct endpoint *initiator = calling_peer ? &caller : &answerer;
+		struct channel channel = { 0 };
+		struct v34_training_transmitter peer;
+		struct v34_call_configuration call_config = configuration(V34_CALLING_STATION);
+		struct v34_call_configuration answer_config = configuration(V34_ANSWERING_STATION);
+		uint32_t armed_at = UINT32_MAX;
+		uint32_t timeout;
+		bool retrained = false;
+
+		call_config.local_info0.cme_modem = cme;
+		answer_config.local_info0.cme_modem = cme;
+		CHECK(v34_call_init(&caller.call, &call_config) == V34_CALL_OK &&
+		      v34_call_init(&answerer.call, &answer_config) == V34_CALL_OK &&
+		      run_initialized_pair(&caller, &answerer, &channel),
+		      "rate renegotiation timeout fixture did not connect");
+		timeout = cme ? 240000u : 20000u + 3u * responder->call.round_trip_delay_samples;
+		CHECK(v34_training_transmitter_resume_online(&peer,
+			      &initiator->call.state.phase4.transmit.data.line) == V34_TRAINING_TRANSMITTER_OK,
+		      "rate renegotiation timeout peer did not initialize");
+		/* Deliberately leave the peer in TRN: no MP-prime/E acknowledgement
+		 * may keep an online renegotiation alive beyond its protocol deadline. */
+		for (uint32_t sample = 0; sample < timeout + 2000u; ++sample) {
+			struct v34_call_observation observation;
+			struct v34_received_mapping_frame received;
+			int16_t caller_receive, answerer_receive, generated, peer_output;
+
+			channel_receive(&channel, &caller_receive, &answerer_receive);
+			CHECK(v34_call_sample(&responder->call,
+				      calling_peer ? answerer_receive : caller_receive,
+				      NULL, NULL, &generated, &observation, &received) == V34_CALL_OK &&
+			      v34_training_transmitter_sample(&peer, &peer_output) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "rate renegotiation timeout path failed: variant=%u sample=%u", variant, sample);
+			channel_transmit(&channel, calling_peer ? peer_output : generated,
+				calling_peer ? generated : peer_output);
+			if (armed_at == UINT32_MAX && responder->call.rate_renegotiation_remaining_samples) {
+				armed_at = sample;
+				CHECK(responder->call.rate_renegotiation_remaining_samples == timeout,
+				      "rate renegotiation armed the wrong timeout");
+			}
+			if (responder->call.stage == V34_CALL_RETRAIN_SILENCE) {
+				CHECK(armed_at != UINT32_MAX && sample - armed_at == timeout &&
+				      responder->call.rate_renegotiation_remaining_samples == 0u,
+				      "rate renegotiation retrained at the wrong deadline");
+				retrained = true;
+				break;
+			}
+		}
+		CHECK(retrained, "unacknowledged rate renegotiation never requested full retrain");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
 		{ "reciprocal zero-rate cleardown", test_cleardown },
 		{ "cleardown waits for peer MP-prime", test_cleardown_waits_for_prime },
 		{ "completed Phase 2 handoff", test_phase2_handoff },

@@ -182,9 +182,12 @@ bool v34_phase4_decision_receiver_is_valid(
 	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
 	    !v34_station_role_is_valid(
 		    receiver->mp_receiver.transmitting_role) ||
-	    !answer_s_state_is_valid(receiver) ||
-	    !call_j_prime_state_is_valid(receiver) ||
-	    !trn_state_is_valid(receiver) ||
+	    (receiver->rate_renegotiation ?
+	     (receiver->stage < V34_PHASE4_DECISION_RECEIVER_MP ||
+	      receiver->mp_receiver.constellation != V34_CONSTELLATION_4_POINT) :
+	     (!answer_s_state_is_valid(receiver) ||
+	      !call_j_prime_state_is_valid(receiver) ||
+	      !trn_state_is_valid(receiver))) ||
 	    (receiver->pending_record_is_valid && !receiver->record_pending) ||
 	    (receiver->record_pending &&
 	     receiver->stage != V34_PHASE4_DECISION_RECEIVER_MP))
@@ -206,6 +209,25 @@ bool v34_phase4_decision_receiver_is_complete(
 {
 	return v34_phase4_decision_receiver_is_valid(receiver) &&
 	       receiver->stage == V34_PHASE4_DECISION_RECEIVER_COMPLETE;
+}
+
+enum v34_phase4_decision_receiver_result
+v34_phase4_decision_receiver_resume_online(
+	struct v34_phase4_decision_receiver *receiver,
+	enum v34_station_role transmitting_role)
+{
+	struct v34_phase4_decision_receiver next = {
+		.stage = V34_PHASE4_DECISION_RECEIVER_MP,
+		.rate_renegotiation = true,
+	};
+
+	if (receiver == NULL ||
+	    v34_phase4_mp_receiver_init(&next.mp_receiver, transmitting_role,
+		    V34_CONSTELLATION_4_POINT) != V34_PHASE4_MP_RECEIVER_OK ||
+	    !v34_phase4_decision_receiver_is_valid(&next))
+		return V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT;
+	*receiver = next;
+	return V34_PHASE4_DECISION_RECEIVER_OK;
 }
 
 enum v34_phase4_decision_receiver_result

@@ -422,6 +422,238 @@ static bool run_pair(
 		caller, answerer, caller_seen, answerer_seen);
 }
 
+/* A protocol peer built from the public line/sequence primitives. It sends
+ * S/S-bar, optional TRN, repeated MP/MP-prime, E, B1, and fresh data; it does
+ * not alter the responder's state or fabricate a Phase 3 handoff. */
+struct renegotiating_peer {
+	struct v34_training_transmitter training;
+	struct v34_phase34_receiver receive;
+	struct v34_data_stream data;
+	struct v34_data_startup startup;
+	struct v34_mp_record local_mp;
+	bool peer_mp_received;
+	bool peer_acknowledged;
+	bool transmitting_mp;
+	bool transmitting_data;
+};
+
+static bool renegotiating_peer_sample(
+	struct renegotiating_peer *peer, struct endpoint *endpoint,
+	int16_t input, int16_t *output)
+{
+	struct v34_phase34_receive_output received;
+	enum v34_phase34_receiver_result result = v34_phase34_receiver_sample(
+		&peer->receive, input, &received);
+	struct v34_mp_parameters *local =
+		v34_mp_record_common_parameters_mutable(&peer->local_mp);
+
+	if (result == V34_PHASE34_RECEIVER_RECORD_READY) {
+		struct v34_mp_record remote = { 0 };
+		const struct v34_mp_parameters *parameters;
+
+		if (received.mp.type == V34_MP_RECEIVE_REJECTED) {
+			CHECK(v34_phase34_receiver_continue_mp(&peer->receive) ==
+				      V34_PHASE34_RECEIVER_OK, "peer rejected MP could not continue");
+			goto transmit;
+		}
+		remote.type = received.mp.type == V34_MP_RECEIVE_TYPE0 ?
+			V34_MP_RECORD_TYPE0 : V34_MP_RECORD_TYPE1;
+		remote.parameters = received.mp.parameters;
+		parameters = v34_mp_record_common_parameters(&remote);
+		if (!peer->peer_mp_received) {
+			struct v34_data_mode mode;
+
+			CHECK(v34_data_mode_select_startup(peer->training.line.profile.local_role,
+				      &peer->local_mp, &remote, &mode) == V34_DATA_MODE_OK &&
+			      v34_data_startup_prepare(&peer->startup, &mode,
+				      &peer->training.line.profile,
+				      &peer->receive.transmitting_profile) == V34_DATA_STARTUP_OK,
+			      "rate renegotiation peer could not select data");
+			peer->peer_mp_received = true;
+		}
+		peer->peer_acknowledged |= parameters->acknowledges_peer_mp;
+		CHECK((peer->peer_acknowledged ?
+		       v34_phase34_receiver_expect_e(&peer->receive) :
+		       v34_phase34_receiver_continue_mp(&peer->receive)) ==
+			      V34_PHASE34_RECEIVER_OK,
+		      "rate renegotiation peer could not continue MP");
+	} else if (result == V34_PHASE34_RECEIVER_E_COMPLETE) {
+		const struct v34_data_line_receiver_configuration *configuration =
+			&peer->startup.receive;
+
+		CHECK(peer->peer_mp_received && v34_phase34_receiver_start_data(
+			      &peer->receive, &configuration->normalizer,
+			      &configuration->geometry, configuration->expanded_shaping,
+			      configuration->precoder_coefficients,
+			      configuration->trellis_selection) == V34_PHASE34_RECEIVER_OK,
+		      "rate renegotiation peer could not start B1");
+	} else if (result == V34_PHASE34_RECEIVER_B1_COMPLETE) {
+		endpoint->primary_idle_bits_remaining = 16;
+	} else if (result == V34_PHASE34_RECEIVER_MAPPING_FRAME_READY) {
+		CHECK(accept_mapping_frame(endpoint, &received.received),
+		      "rate renegotiation peer received bad data");
+	} else {
+		CHECK(result == V34_PHASE34_RECEIVER_OK ||
+		      result == V34_PHASE34_RECEIVER_RATE_RENEGOTIATION ||
+		      result == V34_PHASE34_RECEIVER_INTERVAL_READY ||
+		      result == V34_PHASE34_RECEIVER_B1_IN_PROGRESS,
+		      "rate renegotiation peer receive failed: %d", result);
+	}
+transmit:
+	if (!peer->transmitting_data &&
+	    v34_training_transmitter_phase4_e_complete(&peer->training)) {
+		CHECK(v34_data_stream_continue_prepared_b1(&peer->data,
+			      &peer->training.line, &peer->startup.transmit) == V34_DATA_STREAM_OK,
+		      "rate renegotiation peer could not transmit B1");
+		peer->transmitting_data = true;
+	}
+	if (peer->transmitting_data) {
+		bool accepted;
+
+		return v34_data_stream_sample(&peer->data, supply_mapping_frame,
+			endpoint, output, &accepted) == V34_DATA_STREAM_OK;
+	}
+	if ((!peer->transmitting_mp &&
+	     v34_training_transmitter_phase4_trn_ready(&peer->training)) ||
+	    v34_training_transmitter_phase4_mp_record_complete(&peer->training)) {
+		if (local->acknowledges_peer_mp && peer->peer_acknowledged) {
+			CHECK(v34_training_transmitter_start_e(&peer->training) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "rate renegotiation peer could not transmit E");
+		} else {
+			local->acknowledges_peer_mp = peer->peer_mp_received;
+			CHECK((peer->local_mp.type == V34_MP_RECORD_TYPE0 ?
+			       v34_training_transmitter_start_mp_type0(&peer->training,
+				       &peer->local_mp.parameters.type0) :
+			       v34_training_transmitter_start_mp_type1(&peer->training,
+				       &peer->local_mp.parameters.type1)) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "rate renegotiation peer could not transmit MP");
+			peer->transmitting_mp = true;
+		}
+	}
+	return v34_training_transmitter_sample(&peer->training, output) ==
+		V34_TRAINING_TRANSMITTER_OK;
+}
+
+static bool test_online_rate_renegotiation(void)
+{
+	for (unsigned int calling_peer = 0; calling_peer < 2u; ++calling_peer) {
+		struct endpoint caller, answerer;
+		struct renegotiating_peer peer = { 0 };
+		struct endpoint *initiator = calling_peer ? &caller : &answerer;
+		struct endpoint *responder = calling_peer ? &answerer : &caller;
+		uint32_t caller_events, answerer_events;
+		uint32_t events_seen = 0;
+
+		CHECK(run_pair(&caller, &answerer, &caller_events, &answerer_events),
+		      "rate renegotiation initial call failed");
+		CHECK(v34_training_transmitter_resume_online(&peer.training,
+			      &initiator->phase4.transmit.data.line) == V34_TRAINING_TRANSMITTER_OK,
+		      "rate renegotiation peer could not retain transmit line");
+		peer.receive = initiator->phase4.receive;
+		peer.local_mp = initiator->phase4.transmit_mp;
+		v34_mp_record_common_parameters_mutable(&peer.local_mp)
+			->maximum_call_to_answer_rate_2400_bps_units = 3;
+		v34_mp_record_common_parameters_mutable(&peer.local_mp)
+			->maximum_answer_to_call_rate_2400_bps_units = 3;
+		initiator->mapping_frames_received = 0;
+		responder->mapping_frames_received = 0;
+		for (size_t sample = 0; sample < 16000u; ++sample) {
+			int16_t peer_output, responder_output;
+			uint32_t events;
+
+			CHECK(renegotiating_peer_sample(&peer, initiator,
+				      initiator->next_received, &peer_output) &&
+			      endpoint_sample(responder, responder->next_received,
+				      &responder_output, &events),
+			      "rate renegotiation stopped: peer=%u sample=%zu", calling_peer, sample);
+			initiator->next_received = responder_output;
+			responder->next_received = peer_output;
+			events_seen |= events;
+			if (peer.transmitting_data &&
+			    v34_phase4_exchange_is_online(&responder->phase4) &&
+			    initiator->mapping_frames_received >= 4u &&
+			    responder->mapping_frames_received >= 4u)
+				break;
+		}
+		CHECK((events_seen & V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0 &&
+		      (events_seen & V34_PHASE4_EXCHANGE_EVENT_ONLINE) != 0 &&
+		      peer.transmitting_data && initiator->mapping_frames_received >= 4u &&
+		      responder->mapping_frames_received >= 4u &&
+		      responder->phase4.data_startup.mode.transmit
+			      .primary_data_rate_2400_bps_units == 3u &&
+		      responder->phase4.data_startup.mode.receive
+			      .primary_data_rate_2400_bps_units == 3u,
+		      "rate renegotiation did not restore reduced-rate data: peer=%u events=0x%x frames=%u/%u",
+		      calling_peer, events_seen, initiator->mapping_frames_received,
+		      responder->mapping_frames_received);
+	}
+	return true;
+}
+
+static bool test_control_frame_deferral(void)
+{
+	struct endpoint caller, answerer;
+	struct v34_phase34_receiver receiver;
+	struct v34_phase34_receive_output output;
+	struct v34_received_mapping_frame frames[2] = {
+		{ .primary_bit_count = 1, .primary_bits = { 1 } },
+		{ .primary_bit_count = 1, .primary_bits = { 0 } },
+	};
+	uint32_t caller_events, answerer_events;
+
+	CHECK(run_pair(&caller, &answerer, &caller_events, &answerer_events),
+	      "control-frame queue fixture did not connect");
+	/* Exercise the bounded queue contract at its wrap boundary, over a real
+	 * initialized online receiver. A rejected candidate releases both frames. */
+	receiver = caller.phase4.receive;
+	receiver.pending_head = V34_PHASE34_PENDING_FRAMES - 1u;
+	receiver.pending_count = 2u;
+	receiver.pending_frames[receiver.pending_head] = frames[0];
+	receiver.pending_frames[0] = frames[1];
+	CHECK(v34_phase34_receiver_set_data_erasure(&receiver, true) ==
+		      V34_PHASE34_RECEIVER_OK &&
+	      v34_phase34_receiver_sample(&receiver, 0, &output) ==
+		      V34_PHASE34_RECEIVER_OK && receiver.pending_count == 2u &&
+	      v34_phase34_receiver_set_data_erasure(&receiver, false) ==
+		      V34_PHASE34_RECEIVER_OK,
+	      "line erasure released or discarded the pending frames");
+	for (unsigned int index = 0; index < 2u; ++index)
+		CHECK(v34_phase34_receiver_sample(&receiver, 0, &output) ==
+			      V34_PHASE34_RECEIVER_MAPPING_FRAME_READY &&
+		      memcmp(&output.received, &frames[index], sizeof(frames[index])) == 0,
+		      "rejected S candidate lost or reordered frame %u", index);
+	CHECK(receiver.pending_count == 0u && v34_phase34_receiver_is_valid(&receiver),
+	      "rejected candidate queue did not drain");
+
+	receiver = caller.phase4.receive;
+	receiver.pending_frames[0] = frames[0];
+	receiver.pending_frames[1] = frames[1];
+	receiver.pending_count = 2u;
+	receiver.confirmed_count = 1u;
+	for (unsigned int symbol = 0; symbol < 12u; ++symbol) {
+		struct v34_analytic_sample point;
+		struct v34_phase3_s_adaptation adaptation;
+		bool control;
+
+		CHECK(v34_training_constellation_fixed_point(V34_CONSTELLATION_4_POINT,
+			      0u, symbol & 1u ? 3u : 0u, &point) == V34_CONSTELLATION_OK &&
+		      v34_phase3_s_hunt_receive(&receiver.rate_renegotiation, point,
+			      &adaptation, &control) == V34_PHASE3_S_RECEIVER_OK,
+		      "new S candidate fixture failed");
+	}
+	CHECK(receiver.rate_renegotiation.candidate &&
+	      v34_phase34_receiver_sample(&receiver, 0, &output) ==
+		      V34_PHASE34_RECEIVER_MAPPING_FRAME_READY &&
+	      memcmp(&output.received, &frames[0], sizeof(frames[0])) == 0 &&
+	      v34_phase34_receiver_sample(&receiver, 0, &output) !=
+		      V34_PHASE34_RECEIVER_MAPPING_FRAME_READY &&
+	      receiver.pending_count != 0u,
+	      "new candidate either stalled confirmed data or leaked held control data");
+	return true;
+}
+
 static bool directions_are_equal(
 	const struct v34_data_direction_parameters *left,
 	const struct v34_data_direction_parameters *right)
@@ -1129,6 +1361,9 @@ int main(void)
 		  test_mp_transition_schedule },
 		{ "generated online exchange",
 		  test_generated_online_exchange },
+		{ "online rate renegotiation in either direction",
+		  test_online_rate_renegotiation },
+		{ "unconfirmed control frames retain data", test_control_frame_deferral },
 		{ "peer MP preserves local TRN schedule",
 		  test_peer_mp_preserves_trn_schedule },
 		{ "Phase 4 owns selected data rates",

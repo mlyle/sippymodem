@@ -41,12 +41,20 @@ bool v34_data_mode_is_valid(const struct v34_data_mode *mode);
  * transmitter: local transmission therefore follows the peer record, while
  * local reception follows the local record. Before the first startup MP,
  * precoder coefficients are zero; a Type 0 record leaves that zero state
- * unchanged. Retrain and rate-renegotiation updates need a separate API that
- * can retain an already active Type 0 precoder state. */
+ * unchanged. */
 enum v34_data_mode_result v34_data_mode_select_startup(
 	enum v34_station_role local_role,
 	const struct v34_mp_record *local_record,
 	const struct v34_mp_record *peer_record,
+	struct v34_data_mode *mode);
+
+/* An online Type 0 update leaves the active directional precoder unchanged;
+ * Type 1 replaces it. The destination may be the previous mode itself. */
+enum v34_data_mode_result v34_data_mode_select_update(
+	enum v34_station_role local_role,
+	const struct v34_mp_record *local_record,
+	const struct v34_mp_record *peer_record,
+	const struct v34_data_mode *previous,
 	struct v34_data_mode *mode);
 
 #endif /* V34_DATA_MODE_H */
