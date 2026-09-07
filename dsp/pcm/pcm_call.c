@@ -1091,13 +1091,17 @@ static struct v34_info0 v34_info0_from_v90(
 
 enum pcm_call_result pcm_call_v34_fallback_handoff(
 	const struct pcm_call *call,
-	struct v34_phase2_handoff *handoff)
+	struct v34_phase2_handoff *handoff,
+	struct v90_fallback_restart *restart)
 {
 	struct v34_phase2_handoff selected;
 	int16_t receive_gain;
 
-	if (!pcm_call_is_valid(call) || handoff == NULL ||
-	    memory_regions_overlap(call, sizeof(*call), handoff, sizeof(*handoff)))
+	if (!pcm_call_is_valid(call) || handoff == NULL || restart == NULL ||
+	    memory_regions_overlap(call, sizeof(*call), handoff, sizeof(*handoff)) ||
+	    memory_regions_overlap(call, sizeof(*call), restart, sizeof(*restart)) ||
+	    memory_regions_overlap(
+		    handoff, sizeof(*handoff), restart, sizeof(*restart)))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed || call->protocol != PCM_PROTOCOL_V90 ||
 	    call->local_role != V90_DIGITAL_MODEM ||
@@ -1120,6 +1124,63 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 	if (!v34_phase2_handoff_is_valid(&selected))
 		return PCM_CALL_UNUSABLE_SELECTION;
 	*handoff = selected;
+	*restart = (struct v90_fallback_restart){
+		.local_info0 = call->local_info0.digital,
+		.peer_info0 = call->peer_info0.analog,
+		.local_info1 = call->local_info1.digital,
+		.phase3 = call->phase3_configuration.digital,
+		.phase4 = call->digital_phase4_configuration,
+		.round_trip_delay_samples = call->round_trip_delay_samples,
+		.phase2_nominal_amplitude = call->phase2_nominal_amplitude,
+		.law = call->law,
+	};
+	return PCM_CALL_OK;
+}
+
+enum pcm_call_result pcm_call_init_from_v34(
+	struct pcm_call *call, const struct v90_fallback_restart *restart,
+	const struct v34_full_retrain *response)
+{
+	struct pcm_call initialized;
+	struct pcm_call_configuration configuration;
+	struct pcm_phase2 phase2;
+
+	if (call == NULL || restart == NULL ||
+	    !v34_full_retrain_is_valid(response) ||
+	    !v34_full_retrain_response_is_active(response) ||
+	    response->detector.tone.local_role != V34_CALLING_STATION ||
+	    memory_regions_overlap(call, sizeof(*call), restart, sizeof(*restart)) ||
+	    memory_regions_overlap(call, sizeof(*call), response, sizeof(*response)))
+		return PCM_CALL_INVALID_ARGUMENT;
+	configuration = (struct pcm_call_configuration){
+		.protocol = PCM_PROTOCOL_V90,
+		.local_role = V90_DIGITAL_MODEM,
+		.law = restart->law,
+		.enabled_downstream_rate_mask =
+			restart->phase3.jd.data_rate_capability_mask,
+		.phase2_nominal_amplitude = restart->phase2_nominal_amplitude,
+		.local_info0.digital = restart->local_info0,
+		.local_info1.digital = restart->local_info1,
+		.phase3.digital = restart->phase3,
+		.digital_phase4 = restart->phase4,
+	};
+	if (pcm_call_init(&initialized, &configuration) != PCM_CALL_OK)
+		return PCM_CALL_INVALID_ARGUMENT;
+	initialized.peer_info0.analog = restart->peer_info0;
+	initialized.peer_info0_stored = true;
+	initialized.round_trip_delay_samples = restart->round_trip_delay_samples;
+	initialized.round_trip_delay_stored = true;
+	/* Validate the retained INFO0 pair and ranging interval before accepting
+	 * ownership, not later at the end of the response silence. */
+	if (initialize_retrain_phase2(&initialized, &phase2) != PCM_PHASE2_OK)
+		return PCM_CALL_INVALID_ARGUMENT;
+	initialized.state = (union pcm_call_state){ 0 };
+	initialized.retrain = *response;
+	initialized.retrain_active = true;
+	initialized.stage = PCM_CALL_RETRAIN_SILENCE;
+	if (!pcm_call_is_valid(&initialized))
+		return PCM_CALL_INVALID_ARGUMENT;
+	*call = initialized;
 	return PCM_CALL_OK;
 }
 

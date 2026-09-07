@@ -4,7 +4,7 @@
 #define V90_DATAPUMP_H
 
 #include "training_session.h"
-#include "v34_phase2_selection.h"
+#include "pcm_call.h"
 
 #include <stdbool.h>
 
@@ -12,6 +12,7 @@ struct dp;
 
 struct v90_v34_fallback_handoff {
 	struct v34_phase2_handoff phase2;
+	struct v90_fallback_restart restart;
 	struct training_session training;
 };
 

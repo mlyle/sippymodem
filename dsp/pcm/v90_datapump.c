@@ -9,6 +9,7 @@
 #include "pcm_call.h"
 #include "training_session.h"
 #include "v34_data_quality.h"
+#include "v34_datapump.h"
 #include "v90_host_echo.h"
 #include "v90_info1.h"
 #include "v90_mp.h"
@@ -192,6 +193,7 @@ static struct dp *create_v90(
 	enum pcm_protocol protocol;
 	enum v90_modem_role role;
 	uint8_t maximum_pcm_upstream_data_rate_number = 0;
+	bool from_v34;
 
 	if (modem == NULL || !protocol_from_id(id, &protocol) ||
 	    (caller != 0 && caller != 1) ||
@@ -230,6 +232,18 @@ static struct dp *create_v90(
 		free(datapump->host_echo);
 		free(datapump);
 		return NULL;
+	}
+	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
+	if (from_v34) {
+		if (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
+		    !v34_datapump_pcm_retrain_handoff(
+			    modem->dp, &datapump->call, &datapump->training)) {
+			free(datapump->host_echo);
+			free(datapump);
+			return NULL;
+		}
+		datapump->media_law = datapump->call.law;
+		datapump->call_started = true;
 	}
 	datapump->dp = (struct dp){
 		.id = id,
@@ -568,7 +582,8 @@ static bool process_octet(
 		if (datapump->fallback_ready ||
 		    pcm_call_v34_fallback_handoff(
 			    &datapump->call,
-			    &datapump->fallback.phase2) != PCM_CALL_OK)
+			    &datapump->fallback.phase2,
+			    &datapump->fallback.restart) != PCM_CALL_OK)
 			return false;
 		datapump->fallback.training = datapump->training;
 		datapump->fallback_ready = true;

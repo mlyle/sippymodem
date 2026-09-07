@@ -3,6 +3,7 @@
 #include "v34_datapump.h"
 
 #include "datapump_timing.h"
+#include "memory_region.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "training_session.h"
@@ -35,11 +36,13 @@ struct v34_datapump {
 	struct v34_call call;
 	struct v34_data_quality data_quality;
 	struct training_session training;
+	struct v90_fallback_restart *pcm_restart;
 	uint32_t missing_carrier_samples;
 	uint16_t carrier_recovery_samples;
 	uint16_t rate_mask;
 	bool caller;
 	bool retrain_carrier_acquired;
+	bool pcm_retrain_pending;
 };
 
 static struct dp *create_v34(
@@ -134,6 +137,9 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 		    V34_CARRIER_RECOVERY_SAMPLES ||
 	    !v34_call_is_valid(&datapump->call) ||
 	    datapump->call.local_role != station_role(datapump->caller) ||
+	    (datapump->pcm_retrain_pending &&
+	     (datapump->pcm_restart == NULL ||
+	      datapump->call.stage != V34_CALL_RETRAIN_SILENCE)) ||
 	    (v34_call_has_failed(&datapump->call) &&
 	     !training_session_has_failed(&datapump->training)) ||
 	    (!training_session_has_failed(&datapump->training) &&
@@ -149,6 +155,25 @@ static struct v34_datapump *v34_from_dp(struct dp *dp)
 	     !training_session_is_retraining(&datapump->training)))
 		return NULL;
 	return datapump;
+}
+
+bool v34_datapump_pcm_retrain_handoff(
+	struct dp *dp, struct pcm_call *call, struct training_session *training)
+{
+	struct v34_datapump *datapump = v34_from_dp(dp);
+
+	if (datapump == NULL || call == NULL || training == NULL ||
+	    !datapump->pcm_retrain_pending ||
+	    memory_regions_overlap(datapump, sizeof(*datapump), call, sizeof(*call)) ||
+	    memory_regions_overlap(
+		    datapump, sizeof(*datapump), training, sizeof(*training)) ||
+	    memory_regions_overlap(call, sizeof(*call), training, sizeof(*training)) ||
+	    pcm_call_init_from_v34(
+		    call, datapump->pcm_restart, &datapump->call.retrain) !=
+		    PCM_CALL_OK)
+		return false;
+	*training = datapump->training;
+	return true;
 }
 
 static struct dp *create_v34(
@@ -212,6 +237,14 @@ static struct dp *create_v34(
 		free(datapump);
 		return NULL;
 	}
+	if (from_v90) {
+		datapump->pcm_restart = malloc(sizeof(*datapump->pcm_restart));
+		if (datapump->pcm_restart == NULL) {
+			free(datapump);
+			return NULL;
+		}
+		*datapump->pcm_restart = fallback.restart;
+	}
 	datapump->dp = (struct dp){
 		.id = id,
 		.modem = modem,
@@ -231,6 +264,7 @@ static int delete_v34(struct dp *dp)
 		return -1;
 	v34_operations.use_count--;
 	datapump->dp.dp_data = NULL;
+	free(datapump->pcm_restart);
 	free(datapump);
 	return 0;
 }
@@ -656,6 +690,18 @@ static int process_v34(
 	} else if (training_session_is_retraining(&datapump->training) &&
 		   !datapump->retrain_carrier_acquired) {
 		note_missing_carrier(datapump, count);
+	}
+	if (datapump->pcm_restart != NULL &&
+	    datapump->call.stage == V34_CALL_RETRAIN_SILENCE) {
+		/* The first media block already consumed part of the shared 70 ms
+		 * response. Transfer that exact epoch into V.90 Phase 2. */
+		if (modem_set_param(
+			    datapump->dp.modem, MDMPRM_DP_REQUESTED, DP_V90) != 0) {
+			fail_training(datapump);
+			return DPSTAT_ERROR;
+		}
+		datapump->pcm_retrain_pending = true;
+		return DPSTAT_CHANGEDP;
 	}
 	if (connected)
 		return DPSTAT_CONNECT;

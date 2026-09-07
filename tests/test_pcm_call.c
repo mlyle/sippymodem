@@ -5046,6 +5046,126 @@ static bool test_v92_validation(void)
 	return true;
 }
 
+static bool check_v34_restart(enum g711_law law, bool remote)
+{
+	const struct pcm_call_configuration selected =
+		configuration(V90_DIGITAL_MODEM, law);
+	struct v90_fallback_restart restart = {
+		.local_info0 = selected.local_info0.digital,
+		.peer_info0 = analog_info0(),
+		.local_info1 = selected.local_info1.digital,
+		.phase3 = selected.phase3.digital,
+		.phase4 = selected.digital_phase4,
+		.round_trip_delay_samples = 800u,
+		.phase2_nominal_amplitude = selected.phase2_nominal_amplitude,
+		.law = law,
+	};
+	struct v34_full_retrain response;
+	struct v34_phase2_tone_transmitter peer;
+	struct pcm_call call;
+	struct pcm_call before;
+	bool detected = false;
+
+	CHECK(v34_full_retrain_init(&response, V34_CALLING_STATION) ==
+		      V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &peer, V34_ANSWERING_STATION, PHASE2_NOMINAL_AMPLITUDE) ==
+		      V34_PHASE2_TONE_OK,
+	      "fallback retrain response did not initialize");
+	if (remote) {
+		for (size_t index = 0; index < 2000u && !detected; ++index) {
+			int16_t received = 0;
+
+			if (index >= V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES)
+				CHECK(v34_phase2_tone_transmitter_sample(&peer, &received) ==
+					      V34_PHASE2_TONE_OK,
+				      "fallback peer tone failed");
+			CHECK(v34_retrain_detector_sample(
+				      &response.detector, received, &detected) ==
+				      V34_PHASE2_TONE_OK,
+			      "fallback peer request failed");
+		}
+		CHECK(detected, "fallback peer request was not detected");
+	}
+	CHECK(v34_full_retrain_begin_response(&response, remote) ==
+		      V34_PHASE2_TONE_OK,
+	      "fallback retrain did not begin");
+	/* A datapump switch happens at the next media-block boundary, not at
+	 * the exact sample that recognizes the peer or starts local ATO1. */
+	for (size_t index = 0; index < 79u; ++index) {
+		enum v34_full_retrain_response_event event;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_full_retrain_sample_response(&response, sample, &event) ==
+			      V34_PHASE2_TONE_OK &&
+		      event == V34_FULL_RETRAIN_RESPONSE_CONTINUES,
+		      "fallback block consumed the entire response");
+	}
+	CHECK(pcm_call_init_from_v34(&call, &restart, &response) == PCM_CALL_OK &&
+	      call.stage == PCM_CALL_RETRAIN_SILENCE && call.retrain_active &&
+	      memcmp(&call.retrain, &response, sizeof(response)) == 0 &&
+	      memcmp(&call.local_info0.digital, &restart.local_info0,
+		     sizeof(restart.local_info0)) == 0 &&
+	      memcmp(&call.peer_info0.analog, &restart.peer_info0,
+		     sizeof(restart.peer_info0)) == 0,
+	      "fallback lost its V.90 agreement or restarted the silence");
+	before = call;
+	restart.law = (enum g711_law)99;
+	CHECK(pcm_call_init_from_v34(&call, &restart, &response) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &before, sizeof(call)) == 0,
+	      "invalid fallback media changed the call");
+	restart.law = law;
+	restart.round_trip_delay_samples = UINT16_MAX;
+	CHECK(pcm_call_init_from_v34(&call, &restart, &response) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_init_from_v34(NULL, &restart, &response) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_init_from_v34(&call, NULL, &response) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_init_from_v34(&call, &restart, NULL) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_init_from_v34(&call, &restart, &call.retrain) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &before, sizeof(call)) == 0,
+	      "invalid fallback ranging or alias changed the call");
+	for (size_t index = 0; index < 481u; ++index) {
+		struct pcm_call_observation observed;
+		enum v34_full_retrain_response_event event;
+		uint8_t transmitted;
+		int16_t sample;
+
+		CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_full_retrain_sample_response(&response, sample, &event) ==
+			      V34_PHASE2_TONE_OK &&
+		      pcm_call_octet(&call, encode_octet(law, sample), sample,
+				     &transmitted, &observed) == PCM_CALL_OK &&
+		      transmitted == silence_octet(law) &&
+		      (call.stage == PCM_CALL_PHASE2) == (index == 480u),
+		      "fallback silence changed at sample %zu", index);
+	}
+	CHECK(call.protocol == PCM_PROTOCOL_V90 &&
+	      call.state.phase2.info0_protocol == PCM_PROTOCOL_V90 &&
+	      call.state.phase2.local_role == V90_DIGITAL_MODEM &&
+	      call.round_trip_delay_samples == 800u &&
+	      (!remote || memcmp(
+		      &call.state.phase2.state.ranging.info0_exchange.transport.tone_detector,
+		      &response.detector.tone, sizeof(response.detector.tone)) == 0),
+	      "fallback retrained as V.34 or lost the peer tone");
+	return true;
+}
+
+static bool test_v34_restart(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(check_v34_restart(law, false) && check_v34_restart(law, true),
+		      "fallback restart failed for law %u", (unsigned int)law);
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -5085,6 +5205,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.34 fallback retains V.90 retrain agreement", test_v34_restart },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },

@@ -2773,19 +2773,23 @@ V92_PROFILE_TEST_OBJECTS := $(sort \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
 		$(PCM_CALL_TEST_OBJECTS)))
 V90_DATAPUMP_TEST_BINARY := $(BUILD_DIR)/test_v90_datapump
-V90_DATAPUMP_TEST_OBJECTS := $(sort \
+V90_DATAPUMP_TEST_OBJECTS = $(sort \
 	$(BUILD_DIR)/dc_remover.o \
 	$(BUILD_DIR)/modem_stubs.o \
 	$(BUILD_DIR)/test_v90_datapump.o \
 	$(BUILD_DIR)/training_session.o \
 	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/v34_rate_profile.o \
+	$(BUILD_DIR)/v34_datapump.o \
+	$(BUILD_DIR)/v34_profile.o \
 	$(BUILD_DIR)/v90_datapump.o \
 	$(BUILD_DIR)/v90_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
 	$(BUILD_DIR)/v92_profile.o \
+	$(filter-out $(BUILD_DIR)/test_v34_call.o, \
+		$(V34_CALL_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_pcm_call.o, \
 		$(PCM_CALL_TEST_OBJECTS)))
 V34_PHASE2_DPSK_TEST_BINARY := \

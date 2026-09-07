@@ -2,6 +2,8 @@
 
 #include <v90_datapump.h>
 #include <v90_profile.h>
+#include <v34_datapump.h>
+#include <v34_call.h>
 
 #include <dc_remover.h>
 #include <g711.h>
@@ -61,6 +63,14 @@ struct bit_endpoint {
 
 static struct dp_operations *registered_v90;
 static struct dp_operations *registered_v92;
+static struct dp_operations *registered_v34;
+
+/* This direct datapump bench bypasses V.8 entirely. */
+bool v8_datapump_selected_v34_fallback(struct dp *dp)
+{
+	(void)dp;
+	return false;
+}
 
 int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
 {
@@ -70,6 +80,8 @@ int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
 		registered = &registered_v90;
 	else if (id == DP_V92)
 		registered = &registered_v92;
+	else if (id == DP_V34)
+		registered = &registered_v34;
 	else
 		return -1;
 	if (operations == NULL || *registered != NULL)
@@ -86,6 +98,8 @@ int modem_dp_deregister(enum DP_ID id, struct dp_operations *operations)
 		registered = &registered_v90;
 	else if (id == DP_V92)
 		registered = &registered_v92;
+	else if (id == DP_V34)
+		registered = &registered_v34;
 	else
 		return -1;
 	if (operations == NULL || *registered != operations ||
@@ -101,6 +115,8 @@ struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 		return registered_v90;
 	if (id == DP_V92)
 		return registered_v92;
+	if (id == DP_V34)
+		return registered_v34;
 	return NULL;
 }
 
@@ -130,6 +146,8 @@ long modem_set_param(struct modem *modem, unsigned int name, int value)
 		modem->tx_rate = (unsigned int)value;
 	else if (name == MDMPRM_RX_RATE)
 		modem->rx_rate = (unsigned int)value;
+	else if (name == MDMPRM_DP_REQUESTED)
+		modem->dp_requested = value;
 	else
 		return -1;
 	return 0;
@@ -1140,12 +1158,265 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool fallback_source(
+	void *context, const struct v34_mapping_frame *request,
+	uint8_t *primary_bits, uint8_t *auxiliary_bit)
+{
+	struct modem *modem = context;
+
+	memset(primary_bits, 1, request->primary_bits);
+	if (source_bits(modem, 1, primary_bits, (int)request->primary_bits) < 0)
+		return false;
+	if (auxiliary_bit != NULL)
+		*auxiliary_bit = 1;
+	return true;
+}
+
+static bool run_fallback_restart(enum g711_law law, bool remote)
+{
+	enum { BLOCK = MODEM_FRAG };
+	struct bit_endpoint digital_bits = { .transmit_seed = 7, .receive_seed = 19 };
+	struct bit_endpoint analog_bits = { .transmit_seed = 19, .receive_seed = 7 };
+	struct modem digital = endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &digital_bits);
+	struct modem analog = endpoint_modem(MODEM_PCM_ROLE_ANALOG, &analog_bits);
+	struct pcm_call_configuration configuration;
+	struct v90_upstream_policy upstream = {
+		.minimum_bit_rate = 4800, .maximum_bit_rate = 28800,
+		.maximum_symbol_rate = 3000,
+	};
+	struct pcm_call peer;
+	struct v34_call conventional;
+	struct v34_phase2_info_audio_transmitter info1a;
+	struct dc_remover frontend;
+	uint8_t to_digital[BLOCK];
+	uint8_t to_analog[BLOCK];
+	int16_t input[BLOCK];
+	int16_t output[BLOCK];
+	bool substituted = false;
+	bool info1a_complete = false;
+	bool fallback = false;
+	bool retrain = false;
+	bool returned = false;
+	bool peer_returned = false;
+	unsigned int warmup = 0;
+	unsigned int phases = 0;
+	int16_t peer_gain = 0;
+
+	digital.min_rate = 28000;
+	digital.max_rate = 56000;
+	digital.v90_upstream_min_rate = 4800;
+	digital.v90_upstream_max_rate = 28800;
+	digital.v90_upstream_max_baud = 3000;
+	CHECK(v90_profile_init(&configuration, V90_ANALOG_MODEM, law,
+			       28000, 56000, &upstream) == V90_PROFILE_OK,
+	      "fallback peer profile did not initialize");
+	/* This peer also implements the conventional rates offered in INFO1d. */
+	configuration.local_info0.analog.symbol_rate_2800_supported = true;
+	CHECK(pcm_call_init(&peer, &configuration) == PCM_CALL_OK &&
+	      dc_remover_init(&frontend) == DC_REMOVER_OK,
+	      "fallback peer did not initialize");
+	digital.dp = registered_v90->create(
+		&digital, DP_V90, 0, MODEM_RATE, MODEM_FRAG, registered_v90);
+	CHECK(digital.dp != NULL, "fallback digital datapump did not initialize");
+	memset(to_digital, encode(law, 0), sizeof(to_digital));
+	for (size_t clock = 0; clock < 4u * CALL_OCTET_LIMIT; clock += BLOCK) {
+		struct dp *dp = digital.dp;
+		bool exact = false;
+		int result;
+
+		for (size_t index = 0; index < BLOCK; ++index)
+			input[index] = decode(law, to_digital[index]);
+		CHECK(dc_remover_process(&frontend, input, BLOCK) == DC_REMOVER_OK,
+		      "fallback receive conditioning failed");
+		if (dp->id == DP_V90)
+			result = dp->op->process_g711(dp, law, to_digital, input,
+						   to_analog, output, BLOCK, &exact);
+		else {
+			result = dp->op->process(dp, input, output, BLOCK);
+			for (size_t index = 0; index < BLOCK; ++index)
+				to_analog[index] = encode(law, output[index]);
+		}
+		CHECK(result == DPSTAT_OK || result == DPSTAT_CONNECT ||
+		      result == DPSTAT_CHANGEDP,
+		      "fallback datapump failed at %zu (id=%d status=%d)",
+		      clock, dp->id, result);
+		if (result == DPSTAT_CHANGEDP) {
+			struct dp *next;
+
+			if (!fallback) {
+				struct v90_v34_fallback_handoff handoff;
+				struct v34_call_configuration v34_configuration;
+				struct v34_info0 digital_info0;
+				uint16_t mask;
+
+				CHECK(digital.dp_requested == DP_V34 &&
+				      v90_datapump_v34_fallback_handoff(dp, &handoff),
+				      "V.90 did not export its fallback agreement");
+				/* The peer uses the same INFO0 capabilities retained in
+				 * the digital handoff, with the station roles reversed. */
+				digital_info0 = handoff.phase2.local_info0;
+				handoff.phase2.local_info0 = handoff.phase2.peer_info0;
+				handoff.phase2.peer_info0 = digital_info0;
+				handoff.phase2.local_role = V34_ANSWERING_STATION;
+				handoff.phase2.receive_gain = peer_gain;
+				CHECK(v34_profile_init(&v34_configuration, &mask,
+						       V34_ANSWERING_STATION, 2400, 28800, 0) ==
+					      V34_PROFILE_OK &&
+				      v34_call_init_from_phase2(&conventional,
+							 &v34_configuration, &handoff.phase2) ==
+					      V34_CALL_OK,
+				      "fallback conventional peer did not initialize");
+				fallback = true;
+			} else {
+				CHECK(retrain && digital.dp_requested == DP_V90,
+				      "fallback retrain did not return to V.90");
+				returned = true;
+			}
+			next = modem_dp_get_registered_ops(digital.dp_requested)->create(
+				&digital, digital.dp_requested, 0, MODEM_RATE, MODEM_FRAG,
+				modem_dp_get_registered_ops(digital.dp_requested));
+			CHECK(next != NULL, "fallback owner transfer failed");
+			digital.dp = next;
+			CHECK(dp->op->delete(dp) == 0, "fallback owner was not released");
+		}
+		for (size_t index = 0; index < BLOCK; ++index) {
+			int16_t sample = decode(law, to_analog[index]);
+			uint8_t generated = encode(law, 0);
+
+			if (fallback && !peer_returned) {
+				struct v34_call_observation observation;
+				struct v34_received_mapping_frame frame;
+				int16_t transmit;
+
+				CHECK(v34_call_sample(&conventional, sample, fallback_source,
+						     &analog, &transmit, &observation, &frame) ==
+					      V34_CALL_OK,
+				      "conventional fallback peer failed at %zu", clock + index);
+				generated = encode(law, transmit);
+				if (observation.processed == V34_CALL_PHASE4 &&
+				    (observation.events.phase4 &
+				     V34_PHASE4_EXCHANGE_EVENT_MAPPING_FRAME_RECEIVED))
+					CHECK(sink_bits(&analog, 1, frame.primary_bits,
+							(int)frame.primary_bit_count) >= 0,
+					      "fallback peer data failed");
+				if (conventional.stage == V34_CALL_RETRAIN_SILENCE) {
+					CHECK(pcm_call_start_retrain(&peer) == PCM_CALL_OK,
+					      "fallback peer could not resume V.90");
+					/* Test peer follows V.90 9.2.2.1.9: the accepted
+					 * shared response enters PCM, not V.34, Phase 2. */
+					peer.retrain = conventional.retrain;
+					peer_returned = true;
+				}
+			} else {
+				struct pcm_call_observation observation;
+
+				if (pcm_call_phase4_is_ready(&peer))
+					CHECK(pcm_call_start_data_path(&peer) == PCM_CALL_OK,
+					      "fallback peer PCM data did not start");
+				if (peer.stage == PCM_CALL_DATA_PATH) {
+					struct pcm_call_data_sources sources = {
+						.upstream = fallback_source, .upstream_context = &analog,
+					};
+					struct pcm_call_data_event event;
+
+					CHECK(pcm_call_data_octet(&peer, to_analog[index], sample,
+								 &sources, &generated, &event) == PCM_CALL_OK,
+					      "fallback peer PCM data failed");
+					if (event.kind == PCM_CALL_DOWNSTREAM_FRAME)
+						CHECK(sink_bits(&analog, 1, event.frame.downstream.bits,
+								(int)event.frame.downstream.bit_count) >= 0,
+						      "fallback peer PCM payload failed");
+				} else {
+					CHECK(pcm_call_octet(&peer, to_analog[index], sample,
+							    &generated, &observation) == PCM_CALL_OK,
+					      "fallback peer PCM training failed at %zu", clock + index);
+					if (!substituted && observation.phase2.kind ==
+						    PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+						const struct v34_info1a selected = {
+							.call_transmit = { .high_carrier = true,
+								.projected_data_rate_2400_bps_units = 12 },
+							.answer_to_call_symbol_rate = V34_SYMBOL_RATE_3000,
+							.call_to_answer_symbol_rate = V34_SYMBOL_RATE_3000,
+						};
+						uint8_t payload[V34_INFO1A_PAYLOAD_BYTES];
+
+						CHECK(pcm_phase2_receive_gain(&peer.state.phase2, &peer_gain) ==
+							      PCM_PHASE2_OK &&
+						      v34_info1a_encode(&selected, payload, sizeof(payload)) ==
+							      V34_INFO1_OK &&
+						      v34_phase2_info_audio_transmitter_init(&info1a,
+							      V34_ANSWERING_STATION,
+							      configuration.phase2_nominal_amplitude,
+							      payload, V34_INFO1A_PAYLOAD_BITS) ==
+							      V34_PHASE2_INFO_AUDIO_OK,
+						      "fallback INFO1a fixture did not initialize");
+						substituted = true;
+					}
+				}
+				if (substituted && !fallback) {
+					int16_t transmit = 0;
+
+					if (!info1a_complete)
+						CHECK(v34_phase2_info_audio_transmitter_sample(
+							      &info1a, &transmit, &info1a_complete) ==
+							      V34_PHASE2_INFO_AUDIO_OK,
+						      "fallback INFO1a transmitter failed");
+					generated = encode(law, transmit);
+				}
+			}
+			to_digital[index] = generated;
+		}
+		if (fallback && digital.dp->status == DPSTAT_CONNECT &&
+		    (returned ? pcm_call_is_online(&peer) : v34_call_is_online(&conventional))) {
+			warmup += BLOCK;
+			if (warmup >= 1600u)
+				digital_bits.enabled = analog_bits.enabled = true;
+		}
+		CHECK(!digital_bits.mismatch && !analog_bits.mismatch,
+		      "fallback payload mismatch at %zu (phase=%u bits=%llu/%llu)",
+		      clock, phases, (unsigned long long)digital_bits.received_bits,
+		      (unsigned long long)analog_bits.received_bits);
+		if (digital_bits.received_bits >= SUSTAINED_RECEIVED_BITS &&
+		    analog_bits.received_bits >= SUSTAINED_RECEIVED_BITS) {
+			if (++phases == 2u)
+				break;
+			digital_bits = (struct bit_endpoint){ .transmit_seed = 31, .receive_seed = 43 };
+			analog_bits = (struct bit_endpoint){ .transmit_seed = 43, .receive_seed = 31 };
+			warmup = 0;
+			retrain = true;
+			CHECK(remote ? v34_call_start_retrain(&conventional) == V34_CALL_OK :
+				       digital.dp->op->retrain(digital.dp) == 0,
+			      "fallback ATO1 did not start");
+		}
+	}
+	CHECK(phases == 2u && returned && peer_returned &&
+	      digital.dp->id == DP_V90 && digital.tx_rate > 33600,
+	      "fallback did not restore PCM data (phases=%u returned=%d/%d)",
+	      phases, returned, peer_returned);
+	CHECK(digital.dp->op->delete(digital.dp) == 0,
+	      "fallback final owner was not released");
+	return true;
+}
+
+static bool test_fallback_restart(void)
+{
+	CHECK(v90_datapump_register() == 0 && v34_datapump_register() == 0,
+	      "fallback datapumps did not register");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_fallback_restart(law, false) && run_fallback_restart(law, true),
+		      "fallback retrain failed for law %u", (unsigned int)law);
+	CHECK(v90_datapump_unregister() == 0 && v34_datapump_unregister() == 0,
+	      "fallback datapumps leaked ownership");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.90 retrain after V.34 fallback", test_fallback_restart },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "long-delay upstream channel",
 		  test_delayed_upstream_channel },

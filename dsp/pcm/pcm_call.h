@@ -119,6 +119,20 @@ struct pcm_call_configuration {
 	struct pcm_call_v92_digital_phase4_configuration v92_digital_phase4;
 };
 
+/* V.90 9.2.1.1.8 retains V.90 Phase 2 for subsequent retrains even when
+ * INFO1a selects V.34 data. Keep only the digital call agreement, not the
+ * retired PCM training/data graph, with the conventional owner. */
+struct v90_fallback_restart {
+	struct v90_info0d local_info0;
+	struct v90_info0 peer_info0;
+	struct v34_info1c local_info1;
+	struct pcm_call_digital_phase3_configuration phase3;
+	struct pcm_call_digital_phase4_configuration phase4;
+	uint16_t round_trip_delay_samples;
+	int16_t phase2_nominal_amplitude;
+	enum g711_law law;
+};
+
 union pcm_call_phase3_state {
 	struct v90_phase3_analog_station analog;
 	struct v90_phase3_digital_station digital;
@@ -301,7 +315,16 @@ enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
  * consuming a line character. Rejected calls leave the handoff unchanged. */
 enum pcm_call_result pcm_call_v34_fallback_handoff(
 	const struct pcm_call *call,
-	struct v34_phase2_handoff *handoff);
+	struct v34_phase2_handoff *handoff,
+	struct v90_fallback_restart *restart);
+
+/* Resume the original V.90 digital agreement after V.34 data. The shared
+ * retrain detector/response is transferred at a media-block boundary, so
+ * neither its remaining silence nor an accepted peer tone is restarted.
+ * Rejected calls leave the destination unchanged. */
+enum pcm_call_result pcm_call_init_from_v34(
+	struct pcm_call *call, const struct v90_fallback_restart *restart,
+	const struct v34_full_retrain *response);
 
 /* Consume and produce one simultaneous 8 ksymbol/s G.711 character.
  * `received_octet` retains exact PCM codeword semantics while
