@@ -1567,6 +1567,78 @@ static bool initial_info1_marks_request_retrain(
 	return true;
 }
 
+static bool info1_retrain_preamble_crosses_deadline(
+	const struct pcm_call *initial, enum g711_law law)
+{
+	struct pcm_call call = *initial;
+	struct v34_phase2_tone_transmitter peer_tone;
+	bool before_deadline = false;
+	bool recovered = false;
+	bool responded = false;
+
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &peer_tone, call.local_role == V90_DIGITAL_MODEM ?
+			      V34_ANSWERING_STATION : V34_CALLING_STATION,
+		      PHASE2_NOMINAL_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "INFO1 boundary peer tone did not initialize");
+	/* The peer's silence arrives while INFO1 is still outstanding. Begin
+	 * its tone just before the local deadline, without seeding a detector. */
+	for (size_t sample = 0; sample < CALL_SAMPLE_LIMIT; ++sample) {
+		const struct phase2_info1_exchange *exchange =
+			&call.state.phase2.state.info1.control;
+		uint32_t deadline = call.local_role == V90_DIGITAL_MODEM ?
+			(uint32_t)PHASE2_INFO1_SIGNAL_B_WAIT_BASE_SAMPLES +
+				exchange->round_trip_delay_samples :
+			PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
+				2u * exchange->round_trip_delay_samples;
+		struct pcm_call_observation observation;
+		uint8_t received = silence_octet(law);
+		uint8_t transmitted;
+
+		if (exchange->phase == PHASE2_INFO1_WAITING_FOR_PEER &&
+		    deadline - exchange->peer_deadline_elapsed_samples ==
+			    V34_PHASE2_TONE_ACQUIRE_SAMPLES / 2u) {
+			before_deadline = true;
+			break;
+		}
+		CHECK(pcm_call_octet(
+			      &call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK &&
+		      call_is_in_info1_exchange(&call),
+		      "INFO1 boundary silence failed at %zu", sample);
+	}
+	CHECK(before_deadline, "INFO1 boundary deadline was not reached");
+	for (size_t sample = 0;
+	     sample < V34_RETRAIN_TONE_SAMPLES +
+			      2u * V34_PHASE2_TONE_WINDOW_SAMPLES; ++sample) {
+		struct pcm_call_observation observation;
+		int16_t remote_sample;
+		uint8_t received;
+		uint8_t transmitted;
+
+		CHECK(v34_phase2_tone_transmitter_sample(
+			      &peer_tone, &remote_sample) == V34_PHASE2_TONE_OK,
+		      "INFO1 boundary tone failed at %zu", sample);
+		received = encode_octet(law, remote_sample);
+		CHECK(pcm_call_octet(
+			      &call, received, decode_octet(law, received),
+			      &transmitted, &observation) == PCM_CALL_OK,
+		      "INFO1 boundary call failed at %zu", sample);
+		recovered |= observation.phase2.kind ==
+			PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED;
+		if (call.stage == PCM_CALL_RETRAIN_SILENCE) {
+			responded = true;
+			break;
+		}
+	}
+	CHECK(recovered && responded && call.retrain_active &&
+	      call.retrain.peer_tone_retained && pcm_call_is_valid(&call),
+	      "law %u role %u lost pre-timeout silence: recovery=%d response=%d",
+	      (unsigned int)law, (unsigned int)initial->local_role,
+	      recovered, responded);
+	return true;
+}
+
 static bool check_initial_info1_retrain_tone(enum g711_law law)
 {
 	struct channel channel;
@@ -1605,6 +1677,10 @@ static bool check_initial_info1_retrain_tone(enum g711_law law)
 	}
 	CHECK(stored[0] && stored[1],
 	      "law %u initial INFO1 calls were not retained",
+	      (unsigned int)law);
+	CHECK(info1_retrain_preamble_crosses_deadline(&retained[0], law) &&
+	      info1_retrain_preamble_crosses_deadline(&retained[1], law),
+	      "law %u INFO1 deadline lost the peer's retrain preamble",
 	      (unsigned int)law);
 	marks = retained[1];
 	CHECK(initial_info1_marks_request_retrain(&marks, law) &&

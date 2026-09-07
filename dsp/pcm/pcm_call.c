@@ -1462,11 +1462,17 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 	 * Waiting for online data would ignore a peer's Phase 4 retrain request. */
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return true;
+	/* Observe the preamble while INFO1 is outstanding, not just after its
+	 * timeout. The peer's silence can precede the recovery boundary while
+	 * its Tone A/B continues across it (V.90 9.2.1.2.6). Retain the shared
+	 * detector's complete silence/tone qualification in both phases. */
 	return call->protocol == PCM_PROTOCOL_V90 &&
 	       call->stage == PCM_CALL_PHASE2 &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
-	       call->state.phase2.state.info1.control.phase ==
-		       PHASE2_INFO1_RECOVERING;
+	       (call->state.phase2.state.info1.control.phase ==
+			PHASE2_INFO1_WAITING_FOR_PEER ||
+		call->state.phase2.state.info1.control.phase ==
+			PHASE2_INFO1_RECOVERING);
 }
 
 static enum pcm_call_result sample_retrain_detector(
