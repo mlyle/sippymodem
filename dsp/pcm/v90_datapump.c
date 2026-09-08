@@ -416,10 +416,12 @@ static bool source_upstream_frame(
 	return true;
 }
 
-static bool source_downstream_frame(
+static bool source_pcm_frame(
 	void *context, uint8_t *bits, size_t bit_count)
 {
-	if (bit_count == 0 || bit_count > V90_PCM_FRAME_MAX_BITS)
+	/* Downstream and V.92 upstream use the same host-bit contract, despite
+	 * their different six- and twelve-symbol mapping frames. */
+	if (bit_count == 0 || bit_count > V92_PCM_MAPPING_MAX_BITS)
 		return false;
 	return fill_source_bits(context, bits, bit_count);
 }
@@ -460,6 +462,14 @@ static bool deliver_event(
 		return deliver_bits(
 			datapump, event->frame.downstream.bits,
 			event->frame.downstream.bit_count);
+	}
+	if (event->kind == PCM_CALL_PCM_UPSTREAM_FRAME) {
+		const struct v92_upstream_data_frame *frame = &event->frame.pcm_upstream;
+
+		if (datapump->protocol != PCM_PROTOCOL_V92 ||
+		    datapump->role != V90_DIGITAL_MODEM || frame->b1u || frame->ambiguous)
+			return false;
+		return deliver_bits(datapump, frame->bits, frame->bit_count);
 	}
 	if (event->kind != PCM_CALL_UPSTREAM_FRAME ||
 	    datapump->role != V90_DIGITAL_MODEM ||
@@ -566,8 +576,10 @@ static bool process_octet(
 	struct pcm_call_data_sources sources = {
 		.upstream = source_upstream_frame,
 		.upstream_context = datapump,
-		.downstream = source_downstream_frame,
+		.downstream = source_pcm_frame,
 		.downstream_context = datapump,
+		.pcm_upstream = source_pcm_frame,
+		.pcm_upstream_context = datapump,
 	};
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;
@@ -579,11 +591,7 @@ static bool process_octet(
 	 * network character. */
 	if (datapump->call.stage == PCM_CALL_PHASE4 &&
 	    pcm_call_phase4_is_ready(&datapump->call) &&
-	    /* PCM-upstream frame I/O exists in the call owner, but this host
-	     * adapter still supplies and consumes conventional upstream frames.
-	     * Do not announce CONNECT with an unwired PCM host-bit path. */
-	    (datapump->protocol != PCM_PROTOCOL_V90 ||
-	     pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK))
+	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet_owned(

@@ -443,7 +443,8 @@ static bool test_training_cleardown(void)
 	return true;
 }
 
-static bool run_pair_with_rate_window(
+static bool run_pcm_pair(
+	enum DP_ID protocol, uint8_t pcm_upstream_max_drn,
 	enum g711_law law,
 	uint32_t downstream_rate,
 	uint32_t upstream_min_rate, uint32_t upstream_max_rate,
@@ -470,7 +471,7 @@ static bool run_pair_with_rate_window(
 		MODEM_PCM_ROLE_DIGITAL, &digital_bits);
 	struct dc_remover digital_frontend;
 	struct dp_operations *operations =
-		modem_dp_get_registered_ops(DP_V90);
+		modem_dp_get_registered_ops(protocol);
 	struct dp *analog_dp;
 	struct dp *digital_dp;
 	uint8_t analog_to_digital = law == G711_LAW_PCMA ?
@@ -496,6 +497,12 @@ static bool run_pair_with_rate_window(
 	size_t upstream_history_write = 0;
 	size_t upstream_history_fill = 0;
 
+	if (protocol == DP_V92) {
+		analog.sregs[SREG_V92_PCM_UPSTREAM] = 1;
+		digital.sregs[SREG_V92_PCM_UPSTREAM] = 1;
+		analog.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = pcm_upstream_max_drn;
+		digital.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = pcm_upstream_max_drn;
+	}
 	analog.min_rate = downstream_rate;
 	analog.max_rate = downstream_rate;
 	digital.min_rate = downstream_rate;
@@ -513,9 +520,9 @@ static bool run_pair_with_rate_window(
 	CHECK(dc_remover_init(&digital_frontend) == DC_REMOVER_OK,
 	      "V.90 digital receive front end did not initialize");
 	analog_dp = operations->create(
-		&analog, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
+		&analog, protocol, 1, MODEM_RATE, MODEM_FRAG, operations);
 	digital_dp = operations->create(
-		&digital, DP_V90, 0, MODEM_RATE, MODEM_FRAG, operations);
+		&digital, protocol, 0, MODEM_RATE, MODEM_FRAG, operations);
 	CHECK(analog_dp != NULL && digital_dp != NULL &&
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
@@ -740,7 +747,7 @@ static bool run_pair_with_rate_window(
 	      "retrain response did not exercise the complete tone dropout");
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
-	{
+	if (protocol == DP_V90) {
 		uint64_t analog_supplied = analog_bits.supplied_bits;
 		uint64_t digital_supplied = digital_bits.supplied_bits;
 
@@ -748,12 +755,35 @@ static bool run_pair_with_rate_window(
 		      analog_supplied == analog_bits.supplied_bits &&
 		      digital_supplied == digital_bits.supplied_bits,
 		      "V.90 cleardown consumed new host payload");
+	} else {
+		/* V.92 Amd.1 9.11 specifies zero-rate CPu/CPd, not V.90 CP/MP.
+		 * Keep unsupported cleardown explicit until that exchange lands. */
+		CHECK(operations->hangup(analog_dp) != 0 &&
+		      operations->hangup(digital_dp) != 0,
+		      "V.92 incorrectly accepted a conventional cleardown");
 	}
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      operations->use_count == 0 && !v90_datapump_is_busy(),
 	      "V.90 data pumps did not release their call state");
 	return true;
+}
+
+static bool run_pair_with_rate_window(
+	enum g711_law law, uint32_t downstream_rate,
+	uint32_t upstream_min_rate, uint32_t upstream_max_rate,
+	uint32_t expected_upstream_rate, uint32_t upstream_symbol_rate,
+	uint64_t minimum_received_bits,
+	bool require_online, enum modem_pcm_role retrain_role,
+	bool separate_upstream_sample, uint16_t digital_receive_gain_q15,
+	enum returned_echo_mode echo_mode,
+	enum upstream_channel_mode upstream_channel)
+{
+	return run_pcm_pair(DP_V90, 0, law, downstream_rate,
+		upstream_min_rate, upstream_max_rate, expected_upstream_rate,
+		upstream_symbol_rate, minimum_received_bits, require_online, retrain_role,
+		separate_upstream_sample, digital_receive_gain_q15, echo_mode,
+		upstream_channel);
 }
 
 static bool test_upstream_quality_recovery(void)
@@ -1213,8 +1243,7 @@ static bool test_v92_pcm_upstream_selection(void)
 	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92 &&
 	      operations->use_count == 2,
 	      "V.92 PCM-upstream peers did not share the PCM call owner");
-	bool stopped = false;
-	for (size_t index = 0; index < 120000u; ++index) {
+	for (size_t index = 0; index < MODEM_FRAG * 2u; ++index) {
 		uint8_t next_analog;
 		uint8_t next_digital;
 		int16_t analog_received = g711_decode_pcmu(digital_to_analog);
@@ -1236,26 +1265,41 @@ static bool test_v92_pcm_upstream_selection(void)
 			      &digital_to_analog, &analog_received,
 			      &next_analog, &analog_transmitted, 1,
 			      &analog_exact);
-		CHECK(digital_result != DPSTAT_CONNECT && analog_result != DPSTAT_CONNECT,
-		      "V.92 announced CONNECT without a PCM host-bit adapter");
-		if (index >= MODEM_FRAG * 2u &&
-		    (digital_result == DPSTAT_ERROR || analog_result == DPSTAT_ERROR)) {
-			stopped = true;
-			break;
-		}
 		CHECK(digital_result == DPSTAT_OK && digital_exact &&
 		      analog_result == DPSTAT_OK && analog_exact,
 		      "V.92 PCM-upstream selection stopped at sample %zu", index);
 		analog_to_digital = next_analog;
 		digital_to_analog = next_digital;
 	}
-	CHECK(stopped, "unfinished V.92 host adapter never rejected data entry");
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      v90_datapump_unregister() == 0 &&
 	      modem_dp_get_registered_ops(DP_V90) == NULL &&
 	      modem_dp_get_registered_ops(DP_V92) == NULL,
 	      "V.92 PCM-upstream selection retained shared ownership");
+	return true;
+}
+
+static bool test_v92_pcm_host_data(void)
+{
+	CHECK(v90_datapump_register() == 0, "V.92 host-data registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		/* PCM upstream receives the physical sample, not an accidentally
+		 * parallel pristine octet. Cover sustained twelve-symbol frames. */
+		CHECK(run_pcm_pair(DP_V92, 14, law, 41333, 0, 0, 41333, 0,
+			100000, true, MODEM_PCM_ROLE_NONE, true, UNITY_GAIN_Q15,
+			RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+		      "law %u V.92 sustained PCM host bits failed", law);
+		for (enum modem_pcm_role role = MODEM_PCM_ROLE_ANALOG;
+		     role <= MODEM_PCM_ROLE_DIGITAL; ++role) {
+			CHECK(run_pcm_pair(DP_V92, 4, law, 28000, 0, 0, 28000, 0,
+				MAXIMUM_RATE_RECEIVED_BITS, true, role, false, UNITY_GAIN_Q15,
+				RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u V.92 host data did not resume after retrain",
+			      law, role);
+		}
+	}
+	CHECK(v90_datapump_unregister() == 0, "V.92 host data leaked ownership");
 	return true;
 }
 
@@ -1579,6 +1623,7 @@ int main(void)
 		  test_attenuated_upstream },
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
+		{ "V.92 PCM host data and retrain", test_v92_pcm_host_data },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "sustained maximum-rate pairs",
 		  test_sustained_maximum_rate_pairs },
