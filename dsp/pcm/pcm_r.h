@@ -16,6 +16,12 @@ enum {
 		PCM_R_SYMBOLS + PCM_R_BAR_SYMBOLS,
 };
 
+enum pcm_r_signal {
+	PCM_R_RD,
+	PCM_R_RT,
+	PCM_R_RF,
+};
+
 enum pcm_r_tx_result {
 	PCM_R_TX_OK,
 	PCM_R_TX_COMPLETE,
@@ -24,21 +30,19 @@ enum pcm_r_tx_result {
 	PCM_R_TX_INTERNAL_ERROR,
 };
 
-/* V.90 8.6.4 Rd/Rd-bar and Rt/Rt-bar use the highest-power member of each
- * current data or training constellation. They are independent of the data
- * encoder: neither signal is scrambled, differentially encoded, or shaped. */
+/* V.90 8.6.4 Rd/Rt and V.92 8.8.4 Rf use the highest-power member of
+ * each constellation. Rd/Rf require the current data mapping; Rt requires
+ * the training mapping. No R signal is scrambled, differentially encoded,
+ * or shaped. The caller owns protocol selection and data-frame alignment. */
 struct pcm_r_tx {
 	struct v90_pcm_mapping mapping;
+	enum pcm_r_signal signal;
 	uint16_t transmitted_symbols;
 };
 
-enum pcm_r_tx_result pcm_rd_tx_init(
+enum pcm_r_tx_result pcm_r_tx_init(
 	struct pcm_r_tx *transmitter,
-	const struct v90_pcm_mapping *current_data_mapping);
-/* Rt shares the R waveform and duration, but uses CPt constellations. */
-enum pcm_r_tx_result pcm_rt_tx_init(
-	struct pcm_r_tx *transmitter,
-	const struct v90_pcm_mapping *training_mapping);
+	const struct v90_pcm_mapping *mapping, enum pcm_r_signal signal);
 bool pcm_r_tx_is_valid(const struct pcm_r_tx *transmitter);
 bool pcm_r_tx_is_complete(const struct pcm_r_tx *transmitter);
 
@@ -49,7 +53,7 @@ enum pcm_r_tx_result pcm_r_tx_next(
 
 enum {
 	PCM_R_RX_MIN_SYMBOLS = 240,
-	PCM_R_RX_BAR_SYMBOLS = 24,
+	PCM_R_RX_BAR_SYMBOLS = PCM_R_BAR_SYMBOLS,
 	PCM_R_RX_HYPOTHESES =
 		2 * V90_CP_FRAME_INTERVALS,
 };
@@ -74,26 +78,26 @@ enum pcm_r_rx_result {
 	PCM_R_RX_INTERNAL_ERROR,
 };
 
-/* Detect the digital station's V.90 8.6.4 Rd/Rd-bar signal directly in the
- * authoritative G.711 character stream.  Six phase hypotheses and both
- * polarities avoid assuming where an online monitor first entered the data
- * frame.  Each symbol must be the highest-power member of its current data
- * constellation; unlike a sign-only line detector this rejects unrelated
- * data with the same +++--- sign pattern. */
+/* Detect the selected Rd or Rf directly in authoritative G.711 characters.
+ * Six constellation phases and both polarities cover every entry phase:
+ * Rf's second six-symbol half is the first half with polarity inverted.
+ * Exact constellation magnitudes reject unrelated data with matching signs.
+ * A V.90 caller must select Rd; Rf is only a V.92 fast-exchange request. */
 struct pcm_r_rx {
 	struct v90_pcm_mapping mapping;
 	uint16_t candidate_runs[PCM_R_RX_HYPOTHESES];
 	uint16_t locked_hypotheses;
 	enum v90_pcm_mapping_plane decision_plane;
+	enum pcm_r_signal signal;
 	enum pcm_r_rx_stage stage;
 	uint8_t phase;
-	uint8_t rd_bar_symbols;
+	uint8_t bar_symbols;
 };
 
 enum pcm_r_rx_result pcm_r_rx_init(
 	struct pcm_r_rx *receiver,
 	const struct v90_pcm_mapping *current_data_mapping,
-	enum v90_pcm_mapping_plane decision_plane);
+	enum v90_pcm_mapping_plane decision_plane, enum pcm_r_signal signal);
 bool pcm_r_rx_is_valid(
 	const struct pcm_r_rx *receiver);
 bool pcm_r_rx_signal_detected(
@@ -102,9 +106,9 @@ bool pcm_r_rx_is_complete(
 	const struct pcm_r_rx *receiver);
 
 /* BUFFERING consumes one character. SIGNAL_DETECTED is reported on the 240th
- * consecutive Rd character, BAR_STARTED on the exact frame-boundary
- * polarity reversal, and BAR_COMPLETE on the 24th Rd-bar character. The
- * next character remains unconsumed for the TRN2d receiver.  A post-lock
+ * consecutive R character, BAR_STARTED on the exact frame-boundary
+ * polarity reversal, and BAR_COMPLETE on the 24th R-bar character. The
+ * next character remains unconsumed for TRN2d (Rd) or SUVd (Rf).  A post-lock
  * SEQUENCE_MISMATCH consumes that character and restarts the phase/polarity
  * search with it as the first new candidate. */
 enum pcm_r_rx_result pcm_r_rx_receive(

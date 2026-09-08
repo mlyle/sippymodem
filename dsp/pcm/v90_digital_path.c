@@ -113,6 +113,7 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RD)
 		return path->rate_renegotiation_active &&
 		       pcm_r_tx_is_valid(&path->downstream.rd) &&
+		       path->downstream.rd.signal == PCM_R_RD &&
 		       path->downstream.rd.mapping.kind == V90_CP_DATA &&
 		       path->downstream.rd.mapping.law == path->law;
 	return false;
@@ -474,7 +475,7 @@ static enum v90_digital_path_result emit_downstream(
 			const struct v90_pcm_mapping *mapping =
 				&path->downstream.data.transmitter.encoder.mapping;
 
-			if (pcm_rd_tx_init(&rd, mapping) != PCM_R_TX_OK)
+			if (pcm_r_tx_init(&rd, mapping, PCM_R_RD) != PCM_R_TX_OK)
 				return V90_DIGITAL_PATH_INTERNAL_ERROR;
 			path->downstream =
 				(union v90_digital_path_downstream){ 0 };
@@ -505,7 +506,7 @@ static enum v90_digital_path_result emit_downstream(
 		struct v90_pcm_symbol symbol;
 		struct pcm_downstream_tx training;
 
-		if (pcm_rt_tx_init(&rt, &path->training_mapping) != PCM_R_TX_OK)
+		if (pcm_r_tx_init(&rt, &path->training_mapping, PCM_R_RT) != PCM_R_TX_OK)
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		rt.transmitted_symbols = path->reconditioning_symbols;
 		if (!pcm_r_tx_is_complete(&rt)) {

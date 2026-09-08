@@ -4225,6 +4225,11 @@ static bool run_rate_renegotiation_case(
 			struct pcm_call_data_event stalled_event;
 			uint8_t stalled_transmitted;
 
+			invalid.state.data_path.digital.downstream.rd.signal = PCM_R_RF;
+			CHECK(pcm_r_tx_is_valid(&invalid.state.data_path.digital.downstream.rd) &&
+			      !pcm_call_is_valid(&invalid),
+			      "V.90 rate renegotiation accepted a V.92 fast request");
+			invalid = digital.call;
 			deadline_started = true;
 			invalid.rate_renegotiation_deadline_armed = false;
 			invalid.rate_renegotiation_deadline_remaining_samples = 0u;
@@ -4628,6 +4633,12 @@ static bool run_paired_remote_rate_renegotiation(
 		if (!analog_started && analog_path->rate_renegotiation_active) {
 			struct pcm_call early_deadline = analog.call;
 
+			early_deadline.state.data_path.analog.rate_renegotiation.signal = PCM_R_RF;
+			CHECK(pcm_r_rx_is_valid(
+				      &early_deadline.state.data_path.analog.rate_renegotiation) &&
+			      !pcm_call_is_valid(&early_deadline),
+			      "V.90 analogue path accepted a V.92 fast detector");
+			early_deadline = analog.call;
 			analog_started = true;
 			analog_resume_source = analog.upstream_source.frames;
 			CHECK(analog_path->upstream_stage ==

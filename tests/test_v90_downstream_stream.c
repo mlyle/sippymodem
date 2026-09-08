@@ -67,8 +67,9 @@ static bool make_mapping(
 	return make_mapping_with_shaping(mapping, law, kind, 2, 2);
 }
 
-static bool make_rd_mapping(
-	struct v90_pcm_mapping *mapping, enum g711_law law, enum v90_cp_kind kind)
+static bool make_r_mapping(
+	struct v90_pcm_mapping *mapping, enum g711_law law,
+	enum v90_cp_kind kind, unsigned phase_period)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = kind,
@@ -90,12 +91,12 @@ static bool make_rd_mapping(
 		for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
 			add_ucode(
 				&parameters.transmit_constellations[interval],
-				(uint8_t)(12u + interval % 3u +
+				(uint8_t)(12u + interval % phase_period +
 					  14u * ordinal));
 		for (uint8_t ordinal = 0; ordinal < 8; ++ordinal)
 			add_ucode(
 				&parameters.codec_constellations[interval],
-				(uint8_t)(9u + 2u * (interval % 3u) +
+				(uint8_t)(9u + 2u * (interval % phase_period) +
 					  14u * ordinal));
 	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
@@ -380,9 +381,9 @@ static bool verify_rd_sequence(enum g711_law law, enum v90_cp_kind kind)
 	struct pcm_r_tx transmitter;
 	struct v90_pcm_symbol symbol;
 
-	CHECK(make_rd_mapping(&mapping, law, kind) &&
-	      (kind == V90_CP_TRAINING ? pcm_rt_tx_init(&transmitter, &mapping) :
-		pcm_rd_tx_init(&transmitter, &mapping)) == PCM_R_TX_OK &&
+	CHECK(make_r_mapping(&mapping, law, kind, 3) &&
+	      pcm_r_tx_init(&transmitter, &mapping,
+		      kind == V90_CP_TRAINING ? PCM_R_RT : PCM_R_RD) == PCM_R_TX_OK &&
 	      pcm_r_tx_is_valid(&transmitter) &&
 	      !pcm_r_tx_is_complete(&transmitter),
 	      "law %u Rd fixture did not initialize", law);
@@ -457,8 +458,8 @@ static bool verify_rrn_detection(
 	uint8_t octet;
 	size_t rd_symbols = PCM_R_SYMBOLS - offset;
 
-	CHECK(make_rd_mapping(&mapping, law, V90_CP_DATA) &&
-	      pcm_r_rx_init(&receiver, &mapping, plane) ==
+	CHECK(make_r_mapping(&mapping, law, V90_CP_DATA, 3) &&
+	      pcm_r_rx_init(&receiver, &mapping, plane, PCM_R_RD) ==
 		      PCM_R_RX_OK &&
 	      pcm_r_rx_is_valid(&receiver) &&
 	      !pcm_r_rx_signal_detected(&receiver) &&
@@ -545,9 +546,9 @@ static bool test_rrn_rejection(void)
 	struct pcm_r_rx receiver;
 	uint8_t octet;
 
-	CHECK(make_rd_mapping(&mapping, G711_LAW_PCMU, V90_CP_DATA) &&
+	CHECK(make_r_mapping(&mapping, G711_LAW_PCMU, V90_CP_DATA, 3) &&
 	      pcm_r_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
 		      PCM_R_RX_OK,
 	      "RRN rejection fixture did not initialize");
 	for (size_t index = 0; index < 234u; ++index) {
@@ -572,7 +573,7 @@ static bool test_rrn_rejection(void)
 	CHECK(!pcm_r_rx_signal_detected(&receiver),
 	      "short Rd/Rd-bar sequence was accepted");
 	CHECK(pcm_r_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
 		      PCM_R_RX_OK,
 	      "RRN mismatch fixture did not reset");
 	for (size_t index = 0;
@@ -610,22 +611,22 @@ static bool test_rrn_contracts(void)
 
 	CHECK(make_mapping(
 		      &training, G711_LAW_PCMU, V90_CP_TRAINING) &&
-	      make_rd_mapping(&data, G711_LAW_PCMU, V90_CP_DATA),
+	      make_r_mapping(&data, G711_LAW_PCMU, V90_CP_DATA, 3),
 	      "RRN contract mappings did not initialize");
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
 	CHECK(pcm_r_rx_init(
-		      NULL, &data, V90_PCM_MAPPING_TRANSMIT) ==
+		      NULL, &data, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
 		      PCM_R_RX_INVALID_ARGUMENT &&
 	      pcm_r_rx_init(
-		      &receiver, NULL, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, NULL, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
 		      PCM_R_RX_INVALID_ARGUMENT &&
 	      pcm_r_rx_init(
-		      &receiver, &training, V90_PCM_MAPPING_TRANSMIT) ==
+		      &receiver, &training, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
 		      PCM_R_RX_INVALID_PARAMETERS &&
 	      pcm_r_rx_init(
 		      &receiver, &data,
-		      (enum v90_pcm_mapping_plane)2) ==
+		      (enum v90_pcm_mapping_plane)2, PCM_R_RD) ==
 		      PCM_R_RX_INVALID_PARAMETERS &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      pcm_r_rx_receive(NULL, 0) ==
@@ -634,6 +635,221 @@ static bool test_rrn_contracts(void)
 		      PCM_R_RX_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "RRN receiver accepted an invalid contract");
+	return true;
+}
+
+static bool verify_rf(
+	enum g711_law law, enum v90_pcm_mapping_plane plane,
+	unsigned offset, bool inverted, bool varied)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_r_tx tx;
+	struct pcm_r_rx rx;
+	struct pcm_r_rx rd;
+	struct v90_pcm_symbol symbol;
+
+	CHECK((varied ? make_r_mapping(&mapping, law, V90_CP_DATA, 6) :
+		       make_mapping(&mapping, law, V90_CP_DATA)) &&
+	      pcm_r_tx_init(&tx, &mapping, PCM_R_RF) == PCM_R_TX_OK &&
+	      pcm_r_rx_init(&rx, &mapping, plane, PCM_R_RF) == PCM_R_RX_OK &&
+	      pcm_r_rx_init(&rd, &mapping, plane, PCM_R_RD) == PCM_R_RX_OK,
+	      "Rf fixture did not initialize");
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		unsigned phase = i % 6u;
+		uint8_t transmit_ucode = varied ? 110u + phase : 108u;
+		uint8_t ucode = varied && plane == V90_PCM_MAPPING_CODEC ?
+			107u + 2u * phase : transmit_ucode;
+		bool positive = (i % 4u < 2u) != (i >= PCM_R_SYMBOLS);
+		uint8_t octet;
+		enum pcm_r_rx_result expected = PCM_R_RX_BUFFERING;
+
+		CHECK(pcm_r_tx_next(&tx, &symbol) == PCM_R_TX_OK &&
+		      symbol.ucode == transmit_ucode &&
+		      symbol.positive == positive,
+		      "Rf transmitted wrong symbol %u", i);
+		if (i < offset)
+			continue;
+		if (i == offset + PCM_R_RX_MIN_SYMBOLS - 1u)
+			expected = PCM_R_RX_SIGNAL_DETECTED;
+		if (i == PCM_R_SYMBOLS)
+			expected = PCM_R_RX_BAR_STARTED;
+		if (i + 1u == PCM_R_SEQUENCE_SYMBOLS)
+			expected = PCM_R_RX_BAR_COMPLETE;
+		CHECK(g711_ucode_octet(law, ucode, positive != inverted, &octet) &&
+		      pcm_r_rx_receive(&rx, octet) == expected &&
+		      pcm_r_rx_receive(&rd, octet) == PCM_R_RX_BUFFERING,
+		      "law %u plane %u offset %u polarity %u varied %u Rf %u",
+		      law, plane, offset, inverted, varied, i);
+	}
+	CHECK(pcm_r_tx_is_complete(&tx) && pcm_r_rx_is_complete(&rx),
+	      "Rf did not finish on the 408th character");
+	{
+		struct pcm_r_tx saved_tx = tx;
+		struct pcm_r_rx saved_rx = rx;
+		struct v90_pcm_symbol saved_symbol = symbol;
+
+		CHECK(pcm_r_tx_next(&tx, &symbol) == PCM_R_TX_COMPLETE &&
+		      pcm_r_rx_receive(&rx, symbol.octet) ==
+			      PCM_R_RX_INVALID_STATE &&
+		      memcmp(&tx, &saved_tx, sizeof(tx)) == 0 &&
+		      memcmp(&rx, &saved_rx, sizeof(rx)) == 0 &&
+		      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+		      "Rf consumed the next control character");
+	}
+	/* Exact Rd signs and a lower-power Rf constellation member must not
+	 * be mistaken for the fast-exchange request. */
+	for (unsigned wrong = 0; wrong < 2; ++wrong) {
+		CHECK(pcm_r_rx_init(&rx, &mapping, plane, PCM_R_RF) == PCM_R_RX_OK,
+		      "Rf negative fixture did not initialize");
+		for (unsigned i = offset; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+			uint8_t ucode;
+			uint8_t octet;
+			bool positive = wrong == 0 ? i % 6u < 3u : i % 4u < 2u;
+
+			positive ^= (i >= PCM_R_SYMBOLS) != inverted;
+			CHECK(v90_pcm_mapping_ucode(&mapping, plane, i % 6u,
+				      wrong, &ucode) == V90_PCM_MAPPING_OK &&
+			      g711_ucode_octet(law, ucode, positive, &octet) &&
+			      pcm_r_rx_receive(&rx, octet) == PCM_R_RX_BUFFERING,
+			      "Rf accepted wrong pattern or magnitude at %u", i);
+		}
+	}
+	return true;
+}
+
+static bool test_rf_matrix(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v90_pcm_mapping_plane plane = V90_PCM_MAPPING_TRANSMIT;
+		     plane <= V90_PCM_MAPPING_CODEC; ++plane)
+			for (unsigned offset = 0; offset < 12; ++offset)
+				for (unsigned polarity = 0; polarity < 2; ++polarity)
+					for (unsigned varied = 0; varied < 2; ++varied)
+						CHECK(verify_rf(law, plane, offset, polarity, varied),
+						      "Rf matrix failed");
+	return true;
+}
+
+static bool test_rf_contracts(void)
+{
+	struct v90_pcm_mapping data;
+	struct v90_pcm_mapping training;
+	struct pcm_r_tx tx, saved_tx;
+	struct pcm_r_rx rx, saved_rx;
+	struct v90_pcm_symbol symbol;
+
+	CHECK(make_mapping(&data, G711_LAW_PCMU, V90_CP_DATA) &&
+	      make_mapping(&training, G711_LAW_PCMU, V90_CP_TRAINING) &&
+	      pcm_r_tx_init(&tx, &data, PCM_R_RF) == PCM_R_TX_OK &&
+	      pcm_r_rx_init(&rx, &data, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) ==
+		      PCM_R_RX_OK, "Rf contracts did not initialize");
+	saved_tx = tx;
+	saved_rx = rx;
+	CHECK(pcm_r_tx_init(&tx, &training, PCM_R_RF) == PCM_R_TX_INVALID_PARAMETERS &&
+	      pcm_r_tx_init(&tx, &data, (enum pcm_r_signal)3) ==
+		      PCM_R_TX_INVALID_PARAMETERS &&
+	      pcm_r_rx_init(&rx, &training, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) ==
+		      PCM_R_RX_INVALID_PARAMETERS &&
+	      pcm_r_rx_init(&rx, &data, V90_PCM_MAPPING_TRANSMIT, PCM_R_RT) ==
+		      PCM_R_RX_INVALID_PARAMETERS &&
+	      pcm_r_rx_init(&rx, &data, V90_PCM_MAPPING_TRANSMIT,
+		      (enum pcm_r_signal)3) == PCM_R_RX_INVALID_PARAMETERS &&
+	      memcmp(&tx, &saved_tx, sizeof(tx)) == 0 &&
+	      memcmp(&rx, &saved_rx, sizeof(rx)) == 0,
+	      "Rf accepted invalid selection or changed rejected state");
+	tx.signal = PCM_R_RT;
+	rx.signal = PCM_R_RT;
+	CHECK(!pcm_r_tx_is_valid(&tx) && !pcm_r_rx_is_valid(&rx),
+	      "R signal and mapping kind may disagree");
+	tx = saved_tx;
+	rx = saved_rx;
+	tx.signal = (enum pcm_r_signal)3;
+	rx.signal = (enum pcm_r_signal)3;
+	CHECK(!pcm_r_tx_is_valid(&tx) && !pcm_r_rx_is_valid(&rx),
+	      "invalid R selector accepted");
+	rx = saved_rx;
+	rx.phase = 12;
+	CHECK(!pcm_r_rx_is_valid(&rx), "out-of-period Rf phase accepted");
+	rx = saved_rx;
+	/* Corrupt a locked Rf and require a fresh complete acquisition. */
+	for (unsigned i = 0; i < PCM_R_RX_MIN_SYMBOLS; ++i) {
+		CHECK(pcm_r_tx_next(&saved_tx, &symbol) == PCM_R_TX_OK,
+		      "Rf recovery source failed");
+		enum pcm_r_rx_result result = pcm_r_rx_receive(&rx, symbol.octet);
+		CHECK(result == (i + 1u == PCM_R_RX_MIN_SYMBOLS ?
+		      PCM_R_RX_SIGNAL_DETECTED : PCM_R_RX_BUFFERING),
+		      "Rf recovery did not lock");
+	}
+	CHECK(g711_ucode_octet(data.law, 0, false, &symbol.octet) &&
+	      pcm_r_rx_receive(&rx, symbol.octet) == PCM_R_RX_SEQUENCE_MISMATCH &&
+	      pcm_r_rx_is_valid(&rx) && !pcm_r_rx_signal_detected(&rx),
+	      "Rf corruption did not restart acquisition");
+	CHECK(pcm_r_tx_init(&tx, &data, PCM_R_RF) == PCM_R_TX_OK,
+	      "Rf recovery transmitter did not reset");
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		CHECK(pcm_r_tx_next(&tx, &symbol) == PCM_R_TX_OK,
+		      "Rf recovery transmitter failed");
+		enum pcm_r_rx_result expected = i + 1u == PCM_R_SEQUENCE_SYMBOLS ?
+			PCM_R_RX_BAR_COMPLETE : i == PCM_R_SYMBOLS ? PCM_R_RX_BAR_STARTED :
+			i + 1u == PCM_R_RX_MIN_SYMBOLS ? PCM_R_RX_SIGNAL_DETECTED :
+			PCM_R_RX_BUFFERING;
+		CHECK(pcm_r_rx_receive(&rx, symbol.octet) == expected,
+		      "Rf did not reacquire after corruption at %u", i);
+	}
+	return true;
+}
+
+static bool test_rf_control_handoff(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v90_pcm_mapping mapping;
+		struct pcm_r_tx request_tx;
+		struct pcm_r_rx request_rx;
+		struct pcm_downstream_tx control_tx;
+		struct pcm_downstream_rx control_rx;
+		struct pcm_downstream_event event;
+		unsigned records = 0;
+
+		CHECK(make_mapping(&mapping, law, V90_CP_DATA) &&
+		      pcm_r_tx_init(&request_tx, &mapping, PCM_R_RF) == PCM_R_TX_OK &&
+		      pcm_r_rx_init(&request_rx, &mapping, V90_PCM_MAPPING_TRANSMIT,
+			      PCM_R_RF) == PCM_R_RX_OK, "Rf handoff init failed");
+		for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+			struct v90_pcm_symbol symbol;
+			CHECK(pcm_r_tx_next(&request_tx, &symbol) == PCM_R_TX_OK,
+			      "Rf handoff transmit failed");
+			enum pcm_r_rx_result result =
+				pcm_r_rx_receive(&request_rx, symbol.octet);
+			CHECK(result == (i + 1u == PCM_R_SEQUENCE_SYMBOLS ?
+				PCM_R_RX_BAR_COMPLETE : i == PCM_R_SYMBOLS ?
+				PCM_R_RX_BAR_STARTED : i + 1u == PCM_R_RX_MIN_SYMBOLS ?
+				PCM_R_RX_SIGNAL_DETECTED : PCM_R_RX_BUFFERING),
+			      "Rf handoff request failed at %u", i);
+		}
+		CHECK(pcm_downstream_tx_init(&control_tx, PCM_PROTOCOL_V92, &mapping) ==
+			      PCM_DOWNSTREAM_TX_OK &&
+		      pcm_downstream_rx_init(&control_rx, PCM_PROTOCOL_V92, &mapping,
+			      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+		      "post-Rf control epoch failed");
+		for (unsigned i = 0; i < 1000 && records < 2; ++i) {
+			struct pcm_downstream_symbol symbol;
+			CHECK(pcm_downstream_tx_next(&control_tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "post-Rf SUVd transmit failed");
+			enum pcm_downstream_rx_result result =
+				pcm_downstream_rx_receive(&control_rx, symbol.pcm.octet, &event);
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD,
+			      "post-Rf data contains a training epoch or rejected SUVd: %u", result);
+			if (result == PCM_DOWNSTREAM_RX_SUVD) {
+				records++;
+				CHECK(i + 1u == records * v92_suvd_frame_bits(mapping.frame_bits) /
+					      mapping.frame_bits * V90_CP_FRAME_INTERVALS &&
+				      !event.control.record.suvd.parameters.request_silence &&
+				      !event.control.record.suvd.parameters.acknowledges_cpu,
+				      "first post-Rf SUVd was lost, delayed, or changed");
+			}
+		}
+		CHECK(records == 2, "first post-Rf SUVd records did not arrive");
+	}
 	return true;
 }
 
@@ -1024,14 +1240,14 @@ static bool test_contracts(void)
 	      "data tail accepted an invalid pre-data boundary");
 	memset(&rd, 0xa5, sizeof(rd));
 	saved_rd = rd;
-	CHECK(pcm_rd_tx_init(NULL, &data_mapping) ==
+	CHECK(pcm_r_tx_init(NULL, &data_mapping, PCM_R_RD) ==
 		      PCM_R_TX_INVALID_ARGUMENT &&
-	      pcm_rd_tx_init(&rd, NULL) == PCM_R_TX_INVALID_ARGUMENT &&
-	      pcm_rd_tx_init(&rd, &mapping) ==
+	      pcm_r_tx_init(&rd, NULL, PCM_R_RD) == PCM_R_TX_INVALID_ARGUMENT &&
+	      pcm_r_tx_init(&rd, &mapping, PCM_R_RD) ==
 		      PCM_R_TX_INVALID_PARAMETERS &&
-	      pcm_rt_tx_init(&rd, &data_mapping) == PCM_R_TX_INVALID_PARAMETERS &&
-	      pcm_rt_tx_init(NULL, &mapping) == PCM_R_TX_INVALID_ARGUMENT &&
-	      pcm_rt_tx_init(&rd, NULL) == PCM_R_TX_INVALID_ARGUMENT &&
+	      pcm_r_tx_init(&rd, &data_mapping, PCM_R_RT) == PCM_R_TX_INVALID_PARAMETERS &&
+	      pcm_r_tx_init(NULL, &mapping, PCM_R_RT) == PCM_R_TX_INVALID_ARGUMENT &&
+	      pcm_r_tx_init(&rd, NULL, PCM_R_RT) == PCM_R_TX_INVALID_ARGUMENT &&
 	      memcmp(&rd, &saved_rd, sizeof(rd)) == 0 &&
 	      pcm_r_tx_next(NULL, &symbol) ==
 		      PCM_R_TX_INVALID_ARGUMENT &&
@@ -1189,6 +1405,9 @@ int main(void)
 		{ "Rd and Rd-bar detection", test_rrn_detection },
 		{ "Rd and Rd-bar rejection", test_rrn_rejection },
 		{ "Rd receiver contracts", test_rrn_contracts },
+		{ "Rf sequence and rejection matrix", test_rf_matrix },
+		{ "Rf contracts and recovery", test_rf_contracts },
+		{ "Rf to V.92 control handoff", test_rf_control_handoff },
 		{ "record-boundary request", test_boundary_request },
 		{ "contracts", test_contracts },
 	};

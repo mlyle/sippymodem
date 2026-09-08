@@ -157,6 +157,7 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	    !v90_phase4_cp_tx_is_valid(&path->control_symbols) ||
 	    !v90_phase4_cp_tx_record_is_complete(&path->control_symbols) ||
 	    !pcm_r_rx_is_valid(&path->rate_renegotiation) ||
+	    path->rate_renegotiation.signal != PCM_R_RD ||
 	    path->rate_renegotiation.decision_plane != path->decision_plane ||
 	    !v90_pcm_mapping_equal(
 		    &path->rate_renegotiation.mapping,
@@ -224,7 +225,7 @@ enum v90_analog_path_result v90_analog_path_init(
 	if (pcm_r_rx_init(
 		    &initialized.rate_renegotiation,
 		    &initialized.data_mapping,
-		    initialized.decision_plane) !=
+		    initialized.decision_plane, PCM_R_RD) !=
 	    PCM_R_RX_OK)
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	initialized.upstream.cp = handoff->transmit;
@@ -625,7 +626,7 @@ static enum v90_analog_path_result start_downstream_data(
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	if (pcm_r_rx_init(
 		    &rate_renegotiation, &path->data_mapping,
-		    path->decision_plane) != PCM_R_RX_OK)
+		    path->decision_plane, PCM_R_RD) != PCM_R_RX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	path->downstream = (union v90_analog_path_downstream){ 0 };
 	path->downstream.data = data;
