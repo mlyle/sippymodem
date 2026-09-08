@@ -940,6 +940,16 @@ static bool exercise_retrain(
 			return false;
 		}
 	}
+	/* The V.92 LAPM case must interrupt a real outstanding information frame,
+	 * not merely queue terminal bytes behind an idle link or resume without
+	 * retraining.  Exact delivery of this payload is checked after recovery. */
+	if (id == DP_V92 && !raw_transport &&
+	    (!initiator_retrains || !peer_retrains ||
+	     initiator->modem->ec.lapm.va == initiator->modem->ec.lapm.vs)) {
+		fprintf(stderr,
+			"V.92 retrain fixture did not interrupt pending LAPM data\n");
+		return false;
+	}
 	initiator->modem->state = TEST_STATE_COMMAND_ONLINE;
 	initiator->modem->command = 1;
 	if (peer_request_frame == 0) {
@@ -3714,6 +3724,35 @@ int main(void)
 			.requires_exact_g711 = true,
 			.digital_caller = true,
 			.impairment = INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex LAPM retrain",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex LAPM retrain with digital caller",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.test_retrain = true,
+			.digital_caller = true,
 		},
 		{
 			.id = DP_V90,
