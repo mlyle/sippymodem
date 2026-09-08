@@ -207,12 +207,17 @@ class LiveCampaignReportTests(unittest.TestCase):
             3,
             results,
             revision="a" * 40,
-            seed=7,
+            campaign_id="test-campaign",
             elapsed_seconds=12.4,
             current="v21-300-originator / waiting for CONNECT",
             current_seconds=12.6,
         )
         self.assertIn("retries=1", dashboard)
+        self.assertEqual(
+            dashboard.splitlines()[0],
+            f"revision={'a' * 12} campaign=test-campaign elapsed=12s retries=1",
+        )
+        self.assertNotIn("seed=", dashboard)
         self.assertIn("  1/3", dashboard)
         self.assertIn(
             "current=v21-300-originator / waiting for CONNECT for=13s",
@@ -258,7 +263,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             (result,),
             revision="b" * 40,
-            seed=9,
+            campaign_id="test-campaign",
             elapsed_seconds=1,
         )
         v22bis = next(
@@ -306,7 +311,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             (result,),
             revision="b" * 40,
-            seed=9,
+            campaign_id="test-campaign",
             elapsed_seconds=1,
         )
         callback_label = "V.34/l" if case.link_mode == "lapm" else "V.34/r"
@@ -340,7 +345,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             (result,),
             revision="b" * 40,
-            seed=9,
+            campaign_id="test-campaign",
             elapsed_seconds=1,
         )
         request = next(
@@ -398,7 +403,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             results,
             revision="d" * 40,
-            seed=13,
+            campaign_id="test-campaign",
             elapsed_seconds=2,
         )
         rows = dashboard.splitlines()
@@ -437,7 +442,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             results,
             revision="c" * 40,
-            seed=11,
+            campaign_id="test-campaign",
             elapsed_seconds=33,
             recent_limit=2,
         )
@@ -476,7 +481,7 @@ class LiveCampaignReportTests(unittest.TestCase):
             1,
             (result,),
             revision="e" * 40,
-            seed=17,
+            campaign_id="test-campaign",
             elapsed_seconds=3,
             recent_limit=2,
         )
@@ -518,7 +523,7 @@ class LiveCampaignReportTests(unittest.TestCase):
                 )
                 dashboard = render_dashboard(
                     (case,), 1, (result,), revision="e" * 40,
-                    seed=17, elapsed_seconds=3, recent_limit=2,
+                    campaign_id="test-campaign", elapsed_seconds=3, recent_limit=2,
                 )
                 recent = next(
                     line for line in dashboard.splitlines() if line.startswith("001")
@@ -561,7 +566,7 @@ class LiveCampaignReportTests(unittest.TestCase):
                 ),
             ),
             revision="f" * 40,
-            seed=19,
+            campaign_id="test-campaign",
             elapsed_seconds=3,
             recent_limit=1,
         )
@@ -593,7 +598,7 @@ class LiveCampaignReportTests(unittest.TestCase):
                 ),
             ),
             revision="1" * 40,
-            seed=23,
+            campaign_id="test-campaign",
             elapsed_seconds=3,
             recent_limit=2,
         )
@@ -637,7 +642,8 @@ class LiveCampaignReportTests(unittest.TestCase):
                     detail="CONNECT selected V.34 instead of V.90",
                 ))
         dashboard = render_dashboard(
-            cases, 3, results, revision="a", seed=1, elapsed_seconds=1,
+            cases, 3, results, revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
         )
         lines = dashboard.splitlines()
         index = next(i for i, line in enumerate(lines) if line.startswith("V.90/r"))
@@ -659,7 +665,7 @@ class LiveCampaignReportTests(unittest.TestCase):
     def test_request_cells_are_blank_only_where_inapplicable(self) -> None:
         cases = cases_for_suite("smoke")
         dashboard = render_dashboard(
-            cases, 1, (), revision="a", seed=1, elapsed_seconds=0,
+            cases, 1, (), revision="a", campaign_id="test-campaign", elapsed_seconds=0,
         )
         for line in dashboard.splitlines():
             if "/" not in line[:12] and not line.startswith("TOTAL"):
@@ -685,7 +691,8 @@ class LiveCampaignReportTests(unittest.TestCase):
                     detail="remote retrain END marker was not verified",
                 )
                 lines = render_dashboard(
-                    (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+                    (case,), 1, (result,), revision="a",
+                    campaign_id="test-campaign", elapsed_seconds=1,
                 ).splitlines()
                 actual = next(line for line in lines if line.startswith(label))
                 self.assertEqual(actual[25:36].split(), ["0", "0", "1", "0"])
@@ -711,7 +718,8 @@ class LiveCampaignReportTests(unittest.TestCase):
             callback_request_profile_error="CONNECT selected V.22 instead of V.22bis",
         )
         lines = render_dashboard(
-            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+            (case,), 1, (result,), revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
             recent_limit=4,
         ).splitlines()
         index = next(i for i, line in enumerate(lines) if line.startswith("V.22bis/l"))
@@ -744,7 +752,8 @@ class LiveCampaignReportTests(unittest.TestCase):
             modulation="Bell 212A", protocol="none",
         )
         lines = render_dashboard(
-            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+            (case,), 1, (result,), revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
         ).splitlines()
         row = next(line for line in lines if line.startswith("Bell 212/r"))
         self.assertEqual(row[25:36].split(), ["0", "0", "0", "1"])
@@ -766,7 +775,8 @@ class LiveCampaignReportTests(unittest.TestCase):
                         detail="CONNECT selected V.34 instead of V.90"),
         )
         dashboard = render_dashboard(
-            (case,), 1, results, revision="a", seed=1, elapsed_seconds=1,
+            (case,), 1, results, revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
             recent_limit=4,
         )
         recent = [line for line in dashboard.splitlines() if line[:1].isdigit()]
@@ -778,7 +788,8 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertTrue(recent[2].endswith("request-busy"))
         self.assertIn("     tried: V.90 4800-14400/28000@3000 r", dashboard)
         bounded = render_dashboard(
-            (case,), 1, results, revision="a", seed=1, elapsed_seconds=1,
+            (case,), 1, results, revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
             recent_limit=2,
         )
         self.assertEqual(sum(line[:1].isdigit() for line in bounded.splitlines()), 1)
@@ -798,7 +809,8 @@ class LiveCampaignReportTests(unittest.TestCase):
             detail="callback request CONNECT selected V.22 instead of V.22bis",
         )
         dashboard = render_dashboard(
-            (case,), 1, (result,), revision="a", seed=1, elapsed_seconds=1,
+            (case,), 1, (result,), revision="a",
+            campaign_id="test-campaign", elapsed_seconds=1,
             recent_limit=2,
         )
         recent, tried = dashboard.splitlines()[-2:]

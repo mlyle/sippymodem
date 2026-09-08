@@ -296,7 +296,7 @@ def render_dashboard(
     results: Sequence[AttemptResult],
     *,
     revision: str,
-    seed: int,
+    campaign_id: str,
     elapsed_seconds: float,
     current: str = "",
     current_seconds: float | None = None,
@@ -371,7 +371,7 @@ def render_dashboard(
     }
     rows: list[str] = []
     header = (
-        f"revision={revision[:12]} seed={seed} elapsed={elapsed_seconds:.0f}s "
+        f"revision={revision[:12]} campaign={campaign_id} elapsed={elapsed_seconds:.0f}s "
         f"retries={sum(result.outcome == OUTCOME_BUSY for result in results)}"
     )
     rows.append(header)

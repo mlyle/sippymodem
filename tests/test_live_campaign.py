@@ -29,6 +29,7 @@ from tools.live_campaign import (  # noqa: E402
     _display,
     _freeze_with_status,
     _run_schedule,
+    run_campaign,
     run_physical_attempt,
 )
 from tools.live_campaign_config import (  # noqa: E402
@@ -215,13 +216,15 @@ class LiveCampaignTests(unittest.TestCase):
                 1,
                 (),
                 revision="a" * 40,
-                seed=1,
+                campaign_id="test-campaign",
                 started=time.monotonic(),
                 current="v21 / waiting for CONNECT",
                 current_seconds=4.0,
                 live=True,
             )
         self.assertTrue(output.getvalue().startswith("\x1b[2J\x1b[H"))
+        self.assertIn("campaign=test-campaign", output.getvalue().splitlines()[0])
+        self.assertNotIn("seed=", output.getvalue())
         self.assertIn("for=4s", output.getvalue())
 
     def test_display_fills_only_spare_terminal_rows_with_recent_calls(self) -> None:
@@ -249,7 +252,7 @@ class LiveCampaignTests(unittest.TestCase):
                 5,
                 results,
                 revision="a" * 40,
-                seed=1,
+                campaign_id="test-campaign",
                 started=time.monotonic(),
                 current="complete",
                 live=False,
@@ -274,7 +277,8 @@ class LiveCampaignTests(unittest.TestCase):
                 return_value=os.terminal_size((80, terminal_rows)),
             ):
                 dashboard = _display(
-                    (case,), 1, (result,), revision="a" * 40, seed=1,
+                    (case,), 1, (result,), revision="a" * 40,
+                    campaign_id="test-campaign",
                     started=time.monotonic(), current="complete", live=False,
                 )
             lines = dashboard.splitlines()
@@ -388,7 +392,6 @@ class LiveCampaignTests(unittest.TestCase):
                     store,
                     (case,),
                     1,
-                    7,
                     True,
                     results,
                     time.monotonic(),
@@ -454,7 +457,6 @@ class LiveCampaignTests(unittest.TestCase):
                     store,
                     (case,),
                     1,
-                    7,
                     True,
                     results,
                     time.monotonic(),
@@ -463,6 +465,61 @@ class LiveCampaignTests(unittest.TestCase):
             self.assertEqual(sleep.call_args_list, [mock.call(10)] * 9)
             self.assertEqual(sum(r.outcome == OUTCOME_BUSY for r in results), 10)
             self.assertEqual(results[-1].outcome, "unavailable")
+
+    def test_campaign_headers_identify_saved_evidence_and_keep_seed_in_manifest(self) -> None:
+        for interrupted in (False, True):
+            with (
+                self.subTest(interrupted=interrupted),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                case = CASES_BY_NAME["v21-300-originator"]
+                frozen = FrozenBinary(
+                    root, Path(sys.executable), "a" * 40, "b" * 64, False
+                )
+                config = self.config(root, root / "unused.py", "pass")
+                output = io.StringIO()
+                result = AttemptResult(
+                    case_name=case.name, family=case.family, role=case.role,
+                    ordinal=1, extra=False, physical_try=1, outcome="complete",
+                    connected=True,
+                )
+                with (
+                    mock.patch("tools.live_campaign.sys.stdout", output),
+                    mock.patch(
+                        "tools.live_campaign.run_physical_attempt",
+                        return_value=result,
+                        side_effect=KeyboardInterrupt if interrupted else None,
+                    ),
+                ):
+                    arguments = dict(
+                        attempts=1, failure_extra=0, seed=12345,
+                        randomize=True, retrain=True, live_display=True,
+                    )
+                    if interrupted:
+                        with self.assertRaises(KeyboardInterrupt):
+                            run_campaign(config, frozen, (case,), **arguments)
+                    else:
+                        run_campaign(config, frozen, (case,), **arguments)
+                campaign = next(config.artifact_directory.iterdir())
+                manifest = json.loads((campaign / "manifest.json").read_text())
+                summary = json.loads((campaign / "summary.json").read_text())
+                expected = f"revision={'a' * 12} campaign={campaign.name} "
+                self.assertTrue(summary["dashboard"].startswith(expected))
+                self.assertEqual(summary["complete"], not interrupted)
+                state = "interrupted" if interrupted else "complete"
+                self.assertIn(f"current={state}", summary["dashboard"])
+                headers = [
+                    line.split("revision=", 1)[1]
+                    for line in output.getvalue().splitlines()
+                    if "revision=" in line
+                ]
+                self.assertTrue(headers)
+                self.assertTrue(all(
+                    f"campaign={campaign.name} " in line for line in headers
+                ))
+                self.assertNotIn("seed=", output.getvalue())
+                self.assertEqual(manifest["seed"], 12345)
 
     def config(
         self,
