@@ -2,8 +2,6 @@
 
 #include "v92_pcm_phase3_cpt_rx.h"
 
-#include "memory_region.h"
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -40,25 +38,6 @@ static bool boundary_is_valid(
 	return receiver->boundary_ones == ones;
 }
 
-static bool parameters_are_valid(
-	const struct v92_pcm_phase3_cpt_rx *receiver)
-{
-	uint8_t canonical[V92_CPT_MAX_FRAME_BYTES] = { 0 };
-	size_t canonical_bits = 0u;
-
-	if (receiver->matching_records == 0u)
-		return receiver->parameter_frame_bits == 0u &&
-		       memory_region_is_zero(
-			       receiver->parameter_frame,
-			       sizeof(receiver->parameter_frame));
-	return v92_cpt_encode(
-		       &receiver->parameters, canonical, sizeof(canonical),
-		       &canonical_bits) == V92_CPT_OK &&
-	       canonical_bits == receiver->parameter_frame_bits &&
-	       memcmp(canonical, receiver->parameter_frame,
-		      sizeof(canonical)) == 0;
-}
-
 bool v92_pcm_phase3_cpt_rx_is_valid(
 	const struct v92_pcm_phase3_cpt_rx *receiver)
 {
@@ -66,7 +45,9 @@ bool v92_pcm_phase3_cpt_rx_is_valid(
 	    !v92_phase3_sync_is_valid(&receiver->sync) ||
 	    !coding_is_valid(&receiver->coding) ||
 	    !v92_cpt_receiver_is_valid(&receiver->records) ||
-	    !boundary_is_valid(receiver) || !parameters_are_valid(receiver))
+	    !boundary_is_valid(receiver) ||
+	    (receiver->matching_records != 0u &&
+	     !v92_cpt_parameters_are_valid(&receiver->parameters)))
 		return false;
 	switch (receiver->stage) {
 	case V92_PCM_PHASE3_CPT_RX_TRAINING:
@@ -209,14 +190,37 @@ static void begin_boundary(struct v92_pcm_phase3_cpt_rx *receiver)
 	receiver->stage = V92_PCM_PHASE3_CPT_RX_E1U_CANDIDATE;
 }
 
-static bool canonicalize(
-	const struct v92_cpt_parameters *parameters, uint8_t *frame,
-	size_t *frame_bits)
+static bool parameters_match(
+	const struct v92_cpt_parameters *first,
+	const struct v92_cpt_parameters *second)
 {
-	memset(frame, 0, V92_CPT_MAX_FRAME_BYTES);
-	return v92_cpt_encode(
-		       parameters, frame, V92_CPT_MAX_FRAME_BYTES,
-		       frame_bits) == V92_CPT_OK;
+	/* Both records came through the codec's CRC and canonical-constellation
+	 * checks. Compare fields, not struct padding or regenerated wire CRCs. */
+	if (first->law != second->law ||
+	    first->trn1d_ratio_q3_13 != second->trn1d_ratio_q3_13 ||
+	    first->shaping_a1_q1_6 != second->shaping_a1_q1_6 ||
+	    first->shaping_a2_q1_6 != second->shaping_a2_q1_6 ||
+	    first->shaping_b1_q1_6 != second->shaping_b1_q1_6 ||
+	    first->shaping_b2_q1_6 != second->shaping_b2_q1_6 ||
+	    first->selected_rate_index != second->selected_rate_index ||
+	    first->sign_redundancy != second->sign_redundancy ||
+	    first->spectral_lookahead != second->spectral_lookahead ||
+	    first->constellation_count != second->constellation_count ||
+	    first->acknowledges_peer != second->acknowledges_peer ||
+	    first->codec_constellations_differ != second->codec_constellations_differ ||
+	    memcmp(first->frame_constellation, second->frame_constellation,
+		   sizeof(first->frame_constellation)) != 0)
+		return false;
+	for (size_t index = 0; index < V92_CPT_MAX_CONSTELLATIONS; ++index) {
+		if (memcmp(first->transmit_constellations[index].ucode_mask,
+			   second->transmit_constellations[index].ucode_mask,
+			   PCM_CONSTELLATION_MASK_BYTES) != 0 ||
+		    memcmp(first->codec_constellations[index].ucode_mask,
+			   second->codec_constellations[index].ucode_mask,
+			   PCM_CONSTELLATION_MASK_BYTES) != 0)
+			return false;
+	}
+	return true;
 }
 
 static enum v92_pcm_phase3_cpt_rx_result accept_frame(
@@ -224,25 +228,14 @@ static enum v92_pcm_phase3_cpt_rx_result accept_frame(
 	const struct v92_cpt_receive_event *record,
 	struct v92_pcm_phase3_cpt_rx_event *event)
 {
-	uint8_t canonical[V92_CPT_MAX_FRAME_BYTES];
-	size_t frame_bits;
-	bool matches;
-
-	if (!canonicalize(&record->parameters, canonical, &frame_bits))
-		return V92_PCM_PHASE3_CPT_RX_INTERNAL_ERROR;
 	event->observed_bits = record->observed_bits;
 	event->parameters = record->parameters;
 	if (receiver->matching_records == 0u) {
 		receiver->parameters = record->parameters;
-		memcpy(receiver->parameter_frame, canonical, sizeof(canonical));
-		receiver->parameter_frame_bits = frame_bits;
 		receiver->matching_records = 1u;
 		event->type = V92_PCM_PHASE3_CPT_RX_PARAMETERS;
 	} else {
-		matches = frame_bits == receiver->parameter_frame_bits &&
-			  memcmp(canonical, receiver->parameter_frame,
-				 sizeof(canonical)) == 0;
-		if (matches) {
+		if (parameters_match(&receiver->parameters, &record->parameters)) {
 			if (receiver->matching_records != UINT32_MAX)
 				receiver->matching_records++;
 			event->type = V92_PCM_PHASE3_CPT_RX_REPEAT;

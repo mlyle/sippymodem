@@ -359,6 +359,74 @@ static bool test_mismatched_repeat_and_e1u_tolerance(void)
 	return true;
 }
 
+static bool test_repeat_fields(void)
+{
+	struct cpt_pair pair;
+	struct v92_cpt_parameters variants[16];
+
+	CHECK(initialize_pair(&pair, G711_LAW_PCMU, 2u, true) &&
+	      receive_first_record(&pair), "CPt field fixture failed");
+	for (size_t index = 0; index < ARRAY_LENGTH(variants); ++index)
+		variants[index] = pair.parameters;
+	variants[0].law = G711_LAW_PCMA;
+	variants[1].trn1d_ratio_q3_13++;
+	variants[2].shaping_a1_q1_6++;
+	variants[3].shaping_a2_q1_6++;
+	variants[4].shaping_b1_q1_6++;
+	variants[5].shaping_b2_q1_6++;
+	variants[6].selected_rate_index++;
+	variants[7].sign_redundancy++;
+	variants[8].spectral_lookahead++;
+	variants[9] = make_parameters(G711_LAW_PCMU, 3u, true);
+	variants[10].acknowledges_peer = false;
+	variants[11].codec_constellations_differ = false;
+	memset(variants[11].codec_constellations, 0,
+	       sizeof(variants[11].codec_constellations));
+	variants[12].frame_constellation[0] = 1u;
+	add_ucode(&variants[13].transmit_constellations[0], 127u);
+	add_ucode(&variants[14].transmit_constellations[1], 127u);
+	add_ucode(&variants[15].codec_constellations[1], 127u);
+	for (size_t index = 0; index < ARRAY_LENGTH(variants); ++index) {
+		struct v92_pcm_phase3_cpt_rx receiver = pair.receiver;
+		struct pcm_binary_sign source = pair.transmitter.coding;
+		struct v92_pcm_phase3_cpt_rx_event event;
+		struct v92_cpt_parameters accepted;
+		uint8_t frame[V92_CPT_MAX_FRAME_BYTES] = { 0 };
+		size_t bits = 0u;
+
+		CHECK(!parameters_match(&variants[index], &pair.parameters) &&
+		      v92_cpt_encode(&variants[index], frame, sizeof(frame),
+				     &bits) == V92_CPT_OK,
+		      "CPt variant %zu did not change the wire fields", index);
+		for (size_t bit = 0; bit < bits; ++bit)
+			CHECK(feed_encoded_bit(&receiver, &source,
+					       packed_bit(frame, bit), &event),
+			      "CPt variant %zu failed at bit %zu", index, bit);
+		CHECK(event.type == V92_PCM_PHASE3_CPT_RX_REJECTED &&
+		      event.frame_result == V92_CPT_INVALID_FRAME &&
+		      receiver.matching_records == 1u &&
+		      v92_pcm_phase3_cpt_rx_parameters(&receiver, &accepted) &&
+		      parameters_match(&accepted, &pair.parameters),
+		      "CPt variant %zu replaced the first accepted record", index);
+		/* A rejected, CRC-valid repeat must not poison the next repeat. */
+		CHECK(v92_cpt_encode(&pair.parameters, frame, sizeof(frame),
+				    &bits) == V92_CPT_OK,
+		      "CPt recovery record failed to encode");
+		for (size_t bit = 0; bit < bits; ++bit)
+			CHECK(feed_encoded_bit(&receiver, &source,
+					       packed_bit(frame, bit), &event),
+			      "CPt recovery %zu failed at bit %zu", index, bit);
+		CHECK(event.type == V92_PCM_PHASE3_CPT_RX_REPEAT &&
+		      receiver.matching_records == 2u,
+		      "CPt variant %zu prevented a later valid repeat", index);
+	}
+	/* Validation still rejects an invalid negotiated configuration. */
+	pair.receiver.parameters.constellation_count = 0u;
+	CHECK(!v92_pcm_phase3_cpt_rx_is_valid(&pair.receiver),
+	      "CPt receiver accepted invalid stored parameters");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase3_cpt_rx receiver;
@@ -478,6 +546,7 @@ int main(void)
 		{ "corrupt repeat recovery", test_corrupt_repeat_recovery },
 		{ "repeat identity and E1u tolerance",
 		  test_mismatched_repeat_and_e1u_tolerance },
+		{ "repeat field identity and recovery", test_repeat_fields },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0u;

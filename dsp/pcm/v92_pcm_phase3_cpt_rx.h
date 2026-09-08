@@ -50,10 +50,10 @@ struct v92_pcm_phase3_cpt_rx {
 	struct v92_phase3_sync sync;
 	struct pcm_binary_sign coding;
 	struct v92_cpt_receiver records;
+	/* The first CRC-checked record owns the negotiated parameters. Compare
+	 * decoded repeats directly; no second serialized copy is needed. */
 	struct v92_cpt_parameters parameters;
-	uint8_t parameter_frame[V92_CPT_MAX_FRAME_BYTES];
 	uint8_t boundary_bits[V92_CPT_SYMBOLS_PER_FRAME];
-	size_t parameter_frame_bits;
 	uint32_t matching_records;
 	enum v92_pcm_phase3_cpt_rx_stage stage;
 	uint8_t boundary_count;
