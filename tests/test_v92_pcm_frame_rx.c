@@ -6,6 +6,7 @@
 
 #include "test.h"
 
+#include <limits.h>
 #include <string.h>
 
 enum { UPSTREAM_LEVEL = 4096, DATA_FRAMES = 1000 };
@@ -56,7 +57,7 @@ static void source_bits(uint8_t *bits, size_t count, unsigned int frame)
 
 static bool waveform(
 	struct v92_pcm_frame_tx *transmitter, const uint8_t *bits,
-	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS])
+	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], int16_t level)
 {
 	struct v92_pcm_frame frame;
 
@@ -67,7 +68,7 @@ static bool waveform(
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 
-		if (v92_pcm_frame_scale(&transmitter->mapping, UPSTREAM_LEVEL,
+		if (v92_pcm_frame_scale(&transmitter->mapping, level,
 				frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
 			return false;
 		samples[symbol] = quantize(transmitter->mapping.law, sample);
@@ -102,7 +103,7 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
 
 		source_bits(bits, mapping.data_bits_per_frame, frame);
 		memset(decoded, 0xa5, sizeof(decoded));
-		CHECK(waveform(&transmitter, bits, samples) &&
+		CHECK(waveform(&transmitter, bits, samples, UPSTREAM_LEVEL) &&
 		      v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES,
 				decoded, mapping.data_bits_per_frame, &decision) ==
 			      V92_PCM_FRAME_OK &&
@@ -130,7 +131,7 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
 		/* Even an ambiguous delivered sequence must describe the received
 		 * waveform. This pins the zero-distance CPd collision, rather than
 		 * treating arbitrary errors as acceptable training noise. */
-		CHECK(waveform(&reencoded, decoded, replay) &&
+		CHECK(waveform(&reencoded, decoded, replay, UPSTREAM_LEVEL) &&
 		      memcmp(replay, history[output_frame % (V92_PCM_RX_DELAY_FRAMES + 1u)],
 			      sizeof(replay)) == 0,
 		      "law %u rate %u filter %u frame %u changed the wire waveform",
@@ -201,7 +202,7 @@ static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
 				bits[bit] = (record[position / 8u] >> (7u - position % 8u)) & 1u;
 			}
 		}
-		CHECK(waveform(&transmitter, bits, samples) &&
+		CHECK(waveform(&transmitter, bits, samples, UPSTREAM_LEVEL) &&
 		      v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES,
 			      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
 		      "control decoding failed");
@@ -227,6 +228,62 @@ static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
 		delivered++;
 	}
 	CHECK(delivered == end, "control reset lost or duplicated payload");
+	return true;
+}
+
+static bool test_uncertain_level(enum g711_law law, uint8_t rate, int16_t level)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+	int16_t measured = quantize(law, level);
+	int16_t low = measured, high = measured;
+
+	while (low > 1 && quantize(law, (int16_t)(low - 1)) == measured)
+		low--;
+	while (high < INT16_MAX && quantize(law, (int16_t)(high + 1)) == measured)
+		high++;
+	CHECK(mapping_init(&mapping, law, rate, false) &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init(&receiver, &mapping, measured) == V92_PCM_FRAME_OK,
+	      "uncertain-level initialization failed");
+	for (unsigned int frame = 0u; frame < V92_B1U_FRAMES + 128u + V92_PCM_RX_DELAY_FRAMES; ++frame) {
+		struct v92_pcm_frame_decision decision;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		bool b1u = frame < V92_B1U_FRAMES;
+
+		source_bits(bits, mapping.data_bits_per_frame, frame);
+		CHECK(waveform(&transmitter, bits, samples, level) &&
+		      v92_pcm_frame_decode(&receiver, samples, b1u, decoded,
+			      mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "uncertain-level frame did not decode");
+		if (b1u) {
+			struct v92_pcm_frame_rx saved = receiver;
+
+			CHECK(v92_pcm_frame_rx_refine_level(&receiver, &decision.frame,
+				      samples, low, high) == V92_PCM_FRAME_OK &&
+			      receiver.minimum_level >= low && receiver.maximum_level <= high &&
+			      receiver.minimum_level <= level && receiver.maximum_level >= level,
+			      "law %u rate %u level %d frame %u lost feasible LU", law, rate, level, frame);
+			saved.upstream_level = receiver.upstream_level;
+			saved.minimum_level = low = receiver.minimum_level;
+			saved.maximum_level = high = receiver.maximum_level;
+			CHECK(memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+			      "refinement changed coding history");
+		} else {
+			CHECK(receiver.minimum_level == low && receiver.maximum_level == high,
+			      "unknown payload changed the level interval");
+			CHECK(decision.squared_error == 0u &&
+			      memcmp(decision.predicted_samples, samples, sizeof(samples)) == 0,
+			      "law %u rate %u level %d frame %u invented a codeword", law, rate, level, frame);
+		}
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, frame - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!decision.ambiguous && memcmp(bits, decoded, mapping.data_bits_per_frame) == 0,
+			      "law %u rate %u level %d frame %u changed data", law, rate, level, frame);
+		}
+	}
 	return true;
 }
 
@@ -285,6 +342,15 @@ static bool test_rejection_and_training_evidence(void)
 	      memcmp(&receiver, &invalid, sizeof(receiver)) == 0,
 	      "invalid reset changed receiver");
 	receiver = saved;
+	receiver.minimum_level = 0;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "nonpositive LU interval accepted");
+	receiver = saved;
+	receiver.minimum_level++;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "LU below its interval accepted");
+	receiver = saved;
+	receiver.maximum_level--;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "LU above its interval accepted");
+	receiver = saved;
 	receiver.paths[0].ambiguous_frames = 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unowned ambiguity accepted");
 	receiver = saved;
@@ -306,7 +372,14 @@ static bool test_rejection_and_training_evidence(void)
 
 int main(void)
 {
+	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
+
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t level = 0u; level < sizeof(levels) / sizeof(levels[0]); ++level) {
+			if (!test_uncertain_level((enum g711_law)law, 13u, levels[level]) ||
+			    !test_uncertain_level((enum g711_law)law, 19u, levels[level]))
+				return 1;
+		}
 		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
 			if (!run_stream((enum g711_law)law, rate, false) ||
 			    !test_control_epoch((enum g711_law)law, rate, false))

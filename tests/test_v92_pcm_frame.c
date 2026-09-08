@@ -266,8 +266,13 @@ static bool test_level_refinement(void)
 	struct v92_pcm_frame_rx saved = rx;
 
 	CHECK(v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4000, 4200) ==
-		      V92_PCM_FRAME_OK && memcmp(&rx, &saved, sizeof(rx)) == 0,
-	      "equal-error refinement changed LU or coding history");
+		      V92_PCM_FRAME_OK && rx.upstream_level == B1U_TEST_LEVEL &&
+	      rx.minimum_level >= 4000 && rx.maximum_level <= 4200,
+	      "equal-error refinement changed LU or exceeded the interval");
+	saved.minimum_level = rx.minimum_level;
+	saved.maximum_level = rx.maximum_level;
+	CHECK(memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "equal-error refinement changed coding history");
 	CHECK(v92_pcm_frame_rx_refine_level(NULL, &frame, samples, 4000, 4200) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_rx_refine_level(&rx, NULL, samples, 4000, 4200) ==

@@ -71,6 +71,8 @@ struct v92_pcm_frame_rx {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
 	int16_t upstream_level;
+	int16_t minimum_level;
+	int16_t maximum_level;
 	uint8_t path_count;
 	uint8_t pending_frames;
 };
@@ -78,6 +80,7 @@ struct v92_pcm_frame_rx {
 struct v92_pcm_frame_decision {
 	/* Current received frame and its residual; payload bits are delayed. */
 	struct v92_pcm_frame frame;
+	int16_t predicted_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t squared_error;
 	bool bits_ready;
 	/* Equal-distance histories disagree about the delivered payload. */
@@ -118,10 +121,11 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
 
-/* Refine only the receive level against a known training frame. Search the
- * caller's original bounded LU interval, preserving the current estimate on
- * equal residuals. Coding histories and payload decisions are unchanged; the
- * line owner must still qualify the unrounded equalizer residual. */
+/* Refine the receive level against known training, retaining the contiguous
+ * LU interval that predicts the same quantized waveform as the best estimate.
+ * Feed that interval into subsequent refinement calls. Ordinary data uses its
+ * nearest possible codeword without changing the trained interval. Coding
+ * histories are unchanged; the line owner still qualifies unrounded error. */
 enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],

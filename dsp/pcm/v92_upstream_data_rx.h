@@ -26,8 +26,6 @@ struct v92_upstream_data_line {
 	uint64_t input_samples;
 	uint64_t received_frames;
 	double adaptation;
-	int16_t minimum_level;
-	int16_t maximum_level;
 	uint8_t symbol_count;
 	int8_t polarity;
 };
@@ -53,8 +51,8 @@ struct v92_upstream_data_frame {
  * its pending physical inputs, polarity, and LU. Reset only data coding.
  * Bound the inherited adaptation step for decision-directed data tracking;
  * a smaller step, including disabled adaptation, remains unchanged. Known
- * B1u frames refine LU only within its original G.711 quantization cell;
- * ordinary payload never changes that estimate.
+ * B1u frames refine LU and its surviving interval only within the original
+ * G.711 quantization cell; ordinary payload never changes that estimate.
  * The mapping must be the complete CPd actually sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,

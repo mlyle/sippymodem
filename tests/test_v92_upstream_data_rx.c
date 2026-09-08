@@ -160,6 +160,7 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 	unsigned int delivered = 0u;
 	double b1u_error = 0.0;
 	int16_t trained_lu = 0;
+	int16_t trained_minimum = 0, trained_maximum = 0;
 	int16_t measured_lu = law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(TEST_LU)) :
 		g711_decode_pcma(g711_encode_pcma(TEST_LU));
@@ -193,8 +194,6 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.adaptation > 0.0 &&
 	      receiver.line.adaptation < handoff.line.adaptation &&
-	      receiver.line.minimum_level <= TEST_LU &&
-	      receiver.line.maximum_level >= TEST_LU &&
 	      memcmp(&receiver.line.equalizer, &handoff.line.equalizer,
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "tracking handoff changed learned coefficients or pending inputs");
@@ -220,10 +219,15 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 		if (result == V92_UPSTREAM_DATA_RX_FRAME &&
 		    receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1u_error += frame.squared_error;
-		if (receiver.line.received_frames == V92_B1U_FRAMES)
+		if (receiver.line.received_frames == V92_B1U_FRAMES) {
 			trained_lu = receiver.decoder.upstream_level;
+			trained_minimum = receiver.decoder.minimum_level;
+			trained_maximum = receiver.decoder.maximum_level;
+		}
 		if (receiver.line.received_frames > V92_B1U_FRAMES)
-			CHECK(receiver.decoder.upstream_level == trained_lu,
+			CHECK(receiver.decoder.upstream_level == trained_lu &&
+			      receiver.decoder.minimum_level == trained_minimum &&
+			      receiver.decoder.maximum_level == trained_maximum,
 			      "unknown payload changed the trained LU");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME || frame.bit_count == 0u)
 			continue;
@@ -243,6 +247,8 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 	}
 	CHECK(delivered == V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES,
 	      "tracking lost payload frames");
+	CHECK(trained_minimum <= TEST_LU && trained_maximum >= TEST_LU,
+	      "training excluded the transmitted LU");
 	CHECK(b1u_error <= (double)V92_B1U_SYMBOLS *
 		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 	      "law %u rate %u rejected clean quantized B1u: RMS %.2f",
@@ -559,6 +565,7 @@ static bool test_rejection_and_failure(void)
 int main(void)
 {
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true))

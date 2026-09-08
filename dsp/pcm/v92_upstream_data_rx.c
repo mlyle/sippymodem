@@ -44,9 +44,6 @@ bool v92_upstream_data_rx_is_valid(
 		    V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
 	    !qam_adaptation_is_valid(receiver->line.adaptation) ||
 	    (receiver->line.polarity != -1 && receiver->line.polarity != 1) ||
-	    receiver->line.minimum_level <= 0 ||
-	    receiver->line.minimum_level > receiver->decoder.upstream_level ||
-	    receiver->line.maximum_level < receiver->decoder.upstream_level ||
 	    receiver->line.symbol_count >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
 	    receiver->line.received_frames >
 		    receiver->line.input_samples / V92_PCM_MAPPING_FRAME_SYMBOLS ||
@@ -105,8 +102,6 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		 * caller-selected step, but bound decision-directed tracking. */
 		.adaptation = fmin(handoff->line.adaptation, 0.002),
 		.polarity = handoff->line.polarity,
-		.minimum_level = level_bound(mapping->law, handoff->line.demodulator.lu, false),
-		.maximum_level = level_bound(mapping->law, handoff->line.demodulator.lu, true),
 	};
 	if (v92_pcm_frame_rx_init(&initialized.decoder, mapping,
 				 handoff->line.demodulator.lu) != V92_PCM_FRAME_OK ||
@@ -168,20 +163,27 @@ static enum v92_upstream_data_rx_result receive_frame(
 	 * put a dense CPd point on the opposite side of a much wider G.711 cell.
 	 * Fit the known B1u waveform inside that initial uncertainty, not by
 	 * weakening the residual ceiling or adapting level from unknown data. */
-	if (b1u && v92_pcm_frame_rx_refine_level(&decoder, &decision.frame,
-		    line->samples, line->minimum_level, line->maximum_level) != V92_PCM_FRAME_OK)
-		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-		int16_t sample;
-		struct qam_point target;
+	if (b1u) {
+		int16_t low = line->received_frames == 0u ?
+			level_bound(decoder.mapping.law, decoder.upstream_level, false) : decoder.minimum_level;
+		int16_t high = line->received_frames == 0u ?
+			level_bound(decoder.mapping.law, decoder.upstream_level, true) : decoder.maximum_level;
 
-		if (v92_pcm_frame_scale(&decoder.mapping, decoder.upstream_level,
-					decision.frame.v[symbol], &sample) !=
-		    V92_PCM_FRAME_OK)
+		if (v92_pcm_frame_rx_refine_level(&decoder, &decision.frame,
+			    line->samples, low, high) != V92_PCM_FRAME_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-		target = (struct qam_point){
-			.in_phase = quantize(decoder.mapping.law, sample),
-		};
+	}
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		struct qam_point target = { .in_phase = decision.predicted_samples[symbol] };
+
+		if (b1u) {
+			int16_t sample;
+
+			if (v92_pcm_frame_scale(&decoder.mapping, decoder.upstream_level,
+					decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
+				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+			target.in_phase = quantize(decoder.mapping.law, sample);
+		}
 		/* Preserve the original equalizer residual, including excursions
 		 * clipped only for the frame decoder's fixed-point input. */
 		double error = line->observations[symbol].output.in_phase - target.in_phase;

@@ -389,6 +389,18 @@ static uint64_t level_error(
 	return error;
 }
 
+static bool same_level_waveform(
+	const struct v92_pcm_mapping *mapping, const struct v92_pcm_frame *frame,
+	int16_t first, int16_t second)
+{
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		if (quantized_sample(mapping->law, scale_sample(mapping, first, frame->v[symbol])) !=
+		    quantized_sample(mapping->law, scale_sample(mapping, second, frame->v[symbol])))
+			return false;
+	}
+	return true;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
@@ -426,7 +438,18 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 		}
 		distance++;
 	}
+	int16_t low = best;
+	int16_t high = best;
+
+	while (low > minimum_level &&
+	       same_level_waveform(&receiver->mapping, frame, best, (int16_t)(low - 1)))
+		low--;
+	while (high < maximum_level &&
+	       same_level_waveform(&receiver->mapping, frame, best, (int16_t)(high + 1)))
+		high++;
 	receiver->upstream_level = best;
+	receiver->minimum_level = low;
+	receiver->maximum_level = high;
 	return V92_PCM_FRAME_OK;
 }
 
@@ -505,6 +528,9 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 
 	if (receiver == NULL || !v92_pcm_mapping_is_valid(&receiver->mapping) ||
 	    receiver->upstream_level <= 0 || receiver->path_count == 0u ||
+	    receiver->minimum_level <= 0 ||
+	    receiver->minimum_level > receiver->upstream_level ||
+	    receiver->maximum_level < receiver->upstream_level ||
 	    receiver->path_count > V92_PCM_RX_PATHS ||
 	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
 	    !trellis_selection(receiver->mapping.cpd.trellis, &selected))
@@ -548,6 +574,8 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	initialized.mapping = *mapping;
 	initialized.upstream_level = upstream_level;
+	initialized.minimum_level = upstream_level;
+	initialized.maximum_level = upstream_level;
 	initialized.path_count = 1u;
 	if (v34_scrambler_init(&initialized.paths[0].descrambler,
 			       V34_POLYNOMIAL_GPA) !=
@@ -643,16 +671,45 @@ static int16_t signed_point(
 		(int16_t)-constellation->positive_linear[-eta - 1];
 }
 
-static int16_t predicted_sample(
-	const struct v92_pcm_frame_rx *receiver,
-	const struct v92_pcm_frame_filter_state *filter, int16_t u)
+static int16_t level_sample(const struct v92_pcm_frame_rx *receiver, int16_t level, int32_t v)
 {
-	int32_t x = precoder_output(&receiver->mapping, filter, u);
-	int32_t v = prefilter_output(&receiver->mapping, filter, x);
-	int16_t sample = scale_sample(
-		&receiver->mapping, receiver->upstream_level, v);
+	return quantized_sample(receiver->mapping.law, scale_sample(&receiver->mapping, level, v));
+}
 
-	return quantized_sample(receiver->mapping.law, sample);
+static int16_t predicted_sample(
+	const struct v92_pcm_frame_rx *receiver, int32_t v, int16_t observed, bool b1u)
+{
+	if (b1u || receiver->minimum_level == receiver->maximum_level)
+		return level_sample(receiver, receiver->upstream_level, v);
+	int low = receiver->minimum_level;
+	int high = receiver->maximum_level;
+	int16_t low_sample = level_sample(receiver, (int16_t)low, v);
+	int16_t high_sample = level_sample(receiver, (int16_t)high, v);
+
+	if (low_sample == high_sample || (v >= 0 ? observed <= low_sample : observed >= low_sample))
+		return low_sample;
+	if (v >= 0 ? observed >= high_sample : observed <= high_sample)
+		return high_sample;
+	/* Quantized predictions are monotone in LU. Find the two reachable
+	 * codewords surrounding the observation, not an interpolated level
+	 * which the transmitter cannot produce. */
+	while (high - low > 1) {
+		int middle = low + (high - low) / 2;
+		int16_t sample = level_sample(receiver, (int16_t)middle, v);
+
+		if (v >= 0 ? sample < observed : sample > observed) {
+			low = middle;
+			low_sample = sample;
+		} else {
+			high = middle;
+			high_sample = sample;
+		}
+	}
+	int low_error = observed - low_sample;
+	int high_error = observed - high_sample;
+
+	return (int64_t)low_error * low_error <= (int64_t)high_error * high_error ?
+		low_sample : high_sample;
 }
 
 static bool b1u_digits(
@@ -734,9 +791,12 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 						       y0, &digit) ||
 				    (b1u && digit != paths[path].known_digits[symbol]))
 					continue;
-				error = (int64_t)samples[symbol] - predicted_sample(
-					receiver, &paths[path].state.filter,
-					signed_point(constellation, eta));
+				int32_t x = precoder_output(&receiver->mapping,
+					&paths[path].state.filter, signed_point(constellation, eta));
+				int32_t v = prefilter_output(&receiver->mapping, &paths[path].state.filter, x);
+
+				error = (int64_t)samples[symbol] -
+					predicted_sample(receiver, v, samples[symbol], b1u);
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric,
 						(uint64_t)(error * error)),
@@ -863,6 +923,9 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		.bits_ready = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES,
 		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
 	};
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
+		decision->predicted_samples[symbol] = predicted_sample(receiver,
+			decision->frame.v[symbol], samples[symbol], b1u);
 	if (decision->bits_ready)
 		memcpy(bits, decoded, bit_count);
 	else
