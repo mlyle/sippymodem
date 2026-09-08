@@ -217,20 +217,22 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 }
 
 static bool start_analog_downstream_data(
-	struct v92_phase4_e2u_analog_state *state)
+	union v92_phase4_e2u_analog_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu)
 {
 	struct v90_downstream_data_rx data;
 	struct v90_pcm_mapping mapping;
 
-	if (!downstream_mapping(&state->cpu, &mapping) ||
+	if (!downstream_mapping(cpu, &mapping) ||
 	    v90_downstream_data_rx_start_after_ed(
-		    &data, &state->downstream.training, &mapping) !=
+		    &data, &downstream->training, &mapping) !=
 		    V90_DOWNSTREAM_DATA_RX_OK)
 		return false;
-	state->downstream = (union v92_phase4_e2u_analog_downstream){
+	*downstream = (union v92_phase4_e2u_analog_downstream){
 		.data = data,
 	};
-	state->downstream_stage = V92_PHASE4_E2U_DOWNSTREAM_DATA;
+	*stage = V92_PHASE4_E2U_DOWNSTREAM_DATA;
 	return true;
 }
 
@@ -271,32 +273,26 @@ static bool retain_matching_cpd(
 	return v92_pcm_mapping_equal(retained, &candidate);
 }
 
-static bool analog_receive_data(
-	struct v90_downstream_data_rx *receive, uint8_t octet)
-{
-	struct v90_pcm_stream_frame frame;
-	enum v90_downstream_data_rx_result result =
-		v90_downstream_data_rx_receive_octet(receive, octet, &frame);
-
-	return result == V90_DOWNSTREAM_DATA_RX_BUFFERING ||
-	       result == V90_DOWNSTREAM_DATA_RX_B1D_FRAME ||
-	       result == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE ||
-	       result == V90_DOWNSTREAM_DATA_RX_DATA_FRAME;
-}
-
-static bool analog_receive(
-	struct v92_phase4_e2u_analog_state *state, uint8_t octet)
+enum v90_downstream_data_rx_result v92_downstream_receive_owned(
+	union v92_phase4_e2u_analog_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu, struct v92_pcm_mapping *mapping,
+	uint8_t octet, struct v90_pcm_stream_frame *frame)
 {
 	struct pcm_downstream_event event = { 0 };
 	enum pcm_downstream_rx_result result;
 	struct pcm_downstream_rx *receive;
 
-	if (state->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
-		return analog_receive_data(&state->downstream.data, octet);
-	receive = &state->downstream.training;
-	if (pcm_downstream_rx_is_complete(receive))
-		return start_analog_downstream_data(state) &&
-		       analog_receive_data(&state->downstream.data, octet);
+	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
+		return v90_downstream_data_rx_receive_octet(
+			&downstream->data, octet, frame);
+	receive = &downstream->training;
+	if (pcm_downstream_rx_is_complete(receive)) {
+		if (!start_analog_downstream_data(downstream, stage, cpu))
+			return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
+		return v90_downstream_data_rx_receive_octet(
+			&downstream->data, octet, frame);
+	}
 	result = pcm_downstream_rx_receive(receive, octet, &event);
 	if (result == PCM_DOWNSTREAM_RX_ED_REJECTED ||
 	    result == PCM_DOWNSTREAM_RX_INVALID_ARGUMENT ||
@@ -308,74 +304,86 @@ static bool analog_receive(
 	    result == PCM_DOWNSTREAM_RX_MP ||
 	    result == PCM_DOWNSTREAM_RX_MP_PRIME ||
 	    result == PCM_DOWNSTREAM_RX_MP_REJECTED)
-		return false;
+		return V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
 	if (result == PCM_DOWNSTREAM_RX_CPD) {
 		if (event.control.type != V92_CONTROL_EVENT_CPD ||
 		    event.control.record.cpd.frame_result != V92_CPD_OK ||
 		    !retain_matching_cpd(
-			    &state->mapping,
+			    mapping,
 			    &event.control.record.cpd.parameters))
-			return false;
-		return arm_analog_ed(receive);
+			return V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
+		return arm_analog_ed(receive) ? V90_DOWNSTREAM_DATA_RX_BUFFERING :
+			V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
 	}
 	if (result == PCM_DOWNSTREAM_RX_SUVD) {
 		/* SUVd carries status only; CPd owns the retained selection. */
 		if (event.control.type != V92_CONTROL_EVENT_SUVD ||
 		    event.control.record.suvd.frame_result != V92_SUVD_OK ||
 		    !event.control.record.suvd.parameters.acknowledges_cpu)
-			return false;
-		return arm_analog_ed(receive);
+			return V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
+		return arm_analog_ed(receive) ? V90_DOWNSTREAM_DATA_RX_BUFFERING :
+			V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
 	}
 	if (result == PCM_DOWNSTREAM_RX_CPD_REJECTED ||
 	    result == PCM_DOWNSTREAM_RX_SUVD_REJECTED)
-		return true;
+		return V90_DOWNSTREAM_DATA_RX_BUFFERING;
 	if (result == PCM_DOWNSTREAM_RX_ED)
-		return start_analog_downstream_data(state);
-	return result == PCM_DOWNSTREAM_RX_BUFFERING;
+		return start_analog_downstream_data(downstream, stage, cpu) ?
+			V90_DOWNSTREAM_DATA_RX_BUFFERING :
+			V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
+	return result == PCM_DOWNSTREAM_RX_BUFFERING ?
+		V90_DOWNSTREAM_DATA_RX_BUFFERING :
+		V90_DOWNSTREAM_DATA_RX_INVALID_SYMBOL;
 }
 
 static bool start_digital_downstream_data(
-	struct v92_phase4_e2u_digital_state *state)
+	union v92_phase4_e2u_digital_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu)
 {
 	struct v90_downstream_data_stream data;
 	struct v90_pcm_mapping mapping;
 
-	if (!downstream_mapping(&state->cpu, &mapping) ||
+	if (!downstream_mapping(cpu, &mapping) ||
 	    v90_downstream_data_stream_start_after_ed(
-		    &data, &state->downstream.training, &mapping) !=
+		    &data, &downstream->training, &mapping) !=
 		    V90_DOWNSTREAM_DATA_STREAM_OK)
 		return false;
-	state->downstream = (union v92_phase4_e2u_digital_downstream){
+	*downstream = (union v92_phase4_e2u_digital_downstream){
 		.data = data,
 	};
-	state->downstream_stage = V92_PHASE4_E2U_DOWNSTREAM_DATA;
+	*stage = V92_PHASE4_E2U_DOWNSTREAM_DATA;
 	return true;
 }
 
-static bool digital_transmit(
-	struct v92_phase4_e2u_digital_state *state, uint8_t *octet)
+enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
+	union v92_phase4_e2u_digital_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu,
+	v90_downstream_frame_source source, void *context, uint8_t *octet)
 {
 	struct v90_pcm_symbol symbol;
+	enum v90_downstream_data_stream_result data_result;
 
-	if (state->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING) {
+	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING) {
 		struct pcm_downstream_symbol training_symbol;
 		enum pcm_downstream_tx_result result = pcm_downstream_tx_next(
-			&state->downstream.training, &training_symbol);
+			&downstream->training, &training_symbol);
 
 		if (result == PCM_DOWNSTREAM_TX_OK) {
 			*octet = training_symbol.pcm.octet;
-			return true;
+			return V90_DOWNSTREAM_DATA_STREAM_OK;
 		}
 		if (result != PCM_DOWNSTREAM_TX_COMPLETE ||
-		    !start_digital_downstream_data(state))
-			return false;
+		    !start_digital_downstream_data(downstream, stage, cpu))
+			return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 	}
-	if (v90_downstream_data_stream_next(
-		    &state->downstream.data, NULL, NULL, &symbol) !=
-		    V90_DOWNSTREAM_DATA_STREAM_OK)
-		return false;
+	data_result = v90_downstream_data_stream_next(
+		&downstream->data, source, context, &symbol);
+	if (data_result != V90_DOWNSTREAM_DATA_STREAM_OK)
+		return data_result;
 	*octet = symbol.octet;
-	return true;
+	return V90_DOWNSTREAM_DATA_STREAM_OK;
 }
 
 static bool retain_matching_cpu(
@@ -482,18 +490,32 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	next = *owner;
 	if (next.local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
+		struct v90_pcm_stream_frame frame;
+		struct v92_phase4_e2u_analog_state *state = &next.state.analog;
+		enum v90_downstream_data_rx_result received;
 
 		if (v92_phase4_record_tx_next(
 			    &next.state.analog.transmit, &sample) !=
-			    V92_PHASE4_RECORD_TX_OK ||
-		    !analog_receive(&next.state.analog, received_octet))
+			    V92_PHASE4_RECORD_TX_OK)
+			return fail(owner);
+		received = v92_downstream_receive_owned(
+			&state->downstream, &state->downstream_stage,
+			&state->cpu, &state->mapping, received_octet, &frame);
+		if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
+		    received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
+		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
+		    received != V90_DOWNSTREAM_DATA_RX_DATA_FRAME)
 			return fail(owner);
 		generated = next.state.analog.cpu.law == G711_LAW_PCMA ?
 			g711_encode_pcma(sample) : g711_encode_pcmu(sample);
 	} else {
 		enum v92_phase4_e2u_result receive_result;
+		struct v92_phase4_e2u_digital_state *state = &next.state.digital;
 
-		if (!digital_transmit(&next.state.digital, &generated))
+		if (v92_downstream_transmit_owned(
+			    &state->downstream, &state->downstream_stage,
+			    &state->cpu, NULL, NULL, &generated) !=
+		    V90_DOWNSTREAM_DATA_STREAM_OK)
 			return fail(owner);
 		receive_result = digital_receive(
 			&next.state.digital, received_sample);

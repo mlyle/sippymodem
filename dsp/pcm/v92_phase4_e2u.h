@@ -117,6 +117,22 @@ enum v92_phase4_e2u_result v92_phase4_e2u_handoff(
 	const struct v92_phase4_e2u *owner,
 	struct v92_phase4_e2u_handoff *handoff);
 
+/* Continue the independent downstream epoch during or after E2u. The caller
+ * exclusively owns and validates the inherited union, stage and selections;
+ * outputs must be distinct. A transmit SOURCE_FAILURE consumes nothing.
+ * Receive BUFFERING includes accepted control records and the Ed boundary;
+ * subsequent B1d/data results retain the shared downstream receiver contract. */
+enum v90_downstream_data_rx_result v92_downstream_receive_owned(
+	union v92_phase4_e2u_analog_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu, struct v92_pcm_mapping *mapping,
+	uint8_t octet, struct v90_pcm_stream_frame *frame);
+enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
+	union v92_phase4_e2u_digital_downstream *downstream,
+	enum v92_phase4_e2u_downstream_stage *stage,
+	const struct v92_cpu_parameters *cpu,
+	v90_downstream_frame_source source, void *context, uint8_t *octet);
+
 const char *v92_phase4_e2u_result_name(enum v92_phase4_e2u_result result);
 
 #endif /* V92_PHASE4_E2U_H */

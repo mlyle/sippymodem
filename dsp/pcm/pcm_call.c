@@ -8,6 +8,7 @@
 #include "v34_phase2_selection.h"
 #include "v92_pcm_dil.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -19,6 +20,12 @@ enum {
 	V90_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
+	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
+	V92_B1_ROUND_TRIP_ALLOWANCES = 6,
+	/* Receiver policy, not a normative V.92 threshold: known-bit decoding
+	 * must also fit the received waveform within 64 decoded G.711 units
+	 * RMS over B1u. Constraining the mapper to ones alone proves nothing. */
+	V92_B1U_MAX_RMS_ERROR = 64,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 5,
 	V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES = 2,
@@ -569,6 +576,83 @@ static bool rate_renegotiation_deadline_has_started(
 	}
 }
 
+static uint32_t b1_deadline_limit(const struct pcm_call *call)
+{
+	/* V.90 9.2 and V.92 9.6 time peer B1 from the end of INFO1a. */
+	return call->protocol == PCM_PROTOCOL_V92 ?
+		V92_B1_BASE_DEADLINE_SAMPLES +
+			V92_B1_ROUND_TRIP_ALLOWANCES * call->round_trip_delay_samples :
+		V90_B1_BASE_DEADLINE_SAMPLES +
+			V90_B1_ROUND_TRIP_ALLOWANCES * call->round_trip_delay_samples;
+}
+
+static bool v92_data_path_is_valid(const struct pcm_call *call)
+{
+	struct v90_pcm_mapping expected;
+	const struct v92_cpu_parameters *cpu;
+	const struct v92_pcm_mapping *upstream;
+	enum v92_phase4_e2u_downstream_stage stage;
+	bool child_valid;
+
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct pcm_call_v92_analog_data *path =
+			&call->state.data_path.v92_analog;
+
+		cpu = &path->cpu;
+		upstream = &path->upstream.encoder.mapping;
+		stage = path->downstream_stage;
+		if ((stage != V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
+		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
+		    !v92_upstream_data_tx_is_valid(&path->upstream) ||
+		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
+			    V90_PCM_MAPPING_OK)
+			return false;
+		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
+			child_valid = pcm_downstream_rx_is_valid(
+					&path->downstream.training) &&
+				(call->failed || !pcm_downstream_rx_has_failed(
+					&path->downstream.training)) &&
+				path->downstream.training.protocol == PCM_PROTOCOL_V92 &&
+				path->downstream.training.ed_requested &&
+				path->downstream.training.stream.decoder.mapping.law == call->law;
+		else
+			child_valid = v90_downstream_data_rx_is_valid(
+					&path->downstream.data) &&
+				v90_pcm_mapping_equal(&expected,
+					&path->downstream.data.stream.decoder.mapping);
+	} else {
+		const struct pcm_call_v92_digital_data *path =
+			&call->state.data_path.v92_digital;
+
+		cpu = &path->cpu;
+		upstream = &path->upstream.decoder.mapping;
+		stage = path->downstream_stage;
+		if ((stage != V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
+		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
+		    !v92_upstream_data_rx_is_valid(&path->upstream) ||
+		    (path->upstream.failed && !call->failed) ||
+		    !isfinite(path->b1u_squared_error) ||
+		    path->b1u_squared_error < 0.0 ||
+		    (path->upstream.line.received_frames == 0u &&
+		     path->b1u_squared_error != 0.0) ||
+		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
+			    V90_PCM_MAPPING_OK)
+			return false;
+		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
+			child_valid = pcm_downstream_tx_is_valid(
+					&path->downstream.training) &&
+				path->downstream.training.protocol == PCM_PROTOCOL_V92 &&
+				path->downstream.training.ed_requested &&
+				path->downstream.training.encoder.mapping.law == call->law;
+		else
+			child_valid = v90_downstream_data_stream_is_valid(
+					&path->downstream.data) &&
+				v90_pcm_mapping_equal(&expected,
+					&path->downstream.data.transmitter.encoder.mapping);
+	}
+	return cpu->law == call->law && upstream->law == call->law && child_valid;
+}
+
 static bool call_is_valid(
 	const struct pcm_call *call, bool owned_phase3)
 {
@@ -597,13 +681,9 @@ static bool call_is_valid(
 	    (!call->b1_deadline_armed &&
 	     call->b1_deadline_remaining_samples != 0u) ||
 	    (call->b1_deadline_armed &&
-	     (call->protocol != PCM_PROTOCOL_V90 ||
-	      call->stage == PCM_CALL_RETRAIN_SILENCE ||
+	     (call->stage == PCM_CALL_RETRAIN_SILENCE ||
 	      !call->peer_info0_stored || !call->round_trip_delay_stored ||
-	      call->b1_deadline_remaining_samples >
-		      V90_B1_BASE_DEADLINE_SAMPLES +
-		      V90_B1_ROUND_TRIP_ALLOWANCES *
-			      (uint32_t)call->round_trip_delay_samples)) ||
+	      call->b1_deadline_remaining_samples > b1_deadline_limit(call))) ||
 	    (!call->rate_renegotiation_deadline_armed &&
 	     call->rate_renegotiation_deadline_remaining_samples != 0u) ||
 	    (call->rate_renegotiation_deadline_armed &&
@@ -731,8 +811,12 @@ static bool call_is_valid(
 		break;
 	case PCM_CALL_DATA_PATH:
 	case PCM_CALL_CLOSED:
-		if (call->protocol != PCM_PROTOCOL_V90)
-			return false;
+		if (call->protocol == PCM_PROTOCOL_V92) {
+			child_valid = call->stage == PCM_CALL_DATA_PATH &&
+				v92_data_path_is_valid(call);
+			child_failed = false;
+			break;
+		}
 		if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_analog_path_is_valid(
 				&call->state.data_path.analog);
@@ -926,11 +1010,9 @@ static enum pcm_call_result recover_unusable_retrain_selection(
 	return begin_retrain(call, false);
 }
 
-static bool is_v90_info1a_boundary(
+static bool is_info1a_boundary(
 	const struct pcm_call *call, const struct pcm_phase2_event *event)
 {
-	if (call->protocol != PCM_PROTOCOL_V90)
-		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
 		event->kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT :
 		event->kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED;
@@ -939,14 +1021,11 @@ static bool is_v90_info1a_boundary(
 static enum pcm_call_result arm_b1_deadline(
 	struct pcm_call *call, const struct pcm_phase2_event *event)
 {
-	if (!is_v90_info1a_boundary(call, event))
+	if (!is_info1a_boundary(call, event))
 		return PCM_CALL_OK;
 	if (!call->round_trip_delay_stored)
 		return PCM_CALL_SEQUENCE_MISMATCH;
-	call->b1_deadline_remaining_samples =
-		V90_B1_BASE_DEADLINE_SAMPLES +
-		V90_B1_ROUND_TRIP_ALLOWANCES *
-		(uint32_t)call->round_trip_delay_samples;
+	call->b1_deadline_remaining_samples = b1_deadline_limit(call);
 	call->b1_deadline_armed = true;
 	return PCM_CALL_OK;
 }
@@ -992,11 +1071,41 @@ static bool digital_upstream_is_online_owned(
 		path->upstream_stage == V90_DIGITAL_PATH_UPSTREAM_DATA);
 }
 
+static bool v92_peer_b1_received_owned(const struct pcm_call *call)
+{
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct pcm_call_v92_analog_data *path =
+			&call->state.data_path.v92_analog;
+
+		return path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
+	}
+	const struct pcm_call_v92_digital_data *path =
+		&call->state.data_path.v92_digital;
+
+	return path->upstream.line.received_frames >= V92_B1U_FRAMES &&
+	       path->b1u_squared_error <= (double)V92_B1U_SYMBOLS *
+		       V92_B1U_MAX_RMS_ERROR * V92_B1U_MAX_RMS_ERROR;
+}
+
+static bool v92_local_b1_sent_owned(const struct pcm_call *call)
+{
+	if (call->local_role == V90_ANALOG_MODEM)
+		return call->state.data_path.v92_analog.upstream.b1u_symbols_remaining == 0u;
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+
+	return path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+	       path->downstream.data.transmitted_symbols >=
+		       V90_PHASE4_B1D_FRAMES * V90_CP_FRAME_INTERVALS;
+}
+
 static bool data_path_is_online_owned(const struct pcm_call *call)
 {
 	if (call->failed || call->stage != PCM_CALL_DATA_PATH ||
 	    cleardown_is_active_owned(call))
 		return false;
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return v92_peer_b1_received_owned(call) && v92_local_b1_sent_owned(call);
 	if (call->local_role == V90_ANALOG_MODEM)
 		return analog_upstream_is_online_owned(
 			       &call->state.data_path.analog) &&
@@ -1012,6 +1121,8 @@ static bool peer_b1_received(const struct pcm_call *call)
 {
 	if (call->stage != PCM_CALL_DATA_PATH)
 		return false;
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return v92_peer_b1_received_owned(call);
 	return call->local_role == V90_ANALOG_MODEM ?
 		analog_downstream_is_online_owned(
 			&call->state.data_path.analog) :
@@ -1517,7 +1628,8 @@ static uint32_t retrain_silence_ceiling(
 	uint64_t gain;
 	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
 
-	if (call->local_role != V90_DIGITAL_MODEM ||
+	if (call->protocol != PCM_PROTOCOL_V90 ||
+	    call->local_role != V90_DIGITAL_MODEM ||
 	    call->stage != PCM_CALL_DATA_PATH)
 		return nominal_window_energy;
 	path = &call->state.data_path.digital;
@@ -2692,6 +2804,37 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 	return result;
 }
 
+static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *call)
+{
+	struct v92_phase4_e2u_handoff handoff;
+
+	if (v92_phase4_e2u_handoff(&call->state.phase4.v92.owner.e2u, &handoff) !=
+	    V92_PHASE4_E2U_OK)
+		return false;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct v92_phase4_e2u_analog_handoff *from = &handoff.state.analog;
+		struct pcm_call_v92_analog_data *path = &next->state.data_path.v92_analog;
+
+		if (v92_upstream_data_tx_init(&path->upstream, &from->mapping,
+					     from->transmit.lu) != V92_UPSTREAM_DATA_TX_OK)
+			return false;
+		path->downstream = from->downstream;
+		path->downstream_stage = from->downstream_stage;
+		path->cpu = from->cpu;
+	} else {
+		const struct v92_phase4_e2u_digital_handoff *from = &handoff.state.digital;
+		struct pcm_call_v92_digital_data *path = &next->state.data_path.v92_digital;
+
+		if (v92_upstream_data_rx_init(&path->upstream, &from->receive,
+					     &from->mapping) != V92_UPSTREAM_DATA_RX_OK)
+			return false;
+		path->downstream = from->downstream;
+		path->downstream_stage = from->downstream_stage;
+		path->cpu = from->cpu;
+	}
+	return true;
+}
+
 enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 {
 	struct pcm_call next;
@@ -2701,13 +2844,14 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return PCM_CALL_FAILED;
-	if (call->protocol != PCM_PROTOCOL_V90)
-		return PCM_CALL_INVALID_STATE;
 	if (!pcm_call_phase4_is_ready(call))
 		return PCM_CALL_INVALID_STATE;
 	next = *call;
 	next.state = (union pcm_call_state){ 0 };
-	if (call->local_role == V90_ANALOG_MODEM) {
+	if (call->protocol == PCM_PROTOCOL_V92) {
+		if (!start_v92_data_path(&next, call))
+			return PCM_CALL_NUMERIC_FAILURE;
+	} else if (call->local_role == V90_ANALOG_MODEM) {
 		struct v90_phase4_analog_handoff handoff;
 		struct v90_analog_path path;
 
@@ -2781,6 +2925,10 @@ static bool data_outputs_overlap(
 static const struct v90_pcm_mapping *online_downstream_mapping(
 	const struct pcm_call *call)
 {
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return call->local_role == V90_ANALOG_MODEM ?
+			&call->state.data_path.v92_analog.downstream.data.stream.decoder.mapping :
+			&call->state.data_path.v92_digital.downstream.data.transmitter.encoder.mapping;
 	return call->local_role == V90_ANALOG_MODEM ?
 		       &call->state.data_path.analog.data_mapping :
 		       &call->state.data_path.digital.data_mapping;
@@ -2823,13 +2971,22 @@ bool pcm_call_get_data_rates(
 		    sizeof(*receive_bits_per_second)))
 		return false;
 	downstream = online_downstream_mapping(call);
-	upstream_units = online_upstream_rate_units(call);
-	if (upstream_units == 0 ||
-	    !v90_pcm_mapping_is_valid(downstream) ||
-	    downstream->kind != V90_CP_DATA)
+	if (!v90_pcm_mapping_is_valid(downstream) || downstream->kind != V90_CP_DATA)
 		return false;
-	upstream_rate =
-		(uint32_t)upstream_units * V90_UPSTREAM_RATE_UNIT;
+	if (call->protocol == PCM_PROTOCOL_V92) {
+		const struct v92_pcm_mapping *mapping = call->local_role == V90_ANALOG_MODEM ?
+			&call->state.data_path.v92_analog.upstream.encoder.mapping :
+			&call->state.data_path.v92_digital.upstream.decoder.mapping;
+
+		upstream_rate = ((uint32_t)mapping->data_bits_per_frame *
+				V90_NETWORK_CHARACTERS_PER_SECOND +
+				V92_PCM_MAPPING_FRAME_SYMBOLS / 2u) / V92_PCM_MAPPING_FRAME_SYMBOLS;
+	} else {
+		upstream_units = online_upstream_rate_units(call);
+		if (upstream_units == 0)
+			return false;
+		upstream_rate = (uint32_t)upstream_units * V90_UPSTREAM_RATE_UNIT;
+	}
 	downstream_rate =
 		((uint32_t)downstream->frame_bits *
 		 V90_NETWORK_CHARACTERS_PER_SECOND +
@@ -2912,6 +3069,73 @@ static void complete_cleardown(struct pcm_call *call)
 	call->rate_renegotiation_deadline_remaining_samples = 0u;
 }
 
+static enum pcm_call_result v92_data_octet_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	const struct pcm_call_data_sources *sources, uint8_t *generated,
+	struct pcm_call_data_event *emitted)
+{
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+		struct v90_pcm_stream_frame frame;
+		enum v90_downstream_data_rx_result received;
+		enum v92_upstream_data_tx_result transmitted;
+		int16_t sample;
+
+		transmitted = v92_upstream_data_tx_next(&path->upstream,
+			sources->pcm_upstream, sources->pcm_upstream_context, &sample);
+		if (transmitted == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
+			return PCM_CALL_SOURCE_FAILURE;
+		if (transmitted != V92_UPSTREAM_DATA_TX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		*generated = encode_sample(call->law, sample);
+		received = v92_downstream_receive_owned(&path->downstream,
+			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
+			received_octet, &frame);
+		if (received == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
+			emitted->frame.downstream = frame;
+			emitted->kind = PCM_CALL_DOWNSTREAM_FRAME;
+		} else if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
+			   received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
+			   received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {
+			return PCM_CALL_SEQUENCE_MISMATCH;
+		}
+	} else {
+		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		struct v92_upstream_data_frame frame;
+		enum v92_upstream_data_rx_result received;
+		enum v90_downstream_data_stream_result transmitted;
+
+		transmitted = v92_downstream_transmit_owned(&path->downstream,
+			&path->downstream_stage, &path->cpu, sources->downstream,
+			sources->downstream_context, generated);
+		if (transmitted == V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE)
+			return PCM_CALL_SOURCE_FAILURE;
+		if (transmitted != V90_DOWNSTREAM_DATA_STREAM_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		received = v92_upstream_data_rx_sample(&path->upstream,
+			received_sample, &frame);
+		if (received == V92_UPSTREAM_DATA_RX_FRAME) {
+			if (path->upstream.line.received_frames <= V92_B1U_FRAMES) {
+				double error = path->b1u_squared_error + frame.squared_error;
+
+				if (!isfinite(error))
+					return PCM_CALL_NUMERIC_FAILURE;
+				path->b1u_squared_error = error;
+			}
+			/* The decoder's lookahead can still deliver B1u bits after
+			 * the physical B1 boundary. Never expose them as host data. */
+			if (v92_peer_b1_received_owned(call) &&
+			    frame.bit_count != 0u && !frame.b1u) {
+				emitted->frame.pcm_upstream = frame;
+				emitted->kind = PCM_CALL_PCM_UPSTREAM_FRAME;
+			}
+		} else if (received != V92_UPSTREAM_DATA_RX_OK) {
+			return PCM_CALL_NUMERIC_FAILURE;
+		}
+	}
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	const struct pcm_call_data_sources *sources,
@@ -2973,7 +3197,12 @@ static enum pcm_call_result data_octet_owned(
 				call, 256u * 256u *
 				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
 	generated = encode_sample(call->law, 0);
-	if (call->local_role == V90_ANALOG_MODEM) {
+	if (call->protocol == PCM_PROTOCOL_V92) {
+		result = v92_data_octet_owned(call, received_octet, received_sample,
+			sources, &generated, &emitted);
+		if (retrain_candidate)
+			emitted = (struct pcm_call_data_event){ 0 };
+	} else if (call->local_role == V90_ANALOG_MODEM) {
 		analog_result = v90_analog_path_transmit(
 			&call->state.data_path.analog,
 			sources->upstream, sources->upstream_context,
@@ -2992,7 +3221,8 @@ static enum pcm_call_result data_octet_owned(
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
 	result = recover_rate_renegotiation_failure(call, result);
-	if (result == PCM_CALL_OK && call->stage == PCM_CALL_DATA_PATH &&
+	if (result == PCM_CALL_OK && call->protocol == PCM_PROTOCOL_V90 &&
+	    call->stage == PCM_CALL_DATA_PATH &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		/* Data decoding must retain the six-sample mapper phase through a
 		 * short gap. Only the host output is clamped; a qualified retrain
@@ -3171,7 +3401,7 @@ enum pcm_call_result pcm_call_octet(
 		 retrain_detection_is_active(call))
 		result = observe_retrain_tone(call, received_sample);
 	deadline_started = emitted.processed == PCM_CALL_PHASE2 &&
-		is_v90_info1a_boundary(call, &emitted.phase2);
+		is_info1a_boundary(call, &emitted.phase2);
 	if (result == PCM_CALL_OK && !deadline_started)
 		result = advance_b1_deadline(call);
 	if (result != PCM_CALL_OK &&

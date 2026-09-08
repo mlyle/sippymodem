@@ -1213,7 +1213,8 @@ static bool test_v92_pcm_upstream_selection(void)
 	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92 &&
 	      operations->use_count == 2,
 	      "V.92 PCM-upstream peers did not share the PCM call owner");
-	for (size_t index = 0; index < MODEM_FRAG * 2u; ++index) {
+	bool stopped = false;
+	for (size_t index = 0; index < 120000u; ++index) {
 		uint8_t next_analog;
 		uint8_t next_digital;
 		int16_t analog_received = g711_decode_pcmu(digital_to_analog);
@@ -1222,21 +1223,33 @@ static bool test_v92_pcm_upstream_selection(void)
 		int16_t digital_transmitted;
 		bool analog_exact = false;
 		bool digital_exact = false;
+		int digital_result;
+		int analog_result;
 
-		CHECK(operations->process_g711(
+		digital_result = operations->process_g711(
 			      digital_dp, G711_LAW_PCMU,
 			      &analog_to_digital, &digital_received,
 			      &next_digital, &digital_transmitted, 1,
-			      &digital_exact) == DPSTAT_OK && digital_exact &&
-		      operations->process_g711(
+			      &digital_exact);
+		analog_result = operations->process_g711(
 			      analog_dp, G711_LAW_PCMU,
 			      &digital_to_analog, &analog_received,
 			      &next_analog, &analog_transmitted, 1,
-			      &analog_exact) == DPSTAT_OK && analog_exact,
+			      &analog_exact);
+		CHECK(digital_result != DPSTAT_CONNECT && analog_result != DPSTAT_CONNECT,
+		      "V.92 announced CONNECT without a PCM host-bit adapter");
+		if (index >= MODEM_FRAG * 2u &&
+		    (digital_result == DPSTAT_ERROR || analog_result == DPSTAT_ERROR)) {
+			stopped = true;
+			break;
+		}
+		CHECK(digital_result == DPSTAT_OK && digital_exact &&
+		      analog_result == DPSTAT_OK && analog_exact,
 		      "V.92 PCM-upstream selection stopped at sample %zu", index);
 		analog_to_digital = next_analog;
 		digital_to_analog = next_digital;
 	}
+	CHECK(stopped, "unfinished V.92 host adapter never rejected data entry");
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&
 	      v90_datapump_unregister() == 0 &&

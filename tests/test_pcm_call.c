@@ -13,6 +13,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -5336,10 +5337,298 @@ static bool run_v92_phase4_control(
 	      retrain_preserves_protocol(&analog, law) &&
 	      retrain_preserves_protocol(&digital, law) &&
 	      !pcm_call_is_online(&analog) && !pcm_call_is_online(&digital) &&
-	      pcm_call_start_data_path(&analog) == PCM_CALL_INVALID_STATE &&
-	      pcm_call_start_data_path(&digital) == PCM_CALL_INVALID_STATE,
+	      pcm_call_start_data_path(&analog) == PCM_CALL_OK &&
+	      pcm_call_start_data_path(&digital) == PCM_CALL_OK &&
+	      !pcm_call_is_online(&analog) && !pcm_call_is_online(&digital),
 	      "law %u V.92 control was misreported as online",
 	      (unsigned int)law);
+	return true;
+}
+
+struct pcm_payload_source {
+	uint32_t frames;
+	bool reject;
+	bool rejection_checked;
+};
+
+static void pcm_payload_bits(uint8_t *bits, size_t count, uint32_t frame)
+{
+	uint32_t state = UINT32_C(0x8712563b) ^ frame;
+
+	for (size_t bit = 0u; bit < count; ++bit) {
+		state = state * UINT32_C(1664525) + UINT32_C(1013904223);
+		bits[bit] = (uint8_t)(state >> 31u);
+	}
+}
+
+static bool pcm_payload(void *context, uint8_t *bits, size_t count)
+{
+	struct pcm_payload_source *source = context;
+
+	if (source->reject) {
+		source->reject = false;
+		return false;
+	}
+	pcm_payload_bits(bits, count, source->frames++);
+	return true;
+}
+
+static bool v92_data_boundary(struct pcm_call *call)
+{
+	struct v92_phase4_e2u_handoff handoff;
+	struct pcm_call snapshot = *call;
+
+	CHECK(phase4_boundary_is_transactional(call, call->law) &&
+	      v92_phase4_e2u_handoff(&call->state.phase4.v92.owner.e2u, &handoff) ==
+		      V92_PHASE4_E2U_OK &&
+	      pcm_call_start_data_path(call) == PCM_CALL_OK &&
+	      call->stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(call) &&
+	      !pcm_call_is_online(call) && call->b1_deadline_armed &&
+	      call->b1_deadline_remaining_samples == snapshot.b1_deadline_remaining_samples,
+	      "V.92 data entry changed the boundary or B1 deadline");
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+		struct v92_phase4_e2u_analog_handoff *from = &handoff.state.analog;
+
+		CHECK(v92_pcm_mapping_equal(&path->upstream.encoder.mapping, &from->mapping) &&
+		      path->upstream.upstream_level == from->transmit.lu &&
+		      path->upstream.b1u_symbols_remaining == V92_B1U_SYMBOLS &&
+		      path->downstream_stage == from->downstream_stage &&
+		      memcmp(&path->downstream, &from->downstream, sizeof(path->downstream)) == 0,
+		      "V.92 analogue data entry lost its continuous downstream");
+	} else {
+		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		struct v92_phase4_e2u_digital_handoff *from = &handoff.state.digital;
+
+		CHECK(v92_pcm_mapping_equal(&path->upstream.decoder.mapping, &from->mapping) &&
+		      path->upstream.line.input_samples == from->receive.line.input_samples &&
+		      path->upstream.line.polarity == from->receive.line.polarity &&
+		      memcmp(&path->upstream.line.equalizer, &from->receive.line.equalizer,
+			     sizeof(path->upstream.line.equalizer)) == 0 &&
+		      path->downstream_stage == from->downstream_stage &&
+		      memcmp(&path->downstream, &from->downstream, sizeof(path->downstream)) == 0,
+		      "V.92 digital data entry reset trained line or downstream history");
+	}
+	snapshot = *call;
+	CHECK(pcm_call_start_data_path(call) == PCM_CALL_INVALID_STATE &&
+	      pcm_call_start_cleardown(call) == PCM_CALL_INVALID_STATE &&
+	      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+	      "V.92 duplicate data entry or unsupported cleardown changed the call");
+	return true;
+}
+
+static bool v92_payload_octet(
+	struct pcm_call *call, uint8_t received, struct pcm_payload_source *source,
+	uint32_t *received_frames, uint8_t *transmitted)
+{
+	struct pcm_call_data_sources sources = {
+		.pcm_upstream = pcm_payload, .pcm_upstream_context = source,
+		.downstream = pcm_payload, .downstream_context = source,
+	};
+	struct pcm_call_data_event event = { 0 };
+	struct pcm_call_data_event sentinel = event;
+	struct pcm_call snapshot;
+	uint8_t generated = 0xa5u;
+	enum pcm_call_result result;
+
+	if (!source->rejection_checked)
+		snapshot = *call;
+	result = pcm_call_data_octet(call, received, decode_octet(call->law, received),
+				    &sources, &generated, &event);
+	if (result == PCM_CALL_SOURCE_FAILURE) {
+		CHECK(!source->rejection_checked && !source->reject &&
+		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
+		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+		      "V.92 source rejection consumed media or changed output");
+		source->rejection_checked = true;
+		result = pcm_call_data_octet(call, received, decode_octet(call->law, received),
+					    &sources, &generated, &event);
+	}
+	CHECK(result == PCM_CALL_OK, "V.92 data returned %s", pcm_call_result_name(result));
+	if (event.kind != PCM_CALL_DATA_NONE) {
+		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+		const uint8_t *bits;
+		size_t count;
+
+		if (call->local_role == V90_ANALOG_MODEM) {
+			CHECK(event.kind == PCM_CALL_DOWNSTREAM_FRAME,
+			      "analogue received the wrong PCM event");
+			bits = event.frame.downstream.bits;
+			count = event.frame.downstream.bit_count;
+		} else {
+			CHECK(event.kind == PCM_CALL_PCM_UPSTREAM_FRAME &&
+			      !event.frame.pcm_upstream.b1u && !event.frame.pcm_upstream.ambiguous,
+			      "digital exposed B1u or an ambiguous clean frame");
+			bits = event.frame.pcm_upstream.bits;
+			count = event.frame.pcm_upstream.bit_count;
+		}
+		CHECK(count != 0u && count <= sizeof(expected), "invalid PCM payload size");
+		pcm_payload_bits(expected, count, *received_frames);
+		CHECK(memcmp(bits, expected, count) == 0,
+		      "role %u PCM payload changed at frame %u", call->local_role, *received_frames);
+		(*received_frames)++;
+	}
+	*transmitted = generated;
+	return true;
+}
+
+static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
+{
+	struct pcm_call damaged = *boundary;
+	struct pcm_call_data_event event;
+	uint8_t transmitted;
+	uint8_t silence = silence_octet(boundary->law);
+
+	for (size_t sample = 0u; sample < V92_B1U_SYMBOLS; ++sample) {
+		CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) ==
+			      PCM_CALL_OK &&
+		      event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
+		      "missing B1u opened the host or failed before its deadline");
+	}
+	CHECK(damaged.state.data_path.v92_digital.upstream.line.received_frames == V92_B1U_FRAMES &&
+	      damaged.state.data_path.v92_digital.b1u_squared_error > 0.0 &&
+	      damaged.b1_deadline_armed, "known B1u digits hid missing waveform evidence");
+	damaged.b1_deadline_remaining_samples = 1u;
+	CHECK(pcm_call_is_valid(&damaged) &&
+	      pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK &&
+	      damaged.stage == PCM_CALL_RETRAIN_SILENCE && !damaged.failed &&
+	      damaged.protocol == PCM_PROTOCOL_V92 && !damaged.b1_deadline_armed,
+	      "missing V.92 B1 did not start a bounded retrain");
+	return true;
+}
+
+static bool v92_data_error_contracts(const struct pcm_call *online)
+{
+	struct pcm_call checked = *online;
+	struct pcm_call owned = *online;
+	struct pcm_call_data_event checked_event, owned_event;
+	uint8_t checked_octet, owned_octet;
+	uint8_t silence = silence_octet(online->law);
+
+	CHECK(pcm_call_data_octet(&checked, silence, 0, NULL,
+				 (uint8_t *)&checked, &checked_event) == PCM_CALL_INVALID_ARGUMENT &&
+	      pcm_call_data_octet_owned(&checked, silence, 0, NULL,
+				       &checked_octet, (struct pcm_call_data_event *)&checked) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&checked, online, sizeof(checked)) == 0,
+	      "V.92 accepted aliased media outputs");
+	CHECK(pcm_call_data_octet(&checked, silence, 0, NULL, &checked_octet, &checked_event) ==
+		      PCM_CALL_OK &&
+	      pcm_call_data_octet_owned(&owned, silence, 0, NULL, &owned_octet, &owned_event) ==
+		      PCM_CALL_OK &&
+	      pcm_call_is_valid(&owned) && checked_octet == owned_octet &&
+	      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
+	      memcmp(&checked, &owned, sizeof(checked)) == 0,
+	      "validated-block and checked V.92 clocks diverged");
+	if (online->local_role == V90_DIGITAL_MODEM) {
+		checked = *online;
+		checked.state.data_path.v92_digital.upstream.line.equalizer.history[0].in_phase =
+			DBL_MAX;
+		checked.state.data_path.v92_digital.upstream.line.equalizer.coefficients[1].in_phase =
+			2.0;
+		owned = checked;
+		CHECK(pcm_call_is_valid(&checked) &&
+		      v92_downstream_transmit_owned(
+			      &owned.state.data_path.v92_digital.downstream,
+			      &owned.state.data_path.v92_digital.downstream_stage,
+			      &owned.state.data_path.v92_digital.cpu,
+			      NULL, NULL, &owned_octet) == V90_DOWNSTREAM_DATA_STREAM_OK,
+		      "late V.92 receive-failure fixture was invalid");
+		owned.state.data_path.v92_digital.upstream.failed = true;
+		owned.failed = true;
+		CHECK(pcm_call_data_octet(&checked, silence, INT16_MAX, NULL,
+					 &checked_octet, &checked_event) == PCM_CALL_NUMERIC_FAILURE &&
+		      pcm_call_has_failed(&checked) && checked_octet == owned_octet &&
+		      checked_event.kind == PCM_CALL_DATA_NONE &&
+		      memcmp(&checked, &owned, sizeof(checked)) == 0,
+		      "late V.92 receive failure hid output or advanced receive state");
+	}
+	return true;
+}
+
+static bool run_v92_duplex_data(enum g711_law law, size_t delay)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel wire;
+	struct pcm_payload_source upstream = { .reject = true };
+	struct pcm_payload_source downstream = { .reject = true };
+	uint32_t upstream_received = 0u, downstream_received = 0u;
+	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
+	bool deadline_checked[2] = { false, false };
+
+	CHECK(channel_init(&wire, law, delay) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "V.92 duplex initialization failed");
+	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t ar, dr, at, dt;
+		struct pcm_call *calls[] = { &analog, &digital };
+
+		channel_receive(&wire, &ar, &dr);
+		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
+			struct pcm_call *call = calls[role];
+			uint8_t received = role == 0u ? ar : dr;
+			uint8_t *transmitted = role == 0u ? &at : &dt;
+
+			if (pcm_call_phase4_is_ready(call)) {
+				CHECK(v92_data_boundary(call), "V.92 handoff failed");
+				if (role == 0u)
+					analog_boundary = clock;
+				else {
+					digital_boundary = clock;
+					CHECK(v92_bad_b1_stays_clamped(call), "V.92 B1 quality gate failed");
+				}
+			}
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(v92_payload_octet(call, received, role == 0u ? &upstream : &downstream,
+							role == 0u ? &downstream_received : &upstream_received,
+							transmitted), "V.92 payload failed at clock %zu", clock);
+			} else {
+				struct pcm_call_observation observation;
+
+				CHECK(pcm_call_octet(call, received, decode_octet(law, received),
+						     transmitted, &observation) == PCM_CALL_OK,
+				      "V.92 training failed at clock %zu", clock);
+				if (observation.phase2.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT ||
+				    observation.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
+					CHECK(call->b1_deadline_armed && call->b1_deadline_remaining_samples ==
+						      20u * V34_PHASE2_SAMPLE_RATE +
+							      6u * call->round_trip_delay_samples,
+					      "V.92 B1 deadline did not start at INFO1a");
+					deadline_checked[role] = true;
+				}
+			}
+		}
+		channel_transmit(&wire, at, dt);
+		if (upstream_received >= 200u && downstream_received >= 200u)
+			break;
+	}
+	CHECK(upstream_received >= 200u && downstream_received >= 200u &&
+	      upstream.rejection_checked && downstream.rejection_checked &&
+	      analog_boundary < digital_boundary && deadline_checked[0] && deadline_checked[1] &&
+	      pcm_call_is_online(&analog) && pcm_call_is_online(&digital) &&
+	      !analog.b1_deadline_armed && !digital.b1_deadline_armed &&
+	      retrain_preserves_protocol(&analog, law) && retrain_preserves_protocol(&digital, law) &&
+	      v92_data_error_contracts(&analog) && v92_data_error_contracts(&digital),
+	      "law %u delay %zu V.92 did not complete ordered duplex data (%u/%u)",
+	      law, delay, upstream_received, downstream_received);
+	{
+		uint32_t at = 0u, ar = 0u, dt = 0u, dr = 0u;
+
+		CHECK(pcm_call_get_data_rates(&analog, &at, &ar) &&
+		      pcm_call_get_data_rates(&digital, &dt, &dr) &&
+		      at == 41333u && at == dr && ar == dt && ar == 41333u,
+		      "V.92 call reported incorrect PCM frame rates: %u/%u %u/%u",
+		      at, ar, dt, dr);
+	}
+	return true;
+}
+
+static bool test_v92_duplex_data(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t delay = 1u; delay <= 3u; delay += 2u)
+			CHECK(run_v92_duplex_data(law, delay), "V.92 duplex data failed");
 	return true;
 }
 
@@ -6170,6 +6459,7 @@ int main(void)
 		  test_downstream_rate_negotiation },
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
+		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },

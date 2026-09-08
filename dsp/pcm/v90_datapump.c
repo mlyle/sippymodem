@@ -579,7 +579,11 @@ static bool process_octet(
 	 * network character. */
 	if (datapump->call.stage == PCM_CALL_PHASE4 &&
 	    pcm_call_phase4_is_ready(&datapump->call) &&
-	    pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK)
+	    /* PCM-upstream frame I/O exists in the call owner, but this host
+	     * adapter still supplies and consumes conventional upstream frames.
+	     * Do not announce CONNECT with an unwired PCM host-bit path. */
+	    (datapump->protocol != PCM_PROTOCOL_V90 ||
+	     pcm_call_start_data_path(&datapump->call) != PCM_CALL_OK))
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet_owned(

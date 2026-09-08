@@ -16,6 +16,8 @@
 #include "v92_phase4_analog_station.h"
 #include "v92_phase4_digital_station.h"
 #include "v92_phase4_e2u.h"
+#include "v92_upstream_data_rx.h"
+#include "v92_upstream_data_tx.h"
 #include "v34_phase2_tone.h"
 #include "v34_phase2_selection.h"
 
@@ -205,9 +207,28 @@ union pcm_call_phase4_state {
 	struct pcm_call_v92_phase4_state v92;
 };
 
+/* PCM upstream replaces only the conventional direction. The downstream
+ * union crosses E2u unchanged and continues the shared Ed/B1d/data epoch. */
+struct pcm_call_v92_analog_data {
+	struct v92_upstream_data_tx upstream;
+	union v92_phase4_e2u_analog_downstream downstream;
+	struct v92_cpu_parameters cpu;
+	enum v92_phase4_e2u_downstream_stage downstream_stage;
+};
+
+struct pcm_call_v92_digital_data {
+	struct v92_upstream_data_rx upstream;
+	union v92_phase4_e2u_digital_downstream downstream;
+	struct v92_cpu_parameters cpu;
+	enum v92_phase4_e2u_downstream_stage downstream_stage;
+	double b1u_squared_error;
+};
+
 union pcm_call_data_path_state {
 	struct v90_analog_path analog;
 	struct v90_digital_path digital;
+	struct pcm_call_v92_analog_data v92_analog;
+	struct pcm_call_v92_digital_data v92_digital;
 };
 
 union pcm_call_state {
@@ -233,17 +254,22 @@ struct pcm_call_data_sources {
 	/* PCM downstream frames originate at the digital station. */
 	v90_downstream_frame_source downstream;
 	void *downstream_context;
+	/* PCM upstream has no conventional mapping request or auxiliary bit. */
+	v92_upstream_frame_source pcm_upstream;
+	void *pcm_upstream_context;
 };
 
 enum pcm_call_data_event_kind {
 	PCM_CALL_DATA_NONE,
 	PCM_CALL_DOWNSTREAM_FRAME,
 	PCM_CALL_UPSTREAM_FRAME,
+	PCM_CALL_PCM_UPSTREAM_FRAME,
 };
 
 union pcm_call_received_frame {
 	struct v90_pcm_stream_frame downstream;
 	struct v34_received_mapping_frame upstream;
+	struct v92_upstream_data_frame pcm_upstream;
 };
 
 struct pcm_call_data_event {
@@ -255,7 +281,8 @@ struct pcm_call_data_event {
 /* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
  * path. V.92 starts the shared downstream Phase 4 epoch during the split
  * CPt/E1u handoff, continues through the CP/SUV control exchange, and owns the
- * post-control E2u/Ed crossing. Calls on one instance must be serialized. */
+ * post-control E2u/Ed crossing into continuous PCM upstream and downstream
+ * data. Calls on one instance must be serialized. */
 struct pcm_call {
 	union pcm_call_state state;
 	struct pcm_phase3_entry phase3_entry;
@@ -305,7 +332,7 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
  * pre-control startup and an already committed E/Ed are not interrupted.
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
- * Native V.92 currently has no B1/data owner and is rejected here.
+ * Native V.92 zero-rate cleardown is not yet implemented and is rejected here.
  * A completed local or peer cleardown is idempotent and cannot retrain. */
 enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 
@@ -352,13 +379,13 @@ enum pcm_call_result pcm_call_octet(
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 
-/* Transfer an exact completed V.90 Phase 4 handoff into its role-specific data
- * path without consuming a network character. V.92 B1u/data continuation is a
- * later owner and is rejected transactionally here. */
+/* Transfer the exact role-local Phase 4 handoff without consuming a network
+ * character. V.92 resets upstream coding once at B1u while preserving the
+ * trained line and the independent downstream training/data epoch. */
 enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call);
 
 /* Report role-local transmit and receive rates after both directions are
- * online. PCM rates round the exact six-character frame rate to the nearest
+ * online. PCM rates round the exact mapping-frame rate to the nearest
  * integer bit/s. Rejected calls leave both outputs unchanged. */
 bool pcm_call_get_data_rates(
 	const struct pcm_call *call,
