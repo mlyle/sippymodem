@@ -224,8 +224,14 @@ static void reject_cpu(
 	struct v92_control_event *event,
 	enum v92_cpu_result result)
 {
-	event->type = V92_CONTROL_EVENT_CPU_REJECTED;
-	event->record.cpu.frame_result = result;
+	/* Table 24 uses type 2, transmitted LSB first in bits 19:20. */
+	if (packed_msb_read_lsb_field(receiver->frame, 19u, 2u) == 2u) {
+		event->type = V92_CONTROL_EVENT_CPUS_REJECTED;
+		event->record.cpus.frame_result = result;
+	} else {
+		event->type = V92_CONTROL_EVENT_CPU_REJECTED;
+		event->record.cpu.frame_result = result;
+	}
 	clear_candidate(receiver);
 }
 
@@ -294,7 +300,27 @@ static void finish_cpu(
 	struct v92_control_event *event)
 {
 	struct v92_cpu_parameters parameters;
-	enum v92_cpu_result result = v92_cpu_decode(
+	enum v92_cpu_result result;
+
+	if (packed_msb_read_lsb_field(receiver->frame, 19u, 2u) == 2u) {
+		struct v92_cpus_parameters short_parameters;
+
+		result = v92_cpus_decode(
+			receiver->frame, sizeof(receiver->frame),
+			receiver->frame_bit_count, receiver->alignment_bits,
+			&short_parameters);
+
+		if (result != V92_CPU_OK) {
+			reject_cpu(receiver, event, result);
+			return;
+		}
+		event->type = V92_CONTROL_EVENT_CPUS;
+		event->record.cpus.frame_result = result;
+		event->record.cpus.parameters = short_parameters;
+		clear_candidate(receiver);
+		return;
+	}
+	result = v92_cpu_decode(
 		receiver->frame, sizeof(receiver->frame),
 		receiver->frame_bit_count,
 		receiver->alignment_bits, &parameters);

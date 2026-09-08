@@ -31,6 +31,8 @@ enum {
 	CPU_CODEC_DIFFERENCE_BIT = 128,
 	CPU_MASKS_FIRST_BIT = V92_CPU_HEADER_BITS,
 	CPU_CRC_BITS = 16,
+	CPUS_INFORMATION_BITS = 34,
+	CPUS_UNFILLED_BITS = 52,
 };
 
 bool v92_cpu_parameters_are_valid(
@@ -99,13 +101,18 @@ static size_t mask_bit(
 	       (size_t)(ucode / 16u) * 17u + 1u + ucode % 16u;
 }
 
-static void encode_header(
-	uint8_t *frame, const struct v92_cpu_parameters *parameters)
+static void encode_prefix(uint8_t *frame, unsigned int type)
 {
 	for (size_t bit = 0u; bit < 17u; ++bit)
 		packed_msb_set_bit(frame, bit, true);
 	packed_msb_write_lsb_field(
-		frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS, 1u);
+		frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS, type);
+}
+
+static void encode_header(
+	uint8_t *frame, const struct v92_cpu_parameters *parameters)
+{
+	encode_prefix(frame, 1u);
 	packed_msb_write_lsb_field(
 		frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS,
 		parameters->data_rate_number);
@@ -233,13 +240,94 @@ static bool bits_are(
 	return true;
 }
 
-static bool header_framing_is_valid(const uint8_t *frame)
+static bool prefix_is_valid(const uint8_t *frame, unsigned int type)
 {
 	return bits_are(frame, 0u, 17u, 1u) &&
 	       packed_msb_bit(frame, 17u) == 0u &&
 	       packed_msb_bit(frame, 18u) == 0u &&
 	       packed_msb_read_lsb_field(
-		       frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS) == 1u &&
+		       frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS) == type;
+}
+
+size_t v92_cpus_frame_bits(unsigned int mapping_frame_bits)
+{
+	if (!v92_control_upstream_alignment_is_valid(mapping_frame_bits))
+		return 0u;
+	return (CPUS_UNFILLED_BITS + mapping_frame_bits - 1u) /
+		mapping_frame_bits * mapping_frame_bits;
+}
+
+enum v92_cpu_result v92_cpus_encode(
+	const struct v92_cpus_parameters *parameters,
+	unsigned int mapping_frame_bits,
+	uint8_t *frame, size_t frame_capacity, size_t *frame_bit_count)
+{
+	uint8_t encoded[V92_CPUS_MAX_FRAME_BYTES] = { 0 };
+	size_t bits = v92_cpus_frame_bits(mapping_frame_bits);
+	size_t bytes = (bits + 7u) / 8u;
+
+	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (bits == 0u ||
+	    parameters->data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)
+		return V92_CPU_INVALID_PARAMETERS;
+	if (frame_capacity < bytes)
+		return V92_CPU_OUTPUT_TOO_SMALL;
+	encode_prefix(encoded, 2u);
+	packed_msb_write_lsb_field(
+		encoded, CPU_RATE_FIRST_BIT, CPU_RATE_BITS,
+		parameters->data_rate_number);
+	packed_msb_set_bit(
+		encoded, CPU_ACKNOWLEDGMENT_BIT, parameters->acknowledges_cpd);
+	packed_msb_write_msb_field(
+		encoded, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS,
+		frame_crc(encoded, CPUS_INFORMATION_BITS));
+	memcpy(frame, encoded, bytes);
+	*frame_bit_count = bits;
+	return V92_CPU_OK;
+}
+
+enum v92_cpu_result v92_cpus_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count, unsigned int mapping_frame_bits,
+	struct v92_cpus_parameters *parameters)
+{
+	struct v92_cpus_parameters decoded;
+	size_t bits = v92_cpus_frame_bits(mapping_frame_bits);
+	size_t bytes = (bits + 7u) / 8u;
+
+	if (frame == NULL || parameters == NULL)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (bits == 0u || frame_bit_count != bits)
+		return V92_CPU_INVALID_FRAME;
+	if (frame_capacity < bytes)
+		return V92_CPU_INVALID_ARGUMENT;
+	if (!prefix_is_valid(frame, 2u) ||
+	    packed_msb_bit(frame, CPUS_INFORMATION_BITS) != 0u ||
+	    !bits_are(
+		    frame, CPUS_UNFILLED_BITS - 1u,
+		    bits - CPUS_UNFILLED_BITS + 1u, 0u) ||
+	    !packed_msb_tail_is_zero(frame, bits, bytes))
+		return V92_CPU_INVALID_FRAME;
+	if (packed_msb_read_msb_field(
+		    frame, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS) !=
+	    frame_crc(frame, CPUS_INFORMATION_BITS))
+		return V92_CPU_CRC_MISMATCH;
+	decoded = (struct v92_cpus_parameters){
+		.data_rate_number = (uint8_t)packed_msb_read_lsb_field(
+			frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS),
+		.acknowledges_cpd =
+			packed_msb_bit(frame, CPU_ACKNOWLEDGMENT_BIT) != 0u,
+	};
+	if (decoded.data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)
+		return V92_CPU_INVALID_FRAME;
+	*parameters = decoded;
+	return V92_CPU_OK;
+}
+
+static bool header_framing_is_valid(const uint8_t *frame)
+{
+	return prefix_is_valid(frame, 1u) &&
 	       packed_msb_bit(frame, 34u) == 0u &&
 	       packed_msb_bit(frame, 51u) == 0u &&
 	       packed_msb_bit(frame, 68u) == 0u &&
@@ -331,6 +419,18 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 		return V92_CPU_INVALID_FRAME;
 	if (frame_capacity < (received_bit_count + 7u) / 8u)
 		return V92_CPU_INVALID_ARGUMENT;
+	if (received_bit_count >= CPUS_INFORMATION_BITS &&
+	    packed_msb_read_lsb_field(
+		    frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS) == 2u) {
+		inferred = v92_cpus_frame_bits(mapping_frame_bits);
+		if (!prefix_is_valid(frame, 2u) || inferred < received_bit_count ||
+		    packed_msb_read_lsb_field(
+			    frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS) >
+			    V92_CPU_MAX_DATA_RATE_NUMBER)
+			return V92_CPU_INVALID_FRAME;
+		*frame_bit_count = inferred;
+		return V92_CPU_OK;
+	}
 	if (received_bit_count < V92_CPU_HEADER_BITS)
 		return V92_CPU_INCOMPLETE;
 	if (!header_framing_is_valid(frame) ||

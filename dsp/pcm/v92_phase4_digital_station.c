@@ -295,7 +295,10 @@ static bool accept_event(
 		return true;
 	case V92_CONTROL_EVENT_SUVU_REJECTED:
 	case V92_CONTROL_EVENT_CPU_REJECTED:
+	case V92_CONTROL_EVENT_CPUS_REJECTED:
 		return true;
+	/* Initial training requires the full downstream mapping, not CPus. */
+	case V92_CONTROL_EVENT_CPUS:
 	case V92_CONTROL_EVENT_SUVD:
 	case V92_CONTROL_EVENT_CPD:
 	case V92_CONTROL_EVENT_SUVD_REJECTED:

@@ -419,7 +419,9 @@ static bool control_event_rearms_trial(
 			       &state->cpu, &event->record.cpu.parameters);
 	case V92_CONTROL_EVENT_SUVU_REJECTED:
 	case V92_CONTROL_EVENT_CPU_REJECTED:
+	case V92_CONTROL_EVENT_CPUS_REJECTED:
 		return true;
+	case V92_CONTROL_EVENT_CPUS:
 	case V92_CONTROL_EVENT_NONE:
 	case V92_CONTROL_EVENT_SUVD:
 	case V92_CONTROL_EVENT_CPD:

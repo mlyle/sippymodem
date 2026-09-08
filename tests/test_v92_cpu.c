@@ -737,6 +737,148 @@ static bool test_decoder_storage_padding(void)
 	return true;
 }
 
+static bool test_short_records(void)
+{
+	/* Table 24: type 2, drn 22, acknowledgment set, CRC 0x7d94. */
+	static const uint8_t expected[] = {
+		0xff, 0xff, 0x8b, 0x40, 0x4f, 0xb2, 0x80, 0x00, 0x00,
+	};
+	unsigned int cases = 0u;
+
+	for (unsigned int width = 0u; width <= 73u; ++width) {
+		bool allowed = width == 24u ||
+			(width >= 36u && width <= 72u && width % 2u == 0u);
+		size_t bits = v92_cpus_frame_bits(width);
+		size_t bytes = (bits + 7u) / 8u;
+
+		CHECK((bits != 0u) == allowed && bits <= V92_CPUS_MAX_FRAME_BITS,
+		      "CPus width %u validity or extent is wrong", width);
+		if (!allowed)
+			continue;
+		CHECK(bits == (52u + width - 1u) / width * width,
+		      "CPus width %u is not frame aligned", width);
+		for (unsigned int fields = 0u; fields < 46u; ++fields) {
+			struct v92_cpus_parameters value = {
+				.data_rate_number = (uint8_t)(fields / 2u),
+				.acknowledges_cpd = (fields & 1u) != 0u,
+			};
+			struct v92_cpus_parameters decoded;
+			uint8_t frame[V92_CPUS_MAX_FRAME_BYTES + 1u];
+			size_t count = 0u;
+			size_t inferred = 0u;
+
+			memset(frame, 0xa5, sizeof(frame));
+			CHECK(v92_cpus_encode(&value, width, frame, bytes, &count) ==
+				      V92_CPU_OK && count == bits && frame[bytes] == 0xa5 &&
+			      v92_cpus_decode(frame, bytes, bits, width, &decoded) ==
+				      V92_CPU_OK &&
+			      decoded.data_rate_number == value.data_rate_number &&
+			      decoded.acknowledges_cpd == value.acknowledges_cpd &&
+			      msb_field(frame, 35u, 16u) == reference_crc(frame, 34u) &&
+			      bits_are(frame, 26u, 7u, 0u) &&
+			      bits_are(frame, 51u, bytes * 8u - 51u, 0u),
+			      "CPus width %u fields %u failed", width, fields);
+			for (size_t received = 0u; received < 34u; ++received)
+				CHECK(probe_is_transactional(
+					      frame, (received + 7u) / 8u, received,
+					      width, V92_CPU_INCOMPLETE),
+				      "CPus probe consumed a partial header");
+			CHECK(v92_cpu_probe_frame_bits(frame, 5u, 34u, width, &inferred) ==
+				      V92_CPU_OK && inferred == bits &&
+			      decode_is_transactional(frame, bytes, bits, width,
+				      V92_CPU_INVALID_FRAME),
+			      "CPus was not distinguished from long CPu");
+			if (width == 24u && fields == 45u)
+				CHECK(memcmp(frame, expected, sizeof(expected)) == 0,
+				      "CPus Table 24 wire fixture differs");
+			cases++;
+		}
+	}
+	CHECK(cases == 920u, "CPus covered %u cases instead of 920", cases);
+	return true;
+}
+
+static bool test_short_rejection(void)
+{
+	struct v92_cpus_parameters value = {
+		.data_rate_number = 22u, .acknowledges_cpd = true,
+	};
+	struct v92_cpus_parameters decoded;
+	struct v92_cpus_parameters unchanged;
+	struct v92_cpu_parameters long_value = parameters(1u, false);
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	uint8_t saved[sizeof(frame)];
+	const unsigned int width = 50u;
+	size_t count = 0u;
+	size_t bytes;
+
+	memset(&decoded, 0x5a, sizeof(decoded));
+	memcpy(&unchanged, &decoded, sizeof(decoded));
+	memset(frame, 0xa5, sizeof(frame));
+	CHECK(v92_cpus_encode(&value, width, frame, sizeof(frame), &count) == V92_CPU_OK &&
+	      count == 100u, "maximum short CPu fixture did not encode");
+	bytes = (count + 7u) / 8u;
+	memcpy(saved, frame, sizeof(saved));
+	for (size_t bit = 0u; bit < bytes * 8u; ++bit) {
+		set_bit(frame, bit, (uint8_t)!bit_at(frame, bit));
+		CHECK(v92_cpus_decode(frame, bytes, count, width, &decoded) != V92_CPU_OK &&
+		      memcmp(&decoded, &unchanged, sizeof(decoded)) == 0,
+		      "CPus bit %zu corruption escaped validation or changed output", bit);
+		memcpy(frame, saved, sizeof(frame));
+	}
+	for (size_t bit = 26u; bit <= 32u; ++bit) {
+		set_bit(frame, bit, 1u);
+		rewrite_crc(frame, 34u);
+		CHECK(v92_cpus_decode(frame, bytes, count, width, &decoded) == V92_CPU_OK &&
+		      decoded.data_rate_number == value.data_rate_number &&
+		      decoded.acknowledges_cpd == value.acknowledges_cpd,
+		      "CPus interpreted reserved bit %zu", bit);
+	}
+	memcpy(frame, saved, sizeof(frame));
+	memcpy(&decoded, &unchanged, sizeof(decoded));
+	CHECK(v92_cpus_decode(frame, bytes - 1u, count, width, &decoded) ==
+		      V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpus_decode(frame, bytes, count - 1u, width, &decoded) ==
+		      V92_CPU_INVALID_FRAME &&
+	      v92_cpus_decode(frame, bytes, count, 49u, &decoded) == V92_CPU_INVALID_FRAME &&
+	      memcmp(&decoded, &unchanged, sizeof(decoded)) == 0,
+	      "CPus accepted an invalid input boundary");
+	for (unsigned int rate = 23u; rate <= 31u; ++rate) {
+		write_lsb_field(frame, 21u, 5u, rate);
+		rewrite_crc(frame, 34u);
+		CHECK(v92_cpus_decode(frame, bytes, count, width, &decoded) ==
+			      V92_CPU_INVALID_FRAME &&
+		      probe_is_transactional(frame, 5u, 34u, width, V92_CPU_INVALID_FRAME) &&
+		      memcmp(&decoded, &unchanged, sizeof(decoded)) == 0,
+		      "CPus accepted reserved rate %u", rate);
+	}
+	memcpy(frame, saved, sizeof(frame));
+	count = 123u;
+	CHECK(v92_cpus_encode(&value, width, frame, bytes - 1u, &count) ==
+		      V92_CPU_OUTPUT_TOO_SMALL &&
+	      v92_cpus_encode(&value, 49u, frame, sizeof(frame), &count) ==
+		      V92_CPU_INVALID_PARAMETERS && count == 123u &&
+	      memcmp(frame, saved, sizeof(frame)) == 0,
+	      "CPus rejected encoder changed output");
+	value.data_rate_number = 23u;
+	CHECK(v92_cpus_encode(&value, width, frame, sizeof(frame), &count) ==
+		      V92_CPU_INVALID_PARAMETERS && count == 123u &&
+	      memcmp(frame, saved, sizeof(frame)) == 0,
+	      "CPus encoder accepted a reserved rate");
+	CHECK(v92_cpus_encode(NULL, width, frame, bytes, &count) == V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpus_encode(&value, width, NULL, bytes, &count) == V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpus_encode(&value, width, frame, bytes, NULL) == V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpus_decode(NULL, bytes, 100u, width, &decoded) == V92_CPU_INVALID_ARGUMENT &&
+	      v92_cpus_decode(frame, bytes, 100u, width, NULL) == V92_CPU_INVALID_ARGUMENT,
+	      "CPus accepted null arguments");
+	CHECK(v92_cpu_encode(&long_value, 24u, frame, sizeof(frame), &count) == V92_CPU_OK &&
+	      v92_cpus_decode(frame, sizeof(frame), count, 24u, &decoded) ==
+		      V92_CPU_INVALID_FRAME &&
+	      memcmp(&decoded, &unchanged, sizeof(decoded)) == 0,
+	      "CPus decoder accepted a long record");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	CHECK(strcmp(v92_cpu_result_name(V92_CPU_OK), "ok") == 0 &&
@@ -773,6 +915,8 @@ int main(void)
 		{ "transactionality", test_transactionality },
 		{ "decoder failures", test_decoder_failures },
 		{ "decoder storage padding", test_decoder_storage_padding },
+		{ "short CPu records", test_short_records },
+		{ "short CPu rejection", test_short_rejection },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0u;

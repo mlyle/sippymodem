@@ -342,6 +342,8 @@ static enum pcm_downstream_rx_result feed_v92_control_frame(
 	case V92_CONTROL_EVENT_CPU:
 	case V92_CONTROL_EVENT_SUVU_REJECTED:
 	case V92_CONTROL_EVENT_CPU_REJECTED:
+	case V92_CONTROL_EVENT_CPUS:
+	case V92_CONTROL_EVENT_CPUS_REJECTED:
 	case V92_CONTROL_EVENT_NONE:
 		break;
 	}

@@ -30,6 +30,8 @@ enum v92_control_event_type {
 	V92_CONTROL_EVENT_CPU,
 	V92_CONTROL_EVENT_SUVU_REJECTED,
 	V92_CONTROL_EVENT_CPU_REJECTED,
+	V92_CONTROL_EVENT_CPUS,
+	V92_CONTROL_EVENT_CPUS_REJECTED,
 };
 
 struct v92_control_suvd_event {
@@ -52,11 +54,17 @@ struct v92_control_cpu_event {
 	struct v92_cpu_parameters parameters;
 };
 
+struct v92_control_cpus_event {
+	enum v92_cpu_result frame_result;
+	struct v92_cpus_parameters parameters;
+};
+
 union v92_control_record_event {
 	struct v92_control_suvd_event suvd;
 	struct v92_control_cpd_event cpd;
 	struct v92_control_suvu_event suvu;
 	struct v92_control_cpu_event cpu;
+	struct v92_control_cpus_event cpus;
 };
 
 struct v92_control_event {

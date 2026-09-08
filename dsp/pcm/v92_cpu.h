@@ -27,6 +27,9 @@ enum {
 		V92_CONTROL_UPSTREAM_DATA_MAX_BITS - 1,
 	V92_CPU_MAX_FRAME_BYTES = (V92_CPU_MAX_FRAME_BITS + 7) / 8,
 	V92_CPU_MAX_DATA_RATE_NUMBER = 22,
+	/* A 52-bit short record rounds to two 50-bit data mapping frames. */
+	V92_CPUS_MAX_FRAME_BITS = 100,
+	V92_CPUS_MAX_FRAME_BYTES = (V92_CPUS_MAX_FRAME_BITS + 7) / 8,
 };
 
 enum v92_cpu_result {
@@ -62,6 +65,27 @@ struct v92_cpu_parameters {
 	bool codec_constellations_differ;
 };
 
+/* Table 24: retain the preceding downstream modulation parameters. Used in
+ * rate renegotiation or fast parameter exchange, not initial training.
+ * Rate zero requests cleardown; 1..22 have the same meaning as long CPu. */
+struct v92_cpus_parameters {
+	uint8_t data_rate_number;
+	bool acknowledges_cpd;
+};
+
+/* Same alignment and packed-bit conventions as long CPu below. Invalid
+ * widths yield zero. Codecs reject without changing outputs; reserved bits
+ * are CRC-covered but ignored on receive, and all fill/padding must be zero. */
+size_t v92_cpus_frame_bits(unsigned int mapping_frame_bits);
+enum v92_cpu_result v92_cpus_encode(
+	const struct v92_cpus_parameters *parameters,
+	unsigned int mapping_frame_bits,
+	uint8_t *frame, size_t frame_capacity, size_t *frame_bit_count);
+enum v92_cpu_result v92_cpus_decode(
+	const uint8_t *frame, size_t frame_capacity,
+	size_t frame_bit_count, unsigned int mapping_frame_bits,
+	struct v92_cpus_parameters *parameters);
+
 bool v92_cpu_parameters_are_valid(
 	const struct v92_cpu_parameters *parameters);
 
@@ -75,7 +99,8 @@ size_t v92_cpu_frame_bytes(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int mapping_frame_bits);
 
-/* Infer the exact record extent once the bounded 136-bit header has arrived.
+/* Infer a long CPu extent from its 136-bit header, or a short CPus extent from
+ * its 34-bit information field. The separate decoders enforce the wire type.
  * INCOMPLETE requests more header bits; a successful probe does not imply
  * that the remaining constellation rows or CRC have arrived or are valid.
  * Rejected calls leave frame_bit_count unchanged. */

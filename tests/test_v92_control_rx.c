@@ -366,7 +366,68 @@ static bool test_upstream_records(void)
 				      alignment);
 			}
 		}
+		for (unsigned int fields = 0u; fields < 46u; ++fields) {
+			struct v92_cpus_parameters parameters = {
+				.data_rate_number = (uint8_t)(fields / 2u),
+				.acknowledges_cpd = (fields & 1u) != 0u,
+			};
+			uint8_t frame[V92_CPUS_MAX_FRAME_BYTES];
+			size_t frame_bits = 0u;
+
+			CHECK(v92_cpus_encode(&parameters, alignment, frame,
+				      sizeof(frame), &frame_bits) == V92_CPU_OK &&
+			      feed_frame(&receiver, frame, 0u, frame_bits, &event) &&
+			      event.type == V92_CONTROL_EVENT_CPUS &&
+			      event.record.cpus.frame_result == V92_CPU_OK &&
+			      event.record.cpus.parameters.data_rate_number ==
+				      parameters.data_rate_number &&
+			      event.record.cpus.parameters.acknowledges_cpd ==
+				      parameters.acknowledges_cpd,
+			      "CPus fields %u alignment %u did not decode", fields, alignment);
+		}
 	}
+	return true;
+}
+
+static bool test_short_recovery(void)
+{
+	const struct v92_cpus_parameters parameters = {
+		.data_rate_number = 22u, .acknowledges_cpd = true,
+	};
+	struct v92_cpu_parameters cpu = cpu_selection(1u, false);
+	struct v92_control_rx receiver;
+	struct v92_control_event event;
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	uint8_t short_frame[V92_CPUS_MAX_FRAME_BYTES];
+	size_t bits = 0u;
+	size_t short_bits = 0u;
+
+	CHECK(v92_control_rx_init_upstream(&receiver, 50u) == V92_CONTROL_RX_OK &&
+	      v92_cpus_encode(&parameters, 50u, short_frame, sizeof(short_frame),
+		      &short_bits) == V92_CPU_OK &&
+	      v92_cpu_encode(&cpu, 50u, frame, sizeof(frame), &bits) == V92_CPU_OK,
+	      "CPus recovery fixture failed");
+	flip_bit(short_frame, 35u);
+	CHECK(feed_frame(&receiver, short_frame, 0u, short_bits, &event) &&
+	      event.type == V92_CONTROL_EVENT_CPUS_REJECTED &&
+	      event.record.cpus.frame_result == V92_CPU_CRC_MISMATCH,
+	      "CPus corruption was not a typed CRC rejection");
+	flip_bit(short_frame, 35u);
+	CHECK(feed_frame(&receiver, short_frame, 0u, 31u, &event) &&
+	      event.type == V92_CONTROL_EVENT_NONE &&
+	      feed_frame(&receiver, frame, 0u, bits, &event) &&
+	      event.type == V92_CONTROL_EVENT_CPU &&
+	      cpu_parameters_match(&event.record.cpu.parameters, &cpu) &&
+	      feed_frame(&receiver, short_frame, 0u, short_bits, &event) &&
+	      event.type == V92_CONTROL_EVENT_CPUS,
+	      "CPus truncation prevented recovery to long/short records");
+	packed_msb_write_lsb_field(short_frame, 21u, 5u, 31u);
+	CHECK(feed_frame(&receiver, short_frame, 0u, 34u, &event) &&
+	      event.type == V92_CONTROL_EVENT_CPUS_REJECTED &&
+	      event.record.cpus.frame_result == V92_CPU_INVALID_FRAME &&
+	      feed_frame(&receiver, frame, 0u, bits, &event) &&
+	      event.type == V92_CONTROL_EVENT_CPU,
+	      "CPus invalid rate prevented stream recovery");
 	return true;
 }
 
@@ -589,6 +650,7 @@ int main(void)
 	fprintf(stderr, "[ RUN      ] V.92 control receiver\n");
 	if (!test_all_frame_widths() || !test_cpd_matrix() ||
 	    !test_upstream_records() ||
+	    !test_short_recovery() ||
 	    !test_upstream_recovery_and_rejection() ||
 	    !test_recovery_and_rejection() ||
 	    !test_contracts()) {

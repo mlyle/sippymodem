@@ -1422,6 +1422,76 @@ static bool test_early_cpu_acknowledgement(void)
 	return true;
 }
 
+static bool test_short_cpu_requires_renegotiation(void)
+{
+	const struct v92_cpus_parameters cpus = {
+		.data_rate_number = 11u, .acknowledges_cpd = true,
+	};
+	const struct v92_suvd_parameters suvd = { 0 };
+	struct v92_cpd_base_parameters cpd = cpd_parameters(G711_LAW_PCMU);
+	struct v92_pcm_phase3_cpt_line_handoff handoff;
+	struct v92_pcm_phase4_trn2u upstream;
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx downstream;
+	struct v92_phase4_digital_station station;
+	struct v92_phase4_record_tx record;
+	uint8_t frame[V92_CPUS_MAX_FRAME_BYTES];
+	size_t bits = 0u;
+
+	CHECK(build_predecessor(G711_LAW_PCMU, V92_CONSTELLATION_4_POINT,
+		      0u, 1, &upstream, &handoff) &&
+	      v90_pcm_mapping_init_from_v92_cpt(&mapping, &handoff.parameters) ==
+		      V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(&downstream, &suvd) == PCM_DOWNSTREAM_TX_OK &&
+	      v92_phase4_digital_station_init(&station, &handoff,
+		      V92_CONSTELLATION_4_POINT, &downstream, &cpd) ==
+		      V92_PHASE4_DIGITAL_STATION_OK,
+	      "CPus phase guard fixture did not initialize");
+	for (size_t symbol = 0u;
+	     symbol < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS -
+			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++symbol) {
+		int16_t raw;
+		CHECK(v92_pcm_phase4_trn2u_next(&upstream, &raw) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_phase4_digital_station_receive(&station,
+			      line_sample(G711_LAW_PCMU, 1, raw)) == V92_PHASE4_DIGITAL_STATION_OK,
+		      "CPus phase guard lost training");
+	}
+	CHECK(v92_cpus_encode(&cpus, 24u, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+	      v92_phase4_record_tx_init(&record, &upstream.modulator,
+		      frame, sizeof(frame), bits) == V92_PHASE4_RECORD_TX_OK,
+	      "CPus phase guard record did not initialize");
+	for (unsigned int repeat = 0u; repeat < 4u; ++repeat) {
+		if (repeat != 0u)
+			CHECK(v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
+				      V92_PHASE4_RECORD_TX_OK, "CPus repeat did not start");
+		while (!v92_phase4_record_tx_is_complete(&record)) {
+			struct v92_phase4_digital_rx observer = station.receive;
+			struct v92_control_event event = { 0 };
+			enum v92_phase4_digital_station_result result;
+			int16_t raw;
+			CHECK(v92_phase4_record_tx_next(&record, &raw) == V92_PHASE4_RECORD_TX_OK,
+			      "CPus source stopped");
+			raw = line_sample(G711_LAW_PCMU, 1, raw);
+			(void)v92_phase4_digital_rx_sample(&observer, raw, &event);
+			result = v92_phase4_digital_station_receive(&station, raw);
+			if (event.type == V92_CONTROL_EVENT_CPUS) {
+				CHECK(result == V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR &&
+				      station.failed && !station.cpu_received &&
+				      !station.peer_acknowledged_cpd,
+				      "initial training accepted a CPus in place of a full mapping");
+				return true;
+			}
+			CHECK(result == V92_PHASE4_DIGITAL_STATION_OK ||
+			      result == V92_PHASE4_DIGITAL_STATION_EVENT,
+			      "station failed before receiving CPus");
+		}
+	}
+	CHECK(false, "CPus was not decoded on the trained PCM line");
+	return false;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1435,6 +1505,7 @@ int main(void)
 		{ "analogue early control handoff", test_analog_early_control },
 		{ "compact station boundary", test_compact_boundary },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
+		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
 	};
 	unsigned int failures = 0u;
 
