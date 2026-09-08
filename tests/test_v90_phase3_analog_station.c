@@ -185,6 +185,14 @@ static bool run_exchange(
 				      V90_PHASE3_DIGITAL_STATION_OK,
 			      "law %u digital receive failed at %u",
 			      (unsigned int)law, index);
+		if (digital.transmit_started &&
+		    digital.transmit.stage == PCM_PHASE3_DIGITAL_TX_PREFIX)
+			CHECK(digital.receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
+			      digital.receive.returning.marker.stage ==
+				      V90_PHASE3_RETURN_RX_STAGE_SEARCH_S &&
+			      digital.receive.returning.marker.buffered_onset_decisions == 0,
+			      "law %u return marker armed before Jd at %u",
+			      (unsigned int)law, index);
 		if (expected_dil_symbols != 0u &&
 		    digital.receive_stage ==
 			    V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN) {

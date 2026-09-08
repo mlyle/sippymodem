@@ -227,6 +227,20 @@ static enum v90_phase3_digital_station_result receive_initial(
 static enum v90_phase3_digital_station_result receive_return(
 	struct v90_phase3_digital_station *station, int16_t sample)
 {
+	/* V.90 9.3.1.4 arms the return S detector when Jd starts. The peer
+	 * cannot acknowledge Jd during Sd/TRN1d. Keep the physical receiver
+	 * continuous, but do not let pre-Jd echo seed a return marker. */
+	if (station->transmit.stage == PCM_PHASE3_DIGITAL_TX_PREFIX) {
+		struct v34_analytic_sample decision;
+		enum v90_upstream_training_rx_result result =
+			v90_upstream_training_rx_sample(
+				&station->receive.returning.upstream, sample, &decision);
+
+		return result == V90_UPSTREAM_TRAINING_RX_OK ||
+		       result == V90_UPSTREAM_TRAINING_RX_DECISION_READY ?
+			V90_PHASE3_DIGITAL_STATION_OK :
+			V90_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	}
 	enum v90_phase3_return_line_rx_result result =
 		v90_phase3_return_line_rx_sample(
 			&station->receive.returning, sample);

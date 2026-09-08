@@ -41,6 +41,7 @@ enum returned_echo_mode {
 	RETURNED_ECHO_NONE,
 	RETURNED_ECHO_STABLE,
 	RETURNED_ECHO_DC_BIASED,
+	RETURNED_ECHO_DC_BIASED_G711,
 };
 
 enum upstream_channel_mode {
@@ -313,7 +314,8 @@ static int16_t returned_echo(
 			history, RETURNED_ECHO_HISTORY, write, fill,
 			RETURNED_ECHO_TAP_2),
 		2200);
-	if (mode == RETURNED_ECHO_DC_BIASED)
+	if (mode == RETURNED_ECHO_DC_BIASED ||
+	    mode == RETURNED_ECHO_DC_BIASED_G711)
 		sample += 1400;
 	return add_s16(sample);
 }
@@ -576,6 +578,11 @@ static bool run_pair_with_rate_window(
 				returned_echo(
 					echo_history, echo_history_write,
 					echo_history_fill, echo_mode));
+		if (echo_mode == RETURNED_ECHO_DC_BIASED_G711) {
+			/* The analogue return, echo and bias share one codec input. */
+			digital_received_octet = encode(law, digital_receive);
+			digital_receive = decode(law, digital_received_octet);
+		}
 		CHECK(dc_remover_process(
 			      &digital_frontend, &digital_receive, 1) ==
 			      DC_REMOVER_OK,
@@ -983,6 +990,24 @@ static bool test_dc_biased_host_echo(void)
 		      MINIMUM_RATES[index]);
 	CHECK(v90_datapump_unregister() == 0,
 	      "DC-biased V.90 registration remained busy");
+	return true;
+}
+
+static bool test_quantized_host_echo(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "quantized host-echo V.90 registration failed");
+	/* PCMA quantization of the biased return produces a false S candidate
+	 * during Sd/TRN1d. It cannot acknowledge the not-yet-transmitted Jd.
+	 * Require real negotiated data, not just survival of that prefix. */
+	CHECK(run_pair_with_rate_window(
+		      G711_LAW_PCMA, 56000, 4800, 33600, 28800, 3429,
+		      2u * 33600u, true, MODEM_PCM_ROLE_NONE, false,
+		      UNITY_GAIN_Q15, RETURNED_ECHO_DC_BIASED_G711,
+		      UPSTREAM_CHANNEL_CLEAN),
+	      "quantized PCMA host echo lost training or sustained data");
+	CHECK(v90_datapump_unregister() == 0,
+	      "quantized host-echo V.90 registration remained busy");
 	return true;
 }
 
@@ -1513,6 +1538,8 @@ int main(void)
 		{ "delayed digital-answerer host echo", test_delayed_host_echo },
 		{ "DC-biased digital-answerer host echo",
 		  test_dc_biased_host_echo },
+		{ "quantized DC-biased digital-answerer host echo",
+		  test_quantized_host_echo },
 		{ "local and remote full retrain", test_full_retrain_pairs },
 		{ "sustained maximum-rate retrains",
 		  test_sustained_maximum_rate_retrains },
