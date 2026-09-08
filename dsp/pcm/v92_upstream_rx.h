@@ -22,10 +22,11 @@ struct v92_upstream_decision {
 	uint8_t group;
 };
 
-/* Own the continuous, trained PCM-upstream equalizer and demodulator shared
- * by Phase 4 control, E2u, B1u, and data. The short inherited training tail
+/* Own the continuous, trained PCM-upstream equalizer and control demodulator
+ * through Phase 4 control and E2u. The short inherited training tail
  * is adapted against its known targets; later decisions adapt against the
- * nearest selected constellation level. */
+ * nearest selected control-constellation level. B1u/data inherits the line
+ * through v92_upstream_data_rx and uses its negotiated CPd constellation. */
 struct v92_upstream_rx {
 	struct v92_pcm_phase4_trn2u_line_handoff line;
 	uint8_t training_tail_remaining;
@@ -39,8 +40,7 @@ bool v92_upstream_rx_is_valid(const struct v92_upstream_rx *receiver);
 bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver);
 
 /* Predict the equalizer-coordinate level for a known next input group without
- * advancing either coding history. This is the reference used by E2u and B1u
- * training. */
+ * advancing either coding history. This is the reference used by E2u. */
 bool v92_upstream_rx_expected_level(
 	const struct v92_upstream_rx *receiver, uint8_t input_group,
 	int16_t *level);

@@ -10,6 +10,7 @@
 #include <v92_phase4_e2u.h>
 #include <v92_suvu.h>
 #include <v92_upstream_data_tx.h>
+#include <v92_upstream_data_rx.h>
 
 #include "test.h"
 
@@ -656,6 +657,8 @@ static bool run_crossing(
 	/* B1u begins on the very next media interval, using the accepted CPd
 	 * and trained LU but fresh data-coding histories for either E2u length. */
 	struct v92_upstream_data_tx upstream;
+	struct v92_upstream_data_rx upstream_receive;
+	struct v92_upstream_data_frame received_frame;
 	struct v92_pcm_frame_tx encoder;
 	struct v92_pcm_frame b1u;
 	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
@@ -666,6 +669,9 @@ static bool run_crossing(
 	CHECK(v92_upstream_data_tx_init(
 		      &upstream, &handoff->mapping, handoff->transmit.lu) ==
 		      V92_UPSTREAM_DATA_TX_OK &&
+	      v92_upstream_data_rx_init(&upstream_receive,
+		      &digital_done.state.digital.receive, &handoff->mapping) ==
+		      V92_UPSTREAM_DATA_RX_OK &&
 	      v92_pcm_frame_tx_init(&encoder, &handoff->mapping) ==
 		      V92_PCM_FRAME_OK &&
 	      v92_pcm_frame_encode(
@@ -683,7 +689,15 @@ static bool run_crossing(
 		      actual == expected,
 		      "law %u extended %u first B1u frame changed at %zu",
 		      (unsigned int)law, extended, symbol);
+		CHECK(v92_upstream_data_rx_sample(&upstream_receive,
+			      quantize(law, actual), &received_frame) ==
+			      (symbol + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ?
+				       V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
+		      "first duplex B1u frame did not decode");
 	}
+	CHECK(received_frame.squared_error == 0u && received_frame.bit_count == 0u &&
+	      upstream_receive.line.received_frames == 1u,
+	      "E2u to B1u changed frame alignment or emitted payload early");
 	if (ed_complete) {
 		CHECK(digital_done.state.digital.downstream_stage ==
 			      V92_PHASE4_E2U_DOWNSTREAM_DATA &&
