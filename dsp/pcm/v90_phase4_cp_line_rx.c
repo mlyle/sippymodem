@@ -510,10 +510,16 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 		next.pending_parameters = (struct v90_cp_parameters){ 0 };
 		if (next.pending_record_is_valid)
 			next.pending_parameters = emitted.parameters;
-		/* A rejected record is not evidence that gain acquisition is done. */
+		/* A valid CP can finish while the AGC is still correcting an
+		 * under-level training handoff. Settle that level from the owned
+		 * signal history once, then preserve it through CP/E/B1. Rejected
+		 * records and already frozen receivers cannot change the gain. */
 		if (next.pending_record_is_valid &&
-		    v34_receive_timing_freeze_gain(&next.line.timing) !=
-			    V34_RECEIVE_TIMING_OK)
+		    next.line.timing.gain.mode == V34_GAIN_TRACKING &&
+		    (v34_gain_control_refresh_level(&next.line.timing.gain) !=
+			     V34_GAIN_CONTROL_OK ||
+		     v34_receive_timing_freeze_gain(&next.line.timing) !=
+			     V34_RECEIVE_TIMING_OK))
 			return fail_sample(rx, &next, NULL);
 	}
 	if (!v90_phase4_cp_line_rx_is_valid(&next))

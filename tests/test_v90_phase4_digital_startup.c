@@ -141,6 +141,57 @@ static bool next_cp_octet(
 	return true;
 }
 
+static bool check_rejected_cpt_continuation(
+	const struct v90_phase4_digital_startup *startup,
+	const struct v90_cp_parameters *training, int16_t sample)
+{
+	struct v90_phase4_digital_startup trial = *startup;
+	struct v90_cp_receiver *records =
+		&trial.state.continuing.receive.symbols.records;
+	uint8_t frame[V90_CP_MAX_FRAME_BYTES];
+	size_t bits;
+
+	CHECK(v90_cp_encode(training, frame, sizeof(frame), &bits) == V90_CP_OK &&
+	      v90_cp_receiver_init(records) == V90_CP_OK,
+	      "repeated CPt did not encode");
+	/* Leave four bits for the live line decoder and corrupt an already
+	 * buffered CRC bit. No possible suffix can repair the candidate. */
+	for (size_t bit = 0u; bit < bits - 4u; ++bit) {
+		struct v90_cp_receive_event event;
+
+		CHECK(v90_cp_receiver_receive_bit(records,
+			      (frame[bit / 8u] >> (7u - bit % 8u)) & 1u,
+			      &event) == V90_CP_OK &&
+		      event.type == V90_CP_RECEIVE_NO_EVENT,
+		      "repeated CPt rejected before its suffix");
+	}
+	records->frame[(bits - 8u) / 8u] ^=
+		(uint8_t)(1u << (7u - (bits - 8u) % 8u));
+	for (size_t clock = 0u; clock < 16u; ++clock) {
+		struct v90_phase4_cp_line_rx expected = trial.state.continuing.receive;
+		struct v90_cp_receive_event event;
+		enum v90_phase4_cp_line_rx_result received =
+			v90_phase4_cp_line_rx_sample(&expected, sample, &event);
+		uint8_t output;
+
+		CHECK(v90_phase4_digital_startup_sample(&trial, sample, &output) ==
+			      V90_PHASE4_STARTUP_OK && !trial.failed &&
+		      trial.stage == V90_PHASE4_STARTUP_CONTINUING,
+		      "rejected CPt revoked an accepted mapping");
+		if (received != V90_PHASE4_CP_LINE_RX_RECORD_READY)
+			continue;
+		CHECK(event.type == V90_CP_RECEIVE_REJECTED &&
+		      v90_phase4_cp_line_rx_continue(&expected) == V90_PHASE4_CP_LINE_RX_OK &&
+		      memcmp(&expected, &trial.state.continuing.receive, sizeof(expected)) == 0 &&
+		      v90_pcm_mapping_equal(&startup->state.continuing.station.training_mapping,
+					    &trial.state.continuing.station.training_mapping),
+		      "rejected CPt reset receive state or changed the mapping");
+		return true;
+	}
+	CHECK(false, "repeated CPt candidate did not reach its CRC");
+	return false;
+}
+
 static bool run_exchange(
 	enum g711_law law, uint8_t projected_rate,
 	uint16_t peer_rate_mask, int16_t decision_metric,
@@ -202,6 +253,9 @@ static bool run_exchange(
 				&startup.state.continuing.receive.line.timing.carrier;
 
 			if (!tracking_continuation) {
+				CHECK(check_rejected_cpt_continuation(
+					      &startup, &training, decode_octet(law, to_digital)),
+				      "rejected CPt continuation failed");
 				expected_carrier_phase =
 					carrier->phase;
 				tracking_continuation = true;

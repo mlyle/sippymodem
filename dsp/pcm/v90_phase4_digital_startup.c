@@ -213,12 +213,14 @@ static enum v90_phase4_startup_result receive_continued(
 		return V90_PHASE4_STARTUP_OK;
 	case V90_PHASE4_CP_LINE_RX_RECORD_READY: {
 		bool matches =
-			v90_phase4_cp_line_rx_pending_record_is_valid(
-				&state->receive) &&
+			!v90_phase4_cp_line_rx_pending_record_is_valid(
+				&state->receive) ||
 			mapping_matches(
 				&state->station.training_mapping,
 				&event.parameters);
 
+		/* A rejected CPt candidate cannot revoke the accepted mapping
+		 * while Ri drains. Only a valid conflicting record can do that. */
 		if (v90_phase4_cp_line_rx_continue(&state->receive) !=
 		    V90_PHASE4_CP_LINE_RX_OK)
 			return V90_PHASE4_STARTUP_NUMERIC_FAILURE;

@@ -163,6 +163,15 @@ static bool verify_line(
 		       rx.line.timing.gain.gain == frozen_gain),
 		      "CP line record %u changed", received_records);
 		frozen_gain = rx.line.timing.gain.gain;
+		if (received_records == 0) {
+			struct v34_gain_control settled = rx.line.timing.gain;
+
+			CHECK(v34_gain_control_refresh_level(&settled) ==
+				      V34_GAIN_CONTROL_OK &&
+			      memcmp(&settled, &rx.line.timing.gain,
+				     sizeof(settled)) == 0,
+			      "CP froze an under-level gain at its first valid record");
+		}
 		{
 			struct v90_phase4_cp_line_rx saved = rx;
 			struct v90_cp_receive_event sentinel = {
