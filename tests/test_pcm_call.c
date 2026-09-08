@@ -5280,7 +5280,7 @@ static bool run_v92_phase4_control(
 		      analog_control.station.transmit.completed_cpu_records &&
 	      analog_control.observed_cpu_records >= 2u &&
 	      v92_cpu_frame_bits(
-		      &analog_configuration.v92_analog_phase4.cpu, 2u) /
+		      &analog_configuration.v92_analog_phase4.cpu, 24u) /
 		      2u >
 		      analog_control.cpu_repeat_interval_samples &&
 	      v92_phase4_analog_station_is_e2u_ready(

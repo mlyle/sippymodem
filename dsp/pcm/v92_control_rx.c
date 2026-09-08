@@ -34,25 +34,7 @@ static bool configuration_is_valid(
 			       V92_CPD_DOWNSTREAM_DATA_MAX_BITS;
 	}
 	return receiver->direction == V92_CONTROL_UPSTREAM &&
-	       (receiver->alignment_bits ==
-			V92_STATUS_UPDATE_4_POINT_ALIGNMENT ||
-		receiver->alignment_bits ==
-			V92_STATUS_UPDATE_8_POINT_ALIGNMENT);
-}
-
-static enum v92_constellation_size upstream_constellation(
-	const struct v92_control_rx *receiver)
-{
-	return receiver->alignment_bits ==
-		       V92_STATUS_UPDATE_4_POINT_ALIGNMENT ?
-		       V92_CONSTELLATION_4_POINT :
-		       V92_CONSTELLATION_8_POINT;
-}
-
-static unsigned int upstream_bits_per_symbol(
-	const struct v92_control_rx *receiver)
-{
-	return receiver->alignment_bits / V92_CPU_SYMBOLS_PER_FRAME;
+	       v92_control_upstream_alignment_is_valid(receiver->alignment_bits);
 }
 
 static size_t maximum_frame_bits(
@@ -67,7 +49,7 @@ static size_t status_frame_bits(
 {
 	if (receiver->direction == V92_CONTROL_DOWNSTREAM)
 		return v92_suvd_frame_bits(receiver->alignment_bits);
-	return v92_suvu_frame_bits(upstream_constellation(receiver));
+	return v92_suvu_frame_bits(receiver->alignment_bits);
 }
 
 static bool prefix_is_valid(const uint8_t *frame)
@@ -143,7 +125,7 @@ bool v92_control_rx_is_valid(
 		enum v92_cpu_result probe = v92_cpu_probe_frame_bits(
 			receiver->frame, sizeof(receiver->frame),
 			receiver->bit_index,
-			upstream_bits_per_symbol(receiver), &inferred);
+			receiver->alignment_bits, &inferred);
 
 		if (receiver->frame_bit_count == 0u)
 			return probe == V92_CPU_INCOMPLETE;
@@ -175,20 +157,17 @@ enum v92_control_rx_result v92_control_rx_init_downstream(
 
 enum v92_control_rx_result v92_control_rx_init_upstream(
 	struct v92_control_rx *receiver,
-	enum v92_constellation_size constellation)
+	uint8_t mapping_frame_bits)
 {
 	struct v92_control_rx initialized = {
-		.alignment_bits = constellation == V92_CONSTELLATION_4_POINT ?
-			V92_STATUS_UPDATE_4_POINT_ALIGNMENT :
-			V92_STATUS_UPDATE_8_POINT_ALIGNMENT,
+		.alignment_bits = mapping_frame_bits,
 		.direction = V92_CONTROL_UPSTREAM,
 		.stage = V92_CONTROL_RX_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL)
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
-	if (constellation != V92_CONSTELLATION_4_POINT &&
-	    constellation != V92_CONSTELLATION_8_POINT)
+	if (!v92_control_upstream_alignment_is_valid(mapping_frame_bits))
 		return V92_CONTROL_RX_INVALID_PARAMETERS;
 	if (!v92_control_rx_is_valid(&initialized))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
@@ -277,7 +256,7 @@ static void finish_suvu(
 	struct v92_suvu_parameters parameters;
 	enum v92_suvu_result result = v92_suvu_decode(
 		receiver->frame, sizeof(receiver->frame),
-		receiver->frame_bit_count, upstream_constellation(receiver),
+		receiver->frame_bit_count, receiver->alignment_bits,
 		&parameters);
 
 	event->record.suvu.frame_result = result;
@@ -318,7 +297,7 @@ static void finish_cpu(
 	enum v92_cpu_result result = v92_cpu_decode(
 		receiver->frame, sizeof(receiver->frame),
 		receiver->frame_bit_count,
-		upstream_bits_per_symbol(receiver), &parameters);
+		receiver->alignment_bits, &parameters);
 
 	event->record.cpu.frame_result = result;
 	if (result == V92_CPU_OK) {
@@ -394,7 +373,7 @@ static bool receive_valid_bit(
 				v92_cpu_probe_frame_bits(
 					receiver->frame, sizeof(receiver->frame),
 					receiver->bit_index,
-					upstream_bits_per_symbol(receiver),
+					receiver->alignment_bits,
 					&frame_bits);
 
 			if (cpu_probe == V92_CPU_OK)

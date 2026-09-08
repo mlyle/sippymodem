@@ -11,8 +11,8 @@ static bool line_state_is_valid(
 	unsigned int expected_alignment =
 		receiver->signal.line.demodulator.constellation ==
 				V92_CONSTELLATION_4_POINT ?
-			V92_STATUS_UPDATE_4_POINT_ALIGNMENT :
-			V92_STATUS_UPDATE_8_POINT_ALIGNMENT;
+			V92_CONTROL_UPSTREAM_4_POINT_BITS :
+			V92_CONTROL_UPSTREAM_8_POINT_BITS;
 
 	return v92_upstream_rx_is_valid(&receiver->signal) &&
 	       v92_control_rx_is_valid(&receiver->control) &&
@@ -47,7 +47,10 @@ v92_upstream_control_line_rx_init(
 		    V92_UPSTREAM_RX_OK ||
 	    v92_control_rx_init_upstream(
 		    &initialized.control,
-		    initialized.signal.line.demodulator.constellation) !=
+		    initialized.signal.line.demodulator.constellation ==
+			    V92_CONSTELLATION_4_POINT ?
+			    V92_CONTROL_UPSTREAM_4_POINT_BITS :
+			    V92_CONTROL_UPSTREAM_8_POINT_BITS) !=
 		    V92_CONTROL_RX_OK ||
 	    !v92_upstream_control_line_rx_is_valid(&initialized))
 		return V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR;

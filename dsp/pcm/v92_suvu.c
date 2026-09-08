@@ -12,26 +12,15 @@ enum {
 	SUVU_ACKNOWLEDGMENT_PAYLOAD_BIT = 14,
 };
 
-static unsigned int alignment_bits(
-	enum v92_constellation_size constellation)
+size_t v92_suvu_frame_bits(unsigned int mapping_frame_bits)
 {
-	switch (constellation) {
-	case V92_CONSTELLATION_4_POINT:
-		return V92_STATUS_UPDATE_4_POINT_ALIGNMENT;
-	case V92_CONSTELLATION_8_POINT:
-		return V92_STATUS_UPDATE_8_POINT_ALIGNMENT;
-	}
-	return 0u;
+	return v92_control_upstream_alignment_is_valid(mapping_frame_bits) ?
+		v92_status_update_frame_bits(mapping_frame_bits) : 0u;
 }
 
-size_t v92_suvu_frame_bits(enum v92_constellation_size constellation)
+size_t v92_suvu_frame_bytes(unsigned int mapping_frame_bits)
 {
-	return v92_status_update_frame_bits(alignment_bits(constellation));
-}
-
-size_t v92_suvu_frame_bytes(enum v92_constellation_size constellation)
-{
-	size_t bits = v92_suvu_frame_bits(constellation);
+	size_t bits = v92_suvu_frame_bits(mapping_frame_bits);
 
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
@@ -65,17 +54,16 @@ static enum v92_suvu_result encode_result(
 
 enum v92_suvu_result v92_suvu_encode(
 	const struct v92_suvu_parameters *parameters,
-	enum v92_constellation_size constellation,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity, size_t *frame_bit_count)
 {
-	unsigned int alignment = alignment_bits(constellation);
 	uint8_t raw_level;
 	uint16_t payload;
 
 	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
 		return V92_SUVU_INVALID_ARGUMENT;
 	if (!v92_suvu_parameters_are_valid(parameters) ||
-	    alignment == 0u)
+	    !v92_control_upstream_alignment_is_valid(mapping_frame_bits))
 		return V92_SUVU_INVALID_PARAMETERS;
 	raw_level = parameters->prefilter_level_db_q2_2 < 0 ?
 		(uint8_t)(parameters->prefilter_level_db_q2_2 + 32) :
@@ -92,7 +80,7 @@ enum v92_suvu_result v92_suvu_encode(
 		(uint16_t)parameters->acknowledges_cpd <<
 		SUVU_ACKNOWLEDGMENT_PAYLOAD_BIT);
 	return encode_result(v92_status_update_encode(
-		payload, alignment, frame, frame_capacity, frame_bit_count));
+		payload, mapping_frame_bits, frame, frame_capacity, frame_bit_count));
 }
 
 static enum v92_suvu_result decode_result(
@@ -116,20 +104,21 @@ static enum v92_suvu_result decode_result(
 
 enum v92_suvu_result v92_suvu_decode(
 	const uint8_t *frame, size_t frame_capacity, size_t frame_bit_count,
-	enum v92_constellation_size constellation,
+	unsigned int mapping_frame_bits,
 	struct v92_suvu_parameters *parameters)
 {
 	struct v92_suvu_parameters decoded;
 	enum v92_status_update_result result;
-	unsigned int alignment = alignment_bits(constellation);
 	uint16_t payload = 0u;
 	uint8_t raw_level;
 
 	if (frame == NULL || parameters == NULL)
 		return V92_SUVU_INVALID_ARGUMENT;
+	if (!v92_control_upstream_alignment_is_valid(mapping_frame_bits))
+		return V92_SUVU_INVALID_FRAME;
 	result = v92_status_update_decode(
 		frame, frame_capacity, frame_bit_count,
-		alignment, &payload);
+		mapping_frame_bits, &payload);
 	if (result != V92_STATUS_UPDATE_OK)
 		return decode_result(result);
 	raw_level = (uint8_t)(

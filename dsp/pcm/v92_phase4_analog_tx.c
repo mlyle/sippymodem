@@ -205,8 +205,10 @@ static enum v92_phase4_analog_tx_result start_suvu(
 	parameters.acknowledges_cpd = tx->received_cpd;
 	if (v92_suvu_encode(
 		    &parameters,
-		    after_trn2u ? tx->signal.trn2u.modulator.constellation :
-			    tx->signal.record.modulator.constellation,
+		    v92_phase4_modulator_bits_per_symbol(after_trn2u ?
+			    tx->signal.trn2u.modulator.constellation :
+			    tx->signal.record.modulator.constellation) *
+			    V92_SUVU_SYMBOLS_PER_FRAME,
 		    frame, sizeof(frame), &frame_bits) != V92_SUVU_OK)
 		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
 	if (after_trn2u) {
@@ -233,7 +235,7 @@ static enum v92_phase4_analog_tx_result start_cpu(
 	uint8_t frame[V92_CPU_MAX_FRAME_BYTES] = { 0 };
 	size_t frame_bits = 0u;
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
-		tx->signal.record.modulator.constellation);
+		tx->signal.record.modulator.constellation) * V92_CPU_SYMBOLS_PER_FRAME;
 
 	parameters.acknowledges_cpd = tx->received_cpd;
 	if (v92_cpu_encode(

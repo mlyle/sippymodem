@@ -77,9 +77,10 @@ enum v92_control_rx_stage {
 };
 
 /* Incrementally find status updates and parameter records in one continuous
- * descrambled Phase 4 stream. Both directions share the 17-one/zero prefix;
- * marker bit 18 selects the fixed status or variable parameter branch. A
- * saturated sync count lets a TRN2 suffix become the first prefix. */
+ * descrambled training or data-mode control stream. Both directions share
+ * the 17-one/zero prefix; marker bit 18 selects the fixed status or variable
+ * parameter branch. A saturated sync count lets a TRN2 suffix become the
+ * first prefix. */
 struct v92_control_rx {
 	uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
 	size_t frame_bit_count;
@@ -90,13 +91,14 @@ struct v92_control_rx {
 	enum v92_control_rx_stage stage;
 };
 
-/* Downstream records use the negotiated training or data mapping-frame width.
- * Upstream records use the selected two- or three-bit TRN2u constellation. */
+/* Both directions take the negotiated mapping-frame bit width: 9..42
+ * downstream; 24/36 during upstream training, or even 36..72 during FPE.
+ * The caller owns demodulation, descrambling and the aligned coding epoch. */
 enum v92_control_rx_result v92_control_rx_init_downstream(
 	struct v92_control_rx *receiver, uint8_t mapping_frame_bits);
 enum v92_control_rx_result v92_control_rx_init_upstream(
 	struct v92_control_rx *receiver,
-	enum v92_constellation_size constellation);
+	uint8_t mapping_frame_bits);
 bool v92_control_rx_is_valid(
 	const struct v92_control_rx *receiver);
 

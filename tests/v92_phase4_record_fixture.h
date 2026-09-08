@@ -30,7 +30,8 @@ static bool v92_record_fixture_start_suvu(
 	else
 		return false;
 	if (v92_suvu_encode(
-		    parameters, constellation, frame, sizeof(frame),
+		    parameters, v92_phase4_modulator_bits_per_symbol(constellation) *
+			    V92_SUVU_SYMBOLS_PER_FRAME, frame, sizeof(frame),
 		    &frame_bits) != V92_SUVU_OK)
 		return false;
 	if (modulator != NULL)
@@ -62,7 +63,8 @@ static bool v92_record_fixture_start_cpu(
 	else
 		return false;
 	if (v92_cpu_encode(
-		    parameters, bits_per_symbol, frame, sizeof(frame),
+		    parameters, bits_per_symbol * V92_CPU_SYMBOLS_PER_FRAME,
+		    frame, sizeof(frame),
 		    &frame_bits) != V92_CPU_OK)
 		return false;
 	if (modulator != NULL)

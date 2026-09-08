@@ -261,6 +261,10 @@ static bool test_bounds_and_names(void)
 		      V92_SUVD_INVALID_ARGUMENT &&
 	      v92_suvd_frame_bits(8u) == 0u &&
 	      v92_suvd_frame_bytes(43u) == 0u &&
+	      v92_suvd_frame_bits(44u) == 0u &&
+	      v92_suvd_frame_bytes(72u) == 0u &&
+	      v92_suvd_encode(&parameters, 44u, frame, sizeof(frame),
+		      &frame_bits) == V92_SUVD_INVALID_ARGUMENT &&
 	      frame_bits == 123u &&
 	      memcmp(frame, unchanged, sizeof(frame)) == 0,
 	      "invalid SUVd encoding changed output");

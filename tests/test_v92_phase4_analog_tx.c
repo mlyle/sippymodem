@@ -105,7 +105,9 @@ static bool current_suvu_acknowledges_cpd(
 	      v92_suvu_decode(
 		      tx->signal.record.frame, V92_SUVU_FRAME_BYTES,
 		      tx->signal.record.frame_bit_count,
-		      tx->signal.record.modulator.constellation,
+		      v92_phase4_modulator_bits_per_symbol(
+			      tx->signal.record.modulator.constellation) *
+			      V92_SUVU_SYMBOLS_PER_FRAME,
 		      &decoded) == V92_SUVU_OK &&
 	      decoded.acknowledges_cpd == expected,
 	      "SUVu acknowledgment differed");
@@ -122,7 +124,8 @@ static bool current_cpu_acknowledges_cpd(
 	CHECK(tx->stage == V92_PHASE4_ANALOG_TX_CPU &&
 	      v92_cpu_decode(
 		      tx->signal.record.frame, V92_CPU_MAX_FRAME_BYTES,
-		      tx->signal.record.frame_bit_count, bits, &decoded) ==
+		      tx->signal.record.frame_bit_count,
+		      bits * V92_CPU_SYMBOLS_PER_FRAME, &decoded) ==
 		      V92_CPU_OK &&
 	      decoded.acknowledges_cpd == expected,
 	      "CPu acknowledgment differed");

@@ -206,10 +206,18 @@ static bool parameters_are_equal(
 
 static bool test_dimensions(void)
 {
-	CHECK(V92_CPU_MIN_FRAME_BITS == 312 &&
-	      V92_CPU_MAX_FRAME_BITS == 1824 &&
-	      V92_CPU_MAX_FRAME_BYTES == 228,
+	const struct v92_cpu_parameters valid = parameters(1u, false);
+
+	CHECK(V92_CPU_MIN_FRAME_BITS == 290 &&
+	      V92_CPU_MAX_FRAME_BITS == 1857 &&
+	      V92_CPU_MAX_FRAME_BYTES == 233,
 	      "CPu public bounds changed");
+	for (unsigned int width = 0u; width <= 73u; ++width) {
+		bool allowed = width == 24u ||
+			(width >= 36u && width <= 72u && width % 2u == 0u);
+		CHECK((v92_cpu_frame_bits(&valid, width) != 0u) == allowed,
+		      "CPu incorrectly accepted or rejected width %u", width);
+	}
 	for (uint8_t count = 1u;
 	     count <= V92_CPU_MAX_CONSTELLATIONS; ++count) {
 		for (unsigned int differs = 0u; differs < 2u; ++differs) {
@@ -221,15 +229,17 @@ static bool test_dimensions(void)
 				sets * V92_CPU_CONSTELLATION_BITS +
 				V92_CPU_MIN_TRAILER_BITS;
 
-			for (unsigned int bits = V92_CPU_MIN_BITS_PER_SYMBOL;
-			     bits <= V92_CPU_MAX_BITS_PER_SYMBOL; ++bits) {
+			for (unsigned int bits = V92_CONTROL_UPSTREAM_4_POINT_BITS;
+			     bits <= V92_CONTROL_UPSTREAM_DATA_MAX_BITS; bits += 2u) {
 				struct v92_cpu_parameters decoded;
 				size_t encoded_bits = 0u;
 				size_t probed_bits = 0u;
-				size_t multiple =
-					bits * V92_CPU_SYMBOLS_PER_FRAME;
+				size_t multiple = bits;
 				size_t expected =
 					(unfilled + multiple - 1u) / multiple * multiple;
+
+				if (bits != 24u && bits < 36u)
+					continue;
 
 				CHECK(v92_cpu_parameters_are_valid(&value) &&
 				      v92_cpu_frame_bits(&value, bits) == expected &&
@@ -259,14 +269,14 @@ static bool test_dimensions(void)
 
 static bool probe_is_transactional(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t received_bits, unsigned int bits_per_symbol,
+	size_t received_bits, unsigned int mapping_frame_bits,
 	enum v92_cpu_result expected)
 {
 	size_t extent = 123u;
 
 	return v92_cpu_probe_frame_bits(
 		       frame, frame_capacity, received_bits,
-		       bits_per_symbol, &extent) == expected &&
+		       mapping_frame_bits, &extent) == expected &&
 	       extent == 123u;
 }
 
@@ -279,58 +289,58 @@ static bool test_extent_probe_failures(void)
 	size_t inferred = 0u;
 
 	CHECK(v92_cpu_encode(
-		      &value, 3u, encoded, sizeof(encoded), &frame_bits) ==
+		      &value, 36u, encoded, sizeof(encoded), &frame_bits) ==
 		      V92_CPU_OK &&
 	      v92_cpu_probe_frame_bits(
 		      encoded, V92_CPU_HEADER_BITS / 8u,
-		      V92_CPU_HEADER_BITS, 3u, &inferred) == V92_CPU_OK &&
+		      V92_CPU_HEADER_BITS, 36u, &inferred) == V92_CPU_OK &&
 	      inferred == frame_bits,
 	      "CPu extent probe did not infer a complete header");
 	for (size_t received = 0u;
 	     received < V92_CPU_HEADER_BITS; ++received) {
 		CHECK(probe_is_transactional(
 			      encoded, (received + 7u) / 8u, received,
-			      3u, V92_CPU_INCOMPLETE),
+			      36u, V92_CPU_INCOMPLETE),
 		      "CPu extent probe mishandled split %zu", received);
 	}
 	CHECK(probe_is_transactional(
 		      encoded, V92_CPU_HEADER_BITS / 8u - 1u,
-		      V92_CPU_HEADER_BITS, 3u, V92_CPU_INVALID_ARGUMENT) &&
+		      V92_CPU_HEADER_BITS, 36u, V92_CPU_INVALID_ARGUMENT) &&
 	      probe_is_transactional(
 		      encoded, sizeof(encoded), V92_CPU_MAX_FRAME_BITS + 1u,
-		      3u, V92_CPU_INVALID_FRAME) &&
+		      36u, V92_CPU_INVALID_FRAME) &&
 	      probe_is_transactional(
 		      encoded, sizeof(encoded), V92_CPU_HEADER_BITS,
 		      1u, V92_CPU_INVALID_FRAME) &&
 	      v92_cpu_probe_frame_bits(
-		      NULL, 0u, 0u, 3u, &inferred) ==
+		      NULL, 0u, 0u, 36u, &inferred) ==
 		      V92_CPU_INVALID_ARGUMENT &&
 	      v92_cpu_probe_frame_bits(
 		      encoded, sizeof(encoded), V92_CPU_HEADER_BITS,
-		      3u, NULL) == V92_CPU_INVALID_ARGUMENT,
+		      36u, NULL) == V92_CPU_INVALID_ARGUMENT,
 	      "CPu extent probe accepted an invalid boundary");
 
 	memcpy(changed, encoded, sizeof(changed));
 	set_bit(changed, 0u, 0u);
 	CHECK(probe_is_transactional(
 		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
-		      3u, V92_CPU_INVALID_FRAME),
+		      36u, V92_CPU_INVALID_FRAME),
 	      "CPu extent probe accepted a broken prefix");
 	memcpy(changed, encoded, sizeof(changed));
 	write_lsb_field(changed, CPU_RATE_FIRST_BIT, 5u, 31u);
 	CHECK(probe_is_transactional(
 		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
-		      3u, V92_CPU_INVALID_FRAME),
+		      36u, V92_CPU_INVALID_FRAME),
 	      "CPu extent probe accepted an invalid rate");
 	memcpy(changed, encoded, sizeof(changed));
 	write_lsb_field(changed, map_first_bit(0u), 4u, 6u);
 	CHECK(probe_is_transactional(
 		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
-		      3u, V92_CPU_INVALID_FRAME),
+		      36u, V92_CPU_INVALID_FRAME),
 	      "CPu extent probe accepted an invalid map");
 	CHECK(probe_is_transactional(
 		      encoded, sizeof(encoded), frame_bits + 1u,
-		      3u, V92_CPU_INVALID_FRAME),
+		      36u, V92_CPU_INVALID_FRAME),
 	      "CPu extent probe accepted input past its inferred end");
 	return true;
 }
@@ -341,7 +351,7 @@ static bool test_scalar_validation(void)
 	struct v92_cpu_parameters changed;
 
 	CHECK(!v92_cpu_parameters_are_valid(NULL) &&
-	      v92_cpu_frame_bits(NULL, 2u) == 0u,
+	      v92_cpu_frame_bits(NULL, 24u) == 0u,
 	      "CPu accepted null parameters");
 	for (uint8_t rate = 0u;
 	     rate <= V92_CPU_MAX_DATA_RATE_NUMBER; ++rate) {
@@ -507,11 +517,11 @@ static bool test_wire_fields(void)
 
 	memset(frame, 0xa5, sizeof(frame));
 	CHECK(v92_cpu_encode(
-		      &value, 4u, frame, V92_CPU_MAX_FRAME_BYTES,
+		      &value, 66u, frame, V92_CPU_MAX_FRAME_BYTES,
 		      &frame_bits) == V92_CPU_OK,
 	      "maximum CPu encoding failed");
-	CHECK(frame_bits == V92_CPU_MAX_FRAME_BITS &&
-	      frame[V92_CPU_MAX_FRAME_BYTES] == 0xa5,
+	CHECK(frame_bits == 1848u && frame_bits <= V92_CPU_MAX_FRAME_BITS &&
+	      frame[(frame_bits + 7u) / 8u] == 0xa5,
 	      "maximum CPu extent is wrong");
 	CHECK(fixed_fields_are_correct(frame, &value),
 	      "CPu fixed fields are wrong");
@@ -542,10 +552,10 @@ static bool test_compact_row_layout(void)
 
 	value.law = G711_LAW_PCMU;
 	CHECK(v92_cpu_encode(
-		      &value, 2u, frame, sizeof(frame), &frame_bits) ==
+		      &value, 24u, frame, sizeof(frame), &frame_bits) ==
 		      V92_CPU_OK,
 	      "compact CPu encoding failed");
-	CHECK(frame_bits == v92_cpu_frame_bits(&value, 2u) &&
+	CHECK(frame_bits == v92_cpu_frame_bits(&value, 24u) &&
 	      fixed_fields_are_correct(frame, &value) &&
 	      constellation_rows_are_correct(frame, &value),
 	      "CPu rows were not packed contiguously");
@@ -558,8 +568,8 @@ static bool test_transactionality(void)
 	uint8_t frame[V92_CPU_MAX_FRAME_BYTES + 1u];
 	uint8_t unchanged[sizeof(frame)];
 	size_t frame_bits = 123u;
-	size_t expected_bits = v92_cpu_frame_bits(&value, 3u);
-	size_t expected_bytes = v92_cpu_frame_bytes(&value, 3u);
+	size_t expected_bits = v92_cpu_frame_bits(&value, 36u);
+	size_t expected_bytes = v92_cpu_frame_bytes(&value, 36u);
 
 	memset(frame, 0xa5, sizeof(frame));
 	memcpy(unchanged, frame, sizeof(frame));
@@ -570,13 +580,13 @@ static bool test_transactionality(void)
 	      memcmp(frame, unchanged, sizeof(frame)) == 0,
 	      "invalid CPu encoding changed output");
 	CHECK(v92_cpu_encode(
-		      &value, 3u, frame, expected_bytes - 1u,
+		      &value, 36u, frame, expected_bytes - 1u,
 		      &frame_bits) == V92_CPU_OUTPUT_TOO_SMALL &&
 	      frame_bits == 123u &&
 	      memcmp(frame, unchanged, sizeof(frame)) == 0,
 	      "short CPu encoding changed output");
 	CHECK(v92_cpu_encode(
-		      &value, 3u, frame, expected_bytes, &frame_bits) ==
+		      &value, 36u, frame, expected_bytes, &frame_bits) ==
 		      V92_CPU_OK &&
 	      frame_bits == expected_bits &&
 	      expected_bits % 8u != 0u &&
@@ -586,13 +596,13 @@ static bool test_transactionality(void)
 	      frame[expected_bytes] == 0xa5,
 	      "valid CPu encoding crossed its extent");
 	CHECK(v92_cpu_encode(
-		      NULL, 3u, frame, sizeof(frame), &frame_bits) ==
+		      NULL, 36u, frame, sizeof(frame), &frame_bits) ==
 		      V92_CPU_INVALID_ARGUMENT &&
 	      v92_cpu_encode(
-		      &value, 3u, NULL, sizeof(frame), &frame_bits) ==
+		      &value, 36u, NULL, sizeof(frame), &frame_bits) ==
 		      V92_CPU_INVALID_ARGUMENT &&
 	      v92_cpu_encode(
-		      &value, 3u, frame, sizeof(frame), NULL) ==
+		      &value, 36u, frame, sizeof(frame), NULL) ==
 		      V92_CPU_INVALID_ARGUMENT,
 	      "CPu accepted null arguments");
 	return true;
@@ -600,7 +610,7 @@ static bool test_transactionality(void)
 
 static bool decode_is_transactional(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bits, unsigned int bits_per_symbol,
+	size_t frame_bits, unsigned int mapping_frame_bits,
 	enum v92_cpu_result expected)
 {
 	struct v92_cpu_parameters decoded;
@@ -610,7 +620,7 @@ static bool decode_is_transactional(
 	memcpy(&unchanged, &decoded, sizeof(decoded));
 	return v92_cpu_decode(
 		       frame, frame_capacity, frame_bits,
-		       bits_per_symbol, &decoded) == expected &&
+		       mapping_frame_bits, &decoded) == expected &&
 	       memcmp(&decoded, &unchanged, sizeof(decoded)) == 0;
 }
 
@@ -627,56 +637,56 @@ static bool test_decoder_failures(void)
 		V92_CPU_CONSTELLATION_BITS;
 
 	CHECK(v92_cpu_encode(
-		      &value, 3u, encoded, sizeof(encoded), &frame_bits) ==
+		      &value, 36u, encoded, sizeof(encoded), &frame_bits) ==
 		      V92_CPU_OK,
 	      "decoder fixture encoding failed");
 	frame_bytes = (frame_bits + 7u) / 8u;
 	CHECK(v92_cpu_decode(
-		      NULL, frame_bytes, frame_bits, 3u, &decoded) ==
+		      NULL, frame_bytes, frame_bits, 36u, &decoded) ==
 		      V92_CPU_INVALID_ARGUMENT &&
 	      v92_cpu_decode(
-		      encoded, frame_bytes, frame_bits, 3u, NULL) ==
+		      encoded, frame_bytes, frame_bits, 36u, NULL) ==
 		      V92_CPU_INVALID_ARGUMENT,
 	      "CPu decoder accepted null arguments");
 	CHECK(decode_is_transactional(
-		      encoded, frame_bytes - 1u, frame_bits, 3u,
+		      encoded, frame_bytes - 1u, frame_bits, 36u,
 		      V92_CPU_INVALID_ARGUMENT) &&
 	      decode_is_transactional(
 		      encoded, frame_bytes, frame_bits, 1u,
 		      V92_CPU_INVALID_FRAME) &&
 	      decode_is_transactional(
-		      encoded, frame_bytes, frame_bits - 1u, 3u,
+		      encoded, frame_bytes, frame_bits - 1u, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted an invalid extent");
 
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, 0u, 0u);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted a broken preamble");
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, V92_CPU_HEADER_BITS, 1u);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted a row start bit");
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, payload_end + 17u, 1u);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted a nonzero fill bit");
 
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, 26u, 1u);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_CRC_MISMATCH),
 	      "CPu decoder missed a CRC error");
 	rewrite_crc(changed, payload_end);
 	CHECK(v92_cpu_decode(
-		      changed, frame_bytes, frame_bits, 3u, &decoded) ==
+		      changed, frame_bytes, frame_bits, 36u, &decoded) ==
 		      V92_CPU_OK && parameters_are_equal(&decoded, &value),
 	      "CPu decoder did not ignore a covered reserved bit");
 
@@ -684,7 +694,7 @@ static bool test_decoder_failures(void)
 	write_lsb_field(changed, CPU_RATE_FIRST_BIT, 5u, 31u);
 	rewrite_crc(changed, payload_end);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted an invalid data rate");
 	memcpy(changed, encoded, frame_bytes);
@@ -692,7 +702,7 @@ static bool test_decoder_failures(void)
 	     interval < V92_CPU_FRAME_INTERVALS; ++interval)
 		write_lsb_field(changed, map_first_bit(interval), 4u, 1u);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted a gapped interval map");
 	memcpy(changed, encoded, frame_bytes);
@@ -701,7 +711,7 @@ static bool test_decoder_failures(void)
 		set_bit(changed, row_mask_bit(0u, ucode), 0u);
 	rewrite_crc(changed, payload_end);
 	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 3u,
+		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted an empty active constellation");
 	return true;
@@ -715,13 +725,13 @@ static bool test_decoder_storage_padding(void)
 	size_t frame_bytes;
 
 	CHECK(v92_cpu_encode(
-		      &value, 3u, frame, sizeof(frame), &frame_bits) ==
+		      &value, 36u, frame, sizeof(frame), &frame_bits) ==
 		      V92_CPU_OK && frame_bits % 8u != 0u,
 	      "storage-padding fixture encoding failed");
 	frame_bytes = (frame_bits + 7u) / 8u;
 	set_bit(frame, frame_bits, 1u);
 	CHECK(decode_is_transactional(
-		      frame, frame_bytes, frame_bits, 3u,
+		      frame, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted nonzero storage padding");
 	return true;

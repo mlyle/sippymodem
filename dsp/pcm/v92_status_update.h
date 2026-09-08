@@ -3,6 +3,8 @@
 #ifndef V92_STATUS_UPDATE_H
 #define V92_STATUS_UPDATE_H
 
+#include "v92_control_frame.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -13,10 +15,8 @@ enum {
 	V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS = 9,
 	V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS = 30,
 	V92_STATUS_UPDATE_DOWNSTREAM_DATA_MAX_BITS = 42,
-	V92_STATUS_UPDATE_4_POINT_ALIGNMENT = 24,
-	V92_STATUS_UPDATE_8_POINT_ALIGNMENT = 36,
-	/* Data-mode SUVd can fill two 42-bit frames during parameter exchange. */
-	V92_STATUS_UPDATE_MAX_FRAME_BITS = 84,
+	/* A 52-bit SUVu record can fill two 50-bit data frames. */
+	V92_STATUS_UPDATE_MAX_FRAME_BITS = 100,
 	V92_STATUS_UPDATE_MAX_FRAME_BYTES =
 		(V92_STATUS_UPDATE_MAX_FRAME_BITS + 7) / 8,
 };
@@ -30,8 +30,8 @@ enum v92_status_update_result {
 	V92_STATUS_UPDATE_CRC_MISMATCH,
 };
 
-/* Return the exact wire extent for a legal six-symbol downstream PCM mapping
- * frame, or one upstream 12-symbol 4/8-point frame. */
+/* Return the exact wire extent for a legal downstream or upstream mapping
+ * frame, during training or fast parameter exchange. */
 size_t v92_status_update_frame_bits(unsigned int alignment_bits);
 size_t v92_status_update_frame_bytes(unsigned int alignment_bits);
 

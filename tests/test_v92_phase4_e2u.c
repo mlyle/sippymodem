@@ -346,7 +346,9 @@ static bool start_suvu_record(
 	size_t frame_bits = 0u;
 
 	if (v92_suvu_encode(
-		    &parameters, transmit->constellation, frame, sizeof(frame),
+		    &parameters, v92_phase4_modulator_bits_per_symbol(
+			    transmit->constellation) * V92_SUVU_SYMBOLS_PER_FRAME,
+		    frame, sizeof(frame),
 		    &frame_bits) != V92_SUVU_OK)
 		return false;
 	return first ?
@@ -369,7 +371,8 @@ static bool start_cpu_record(
 		transmit->constellation);
 
 	if (v92_cpu_encode(
-		    parameters, bits, frame, sizeof(frame), &frame_bits) !=
+		    parameters, bits * V92_CPU_SYMBOLS_PER_FRAME,
+		    frame, sizeof(frame), &frame_bits) !=
 	    V92_CPU_OK)
 		return false;
 	return first ?

@@ -5,6 +5,7 @@
 
 #include "g711.h"
 #include "pcm_constellation.h"
+#include "v92_control_frame.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -17,20 +18,13 @@ enum {
 	V92_CPU_CONSTELLATION_BITS = 136,
 	V92_CPU_MIN_TRAILER_BITS = 18,
 	V92_CPU_SYMBOLS_PER_FRAME = 12,
-	V92_CPU_MIN_BITS_PER_SYMBOL = 2,
-	V92_CPU_MAX_BITS_PER_SYMBOL = 4,
 	V92_CPU_MIN_FRAME_BITS =
-		(V92_CPU_HEADER_BITS + V92_CPU_CONSTELLATION_BITS +
-		 V92_CPU_MIN_TRAILER_BITS +
-		 V92_CPU_MIN_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME - 1) /
-		(V92_CPU_MIN_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME) *
-		(V92_CPU_MIN_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME),
+		V92_CPU_HEADER_BITS + V92_CPU_CONSTELLATION_BITS +
+		V92_CPU_MIN_TRAILER_BITS,
 	V92_CPU_MAX_FRAME_BITS =
-		(V92_CPU_HEADER_BITS + 2 * V92_CPU_MAX_CONSTELLATIONS *
-		 V92_CPU_CONSTELLATION_BITS + V92_CPU_MIN_TRAILER_BITS +
-		 V92_CPU_MAX_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME - 1) /
-		(V92_CPU_MAX_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME) *
-		(V92_CPU_MAX_BITS_PER_SYMBOL * V92_CPU_SYMBOLS_PER_FRAME),
+		V92_CPU_HEADER_BITS + 2 * V92_CPU_MAX_CONSTELLATIONS *
+		V92_CPU_CONSTELLATION_BITS + V92_CPU_MIN_TRAILER_BITS +
+		V92_CONTROL_UPSTREAM_DATA_MAX_BITS - 1,
 	V92_CPU_MAX_FRAME_BYTES = (V92_CPU_MAX_FRAME_BITS + 7) / 8,
 	V92_CPU_MAX_DATA_RATE_NUMBER = 22,
 };
@@ -71,14 +65,15 @@ struct v92_cpu_parameters {
 bool v92_cpu_parameters_are_valid(
 	const struct v92_cpu_parameters *parameters);
 
-/* bits_per_symbol is the modulation width carrying the record. The result is
- * an integral number of 12-symbol frames, or zero for invalid inputs. */
+/* mapping_frame_bits is the bit width of the preceding twelve-symbol mapping:
+ * 24/36 for training, or even 36..72 for fast parameter exchange. The result
+ * ends on a complete mapping frame, or is zero for invalid inputs. */
 size_t v92_cpu_frame_bits(
 	const struct v92_cpu_parameters *parameters,
-	unsigned int bits_per_symbol);
+	unsigned int mapping_frame_bits);
 size_t v92_cpu_frame_bytes(
 	const struct v92_cpu_parameters *parameters,
-	unsigned int bits_per_symbol);
+	unsigned int mapping_frame_bits);
 
 /* Infer the exact record extent once the bounded 136-bit header has arrived.
  * INCOMPLETE requests more header bits; a successful probe does not imply
@@ -86,7 +81,7 @@ size_t v92_cpu_frame_bytes(
  * Rejected calls leave frame_bit_count unchanged. */
 enum v92_cpu_result v92_cpu_probe_frame_bits(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t received_bit_count, unsigned int bits_per_symbol,
+	size_t received_bit_count, unsigned int mapping_frame_bits,
 	size_t *frame_bit_count);
 
 /* Pack bits in transmission order, most-significant bit first within each
@@ -94,7 +89,7 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
  * Rejected calls leave every output unchanged. */
 enum v92_cpu_result v92_cpu_encode(
 	const struct v92_cpu_parameters *parameters,
-	unsigned int bits_per_symbol,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
 
@@ -103,7 +98,7 @@ enum v92_cpu_result v92_cpu_encode(
  * padding bits are strict. Rejected calls leave parameters unchanged. */
 enum v92_cpu_result v92_cpu_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bit_count, unsigned int bits_per_symbol,
+	size_t frame_bit_count, unsigned int mapping_frame_bits,
 	struct v92_cpu_parameters *parameters);
 
 const char *v92_cpu_result_name(enum v92_cpu_result result);

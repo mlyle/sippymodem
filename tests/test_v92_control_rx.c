@@ -303,25 +303,17 @@ static bool test_cpd_matrix(void)
 
 static bool test_upstream_records(void)
 {
-	static const enum v92_constellation_size constellations[] = {
-		V92_CONSTELLATION_4_POINT,
-		V92_CONSTELLATION_8_POINT,
-	};
-
-	for (size_t kind = 0u;
-	     kind < ARRAY_LENGTH(constellations); ++kind) {
-		enum v92_constellation_size constellation =
-			constellations[kind];
-		unsigned int bits_per_symbol =
-			constellation == V92_CONSTELLATION_4_POINT ? 2u : 3u;
+	for (unsigned int alignment = V92_CONTROL_UPSTREAM_4_POINT_BITS;
+	     alignment <= V92_CONTROL_UPSTREAM_DATA_MAX_BITS; alignment += 2u) {
 		struct v92_control_rx receiver;
 		struct v92_control_event event;
 
+		if (alignment != 24u && alignment < 36u)
+			continue;
 		CHECK(v92_control_rx_init_upstream(
-			      &receiver, constellation) == V92_CONTROL_RX_OK &&
+			      &receiver, alignment) == V92_CONTROL_RX_OK &&
 		      receiver.direction == V92_CONTROL_UPSTREAM &&
-		      receiver.alignment_bits ==
-			      bits_per_symbol * V92_CPU_SYMBOLS_PER_FRAME,
+		      receiver.alignment_bits == alignment,
 		      "upstream control receiver did not initialize");
 		for (size_t bit = 0u; bit < 47u; ++bit) {
 			CHECK(receive_bit(&receiver, 1u, &event) &&
@@ -335,11 +327,11 @@ static bool test_upstream_records(void)
 				.request_silence = (flags & 2u) != 0u,
 				.acknowledges_cpd = (flags & 4u) != 0u,
 			};
-			uint8_t frame[V92_SUVU_FRAME_BYTES];
+			uint8_t frame[V92_SUVU_MAX_FRAME_BYTES];
 			size_t frame_bits = 0u;
 
 			CHECK(v92_suvu_encode(
-				      &parameters, constellation, frame,
+				      &parameters, alignment, frame,
 				      sizeof(frame), &frame_bits) == V92_SUVU_OK &&
 			      feed_frame(
 				      &receiver, frame, 0u, frame_bits, &event) &&
@@ -347,8 +339,8 @@ static bool test_upstream_records(void)
 			      event.record.suvu.frame_result == V92_SUVU_OK &&
 			      suvu_parameters_match(
 				      &event.record.suvu.parameters, &parameters),
-			      "SUVu flags 0x%x constellation %u did not decode",
-			      flags, (unsigned int)constellation);
+			      "SUVu flags 0x%x alignment %u did not decode",
+			      flags, alignment);
 		}
 		for (uint8_t count = 1u;
 		     count <= V92_CPU_MAX_CONSTELLATIONS; ++count) {
@@ -359,7 +351,7 @@ static bool test_upstream_records(void)
 				size_t frame_bits = 0u;
 
 				CHECK(v92_cpu_encode(
-					      &parameters, bits_per_symbol, frame,
+					      &parameters, alignment, frame,
 					      sizeof(frame), &frame_bits) == V92_CPU_OK &&
 				      feed_frame(
 					      &receiver, frame, 0u, frame_bits,
@@ -369,9 +361,9 @@ static bool test_upstream_records(void)
 				      cpu_parameters_match(
 					      &event.record.cpu.parameters,
 					      &parameters),
-				      "CPu shape %u/%u constellation %u did not decode",
+				      "CPu shape %u/%u alignment %u did not decode",
 				      count, differs,
-				      (unsigned int)constellation);
+				      alignment);
 			}
 		}
 	}
@@ -380,8 +372,8 @@ static bool test_upstream_records(void)
 
 static bool test_upstream_recovery_and_rejection(void)
 {
-	const enum v92_constellation_size constellation =
-		V92_CONSTELLATION_8_POINT;
+	const unsigned int alignment =
+		V92_CONTROL_UPSTREAM_8_POINT_BITS;
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
 		.wait_for_cpu = true,
@@ -398,13 +390,13 @@ static bool test_upstream_recovery_and_rejection(void)
 	size_t suvu_bits = 0u;
 	size_t cpu_bits = 0u;
 
-	CHECK(v92_control_rx_init_upstream(&receiver, constellation) ==
+	CHECK(v92_control_rx_init_upstream(&receiver, alignment) ==
 		      V92_CONTROL_RX_OK &&
 	      v92_suvu_encode(
-		      &suvu, constellation, suvu_frame, sizeof(suvu_frame),
+		      &suvu, alignment, suvu_frame, sizeof(suvu_frame),
 		      &suvu_bits) == V92_SUVU_OK &&
 	      v92_cpu_encode(
-		      &cpu, 3u, cpu_frame, sizeof(cpu_frame), &cpu_bits) ==
+		      &cpu, 36u, cpu_frame, sizeof(cpu_frame), &cpu_bits) ==
 		      V92_CPU_OK,
 	      "upstream rejection fixtures did not initialize");
 	memcpy(suvu_corrupt, suvu_frame, sizeof(suvu_corrupt));
@@ -534,17 +526,26 @@ static bool test_contracts(void)
 	CHECK(v92_control_rx_init_downstream(NULL, 17u) ==
 		      V92_CONTROL_RX_INVALID_ARGUMENT &&
 	      v92_control_rx_init_upstream(
-		      NULL, V92_CONSTELLATION_4_POINT) ==
+		      NULL, V92_CONTROL_UPSTREAM_4_POINT_BITS) ==
 		      V92_CONTROL_RX_INVALID_ARGUMENT &&
 	      v92_control_rx_init_downstream(&receiver, 8u) ==
 		      V92_CONTROL_RX_INVALID_PARAMETERS &&
 	      v92_control_rx_init_downstream(&receiver, 43u) ==
 		      V92_CONTROL_RX_INVALID_PARAMETERS &&
 	      v92_control_rx_init_upstream(
-		      &receiver, (enum v92_constellation_size)6) ==
+		      &receiver, 6u) ==
 		      V92_CONTROL_RX_INVALID_PARAMETERS &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "invalid control receiver initialization changed state");
+	for (unsigned int width = 0u; width <= 73u; ++width) {
+		if (width == 24u ||
+		    (width >= 36u && width <= 72u && width % 2u == 0u))
+			continue;
+		CHECK(v92_control_rx_init_upstream(&receiver, width) ==
+			      V92_CONTROL_RX_INVALID_PARAMETERS &&
+		      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+		      "invalid upstream width %u changed receiver", width);
+	}
 	CHECK(v92_control_rx_init_downstream(&receiver, 17u) ==
 		      V92_CONTROL_RX_OK,
 	      "control receiver did not initialize");

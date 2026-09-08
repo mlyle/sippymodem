@@ -104,20 +104,20 @@ static bool parameters_match(
 static bool test_dimensions(void)
 {
 	CHECK(V92_SUVU_FRAME_BITS == 72 && V92_SUVU_FRAME_BYTES == 9 &&
-	      v92_suvu_frame_bits(V92_CONSTELLATION_4_POINT) == 72 &&
-	      v92_suvu_frame_bits(V92_CONSTELLATION_8_POINT) == 72 &&
-	      v92_suvu_frame_bytes(V92_CONSTELLATION_4_POINT) == 9 &&
-	      v92_suvu_frame_bytes(V92_CONSTELLATION_8_POINT) == 9 &&
-	      v92_suvu_frame_bits((enum v92_constellation_size)6) == 0 &&
-	      v92_suvu_frame_bytes((enum v92_constellation_size)6) == 0 &&
+	      v92_suvu_frame_bits(V92_CONTROL_UPSTREAM_4_POINT_BITS) == 72 &&
+	      v92_suvu_frame_bits(V92_CONTROL_UPSTREAM_8_POINT_BITS) == 72 &&
+	      v92_suvu_frame_bytes(V92_CONTROL_UPSTREAM_4_POINT_BITS) == 9 &&
+	      v92_suvu_frame_bytes(V92_CONTROL_UPSTREAM_8_POINT_BITS) == 9 &&
+	      v92_suvu_frame_bits(6u) == 0 &&
+	      v92_suvu_frame_bytes(6u) == 0 &&
 	      v92_status_update_frame_bits(
 		      V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS) == 54 &&
 	      v92_status_update_frame_bytes(
 		      V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS) == 7 &&
 	      v92_status_update_frame_bits(
-		      V92_STATUS_UPDATE_4_POINT_ALIGNMENT) == 72 &&
+		      V92_CONTROL_UPSTREAM_4_POINT_BITS) == 72 &&
 	      v92_status_update_frame_bits(
-		      V92_STATUS_UPDATE_8_POINT_ALIGNMENT) == 72 &&
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS) == 72 &&
 	      v92_status_update_frame_bits(0u) == 0u,
 	      "SUVu training dimensions changed");
 	return true;
@@ -158,7 +158,7 @@ static bool test_wire_fields(void)
 
 	memset(frame, 0xa5, sizeof(frame));
 	CHECK(v92_suvu_encode(
-		      &parameters, V92_CONSTELLATION_4_POINT,
+		      &parameters, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, V92_SUVU_FRAME_BYTES, &frame_bits) == V92_SUVU_OK,
 	      "SUVu wire fixture did not encode");
 	CHECK(frame_bits == V92_SUVU_FRAME_BITS &&
@@ -194,18 +194,18 @@ static bool test_all_values_round_trip(void)
 			struct v92_suvu_parameters decoded;
 			uint8_t frame[V92_SUVU_FRAME_BYTES];
 			size_t frame_bits = 0;
-			enum v92_constellation_size constellation =
-				(flags & 1u) != 0 ? V92_CONSTELLATION_8_POINT :
-							 V92_CONSTELLATION_4_POINT;
+			unsigned int alignment =
+				(flags & 1u) != 0 ? V92_CONTROL_UPSTREAM_8_POINT_BITS :
+							 V92_CONTROL_UPSTREAM_4_POINT_BITS;
 
 			memset(&decoded, 0xa5, sizeof(decoded));
 			CHECK(v92_suvu_parameters_are_valid(&wanted) &&
 			      v92_suvu_encode(
-				      &wanted, constellation, frame, sizeof(frame),
+				      &wanted, alignment, frame, sizeof(frame),
 				      &frame_bits) == V92_SUVU_OK &&
 			      v92_suvu_decode(
 				      frame, sizeof(frame), frame_bits,
-				      constellation, &decoded) == V92_SUVU_OK &&
+				      alignment, &decoded) == V92_SUVU_OK &&
 			      parameters_match(&wanted, &decoded),
 			      "SUVu level %d flags 0x%x did not round-trip",
 			      level, flags);
@@ -214,9 +214,47 @@ static bool test_all_values_round_trip(void)
 	return true;
 }
 
+static bool test_data_widths(void)
+{
+	for (unsigned int width = 0u; width <= 73u; ++width) {
+		bool valid = width == 24u ||
+			(width >= 36u && width <= 72u && width % 2u == 0u);
+		size_t expected = valid ? (52u + width - 1u) / width * width : 0u;
+		CHECK(v92_suvu_frame_bits(width) == expected,
+		      "SUVu width %u has the wrong extent", width);
+		if (!valid)
+			continue;
+		for (unsigned int flags = 0u; flags < 8u; ++flags) {
+			struct v92_suvu_parameters wanted = {
+				.prefilter_level_db_q2_2 = (int8_t)((int)width % 32 - 16),
+				.wait_for_cpu = (flags & 1u) != 0u,
+				.request_silence = (flags & 2u) != 0u,
+				.acknowledges_cpd = (flags & 4u) != 0u,
+			};
+			struct v92_suvu_parameters decoded;
+			uint8_t frame[V92_SUVU_MAX_FRAME_BYTES + 1u];
+			size_t bits = 0u;
+			size_t bytes = (expected + 7u) / 8u;
+
+			memset(frame, 0xa5, sizeof(frame));
+			CHECK(v92_suvu_encode(&wanted, width, frame, bytes - 1u,
+				      &bits) == V92_SUVU_OUTPUT_TOO_SMALL &&
+			      bits == 0u && frame[0] == 0xa5 && frame[bytes] == 0xa5,
+			      "short SUVu width %u output was modified", width);
+			CHECK(v92_suvu_encode(&wanted, width, frame, bytes, &bits) ==
+				      V92_SUVU_OK && bits == expected &&
+			      frame[bytes] == 0xa5 &&
+			      v92_suvu_decode(frame, bytes, bits, width, &decoded) ==
+				      V92_SUVU_OK && parameters_match(&wanted, &decoded),
+			      "SUVu width %u flags %u failed", width, flags);
+		}
+	}
+	return true;
+}
+
 static bool decode_rejects_unchanged(
 	const uint8_t *frame, size_t capacity, size_t frame_bits,
-	enum v92_constellation_size constellation,
+	unsigned int alignment,
 	enum v92_suvu_result wanted)
 {
 	struct v92_suvu_parameters decoded;
@@ -225,7 +263,7 @@ static bool decode_rejects_unchanged(
 	memset(&decoded, 0xa5, sizeof(decoded));
 	before = decoded;
 	return v92_suvu_decode(
-		       frame, capacity, frame_bits, constellation, &decoded) ==
+		       frame, capacity, frame_bits, alignment, &decoded) ==
 		       wanted &&
 	       memcmp(&decoded, &before, sizeof(decoded)) == 0;
 }
@@ -242,7 +280,7 @@ static bool test_decode_corruption(void)
 	size_t frame_bits = 0;
 
 	CHECK(v92_suvu_encode(
-		      &parameters, V92_CONSTELLATION_8_POINT,
+		      &parameters, V92_CONTROL_UPSTREAM_8_POINT_BITS,
 		      original, sizeof(original), &frame_bits) == V92_SUVU_OK,
 	      "SUVu corruption fixture did not encode");
 
@@ -250,45 +288,45 @@ static bool test_decode_corruption(void)
 	set_bit(changed, 0, 0);
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_INVALID_FRAME),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_INVALID_FRAME),
 	      "SUVu accepted a broken sync prefix");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, 17, 1);
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_INVALID_FRAME),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_INVALID_FRAME),
 	      "SUVu accepted a nonzero initial start bit");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, 18, 0);
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_INVALID_FRAME),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_INVALID_FRAME),
 	      "SUVu accepted another record type");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, SUVU_CRC_START_BIT, 1);
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_INVALID_FRAME),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_INVALID_FRAME),
 	      "SUVu accepted a nonzero CRC start bit");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, SUVU_WAIT_FOR_CPU_BIT,
 		(uint8_t)!bit_at(changed, SUVU_WAIT_FOR_CPU_BIT));
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_CRC_MISMATCH),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_CRC_MISMATCH),
 	      "SUVu accepted corrupted information");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, SUVU_CRC_FIRST_BIT,
 		(uint8_t)!bit_at(changed, SUVU_CRC_FIRST_BIT));
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_CRC_MISMATCH),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_CRC_MISMATCH),
 	      "SUVu accepted a corrupted CRC");
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, SUVU_FILL_FIRST_BIT, 1);
 	CHECK(decode_rejects_unchanged(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, V92_SUVU_INVALID_FRAME),
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, V92_SUVU_INVALID_FRAME),
 	      "SUVu accepted nonzero fill");
 
 	memcpy(changed, original, sizeof(changed));
@@ -297,7 +335,7 @@ static bool test_decode_corruption(void)
 	rewrite_crc(changed);
 	CHECK(v92_suvu_decode(
 		      changed, sizeof(changed), frame_bits,
-		      V92_CONSTELLATION_8_POINT, &decoded) == V92_SUVU_OK &&
+		      V92_CONTROL_UPSTREAM_8_POINT_BITS, &decoded) == V92_SUVU_OK &&
 	      parameters_match(&parameters, &decoded),
 	      "SUVu decoder interpreted reserved bits");
 	return true;
@@ -319,7 +357,7 @@ static bool test_bounds_and_transactionality(void)
 	CHECK(!v92_suvu_parameters_are_valid(NULL) &&
 	      !v92_suvu_parameters_are_valid(&invalid) &&
 	      v92_suvu_encode(
-		      &invalid, V92_CONSTELLATION_4_POINT,
+		      &invalid, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, sizeof(frame), &frame_bits) ==
 		      V92_SUVU_INVALID_PARAMETERS &&
 	      frame_bits == 1234 &&
@@ -329,50 +367,50 @@ static bool test_bounds_and_transactionality(void)
 	CHECK(!v92_suvu_parameters_are_valid(&invalid),
 	      "SUVu accepted a level above signed Q2.2");
 	CHECK(v92_suvu_encode(
-		      &valid, V92_CONSTELLATION_4_POINT,
+		      &valid, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, sizeof(frame) - 1u, &frame_bits) ==
 		      V92_SUVU_OUTPUT_TOO_SMALL &&
 	      frame_bits == 1234 &&
 	      memcmp(frame, before, sizeof(frame)) == 0,
 	      "short SUVu output changed outputs");
 	CHECK(v92_suvu_encode(
-		      &valid, (enum v92_constellation_size)6,
+		      &valid, 6u,
 		      frame, sizeof(frame), &frame_bits) ==
 		      V92_SUVU_INVALID_PARAMETERS &&
 	      v92_suvu_encode(
-		      NULL, V92_CONSTELLATION_4_POINT,
+		      NULL, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, sizeof(frame), &frame_bits) ==
 		      V92_SUVU_INVALID_ARGUMENT &&
 	      v92_suvu_encode(
-		      &valid, V92_CONSTELLATION_4_POINT,
+		      &valid, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      NULL, sizeof(frame), &frame_bits) ==
 		      V92_SUVU_INVALID_ARGUMENT &&
 	      v92_suvu_encode(
-		      &valid, V92_CONSTELLATION_4_POINT,
+		      &valid, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, sizeof(frame), NULL) ==
 		      V92_SUVU_INVALID_ARGUMENT,
 	      "SUVu encoder accepted invalid arguments");
 
 	CHECK(v92_suvu_encode(
-		      &valid, V92_CONSTELLATION_4_POINT,
+		      &valid, V92_CONTROL_UPSTREAM_4_POINT_BITS,
 		      frame, sizeof(frame), &frame_bits) == V92_SUVU_OK,
 	      "SUVu bounds fixture did not encode");
 	CHECK(decode_rejects_unchanged(
 		      frame, sizeof(frame) - 1u, frame_bits,
-		      V92_CONSTELLATION_4_POINT, V92_SUVU_INVALID_ARGUMENT) &&
+		      V92_CONTROL_UPSTREAM_4_POINT_BITS, V92_SUVU_INVALID_ARGUMENT) &&
 	      decode_rejects_unchanged(
 		      frame, sizeof(frame), frame_bits - 1u,
-		      V92_CONSTELLATION_4_POINT, V92_SUVU_INVALID_FRAME) &&
+		      V92_CONTROL_UPSTREAM_4_POINT_BITS, V92_SUVU_INVALID_FRAME) &&
 	      decode_rejects_unchanged(
 		      frame, sizeof(frame), frame_bits,
-		      (enum v92_constellation_size)6, V92_SUVU_INVALID_FRAME) &&
+		      6u, V92_SUVU_INVALID_FRAME) &&
 	      v92_suvu_decode(
 		      NULL, sizeof(frame), frame_bits,
-		      V92_CONSTELLATION_4_POINT, &valid) ==
+		      V92_CONTROL_UPSTREAM_4_POINT_BITS, &valid) ==
 		      V92_SUVU_INVALID_ARGUMENT &&
 	      v92_suvu_decode(
 		      frame, sizeof(frame), frame_bits,
-		      V92_CONSTELLATION_4_POINT, NULL) ==
+		      V92_CONTROL_UPSTREAM_4_POINT_BITS, NULL) ==
 		      V92_SUVU_INVALID_ARGUMENT,
 	      "SUVu decoder accepted invalid bounds or arguments");
 	return true;
@@ -407,6 +445,7 @@ int main(void)
 		{ "shared framing", test_shared_framing },
 		{ "wire fields", test_wire_fields },
 		{ "all values round trip", test_all_values_round_trip },
+		{ "data widths", test_data_widths },
 		{ "decode corruption", test_decode_corruption },
 		{ "bounds and transactionality", test_bounds_and_transactionality },
 		{ "result names", test_result_names },

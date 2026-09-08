@@ -15,12 +15,15 @@ bool v92_suvd_parameters_are_valid(
 
 size_t v92_suvd_frame_bits(uint8_t mapping_frame_bits)
 {
+	if (mapping_frame_bits < V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS ||
+	    mapping_frame_bits > V92_STATUS_UPDATE_DOWNSTREAM_DATA_MAX_BITS)
+		return 0u;
 	return v92_status_update_frame_bits(mapping_frame_bits);
 }
 
 size_t v92_suvd_frame_bytes(uint8_t mapping_frame_bits)
 {
-	return v92_status_update_frame_bytes(mapping_frame_bits);
+	return (v92_suvd_frame_bits(mapping_frame_bits) + 7u) / 8u;
 }
 
 static enum v92_suvd_result encode_result(
@@ -50,7 +53,7 @@ enum v92_suvd_result v92_suvd_encode(
 	uint16_t payload;
 
 	if (!v92_suvd_parameters_are_valid(parameters) || frame == NULL ||
-	    frame_bit_count == NULL)
+	    frame_bit_count == NULL || v92_suvd_frame_bits(mapping_frame_bits) == 0u)
 		return V92_SUVD_INVALID_ARGUMENT;
 	payload = (uint16_t)(
 		(uint16_t)parameters->request_silence <<
@@ -93,6 +96,8 @@ enum v92_suvd_result v92_suvd_decode(
 
 	if (frame == NULL || parameters == NULL)
 		return V92_SUVD_INVALID_ARGUMENT;
+	if (v92_suvd_frame_bits(mapping_frame_bits) == 0u)
+		return V92_SUVD_INVALID_FRAME;
 	result = v92_status_update_decode(
 		frame, frame_capacity, frame_bit_count,
 		mapping_frame_bits, &payload);
