@@ -104,6 +104,32 @@ static bool test_generated_profiles(void)
 						      PHASE2_NOMINAL_AMPLITUDE,
 				      "role %u law %u rate %u Phase 2 level changed",
 				      role_index, law_index, rate);
+				/* Reconstruct the conventional policy from the live owner,
+				 * not the original profile. It must survive initialization
+				 * independently of the PCM-upstream parameters. */
+				struct pcm_call_configuration conventional = {
+					.protocol = PCM_PROTOCOL_V90,
+					.local_role = role,
+					.law = law,
+					.enabled_downstream_rate_mask = call.enabled_downstream_rate_mask,
+					.phase2_nominal_amplitude = call.phase2_nominal_amplitude,
+					.phase3 = call.phase3_configuration,
+					.analog_phase4 = call.analog_phase4_configuration,
+					.digital_phase4 = call.digital_phase4_configuration,
+				};
+				struct pcm_call conventional_call;
+
+				if (role == V90_ANALOG_MODEM) {
+					conventional.local_info0.analog = call.local_info0.v92_analog.v90;
+					conventional.local_info1.analog = call.local_info1.analog;
+				} else {
+					conventional.local_info0.digital = call.local_info0.v92_digital.v90;
+					conventional.local_info1.digital = call.local_info1.v92_digital.v34;
+				}
+				CHECK(pcm_call_init(&conventional_call, &conventional) == PCM_CALL_OK &&
+				      pcm_call_is_valid(&conventional_call),
+				      "role %u law %u rate %u lost conventional policy",
+				      role_index, law_index, rate);
 				if (role == V90_ANALOG_MODEM) {
 					const struct v92_phase3_analog_station_configuration
 						*phase3 = &configuration.phase3.v92_analog;

@@ -8,6 +8,7 @@
 #include <v34_phase3_s_receiver.h>
 #include <v90_downstream_data_handoff.h>
 #include <v90_phase3_sd.h>
+#include <v90_profile.h>
 #include <v90_upstream_data.h>
 #include <v92_cpd_direct.h>
 #include <v92_profile.h>
@@ -343,12 +344,21 @@ static struct pcm_call_configuration v92_configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
 	const uint32_t rate_mask = UINT32_C(0x52491);
+	struct pcm_call_configuration conventional;
+
+	if (v90_profile_init(&conventional, role, law, 28000, 56000, NULL) !=
+	    V90_PROFILE_OK)
+		return (struct pcm_call_configuration){ 0 };
 	struct pcm_call_configuration configuration = {
 		.protocol = PCM_PROTOCOL_V92,
 		.local_role = role,
 		.law = law,
 		.enabled_downstream_rate_mask = V92_JD_RATE_CAPABILITY_MASK,
 		.phase2_nominal_amplitude = PHASE2_NOMINAL_AMPLITUDE,
+		.local_info1 = conventional.local_info1,
+		.phase3 = conventional.phase3,
+		.analog_phase4 = conventional.analog_phase4,
+		.digital_phase4 = conventional.digital_phase4,
 	};
 
 	if (role == V90_ANALOG_MODEM) {
@@ -5748,6 +5758,8 @@ static bool run_v92_unavailable_selection(
 				 .data_rate_number - 1u);
 
 		digital_configuration.enabled_downstream_rate_mask &= ~selected;
+		digital_configuration.phase3.digital.jd
+			.data_rate_capability_mask &= ~selected;
 		digital_configuration.phase3.v92_digital.jd
 			.data_rate_capability_mask &= ~selected;
 	} else if (selection == V92_UNAVAILABLE_UPSTREAM_RATE) {
@@ -6341,6 +6353,30 @@ static bool test_v92_validation(void)
 	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK,
 	      "valid digital V.92 configuration was rejected");
+	selected.phase3.digital.jd.data_rate_capability_mask = 0u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted an unusable conventional Jd");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.phase3.digital.jd.data_rate_capability_mask >>= 1u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted inconsistent conventional downstream rates");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.digital_phase4.initial_mp.type = (enum v90_mp_record_type)99;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted an invalid conventional MP");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.local_info1.analog.training_ucode = 0u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted an unusable conventional INFO1a");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.phase3.analog.nominal_peak_amplitude = 0;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted an unusable conventional transmitter");
+	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
+	selected.analog_phase4.data_parameters.law = G711_LAW_PCMA;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "V.92 call accepted a mismatched conventional CP law");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.protocol = (enum pcm_protocol)99;
 	CHECK(pcm_call_init(&untouched, &selected) ==
 		      PCM_CALL_INVALID_ARGUMENT,

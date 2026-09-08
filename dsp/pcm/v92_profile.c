@@ -217,11 +217,10 @@ enum v92_profile_result v92_pcm_profile_init(
 		    &v90, role, law, minimum_downstream_rate,
 		    maximum_downstream_rate, NULL) != V90_PROFILE_OK)
 		return V92_PROFILE_UNSUPPORTED_RATE;
+	/* PCM upstream adds a capability to the conventional path. Retain the
+	 * latter's policy for INFO1 selection and subsequent full retrains. */
+	selected = v90;
 	selected.protocol = PCM_PROTOCOL_V92;
-	selected.local_role = role;
-	selected.law = law;
-	selected.enabled_downstream_rate_mask = downstream.enabled_mask;
-	selected.phase2_nominal_amplitude = v90.phase2_nominal_amplitude;
 	if (role == V90_ANALOG_MODEM)
 		configure_analog(
 			&selected, &v90, &downstream, upstream_rate_mask);

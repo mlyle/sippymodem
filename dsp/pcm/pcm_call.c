@@ -140,7 +140,7 @@ static bool analog_configuration_is_valid(
 }
 
 static bool digital_configuration_is_valid(
-	const union pcm_call_local_info1 *info1,
+	const struct v34_info1c *info1,
 	const union pcm_call_phase3_configuration *phase3,
 	const struct pcm_call_digital_phase4_configuration *phase4)
 {
@@ -148,7 +148,7 @@ static bool digital_configuration_is_valid(
 
 	if (!v90_mp_record_is_valid(mp))
 		return false;
-	return v34_info1c_is_valid(&info1->digital) &&
+	return v34_info1c_is_valid(info1) &&
 	       v90_jd_parameters_are_valid(&phase3->digital.jd) &&
 	       !v90_mp_record_acknowledges_cp(mp);
 }
@@ -156,12 +156,18 @@ static bool digital_configuration_is_valid(
 static bool v92_analog_configuration_is_valid(
 	const union pcm_call_local_info1 *info1,
 	const union pcm_call_phase3_configuration *phase3,
-	enum g711_law law)
+	const struct pcm_call_analog_phase4_configuration *phase4,
+	uint32_t enabled_downstream_rate_mask, enum g711_law law)
 {
 	const struct v92_phase3_analog_station_configuration *selected =
 		&phase3->v92_analog;
 
-	return selected->law == law &&
+	return analog_configuration_is_valid(info1, phase3, phase4, law) &&
+	       downstream_rate_is_enabled(enabled_downstream_rate_mask,
+		       phase4->data_parameters.selected_rate_index) &&
+	       cp_supports_rate_mask(&phase4->data_parameters,
+		       enabled_downstream_rate_mask) &&
+	       selected->law == law &&
 	       selected->local_info1a.local_md_length_276_symbol_units == 0u &&
 	       v92_pcm_info1a_equal(
 		       &info1->v92_analog, &selected->local_info1a) &&
@@ -171,12 +177,17 @@ static bool v92_analog_configuration_is_valid(
 static bool v92_digital_configuration_is_valid(
 	const union pcm_call_local_info1 *info1,
 	const union pcm_call_phase3_configuration *phase3,
+	const struct pcm_call_digital_phase4_configuration *phase4,
 	uint32_t enabled_downstream_rate_mask, enum g711_law law)
 {
 	const struct pcm_call_v92_digital_phase3_configuration *selected =
 		&phase3->v92_digital;
 
 	return v92_info1d_is_valid(&info1->v92_digital) &&
+	       digital_configuration_is_valid(
+		       &info1->v92_digital.v34, phase3, phase4) &&
+	       phase3->digital.jd.data_rate_capability_mask ==
+		       enabled_downstream_rate_mask &&
 	       info1->v92_digital.pcm_upstream_supported &&
 	       selected->jd.data_rate_capability_mask ==
 		       enabled_downstream_rate_mask &&
@@ -245,6 +256,8 @@ static bool configuration_is_valid(
 			       v92_analog_configuration_is_valid(
 				       &configuration->local_info1,
 				       &configuration->phase3,
+				       &configuration->analog_phase4,
+				       configuration->enabled_downstream_rate_mask,
 				       configuration->law) &&
 			       v92_analog_phase4_configuration_is_valid(
 				       &configuration->v92_analog_phase4,
@@ -261,6 +274,7 @@ static bool configuration_is_valid(
 		       v92_digital_configuration_is_valid(
 			       &configuration->local_info1,
 			       &configuration->phase3,
+			       &configuration->digital_phase4,
 			       configuration->enabled_downstream_rate_mask,
 			       configuration->law) &&
 		       v92_digital_phase4_configuration_is_valid(
@@ -289,7 +303,7 @@ static bool configuration_is_valid(
 		       .data_rate_capability_mask ==
 		       configuration->enabled_downstream_rate_mask &&
 	       digital_configuration_is_valid(
-		       &configuration->local_info1,
+		       &configuration->local_info1.digital,
 		       &configuration->phase3,
 		       &configuration->digital_phase4);
 }
@@ -313,6 +327,8 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 		       v92_analog_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
+			       &call->analog_phase4_configuration,
+			       call->enabled_downstream_rate_mask,
 			       call->law) &&
 		       v92_analog_phase4_configuration_is_valid(
 			       &call->v92_analog_phase4_configuration,
@@ -321,6 +337,7 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 		       v92_digital_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
+			       &call->digital_phase4_configuration,
 			       call->enabled_downstream_rate_mask,
 			       call->law) &&
 		       v92_digital_phase4_configuration_is_valid(
@@ -342,7 +359,7 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 			       .data_rate_capability_mask ==
 			       call->enabled_downstream_rate_mask &&
 		       digital_configuration_is_valid(
-			       &call->local_info1,
+			       &call->local_info1.digital,
 			       &call->phase3_configuration,
 			       &call->digital_phase4_configuration);
 }
@@ -895,19 +912,24 @@ enum pcm_call_result pcm_call_init(
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (configuration->protocol == PCM_PROTOCOL_V92 &&
 	    configuration->local_role == V90_ANALOG_MODEM) {
+		initialized.local_info1.analog = configuration->local_info1.analog;
 		initialized.local_info1.v92_analog =
 			configuration->local_info1.v92_analog;
+		initialized.phase3_configuration.analog = configuration->phase3.analog;
 		initialized.phase3_configuration.v92_analog =
 			configuration->phase3.v92_analog;
 		initialized.v92_analog_phase4_configuration =
 			configuration->v92_analog_phase4;
+		initialized.analog_phase4_configuration = configuration->analog_phase4;
 	} else if (configuration->protocol == PCM_PROTOCOL_V92) {
 		initialized.local_info1.v92_digital =
 			configuration->local_info1.v92_digital;
+		initialized.phase3_configuration.digital = configuration->phase3.digital;
 		initialized.phase3_configuration.v92_digital =
 			configuration->phase3.v92_digital;
 		initialized.v92_digital_phase4_configuration =
 			configuration->v92_digital_phase4;
+		initialized.digital_phase4_configuration = configuration->digital_phase4;
 	} else if (configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.local_info1.analog =
 			configuration->local_info1.analog;

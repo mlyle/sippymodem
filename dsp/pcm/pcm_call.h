@@ -54,10 +54,15 @@ enum pcm_call_result {
 };
 
 union pcm_call_local_info1 {
-	struct v90_info1a analog;
 	struct v34_info1c digital;
-	struct v92_pcm_info1a v92_analog;
 	struct v92_info1d v92_digital;
+	/* The analogue modem retains both proposals until INFO1d selects which
+	 * upstream waveform the connection can use. Digital V.92 INFO1d already
+	 * contains its conventional probing fields. */
+	struct {
+		struct v90_info1a analog;
+		struct v92_pcm_info1a v92_analog;
+	};
 };
 
 struct pcm_call_analog_phase3_configuration {
@@ -77,10 +82,16 @@ struct pcm_call_v92_digital_phase3_configuration {
 };
 
 union pcm_call_phase3_configuration {
-	struct pcm_call_analog_phase3_configuration analog;
-	struct pcm_call_digital_phase3_configuration digital;
-	struct v92_phase3_analog_station_configuration v92_analog;
-	struct pcm_call_v92_digital_phase3_configuration v92_digital;
+	/* Roles are exclusive; upstream capabilities are not. INFO1 may select
+	 * conventional upstream even after both modems advertise V.92. */
+	struct {
+		struct pcm_call_analog_phase3_configuration analog;
+		struct v92_phase3_analog_station_configuration v92_analog;
+	};
+	struct {
+		struct pcm_call_digital_phase3_configuration digital;
+		struct pcm_call_v92_digital_phase3_configuration v92_digital;
+	};
 };
 
 struct pcm_call_analog_phase4_configuration {
