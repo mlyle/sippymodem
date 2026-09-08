@@ -2,6 +2,7 @@
 
 #include <v92_pcm_frame.h>
 #include <v92_cpd_direct.h>
+#include <v92_cpu.h>
 
 #include "test.h"
 
@@ -146,6 +147,89 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
 	return true;
 }
 
+static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
+{
+	enum { CONTROL_FRAME = V92_B1U_FRAMES + 16, RECORDS = 24 };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+	const struct v92_cpus_parameters parameters = {
+		.data_rate_number = 22u, .acknowledges_cpd = true,
+	};
+	uint8_t record[V92_CPUS_MAX_FRAME_BYTES];
+	size_t record_bits;
+	unsigned int delivered = 0u;
+
+	CHECK(mapping_init(&mapping, law, rate, filtered) &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init(&receiver, &mapping, UPSTREAM_LEVEL) == V92_PCM_FRAME_OK &&
+	      v92_cpus_encode(&parameters, mapping.data_bits_per_frame,
+		      record, sizeof(record), &record_bits) == V92_CPU_OK,
+	      "control fixture failed");
+	unsigned int end = CONTROL_FRAME + RECORDS * record_bits / mapping.data_bits_per_frame;
+
+	for (unsigned int frame = 0u; frame < end + V92_PCM_RX_DELAY_FRAMES; ++frame) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		struct v92_pcm_frame_decision decision;
+
+		if (frame == CONTROL_FRAME) {
+			struct v92_pcm_frame_tx expected_tx = transmitter;
+			struct v92_pcm_frame_rx expected_rx = receiver;
+
+			expected_tx.state.scrambler.history = 0u;
+			expected_tx.state.differential = 0u;
+			for (size_t path = 0u; path < expected_rx.path_count; ++path) {
+				expected_rx.paths[path].descrambler.history = 0u;
+				expected_rx.paths[path].differential = 0u;
+			}
+			CHECK(receiver.pending_frames == V92_PCM_RX_DELAY_FRAMES &&
+			      v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_OK &&
+			      v92_pcm_frame_rx_reset_control(&receiver) == V92_PCM_FRAME_OK &&
+			      memcmp(&transmitter, &expected_tx, sizeof(transmitter)) == 0 &&
+			      memcmp(&receiver, &expected_rx, sizeof(receiver)) == 0,
+			      "control reset changed mapping, histories, metrics, or pending bits");
+		}
+		if (frame < CONTROL_FRAME) {
+			source_bits(bits, mapping.data_bits_per_frame, frame);
+		} else {
+			for (size_t bit = 0u; bit < mapping.data_bits_per_frame; ++bit) {
+				size_t position = ((frame - CONTROL_FRAME) *
+					mapping.data_bits_per_frame + bit) % record_bits;
+
+				bits[bit] = (record[position / 8u] >> (7u - position % 8u)) & 1u;
+			}
+		}
+		CHECK(waveform(&transmitter, bits, samples) &&
+		      v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES,
+			      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "control decoding failed");
+		CHECK(decision.bits_ready == (frame >= V92_PCM_RX_DELAY_FRAMES),
+		      "control reset dropped pending delivery");
+		if (!decision.bits_ready)
+			continue;
+		unsigned int output = frame - V92_PCM_RX_DELAY_FRAMES;
+
+		if (output < CONTROL_FRAME) {
+			source_bits(bits, mapping.data_bits_per_frame, output);
+		} else {
+			for (size_t bit = 0u; bit < mapping.data_bits_per_frame; ++bit) {
+				size_t position = ((output - CONTROL_FRAME) *
+					mapping.data_bits_per_frame + bit) % record_bits;
+
+				bits[bit] = (record[position / 8u] >> (7u - position % 8u)) & 1u;
+			}
+		}
+		CHECK(!decision.ambiguous && memcmp(bits, decoded, mapping.data_bits_per_frame) == 0,
+		      "law %u rate %u filter %u output %u changed across control reset",
+		      (unsigned int)law, rate, filtered, output);
+		delivered++;
+	}
+	CHECK(delivered == end, "control reset lost or duplicated payload");
+	return true;
+}
+
 static bool test_rejection_and_training_evidence(void)
 {
 	struct v92_pcm_mapping mapping;
@@ -166,6 +250,7 @@ static bool test_rejection_and_training_evidence(void)
 	memset(bits, 0x5a, sizeof(bits));
 	memcpy(saved_bits, bits, sizeof(bits));
 	CHECK(!v92_pcm_frame_rx_is_valid(NULL) &&
+	      v92_pcm_frame_rx_reset_control(NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_rx_init(NULL, &mapping, UPSTREAM_LEVEL) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_rx_init(&receiver, NULL, UPSTREAM_LEVEL) ==
@@ -194,6 +279,11 @@ static bool test_rejection_and_training_evidence(void)
 	      "rejected call changed state or output");
 	receiver.paths[0].pending[0][0] = 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unowned payload accepted");
+	struct v92_pcm_frame_rx invalid = receiver;
+
+	CHECK(v92_pcm_frame_rx_reset_control(&receiver) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&receiver, &invalid, sizeof(receiver)) == 0,
+	      "invalid reset changed receiver");
 	receiver = saved;
 	receiver.paths[0].ambiguous_frames = 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unowned ambiguity accepted");
@@ -218,10 +308,12 @@ int main(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
-			if (!run_stream((enum g711_law)law, rate, false))
+			if (!run_stream((enum g711_law)law, rate, false) ||
+			    !test_control_epoch((enum g711_law)law, rate, false))
 				return 1;
 		}
-		if (!run_stream((enum g711_law)law, 13u, true))
+		if (!run_stream((enum g711_law)law, 13u, true) ||
+		    !test_control_epoch((enum g711_law)law, 13u, true))
 			return 1;
 	}
 	return test_rejection_and_training_evidence() ? 0 : 1;

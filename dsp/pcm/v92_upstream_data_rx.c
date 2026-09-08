@@ -81,6 +81,22 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
+enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
+	struct v92_upstream_data_rx *receiver)
+{
+	if (receiver == NULL)
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if (!v92_upstream_data_rx_is_valid(receiver))
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	if (receiver->failed)
+		return V92_UPSTREAM_DATA_RX_FAILED;
+	if (receiver->line.symbol_count != 0u ||
+	    receiver->line.received_frames < V92_B1U_FRAMES ||
+	    v92_pcm_frame_rx_reset_control(&receiver->decoder) != V92_PCM_FRAME_OK)
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	return V92_UPSTREAM_DATA_RX_OK;
+}
+
 static int16_t quantize(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMU ?

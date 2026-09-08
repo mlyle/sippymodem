@@ -60,6 +60,15 @@ bool v92_upstream_data_rx_is_valid(
 bool v92_upstream_data_rx_b1u_complete(
 	const struct v92_upstream_data_rx *receiver);
 
+/* Reset control coding at an aligned equalized frame boundary after B1u,
+ * not at the earlier physical-input boundary. Retain the line, counters,
+ * trellis, filters, and delayed payload. After a successful reset, the next
+ * V92_PCM_RX_DELAY_FRAMES delivered frames still precede this boundary.
+ * The caller owns request detection and routing by the delayed boundary.
+ * Failed, partial-frame, and pre-B1u calls change nothing. */
+enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
+	struct v92_upstream_data_rx *receiver);
+
 /* Consume one signed 8 kHz sample. FRAME reports each twelve-symbol decision;
  * OK buffers a sample and leaves frame unchanged. Quality is reported even
  * for damaged B1u; known bits do not imply a usable line. Rejected calls

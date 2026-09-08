@@ -94,6 +94,12 @@ bool v92_pcm_frame_tx_is_valid(
 enum v92_pcm_frame_result v92_pcm_frame_tx_reset_b1u(
 	struct v92_pcm_frame_tx *transmitter);
 
+/* Start fast-exchange control on the preceding data mapping (V.92 9.9.2).
+ * Reset only scrambler and differential coding; trellis and both filter
+ * histories continue. The caller owns the aligned control boundary. */
+enum v92_pcm_frame_result v92_pcm_frame_tx_reset_control(
+	struct v92_pcm_frame_tx *transmitter);
+
 /* Input bits are LSB-first, as in the mixed-radix mapping. */
 enum v92_pcm_frame_result v92_pcm_frame_encode(
 	struct v92_pcm_frame_tx *transmitter,
@@ -111,6 +117,14 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 	struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
+
+/* Receive the matching control boundary. Reset descrambler and differential
+ * state on EVERY surviving path, retaining metrics, ambiguity, filters,
+ * trellis, and pending payload. Already decoded bits still emerge after the
+ * usual lookahead; the caller must route them by their original frame, not
+ * by the current input phase. Rejected resets leave state unchanged. */
+enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
+	struct v92_pcm_frame_rx *receiver);
 
 /* Decode one aligned twelve-symbol frame in decoded-G.711 coordinates.
  * A bounded sequence search retains competing histories across frames.

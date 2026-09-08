@@ -10,6 +10,7 @@ enum v92_upstream_data_tx_result {
 	V92_UPSTREAM_DATA_TX_SOURCE_FAILURE,
 	V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT,
 	V92_UPSTREAM_DATA_TX_INVALID_PARAMETERS,
+	V92_UPSTREAM_DATA_TX_INVALID_STATE,
 	V92_UPSTREAM_DATA_TX_OUT_OF_RANGE,
 	V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE,
 };
@@ -41,6 +42,13 @@ bool v92_upstream_data_tx_is_valid(
 /* True only after all 576 B1u samples have left the transmitter. */
 bool v92_upstream_data_tx_is_online(
 	const struct v92_upstream_data_tx *transmitter);
+
+/* Start control at an empty twelve-symbol queue after B1u. Preserve the
+ * mapping, level, trellis and filters; the next source frame is control,
+ * with fresh scrambler/differential coding and no new B1u. The caller owns
+ * request signaling and control records. Rejected resets change nothing. */
+enum v92_upstream_data_tx_result v92_upstream_data_tx_reset_control(
+	struct v92_upstream_data_tx *transmitter);
 
 /* Emit exactly one signed sample. Acquire at most one complete source frame,
  * and never call the source while sending B1u or draining a queued frame.

@@ -54,6 +54,19 @@ bool v92_upstream_data_tx_is_online(
 	       transmitter->b1u_symbols_remaining == 0u;
 }
 
+enum v92_upstream_data_tx_result v92_upstream_data_tx_reset_control(
+	struct v92_upstream_data_tx *transmitter)
+{
+	if (transmitter == NULL)
+		return V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT;
+	if (!v92_upstream_data_tx_is_online(transmitter) ||
+	    transmitter->queue_count != 0u)
+		return V92_UPSTREAM_DATA_TX_INVALID_STATE;
+	if (v92_pcm_frame_tx_reset_control(&transmitter->encoder) != V92_PCM_FRAME_OK)
+		return V92_UPSTREAM_DATA_TX_INVALID_STATE;
+	return V92_UPSTREAM_DATA_TX_OK;
+}
+
 static enum v92_upstream_data_tx_result generate_frame(
 	struct v92_upstream_data_tx *transmitter,
 	v92_upstream_frame_source source, void *context)

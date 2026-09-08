@@ -1857,6 +1857,7 @@ V92_CPD_DIRECT_TEST_OBJECTS := $(sort \
 V92_PCM_FRAME_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame_rx
 V92_PCM_FRAME_RX_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_pcm_frame_rx.o \
+	$(BUILD_DIR)/v92_cpu.o \
 	$(filter-out $(BUILD_DIR)/test_v92_cpd_direct.o, \
 		$(V92_CPD_DIRECT_TEST_OBJECTS)))
 V92_UPSTREAM_DATA_TX_TEST_BINARY := $(BUILD_DIR)/test_v92_upstream_data_tx

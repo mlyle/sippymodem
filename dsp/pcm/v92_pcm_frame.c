@@ -116,6 +116,18 @@ enum v92_pcm_frame_result v92_pcm_frame_tx_reset_b1u(
 	return V92_PCM_FRAME_OK;
 }
 
+enum v92_pcm_frame_result v92_pcm_frame_tx_reset_control(
+	struct v92_pcm_frame_tx *transmitter)
+{
+	if (transmitter == NULL)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_tx_is_valid(transmitter))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	transmitter->state.scrambler.history = 0u;
+	transmitter->state.differential = 0u;
+	return V92_PCM_FRAME_OK;
+}
+
 static int positive_modulo(int value, unsigned int modulus)
 {
 	int reduced = value % (int)modulus;
@@ -481,6 +493,20 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 		    V34_TRELLIS_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	*receiver = initialized;
+	return V92_PCM_FRAME_OK;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
+	struct v92_pcm_frame_rx *receiver)
+{
+	if (receiver == NULL)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_rx_is_valid(receiver))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	for (size_t index = 0u; index < receiver->path_count; ++index) {
+		receiver->paths[index].descrambler.history = 0u;
+		receiver->paths[index].differential = 0u;
+	}
 	return V92_PCM_FRAME_OK;
 }
 

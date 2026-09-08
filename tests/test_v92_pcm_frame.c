@@ -287,6 +287,12 @@ static bool test_rejection_and_names(void)
 		      &saved.mapping, 0, 123, &sample) ==
 		      V92_PCM_FRAME_OUT_OF_RANGE && sample == 1234,
 	      "invalid gain changed its output");
+	struct v92_pcm_frame_tx invalid = transmitter;
+
+	CHECK(v92_pcm_frame_tx_reset_control(NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&transmitter, &invalid, sizeof(transmitter)) == 0,
+	      "invalid control reset changed state");
 	for (size_t index = 0u; index < ARRAY_LENGTH(names); ++index)
 		CHECK(strcmp(
 			      v92_pcm_frame_result_name(

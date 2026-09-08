@@ -120,7 +120,7 @@ static bool prepare_e2u(
 }
 
 static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
-		       uint8_t rate, double gain, double postcursor)
+		       uint8_t rate, double gain, double postcursor, bool control)
 {
 	struct channel channel = { .gain = gain, .postcursor = postcursor,
 		.law = law, .polarity = polarity };
@@ -184,6 +184,51 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 
 		memset(&frame, 0xa5, sizeof(frame));
 		saved = frame;
+		/* Two epochs closer than traceback: both pending generations must
+		 * survive. Transmit and equalized receive boundaries differ by the
+		 * trained FIR's physical delay. No request acquisition is simulated. */
+		if (control && transmitter.queue_count == 0u &&
+		    (source_frames == 16u || source_frames == 18u)) {
+			struct v92_upstream_data_tx expected = transmitter;
+
+			expected.encoder.state.scrambler.history = 0u;
+			expected.encoder.state.differential = 0u;
+			CHECK(v92_upstream_data_tx_reset_control(&transmitter) ==
+				      V92_UPSTREAM_DATA_TX_OK &&
+			      memcmp(&transmitter, &expected, sizeof(expected)) == 0,
+			      "transmit control reset changed retained state");
+		}
+		if (control && receiver.line.symbol_count == 0u &&
+		    (receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
+		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
+			struct v92_upstream_data_rx expected = receiver;
+
+			for (size_t path = 0u; path < expected.decoder.path_count; ++path) {
+				expected.decoder.paths[path].descrambler.history = 0u;
+				expected.decoder.paths[path].differential = 0u;
+			}
+			CHECK(v92_upstream_data_rx_reset_control(&receiver) ==
+				      V92_UPSTREAM_DATA_RX_OK &&
+			      memcmp(&receiver, &expected, sizeof(expected)) == 0,
+			      "receive control reset changed retained state");
+		}
+		if (control && receiver.line.received_frames == V92_B1U_FRAMES + 16u &&
+		    receiver.line.symbol_count != 0u) {
+			struct v92_upstream_data_rx expected = receiver;
+
+			CHECK(v92_upstream_data_rx_reset_control(&receiver) ==
+				      V92_UPSTREAM_DATA_RX_INVALID_STATE &&
+			      memcmp(&receiver, &expected, sizeof(expected)) == 0,
+			      "partial equalized frame accepted a control reset");
+		}
+		if (control && source_frames == 17u && transmitter.queue_count != 0u) {
+			struct v92_upstream_data_tx expected = transmitter;
+
+			CHECK(v92_upstream_data_tx_reset_control(&transmitter) ==
+				      V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+			      memcmp(&transmitter, &expected, sizeof(expected)) == 0,
+			      "partial transmit frame accepted a control reset");
+		}
 		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames,
 				&sample) == V92_UPSTREAM_DATA_TX_OK, "data transmitter stopped");
 		result = v92_upstream_data_rx_sample(&receiver,
@@ -261,6 +306,8 @@ static bool test_rejection_and_failure(void)
 	saved_frame = frame;
 	CHECK(!v92_upstream_data_rx_is_valid(NULL) &&
 	      !v92_upstream_data_rx_b1u_complete(NULL) &&
+	      v92_upstream_data_rx_reset_control(NULL) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
 	      v92_upstream_data_rx_init(NULL, &e2u_rx.signal, &mapping) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_init(&receiver, NULL, &mapping) ==
@@ -293,6 +340,18 @@ static bool test_rejection_and_failure(void)
 		      V92_UPSTREAM_DATA_RX_INVALID_STATE &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "input clock overflow accepted");
+	receiver = saved;
+	receiver.failed = true;
+	struct v92_upstream_data_rx failed = receiver;
+
+	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_FAILED &&
+	      memcmp(&receiver, &failed, sizeof(failed)) == 0,
+	      "control reset revived a failed receiver");
+	receiver.line.symbol_count = V92_PCM_MAPPING_FRAME_SYMBOLS;
+	failed = receiver;
+	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
+	      memcmp(&receiver, &failed, sizeof(failed)) == 0,
+	      "control reset changed invalid line state");
 	receiver = saved;
 	receiver.line.equalizer.history[0].in_phase = DBL_MAX;
 	receiver.line.equalizer.coefficients[1].in_phase = 2.0;
@@ -371,7 +430,12 @@ int main(void)
 				for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index)
 					if (!run_stream((enum g711_law)law, polarity, extended,
 							cases[index].rate, cases[index].gain,
-							cases[index].postcursor))
+							cases[index].postcursor, false))
 						return 1;
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int distorted = 0u; distorted < 2u; ++distorted)
+			if (!run_stream((enum g711_law)law, -1, false, 8u,
+					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, true))
+				return 1;
 	return test_rejection_and_failure() ? 0 : 1;
 }

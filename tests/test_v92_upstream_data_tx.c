@@ -216,6 +216,8 @@ static bool test_validation(void)
 	saved = transmit;
 	CHECK(!v92_upstream_data_tx_is_valid(NULL) &&
 	      !v92_upstream_data_tx_is_online(NULL) &&
+	      v92_upstream_data_tx_reset_control(NULL) == V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_reset_control(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
 	      v92_upstream_data_tx_init(NULL, &mapping, TEST_LEVEL) ==
 		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_init(&transmit, NULL, TEST_LEVEL) ==
@@ -237,6 +239,11 @@ static bool test_validation(void)
 	      "invalid mapping changed state");
 	transmit.b1u_symbols_remaining--;
 	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "invalid B1u queue accepted");
+	struct v92_upstream_data_tx invalid = transmit;
+
+	CHECK(v92_upstream_data_tx_reset_control(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      memcmp(&transmit, &invalid, sizeof(transmit)) == 0,
+	      "control reset accepted invalid state");
 	transmit = saved;
 	transmit.queue[11] = 1;
 	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "unowned queue sample accepted");
