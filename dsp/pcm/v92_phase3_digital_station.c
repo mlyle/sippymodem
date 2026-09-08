@@ -34,9 +34,6 @@ static bool receive_is_valid(
 		return station->receive.su.mode == V92_SU_RX_TRANSITION_ONLY &&
 		       v92_su_rx_is_valid(&station->receive.su) &&
 		       !v92_su_rx_is_complete(&station->receive.su);
-	case V92_PHASE3_DIGITAL_RECEIVE_WAIT_SECOND_TRN1U:
-		return station->receive.su.mode == V92_SU_RX_TRANSITION_ONLY &&
-		       v92_su_rx_is_complete(&station->receive.su);
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
 		return v92_pcm_phase3_trn1u_line_rx_is_valid(
 			&station->receive.trn1u);
@@ -87,7 +84,6 @@ static bool receive_has_failed(
 			&station->receive.initial);
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE:
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
-	case V92_PHASE3_DIGITAL_RECEIVE_WAIT_SECOND_TRN1U:
 		return v92_su_rx_has_failed(&station->receive.su);
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
 		return station->receive.trn1u.stage ==
@@ -116,13 +112,8 @@ static bool coordination_is_valid(
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
 		return station->downstream.finish_jd_requested &&
 		       !station->downstream.finish_jp_requested;
-	case V92_PHASE3_DIGITAL_RECEIVE_WAIT_SECOND_TRN1U:
-		return station->downstream.finish_jd_requested &&
-		       station->downstream.finish_jp_requested &&
-		       !station->downstream.finish_scr_requested;
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
-		return station->downstream.stage >= PCM_PHASE3_DIGITAL_TX_DIL &&
-		       station->downstream.finish_jd_requested &&
+		return station->downstream.finish_jd_requested &&
 		       station->downstream.finish_jp_requested &&
 		       !station->downstream.finish_scr_requested;
 	case V92_PHASE3_DIGITAL_RECEIVE_CPT:
@@ -402,11 +393,21 @@ static enum v92_phase3_digital_station_result receive_su_response(
 	if (result == V92_SU_RX_OK || result == V92_SU_RX_ACQUIRED)
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	if (result == V92_SU_RX_TRANSITION) {
+		struct v92_pcm_phase3_trn1u_line_rx trn1u;
+
 		if (pcm_phase3_digital_tx_finish_jp(&station->downstream) !=
-		    PCM_PHASE3_DIGITAL_TX_OK)
+			    PCM_PHASE3_DIGITAL_TX_OK ||
+		    v92_pcm_phase3_trn1u_line_rx_init(
+			    &trn1u, station->equalizer_adaptation) !=
+			    V92_PCM_PHASE3_TRN1U_LINE_RX_OK)
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+		/* Arm acquisition on the Su reversal. Waiting for our Jp/Jp-prime
+		 * tail to finish can discard the peer's zero-seeded TRN1u opening.
+		 * The downstream acknowledgement keeps its own complete timing. */
+		station->receive =
+			(union v92_phase3_digital_receive){ .trn1u = trn1u };
 		station->receive_stage =
-			V92_PHASE3_DIGITAL_RECEIVE_WAIT_SECOND_TRN1U;
+			V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U;
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	}
 	return result == V92_SU_RX_FAILURE ?
@@ -448,24 +449,6 @@ static enum v92_phase3_digital_station_result receive_second_trn1u(
 	return result == V92_PCM_PHASE3_TRN1U_LINE_RX_FAILED ?
 		       V92_PHASE3_DIGITAL_STATION_FAILED :
 		       V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
-}
-
-static enum v92_phase3_digital_station_result receive_wait_second_trn1u(
-	struct v92_phase3_digital_station *station, int16_t sample)
-{
-	struct v92_pcm_phase3_trn1u_line_rx trn1u;
-
-	if (station->downstream.stage < PCM_PHASE3_DIGITAL_TX_DIL)
-		return V92_PHASE3_DIGITAL_STATION_OK;
-	if (station->downstream.stage > PCM_PHASE3_DIGITAL_TX_COMPLETE ||
-	    v92_pcm_phase3_trn1u_line_rx_init(
-		    &trn1u, station->equalizer_adaptation) !=
-		    V92_PCM_PHASE3_TRN1U_LINE_RX_OK)
-		return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
-	station->receive =
-		(union v92_phase3_digital_receive){ .trn1u = trn1u };
-	station->receive_stage = V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U;
-	return receive_second_trn1u(station, sample);
 }
 
 static enum v92_phase3_digital_station_result receive_cpt(
@@ -566,9 +549,6 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 		break;
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
 		result = receive_su_response(&next, sample);
-		break;
-	case V92_PHASE3_DIGITAL_RECEIVE_WAIT_SECOND_TRN1U:
-		result = receive_wait_second_trn1u(&next, sample);
 		break;
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
 		result = receive_second_trn1u(&next, sample);

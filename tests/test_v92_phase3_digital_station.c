@@ -263,7 +263,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	return true;
 }
 
-static bool run_nonzero_dil(enum g711_law law)
+static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 {
 	/* A scripted peer requests DIL, then sends CPt while DIL is active.
 	 * Hold CPt after Ri to distinguish that acknowledgement from E1u. */
@@ -287,6 +287,7 @@ static bool run_nonzero_dil(enum g711_law law)
 	size_t bits, ja_symbols = 0, ri_symbols = 0;
 	bool mid_segment_finish = false, e1u_started = false, finished = false;
 	bool trn2u_started = false;
+	bool trn1u_overlapped_jp = false;
 
 	fractional_delay_init(&delay);
 	CHECK(v90_dil_profile_init(&request.downstream,
@@ -328,12 +329,15 @@ static bool run_nonzero_dil(enum g711_law law)
 				CHECK(v92_su_accept_jp(&su, &digital.jp) == V92_SU_OK,
 				      "peer could not acknowledge Jp");
 			if (su.stage == V92_SU_JP_PRIME_WAIT &&
-			    digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL) {
+			    ((early_trn1u && digital.downstream.finish_jp_requested) ||
+			     digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL)) {
 				CHECK(v92_su_accept_jp_prime(&su, &delay, true) == V92_SU_COMPLETE &&
 				      v92_pcm_phase3_cpt_tx_init(&cpt, law, TEST_UCODE, &parameters) ==
 					      V92_PCM_PHASE3_CPT_TX_OK,
 				      "peer could not enter DIL study");
 				peer = PEER_CPT;
+				trn1u_overlapped_jp = digital.downstream.stage <
+					PCM_PHASE3_DIGITAL_TX_DIL;
 			}
 		}
 		if (peer == PEER_TRN1U) {
@@ -360,7 +364,9 @@ static bool run_nonzero_dil(enum g711_law law)
 				      !digital.downstream.dil.finish_requested &&
 				      digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_CPT &&
 				      v92_pcm_phase3_cpt_tx_start(&cpt) == V92_PCM_PHASE3_CPT_TX_OK,
-				      "DIL did not wait for CPt");
+				      "DIL did not wait for CPt: rx=%u tx=%u overlap=%u",
+				      digital.receive_stage, digital.downstream.stage,
+				      trn1u_overlapped_jp);
 			}
 			if (digital.transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_RI &&
 			    !e1u_started) {
@@ -403,7 +409,8 @@ static bool run_nonzero_dil(enum g711_law law)
 		finished = v92_phase3_digital_station_receive_complete(&digital) &&
 			v92_phase3_digital_station_transmit_complete(&digital);
 	}
-	CHECK(finished && mid_segment_finish && e1u_started && ri_symbols == 3000 &&
+	CHECK(finished && trn1u_overlapped_jp == early_trn1u &&
+	      mid_segment_finish && e1u_started && ri_symbols == 3000 &&
 	      digital.downstream.scr_symbols == 0 && !digital.downstream.finish_scr_requested &&
 	      digital.downstream.dil.complete && digital.ri.finish_requested &&
 	      v92_phase3_digital_station_downstream_handoff(&digital, &received) ==
@@ -449,7 +456,17 @@ static bool run_nonzero_dil(enum g711_law law)
 
 static bool test_nonzero_dil(void)
 {
-	return run_nonzero_dil(G711_LAW_PCMU) && run_nonzero_dil(G711_LAW_PCMA);
+	return run_nonzero_dil(G711_LAW_PCMU, false) &&
+	       run_nonzero_dil(G711_LAW_PCMA, false);
+}
+
+static bool test_early_second_trn1u(void)
+{
+	/* A peer can begin the second TRN1u after its Su-bar while our
+	 * transmitter is still completing Jp/Jp-prime. Retain its zero-seeded
+	 * opening, without shortening our downstream acknowledgement. */
+	return run_nonzero_dil(G711_LAW_PCMU, true) &&
+	       run_nonzero_dil(G711_LAW_PCMA, true);
 }
 
 static bool test_analog_contracts(void)
@@ -694,6 +711,7 @@ int main(void)
 		{ "PCMU delayed station exchange", NULL },
 		{ "PCMA delayed station exchange", NULL },
 		{ "nonzero-DIL station exchange", test_nonzero_dil },
+		{ "second TRN1u overlaps Jp", test_early_second_trn1u },
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
 		{ "digital station contracts", test_digital_contracts },
