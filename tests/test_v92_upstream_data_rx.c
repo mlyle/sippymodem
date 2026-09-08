@@ -53,20 +53,20 @@ static bool source(void *context, uint8_t *bits, size_t count)
 
 /* A trained FIR with the real causal delay, not a zero-delay stand-in. Feed
  * E2u's first delayed samples before exporting its receive-side boundary. */
-static bool prepare_e2u(
+static bool prepare_e2u_at_level(
 	struct channel *channel, bool extended,
-	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver)
+	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver,
+	int16_t measured_lu, double adaptation)
 {
 	struct v92_phase4_modulator modulator;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
 		.input_samples = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
 		.training_symbols = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
-		.adaptation = 0.002,
+		.adaptation = adaptation,
 		.law = channel->law,
 		.polarity = channel->polarity,
 	};
 	struct v92_upstream_rx signal;
-	int16_t measured_lu = (int16_t)lround(TEST_LU * channel->gain);
 	struct qam_point reference = { .in_phase = measured_lu };
 	struct qam_point output;
 	int16_t level;
@@ -116,6 +116,119 @@ static bool prepare_e2u(
 	signal.training_tail_remaining = 0u;
 	CHECK(v92_e2u_rx_init(receiver, &signal, extended) == V92_E2U_RX_OK,
 	      "E2u receiver initialization failed");
+	return true;
+}
+
+static bool prepare_e2u(
+	struct channel *channel, bool extended,
+	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver)
+{
+	return prepare_e2u_at_level(channel, extended, transmitter, receiver,
+		(int16_t)lround(TEST_LU * channel->gain), 0.002);
+}
+
+struct idle_source {
+	unsigned int frames;
+	unsigned int idle_frames;
+};
+
+static bool after_idle(void *context, uint8_t *bits, size_t count)
+{
+	struct idle_source *source = context;
+
+	if (source->frames < source->idle_frames)
+		memset(bits, 1, count);
+	else
+		payload(bits, count, source->frames - source->idle_frames);
+	source->frames++;
+	return true;
+}
+
+static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool drift)
+{
+	enum { IDLE_FRAMES = 2000, PAYLOAD_FRAMES = 400 };
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_rx handoff;
+	struct v92_upstream_data_tx transmitter;
+	struct v92_upstream_data_rx receiver;
+	struct idle_source source = { .idle_frames = IDLE_FRAMES };
+	unsigned int delivered = 0u;
+	int16_t measured_lu = law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(TEST_LU)) :
+		g711_decode_pcma(g711_encode_pcma(TEST_LU));
+
+	/* TRN1u estimates LU from quantized samples, not the transmitter's
+	 * exact scalar. Carry the fast training step through real E2u, then
+	 * require clean idle and payload decisions. The dense 48k case checks
+	 * quantization stability; the lower-rate case checks ongoing tracking. */
+	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) ==
+		      V92_UPSTREAM_DATA_TX_OK &&
+	      prepare_e2u_at_level(&channel, false, &e2u_tx, &e2u_rx,
+			measured_lu, 0.05), "tracking fixture failed");
+	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
+		int16_t sample;
+		enum v92_e2u_rx_result result;
+
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx))
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &sample) ==
+				      V92_PHASE4_RECORD_TX_OK, "tracking E2u stopped");
+		else
+			CHECK(v92_upstream_data_tx_next(&transmitter, after_idle, &source,
+					&sample) == V92_UPSTREAM_DATA_TX_OK, "tracking B1u stopped");
+		result = v92_e2u_rx_sample(&e2u_rx, wire_sample(&channel, sample));
+		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE,
+		      "tracking E2u did not match");
+	}
+	CHECK(v92_e2u_rx_handoff(&e2u_rx, &handoff) == V92_E2U_RX_OK &&
+	      v92_upstream_data_rx_init(&receiver, &handoff, &mapping) ==
+		      V92_UPSTREAM_DATA_RX_OK &&
+	      receiver.line.adaptation > 0.0 &&
+	      receiver.line.adaptation < handoff.line.adaptation &&
+	      memcmp(&receiver.line.equalizer, &handoff.line.equalizer,
+		      sizeof(handoff.line.equalizer)) == 0,
+	      "tracking handoff changed learned coefficients or pending inputs");
+	for (unsigned int symbol = 0u;
+	     symbol < (V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES +
+		       V92_PCM_RX_DELAY_FRAMES) * V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int16_t sample;
+		struct v92_upstream_data_frame frame;
+		enum v92_upstream_data_rx_result result;
+
+		/* Slow postcursor drift requires continuing adaptation; freezing
+		 * the learned FIR is not a substitute for stable data tracking. */
+		if (drift)
+			channel.postcursor = 0.02 * symbol /
+				((V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES) *
+				 V92_PCM_MAPPING_FRAME_SYMBOLS);
+		CHECK(v92_upstream_data_tx_next(&transmitter, after_idle, &source,
+				&sample) == V92_UPSTREAM_DATA_TX_OK, "tracking transmitter stopped");
+		result = v92_upstream_data_rx_sample(&receiver,
+			wire_sample(&channel, sample), &frame);
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+		      "tracking receiver stopped");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME || frame.bit_count == 0u)
+			continue;
+		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+
+		if (delivered < V92_B1U_FRAMES + IDLE_FRAMES)
+			memset(expected, 1, mapping.data_bits_per_frame);
+		else
+			payload(expected, mapping.data_bits_per_frame,
+				delivered - V92_B1U_FRAMES - IDLE_FRAMES);
+		CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
+		      memcmp(expected, frame.bits, frame.bit_count) == 0,
+		      "law %u drift %u frame %u changed data: ambiguous=%u error=%.2f",
+		      (unsigned int)law, drift, delivered, frame.ambiguous, frame.squared_error);
+		delivered++;
+	}
+	CHECK(delivered == V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES,
+	      "tracking lost payload frames");
 	return true;
 }
 
@@ -301,6 +414,19 @@ static bool test_rejection_and_failure(void)
 	      v92_pcm_mapping_init(&mapping, channel.law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
 		      V92_UPSTREAM_DATA_RX_OK, "rejection fixture failed");
+	const double slower_steps[] = { 0.0, 0.001 };
+	for (size_t index = 0u; index < sizeof(slower_steps) / sizeof(slower_steps[0]); ++index) {
+		struct v92_upstream_rx slower = e2u_rx.signal;
+		struct v92_upstream_data_rx initialized;
+
+		slower.line.adaptation = slower_steps[index];
+		CHECK(v92_upstream_data_rx_init(&initialized, &slower, &mapping) ==
+			      V92_UPSTREAM_DATA_RX_OK &&
+		      initialized.line.adaptation == slower_steps[index] &&
+		      memcmp(&initialized.line.equalizer, &slower.line.equalizer,
+			      sizeof(slower.line.equalizer)) == 0,
+		      "data handoff increased a slower step or changed the learned FIR");
+	}
 	saved = receiver;
 	memset(&frame, 0xa5, sizeof(frame));
 	saved_frame = frame;
@@ -412,6 +538,9 @@ static bool test_rejection_and_failure(void)
 
 int main(void)
 {
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true))
+		return 1;
 	const struct {
 		uint8_t rate;
 		double gain;

@@ -49,6 +49,8 @@ struct v92_upstream_data_frame {
 
 /* Start at the first B1u decision after E2u, preserving the trained equalizer,
  * its pending physical inputs, polarity, and LU. Reset only data coding.
+ * Bound the inherited adaptation step for decision-directed data tracking;
+ * a smaller step, including disabled adaptation, remains unchanged.
  * The mapping must be the complete CPd actually sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,

@@ -70,7 +70,12 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	initialized.line = (struct v92_upstream_data_line){
 		.equalizer = handoff->line.equalizer,
 		.input_samples = handoff->line.input_samples,
-		.adaptation = handoff->line.adaptation,
+		/* Training uses known symbols and a sparse constellation. Dense
+		 * data decisions near a companding boundary must not drive that
+		 * fast acquisition loop: even a quantized LU estimate can make it
+		 * chase the wrong point. Retain the trained FIR and any slower
+		 * caller-selected step, but bound decision-directed tracking. */
+		.adaptation = fmin(handoff->line.adaptation, 0.002),
 		.polarity = handoff->line.polarity,
 	};
 	if (v92_pcm_frame_rx_init(&initialized.decoder, mapping,
