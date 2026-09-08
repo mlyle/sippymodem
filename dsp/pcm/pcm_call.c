@@ -2964,14 +2964,14 @@ static enum pcm_call_result data_octet_owned(
 	retrain_detection_active = retrain_detection_is_active(call);
 	silence_ceiling = retrain_silence_ceiling(
 		call, V34_RETRAIN_SILENCE_MAX_WINDOW_ENERGY);
+	/* One G.711 zero can be a negotiated PCM symbol. Qualify quiet from
+	 * the shared signal window, not from an individual network octet. */
 	retrain_candidate = retrain_detection_active &&
-		(retrain_candidate_is_active(
-			 &call->retrain.detector,
-			 retrain_silence_ceiling(
-				 call, 256u * 256u *
-				       V34_RETRAIN_SILENCE_WINDOW_SAMPLES)) ||
-		(call->local_role == V90_ANALOG_MODEM &&
-		 received_octet == encode_sample(call->law, 0)));
+		retrain_candidate_is_active(
+			&call->retrain.detector,
+			retrain_silence_ceiling(
+				call, 256u * 256u *
+				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
 	generated = encode_sample(call->law, 0);
 	if (call->local_role == V90_ANALOG_MODEM) {
 		analog_result = v90_analog_path_transmit(

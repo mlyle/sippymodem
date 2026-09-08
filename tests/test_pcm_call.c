@@ -1512,6 +1512,98 @@ static bool step_endpoints(
 	return true;
 }
 
+static bool test_negotiated_zero_symbols(void)
+{
+	static const struct {
+		enum v34_symbol_rate baud;
+		uint8_t rate_index;
+		bool training;
+	} cases[] = {
+		{ V34_SYMBOL_RATE_3200, 3u, false },
+		{ V34_SYMBOL_RATE_3200, 1u, true },
+		{ V34_SYMBOL_RATE_3200, 3u, true },
+		{ V34_SYMBOL_RATE_3000, 1u, true },
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t trial = 0u; trial < ARRAY_LENGTH(cases); ++trial) {
+			const bool training = cases[trial].training;
+			struct channel channel;
+			struct endpoint analog = { .upstream_received_delay = UINT16_MAX };
+			struct endpoint digital;
+			struct pcm_call_configuration selected =
+				configuration(V90_ANALOG_MODEM, law);
+			struct v90_cp_parameters *parameters[] = {
+				&selected.analog_phase4.data_parameters,
+				&selected.analog_phase4.training_parameters,
+			};
+			size_t zero_symbols[2][2] = { { 0 } };
+			size_t zero_frame_ends[2] = { 0 };
+
+			selected.local_info1.analog.upstream_symbol_rate = cases[trial].baud;
+			/* 30,667 bit/s uses all 8^6 modulus tuples, including zero
+			 * in the last interval, where host frames are emitted. Also
+			 * cover zero in training with the default 28,000-bit/s data map. */
+			selected.enabled_downstream_rate_mask =
+				UINT32_C(1) << (cases[trial].rate_index - 1u);
+			selected.analog_phase4.data_parameters.selected_rate_index =
+				cases[trial].rate_index;
+			/* Ucode zero is a legal CP constellation point, not necessarily
+			 * silence. Keep the cardinality and rate unchanged. */
+			for (unsigned int index = 0u; index <= training; ++index) {
+				struct pcm_constellation *set =
+					&parameters[index]->transmit_constellations[0];
+
+				set->ucode_mask[24u / 8u] &= (uint8_t)~1u;
+				add_ucode(set, 0u);
+			}
+			CHECK(channel_init(&channel, law, 3u) &&
+			      pcm_call_init(&analog.call, &selected) == PCM_CALL_OK &&
+			      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+					    V90_JD_RATE_CAPABILITY_MASK, 0u),
+			      "zero-symbol endpoints did not initialize");
+			for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT &&
+			     analog.downstream_frames < 64u; ++clock) {
+				if (analog.call.stage == PCM_CALL_DATA_PATH) {
+					struct v90_pcm_symbol symbol;
+					bool data = analog.call.state.data_path.analog
+						.downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA;
+
+					CHECK(v90_pcm_symbol_parse(&symbol, law,
+						      channel.digital_to_analog[channel.cursor]),
+					      "zero-symbol input did not parse");
+					if (symbol.ucode == 0u) {
+						zero_symbols[data][symbol.positive]++;
+						if (data && pcm_call_is_online(&analog.call) &&
+						    analog.call.state.data_path.analog.downstream.data
+							    .stream.pending_count == V90_CP_FRAME_INTERVALS - 1u)
+							zero_frame_ends[symbol.positive]++;
+					}
+				}
+				CHECK(step_endpoints(&channel, &analog, &digital, law),
+				      "law %u case %zu zero-symbol call stopped at %zu "
+				      "stages %u/%u frames %zu/%zu failed %u/%u",
+				      (unsigned int)law, trial, clock,
+				      analog.call.stage, digital.call.stage,
+				      analog.downstream_frames, digital.upstream_frames,
+				      analog.call.failed, digital.call.failed);
+			}
+			CHECK(goal_is_reached(CALL_GOAL_ONLINE_DATA, &analog, &digital) &&
+			      analog.downstream_frames == 64u &&
+			      zero_symbols[1][0] != 0u && zero_symbols[1][1] != 0u &&
+			      (training || (zero_frame_ends[0] != 0u && zero_frame_ends[1] != 0u)) &&
+			      (!training || zero_symbols[0][0] + zero_symbols[0][1] != 0u),
+			      "law %u case %zu lost negotiated zero symbols or ordered data: "
+			      "stages %u/%u frames %zu/%zu zero %zu/%zu/%zu/%zu",
+			      (unsigned int)law, trial, analog.call.stage, digital.call.stage,
+			      analog.downstream_frames, digital.upstream_frames,
+			      zero_symbols[0][0], zero_symbols[0][1],
+			      zero_symbols[1][0], zero_symbols[1][1]);
+		}
+	}
+	return true;
+}
+
 static bool call_is_in_info1_exchange(const struct pcm_call *call)
 {
 	return call != NULL && call->stage == PCM_CALL_PHASE2 &&
@@ -3070,9 +3162,9 @@ static bool check_idle_retrain_receive(
 	size_t idle_frames[2] = { 0u, 0u };
 	bool detected = false;
 
-	/* Drain the previously supplied payload into continuous all-one idle.
-	 * Keep auditing the receive output while the complete remote retrain
-	 * preamble is qualified; a post-retrain payload alone misses this gap. */
+	/* Drain the supplied payload and verify continuous idle before retrain.
+	 * Raw decisions while its preamble is being qualified are not payload;
+	 * the complete call test verifies ordered data after recovery. */
 	for (size_t clock = 0;
 	     clock < IDLE_SAMPLES + RETRAIN_LIMIT_SAMPLES; ++clock) {
 		uint8_t received[2];
@@ -3099,12 +3191,12 @@ static bool check_idle_retrain_receive(
 				bits = event.frame.downstream.bits;
 				count = event.frame.downstream.bit_count;
 			}
-			if (clock < DRAIN_SAMPLES || count == 0u)
+			if (clock < DRAIN_SAMPLES || clock >= IDLE_SAMPLES || count == 0u)
 				continue;
 			for (size_t bit = 0; bit < count; ++bit)
 				CHECK(bits[bit] == 1u,
-				      "law %u initiator %zu receiver %zu leaked "
-				      "non-idle retrain data at sample %zu bit %zu",
+				      "law %u initiator %zu receiver %zu lost "
+				      "idle data before retrain at sample %zu bit %zu",
 				      (unsigned int)law, initiator, role, clock, bit);
 			idle_frames[role]++;
 		}
@@ -3128,18 +3220,25 @@ static bool check_short_quiet_receive(
 	};
 	const size_t quiet_lengths[] = { 80u, 160u, 320u };
 	const size_t phases = receiver == 0u ? V90_CP_FRAME_INTERVALS : 1u;
+	const size_t signs = receiver == 0u ? 2u : 1u;
 	const size_t recovery_samples = receiver == 0u ? 64u : V34_PHASE2_SAMPLE_RATE / 10;
 
-	for (size_t trial = 0; trial < phases * ARRAY_LENGTH(quiet_lengths); ++trial) {
+	for (size_t trial = 0; trial < signs * phases * ARRAY_LENGTH(quiet_lengths); ++trial) {
 		struct pcm_call calls[] = { analog->call, digital->call };
 		struct channel channel = *line;
-		const size_t quiet_start = IDLE_SAMPLES + trial / ARRAY_LENGTH(quiet_lengths);
+		const size_t quiet_start = IDLE_SAMPLES +
+			(trial / ARRAY_LENGTH(quiet_lengths)) % phases;
 		const size_t quiet_length = quiet_lengths[trial % ARRAY_LENGTH(quiet_lengths)];
 		const size_t quiet_end = quiet_start + quiet_length;
+		const bool negative = trial >= phases * ARRAY_LENGTH(quiet_lengths);
+		uint8_t quiet;
 		size_t recovered_frames = 0u;
 
+		CHECK(g711_ucode_octet(law, 0u, !negative, &quiet),
+		      "signed silence did not encode");
 		/* Resume the same signal after erasure, without ATO1 or a full
-		 * silence/tone preamble. Exercise all six downstream mapper phases. */
+		 * silence/tone preamble. Neither zero sign is in the constellation;
+		 * exercise them at all six downstream mapper phases. */
 		for (size_t clock = 0;
 		     clock < quiet_end + 2u * recovery_samples; ++clock) {
 			struct pcm_call_data_event events[2];
@@ -3154,7 +3253,7 @@ static bool check_short_quiet_receive(
 
 			channel_receive(&channel, &received[0], &received[1]);
 			if (clock >= quiet_start && clock < quiet_end)
-				received[receiver] = silence_octet(law);
+				received[receiver] = quiet;
 			line_result = v34_line_receiver_sample(
 				&expected, decode_octet(law, received[1]),
 				&observation);
@@ -6051,6 +6150,8 @@ int main(void)
 		  test_completed_dil_return_drains },
 		{ "generated PCMU and PCMA calls through online data",
 		  test_generated_calls },
+		{ "negotiated zero symbols retain training and ordered data",
+		  test_negotiated_zero_symbols },
 		{ "local and remote PCM full retrain", test_full_retrain },
 		{ "V.90 in-place rate-renegotiation completion and resume",
 		  test_rate_renegotiation_completion },
