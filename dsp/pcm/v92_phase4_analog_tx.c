@@ -91,16 +91,17 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
 	return V92_PHASE4_ANALOG_TX_OK;
 }
 
-static bool may_finish(const struct v92_phase4_analog_tx *tx)
+bool v92_phase4_analog_tx_can_handoff(const struct v92_phase4_analog_tx *tx)
 {
-	return tx->cpu_sent && tx->acknowledgment_sent &&
-	       tx->peer_confirmation_received &&
-	       v92_phase4_record_tx_is_complete(&tx->signal.record);
+	return v92_phase4_analog_tx_is_valid(tx) &&
+	       tx->cpu_sent && tx->acknowledgment_sent &&
+	       tx->peer_confirmation_received;
 }
 
 static void finish_if_ready(struct v92_phase4_analog_tx *tx)
 {
-	if (tx->stage != V92_PHASE4_ANALOG_TX_TRN2U && may_finish(tx))
+	if (v92_phase4_analog_tx_can_handoff(tx) &&
+	    v92_phase4_record_tx_is_complete(&tx->signal.record))
 		tx->stage = V92_PHASE4_ANALOG_TX_E2U_READY;
 }
 
@@ -323,19 +324,16 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
 
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_handoff(
 	const struct v92_phase4_analog_tx *tx,
-	struct v92_phase4_modulator *modulator)
+	struct v92_phase4_record_tx *record)
 {
-	if (tx == NULL || modulator == NULL)
+	if (tx == NULL || record == NULL)
 		return V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT;
 	if (memory_regions_overlap(
-		    tx, sizeof(*tx), modulator, sizeof(*modulator)))
+		    tx, sizeof(*tx), record, sizeof(*record)))
 		return V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT;
-	if (!v92_phase4_analog_tx_is_e2u_ready(tx))
+	if (!v92_phase4_analog_tx_can_handoff(tx))
 		return V92_PHASE4_ANALOG_TX_INVALID_STATE;
-	if (v92_phase4_record_tx_handoff(
-		    &tx->signal.record, modulator) !=
-	    V92_PHASE4_RECORD_TX_OK)
-		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
+	*record = tx->signal.record;
 	return V92_PHASE4_ANALOG_TX_OK;
 }
 

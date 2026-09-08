@@ -1108,7 +1108,7 @@ static bool run_paired_station_exchange(
 		if (analog_result == V92_PHASE4_ANALOG_STATION_E2U_READY) {
 			CHECK(v92_phase4_analog_station_handoff(&analog, &analog_handoff_out) ==
 				      V92_PHASE4_ANALOG_STATION_OK &&
-			      v92_phase4_record_tx_init_e2u(&e2u, &analog_handoff_out.transmit,
+			      v92_phase4_record_tx_init_e2u(&e2u, &analog_handoff_out.transmit.modulator,
 				      cpd.extend_e2u) == V92_PHASE4_RECORD_TX_OK,
 			      "paired station did not begin E2u");
 			ready = true;
@@ -1214,10 +1214,10 @@ static bool run_paired_station_exchange(
 	      "paired upstream mapping did not initialize law=%u",
 	      (unsigned int)law);
 	CHECK(ready && terminal_probe_initialized && terminal_status_seen &&
-	      v92_phase4_analog_station_is_e2u_ready(&terminal_analog) &&
+	      v92_phase4_analog_station_can_handoff(&terminal_analog) &&
 	      v92_phase4_digital_station_is_valid(&terminal_digital) &&
 	      !v92_phase4_digital_station_has_failed(&terminal_digital) &&
-	      v92_phase4_analog_station_is_e2u_ready(&analog) &&
+	      v92_phase4_analog_station_can_handoff(&analog) &&
 	      v92_phase4_analog_station_cpd_parameters(
 		      &analog, &retained_cpd) &&
 	      base_cpd_equal(&retained_cpd, &cpd) &&
@@ -1305,7 +1305,7 @@ static bool run_paired_station_exchange(
 	}
 	CHECK(pcm_downstream_tx_is_complete(&digital_handoff_out.transmit.transmit) &&
 	      pcm_downstream_rx_is_complete(&analog.receive) &&
-	      v92_phase4_analog_station_is_e2u_ready(&analog) &&
+	      v92_phase4_analog_station_can_handoff(&analog) &&
 	      v92_phase4_analog_station_handoff(&analog, &ed_handoff) ==
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      pcm_downstream_rx_is_complete(&ed_handoff.receive),

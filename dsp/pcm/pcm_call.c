@@ -2683,7 +2683,7 @@ static bool v92_phase4_control_is_ready(const struct pcm_call *call)
 	if (call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL)
 		return false;
 	return call->local_role == V90_ANALOG_MODEM ?
-		v92_phase4_analog_station_is_e2u_ready(
+		v92_phase4_analog_station_can_handoff(
 			&call->state.phase4.v92.owner.analog.station) :
 		v92_phase4_digital_station_is_ed_ready(
 			&call->state.phase4.v92.owner.digital);

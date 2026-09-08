@@ -62,6 +62,8 @@ bool v92_phase4_analog_tx_is_valid(
 	const struct v92_phase4_analog_tx *tx);
 bool v92_phase4_analog_tx_is_e2u_ready(
 	const struct v92_phase4_analog_tx *tx);
+bool v92_phase4_analog_tx_can_handoff(
+	const struct v92_phase4_analog_tx *tx);
 bool v92_phase4_analog_tx_silence_requested(
 	const struct v92_phase4_analog_tx *tx);
 
@@ -85,10 +87,11 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_repeat_cpu(
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
 	struct v92_phase4_analog_tx *tx, int16_t *sample);
 
-/* Export the exact coding history after the final complete status record. */
+/* Export the mutually acknowledged control record, including any unsent tail.
+ * The next duplex owner finishes that record before transmitting E2u. */
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_handoff(
 	const struct v92_phase4_analog_tx *tx,
-	struct v92_phase4_modulator *modulator);
+	struct v92_phase4_record_tx *record);
 
 const char *v92_phase4_analog_tx_result_name(
 	enum v92_phase4_analog_tx_result result);

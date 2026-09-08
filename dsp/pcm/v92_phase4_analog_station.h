@@ -40,12 +40,12 @@ struct v92_phase4_analog_station {
 	bool failed;
 };
 
-/* Exact duplex boundary after the control exchange. The upstream modulator
- * continues into E2u, while the downstream receiver continues through Ed.
+/* Exact duplex boundary after mutual acknowledgement. Finish the pending
+ * upstream control record before E2u; downstream may already be through Ed.
  * CPU and CPd retain the independently selected downstream and upstream data
  * mappings for the next owner. */
 struct v92_phase4_analog_handoff {
-	struct v92_phase4_modulator transmit;
+	struct v92_phase4_record_tx transmit;
 	struct pcm_downstream_rx receive;
 	struct v92_cpu_parameters cpu;
 	struct v92_pcm_mapping mapping;
@@ -67,7 +67,7 @@ bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station);
 bool v92_phase4_analog_station_has_failed(
 	const struct v92_phase4_analog_station *station);
-bool v92_phase4_analog_station_is_e2u_ready(
+bool v92_phase4_analog_station_can_handoff(
 	const struct v92_phase4_analog_station *station);
 
 /* Consume one authoritative downstream G.711 character. Complete rejected
@@ -86,8 +86,8 @@ enum v92_phase4_analog_station_result
 v92_phase4_analog_station_repeat_cpu(
 	struct v92_phase4_analog_station *station);
 
-/* Export both continuous line directions and their selected mappings at the
- * E2u boundary. Rejected calls leave the handoff unchanged. */
+/* Export both continuous line directions and their selected mappings after
+ * mutual acknowledgement. Rejected calls leave the handoff unchanged. */
 bool v92_phase4_analog_station_cpd_parameters(
 	const struct v92_phase4_analog_station *station,
 	struct v92_cpd_base_parameters *parameters);

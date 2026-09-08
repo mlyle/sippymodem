@@ -138,7 +138,7 @@ static bool test_early_peer_sequence(void)
 	struct v92_suvd_parameters suvd = {
 		.request_silence = true,
 	};
-	struct v92_phase4_modulator handoff;
+	struct v92_phase4_record_tx handoff;
 	int16_t sample = 1234;
 
 	CHECK(initialize(&tx, V92_CONSTELLATION_4_POINT) &&
@@ -180,7 +180,7 @@ static bool test_early_peer_sequence(void)
 	memset(&handoff, 0, sizeof(handoff));
 	CHECK(v92_phase4_analog_tx_handoff(&tx, &handoff) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      v92_phase4_modulator_is_valid(&handoff) &&
+	      v92_phase4_record_tx_is_complete(&handoff) &&
 	      v92_phase4_analog_tx_next(&tx, &sample) ==
 		      V92_PHASE4_ANALOG_TX_E2U_READY_RESULT &&
 	      sample == 1234,
@@ -240,6 +240,55 @@ static bool test_timeout_and_retry(void)
 	return true;
 }
 
+static bool test_pending_handoff(enum v92_constellation_size constellation,
+	bool repeat_cpu)
+{
+	struct v92_phase4_analog_tx tx;
+	struct v92_phase4_analog_tx saved;
+	struct v92_phase4_record_tx handoff;
+	struct v92_suvd_parameters suvd = { 0 };
+
+	CHECK(initialize(&tx, constellation) &&
+	      v92_phase4_analog_tx_note_suvd(&tx, &suvd) == V92_PHASE4_ANALOG_TX_OK &&
+	      v92_phase4_analog_tx_note_cpd(&tx, false) == V92_PHASE4_ANALOG_TX_OK &&
+	      emit_symbols(&tx, 25u) && finish_record(&tx) &&
+	      emit_symbols(&tx, 1u) && finish_record(&tx) &&
+	      tx.cpu_sent && tx.acknowledgment_sent && emit_symbols(&tx, 5u),
+	      "acknowledged control fixture did not prepare");
+	if (repeat_cpu)
+		CHECK(v92_phase4_analog_tx_repeat_cpu(&tx) == V92_PHASE4_ANALOG_TX_OK &&
+		      finish_record(&tx) && emit_symbols(&tx, 5u) &&
+		      tx.stage == V92_PHASE4_ANALOG_TX_CPU,
+		      "repeated CPu fixture did not prepare");
+	CHECK(!v92_phase4_analog_tx_can_handoff(&tx) &&
+	      v92_phase4_analog_tx_handoff(&tx, &handoff) ==
+		      V92_PHASE4_ANALOG_TX_INVALID_STATE,
+	      "control handed off without peer confirmation");
+	suvd.acknowledges_cpu = true;
+	CHECK((repeat_cpu ? v92_phase4_analog_tx_note_suvd(&tx, &suvd) :
+			    v92_phase4_analog_tx_note_ed(&tx)) == V92_PHASE4_ANALOG_TX_OK &&
+	      !v92_phase4_analog_tx_is_e2u_ready(&tx) &&
+	      v92_phase4_analog_tx_can_handoff(&tx),
+	      "early peer confirmation discarded the control tail");
+	saved = tx;
+	CHECK(v92_phase4_analog_tx_handoff(&tx, &handoff) == V92_PHASE4_ANALOG_TX_OK &&
+	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+	      memcmp(&handoff, &tx.signal.record, sizeof(handoff)) == 0,
+	      "handoff changed the pending record or its coding history");
+	while (!v92_phase4_record_tx_is_complete(&handoff)) {
+		int16_t expected, actual;
+
+		CHECK(v92_phase4_record_tx_next(&handoff, &actual) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_phase4_analog_tx_next(&tx, &expected) == V92_PHASE4_ANALOG_TX_OK &&
+		      actual == expected,
+		      "handoff changed an unsent control symbol");
+	}
+	CHECK(v92_phase4_analog_tx_is_e2u_ready(&tx) &&
+	      memcmp(&handoff, &tx.signal.record, sizeof(handoff)) == 0,
+	      "pending control did not finish at the E2u boundary");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_suvu_parameters suvu = suvu_parameters();
@@ -248,8 +297,8 @@ static bool test_contracts(void)
 	struct v92_phase4_analog_tx ed_tx;
 	struct v92_phase4_analog_tx cancel_tx;
 	struct v92_phase4_analog_tx before;
-	struct v92_phase4_modulator handoff;
-	struct v92_phase4_modulator handoff_before;
+	struct v92_phase4_record_tx handoff;
+	struct v92_phase4_record_tx handoff_before;
 	struct v92_suvd_parameters suvd = { 0 };
 	int16_t sample = 1234;
 	static const char *const names[] = {
@@ -328,7 +377,7 @@ static bool test_contracts(void)
 	      v92_phase4_analog_tx_handoff(&tx, &handoff) ==
 		      V92_PHASE4_ANALOG_TX_INVALID_STATE &&
 	      v92_phase4_analog_tx_handoff(
-		      &tx, (struct v92_phase4_modulator *)(void *)&tx) ==
+		      &tx, (struct v92_phase4_record_tx *)(void *)&tx) ==
 		      V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT &&
 	      memcmp(&tx, &before, sizeof(tx)) == 0 &&
 	      memcmp(&handoff, &handoff_before, sizeof(handoff)) == 0 &&
@@ -342,6 +391,7 @@ static bool test_contracts(void)
 	      memcmp(&tx, &before, sizeof(tx)) == 0 && sample == 1234 &&
 	      !v92_phase4_analog_tx_is_valid(NULL) &&
 	      !v92_phase4_analog_tx_is_e2u_ready(NULL) &&
+	      !v92_phase4_analog_tx_can_handoff(NULL) &&
 	      !v92_phase4_analog_tx_silence_requested(NULL),
 	      "invalid state was not rejected transactionally");
 	for (size_t index = 0u; index < ARRAY_LENGTH(names); ++index)
@@ -362,6 +412,10 @@ int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
 	if (!test_early_peer_sequence() || !test_timeout_and_retry() ||
+	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, false) ||
+	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, true) ||
+	    !test_pending_handoff(V92_CONSTELLATION_8_POINT, false) ||
+	    !test_pending_handoff(V92_CONSTELLATION_8_POINT, true) ||
 	    !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 analogue Phase 4 control\n");
 		return 1;

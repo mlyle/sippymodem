@@ -22,6 +22,12 @@ enum {
 	DOWNSTREAM_PREPARE_LIMIT = 10000,
 };
 
+enum upstream_tail {
+	NO_TAIL,
+	SUVU_TAIL,
+	CPU_TAIL,
+};
+
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -183,10 +189,15 @@ static bool prepare_downstream(
 	return false;
 }
 
+static bool start_suvu_record(
+	struct v92_phase4_record_tx *record,
+	const struct v92_phase4_modulator *transmit, bool first);
+
 static bool upstream_line(
-	enum g711_law law, struct v92_phase4_modulator *transmit,
+	enum g711_law law, struct v92_phase4_record_tx *transmit,
 	struct v92_upstream_control_line_rx *receive)
 {
+	struct v92_phase4_modulator modulator;
 	struct qam_point reference = { .in_phase = TEST_LU };
 	struct qam_point output;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
@@ -199,7 +210,7 @@ static bool upstream_line(
 	bool ready = false;
 
 	if (v92_phase4_modulator_init(
-		    transmit, V92_CONSTELLATION_4_POINT, 0u, TEST_LU) !=
+		    &modulator, V92_CONSTELLATION_4_POINT, 0u, TEST_LU) !=
 		    V92_PHASE4_MODULATOR_OK ||
 	    v92_phase4_demodulator_init(
 		    &handoff.demodulator, V92_CONSTELLATION_4_POINT,
@@ -240,6 +251,24 @@ static bool upstream_line(
 		    V92_UPSTREAM_CONTROL_LINE_RX_OK)
 		return false;
 	receive->signal.training_tail_remaining = 0u;
+	/* A real completed SUVu supplies both sides of the control boundary. */
+	if (!start_suvu_record(transmit, &modulator, true))
+		return false;
+	while (!v92_phase4_record_tx_is_complete(transmit)) {
+		struct v92_control_event event;
+		int16_t sample;
+		enum v92_upstream_control_line_rx_result result;
+
+		if (v92_phase4_record_tx_next(transmit, &sample) !=
+		    V92_PHASE4_RECORD_TX_OK)
+			return false;
+		result = v92_upstream_control_line_rx_sample(
+			receive, quantize(law, sample), &event);
+		if (result != V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+		    (result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT ||
+		     event.type != V92_CONTROL_EVENT_SUVU))
+			return false;
+	}
 	return v92_upstream_control_line_rx_is_valid(receive);
 }
 
@@ -258,6 +287,7 @@ static bool prepare_digital_fixture(
 	struct pcm_downstream_rx downstream_rx;
 	struct v92_upstream_control_line_rx upstream_rx;
 	struct v92_phase4_digital_handoff handoff;
+	struct v92_phase4_record_tx control;
 
 	fixture->cpu = cpu_parameters(law);
 	if (v92_cpd_direct_init(
@@ -272,8 +302,9 @@ static bool prepare_digital_fixture(
 	if (!prepare_downstream(
 		    law, 3u, &cpd, &downstream_tx, &downstream_rx,
 		    false, false) ||
-	    !upstream_line(law, &fixture->transmit, &upstream_rx))
+	    !upstream_line(law, &control, &upstream_rx))
 		return false;
+	fixture->transmit = control.modulator;
 	handoff = (struct v92_phase4_digital_handoff){
 		.receive = upstream_rx,
 		.cpu = fixture->cpu,
@@ -294,7 +325,7 @@ static bool test_fresh_analog_ed_arming(enum g711_law law)
 	struct v92_pcm_mapping mapping;
 	struct pcm_downstream_tx downstream_tx;
 	struct pcm_downstream_rx downstream_rx;
-	struct v92_phase4_modulator upstream_tx;
+	struct v92_phase4_record_tx upstream_tx;
 	struct v92_upstream_control_line_rx unused_rx;
 	struct v92_phase4_analog_handoff handoff;
 	struct v92_phase4_e2u owner;
@@ -511,7 +542,8 @@ static bool run_changed_cpu_rejection(enum g711_law law)
 }
 
 static bool run_crossing(
-	enum g711_law law, bool extended, bool ed_complete, bool pending_cpd)
+	enum g711_law law, bool extended, bool ed_complete, bool pending_cpd,
+	enum upstream_tail upstream_tail)
 {
 	struct v92_cpd_parameters full_cpd;
 	struct v92_cpd_base_parameters cpd;
@@ -521,7 +553,7 @@ static bool run_crossing(
 	struct pcm_downstream_rx downstream_rx;
 	struct pcm_downstream_tx completed_tx;
 	struct pcm_downstream_rx completed_rx;
-	struct v92_phase4_modulator upstream_tx;
+	struct v92_phase4_record_tx upstream_tx;
 	struct v92_upstream_control_line_rx upstream_rx;
 	struct v92_phase4_analog_handoff analog_handoff;
 	struct v92_phase4_digital_handoff digital_handoff;
@@ -536,6 +568,7 @@ static bool run_crossing(
 	bool mid_control_record = extended && !ed_complete && !pending_cpd;
 	size_t symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
 				    V92_PHASE4_E2U_SYMBOLS;
+	size_t tail_symbols = 0u;
 
 	CHECK(v92_cpd_direct_init(
 		      &full_cpd, law, 12u, extended) == V92_CPD_OK,
@@ -595,6 +628,25 @@ static bool run_crossing(
 			      &completed_tx, &completed_rx, true, false),
 		      "law %u completed Ed fixture did not prepare",
 		      (unsigned int)law);
+	if (upstream_tail != NO_TAIL) {
+		CHECK(upstream_tail == SUVU_TAIL ?
+		      start_suvu_record(&upstream_tx, &upstream_tx.modulator, false) :
+		      start_cpu_record(&upstream_tx, &upstream_tx.modulator, &cpu, false),
+		      "upstream tail did not initialize");
+		for (size_t index = 0u; index < 6u; ++index) {
+			struct v92_control_event event;
+			int16_t sample;
+
+			CHECK(v92_phase4_record_tx_next(&upstream_tx, &sample) ==
+				      V92_PHASE4_RECORD_TX_OK &&
+			      v92_upstream_control_line_rx_sample(&upstream_rx,
+				      quantize(law, sample), &event) ==
+				      V92_UPSTREAM_CONTROL_LINE_RX_OK,
+			      "upstream tail prefix did not decode");
+		}
+		tail_symbols = (upstream_tx.frame_bit_count - upstream_tx.bit_index) /
+			v92_phase4_modulator_bits_per_symbol(upstream_tx.modulator.constellation);
+	}
 	analog_handoff = (struct v92_phase4_analog_handoff){
 		.transmit = upstream_tx,
 		.receive = ed_complete ? completed_rx : downstream_rx,
@@ -623,9 +675,9 @@ static bool run_crossing(
 		      V92_PHASE4_E2U_OK,
 	      "law %u extended %u digital owner did not initialize",
 	      (unsigned int)law, extended);
-	CHECK(v92_phase4_record_tx_init_e2u(
-		      &reference, &upstream_tx, extended) ==
-		      V92_PHASE4_RECORD_TX_OK,
+	reference = upstream_tx;
+	CHECK(tail_symbols != 0u || v92_phase4_record_tx_init_e2u(
+		      &reference, &upstream_tx.modulator, extended) == V92_PHASE4_RECORD_TX_OK,
 	      "law %u extended %u reference did not initialize",
 	      (unsigned int)law, extended);
 	if (mid_control_record)
@@ -646,7 +698,7 @@ static bool run_crossing(
 	      memcmp(&analog, &saved, sizeof(analog)) == 0,
 	      "law %u overlapping output changed the owner",
 	      (unsigned int)law);
-	for (size_t index = 0u; index < symbols; ++index) {
+	for (size_t index = 0u; index < tail_symbols + symbols; ++index) {
 		int16_t raw;
 		uint8_t downstream_octet = 0xa5;
 		uint8_t upstream_octet = 0xa5;
@@ -661,7 +713,7 @@ static bool run_crossing(
 		analog_result = v92_phase4_e2u_next(
 			&analog, downstream_octet, 0, &upstream_octet);
 		CHECK(digital_result ==
-			      (index + 1u == symbols ?
+			      (index + 1u == tail_symbols + symbols ?
 				       V92_PHASE4_E2U_COMPLETE :
 				       V92_PHASE4_E2U_OK) &&
 		      analog_result == digital_result &&
@@ -673,6 +725,15 @@ static bool run_crossing(
 		      (unsigned int)law, extended, lookahead, index,
 		      v92_phase4_e2u_result_name(analog_result),
 		      v92_phase4_e2u_result_name(digital_result));
+		if (tail_symbols != 0u && index + 1u == tail_symbols) {
+			struct v92_phase4_modulator modulator = reference.modulator;
+
+			CHECK(!v92_phase4_e2u_is_complete(&analog) &&
+			      !analog.state.analog.finishing_control &&
+			      v92_phase4_record_tx_init_e2u(&reference, &modulator, extended) ==
+				      V92_PHASE4_RECORD_TX_OK,
+			      "finishing control truncated or consumed E2u");
+		}
 	}
 	CHECK(v92_phase4_e2u_is_complete(&analog) &&
 	      v92_phase4_e2u_is_complete(&digital) &&
@@ -742,7 +803,11 @@ static bool run_crossing(
 		CHECK(digital_done.state.digital.downstream_stage ==
 			      V92_PHASE4_E2U_DOWNSTREAM_DATA &&
 		      digital_done.state.digital.downstream.data
-			      .transmitted_symbols == symbols,
+			      .transmitted_symbols == tail_symbols + symbols &&
+		      analog_done.state.analog.downstream_stage ==
+			      V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		      analog_done.state.analog.downstream.data.stream.received_symbols ==
+			      tail_symbols + symbols,
 		      "early Ed stages %u/%u preserved %zu B1d intervals",
 		      (unsigned int)analog_done.state.analog.downstream_stage,
 		      (unsigned int)digital_done.state.digital.downstream_stage,
@@ -822,12 +887,14 @@ int main(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		if (!test_fresh_analog_ed_arming((enum g711_law)law) ||
-		    !run_crossing((enum g711_law)law, false, false, false) ||
-		    !run_crossing((enum g711_law)law, true, false, false) ||
-		    !run_crossing((enum g711_law)law, false, true, false) ||
-		    !run_crossing((enum g711_law)law, true, true, false) ||
-		    !run_crossing((enum g711_law)law, false, false, true) ||
-		    !run_crossing((enum g711_law)law, true, false, true) ||
+		    !run_crossing((enum g711_law)law, false, false, false, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, true, false, false, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, false, true, false, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, true, true, false, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, false, false, true, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, true, false, true, NO_TAIL) ||
+		    !run_crossing((enum g711_law)law, false, true, false, SUVU_TAIL) ||
+		    !run_crossing((enum g711_law)law, true, true, false, CPU_TAIL) ||
 		    !run_rearmed_crossing(
 			    (enum g711_law)law, false, 1u) ||
 		    !run_rearmed_crossing(

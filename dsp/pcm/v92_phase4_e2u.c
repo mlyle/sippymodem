@@ -52,6 +52,8 @@ static bool analog_state_is_valid(
 			   &data_mapping)) {
 		return false;
 	}
+	if (state->finishing_control)
+		return !v92_phase4_record_tx_is_complete(&state->transmit);
 	bits = v92_phase4_modulator_bits_per_symbol(
 		state->transmit.modulator.constellation);
 	expected_symbols = state->mapping.cpd.extend_e2u ?
@@ -125,6 +127,7 @@ bool v92_phase4_e2u_is_complete(const struct v92_phase4_e2u *owner)
 	if (!v92_phase4_e2u_is_valid(owner) || owner->failed)
 		return false;
 	return owner->local_role == V90_ANALOG_MODEM ?
+		!owner->state.analog.finishing_control &&
 		v92_phase4_record_tx_is_complete(
 			&owner->state.analog.transmit) :
 		v92_e2u_rx_is_complete(&owner->state.digital.receive);
@@ -138,6 +141,18 @@ static bool arm_analog_ed(struct pcm_downstream_rx *receiver)
 		return true;
 	result = pcm_downstream_rx_expect_ed(receiver);
 	return result == PCM_DOWNSTREAM_RX_OK;
+}
+
+static bool start_analog_e2u(struct v92_phase4_e2u_analog_state *state)
+{
+	struct v92_phase4_modulator modulator = state->transmit.modulator;
+
+	if (v92_phase4_record_tx_init_e2u(
+		    &state->transmit, &modulator,
+		    state->mapping.cpd.extend_e2u) != V92_PHASE4_RECORD_TX_OK)
+		return false;
+	state->finishing_control = false;
+	return true;
 }
 
 enum v92_phase4_e2u_result v92_phase4_e2u_init_analog(
@@ -157,6 +172,9 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_analog(
 	initialized.state.analog.downstream.training = handoff->receive;
 	initialized.state.analog.cpu = handoff->cpu;
 	initialized.state.analog.mapping = handoff->mapping;
+	initialized.state.analog.transmit = handoff->transmit;
+	initialized.state.analog.finishing_control =
+		!v92_phase4_record_tx_is_complete(&handoff->transmit);
 	initialized.state.analog.downstream_stage =
 		V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
 	if (!pcm_downstream_rx_is_complete(
@@ -172,10 +190,8 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_analog(
 		     initialized.state.analog.downstream.training.ed_requested))
 			return V92_PHASE4_E2U_INVALID_PARAMETERS;
 	}
-	if (v92_phase4_record_tx_init_e2u(
-		    &initialized.state.analog.transmit, &handoff->transmit,
-		    handoff->mapping.cpd.extend_e2u) !=
-		    V92_PHASE4_RECORD_TX_OK ||
+	if ((!initialized.state.analog.finishing_control &&
+	     !start_analog_e2u(&initialized.state.analog)) ||
 	    !v92_phase4_e2u_is_valid(&initialized))
 		return V92_PHASE4_E2U_INVALID_PARAMETERS;
 	*owner = initialized;
@@ -494,6 +510,12 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		if (v92_phase4_record_tx_next(
 			    &next.state.analog.transmit, &sample) !=
 			    V92_PHASE4_RECORD_TX_OK)
+			return fail(owner);
+		/* V.92 9.6.2.1.4/6: finish our control record before E2u,
+		 * independently of the peer's Ed/B1d receive boundary. */
+		if (state->finishing_control &&
+		    v92_phase4_record_tx_is_complete(&state->transmit) &&
+		    !start_analog_e2u(state))
 			return fail(owner);
 		received = v92_downstream_receive_owned(
 			&state->downstream, &state->downstream_stage,

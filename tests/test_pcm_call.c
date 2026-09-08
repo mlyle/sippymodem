@@ -5155,7 +5155,7 @@ static bool run_v92_phase4_control(
 			analog.stage == PCM_CALL_PHASE4 &&
 			analog.state.phase4.v92.child ==
 				PCM_CALL_V92_PHASE4_CONTROL &&
-			v92_phase4_analog_station_is_e2u_ready(
+			v92_phase4_analog_station_can_handoff(
 				&analog.state.phase4.v92.owner.analog.station);
 		bool digital_control_active =
 			digital.stage == PCM_CALL_PHASE4 &&
@@ -5234,6 +5234,23 @@ static bool run_v92_phase4_control(
 				decode_octet(law, analog_received),
 				&analog_transmitted,
 				&analog_observation);
+		if (analog_control_ready) {
+			struct v92_phase4_record_tx expected =
+				analog_control.station.transmit.signal.record;
+			struct v92_phase4_modulator modulator = expected.modulator;
+			int16_t sample;
+
+			CHECK((!v92_phase4_record_tx_is_complete(&expected) ||
+			       v92_phase4_record_tx_init_e2u(&expected, &modulator,
+				       analog_control.station.mapping.cpd.extend_e2u) ==
+				       V92_PHASE4_RECORD_TX_OK) &&
+			      v92_phase4_record_tx_next(&expected, &sample) ==
+				      V92_PHASE4_RECORD_TX_OK &&
+			      analog_transmitted == encode_octet(law, sample) &&
+			      analog.stage == PCM_CALL_PHASE4 &&
+			      analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U,
+			      "mutual acknowledgement lost a pending control/E2u symbol");
+		}
 		digital_result = digital_ready ? PCM_CALL_PHASE4_READY :
 			pcm_call_octet(
 				&digital, digital_received,
@@ -5354,7 +5371,7 @@ static bool run_v92_phase4_control(
 		      &analog_configuration.v92_analog_phase4.cpu, 24u) /
 		      2u >
 		      analog_control.cpu_repeat_interval_samples &&
-	      v92_phase4_analog_station_is_e2u_ready(
+	      v92_phase4_analog_station_can_handoff(
 		      &analog_control.station) &&
 	      v92_cpu_parameters_are_valid(
 		      &digital.state.phase4.v92.owner.e2u.state.digital.cpu) &&

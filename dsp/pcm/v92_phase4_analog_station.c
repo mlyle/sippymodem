@@ -105,12 +105,12 @@ bool v92_phase4_analog_station_has_failed(
 	return v92_phase4_analog_station_is_valid(station) && station->failed;
 }
 
-bool v92_phase4_analog_station_is_e2u_ready(
+bool v92_phase4_analog_station_can_handoff(
 	const struct v92_phase4_analog_station *station)
 {
 	return v92_phase4_analog_station_is_valid(station) &&
 	       !station->failed && station->cpd_received &&
-	       v92_phase4_analog_tx_is_e2u_ready(&station->transmit);
+	       v92_phase4_analog_tx_can_handoff(&station->transmit);
 }
 
 static bool note_suvd(
@@ -383,7 +383,7 @@ bool v92_phase4_analog_handoff_is_valid(
 	const struct v92_phase4_analog_handoff *handoff)
 {
 	return handoff != NULL &&
-	       v92_phase4_modulator_is_valid(&handoff->transmit) &&
+	       v92_phase4_record_tx_is_valid(&handoff->transmit) &&
 	       pcm_downstream_rx_is_valid(&handoff->receive) &&
 	       !pcm_downstream_rx_has_failed(&handoff->receive) &&
 	       handoff->receive.protocol == PCM_PROTOCOL_V92 &&
@@ -407,7 +407,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 	    memory_regions_overlap(
 		    station, sizeof(*station), handoff, sizeof(*handoff)))
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
-	if (!v92_phase4_analog_station_is_e2u_ready(station))
+	if (!v92_phase4_analog_station_can_handoff(station))
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_analog_handoff){
 		.receive = station->receive,

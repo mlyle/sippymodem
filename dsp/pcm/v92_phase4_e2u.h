@@ -44,6 +44,7 @@ struct v92_phase4_e2u_analog_state {
 	struct v92_cpu_parameters cpu;
 	struct v92_pcm_mapping mapping;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
+	bool finishing_control;
 };
 
 struct v92_phase4_e2u_digital_state {
@@ -60,9 +61,9 @@ union v92_phase4_e2u_state {
 	struct v92_phase4_e2u_digital_state digital;
 };
 
-/* Own the duplex E2u/Ed crossing. E2u determines completion; the independent
- * downstream path may still be in Ed training or may already have entered
- * B1d data coding. */
+/* Own the final upstream control tail and duplex E2u/Ed crossing. E2u
+ * determines completion; the independent downstream path may still be in Ed
+ * training or may already have entered B1d data coding. */
 struct v92_phase4_e2u {
 	union v92_phase4_e2u_state state;
 	enum v90_modem_role local_role;
