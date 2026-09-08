@@ -1303,6 +1303,20 @@ static bool test_v92_pcm_host_data(void)
 	return true;
 }
 
+static bool test_v92_upstream_quality_recovery(void)
+{
+	CHECK(v90_datapump_register() == 0, "V.92 quality registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_pcm_pair(DP_V92, 14, law, 41333, 0, 0, 41333, 0,
+			SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
+			false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
+			UPSTREAM_CHANNEL_NOISE_BURST),
+		      "law %u V.92 did not recover from sustained upstream noise", law);
+	}
+	CHECK(v90_datapump_unregister() == 0, "V.92 quality recovery leaked ownership");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct bit_endpoint bits = { 0 };
@@ -1624,6 +1638,7 @@ int main(void)
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
 		{ "V.92 PCM host data and retrain", test_v92_pcm_host_data },
+		{ "V.92 automatic upstream quality recovery", test_v92_upstream_quality_recovery },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "sustained maximum-rate pairs",
 		  test_sustained_maximum_rate_pairs },

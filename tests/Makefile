@@ -2060,6 +2060,9 @@ V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
 		$(BUILD_DIR)/test_v92_upstream_data_tx.o, \
 		$(V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS) \
 		$(V92_UPSTREAM_DATA_TX_TEST_OBJECTS)))
+V92_DATA_QUALITY_TEST_BINARY := $(BUILD_DIR)/test_v92_data_quality
+V92_DATA_QUALITY_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_data_quality.o $(BUILD_DIR)/v92_data_quality.o
 V90_MP_TEST_BINARY := $(BUILD_DIR)/test_v90_mp
 V90_MP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_mp.o \
@@ -2808,6 +2811,7 @@ V90_DATAPUMP_TEST_OBJECTS = $(sort \
 	$(BUILD_DIR)/v34_datapump.o \
 	$(BUILD_DIR)/v34_profile.o \
 	$(BUILD_DIR)/v90_datapump.o \
+	$(BUILD_DIR)/v92_data_quality.o \
 	$(BUILD_DIR)/v90_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/pcm_rate.o \
@@ -3237,6 +3241,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_CPD_DIRECT_TEST_BINARY) \
 	$(V92_UPSTREAM_DATA_TX_TEST_BINARY) \
 	$(V92_UPSTREAM_DATA_RX_TEST_BINARY) \
+	$(V92_DATA_QUALITY_TEST_BINARY) \
 	$(V92_PCM_FRAME_RX_TEST_BINARY) \
 	$(V92_SUVU_TEST_BINARY) \
 	$(V92_SUVD_TEST_BINARY) \
@@ -3557,6 +3562,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V92_CPD_DIRECT_TEST_OBJECTS:.o=.d) \
 	$(V92_UPSTREAM_DATA_TX_TEST_OBJECTS:.o=.d) \
 	$(V92_UPSTREAM_DATA_RX_TEST_OBJECTS:.o=.d) \
+	$(V92_DATA_QUALITY_TEST_OBJECTS:.o=.d) \
 	$(V92_PCM_FRAME_RX_TEST_OBJECTS:.o=.d) \
 	$(V92_SUVU_TEST_OBJECTS:.o=.d) \
 	$(V92_SUVD_TEST_OBJECTS:.o=.d) \
@@ -4344,6 +4350,9 @@ $(V92_PCM_FRAME_RX_TEST_BINARY): $(V92_PCM_FRAME_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V92_UPSTREAM_DATA_RX_TEST_BINARY): $(V92_UPSTREAM_DATA_RX_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V92_DATA_QUALITY_TEST_BINARY): $(V92_DATA_QUALITY_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_SUVU_TEST_BINARY): $(V92_SUVU_TEST_OBJECTS)
@@ -5448,6 +5457,10 @@ $(BUILD_DIR)/v92_upstream_data_tx.o: \
 
 $(BUILD_DIR)/v92_upstream_data_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_data_quality.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_data_quality.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_pcm_frame_encoder.o: \

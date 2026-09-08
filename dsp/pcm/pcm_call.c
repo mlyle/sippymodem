@@ -5,6 +5,7 @@
 #include "memory_region.h"
 #include "pcm_phase3_entry.h"
 #include "pcm_phase3_handoff.h"
+#include "v92_data_quality.h"
 #include "v34_phase2_selection.h"
 #include "v92_pcm_dil.h"
 
@@ -22,10 +23,6 @@ enum {
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
 	V92_B1_ROUND_TRIP_ALLOWANCES = 6,
-	/* Receiver policy, not a normative V.92 threshold: known-bit decoding
-	 * must also fit the received waveform within 64 decoded G.711 units
-	 * RMS over B1u. Constraining the mapper to ones alone proves nothing. */
-	V92_B1U_MAX_RMS_ERROR = 64,
 	V90_RATE_RENEGOTIATION_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 5,
 	V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES = 2,
@@ -1083,9 +1080,11 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 	const struct pcm_call_v92_digital_data *path =
 		&call->state.data_path.v92_digital;
 
+	/* Known-one decoding alone cannot qualify B1u: the received waveform
+	 * must also satisfy the same residual ceiling used for online recovery. */
 	return path->upstream.line.received_frames >= V92_B1U_FRAMES &&
 	       path->b1u_squared_error <= (double)V92_B1U_SYMBOLS *
-		       V92_B1U_MAX_RMS_ERROR * V92_B1U_MAX_RMS_ERROR;
+		       V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 }
 
 static bool v92_local_b1_sent_owned(const struct pcm_call *call)

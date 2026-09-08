@@ -113,10 +113,11 @@ V.92 are registered. V.90 can select every standard PCM downstream rate from
 state machine. The implemented V.92 profile uses PCM upstream with quick
 connect disabled; V.92 conventional upstream and quick connect remain
 unavailable and fail closed during profile selection. This experimental profile
-can carry native duplex host data and perform full retrains, but V.92 zero-rate
-cleardown and automatic PCM-upstream quality recovery are not yet implemented.
-Ambiguous upstream frames fail closed instead of delivering uncertain host bits;
-clean native tests are not evidence of robust operation on a physical line.
+can carry native duplex host data and perform full retrains. Sustained excessive
+PCM-upstream residuals or ambiguous payload trigger up to two automatic full
+retrains per call; ambiguous bits are never delivered. V.92 zero-rate cleardown
+is not yet implemented. Generated-channel tests are not evidence of robust
+operation on a physical line.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 
