@@ -189,13 +189,7 @@ static bool configure_digital(
 			.equalizer_adaptation = 0.05,
 			.su_minimum_magnitude = V92_SU_MINIMUM_MAGNITUDE,
 		};
-	selected->v92_digital_phase4.cpd =
-		(struct v92_cpd_base_parameters){
-			.four_times_gain_q0_16 = cpd.four_times_gain_q0_16,
-			.data_rate_number = cpd.data_rate_number,
-			.trellis = cpd.trellis,
-			.extend_e2u = cpd.extend_e2u,
-		};
+	selected->v92_digital_phase4.cpd = cpd;
 	return true;
 }
 

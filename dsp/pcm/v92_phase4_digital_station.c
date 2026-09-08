@@ -117,8 +117,6 @@ static bool owned_state_is_valid(
 	return receive_law(&station->receive) ==
 		       station->transmit.encoder.mapping.law &&
 	       v92_phase4_cpd_tx_is_valid(&station->initial_cpd) &&
-	       v92_cpd_base_parameters_are_valid(&station->cpd) &&
-	       !station->cpd.acknowledges_cpu &&
 	       transmit_stage_is_valid(station->transmit_stage) &&
 	       (station->transmit_stage ==
 			V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD ||
@@ -193,7 +191,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_base_parameters *cpd)
+	const struct v92_cpd_parameters *cpd)
 {
 	struct v92_phase4_digital_station initialized = { 0 };
 
@@ -207,7 +205,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 		    PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
 	    downstream->control.suvd.acknowledges_cpu ||
 	    downstream->finish_requested || downstream->complete ||
-	    !v92_cpd_base_parameters_are_valid(cpd) ||
+	    !v92_cpd_parameters_are_valid(cpd) ||
 	    cpd->acknowledges_cpu)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	if (v92_phase4_digital_rx_init(
@@ -215,7 +213,6 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	    V92_PHASE4_DIGITAL_RX_OK)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	initialized.transmit = *downstream;
-	initialized.cpd = *cpd;
 	if (!v92_phase4_cpd_tx_init(
 		    &initialized.initial_cpd, downstream, cpd))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
@@ -348,12 +345,17 @@ static bool apply_pending_downstream(
 	if (station->suvu_received &&
 	    station->transmit_stage ==
 		    V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) {
-		struct v92_cpd_base_parameters cpd = station->cpd;
+		struct v92_cpd_parameters cpd;
 		const struct v92_suvd_parameters suvd = {
 			.request_silence = station->request_silence,
 			.acknowledges_cpu = station->cpu_received,
 		};
 
+		if (v92_cpd_decode(station->initial_cpd.sequence,
+				   sizeof(station->initial_cpd.sequence),
+				   station->initial_cpd.sequence_bits,
+				   station->initial_cpd.frame_bits, &cpd) != V92_CPD_OK)
+			return false;
 		cpd.acknowledges_cpu = station->cpu_received;
 		if (pcm_downstream_tx_start_suvd(
 			    &station->transmit, &suvd) !=
@@ -465,6 +467,9 @@ bool v92_phase4_digital_station_peer_acknowledged_cpd(
 bool v92_phase4_digital_station_is_ed_ready(
 	const struct v92_phase4_digital_station *station)
 {
+	/* The receive record boundary is authoritative for E2u. The downstream
+	 * owner can finish a partial SUVd before Ed; waiting here would discard
+	 * the leading E2u symbols while the independent transmitter drains. */
 	return v92_phase4_digital_station_is_valid(station) &&
 	       !station->failed && station->cpu_received &&
 	       station->peer_acknowledged_cpd &&
@@ -473,9 +478,7 @@ bool v92_phase4_digital_station_is_ed_ready(
 		       V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
 	       station->transmit.v92_control_record_accepted &&
 	       station->transmit.accepted_frames >
-		       station->status_start_frame &&
-	       pcm_downstream_tx_is_v92_control_boundary(
-		       &station->transmit);
+		       station->status_start_frame;
 }
 
 bool v92_phase4_digital_handoff_is_valid(
@@ -491,7 +494,6 @@ bool v92_phase4_digital_handoff_is_valid(
 		       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
 	       handoff->transmit.control.suvd.acknowledges_cpu &&
 	       handoff->transmit.v92_control_record_accepted &&
-	       pcm_downstream_tx_is_v92_control_boundary(&handoff->transmit) &&
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
 	       handoff->cpu.law == handoff->transmit.encoder.mapping.law &&
 	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
@@ -520,7 +522,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 	};
 	/* The wire owner already retains every negotiated section. Decode it
 	 * once at this boundary instead of reconstructing filters and levels
-	 * from the compact initial selection. This also preserves CPd-prime. */
+	 * from a default profile. This also preserves CPd-prime. */
 	if (v92_cpd_decode(station->initial_cpd.sequence,
 			   sizeof(station->initial_cpd.sequence),
 			   station->initial_cpd.sequence_bits,

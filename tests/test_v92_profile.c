@@ -141,7 +141,8 @@ static bool test_generated_profiles(void)
 					      rate);
 				} else {
 					struct v92_cpd_parameters expected;
-					const struct v92_cpd_base_parameters *cpd =
+					struct v92_pcm_mapping expected_mapping, selected_mapping;
+					const struct v92_cpd_parameters *cpd =
 						&configuration.v92_digital_phase4.cpd;
 
 					CHECK(configuration.local_info0.v92_digital.v90
@@ -162,14 +163,11 @@ static bool test_generated_profiles(void)
 					      v92_cpd_direct_init(
 						      &expected, law, upstream_rate,
 						      false) == V92_CPD_OK &&
-					      cpd->four_times_gain_q0_16 ==
-						      expected.four_times_gain_q0_16 &&
-					      cpd->data_rate_number ==
-						      expected.data_rate_number &&
-					      cpd->trellis == expected.trellis &&
-					      cpd->extend_e2u == expected.extend_e2u &&
-					      cpd->acknowledges_cpu ==
-						      expected.acknowledges_cpu,
+					      v92_pcm_mapping_init(&expected_mapping, law, &expected) ==
+						      V92_PCM_MAPPING_OK &&
+					      v92_pcm_mapping_init(&selected_mapping, law, cpd) ==
+						      V92_PCM_MAPPING_OK &&
+					      v92_pcm_mapping_equal(&selected_mapping, &expected_mapping),
 					      "digital profile did not generate rate %u",
 					      rate);
 				}

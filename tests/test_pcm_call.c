@@ -329,18 +329,13 @@ static struct v92_cpu_parameters v92_cpu_parameters(enum g711_law law)
 	return parameters;
 }
 
-static struct v92_cpd_base_parameters v92_cpd_parameters(enum g711_law law)
+static struct v92_cpd_parameters v92_cpd_parameters(enum g711_law law)
 {
 	struct v92_cpd_parameters full;
 
 	if (v92_cpd_direct_init(&full, law, 14u, true) != V92_CPD_OK)
-		return (struct v92_cpd_base_parameters){ 0 };
-	return (struct v92_cpd_base_parameters){
-		.four_times_gain_q0_16 = full.four_times_gain_q0_16,
-		.data_rate_number = full.data_rate_number,
-		.trellis = full.trellis,
-		.extend_e2u = full.extend_e2u,
-	};
+		return (struct v92_cpd_parameters){ 0 };
+	return full;
 }
 
 static struct pcm_call_configuration v92_configuration(
@@ -5557,7 +5552,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 	return true;
 }
 
-static bool run_v92_duplex_data(enum g711_law law, size_t delay)
+static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
@@ -5569,6 +5564,19 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay)
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
 
+	if (long_cpd) {
+		struct v92_cpd_parameters *cpd = &dc.v92_digital_phase4.cpd;
+
+		/* A longer CPd moves the final receive acknowledgment away from the
+		 * downstream transmit boundary. Keep the active filter taps small so
+		 * this call isolates negotiation and the continuous data handoff. */
+		memset(cpd->filter, 0, sizeof(cpd->filter));
+		cpd->filter[V92_CPD_PRECODER_FEEDBACK].count = 90u;
+		cpd->filter[V92_CPD_PRECODER_FEEDBACK].coefficient[89] = 1;
+		cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 85u;
+		cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[0] = INT16_MAX;
+		cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[84] = -1;
+	}
 	CHECK(channel_init(&wire, law, delay) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "V.92 duplex initialization failed");
 	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -5637,13 +5645,25 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay)
 
 static bool test_v92_duplex_data(void)
 {
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (size_t delay = 1u; delay <= 3u; delay += 2u)
-			CHECK(run_v92_duplex_data(law, delay), "V.92 duplex data failed");
+			CHECK(run_v92_duplex_data(law, delay, false), "V.92 duplex data failed");
+		CHECK(run_v92_duplex_data(law, 1u, true), "V.92 long-CPd duplex data failed");
+	}
 	return true;
 }
 
-static bool run_v92_unavailable_selection(bool downstream)
+enum v92_unavailable_selection {
+	V92_UNAVAILABLE_DOWNSTREAM_RATE,
+	V92_UNAVAILABLE_UPSTREAM_RATE,
+	V92_UNAVAILABLE_Z1,
+	V92_UNAVAILABLE_P2,
+	V92_UNAVAILABLE_SECTION_LENGTH,
+	V92_UNAVAILABLE_TOTAL_LENGTH,
+};
+
+static bool run_v92_unavailable_selection(
+	enum v92_unavailable_selection selection, bool peer_violation)
 {
 	const enum g711_law law = G711_LAW_PCMU;
 	struct pcm_call_configuration analog_configuration =
@@ -5653,6 +5673,12 @@ static bool run_v92_unavailable_selection(bool downstream)
 	struct channel channel;
 	struct pcm_call analog;
 	struct pcm_call digital;
+	struct v92_cpd_parameters unsupported = digital_configuration.v92_digital_phase4.cpd;
+	struct v92_cpd_parameters *cpd = peer_violation ?
+		&unsupported : &digital_configuration.v92_digital_phase4.cpd;
+	bool downstream = selection == V92_UNAVAILABLE_DOWNSTREAM_RATE;
+	bool reject_analog = downstream || peer_violation;
+	bool injected = false;
 
 	if (downstream) {
 		uint32_t selected = UINT32_C(1) <<
@@ -5662,18 +5688,44 @@ static bool run_v92_unavailable_selection(bool downstream)
 		digital_configuration.enabled_downstream_rate_mask &= ~selected;
 		digital_configuration.phase3.v92_digital.jd
 			.data_rate_capability_mask &= ~selected;
-	} else {
+	} else if (selection == V92_UNAVAILABLE_UPSTREAM_RATE) {
 		uint32_t selected = UINT32_C(1) <<
 			(digital_configuration.v92_digital_phase4.cpd
 				 .data_rate_number - 1u);
 
 		analog_configuration.phase3.v92_analog.upstream_rate_mask &=
 			~selected;
+	} else {
+		struct v92_cpd_filter *filter;
+
+		switch (selection) {
+		case V92_UNAVAILABLE_Z1:
+			filter = &cpd->filter[V92_CPD_PRECODER_FEED_FORWARD];
+			filter->count = 1u;
+			filter->coefficient[0] = 32767;
+			break;
+		case V92_UNAVAILABLE_P2:
+			filter = &cpd->filter[V92_CPD_PREFILTER_FEEDBACK];
+			filter->count = 1u;
+			filter->coefficient[0] = 1;
+			break;
+		case V92_UNAVAILABLE_SECTION_LENGTH:
+			filter = &cpd->filter[V92_CPD_PRECODER_FEEDBACK];
+			filter->count = 129u;
+			filter->coefficient[128] = 1;
+			break;
+		case V92_UNAVAILABLE_TOTAL_LENGTH:
+			cpd->filter[V92_CPD_PRECODER_FEEDBACK].count = 128u;
+			cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 128u;
+			break;
+		default:
+			CHECK(false, "invalid V.92 unavailable-selection fixture");
+		}
 	}
 	CHECK(channel_init(&channel, law, 1u) &&
 	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
 	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
-	      "V.92 unavailable-rate calls did not initialize");
+	      "V.92 unavailable-selection %u calls did not initialize", selection);
 	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
 		struct pcm_call_observation analog_observation;
 		struct pcm_call_observation digital_observation;
@@ -5694,11 +5746,26 @@ static bool run_v92_unavailable_selection(bool downstream)
 			&digital, digital_received,
 			decode_octet(law, digital_received), &digital_transmitted,
 			&digital_observation);
+		/* A nonconforming peer may send a valid CPd outside our advertised
+		 * filter limits. Replace its not-yet-started wire record so rejection
+		 * exercises the analogue receive boundary, not our sender policy. */
+		if (peer_violation && !injected && digital_result == PCM_CALL_OK &&
+		    digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			struct v92_phase4_digital_station *station =
+				&digital.state.phase4.v92.owner.digital;
+
+			CHECK(station->transmit_stage == V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD &&
+			      v92_phase4_cpd_tx_init(&station->initial_cpd, &station->transmit,
+						    &unsupported),
+			      "could not inject the unsupported peer CPd");
+			injected = true;
+		}
 		if (analog_result != PCM_CALL_OK ||
 		    digital_result != PCM_CALL_OK) {
-			enum pcm_call_result expected_analog = downstream ?
+			enum pcm_call_result expected_analog = reject_analog ?
 				PCM_CALL_UNUSABLE_SELECTION : PCM_CALL_OK;
-			enum pcm_call_result expected_digital = downstream ?
+			enum pcm_call_result expected_digital = reject_analog ?
 				PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
 
 			CHECK(analog_result == expected_analog &&
@@ -5706,11 +5773,11 @@ static bool run_v92_unavailable_selection(bool downstream)
 			      pcm_call_is_valid(&analog) &&
 			      pcm_call_is_valid(&digital) &&
 			      pcm_call_has_failed(
-				      downstream ? &analog : &digital) &&
+				      reject_analog ? &analog : &digital) &&
 			      !pcm_call_has_failed(
-				      downstream ? &digital : &analog),
-			      "V.92 accepted an unadvertised %s rate: %s/%s",
-			      downstream ? "downstream" : "upstream",
+				      reject_analog ? &digital : &analog),
+			      "V.92 accepted unavailable selection %u peer=%u: %s/%s",
+			      selection, peer_violation,
 			      pcm_call_result_name(analog_result),
 			      pcm_call_result_name(digital_result));
 			return true;
@@ -5718,8 +5785,7 @@ static bool run_v92_unavailable_selection(bool downstream)
 		channel_transmit(
 			&channel, analog_transmitted, digital_transmitted);
 	}
-	CHECK(false, "V.92 unadvertised %s rate did not terminate",
-	      downstream ? "downstream" : "upstream");
+	CHECK(false, "V.92 unavailable selection %u did not terminate", selection);
 	return false;
 }
 
@@ -5730,8 +5796,13 @@ static bool test_v92_phase4_control(void)
 		      run_v92_phase4_control(G711_LAW_PCMA, delay),
 		      "delay %zu V.92 role-local Phase 4 handoff failed",
 		      delay);
-	return run_v92_unavailable_selection(true) &&
-	       run_v92_unavailable_selection(false);
+	for (enum v92_unavailable_selection selection = V92_UNAVAILABLE_DOWNSTREAM_RATE;
+	     selection <= V92_UNAVAILABLE_TOTAL_LENGTH; ++selection)
+		CHECK(run_v92_unavailable_selection(selection, false) &&
+		      (selection < V92_UNAVAILABLE_Z1 ||
+		       run_v92_unavailable_selection(selection, true)),
+		      "V.92 selection %u was not rejected", selection);
+	return true;
 }
 
 static bool test_downstream_rate_negotiation(void)
@@ -6234,6 +6305,18 @@ static bool test_v92_validation(void)
 	CHECK(pcm_call_init(&untouched, &selected) ==
 		      PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted a V.92 CPd cleardown as startup");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.v92_digital_phase4.cpd.modulus[0] = 1u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a V.92 CPd with insufficient mapping capacity");
+	selected.v92_digital_phase4.cpd = (struct v92_cpd_parameters){
+		.four_times_gain_q0_16 = 1234u,
+		.data_rate_number = 12u,
+		.trellis = V92_CPD_TRELLIS_16_STATE,
+	};
+	CHECK(v92_cpd_parameters_are_valid(&selected.v92_digital_phase4.cpd) &&
+	      pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a table-free V.92 CPd as startup");
 	selected = v92_configuration(V90_ANALOG_MODEM, G711_LAW_PCMU);
 	selected.local_info1.v92_analog.maximum_total_coefficients--;
 	CHECK(pcm_call_init(&untouched, &selected) ==

@@ -102,7 +102,7 @@ struct pcm_call_v92_analog_phase4_configuration {
 
 struct pcm_call_v92_digital_phase4_configuration {
 	struct v92_suvd_parameters suvd;
-	struct v92_cpd_base_parameters cpd;
+	struct v92_cpd_parameters cpd;
 };
 
 struct pcm_call_configuration {

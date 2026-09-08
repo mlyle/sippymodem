@@ -201,15 +201,16 @@ static bool v92_analog_phase4_configuration_is_valid(
 }
 
 static bool v92_digital_phase4_configuration_is_valid(
-	const struct pcm_call_v92_digital_phase4_configuration *configuration)
+	const struct pcm_call_v92_digital_phase4_configuration *configuration,
+	enum g711_law law)
 {
+	struct v92_pcm_mapping mapping;
+
 	return v92_suvd_parameters_are_valid(&configuration->suvd) &&
 	       !configuration->suvd.acknowledges_cpu &&
-	       v92_cpd_base_parameters_are_valid(&configuration->cpd) &&
 	       !configuration->cpd.acknowledges_cpu &&
-	       v92_pcm_dil_rate_is_enabled(
-		       V92_PCM_DIL_RATE_MASK_ALL,
-		       configuration->cpd.data_rate_number);
+	       v92_pcm_mapping_init(&mapping, law, &configuration->cpd) ==
+		       V92_PCM_MAPPING_OK;
 }
 
 static bool configuration_is_valid(
@@ -252,7 +253,7 @@ static bool configuration_is_valid(
 			       configuration->enabled_downstream_rate_mask,
 			       configuration->law) &&
 		       v92_digital_phase4_configuration_is_valid(
-			       &configuration->v92_digital_phase4);
+			       &configuration->v92_digital_phase4, configuration->law);
 	}
 	if (configuration->local_role == V90_ANALOG_MODEM)
 		return v90_info0_is_valid(
@@ -312,7 +313,7 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 			       call->enabled_downstream_rate_mask,
 			       call->law) &&
 		       v92_digital_phase4_configuration_is_valid(
-			       &call->v92_digital_phase4_configuration);
+			       &call->v92_digital_phase4_configuration, call->law);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       downstream_rate_is_enabled(
 			       call->enabled_downstream_rate_mask,
@@ -1999,6 +2000,28 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+static bool v92_filters_fit_capabilities(
+	const struct v92_cpd_parameters *cpd, const struct v92_pcm_info1a *capabilities)
+{
+	unsigned int total = 0u;
+	bool supports_z1 = capabilities->filter_sections == V92_PCM_FILTER_Z1_P1_Z2 ||
+		capabilities->filter_sections == V92_PCM_FILTER_Z1_P1_P2_Z2;
+	bool supports_p2 = capabilities->filter_sections == V92_PCM_FILTER_P1_P2_Z2 ||
+		capabilities->filter_sections == V92_PCM_FILTER_Z1_P1_P2_Z2;
+
+	if ((!supports_z1 && cpd->filter[V92_CPD_PRECODER_FEED_FORWARD].count != 0u) ||
+	    (!supports_p2 && cpd->filter[V92_CPD_PREFILTER_FEEDBACK].count != 0u))
+		return false;
+	for (size_t section = 0u; section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
+		unsigned int count = cpd->filter[section].count;
+
+		if (count > capabilities->maximum_section_coefficients)
+			return false;
+		total += count;
+	}
+	return total <= capabilities->maximum_total_coefficients;
+}
+
 static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 {
 	struct pcm_call next = *call;
@@ -2053,7 +2076,10 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		if (!v92_pcm_dil_rate_is_enabled(
 			    upstream_rate_mask,
 			    call->v92_digital_phase4_configuration.cpd
-				    .data_rate_number))
+				    .data_rate_number) ||
+		    !v92_filters_fit_capabilities(
+			    &call->v92_digital_phase4_configuration.cpd,
+			    &call->phase3_entry.selection.analog.pcm))
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (v92_phase3_digital_station_receive_handoff(
 			    &mixed->phase3, &handoff) !=
@@ -2660,10 +2686,13 @@ static enum pcm_call_result sample_v92_phase4(
 		if (result != PCM_CALL_OK)
 			return result;
 		if (state->station.cpd_received &&
-		    !v92_pcm_dil_rate_is_enabled(
+		    (!v92_pcm_dil_rate_is_enabled(
 			    call->phase3_configuration.v92_analog
 				    .upstream_rate_mask,
-			    state->station.cpd.data_rate_number))
+			    state->station.cpd.data_rate_number) ||
+		     !v92_filters_fit_capabilities(
+			     &state->station.mapping.cpd,
+			     &call->phase3_entry.selection.analog.pcm)))
 			return PCM_CALL_UNUSABLE_SELECTION;
 		return advance_v92_cpu_repeat(
 			state, completed_this_sample);

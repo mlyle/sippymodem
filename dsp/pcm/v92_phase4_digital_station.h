@@ -41,7 +41,6 @@ struct v92_phase4_digital_station {
 	struct pcm_downstream_tx transmit;
 	struct v92_phase4_cpd_tx initial_cpd;
 	struct v92_cpu_parameters cpu;
-	struct v92_cpd_base_parameters cpd;
 	struct v92_suvu_parameters suvu;
 	uint64_t cpd_start_frame;
 	uint64_t status_start_frame;
@@ -66,14 +65,14 @@ struct v92_phase4_digital_handoff {
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
- * downstream TRN2d/SUVd transmitter. The compact CPd selection is expanded
- * once into the generated direct profile owned by the station. */
+ * downstream TRN2d/SUVd transmitter. Retain the complete selected CPd in the
+ * wire owner; acknowledging CPu changes no filters or constellation tables. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	struct v92_phase4_digital_station *station,
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_base_parameters *cpd);
+	const struct v92_cpd_parameters *cpd);
 
 bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station);

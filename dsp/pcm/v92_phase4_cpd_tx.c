@@ -3,6 +3,7 @@
 #include "v92_phase4_cpd_tx.h"
 
 #include "memory_region.h"
+#include "v92_pcm_mapping.h"
 
 enum {
 	FINGERPRINT_OFFSET = UINT32_C(2166136261),
@@ -20,18 +21,6 @@ static uint32_t fingerprint(const uint8_t *bytes, size_t count)
 	return value;
 }
 
-static bool selection_matches(
-	const struct v92_cpd_parameters *generated,
-	const struct v92_cpd_base_parameters *selection)
-{
-	return generated->four_times_gain_q0_16 ==
-		       selection->four_times_gain_q0_16 &&
-	       generated->data_rate_number == selection->data_rate_number &&
-	       generated->trellis == selection->trellis &&
-	       generated->extend_e2u == selection->extend_e2u &&
-	       generated->acknowledges_cpu == selection->acknowledges_cpu;
-}
-
 bool v92_phase4_cpd_tx_is_valid(
 	const struct v92_phase4_cpd_tx *transmitter)
 {
@@ -41,7 +30,7 @@ bool v92_phase4_cpd_tx_is_valid(
 	    transmitter->frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
 	    transmitter->frame_bits > V92_CPD_DOWNSTREAM_FRAME_MAX_BITS ||
 	    transmitter->sequence_bits == 0u ||
-	    transmitter->sequence_bits > V92_CPD_DIRECT_MAX_FRAME_BITS ||
+	    transmitter->sequence_bits > V92_CPD_MAX_FRAME_BITS ||
 	    transmitter->sequence_bits % transmitter->frame_bits != 0u ||
 	    (transmitter->complete ?
 		     transmitter->bit_index != transmitter->sequence_bits :
@@ -57,34 +46,31 @@ bool v92_phase4_cpd_tx_is_valid(
 bool v92_phase4_cpd_tx_init(
 	struct v92_phase4_cpd_tx *transmitter,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_base_parameters *selection)
+	const struct v92_cpd_parameters *parameters)
 {
 	struct v92_phase4_cpd_tx initialized = { 0 };
-	struct v92_cpd_parameters generated;
+	struct v92_pcm_mapping mapping;
 	size_t sequence_bytes;
 
-	if (transmitter == NULL || downstream == NULL || selection == NULL ||
+	if (transmitter == NULL || downstream == NULL || parameters == NULL ||
 	    memory_regions_overlap(
 		    transmitter, sizeof(*transmitter), downstream,
 		    sizeof(*downstream)) ||
 	    memory_regions_overlap(
-		    transmitter, sizeof(*transmitter), selection,
-		    sizeof(*selection)))
+		    transmitter, sizeof(*transmitter), parameters,
+		    sizeof(*parameters)))
 		return false;
 	if (!pcm_downstream_tx_is_valid(downstream) ||
 	    downstream->protocol != PCM_PROTOCOL_V92 ||
-	    downstream->encoder.mapping.kind != V90_CP_TRAINING ||
-	    !v92_cpd_base_parameters_are_valid(selection))
+	    downstream->encoder.mapping.kind != V90_CP_TRAINING)
 		return false;
-	if (v92_cpd_direct_init(
-		    &generated, downstream->encoder.mapping.law,
-		    selection->data_rate_number, selection->extend_e2u) !=
-	    V92_CPD_OK)
+	/* Initial negotiation must establish a complete usable mapping. Compact
+	 * records can acknowledge an existing mapping, but cannot create one. */
+	if (v92_pcm_mapping_init(&mapping, downstream->encoder.mapping.law,
+				 parameters) != V92_PCM_MAPPING_OK)
 		return false;
-	generated.acknowledges_cpu = selection->acknowledges_cpu;
-	if (!selection_matches(&generated, selection) ||
-	    v92_cpd_encode(
-		    &generated, downstream->encoder.mapping.frame_bits,
+	if (v92_cpd_encode(
+		    parameters, downstream->encoder.mapping.frame_bits,
 		    initialized.sequence, sizeof(initialized.sequence),
 		    &initialized.sequence_bits) != V92_CPD_OK)
 		return false;

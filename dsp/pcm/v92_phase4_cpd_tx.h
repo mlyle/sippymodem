@@ -4,7 +4,7 @@
 #define V92_PHASE4_CPD_TX_H
 
 #include "pcm_downstream_tx.h"
-#include "v92_cpd_direct.h"
+#include "v92_cpd.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -13,7 +13,7 @@
 /* Own the one complete initial CPd record without enlarging the continuous
  * downstream transmitter's compact status-record storage. */
 struct v92_phase4_cpd_tx {
-	uint8_t sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES];
+	uint8_t sequence[V92_CPD_MAX_FRAME_BYTES];
 	size_t sequence_bits;
 	size_t bit_index;
 	uint32_t sequence_fingerprint;
@@ -25,7 +25,7 @@ struct v92_phase4_cpd_tx {
 bool v92_phase4_cpd_tx_init(
 	struct v92_phase4_cpd_tx *transmitter,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_base_parameters *selection);
+	const struct v92_cpd_parameters *parameters);
 bool v92_phase4_cpd_tx_is_valid(
 	const struct v92_phase4_cpd_tx *transmitter);
 
