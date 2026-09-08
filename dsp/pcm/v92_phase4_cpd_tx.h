@@ -10,7 +10,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Own the one complete initial CPd record without enlarging the continuous
+/* Own a complete CPd record without enlarging the continuous
  * downstream transmitter's compact status-record storage. */
 struct v92_phase4_cpd_tx {
 	uint8_t sequence[V92_CPD_MAX_FRAME_BYTES];
@@ -36,5 +36,22 @@ bool v92_phase4_cpd_tx_next(
 	struct v92_phase4_cpd_tx *transmitter,
 	struct pcm_downstream_tx *downstream,
 	struct pcm_downstream_symbol *symbol);
+
+/* Drain the current acknowledging CPd/SUVd and Ed without stopping the
+ * independent E2u receiver. The tail can outlive E2u and continue during B1u.
+ * When cpd_pending is false, only the continuous transmitter is active. */
+struct v92_phase4_ed_tx {
+	struct pcm_downstream_tx transmit;
+	struct v92_phase4_cpd_tx cpd;
+	bool cpd_pending;
+};
+
+bool v92_phase4_ed_tx_init(
+	struct v92_phase4_ed_tx *tail,
+	const struct pcm_downstream_tx *transmit,
+	const struct v92_phase4_cpd_tx *pending_cpd);
+bool v92_phase4_ed_tx_is_valid(const struct v92_phase4_ed_tx *tail);
+enum pcm_downstream_tx_result v92_phase4_ed_tx_next(
+	struct v92_phase4_ed_tx *tail, struct pcm_downstream_symbol *symbol);
 
 #endif /* V92_PHASE4_CPD_TX_H */

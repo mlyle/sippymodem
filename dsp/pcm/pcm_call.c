@@ -648,11 +648,9 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 			    V90_PCM_MAPPING_OK)
 			return false;
 		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
-			child_valid = pcm_downstream_tx_is_valid(
+			child_valid = v92_phase4_ed_tx_is_valid(
 					&path->downstream.training) &&
-				path->downstream.training.protocol == PCM_PROTOCOL_V92 &&
-				path->downstream.training.ed_requested &&
-				path->downstream.training.encoder.mapping.law == call->law;
+				path->downstream.training.transmit.encoder.mapping.law == call->law;
 		else
 			child_valid = v90_downstream_data_stream_is_valid(
 					&path->downstream.data) &&
@@ -2125,7 +2123,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    call->phase3_configuration.v92_digital.jp
 				    .training_constellation,
 			    &mixed->transmit,
-			    &cpd) !=
+			    &cpd, call->round_trip_delay_samples) !=
 		    V92_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		/* Nonzero DIL acknowledges CPt with Ri, then E1u with Ri-bar.

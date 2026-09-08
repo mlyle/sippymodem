@@ -132,3 +132,77 @@ bool v92_phase4_cpd_tx_next(
 	*symbol = generated;
 	return true;
 }
+
+bool v92_phase4_ed_tx_is_valid(const struct v92_phase4_ed_tx *tail)
+{
+	if (tail == NULL || !pcm_downstream_tx_is_valid(&tail->transmit) ||
+	    tail->transmit.protocol != PCM_PROTOCOL_V92)
+		return false;
+	if (!tail->cpd_pending)
+		return tail->transmit.ed_requested;
+	return !tail->transmit.ed_requested &&
+	       pcm_downstream_tx_is_v92_control_boundary(&tail->transmit) &&
+	       tail->transmit.v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+	       tail->transmit.control.suvd.acknowledges_cpu &&
+	       v92_phase4_cpd_tx_is_valid(&tail->cpd) && !tail->cpd.complete &&
+	       tail->cpd.law == tail->transmit.encoder.mapping.law &&
+	       tail->cpd.frame_bits == tail->transmit.encoder.mapping.frame_bits;
+}
+
+bool v92_phase4_ed_tx_init(
+	struct v92_phase4_ed_tx *tail,
+	const struct pcm_downstream_tx *transmit,
+	const struct v92_phase4_cpd_tx *pending_cpd)
+{
+	struct v92_phase4_ed_tx initialized = { 0 };
+	struct v92_cpd_parameters parameters;
+
+	if (tail == NULL || transmit == NULL ||
+	    memory_regions_overlap(tail, sizeof(*tail), transmit, sizeof(*transmit)) ||
+	    (pending_cpd != NULL && memory_regions_overlap(
+		    tail, sizeof(*tail), pending_cpd, sizeof(*pending_cpd))))
+		return false;
+	initialized.transmit = *transmit;
+	if (pending_cpd != NULL) {
+		initialized.cpd = *pending_cpd;
+		initialized.cpd_pending = true;
+		if (!v92_phase4_ed_tx_is_valid(&initialized) ||
+		    v92_cpd_decode(pending_cpd->sequence, sizeof(pending_cpd->sequence),
+			    pending_cpd->sequence_bits, pending_cpd->frame_bits,
+			    &parameters) != V92_CPD_OK || !parameters.acknowledges_cpu)
+			return false;
+	} else if (pcm_downstream_tx_request_ed(&initialized.transmit) !=
+			   PCM_DOWNSTREAM_TX_OK) {
+		return false;
+	}
+	if (!v92_phase4_ed_tx_is_valid(&initialized))
+		return false;
+	*tail = initialized;
+	return true;
+}
+
+enum pcm_downstream_tx_result v92_phase4_ed_tx_next(
+	struct v92_phase4_ed_tx *tail, struct pcm_downstream_symbol *symbol)
+{
+	struct v92_phase4_ed_tx next;
+	struct pcm_downstream_symbol generated;
+
+	if (tail == NULL || symbol == NULL ||
+	    memory_regions_overlap(tail, sizeof(*tail), symbol, sizeof(*symbol)))
+		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
+	if (!v92_phase4_ed_tx_is_valid(tail))
+		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+	if (!tail->cpd_pending)
+		return pcm_downstream_tx_next(&tail->transmit, symbol);
+	next = *tail;
+	if (!v92_phase4_cpd_tx_next(&next.cpd, &next.transmit, &generated))
+		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	if (next.cpd.complete) {
+		if (pcm_downstream_tx_request_ed(&next.transmit) != PCM_DOWNSTREAM_TX_OK)
+			return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+		next.cpd_pending = false;
+	}
+	*tail = next;
+	*symbol = generated;
+	return PCM_DOWNSTREAM_TX_OK;
+}

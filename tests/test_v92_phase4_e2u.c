@@ -276,9 +276,10 @@ static bool prepare_digital_fixture(
 		return false;
 	handoff = (struct v92_phase4_digital_handoff){
 		.receive = upstream_rx,
-		.transmit = downstream_tx,
 		.cpu = fixture->cpu,
 	};
+	if (!v92_phase4_ed_tx_init(&handoff.transmit, &downstream_tx, NULL))
+		return false;
 	if (v92_pcm_mapping_init(&handoff.mapping, law, &full_cpd) !=
 	    V92_PCM_MAPPING_OK)
 		return false;
@@ -510,7 +511,7 @@ static bool run_changed_cpu_rejection(enum g711_law law)
 }
 
 static bool run_crossing(
-	enum g711_law law, bool extended, bool ed_complete)
+	enum g711_law law, bool extended, bool ed_complete, bool pending_cpd)
 {
 	struct v92_cpd_parameters full_cpd;
 	struct v92_cpd_base_parameters cpd;
@@ -530,14 +531,16 @@ static bool run_crossing(
 	struct v92_phase4_e2u_handoff analog_done;
 	struct v92_phase4_e2u_handoff digital_done;
 	struct v92_phase4_e2u saved;
+	struct v92_phase4_cpd_tx cpd_tail;
 	uint8_t lookahead = ed_complete ? 0u : 3u;
-	bool mid_control_record = extended && !ed_complete;
+	bool mid_control_record = extended && !ed_complete && !pending_cpd;
 	size_t symbols = extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
 				    V92_PHASE4_E2U_SYMBOLS;
 
 	CHECK(v92_cpd_direct_init(
 		      &full_cpd, law, 12u, extended) == V92_CPD_OK,
 	      "crossing CPd did not initialize");
+	full_cpd.acknowledges_cpu = pending_cpd;
 	/* A non-default selected filter must survive E2u without regeneration. */
 	if (extended)
 		full_cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
@@ -571,6 +574,21 @@ static bool run_crossing(
 		      "law %u mid-record handoff did not advance",
 		      (unsigned int)law);
 	}
+	if (pending_cpd) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+
+		CHECK(v92_phase4_cpd_tx_init(&cpd_tail, &downstream_tx, &full_cpd),
+		      "CPd tail did not initialize");
+		/* Hand off after CPd has begun, with its coder queue still live. */
+		for (unsigned int index = 0u; index < 12u; ++index)
+			CHECK(v92_phase4_cpd_tx_next(&cpd_tail, &downstream_tx, &symbol) &&
+			      pcm_downstream_rx_receive(&downstream_rx, symbol.pcm.octet, &event) ==
+				      PCM_DOWNSTREAM_RX_BUFFERING,
+			      "CPd tail did not start cleanly");
+		CHECK(cpd_tail.bit_index && !cpd_tail.complete,
+		      "CPd tail fixture did not leave a partial record");
+	}
 	if (ed_complete)
 		CHECK(prepare_downstream(
 			      law, lookahead, &cpd,
@@ -585,10 +603,12 @@ static bool run_crossing(
 	};
 	digital_handoff = (struct v92_phase4_digital_handoff){
 		.receive = upstream_rx,
-		.transmit = downstream_tx,
 		.cpu = cpu,
 		.mapping = upstream_mapping,
 	};
+	CHECK(v92_phase4_ed_tx_init(&digital_handoff.transmit, &downstream_tx,
+		      pending_cpd ? &cpd_tail : NULL),
+	      "crossing Ed tail did not initialize");
 	CHECK(v92_phase4_analog_handoff_is_valid(&analog_handoff),
 	      "law %u extended %u analogue handoff was invalid",
 	      (unsigned int)law, extended);
@@ -613,7 +633,7 @@ static bool run_crossing(
 		      "law %u mid-record control handoff armed Ed",
 		      (unsigned int)law);
 	if (ed_complete) {
-		digital.state.digital.downstream.training = completed_tx;
+		digital.state.digital.downstream.training.transmit = completed_tx;
 		CHECK(v92_phase4_e2u_is_valid(&analog) &&
 		      v92_phase4_e2u_is_valid(&digital),
 		      "law %u completed Ed invalidated owners",
@@ -733,6 +753,38 @@ static bool run_crossing(
 			      V92_PHASE4_E2U_DOWNSTREAM_TRAINING,
 		      "delayed Ed did not remain in progress");
 	}
+	if (pending_cpd) {
+		struct v92_phase4_e2u_digital_handoff *digital_tail = &digital_done.state.digital;
+		struct v92_phase4_e2u_analog_handoff *analog_tail = &analog_done.state.analog;
+		struct v92_phase4_ed_tx *tail = &digital_tail->downstream.training;
+		uint64_t cpd_end_frame = tail->transmit.accepted_frames +
+			(tail->cpd.sequence_bits - tail->cpd.bit_index) / tail->cpd.frame_bits;
+
+		CHECK(digital_tail->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
+		      tail->cpd_pending && !tail->transmit.ed_requested,
+		      "E2u completion discarded the pending CPd");
+		for (size_t index = 0u; index < DOWNSTREAM_PREPARE_LIMIT &&
+		     analog_tail->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA; ++index) {
+			struct pcm_downstream_symbol symbol;
+			struct v90_pcm_stream_frame frame;
+			bool finishing_cpd = tail->cpd_pending;
+
+			CHECK(v92_phase4_ed_tx_next(tail, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "post-E2u CPd/Ed tail stopped");
+			if (finishing_cpd && !tail->cpd_pending)
+				CHECK(tail->transmit.stage == PCM_DOWNSTREAM_TX_ED &&
+				      tail->transmit.accepted_frames == cpd_end_frame,
+				      "CPd was truncated or an extra SUVd preceded Ed");
+			CHECK(v92_downstream_receive_owned(&analog_tail->downstream,
+				      &analog_tail->downstream_stage, &analog_tail->cpu,
+				      &analog_tail->mapping, symbol.pcm.octet, &frame) ==
+				      V90_DOWNSTREAM_DATA_RX_BUFFERING,
+			      "peer could not decode the complete CPd and Ed tail");
+		}
+		CHECK(analog_tail->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		      v92_pcm_mapping_equal(&analog_tail->mapping, &upstream_mapping),
+		      "post-E2u tail failed to reach data with the selected mapping");
+	}
 	return true;
 }
 
@@ -770,10 +822,12 @@ int main(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		if (!test_fresh_analog_ed_arming((enum g711_law)law) ||
-		    !run_crossing((enum g711_law)law, false, false) ||
-		    !run_crossing((enum g711_law)law, true, false) ||
-		    !run_crossing((enum g711_law)law, false, true) ||
-		    !run_crossing((enum g711_law)law, true, true) ||
+		    !run_crossing((enum g711_law)law, false, false, false) ||
+		    !run_crossing((enum g711_law)law, true, false, false) ||
+		    !run_crossing((enum g711_law)law, false, true, false) ||
+		    !run_crossing((enum g711_law)law, true, true, false) ||
+		    !run_crossing((enum g711_law)law, false, false, true) ||
+		    !run_crossing((enum g711_law)law, true, false, true) ||
 		    !run_rearmed_crossing(
 			    (enum g711_law)law, false, 1u) ||
 		    !run_rearmed_crossing(

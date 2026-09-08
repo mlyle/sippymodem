@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <string.h>
 
+enum { CPD_REPEAT_BASE_SAMPLES = 800 };
+
 static enum g711_law receive_law(
 	const struct v92_phase4_digital_rx *receiver)
 {
@@ -146,6 +148,8 @@ static bool owned_state_is_valid(
 				station->transmit.accepted_frames :
 		station->status_start_frame == 0u) &&
 	       (!station->cpu_received || station->suvu_received) &&
+	       (!station->repeat_cpd || station->cpd_start_frame != 0u) &&
+	       (!station->acknowledgement_end_frame || station->cpu_received) &&
 	       (!station->peer_acknowledged_cpd || station->suvu_received) &&
 	       (!station->transmit_acknowledges_cpu ||
 		((station->transmit_stage ==
@@ -191,7 +195,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_parameters *cpd)
+	const struct v92_cpd_parameters *cpd,
+	uint16_t round_trip_delay_samples)
 {
 	struct v92_phase4_digital_station initialized = { 0 };
 
@@ -213,6 +218,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	    V92_PHASE4_DIGITAL_RX_OK)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	initialized.transmit = *downstream;
+	initialized.round_trip_delay_samples = round_trip_delay_samples;
 	if (!v92_phase4_cpd_tx_init(
 		    &initialized.initial_cpd, downstream, cpd))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
@@ -325,7 +331,23 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	    result != V92_PHASE4_DIGITAL_RX_ALIGNED &&
 	    result != V92_PHASE4_DIGITAL_RX_EVENT)
 		return fail(station);
-	if (!accept_event(station, &event) || !owned_state_is_valid(station))
+	if (!accept_event(station, &event))
+		return fail(station);
+	/* V.92 9.6.1.1.3: expiry alone is insufficient. Wait through a whole
+	 * valid CPu/SUVu at or after the deadline; damaged records do not count.
+	 * The output clock includes queued coder frames, so use the CPd's wire
+	 * end rather than the earlier instant its last source frame was accepted. */
+	if (!station->peer_acknowledged_cpd &&
+	    station->transmit_stage == V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
+	    (event.type == V92_CONTROL_EVENT_CPU ||
+	     event.type == V92_CONTROL_EVENT_SUVU) &&
+	    station->transmit.transmitted_symbols / V90_CP_FRAME_INTERVALS >=
+		    station->status_start_frame &&
+	    station->transmit.transmitted_symbols -
+		    station->status_start_frame * V90_CP_FRAME_INTERVALS >=
+			    (unsigned int)CPD_REPEAT_BASE_SAMPLES + station->round_trip_delay_samples)
+		station->repeat_cpd = true;
+	if (!owned_state_is_valid(station))
 		return fail(station);
 	return result == V92_PHASE4_DIGITAL_RX_EVENT ?
 		       V92_PHASE4_DIGITAL_STATION_EVENT :
@@ -343,8 +365,9 @@ static bool apply_pending_downstream(
 			V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD;
 	}
 	if (station->suvu_received &&
-	    station->transmit_stage ==
-		    V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) {
+	    (station->transmit_stage == V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD ||
+	     (station->transmit_stage == V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
+	      station->repeat_cpd && !v92_phase4_digital_station_is_ed_ready(station)))) {
 		struct v92_cpd_parameters cpd;
 		const struct v92_suvd_parameters suvd = {
 			.request_silence = station->request_silence,
@@ -366,6 +389,10 @@ static bool apply_pending_downstream(
 		station->transmit_stage = V92_PHASE4_DIGITAL_STATION_CPD;
 		station->transmit_acknowledges_cpu = cpd.acknowledges_cpu;
 		station->cpd_start_frame = station->transmit.accepted_frames;
+		station->status_start_frame = 0u;
+		if (cpd.acknowledges_cpu && !station->acknowledgement_end_frame)
+			station->acknowledgement_end_frame = station->cpd_start_frame +
+				station->initial_cpd.sequence_bits / station->initial_cpd.frame_bits;
 		return true;
 	}
 	if (station->transmit_stage ==
@@ -433,9 +460,19 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 			station->transmit_acknowledges_cpu =
 				station->transmit.control.suvd.acknowledges_cpu;
 		}
-	} else if (pcm_downstream_tx_next(&station->transmit, &symbol) !=
-		   PCM_DOWNSTREAM_TX_OK) {
-		return fail(station);
+	} else {
+		uint64_t before = station->transmit.accepted_frames;
+		uint64_t record_end = before +
+			(station->transmit.control_sequence_bits - station->transmit.control_bit_index) /
+				station->transmit.encoder.mapping.frame_bits;
+
+		if (pcm_downstream_tx_next(&station->transmit, &symbol) != PCM_DOWNSTREAM_TX_OK)
+			return fail(station);
+		/* Merely updating the stored SUVd while CPd is in flight does not
+		 * send an acknowledgement. Count the record only once sourced. */
+		if (station->transmit_acknowledges_cpu && !station->acknowledgement_end_frame &&
+		    station->transmit.accepted_frames > before)
+			station->acknowledgement_end_frame = record_end;
 	}
 	if (!owned_state_is_valid(station))
 		return fail(station);
@@ -468,17 +505,14 @@ bool v92_phase4_digital_station_is_ed_ready(
 	const struct v92_phase4_digital_station *station)
 {
 	/* The receive record boundary is authoritative for E2u. The downstream
-	 * owner can finish a partial SUVd before Ed; waiting here would discard
+	 * owner can finish a partial CPd/SUVd before Ed; waiting here would discard
 	 * the leading E2u symbols while the independent transmitter drains. */
 	return v92_phase4_digital_station_is_valid(station) &&
 	       !station->failed && station->cpu_received &&
 	       station->peer_acknowledged_cpd &&
 	       station->transmit_acknowledges_cpu &&
-	       station->transmit_stage ==
-		       V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
-	       station->transmit.v92_control_record_accepted &&
-	       station->transmit.accepted_frames >
-		       station->status_start_frame;
+	       station->acknowledgement_end_frame != 0u &&
+	       station->transmit.accepted_frames >= station->acknowledgement_end_frame;
 }
 
 bool v92_phase4_digital_handoff_is_valid(
@@ -488,14 +522,9 @@ bool v92_phase4_digital_handoff_is_valid(
 	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       !v92_upstream_control_line_rx_has_failed(&handoff->receive) &&
 	       handoff->receive.signal.training_tail_remaining == 0u &&
-	       pcm_downstream_tx_is_valid(&handoff->transmit) &&
-	       handoff->transmit.protocol == PCM_PROTOCOL_V92 &&
-	       handoff->transmit.v92_control_kind ==
-		       PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-	       handoff->transmit.control.suvd.acknowledges_cpu &&
-	       handoff->transmit.v92_control_record_accepted &&
+	       v92_phase4_ed_tx_is_valid(&handoff->transmit) &&
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
-	       handoff->cpu.law == handoff->transmit.encoder.mapping.law &&
+	       handoff->cpu.law == handoff->transmit.transmit.encoder.mapping.law &&
 	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
 	       handoff->mapping.law == handoff->cpu.law &&
 	       handoff->receive.signal.line.law == handoff->mapping.law;
@@ -517,9 +546,12 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_digital_handoff){
 		.receive = station->receive.signal.control,
-		.transmit = station->transmit,
 		.cpu = station->cpu,
 	};
+	if (!v92_phase4_ed_tx_init(&generated.transmit, &station->transmit,
+		    station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD ?
+			    &station->initial_cpd : NULL))
+		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
 	/* The wire owner already retains every negotiated section. Decode it
 	 * once at this boundary instead of reconstructing filters and levels
 	 * from a default profile. This also preserves CPd-prime. */

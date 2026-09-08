@@ -196,6 +196,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_next(
  * control buffer. The line must be at a V.92 control-record boundary and
  * retain the SUVd that follows this record. Once the external record ends,
  * any additional frames needed for spectral look-ahead come from that SUVd.
+ * Completing the source record also establishes the control/Ed boundary.
  * Rejected calls change neither line, cursor, nor output. */
 enum pcm_downstream_tx_result pcm_downstream_tx_next_source_record(
 	struct pcm_downstream_tx *transmitter,

@@ -360,11 +360,15 @@ static bool clock_downstream(
 		return true;
 	}
 	if (result == PCM_DOWNSTREAM_RX_CPD) {
+		struct v92_cpd_parameters expected = *expected_cpd;
+
+		expected.acknowledges_cpu = event.control.record.cpd.parameters.acknowledges_cpu;
 		CHECK(event.control.type == V92_CONTROL_EVENT_CPD &&
 		      event.control.record.cpd.frame_result == V92_CPD_OK &&
 		      cpd_selection_equal(
 			      &event.control.record.cpd.parameters,
-			      expected_cpd, station->transmit.encoder.mapping.law),
+			      &expected, station->transmit.encoder.mapping.law) &&
+		      (!expected.acknowledges_cpu || station->cpu_received),
 		      "station emitted malformed CPd");
 		counts->cpd++;
 		return true;
@@ -396,9 +400,82 @@ static bool receive_upstream_sample(
 		station, downstream, counts, expected_cpd, request_silence);
 }
 
+static bool feed_retry_status(
+	struct v92_phase4_digital_station *station,
+	struct v92_phase4_record_tx *source,
+	const struct v92_suvu_parameters *suvu, bool corrupt,
+	enum g711_law law, int8_t polarity, size_t *events)
+{
+	size_t rejected = 0u;
+
+	for (unsigned int repeat = 0u; repeat < 3u; ++repeat) {
+		CHECK(v92_record_fixture_start_suvu(source, NULL, suvu),
+		      "retry SUVu did not start");
+		if (corrupt)
+			source->frame[5] ^= 1u;
+		while (!v92_phase4_record_tx_is_complete(source)) {
+			struct v92_phase4_digital_rx observer = station->receive;
+			struct v92_control_event event = { 0 };
+			int16_t raw;
+			enum v92_phase4_digital_station_result result;
+
+			CHECK(v92_phase4_record_tx_next(source, &raw) == V92_PHASE4_RECORD_TX_OK,
+			      "retry SUVu generator stopped");
+			raw = line_sample(law, polarity, raw);
+			(void)v92_phase4_digital_rx_sample(&observer, raw, &event);
+			rejected += event.type == V92_CONTROL_EVENT_SUVU_REJECTED;
+			result = v92_phase4_digital_station_receive(station, raw);
+			CHECK(result == V92_PHASE4_DIGITAL_STATION_OK ||
+			      result == V92_PHASE4_DIGITAL_STATION_EVENT,
+			      "retry status receive failed");
+			*events += result == V92_PHASE4_DIGITAL_STATION_EVENT;
+		}
+	}
+	CHECK(!corrupt || rejected != 0u, "retry fixture did not deliver a CRC rejection");
+	return true;
+}
+
+static bool exercise_cpd_retry(
+	struct v92_phase4_digital_station *station, struct pcm_downstream_rx *receive,
+	struct downstream_counts *counts, struct v92_phase4_record_tx *source,
+	const struct v92_suvu_parameters *suvu, const struct v92_cpd_parameters *cpd,
+	enum g711_law law, int8_t polarity, bool silence, size_t *events)
+{
+	uint64_t deadline = station->status_start_frame * V90_CP_FRAME_INTERVALS +
+		800u + station->round_trip_delay_samples;
+	size_t status_count;
+
+	CHECK(station->transmit.transmitted_symbols < deadline, "retry deadline already passed");
+	while (station->transmit.transmitted_symbols + 1u < deadline)
+		CHECK(clock_downstream(station, receive, counts, cpd, silence),
+		      "pre-deadline downstream stopped");
+	CHECK(feed_retry_status(station, source, suvu, false, law, polarity, events) &&
+	      !station->repeat_cpd, "valid SUVu retried before 100 ms + RTD");
+	/* Flush the receiver's delayed valid decision before crossing the timer. */
+	CHECK(feed_retry_status(station, source, suvu, true, law, polarity, events) &&
+	      !station->repeat_cpd, "damaged SUVu retried before the deadline");
+	CHECK(clock_downstream(station, receive, counts, cpd, silence) &&
+	      station->transmit.transmitted_symbols == deadline && !station->repeat_cpd,
+	      "timer alone restarted CPd");
+	CHECK(feed_retry_status(station, source, suvu, true, law, polarity, events) &&
+	      !station->repeat_cpd, "CRC-rejected SUVu triggered CPd retry");
+	CHECK(feed_retry_status(station, source, suvu, false, law, polarity, events) &&
+	      station->repeat_cpd, "complete unacknowledging SUVu did not trigger CPd retry");
+	for (size_t index = 0u; counts->cpd < 2u && index < DOWNSTREAM_LIMIT; ++index)
+		CHECK(clock_downstream(station, receive, counts, cpd, silence),
+		      "first repeated CPd stopped");
+	status_count = counts->status_suvd;
+	for (size_t index = 0u; counts->cpd < 4u && index < DOWNSTREAM_LIMIT; ++index)
+		CHECK(clock_downstream(station, receive, counts, cpd, silence),
+		      "continuous CPd repeat stopped");
+	CHECK(counts->cpd == 4u && counts->status_suvd == status_count,
+	      "CPd retry inserted SUVd or did not preserve complete repeated records");
+	return true;
+}
+
 static bool run_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
-	uint8_t previous_sign, int8_t polarity)
+	uint8_t previous_sign, int8_t polarity, bool retry)
 {
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
@@ -438,7 +515,8 @@ static bool run_exchange(
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_digital_station_init(
 		      &station, &handoff, constellation,
-		      &downstream_tx, &cpd) ==
+		      &downstream_tx, &cpd,
+		      retry && constellation == V92_CONSTELLATION_8_POINT ? 2400u : 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "law %u constellation %u station did not initialize",
 	      (unsigned int)law, (unsigned int)constellation);
@@ -518,6 +596,10 @@ static bool run_exchange(
 	      (unsigned long long)station.transmit.accepted_frames,
 	      station.transmit.control_bit_index, downstream_rx.stage,
 	      (unsigned long long)downstream_rx.trn2d_bit_errors);
+	if (retry)
+		CHECK(exercise_cpd_retry(&station, &downstream_rx, &counts, &suvu_tx,
+			      &suvu, &cpd, law, polarity, suvd.request_silence, &events),
+		      "CPd retry procedure failed");
 	acknowledged_suvu.acknowledges_cpd = true;
 	CHECK(v92_record_fixture_start_suvu(
 		      &suvu_tx, NULL, &acknowledged_suvu),
@@ -566,13 +648,13 @@ static bool run_exchange(
 			      &station, &downstream_rx, &counts, &cpd,
 			      suvd.request_silence),
 		      "station downstream completion stopped");
-	CHECK(events >= 5u && events <= 7u && station.suvu_received &&
+	CHECK(events >= 5u && (retry || events <= 7u) && station.suvu_received &&
 	      station.transmit_stage ==
 		      V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
 	      station.cpu_received && station.transmit_acknowledges_cpu &&
 	      station.peer_acknowledged_cpd &&
 	      station.suvu.acknowledges_cpd &&
-	      counts.initial_suvd >= 1u && counts.cpd == 1u &&
+	      counts.initial_suvd >= 1u && (retry ? counts.cpd >= 4u : counts.cpd == 1u) &&
 	      counts.status_suvd >= 1u &&
 	      counts.acknowledged_suvd >= 1u &&
 	      v92_phase4_digital_station_cpu_parameters(
@@ -652,7 +734,8 @@ static bool test_generated_exchange(void)
 				      constellation,
 				      (uint8_t)((law + index) & 1u),
 				      constellation == V92_CONSTELLATION_4_POINT ?
-					      1 : -1),
+					      1 : -1, false) &&
+			      run_exchange((enum g711_law)law, constellation, 1u, 1, true),
 			      "generated station matrix stopped");
 		}
 	}
@@ -1000,7 +1083,7 @@ static bool run_paired_station_exchange(
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      v92_phase4_digital_station_init(
 		      &digital, &digital_handoff, constellation,
-		      &downstream_tx, &cpd) ==
+		      &downstream_tx, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "paired station initialization failed law=%u constellation=%u",
 	      (unsigned int)law, (unsigned int)constellation);
@@ -1175,8 +1258,10 @@ static bool run_paired_station_exchange(
 	      memcmp(&digital_handoff_out.receive,
 		     &digital.receive.signal.control,
 		     sizeof(digital_handoff_out.receive)) == 0 &&
-	      memcmp(&digital_handoff_out.transmit, &digital.transmit,
-		     sizeof(digital.transmit)) == 0 &&
+	      digital_handoff_out.transmit.transmit.transmitted_symbols ==
+		      digital.transmit.transmitted_symbols &&
+	      memcmp(&digital_handoff_out.transmit.transmit.encoder,
+		     &digital.transmit.encoder, sizeof(digital.transmit.encoder)) == 0 &&
 	      cpu_equal(&digital_handoff_out.cpu, &expected_cpu) &&
 	      v92_pcm_mapping_equal(&digital_handoff_out.mapping,
 				    &expected_upstream_mapping),
@@ -1188,21 +1273,21 @@ static bool run_paired_station_exchange(
 		CHECK(check_mapping_payload(&analog_handoff_out.mapping, &digital_handoff_out.mapping),
 		      "selected filters were not usable after the control handoff");
 	request_ed_result = pcm_downstream_tx_request_ed(
-		&digital_handoff_out.transmit);
+		&digital_handoff_out.transmit.transmit);
 	CHECK(request_ed_result == PCM_DOWNSTREAM_TX_OK &&
-	      digital_handoff_out.transmit.ed_requested,
+	      digital_handoff_out.transmit.transmit.ed_requested,
 	      "digital handoff could not enter Ed law=%u constellation=%u "
 	      "result=%s stage=%u",
 	      (unsigned int)law, (unsigned int)constellation,
 	      pcm_downstream_tx_result_name(request_ed_result),
-	      digital_handoff_out.transmit.stage);
+	      digital_handoff_out.transmit.transmit.stage);
 	for (size_t symbol = 0u;
-	     !pcm_downstream_tx_is_complete(&digital_handoff_out.transmit) &&
+	     !pcm_downstream_tx_is_complete(&digital_handoff_out.transmit.transmit) &&
 		     symbol < DOWNSTREAM_LIMIT;
 	     ++symbol) {
 		struct pcm_downstream_symbol output;
 		enum pcm_downstream_tx_result transmit_result =
-			pcm_downstream_tx_next(
+			v92_phase4_ed_tx_next(
 				&digital_handoff_out.transmit, &output);
 		enum v92_phase4_analog_station_result receive_result;
 
@@ -1218,7 +1303,7 @@ static bool run_paired_station_exchange(
 		      "paired Ed receive stopped at %zu: %s", symbol,
 		      v92_phase4_analog_station_result_name(receive_result));
 	}
-	CHECK(pcm_downstream_tx_is_complete(&digital_handoff_out.transmit) &&
+	CHECK(pcm_downstream_tx_is_complete(&digital_handoff_out.transmit.transmit) &&
 	      pcm_downstream_rx_is_complete(&analog.receive) &&
 	      v92_phase4_analog_station_is_e2u_ready(&analog) &&
 	      v92_phase4_analog_station_handoff(&analog, &ed_handoff) ==
@@ -1376,7 +1461,7 @@ static bool test_compact_boundary(void)
 		CHECK(v92_phase4_digital_station_init(
 			      &station, &handoff,
 			      V92_CONSTELLATION_4_POINT,
-			      &downstream, &rejected) ==
+			      &downstream, &rejected, 0u) ==
 			      V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS &&
 		      memcmp(&station, &saved, sizeof(station)) == 0,
 		      "invalid initial CPd mutation %u changed station",
@@ -1492,7 +1577,7 @@ static bool test_early_cpu_acknowledgement(void)
 	CHECK(pcm_downstream_tx_is_v92_control_boundary(&downstream) &&
 	      v92_phase4_digital_station_init(
 		      &station, &handoff, V92_CONSTELLATION_4_POINT,
-		      &downstream, &cpd) == V92_PHASE4_DIGITAL_STATION_OK,
+		      &downstream, &cpd, 0u) == V92_PHASE4_DIGITAL_STATION_OK,
 	      "early-CPu station did not inherit completed SUVd");
 	CHECK(cpd_tx_contracts_are_transactional(
 		      &station.initial_cpd, &station.transmit),
@@ -1568,7 +1653,7 @@ static bool test_short_cpu_requires_renegotiation(void)
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_suvd(&downstream, &suvd) == PCM_DOWNSTREAM_TX_OK &&
 	      v92_phase4_digital_station_init(&station, &handoff,
-		      V92_CONSTELLATION_4_POINT, &downstream, &cpd) ==
+		      V92_CONSTELLATION_4_POINT, &downstream, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "CPus phase guard fixture did not initialize");
 	for (size_t symbol = 0u;

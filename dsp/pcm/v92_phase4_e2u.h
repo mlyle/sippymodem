@@ -34,7 +34,7 @@ union v92_phase4_e2u_analog_downstream {
 };
 
 union v92_phase4_e2u_digital_downstream {
-	struct pcm_downstream_tx training;
+	struct v92_phase4_ed_tx training;
 	struct v90_downstream_data_stream data;
 };
 

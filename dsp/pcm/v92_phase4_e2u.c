@@ -71,13 +71,11 @@ static bool digital_state_is_valid(
 	    !downstream_mapping(&state->cpu, &data_mapping))
 		return false;
 	if (state->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING) {
-		const struct pcm_downstream_tx *training =
+		const struct v92_phase4_ed_tx *training =
 			&state->downstream.training;
 
-		downstream_valid = pcm_downstream_tx_is_valid(training) &&
-			training->protocol == PCM_PROTOCOL_V92 &&
-			training->ed_requested &&
-			state->cpu.law == training->encoder.mapping.law;
+		downstream_valid = v92_phase4_ed_tx_is_valid(training) &&
+			state->cpu.law == training->transmit.encoder.mapping.law;
 	} else {
 		downstream_valid = v90_downstream_data_stream_is_valid(
 			&state->downstream.data) &&
@@ -207,9 +205,6 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 		    &initialized.state.digital.receive,
 		    &handoff->receive.signal, handoff->mapping.cpd.extend_e2u) !=
 		    V92_E2U_RX_OK ||
-	    pcm_downstream_tx_request_ed(
-		    &initialized.state.digital.downstream.training) !=
-		    PCM_DOWNSTREAM_TX_OK ||
 	    !v92_phase4_e2u_is_valid(&initialized))
 		return V92_PHASE4_E2U_INVALID_PARAMETERS;
 	*owner = initialized;
@@ -346,7 +341,7 @@ static bool start_digital_downstream_data(
 
 	if (!downstream_mapping(cpu, &mapping) ||
 	    v90_downstream_data_stream_start_after_ed(
-		    &data, &downstream->training, &mapping) !=
+		    &data, &downstream->training.transmit, &mapping) !=
 		    V90_DOWNSTREAM_DATA_STREAM_OK)
 		return false;
 	*downstream = (union v92_phase4_e2u_digital_downstream){
@@ -367,7 +362,7 @@ enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
 
 	if (*stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING) {
 		struct pcm_downstream_symbol training_symbol;
-		enum pcm_downstream_tx_result result = pcm_downstream_tx_next(
+		enum pcm_downstream_tx_result result = v92_phase4_ed_tx_next(
 			&downstream->training, &training_symbol);
 
 		if (result == PCM_DOWNSTREAM_TX_OK) {
@@ -582,12 +577,9 @@ bool v92_phase4_e2u_handoff_is_valid(
 			return false;
 		if (digital->downstream_stage ==
 		    V92_PHASE4_E2U_DOWNSTREAM_TRAINING) {
-			downstream_valid = pcm_downstream_tx_is_valid(
+			downstream_valid = v92_phase4_ed_tx_is_valid(
 				&digital->downstream.training) &&
-				digital->downstream.training.protocol ==
-					PCM_PROTOCOL_V92 &&
-				digital->downstream.training.ed_requested &&
-				digital->downstream.training.encoder.mapping.law ==
+				digital->downstream.training.transmit.encoder.mapping.law ==
 					digital->cpu.law;
 		} else {
 			downstream_valid = v90_downstream_data_stream_is_valid(

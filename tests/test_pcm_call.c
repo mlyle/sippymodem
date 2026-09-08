@@ -5665,8 +5665,13 @@ static bool run_v92_duplex_data(
 		struct v92_cpd_parameters expected;
 		struct v92_pcm_mapping mapping;
 
-		CHECK(v92_cpd_direct_init(&expected, law, offer->expected, false) == V92_CPD_OK &&
-		      v92_pcm_mapping_init(&mapping, law, &expected) == V92_PCM_MAPPING_OK &&
+		CHECK(v92_cpd_direct_init(&expected, law, offer->expected, false) == V92_CPD_OK,
+		      "V.92 expected upstream selection did not initialize");
+		/* CPd-prime repeats the same selection with CPu acknowledged. The
+		 * acknowledgement may now be in CPd rather than a later SUVd. */
+		expected.acknowledges_cpu = analog.state.data_path.v92_analog
+			.upstream.encoder.mapping.cpd.acknowledges_cpu;
+		CHECK(v92_pcm_mapping_init(&mapping, law, &expected) == V92_PCM_MAPPING_OK &&
 		      v92_pcm_mapping_equal(&mapping, &analog.state.data_path.v92_analog
 						       .upstream.encoder.mapping) &&
 		      v92_pcm_mapping_equal(&mapping, &digital.state.data_path.v92_digital

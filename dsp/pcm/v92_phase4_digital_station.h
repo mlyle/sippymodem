@@ -33,8 +33,9 @@ enum v92_phase4_digital_station_tx_stage {
  * inherited downstream transmitter remains continuous with TRN2d. A valid
  * SUVu selects one complete initial CPd followed by SUVd; a later valid CPu
  * makes that initial CPd or the next SUVd acknowledge it. Each change waits for a
- * complete current record. Timeout-driven CPd repetition, Ed, and the data-
- * mode handoff are deliberately outside this initial owner. One instance is
+ * complete current record. After 100 ms + RTD without acknowledgement, a
+ * complete unacknowledging CPu/SUVu starts continuous CPd repetition. The
+ * final record and Ed drain in the handoff's transmitter. One instance is
  * serialized; receive and transmit share procedure state. */
 struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
@@ -44,21 +45,24 @@ struct v92_phase4_digital_station {
 	struct v92_suvu_parameters suvu;
 	uint64_t cpd_start_frame;
 	uint64_t status_start_frame;
+	uint64_t acknowledgement_end_frame;
+	uint16_t round_trip_delay_samples;
 	enum v92_phase4_digital_station_tx_stage transmit_stage;
 	bool request_silence;
 	bool suvu_received;
 	bool cpu_received;
 	bool transmit_acknowledges_cpu;
 	bool peer_acknowledged_cpd;
+	bool repeat_cpd;
 	bool failed;
 };
 
 /* Exact duplex boundary after both selected controls are acknowledged. The
  * warm upstream line continues into E2u while the downstream coder completes
- * its acknowledging status record and Ed. */
+ * its current CPd/SUVd and Ed. */
 struct v92_phase4_digital_handoff {
 	struct v92_upstream_control_line_rx receive;
-	struct pcm_downstream_tx transmit;
+	struct v92_phase4_ed_tx transmit;
 	struct v92_cpu_parameters cpu;
 	/* The complete CPd actually transmitted, not a regenerated profile. */
 	struct v92_pcm_mapping mapping;
@@ -72,7 +76,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
-	const struct v92_cpd_parameters *cpd);
+	const struct v92_cpd_parameters *cpd,
+	uint16_t round_trip_delay_samples);
 
 bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station);
@@ -100,9 +105,9 @@ bool v92_phase4_digital_station_cpu_parameters(
 bool v92_phase4_digital_station_peer_acknowledged_cpd(
 	const struct v92_phase4_digital_station *station);
 
-/* Ed may replace the repeated downstream status once a complete CPu has been
- * accepted, its selected CPd has been acknowledged, and the downstream status
- * has been changed to acknowledge CPu. */
+/* Begin E2u reception once a complete CPu has been accepted, CPd has been
+ * acknowledged, and an acknowledging downstream record has been sourced.
+ * The handoff drains any current CPd/SUVd before Ed without losing E2u. */
 bool v92_phase4_digital_station_is_ed_ready(
 	const struct v92_phase4_digital_station *station);
 

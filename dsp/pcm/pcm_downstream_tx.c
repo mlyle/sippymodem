@@ -926,8 +926,10 @@ static enum pcm_downstream_tx_result generate_frame(
 		if (source_record->bit_index == 0u)
 			transmitter->v92_control_record_accepted = false;
 		source_record->bit_index += bit_count;
-		if (source_record->bit_index == source_record->sequence_bits)
+		if (source_record->bit_index == source_record->sequence_bits) {
 			source_record->complete = true;
+			transmitter->v92_control_record_accepted = true;
+		}
 	} else if (transmitter->stage == PCM_DOWNSTREAM_TX_MP ||
 	    transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME ||
 	    transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL) {
