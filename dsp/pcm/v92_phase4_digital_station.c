@@ -491,8 +491,9 @@ bool v92_phase4_digital_handoff_is_valid(
 	       pcm_downstream_tx_is_v92_control_boundary(&handoff->transmit) &&
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
 	       handoff->cpu.law == handoff->transmit.encoder.mapping.law &&
-	       v92_cpd_base_parameters_are_valid(&handoff->cpd) &&
-	       !handoff->cpd.acknowledges_cpu;
+	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
+	       handoff->mapping.law == handoff->cpu.law &&
+	       handoff->receive.signal.line.law == handoff->mapping.law;
 }
 
 enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
@@ -500,6 +501,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 	struct v92_phase4_digital_handoff *handoff)
 {
 	struct v92_phase4_digital_handoff generated;
+	struct v92_cpd_parameters parameters;
 
 	if (station == NULL || handoff == NULL ||
 	    memory_regions_overlap(
@@ -512,8 +514,18 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 		.receive = station->receive.signal.control,
 		.transmit = station->transmit,
 		.cpu = station->cpu,
-		.cpd = station->cpd,
 	};
+	/* The wire owner already retains every negotiated section. Decode it
+	 * once at this boundary instead of reconstructing filters and levels
+	 * from the compact initial selection. This also preserves CPd-prime. */
+	if (v92_cpd_decode(station->initial_cpd.sequence,
+			   sizeof(station->initial_cpd.sequence),
+			   station->initial_cpd.sequence_bits,
+			   station->initial_cpd.frame_bits, &parameters) != V92_CPD_OK ||
+	    v92_pcm_mapping_init(&generated.mapping,
+				 station->transmit.encoder.mapping.law, &parameters) !=
+		    V92_PCM_MAPPING_OK)
+		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
 	if (!v92_phase4_digital_handoff_is_valid(&generated))
 		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
 	*handoff = generated;

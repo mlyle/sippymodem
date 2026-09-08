@@ -89,9 +89,12 @@ static bool digital_state_is_valid(
 	       v92_upstream_control_line_rx_is_valid(&state->control) &&
 	       !v92_upstream_control_line_rx_has_failed(&state->control) &&
 	       downstream_valid &&
-	       v92_cpd_base_parameters_are_valid(&state->cpd) &&
+	       v92_pcm_mapping_is_valid(&state->mapping) &&
+	       state->mapping.law == state->cpu.law &&
+	       state->receive.signal.line.law == state->mapping.law &&
+	       state->control.signal.line.law == state->mapping.law &&
 	       state->receive.expected_symbols ==
-		       (state->cpd.extend_e2u ?
+		       (state->mapping.cpd.extend_e2u ?
 			V92_PHASE4_E2U_EXTENDED_SYMBOLS :
 			V92_PHASE4_E2U_SYMBOLS);
 }
@@ -197,12 +200,12 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 	initialized.state.digital.control = handoff->receive;
 	initialized.state.digital.downstream.training = handoff->transmit;
 	initialized.state.digital.cpu = handoff->cpu;
-	initialized.state.digital.cpd = handoff->cpd;
+	initialized.state.digital.mapping = handoff->mapping;
 	initialized.state.digital.downstream_stage =
 		V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
 	if (v92_e2u_rx_init(
 		    &initialized.state.digital.receive,
-		    &handoff->receive.signal, handoff->cpd.extend_e2u) !=
+		    &handoff->receive.signal, handoff->mapping.cpd.extend_e2u) !=
 		    V92_E2U_RX_OK ||
 	    pcm_downstream_tx_request_ed(
 		    &initialized.state.digital.downstream.training) !=
@@ -448,7 +451,7 @@ static enum v92_phase4_e2u_result digital_receive(
 	if (!control_event_rearms_trial(state, &event) ||
 	    v92_e2u_rx_init(
 		    &state->receive, &state->control.signal,
-		    state->cpd.extend_e2u) != V92_E2U_RX_OK)
+		    state->mapping.cpd.extend_e2u) != V92_E2U_RX_OK)
 		return V92_PHASE4_E2U_FAILED;
 	return V92_PHASE4_E2U_OK;
 }
@@ -573,7 +576,9 @@ bool v92_phase4_e2u_handoff_is_valid(
 		return v92_upstream_rx_is_valid(&digital->receive) &&
 		       !v92_upstream_rx_has_failed(&digital->receive) &&
 		       downstream_valid &&
-		       v92_cpd_base_parameters_are_valid(&digital->cpd);
+		       v92_pcm_mapping_is_valid(&digital->mapping) &&
+		       digital->mapping.law == digital->cpu.law &&
+		       digital->receive.line.law == digital->mapping.law;
 	}
 }
 
@@ -614,7 +619,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_handoff(
 			return V92_PHASE4_E2U_INTERNAL_ERROR;
 		generated.state.digital.downstream = digital->downstream;
 		generated.state.digital.cpu = digital->cpu;
-		generated.state.digital.cpd = digital->cpd;
+		generated.state.digital.mapping = digital->mapping;
 		generated.state.digital.downstream_stage =
 			digital->downstream_stage;
 	}

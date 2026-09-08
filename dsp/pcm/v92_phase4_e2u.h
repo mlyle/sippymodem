@@ -51,7 +51,7 @@ struct v92_phase4_e2u_digital_state {
 	struct v92_upstream_control_line_rx control;
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
-	struct v92_cpd_base_parameters cpd;
+	struct v92_pcm_mapping mapping;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 };
 
@@ -81,7 +81,7 @@ struct v92_phase4_e2u_digital_handoff {
 	struct v92_upstream_rx receive;
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
-	struct v92_cpd_base_parameters cpd;
+	struct v92_pcm_mapping mapping;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 };
 

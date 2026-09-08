@@ -278,8 +278,10 @@ static bool prepare_digital_fixture(
 		.receive = upstream_rx,
 		.transmit = downstream_tx,
 		.cpu = fixture->cpu,
-		.cpd = cpd,
 	};
+	if (v92_pcm_mapping_init(&handoff.mapping, law, &full_cpd) !=
+	    V92_PCM_MAPPING_OK)
+		return false;
 	return v92_phase4_e2u_init_digital(&fixture->owner, &handoff) ==
 		       V92_PHASE4_E2U_OK;
 }
@@ -531,8 +533,13 @@ static bool run_crossing(
 				    V92_PHASE4_E2U_SYMBOLS;
 
 	CHECK(v92_cpd_direct_init(
-		      &full_cpd, law, 12u, extended) == V92_CPD_OK &&
-	      v92_pcm_mapping_init(
+		      &full_cpd, law, 12u, extended) == V92_CPD_OK,
+	      "crossing CPd did not initialize");
+	/* A non-default selected filter must survive E2u without regeneration. */
+	if (extended)
+		full_cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
+			(struct v92_cpd_filter){ .count = 1u, .coefficient = { 4096 } };
+	CHECK(v92_pcm_mapping_init(
 		      &upstream_mapping, law, &full_cpd) ==
 		      V92_PCM_MAPPING_OK,
 	      "law %u extended %u CPd mapping did not initialize",
@@ -577,7 +584,7 @@ static bool run_crossing(
 		.receive = upstream_rx,
 		.transmit = downstream_tx,
 		.cpu = cpu,
-		.cpd = cpd,
+		.mapping = upstream_mapping,
 	};
 	CHECK(v92_phase4_analog_handoff_is_valid(&analog_handoff),
 	      "law %u extended %u analogue handoff was invalid",
@@ -651,9 +658,18 @@ static bool run_crossing(
 	      v92_phase4_e2u_handoff(&digital, &digital_done) ==
 		      V92_PHASE4_E2U_OK &&
 	      v92_phase4_e2u_handoff_is_valid(&analog_done) &&
-	      v92_phase4_e2u_handoff_is_valid(&digital_done),
+	      v92_phase4_e2u_handoff_is_valid(&digital_done) &&
+	      v92_pcm_mapping_equal(&digital_done.state.digital.mapping,
+				    &analog_done.state.analog.mapping) &&
+	      v92_pcm_mapping_equal(&digital_done.state.digital.mapping,
+				    &upstream_mapping),
 	      "law %u extended %u lookahead %u handoff did not match",
 	      (unsigned int)law, extended, lookahead);
+	struct v92_phase4_e2u_handoff rejected = digital_done;
+
+	rejected.state.digital.mapping.law ^= 1u;
+	CHECK(!v92_phase4_e2u_handoff_is_valid(&rejected),
+	      "E2u exported a mapping for a different PCM law");
 	/* B1u begins on the very next media interval, using the accepted CPd
 	 * and trained LU but fresh data-coding histories for either E2u length. */
 	struct v92_upstream_data_tx upstream;
@@ -670,7 +686,8 @@ static bool run_crossing(
 		      &upstream, &handoff->mapping, handoff->transmit.lu) ==
 		      V92_UPSTREAM_DATA_TX_OK &&
 	      v92_upstream_data_rx_init(&upstream_receive,
-		      &digital_done.state.digital.receive, &handoff->mapping) ==
+		      &digital_done.state.digital.receive,
+		      &digital_done.state.digital.mapping) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      v92_pcm_frame_tx_init(&encoder, &handoff->mapping) ==
 		      V92_PCM_FRAME_OK &&

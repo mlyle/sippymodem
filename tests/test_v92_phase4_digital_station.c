@@ -833,6 +833,48 @@ static bool test_full_cpd_ownership(void)
 	return true;
 }
 
+static bool check_digital_mapping_handoff(
+	const struct v92_phase4_digital_station *ready)
+{
+	struct v92_phase4_digital_station prime = *ready;
+	struct v92_cpd_base_parameters selection = prime.cpd;
+	struct v92_phase4_digital_handoff handoff;
+	struct v92_pcm_mapping expected;
+	struct v92_cpd_parameters parameters;
+
+	/* A retained CPd-prime differs from the original compact selection.
+	 * Rebuild only the fixture's record, with the same completed extent. */
+	selection.acknowledges_cpu = true;
+	CHECK(v92_phase4_cpd_tx_init(&prime.initial_cpd, &prime.transmit, &selection),
+	      "CPd-prime fixture did not encode");
+	prime.initial_cpd.bit_index = prime.initial_cpd.sequence_bits;
+	prime.initial_cpd.complete = true;
+	CHECK(v92_phase4_digital_station_is_valid(&prime) &&
+	      v92_cpd_decode(prime.initial_cpd.sequence,
+		      sizeof(prime.initial_cpd.sequence), prime.initial_cpd.sequence_bits,
+		      prime.initial_cpd.frame_bits, &parameters) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&expected, prime.transmit.encoder.mapping.law,
+		      &parameters) == V92_PCM_MAPPING_OK &&
+	      v92_phase4_digital_station_handoff(&prime, &handoff) ==
+		      V92_PHASE4_DIGITAL_STATION_OK &&
+	      handoff.mapping.cpd.acknowledges_cpu &&
+	      v92_pcm_mapping_equal(&handoff.mapping, &expected),
+	      "handoff regenerated CPd instead of retaining the transmitted record");
+	for (unsigned int mutation = 0u; mutation < 3u; ++mutation) {
+		struct v92_phase4_digital_handoff rejected = handoff;
+
+		if (mutation == 0u)
+			rejected.mapping.data_bits_per_frame++;
+		else if (mutation == 1u)
+			rejected.mapping.law ^= 1u;
+		else
+			rejected.receive.signal.line.law ^= 1u;
+		CHECK(!v92_phase4_digital_handoff_is_valid(&rejected),
+		      "inconsistent digital mapping handoff %u accepted", mutation);
+	}
+	return true;
+}
+
 static bool run_paired_station_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
 	uint8_t previous_sign, int8_t polarity)
@@ -1052,9 +1094,12 @@ static bool run_paired_station_exchange(
 	      memcmp(&digital_handoff_out.transmit, &digital.transmit,
 		     sizeof(digital.transmit)) == 0 &&
 	      cpu_equal(&digital_handoff_out.cpu, &expected_cpu) &&
-	      base_cpd_equal(&digital_handoff_out.cpd, &cpd),
+	      v92_pcm_mapping_equal(&digital_handoff_out.mapping,
+				    &expected_upstream_mapping),
 	      "paired station handoff lost duplex state law=%u constellation=%u",
 	      (unsigned int)law, (unsigned int)constellation);
+	CHECK(check_digital_mapping_handoff(&digital),
+	      "digital mapping handoff contract changed");
 	request_ed_result = pcm_downstream_tx_request_ed(
 		&digital_handoff_out.transmit);
 	CHECK(request_ed_result == PCM_DOWNSTREAM_TX_OK &&

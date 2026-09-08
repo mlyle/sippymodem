@@ -5286,8 +5286,9 @@ static bool run_v92_phase4_control(
 		      &analog_control.station) &&
 	      v92_cpu_parameters_are_valid(
 		      &digital.state.phase4.v92.owner.e2u.state.digital.cpu) &&
-	      v92_cpd_base_parameters_are_valid(
-		      &digital.state.phase4.v92.owner.e2u.state.digital.cpd) &&
+	      v92_pcm_mapping_equal(
+		      &digital.state.phase4.v92.owner.e2u.state.digital.mapping,
+		      &analog.state.phase4.v92.owner.e2u.state.analog.mapping) &&
 	      analog_control.station.cpd_received &&
 	      analog_control.station.suvd.request_silence ==
 		      digital_configuration.v92_digital_phase4.suvd
@@ -5300,17 +5301,17 @@ static bool run_v92_phase4_control(
 		      analog_configuration.v92_analog_phase4.cpu
 			      .data_rate_number &&
 	      digital.state.phase4.v92.owner.e2u.state.digital.cpu.law == law &&
-	      digital.state.phase4.v92.owner.e2u.state.digital.cpd
+	      digital.state.phase4.v92.owner.e2u.state.digital.mapping.cpd
 		      .data_rate_number ==
 		      digital_configuration.v92_digital_phase4.cpd
 			      .data_rate_number &&
-	      digital.state.phase4.v92.owner.e2u.state.digital.cpd.trellis ==
+	      digital.state.phase4.v92.owner.e2u.state.digital.mapping.cpd.trellis ==
 		      digital_configuration.v92_digital_phase4.cpd.trellis &&
-	      digital.state.phase4.v92.owner.e2u.state.digital.cpd
+	      digital.state.phase4.v92.owner.e2u.state.digital.mapping.cpd
 		      .four_times_gain_q0_16 ==
 		      digital_configuration.v92_digital_phase4.cpd
 			      .four_times_gain_q0_16 &&
-	      digital.state.phase4.v92.owner.e2u.state.digital.cpd.extend_e2u ==
+	      digital.state.phase4.v92.owner.e2u.state.digital.mapping.cpd.extend_e2u ==
 		      digital_configuration.v92_digital_phase4.cpd.extend_e2u &&
 	      v90_pcm_mapping_equal(
 		      &analog_control.station.receive.stream.decoder.mapping,

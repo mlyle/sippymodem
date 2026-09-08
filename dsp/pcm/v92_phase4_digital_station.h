@@ -6,6 +6,7 @@
 #include "pcm_downstream_tx.h"
 #include "v92_phase4_cpd_tx.h"
 #include "v92_phase4_digital_rx.h"
+#include "v92_pcm_mapping.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -60,7 +61,8 @@ struct v92_phase4_digital_handoff {
 	struct v92_upstream_control_line_rx receive;
 	struct pcm_downstream_tx transmit;
 	struct v92_cpu_parameters cpu;
-	struct v92_cpd_base_parameters cpd;
+	/* The complete CPd actually transmitted, not a regenerated profile. */
+	struct v92_pcm_mapping mapping;
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
