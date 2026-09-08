@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_cpd_direct.h>
+#include <v92_data_quality.h>
 #include <v92_e2u_rx.h>
 #include <v92_phase4_record_tx.h>
 #include <v92_upstream_data_rx.h>
@@ -157,13 +158,15 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 	struct v92_upstream_data_rx receiver;
 	struct idle_source source = { .idle_frames = IDLE_FRAMES };
 	unsigned int delivered = 0u;
+	double b1u_error = 0.0;
+	int16_t trained_lu = 0;
 	int16_t measured_lu = law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(TEST_LU)) :
 		g711_decode_pcma(g711_encode_pcma(TEST_LU));
 
 	/* TRN1u estimates LU from quantized samples, not the transmitter's
 	 * exact scalar. Carry the fast training step through real E2u, then
-	 * require clean idle and payload decisions. The dense 48k case checks
+	 * require usable B1u and clean idle/payload. Dense 40k/48k cases check
 	 * quantization stability; the lower-rate case checks ongoing tracking. */
 	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
@@ -190,6 +193,8 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.adaptation > 0.0 &&
 	      receiver.line.adaptation < handoff.line.adaptation &&
+	      receiver.line.minimum_level <= TEST_LU &&
+	      receiver.line.maximum_level >= TEST_LU &&
 	      memcmp(&receiver.line.equalizer, &handoff.line.equalizer,
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "tracking handoff changed learned coefficients or pending inputs");
@@ -212,6 +217,14 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 			wire_sample(&channel, sample), &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "tracking receiver stopped");
+		if (result == V92_UPSTREAM_DATA_RX_FRAME &&
+		    receiver.line.received_frames <= V92_B1U_FRAMES)
+			b1u_error += frame.squared_error;
+		if (receiver.line.received_frames == V92_B1U_FRAMES)
+			trained_lu = receiver.decoder.upstream_level;
+		if (receiver.line.received_frames > V92_B1U_FRAMES)
+			CHECK(receiver.decoder.upstream_level == trained_lu,
+			      "unknown payload changed the trained LU");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME || frame.bit_count == 0u)
 			continue;
 		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
@@ -223,12 +236,17 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 				delivered - V92_B1U_FRAMES - IDLE_FRAMES);
 		CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
 		      memcmp(expected, frame.bits, frame.bit_count) == 0,
-		      "law %u drift %u frame %u changed data: ambiguous=%u error=%.2f",
-		      (unsigned int)law, drift, delivered, frame.ambiguous, frame.squared_error);
+		      "law %u rate %u drift %u frame %u changed data: LU=%d ambiguous=%u error=%.2f",
+		      (unsigned int)law, rate, drift, delivered, receiver.decoder.upstream_level,
+		      frame.ambiguous, frame.squared_error);
 		delivered++;
 	}
 	CHECK(delivered == V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES,
 	      "tracking lost payload frames");
+	CHECK(b1u_error <= (double)V92_B1U_SYMBOLS *
+		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "law %u rate %u rejected clean quantized B1u: RMS %.2f",
+	      (unsigned int)law, rate, sqrt(b1u_error / V92_B1U_SYMBOLS));
 	return true;
 }
 
@@ -519,7 +537,9 @@ static bool test_rejection_and_failure(void)
 		if (result == V92_UPSTREAM_DATA_RX_FRAME)
 			training_error += frame.squared_error;
 	}
-	CHECK(training_error > 0u && v92_upstream_data_rx_b1u_complete(&receiver),
+	CHECK(training_error > (double)V92_B1U_SYMBOLS *
+		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
+	      v92_upstream_data_rx_b1u_complete(&receiver),
 	      "known B1u bits hid unusable samples or moved the boundary");
 	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
 		      V92_UPSTREAM_DATA_RX_OK, "clipped-input initialization failed");
@@ -539,6 +559,8 @@ static bool test_rejection_and_failure(void)
 int main(void)
 {
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true))
 		return 1;
 	const struct {

@@ -8,6 +8,31 @@
 #include <math.h>
 #include <string.h>
 
+static int16_t quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+static int16_t level_bound(enum g711_law law, int16_t level, bool upper)
+{
+	int low = upper ? level : 1;
+	int high = upper ? INT16_MAX : level;
+	int16_t code_level = quantize(law, level);
+
+	while (low < high) {
+		int middle = low + (high - low + (upper ? 1 : 0)) / 2;
+		bool same = quantize(law, (int16_t)middle) == code_level;
+
+		if (upper ? same : !same)
+			low = middle + (upper ? 0 : 1);
+		else
+			high = middle - (upper ? 1 : 0);
+	}
+	return (int16_t)low;
+}
+
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
@@ -19,6 +44,9 @@ bool v92_upstream_data_rx_is_valid(
 		    V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
 	    !qam_adaptation_is_valid(receiver->line.adaptation) ||
 	    (receiver->line.polarity != -1 && receiver->line.polarity != 1) ||
+	    receiver->line.minimum_level <= 0 ||
+	    receiver->line.minimum_level > receiver->decoder.upstream_level ||
+	    receiver->line.maximum_level < receiver->decoder.upstream_level ||
 	    receiver->line.symbol_count >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
 	    receiver->line.received_frames >
 		    receiver->line.input_samples / V92_PCM_MAPPING_FRAME_SYMBOLS ||
@@ -77,6 +105,8 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		 * caller-selected step, but bound decision-directed tracking. */
 		.adaptation = fmin(handoff->line.adaptation, 0.002),
 		.polarity = handoff->line.polarity,
+		.minimum_level = level_bound(mapping->law, handoff->line.demodulator.lu, false),
+		.maximum_level = level_bound(mapping->law, handoff->line.demodulator.lu, true),
 	};
 	if (v92_pcm_frame_rx_init(&initialized.decoder, mapping,
 				 handoff->line.demodulator.lu) != V92_PCM_FRAME_OK ||
@@ -100,13 +130,6 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 	    v92_pcm_frame_rx_reset_control(&receiver->decoder) != V92_PCM_FRAME_OK)
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	return V92_UPSTREAM_DATA_RX_OK;
-}
-
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
 }
 
 static int16_t rounded_sample(double level)
@@ -141,6 +164,13 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+	/* LU came from a quantized training waveform. A tiny level error can
+	 * put a dense CPd point on the opposite side of a much wider G.711 cell.
+	 * Fit the known B1u waveform inside that initial uncertainty, not by
+	 * weakening the residual ceiling or adapting level from unknown data. */
+	if (b1u && v92_pcm_frame_rx_refine_level(&decoder, &decision.frame,
+		    line->samples, line->minimum_level, line->maximum_level) != V92_PCM_FRAME_OK)
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 		struct qam_point target;

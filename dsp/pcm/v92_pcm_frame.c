@@ -367,6 +367,69 @@ static int16_t scale_sample(
 			upstream_level, V92_PCM_GAIN_SHIFT));
 }
 
+static int16_t quantized_sample(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+static uint64_t level_error(
+	const struct v92_pcm_mapping *mapping, int16_t level,
+	const struct v92_pcm_frame *frame, const int16_t *samples)
+{
+	uint64_t error = 0u;
+
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int64_t residual = (int64_t)samples[symbol] - quantized_sample(
+			mapping->law, scale_sample(mapping, level, frame->v[symbol]));
+
+		error += (uint64_t)(residual * residual);
+	}
+	return error;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
+	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	int16_t minimum_level, int16_t maximum_level)
+{
+	if (receiver == NULL || frame == NULL || samples == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), samples,
+				   V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples)))
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_rx_is_valid(receiver) || minimum_level <= 0 ||
+	    minimum_level > receiver->upstream_level || maximum_level < receiver->upstream_level)
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	int16_t best = receiver->upstream_level;
+	uint64_t best_error = level_error(&receiver->mapping, best, frame, samples);
+	int distance = 1;
+
+	/* Quantization makes the objective piecewise constant. Visit closest
+	 * integer levels first rather than moving arbitrarily across a plateau. */
+	while (best_error != 0u &&
+	       (receiver->upstream_level - distance >= minimum_level ||
+		receiver->upstream_level + distance <= maximum_level)) {
+		for (int direction = -1; direction <= 1; direction += 2) {
+			int candidate = receiver->upstream_level + direction * distance;
+
+			if (candidate < minimum_level || candidate > maximum_level)
+				continue;
+			uint64_t error = level_error(&receiver->mapping,
+				(int16_t)candidate, frame, samples);
+
+			if (error < best_error) {
+				best_error = error;
+				best = (int16_t)candidate;
+			}
+		}
+		distance++;
+	}
+	receiver->upstream_level = best;
+	return V92_PCM_FRAME_OK;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_encode(
 	struct v92_pcm_frame_tx *transmitter,
 	const uint8_t *bits, size_t bit_count,
@@ -589,9 +652,7 @@ static int16_t predicted_sample(
 	int16_t sample = scale_sample(
 		&receiver->mapping, receiver->upstream_level, v);
 
-	return receiver->mapping.law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
+	return quantized_sample(receiver->mapping.law, sample);
 }
 
 static bool b1u_digits(

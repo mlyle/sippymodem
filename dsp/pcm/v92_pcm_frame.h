@@ -118,6 +118,15 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
 
+/* Refine only the receive level against a known training frame. Search the
+ * caller's original bounded LU interval, preserving the current estimate on
+ * equal residuals. Coding histories and payload decisions are unchanged; the
+ * line owner must still qualify the unrounded equalizer residual. */
+enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
+	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	int16_t minimum_level, int16_t maximum_level);
+
 /* Receive the matching control boundary. Reset descrambler and differential
  * state on EVERY surviving path, retaining metrics, ambiguity, filters,
  * trellis, and pending payload. Already decoded bits still emerge after the

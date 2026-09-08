@@ -243,6 +243,52 @@ static bool test_filters(void)
 	return true;
 }
 
+static bool test_level_refinement(void)
+{
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	struct v92_pcm_frame frame;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+	memset(bits, 1, sizeof(bits));
+	CHECK(initialize(&tx, 13u, G711_LAW_PCMU) &&
+	      v92_pcm_frame_rx_init(&rx, &tx.mapping, B1U_TEST_LEVEL) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "level-refinement fixture failed");
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int16_t sample;
+
+		CHECK(v92_pcm_frame_scale(&tx.mapping, B1U_TEST_LEVEL, frame.v[symbol],
+			      &sample) == V92_PCM_FRAME_OK, "level-refinement scaling failed");
+		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
+	}
+	struct v92_pcm_frame_rx saved = rx;
+
+	CHECK(v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4000, 4200) ==
+		      V92_PCM_FRAME_OK && memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "equal-error refinement changed LU or coding history");
+	CHECK(v92_pcm_frame_rx_refine_level(NULL, &frame, samples, 4000, 4200) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, NULL, samples, 4000, 4200) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &frame, NULL, 4000, 4200) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, (const struct v92_pcm_frame *)&rx,
+		      samples, 4000, 4200) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &frame, (const int16_t *)&rx,
+		      4000, 4200) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 0, 4200) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4100, 4200) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4000, 4090) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      "invalid refinement changed LU or coding history");
+	return true;
+}
+
 static bool test_rejection_and_names(void)
 {
 	static const char *const names[] = {
@@ -310,7 +356,7 @@ static bool test_rejection_and_names(void)
 int main(void)
 {
 	if (!test_b1u_oracle() || !test_rate_matrix_and_reset() ||
-	    !test_filters() || !test_rejection_and_names())
+	    !test_filters() || !test_level_refinement() || !test_rejection_and_names())
 		return 1;
 	return 0;
 }
