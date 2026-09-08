@@ -62,6 +62,8 @@ union pcm_call_local_info1 {
 	struct {
 		struct v90_info1a analog;
 		struct v92_pcm_info1a v92_analog;
+		/* Local policy; the analogue station chooses its INFO1a response. */
+		bool pcm_upstream_enabled;
 	};
 };
 
@@ -303,9 +305,9 @@ struct pcm_call_data_event {
 	enum pcm_call_data_event_kind kind;
 };
 
-/* Own one post-V.8 PCM startup. V.90 continues through its role-specific data
- * path. V.92 starts the shared downstream Phase 4 epoch during the split
- * CPt/E1u handoff, continues through the CP/SUV control exchange, and owns the
+/* Own one post-V.8 PCM startup. V.90 and V.92 share the conventional-upstream
+ * path. With PCM upstream selected, V.92 starts downstream Phase 4 during
+ * the split CPt/E1u handoff, continues through CP/SUV control, and owns the
  * post-control E2u/Ed crossing into continuous PCM upstream and downstream
  * data. Calls on one instance must be serialized. */
 struct pcm_call {
@@ -357,7 +359,7 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
  * pre-control startup and an already committed E/Ed are not interrupted.
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
- * Native V.92 zero-rate cleardown is not yet implemented and is rejected here.
+ * PCM-upstream zero-rate cleardown is not yet implemented and is rejected here.
  * A completed local or peer cleardown is idempotent and cannot retrain. */
 enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 

@@ -367,6 +367,7 @@ static struct pcm_call_configuration v92_configuration(
 			.v92_capable = true,
 		};
 		configuration.local_info1.v92_analog = v92_analog_info1();
+		configuration.local_info1.pcm_upstream_enabled = true;
 		configuration.phase3.v92_analog =
 			(struct v92_phase3_analog_station_configuration){
 				.local_info1a = v92_analog_info1(),
@@ -5637,9 +5638,9 @@ static bool run_v92_duplex_data(
 	bool deadline_checked[2] = { false, false };
 
 	if (offer != NULL) {
-		CHECK(!long_cpd && v92_pcm_profile_init(
+		CHECK(!long_cpd && v92_profile_init(
 			      &dc, V90_DIGITAL_MODEM, law, 28000u, 56000u,
-			      offer->local_maximum) == V92_PROFILE_OK,
+			      offer->local_maximum, NULL) == V92_PROFILE_OK,
 		      "V.92 negotiating profile failed");
 		ac.phase3.v92_analog.upstream_rate_mask = offer->peer_mask;
 	}
@@ -5823,7 +5824,14 @@ static bool test_v92_upstream_reselection(void)
 			CHECK(online && !calls[0].retrain_active && !calls[1].retrain_active &&
 			      pcm_call_uses_conventional_upstream(&calls[0]) == (epoch == 1u) &&
 			      pcm_call_uses_conventional_upstream(&calls[1]) == (epoch == 1u),
-			      "law %u epoch %u failed to reselect upstream online", law, epoch);
+			      "law %u epoch %u failed to reselect upstream: online %u retrain %u/%u "
+			      "stage %u/%u conventional %u/%u enabled %u/%u",
+			      law, epoch, online, calls[0].retrain_active, calls[1].retrain_active,
+			      calls[0].stage, calls[1].stage,
+			      pcm_call_uses_conventional_upstream(&calls[0]),
+			      pcm_call_uses_conventional_upstream(&calls[1]),
+			      calls[0].local_info1.pcm_upstream_enabled,
+			      calls[1].local_info1.v92_digital.pcm_upstream_supported);
 			if (epoch < 2u) {
 				calls[1].local_info1.v92_digital.pcm_upstream_supported = epoch != 0u;
 				CHECK(pcm_call_start_retrain(&calls[1u - epoch]) == PCM_CALL_OK &&

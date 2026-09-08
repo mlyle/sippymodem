@@ -498,8 +498,8 @@ static bool run_pcm_pair(
 	size_t upstream_history_fill = 0;
 
 	if (protocol == DP_V92) {
-		analog.sregs[SREG_V92_PCM_UPSTREAM] = 1;
-		digital.sregs[SREG_V92_PCM_UPSTREAM] = 1;
+		analog.sregs[SREG_V92_PCM_UPSTREAM] = pcm_upstream_max_drn != 0;
+		digital.sregs[SREG_V92_PCM_UPSTREAM] = pcm_upstream_max_drn != 0;
 		analog.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = pcm_upstream_max_drn;
 		digital.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = pcm_upstream_max_drn;
 	}
@@ -747,7 +747,7 @@ static bool run_pcm_pair(
 	      "retrain response did not exercise the complete tone dropout");
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
-	if (protocol == DP_V90) {
+	if (protocol == DP_V90 || pcm_upstream_max_drn == 0) {
 		uint64_t analog_supplied = analog_bits.supplied_bits;
 		uint64_t digital_supplied = digital_bits.supplied_bits;
 
@@ -1220,11 +1220,11 @@ static bool test_v92_pcm_upstream_selection(void)
 	operations = modem_dp_get_registered_ops(DP_V92);
 	analog.min_rate = analog.max_rate = 28000;
 	digital.min_rate = digital.max_rate = 28000;
-	CHECK(operations != NULL &&
-	      operations->create(
-		      &analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG,
-		      operations) == NULL,
-	      "V.92 accepted conventional upstream without an implementation");
+	CHECK(operations != NULL, "missing V.92 operations");
+	analog_dp = operations->create(
+		&analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG, operations);
+	CHECK(analog_dp != NULL && operations->delete(analog_dp) == 0,
+	      "V.92 rejected explicit conventional upstream");
 	analog.sregs[SREG_V92_PCM_UPSTREAM] = 1;
 	digital.sregs[SREG_V92_PCM_UPSTREAM] = 1;
 	analog.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 4;
@@ -1300,6 +1300,21 @@ static bool test_v92_pcm_host_data(void)
 		}
 	}
 	CHECK(v90_datapump_unregister() == 0, "V.92 host data leaked ownership");
+	return true;
+}
+
+static bool test_v92_conventional_host_data(void)
+{
+	CHECK(v90_datapump_register() == 0, "V.92 conventional registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum modem_pcm_role role = MODEM_PCM_ROLE_ANALOG;
+		     role <= MODEM_PCM_ROLE_DIGITAL; ++role)
+			CHECK(run_pcm_pair(DP_V92, 0, law, 28000, 14400, 14400, 14400, 3000,
+				MAXIMUM_RATE_RECEIVED_BITS, true, role, true, UNITY_GAIN_Q15,
+				RETURNED_ECHO_NONE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u conventional V.92 data/retrain/cleardown failed",
+			      law, role);
+	CHECK(v90_datapump_unregister() == 0, "V.92 conventional data leaked ownership");
 	return true;
 }
 
@@ -1638,6 +1653,7 @@ int main(void)
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
 		{ "V.92 PCM host data and retrain", test_v92_pcm_host_data },
+		{ "V.92 conventional host data and retrain", test_v92_conventional_host_data },
 		{ "V.92 automatic upstream quality recovery", test_v92_upstream_quality_recovery },
 		{ "forced upstream pairs", test_forced_upstream_pairs },
 		{ "sustained maximum-rate pairs",

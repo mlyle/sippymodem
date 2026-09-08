@@ -3,6 +3,7 @@
 #include <v92_profile.h>
 
 #include <pcm_rate.h>
+#include <v90_profile.h>
 #include <v90_pcm_mapping.h>
 #include <v92_pcm_dil.h>
 
@@ -77,10 +78,10 @@ static bool test_generated_profiles(void)
 					      &downstream, rate, rate) &&
 				      v92_pcm_dil_rate_mask_through(
 					      upstream_rate, &upstream_mask) &&
-				      v92_pcm_profile_init(
+				      v92_profile_init(
 					      &configuration, role, law,
 					      rate, rate,
-					      upstream_rate) ==
+					      upstream_rate, NULL) ==
 					      V92_PROFILE_OK &&
 				      pcm_call_init(&call, &configuration) ==
 					      PCM_CALL_OK &&
@@ -138,6 +139,8 @@ static bool test_generated_profiles(void)
 						      .v92_capable &&
 					      !configuration.local_info0.v92_analog
 						       .short_phase2_requested &&
+					      configuration.local_info1.pcm_upstream_enabled &&
+					      call.local_info1.pcm_upstream_enabled &&
 					      configuration.local_info1.v92_analog
 						      .maximum_total_coefficients == 256 &&
 					      phase3->upstream_rate_mask == upstream_mask &&
@@ -197,36 +200,100 @@ static bool test_generated_profiles(void)
 	return true;
 }
 
+static bool test_conventional_policy(void)
+{
+	const struct v90_upstream_policy policy = {
+		.minimum_bit_rate = 14400u,
+		.maximum_bit_rate = 14400u,
+		.maximum_symbol_rate = 3000u,
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v90_modem_role role = V90_ANALOG_MODEM;
+		     role <= V90_DIGITAL_MODEM; ++role)
+			for (uint8_t maximum = 0u; maximum <= 19u; maximum += 19u) {
+				struct pcm_call_configuration selected, conventional;
+				struct pcm_call call;
+
+				CHECK(v92_profile_init(&selected, role, law, 28000u, 28000u,
+					      maximum, &policy) == V92_PROFILE_OK &&
+				      v90_profile_init(&conventional, role, law, 28000u, 28000u,
+					      &policy) == V90_PROFILE_OK &&
+				      pcm_call_init(&call, &selected) == PCM_CALL_OK &&
+				      call.protocol == PCM_PROTOCOL_V92 && pcm_call_is_valid(&call),
+				      "role %u law %u PCM limit %u rejected conventional policy",
+				      role, law, maximum);
+				if (role == V90_ANALOG_MODEM) {
+					CHECK(selected.local_info1.pcm_upstream_enabled == (maximum != 0u) &&
+					      call.local_info1.pcm_upstream_enabled == (maximum != 0u) &&
+					      memcmp(&selected.local_info1.analog,
+						      &conventional.local_info1.analog,
+						      sizeof(selected.local_info1.analog)) == 0 &&
+					      memcmp(&selected.analog_phase4, &conventional.analog_phase4,
+						      sizeof(selected.analog_phase4)) == 0,
+					      "analogue V.92 lost upstream selection policy");
+				} else {
+					/* V.92 repurposes the optional 3429 high-carrier bit. */
+					conventional.local_info1.digital.answer_transmit[
+						V34_SYMBOL_RATE_3429].high_carrier = false;
+					CHECK(selected.local_info1.v92_digital.pcm_upstream_supported ==
+						      (maximum != 0u) &&
+					      call.local_info1.v92_digital.pcm_upstream_supported ==
+						      (maximum != 0u) &&
+					      memcmp(&selected.local_info1.v92_digital.v34,
+						      &conventional.local_info1.digital,
+						      sizeof(selected.local_info1.v92_digital.v34)) == 0 &&
+					      memcmp(&selected.digital_phase4, &conventional.digital_phase4,
+						      sizeof(selected.digital_phase4)) == 0,
+					      "digital V.92 lost upstream MP/INFO1 policy");
+				}
+				if (maximum == 0u) {
+					/* Disabled profiles need no dormant PCM training graph.
+					 * Enabling that capability requires valid parameters. */
+					if (role == V90_ANALOG_MODEM)
+						call.local_info1.pcm_upstream_enabled = true;
+					else
+						call.local_info1.v92_digital.pcm_upstream_supported = true;
+					CHECK(!pcm_call_is_valid(&call),
+					      "role %u enabled unconfigured PCM training", role);
+				}
+			}
+	return true;
+}
+
 static bool test_transactionality(void)
 {
 	struct pcm_call_configuration configuration;
 	struct pcm_call_configuration saved;
+	const struct v90_upstream_policy invalid = {
+		.minimum_bit_rate = 14400u, .maximum_bit_rate = 9600u,
+	};
 
 	memset(&configuration, 0xa5, sizeof(configuration));
 	saved = configuration;
-	CHECK(v92_pcm_profile_init(
+	CHECK(v92_profile_init(
 		      NULL, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      28000, 56000, 19) == V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
+		      28000, 56000, 19, NULL) == V92_PROFILE_INVALID_ARGUMENT &&
+	      v92_profile_init(
 		      &configuration, (enum v90_modem_role)-1,
-		      G711_LAW_PCMU, 28000, 56000, 19) ==
+		      G711_LAW_PCMU, 28000, 56000, 19, NULL) ==
 		      V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
+	      v92_profile_init(
 		      &configuration, V90_ANALOG_MODEM,
-		      (enum g711_law)-1, 28000, 56000, 19) ==
+		      (enum g711_law)-1, 28000, 56000, 19, NULL) ==
 		      V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
+	      v92_profile_init(
 		      &configuration, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      56000, 28000, 19) == V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
+		      56000, 28000, 19, NULL) == V92_PROFILE_INVALID_ARGUMENT &&
+	      v92_profile_init(
 		      &configuration, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      28000, 56000, 0) == V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
+		      28000, 56000, 20, NULL) == V92_PROFILE_INVALID_ARGUMENT &&
+	      v92_profile_init(
 		      &configuration, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      28000, 56000, 20) == V92_PROFILE_INVALID_ARGUMENT &&
-	      v92_pcm_profile_init(
-		      &configuration, V90_ANALOG_MODEM, G711_LAW_PCMU,
-		      1000, 2000, 19) == V92_PROFILE_UNSUPPORTED_RATE &&
+		      1000, 2000, 19, NULL) == V92_PROFILE_UNSUPPORTED_RATE &&
+	      v92_profile_init(
+		      &configuration, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		      28000, 56000, 0, &invalid) == V92_PROFILE_UNSUPPORTED_RATE &&
 	      memcmp(&configuration, &saved, sizeof(configuration)) == 0,
 	      "rejected V.92 profile changed its destination");
 	return true;
@@ -256,8 +323,8 @@ static bool test_result_names(void)
 
 int main(void)
 {
-	if (!test_generated_profiles() || !test_transactionality() ||
-	    !test_result_names())
+	if (!test_generated_profiles() || !test_conventional_policy() ||
+	    !test_transactionality() || !test_result_names())
 		return 1;
 	return 0;
 }

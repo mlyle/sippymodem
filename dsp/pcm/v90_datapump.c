@@ -79,20 +79,22 @@ static bool protocol_from_id(enum DP_ID id, enum pcm_protocol *protocol)
 	return true;
 }
 
-static bool v92_pcm_profile_requested(
+static bool v92_profile_requested(
 	struct modem *modem, uint8_t *maximum_data_rate_number)
 {
-	int configured;
+	int configured, enabled;
 
 	if (modem == NULL || maximum_data_rate_number == NULL ||
-	    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) != 0 ||
-	    modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) != 1)
+	    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) != 0)
+		return false;
+	enabled = modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM);
+	if (enabled != 0 && enabled != 1)
 		return false;
 	configured = modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN);
 	if (configured < 0 ||
 	    configured > V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER)
 		return false;
-	*maximum_data_rate_number = configured == 0 ?
+	*maximum_data_rate_number = enabled == 0 ? 0u : configured == 0 ?
 		V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER :
 		(uint8_t)configured;
 	return true;
@@ -220,7 +222,7 @@ static struct dp *create_v90(
 	    operations != &v90_operations || operations->use_count == INT_MAX ||
 	    !role_from_modem(modem, &role) ||
 	    (protocol == PCM_PROTOCOL_V92 &&
-	     !v92_pcm_profile_requested(
+	     !v92_profile_requested(
 		     modem, &maximum_pcm_upstream_data_rate_number)) ||
 	    !pcm_downstream_rates_select(
 		    &downstream, modem->min_rate, modem->max_rate))
@@ -573,11 +575,11 @@ static bool start_call(
 		     datapump->dp.modem->max_rate,
 		     &upstream) != V90_PROFILE_OK) ||
 	    (datapump->protocol == PCM_PROTOCOL_V92 &&
-	     v92_pcm_profile_init(
+	     v92_profile_init(
 		     &configuration, datapump->role, media_law,
 		     datapump->dp.modem->min_rate,
 		     datapump->dp.modem->max_rate,
-		     datapump->maximum_pcm_upstream_data_rate_number) !=
+		     datapump->maximum_pcm_upstream_data_rate_number, &upstream) !=
 		     V92_PROFILE_OK) ||
 	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;

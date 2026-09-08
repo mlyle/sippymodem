@@ -131,6 +131,9 @@ static void configure_analog(
 		.v90 = v90->local_info0.analog,
 		.v92_capable = true,
 	};
+	selected->local_info1.pcm_upstream_enabled = upstream_rate_mask != 0u;
+	if (!selected->local_info1.pcm_upstream_enabled)
+		return;
 	selected->local_info1.v92_analog = info1;
 	selected->phase3.v92_analog =
 		(struct v92_phase3_analog_station_configuration){
@@ -164,8 +167,10 @@ static void configure_digital(
 	};
 	selected->local_info1.v92_digital = (struct v92_info1d){
 		.v34 = v34,
-		.pcm_upstream_supported = true,
+		.pcm_upstream_supported = maximum_upstream_data_rate_number != 0u,
 	};
+	if (!selected->local_info1.v92_digital.pcm_upstream_supported)
+		return;
 	selected->phase3.v92_digital =
 		(struct pcm_call_v92_digital_phase3_configuration){
 			.jd = {
@@ -187,35 +192,35 @@ static void configure_digital(
 		maximum_upstream_data_rate_number;
 }
 
-enum v92_profile_result v92_pcm_profile_init(
+enum v92_profile_result v92_profile_init(
 	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,
 	unsigned int minimum_downstream_rate,
 	unsigned int maximum_downstream_rate,
-	uint8_t maximum_upstream_data_rate_number)
+	uint8_t maximum_upstream_data_rate_number,
+	const struct v90_upstream_policy *conventional_upstream)
 {
 	struct pcm_call_configuration v90;
 	struct pcm_call_configuration selected = { 0 };
 	struct pcm_downstream_rate_selection downstream;
-	uint32_t upstream_rate_mask;
+	uint32_t upstream_rate_mask = 0u;
 
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
 	    !g711_law_is_valid(law) ||
 	    minimum_downstream_rate > maximum_downstream_rate ||
-	    maximum_upstream_data_rate_number <
-		    V92_PROFILE_MIN_UPSTREAM_DATA_RATE_NUMBER ||
 	    maximum_upstream_data_rate_number >
 		    V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER)
 		return V92_PROFILE_INVALID_ARGUMENT;
 	if (!pcm_downstream_rates_select(
 		    &downstream, minimum_downstream_rate,
 		    maximum_downstream_rate) ||
-	    !v92_pcm_dil_rate_mask_through(
+	    (maximum_upstream_data_rate_number != 0u &&
+	     !v92_pcm_dil_rate_mask_through(
 		    maximum_upstream_data_rate_number,
-		    &upstream_rate_mask) ||
+		    &upstream_rate_mask)) ||
 	    v90_profile_init(
 		    &v90, role, law, minimum_downstream_rate,
-		    maximum_downstream_rate, NULL) != V90_PROFILE_OK)
+		    maximum_downstream_rate, conventional_upstream) != V90_PROFILE_OK)
 		return V92_PROFILE_UNSUPPORTED_RATE;
 	/* PCM upstream adds a capability to the conventional path. Retain the
 	 * latter's policy for INFO1 selection and subsequent full retrains. */
