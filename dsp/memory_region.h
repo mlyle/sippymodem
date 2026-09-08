@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 struct memory_region {
 	const void *data;
@@ -52,6 +53,17 @@ static inline bool memory_region_is_zero(const void *region, size_t size)
 
 	if (bytes == NULL)
 		return false;
+	/* Inspect whole words without alignment or aliasing assumptions, and
+	 * never read beyond the caller's region (including its final byte). */
+	while (size >= sizeof(uint64_t)) {
+		uint64_t word;
+
+		memcpy(&word, bytes, sizeof(word));
+		if (word != 0u)
+			return false;
+		bytes += sizeof(word);
+		size -= sizeof(word);
+	}
 	for (size_t index = 0; index < size; ++index) {
 		if (bytes[index] != 0u)
 			return false;

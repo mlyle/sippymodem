@@ -4,6 +4,8 @@
 
 #include "test.h"
 
+#include <stdlib.h>
+
 static bool test_boundaries_and_containment(void)
 {
 	uint8_t storage[32];
@@ -75,6 +77,39 @@ static bool test_zero_regions(void)
 	return true;
 }
 
+static bool test_zero_region_alignment_and_bounds(void)
+{
+	/* Place the requested end at the allocation boundary so sanitizer runs
+	 * also detect an overread, not just a wrong answer from a nonzero guard. */
+	for (size_t offset = 0; offset < 16u; ++offset) {
+		for (size_t size = 0; size <= 33u; ++size) {
+			uint8_t *storage = malloc(offset + size + 1u);
+			uint8_t *region;
+
+			CHECK(storage != NULL, "zero-region fixture allocation failed");
+			memset(storage, UINT8_MAX, offset + size + 1u);
+			region = storage + offset + 1u;
+			memset(region, 0, size);
+			CHECK(memory_region_is_zero(region, size),
+			      "zero region rejected at offset %zu size %zu", offset, size);
+			for (size_t index = 0; index < size; ++index) {
+				for (unsigned int bit = 0; bit < 8u; ++bit) {
+					region[index] = (uint8_t)(1u << bit);
+					CHECK(!memory_region_is_zero(region, size) &&
+					      memory_region_is_zero(region, index) &&
+					      memory_region_is_zero(region + index + 1u,
+								    size - index - 1u),
+					      "nonzero bit escaped bounds at %zu/%zu byte %zu bit %u",
+					      offset, size, index, bit);
+				}
+				region[index] = 0u;
+			}
+			free(storage);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -85,6 +120,7 @@ int main(void)
 		{ "empty regions", test_empty_regions },
 		{ "region sets", test_region_sets },
 		{ "zero regions", test_zero_regions },
+		{ "zero region alignment and bounds", test_zero_region_alignment_and_bounds },
 	};
 	unsigned int failures = 0;
 
