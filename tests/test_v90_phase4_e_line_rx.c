@@ -330,7 +330,7 @@ static bool run_line(
 			struct v90_cp_receive_event event = { 0 };
 			enum v90_phase4_cp_line_rx_result result =
 				v90_phase4_cp_line_rx_sample(
-					&cp_rx, sample, &event);
+					&cp_rx, sample, &event, NULL);
 
 			CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
 			      result == V90_PHASE4_CP_LINE_RX_SYMBOL ||

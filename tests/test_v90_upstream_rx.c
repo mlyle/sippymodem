@@ -183,6 +183,8 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	struct v90_phase4_cp_line_rx cp;
 	struct v90_upstream_rx rx;
 	unsigned int requests = 0u;
+	unsigned int scr_samples = 0u;
+	bool scr_complete = false;
 
 	cps.request_silence = true;
 	cps.selected_rate_index = V90_CP_RATE_INDEX_MAX;
@@ -206,15 +208,29 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	for (size_t clock = 0; clock < SAMPLE_LIMIT; ++clock) {
 		struct v90_cp_parameters event;
 		int16_t sample;
+		bool sample_ready = false;
 		enum v90_upstream_rx_result result;
 
-		if (v90_phase4_cp_line_tx_record_is_complete(&tx)) {
+		if (requests == 2u && !scr_complete &&
+		    v90_phase4_cp_line_tx_record_is_complete(&tx)) {
+			enum v90_phase4_cp_line_tx_result scr_result =
+				v90_phase4_cp_line_tx_scr_sample(&tx, scr_samples >= 128u, &sample);
+
+			CHECK(scr_result == V90_PHASE4_CP_LINE_TX_OK ||
+			      scr_result == V90_PHASE4_CP_LINE_TX_COMPLETE, "CPs SCR stopped");
+			scr_complete = scr_result == V90_PHASE4_CP_LINE_TX_COMPLETE;
+			sample_ready = !scr_complete;
+			if (sample_ready)
+				scr_samples++;
+		}
+		if (!sample_ready && v90_phase4_cp_line_tx_record_is_complete(&tx)) {
 			cps.acknowledges_peer = requests != 0u;
 			CHECK(v90_phase4_cp_line_tx_start_next_record(&tx,
 				      requests < 2u ? &cps : &data) == V90_PHASE4_CP_LINE_TX_OK,
 			      "CPs repetition failed");
 		}
-		CHECK(v90_phase4_cp_line_tx_sample(&tx, &sample) == V90_PHASE4_CP_LINE_TX_OK,
+		CHECK(sample_ready ||
+		      v90_phase4_cp_line_tx_sample(&tx, &sample) == V90_PHASE4_CP_LINE_TX_OK,
 		      "CPs line stopped");
 		result = v90_upstream_rx_sample(&rx, quantize(law, sample), &event);
 		if (result == V90_UPSTREAM_RX_OK)
@@ -229,8 +245,11 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 		      "CPs request %u became %s", requests, v90_upstream_rx_result_name(result));
 		CHECK(rx.data_cp_received == (requests == 2u && final_case == 0u),
 		      "CPs installed a data selection or zero rate became data");
-		if (++requests == 3u)
+		if (++requests == 3u) {
+			CHECK(scr_complete && scr_samples >= 128u,
+			      "CPs did not exercise pre-DATA SCR");
 			return true;
+		}
 	}
 	CHECK(false, "CPs control did not complete");
 	return false;
@@ -239,7 +258,7 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
-	bool acknowledged_first, bool different_codec)
+	bool acknowledged_first, bool different_codec, bool damage_prime)
 {
 	enum g711_law codec_law = different_codec ?
 		(law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU) : law;
@@ -274,6 +293,9 @@ static bool run_line(
 	bool ed_requested = false;
 	bool e_received = false;
 	bool b1_received = false;
+	bool prime_damaged = false;
+	bool scr_complete = false;
+	unsigned int scr_samples = 0u;
 
 	data.acknowledges_peer = acknowledged_first;
 	prime.acknowledges_peer = true;
@@ -308,7 +330,18 @@ static bool run_line(
 		int16_t sample = 0;
 		bool sample_ready = false;
 
-		if (!e_started &&
+		if (!scr_complete && v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
+			enum v90_phase4_cp_line_tx_result result =
+				v90_phase4_cp_line_tx_scr_sample(&cp_tx, scr_samples >= 128u, &sample);
+
+			CHECK(result == V90_PHASE4_CP_LINE_TX_OK || result == V90_PHASE4_CP_LINE_TX_COMPLETE,
+			      "SCR before DATA CP stopped");
+			scr_complete = result == V90_PHASE4_CP_LINE_TX_COMPLETE;
+			sample_ready = !scr_complete;
+			if (sample_ready)
+				scr_samples++;
+		}
+		if (!sample_ready && !e_started &&
 		    v90_phase4_cp_line_tx_record_is_complete(&cp_tx)) {
 			if (!unadvertised_started) {
 				CHECK(v90_phase4_cp_line_tx_start_next_record(
@@ -336,7 +369,7 @@ static bool run_line(
 				cp_finished = true;
 			}
 		}
-		if (!e_started) {
+		if (!sample_ready && !e_started) {
 			enum v90_phase4_cp_line_tx_result result =
 				v90_phase4_cp_line_tx_sample(&cp_tx, &sample);
 
@@ -383,6 +416,14 @@ static bool run_line(
 			sample_ready = true;
 		}
 		CHECK(sample_ready, "line produced no sample at clock %zu", clock);
+		/* Damage only the CP-prime waveform, not the transmitter state.
+		 * Its remaining tail, E and B1 still use the continuous scrambler. */
+		if (damage_prime && prime_started && !e_started &&
+		    cp_tx.symbols.bit_index >= 64u &&
+		    cp_tx.symbols.bit_index < 72u) {
+			sample = 0;
+			prime_damaged = true;
+		}
 		{
 			struct v90_cp_parameters event;
 			struct v90_cp_parameters saved;
@@ -411,11 +452,13 @@ static bool run_line(
 				      "first data CP event changed");
 				mp_prime_requested = true;
 			} else if (result == V90_UPSTREAM_RX_REQUEST_ED) {
-				CHECK(mp_prime_requested && !ed_requested &&
+				CHECK(!damage_prime && mp_prime_requested && !ed_requested &&
 				      parameters_match(&event, &prime),
 				      "CP-prime event changed or arrived early");
 				ed_requested = true;
 			} else if (result == V90_UPSTREAM_RX_E_COMPLETE) {
+				CHECK(memcmp(&event, &saved, sizeof(event)) == 0,
+				      "E changed the CP event output");
 				e_received = true;
 			} else {
 				b1_received = true;
@@ -430,8 +473,9 @@ static bool run_line(
 			v34_data_line_receiver_is_valid(&data_handoff);
 
 		CHECK(unadvertised_started && data_started && prime_started &&
-		      cp_finished && e_started &&
-		      b1_started && mp_prime_requested && ed_requested &&
+		      scr_complete && scr_samples >= 128u && cp_finished && e_started &&
+		      b1_started && mp_prime_requested &&
+		      (damage_prime ? prime_damaged && !ed_requested : ed_requested) &&
 		      e_received && b1_received &&
 		      v90_upstream_rx_is_complete(&receiver) &&
 		      !v90_upstream_rx_has_failed(&receiver) && handoff_valid &&
@@ -463,6 +507,11 @@ static bool run_line(
 			      (unsigned int)data_handoff.decisions
 				      .data_receiver.data_receiver.b1_error_bits : 0);
 	}
+	CHECK(!damage_prime ||
+	      (receiver.control_symbols.descrambler.history == cp_tx.symbols.scrambler.history &&
+	       receiver.control_symbols.previous_clockwise_quarter_turns ==
+		       cp_tx.symbols.previous_clockwise_quarter_turns),
+	      "E changed the CP history retained for renegotiation");
 	{
 		struct v90_upstream_rx saved_receiver = receiver;
 		struct v90_cp_parameters event;
@@ -598,22 +647,30 @@ int main(void)
 					    paths[path].law,
 					    paths[path].constellation,
 					    profiles[profile].symbol_rate,
-					    rate, false, false))
+					    rate, false, false, false))
 					return 1;
 	fprintf(stderr, "[       OK ] generated upstream entry\n");
 	fprintf(stderr, "[ RUN      ] CP-prime-first upstream entry\n");
 	if (!run_line(
 		    G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
-		    V34_SYMBOL_RATE_3429, 14, true, false))
+		    V34_SYMBOL_RATE_3429, 14, true, false, false))
 		return 1;
 	fprintf(stderr, "[       OK ] CP-prime-first upstream entry\n");
 	fprintf(stderr, "[ RUN      ] differing peer codec through CP/E/B1\n");
 	if (!run_line(G711_LAW_PCMU, V34_CONSTELLATION_4_POINT,
-		      V34_SYMBOL_RATE_3000, 6, false, true) ||
+		      V34_SYMBOL_RATE_3000, 6, false, true, false) ||
 	    !run_line(G711_LAW_PCMA, V34_CONSTELLATION_16_POINT,
-		      V34_SYMBOL_RATE_3429, 14, true, true))
+		      V34_SYMBOL_RATE_3429, 14, true, true, false))
 		return 1;
 	fprintf(stderr, "[       OK ] differing peer codec through CP/E/B1\n");
+	fprintf(stderr, "[ RUN      ] E after damaged CP prime\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int mode = 0u; mode < 2u; ++mode)
+			if (!run_line(law, mode == 0u ? V34_CONSTELLATION_4_POINT :
+				      V34_CONSTELLATION_16_POINT,
+				      V34_SYMBOL_RATE_3000, 6, false, false, true))
+				return 1;
+	fprintf(stderr, "[       OK ] E after damaged CP prime\n");
 	fprintf(stderr, "[ RUN      ] zero-rate CP/CPt cleardown\n");
 	for (size_t path = 0; path < ARRAY_LENGTH(paths); ++path)
 		if (!check_cleardown(paths[path].law, paths[path].constellation, V90_CP_DATA) ||

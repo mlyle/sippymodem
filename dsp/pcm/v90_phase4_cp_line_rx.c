@@ -451,7 +451,8 @@ static enum v90_phase4_cp_line_rx_result fail_sample(
 
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	struct v90_phase4_cp_line_rx *rx, int16_t sample,
-	struct v90_cp_receive_event *event)
+	struct v90_cp_receive_event *event,
+	struct v34_fixed_training_decision *decision)
 {
 	struct v90_phase4_cp_line_rx next;
 	struct v34_adaptive_equalizer_observation observation;
@@ -462,7 +463,11 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	enum v34_line_receiver_result line_result;
 	bool boundary_was_complete;
 
-	if (!v90_phase4_cp_line_rx_is_valid(rx) || event == NULL)
+	if (!v90_phase4_cp_line_rx_is_valid(rx) || event == NULL ||
+	    memory_regions_overlap(rx, sizeof(*rx), event, sizeof(*event)) ||
+	    (decision != NULL &&
+	     (memory_regions_overlap(rx, sizeof(*rx), decision, sizeof(*decision)) ||
+	      memory_regions_overlap(event, sizeof(*event), decision, sizeof(*decision)))))
 		return V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT;
 	if (rx->failed)
 		return V90_PHASE4_CP_LINE_RX_FAILED;
@@ -525,6 +530,8 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	if (!v90_phase4_cp_line_rx_is_valid(&next))
 		return fail_sample(rx, &next, NULL);
 	*rx = next;
+	if (decision != NULL && boundary_was_complete)
+		*decision = hard;
 	if (emitted.type != V90_CP_RECEIVE_NO_EVENT) {
 		*event = emitted;
 		return V90_PHASE4_CP_LINE_RX_RECORD_READY;

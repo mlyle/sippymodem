@@ -383,7 +383,7 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_analog_receive_handoff *analog,
 	const struct v90_cp_parameters *training,
 	uint32_t enabled_downstream_rate_mask,
-	bool expect_rate_deferral)
+	bool expect_rate_deferral, bool damage_prime)
 {
 	struct v90_cp_parameters data_cp = *training;
 	struct v90_phase4_analog_handoff analog_handoff = {
@@ -411,6 +411,8 @@ static bool verify_final_downstream_exchange(
 	bool downstream_source_failure_checked = false;
 	bool upstream_source_failure_checked = false;
 	bool unadvertised_candidate_seen = false;
+	bool prime_damaged = false;
+	bool e_acknowledged = false;
 
 	data_cp.kind = V90_CP_DATA;
 	data_cp.selected_rate_index = 1;
@@ -449,6 +451,7 @@ static bool verify_final_downstream_exchange(
 		uint8_t analog_octet = 0x5a;
 		uint8_t digital_octet = 0xa5;
 		uint8_t saved_octet = 0;
+		int16_t upstream_sample;
 		enum v90_analog_path_result analog_result;
 		enum v90_digital_path_result digital_result;
 		bool training_active = analog_path.downstream_stage ==
@@ -510,8 +513,21 @@ static bool verify_final_downstream_exchange(
 			saved_digital = digital_path;
 			saved_octet = digital_octet;
 		}
+		upstream_sample = decode_octet(digital_path.law, analog_octet);
+		if (damage_prime &&
+		    analog_path.upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
+		    analog_path.data_parameters.acknowledges_peer &&
+		    analog_path.upstream.cp.symbols.bit_index >= 64u &&
+		    analog_path.upstream.cp.symbols.bit_index < 68u) {
+			upstream_sample = 0;
+			prime_damaged = true;
+		}
+		if (damage_prime && digital_path.upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP &&
+		    digital_path.upstream.startup.stage == V90_UPSTREAM_RX_STAGE_CP)
+			CHECK(!digital_path.downstream.training.ed_requested,
+			      "damaged CP-prime acknowledged MP before E");
 		digital_result = v90_digital_path_sample(
-			&digital_path, decode_octet(digital_path.law, analog_octet),
+			&digital_path, upstream_sample,
 			source_downstream_frame,
 			&downstream_source, &digital_octet, &upstream_frame);
 		if (expect_rate_deferral) {
@@ -544,7 +560,7 @@ static bool verify_final_downstream_exchange(
 			downstream_source.reject_next = false;
 			digital_result = v90_digital_path_sample(
 				&digital_path,
-				decode_octet(digital_path.law, analog_octet),
+				upstream_sample,
 				source_downstream_frame, &downstream_source,
 				&digital_octet, &upstream_frame);
 			downstream_source_failure_checked = true;
@@ -553,13 +569,26 @@ static bool verify_final_downstream_exchange(
 		      digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME,
 		      "digital path failed at clock %zu: %s", clock,
 		      v90_digital_path_result_name(digital_result));
+		if (damage_prime && digital_path.upstream_stage == V90_DIGITAL_PATH_UPSTREAM_STARTUP) {
+			CHECK(digital_path.upstream.startup.stage != V90_UPSTREAM_RX_STAGE_E,
+			      "a damaged CP-prime was accepted");
+			if (!e_acknowledged &&
+			    digital_path.upstream.startup.stage == V90_UPSTREAM_RX_STAGE_B1) {
+				CHECK(digital_path.downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+				      digital_path.downstream.training.ed_requested,
+				      "E did not authorize Ed without CP-prime");
+				e_acknowledged = true;
+			}
+		}
 		if (digital_result == V90_DIGITAL_PATH_UPSTREAM_FRAME) {
 			CHECK(upstream_data_frames < upstream_source.frames &&
 			      upstream_frame_matches(
 				      &upstream_frame, &upstream_source,
 				      upstream_data_frames),
-			      "upstream data frame %zu changed",
-			      upstream_data_frames);
+			      "upstream data frame %zu changed: damage=%d clock=%zu B1 errors=%u",
+			      upstream_data_frames, damage_prime, clock,
+			      (unsigned int)digital_path.upstream.data.decisions.data_receiver
+				      .data_receiver.b1_error_bits);
 			upstream_data_frames++;
 		}
 
@@ -605,6 +634,7 @@ static bool verify_final_downstream_exchange(
 
 	CHECK(analog_path.peer_mp_received &&
 	      !expect_rate_deferral &&
+	      (!damage_prime || (prime_damaged && e_acknowledged)) &&
 	      analog_path.peer_mp_prime_received &&
 	      analog_path.cp_prime_sent && analog_path.finishing_cp &&
 	      analog_path.ed_armed && trn2d_complete &&
@@ -695,7 +725,7 @@ static bool run_exchange(
 
 				result = v90_phase4_cp_line_rx_sample(
 					&digital_receive, quantize(law, sample),
-					&event);
+					&event, NULL);
 				CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
 				      result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
 				      result == V90_PHASE4_CP_LINE_RX_RECORD_READY,
@@ -769,11 +799,15 @@ static bool run_exchange(
 	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
-		      V90_JD_RATE_CAPABILITY_MASK, false) &&
+		      V90_JD_RATE_CAPABILITY_MASK, false, false) &&
 	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
-		      UINT32_C(2), true),
+		      V90_JD_RATE_CAPABILITY_MASK, false, true) &&
+	      verify_final_downstream_exchange(
+		      &analog_transmit, &digital_receive,
+		      &digital_transmit, &analog_receive, &training,
+		      UINT32_C(2), true, false),
 	      "paired owners disagreed through downstream data");
 	return true;
 }

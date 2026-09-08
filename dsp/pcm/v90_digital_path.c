@@ -642,7 +642,13 @@ static enum v90_digital_path_result startup_result(
 {
 	switch (result) {
 	case V90_UPSTREAM_RX_OK:
+		return V90_DIGITAL_PATH_OK;
 	case V90_UPSTREAM_RX_E_COMPLETE:
+		/* E can replace a lost CP-prime acknowledgement. The transmitter
+		 * still finishes a complete MP-prime record before emitting Ed. */
+		if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_TRAINING &&
+		    !path->downstream.training.ed_requested)
+			return request_ed(path, &path->upstream.startup.data_parameters);
 		return V90_DIGITAL_PATH_OK;
 	case V90_UPSTREAM_RX_CLEARDOWN:
 		return V90_DIGITAL_PATH_CLEARDOWN_COMPLETE;

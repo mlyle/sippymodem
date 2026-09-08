@@ -1142,7 +1142,7 @@ static bool check_zero_rate_cleardown(
 				struct v90_cp_receive_event received;
 				enum v90_phase4_cp_line_rx_result decoded =
 					v90_phase4_cp_line_rx_sample(
-						&cp_receive, sample, &received);
+						&cp_receive, sample, &received, NULL);
 
 				if (decoded == V90_PHASE4_CP_LINE_RX_RECORD_READY) {
 					if (v90_phase4_cp_line_rx_pending_record_is_valid(

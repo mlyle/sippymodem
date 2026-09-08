@@ -115,6 +115,10 @@ static bool verify_line(
 	for (uint32_t sample_index = 0;
 	     sample_index < SAMPLE_LIMIT; ++sample_index) {
 		struct v90_cp_receive_event event = { 0 };
+		struct v90_phase4_cp_rx expected_symbols = rx.symbols;
+		struct v34_fixed_training_decision decision;
+		struct v34_fixed_training_decision saved_decision;
+		bool boundary_was_complete = rx.boundary_complete;
 		int16_t sample;
 		enum v90_phase4_cp_line_rx_result result;
 
@@ -132,8 +136,24 @@ static bool verify_line(
 			      V90_PHASE4_CP_LINE_TX_OK,
 		      "CP transmitter stopped before record %u",
 		      received_records);
+		memset(&decision, 0xa5, sizeof(decision));
+		saved_decision = decision;
 		result = v90_phase4_cp_line_rx_sample(
-			&rx, quantize(law, sample), &event);
+			&rx, quantize(law, sample), &event, &decision);
+		if (boundary_was_complete &&
+		    (result == V90_PHASE4_CP_LINE_RX_SYMBOL ||
+		     result == V90_PHASE4_CP_LINE_RX_RECORD_READY)) {
+			struct v90_cp_receive_event expected_event;
+
+			CHECK(v90_phase4_cp_rx_receive_decision(&expected_symbols,
+				      decision.quarter_point, decision.clockwise_quarter_turns,
+				      &expected_event) == V90_CP_OK &&
+			      memcmp(&expected_symbols, &rx.symbols, sizeof(expected_symbols)) == 0,
+			      "exported CP decision did not match the consumed symbol");
+		} else {
+			CHECK(memcmp(&decision, &saved_decision, sizeof(decision)) == 0,
+			      "a sample without a CP symbol changed the decision output");
+		}
 		if (result != V90_PHASE4_CP_LINE_RX_RECORD_READY) {
 			CHECK(result == V90_PHASE4_CP_LINE_RX_OK ||
 			      result == V90_PHASE4_CP_LINE_RX_SYMBOL,
@@ -181,7 +201,7 @@ static bool verify_line(
 			struct v90_cp_receive_event saved_event = sentinel;
 
 			CHECK(v90_phase4_cp_line_rx_sample(
-				      &rx, 0, &sentinel) ==
+				      &rx, 0, &sentinel, NULL) ==
 				      V90_PHASE4_CP_LINE_RX_INVALID_STATE &&
 			      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
 			      memcmp(&sentinel, &saved_event,
@@ -259,9 +279,15 @@ static bool test_transactional_contracts(void)
 	      rx.adaptation == V34_ADAPTIVE_EQUALIZER_FULL,
 	      "CP line initialization contract changed");
 	saved = rx;
-	CHECK(v90_phase4_cp_line_rx_sample(NULL, 0, &event) ==
+	CHECK(v90_phase4_cp_line_rx_sample(NULL, 0, &event, NULL) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
-	      v90_phase4_cp_line_rx_sample(&rx, 0, NULL) ==
+	      v90_phase4_cp_line_rx_sample(&rx, 0, NULL, NULL) ==
+		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_rx_sample(&rx, 0, &event,
+		      (struct v34_fixed_training_decision *)&rx) ==
+		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_rx_sample(&rx, 0, &event,
+		      (struct v34_fixed_training_decision *)&event) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_ARGUMENT &&
 	      v90_phase4_cp_line_rx_continue(&rx) ==
 		      V90_PHASE4_CP_LINE_RX_INVALID_STATE &&

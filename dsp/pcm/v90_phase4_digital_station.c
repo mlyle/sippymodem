@@ -182,7 +182,7 @@ enum v90_phase4_digital_station_result v90_phase4_digital_station_receive(
 		return V90_PHASE4_DIGITAL_STATION_COMPLETE;
 	next = *station;
 	receive_result = v90_phase4_cp_line_rx_sample(
-		&next.receive, sample, &event);
+		&next.receive, sample, &event, NULL);
 	if (receive_result == V90_PHASE4_CP_LINE_RX_FAILED ||
 	    receive_result == V90_PHASE4_CP_LINE_RX_NUMERIC_FAILURE)
 		return fail_receive(station, &next);

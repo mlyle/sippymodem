@@ -29,6 +29,7 @@ enum v90_upstream_rx_result {
 	V90_UPSTREAM_RX_REQUEST_SILENCE,
 	/* A normal CP following CPs prime ends silence through Rt/Rt-bar. */
 	V90_UPSTREAM_RX_REQUEST_RT,
+	/* E also authorizes Ed when CP prime was lost (V.90 9.4.1.4). */
 	V90_UPSTREAM_RX_E_COMPLETE,
 	V90_UPSTREAM_RX_B1_COMPLETE,
 	V90_UPSTREAM_RX_COMPLETE,
@@ -57,9 +58,13 @@ union v90_upstream_rx_state {
 struct v90_upstream_rx {
 	union v90_upstream_rx_state state;
 	/* CP modulation is initialized only before the first CPt. Preserve its
-	 * self-synchronizing scrambler and differential phase after CP-prime so a
-	 * later rate renegotiation can reset only the frame parser. */
+	 * self-synchronizing scrambler and differential phase before E so a later
+	 * rate renegotiation can reset only the frame parser. While searching CP,
+	 * this checkpoints the state before the current possible E run. */
 	struct v90_phase4_cp_rx control_symbols;
+	/* Search alongside CP only after admitting normal DATA CP. CPt and
+	 * echo-reconditioning SCR must not be mistaken for E. */
+	struct v34_phase4_e_receiver e_search;
 	struct v90_pcm_mapping training_mapping;
 	/* Retain CPs for matching its prime; only data_cp_received publishes a
 	 * final data selection. CPs never installs a data mapping. */

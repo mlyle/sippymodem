@@ -205,7 +205,7 @@ static enum v90_phase4_startup_result receive_continued(
 {
 	struct v90_cp_receive_event event = { 0 };
 	enum v90_phase4_cp_line_rx_result result =
-		v90_phase4_cp_line_rx_sample(&state->receive, sample, &event);
+		v90_phase4_cp_line_rx_sample(&state->receive, sample, &event, NULL);
 
 	switch (result) {
 	case V90_PHASE4_CP_LINE_RX_OK:

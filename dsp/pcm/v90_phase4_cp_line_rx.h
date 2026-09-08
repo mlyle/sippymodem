@@ -80,11 +80,15 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_continue(
 	struct v90_phase4_cp_line_rx *rx);
 
 /* Consume one signed 8 kHz sample. event changes only for RECORD_READY.
+ * Optional decision receives the accepted CP symbol on SYMBOL/RECORD_READY
+ * when the S/S-bar boundary was already complete before this call. It stays
+ * untouched during boundary acquisition and on all other results.
  * Invalid, paused, and failed calls consume nothing. A terminal DSP failure
  * consumes the sample, latches failure, and leaves event unchanged. */
 enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 	struct v90_phase4_cp_line_rx *rx, int16_t sample,
-	struct v90_cp_receive_event *event);
+	struct v90_cp_receive_event *event,
+	struct v34_fixed_training_decision *decision);
 
 const char *v90_phase4_cp_line_rx_result_name(
 	enum v90_phase4_cp_line_rx_result result);

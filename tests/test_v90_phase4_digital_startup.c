@@ -171,7 +171,7 @@ static bool check_rejected_cpt_continuation(
 		struct v90_phase4_cp_line_rx expected = trial.state.continuing.receive;
 		struct v90_cp_receive_event event;
 		enum v90_phase4_cp_line_rx_result received =
-			v90_phase4_cp_line_rx_sample(&expected, sample, &event);
+			v90_phase4_cp_line_rx_sample(&expected, sample, &event, NULL);
 		uint8_t output;
 
 		CHECK(v90_phase4_digital_startup_sample(&trial, sample, &output) ==
