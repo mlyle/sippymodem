@@ -1957,6 +1957,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
+	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
 	$(BUILD_DIR)/v92_phase3_analog_station.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \

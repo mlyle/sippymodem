@@ -47,7 +47,7 @@ static bool check_line(
 	struct v92_pcm_phase3_trn1u_line_rx training;
 	struct v92_pcm_phase3_ja_line_rx receiver;
 	uint64_t ja_symbols = 0u;
-	uint32_t decoded = UINT32_MAX;
+	struct v92_pcm_dil_parameters decoded = { 0 };
 	unsigned int synchronization_events = 0u;
 	bool ja_started = false;
 	bool receiver_started = false;
@@ -116,8 +116,9 @@ static bool check_line(
 	CHECK(receiver_started && detected && synchronization_events == 1u &&
 	      v92_pcm_phase3_ja_line_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_ja_line_rx_has_failed(&receiver) &&
-	      v92_pcm_phase3_ja_line_rx_rate_mask(&receiver, &decoded) &&
-	      decoded == rate_mask &&
+	      v92_pcm_phase3_ja_line_rx_parameters(&receiver, &decoded) &&
+	      decoded.upstream_rate_mask == rate_mask &&
+	      decoded.downstream.segment_count == 0u &&
 	      receiver.processed_samples == V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
 	      receiver.input_advance_symbols ==
 		      V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY &&
@@ -127,7 +128,7 @@ static bool check_line(
 	      "Ja line differed: started=%u detected=%u sync=%u mask=%05x/%05x "
 	      "processed=%llu/%u polarity=%d/%d source=%llu delay=%u",
 	      receiver_started, detected, synchronization_events,
-	      (unsigned int)decoded, (unsigned int)rate_mask,
+	      (unsigned int)decoded.upstream_rate_mask, (unsigned int)rate_mask,
 	      (unsigned long long)receiver.processed_samples,
 	      V92_PCM_PHASE3_JA_MIN_SYMBOLS, receiver.line.polarity,
 	      expected_polarity, (unsigned long long)ja_symbols, channel_delay);
@@ -238,7 +239,10 @@ static bool test_contracts(void)
 	struct v92_pcm_phase3_trn1u_line_handoff invalid;
 	struct v92_pcm_phase3_ja_line_rx receiver;
 	struct v92_pcm_phase3_ja_line_rx before;
-	uint32_t rate_mask = UINT32_C(0xa5a5a5a5);
+	struct v92_pcm_dil_parameters sentinel = {
+		.upstream_rate_mask = UINT32_C(0xa5a5a5a5),
+	};
+	struct v92_pcm_dil_parameters parameters = sentinel;
 	static const char *const names[] = {
 		"ok", "synchronized", "rejected", "detected", "done",
 		"failed", "invalid argument", "invalid state",
@@ -264,8 +268,8 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_ja_line_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_ja_line_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_ja_line_rx_has_failed(&receiver) &&
-	      !v92_pcm_phase3_ja_line_rx_rate_mask(&receiver, &rate_mask) &&
-	      rate_mask == UINT32_C(0xa5a5a5a5),
+	      !v92_pcm_phase3_ja_line_rx_parameters(&receiver, &parameters) &&
+	      memcmp(&parameters, &sentinel, sizeof(parameters)) == 0,
 	      "Ja line initialization/getter contract failed");
 	before = receiver;
 	CHECK(v92_pcm_phase3_ja_line_rx_sample(NULL, 0) ==

@@ -47,8 +47,8 @@ union v92_phase3_digital_receive {
 	struct v92_pcm_phase3_cpt_line_rx cpt;
 };
 
-/* Own both directions of the digital modem's zero-DIL V.92 Phase 3
- * procedure. The common PCM transmitter supplies Sd through SCR, and the
+/* Own both directions of the digital modem's V.92 Phase 3 procedure.
+ * The common PCM transmitter supplies Sd through DIL or SCR, and the
  * existing Ri generator supplies the CPt/E1u boundary; this owner only
  * coordinates their protocol events. Calls on one instance are serialized. */
 struct v92_phase3_digital_station {
@@ -64,6 +64,10 @@ struct v92_phase3_digital_station {
 	enum g711_law law;
 	uint16_t su_minimum_magnitude;
 	uint8_t training_ucode;
+	/* E1u can precede completion of our Ri/Ri-bar. Preserve the short
+	 * upstream overlap for the Phase 4 receiver without changing its epoch. */
+	int16_t early_trn2u[V90_PHASE4_RI_MIN_SYMBOLS + V90_PHASE4_RI_BAR_SYMBOLS];
+	uint16_t early_trn2u_samples;
 	bool failed;
 };
 
@@ -87,8 +91,11 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 	struct v92_phase3_digital_station *station, uint8_t *network_octet);
 
 /* Consume one signed 8 kHz sample. Su phase and both TRN1u equalizers are
- * internal continuous stages. A complete CPt record requests Ri-bar; E1u
- * exposes the exact receive handoff. */
+ * internal continuous stages. With DIL, CPt requests Ri and E1u requests
+ * Ri-bar; without DIL, Ri precedes CPt and CPt requests Ri-bar. E1u exposes
+ * the exact receive handoff in either case. After E1u, COMPLETE still consumes
+ * and retains samples in early_trn2u. Retire this owner as soon as both
+ * directions complete, then deliver those samples to the Phase 4 receiver. */
 enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 	struct v92_phase3_digital_station *station, int16_t sample);
 

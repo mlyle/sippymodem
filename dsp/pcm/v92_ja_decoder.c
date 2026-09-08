@@ -10,24 +10,51 @@
 
 bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 {
-	uint32_t decoded_mask;
+	struct pcm_dil_descriptor_layout layout;
+	struct v92_pcm_dil_parameters parameters;
 
 	if (decoder == NULL ||
 	    !pcm_binary_sign_is_valid(&decoder->coding) ||
 	    decoder->coding.scrambler.polynomial != V34_POLYNOMIAL_GPA ||
-	    decoder->bit_index > V92_PCM_DIL_ZERO_DESCRIPTOR_BITS ||
+	    decoder->bit_index > V92_PCM_DIL_MAX_DESCRIPTOR_BITS ||
+	    decoder->consecutive_ones > V92_PHASE3_FRAME_SYNC_BITS ||
 	    !packed_msb_tail_is_zero(
 		    decoder->descriptor, decoder->bit_index,
 		    sizeof(decoder->descriptor)))
 		return false;
+	if (decoder->bit_index < V90_DIL_HEADER_BITS)
+		return !decoder->complete && decoder->descriptor_bits == 0u &&
+		       (decoder->bit_index == 0u ||
+			decoder->bit_index >= V92_PHASE3_FRAME_SYNC_BITS + 1u);
+	if (v92_pcm_dil_layout(
+		    decoder->descriptor, sizeof(decoder->descriptor),
+		    decoder->bit_index, &layout) != V92_PCM_DIL_OK ||
+	    layout.bit_count != decoder->descriptor_bits)
+		return false;
 	if (!decoder->complete)
-		return decoder->bit_index < V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
-		       decoder->rate_mask == 0u;
-	return decoder->bit_index == V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
-	       v92_pcm_dil_decode_zero(
+		return decoder->bit_index < decoder->descriptor_bits;
+	return decoder->bit_index == decoder->descriptor_bits &&
+	       decoder->consecutive_ones == 0u &&
+	       v92_pcm_dil_decode(
 		       decoder->descriptor, sizeof(decoder->descriptor),
-		       &decoded_mask) == V92_PCM_DIL_OK &&
-	       decoded_mask == decoder->rate_mask;
+		       decoder->descriptor_bits, &parameters) == V92_PCM_DIL_OK;
+}
+
+static void start_descriptor(struct v92_ja_decoder *decoder)
+{
+	memset(decoder->descriptor, 0, sizeof(decoder->descriptor));
+	for (size_t bit = 0; bit < V92_PHASE3_FRAME_SYNC_BITS; ++bit)
+		packed_msb_set_bit(decoder->descriptor, bit, true);
+	decoder->bit_index = V92_PHASE3_FRAME_SYNC_BITS + 1u;
+	decoder->descriptor_bits = 0u;
+	decoder->consecutive_ones = 0u;
+}
+
+static void discard_descriptor(struct v92_ja_decoder *decoder)
+{
+	memset(decoder->descriptor, 0, sizeof(decoder->descriptor));
+	decoder->bit_index = 0u;
+	decoder->descriptor_bits = 0u;
 }
 
 enum v92_ja_decoder_result v92_ja_decoder_init(
@@ -39,9 +66,7 @@ enum v92_ja_decoder_result v92_ja_decoder_init(
 	if (decoder == NULL ||
 	    !v92_phase3_sync_handoff(sync, &initialized.coding))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
-	for (size_t bit = 0; bit < V92_PHASE3_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(initialized.descriptor, bit, true);
-	initialized.bit_index = V92_PHASE3_FRAME_SYNC_BITS + 1u;
+	start_descriptor(&initialized);
 	if (!v92_ja_decoder_is_valid(&initialized))
 		return V92_JA_DECODER_INVALID_ARGUMENT;
 	*decoder = initialized;
@@ -58,7 +83,9 @@ enum v92_ja_decoder_result v92_ja_decoder_receive(
 	struct v92_ja_decoder *decoder, uint8_t sign)
 {
 	struct v92_ja_decoder next;
-	enum v92_pcm_dil_result result;
+	struct pcm_dil_descriptor_layout layout;
+	struct v92_pcm_dil_parameters parameters;
+	enum v92_ja_decoder_result result = V92_JA_DECODER_OK;
 	uint8_t bit;
 
 	if (decoder == NULL || sign > 1u)
@@ -71,39 +98,62 @@ enum v92_ja_decoder_result v92_ja_decoder_receive(
 	if (pcm_binary_sign_decode(&next.coding, sign, &bit) !=
 	    PCM_BINARY_SIGN_OK)
 		return V92_JA_DECODER_INVALID_STATE;
+	if (bit != 0u) {
+		if (next.consecutive_ones < V92_PHASE3_FRAME_SYNC_BITS)
+			next.consecutive_ones++;
+	} else {
+		bool synchronized =
+			next.consecutive_ones == V92_PHASE3_FRAME_SYNC_BITS;
+
+		next.consecutive_ones = 0u;
+		if (synchronized) {
+			if (next.bit_index != 0u)
+				result = V92_JA_DECODER_REJECTED;
+			start_descriptor(&next);
+			goto commit;
+		}
+	}
+	if (next.bit_index == 0u)
+		goto commit;
 	packed_msb_set_bit(
 		next.descriptor, next.bit_index, bit != 0u);
 	next.bit_index++;
-	if (next.bit_index < V92_PCM_DIL_ZERO_DESCRIPTOR_BITS) {
-		if (!v92_ja_decoder_is_valid(&next))
-			return V92_JA_DECODER_INVALID_STATE;
-		*decoder = next;
-		return V92_JA_DECODER_OK;
+	if (next.bit_index == V90_DIL_HEADER_BITS) {
+		if (v92_pcm_dil_layout(
+			    next.descriptor, sizeof(next.descriptor),
+			    next.bit_index, &layout) != V92_PCM_DIL_OK) {
+			discard_descriptor(&next);
+			result = V92_JA_DECODER_REJECTED;
+			goto commit;
+		}
+		next.descriptor_bits = (uint16_t)layout.bit_count;
 	}
-	result = v92_pcm_dil_decode_zero(
-		next.descriptor, sizeof(next.descriptor), &next.rate_mask);
-	if (result == V92_PCM_DIL_OK) {
+	if (next.descriptor_bits == 0u || next.bit_index < next.descriptor_bits)
+		goto commit;
+	if (v92_pcm_dil_decode(
+		    next.descriptor, sizeof(next.descriptor),
+		    next.descriptor_bits, &parameters) == V92_PCM_DIL_OK) {
 		next.complete = true;
+		result = V92_JA_DECODER_DETECTED;
 	} else {
-		memset(next.descriptor, 0, sizeof(next.descriptor));
-		next.rate_mask = 0u;
-		next.bit_index = 0u;
+		discard_descriptor(&next);
+		result = V92_JA_DECODER_REJECTED;
 	}
+commit:
 	if (!v92_ja_decoder_is_valid(&next))
 		return V92_JA_DECODER_INVALID_STATE;
 	*decoder = next;
-	if (next.complete)
-		return V92_JA_DECODER_DETECTED;
-	return V92_JA_DECODER_REJECTED;
+	return result;
 }
 
-bool v92_ja_decoder_rate_mask(
-	const struct v92_ja_decoder *decoder, uint32_t *rate_mask)
+bool v92_ja_decoder_parameters(
+	const struct v92_ja_decoder *decoder,
+	struct v92_pcm_dil_parameters *parameters)
 {
-	if (!v92_ja_decoder_is_complete(decoder) || rate_mask == NULL)
-		return false;
-	*rate_mask = decoder->rate_mask;
-	return true;
+	return v92_ja_decoder_is_complete(decoder) &&
+	       v92_pcm_dil_decode(
+		       decoder->descriptor, sizeof(decoder->descriptor),
+		       decoder->descriptor_bits, parameters) == V92_PCM_DIL_OK;
 }
 
 const char *v92_ja_decoder_result_name(

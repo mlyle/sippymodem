@@ -10,6 +10,11 @@
 #include <stdint.h>
 #include <string.h>
 
+static const struct v90_dil_parameters zero_dil = {
+	.sign_pattern_bits = 1,
+	.training_pattern_bits = 1,
+};
+
 struct reference_scrambler {
 	uint8_t history[23];
 };
@@ -148,7 +153,7 @@ static bool emit_checked_scr(
 	return true;
 }
 
-static bool run_timeline(enum g711_law law)
+static bool run_timeline(enum g711_law law, bool nonzero_dil)
 {
 	struct v92_jd jd = jd_parameters();
 	struct v92_jp jp = jp_parameters();
@@ -159,13 +164,20 @@ static bool run_timeline(enum g711_law law)
 	uint8_t jp_frame[V92_J_FRAME_BYTES];
 	uint8_t last_sign = 0;
 	const uint8_t training_ucode = 78;
+	const struct v90_dil_parameters dil = {
+		.sign_pattern = { 5 }, .sign_pattern_bits = 3,
+		.training_pattern = { 1 }, .training_pattern_bits = 2,
+		.segment_length_codes = { [2] = 1, [5] = 2 },
+		.reference_ucodes = { [2] = 91, [5] = 91 },
+		.training_ucodes = { 32, 80 }, .segment_count = 2,
+	};
 
 	jp_template.su_phase_extension_q16 = 0;
 	CHECK(v92_jd_encode(&jd, jd_frame, sizeof(jd_frame)) == V92_J_OK &&
 	      v92_jp_encode(&jp, jp_frame, sizeof(jp_frame)) == V92_J_OK &&
 	      pcm_phase3_digital_tx_init_v92(
 		      &transmitter, law, training_ucode, &jd,
-		      &jp_template) ==
+		      &jp_template, nonzero_dil ? &dil : &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_exact_prefix(
 		      &transmitter, &scrambler, &last_sign, law,
@@ -238,6 +250,43 @@ static bool run_timeline(enum g711_law law)
 			      &transmitter, &scrambler, &last_sign, 0, law,
 			      training_ucode, "Jp-prime", index),
 		      "could not emit Jp-prime");
+	if (nonzero_dil) {
+		struct pcm_phase3_digital_tx boundary = transmitter;
+
+		CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_DIL &&
+		      pcm_phase3_digital_tx_finish_scr(&transmitter) ==
+			      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
+		      pcm_phase3_digital_tx_finish_dil(&boundary) ==
+			      PCM_PHASE3_DIGITAL_TX_OK &&
+		      boundary.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE,
+		      "nonzero DIL entered SCR");
+		/* Two complete 30-symbol cycles, then finish five symbols into
+		 * the first segment. Sign/training patterns restart per segment. */
+		for (size_t index = 0; index < 72; ++index) {
+			struct v90_pcm_symbol symbol;
+			size_t phase = index % 30;
+			uint8_t training = phase < 12 ? 32 : 80;
+			if (phase >= 12)
+				phase -= 12;
+			if (index == 65)
+				CHECK(pcm_phase3_digital_tx_finish_dil(&transmitter) ==
+					      PCM_PHASE3_DIGITAL_TX_OK &&
+				      transmitter.stage == PCM_PHASE3_DIGITAL_TX_DIL,
+				      "mid-segment DIL finish did not latch");
+			CHECK(pcm_phase3_digital_tx_next(&transmitter, &symbol) ==
+				      PCM_PHASE3_DIGITAL_TX_OK &&
+			      symbol_matches(&symbol, law, phase % 2 == 0 ? training : 91,
+				      phase % 3 != 1),
+			      "V.92 DIL waveform differs at %zu", index);
+		}
+		CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
+		      transmitter.scr_symbols == 0 &&
+		      pcm_phase3_digital_tx_finish_scr(&transmitter) ==
+			      PCM_PHASE3_DIGITAL_TX_INVALID_STATE &&
+		      pcm_phase3_digital_tx_finish_dil(&transmitter) == PCM_PHASE3_DIGITAL_TX_OK,
+		      "nonzero DIL did not finish at its segment boundary");
+		return true;
+	}
 	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_SCR &&
 	      transmitter.scr_symbols == 0,
 	      "Jp-prime did not enter zero-DIL SCR");
@@ -277,7 +326,10 @@ static bool run_timeline(enum g711_law law)
 
 static bool test_timelines(void)
 {
-	return run_timeline(G711_LAW_PCMU) && run_timeline(G711_LAW_PCMA);
+	return run_timeline(G711_LAW_PCMU, false) &&
+	       run_timeline(G711_LAW_PCMA, false) &&
+	       run_timeline(G711_LAW_PCMU, true) &&
+	       run_timeline(G711_LAW_PCMA, true);
 }
 
 static bool advance_to_jd(struct pcm_phase3_digital_tx *transmitter)
@@ -299,7 +351,7 @@ static bool test_minimum_and_boundary_records(void)
 	struct v90_pcm_symbol symbol;
 
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 91, &jd, &jp) ==
+		      &transmitter, G711_LAW_PCMU, 91, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_to_jd(&transmitter) &&
 	      pcm_phase3_digital_tx_finish_jd(&transmitter) ==
@@ -323,7 +375,7 @@ static bool test_minimum_and_boundary_records(void)
 	      "minimum Jp record did not advance to Jp-prime");
 
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMA, 78, &jd, &jp) ==
+		      &transmitter, G711_LAW_PCMA, 78, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_to_jd(&transmitter),
 	      "boundary fixture did not reach Jd");
@@ -364,30 +416,33 @@ static bool test_validation(void)
 	bad_jd.maximum_spectral_shaping_lookahead = 0;
 	bad_jp.training_constellation = (enum v92_constellation_size)6;
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      NULL, G711_LAW_PCMU, 78, &jd, &jp) ==
+		      NULL, G711_LAW_PCMU, 78, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, (enum g711_law)2, 78, &jd, &jp) ==
+		      &transmitter, (enum g711_law)2, 78, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 66, &jd, &jp) ==
+		      &transmitter, G711_LAW_PCMU, 66, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, NULL, &jp) ==
+		      &transmitter, G711_LAW_PCMU, 78, NULL, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, NULL) ==
+		      &transmitter, G711_LAW_PCMU, 78, &jd, NULL, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &bad_jd, &jp) ==
+		      &transmitter, G711_LAW_PCMU, 78, &bad_jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, &bad_jp) ==
+		      &transmitter, G711_LAW_PCMU, 78, &jd, &bad_jp, &zero_dil) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_tx_init_v92(
+		      &transmitter, G711_LAW_PCMU, 78, &jd, &jp, NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
 	      "invalid initialization changed state");
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, &jp) ==
+		      &transmitter, G711_LAW_PCMU, 78, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK,
 	      "validation fixture did not initialize");
 	saved = transmitter;

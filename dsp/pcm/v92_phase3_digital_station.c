@@ -121,12 +121,21 @@ static bool coordination_is_valid(
 		       station->downstream.finish_jp_requested &&
 		       !station->downstream.finish_scr_requested;
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
-		return station->downstream.stage >= PCM_PHASE3_DIGITAL_TX_SCR &&
+		return station->downstream.stage >= PCM_PHASE3_DIGITAL_TX_DIL &&
 		       station->downstream.finish_jd_requested &&
 		       station->downstream.finish_jp_requested &&
 		       !station->downstream.finish_scr_requested;
 	case V92_PHASE3_DIGITAL_RECEIVE_CPT:
 	case V92_PHASE3_DIGITAL_RECEIVE_COMPLETE:
+		if (station->downstream.dil.parameters.segment_count != 0u) {
+			if (station->downstream.stage < PCM_PHASE3_DIGITAL_TX_DIL ||
+			    station->downstream.finish_scr_requested)
+				return false;
+			if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_CPT)
+				return !station->ri.finish_requested;
+			return station->downstream.dil.complete &&
+			       station->ri.finish_requested;
+		}
 		return station->downstream.finish_jd_requested &&
 		       station->downstream.finish_jp_requested &&
 		       station->downstream.finish_scr_requested;
@@ -147,6 +156,10 @@ bool v92_phase3_digital_station_is_valid(
 	    station->su_minimum_magnitude == 0u ||
 	    !v92_jd_is_valid(&station->jd) || !v92_jp_is_valid(&station->jp) ||
 	    !v92_pcm_dil_rate_mask_is_valid(station->upstream_rate_mask) ||
+	    station->early_trn2u_samples >
+		    sizeof(station->early_trn2u) / sizeof(station->early_trn2u[0]) ||
+	    (station->early_trn2u_samples != 0u &&
+	     station->receive_stage != V92_PHASE3_DIGITAL_RECEIVE_COMPLETE) ||
 	    !receive_is_valid(station) || !transmit_is_valid(station) ||
 	    !coordination_is_valid(station) ||
 	    (receive_has_failed(station) && !station->failed))
@@ -299,17 +312,18 @@ static enum v92_phase3_digital_station_result receive_initial(
 	case V92_PCM_PHASE3_INITIAL_RX_DETECTED: {
 		struct pcm_phase3_digital_tx downstream;
 		struct v92_su_rx su;
-		uint32_t rate_mask;
+		struct v92_pcm_dil_parameters parameters;
 
-		if (!v92_pcm_phase3_initial_rx_rate_mask(
-			    &station->receive.initial, &rate_mask))
+		if (!v92_pcm_phase3_initial_rx_parameters(
+			    &station->receive.initial, &parameters))
 			return V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
-		if (rate_mask == 0u)
+		if (parameters.upstream_rate_mask == 0u)
 			return V92_PHASE3_DIGITAL_STATION_UNSUPPORTED;
 		if (pcm_phase3_digital_tx_init_v92(
 			    &downstream, station->law,
 			    station->training_ucode, &station->jd,
-			    &station->jp) != PCM_PHASE3_DIGITAL_TX_OK ||
+			    &station->jp, &parameters.downstream) !=
+			    PCM_PHASE3_DIGITAL_TX_OK ||
 		    v92_su_rx_init(
 			    &su, V92_SU_RX_MEASURE_PHASE,
 			    station->su_minimum_magnitude) != V92_SU_RX_OK)
@@ -317,7 +331,7 @@ static enum v92_phase3_digital_station_result receive_initial(
 		station->receive =
 			(union v92_phase3_digital_receive){ .su = su };
 		station->downstream = downstream;
-		station->upstream_rate_mask = rate_mask;
+		station->upstream_rate_mask = parameters.upstream_rate_mask;
 		station->receive_stage = V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE;
 		station->transmit_stage =
 			V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM;
@@ -408,10 +422,13 @@ static enum v92_phase3_digital_station_result receive_second_trn1u(
 			    &station->receive.trn1u, &handoff) !=
 			    V92_PCM_PHASE3_TRN1U_LINE_RX_OK ||
 		    v92_pcm_phase3_cpt_line_rx_init(&cpt, &handoff) !=
-			    V92_PCM_PHASE3_CPT_LINE_RX_OK ||
-		    pcm_phase3_digital_tx_finish_scr(&station->downstream) !=
-			    PCM_PHASE3_DIGITAL_TX_OK ||
-		    !begin_ri_if_downstream_complete(station))
+			    V92_PCM_PHASE3_CPT_LINE_RX_OK)
+			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+		/* Zero DIL sends Ri before CPt; nonzero DIL waits for CPt. */
+		if (station->downstream.dil.parameters.segment_count == 0u &&
+		    (pcm_phase3_digital_tx_finish_scr(&station->downstream) !=
+			     PCM_PHASE3_DIGITAL_TX_OK ||
+		     !begin_ri_if_downstream_complete(station)))
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		station->receive =
 			(union v92_phase3_digital_receive){ .cpt = cpt };
@@ -428,7 +445,7 @@ static enum v92_phase3_digital_station_result receive_wait_second_trn1u(
 {
 	struct v92_pcm_phase3_trn1u_line_rx trn1u;
 
-	if (station->downstream.stage < PCM_PHASE3_DIGITAL_TX_SCR)
+	if (station->downstream.stage < PCM_PHASE3_DIGITAL_TX_DIL)
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	if (station->downstream.stage > PCM_PHASE3_DIGITAL_TX_COMPLETE ||
 	    v92_pcm_phase3_trn1u_line_rx_init(
@@ -452,13 +469,30 @@ static enum v92_phase3_digital_station_result receive_cpt(
 	if (result == V92_PCM_PHASE3_CPT_LINE_RX_SIGN)
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	if (result == V92_PCM_PHASE3_CPT_LINE_RX_EVENT) {
+		bool nonzero_dil =
+			station->downstream.dil.parameters.segment_count != 0u;
+
 		if (event.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
-			if (station->transmit_stage !=
+			if (nonzero_dil) {
+				if (station->transmit_stage !=
+					    V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM ||
+				    pcm_phase3_digital_tx_finish_dil(
+					    &station->downstream) != PCM_PHASE3_DIGITAL_TX_OK ||
+				    !begin_ri_if_downstream_complete(station))
+					return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+			} else if (station->transmit_stage !=
 				    V92_PHASE3_DIGITAL_TRANSMIT_RI ||
 			    v90_phase4_ri_tx_request_finish(&station->ri) !=
 				    V90_PHASE4_RI_OK)
 				return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		} else if (event.type == V92_PCM_PHASE3_CPT_RX_E1U) {
+			/* For nonzero DIL, E1u acknowledges Ri. Do not send
+			 * Ri-bar while the peer is still repeating CPt. */
+			if (nonzero_dil &&
+			    (station->transmit_stage != V92_PHASE3_DIGITAL_TRANSMIT_RI ||
+			     v90_phase4_ri_tx_request_finish(&station->ri) !=
+				     V90_PHASE4_RI_OK))
+				return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 			if ((station->transmit_stage !=
 				     V92_PHASE3_DIGITAL_TRANSMIT_RI &&
 			     station->transmit_stage !=
@@ -503,8 +537,15 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_DIGITAL_STATION_FAILED;
-	if (v92_phase3_digital_station_receive_complete(station))
+	if (v92_phase3_digital_station_receive_complete(station)) {
+		if (station->early_trn2u_samples ==
+		    sizeof(station->early_trn2u) / sizeof(station->early_trn2u[0])) {
+			station->failed = true;
+			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+		}
+		station->early_trn2u[station->early_trn2u_samples++] = sample;
 		return V92_PHASE3_DIGITAL_STATION_COMPLETE;
+	}
 	next = *station;
 	switch (next.receive_stage) {
 	case V92_PHASE3_DIGITAL_RECEIVE_INITIAL:

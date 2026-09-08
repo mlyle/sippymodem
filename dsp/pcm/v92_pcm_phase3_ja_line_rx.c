@@ -173,13 +173,13 @@ enum v92_pcm_phase3_ja_line_rx_result v92_pcm_phase3_ja_line_rx_sample(
 	return result;
 }
 
-bool v92_pcm_phase3_ja_line_rx_rate_mask(
+bool v92_pcm_phase3_ja_line_rx_parameters(
 	const struct v92_pcm_phase3_ja_line_rx *receiver,
-	uint32_t *rate_mask)
+	struct v92_pcm_dil_parameters *parameters)
 {
 	return v92_pcm_phase3_ja_line_rx_is_complete(receiver) &&
-	       v92_ja_decoder_rate_mask(
-		       &receiver->sequence.decoder, rate_mask);
+	       v92_ja_decoder_parameters(
+		       &receiver->sequence.decoder, parameters);
 }
 
 const char *v92_pcm_phase3_ja_line_rx_result_name(

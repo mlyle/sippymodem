@@ -86,9 +86,6 @@ static bool dil_is_valid(
 {
 	const struct v90_dil_sequence *dil = &transmitter->dil;
 
-	if (transmitter->protocol == PCM_PROTOCOL_V92)
-		return memory_region_is_zero(
-			(const uint8_t *)dil, sizeof(*dil));
 	if (!v90_dil_parameters_are_valid(&dil->parameters) ||
 	    dil->law != law)
 		return false;
@@ -136,6 +133,7 @@ static bool counters_are_valid(
 	} else {
 		if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_JP)
 			return transmitter->bit_index < PCM_J_FRAME_BITS &&
+			       dil_is_unstarted(&transmitter->dil) &&
 			       transmitter->scr_symbols == 0 &&
 			       !transmitter->finish_scr_requested &&
 			       !(transmitter->finish_jp_requested &&
@@ -150,7 +148,11 @@ static bool counters_are_valid(
 		       dil_is_unstarted(&transmitter->dil) &&
 		       !transmitter->finish_scr_requested &&
 		       transmitter->bit_index < PCM_PHASE3_PRIME_BITS;
-	if (transmitter->protocol == PCM_PROTOCOL_V90) {
+	if (transmitter->protocol == PCM_PROTOCOL_V90 ||
+	    transmitter->dil.parameters.segment_count != 0u) {
+		if (transmitter->scr_symbols != 0u ||
+		    transmitter->finish_scr_requested)
+			return false;
 		if (transmitter->stage == PCM_PHASE3_DIGITAL_TX_DIL)
 			return transmitter->bit_index == PCM_PHASE3_PRIME_BITS &&
 			       transmitter->dil.parameters.segment_count != 0u &&
@@ -205,7 +207,7 @@ bool pcm_phase3_digital_tx_is_valid(
 	return dil_is_valid(transmitter, law);
 }
 
-static bool initialize_v90_dil(
+static bool initialize_dil(
 	struct v90_dil_sequence *sequence,
 	const struct v90_dil_parameters *parameters,
 	enum g711_law law)
@@ -238,7 +240,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	    v90_jd_encode(
 		    jd_parameters, initialized.jd_frame,
 		    sizeof(initialized.jd_frame)) != V90_JD_OK ||
-	    !initialize_v90_dil(
+	    !initialize_dil(
 		    &initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
 		    &initialized.sequence.prefix, law, training_ucode,
@@ -253,7 +255,8 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
 	uint8_t training_ucode, const struct v92_jd *jd,
-	const struct v92_jp *jp)
+	const struct v92_jp *jp,
+	const struct v90_dil_parameters *dil_parameters)
 {
 	struct pcm_phase3_digital_tx initialized = {
 		.protocol = PCM_PROTOCOL_V92,
@@ -267,6 +270,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	    v92_jp_encode(
 		    jp, initialized.jp_frame,
 		    sizeof(initialized.jp_frame)) != V92_J_OK ||
+	    !initialize_dil(&initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
 		    &initialized.sequence.prefix, law, training_ucode,
 		    protocol_trn1d_symbols(PCM_PROTOCOL_V92)) !=
@@ -352,10 +356,10 @@ static enum pcm_phase3_digital_tx_result next_prime(
 		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
 	transmitter->bit_index++;
 	if (transmitter->bit_index == PCM_PHASE3_PRIME_BITS) {
-		if (transmitter->protocol == PCM_PROTOCOL_V92)
-			transmitter->stage = PCM_PHASE3_DIGITAL_TX_SCR;
-		else if (transmitter->dil.parameters.segment_count != 0u)
+		if (transmitter->dil.parameters.segment_count != 0u)
 			transmitter->stage = PCM_PHASE3_DIGITAL_TX_DIL;
+		else if (transmitter->protocol == PCM_PROTOCOL_V92)
+			transmitter->stage = PCM_PHASE3_DIGITAL_TX_SCR;
 		else
 			transmitter->stage = PCM_PHASE3_DIGITAL_TX_COMPLETE;
 	}
@@ -515,8 +519,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_dil(
 
 	if (!pcm_phase3_digital_tx_is_valid(transmitter))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
-	if (transmitter->protocol != PCM_PROTOCOL_V90 ||
-	    transmitter->dil.parameters.segment_count == 0u ||
+	if (transmitter->dil.parameters.segment_count == 0u ||
 	    (transmitter->stage != PCM_PHASE3_DIGITAL_TX_DIL &&
 	     !(transmitter->stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 	       transmitter->dil.complete)))
@@ -543,6 +546,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_scr(
 	if (!pcm_phase3_digital_tx_is_valid(transmitter))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
 	if (transmitter->protocol != PCM_PROTOCOL_V92 ||
+	    transmitter->dil.parameters.segment_count != 0u ||
 	    (transmitter->stage != PCM_PHASE3_DIGITAL_TX_SCR &&
 	     transmitter->stage != PCM_PHASE3_DIGITAL_TX_COMPLETE))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_STATE;

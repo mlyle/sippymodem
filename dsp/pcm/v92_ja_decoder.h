@@ -18,16 +18,18 @@ enum v92_ja_decoder_result {
 	V92_JA_DECODER_INVALID_STATE,
 };
 
-/* Decode repeated N=0 Ja descriptors from polarity-normalized hard signs.
+/* Decode repeated Ja descriptors from polarity-normalized hard signs.
  * Initialization copies the coding epoch immediately after the sync field
  * and start bit; the caller must then retire the completed sync owner. A
- * rejected descriptor is discarded at its exact boundary while coding
- * history continues into the next repetition. */
+ * rejected descriptor is discarded while coding history continues. Frame
+ * sync is also recognized inside an incomplete candidate so a corrupt length
+ * cannot hide the next repetition. */
 struct v92_ja_decoder {
 	struct pcm_binary_sign coding;
-	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
-	uint32_t rate_mask;
+	uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES];
 	uint16_t bit_index;
+	uint16_t descriptor_bits;
+	uint8_t consecutive_ones;
 	bool complete;
 };
 
@@ -43,9 +45,10 @@ enum v92_ja_decoder_result v92_ja_decoder_receive(
 	struct v92_ja_decoder *decoder, uint8_t sign);
 
 /* Zero is a syntactically valid mask; availability policy belongs to the
- * later session selection boundary. Failed calls leave rate_mask unchanged. */
-bool v92_ja_decoder_rate_mask(
-	const struct v92_ja_decoder *decoder, uint32_t *rate_mask);
+ * later session selection boundary. Failed calls leave parameters unchanged. */
+bool v92_ja_decoder_parameters(
+	const struct v92_ja_decoder *decoder,
+	struct v92_pcm_dil_parameters *parameters);
 
 const char *v92_ja_decoder_result_name(
 	enum v92_ja_decoder_result result);

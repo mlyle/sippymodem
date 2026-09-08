@@ -2093,6 +2093,13 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    &call->v92_digital_phase4_configuration.cpd) !=
 		    V92_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
+		/* Nonzero DIL acknowledges CPt with Ri, then E1u with Ri-bar.
+		 * Upstream TRN2u continues during that final downstream suffix. */
+		for (size_t index = 0; index < mixed->phase3.early_trn2u_samples; ++index)
+			if (v92_phase4_digital_station_receive(
+				    &station, mixed->phase3.early_trn2u[index]) !=
+			    V92_PHASE4_DIGITAL_STATION_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
 			.owner.digital = station,
 			.child = PCM_CALL_V92_PHASE4_CONTROL,

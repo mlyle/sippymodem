@@ -56,10 +56,10 @@ bool v92_pcm_phase3_initial_rx_has_failed(
 enum v92_pcm_phase3_initial_rx_result v92_pcm_phase3_initial_rx_sample(
 	struct v92_pcm_phase3_initial_rx *receiver, int16_t sample);
 
-/* Zero is a valid advertised mask. Failed calls preserve rate_mask. */
-bool v92_pcm_phase3_initial_rx_rate_mask(
+/* Export the full learning request. Failed calls preserve parameters. */
+bool v92_pcm_phase3_initial_rx_parameters(
 	const struct v92_pcm_phase3_initial_rx *receiver,
-	uint32_t *rate_mask);
+	struct v92_pcm_dil_parameters *parameters);
 
 const char *v92_pcm_phase3_initial_rx_stage_name(
 	enum v92_pcm_phase3_initial_rx_stage stage);

@@ -125,7 +125,7 @@ static bool check_mask(uint32_t expected_mask)
 	struct v92_ja_decoder decoder;
 	struct sign_source source;
 	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
-	uint32_t decoded = UINT32_MAX;
+	struct v92_pcm_dil_parameters decoded = { 0 };
 
 	CHECK(prepare_decoder(&decoder, &source) &&
 	      v92_pcm_dil_encode_zero(
@@ -138,10 +138,10 @@ static bool check_mask(uint32_t expected_mask)
 	      "Ja descriptor fixture failed for mask 0x%05x",
 	      (unsigned int)expected_mask);
 	CHECK(v92_ja_decoder_is_complete(&decoder) &&
-	      v92_ja_decoder_rate_mask(&decoder, &decoded) &&
-	      decoded == expected_mask,
+	      v92_ja_decoder_parameters(&decoder, &decoded) &&
+	      decoded.upstream_rate_mask == expected_mask,
 	      "Ja descriptor decoded 0x%05x instead of 0x%05x",
-	      (unsigned int)decoded, (unsigned int)expected_mask);
+	      (unsigned int)decoded.upstream_rate_mask, (unsigned int)expected_mask);
 	{
 		struct v92_ja_decoder before = decoder;
 
@@ -168,7 +168,7 @@ static bool test_repetition_recovery(void)
 	struct sign_source source;
 	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
 	const uint32_t expected_mask = UINT32_C(0x4567);
-	uint32_t decoded = 0u;
+	struct v92_pcm_dil_parameters decoded = { 0 };
 
 	CHECK(prepare_decoder(&decoder, &source) &&
 	      v92_pcm_dil_encode_zero(
@@ -185,9 +185,87 @@ static bool test_repetition_recovery(void)
 	CHECK(feed_descriptor(
 		      &decoder, &source, descriptor, 0u, SIZE_MAX) ==
 		      V92_JA_DECODER_DETECTED &&
-	      v92_ja_decoder_rate_mask(&decoder, &decoded) &&
-	      decoded == expected_mask,
+	      v92_ja_decoder_parameters(&decoder, &decoded) &&
+	      decoded.upstream_rate_mask == expected_mask,
 	      "Ja decoder did not recover on the next repetition");
+	return true;
+}
+
+static bool test_variable_descriptors(void)
+{
+	for (unsigned int segments = 1; segments <= 255; ++segments) {
+		struct v92_ja_decoder decoder;
+		struct sign_source source;
+		struct v92_pcm_dil_parameters parameters = {
+			.upstream_rate_mask = 0xf,
+		};
+		struct v92_pcm_dil_parameters decoded;
+		uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES];
+		size_t bits;
+
+		CHECK(v90_dil_profile_init(&parameters.downstream,
+			      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK,
+		      "variable Ja parameters failed");
+		parameters.downstream.segment_count = (uint8_t)segments;
+		memset(parameters.downstream.training_ucodes, 0,
+		       sizeof(parameters.downstream.training_ucodes));
+		for (unsigned int index = 0; index < segments; ++index)
+			parameters.downstream.training_ucodes[index] = index % 128u;
+		CHECK(prepare_decoder(&decoder, &source) &&
+		      v92_pcm_dil_encode(&parameters, descriptor,
+			      sizeof(descriptor), &bits) == V92_PCM_DIL_OK,
+		      "variable Ja fixture failed for N=%u", segments);
+		for (size_t bit = 18; bit < bits; ++bit) {
+			uint8_t sign;
+			CHECK(source_ja(&source, descriptor_bit(descriptor, bit), &sign) &&
+			      v92_ja_decoder_receive(&decoder, sign) ==
+				      (bit + 1u == bits ? V92_JA_DECODER_DETECTED :
+							V92_JA_DECODER_OK),
+			      "variable Ja failed for N=%u at bit %zu", segments, bit);
+		}
+		CHECK(v92_ja_decoder_parameters(&decoder, &decoded) &&
+		      decoded.upstream_rate_mask == parameters.upstream_rate_mask &&
+		      memcmp(&decoded.downstream, &parameters.downstream,
+			     sizeof(parameters.downstream)) == 0,
+		      "variable Ja handoff changed N=%u parameters", segments);
+	}
+	return true;
+}
+
+static bool test_length_recovery(void)
+{
+	struct v92_ja_decoder decoder;
+	struct sign_source source;
+	struct v92_pcm_dil_parameters decoded;
+	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
+
+	CHECK(prepare_decoder(&decoder, &source) &&
+	      v92_pcm_dil_encode_zero(0xf, descriptor, sizeof(descriptor)) ==
+		      V92_PCM_DIL_OK, "length recovery fixture failed");
+	/* Corrupt N from zero to 255, without corrupting the coding epoch.
+	 * The declared length now includes the following intact repetition. */
+	for (size_t bit = 18; bit < 276; ++bit) {
+		uint8_t sign;
+		uint8_t value = bit < 26 ? 1u : descriptor_bit(descriptor, bit);
+		CHECK(source_ja(&source, value, &sign) &&
+		      v92_ja_decoder_receive(&decoder, sign) == V92_JA_DECODER_OK,
+		      "corrupt length failed before the next sync at %zu", bit);
+	}
+	CHECK(decoder.descriptor_bits > decoder.bit_index,
+	      "corrupt length did not create an incomplete candidate");
+	for (size_t bit = 0; bit < 276; ++bit) {
+		uint8_t sign;
+		enum v92_ja_decoder_result expected = bit == 17 ?
+			V92_JA_DECODER_REJECTED : bit == 275 ?
+			V92_JA_DECODER_DETECTED : V92_JA_DECODER_OK;
+		CHECK(source_ja(&source, descriptor_bit(descriptor, bit), &sign) &&
+		      v92_ja_decoder_receive(&decoder, sign) == expected,
+		      "length recovery lost the next descriptor at %zu", bit);
+	}
+	CHECK(v92_ja_decoder_parameters(&decoder, &decoded) &&
+	      decoded.downstream.segment_count == 0 &&
+	      decoded.upstream_rate_mask == 0xf,
+	      "length recovery did not hand off the next repetition");
 	return true;
 }
 
@@ -196,7 +274,10 @@ static bool test_contracts(void)
 	struct v92_ja_decoder decoder;
 	struct v92_ja_decoder before;
 	struct v92_phase3_sync sync;
-	uint32_t rate_mask = UINT32_C(0xa5a5a5a5);
+	struct v92_pcm_dil_parameters sentinel = {
+		.upstream_rate_mask = UINT32_C(0xa5a5a5a5),
+	};
+	struct v92_pcm_dil_parameters parameters = sentinel;
 	static const char *const names[] = {
 		"ok", "detected", "rejected", "complete", "invalid argument",
 		"invalid state",
@@ -211,8 +292,8 @@ static bool test_contracts(void)
 		      V92_JA_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &before, sizeof(decoder)) == 0 &&
 	      !v92_ja_decoder_is_complete(NULL) &&
-	      !v92_ja_decoder_rate_mask(&decoder, &rate_mask) &&
-	      rate_mask == UINT32_C(0xa5a5a5a5),
+	      !v92_ja_decoder_parameters(&decoder, &parameters) &&
+	      memcmp(&parameters, &sentinel, sizeof(parameters)) == 0,
 	      "invalid Ja decoder initialization/getter changed output");
 	{
 		struct sign_source source;
@@ -227,7 +308,7 @@ static bool test_contracts(void)
 		      V92_JA_DECODER_INVALID_ARGUMENT &&
 	      memcmp(&decoder, &before, sizeof(decoder)) == 0,
 	      "invalid Ja decoder call changed state");
-	decoder.bit_index = V92_PCM_DIL_ZERO_DESCRIPTOR_BITS + 1u;
+	decoder.bit_index = V92_PCM_DIL_MAX_DESCRIPTOR_BITS + 1u;
 	before = decoder;
 	CHECK(!v92_ja_decoder_is_valid(&decoder) &&
 	      v92_ja_decoder_receive(&decoder, 0u) ==
@@ -256,6 +337,8 @@ int main(void)
 	} tests[] = {
 		{ "generated masks", test_generated_masks },
 		{ "repetition recovery", test_repetition_recovery },
+		{ "variable descriptors", test_variable_descriptors },
+		{ "corrupt length recovery", test_length_recovery },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0u;

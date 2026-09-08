@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_pcm_phase4_trn2u.h>
+#include <v92_pcm_phase4_trn2u_line_rx.h>
 #include <v92_phase3_analog_station.h>
 #include <v92_phase3_digital_station.h>
+#include <packed_bits.h>
 
 #include "test.h"
 
@@ -249,6 +251,195 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	return true;
 }
 
+static bool run_nonzero_dil(enum g711_law law)
+{
+	/* A scripted peer requests DIL, then sends CPt while DIL is active.
+	 * Hold CPt after Ri to distinguish that acknowledgement from E1u. */
+	enum { PEER_TRN1U, PEER_JA, PEER_SU, PEER_CPT } peer = PEER_TRN1U;
+	struct v92_phase3_digital_station digital;
+	struct v92_jd jd = { .data_rate_capability_mask = 1,
+		.maximum_spectral_shaping_lookahead = 1 };
+	struct v92_jp jp = { .training_constellation = V92_CONSTELLATION_4_POINT,
+		.rate_renegotiation_constellation = V92_CONSTELLATION_4_POINT };
+	struct v92_pcm_dil_parameters request = { .upstream_rate_mask = 0xf };
+	struct v92_pcm_phase3_trn1u initial;
+	struct pcm_binary_sign coding;
+	struct v92_su su;
+	struct fractional_delay delay;
+	struct v92_pcm_phase3_cpt_tx cpt;
+	struct v92_pcm_phase4_trn2u trn2u;
+	struct v92_cpt_parameters parameters = cpt_parameters(law), received;
+	struct v92_pcm_phase3_cpt_line_handoff handoff;
+	struct v90_pcm_symbol level;
+	uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES];
+	size_t bits, ja_symbols = 0, ri_symbols = 0;
+	bool mid_segment_finish = false, e1u_started = false, finished = false;
+	bool trn2u_started = false;
+
+	fractional_delay_init(&delay);
+	CHECK(v90_dil_profile_init(&request.downstream,
+		      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+	      v92_pcm_dil_encode(&request, descriptor, sizeof(descriptor), &bits) ==
+		      V92_PCM_DIL_OK &&
+	      v92_phase3_digital_station_init(&digital, law, TEST_UCODE, 0.0,
+		      TEST_SU_THRESHOLD, &jd, &jp) == V92_PHASE3_DIGITAL_STATION_OK &&
+	      v92_pcm_phase3_trn1u_init(&initial, law, TEST_UCODE) ==
+		      V92_PCM_PHASE3_TRN1U_OK &&
+	      v90_pcm_symbol_make(&level, law, TEST_UCODE, true),
+	      "nonzero-DIL peer did not initialize");
+	for (size_t index = 0; index < 60000 && !finished; ++index) {
+		struct v90_pcm_symbol symbol;
+		uint8_t octet;
+		int16_t sample;
+
+		if (!v92_phase3_digital_station_transmit_complete(&digital))
+			CHECK(v92_phase3_digital_station_transmit(&digital, &octet) ==
+				      V92_PHASE3_DIGITAL_STATION_OK,
+			      "nonzero DIL transmit failed at %zu", index);
+		if (peer == PEER_TRN1U && initial.emitted_symbols == 2040) {
+			CHECK(pcm_binary_sign_init_from_scrambler(&coding,
+				      &initial.scrambler, initial.scrambler.history & 1u) ==
+				      PCM_BINARY_SIGN_OK, "Ja coding handoff failed");
+			peer = PEER_JA;
+		}
+		if (peer == PEER_JA && digital.downstream.jd_records != 0 &&
+		    ja_symbols % 12u == 0) {
+			CHECK(v92_su_init(&su, level.sample) == V92_SU_OK &&
+			      memcmp(&digital.downstream.dil.parameters, &request.downstream,
+				     sizeof(request.downstream)) == 0 &&
+			      digital.upstream_rate_mask == request.upstream_rate_mask,
+			      "Ja handoff lost the learning request");
+			peer = PEER_SU;
+		}
+		if (peer == PEER_SU) {
+			if (su.stage == V92_SU_JP_WAIT && digital.downstream.jp_records != 0)
+				CHECK(v92_su_accept_jp(&su, &digital.jp) == V92_SU_OK,
+				      "peer could not acknowledge Jp");
+			if (su.stage == V92_SU_JP_PRIME_WAIT &&
+			    digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL) {
+				CHECK(v92_su_accept_jp_prime(&su, &delay, true) == V92_SU_COMPLETE &&
+				      v92_pcm_phase3_cpt_tx_init(&cpt, law, TEST_UCODE, &parameters) ==
+					      V92_PCM_PHASE3_CPT_TX_OK,
+				      "peer could not enter DIL study");
+				peer = PEER_CPT;
+			}
+		}
+		if (peer == PEER_TRN1U) {
+			CHECK(v92_pcm_phase3_trn1u_next(&initial, &symbol) ==
+				      V92_PCM_PHASE3_TRN1U_OK, "initial TRN1u failed");
+			sample = symbol.sample;
+		} else if (peer == PEER_JA) {
+			uint8_t sign;
+			uint8_t bit = ja_symbols < 24 ? 1u :
+				packed_msb_bit(descriptor, (ja_symbols - 24u) % bits);
+			CHECK(pcm_binary_sign_encode(&coding, bit, &sign) == PCM_BINARY_SIGN_OK &&
+			      v90_pcm_symbol_make(&symbol, law, TEST_UCODE, sign == 0u),
+			      "nonzero Ja generation failed");
+			ja_symbols++;
+			sample = symbol.sample;
+		} else if (peer == PEER_SU) {
+			enum v92_su_result result = v92_su_next(&su, &delay, &sample);
+			CHECK(result == V92_SU_OK || result == V92_SU_REACHED_JP_WAIT ||
+			      result == V92_SU_REACHED_JP_PRIME_WAIT, "Su generation failed");
+		} else {
+			if (cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+			    cpt.trn1u.emitted_symbols == 6000) {
+				CHECK(digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL &&
+				      !digital.downstream.dil.finish_requested &&
+				      digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_CPT &&
+				      v92_pcm_phase3_cpt_tx_start(&cpt) == V92_PCM_PHASE3_CPT_TX_OK,
+				      "DIL did not wait for CPt");
+			}
+			if (digital.transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_RI &&
+			    !e1u_started) {
+				CHECK(!digital.ri.finish_requested, "Ri-bar preceded peer E1u");
+				if (++ri_symbols == 3000) {
+					CHECK(v92_pcm_phase3_cpt_tx_request_finish(&cpt) ==
+						      V92_PCM_PHASE3_CPT_TX_OK,
+					      "peer could not acknowledge Ri with E1u");
+					e1u_started = true;
+				}
+			}
+			if (!v92_pcm_phase3_cpt_tx_is_complete(&cpt)) {
+				CHECK(v92_pcm_phase3_cpt_tx_next(&cpt, &symbol) ==
+					      V92_PCM_PHASE3_CPT_TX_OK, "CPt/E1u generation failed");
+				sample = symbol.sample;
+			} else {
+				if (!trn2u_started) {
+					CHECK(v92_pcm_phase4_trn2u_init(&trn2u, jp.training_constellation,
+						      cpt.coding.previous_sign, level.sample) ==
+						      V92_PCM_PHASE4_TRN2U_OK, "TRN2u handoff failed");
+					trn2u_started = true;
+				}
+				CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
+					      V92_PCM_PHASE4_TRN2U_OK, "TRN2u generation failed");
+			}
+		}
+		if (peer != PEER_SU)
+			CHECK(fractional_delay_process(&delay, sample, &sample) ==
+				      FRACTIONAL_DELAY_OK, "peer sample delay failed");
+		{
+			enum v92_phase3_digital_station_result result =
+				v92_phase3_digital_station_receive(&digital, media_sample(law, sample));
+			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
+			      result == V92_PHASE3_DIGITAL_STATION_COMPLETE,
+			      "nonzero-DIL receive failed at %zu: %s", index,
+			      v92_phase3_digital_station_result_name(result));
+		}
+		mid_segment_finish |= digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL &&
+			digital.downstream.dil.finish_requested;
+		finished = v92_phase3_digital_station_receive_complete(&digital) &&
+			v92_phase3_digital_station_transmit_complete(&digital);
+	}
+	CHECK(finished && mid_segment_finish && e1u_started && ri_symbols == 3000 &&
+	      digital.downstream.scr_symbols == 0 && !digital.downstream.finish_scr_requested &&
+	      digital.downstream.dil.complete && digital.ri.finish_requested &&
+	      v92_phase3_digital_station_downstream_handoff(&digital, &received) ==
+		      V92_PHASE3_DIGITAL_STATION_OK && parameters_match(&received, &parameters) &&
+	      v92_phase3_digital_station_receive_handoff(&digital, &handoff) ==
+		      V92_PHASE3_DIGITAL_STATION_OK &&
+	      v92_pcm_phase3_cpt_line_handoff_is_valid(&handoff),
+	      "nonzero-DIL exchange did not complete the negotiated handoffs");
+	{
+		struct v92_pcm_phase4_trn2u_line_rx receiver;
+
+		CHECK(digital.early_trn2u_samples >= V90_PHASE4_RI_BAR_SYMBOLS &&
+		      v92_pcm_phase4_trn2u_line_rx_init(
+			      &receiver, &handoff, jp.training_constellation) ==
+			      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
+		      "Ri-bar overlap did not retain early TRN2u");
+		for (size_t index = 0; index < digital.early_trn2u_samples; ++index)
+			CHECK(v92_pcm_phase4_trn2u_line_rx_sample(&receiver,
+				      digital.early_trn2u[index]) == V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
+			      "buffered TRN2u handoff failed at %zu", index);
+		for (size_t index = 0; index < 240; ++index) {
+			int16_t sample;
+			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
+			      fractional_delay_process(&delay, sample, &sample) == FRACTIONAL_DELAY_OK &&
+			      v92_pcm_phase4_trn2u_line_rx_sample(&receiver, media_sample(law, sample)) ==
+				      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
+			      "live TRN2u continuation failed at %zu", index);
+		}
+		CHECK(receiver.symbol_errors == 0 && receiver.coding_errors == 0,
+		      "Ri-bar overlap lost the TRN2u epoch: %u symbol / %u coding errors",
+		      receiver.symbol_errors, receiver.coding_errors);
+		while (digital.early_trn2u_samples < ARRAY_LENGTH(digital.early_trn2u))
+			CHECK(v92_phase3_digital_station_receive(&digital, 0) ==
+				      V92_PHASE3_DIGITAL_STATION_COMPLETE,
+			      "bounded overlap rejected a permitted sample");
+		CHECK(v92_phase3_digital_station_receive(&digital, 0) ==
+			      V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH &&
+		      v92_phase3_digital_station_has_failed(&digital),
+		      "unpaced overlap exceeded its bound");
+	}
+	return true;
+}
+
+static bool test_nonzero_dil(void)
+{
+	return run_nonzero_dil(G711_LAW_PCMU) && run_nonzero_dil(G711_LAW_PCMA);
+}
+
 static bool test_analog_contracts(void)
 {
 	struct v92_phase3_analog_station_configuration configuration =
@@ -490,6 +681,7 @@ int main(void)
 		{ "PCMA zero-DIL station exchange", NULL },
 		{ "PCMU delayed station exchange", NULL },
 		{ "PCMA delayed station exchange", NULL },
+		{ "nonzero-DIL station exchange", test_nonzero_dil },
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
 		{ "digital station contracts", test_digital_contracts },

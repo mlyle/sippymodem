@@ -36,10 +36,9 @@ union pcm_phase3_digital_tx_sequence {
 };
 
 /* Own the common digital-modem Phase 3 network-character stream after Ja.
- * Both protocols emit Sd, Sd-bar, TRN1d, and Jd. V.90 can continue with an
- * exact descriptor-selected DIL after Jd-prime; V.92 alone can enter Jp and
- * the zero-DIL SCR continuation. The call controller owns remote signal
- * detection and decides when either continuation is complete. */
+ * Both protocols emit Sd, Sd-bar, TRN1d, Jd, and descriptor-selected DIL.
+ * V.92 adds Jp and uses SCR when no DIL is requested. The call controller
+ * owns remote signal detection and decides when either continuation ends. */
 struct pcm_phase3_digital_tx {
 	union pcm_phase3_digital_tx_sequence sequence;
 	struct v90_dil_sequence dil;
@@ -64,7 +63,8 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
 	uint8_t training_ucode, const struct v92_jd *jd,
-	const struct v92_jp *jp);
+	const struct v92_jp *jp,
+	const struct v90_dil_parameters *dil_parameters);
 bool pcm_phase3_digital_tx_is_valid(
 	const struct pcm_phase3_digital_tx *transmitter);
 
@@ -93,8 +93,8 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jd(
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_jp(
 	struct pcm_phase3_digital_tx *transmitter);
 
-/* End a nonzero V.90 DIL on its next segment boundary. A request made at a
- * boundary completes immediately. Zero-DIL V.90 and V.92 reject it. */
+/* End nonzero DIL on its next segment boundary. A request made at a
+ * boundary completes immediately. Zero-DIL selections reject it. */
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_finish_dil(
 	struct pcm_phase3_digital_tx *transmitter);
 

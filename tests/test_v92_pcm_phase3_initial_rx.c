@@ -53,7 +53,7 @@ static bool check_line(
 	struct v92_pcm_phase3_initial_tx transmitter;
 	struct v92_pcm_phase3_initial_rx receiver;
 	struct v90_pcm_symbol md_symbol;
-	uint32_t decoded = UINT32_MAX;
+	struct v92_pcm_dil_parameters decoded = { 0 };
 	unsigned int alignment_events = 0u;
 	unsigned int training_events = 0u;
 	unsigned int synchronization_events = 0u;
@@ -99,8 +99,9 @@ static bool check_line(
 	      synchronization_events == 1u &&
 	      v92_pcm_phase3_initial_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_initial_rx_has_failed(&receiver) &&
-	      v92_pcm_phase3_initial_rx_rate_mask(&receiver, &decoded) &&
-	      decoded == rate_mask &&
+	      v92_pcm_phase3_initial_rx_parameters(&receiver, &decoded) &&
+	      decoded.upstream_rate_mask == rate_mask &&
+	      decoded.downstream.segment_count == 0u &&
 	      transmitter.stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
 	      receiver.sequence.ja.processed_samples ==
 		      V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
@@ -113,7 +114,7 @@ static bool check_line(
 	      "mask=%05x/%05x processed=%llu/%u polarity=%d/%d "
 	      "source=%llu delay=%u",
 	      detected, alignment_events, training_events,
-	      synchronization_events, (unsigned int)decoded,
+	      synchronization_events, (unsigned int)decoded.upstream_rate_mask,
 	      (unsigned int)rate_mask,
 	      (unsigned long long)receiver.sequence.ja.processed_samples,
 	      V92_PCM_PHASE3_JA_MIN_SYMBOLS,
@@ -192,7 +193,10 @@ static bool test_contracts(void)
 {
 	struct v92_pcm_phase3_initial_rx receiver;
 	struct v92_pcm_phase3_initial_rx before;
-	uint32_t rate_mask = UINT32_C(0xa5a5a5a5);
+	struct v92_pcm_dil_parameters sentinel = {
+		.upstream_rate_mask = UINT32_C(0xa5a5a5a5),
+	};
+	struct v92_pcm_dil_parameters parameters = sentinel;
 	static const char *const stages[] = {
 		"TRN1u", "Ja", "complete",
 	};
@@ -219,8 +223,8 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_initial_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_initial_rx_is_complete(&receiver) &&
 	      !v92_pcm_phase3_initial_rx_has_failed(&receiver) &&
-	      !v92_pcm_phase3_initial_rx_rate_mask(&receiver, &rate_mask) &&
-	      rate_mask == UINT32_C(0xa5a5a5a5),
+	      !v92_pcm_phase3_initial_rx_parameters(&receiver, &parameters) &&
+	      memcmp(&parameters, &sentinel, sizeof(parameters)) == 0,
 	      "initial receive contract instance did not initialize");
 	before = receiver;
 	CHECK(v92_pcm_phase3_initial_rx_sample(NULL, 0) ==
