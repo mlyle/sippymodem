@@ -389,6 +389,27 @@ v34_training_constellation_fixed_point(
 	return V34_CONSTELLATION_OK;
 }
 
+static uint32_t fixed_point_power(struct v34_analytic_sample point)
+{
+	int32_t in_phase = point.in_phase;
+	int32_t quadrature = point.quadrature;
+
+	return (uint32_t)(in_phase * in_phase) +
+	       (uint32_t)(quadrature * quadrature);
+}
+
+bool v34_training_constellation_has_signal(
+	enum v34_constellation_size constellation,
+	struct v34_analytic_sample point)
+{
+	struct v34_analytic_sample innermost;
+
+	if (v34_training_constellation_fixed_point(
+		    constellation, 0, 0, &innermost) != V34_CONSTELLATION_OK)
+		return false;
+	return fixed_point_power(point) >= fixed_point_power(innermost) / 4u;
+}
+
 enum v34_constellation_result
 v34_training_constellation_fixed_slice(
 	enum v34_constellation_size constellation,

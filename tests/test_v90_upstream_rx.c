@@ -420,7 +420,7 @@ static bool run_line(
 		 * Its remaining tail, E and B1 still use the continuous scrambler. */
 		if (damage_prime && prime_started && !e_started &&
 		    cp_tx.symbols.bit_index >= 64u &&
-		    cp_tx.symbols.bit_index < 72u) {
+		    cp_tx.symbols.bit_index < 128u) {
 			sample = 0;
 			prime_damaged = true;
 		}

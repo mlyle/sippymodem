@@ -18,7 +18,7 @@ enum {
 	DOWNSTREAM_TRAINING_CHARACTER_LIMIT =
 		V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 2048,
 	DATA_FRAMES_TO_RECEIVE = 4,
-	UPSTREAM_FRAMES_TO_RECEIVE = 4,
+	UPSTREAM_FRAMES_TO_RECEIVE = 64,
 };
 
 static struct v90_jd_parameters jd_parameters(
@@ -518,7 +518,7 @@ static bool verify_final_downstream_exchange(
 		    analog_path.upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP &&
 		    analog_path.data_parameters.acknowledges_peer &&
 		    analog_path.upstream.cp.symbols.bit_index >= 64u &&
-		    analog_path.upstream.cp.symbols.bit_index < 68u) {
+		    analog_path.upstream.cp.symbols.bit_index < 128u) {
 			upstream_sample = 0;
 			prime_damaged = true;
 		}

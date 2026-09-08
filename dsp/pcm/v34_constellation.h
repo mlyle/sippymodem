@@ -135,4 +135,12 @@ v34_training_constellation_fixed_slice(
 	struct v34_analytic_sample point,
 	struct v34_fixed_training_decision *decision);
 
+/* Qualify decision-directed training feedback at half the innermost point's
+ * radius. This rejects near-silence without excluding the sixteen-point
+ * set's inner points. Not a carrier detector or a mapped-data qualifier.
+ * Invalid constellations return false. */
+bool v34_training_constellation_has_signal(
+	enum v34_constellation_size constellation,
+	struct v34_analytic_sample point);
+
 #endif

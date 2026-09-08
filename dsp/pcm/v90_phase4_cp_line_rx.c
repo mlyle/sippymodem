@@ -499,9 +499,16 @@ enum v90_phase4_cp_line_rx_result v90_phase4_cp_line_rx_sample(
 			action =
 				v34_receive_action_only(V34_RECEIVE_DISCARD);
 	} else {
+		/* A CP dropout must not teach the FIR an arbitrary hard decision.
+		 * Keep the carrier and symbol history moving so a later CP or E can
+		 * recover, and resume ordinary adaptation as soon as signal returns. */
 		action = v34_receive_action_commit(
 			&observation, hard.target,
-			next.decoder_power_q15, next.adaptation);
+			next.decoder_power_q15,
+			next.adaptation == V34_ADAPTIVE_EQUALIZER_FULL &&
+			!v34_training_constellation_has_signal(
+				next.symbols.constellation, observation.decision) ?
+				V34_ADAPTIVE_EQUALIZER_CARRIER : next.adaptation);
 	}
 	if (v34_line_receiver_resolve(
 		    &next.line, &observation, &action,

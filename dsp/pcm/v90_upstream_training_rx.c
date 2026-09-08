@@ -12,11 +12,6 @@ enum {
 	/* Preserve 48 symbols of past-channel span for delayed upstream echoes,
 	 * while ordinary V.34 retains its 80-tap/20-symbol geometry. */
 	V90_UPSTREAM_EQUALIZER_TAPS = 128,
-	/* Silence between the analogue modem's V.90 return intervals must not
-	 * pull the trained equalizer toward an arbitrary constellation point. */
-	V90_UPSTREAM_MIN_TRACKING_POWER =
-		(V34_TRAINING_FIXED_AMPLITUDE / 2) *
-		(V34_TRAINING_FIXED_AMPLITUDE / 2),
 };
 
 static bool semantic_state_is_valid(
@@ -198,16 +193,6 @@ static enum v90_upstream_training_rx_result receive_initial(
 	return V90_UPSTREAM_TRAINING_RX_OK;
 }
 
-static uint32_t observation_power(
-	const struct v34_adaptive_equalizer_observation *observation)
-{
-	int32_t in_phase = observation->decision.in_phase;
-	int32_t quadrature = observation->decision.quadrature;
-
-	return (uint32_t)(in_phase * in_phase) +
-	       (uint32_t)(quadrature * quadrature);
-}
-
 static enum v90_upstream_training_rx_result receive_tracking(
 	struct v90_upstream_training_rx *receiver,
 	const struct v34_adaptive_equalizer_observation *observation)
@@ -229,8 +214,9 @@ static enum v90_upstream_training_rx_result receive_tracking(
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;
 		return resolve_action(receiver, observation, &action);
 	}
-	if (observation_power(observation) <
-	    V90_UPSTREAM_MIN_TRACKING_POWER) {
+	/* Silence between return intervals cannot train a constellation point. */
+	if (!v34_training_constellation_has_signal(
+		    V34_CONSTELLATION_4_POINT, observation->decision)) {
 		if (v34_receive_timing_set_feedback_held(
 			    &receiver->line.timing, true) != V34_RECEIVE_TIMING_OK)
 			return V90_UPSTREAM_TRAINING_RX_NUMERIC_FAILURE;

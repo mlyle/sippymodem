@@ -371,6 +371,10 @@ static bool test_fixed_training_constellations(void)
 							perturbations[noise].quadrature),
 					};
 
+					CHECK(v34_training_constellation_has_signal(
+						      fixtures[fixture].constellation, observed),
+					      "training point %zu/%u/%u rejected at %zu",
+					      fixture, quarter, rotation, noise);
 					CHECK(v34_training_constellation_fixed_slice(
 						      fixtures[fixture].constellation,
 						      observed, &decision) ==
@@ -399,6 +403,42 @@ static bool test_fixed_training_constellations(void)
 			      "fixed tie order changed for fixture %zu", fixture);
 		}
 	}
+	return true;
+}
+
+static bool test_training_signal_qualification(void)
+{
+	static const struct {
+		enum v34_constellation_size constellation;
+		int16_t half_coordinate;
+	} fixtures[] = {
+		{ V34_CONSTELLATION_4_POINT, 1145 },
+		{ V34_CONSTELLATION_16_POINT, 512 },
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(fixtures); ++i) {
+		enum v34_constellation_size constellation = fixtures[i].constellation;
+		int16_t edge = fixtures[i].half_coordinate;
+		struct v34_analytic_sample weak = { edge - 1, edge - 1 };
+		struct v34_analytic_sample threshold = { edge, edge };
+
+		CHECK(!v34_training_constellation_has_signal(
+			      constellation, (struct v34_analytic_sample){ 0 }) &&
+		      !v34_training_constellation_has_signal(constellation, weak) &&
+		      v34_training_constellation_has_signal(constellation, threshold),
+		      "half-radius signal threshold changed for %zu", i);
+		CHECK(v34_training_constellation_has_signal(
+			      constellation,
+			      (struct v34_analytic_sample){ INT16_MIN, INT16_MIN }) &&
+		      v34_training_constellation_has_signal(
+			      constellation,
+			      (struct v34_analytic_sample){ INT16_MAX, INT16_MAX }),
+		      "signal power overflow for %zu", i);
+	}
+	CHECK(!v34_training_constellation_has_signal(
+		      (enum v34_constellation_size)0,
+		      (struct v34_analytic_sample){ INT16_MAX, INT16_MAX }),
+	      "invalid training constellation qualified as signal");
 	return true;
 }
 
@@ -637,6 +677,7 @@ int main(void)
 		{ "four-point training set", test_four_point_constellation },
 		{ "sixteen-point training set", test_sixteen_point_constellation },
 		{ "fixed training sets", test_fixed_training_constellations },
+		{ "training signal qualification", test_training_signal_qualification },
 		{ "training-constellation slicing",
 		  test_training_constellation_slicing },
 		{ "validation", test_validation },
