@@ -67,7 +67,7 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 	     (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_SILENCE ?
 		path->reconditioning_symbols >= V90_CP_FRAME_INTERVALS :
 		!path->data_mapping_ready ||
-		path->reconditioning_symbols > V90_RD_SEQUENCE_SYMBOLS)))
+		path->reconditioning_symbols > PCM_R_SEQUENCE_SYMBOLS)))
 		return false;
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_TRAINING_SILENCE &&
 	    !path->rate_renegotiation_active)
@@ -112,7 +112,7 @@ static bool downstream_is_valid(const struct v90_digital_path *path)
 	}
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RD)
 		return path->rate_renegotiation_active &&
-		       v90_rd_tx_is_valid(&path->downstream.rd) &&
+		       pcm_r_tx_is_valid(&path->downstream.rd) &&
 		       path->downstream.rd.mapping.kind == V90_CP_DATA &&
 		       path->downstream.rd.mapping.law == path->law;
 	return false;
@@ -470,11 +470,11 @@ static enum v90_digital_path_result emit_downstream(
 		if (result != V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
 			return stream_result(result);
 		{
-			struct v90_rd_tx rd;
+			struct pcm_r_tx rd;
 			const struct v90_pcm_mapping *mapping =
 				&path->downstream.data.transmitter.encoder.mapping;
 
-			if (v90_rd_tx_init(&rd, mapping) != V90_RD_TX_OK)
+			if (pcm_rd_tx_init(&rd, mapping) != PCM_R_TX_OK)
 				return V90_DIGITAL_PATH_INTERNAL_ERROR;
 			path->downstream =
 				(union v90_digital_path_downstream){ 0 };
@@ -501,15 +501,15 @@ static enum v90_digital_path_result emit_downstream(
 		}
 	}
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RT) {
-		struct v90_rd_tx rt;
+		struct pcm_r_tx rt;
 		struct v90_pcm_symbol symbol;
 		struct pcm_downstream_tx training;
 
-		if (v90_rt_tx_init(&rt, &path->training_mapping) != V90_RD_TX_OK)
+		if (pcm_rt_tx_init(&rt, &path->training_mapping) != PCM_R_TX_OK)
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		rt.transmitted_symbols = path->reconditioning_symbols;
-		if (!v90_rd_tx_is_complete(&rt)) {
-			if (v90_rd_tx_next(&rt, &symbol) != V90_RD_TX_OK)
+		if (!pcm_r_tx_is_complete(&rt)) {
+			if (pcm_r_tx_next(&rt, &symbol) != PCM_R_TX_OK)
 				return V90_DIGITAL_PATH_INTERNAL_ERROR;
 			path->reconditioning_symbols = rt.transmitted_symbols;
 			*octet = symbol.octet;
@@ -525,15 +525,15 @@ static enum v90_digital_path_result emit_downstream(
 	}
 	if (path->downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_RD) {
 		struct v90_pcm_symbol pcm;
-		enum v90_rd_tx_result result =
-			v90_rd_tx_next(&path->downstream.rd, &pcm);
+		enum pcm_r_tx_result result =
+			pcm_r_tx_next(&path->downstream.rd, &pcm);
 
-		if (result == V90_RD_TX_OK) {
+		if (result == PCM_R_TX_OK) {
 			*octet = pcm.octet;
 			return V90_DIGITAL_PATH_OK;
 		}
-		if (result != V90_RD_TX_COMPLETE)
-			return result == V90_RD_TX_INVALID_PARAMETERS ?
+		if (result != PCM_R_TX_COMPLETE)
+			return result == PCM_R_TX_INVALID_PARAMETERS ?
 				       V90_DIGITAL_PATH_INVALID_PARAMETERS :
 				       V90_DIGITAL_PATH_INTERNAL_ERROR;
 		{

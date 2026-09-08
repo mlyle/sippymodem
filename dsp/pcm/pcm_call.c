@@ -572,7 +572,7 @@ static bool rate_renegotiation_deadline_has_started(
 			       V90_DIGITAL_PATH_DOWNSTREAM_DATA_DRAIN &&
 		       (path->downstream_stage !=
 				V90_DIGITAL_PATH_DOWNSTREAM_RD ||
-			path->downstream.rd.transmitted_symbols >= V90_RD_SYMBOLS);
+			path->downstream.rd.transmitted_symbols >= PCM_R_SYMBOLS);
 	}
 }
 

@@ -38,7 +38,7 @@ V34_NATIVE_OBJECTS := \
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c \
 	pcm_echo_reference.c \
-	pcm_info1.c pcm_j_frame.c \
+	pcm_info1.c pcm_j_frame.c pcm_r.c \
 	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
@@ -2214,7 +2214,7 @@ V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_downstream_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_handoff.o \
 	$(BUILD_DIR)/v90_downstream_data_stream.o \
-	$(BUILD_DIR)/v90_downstream_rrn_rx.o \
+	$(BUILD_DIR)/pcm_r.o \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
 	$(filter-out $(BUILD_DIR)/test_pcm_downstream_tx.o, \
@@ -2611,7 +2611,7 @@ V90_PHASE4_STATION_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_downstream_data_rx.o \
 	$(BUILD_DIR)/v90_downstream_data_stream.o \
 	$(BUILD_DIR)/v90_downstream_data_tx.o \
-	$(BUILD_DIR)/v90_downstream_rrn_rx.o \
+	$(BUILD_DIR)/pcm_r.o \
 	$(BUILD_DIR)/v90_analog_path.o \
 	$(BUILD_DIR)/v90_digital_path.o \
 	$(BUILD_DIR)/v90_phase4_e_line_tx.o \
@@ -5474,8 +5474,8 @@ $(BUILD_DIR)/v90_downstream_data_stream.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_downstream_data_stream.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_downstream_rrn_rx.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_downstream_rrn_rx.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_r.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_r.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_analog_path.o: \

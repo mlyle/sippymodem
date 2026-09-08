@@ -156,7 +156,7 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	    !mapping_matches(&path->data_mapping, &path->data_parameters) ||
 	    !v90_phase4_cp_tx_is_valid(&path->control_symbols) ||
 	    !v90_phase4_cp_tx_record_is_complete(&path->control_symbols) ||
-	    !v90_downstream_rrn_rx_is_valid(&path->rate_renegotiation) ||
+	    !pcm_r_rx_is_valid(&path->rate_renegotiation) ||
 	    path->rate_renegotiation.decision_plane != path->decision_plane ||
 	    !v90_pcm_mapping_equal(
 		    &path->rate_renegotiation.mapping,
@@ -221,11 +221,11 @@ enum v90_analog_path_result v90_analog_path_init(
 		handoff->rate_renegotiation_constellation;
 	initialized.decision_plane =
 		handoff->receive.stream.decoder.decision_plane;
-	if (v90_downstream_rrn_rx_init(
+	if (pcm_r_rx_init(
 		    &initialized.rate_renegotiation,
 		    &initialized.data_mapping,
 		    initialized.decision_plane) !=
-	    V90_DOWNSTREAM_RRN_RX_OK)
+	    PCM_R_RX_OK)
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	initialized.upstream.cp = handoff->transmit;
 	initialized.downstream.training = handoff->receive;
@@ -612,7 +612,7 @@ static enum v90_analog_path_result start_downstream_data(
 	struct v90_analog_path *path)
 {
 	struct v90_downstream_data_rx data;
-	struct v90_downstream_rrn_rx rate_renegotiation;
+	struct pcm_r_rx rate_renegotiation;
 	enum v90_downstream_data_rx_result result;
 
 	if (!path->ed_armed)
@@ -623,9 +623,9 @@ static enum v90_analog_path_result start_downstream_data(
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
 	if (result != V90_DOWNSTREAM_DATA_RX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
-	if (v90_downstream_rrn_rx_init(
+	if (pcm_r_rx_init(
 		    &rate_renegotiation, &path->data_mapping,
-		    path->decision_plane) != V90_DOWNSTREAM_RRN_RX_OK)
+		    path->decision_plane) != PCM_R_RX_OK)
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	path->downstream = (union v90_analog_path_downstream){ 0 };
 	path->downstream.data = data;
@@ -754,7 +754,7 @@ static enum v90_analog_path_result start_rrn_downstream_training(
 	struct pcm_downstream_rx training;
 
 	if (!path->rate_renegotiation_active ||
-	    !v90_downstream_rrn_rx_is_complete(
+	    !pcm_r_rx_is_complete(
 		    &path->rate_renegotiation))
 		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
 	if (pcm_downstream_rx_init(
@@ -810,7 +810,7 @@ static enum v90_analog_path_result receive_data(
 	struct v90_analog_path *path, uint8_t octet,
 	struct v90_pcm_stream_frame *frame, bool *frame_ready)
 {
-	enum v90_downstream_rrn_rx_result rrn_result;
+	enum pcm_r_rx_result rrn_result;
 
 	if (!v90_downstream_data_rx_b1d_complete(&path->downstream.data))
 		return receive_data_frame(
@@ -818,37 +818,37 @@ static enum v90_analog_path_result receive_data(
 			path->rate_renegotiation_active);
 	if (path->rate_renegotiation_active &&
 	    path->rate_renegotiation.stage ==
-		    V90_DOWNSTREAM_RRN_RX_SEARCH)
+		    PCM_R_RX_SEARCH)
 		return receive_data_frame(
 			path, octet, frame, frame_ready, false);
 
-	rrn_result = v90_downstream_rrn_rx_receive(
+	rrn_result = pcm_r_rx_receive(
 		&path->rate_renegotiation, octet);
 	switch (rrn_result) {
-	case V90_DOWNSTREAM_RRN_RX_BUFFERING:
-	case V90_DOWNSTREAM_RRN_RX_RD_DETECTED:
+	case PCM_R_RX_BUFFERING:
+	case PCM_R_RX_SIGNAL_DETECTED:
 		break;
-	case V90_DOWNSTREAM_RRN_RX_RD_BAR_STARTED:
+	case PCM_R_RX_BAR_STARTED:
 		return begin_rate_renegotiation(path);
-	case V90_DOWNSTREAM_RRN_RX_RD_BAR_COMPLETE:
+	case PCM_R_RX_BAR_COMPLETE:
 		return start_rrn_downstream_training(path);
-	case V90_DOWNSTREAM_RRN_RX_SEQUENCE_MISMATCH:
+	case PCM_R_RX_SEQUENCE_MISMATCH:
 		if (path->rate_renegotiation_active)
 			return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
 		break;
-	case V90_DOWNSTREAM_RRN_RX_INVALID_PARAMETERS:
+	case PCM_R_RX_INVALID_PARAMETERS:
 		return V90_ANALOG_PATH_INVALID_PARAMETERS;
-	case V90_DOWNSTREAM_RRN_RX_INVALID_ARGUMENT:
-	case V90_DOWNSTREAM_RRN_RX_INVALID_STATE:
-	case V90_DOWNSTREAM_RRN_RX_INTERNAL_ERROR:
-	case V90_DOWNSTREAM_RRN_RX_OK:
+	case PCM_R_RX_INVALID_ARGUMENT:
+	case PCM_R_RX_INVALID_STATE:
+	case PCM_R_RX_INTERNAL_ERROR:
+	case PCM_R_RX_OK:
 		return V90_ANALOG_PATH_INTERNAL_ERROR;
 	}
 	if (path->rate_renegotiation_active)
 		return V90_ANALOG_PATH_OK;
 	return receive_data_frame(
 		path, octet, frame, frame_ready,
-		v90_downstream_rrn_rx_rd_detected(
+		pcm_r_rx_signal_detected(
 			&path->rate_renegotiation));
 }
 

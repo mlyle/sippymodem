@@ -3782,14 +3782,14 @@ static bool rrn_peer_receive(
 		size_t interval = peer->rt_symbols % V90_CP_FRAME_INTERVALS;
 		bool positive = interval < 3u;
 
-		if (peer->rt_symbols >= V90_RD_SYMBOLS)
+		if (peer->rt_symbols >= PCM_R_SYMBOLS)
 			positive = !positive;
 		if (v90_pcm_mapping_ucode(&path->training_mapping, peer->decision_plane,
 					 interval, 0u, &ucode) != V90_PCM_MAPPING_OK ||
 		    !v90_pcm_symbol_make(&expected, peer->law, ucode, positive) ||
 		    octet != expected.octet)
 			return false;
-		if (++peer->rt_symbols == V90_RD_SEQUENCE_SYMBOLS) {
+		if (++peer->rt_symbols == PCM_R_SEQUENCE_SYMBOLS) {
 			if (pcm_downstream_rx_resume_after_rt(&peer->downstream.training) != PCM_DOWNSTREAM_RX_OK)
 				return false;
 			peer->downstream_stage = RRN_PEER_DOWNSTREAM_TRAINING;
@@ -4232,7 +4232,7 @@ static bool run_rate_renegotiation_case(
 			CHECK(digital.call.state.data_path.digital.downstream_stage ==
 				      V90_DIGITAL_PATH_DOWNSTREAM_RD &&
 			      digital.call.state.data_path.digital.downstream.rd
-				      .transmitted_symbols == V90_RD_SYMBOLS &&
+				      .transmitted_symbols == PCM_R_SYMBOLS &&
 			      digital.call.rate_renegotiation_deadline_remaining_samples ==
 				      expected_deadline &&
 			      !pcm_call_is_valid(&invalid) &&
@@ -4302,7 +4302,7 @@ static bool run_rate_renegotiation_case(
 				V90_DIGITAL_PATH_DOWNSTREAM_TRAINING;
 	}
 	CHECK(training_started && deadline_started && timeout_checked &&
-	      rd_symbols == V90_RD_SEQUENCE_SYMBOLS &&
+	      rd_symbols == PCM_R_SEQUENCE_SYMBOLS &&
 	      data_cp_latched_during_control && peer.peer_mp_received &&
 	      peer.cp_prime_started &&
 	      peer.upstream_stage == RRN_PEER_UPSTREAM_DATA &&
@@ -4338,7 +4338,7 @@ static bool run_rate_renegotiation_case(
 	      digital.upstream_frames, received_before);
 	CHECK(!recondition || (recondition_timeout_checked &&
 			      peer.silence_samples > 0u && peer.scr_samples >= 1601u &&
-			      peer.rt_symbols == V90_RD_SEQUENCE_SYMBOLS),
+			      peer.rt_symbols == PCM_R_SEQUENCE_SYMBOLS),
 	      "CPs did not complete silence/SCR/Rt: %zu/%zu/%zu",
 	      peer.silence_samples, peer.scr_samples, peer.rt_symbols);
 	return true;
@@ -4619,11 +4619,11 @@ static bool run_paired_remote_rate_renegotiation(
 			      "law %u paired RRN consumed digital host input",
 			      (unsigned int)law);
 
-		rd_detected |= v90_downstream_rrn_rx_rd_detected(
+		rd_detected |= pcm_r_rx_signal_detected(
 			&analog_path->rate_renegotiation);
 		rd_bar_started |= analog_path->rate_renegotiation.stage ==
-			V90_DOWNSTREAM_RRN_RX_RD_BAR;
-		rd_bar_complete |= v90_downstream_rrn_rx_is_complete(
+			PCM_R_RX_BAR;
+		rd_bar_complete |= pcm_r_rx_is_complete(
 			&analog_path->rate_renegotiation);
 		if (!analog_started && analog_path->rate_renegotiation_active) {
 			struct pcm_call early_deadline = analog.call;
@@ -4801,7 +4801,7 @@ static bool run_paired_remote_rate_renegotiation(
 	      rd_bar_complete && analog_deadline_seen &&
 	      analog_response_seen && digital_response_seen &&
 	      digital_deadline_seen && timeout_checked && cp_seen && e_seen &&
-	      rd_high_water == V90_RD_SEQUENCE_SYMBOLS &&
+	      rd_high_water == PCM_R_SEQUENCE_SYMBOLS &&
 	      s_high_water == V34_PHASE3_S_SYMBOLS &&
 	      s_bar_high_water == V34_PHASE3_S_BAR_SYMBOLS &&
 	      first_downstream_frame_seen && downstream_resumed &&

@@ -5,6 +5,7 @@
 
 #include "v34_data_line_receiver.h"
 #include "v90_downstream_data_stream.h"
+#include "pcm_r.h"
 #include "v90_phase4_digital_startup.h"
 #include "v90_upstream_rx.h"
 
@@ -71,7 +72,7 @@ enum {
 union v90_digital_path_downstream {
 	struct pcm_downstream_tx training;
 	struct v90_downstream_data_stream data;
-	struct v90_rd_tx rd;
+	struct pcm_r_tx rd;
 };
 
 union v90_digital_path_upstream {

@@ -5,7 +5,7 @@
 
 #include "v34_data_stream.h"
 #include "v90_downstream_data_rx.h"
-#include "v90_downstream_rrn_rx.h"
+#include "pcm_r.h"
 #include "v90_phase3_return_line_tx.h"
 #include "v90_phase4_analog_startup.h"
 #include "v90_phase4_e_line_tx.h"
@@ -70,7 +70,7 @@ struct v90_analog_path {
 	struct v90_cp_parameters data_parameters;
 	struct v90_pcm_mapping data_mapping;
 	struct v90_phase4_cp_tx control_symbols;
-	struct v90_downstream_rrn_rx rate_renegotiation;
+	struct pcm_r_rx rate_renegotiation;
 	struct v90_mp_record peer_mp;
 	enum g711_law law;
 	enum v34_constellation_size rate_renegotiation_constellation;

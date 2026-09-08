@@ -21,29 +21,6 @@ enum v90_downstream_data_stream_result {
 	V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR,
 };
 
-enum {
-	V90_RD_SYMBOLS = 384,
-	V90_RD_BAR_SYMBOLS = 24,
-	V90_RD_SEQUENCE_SYMBOLS =
-		V90_RD_SYMBOLS + V90_RD_BAR_SYMBOLS,
-};
-
-enum v90_rd_tx_result {
-	V90_RD_TX_OK,
-	V90_RD_TX_COMPLETE,
-	V90_RD_TX_INVALID_ARGUMENT,
-	V90_RD_TX_INVALID_PARAMETERS,
-	V90_RD_TX_INTERNAL_ERROR,
-};
-
-/* V.90 8.6.4 Rd/Rd-bar and Rt/Rt-bar use the highest-power member of each
- * current data or training constellation. They are independent of the data
- * encoder: neither signal is scrambled, differentially encoded, or shaped. */
-struct v90_rd_tx {
-	struct v90_pcm_mapping mapping;
-	uint16_t transmitted_symbols;
-};
-
 /* Supply one complete post-B1d PCM data frame. The source must initialize all
  * requested bits to zero or one. Returning false rejects the frame. A NULL
  * source deliberately transmits idle ones. */
@@ -90,21 +67,6 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	struct v90_downstream_data_stream *stream,
 	v90_downstream_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol);
-
-enum v90_rd_tx_result v90_rd_tx_init(
-	struct v90_rd_tx *transmitter,
-	const struct v90_pcm_mapping *current_data_mapping);
-/* Rt shares the R waveform and duration, but uses CPt constellations. */
-enum v90_rd_tx_result v90_rt_tx_init(
-	struct v90_rd_tx *transmitter,
-	const struct v90_pcm_mapping *training_mapping);
-bool v90_rd_tx_is_valid(const struct v90_rd_tx *transmitter);
-bool v90_rd_tx_is_complete(const struct v90_rd_tx *transmitter);
-
-/* Emit exactly 384T of R followed by 24T of R-bar. COMPLETE consumes no
- * character and leaves symbol unchanged. */
-enum v90_rd_tx_result v90_rd_tx_next(
-	struct v90_rd_tx *transmitter, struct v90_pcm_symbol *symbol);
 
 const char *v90_downstream_data_stream_result_name(
 	enum v90_downstream_data_stream_result result);
