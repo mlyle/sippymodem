@@ -10,6 +10,7 @@
 #include <v90_phase3_sd.h>
 #include <v90_upstream_data.h>
 #include <v92_cpd_direct.h>
+#include <v92_profile.h>
 
 #include "test.h"
 
@@ -5041,6 +5042,9 @@ static bool retrain_preserves_protocol(
 		       .prior_round_trip_delay_samples == prior_round_trip_delay &&
 	       retraining.peer_info0_stored &&
 	       !retraining.phase3_entry_stored &&
+	       memcmp(&retraining.v92_digital_phase4_configuration,
+		      &completed->v92_digital_phase4_configuration,
+		      sizeof(retraining.v92_digital_phase4_configuration)) == 0 &&
 	       pcm_call_is_valid(&retraining);
 }
 
@@ -5552,7 +5556,15 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 	return true;
 }
 
-static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd)
+struct v92_upstream_offer {
+	uint32_t peer_mask;
+	uint8_t local_maximum;
+	uint8_t expected;
+};
+
+static bool run_v92_duplex_data(
+	enum g711_law law, size_t delay, bool long_cpd,
+	const struct v92_upstream_offer *offer)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
@@ -5564,6 +5576,13 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd)
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
 
+	if (offer != NULL) {
+		CHECK(!long_cpd && v92_pcm_profile_init(
+			      &dc, V90_DIGITAL_MODEM, law, 28000u, 56000u,
+			      offer->local_maximum) == V92_PROFILE_OK,
+		      "V.92 negotiating profile failed");
+		ac.phase3.v92_analog.upstream_rate_mask = offer->peer_mask;
+	}
 	if (long_cpd) {
 		struct v92_cpd_parameters *cpd = &dc.v92_digital_phase4.cpd;
 
@@ -5633,12 +5652,30 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd)
 	      law, delay, upstream_received, downstream_received);
 	{
 		uint32_t at = 0u, ar = 0u, dt = 0u, dr = 0u;
+		unsigned int expected_rate = offer == NULL ? 41333u :
+			((offer->expected + 17u) * 8000u + 3u) / 6u;
 
 		CHECK(pcm_call_get_data_rates(&analog, &at, &ar) &&
 		      pcm_call_get_data_rates(&digital, &dt, &dr) &&
-		      at == 41333u && at == dr && ar == dt && ar == 41333u,
+		      at == expected_rate && at == dr && ar == dt && ar == 41333u,
 		      "V.92 call reported incorrect PCM frame rates: %u/%u %u/%u",
 		      at, ar, dt, dr);
+	}
+	if (offer != NULL) {
+		struct v92_cpd_parameters expected;
+		struct v92_pcm_mapping mapping;
+
+		CHECK(v92_cpd_direct_init(&expected, law, offer->expected, false) == V92_CPD_OK &&
+		      v92_pcm_mapping_init(&mapping, law, &expected) == V92_PCM_MAPPING_OK &&
+		      v92_pcm_mapping_equal(&mapping, &analog.state.data_path.v92_analog
+						       .upstream.encoder.mapping) &&
+		      v92_pcm_mapping_equal(&mapping, &digital.state.data_path.v92_digital
+						       .upstream.decoder.mapping) &&
+		      digital.v92_digital_phase4_configuration.upstream_selection ==
+			      PCM_CALL_V92_UPSTREAM_DIRECT &&
+		      digital.v92_digital_phase4_configuration.direct_maximum_data_rate_number ==
+			      offer->local_maximum,
+		      "V.92 did not exchange the complete selected mapping or lost its rate policy");
 	}
 	return true;
 }
@@ -5647,15 +5684,35 @@ static bool test_v92_duplex_data(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (size_t delay = 1u; delay <= 3u; delay += 2u)
-			CHECK(run_v92_duplex_data(law, delay, false), "V.92 duplex data failed");
-		CHECK(run_v92_duplex_data(law, 1u, true), "V.92 long-CPd duplex data failed");
+			CHECK(run_v92_duplex_data(law, delay, false, NULL), "V.92 duplex data failed");
+		CHECK(run_v92_duplex_data(law, 1u, true, NULL), "V.92 long-CPd duplex data failed");
 	}
+	return true;
+}
+
+static bool test_v92_upstream_negotiation(void)
+{
+	static const struct v92_upstream_offer offers[] = {
+		/* Recorded peer mask: 24k through 28k, against 48k and 36k caps. */
+		{ UINT32_C(0xf), 19u, 4u },
+		{ UINT32_C(0xf), 10u, 4u },
+		/* Holes below and rates above our cap are not usable alternatives. */
+		{ UINT32_C(0x40009), 3u, 1u },
+		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
+		{ UINT32_C(1) << 12u, 19u, 13u },
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t index = 0u; index < ARRAY_LENGTH(offers); ++index)
+			CHECK(run_v92_duplex_data(law, 3u, false, &offers[index]),
+			      "V.92 upstream selection law %u case %zu failed", law, index);
 	return true;
 }
 
 enum v92_unavailable_selection {
 	V92_UNAVAILABLE_DOWNSTREAM_RATE,
 	V92_UNAVAILABLE_UPSTREAM_RATE,
+	V92_UNAVAILABLE_DIRECT_UPSTREAM_RATE,
 	V92_UNAVAILABLE_Z1,
 	V92_UNAVAILABLE_P2,
 	V92_UNAVAILABLE_SECTION_LENGTH,
@@ -5695,6 +5752,11 @@ static bool run_v92_unavailable_selection(
 
 		analog_configuration.phase3.v92_analog.upstream_rate_mask &=
 			~selected;
+	} else if (selection == V92_UNAVAILABLE_DIRECT_UPSTREAM_RATE) {
+		digital_configuration.v92_digital_phase4.upstream_selection =
+			PCM_CALL_V92_UPSTREAM_DIRECT;
+		digital_configuration.v92_digital_phase4.direct_maximum_data_rate_number = 3u;
+		analog_configuration.phase3.v92_analog.upstream_rate_mask = UINT32_C(8);
 	} else {
 		struct v92_cpd_filter *filter;
 
@@ -6296,6 +6358,18 @@ static bool test_v92_validation(void)
 		      PCM_CALL_INVALID_ARGUMENT,
 	      "call accepted a locally disabled V.92 CPu rate");
 	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
+	selected.v92_digital_phase4.upstream_selection =
+		(enum pcm_call_v92_upstream_selection)99;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted an invalid V.92 upstream selection policy");
+	selected.v92_digital_phase4.upstream_selection = PCM_CALL_V92_UPSTREAM_DIRECT;
+	selected.v92_digital_phase4.direct_maximum_data_rate_number = 0u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted a zero V.92 upstream rate cap");
+	selected.v92_digital_phase4.direct_maximum_data_rate_number = 20u;
+	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
+	      "call accepted an out-of-range V.92 upstream rate cap");
+	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.v92_digital_phase4.cpd.acknowledges_cpu = true;
 	CHECK(pcm_call_init(&untouched, &selected) ==
 		      PCM_CALL_INVALID_ARGUMENT,
@@ -6554,6 +6628,7 @@ int main(void)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },

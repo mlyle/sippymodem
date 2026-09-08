@@ -19,8 +19,10 @@ enum v92_profile_result {
 	V92_PROFILE_UNSUPPORTED_RATE,
 };
 
-/* Build the full-startup PCM-upstream profile. The maximum upstream data-rate
- * number advertises every V.92 PCM-upstream rate through that selection.
+/* Build the full-startup PCM-upstream profile. The analogue role advertises
+ * every upstream rate through the maximum. The digital role chooses the
+ * highest peer-enabled rate within that maximum after receiving Ja, then
+ * constructs its complete direct CPd mapping for the selected rate.
  * Quick connect and conventional upstream are separate procedures. */
 enum v92_profile_result v92_pcm_profile_init(
 	struct pcm_call_configuration *configuration,

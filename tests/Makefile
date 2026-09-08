@@ -2771,6 +2771,9 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_pcm_call.o \
+	$(BUILD_DIR)/v92_profile.o \
+	$(BUILD_DIR)/v90_profile.o \
+	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
 	$(BUILD_DIR)/v92_upstream_data_tx.o \
 	$(BUILD_DIR)/v34_data_quality.o \

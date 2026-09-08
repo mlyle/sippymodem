@@ -4,7 +4,6 @@
 
 #include "pcm_rate.h"
 #include "v90_profile.h"
-#include "v92_cpd_direct.h"
 #include "v92_pcm_dil.h"
 #include "v92_pcm_phase3_trn1u.h"
 
@@ -151,18 +150,12 @@ static void configure_analog(
 		selected->law, downstream->selected_data_rate_number);
 }
 
-static bool configure_digital(
+static void configure_digital(
 	struct pcm_call_configuration *selected,
 	const struct pcm_call_configuration *v90,
 	uint8_t maximum_upstream_data_rate_number)
 {
 	struct v34_info1c v34 = v90->local_info1.digital;
-	struct v92_cpd_parameters cpd;
-
-	if (v92_cpd_direct_init(
-		    &cpd, selected->law,
-		    maximum_upstream_data_rate_number, false) != V92_CPD_OK)
-		return false;
 
 	v34.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
 	selected->local_info0.v92_digital = (struct v92_info0d){
@@ -189,8 +182,9 @@ static bool configure_digital(
 			.equalizer_adaptation = 0.05,
 			.su_minimum_magnitude = V92_SU_MINIMUM_MAGNITUDE,
 		};
-	selected->v92_digital_phase4.cpd = cpd;
-	return true;
+	selected->v92_digital_phase4.upstream_selection = PCM_CALL_V92_UPSTREAM_DIRECT;
+	selected->v92_digital_phase4.direct_maximum_data_rate_number =
+		maximum_upstream_data_rate_number;
 }
 
 enum v92_profile_result v92_pcm_profile_init(
@@ -231,10 +225,10 @@ enum v92_profile_result v92_pcm_profile_init(
 	if (role == V90_ANALOG_MODEM)
 		configure_analog(
 			&selected, &v90, &downstream, upstream_rate_mask);
-	else if (!configure_digital(
+	else
+		configure_digital(
 			&selected, &v90,
-			maximum_upstream_data_rate_number))
-		return V92_PROFILE_UNSUPPORTED_RATE;
+			maximum_upstream_data_rate_number);
 	*configuration = selected;
 	return V92_PROFILE_OK;
 }

@@ -4,7 +4,6 @@
 
 #include <pcm_rate.h>
 #include <v90_pcm_mapping.h>
-#include <v92_cpd_direct.h>
 #include <v92_pcm_dil.h>
 
 #include "test.h"
@@ -140,11 +139,6 @@ static bool test_generated_profiles(void)
 					      "analogue profile did not generate rate %u",
 					      rate);
 				} else {
-					struct v92_cpd_parameters expected;
-					struct v92_pcm_mapping expected_mapping, selected_mapping;
-					const struct v92_cpd_parameters *cpd =
-						&configuration.v92_digital_phase4.cpd;
-
 					CHECK(configuration.local_info0.v92_digital.v90
 						      .nominal_transmit_power ==
 						      DIGITAL_PHASE2_NOMINAL_POWER_CODE &&
@@ -160,15 +154,15 @@ static bool test_generated_profiles(void)
 					      configuration.phase3.v92_digital.jd
 						      .data_rate_capability_mask ==
 						      downstream.enabled_mask &&
-					      v92_cpd_direct_init(
-						      &expected, law, upstream_rate,
-						      false) == V92_CPD_OK &&
-					      v92_pcm_mapping_init(&expected_mapping, law, &expected) ==
-						      V92_PCM_MAPPING_OK &&
-					      v92_pcm_mapping_init(&selected_mapping, law, cpd) ==
-						      V92_PCM_MAPPING_OK &&
-					      v92_pcm_mapping_equal(&selected_mapping, &expected_mapping),
-					      "digital profile did not generate rate %u",
+					      configuration.v92_digital_phase4.upstream_selection ==
+						      PCM_CALL_V92_UPSTREAM_DIRECT &&
+					      configuration.v92_digital_phase4.direct_maximum_data_rate_number ==
+						      upstream_rate &&
+					      call.v92_digital_phase4_configuration.upstream_selection ==
+						      PCM_CALL_V92_UPSTREAM_DIRECT &&
+					      call.v92_digital_phase4_configuration.direct_maximum_data_rate_number ==
+						      upstream_rate,
+					      "digital profile did not retain rate limit %u",
 					      rate);
 				}
 			}

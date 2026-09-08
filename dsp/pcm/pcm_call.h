@@ -100,9 +100,23 @@ struct pcm_call_v92_analog_phase4_configuration {
 	struct v92_cpu_parameters cpu;
 };
 
+enum pcm_call_v92_upstream_selection {
+	PCM_CALL_V92_UPSTREAM_CONFIGURED,
+	PCM_CALL_V92_UPSTREAM_DIRECT,
+};
+
 struct pcm_call_v92_digital_phase4_configuration {
 	struct v92_suvd_parameters suvd;
-	struct v92_cpd_parameters cpd;
+	enum pcm_call_v92_upstream_selection upstream_selection;
+	union {
+		/* A caller-owned mapping is fixed: do not replace its constellation
+		 * or filters when the peer cannot transmit its selected rate. */
+		struct v92_cpd_parameters cpd;
+		/* Construct the complete direct mapping after Ja, selecting the
+		 * highest peer-enabled rate at or below this local maximum. Retain
+		 * this policy across retrains rather than pinning the first rate. */
+		uint8_t direct_maximum_data_rate_number;
+	};
 };
 
 struct pcm_call_configuration {

@@ -7,6 +7,7 @@
 #include "pcm_phase3_handoff.h"
 #include "v92_data_quality.h"
 #include "v34_phase2_selection.h"
+#include "v92_cpd_direct.h"
 #include "v92_pcm_dil.h"
 
 #include <math.h>
@@ -206,11 +207,21 @@ static bool v92_digital_phase4_configuration_is_valid(
 {
 	struct v92_pcm_mapping mapping;
 
-	return v92_suvd_parameters_are_valid(&configuration->suvd) &&
-	       !configuration->suvd.acknowledges_cpu &&
-	       !configuration->cpd.acknowledges_cpu &&
-	       v92_pcm_mapping_init(&mapping, law, &configuration->cpd) ==
-		       V92_PCM_MAPPING_OK;
+	if (!v92_suvd_parameters_are_valid(&configuration->suvd) ||
+	    configuration->suvd.acknowledges_cpu)
+		return false;
+	switch (configuration->upstream_selection) {
+	case PCM_CALL_V92_UPSTREAM_CONFIGURED:
+		return !configuration->cpd.acknowledges_cpu &&
+		       v92_pcm_mapping_init(&mapping, law, &configuration->cpd) ==
+			       V92_PCM_MAPPING_OK;
+	case PCM_CALL_V92_UPSTREAM_DIRECT:
+		return configuration->direct_maximum_data_rate_number >=
+			       V92_PCM_DIL_MIN_DATA_RATE_NUMBER &&
+		       configuration->direct_maximum_data_rate_number <=
+			       V92_PCM_DIL_MAX_DATA_RATE_NUMBER;
+	}
+	return false;
 }
 
 static bool configuration_is_valid(
@@ -2022,6 +2033,33 @@ static bool v92_filters_fit_capabilities(
 	return total <= capabilities->maximum_total_coefficients;
 }
 
+static enum pcm_call_result select_v92_upstream(
+	const struct pcm_call *call, uint32_t peer_rate_mask,
+	struct v92_cpd_parameters *cpd)
+{
+	const struct pcm_call_v92_digital_phase4_configuration *configuration =
+		&call->v92_digital_phase4_configuration;
+
+	if (configuration->upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
+		uint8_t rate = configuration->direct_maximum_data_rate_number;
+
+		while (rate != 0u && !v92_pcm_dil_rate_is_enabled(peer_rate_mask, rate))
+			--rate;
+		if (rate == 0u)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		/* Rate-dependent modulus, trellis, constellation and normalized gain
+		 * must be selected together, not patched onto a higher-rate CPd. */
+		if (v92_cpd_direct_init(cpd, call->law, rate, false) != V92_CPD_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+	} else {
+		*cpd = configuration->cpd;
+		if (!v92_pcm_dil_rate_is_enabled(peer_rate_mask, cpd->data_rate_number))
+			return PCM_CALL_UNUSABLE_SELECTION;
+	}
+	return v92_filters_fit_capabilities(cpd, &call->phase3_entry.selection.analog.pcm) ?
+		PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
+}
+
 static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 {
 	struct pcm_call next = *call;
@@ -2068,19 +2106,16 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			&call->state.mixed.v92_digital;
 		struct v92_pcm_phase3_cpt_line_handoff handoff;
 		struct v92_phase4_digital_station station;
+		struct v92_cpd_parameters cpd;
+		enum pcm_call_result result;
 		uint32_t upstream_rate_mask;
 
 		if (!v92_phase3_digital_station_upstream_rate_mask(
 			    &mixed->phase3, &upstream_rate_mask))
 			return PCM_CALL_INVALID_STATE;
-		if (!v92_pcm_dil_rate_is_enabled(
-			    upstream_rate_mask,
-			    call->v92_digital_phase4_configuration.cpd
-				    .data_rate_number) ||
-		    !v92_filters_fit_capabilities(
-			    &call->v92_digital_phase4_configuration.cpd,
-			    &call->phase3_entry.selection.analog.pcm))
-			return PCM_CALL_UNUSABLE_SELECTION;
+		result = select_v92_upstream(call, upstream_rate_mask, &cpd);
+		if (result != PCM_CALL_OK)
+			return result;
 		if (v92_phase3_digital_station_receive_handoff(
 			    &mixed->phase3, &handoff) !=
 		    V92_PHASE3_DIGITAL_STATION_OK)
@@ -2090,7 +2125,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    call->phase3_configuration.v92_digital.jp
 				    .training_constellation,
 			    &mixed->transmit,
-			    &call->v92_digital_phase4_configuration.cpd) !=
+			    &cpd) !=
 		    V92_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		/* Nonzero DIL acknowledges CPt with Ri, then E1u with Ri-bar.
