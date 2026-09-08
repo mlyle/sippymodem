@@ -90,6 +90,19 @@ enum v90_dil_result v90_dil_decode(
 	const uint8_t *descriptor, size_t descriptor_capacity,
 	size_t descriptor_bits, struct v90_dil_parameters *parameters);
 
+/* Shared V.90 parameter payload, also used by V.92 Table 20. Encoding leaves
+ * the CRC unwritten and returns the V.90 layout, whose CRC start is where
+ * V.92 appends its two rate-mask words. Decoding reads only the parameter
+ * payload: the owner must validate its complete protocol-specific frame and
+ * CRC first. Both operations validate bounds and commit output on success. */
+enum v90_dil_result v90_dil_payload_encode(
+	const struct v90_dil_parameters *parameters,
+	uint8_t *descriptor, size_t descriptor_capacity,
+	struct pcm_dil_descriptor_layout *layout);
+enum v90_dil_result v90_dil_payload_decode(
+	const uint8_t *descriptor, size_t descriptor_capacity,
+	struct v90_dil_parameters *parameters);
+
 /* Encode the canonical N=0 descriptor used when no digital impairment
  * learning is requested. Bits are packed in transmission order, most-
  * significant bit first within each octet. */

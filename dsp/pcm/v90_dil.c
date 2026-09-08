@@ -294,10 +294,10 @@ static bool read_field(
 		first_bit, field_bits, value);
 }
 
-enum v90_dil_result v90_dil_encode(
+enum v90_dil_result v90_dil_payload_encode(
 	const struct v90_dil_parameters *parameters,
 	uint8_t *descriptor, size_t descriptor_capacity,
-	size_t *descriptor_bits)
+	struct pcm_dil_descriptor_layout *payload_layout)
 {
 	uint8_t encoded[V90_DIL_MAX_DESCRIPTOR_BYTES];
 	struct pcm_dil_descriptor_layout layout;
@@ -306,7 +306,7 @@ enum v90_dil_result v90_dil_encode(
 	size_t bytes;
 
 	if (!v90_dil_parameters_are_valid(parameters) || descriptor == NULL ||
-	    descriptor_bits == NULL ||
+	    payload_layout == NULL ||
 	    !layout_from_lengths(
 		    parameters->segment_count,
 		    parameters->sign_pattern_bits,
@@ -369,11 +369,32 @@ enum v90_dil_result v90_dil_encode(
 			    parameters->training_ucodes[segment]))
 			return V90_DIL_INVALID_FRAME;
 	}
-	if (pcm_dil_descriptor_finalize(
-		    encoded, sizeof(encoded), &layout) !=
+	memcpy(descriptor, encoded, bytes);
+	*payload_layout = layout;
+	return V90_DIL_OK;
+}
+
+enum v90_dil_result v90_dil_encode(
+	const struct v90_dil_parameters *parameters,
+	uint8_t *descriptor, size_t descriptor_capacity,
+	size_t *descriptor_bits)
+{
+	uint8_t encoded[V90_DIL_MAX_DESCRIPTOR_BYTES];
+	struct pcm_dil_descriptor_layout layout;
+	enum v90_dil_result result;
+
+	if (descriptor == NULL || descriptor_bits == NULL)
+		return V90_DIL_INVALID_ARGUMENT;
+	result = v90_dil_payload_encode(
+		parameters, encoded, sizeof(encoded), &layout);
+	if (result != V90_DIL_OK)
+		return result;
+	if (descriptor_capacity < pcm_dil_descriptor_storage_bytes(&layout))
+		return V90_DIL_INVALID_ARGUMENT;
+	if (pcm_dil_descriptor_finalize(encoded, sizeof(encoded), &layout) !=
 	    PCM_DIL_DESCRIPTOR_OK)
 		return V90_DIL_INVALID_FRAME;
-	memcpy(descriptor, encoded, bytes);
+	memcpy(descriptor, encoded, pcm_dil_descriptor_storage_bytes(&layout));
 	*descriptor_bits = layout.bit_count;
 	return V90_DIL_OK;
 }
@@ -413,11 +434,7 @@ enum v90_dil_result v90_dil_decode(
 	size_t descriptor_bits, struct v90_dil_parameters *parameters)
 {
 	struct pcm_dil_descriptor_layout layout;
-	struct v90_dil_parameters decoded = { 0 };
 	enum pcm_dil_descriptor_result common;
-	uint32_t value;
-	size_t sign_span;
-	size_t patterns_span;
 	enum v90_dil_result layout_result;
 
 	if (parameters == NULL)
@@ -436,6 +453,29 @@ enum v90_dil_result v90_dil_decode(
 		descriptor, descriptor_capacity, &layout);
 	if (common != PCM_DIL_DESCRIPTOR_OK)
 		return common_result(common);
+	return v90_dil_payload_decode(
+		descriptor, descriptor_capacity, parameters);
+}
+
+enum v90_dil_result v90_dil_payload_decode(
+	const uint8_t *descriptor, size_t descriptor_capacity,
+	struct v90_dil_parameters *parameters)
+{
+	struct pcm_dil_descriptor_layout layout;
+	struct v90_dil_parameters decoded = { 0 };
+	uint32_t value;
+	size_t sign_span;
+	size_t patterns_span;
+	enum v90_dil_result result;
+
+	if (parameters == NULL)
+		return V90_DIL_INVALID_ARGUMENT;
+	result = v90_dil_descriptor_layout(
+		descriptor, descriptor_capacity, V90_DIL_HEADER_BITS, &layout);
+	if (result != V90_DIL_OK)
+		return result;
+	if (descriptor_capacity < pcm_dil_descriptor_storage_bytes(&layout))
+		return V90_DIL_INVALID_ARGUMENT;
 	if (!read_field(
 		    descriptor, descriptor_capacity, &layout,
 		    N_FIRST_BIT, N_BITS, &value))

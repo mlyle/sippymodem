@@ -1622,6 +1622,7 @@ V92_PCM_DIL_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_dil
 V92_PCM_DIL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_dil.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o
 V92_PCM_PHASE3_RU_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase3_ru
@@ -1671,6 +1672,7 @@ V92_PCM_PHASE3_JA_TEST_OBJECTS := \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v92_pcm_phase3_trn1u.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/v34_framing.o \
 	$(BUILD_DIR)/self_sync_scrambler.o \
@@ -1687,6 +1689,7 @@ V92_PCM_PHASE3_INITIAL_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_pcm_phase3_ja.o \
 	$(BUILD_DIR)/v92_pcm_info1a.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -1710,6 +1713,7 @@ V92_PCM_PHASE3_INITIAL_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_ja_decoder.o \
 	$(BUILD_DIR)/v92_phase3_sync.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -1732,6 +1736,7 @@ V92_JA_DECODER_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_ja_decoder.o \
 	$(BUILD_DIR)/v92_phase3_sync.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -1748,6 +1753,7 @@ V92_PCM_PHASE3_JA_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_ja_decoder.o \
 	$(BUILD_DIR)/v92_phase3_sync.o \
 	$(BUILD_DIR)/v92_pcm_dil.o \
+	$(BUILD_DIR)/v90_dil.o \
 	$(BUILD_DIR)/pcm_dil_descriptor.o \
 	$(BUILD_DIR)/pcm_binary_sign.o \
 	$(BUILD_DIR)/v34_framing.o \

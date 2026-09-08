@@ -145,6 +145,136 @@ static bool test_rate_masks(void)
 	return true;
 }
 
+static bool test_peer_descriptor(void)
+{
+	/* One complete Ja descriptor decoded from a peer call: only training
+	 * parameters, not media or user payload. N=192, LSP=LTP=120, DRN 1..4. */
+	static const uint8_t peer[] = {
+		0xff, 0xff, 0x80, 0xc0, 0x1d, 0xdd, 0xc0, 0x00, 0x80, 0x00, 0x08, 0x00,
+		0x00, 0x40, 0x1c, 0x38, 0xe3, 0x47, 0x03, 0x87, 0x1c, 0x58, 0xe0, 0x00,
+		0x00, 0x80, 0x20, 0x08, 0x02, 0x00, 0x40, 0x3e, 0xff, 0xff, 0x7f, 0xff,
+		0xbf, 0xff, 0xdf, 0xe0, 0x0d, 0xcd, 0xc7, 0x27, 0x23, 0x92, 0x41, 0x21,
+		0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x60,
+		0xd0, 0xd0, 0x68, 0x68, 0x2c, 0x2c, 0x66, 0x66, 0x3d, 0x3d, 0x1e, 0x9e,
+		0x8e, 0xce, 0xc2, 0x62, 0x61, 0xd1, 0xd0, 0xe8, 0xe8, 0x6c, 0x6c, 0x46,
+		0x46, 0x2d, 0x2d, 0x16, 0x96, 0x8a, 0xca, 0xcf, 0xce, 0x27, 0x67, 0x53,
+		0xab, 0xa9, 0xd5, 0xe4, 0x7c, 0x62, 0x36, 0x35, 0x1a, 0x9a, 0x8d, 0x4e,
+		0x4b, 0xca, 0x25, 0x65, 0x52, 0xaa, 0xa9, 0x55, 0x64, 0x3c, 0x22, 0x16,
+		0x15, 0x0a, 0x8a, 0x85, 0x46, 0x4d, 0xcc, 0x26, 0x66, 0x53, 0x2b, 0x29,
+		0x95, 0xa4, 0x5c, 0x42, 0x26, 0x25, 0x12, 0x92, 0x89, 0x4a, 0x49, 0xc8,
+		0x24, 0x64, 0x52, 0x2a, 0x29, 0x15, 0x24, 0x1c, 0x02, 0x06, 0x05, 0x02,
+		0x82, 0x81, 0x42, 0x4f, 0x8f, 0x00, 0x70, 0x73, 0xd3, 0x99, 0xcd, 0xc8,
+		0xfa, 0xfa, 0x7d, 0x7d, 0x12, 0x10, 0x1d, 0x1e, 0xcf, 0x6e, 0x03, 0xc3,
+		0x82, 0x3a, 0x39, 0x71, 0x60, 0x4e, 0x4e, 0x14, 0x10, 0x2d, 0x29, 0x94,
+		0xd4, 0x8b, 0xab, 0xa5, 0xd5, 0xd1, 0x51, 0x11, 0x51, 0x6c, 0xb6, 0xa0,
+		0x1c, 0x18, 0x33, 0xb3, 0x9b, 0x1a, 0x02, 0xe2, 0xe6, 0xa6, 0x33, 0x1b,
+		0x10, 0x10, 0xe8, 0xda, 0xda, 0x6d, 0x6d, 0x1a, 0x18, 0x19, 0x1a, 0xcd,
+		0x6c, 0x02, 0xc2, 0x82, 0xba, 0xb8, 0x68, 0x48, 0x98, 0x90, 0x37, 0x37,
+		0x25, 0x21, 0x90, 0xd0, 0x89, 0xa9, 0xa4, 0xd4, 0xd0, 0x50, 0x11, 0x11,
+		0x2c, 0x96, 0x80, 0x0c, 0x08, 0x3b, 0xbb, 0x8c, 0x80, 0x0f, 0x00, 0x00,
+		0x00, 0x00, 0x40, 0x90, 0x00,
+	};
+	struct v92_pcm_dil_parameters decoded, saved;
+	struct pcm_dil_descriptor_layout layout;
+	uint8_t frame[sizeof(peer)];
+	size_t bits;
+
+	CHECK(v92_pcm_dil_layout(peer, 7, 50, &layout) == V92_PCM_DIL_OK &&
+	      layout.bit_count == 2148 && layout.crc_start_bit == 2125 &&
+	      v92_pcm_dil_decode(peer, sizeof(peer), 2148, &decoded) == V92_PCM_DIL_OK &&
+	      decoded.downstream.segment_count == 192 &&
+	      decoded.downstream.sign_pattern_bits == 120 &&
+	      decoded.downstream.training_pattern_bits == 120 &&
+	      decoded.upstream_rate_mask == 0xf &&
+	      v92_pcm_dil_encode(&decoded, frame, sizeof(frame), &bits) == V92_PCM_DIL_OK &&
+	      bits == 2148 && memcmp(frame, peer, sizeof(peer)) == 0,
+	      "V.92 peer's nonzero Ja descriptor did not reproduce exactly");
+	saved = decoded;
+	for (size_t bit = 0; bit < 2148; ++bit) {
+		CHECK(v92_pcm_dil_decode(peer, sizeof(peer), bit, &decoded) ==
+			      V92_PCM_DIL_INCOMPLETE &&
+		      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+		      "truncated V.92 descriptor changed output at bit %zu", bit);
+		memcpy(frame, peer, sizeof(frame));
+		assign_packed_bit(frame, bit, packed_bit(frame, bit) == 0u);
+		CHECK(v92_pcm_dil_decode(frame, sizeof(frame), 2148, &decoded) !=
+			      V92_PCM_DIL_OK &&
+		      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+		      "V.92 descriptor corruption was accepted at bit %zu", bit);
+	}
+	memcpy(frame, peer, sizeof(frame));
+	bits = 123;
+	CHECK(v92_pcm_dil_encode(&saved, frame, sizeof(frame) - 1u, &bits) ==
+		      V92_PCM_DIL_INVALID_ARGUMENT && bits == 123 &&
+	      memcmp(frame, peer, sizeof(frame)) == 0 &&
+	      v92_pcm_dil_decode(peer, sizeof(peer) - 1u, 2148, &decoded) ==
+		      V92_PCM_DIL_INVALID_ARGUMENT &&
+	      v92_pcm_dil_decode(peer, sizeof(peer), 2149, &decoded) ==
+		      V92_PCM_DIL_INVALID_FRAME &&
+	      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+	      "V.92 variable descriptor bounds were not transactional");
+	return true;
+}
+
+static bool test_variable_descriptors(void)
+{
+	static const uint8_t segments[] = { 1, 2, 191, 192, 254, 255 };
+	static const uint8_t lengths[] = { 1, 16, 17, 120, 128 };
+
+	for (size_t n = 0; n < ARRAY_LENGTH(segments); ++n) {
+		for (size_t s = 0; s < ARRAY_LENGTH(lengths); ++s) {
+			for (size_t t = 0; t < ARRAY_LENGTH(lengths); ++t) {
+				struct v92_pcm_dil_parameters source = { 0 }, decoded;
+				struct v90_dil_parameters *dil = &source.downstream;
+				struct pcm_dil_descriptor_layout layout;
+				uint8_t frame[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES + 1];
+				size_t bits = 0;
+				size_t crc = 221u +
+					((lengths[s] + 15u) / 16u) * 17u +
+					((lengths[t] + 15u) / 16u) * 17u +
+					((segments[n] + 1u) / 2u) * 17u;
+
+				dil->segment_count = segments[n];
+				dil->sign_pattern_bits = lengths[s];
+				dil->training_pattern_bits = lengths[t];
+				for (size_t i = 0; i < lengths[s]; ++i)
+					dil->sign_pattern[i / 8] |= (i % 3u == 0u) << (i % 8u);
+				for (size_t i = 0; i < lengths[t]; ++i)
+					dil->training_pattern[i / 8] |= (i % 5u == 0u) << (i % 8u);
+				for (size_t i = 0; i < V90_DIL_CHORDS; ++i) {
+					dil->segment_length_codes[i] = (uint8_t)(127u - i);
+					dil->reference_ucodes[i] = (uint8_t)(i * 17u);
+				}
+				for (size_t i = 0; i < segments[n]; ++i)
+					dil->training_ucodes[i] = (uint8_t)((i * 11u) % 128u);
+				source.upstream_rate_mask = V92_PCM_DIL_RATE_MASK_ALL;
+				memset(frame, 0xa5, sizeof(frame));
+				CHECK(v92_pcm_dil_encode(&source, frame, sizeof(frame), &bits) ==
+					      V92_PCM_DIL_OK && bits == ((crc + 29u) / 12u) * 12u &&
+				      frame[(bits + 7u) / 8u] == 0xa5 &&
+				      v92_pcm_dil_layout(frame, 7, V90_DIL_HEADER_BITS, &layout) ==
+					      V92_PCM_DIL_OK && layout.crc_start_bit == crc &&
+				      layout.bit_count == bits &&
+				      v92_pcm_dil_decode(frame, (bits + 7u) / 8u, bits, &decoded) ==
+					      V92_PCM_DIL_OK &&
+				      memcmp(&decoded.downstream, dil, sizeof(*dil)) == 0 &&
+				      decoded.upstream_rate_mask == source.upstream_rate_mask,
+				      "V.92 descriptor N=%u LSP=%u LTP=%u did not round trip",
+				      segments[n], lengths[s], lengths[t]);
+				/* The high word's unused 13 bits are CRC-protected but ignored. */
+				assign_packed_bit(frame, crc - 1u, true);
+				CHECK(pcm_dil_descriptor_finalize(frame, sizeof(frame), &layout) ==
+					      PCM_DIL_DESCRIPTOR_OK &&
+				      v92_pcm_dil_decode(frame, sizeof(frame), bits, &decoded) ==
+					      V92_PCM_DIL_OK &&
+				      decoded.upstream_rate_mask == source.upstream_rate_mask,
+				      "V.92 nonzero descriptor interpreted reserved mask bits");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_reserved_bits(void)
 {
 	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
@@ -252,7 +382,7 @@ static bool test_result_names(void)
 {
 	static const char *const names[] = {
 		"ok", "invalid argument", "invalid frame", "CRC mismatch",
-		"nonzero descriptor",
+		"nonzero descriptor", "incomplete",
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(names); ++index)
@@ -270,13 +400,14 @@ static bool test_result_names(void)
 
 int main(void)
 {
-	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream zero-DIL descriptor\n");
+	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream DIL descriptors\n");
 	if (!test_generated_masks() || !test_rate_masks() ||
+	    !test_variable_descriptors() || !test_peer_descriptor() ||
 	    !test_reserved_bits() || !test_rejection() ||
 	    !test_result_names()) {
-		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream zero-DIL descriptor\n");
+		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream DIL descriptors\n");
 		return 1;
 	}
-	fprintf(stderr, "[       OK ] V.92 PCM-upstream zero-DIL descriptor\n");
+	fprintf(stderr, "[       OK ] V.92 PCM-upstream DIL descriptors\n");
 	return 0;
 }
