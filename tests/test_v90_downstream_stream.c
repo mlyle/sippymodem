@@ -12,7 +12,7 @@
 
 enum {
 	FRAME_BITS = 17,
-	MAXIMUM_STREAM_SYMBOLS = V90_PHASE4_TRN2D_INITIAL_SYMBOLS + 4096,
+	MAXIMUM_STREAM_SYMBOLS = V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 4096,
 	DATA_FRAMES = 8,
 	MAXIMUM_DATA_FRAMES = 16,
 	MAXIMUM_DATA_SYMBOLS =
@@ -647,6 +647,7 @@ static bool check_rt_resume(
 	struct pcm_downstream_tx resumed;
 	struct pcm_downstream_rx resumed_rx;
 	bool mp_seen = false;
+	bool prime_seen = false;
 
 	encoder.finishing = false;
 	encoder.shaper.finishing = false;
@@ -665,7 +666,9 @@ static bool check_rt_resume(
 	      memcmp(&tx, &resumed, sizeof(tx)) == 0 &&
 	      memcmp(&rx, &resumed_rx, sizeof(rx)) == 0,
 	      "Rt resumed an incomplete control exchange");
-	for (size_t index = 0; index < 600u && !mp_seen; ++index) {
+	CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK,
+	      "post-Rt CP acknowledgement was rejected");
+	for (size_t index = 0; index < 600u && !prime_seen; ++index) {
 		struct pcm_downstream_symbol symbol;
 		struct pcm_downstream_event event;
 		enum pcm_downstream_rx_result result;
@@ -673,13 +676,21 @@ static bool check_rt_resume(
 		CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
 		      "post-Rt MP transmitter stopped");
 		result = pcm_downstream_rx_receive(&rx, symbol.pcm.octet, &event);
-		CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_OK ||
-		      (result == PCM_DOWNSTREAM_RX_MP &&
-		       v90_mp_record_equal(&event.mp.record, &completed_tx->control.mp)),
-		      "post-Rt MP was not continuous: %s", pcm_downstream_rx_result_name(result));
-		mp_seen = result == PCM_DOWNSTREAM_RX_MP;
+		if (result == PCM_DOWNSTREAM_RX_MP) {
+			CHECK(!mp_seen && v90_mp_record_equal(&event.mp.record, &completed_tx->control.mp),
+			      "post-Rt MP changed or repeated before acknowledgement");
+			mp_seen = true;
+		} else if (result == PCM_DOWNSTREAM_RX_MP_PRIME) {
+			CHECK(mp_seen && v90_mp_record_parameters_equal(
+				      &event.mp.record, &completed_tx->control.mp),
+			      "post-Rt acknowledgement skipped or changed MP");
+			prime_seen = true;
+		} else {
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_OK,
+			      "post-Rt MP was not continuous: %s", pcm_downstream_rx_result_name(result));
+		}
 	}
-	CHECK(mp_seen, "Rt inserted initial TRN2d before MP");
+	CHECK(mp_seen && prime_seen, "Rt did not resume MP then MP-prime directly");
 	return true;
 }
 
@@ -736,8 +747,7 @@ static bool run_stream(
 		enum pcm_downstream_tx_result transmit_result;
 		enum pcm_downstream_rx_result result;
 
-		if (!refined && transmitter.accepted_frames >=
-				V90_PHASE4_TRN2D_INITIAL_FRAMES) {
+		if (!refined && pcm_downstream_tx_mp_starts_next_frame(&transmitter)) {
 			CHECK(transmitter.stage == PCM_DOWNSTREAM_TX_TRN2D &&
 			      pcm_downstream_tx_start_mp(&transmitter, &record) ==
 				      PCM_DOWNSTREAM_TX_OK,
@@ -828,6 +838,7 @@ static bool run_stream(
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      first_mp_symbol >= V90_PHASE4_TRN2D_INITIAL_SYMBOLS &&
+	      first_mp_symbol < 16000u &&
 	      mp_records == 1 && prime_records == expected_prime_records &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&

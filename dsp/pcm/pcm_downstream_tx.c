@@ -31,13 +31,6 @@ static bool stage_matches_protocol(
 	       transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME;
 }
 
-static uint64_t initial_training_frames(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 ?
-		       V90_PHASE4_TRN2D_INITIAL_FRAMES :
-		       V90_PHASE4_TRN2D_MINIMUM_FRAMES;
-}
-
 static struct v90_mp_parameters *record_common(
 	struct v90_mp_record *record)
 {
@@ -58,6 +51,17 @@ static bool requests_cleardown(const struct pcm_downstream_tx *transmitter)
 	return transmitter->control_configured &&
 	       transmitter->protocol == PCM_PROTOCOL_V90 &&
 	       record_requests_cleardown(&transmitter->control.mp);
+}
+
+static uint64_t initial_training_frames(const struct pcm_downstream_tx *transmitter)
+{
+	if (transmitter->protocol == PCM_PROTOCOL_V92)
+		return V90_PHASE4_TRN2D_MINIMUM_FRAMES;
+	/* A validated CP requests MP-prime. Until then, allow the analogue
+	 * receiver longer to condition, without waiting indefinitely for CP.
+	 * Cleardown does not need that extra data-path conditioning. */
+	return transmitter->mp_prime_requested || requests_cleardown(transmitter) ?
+		V90_PHASE4_TRN2D_INITIAL_FRAMES : V90_PHASE4_TRN2D_WAIT_CP_FRAMES;
 }
 
 static bool encode_mp_sequence(
@@ -192,7 +196,7 @@ static bool v90_control_is_valid(
 	     transmitter->control_bit_index != 0) ||
 	    (transmitter->stage != PCM_DOWNSTREAM_TX_TRN2D &&
 	     transmitter->accepted_frames <=
-		     initial_training_frames(transmitter->protocol)) ||
+		     V90_PHASE4_TRN2D_INITIAL_FRAMES) ||
 	    (transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME &&
 	     !transmitter->mp_prime_requested) ||
 	    (transmitter->stage == PCM_DOWNSTREAM_TX_MP &&
@@ -490,6 +494,16 @@ bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter)
 	return pcm_downstream_tx_is_valid(transmitter) && transmitter->complete;
 }
 
+bool pcm_downstream_tx_mp_starts_next_frame(const struct pcm_downstream_tx *transmitter)
+{
+	return transmitter != NULL &&
+	       transmitter->protocol == PCM_PROTOCOL_V90 &&
+	       transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
+	       transmitter->control_configured && transmitter->queue_count == 0u &&
+	       transmitter->accepted_frames >= initial_training_frames(transmitter) &&
+	       pcm_downstream_tx_is_valid(transmitter);
+}
+
 static bool same_mp_record(
 	const struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record)
@@ -572,6 +586,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
 	next.accepted_frames = transmitter->accepted_frames;
 	next.transmitted_symbols = transmitter->transmitted_symbols;
 	result = pcm_downstream_tx_start_mp(&next, &transmitter->control.mp);
+	if (result != PCM_DOWNSTREAM_TX_OK)
+		return result;
+	/* Rt follows a validated CP. Latch it before generating the next frame:
+	 * the elapsed short interval skips TRN2d, but its boundary still owns
+	 * one complete MP before the queued acknowledgement selects MP-prime. */
+	result = pcm_downstream_tx_request_mp_prime(&next);
 	if (result != PCM_DOWNSTREAM_TX_OK)
 		return result;
 	if (!pcm_downstream_tx_is_valid(&next))
@@ -851,7 +871,7 @@ static enum pcm_downstream_tx_result generate_frame(
 	if (transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	    transmitter->control_configured &&
 	    transmitter->accepted_frames >=
-		    initial_training_frames(transmitter->protocol))
+		    initial_training_frames(transmitter))
 		transmitter->stage =
 			transmitter->protocol == PCM_PROTOCOL_V90 ?
 				PCM_DOWNSTREAM_TX_MP :

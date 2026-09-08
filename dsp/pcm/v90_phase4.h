@@ -18,6 +18,11 @@ enum {
 		(V90_PHASE4_TRN2D_INITIAL_SYMBOLS +
 		 V90_CP_FRAME_INTERVALS - 1) /
 		V90_CP_FRAME_INTERVALS,
+	/* While CP is still absent, allow 1.815 seconds of conditioning. Leave
+	 * room for spectral look-ahead before the two-second MP deadline. */
+	V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS = 14520,
+	V90_PHASE4_TRN2D_WAIT_CP_FRAMES =
+		V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS / V90_CP_FRAME_INTERVALS,
 	/* V.90 clause 8.6 defines Ed as exactly two data frames. */
 	V90_PHASE4_ED_FRAMES = 2,
 	/* B1d is the first 48 frames of the fresh data-coding epoch. */

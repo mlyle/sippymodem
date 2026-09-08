@@ -14,7 +14,7 @@
 
 enum {
 	TRAINING_UCODE = 91,
-	CHARACTER_LIMIT = 12000,
+	CHARACTER_LIMIT = V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 4096,
 };
 
 static void add_ucode(
@@ -360,7 +360,7 @@ static bool run_exchange(
 		for (size_t sample = 0; sample < CHARACTER_LIMIT; ++sample) {
 			struct pcm_downstream_tx *transmit = &path.downstream.training;
 			bool final_window = transmit->accepted_frames >=
-				V90_PHASE4_TRN2D_INITIAL_FRAMES - 10u;
+				V90_PHASE4_TRN2D_WAIT_CP_FRAMES - 10u;
 
 			path.upstream.startup.state.cp.line.equalizer.quality =
 				(struct v34_adaptive_equalizer_quality){

@@ -1099,7 +1099,7 @@ static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
 	else if (replacement == 2u)
 		CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK,
 		      "MP-prime fixture did not start");
-	for (; symbols < 10000u; ++symbols) {
+	for (; symbols < 16000u; ++symbols) {
 		struct pcm_downstream_symbol symbol;
 		struct pcm_downstream_event event;
 		enum pcm_downstream_tx_result sent;
@@ -1158,7 +1158,8 @@ static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
 	}
 	CHECK(completed && replaced && received_records == 2u &&
 	      preceding_records == replacement &&
-	      symbols == (V90_PHASE4_TRN2D_INITIAL_FRAMES +
+	      symbols == ((replacement == 1u ? V90_PHASE4_TRN2D_WAIT_CP_FRAMES :
+			   V90_PHASE4_TRN2D_INITIAL_FRAMES) +
 			  (2u + replacement) * sequence_bits / mapping.frame_bits) *
 			 V90_CP_FRAME_INTERVALS &&
 	      pcm_downstream_tx_is_complete(&tx) &&
@@ -1178,6 +1179,79 @@ static bool test_zero_rate_cleardown(void)
 	return true;
 }
 
+static bool verify_conditioning(enum g711_law law, uint8_t lookahead,
+	unsigned int cp_arrival)
+{
+	const struct v90_mp_record mp = {
+		.type = V90_MP_RECORD_TYPE0,
+		.parameters.type0 = {
+			.maximum_upstream_rate_2400_bps_units = 12u,
+			.upstream_trellis = V34_TRELLIS_16_STATE,
+			.upstream_rate_capability_mask = V90_MP_RATE_CAPABILITY_MASK,
+		},
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx tx;
+	uint64_t expected_frames = cp_arrival == 1u ?
+		V90_PHASE4_TRN2D_INITIAL_FRAMES : V90_PHASE4_TRN2D_WAIT_CP_FRAMES;
+	bool requested = false;
+
+	CHECK(make_mapping(&mapping, V90_CP_TRAINING, law, 3u, lookahead) &&
+	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_OK,
+	      "conditioning fixture did not initialize");
+	CHECK(!pcm_downstream_tx_mp_starts_next_frame(NULL) &&
+	      !pcm_downstream_tx_mp_starts_next_frame(&tx),
+	      "MP boundary accepted an absent or unconditioned transmitter");
+	for (unsigned int symbols = 0u; symbols < 16000u; ++symbols) {
+		struct pcm_downstream_symbol symbol;
+
+		/* CP can arrive before conditioning, or while delayed PCM output
+		 * is queued after the shorter interval has already elapsed. */
+		if (!requested && (cp_arrival == 1u ||
+		    (cp_arrival == 2u && symbols > 9000u && tx.queue_count != 0u))) {
+			struct pcm_downstream_tx before = tx;
+
+			CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK &&
+			      memcmp(&before.encoder, &tx.encoder, sizeof(tx.encoder)) == 0 &&
+			      memcmp(&before.scrambler, &tx.scrambler, sizeof(tx.scrambler)) == 0 &&
+			      memcmp(before.queue, tx.queue, sizeof(tx.queue)) == 0 &&
+			      before.queue_count == tx.queue_count &&
+			      before.accepted_frames == tx.accepted_frames,
+			      "CP discarded queued PCM or restarted conditioning");
+			if (cp_arrival == 2u)
+				expected_frames = tx.accepted_frames;
+			requested = true;
+		}
+		CHECK(pcm_downstream_tx_mp_starts_next_frame(&tx) ==
+		      (tx.accepted_frames >= expected_frames && tx.queue_count == 0u),
+		      "MP boundary ignored conditioning or queued output");
+		CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+		      "conditioning stopped at symbol %u", symbols);
+		if (tx.stage == PCM_DOWNSTREAM_TX_MP) {
+			CHECK(tx.accepted_frames == expected_frames + 1u &&
+			      requested == (cp_arrival != 0u),
+			      "CP arrival %u: MP began after %llu frames, expected %llu",
+			      cp_arrival, (unsigned long long)(tx.accepted_frames - 1u),
+			      (unsigned long long)expected_frames);
+			return true;
+		}
+	}
+	CHECK(false, "MP missed its two-second deadline");
+}
+
+static bool test_conditioning(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead)
+			for (unsigned int cp_arrival = 0u; cp_arrival <= 2u; ++cp_arrival)
+				CHECK(verify_conditioning(law, lookahead, cp_arrival),
+				      "law %u lookahead %u CP arrival %u failed",
+				      law, lookahead, cp_arrival);
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
@@ -1187,6 +1261,7 @@ int main(void)
 		{ "source-record contracts", test_source_record_contracts },
 		{ "empty finish", test_empty_finish },
 		{ "zero-rate cleardown", test_zero_rate_cleardown },
+		{ "CP-dependent conditioning", test_conditioning },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

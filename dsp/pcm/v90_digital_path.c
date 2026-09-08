@@ -349,9 +349,7 @@ static bool select_initial_receive_rate(struct v90_digital_path *path)
 	 * After the next frame MP is immutable, including spectral look-ahead.
 	 * Online renegotiation retains its preceding MP and receive geometry. */
 	if (path->rate_renegotiation_active ||
-	    transmit->stage != PCM_DOWNSTREAM_TX_TRN2D ||
-	    transmit->accepted_frames < V90_PHASE4_TRN2D_INITIAL_FRAMES ||
-	    transmit->queue_count != 0u ||
+	    !pcm_downstream_tx_mp_starts_next_frame(transmit) ||
 	    path->upstream_stage != V90_DIGITAL_PATH_UPSTREAM_STARTUP ||
 	    receive->stage != V90_UPSTREAM_RX_STAGE_CP || maximum == 0u ||
 	    common_mask == 0u)
@@ -518,8 +516,7 @@ static enum v90_digital_path_result emit_downstream(
 			return V90_DIGITAL_PATH_OK;
 		}
 		training = path->downstream.training;
-		if (pcm_downstream_tx_resume_after_rt(&training) != PCM_DOWNSTREAM_TX_OK ||
-		    pcm_downstream_tx_request_mp_prime(&training) != PCM_DOWNSTREAM_TX_OK)
+		if (pcm_downstream_tx_resume_after_rt(&training) != PCM_DOWNSTREAM_TX_OK)
 			return V90_DIGITAL_PATH_INTERNAL_ERROR;
 		path->downstream.training = training;
 		path->downstream_stage = V90_DIGITAL_PATH_DOWNSTREAM_TRAINING;

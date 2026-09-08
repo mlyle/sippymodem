@@ -117,10 +117,15 @@ enum pcm_downstream_tx_result pcm_downstream_tx_init(
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter);
 bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 
+/* The next source frame will begin MP: conditioning has elapsed and queued
+ * network output has drained. MP may still be refined at this boundary. */
+bool pcm_downstream_tx_mp_starts_next_frame(const struct pcm_downstream_tx *transmitter);
+
 /* Configure MP parameters. They may be refined during TRN2d, but become
  * immutable when the first MP source frame enters the coder, even if that
  * frame is still in the spectral look-ahead. Acknowledgement must be clear;
- * initial V.90 MP begins after the one-second TRN2d conditioning interval.
+ * initial V.90 MP begins after one second of TRN2d if CP has arrived,
+ * otherwise after a bounded longer conditioning interval.
  * Repeating an identical request is harmless. A
  * zero-rate MP may also replace MP/MP-prime at a complete source-record
  * boundary, retaining all queued symbols and coding histories. It sends
@@ -132,7 +137,8 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 
 /* V.90 9.6.1.2.6 resumes the completed CPs/Ed control coder with MP after
  * Rt-bar. Preserve scrambling, differential and spectral histories; no
- * intervening TRN2d starts a new coding epoch. */
+ * intervening TRN2d starts a new coding epoch. Rt follows a validated CP;
+ * queue its acknowledgement after one complete MP record. */
 enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
 	struct pcm_downstream_tx *transmitter);
 
