@@ -3,6 +3,7 @@
 #include "v92_pcm_frame.h"
 
 #include "integer_math.h"
+#include "memory_region.h"
 
 #include <limits.h>
 #include <string.h>
@@ -345,6 +346,15 @@ static bool advance_trellis(
 		       V34_TRELLIS_OK;
 }
 
+static int16_t scale_sample(
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
+	int32_t v)
+{
+	return clamp_s16(round_shift_s64_to_s32_saturating(
+		(int64_t)v * mapping->cpd.four_times_gain_q0_16 *
+			upstream_level, V92_PCM_GAIN_SHIFT));
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_encode(
 	struct v92_pcm_frame_tx *transmitter,
 	const uint8_t *bits, size_t bit_count,
@@ -403,19 +413,382 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample)
 {
-	int32_t scaled;
-
 	if (mapping == NULL || sample == NULL)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_mapping_is_valid(mapping))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (upstream_level <= 0)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
-	scaled = round_shift_s64_to_s32_saturating(
-		(int64_t)prefilter_output *
-			mapping->cpd.four_times_gain_q0_16 * upstream_level,
-		V92_PCM_GAIN_SHIFT);
-	*sample = clamp_s16(scaled);
+	*sample = scale_sample(mapping, upstream_level, prefilter_output);
+	return V92_PCM_FRAME_OK;
+}
+
+bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
+{
+	enum v34_trellis_selection selected;
+	bool normalized = false;
+
+	if (receiver == NULL || !v92_pcm_mapping_is_valid(&receiver->mapping) ||
+	    receiver->upstream_level <= 0 || receiver->path_count == 0u ||
+	    receiver->path_count > V92_PCM_RX_PATHS ||
+	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
+	    !trellis_selection(receiver->mapping.cpd.trellis, &selected))
+		return false;
+	for (size_t index = 0u; index < receiver->path_count; ++index) {
+		const struct v92_pcm_frame_rx_path *path = &receiver->paths[index];
+
+		normalized |= path->metric == 0u;
+		if (path->differential > 1u ||
+		    !v34_scrambler_is_valid(&path->descrambler) ||
+		    path->descrambler.polynomial != V34_POLYNOMIAL_GPA ||
+		    !v34_convolutional_encoder_is_valid(&path->trellis) ||
+		    path->trellis.selection != selected)
+			return false;
+		if (path->ambiguous_frames >> receiver->pending_frames)
+			return false;
+		for (size_t frame = 0u; frame < V92_PCM_RX_DELAY_FRAMES; ++frame) {
+			for (size_t bit = 0u; bit < V92_PCM_MAPPING_MAX_BITS; ++bit) {
+				uint8_t limit = frame < receiver->pending_frames &&
+					bit < receiver->mapping.data_bits_per_frame ? 1u : 0u;
+
+				if (path->pending[frame][bit] > limit)
+					return false;
+			}
+		}
+	}
+	return normalized;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_rx_init(
+	struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level)
+{
+	struct v92_pcm_frame_rx initialized = { 0 };
+	enum v34_trellis_selection selected;
+
+	if (receiver == NULL || mapping == NULL)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_mapping_is_valid(mapping) || upstream_level <= 0 ||
+	    !trellis_selection(mapping->cpd.trellis, &selected))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	initialized.mapping = *mapping;
+	initialized.upstream_level = upstream_level;
+	initialized.path_count = 1u;
+	if (v34_scrambler_init(&initialized.paths[0].descrambler,
+			       V34_POLYNOMIAL_GPA) !=
+		    V34_FRAMING_OK ||
+	    v34_convolutional_encoder_init(&initialized.paths[0].trellis, selected) !=
+		    V34_TRELLIS_OK)
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	*receiver = initialized;
+	return V92_PCM_FRAME_OK;
+}
+
+struct frame_path {
+	struct v92_pcm_frame_rx_path state;
+	struct v92_pcm_frame frame;
+	uint64_t frame_metric;
+	uint8_t output_bits[V92_PCM_MAPPING_MAX_BITS];
+	uint8_t known_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	bool output_ambiguous;
+};
+
+struct frame_candidate {
+	uint64_t metric;
+	uint64_t frame_metric;
+	int16_t eta;
+	uint8_t path;
+	uint8_t digit;
+};
+
+/* Max-heap of the best bounded candidates. Equal metrics do not replace
+ * retained candidates; the path/point enumeration makes ties deterministic. */
+static void candidate_push(struct frame_candidate *candidates, size_t count)
+{
+	size_t child = count - 1u;
+
+	while (child != 0u) {
+		size_t parent = (child - 1u) / 2u;
+		struct frame_candidate swap;
+
+		if (candidates[parent].metric >= candidates[child].metric)
+			break;
+		swap = candidates[parent];
+		candidates[parent] = candidates[child];
+		candidates[child] = swap;
+		child = parent;
+	}
+}
+
+static void candidate_replace(
+	struct frame_candidate *candidates, size_t count,
+	const struct frame_candidate *replacement)
+{
+	size_t parent = 0u;
+
+	candidates[0] = *replacement;
+	for (;;) {
+		size_t left = 2u * parent + 1u;
+		size_t right = left + 1u;
+		size_t larger;
+		struct frame_candidate swap;
+
+		if (left >= count)
+			break;
+		larger = right < count &&
+			candidates[right].metric > candidates[left].metric ?
+				right : left;
+		if (candidates[parent].metric >= candidates[larger].metric)
+			break;
+		swap = candidates[parent];
+		candidates[parent] = candidates[larger];
+		candidates[larger] = swap;
+		parent = larger;
+	}
+}
+
+static int16_t signed_point(
+	const struct v92_cpd_constellation *constellation, int eta)
+{
+	return eta >= 0 ? constellation->positive_linear[eta] :
+		(int16_t)-constellation->positive_linear[-eta - 1];
+}
+
+static int16_t predicted_sample(
+	const struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_frame_filter_state *filter, int16_t u)
+{
+	int32_t x = precoder_output(&receiver->mapping, filter, u);
+	int32_t v = prefilter_output(&receiver->mapping, filter, x);
+	int16_t sample = scale_sample(
+		&receiver->mapping, receiver->upstream_level, v);
+
+	return receiver->mapping.law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+static bool b1u_digits(
+	const struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_frame_rx_path *path,
+	uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS])
+{
+	struct v34_scrambler scrambler = path->descrambler;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	uint8_t differential = path->differential;
+	uint8_t sign;
+
+	for (size_t bit = 0u; bit < receiver->mapping.data_bits_per_frame; ++bit) {
+		if (v34_scramble_group(&scrambler, 1u, 1u, &bits[bit]) !=
+		    V34_FRAMING_OK)
+			return false;
+	}
+	return v92_pcm_mapping_encode(
+		&receiver->mapping, bits, receiver->mapping.data_bits_per_frame,
+		&differential, digits, &sign) == V92_PCM_MAPPING_OK;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_decode(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision)
+{
+	struct frame_path banks[2][V92_PCM_RX_PATHS];
+	struct frame_path *paths = banks[0];
+	struct frame_path *next = banks[1];
+	uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+	size_t path_count;
+	size_t best = V92_PCM_RX_PATHS;
+	const struct memory_region regions[] = {
+		{ receiver, sizeof(*receiver) },
+		{ samples, V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples) },
+		{ bits, bit_count },
+		{ decision, sizeof(*decision) },
+	};
+
+	if (receiver == NULL || samples == NULL || bits == NULL ||
+	    decision == NULL || memory_region_set_overlaps(regions, 4u))
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_rx_is_valid(receiver))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (bit_count != receiver->mapping.data_bits_per_frame)
+		return V92_PCM_FRAME_OUT_OF_RANGE;
+	path_count = receiver->path_count;
+	for (size_t index = 0u; index < path_count; ++index) {
+		paths[index] = (struct frame_path){ .state = receiver->paths[index] };
+		if (b1u && !b1u_digits(receiver, &paths[index].state,
+				      paths[index].known_digits))
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+	}
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		uint8_t set = receiver->mapping.cpd.frame_constellation[
+			symbol % V92_PCM_MAPPING_PHASES];
+		const struct v92_cpd_constellation *constellation =
+			&receiver->mapping.cpd.constellation[set];
+		struct frame_candidate candidates[V92_PCM_RX_PATHS];
+		size_t count = 0u;
+
+		for (size_t path = 0u; path < path_count; ++path) {
+			uint8_t y0;
+
+			if (v34_convolutional_encoder_output(
+					&paths[path].state.trellis, &y0) !=
+			    V34_TRELLIS_OK)
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+			for (int eta = -(int)constellation->count;
+			     eta < (int)constellation->count; ++eta) {
+				uint8_t digit;
+				int64_t error;
+				struct frame_candidate candidate;
+
+				if (!equivalence_digit(&receiver->mapping, symbol,
+						       eta, paths[path].frame.signed_index,
+						       y0, &digit) ||
+				    (b1u && digit != paths[path].known_digits[symbol]))
+					continue;
+				error = (int64_t)samples[symbol] - predicted_sample(
+					receiver, &paths[path].state.filter,
+					signed_point(constellation, eta));
+				candidate = (struct frame_candidate){
+					.metric = add_u64_saturating(paths[path].state.metric,
+						(uint64_t)(error * error)),
+					.frame_metric = paths[path].frame_metric +
+						(uint64_t)(error * error),
+					.eta = (int16_t)eta, .path = (uint8_t)path,
+					.digit = digit,
+				};
+				if (count < V92_PCM_RX_PATHS) {
+					candidates[count++] = candidate;
+					candidate_push(candidates, count);
+				} else if (candidate.metric < candidates[0].metric) {
+					candidate_replace(candidates, count, &candidate);
+				}
+			}
+		}
+		if (count == 0u)
+			return V92_PCM_FRAME_NO_PATH;
+		for (size_t index = 0u; index < count; ++index) {
+			const struct frame_candidate *candidate = &candidates[index];
+			struct v92_pcm_frame *frame = &next[index].frame;
+
+			next[index] = paths[candidate->path];
+			next[index].frame_metric = candidate->frame_metric;
+			next[index].state.metric = candidate->metric;
+			frame->signed_index[symbol] = candidate->eta;
+			frame->digit[symbol] = candidate->digit;
+			frame->u[symbol] = signed_point(constellation, candidate->eta);
+			if (v34_convolutional_encoder_output(&next[index].state.trellis,
+							    &frame->y0[symbol]) !=
+			    V34_TRELLIS_OK)
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+			filter_step(&receiver->mapping, &next[index].state.filter,
+				    frame->u[symbol], &frame->x[symbol], &frame->v[symbol]);
+			if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u &&
+			    !advance_trellis(&next[index].state.trellis,
+					     frame->signed_index, symbol))
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+		}
+		struct frame_path *swap = paths;
+
+		paths = next;
+		next = swap;
+		path_count = count;
+	}
+	/* A mixed-radix constellation may have spare words. Reject those paths
+	 * before selecting a survivor, rather than returning an invalid frame. */
+	size_t valid = 0u;
+
+	for (size_t index = 0u; index < path_count; ++index) {
+		uint8_t candidate_bits[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame_rx_path *state = &paths[index].state;
+
+		if (v92_pcm_mapping_decode(&receiver->mapping, paths[index].frame.digit,
+					   &state->differential, candidate_bits,
+					   bit_count) != V92_PCM_MAPPING_OK)
+			continue;
+		for (size_t bit = 0u; bit < bit_count; ++bit) {
+			if (v34_descramble_group(&state->descrambler, candidate_bits[bit],
+						1u, &candidate_bits[bit]) != V34_FRAMING_OK)
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+		}
+		paths[index].frame.frame_sign = state->differential;
+		memcpy(paths[index].output_bits, state->pending[0], bit_count);
+		paths[index].output_ambiguous = (state->ambiguous_frames & 1u) != 0u;
+		if (receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES) {
+			state->ambiguous_frames >>= 1u;
+			memmove(state->pending, state->pending + 1,
+				(V92_PCM_RX_DELAY_FRAMES - 1u) * sizeof(state->pending[0]));
+			memcpy(state->pending[V92_PCM_RX_DELAY_FRAMES - 1u],
+				candidate_bits, bit_count);
+		} else {
+			memcpy(state->pending[receiver->pending_frames],
+				candidate_bits, bit_count);
+		}
+		/* Merge histories with identical future behavior. Different old
+		 * payload decisions are resolved by their accumulated metric. */
+		size_t survivor;
+
+		for (survivor = 0u; survivor < valid; ++survivor) {
+			const struct v92_pcm_frame_rx_path *prior = &paths[survivor].state;
+
+			if (state->differential == prior->differential &&
+			    state->descrambler.history == prior->descrambler.history &&
+			    state->trellis.state == prior->trellis.state &&
+			    memcmp(&state->filter, &prior->filter, sizeof(state->filter)) == 0)
+				break;
+		}
+		if (survivor == valid)
+			paths[valid++] = paths[index];
+		else if (state->metric < paths[survivor].state.metric)
+			paths[survivor] = paths[index];
+		else if (state->metric == paths[survivor].state.metric) {
+			struct frame_path *prior = &paths[survivor];
+
+			prior->output_ambiguous |= paths[index].output_ambiguous ||
+				memcmp(prior->output_bits, paths[index].output_bits, bit_count) != 0;
+			prior->state.ambiguous_frames |= state->ambiguous_frames;
+			for (size_t frame = 0u; frame < V92_PCM_RX_DELAY_FRAMES; ++frame) {
+				if (memcmp(prior->state.pending[frame], state->pending[frame],
+					   bit_count) != 0)
+					prior->state.ambiguous_frames |= (uint16_t)(1u << frame);
+			}
+		}
+	}
+	for (size_t index = 0u; index < valid; ++index) {
+		if (best == V92_PCM_RX_PATHS ||
+		    paths[index].state.metric < paths[best].state.metric)
+			best = index;
+	}
+	if (best == V92_PCM_RX_PATHS)
+		return V92_PCM_FRAME_NO_PATH;
+	memcpy(decoded, paths[best].output_bits, bit_count);
+	bool ambiguous = paths[best].output_ambiguous;
+
+	for (size_t index = 0u; index < valid; ++index) {
+		if (paths[index].state.metric == paths[best].state.metric)
+			ambiguous |= paths[index].output_ambiguous ||
+				memcmp(decoded, paths[index].output_bits, bit_count) != 0;
+	}
+	*decision = (struct v92_pcm_frame_decision){
+		.frame = paths[best].frame,
+		.squared_error = paths[best].frame_metric,
+		.bits_ready = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES,
+		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
+	};
+	if (decision->bits_ready)
+		memcpy(bits, decoded, bit_count);
+	else
+		receiver->pending_frames++;
+	uint64_t minimum_metric = paths[best].state.metric;
+
+	for (size_t index = 0u; index < valid; ++index) {
+		receiver->paths[index] = paths[index].state;
+		receiver->paths[index].metric -= minimum_metric;
+	}
+	memset(receiver->paths + valid, 0,
+		(V92_PCM_RX_PATHS - valid) * sizeof(receiver->paths[0]));
+	receiver->path_count = (uint8_t)valid;
 	return V92_PCM_FRAME_OK;
 }
 
@@ -431,6 +804,8 @@ const char *v92_pcm_frame_result_name(
 		return "invalid parameters";
 	case V92_PCM_FRAME_OUT_OF_RANGE:
 		return "out of range";
+	case V92_PCM_FRAME_NO_PATH:
+		return "no path";
 	}
 	return "unknown";
 }

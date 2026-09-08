@@ -14,6 +14,9 @@
 enum {
 	V92_B1U_FRAMES = 48,
 	V92_B1U_SYMBOLS = V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
+	/* 120-symbol (15 ms) traceback with bounded competing histories. */
+	V92_PCM_RX_PATHS = 32,
+	V92_PCM_RX_DELAY_FRAMES = 10,
 };
 
 enum v92_pcm_frame_result {
@@ -21,6 +24,7 @@ enum v92_pcm_frame_result {
 	V92_PCM_FRAME_INVALID_ARGUMENT,
 	V92_PCM_FRAME_INVALID_PARAMETERS,
 	V92_PCM_FRAME_OUT_OF_RANGE,
+	V92_PCM_FRAME_NO_PATH,
 };
 
 struct v92_pcm_frame_filter_state {
@@ -53,6 +57,33 @@ struct v92_pcm_frame {
 	uint8_t frame_sign;
 };
 
+struct v92_pcm_frame_rx_path {
+	struct v34_scrambler descrambler;
+	struct v34_convolutional_encoder trellis;
+	struct v92_pcm_frame_filter_state filter;
+	uint64_t metric;
+	uint8_t pending[V92_PCM_RX_DELAY_FRAMES][V92_PCM_MAPPING_MAX_BITS];
+	uint16_t ambiguous_frames;
+	uint8_t differential;
+};
+
+struct v92_pcm_frame_rx {
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
+	int16_t upstream_level;
+	uint8_t path_count;
+	uint8_t pending_frames;
+};
+
+struct v92_pcm_frame_decision {
+	/* Current received frame and its residual; payload bits are delayed. */
+	struct v92_pcm_frame frame;
+	uint64_t squared_error;
+	bool bits_ready;
+	/* Equal-distance histories disagree about the delivered payload. */
+	bool ambiguous;
+};
+
 enum v92_pcm_frame_result v92_pcm_frame_tx_init(
 	struct v92_pcm_frame_tx *transmitter,
 	const struct v92_pcm_mapping *mapping);
@@ -73,6 +104,29 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 enum v92_pcm_frame_result v92_pcm_frame_scale(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample);
+
+/* Initialize at B1u with the accepted CPd and trained LU. The continuous
+ * line equalizer and timing remain owned by the caller. */
+enum v92_pcm_frame_result v92_pcm_frame_rx_init(
+	struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
+bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
+
+/* Decode one aligned twelve-symbol frame in decoded-G.711 coordinates.
+ * A bounded sequence search retains competing histories across frames.
+ * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; before
+ * that, bits remain untouched while state and decision advance normally.
+ * B1u constrains source bits to ones; its residual is training evidence, not
+ * an automatic pass. Ordinary data has no payload-dependent constraints.
+ * Ambiguity and residuals are quality evidence for the call owner, not a
+ * guarantee of correct payload. CPd points can coincide after quantization.
+ * State, bits and decision commit together; rejected calls change none.
+ * The input, outputs and receiver must not overlap. */
+enum v92_pcm_frame_result v92_pcm_frame_decode(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision);
 
 const char *v92_pcm_frame_result_name(
 	enum v92_pcm_frame_result result);
