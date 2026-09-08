@@ -86,8 +86,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
 	if (entry->local_role != V90_ANALOG_MODEM)
 		return PCM_PHASE3_ENTRY_ROLE_MISMATCH;
-	if (entry->selection.startup.protocol != PCM_PROTOCOL_V90 ||
-	    entry->selection.upstream != PCM_UPSTREAM_V34)
+	if (entry->selection.upstream != PCM_UPSTREAM_V34)
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	result = v90_phase3_analog_station_init(
 		station, &entry->conventional_profile, entry->law,
@@ -124,8 +123,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_digital(
 		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
 	if (entry->local_role != V90_DIGITAL_MODEM)
 		return PCM_PHASE3_ENTRY_ROLE_MISMATCH;
-	if (entry->selection.startup.protocol != PCM_PROTOCOL_V90 ||
-	    entry->selection.upstream != PCM_UPSTREAM_V34)
+	if (entry->selection.upstream != PCM_UPSTREAM_V34)
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	result = v90_phase3_digital_station_init(
 		station, &entry->conventional_profile,

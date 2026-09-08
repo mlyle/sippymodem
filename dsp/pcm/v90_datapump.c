@@ -115,7 +115,8 @@ static bool role_from_modem(
 static bool call_is_disconnecting(const struct pcm_call *call)
 {
 	return call->stage == PCM_CALL_CLOSED ||
-	       (call->protocol == PCM_PROTOCOL_V90 && call->stage == PCM_CALL_DATA_PATH &&
+	       (pcm_call_uses_conventional_upstream(call) &&
+		call->stage == PCM_CALL_DATA_PATH &&
 		(call->local_role == V90_ANALOG_MODEM ?
 		 call->state.data_path.analog.cleardown_requested :
 		 call->state.data_path.digital.cleardown_requested));
@@ -140,7 +141,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	if (&datapump->dp != dp || datapump->role != role ||
 	    (closed && dp->status != DPSTAT_DISCONNECT) ||
 	    datapump->protocol != protocol ||
-	    ((protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) !=
+	    ((role == V90_DIGITAL_MODEM) !=
 	     (datapump->host_echo != NULL)) ||
 	    (datapump->host_echo_margin_evaluated &&
 	     (!datapump->call_started || datapump->host_echo == NULL ||
@@ -152,7 +153,8 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	    !v34_data_quality_is_valid(&datapump->upstream_quality) ||
 	    !v92_data_quality_is_valid(&datapump->pcm_upstream_quality) ||
 	    (datapump->upstream_quality_ready &&
-	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM)) ||
+	     (role != V90_DIGITAL_MODEM ||
+	      !pcm_call_uses_conventional_upstream(&datapump->call))) ||
 	    (datapump->fallback_ready &&
 	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
 	      !datapump->call_started ||
@@ -231,7 +233,7 @@ static struct dp *create_v90(
 	datapump->caller = caller != 0;
 	datapump->maximum_pcm_upstream_data_rate_number =
 		maximum_pcm_upstream_data_rate_number;
-	if (protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM) {
+	if (role == V90_DIGITAL_MODEM) {
 		datapump->host_echo = malloc(sizeof(*datapump->host_echo));
 		if (datapump->host_echo == NULL ||
 		    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK) {
@@ -326,10 +328,10 @@ static bool observe_upstream_quality(struct v90_datapump *datapump)
 	struct v34_data_line_receiver *receiver;
 	enum v34_data_quality_result result;
 
-	/* V.90 uses the conventional V.34 receiver upstream. Do not carry a
-	 * quality baseline across CP/E/B1, rate renegotiation or full retrain;
-	 * only the call's bounded automatic-retrain budget survives. */
-	if (datapump->protocol != PCM_PROTOCOL_V90 ||
+	/* Both sessions share the conventional V.34 upstream receiver. Do not
+	 * carry a quality baseline across CP/E/B1, rate renegotiation or full
+	 * retrain; only the call's bounded automatic-retrain budget survives. */
+	if (!pcm_call_uses_conventional_upstream(&datapump->call) ||
 	    datapump->role != V90_DIGITAL_MODEM ||
 	    datapump->call.stage != PCM_CALL_DATA_PATH ||
 	    !training_session_is_online(&datapump->training) ||
@@ -674,7 +676,8 @@ static enum v90_host_echo_mode host_echo_mode(
 {
 	const struct pcm_call *call = &datapump->call;
 
-	if (datapump->host_echo == NULL)
+	if (datapump->host_echo == NULL ||
+	    (call->phase3_entry_stored && !pcm_call_uses_conventional_upstream(call)))
 		return V90_HOST_ECHO_BYPASS;
 	if (call->stage == PCM_CALL_PHASE3 &&
 	    call->state.phase3.digital.transmit_started &&
@@ -719,6 +722,7 @@ static bool apply_host_echo_margin(struct v90_datapump *datapump)
 	struct pcm_call limited;
 
 	if (datapump->host_echo == NULL ||
+	    !pcm_call_uses_conventional_upstream(&datapump->call) ||
 	    datapump->host_echo_margin_evaluated ||
 	    !v90_host_echo_is_ready(datapump->host_echo))
 		return true;

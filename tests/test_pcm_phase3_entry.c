@@ -476,7 +476,7 @@ static bool test_peer_md_entry(void)
 	return true;
 }
 
-static bool test_v90_branch_guards(void)
+static bool test_conventional_branch_guards(void)
 {
 	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
 	struct v90_jd_parameters jd = jd_parameters();
@@ -517,23 +517,30 @@ static bool test_v90_branch_guards(void)
 			memset(&digital, 0x5a, sizeof(digital));
 			saved_digital = digital;
 			if (role == V90_ANALOG_MODEM) {
-				CHECK(pcm_phase3_entry_start_v90_analog(
-					      &entry, NOMINAL_AMPLITUDE,
-					      V90_DIL_PROFILE_NONE,
-					      &analog) ==
-					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
-				      memcmp(&analog, &saved_analog,
-					     sizeof(analog)) == 0,
-				      "V.92 upstream %u entered the V.90 analogue branch",
+				enum pcm_phase3_entry_result result =
+					pcm_phase3_entry_start_v90_analog(
+						&entry, NOMINAL_AMPLITUDE,
+						V90_DIL_PROFILE_NONE, &analog);
+
+				CHECK(upstream_index == PCM_UPSTREAM_V34 ?
+				      result == PCM_PHASE3_ENTRY_OK &&
+				      v90_phase3_analog_station_is_valid(&analog) :
+				      result == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+				      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
+				      "V.92 upstream %u selected the wrong analogue child",
 				      upstream_index);
 			} else {
-				CHECK(pcm_phase3_entry_start_v90_digital(
-					      &entry, TEST_INITIAL_RECEIVE_GAIN, &jd,
-					      &digital) ==
-					      PCM_PHASE3_ENTRY_INVALID_SELECTION &&
-				      memcmp(&digital, &saved_digital,
-					     sizeof(digital)) == 0,
-				      "V.92 upstream %u entered the V.90 digital branch",
+				enum pcm_phase3_entry_result result =
+					pcm_phase3_entry_start_v90_digital(
+						&entry, TEST_INITIAL_RECEIVE_GAIN,
+						&jd, &digital);
+
+				CHECK(upstream_index == PCM_UPSTREAM_V34 ?
+				      result == PCM_PHASE3_ENTRY_OK &&
+				      v90_phase3_digital_station_is_valid(&digital) :
+				      result == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+				      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
+				      "V.92 upstream %u selected the wrong digital child",
 				      upstream_index);
 			}
 		}
@@ -669,7 +676,7 @@ int main(void)
 		{ "selection rejection", test_selection_rejection },
 		{ "station validation", test_station_validation },
 		{ "peer MD entry", test_peer_md_entry },
-		{ "V.90 branch guards", test_v90_branch_guards },
+		{ "conventional branch guards", test_conventional_branch_guards },
 		{ "V.92 PCM station starts", test_v92_pcm_starts },
 		{ "result names", test_result_names },
 	};

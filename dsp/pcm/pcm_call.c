@@ -33,6 +33,18 @@ enum {
 _Static_assert(PCM_PROTOCOL_V90 == 0,
 	"zero-initialized PCM call configurations must select V.90");
 
+static bool uses_pcm_upstream(const struct pcm_call *call)
+{
+	return call->phase3_entry_stored &&
+	       call->phase3_entry.selection.upstream == PCM_UPSTREAM_PCM;
+}
+
+bool pcm_call_uses_conventional_upstream(const struct pcm_call *call)
+{
+	return call != NULL && call->phase3_entry_stored &&
+	       call->phase3_entry.selection.upstream == PCM_UPSTREAM_V34;
+}
+
 static bool downstream_rate_mask_is_valid(uint32_t mask)
 {
 	return mask != 0 &&
@@ -188,7 +200,6 @@ static bool v92_digital_configuration_is_valid(
 		       &info1->v92_digital.v34, phase3, phase4) &&
 	       phase3->digital.jd.data_rate_capability_mask ==
 		       enabled_downstream_rate_mask &&
-	       info1->v92_digital.pcm_upstream_supported &&
 	       selected->jd.data_rate_capability_mask ==
 		       enabled_downstream_rate_mask &&
 	       v92_phase3_digital_station_parameters_are_valid(
@@ -529,7 +540,7 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 
 static bool cleardown_is_active_owned(const struct pcm_call *call)
 {
-	return call->protocol == PCM_PROTOCOL_V90 &&
+	return pcm_call_uses_conventional_upstream(call) &&
 	       call->stage == PCM_CALL_DATA_PATH &&
 	       (call->local_role == V90_ANALOG_MODEM ?
 			call->state.data_path.analog.cleardown_requested :
@@ -539,7 +550,7 @@ static bool cleardown_is_active_owned(const struct pcm_call *call)
 static bool rate_renegotiation_is_active_owned(
 	const struct pcm_call *call)
 {
-	if (call->protocol != PCM_PROTOCOL_V90 ||
+	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->stage != PCM_CALL_DATA_PATH ||
 	    cleardown_is_active_owned(call))
 		return false;
@@ -604,8 +615,16 @@ static bool rate_renegotiation_deadline_has_started(
 
 static uint32_t b1_deadline_limit(const struct pcm_call *call)
 {
+	bool pcm_upstream = uses_pcm_upstream(call);
+
+	/* PCM INFO1a finishes before its Phase 3 handoff. Start timing at the
+	 * record boundary, while the INFO1 owner still holds that selection. */
+	if (call->stage == PCM_CALL_PHASE2 &&
+	    call->state.phase2.stage == PCM_PHASE2_INFO1 &&
+	    call->state.phase2.state.info1.analog_record_stored)
+		pcm_upstream = call->state.phase2.state.info1.analog.kind == PCM_INFO1A_PCM;
 	/* V.90 9.2 and V.92 9.6 time peer B1 from the end of INFO1a. */
-	return call->protocol == PCM_PROTOCOL_V92 ?
+	return pcm_upstream ?
 		V92_B1_BASE_DEADLINE_SAMPLES +
 			V92_B1_ROUND_TRIP_ALLOWANCES * call->round_trip_delay_samples :
 		V90_B1_BASE_DEADLINE_SAMPLES +
@@ -690,11 +709,11 @@ static bool call_is_valid(
 	    (!call->v92_peer_downstream_rate_stored &&
 	     call->v92_peer_downstream_rate_mask != 0u) ||
 	    (call->v92_peer_downstream_rate_stored &&
-	     (call->protocol != PCM_PROTOCOL_V92 ||
+	     (!uses_pcm_upstream(call) ||
 	      call->local_role != V90_ANALOG_MODEM ||
 	      (call->v92_peer_downstream_rate_mask &
 	       ~(uint32_t)V92_JD_RATE_CAPABILITY_MASK) != 0u)) ||
-	    (call->protocol == PCM_PROTOCOL_V92 &&
+	    (uses_pcm_upstream(call) &&
 	     call->local_role == V90_ANALOG_MODEM &&
 	     call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_PHASE3 &&
@@ -711,7 +730,7 @@ static bool call_is_valid(
 	    (!call->rate_renegotiation_deadline_armed &&
 	     call->rate_renegotiation_deadline_remaining_samples != 0u) ||
 	    (call->rate_renegotiation_deadline_armed &&
-	     (call->protocol != PCM_PROTOCOL_V90 ||
+	     (!pcm_call_uses_conventional_upstream(call) ||
 	      call->stage != PCM_CALL_DATA_PATH ||
 	      !call->round_trip_delay_stored ||
 	      !rate_renegotiation_is_active_owned(call) ||
@@ -744,13 +763,13 @@ static bool call_is_valid(
 		child_failed = pcm_phase2_has_failed(&call->state.phase2);
 		break;
 	case PCM_CALL_PHASE3:
-		if (call->protocol == PCM_PROTOCOL_V92 &&
+		if (uses_pcm_upstream(call) &&
 		    call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v92_phase3_analog_station_is_valid(
 				&call->state.phase3.v92_analog);
 			child_failed = v92_phase3_analog_station_has_failed(
 				&call->state.phase3.v92_analog);
-		} else if (call->protocol == PCM_PROTOCOL_V92) {
+		} else if (uses_pcm_upstream(call)) {
 			child_valid = v92_phase3_digital_station_is_valid(
 				&call->state.phase3.v92_digital);
 			child_failed = v92_phase3_digital_station_has_failed(
@@ -770,7 +789,7 @@ static bool call_is_valid(
 		}
 		break;
 	case PCM_CALL_PHASE3_MIXED:
-		if (call->protocol == PCM_PROTOCOL_V92) {
+		if (uses_pcm_upstream(call)) {
 			bool trailing_complete =
 				call->local_role == V90_ANALOG_MODEM ?
 					v92_phase3_analog_station_transmit_complete(
@@ -796,7 +815,7 @@ static bool call_is_valid(
 		}
 		break;
 	case PCM_CALL_PHASE4:
-		if (call->protocol == PCM_PROTOCOL_V92 &&
+		if (uses_pcm_upstream(call) &&
 		    call->state.phase4.v92.child ==
 			    PCM_CALL_V92_PHASE4_E2U) {
 			child_valid = v92_phase4_e2u_is_valid(
@@ -805,21 +824,21 @@ static bool call_is_valid(
 					call->local_role;
 			child_failed = v92_phase4_e2u_has_failed(
 				&call->state.phase4.v92.owner.e2u);
-		} else if (call->protocol == PCM_PROTOCOL_V92 &&
+		} else if (uses_pcm_upstream(call) &&
 			   call->state.phase4.v92.child ==
 				   PCM_CALL_V92_PHASE4_CONTROL &&
 			   call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v92_analog_phase4_state_is_valid(call);
 			child_failed = v92_phase4_analog_station_has_failed(
 				&call->state.phase4.v92.owner.analog.station);
-		} else if (call->protocol == PCM_PROTOCOL_V92 &&
+		} else if (uses_pcm_upstream(call) &&
 			   call->state.phase4.v92.child ==
 				   PCM_CALL_V92_PHASE4_CONTROL) {
 			child_valid = v92_phase4_digital_station_is_valid(
 				&call->state.phase4.v92.owner.digital);
 			child_failed = v92_phase4_digital_station_has_failed(
 				&call->state.phase4.v92.owner.digital);
-		} else if (call->protocol == PCM_PROTOCOL_V92) {
+		} else if (uses_pcm_upstream(call)) {
 			return false;
 		} else if (call->local_role == V90_ANALOG_MODEM) {
 			child_valid = v90_phase4_analog_startup_is_valid(
@@ -835,7 +854,7 @@ static bool call_is_valid(
 		break;
 	case PCM_CALL_DATA_PATH:
 	case PCM_CALL_CLOSED:
-		if (call->protocol == PCM_PROTOCOL_V92) {
+		if (uses_pcm_upstream(call)) {
 			child_valid = call->stage == PCM_CALL_DATA_PATH &&
 				v92_data_path_is_valid(call);
 			child_failed = false;
@@ -1135,7 +1154,7 @@ static bool data_path_is_online_owned(const struct pcm_call *call)
 	if (call->failed || call->stage != PCM_CALL_DATA_PATH ||
 	    cleardown_is_active_owned(call))
 		return false;
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return v92_peer_b1_received_owned(call) && v92_local_b1_sent_owned(call);
 	if (call->local_role == V90_ANALOG_MODEM)
 		return analog_upstream_is_online_owned(
@@ -1152,7 +1171,7 @@ static bool peer_b1_received(const struct pcm_call *call)
 {
 	if (call->stage != PCM_CALL_DATA_PATH)
 		return false;
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return v92_peer_b1_received_owned(call);
 	return call->local_role == V90_ANALOG_MODEM ?
 		analog_downstream_is_online_owned(
@@ -1202,7 +1221,7 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 	if (!pcm_call_is_valid(call) || call->failed ||
 	    call->stage != PCM_CALL_PHASE4)
 		return false;
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return call->state.phase4.v92.child ==
 			       PCM_CALL_V92_PHASE4_E2U &&
 		       v92_phase4_e2u_is_complete(
@@ -1398,10 +1417,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		return PCM_CALL_UNUSABLE_SELECTION;
 	next = *call;
 	next.state.phase3 = (union pcm_call_phase3_state){ 0 };
-	if (call->protocol == PCM_PROTOCOL_V92 &&
-	    entry.selection.upstream != PCM_UPSTREAM_PCM)
-		return PCM_CALL_UNUSABLE_SELECTION;
-	if (call->protocol == PCM_PROTOCOL_V92 &&
+	if (entry.selection.upstream == PCM_UPSTREAM_PCM &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		struct v92_phase3_analog_station station;
 
@@ -1411,7 +1427,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);
 		next.state.phase3.v92_analog = station;
-	} else if (call->protocol == PCM_PROTOCOL_V92) {
+	} else if (entry.selection.upstream == PCM_UPSTREAM_PCM) {
 		const struct pcm_call_v92_digital_phase3_configuration *config =
 			&call->phase3_configuration.v92_digital;
 		struct v92_phase3_digital_station station;
@@ -1533,7 +1549,17 @@ static enum pcm_call_result advance_phase2(
 	}
 	if (call->local_role == V90_ANALOG_MODEM &&
 	    event->kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
-		result = call->protocol == PCM_PROTOCOL_V92 ?
+		bool pcm_upstream = false;
+
+		if (call->protocol == PCM_PROTOCOL_V92) {
+			struct v92_info1d peer;
+
+			if (pcm_phase2_peer_v92_info1d(&call->state.phase2, &peer) !=
+			    PCM_PHASE2_OK)
+				return PCM_CALL_SEQUENCE_MISMATCH;
+			pcm_upstream = peer.pcm_upstream_supported;
+		}
+		result = pcm_upstream ?
 			pcm_phase2_reply_pcm(
 				&call->state.phase2,
 				&call->local_info1.v92_analog) :
@@ -1659,7 +1685,7 @@ static uint32_t retrain_silence_ceiling(
 	uint64_t gain;
 	const uint64_t unity = UINT64_C(1) << V34_GAIN_FRACTION_BITS;
 
-	if (call->protocol != PCM_PROTOCOL_V90 ||
+	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->local_role != V90_DIGITAL_MODEM ||
 	    call->stage != PCM_CALL_DATA_PATH)
 		return nominal_window_energy;
@@ -2171,7 +2197,7 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 {
 	enum pcm_call_result result;
 
-	if (call->protocol == PCM_PROTOCOL_V92) {
+	if (uses_pcm_upstream(call)) {
 		if (call->stage == PCM_CALL_PHASE3) {
 			bool leading_direction_complete =
 				call->local_role == V90_ANALOG_MODEM ?
@@ -2242,7 +2268,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 	const struct pcm_phase3_digital_tx *transmit;
 	uint64_t elapsed;
 
-	if (call->protocol != PCM_PROTOCOL_V90)
+	if (!pcm_call_uses_conventional_upstream(call))
 		return false;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct v90_phase3_analog_station *station =
@@ -2294,7 +2320,7 @@ static enum pcm_call_result sample_phase3(
 {
 	enum pcm_call_result result;
 
-	if (call->protocol == PCM_PROTOCOL_V92 &&
+	if (uses_pcm_upstream(call) &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 
@@ -2310,7 +2336,7 @@ static enum pcm_call_result sample_phase3(
 				received_octet));
 		if (result == PCM_CALL_OK)
 			result = retain_v92_peer_downstream_rates(call);
-	} else if (call->protocol == PCM_PROTOCOL_V92) {
+	} else if (uses_pcm_upstream(call)) {
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_transmit(
 				&call->state.phase3.v92_digital,
@@ -2489,7 +2515,7 @@ static enum pcm_call_result sample_mixed_phase3(
 {
 	enum pcm_call_result result;
 
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return sample_v92_mixed_phase3(
 			call, received_octet, transmit_octet);
 
@@ -2792,7 +2818,7 @@ static enum pcm_call_result sample_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return sample_v92_phase4(
 			call, received_octet, received_sample, transmit_octet);
 	enum v90_phase4_startup_result result =
@@ -2876,7 +2902,8 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->stage == PCM_CALL_CLOSED || cleardown_is_active_owned(call))
 		return PCM_CALL_OK;
-	if (call->stage != PCM_CALL_DATA_PATH || call->protocol != PCM_PROTOCOL_V90)
+	if (call->stage != PCM_CALL_DATA_PATH ||
+	    !pcm_call_uses_conventional_upstream(call))
 		return PCM_CALL_INVALID_STATE;
 	result = call->local_role == V90_ANALOG_MODEM ?
 		analog_path_result(v90_analog_path_start_cleardown(
@@ -2938,7 +2965,7 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		return PCM_CALL_INVALID_STATE;
 	next = *call;
 	next.state = (union pcm_call_state){ 0 };
-	if (call->protocol == PCM_PROTOCOL_V92) {
+	if (uses_pcm_upstream(call)) {
 		if (!start_v92_data_path(&next, call))
 			return PCM_CALL_NUMERIC_FAILURE;
 	} else if (call->local_role == V90_ANALOG_MODEM) {
@@ -3015,7 +3042,7 @@ static bool data_outputs_overlap(
 static const struct v90_pcm_mapping *online_downstream_mapping(
 	const struct pcm_call *call)
 {
-	if (call->protocol == PCM_PROTOCOL_V92)
+	if (uses_pcm_upstream(call))
 		return call->local_role == V90_ANALOG_MODEM ?
 			&call->state.data_path.v92_analog.downstream.data.stream.decoder.mapping :
 			&call->state.data_path.v92_digital.downstream.data.transmitter.encoder.mapping;
@@ -3063,7 +3090,7 @@ bool pcm_call_get_data_rates(
 	downstream = online_downstream_mapping(call);
 	if (!v90_pcm_mapping_is_valid(downstream) || downstream->kind != V90_CP_DATA)
 		return false;
-	if (call->protocol == PCM_PROTOCOL_V92) {
+	if (uses_pcm_upstream(call)) {
 		const struct v92_pcm_mapping *mapping = call->local_role == V90_ANALOG_MODEM ?
 			&call->state.data_path.v92_analog.upstream.encoder.mapping :
 			&call->state.data_path.v92_digital.upstream.decoder.mapping;
@@ -3097,7 +3124,7 @@ static enum pcm_call_result begin_rate_renegotiation_control(
 {
 	struct pcm_call next = *call;
 
-	if (call->protocol != PCM_PROTOCOL_V90 ||
+	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->stage != PCM_CALL_DATA_PATH ||
 	    !call->round_trip_delay_stored ||
 	    !rate_renegotiation_is_active_owned(call) ||
@@ -3287,7 +3314,7 @@ static enum pcm_call_result data_octet_owned(
 				call, 256u * 256u *
 				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
 	generated = encode_sample(call->law, 0);
-	if (call->protocol == PCM_PROTOCOL_V92) {
+	if (uses_pcm_upstream(call)) {
 		result = v92_data_octet_owned(call, received_octet, received_sample,
 			sources, &generated, &emitted);
 		if (retrain_candidate)
@@ -3311,7 +3338,7 @@ static enum pcm_call_result data_octet_owned(
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
 	result = recover_rate_renegotiation_failure(call, result);
-	if (result == PCM_CALL_OK && call->protocol == PCM_PROTOCOL_V90 &&
+	if (result == PCM_CALL_OK && pcm_call_uses_conventional_upstream(call) &&
 	    call->stage == PCM_CALL_DATA_PATH &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		/* Data decoding must retain the six-sample mapper phase through a
@@ -3363,7 +3390,7 @@ static enum pcm_call_result data_octet_owned(
 		call->retrain_active = false;
 	if (result == PCM_CALL_OK)
 		result = advance_b1_deadline(call);
-	if (result == PCM_CALL_OK && call->protocol == PCM_PROTOCOL_V90 &&
+	if (result == PCM_CALL_OK && pcm_call_uses_conventional_upstream(call) &&
 	    call->stage == PCM_CALL_DATA_PATH)
 		result = update_rate_renegotiation_deadline(call);
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
@@ -3458,8 +3485,7 @@ enum pcm_call_result pcm_call_octet(
 	case PCM_CALL_PHASE2:
 		result = sample_phase2(
 			call,
-			call->protocol == PCM_PROTOCOL_V90 &&
-				call->local_role == V90_DIGITAL_MODEM ?
+			call->local_role == V90_DIGITAL_MODEM ?
 				received_sample :
 				decode_octet(call->law, received_octet),
 			&generated, &emitted);

@@ -23,7 +23,8 @@ enum v92_profile_result {
  * every upstream rate through the maximum. The digital role chooses the
  * highest peer-enabled rate within that maximum after receiving Ja, then
  * constructs its complete direct CPd mapping for the selected rate.
- * Quick connect and conventional upstream are separate procedures. */
+ * PCM upstream is preferred, but a peer may select conventional upstream
+ * within the same V.92 session. Quick connect remains a separate procedure. */
 enum v92_profile_result v92_pcm_profile_init(
 	struct pcm_call_configuration *configuration,
 	enum v90_modem_role role, enum g711_law law,

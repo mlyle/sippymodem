@@ -455,7 +455,7 @@ static bool check_phase2_input_ownership(
 	struct pcm_call call;
 	struct pcm_phase2 expected;
 	struct v34_phase2_tone_transmitter peer;
-	bool physical = protocol == PCM_PROTOCOL_V90 && role == V90_DIGITAL_MODEM;
+	bool physical = role == V90_DIGITAL_MODEM;
 	size_t distinct_inputs = 0u;
 	size_t noncodeword_samples = 0u;
 
@@ -699,6 +699,30 @@ static bool endpoint_init_with_rate_renegotiation_constellation(
 	return true;
 }
 
+static bool endpoint_init_conventional_v92(
+	struct endpoint *endpoint, enum v90_modem_role role, enum g711_law law)
+{
+	struct pcm_call_configuration selected = v92_configuration(role, law);
+	const struct pcm_call_configuration conventional = configuration(role, law);
+	struct endpoint initialized = { .upstream_received_delay = UINT16_MAX };
+
+	selected.enabled_downstream_rate_mask = conventional.enabled_downstream_rate_mask;
+	if (role == V90_ANALOG_MODEM) {
+		selected.local_info1.analog = conventional.local_info1.analog;
+		selected.phase3.analog = conventional.phase3.analog;
+		selected.analog_phase4 = conventional.analog_phase4;
+		selected.v92_analog_phase4.cpu.data_rate_number = 1u;
+	} else {
+		selected.local_info1.v92_digital.pcm_upstream_supported = false;
+		selected.phase3.digital = conventional.phase3.digital;
+		selected.digital_phase4 = conventional.digital_phase4;
+	}
+	if (pcm_call_init(&initialized.call, &selected) != PCM_CALL_OK)
+		return false;
+	*endpoint = initialized;
+	return true;
+}
+
 static bool phase4_boundary_is_transactional(
 	struct pcm_call *call, enum g711_law law);
 
@@ -849,7 +873,7 @@ static bool endpoint_octet(
 			return false;
 		endpoint->measured_info1d_checked = true;
 	}
-	if (endpoint->call.protocol == PCM_PROTOCOL_V90 &&
+	if (pcm_call_uses_conventional_upstream(&endpoint->call) &&
 	    ((endpoint->call.local_role == V90_ANALOG_MODEM &&
 	      observation.phase2.kind ==
 		      PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) ||
@@ -3308,7 +3332,8 @@ static bool check_short_quiet_receive(
 }
 
 static bool run_full_retrain(
-	enum g711_law law, enum v90_modem_role initiating_role)
+	enum pcm_protocol protocol, enum g711_law law,
+	enum v90_modem_role initiating_role)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -3327,11 +3352,12 @@ static bool run_full_retrain(
 	bool reconnected = false;
 
 	CHECK(channel_init(&channel, law, 3u) &&
-	      endpoint_init(
-		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
-	      endpoint_init(
-		      &digital, V90_DIGITAL_MODEM, law,
-		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      (protocol == PCM_PROTOCOL_V92 ?
+		      endpoint_init_conventional_v92(&analog, V90_ANALOG_MODEM, law) &&
+		      endpoint_init_conventional_v92(&digital, V90_DIGITAL_MODEM, law) :
+		      endpoint_init(&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+		      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+			      V90_JD_RATE_CAPABILITY_MASK, 0u)),
 	      "law %u retrain endpoints did not initialize",
 	      (unsigned int)law);
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -3348,6 +3374,26 @@ static bool run_full_retrain(
 	}
 	CHECK(initially_online, "law %u retrain pair did not reach data",
 	      (unsigned int)law);
+	CHECK(pcm_call_uses_conventional_upstream(&analog.call) &&
+	      pcm_call_uses_conventional_upstream(&digital.call) &&
+	      analog.call.protocol == protocol && digital.call.protocol == protocol &&
+	      analog.info1_b1_deadline_seen && digital.info1_b1_deadline_seen,
+	      "conventional selection lost session/deadline: mode %u/%u "
+	      "protocol %u/%u expected %u deadline %d/%d",
+	      analog.call.phase3_entry.selection.upstream,
+	      digital.call.phase3_entry.selection.upstream,
+	      analog.call.protocol, digital.call.protocol, protocol,
+	      analog.info1_b1_deadline_seen, digital.info1_b1_deadline_seen);
+	if (protocol == PCM_PROTOCOL_V92) {
+		uint32_t at, ar, dt, dr;
+
+		CHECK(pcm_call_get_data_rates(&analog.call, &at, &ar) &&
+		      pcm_call_get_data_rates(&digital.call, &dt, &dr) &&
+		      at == dr && ar == dt && ar == 28000u && at > 0u && at <= 33600u &&
+		      check_peer_cleardown(&analog.call, &digital.call, &channel, 0u) &&
+		      check_peer_cleardown(&analog.call, &digital.call, &channel, 1u),
+		      "V.92 conventional rates or bidirectional cleardown failed");
+	}
 	CHECK(check_idle_retrain_receive(
 		      &analog, &digital, &channel, law, initiating_role),
 	      "idle retrain receive boundary failed");
@@ -3371,7 +3417,8 @@ static bool run_full_retrain(
 	      initiator->call.retrain_active &&
 	      initiator->call.round_trip_delay_stored &&
 	      initiator->call.round_trip_delay_samples == initiator_prior_rtd &&
-	      initiator->call.protocol == PCM_PROTOCOL_V90,
+	      initiator->call.protocol == protocol &&
+	      !pcm_call_uses_conventional_upstream(&initiator->call),
 	      "law %u role %u did not begin local full retrain",
 	      (unsigned int)law, (unsigned int)initiating_role);
 	/* The responder continues clocking its source until the complete remote
@@ -3406,7 +3453,8 @@ static bool run_full_retrain(
 				      tone->carrier.reference_quadrature == 0.0,
 				      "local retrain lost sensitivity or retained stale peer phase");
 			}
-			CHECK(initiator->call.round_trip_delay_stored &&
+			CHECK(initiator->call.state.phase2.info0_protocol == protocol &&
+			      initiator->call.round_trip_delay_stored &&
 			      initiator->call.state.phase2.state.ranging.control
 				      .prior_round_trip_delay_samples ==
 				      initiator_prior_rtd,
@@ -3437,7 +3485,8 @@ static bool run_full_retrain(
 		if (remote_retrain_started &&
 		    responder->call.stage == PCM_CALL_PHASE2 &&
 		    responder->call.retrain_active) {
-			CHECK(responder->call.round_trip_delay_stored &&
+			CHECK(responder->call.state.phase2.info0_protocol == protocol &&
+			      responder->call.round_trip_delay_stored &&
 			      responder->call.state.phase2.state.ranging.control
 				      .prior_round_trip_delay_samples ==
 				      responder_prior_rtd,
@@ -3458,8 +3507,9 @@ static bool run_full_retrain(
 	      responder_prior_handed_off && reconnected &&
 	      !analog.call.retrain_active &&
 	      !digital.call.retrain_active &&
-	      analog.call.protocol == PCM_PROTOCOL_V90 &&
-	      digital.call.protocol == PCM_PROTOCOL_V90 &&
+	      analog.call.protocol == protocol && digital.call.protocol == protocol &&
+	      pcm_call_uses_conventional_upstream(&analog.call) &&
+	      pcm_call_uses_conventional_upstream(&digital.call) &&
 	      analog.call.peer_info0_stored &&
 	      digital.call.peer_info0_stored &&
 	      !pcm_call_has_failed(&analog.call) &&
@@ -3471,12 +3521,12 @@ static bool run_full_retrain(
 
 static bool test_full_retrain(void)
 {
-	for (enum g711_law law = G711_LAW_PCMU;
-	     law <= G711_LAW_PCMA; ++law) {
-		CHECK(run_full_retrain(law, V90_ANALOG_MODEM) &&
-		      run_full_retrain(law, V90_DIGITAL_MODEM),
-		      "law %u full retrain matrix failed", (unsigned int)law);
-	}
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+	     protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM) &&
+			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM),
+			      "protocol %u law %u full retrain matrix failed", protocol, law);
 	return true;
 }
 
@@ -5724,6 +5774,67 @@ static bool test_v92_upstream_negotiation(void)
 	return true;
 }
 
+static bool test_v92_upstream_reselection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+		struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+		struct pcm_call calls[2];
+		struct channel line;
+
+		CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+		      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK &&
+		      channel_init(&line, law, 3u), "mode-reselection setup failed");
+		/* Reuse the same live owners: PCM, conventional, then PCM again.
+		 * Each retrain must discard the old child but retain V.92 INFO0. */
+		for (unsigned int epoch = 0u; epoch < 3u; ++epoch) {
+			bool online = false;
+
+			for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+				uint8_t received[2], transmitted[2];
+
+				channel_receive(&line, &received[0], &received[1]);
+				for (unsigned int side = 0u; side < 2u; ++side) {
+					struct pcm_call *call = &calls[side];
+					struct pcm_call_data_event data;
+					struct pcm_call_observation training;
+
+					if (pcm_call_phase4_is_ready(call))
+						CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK,
+						      "mode-reselection data handoff failed");
+					enum pcm_call_result result = call->stage == PCM_CALL_DATA_PATH ?
+						pcm_call_data_octet(call, received[side],
+							decode_octet(law, received[side]), NULL,
+							&transmitted[side], &data) :
+						pcm_call_octet(call, received[side],
+							decode_octet(law, received[side]),
+							&transmitted[side], &training);
+
+					CHECK(result == PCM_CALL_OK && call->protocol == PCM_PROTOCOL_V92,
+					      "law %u epoch %u side %u stopped at %zu: %s",
+					      law, epoch, side, clock, pcm_call_result_name(result));
+				}
+				channel_transmit(&line, transmitted[0], transmitted[1]);
+				if (pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
+					online = true;
+					break;
+				}
+			}
+			CHECK(online && !calls[0].retrain_active && !calls[1].retrain_active &&
+			      pcm_call_uses_conventional_upstream(&calls[0]) == (epoch == 1u) &&
+			      pcm_call_uses_conventional_upstream(&calls[1]) == (epoch == 1u),
+			      "law %u epoch %u failed to reselect upstream online", law, epoch);
+			if (epoch < 2u) {
+				calls[1].local_info1.v92_digital.pcm_upstream_supported = epoch != 0u;
+				CHECK(pcm_call_start_retrain(&calls[1u - epoch]) == PCM_CALL_OK &&
+				      !calls[1u - epoch].phase3_entry_stored,
+				      "mode reselection retained the retired child");
+			}
+		}
+	}
+	return true;
+}
+
 enum v92_unavailable_selection {
 	V92_UNAVAILABLE_DOWNSTREAM_RATE,
 	V92_UNAVAILABLE_UPSTREAM_RATE,
@@ -6457,9 +6568,10 @@ static bool test_v92_validation(void)
 	      "call accepted unsupported short Phase 2");
 	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.local_info1.v92_digital.pcm_upstream_supported = false;
-	CHECK(pcm_call_init(&untouched, &selected) ==
-		      PCM_CALL_INVALID_ARGUMENT,
-	      "call accepted a V.92 configuration without PCM upstream");
+	CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK &&
+	      !digital.local_info1.v92_digital.pcm_upstream_supported &&
+	      !pcm_call_uses_conventional_upstream(&digital),
+	      "V.92 conventional capability was rejected or selected before INFO1");
 	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	selected.phase3.v92_digital.jd.data_rate_capability_mask >>= 1u;
 	CHECK(pcm_call_init(&untouched, &selected) ==
@@ -6670,6 +6782,7 @@ int main(void)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
+		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },

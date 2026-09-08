@@ -58,9 +58,9 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 	const struct v90_info0d *digital_info0,
 	const struct pcm_info1_selection *selection);
 
-/* Initialize the existing V.90/conventional child for entry.local_role.
- * V.92 and PCM-upstream entries are valid common entries but cannot enter
- * these V.90-only children. Rejected calls leave the station unchanged. */
+/* Initialize the conventional-upstream child for entry.local_role. Full
+ * V.90 and V.92 sessions share this waveform when INFO1 selects V.34 upstream.
+ * PCM-upstream entries are rejected without changing the station. */
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(
 	const struct pcm_phase3_entry *entry,
 	int16_t nominal_peak_amplitude, enum v90_dil_profile dil_profile,

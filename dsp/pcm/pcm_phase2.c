@@ -285,10 +285,11 @@ static bool ready_for_phase3(const struct pcm_phase2 *phase2)
 	if (info1_timeline_is_complete(phase2))
 		return true;
 	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
-	    phase2->stage != PCM_PHASE2_INFO1 ||
-	    phase2->startup.protocol != PCM_PROTOCOL_V90)
+	    phase2->stage != PCM_PHASE2_INFO1)
 		return false;
 	info1 = &phase2->state.info1;
+	/* The conventional Phase 3 child owns the post-INFO1a line interval,
+	 * including when INFO0 retained a V.92 agreement. */
 	return info1->control.phase == PHASE2_INFO1_SILENCE &&
 	       info1->digital_record_stored && info1->analog_record_stored &&
 	       info1->analog.kind == PCM_INFO1A_CONVENTIONAL;

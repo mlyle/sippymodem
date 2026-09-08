@@ -1319,7 +1319,7 @@ static bool check_phase2_controller(
 		}
 		if (analog_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) {
 			analog_sent = index;
-			CHECK(mode == TEST_INFO1_V90 ?
+			CHECK(mode != TEST_INFO1_V92_PCM ?
 				      pcm_phase2_is_ready_for_phase3(&analog) &&
 					      analog.state.info1.control.phase ==
 						      PHASE2_INFO1_SILENCE :
@@ -1330,7 +1330,7 @@ static bool check_phase2_controller(
 		}
 		if (digital_event.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
-			CHECK(mode == TEST_INFO1_V90 ?
+			CHECK(mode != TEST_INFO1_V92_PCM ?
 				      pcm_phase2_is_ready_for_phase3(&digital) &&
 					      digital.state.info1.control.phase ==
 						      PHASE2_INFO1_SILENCE :
@@ -1356,7 +1356,7 @@ static bool check_phase2_controller(
 				&digital, &peer_info1a) == PCM_PHASE2_OK &&
 				info1a_equal(
 					&peer_info1a, &conventional_info1a);
-		bool handoff_boundary_matches = mode == TEST_INFO1_V90 ?
+		bool handoff_boundary_matches = mode != TEST_INFO1_V92_PCM ?
 			digital.state.info1.control.phase ==
 				PHASE2_INFO1_SILENCE &&
 				digital.state.info1.control.silence_samples <
