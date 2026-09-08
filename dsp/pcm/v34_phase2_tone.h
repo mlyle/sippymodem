@@ -223,7 +223,8 @@ bool v34_full_retrain_response_is_active(
 enum v34_phase2_tone_result v34_full_retrain_begin_response(
 	struct v34_full_retrain *retrain, bool retain_peer_tone);
 /* On COMPLETE_WITH_PEER_TONE, detector.tone is the phase-continuous state
- * to graft into the restarted Phase 2 receiver. */
+ * to graft into the restarted Phase 2 receiver. Tone loss during the response
+ * instead emits COMPLETE on the original deadline, requiring reacquisition. */
 enum v34_phase2_tone_result v34_full_retrain_sample_response(
 	struct v34_full_retrain *retrain, int16_t received_sample,
 	enum v34_full_retrain_response_event *event);

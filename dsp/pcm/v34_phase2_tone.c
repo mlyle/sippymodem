@@ -667,6 +667,10 @@ enum v34_phase2_tone_result v34_full_retrain_sample_response(
 			    &next.detector.tone, received_sample,
 			    &tone_event) != V34_PHASE2_TONE_OK)
 			return V34_PHASE2_TONE_INVALID_ARGUMENT;
+		/* A lost phase reference is a channel event, not corrupt state.
+		 * Finish the original silence interval and reacquire in Phase 2. */
+		if (tone_event.kind == V34_PHASE2_TONE_ENDED)
+			next.peer_tone_retained = false;
 	}
 	if (--next.response_silence_samples_remaining == 0u) {
 		emitted = next.peer_tone_retained ?

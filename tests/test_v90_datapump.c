@@ -35,6 +35,9 @@ enum {
 	UPSTREAM_ECHO_HISTORY = UPSTREAM_ECHO_DELAY,
 	UPSTREAM_ECHO_GAIN_Q15 = 8000,
 	UPSTREAM_NOISE_SAMPLES = 16000,
+	RETRAIN_DROPOUT_START = V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES +
+		V34_RETRAIN_TONE_SAMPLES + 2u * V34_PHASE2_TONE_WINDOW_SAMPLES,
+	RETRAIN_DROPOUT_SAMPLES = 3u * V34_PHASE2_TONE_LOSS_SAMPLES,
 };
 
 enum returned_echo_mode {
@@ -48,6 +51,7 @@ enum upstream_channel_mode {
 	UPSTREAM_CHANNEL_CLEAN,
 	UPSTREAM_CHANNEL_DELAYED_ECHO,
 	UPSTREAM_CHANNEL_NOISE_BURST,
+	UPSTREAM_CHANNEL_RETRAIN_DROPOUT,
 };
 
 struct bit_endpoint {
@@ -484,6 +488,8 @@ static bool run_pair_with_rate_window(
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE || automatic_retrain;
 	uint32_t noise_state = UINT32_C(0x197bc485);
 	unsigned int noise_samples = 0;
+	unsigned int dropout_samples = 0;
+	size_t retrain_start = 0;
 	bool sample_codeword_separated = false;
 	size_t echo_history_write = 0;
 	size_t echo_history_fill = 0;
@@ -558,6 +564,15 @@ static bool run_pair_with_rate_window(
 		}
 		digital_receive = scale_uq15(
 			digital_receive, digital_receive_gain_q15);
+		if (upstream_channel == UPSTREAM_CHANNEL_RETRAIN_DROPOUT &&
+		    retrain_requested && octet - retrain_start >= RETRAIN_DROPOUT_START &&
+		    dropout_samples < RETRAIN_DROPOUT_SAMPLES) {
+			/* Lose Tone A after the digital modem qualifies the request,
+			 * during its response silence. The peer keeps running normally. */
+			digital_received_octet = encode(law, 0);
+			digital_receive = decode(law, digital_received_octet);
+			dropout_samples++;
+		}
 		if (automatic_retrain && retrain_requested &&
 		    noise_samples < UPSTREAM_NOISE_SAMPLES) {
 			/* A bounded physical disturbance after verified initial data.
@@ -665,6 +680,7 @@ static bool run_pair_with_rate_window(
 			analog_bits.enabled = false;
 			digital_bits.enabled = false;
 			retrain_requested = true;
+			retrain_start = octet;
 			continue;
 		}
 		if (post_retrain_data_enabled &&
@@ -719,6 +735,9 @@ static bool run_pair_with_rate_window(
 	      (unsigned int)retrain_role);
 	CHECK(!automatic_retrain || noise_samples == UPSTREAM_NOISE_SAMPLES,
 	      "quality recovery did not consume the complete noise burst");
+	CHECK(upstream_channel != UPSTREAM_CHANNEL_RETRAIN_DROPOUT ||
+	      dropout_samples == RETRAIN_DROPOUT_SAMPLES,
+	      "retrain response did not exercise the complete tone dropout");
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
 	{
@@ -1027,6 +1046,22 @@ static bool test_full_retrain_pairs(void)
 	}
 	CHECK(v90_datapump_unregister() == 0,
 	      "full-retrain V.90 registration remained busy");
+	return true;
+}
+
+static bool test_retrain_tone_dropout(void)
+{
+	CHECK(v90_datapump_register() == 0,
+	      "retrain-dropout V.90 registration failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_pair_with_rate_window(
+			      law, 28000, 14400, 14400, 14400, 3000,
+			      SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_ANALOG,
+			      false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
+			      UPSTREAM_CHANNEL_RETRAIN_DROPOUT),
+		      "law %u did not recover from retrain Tone A loss", (unsigned int)law);
+	CHECK(v90_datapump_unregister() == 0,
+	      "retrain-dropout V.90 registration remained busy");
 	return true;
 }
 
@@ -1541,6 +1576,7 @@ int main(void)
 		{ "quantized DC-biased digital-answerer host echo",
 		  test_quantized_host_echo },
 		{ "local and remote full retrain", test_full_retrain_pairs },
+		{ "retrain response with tone loss", test_retrain_tone_dropout },
 		{ "sustained maximum-rate retrains",
 		  test_sustained_maximum_rate_retrains },
 		{ "full retrain through returned host echo",

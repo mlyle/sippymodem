@@ -1058,12 +1058,14 @@ static bool test_receiver_silence_ceiling(void)
 }
 
 static bool check_full_retrain_response(
-	enum v34_station_role local_role, enum test_codec codec)
+	enum v34_station_role local_role, enum test_codec codec,
+	size_t dropout_start)
 {
 	struct v34_full_retrain retrain;
 	struct v34_phase2_tone_transmitter peer_tone;
 	struct v34_phase2_tone_detector retained;
 	bool detected = false;
+	bool tone_lost = false;
 
 	CHECK(v34_full_retrain_init(&retrain, local_role) ==
 		      V34_PHASE2_TONE_OK &&
@@ -1096,28 +1098,43 @@ static bool check_full_retrain_response(
 		enum v34_full_retrain_response_event event;
 		int16_t sample;
 		int16_t received;
-		enum v34_full_retrain_response_event expected =
-			index + 1u ==
-					V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
-				V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE :
-				V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+		enum v34_full_retrain_response_event expected;
 
 		CHECK(v34_phase2_tone_transmitter_sample(
 			      &peer_tone, &sample) == V34_PHASE2_TONE_OK,
 		      "peer retrain tone stopped during response at %zu", index);
-		received = codec_round_trip(sample, codec);
+		/* Keep the peer's oscillator running through a bounded loss. An
+		 * early loss returns before the response ends; a late one tests
+		 * loss close to the Phase 2 handoff. Neither may retain stale phase. */
+		received = codec_round_trip(
+			index >= dropout_start &&
+			index - dropout_start < 3u * V34_PHASE2_TONE_LOSS_SAMPLES ?
+				0 : sample, codec);
 		CHECK(v34_phase2_tone_detector_sample(
 			      &retained, received, &tone_event) ==
-			      V34_PHASE2_TONE_OK &&
-		      v34_full_retrain_sample_response(
+			      V34_PHASE2_TONE_OK,
+		      "retained response observer failed at %zu", index);
+		tone_lost |= tone_event.kind == V34_PHASE2_TONE_ENDED;
+		expected = index + 1u == V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES ?
+			(tone_lost ? V34_FULL_RETRAIN_RESPONSE_COMPLETES :
+			 V34_FULL_RETRAIN_RESPONSE_COMPLETES_WITH_PEER_TONE) :
+			V34_FULL_RETRAIN_RESPONSE_CONTINUES;
+		CHECK(v34_full_retrain_sample_response(
 			      &retrain, received, &event) == V34_PHASE2_TONE_OK &&
-		      event == expected,
+		      event == expected &&
+		      retrain.response_silence_samples_remaining ==
+			V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES - index - 1u &&
+		      retrain.peer_tone_retained ==
+			(!tone_lost && event == V34_FULL_RETRAIN_RESPONSE_CONTINUES),
 		      "peer full-retrain response failed at %zu", index);
 	}
 	CHECK(v34_full_retrain_is_valid(&retrain) &&
 	      !v34_full_retrain_response_is_active(&retrain) &&
 	      !retrain.peer_tone_retained &&
-	      memcmp(&retrain.detector.tone, &retained, sizeof(retained)) == 0,
+	      (tone_lost ?
+		!v34_phase2_tone_detector_measure(&retrain.detector.tone).tone_present :
+		memcmp(&retrain.detector.tone, &retained, sizeof(retained)) == 0) &&
+	      tone_lost == (dropout_start != SIZE_MAX),
 	      "peer full-retrain response lost retained tone phase");
 
 	CHECK(v34_full_retrain_init(&retrain, local_role) ==
@@ -1158,7 +1175,11 @@ static bool test_full_retrain_response(void)
 	     codec <= TEST_CODEC_PCMA; ++codec)
 		for (enum v34_station_role role = V34_CALLING_STATION;
 		     role <= V34_ANSWERING_STATION; ++role)
-			CHECK(check_full_retrain_response(role, codec),
+			CHECK(check_full_retrain_response(role, codec, SIZE_MAX) &&
+			      check_full_retrain_response(role, codec, 0u) &&
+			      check_full_retrain_response(role, codec,
+				V34_FULL_RETRAIN_RESPONSE_SILENCE_SAMPLES -
+				2u * V34_PHASE2_TONE_LOSS_SAMPLES),
 			      "full-retrain response failed role=%d codec=%d",
 			      role, codec);
 	return true;
