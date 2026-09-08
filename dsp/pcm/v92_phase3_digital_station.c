@@ -313,12 +313,20 @@ static enum v92_phase3_digital_station_result receive_initial(
 		struct pcm_phase3_digital_tx downstream;
 		struct v92_su_rx su;
 		struct v92_pcm_dil_parameters parameters;
+		uint16_t phase_minimum;
 
 		if (!v92_pcm_phase3_initial_rx_parameters(
 			    &station->receive.initial, &parameters))
 			return V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		if (parameters.upstream_rate_mask == 0u)
 			return V92_PHASE3_DIGITAL_STATION_UNSUPPORTED;
+		/* The received TRN1u level survives Ja. Scale confidence in the
+		 * coherently averaged 4 kHz component from that level, not from
+		 * the much larger threshold used to qualify individual Su signs. */
+		phase_minimum = (uint16_t)(
+			station->receive.initial.sequence.ja.line.magnitude / 256.0);
+		if (phase_minimum < 8u)
+			phase_minimum = 8u;
 		if (pcm_phase3_digital_tx_init_v92(
 			    &downstream, station->law,
 			    station->training_ucode, &station->jd,
@@ -326,7 +334,8 @@ static enum v92_phase3_digital_station_result receive_initial(
 			    PCM_PHASE3_DIGITAL_TX_OK ||
 		    v92_su_rx_init(
 			    &su, V92_SU_RX_MEASURE_PHASE,
-			    station->su_minimum_magnitude) != V92_SU_RX_OK)
+			    station->su_minimum_magnitude,
+			    phase_minimum) != V92_SU_RX_OK)
 			return V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v92_phase3_digital_receive){ .su = su };
@@ -369,7 +378,8 @@ static enum v92_phase3_digital_station_result receive_su_phase(
 			    PCM_PHASE3_DIGITAL_TX_OK ||
 		    v92_su_rx_init(
 			    &response, V92_SU_RX_TRANSITION_ONLY,
-			    station->su_minimum_magnitude) != V92_SU_RX_OK)
+			    station->su_minimum_magnitude,
+			    station->receive.su.phase_minimum_magnitude) != V92_SU_RX_OK)
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		station->jp.su_phase_extension_q16 = extension;
 		station->receive =

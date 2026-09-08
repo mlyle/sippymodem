@@ -192,6 +192,12 @@ static bool run_exchange(enum g711_law law, bool delayed)
 		sample = media_sample(law, sample);
 		if (!v92_phase3_digital_station_receive_complete(&digital)) {
 			int16_t delivered = delayed ? upstream_delay : sample;
+			bool receiving_ja =
+				digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL &&
+				digital.receive.initial.stage == V92_PCM_PHASE3_INITIAL_RX_JA;
+			uint16_t expected_phase_minimum = receiving_ja ?
+				(uint16_t)fmax(8.0,
+					digital.receive.initial.sequence.ja.line.magnitude / 256.0) : 0u;
 			enum v92_phase3_digital_station_result result =
 				v92_phase3_digital_station_receive(
 					&digital, delivered);
@@ -202,6 +208,12 @@ static bool run_exchange(enum g711_law law, bool delayed)
 			      "digital receiver returned %s at %zu",
 			      v92_phase3_digital_station_result_name(result),
 			      index);
+			if (receiving_ja && digital.receive_stage ==
+					    V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE)
+				CHECK(digital.receive.su.minimum_magnitude == TEST_SU_THRESHOLD &&
+				      digital.receive.su.phase_minimum_magnitude ==
+					      expected_phase_minimum,
+				      "Su did not retain separate sign and measured-level phase thresholds");
 		}
 		finished =
 			v92_phase3_analog_station_transmit_complete(&analog) &&

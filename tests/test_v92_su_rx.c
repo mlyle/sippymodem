@@ -13,6 +13,7 @@
 enum {
 	TEST_LU = 4096,
 	TEST_THRESHOLD = 256,
+	TEST_PHASE_THRESHOLD = TEST_LU / 256,
 	SAMPLE_LIMIT = 1024,
 };
 
@@ -63,7 +64,7 @@ static bool check_phase_estimator(void)
 
 static bool run_phase_receiver(
 	const struct channel_bench_effect_spec *effects, size_t effect_count,
-	uint16_t *extension)
+	bool phase_expected, uint16_t *extension)
 {
 	struct channel_bench channel = { 0 };
 	struct fractional_delay delay;
@@ -79,7 +80,8 @@ static bool run_phase_receiver(
 	fractional_delay_init(&delay);
 	CHECK(v92_su_init(&source, TEST_LU) == V92_SU_OK &&
 	      v92_su_rx_init(
-		      &receiver, V92_SU_RX_MEASURE_PHASE, TEST_THRESHOLD) ==
+		      &receiver, V92_SU_RX_MEASURE_PHASE,
+		      TEST_THRESHOLD, TEST_PHASE_THRESHOLD) ==
 		      V92_SU_RX_OK,
 	      "Su phase fixture did not initialize");
 	for (size_t index = 0; index < SAMPLE_LIMIT && ready == 0u; ++index) {
@@ -96,6 +98,21 @@ static bool run_phase_receiver(
 			      CHANNEL_BENCH_OK,
 		      "Su channel failed at %zu", index);
 		result = v92_su_rx_sample(&receiver, sample);
+		if (result == V92_SU_RX_FAILURE && !phase_expected) {
+			struct v92_su_rx before = receiver;
+			uint16_t untouched = UINT16_C(0x1357);
+
+			CHECK(acquired == 1u && transitions == 1u &&
+			      receiver.phase_samples[0] == V92_SU_RX_PHASE_SYMBOLS &&
+			      receiver.phase_samples[1] == V92_SU_RX_PHASE_SYMBOLS &&
+			      !v92_su_rx_phase_extension(&receiver, &untouched) &&
+			      untouched == UINT16_C(0x1357) &&
+			      v92_su_rx_sample(&receiver, 1234) == V92_SU_RX_FAILURE &&
+			      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+			      "absent Su phase was not rejected transactionally");
+			channel_bench_destroy(&channel);
+			return true;
+		}
 		CHECK(result == V92_SU_RX_OK || result == V92_SU_RX_ACQUIRED ||
 		      result == V92_SU_RX_TRANSITION ||
 		      result == V92_SU_RX_PHASE_READY,
@@ -105,7 +122,7 @@ static bool run_phase_receiver(
 		transitions += result == V92_SU_RX_TRANSITION;
 		ready += result == V92_SU_RX_PHASE_READY;
 	}
-	CHECK(acquired == 1u && transitions == 1u && ready == 1u &&
+	CHECK(phase_expected && acquired == 1u && transitions == 1u && ready == 1u &&
 	      v92_su_rx_is_complete(&receiver) &&
 	      !v92_su_rx_has_failed(&receiver) &&
 	      v92_su_rx_phase_extension(&receiver, extension) &&
@@ -142,21 +159,83 @@ static bool test_generated_phase_probe(void)
 			.kind = CHANNEL_BENCH_PCMA,
 		},
 	};
+	/* H(z) = (1 + 0.96 z^-1) / 2 retains the low-frequency Su
+	 * waveform but attenuates its Nyquist phase component by 34 dB. */
+	static const struct channel_bench_effect_spec band_limited[] = {
+		{
+			.kind = CHANNEL_BENCH_ECHO,
+			.parameters.echo = {
+				.delay_samples = 1u,
+				.gain_q15 = 31457,
+			},
+		},
+		{
+			.kind = CHANNEL_BENCH_GAIN,
+			.parameters.gain.scale_q15 = 16384,
+		},
+	};
 	uint16_t exact_extension = 0u;
 	uint16_t impaired_extension = 0u;
+	uint16_t filtered_extension = 0u;
 
-	CHECK(run_phase_receiver(&exact, 1u, &exact_extension),
+	CHECK(run_phase_receiver(&exact, 1u, true, &exact_extension),
 	      "exact generated Su phase probe failed");
 	CHECK(extension_is_near(
 		      exact_extension, UINT16_C(0x8000), UINT16_C(0x0800)),
 	      "exact Su phase was %04x instead of one half symbol",
 	      exact_extension);
 	CHECK(run_phase_receiver(
-		      impaired, ARRAY_LENGTH(impaired), &impaired_extension),
+		      impaired, ARRAY_LENGTH(impaired), true, &impaired_extension),
 	      "impaired generated Su phase probe failed");
 	CHECK(extension_is_near(
 		      impaired_extension, UINT16_C(0x8000), UINT16_C(0x1000)),
 	      "impaired Su phase drifted to %04x", impaired_extension);
+	CHECK(run_phase_receiver(
+		      band_limited, ARRAY_LENGTH(band_limited),
+		      true, &filtered_extension),
+	      "band-limited Su phase probe failed");
+	CHECK(extension_is_near(
+		      filtered_extension, UINT16_C(0x8000), UINT16_C(0x1000)),
+	      "band-limited Su phase drifted to %04x", filtered_extension);
+	return true;
+}
+
+static bool test_absent_phase_is_rejected(void)
+{
+	/* H(z) = (1 + z^-1) / 2 removes only the phase information;
+	 * there is still a strong periodic waveform and a detectable inversion. */
+	const struct channel_bench_effect_spec notch[] = {
+		{
+			.kind = CHANNEL_BENCH_ECHO,
+			.parameters.echo = {
+				.delay_samples = 1u,
+				.gain_q15 = 32768,
+			},
+		},
+		{
+			.kind = CHANNEL_BENCH_GAIN,
+			.parameters.gain.scale_q15 = 16384,
+		},
+	};
+	struct v92_su_rx receiver;
+	struct channel_bench_generator noise;
+	uint16_t extension = 0;
+
+	CHECK(run_phase_receiver(notch, ARRAY_LENGTH(notch), false, &extension),
+	      "Su without phase information was accepted");
+	CHECK(v92_su_rx_init(&receiver, V92_SU_RX_MEASURE_PHASE,
+			    TEST_THRESHOLD, TEST_PHASE_THRESHOLD) == V92_SU_RX_OK,
+	      "noise receiver did not initialize");
+	channel_bench_generator_init(&noise, UINT32_C(0x23688ba1));
+	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
+		int16_t sample;
+
+		CHECK(channel_bench_generate_uniform(&noise, &sample, 1u, 32u) ==
+			      CHANNEL_BENCH_OK &&
+		      v92_su_rx_sample(&receiver, sample) == V92_SU_RX_OK &&
+		      receiver.stage == V92_SU_RX_ACQUIRING,
+		      "sub-threshold noise acquired Su at %zu", index);
+	}
 	return true;
 }
 
@@ -189,7 +268,7 @@ static bool test_transition_receiver_is_reusable(void)
 	      advance_to_jp_wait(&source, &delay) &&
 	      v92_su_rx_init(
 		      &receiver, V92_SU_RX_TRANSITION_ONLY,
-		      TEST_THRESHOLD) == V92_SU_RX_OK,
+		      TEST_THRESHOLD, TEST_PHASE_THRESHOLD) == V92_SU_RX_OK,
 	      "Su transition fixture did not initialize");
 	for (size_t index = 0; index < 48u; ++index) {
 		int16_t sample;
@@ -242,18 +321,20 @@ static bool test_validation_is_transactional(void)
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	before = receiver;
-	CHECK(v92_su_rx_init(NULL, V92_SU_RX_TRANSITION_ONLY, 1u) ==
+	CHECK(v92_su_rx_init(NULL, V92_SU_RX_TRANSITION_ONLY, 1u, 1u) ==
 		      V92_SU_RX_INVALID_ARGUMENT &&
 	      v92_su_rx_init(
-		      &receiver, (enum v92_su_rx_mode)99, 1u) ==
+		      &receiver, (enum v92_su_rx_mode)99, 1u, 1u) ==
 		      V92_SU_RX_INVALID_ARGUMENT &&
-	      v92_su_rx_init(&receiver, V92_SU_RX_MEASURE_PHASE, 0u) ==
+	      v92_su_rx_init(&receiver, V92_SU_RX_MEASURE_PHASE, 0u, 1u) ==
+		      V92_SU_RX_INVALID_ARGUMENT &&
+	      v92_su_rx_init(&receiver, V92_SU_RX_MEASURE_PHASE, 1u, 0u) ==
 		      V92_SU_RX_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "invalid Su initialization changed the receiver");
 	CHECK(v92_su_rx_init(
 		      &receiver, V92_SU_RX_TRANSITION_ONLY,
-		      TEST_THRESHOLD) == V92_SU_RX_OK &&
+		      TEST_THRESHOLD, TEST_PHASE_THRESHOLD) == V92_SU_RX_OK &&
 	      v92_su_rx_is_valid(&receiver) &&
 	      !v92_su_rx_is_complete(&receiver) &&
 	      !v92_su_rx_has_failed(&receiver) &&
@@ -292,6 +373,7 @@ int main(void)
 	} tests[] = {
 		{ "phase estimator", check_phase_estimator },
 		{ "generated phase probe", test_generated_phase_probe },
+		{ "absent phase rejection", test_absent_phase_is_rejected },
 		{ "reusable transition receiver",
 		  test_transition_receiver_is_reusable },
 		{ "transactional validation", test_validation_is_transactional },

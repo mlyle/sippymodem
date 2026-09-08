@@ -53,6 +53,7 @@ bool v92_su_rx_is_valid(const struct v92_su_rx *receiver)
 	if (receiver == NULL || !mode_is_valid(receiver->mode) ||
 	    !stage_is_valid(receiver->stage) ||
 	    receiver->minimum_magnitude == 0u ||
+	    receiver->phase_minimum_magnitude == 0u ||
 	    receiver->phase_samples[0] > V92_SU_RX_PHASE_SYMBOLS ||
 	    receiver->phase_samples[1] > V92_SU_RX_PHASE_SYMBOLS ||
 	    !comparison_bits_are_valid(receiver) ||
@@ -103,15 +104,16 @@ bool v92_su_rx_is_valid(const struct v92_su_rx *receiver)
 
 enum v92_su_rx_result v92_su_rx_init(
 	struct v92_su_rx *receiver, enum v92_su_rx_mode mode,
-	uint16_t minimum_magnitude)
+	uint16_t minimum_magnitude, uint16_t phase_minimum_magnitude)
 {
 	struct v92_su_rx initialized = {
 		.minimum_magnitude = minimum_magnitude,
+		.phase_minimum_magnitude = phase_minimum_magnitude,
 		.mode = mode,
 	};
 
 	if (receiver == NULL || !mode_is_valid(mode) ||
-	    minimum_magnitude == 0u || !v92_su_rx_is_valid(&initialized))
+	    !v92_su_rx_is_valid(&initialized))
 		return V92_SU_RX_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V92_SU_RX_OK;
@@ -317,7 +319,7 @@ static enum v92_su_rx_result second_phase_sample(
 	strength = first_mean > second_mean ?
 			 first_mean + second_mean / 2u :
 			 second_mean + first_mean / 2u;
-	if (strength < receiver->minimum_magnitude ||
+	if (strength < receiver->phase_minimum_magnitude ||
 	    !v92_su_phase_extension(
 		    receiver->phase_component[0], receiver->phase_component[1],
 		    &receiver->phase_extension_q16)) {

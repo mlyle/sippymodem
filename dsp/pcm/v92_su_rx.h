@@ -51,7 +51,10 @@ struct v92_su_rx {
 	uint16_t phase_samples[2];
 	uint16_t phase_extension_q16;
 	uint16_t peak;
+	/* Individual sign confidence and averaged 4 kHz phase confidence are
+	 * different quantities, particularly after analogue low-pass filtering. */
 	uint16_t minimum_magnitude;
+	uint16_t phase_minimum_magnitude;
 	enum v92_su_rx_mode mode;
 	enum v92_su_rx_stage stage;
 	uint8_t history_signs;
@@ -63,7 +66,7 @@ struct v92_su_rx {
 
 enum v92_su_rx_result v92_su_rx_init(
 	struct v92_su_rx *receiver, enum v92_su_rx_mode mode,
-	uint16_t minimum_magnitude);
+	uint16_t minimum_magnitude, uint16_t phase_minimum_magnitude);
 bool v92_su_rx_is_valid(const struct v92_su_rx *receiver);
 bool v92_su_rx_is_complete(const struct v92_su_rx *receiver);
 bool v92_su_rx_has_failed(const struct v92_su_rx *receiver);
