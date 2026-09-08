@@ -10,7 +10,6 @@
 enum {
 	V92_CPD_DIRECT_40K_RATE_NUMBER = 13,
 	V92_CPD_DIRECT_LINEAR_STEP = 256,
-	V92_CPD_DIRECT_B1U_FRAMES = 48,
 	V92_CPD_DIRECT_GAIN_TARGET_SHIFT = 36,
 };
 
@@ -162,7 +161,7 @@ static bool normalize_gain(
 		return false;
 	memset(ones, 1, mapping.data_bits_per_frame);
 	for (unsigned int index = 0u;
-	     index < V92_CPD_DIRECT_B1U_FRAMES; ++index) {
+	     index < V92_B1U_FRAMES; ++index) {
 		struct v92_pcm_frame frame;
 
 		if (v92_pcm_frame_encode(

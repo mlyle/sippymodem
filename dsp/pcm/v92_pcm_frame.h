@@ -11,6 +11,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum {
+	V92_B1U_FRAMES = 48,
+	V92_B1U_SYMBOLS = V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
+};
+
 enum v92_pcm_frame_result {
 	V92_PCM_FRAME_OK,
 	V92_PCM_FRAME_INVALID_ARGUMENT,
