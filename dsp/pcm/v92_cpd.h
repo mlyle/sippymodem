@@ -16,6 +16,7 @@ enum {
 	V92_CPD_MAX_TOTAL_COEFFICIENTS = 384,
 	V92_CPD_DOWNSTREAM_FRAME_MIN_BITS = 9,
 	V92_CPD_DOWNSTREAM_FRAME_MAX_BITS = 30,
+	V92_CPD_DOWNSTREAM_DATA_MAX_BITS = 42,
 	V92_CPD_FIXED_BITS = 51,
 	V92_CPD_MODULUS_BITS = 102,
 	V92_CPD_FILTER_HEADER_BITS = 68,
@@ -31,11 +32,11 @@ enum {
 			V92_CPD_MAX_CONSTELLATION_POINTS * V92_CPD_WORD_BITS,
 	V92_CPD_MAX_FRAME_BITS =
 		V92_CPD_MAX_PAYLOAD_BITS + V92_CPD_TRAILER_BITS +
-		V92_CPD_DOWNSTREAM_FRAME_MAX_BITS - 1,
+		V92_CPD_DOWNSTREAM_DATA_MAX_BITS - 1,
 	V92_CPD_MAX_FRAME_BYTES = (V92_CPD_MAX_FRAME_BITS + 7) / 8,
 	V92_CPD_BASE_MAX_FRAME_BITS =
 		V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS +
-		V92_CPD_DOWNSTREAM_FRAME_MAX_BITS - 1,
+		V92_CPD_DOWNSTREAM_DATA_MAX_BITS - 1,
 	V92_CPD_BASE_MAX_FRAME_BYTES =
 		(V92_CPD_BASE_MAX_FRAME_BITS + 7) / 8,
 	V92_CPD_MAX_DATA_RATE_NUMBER = 19,
@@ -81,11 +82,11 @@ struct v92_cpd_base_parameters {
 bool v92_cpd_base_parameters_are_valid(
 	const struct v92_cpd_base_parameters *parameters);
 
-/* Encode the table-free form into one integral downstream mapping frame.
+/* Encode the table-free form into integral downstream training or data frames.
  * Rejected calls leave frame and frame_bit_count unchanged. */
 enum v92_cpd_result v92_cpd_encode_base(
 	const struct v92_cpd_base_parameters *parameters,
-	unsigned int training_frame_bits,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
 
@@ -129,24 +130,24 @@ size_t v92_cpd_payload_bits(
 	const struct v92_cpd_parameters *parameters);
 size_t v92_cpd_frame_bits(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits);
+	unsigned int mapping_frame_bits);
 size_t v92_cpd_frame_bytes(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits);
+	unsigned int mapping_frame_bits);
 
 /* Infer the exact frame extent once all variable-length counts have arrived.
  * INCOMPLETE is not a wire failure: more packed input is needed to reach a
  * count field. Rejected calls leave frame_bit_count unchanged. */
 enum v92_cpd_result v92_cpd_probe_frame_bits(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t received_bit_count, unsigned int training_frame_bits,
+	size_t received_bit_count, unsigned int mapping_frame_bits,
 	size_t *frame_bit_count);
 
 /* Bits are packed in transmission order, most-significant bit first in each
  * octet. Rejected calls leave frame and frame_bit_count unchanged. */
 enum v92_cpd_result v92_cpd_encode(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count);
 
@@ -155,7 +156,7 @@ enum v92_cpd_result v92_cpd_encode(
  * Rejected calls leave parameters unchanged. */
 enum v92_cpd_result v92_cpd_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bit_count, unsigned int training_frame_bits,
+	size_t frame_bit_count, unsigned int mapping_frame_bits,
 	struct v92_cpd_parameters *parameters);
 
 const char *v92_cpd_result_name(enum v92_cpd_result result);

@@ -13,14 +13,14 @@ bool v92_suvd_parameters_are_valid(
 	return parameters != NULL;
 }
 
-size_t v92_suvd_frame_bits(uint8_t training_frame_bits)
+size_t v92_suvd_frame_bits(uint8_t mapping_frame_bits)
 {
-	return v92_status_update_frame_bits(training_frame_bits);
+	return v92_status_update_frame_bits(mapping_frame_bits);
 }
 
-size_t v92_suvd_frame_bytes(uint8_t training_frame_bits)
+size_t v92_suvd_frame_bytes(uint8_t mapping_frame_bits)
 {
-	return v92_status_update_frame_bytes(training_frame_bits);
+	return v92_status_update_frame_bytes(mapping_frame_bits);
 }
 
 static enum v92_suvd_result encode_result(
@@ -43,7 +43,7 @@ static enum v92_suvd_result encode_result(
 
 enum v92_suvd_result v92_suvd_encode(
 	const struct v92_suvd_parameters *parameters,
-	uint8_t training_frame_bits,
+	uint8_t mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count)
 {
@@ -59,7 +59,7 @@ enum v92_suvd_result v92_suvd_encode(
 		(uint16_t)parameters->acknowledges_cpu <<
 		SUVD_ACKNOWLEDGMENT_PAYLOAD_BIT);
 	return encode_result(v92_status_update_encode(
-		payload, training_frame_bits,
+		payload, mapping_frame_bits,
 		frame, frame_capacity, frame_bit_count));
 }
 
@@ -84,7 +84,7 @@ static enum v92_suvd_result decode_result(
 
 enum v92_suvd_result v92_suvd_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bit_count, uint8_t training_frame_bits,
+	size_t frame_bit_count, uint8_t mapping_frame_bits,
 	struct v92_suvd_parameters *parameters)
 {
 	struct v92_suvd_parameters decoded;
@@ -95,7 +95,7 @@ enum v92_suvd_result v92_suvd_decode(
 		return V92_SUVD_INVALID_ARGUMENT;
 	result = v92_status_update_decode(
 		frame, frame_capacity, frame_bit_count,
-		training_frame_bits, &payload);
+		mapping_frame_bits, &payload);
 	if (result != V92_STATUS_UPDATE_OK)
 		return decode_result(result);
 	decoded = (struct v92_suvd_parameters){

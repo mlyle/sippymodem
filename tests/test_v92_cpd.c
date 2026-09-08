@@ -174,12 +174,12 @@ static bool test_base_encoding(void)
 	size_t actual_bits;
 	size_t untouched_bits;
 
-	CHECK(V92_CPD_BASE_MAX_FRAME_BITS == 98u &&
-	      V92_CPD_BASE_MAX_FRAME_BYTES == 13u &&
+	CHECK(V92_CPD_BASE_MAX_FRAME_BITS == 110u &&
+	      V92_CPD_BASE_MAX_FRAME_BYTES == 14u &&
 	      v92_cpd_base_parameters_are_valid(&base),
 	      "base CPd dimensions or parameters changed");
 	for (unsigned int alignment = V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
-	     alignment <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS; ++alignment) {
+	     alignment <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS; ++alignment) {
 		CHECK(v92_cpd_encode(
 			      &full, alignment, expected, sizeof(expected),
 			      &expected_bits) == V92_CPD_OK &&
@@ -276,7 +276,7 @@ static bool test_optional_section_matrix(void)
 
 		for (unsigned int alignment =
 			     V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
-		     alignment <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+		     alignment <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS;
 		     ++alignment) {
 			struct v92_cpd_parameters decoded;
 			uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
@@ -328,7 +328,7 @@ static bool test_optional_section_matrix(void)
 			cases++;
 		}
 	}
-	CHECK(cases == 176u, "generated %u optional CPd cases", cases);
+	CHECK(cases == 272u, "generated %u optional CPd cases", cases);
 	return true;
 }
 
@@ -380,12 +380,12 @@ static bool test_maximum_extent(void)
 	      v92_cpd_payload_bits(&parameters) ==
 		      V92_CPD_MAX_PAYLOAD_BITS &&
 	      v92_cpd_encode(
-		      &parameters, V92_CPD_DOWNSTREAM_FRAME_MAX_BITS,
+		      &parameters, V92_CPD_DOWNSTREAM_DATA_MAX_BITS,
 		      frame, sizeof(frame), &frame_bits) == V92_CPD_OK &&
-	      frame_bits == 19920u && frame_bits <= V92_CPD_MAX_FRAME_BITS &&
+	      frame_bits == 19908u && frame_bits <= V92_CPD_MAX_FRAME_BITS &&
 	      v92_cpd_decode(
 		      frame, sizeof(frame), frame_bits,
-		      V92_CPD_DOWNSTREAM_FRAME_MAX_BITS,
+		      V92_CPD_DOWNSTREAM_DATA_MAX_BITS,
 		      &decoded) == V92_CPD_OK &&
 	      parameters_equal(&decoded, &parameters),
 	      "maximum CPd extent did not round-trip");
@@ -602,7 +602,7 @@ static bool test_wire_rejection_and_contracts(void)
 		      &parameters, FIXTURE_ALIGNMENT_BITS, untouched,
 		      sizeof(untouched), NULL) == V92_CPD_INVALID_ARGUMENT &&
 	      v92_cpd_encode(
-		      &parameters, 31u, untouched,
+		      &parameters, 43u, untouched,
 		      sizeof(untouched), &untouched_bits) ==
 		      V92_CPD_INVALID_ALIGNMENT &&
 	      v92_cpd_encode(

@@ -222,7 +222,7 @@ static bool feed_frame(
 static bool test_all_frame_widths(void)
 {
 	for (uint8_t width = V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
-	     width <= V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS; ++width) {
+	     width <= V92_STATUS_UPDATE_DOWNSTREAM_DATA_MAX_BITS; ++width) {
 		for (unsigned int flags = 0u; flags < 4u; ++flags) {
 			struct v92_suvd_parameters parameters = {
 				.request_silence = (flags & 1u) != 0u,
@@ -263,7 +263,7 @@ static bool test_cpd_matrix(void)
 	unsigned int cases = 0u;
 
 	for (uint8_t width = V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
-	     width <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS; ++width) {
+	     width <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS; ++width) {
 		for (unsigned int sections = 0u; sections < 8u; ++sections) {
 			struct v92_cpd_parameters parameters =
 				cpd_selection(sections);
@@ -297,7 +297,7 @@ static bool test_cpd_matrix(void)
 			cases++;
 		}
 	}
-	CHECK(cases == 176u, "generated %u CPd receiver cases", cases);
+	CHECK(cases == 272u, "generated %u CPd receiver cases", cases);
 	return true;
 }
 
@@ -538,7 +538,7 @@ static bool test_contracts(void)
 		      V92_CONTROL_RX_INVALID_ARGUMENT &&
 	      v92_control_rx_init_downstream(&receiver, 8u) ==
 		      V92_CONTROL_RX_INVALID_PARAMETERS &&
-	      v92_control_rx_init_downstream(&receiver, 31u) ==
+	      v92_control_rx_init_downstream(&receiver, 43u) ==
 		      V92_CONTROL_RX_INVALID_PARAMETERS &&
 	      v92_control_rx_init_upstream(
 		      &receiver, (enum v92_constellation_size)6) ==

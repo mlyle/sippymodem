@@ -90,10 +90,10 @@ struct v92_control_rx {
 	enum v92_control_rx_stage stage;
 };
 
-/* Downstream records use the negotiated D-bit mapping-frame alignment.
+/* Downstream records use the negotiated training or data mapping-frame width.
  * Upstream records use the selected two- or three-bit TRN2u constellation. */
 enum v92_control_rx_result v92_control_rx_init_downstream(
-	struct v92_control_rx *receiver, uint8_t training_frame_bits);
+	struct v92_control_rx *receiver, uint8_t mapping_frame_bits);
 enum v92_control_rx_result v92_control_rx_init_upstream(
 	struct v92_control_rx *receiver,
 	enum v92_constellation_size constellation);

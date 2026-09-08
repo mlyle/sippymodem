@@ -31,7 +31,7 @@ static bool configuration_is_valid(
 		return receiver->alignment_bits >=
 			       V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
 		       receiver->alignment_bits <=
-			       V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+			       V92_CPD_DOWNSTREAM_DATA_MAX_BITS;
 	}
 	return receiver->direction == V92_CONTROL_UPSTREAM &&
 	       (receiver->alignment_bits ==
@@ -154,18 +154,18 @@ bool v92_control_rx_is_valid(
 }
 
 enum v92_control_rx_result v92_control_rx_init_downstream(
-	struct v92_control_rx *receiver, uint8_t training_frame_bits)
+	struct v92_control_rx *receiver, uint8_t mapping_frame_bits)
 {
 	struct v92_control_rx initialized = {
-		.alignment_bits = training_frame_bits,
+		.alignment_bits = mapping_frame_bits,
 		.direction = V92_CONTROL_DOWNSTREAM,
 		.stage = V92_CONTROL_RX_SEARCH_SYNC,
 	};
 
 	if (receiver == NULL)
 		return V92_CONTROL_RX_INVALID_ARGUMENT;
-	if (training_frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
-	    training_frame_bits > V92_CPD_DOWNSTREAM_FRAME_MAX_BITS)
+	if (mapping_frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
+	    mapping_frame_bits > V92_CPD_DOWNSTREAM_DATA_MAX_BITS)
 		return V92_CONTROL_RX_INVALID_PARAMETERS;
 	if (!v92_control_rx_is_valid(&initialized))
 		return V92_CONTROL_RX_INTERNAL_ERROR;

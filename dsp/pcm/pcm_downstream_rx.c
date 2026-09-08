@@ -69,7 +69,10 @@ bool pcm_downstream_rx_is_valid(
 	    !stage_is_valid(receiver->stage) ||
 	    !stage_matches_protocol(receiver) ||
 	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
-	    receiver->stream.decoder.mapping.kind != V90_CP_TRAINING ||
+	    (receiver->stream.decoder.mapping.kind != V90_CP_TRAINING &&
+	     (receiver->protocol != PCM_PROTOCOL_V92 ||
+	      receiver->stage == PCM_DOWNSTREAM_RX_TRN2D ||
+	      receiver->trn2d_bit_errors != 0u)) ||
 	    !control_is_valid(receiver))
 		return false;
 	training_bits = (uint64_t)V90_PHASE4_TRN2D_MINIMUM_FRAMES *
@@ -87,7 +90,8 @@ bool pcm_downstream_rx_is_valid(
 		       !receiver->ed_requested &&
 		       !receiver->mp_prime_boundary;
 	}
-	if (receiver->stream.received_symbols <
+	if (receiver->stream.decoder.mapping.kind == V90_CP_TRAINING &&
+	    receiver->stream.received_symbols <
 	    V90_PHASE4_TRN2D_MINIMUM_SYMBOLS)
 		return false;
 	if (receiver->protocol == PCM_PROTOCOL_V92 &&
@@ -117,21 +121,22 @@ bool pcm_downstream_rx_is_valid(
 enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	struct pcm_downstream_rx *receiver,
 	enum pcm_protocol protocol,
-	const struct v90_pcm_mapping *training_mapping,
+	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane)
 {
 	struct pcm_downstream_rx initialized = { 0 };
 	enum v90_pcm_stream_rx_result stream_result;
 	bool control_initialized;
 
-	if (receiver == NULL || training_mapping == NULL ||
+	if (receiver == NULL || mapping == NULL ||
 	    !pcm_protocol_is_valid(protocol))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
-	if (!v90_pcm_mapping_is_valid(training_mapping) ||
-	    training_mapping->kind != V90_CP_TRAINING)
+	if (!v90_pcm_mapping_is_valid(mapping) ||
+	    (mapping->kind != V90_CP_TRAINING &&
+	     protocol != PCM_PROTOCOL_V92))
 		return PCM_DOWNSTREAM_RX_INVALID_PARAMETERS;
 	stream_result = v90_pcm_stream_rx_init(
-		&initialized.stream, training_mapping, decision_plane);
+		&initialized.stream, mapping, decision_plane);
 	if (stream_result == V90_PCM_STREAM_RX_INVALID_ARGUMENT)
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (stream_result == V90_PCM_STREAM_RX_INVALID_PARAMETERS)
@@ -142,15 +147,16 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	if (protocol == PCM_PROTOCOL_V90) {
 		control_initialized = v90_mp_receiver_init(
 			&initialized.control.mp,
-			training_mapping->frame_bits) == V90_MP_RECEIVER_OK;
+			mapping->frame_bits) == V90_MP_RECEIVER_OK;
 	} else {
 		control_initialized = v92_control_rx_init_downstream(
 			&initialized.control.v92,
-			training_mapping->frame_bits) == V92_CONTROL_RX_OK;
+			mapping->frame_bits) == V92_CONTROL_RX_OK;
 	}
 	if (!control_initialized)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-	initialized.stage = PCM_DOWNSTREAM_RX_TRN2D;
+	initialized.stage = mapping->kind == V90_CP_TRAINING ?
+		PCM_DOWNSTREAM_RX_TRN2D : PCM_DOWNSTREAM_RX_V92_CONTROL;
 	if (!pcm_downstream_rx_is_valid(&initialized))
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	*receiver = initialized;

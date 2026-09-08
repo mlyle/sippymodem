@@ -99,8 +99,8 @@ static bool test_wire_fields(void)
 	size_t frame_bits = 0u;
 	size_t frame_bytes = v92_suvd_frame_bytes(FIXTURE_FRAME_BITS);
 
-	CHECK(V92_SUVD_MAX_FRAME_BITS == 75 &&
-	      V92_SUVD_MAX_FRAME_BYTES == 10 && frame_bytes == 7u &&
+	CHECK(V92_SUVD_MAX_FRAME_BITS == 84 &&
+	      V92_SUVD_MAX_FRAME_BYTES == 11 && frame_bytes == 7u &&
 	      v92_suvd_frame_bits(FIXTURE_FRAME_BITS) == 54u,
 	      "SUVd dimensions changed");
 	memset(frame, 0xa5, sizeof(frame));
@@ -131,7 +131,7 @@ static bool test_wire_fields(void)
 static bool test_round_trip(void)
 {
 	for (uint8_t width = V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MIN_BITS;
-	     width <= V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS; ++width) {
+	     width <= V92_STATUS_UPDATE_DOWNSTREAM_DATA_MAX_BITS; ++width) {
 		for (unsigned int flags = 0u; flags < 4u; ++flags) {
 			struct v92_suvd_parameters wanted = {
 				.request_silence = (flags & 1u) != 0u,
@@ -260,7 +260,7 @@ static bool test_bounds_and_names(void)
 		      &parameters, 8u, frame, sizeof(frame), &frame_bits) ==
 		      V92_SUVD_INVALID_ARGUMENT &&
 	      v92_suvd_frame_bits(8u) == 0u &&
-	      v92_suvd_frame_bytes(31u) == 0u &&
+	      v92_suvd_frame_bytes(43u) == 0u &&
 	      frame_bits == 123u &&
 	      memcmp(frame, unchanged, sizeof(frame)) == 0,
 	      "invalid SUVd encoding changed output");

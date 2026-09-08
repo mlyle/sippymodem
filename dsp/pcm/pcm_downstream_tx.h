@@ -110,10 +110,15 @@ struct pcm_downstream_tx {
 	bool complete;
 };
 
+/* A training mapping starts TRN2d. A V.92 data mapping starts the fresh
+ * SUVd/CPd coding epoch after Rf-bar (9.9), with silence and acknowledgement
+ * clear in its initial SUVd. The caller owns the preceding request signals
+ * and must enter on the existing data-frame boundary. This resets coding,
+ * not the negotiated mapping; V.90 still requires a training mapping. */
 enum pcm_downstream_tx_result pcm_downstream_tx_init(
 	struct pcm_downstream_tx *transmitter,
 	enum pcm_protocol protocol,
-	const struct v90_pcm_mapping *training_mapping);
+	const struct v90_pcm_mapping *mapping);
 bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter);
 bool pcm_downstream_tx_is_complete(const struct pcm_downstream_tx *transmitter);
 

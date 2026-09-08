@@ -36,10 +36,10 @@ struct cpd_presence {
 	bool constellations;
 };
 
-static bool alignment_is_valid(unsigned int training_frame_bits)
+static bool alignment_is_valid(unsigned int mapping_frame_bits)
 {
-	return training_frame_bits >= V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
-	       training_frame_bits <= V92_CPD_DOWNSTREAM_FRAME_MAX_BITS;
+	return mapping_frame_bits >= V92_CPD_DOWNSTREAM_FRAME_MIN_BITS &&
+	       mapping_frame_bits <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS;
 }
 
 static bool bits_are(
@@ -215,23 +215,23 @@ size_t v92_cpd_payload_bits(
 
 size_t v92_cpd_frame_bits(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits)
+	unsigned int mapping_frame_bits)
 {
 	size_t payload = v92_cpd_payload_bits(parameters);
 	size_t unfilled;
 
-	if (payload == 0u || !alignment_is_valid(training_frame_bits))
+	if (payload == 0u || !alignment_is_valid(mapping_frame_bits))
 		return 0u;
 	unfilled = payload + V92_CPD_TRAILER_BITS;
-	return (unfilled + training_frame_bits - 1u) /
-	       training_frame_bits * training_frame_bits;
+	return (unfilled + mapping_frame_bits - 1u) /
+	       mapping_frame_bits * mapping_frame_bits;
 }
 
 size_t v92_cpd_frame_bytes(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits)
+	unsigned int mapping_frame_bits)
 {
-	size_t bits = v92_cpd_frame_bits(parameters, training_frame_bits);
+	size_t bits = v92_cpd_frame_bits(parameters, mapping_frame_bits);
 
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
@@ -312,7 +312,7 @@ static enum v92_cpd_result probe_constellation_extent(
 
 enum v92_cpd_result v92_cpd_probe_frame_bits(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t received_bit_count, unsigned int training_frame_bits,
+	size_t received_bit_count, unsigned int mapping_frame_bits,
 	size_t *frame_bit_count)
 {
 	size_t payload_bits = V92_CPD_FIXED_BITS;
@@ -322,7 +322,7 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 
 	if (frame == NULL || frame_bit_count == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
-	if (!alignment_is_valid(training_frame_bits))
+	if (!alignment_is_valid(mapping_frame_bits))
 		return V92_CPD_INVALID_ALIGNMENT;
 	if (received_bit_count > V92_CPD_MAX_FRAME_BITS)
 		return V92_CPD_INVALID_FRAME;
@@ -400,8 +400,8 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 			return result;
 	}
 	expected_bits = (payload_bits + V92_CPD_TRAILER_BITS +
-			 training_frame_bits - 1u) /
-		training_frame_bits * training_frame_bits;
+			 mapping_frame_bits - 1u) /
+		mapping_frame_bits * mapping_frame_bits;
 	if (expected_bits > V92_CPD_MAX_FRAME_BITS ||
 	    received_bit_count > expected_bits)
 		return V92_CPD_INVALID_FRAME;
@@ -630,7 +630,7 @@ static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
 
 enum v92_cpd_result v92_cpd_encode_base(
 	const struct v92_cpd_base_parameters *parameters,
-	unsigned int training_frame_bits,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count)
 {
@@ -645,11 +645,11 @@ enum v92_cpd_result v92_cpd_encode_base(
 		return V92_CPD_INVALID_ARGUMENT;
 	if (!v92_cpd_base_parameters_are_valid(parameters))
 		return V92_CPD_INVALID_PARAMETERS;
-	if (!alignment_is_valid(training_frame_bits))
+	if (!alignment_is_valid(mapping_frame_bits))
 		return V92_CPD_INVALID_ALIGNMENT;
 	bit_count = (V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS +
-		     training_frame_bits - 1u) /
-		    training_frame_bits * training_frame_bits;
+		     mapping_frame_bits - 1u) /
+		    mapping_frame_bits * mapping_frame_bits;
 	byte_count = (bit_count + 7u) / 8u;
 	if (frame_capacity < byte_count)
 		return V92_CPD_OUTPUT_TOO_SMALL;
@@ -674,7 +674,7 @@ enum v92_cpd_result v92_cpd_encode_base(
 
 enum v92_cpd_result v92_cpd_encode(
 	const struct v92_cpd_parameters *parameters,
-	unsigned int training_frame_bits,
+	unsigned int mapping_frame_bits,
 	uint8_t *frame, size_t frame_capacity,
 	size_t *frame_bit_count)
 {
@@ -689,10 +689,10 @@ enum v92_cpd_result v92_cpd_encode(
 		return V92_CPD_INVALID_ARGUMENT;
 	if (!v92_cpd_parameters_are_valid(parameters))
 		return V92_CPD_INVALID_PARAMETERS;
-	if (!alignment_is_valid(training_frame_bits))
+	if (!alignment_is_valid(mapping_frame_bits))
 		return V92_CPD_INVALID_ALIGNMENT;
 	payload_end = v92_cpd_payload_bits(parameters);
-	bit_count = v92_cpd_frame_bits(parameters, training_frame_bits);
+	bit_count = v92_cpd_frame_bits(parameters, mapping_frame_bits);
 	byte_count = (bit_count + 7u) / 8u;
 	if (frame_capacity < byte_count)
 		return V92_CPD_OUTPUT_TOO_SMALL;
@@ -716,7 +716,7 @@ enum v92_cpd_result v92_cpd_encode(
 
 enum v92_cpd_result v92_cpd_decode(
 	const uint8_t *frame, size_t frame_capacity,
-	size_t frame_bit_count, unsigned int training_frame_bits,
+	size_t frame_bit_count, unsigned int mapping_frame_bits,
 	struct v92_cpd_parameters *parameters)
 {
 	struct v92_cpd_parameters decoded = { 0 };
@@ -727,11 +727,11 @@ enum v92_cpd_result v92_cpd_decode(
 
 	if (frame == NULL || parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
-	if (!alignment_is_valid(training_frame_bits))
+	if (!alignment_is_valid(mapping_frame_bits))
 		return V92_CPD_INVALID_ALIGNMENT;
 	if (frame_bit_count < V92_CPD_FIXED_BITS + V92_CPD_TRAILER_BITS ||
 	    frame_bit_count > V92_CPD_MAX_FRAME_BITS ||
-	    frame_bit_count % training_frame_bits != 0u)
+	    frame_bit_count % mapping_frame_bits != 0u)
 		return V92_CPD_INVALID_FRAME;
 	frame_bytes = (frame_bit_count + 7u) / 8u;
 	if (frame_capacity < frame_bytes)
@@ -747,7 +747,7 @@ enum v92_cpd_result v92_cpd_decode(
 	if (!wire_payload(&wire, &decoded) ||
 	    !v92_cpd_parameters_are_valid(&decoded))
 		return V92_CPD_INVALID_FRAME;
-	expected_bits = v92_cpd_frame_bits(&decoded, training_frame_bits);
+	expected_bits = v92_cpd_frame_bits(&decoded, mapping_frame_bits);
 	if (expected_bits != frame_bit_count ||
 	    wire.cursor + V92_CPD_TRAILER_BITS > frame_bit_count ||
 	    packed_msb_bit(frame, wire.cursor) != 0u ||

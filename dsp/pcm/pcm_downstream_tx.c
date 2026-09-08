@@ -271,6 +271,7 @@ static bool v92_control_is_valid(
 	     transmitter->control_bit_index != 0u) ||
 	    ((transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL ||
 	      transmitter->stage == PCM_DOWNSTREAM_TX_ED) &&
+	     transmitter->encoder.mapping.kind == V90_CP_TRAINING &&
 	     transmitter->accepted_frames <=
 		     V90_PHASE4_TRN2D_MINIMUM_FRAMES) ||
 	    transmitter->mp_prime_requested ||
@@ -442,7 +443,10 @@ bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter)
 	if (transmitter == NULL ||
 	    !pcm_protocol_is_valid(transmitter->protocol) ||
 	    !v90_pcm_frame_encoder_is_valid(&transmitter->encoder) ||
-	    transmitter->encoder.mapping.kind != V90_CP_TRAINING ||
+	    (transmitter->encoder.mapping.kind != V90_CP_TRAINING &&
+	     (transmitter->protocol != PCM_PROTOCOL_V92 ||
+	      transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D ||
+	      !transmitter->control_configured)) ||
 	    !v34_scrambler_is_valid(&transmitter->scrambler) ||
 	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
 	    (transmitter->encoder.finishing &&
@@ -465,24 +469,37 @@ bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter)
 enum pcm_downstream_tx_result pcm_downstream_tx_init(
 	struct pcm_downstream_tx *transmitter,
 	enum pcm_protocol protocol,
-	const struct v90_pcm_mapping *training_mapping)
+	const struct v90_pcm_mapping *mapping)
 {
 	struct pcm_downstream_tx initialized = { 0 };
 
-	if (transmitter == NULL || training_mapping == NULL ||
+	if (transmitter == NULL || mapping == NULL ||
 	    !pcm_protocol_is_valid(protocol))
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
-	if (!v90_pcm_mapping_is_valid(training_mapping) ||
-	    training_mapping->kind != V90_CP_TRAINING)
+	if (!v90_pcm_mapping_is_valid(mapping) ||
+	    (mapping->kind != V90_CP_TRAINING &&
+	     protocol != PCM_PROTOCOL_V92))
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
 	if (v90_pcm_frame_encoder_init(
-		    &initialized.encoder, training_mapping) !=
+		    &initialized.encoder, mapping) !=
 		    V90_PCM_FRAME_ENCODER_OK ||
 	    v34_scrambler_init(
 		    &initialized.scrambler, V34_POLYNOMIAL_GPC) !=
 		    V34_FRAMING_OK)
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
 	initialized.protocol = protocol;
+	if (mapping->kind == V90_CP_DATA) {
+		/* V.92 9.9 starts a fresh coding epoch after Rf-bar, using the
+		 * preceding data constellation without another TRN2d interval. */
+		initialized.stage = PCM_DOWNSTREAM_TX_V92_CONTROL;
+		initialized.control_configured = true;
+		initialized.v92_control_kind = PCM_DOWNSTREAM_V92_CONTROL_SUVD;
+		if (!encode_suvd_sequence(&initialized.control.suvd,
+				mapping->frame_bits,
+				initialized.control_sequence,
+				&initialized.control_sequence_bits))
+			return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+	}
 	if (!pcm_downstream_tx_is_valid(&initialized))
 		return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
 	*transmitter = initialized;

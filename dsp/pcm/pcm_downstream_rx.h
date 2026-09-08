@@ -86,10 +86,14 @@ struct pcm_downstream_rx {
 	bool mp_prime_boundary;
 };
 
+/* Training mappings include TRN2d. A V.92 data mapping instead starts a
+ * fresh SUVd/CPd receive epoch after Rf-bar, retaining the preceding data
+ * constellation. The caller must preserve the six-symbol frame boundary;
+ * this function does not detect Rf or perform the FPE handshake. */
 enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	struct pcm_downstream_rx *receiver,
 	enum pcm_protocol protocol,
-	const struct v90_pcm_mapping *training_mapping,
+	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane);
 /* Resume the completed CPs/Ed decoder after Rt-bar. MP continues the
  * preceding coding histories without initial TRN2d. */

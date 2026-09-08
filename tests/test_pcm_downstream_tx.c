@@ -50,17 +50,19 @@ static bool make_mapping(
 
 static bool make_width_mapping(
 	struct v90_pcm_mapping *mapping, enum g711_law law,
-	uint8_t frame_bits, uint8_t lookahead)
+	uint8_t frame_bits, uint8_t lookahead, bool parameter_exchange)
 {
 	struct v90_cp_parameters parameters = {
-		.kind = V90_CP_TRAINING,
+		.kind = parameter_exchange ? V90_CP_DATA : V90_CP_TRAINING,
 		.law = law,
-		.selected_rate_index = (uint8_t)(frame_bits - 8u),
+		.selected_rate_index = (uint8_t)(frame_bits -
+			(parameter_exchange ? 20u : 8u)),
 		.spectral_lookahead = lookahead,
 		.constellation_count = V90_CP_MAX_CONSTELLATIONS,
 	};
-	uint8_t sign_bits = frame_bits > 27u ?
-				    (uint8_t)(frame_bits - 24u) : 3u;
+	uint8_t modulus_limit = parameter_exchange ? 36u : 24u;
+	uint8_t sign_bits = frame_bits > modulus_limit + 3u ?
+				    (uint8_t)(frame_bits - modulus_limit) : 3u;
 	uint8_t modulus_bits = (uint8_t)(frame_bits - sign_bits);
 
 	parameters.sign_redundancy =
@@ -76,7 +78,8 @@ static bool make_width_mapping(
 		for (uint8_t ordinal = 0u; ordinal < count; ++ordinal) {
 			add_ucode(
 				&parameters.transmit_constellations[interval],
-				(uint8_t)(4u + interval * 20u + ordinal));
+				(uint8_t)(4u + interval *
+					(parameter_exchange ? 8u : 20u) + ordinal));
 		}
 	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
@@ -319,16 +322,17 @@ static bool test_generated_sequences(void)
 }
 
 static bool run_v92_width(
-	enum g711_law law, uint8_t frame_bits, uint8_t lookahead)
+	enum g711_law law, uint8_t frame_bits, uint8_t lookahead,
+	bool parameter_exchange, bool cleardown)
 {
 	const struct v92_suvd_parameters initial_suvd = {
-		.request_silence = (frame_bits & 1u) != 0u,
+		.request_silence = !parameter_exchange && (frame_bits & 1u) != 0u,
 	};
 	const struct v92_suvd_parameters acknowledged_suvd = {
-		.request_silence = (frame_bits & 1u) != 0u,
+		.request_silence = !parameter_exchange && (frame_bits & 1u) != 0u,
 		.acknowledges_cpu = true,
 	};
-	const struct v92_cpd_base_parameters cpd = cpd_parameters();
+	struct v92_cpd_base_parameters cpd = cpd_parameters();
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_rx receiver;
@@ -348,7 +352,10 @@ static bool run_v92_width(
 	bool cpd_pending = false;
 	bool suvd_pending = false;
 
-	CHECK(make_width_mapping(&mapping, law, frame_bits, lookahead) &&
+	if (cleardown)
+		cpd.data_rate_number = 0u;
+	CHECK(make_width_mapping(&mapping, law, frame_bits, lookahead,
+				 parameter_exchange) &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -359,7 +366,12 @@ static bool run_v92_width(
 		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_suvd(
 		      &transmitter, &initial_suvd) == PCM_DOWNSTREAM_TX_OK &&
-	      !pcm_downstream_tx_is_v92_control_boundary(&transmitter),
+	      pcm_downstream_tx_is_v92_control_boundary(&transmitter) ==
+		      parameter_exchange &&
+	      transmitter.accepted_frames == 0u &&
+	      transmitter.transmitted_symbols == 0u &&
+	      transmitter.scrambler.history == 0u &&
+	      receiver.stream.descrambler.history == 0u,
 	      "V.92 width %u law %u fixture did not initialize",
 	      frame_bits, law);
 	while (stage != CONTROL_COMPLETE && symbol_count < maximum_symbols) {
@@ -466,7 +478,8 @@ static bool run_v92_width(
 	}
 	CHECK(stage == CONTROL_COMPLETE && suvd_records >= 2u &&
 	      cpd_records >= 1u && !cpd_pending && !suvd_pending &&
-	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	      training_frames == (parameter_exchange ? 0u :
+		      V90_PHASE4_TRN2D_MINIMUM_FRAMES) &&
 	      transmitter.protocol == PCM_PROTOCOL_V92 &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
 	      transmitter.v92_control_kind ==
@@ -478,6 +491,11 @@ static bool run_v92_width(
 	      pcm_downstream_rx_is_valid(&receiver),
 	      "V.92 width %u law %u lost its continuous control epoch",
 	      frame_bits, law);
+	/* Cleardown deliberately stops this component check at the CP/SUV
+	 * exchange. A call owner must acknowledge and wait the 9.11 interval;
+	 * it must not request Ed or resume data after a zero-rate CP. */
+	if (cleardown)
+		return true;
 	CHECK(pcm_downstream_rx_expect_ed(&receiver) == PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -540,11 +558,64 @@ static bool test_v92_sequences(void)
 			     ++frame_bits) {
 				CHECK(run_v92_width(
 					      (enum g711_law)law, frame_bits,
-					      lookahead),
+					      lookahead, false, false),
 				      "V.92 downstream transmitter matrix stopped");
 			}
 		}
 	}
+	return true;
+}
+
+static bool test_v92_parameter_exchange(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead) {
+			for (uint8_t width = 21u; width <= 42u; ++width) {
+				CHECK(run_v92_width(law, width, lookahead, true, false) &&
+				      run_v92_width(law, width, lookahead, true, true),
+				      "V.92 data-mode control stream failed");
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_v92_parameter_exchange_contracts(void)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx tx;
+	struct pcm_downstream_rx rx;
+	struct pcm_downstream_tx saved_tx;
+	struct pcm_downstream_rx saved_rx;
+
+	CHECK(make_width_mapping(&mapping, G711_LAW_PCMU, 42u, 3u, true) &&
+	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&rx, PCM_PROTOCOL_V92, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+	      "data-mode contract fixture did not initialize");
+	saved_tx = tx;
+	saved_rx = rx;
+	CHECK(pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_INVALID_PARAMETERS &&
+	      pcm_downstream_rx_init(&rx, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) ==
+		      PCM_DOWNSTREAM_RX_INVALID_PARAMETERS &&
+	      memcmp(&tx, &saved_tx, sizeof(tx)) == 0 &&
+	      memcmp(&rx, &saved_rx, sizeof(rx)) == 0,
+	      "V.90 accepted a data mapping or changed rejected output");
+	tx.stage = PCM_DOWNSTREAM_TX_TRN2D;
+	rx.stage = PCM_DOWNSTREAM_RX_TRN2D;
+	CHECK(!pcm_downstream_tx_is_valid(&tx) &&
+	      !pcm_downstream_rx_is_valid(&rx),
+	      "data-mode control accepted a TRN2d stage");
+	tx = saved_tx;
+	rx = saved_rx;
+	tx.control_configured = false;
+	rx.trn2d_bit_errors = 1u;
+	CHECK(!pcm_downstream_tx_is_valid(&tx) &&
+	      !pcm_downstream_rx_is_valid(&rx),
+	      "data-mode control accepted absent control or training history");
 	return true;
 }
 
@@ -614,7 +685,7 @@ static bool test_v92_switch_contracts(void)
 	size_t first_unused_bit;
 
 	different_cpd.four_times_gain_q0_16++;
-	CHECK(make_width_mapping(&mapping, G711_LAW_PCMU, 17u, 3u) &&
+	CHECK(make_width_mapping(&mapping, G711_LAW_PCMU, 17u, 3u, false) &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -724,7 +795,7 @@ static bool source_record_fixture(
 		.sequence_bits = 4u * 17u,
 	};
 	if (!make_width_mapping(
-		    &mapping, G711_LAW_PCMU, 17u, 3u))
+		    &mapping, G711_LAW_PCMU, 17u, 3u, false))
 		return false;
 	if (pcm_downstream_tx_init(
 		    transmitter, PCM_PROTOCOL_V92, &mapping) !=
@@ -1257,6 +1328,8 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
 		{ "V.92 sequences", test_v92_sequences },
+		{ "V.92 parameter exchange", test_v92_parameter_exchange },
+		{ "V.92 parameter exchange contracts", test_v92_parameter_exchange_contracts },
 		{ "V.92 switch contracts", test_v92_switch_contracts },
 		{ "source-record contracts", test_source_record_contracts },
 		{ "empty finish", test_empty_finish },
