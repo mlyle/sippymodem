@@ -285,8 +285,10 @@ static bool test_data_freeze(void)
 	      v34_timing_control_set_data_frozen(&uninitialized, true) ==
 			      V34_TIMING_CONTROL_INVALID_STATE,
 	      "V.34 timing freeze accepted an absent owner");
-	for (unsigned int role = V34_CALLING_STATION;
-	     role <= V34_ANSWERING_STATION; ++role) {
+	for (unsigned int variant = 0; variant < 4; ++variant) {
+		enum v34_station_role role = variant < 2 ?
+			V34_CALLING_STATION : V34_ANSWERING_STATION;
+		bool full_pull_in = variant % 2 == 0;
 		struct v34_timing_control control;
 		struct v34_timing_control saved;
 		struct v34_timing_control expected;
@@ -300,7 +302,7 @@ static bool test_data_freeze(void)
 		CHECK(v34_timing_control_set_data_frozen(&control, false) ==
 			      V34_TIMING_CONTROL_INVALID_STATE &&
 		      memcmp(&control, &saved, sizeof(control)) == 0 &&
-		      v34_timing_control_begin_acquisition(&control, true) ==
+		      v34_timing_control_begin_acquisition(&control, full_pull_in) ==
 			      V34_TIMING_CONTROL_OK,
 		      "V.34 timing freeze changed initial owner %u", role);
 		saved = control;
@@ -318,19 +320,23 @@ static bool test_data_freeze(void)
 				      V34_TIMING_CONTROL_OK,
 			      "V.34 timing owner %u did not continue at %u", role,
 			      step);
+			if (control.timeout != -1) {
+				saved = control;
+				CHECK(v34_timing_control_set_data_frozen(&control, true) ==
+					      V34_TIMING_CONTROL_OK &&
+				      memcmp(&control, &saved, sizeof(control)) == 0 &&
+				      v34_timing_control_set_data_frozen(&control, false) ==
+					      V34_TIMING_CONTROL_OK &&
+				      memcmp(&control, &saved, sizeof(control)) == 0,
+				      "V.34 timing freeze changed acquisition at %u/%u",
+				      variant, step);
+			}
 		}
 		saved = control;
-		if (control.mode != V34_TIMING_CONTROL_HOLD) {
-			CHECK(role == V34_CALLING_STATION &&
-			      control.mode == V34_TIMING_CONTROL_MEDIUM_TRACK &&
-			      v34_timing_control_set_data_frozen(&control, true) ==
-				      V34_TIMING_CONTROL_OK &&
-			      v34_timing_control_set_data_frozen(&control, false) ==
-				      V34_TIMING_CONTROL_OK &&
-			      memcmp(&control, &saved, sizeof(control)) == 0,
-			      "V.34 timing freeze interrupted active role %u", role);
-			continue;
-		}
+		CHECK(control.mode == (role == V34_CALLING_STATION && full_pull_in ?
+			      V34_TIMING_CONTROL_MEDIUM_TRACK :
+			      V34_TIMING_CONTROL_HOLD) && control.timeout == -1,
+		      "V.34 timing role %u did not settle", role);
 		expected = control;
 		expected.mode = V34_TIMING_CONTROL_LOCKED;
 		CHECK(v34_timing_control_set_data_frozen(&control, true) ==
@@ -353,13 +359,19 @@ static bool test_data_freeze(void)
 			      "V.34 timing freeze escaped at %u/%u", role, step);
 		}
 		expected = control;
-		expected.mode = V34_TIMING_CONTROL_HOLD;
+		expected.mode = saved.mode;
 		CHECK(v34_timing_control_set_data_frozen(&control, false) ==
 			      V34_TIMING_CONTROL_OK &&
 		      memcmp(&control, &expected, sizeof(control)) == 0 &&
 		      v34_timing_control_set_data_frozen(&control, false) ==
 			      V34_TIMING_CONTROL_OK,
-		      "V.34 timing hold did not resume for role %u", role);
+		      "V.34 timing tracking did not resume for variant %u", variant);
+		++control.integral_gain;
+		saved = control;
+		CHECK(v34_timing_control_set_data_frozen(&control, true) ==
+			      V34_TIMING_CONTROL_INVALID_STATE &&
+		      memcmp(&control, &saved, sizeof(control)) == 0,
+		      "V.34 timing freeze accepted a corrupt profile %u", variant);
 	}
 	return true;
 }

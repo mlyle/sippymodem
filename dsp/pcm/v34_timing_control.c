@@ -284,25 +284,36 @@ static void set_mode_parameters(struct v34_timing_control *control)
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen)
 {
-	struct v34_timing_control next;
+	static const enum v34_timing_control_mode settled_modes[] = {
+		V34_TIMING_CONTROL_MEDIUM_TRACK,
+		V34_TIMING_CONTROL_HOLD,
+	};
 
 	if (!v34_timing_control_is_valid(control))
 		return V34_TIMING_CONTROL_INVALID_STATE;
 	if (control->mode >= V34_TIMING_CONTROL_FAST_PULL_IN &&
-	    control->mode <= V34_TIMING_CONTROL_FINE_TRACK)
+	    control->mode <= V34_TIMING_CONTROL_FINE_TRACK &&
+	    control->timeout != -1)
 		return V34_TIMING_CONTROL_OK;
-	if ((control->mode != V34_TIMING_CONTROL_HOLD &&
-	     control->mode != V34_TIMING_CONTROL_LOCKED) ||
-	    control->proportional_gain != 0x01f4 ||
-	    control->integral_gain != 0x0001 || control->timeout != -1)
-		return V34_TIMING_CONTROL_INVALID_STATE;
-	next = *control;
-	next.mode = frozen ? V34_TIMING_CONTROL_LOCKED :
-			       V34_TIMING_CONTROL_HOLD;
-	if (!v34_timing_control_is_valid(&next))
-		return V34_TIMING_CONTROL_INVALID_STATE;
-	*control = next;
-	return V34_TIMING_CONTROL_OK;
+	/* Full calling-side acquisition settles in MEDIUM_TRACK. Retained
+	 * acquisition and the answering side reach HOLD. The preserved gains
+	 * identify the original profile even while its mode is LOCKED. */
+	for (size_t i = 0; i < sizeof(settled_modes) / sizeof(settled_modes[0]);
+	     ++i) {
+		struct v34_timing_control profile = *control;
+
+		profile.mode = settled_modes[i];
+		set_mode_parameters(&profile);
+		if (profile.timeout != -1 || control->timeout != -1 ||
+		    (control->mode != profile.mode &&
+		     control->mode != V34_TIMING_CONTROL_LOCKED) ||
+		    control->proportional_gain != profile.proportional_gain ||
+		    control->integral_gain != profile.integral_gain)
+			continue;
+		control->mode = frozen ? V34_TIMING_CONTROL_LOCKED : profile.mode;
+		return V34_TIMING_CONTROL_OK;
+	}
+	return V34_TIMING_CONTROL_INVALID_STATE;
 }
 
 static int32_t timing_phase_error(

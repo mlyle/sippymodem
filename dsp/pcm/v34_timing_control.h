@@ -73,9 +73,10 @@ bool v34_timing_control_is_valid(
 enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	struct v34_timing_control *control, bool full_pull_in);
 
-/* Freeze or resume a data-mode clock that has naturally reached HOLD without
- * changing its learned phase, increment, integrator, or low-gain profile.
- * Earlier acquisition/tracking modes continue unchanged. */
+/* Freeze or resume a settled data-mode clock without changing its learned
+ * phase, increment, integrator, or tracking profile. Full calling-side
+ * acquisition settles in MEDIUM_TRACK; other schedules reach HOLD.
+ * Timed acquisition/tracking modes continue unchanged. */
 enum v34_timing_control_result v34_timing_control_set_data_frozen(
 	struct v34_timing_control *control, bool frozen);
 
