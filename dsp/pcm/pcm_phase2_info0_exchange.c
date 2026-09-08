@@ -441,8 +441,11 @@ static bool retain_peer_info0(
 		clear_completion_tone(exchange, event);
 		event->recovery_event = late_ack ? PCM_INFO0_LATE_ACK_RECEIVED :
 			PCM_INFO0_RECOVERY_ACCEPTED;
-		exchange->state = decoded_ack ? PCM_PHASE2_INFO0_ACKNOWLEDGING :
-			PCM_PHASE2_INFO0_ACK_REPEAT;
+		/* Our previous record already acknowledged this peer. A repeat
+		 * can have been sent before that ACK arrived. Let its following
+		 * tone finish the exchange; another record while waiting requests
+		 * a new ACK. Sending one now can cover the peer's first reversal. */
+		exchange->state = PCM_PHASE2_INFO0_ACKNOWLEDGING;
 		return true;
 	}
 	if (!retained) {

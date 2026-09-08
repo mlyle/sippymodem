@@ -398,6 +398,7 @@ enum following_tone_case {
 	TEST_TONE_AFTER_ACK,
 	TEST_TONE_INVALIDATED_BY_REPEAT,
 	TEST_TONE_REPEAT_AFTER_COMPLETION,
+	TEST_TONE_REPEAT_NEEDS_ACK,
 	TEST_TONE_REJECT_AFTER_COMPLETION,
 };
 
@@ -432,6 +433,7 @@ static bool check_following_tone(
 	bool tone_invalidated = false;
 	bool fresh_tone_after_repeat = false;
 	bool repeated = false;
+	bool repeated_without_tone = false;
 	bool overlapping_repeat = false;
 	bool reopened_after_completion = false;
 	bool rejected_after_completion = false;
@@ -518,6 +520,18 @@ static bool check_following_tone(
 		int16_t received;
 		int16_t ignored;
 
+		if (test_case == TEST_TONE_REPEAT_NEEDS_ACK && repeated &&
+		    !repeated_without_tone && peer.transmit_phase == PHASE2_INFO0_TONE) {
+			/* A peer still missing our ACK repeats instead of sending the
+			 * following tone. It must receive another reply, not deadlock. */
+			CHECK(phase2_info0_exchange_restart_info(
+				      &peer, repeat_payload,
+				      digital_local ? V90_INFO0A_PAYLOAD_BITS :
+					      V90_INFO0D_PAYLOAD_BITS) ==
+				      PHASE2_INFO0_EXCHANGE_OK,
+			      "unacknowledged peer did not repeat without tone");
+			repeated_without_tone = true;
+		}
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK,
@@ -646,6 +660,7 @@ static bool check_following_tone(
 				      "V.92 repeat changed retained capabilities");
 			if (!repeated &&
 			    (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION ||
+			     test_case == TEST_TONE_REPEAT_NEEDS_ACK ||
 			     test_case == TEST_TONE_REJECT_AFTER_COMPLETION)) {
 				CHECK(!repeated &&
 				      phase2_info0_exchange_restart_info(
@@ -702,10 +717,13 @@ static bool check_following_tone(
 		      mode, codec, digital_local, acknowledge_starts,
 		      tone_invalidated, fresh_tone_after_repeat,
 		      overlapping_repeat);
-	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION)
+	else if (test_case == TEST_TONE_REPEAT_AFTER_COMPLETION ||
+		 test_case == TEST_TONE_REPEAT_NEEDS_ACK)
 		CHECK(received_records == 2 && completed != SIZE_MAX &&
 		      reopened_after_completion && !early_acknowledgment &&
-		      acknowledge_starts == 2 && recovery_starts == 1 &&
+		      acknowledge_starts == (repeated_without_tone ? 2u : 1u) &&
+		      repeated_without_tone == (test_case == TEST_TONE_REPEAT_NEEDS_ACK) &&
+		      recovery_starts == 1 &&
 		      recovery_accepts == 1 && recovery_rejects == 0 &&
 		      exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
 		      exchange.fresh_peer_tone_seen,

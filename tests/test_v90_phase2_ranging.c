@@ -339,6 +339,7 @@ static bool check_info_interrupted_reversal(
 	size_t payload_bits = 0;
 	size_t edge_sample = SIZE_MAX;
 	size_t local_reversal = SIZE_MAX;
+	size_t peer_tone_sample = SIZE_MAX;
 	bool repeat_started = false;
 	bool recovery_started = false;
 	bool recovery_accepted = false;
@@ -360,10 +361,14 @@ static bool check_info_interrupted_reversal(
 		int16_t peer_line;
 		int16_t ignored;
 
+		if (repeat_started && peer.transmit_phase == PHASE2_INFO0_TONE &&
+		    peer_tone_sample == SIZE_MAX)
+			peer_tone_sample = index;
+		/* The peer follows its own 50 ms tone clock, not our ACK state.
+		 * An unnecessary local reply would obscure this first reversal. */
 		if (repeat_started && !peer_reversed &&
-		    recovery_accepted &&
-		    ranging.control.phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
-		    peer.transmit_phase == PHASE2_INFO0_TONE) {
+		    peer_tone_sample != SIZE_MAX &&
+		    index - peer_tone_sample >= V34_PHASE2_SAMPLE_RATE / 20u) {
 			CHECK(v34_phase2_tone_transmitter_reverse(
 				      &peer.tone_transmitter) == V34_PHASE2_TONE_OK,
 			      "peer following tone did not reverse");
@@ -1204,7 +1209,7 @@ static bool check_completed_exchange_repeat(
 	size_t first_completion = SIZE_MAX;
 	size_t rejection = SIZE_MAX;
 	size_t reversal = SIZE_MAX;
-	size_t new_tone_start = SIZE_MAX;
+	size_t recovery_accepted = SIZE_MAX;
 	size_t completed_records = 0;
 	bool repeat_started = false;
 	bool receiver_synchronized = false;
@@ -1232,8 +1237,6 @@ static bool check_completed_exchange_repeat(
 		enum v34_phase2_info_receive_stage receive_stage_before =
 			ranging.info0_exchange.transport.info_receiver.frame.stage;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
-		enum phase2_info0_transmit_phase transmit_before =
-			ranging.info0_exchange.transport.transmit_phase;
 		int16_t ignored;
 
 		CHECK(phase2_info0_exchange_sample(
@@ -1270,9 +1273,8 @@ static bool check_completed_exchange_repeat(
 		if (event.exchange_event.peer_info0_event ==
 		    PCM_PEER_INFO0_REJECTED)
 			rejection = index;
-		if (repeat_started && transmit_before == PHASE2_INFO0_CARRIER_TAIL &&
-		    ranging.info0_exchange.transport.transmit_phase == PHASE2_INFO0_TONE)
-			new_tone_start = index + 1u;
+		if (event.exchange_event.recovery_event == PCM_INFO0_RECOVERY_ACCEPTED)
+			recovery_accepted = index;
 		reopened |= repeat_started &&
 			!pcm_phase2_info0_exchange_complete(
 				&ranging.info0_exchange);
@@ -1321,13 +1323,18 @@ static bool check_completed_exchange_repeat(
 		      codec, rejection, reversal, reopened, completed_records,
 		      ranging.info0_exchange.state, ranging.control.phase,
 		      ranging.control.local_tone_samples);
-	else
+	else {
+		/* Tone A stays on; accepting the repeat restarts its 50 ms
+		 * clock without waiting for another local ACK transmission. */
 		CHECK(reopened && completed_records == 2u &&
 		      ranging.info0_exchange.state == PCM_PHASE2_INFO0_COMPLETE &&
-		      reversal > first_completion && new_tone_start != SIZE_MAX &&
-		      reversal - new_tone_start == PHASE2_RANGING_INITIAL_TONE_SAMPLES,
-		      "valid INFO0 repeat did not restart completed ranging for %d",
-		      codec);
+		      reversal > first_completion && recovery_accepted != SIZE_MAX &&
+		      reversal - recovery_accepted == PHASE2_RANGING_INITIAL_TONE_SAMPLES,
+		      "valid INFO0 repeat did not restart completed ranging for %d: first=%zu accepted=%zu reversal=%zu local=%u records=%zu state=%d",
+		      codec, first_completion, recovery_accepted, reversal,
+		      ranging.control.local_tone_samples, completed_records,
+		      ranging.info0_exchange.state);
+	}
 	return true;
 }
 
