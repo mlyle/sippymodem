@@ -5103,6 +5103,7 @@ static bool retrain_preserves_protocol(
 		       .prior_round_trip_delay_samples == prior_round_trip_delay &&
 	       retraining.peer_info0_stored &&
 	       !retraining.phase3_entry_stored &&
+	       retraining.v92_upstream_retry_ceiling == completed->v92_upstream_retry_ceiling &&
 	       memcmp(&retraining.v92_digital_phase4_configuration,
 		      &completed->v92_digital_phase4_configuration,
 		      sizeof(retraining.v92_digital_phase4_configuration)) == 0 &&
@@ -5623,12 +5624,31 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 			 * the bad bit is validly coded and has negligible residual. */
 			long sample = lround(path->upstream.line.polarity * encoded.u[symbol] /
 				path->upstream.line.plan.gain);
+			enum pcm_call_result result;
 
-			CHECK(sample >= INT16_MIN && sample <= INT16_MAX &&
-			      pcm_call_data_octet(&damaged, encode_octet(boundary->law, (int16_t)sample),
-				      (int16_t)sample, NULL, &transmitted, &event) == PCM_CALL_OK &&
-			      event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
+			CHECK(sample >= INT16_MIN && sample <= INT16_MAX, "wrong-B1u sample overflowed");
+			result = pcm_call_data_octet(&damaged,
+				encode_octet(boundary->law, (int16_t)sample), (int16_t)sample,
+				NULL, &transmitted, &event);
+
+			CHECK(event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
 			      "wrong B1u or its undecided tail opened the host at frame %u", frame);
+			if (result == PCM_CALL_UNUSABLE_SELECTION || damaged.stage == PCM_CALL_RETRAIN_SILENCE) {
+				CHECK(boundary->v92_digital_phase4_configuration.upstream_selection ==
+					      PCM_CALL_V92_UPSTREAM_DIRECT &&
+				      frame == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u &&
+				      symbol == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u && pcm_call_is_valid(&damaged) &&
+				      (tx.mapping.cpd.data_rate_number == 1u ?
+					(result == PCM_CALL_UNUSABLE_SELECTION && damaged.failed) :
+					(result == PCM_CALL_OK && !damaged.failed && !damaged.b1_deadline_armed &&
+					 damaged.v92_upstream_retry_ceiling == tx.mapping.cpd.data_rate_number - 1u)) &&
+				      memcmp(&damaged.v92_digital_phase4_configuration,
+					&boundary->v92_digital_phase4_configuration,
+					sizeof(damaged.v92_digital_phase4_configuration)) == 0,
+				      "wrong B1u did not bound rate recovery at the final decision");
+				return true;
+			}
+			CHECK(result == PCM_CALL_OK, "wrong B1u recovery failed");
 		}
 	}
 	CHECK(path->b1u_decode_failed &&
@@ -5696,10 +5716,12 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 struct v92_upstream_offer {
 	uint32_t peer_mask;
 	uint8_t local_maximum;
+	/* Zero expects exhaustion after a failed B1u and fresh peer offer. */
 	uint8_t expected;
 	double postcursor;
 	/* Zero keeps the received sample unchanged; scaling follows G.711. */
 	double receive_gain;
+	unsigned expected_retrains;
 };
 
 static bool run_v92_duplex_data(
@@ -5715,6 +5737,10 @@ static bool run_v92_duplex_data(
 	uint32_t upstream_received = 0u, downstream_received = 0u;
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
+	unsigned retrains[2] = { 0u, 0u };
+	uint8_t previous_rate = 0u;
+	size_t sample_limit = CALL_SAMPLE_LIMIT *
+		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
 	int16_t previous_upstream = 0;
 	/* The 40 kbit/s 32-state family needs a longer payload to catch rare
@@ -5749,7 +5775,7 @@ static bool run_v92_duplex_data(
 	}
 	CHECK(channel_init(&wire, law, delay) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "V.92 duplex initialization failed");
-	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+	for (size_t clock = 0u; clock < sample_limit; ++clock) {
 		uint8_t ar, dr, at, dt;
 		struct pcm_call *calls[] = { &analog, &digital };
 
@@ -5772,18 +5798,44 @@ static bool run_v92_duplex_data(
 
 			if (pcm_call_phase4_is_ready(call)) {
 				CHECK(v92_data_boundary(call), "V.92 handoff failed");
+				/* Each retrain creates fresh coding and payload epochs. */
+				if (role == 0u) {
+					upstream = (struct pcm_payload_source){ .reject = true };
+					downstream_received = 0u;
+				} else {
+					downstream = (struct pcm_payload_source){ .reject = true };
+					upstream_received = 0u;
+				}
 				if (role == 0u)
 					analog_boundary = clock;
 				else {
+					uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+
+					CHECK(previous_rate == 0u ? call->v92_upstream_retry_ceiling == 0u :
+						      (rate < previous_rate && call->v92_upstream_retry_ceiling == previous_rate - 1u),
+					      "B1 recovery repeated or increased the failed upstream rate");
+					previous_rate = rate;
 					digital_boundary = clock;
 					CHECK(v92_bad_b1_stays_clamped(call) && v92_wrong_b1_stays_clamped(call),
 					      "V.92 B1 quality gate failed");
 				}
 			}
 			if (call->stage == PCM_CALL_DATA_PATH) {
-				CHECK(v92_payload_sample(call, received, sample, role == 0u ? &upstream : &downstream,
-							role == 0u ? &downstream_received : &upstream_received,
-							transmitted), "V.92 payload failed at clock %zu", clock);
+				if (role == 0u && retrains[1] > retrains[0]) {
+					struct pcm_call_data_event event;
+
+					/* The digital peer has stopped its data transmitter.
+					 * Raw transition bytes before tone qualification are
+					 * not payload; keep clocking the analogue receiver. */
+					CHECK(pcm_call_data_octet(call, received, sample, NULL, transmitted, &event) ==
+						      PCM_CALL_OK, "V.92 peer did not accept training recovery");
+				} else {
+					CHECK(v92_payload_sample(call, received, sample, role == 0u ? &upstream : &downstream,
+							      role == 0u ? &downstream_received : &upstream_received,
+							      transmitted), "V.92 payload failed at clock %zu", clock);
+				}
+				if (call->stage == PCM_CALL_RETRAIN_SILENCE)
+					retrains[role]++;
 			} else {
 				struct pcm_call_observation observation;
 				bool entering_v92_phase4 = role == 1u && call->stage == PCM_CALL_PHASE3_MIXED;
@@ -5791,6 +5843,15 @@ static bool run_v92_duplex_data(
 				enum pcm_call_result result = pcm_call_octet(call, received, sample,
 					transmitted, &observation);
 
+				if (offer != NULL && offer->expected == 0u && result == PCM_CALL_UNUSABLE_SELECTION) {
+					CHECK(role == 1u && retrains[0] == offer->expected_retrains &&
+					      retrains[1] == offer->expected_retrains && call->failed &&
+					      call->v92_upstream_retry_ceiling == offer->local_maximum - 1u &&
+					      call->v92_digital_phase4_configuration.direct_maximum_data_rate_number ==
+						      offer->local_maximum && pcm_call_is_valid(call) && !pcm_call_is_online(call),
+					      "V.92 exhausted peer rates without bounded recovery");
+					return true;
+				}
 				CHECK(result == PCM_CALL_OK, "V.92 role %zu stage %u training failed at clock %zu: %s",
 				      role, call->stage, clock, pcm_call_result_name(result));
 				if (entering_v92_phase4 && call->stage == PCM_CALL_PHASE4)
@@ -5819,6 +5880,8 @@ static bool run_v92_duplex_data(
 	      v92_data_error_contracts(&analog) && v92_data_error_contracts(&digital),
 	      "law %u delay %zu V.92 did not complete ordered duplex data (%u/%u)",
 	      law, delay, upstream_received, downstream_received);
+	CHECK(retrains[0] == retrains[1] && retrains[1] == (offer == NULL ? 0u : offer->expected_retrains),
+	      "V.92 did not recover only failed training (%u/%u)", retrains[0], retrains[1]);
 	{
 		uint32_t at = 0u, ar = 0u, dt = 0u, dr = 0u;
 		unsigned int expected_rate = offer == NULL ? 41333u :
@@ -5890,26 +5953,26 @@ static bool test_v92_upstream_negotiation(void)
 {
 	static const struct v92_upstream_offer offers[] = {
 		/* Recorded peer mask: 24k through 28k, against 48k and 36k caps. */
-		{ UINT32_C(0xf), 19u, 4u, 0.0, 0.0 },
-		{ UINT32_C(0xf), 10u, 4u, 0.0, 0.0 },
+		{ UINT32_C(0xf), 19u, 4u, 0.0, 0.0, 0u },
+		{ UINT32_C(0xf), 10u, 4u, 0.0, 0.0, 0u },
 		/* Holes below and rates above our cap are not usable alternatives. */
-		{ UINT32_C(0x40009), 3u, 1u, 0.0, 0.0 },
+		{ UINT32_C(0x40009), 3u, 1u, 0.0, 0.0, 0u },
 		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
-		{ UINT32_C(1) << 12u, 19u, 13u, 0.0, 0.0 },
+		{ UINT32_C(1) << 12u, 19u, 13u, 0.0, 0.0, 0u },
 		/* Dense maps must use the trained LU, not just normalize B1u power. */
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.0 },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.0, 0u },
 		/* Gain alone must retain the quantizer-aware direct selection and
 		 * learned receive FIR, including the dense maximum-rate mapping. */
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75 },
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5 },
-		{ UINT32_C(1), 1u, 1u, 0.0, 0.75 },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75, 0u },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5, 0u },
+		{ UINT32_C(1), 1u, 1u, 0.0, 0.75, 0u },
 		/* At this level the bounded 44k map is not injective. Only try a
 		 * lower rate actually offered by the peer (here 41 1/3 kbit/s). */
-		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0, 0.0 },
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0, 0.0, 0u },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
-		{ UINT32_C(1), 1u, 1u, 0.10, 0.0 },
-		{ UINT32_C(1), 1u, 1u, 0.10, 0.75 },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.75, 0u },
 	};
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -5921,12 +5984,38 @@ static bool test_v92_upstream_negotiation(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (uint8_t rate = 10u; rate <= 13u; rate += 3u) {
 			const struct v92_upstream_offer compensated = {
-				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75,
+				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75, 0u,
 			};
 
 			CHECK(run_v92_duplex_data(law, 3u, false, &compensated),
 			      "V.92 compensated law %u rate %u call failed", law, rate);
 		}
+	}
+	return true;
+}
+
+static bool test_v92_b1_rate_recovery(void)
+{
+	/* The 48k and 46 2/3k mappings fail B1u on this tandem-codec channel.
+	 * Re-enter the complete on-wire negotiation, skip holes in Ja, rebuild
+	 * CPd for the 40k trellis and verify 2000 exact frames in each direction. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned retries = 1u; retries <= 2u; ++retries) {
+			const struct v92_upstream_offer offer = {
+				(UINT32_C(1) << 18u) | (UINT32_C(1) << 12u) |
+					(retries == 2u ? UINT32_C(1) << 17u : 0u),
+				19u, 13u, 0.10, 0.75, retries,
+			};
+
+			CHECK(run_v92_duplex_data(law, 3u, false, &offer),
+			      "V.92 B1 recovery law %u retries %u failed", law, retries);
+		}
+		const struct v92_upstream_offer exhausted = {
+			UINT32_C(1) << 18u, 19u, 0u, 0.10, 0.75, 1u,
+		};
+
+		CHECK(run_v92_duplex_data(law, 3u, false, &exhausted),
+		      "V.92 retried a failed rate or selected a disabled lower rate");
 	}
 	return true;
 }
@@ -6765,6 +6854,9 @@ static bool test_validation(void)
 	      !pcm_call_is_online(&call),
 	      "valid call did not initialize");
 	invalid = call;
+	invalid.v92_upstream_retry_ceiling = 1u;
+	CHECK(!pcm_call_is_valid(&invalid), "V.90 accepted a PCM-upstream retry ceiling");
+	invalid = call;
 	invalid.b1_deadline_armed = true;
 	invalid.b1_deadline_remaining_samples =
 		V90_B1_BASE_DEADLINE_SAMPLES;
@@ -6852,6 +6944,26 @@ static bool test_v92_validation(void)
 	selected = v92_configuration(V90_DIGITAL_MODEM, G711_LAW_PCMU);
 	CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK,
 	      "valid digital V.92 configuration was rejected");
+	{
+		struct pcm_call invalid = analog;
+
+		invalid.v92_upstream_retry_ceiling = 1u;
+		CHECK(!pcm_call_is_valid(&invalid), "analogue V.92 accepted a digital retry ceiling");
+		invalid = digital;
+		invalid.v92_upstream_retry_ceiling = 1u;
+		CHECK(!pcm_call_is_valid(&invalid), "fixed CPd accepted a retry ceiling");
+		struct pcm_call_configuration direct;
+
+		CHECK(v92_profile_init(&direct, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+			28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+		      pcm_call_init(&invalid, &direct) == PCM_CALL_OK &&
+		      invalid.v92_upstream_retry_ceiling == 0u, "new call inherited a retry ceiling");
+		invalid.v92_upstream_retry_ceiling = 19u;
+		CHECK(!pcm_call_is_valid(&invalid), "retry ceiling did not lower the configured maximum");
+		invalid.v92_upstream_retry_ceiling = 18u;
+		CHECK(pcm_call_is_valid(&invalid) && pcm_call_init(&invalid, &direct) == PCM_CALL_OK &&
+		      invalid.v92_upstream_retry_ceiling == 0u, "retry ceiling survived a new call");
+	}
 	selected.phase3.digital.jd.data_rate_capability_mask = 0u;
 	CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT,
 	      "V.92 call accepted an unusable conventional Jd");
@@ -7170,6 +7282,7 @@ int main(void)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
+		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
 		{ "V.92 received lookahead limits", test_v92_received_lookahead },
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },

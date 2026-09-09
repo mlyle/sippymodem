@@ -341,6 +341,9 @@ struct pcm_call {
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
+	/* Zero until failed PCM-upstream B1u lowers the direct-selection ceiling.
+	 * Retained through retrains; never changes the configured maximum. */
+	uint8_t v92_upstream_retry_ceiling;
 	bool phase3_entry_stored;
 	bool peer_info0_stored;
 	bool v92_peer_jd_stored;

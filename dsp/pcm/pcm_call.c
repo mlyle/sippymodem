@@ -725,6 +725,11 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    (call->v92_upstream_retry_ceiling != 0u &&
+	     (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM ||
+	      call->v92_digital_phase4_configuration.upstream_selection != PCM_CALL_V92_UPSTREAM_DIRECT ||
+	      call->v92_upstream_retry_ceiling >=
+		      call->v92_digital_phase4_configuration.direct_maximum_data_rate_number)) ||
 	    (call->stage == PCM_CALL_CLOSED &&
 	     (call->failed || call->retrain_active || call->b1_deadline_armed ||
 	      call->rate_renegotiation_deadline_armed)) ||
@@ -1205,6 +1210,28 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 		call->b1_deadline_remaining_samples = 0u;
 		call->b1_deadline_armed = false;
 		return PCM_CALL_OK;
+	}
+	if (call->stage == PCM_CALL_DATA_PATH && uses_pcm_upstream(call) &&
+	    call->local_role == V90_DIGITAL_MODEM &&
+	    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
+	    call->state.data_path.v92_digital.upstream.line.received_frames >=
+		    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+		uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+		uint8_t previous = call->v92_upstream_retry_ceiling;
+		enum pcm_call_result result;
+
+		/* V.92 9.6.1.2 allows full retrain during Phase 4. Once every B1u
+		 * decision is available, do not repeat a selection that failed it.
+		 * Ja in the next epoch still decides which lower rates are usable.
+		 * Strictly decreasing ceilings bound recovery, even without a host
+		 * training timeout. Fixed caller-owned mappings are never replaced. */
+		if (rate <= 1u)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		call->v92_upstream_retry_ceiling = rate - 1u;
+		result = begin_retrain(call, false);
+		if (result != PCM_CALL_OK)
+			call->v92_upstream_retry_ceiling = previous;
+		return result;
 	}
 	if (call->b1_deadline_remaining_samples != 0u)
 		call->b1_deadline_remaining_samples--;
@@ -2111,6 +2138,8 @@ static enum pcm_call_result select_v92_upstream(
 		uint8_t rate = configuration->direct_maximum_data_rate_number;
 		long level;
 
+		if (call->v92_upstream_retry_ceiling != 0u && call->v92_upstream_retry_ceiling < rate)
+			rate = call->v92_upstream_retry_ceiling;
 		if (!isfinite(signal_level) || signal_level < 1.0 || signal_level > INT16_MAX)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		level = lround(signal_level);
