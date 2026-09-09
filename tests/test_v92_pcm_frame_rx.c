@@ -7,6 +7,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 enum { UPSTREAM_LEVEL = 4096, DATA_FRAMES = 1000 };
@@ -310,6 +311,70 @@ static bool test_constellation_coordinates(
 	return true;
 }
 
+static bool test_noise_training(bool proportional)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+	struct v92_pcm_frame_noise trained = { 0 };
+	uint64_t energy = 0u;
+
+	CHECK(mapping_init(&mapping, G711_LAW_PCMU, 1u, false) &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
+	      "noise fixture initialization failed");
+	for (unsigned frame = 0u; frame < V92_B1U_FRAMES + 32u; ++frame) {
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		uint64_t error = 0u;
+
+		source_bits(bits, mapping.data_bits_per_frame, frame);
+		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &encoded) ==
+		      V92_PCM_FRAME_OK, "noise fixture encoding failed");
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			/* Exclude the acquisition half, then provide an exact variance
+			 * slope of 1/1024 or amplitude-independent unit residual. */
+			int residual = frame < V92_B1U_FRAMES / 2u ? 0 :
+				proportional ? encoded.u[i] / 32 : 1;
+
+			samples[i] = (int16_t)(encoded.u[i] + residual);
+			error += (uint64_t)((int64_t)residual * residual);
+			if (frame >= V92_B1U_FRAMES / 2u && frame < V92_B1U_FRAMES)
+				energy += (uint64_t)((int64_t)encoded.u[i] * encoded.u[i]);
+		}
+		CHECK(v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES, decoded,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_is_valid(&receiver) && decision.squared_error == error,
+		      "noise weighting changed raw residual evidence");
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, frame - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!decision.ambiguous && memcmp(bits, decoded, mapping.data_bits_per_frame) == 0,
+			      "noise weighting changed payload");
+		}
+		if (frame + 1u == V92_B1U_FRAMES) {
+			double expected = proportional ? (double)(V92_B1U_SYMBOLS / 2u) / energy : 0.0;
+
+			CHECK(fabs(receiver.noise.relative_variance - expected) < 1e-12 &&
+			      receiver.noise.frames == V92_B1U_FRAMES && receiver.noise.signal_energy == 0.0 &&
+			      receiver.noise.signal_fourth == 0.0 && receiver.noise.error_energy == 0.0 &&
+			      receiver.noise.error_signal_energy == 0.0,
+			      "B1u noise fit or completed accumulator cleanup failed");
+			trained = receiver.noise;
+		} else if (frame >= V92_B1U_FRAMES) {
+			CHECK(memcmp(&receiver.noise, &trained, sizeof(trained)) == 0,
+			      "payload trained the noise model");
+		} else {
+			CHECK(receiver.noise.relative_variance == 0.0, "partial B1u enabled weighting");
+		}
+	}
+	CHECK(v92_pcm_frame_rx_reset_control(&receiver) == V92_PCM_FRAME_OK &&
+	      memcmp(&receiver.noise, &trained, sizeof(trained)) == 0,
+	      "control reset lost the trained noise model");
+	return true;
+}
+
 static bool test_compensated_channel(enum g711_law law)
 {
 	enum { DELAY = 59, FRAMES = V92_B1U_FRAMES + 128 + V92_PCM_RX_DELAY_FRAMES };
@@ -542,6 +607,19 @@ static bool test_rejection_and_training_evidence(void)
 	receiver.maximum_level = 1;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "constellation receiver accepted maximum LU");
 	receiver = saved;
+	receiver.noise.frames = V92_B1U_FRAMES + 1u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "noise accepted excess training");
+	receiver = saved;
+	receiver.noise.relative_variance = NAN;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "noise accepted NaN");
+	receiver = saved;
+	receiver.noise.signal_energy = 1.0;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "noise accepted unowned moments");
+	receiver = saved;
+	receiver.noise.frames = V92_B1U_FRAMES;
+	receiver.noise.relative_variance = -1.0;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "noise accepted a negative weight");
+	receiver = saved;
 	CHECK(v92_pcm_frame_decode(&receiver, samples, true, bits, 36u, &decision) ==
 		      V92_PCM_FRAME_OK && decision.squared_error > 0u && !decision.bits_ready,
 	      "constellation B1u suppressed damaged-training evidence");
@@ -578,5 +656,6 @@ int main(void)
 		    !test_control_epoch((enum g711_law)law, 13u, true))
 			return 1;
 	}
-	return test_rejection_and_training_evidence() ? 0 : 1;
+	return test_noise_training(false) && test_noise_training(true) &&
+		test_rejection_and_training_evidence() ? 0 : 1;
 }

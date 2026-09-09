@@ -5856,15 +5856,18 @@ static bool test_v92_upstream_negotiation(void)
 		for (size_t index = 0u; index < ARRAY_LENGTH(offers); ++index)
 			CHECK(run_v92_duplex_data(law, 3u, false, &offers[index]),
 			      "V.92 upstream selection law %u case %zu failed", law, index);
-	/* Exercise the 32-state channel-compensated constellation through the
-	 * complete CPd/B1u/data handoff, including gain after tandem quantization.
-	 * This fixture is not yet error-free at 40k with the A-law quantizer. */
-	const struct v92_upstream_offer compensated = {
-		UINT32_C(1) << 12u, 19u, 13u, 0.10, 0.75,
-	};
+	/* Both trellis families through the complete compensated CPd/B1u/data
+	 * handoff, with amplitude-dependent noise from tandem quantization. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 10u; rate <= 13u; rate += 3u) {
+			const struct v92_upstream_offer compensated = {
+				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75,
+			};
 
-	CHECK(run_v92_duplex_data(G711_LAW_PCMU, 3u, false, &compensated),
-	      "V.92 compensated 40k call failed");
+			CHECK(run_v92_duplex_data(law, 3u, false, &compensated),
+			      "V.92 compensated law %u rate %u call failed", law, rate);
+		}
+	}
 	return true;
 }
 

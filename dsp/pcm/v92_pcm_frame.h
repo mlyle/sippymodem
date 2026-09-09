@@ -72,9 +72,20 @@ enum v92_pcm_frame_observation {
 	V92_PCM_FRAME_CONSTELLATION,
 };
 
+/* Known B1u fits the amplitude-dependent slope of residual variance in
+ * recovered constellation coordinates. Keep slope/mean_error after training,
+ * with a one-sample variance floor; payload never trains it. */
+struct v92_pcm_frame_noise {
+	double signal_energy, signal_fourth;
+	double error_energy, error_signal_energy;
+	double relative_variance;
+	uint8_t frames;
+};
+
 struct v92_pcm_frame_rx {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
+	struct v92_pcm_frame_noise noise;
 	enum v92_pcm_frame_observation observation;
 	/* Zero in constellation coordinates; the caller has removed the gain. */
 	int16_t upstream_level;
@@ -129,8 +140,10 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 
 /* Initialize at B1u for recovered linear constellation coordinates u(n).
  * The caller must compensate the channel, remove gain, and align its decision
- * delay before supplying frames. These observations are not scaled prefilter
- * outputs and must not undergo another G.711 quantization. Coding, traceback,
+ * delay before supplying frames. The latter half of B1u measures additive
+ * and amplitude-dependent residual noise for weighting payload decisions.
+ * These observations are not scaled prefilter outputs and must not undergo
+ * another G.711 quantization. Coding, traceback,
  * and reconstructed filter histories use the same decoder as above. */
 enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
 	struct v92_pcm_frame_rx *receiver,
@@ -158,7 +171,8 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 
 /* Decode one aligned twelve-symbol frame in the initialized observation
  * coordinates: decoded G.711 filter output, or recovered linear u(n).
- * Predicted samples and squared error use those same coordinates.
+ * Predicted samples and squared error use those same coordinates and remain
+ * unweighted even when the sequence search uses learned noise weights.
  * A bounded sequence search retains competing histories across frames.
  * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; before
  * that, bits remain untouched while state and decision advance normally.

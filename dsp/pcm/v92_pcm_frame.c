@@ -6,6 +6,7 @@
 #include "memory_region.h"
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 enum {
@@ -522,6 +523,26 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 	return V92_PCM_FRAME_OK;
 }
 
+static bool noise_is_valid(const struct v92_pcm_frame_noise *noise)
+{
+	if (noise->frames > V92_B1U_FRAMES ||
+	    !isfinite(noise->relative_variance) || noise->relative_variance < 0.0 ||
+	    noise->relative_variance > 65535.0 ||
+	    (noise->frames < V92_B1U_FRAMES && noise->relative_variance != 0.0))
+		return false;
+	unsigned symbols = noise->frames > V92_B1U_FRAMES / 2u && noise->frames < V92_B1U_FRAMES ?
+		(noise->frames - V92_B1U_FRAMES / 2u) * V92_PCM_MAPPING_FRAME_SYMBOLS : 0u;
+	const double moments[] = { noise->signal_energy, noise->signal_fourth,
+		noise->error_energy, noise->error_signal_energy };
+	const double bounds[] = { 32768.0 * 32768.0, 32768.0 * 32768.0 * 32768.0 * 32768.0,
+		65535.0 * 65535.0, 65535.0 * 65535.0 * 32768.0 * 32768.0 };
+
+	for (size_t i = 0; i < sizeof(moments) / sizeof(moments[0]); ++i)
+		if (!isfinite(moments[i]) || moments[i] < 0.0 || moments[i] > symbols * bounds[i])
+			return false;
+	return true;
+}
+
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 {
 	enum v34_trellis_selection selected;
@@ -535,13 +556,15 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 		return false;
 	switch (receiver->observation) {
 	case V92_PCM_FRAME_FILTER_OUTPUT:
-		if (receiver->minimum_level <= 0 ||
+		if (!memory_region_is_zero(&receiver->noise, sizeof(receiver->noise)) ||
+		    receiver->minimum_level <= 0 ||
 		    receiver->minimum_level > receiver->upstream_level ||
 		    receiver->maximum_level < receiver->upstream_level)
 			return false;
 		break;
 	case V92_PCM_FRAME_CONSTELLATION:
-		if (receiver->upstream_level != 0 || receiver->minimum_level != 0 ||
+		if (!noise_is_valid(&receiver->noise) ||
+		    receiver->upstream_level != 0 || receiver->minimum_level != 0 ||
 		    receiver->maximum_level != 0)
 			return false;
 		break;
@@ -769,6 +792,45 @@ static bool b1u_digits(
 		&differential, digits, &sign) == V92_PCM_MAPPING_OK;
 }
 
+static void train_noise(struct v92_pcm_frame_noise *noise,
+	const int16_t *samples, const int16_t *expected)
+{
+	if (noise->frames == V92_B1U_FRAMES)
+		return;
+	/* Allow initial B1u gain acquisition to settle. Only known training,
+	 * never a payload decision or a subsequent control exchange, is used. */
+	if (noise->frames >= V92_B1U_FRAMES / 2u) {
+		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			double signal = expected[i], error = samples[i] - signal;
+			double square = signal * signal, residual = error * error;
+
+			noise->signal_energy += square;
+			noise->signal_fourth += square * square;
+			noise->error_energy += residual;
+			noise->error_signal_energy += residual * square;
+		}
+	}
+	if (++noise->frames != V92_B1U_FRAMES)
+		return;
+	double count = V92_B1U_SYMBOLS / 2u;
+	double determinant = count * noise->signal_fourth - noise->signal_energy * noise->signal_energy;
+	double slope = determinant > 0.0 ?
+		(count * noise->error_signal_energy - noise->error_energy * noise->signal_energy) / determinant : 0.0;
+	double average_error = noise->error_energy / count;
+	/* Do not extrapolate near-zero variance at low amplitudes from this
+	 * short fit: retain the average B1u residual as a conservative noise
+	 * floor. Constant-amplitude or amplitude-independent noise keeps equal
+	 * weights. One sample and Q16 bound numerical precision, not quality. */
+	double ratio = slope > 0.0 ? slope / (average_error > 1.0 ? average_error : 1.0) : 0.0;
+
+	if (ratio > 65535.0)
+		ratio = 65535.0;
+
+	*noise = (struct v92_pcm_frame_noise){
+		.frames = V92_B1U_FRAMES, .relative_variance = ratio,
+	};
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_decode(
 	struct v92_pcm_frame_rx *receiver,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
@@ -809,6 +871,19 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 			&receiver->mapping.cpd.constellation[set];
 		struct frame_candidate candidates[V92_PCM_RX_PATHS];
 		size_t count = 0u;
+		uint64_t weight = 1u;
+
+		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION) {
+			/* Companding noise grows with amplitude. Estimate reliability
+			 * from the observation, independently of each candidate point.
+			 * Compute once per symbol, outside the bounded path search. */
+			double variance = 1.0 + receiver->noise.relative_variance *
+				(double)samples[symbol] * samples[symbol];
+
+			weight = (uint64_t)(65536.0 / variance);
+			if (weight == 0u)
+				weight = 1u;
+		}
 
 		for (size_t path = 0u; path < path_count; ++path) {
 			uint8_t y0;
@@ -842,7 +917,7 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 					predicted_observation(receiver, u, v, samples[symbol], b1u);
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric,
-						(uint64_t)(error * error)),
+						(uint64_t)(error * error) * weight),
 					.frame_metric = paths[path].frame_metric +
 						(uint64_t)(error * error),
 					.eta = (int16_t)eta, .path = (uint8_t)path,
@@ -982,6 +1057,8 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	memset(receiver->paths + valid, 0,
 		(V92_PCM_RX_PATHS - valid) * sizeof(receiver->paths[0]));
 	receiver->path_count = (uint8_t)valid;
+	if (b1u && receiver->observation == V92_PCM_FRAME_CONSTELLATION)
+		train_noise(&receiver->noise, samples, decision->predicted_samples);
 	return V92_PCM_FRAME_OK;
 }
 
