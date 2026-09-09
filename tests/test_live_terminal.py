@@ -23,6 +23,19 @@ from tools.live_terminal import (  # noqa: E402
 
 
 class LiveTerminalTests(unittest.TestCase):
+    def test_upstream_report_is_explicit_allowlisted_and_reset(self) -> None:
+        decoder = ResponseDecoder()
+        for value, expected in ((b"PCM", "PCM"), (b"V34", "V.34"),
+                                (b"sip:private@example.invalid", None), (b"", None)):
+            with self.subTest(value=value):
+                decoder.begin_command_response()
+                decoder.feed(b"Modulation: V92\r\nUpstream: " + value
+                             + b"\r\nCONNECT 24000\r\n")
+                self.assertEqual(decoder.connect_report.upstream_mode, expected)
+        decoder.begin_command_response()
+        decoder.feed(b"Modulation: V92\r\nCONNECT 48000\r\n")
+        self.assertIsNone(decoder.connect_report.upstream_mode)
+
     def test_response_decoder_allowlists_high_speed_profile_labels(self) -> None:
         for wire_name, expected in (
             (b"V34", "V.34"),

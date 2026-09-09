@@ -1073,6 +1073,10 @@ static bool exercise_retrain(
 			caller->output_count, answerer->output_count);
 		return false;
 	}
+	if (id == DP_V92 && !output_contains(initiator, "Upstream: PCM\r\n")) {
+		fprintf(stderr, "V.92 retrain omitted negotiated upstream evidence\n");
+		return false;
+	}
 	if (raw_transport) {
 		caller_preserved_delivered = output_contains_bytes(
 			caller, answerer_preserved + preserved_length - 1u, 1);
@@ -1610,6 +1614,9 @@ static bool run_media_call(
 	      "%s integration endpoints did not initialize", test_case->name);
 	if (v8_datapump_uses_pcm(test_case->id) ||
 	    v8_datapump_uses_pcm(answerer_id)) {
+		CHECK(modem_set_sreg(caller.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0 &&
+		      modem_set_sreg(answerer.modem, SREG_CONNNECT_MSG_FORMAT, 1) == 0,
+		      "%s did not enable negotiated PCM details", test_case->name);
 		CHECK(modem_set_sreg(
 			      caller.modem, SREG_V90_DIGITAL_INDICATION,
 			      test_case->digital_caller) == 0 &&
@@ -1832,6 +1839,16 @@ static bool run_media_call(
 	      answerer.modem->ec.lapm.config,
 	      answerer.modem->ec.lapm.ctrl_count,
 	      answerer.modem->bit_timer);
+	if (connected_id == DP_V90 || connected_id == DP_V92) {
+		const char *upstream = connected_id == DP_V92 ?
+			"Upstream: PCM\r\n" : "Upstream: V34\r\n";
+		CHECK(output_contains(&caller, upstream) && output_contains(&answerer, upstream),
+		      "%s did not report negotiated upstream to both terminals", test_case->name);
+	} else {
+		CHECK(!output_contains(&caller, "Upstream:") &&
+		      !output_contains(&answerer, "Upstream:"),
+		      "%s leaked a PCM upstream report to another modulation", test_case->name);
+	}
 	caller.output_count = 0;
 	answerer.output_count = 0;
 	CHECK(process_test_frame(

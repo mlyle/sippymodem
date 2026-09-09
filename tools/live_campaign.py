@@ -556,6 +556,10 @@ def _case_connect_error(
         else FAMILY_CONNECT_MODULATIONS[case.family]
     )
     protocol = "none" if case.link_mode == LINK_RAW else "LAPM"
+    if (case.feature == "pcm-upstream" and report.modulation == "V.92"
+            and report.upstream_mode != "PCM"):
+        actual = report.upstream_mode or "unreported"
+        return f"CONNECT selected {actual} upstream instead of PCM"
     return _connect_error(
         report,
         modulations,
@@ -1042,6 +1046,7 @@ def run_physical_attempt(
         compression=state.report.compression,
         receive_rate=state.report.receive_bit_rate,
         transmit_rate=state.report.transmit_bit_rate,
+        upstream_mode=state.report.upstream_mode,
         profile_error=state.profile_error,
         detail=state.detail,
         artifact=artifacts.directory.name,

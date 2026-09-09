@@ -524,6 +524,9 @@ static bool enter_link(struct v90_datapump *datapump)
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)
 		return false;
+	datapump->dp.modem->dsp_info.upstream_mode =
+		pcm_call_uses_conventional_upstream(&datapump->call) ?
+		MODEM_UPSTREAM_V34 : MODEM_UPSTREAM_PCM;
 	datapump->dp.status = DPSTAT_CONNECT;
 	if (retrained)
 		modem_dp_reconnected(datapump->dp.modem);

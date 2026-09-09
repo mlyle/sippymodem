@@ -115,6 +115,7 @@ class AttemptResult:
     profile_error: str = ""
     detail: str = ""
     artifact: str = ""
+    upstream_mode: str | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -621,6 +622,8 @@ def render_dashboard(
                 }.get(result.outcome, result.outcome)
             if profile_mismatch:
                 status = f"{request_status if request else status}/mismatch"
+            if not request and connected and result.upstream_mode in {"V.34", "PCM"}:
+                status += f" up={result.upstream_mode}"
             sequence = f"{index + 1:03d}{'+' if result.extra else ' '}"
             request_cell = (
                 str(int(result.callback_request_maturity == MATURITY_REQUEST))

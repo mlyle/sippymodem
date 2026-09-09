@@ -170,6 +170,12 @@ counting twice in TOTAL. A rate-only mismatch stays in the same modulation/link
 row. Mismatches remain eligible for failure extras; explicitly permitted analogue
 fallbacks are not mismatches. Callback request legs appear separately as `q` in
 history, and mismatches show the attempted profile on an indented `tried:` line.
+PCM-session CONNECT details also report `Upstream: PCM` or `Upstream: V34`;
+history displays this as `up=PCM` or `up=V.34`. The value describes the negotiated
+upstream, not the enabled capability. A PCM-upstream case requires explicit PCM
+evidence at the initial CONNECT: the V.92 label and bit rate alone are insufficient.
+Missing or conventional-upstream reports count as mismatches, without stopping
+the data and retrain exercises.
 
 The default standard campaign has 100 curated call configurations rather than
 a Cartesian matrix: 53 raw datapump baselines plus 47 LAPM variants. LAPM is

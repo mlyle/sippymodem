@@ -718,6 +718,10 @@ static bool run_pcm_pair(
 	      downstream_rate, expected_upstream_rate,
 	      analog.rx_rate, analog.tx_rate,
 	      digital.tx_rate, digital.rx_rate);
+	CHECK(analog.dsp_info.upstream_mode ==
+		      (pcm_upstream_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34) &&
+	      digital.dsp_info.upstream_mode == analog.dsp_info.upstream_mode,
+	      "PCM pair reported the configured rather than negotiated upstream mode");
 	CHECK(analog_bits.supplied_bits >= minimum_received_bits &&
 	      digital_bits.supplied_bits >= minimum_received_bits &&
 	      analog_bits.received_bits >= minimum_received_bits &&

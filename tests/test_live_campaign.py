@@ -74,7 +74,10 @@ callback_nonce = b"0123456789abcdef0123456789abcdef"
 raw_transport = False
 
 def connect_response():
-    if "wrong-profile" in mode:
+    if mode == "pcm-conventional":
+        modulation = b"V92"
+        rate = b"24000"
+    elif "wrong-profile" in mode:
         modulation = b"V22"
         rate = b"1200"
     elif mode == "wrong-link":
@@ -84,9 +87,11 @@ def connect_response():
         modulation = b"V21"
         rate = b"300"
     protocol = b"NONE" if raw_transport or mode == "wrong-link" else b"LAPM"
+    upstream = b"Upstream: V34\r\n" if mode == "pcm-conventional" else b""
+    tx_rate = b"56000" if mode == "pcm-conventional" else rate
     return (
-        b"\r\nModulation: " + modulation + b"\r\nProtocol: " + protocol
-        + b"\r\nCompression: NONE\r\nTxRate: " + rate
+        b"\r\nModulation: " + modulation + b"\r\n" + upstream + b"Protocol: " + protocol
+        + b"\r\nCompression: NONE\r\nTxRate: " + tx_rate
         + b"\r\nCONNECT " + rate + b"\r\n"
     )
 def request_connect_response():
@@ -814,6 +819,20 @@ class LiveCampaignTests(unittest.TestCase):
             ),
         )
 
+    def test_pcm_profile_requires_upstream_evidence_not_just_rate(self) -> None:
+        for role in ("originator", "callback"):
+            for mode, protocol in (("raw", "none"), ("lapm", "LAPM")):
+                case = CASES_BY_NAME[f"v92-pcmup-24000-{mode}-{role}"]
+                for upstream in (None, "V.34", "PCM"):
+                    with self.subTest(role=role, mode=mode, upstream=upstream):
+                        report = ConnectReport("V.92", protocol, "none", 24000,
+                                               56000, upstream_mode=upstream)
+                        error = _case_connect_error(case, report)
+                        if upstream == "PCM":
+                            self.assertIsNone(error)
+                        else:
+                            self.assertIn("upstream instead of PCM", error)
+
     def test_mismatched_calls_continue_data_and_both_retrains(self) -> None:
         for mode, name in (
             ("wrong-profile", "v21-300-originator"),
@@ -821,6 +840,7 @@ class LiveCampaignTests(unittest.TestCase):
             ("wrong-link", "v22bis-2400-lapm-originator"),
             ("wrong-profile-no-end", "v21-300-originator"),
             ("wrong-profile-no-retrain", "v21-300-originator"),
+            ("pcm-conventional", "v92-pcmup-24000-raw-originator"),
         ):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -843,6 +863,9 @@ class LiveCampaignTests(unittest.TestCase):
                 self.assertFalse(result.callback_request_profile_mismatch)
                 detail = json.loads((artifacts.directory / "result.json").read_text())
                 self.assertEqual(detail["result"]["profile_error"], result.profile_error)
+                if mode == "pcm-conventional":
+                    self.assertEqual(result.upstream_mode, "V.34")
+                    self.assertEqual(detail["result"]["upstream_mode"], "V.34")
                 leg = "answer" if mode.startswith("callback") else "modem"
                 tx = (artifacts.legs[leg] / "terminal-tx.bin").read_bytes()
                 if mode.endswith("no-retrain"):

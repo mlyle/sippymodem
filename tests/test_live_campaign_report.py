@@ -492,6 +492,24 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertTrue(recent.endswith("connect/mismatch"))
         self.assertEqual(tried, "     tried: V.22bis 2400/2400@600 l")
 
+    def test_history_shows_only_explicit_upstream_evidence(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v92" and case.feature == "pcm-upstream")
+        for upstream in (None, "V.34", "PCM", "private-value"):
+            with self.subTest(upstream=upstream):
+                result = self.result(case_name=case.name, family=case.family,
+                                     role=case.role, connected=True, modulation="V.92",
+                                     protocol="none", receive_rate=24000,
+                                     transmit_rate=56000, upstream_mode=upstream)
+                dashboard = render_dashboard((case,), 1, (result,), revision="e" * 40,
+                                             campaign_id="test-campaign",
+                                             elapsed_seconds=3, recent_limit=1)
+                if upstream in {"V.34", "PCM"}:
+                    self.assertTrue(dashboard.endswith(f"connect up={upstream}"))
+                else:
+                    self.assertNotIn("up=", dashboard)
+                    self.assertNotIn("private-value", dashboard)
+
     def test_pcm_fallback_credits_v34_without_regrouping_scheduled_progress(self) -> None:
         cases = cases_for_suite("standard")
         for feature in ("analogue-fallback", "digital-headend"):

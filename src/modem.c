@@ -323,6 +323,19 @@ static void modem_report_result(struct modem *m, enum MODEM_RESULT code)
 					msg = none_str;
 				modem_put_chars(m,msg,strlen(msg));
 				modem_put_chars(m,CRLF_CHARS(m),2);
+				if (m->dp != NULL &&
+				    (m->dp->id == DP_V90 || m->dp->id == DP_V92)) {
+					msg = NULL;
+					if (m->dsp_info.upstream_mode == MODEM_UPSTREAM_V34)
+						msg = "V34";
+					else if (m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM)
+						msg = "PCM";
+					if (msg != NULL) {
+						modem_put_chars(m,"Upstream: ",10);
+						modem_put_chars(m,msg,strlen(msg));
+						modem_put_chars(m,CRLF_CHARS(m),2);
+					}
+				}
 			}
 			if(msg_mask&2) {
 				modem_put_chars(m,"Protocol: ",10);
@@ -1447,6 +1460,7 @@ static void modem_setup_config(struct modem *m)
 	/* Only an exchanged V.8 menu can establish quick-connect LAPM. */
 	m->dsp_info.qc_lapm = 0;
 	m->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+	m->dsp_info.upstream_mode = MODEM_UPSTREAM_UNKNOWN;
 }
 
 

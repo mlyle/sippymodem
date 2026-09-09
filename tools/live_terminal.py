@@ -52,6 +52,7 @@ CONNECT_MODULATIONS = {
     b"BAUDOT TTY/TDD": "Baudot TTY/TDD",
 }
 CONNECT_PROTOCOLS = {b"LAPM": "LAPM", b"NONE": "none"}
+CONNECT_UPSTREAM_MODES = {b"V34": "V.34", b"PCM": "PCM"}
 CONNECT_COMPRESSIONS = {
     b"V44": "V.44",
     b"V42BIS": "V.42bis",
@@ -86,6 +87,7 @@ class ConnectReport:
     compression: str | None = None
     receive_bit_rate: int | None = None
     transmit_bit_rate: int | None = None
+    upstream_mode: str | None = None
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,7 @@ class ResponseDecoder:
         self._compression: str | None = None
         self._receive_bit_rate: int | None = None
         self._transmit_bit_rate: int | None = None
+        self._upstream_mode: str | None = None
 
     def feed(self, data: bytes) -> None:
         for byte in data:
@@ -159,6 +162,8 @@ class ResponseDecoder:
                             self._compression = value
                         elif name == "transmit_bit_rate":
                             self._transmit_bit_rate = value
+                        elif name == "upstream_mode":
+                            self._upstream_mode = value
                     result = _classify_response(line)
                     if result is not None:
                         self._results.append(result)
@@ -195,6 +200,7 @@ class ResponseDecoder:
             compression=self._compression,
             receive_bit_rate=self._receive_bit_rate,
             transmit_bit_rate=self._transmit_bit_rate,
+            upstream_mode=self._upstream_mode,
         )
 
     def begin_command_response(self) -> None:
@@ -209,6 +215,7 @@ class ResponseDecoder:
         self._compression = None
         self._receive_bit_rate = None
         self._transmit_bit_rate = None
+        self._upstream_mode = None
 
 
 def _classify_response(line: bytes) -> str | None:
@@ -239,6 +246,7 @@ def _classify_connect_detail(line: bytes) -> tuple[str, str | int] | None:
         (b"MODULATION:", "modulation", CONNECT_MODULATIONS),
         (b"PROTOCOL:", "protocol", CONNECT_PROTOCOLS),
         (b"COMPRESSION:", "compression", CONNECT_COMPRESSIONS),
+        (b"UPSTREAM:", "upstream_mode", CONNECT_UPSTREAM_MODES),
     )
     for prefix, name, values in text_fields:
         if normalized.startswith(prefix):

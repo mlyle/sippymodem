@@ -365,6 +365,12 @@ enum modem_pcm_role {
 	MODEM_PCM_ROLE_DIGITAL,
 };
 
+enum modem_upstream_mode {
+	MODEM_UPSTREAM_UNKNOWN,
+	MODEM_UPSTREAM_V34,
+	MODEM_UPSTREAM_PCM,
+};
+
 /* dp status */
 #define DPSTAT_OK         0
 #define DPSTAT_CONNECT    1
@@ -382,6 +388,8 @@ struct dsp_info {
 	unsigned qc_lapm;
 	unsigned qc_index;
 	enum modem_pcm_role pcm_role;
+	/* Negotiated PCM-session upstream, not the configured capability. */
+	enum modem_upstream_mode upstream_mode;
 };
 
 
