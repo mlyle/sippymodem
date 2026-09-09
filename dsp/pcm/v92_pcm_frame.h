@@ -67,9 +67,16 @@ struct v92_pcm_frame_rx_path {
 	uint8_t differential;
 };
 
+enum v92_pcm_frame_observation {
+	V92_PCM_FRAME_FILTER_OUTPUT,
+	V92_PCM_FRAME_CONSTELLATION,
+};
+
 struct v92_pcm_frame_rx {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_rx_path paths[V92_PCM_RX_PATHS];
+	enum v92_pcm_frame_observation observation;
+	/* Zero in constellation coordinates; the caller has removed the gain. */
 	int16_t upstream_level;
 	int16_t minimum_level;
 	int16_t maximum_level;
@@ -119,13 +126,23 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 	struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
+
+/* Initialize at B1u for recovered linear constellation coordinates u(n).
+ * The caller must compensate the channel, remove gain, and align its decision
+ * delay before supplying frames. These observations are not scaled prefilter
+ * outputs and must not undergo another G.711 quantization. Coding, traceback,
+ * and reconstructed filter histories use the same decoder as above. */
+enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
+	struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_mapping *mapping);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
 
 /* Refine the receive level against known training, retaining the contiguous
  * LU interval that predicts the same quantized waveform as the best estimate.
  * Feed that interval into subsequent refinement calls. Ordinary data uses its
  * nearest possible codeword without changing the trained interval. Coding
- * histories are unchanged; the line owner still qualifies unrounded error. */
+ * histories are unchanged; the line owner still qualifies unrounded error.
+ * Only filter-output receivers have a receive-level interval. */
 enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
@@ -139,7 +156,9 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 	struct v92_pcm_frame_rx *receiver);
 
-/* Decode one aligned twelve-symbol frame in decoded-G.711 coordinates.
+/* Decode one aligned twelve-symbol frame in the initialized observation
+ * coordinates: decoded G.711 filter output, or recovered linear u(n).
+ * Predicted samples and squared error use those same coordinates.
  * A bounded sequence search retains competing histories across frames.
  * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; before
  * that, bits remain untouched while state and decision advance normally.

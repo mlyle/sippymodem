@@ -411,7 +411,8 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	    memory_regions_overlap(receiver, sizeof(*receiver), samples,
 				   V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples)))
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_frame_rx_is_valid(receiver) || minimum_level <= 0 ||
+	if (!v92_pcm_frame_rx_is_valid(receiver) ||
+	    receiver->observation != V92_PCM_FRAME_FILTER_OUTPUT || minimum_level <= 0 ||
 	    minimum_level > receiver->upstream_level || maximum_level < receiver->upstream_level)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	int16_t best = receiver->upstream_level;
@@ -527,14 +528,26 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	bool normalized = false;
 
 	if (receiver == NULL || !v92_pcm_mapping_is_valid(&receiver->mapping) ||
-	    receiver->upstream_level <= 0 || receiver->path_count == 0u ||
-	    receiver->minimum_level <= 0 ||
-	    receiver->minimum_level > receiver->upstream_level ||
-	    receiver->maximum_level < receiver->upstream_level ||
+	    receiver->path_count == 0u ||
 	    receiver->path_count > V92_PCM_RX_PATHS ||
 	    receiver->pending_frames > V92_PCM_RX_DELAY_FRAMES ||
 	    !trellis_selection(receiver->mapping.cpd.trellis, &selected))
 		return false;
+	switch (receiver->observation) {
+	case V92_PCM_FRAME_FILTER_OUTPUT:
+		if (receiver->minimum_level <= 0 ||
+		    receiver->minimum_level > receiver->upstream_level ||
+		    receiver->maximum_level < receiver->upstream_level)
+			return false;
+		break;
+	case V92_PCM_FRAME_CONSTELLATION:
+		if (receiver->upstream_level != 0 || receiver->minimum_level != 0 ||
+		    receiver->maximum_level != 0)
+			return false;
+		break;
+	default:
+		return false;
+	}
 	for (size_t index = 0u; index < receiver->path_count; ++index) {
 		const struct v92_pcm_frame_rx_path *path = &receiver->paths[index];
 
@@ -560,19 +573,22 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 	return normalized;
 }
 
-enum v92_pcm_frame_result v92_pcm_frame_rx_init(
+static enum v92_pcm_frame_result initialize_receiver(
 	struct v92_pcm_frame_rx *receiver,
-	const struct v92_pcm_mapping *mapping, int16_t upstream_level)
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
+	enum v92_pcm_frame_observation observation)
 {
 	struct v92_pcm_frame_rx initialized = { 0 };
 	enum v34_trellis_selection selected;
 
 	if (receiver == NULL || mapping == NULL)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_mapping_is_valid(mapping) || upstream_level <= 0 ||
+	if (!v92_pcm_mapping_is_valid(mapping) ||
+	    (observation == V92_PCM_FRAME_FILTER_OUTPUT && upstream_level <= 0) ||
 	    !trellis_selection(mapping->cpd.trellis, &selected))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	initialized.mapping = *mapping;
+	initialized.observation = observation;
 	initialized.upstream_level = upstream_level;
 	initialized.minimum_level = upstream_level;
 	initialized.maximum_level = upstream_level;
@@ -585,6 +601,19 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	*receiver = initialized;
 	return V92_PCM_FRAME_OK;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_rx_init(
+	struct v92_pcm_frame_rx *receiver,
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level)
+{
+	return initialize_receiver(receiver, mapping, upstream_level, V92_PCM_FRAME_FILTER_OUTPUT);
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
+	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_mapping *mapping)
+{
+	return initialize_receiver(receiver, mapping, 0, V92_PCM_FRAME_CONSTELLATION);
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
@@ -712,6 +741,14 @@ static int16_t predicted_sample(
 		low_sample : high_sample;
 }
 
+static int16_t predicted_observation(
+	const struct v92_pcm_frame_rx *receiver, int16_t u, int32_t v,
+	int16_t observed, bool b1u)
+{
+	return receiver->observation == V92_PCM_FRAME_CONSTELLATION ? u :
+		predicted_sample(receiver, v, observed, b1u);
+}
+
 static bool b1u_digits(
 	const struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_frame_rx_path *path,
@@ -791,12 +828,18 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 						       y0, &digit) ||
 				    (b1u && digit != paths[path].known_digits[symbol]))
 					continue;
-				int32_t x = precoder_output(&receiver->mapping,
-					&paths[path].state.filter, signed_point(constellation, eta));
-				int32_t v = prefilter_output(&receiver->mapping, &paths[path].state.filter, x);
+				int16_t u = signed_point(constellation, eta);
+				int32_t v = 0;
+
+				if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
+					int32_t x = precoder_output(&receiver->mapping,
+						&paths[path].state.filter, u);
+
+					v = prefilter_output(&receiver->mapping, &paths[path].state.filter, x);
+				}
 
 				error = (int64_t)samples[symbol] -
-					predicted_sample(receiver, v, samples[symbol], b1u);
+					predicted_observation(receiver, u, v, samples[symbol], b1u);
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric,
 						(uint64_t)(error * error)),
@@ -924,8 +967,8 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
 	};
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
-		decision->predicted_samples[symbol] = predicted_sample(receiver,
-			decision->frame.v[symbol], samples[symbol], b1u);
+		decision->predicted_samples[symbol] = predicted_observation(receiver,
+			decision->frame.u[symbol], decision->frame.v[symbol], samples[symbol], b1u);
 	if (decision->bits_ready)
 		memcpy(bits, decoded, bit_count);
 	else

@@ -231,6 +231,155 @@ static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
 	return true;
 }
 
+static bool test_constellation_coordinates(
+	enum g711_law law, uint8_t rate, enum v92_cpd_trellis trellis)
+{
+	enum { CONTROL_FRAME = V92_B1U_FRAMES + 32, FRAMES = V92_B1U_FRAMES + 128 };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+	unsigned int delivered = 0u;
+
+	CHECK(mapping_init(&mapping, law, rate, true), "filtered mapping failed");
+	struct v92_cpd_parameters cpd = mapping.cpd;
+
+	cpd.trellis = trellis;
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] = (struct v92_cpd_filter){
+		.count = 62u, .coefficient = { [60] = 24576, [61] = 8192 },
+	};
+	/* CPd specifies linear points, not G.711 codewords. Moving off the codec
+	 * grid catches accidental re-quantization of compensated observations. */
+	for (size_t set = 0u; set < V92_CPD_MAX_CONSTELLATIONS; ++set) {
+		for (size_t point = 0u; point < cpd.constellation[set].count; ++point)
+			cpd.constellation[set].positive_linear[point]++;
+	}
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK &&
+	      receiver.observation == V92_PCM_FRAME_CONSTELLATION &&
+	      v92_pcm_frame_rx_is_valid(&receiver), "constellation initialization failed");
+	for (unsigned int frame = 0u; frame < FRAMES + V92_PCM_RX_DELAY_FRAMES; ++frame) {
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		if (frame == CONTROL_FRAME) {
+			struct v92_pcm_frame_rx expected = receiver;
+
+			for (size_t path = 0u; path < expected.path_count; ++path) {
+				expected.paths[path].descrambler.history = 0u;
+				expected.paths[path].differential = 0u;
+			}
+			CHECK(v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_OK &&
+			      v92_pcm_frame_rx_reset_control(&receiver) == V92_PCM_FRAME_OK &&
+			      memcmp(&receiver, &expected, sizeof(receiver)) == 0,
+			      "control reset changed coordinates, filters, or pending payload");
+		}
+		source_bits(bits, mapping.data_bits_per_frame, frame);
+		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
+			      &encoded) == V92_PCM_FRAME_OK, "constellation encoding failed");
+		/* This is the decoder boundary AFTER channel compensation and delay
+		 * removal, not a simulation of a complete line receiver. */
+		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
+			samples[symbol] = (int16_t)(encoded.u[symbol] + (symbol % 2u ? 1 : -1));
+		memset(decoded, 0xa5, sizeof(decoded));
+		CHECK(v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES,
+			      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_is_valid(&receiver), "constellation decoding failed");
+		CHECK(decision.squared_error == V92_PCM_MAPPING_FRAME_SYMBOLS &&
+		      memcmp(decision.predicted_samples, encoded.u, sizeof(encoded.u)) == 0 &&
+		      memcmp(decision.frame.u, encoded.u, sizeof(encoded.u)) == 0 &&
+		      memcmp(decision.frame.x, encoded.x, sizeof(encoded.x)) == 0 &&
+		      memcmp(decision.frame.v, encoded.v, sizeof(encoded.v)) == 0,
+		      "law %u rate %u trellis %u frame %u changed observations or filter history",
+		      law, rate, trellis, frame);
+		CHECK(decision.bits_ready == (frame >= V92_PCM_RX_DELAY_FRAMES) && !decision.ambiguous,
+		      "constellation delivery delay or ambiguity changed");
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, frame - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(memcmp(bits, decoded, mapping.data_bits_per_frame) == 0,
+			      "constellation payload changed across training/control");
+			delivered++;
+		}
+		for (size_t bit = decision.bits_ready ? mapping.data_bits_per_frame : 0u;
+		     bit < sizeof(decoded); ++bit)
+			CHECK(decoded[bit] == 0xa5, "constellation decoder wrote unowned payload");
+	}
+	CHECK(delivered == FRAMES, "constellation decoder lost or duplicated payload");
+	return true;
+}
+
+static bool test_compensated_channel(enum g711_law law)
+{
+	enum { DELAY = 59, FRAMES = V92_B1U_FRAMES + 128 + V92_PCM_RX_DELAY_FRAMES };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	int32_t previous = 0;
+	unsigned int received_frames = 0u;
+
+	CHECK(mapping_init(&mapping, law, 13u, false), "channel mapping failed");
+	struct v92_cpd_parameters cpd = mapping.cpd;
+
+	/* H(z) = 2 + z^-1/2, P1(z) = -z^-1/4, Z2(z) = z^-59/2.
+	 * Thus H Z2 / (1 - P1) = z^-59. Receive the actual filtered output
+	 * through H, discard its decision delay, then decode recovered u(n).
+	 * This isolates filter/channel composition, without a codec or timing
+	 * loop; the line owner must also handle those in a real connection. */
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	cpd.filter[V92_CPD_PRECODER_FEEDBACK] = (struct v92_cpd_filter){
+		.count = 1u, .coefficient = { -4096 },
+	};
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] = (struct v92_cpd_filter){
+		.count = DELAY + 1u, .coefficient = { [DELAY] = 16384 },
+	};
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
+	      "channel initialization failed");
+	for (unsigned int frame = 0u; received_frames < FRAMES; ++frame) {
+		struct v92_pcm_frame encoded;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+		source_bits(bits, mapping.data_bits_per_frame, frame);
+		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
+			      &encoded) == V92_PCM_FRAME_OK, "channel encoding failed");
+		for (unsigned int symbol = 0u;
+		     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS && received_frames < FRAMES; ++symbol) {
+			unsigned int time = frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol;
+			int32_t observed = 2 * encoded.v[symbol] + previous / 2;
+
+			previous = encoded.v[symbol];
+			if (time < DELAY)
+				continue;
+			unsigned int position = (time - DELAY) % V92_PCM_MAPPING_FRAME_SYMBOLS;
+
+			CHECK(observed >= INT16_MIN && observed <= INT16_MAX, "channel clipped u(n)");
+			samples[position] = (int16_t)observed;
+			if (position != V92_PCM_MAPPING_FRAME_SYMBOLS - 1u)
+				continue;
+			struct v92_pcm_frame_decision decision;
+			uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+
+			CHECK(v92_pcm_frame_decode(&receiver, samples, received_frames < V92_B1U_FRAMES,
+				      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+			      decision.squared_error <= 9u * V92_PCM_MAPPING_FRAME_SYMBOLS &&
+			      decision.bits_ready == (received_frames >= V92_PCM_RX_DELAY_FRAMES) &&
+			      !decision.ambiguous, "compensated channel decoding failed");
+			if (decision.bits_ready) {
+				source_bits(bits, mapping.data_bits_per_frame,
+					received_frames - V92_PCM_RX_DELAY_FRAMES);
+				CHECK(memcmp(decoded, bits, mapping.data_bits_per_frame) == 0,
+				      "compensated channel changed payload");
+			}
+			received_frames++;
+		}
+	}
+	return true;
+}
+
 static bool test_uncertain_level(enum g711_law law, uint8_t rate, int16_t level)
 {
 	struct v92_pcm_mapping mapping;
@@ -367,6 +516,35 @@ static bool test_rejection_and_training_evidence(void)
 	      "B1u hid damaged training or saturated metrics corrupted state");
 	CHECK(strcmp(v92_pcm_frame_result_name(V92_PCM_FRAME_NO_PATH), "no path") == 0,
 	      "missing no-path result name");
+	CHECK(v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
+	      "constellation initialization failed");
+	saved = receiver;
+	struct v92_pcm_mapping invalid_mapping = mapping;
+
+	invalid_mapping.data_bits_per_frame = 0u;
+	CHECK(v92_pcm_frame_rx_init_constellation(NULL, &mapping) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_init_constellation(&receiver, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_init_constellation(&receiver, &invalid_mapping) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      v92_pcm_frame_rx_refine_level(&receiver, &decision.frame, samples, 1, 2) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "constellation receiver accepted level refinement or changed on rejection");
+	receiver.observation = (enum v92_pcm_frame_observation)-1;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unknown observation coordinates accepted");
+	receiver = saved;
+	receiver.upstream_level = 1;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "constellation receiver accepted a gain");
+	receiver = saved;
+	receiver.minimum_level = 1;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "constellation receiver accepted minimum LU");
+	receiver = saved;
+	receiver.maximum_level = 1;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "constellation receiver accepted maximum LU");
+	receiver = saved;
+	CHECK(v92_pcm_frame_decode(&receiver, samples, true, bits, 36u, &decision) ==
+		      V92_PCM_FRAME_OK && decision.squared_error > 0u && !decision.bits_ready,
+	      "constellation B1u suppressed damaged-training evidence");
 	return true;
 }
 
@@ -375,6 +553,17 @@ int main(void)
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
 
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		static const uint8_t rates[] = { 1u, 13u, 19u };
+
+		if (!test_compensated_channel((enum g711_law)law))
+			return 1;
+		for (size_t rate = 0u; rate < sizeof(rates) / sizeof(rates[0]); ++rate) {
+			for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
+			     trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis) {
+				if (!test_constellation_coordinates((enum g711_law)law, rates[rate], trellis))
+					return 1;
+			}
+		}
 		for (size_t level = 0u; level < sizeof(levels) / sizeof(levels[0]); ++level) {
 			if (!test_uncertain_level((enum g711_law)law, 13u, levels[level]) ||
 			    !test_uncertain_level((enum g711_law)law, 19u, levels[level]))
