@@ -124,7 +124,7 @@ struct modem_test_case {
 	bool requires_exact_g711;
 	bool test_prelink;
 	bool test_retrain;
-	bool test_cleardown;
+	unsigned int cleardown_initiators;
 	bool raw_transport;
 	bool require_lapm;
 	bool require_v44;
@@ -500,9 +500,10 @@ static bool process_transmit_frame(
 			       ARRAY_LENGTH(endpoint->transmit_codewords),
 			       recorder) == MEDIA_OK;
 	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index)
-		if (endpoint->transmit[index] != decode_codeword(
-				law, endpoint->transmit_codewords[index]))
-			return false;
+		CHECK(endpoint->transmit[index] == decode_codeword(law, endpoint->transmit_codewords[index]),
+		      "exact media mismatch law=%u sample=%zu linear=%d octet=%u decoded=%d",
+		      law, index, endpoint->transmit[index], endpoint->transmit_codewords[index],
+		      decode_codeword(law, endpoint->transmit_codewords[index]));
 	endpoint->exact_frames++;
 	return recording_emit(
 		       recorder, RECORD_TX_LINE_PCM, RECORD_S16_NATIVE,
@@ -1609,9 +1610,10 @@ static bool exercise_low_speed_carrier_recovery(
 	return true;
 }
 
-static bool exercise_v34_cleardown(
+static bool exercise_cleardown(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
+	enum DP_ID id, unsigned int initiators,
 	enum media_codec codec, const struct media_recorder *recorder)
 {
 	enum { TEST_STATE_COMMAND_ONLINE = 6 };
@@ -1622,31 +1624,34 @@ static bool exercise_v34_cleardown(
 		struct integration_endpoint *endpoint = endpoints[index];
 		char command[] = "ATH0";
 
-		CHECK(modem_is_online(endpoint->modem, DP_V34) &&
+		CHECK(modem_is_online(endpoint->modem, id) &&
 		      endpoint->stops == 0u,
-		      "V.34 cleardown did not start on a live line");
+		      "cleardown did not start on a live line");
 		endpoint->output_count = 0u;
+		if (!(initiators & (1u << index)))
+			continue;
 		endpoint->modem->state = TEST_STATE_COMMAND_ONLINE;
 		endpoint->modem->command = 1;
 		CHECK(process_at_command(endpoint->modem, command) == 1 &&
 		      endpoint_drain(endpoint) && endpoint->output_count == 0u &&
 		      endpoint->modem->dp != NULL && endpoint->stops == 0u,
-		      "ATH0 completed before its V.34 line sequence");
+		      "ATH0 completed before its line sequence");
 	}
 	for (unsigned int frame = 0u; frame < 100u; ++frame) {
 		CHECK(process_sip_frame(caller, answerer, codec, recorder),
-		      "V.34 cleardown failed at the SIP media boundary");
+		      "cleardown failed at the SIP media boundary");
 		for (size_t index = 0; index < ARRAY_LENGTH(endpoints); ++index) {
 			struct integration_endpoint *endpoint = endpoints[index];
+			bool local = (initiators & (1u << index)) != 0u;
 
 			CHECK(endpoint_drain(endpoint) && endpoint->stops <= 1u &&
 			      (endpoint->stops == 0u ?
 				(endpoint->modem->dp != NULL &&
-				 endpoint->output_count == 0u) :
+				 (!local || endpoint->output_count == 0u)) :
 				(endpoint->modem->dp == NULL &&
 				 !endpoint->modem->started &&
-				 output_contains(endpoint, "OK") &&
-				 !output_contains(endpoint, "NO CARRIER"))),
+				 output_contains(endpoint, local ? "OK" : "NO CARRIER") &&
+				 (!local || !output_contains(endpoint, "NO CARRIER")))),
 			      "ATH0 final boundary frame=%u side=%zu stops=%zu "
 			      "dp=%p started=%d output=%.*s",
 			      frame, index, endpoint->stops,
@@ -1656,13 +1661,13 @@ static bool exercise_v34_cleardown(
 		}
 		if (caller->stops != 0u && answerer->stops != 0u) {
 			CHECK(frame > 2u,
-			      "V.34 ATH0 retained the old immediate teardown");
+			      "ATH0 retained the old immediate teardown");
 			completed = true;
 			break;
 		}
 	}
 	CHECK(completed,
-	      "V.34 ATH0 did not finish before the missing-peer safety deadline");
+	      "ATH0 did not finish before the missing-peer safety deadline");
 	return true;
 }
 
@@ -2044,7 +2049,7 @@ static bool run_media_call(
 	      (modem_ec_active_compression(caller.modem) == MODEM_EC_COMPRESSION_V44 &&
 	       modem_ec_active_compression(answerer.modem) == MODEM_EC_COMPRESSION_V44),
 	      "%s did not negotiate V.44 in both directions", test_case->name);
-	if (connected_id == DP_V92)
+	if (connected_id == DP_V92 && !test_case->raw_transport)
 		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
 		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->test_retrain) {
@@ -2124,9 +2129,9 @@ static bool run_media_call(
 		      "%s carrier loss did not honor the fragmented S10 boundary",
 		      test_case->name);
 	}
-	if (test_case->test_cleardown)
-		CHECK(exercise_v34_cleardown(
-			      &caller, &answerer, codec, &recorder),
+	if (test_case->cleardown_initiators)
+		CHECK(exercise_cleardown(
+			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),
 		      "%s did not complete protocol ATH0 cleardown", test_case->name);
 
 	endpoint_destroy(&answerer);
@@ -3818,7 +3823,7 @@ int main(void)
 			.answerer_rx_rate = 9600,
 			.training_frame_limit = 1500,
 			.automode = true,
-			.test_cleardown = true,
+			.cleardown_initiators = 3u,
 			.raw_transport = true,
 		},
 		{
@@ -3831,7 +3836,7 @@ int main(void)
 			.answerer_rx_rate = 9600,
 			.training_frame_limit = 1500,
 			.automode = true,
-			.test_cleardown = true,
+			.cleardown_initiators = 3u,
 			.require_lapm = true,
 		},
 		{
@@ -3891,7 +3896,39 @@ int main(void)
 		},
 		{
 			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex raw ATH0 cleardown",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.raw_transport = true,
+			.cleardown_initiators = 1u,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex raw ATH0 cleardown with digital caller",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.raw_transport = true,
+			.digital_caller = true,
+			.cleardown_initiators = 1u,
+		},
+		{
+			.id = DP_V92,
 			.name = "V.92 28000 PCM duplex LAPM rate exchange and retrain",
+			.cleardown_initiators = 1u,
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
 			.caller_tx_rate = 28000,
@@ -3906,6 +3943,7 @@ int main(void)
 		{
 			.id = DP_V92,
 			.name = "V.92 28000 PCM duplex LAPM rate exchange and retrain with digital caller",
+			.cleardown_initiators = 1u,
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
 			.caller_tx_rate = 28000,
@@ -3921,6 +3959,7 @@ int main(void)
 		{
 			.id = DP_V92,
 			.name = "V.92 28000 PCM duplex V.44 rate exchange",
+			.cleardown_initiators = 2u,
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000+DS=3,2\r",
 			.caller_tx_rate = 28000,
@@ -3936,6 +3975,7 @@ int main(void)
 		{
 			.id = DP_V92,
 			.name = "V.92 28000 PCM duplex V.44 rate exchange with digital caller",
+			.cleardown_initiators = 2u,
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000+DS=3,2\r",
 			.caller_tx_rate = 28000,

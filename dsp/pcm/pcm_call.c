@@ -582,6 +582,8 @@ static bool cleardown_is_active_owned(const struct pcm_call *call)
 bool pcm_call_is_disconnecting(const struct pcm_call *call)
 {
 	return call != NULL && (call->stage == PCM_CALL_CLOSED ||
+		(uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
+		 call->state.phase4.v92.cleardown_requested) ||
 		cleardown_is_active_owned(call));
 }
 
@@ -760,6 +762,9 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 {
 	const struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
 
+	if (state->cleardown_requested && (!call->v92_rate_renegotiation_active ||
+	    state->child == PCM_CALL_V92_PHASE4_E2U))
+		return false;
 	if (call->v92_rate_renegotiation_active &&
 	    (!v90_pcm_mapping_is_valid(&state->training_mapping) || state->training_mapping.law != call->law))
 		return false;
@@ -1363,9 +1368,8 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->failed || !call->peer_info0_stored ||
-	    cleardown_is_active_owned(call) ||
+	    pcm_call_is_disconnecting(call) ||
 	    call->stage == PCM_CALL_PHASE2 ||
-	    call->stage == PCM_CALL_CLOSED ||
 	    call->stage == PCM_CALL_RETRAIN_SILENCE)
 		return PCM_CALL_INVALID_STATE;
 	return begin_retrain(call, false);
@@ -1809,7 +1813,7 @@ static enum pcm_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct pcm_call *call)
 {
-	if (cleardown_is_active_owned(call))
+	if (pcm_call_is_disconnecting(call))
 		return false;
 	/* V.90 requires a modem to honor the peer's Tone A/B full-retrain
 	 * request during INFO1 recovery, final training, and online operation.
@@ -3017,11 +3021,31 @@ static enum pcm_call_result receive_v92_rate_request(
 	return PCM_CALL_OK;
 }
 
+static bool activate_v92_cleardown(struct pcm_call *call)
+{
+	struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+
+	if (!state->cleardown_requested || state->child != PCM_CALL_V92_PHASE4_CONTROL)
+		return true;
+	/* Keep receiving status during TRN2 so the ordinary training exit and
+	 * coder continuity remain intact. No CP or E2u can be committed first. */
+	if (call->local_role == V90_ANALOG_MODEM) {
+		struct v92_phase4_analog_station *station = &state->owner.analog.station;
+		return station->transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U ||
+			v92_phase4_analog_station_start_cleardown(station);
+	}
+	struct v92_phase4_digital_station *station = &state->owner.digital;
+	return station->transmit.stage == PCM_DOWNSTREAM_TX_TRN2D ||
+		v92_phase4_digital_station_start_cleardown(station);
+}
+
 static enum pcm_call_result sample_v92_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	bool prefix_sent = false;
+	if (!activate_v92_cleardown(call))
+		return PCM_CALL_INVALID_STATE;
 	if (call->state.phase4.v92.prefix_stage != PCM_CALL_V92_PREFIX_NONE) {
 		enum pcm_call_result result = transmit_v92_rate_prefix(
 			&call->state.phase4.v92, transmit_octet);
@@ -3244,8 +3268,24 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 
 	if (!pcm_call_is_valid(call))
 		return PCM_CALL_INVALID_ARGUMENT;
-	if (call->stage == PCM_CALL_CLOSED || cleardown_is_active_owned(call))
+	if (pcm_call_is_disconnecting(call))
 		return PCM_CALL_OK;
+	if (uses_pcm_upstream(call) && (pcm_call_is_online(call) ||
+	    (call->v92_rate_renegotiation_active && call->stage == PCM_CALL_PHASE4 &&
+	     call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_E2U &&
+	     !v92_phase4_control_is_ready(call)))) {
+		struct pcm_call next = *call;
+		if (next.stage == PCM_CALL_DATA_PATH) {
+			result = pcm_call_start_rate_renegotiation(&next);
+			if (result != PCM_CALL_OK)
+				return result;
+		}
+		next.state.phase4.v92.cleardown_requested = true;
+		if (!pcm_call_is_valid(&next))
+			return PCM_CALL_NUMERIC_FAILURE;
+		*call = next;
+		return PCM_CALL_OK;
+	}
 	if (uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
 	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
 		bool started = call->local_role == V90_ANALOG_MODEM ?
@@ -3525,6 +3565,8 @@ static enum pcm_call_result update_rate_renegotiation_deadline(
 	call->rate_renegotiation_deadline_remaining_samples--;
 	if (call->rate_renegotiation_deadline_remaining_samples != 0u)
 		return PCM_CALL_OK;
+	if (pcm_call_is_disconnecting(call))
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	/* V.90 9.6 bounds the response to 5000 ms plus two round-trip delays.
 	 * Use the same bounded recovery policy for PCM Ru/control/B1, not as
 	 * a purported V.92 normative timer. */
@@ -3538,6 +3580,8 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 	     result != PCM_CALL_SEQUENCE_MISMATCH) ||
 	    !rate_renegotiation_is_active_owned(call))
 		return result;
+	if (pcm_call_is_disconnecting(call))
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	/* Leave a broken committed rate exchange through the standards-defined
 	 * full-retrain path. */
 	return begin_retrain(call, false);
@@ -4031,8 +4075,6 @@ enum pcm_call_result pcm_call_octet(
 	}
 	result = recover_unusable_retrain_selection(call, result);
 	result = recover_rate_renegotiation_failure(call, result);
-	if (result == PCM_CALL_CLEARDOWN_COMPLETE)
-		complete_cleardown(call);
 	if (cleardown_is_active_owned(call)) {
 		call->b1_deadline_armed = false;
 		call->b1_deadline_remaining_samples = 0u;
@@ -4049,6 +4091,8 @@ enum pcm_call_result pcm_call_octet(
 		result = advance_b1_deadline(call);
 	if (result == PCM_CALL_OK && call->v92_rate_renegotiation_active)
 		result = update_rate_renegotiation_deadline(call);
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE)
+		complete_cleardown(call);
 	if (result != PCM_CALL_OK &&
 	    result != PCM_CALL_CLEARDOWN_COMPLETE &&
 	    result != PCM_CALL_V34_FALLBACK_READY)

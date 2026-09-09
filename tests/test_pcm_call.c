@@ -6664,6 +6664,128 @@ static bool v92_digital_rate_prefix_contracts(const struct pcm_call *online)
 	return true;
 }
 
+static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned initiators)
+{
+	struct v92_online_pair pair = *online;
+	struct pcm_call *calls[] = { &pair.analog, &pair.digital };
+	struct pcm_downstream_rx downstream;
+	struct v92_phase4_digital_rx upstream;
+	bool observing[2] = { false, false }, zero[2] = { false, false };
+	bool acknowledged[2] = { false, false }, closed[2] = { false, false };
+	bool expect_ack[2] = { false, false };
+	enum g711_law law = pair.analog.law;
+	unsigned tail = 0u;
+
+	for (unsigned role = 0; role < 2u; ++role) {
+		if (!(initiators & (1u << role)))
+			continue;
+		if (initiators == 3u)
+			CHECK(pcm_call_start_rate_renegotiation(calls[role]) == PCM_CALL_OK,
+			      "cleardown could not join an existing rate exchange");
+		CHECK(pcm_call_start_cleardown(calls[role]) == PCM_CALL_OK &&
+		      pcm_call_is_disconnecting(calls[role]) && !pcm_call_is_online(calls[role]),
+		      "PCM data cleardown did not enter rate exchange role %u", role);
+		struct pcm_call retained = *calls[role];
+		CHECK(pcm_call_start_cleardown(calls[role]) == PCM_CALL_OK &&
+		      pcm_call_start_retrain(calls[role]) == PCM_CALL_INVALID_STATE &&
+		      memcmp(calls[role], &retained, sizeof(retained)) == 0,
+		      "duplicate cleardown or ATO1 restarted entry");
+		/* No response is a bounded close, not another full retrain. */
+		retained.rate_renegotiation_deadline_remaining_samples = 1u;
+		struct pcm_call_observation observation;
+		uint8_t transmitted;
+		CHECK(pcm_call_octet(&retained, silence_octet(law), 0, &transmitted, &observation) ==
+			PCM_CALL_CLEARDOWN_COMPLETE && retained.stage == PCM_CALL_CLOSED &&
+		      pcm_call_is_valid(&retained), "unanswered cleardown restarted training");
+	}
+	for (unsigned clock = 0; clock < 24000u && tail < pair.wire.delay +
+	     V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + V92_RU_RX_FRAME_SYMBOLS; ++clock) {
+		uint8_t received[2], transmitted[2];
+		channel_receive(&pair.wire, &received[0], &received[1]);
+		for (unsigned role = 0; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			transmitted[role] = silence_octet(law);
+			struct v92_cleardown final = { 0 };
+			uint64_t sent = 0;
+			if (call->stage == PCM_CALL_PHASE4 &&
+			    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+				struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+				bool receiving = role != 0u || state->prefix_stage == PCM_CALL_V92_PREFIX_NONE ||
+					pcm_r_rx_is_complete(&state->prefix.analog.receive);
+				if (role == 0u) {
+					if (!observing[role] && receiving)
+						downstream = state->owner.analog.station.receive;
+					final = state->owner.analog.station.cleardown;
+					sent = state->owner.analog.station.transmitted_symbols;
+				} else {
+					if (!observing[role])
+						upstream = state->owner.digital.receive;
+					final = state->owner.digital.cleardown;
+					sent = state->owner.digital.transmit.transmitted_symbols;
+				}
+				observing[role] |= receiving;
+			}
+			/* Independent decoders inspect the actual received wire. A host
+			 * stop or a transmitter's internal zero-rate flag is insufficient. */
+			if (observing[role] && role == 0u) {
+				struct pcm_downstream_event event;
+				enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(
+					&downstream, received[role], &event);
+				if (result == PCM_DOWNSTREAM_RX_CPD && event.control.record.cpd.frame_result == V92_CPD_OK) {
+					zero[role] |= event.control.record.cpd.parameters.data_rate_number == 0u;
+					acknowledged[role] |= event.control.record.cpd.parameters.acknowledges_cpu;
+				}
+			} else if (observing[role]) {
+				struct v92_control_event event;
+				enum v92_phase4_digital_rx_result result = v92_phase4_digital_rx_sample(
+					&upstream, decode_octet(law, received[role]), &event);
+				if (result == V92_PHASE4_DIGITAL_RX_EVENT && event.type == V92_CONTROL_EVENT_CPU) {
+					zero[role] |= event.record.cpu.parameters.data_rate_number == 0u;
+					acknowledged[role] |= event.record.cpu.parameters.acknowledges_cpd;
+				}
+			}
+			/* A legal 100 ms initiator timeout may precede the peer's
+			 * complete response. Keep recording that final wire tail. */
+			if (closed[role])
+				continue;
+			CHECK(!pcm_call_phase4_is_ready(call), "cleardown reached B1");
+			enum pcm_call_result result;
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				struct pcm_call_data_event event;
+				result = pcm_call_data_octet(call, received[role], decode_octet(law, received[role]),
+					NULL, &transmitted[role], &event);
+			} else {
+				struct pcm_call_observation observation;
+				result = pcm_call_octet(call, received[role], decode_octet(law, received[role]),
+					&transmitted[role], &observation);
+			}
+			if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+				CHECK(final.active && final.cp_end && sent >= final.cp_end &&
+				      (!final.peer_requested || (final.acknowledgement_end && sent >= final.acknowledgement_end)) &&
+				      ((final.initiator && final.acknowledged) ||
+				       sent >= (final.initiator ? final.cp_end : final.acknowledgement_end) +
+					800u + (final.initiator ? final.round_trip_delay : (final.round_trip_delay + 1u) / 2u)),
+				      "cleardown skipped zero CP or line delay role %u", role);
+				expect_ack[1u - role] = final.peer_requested;
+				closed[role] = true;
+			} else {
+				CHECK(result == PCM_CALL_OK && call->stage != PCM_CALL_RETRAIN_SILENCE,
+				      "PCM cleardown law %u mask %u role %u clock %u failed: %s stage %u",
+				      law, initiators, role, clock, pcm_call_result_name(result), call->stage);
+			}
+			CHECK(pcm_call_is_valid(call), "cleardown state invalid");
+		}
+		channel_transmit(&pair.wire, transmitted[0], transmitted[1]);
+		if (closed[0] && closed[1])
+			tail++;
+	}
+	CHECK(closed[0] && closed[1] && zero[0] && zero[1] &&
+	      (!expect_ack[0] || acknowledged[0]) && (!expect_ack[1] || acknowledged[1]),
+	      "PCM cleardown incomplete law %u mask %u closed %u/%u zero %u/%u ack %u/%u",
+	      law, initiators, closed[0], closed[1], zero[0], zero[1], acknowledged[0], acknowledged[1]);
+	return true;
+}
+
 static bool test_v92_rate_request(void)
 {
 	const unsigned rates[] = { 1u, 19u };
@@ -6686,6 +6808,8 @@ static bool test_v92_rate_request(void)
 			CHECK(v92_analog_rate_prefix_contracts(&pair.analog), "analogue rate prefix failed");
 			CHECK(v92_analog_remote_rd(&pair.analog), "remote Rd response failed");
 			CHECK(v92_digital_rate_prefix_contracts(&pair.digital), "digital rate prefix failed");
+			for (unsigned initiators = 1u; initiators <= 3u; ++initiators)
+				CHECK(v92_data_cleardown(&pair, initiators), "PCM data cleardown failed");
 			CHECK(pcm_call_start_rate_renegotiation(NULL) == PCM_CALL_INVALID_ARGUMENT,
 			      "null rate request accepted");
 			for (unsigned epoch = 0; epoch < 5u; ++epoch) {

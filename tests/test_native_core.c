@@ -341,10 +341,14 @@ static int process_hangup_g711(
 {
 	int result = process_retrain_dp(datapump, receive, transmit, count);
 
-	(void)law;
 	(void)receive_codewords;
-	/* Negative zero must survive the final exact PCM fragment. */
-	memset(transmit_codewords, 0x7f, count);
+	/* Preserve the signed minimum-magnitude codeword through the last
+	 * datapump fragment, including PCMU's otherwise lost negative zero. */
+	uint8_t octet = law == G711_LAW_PCMA ? 0x55 : 0x7f;
+	memset(transmit_codewords, octet, count);
+	for (int index = 0; index < count; ++index)
+		((int16_t *)transmit)[index] = law == G711_LAW_PCMA ?
+			g711_decode_pcma(octet) : g711_decode_pcmu(octet);
 	*exact_output = true;
 	return result;
 }
@@ -461,12 +465,15 @@ static int count_hangup_driver_stop(struct modem *modem)
 enum ath0_test_completion {
 	ATH0_ACKNOWLEDGED,
 	ATH0_TIMED_OUT,
+	ATH0_SIMULTANEOUS,
 	ATH0_REMOTE_END,
 	ATH0_RESET,
+	PEER_DISC,
+	PEER_DISC_TIMEOUT,
 	HANGUP_WITHOUT_COMMAND,
 };
 
-static bool run_ath0_cleardown(enum ath0_test_completion completion)
+static bool run_ath0_cleardown(enum ath0_test_completion completion, enum g711_law law)
 {
 	enum {
 		TEST_STATE_MODEM_IDLE = 1,
@@ -506,8 +513,9 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	char command[] = "ATH0";
 	int result_pipe[2];
 	char result_text[32];
+	bool peer = completion == PEER_DISC || completion == PEER_DISC_TIMEOUT;
 	const char *expected_result =
-		completion == ATH0_RESET || completion == HANGUP_WITHOUT_COMMAND ?
+		peer || completion == ATH0_RESET || completion == HANGUP_WITHOUT_COMMAND ?
 			"NO CARRIER\r\n" : "OK\r\n";
 
 	memset(&retrain_dp, 0, sizeof(retrain_dp));
@@ -540,6 +548,24 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	modem->hook = MODEM_HOOK_OFF;
+	if (peer) {
+		uint8_t serialized[32];
+		response_bytes[0] = modem->ec.lapm.rsp_addr;
+		response_bytes[1] = 0x53;
+		modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &response);
+		CHECK(modem->state == TEST_STATE_DP_DISC && modem->ec.lapm.state == 0 &&
+		      modem->get_bits == modem_hdlc_get_bits && modem->put_bits == modem_hdlc_put_bits &&
+		      retrain_dp.hangup_calls == 0 && hangup_driver_stop_calls == 0 &&
+		      modem->sample_timer > modem->count &&
+		      modem->ec.lapm.tx_ctrl != modem->ec.lapm.ctrl_list &&
+		      modem->ec.lapm.tx_ctrl->buf[1] == UA_CONTROL,
+		      "peer DISC lost its queued UA or prematurely cleared the modem");
+		CHECK(modem_hdlc_get_bits(modem, 8, serialized, sizeof(serialized)) == sizeof(serialized) &&
+		      modem->packer.hdlc.tx_frame == NULL &&
+		      modem->ec.lapm.tx_ctrl == modem->ec.lapm.ctrl_list,
+		      "peer UA did not drain through the retained HDLC serializer");
+		goto wait_datapump;
+	}
 	if (completion == ATH0_ACKNOWLEDGED) {
 		uint8_t poll_bytes[] = { modem->ec.lapm.rsp_addr, 0x01, 0x01 };
 		frame_t poll = { .buf = poll_bytes, .count = sizeof(poll_bytes) };
@@ -638,6 +664,23 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 	      "ATH0 did not queue LAPM DISC");
 	modem->packer.hdlc.tx_complete(
 		modem->packer.hdlc.framer, disconnect);
+	if (completion == ATH0_SIMULTANEOUS) {
+		unsigned long deadline = modem->sample_timer;
+		uint8_t serialized[32];
+
+		response_bytes[0] = modem->ec.lapm.rsp_addr;
+		response_bytes[1] = 0x53;
+		modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &response);
+		CHECK(modem->state == TEST_STATE_EC_DISC &&
+		      modem->sample_timer == deadline && retrain_dp.hangup_calls == 0 &&
+		      modem->ec.lapm.tx_ctrl != modem->ec.lapm.ctrl_list &&
+		      modem->ec.lapm.tx_ctrl->buf[1] == UA_CONTROL,
+		      "simultaneous DISC lost its UA or changed the local deadline");
+		CHECK(modem_hdlc_get_bits(modem, 8, serialized, sizeof(serialized)) == sizeof(serialized) &&
+		      modem->packer.hdlc.tx_frame == NULL &&
+		      modem->ec.lapm.tx_ctrl == modem->ec.lapm.ctrl_list,
+		      "simultaneous DISC did not serialize its UA before cleardown");
+	}
 	if (completion == ATH0_ACKNOWLEDGED) {
 		response_bytes[0] = modem->ec.lapm.cmd_addr;
 		response_bytes[1] = UA_CONTROL;
@@ -659,11 +702,12 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		      modem->hook == MODEM_HOOK_OFF &&
 		      modem->sample_timer > modem->count,
 	      "LAPM UA did not begin datapump cleardown");
+wait_datapump:
 	modem_process(modem, receive, transmit, ARRAY_LENGTH(receive));
 	CHECK(modem->state == TEST_STATE_DP_DISC &&
 		      hangup_driver_stop_calls == 0,
 	      "ATH0 released the call before datapump completion");
-	if (completion == ATH0_TIMED_OUT) {
+	if (completion == ATH0_TIMED_OUT || completion == PEER_DISC_TIMEOUT) {
 		unsigned int samples = ARRAY_LENGTH(receive);
 
 		while (modem->started && samples < MODEM_RATE * 4) {
@@ -675,13 +719,17 @@ static bool run_ath0_cleardown(enum ath0_test_completion completion)
 		goto stopped;
 	}
 	retrain_dp.process_result = DPSTAT_DISCONNECT;
-	modem_process_g711(modem, G711_LAW_PCMU, receive_codewords, receive,
+	modem_process_g711(modem, law, receive_codewords, receive,
 		transmit_codewords, transmit, ARRAY_LENGTH(receive), &exact_output);
 	CHECK(modem->state == TEST_STATE_DP_DISC && modem->process == NULL &&
 		      hangup_driver_stop_calls == 0 && exact_output &&
-		      transmit_codewords[MODEM_FRAG - 1] == 0x7f &&
-		      transmit_codewords[MODEM_FRAG] == 0xff,
+		      transmit_codewords[MODEM_FRAG - 1] == (law == G711_LAW_PCMA ? 0x55 : 0x7f) &&
+		      transmit_codewords[MODEM_FRAG] == (law == G711_LAW_PCMA ? 0xd5 : 0xff),
 	      "datapump completion did not leave its final media frame to drain");
+	for (size_t index = 0; index < ARRAY_LENGTH(transmit); ++index)
+		CHECK(transmit[index] == (law == G711_LAW_PCMA ?
+			g711_decode_pcma(transmit_codewords[index]) : g711_decode_pcmu(transmit_codewords[index])),
+		      "final exact-media fragment disagreed with its codeword at %zu", index);
 	CHECK(read(result_pipe[0], result_text, sizeof(result_text)) == -1 &&
 	      errno == EAGAIN,
 	      "ATH0 emitted a result before the final media frame drained");
@@ -716,11 +764,11 @@ stopped:
 
 static bool test_ath0_drains_link_cleardown(void)
 {
-	return run_ath0_cleardown(ATH0_ACKNOWLEDGED) &&
-	       run_ath0_cleardown(ATH0_TIMED_OUT) &&
-	       run_ath0_cleardown(ATH0_REMOTE_END) &&
-	       run_ath0_cleardown(ATH0_RESET) &&
-	       run_ath0_cleardown(HANGUP_WITHOUT_COMMAND);
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum ath0_test_completion completion = ATH0_ACKNOWLEDGED;
+		     completion <= HANGUP_WITHOUT_COMMAND; ++completion)
+			CHECK(run_ath0_cleardown(completion, law), "ATH0 law %u case %u failed", law, completion);
+	return true;
 }
 
 static struct {

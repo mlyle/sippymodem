@@ -79,6 +79,7 @@ enum MODEM_MODE {
 #define STATUS_EC_RELEASE 0x2000 // 18
 #define STATUS_EC_ERROR   0x4000 // 19
 #define STATUS_RETRAIN_COMPLETE 0x8000
+#define STATUS_EC_PEER_DISC 0x10000
 
 enum modem_ec_compression {
 	MODEM_EC_COMPRESSION_NONE = 0,

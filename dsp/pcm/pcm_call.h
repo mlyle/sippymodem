@@ -271,6 +271,9 @@ struct pcm_call_v92_phase4_state {
 	enum v92_constellation_size rate_renegotiation_constellation;
 	enum pcm_call_v92_rate_prefix_stage prefix_stage;
 	enum pcm_call_v92_phase4_child child;
+	/* Retain a local hangup through Ru/Rd and TRN2. The control station
+	 * takes over at the first complete status-record boundary. */
+	bool cleardown_requested;
 };
 
 union pcm_call_phase4_state {
@@ -428,8 +431,10 @@ enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call);
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
  * V.92 PCM-upstream Phase 4 control can also be cancelled with zero-rate CP.
- * Data-mode PCM upstream still lacks the aligned rate-request entry and is
- * rejected here. Phase 4 cancellation continues through pcm_call_octet().
+ * Online PCM upstream first enters a nonsilent Ru/Rd rate exchange. The
+ * accepted frame drains before the request; Phase 4 cancellation continues
+ * through pcm_call_octet(). An unanswered or broken entry closes rather than
+ * starting another retrain. Pre-control startup is still rejected.
  * A completed local or peer cleardown is idempotent and cannot retrain. */
 enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 

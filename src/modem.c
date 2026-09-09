@@ -668,6 +668,26 @@ void modem_update_status(struct modem *m, unsigned status)
 		m->retrain_pending = 0;
 		modem_report_result(m, RESULT_CONNECT);
 		break;
+	case STATUS_EC_PEER_DISC:
+		m->result_code = RESULT_NOCARRIER;
+		/* With simultaneous DISC, both ends have queued UA. Keep the
+		 * local disconnect deadline: it gives UA time to drain, then
+		 * starts our cleardown instead of waiting for the peer forever. */
+		if (m->state == STATE_EC_DISC)
+			break;
+		if (m->state != STATE_DP_DISC) {
+			modem_set_state(m, STATE_DP_DISC);
+			/* The received DISC has queued UA. Do not clear its framer
+			 * or initiate a rate exchange ahead of its closing flag.
+			 * Continue media to answer the peer's protocol cleardown;
+			 * a missing peer still cannot hold the line indefinitely. */
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			m->modem_info &= ~TIOCM_CD;
+			schedule_modem_timer(m, run_modem_stop,
+				modem_timeout_samples(m, MODEM_DP_DISCONNECT_TIMEOUT_MS));
+		}
+		break;
 	case STATUS_EC_RELEASE:
 	case STATUS_EC_ERROR:
 		MODEM_DBG("--> EC UNLINK\n");
@@ -928,10 +948,16 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			break;
 	}
 	if(count) {
-		memset(out,0,count<<MFMT_SHIFT(m->format));
-		if (all_exact)
-			memset(transmit_codewords,
-			       law == G711_LAW_PCMA ? 0xd5 : 0xff, count);
+		if (all_exact) {
+			uint8_t silence = law == G711_LAW_PCMA ? 0xd5 : 0xff;
+			/* G.711's smallest positive A-law level is 8, not zero. */
+			int16_t linear = law == G711_LAW_PCMA ? 8 : 0;
+			memset(transmit_codewords, silence, count);
+			for (int index = 0; index < count; ++index)
+				((int16_t *)out)[index] = linear;
+		} else {
+			memset(out,0,count<<MFMT_SHIFT(m->format));
+		}
 	}
 	if (exact_output != NULL)
 		*exact_output = all_exact;

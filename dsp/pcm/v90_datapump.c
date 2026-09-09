@@ -663,13 +663,16 @@ static void mute_output(
 {
 	uint8_t silence = law == G711_LAW_PCMA ?
 				  g711_encode_pcma(0) : g711_encode_pcmu(0);
+	int16_t linear = law == G711_LAW_PCMA ?
+		g711_decode_pcma(silence) : g711_decode_pcmu(silence);
 
 	if (count <= 0 || count > MODEM_FRAG)
 		return;
 	if (codewords != NULL)
 		memset(codewords, silence, (size_t)count);
 	if (samples != NULL)
-		memset(samples, 0, (size_t)count * sizeof(*samples));
+		for (int index = 0; index < count; ++index)
+			samples[index] = linear;
 }
 
 static enum v90_host_echo_mode host_echo_mode(

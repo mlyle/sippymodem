@@ -324,7 +324,8 @@ static int16_t returned_echo(
 	return add_s16(sample);
 }
 
-static bool check_cleardown(struct dp *dp, enum g711_law law)
+static bool check_cleardown(struct dp *dp, enum g711_law law,
+	unsigned int timeout_seconds)
 {
 	uint8_t input[MODEM_FRAG];
 	int16_t samples[MODEM_FRAG] = { 0 };
@@ -336,7 +337,7 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 	CHECK(dp->op->hangup != NULL && dp->op->hangup(dp) == 0 &&
 	      dp->op->hangup(dp) == 0,
 	      "PCM hangup did not start idempotently");
-	for (; elapsed < 2u * MODEM_RATE; elapsed += MODEM_FRAG) {
+	for (; elapsed < timeout_seconds * MODEM_RATE; elapsed += MODEM_FRAG) {
 		uint8_t output[MODEM_FRAG];
 		int16_t generated[MODEM_FRAG];
 		bool exact = false;
@@ -349,10 +350,7 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 		      "PCM cleardown failed after %u samples, status %d",
 		      elapsed, result);
 		for (unsigned int index = 0u; index < MODEM_FRAG; ++index) {
-			CHECK(generated[index] == decode(law, output[index]) ||
-			      (result == DPSTAT_DISCONNECT &&
-			       generated[index] == 0 &&
-			       output[index] == encode(law, 0)),
+			CHECK(generated[index] == decode(law, output[index]),
 			      "PCM cleardown lost exact network character");
 			signaling |= output[index] != encode(law, 0);
 		}
@@ -375,7 +373,8 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 					  MODEM_FRAG, &exact) == DPSTAT_DISCONNECT && exact,
 		      "closed datapump lost ownership or attempted to restart");
 		for (unsigned int index = 0u; index < MODEM_FRAG; ++index)
-			CHECK(output[index] == encode(law, 0) && generated[index] == 0,
+			CHECK(output[index] == encode(law, 0) &&
+			      generated[index] == decode(law, output[index]),
 			      "closed datapump generated further output");
 	}
 	return true;
@@ -461,7 +460,7 @@ static bool run_training_cleardown(
 			remaining -= (size_t)count;
 		}
 	}
-	CHECK(check_cleardown(pumps[initiator], law) &&
+	CHECK(check_cleardown(pumps[initiator], law, 2u) &&
 	      bits[0].supplied_bits == 0u && bits[1].supplied_bits == 0u,
 	      "training cleardown did not close before host data (near deadline=%u)",
 	      near_deadline);
@@ -799,22 +798,22 @@ static bool run_pcm_pair(
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
 	if (protocol == DP_V90 || pcm_upstream_max_drn == 0) {
-		uint64_t analog_supplied = analog_bits.supplied_bits;
-		uint64_t digital_supplied = digital_bits.supplied_bits;
-
 		CHECK(!v90_datapump_start_rate_renegotiation(analog_dp) &&
 		      !v90_datapump_start_rate_renegotiation(digital_dp),
 		      "non-PCM-upstream call accepted a V.92 rate exchange");
-		CHECK(check_cleardown(analog_dp, law) && check_cleardown(digital_dp, law) &&
+	}
+	{
+		uint64_t analog_supplied = analog_bits.supplied_bits;
+		uint64_t digital_supplied = digital_bits.supplied_bits;
+		/* Withhold the peer after hangup. PCM upstream must first bound
+		 * an unanswered Ru/Rd entry; conventional upstream sends CP/MP
+		 * directly. Neither path may consume more host payload. */
+		unsigned int timeout = pcm_upstream_max_drn != 0 ? 6u : 2u;
+		CHECK(check_cleardown(analog_dp, law, timeout) &&
+		      check_cleardown(digital_dp, law, timeout) &&
 		      analog_supplied == analog_bits.supplied_bits &&
 		      digital_supplied == digital_bits.supplied_bits,
-		      "V.90 cleardown consumed new host payload");
-	} else {
-		/* V.92 Amd.1 9.11 specifies zero-rate CPu/CPd, not V.90 CP/MP.
-		 * Keep unsupported cleardown explicit until that exchange lands. */
-		CHECK(operations->hangup(analog_dp) != 0 &&
-		      operations->hangup(digital_dp) != 0,
-		      "V.92 incorrectly accepted a conventional cleardown");
+		      "PCM cleardown failed or consumed new host payload");
 	}
 	CHECK(operations->delete(analog_dp) == 0 &&
 	      operations->delete(digital_dp) == 0 &&

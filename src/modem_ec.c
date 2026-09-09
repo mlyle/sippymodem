@@ -1380,10 +1380,14 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 			  discard unacked I frames, reset all  */
 			l->state = LAPM_IDLE;
 			reset_lapm_sequence(l);
-			TX_UA(l,FRAME_U_PF(f));
 			T401_STOP(l);
-			// TBD notify CF
-			modem_update_status(l->modem,STATUS_EC_RELEASE);
+			if (TX_UA(l,FRAME_U_PF(f)) != 0) {
+				modem_update_status(l->modem, STATUS_EC_ERROR);
+				return -1;
+			}
+			/* UA is queued, not yet serialized. Keep HDLC and the modem
+			 * line alive for that response and the peer's cleardown. */
+			modem_update_status(l->modem, STATUS_EC_PEER_DISC);
 		}
 		break;
 	case FRAME_U_XID:
