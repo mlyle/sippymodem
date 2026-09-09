@@ -46,6 +46,8 @@ struct v92_phase4_digital_station {
 	struct pcm_downstream_tx transmit;
 	struct v92_phase4_cpd_tx initial_cpd;
 	struct v92_upstream_plan upstream_plan;
+	/* During renegotiation this initially retains the preceding mapping,
+	 * without acknowledging it or setting cpu_received for the new exchange. */
 	struct v92_cpu_parameters cpu;
 	struct v92_suvu_parameters suvu;
 	struct v92_cleardown cleardown;
@@ -88,6 +90,16 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	const struct v92_suvd_parameters *suvd,
 	const struct v92_cpd_parameters *cpd,
 	uint16_t round_trip_delay_samples);
+
+/* Reuse the control owner after Ru-bar. The caller supplies the independently
+ * clocked post-Rd TRN2d/SUVd transmitter and the preceding complete CPd/plan
+ * and CPu mapping. A fresh SUVu and CPu/CPus are still required; prior
+ * acknowledgements are discarded. This path does not request silence. */
+enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
+	struct v92_phase4_digital_station *station, const struct v92_ru_line_rx *ru,
+	const struct pcm_downstream_tx *downstream,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan,
+	const struct v92_cpu_parameters *cpu, uint16_t round_trip_delay_samples);
 
 bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station);

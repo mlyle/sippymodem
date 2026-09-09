@@ -164,9 +164,11 @@ static bool owned_state_is_valid(
 	       (station->suvu_received ?
 		v92_suvu_parameters_are_valid(&station->suvu) :
 		suvu_storage_is_empty(station)) &&
-	       (station->cpu_received ?
+	       (station->cpu_received || v92_phase4_digital_rx_is_renegotiating(&station->receive) ?
 		(v92_cpu_parameters_are_valid(&station->cpu) &&
-		 station->cpu.law == station->transmit.encoder.mapping.law) :
+		 station->cpu.data_rate_number != 0u &&
+		 station->cpu.law == station->transmit.encoder.mapping.law &&
+		 (!station->cpu.acknowledges_cpd || station->cpu_received)) :
 		cpu_storage_is_empty(station)) &&
 	       station->peer_acknowledged_cpd ==
 		((station->suvu_received &&
@@ -219,19 +221,14 @@ bool v92_phase4_digital_station_start_cleardown(
 	return true;
 }
 
-enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
-	struct v92_phase4_digital_station *station,
-	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
-	enum v92_constellation_size constellation,
+static enum v92_phase4_digital_station_result initialize_downstream(
+	struct v92_phase4_digital_station *initialized,
 	const struct pcm_downstream_tx *downstream,
 	const struct v92_suvd_parameters *suvd,
 	const struct v92_cpd_parameters *cpd,
 	uint16_t round_trip_delay_samples)
 {
-	struct v92_phase4_digital_station initialized = { 0 };
-
-	if (station == NULL || receive_handoff == NULL || downstream == NULL ||
-	    cpd == NULL || suvd == NULL)
+	if (downstream == NULL || cpd == NULL || suvd == NULL)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (!pcm_downstream_tx_is_valid(downstream) ||
 	    downstream->protocol != PCM_PROTOCOL_V92 ||
@@ -244,20 +241,75 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	    !v92_cpd_parameters_are_valid(cpd) ||
 	    cpd->acknowledges_cpu)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
-	if (v92_phase4_digital_rx_init(
-		    &initialized.receive, receive_handoff, constellation) !=
-	    V92_PHASE4_DIGITAL_RX_OK)
-		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
-	initialized.transmit = *downstream;
-	initialized.round_trip_delay_samples = round_trip_delay_samples;
+	initialized->transmit = *downstream;
+	initialized->round_trip_delay_samples = round_trip_delay_samples;
 	if (!v92_phase4_cpd_tx_init(
-		    &initialized.initial_cpd, downstream, cpd))
+		    &initialized->initial_cpd, downstream, cpd))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	if (downstream->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
 	    downstream->control_bit_index == 0u)
-		initialized.transmit_stage =
+		initialized->transmit_stage =
 			V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD;
-	initialized.request_silence = suvd->request_silence;
+	initialized->request_silence = suvd->request_silence;
+	if (!v92_phase4_digital_station_is_valid(initialized))
+		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
+	return V92_PHASE4_DIGITAL_STATION_OK;
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
+	struct v92_phase4_digital_station *station,
+	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
+	enum v92_constellation_size constellation,
+	const struct pcm_downstream_tx *downstream,
+	const struct v92_suvd_parameters *suvd,
+	const struct v92_cpd_parameters *cpd, uint16_t round_trip_delay_samples)
+{
+	struct v92_phase4_digital_station initialized = { 0 };
+
+	if (station == NULL || receive_handoff == NULL)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (v92_phase4_digital_rx_init(&initialized.receive, receive_handoff, constellation) !=
+	    V92_PHASE4_DIGITAL_RX_OK)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
+	enum v92_phase4_digital_station_result result = initialize_downstream(
+		&initialized, downstream, suvd, cpd, round_trip_delay_samples);
+	if (result != V92_PHASE4_DIGITAL_STATION_OK)
+		return result;
+	*station = initialized;
+	return V92_PHASE4_DIGITAL_STATION_OK;
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
+	struct v92_phase4_digital_station *station, const struct v92_ru_line_rx *ru,
+	const struct pcm_downstream_tx *downstream,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan,
+	const struct v92_cpu_parameters *cpu, uint16_t round_trip_delay_samples)
+{
+	struct v92_phase4_digital_station initialized = { 0 };
+	struct v92_cpd_parameters selected;
+	const struct v92_suvd_parameters suvd = { 0 };
+
+	if (station == NULL || ru == NULL || downstream == NULL || cpd == NULL ||
+	    plan == NULL || cpu == NULL)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (!v92_upstream_plan_is_valid(plan) || !v92_cpu_parameters_are_valid(cpu) ||
+	    !v92_cpd_parameters_are_valid(cpd) || !cpu->data_rate_number || !cpd->data_rate_number ||
+	    v92_phase4_digital_rx_init_after_ru(&initialized.receive, ru) != V92_PHASE4_DIGITAL_RX_OK)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
+	initialized.cpu = *cpu;
+	initialized.cpu.acknowledges_cpd = false;
+	initialized.upstream_plan = *plan;
+	selected = *cpd;
+	selected.acknowledges_cpu = false;
+	enum v92_phase4_digital_station_result result = initialize_downstream(
+		&initialized, downstream, &suvd, &selected, round_trip_delay_samples);
+	if (result != V92_PHASE4_DIGITAL_STATION_OK)
+		return result;
+	/* Reentry reuses the previous channel selection. Do not wait for a new
+	 * 12000-symbol measurement that the peer need not send during RRN. */
+	if (!initialized.transmit.control_configured &&
+	    pcm_downstream_tx_start_suvd(&initialized.transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	if (!v92_phase4_digital_station_is_valid(&initialized))
 		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
 	*station = initialized;
@@ -294,6 +346,26 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstrea
 	return V92_PHASE4_DIGITAL_STATION_OK;
 }
 
+static bool accept_cpu(struct v92_phase4_digital_station *station,
+		       const struct v92_cpu_parameters *cpu)
+{
+	if (!v92_cpu_parameters_are_valid(cpu) || cpu->law != station->transmit.encoder.mapping.law)
+		return false;
+	if (!station->suvu_received)
+		return true;
+	if (!station->cpu_received) {
+		station->cpu = *cpu;
+		station->cpu_received = true;
+	} else {
+		if (!cpu_selection_equal(&station->cpu, cpu) ||
+		    (station->cpu.acknowledges_cpd && !cpu->acknowledges_cpd))
+			return false;
+		station->cpu.acknowledges_cpd |= cpu->acknowledges_cpd;
+	}
+	station->peer_acknowledged_cpd = station->suvu.acknowledges_cpd || station->cpu.acknowledges_cpd;
+	return true;
+}
+
 static bool accept_event(
 	struct v92_phase4_digital_station *station,
 	const struct v92_control_event *event)
@@ -325,36 +397,23 @@ static bool accept_event(
 			 station->cpu.acknowledges_cpd);
 		return true;
 	case V92_CONTROL_EVENT_CPU:
-		if (event->record.cpu.frame_result != V92_CPU_OK ||
-		    !v92_cpu_parameters_are_valid(&event->record.cpu.parameters) ||
-		    event->record.cpu.parameters.law !=
-			    station->transmit.encoder.mapping.law)
+		return event->record.cpu.frame_result == V92_CPU_OK &&
+			accept_cpu(station, &event->record.cpu.parameters);
+	case V92_CONTROL_EVENT_CPUS: {
+		/* Table 24 changes only the rate and acknowledgement. Initial
+		 * training has no preceding mapping, so still requires long CPu. */
+		if (!v92_phase4_digital_rx_is_renegotiating(&station->receive) ||
+		    event->record.cpus.frame_result != V92_CPU_OK)
 			return false;
-		if (!station->suvu_received)
-			return true;
-		if (!station->cpu_received) {
-			station->cpu = event->record.cpu.parameters;
-			station->cpu_received = true;
-		} else {
-			if (!cpu_selection_equal(
-				    &station->cpu,
-				    &event->record.cpu.parameters) ||
-			    (station->cpu.acknowledges_cpd &&
-			     !event->record.cpu.parameters.acknowledges_cpd))
-				return false;
-			station->cpu.acknowledges_cpd |=
-				event->record.cpu.parameters.acknowledges_cpd;
-		}
-		station->peer_acknowledged_cpd =
-			station->suvu.acknowledges_cpd ||
-			station->cpu.acknowledges_cpd;
-		return true;
+		struct v92_cpu_parameters cpu = station->cpu;
+		cpu.data_rate_number = event->record.cpus.parameters.data_rate_number;
+		cpu.acknowledges_cpd = event->record.cpus.parameters.acknowledges_cpd;
+		return accept_cpu(station, &cpu);
+	}
 	case V92_CONTROL_EVENT_SUVU_REJECTED:
 	case V92_CONTROL_EVENT_CPU_REJECTED:
 	case V92_CONTROL_EVENT_CPUS_REJECTED:
 		return true;
-	/* Initial training requires the full downstream mapping, not CPus. */
-	case V92_CONTROL_EVENT_CPUS:
 	case V92_CONTROL_EVENT_SUVD:
 	case V92_CONTROL_EVENT_CPD:
 	case V92_CONTROL_EVENT_SUVD_REJECTED:
@@ -410,6 +469,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	if (!station->peer_acknowledged_cpd &&
 	    station->transmit_stage == V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
 	    (event.type == V92_CONTROL_EVENT_CPU ||
+	     event.type == V92_CONTROL_EVENT_CPUS ||
 	     event.type == V92_CONTROL_EVENT_SUVU) &&
 	    station->transmit.transmitted_symbols / V90_CP_FRAME_INTERVALS >=
 		    station->status_start_frame &&

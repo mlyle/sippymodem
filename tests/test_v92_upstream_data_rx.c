@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
+#include <pcm_downstream_rx.h>
 #include <v92_cpd_direct.h>
 #include <v92_cpd_channel.h>
 #include <v92_data_quality.h>
 #include <v92_e2u_rx.h>
+#include <v92_phase4_digital_station.h>
 #include <v92_phase4_record_tx.h>
 #include <v92_ru_line_rx.h>
 #include <v92_upstream_control_line_rx.h>
@@ -857,6 +859,122 @@ static bool test_rate_request_contracts(const struct v92_upstream_rx *handoff)
 	return true;
 }
 
+struct rate_exchange {
+	struct v92_phase4_digital_station station;
+	struct pcm_downstream_rx peer;
+	unsigned zero_acknowledgements;
+	unsigned withheld_transmit_samples;
+	bool complete;
+};
+
+static bool rate_exchange_init(struct rate_exchange *exchange,
+	const struct v92_ru_line_rx *ru, const struct v92_cpd_parameters *cpd,
+	const struct v92_upstream_plan *plan)
+{
+	struct v92_cpt_parameters cpt = {
+		.law = ru->law, .selected_rate_index = 9, .constellation_count = 1,
+		.sign_redundancy = 1, .spectral_lookahead = 2,
+	};
+	struct v92_cpu_parameters cpu = {
+		.law = ru->law, .data_rate_number = 11, .constellation_count = 1,
+		.sign_redundancy = 1, .spectral_lookahead_frames = 2,
+		.shaping_a1_q1_6 = 7, .acknowledges_cpd = true,
+	};
+	struct v92_cpd_parameters previous = *cpd;
+	struct v90_pcm_mapping training, data, control;
+	struct pcm_downstream_tx tx;
+
+	for (unsigned ucode = 16; ucode < 112; ++ucode)
+		cpu.transmit_constellations[0].ucode_mask[ucode / 8] |= (uint8_t)(1u << (ucode % 8));
+	for (unsigned ucode = 24; ucode < 120; ucode += 12)
+		cpt.transmit_constellations[0].ucode_mask[ucode / 8] |= (uint8_t)(1u << (ucode % 8));
+	previous.acknowledges_cpu = true;
+	/* A responder can still be sending Rd when Ru-bar ends. Keep receiving
+	 * the peer's fresh TRN2u while the independent transmit clock waits. */
+	exchange->withheld_transmit_samples = ru->constellation == V92_CONSTELLATION_8_POINT ? 384u : 0u;
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&data, &cpu) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init_rate_renegotiation(&control, &training, &data) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &control) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&exchange->peer, PCM_PROTOCOL_V92, &control,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+	      "rate exchange downstream mapping failed");
+	struct v92_phase4_digital_station *station = &exchange->station;
+	memset(station, 0xa5, sizeof(*station));
+	struct v92_phase4_digital_station saved = *station;
+	for (unsigned invalid = 0; invalid < 5; ++invalid) {
+		struct v92_ru_line_rx candidate_ru = *ru;
+		struct v92_upstream_plan candidate_plan = *plan;
+		struct v92_cpu_parameters candidate_cpu = cpu;
+		struct v92_cpd_parameters candidate_cpd = previous;
+		switch (invalid) {
+		case 0: candidate_ru.signal.bar_symbols--; break;
+		case 1: candidate_plan.delay = UINT16_MAX; break;
+		case 2: candidate_cpu.data_rate_number = 0; break;
+		case 3: candidate_cpd.data_rate_number = 0; break;
+		case 4: candidate_cpu.law = (enum g711_law)99; break;
+		}
+		CHECK(v92_phase4_digital_station_init_after_ru(station, &candidate_ru, &tx,
+			      &candidate_cpd, &candidate_plan, &candidate_cpu, 161) != V92_PHASE4_DIGITAL_STATION_OK &&
+		      memcmp(station, &saved, sizeof(saved)) == 0,
+		      "invalid rate exchange input %u changed station", invalid);
+	}
+	CHECK(v92_phase4_digital_station_init_after_ru(station, ru, &tx,
+		      &previous, plan, &cpu, 161) == V92_PHASE4_DIGITAL_STATION_OK &&
+	      v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
+	      !station->cpu_received && !station->suvu_received &&
+	      !station->cpu.acknowledges_cpd && !station->peer_acknowledged_cpd &&
+	      !station->transmit_acknowledges_cpu && !station->cleardown.active &&
+	      !v92_phase4_digital_station_is_ed_ready(station) &&
+	      station->transmit.control_configured &&
+	      memcmp(&station->upstream_plan, plan, sizeof(*plan)) == 0,
+	      "rate exchange reused acknowledgements or lost the receive plan");
+	cpu.acknowledges_cpd = false;
+	CHECK(memcmp(&station->cpu, &cpu, sizeof(cpu)) == 0 &&
+	      v92_cpd_decode(station->initial_cpd.sequence, sizeof(station->initial_cpd.sequence),
+		      station->initial_cpd.sequence_bits, station->initial_cpd.frame_bits, &previous) == V92_CPD_OK &&
+	      !previous.acknowledges_cpu, "rate exchange lost prior CPu or reused old CPd acknowledgement");
+	return true;
+}
+
+static bool rate_exchange_clock(struct rate_exchange *exchange, const int16_t *sample)
+{
+	struct v92_phase4_digital_station *station = &exchange->station;
+	if (sample) {
+		enum v92_phase4_digital_station_result r = v92_phase4_digital_station_receive(station, *sample);
+		CHECK(r == V92_PHASE4_DIGITAL_STATION_OK || r == V92_PHASE4_DIGITAL_STATION_EVENT,
+		      "post-Ru station receive failed: %s", v92_phase4_digital_station_result_name(r));
+	}
+	if (exchange->withheld_transmit_samples) {
+		exchange->withheld_transmit_samples--;
+		return true;
+	}
+	uint8_t octet;
+	enum v92_phase4_digital_station_result r = v92_phase4_digital_station_transmit(station, &octet);
+	if (r == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE) {
+		exchange->complete = true;
+		CHECK(exchange->zero_acknowledgements && !station->transmit.ed_requested &&
+		      station->transmit.transmitted_symbols >= station->cleardown.acknowledgement_end &&
+		      station->transmit.transmitted_symbols >= station->cleardown.cp_end + 881u,
+		      "cleardown completed without wire acknowledgement/deadline");
+		return true;
+	}
+	CHECK(r == V92_PHASE4_DIGITAL_STATION_OK, "post-Ru station transmit failed: %s",
+	      v92_phase4_digital_station_result_name(r));
+	struct pcm_downstream_event event;
+	enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&exchange->peer, octet, &event);
+	CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING || received == PCM_DOWNSTREAM_RX_TRN2D_FRAME ||
+	      received == PCM_DOWNSTREAM_RX_SUVD || received == PCM_DOWNSTREAM_RX_CPD,
+	      "post-Ru downstream receiver failed: %s", pcm_downstream_rx_result_name(received));
+	if (received == PCM_DOWNSTREAM_RX_CPD && !event.control.record.cpd.parameters.data_rate_number) {
+		CHECK(event.control.record.cpd.frame_result == V92_CPD_OK &&
+		      event.control.record.cpd.parameters.acknowledges_cpu,
+		      "zero-rate CPd did not acknowledge peer cleardown");
+		exchange->zero_acknowledgements++;
+	}
+	return true;
+}
+
 static bool test_rate_request_line(enum g711_law law, int polarity,
 				   bool extended, bool compensated,
 				   enum v92_constellation_size constellation)
@@ -875,6 +993,7 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	struct v92_pcm_phase4_trn2u_line_rx training_rx, before;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff;
 	struct v92_upstream_control_line_rx control;
+	struct rate_exchange exchange = { 0 };
 	unsigned source_frames = 0, delivered = 0;
 	CHECK(v92_cpd_direct_init(&cpd, law, 1, extended) == V92_CPD_OK,
 	      "rate-request mapping failed");
@@ -977,13 +1096,16 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	      training_rx.demodulator.descrambler.history == 0 &&
 	      training_rx.demodulator.previous_encoded_sign == 0 && training_rx.renegotiation,
 	      "Ru-bar handoff lost filter history or failed to reset coding");
+	CHECK(rate_exchange_init(&exchange, &ru, &cpd, &plan), "rate exchange did not start");
+	struct v92_cpu_parameters retained_cpu = exchange.station.cpu;
 	while (!v92_pcm_phase4_trn2u_line_rx_can_handoff(&training_rx)) {
 		int16_t sample;
 		CHECK(training_tx.emitted_symbols < 12 &&
 		      v92_pcm_phase4_trn2u_next(&training_tx, &sample) == V92_PCM_PHASE4_TRN2U_OK,
 		      "early control boundary missed");
-		enum v92_pcm_phase4_trn2u_line_rx_result r = v92_pcm_phase4_trn2u_line_rx_sample(
-			&training_rx, wire_sample(&channel, sample));
+		sample = wire_sample(&channel, sample);
+		enum v92_pcm_phase4_trn2u_line_rx_result r = v92_pcm_phase4_trn2u_line_rx_sample(&training_rx, sample);
+		CHECK(rate_exchange_clock(&exchange, &sample), "rate exchange training failed");
 		CHECK(r == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
 		      r == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED, "new TRN2u receive failed");
 	}
@@ -1001,12 +1123,18 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	while (training_tx.emitted_symbols < train_symbols) {
 		int16_t sample;
 		struct v92_control_event event;
-		CHECK(v92_pcm_phase4_trn2u_next(&training_tx, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
-		      v92_upstream_control_line_rx_sample(&control, wire_sample(&channel, sample),
-			    &event) == V92_UPSTREAM_CONTROL_LINE_RX_OK, "training became a control record");
+		CHECK(v92_pcm_phase4_trn2u_next(&training_tx, &sample) == V92_PCM_PHASE4_TRN2U_OK,
+		      "rate exchange training stopped");
+		sample = wire_sample(&channel, sample);
+		CHECK(v92_upstream_control_line_rx_sample(&control, sample, &event) == V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+		      rate_exchange_clock(&exchange, &sample), "training became a control record");
 	}
+	CHECK(exchange.station.receive.channel.symbols == 12 &&
+	      v92_phase4_digital_station_select_upstream(&exchange.station, &cpd, &plan) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE,
+	      "short RRN training was treated as a complete channel measurement");
 	const struct v92_suvu_parameters suvu = { .prefilter_level_db_q2_2 = -16 };
-	const struct v92_cpus_parameters cpus = { .acknowledges_cpd = true };
+	struct v92_cpus_parameters cpus = { 0 };
 	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
 	size_t bits;
 	unsigned mapping_bits = V92_PCM_MAPPING_FRAME_SYMBOLS *
@@ -1015,19 +1143,23 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	CHECK(v92_suvu_encode(&suvu, mapping_bits, frame, sizeof(frame), &bits) == V92_SUVU_OK &&
 	      v92_phase4_record_tx_init(&record, &training_tx.modulator, frame, sizeof(frame), bits) ==
 		V92_PHASE4_RECORD_TX_OK, "SUVu encode failed");
-	for (unsigned which = 0; which < 3; ++which) {
+	for (unsigned which = 0; which < 7; ++which) {
 		if (which) {
+			cpus.data_rate_number = which < 5 ? 10 : 0;
+			cpus.acknowledges_cpd = which >= 3;
 			CHECK(v92_cpus_encode(&cpus, mapping_bits, frame, sizeof(frame), &bits) == V92_CPU_OK &&
 			      v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
-				V92_PHASE4_RECORD_TX_OK, "zero-rate CPus encode failed");
+				V92_PHASE4_RECORD_TX_OK, "CPus encode failed");
 		}
 		while (!v92_phase4_record_tx_is_complete(&record)) {
 			int16_t sample;
 			struct v92_control_event event;
 			CHECK(v92_phase4_record_tx_next(&record, &sample) == V92_PHASE4_RECORD_TX_OK,
 			      "control transmit stopped");
+			sample = wire_sample(&channel, sample);
 			enum v92_upstream_control_line_rx_result r = v92_upstream_control_line_rx_sample(
-				&control, wire_sample(&channel, sample), &event);
+				&control, sample, &event);
+			CHECK(rate_exchange_clock(&exchange, &sample), "rate exchange control failed");
 			CHECK(r == V92_UPSTREAM_CONTROL_LINE_RX_OK || r == V92_UPSTREAM_CONTROL_LINE_RX_EVENT,
 			      "control receive stopped");
 			if (r != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
@@ -1039,14 +1171,29 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 				suvu_count++;
 			} else {
 				CHECK(event.type == V92_CONTROL_EVENT_CPUS && event.record.cpus.frame_result == V92_CPU_OK &&
-				      event.record.cpus.parameters.data_rate_number == 0 &&
-				      event.record.cpus.parameters.acknowledges_cpd,
-				      "cleardown CPus did not survive rate request");
+				      (event.record.cpus.parameters.data_rate_number == 0 ||
+				       event.record.cpus.parameters.data_rate_number == 10),
+				      "CPus did not survive rate request");
 				cpu_count++;
 			}
 		}
+		if (which == 2 || which == 4) {
+			struct v92_cpu_parameters selected;
+			retained_cpu.data_rate_number = 10;
+			retained_cpu.acknowledges_cpd = which == 4;
+			CHECK(v92_phase4_digital_station_cpu_parameters(&exchange.station, &selected) &&
+			      memcmp(&selected, &retained_cpu, sizeof(selected)) == 0 &&
+			      exchange.station.peer_acknowledged_cpd == (which == 4) &&
+			      !exchange.station.cleardown.active,
+			      "CPus lost the retained mapping or reused an old acknowledgement");
+		}
 	}
 	CHECK(suvu_count == 1 && cpu_count >= 1, "missing post-Ru status/cleardown record");
+	CHECK(exchange.station.cleardown.active && exchange.station.cleardown.peer_requested &&
+	      !v92_phase4_digital_station_is_ed_ready(&exchange.station), "zero CPus did not select cleardown");
+	for (unsigned i = 0; i < 4000 && !exchange.complete; ++i)
+		CHECK(rate_exchange_clock(&exchange, NULL), "rate exchange cleardown stopped");
+	CHECK(exchange.complete, "post-Ru zero-rate exchange did not release in bounded time");
 	return true;
 }
 

@@ -48,6 +48,14 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 	struct v92_phase4_digital_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
 	enum v92_constellation_size constellation);
+
+/* Reenter at the observed Ru-bar boundary. The short training prefix does
+ * not constitute a new complete channel measurement; reuse the preceding
+ * CPd/receive plan until a subsequent full training measures the channel. */
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init_after_ru(
+	struct v92_phase4_digital_rx *receiver, const struct v92_ru_line_rx *ru);
+bool v92_phase4_digital_rx_is_renegotiating(
+	const struct v92_phase4_digital_rx *receiver);
 bool v92_phase4_digital_rx_is_valid(
 	const struct v92_phase4_digital_rx *receiver);
 bool v92_phase4_digital_rx_has_failed(

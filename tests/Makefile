@@ -2244,6 +2244,12 @@ V92_PHASE4_DIGITAL_STATION_OBJECTS := \
 V92_PHASE4_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_digital_station.o \
 	$(V92_PHASE4_DIGITAL_STATION_OBJECTS)
+V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(V92_UPSTREAM_DATA_RX_TEST_OBJECTS) \
+	$(BUILD_DIR)/v92_phase4_digital_station.o \
+	$(BUILD_DIR)/v92_phase4_cpd_tx.o \
+	$(BUILD_DIR)/v92_cleardown.o \
+	$(filter-out $(BUILD_DIR)/test_pcm_downstream_tx.o, $(PCM_DOWNSTREAM_TX_TEST_OBJECTS)))
 V90_DOWNSTREAM_STREAM_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_downstream_stream
 V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \

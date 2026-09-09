@@ -21,7 +21,8 @@ bool v92_phase4_digital_rx_is_valid(
 		return false;
 	uint32_t symbols = receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 		receiver->signal.trn2u.trained_symbols :
-		(uint32_t)V92_UPSTREAM_CHANNEL_SYMBOLS - receiver->signal.control.signal.training_tail_remaining;
+		receiver->signal.control.signal.line.training_symbols -
+			receiver->signal.control.signal.training_tail_remaining;
 
 	if (receiver->channel.symbols != symbols ||
 	    (receiver->channel_distorted && symbols <= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS))
@@ -77,6 +78,31 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 		return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
 	*receiver = initialized;
 	return V92_PHASE4_DIGITAL_RX_OK;
+}
+
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init_after_ru(
+	struct v92_phase4_digital_rx *receiver, const struct v92_ru_line_rx *ru)
+{
+	struct v92_phase4_digital_rx initialized = { 0 };
+
+	if (receiver == NULL || ru == NULL)
+		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
+	if (v92_pcm_phase4_trn2u_line_rx_init_after_ru(&initialized.signal.trn2u, ru) !=
+	    V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
+		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
+	if (!v92_phase4_digital_rx_is_valid(&initialized))
+		return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
+	*receiver = initialized;
+	return V92_PHASE4_DIGITAL_RX_OK;
+}
+
+bool v92_phase4_digital_rx_is_renegotiating(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	return v92_phase4_digital_rx_is_valid(receiver) &&
+		(receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+		 receiver->signal.trn2u.renegotiation :
+		 receiver->signal.control.signal.line.renegotiation);
 }
 
 static enum v92_phase4_digital_rx_result fail(
