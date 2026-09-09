@@ -253,6 +253,7 @@ struct pcm_call_v92_digital_data {
 	struct v92_cpu_parameters cpu;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 	double b1u_squared_error;
+	bool b1u_decode_failed;
 };
 
 union pcm_call_data_path_state {

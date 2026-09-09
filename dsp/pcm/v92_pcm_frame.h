@@ -13,6 +13,8 @@
 
 enum {
 	V92_B1U_FRAMES = 48,
+	/* Receiver-only split; the wire still carries all 48 training frames. */
+	V92_B1U_ACQUISITION_FRAMES = V92_B1U_FRAMES / 2,
 	V92_B1U_SYMBOLS = V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
 	/* 120-symbol (15 ms) traceback with bounded competing histories. */
 	V92_PCM_RX_PATHS = 32,
@@ -72,9 +74,10 @@ enum v92_pcm_frame_observation {
 	V92_PCM_FRAME_CONSTELLATION,
 };
 
-/* Known B1u fits the amplitude-dependent slope of residual variance in
+/* The B1u interval fits the amplitude-dependent slope of residual variance in
  * recovered constellation coordinates. Keep slope/mean_error after training,
- * with a one-sample variance floor; payload never trains it. */
+ * with a one-sample variance floor; payload never trains it. The caller must
+ * validate the decoded B1u bits before trusting this trained data path. */
 struct v92_pcm_frame_noise {
 	double signal_energy, signal_fourth;
 	double error_energy, error_signal_energy;

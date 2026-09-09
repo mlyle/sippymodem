@@ -700,6 +700,8 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    path->b1u_squared_error < 0.0 ||
 		    (path->upstream.line.received_frames == 0u &&
 		     path->b1u_squared_error != 0.0) ||
+		    (path->upstream.line.received_frames <= V92_PCM_RX_DELAY_FRAMES &&
+		     path->b1u_decode_failed) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
 			    V90_PCM_MAPPING_OK)
 			return false;
@@ -1144,9 +1146,11 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 	const struct pcm_call_v92_digital_data *path =
 		&call->state.data_path.v92_digital;
 
-	/* Known-one decoding alone cannot qualify B1u: the received waveform
-	 * must also satisfy the same residual ceiling used for online recovery. */
-	return path->upstream.line.received_frames >= V92_B1U_FRAMES &&
+	/* Wait for all delayed B1u decisions, including the unconstrained tail,
+	 * before reporting online. A small residual alone does not prove that
+	 * a dense constellation can carry data on the measured channel. */
+	return path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
+	       !path->b1u_decode_failed &&
 	       path->b1u_squared_error <= (double)V92_B1U_SYMBOLS *
 		       V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 }
@@ -3293,6 +3297,11 @@ static enum pcm_call_result v92_data_octet_owned(
 				if (!isfinite(error))
 					return PCM_CALL_NUMERIC_FAILURE;
 				path->b1u_squared_error = error;
+			}
+			if (frame.b1u && frame.bit_count != 0u) {
+				path->b1u_decode_failed |= frame.ambiguous;
+				for (size_t bit = 0u; bit < frame.bit_count; ++bit)
+					path->b1u_decode_failed |= frame.bits[bit] != 1u;
 			}
 			/* The decoder's lookahead can still deliver B1u bits after
 			 * the physical B1 boundary. Never expose them as host data. */

@@ -208,11 +208,12 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-	if (b1u && raw) {
+	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES) {
 		/* TRN2u's sparse, quantized levels leave a small scalar uncertainty
 		 * in the inverse. Fit only known B1u coordinates, and never outside
 		 * the original training cell: quiet/noisy input must not be scaled
-		 * into apparently valid training. Unknown payload cannot update it. */
+		 * into apparently valid training. Freeze it before the decoder tests
+		 * the remaining B1u with ordinary, unconstrained decisions. */
 		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 			double sample = line->raw[symbol];
 

@@ -797,9 +797,10 @@ static void train_noise(struct v92_pcm_frame_noise *noise,
 {
 	if (noise->frames == V92_B1U_FRAMES)
 		return;
-	/* Allow initial B1u gain acquisition to settle. Only known training,
-	 * never a payload decision or a subsequent control exchange, is used. */
-	if (noise->frames >= V92_B1U_FRAMES / 2u) {
+	/* Allow initial B1u gain acquisition to settle. Use only the remaining
+	 * training interval; the caller qualifies its decoded bits. Payload and
+	 * subsequent control exchanges must not update this estimate. */
+	if (noise->frames >= V92_B1U_ACQUISITION_FRAMES) {
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
 			double signal = expected[i], error = samples[i] - signal;
 			double square = signal * signal, residual = error * error;
@@ -858,9 +859,15 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
 	path_count = receiver->path_count;
+	/* Acquire with known bits, then test the settled raw-coordinate path
+	 * using ordinary decisions. Constraining all 48 frames to ones would
+	 * conceal a channel that cannot recover data at the selected rate. */
+	bool known = b1u && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
+		receiver->noise.frames < V92_B1U_ACQUISITION_FRAMES);
+
 	for (size_t index = 0u; index < path_count; ++index) {
 		paths[index] = (struct frame_path){ .state = receiver->paths[index] };
-		if (b1u && !b1u_digits(receiver, &paths[index].state,
+		if (known && !b1u_digits(receiver, &paths[index].state,
 				      paths[index].known_digits))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
@@ -901,7 +908,7 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 				if (!equivalence_digit(&receiver->mapping, symbol,
 						       eta, paths[path].frame.signed_index,
 						       y0, &digit) ||
-				    (b1u && digit != paths[path].known_digits[symbol]))
+				    (known && digit != paths[path].known_digits[symbol]))
 					continue;
 				int16_t u = signed_point(constellation, eta);
 				int32_t v = 0;

@@ -311,6 +311,45 @@ static bool test_constellation_coordinates(
 	return true;
 }
 
+static bool test_b1u_validation(enum g711_law law)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	unsigned bad_bits = 0u;
+
+	CHECK(mapping_init(&mapping, law, 19u, false) &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+	      "B1u validation fixture failed");
+	for (unsigned frame = 0u; frame < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++frame) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision;
+
+		memset(bits, 1, mapping.data_bits_per_frame);
+		/* A valid coded waveform carrying one wrong training bit has zero
+		 * residual. It must not be silently replaced by the expected one. */
+		if (frame == V92_B1U_FRAMES - 1u)
+			bits[0] = 0u;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_decode(&rx, encoded.u, frame < V92_B1U_FRAMES, decoded,
+			      mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+		      decision.squared_error == 0u && !decision.ambiguous,
+		      "B1u validation damaged a valid waveform at frame %u", frame);
+		if (!decision.bits_ready)
+			continue;
+		for (size_t bit = 0u; bit < mapping.data_bits_per_frame; ++bit) {
+			bool wrong = frame == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u && bit == 0u;
+
+			CHECK(decoded[bit] == (wrong ? 0u : 1u), "B1u hid or invented a training error");
+			bad_bits += decoded[bit] != 1u;
+		}
+	}
+	CHECK(bad_bits == 1u, "B1u did not expose its delayed final-bit error");
+	return true;
+}
+
 static bool test_noise_training(bool proportional)
 {
 	struct v92_pcm_mapping mapping;
@@ -633,7 +672,8 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		static const uint8_t rates[] = { 1u, 13u, 19u };
 
-		if (!test_compensated_channel((enum g711_law)law))
+		if (!test_compensated_channel((enum g711_law)law) ||
+		    !test_b1u_validation((enum g711_law)law))
 			return 1;
 		for (size_t rate = 0u; rate < sizeof(rates) / sizeof(rates[0]); ++rate) {
 			for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;

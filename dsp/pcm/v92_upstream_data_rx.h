@@ -71,9 +71,9 @@ struct v92_upstream_data_frame {
  * A constellation-coordinate plan instead retains polarity and the measured
  * gain, skips only the delay not already consumed by E2u detection, and
  * decodes raw line samples without another FIR or G.711 quantization. The
- * gain is refined within training LU uncertainty during B1u, then remains
- * fixed through data/control. A zero-initialized plan selects the equalized
- * filter-output path described above.
+ * gain is refined within training LU uncertainty during initial B1u
+ * acquisition, then remains fixed through B1u validation and data/control.
+ * A zero-initialized plan selects the equalized filter-output path above.
  * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,

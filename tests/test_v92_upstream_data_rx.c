@@ -785,11 +785,11 @@ static bool test_channel_plan(
 			continue;
 		if (receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
-		if (receiver.line.received_frames == V92_B1U_FRAMES)
+		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
 			trained = receiver.line;
-		else if (receiver.line.received_frames > V92_B1U_FRAMES)
+		else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES)
 			CHECK(memcmp(&receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0,
-			      "unknown payload continued gain calibration");
+			      "B1u validation or payload continued gain calibration");
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);

@@ -5592,6 +5592,57 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	return true;
 }
 
+static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
+{
+	struct pcm_call damaged = *boundary;
+	struct pcm_call_v92_digital_data *path = &damaged.state.data_path.v92_digital;
+	struct v92_pcm_frame_tx tx;
+	struct pcm_call_data_event event;
+	uint8_t transmitted;
+	uint8_t silence = silence_octet(boundary->law);
+
+	if (path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION)
+		return true;
+	CHECK(v92_pcm_frame_tx_init(&tx, &path->upstream.decoder.mapping) == V92_PCM_FRAME_OK,
+	      "wrong-B1u transmitter failed");
+	while (path->upstream.line.delay_remaining != 0u)
+		CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK,
+		      "wrong-B1u delay failed");
+	for (unsigned frame = 0u; frame < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 2u; ++frame) {
+		struct v92_pcm_frame encoded;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+		memset(bits, 1, tx.mapping.data_bits_per_frame);
+		if (frame == V92_B1U_FRAMES - 1u)
+			bits[0] = 0u;
+		CHECK(v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
+		      "wrong-B1u encoding failed");
+		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			/* Feed the trained raw-coordinate contract directly. This
+			 * isolates bit validation from a second channel acquisition:
+			 * the bad bit is validly coded and has negligible residual. */
+			long sample = lround(path->upstream.line.polarity * encoded.u[symbol] /
+				path->upstream.line.plan.gain);
+
+			CHECK(sample >= INT16_MIN && sample <= INT16_MAX &&
+			      pcm_call_data_octet(&damaged, encode_octet(boundary->law, (int16_t)sample),
+				      (int16_t)sample, NULL, &transmitted, &event) == PCM_CALL_OK &&
+			      event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
+			      "wrong B1u or its undecided tail opened the host at frame %u", frame);
+		}
+	}
+	CHECK(path->b1u_decode_failed &&
+	      path->b1u_squared_error < V92_B1U_SYMBOLS &&
+	      damaged.b1_deadline_armed && pcm_call_is_valid(&damaged),
+	      "small residual concealed a wrong B1u bit");
+	damaged.b1_deadline_remaining_samples = 1u;
+	CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK &&
+	      damaged.stage == PCM_CALL_RETRAIN_SILENCE && !damaged.failed &&
+	      damaged.protocol == PCM_PROTOCOL_V92 && !damaged.b1_deadline_armed,
+	      "wrong B1u did not retain bounded retrain recovery");
+	return true;
+}
+
 static bool v92_data_error_contracts(const struct pcm_call *online)
 {
 	struct pcm_call checked = *online;
@@ -5725,7 +5776,8 @@ static bool run_v92_duplex_data(
 					analog_boundary = clock;
 				else {
 					digital_boundary = clock;
-					CHECK(v92_bad_b1_stays_clamped(call), "V.92 B1 quality gate failed");
+					CHECK(v92_bad_b1_stays_clamped(call) && v92_wrong_b1_stays_clamped(call),
+					      "V.92 B1 quality gate failed");
 				}
 			}
 			if (call->stage == PCM_CALL_DATA_PATH) {
