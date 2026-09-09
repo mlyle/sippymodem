@@ -409,10 +409,18 @@ static enum v92_phase3_analog_station_result receive_j(
 			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 	if (result == V92_PHASE3_J_RECEIVER_JD_DETECTED) {
 		struct v92_su su;
+		struct v92_jd jd;
 
 		if (!v92_pcm_phase3_initial_tx_is_complete(
-			    &station->transmit.initial))
+			    &station->transmit.initial) ||
+		    !v92_phase3_j_receiver_jd(&station->receive.j, &jd))
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		/* CPt selects a training map the peer must be able to transmit.
+		 * Clamp the station-owned copy; a retrain starts from configuration. */
+		if (station->cpt_parameters.spectral_lookahead >
+		    jd.maximum_spectral_shaping_lookahead)
+			station->cpt_parameters.spectral_lookahead =
+				jd.maximum_spectral_shaping_lookahead;
 		if (v92_su_init(&su, station->upstream_lu) != V92_SU_OK)
 			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->transmit =

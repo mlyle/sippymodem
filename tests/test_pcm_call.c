@@ -5320,12 +5320,15 @@ static bool run_v92_phase4_control(
 	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
 	      !pcm_call_has_failed(&analog) && !pcm_call_has_failed(&digital) &&
 	      analog.phase3_entry_stored && digital.phase3_entry_stored &&
-	      analog.v92_peer_downstream_rate_stored &&
-	      analog.v92_peer_downstream_rate_mask ==
+	      analog.v92_peer_jd_stored &&
+	      analog.v92_peer_jd.data_rate_capability_mask ==
 		      digital_configuration.phase3.v92_digital.jd
 			      .data_rate_capability_mask &&
-	      !digital.v92_peer_downstream_rate_stored &&
-	      digital.v92_peer_downstream_rate_mask == 0u &&
+	      analog.v92_peer_jd.maximum_spectral_shaping_lookahead ==
+		      digital_configuration.phase3.v92_digital.jd.maximum_spectral_shaping_lookahead &&
+	      !digital.v92_peer_jd_stored &&
+	      digital.v92_peer_jd.data_rate_capability_mask == 0u &&
+	      digital.v92_peer_jd.maximum_spectral_shaping_lookahead == 0u &&
 	      analog.phase3_entry.selection.startup.protocol ==
 		      PCM_PROTOCOL_V92 &&
 	      digital.phase3_entry.selection.startup.protocol ==
@@ -5810,6 +5813,7 @@ static bool test_v92_downstream_reselection(void)
 		V92_JD_RATE_CAPABILITY_MASK,
 	};
 	static const uint8_t expected_rates[] = { 10u, 1u, 11u };
+	static const uint8_t peer_lookaheads[] = { 1u, 3u, 2u };
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
@@ -5822,9 +5826,11 @@ static bool test_v92_downstream_reselection(void)
 		ac.enabled_downstream_rate_mask = UINT32_C(1) | (UINT32_C(1) << 9u) |
 			(UINT32_C(1) << 10u) | (UINT32_C(1) << 18u);
 		ac.analog_phase4.data_parameters.selected_rate_index = 11u;
+		ac.phase3.v92_analog.cpt.spectral_lookahead = 3u;
 		dc.enabled_downstream_rate_mask = peer_masks[0];
 		dc.phase3.digital.jd.data_rate_capability_mask = peer_masks[0];
 		dc.phase3.v92_digital.jd.data_rate_capability_mask = peer_masks[0];
+		dc.phase3.v92_digital.jd.maximum_spectral_shaping_lookahead = peer_lookaheads[0];
 		CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 		      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK &&
 		      channel_init(&line, law, 3u), "downstream-reselection setup failed");
@@ -5832,6 +5838,7 @@ static bool test_v92_downstream_reselection(void)
 			struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
 			uint32_t frames[2] = { 0u, 0u };
 			bool data_started[2] = { false, false };
+			bool cpt_checked = false;
 			uint32_t at, ar, dt, dr;
 			struct v92_cpu_parameters expected = ac.v92_analog_phase4.cpu;
 			const struct v92_cpu_parameters *received;
@@ -5870,10 +5877,29 @@ static bool test_v92_downstream_reselection(void)
 						      law, epoch, side, clock);
 				}
 				channel_transmit(&line, tx[0], tx[1]);
+				if (!cpt_checked && calls[1].stage == PCM_CALL_PHASE3_MIXED) {
+					struct v92_cpt_parameters cpt;
+
+					if (v92_phase3_digital_station_downstream_handoff(
+						    &calls[1].state.mixed.v92_digital.phase3, &cpt) ==
+					    V92_PHASE3_DIGITAL_STATION_OK) {
+						struct v92_cpt_parameters expected_cpt = ac.phase3.v92_analog.cpt;
+						uint8_t sent[V92_CPT_MAX_FRAME_BYTES], got[V92_CPT_MAX_FRAME_BYTES];
+						size_t sent_bits, got_bits;
+
+						expected_cpt.spectral_lookahead = peer_lookaheads[epoch];
+						CHECK(v92_cpt_encode(&expected_cpt, sent, sizeof(sent), &sent_bits) == V92_CPT_OK &&
+						      v92_cpt_encode(&cpt, got, sizeof(got), &got_bits) == V92_CPT_OK &&
+						      sent_bits == got_bits && memcmp(sent, got, (sent_bits + 7u) / 8u) == 0,
+						      "law %u epoch %zu CPt did not retain its map with peer lookahead %u",
+						      law, epoch, peer_lookaheads[epoch]);
+						cpt_checked = true;
+					}
+				}
 				if (frames[0] >= 200u && frames[1] >= 200u)
 					break;
 			}
-			CHECK(frames[0] >= 200u && frames[1] >= 200u &&
+			CHECK(cpt_checked && frames[0] >= 200u && frames[1] >= 200u &&
 			      sources[0].rejection_checked && sources[1].rejection_checked &&
 			      pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1]) &&
 			      !calls[0].retrain_active && !calls[1].retrain_active &&
@@ -5883,6 +5909,8 @@ static bool test_v92_downstream_reselection(void)
 			      "law %u epoch %zu did not exchange data at the common downstream rate", law, epoch);
 			received = &calls[1].state.data_path.v92_digital.cpu;
 			expected.data_rate_number = expected_rates[epoch];
+			if (expected.spectral_lookahead_frames > peer_lookaheads[epoch])
+				expected.spectral_lookahead_frames = peer_lookaheads[epoch];
 			expected.acknowledges_cpd = received->acknowledges_cpd;
 			CHECK(v92_cpu_encode(&expected, 24u, expected_wire, sizeof(expected_wire),
 					     &expected_bits) == V92_CPU_OK &&
@@ -5891,12 +5919,24 @@ static bool test_v92_downstream_reselection(void)
 			      expected_bits == received_bits &&
 			      memcmp(expected_wire, received_wire, (expected_bits + 7u) / 8u) == 0 &&
 			      memcmp(&calls[0].v92_analog_phase4_configuration, &ac.v92_analog_phase4,
-				     sizeof(ac.v92_analog_phase4)) == 0,
-			      "downstream reselection changed constellation fields or the configured ceiling");
+				     sizeof(ac.v92_analog_phase4)) == 0 &&
+			      calls[0].phase3_configuration.v92_analog.cpt.spectral_lookahead == 3u,
+			      "downstream reselection changed constellation fields or configured preferences");
+			struct pcm_call invalid = calls[0];
+
+			invalid.v92_peer_jd.maximum_spectral_shaping_lookahead = 0u;
+			CHECK(!pcm_call_is_valid(&invalid), "retained Jd accepted zero lookahead");
+			invalid.v92_peer_jd.maximum_spectral_shaping_lookahead = 4u;
+			CHECK(!pcm_call_is_valid(&invalid), "retained Jd accepted unsupported lookahead");
+			invalid = calls[1];
+			invalid.v92_peer_jd.maximum_spectral_shaping_lookahead = 1u;
+			CHECK(!pcm_call_is_valid(&invalid), "unreceived Jd retained a lookahead value");
 			if (epoch + 1u < ARRAY_LENGTH(peer_masks)) {
 				calls[1].enabled_downstream_rate_mask = peer_masks[epoch + 1u];
 				calls[1].phase3_configuration.digital.jd.data_rate_capability_mask = peer_masks[epoch + 1u];
 				calls[1].phase3_configuration.v92_digital.jd.data_rate_capability_mask = peer_masks[epoch + 1u];
+				calls[1].phase3_configuration.v92_digital.jd.maximum_spectral_shaping_lookahead =
+					peer_lookaheads[epoch + 1u];
 				CHECK(pcm_call_start_retrain(&calls[1u - epoch]) == PCM_CALL_OK,
 				      "downstream-reselection retrain failed");
 			}

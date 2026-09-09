@@ -110,8 +110,8 @@ struct pcm_call_digital_phase4_configuration {
 
 struct pcm_call_v92_analog_phase4_configuration {
 	struct v92_suvu_parameters suvu;
-	/* Retain these constellation/shaping fields and use data_rate_number
-	 * as the ceiling when selecting the highest common downstream rate. */
+	/* Retain configured preferences across retrains. Rate and spectral
+	 * lookahead are ceilings, constrained by the peer's current Jd. */
 	struct v92_cpu_parameters cpu;
 };
 
@@ -328,8 +328,8 @@ struct pcm_call {
 	struct pcm_call_v92_digital_phase4_configuration
 		v92_digital_phase4_configuration;
 	struct v34_full_retrain retrain;
+	struct v92_jd v92_peer_jd;
 	uint32_t enabled_downstream_rate_mask;
-	uint32_t v92_peer_downstream_rate_mask;
 	uint32_t b1_deadline_remaining_samples;
 	uint32_t rate_renegotiation_deadline_remaining_samples;
 	uint16_t round_trip_delay_samples;
@@ -340,7 +340,7 @@ struct pcm_call {
 	enum pcm_call_stage stage;
 	bool phase3_entry_stored;
 	bool peer_info0_stored;
-	bool v92_peer_downstream_rate_stored;
+	bool v92_peer_jd_stored;
 	bool round_trip_delay_stored;
 	bool b1_deadline_armed;
 	bool rate_renegotiation_deadline_armed;

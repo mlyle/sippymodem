@@ -723,19 +723,19 @@ static bool call_is_valid(
 	    (call->stage == PCM_CALL_CLOSED &&
 	     (call->failed || call->retrain_active || call->b1_deadline_armed ||
 	      call->rate_renegotiation_deadline_armed)) ||
-	    (!call->v92_peer_downstream_rate_stored &&
-	     call->v92_peer_downstream_rate_mask != 0u) ||
-	    (call->v92_peer_downstream_rate_stored &&
+	    (!call->v92_peer_jd_stored &&
+	     (call->v92_peer_jd.data_rate_capability_mask != 0u ||
+	      call->v92_peer_jd.maximum_spectral_shaping_lookahead != 0u)) ||
+	    (call->v92_peer_jd_stored &&
 	     (!uses_pcm_upstream(call) ||
 	      call->local_role != V90_ANALOG_MODEM ||
-	      (call->v92_peer_downstream_rate_mask &
-	       ~(uint32_t)V92_JD_RATE_CAPABILITY_MASK) != 0u)) ||
+	      !v92_jd_is_valid(&call->v92_peer_jd))) ||
 	    (uses_pcm_upstream(call) &&
 	     call->local_role == V90_ANALOG_MODEM &&
 	     call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_PHASE3 &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
-	     !call->v92_peer_downstream_rate_stored) ||
+	     !call->v92_peer_jd_stored) ||
 	    (!call->round_trip_delay_stored &&
 	     call->round_trip_delay_samples != 0u) ||
 	    (!call->b1_deadline_armed &&
@@ -1040,12 +1040,12 @@ static enum pcm_call_result begin_retrain(
 		return PCM_CALL_NUMERIC_FAILURE;
 	next.state = (union pcm_call_state){ 0 };
 	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
-	next.v92_peer_downstream_rate_mask = 0u;
+	next.v92_peer_jd = (struct v92_jd){ 0 };
 	next.b1_deadline_remaining_samples = 0u;
 	next.rate_renegotiation_deadline_remaining_samples = 0u;
 	next.stage = PCM_CALL_RETRAIN_SILENCE;
 	next.phase3_entry_stored = false;
-	next.v92_peer_downstream_rate_stored = false;
+	next.v92_peer_jd_stored = false;
 	next.b1_deadline_armed = false;
 	next.rate_renegotiation_deadline_armed = false;
 	next.retrain_active = true;
@@ -2137,16 +2137,20 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		struct v92_phase4_analog_station station;
 		struct v92_cpu_parameters cpu = call->v92_analog_phase4_configuration.cpu;
 
-		if (!call->v92_peer_downstream_rate_stored ||
+		if (!call->v92_peer_jd_stored ||
 		    !call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
 		/* Keep the configured constellation and rate ceiling across retrains.
 		 * A lower common rate needs fewer modulus bits, not a new constellation. */
 		cpu.data_rate_number = highest_downstream_rate(
-			call->enabled_downstream_rate_mask & call->v92_peer_downstream_rate_mask &
+			call->enabled_downstream_rate_mask & call->v92_peer_jd.data_rate_capability_mask &
 			((UINT32_C(1) << cpu.data_rate_number) - 1u));
 		if (cpu.data_rate_number == 0u)
 			return PCM_CALL_UNUSABLE_SELECTION;
+		if (cpu.spectral_lookahead_frames >
+		    call->v92_peer_jd.maximum_spectral_shaping_lookahead)
+			cpu.spectral_lookahead_frames =
+				call->v92_peer_jd.maximum_spectral_shaping_lookahead;
 		if (v92_phase3_analog_station_transmit_handoff(
 			    &mixed->phase3, &handoff) !=
 		    V92_PHASE3_ANALOG_STATION_OK)
@@ -2260,7 +2264,7 @@ static enum pcm_call_result advance_phase3(struct pcm_call *call)
 	return enter_phase4(call);
 }
 
-static enum pcm_call_result retain_v92_peer_downstream_rates(
+static enum pcm_call_result retain_v92_peer_jd(
 	struct pcm_call *call)
 {
 	const struct v92_phase3_analog_station *station =
@@ -2270,14 +2274,14 @@ static enum pcm_call_result retain_v92_peer_downstream_rates(
 	if (station->receive_stage != V92_PHASE3_ANALOG_RECEIVE_J ||
 	    !v92_phase3_j_receiver_jd(&station->receive.j, &jd))
 		return PCM_CALL_OK;
-	if (call->v92_peer_downstream_rate_stored) {
-		return call->v92_peer_downstream_rate_mask ==
-			       jd.data_rate_capability_mask ?
+	if (call->v92_peer_jd_stored) {
+		return call->v92_peer_jd.data_rate_capability_mask == jd.data_rate_capability_mask &&
+			       call->v92_peer_jd.maximum_spectral_shaping_lookahead ==
+				       jd.maximum_spectral_shaping_lookahead ?
 			       PCM_CALL_OK : PCM_CALL_SEQUENCE_MISMATCH;
 	}
-	call->v92_peer_downstream_rate_mask =
-		jd.data_rate_capability_mask;
-	call->v92_peer_downstream_rate_stored = true;
+	call->v92_peer_jd = jd;
+	call->v92_peer_jd_stored = true;
 	return jd.data_rate_capability_mask != 0u ?
 		       PCM_CALL_OK : PCM_CALL_UNUSABLE_SELECTION;
 }
@@ -2354,7 +2358,7 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.v92_analog,
 				received_octet));
 		if (result == PCM_CALL_OK)
-			result = retain_v92_peer_downstream_rates(call);
+			result = retain_v92_peer_jd(call);
 	} else if (uses_pcm_upstream(call)) {
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_transmit(
