@@ -329,12 +329,13 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 	uint8_t input[MODEM_FRAG];
 	int16_t samples[MODEM_FRAG] = { 0 };
 	bool complete = false;
+	bool signaling = false;
 	unsigned int elapsed = 0u;
 
 	memset(input, encode(law, 0), sizeof(input));
 	CHECK(dp->op->hangup != NULL && dp->op->hangup(dp) == 0 &&
 	      dp->op->hangup(dp) == 0,
-	      "V.90 hangup did not start idempotently");
+	      "PCM hangup did not start idempotently");
 	for (; elapsed < 2u * MODEM_RATE; elapsed += MODEM_FRAG) {
 		uint8_t output[MODEM_FRAG];
 		int16_t generated[MODEM_FRAG];
@@ -345,21 +346,24 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 
 		CHECK((result == DPSTAT_OK || result == DPSTAT_DISCONNECT) &&
 		      exact,
-		      "V.90 cleardown failed after %u samples, status %d",
+		      "PCM cleardown failed after %u samples, status %d",
 		      elapsed, result);
-		for (unsigned int index = 0u; index < MODEM_FRAG; ++index)
+		for (unsigned int index = 0u; index < MODEM_FRAG; ++index) {
 			CHECK(generated[index] == decode(law, output[index]) ||
 			      (result == DPSTAT_DISCONNECT &&
 			       generated[index] == 0 &&
 			       output[index] == encode(law, 0)),
-			      "V.90 cleardown lost exact network character");
+			      "PCM cleardown lost exact network character");
+			signaling |= output[index] != encode(law, 0);
+		}
 		if (result == DPSTAT_DISCONNECT) {
 			complete = true;
 			break;
 		}
 	}
-	CHECK(complete && elapsed > MODEM_RATE / 20u,
-	      "V.90 cleardown did not emit a bounded protocol sequence");
+	CHECK(complete && signaling,
+	      "cleardown did not emit a bounded protocol sequence (complete=%u elapsed=%u)",
+	      complete, elapsed);
 	{
 		uint8_t output[MODEM_FRAG];
 		int16_t generated[MODEM_FRAG];
@@ -377,24 +381,32 @@ static bool check_cleardown(struct dp *dp, enum g711_law law)
 	return true;
 }
 
-static bool run_training_cleardown(enum g711_law law, unsigned int initiator)
+static bool run_training_cleardown(
+	enum DP_ID protocol, enum g711_law law, unsigned int initiator,
+	size_t *control_clock)
 {
 	struct bit_endpoint bits[2] = { 0 };
 	struct modem modems[2] = {
 		endpoint_modem(MODEM_PCM_ROLE_ANALOG, &bits[0]),
 		endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits[1]),
 	};
-	struct dp_operations *operations = modem_dp_get_registered_ops(DP_V90);
+	struct dp_operations *operations = modem_dp_get_registered_ops(protocol);
 	struct dp *pumps[2];
 	struct dc_remover frontend;
 	uint8_t received[2] = { encode(law, 0), encode(law, 0) };
 	bool started = false;
+	bool near_deadline = *control_clock != 0u;
+	unsigned int carrier_seconds = near_deadline ?
+		(unsigned int)(*control_clock / MODEM_RATE) + 2u : 60u;
 
 	CHECK(operations != NULL && dc_remover_init(&frontend) == DC_REMOVER_OK,
 	      "training cleardown fixture did not initialize");
 	for (unsigned int side = 0; side < 2u; ++side) {
 		modems[side].min_rate = modems[side].max_rate = 28000;
-		pumps[side] = operations->create(&modems[side], DP_V90, side == 0u,
+		modems[side].sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = carrier_seconds;
+		modems[side].sregs[SREG_V92_PCM_UPSTREAM] = protocol == DP_V92;
+		modems[side].sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 4u;
+		pumps[side] = operations->create(&modems[side], protocol, side == 0u,
 			MODEM_RATE, MODEM_FRAG, operations);
 		CHECK(pumps[side] != NULL, "training cleardown datapump did not initialize");
 	}
@@ -403,7 +415,9 @@ static bool run_training_cleardown(enum g711_law law, unsigned int initiator)
 	for (size_t clock = 0; clock < CALL_OCTET_LIMIT; ++clock) {
 		uint8_t transmitted[2];
 
-		if (clock % MODEM_FRAG == 0u && operations->hangup(pumps[initiator]) == 0) {
+		if (clock % MODEM_FRAG == 0u && (near_deadline ?
+			clock == *control_clock : operations->hangup(pumps[initiator]) == 0)) {
+			*control_clock = clock;
 			started = true;
 			break;
 		}
@@ -423,9 +437,34 @@ static bool run_training_cleardown(enum g711_law law, unsigned int initiator)
 		received[0] = transmitted[1];
 		received[1] = transmitted[0];
 	}
-	CHECK(started && check_cleardown(pumps[initiator], law) &&
+	CHECK(started, "training cleardown never reached control");
+	if (near_deadline) {
+		/* Repeat the same handshake up to its first cancellable control
+		 * interval. Withhold the peer response until only one sample of
+		 * the host CONNECT budget remains, then request hangup. Shutdown
+		 * must use its own bounded protocol timer, not the old S7 budget. */
+		size_t remaining = (size_t)carrier_seconds * MODEM_RATE - *control_clock - 1u;
+		uint8_t input[MODEM_FRAG];
+		int16_t samples[MODEM_FRAG] = { 0 };
+
+		memset(input, encode(law, 0), sizeof(input));
+		while (remaining != 0u) {
+			int count = remaining > MODEM_FRAG ? MODEM_FRAG : (int)remaining;
+			uint8_t output[MODEM_FRAG];
+			int16_t generated[MODEM_FRAG];
+			bool exact = false;
+
+			CHECK(operations->process_g711(pumps[initiator], law, input, samples,
+				      output, generated, count, &exact) == DPSTAT_OK && exact &&
+			      pumps[initiator]->status != DPSTAT_CONNECT,
+			      "control did not survive to the CONNECT deadline");
+			remaining -= (size_t)count;
+		}
+	}
+	CHECK(check_cleardown(pumps[initiator], law) &&
 	      bits[0].supplied_bits == 0u && bits[1].supplied_bits == 0u,
-	      "training cleardown did not close before host data");
+	      "training cleardown did not close before host data (near deadline=%u)",
+	      near_deadline);
 	CHECK(operations->delete(pumps[0]) == 0 && operations->delete(pumps[1]) == 0 &&
 	      operations->use_count == 0,
 	      "training cleardown retained a datapump owner");
@@ -434,11 +473,19 @@ static bool run_training_cleardown(enum g711_law law, unsigned int initiator)
 
 static bool test_training_cleardown(void)
 {
+	const enum DP_ID protocols[] = { DP_V90, DP_V92 };
+
 	CHECK(v90_datapump_register() == 0, "training cleardown registration failed");
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (unsigned int side = 0; side < 2u; ++side)
-			CHECK(run_training_cleardown(law, side),
-			      "law %u side %u training cleardown failed", law, side);
+	for (size_t p = 0u; p < ARRAY_LENGTH(protocols); ++p)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (unsigned int side = 0; side < 2u; ++side) {
+				size_t control_clock = 0u;
+
+				CHECK(run_training_cleardown(protocols[p], law, side, &control_clock) &&
+				      run_training_cleardown(protocols[p], law, side, &control_clock),
+				      "protocol %u law %u side %u training cleardown failed",
+				      protocols[p], law, side);
+			}
 	CHECK(v90_datapump_unregister() == 0, "training cleardown registration leaked");
 	return true;
 }

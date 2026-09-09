@@ -993,7 +993,10 @@ static bool check_peer_cleardown(
 	CHECK(started == PCM_CALL_OK,
 	      "law %u side %u paired cleardown did not start: %s",
 	      (unsigned int)analog->law, initiator, pcm_call_result_name(started));
-	CHECK(!pcm_call_is_online(&calls[initiator]) &&
+	CHECK(!pcm_call_is_disconnecting(analog) && !pcm_call_is_disconnecting(digital) &&
+	      pcm_call_is_disconnecting(&calls[initiator]) &&
+	      !pcm_call_is_disconnecting(&calls[1u - initiator]) &&
+	      !pcm_call_is_online(&calls[initiator]) &&
 	      !calls[initiator].b1_deadline_armed &&
 	      !calls[initiator].rate_renegotiation_deadline_armed,
 	      "local cleardown retained CONNECT or training deadlines");
@@ -1026,9 +1029,12 @@ static bool check_peer_cleardown(
 			CHECK(!closing_control || result == PCM_CALL_CLEARDOWN_COMPLETE ||
 			      memcmp(&retrain_before, &calls[side].retrain, sizeof(retrain_before)) == 0,
 			      "closing control continued to hunt for retrain");
+			CHECK(!closing_control || pcm_call_is_disconnecting(&calls[side]),
+			      "active local or peer control lost its shutdown ownership");
 			if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
 				CHECK(event.kind == PCM_CALL_DATA_NONE &&
 				      calls[side].stage == PCM_CALL_CLOSED &&
+				      pcm_call_is_disconnecting(&calls[side]) &&
 				      !pcm_call_is_online(&calls[side]) &&
 				      !calls[side].b1_deadline_armed &&
 				      !calls[side].rate_renegotiation_deadline_armed,
@@ -6947,7 +6953,7 @@ static bool test_validation(void)
 	      memcmp(&call, &saved, sizeof(call)) == 0 &&
 	      !pcm_call_is_valid(NULL) && !pcm_call_has_failed(NULL) &&
 	      !pcm_call_phase4_is_ready(NULL) &&
-	      !pcm_call_is_online(NULL) &&
+	      !pcm_call_is_online(NULL) && !pcm_call_is_disconnecting(NULL) &&
 	      pcm_call_current_stage(NULL) == (enum pcm_call_stage)-1,
 	      "invalid call operation changed state or output");
 	return true;

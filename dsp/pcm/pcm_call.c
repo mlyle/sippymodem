@@ -574,6 +574,12 @@ static bool cleardown_is_active_owned(const struct pcm_call *call)
 			call->state.data_path.digital.cleardown_requested);
 }
 
+bool pcm_call_is_disconnecting(const struct pcm_call *call)
+{
+	return call != NULL && (call->stage == PCM_CALL_CLOSED ||
+		cleardown_is_active_owned(call));
+}
+
 static bool rate_renegotiation_is_active_owned(
 	const struct pcm_call *call)
 {

@@ -114,16 +114,6 @@ static bool role_from_modem(
 	return true;
 }
 
-static bool call_is_disconnecting(const struct pcm_call *call)
-{
-	return call->stage == PCM_CALL_CLOSED ||
-	       (pcm_call_uses_conventional_upstream(call) &&
-		call->stage == PCM_CALL_DATA_PATH &&
-		(call->local_role == V90_ANALOG_MODEM ?
-		 call->state.data_path.analog.cleardown_requested :
-		 call->state.data_path.digital.cleardown_requested));
-}
-
 static struct v90_datapump *v90_from_dp(struct dp *dp)
 {
 	struct v90_datapump *datapump;
@@ -139,7 +129,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 		return NULL;
 	datapump = dp->dp_data;
 	closed = datapump->call_started && datapump->call.stage == PCM_CALL_CLOSED;
-	disconnecting = datapump->call_started && call_is_disconnecting(&datapump->call);
+	disconnecting = datapump->call_started && pcm_call_is_disconnecting(&datapump->call);
 	if (&datapump->dp != dp || datapump->role != role ||
 	    (closed && dp->status != DPSTAT_DISCONNECT) ||
 	    datapump->protocol != protocol ||
@@ -790,7 +780,7 @@ static int process_v90_g711(
 
 		/* An accepted hangup owns the line until its bounded protocol
 		 * tail drains, even if the original CONNECT deadline expires. */
-		if (!call_is_disconnecting(&datapump->call) &&
+		if (!pcm_call_is_disconnecting(&datapump->call) &&
 		    !training_session_is_online(&datapump->training) &&
 		    training_session_advance(&datapump->training, 1) !=
 			    TRAINING_SESSION_OK)

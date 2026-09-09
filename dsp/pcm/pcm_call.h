@@ -379,6 +379,12 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
+/* Inspect only the active owner's shutdown state, not the child DSP graph.
+ * The serialized host uses this between media-block validations to let an
+ * accepted protocol cleardown finish independently of the CONNECT timeout.
+ * Includes peer-initiated cleardown and the completed CLOSED state. */
+bool pcm_call_is_disconnecting(const struct pcm_call *call);
+
 /* A V.90 digital endpoint can receive a conventional V.34 INFO1a after its
  * INFO1d offer. Copy the completed Phase 2 records and receive state without
  * consuming a line character. Rejected calls leave the handoff unchanged. */
