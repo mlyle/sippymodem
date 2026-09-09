@@ -6280,8 +6280,8 @@ static bool v92_resume_rate_call(struct v92_rate_call *test, struct v92_phase4_r
 	return true;
 }
 
-static bool run_v92_remote_rate_request(struct pcm_call *online,
-	struct v92_upstream_data_tx *upstream, unsigned epoch)
+static bool run_v92_rate_request(struct pcm_call *online,
+	struct v92_upstream_data_tx *upstream, unsigned epoch, bool local)
 {
 	const enum g711_law law = online->law;
 	struct v92_rate_call test = {
@@ -6302,19 +6302,49 @@ static bool run_v92_remote_rate_request(struct pcm_call *online,
 	      pcm_r_tx_init(&test.rd, &path->downstream.data.transmitter.encoder.mapping, PCM_R_RD) == PCM_R_TX_OK &&
 	      v92_pcm_phase4_trn2u_init(&training, path->ru.constellation, 0,
 		upstream->upstream_level) == V92_PCM_PHASE4_TRN2U_OK, "rate exchange setup failed");
+	if (local) {
+		CHECK(pcm_call_start_rate_renegotiation(&test.call) == PCM_CALL_OK,
+		      "digital delayed-response request failed");
+		/* Keep transmitting peer data until our Rd and TRN2d have ended.
+		 * Ru then overlaps repeated SUVd, not just the first TRN2d frame. */
+		for (unsigned i = 0; i < 3000u; ++i) {
+			int16_t sample;
+			CHECK(v92_upstream_data_tx_next(upstream, NULL, NULL, &sample) == V92_UPSTREAM_DATA_TX_OK &&
+			      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))),
+			      "digital request did not retain its line while awaiting Ru");
+		}
+		CHECK(test.call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU &&
+		      test.call.state.phase4.v92.owner.ru.transmit.stage == PCM_DOWNSTREAM_TX_V92_CONTROL,
+		      "delayed Ru did not overlap repeated SUVd");
+	}
 	unsigned drain = upstream->queue_count;
 	for (unsigned i = 0; i < drain; ++i) {
 		int16_t sample;
 		CHECK(v92_upstream_data_tx_next(upstream, NULL, NULL, &sample) == V92_UPSTREAM_DATA_TX_OK &&
 		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "data queue drain failed");
 	}
+	bool broken_checked = false;
 	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
 		int sign = i % 6u < 3u ? 1 : -1;
 		if (i >= PCM_R_SYMBOLS)
 			sign = -sign;
 		CHECK(v92_rate_call_sample(&test, decode_octet(law,
 			encode_octet(law, (int16_t)(sign * upstream->upstream_level)))), "Ru/bar failed");
+		if (local && test.call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU &&
+		    test.call.state.phase4.v92.owner.ru.receive.signal.bar_symbols == 1u) {
+			struct pcm_call broken = test.call;
+			for (unsigned n = 0; n < 64u && broken.stage == PCM_CALL_PHASE4; ++n) {
+				struct pcm_call_observation observation;
+				uint8_t octet;
+				CHECK(pcm_call_octet(&broken, silence_octet(law), 0, &octet, &observation) == PCM_CALL_OK,
+				      "corrupt delayed Ru aborted its owner");
+			}
+			CHECK(broken.stage == PCM_CALL_RETRAIN_SILENCE && !broken.failed &&
+			      !broken.v92_rate_renegotiation_active, "corrupt delayed Ru did not use full retrain");
+			broken_checked = true;
+		}
 	}
+	CHECK(!local || broken_checked, "delayed Ru did not reach the corruption checkpoint");
 	if (epoch == 0u) {
 		struct v92_phase4_analog_station analog;
 		struct v92_phase4_analog_handoff handoff;
@@ -6433,6 +6463,10 @@ static bool test_v92_remote_rate_request(void)
 			channel_receive(&pair.wire, &ar, &dr);
 			CHECK(pcm_call_data_octet(&pair.digital, dr, decode_octet(law, dr), NULL,
 				&transmitted, &event) == PCM_CALL_OK, "pending data sample failed");
+			struct pcm_call local = pair.digital;
+			struct v92_upstream_data_tx delayed = *upstream;
+			CHECK(run_v92_rate_request(&local, &delayed, 1u, true),
+			      "delayed digital rate request failed");
 			/* Retained initial-training metadata must not extend a new E2u.
 			 * This flag no longer affects the already-running data coders. */
 			upstream->encoder.mapping.cpd.extend_e2u = true;
@@ -6442,7 +6476,7 @@ static bool test_v92_remote_rate_request(void)
 				 * recovery attempts have been exhausted, without resetting them. */
 				if (epoch == 1u)
 					pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
-				CHECK(run_v92_remote_rate_request(&pair.digital, upstream, epoch),
+				CHECK(run_v92_rate_request(&pair.digital, upstream, epoch, false),
 				      "law %u rate %u Ru epoch %u failed", law, rates[i], epoch);
 			}
 		}
@@ -6562,7 +6596,75 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 	return true;
 }
 
-static bool test_v92_analog_rate_request(void)
+static bool v92_digital_rate_prefix_contracts(const struct pcm_call *online)
+{
+	struct pcm_call shifted = *online;
+	for (unsigned offset = 0; offset < V90_CP_FRAME_INTERVALS; ++offset) {
+		struct pcm_call call = shifted;
+		struct v90_downstream_data_stream data = call.state.data_path.v92_digital.downstream.data;
+		struct v90_pcm_mapping mapping;
+		struct pcm_r_tx rd;
+		struct pcm_downstream_tx training;
+		const struct v92_suvd_parameters suvd = { 0 };
+		struct pcm_call_observation observation;
+		struct v90_pcm_symbol symbol;
+		uint8_t transmitted;
+		CHECK(pcm_r_tx_init(&rd, &data.transmitter.encoder.mapping, PCM_R_RD) == PCM_R_TX_OK &&
+		      v90_pcm_mapping_init_rate_renegotiation(&mapping,
+			&call.state.data_path.v92_digital.training_mapping,
+			&data.transmitter.encoder.mapping) == V90_PCM_MAPPING_OK &&
+		      pcm_downstream_tx_init(&training, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+		      pcm_downstream_tx_start_suvd(&training, &suvd) == PCM_DOWNSTREAM_TX_OK,
+		      "digital rate prefix setup failed");
+		CHECK(pcm_call_start_rate_renegotiation(&call) == PCM_CALL_OK &&
+		      !pcm_call_is_online(&call) && call.v92_rate_renegotiation_active &&
+		      call.rate_renegotiation_deadline_armed && !call.b1_deadline_armed,
+		      "digital rate entry failed at offset %u", offset);
+		struct pcm_call snapshot = call;
+		CHECK(pcm_call_start_rate_renegotiation(&call) == PCM_CALL_INVALID_STATE &&
+		      memcmp(&snapshot, &call, sizeof(call)) == 0, "duplicate digital rate entry changed call");
+		unsigned drained = 0;
+		for (;;) {
+			enum v90_downstream_data_stream_result result = v90_downstream_data_stream_finish(&data, &symbol);
+			if (result == V90_DOWNSTREAM_DATA_STREAM_COMPLETE)
+				break;
+			CHECK(result == V90_DOWNSTREAM_DATA_STREAM_OK && ++drained <= 64u &&
+			      pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
+			      transmitted == symbol.octet, "digital rate entry truncated a data frame");
+		}
+		for (unsigned i = 0; i < PCM_R_SYMBOLS + PCM_R_BAR_SYMBOLS; ++i)
+			CHECK(pcm_r_tx_next(&rd, &symbol) == PCM_R_TX_OK &&
+			      pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
+			      transmitted == symbol.octet, "digital Rd waveform failed at %u/%u", offset, i);
+		/* No Ru arrives: TRN2d must still occupy the very next interval,
+		 * continue through its complete minimum duration, then repeat SUVd. */
+		for (unsigned i = 0; i < (offset ? 1u : 3000u); ++i) {
+			struct pcm_downstream_symbol expected;
+			CHECK(pcm_downstream_tx_next(&training, &expected) == PCM_DOWNSTREAM_TX_OK,
+			      "expected digital training failed");
+			enum pcm_call_result result = pcm_call_octet(&call, silence_octet(call.law), 0,
+				&transmitted, &observation);
+			CHECK(result == PCM_CALL_OK && call.stage == PCM_CALL_PHASE4 &&
+			      transmitted == expected.pcm.octet,
+			      "digital rate training lost its output interval at %u/%u: %s stage %u octet %u/%u",
+			      offset, i, pcm_call_result_name(result), call.stage, transmitted, expected.pcm.octet);
+			CHECK(call.state.phase4.v92.owner.ru.transmit.transmitted_symbols == training.transmitted_symbols,
+			      "digital training did not advance its continuous transmitter");
+		}
+		CHECK(offset || training.stage == PCM_DOWNSTREAM_TX_V92_CONTROL,
+		      "missing Ru left digital TRN2d unbounded");
+		call.rate_renegotiation_deadline_remaining_samples = 1u;
+		CHECK(pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
+		      call.stage == PCM_CALL_RETRAIN_SILENCE && !call.failed && !call.v92_rate_renegotiation_active,
+		      "missing Ru did not use bounded full retrain");
+		struct pcm_call_data_event event;
+		CHECK(pcm_call_data_octet(&shifted, silence_octet(shifted.law), 0, NULL,
+			&transmitted, &event) == PCM_CALL_OK, "digital data offset failed");
+	}
+	return true;
+}
+
+static bool test_v92_rate_request(void)
 {
 	const unsigned rates[] = { 1u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -6583,19 +6685,19 @@ static bool test_v92_analog_rate_request(void)
 				jp.rate_renegotiation_constellation, "rate exchange lost the Jp bit 49 constellation");
 			CHECK(v92_analog_rate_prefix_contracts(&pair.analog), "analogue rate prefix failed");
 			CHECK(v92_analog_remote_rd(&pair.analog), "remote Rd response failed");
-			struct pcm_call rejected = pair.digital;
-			CHECK(pcm_call_start_rate_renegotiation(&pair.digital) == PCM_CALL_INVALID_STATE &&
-			      memcmp(&pair.digital, &rejected, sizeof(rejected)) == 0 &&
-			      pcm_call_start_rate_renegotiation(NULL) == PCM_CALL_INVALID_ARGUMENT,
-			      "unsupported rate request changed call");
-			for (unsigned epoch = 0; epoch < 2u; ++epoch) {
+			CHECK(v92_digital_rate_prefix_contracts(&pair.digital), "digital rate prefix failed");
+			CHECK(pcm_call_start_rate_renegotiation(NULL) == PCM_CALL_INVALID_ARGUMENT,
+			      "null rate request accepted");
+			for (unsigned epoch = 0; epoch < 5u; ++epoch) {
 				struct pcm_call *calls[] = { &pair.analog, &pair.digital };
 				struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
 				uint32_t frames[2] = { 0 };
 				bool entered[2] = { false, false };
 				pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
-				CHECK(pcm_call_start_rate_renegotiation(&pair.analog) == PCM_CALL_OK,
-				      "analogue did not initiate rate exchange");
+				unsigned initiator = epoch >= 2u && epoch < 4u ? 1u : 0u;
+				CHECK(pcm_call_start_rate_renegotiation(calls[initiator]) == PCM_CALL_OK &&
+				      (epoch != 4u || pcm_call_start_rate_renegotiation(&pair.digital) == PCM_CALL_OK),
+				      "rate exchange did not start at epoch %u", epoch);
 				for (unsigned clock = 0; clock < 40000u && (frames[0] < 200u || frames[1] < 200u); ++clock) {
 					uint8_t received[2], transmitted[2];
 					channel_receive(&pair.wire, &received[0], &received[1]);
@@ -7971,7 +8073,7 @@ int main(void)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
-		{ "V.92 analogue-initiated rate exchange", test_v92_analog_rate_request },
+		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },

@@ -227,6 +227,9 @@ enum pcm_call_v92_phase4_child {
 
 struct pcm_call_v92_rate_request {
 	struct v92_ru_line_rx receive;
+	/* Rd can finish before Ru. Keep TRN2d/SUVd continuous until the
+	 * completed receive side can join the ordinary control station. */
+	struct pcm_downstream_tx transmit;
 	struct v92_cpd_parameters cpd;
 	struct v92_upstream_plan plan;
 	struct v92_cpu_parameters cpu;
@@ -412,11 +415,11 @@ enum pcm_call_result pcm_call_init(
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
 
-/* Initiate a PCM-upstream rate exchange from an online analogue endpoint.
- * Drain the accepted data frame before Ru; subsequent media uses octet()
+/* Initiate a PCM-upstream rate exchange from either online endpoint.
+ * Drain the accepted data frame before Ru/Rd; subsequent media uses octet()
  * through Phase 4 and the ordinary start_data_path() handoff. No new host
  * frame is consumed until data resumes after B1. Full retrain remains separate.
- * Unsupported protocols/roles and non-online calls are rejected unchanged. */
+ * Unsupported protocols and non-online calls are rejected unchanged. */
 enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call);
 
 /* Begin V.90 zero-rate cleardown on the current continuous data or CP/MP

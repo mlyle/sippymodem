@@ -1247,7 +1247,10 @@ static bool exercise_v92_rate_exchange(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
 	enum media_codec codec, const struct media_recorder *recorder)
 {
-	enum { PAYLOAD = 128, PREFIX = 640, FRAME_LIMIT = 250, QUIET_LIMIT = MODEM_RATE * 70 / 1000 };
+	/* A digital request sends Rd before the analogue emits Ru. Allow both
+	 * signals and the media-frame buffering in the bounded Ru observation. */
+	enum { PAYLOAD = 128, PREFIX = 2 * (PCM_R_SYMBOLS + PCM_R_BAR_SYMBOLS + SIP_FRAME_SAMPLES),
+	       FRAME_LIMIT = 250, QUIET_LIMIT = MODEM_RATE * 70 / 1000 };
 	struct integration_endpoint *endpoints[] = { caller, answerer };
 	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
@@ -1259,7 +1262,7 @@ static bool exercise_v92_rate_exchange(
 	      v92_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 28000, 4, NULL) == V92_PROFILE_OK &&
 	      v90_pcm_mapping_init_from_v92_cpu(&mapping, &profile.v92_analog_phase4.cpu) == V90_PCM_MAPPING_OK,
 	      "rate-exchange signal monitor setup failed");
-	for (unsigned epoch = 0; epoch < 2; ++epoch) {
+	for (unsigned epoch = 0; epoch < 4; ++epoch) {
 		uint8_t payload[2][2 * PAYLOAD];
 		uint8_t prefix[PREFIX];
 		struct lapm_state retained[2];
@@ -1296,10 +1299,10 @@ static bool exercise_v92_rate_exchange(
 			      "side %u has no outstanding partial LAPM frame", side);
 			retained[side] = m->ec.lapm;
 		}
-		CHECK(v90_datapump_start_rate_renegotiation(owned[analog]) &&
-		      !v90_datapump_start_rate_renegotiation(owned[analog]) &&
-		      !v90_datapump_start_rate_renegotiation(owned[1u - analog]),
-		      "native rate request or duplicate/unsupported-role rejection failed");
+		unsigned initiator = epoch < 2u ? analog : 1u - analog;
+		CHECK(v90_datapump_start_rate_renegotiation(owned[initiator]) &&
+		      !v90_datapump_start_rate_renegotiation(owned[initiator]),
+		      "native rate request or duplicate rejection failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
 			CHECK(memcmp(&m->ec.lapm, &retained[side], sizeof(retained[side])) == 0 && !m->command,
