@@ -3,6 +3,7 @@
 #include "v92_cpd_direct.h"
 
 #include "integer_math.h"
+#include "v92_cpd_gain.h"
 #include "v92_pcm_frame.h"
 
 #include <limits.h>
@@ -11,7 +12,6 @@
 enum {
 	V92_CPD_DIRECT_40K_RATE_NUMBER = 13,
 	V92_CPD_DIRECT_LINEAR_STEP = 256,
-	V92_CPD_DIRECT_GAIN_TARGET_SHIFT = 36,
 };
 
 static bool direct_constellation(
@@ -91,45 +91,6 @@ static bool direct_tables(
 		&parameters->constellation[0], law, point_count);
 }
 
-static uint16_t nearest_gain(
-	uint64_t prefilter_energy, size_t symbol_count)
-{
-	__uint128_t target;
-	uint32_t low = 0u;
-	uint32_t high = UINT16_MAX;
-
-	if (prefilter_energy == 0u || symbol_count == 0u)
-		return 0u;
-	/* CPd carries F=4G in Q0.16, so G=F/2^18. Select the
-	 * representable F whose mean squared B1u prefilter output is nearest
-	 * unity. */
-	target = (__uint128_t)symbol_count <<
-		V92_CPD_DIRECT_GAIN_TARGET_SHIFT;
-	while (low < high) {
-		uint32_t middle = low + (high - low + 1u) / 2u;
-		__uint128_t scaled =
-			(__uint128_t)middle * middle * prefilter_energy;
-
-		if (scaled <= target)
-			low = middle;
-		else
-			high = middle - 1u;
-	}
-	if (low == 0u)
-		return 1u;
-	if (low < UINT16_MAX) {
-		uint32_t upper = low + 1u;
-		__uint128_t below = target -
-			(__uint128_t)low * low * prefilter_energy;
-		__uint128_t above =
-			(__uint128_t)upper * upper * prefilter_energy - target;
-
-		if (above < below)
-			low = upper;
-	}
-	return (uint16_t)low;
-}
-
 static bool b1u_frequencies(
 	const struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS])
@@ -185,7 +146,7 @@ static bool normalize_gain(
 		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_DIRECT_MAX_POINTS];
 	}
 	parameters->four_times_gain_q0_16 =
-		nearest_gain(energy, V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
+		v92_cpd_gain_for_energy(energy, V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
 	return parameters->four_times_gain_q0_16 != 0u;
 }
 
