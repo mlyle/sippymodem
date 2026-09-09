@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 
+#include <math.h>
 #include <stddef.h>
 
 static bool stage_is_valid(enum v92_phase4_digital_rx_stage stage)
@@ -15,7 +16,14 @@ static bool stage_is_valid(enum v92_phase4_digital_rx_stage stage)
 bool v92_phase4_digital_rx_is_valid(
 	const struct v92_phase4_digital_rx *receiver)
 {
-	if (receiver == NULL || !stage_is_valid(receiver->stage))
+	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
+	    !v92_upstream_channel_is_valid(&receiver->channel))
+		return false;
+	uint32_t symbols = receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+		receiver->signal.trn2u.trained_symbols :
+		(uint32_t)V92_UPSTREAM_CHANNEL_SYMBOLS - receiver->signal.control.signal.training_tail_remaining;
+
+	if (receiver->channel.symbols != symbols)
 		return false;
 	return receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 		       v92_pcm_phase4_trn2u_line_rx_is_valid(
@@ -77,14 +85,29 @@ static enum v92_phase4_digital_rx_result fail(
 	return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
 }
 
+static bool observe_channel(
+	struct v92_upstream_channel *channel, int16_t expected,
+	const struct qam_equalizer *equalizer)
+{
+	double raw = equalizer->history[equalizer->decision_delay].in_phase;
+
+	return isfinite(raw) && raw >= -32768.0 && raw <= 32768.0 && trunc(raw) == raw &&
+		v92_upstream_channel_sample(channel, expected, (int32_t)raw);
+}
+
 static enum v92_phase4_digital_rx_result receive_training(
 	struct v92_phase4_digital_rx *receiver,
 	struct v92_phase4_digital_rx *next, int16_t sample)
 {
+	int16_t expected = next->signal.trn2u.expected[next->signal.trn2u.expected_index];
 	enum v92_pcm_phase4_trn2u_line_rx_result result =
 		v92_pcm_phase4_trn2u_line_rx_sample(
 			&next->signal.trn2u, sample);
 
+	if ((result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
+	     result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) &&
+	    !observe_channel(&next->channel, expected, &next->signal.trn2u.equalizer))
+		return fail(receiver);
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
 		return V92_PHASE4_DIGITAL_RX_OK;
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) {
@@ -115,10 +138,18 @@ static enum v92_phase4_digital_rx_result receive_control(
 	struct v92_phase4_digital_rx *next, int16_t sample,
 	struct v92_control_event *event)
 {
+	const struct v92_upstream_rx *signal = &next->signal.control.signal;
+	uint8_t remaining = signal->training_tail_remaining;
+	int16_t expected = remaining ? signal->line.pending_training_targets[
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY - remaining] : 0;
 	enum v92_upstream_control_line_rx_result result =
 		v92_upstream_control_line_rx_sample(
 			&next->signal.control, sample, event);
 
+	if (remaining &&
+	    (result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
+	    !observe_channel(&next->channel, expected, &signal->line.equalizer))
+		return fail(receiver);
 	switch (result) {
 	case V92_UPSTREAM_CONTROL_LINE_RX_OK:
 		return V92_PHASE4_DIGITAL_RX_OK;

@@ -265,6 +265,8 @@ static bool run_records(
 	struct v92_pcm_phase4_trn2u transmitter;
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_phase4_digital_rx receiver;
+	struct v92_pcm_phase4_trn2u reference;
+	struct v92_upstream_channel expected_channel = { 0 };
 	struct v92_phase4_record_tx suvu_tx;
 	struct v92_phase4_record_tx cpu_tx;
 	struct v92_phase4_modulator modulator;
@@ -280,6 +282,8 @@ static bool run_records(
 		      &receiver, &handoff, constellation) ==
 		      V92_PHASE4_DIGITAL_RX_OK,
 	      "digital Phase 4 line did not initialize");
+	CHECK(v92_pcm_phase4_trn2u_init(&reference, constellation, previous_sign, TEST_LU) ==
+		      V92_PCM_PHASE4_TRN2U_OK, "channel reference did not initialize");
 	for (uint32_t symbol = 0;
 	     symbol < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS -
 			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
@@ -304,7 +308,16 @@ static bool run_records(
 		      event.type == V92_CONTROL_EVENT_NONE,
 		      "digital Phase 4 boundary changed at %u: %s", symbol,
 		      v92_phase4_digital_rx_result_name(result));
+		int16_t target;
+
+		CHECK(v92_pcm_phase4_trn2u_next(&reference, &target) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_upstream_channel_sample(&expected_channel, line_sample(law, 1, target),
+			      line_sample(law, 1, target)), "channel reference failed");
 	}
+	CHECK(receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS -
+		      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	      memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
+	      "physical handoff lost channel history or used equalized rather than raw samples");
 	CHECK(transmitter.emitted_symbols ==
 		      V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
 	      v92_phase4_digital_rx_is_receiving_control(&receiver) &&
@@ -321,8 +334,18 @@ static bool run_records(
 			      &receiver, law, polarity, raw,
 			      &suvu_event, &cpu_event),
 		      "control-line SUVu generation failed");
+		if (expected_channel.symbols < V92_UPSTREAM_CHANNEL_SYMBOLS) {
+			int16_t target;
+
+			CHECK(v92_pcm_phase4_trn2u_next(&reference, &target) == V92_PCM_PHASE4_TRN2U_OK &&
+			      v92_upstream_channel_sample(&expected_channel, line_sample(law, 1, target),
+				      line_sample(law, 1, target)), "delayed channel reference failed");
+		}
+		CHECK(memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
+		      "channel lost a delayed training symbol or included control data");
 	}
 	CHECK(suvu_event.type == V92_CONTROL_EVENT_NONE &&
+	      receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
 	      receiver.signal.control.signal.training_tail_remaining == 0u,
 	      "control line exposed SUVu before its delayed decisions");
 	CHECK(v92_phase4_record_tx_handoff(&suvu_tx, &modulator) ==
@@ -384,6 +407,8 @@ static bool run_records(
 	      v92_phase4_digital_rx_is_receiving_control(&receiver) &&
 	      !v92_phase4_digital_rx_has_failed(&receiver),
 	      "control-line records or retained state differed");
+	CHECK(memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
+	      "control records changed the completed training measurement");
 	return true;
 }
 
@@ -891,6 +916,15 @@ static bool test_digital_receive_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "digital receive invalid calls changed state");
+	receiver.channel.symbols = 1u;
+	struct v92_phase4_digital_rx inconsistent = receiver;
+
+	CHECK(!v92_phase4_digital_rx_is_valid(&receiver) &&
+	      v92_phase4_digital_rx_sample(&receiver, 0, &event) == V92_PHASE4_DIGITAL_RX_INVALID_STATE &&
+	      memcmp(&receiver, &inconsistent, sizeof(receiver)) == 0 &&
+	      memcmp(&event, &event_before, sizeof(event)) == 0,
+	      "inconsistent channel extent was accepted");
+	receiver = saved;
 	receiver.failed = true;
 	saved = receiver;
 	CHECK(v92_phase4_digital_rx_has_failed(&receiver) &&

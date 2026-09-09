@@ -3,6 +3,7 @@
 #ifndef V92_PHASE4_DIGITAL_RX_H
 #define V92_PHASE4_DIGITAL_RX_H
 
+#include "v92_upstream_channel.h"
 #include "v92_upstream_control_line_rx.h"
 
 #include <stdbool.h>
@@ -35,6 +36,7 @@ union v92_phase4_digital_receive {
  * serialized. */
 struct v92_phase4_digital_rx {
 	union v92_phase4_digital_receive signal;
+	struct v92_upstream_channel channel;
 	enum v92_phase4_digital_rx_stage stage;
 	bool failed;
 };
