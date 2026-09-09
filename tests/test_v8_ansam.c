@@ -149,7 +149,8 @@ static bool detect_generated(enum test_codec codec)
 	struct v8_ansam_detector samplewise;
 	struct v8_line_conditioner blocked_line;
 	struct v8_line_conditioner samplewise_line;
-	static const uint16_t expected_energy[] = { 4680, 4637, 4684 };
+	/* A-law uses the G.191 one's-complement quantization intervals. */
+	static const uint16_t expected_energy[] = { 4680, 4637, 4686 };
 	int16_t samples[73];
 	bool blocked_detected = false;
 	bool sample_detected = false;

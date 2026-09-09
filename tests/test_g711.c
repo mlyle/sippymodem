@@ -60,8 +60,12 @@ static bool test_pcma_known_values(void)
 		{ 8, 0xd5, 8 },
 		{ -8, 0x55, -8 },
 		{ 16, 0xd4, 24 },
-		{ -17, 0x55, -8 },
+		{ -16, 0x55, -8 },
+		{ -17, 0x54, -24 },
 		{ -24, 0x54, -24 },
+		{ -112, 0x53, -104 },
+		{ -113, 0x52, -120 },
+		{ -119, 0x52, -120 },
 		{ 1000, 0xfa, 1008 },
 		{ -1000, 0x7a, -1008 },
 		{ INT16_MAX, 0xaa, 32256 },
@@ -112,41 +116,39 @@ static bool test_pcma_code_space(void)
 	return true;
 }
 
-static unsigned int pcma_specification_segment(unsigned int magnitude)
+static bool test_pcma_quantization_intervals(void)
 {
-	unsigned int segment = 0;
-	unsigned int segment_end = 0xff;
+	/* Table 1a/G.711 intervals in left-justified 16-bit PCM.  Enumerate
+	 * every interval rather than duplicating the encoder's magnitude and
+	 * segment search.  Negative intervals mirror the one's-complement
+	 * input: [lo, hi] corresponds to [-hi-1, -lo-1].  This also agrees
+	 * exhaustively with G.191's alaw_compress(), including the low bits.
+	 * https://github.com/openitu/STL/blob/cbacae95828179f1238967608e1b91cd515a0261/src/g711/g711.c
+	 */
+	unsigned int lo = 0;
 
-	while (magnitude > segment_end && segment < 8) {
-		segment_end = (segment_end << 1) | 1;
-		segment++;
+	for (unsigned int segment = 0; segment < 8; ++segment) {
+		unsigned int width = segment < 2 ? 16 : 1u << (segment + 3);
+
+		for (unsigned int mantissa = 0; mantissa < 16; ++mantissa) {
+			uint8_t code = (uint8_t)((segment << 4) | mantissa);
+			unsigned int hi = lo + width;
+
+			for (unsigned int sample = lo; sample < hi; ++sample) {
+				int16_t negative = (int16_t)(-(int32_t)sample - 1);
+
+				CHECK(g711_encode_pcma((int16_t)sample) ==
+					      (uint8_t)(code ^ 0xd5),
+				      "PCMA positive interval failed at %u", sample);
+				CHECK(g711_encode_pcma(negative) ==
+					      (uint8_t)(code ^ 0x55),
+				      "PCMA negative interval failed at %d", negative);
+			}
+			lo = hi;
+		}
 	}
-	return segment;
-}
-
-static uint8_t pcma_specification_encode(int sample)
-{
-	unsigned int magnitude;
-	unsigned int segment;
-	uint8_t mask;
-	uint8_t code;
-
-	if (sample >= 0) {
-		magnitude = (unsigned int)sample;
-		mask = 0xd5;
-	} else {
-		int biased = -sample - 8;
-
-		magnitude = biased > 0 ? (unsigned int)biased : 0;
-		mask = 0x55;
-	}
-	segment = pcma_specification_segment(magnitude);
-	if (segment >= 8)
-		return (uint8_t)(0x7f ^ mask);
-	code = (uint8_t)(segment << 4);
-	code |= (uint8_t)((magnitude >>
-			      (segment < 2 ? 4 : segment + 3)) & 0x0f);
-	return (uint8_t)(code ^ mask);
+	CHECK(lo == 32768, "PCMA intervals did not cover the linear range");
+	return true;
 }
 
 static bool test_all_linear_samples(void)
@@ -166,8 +168,6 @@ static bool test_all_linear_samples(void)
 		      "PCMU encoding is unstable at %d", (int)sample);
 		CHECK(g711_encode_pcma(pcma_linear) == pcma,
 		      "PCMA encoding is unstable at %d", (int)sample);
-		CHECK(pcma == pcma_specification_encode((int)sample),
-		      "PCMA encoding disagrees with G.711 at %d", (int)sample);
 	}
 	return true;
 }
@@ -274,6 +274,7 @@ int main(void)
 		{ "PCMA known values", test_pcma_known_values },
 		{ "PCMU code space", test_pcmu_code_space },
 		{ "PCMA code space", test_pcma_code_space },
+		{ "PCMA quantization intervals", test_pcma_quantization_intervals },
 		{ "all linear samples", test_all_linear_samples },
 		{ "V.90 Ucode space", test_ucode_space },
 		{ "V.90 Ucode boundaries", test_ucode_boundaries },

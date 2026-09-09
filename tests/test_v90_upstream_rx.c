@@ -255,6 +255,69 @@ static bool check_cps_requests(enum g711_law law, unsigned int final_case)
 	return false;
 }
 
+struct entry_payload {
+	size_t bits;
+};
+
+static uint8_t entry_bit(size_t offset)
+{
+	uint32_t mixed = (uint32_t)offset + UINT32_C(0x94d049bb);
+
+	mixed ^= mixed >> 16;
+	mixed *= UINT32_C(0x7feb352d);
+	mixed ^= mixed >> 15;
+	return (uint8_t)(mixed & 1u);
+}
+
+static bool entry_source(
+	void *context, const struct v34_mapping_frame *request,
+	uint8_t *bits, uint8_t *auxiliary)
+{
+	struct entry_payload *payload = context;
+
+	for (unsigned int bit = 0; bit < request->primary_bits; ++bit)
+		bits[bit] = entry_bit(payload->bits++);
+	if (auxiliary != NULL)
+		*auxiliary = 0;
+	return true;
+}
+
+static bool entry_payload_received(
+	struct v34_data_stream *transmitter,
+	struct v34_data_line_receiver *receiver,
+	enum g711_law law, struct entry_payload *payload)
+{
+	size_t received_bits = 0u;
+
+	for (size_t clock = 0; clock < SAMPLE_LIMIT && received_bits < 4096u; ++clock) {
+		int16_t sample;
+		bool accepted;
+		struct v34_survivor_decision current;
+		struct v34_received_mapping_frame frame;
+		enum v34_data_receive_result result;
+
+		CHECK(v34_data_stream_sample(transmitter, entry_source, payload,
+			&sample, &accepted) == V34_DATA_STREAM_OK, "post-B1 source failed");
+		result = v34_data_line_receiver_sample(receiver, quantize(law, sample),
+			&current, &frame);
+		CHECK(result == V34_DATA_RECEIVE_OK || result == V34_DATA_RECEIVE_INTERVAL_READY ||
+			result == V34_DATA_RECEIVE_MAPPING_FRAME_READY, "post-B1 receiver failed: %u", result);
+		if (result != V34_DATA_RECEIVE_MAPPING_FRAME_READY)
+			continue;
+		for (unsigned int bit = 0; bit < frame.primary_bit_count; ++bit, ++received_bits) {
+			/* Account for the specified pending DTE mark bits at B1 exit,
+			 * without searching past or discarding any received payload. */
+			uint8_t expected = received_bits < transmitter->primary_delay_bits ? 1u :
+				entry_bit(received_bits - transmitter->primary_delay_bits);
+
+			CHECK(frame.primary_bits[bit] == expected,
+			      "post-B1 payload changed at bit %zu", received_bits);
+		}
+	}
+	CHECK(received_bits >= 4096u, "post-B1 data timed out");
+	return true;
+}
+
 static bool run_line(
 	enum g711_law law, enum v34_constellation_size constellation,
 	enum v34_symbol_rate symbol_rate, uint8_t rate_2400_bps_units,
@@ -296,6 +359,9 @@ static bool run_line(
 	bool prime_damaged = false;
 	bool scr_complete = false;
 	unsigned int scr_samples = 0u;
+	struct entry_payload payload = { 0 };
+	uint16_t b1_previous_error_bits = 0u;
+	bool b1_frame_seen = false;
 
 	data.acknowledges_peer = acknowledged_first;
 	prime.acknowledges_peer = true;
@@ -409,7 +475,7 @@ static bool run_line(
 			bool accepted;
 
 			CHECK(v34_data_stream_sample(
-				      &data_tx, NULL, NULL, &sample, &accepted) ==
+				      &data_tx, entry_source, &payload, &sample, &accepted) ==
 				      V34_DATA_STREAM_OK,
 			      "B1 source stopped at clock %zu", clock);
 			(void)accepted;
@@ -442,6 +508,13 @@ static bool run_line(
 			      "symbol_rate=%d rate=%u",
 			      clock, v90_upstream_rx_result_name(result),
 			      symbol_rate, rate_2400_bps_units);
+			if (receiver.stage == V90_UPSTREAM_RX_STAGE_B1) {
+				const struct v34_data_receiver *b1 =
+					&receiver.state.data.decisions.data_receiver.data_receiver;
+
+				b1_previous_error_bits = b1->b1_error_bits;
+				b1_frame_seen = b1->b1_received_bits != 0u;
+			}
 			if (result == V90_UPSTREAM_RX_OK) {
 				CHECK(memcmp(&event, &saved, sizeof(event)) == 0,
 				      "quiet sample changed its event");
@@ -488,8 +561,9 @@ static bool run_line(
 			      &data_handoff.transmitting_profile) &&
 		      data_handoff.line.equalizer.feedback_mode ==
 			      V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE &&
+		      b1_frame_seen &&
 		      data_handoff.decisions.data_receiver.data_receiver
-			      .b1_error_bits == 0,
+			      .b1_error_bits == b1_previous_error_bits,
 		      "upstream entry at rate %u stopped: source=%d/%d/%d/%d/%d/%d "
 		      "events=%d/%d/%d/%d stage=%d failed=%d handoff=%s "
 		      "valid=%d rate=%u errors=%u",
@@ -507,6 +581,12 @@ static bool run_line(
 			      (unsigned int)data_handoff.decisions
 				      .data_receiver.data_receiver.b1_error_bits : 0);
 	}
+	/* B1 trains the dense data constellation. Require convergence by its
+	 * last mapping frame above, then verify actual online bits below;
+	 * early training errors are not failed payload or evidence of success. */
+	CHECK(entry_payload_received(&data_tx, &data_handoff, law, &payload),
+	      "upstream payload did not survive B1 at rate %u law %u",
+	      rate_2400_bps_units, law);
 	CHECK(!damage_prime ||
 	      (receiver.control_symbols.descrambler.history == cp_tx.symbols.scrambler.history &&
 	       receiver.control_symbols.previous_clockwise_quarter_turns ==
