@@ -2834,10 +2834,14 @@ static enum pcm_call_result sample_v92_phase4(
 			return result;
 		/* The final delayed TRN2u target completes the channel measurement
 		 * before SUVu can start CPd. Freeze wire filters and local receive
-		 * coordinates together here; repeats must not redesign either. */
+		 * coordinates together here; repeats must not redesign either.
+		 * A scalar gain change already belongs to the trained receive FIR.
+		 * Redesigning CPd for it can destroy the direct constellation's
+		 * quantizer spacing without providing useful channel compensation. */
 		if (measured_symbols < V92_UPSTREAM_CHANNEL_SYMBOLS &&
 		    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
 		    station->receive.channel_distorted &&
+		    !v92_upstream_channel_fits_gain(&station->receive.channel) &&
 		    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 			struct v92_cpd_parameters cpd;
 			struct v92_upstream_plan plan;

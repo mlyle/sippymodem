@@ -5511,8 +5511,8 @@ static bool v92_data_boundary(struct pcm_call *call)
 	return true;
 }
 
-static bool v92_payload_octet(
-	struct pcm_call *call, uint8_t received, struct pcm_payload_source *source,
+static bool v92_payload_sample(
+	struct pcm_call *call, uint8_t received, int16_t sample, struct pcm_payload_source *source,
 	uint32_t *received_frames, uint8_t *transmitted)
 {
 	struct pcm_call_data_sources sources = {
@@ -5527,7 +5527,7 @@ static bool v92_payload_octet(
 
 	if (!source->rejection_checked)
 		snapshot = *call;
-	result = pcm_call_data_octet(call, received, decode_octet(call->law, received),
+	result = pcm_call_data_octet(call, received, sample,
 				    &sources, &generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		CHECK(!source->rejection_checked && !source->reject &&
@@ -5535,7 +5535,7 @@ static bool v92_payload_octet(
 		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
 		      "V.92 source rejection consumed media or changed output");
 		source->rejection_checked = true;
-		result = pcm_call_data_octet(call, received, decode_octet(call->law, received),
+		result = pcm_call_data_octet(call, received, sample,
 					    &sources, &generated, &event);
 	}
 	CHECK(result == PCM_CALL_OK, "V.92 data returned %s", pcm_call_result_name(result));
@@ -5647,6 +5647,8 @@ struct v92_upstream_offer {
 	uint8_t local_maximum;
 	uint8_t expected;
 	double postcursor;
+	/* Zero keeps the received sample unchanged; scaling follows G.711. */
+	double receive_gain;
 };
 
 static bool run_v92_duplex_data(
@@ -5708,6 +5710,10 @@ static bool run_v92_duplex_data(
 			struct pcm_call *call = calls[role];
 			uint8_t received = role == 0u ? ar : dr;
 			uint8_t *transmitted = role == 0u ? &at : &dt;
+			int16_t sample = decode_octet(law, received);
+
+			if (role == 1u && offer != NULL && offer->receive_gain != 0.0)
+				sample = (int16_t)lround(sample * offer->receive_gain);
 
 			if (pcm_call_phase4_is_ready(call)) {
 				CHECK(v92_data_boundary(call), "V.92 handoff failed");
@@ -5719,14 +5725,14 @@ static bool run_v92_duplex_data(
 				}
 			}
 			if (call->stage == PCM_CALL_DATA_PATH) {
-				CHECK(v92_payload_octet(call, received, role == 0u ? &upstream : &downstream,
+				CHECK(v92_payload_sample(call, received, sample, role == 0u ? &upstream : &downstream,
 							role == 0u ? &downstream_received : &upstream_received,
 							transmitted), "V.92 payload failed at clock %zu", clock);
 			} else {
 				struct pcm_call_observation observation;
 				bool entering_v92_phase4 = role == 1u && call->stage == PCM_CALL_PHASE3_MIXED;
 
-				enum pcm_call_result result = pcm_call_octet(call, received, decode_octet(law, received),
+				enum pcm_call_result result = pcm_call_octet(call, received, sample,
 					transmitted, &observation);
 
 				CHECK(result == PCM_CALL_OK, "V.92 role %zu stage %u training failed at clock %zu: %s",
@@ -5818,20 +5824,26 @@ static bool test_v92_upstream_negotiation(void)
 {
 	static const struct v92_upstream_offer offers[] = {
 		/* Recorded peer mask: 24k through 28k, against 48k and 36k caps. */
-		{ UINT32_C(0xf), 19u, 4u, 0.0 },
-		{ UINT32_C(0xf), 10u, 4u, 0.0 },
+		{ UINT32_C(0xf), 19u, 4u, 0.0, 0.0 },
+		{ UINT32_C(0xf), 10u, 4u, 0.0, 0.0 },
 		/* Holes below and rates above our cap are not usable alternatives. */
-		{ UINT32_C(0x40009), 3u, 1u, 0.0 },
+		{ UINT32_C(0x40009), 3u, 1u, 0.0, 0.0 },
 		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
-		{ UINT32_C(1) << 12u, 19u, 13u, 0.0 },
+		{ UINT32_C(1) << 12u, 19u, 13u, 0.0, 0.0 },
 		/* Dense maps must use the trained LU, not just normalize B1u power. */
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0 },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.0 },
+		/* Gain alone must retain the quantizer-aware direct selection and
+		 * learned receive FIR, including the dense maximum-rate mapping. */
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75 },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5 },
+		{ UINT32_C(1), 1u, 1u, 0.0, 0.75 },
 		/* At this level the bounded 44k map is not injective. Only try a
 		 * lower rate actually offered by the peer (here 41 1/3 kbit/s). */
-		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0 },
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0, 0.0 },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
-		{ UINT32_C(1), 1u, 1u, 0.10 },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.0 },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.75 },
 	};
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -5976,7 +5988,7 @@ static bool test_v92_downstream_reselection(void)
 						data_started[side] = true;
 					}
 					if (call->stage == PCM_CALL_DATA_PATH && data_started[side])
-						CHECK(v92_payload_octet(call, rx[side], &sources[side],
+						CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]), &sources[side],
 									&frames[side], &tx[side]),
 						      "law %u epoch %zu side %zu data failed", law, epoch, side);
 					else if (call->stage == PCM_CALL_DATA_PATH) {

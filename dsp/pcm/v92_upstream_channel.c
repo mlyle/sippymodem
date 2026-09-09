@@ -66,3 +66,23 @@ bool v92_upstream_channel_sample(
 			(int64_t)expected * channel->observed_history[lead];
 	return true;
 }
+
+bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
+{
+	if (!v92_upstream_channel_is_valid(channel) ||
+	    channel->symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+		return false;
+	int64_t cross = channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS];
+	int64_t expected = channel->expected_autocorrelation[0];
+	int64_t observed = channel->observed_autocorrelation[0];
+
+	if (cross <= 0 || expected <= 0 || observed <= 0)
+		return false;
+	/* The best scalar's unexplained energy is yy - xy*xy/xx. Compare
+	 * without cancellation or division; the bounded training sums and
+	 * their products fit in 128 bits, including the squared 1% bound. */
+	__uint128_t energy = (__uint128_t)expected * observed;
+	__uint128_t explained = (__uint128_t)cross * cross;
+
+	return explained <= energy && (energy - explained) * 10000u <= energy;
+}

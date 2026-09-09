@@ -92,7 +92,66 @@ static bool test_rejection(void)
 	return true;
 }
 
+static bool test_gain_fit(void)
+{
+	static const struct {
+		double gain, postcursor, noise;
+		bool fits;
+	} cases[] = {
+		{ 0.25, 0.0, 0.0, true },
+		{ 0.75, 0.0, 0.0, true },
+		{ 1.25, 0.0, 0.0, true },
+		{ 0.75, 0.0, 0.003, true },
+		{ 0.75, 0.0, 0.02, false },
+		{ 0.75, 0.02, 0.0, false },
+		{ 0.75, 0.10, 0.0, false },
+		{ -0.75, 0.0, 0.0, false },
+		{ 0.0, 0.0, 0.0, false },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct v92_upstream_channel channel = { 0 };
+
+		for (int n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+			CHECK(!v92_upstream_channel_fits_gain(&channel), "incomplete gain fit accepted");
+			int16_t target = expected(n, false) / 4;
+			int32_t input = (int32_t)(cases[index].gain * target +
+				cases[index].postcursor * (expected(n - 1, false) / 4) +
+				cases[index].noise * (expected(n + 100000, false) / 4));
+
+			CHECK(v92_upstream_channel_sample(&channel, target, input), "gain fixture failed");
+		}
+		struct v92_upstream_channel saved = channel;
+
+		CHECK(v92_upstream_channel_fits_gain(&channel) == cases[index].fits &&
+		      memcmp(&channel, &saved, sizeof(channel)) == 0,
+		      "gain fit case %zu changed classification or measurement", index);
+	}
+	struct v92_upstream_channel edge = { .symbols = V92_UPSTREAM_CHANNEL_SYMBOLS };
+
+	edge.expected_autocorrelation[0] = 10000;
+	edge.observed_autocorrelation[0] = 10001;
+	edge.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS] = 10000;
+	CHECK(v92_upstream_channel_fits_gain(&edge), "gain-fit residual below 1%% rejected");
+	edge.observed_autocorrelation[0]++;
+	CHECK(!v92_upstream_channel_fits_gain(&edge), "gain-fit residual above 1%% accepted");
+	edge.observed_autocorrelation[0] = 9999;
+	CHECK(!v92_upstream_channel_fits_gain(&edge), "inconsistent energy accepted");
+	int64_t maximum = (int64_t)(V92_UPSTREAM_CHANNEL_SYMBOLS -
+		V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS) * 32768 * 32768;
+
+	edge.expected_autocorrelation[0] = edge.observed_autocorrelation[0] = maximum;
+	edge.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS] = maximum;
+	CHECK(v92_upstream_channel_fits_gain(&edge), "full-scale gain fit overflowed");
+	edge.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS] = maximum / 2;
+	CHECK(!v92_upstream_channel_fits_gain(&edge), "full-scale poor fit overflowed");
+	CHECK(!v92_upstream_channel_fits_gain(NULL), "missing measurement accepted");
+	edge.symbols++;
+	CHECK(!v92_upstream_channel_fits_gain(&edge), "invalid measurement accepted");
+	return true;
+}
+
 int main(void)
 {
-	return test_correlations(false) && test_correlations(true) && test_rejection() ? 0 : 1;
+	return test_correlations(false) && test_correlations(true) && test_rejection() && test_gain_fit() ? 0 : 1;
 }

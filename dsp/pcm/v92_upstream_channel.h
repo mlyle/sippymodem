@@ -43,6 +43,11 @@ struct v92_upstream_channel {
 
 bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel);
 
+/* A completed, energetic training measurement fits one positive gain with
+ * at most 1% relative RMS residual. This selects whether the existing receive
+ * FIR suffices; it is not a substitute for B1u or online quality checks. */
+bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel);
+
 /* Polarity reversal of -32768 can produce +32768, hence the wider observed
  * argument. Invalid calls change nothing. Completed measurements are stable. */
 bool v92_upstream_channel_sample(
