@@ -308,6 +308,7 @@ static bool prepare_digital_fixture(
 	handoff = (struct v92_phase4_digital_handoff){
 		.receive = upstream_rx,
 		.cpu = fixture->cpu,
+		.upstream_plan = { .gain = 1.25, .delay = 60u, .observation = V92_PCM_FRAME_CONSTELLATION },
 	};
 	if (!v92_phase4_ed_tx_init(&handoff.transmit, &downstream_tx, NULL))
 		return false;
@@ -450,6 +451,10 @@ static bool run_rearmed_crossing(
 	      prepare_digital_fixture(law, extended, &fixture),
 	      "law %u extra %u digital fixture did not initialize",
 	      (unsigned int)law, extra_records);
+	struct v92_upstream_plan plan = fixture.owner.state.digital.upstream_plan;
+
+	CHECK(plan.gain == 1.25 && plan.delay == 60u && plan.observation == V92_PCM_FRAME_CONSTELLATION,
+	      "E2u initialization lost selected receive coordinates");
 	for (unsigned int record_index = 0u;
 	     record_index < extra_records; ++record_index) {
 		bool cpu_record = extra_records > 1u && record_index == 1u;
@@ -492,6 +497,13 @@ static bool run_rearmed_crossing(
 		      (unsigned int)law, extra_records, symbol,
 		      v92_phase4_e2u_result_name(result));
 	}
+	struct v92_phase4_e2u_handoff handoff;
+
+	CHECK(v92_phase4_e2u_handoff(&fixture.owner, &handoff) == V92_PHASE4_E2U_OK &&
+	      memcmp(&handoff.state.digital.upstream_plan, &plan, sizeof(plan)) == 0,
+	      "repeated controls or E2u changed receive plan");
+	handoff.state.digital.upstream_plan.delay = 0u;
+	CHECK(!v92_phase4_e2u_handoff_is_valid(&handoff), "invalid plan crossed E2u handoff");
 	return true;
 }
 
@@ -771,7 +783,8 @@ static bool run_crossing(
 		      V92_UPSTREAM_DATA_TX_OK &&
 	      v92_upstream_data_rx_init(&upstream_receive,
 		      &digital_done.state.digital.receive,
-		      &digital_done.state.digital.mapping) ==
+		      &digital_done.state.digital.mapping,
+		      &digital_done.state.digital.upstream_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      v92_pcm_frame_tx_init(&encoder, &handoff->mapping) ==
 		      V92_PCM_FRAME_OK &&

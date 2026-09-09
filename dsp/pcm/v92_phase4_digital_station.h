@@ -7,6 +7,7 @@
 #include "v92_phase4_cpd_tx.h"
 #include "v92_phase4_digital_rx.h"
 #include "v92_pcm_mapping.h"
+#include "v92_upstream_plan.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -41,6 +42,7 @@ struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
 	struct pcm_downstream_tx transmit;
 	struct v92_phase4_cpd_tx initial_cpd;
+	struct v92_upstream_plan upstream_plan;
 	struct v92_cpu_parameters cpu;
 	struct v92_suvu_parameters suvu;
 	uint64_t cpd_start_frame;
@@ -66,16 +68,20 @@ struct v92_phase4_digital_handoff {
 	struct v92_cpu_parameters cpu;
 	/* The complete CPd actually transmitted, not a regenerated profile. */
 	struct v92_pcm_mapping mapping;
+	struct v92_upstream_plan upstream_plan;
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
- * downstream TRN2d/SUVd transmitter. Retain the complete selected CPd in the
- * wire owner; acknowledging CPu changes no filters or constellation tables. */
+ * downstream TRN2d/SUVd transmitter. If control is not configured yet, defer
+ * SUVd until the complete channel measurement. Otherwise the supplied SUVd
+ * must match the inherited selection. Retain complete CPd in the wire owner;
+ * acknowledging CPu changes no filters or constellation tables. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	struct v92_phase4_digital_station *station,
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
+	const struct v92_suvd_parameters *suvd,
 	const struct v92_cpd_parameters *cpd,
 	uint16_t round_trip_delay_samples);
 
@@ -83,6 +89,13 @@ bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station);
 bool v92_phase4_digital_station_has_failed(
 	const struct v92_phase4_digital_station *station);
+
+/* Replace an unsent initial CPd and its matching local receive plan after
+ * channel measurement. Once CPd transmission starts, selection is frozen
+ * through all acknowledgements/repeats. Rejected calls change nothing. */
+enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstream(
+	struct v92_phase4_digital_station *station,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan);
 
 /* Consume one signed 8 kHz upstream sample. EVENT reports a complete decoded
  * record. Rejected wire records advance only the receive line and do not

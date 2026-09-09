@@ -84,9 +84,12 @@ static bool downstream_state_matches(
 {
 	const struct pcm_downstream_tx *tx = &station->transmit;
 
-	if (tx->protocol != PCM_PROTOCOL_V92 || !tx->control_configured ||
+	if (tx->protocol != PCM_PROTOCOL_V92 ||
 	    tx->finish_requested || tx->complete)
 		return false;
+	if (!tx->control_configured)
+		return station->transmit_stage == V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD &&
+			tx->stage == PCM_DOWNSTREAM_TX_TRN2D;
 	switch (station->transmit_stage) {
 	case V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD:
 	case V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD:
@@ -119,6 +122,7 @@ static bool owned_state_is_valid(
 	return receive_law(&station->receive) ==
 		       station->transmit.encoder.mapping.law &&
 	       v92_phase4_cpd_tx_is_valid(&station->initial_cpd) &&
+	       v92_upstream_plan_is_valid(&station->upstream_plan) &&
 	       transmit_stage_is_valid(station->transmit_stage) &&
 	       (station->transmit_stage ==
 			V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD ||
@@ -195,20 +199,22 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	const struct v92_pcm_phase3_cpt_line_handoff *receive_handoff,
 	enum v92_constellation_size constellation,
 	const struct pcm_downstream_tx *downstream,
+	const struct v92_suvd_parameters *suvd,
 	const struct v92_cpd_parameters *cpd,
 	uint16_t round_trip_delay_samples)
 {
 	struct v92_phase4_digital_station initialized = { 0 };
 
 	if (station == NULL || receive_handoff == NULL || downstream == NULL ||
-	    cpd == NULL)
+	    cpd == NULL || suvd == NULL)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (!pcm_downstream_tx_is_valid(downstream) ||
 	    downstream->protocol != PCM_PROTOCOL_V92 ||
-	    !downstream->control_configured ||
-	    downstream->v92_control_kind !=
-		    PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
-	    downstream->control.suvd.acknowledges_cpu ||
+	    !v92_suvd_parameters_are_valid(suvd) || suvd->acknowledges_cpu ||
+	    (downstream->control_configured &&
+	     (downstream->v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+	      downstream->control.suvd.acknowledges_cpu ||
+	      downstream->control.suvd.request_silence != suvd->request_silence)) ||
 	    downstream->finish_requested || downstream->complete ||
 	    !v92_cpd_parameters_are_valid(cpd) ||
 	    cpd->acknowledges_cpu)
@@ -226,8 +232,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 	    downstream->control_bit_index == 0u)
 		initialized.transmit_stage =
 			V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD;
-	initialized.request_silence =
-		downstream->control.suvd.request_silence;
+	initialized.request_silence = suvd->request_silence;
 	if (!v92_phase4_digital_station_is_valid(&initialized))
 		return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
 	*station = initialized;
@@ -239,6 +244,29 @@ static enum v92_phase4_digital_station_result fail(
 {
 	station->failed = true;
 	return V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR;
+}
+
+enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstream(
+	struct v92_phase4_digital_station *station,
+	const struct v92_cpd_parameters *cpd, const struct v92_upstream_plan *plan)
+{
+	struct v92_phase4_cpd_tx transmit;
+
+	if (station == NULL || cpd == NULL || plan == NULL ||
+	    memory_regions_overlap(station, sizeof(*station), cpd, sizeof(*cpd)) ||
+	    memory_regions_overlap(station, sizeof(*station), plan, sizeof(*plan)))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
+	if (!v92_phase4_digital_station_is_valid(station) || station->failed ||
+	    (station->transmit_stage != V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD &&
+	     station->transmit_stage != V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) ||
+	    station->receive.channel.symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
+	if (!v92_upstream_plan_is_valid(plan) || cpd->acknowledges_cpu ||
+	    !v92_phase4_cpd_tx_init(&transmit, &station->transmit, cpd))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
+	station->initial_cpd = transmit;
+	station->upstream_plan = *plan;
+	return V92_PHASE4_DIGITAL_STATION_OK;
 }
 
 static bool accept_event(
@@ -357,6 +385,16 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 static bool apply_pending_downstream(
 	struct v92_phase4_digital_station *station)
 {
+	/* SUVd permits the analogue modem to end TRN2u early (9.6.2.1.1).
+	 * An unconfigured transmitter keeps TRN2d continuous until we have
+	 * the complete measurement, then advertises readiness for controls. */
+	if (!station->transmit.control_configured &&
+	    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS) {
+		const struct v92_suvd_parameters suvd = { .request_silence = station->request_silence };
+
+		if (pcm_downstream_tx_start_suvd(&station->transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+			return false;
+	}
 	if (!pcm_downstream_tx_is_v92_control_boundary(&station->transmit))
 		return true;
 	if (station->transmit_stage ==
@@ -526,6 +564,7 @@ bool v92_phase4_digital_handoff_is_valid(
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
 	       handoff->cpu.law == handoff->transmit.transmit.encoder.mapping.law &&
 	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
+	       v92_upstream_plan_is_valid(&handoff->upstream_plan) &&
 	       handoff->mapping.law == handoff->cpu.law &&
 	       handoff->receive.signal.line.law == handoff->mapping.law;
 }
@@ -547,6 +586,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 	generated = (struct v92_phase4_digital_handoff){
 		.receive = station->receive.signal.control,
 		.cpu = station->cpu,
+		.upstream_plan = station->upstream_plan,
 	};
 	if (!v92_phase4_ed_tx_init(&generated.transmit, &station->transmit,
 		    station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD ?

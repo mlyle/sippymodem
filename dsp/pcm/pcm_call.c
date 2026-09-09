@@ -8,6 +8,7 @@
 #include "v92_data_quality.h"
 #include "v34_phase2_selection.h"
 #include "v92_cpd_direct.h"
+#include "v92_cpd_channel.h"
 #include "v92_pcm_dil.h"
 
 #include <limits.h>
@@ -487,6 +488,8 @@ static bool v92_digital_mixed_is_valid(
 {
 	const struct pcm_call_v92_digital_mixed_state *mixed =
 		&call->state.mixed.v92_digital;
+	const struct pcm_call_v92_digital_phase4_configuration *configuration =
+		&call->v92_digital_phase4_configuration;
 	struct v92_cpt_parameters parameters;
 	struct v90_pcm_mapping mapping;
 
@@ -496,12 +499,12 @@ static bool v92_digital_mixed_is_valid(
 	    mixed->transmit.protocol != PCM_PROTOCOL_V92 ||
 	    (mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D &&
 	     mixed->transmit.stage != PCM_DOWNSTREAM_TX_V92_CONTROL) ||
-	    !mixed->transmit.control_configured ||
-	    mixed->transmit.v92_control_kind !=
-		    PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
-	    mixed->transmit.control.suvd.request_silence !=
-		    call->v92_digital_phase4_configuration.suvd.request_silence ||
-	    mixed->transmit.control.suvd.acknowledges_cpu ||
+	    (configuration->upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT ?
+		mixed->transmit.control_configured :
+		(!mixed->transmit.control_configured ||
+		 mixed->transmit.v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
+		 mixed->transmit.control.suvd.request_silence != configuration->suvd.request_silence ||
+		 mixed->transmit.control.suvd.acknowledges_cpu)) ||
 	    mixed->transmit.finish_requested || mixed->transmit.complete)
 		return false;
 	if (call->failed)
@@ -1938,10 +1941,11 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 		if (pcm_downstream_tx_init(
 			    &mixed.transmit, PCM_PROTOCOL_V92, &mapping) !=
 			    PCM_DOWNSTREAM_TX_OK ||
-		    pcm_downstream_tx_start_suvd(
+		    (call->v92_digital_phase4_configuration.upstream_selection != PCM_CALL_V92_UPSTREAM_DIRECT &&
+		     pcm_downstream_tx_start_suvd(
 			    &mixed.transmit,
 			    &call->v92_digital_phase4_configuration.suvd) !=
-			    PCM_DOWNSTREAM_TX_OK)
+			    PCM_DOWNSTREAM_TX_OK))
 			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.mixed.v92_digital = mixed;
 	}
@@ -2194,6 +2198,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    call->phase3_configuration.v92_digital.jp
 				    .training_constellation,
 			    &mixed->transmit,
+			    &call->v92_digital_phase4_configuration.suvd,
 			    &cpd, call->round_trip_delay_samples) !=
 		    V92_PHASE4_DIGITAL_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
@@ -2810,6 +2815,8 @@ static enum pcm_call_result sample_v92_phase4(
 	}
 	{
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
+		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
+		uint16_t measured_symbols = station->receive.channel.symbols;
 		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.cpu;
 		enum v92_phase4_digital_station_result station_result =
 			v92_phase4_digital_station_transmit(
@@ -2825,6 +2832,28 @@ static enum pcm_call_result sample_v92_phase4(
 		result = v92_digital_phase4_result(station_result);
 		if (result != PCM_CALL_OK)
 			return result;
+		/* The final delayed TRN2u target completes the channel measurement
+		 * before SUVu can start CPd. Freeze wire filters and local receive
+		 * coordinates together here; repeats must not redesign either. */
+		if (measured_symbols < V92_UPSTREAM_CHANNEL_SYMBOLS &&
+		    station->receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+		    station->receive.channel_distorted &&
+		    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
+			struct v92_cpd_parameters cpd;
+			struct v92_upstream_plan plan;
+			const struct v92_phase4_cpd_tx *wire = &station->initial_cpd;
+			int16_t level = station->receive.signal.control.signal.line.demodulator.lu;
+
+			if (v92_cpd_decode(wire->sequence, sizeof(wire->sequence),
+				    wire->sequence_bits, wire->frame_bits, &cpd) != V92_CPD_OK ||
+			    !v92_cpd_channel_design(&cpd, &station->receive.channel, call->law, level, &plan) ||
+			    !v92_filters_fit_capabilities(&cpd, &call->phase3_entry.selection.analog.pcm))
+				return PCM_CALL_UNUSABLE_SELECTION;
+			result = v92_digital_phase4_result(
+				v92_phase4_digital_station_select_upstream(station, &cpd, &plan));
+			if (result != PCM_CALL_OK)
+				return result;
+		}
 		if (call->state.phase4.v92.owner.digital.cpu_received &&
 		    (!downstream_rate_is_enabled(jd->data_rate_capability_mask, cpu->data_rate_number) ||
 		     cpu->spectral_lookahead_frames > jd->maximum_spectral_shaping_lookahead))
@@ -2965,7 +2994,7 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		struct pcm_call_v92_digital_data *path = &next->state.data_path.v92_digital;
 
 		if (v92_upstream_data_rx_init(&path->upstream, &from->receive,
-					     &from->mapping) != V92_UPSTREAM_DATA_RX_OK)
+					     &from->mapping, &from->upstream_plan) != V92_UPSTREAM_DATA_RX_OK)
 			return false;
 		path->downstream = from->downstream;
 		path->downstream_stage = from->downstream_stage;

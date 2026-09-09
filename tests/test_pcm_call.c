@@ -5494,8 +5494,11 @@ static bool v92_data_boundary(struct pcm_call *call)
 		CHECK(v92_pcm_mapping_equal(&path->upstream.decoder.mapping, &from->mapping) &&
 		      path->upstream.line.input_samples == from->receive.line.input_samples &&
 		      path->upstream.line.polarity == from->receive.line.polarity &&
-		      memcmp(&path->upstream.line.equalizer, &from->receive.line.equalizer,
-			     sizeof(path->upstream.line.equalizer)) == 0 &&
+		      memcmp(&path->upstream.line.plan, &from->upstream_plan, sizeof(from->upstream_plan)) == 0 &&
+		      (from->upstream_plan.observation == V92_PCM_FRAME_CONSTELLATION ?
+			path->upstream.line.delay_remaining == from->upstream_plan.delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY :
+			memcmp(&path->upstream.line.equalizer, &from->receive.line.equalizer,
+			       sizeof(path->upstream.line.equalizer)) == 0) &&
 		      path->downstream_stage == from->downstream_stage &&
 		      memcmp(&path->downstream, &from->downstream, sizeof(path->downstream)) == 0,
 		      "V.92 digital data entry reset trained line or downstream history");
@@ -5570,7 +5573,8 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	uint8_t transmitted;
 	uint8_t silence = silence_octet(boundary->law);
 
-	for (size_t sample = 0u; sample < V92_B1U_SYMBOLS; ++sample) {
+	for (size_t sample = 0u; sample < (size_t)V92_B1U_SYMBOLS +
+	     boundary->state.data_path.v92_digital.upstream.line.delay_remaining; ++sample) {
 		CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) ==
 			      PCM_CALL_OK &&
 		      event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
@@ -5611,7 +5615,8 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 	      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
 	      memcmp(&checked, &owned, sizeof(checked)) == 0,
 	      "validated-block and checked V.92 clocks diverged");
-	if (online->local_role == V90_DIGITAL_MODEM) {
+	if (online->local_role == V90_DIGITAL_MODEM && online->state.data_path.v92_digital
+	    .upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
 		checked = *online;
 		checked.state.data_path.v92_digital.upstream.line.equalizer.history[0].in_phase =
 			DBL_MAX;
@@ -5641,6 +5646,7 @@ struct v92_upstream_offer {
 	uint32_t peer_mask;
 	uint8_t local_maximum;
 	uint8_t expected;
+	double postcursor;
 };
 
 static bool run_v92_duplex_data(
@@ -5657,6 +5663,7 @@ static bool run_v92_duplex_data(
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
 	int16_t selected_lu = 0;
+	int16_t previous_upstream = 0;
 
 	if (offer != NULL) {
 		CHECK(!long_cpd && v92_profile_init(
@@ -5664,6 +5671,11 @@ static bool run_v92_duplex_data(
 			      offer->local_maximum, NULL) == V92_PROFILE_OK,
 		      "V.92 negotiating profile failed");
 		ac.phase3.v92_analog.upstream_rate_mask = offer->peer_mask;
+		/* The impaired fixture adds memory and a second G.711 conversion
+		 * to the octet transport. Use a roughly 2k training level so this
+		 * deliberate tandem quantization stays inside the B1 quality bound. */
+		if (offer->postcursor != 0.0)
+			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	}
 	if (long_cpd) {
 		struct v92_cpd_parameters *cpd = &dc.v92_digital_phase4.cpd;
@@ -5685,6 +5697,13 @@ static bool run_v92_duplex_data(
 		struct pcm_call *calls[] = { &analog, &digital };
 
 		channel_receive(&wire, &ar, &dr);
+		if (offer != NULL && offer->postcursor != 0.0) {
+			int16_t current = decode_octet(law, dr);
+
+			dr = encode_octet(law, (int16_t)lround((1.0 - offer->postcursor) * current +
+				offer->postcursor * previous_upstream));
+			previous_upstream = current;
+		}
 		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
 			struct pcm_call *call = calls[role];
 			uint8_t received = role == 0u ? ar : dr;
@@ -5707,9 +5726,11 @@ static bool run_v92_duplex_data(
 				struct pcm_call_observation observation;
 				bool entering_v92_phase4 = role == 1u && call->stage == PCM_CALL_PHASE3_MIXED;
 
-				CHECK(pcm_call_octet(call, received, decode_octet(law, received),
-						     transmitted, &observation) == PCM_CALL_OK,
-				      "V.92 training failed at clock %zu", clock);
+				enum pcm_call_result result = pcm_call_octet(call, received, decode_octet(law, received),
+					transmitted, &observation);
+
+				CHECK(result == PCM_CALL_OK, "V.92 role %zu stage %u training failed at clock %zu: %s",
+				      role, call->stage, clock, pcm_call_result_name(result));
 				if (entering_v92_phase4 && call->stage == PCM_CALL_PHASE4)
 					selected_lu = call->state.phase4.v92.owner.digital.receive
 						.signal.trn2u.demodulator.lu;
@@ -5753,6 +5774,18 @@ static bool run_v92_duplex_data(
 
 		CHECK(v92_cpd_direct_select(&expected, law, offer->expected, selected_lu, false) == V92_CPD_OK,
 		      "V.92 expected upstream selection did not initialize");
+		const struct v92_upstream_data_rx *rx = &digital.state.data_path.v92_digital.upstream;
+
+		CHECK(rx->line.plan.observation == (offer->postcursor == 0.0 ?
+			V92_PCM_FRAME_FILTER_OUTPUT : V92_PCM_FRAME_CONSTELLATION),
+		      "V.92 selected the wrong receive coordinates for its measured channel");
+		if (offer->postcursor != 0.0) {
+			CHECK(rx->decoder.mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK].count == 90u &&
+			      rx->decoder.mapping.cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 85u,
+			      "V.92 distorted channel did not receive compensating CPd");
+			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
+			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
+		}
 		/* CPd-prime repeats the same selection with CPu acknowledged. The
 		 * acknowledgement may now be in CPd rather than a later SUVd. */
 		expected.acknowledges_cpu = analog.state.data_path.v92_analog
@@ -5785,17 +5818,20 @@ static bool test_v92_upstream_negotiation(void)
 {
 	static const struct v92_upstream_offer offers[] = {
 		/* Recorded peer mask: 24k through 28k, against 48k and 36k caps. */
-		{ UINT32_C(0xf), 19u, 4u },
-		{ UINT32_C(0xf), 10u, 4u },
+		{ UINT32_C(0xf), 19u, 4u, 0.0 },
+		{ UINT32_C(0xf), 10u, 4u, 0.0 },
 		/* Holes below and rates above our cap are not usable alternatives. */
-		{ UINT32_C(0x40009), 3u, 1u },
+		{ UINT32_C(0x40009), 3u, 1u, 0.0 },
 		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
-		{ UINT32_C(1) << 12u, 19u, 13u },
+		{ UINT32_C(1) << 12u, 19u, 13u, 0.0 },
 		/* Dense maps must use the trained LU, not just normalize B1u power. */
-		{ UINT32_C(1) << 18u, 19u, 19u },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0 },
 		/* At this level the bounded 44k map is not injective. Only try a
 		 * lower rate actually offered by the peer (here 41 1/3 kbit/s). */
-		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u },
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0 },
+		/* A real channel-memory boundary must select and use the filters,
+		 * not pass only because both coders share an identity mapping. */
+		{ UINT32_C(1), 1u, 1u, 0.10 },
 	};
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

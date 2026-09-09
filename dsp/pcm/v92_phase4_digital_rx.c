@@ -23,7 +23,8 @@ bool v92_phase4_digital_rx_is_valid(
 		receiver->signal.trn2u.trained_symbols :
 		(uint32_t)V92_UPSTREAM_CHANNEL_SYMBOLS - receiver->signal.control.signal.training_tail_remaining;
 
-	if (receiver->channel.symbols != symbols)
+	if (receiver->channel.symbols != symbols ||
+	    (receiver->channel_distorted && symbols <= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS))
 		return false;
 	return receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
 		       v92_pcm_phase4_trn2u_line_rx_is_valid(
@@ -85,14 +86,43 @@ static enum v92_phase4_digital_rx_result fail(
 	return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
 }
 
+static int16_t quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
 static bool observe_channel(
-	struct v92_upstream_channel *channel, int16_t expected,
-	const struct qam_equalizer *equalizer)
+	struct v92_phase4_digital_rx *receiver, int16_t expected,
+	const struct qam_equalizer *equalizer,
+	const struct v92_phase4_demodulator *demodulator, enum g711_law law)
 {
 	double raw = equalizer->history[equalizer->decision_delay].in_phase;
 
-	return isfinite(raw) && raw >= -32768.0 && raw <= 32768.0 && trunc(raw) == raw &&
-		v92_upstream_channel_sample(channel, expected, (int32_t)raw);
+	if (!isfinite(raw) || raw < -32768.0 || raw > 32768.0 || trunc(raw) != raw)
+		return false;
+	/* The acquisition FIR targets G.711 cells; the channel inverse needs
+	 * the linear training waveform. Using cell centres in the inverse
+	 * biases its gain, especially when LU lies near a companding boundary. */
+	for (uint8_t magnitude = 0u; magnitude < demodulator->constellation / 2u; ++magnitude) {
+		int16_t linear;
+
+		if (v92_phase4_modulator_level(demodulator->constellation,
+			    demodulator->lu, magnitude, expected < 0, &linear) != V92_PHASE4_MODULATOR_OK)
+			return false;
+		if (quantize(law, linear) != expected)
+			continue;
+		if (!v92_upstream_channel_sample(&receiver->channel, linear, (int32_t)raw))
+			return false;
+		/* Host DC/echo conditioning can move a sample within its original
+		 * cell without changing the direct mapping's G.711 point placement. */
+		if (receiver->channel.symbols > V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
+		    quantize(law, (int16_t)fmin(raw, INT16_MAX)) != expected)
+			receiver->channel_distorted = true;
+		return true;
+	}
+	return false;
 }
 
 static enum v92_phase4_digital_rx_result receive_training(
@@ -106,7 +136,8 @@ static enum v92_phase4_digital_rx_result receive_training(
 
 	if ((result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
 	     result == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED) &&
-	    !observe_channel(&next->channel, expected, &next->signal.trn2u.equalizer))
+	    !observe_channel(next, expected, &next->signal.trn2u.equalizer,
+		    &next->signal.trn2u.demodulator, next->signal.trn2u.law))
 		return fail(receiver);
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_OK)
 		return V92_PHASE4_DIGITAL_RX_OK;
@@ -148,7 +179,8 @@ static enum v92_phase4_digital_rx_result receive_control(
 
 	if (remaining &&
 	    (result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT) &&
-	    !observe_channel(&next->channel, expected, &signal->line.equalizer))
+	    !observe_channel(next, expected, &signal->line.equalizer,
+		    &signal->line.demodulator, signal->line.law))
 		return fail(receiver);
 	switch (result) {
 	case V92_UPSTREAM_CONTROL_LINE_RX_OK:

@@ -25,7 +25,7 @@ enum {
 };
 
 /* Zero initialization starts one bounded TRN2u measurement. Observations are
- * polarity-normalized raw PCM, aligned with their known training targets,
+ * polarity-normalized raw PCM, aligned with their known linear training targets,
  * not the equalizer's output or nearest-point decisions. Retain the delayed
  * training tail across the physical control handoff. Freeze the completed
  * measurement so control/data cannot train a different channel accidentally.

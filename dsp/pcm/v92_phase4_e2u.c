@@ -86,6 +86,7 @@ static bool digital_state_is_valid(
 				&data_mapping);
 	}
 	return v92_e2u_rx_is_valid(&state->receive) &&
+	       v92_upstream_plan_is_valid(&state->upstream_plan) &&
 	       v92_upstream_control_line_rx_is_valid(&state->control) &&
 	       !v92_upstream_control_line_rx_has_failed(&state->control) &&
 	       downstream_valid &&
@@ -215,6 +216,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 	initialized.state.digital.downstream.training = handoff->transmit;
 	initialized.state.digital.cpu = handoff->cpu;
 	initialized.state.digital.mapping = handoff->mapping;
+	initialized.state.digital.upstream_plan = handoff->upstream_plan;
 	initialized.state.digital.downstream_stage =
 		V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
 	if (v92_e2u_rx_init(
@@ -612,6 +614,7 @@ bool v92_phase4_e2u_handoff_is_valid(
 		}
 
 		return v92_upstream_rx_is_valid(&digital->receive) &&
+		       v92_upstream_plan_is_valid(&digital->upstream_plan) &&
 		       !v92_upstream_rx_has_failed(&digital->receive) &&
 		       downstream_valid &&
 		       v92_pcm_mapping_is_valid(&digital->mapping) &&
@@ -658,6 +661,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_handoff(
 		generated.state.digital.downstream = digital->downstream;
 		generated.state.digital.cpu = digital->cpu;
 		generated.state.digital.mapping = digital->mapping;
+		generated.state.digital.upstream_plan = digital->upstream_plan;
 		generated.state.digital.downstream_stage =
 			digital->downstream_stage;
 	}

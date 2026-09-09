@@ -38,6 +38,9 @@ struct v92_phase4_digital_rx {
 	union v92_phase4_digital_receive signal;
 	struct v92_upstream_channel channel;
 	enum v92_phase4_digital_rx_stage stage;
+	/* Compare raw-input cells with quantized targets separately from the linear
+	 * training reference used to design the channel inverse. */
+	bool channel_distorted;
 	bool failed;
 };
 

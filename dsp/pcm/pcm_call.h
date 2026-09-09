@@ -129,7 +129,9 @@ struct pcm_call_v92_digital_phase4_configuration {
 		struct v92_cpd_parameters cpd;
 		/* Construct the complete direct mapping after Ja, selecting the
 		 * highest usable peer-enabled rate at or below this local maximum. Retain
-		 * this policy across retrains rather than pinning the first rate. */
+		 * this policy across retrains rather than pinning the first rate.
+		 * After TRN2u, compensate the measured channel unless all retained
+		 * training samples remain in their expected G.711 cells. */
 		uint8_t direct_maximum_data_rate_number;
 	};
 };

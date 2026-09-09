@@ -254,7 +254,7 @@ static bool receive_sample(
 
 static bool run_records(
 	enum g711_law law, enum v92_constellation_size constellation,
-	uint8_t previous_sign, int8_t polarity)
+	uint8_t previous_sign, int8_t polarity, int16_t offset)
 {
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
@@ -298,7 +298,7 @@ static bool run_records(
 			      V92_PCM_PHASE4_TRN2U_OK,
 		      "digital Phase 4 training failed at %u", symbol);
 		result = v92_phase4_digital_rx_sample(
-			&receiver, line_sample(law, polarity, raw), &event);
+			&receiver, line_sample(law, polarity, raw) + polarity * offset, &event);
 		CHECK(result ==
 			      (symbol + 1u ==
 				       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS -
@@ -311,11 +311,14 @@ static bool run_records(
 		int16_t target;
 
 		CHECK(v92_pcm_phase4_trn2u_next(&reference, &target) == V92_PCM_PHASE4_TRN2U_OK &&
-		      v92_upstream_channel_sample(&expected_channel, line_sample(law, 1, target),
-			      line_sample(law, 1, target)), "channel reference failed");
+		      v92_upstream_channel_sample(&expected_channel, target,
+			      line_sample(law, 1, target) +
+			      (symbol < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ? 0 : offset)),
+		      "channel reference failed");
 	}
 	CHECK(receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS -
 		      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	      !receiver.channel_distorted &&
 	      memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
 	      "physical handoff lost channel history or used equalized rather than raw samples");
 	CHECK(transmitter.emitted_symbols ==
@@ -338,14 +341,15 @@ static bool run_records(
 			int16_t target;
 
 			CHECK(v92_pcm_phase4_trn2u_next(&reference, &target) == V92_PCM_PHASE4_TRN2U_OK &&
-			      v92_upstream_channel_sample(&expected_channel, line_sample(law, 1, target),
-				      line_sample(law, 1, target)), "delayed channel reference failed");
+			      v92_upstream_channel_sample(&expected_channel, target,
+				      line_sample(law, 1, target) + offset), "delayed channel reference failed");
 		}
 		CHECK(memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
 		      "channel lost a delayed training symbol or included control data");
 	}
 	CHECK(suvu_event.type == V92_CONTROL_EVENT_NONE &&
 	      receiver.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+	      !receiver.channel_distorted &&
 	      receiver.signal.control.signal.training_tail_remaining == 0u,
 	      "control line exposed SUVu before its delayed decisions");
 	CHECK(v92_phase4_record_tx_handoff(&suvu_tx, &modulator) ==
@@ -415,9 +419,13 @@ static bool run_records(
 static bool test_generated_lines(void)
 {
 	return run_records(
-		       G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1) &&
+		       G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1, 0) &&
 	       run_records(
-		       G711_LAW_PCMA, V92_CONSTELLATION_8_POINT, 1u, -1);
+		       G711_LAW_PCMA, V92_CONSTELLATION_8_POINT, 1u, -1, 0) &&
+	       /* Host conditioning can move samples within the same G.711 cell.
+		* Retain those raw values without mistaking them for channel memory. */
+	       run_records(G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1, 1) &&
+	       run_records(G711_LAW_PCMA, V92_CONSTELLATION_8_POINT, 1u, -1, 1);
 }
 
 static bool run_e2u(
@@ -924,6 +932,10 @@ static bool test_digital_receive_contracts(void)
 	      memcmp(&receiver, &inconsistent, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "inconsistent channel extent was accepted");
+	receiver = saved;
+	receiver.channel_distorted = true;
+	CHECK(!v92_phase4_digital_rx_is_valid(&receiver),
+	      "unmeasured channel accepted distortion evidence");
 	receiver = saved;
 	receiver.failed = true;
 	saved = receiver;

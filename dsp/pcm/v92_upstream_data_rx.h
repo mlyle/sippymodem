@@ -5,6 +5,7 @@
 
 #include "v92_pcm_frame.h"
 #include "v92_upstream_rx.h"
+#include "v92_upstream_plan.h"
 
 enum v92_upstream_data_rx_result {
 	V92_UPSTREAM_DATA_RX_OK,
@@ -21,11 +22,16 @@ enum v92_upstream_data_rx_result {
  * buffered sample need not copy all competing coding histories. */
 struct v92_upstream_data_line {
 	struct qam_equalizer equalizer;
-	struct qam_equalizer_observation observations[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	union {
+		struct qam_equalizer_observation observations[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	};
+	struct v92_upstream_plan plan;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t input_samples;
 	uint64_t received_frames;
 	double adaptation;
+	uint16_t delay_remaining;
 	uint8_t symbol_count;
 	int8_t polarity;
 };
@@ -37,7 +43,9 @@ struct v92_upstream_data_rx {
 };
 
 struct v92_upstream_data_frame {
-	/* Residual of the CURRENT received frame, before adaptation. */
+	/* Residual of the CURRENT frame in signed PCM sample units: equalized
+	 * filter output, or raw line input for a channel-compensated mapping.
+	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
 	/* Payload is delayed by the frame decoder's lookahead. A zero count
 	 * means no payload is ready; b1u and ambiguous apply only to these bits. */
@@ -53,18 +61,24 @@ struct v92_upstream_data_frame {
  * a smaller step, including disabled adaptation, remains unchanged. Known
  * B1u frames refine LU and its surviving interval only within the original
  * G.711 quantization cell; ordinary payload never changes that estimate.
- * The mapping must be the complete CPd actually sent to the peer. */
+ * A constellation-coordinate plan instead retains polarity and the measured
+ * gain, skips only the delay not already consumed by E2u detection, and
+ * decodes raw line samples without another FIR or G.711 quantization. The
+ * nominal gain remains fixed through data/control. A zero-initialized plan
+ * selects the equalized filter-output path described above.
+ * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,
 	const struct v92_upstream_rx *handoff,
-	const struct v92_pcm_mapping *mapping);
+	const struct v92_pcm_mapping *mapping,
+	const struct v92_upstream_plan *plan);
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver);
 /* This marks the received B1u boundary, not a quality-based online decision. */
 bool v92_upstream_data_rx_b1u_complete(
 	const struct v92_upstream_data_rx *receiver);
 
-/* Reset control coding at an aligned equalized frame boundary after B1u,
+/* Reset control coding at an aligned decoded frame boundary after B1u,
  * not at the earlier physical-input boundary. Retain the line, counters,
  * trellis, filters, and delayed payload. After a successful reset, the next
  * V92_PCM_RX_DELAY_FRAMES delivered frames still precede this boundary.

@@ -7,8 +7,9 @@
 #include <stdint.h>
 
 enum {
-	/* Receiver policy in equalizer-coordinate sample units, not a normative
-	 * V.92 threshold. Initial B1u and online recovery use the same ceiling. */
+	/* Receiver policy in signed PCM sample units, not a normative threshold:
+	 * equalized filter output, or raw input for a channel-compensated CPd.
+	 * Initial B1u and online recovery use the same ceiling. */
 	V92_DATA_MAX_RMS_ERROR = 64,
 	V92_DATA_QUALITY_WINDOW_FRAMES = 128,
 	V92_DATA_QUALITY_BAD_WINDOWS = 3,

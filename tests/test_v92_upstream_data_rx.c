@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v92_cpd_direct.h>
+#include <v92_cpd_channel.h>
 #include <v92_data_quality.h>
 #include <v92_e2u_rx.h>
 #include <v92_phase4_record_tx.h>
@@ -14,6 +15,8 @@
 #include <string.h>
 
 enum { TEST_LU = 4096, DATA_FRAMES = 80 };
+
+static const struct v92_upstream_plan direct_plan;
 
 struct channel {
 	double gain;
@@ -192,7 +195,7 @@ static bool test_quantized_level_tracking(
 		      "tracking E2u did not match");
 	}
 	CHECK(v92_e2u_rx_handoff(&e2u_rx, &handoff) == V92_E2U_RX_OK &&
-	      v92_upstream_data_rx_init(&receiver, &handoff, &mapping) ==
+	      v92_upstream_data_rx_init(&receiver, &handoff, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.adaptation > 0.0 &&
 	      receiver.line.adaptation < handoff.line.adaptation &&
@@ -306,7 +309,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		      distorted, v92_e2u_rx_result_name(result));
 	}
 	CHECK(v92_e2u_rx_handoff(&e2u_rx, &handoff) == V92_E2U_RX_OK &&
-	      v92_upstream_data_rx_init(&receiver, &handoff, &mapping) ==
+	      v92_upstream_data_rx_init(&receiver, &handoff, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK &&
 	      transmitter.b1u_symbols_remaining == V92_B1U_SYMBOLS -
 		      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
@@ -438,7 +441,7 @@ static bool test_rejection_and_failure(void)
 	CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
 	      v92_cpd_direct_init(&cpd, channel.law, 1u, false) == V92_CPD_OK &&
 	      v92_pcm_mapping_init(&mapping, channel.law, &cpd) == V92_PCM_MAPPING_OK &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "rejection fixture failed");
 	const double slower_steps[] = { 0.0, 0.001 };
 	for (size_t index = 0u; index < sizeof(slower_steps) / sizeof(slower_steps[0]); ++index) {
@@ -446,7 +449,7 @@ static bool test_rejection_and_failure(void)
 		struct v92_upstream_data_rx initialized;
 
 		slower.line.adaptation = slower_steps[index];
-		CHECK(v92_upstream_data_rx_init(&initialized, &slower, &mapping) ==
+		CHECK(v92_upstream_data_rx_init(&initialized, &slower, &mapping, &direct_plan) ==
 			      V92_UPSTREAM_DATA_RX_OK &&
 		      initialized.line.adaptation == slower_steps[index] &&
 		      memcmp(&initialized.line.equalizer, &slower.line.equalizer,
@@ -460,13 +463,17 @@ static bool test_rejection_and_failure(void)
 	      !v92_upstream_data_rx_b1u_complete(NULL) &&
 	      v92_upstream_data_rx_reset_control(NULL) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
-	      v92_upstream_data_rx_init(NULL, &e2u_rx.signal, &mapping) ==
+	      v92_upstream_data_rx_init(NULL, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_init(&receiver, NULL, &mapping) ==
+	      v92_upstream_data_rx_init(&receiver, NULL, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, NULL) ==
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, NULL, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
-	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &receiver.decoder.mapping) ==
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, NULL) ==
+		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &receiver.line.plan) ==
+		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &receiver.decoder.mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_sample(NULL, 0, &frame) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
@@ -478,13 +485,13 @@ static bool test_rejection_and_failure(void)
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "invalid call changed state or output");
 	e2u_rx.signal.training_tail_remaining = 1u;
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "unconsumed TRN2u tail accepted");
 	e2u_rx.signal.training_tail_remaining = 0u;
 	mapping.law = G711_LAW_PCMA;
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS,
 	      "conflicting PCM law accepted");
 	receiver.line.input_samples = UINT64_MAX;
@@ -518,7 +525,7 @@ static bool test_rejection_and_failure(void)
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "DSP failure advanced state, changed output, or did not latch");
 	mapping.law = G711_LAW_PCMU;
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "late-failure initialization failed");
 	for (size_t sample = 0u; sample < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++sample)
 		CHECK(v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
@@ -532,7 +539,7 @@ static bool test_rejection_and_failure(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &saved_frame, sizeof(frame)) == 0,
 	      "late adaptation failure committed the decoded frame");
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "damaged-B1u initialization failed");
 	double training_error = 0.0;
 
@@ -549,7 +556,7 @@ static bool test_rejection_and_failure(void)
 		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
 	      v92_upstream_data_rx_b1u_complete(&receiver),
 	      "known B1u bits hid unusable samples or moved the boundary");
-	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping) ==
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "clipped-input initialization failed");
 	memset(receiver.line.equalizer.coefficients, 0,
 	       sizeof(receiver.line.equalizer.coefficients));
@@ -561,11 +568,154 @@ static bool test_rejection_and_failure(void)
 		      "finite equalizer excursion stopped reception");
 	CHECK(frame.squared_error > 12.0 * 65535.0 * 65535.0,
 	      "fixed-point clipping hid the equalizer residual");
+	struct v92_upstream_plan plan = {
+		.gain = 2.0, .delay = 60u, .observation = V92_PCM_FRAME_CONSTELLATION,
+	};
+
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
+		      V92_UPSTREAM_DATA_RX_OK, "raw-plan initialization failed");
+	saved = receiver;
+	for (unsigned int mutation = 0u; mutation < 5u; ++mutation) {
+		struct v92_upstream_plan bad = plan;
+
+		switch (mutation) {
+		case 0: bad.gain = NAN; break;
+		case 1: bad.delay = 0u; break;
+		case 2: bad.gain = 0.0; break;
+		case 3: bad.delay = V92_B1U_SYMBOLS; break;
+		case 4: bad.observation = V92_PCM_FRAME_FILTER_OUTPUT; break;
+		}
+		CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &bad) ==
+			      V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS &&
+		      memcmp(&receiver, &saved, sizeof(saved)) == 0, "invalid raw plan changed receiver");
+	}
+	receiver.decoder.observation = V92_PCM_FRAME_FILTER_OUTPUT;
+	CHECK(!v92_upstream_data_rx_is_valid(&receiver), "conflicting receive coordinates accepted");
+	receiver = saved;
+	training_error = 0.0;
+	for (unsigned int i = 0u; i < (unsigned int)V92_B1U_SYMBOLS + plan.delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++i) {
+		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_sample(&receiver, 0, &frame);
+
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+		      "raw silence stopped evidence collection");
+		if (result == V92_UPSTREAM_DATA_RX_FRAME)
+			training_error += frame.squared_error;
+	}
+	CHECK(v92_upstream_data_rx_b1u_complete(&receiver) &&
+	      training_error > (double)V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "raw known B1u bits hid silence");
+	receiver = saved;
+	receiver.line.polarity = -1;
+	receiver.line.delay_remaining = 0u;
+	CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MIN, &frame) == V92_UPSTREAM_DATA_RX_OK &&
+	      receiver.line.raw[0] == 32768 && receiver.line.samples[0] == INT16_MAX,
+	      "polarity reversal overflowed or lost original raw excursion");
+	for (unsigned int i = 1u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+		CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MIN, &frame) ==
+			      (i + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ? V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
+		      "raw excursion stopped receiving");
+	CHECK(frame.squared_error > 12.0 * 20000.0 * 20000.0,
+	      "raw decoder clipping hid the residual");
+	return true;
+}
+
+/* E2u recognizes its last control symbol after already consuming ten B1u
+ * samples. The channel-compensating filter has a different causal delay:
+ * receive its remaining prefix exactly once, not as B1u or payload. */
+static bool test_channel_plan(enum g711_law law, int polarity, bool extended)
+{
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = polarity };
+	struct v92_upstream_channel measured = { 0 };
+	struct v92_upstream_plan plan;
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_data_tx transmitter;
+	struct v92_upstream_data_rx receiver;
+	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+	unsigned int source_frames = 0u, leading = 0u, delivered = 0u;
+	double b1_error = 0.0;
+	uint32_t random = UINT32_C(9376271);
+
+	for (unsigned int i = 0u; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		int16_t sample = (int16_t)((int)(random >> 19) - TEST_LU);
+
+		CHECK(v92_upstream_channel_sample(&measured, sample,
+			    polarity * wire_sample(&channel, sample)), "channel measurement failed");
+	}
+	CHECK(v92_cpd_direct_init(&cpd, law, 1u, extended) == V92_CPD_OK &&
+	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan) &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
+	      prepare_e2u(&channel, extended, &e2u_tx, &e2u_rx), "channel-plan fixture failed");
+	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
+		int16_t sample;
+
+		CHECK(leading < V92_B1U_SYMBOLS, "E2u did not complete before B1u ended");
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx)) {
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+			      "E2u transmit failed");
+		} else {
+			CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
+				      V92_UPSTREAM_DATA_TX_OK, "early B1u transmit failed");
+			++leading;
+		}
+		enum v92_e2u_rx_result result = v92_e2u_rx_sample(&e2u_rx, wire_sample(&channel, sample));
+
+		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE, "E2u receive failed");
+	}
+	CHECK(leading == V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
+	for (unsigned int symbol = 0u; delivered < DATA_FRAMES &&
+	     symbol < (V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES + 6u) *
+		     V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int16_t sample;
+		struct v92_upstream_data_frame frame;
+
+		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
+			      V92_UPSTREAM_DATA_TX_OK, "channel-plan data transmit failed");
+		enum v92_upstream_data_rx_result result =
+			v92_upstream_data_rx_sample(&receiver, wire_sample(&channel, sample), &frame);
+
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+		      "channel-plan receive failed: %d", result);
+		CHECK(receiver.line.received_frames ==
+			(symbol + 1u < plan.delay - leading ? 0u :
+			 (symbol + 1u - (plan.delay - leading)) / V92_PCM_MAPPING_FRAME_SYMBOLS),
+		      "channel-plan frame boundary moved");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME)
+			continue;
+		if (receiver.line.received_frames <= V92_B1U_FRAMES)
+			b1_error += frame.squared_error;
+		if (frame.bit_count == 0u || frame.b1u)
+			continue;
+		payload(expected, mapping.data_bits_per_frame, delivered);
+		CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
+		      memcmp(frame.bits, expected, frame.bit_count) == 0,
+		      "channel-plan payload lost at frame %u", delivered);
+		++delivered;
+	}
+	struct v92_upstream_data_line saved = receiver.line;
+
+	CHECK(delivered == DATA_FRAMES, "channel-plan data did not arrive");
+	CHECK(b1_error < V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "channel-plan B1u residual too large: %g", sqrt(b1_error / V92_B1U_SYMBOLS));
+	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	      memcmp(&saved, &receiver.line, sizeof(saved)) == 0,
+	      "control reset changed channel plan or line timing");
 	return true;
 }
 
 int main(void)
 {
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned int extended = 0u; extended < 2u; ++extended)
+				if (!test_channel_plan((enum g711_law)law, polarity, extended))
+					return 1;
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false) ||

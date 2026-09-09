@@ -498,6 +498,9 @@ static bool run_exchange(
 	struct v92_phase4_digital_station station;
 	struct v92_cpu_parameters retained;
 	struct downstream_counts counts = { 0 };
+	const struct v92_upstream_plan plan = {
+		.gain = 2.0, .delay = 60u, .observation = V92_PCM_FRAME_CONSTELLATION,
+	};
 	size_t events = 0u;
 
 	CHECK(build_predecessor(
@@ -508,18 +511,21 @@ static bool run_exchange(
 	      pcm_downstream_tx_init(
 		      &downstream_tx, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
-	      pcm_downstream_tx_start_suvd(&downstream_tx, &suvd) ==
-		      PCM_DOWNSTREAM_TX_OK &&
+	      (retry || pcm_downstream_tx_start_suvd(&downstream_tx, &suvd) ==
+		      PCM_DOWNSTREAM_TX_OK) &&
 	      pcm_downstream_rx_init(
 		      &downstream_rx, PCM_PROTOCOL_V92, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_digital_station_init(
 		      &station, &handoff, constellation,
-		      &downstream_tx, &cpd,
+		      &downstream_tx, &suvd, &cpd,
 		      retry && constellation == V92_CONSTELLATION_8_POINT ? 2400u : 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "law %u constellation %u station did not initialize",
 	      (unsigned int)law, (unsigned int)constellation);
+	CHECK(v92_phase4_digital_station_select_upstream(&station, &cpd, &plan) ==
+		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE,
+	      "selected upstream before channel measurement");
 	for (uint32_t symbol = 0u;
 	     symbol < V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS -
 			      V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
@@ -562,6 +568,21 @@ static bool run_exchange(
 				      law, polarity, raw, &events, &cpd,
 				      suvd.request_silence),
 			      "station SUVu stopped");
+			if (station.receive.channel.symbols == V92_UPSTREAM_CHANNEL_SYMBOLS &&
+			    station.upstream_plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
+				struct v92_phase4_digital_station saved = station;
+				struct v92_upstream_plan bad = plan;
+
+				bad.delay = 0u;
+				CHECK(v92_phase4_digital_station_select_upstream(&station, &cpd, &bad) ==
+					      V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS &&
+				      memcmp(&station, &saved, sizeof(station)) == 0,
+				      "invalid receive plan changed CPd");
+				++cpd.four_times_gain_q0_16;
+				CHECK(v92_phase4_digital_station_select_upstream(&station, &cpd, &plan) ==
+					      V92_PHASE4_DIGITAL_STATION_OK,
+				      "completed channel did not select initial CPd");
+			}
 		}
 		if (repeat == 1u)
 			CHECK(!station.suvu_received &&
@@ -669,6 +690,21 @@ static bool run_exchange(
 	      (unsigned int)law, (unsigned int)constellation, events,
 	      counts.initial_suvd, counts.cpd, counts.status_suvd,
 	      counts.acknowledged_suvd);
+	{
+		struct v92_phase4_digital_handoff selected;
+		struct v92_phase4_digital_station saved = station;
+
+		CHECK(v92_phase4_digital_station_handoff(&station, &selected) ==
+			      V92_PHASE4_DIGITAL_STATION_OK &&
+		      memcmp(&selected.upstream_plan, &plan, sizeof(plan)) == 0 &&
+		      v92_phase4_digital_station_select_upstream(&station, &cpd, &plan) ==
+			      V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+		      memcmp(&station, &saved, sizeof(station)) == 0,
+		      "CPd repeat or acknowledgement changed the frozen receive plan");
+		selected.upstream_plan.delay = 0u;
+		CHECK(!v92_phase4_digital_handoff_is_valid(&selected),
+		      "invalid receive plan crossed station handoff");
+	}
 	if (law == G711_LAW_PCMU &&
 	    constellation == V92_CONSTELLATION_4_POINT) {
 		struct v92_cpu_parameters changed = cpu;
@@ -1083,7 +1119,7 @@ static bool run_paired_station_exchange(
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      v92_phase4_digital_station_init(
 		      &digital, &digital_handoff, constellation,
-		      &downstream_tx, &cpd, 0u) ==
+		      &downstream_tx, &downstream_tx.control.suvd, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "paired station initialization failed law=%u constellation=%u",
 	      (unsigned int)law, (unsigned int)constellation);
@@ -1461,7 +1497,7 @@ static bool test_compact_boundary(void)
 		CHECK(v92_phase4_digital_station_init(
 			      &station, &handoff,
 			      V92_CONSTELLATION_4_POINT,
-			      &downstream, &rejected, 0u) ==
+			      &downstream, &downstream.control.suvd, &rejected, 0u) ==
 			      V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS &&
 		      memcmp(&station, &saved, sizeof(station)) == 0,
 		      "invalid initial CPd mutation %u changed station",
@@ -1577,7 +1613,7 @@ static bool test_early_cpu_acknowledgement(void)
 	CHECK(pcm_downstream_tx_is_v92_control_boundary(&downstream) &&
 	      v92_phase4_digital_station_init(
 		      &station, &handoff, V92_CONSTELLATION_4_POINT,
-		      &downstream, &cpd, 0u) == V92_PHASE4_DIGITAL_STATION_OK,
+		      &downstream, &downstream.control.suvd, &cpd, 0u) == V92_PHASE4_DIGITAL_STATION_OK,
 	      "early-CPu station did not inherit completed SUVd");
 	CHECK(cpd_tx_contracts_are_transactional(
 		      &station.initial_cpd, &station.transmit),
@@ -1653,7 +1689,7 @@ static bool test_short_cpu_requires_renegotiation(void)
 		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_tx_start_suvd(&downstream, &suvd) == PCM_DOWNSTREAM_TX_OK &&
 	      v92_phase4_digital_station_init(&station, &handoff,
-		      V92_CONSTELLATION_4_POINT, &downstream, &cpd, 0u) ==
+		      V92_CONSTELLATION_4_POINT, &downstream, &suvd, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "CPus phase guard fixture did not initialize");
 	for (size_t symbol = 0u;
