@@ -181,10 +181,22 @@ static bool owned_state_is_valid(
 bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station)
 {
-	return station != NULL &&
-	       v92_phase4_digital_rx_is_valid(&station->receive) &&
-	       pcm_downstream_tx_is_valid(&station->transmit) &&
-	       owned_state_is_valid(station);
+	if (station == NULL ||
+	    !v92_phase4_digital_rx_is_valid(&station->receive) ||
+	    !pcm_downstream_tx_is_valid(&station->transmit) ||
+	    !v92_cleardown_is_valid(&station->cleardown))
+		return false;
+	if (station->cleardown.active)
+		return station->transmit.protocol == PCM_PROTOCOL_V92 &&
+			!station->transmit.ed_requested &&
+			transmit_stage_is_valid(station->transmit_stage) &&
+			(!station->transmit.finish_requested ||
+			 v92_cleardown_is_ready(&station->cleardown, station->transmit.transmitted_symbols)) &&
+			station->cleardown.cp_end <= station->transmit.accepted_frames * V90_CP_FRAME_INTERVALS &&
+			station->cleardown.acknowledgement_end <= station->transmit.accepted_frames * V90_CP_FRAME_INTERVALS &&
+			receive_law(&station->receive) == station->transmit.encoder.mapping.law &&
+			v92_phase4_cpd_tx_is_valid(&station->initial_cpd);
+	return owned_state_is_valid(station);
 }
 
 bool v92_phase4_digital_station_has_failed(
@@ -192,6 +204,19 @@ bool v92_phase4_digital_station_has_failed(
 {
 	return v92_phase4_digital_station_is_valid(station) &&
 	       station->failed;
+}
+
+bool v92_phase4_digital_station_start_cleardown(
+	struct v92_phase4_digital_station *station)
+{
+	if (!v92_phase4_digital_station_is_valid(station) || station->failed)
+		return false;
+	if (station->cleardown.active)
+		return true;
+	if (station->transmit.stage != PCM_DOWNSTREAM_TX_V92_CONTROL)
+		return false;
+	v92_cleardown_start(&station->cleardown, station->round_trip_delay_samples, true);
+	return true;
 }
 
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
@@ -353,6 +378,23 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		return V92_PHASE4_DIGITAL_STATION_FAILED;
 	result = v92_phase4_digital_rx_sample(
 		&station->receive, sample, &event);
+	if (result == V92_PHASE4_DIGITAL_RX_EVENT &&
+	    (event.type == V92_CONTROL_EVENT_CPU || event.type == V92_CONTROL_EVENT_CPUS)) {
+		bool zero = event.type == V92_CONTROL_EVENT_CPU ?
+			event.record.cpu.parameters.data_rate_number == 0u :
+			event.record.cpus.parameters.data_rate_number == 0u;
+		bool ack = event.type == V92_CONTROL_EVENT_CPU ?
+			event.record.cpu.parameters.acknowledges_cpd :
+			event.record.cpus.parameters.acknowledges_cpd;
+
+		if (zero)
+			v92_cleardown_start(&station->cleardown, station->round_trip_delay_samples, false);
+		if (station->cleardown.active)
+			v92_cleardown_receive(&station->cleardown, zero, ack,
+				station->transmit.transmitted_symbols);
+	}
+	if (station->cleardown.active)
+		return V92_PHASE4_DIGITAL_STATION_OK;
 	if (result == V92_PHASE4_DIGITAL_RX_FAILED)
 		return fail(station);
 	if (result != V92_PHASE4_DIGITAL_RX_OK &&
@@ -468,6 +510,62 @@ static bool apply_pending_downstream(
 	return true;
 }
 
+static enum v92_phase4_digital_station_result transmit_cleardown(
+	struct v92_phase4_digital_station *station, uint8_t *network_octet)
+{
+	struct pcm_downstream_tx *tx = &station->transmit;
+	struct pcm_downstream_symbol symbol;
+	enum pcm_downstream_tx_result result;
+
+	if (!tx->control_configured) {
+		const struct v92_suvd_parameters status = { 0 };
+		if (pcm_downstream_tx_start_suvd(tx, &status) != PCM_DOWNSTREAM_TX_OK)
+			return fail(station);
+	}
+	/* An externally sourced long CPd also owns its unsent tail. */
+	if (station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
+	    !station->initial_cpd.complete) {
+		if (!v92_phase4_cpd_tx_next(&station->initial_cpd, tx, &symbol))
+			return fail(station);
+		*network_octet = symbol.pcm.octet;
+		return V92_PHASE4_DIGITAL_STATION_OK;
+	}
+	if (pcm_downstream_tx_is_v92_control_boundary(tx)) {
+		bool zero = tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_CPD &&
+			tx->control.cpd.data_rate_number == 0u;
+
+		if (zero && tx->v92_control_record_accepted)
+			v92_cleardown_sent(&station->cleardown,
+				tx->accepted_frames * V90_CP_FRAME_INTERVALS,
+				tx->control.cpd.acknowledges_cpu);
+		if (v92_cleardown_is_ready(&station->cleardown, tx->transmitted_symbols)) {
+			if (pcm_downstream_tx_request_finish(tx) != PCM_DOWNSTREAM_TX_OK)
+				return fail(station);
+		} else if (!zero || tx->control.cpd.acknowledges_cpu != station->cleardown.peer_requested) {
+			struct v92_cpd_parameters previous;
+
+			if (v92_cpd_decode(station->initial_cpd.sequence, sizeof(station->initial_cpd.sequence),
+				    station->initial_cpd.sequence_bits, station->initial_cpd.frame_bits,
+				    &previous) != V92_CPD_OK)
+				return fail(station);
+			const struct v92_cpd_base_parameters cpd = {
+				.four_times_gain_q0_16 = previous.four_times_gain_q0_16,
+				.trellis = previous.trellis,
+				.acknowledges_cpu = station->cleardown.peer_requested,
+			};
+			if (pcm_downstream_tx_start_cpd(tx, &cpd) != PCM_DOWNSTREAM_TX_OK)
+				return fail(station);
+		}
+	}
+	result = pcm_downstream_tx_next(tx, &symbol);
+	if (result == PCM_DOWNSTREAM_TX_COMPLETE)
+		return V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE;
+	if (result != PCM_DOWNSTREAM_TX_OK)
+		return fail(station);
+	*network_octet = symbol.pcm.octet;
+	return V92_PHASE4_DIGITAL_STATION_OK;
+}
+
 enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 	struct v92_phase4_digital_station *station, uint8_t *network_octet)
 {
@@ -482,6 +580,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_transmit(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	if (station->failed)
 		return V92_PHASE4_DIGITAL_STATION_FAILED;
+	if (station->cleardown.active)
+		return transmit_cleardown(station, network_octet);
 	if (!apply_pending_downstream(station))
 		return fail(station);
 	if (station->transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD) {
@@ -546,7 +646,7 @@ bool v92_phase4_digital_station_is_ed_ready(
 	 * owner can finish a partial CPd/SUVd before Ed; waiting here would discard
 	 * the leading E2u symbols while the independent transmitter drains. */
 	return v92_phase4_digital_station_is_valid(station) &&
-	       !station->failed && station->cpu_received &&
+	       !station->failed && !station->cleardown.active && station->cpu_received &&
 	       station->peer_acknowledged_cpd &&
 	       station->transmit_acknowledges_cpu &&
 	       station->acknowledgement_end_frame != 0u &&
@@ -617,6 +717,8 @@ const char *v92_phase4_digital_station_result_name(
 		return "ok";
 	case V92_PHASE4_DIGITAL_STATION_EVENT:
 		return "event";
+	case V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE:
+		return "cleardown complete";
 	case V92_PHASE4_DIGITAL_STATION_FAILED:
 		return "failed";
 	case V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT:

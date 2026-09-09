@@ -538,6 +538,8 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 	bool confirmed = state->station.transmit.peer_confirmation_received;
 	bool timer_valid;
 
+	if (state->station.cleardown.active)
+		return v92_phase4_analog_station_is_valid(&state->station);
 	if (state->observed_cpu_records !=
 	    state->station.transmit.completed_cpu_records)
 		return false;
@@ -560,6 +562,11 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 
 static bool cleardown_is_active_owned(const struct pcm_call *call)
 {
+	if (uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
+	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL)
+		return call->local_role == V90_ANALOG_MODEM ?
+			call->state.phase4.v92.owner.analog.station.cleardown.active :
+			call->state.phase4.v92.owner.digital.cleardown.active;
 	return pcm_call_uses_conventional_upstream(call) &&
 	       call->stage == PCM_CALL_DATA_PATH &&
 	       (call->local_role == V90_ANALOG_MODEM ?
@@ -882,7 +889,8 @@ static bool call_is_valid(
 	case PCM_CALL_DATA_PATH:
 	case PCM_CALL_CLOSED:
 		if (uses_pcm_upstream(call)) {
-			child_valid = call->stage == PCM_CALL_DATA_PATH &&
+			child_valid = call->stage == PCM_CALL_CLOSED ?
+				memory_region_is_zero(&call->state, sizeof(call->state)) :
 				v92_data_path_is_valid(call);
 			child_failed = false;
 			break;
@@ -1693,6 +1701,8 @@ static enum pcm_call_result sample_retrain_silence(
 
 static bool retrain_detection_is_active(const struct pcm_call *call)
 {
+	if (cleardown_is_active_owned(call))
+		return false;
 	/* V.90 requires a modem to honor the peer's Tone A/B full-retrain
 	 * request during INFO1 recovery, final training, and online operation.
 	 * The detector's silence preamble distinguishes that request from
@@ -2198,6 +2208,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    &cpu,
 			    early_suvd, NULL) != V92_PHASE4_ANALOG_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
+		station.round_trip_delay_samples = call->round_trip_delay_samples;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
 			.owner.analog = {
 				.station = station,
@@ -2639,6 +2650,8 @@ static enum pcm_call_result v92_analog_phase4_result(
 	case V92_PHASE4_ANALOG_STATION_OK:
 	case V92_PHASE4_ANALOG_STATION_EVENT:
 		return PCM_CALL_OK;
+	case V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE:
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	case V92_PHASE4_ANALOG_STATION_FAILED:
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS:
@@ -2660,6 +2673,8 @@ static enum pcm_call_result v92_digital_phase4_result(
 	case V92_PHASE4_DIGITAL_STATION_OK:
 	case V92_PHASE4_DIGITAL_STATION_EVENT:
 		return PCM_CALL_OK;
+	case V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE:
+		return PCM_CALL_CLEARDOWN_COMPLETE;
 	case V92_PHASE4_DIGITAL_STATION_FAILED:
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS:
@@ -2824,6 +2839,9 @@ static enum pcm_call_result sample_v92_phase4(
 		if (result != PCM_CALL_OK)
 			return result;
 		*transmit_octet = encode_sample(call->law, sample);
+		if (state->station.cleardown.active)
+			return v92_analog_phase4_result(v92_phase4_analog_station_receive(
+				&state->station, received_octet));
 		result = observe_v92_cpu_completion(
 			state, &completed_this_sample);
 		if (result != PCM_CALL_OK)
@@ -2834,6 +2852,8 @@ static enum pcm_call_result sample_v92_phase4(
 		cancel_v92_cpu_repeat_if_confirmed(state);
 		if (result != PCM_CALL_OK)
 			return result;
+		if (state->station.cleardown.active)
+			return PCM_CALL_OK;
 		if (state->station.cpd_received &&
 		    (!v92_pcm_dil_rate_is_enabled(
 			    call->phase3_configuration.v92_analog
@@ -2865,6 +2885,8 @@ static enum pcm_call_result sample_v92_phase4(
 		result = v92_digital_phase4_result(station_result);
 		if (result != PCM_CALL_OK)
 			return result;
+		if (station->cleardown.active)
+			return PCM_CALL_OK;
 		/* The final delayed TRN2u target completes the channel measurement
 		 * before SUVu can start CPd. Freeze wire filters and local receive
 		 * coordinates together here; repeats must not redesign either.
@@ -2990,14 +3012,23 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (call->stage == PCM_CALL_CLOSED || cleardown_is_active_owned(call))
 		return PCM_CALL_OK;
-	if (call->stage != PCM_CALL_DATA_PATH ||
-	    !pcm_call_uses_conventional_upstream(call))
+	if (uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
+	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+		bool started = call->local_role == V90_ANALOG_MODEM ?
+			v92_phase4_analog_station_start_cleardown(&call->state.phase4.v92.owner.analog.station) :
+			v92_phase4_digital_station_start_cleardown(&call->state.phase4.v92.owner.digital);
+
+		result = started ? PCM_CALL_OK : PCM_CALL_INVALID_STATE;
+	} else if (call->stage != PCM_CALL_DATA_PATH ||
+		   !pcm_call_uses_conventional_upstream(call)) {
 		return PCM_CALL_INVALID_STATE;
-	result = call->local_role == V90_ANALOG_MODEM ?
-		analog_path_result(v90_analog_path_start_cleardown(
-			&call->state.data_path.analog)) :
-		digital_path_result(v90_digital_path_start_cleardown(
-			&call->state.data_path.digital));
+	} else {
+		result = call->local_role == V90_ANALOG_MODEM ?
+			analog_path_result(v90_analog_path_start_cleardown(
+				&call->state.data_path.analog)) :
+			digital_path_result(v90_digital_path_start_cleardown(
+				&call->state.data_path.digital));
+	}
 	if (result == PCM_CALL_OK) {
 		call->b1_deadline_armed = false;
 		call->b1_deadline_remaining_samples = 0u;
@@ -3266,6 +3297,8 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 
 static void complete_cleardown(struct pcm_call *call)
 {
+	if (uses_pcm_upstream(call))
+		memset(&call->state, 0, sizeof(call->state));
 	call->stage = PCM_CALL_CLOSED;
 	call->retrain_active = false;
 	call->b1_deadline_armed = false;
@@ -3603,6 +3636,12 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
 	result = recover_unusable_retrain_selection(call, result);
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE)
+		complete_cleardown(call);
+	if (cleardown_is_active_owned(call)) {
+		call->b1_deadline_armed = false;
+		call->b1_deadline_remaining_samples = 0u;
+	}
 	if (result == PCM_CALL_OK && emitted.processed != call->stage &&
 	    call->stage != PCM_CALL_RETRAIN_SILENCE)
 		result = reset_retrain_detector(call);

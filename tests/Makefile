@@ -2220,6 +2220,7 @@ V92_PHASE4_DIGITAL_STATION_OBJECTS := \
 	$(BUILD_DIR)/v92_phase4_analog_station.o \
 	$(BUILD_DIR)/v92_phase4_cpd_tx.o \
 	$(BUILD_DIR)/v92_phase4_digital_station.o \
+	$(BUILD_DIR)/v92_cleardown.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v92_upstream_control_line_rx.o \
 		$(BUILD_DIR)/test_v92_cpd_direct.o \
@@ -5450,6 +5451,10 @@ $(BUILD_DIR)/v92_upstream_channel.o: \
 
 $(BUILD_DIR)/v92_phase4_digital_station.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_digital_station.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_cleardown.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_cleardown.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_cpd_tx.o: \

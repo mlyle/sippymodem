@@ -1003,11 +1003,19 @@ static bool check_peer_cleardown(
 
 		channel_receive(&channel, &received[0], &received[1]);
 		for (unsigned int side = 0; side < 2u; ++side) {
-			struct pcm_call_data_event event;
-			enum pcm_call_result result = pcm_call_data_octet(
-				&calls[side], received[side],
-				decode_octet(calls[side].law, received[side]), NULL,
-				&transmitted[side], &event);
+			const struct v34_full_retrain retrain_before = calls[side].retrain;
+			bool closing_control = calls[side].stage == PCM_CALL_PHASE4 &&
+				(side == 0u ? calls[side].state.phase4.v92.owner.analog.station.cleardown.active :
+				 calls[side].state.phase4.v92.owner.digital.cleardown.active);
+			struct pcm_call_data_event event = { 0 };
+			struct pcm_call_observation observation;
+			enum pcm_call_result result = calls[side].stage == PCM_CALL_PHASE4 ?
+				pcm_call_octet(&calls[side], received[side],
+					decode_octet(calls[side].law, received[side]),
+					&transmitted[side], &observation) :
+				pcm_call_data_octet(&calls[side], received[side],
+					decode_octet(calls[side].law, received[side]), NULL,
+					&transmitted[side], &event);
 
 			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) &&
 			      !calls[side].failed && !calls[side].retrain_active &&
@@ -1015,6 +1023,9 @@ static bool check_peer_cleardown(
 			      "law %u initiator %u side %u sample %zu cleardown returned %s stage %u",
 			      (unsigned int)calls[side].law, initiator, side, clock,
 			      pcm_call_result_name(result), (unsigned int)calls[side].stage);
+			CHECK(!closing_control || result == PCM_CALL_CLEARDOWN_COMPLETE ||
+			      memcmp(&retrain_before, &calls[side].retrain, sizeof(retrain_before)) == 0,
+			      "closing control continued to hunt for retrain");
 			if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
 				CHECK(event.kind == PCM_CALL_DATA_NONE &&
 				      calls[side].stage == PCM_CALL_CLOSED &&
@@ -5133,6 +5144,7 @@ static bool run_v92_phase4_control(
 	bool analog_handoff_reached = false;
 	bool digital_handoff_reached = false;
 	bool completion_failure_checked = false;
+	bool cleardown_checked = false;
 	size_t first_cpu_sent = SIZE_MAX;
 	size_t first_cpu_received = SIZE_MAX;
 
@@ -5163,6 +5175,16 @@ static bool run_v92_phase4_control(
 			digital.state.phase4.v92.child ==
 				PCM_CALL_V92_PHASE4_CONTROL;
 
+		if (!cleardown_checked && digital_control_active && analog.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		    analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU &&
+		    digital.state.phase4.v92.owner.digital.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
+		    digital.state.phase4.v92.owner.digital.initial_cpd.bit_index != 0u) {
+			CHECK(check_peer_cleardown(&analog, &digital, &channel, 0u) &&
+			      check_peer_cleardown(&analog, &digital, &channel, 1u),
+			      "PCM-upstream control cleardown failed");
+			cleardown_checked = true;
+		}
 		if (analog_control_ready && !analog_control_reached) {
 			analog_control = analog.state.phase4.v92.owner.analog;
 			analog_control_reached = true;
@@ -5171,6 +5193,7 @@ static bool run_v92_phase4_control(
 			digital_control = digital.state.phase4.v92.owner.digital;
 
 		if (analog_ready && !analog_handoff_reached) {
+			CHECK(cleardown_checked, "PCM-upstream control missed cleardown boundary");
 			CHECK(phase4_boundary_is_transactional(&analog, law),
 			      "law %u analogue V.92 handoff consumed input",
 			      (unsigned int)law);

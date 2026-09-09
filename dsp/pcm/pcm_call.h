@@ -367,7 +367,9 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
  * pre-control startup and an already committed E/Ed are not interrupted.
  * Subsequent data_octet calls ignore host sources and return
  * CLEARDOWN_COMPLETE only after the final control/filter output drains.
- * PCM-upstream zero-rate cleardown is not yet implemented and is rejected here.
+ * V.92 PCM-upstream Phase 4 control can also be cancelled with zero-rate CP.
+ * Data-mode PCM upstream still lacks the aligned rate-request entry and is
+ * rejected here. Phase 4 cancellation continues through pcm_call_octet().
  * A completed local or peer cleardown is idempotent and cannot retrain. */
 enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call);
 

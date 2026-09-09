@@ -1056,6 +1056,91 @@ static bool check_mapping_payload(
 	return true;
 }
 
+static bool check_cleardown_pair(
+	const struct v92_phase4_analog_station *analog_start,
+	const struct v92_phase4_digital_station *digital_start, int8_t polarity,
+	unsigned int initiators, bool drop_peer)
+{
+	struct v92_phase4_analog_station analog = *analog_start;
+	struct v92_phase4_digital_station digital = *digital_start;
+	bool done[2] = { false, false };
+	uint64_t ended[2] = { 0, 0 };
+	enum g711_law law = analog.transmit.cpu.law;
+	uint16_t rtd = 161u;
+
+	analog.round_trip_delay_samples = rtd;
+	digital.round_trip_delay_samples = rtd;
+	if (initiators & 1u)
+		CHECK(v92_phase4_analog_station_start_cleardown(&analog) &&
+		      v92_phase4_analog_station_start_cleardown(&analog), "analogue cancellation failed");
+	if (initiators & 2u)
+		CHECK(v92_phase4_digital_station_start_cleardown(&digital) &&
+		      v92_phase4_digital_station_start_cleardown(&digital), "digital cancellation failed");
+	for (unsigned int clock = 0u; clock < 16000u; ++clock) {
+		int16_t up = 0;
+		uint8_t down = law == G711_LAW_PCMU ? g711_encode_pcmu(0) : g711_encode_pcma(0);
+
+		if (!done[0] && (!drop_peer || (initiators & 1u))) {
+			enum v92_phase4_analog_station_result result = v92_phase4_analog_station_transmit(&analog, &up);
+			CHECK(result == V92_PHASE4_ANALOG_STATION_OK ||
+			      result == V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE,
+			      "analogue close stopped at %u: %s", clock, v92_phase4_analog_station_result_name(result));
+			done[0] = result == V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE;
+			if (done[0]) ended[0] = analog.transmitted_symbols;
+		}
+		if (!done[1] && (!drop_peer || (initiators & 2u))) {
+			enum v92_phase4_digital_station_result result = v92_phase4_digital_station_transmit(&digital, &down);
+			CHECK(result == V92_PHASE4_DIGITAL_STATION_OK ||
+			      result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE,
+			      "digital close stopped at %u: %s", clock, v92_phase4_digital_station_result_name(result));
+			done[1] = result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE;
+			if (done[1]) ended[1] = digital.transmit.transmitted_symbols;
+		}
+		if (!drop_peer) {
+			if (!done[0]) {
+				enum v92_phase4_analog_station_result result = v92_phase4_analog_station_receive(&analog, down);
+				CHECK(result == V92_PHASE4_ANALOG_STATION_OK || result == V92_PHASE4_ANALOG_STATION_EVENT,
+				      "analogue closing receive failed");
+			}
+			if (!done[1]) {
+				enum v92_phase4_digital_station_result result = v92_phase4_digital_station_receive(&digital,
+					line_sample(law, polarity, up));
+				CHECK(result == V92_PHASE4_DIGITAL_STATION_OK || result == V92_PHASE4_DIGITAL_STATION_EVENT,
+				      "digital closing receive failed");
+			}
+		}
+		CHECK(v92_phase4_analog_station_is_valid(&analog) &&
+		      v92_phase4_digital_station_is_valid(&digital), "cleardown state invalid");
+		if ((drop_peer ? ((!(initiators & 1u) || done[0]) && (!(initiators & 2u) || done[1])) :
+		     (done[0] && done[1]))) break;
+	}
+	for (unsigned int side = 0; side < 2u; ++side) {
+		const struct v92_cleardown *state = side == 0u ? &analog.cleardown : &digital.cleardown;
+		if (drop_peer && !(initiators & (1u << side))) continue;
+		CHECK(done[side] && state->cp_end && v92_cleardown_is_ready(state, ended[side]),
+		      "side %u never completed bounded cleardown (%u/%u)", side, done[0], done[1]);
+		if (!state->initiator)
+			CHECK(state->acknowledgement_end && ended[side] - state->acknowledgement_end >= 881u,
+			      "responder omitted acknowledgement or disconnected early");
+		if (drop_peer)
+			CHECK(!state->acknowledged && ended[side] - state->cp_end >= 961u,
+			      "lost-peer timeout started before the physical CP boundary");
+	}
+	for (unsigned int repeat = 0; repeat < 3u; ++repeat) {
+		int16_t up = 123;
+		uint8_t down = 123u;
+		CHECK(!done[0] || (v92_phase4_analog_station_transmit(&analog, &up) ==
+		      V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE && up == 123 &&
+		      analog.transmitted_symbols == ended[0]), "analogue close emitted another symbol");
+		CHECK(!done[1] || (v92_phase4_digital_station_transmit(&digital, &down) ==
+		      V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE && down == 123u &&
+		      digital.transmit.transmitted_symbols == ended[1]), "digital close emitted another symbol");
+	}
+	CHECK(!v92_phase4_analog_station_can_handoff(&analog) &&
+	      !v92_phase4_digital_station_is_ed_ready(&digital), "cleardown restarted data");
+	return true;
+}
+
 static bool run_paired_station_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
 	uint8_t previous_sign, int8_t polarity,
@@ -1098,11 +1183,15 @@ static bool run_paired_station_exchange(
 	bool ready = false;
 	bool terminal_status_seen = false;
 	bool terminal_probe_initialized = false;
+	bool cleardown_checked = false;
 
 	CHECK(build_predecessor(
 		      law, constellation, previous_sign, polarity,
-		      &upstream, &digital_handoff) &&
-	      v90_pcm_mapping_init_from_v92_cpt(
+		      &upstream, &digital_handoff), "paired training predecessor failed");
+	/* Cover physical source-to-wire offsets at every supported lookahead. */
+	digital_handoff.parameters.spectral_lookahead = (uint8_t)(2u * law +
+		(constellation == V92_CONSTELLATION_8_POINT));
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(
 		      &mapping, &digital_handoff.parameters) ==
 		      V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(
@@ -1139,6 +1228,17 @@ static bool run_paired_station_exchange(
 		enum v92_phase4_analog_station_result analog_result;
 		enum v92_phase4_digital_station_result digital_result;
 
+		if (!cleardown_checked && digital.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
+		    digital.initial_cpd.bit_index > digital.initial_cpd.frame_bits &&
+		    analog.transmit.stage != V92_PHASE4_ANALOG_TX_TRN2U) {
+			for (unsigned int initiators = 1u; initiators <= 3u; ++initiators)
+				CHECK(check_cleardown_pair(&analog, &digital, polarity, initiators, false),
+				      "paired cleardown failed law=%u initiators=%u", (unsigned int)law, initiators);
+			for (unsigned int initiators = 1u; initiators <= 2u; ++initiators)
+				CHECK(check_cleardown_pair(&analog, &digital, polarity, initiators, true),
+				      "unacknowledged cleardown failed");
+			cleardown_checked = true;
+		}
 		analog_result = v92_phase4_analog_station_transmit(
 			&analog, &upstream_sample);
 		if (analog_result == V92_PHASE4_ANALOG_STATION_E2U_READY) {
@@ -1184,6 +1284,7 @@ static bool run_paired_station_exchange(
 				      symbol);
 		}
 	}
+	CHECK(cleardown_checked, "paired control did not reach cancellation boundary");
 	for (size_t symbol = 0u;
 	     ready && (!v92_phase4_digital_station_is_ed_ready(&digital) ||
 		       !analog.receive.ed_requested) &&
@@ -1665,10 +1766,10 @@ static bool test_early_cpu_acknowledgement(void)
 	return true;
 }
 
-static bool test_short_cpu_requires_renegotiation(void)
+static bool run_short_cpu(bool zero_rate)
 {
 	const struct v92_cpus_parameters cpus = {
-		.data_rate_number = 11u, .acknowledges_cpd = true,
+		.data_rate_number = zero_rate ? 0u : 11u, .acknowledges_cpd = true,
 	};
 	const struct v92_suvd_parameters suvd = { 0 };
 	struct v92_cpd_parameters cpd = cpd_parameters(G711_LAW_PCMU);
@@ -1687,7 +1788,7 @@ static bool test_short_cpu_requires_renegotiation(void)
 		      V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
-	      pcm_downstream_tx_start_suvd(&downstream, &suvd) == PCM_DOWNSTREAM_TX_OK &&
+	      (zero_rate || pcm_downstream_tx_start_suvd(&downstream, &suvd) == PCM_DOWNSTREAM_TX_OK) &&
 	      v92_phase4_digital_station_init(&station, &handoff,
 		      V92_CONSTELLATION_4_POINT, &downstream, &suvd, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
@@ -1701,11 +1802,15 @@ static bool test_short_cpu_requires_renegotiation(void)
 			      line_sample(G711_LAW_PCMU, 1, raw)) == V92_PHASE4_DIGITAL_STATION_OK,
 		      "CPus phase guard lost training");
 	}
-	CHECK(v92_cpus_encode(&cpus, 24u, frame, sizeof(frame), &bits) == V92_CPU_OK &&
-	      v92_phase4_record_tx_init(&record, &upstream.modulator,
+	CHECK(v92_cpus_encode(&cpus, 24u, frame, sizeof(frame), &bits) == V92_CPU_OK,
+	      "CPus encoding failed");
+	frame[5] ^= 1u; /* CRC corruption must not request cleardown. */
+	CHECK(v92_phase4_record_tx_init(&record, &upstream.modulator,
 		      frame, sizeof(frame), bits) == V92_PHASE4_RECORD_TX_OK,
 	      "CPus phase guard record did not initialize");
-	for (unsigned int repeat = 0u; repeat < 4u; ++repeat) {
+	bool rejected = false;
+	for (unsigned int repeat = 0u; repeat < 6u; ++repeat) {
+		if (repeat == 2u) frame[5] ^= 1u;
 		if (repeat != 0u)
 			CHECK(v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
 				      V92_PHASE4_RECORD_TX_OK, "CPus repeat did not start");
@@ -1719,7 +1824,35 @@ static bool test_short_cpu_requires_renegotiation(void)
 			raw = line_sample(G711_LAW_PCMU, 1, raw);
 			(void)v92_phase4_digital_rx_sample(&observer, raw, &event);
 			result = v92_phase4_digital_station_receive(&station, raw);
+			if (event.type == V92_CONTROL_EVENT_CPUS_REJECTED) {
+				CHECK(!station.failed && !station.cleardown.active,
+				      "corrupt zero-rate CPus started cleardown");
+				rejected = true;
+			}
 			if (event.type == V92_CONTROL_EVENT_CPUS) {
+				CHECK(rejected, "CPus corruption case was not observed");
+				if (zero_rate) {
+					CHECK(result == V92_PHASE4_DIGITAL_STATION_OK &&
+					      !station.failed && station.cleardown.active &&
+					      station.cleardown.peer_requested && !station.cpu_received &&
+					      !v92_phase4_digital_station_is_ed_ready(&station),
+					      "zero-rate CPus was treated as a data selection");
+					for (unsigned int clock = 0u; clock < 16000u; ++clock) {
+						uint8_t down;
+						result = v92_phase4_digital_station_transmit(&station, &down);
+						if (result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE) {
+							CHECK(station.cleardown.acknowledgement_end &&
+							      !station.transmit.ed_requested &&
+							      v92_phase4_digital_station_is_valid(&station),
+							      "early zero-rate CPus did not drain its acknowledgement");
+							return true;
+						}
+						CHECK(result == V92_PHASE4_DIGITAL_STATION_OK,
+						      "early zero-rate CPus response failed");
+					}
+					CHECK(false, "early zero-rate CPus response did not finish");
+					return true;
+				}
 				CHECK(result == V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR &&
 				      station.failed && !station.cpu_received &&
 				      !station.peer_acknowledged_cpd,
@@ -1733,6 +1866,50 @@ static bool test_short_cpu_requires_renegotiation(void)
 	}
 	CHECK(false, "CPus was not decoded on the trained PCM line");
 	return false;
+}
+
+static bool test_short_cpu_requires_renegotiation(void)
+{
+	return run_short_cpu(false) && run_short_cpu(true);
+}
+
+static bool test_cleardown_timing(void)
+{
+	static const uint16_t delays[] = { 0u, 1u, 160u, 161u, UINT16_MAX };
+
+	for (size_t index = 0; index < ARRAY_LENGTH(delays); ++index) {
+		for (unsigned int initiator = 0; initiator < 2u; ++initiator) {
+			struct v92_cleardown state = { 0 };
+			uint32_t wait = 800u + (initiator ? delays[index] :
+				((uint32_t)delays[index] + 1u) / 2u);
+
+			CHECK(v92_cleardown_is_valid(&state) && !v92_cleardown_is_ready(&state, UINT64_MAX),
+			      "empty cleardown state was ready");
+			v92_cleardown_start(&state, delays[index], initiator);
+			v92_cleardown_receive(&state, !initiator, true, 0u);
+			CHECK(!state.acknowledged, "old acknowledgement escaped initial guard");
+			v92_cleardown_sent(&state, 100u, !initiator);
+			v92_cleardown_receive(&state, !initiator, true, 99u);
+			CHECK(!state.acknowledged && !v92_cleardown_is_ready(&state, 99u),
+			      "queued source completion was mistaken for transmitted CP");
+			v92_cleardown_sent(&state, 200u, !initiator);
+			CHECK(state.cp_end == 100u && v92_cleardown_is_valid(&state) &&
+			      !v92_cleardown_is_ready(&state, 100u + wait - 1u) &&
+			      v92_cleardown_is_ready(&state, 100u + wait),
+			      "cleardown timeout moved on a repeated CP or rounded RTD down");
+			v92_cleardown_receive(&state, !initiator, true, 100u);
+			CHECK(v92_cleardown_is_ready(&state, 100u) == (initiator != 0u),
+			      "responder used initiator's acknowledgement shortcut");
+			if (initiator) {
+				v92_cleardown_receive(&state, true, true, 101u);
+				CHECK(!v92_cleardown_is_ready(&state, 101u), "simultaneous request went unacknowledged");
+				v92_cleardown_sent(&state, 210u, true);
+				CHECK(!v92_cleardown_is_ready(&state, 209u) && v92_cleardown_is_ready(&state, 210u),
+				      "simultaneous acknowledgement was not physically drained");
+			}
+		}
+	}
+	return true;
 }
 
 int main(void)
@@ -1750,6 +1927,7 @@ int main(void)
 		{ "compact station boundary", test_compact_boundary },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
+		{ "cleardown physical CP deadlines", test_cleardown_timing },
 	};
 	unsigned int failures = 0u;
 

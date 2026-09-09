@@ -8,6 +8,7 @@
 #include "v92_phase4_digital_rx.h"
 #include "v92_pcm_mapping.h"
 #include "v92_upstream_plan.h"
+#include "v92_cleardown.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,6 +16,7 @@
 enum v92_phase4_digital_station_result {
 	V92_PHASE4_DIGITAL_STATION_OK,
 	V92_PHASE4_DIGITAL_STATION_EVENT,
+	V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE,
 	V92_PHASE4_DIGITAL_STATION_FAILED,
 	V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT,
 	V92_PHASE4_DIGITAL_STATION_INVALID_STATE,
@@ -36,8 +38,9 @@ enum v92_phase4_digital_station_tx_stage {
  * makes that initial CPd or the next SUVd acknowledge it. Each change waits for a
  * complete current record. After 100 ms + RTD without acknowledgement, a
  * complete unacknowledging CPu/SUVu starts continuous CPd repetition. The
- * final record and Ed drain in the handoff's transmitter. One instance is
- * serialized; receive and transmit share procedure state. */
+ * final record and Ed drain in the handoff's transmitter. Zero-rate CPu/CPus
+ * instead requests an acknowledged, bounded cleardown without Ed. One instance
+ * is serialized; receive and transmit share procedure state. */
 struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
 	struct pcm_downstream_tx transmit;
@@ -45,6 +48,7 @@ struct v92_phase4_digital_station {
 	struct v92_upstream_plan upstream_plan;
 	struct v92_cpu_parameters cpu;
 	struct v92_suvu_parameters suvu;
+	struct v92_cleardown cleardown;
 	uint64_t cpd_start_frame;
 	uint64_t status_start_frame;
 	uint64_t acknowledgement_end_frame;
@@ -89,6 +93,12 @@ bool v92_phase4_digital_station_is_valid(
 	const struct v92_phase4_digital_station *station);
 bool v92_phase4_digital_station_has_failed(
 	const struct v92_phase4_digital_station *station);
+
+/* Cancel the current Phase 4 exchange with zero-rate CPd. Finish any
+ * in-flight record, acknowledge a peer zero-rate CP, and retain the line
+ * until Amendment 1, 9.11 permits release. No Ed or data handoff follows. */
+bool v92_phase4_digital_station_start_cleardown(
+	struct v92_phase4_digital_station *station);
 
 /* Replace an unsent initial CPd and its matching local receive plan after
  * channel measurement. Once CPd transmission starts, selection is frozen

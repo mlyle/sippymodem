@@ -88,9 +88,23 @@ static bool owned_state_is_valid(
 bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station)
 {
-	return station != NULL &&
+	if (station == NULL || !pcm_downstream_rx_is_valid(&station->receive) ||
+	    !v92_cleardown_is_valid(&station->cleardown))
+		return false;
+	if (station->cleardown.active)
+		return station->receive.protocol == PCM_PROTOCOL_V92 &&
+			v92_cpu_parameters_are_valid(&station->transmit.cpu) &&
+			station->receive.stream.decoder.mapping.law == station->transmit.cpu.law &&
+			station->cleardown.cp_end <= station->transmitted_symbols &&
+			station->cleardown.acknowledgement_end <= station->transmitted_symbols &&
+			(!station->cleardown_cp_started || station->transmit.cpu.data_rate_number == 0u) &&
+			(station->transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U ?
+			 v92_phase4_analog_tx_is_valid(&station->transmit) :
+			 (station->transmit.stage >= V92_PHASE4_ANALOG_TX_SUVU &&
+			  station->transmit.stage <= V92_PHASE4_ANALOG_TX_E2U_READY &&
+			  v92_phase4_record_tx_is_valid(&station->transmit.signal.record)));
+	return !station->cleardown_cp_started &&
 	       v92_phase4_analog_tx_is_valid(&station->transmit) &&
-	       pcm_downstream_rx_is_valid(&station->receive) &&
 	       station->receive.protocol == PCM_PROTOCOL_V92 &&
 	       station->receive.stream.decoder.decision_plane ==
 		       V90_PCM_MAPPING_TRANSMIT &&
@@ -109,8 +123,22 @@ bool v92_phase4_analog_station_can_handoff(
 	const struct v92_phase4_analog_station *station)
 {
 	return v92_phase4_analog_station_is_valid(station) &&
-	       !station->failed && station->cpd_received &&
+	       !station->failed && !station->cleardown.active && station->cpd_received &&
 	       v92_phase4_analog_tx_can_handoff(&station->transmit);
+}
+
+bool v92_phase4_analog_station_start_cleardown(
+	struct v92_phase4_analog_station *station)
+{
+	if (!v92_phase4_analog_station_is_valid(station) || station->failed)
+		return false;
+	if (station->cleardown.active)
+		return true;
+	if (station->transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U ||
+	    station->transmit.stage == V92_PHASE4_ANALOG_TX_E2U_READY)
+		return false;
+	v92_cleardown_start(&station->cleardown, station->round_trip_delay_samples, true);
+	return true;
 }
 
 static bool note_suvd(
@@ -277,6 +305,18 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		return V92_PHASE4_ANALOG_STATION_FAILED;
 	result = pcm_downstream_rx_receive(
 		&station->receive, network_octet, &event);
+	if (result == PCM_DOWNSTREAM_RX_CPD &&
+	    event.control.record.cpd.frame_result == V92_CPD_OK) {
+		const struct v92_cpd_parameters *cpd = &event.control.record.cpd.parameters;
+
+		if (cpd->data_rate_number == 0u)
+			v92_cleardown_start(&station->cleardown, station->round_trip_delay_samples, false);
+		if (station->cleardown.active)
+			v92_cleardown_receive(&station->cleardown, cpd->data_rate_number == 0u,
+				cpd->acknowledges_cpu, station->transmitted_symbols);
+	}
+	if (station->cleardown.active)
+		return V92_PHASE4_ANALOG_STATION_OK;
 	switch (result) {
 	case PCM_DOWNSTREAM_RX_BUFFERING:
 	case PCM_DOWNSTREAM_RX_TRN2D_FRAME:
@@ -330,6 +370,44 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 	return fail(station);
 }
 
+static enum v92_phase4_analog_station_result transmit_cleardown(
+	struct v92_phase4_analog_station *station, int16_t *sample)
+{
+	struct v92_phase4_analog_tx *tx = &station->transmit;
+	struct v92_phase4_record_tx *record = &tx->signal.record;
+
+	if (tx->stage == V92_PHASE4_ANALOG_TX_TRN2U) {
+		if (v92_phase4_analog_tx_next(tx, sample) != V92_PHASE4_ANALOG_TX_OK)
+			return fail(station);
+	} else {
+		if (v92_phase4_record_tx_is_complete(record)) {
+			uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+			size_t bits;
+			unsigned int width = V92_CPU_SYMBOLS_PER_FRAME *
+				v92_phase4_modulator_bits_per_symbol(record->modulator.constellation);
+			struct v92_cpu_parameters cpu = tx->cpu;
+
+			if (v92_cleardown_is_ready(&station->cleardown, station->transmitted_symbols))
+				return V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE;
+			cpu.data_rate_number = 0u;
+			cpu.acknowledges_cpd = station->cleardown.peer_requested;
+			if (v92_cpu_encode(&cpu, width, frame, sizeof(frame), &bits) != V92_CPU_OK ||
+			    v92_phase4_record_tx_start_next(record, frame, sizeof(frame), bits) !=
+				V92_PHASE4_RECORD_TX_OK)
+				return fail(station);
+			tx->cpu = cpu;
+			station->cleardown_cp_started = true;
+		}
+		if (v92_phase4_record_tx_next(record, sample) != V92_PHASE4_RECORD_TX_OK)
+			return fail(station);
+	}
+	station->transmitted_symbols++;
+	if (station->cleardown_cp_started && v92_phase4_record_tx_is_complete(record))
+		v92_cleardown_sent(&station->cleardown, station->transmitted_symbols,
+			tx->cpu.acknowledges_cpd);
+	return V92_PHASE4_ANALOG_STATION_OK;
+}
+
 enum v92_phase4_analog_station_result v92_phase4_analog_station_transmit(
 	struct v92_phase4_analog_station *station, int16_t *sample)
 {
@@ -343,9 +421,13 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_transmit(
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
 	if (station->failed)
 		return V92_PHASE4_ANALOG_STATION_FAILED;
+	if (station->cleardown.active)
+		return transmit_cleardown(station, sample);
 	result = v92_phase4_analog_tx_next(&station->transmit, sample);
-	if (result == V92_PHASE4_ANALOG_TX_OK)
+	if (result == V92_PHASE4_ANALOG_TX_OK) {
+		station->transmitted_symbols++;
 		return V92_PHASE4_ANALOG_STATION_OK;
+	}
 	if (result == V92_PHASE4_ANALOG_TX_E2U_READY_RESULT)
 		return V92_PHASE4_ANALOG_STATION_E2U_READY;
 	return fail(station);
@@ -357,7 +439,7 @@ v92_phase4_analog_station_repeat_cpu(
 {
 	if (station == NULL)
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
-	if (!v92_phase4_analog_station_is_valid(station) || station->failed)
+	if (!v92_phase4_analog_station_is_valid(station) || station->failed || station->cleardown.active)
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
 	return v92_phase4_analog_tx_repeat_cpu(&station->transmit) ==
 		       V92_PHASE4_ANALOG_TX_OK ?
@@ -431,6 +513,8 @@ const char *v92_phase4_analog_station_result_name(
 		return "ok";
 	case V92_PHASE4_ANALOG_STATION_EVENT:
 		return "event";
+	case V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE:
+		return "cleardown complete";
 	case V92_PHASE4_ANALOG_STATION_E2U_READY:
 		return "E2u ready";
 	case V92_PHASE4_ANALOG_STATION_FAILED:

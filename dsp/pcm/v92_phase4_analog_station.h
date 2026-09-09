@@ -7,6 +7,7 @@
 #include "v92_pcm_mapping.h"
 #include "v92_phase3_analog_station.h"
 #include "v92_phase4_analog_tx.h"
+#include "v92_cleardown.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -14,6 +15,7 @@
 enum v92_phase4_analog_station_result {
 	V92_PHASE4_ANALOG_STATION_OK,
 	V92_PHASE4_ANALOG_STATION_EVENT,
+	V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE,
 	V92_PHASE4_ANALOG_STATION_E2U_READY,
 	V92_PHASE4_ANALOG_STATION_FAILED,
 	V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT,
@@ -25,8 +27,9 @@ enum v92_phase4_analog_station_result {
 /* Own the analogue modem's initial Phase 4 control exchange. The inherited
  * downstream receiver preserves the Phase 3 coding histories; the upstream
  * transmitter preserves the CPt/E1u differential-sign boundary. Only the
- * first complete CPd owns the PCM-upstream mapping; later compact CPd records
- * may only acknowledge CPU or repeat that immutable selection. Ed/E2u
+ * first complete nonzero CPd owns the PCM-upstream mapping; later compact CPd
+ * records may acknowledge CPU, repeat that selection, or request cleardown.
+ * A zero-rate CPd terminates the exchange without a mapping or Ed/E2u. Ed/E2u
  * emission and data mode follow in the next owner. One instance is
  * serialized. */
 struct v92_phase4_analog_station {
@@ -35,6 +38,10 @@ struct v92_phase4_analog_station {
 	struct v92_pcm_mapping mapping;
 	struct v92_suvd_parameters suvd;
 	struct v92_cpd_base_parameters cpd;
+	struct v92_cleardown cleardown;
+	uint64_t transmitted_symbols;
+	uint16_t round_trip_delay_samples;
+	bool cleardown_cp_started;
 	bool suvd_received;
 	bool cpd_received;
 	bool failed;
@@ -67,6 +74,11 @@ bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station);
 bool v92_phase4_analog_station_has_failed(
 	const struct v92_phase4_analog_station *station);
+
+/* As with digital zero-rate CPd, preserve the current record and coding.
+ * The caller sets round_trip_delay_samples before starting line processing. */
+bool v92_phase4_analog_station_start_cleardown(
+	struct v92_phase4_analog_station *station);
 bool v92_phase4_analog_station_can_handoff(
 	const struct v92_phase4_analog_station *station);
 
