@@ -186,10 +186,20 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	 * identity precoder cannot reach. Restore them for precoder feedback. */
 	if (next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u)
 		next.constellation[0].count = 64u;
-	/* A dense direct-channel window is not preserved by the new filters
-	 * and gain. Use alternating compander levels for these larger families
-	 * before normalizing the actual channel-compensated B1u waveform. */
-	if (next.constellation[0].count == 32u || next.constellation[0].count == 64u) {
+	/* CPd carries linear points, not codec indices. A sinh grid has a
+	 * finite spacing floor near zero and progressively wider outer gaps.
+	 * For the dense 16-state family, this protects small symbols from residual ISI
+	 * instead of compressing odd codec levels into adjoining wire cells
+	 * after power normalization. Shape 4 balances that floor and companding
+	 * noise; peak 30000 leaves signed-observation headroom. These are design
+	 * choices, not wire limits. Keep the 32-state family's spacing: its
+	 * redundant representatives have different error margins. Normalize the
+	 * actual filtered B1u below. */
+	if (next.trellis == V92_CPD_TRELLIS_16_STATE && next.constellation[0].count == 64u) {
+		for (unsigned point = 0; point < 64u; ++point)
+			next.constellation[0].positive_linear[point] = (int16_t)lround(
+				30000.0 * sinh(4.0 * (point + 0.5) / 63.5) / sinh(4.0));
+	} else if (next.constellation[0].count == 32u || next.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < next.constellation[0].count; ++point)
 			if (!g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
 				    &next.constellation[0].positive_linear[point]))

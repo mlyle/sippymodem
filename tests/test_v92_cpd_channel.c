@@ -69,10 +69,21 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
 	if (original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u)
 		original.constellation[0].count = 64u;
-	if (original.constellation[0].count == 32u || original.constellation[0].count == 64u)
+	if (original.trellis == V92_CPD_TRELLIS_16_STATE && original.constellation[0].count == 64u) {
+		/* Representative values of the generated sinh grid, independently
+		 * pinned without repeating the production formula. */
+		const struct v92_cpd_constellation *set = &cpd.constellation[0];
+
+		CHECK(set->count == 64u && set->positive_linear[0] == 35 &&
+			set->positive_linear[1] == 104 && set->positive_linear[15] == 1252 &&
+			set->positive_linear[31] == 3922 && set->positive_linear[47] == 10926 &&
+			set->positive_linear[63] == 30000, "dense channel spacing changed");
+		original.constellation[0] = *set;
+	} else if (original.constellation[0].count == 32u || original.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < original.constellation[0].count; ++point)
 			CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
 				&original.constellation[0].positive_linear[point]), "expected spacing failed");
+	}
 	CHECK(memcmp(&original, &cpd, sizeof(cpd)) == 0,
 		"channel design changed unrelated CPd selection");
 	CHECK(cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count == 0u &&
@@ -212,12 +223,17 @@ int main(void)
 {
 	if (!test_rejections() || !test_receive_plan())
 		return 1;
-	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* Both laws and trellis families: 24, 28, 32, 36 and 40 kbit/s. */
 		for (uint8_t rate = 1u; rate <= 13u; rate += 3u)
 			if (!test_channel((enum g711_law)law, 1.0, 0.0, rate) ||
 				!test_channel((enum g711_law)law, 0.55, 0.43, rate) ||
 				!test_channel((enum g711_law)law, 0.8, -0.25, rate))
 				return 1;
+		/* Keep the full 48 kbit/s payload through a nontrivial channel,
+		 * including wire CPd, B1u normalization and delayed bit delivery. */
+		if (!test_channel((enum g711_law)law, 0.9, 0.1, 19u))
+			return 1;
+	}
 	return 0;
 }
