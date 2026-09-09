@@ -76,6 +76,7 @@ struct v92_phase3_analog_station {
 	struct v92_cpt_parameters cpt_parameters;
 	uint32_t upstream_rate_mask;
 	enum v92_constellation_size phase4_training_constellation;
+	enum v92_constellation_size rate_renegotiation_constellation;
 	enum v92_phase3_analog_receive_stage receive_stage;
 	enum v92_phase3_analog_transmit_stage transmit_stage;
 	enum g711_law law;

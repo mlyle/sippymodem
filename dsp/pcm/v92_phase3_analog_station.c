@@ -105,18 +105,22 @@ static bool phase4_constellation_is_valid(
 {
 	switch (station->receive_stage) {
 	case V92_PHASE3_ANALOG_RECEIVE_SD:
-		return station->phase4_training_constellation == 0;
+		return station->phase4_training_constellation == 0 &&
+		       station->rate_renegotiation_constellation == 0;
 	case V92_PHASE3_ANALOG_RECEIVE_J:
 		switch (station->receive.j.stage) {
 		case V92_PHASE3_J_RECEIVER_TRN1D:
 		case V92_PHASE3_J_RECEIVER_JD_SEARCH:
 		case V92_PHASE3_J_RECEIVER_JD:
-			return station->phase4_training_constellation == 0;
+			return station->phase4_training_constellation == 0 &&
+			       station->rate_renegotiation_constellation == 0;
 		case V92_PHASE3_J_RECEIVER_JP:
 			return v92_constellation_size_is_valid(
 				       station->phase4_training_constellation) &&
 			       station->phase4_training_constellation ==
-				       station->receive.j.jp.training_constellation;
+				       station->receive.j.jp.training_constellation &&
+			       station->rate_renegotiation_constellation ==
+				       station->receive.j.jp.rate_renegotiation_constellation;
 		case V92_PHASE3_J_RECEIVER_DONE:
 			return false;
 		}
@@ -124,7 +128,8 @@ static bool phase4_constellation_is_valid(
 	case V92_PHASE3_ANALOG_RECEIVE_RI:
 	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
 		return v92_constellation_size_is_valid(
-			station->phase4_training_constellation);
+			station->phase4_training_constellation) &&
+		       v92_constellation_size_is_valid(station->rate_renegotiation_constellation);
 	}
 	return false;
 }
@@ -436,6 +441,7 @@ static enum v92_phase3_analog_station_result receive_j(
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 		station->phase4_training_constellation =
 			jp.training_constellation;
+		station->rate_renegotiation_constellation = jp.rate_renegotiation_constellation;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
 	if (result == V92_PHASE3_J_RECEIVER_COMPLETE) {

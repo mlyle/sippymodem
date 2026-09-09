@@ -560,6 +560,7 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 			state->cpu_repeat_remaining_samples <= expected_interval;
 
 	return v92_phase4_analog_station_is_valid(&state->station) &&
+	       v92_constellation_size_is_valid(call->state.phase4.v92.rate_renegotiation_constellation) &&
 	       state->cpu_repeat_interval_samples == expected_interval &&
 	       timer_valid;
 }
@@ -692,8 +693,13 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		if ((stage != V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
 		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
 		    !v92_upstream_data_tx_is_valid(&path->upstream) ||
+		    !pcm_r_rx_is_valid(&path->rd) || path->rd.signal != PCM_R_RD ||
+		    path->rd.decision_plane != V90_PCM_MAPPING_TRANSMIT ||
+		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
+		    path->training_mapping.law != call->law ||
+		    !v92_constellation_size_is_valid(path->rate_renegotiation_constellation) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
-			    V90_PCM_MAPPING_OK)
+			    V90_PCM_MAPPING_OK || !v90_pcm_mapping_equal(&expected, &path->rd.mapping))
 			return false;
 		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
 			child_valid = pcm_downstream_rx_is_valid(
@@ -719,6 +725,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
 		    !v92_upstream_data_rx_is_valid(&path->upstream) ||
 		    !v92_ru_line_rx_is_valid(&path->ru) ||
+		    path->ru.constellation != call->phase3_configuration.v92_digital.jp.rate_renegotiation_constellation ||
 		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
 		    path->training_mapping.law != call->law ||
 		    !isfinite(path->pending_squared_error) ||
@@ -753,11 +760,32 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 {
 	const struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
 
+	if (call->v92_rate_renegotiation_active &&
+	    (!v90_pcm_mapping_is_valid(&state->training_mapping) || state->training_mapping.law != call->law))
+		return false;
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_NONE)
 		return state->child != PCM_CALL_V92_PHASE4_RU;
+	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RU) {
+		const struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
+		if (!call->v92_rate_renegotiation_active || call->local_role != V90_ANALOG_MODEM ||
+		    state->child != PCM_CALL_V92_PHASE4_CONTROL ||
+		    !state->owner.analog.station.transmit.renegotiation ||
+		    !v92_pcm_phase3_ru_is_valid(&prefix->transmit) ||
+		    prefix->transmit.law != call->law ||
+		    !pcm_r_rx_is_valid(&prefix->receive) || prefix->receive.mapping.law != call->law ||
+		    prefix->receive.signal != PCM_R_RD ||
+		    prefix->receive.decision_plane != V90_PCM_MAPPING_TRANSMIT ||
+		    prefix->queue_count >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
+		    (prefix->queue_count && (prefix->transmit.emitted_symbols ||
+			prefix->transmit.kind != V92_PCM_PHASE3_RU)))
+			return false;
+		for (unsigned i = prefix->queue_count; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			if (prefix->queue[i])
+				return false;
+		return true;
+	}
 	if (!call->v92_rate_renegotiation_active || call->local_role != V90_DIGITAL_MODEM ||
-	    !v90_pcm_mapping_is_valid(&state->training_mapping) ||
-	    state->training_mapping.law != call->law || state->child == PCM_CALL_V92_PHASE4_E2U)
+	    state->child == PCM_CALL_V92_PHASE4_E2U)
 		return false;
 	switch (state->prefix_stage) {
 	case PCM_CALL_V92_PREFIX_DATA:
@@ -784,7 +812,7 @@ static bool call_is_valid(
 	if (call == NULL || !stored_configuration_is_valid(call) ||
 	    !v92_data_quality_is_valid(&call->pcm_upstream_quality) ||
 	    (call->v92_rate_renegotiation_active &&
-	     (!uses_pcm_upstream(call) || call->local_role != V90_DIGITAL_MODEM ||
+	     (!uses_pcm_upstream(call) ||
 	      !call->retrain_active ||
 	      (call->stage != PCM_CALL_PHASE4 && call->stage != PCM_CALL_DATA_PATH))) ||
 	    (call->v92_upstream_retry_ceiling != 0u &&
@@ -2280,6 +2308,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			return PCM_CALL_NUMERIC_FAILURE;
 		station.round_trip_delay_samples = call->round_trip_delay_samples;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
+			.rate_renegotiation_constellation = mixed->phase3.rate_renegotiation_constellation,
 			.owner.analog = {
 				.station = station,
 				.cpu_repeat_interval_samples =
@@ -2840,6 +2869,7 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 		if (v92_phase4_e2u_init_analog(&e2u, &handoff) !=
 		    V92_PHASE4_E2U_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.phase4.v92.training_mapping = handoff.receive.stream.decoder.mapping;
 	} else {
 		struct v92_phase4_digital_handoff handoff;
 
@@ -2891,6 +2921,31 @@ static enum pcm_call_result transmit_v92_rate_prefix(
 	struct v90_pcm_symbol symbol;
 	enum v90_downstream_data_stream_result result;
 
+	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RU) {
+		struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
+		if (prefix->queue_count) {
+			*octet = encode_sample(prefix->transmit.law, prefix->queue[0]);
+			prefix->queue_count--;
+			memmove(prefix->queue, prefix->queue + 1,
+				prefix->queue_count * sizeof(prefix->queue[0]));
+			prefix->queue[prefix->queue_count] = 0;
+			return PCM_CALL_OK;
+		}
+		if (!v92_pcm_phase3_ru_remaining(&prefix->transmit)) {
+			if (prefix->transmit.kind == V92_PCM_PHASE3_RU_BAR) {
+				if (pcm_r_rx_is_complete(&prefix->receive))
+					state->prefix_stage = PCM_CALL_V92_PREFIX_NONE;
+				return PCM_CALL_PHASE4_READY;
+			}
+			if (v92_pcm_phase3_ru_init(&prefix->transmit, prefix->transmit.law,
+				prefix->transmit.lu_ucode, V92_PCM_PHASE3_RU_BAR) != V92_PCM_PHASE3_RU_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+		}
+		if (v92_pcm_phase3_ru_next(&prefix->transmit, &symbol) != V92_PCM_PHASE3_RU_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		*octet = symbol.octet;
+		return PCM_CALL_OK;
+	}
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_DATA) {
 		result = v90_downstream_data_stream_next(&state->prefix.data, NULL, NULL, &symbol);
 		if (result != V90_DOWNSTREAM_DATA_STREAM_OK)
@@ -2989,13 +3044,22 @@ static enum pcm_call_result sample_v92_phase4(
 			&call->state.phase4.v92.owner.analog;
 		bool completed_this_sample;
 		int16_t sample;
-		enum pcm_call_result result = v92_analog_phase4_result(
+		enum pcm_call_result result = prefix_sent ? PCM_CALL_OK : v92_analog_phase4_result(
 			v92_phase4_analog_station_transmit(
 				&state->station, &sample));
 
 		if (result != PCM_CALL_OK)
 			return result;
-		*transmit_octet = encode_sample(call->law, sample);
+		if (!prefix_sent)
+			*transmit_octet = encode_sample(call->law, sample);
+		if (call->state.phase4.v92.prefix_stage == PCM_CALL_V92_PREFIX_RU &&
+		    !pcm_r_rx_is_complete(&call->state.phase4.v92.prefix.analog.receive)) {
+			enum pcm_r_rx_result received = pcm_r_rx_receive(
+				&call->state.phase4.v92.prefix.analog.receive, received_octet);
+			return received == PCM_R_RX_BUFFERING || received == PCM_R_RX_SIGNAL_DETECTED ||
+				received == PCM_R_RX_BAR_STARTED || received == PCM_R_RX_BAR_COMPLETE ?
+				PCM_CALL_OK : PCM_CALL_SEQUENCE_MISMATCH;
+		}
 		if (state->station.cleardown.active)
 			return v92_analog_phase4_result(v92_phase4_analog_station_receive(
 				&state->station, received_octet));
@@ -3214,6 +3278,12 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		path->downstream = from->downstream;
 		path->downstream_stage = from->downstream_stage;
 		path->cpu = from->cpu;
+		path->training_mapping = call->state.phase4.v92.training_mapping;
+		path->rate_renegotiation_constellation = call->state.phase4.v92.rate_renegotiation_constellation;
+		struct v90_pcm_mapping mapping;
+		if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &path->cpu) != V90_PCM_MAPPING_OK ||
+		    pcm_r_rx_init(&path->rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) != PCM_R_RX_OK)
+			return false;
 	} else {
 		const struct v92_phase4_e2u_digital_handoff *from = &handoff.state.digital;
 		struct pcm_call_v92_digital_data *path = &next->state.data_path.v92_digital;
@@ -3224,6 +3294,9 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		if (!v92_ru_line_rx_init_after_e2u(&path->ru, &from->receive) ||
 		    !v92_data_quality_restart(&next->pcm_upstream_quality))
 			return false;
+		/* Keep the trained FIR for Ru, but select post-Ru modulation with
+		 * Jp bit 49 rather than the initial-training bit 48. */
+		path->ru.constellation = call->phase3_configuration.v92_digital.jp.rate_renegotiation_constellation;
 		path->training_mapping = call->state.phase4.v92.training_mapping;
 		path->downstream = from->downstream;
 		path->downstream_stage = from->downstream_stage;
@@ -3495,6 +3568,62 @@ static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call)
 	return reset_retrain_detector(call);
 }
 
+static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
+{
+	const struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+	struct pcm_call_v92_phase4_state state = {
+		.training_mapping = path->training_mapping,
+		.rate_renegotiation_constellation = path->rate_renegotiation_constellation,
+		.prefix_stage = PCM_CALL_V92_PREFIX_RU,
+		.child = PCM_CALL_V92_PHASE4_CONTROL,
+		.owner.analog.cpu_repeat_interval_samples =
+			V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples,
+		.prefix.analog.receive = path->rd,
+		.prefix.analog.queue_count = path->upstream.queue_count,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx downstream;
+	struct pcm_call_v92_analog_rate_prefix *prefix = &state.prefix.analog;
+
+	if (v90_pcm_mapping_init_rate_renegotiation(&mapping, &path->training_mapping,
+		&path->rd.mapping) != V90_PCM_MAPPING_OK ||
+	    pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
+		V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK ||
+	    v92_phase4_analog_station_init_after_ru(&state.owner.analog.station,
+		path->rate_renegotiation_constellation, path->upstream.upstream_level, &downstream,
+		&path->cpu, &path->upstream.encoder.mapping,
+		call->round_trip_delay_samples) != V92_PHASE4_ANALOG_STATION_OK ||
+	    v92_pcm_phase3_ru_init(&prefix->transmit, call->law,
+		call->phase3_configuration.v92_analog.upstream_lu_ucode,
+		V92_PCM_PHASE3_RU) != V92_PCM_PHASE3_RU_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	memcpy(prefix->queue, path->upstream.queue, sizeof(prefix->queue));
+	call->state = (union pcm_call_state){ .phase4.v92 = state };
+	call->stage = PCM_CALL_PHASE4;
+	call->retrain_active = true;
+	call->v92_rate_renegotiation_active = true;
+	return reset_retrain_detector(call);
+}
+
+enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (!uses_pcm_upstream(call) || call->local_role != V90_ANALOG_MODEM ||
+	    !pcm_call_is_online(call) || call->retrain_active)
+		return PCM_CALL_INVALID_STATE;
+	struct pcm_call next = *call;
+	enum pcm_call_result result = begin_v92_analog_rate_request(&next);
+	if (result == PCM_CALL_OK)
+		result = update_rate_renegotiation_deadline(&next);
+	if (result != PCM_CALL_OK)
+		return result;
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result observe_v92_data_quality(
 	struct pcm_call *call, const struct v92_upstream_data_frame *frame,
 	struct pcm_call_data_event *event)
@@ -3539,12 +3668,24 @@ static enum pcm_call_result v92_data_octet_owned(
 		if (transmitted != V92_UPSTREAM_DATA_TX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		*generated = encode_sample(call->law, sample);
+		bool suppress_frame = false;
+		if (data_path_is_online_owned(call)) {
+			enum pcm_r_rx_result rd = pcm_r_rx_receive(&path->rd, received_octet);
+			if (rd == PCM_R_RX_BAR_STARTED)
+				return begin_v92_analog_rate_request(call);
+			if (rd != PCM_R_RX_BUFFERING && rd != PCM_R_RX_SIGNAL_DETECTED &&
+			    rd != PCM_R_RX_SEQUENCE_MISMATCH)
+				return PCM_CALL_SEQUENCE_MISMATCH;
+			suppress_frame = pcm_r_rx_signal_detected(&path->rd);
+		}
 		received = v92_downstream_receive_owned(&path->downstream,
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
 			received_octet, &frame);
 		if (received == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
-			emitted->frame.downstream = frame;
-			emitted->kind = PCM_CALL_DOWNSTREAM_FRAME;
+			if (!suppress_frame) {
+				emitted->frame.downstream = frame;
+				emitted->kind = PCM_CALL_DOWNSTREAM_FRAME;
+			}
 		} else if (received != V90_DOWNSTREAM_DATA_RX_BUFFERING &&
 			   received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
 			   received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {

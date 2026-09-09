@@ -19,6 +19,7 @@
 #include "v92_upstream_data_rx.h"
 #include "v92_upstream_data_tx.h"
 #include "v92_ru_line_rx.h"
+#include "v92_pcm_phase3_ru.h"
 #include "v92_data_quality.h"
 #include "v34_phase2_tone.h"
 #include "v34_phase2_selection.h"
@@ -244,6 +245,16 @@ enum pcm_call_v92_rate_prefix_stage {
 	PCM_CALL_V92_PREFIX_DATA,
 	PCM_CALL_V92_PREFIX_DRAIN,
 	PCM_CALL_V92_PREFIX_RD,
+	PCM_CALL_V92_PREFIX_RU,
+};
+
+/* Drain only the already encoded data frame before Ru. Its transmission and
+ * the peer's Rd reception finish independently of each other. */
+struct pcm_call_v92_analog_rate_prefix {
+	struct v92_pcm_phase3_ru transmit;
+	struct pcm_r_rx receive;
+	int16_t queue[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	uint8_t queue_count;
 };
 
 struct pcm_call_v92_phase4_state {
@@ -251,8 +262,10 @@ struct pcm_call_v92_phase4_state {
 	union {
 		struct v90_downstream_data_stream data;
 		struct pcm_r_tx rd;
+		struct pcm_call_v92_analog_rate_prefix analog;
 	} prefix;
 	struct v90_pcm_mapping training_mapping;
+	enum v92_constellation_size rate_renegotiation_constellation;
 	enum pcm_call_v92_rate_prefix_stage prefix_stage;
 	enum pcm_call_v92_phase4_child child;
 };
@@ -267,8 +280,11 @@ union pcm_call_phase4_state {
  * union crosses E2u unchanged and continues the shared Ed/B1d/data epoch. */
 struct pcm_call_v92_analog_data {
 	struct v92_upstream_data_tx upstream;
+	struct pcm_r_rx rd;
+	struct v90_pcm_mapping training_mapping;
 	union v92_phase4_e2u_analog_downstream downstream;
 	struct v92_cpu_parameters cpu;
+	enum v92_constellation_size rate_renegotiation_constellation;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 };
 
@@ -395,6 +411,13 @@ enum pcm_call_result pcm_call_init(
 /* Start a full retrain while retaining the negotiated PCM protocol and INFO0
  * records. The following line character begins the 70 ms silence interval. */
 enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
+
+/* Initiate a PCM-upstream rate exchange from an online analogue endpoint.
+ * Drain the accepted data frame before Ru; subsequent media uses octet()
+ * through Phase 4 and the ordinary start_data_path() handoff. No new host
+ * frame is consumed until data resumes after B1. Full retrain remains separate.
+ * Unsupported protocols/roles and non-online calls are rejected unchanged. */
+enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call);
 
 /* Begin V.90 zero-rate cleardown on the current continuous data or CP/MP
  * line. A rate exchange can be cancelled before CONNECT or during retrain;
