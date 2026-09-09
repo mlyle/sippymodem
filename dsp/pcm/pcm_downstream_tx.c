@@ -53,6 +53,17 @@ static bool requests_cleardown(const struct pcm_downstream_tx *transmitter)
 	       record_requests_cleardown(&transmitter->control.mp);
 }
 
+static bool v92_cleardown_can_finish(const struct pcm_downstream_tx *transmitter)
+{
+	return transmitter->protocol == PCM_PROTOCOL_V92 &&
+	       transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	       transmitter->control_configured &&
+	       transmitter->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_CPD &&
+	       transmitter->control.cpd.data_rate_number == 0u &&
+	       transmitter->v92_control_record_accepted &&
+	       transmitter->control_bit_index == 0u;
+}
+
 static uint64_t initial_training_frames(const struct pcm_downstream_tx *transmitter)
 {
 	if (transmitter->protocol == PCM_PROTOCOL_V92)
@@ -295,7 +306,8 @@ static bool v92_control_is_valid(
 		     !transmitter->finish_requested))
 			return false;
 	} else if (transmitter->ed_frames != 0u ||
-		   transmitter->finish_requested || transmitter->complete ||
+		   (transmitter->finish_requested && !v92_cleardown_can_finish(transmitter)) ||
+		   (transmitter->complete && !transmitter->finish_requested) ||
 		   (transmitter->ed_requested &&
 		    transmitter->control_bit_index == 0u)) {
 		return false;
@@ -635,6 +647,7 @@ bool pcm_downstream_tx_is_v92_control_boundary(
 	       transmitter->protocol == PCM_PROTOCOL_V92 &&
 	       transmitter->control_configured &&
 	       transmitter->stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
+	       !transmitter->finish_requested &&
 	       transmitter->control_bit_index == 0u;
 }
 
@@ -813,7 +826,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_finish(
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	if (transmitter->complete)
 		return PCM_DOWNSTREAM_TX_COMPLETE;
-	if (transmitter->control_configured)
+	if (transmitter->control_configured && !v92_cleardown_can_finish(transmitter))
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
 	next = *transmitter;
 	next.finish_requested = true;

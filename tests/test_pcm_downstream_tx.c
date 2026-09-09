@@ -326,10 +326,10 @@ static bool run_v92_width(
 	bool parameter_exchange, bool cleardown)
 {
 	const struct v92_suvd_parameters initial_suvd = {
-		.request_silence = !parameter_exchange && (frame_bits & 1u) != 0u,
+		.request_silence = !parameter_exchange && !cleardown && (frame_bits & 1u) != 0u,
 	};
 	const struct v92_suvd_parameters acknowledged_suvd = {
-		.request_silence = !parameter_exchange && (frame_bits & 1u) != 0u,
+		.request_silence = !parameter_exchange && !cleardown && (frame_bits & 1u) != 0u,
 		.acknowledges_cpu = true,
 	};
 	struct v92_cpd_base_parameters cpd = cpd_parameters();
@@ -341,6 +341,7 @@ static bool run_v92_width(
 	size_t cpd_records = 0u;
 	size_t ed_records = 0u;
 	size_t symbol_count = 0u;
+	uint64_t cpd_first_frame = 0u;
 	size_t maximum_symbols =
 		V90_PHASE4_TRN2D_MINIMUM_SYMBOLS + 2048u;
 	enum {
@@ -352,8 +353,10 @@ static bool run_v92_width(
 	bool cpd_pending = false;
 	bool suvd_pending = false;
 
-	if (cleardown)
+	if (cleardown) {
 		cpd.data_rate_number = 0u;
+		cpd.acknowledges_cpu = (frame_bits & 1u) != 0u;
+	}
 	CHECK(make_width_mapping(&mapping, law, frame_bits, lookahead,
 				 parameter_exchange) &&
 	      pcm_downstream_tx_init(
@@ -389,9 +392,24 @@ static bool run_v92_width(
 			      "V.92 width %u law %u did not switch to CPd",
 			      frame_bits, law);
 			cpd_pending = false;
+			cpd_first_frame = transmitter.accepted_frames;
+			if (cleardown) {
+				struct pcm_downstream_tx before = transmitter;
+
+				CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
+					      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+				      memcmp(&before, &transmitter, sizeof(before)) == 0,
+				      "unsent zero-rate CPd was discarded");
+			}
 		}
 		if (suvd_pending &&
 		    pcm_downstream_tx_is_v92_control_boundary(&transmitter)) {
+			struct pcm_downstream_tx before = transmitter;
+
+			CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
+				      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+			      memcmp(&before, &transmitter, sizeof(before)) == 0,
+			      "nonzero CPd was allowed to finish without Ed");
 			CHECK(pcm_downstream_tx_start_suvd(
 				      &transmitter, &acknowledged_suvd) ==
 				      PCM_DOWNSTREAM_TX_OK &&
@@ -465,6 +483,10 @@ static bool run_v92_width(
 			      "V.92 width %u law %u returned malformed CPd",
 			      frame_bits, law);
 			cpd_records++;
+			if (cleardown) {
+				stage = CONTROL_COMPLETE;
+				continue;
+			}
 			if (stage == WAIT_CPD) {
 				suvd_pending = true;
 				stage = WAIT_ACKNOWLEDGED_SUVD;
@@ -476,14 +498,14 @@ static bool run_v92_width(
 		      frame_bits, law,
 		      pcm_downstream_rx_result_name(result));
 	}
-	CHECK(stage == CONTROL_COMPLETE && suvd_records >= 2u &&
+	CHECK(stage == CONTROL_COMPLETE && suvd_records >= (cleardown ? 1u : 2u) &&
 	      cpd_records >= 1u && !cpd_pending && !suvd_pending &&
 	      training_frames == (parameter_exchange ? 0u :
 		      V90_PHASE4_TRN2D_MINIMUM_FRAMES) &&
 	      transmitter.protocol == PCM_PROTOCOL_V92 &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_V92_CONTROL &&
 	      transmitter.v92_control_kind ==
-		      PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+		      (cleardown ? PCM_DOWNSTREAM_V92_CONTROL_CPD : PCM_DOWNSTREAM_V92_CONTROL_SUVD) &&
 	      transmitter.control_configured &&
 	      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
 	      receiver.trn2d_bit_errors == 0u &&
@@ -491,11 +513,65 @@ static bool run_v92_width(
 	      pcm_downstream_rx_is_valid(&receiver),
 	      "V.92 width %u law %u lost its continuous control epoch",
 	      frame_bits, law);
-	/* Cleardown deliberately stops this component check at the CP/SUV
-	 * exchange. A call owner must acknowledge and wait the 9.11 interval;
-	 * it must not request Ed or resume data after a zero-rate CP. */
-	if (cleardown)
+	/* The owner decides when the 9.11 acknowledgement/timer permits exit.
+	 * This component must then finish the current zero-rate CPd and drain
+	 * every queued symbol, without Ed/B1d or another data epoch. */
+	if (cleardown) {
+		while (!pcm_downstream_tx_is_complete(&transmitter) &&
+		       symbol_count < maximum_symbols) {
+			struct pcm_downstream_tx before = transmitter;
+			struct pcm_downstream_symbol symbol = { 0 }, untouched = symbol;
+			struct pcm_downstream_event event;
+			bool boundary = transmitter.control_bit_index == 0u;
+
+			CHECK(pcm_downstream_tx_request_finish(&transmitter) ==
+				      (boundary ? PCM_DOWNSTREAM_TX_OK : PCM_DOWNSTREAM_TX_INVALID_STATE) &&
+			      (boundary || memcmp(&before, &transmitter, sizeof(before)) == 0),
+			      "zero-rate CPd finish lost its record boundary");
+			if (boundary) {
+				before.finish_requested = true;
+				CHECK(memcmp(&before, &transmitter, sizeof(before)) == 0 &&
+				      pcm_downstream_tx_request_finish(&transmitter) == PCM_DOWNSTREAM_TX_OK &&
+				      !pcm_downstream_tx_is_v92_control_boundary(&transmitter) &&
+				      pcm_downstream_tx_start_suvd(&transmitter, &acknowledged_suvd) ==
+					      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+				      pcm_downstream_tx_start_cpd(&transmitter, &cpd) ==
+					      PCM_DOWNSTREAM_TX_INVALID_STATE &&
+				      pcm_downstream_tx_request_ed(&transmitter) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
+				      memcmp(&before, &transmitter, sizeof(before)) == 0,
+				      "zero-rate CPd finish reset coding or restarted transmission");
+			}
+			enum pcm_downstream_tx_result sent = pcm_downstream_tx_next(&transmitter, &symbol);
+
+			if (sent == PCM_DOWNSTREAM_TX_COMPLETE) {
+				CHECK(memcmp(&symbol, &untouched, sizeof(symbol)) == 0,
+				      "completed CPd drain changed output");
+				break;
+			}
+			CHECK(sent == PCM_DOWNSTREAM_TX_OK, "zero-rate CPd drain failed");
+			symbol_count++;
+			enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(
+				&receiver, symbol.pcm.octet, &event);
+
+			if (received == PCM_DOWNSTREAM_RX_CPD) {
+				CHECK(event.control.record.cpd.frame_result == V92_CPD_OK &&
+				      cpd_parameters_equal(&event.control.record.cpd.parameters, &cpd),
+				      "CPd drain corrupted its final record");
+				cpd_records++;
+			} else {
+				CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING,
+				      "CPd drain emitted a non-cleardown record");
+			}
+		}
+		CHECK(pcm_downstream_tx_is_complete(&transmitter) &&
+		      transmitter.ed_frames == 0u && transmitter.queue_count == 0u &&
+		      symbol_count == transmitter.accepted_frames * V90_CP_FRAME_INTERVALS &&
+		      cpd_records * transmitter.control_sequence_bits ==
+			      (transmitter.accepted_frames - cpd_first_frame) * frame_bits &&
+		      pcm_downstream_tx_request_finish(&transmitter) == PCM_DOWNSTREAM_TX_COMPLETE,
+		      "zero-rate CPd lost a record or spectral tail");
 		return true;
+	}
 	CHECK(pcm_downstream_rx_expect_ed(&receiver) == PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_tx_request_ed(&transmitter) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -558,7 +634,8 @@ static bool test_v92_sequences(void)
 			     ++frame_bits) {
 				CHECK(run_v92_width(
 					      (enum g711_law)law, frame_bits,
-					      lookahead, false, false),
+					      lookahead, false, false) &&
+				      run_v92_width(law, frame_bits, lookahead, false, true),
 				      "V.92 downstream transmitter matrix stopped");
 			}
 		}

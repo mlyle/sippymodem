@@ -182,7 +182,11 @@ enum pcm_downstream_tx_result pcm_downstream_tx_request_ed(
 
 /* End after every already accepted six-symbol frame has drained. The request
  * is idempotent and never truncates a shaping look-ahead window. Once MP is
- * configured, the later Ed transition owns termination instead. */
+ * configured, the later Ed transition owns termination instead. V.92 may
+ * also finish at a compact zero-rate CPd boundary after at least one complete
+ * record has entered the coder, without Ed/B1d. Mid-record requests reject
+ * unchanged. The call owner must first satisfy the acknowledgement or wait
+ * interval in V.92 Amendment 1, 9.11; this drain does not time line release. */
 enum pcm_downstream_tx_result pcm_downstream_tx_request_finish(
 	struct pcm_downstream_tx *transmitter);
 
