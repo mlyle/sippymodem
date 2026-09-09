@@ -153,7 +153,12 @@ static bool fill_queue(
 	for (size_t index = 0; index < output->symbol_count; ++index) {
 		if (!v90_pcm_symbol_is_valid(&output->symbols[index], law))
 			return false;
-		stream->queue[index] = output->symbols[index];
+		/* The queue has a deterministic representation for transactional
+		 * snapshots; a frame's temporary symbol padding is not owned data. */
+		stream->queue[index].ucode = output->symbols[index].ucode;
+		stream->queue[index].positive = output->symbols[index].positive;
+		stream->queue[index].octet = output->symbols[index].octet;
+		stream->queue[index].sample = output->symbols[index].sample;
 	}
 	stream->queue_count = output->symbol_count;
 	return true;

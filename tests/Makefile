@@ -2802,6 +2802,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(V34_PHASE2_TONE_OBJECTS)
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_data_quality.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
 	$(BUILD_DIR)/test_pcm_call.o \
 	$(BUILD_DIR)/v92_profile.o \

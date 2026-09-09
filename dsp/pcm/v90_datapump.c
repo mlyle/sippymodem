@@ -14,7 +14,6 @@
 #include "v90_info1.h"
 #include "v90_mp.h"
 #include "v90_profile.h"
-#include "v92_data_quality.h"
 #include "v92_profile.h"
 
 #include <limits.h>
@@ -27,7 +26,6 @@ struct v90_datapump {
 	struct pcm_call call;
 	struct training_session training;
 	struct v34_data_quality upstream_quality;
-	struct v92_data_quality pcm_upstream_quality;
 	struct v90_v34_fallback_handoff fallback;
 	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
@@ -143,7 +141,6 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      !datapump->call.round_trip_delay_stored)) ||
 	    !training_session_is_valid(&datapump->training) ||
 	    !v34_data_quality_is_valid(&datapump->upstream_quality) ||
-	    !v92_data_quality_is_valid(&datapump->pcm_upstream_quality) ||
 	    (datapump->upstream_quality_ready &&
 	     (role != V90_DIGITAL_MODEM ||
 	      !pcm_call_uses_conventional_upstream(&datapump->call))) ||
@@ -462,21 +459,12 @@ static bool deliver_event(
 	}
 	if (event->kind == PCM_CALL_PCM_UPSTREAM_FRAME) {
 		const struct v92_upstream_data_frame *frame = &event->frame.pcm_upstream;
-		enum v92_data_quality_result quality;
 
 		if (datapump->protocol != PCM_PROTOCOL_V92 ||
-		    datapump->role != V90_DIGITAL_MODEM || frame->b1u)
+		    datapump->role != V90_DIGITAL_MODEM || frame->b1u || frame->ambiguous)
 			return false;
 		if (!training_session_is_online(&datapump->training))
 			return true;
-		quality = v92_data_quality_observe(&datapump->pcm_upstream_quality,
-			frame->squared_error, frame->ambiguous);
-		/* Do not deliver the triggering frame. Full retraining pauses the
-		 * host-bit source and preserves the existing data-link session. */
-		if (quality == V92_DATA_QUALITY_RETRAIN)
-			return retrain_v90(&datapump->dp) == 0;
-		if (quality != V92_DATA_QUALITY_OK)
-			return false;
 		return deliver_bits(datapump, frame->bits, frame->bit_count);
 	}
 	if (event->kind != PCM_CALL_UPSTREAM_FRAME ||
@@ -507,8 +495,6 @@ static bool enter_link(struct v90_datapump *datapump)
 	    modem_set_param(
 		    datapump->dp.modem, MDMPRM_RX_RATE,
 		    (int)receive_rate) != 0)
-		return false;
-	if (!v92_data_quality_restart(&datapump->pcm_upstream_quality))
 		return false;
 	retrained = training_session_is_retraining(&datapump->training);
 	if (training_session_connect(&datapump->training) !=
@@ -637,7 +623,7 @@ static bool process_octet(
 	if (result != PCM_CALL_OK)
 		return false;
 	if (was_online &&
-	    datapump->call.stage == PCM_CALL_RETRAIN_SILENCE &&
+	    datapump->call.retrain_active && !pcm_call_is_online(&datapump->call) &&
 	    training_session_start_retrain(
 		    &datapump->training, TRAINING_REMOTE_RETRAIN) !=
 		    TRAINING_SESSION_OK)

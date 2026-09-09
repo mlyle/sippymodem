@@ -18,6 +18,8 @@
 #include "v92_phase4_e2u.h"
 #include "v92_upstream_data_rx.h"
 #include "v92_upstream_data_tx.h"
+#include "v92_ru_line_rx.h"
+#include "v92_data_quality.h"
 #include "v34_phase2_tone.h"
 #include "v34_phase2_selection.h"
 
@@ -219,16 +221,39 @@ struct pcm_call_v92_analog_phase4_control {
 enum pcm_call_v92_phase4_child {
 	PCM_CALL_V92_PHASE4_CONTROL,
 	PCM_CALL_V92_PHASE4_E2U,
+	PCM_CALL_V92_PHASE4_RU,
+};
+
+struct pcm_call_v92_rate_request {
+	struct v92_ru_line_rx receive;
+	struct v92_cpd_parameters cpd;
+	struct v92_upstream_plan plan;
+	struct v92_cpu_parameters cpu;
 };
 
 union pcm_call_v92_phase4_owner {
 	struct pcm_call_v92_analog_phase4_control analog;
 	struct v92_phase4_digital_station digital;
 	struct v92_phase4_e2u e2u;
+	struct pcm_call_v92_rate_request ru;
+};
+
+/* Rd transmission overlaps reception of the peer's post-Ru TRN2u. */
+enum pcm_call_v92_rate_prefix_stage {
+	PCM_CALL_V92_PREFIX_NONE,
+	PCM_CALL_V92_PREFIX_DATA,
+	PCM_CALL_V92_PREFIX_DRAIN,
+	PCM_CALL_V92_PREFIX_RD,
 };
 
 struct pcm_call_v92_phase4_state {
 	union pcm_call_v92_phase4_owner owner;
+	union {
+		struct v90_downstream_data_stream data;
+		struct pcm_r_tx rd;
+	} prefix;
+	struct v90_pcm_mapping training_mapping;
+	enum pcm_call_v92_rate_prefix_stage prefix_stage;
 	enum pcm_call_v92_phase4_child child;
 };
 
@@ -249,10 +274,17 @@ struct pcm_call_v92_analog_data {
 
 struct pcm_call_v92_digital_data {
 	struct v92_upstream_data_rx upstream;
+	struct v92_ru_line_rx ru;
+	struct v90_pcm_mapping training_mapping;
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 	double b1u_squared_error;
+	/* Freeze a quality-triggering observation while Ru acquisition finishes.
+	 * A timeout charges the original failure; it never forgives lost data. */
+	double pending_squared_error;
+	uint16_t quality_guard_samples;
+	bool pending_ambiguous;
 	bool b1u_decode_failed;
 };
 
@@ -331,6 +363,7 @@ struct pcm_call {
 	struct pcm_call_v92_digital_phase4_configuration
 		v92_digital_phase4_configuration;
 	struct v34_full_retrain retrain;
+	struct v92_data_quality pcm_upstream_quality;
 	struct v92_jd v92_peer_jd;
 	uint32_t enabled_downstream_rate_mask;
 	uint32_t b1_deadline_remaining_samples;
@@ -350,6 +383,7 @@ struct pcm_call {
 	bool round_trip_delay_stored;
 	bool b1_deadline_armed;
 	bool rate_renegotiation_deadline_armed;
+	bool v92_rate_renegotiation_active;
 	bool retrain_active;
 	bool failed;
 };

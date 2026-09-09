@@ -30,6 +30,10 @@ enum {
 		V34_PHASE2_SAMPLE_RATE * 5,
 	V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES = 2,
 	V92_CPU_REPEAT_BASE_SAMPLES = 800,
+	/* Local recovery policy: leave time for a complete Ru qualification,
+	 * its retained FIR delay and one data-frame reporting boundary. */
+	V92_RU_QUALITY_GUARD_SAMPLES = V92_RU_RX_MIN_SYMBOLS +
+		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + V92_RU_RX_FRAME_SYMBOLS,
 };
 
 _Static_assert(PCM_PROTOCOL_V90 == 0,
@@ -583,6 +587,8 @@ bool pcm_call_is_disconnecting(const struct pcm_call *call)
 static bool rate_renegotiation_is_active_owned(
 	const struct pcm_call *call)
 {
+	if (call->v92_rate_renegotiation_active)
+		return !cleardown_is_active_owned(call);
 	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->stage != PCM_CALL_DATA_PATH ||
 	    cleardown_is_active_owned(call))
@@ -597,6 +603,8 @@ static bool rate_renegotiation_response_is_pending_owned(
 {
 	if (!rate_renegotiation_is_active_owned(call))
 		return false;
+	if (call->v92_rate_renegotiation_active)
+		return true;
 	/* V.90 9.6.1/9.6.2 time E/Ed reception, not the following B1/B1d.
 	 * The path remains in its control epoch until both directions are ready
 	 * for host data, but that must not extend the response deadline. */
@@ -624,6 +632,8 @@ static bool rate_renegotiation_deadline_has_started(
 {
 	if (!rate_renegotiation_response_is_pending_owned(call))
 		return false;
+	if (call->v92_rate_renegotiation_active)
+		return true;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct v90_analog_path *path = &call->state.data_path.analog;
 
@@ -708,6 +718,14 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		if ((stage != V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
 		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
 		    !v92_upstream_data_rx_is_valid(&path->upstream) ||
+		    !v92_ru_line_rx_is_valid(&path->ru) ||
+		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
+		    path->training_mapping.law != call->law ||
+		    !isfinite(path->pending_squared_error) ||
+		    path->pending_squared_error < 0.0 ||
+		    path->quality_guard_samples > V92_RU_QUALITY_GUARD_SAMPLES ||
+		    (!path->quality_guard_samples &&
+		     (path->pending_squared_error != 0.0 || path->pending_ambiguous)) ||
 		    (path->upstream.failed && !call->failed) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
@@ -731,6 +749,32 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 	return cpu->law == call->law && upstream->law == call->law && child_valid;
 }
 
+static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
+{
+	const struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+
+	if (state->prefix_stage == PCM_CALL_V92_PREFIX_NONE)
+		return state->child != PCM_CALL_V92_PHASE4_RU;
+	if (!call->v92_rate_renegotiation_active || call->local_role != V90_DIGITAL_MODEM ||
+	    !v90_pcm_mapping_is_valid(&state->training_mapping) ||
+	    state->training_mapping.law != call->law || state->child == PCM_CALL_V92_PHASE4_E2U)
+		return false;
+	switch (state->prefix_stage) {
+	case PCM_CALL_V92_PREFIX_DATA:
+		if (state->child != PCM_CALL_V92_PHASE4_RU)
+			return false;
+		/* fall through */
+	case PCM_CALL_V92_PREFIX_DRAIN:
+		return v90_downstream_data_stream_is_valid(&state->prefix.data) &&
+			state->prefix.data.transmitter.encoder.mapping.law == call->law;
+	case PCM_CALL_V92_PREFIX_RD:
+		return pcm_r_tx_is_valid(&state->prefix.rd) &&
+			state->prefix.rd.mapping.law == call->law && state->prefix.rd.signal == PCM_R_RD;
+	default:
+		return false;
+	}
+}
+
 static bool call_is_valid(
 	const struct pcm_call *call, bool owned_phase3)
 {
@@ -738,6 +782,11 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    !v92_data_quality_is_valid(&call->pcm_upstream_quality) ||
+	    (call->v92_rate_renegotiation_active &&
+	     (!uses_pcm_upstream(call) || call->local_role != V90_DIGITAL_MODEM ||
+	      !call->retrain_active ||
+	      (call->stage != PCM_CALL_PHASE4 && call->stage != PCM_CALL_DATA_PATH))) ||
 	    (call->v92_upstream_retry_ceiling != 0u &&
 	     (call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM ||
 	      call->v92_digital_phase4_configuration.upstream_selection != PCM_CALL_V92_UPSTREAM_DIRECT ||
@@ -770,8 +819,9 @@ static bool call_is_valid(
 	    (!call->rate_renegotiation_deadline_armed &&
 	     call->rate_renegotiation_deadline_remaining_samples != 0u) ||
 	    (call->rate_renegotiation_deadline_armed &&
-	     (!pcm_call_uses_conventional_upstream(call) ||
-	      call->stage != PCM_CALL_DATA_PATH ||
+	     ((!call->v92_rate_renegotiation_active &&
+	       (!pcm_call_uses_conventional_upstream(call) ||
+	        call->stage != PCM_CALL_DATA_PATH)) ||
 	      !call->round_trip_delay_stored ||
 	      !rate_renegotiation_is_active_owned(call) ||
 	      call->rate_renegotiation_deadline_remaining_samples == 0u ||
@@ -855,7 +905,20 @@ static bool call_is_valid(
 		}
 		break;
 	case PCM_CALL_PHASE4:
+		if (uses_pcm_upstream(call) && !v92_rate_prefix_is_valid(call))
+			return false;
 		if (uses_pcm_upstream(call) &&
+		    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU) {
+			const struct pcm_call_v92_rate_request *ru = &call->state.phase4.v92.owner.ru;
+
+			child_valid = call->v92_rate_renegotiation_active &&
+				v92_ru_line_rx_is_valid(&ru->receive) &&
+				ru->receive.law == call->law && ru->receive.signal.run >= V92_RU_RX_MIN_SYMBOLS &&
+				v92_upstream_plan_is_valid(&ru->plan) && ru->cpu.law == call->law &&
+				v92_cpd_parameters_are_valid(&ru->cpd) &&
+				v92_cpu_parameters_are_valid(&ru->cpu);
+			child_failed = false;
+		} else if (uses_pcm_upstream(call) &&
 		    call->state.phase4.v92.child ==
 			    PCM_CALL_V92_PHASE4_E2U) {
 			child_valid = v92_phase4_e2u_is_valid(
@@ -1072,6 +1135,7 @@ static enum pcm_call_result begin_retrain(
 	next.v92_peer_jd_stored = false;
 	next.b1_deadline_armed = false;
 	next.rate_renegotiation_deadline_armed = false;
+	next.v92_rate_renegotiation_active = false;
 	next.retrain_active = true;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -2779,6 +2843,8 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 	} else {
 		struct v92_phase4_digital_handoff handoff;
 
+		next.state.phase4.v92.training_mapping =
+			call->state.phase4.v92.owner.digital.transmit.encoder.mapping;
 		if (v92_phase4_digital_station_handoff(
 			    &call->state.phase4.v92.owner.digital,
 			    &handoff) != V92_PHASE4_DIGITAL_STATION_OK)
@@ -2787,10 +2853,8 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 		    V92_PHASE4_E2U_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 	}
-	next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
-		.owner.e2u = e2u,
-		.child = PCM_CALL_V92_PHASE4_E2U,
-	};
+	next.state.phase4.v92.owner = (union pcm_call_v92_phase4_owner){ .e2u = e2u };
+	next.state.phase4.v92.child = PCM_CALL_V92_PHASE4_E2U;
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
@@ -2817,10 +2881,95 @@ static enum pcm_call_result v92_e2u_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
+/* PHASE4_READY consumes no output interval: the prefix has drained and the
+ * control transmitter now owns that same interval. */
+static enum pcm_call_result transmit_v92_rate_prefix(
+	struct pcm_call_v92_phase4_state *state, uint8_t *octet)
+{
+	struct v90_pcm_symbol symbol;
+	enum v90_downstream_data_stream_result result;
+
+	if (state->prefix_stage == PCM_CALL_V92_PREFIX_DATA) {
+		result = v90_downstream_data_stream_next(&state->prefix.data, NULL, NULL, &symbol);
+		if (result != V90_DOWNSTREAM_DATA_STREAM_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+	} else {
+		if (state->prefix_stage == PCM_CALL_V92_PREFIX_DRAIN) {
+			result = v90_downstream_data_stream_finish(&state->prefix.data, &symbol);
+			if (result == V90_DOWNSTREAM_DATA_STREAM_OK) {
+				*octet = symbol.octet;
+				return PCM_CALL_OK;
+			}
+			struct pcm_r_tx rd;
+			if (result != V90_DOWNSTREAM_DATA_STREAM_COMPLETE ||
+			    pcm_r_tx_init(&rd, &state->prefix.data.transmitter.encoder.mapping,
+				PCM_R_RD) != PCM_R_TX_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+			state->prefix.rd = rd;
+			state->prefix_stage = PCM_CALL_V92_PREFIX_RD;
+		}
+		if (state->prefix_stage == PCM_CALL_V92_PREFIX_RD) {
+			enum pcm_r_tx_result transmitted = pcm_r_tx_next(&state->prefix.rd, &symbol);
+
+			if (transmitted == PCM_R_TX_COMPLETE)
+				state->prefix_stage = PCM_CALL_V92_PREFIX_NONE;
+			else if (transmitted != PCM_R_TX_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+		}
+		if (state->prefix_stage == PCM_CALL_V92_PREFIX_NONE)
+			return PCM_CALL_PHASE4_READY;
+	}
+	*octet = symbol.octet;
+	return PCM_CALL_OK;
+}
+
+static enum pcm_call_result receive_v92_rate_request(
+	struct pcm_call *call, int16_t sample)
+{
+	struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+	struct pcm_call_v92_rate_request *ru = &state->owner.ru;
+	enum v92_ru_rx_result received = v92_ru_line_rx_sample(&ru->receive, sample);
+
+	if (received == V92_RU_RX_BUFFERING || received == V92_RU_RX_DETECTED)
+		return PCM_CALL_OK;
+	if (received == V92_RU_RX_BAR_STARTED) {
+		state->prefix_stage = PCM_CALL_V92_PREFIX_DRAIN;
+		return PCM_CALL_OK;
+	}
+	if (received != V92_RU_RX_COMPLETE)
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	struct v90_pcm_mapping mapping, data;
+	struct pcm_downstream_tx downstream;
+	struct v92_phase4_digital_station station;
+
+	if (v90_pcm_mapping_init_from_v92_cpu(&data, &ru->cpu) != V90_PCM_MAPPING_OK ||
+	    v90_pcm_mapping_init_rate_renegotiation(&mapping,
+		&state->training_mapping, &data) != V90_PCM_MAPPING_OK ||
+	    pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &mapping) != PCM_DOWNSTREAM_TX_OK ||
+	    v92_phase4_digital_station_init_after_ru(&station, &ru->receive,
+		&downstream, &ru->cpd, &ru->plan, &ru->cpu,
+		call->round_trip_delay_samples) != V92_PHASE4_DIGITAL_STATION_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	state->owner = (union pcm_call_v92_phase4_owner){ .digital = station };
+	state->child = PCM_CALL_V92_PHASE4_CONTROL;
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result sample_v92_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
+	bool prefix_sent = false;
+	if (call->state.phase4.v92.prefix_stage != PCM_CALL_V92_PREFIX_NONE) {
+		enum pcm_call_result result = transmit_v92_rate_prefix(
+			&call->state.phase4.v92, transmit_octet);
+
+		if (result != PCM_CALL_OK && result != PCM_CALL_PHASE4_READY)
+			return result;
+		prefix_sent = result == PCM_CALL_OK;
+	}
+	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU)
+		return receive_v92_rate_request(call, received_sample);
 	if (call->local_role == V90_ANALOG_MODEM &&
 	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
 	    v92_phase4_control_is_ready(call)) {
@@ -2877,8 +3026,8 @@ static enum pcm_call_result sample_v92_phase4(
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
 		uint16_t measured_symbols = station->receive.channel.symbols;
 		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.cpu;
-		enum v92_phase4_digital_station_result station_result =
-			v92_phase4_digital_station_transmit(
+		enum v92_phase4_digital_station_result station_result = prefix_sent ?
+			V92_PHASE4_DIGITAL_STATION_OK : v92_phase4_digital_station_transmit(
 				&call->state.phase4.v92.owner.digital,
 				transmit_octet);
 		enum pcm_call_result result =
@@ -3070,6 +3219,10 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		if (v92_upstream_data_rx_init(&path->upstream, &from->receive,
 					     &from->mapping, &from->upstream_plan) != V92_UPSTREAM_DATA_RX_OK)
 			return false;
+		if (!v92_ru_line_rx_init_after_e2u(&path->ru, &from->receive) ||
+		    !v92_data_quality_restart(&next->pcm_upstream_quality))
+			return false;
+		path->training_mapping = call->state.phase4.v92.training_mapping;
 		path->downstream = from->downstream;
 		path->downstream_stage = from->downstream_stage;
 		path->cpu = from->cpu;
@@ -3284,8 +3437,9 @@ static enum pcm_call_result update_rate_renegotiation_deadline(
 	call->rate_renegotiation_deadline_remaining_samples--;
 	if (call->rate_renegotiation_deadline_remaining_samples != 0u)
 		return PCM_CALL_OK;
-	/* V.90 9.6 bounds an incomplete rate-renegotiation exchange to 5000 ms
-	 * plus two round-trip delays. */
+	/* V.90 9.6 bounds the response to 5000 ms plus two round-trip delays.
+	 * Use the same bounded recovery policy for PCM Ru/control/B1, not as
+	 * a purported V.92 normative timer. */
 	return begin_retrain(call, false);
 }
 
@@ -3307,10 +3461,61 @@ static void complete_cleardown(struct pcm_call *call)
 		memset(&call->state, 0, sizeof(call->state));
 	call->stage = PCM_CALL_CLOSED;
 	call->retrain_active = false;
+	call->v92_rate_renegotiation_active = false;
 	call->b1_deadline_armed = false;
 	call->b1_deadline_remaining_samples = 0u;
 	call->rate_renegotiation_deadline_armed = false;
 	call->rate_renegotiation_deadline_remaining_samples = 0u;
+}
+
+static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call)
+{
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	struct pcm_call_v92_phase4_state state = {
+		.owner.ru = {
+			.receive = path->ru,
+			.cpd = path->upstream.decoder.mapping.cpd,
+			.plan = path->upstream.line.plan,
+			.cpu = path->cpu,
+		},
+		.prefix.data = path->downstream.data,
+		.training_mapping = path->training_mapping,
+		.prefix_stage = PCM_CALL_V92_PREFIX_DATA,
+		.child = PCM_CALL_V92_PHASE4_RU,
+	};
+
+	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA)
+		return PCM_CALL_SEQUENCE_MISMATCH;
+	call->state = (union pcm_call_state){ .phase4.v92 = state };
+	call->stage = PCM_CALL_PHASE4;
+	call->retrain_active = true;
+	call->v92_rate_renegotiation_active = true;
+	return reset_retrain_detector(call);
+}
+
+static enum pcm_call_result observe_v92_data_quality(
+	struct pcm_call *call, const struct v92_upstream_data_frame *frame,
+	struct pcm_call_data_event *event)
+{
+	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	struct v92_data_quality next = call->pcm_upstream_quality;
+	enum v92_data_quality_result quality;
+
+	if (path->quality_guard_samples)
+		return PCM_CALL_OK;
+	quality = v92_data_quality_observe(&next, frame->squared_error, frame->ambiguous);
+	if (quality == V92_DATA_QUALITY_OK) {
+		call->pcm_upstream_quality = next;
+		event->frame.pcm_upstream = *frame;
+		event->kind = PCM_CALL_PCM_UPSTREAM_FRAME;
+	} else if (quality == V92_DATA_QUALITY_RETRAIN || quality == V92_DATA_QUALITY_EXHAUSTED) {
+		path->pending_squared_error = frame->squared_error;
+		path->pending_ambiguous = frame->ambiguous;
+		path->quality_guard_samples = V92_RU_QUALITY_GUARD_SAMPLES;
+	} else {
+		return PCM_CALL_NUMERIC_FAILURE;
+	}
+	return PCM_CALL_OK;
 }
 
 static enum pcm_call_result v92_data_octet_owned(
@@ -3347,6 +3552,7 @@ static enum pcm_call_result v92_data_octet_owned(
 		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		struct v92_upstream_data_frame frame;
 		enum v92_upstream_data_rx_result received;
+		enum v92_ru_rx_result ru;
 		enum v90_downstream_data_stream_result transmitted;
 
 		transmitted = v92_downstream_transmit_owned(&path->downstream,
@@ -3358,6 +3564,23 @@ static enum pcm_call_result v92_data_octet_owned(
 			return PCM_CALL_NUMERIC_FAILURE;
 		received = v92_upstream_data_rx_sample(&path->upstream,
 			received_sample, &frame);
+		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		ru = v92_ru_line_rx_sample(&path->ru, received_sample);
+		if (ru == V92_RU_RX_DETECTED && data_path_is_online_owned(call))
+			return begin_v92_rate_request(call);
+		if (ru != V92_RU_RX_BUFFERING && ru != V92_RU_RX_MISMATCH && ru != V92_RU_RX_DETECTED)
+			return PCM_CALL_SEQUENCE_MISMATCH;
+		if (path->quality_guard_samples && --path->quality_guard_samples == 0u) {
+			enum v92_data_quality_result quality = v92_data_quality_observe(
+				&call->pcm_upstream_quality, path->pending_squared_error, path->pending_ambiguous);
+
+			path->pending_squared_error = 0.0;
+			path->pending_ambiguous = false;
+			if (quality == V92_DATA_QUALITY_RETRAIN)
+				return begin_retrain(call, false);
+			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+		}
 		if (received == V92_UPSTREAM_DATA_RX_FRAME) {
 			if (path->upstream.line.received_frames <= V92_B1U_FRAMES) {
 				double error = path->b1u_squared_error + frame.squared_error;
@@ -3375,11 +3598,8 @@ static enum pcm_call_result v92_data_octet_owned(
 			 * the physical B1 boundary. Never expose them as host data. */
 			if (v92_peer_b1_received_owned(call) &&
 			    frame.bit_count != 0u && !frame.b1u) {
-				emitted->frame.pcm_upstream = frame;
-				emitted->kind = PCM_CALL_PCM_UPSTREAM_FRAME;
+				return observe_v92_data_quality(call, &frame, emitted);
 			}
-		} else if (received != V92_UPSTREAM_DATA_RX_OK) {
-			return PCM_CALL_NUMERIC_FAILURE;
 		}
 	}
 	return PCM_CALL_OK;
@@ -3518,12 +3738,14 @@ static enum pcm_call_result data_octet_owned(
 	if (result == PCM_CALL_OK && retrain_detected)
 		result = begin_retrain(call, true);
 	else if (result == PCM_CALL_OK && call->retrain_active &&
-		 data_path_is_online_owned(call))
+		 data_path_is_online_owned(call)) {
 		call->retrain_active = false;
+		call->v92_rate_renegotiation_active = false;
+	}
 	if (result == PCM_CALL_OK)
 		result = advance_b1_deadline(call);
-	if (result == PCM_CALL_OK && pcm_call_uses_conventional_upstream(call) &&
-	    call->stage == PCM_CALL_DATA_PATH)
+	if (result == PCM_CALL_OK &&
+	    (call->stage == PCM_CALL_DATA_PATH || call->v92_rate_renegotiation_active))
 		result = update_rate_renegotiation_deadline(call);
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
 		complete_cleardown(call);
@@ -3642,6 +3864,7 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
 	result = recover_unusable_retrain_selection(call, result);
+	result = recover_rate_renegotiation_failure(call, result);
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE)
 		complete_cleardown(call);
 	if (cleardown_is_active_owned(call)) {
@@ -3658,6 +3881,8 @@ enum pcm_call_result pcm_call_octet(
 		is_info1a_boundary(call, &emitted.phase2);
 	if (result == PCM_CALL_OK && !deadline_started)
 		result = advance_b1_deadline(call);
+	if (result == PCM_CALL_OK && call->v92_rate_renegotiation_active)
+		result = update_rate_renegotiation_deadline(call);
 	if (result != PCM_CALL_OK &&
 	    result != PCM_CALL_CLEARDOWN_COMPLETE &&
 	    result != PCM_CALL_V34_FALLBACK_READY)

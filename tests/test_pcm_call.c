@@ -5753,9 +5753,14 @@ struct v92_upstream_offer {
 	unsigned expected_retrains;
 };
 
-static bool run_v92_duplex_data(
+struct v92_online_pair {
+	struct pcm_call analog, digital;
+	struct channel wire;
+};
+
+static bool capture_v92_duplex_data(
 	enum g711_law law, size_t delay, bool long_cpd,
-	const struct v92_upstream_offer *offer)
+	const struct v92_upstream_offer *offer, struct v92_online_pair *capture)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
@@ -5966,7 +5971,15 @@ static bool run_v92_duplex_data(
 			      offer->local_maximum,
 		      "V.92 did not exchange the complete selected mapping or lost its rate policy");
 	}
+	if (capture != NULL)
+		*capture = (struct v92_online_pair){ .analog = analog, .digital = digital, .wire = wire };
 	return true;
+}
+
+static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd,
+	const struct v92_upstream_offer *offer)
+{
+	return capture_v92_duplex_data(law, delay, long_cpd, offer, NULL);
 }
 
 static bool test_v92_duplex_data(void)
@@ -5976,6 +5989,221 @@ static bool test_v92_duplex_data(void)
 			CHECK(run_v92_duplex_data(law, delay, false, NULL), "V.92 duplex data failed");
 		CHECK(run_v92_duplex_data(law, 1u, true, NULL), "V.92 long-CPd duplex data failed");
 	}
+	return true;
+}
+
+struct v92_rate_call {
+	struct pcm_call call;
+	struct pcm_downstream_rx peer;
+	struct pcm_r_tx rd;
+	unsigned rd_symbols, zero_acks;
+	uint64_t transmitted;
+	bool control_started, complete;
+};
+
+static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
+{
+	struct pcm_call *call = &test->call;
+	struct pcm_call_data_event data = { 0 };
+	struct pcm_call_observation observation;
+	uint8_t octet;
+	enum pcm_call_result result;
+
+	if (call->stage == PCM_CALL_DATA_PATH)
+		result = pcm_call_data_octet(call, encode_octet(call->law, sample), sample,
+			NULL, &octet, &data);
+	else
+		result = pcm_call_octet(call, encode_octet(call->law, sample), sample, &octet, &observation);
+	CHECK(result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE,
+	      "PCM rate call failed in stage %u: %s", call->stage, pcm_call_result_name(result));
+	CHECK(data.kind != PCM_CALL_PCM_UPSTREAM_FRAME || !data.frame.pcm_upstream.ambiguous,
+	      "PCM rate request exposed ambiguous bits");
+	CHECK(call->pcm_upstream_quality.automatic_retrains == 0,
+	      "legitimate Ru consumed quality recovery budget");
+	uint64_t transmitted = test->transmitted++;
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		test->complete = true;
+		CHECK(test->zero_acks && !pcm_call_is_online(call), "cleardown omitted wire acknowledgement");
+		return true;
+	}
+	if (call->stage != PCM_CALL_PHASE4)
+		return true;
+	CHECK(call->retrain_active && !pcm_call_is_online(call) && data.kind == PCM_CALL_DATA_NONE,
+	      "Ru did not pause the existing host session");
+	struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RD &&
+	    test->rd_symbols < PCM_R_SEQUENCE_SYMBOLS) {
+		struct v90_pcm_symbol expected;
+		CHECK(test->rd_symbols || transmitted % V90_CP_FRAME_INTERVALS == 0u,
+		      "Rd did not start on the existing downstream frame boundary");
+		CHECK(pcm_r_tx_next(&test->rd, &expected) == PCM_R_TX_OK && octet == expected.octet,
+		      "Rd waveform changed at symbol %u", test->rd_symbols);
+		test->rd_symbols++;
+	}
+	if (state->prefix_stage != PCM_CALL_V92_PREFIX_NONE)
+		return true;
+	CHECK(test->rd_symbols == PCM_R_SEQUENCE_SYMBOLS, "TRN2d started before complete Rd-bar");
+	test->control_started = true;
+	struct pcm_downstream_event event;
+	enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&test->peer, octet, &event);
+	CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING || received == PCM_DOWNSTREAM_RX_TRN2D_FRAME ||
+	      received == PCM_DOWNSTREAM_RX_SUVD || received == PCM_DOWNSTREAM_RX_CPD,
+	      "post-Rd control decode failed: %s", pcm_downstream_rx_result_name(received));
+	if (received == PCM_DOWNSTREAM_RX_CPD && !event.control.record.cpd.parameters.data_rate_number) {
+		CHECK(event.control.record.cpd.frame_result == V92_CPD_OK &&
+		      event.control.record.cpd.parameters.acknowledges_cpu, "invalid zero-rate acknowledgement");
+		test->zero_acks++;
+	}
+	return true;
+}
+
+static bool v92_rejected_ru_recovery(const struct pcm_call *online, int16_t lu)
+{
+	/* A short Ru-like run followed by unrelated energy is not a rate request.
+	 * Do not deliver its ambiguous frame or repeatedly defer its recovery. */
+	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+		struct pcm_call call = *online;
+		unsigned guard_started = 0;
+		bool recovered = false;
+		call.pcm_upstream_quality.automatic_retrains = budget;
+		for (unsigned clock = 0; clock < 8000u; ++clock) {
+			struct pcm_call_data_event event;
+			uint8_t octet;
+			int16_t sample = clock < 180u ?
+				(clock % 6u < 3u ? lu : -lu) : (clock % 2u ? lu / 3 : -lu / 3);
+			enum pcm_call_result result = pcm_call_data_octet(&call,
+				encode_octet(call.law, sample), decode_octet(call.law, encode_octet(call.law, sample)),
+				NULL, &octet, &event);
+			if (call.stage == PCM_CALL_DATA_PATH &&
+			    call.state.data_path.v92_digital.quality_guard_samples && !guard_started)
+				guard_started = clock + 1u;
+			CHECK(!call.v92_rate_renegotiation_active &&
+			      (event.kind != PCM_CALL_PCM_UPSTREAM_FRAME || !event.frame.pcm_upstream.ambiguous),
+			      "false Ru entered control or delivered ambiguous data");
+			if (result != PCM_CALL_OK || call.stage == PCM_CALL_RETRAIN_SILENCE) {
+				CHECK(guard_started && clock + 1u - guard_started <=
+				      V92_RU_RX_MIN_SYMBOLS + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY +
+					V92_RU_RX_FRAME_SYMBOLS && pcm_call_is_valid(&call) &&
+				      (budget < V92_DATA_QUALITY_MAX_RETRAINS ?
+					(result == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
+					 call.pcm_upstream_quality.automatic_retrains == budget + 1u) :
+					(result == PCM_CALL_FAILED && call.failed)),
+				      "false Ru lost its bounded quality recovery/budget");
+				recovered = true;
+				break;
+			}
+		}
+		CHECK(recovered, "false Ru indefinitely postponed quality recovery");
+	}
+	return true;
+}
+
+static bool run_v92_remote_rate_request(enum g711_law law, unsigned rate)
+{
+	struct v92_online_pair pair;
+	const struct v92_upstream_offer offer = {
+		.peer_mask = UINT32_C(1) << (rate - 1u), .local_maximum = rate, .expected = rate,
+	};
+	CHECK(capture_v92_duplex_data(law, 1u, false, &offer, &pair), "rate request call did not train");
+	struct v92_rate_call test = { .call = pair.digital };
+	struct pcm_call_v92_digital_data *path = &pair.digital.state.data_path.v92_digital;
+	struct v92_upstream_data_tx *upstream = &pair.analog.state.data_path.v92_analog.upstream;
+	test.transmitted = path->downstream.data.transmitted_symbols;
+	if (rate == 7u)
+		CHECK(v92_rejected_ru_recovery(&pair.digital, upstream->upstream_level), "false Ru recovery failed");
+	struct v90_pcm_mapping control;
+	struct v92_pcm_phase4_trn2u training;
+	const unsigned mapping_bits = V92_PCM_MAPPING_FRAME_SYMBOLS *
+		v92_phase4_modulator_bits_per_symbol(path->ru.constellation);
+	CHECK(v90_pcm_mapping_init_rate_renegotiation(&control, &path->training_mapping,
+		&path->downstream.data.transmitter.encoder.mapping) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_rx_init(&test.peer, PCM_PROTOCOL_V92, &control,
+		V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      pcm_r_tx_init(&test.rd, &path->downstream.data.transmitter.encoder.mapping, PCM_R_RD) == PCM_R_TX_OK &&
+	      v92_pcm_phase4_trn2u_init(&training, path->ru.constellation, 0,
+		upstream->upstream_level) == V92_PCM_PHASE4_TRN2U_OK, "rate exchange setup failed");
+	uint8_t ar, dr;
+	channel_receive(&pair.wire, &ar, &dr);
+	CHECK(v92_rate_call_sample(&test, decode_octet(law, dr)), "pending data sample failed");
+	unsigned drain = upstream->queue_count;
+	for (unsigned i = 0; i < drain; ++i) {
+		int16_t sample;
+		CHECK(v92_upstream_data_tx_next(upstream, NULL, NULL, &sample) == V92_UPSTREAM_DATA_TX_OK &&
+		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "data queue drain failed");
+	}
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		int sign = i % 6u < 3u ? 1 : -1;
+		if (i >= PCM_R_SYMBOLS)
+			sign = -sign;
+		CHECK(v92_rate_call_sample(&test, decode_octet(law,
+			encode_octet(law, (int16_t)(sign * upstream->upstream_level)))), "Ru/bar failed");
+	}
+	for (unsigned i = 0; i < 2400u; ++i) {
+		int16_t sample;
+		CHECK(v92_pcm_phase4_trn2u_next(&training, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "TRN2u failed");
+	}
+	CHECK(test.control_started && test.call.state.phase4.v92.owner.digital.receive.channel.symbols == 12u &&
+	      !test.call.state.phase4.v92.owner.digital.cpu_received &&
+	      !test.call.state.phase4.v92.owner.digital.peer_acknowledged_cpd,
+	      "rate exchange reused initial training or acknowledgement state");
+	{
+		struct pcm_call expired = test.call;
+		struct pcm_call_observation observation;
+		struct v92_pcm_phase4_trn2u next_training = training;
+		int16_t sample;
+		uint8_t octet;
+		expired.rate_renegotiation_deadline_remaining_samples = 1u;
+		CHECK(v92_pcm_phase4_trn2u_next(&next_training, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
+		      pcm_call_octet(&expired, encode_octet(law, sample), decode_octet(law, encode_octet(law, sample)),
+			&octet, &observation) == PCM_CALL_OK && expired.stage == PCM_CALL_RETRAIN_SILENCE &&
+		      !expired.v92_rate_renegotiation_active && !expired.rate_renegotiation_deadline_armed &&
+		      expired.protocol == PCM_PROTOCOL_V92, "stalled PCM control did not leave through full retrain");
+	}
+	struct v92_phase4_record_tx record;
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	size_t bits;
+	const struct v92_suvu_parameters suvu = { .prefilter_level_db_q2_2 = -16 };
+	CHECK(v92_suvu_encode(&suvu, mapping_bits, frame, sizeof(frame), &bits) == V92_SUVU_OK &&
+	      v92_phase4_record_tx_init(&record, &training.modulator, frame, sizeof(frame), bits) ==
+		V92_PHASE4_RECORD_TX_OK, "SUVu setup failed");
+	/* A short CPus retains the old constellation. Follow it with zero CPus
+	 * to verify that the real call accepts control and drains its response. */
+	for (unsigned which = 0; which < 6u; ++which) {
+		if (which) {
+			const struct v92_cpus_parameters cpus = {
+				.data_rate_number = which < 3u ? path->cpu.data_rate_number - 1u : 0u,
+			};
+			CHECK(v92_cpus_encode(&cpus, mapping_bits, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+			      v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
+				V92_PHASE4_RECORD_TX_OK, "CPus setup failed");
+		}
+		while (!v92_phase4_record_tx_is_complete(&record)) {
+			int16_t sample;
+			CHECK(v92_phase4_record_tx_next(&record, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "control record failed");
+		}
+		if (which == 2u) {
+			struct v92_cpu_parameters cpu = path->cpu;
+			cpu.data_rate_number--;
+			cpu.acknowledges_cpd = false;
+			CHECK(test.call.state.phase4.v92.owner.digital.cpu_received &&
+			      memcmp(&cpu, &test.call.state.phase4.v92.owner.digital.cpu, sizeof(cpu)) == 0,
+			      "CPus did not retain the negotiated mapping");
+		}
+	}
+	for (unsigned i = 0; i < 4000u && !test.complete; ++i)
+		CHECK(v92_rate_call_sample(&test, upstream->upstream_level), "cleardown failed");
+	CHECK(test.complete, "rate exchange did not complete bounded cleardown");
+	return true;
+}
+
+static bool test_v92_remote_rate_request(void)
+{
+	const unsigned rates[] = { 1, 7, 13, 19 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned i = 0; i < ARRAY_LENGTH(rates); ++i)
+			CHECK(run_v92_remote_rate_request(law, rates[i]), "law %u rate %u Ru call failed", law, rates[i]);
 	return true;
 }
 
@@ -7312,6 +7540,7 @@ int main(void)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
