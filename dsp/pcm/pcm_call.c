@@ -2135,15 +2135,17 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			mixed->early_suvd_received ? &mixed->early_suvd : NULL;
 		struct v92_phase3_analog_transmit_handoff handoff;
 		struct v92_phase4_analog_station station;
+		struct v92_cpu_parameters cpu = call->v92_analog_phase4_configuration.cpu;
 
 		if (!call->v92_peer_downstream_rate_stored ||
 		    !call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
-		if (!downstream_rate_is_enabled(
-			    call->enabled_downstream_rate_mask &
-				    call->v92_peer_downstream_rate_mask,
-			    call->v92_analog_phase4_configuration.cpu
-				    .data_rate_number))
+		/* Keep the configured constellation and rate ceiling across retrains.
+		 * A lower common rate needs fewer modulus bits, not a new constellation. */
+		cpu.data_rate_number = highest_downstream_rate(
+			call->enabled_downstream_rate_mask & call->v92_peer_downstream_rate_mask &
+			((UINT32_C(1) << cpu.data_rate_number) - 1u));
+		if (cpu.data_rate_number == 0u)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (v92_phase3_analog_station_transmit_handoff(
 			    &mixed->phase3, &handoff) !=
@@ -2152,7 +2154,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		if (v92_phase4_analog_station_init(
 			    &station, &handoff, &mixed->receive,
 			    &call->v92_analog_phase4_configuration.suvu,
-			    &call->v92_analog_phase4_configuration.cpu,
+			    &cpu,
 			    early_suvd, NULL) != V92_PHASE4_ANALOG_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){

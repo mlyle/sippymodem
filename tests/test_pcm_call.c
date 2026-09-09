@@ -5802,6 +5802,109 @@ static bool test_v92_upstream_negotiation(void)
 	return true;
 }
 
+static bool test_v92_downstream_reselection(void)
+{
+	static const uint32_t peer_masks[] = {
+		(UINT32_C(1) << 4u) | (UINT32_C(1) << 9u) | (UINT32_C(1) << 18u),
+		UINT32_C(1) | (UINT32_C(1) << 4u) | (UINT32_C(1) << 18u),
+		V92_JD_RATE_CAPABILITY_MASK,
+	};
+	static const uint8_t expected_rates[] = { 10u, 1u, 11u };
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+		struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+		struct pcm_call calls[2];
+		struct channel line;
+
+		/* Keep holes below the configured CPu ceiling and a common enabled
+		 * rate above it. Neither may replace the highest usable selection. */
+		ac.enabled_downstream_rate_mask = UINT32_C(1) | (UINT32_C(1) << 9u) |
+			(UINT32_C(1) << 10u) | (UINT32_C(1) << 18u);
+		ac.analog_phase4.data_parameters.selected_rate_index = 11u;
+		dc.enabled_downstream_rate_mask = peer_masks[0];
+		dc.phase3.digital.jd.data_rate_capability_mask = peer_masks[0];
+		dc.phase3.v92_digital.jd.data_rate_capability_mask = peer_masks[0];
+		CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+		      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK &&
+		      channel_init(&line, law, 3u), "downstream-reselection setup failed");
+		for (size_t epoch = 0u; epoch < ARRAY_LENGTH(peer_masks); ++epoch) {
+			struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+			uint32_t frames[2] = { 0u, 0u };
+			bool data_started[2] = { false, false };
+			uint32_t at, ar, dt, dr;
+			struct v92_cpu_parameters expected = ac.v92_analog_phase4.cpu;
+			const struct v92_cpu_parameters *received;
+			uint8_t expected_wire[V92_CPU_MAX_FRAME_BYTES], received_wire[V92_CPU_MAX_FRAME_BYTES];
+			size_t expected_bits, received_bits;
+
+			for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+				uint8_t rx[2], tx[2];
+
+				channel_receive(&line, &rx[0], &rx[1]);
+				for (size_t side = 0u; side < 2u; ++side) {
+					struct pcm_call *call = &calls[side];
+					struct pcm_call_observation observation;
+
+					if (pcm_call_phase4_is_ready(call)) {
+						CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK,
+						      "downstream-reselection data handoff failed");
+						data_started[side] = true;
+					}
+					if (call->stage == PCM_CALL_DATA_PATH && data_started[side])
+						CHECK(v92_payload_octet(call, rx[side], &sources[side],
+									&frames[side], &tx[side]),
+						      "law %u epoch %zu side %zu data failed", law, epoch, side);
+					else if (call->stage == PCM_CALL_DATA_PATH) {
+						struct pcm_call_data_event event;
+
+						/* Drain the old call until it detects the peer's retrain;
+						 * this epoch's payload starts at the new data handoff. */
+						CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]),
+									 NULL, &tx[side], &event) == PCM_CALL_OK,
+						      "downstream-reselection retrain detection failed");
+					} else
+						CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+								     &tx[side], &observation) == PCM_CALL_OK,
+						      "law %u epoch %zu side %zu training failed at %zu",
+						      law, epoch, side, clock);
+				}
+				channel_transmit(&line, tx[0], tx[1]);
+				if (frames[0] >= 200u && frames[1] >= 200u)
+					break;
+			}
+			CHECK(frames[0] >= 200u && frames[1] >= 200u &&
+			      sources[0].rejection_checked && sources[1].rejection_checked &&
+			      pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1]) &&
+			      !calls[0].retrain_active && !calls[1].retrain_active &&
+			      pcm_call_get_data_rates(&calls[0], &at, &ar) &&
+			      pcm_call_get_data_rates(&calls[1], &dt, &dr) && at == dr && ar == dt &&
+			      ar == ((expected_rates[epoch] + 20u) * 8000u + 3u) / 6u,
+			      "law %u epoch %zu did not exchange data at the common downstream rate", law, epoch);
+			received = &calls[1].state.data_path.v92_digital.cpu;
+			expected.data_rate_number = expected_rates[epoch];
+			expected.acknowledges_cpd = received->acknowledges_cpd;
+			CHECK(v92_cpu_encode(&expected, 24u, expected_wire, sizeof(expected_wire),
+					     &expected_bits) == V92_CPU_OK &&
+			      v92_cpu_encode(received, 24u, received_wire, sizeof(received_wire),
+					     &received_bits) == V92_CPU_OK &&
+			      expected_bits == received_bits &&
+			      memcmp(expected_wire, received_wire, (expected_bits + 7u) / 8u) == 0 &&
+			      memcmp(&calls[0].v92_analog_phase4_configuration, &ac.v92_analog_phase4,
+				     sizeof(ac.v92_analog_phase4)) == 0,
+			      "downstream reselection changed constellation fields or the configured ceiling");
+			if (epoch + 1u < ARRAY_LENGTH(peer_masks)) {
+				calls[1].enabled_downstream_rate_mask = peer_masks[epoch + 1u];
+				calls[1].phase3_configuration.digital.jd.data_rate_capability_mask = peer_masks[epoch + 1u];
+				calls[1].phase3_configuration.v92_digital.jd.data_rate_capability_mask = peer_masks[epoch + 1u];
+				CHECK(pcm_call_start_retrain(&calls[1u - epoch]) == PCM_CALL_OK,
+				      "downstream-reselection retrain failed");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_v92_upstream_reselection(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
@@ -5904,6 +6007,9 @@ static bool run_v92_unavailable_selection(
 				 .data_rate_number - 1u);
 
 		digital_configuration.enabled_downstream_rate_mask &= ~selected;
+		analog_configuration.enabled_downstream_rate_mask = selected;
+		analog_configuration.analog_phase4.data_parameters.selected_rate_index =
+			analog_configuration.v92_analog_phase4.cpu.data_rate_number;
 		digital_configuration.phase3.digital.jd
 			.data_rate_capability_mask &= ~selected;
 		digital_configuration.phase3.v92_digital.jd
@@ -6817,6 +6923,7 @@ int main(void)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
+		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },

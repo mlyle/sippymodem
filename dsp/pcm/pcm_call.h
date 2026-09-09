@@ -110,6 +110,8 @@ struct pcm_call_digital_phase4_configuration {
 
 struct pcm_call_v92_analog_phase4_configuration {
 	struct v92_suvu_parameters suvu;
+	/* Retain these constellation/shaping fields and use data_rate_number
+	 * as the ceiling when selecting the highest common downstream rate. */
 	struct v92_cpu_parameters cpu;
 };
 
