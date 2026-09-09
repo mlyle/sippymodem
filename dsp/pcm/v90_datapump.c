@@ -310,6 +310,26 @@ static int retrain_v90(struct dp *dp)
 	return 0;
 }
 
+bool v90_datapump_start_rate_renegotiation(struct dp *dp)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+	struct training_session training;
+	struct pcm_call call;
+
+	if (datapump == NULL || !datapump->call_started ||
+	    !training_session_is_online(&datapump->training))
+		return false;
+	training = datapump->training;
+	call = datapump->call;
+	if (pcm_call_start_rate_renegotiation(&call) != PCM_CALL_OK ||
+	    training_session_start_retrain(&training, TRAINING_LOCAL_RETRAIN) !=
+		    TRAINING_SESSION_OK)
+		return false;
+	datapump->call = call;
+	datapump->training = training;
+	return true;
+}
+
 static bool observe_upstream_quality(struct v90_datapump *datapump)
 {
 	struct v90_digital_path *path = &datapump->call.state.data_path.digital;

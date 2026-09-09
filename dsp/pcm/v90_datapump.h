@@ -20,6 +20,13 @@ int v90_datapump_register(void);
 int v90_datapump_unregister(void);
 bool v90_datapump_is_busy(void);
 
+/* Request an online analogue PCM-upstream rate exchange without changing
+ * terminal command mode. Ordinary media processing owns Ru/Rd and reconnects
+ * the retained link. Full retraining (including ATO1) remains separate.
+ * Unsupported roles/protocols, non-online calls and duplicates return false
+ * without changing the call or its training session. Serialize with media. */
+bool v90_datapump_start_rate_renegotiation(struct dp *dp);
+
 /* Copy a completed V.90-to-V.34 fallback while the modem still owns the old
  * datapump. The ordinary datapump switch creates the V.34 owner before
  * deleting this one, so no process-global transfer slot is needed. */

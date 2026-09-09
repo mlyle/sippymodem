@@ -17,6 +17,8 @@
 #include <v34_datapump.h>
 #include <v34_frame_schedule.h>
 #include <v90_profile.h>
+#include <v90_datapump.h>
+#include <v92_profile.h>
 
 #include "channel_bench.h"
 #include "test.h"
@@ -125,6 +127,7 @@ struct modem_test_case {
 	bool test_cleardown;
 	bool raw_transport;
 	bool require_lapm;
+	bool require_v44;
 	bool digital_caller;
 	enum integration_impairment impairment;
 };
@@ -1220,6 +1223,140 @@ static bool preserves_link_across_carrier_return(enum DP_ID id)
 	       id == DP_V22 || id == DP_V23;
 }
 
+static bool contains_v92_ru(const uint8_t *octets, size_t count, enum g711_law law)
+{
+	/* Observe the exact 384/24 waveform without accessing datapump state or
+	 * using its sequence generator. The accepted data-frame tail comes first. */
+	for (size_t start = 0; start + 408u <= count; ++start) {
+		if (decode_codeword(law, octets[start]) <= 8)
+			continue;
+		size_t sample = 0;
+		for (; sample < 408u; ++sample) {
+			bool positive = (sample % 6u < 3u) != (sample >= 384u);
+			uint8_t expected = octets[start] ^ (positive ? 0u : 0x80u);
+			if (octets[start + sample] != expected)
+				break;
+		}
+		if (sample == 408u)
+			return true;
+	}
+	return false;
+}
+
+static bool exercise_v92_rate_exchange(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	enum { PAYLOAD = 128, PREFIX = 640, FRAME_LIMIT = 250, QUIET_LIMIT = MODEM_RATE * 70 / 1000 };
+	struct integration_endpoint *endpoints[] = { caller, answerer };
+	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	struct pcm_call_configuration profile;
+	struct v90_pcm_mapping mapping;
+	enum g711_law law;
+
+	CHECK(codec_law(codec, &law) &&
+	      v92_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 28000, 4, NULL) == V92_PROFILE_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&mapping, &profile.v92_analog_phase4.cpu) == V90_PCM_MAPPING_OK,
+	      "rate-exchange signal monitor setup failed");
+	for (unsigned epoch = 0; epoch < 2; ++epoch) {
+		uint8_t payload[2][2 * PAYLOAD];
+		uint8_t prefix[PREFIX];
+		struct lapm_state retained[2];
+		struct pcm_r_rx rd;
+		unsigned quiet[2] = { 0 };
+		bool poll_seen[2] = { false };
+		size_t prefix_count = 0;
+		unsigned settled = 0;
+		CHECK(pcm_r_rx_init(&rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) == PCM_R_RX_OK,
+		      "Rd monitor initialization failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = endpoints[side]->modem;
+			CHECK(modem_is_online(m, DP_V92) && m->cfg.ec &&
+			      m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM,
+			      "rate exchange did not start with a PCM LAPM link");
+			endpoints[side]->output_count = 0;
+			uint32_t random = UINT32_C(0x4e415449) + side + 17u * epoch;
+			for (unsigned i = 0; i < PAYLOAD; ++i)
+				payload[side][i] = (uint8_t)noise_state_next(&random);
+			/* The first burst fills a real information frame. Repeating it
+			 * after the exchange exercises retained compression history. */
+			memcpy(payload[side] + PAYLOAD, payload[side], PAYLOAD);
+			CHECK(modem_write(m, (const char *)payload[side], PAYLOAD) == PAYLOAD,
+			      "rate exchange did not accept initial queued data");
+		}
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "rate exchange setup failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = endpoints[side]->modem;
+			frame_t *tx = m->packer.hdlc.tx_frame;
+			CHECK(m->ec.lapm.va != m->ec.lapm.vs && tx != NULL &&
+			      (tx->buf[1] & 1u) == 0 && tx->count > 0 && tx->count < tx->size &&
+			      endpoints[side]->output_count < PAYLOAD,
+			      "side %u has no outstanding partial LAPM frame", side);
+			retained[side] = m->ec.lapm;
+		}
+		CHECK(v90_datapump_start_rate_renegotiation(owned[analog]) &&
+		      !v90_datapump_start_rate_renegotiation(owned[analog]) &&
+		      !v90_datapump_start_rate_renegotiation(owned[1u - analog]),
+		      "native rate request or duplicate/unsupported-role rejection failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = endpoints[side]->modem;
+			CHECK(memcmp(&m->ec.lapm, &retained[side], sizeof(retained[side])) == 0 && !m->command,
+			      "rate request changed retained LAPM or terminal mode");
+			CHECK(modem_write(m, (const char *)payload[side] + PAYLOAD, PAYLOAD) == PAYLOAD,
+			      "rate exchange did not retain following host data");
+		}
+		for (unsigned frame = 0; frame < FRAME_LIMIT; ++frame) {
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer),
+			      "rate exchange media failed at frame %u", frame);
+			for (unsigned side = 0; side < 2; ++side) {
+				struct modem *m = endpoints[side]->modem;
+				CHECK(m->dp == owned[side] && m->cfg.ec && !m->command &&
+				      m->ec.lapm.state == retained[side].state &&
+				      m->ec.lapm.v44_path == retained[side].v44_path &&
+				      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
+					     sizeof(retained[side].v44_session)) == 0,
+				      "rate exchange replaced side %u's online link", side);
+				poll_seen[side] |= m->ec.lapm.retrain_poll != 0;
+				for (unsigned sample = 0; sample < SIP_FRAME_SAMPLES; ++sample) {
+					uint8_t code = endpoints[side]->transmit_codewords[sample];
+					quiet[side] = abs(decode_codeword(law, code)) <= 8 ? quiet[side] + 1u : 0u;
+					CHECK(quiet[side] < QUIET_LIMIT, "rate exchange fell back to full-retrain silence");
+					if (side == analog && prefix_count < sizeof(prefix))
+						prefix[prefix_count++] = code;
+					if (side != analog && !pcm_r_rx_is_complete(&rd)) {
+						enum pcm_r_rx_result result = pcm_r_rx_receive(&rd, code);
+						CHECK(result == PCM_R_RX_BUFFERING || result == PCM_R_RX_SEQUENCE_MISMATCH ||
+						      result == PCM_R_RX_SIGNAL_DETECTED || result == PCM_R_RX_BAR_STARTED ||
+						      result == PCM_R_RX_BAR_COMPLETE, "Rd observation failed");
+					}
+				}
+			}
+			bool delivered = caller->output_count == sizeof(payload[1]) &&
+				answerer->output_count == sizeof(payload[0]) &&
+				caller->modem->ec.lapm.va == caller->modem->ec.lapm.vs &&
+				answerer->modem->ec.lapm.va == answerer->modem->ec.lapm.vs;
+			/* Continue after delivery to detect delayed duplicate payload. */
+			settled = delivered ? settled + 1u : 0u;
+			if (settled == 25u)
+				break;
+		}
+		CHECK(pcm_r_rx_is_complete(&rd) && contains_v92_ru(prefix, prefix_count, law),
+		      "rate exchange %u did not emit Ru/Rd", epoch);
+		CHECK(poll_seen[0] && poll_seen[1],
+		      "rate exchange %u did not poll retained LAPM state (polls=%d/%d)",
+		      epoch, poll_seen[0], poll_seen[1]);
+		CHECK(settled == 25u &&
+		      memcmp(caller->output, payload[1], sizeof(payload[1])) == 0 &&
+		      memcmp(answerer->output, payload[0], sizeof(payload[0])) == 0,
+		      "rate exchange %u lost ordered LAPM data (outputs=%zu/%zu, settled=%u)",
+		      epoch, caller->output_count, answerer->output_count, settled);
+	}
+	return true;
+}
+
 static bool exercise_low_speed_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -1900,6 +2037,13 @@ static bool run_media_call(
 	CHECK(!require_lapm ||
 		      (caller.modem->cfg.ec && answerer.modem->cfg.ec),
 	      "%s did not retain its required LAPM transport", test_case->name);
+	CHECK(!test_case->require_v44 ||
+	      (modem_ec_active_compression(caller.modem) == MODEM_EC_COMPRESSION_V44 &&
+	       modem_ec_active_compression(answerer.modem) == MODEM_EC_COMPRESSION_V44),
+	      "%s did not negotiate V.44 in both directions", test_case->name);
+	if (connected_id == DP_V92)
+		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
+		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->test_retrain) {
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
@@ -3744,7 +3888,7 @@ int main(void)
 		},
 		{
 			.id = DP_V92,
-			.name = "V.92 28000 PCM duplex LAPM retrain",
+			.name = "V.92 28000 PCM duplex LAPM rate exchange and retrain",
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
 			.caller_tx_rate = 28000,
@@ -3758,7 +3902,7 @@ int main(void)
 		},
 		{
 			.id = DP_V92,
-			.name = "V.92 28000 PCM duplex LAPM retrain with digital caller",
+			.name = "V.92 28000 PCM duplex LAPM rate exchange and retrain with digital caller",
 			.selection_command =
 				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000\r",
 			.caller_tx_rate = 28000,
@@ -3769,6 +3913,37 @@ int main(void)
 			.requires_v8 = true,
 			.requires_exact_g711 = true,
 			.test_retrain = true,
+			.digital_caller = true,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex V.44 rate exchange",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000+DS=3,2\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.require_lapm = true,
+			.require_v44 = true,
+		},
+		{
+			.id = DP_V92,
+			.name = "V.92 28000 PCM duplex V.44 rate exchange with digital caller",
+			.selection_command =
+				"AT+MS=92,0,28000,28000+V92Q=0+V92U=1,28000+DS=3,2\r",
+			.caller_tx_rate = 28000,
+			.caller_rx_rate = 28000,
+			.answerer_tx_rate = 28000,
+			.answerer_rx_rate = 28000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.require_lapm = true,
+			.require_v44 = true,
 			.digital_caller = true,
 		},
 		{
