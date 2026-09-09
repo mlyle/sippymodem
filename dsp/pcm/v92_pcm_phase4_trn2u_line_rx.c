@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_phase4_trn2u_line_rx.h"
+#include "v92_ru_line_rx.h"
 
 #include <limits.h>
 #include <math.h>
@@ -18,6 +19,12 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 	return law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(sample)) :
 		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+static unsigned control_search_minimum(bool renegotiation)
+{
+	return renegotiation ? V92_PCM_PHASE4_TRN2U_ALIGNMENT :
+		V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS;
 }
 
 static bool target_is_member(
@@ -101,7 +108,7 @@ bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
 	return v92_pcm_phase4_trn2u_line_rx_is_valid(receiver) &&
 	       !receiver->failed &&
 	       receiver->reference.emitted_symbols >=
-		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
+		       control_search_minimum(receiver->renegotiation) &&
 	       receiver->reference.emitted_symbols %
 		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
 }
@@ -124,7 +131,7 @@ bool v92_pcm_phase4_trn2u_line_handoff_is_valid(
 		       V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	       v92_phase4_demodulator_is_valid(&handoff->demodulator) &&
 	       handoff->training_symbols >=
-		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
+		       control_search_minimum(handoff->renegotiation) &&
 	       handoff->training_symbols %
 		       V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
 	       handoff->input_samples >= handoff->training_symbols &&
@@ -158,6 +165,7 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 		.adaptation = receiver->adaptation,
 		.law = receiver->law,
 		.polarity = receiver->polarity,
+		.renegotiation = receiver->renegotiation,
 	};
 	for (size_t index = 0;
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
@@ -232,6 +240,36 @@ v92_pcm_phase4_trn2u_line_rx_init(
 	    !initialize_targets(&initialized) ||
 	    !v92_pcm_phase4_trn2u_line_rx_is_valid(&initialized))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE;
+	*receiver = initialized;
+	return V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
+}
+
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_init_after_ru(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver,
+	const struct v92_ru_line_rx *handoff)
+{
+	struct v92_pcm_phase4_trn2u_line_rx initialized;
+	if (receiver == NULL || !v92_ru_line_rx_is_valid(handoff))
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
+	if (handoff->signal.bar_symbols != V92_RU_RX_BAR_SYMBOLS)
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE;
+	initialized = (struct v92_pcm_phase4_trn2u_line_rx){
+		.equalizer = handoff->equalizer,
+		.starting_input_samples = handoff->input_samples,
+		.input_samples = handoff->input_samples,
+		.adaptation = handoff->adaptation,
+		.law = handoff->law,
+		.polarity = handoff->polarity,
+		.renegotiation = true,
+	};
+	if (v92_pcm_phase4_trn2u_init(&initialized.reference,
+		    handoff->constellation, 0, handoff->signal.lu) != V92_PCM_PHASE4_TRN2U_OK ||
+	    v92_phase4_demodulator_init(&initialized.demodulator,
+		    handoff->constellation, 0, handoff->signal.lu) != V92_PHASE4_MODULATOR_OK ||
+	    !initialize_targets(&initialized) ||
+	    !v92_pcm_phase4_trn2u_line_rx_is_valid(&initialized))
+		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	*receiver = initialized;
 	return V92_PCM_PHASE4_TRN2U_LINE_RX_OK;
 }

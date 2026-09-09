@@ -203,6 +203,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_ru.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_ru_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_ru_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_opening.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_trn1u.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase3_trn1u_line_rx.c \

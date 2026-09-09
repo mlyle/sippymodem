@@ -1972,6 +1972,9 @@ V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
+	$(BUILD_DIR)/v92_ru_line_rx.o \
+	$(BUILD_DIR)/v92_ru_rx.o \
+	$(BUILD_DIR)/v92_upstream_rx.o \
 	$(BUILD_DIR)/v92_phase3_analog_station.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
@@ -2052,6 +2055,9 @@ V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY := \
 V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_phase4_trn2u_line_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
+	$(BUILD_DIR)/v92_ru_line_rx.o \
+	$(BUILD_DIR)/v92_ru_rx.o \
+	$(BUILD_DIR)/v92_upstream_rx.o \
 	$(sort $(filter-out \
 		$(BUILD_DIR)/test_v92_pcm_phase3_cpt_line_rx.o \
 		$(BUILD_DIR)/test_v92_pcm_phase4_trn2u.o \
@@ -5314,6 +5320,9 @@ $(BUILD_DIR)/v92_pcm_phase3_ru.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_ru_rx.o: $(DSP_PCM_SOURCE_DIR)/v92_ru_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_ru_line_rx.o: $(DSP_PCM_SOURCE_DIR)/v92_ru_line_rx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_pcm_phase3_opening.o: \

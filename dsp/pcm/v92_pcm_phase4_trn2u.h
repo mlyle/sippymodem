@@ -19,10 +19,10 @@ enum v92_pcm_phase4_trn2u_result {
 	V92_PCM_PHASE4_TRN2U_INVALID_STATE,
 };
 
-/* Generate the initial Phase 4 TRN2u epoch. The GPA scrambler starts from
- * zero, while differential sign encoding continues from the final E1u sign.
- * Rate-renegotiation epochs have different initialization and are intentionally
- * outside this owner. */
+/* Generate a fresh Phase 4 TRN2u epoch. The GPA scrambler starts from zero.
+ * Initial training continues the final E1u differential sign; the first
+ * rate-renegotiation TRN2u uses zero instead (V.92 Amendment 1, 8.7.6).
+ * The procedure owner chooses the training duration. */
 struct v92_pcm_phase4_trn2u {
 	struct v92_phase4_modulator modulator;
 	uint32_t emitted_symbols;

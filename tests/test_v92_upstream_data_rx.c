@@ -5,6 +5,8 @@
 #include <v92_data_quality.h>
 #include <v92_e2u_rx.h>
 #include <v92_phase4_record_tx.h>
+#include <v92_ru_line_rx.h>
+#include <v92_upstream_control_line_rx.h>
 #include <v92_upstream_data_rx.h>
 #include <v92_upstream_data_tx.h>
 
@@ -64,7 +66,8 @@ static bool source(void *context, uint8_t *bits, size_t count)
 static bool prepare_e2u_at_level(
 	struct channel *channel, bool extended,
 	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver,
-	int16_t lu, int16_t measured_lu, double adaptation)
+	int16_t lu, int16_t measured_lu, double adaptation,
+	enum v92_constellation_size constellation)
 {
 	struct v92_phase4_modulator modulator;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
@@ -80,10 +83,10 @@ static bool prepare_e2u_at_level(
 	int16_t level;
 	bool ready;
 
-	CHECK(v92_phase4_modulator_init(&modulator, V92_CONSTELLATION_4_POINT,
+	CHECK(v92_phase4_modulator_init(&modulator, constellation,
 			0u, lu) == V92_PHASE4_MODULATOR_OK &&
 	      v92_phase4_demodulator_init(&handoff.demodulator,
-			V92_CONSTELLATION_4_POINT, 0u, measured_lu) == V92_PHASE4_MODULATOR_OK &&
+			constellation, 0u, measured_lu) == V92_PHASE4_MODULATOR_OK &&
 	      v92_phase4_record_tx_init_e2u(transmitter, &modulator, extended) ==
 		      V92_PHASE4_RECORD_TX_OK &&
 	      qam_equalizer_init_geometry(&handoff.equalizer, &reference, &reference,
@@ -112,7 +115,7 @@ static bool prepare_e2u_at_level(
 	}
 	CHECK(ready && qam_equalizer_adapt(&handoff.equalizer, &output, 0.0) ==
 		      QAM_EQUALIZER_OK &&
-	      v92_phase4_modulator_level(V92_CONSTELLATION_4_POINT, measured_lu, 0u, 0u,
+	      v92_phase4_modulator_level(constellation, measured_lu, 0u, 0u,
 			&level) == V92_PHASE4_MODULATOR_OK, "FIR did not become warm");
 	level = channel->law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(level)) :
@@ -132,7 +135,7 @@ static bool prepare_e2u(
 	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver)
 {
 	return prepare_e2u_at_level(channel, extended, transmitter, receiver,
-		TEST_LU, (int16_t)lround(TEST_LU * channel->gain), 0.002);
+		TEST_LU, (int16_t)lround(TEST_LU * channel->gain), 0.002, V92_CONSTELLATION_4_POINT);
 }
 
 struct idle_source {
@@ -183,7 +186,7 @@ static bool test_quantized_level_tracking(
 	      v92_upstream_data_tx_init(&transmitter, &mapping, lu) ==
 		      V92_UPSTREAM_DATA_TX_OK &&
 	      prepare_e2u_at_level(&channel, false, &e2u_tx, &e2u_rx,
-			lu, measured_lu, 0.05), "tracking fixture failed");
+			lu, measured_lu, 0.05, V92_CONSTELLATION_4_POINT), "tracking fixture failed");
 	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
 		int16_t sample;
 		enum v92_e2u_rx_result result;
@@ -817,8 +820,248 @@ static bool test_channel_plan(
 	return true;
 }
 
+static bool test_rate_request_contracts(const struct v92_upstream_rx *handoff)
+{
+	struct v92_ru_line_rx receiver, saved;
+	CHECK(v92_ru_line_rx_init_after_e2u(&receiver, handoff), "warm Ru handoff failed");
+	saved = receiver;
+	CHECK(!v92_ru_line_rx_init_after_e2u(NULL, handoff) &&
+	      !v92_ru_line_rx_init_after_e2u(&receiver, NULL) &&
+	      !v92_ru_line_rx_is_valid(NULL) &&
+	      v92_ru_line_rx_sample(NULL, 0) == V92_RU_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0, "null Ru contract changed state");
+	for (unsigned i = 0; i < 3; ++i) {
+		struct v92_upstream_rx invalid = *handoff;
+		if (i == 0)
+			invalid.failed = true;
+		else if (i == 1)
+			invalid.training_tail_remaining = 1;
+		else
+			invalid.line.equalizer.coefficients[0].in_phase = NAN;
+		CHECK(!v92_ru_line_rx_init_after_e2u(&receiver, &invalid) &&
+		      memcmp(&receiver, &saved, sizeof(saved)) == 0, "invalid E2u handoff changed Ru receiver");
+	}
+	for (unsigned i = 0; i < 5; ++i) {
+		receiver = saved;
+		switch (i) {
+		case 0: receiver.input_samples = UINT64_MAX; break;
+		case 1: receiver.equalizer.coefficients[0].in_phase = NAN; break;
+		case 2: receiver.signal.phase = V92_RU_RX_FRAME_SYMBOLS; break;
+		case 3: receiver.equalizer.decision_delay--; break;
+		case 4: receiver.polarity = 0; break;
+		}
+		struct v92_ru_line_rx before = receiver;
+		CHECK(v92_ru_line_rx_sample(&receiver, INT16_MIN) == V92_RU_RX_INVALID_STATE &&
+		      memcmp(&receiver, &before, sizeof(before)) == 0, "invalid Ru sample changed state");
+	}
+	return true;
+}
+
+static bool test_rate_request_line(enum g711_law law, int polarity,
+				   bool extended, bool compensated,
+				   enum v92_constellation_size constellation)
+{
+	struct channel channel = { .gain = 0.75, .postcursor = 0.10,
+		.law = law, .polarity = polarity };
+	struct v92_upstream_plan plan = { 0 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx record;
+	struct v92_e2u_rx e2u;
+	struct v92_upstream_data_tx data_tx;
+	struct v92_upstream_data_rx data_rx;
+	struct v92_ru_line_rx ru;
+	struct v92_pcm_phase4_trn2u training_tx;
+	struct v92_pcm_phase4_trn2u_line_rx training_rx, before;
+	struct v92_pcm_phase4_trn2u_line_handoff handoff;
+	struct v92_upstream_control_line_rx control;
+	unsigned source_frames = 0, delivered = 0;
+	CHECK(v92_cpd_direct_init(&cpd, law, 1, extended) == V92_CPD_OK,
+	      "rate-request mapping failed");
+	if (compensated) {
+		struct v92_upstream_channel measured = { 0 };
+		uint32_t random = 9376271;
+		for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			int16_t sample = (int16_t)((int)(random >> 19) - TEST_LU);
+			CHECK(v92_upstream_channel_sample(&measured, sample,
+				    polarity * wire_sample(&channel, sample)), "measurement failed");
+		}
+		CHECK(v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan),
+		      "channel design failed");
+	}
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&data_tx, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
+	      prepare_e2u_at_level(&channel, extended, &record, &e2u,
+		TEST_LU, (int16_t)lround(TEST_LU * channel.gain), 0.002, constellation),
+	      "rate-request fixture failed");
+	while (!v92_e2u_rx_is_complete(&e2u)) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&record))
+			CHECK(v92_phase4_record_tx_next(&record, &sample) ==
+			      V92_PHASE4_RECORD_TX_OK, "E2u transmit failed");
+		else
+			CHECK(v92_upstream_data_tx_next(&data_tx, source, &source_frames, &sample) ==
+			      V92_UPSTREAM_DATA_TX_OK, "B1u transmit failed");
+		enum v92_e2u_rx_result r = v92_e2u_rx_sample(&e2u, wire_sample(&channel, sample));
+		CHECK(r == V92_E2U_RX_OK || r == V92_E2U_RX_COMPLETE, "E2u failed");
+	}
+	CHECK(v92_upstream_data_rx_init(&data_rx, &e2u.signal, &mapping, &plan) ==
+		V92_UPSTREAM_DATA_RX_OK && v92_ru_line_rx_init_after_e2u(&ru, &e2u.signal),
+	      "parallel data/control-channel handoff failed");
+	CHECK(test_rate_request_contracts(&e2u.signal), "rate-request contracts failed");
+	memset(&training_rx, 0xa5, sizeof(training_rx));
+	before = training_rx;
+	CHECK(v92_pcm_phase4_trn2u_line_rx_init_after_ru(NULL, &ru) ==
+		V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase4_trn2u_line_rx_init_after_ru(&training_rx, NULL) ==
+		V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase4_trn2u_line_rx_init_after_ru(&training_rx, &ru) ==
+		V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_STATE &&
+	      memcmp(&training_rx, &before, sizeof(before)) == 0,
+	      "unobserved Ru-bar manufactured a training boundary");
+	/* Flush the decoder and either line plan before switching the transmitter
+	 * at a physical frame boundary. The raw Ru FIR has its own shorter delay. */
+	unsigned flush_frames = V92_PCM_RX_DELAY_FRAMES +
+		(plan.delay + ru.equalizer.decision_delay + V92_PCM_MAPPING_FRAME_SYMBOLS - 1u) /
+		V92_PCM_MAPPING_FRAME_SYMBOLS;
+	while (source_frames < DATA_FRAMES + flush_frames || data_tx.queue_count) {
+		int16_t sample;
+		struct v92_upstream_data_frame frame;
+		CHECK(v92_upstream_data_tx_next(&data_tx, source, &source_frames, &sample) ==
+		      V92_UPSTREAM_DATA_TX_OK, "data transmit failed");
+		sample = wire_sample(&channel, sample);
+		CHECK(v92_ru_line_rx_sample(&ru, sample) == V92_RU_RX_BUFFERING,
+		      "data caused a false rate request");
+		enum v92_upstream_data_rx_result r = v92_upstream_data_rx_sample(&data_rx, sample, &frame);
+		CHECK(r == V92_UPSTREAM_DATA_RX_OK || r == V92_UPSTREAM_DATA_RX_FRAME,
+		      "data receive failed before rate request");
+		if (r == V92_UPSTREAM_DATA_RX_FRAME && frame.bit_count && !frame.b1u) {
+			uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+			payload(expected, mapping.data_bits_per_frame, delivered++);
+			CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
+			      memcmp(frame.bits, expected, frame.bit_count) == 0,
+			      "PCM payload changed before rate request");
+		}
+	}
+	CHECK(delivered >= DATA_FRAMES &&
+	      memcmp(ru.equalizer.coefficients, e2u.signal.line.equalizer.coefficients,
+		     sizeof(ru.equalizer.coefficients)) == 0,
+	      "lost data (%u frames, law=%u polarity=%d extended=%u compensated=%u) or adapted the raw control channel",
+	      delivered, law, polarity, extended, compensated);
+	CHECK(v92_pcm_phase4_trn2u_init(&training_tx, ru.constellation, 0, TEST_LU) ==
+	      V92_PCM_PHASE4_TRN2U_OK, "new training epoch failed");
+	unsigned delay = ru.equalizer.decision_delay, detected = 0;
+	for (unsigned i = 0; i < 408 + delay; ++i) {
+		int16_t sample = i % 6u < 3u ? TEST_LU : -TEST_LU;
+		if (i >= 384 && i < 408)
+			sample = -sample;
+		if (i >= 408)
+			CHECK(v92_pcm_phase4_trn2u_next(&training_tx, &sample) ==
+			      V92_PCM_PHASE4_TRN2U_OK, "early TRN2u failed");
+		enum v92_ru_rx_result r = v92_ru_line_rx_sample(&ru, wire_sample(&channel, sample));
+		if (r == V92_RU_RX_DETECTED)
+			detected++;
+		CHECK(r == V92_RU_RX_BUFFERING || r == V92_RU_RX_DETECTED ||
+		      (r == V92_RU_RX_BAR_STARTED && i == 384 + delay) ||
+		      (r == V92_RU_RX_COMPLETE && i == 407 + delay),
+		      "lost delayed Ru boundary at %u: %u", i, r);
+	}
+	struct v92_ru_line_rx completed = ru;
+	CHECK(detected == 1 && ru.signal.bar_symbols == 24 &&
+	      v92_ru_line_rx_sample(&ru, 123) == V92_RU_RX_COMPLETE &&
+	      memcmp(&ru, &completed, sizeof(ru)) == 0 &&
+	      v92_pcm_phase4_trn2u_line_rx_init_after_ru(&training_rx, &ru) ==
+		V92_PCM_PHASE4_TRN2U_LINE_RX_OK &&
+	      memcmp(&training_rx.equalizer, &ru.equalizer, sizeof(ru.equalizer)) == 0 &&
+	      training_rx.demodulator.descrambler.history == 0 &&
+	      training_rx.demodulator.previous_encoded_sign == 0 && training_rx.renegotiation,
+	      "Ru-bar handoff lost filter history or failed to reset coding");
+	while (!v92_pcm_phase4_trn2u_line_rx_can_handoff(&training_rx)) {
+		int16_t sample;
+		CHECK(training_tx.emitted_symbols < 12 &&
+		      v92_pcm_phase4_trn2u_next(&training_tx, &sample) == V92_PCM_PHASE4_TRN2U_OK,
+		      "early control boundary missed");
+		enum v92_pcm_phase4_trn2u_line_rx_result r = v92_pcm_phase4_trn2u_line_rx_sample(
+			&training_rx, wire_sample(&channel, sample));
+		CHECK(r == V92_PCM_PHASE4_TRN2U_LINE_RX_OK ||
+		      r == V92_PCM_PHASE4_TRN2U_LINE_RX_ALIGNED, "new TRN2u receive failed");
+	}
+	CHECK(v92_pcm_phase4_trn2u_line_rx_handoff(&training_rx, &handoff) ==
+		V92_PCM_PHASE4_TRN2U_LINE_RX_OK && handoff.renegotiation &&
+	      handoff.training_symbols == 12 &&
+	      v92_upstream_control_line_rx_init(&control, &handoff) == V92_UPSTREAM_CONTROL_LINE_RX_OK,
+	      "renegotiation control handoff failed");
+	handoff.renegotiation = false;
+	CHECK(!v92_pcm_phase4_trn2u_line_handoff_is_valid(&handoff),
+	      "renegotiation weakened the initial training minimum");
+	/* Exercise early SUVd-triggered termination and the ordinary 2400T train.
+	 * The transmitter, not the control hunter, owns that policy. */
+	unsigned train_symbols = compensated ? 1632 : 2400;
+	while (training_tx.emitted_symbols < train_symbols) {
+		int16_t sample;
+		struct v92_control_event event;
+		CHECK(v92_pcm_phase4_trn2u_next(&training_tx, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_upstream_control_line_rx_sample(&control, wire_sample(&channel, sample),
+			    &event) == V92_UPSTREAM_CONTROL_LINE_RX_OK, "training became a control record");
+	}
+	const struct v92_suvu_parameters suvu = { .prefilter_level_db_q2_2 = -16 };
+	const struct v92_cpus_parameters cpus = { .acknowledges_cpd = true };
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	size_t bits;
+	unsigned mapping_bits = V92_PCM_MAPPING_FRAME_SYMBOLS *
+		v92_phase4_modulator_bits_per_symbol(constellation);
+	unsigned suvu_count = 0, cpu_count = 0;
+	CHECK(v92_suvu_encode(&suvu, mapping_bits, frame, sizeof(frame), &bits) == V92_SUVU_OK &&
+	      v92_phase4_record_tx_init(&record, &training_tx.modulator, frame, sizeof(frame), bits) ==
+		V92_PHASE4_RECORD_TX_OK, "SUVu encode failed");
+	for (unsigned which = 0; which < 3; ++which) {
+		if (which) {
+			CHECK(v92_cpus_encode(&cpus, mapping_bits, frame, sizeof(frame), &bits) == V92_CPU_OK &&
+			      v92_phase4_record_tx_start_next(&record, frame, sizeof(frame), bits) ==
+				V92_PHASE4_RECORD_TX_OK, "zero-rate CPus encode failed");
+		}
+		while (!v92_phase4_record_tx_is_complete(&record)) {
+			int16_t sample;
+			struct v92_control_event event;
+			CHECK(v92_phase4_record_tx_next(&record, &sample) == V92_PHASE4_RECORD_TX_OK,
+			      "control transmit stopped");
+			enum v92_upstream_control_line_rx_result r = v92_upstream_control_line_rx_sample(
+				&control, wire_sample(&channel, sample), &event);
+			CHECK(r == V92_UPSTREAM_CONTROL_LINE_RX_OK || r == V92_UPSTREAM_CONTROL_LINE_RX_EVENT,
+			      "control receive stopped");
+			if (r != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+				continue;
+			if (event.type == V92_CONTROL_EVENT_SUVU) {
+				CHECK(event.record.suvu.frame_result == V92_SUVU_OK &&
+				      event.record.suvu.parameters.prefilter_level_db_q2_2 == -16,
+				      "SUVu CRC/parameters did not survive rate request");
+				suvu_count++;
+			} else {
+				CHECK(event.type == V92_CONTROL_EVENT_CPUS && event.record.cpus.frame_result == V92_CPU_OK &&
+				      event.record.cpus.parameters.data_rate_number == 0 &&
+				      event.record.cpus.parameters.acknowledges_cpd,
+				      "cleardown CPus did not survive rate request");
+				cpu_count++;
+			}
+		}
+	}
+	CHECK(suvu_count == 1 && cpu_count >= 1, "missing post-Ru status/cleardown record");
+	return true;
+}
+
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] retained PCM data-to-Ru control channel\n");
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned extended = 0; extended < 2; ++extended)
+				for (unsigned compensated = 0; compensated < 2; ++compensated)
+					for (unsigned constellation = V92_CONSTELLATION_4_POINT;
+					     constellation <= V92_CONSTELLATION_8_POINT; constellation *= 2u)
+						if (!test_rate_request_line(law, polarity, extended, compensated, constellation))
+							return 1;
+	fprintf(stderr, "[       OK ] retained PCM data-to-Ru control channel\n");
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned int extended = 0u; extended < 2u; ++extended)

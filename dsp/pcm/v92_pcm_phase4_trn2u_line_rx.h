@@ -24,10 +24,11 @@ enum v92_pcm_phase4_trn2u_line_rx_result {
 	V92_PCM_PHASE4_TRN2U_LINE_RX_NUMERIC_FAILURE,
 };
 
-/* Continue the analogue-modem line from E1u into initial TRN2u. The reference
+/* Continue the analogue-modem line from E1u or Ru-bar into TRN2u. The reference
  * is kept one equalizer delay ahead of trained_symbols because those physical
- * inputs have already entered the inherited FIR. The longer Phase-4 span adds
- * zeroed postcursor taps without moving the trained decision point. */
+ * inputs have already entered the inherited FIR. Initial Phase 4 adds zeroed
+ * postcursor taps; renegotiation retains the full trained filter. Neither
+ * changes the decision point. */
 struct v92_pcm_phase4_trn2u_line_rx {
 	struct qam_equalizer equalizer;
 	struct v92_pcm_phase4_trn2u reference;
@@ -45,6 +46,7 @@ struct v92_pcm_phase4_trn2u_line_rx {
 	enum g711_law law;
 	uint8_t expected_index;
 	int8_t polarity;
+	bool renegotiation;
 	bool failed;
 };
 
@@ -62,6 +64,7 @@ struct v92_pcm_phase4_trn2u_line_handoff {
 	double adaptation;
 	enum g711_law law;
 	int8_t polarity;
+	bool renegotiation;
 };
 
 /* The receive-side LU scale is the measured TRN1u level retained by handoff.
@@ -71,6 +74,17 @@ v92_pcm_phase4_trn2u_line_rx_init(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
 	enum v92_constellation_size constellation);
+
+struct v92_ru_line_rx;
+/* First TRN2u after aligned Ru-bar (V.92 Amendment 1, 8.7.6). Retain the
+ * trained FIR and its accepted input tail, but reset scrambling/differential
+ * memory. Control hunting may start at the first 12-symbol boundary: the
+ * peer may end TRN2u upon receiving SUVd (9.8.2.1.2). This is receive policy,
+ * not permission for a transmitter to shorten its training arbitrarily. */
+enum v92_pcm_phase4_trn2u_line_rx_result
+v92_pcm_phase4_trn2u_line_rx_init_after_ru(
+	struct v92_pcm_phase4_trn2u_line_rx *receiver,
+	const struct v92_ru_line_rx *handoff);
 bool v92_pcm_phase4_trn2u_line_rx_is_valid(
 	const struct v92_pcm_phase4_trn2u_line_rx *receiver);
 bool v92_pcm_phase4_trn2u_line_rx_can_handoff(
@@ -86,7 +100,8 @@ v92_pcm_phase4_trn2u_line_rx_handoff(
 	struct v92_pcm_phase4_trn2u_line_handoff *handoff);
 
 /* Consume one signed 8 kHz sample. ALIGNED marks each physical twelve-symbol
- * boundary at or after the 12000-symbol initial minimum. The equalizer's
+ * boundary at or after the 12000-symbol initial minimum, or the first such
+ * boundary of an explicitly initialized renegotiation. The equalizer's
  * delayed outputs have not yet exposed the last decision_delay symbols at
  * that boundary; a successor must retain them. Internal DSP failure latches
  * without consuming the sample; all rejected calls are transactional. */
