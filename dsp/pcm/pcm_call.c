@@ -10,6 +10,7 @@
 #include "v92_cpd_direct.h"
 #include "v92_pcm_dil.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -2092,7 +2093,7 @@ static bool v92_filters_fit_capabilities(
 }
 
 static enum pcm_call_result select_v92_upstream(
-	const struct pcm_call *call, uint32_t peer_rate_mask,
+	const struct pcm_call *call, uint32_t peer_rate_mask, double signal_level,
 	struct v92_cpd_parameters *cpd)
 {
 	const struct pcm_call_v92_digital_phase4_configuration *configuration =
@@ -2100,15 +2101,19 @@ static enum pcm_call_result select_v92_upstream(
 
 	if (configuration->upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 		uint8_t rate = configuration->direct_maximum_data_rate_number;
+		long level;
 
-		while (rate != 0u && !v92_pcm_dil_rate_is_enabled(peer_rate_mask, rate))
-			--rate;
+		if (!isfinite(signal_level) || signal_level < 1.0 || signal_level > INT16_MAX)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		level = lround(signal_level);
+		/* Rate-dependent modulus, trellis, constellation and normalized gain
+		 * must be selected together at the measured upstream level. */
+		for (; rate != 0u; --rate)
+			if (v92_pcm_dil_rate_is_enabled(peer_rate_mask, rate) &&
+			    v92_cpd_direct_select(cpd, call->law, rate, (int16_t)level, false) == V92_CPD_OK)
+				break;
 		if (rate == 0u)
 			return PCM_CALL_UNUSABLE_SELECTION;
-		/* Rate-dependent modulus, trellis, constellation and normalized gain
-		 * must be selected together, not patched onto a higher-rate CPd. */
-		if (v92_cpd_direct_init(cpd, call->law, rate, false) != V92_CPD_OK)
-			return PCM_CALL_NUMERIC_FAILURE;
 	} else {
 		*cpd = configuration->cpd;
 		if (!v92_pcm_dil_rate_is_enabled(peer_rate_mask, cpd->data_rate_number))
@@ -2171,13 +2176,13 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		if (!v92_phase3_digital_station_upstream_rate_mask(
 			    &mixed->phase3, &upstream_rate_mask))
 			return PCM_CALL_INVALID_STATE;
-		result = select_v92_upstream(call, upstream_rate_mask, &cpd);
-		if (result != PCM_CALL_OK)
-			return result;
 		if (v92_phase3_digital_station_receive_handoff(
 			    &mixed->phase3, &handoff) !=
 		    V92_PHASE3_DIGITAL_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
+		result = select_v92_upstream(call, upstream_rate_mask, handoff.signal_level, &cpd);
+		if (result != PCM_CALL_OK)
+			return result;
 		if (v92_phase4_digital_station_init(
 			    &station, &handoff,
 			    call->phase3_configuration.v92_digital.jp

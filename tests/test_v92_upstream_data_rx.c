@@ -57,7 +57,7 @@ static bool source(void *context, uint8_t *bits, size_t count)
 static bool prepare_e2u_at_level(
 	struct channel *channel, bool extended,
 	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver,
-	int16_t measured_lu, double adaptation)
+	int16_t lu, int16_t measured_lu, double adaptation)
 {
 	struct v92_phase4_modulator modulator;
 	struct v92_pcm_phase4_trn2u_line_handoff handoff = {
@@ -74,7 +74,7 @@ static bool prepare_e2u_at_level(
 	bool ready;
 
 	CHECK(v92_phase4_modulator_init(&modulator, V92_CONSTELLATION_4_POINT,
-			0u, TEST_LU) == V92_PHASE4_MODULATOR_OK &&
+			0u, lu) == V92_PHASE4_MODULATOR_OK &&
 	      v92_phase4_demodulator_init(&handoff.demodulator,
 			V92_CONSTELLATION_4_POINT, 0u, measured_lu) == V92_PHASE4_MODULATOR_OK &&
 	      v92_phase4_record_tx_init_e2u(transmitter, &modulator, extended) ==
@@ -91,7 +91,7 @@ static bool prepare_e2u_at_level(
 		coefficient *= -channel->postcursor / channel->gain;
 	}
 	for (size_t index = 0u; index <= V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
-		int16_t sample = TEST_LU;
+		int16_t sample = lu;
 		struct qam_point input;
 
 		if (index != 0u)
@@ -125,7 +125,7 @@ static bool prepare_e2u(
 	struct v92_phase4_record_tx *transmitter, struct v92_e2u_rx *receiver)
 {
 	return prepare_e2u_at_level(channel, extended, transmitter, receiver,
-		(int16_t)lround(TEST_LU * channel->gain), 0.002);
+		TEST_LU, (int16_t)lround(TEST_LU * channel->gain), 0.002);
 }
 
 struct idle_source {
@@ -145,7 +145,8 @@ static bool after_idle(void *context, uint8_t *bits, size_t count)
 	return true;
 }
 
-static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool drift)
+static bool test_quantized_level_tracking(
+	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select)
 {
 	enum { IDLE_FRAMES = 2000, PAYLOAD_FRAMES = 400 };
 	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
@@ -162,19 +163,20 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 	int16_t trained_lu = 0;
 	int16_t trained_minimum = 0, trained_maximum = 0;
 	int16_t measured_lu = law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(TEST_LU)) :
-		g711_decode_pcma(g711_encode_pcma(TEST_LU));
+		g711_decode_pcmu(g711_encode_pcmu(lu)) :
+		g711_decode_pcma(g711_encode_pcma(lu));
 
 	/* TRN1u estimates LU from quantized samples, not the transmitter's
 	 * exact scalar. Carry the fast training step through real E2u, then
 	 * require usable B1u and clean idle/payload. Dense 40k/48k cases check
 	 * quantization stability; the lower-rate case checks ongoing tracking. */
-	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
+	CHECK((select ? v92_cpd_direct_select(&cpd, law, rate, measured_lu, false) :
+			v92_cpd_direct_init(&cpd, law, rate, false)) == V92_CPD_OK &&
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
-	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) ==
+	      v92_upstream_data_tx_init(&transmitter, &mapping, lu) ==
 		      V92_UPSTREAM_DATA_TX_OK &&
 	      prepare_e2u_at_level(&channel, false, &e2u_tx, &e2u_rx,
-			measured_lu, 0.05), "tracking fixture failed");
+			lu, measured_lu, 0.05), "tracking fixture failed");
 	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
 		int16_t sample;
 		enum v92_e2u_rx_result result;
@@ -247,7 +249,7 @@ static bool test_quantized_level_tracking(enum g711_law law, uint8_t rate, bool 
 	}
 	CHECK(delivered == V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES,
 	      "tracking lost payload frames");
-	CHECK(trained_minimum <= TEST_LU && trained_maximum >= TEST_LU,
+	CHECK(trained_minimum <= lu && trained_maximum >= lu,
 	      "training excluded the transmitted LU");
 	CHECK(b1u_error <= (double)V92_B1U_SYMBOLS *
 		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
@@ -564,11 +566,13 @@ static bool test_rejection_and_failure(void)
 
 int main(void)
 {
-	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true))
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false, TEST_LU, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true, TEST_LU, false) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, 7164, true) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, 7040, true))
 		return 1;
 	const struct {
 		uint8_t rate;

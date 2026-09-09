@@ -5653,6 +5653,7 @@ static bool run_v92_duplex_data(
 	uint32_t upstream_received = 0u, downstream_received = 0u;
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
+	int16_t selected_lu = 0;
 
 	if (offer != NULL) {
 		CHECK(!long_cpd && v92_profile_init(
@@ -5701,10 +5702,14 @@ static bool run_v92_duplex_data(
 							transmitted), "V.92 payload failed at clock %zu", clock);
 			} else {
 				struct pcm_call_observation observation;
+				bool entering_v92_phase4 = role == 1u && call->stage == PCM_CALL_PHASE3_MIXED;
 
 				CHECK(pcm_call_octet(call, received, decode_octet(law, received),
 						     transmitted, &observation) == PCM_CALL_OK,
 				      "V.92 training failed at clock %zu", clock);
+				if (entering_v92_phase4 && call->stage == PCM_CALL_PHASE4)
+					selected_lu = call->state.phase4.v92.owner.digital.receive
+						.signal.trn2u.demodulator.lu;
 				if (observation.phase2.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT ||
 				    observation.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
 					CHECK(call->b1_deadline_armed && call->b1_deadline_remaining_samples ==
@@ -5743,7 +5748,7 @@ static bool run_v92_duplex_data(
 		struct v92_cpd_parameters expected;
 		struct v92_pcm_mapping mapping;
 
-		CHECK(v92_cpd_direct_init(&expected, law, offer->expected, false) == V92_CPD_OK,
+		CHECK(v92_cpd_direct_select(&expected, law, offer->expected, selected_lu, false) == V92_CPD_OK,
 		      "V.92 expected upstream selection did not initialize");
 		/* CPd-prime repeats the same selection with CPu acknowledged. The
 		 * acknowledgement may now be in CPd rather than a later SUVd. */
@@ -5783,6 +5788,11 @@ static bool test_v92_upstream_negotiation(void)
 		{ UINT32_C(0x40009), 3u, 1u },
 		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
 		{ UINT32_C(1) << 12u, 19u, 13u },
+		/* Dense maps must use the trained LU, not just normalize B1u power. */
+		{ UINT32_C(1) << 18u, 19u, 19u },
+		/* At this level the bounded 44k map is not injective. Only try a
+		 * lower rate actually offered by the peer (here 41 1/3 kbit/s). */
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u },
 	};
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

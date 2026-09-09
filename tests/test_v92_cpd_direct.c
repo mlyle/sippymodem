@@ -2,6 +2,7 @@
 
 #include <v92_cpd_direct.h>
 #include <v92_pcm_frame.h>
+#include <integer_math.h>
 
 #include "test.h"
 
@@ -284,10 +285,80 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static bool quantized_points_are_distinct(
+	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
+{
+	struct v92_pcm_mapping mapping;
+	const struct v92_cpd_constellation *points = &cpd->constellation[0];
+	int previous = INT16_MIN;
+
+	CHECK(v92_pcm_mapping_init(&mapping, law, cpd) == V92_PCM_MAPPING_OK,
+	      "selected mapping was invalid");
+	for (int eta = -(int)points->count; eta < points->count; ++eta) {
+		int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+			points->positive_linear[eta];
+		int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+		int16_t linear;
+		int sample;
+
+		CHECK(v92_pcm_frame_scale(&mapping, lu, v, &linear) == V92_PCM_FRAME_OK &&
+		      linear > INT16_MIN && linear < INT16_MAX, "selected point clipped");
+		sample = law == G711_LAW_PCMA ?
+			g711_decode_pcma(g711_encode_pcma(linear)) :
+			g711_decode_pcmu(g711_encode_pcmu(linear));
+		CHECK(sample > previous, "law %u LU %d rate %u point %d collapsed",
+		      law, lu, cpd->data_rate_number, eta);
+		previous = sample;
+	}
+	return true;
+}
+
+static bool test_level_selection(void)
+{
+	static const int16_t levels[] = { 4092, 4096, 4224, 7040, 7164 };
+	static const uint8_t rates[] = { 1, 4, 13, 19 };
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t level = 0u; level < ARRAY_LENGTH(levels); ++level)
+			for (size_t rate = 0u; rate < ARRAY_LENGTH(rates); ++rate) {
+				struct v92_cpd_parameters cpd, decoded;
+				uint8_t wire[V92_CPD_DIRECT_MAX_FRAME_BYTES];
+				size_t bits;
+
+				CHECK(v92_cpd_direct_select(&cpd, law, rates[rate], levels[level], true) ==
+					      V92_CPD_OK && cpd.data_rate_number == rates[rate] &&
+				      cpd.extend_e2u && v92_cpd_parameters_are_valid(&cpd) &&
+				      gain_is_nearest(&cpd, law) &&
+				      quantized_points_are_distinct(&cpd, law, levels[level]),
+				      "law %u LU %d rate %u selection failed", law, levels[level], rates[rate]);
+				CHECK(v92_cpd_encode(&cpd, 17u, wire, sizeof(wire), &bits) == V92_CPD_OK &&
+				      v92_cpd_decode(wire, (bits + 7u) / 8u, bits, 17u, &decoded) == V92_CPD_OK &&
+				      memcmp(&cpd, &decoded, sizeof(cpd)) == 0,
+				      "selected CPd did not survive wire encoding");
+			}
+	struct v92_cpd_parameters cpd, before;
+
+	CHECK(v92_cpd_direct_init(&before, G711_LAW_PCMU, 19u, false) == V92_CPD_OK &&
+	      v92_cpd_direct_select(&cpd, G711_LAW_PCMU, 19u, 4092, false) == V92_CPD_OK &&
+	      memcmp(&cpd, &before, sizeof(cpd)) == 0, "usable template changed");
+	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, 19u, 1, false) ==
+		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0,
+	      "unusable level was accepted or changed output");
+	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, 0u, 7040, false) ==
+		      V92_CPD_INVALID_PARAMETERS &&
+	      v92_cpd_direct_select(&cpd, G711_LAW_PCMA, 19u, 0, false) ==
+		      V92_CPD_INVALID_PARAMETERS &&
+	      v92_cpd_direct_select(&cpd, (enum g711_law)99, 19u, 7040, false) ==
+		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0 &&
+	      v92_cpd_direct_select(NULL, G711_LAW_PCMA, 19u, 7040, false) ==
+		      V92_CPD_INVALID_ARGUMENT, "invalid level-selection arguments accepted");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
-	    !test_transactionality())
+	    !test_transactionality() || !test_level_selection())
 		return 1;
 	return 0;
 }

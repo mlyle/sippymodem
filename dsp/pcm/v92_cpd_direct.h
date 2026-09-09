@@ -28,12 +28,20 @@ enum {
 		(V92_CPD_DIRECT_MAX_FRAME_BITS + 7) / 8,
 };
 
-/* Build the complete initial CPd for a direct PCM-upstream mapping. The
+/* Build a level-neutral initial CPd template for a direct PCM-upstream mapping. The
  * generated modulus, filter, and constellation sections are owned by the
  * result; later parameter-mode updates may use the compact CPd form.
  * Rejected calls leave parameters unchanged. */
 enum v92_cpd_result v92_cpd_direct_init(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint8_t data_rate_number, bool extend_e2u);
+
+/* Select a direct mapping whose scaled, quantized points remain distinct at
+ * the trained LU. Unlike the level-neutral template above, this may reject a
+ * valid rate when its bounded constellation search finds no usable mapping.
+ * Rejection leaves parameters unchanged; callers may try a lower offered rate. */
+enum v92_cpd_result v92_cpd_direct_select(
+	struct v92_cpd_parameters *parameters, enum g711_law law,
+	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u);
 
 #endif /* V92_CPD_DIRECT_H */

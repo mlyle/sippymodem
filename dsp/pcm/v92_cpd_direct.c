@@ -2,6 +2,7 @@
 
 #include "v92_cpd_direct.h"
 
+#include "integer_math.h"
 #include "v92_pcm_frame.h"
 
 #include <limits.h>
@@ -90,22 +91,6 @@ static bool direct_tables(
 		&parameters->constellation[0], law, point_count);
 }
 
-static bool add_energy(uint64_t *energy, int32_t value)
-{
-	uint64_t magnitude = value < 0 ?
-		(uint64_t)(-(int64_t)value) : (uint64_t)value;
-	uint64_t square;
-
-	if (energy == NULL ||
-	    (magnitude != 0u && magnitude > UINT64_MAX / magnitude))
-		return false;
-	square = magnitude * magnitude;
-	if (*energy > UINT64_MAX - square)
-		return false;
-	*energy += square;
-	return true;
-}
-
 static uint16_t nearest_gain(
 	uint64_t prefilter_energy, size_t symbol_count)
 {
@@ -145,20 +130,20 @@ static uint16_t nearest_gain(
 	return (uint16_t)low;
 }
 
-static bool normalize_gain(
-	struct v92_cpd_parameters *parameters, enum g711_law law)
+static bool b1u_frequencies(
+	const struct v92_cpd_parameters *parameters, enum g711_law law,
+	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS])
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	uint8_t ones[V92_PCM_MAPPING_MAX_BITS];
-	uint64_t energy = 0u;
-	size_t symbol_count = 0u;
 
 	if (v92_pcm_mapping_init(&mapping, law, parameters) !=
 			V92_PCM_MAPPING_OK ||
 	    v92_pcm_frame_tx_init(&transmitter, &mapping) !=
 			V92_PCM_FRAME_OK)
 		return false;
+	memset(frequencies, 0, 2u * V92_CPD_DIRECT_MAX_POINTS * sizeof(*frequencies));
 	memset(ones, 1, mapping.data_bits_per_frame);
 	for (unsigned int index = 0u;
 	     index < V92_B1U_FRAMES; ++index) {
@@ -170,13 +155,37 @@ static bool normalize_gain(
 			return false;
 		for (size_t symbol = 0u;
 		     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-			if (!add_energy(&energy, frame.v[symbol]))
+			int index = frame.signed_index[symbol] + V92_CPD_DIRECT_MAX_POINTS;
+
+			if (index < 0 || index >= 2 * V92_CPD_DIRECT_MAX_POINTS)
 				return false;
-			symbol_count++;
+			frequencies[index]++;
 		}
 	}
+	return true;
+}
+
+static bool normalize_gain(
+	struct v92_cpd_parameters *parameters,
+	const uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS])
+{
+	const struct v92_cpd_constellation *points = &parameters->constellation[0];
+	uint64_t energy = 0u;
+
+	/* For a monotone constellation and identity precoder, the chosen inner
+	 * representative depends only on the coded index, not point spacing.
+	 * Reuse exact signed B1u frequencies instead of encoding 48 frames for
+	 * every search candidate on the live media thread. Energy is bounded by
+	 * 576 signed 16-bit samples, comfortably inside uint64_t. */
+	for (int eta = -(int)points->count; eta < points->count; ++eta) {
+		int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+			points->positive_linear[eta];
+		int64_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+
+		energy += (uint64_t)(v * v) * frequencies[eta + V92_CPD_DIRECT_MAX_POINTS];
+	}
 	parameters->four_times_gain_q0_16 =
-		nearest_gain(energy, symbol_count);
+		nearest_gain(energy, V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS);
 	return parameters->four_times_gain_q0_16 != 0u;
 }
 
@@ -185,14 +194,112 @@ enum v92_cpd_result v92_cpd_direct_init(
 	uint8_t data_rate_number, bool extend_e2u)
 {
 	struct v92_cpd_parameters generated;
+	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
 
 	if (parameters == NULL)
 		return V92_CPD_INVALID_ARGUMENT;
 	if (!direct_tables(
 		    &generated, law, data_rate_number, extend_e2u) ||
-	    !normalize_gain(&generated, law) ||
+	    !b1u_frequencies(&generated, law, frequencies) ||
+	    !normalize_gain(&generated, frequencies) ||
 	    !v92_cpd_parameters_are_valid(&generated))
 		return V92_CPD_INVALID_PARAMETERS;
 	*parameters = generated;
+	return V92_CPD_OK;
+}
+
+/* Identity-filter output followed by the analogue LU/G scaling and network
+ * quantizer. Check both signs: integer rounding need not be symmetric. */
+static int direct_separation(
+	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
+{
+	const struct v92_cpd_constellation *points = &cpd->constellation[0];
+	int previous = 0, minimum = INT16_MAX;
+
+	for (int eta = -(int)points->count; eta < points->count; ++eta) {
+		int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+			points->positive_linear[eta];
+		int32_t v = round_shift_s64_to_s32_saturating(
+			(int64_t)u * INT16_MAX, 15u);
+		int32_t scaled = round_shift_s64_to_s32_saturating(
+			(int64_t)v * cpd->four_times_gain_q0_16 * lu, 18u);
+		int sample;
+
+		if (scaled <= INT16_MIN || scaled >= INT16_MAX)
+			return 0;
+		sample = law == G711_LAW_PCMA ?
+			g711_decode_pcma(g711_encode_pcma((int16_t)scaled)) :
+			g711_decode_pcmu(g711_encode_pcmu((int16_t)scaled));
+		if (eta != -(int)points->count && sample - previous < minimum)
+			minimum = sample - previous;
+		previous = sample;
+	}
+	return minimum;
+}
+
+enum v92_cpd_result v92_cpd_direct_select(
+	struct v92_cpd_parameters *parameters, enum g711_law law,
+	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
+{
+	struct v92_cpd_parameters candidate, best;
+	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
+	unsigned int count;
+	int best_separation = 0;
+
+	if (parameters == NULL)
+		return V92_CPD_INVALID_ARGUMENT;
+	if (upstream_level <= 0 ||
+	    v92_cpd_direct_init(&candidate, law, data_rate_number, extend_e2u) != V92_CPD_OK)
+		return V92_CPD_INVALID_PARAMETERS;
+	/* The identity precoder always selects the inner representatives. At
+	 * 40k its outer 32 positive points are unreachable; do not let unused
+	 * points constrain placement or add competing receive branches. */
+	if (data_rate_number == V92_CPD_DIRECT_40K_RATE_NUMBER) {
+		candidate.constellation[0].count = 32u;
+		memset(candidate.constellation[0].positive_linear + 32u, 0,
+			(V92_CPD_MAX_CONSTELLATION_POINTS - 32u) * sizeof(int16_t));
+	}
+	if (direct_separation(&candidate, law, upstream_level) > 0) {
+		*parameters = candidate;
+		return V92_CPD_OK;
+	}
+	if (!b1u_frequencies(&candidate, law, frequencies))
+		return V92_CPD_INVALID_PARAMETERS;
+	/* V.92 Table 30 permits arbitrary positive linear points. Search a
+	 * bounded set of contiguous G.711 windows, including quarter-code
+	 * offsets; renormalize the actual B1u waveform for each candidate.
+	 * This is a direct-channel selector, not a filtered-channel designer.
+	 * If no injective map exists in this family, let policy try a lower rate. */
+	count = candidate.constellation[0].count;
+	for (unsigned int slot = law == G711_LAW_PCMU ? 4u : 0u;
+	     slot / 4u + count <= 128u; ++slot) {
+		unsigned int start = slot / 4u, fraction = slot % 4u;
+		int separation;
+
+		if (fraction != 0u && start + count == 128u)
+			continue;
+		for (unsigned int point = 0u; point < count; ++point) {
+			int16_t low, high;
+
+			if (!g711_ucode_sample(law, (uint8_t)(start + point), true, &low))
+				return V92_CPD_INVALID_PARAMETERS;
+			if (fraction != 0u) {
+				if (!g711_ucode_sample(law, (uint8_t)(start + point + 1u), true, &high))
+					return V92_CPD_INVALID_PARAMETERS;
+				low += (int16_t)((high - low) * fraction / 4u);
+			}
+			candidate.constellation[0].positive_linear[point] = low;
+		}
+		if (!normalize_gain(&candidate, frequencies))
+			return V92_CPD_INVALID_PARAMETERS;
+		separation = direct_separation(&candidate, law, upstream_level);
+		if (separation > best_separation) {
+			best_separation = separation;
+			best = candidate;
+		}
+	}
+	if (best_separation == 0)
+		return V92_CPD_INVALID_PARAMETERS;
+	*parameters = best;
 	return V92_CPD_OK;
 }

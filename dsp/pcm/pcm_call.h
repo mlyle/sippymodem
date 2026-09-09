@@ -126,7 +126,7 @@ struct pcm_call_v92_digital_phase4_configuration {
 		 * or filters when the peer cannot transmit its selected rate. */
 		struct v92_cpd_parameters cpd;
 		/* Construct the complete direct mapping after Ja, selecting the
-		 * highest peer-enabled rate at or below this local maximum. Retain
+		 * highest usable peer-enabled rate at or below this local maximum. Retain
 		 * this policy across retrains rather than pinning the first rate. */
 		uint8_t direct_maximum_data_rate_number;
 	};
