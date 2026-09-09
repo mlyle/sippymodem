@@ -52,6 +52,20 @@ bool v92_upstream_data_rx_is_valid(
 
 		if (line->adaptation != 0.0 ||
 		    !memory_region_is_zero(&line->equalizer, sizeof(line->equalizer)) ||
+		    !isfinite(line->calibration.gain) ||
+		    !isfinite(line->calibration.minimum) ||
+		    !isfinite(line->calibration.maximum) ||
+		    line->calibration.minimum < 1.0 / 32768.0 ||
+		    line->calibration.maximum > 32768.0 ||
+		    line->calibration.minimum > line->plan.gain ||
+		    line->calibration.maximum < line->plan.gain ||
+		    line->calibration.gain < line->calibration.minimum ||
+		    line->calibration.gain > line->calibration.maximum ||
+		    !isfinite(line->calibration.correlation) ||
+		    !isfinite(line->calibration.energy) ||
+		    line->calibration.energy < 0.0 ||
+		    (line->received_frames == 0u &&
+		     (line->calibration.correlation != 0.0 || line->calibration.energy != 0.0)) ||
 		    line->delay_remaining > line->plan.delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
 		    (line->delay_remaining != 0u && (line->received_frames != 0u || line->symbol_count != 0u)))
 			return false;
@@ -61,7 +75,8 @@ bool v92_upstream_data_rx_is_valid(
 				return false;
 		return true;
 	}
-	if (!qam_equalizer_is_handoff_ready(&receiver->line.equalizer) ||
+	if (!memory_region_is_zero(&receiver->line.calibration, sizeof(receiver->line.calibration)) ||
+	    !qam_equalizer_is_handoff_ready(&receiver->line.equalizer) ||
 	    receiver->line.equalizer.tap_count != V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS ||
 	    receiver->line.equalizer.decision_delay != V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
 	    !qam_adaptation_is_valid(receiver->line.adaptation) || receiver->line.delay_remaining != 0u)
@@ -116,6 +131,13 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		.polarity = handoff->line.polarity,
 	};
 	if (plan->observation == V92_PCM_FRAME_CONSTELLATION) {
+		int16_t lu = handoff->line.demodulator.lu;
+
+		initialized.line.calibration.gain = plan->gain;
+		initialized.line.calibration.minimum = fmax(1.0 / 32768.0,
+			plan->gain * lu / level_bound(mapping->law, lu, true));
+		initialized.line.calibration.maximum = fmin(32768.0,
+			plan->gain * lu / level_bound(mapping->law, lu, false));
 		initialized.line.delay_remaining = plan->delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 		if (v92_pcm_frame_rx_init_constellation(&initialized.decoder, mapping) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
@@ -186,6 +208,23 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+	if (b1u && raw) {
+		/* TRN2u's sparse, quantized levels leave a small scalar uncertainty
+		 * in the inverse. Fit only known B1u coordinates, and never outside
+		 * the original training cell: quiet/noisy input must not be scaled
+		 * into apparently valid training. Unknown payload cannot update it. */
+		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			double sample = line->raw[symbol];
+
+			line->calibration.correlation += sample * decision.predicted_samples[symbol];
+			line->calibration.energy += sample * sample;
+		}
+		if (!isfinite(line->calibration.correlation) || !isfinite(line->calibration.energy))
+			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+		if (line->calibration.energy > 0.0 && line->calibration.correlation > 0.0)
+			line->calibration.gain = fmax(line->calibration.minimum,
+				fmin(line->calibration.maximum, line->calibration.correlation / line->calibration.energy));
+	}
 	/* LU came from a quantized training waveform. A tiny level error can
 	 * put a dense CPd point on the opposite side of a much wider G.711 cell.
 	 * Fit the known B1u waveform inside that initial uncertainty, not by
@@ -209,7 +248,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 			 * point; ordinary companding error is not line distortion.
 			 * Keep decoder observations in recovered u coordinates. */
 			int16_t predicted = quantize(decoder.mapping.law, rounded_sample(
-				line->polarity * target.in_phase / line->plan.gain));
+				line->polarity * target.in_phase / line->calibration.gain));
 			double error = line->raw[symbol] - line->polarity * (double)predicted;
 
 			generated.squared_error += error * error;
@@ -279,7 +318,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
 		next.raw[next.symbol_count] = (int32_t)next.polarity * sample;
-		next.samples[next.symbol_count] = rounded_sample(next.raw[next.symbol_count] * next.plan.gain);
+		next.samples[next.symbol_count] = rounded_sample(next.raw[next.symbol_count] * next.calibration.gain);
 		if (++next.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, &next, frame);
 		receiver->line = next;

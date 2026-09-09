@@ -27,6 +27,12 @@ struct v92_upstream_data_line {
 		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	};
 	struct v92_upstream_plan plan;
+	/* Raw-coordinate calibration from known B1u only. Bounds come from
+	 * the training LU cell; the CPd's nominal receive plan stays intact. */
+	struct {
+		double gain, minimum, maximum;
+		double correlation, energy;
+	} calibration;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t input_samples;
 	uint64_t received_frames;
@@ -64,8 +70,9 @@ struct v92_upstream_data_frame {
  * A constellation-coordinate plan instead retains polarity and the measured
  * gain, skips only the delay not already consumed by E2u detection, and
  * decodes raw line samples without another FIR or G.711 quantization. The
- * nominal gain remains fixed through data/control. A zero-initialized plan
- * selects the equalized filter-output path described above.
+ * gain is refined within training LU uncertainty during B1u, then remains
+ * fixed through data/control. A zero-initialized plan selects the equalized
+ * filter-output path described above.
  * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,
