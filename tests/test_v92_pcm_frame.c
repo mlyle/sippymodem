@@ -191,32 +191,33 @@ static bool test_rate_matrix_and_reset(void)
 	return true;
 }
 
-static bool test_filters(void)
+static bool test_filter_history(int32_t prior_u, int32_t prior_x, int32_t prior_v,
+	int16_t precoder_feedback, int16_t prefilter_feedback)
 {
 	struct v92_cpd_parameters cpd = parameters(4u);
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_pcm_frame frame;
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
-	int32_t prior_u = 0;
-	int32_t prior_x = 0;
-	int32_t prior_v = 0;
 
 	memset(cpd.filter, 0, sizeof(cpd.filter));
 	cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count = 1u;
 	cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].coefficient[0] = 16384;
 	cpd.filter[V92_CPD_PRECODER_FEEDBACK].count = 1u;
-	cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0] = -4096;
+	cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0] = precoder_feedback;
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 2u;
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[0] = 24576;
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[1] = 8192;
 	cpd.filter[V92_CPD_PREFILTER_FEEDBACK].count = 1u;
-	cpd.filter[V92_CPD_PREFILTER_FEEDBACK].coefficient[0] = 4096;
+	cpd.filter[V92_CPD_PREFILTER_FEEDBACK].coefficient[0] = prefilter_feedback;
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) ==
 		      V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) ==
 		      V92_PCM_FRAME_OK,
 	      "filtered mapping did not initialize");
+	transmitter.state.filter.history[0] = prior_u;
+	transmitter.state.filter.history[1] = prior_x;
+	transmitter.state.filter.history[2] = prior_v;
 	generated_bits(bits, mapping.data_bits_per_frame, 917u);
 	CHECK(v92_pcm_frame_encode(
 		      &transmitter, bits, mapping.data_bits_per_frame,
@@ -226,12 +227,12 @@ static bool test_filters(void)
 	     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int32_t x = round_shift_s64_to_s32_saturating(
 			(int64_t)frame.u[symbol] * 32768 +
-			(int64_t)prior_u * 16384 -
-			(int64_t)prior_x * 8192,
+			(int64_t)prior_u * 16384 +
+			(int64_t)prior_x * precoder_feedback * 2,
 			15u);
 		int32_t v = round_shift_s64_to_s32_saturating(
 			(int64_t)x * 24576 + (int64_t)prior_x * 8192 +
-			(int64_t)prior_v * 8192,
+			(int64_t)prior_v * prefilter_feedback * 2,
 			15u);
 
 		CHECK(frame.x[symbol] == x && frame.v[symbol] == v,
@@ -241,6 +242,20 @@ static bool test_filters(void)
 		prior_v = v;
 	}
 	return true;
+}
+
+static bool test_filters(void)
+{
+	/* The history contribution must not be rounded or saturated before
+	 * adding the current point: exercise half ties of either sign and
+	 * cancellation near both signed limits, not just a zero history. */
+	return test_filter_history(0, 0, 0, -4096, 4096) &&
+		test_filter_history(1, 0, 0, -4096, 4096) &&
+		test_filter_history(-1, 0, 0, -4096, 4096) &&
+		test_filter_history(4, INT32_MAX, 0, 16384, 4096) &&
+		test_filter_history(-4, INT32_MIN, 0, 16384, 4096) &&
+		test_filter_history(0, 0, INT32_MAX, -4096, 16384) &&
+		test_filter_history(0, 0, INT32_MIN, -4096, 16384);
 }
 
 static bool test_level_refinement(void)

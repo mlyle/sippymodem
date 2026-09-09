@@ -203,9 +203,9 @@ static bool equivalence_digit(
 	return true;
 }
 
-static int32_t precoder_output(
+static int64_t precoder_history(
 	const struct v92_pcm_mapping *mapping,
-	const struct v92_pcm_frame_filter_state *filter, int32_t u)
+	const struct v92_pcm_frame_filter_state *filter)
 {
 	const struct v92_cpd_filter *feed_forward =
 		&mapping->cpd.filter[V92_CPD_PRECODER_FEED_FORWARD];
@@ -213,7 +213,7 @@ static int32_t precoder_output(
 		&mapping->cpd.filter[V92_CPD_PRECODER_FEEDBACK];
 	const int32_t *u_values = u_history(filter);
 	const int32_t *x_values = x_history(mapping, filter);
-	int64_t accumulator = (int64_t)u * INT64_C(32768);
+	int64_t accumulator = 0;
 
 	for (size_t tap = 0u; tap < feed_forward->count; ++tap)
 		accumulator += (int64_t)u_values[tap] *
@@ -221,12 +221,12 @@ static int32_t precoder_output(
 	for (size_t tap = 0u; tap < feedback->count; ++tap)
 		accumulator += (int64_t)x_values[tap] *
 			       feedback->coefficient[tap] * 2;
-	return round_shift_s64_to_s32_saturating(accumulator, 15u);
+	return accumulator;
 }
 
-static int32_t prefilter_output(
+static int64_t prefilter_history(
 	const struct v92_pcm_mapping *mapping,
-	const struct v92_pcm_frame_filter_state *filter, int32_t x)
+	const struct v92_pcm_frame_filter_state *filter)
 {
 	const struct v92_cpd_filter *feed_forward =
 		&mapping->cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD];
@@ -236,16 +236,37 @@ static int32_t prefilter_output(
 	const int32_t *v_values = v_history(mapping, filter);
 	int64_t accumulator = 0;
 
-	if (feed_forward->count == 0u && feedback->count == 0u)
-		return x;
-	if (feed_forward->count != 0u)
-		accumulator += (int64_t)x * feed_forward->coefficient[0];
 	for (size_t tap = 1u; tap < feed_forward->count; ++tap)
 		accumulator += (int64_t)x_values[tap - 1u] *
 			       feed_forward->coefficient[tap];
 	for (size_t tap = 0u; tap < feedback->count; ++tap)
 		accumulator += (int64_t)v_values[tap] *
 			       feedback->coefficient[tap] * 2;
+	return accumulator;
+}
+
+/* A path's past inputs are fixed across candidate points. Retain the full
+ * accumulator: rounding the history first would change half-way cases when
+ * the current input changes its sign, and can lose cancellation at clipping. */
+static int32_t precoder_output(int64_t history, int32_t u)
+{
+	return round_shift_s64_to_s32_saturating(
+		history + (int64_t)u * INT64_C(32768), 15u);
+}
+
+static int32_t prefilter_output(
+	const struct v92_pcm_mapping *mapping, int64_t history, int32_t x)
+{
+	const struct v92_cpd_filter *feed_forward =
+		&mapping->cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD];
+	const struct v92_cpd_filter *feedback =
+		&mapping->cpd.filter[V92_CPD_PREFILTER_FEEDBACK];
+
+	if (feed_forward->count == 0u && feedback->count == 0u)
+		return x;
+	int64_t accumulator = history;
+	if (feed_forward->count != 0u)
+		accumulator += (int64_t)x * feed_forward->coefficient[0];
 	return round_shift_s64_to_s32_saturating(accumulator, 15u);
 }
 
@@ -274,8 +295,8 @@ static void filter_step(
 	int32_t *x_values = u_values + z1->count;
 	int32_t *v_values = x_values + x_count;
 
-	*x = precoder_output(mapping, filter, u);
-	*v = prefilter_output(mapping, filter, *x);
+	*x = precoder_output(precoder_history(mapping, filter), u);
+	*v = prefilter_output(mapping, prefilter_history(mapping, filter), *x);
 	push_history(u_values, z1->count, u);
 	push_history(x_values, x_count, *x);
 	push_history(v_values, p2->count, *v);
@@ -293,6 +314,7 @@ static bool select_point(
 	int16_t best_eta = 0;
 	int16_t best_u = 0;
 	bool found = false;
+	int64_t history = precoder_history(mapping, filter);
 	uint8_t constellation_index =
 		mapping->cpd.frame_constellation[
 			symbol % V92_PCM_MAPPING_PHASES];
@@ -316,7 +338,7 @@ static bool select_point(
 			continue;
 		positive = constellation->positive_linear[ordinal];
 		u = eta >= 0 ? positive : (int16_t)-positive;
-		x = precoder_output(mapping, filter, u);
+		x = precoder_output(history, u);
 		score = x < 0 ? -(int64_t)x : (int64_t)x;
 		if (!found || score < best_score) {
 			found = true;
@@ -894,6 +916,12 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 
 		for (size_t path = 0u; path < path_count; ++path) {
 			uint8_t y0;
+			int64_t precoder = 0, prefilter = 0;
+
+			if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
+				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
+				prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
+			}
 
 			if (v34_convolutional_encoder_output(
 					&paths[path].state.trellis, &y0) !=
@@ -914,10 +942,9 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 				int32_t v = 0;
 
 				if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
-					int32_t x = precoder_output(&receiver->mapping,
-						&paths[path].state.filter, u);
+					int32_t x = precoder_output(precoder, u);
 
-					v = prefilter_output(&receiver->mapping, &paths[path].state.filter, x);
+					v = prefilter_output(&receiver->mapping, prefilter, x);
 				}
 
 				error = (int64_t)samples[symbol] -
