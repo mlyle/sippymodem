@@ -430,11 +430,23 @@ static bool control_event_rearms_trial(
 		return event->record.cpu.frame_result == V92_CPU_OK &&
 		       retain_matching_cpu(
 			       &state->cpu, &event->record.cpu.parameters);
+	case V92_CONTROL_EVENT_CPUS: {
+		/* A non-initial exchange can still be repeating its short CPu
+		 * while the independent downstream acknowledgement drains. Only
+		 * the already selected rate and a monotonic acknowledgement are
+		 * repeats; do not reopen negotiation after committing to E2u. */
+		if (!state->control.signal.line.renegotiation ||
+		    event->record.cpus.frame_result != V92_CPU_OK)
+			return false;
+		struct v92_cpu_parameters cpu = state->cpu;
+		cpu.data_rate_number = event->record.cpus.parameters.data_rate_number;
+		cpu.acknowledges_cpd = event->record.cpus.parameters.acknowledges_cpd;
+		return retain_matching_cpu(&state->cpu, &cpu);
+	}
 	case V92_CONTROL_EVENT_SUVU_REJECTED:
 	case V92_CONTROL_EVENT_CPU_REJECTED:
 	case V92_CONTROL_EVENT_CPUS_REJECTED:
 		return true;
-	case V92_CONTROL_EVENT_CPUS:
 	case V92_CONTROL_EVENT_NONE:
 	case V92_CONTROL_EVENT_SUVD:
 	case V92_CONTROL_EVENT_CPD:

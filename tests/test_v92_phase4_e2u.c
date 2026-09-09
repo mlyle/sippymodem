@@ -279,7 +279,8 @@ struct digital_fixture {
 };
 
 static bool prepare_digital_fixture(
-	enum g711_law law, bool extended, struct digital_fixture *fixture)
+	enum g711_law law, bool extended, bool renegotiation,
+	struct digital_fixture *fixture)
 {
 	struct v92_cpd_parameters full_cpd;
 	struct v92_cpd_base_parameters cpd;
@@ -305,6 +306,7 @@ static bool prepare_digital_fixture(
 	    !upstream_line(law, &control, &upstream_rx))
 		return false;
 	fixture->transmit = control.modulator;
+	upstream_rx.signal.line.renegotiation = renegotiation;
 	handoff = (struct v92_phase4_digital_handoff){
 		.receive = upstream_rx,
 		.cpu = fixture->cpu,
@@ -437,8 +439,28 @@ static bool feed_control_record(
 	return !v92_phase4_e2u_is_complete(owner);
 }
 
+static bool start_cpus_record(
+	struct v92_phase4_record_tx *record,
+	const struct v92_phase4_modulator *transmit,
+	const struct v92_cpu_parameters *cpu)
+{
+	const struct v92_cpus_parameters parameters = {
+		.data_rate_number = cpu->data_rate_number,
+		.acknowledges_cpd = cpu->acknowledges_cpd,
+	};
+	uint8_t frame[V92_CPUS_MAX_FRAME_BYTES];
+	size_t bits;
+
+	return v92_cpus_encode(&parameters,
+		v92_phase4_modulator_bits_per_symbol(transmit->constellation) * V92_CPU_SYMBOLS_PER_FRAME,
+		frame, sizeof(frame), &bits) == V92_CPU_OK &&
+		v92_phase4_record_tx_init(record, transmit, frame, sizeof(frame), bits) ==
+			V92_PHASE4_RECORD_TX_OK;
+}
+
 static bool run_rearmed_crossing(
-	enum g711_law law, bool extended, unsigned int extra_records)
+	enum g711_law law, bool extended, unsigned int extra_records,
+	bool renegotiation)
 {
 	struct digital_fixture fixture;
 	struct v92_phase4_record_tx control;
@@ -448,7 +470,7 @@ static bool run_rearmed_crossing(
 				    V92_PHASE4_E2U_SYMBOLS;
 
 	CHECK(extra_records != 0u &&
-	      prepare_digital_fixture(law, extended, &fixture),
+	      prepare_digital_fixture(law, extended, renegotiation, &fixture),
 	      "law %u extra %u digital fixture did not initialize",
 	      (unsigned int)law, extra_records);
 	struct v92_upstream_plan plan = fixture.owner.state.digital.upstream_plan;
@@ -458,7 +480,8 @@ static bool run_rearmed_crossing(
 	for (unsigned int record_index = 0u;
 	     record_index < extra_records; ++record_index) {
 		bool cpu_record = extra_records > 1u && record_index == 1u;
-		bool started = cpu_record ?
+		bool started = renegotiation ?
+			start_cpus_record(&control, &fixture.transmit, &fixture.cpu) : cpu_record ?
 			start_cpu_record(
 				&control, &fixture.transmit, &fixture.cpu,
 				record_index == 0u) :
@@ -507,21 +530,33 @@ static bool run_rearmed_crossing(
 	return true;
 }
 
-static bool run_changed_cpu_rejection(enum g711_law law)
+enum rejected_control {
+	CHANGED_CPU_SHAPING,
+	INITIAL_CPUS,
+	CHANGED_CPUS_RATE,
+	CPUS_ACK_ROLLBACK,
+};
+
+static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 {
 	struct digital_fixture fixture;
 	struct v92_phase4_record_tx record;
 	struct v92_cpu_parameters changed;
 	bool rejected = false;
 
-	CHECK(prepare_digital_fixture(law, false, &fixture),
-	      "law %u changed-CPu fixture did not initialize",
-	      (unsigned int)law);
+	CHECK(prepare_digital_fixture(law, false, kind >= CHANGED_CPUS_RATE, &fixture),
+	      "law %u rejected-control fixture did not initialize", (unsigned int)law);
 	changed = fixture.cpu;
-	changed.shaping_a1_q1_6++;
-	CHECK(start_cpu_record(
-		      &record, &fixture.transmit, &changed, true),
-	      "law %u changed CPu did not start", (unsigned int)law);
+	if (kind == CHANGED_CPU_SHAPING)
+		changed.shaping_a1_q1_6++;
+	else if (kind == CHANGED_CPUS_RATE)
+		changed.data_rate_number++;
+	else if (kind == CPUS_ACK_ROLLBACK)
+		changed.acknowledges_cpd = false;
+	CHECK(kind == CHANGED_CPU_SHAPING ?
+	      start_cpu_record(&record, &fixture.transmit, &changed, true) :
+	      start_cpus_record(&record, &fixture.transmit, &changed),
+	      "law %u rejected control %u did not start", (unsigned int)law, kind);
 	while (!v92_phase4_record_tx_is_complete(&record)) {
 		struct v92_phase4_e2u before = fixture.owner;
 		int16_t raw;
@@ -530,7 +565,7 @@ static bool run_changed_cpu_rejection(enum g711_law law)
 
 		CHECK(v92_phase4_record_tx_next(&record, &raw) ==
 			      V92_PHASE4_RECORD_TX_OK,
-		      "law %u changed CPu generator stopped",
+		      "law %u rejected-control generator stopped",
 		      (unsigned int)law);
 		result = v92_phase4_e2u_next(
 			&fixture.owner, 0u, quantize(law, raw), &octet);
@@ -539,17 +574,17 @@ static bool run_changed_cpu_rejection(enum g711_law law)
 			CHECK(octet == 0xa5 && fixture.owner.failed &&
 			      memcmp(&fixture.owner.state, &before.state,
 			             sizeof(before.state)) == 0,
-			      "law %u changed CPu failure was not transactional",
+			      "law %u control rejection was not transactional",
 			      (unsigned int)law);
 			break;
 		}
 		CHECK(result == V92_PHASE4_E2U_OK,
-		      "law %u changed CPu stopped early: %s",
+		      "law %u rejected control stopped early: %s",
 		      (unsigned int)law, v92_phase4_e2u_result_name(result));
 	}
 	CHECK(rejected,
-	      "law %u changed CPu selection was accepted",
-	      (unsigned int)law);
+	      "law %u invalid control %u was accepted",
+	      (unsigned int)law, kind);
 	return true;
 }
 
@@ -909,11 +944,15 @@ int main(void)
 		    !run_crossing((enum g711_law)law, false, true, false, SUVU_TAIL) ||
 		    !run_crossing((enum g711_law)law, true, true, false, CPU_TAIL) ||
 		    !run_rearmed_crossing(
-			    (enum g711_law)law, false, 1u) ||
+			    (enum g711_law)law, false, 1u, false) ||
 		    !run_rearmed_crossing(
-			    (enum g711_law)law, true, 3u) ||
-		    !run_changed_cpu_rejection((enum g711_law)law))
+			    (enum g711_law)law, true, 3u, false) ||
+		    !run_rearmed_crossing((enum g711_law)law, false, 3u, true) ||
+		    !run_rearmed_crossing((enum g711_law)law, true, 3u, true))
 			return 1;
+		for (enum rejected_control kind = CHANGED_CPU_SHAPING; kind <= CPUS_ACK_ROLLBACK; ++kind)
+			if (!run_control_rejection((enum g711_law)law, kind))
+				return 1;
 	}
 	return test_contracts() ? 0 : 1;
 }
