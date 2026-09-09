@@ -50,7 +50,7 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 	uint32_t random = 0x35791bdu;
 	uint64_t energy = 0u;
 	int16_t previous = 0;
-	unsigned payload_frames = rate == 19u ? PAYLOAD_FRAMES : 120u;
+	unsigned payload_frames = rate == 16u || rate == 19u ? PAYLOAD_FRAMES : 120u;
 	unsigned frames = V92_B1U_FRAMES + payload_frames + V92_PCM_RX_DELAY_FRAMES;
 
 	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
@@ -82,6 +82,20 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 			set->positive_linear[31] == 3922 && set->positive_linear[47] == 10926 &&
 			set->positive_linear[63] == 30000, "dense channel spacing changed");
 		original.constellation[0] = *set;
+		if (rate == 16u) {
+			__uint128_t capacity = 1u, smaller = 1u;
+
+			for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+				unsigned modulus = symbol % 4u == 3u ? 27u : 54u;
+
+				CHECK(cpd.modulus[symbol] == modulus, "44k intervals were not balanced");
+				original.modulus[symbol] = (uint8_t)modulus;
+				capacity *= modulus;
+				smaller *= symbol % 4u == 3u ? 26u : 52u;
+			}
+			CHECK(capacity >= ((__uint128_t)1u << 66) && smaller < ((__uint128_t)1u << 66),
+				"44k allocation is not the smallest even, uniform signed alphabet");
+		}
 	} else if (original.constellation[0].count == 32u || original.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < original.constellation[0].count; ++point)
 			CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
@@ -122,6 +136,9 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 				energy += (uint64_t)((int64_t)encoded.v[symbol] * encoded.v[symbol]);
 			CHECK(v92_pcm_frame_scale(&mapping, LEVEL, encoded.v[symbol], &transmitted) ==
 				V92_PCM_FRAME_OK, "frame %u scale failed", frame);
+			CHECK(transmitted != INT16_MIN && transmitted != INT16_MAX,
+				"transmit clipped: law=%u rate=%u H=(%g,%g) frame=%u symbol=%u",
+				law, rate, main, post, frame, symbol);
 			line[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] =
 				quantize(law, main * transmitted + post * previous);
 			previous = transmitted;
@@ -152,6 +169,9 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		CHECK(v92_pcm_frame_decode(&receiver, observed, frame < V92_B1U_FRAMES, bits,
 			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
 			"frame %u decode failed", frame);
+		if (decision.bits_ready && frame < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+			for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit)
+				CHECK(bits[bit] == 1u, "B1u failed: law=%u rate=%u frame=%u", law, rate, frame);
 		if (frame >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			CHECK(decision.bits_ready && !decision.ambiguous &&
 				memcmp(bits, payload[frame - V92_PCM_RX_DELAY_FRAMES], mapping.data_bits_per_frame) == 0,
@@ -292,6 +312,14 @@ int main(void)
 		 * including wire CPd, B1u normalization and delayed bit delivery. */
 		if (!test_channel((enum g711_law)law, 0.9, 0.1, 19u) ||
 		    !test_channel((enum g711_law)law, 0.55, 0.43, 19u))
+			return 1;
+		/* The old 44k map clipped 95 samples in the unity-channel fixture;
+		 * A-law B1u still passed, but the subsequent payload was corrupt.
+		 * Also exercise real memory with small, strong and negative echoes. */
+		if (!test_channel((enum g711_law)law, 1.0, 0.0, 16u) ||
+		    !test_channel((enum g711_law)law, 0.98, 0.02, 16u) ||
+		    !test_channel((enum g711_law)law, 0.55, 0.43, 16u) ||
+		    !test_channel((enum g711_law)law, 0.8, -0.25, 16u))
 			return 1;
 	}
 	return 0;
