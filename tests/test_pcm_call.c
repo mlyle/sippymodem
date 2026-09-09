@@ -5791,6 +5791,12 @@ static bool run_v92_duplex_data(
 			      "V.92 distorted channel did not receive compensating CPd");
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
+			if (expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u)
+				expected.constellation[0].count = 64u;
+			if (expected.constellation[0].count == 32u || expected.constellation[0].count == 64u)
+				for (unsigned point = 0; point < expected.constellation[0].count; ++point)
+					CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
+						&expected.constellation[0].positive_linear[point]), "expected spacing failed");
 		}
 		/* CPd-prime repeats the same selection with CPu acknowledged. The
 		 * acknowledgement may now be in CPd rather than a later SUVd. */
@@ -5850,6 +5856,15 @@ static bool test_v92_upstream_negotiation(void)
 		for (size_t index = 0u; index < ARRAY_LENGTH(offers); ++index)
 			CHECK(run_v92_duplex_data(law, 3u, false, &offers[index]),
 			      "V.92 upstream selection law %u case %zu failed", law, index);
+	/* Exercise the 32-state channel-compensated constellation through the
+	 * complete CPd/B1u/data handoff, including gain after tandem quantization.
+	 * This fixture is not yet error-free at 40k with the A-law quantizer. */
+	const struct v92_upstream_offer compensated = {
+		UINT32_C(1) << 12u, 19u, 13u, 0.10, 0.75,
+	};
+
+	CHECK(run_v92_duplex_data(G711_LAW_PCMU, 3u, false, &compensated),
+	      "V.92 compensated 40k call failed");
 	return true;
 }
 

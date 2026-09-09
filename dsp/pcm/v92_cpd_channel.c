@@ -182,6 +182,19 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 			return false;
 		next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap] = (int16_t)value;
 	}
+	/* The direct 32-state selection omits outer representatives that an
+	 * identity precoder cannot reach. Restore them for precoder feedback. */
+	if (next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u)
+		next.constellation[0].count = 64u;
+	/* A dense direct-channel window is not preserved by the new filters
+	 * and gain. Use alternating compander levels for these larger families
+	 * before normalizing the actual channel-compensated B1u waveform. */
+	if (next.constellation[0].count == 32u || next.constellation[0].count == 64u) {
+		for (unsigned point = 0; point < next.constellation[0].count; ++point)
+			if (!g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,
+				    &next.constellation[0].positive_linear[point]))
+				return false;
+	}
 	if (!normalize_gain(&next, law))
 		return false;
 	aligned.gain = 32768.0 * 262144.0 / (z2_scale * next.four_times_gain_q0_16 * upstream_level);
