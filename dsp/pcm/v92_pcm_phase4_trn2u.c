@@ -29,16 +29,6 @@ enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_init(
 	return V92_PCM_PHASE4_TRN2U_OK;
 }
 
-bool v92_pcm_phase4_trn2u_can_handoff(
-	const struct v92_pcm_phase4_trn2u *trn2u, bool received_suvd)
-{
-	return v92_pcm_phase4_trn2u_is_valid(trn2u) &&
-	       trn2u->emitted_symbols != 0u &&
-	       trn2u->emitted_symbols % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
-	       (received_suvd || trn2u->emitted_symbols >=
-		       V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS);
-}
-
 enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_next(
 	struct v92_pcm_phase4_trn2u *trn2u, int16_t *sample)
 {

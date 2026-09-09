@@ -34,11 +34,6 @@ enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_init(
 	uint8_t previous_encoded_sign, int16_t lu);
 bool v92_pcm_phase4_trn2u_is_valid(
 	const struct v92_pcm_phase4_trn2u *trn2u);
-/* Initial TRN2u may end at a 12-symbol boundary after either 12000 symbols
- * or receipt of a complete SUVd. At least one aligned group is required so a
- * caller cannot manufacture a zero-length training epoch. */
-bool v92_pcm_phase4_trn2u_can_handoff(
-	const struct v92_pcm_phase4_trn2u *trn2u, bool received_suvd);
 
 /* Consume scrambled binary ones in transmission order. Rejected calls leave
  * both the generator and sample unchanged. */

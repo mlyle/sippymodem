@@ -91,6 +91,27 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
 	return V92_PHASE4_ANALOG_TX_OK;
 }
 
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init_after_ru(
+	struct v92_phase4_analog_tx *tx,
+	enum v92_constellation_size constellation, int16_t lu,
+	const struct v92_suvu_parameters *suvu,
+	const struct v92_cpu_parameters *cpu)
+{
+	struct v92_phase4_analog_tx initialized;
+	struct v92_cpu_parameters selected;
+	if (tx == NULL || cpu == NULL)
+		return V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT;
+	selected = *cpu;
+	selected.acknowledges_cpd = false;
+	enum v92_phase4_analog_tx_result result = v92_phase4_analog_tx_init(
+		&initialized, constellation, 0u, lu, suvu, &selected);
+	if (result != V92_PHASE4_ANALOG_TX_OK)
+		return result;
+	initialized.renegotiation = true;
+	*tx = initialized;
+	return V92_PHASE4_ANALOG_TX_OK;
+}
+
 bool v92_phase4_analog_tx_can_handoff(const struct v92_phase4_analog_tx *tx)
 {
 	return v92_phase4_analog_tx_is_valid(tx) &&
@@ -274,6 +295,17 @@ static bool record_completed(struct v92_phase4_analog_tx *tx)
 	return true;
 }
 
+static bool trn2u_complete(const struct v92_phase4_analog_tx *tx)
+{
+	uint32_t count = tx->signal.trn2u.emitted_symbols;
+	/* V.92 9.6.2.1.1 and 9.8.2: use the earliest permitted local end,
+	 * or the next aligned boundary after receipt of SUVd. */
+	uint32_t minimum = tx->renegotiation ? 2400u :
+		V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS;
+	return count && count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
+		(tx->received_suvd || count >= minimum);
+}
+
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
 	struct v92_phase4_analog_tx *tx, int16_t *sample)
 {
@@ -291,8 +323,7 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_next(
 		return V92_PHASE4_ANALOG_TX_E2U_READY_RESULT;
 	next = *tx;
 	if (next.stage == V92_PHASE4_ANALOG_TX_TRN2U &&
-	    !v92_pcm_phase4_trn2u_can_handoff(
-		    &next.signal.trn2u, next.received_suvd)) {
+	    !trn2u_complete(&next)) {
 		if (v92_pcm_phase4_trn2u_next(
 			    &next.signal.trn2u, &generated) !=
 		    V92_PCM_PHASE4_TRN2U_OK)

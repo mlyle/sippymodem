@@ -188,6 +188,47 @@ static bool test_early_peer_sequence(void)
 	return true;
 }
 
+static bool test_training_boundaries(void)
+{
+	const unsigned peer_times[] = { 0u, 13u, 2399u, 12001u, UINT_MAX };
+	for (unsigned mode = 0; mode < 2u; ++mode)
+		for (unsigned points = 4u; points <= 8u; points += 4u)
+			for (unsigned which = 0; which < ARRAY_LENGTH(peer_times); ++which) {
+				struct v92_phase4_analog_tx tx;
+				struct v92_pcm_phase4_trn2u expected;
+				struct v92_cpu_parameters cpu = cpu_parameters();
+				struct v92_suvu_parameters suvu = suvu_parameters();
+				const struct v92_suvd_parameters suvd = { 0 };
+				cpu.acknowledges_cpd = mode != 0u;
+				enum v92_phase4_analog_tx_result result = mode ?
+					v92_phase4_analog_tx_init_after_ru(&tx, points, TEST_LU, &suvu, &cpu) :
+					v92_phase4_analog_tx_init(&tx, points, 1u, TEST_LU, &suvu, &cpu);
+				CHECK(result == V92_PHASE4_ANALOG_TX_OK && !tx.cpu.acknowledges_cpd &&
+				      !tx.received_cpd && !tx.peer_confirmation_received &&
+				      v92_pcm_phase4_trn2u_init(&expected, points, mode ? 0u : 1u, TEST_LU) ==
+					V92_PCM_PHASE4_TRN2U_OK, "training boundary did not initialize");
+				unsigned end = mode ? 2400u : 12000u;
+				if (peer_times[which] < end)
+					end = peer_times[which] ? (peer_times[which] + 11u) / 12u * 12u : 12u;
+				for (unsigned clock = 0; clock <= end; ++clock) {
+					int16_t sample, reference;
+					if (clock == peer_times[which])
+						CHECK(v92_phase4_analog_tx_note_suvd(&tx, &suvd) == V92_PHASE4_ANALOG_TX_OK,
+						      "early SUVd failed");
+					CHECK(v92_phase4_analog_tx_next(&tx, &sample) == V92_PHASE4_ANALOG_TX_OK,
+					      "training output failed");
+					if (clock < end)
+						CHECK(tx.stage == V92_PHASE4_ANALOG_TX_TRN2U &&
+						      v92_pcm_phase4_trn2u_next(&expected, &reference) == V92_PCM_PHASE4_TRN2U_OK &&
+						      sample == reference, "training timing/coding differed at %u", clock);
+					else
+						CHECK(tx.stage == V92_PHASE4_ANALOG_TX_SUVU &&
+						      current_suvu_acknowledges_cpd(&tx, false), "SUVu did not follow aligned training");
+				}
+			}
+	return true;
+}
+
 static bool test_timeout_and_retry(void)
 {
 	struct v92_phase4_analog_tx tx;
@@ -330,6 +371,15 @@ static bool test_contracts(void)
 	      memcmp(&tx, &before, sizeof(tx)) == 0,
 	      "caller-controlled CPu acknowledgment was accepted");
 	cpu.acknowledges_cpd = false;
+	CHECK(v92_phase4_analog_tx_init_after_ru(NULL, V92_CONSTELLATION_4_POINT, TEST_LU,
+		&suvu, &cpu) == V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT &&
+	      v92_phase4_analog_tx_init_after_ru(&tx, V92_CONSTELLATION_4_POINT, TEST_LU,
+		&suvu, NULL) == V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT &&
+	      v92_phase4_analog_tx_init_after_ru(&tx, V92_CONSTELLATION_4_POINT, TEST_LU,
+		NULL, &cpu) == V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT &&
+	      v92_phase4_analog_tx_init_after_ru(&tx, V92_CONSTELLATION_4_POINT, INT16_MAX,
+		&suvu, &cpu) == V92_PHASE4_ANALOG_TX_INVALID_PARAMETERS &&
+	      memcmp(&tx, &before, sizeof(tx)) == 0, "invalid rate entry changed its destination");
 	CHECK(v92_phase4_analog_tx_init(
 		      &tx, V92_CONSTELLATION_4_POINT, 0u, INT16_MAX,
 		      &suvu, &cpu) == V92_PHASE4_ANALOG_TX_INVALID_PARAMETERS &&
@@ -411,7 +461,7 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
-	if (!test_early_peer_sequence() || !test_timeout_and_retry() ||
+	if (!test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, false) ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, true) ||
 	    !test_pending_handoff(V92_CONSTELLATION_8_POINT, false) ||

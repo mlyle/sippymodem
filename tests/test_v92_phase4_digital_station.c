@@ -789,7 +789,25 @@ static bool base_cpd_equal(
 	       left->acknowledges_cpu == right->acknowledges_cpu;
 }
 
-static bool run_full_cpd_ownership(enum g711_law law)
+static struct v92_cpd_parameters omit_cpd_sections(struct v92_cpd_parameters parameters, unsigned omitted)
+{
+	if (omitted & 1u) {
+		parameters.modulus_present = false;
+		memset(parameters.modulus, 0, sizeof(parameters.modulus));
+	}
+	if (omitted & 2u) {
+		parameters.filters_present = false;
+		memset(parameters.filter, 0, sizeof(parameters.filter));
+	}
+	if (omitted & 4u) {
+		parameters.constellations_present = false;
+		memset(parameters.constellation, 0, sizeof(parameters.constellation));
+		memset(parameters.frame_constellation, 0, sizeof(parameters.frame_constellation));
+	}
+	return parameters;
+}
+
+static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 {
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
@@ -797,6 +815,7 @@ static bool run_full_cpd_ownership(enum g711_law law)
 	};
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
 	struct v92_cpd_parameters full;
+	struct v92_cpd_parameters wire;
 	struct v92_cpd_parameters expected;
 	struct v92_cpd_base_parameters compact = compact_cpd_parameters(law);
 	struct v92_phase3_analog_transmit_handoff handoff = {
@@ -825,13 +844,60 @@ static bool run_full_cpd_ownership(enum g711_law law)
 	      v92_phase4_analog_station_init(
 		      &station, &handoff, &downstream, &suvu, &cpu,
 		      NULL, NULL) == V92_PHASE4_ANALOG_STATION_OK &&
-	      full_cpd_source_init(&source, &training_mapping) &&
-	      v92_cpd_encode(
-		      &full, training_mapping.frame_bits, full_sequence,
-		      sizeof(full_sequence), &full_bits) == V92_CPD_OK &&
-	      push_full_cpd_training(&source, &station, &events),
+	      full_cpd_source_init(&source, &training_mapping),
 	      "full CPd fixture did not initialize for law %u",
 	      (unsigned int)law);
+	wire = full;
+	if (omitted) {
+		struct v92_cpd_parameters previous = full;
+		struct v92_pcm_mapping retained;
+		previous.data_rate_number--;
+		previous.acknowledges_cpu = cpu.acknowledges_cpd = true;
+		full.extend_e2u = compact.extend_e2u = false;
+		CHECK(v92_pcm_mapping_init(&retained, law, &previous) == V92_PCM_MAPPING_OK &&
+		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
+			TEST_LU, &downstream, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_OK &&
+		      !station.cpd_received && !station.transmit.received_cpd &&
+		      !station.transmit.cpu.acknowledges_cpd && !station.mapping.cpd.acknowledges_cpu &&
+		      !v92_phase4_analog_station_can_handoff(&station) &&
+		      station.mapping.cpd.data_rate_number == previous.data_rate_number,
+		      "rate reentry reused an acknowledgement or lost the prior mapping");
+		wire = omit_cpd_sections(full, omitted);
+		struct v92_phase4_analog_station before = station;
+		struct pcm_downstream_rx invalid = downstream;
+		invalid.protocol = PCM_PROTOCOL_V90;
+		CHECK(v92_phase4_analog_station_init_after_ru(NULL, V92_CONSTELLATION_4_POINT,
+			TEST_LU, &downstream, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
+			TEST_LU, &invalid, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
+		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
+			TEST_LU, &downstream, &cpu, NULL, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+		      memcmp(&station, &before, sizeof(station)) == 0, "invalid station reentry was not transactional");
+	}
+	CHECK(v92_cpd_encode(&wire, training_mapping.frame_bits, full_sequence,
+		      sizeof(full_sequence), &full_bits) == V92_CPD_OK &&
+	      push_full_cpd_training(&source, &station, &events), "CPd wire setup failed");
+	{
+		struct v92_phase4_analog_station rejected = station;
+		struct full_cpd_source rejected_source = source;
+		uint8_t invalid[V92_CPD_BASE_MAX_FRAME_BYTES];
+		size_t bits, ignored = 0u;
+		const struct v92_suvd_parameters silence = { .request_silence = true };
+		/* No prior mapping may be invented at initial training. Likewise,
+		 * an unsupported silence request must not falsely complete RRN. */
+		CHECK(omitted ?
+		      v92_suvd_encode(&silence, training_mapping.frame_bits, invalid, sizeof(invalid), &bits) == V92_SUVD_OK :
+		      v92_cpd_encode_base(&compact, training_mapping.frame_bits, invalid, sizeof(invalid), &bits) == V92_CPD_OK,
+		      "rejected control did not encode");
+		enum v92_phase4_analog_station_result result = V92_PHASE4_ANALOG_STATION_OK;
+		for (unsigned repeat = 0u; repeat < 3u && result == V92_PHASE4_ANALOG_STATION_OK; ++repeat)
+			result = push_full_cpd_sequence(&rejected_source, &rejected, invalid, bits, &ignored);
+		CHECK(result == V92_PHASE4_ANALOG_STATION_FAILED && rejected.failed &&
+		      !v92_phase4_analog_station_can_handoff(&rejected) &&
+		      memcmp(&rejected.mapping, &station.mapping, sizeof(station.mapping)) == 0 &&
+		      memcmp(&rejected.transmit, &station.transmit, sizeof(station.transmit)) == 0,
+		      "unsupported control changed the committed mapping or transmitter");
+	}
 	for (unsigned int repeat = 0u; repeat < 2u; ++repeat)
 		CHECK(push_full_cpd_sequence(
 			      &source, &station, full_sequence, full_bits,
@@ -843,6 +909,16 @@ static bool run_full_cpd_ownership(enum g711_law law)
 		      V92_PCM_MAPPING_OK &&
 	      v92_pcm_mapping_equal(&station.mapping, &expected_mapping),
 	      "full CPd was not retained for law %u", (unsigned int)law);
+	/* Identical partial repeats must also work during initial training. */
+	for (unsigned mask = 1u; omitted == 0u && mask < 7u; ++mask) {
+		struct v92_cpd_parameters partial = omit_cpd_sections(full, mask);
+		CHECK(v92_cpd_encode(&partial, training_mapping.frame_bits, full_sequence,
+			sizeof(full_sequence), &full_bits) == V92_CPD_OK, "partial repeat did not encode");
+		for (unsigned repeat = 0; repeat < 2u; ++repeat)
+			CHECK(push_full_cpd_sequence(&source, &station, full_sequence, full_bits, &events) ==
+				V92_PHASE4_ANALOG_STATION_OK, "partial CPd repeat rejected");
+		CHECK(v92_pcm_mapping_equal(&station.mapping, &expected_mapping), "partial repeat changed mapping");
+	}
 
 	CHECK(v92_cpd_encode_base(
 		      &compact, training_mapping.frame_bits, compact_sequence,
@@ -903,7 +979,7 @@ static bool run_full_cpd_ownership(enum g711_law law)
 			else if (mutation == 2u)
 				changed.four_times_gain_q0_16++;
 			else
-				changed.extend_e2u = false;
+				changed.extend_e2u = !compact.extend_e2u;
 			CHECK(v92_cpd_encode_base(
 				      &changed, training_mapping.frame_bits,
 				      changed_sequence, sizeof(changed_sequence),
@@ -954,8 +1030,9 @@ static bool test_full_cpd_ownership(void)
 {
 	for (unsigned int law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
-		CHECK(run_full_cpd_ownership((enum g711_law)law),
-		      "full CPd ownership matrix stopped");
+		for (unsigned omitted = 0; omitted <= 8u; ++omitted)
+			CHECK(run_full_cpd_ownership((enum g711_law)law, omitted),
+			      "CPd ownership law %u omitted %u stopped", law, omitted);
 	return true;
 }
 

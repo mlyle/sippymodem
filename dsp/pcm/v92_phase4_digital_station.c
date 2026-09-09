@@ -301,6 +301,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
 	initialized.upstream_plan = *plan;
 	selected = *cpd;
 	selected.acknowledges_cpu = false;
+	/* V.92 Table 30: do not carry initial E2u extension into RRN. */
+	selected.extend_e2u = false;
 	enum v92_phase4_digital_station_result result = initialize_downstream(
 		&initialized, downstream, &suvd, &selected, round_trip_delay_samples);
 	if (result != V92_PHASE4_DIGITAL_STATION_OK)

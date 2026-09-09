@@ -129,46 +129,6 @@ static bool test_sequences(void)
 	return true;
 }
 
-static bool test_initial_boundary(void)
-{
-	static const enum v92_constellation_size constellations[] = {
-		V92_CONSTELLATION_4_POINT,
-		V92_CONSTELLATION_8_POINT,
-	};
-
-	for (size_t selection = 0;
-	     selection < ARRAY_LENGTH(constellations); ++selection) {
-		struct v92_pcm_phase4_trn2u trn2u;
-
-		CHECK(v92_pcm_phase4_trn2u_init(
-			      &trn2u, constellations[selection], 1u,
-			      TEST_LU) == V92_PCM_PHASE4_TRN2U_OK,
-		      "TRN2u boundary did not initialize");
-		CHECK(!v92_pcm_phase4_trn2u_can_handoff(&trn2u, true),
-		      "zero-length TRN2u allowed a peer-triggered handoff");
-		for (uint32_t count = 1;
-		     count <= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS +
-			      V92_PCM_PHASE4_TRN2U_ALIGNMENT;
-		     ++count) {
-			int16_t sample;
-			bool timeout_expected =
-				count >= V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS &&
-				count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
-			bool peer_expected =
-				count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u;
-
-			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
-				      V92_PCM_PHASE4_TRN2U_OK &&
-			      v92_pcm_phase4_trn2u_can_handoff(
-				      &trn2u, false) == timeout_expected &&
-			      v92_pcm_phase4_trn2u_can_handoff(
-				      &trn2u, true) == peer_expected,
-			      "TRN2u handoff boundary differed at %u", count);
-		}
-	}
-	return true;
-}
-
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u trn2u;
@@ -200,7 +160,6 @@ static bool test_contracts(void)
 	trn2u.emitted_symbols = UINT32_MAX;
 	before = trn2u;
 	CHECK(!v92_pcm_phase4_trn2u_is_valid(NULL) &&
-	      !v92_pcm_phase4_trn2u_can_handoff(NULL, false) &&
 	      v92_pcm_phase4_trn2u_next(NULL, &sample) ==
 		      V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_next(&trn2u, NULL) ==
@@ -226,8 +185,7 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 initial TRN2u\n");
-	if (!test_sequences() || !test_initial_boundary() ||
-	    !test_contracts()) {
+	if (!test_sequences() || !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 initial TRN2u\n");
 		return 1;
 	}

@@ -28,7 +28,7 @@ enum v92_phase4_analog_tx_result {
 	V92_PHASE4_ANALOG_TX_INTERNAL_ERROR,
 };
 
-/* Own the analogue modem's initial Phase 4 transmit procedure through the
+/* Own the analogue modem's Phase 4 transmit procedure through the
  * last CPu/SUVu record. The caller supplies decoded downstream events and
  * owns the round-trip timer; E2u and the data-mode handoff follow separately.
  * One instance is serialized. */
@@ -50,12 +50,22 @@ struct v92_phase4_analog_tx {
 	bool cpu_sent;
 	bool acknowledgment_sent;
 	bool current_record_acknowledges_cpd;
+	bool renegotiation;
 };
 
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
 	struct v92_phase4_analog_tx *tx,
 	enum v92_constellation_size constellation,
 	uint8_t previous_encoded_sign, int16_t lu,
+	const struct v92_suvu_parameters *suvu,
+	const struct v92_cpu_parameters *cpu);
+
+/* Start the first TRN2u after Ru/Ru-bar. Both coding memories start at zero;
+ * prior control acknowledgements are not evidence for this exchange. This
+ * owner sends a complete CPu, so the selected mapping may also change. */
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init_after_ru(
+	struct v92_phase4_analog_tx *tx,
+	enum v92_constellation_size constellation, int16_t lu,
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu);
 bool v92_phase4_analog_tx_is_valid(

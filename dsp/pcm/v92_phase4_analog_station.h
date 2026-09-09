@@ -24,11 +24,11 @@ enum v92_phase4_analog_station_result {
 	V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR,
 };
 
-/* Own the analogue modem's initial Phase 4 control exchange. The inherited
- * downstream receiver preserves the Phase 3 coding histories; the upstream
- * transmitter preserves the CPt/E1u differential-sign boundary. Only the
- * first complete nonzero CPd owns the PCM-upstream mapping; later compact CPd
- * records may acknowledge CPU, repeat that selection, or request cleardown.
+/* Own the analogue modem's Phase 4 control exchange. Initial entry preserves
+ * the Phase 3 coding histories and CPt/E1u differential-sign boundary. The
+ * first nonzero CPd owns the PCM-upstream selection; omitted sections may use
+ * the previous mapping only during rate reentry. Later CPd records may
+ * acknowledge CPu, repeat that selection, or request cleardown.
  * A zero-rate CPd terminates the exchange without a mapping or Ed/E2u. Ed/E2u
  * emission and data mode follow in the next owner. One instance is
  * serialized. */
@@ -69,6 +69,19 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	const struct v92_cpu_parameters *cpu,
 	const struct v92_suvd_parameters *early_suvd,
 	const struct v92_cpd_parameters *early_cpd);
+
+/* Reenter after the caller-owned Ru/Rd exchange. The downstream receiver
+ * already owns the post-Rd coding boundary. Keep the last complete upstream
+ * mapping for optional sections omitted from the first new CPd; none of its
+ * old acknowledgements satisfies this exchange. Send a complete nonzero CPu;
+ * start_cleardown() remains the local zero-rate operation. This entry rejects
+ * requests for the not-yet-implemented intervening silent period. */
+enum v92_phase4_analog_station_result v92_phase4_analog_station_init_after_ru(
+	struct v92_phase4_analog_station *station,
+	enum v92_constellation_size constellation, int16_t lu,
+	const struct pcm_downstream_rx *downstream,
+	const struct v92_cpu_parameters *cpu,
+	const struct v92_pcm_mapping *upstream, uint16_t round_trip_delay_samples);
 
 bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station);

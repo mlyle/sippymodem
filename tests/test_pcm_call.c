@@ -5994,6 +5994,7 @@ static bool test_v92_duplex_data(void)
 
 struct v92_rate_call {
 	struct pcm_call call;
+	struct v92_phase4_analog_station *analog;
 	struct pcm_downstream_rx peer;
 	struct v90_downstream_data_rx data_peer;
 	struct v92_cpu_parameters cpu;
@@ -6082,6 +6083,13 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 		return true;
 	CHECK(test->rd_symbols == PCM_R_SEQUENCE_SYMBOLS, "TRN2d started before complete Rd-bar");
 	test->control_started = true;
+	if (test->analog != NULL) {
+		enum v92_phase4_analog_station_result result =
+			v92_phase4_analog_station_receive(test->analog, octet);
+		CHECK(result == V92_PHASE4_ANALOG_STATION_OK || result == V92_PHASE4_ANALOG_STATION_EVENT,
+		      "analogue rate control rejected the downstream: %s",
+		      v92_phase4_analog_station_result_name(result));
+	}
 	if (test->peer_data_started) {
 		struct v90_pcm_stream_frame frame;
 		enum v90_downstream_data_rx_result received = v90_downstream_data_rx_receive_octet(
@@ -6270,7 +6278,7 @@ static bool v92_resume_rate_call(struct v92_rate_call *test, struct v92_phase4_r
 }
 
 static bool run_v92_remote_rate_request(struct pcm_call *online,
-	struct v92_upstream_data_tx *upstream, bool resume)
+	struct v92_upstream_data_tx *upstream, unsigned epoch)
 {
 	const enum g711_law law = online->law;
 	struct v92_rate_call test = {
@@ -6304,6 +6312,38 @@ static bool run_v92_remote_rate_request(struct pcm_call *online,
 		CHECK(v92_rate_call_sample(&test, decode_octet(law,
 			encode_octet(law, (int16_t)(sign * upstream->upstream_level)))), "Ru/bar failed");
 	}
+	if (epoch == 0u) {
+		struct v92_phase4_analog_station analog;
+		struct v92_phase4_analog_handoff handoff;
+		struct v92_pcm_mapping expected = upstream->encoder.mapping;
+		expected.cpd.extend_e2u = false;
+		CHECK(v92_phase4_analog_station_init_after_ru(&analog, path->ru.constellation,
+			upstream->upstream_level, &test.peer, &test.cpu, &upstream->encoder.mapping,
+			online->round_trip_delay_samples) == V92_PHASE4_ANALOG_STATION_OK,
+		      "analogue rate control did not reenter");
+		test.analog = &analog;
+		for (unsigned clock = 0; clock < 16008u && !v92_phase4_analog_station_can_handoff(&analog); ++clock) {
+			int16_t sample;
+			CHECK(v92_phase4_analog_station_transmit(&analog, &sample) == V92_PHASE4_ANALOG_STATION_OK &&
+			      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))),
+			      "analogue rate exchange failed at %u", clock);
+		}
+		test.analog = NULL;
+		CHECK(v92_phase4_analog_station_handoff(&analog, &handoff) == V92_PHASE4_ANALOG_STATION_OK &&
+		      memcmp(&handoff.receive, &test.peer, sizeof(test.peer)) == 0 &&
+		      v92_pcm_mapping_equal(&handoff.mapping, &expected),
+		      "analogue rate exchange lost its mapping or downstream boundary");
+		while (!v92_phase4_record_tx_is_complete(&handoff.transmit)) {
+			int16_t sample;
+			CHECK(v92_phase4_record_tx_next(&handoff.transmit, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))),
+			      "analogue rate control tail did not finish");
+		}
+		CHECK(v92_resume_rate_call(&test, &handoff.transmit, &handoff.mapping,
+			upstream->upstream_level, mapping_bits, upstream), "analogue rate exchange did not resume");
+		*online = test.call;
+		return true;
+	}
 	for (unsigned i = 0; i < 2400u; ++i) {
 		int16_t sample;
 		CHECK(v92_pcm_phase4_trn2u_next(&training, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
@@ -6336,7 +6376,7 @@ static bool run_v92_remote_rate_request(struct pcm_call *online,
 	/* A short CPus retains the old constellation. Then either acknowledge
 	 * the new rate and resume data, or request zero-rate cleardown. */
 	for (unsigned which = 0; which < 6u; ++which) {
-		if (which == 3u && resume) {
+		if (which == 3u && epoch == 1u) {
 			CHECK(v92_resume_rate_call(&test, &record, &upstream->encoder.mapping,
 				upstream->upstream_level, mapping_bits, upstream), "rate exchange did not resume");
 			*online = test.call;
@@ -6390,12 +6430,16 @@ static bool test_v92_remote_rate_request(void)
 			channel_receive(&pair.wire, &ar, &dr);
 			CHECK(pcm_call_data_octet(&pair.digital, dr, decode_octet(law, dr), NULL,
 				&transmitted, &event) == PCM_CALL_OK, "pending data sample failed");
+			/* Retained initial-training metadata must not extend a new E2u.
+			 * This flag no longer affects the already-running data coders. */
+			upstream->encoder.mapping.cpd.extend_e2u = true;
+			pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.extend_e2u = true;
 			for (unsigned epoch = 0; epoch < 3u; ++epoch) {
 				/* A legitimate exchange must work even after automatic
 				 * recovery attempts have been exhausted, without resetting them. */
 				if (epoch == 1u)
 					pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
-				CHECK(run_v92_remote_rate_request(&pair.digital, upstream, epoch < 2u),
+				CHECK(run_v92_remote_rate_request(&pair.digital, upstream, epoch),
 				      "law %u rate %u Ru epoch %u failed", law, rates[i], epoch);
 			}
 		}
