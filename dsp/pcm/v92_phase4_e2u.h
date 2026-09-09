@@ -17,6 +17,7 @@ enum v92_phase4_e2u_result {
 	V92_PHASE4_E2U_OK,
 	V92_PHASE4_E2U_COMPLETE,
 	V92_PHASE4_E2U_FAILED,
+	V92_PHASE4_E2U_SEQUENCE_MISMATCH,
 	V92_PHASE4_E2U_INVALID_ARGUMENT,
 	V92_PHASE4_E2U_INVALID_PARAMETERS,
 	V92_PHASE4_E2U_INVALID_STATE,
@@ -109,7 +110,9 @@ bool v92_phase4_e2u_is_complete(const struct v92_phase4_e2u *owner);
 
 /* Consume and produce one simultaneous 8 kHz media interval. The authoritative
  * downstream codeword and upstream sample are supplied together; only the
- * role-owned input is used. COMPLETE consumes the final E2u interval. */
+ * role-owned input is used. COMPLETE consumes the final E2u interval.
+ * A contradictory decoded control record returns SEQUENCE_MISMATCH and
+ * latches failure without committing its parameters or output. */
 enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	struct v92_phase4_e2u *owner, uint8_t received_octet,
 	int16_t received_sample, uint8_t *transmit_octet);

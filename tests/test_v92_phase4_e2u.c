@@ -569,13 +569,17 @@ static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 		      (unsigned int)law);
 		result = v92_phase4_e2u_next(
 			&fixture.owner, 0u, quantize(law, raw), &octet);
-		if (result == V92_PHASE4_E2U_FAILED) {
+		if (result == V92_PHASE4_E2U_SEQUENCE_MISMATCH) {
 			rejected = true;
 			CHECK(octet == 0xa5 && fixture.owner.failed &&
 			      memcmp(&fixture.owner.state, &before.state,
 			             sizeof(before.state)) == 0,
 			      "law %u control rejection was not transactional",
 			      (unsigned int)law);
+			CHECK(v92_phase4_e2u_next(&fixture.owner, 0u, quantize(law, raw), &octet) ==
+				      V92_PHASE4_E2U_FAILED && octet == 0xa5 &&
+			      memcmp(&fixture.owner.state, &before.state, sizeof(before.state)) == 0,
+			      "control rejection did not latch failure");
 			break;
 		}
 		CHECK(result == V92_PHASE4_E2U_OK,

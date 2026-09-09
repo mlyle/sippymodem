@@ -483,8 +483,9 @@ static enum v92_phase4_e2u_result digital_receive(
 	state->control = control;
 	if (control_result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
 		return V92_PHASE4_E2U_OK;
-	if (!control_event_rearms_trial(state, &event) ||
-	    v92_e2u_rx_init(
+	if (!control_event_rearms_trial(state, &event))
+		return V92_PHASE4_E2U_SEQUENCE_MISMATCH;
+	if (v92_e2u_rx_init(
 		    &state->receive, &state->control.signal,
 		    state->mapping.cpd.extend_e2u) != V92_E2U_RX_OK)
 		return V92_PHASE4_E2U_FAILED;
@@ -552,8 +553,11 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 			return fail(owner);
 		receive_result = digital_receive(
 			&next.state.digital, received_sample);
-		if (receive_result == V92_PHASE4_E2U_FAILED)
-			return fail(owner);
+		if (receive_result != V92_PHASE4_E2U_OK &&
+		    receive_result != V92_PHASE4_E2U_COMPLETE) {
+			owner->failed = true;
+			return receive_result;
+		}
 	}
 	if (!v92_phase4_e2u_is_valid(&next))
 		return fail(owner);
@@ -692,6 +696,8 @@ const char *v92_phase4_e2u_result_name(enum v92_phase4_e2u_result result)
 		return "complete";
 	case V92_PHASE4_E2U_FAILED:
 		return "failed";
+	case V92_PHASE4_E2U_SEQUENCE_MISMATCH:
+		return "sequence mismatch";
 	case V92_PHASE4_E2U_INVALID_ARGUMENT:
 		return "invalid argument";
 	case V92_PHASE4_E2U_INVALID_PARAMETERS:
