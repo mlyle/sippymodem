@@ -2809,6 +2809,8 @@ static enum pcm_call_result sample_v92_phase4(
 			state, completed_this_sample);
 	}
 	{
+		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
+		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.cpu;
 		enum v92_phase4_digital_station_result station_result =
 			v92_phase4_digital_station_transmit(
 				&call->state.phase4.v92.owner.digital,
@@ -2824,11 +2826,8 @@ static enum pcm_call_result sample_v92_phase4(
 		if (result != PCM_CALL_OK)
 			return result;
 		if (call->state.phase4.v92.owner.digital.cpu_received &&
-		    !downstream_rate_is_enabled(
-			    call->phase3_configuration.v92_digital.jd
-				    .data_rate_capability_mask,
-			    call->state.phase4.v92.owner.digital.cpu
-				    .data_rate_number))
+		    (!downstream_rate_is_enabled(jd->data_rate_capability_mask, cpu->data_rate_number) ||
+		     cpu->spectral_lookahead_frames > jd->maximum_spectral_shaping_lookahead))
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (station_result == V92_PHASE4_DIGITAL_STATION_EVENT &&
 		    v92_phase4_control_is_ready(call))

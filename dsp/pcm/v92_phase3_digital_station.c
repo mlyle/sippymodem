@@ -466,6 +466,9 @@ static enum v92_phase3_digital_station_result receive_cpt(
 			station->downstream.dil.parameters.segment_count != 0u;
 
 		if (event.type == V92_PCM_PHASE3_CPT_RX_PARAMETERS) {
+			if (event.parameters.spectral_lookahead >
+			    station->jd.maximum_spectral_shaping_lookahead)
+				return V92_PHASE3_DIGITAL_STATION_UNSUPPORTED;
 			if (nonzero_dil) {
 				if (station->transmit_stage !=
 					    V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM ||

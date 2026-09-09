@@ -289,6 +289,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 	bool trn2u_started = false;
 	bool trn1u_overlapped_jp = false;
 
+	parameters.spectral_lookahead = jd.maximum_spectral_shaping_lookahead;
 	fractional_delay_init(&delay);
 	CHECK(v90_dil_profile_init(&request.downstream,
 		      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&

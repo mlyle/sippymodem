@@ -5805,6 +5805,87 @@ static bool test_v92_upstream_negotiation(void)
 	return true;
 }
 
+static bool run_v92_excess_lookahead(enum g711_law law, uint8_t maximum, bool cpt)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2];
+	struct channel wire;
+	bool injected = false;
+
+	dc.phase3.v92_digital.jd.maximum_spectral_shaping_lookahead = maximum;
+	CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK && channel_init(&wire, law, 3u),
+	      "V.92 excess lookahead fixture failed");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+
+		/* Change only the peer's request, before normal encoding and CRC.
+		 * Exercise CPt and CPu separately; a bad CPt must not hide CPu. */
+		if (!injected && cpt && calls[0].stage == PCM_CALL_PHASE3 &&
+		    calls[0].state.phase3.v92_analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU) {
+			calls[0].state.phase3.v92_analog.cpt_parameters.spectral_lookahead = maximum + 1u;
+			injected = true;
+		}
+		if (!injected && !cpt && calls[0].stage == PCM_CALL_PHASE4 &&
+		    calls[0].state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			calls[0].state.phase4.v92.owner.analog.station.transmit.cpu
+				.spectral_lookahead_frames = maximum + 1u;
+			injected = true;
+		}
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_observation observation;
+			enum pcm_call_result result = pcm_call_octet(&calls[side], rx[side],
+				decode_octet(law, rx[side]), &tx[side], &observation);
+
+			if (side == 1 && result == PCM_CALL_UNUSABLE_SELECTION) {
+				CHECK(injected && calls[1].failed && pcm_call_is_valid(&calls[1]) &&
+				      !pcm_call_is_online(&calls[1]) &&
+				      calls[1].phase3_configuration.v92_digital.jd
+					      .maximum_spectral_shaping_lookahead == maximum,
+				      "excess lookahead did not preserve a failed, bounded call");
+				if (cpt) {
+					CHECK(calls[1].stage == PCM_CALL_PHASE3 &&
+					      calls[1].state.phase3.v92_digital.receive_stage ==
+						      V92_PHASE3_DIGITAL_RECEIVE_CPT &&
+					      !calls[1].state.phase3.v92_digital.ri.finish_requested,
+					      "excess CPt lookahead was acknowledged before rejection");
+				} else {
+					CHECK(calls[1].stage == PCM_CALL_PHASE4 &&
+					      calls[1].state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+					      calls[1].state.phase4.v92.owner.digital.cpu_received &&
+					      calls[1].state.phase4.v92.owner.digital.cpu
+						      .spectral_lookahead_frames == maximum + 1u &&
+					      !calls[1].state.phase4.v92.owner.digital.transmit_acknowledges_cpu,
+					      "excess CPu lookahead was acknowledged before rejection");
+				}
+				return true;
+			}
+			CHECK(result == PCM_CALL_OK, "law %u CP%c side %u failed at %zu: %s",
+			      law, cpt ? 't' : 'u', side, clock, pcm_call_result_name(result));
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		CHECK(!cpt || calls[1].stage != PCM_CALL_PHASE3_MIXED,
+		      "law %u digital accepted CPt lookahead %u above Jd %u", law, maximum + 1u, maximum);
+		CHECK(cpt || calls[1].stage != PCM_CALL_PHASE4 ||
+		      calls[1].state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL ||
+		      !calls[1].state.phase4.v92.owner.digital.cpu_received,
+		      "law %u digital accepted CPu lookahead %u above Jd %u", law, maximum + 1u, maximum);
+	}
+	CHECK(false, "law %u CP%c excess lookahead never arrived", law, cpt ? 't' : 'u');
+}
+
+static bool test_v92_received_lookahead(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t maximum = 1u; maximum <= 2u; ++maximum)
+			for (unsigned kind = 0; kind < 2u; ++kind)
+				CHECK(run_v92_excess_lookahead(law, maximum, kind == 0u),
+				      "V.92 excess lookahead was not rejected");
+	return true;
+}
+
 static bool test_v92_downstream_reselection(void)
 {
 	static const uint32_t peer_masks[] = {
@@ -6964,6 +7045,7 @@ int main(void)
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 downstream reselection through retrain", test_v92_downstream_reselection },
+		{ "V.92 received lookahead limits", test_v92_received_lookahead },
 		{ "V.92 upstream reselection through retrain", test_v92_upstream_reselection },
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
