@@ -69,6 +69,12 @@ static bool direct_tables(
 		V92_CPD_DIRECT_FILTER_TAPS;
 	parameters->filter[V92_CPD_PREFILTER_FEED_FORWARD]
 		.coefficient[0] = INT16_MAX;
+	/* Spread the 44k frame's 66 data bits evenly across the intervals.
+	 * Nine modulus-54 and three modulus-27 trellis intervals have product
+	 * 54^9 * 27^3 >= 2^66 (V.92 6.4.1); 52/26 would be too small. Each
+	 * interval needs only 54 signed points, rather than concentrating 128
+	 * in one interval. This improves quantizer separation for direct calls
+	 * and leaves equivalent representatives for channel precoder feedback. */
 	for (size_t symbol = 0u;
 	     symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 		unsigned int exponent = data_bits / V92_CPD_MODULUS_COUNT;
@@ -77,6 +83,8 @@ static bool direct_tables(
 		if (symbol < data_bits % V92_CPD_MODULUS_COUNT)
 			exponent++;
 		parameters->modulus[symbol] = (uint8_t)(1u << exponent);
+		if (data_rate_number == 16u)
+			parameters->modulus[symbol] = symbol % 4u == 3u ? 27u : 54u;
 		required = symbol % 4u == 3u ?
 			parameters->modulus[symbol] :
 			(uint8_t)((parameters->modulus[symbol] + 1u) / 2u);

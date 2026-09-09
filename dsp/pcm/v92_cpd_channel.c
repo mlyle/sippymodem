@@ -225,9 +225,11 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 			return false;
 		next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap] = (int16_t)value;
 	}
-	/* The direct 32-state selection omits outer representatives that an
+	/* The direct 40k/44k selections omit outer representatives that an
 	 * identity precoder cannot reach. Restore them for precoder feedback. */
-	if (next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u)
+	if ((next.trellis == V92_CPD_TRELLIS_32_STATE && next.constellation[0].count == 32u) ||
+	    (next.data_rate_number == 16u && next.trellis == V92_CPD_TRELLIS_16_STATE &&
+	     next.constellation[0].count == 27u))
 		next.constellation[0].count = 64u;
 	/* CPd carries linear points, not codec indices. A sinh grid has a
 	 * finite spacing floor near zero and progressively wider outer gaps.
@@ -242,17 +244,6 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 		for (unsigned point = 0; point < 64u; ++point)
 			next.constellation[0].positive_linear[point] = (int16_t)lround(
 				30000.0 * sinh(4.0 * (point + 0.5) / 63.5) / sinh(4.0));
-		/* At 44k, six modulus-64 and six modulus-32 intervals put rare
-		 * outer points in one trellis interval. B1u power normalization
-		 * can then clip payload peaks. Spread the 66 data bits evenly:
-		 * nine modulus-54 intervals and three modulus-27 trellis intervals
-		 * have product 54^9 * 27^3 >= 2^66 (V.92 6.4.1). Each interval
-		 * needs the same 54 signed representatives after its trellis bit,
-		 * leaving the remaining points available for precoder feedback.
-		 * Keep the other rate families, including the proven 48k map. */
-		if (next.data_rate_number == 16u)
-			for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-				next.modulus[symbol] = symbol % 4u == 3u ? 27u : 54u;
 	} else if (next.constellation[0].count == 32u || next.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < next.constellation[0].count; ++point)
 			if (!g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,

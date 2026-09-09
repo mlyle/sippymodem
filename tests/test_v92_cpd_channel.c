@@ -63,6 +63,8 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 	CHECK(v92_cpd_direct_select(&cpd, law, rate, LEVEL, false) == V92_CPD_OK, "initial CPd failed");
 	if (rate == 13u)
 		CHECK(cpd.constellation[0].count == 32u, "direct 40k did not omit outer points");
+	if (rate == 16u)
+		CHECK(cpd.constellation[0].count == 27u, "direct 44k did not omit outer points");
 	original = cpd;
 	CHECK(v92_cpd_channel_design(&cpd, &channel, law, LEVEL, &plan),
 		"channel design failed: law=%u rate=%u H=(%g,%g)", law, rate, main, post);
@@ -70,7 +72,8 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		v92_upstream_plan_is_valid(&plan), "invalid receive plan");
 	original.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
-	if (original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u)
+	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
+	    (rate == 16u && original.constellation[0].count == 27u))
 		original.constellation[0].count = 64u;
 	if (original.trellis == V92_CPD_TRELLIS_16_STATE && original.constellation[0].count == 64u) {
 		/* Representative values of the generated sinh grid, independently
@@ -82,20 +85,6 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 			set->positive_linear[31] == 3922 && set->positive_linear[47] == 10926 &&
 			set->positive_linear[63] == 30000, "dense channel spacing changed");
 		original.constellation[0] = *set;
-		if (rate == 16u) {
-			__uint128_t capacity = 1u, smaller = 1u;
-
-			for (unsigned symbol = 0; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
-				unsigned modulus = symbol % 4u == 3u ? 27u : 54u;
-
-				CHECK(cpd.modulus[symbol] == modulus, "44k intervals were not balanced");
-				original.modulus[symbol] = (uint8_t)modulus;
-				capacity *= modulus;
-				smaller *= symbol % 4u == 3u ? 26u : 52u;
-			}
-			CHECK(capacity >= ((__uint128_t)1u << 66) && smaller < ((__uint128_t)1u << 66),
-				"44k allocation is not the smallest even, uniform signed alphabet");
-		}
 	} else if (original.constellation[0].count == 32u || original.constellation[0].count == 64u) {
 		for (unsigned point = 0; point < original.constellation[0].count; ++point)
 			CHECK(g711_ucode_sample(law, (uint8_t)(2u * point + 1u), true,

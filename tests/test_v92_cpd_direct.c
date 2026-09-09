@@ -21,6 +21,8 @@ static uint8_t expected_point_count(uint8_t rate)
 	unsigned int bits = v92_pcm_mapping_data_bits(rate);
 	uint8_t count = 0u;
 
+	if (rate == 16u)
+		return 27u;
 	for (size_t symbol = 0u;
 	     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		unsigned int exponent = bits / V92_PCM_MAPPING_FRAME_SYMBOLS;
@@ -73,12 +75,15 @@ static bool direct_sections_are_correct(
 		if (symbol < v92_pcm_mapping_data_bits(rate) %
 				     V92_PCM_MAPPING_FRAME_SYMBOLS)
 			exponent++;
-		CHECK(cpd->modulus[symbol] == (uint8_t)(1u << exponent),
+		unsigned int modulus = rate == 16u ?
+			(symbol % 4u == 3u ? 27u : 54u) : (1u << exponent);
+
+		CHECK(cpd->modulus[symbol] == modulus,
 		      "rate %u law %u symbol %zu modulus changed",
 		      rate, law, symbol);
 		product *= cpd->modulus[symbol];
 	}
-	CHECK(product == expected,
+	CHECK(rate == 16u ? product >= expected : product == expected,
 	      "rate %u law %u modulus product changed", rate, law);
 	CHECK(cpd->constellation[0].count == point_count,
 	      "rate %u law %u generated %u rather than %u points",
@@ -253,6 +258,12 @@ static bool test_known_boundaries(void)
 	      cpd.trellis == V92_CPD_TRELLIS_32_STATE &&
 	      cpd.constellation[0].count == V92_CPD_DIRECT_MAX_POINTS,
 	      "DRN13 did not select its expanded 32-state mapping");
+	__uint128_t smaller = 1u;
+
+	for (unsigned symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+		smaller *= symbol % 4u == 3u ? 26u : 52u;
+	CHECK(smaller < ((__uint128_t)1u << 66),
+	      "44k allocation is not the smallest even, uniform signed alphabet");
 	return true;
 }
 
@@ -316,7 +327,7 @@ static bool quantized_points_are_distinct(
 static bool test_level_selection(void)
 {
 	static const int16_t levels[] = { 4092, 4096, 4224, 7040, 7164 };
-	static const uint8_t rates[] = { 1, 4, 13, 19 };
+	static const uint8_t rates[] = { 1, 4, 13, 16, 19 };
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (size_t level = 0u; level < ARRAY_LENGTH(levels); ++level)

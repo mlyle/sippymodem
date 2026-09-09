@@ -77,7 +77,7 @@ static bool waveform(
 	return true;
 }
 
-static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
+static bool run_stream(enum g711_law law, uint8_t rate, bool filtered, bool collision)
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
@@ -88,8 +88,25 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
 	unsigned int ambiguous = 0u;
 	unsigned int different = 0u;
 
-	CHECK(mapping_init(&mapping, law, rate, filtered) &&
-	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	CHECK(mapping_init(&mapping, law, rate, filtered), "mapping initialization failed");
+	if (collision) {
+		/* Preserve a valid but non-injective peer CPd independently of our
+		 * direct selector: six modulus-64/six modulus-32 intervals, the first
+		 * 64 positive A-law levels, and the original normalized B1u gain. */
+		struct v92_cpd_parameters cpd = mapping.cpd;
+
+		CHECK(law == G711_LAW_PCMA && rate == 16u && !filtered, "invalid collision fixture");
+		cpd.four_times_gain_q0_16 = 708u;
+		for (unsigned symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+			cpd.modulus[symbol] = symbol < 6u ? 64u : 32u;
+		cpd.constellation[0].count = 64u;
+		for (unsigned point = 0u; point < 64u; ++point)
+			CHECK(g711_ucode_sample(law, (uint8_t)(point + 1u), true,
+				&cpd.constellation[0].positive_linear[point]), "collision point failed");
+		CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+			"collision mapping failed");
+	}
+	CHECK(v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 	      v92_pcm_frame_rx_init(&receiver, &mapping, UPSTREAM_LEVEL) ==
 		      V92_PCM_FRAME_OK, "receive initialization failed");
 	reencoded = transmitter;
@@ -141,11 +158,44 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered)
 			CHECK(decoded[bit] == 0xa5, "decoder exceeded payload width");
 	}
 	CHECK(delivered == V92_B1U_FRAMES + DATA_FRAMES, "payload delivery count changed");
-	if (!filtered && law == G711_LAW_PCMA && rate == 16u)
+	if (collision)
 		CHECK(ambiguous != 0u && different != 0u,
 		      "dense A-law CPd collision was not identified");
 	else
 		CHECK(different == 0u, "clean channel changed payload");
+	return true;
+}
+
+static bool test_direct_44k_level(enum g711_law law, int16_t level)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_pcm_frame_rx receiver;
+
+	CHECK(v92_cpd_direct_select(&cpd, law, 16u, level, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init(&receiver, &mapping, level) == V92_PCM_FRAME_OK,
+	      "44k law %u LU %d initialization failed", law, level);
+	for (unsigned frame = 0u;
+	     frame < V92_B1U_FRAMES + 2u * DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++frame) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		struct v92_pcm_frame_decision decision;
+
+		source_bits(bits, mapping.data_bits_per_frame, frame);
+		CHECK(waveform(&transmitter, bits, samples, level) &&
+		      v92_pcm_frame_decode(&receiver, samples, frame < V92_B1U_FRAMES,
+			      decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+		      decision.bits_ready == (frame >= V92_PCM_RX_DELAY_FRAMES) && !decision.ambiguous,
+		      "44k law %u LU %d frame %u did not decode unambiguously", law, level, frame);
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, frame - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(memcmp(bits, decoded, mapping.data_bits_per_frame) == 0,
+			      "44k law %u LU %d frame %u changed bits", law, level, frame);
+		}
+	}
 	return true;
 }
 
@@ -671,6 +721,11 @@ int main(void)
 
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		static const uint8_t rates[] = { 1u, 13u, 19u };
+		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
+
+		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
+			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))
+				return 1;
 
 		if (!test_compensated_channel((enum g711_law)law) ||
 		    !test_b1u_validation((enum g711_law)law))
@@ -688,14 +743,15 @@ int main(void)
 				return 1;
 		}
 		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
-			if (!run_stream((enum g711_law)law, rate, false) ||
+			if (!run_stream((enum g711_law)law, rate, false, false) ||
 			    !test_control_epoch((enum g711_law)law, rate, false))
 				return 1;
 		}
-		if (!run_stream((enum g711_law)law, 13u, true) ||
+		if (!run_stream((enum g711_law)law, 13u, true, false) ||
 		    !test_control_epoch((enum g711_law)law, 13u, true))
 			return 1;
 	}
-	return test_noise_training(false) && test_noise_training(true) &&
+	return run_stream(G711_LAW_PCMA, 16u, false, true) &&
+		test_noise_training(false) && test_noise_training(true) &&
 		test_rejection_and_training_evidence() ? 0 : 1;
 }

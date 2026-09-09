@@ -5743,10 +5743,10 @@ static bool run_v92_duplex_data(
 		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
 	int16_t previous_upstream = 0;
-	/* The 40 kbit/s 32-state family needs a longer payload to catch rare
-	 * errors from unsuitable constellation spacing after compensation. */
-	unsigned payload_frames = offer != NULL && offer->postcursor != 0.0 &&
-		offer->expected == 13u ? 2000u : 200u;
+	/* Use a longer payload for compensated 40k and balanced 44k maps to
+	 * catch rare errors not exercised by the all-ones B1u sequence. */
+	unsigned payload_frames = offer != NULL && (offer->expected == 16u ||
+		(offer->postcursor != 0.0 && offer->expected == 13u)) ? 2000u : 200u;
 
 	if (offer != NULL) {
 		CHECK(!long_cpd && v92_profile_init(
@@ -5910,7 +5910,8 @@ static bool run_v92_duplex_data(
 			      "V.92 distorted channel did not receive compensating CPd");
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
-			if (expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u)
+			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||
+			    (offer->expected == 16u && expected.constellation[0].count == 27u))
 				expected.constellation[0].count = 64u;
 			/* The focused channel test pins the dense spacing. Here verify
 			 * that both peers actually exchanged that complete design. */
@@ -5966,9 +5967,10 @@ static bool test_v92_upstream_negotiation(void)
 		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75, 0u },
 		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5, 0u },
 		{ UINT32_C(1), 1u, 1u, 0.0, 0.75, 0u },
-		/* At this level the bounded 44k map is not injective. Only try a
-		 * lower rate actually offered by the peer (here 41 1/3 kbit/s). */
-		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 14u, 0.0, 0.0, 0u },
+		/* Balanced 44k must now carry data at the ordinary trained level,
+		 * without falling back to the peer's lower 41 1/3 kbit/s offer. */
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 16u, 0.0, 0.0, 0u },
+		{ UINT32_C(1) << 15u, 16u, 16u, 0.0, 0.75, 0u },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
 		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u },
