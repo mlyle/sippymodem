@@ -243,13 +243,11 @@ static enum v92_upstream_data_rx_result receive_frame(
 		struct qam_point target = { .in_phase = decision.predicted_samples[symbol] };
 
 		if (raw) {
-			/* The raw network sample has already passed through G.711.
-			 * Compare it with the same wire cell, not the ideal linear
-			 * point; ordinary companding error is not line distortion.
-			 * Keep decoder observations in recovered u coordinates. */
-			int16_t predicted = quantize(decoder.mapping.law, rounded_sample(
-				line->polarity * target.in_phase / line->calibration.gain));
-			double error = line->raw[symbol] - line->polarity * (double)predicted;
+			/* Use the decoder's linear observation model in original input
+			 * units. G.711 conversion preceded any host conditioning: a
+			 * second quantization here would invent different wire cells.
+			 * Retain actual companding noise and unclipped prediction error. */
+			double error = line->raw[symbol] - target.in_phase / line->calibration.gain;
 
 			generated.squared_error += error * error;
 			if (!isfinite(generated.squared_error))

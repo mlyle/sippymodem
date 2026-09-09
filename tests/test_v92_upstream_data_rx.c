@@ -21,6 +21,8 @@ static const struct v92_upstream_plan direct_plan;
 struct channel {
 	double gain;
 	double postcursor;
+	/* Zero keeps the original codec output; nonzero scales after G.711. */
+	double receive_gain;
 	int16_t previous;
 	enum g711_law law;
 	int8_t polarity;
@@ -32,9 +34,11 @@ static int16_t wire_sample(struct channel *channel, int16_t sample)
 		channel->postcursor * channel->previous);
 
 	channel->previous = sample;
-	return channel->polarity * (channel->law == G711_LAW_PCMU ?
+	int16_t decoded = channel->law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(mixed)) :
-		g711_decode_pcma(g711_encode_pcma(mixed)));
+		g711_decode_pcma(g711_encode_pcma(mixed));
+	return channel->polarity * (channel->receive_gain != 0.0 ?
+		(int16_t)lround(decoded * channel->receive_gain) : decoded);
 }
 
 static void payload(uint8_t *bits, size_t count, unsigned int frame)
@@ -87,7 +91,7 @@ static bool prepare_e2u_at_level(
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY) == QAM_EQUALIZER_OK,
 	      "E2u fixture initialization failed");
 	/* Finite inverse of the known two-tap channel; B1u continues adaptation. */
-	double coefficient = 1.0;
+	double coefficient = channel->receive_gain != 0.0 ? 1.0 / channel->receive_gain : 1.0;
 	for (size_t tap = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 	     tap < handoff.equalizer.tap_count; ++tap) {
 		handoff.equalizer.coefficients[tap].in_phase = coefficient;
@@ -655,9 +659,13 @@ static bool test_rejection_and_failure(void)
 /* E2u recognizes its last control symbol after already consuming ten B1u
  * samples. The channel-compensating filter has a different causal delay:
  * receive its remaining prefix exactly once, not as B1u or payload. */
-static bool test_channel_plan(enum g711_law law, int polarity, bool extended, bool biased)
+static bool test_channel_plan(
+	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned)
 {
-	struct channel channel = { .gain = 1.0, .law = law, .polarity = polarity };
+	struct channel channel = {
+		.gain = 1.0, .law = law, .polarity = polarity,
+		.receive_gain = conditioned ? 0.75 : 0.0,
+	};
 	struct v92_upstream_channel measured = { 0 };
 	struct v92_upstream_plan plan;
 	struct v92_cpd_parameters cpd;
@@ -722,8 +730,40 @@ static bool test_channel_plan(enum g711_law law, int polarity, bool extended, bo
 		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames, &sample) ==
 			      V92_UPSTREAM_DATA_TX_OK, "channel-plan data transmit failed");
 		int16_t input = wire_sample(&channel, sample);
+		bool first_frame = receiver.line.received_frames == 0u &&
+			receiver.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u;
+		struct v92_pcm_frame_decision predicted;
+		int32_t raw[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		if (first_frame) {
+			struct v92_pcm_frame_rx decoder = receiver.decoder;
+			int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+			memcpy(samples, receiver.line.samples, sizeof(samples));
+			memcpy(raw, receiver.line.raw, sizeof(raw));
+			raw[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u] = polarity * (int32_t)input;
+			samples[V92_PCM_MAPPING_FRAME_SYMBOLS - 1u] = (int16_t)lround(
+				polarity * input * receiver.line.calibration.gain);
+			CHECK(v92_pcm_frame_decode(&decoder, samples, true, bits,
+					mapping.data_bits_per_frame, &predicted) ==
+				      V92_PCM_FRAME_OK, "linear quality prediction failed");
+		}
 		enum v92_upstream_data_rx_result result =
 			v92_upstream_data_rx_sample(&receiver, input, &frame);
+
+		if (first_frame) {
+			double error = 0.0;
+
+			for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+				double residual = raw[i] -
+					predicted.predicted_samples[i] / receiver.line.calibration.gain;
+
+				error += residual * residual;
+			}
+			CHECK(result == V92_UPSTREAM_DATA_RX_FRAME && fabs(frame.squared_error - error) < 1e-6,
+			      "raw quality rounded, clipped or requantized its linear prediction");
+		}
 
 		if (comparison_rx.line.received_frames < V92_B1U_FRAMES) {
 			struct v92_upstream_data_frame comparison;
@@ -782,8 +822,9 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned int extended = 0u; extended < 2u; ++extended)
-				for (unsigned int biased = 0u; biased < 2u; ++biased)
-					if (!test_channel_plan((enum g711_law)law, polarity, extended, biased))
+				for (unsigned int fixture = 0u; fixture < 3u; ++fixture)
+					if (!test_channel_plan((enum g711_law)law, polarity, extended,
+							fixture == 1u, fixture == 2u))
 						return 1;
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false) ||

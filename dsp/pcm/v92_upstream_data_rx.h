@@ -51,6 +51,7 @@ struct v92_upstream_data_rx {
 struct v92_upstream_data_frame {
 	/* Residual of the CURRENT frame in signed PCM sample units: equalized
 	 * filter output, or raw line input for a channel-compensated mapping.
+	 * Raw-line residual includes companding noise against the linear model.
 	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
 	/* Payload is delayed by the frame decoder's lookahead. A zero count
