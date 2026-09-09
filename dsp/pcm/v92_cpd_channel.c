@@ -29,6 +29,49 @@ static double cross(const struct v92_upstream_channel *channel, int lag, double 
 	return (double)channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + lag] / scale;
 }
 
+static bool solve_two_tap(const struct v92_upstream_channel *channel, double coefficients[TAPS])
+{
+	double scale = fmax(channel->expected_autocorrelation[0],
+		fmax(channel->previous_expected_energy, channel->observed_autocorrelation[0]));
+
+	if (!(scale > 0.0))
+		return false;
+	double xx = channel->expected_autocorrelation[0] / scale;
+	double pp = channel->previous_expected_energy / scale;
+	double xp = channel->expected_autocorrelation[1] / scale;
+	double yy = channel->observed_autocorrelation[0] / scale;
+	double xy = cross(channel, 0, scale), py = cross(channel, 1, scale);
+	double determinant = xx * pp - xp * xp;
+
+	/* Avoid fitting two nearly dependent training columns. These quality
+	 * bounds choose an implementation, not a negotiated capability. */
+	if (!(xx > 0.0 && pp > 0.0 && yy > 0.0) || determinant <= 1.0e-6 * xx * pp)
+		return false;
+	double main = (xy * pp - py * xp) / determinant;
+	double post = (py * xx - xy * xp) / determinant;
+	double error = yy - main * xy - post * py;
+
+	if (!isfinite(main) || !isfinite(post) || !isfinite(error) ||
+	    !(main > fabs(post)) || error < -1.0e-10 * yy || error > 4.0e-4 * yy)
+		return false;
+	long feedback = lround(-post / main * 16384.0);
+
+	/* Require stability after coefficient quantization, too. */
+	if (feedback <= -16384 || feedback >= 16384)
+		return false;
+	/* For y(n)=a*v(n)+b*v(n-1), V.92 6.4.2 permits x(n)=u(n)
+	 * -(b/a)*x(n-1). With Z2=z^-D/a, H*Z2=(1-P1)*z^-D.
+	 * Use this measured inverse instead of spreading a simple channel over
+	 * all 175 coefficients. The common wire scaling and B1u normalization
+	 * below still apply. The 2% relative RMS residual limit accommodates
+	 * companding noise (about 1.4% in the mu-law training fixture). Channels
+	 * exceeding it use the general designer instead. */
+	memset(coefficients, 0, TAPS * sizeof(*coefficients));
+	coefficients[DELAY] = 1.0 / main;
+	coefficients[Z2_TAPS] = feedback / 16384.0;
+	return true;
+}
+
 /* Apply the symmetric normal matrix without allocating a dense matrix.
  * H(z)Z2(z) = z^-DELAY (1-P1(z)); unknowns are z2 then p1. */
 static void apply_normal(const struct v92_upstream_channel *channel,
@@ -156,7 +199,7 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), channel, sizeof(*channel)) ||
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
-	    !solve(channel, coefficients))
+	    (!solve_two_tap(channel, coefficients) && !solve(channel, coefficients)))
 		return false;
 	for (size_t tap = 0; tap < TAPS; ++tap) {
 		if (!isfinite(coefficients[tap]) ||

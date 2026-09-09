@@ -33,6 +33,9 @@ enum {
  * Cross-correlation index PRECURSOR_LAGS+k accumulates observed(n)*expected(n-k)
  * for k>=0, or expected(n)*observed(n+k) for k<0, over the retained window. */
 struct v92_upstream_channel {
+	/* Exact energy of expected(n-1) over the same window as yy and xy;
+	 * shifting xx(0) would introduce endpoint error in a two-tap fit. */
+	int64_t previous_expected_energy;
 	int64_t observed_autocorrelation[V92_UPSTREAM_CHANNEL_Z2_TAPS];
 	int64_t expected_autocorrelation[V92_UPSTREAM_CHANNEL_P1_TAPS + 1];
 	int64_t cross_correlation[V92_UPSTREAM_CHANNEL_CROSS_LAGS];

@@ -38,6 +38,11 @@ static bool test_correlations(bool full_scale)
 			CHECK(channel.observed_autocorrelation[0] == 0, "channel included settling symbols");
 	}
 	/* Compute each complete sum independently, without the streaming history. */
+	int64_t previous_energy = 0;
+
+	for (int n = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n)
+		previous_energy += (int64_t)expected(n - 1, full_scale) * expected(n - 1, full_scale);
+	CHECK(previous_energy == channel.previous_expected_energy, "previous-target energy changed");
 	for (int lag = 0; lag < V92_UPSTREAM_CHANNEL_Z2_TAPS; ++lag) {
 		int64_t sum = 0;
 
@@ -86,6 +91,11 @@ static bool test_rejection(void)
 	saved = channel;
 	CHECK(!v92_upstream_channel_sample(&channel, 0, 0) &&
 	      memcmp(&channel, &saved, sizeof(channel)) == 0, "unbounded correlation accepted");
+	channel = (struct v92_upstream_channel){ 0 };
+	channel.previous_expected_energy = 1;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned previous-target energy accepted");
+	channel.previous_expected_energy = -1;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "negative previous-target energy accepted");
 	channel = (struct v92_upstream_channel){ 0 };
 	channel.expected_history[1] = 1;
 	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned history accepted");
