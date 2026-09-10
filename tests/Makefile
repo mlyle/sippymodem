@@ -36,6 +36,7 @@ V34_NATIVE_SOURCE_NAMES := \
 V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
+	pcm_gain.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c \
 	pcm_echo_reference.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
@@ -78,6 +79,9 @@ PJSIP_TEST_OBJECTS := $(BUILD_DIR)/test_sip_signaling.o \
 G711_TEST_BINARY := $(BUILD_DIR)/test_g711
 G711_TEST_OBJECTS := $(BUILD_DIR)/test_g711.o \
 	$(BUILD_DIR)/g711.o
+PCM_GAIN_TEST_BINARY := $(BUILD_DIR)/test_pcm_gain
+PCM_GAIN_TEST_OBJECTS := $(BUILD_DIR)/test_pcm_gain.o \
+	$(BUILD_DIR)/pcm_gain.o $(BUILD_DIR)/g711.o
 CHANNEL_BENCH_TEST_BINARY := $(BUILD_DIR)/test_channel_bench
 CHANNEL_BENCH_TEST_OBJECTS := $(BUILD_DIR)/test_channel_bench.o \
 	$(BUILD_DIR)/channel_bench.o $(BUILD_DIR)/fractional_delay.o \
@@ -3109,6 +3113,7 @@ FSK_INTEGRATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/g711.o
 TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(SIP_URI_TEST_BINARY) $(SDP_TEST_BINARY) $(G711_TEST_BINARY) \
+	$(PCM_GAIN_TEST_BINARY) \
 	$(CHANNEL_BENCH_TEST_BINARY) \
 	$(V42_XID_TEST_BINARY) $(LAPM_V44_SESSION_TEST_BINARY) \
 	$(V44_STREAM_TEST_BINARY) $(V44_XID_TEST_BINARY) \
@@ -3419,6 +3424,7 @@ TEST_RUNS := \
 DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(CONFIG_TEST_OBJECTS:.o=.d) $(SIP_URI_TEST_OBJECTS:.o=.d) \
 	$(SDP_TEST_OBJECTS:.o=.d) $(G711_TEST_OBJECTS:.o=.d) \
+	$(PCM_GAIN_TEST_OBJECTS:.o=.d) \
 	$(CHANNEL_BENCH_TEST_OBJECTS:.o=.d) \
 	$(V42_XID_TEST_OBJECTS:.o=.d) \
 	$(LAPM_V44_SESSION_TEST_OBJECTS:.o=.d) \
@@ -3754,6 +3760,9 @@ $(PJSIP_TEST_BINARY): $(PJSIP_TEST_OBJECTS) $(PJSIP_DEPENDENCY)
 
 $(G711_TEST_BINARY): $(G711_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
+
+$(PCM_GAIN_TEST_BINARY): $(PCM_GAIN_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(CHANNEL_BENCH_TEST_BINARY): $(CHANNEL_BENCH_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
@@ -5761,6 +5770,9 @@ $(BUILD_DIR)/pcm_phase3_handoff.o: \
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_call.o: $(DSP_PCM_SOURCE_DIR)/pcm_call.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_gain.o: $(DSP_PCM_SOURCE_DIR)/pcm_gain.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_rate.o: $(DSP_PCM_SOURCE_DIR)/pcm_rate.c | $(BUILD_DIR)
