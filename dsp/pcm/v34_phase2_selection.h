@@ -54,7 +54,10 @@ enum v34_phase2_selection_result v34_phase2_select_preemphasis(
 
 /* Build V.90-format digital INFO1d probe groups from the measured analogue
  * modem's L2 spectrum. Nonzero configured groups enable one symbol rate;
- * their placeholder projection and filter values are not retained. */
+ * their placeholder projection and filter values are not retained. MD and
+ * frequency-offset fields remain with their configured owners; the spectrum
+ * alone does not establish a frequency offset. Power allowance is selected
+ * independently of those fields and bounded by peer capability. */
 enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
 	const struct v34_phase2_probe_receiver_measurement *measurement,
 	const struct v34_info1c *configured,

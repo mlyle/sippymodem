@@ -1695,13 +1695,8 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		struct v92_info1d info1 = call->local_info1.v92_digital;
 
 		/* Full V.92 Phase 2 shares V.90's measured upstream probe
-		 * groups. Bit 70 is PCM permission, not a carrier selection;
-		 * the configured MD duration and offset have separate owners. */
+		 * groups. Bit 70 is PCM permission, not a carrier selection. */
 		selected.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
-		selected.common.local_md_length_35_ms_units =
-			configured->common.local_md_length_35_ms_units;
-		selected.common.frequency_offset_1_50_hz_units =
-			configured->common.frequency_offset_1_50_hz_units;
 		info1.v34 = selected;
 		result = pcm_phase2_start_v92_digital_info1(
 			&call->state.phase2, &info1);

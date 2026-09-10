@@ -285,13 +285,7 @@ enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
 	struct v34_info1c *selected)
 {
 	uint8_t metrics[V34_PHASE2_PROBE_HIGHEST_HARMONIC];
-	struct v34_info1c result = {
-		.common = {
-			.additional_peer_power_reduction_db =
-				peer_supports_power_reduction ?
-					V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB : 0,
-		},
-	};
+	struct v34_info1c result = { 0 };
 
 	if (measurement == NULL || configured == NULL || selected == NULL ||
 	    memory_regions_overlap(
@@ -304,6 +298,11 @@ enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
 	if (!v34_info1c_is_valid(configured) ||
 	    !v90_probe_metrics(measurement, metrics))
 		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
+	result.common = configured->common;
+	result.common.minimum_peer_power_reduction_db = 0;
+	result.common.additional_peer_power_reduction_db =
+		peer_supports_power_reduction ?
+			V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB : 0;
 	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
 	     ++index) {
 		enum v34_symbol_rate rate = (enum v34_symbol_rate)index;

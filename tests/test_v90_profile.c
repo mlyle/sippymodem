@@ -146,6 +146,13 @@ static bool test_generated_profiles(void)
 					      configuration.phase2_nominal_amplitude,
 				      "role %u law %u rate %u profile did not initialize",
 				      role_index, law_index, bit_rate);
+				CHECK((role == V90_DIGITAL_MODEM ?
+					       call.local_info1.digital.common
+						       .frequency_offset_1_50_hz_units :
+					       call.local_info1.analog
+						       .frequency_offset_1_50_hz_units) ==
+					      V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE,
+				      "V.90 profile advertised an unmeasured frequency offset");
 				tone = &call.state.phase2.state.ranging.info0_exchange
 						.transport.tone_transmitter;
 				CHECK(role == V90_DIGITAL_MODEM ?

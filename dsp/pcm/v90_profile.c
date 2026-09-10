@@ -86,7 +86,12 @@ static struct v34_info1c digital_info1(
 		[V34_SYMBOL_RATE_3200] = 13,
 		[V34_SYMBOL_RATE_3429] = 14,
 	};
-	struct v34_info1c info1 = { 0 };
+	struct v34_info1c info1 = {
+		/* The probe spectrum does not provide a qualified offset estimate.
+		 * V.90 Table 9 / V.92 Table 17 require -512, not unmeasured zero. */
+		.common.frequency_offset_1_50_hz_units =
+			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE,
+	};
 
 	/* INFO1d advertises channel potential. The configured upstream bit-rate
 	 * limit is applied later when MP selects the data-mode parameters. */

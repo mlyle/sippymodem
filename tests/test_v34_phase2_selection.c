@@ -183,6 +183,52 @@ static bool test_v90_info1d_selection(void)
 	return true;
 }
 
+static bool test_v90_info1d_common_fields(void)
+{
+	static const int16_t offsets[] = {
+		V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE, -511, -23, 0, 17, 511,
+	};
+	struct v34_phase2_probe_receiver_measurement measurement =
+		flat_probe_measurement();
+
+	for (size_t index = 0; index < ARRAY_LENGTH(offsets); ++index)
+		for (unsigned int power = 0; power < 2u; ++power) {
+			struct v34_info1c configured = v90_info1d_configuration();
+			struct v34_info1c selected;
+			uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
+			unsigned int wire_offset = 0;
+
+			configured.common = (struct v34_info1_common){
+				.minimum_peer_power_reduction_db = 7,
+				.additional_peer_power_reduction_db = 6,
+				.local_md_length_35_ms_units = index % 2u ? 127 : 7,
+				.frequency_offset_1_50_hz_units = offsets[index],
+			};
+			struct v34_info1c saved = configured;
+
+			CHECK(v34_phase2_select_v90_info1d(&measurement, &configured,
+				      power != 0u, &selected) == V34_PHASE2_SELECTION_OK &&
+			      selected.common.local_md_length_35_ms_units ==
+				      configured.common.local_md_length_35_ms_units &&
+			      selected.common.frequency_offset_1_50_hz_units == offsets[index] &&
+			      selected.common.minimum_peer_power_reduction_db == 0 &&
+			      selected.common.additional_peer_power_reduction_db ==
+				      (power != 0u ? 3 : 0) &&
+			      memcmp(&configured, &saved, sizeof(saved)) == 0 &&
+			      v34_info1c_encode(&selected, payload, sizeof(payload)) == V34_INFO1_OK,
+			      "INFO1d selection lost common fields or reused configured power");
+			/* INFO1d wire bits 79:88 are a ten-bit LSB-first signed
+			 * offset. The packed payload starts at wire bit 12. */
+			for (unsigned int bit = 0; bit < 10u; ++bit)
+				if ((payload[(67u + bit) / 8u] &
+				     (1u << (7u - (67u + bit) % 8u))) != 0)
+					wire_offset |= 1u << bit;
+			CHECK(wire_offset == ((uint16_t)offsets[index] & 0x3ffu),
+			      "INFO1d changed the signed frequency-offset wire field");
+		}
+	return true;
+}
+
 static bool test_v90_info1d_validation(void)
 {
 	struct v34_phase2_probe_receiver_measurement measurement =
@@ -657,6 +703,7 @@ int main(void)
 		{ "measured pre-emphasis", test_measured_preemphasis },
 		{ "pre-emphasis validation", test_preemphasis_validation },
 		{ "measured V.90 INFO1d", test_v90_info1d_selection },
+		{ "V.90 INFO1d common-field ownership", test_v90_info1d_common_fields },
 		{ "V.90 INFO1d validation", test_v90_info1d_validation },
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },
