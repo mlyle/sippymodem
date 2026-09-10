@@ -160,6 +160,7 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/trellis.c
 PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/pcm_gain.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_observation.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_startup.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_profile.c \
