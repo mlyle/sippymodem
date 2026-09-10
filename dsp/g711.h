@@ -22,6 +22,16 @@ int16_t g711_decode_pcmu(uint8_t octet);
 uint8_t g711_encode_pcma(int16_t sample);
 int16_t g711_decode_pcma(uint8_t octet);
 
+struct g711_interval {
+	int16_t lower, upper;
+};
+
+/* Inclusive 16-bit input range with the same encode/decode result as sample.
+ * This is a reconstructed-level interval, not an exact-octet interval: the
+ * two PCMU zero codewords share one interval. Invalid calls leave it alone. */
+bool g711_quantization_interval(
+	enum g711_law law, int16_t sample, struct g711_interval *interval);
+
 /* V.90 and V.92 identify magnitudes with a seven-bit universal code.  The
  * sample form preserves the otherwise ambiguous PCMU negative-zero codeword
  * as -1 so a later G.711 encoder reproduces the exact octet. */

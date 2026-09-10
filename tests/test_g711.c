@@ -178,6 +178,89 @@ static uint8_t encode_sample(enum g711_law law, int16_t sample)
 					   g711_encode_pcmu(sample);
 }
 
+static int16_t reconstruct_sample(enum g711_law law, int16_t sample)
+{
+	uint8_t octet = encode_sample(law, sample);
+
+	return law == G711_LAW_PCMU ? g711_decode_pcmu(octet) :
+		g711_decode_pcma(octet);
+}
+
+static bool test_quantization_interval_edges(void)
+{
+	static const struct {
+		enum g711_law law;
+		int16_t sample, lower, upper;
+	} cases[] = {
+		{ G711_LAW_PCMU, 0, -3, 3 },
+		{ G711_LAW_PCMU, -1, -3, 3 },
+		{ G711_LAW_PCMU, 4, 4, 11 },
+		{ G711_LAW_PCMU, -4, -11, -4 },
+		{ G711_LAW_PCMU, INT16_MIN, INT16_MIN, -31612 },
+		{ G711_LAW_PCMU, INT16_MAX, 31612, INT16_MAX },
+		{ G711_LAW_PCMA, 0, 0, 15 },
+		{ G711_LAW_PCMA, -1, -16, -1 },
+		{ G711_LAW_PCMA, -16, -16, -1 },
+		{ G711_LAW_PCMA, -17, -32, -17 },
+		{ G711_LAW_PCMA, INT16_MIN, INT16_MIN, -31745 },
+		{ G711_LAW_PCMA, INT16_MAX, 31744, INT16_MAX },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct g711_interval interval;
+
+		CHECK(g711_quantization_interval(cases[index].law, cases[index].sample, &interval) &&
+		      interval.lower == cases[index].lower && interval.upper == cases[index].upper,
+		      "quantization interval edge %zu differs", index);
+	}
+	return true;
+}
+
+static bool test_quantization_interval_input_space(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		unsigned int intervals = 0;
+
+		/* Independently enumerate each constant run, without the helper's
+		 * binary searches. Every linear input must recover that whole run. */
+		for (int32_t lower = INT16_MIN; lower <= INT16_MAX; ) {
+			int16_t level = reconstruct_sample(law, (int16_t)lower);
+			int32_t upper = lower;
+
+			while (upper < INT16_MAX &&
+			       reconstruct_sample(law, (int16_t)(upper + 1)) == level)
+				upper++;
+			for (int32_t sample = lower; sample <= upper; ++sample) {
+				struct g711_interval interval;
+
+				CHECK(g711_quantization_interval(law, (int16_t)sample, &interval) &&
+				      interval.lower == lower && interval.upper == upper,
+				      "law %u sample %d did not recover [%d,%d]",
+				      (unsigned int)law, (int)sample, (int)lower, (int)upper);
+			}
+			lower = upper + 1;
+			intervals++;
+		}
+		CHECK(intervals == (law == G711_LAW_PCMU ? 255u : 256u),
+		      "law %u lost reconstructed levels", (unsigned int)law);
+	}
+	return true;
+}
+
+static bool test_quantization_interval_rejection(void)
+{
+	struct g711_interval interval = { 123, 456 };
+
+	CHECK(!g711_quantization_interval((enum g711_law)-1, 0, &interval) &&
+	      !g711_quantization_interval((enum g711_law)2, 0, &interval) &&
+	      interval.lower == 123 && interval.upper == 456,
+	      "invalid law changed the interval");
+	CHECK(!g711_quantization_interval(G711_LAW_PCMU, 0, NULL) &&
+	      !g711_quantization_interval(G711_LAW_PCMA, 0, NULL),
+	      "NULL interval output was accepted");
+	return true;
+}
+
 static bool test_ucode_space(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
@@ -276,6 +359,9 @@ int main(void)
 		{ "PCMA code space", test_pcma_code_space },
 		{ "PCMA quantization intervals", test_pcma_quantization_intervals },
 		{ "all linear samples", test_all_linear_samples },
+		{ "quantization interval edges", test_quantization_interval_edges },
+		{ "quantization interval input space", test_quantization_interval_input_space },
+		{ "quantization interval rejection", test_quantization_interval_rejection },
 		{ "V.90 Ucode space", test_ucode_space },
 		{ "V.90 Ucode boundaries", test_ucode_boundaries },
 		{ "V.90 Ucode rejection", test_ucode_rejection_is_transactional },

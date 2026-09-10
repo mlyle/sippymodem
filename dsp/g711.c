@@ -2,6 +2,7 @@
 
 #include "g711.h"
 
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -102,6 +103,48 @@ int16_t g711_decode_pcma(uint8_t octet)
 		magnitude = (magnitude + 0x108) << (segment - 1);
 
 	return (int16_t)(((code & 0x80) != 0) ? magnitude : -magnitude);
+}
+
+static int16_t quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+bool g711_quantization_interval(
+	enum g711_law law, int16_t sample, struct g711_interval *interval)
+{
+	if (!g711_law_is_valid(law) || interval == NULL)
+		return false;
+	int16_t level = quantize(law, sample);
+	int32_t low = INT16_MIN, high = sample;
+
+	/* Both reconstructed-level functions are monotone, including PCMU's
+	 * two zeros. Search integer inputs so clipping and sign boundaries do
+	 * not need a second copy of the codec's segment rules. */
+	while (low < high) {
+		int32_t middle = low + (high - low) / 2;
+
+		if (quantize(law, (int16_t)middle) < level)
+			low = middle + 1;
+		else
+			high = middle;
+	}
+	int16_t lower = (int16_t)low;
+
+	low = sample;
+	high = INT16_MAX;
+	while (low < high) {
+		int32_t middle = low + (high - low + 1) / 2;
+
+		if (quantize(law, (int16_t)middle) > level)
+			high = middle - 1;
+		else
+			low = middle;
+	}
+	*interval = (struct g711_interval){ lower, (int16_t)low };
+	return true;
 }
 
 bool g711_ucode_octet(

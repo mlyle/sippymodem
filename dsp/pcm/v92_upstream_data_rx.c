@@ -15,24 +15,6 @@ static int16_t quantize(enum g711_law law, int16_t sample)
 		g711_decode_pcma(g711_encode_pcma(sample));
 }
 
-static int16_t level_bound(enum g711_law law, int16_t level, bool upper)
-{
-	int low = upper ? level : 1;
-	int high = upper ? INT16_MAX : level;
-	int16_t code_level = quantize(law, level);
-
-	while (low < high) {
-		int middle = low + (high - low + (upper ? 1 : 0)) / 2;
-		bool same = quantize(law, (int16_t)middle) == code_level;
-
-		if (upper ? same : !same)
-			low = middle + (upper ? 0 : 1);
-		else
-			high = middle - (upper ? 1 : 0);
-	}
-	return (int16_t)low;
-}
-
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
@@ -132,12 +114,17 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	};
 	if (plan->observation == V92_PCM_FRAME_CONSTELLATION) {
 		int16_t lu = handoff->line.demodulator.lu;
+		struct g711_interval levels;
+
+		if (!g711_quantization_interval(mapping->law, lu, &levels))
+			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 
 		initialized.line.calibration.gain = plan->gain;
 		initialized.line.calibration.minimum = fmax(1.0 / 32768.0,
-			plan->gain * lu / level_bound(mapping->law, lu, true));
+			plan->gain * lu / levels.upper);
+		/* LU is positive even when its PCMU cell also contains zero. */
 		initialized.line.calibration.maximum = fmin(32768.0,
-			plan->gain * lu / level_bound(mapping->law, lu, false));
+			plan->gain * lu / fmax(1.0, levels.lower));
 		initialized.line.delay_remaining = plan->delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 		if (v92_pcm_frame_rx_init_constellation(&initialized.decoder, mapping) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
@@ -231,13 +218,16 @@ static enum v92_upstream_data_rx_result receive_frame(
 	 * Fit the known B1u waveform inside that initial uncertainty, not by
 	 * weakening the residual ceiling or adapting level from unknown data. */
 	if (b1u && !raw) {
-		int16_t low = line->received_frames == 0u ?
-			level_bound(decoder.mapping.law, decoder.upstream_level, false) : decoder.minimum_level;
-		int16_t high = line->received_frames == 0u ?
-			level_bound(decoder.mapping.law, decoder.upstream_level, true) : decoder.maximum_level;
+		struct g711_interval levels = { decoder.minimum_level, decoder.maximum_level };
+
+		if (line->received_frames == 0u &&
+		    !g711_quantization_interval(decoder.mapping.law, decoder.upstream_level, &levels))
+			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+		if (levels.lower < 1)
+			levels.lower = 1;
 
 		if (v92_pcm_frame_rx_refine_level(&decoder, &decision.frame,
-			    line->samples, low, high) != V92_PCM_FRAME_OK)
+			    line->samples, levels.lower, levels.upper) != V92_PCM_FRAME_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	}
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
