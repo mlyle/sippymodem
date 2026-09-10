@@ -128,6 +128,73 @@ bool v90_pcm_mapping_equal(
 		      sizeof(left->modulus)) == 0;
 }
 
+enum v90_pcm_mapping_result v90_pcm_mapping_power(
+	const struct v90_pcm_mapping *mapping,
+	enum v90_pcm_mapping_plane plane, enum g711_law law,
+	uint32_t *floor_power, uint32_t *ceiling_power)
+{
+	uint64_t words, remainder, stride = 1;
+	uint64_t whole = 0, fraction = 0;
+	uint32_t floor;
+
+	if (mapping == NULL || floor_power == NULL || ceiling_power == NULL ||
+	    floor_power == ceiling_power || !g711_law_is_valid(law) ||
+	    (plane != V90_PCM_MAPPING_TRANSMIT && plane != V90_PCM_MAPPING_CODEC))
+		return V90_PCM_MAPPING_INVALID_ARGUMENT;
+	if (!v90_pcm_mapping_is_valid(mapping))
+		return V90_PCM_MAPPING_INVALID_PARAMETERS;
+	words = UINT64_C(1) << mapping->modulus_bits;
+	remainder = words - 1u;
+	for (size_t interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval) {
+		const struct pcm_constellation *constellation =
+			plane == V90_PCM_MAPPING_CODEC ? &mapping->codec[interval] :
+				&mapping->transmit[interval];
+		uint64_t next = remainder / mapping->modulus[interval];
+		uint8_t boundary = remainder % mapping->modulus[interval];
+		uint8_t label = 0;
+
+		/* Clause 5.4.4 labels descend in Ucode. The occurrence formula in
+		 * 8.5.2 accounts for unused tuples above the 2^K input range. */
+		for (int ucode = PCM_CONSTELLATION_UCODES - 1; ucode >= 0; --ucode) {
+			uint64_t occurrences, upper, lower;
+			uint32_t square;
+			int16_t level;
+
+			if (!pcm_constellation_contains(constellation, (uint8_t)ucode))
+				continue;
+			if (!g711_ucode_sample(law, (uint8_t)ucode, true, &level))
+				return V90_PCM_MAPPING_INVALID_PARAMETERS;
+			if (label < boundary)
+				occurrences = stride * (next + 1u);
+			else if (label == boundary)
+				occurrences = words - stride * (remainder - next);
+			else
+				occurrences = stride * next;
+			label++;
+			square = (uint32_t)((int32_t)level * level);
+			/* K <= 39, square < 2^30: their product may exceed 64
+			 * bits. Split square into 16-bit limbs and divide by 2^K
+			 * before accumulating. Upper < 2^53, lower < 2^56,
+			 * total fraction < 6*128*2^39; no precision is lost. */
+			upper = occurrences * (square >> 16);
+			lower = occurrences * (square & UINT16_MAX) +
+				((upper & (words - 1u)) << 16);
+			whole += ((upper >> mapping->modulus_bits) << 16) +
+				 (lower >> mapping->modulus_bits);
+			fraction += lower & (words - 1u);
+		}
+		stride *= mapping->modulus[interval];
+		remainder = next;
+	}
+	whole += fraction >> mapping->modulus_bits;
+	fraction &= words - 1u;
+	floor = (uint32_t)(whole / V90_CP_FRAME_INTERVALS);
+	*floor_power = floor;
+	*ceiling_power = floor +
+		(whole % V90_CP_FRAME_INTERVALS != 0u || fraction != 0u);
+	return V90_PCM_MAPPING_OK;
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters, enum g711_law law)

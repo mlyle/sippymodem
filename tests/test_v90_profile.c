@@ -23,33 +23,6 @@ static uint32_t expected_bit_rate(uint8_t rate_index)
 		8000u + 3u) / 6u;
 }
 
-static bool constellation_power(
-	const struct pcm_constellation *constellation, enum g711_law law,
-	uint64_t *power, uint8_t *count)
-{
-	uint64_t sum = 0;
-	uint8_t members = 0;
-
-	if (constellation == NULL || power == NULL || count == NULL)
-		return false;
-	for (uint8_t ucode = 0; ucode < PCM_CONSTELLATION_UCODES;
-	     ++ucode) {
-		int16_t sample;
-
-		if (!pcm_constellation_contains(constellation, ucode))
-			continue;
-		if (!g711_ucode_sample(law, ucode, true, &sample))
-			return false;
-		sum += (uint64_t)((int32_t)sample * sample);
-		members++;
-	}
-	if (members == 0)
-		return false;
-	*power = sum;
-	*count = members;
-	return true;
-}
-
 static bool test_downstream_rate_selection(void)
 {
 	for (uint8_t index = PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
@@ -248,10 +221,7 @@ static bool test_generated_profiles(void)
 				      role_index, law_index, bit_rate);
 				if (role == V90_ANALOG_MODEM) {
 					struct v90_pcm_mapping mapping;
-					uint64_t training_power;
-					uint64_t data_power;
-					uint8_t training_points;
-					uint8_t data_points;
+					uint32_t training_power[2], data_power[2];
 
 					CHECK(configuration.local_info1.analog
 						      .local_md_length_35_ms_units == 0 &&
@@ -290,19 +260,16 @@ static bool test_generated_profiles(void)
 					      mapping.frame_bits ==
 						      PCM_DOWNSTREAM_BASE_FRAME_BITS +
 							      rate_index &&
-					      constellation_power(
+					      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC,
+						      law, &data_power[0], &data_power[1]) ==
+						      V90_PCM_MAPPING_OK &&
+					      v90_pcm_mapping_init(&mapping,
 						      &configuration.analog_phase4
-						       .training_parameters
-						       .transmit_constellations[0],
-						      law, &training_power,
-						      &training_points) &&
-					      constellation_power(
-						      &configuration.analog_phase4
-						       .data_parameters
-						       .transmit_constellations[0],
-						      law, &data_power, &data_points) &&
-					      data_power * training_points <=
-						      2u * training_power * data_points,
+						       .training_parameters) == V90_PCM_MAPPING_OK &&
+					      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC,
+						      law, &training_power[0], &training_power[1]) ==
+						      V90_PCM_MAPPING_OK &&
+					      data_power[1] <= pow(10.0, 0.3) * training_power[0],
 					      "analogue profile did not generate rate %u",
 					      bit_rate);
 				} else {

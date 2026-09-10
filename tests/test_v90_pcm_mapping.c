@@ -121,6 +121,122 @@ static uint64_t labels_value(
 	return value;
 }
 
+static bool test_mapping_power_exhaustive(void)
+{
+	struct v90_cp_parameters source = mixed_parameters();
+	struct v90_pcm_mapping mapping;
+
+	CHECK(v90_pcm_mapping_init(&mapping, &source) == V90_PCM_MAPPING_OK &&
+	      mapping.modulus_bits == 14, "power fixture did not initialize");
+	for (int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (int plane = V90_PCM_MAPPING_TRANSMIT;
+		     plane <= V90_PCM_MAPPING_CODEC; ++plane) {
+			uint32_t squares[V90_CP_FRAME_INTERVALS][PCM_CONSTELLATION_UCODES];
+			uint64_t words = UINT64_C(1) << mapping.modulus_bits;
+			uint64_t sum = 0;
+			uint32_t floor, ceiling;
+
+			for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+				const struct pcm_constellation *row =
+					plane == V90_PCM_MAPPING_CODEC ? &mapping.codec[slot] :
+						&mapping.transmit[slot];
+				size_t label = 0;
+
+				for (int u = 127; u >= 0; --u) {
+					int16_t level;
+					if (!pcm_constellation_contains(row, (uint8_t)u))
+						continue;
+					CHECK(g711_ucode_sample(law, (uint8_t)u, true, &level),
+					      "power fixture level failed");
+					squares[slot][label++] = (uint32_t)((int32_t)level * level);
+				}
+			}
+			/* Enumerate every modulus word independently of the occurrence
+			 * formula. Unequal radices leave partially occupied labels. */
+			for (uint64_t word = 0; word < words; ++word) {
+				uint64_t value = word;
+				for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+					sum += squares[slot][value % mapping.modulus[slot]];
+					value /= mapping.modulus[slot];
+				}
+			}
+			CHECK(v90_pcm_mapping_power(&mapping, plane, law, &floor, &ceiling) ==
+				      V90_PCM_MAPPING_OK &&
+			      floor == sum / (6u * words) &&
+			      ceiling == (sum + 6u * words - 1u) / (6u * words),
+			      "power disagrees with exhaustive words: law %d plane %d", law, plane);
+		}
+	}
+	return true;
+}
+
+static bool test_mapping_power_bounds(void)
+{
+	/* Integer/rational evaluation of 8.5.2 with the positive levels in
+	 * Table 1. The 39-bit cases overflow a naive uint64_t weighted sum. */
+	static const uint32_t expected[][2][2] = {
+		{ { 67921906, 67921907 }, { 69518710, 69518711 } },
+		{ { 188946191, 188946191 }, { 191354802, 191354803 } },
+		{ { 172989093, 172989094 }, { 175299915, 175299916 } },
+		{ { 152623722, 152623723 }, { 155563362, 155563363 } },
+	};
+	struct v90_pcm_mapping mapping;
+	uint32_t floor = 123, ceiling = 456;
+
+	for (size_t test = 0; test < ARRAY_LENGTH(expected); ++test) {
+		struct v90_cp_parameters source = {
+			.kind = test == 0 || test == 3 ? V90_CP_TRAINING : V90_CP_DATA,
+			.law = G711_LAW_PCMU,
+			.upstream_rate_mask = 0x1555,
+			.trn1d_ratio_q3_13 = 0x2000,
+			.selected_rate_index = test == 0 ? 13 : test == 3 ? 1 : 22,
+			.sign_redundancy = test == 0 ? 0 : 3,
+			.constellation_count = test == 1 ? 2 : 1,
+		};
+
+		if (test == 0 || test == 3) {
+			for (uint8_t u = 24; u <= 108; u += 12)
+				add_ucode(&source.transmit_constellations[0], u);
+		} else {
+			fill_constellation(&source.transmit_constellations[0], 0,
+					   test == 1 ? 128 : 127);
+			if (test == 1) {
+				fill_constellation(&source.transmit_constellations[1], 112, 16);
+				source.frame_constellation[5] = 1;
+			}
+		}
+		CHECK(v90_pcm_mapping_init(&mapping, &source) == V90_PCM_MAPPING_OK,
+		      "power boundary fixture %zu failed", test);
+		for (int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+			CHECK(v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT,
+						    law, &floor, &ceiling) == V90_PCM_MAPPING_OK &&
+			      floor == expected[test][law][0] && ceiling == expected[test][law][1],
+			      "wrong exact power bounds: case %zu law %d: %u..%u",
+			      test, law, floor, ceiling);
+		}
+	}
+
+	CHECK(v90_pcm_mapping_power(NULL, V90_PCM_MAPPING_TRANSMIT, G711_LAW_PCMU,
+				    &floor, &ceiling) == V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT, G711_LAW_PCMU,
+				    NULL, &ceiling) == V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT, G711_LAW_PCMU,
+				    &floor, NULL) == V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT, G711_LAW_PCMU,
+				    &floor, &floor) == V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_power(&mapping, (enum v90_pcm_mapping_plane)99, G711_LAW_PCMU,
+				    &floor, &ceiling) == V90_PCM_MAPPING_INVALID_ARGUMENT &&
+	      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT, (enum g711_law)99,
+				    &floor, &ceiling) == V90_PCM_MAPPING_INVALID_ARGUMENT,
+	      "power accepted invalid arguments");
+	mapping.modulus_bits = 63;
+	CHECK(v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_TRANSMIT, G711_LAW_PCMU,
+				    &floor, &ceiling) == V90_PCM_MAPPING_INVALID_PARAMETERS &&
+	      floor == expected[3][G711_LAW_PCMA][0] && ceiling == expected[3][G711_LAW_PCMA][1],
+	      "invalid power mapping changed outputs");
+	return true;
+}
+
 static bool test_training_mapping(void)
 {
 	struct v90_cp_parameters source =
@@ -876,6 +992,8 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "exhaustive constellation power", test_mapping_power_exhaustive },
+		{ "exact constellation power bounds", test_mapping_power_bounds },
 		{ "training mapping", test_training_mapping },
 		{ "negotiated transmit encoding", test_transmit_encoding },
 		{ "rate renegotiation mapping",

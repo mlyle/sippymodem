@@ -90,6 +90,16 @@ bool v90_pcm_mapping_equal(
 	const struct v90_pcm_mapping *left,
 	const struct v90_pcm_mapping *right);
 
+/* Exact integer bounds on V.90 8.5.2 mean-square power over all 2^K
+ * modulus words, not an unweighted mean of constellation levels. Select
+ * the measurement plane and its G.711 law explicitly: a codec law need
+ * not match the transmitter law. Bounds coincide for integral powers;
+ * otherwise ceiling is floor + 1. Rejected calls leave both unchanged. */
+enum v90_pcm_mapping_result v90_pcm_mapping_power(
+	const struct v90_pcm_mapping *mapping,
+	enum v90_pcm_mapping_plane plane, enum g711_law law,
+	uint32_t *floor_power, uint32_t *ceiling_power);
+
 /* Map K LSB-first modulus bits into labels K0..K5. Rejected calls leave the
  * destination unchanged. */
 enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(
