@@ -583,14 +583,13 @@ void modem_detector_start(struct modem *m)
 	m->pack.data = m->unpack.data = 0;
 }
 
-void modem_detector_use_retrain_timeout(struct modem *m)
+void modem_detector_reframe(struct modem *m)
 {
-	unsigned int rate = m->rx_rate + m->tx_rate;
-
-	/* The shared bit timer is debited by transmitted and received bits. */
-	if (rate == 0)
-		rate = 2 * DETECTOR_FALLBACK_RATE;
-	m->bit_timer = (int)(rate * V42_T400_MS / 1000);
+	/* Retraining interrupts adjacency and physical bit alignment, not the
+	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
+	m->packer.detector.rx_count = 0;
+	m->pack.bit = m->unpack.bit = 0;
+	m->pack.data = m->unpack.data = 0;
 }
 
 

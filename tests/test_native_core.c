@@ -2415,13 +2415,11 @@ static bool test_lapm_retrain_preserves_link_state(void)
 	return true;
 }
 
-static bool test_pre_link_retrain_restarts_error_control(void)
+static bool test_retrain_preserves_detection(void)
 {
 	enum {
 		TEST_STATE_DP_ESTAB = 2,
 		TEST_STATE_EC_ESTAB = 4,
-		LAPM_ESTABLISHING_STATE = 1,
-		V42_T400_MILLISECONDS = 750,
 	};
 	struct modem_driver driver = {
 		.name = "pre-link retrain test",
@@ -2436,12 +2434,9 @@ static bool test_pre_link_retrain_restarts_error_control(void)
 		.status = DPSTAT_CONNECT,
 	};
 	struct lapm_state *lapm;
-	int initial_timeout;
-	int retrain_timeout;
 
 	CHECK(modem != NULL, "pre-link retrain modem could not be created");
 	modem->dp = &datapump;
-	modem->caller = 0;
 	modem->rx_rate = modem->tx_rate = 4800;
 	modem->cfg.ec = 1;
 	modem->cfg.ec_detector = 1;
@@ -2452,48 +2447,141 @@ static bool test_pre_link_retrain_restarts_error_control(void)
 	CHECK(modem_ec_init(modem) == 0,
 	      "pre-link retrain LAPM could not initialize");
 
-	modem->state = TEST_STATE_DP_ESTAB;
-	modem_dp_connected(modem);
-	initial_timeout = modem->bit_timer;
-	retrain_timeout = (int)((modem->rx_rate + modem->tx_rate) *
-		V42_T400_MILLISECONDS / 1000u);
-	CHECK(modem->state == TEST_STATE_EC_ESTAB &&
-		      modem->get_bits == modem_detector_get_bits &&
-		      modem->put_bits == modem_detector_put_bits &&
-		      initial_timeout > retrain_timeout,
-	      "initial V.42 epoch did not retain its long detector allowance");
-
 	lapm = &modem->ec.lapm;
-	lapm->state = LAPM_ESTABLISHING_STATE;
-	lapm->config = 1;
-	lapm->vs = 5;
-	lapm->va = 4;
-	lapm->vr = 3;
-	modem->packer.detector.tx_count = 7;
-	modem->packer.detector.rx_count = 9;
-	modem->bit_timer = 17;
-	modem_dp_reconnected(modem);
-	CHECK(modem->state == TEST_STATE_EC_ESTAB &&
+	for (unsigned caller = 0; caller <= 1; ++caller) {
+		void (*timeout)(struct modem *);
+		struct detect_state retained;
+
+		modem->caller = caller;
+		modem->state = TEST_STATE_DP_ESTAB;
+		modem_dp_connected(modem);
+		CHECK(modem->state == TEST_STATE_EC_ESTAB &&
+		      modem->get_bits == modem_detector_get_bits &&
+		      modem->put_bits == modem_detector_put_bits,
+		      "V.42 detection did not start for role %u", caller);
+		modem->packer.detector.tx_count = 7;
+		modem->packer.detector.rx_count = 1;
+		modem->packer.detector.ec_enable = 1;
+		retained = modem->packer.detector;
+		modem->pack.bit = 3;
+		modem->unpack.bit = 5;
+		modem->bit_timer = 17;
+		timeout = modem->bit_timer_func;
+		modem_dp_reconnected(modem);
+		CHECK(modem->state == TEST_STATE_EC_ESTAB &&
 		      lapm->state == 0 && lapm->config == 0 &&
-		      lapm->vs == 0 && lapm->va == 0 && lapm->vr == 0 &&
-		      lapm->modem == modem && lapm->info_list != NULL &&
-		      lapm->ctrl_list != NULL &&
 		      modem->get_bits == modem_detector_get_bits &&
 		      modem->put_bits == modem_detector_put_bits &&
-		      modem->packer.detector.tx_count == 0 &&
+		      modem->packer.detector.tx_count == retained.tx_count &&
+		      modem->packer.detector.ec_enable == retained.ec_enable &&
+		      memcmp(modem->packer.detector.tx_pattern,
+		             retained.tx_pattern, sizeof(retained.tx_pattern)) == 0 &&
+		      memcmp(modem->packer.detector.rx_pattern,
+		             retained.rx_pattern, sizeof(retained.rx_pattern)) == 0 &&
 		      modem->packer.detector.rx_count == 0 &&
-		      modem->bit_timer == retrain_timeout,
-	      "pre-link physical retrain retained an interrupted V.42 epoch");
-
-	modem->packer.detector.rx_count = 2;
-	modem_dp_connected(modem);
-	CHECK(modem->packer.detector.rx_count == 2 &&
-		      modem->bit_timer == retrain_timeout,
-	      "duplicate generic CONNECT restarted the retrain epoch");
+		      modem->pack.bit == 0 && modem->unpack.bit == 0 &&
+		      modem->bit_timer == 17 && modem->bit_timer_func == timeout,
+		      "retrain changed detection selection or timer for role %u", caller);
+		modem->packer.detector.rx_count = 2;
+		modem_dp_connected(modem);
+		CHECK(modem->packer.detector.rx_count == 2 && modem->bit_timer == 17,
+		      "duplicate generic CONNECT restarted detection");
+	}
 
 	modem->dp = NULL;
 	modem_ec_exit(modem);
 	modem_delete(modem);
+	return true;
+}
+
+static bool test_retrain_preserves_lapm_establishment(void)
+{
+	enum { LAPM_DATA_STATE = 2 };
+	struct modem_driver driver = {
+		.name = "LAPM establishment retrain",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *peers[] = {
+		modem_create(&driver, "caller"), modem_create(&driver, "answerer"),
+	};
+	struct dp datapumps[] = {
+		{ .id = DP_V92, .modem = peers[0] },
+		{ .id = DP_V92, .modem = peers[1] },
+	};
+	unsigned interrupted = 0;
+
+	for (unsigned side = 0; side < 2; ++side) {
+		struct modem *m = peers[side];
+
+		CHECK(m != NULL, "establishment retrain allocation failed");
+		m->dp = &datapumps[side];
+		m->caller = side == 0;
+		m->rx_rate = m->tx_rate = 4800;
+		m->cfg.ec = 1;
+		m->cfg.ec_detector = 1;
+		m->dsp_info.v8_lapm = 1;
+		CHECK(modem_ec_init(m) == 0, "establishment retrain initialization failed");
+		modem_dp_connected(m);
+	}
+	for (unsigned bit = 0; bit < 200000; ++bit) {
+		for (unsigned side = 0; side < 2; ++side) {
+			uint8_t value;
+			struct modem *m = peers[side];
+			frame_t *frame = m->packer.hdlc.tx_frame;
+			unsigned point = 0;
+
+			if (side == 0 && bit == 64 &&
+			    m->packer.hdlc.tx_preamble_complete != NULL)
+				point = 8u;
+			else if (frame != NULL && frame->count >= 1) {
+				if (frame->buf[1] == 0xaf)
+					point = side == 0 ? 1u : 2u;
+				else if (side == 0 && frame->buf[1] == 0x7f)
+					point = 4u;
+			}
+			if (point != 0 && (interrupted & point) == 0) {
+				for (unsigned endpoint = 0; endpoint < 2; ++endpoint) {
+					struct modem *resuming = peers[endpoint];
+					struct lapm_state *l = &resuming->ec.lapm;
+					struct lapm_v44_session session = l->v44_session;
+					struct v44_character_path *path = l->v44_path;
+					int state = l->state, config = l->config;
+					int retries = l->rtx_count, remaining = resuming->bit_timer;
+					void (*timeout)(struct modem *) = resuming->bit_timer_func;
+
+					modem_dp_reconnected(resuming);
+					CHECK(l->state == state && l->config == config &&
+					      l->rtx_count == retries && l->v44_path == path &&
+					      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
+					      resuming->bit_timer == remaining &&
+					      resuming->bit_timer_func == timeout &&
+					      resuming->get_bits == modem_hdlc_get_bits &&
+					      resuming->put_bits == modem_hdlc_put_bits &&
+					      resuming->packer.hdlc.tx_frame == NULL &&
+					      resuming->packer.hdlc.rx_frame->count == 0,
+					      "retrain reset LAPM establishment at point %u side %u",
+					      point, endpoint);
+				}
+				interrupted |= point;
+			}
+			CHECK(modem_get_bits(m, 1, &value, 1) == 1 &&
+			      modem_put_bits(peers[1 - side], 1, &value, 1) == 1,
+			      "establishment serial exchange failed");
+		}
+		if (peers[0]->ec.lapm.state == LAPM_DATA_STATE &&
+		    peers[1]->ec.lapm.state == LAPM_DATA_STATE)
+			break;
+	}
+	CHECK(interrupted == 15u && peers[0]->ec.lapm.state == LAPM_DATA_STATE &&
+	      peers[1]->ec.lapm.state == LAPM_DATA_STATE,
+	      "LAPM did not establish after interrupted preamble, XID, reply and SABME (%u)",
+	      interrupted);
+	for (unsigned side = 0; side < 2; ++side) {
+		peers[side]->dp = NULL;
+		modem_delete(peers[side]);
+	}
 	return true;
 }
 
@@ -3087,8 +3175,9 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
-		{ "pre-link retrain restarts error control",
-		  test_pre_link_retrain_restarts_error_control },
+		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
+		{ "retrain preserves LAPM establishment",
+		  test_retrain_preserves_lapm_establishment },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",

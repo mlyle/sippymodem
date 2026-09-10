@@ -492,7 +492,7 @@ extern int  modem_async_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_async_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int modem_link_supports_v42(const struct modem *m);
 extern void modem_detector_start(struct modem *m);
-extern void modem_detector_use_retrain_timeout(struct modem *m);
+extern void modem_detector_reframe(struct modem *m);
 extern int  modem_detector_get_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern int  modem_detector_put_bits(struct modem *m,int nbits,u8 *buf,int cnt);
 extern void modem_hdlc_start(struct modem *m);

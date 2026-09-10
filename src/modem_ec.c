@@ -1841,15 +1841,30 @@ int modem_ec_resume_after_retrain(struct modem *m)
 
 	if (m == NULL)
 		return -1;
+	if (m->get_bits == modem_detector_get_bits &&
+	    m->put_bits == modem_detector_put_bits) {
+		modem_detector_reframe(m);
+		return 0;
+	}
 	if (!m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
 	    m->put_bits != modem_hdlc_put_bits)
 		return 0;
 	l = &m->ec.lapm;
-	if (l->modem != m || l->state != LAPM_DATA || l->ctrl_list == NULL ||
+	if (l->modem != m || l->state < LAPM_IDLE || l->state > LAPM_DATA ||
+	    l->ctrl_list == NULL ||
 	    l->tx_ctrl == NULL)
 		return -1;
 	if (modem_hdlc_reframe(m) != 0)
 		return -1;
+	/* V.42 7.10.2/7.11 also suspend and resume protocol establishment.
+	 * Keep XID/SABME, compression selection and T401 progress; an unfinished
+	 * wire frame is recovered by the existing retransmission procedure. */
+	if (l->state != LAPM_DATA) {
+		if (m->packer.hdlc.tx_preamble_complete != NULL)
+			m->packer.hdlc.tx_preamble_flags =
+				LAPM_ORIGINATOR_PREAMBLE_FLAGS;
+		return 0;
+	}
 	/* A physical interruption loses HDLC framing and leaves the peer's
 	 * receive sequence uncertain only while flow control or unacknowledged
 	 * information remains.  A clean retained window can continue directly. */
