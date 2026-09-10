@@ -305,7 +305,6 @@ bool pcm_phase2_is_ready_for_v34_fallback(
 {
 	return pcm_phase2_is_valid(phase2) &&
 	       info1_timeline_is_complete(phase2) &&
-	       phase2->startup.protocol == PCM_PROTOCOL_V90 &&
 	       phase2->local_role == V90_DIGITAL_MODEM &&
 	       phase2->state.info1.analog_record_stored &&
 	       phase2->state.info1.analog.kind == PCM_INFO1A_V34_FALLBACK;

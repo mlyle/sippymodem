@@ -8018,16 +8018,22 @@ static bool test_v92_validation(void)
 	return true;
 }
 
-static bool check_v34_restart(enum g711_law law, bool remote)
+static bool check_v34_restart(
+	enum pcm_protocol protocol, enum g711_law law, bool remote)
 {
-	const struct pcm_call_configuration selected =
+	const struct pcm_call_configuration selected = protocol == PCM_PROTOCOL_V92 ?
+		v92_configuration(V90_DIGITAL_MODEM, law) :
 		configuration(V90_DIGITAL_MODEM, law);
-	struct v90_fallback_restart restart = {
-		.local_info0 = selected.local_info0.digital,
-		.peer_info0 = analog_info0(),
-		.local_info1 = selected.local_info1.digital,
+	struct pcm_fallback_restart restart = {
+		.protocol = protocol,
+		.local_info0 = selected.local_info0,
+		.peer_info0.analog = analog_info0(),
+		.local_info1 = selected.local_info1,
 		.phase3 = selected.phase3.digital,
+		.v92_phase3 = selected.phase3.v92_digital,
 		.phase4 = selected.digital_phase4,
+		.v92_phase4 = selected.v92_digital_phase4,
+		.enabled_downstream_rate_mask = selected.enabled_downstream_rate_mask,
 		.round_trip_delay_samples = 800u,
 		.phase2_nominal_amplitude = selected.phase2_nominal_amplitude,
 		.law = law,
@@ -8038,6 +8044,16 @@ static bool check_v34_restart(enum g711_law law, bool remote)
 	struct pcm_call before;
 	bool detected = false;
 
+	if (protocol == PCM_PROTOCOL_V92) {
+		restart.peer_info0.v92_analog = (struct v92_info0a){
+			.v90 = analog_info0(), .v92_capable = true,
+		};
+		restart.v92_phase4 = (struct pcm_call_v92_digital_phase4_configuration){
+			.upstream_selection = PCM_CALL_V92_UPSTREAM_DIRECT,
+			.direct_maximum_data_rate_number = 19u,
+		};
+		restart.upstream_retry_ceiling = 17u;
+	}
 	CHECK(v34_full_retrain_init(&response, V34_CALLING_STATION) ==
 		      V34_PHASE2_TONE_OK &&
 	      v34_phase2_tone_transmitter_init(
@@ -8078,11 +8094,16 @@ static bool check_v34_restart(enum g711_law law, bool remote)
 	CHECK(pcm_call_init_from_v34(&call, &restart, &response) == PCM_CALL_OK &&
 	      call.stage == PCM_CALL_RETRAIN_SILENCE && call.retrain_active &&
 	      memcmp(&call.retrain, &response, sizeof(response)) == 0 &&
-	      memcmp(&call.local_info0.digital, &restart.local_info0,
+	      call.protocol == protocol &&
+	      call.enabled_downstream_rate_mask == restart.enabled_downstream_rate_mask &&
+	      call.v92_upstream_retry_ceiling == restart.upstream_retry_ceiling &&
+	      memcmp(&call.local_info1, &restart.local_info1,
+		     sizeof(restart.local_info1)) == 0 &&
+	      memcmp(&call.local_info0, &restart.local_info0,
 		     sizeof(restart.local_info0)) == 0 &&
-	      memcmp(&call.peer_info0.analog, &restart.peer_info0,
+	      memcmp(&call.peer_info0, &restart.peer_info0,
 		     sizeof(restart.peer_info0)) == 0,
-	      "fallback lost its V.90 agreement or restarted the silence");
+	      "fallback lost its PCM agreement or restarted the silence");
 	before = call;
 	restart.law = (enum g711_law)99;
 	CHECK(pcm_call_init_from_v34(&call, &restart, &response) ==
@@ -8090,6 +8111,12 @@ static bool check_v34_restart(enum g711_law law, bool remote)
 	      memcmp(&call, &before, sizeof(call)) == 0,
 	      "invalid fallback media changed the call");
 	restart.law = law;
+	restart.protocol = (enum pcm_protocol)99;
+	CHECK(pcm_call_init_from_v34(&call, &restart, &response) ==
+		      PCM_CALL_INVALID_ARGUMENT &&
+	      memcmp(&call, &before, sizeof(call)) == 0,
+	      "invalid fallback protocol changed the call");
+	restart.protocol = protocol;
 	restart.round_trip_delay_samples = UINT16_MAX;
 	CHECK(pcm_call_init_from_v34(&call, &restart, &response) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
@@ -8119,8 +8146,8 @@ static bool check_v34_restart(enum g711_law law, bool remote)
 		      (call.stage == PCM_CALL_PHASE2) == (index == 480u),
 		      "fallback silence changed at sample %zu", index);
 	}
-	CHECK(call.protocol == PCM_PROTOCOL_V90 &&
-	      call.state.phase2.info0_protocol == PCM_PROTOCOL_V90 &&
+	CHECK(call.protocol == protocol &&
+	      call.state.phase2.info0_protocol == protocol &&
 	      call.state.phase2.local_role == V90_DIGITAL_MODEM &&
 	      call.round_trip_delay_samples == 800u &&
 	      (!remote || memcmp(
@@ -8133,8 +8160,11 @@ static bool check_v34_restart(enum g711_law law, bool remote)
 static bool test_v34_restart(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		CHECK(check_v34_restart(law, false) && check_v34_restart(law, true),
-		      "fallback restart failed for law %u", (unsigned int)law);
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_v34_restart(protocol, law, false) &&
+			      check_v34_restart(protocol, law, true),
+			      "fallback restart failed for protocol %u law %u", protocol, law);
 	return true;
 }
 
@@ -8178,7 +8208,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
-		{ "V.34 fallback retains V.90 retrain agreement", test_v34_restart },
+		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },

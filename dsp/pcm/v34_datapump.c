@@ -36,7 +36,7 @@ struct v34_datapump {
 	struct v34_call call;
 	struct v34_data_quality data_quality;
 	struct training_session training;
-	struct v90_fallback_restart *pcm_restart;
+	struct pcm_fallback_restart *pcm_restart;
 	uint32_t missing_carrier_samples;
 	uint16_t carrier_recovery_samples;
 	uint16_t rate_mask;
@@ -182,24 +182,24 @@ static struct dp *create_v34(
 {
 	struct v34_call_configuration configuration;
 	struct v34_datapump *datapump;
-	struct v90_v34_fallback_handoff fallback;
+	struct pcm_v34_fallback_handoff fallback;
 	enum v34_profile_result profile_result;
 	enum v34_station_role role;
-	bool from_v90;
+	bool from_pcm;
 	bool from_v8_fallback;
 	uint16_t rate_mask;
 
-	from_v90 = modem != NULL && modem->dp != NULL &&
+	from_pcm = modem != NULL && modem->dp != NULL &&
 		v90_datapump_v34_fallback_handoff(modem->dp, &fallback);
 	from_v8_fallback = modem != NULL && modem->dp != NULL &&
 		v8_datapump_selected_v34_fallback(modem->dp);
-	role = from_v90 ? fallback.phase2.local_role :
+	role = from_pcm ? fallback.phase2.local_role :
 		station_role(caller != 0);
 	if (modem == NULL || id != DP_V34 || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
 	    operations != &v34_operations || operations->use_count == INT_MAX)
 		return NULL;
-	if (from_v90)
+	if (from_pcm)
 		profile_result = fallback_profile(
 			&configuration, &rate_mask, &fallback.phase2);
 	else if (from_v8_fallback)
@@ -214,7 +214,7 @@ static struct dp *create_v34(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
-	if ((from_v90 ?
+	if ((from_pcm ?
 	     v34_call_init_from_phase2(
 		     &datapump->call, &configuration, &fallback.phase2) :
 	     v34_call_init(&datapump->call, &configuration)) != V34_CALL_OK) {
@@ -228,7 +228,7 @@ static struct dp *create_v34(
 	}
 	datapump->caller = role == V34_CALLING_STATION;
 	datapump->rate_mask = rate_mask;
-	if (from_v90)
+	if (from_pcm)
 		datapump->training = fallback.training;
 	else if (training_session_init(
 			 &datapump->training,
@@ -237,7 +237,7 @@ static struct dp *create_v34(
 		free(datapump);
 		return NULL;
 	}
-	if (from_v90) {
+	if (from_pcm) {
 		datapump->pcm_restart = malloc(sizeof(*datapump->pcm_restart));
 		if (datapump->pcm_restart == NULL) {
 			free(datapump);
@@ -697,9 +697,10 @@ static int process_v34(
 	if (datapump->pcm_restart != NULL &&
 	    datapump->call.stage == V34_CALL_RETRAIN_SILENCE) {
 		/* The first media block already consumed part of the shared 70 ms
-		 * response. Transfer that exact epoch into V.90 Phase 2. */
+		 * response. Transfer that exact epoch into the agreed PCM Phase 2. */
 		if (modem_set_param(
-			    datapump->dp.modem, MDMPRM_DP_REQUESTED, DP_V90) != 0) {
+			    datapump->dp.modem, MDMPRM_DP_REQUESTED,
+			    datapump->pcm_restart->protocol == PCM_PROTOCOL_V92 ? DP_V92 : DP_V90) != 0) {
 			fail_training(datapump);
 			return DPSTAT_ERROR;
 		}

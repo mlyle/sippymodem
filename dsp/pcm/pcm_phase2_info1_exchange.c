@@ -91,9 +91,7 @@ static bool analog_record_is_valid(
 		       exchange->digital.record.v92.pcm_upstream_supported &&
 		       v92_pcm_info1a_is_valid(&exchange->analog.record.pcm);
 	case PCM_INFO1A_V34_FALLBACK:
-		return exchange->protocol == PCM_PROTOCOL_V90 &&
-		       v34_info1a_is_valid(
-			       &exchange->analog.record.v34_fallback);
+		return v34_info1a_is_valid(&exchange->analog.record.v34_fallback);
 	}
 	return false;
 }
@@ -353,33 +351,26 @@ static bool decode_analog_record(
 	conventional_valid = v90_info1a_decode(
 		frame->payload, sizeof(frame->payload),
 		frame->payload_bit_count, &conventional) == V90_INFO1_OK;
-	if (exchange->protocol == PCM_PROTOCOL_V90) {
-		fallback_valid = v34_info1a_decode(
-			frame->payload, sizeof(frame->payload),
-			frame->payload_bit_count, &fallback) == V34_INFO1_OK;
-		if (conventional_valid == fallback_valid)
-			return false;
-		if (conventional_valid)
-			*decoded = (struct pcm_phase2_info1a){
-				.record.conventional = conventional,
-				.kind = PCM_INFO1A_CONVENTIONAL,
-			};
-		else
-			*decoded = (struct pcm_phase2_info1a){
-				.record.v34_fallback = fallback,
-				.kind = PCM_INFO1A_V34_FALLBACK,
-			};
-		return true;
-	}
-	pcm_valid = v92_pcm_info1a_decode(
+	fallback_valid = v34_info1a_decode(
 		frame->payload, sizeof(frame->payload),
-		frame->payload_bit_count, &pcm) == V92_PCM_INFO1A_OK;
-	if (conventional_valid == pcm_valid)
+		frame->payload_bit_count, &fallback) == V34_INFO1_OK;
+	pcm_valid = exchange->protocol == PCM_PROTOCOL_V92 &&
+		v92_pcm_info1a_decode(
+			frame->payload, sizeof(frame->payload),
+			frame->payload_bit_count, &pcm) == V92_PCM_INFO1A_OK;
+	if ((unsigned int)conventional_valid + fallback_valid + pcm_valid != 1u)
 		return false;
 	if (conventional_valid) {
 		*decoded = (struct pcm_phase2_info1a){
 			.record.conventional = conventional,
 			.kind = PCM_INFO1A_CONVENTIONAL,
+		};
+		return true;
+	}
+	if (fallback_valid) {
+		*decoded = (struct pcm_phase2_info1a){
+			.record.v34_fallback = fallback,
+			.kind = PCM_INFO1A_V34_FALLBACK,
 		};
 		return true;
 	}

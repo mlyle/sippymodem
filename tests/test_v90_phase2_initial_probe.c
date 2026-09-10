@@ -445,14 +445,13 @@ static bool check_pcm_info1d_retry(
 }
 
 static bool check_v34_fallback_info1a(
-	const struct v90_phase2_reciprocal_probe *digital_probe)
+	const struct v90_phase2_reciprocal_probe *digital_probe,
+	enum test_info1_mode mode, const uint8_t *payload)
 {
-	static const uint8_t payload[V34_INFO1A_PAYLOAD_BYTES] = {
-		0x00, 0x06, 0x4f, 0x60, 0x04,
-	};
 	struct pcm_phase2_info1_exchange digital;
 	struct v34_phase2_info_audio_transmitter peer;
 	struct v34_info1c local = digital_info1();
+	struct v92_info1d local_v92 = v92_digital_info1(mode);
 	struct pcm_phase2_info1_event event;
 	struct v34_info1a decoded;
 	uint8_t retained_payload[V34_INFO1A_PAYLOAD_BYTES];
@@ -461,10 +460,12 @@ static bool check_v34_fallback_info1a(
 	bool frame_complete = false;
 
 	CHECK(v34_info1a_decode(
-		      payload, sizeof(payload), V34_INFO1A_PAYLOAD_BITS,
+		      payload, V34_INFO1A_PAYLOAD_BYTES, V34_INFO1A_PAYLOAD_BITS,
 		      &decoded) == V34_INFO1_OK &&
-	      pcm_phase2_info1_init_v90_digital(
-		      &digital, digital_probe, &local) == PHASE2_INFO1_OK,
+	      (mode == TEST_INFO1_V90 ? pcm_phase2_info1_init_v90_digital(
+		      &digital, digital_probe, &local) :
+	       pcm_phase2_info1_init_v92_digital(
+		      &digital, digital_probe, &local_v92)) == PHASE2_INFO1_OK,
 	      "captured V.34 fallback INFO1a fixture was invalid");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		int16_t transmit;
@@ -472,7 +473,7 @@ static bool check_v34_fallback_info1a(
 		CHECK(pcm_phase2_info1_sample(
 			      &digital, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
-		      "V.90 INFO1d did not reach its fallback receive boundary");
+		      "PCM INFO1d did not reach its fallback receive boundary");
 		if (event.kind == PCM_PHASE2_INFO1_EVENT_LOCAL_INFO1D_SENT) {
 			local_sent = true;
 			break;
@@ -483,7 +484,7 @@ static bool check_v34_fallback_info1a(
 		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
 		      payload, V34_INFO1A_PAYLOAD_BITS) ==
 		      V34_PHASE2_INFO_AUDIO_OK,
-	      "V.90 fallback peer did not start at the INFO1a boundary");
+	      "PCM fallback peer did not start at the INFO1a boundary");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		int16_t received = 0;
 		int16_t transmit;
@@ -496,7 +497,7 @@ static bool check_v34_fallback_info1a(
 		CHECK(pcm_phase2_info1_sample(
 			      &digital, received, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
-		      "V.90 fallback receiver failed at sample %zu", index);
+		      "PCM fallback receiver failed at sample %zu", index);
 		if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_INFO1A_RECEIVED) {
 			peer_received = true;
 			break;
@@ -507,7 +508,7 @@ static bool check_v34_fallback_info1a(
 	      v34_info1a_encode(
 		      &digital.analog.record.v34_fallback, retained_payload,
 		      sizeof(retained_payload)) == V34_INFO1_OK &&
-	      memcmp(retained_payload, payload, sizeof(payload)) == 0,
+	      memcmp(retained_payload, payload, sizeof(retained_payload)) == 0,
 	      "captured V.34 INFO1a was not retained as a typed fallback");
 	return true;
 }
@@ -1049,6 +1050,13 @@ static bool check_initial_probe(enum test_codec codec)
 	{
 		struct test_delay_line analog_start = analog_to_digital;
 		struct test_delay_line digital_start = digital_to_analog;
+		/* Compact on-wire fallback replies: the latter two were rejected
+		 * during V.92 recovery despite valid V.34 rates and checksums. */
+		static const uint8_t fallback_payloads[][V34_INFO1A_PAYLOAD_BYTES] = {
+			{ 0x00, 0x06, 0x4f, 0x60, 0x04 },
+			{ 0xa0, 0x07, 0x2c, 0x90, 0x04 },
+			{ 0xa0, 0x05, 0x5f, 0x60, 0x04 },
+		};
 
 		for (enum test_info1_mode mode = TEST_INFO1_V90;
 		     mode <= TEST_INFO1_V92_PCM; ++mode) {
@@ -1061,10 +1069,13 @@ static bool check_initial_probe(enum test_codec codec)
 				      mode),
 			      "PCM INFO1 mode %d failed for codec %d",
 			      mode, codec);
+			for (size_t index = 0; index < sizeof(fallback_payloads) /
+						     sizeof(fallback_payloads[0]); ++index)
+				CHECK(check_v34_fallback_info1a(
+					      &digital_reciprocal, mode, fallback_payloads[index]),
+				      "captured V.34 fallback %zu failed for codec %d mode %d",
+				      index, codec, mode);
 		}
-		CHECK(check_v34_fallback_info1a(&digital_reciprocal),
-		      "captured V.34 fallback INFO1a failed for codec %d",
-		      codec);
 	}
 
 	{

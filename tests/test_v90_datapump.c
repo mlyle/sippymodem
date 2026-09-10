@@ -2,6 +2,7 @@
 
 #include <v90_datapump.h>
 #include <v90_profile.h>
+#include <v92_profile.h>
 #include <v34_datapump.h>
 #include <v34_call.h>
 
@@ -1458,7 +1459,14 @@ static bool fallback_source(
 	return true;
 }
 
-static bool run_fallback_restart(enum g711_law law, bool remote)
+static bool fallback_pcm_source(void *context, uint8_t *bits, size_t bit_count)
+{
+	memset(bits, 1, bit_count);
+	return source_bits(context, 1, bits, (int)bit_count) >= 0;
+}
+
+static bool run_fallback_restart(
+	enum g711_law law, bool remote, enum DP_ID protocol, uint8_t pcm_up_max_drn)
 {
 	enum { BLOCK = MODEM_FRAG };
 	struct bit_endpoint digital_bits = { .transmit_seed = 7, .receive_seed = 19 };
@@ -1493,16 +1501,25 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 	digital.v90_upstream_min_rate = 4800;
 	digital.v90_upstream_max_rate = 28800;
 	digital.v90_upstream_max_baud = 3000;
-	CHECK(v90_profile_init(&configuration, V90_ANALOG_MODEM, law,
-			       28000, 56000, &upstream) == V90_PROFILE_OK,
-	      "fallback peer profile did not initialize");
-	/* This peer also implements the conventional rates offered in INFO1d. */
-	configuration.local_info0.analog.symbol_rate_2800_supported = true;
+	digital.sregs[SREG_V92_PCM_UPSTREAM] = pcm_up_max_drn != 0;
+	digital.sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = pcm_up_max_drn;
+	if (protocol == DP_V92) {
+		CHECK(v92_profile_init(&configuration, V90_ANALOG_MODEM, law,
+				       28000, 56000, pcm_up_max_drn, &upstream) == V92_PROFILE_OK,
+		      "V.92 fallback peer profile did not initialize");
+		configuration.local_info0.v92_analog.v90.symbol_rate_2800_supported = true;
+	} else {
+		CHECK(v90_profile_init(&configuration, V90_ANALOG_MODEM, law,
+				       28000, 56000, &upstream) == V90_PROFILE_OK,
+		      "V.90 fallback peer profile did not initialize");
+		configuration.local_info0.analog.symbol_rate_2800_supported = true;
+	}
 	CHECK(pcm_call_init(&peer, &configuration) == PCM_CALL_OK &&
 	      dc_remover_init(&frontend) == DC_REMOVER_OK,
 	      "fallback peer did not initialize");
-	digital.dp = registered_v90->create(
-		&digital, DP_V90, 0, MODEM_RATE, MODEM_FRAG, registered_v90);
+	digital.dp = modem_dp_get_registered_ops(protocol)->create(
+		&digital, protocol, 0, MODEM_RATE, MODEM_FRAG,
+		modem_dp_get_registered_ops(protocol));
 	CHECK(digital.dp != NULL, "fallback digital datapump did not initialize");
 	memset(to_digital, encode(law, 0), sizeof(to_digital));
 	for (size_t clock = 0; clock < 4u * CALL_OCTET_LIMIT; clock += BLOCK) {
@@ -1514,7 +1531,7 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 			input[index] = decode(law, to_digital[index]);
 		CHECK(dc_remover_process(&frontend, input, BLOCK) == DC_REMOVER_OK,
 		      "fallback receive conditioning failed");
-		if (dp->id == DP_V90)
+		if (dp->id != DP_V34)
 			result = dp->op->process_g711(dp, law, to_digital, input,
 						   to_analog, output, BLOCK, &exact);
 		else {
@@ -1530,14 +1547,18 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 			struct dp *next;
 
 			if (!fallback) {
-				struct v90_v34_fallback_handoff handoff;
+				struct pcm_v34_fallback_handoff handoff;
 				struct v34_call_configuration v34_configuration;
 				struct v34_info0 digital_info0;
 				uint16_t mask;
 
 				CHECK(digital.dp_requested == DP_V34 &&
-				      v90_datapump_v34_fallback_handoff(dp, &handoff),
-				      "V.90 did not export its fallback agreement");
+				      v90_datapump_v34_fallback_handoff(dp, &handoff) &&
+				      handoff.restart.protocol == configuration.protocol &&
+				      (protocol != DP_V92 ||
+				       handoff.restart.local_info1.v92_digital.pcm_upstream_supported ==
+					       (pcm_up_max_drn != 0)),
+				      "PCM did not export its fallback agreement");
 				/* The peer uses the same INFO0 capabilities retained in
 				 * the digital handoff, with the station roles reversed. */
 				digital_info0 = handoff.phase2.local_info0;
@@ -1554,8 +1575,8 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 				      "fallback conventional peer did not initialize");
 				fallback = true;
 			} else {
-				CHECK(retrain && digital.dp_requested == DP_V90,
-				      "fallback retrain did not return to V.90");
+				CHECK(retrain && digital.dp_requested == protocol,
+				      "fallback retrain did not return to the agreed PCM protocol");
 				returned = true;
 			}
 			next = modem_dp_get_registered_ops(digital.dp_requested)->create(
@@ -1587,7 +1608,7 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 					      "fallback peer data failed");
 				if (conventional.stage == V34_CALL_RETRAIN_SILENCE) {
 					CHECK(pcm_call_start_retrain(&peer) == PCM_CALL_OK,
-					      "fallback peer could not resume V.90");
+					      "fallback peer could not resume PCM");
 					/* Test peer follows V.90 9.2.2.1.9: the accepted
 					 * shared response enters PCM, not V.34, Phase 2. */
 					peer.retrain = conventional.retrain;
@@ -1602,6 +1623,7 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 				if (peer.stage == PCM_CALL_DATA_PATH) {
 					struct pcm_call_data_sources sources = {
 						.upstream = fallback_source, .upstream_context = &analog,
+						.pcm_upstream = fallback_pcm_source, .pcm_upstream_context = &analog,
 					};
 					struct pcm_call_data_event event;
 
@@ -1676,7 +1698,9 @@ static bool run_fallback_restart(enum g711_law law, bool remote)
 		}
 	}
 	CHECK(phases == 2u && returned && peer_returned &&
-	      digital.dp->id == DP_V90 && digital.tx_rate > 33600,
+	      digital.dp->id == protocol && digital.tx_rate > 33600 &&
+	      digital.dsp_info.upstream_mode ==
+		      (pcm_up_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34),
 	      "fallback did not restore PCM data (phases=%u returned=%d/%d)",
 	      phases, returned, peer_returned);
 	CHECK(digital.dp->op->delete(digital.dp) == 0,
@@ -1689,8 +1713,14 @@ static bool test_fallback_restart(void)
 	CHECK(v90_datapump_register() == 0 && v34_datapump_register() == 0,
 	      "fallback datapumps did not register");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		CHECK(run_fallback_restart(law, false) && run_fallback_restart(law, true),
-		      "fallback retrain failed for law %u", (unsigned int)law);
+		for (unsigned int mode = 0; mode < 3u; ++mode) {
+			enum DP_ID protocol = mode == 0 ? DP_V90 : DP_V92;
+			uint8_t pcm_up_max_drn = mode == 2u ? 4u : 0;
+
+			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn) &&
+			      run_fallback_restart(law, true, protocol, pcm_up_max_drn),
+			      "fallback retrain failed for law %u mode %u", law, mode);
+		}
 	CHECK(v90_datapump_unregister() == 0 && v34_datapump_unregister() == 0,
 	      "fallback datapumps leaked ownership");
 	return true;
@@ -1702,7 +1732,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
-		{ "V.90 retrain after V.34 fallback", test_fallback_restart },
+		{ "PCM retrain after V.34 fallback", test_fallback_restart },
 		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "long-delay upstream channel",

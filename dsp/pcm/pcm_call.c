@@ -1436,9 +1436,11 @@ static struct v34_info0 v34_info0_from_v90(
 enum pcm_call_result pcm_call_v34_fallback_handoff(
 	const struct pcm_call *call,
 	struct v34_phase2_handoff *handoff,
-	struct v90_fallback_restart *restart)
+	struct pcm_fallback_restart *restart)
 {
 	struct v34_phase2_handoff selected;
+	const struct v90_info0 *local_info0;
+	const struct v90_info0 *peer_info0;
 	int16_t receive_gain;
 
 	if (!pcm_call_is_valid(call) || handoff == NULL || restart == NULL ||
@@ -1447,18 +1449,23 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 	    memory_regions_overlap(
 		    handoff, sizeof(*handoff), restart, sizeof(*restart)))
 		return PCM_CALL_INVALID_ARGUMENT;
-	if (call->failed || call->protocol != PCM_PROTOCOL_V90 ||
+	if (call->failed || call->stage != PCM_CALL_PHASE2 ||
 	    call->local_role != V90_DIGITAL_MODEM ||
 	    !call->peer_info0_stored || !call->round_trip_delay_stored ||
 	    !pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2) ||
 	    pcm_phase2_receive_gain(&call->state.phase2, &receive_gain) !=
 		    PCM_PHASE2_OK)
 		return PCM_CALL_INVALID_STATE;
+	local_info0 = call->protocol == PCM_PROTOCOL_V92 ?
+		&call->local_info0.v92_digital.v90.common : &call->local_info0.digital.common;
+	peer_info0 = call->protocol == PCM_PROTOCOL_V92 ?
+		&call->peer_info0.v92_analog.v90 : &call->peer_info0.analog;
 	selected = (struct v34_phase2_handoff){
-		.local_info0 = v34_info0_from_v90(
-			&call->local_info0.digital.common),
-		.peer_info0 = v34_info0_from_v90(&call->peer_info0.analog),
-		.caller_info1c = call->state.phase2.state.info1.digital.record.v90,
+		.local_info0 = v34_info0_from_v90(local_info0),
+		.peer_info0 = v34_info0_from_v90(peer_info0),
+		.caller_info1c = call->protocol == PCM_PROTOCOL_V92 ?
+			call->state.phase2.state.info1.digital.record.v92.v34 :
+			call->state.phase2.state.info1.digital.record.v90,
 		.answerer_info1a =
 			call->state.phase2.state.info1.analog.record.v34_fallback,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
@@ -1468,12 +1475,17 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 	if (!v34_phase2_handoff_is_valid(&selected))
 		return PCM_CALL_UNUSABLE_SELECTION;
 	*handoff = selected;
-	*restart = (struct v90_fallback_restart){
-		.local_info0 = call->local_info0.digital,
-		.peer_info0 = call->peer_info0.analog,
-		.local_info1 = call->local_info1.digital,
+	*restart = (struct pcm_fallback_restart){
+		.protocol = call->protocol,
+		.local_info0 = call->local_info0,
+		.peer_info0 = call->peer_info0,
+		.local_info1 = call->local_info1,
 		.phase3 = call->phase3_configuration.digital,
+		.v92_phase3 = call->phase3_configuration.v92_digital,
 		.phase4 = call->digital_phase4_configuration,
+		.v92_phase4 = call->v92_digital_phase4_configuration,
+		.enabled_downstream_rate_mask = call->enabled_downstream_rate_mask,
+		.upstream_retry_ceiling = call->v92_upstream_retry_ceiling,
 		.round_trip_delay_samples = call->round_trip_delay_samples,
 		.phase2_nominal_amplitude = call->phase2_nominal_amplitude,
 		.law = call->law,
@@ -1482,7 +1494,7 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 }
 
 enum pcm_call_result pcm_call_init_from_v34(
-	struct pcm_call *call, const struct v90_fallback_restart *restart,
+	struct pcm_call *call, const struct pcm_fallback_restart *restart,
 	const struct v34_full_retrain *response)
 {
 	struct pcm_call initialized;
@@ -1497,21 +1509,23 @@ enum pcm_call_result pcm_call_init_from_v34(
 	    memory_regions_overlap(call, sizeof(*call), response, sizeof(*response)))
 		return PCM_CALL_INVALID_ARGUMENT;
 	configuration = (struct pcm_call_configuration){
-		.protocol = PCM_PROTOCOL_V90,
+		.protocol = restart->protocol,
 		.local_role = V90_DIGITAL_MODEM,
 		.law = restart->law,
-		.enabled_downstream_rate_mask =
-			restart->phase3.jd.data_rate_capability_mask,
+		.enabled_downstream_rate_mask = restart->enabled_downstream_rate_mask,
 		.phase2_nominal_amplitude = restart->phase2_nominal_amplitude,
-		.local_info0.digital = restart->local_info0,
-		.local_info1.digital = restart->local_info1,
+		.local_info0 = restart->local_info0,
+		.local_info1 = restart->local_info1,
 		.phase3.digital = restart->phase3,
+		.phase3.v92_digital = restart->v92_phase3,
 		.digital_phase4 = restart->phase4,
+		.v92_digital_phase4 = restart->v92_phase4,
 	};
 	if (pcm_call_init(&initialized, &configuration) != PCM_CALL_OK)
 		return PCM_CALL_INVALID_ARGUMENT;
-	initialized.peer_info0.analog = restart->peer_info0;
+	initialized.peer_info0 = restart->peer_info0;
 	initialized.peer_info0_stored = true;
+	initialized.v92_upstream_retry_ceiling = restart->upstream_retry_ceiling;
 	initialized.round_trip_delay_samples = restart->round_trip_delay_samples;
 	initialized.round_trip_delay_stored = true;
 	/* Validate the retained INFO0 pair and ranging interval before accepting

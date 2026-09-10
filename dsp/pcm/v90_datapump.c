@@ -26,7 +26,7 @@ struct v90_datapump {
 	struct pcm_call call;
 	struct training_session training;
 	struct v34_data_quality upstream_quality;
-	struct v90_v34_fallback_handoff fallback;
+	struct pcm_v34_fallback_handoff fallback;
 	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
@@ -145,7 +145,8 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	     (role != V90_DIGITAL_MODEM ||
 	      !pcm_call_uses_conventional_upstream(&datapump->call))) ||
 	    (datapump->fallback_ready &&
-	     (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
+	     (role != V90_DIGITAL_MODEM ||
+	      datapump->fallback.restart.protocol != protocol ||
 	      !datapump->call_started ||
 	      !v34_phase2_handoff_is_valid(&datapump->fallback.phase2) ||
 	      memcmp(
@@ -179,7 +180,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 }
 
 bool v90_datapump_v34_fallback_handoff(
-	struct dp *dp, struct v90_v34_fallback_handoff *handoff)
+	struct dp *dp, struct pcm_v34_fallback_handoff *handoff)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
 
@@ -243,9 +244,10 @@ static struct dp *create_v90(
 	}
 	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
 	if (from_v34) {
-		if (protocol != PCM_PROTOCOL_V90 || role != V90_DIGITAL_MODEM ||
+		if (role != V90_DIGITAL_MODEM ||
 		    !v34_datapump_pcm_retrain_handoff(
-			    modem->dp, &datapump->call, &datapump->training)) {
+			    modem->dp, &datapump->call, &datapump->training) ||
+		    datapump->call.protocol != protocol) {
 			free(datapump->host_echo);
 			free(datapump);
 			return NULL;
