@@ -286,8 +286,15 @@ enum phase2_info1_result phase2_info1_reject_peer(
 	    exchange->phase != PHASE2_INFO1_PEER_FRAME_PENDING)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	next = *exchange;
-	next.phase = PHASE2_INFO1_WAITING_FOR_PEER;
-	advance_peer_deadline(&next);
+	/* Recovery still receives INFO, but its peer deadline is already spent.
+	 * Rejecting a late record must retain that recovery, not overrun the
+	 * deadline or start a fresh waiting interval. */
+	if (next.peer_deadline_elapsed_samples == peer_deadline_samples(&next))
+		next.phase = PHASE2_INFO1_RECOVERING;
+	else {
+		next.phase = PHASE2_INFO1_WAITING_FOR_PEER;
+		advance_peer_deadline(&next);
+	}
 	if (!phase2_info1_is_valid(&next))
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	*exchange = next;

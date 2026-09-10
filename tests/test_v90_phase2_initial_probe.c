@@ -234,11 +234,52 @@ static bool check_pcm_info1d_retry(
 	}
 	CHECK(late.control.phase == PHASE2_INFO1_FAILED &&
 	      phase2_info1_recover(&late.control) == PHASE2_INFO1_OK &&
-	      v34_phase2_info_audio_transmitter_init(
+	      pcm_phase2_info1_is_valid(&late),
+	      "PCM late INFO1a fixture did not arm at the first deadline");
+	/* A checksum-valid but unusable reply may arrive after timeout. It
+	 * must not advance the expired deadline or prevent a later good reply. */
+	for (unsigned int attempt = 0; attempt < 2u; ++attempt) {
+		const uint8_t invalid_payload[V90_INFO1A_PAYLOAD_BYTES] = {
+			[2] = UINT8_C(0x03), [3] = UINT8_C(0x80),
+		};
+		uint32_t deadline = late.control.peer_deadline_elapsed_samples;
+		bool rejected = false;
+
+		CHECK(v34_phase2_info_audio_transmitter_init(
+			      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+			      invalid_payload, V90_INFO1A_PAYLOAD_BITS) ==
+			      V34_PHASE2_INFO_AUDIO_OK,
+		      "late invalid INFO1a transmitter did not initialize");
+		for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+			int16_t received = 0;
+			int16_t transmit;
+			bool complete;
+
+			if (!peer.frame_complete)
+				CHECK(v34_phase2_info_audio_transmitter_sample(
+					      &peer, &received, &complete) ==
+					      V34_PHASE2_INFO_AUDIO_OK,
+				      "late invalid INFO1a transmitter failed");
+			CHECK(pcm_phase2_info1_sample(
+				      &late, received, &transmit, &event) ==
+				      PHASE2_INFO1_OK,
+			      "late invalid INFO1a caused an internal error");
+			if (event.kind == PCM_PHASE2_INFO1_EVENT_PEER_FRAME_REJECTED) {
+				rejected = true;
+				break;
+			}
+		}
+		CHECK(rejected && late.control.phase == PHASE2_INFO1_RECOVERING &&
+		      late.control.peer_deadline_elapsed_samples == deadline &&
+		      late.info1d_resends == 0u && !late.analog_record_stored &&
+		      pcm_phase2_info1_retry_pending(&late),
+		      "late invalid INFO1a lost the recoverable exchange");
+	}
+	CHECK(v34_phase2_info_audio_transmitter_init(
 		      &peer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
 		      peer_payload, V90_INFO1A_PAYLOAD_BITS) ==
 		      V34_PHASE2_INFO_AUDIO_OK,
-	      "PCM late INFO1a fixture did not arm at the first deadline");
+	      "PCM late valid INFO1a transmitter did not initialize");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		int16_t received = 0;
 		int16_t transmit;

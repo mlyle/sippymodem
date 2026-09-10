@@ -107,7 +107,8 @@ bool phase2_info1_is_waiting_for_peer(
 
 /* A mode adapter must resolve each pending peer frame exactly once. Accepting
  * advances the role-specific sequence; rejecting resumes acquisition and
- * charges the current sample to the peer deadline. */
+ * charges the current sample to an unexpired peer deadline. A late rejection
+ * instead preserves recovery at the expired deadline. */
 enum phase2_info1_result phase2_info1_accept_peer(
 	struct phase2_info1_exchange *exchange);
 enum phase2_info1_result phase2_info1_reject_peer(
