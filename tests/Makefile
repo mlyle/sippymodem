@@ -1860,6 +1860,7 @@ V92_PCM_FRAME_TEST_BINARY := $(BUILD_DIR)/test_v92_pcm_frame
 V92_PCM_FRAME_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_frame.o \
 	$(BUILD_DIR)/v92_pcm_frame.o \
+	$(BUILD_DIR)/v92_observation.o \
 	$(BUILD_DIR)/v92_pcm_mapping.o \
 	$(BUILD_DIR)/v92_cpd.o \
 	$(BUILD_DIR)/v34_framing.o \
@@ -4411,16 +4412,16 @@ $(V92_PCM_FRAME_TEST_BINARY): $(V92_PCM_FRAME_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_CPD_DIRECT_TEST_BINARY): $(V92_CPD_DIRECT_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_CPD_CHANNEL_TEST_BINARY): $(V92_CPD_CHANNEL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_UPSTREAM_DATA_TX_TEST_BINARY): $(V92_UPSTREAM_DATA_TX_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_PCM_FRAME_RX_TEST_BINARY): $(V92_PCM_FRAME_RX_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -Wl,--wrap=v92_observation_predict -o $@ $^ -lm
 
 $(V92_UPSTREAM_DATA_RX_TEST_BINARY): $(V92_UPSTREAM_DATA_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm

@@ -2,6 +2,8 @@
 
 #include "v92_pcm_frame.h"
 
+#include "v92_observation.h"
+
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -664,6 +666,7 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 }
 
 struct frame_path {
+	uint8_t origin;
 	struct v92_pcm_frame_rx_path state;
 	struct v92_pcm_frame frame;
 	uint64_t frame_metric;
@@ -842,33 +845,52 @@ static void train_noise(struct v92_pcm_frame_noise *noise,
 	};
 }
 
-enum v92_pcm_frame_result v92_pcm_frame_decode(
+static enum v92_pcm_frame_result decode_frame(
 	struct v92_pcm_frame_rx *receiver,
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
 	uint8_t *bits, size_t bit_count,
-	struct v92_pcm_frame_decision *decision)
+	struct v92_pcm_frame_decision *decision,
+	const struct v92_pcm_frame_channel *channel,
+	struct v92_pcm_frame_likelihood *likelihood)
 {
+	const struct v92_observation *model = channel ? channel->model : NULL;
+	const int16_t *levels = channel ? channel->levels : NULL;
+	const bool *received = channel ? channel->received : NULL;
 	struct frame_path banks[2][V92_PCM_RX_PATHS];
 	struct frame_path *paths = banks[0];
 	struct frame_path *next = banks[1];
 	uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
 	size_t path_count;
-	size_t best = V92_PCM_RX_PATHS;
+	size_t best = SIZE_MAX;
 	const struct memory_region regions[] = {
 		{ receiver, sizeof(*receiver) },
 		{ samples, V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples) },
 		{ bits, bit_count },
 		{ decision, sizeof(*decision) },
+		{ model, model ? sizeof(*model) : 0u },
+		{ channel, channel ? sizeof(*channel) : 0u },
+		{ likelihood, likelihood ? sizeof(*likelihood) : 0u },
+		{ levels, levels ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*levels) : 0u },
+		{ received, received ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*received) : 0u },
 	};
 
 	if (receiver == NULL || samples == NULL || bits == NULL ||
-	    decision == NULL || memory_region_set_overlaps(regions, 4u))
+	    decision == NULL ||
+	    memory_region_set_overlaps(regions, sizeof(regions) / sizeof(regions[0])))
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (model && (!v92_observation_is_valid(model) ||
+		model->law != receiver->mapping.law ||
+		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
+		x_history_count(&receiver->mapping) < 2u))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
 	path_count = receiver->path_count;
+	struct v92_observation_cache cache;
+	if (model)
+		v92_observation_begin(&cache, model, receiver->noise.relative_variance);
 	/* Acquire with known bits, then test the settled raw-coordinate path
 	 * using ordinary decisions. Constraining all 48 frames to ones would
 	 * conceal a channel that cannot recover data at the selected rate. */
@@ -876,7 +898,9 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		receiver->noise.frames < V92_B1U_ACQUISITION_FRAMES);
 
 	for (size_t index = 0u; index < path_count; ++index) {
-		paths[index] = (struct frame_path){ .state = receiver->paths[index] };
+		paths[index] = (struct frame_path){
+			.state = receiver->paths[index], .origin = (uint8_t)index,
+		};
 		if (known && !b1u_digits(receiver, &paths[index].state,
 				      paths[index].known_digits))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
@@ -891,6 +915,11 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		struct frame_candidate candidates[V92_PCM_RX_PATHS];
 		size_t count = 0u;
 		uint64_t weight = 1u;
+		bool present = !received || received[symbol];
+
+		if (model && present && !v92_observation_symbol_level(&cache,
+			samples[symbol], levels ? levels + symbol : NULL))
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
 		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION) {
 			/* Companding noise grows with amplitude. Estimate reliability
@@ -907,27 +936,71 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		for (size_t path = 0u; path < path_count; ++path) {
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
+			struct v92_observation_point previous = { 0 }, second = { 0 };
 
 			if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
 				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
 				prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
+			}
+			if (model) {
+				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
+				previous = v92_observation_point(&cache,
+					x_history(&receiver->mapping, &paths[path].state.filter)[0]);
+				second = v92_observation_point(&cache,
+					x_history(&receiver->mapping, &paths[path].state.filter)[1]);
 			}
 
 			if (v34_convolutional_encoder_output(
 					&paths[path].state.trellis, &y0) !=
 			    V34_TRELLIS_OK)
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
+			int first_eta = -(int)constellation->count, end_eta = constellation->count;
+			/* A full heap supplies a budget which can only decrease as this
+			 * path is visited. Trim only tails whose enlarged observation
+			 * envelope cannot reach that budget; preserve eta/tie ordering. */
+			if (model && count == V92_PCM_RX_PATHS && present) {
+				if (paths[path].state.metric >= candidates[0].metric)
+					continue;
+				uint64_t budget = candidates[0].metric - paths[path].state.metric;
+
+				if (budget < (uint64_t)(-2.e6 * log(1e-300))) {
+					double radius = sqrt((budget + 1. + 1e-9 * budget) / cache.bound_scale);
+					double minimum = cache.observed + cache.lower - radius -
+						previous.values.post_high - second.values.second_high;
+					double maximum = cache.observed + cache.upper + radius -
+						previous.values.post_low - second.values.second_low;
+					int low = first_eta, high = end_eta;
+
+					while (low < high) {
+						int mid = low + (high - low) / 2;
+						struct v92_observation_range point = v92_observation_range(&cache,
+							precoder_output(precoder, signed_point(constellation, mid)));
+
+						if (point.high < minimum) low = mid + 1;
+						else high = mid;
+					}
+					first_eta = low;
+					high = end_eta;
+					while (low < high) {
+						int mid = low + (high - low) / 2;
+						struct v92_observation_range point = v92_observation_range(&cache,
+							precoder_output(precoder, signed_point(constellation, mid)));
+
+						if (point.low <= maximum) low = mid + 1;
+						else high = mid;
+					}
+					end_eta = low;
+				}
+			}
 			int offset = equivalence_offset(symbol, paths[path].frame.signed_index, y0);
 			unsigned step = known ? stride * modulus : stride;
 			int residue = offset + (known ? (int)(stride * paths[path].known_digits[symbol]) : 0);
-			int first = -(int)constellation->count;
 
-			first += positive_modulo(residue - first, step);
-			unsigned next_digit = (unsigned)positive_modulo((first - offset) / (int)stride, modulus);
+			first_eta += positive_modulo(residue - first_eta, step);
+			unsigned next_digit = (unsigned)positive_modulo((first_eta - offset) / (int)stride, modulus);
 
-			/* Keep the original ascending eta order, including metric ties.
-			 * Known B1u visits one residue class; data cycles all digits. */
-			for (int eta = first; eta < (int)constellation->count; eta += (int)step) {
+			/* Known B1u visits one residue class; data cycles all digits. */
+			for (int eta = first_eta; eta < end_eta; eta += (int)step) {
 				uint8_t digit = (uint8_t)next_digit;
 				int64_t error;
 				struct frame_candidate candidate;
@@ -954,6 +1027,17 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 					.eta = (int16_t)eta, .path = (uint8_t)path,
 					.digit = digit,
 				};
+				if (model) {
+					if (count == V92_PCM_RX_PATHS &&
+						paths[path].state.metric >= candidates[0].metric)
+						continue;
+					uint64_t budget = count == V92_PCM_RX_PATHS ?
+						candidates[0].metric - paths[path].state.metric : UINT64_MAX;
+
+					candidate.metric = add_u64_saturating(paths[path].state.metric,
+						!present ? 0 :
+						v92_observation_score(&cache, precoder_output(precoder, u), &previous, &second, budget));
+				}
 				if (count < V92_PCM_RX_PATHS) {
 					candidates[count++] = candidate;
 					candidate_push(candidates, count);
@@ -1034,13 +1118,29 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 			    memcmp(&state->filter, &prior->filter, sizeof(state->filter)) == 0)
 				break;
 		}
+		uint64_t gap = survivor == valid ? UINT64_MAX :
+			(state->metric > paths[survivor].state.metric ?
+			 state->metric - paths[survivor].state.metric :
+			 paths[survivor].state.metric - state->metric);
+		/* Observation scores are -2e6 times the log likelihood.
+		 * A gap of at most 3e6 is insufficient to settle disputed
+		 * payload when coding histories merge. Keep the winning state. */
+		bool unresolved = gap == 0u || (model && gap <= UINT64_C(3000000));
+
 		if (survivor == valid)
 			paths[valid++] = paths[index];
-		else if (state->metric < paths[survivor].state.metric)
+		else if (state->metric < paths[survivor].state.metric && !unresolved)
 			paths[survivor] = paths[index];
-		else if (state->metric == paths[survivor].state.metric) {
+		else if (unresolved) {
 			struct frame_path *prior = &paths[survivor];
 
+			if (state->metric < prior->state.metric) {
+				struct frame_path swap = *prior;
+
+				*prior = paths[index];
+				paths[index] = swap;
+				state = &paths[index].state;
+			}
 			prior->output_ambiguous |= paths[index].output_ambiguous ||
 				memcmp(prior->output_bits, paths[index].output_bits, bit_count) != 0;
 			prior->state.ambiguous_frames |= state->ambiguous_frames;
@@ -1052,11 +1152,11 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		}
 	}
 	for (size_t index = 0u; index < valid; ++index) {
-		if (best == V92_PCM_RX_PATHS ||
+		if (best == SIZE_MAX ||
 		    paths[index].state.metric < paths[best].state.metric)
 			best = index;
 	}
-	if (best == V92_PCM_RX_PATHS)
+	if (best == SIZE_MAX)
 		return V92_PCM_FRAME_NO_PATH;
 	memcpy(decoded, paths[best].output_bits, bit_count);
 	bool ambiguous = paths[best].output_ambiguous;
@@ -1066,16 +1166,31 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 			ambiguous |= paths[index].output_ambiguous ||
 				memcmp(decoded, paths[index].output_bits, bit_count) != 0;
 	}
-	*decision = (struct v92_pcm_frame_decision){
+	struct v92_pcm_frame_decision result = {
 		.frame = paths[best].frame,
 		.squared_error = paths[best].frame_metric,
 		.bits_ready = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES,
 		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
 	};
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
-		decision->predicted_samples[symbol] = predicted_observation(receiver,
-			decision->frame.u[symbol], decision->frame.v[symbol], samples[symbol], b1u);
-	if (decision->bits_ready)
+		result.predicted_samples[symbol] = predicted_observation(receiver,
+			result.frame.u[symbol], result.frame.v[symbol], samples[symbol], b1u);
+	double estimated[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	if (model) {
+		const int32_t *previous = x_history(&receiver->mapping,
+			&receiver->paths[paths[best].origin].filter);
+		for (size_t symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			int32_t input[3] = { result.frame.x[symbol],
+				symbol ? result.frame.x[symbol - 1] : previous[0],
+				symbol > 1 ? result.frame.x[symbol - 2] : previous[1 - symbol] };
+			estimated[symbol] = v92_observation_predict(model, input);
+			if (!isfinite(estimated[symbol]))
+				return V92_PCM_FRAME_NO_PATH;
+		}
+	}
+	/* No caller-visible output or receiver state changes before every
+	 * quality prediction succeeds, including the final symbol. */
+	if (result.bits_ready)
 		memcpy(bits, decoded, bit_count);
 	else
 		receiver->pending_frames++;
@@ -1089,8 +1204,22 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 		(V92_PCM_RX_PATHS - valid) * sizeof(receiver->paths[0]));
 	receiver->path_count = (uint8_t)valid;
 	if (b1u && receiver->observation == V92_PCM_FRAME_CONSTELLATION)
-		train_noise(&receiver->noise, samples, decision->predicted_samples);
+		train_noise(&receiver->noise, samples, result.predicted_samples);
+	*decision = result;
+	if (likelihood) {
+		likelihood->cost = minimum_metric;
+		memcpy(likelihood->predicted_samples, estimated, sizeof(estimated));
+	}
 	return V92_PCM_FRAME_OK;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_decode(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision)
+{
+	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
+		NULL, NULL);
 }
 
 const char *v92_pcm_frame_result_name(
@@ -1109,4 +1238,18 @@ const char *v92_pcm_frame_result_name(
 		return "no path";
 	}
 	return "unknown";
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision,
+	const struct v92_pcm_frame_channel *channel,
+	struct v92_pcm_frame_likelihood *likelihood)
+{
+	if (!channel || !channel->model || !likelihood)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
+		channel, likelihood);
 }

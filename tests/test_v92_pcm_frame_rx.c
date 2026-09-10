@@ -3,6 +3,7 @@
 #include <v92_pcm_frame.h>
 #include <v92_cpd_direct.h>
 #include <v92_cpu.h>
+#include <v92_observation.h>
 
 #include "test.h"
 
@@ -732,6 +733,169 @@ static bool test_rejection_and_training_evidence(void)
 	return true;
 }
 
+static unsigned failed_prediction, prediction_count;
+double __real_v92_observation_predict(const struct v92_observation *, const int32_t [3]);
+double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t x[3])
+{
+	if (++prediction_count == failed_prediction) return NAN;
+	return __real_v92_observation_predict(model, x);
+}
+
+static void channel_samples(enum g711_law law, const struct v92_pcm_frame *frame,
+	int16_t memory[2], int16_t levels[12], int16_t samples[12])
+{
+	for (unsigned i = 0; i < 12; i++) {
+		int16_t q = quantize(law, (int16_t)round(.5 * frame->x[i]));
+		levels[i] = quantize(law, (int16_t)round(1.8 * q + .16 * memory[0] + .04 * memory[1]));
+		samples[i] = (int16_t)round(.75 * levels[i]);
+		memory[1] = memory[0]; memory[0] = q;
+	}
+}
+
+static bool observed_rejection(struct v92_pcm_frame_rx *rx,
+	struct v92_observation *model, const int16_t samples[12], const int16_t levels[12])
+{
+	struct v92_pcm_frame_rx initial = *rx;
+	struct v92_pcm_frame_decision decision, saved_decision;
+	struct v92_pcm_frame_likelihood likelihood, saved_likelihood;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], saved_bits[sizeof(bits)];
+	memset(&decision, 0xa5, sizeof(decision)); saved_decision = decision;
+	memset(&likelihood, 0xa5, sizeof(likelihood)); saved_likelihood = likelihood;
+	memset(bits, 0xa5, sizeof(bits)); memcpy(saved_bits, bits, sizeof(bits));
+	struct v92_pcm_frame_channel channel = { model, levels, NULL };
+	const unsigned failures[] = { 1, 6, 12, 0 };
+	for (unsigned i = 0; i < ARRAY_LENGTH(failures); i++) {
+		double gain = model->quantizer_gain;
+		if (i == 3) model->quantizer_gain = 0.;
+		failed_prediction = failures[i]; prediction_count = 0;
+		enum v92_pcm_frame_result rc = v92_pcm_frame_decode_observed(rx, samples, false,
+			bits, rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood);
+		model->quantizer_gain = gain; failed_prediction = 0;
+		CHECK(rc == V92_PCM_FRAME_NO_PATH &&
+			!memcmp(rx, &initial, sizeof(initial)) &&
+			!memcmp(bits, saved_bits, sizeof(bits)) &&
+			!memcmp(&decision, &saved_decision, sizeof(decision)) &&
+			!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
+			"prediction failure %u changed output or receiver", failures[i]);
+	}
+	int16_t invalid_levels[12]; memcpy(invalid_levels, levels, sizeof(invalid_levels));
+	invalid_levels[11] = 1;
+	channel.levels = invalid_levels;
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+		V92_PCM_FRAME_INVALID_PARAMETERS, "invalid final wire level accepted");
+	channel.levels = levels;
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, &channel,
+		(struct v92_pcm_frame_likelihood *)&decision) == V92_PCM_FRAME_INVALID_ARGUMENT,
+		"overlapping outputs accepted");
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, (uint8_t *)rx,
+		rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+		V92_PCM_FRAME_INVALID_ARGUMENT, "overlapping state and bits accepted");
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, NULL, &likelihood) ==
+		V92_PCM_FRAME_INVALID_ARGUMENT, "missing channel accepted");
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, &channel, NULL) ==
+		V92_PCM_FRAME_INVALID_ARGUMENT, "missing likelihood accepted");
+	channel.model = NULL;
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+		V92_PCM_FRAME_INVALID_ARGUMENT, "missing model accepted");
+	channel.model = model;
+	enum g711_law law = model->law;
+	model->law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+		V92_PCM_FRAME_INVALID_PARAMETERS, "wrong model law accepted");
+	model->law = law;
+	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+		rx->mapping.data_bits_per_frame - 1, &decision, &channel, &likelihood) ==
+		V92_PCM_FRAME_OUT_OF_RANGE, "wrong bit count accepted");
+	CHECK(!memcmp(rx, &initial, sizeof(initial)) && !memcmp(bits, saved_bits, sizeof(bits)) &&
+		!memcmp(&decision, &saved_decision, sizeof(decision)) &&
+		!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
+		"rejected observation changed outputs or receiver");
+	return true;
+}
+
+static bool test_observed_channel(enum g711_law law)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	CHECK(v92_cpd_direct_init(&cpd, law, 1, false) == V92_CPD_OK, "CPd failed");
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 3;
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK, "mapping failed");
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	CHECK(v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK, "init failed");
+	int32_t x[V92_OBSERVATION_TRAINING];
+	int16_t u[V92_OBSERVATION_TRAINING], y[V92_OBSERVATION_TRAINING];
+	int16_t wire[V92_OBSERVATION_TRAINING], memory[2] = { 0 };
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+	memset(bits, 1, mapping.data_bits_per_frame);
+	for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; f++) {
+		struct v92_pcm_frame frame;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+			V92_PCM_FRAME_OK, "training encode failed");
+		memcpy(x + 12 * f, frame.x, sizeof(frame.x));
+		memcpy(u + 12 * f, frame.u, sizeof(frame.u));
+		channel_samples(law, &frame, memory, wire + 12 * f, y + 12 * f);
+	}
+	struct v92_observation model;
+	CHECK(v92_observation_fit(&model, law, x, u, y, ARRAY_LENGTH(x)), "fit failed");
+	model.quantizer_gain = .75;
+	CHECK(v92_observation_refit_bins(&model, x, y, wire, ARRAY_LENGTH(x)), "refit failed");
+	struct v92_observation frozen = model;
+	CHECK(v92_pcm_frame_tx_reset_b1u(&tx) == V92_PCM_FRAME_OK, "reset failed");
+	memset(memory, 0, sizeof(memory));
+	for (unsigned f = 0; f < V92_B1U_FRAMES + 100 + V92_PCM_RX_DELAY_FRAMES; f++) {
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		struct v92_pcm_frame_likelihood likelihood;
+		int16_t levels[12], samples[12];
+		bool received[12]; memset(received, true, sizeof(received));
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+			V92_PCM_FRAME_OK, "payload encode failed");
+		channel_samples(law, &frame, memory, levels, samples);
+		if (f == 60 && !observed_rejection(&rx, &model, samples, levels)) return false;
+		struct v92_pcm_frame_channel channel = { &model, levels, received };
+		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
+		struct v92_pcm_frame_rx erased_rx = rx;
+		if (f == 72) { received[5] = false; levels[5] = 1; samples[5] = INT16_MAX; }
+		memset(decoded, 0xa5, sizeof(decoded));
+		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
+			mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK,
+			"observed law %u frame %u failed", law, f);
+		if (f == 72) {
+			struct v92_pcm_frame_decision other;
+			struct v92_pcm_frame_likelihood other_likelihood;
+			uint8_t other_bits[V92_PCM_MAPPING_MAX_BITS];
+			levels[5] = 3; samples[5] = INT16_MIN;
+			CHECK(v92_pcm_frame_decode_observed(&erased_rx, samples, false, other_bits,
+				mapping.data_bits_per_frame, &other, &channel, &other_likelihood) == V92_PCM_FRAME_OK &&
+				!memcmp(&erased_rx, &rx, sizeof(rx)) &&
+				!memcmp(other_bits, decoded, mapping.data_bits_per_frame) &&
+				!memcmp(&likelihood, &other_likelihood, sizeof(likelihood)),
+				"erased symbol influenced likelihood or state");
+		}
+		CHECK(decision.bits_ready == (f >= V92_PCM_RX_DELAY_FRAMES), "traceback delay changed");
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, f - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!decision.ambiguous && !memcmp(bits, decoded, mapping.data_bits_per_frame),
+				"law %u frame %u changed payload", law, f);
+		}
+		for (size_t i = decision.bits_ready ? mapping.data_bits_per_frame : 0; i < sizeof(decoded); i++)
+			CHECK(decoded[i] == 0xa5, "wrote outside delivered bits");
+		for (unsigned i = 0; i < 12; i++)
+			CHECK(isfinite(likelihood.predicted_samples[i]), "non-finite prediction");
+	}
+	CHECK(!memcmp(&model, &frozen, sizeof(model)), "payload changed frozen model");
+	return true;
+}
+
 int main(void)
 {
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
@@ -739,6 +903,8 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		static const uint8_t rates[] = { 1u, 13u, 19u };
 		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
+
+		if (!test_observed_channel((enum g711_law)law)) return 1;
 
 		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
 			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))

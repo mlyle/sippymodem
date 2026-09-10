@@ -191,6 +191,43 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame_decision *decision);
 
+struct v92_observation;
+struct v92_pcm_frame_channel {
+	/* Borrowed, frozen for this coding epoch. Acquisition is caller-owned. */
+	const struct v92_observation *model;
+	/* Optional aligned decoded wire levels before host gain. Each present
+	 * level must be a G.711 reconstruction value. NULL infers bins from
+	 * samples and the model's host gain. Arrays contain twelve symbols. */
+	const int16_t *levels;
+	/* NULL means all received; false ignores the corresponding sample and
+	 * level in likelihood scoring. Erasures still advance coding history. */
+	const bool *received;
+};
+
+struct v92_pcm_frame_likelihood {
+	uint64_t cost;
+	/* Model-only predictions in the supplied sample coordinates. Never
+	 * conditioned on the received values used to select the coding path. */
+	double predicted_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+};
+
+/* Decode calibrated samples using the frozen codec/channel likelihood.
+ * Requires a constellation-coordinate receiver with two x-history entries.
+ * The channel and likelihood are required. Cost is the winning increment
+ * before path-metric normalization; compare it only within a frozen epoch.
+ * Near-tied merged histories retain disputed payload as ambiguous.
+ * The decision's integer predictions/residual retain their linear u(n)
+ * meaning; use likelihood.predicted_samples for channel-quality checks.
+ * Receiver, bits, decision and likelihood commit together, only after all
+ * predictions are finite. All inputs, outputs and state must be disjoint. */
+enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
+	uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame_decision *decision,
+	const struct v92_pcm_frame_channel *channel,
+	struct v92_pcm_frame_likelihood *likelihood);
+
 const char *v92_pcm_frame_result_name(
 	enum v92_pcm_frame_result result);
 
