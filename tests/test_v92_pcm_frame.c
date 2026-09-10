@@ -7,6 +7,7 @@
 #include "test.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -188,6 +189,198 @@ static bool test_rate_matrix_and_reset(void)
 			}
 		}
 	}
+	return true;
+}
+
+/* V.92 6.3/6.4 and 8.7.1: calculate the transmitted constraints without
+ * calling the production scrambler, modulus, inverse-map or trellis helpers.
+ * A legal equivalence class need not have one uniquely prescribed point. */
+static unsigned modulo(int value, unsigned base)
+{
+	int remainder = value % (int)base;
+	return (unsigned)(remainder < 0 ? remainder + (int)base : remainder);
+}
+
+static uint8_t figure9_subset(int first, int second)
+{
+	/* V.34 Figure 9 in printed row/column order, coordinates 2*eta+1. */
+	static const uint8_t labels[4][4] = {
+		{ 1, 6, 5, 2 }, { 4, 3, 0, 7 },
+		{ 5, 2, 1, 6 }, { 0, 7, 4, 3 },
+	};
+	return labels[modulo(1 - second, 4)][modulo(first + 2, 4)];
+}
+
+static void trellis_step(uint8_t delay[6], unsigned states, const int16_t eta[4])
+{
+	/* V.34 Table 13 is normative, unlike the production Boolean reduction. */
+	static const uint8_t input[8][8] = {
+		{ 0, 0, 1, 1, 8, 8, 9, 9 }, { 3, 2, 2, 3, 11, 10, 10, 11 },
+		{ 5, 5, 4, 4, 13, 13, 12, 12 }, { 6, 7, 7, 6, 14, 15, 15, 14 },
+		{ 8, 8, 9, 9, 0, 0, 1, 1 }, { 11, 10, 10, 11, 3, 2, 2, 3 },
+		{ 13, 13, 12, 12, 5, 5, 4, 4 }, { 14, 15, 15, 14, 6, 7, 7, 6 },
+	};
+	uint8_t word = input[figure9_subset(eta[0], eta[1])][figure9_subset(eta[2], eta[3])];
+	uint8_t y1 = word & 1u, y2 = (word >> 1) & 1u;
+	uint8_t y3 = (word >> 2) & 1u, y4 = word >> 3;
+	uint8_t next[6] = { 0 };
+
+	/* Figures 10-12, delay boxes numbered left to right. V.92 advances
+	 * them once per FOUR samples, not at V.34's two-sample boundary. */
+	if (states == 16) {
+		next[0] = delay[3];
+		next[1] = delay[0] ^ y2 ^ delay[3];
+		next[2] = delay[1] ^ y2;
+		next[3] = delay[2] ^ y1;
+	} else if (states == 32) {
+		next[0] = delay[4];
+		next[1] = delay[0] ^ y2;
+		next[2] = delay[1] ^ y1;
+		next[3] = delay[2] ^ y4;
+		next[4] = delay[3] ^ y2;
+	} else {
+		uint8_t feedback = y1 ^ delay[1], tail = delay[0] ^ delay[1];
+
+		next[0] = y4 ^ tail ^ (feedback & delay[2]);
+		next[1] = y3 ^ tail ^ delay[3] ^ (y2 & delay[2]);
+		next[2] = feedback ^ delay[2];
+		next[3] = delay[2];
+		next[4] = delay[5];
+		next[5] = y2 ^ delay[4] ^ delay[2];
+	}
+	memcpy(delay, next, sizeof(next));
+}
+
+static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
+	unsigned law, bool uneven)
+{
+	enum { FRAMES = 56, SYMBOLS = FRAMES * 12 };
+	struct v92_cpd_parameters cpd = parameters(rate);
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx transmitter;
+	int32_t u[SYMBOLS] = { 0 }, x[SYMBOLS] = { 0 }, v[SYMBOLS] = { 0 };
+	uint8_t history[23] = { 0 }, delay[6] = { 0 }, differential = 0;
+	unsigned cursor = 0, signs = 0, parities = 0;
+	__uint128_t capacity = 1;
+
+	cpd.trellis = (enum v92_cpd_trellis)trellis;
+	/* Six different constellations ensure 6T constellation and 4T trellis
+	 * phases cross rather than accidentally repeating together. */
+	memset(cpd.constellation, 0, sizeof(cpd.constellation));
+	for (unsigned phase = 0; phase < 6; ++phase) {
+		cpd.frame_constellation[phase] = (uint8_t)phase;
+		cpd.constellation[phase].count = 128;
+		for (unsigned point = 0; point < 128; ++point)
+			cpd.constellation[phase].positive_linear[point] =
+				(int16_t)((2 * point + 1) * (16 + phase));
+	}
+	if (uneven) {
+		cpd.modulus[0]++;
+		cpd.modulus[6]++;
+	}
+	for (unsigned i = 0; i < 12; ++i)
+		capacity *= cpd.modulus[i];
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	cpd.filter[V92_CPD_PRECODER_FEED_FORWARD] =
+		(struct v92_cpd_filter){ .count = 3, .coefficient = { 8192, -4096, 2048 } };
+	cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+		(struct v92_cpd_filter){ .count = 2, .coefficient = { -4096, 1024 } };
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] =
+		(struct v92_cpd_filter){ .count = 7, .coefficient = { 0, 24576, 0, 0, 0, 0, 8192 } };
+	cpd.filter[V92_CPD_PREFILTER_FEEDBACK] =
+		(struct v92_cpd_filter){ .count = 2, .coefficient = { 2048, -1024 } };
+	CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK,
+	      "equation fixture init: rate %u trellis %u law %u", rate, trellis, law);
+	for (unsigned f = 0; f < FRAMES; ++f) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame frame;
+		__uint128_t value = 0;
+
+		generated_bits(bits, mapping.data_bits_per_frame, f + rate * 71u);
+		if (f < 48)
+			memset(bits, 1, mapping.data_bits_per_frame);
+		/* GPA = 1 + x^-5 + x^-23, including across B1u -> data. */
+		for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit) {
+			uint8_t scrambled = bits[bit] ^ history[(cursor + 18) % 23] ^ history[cursor];
+
+			history[cursor] = scrambled;
+			cursor = (cursor + 1) % 23;
+			value |= (__uint128_t)scrambled << bit;
+		}
+		uint8_t sign = (uint8_t)(differential ^ (value > (capacity - 1) / 2));
+		if (differential)
+			value = capacity - 1 - value;
+		differential = sign;
+		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
+			&frame) == V92_PCM_FRAME_OK, "equation encoding failed");
+		CHECK(frame.frame_sign == sign, "modulus sign differs at frame %u", f);
+		signs |= 1u << sign;
+		for (unsigned i = 0; i < 12; ++i) {
+			unsigned n = f * 12 + i, modulus = cpd.modulus[i];
+			unsigned digit = (unsigned)(value % modulus), base = i - i % 4;
+			uint8_t y0 = delay[3 + trellis];
+			int eta = frame.signed_index[i];
+			int residue = eta;
+			const struct v92_cpd_constellation *points = &cpd.constellation[i % 6];
+
+			value /= modulus;
+			CHECK(frame.digit[i] == digit && frame.y0[i] == y0,
+			      "mapping/trellis differs: frame %u symbol %u", f, i);
+			parities |= 1u << y0;
+			if (i % 4 == 3) {
+				residue -= (int)modulo(frame.signed_index[base] +
+					frame.signed_index[base + 1] + frame.signed_index[base + 2] + y0, 2);
+				CHECK(modulo(residue, 2) == 0, "fourth point has wrong coset parity");
+				residue /= 2;
+			}
+			CHECK(modulo(residue, modulus) == digit && eta >= -128 && eta < 128,
+			      "point is outside its equivalence class");
+			u[n] = eta < 0 ? -points->positive_linear[-eta - 1] : points->positive_linear[eta];
+			CHECK(frame.u[i] == u[n], "six-symbol constellation phase differs");
+			/* Evaluate 6.4.2 directly in separate full-sequence histories.
+			 * Stage rounding is our fixed-point policy, not a V.92 mandate. */
+			long double a = u[n], b = 0;
+			for (unsigned tap = 0; tap < 3 && tap < n; ++tap)
+				a += (long double)u[n - tap - 1] * cpd.filter[0].coefficient[tap] / 32768.L;
+			for (unsigned tap = 0; tap < 2 && tap < n; ++tap)
+				a += (long double)x[n - tap - 1] * cpd.filter[1].coefficient[tap] / 16384.L;
+			x[n] = (int32_t)roundl(a);
+			for (unsigned tap = 0; tap < 7 && tap <= n; ++tap)
+				b += (long double)x[n - tap] * cpd.filter[2].coefficient[tap] / 32768.L;
+			for (unsigned tap = 0; tap < 2 && tap < n; ++tap)
+				b += (long double)v[n - tap - 1] * cpd.filter[3].coefficient[tap] / 16384.L;
+			v[n] = (int32_t)roundl(b);
+			CHECK(frame.x[i] == x[n] && frame.v[i] == v[n],
+			      "filter equation differs: frame %u symbol %u", f, i);
+			for (unsigned level = 4096; level <= 32767; level += 28671) {
+				long double scaled = roundl((long double)v[n] *
+					cpd.four_times_gain_q0_16 * level / 262144.L);
+				int16_t expected = (int16_t)fmaxl(INT16_MIN, fminl(INT16_MAX, scaled));
+				int16_t sample;
+
+				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)level, frame.v[i],
+					&sample) == V92_PCM_FRAME_OK && sample == expected,
+				      "prefilter gain or PCM saturation differs");
+			}
+			if (i % 4 == 3)
+				trellis_step(delay, 16u << trellis, frame.signed_index + base);
+		}
+		CHECK(value == 0, "modulus conversion left high-order data");
+	}
+	CHECK(signs == 3 && parities == 3, "equation fixture missed sign/trellis transitions");
+	return true;
+}
+
+static bool test_transmitter_equation_matrix(void)
+{
+	for (unsigned law = 0; law < 2; ++law)
+		for (unsigned trellis = 0; trellis < 3; ++trellis)
+			for (uint8_t rate = 1; rate <= 19; ++rate)
+				for (unsigned uneven = 0; uneven < 2; ++uneven)
+					CHECK(test_transmitter_equations(rate, trellis, law, uneven != 0),
+					      "equation matrix: rate %u trellis %u law %u uneven %u",
+					      rate, trellis, law, uneven);
 	return true;
 }
 
@@ -445,6 +638,7 @@ static bool test_rejection_and_names(void)
 int main(void)
 {
 	if (!test_b1u_oracle() || !test_rate_matrix_and_reset() ||
+	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_level_refinement() ||
 	    !test_pending_bit_validation() || !test_rejection_and_names())
 		return 1;
