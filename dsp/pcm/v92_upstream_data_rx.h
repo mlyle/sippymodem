@@ -104,6 +104,15 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame);
 
+/* Internal call-owner path for an exclusively owned receiver already
+ * validated for the current media block. Validate again before releasing
+ * ownership. Skip only the recursive state scan: argument/alias checks,
+ * counter exhaustion, transactional DSP failure and failure latching retain
+ * the checked entry point's contract. Never use this for unvalidated input. */
+enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
+	struct v92_upstream_data_rx *receiver, int16_t sample,
+	struct v92_upstream_data_frame *frame);
+
 const char *v92_upstream_data_rx_result_name(
 	enum v92_upstream_data_rx_result result);
 

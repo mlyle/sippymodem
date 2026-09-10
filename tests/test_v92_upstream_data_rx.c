@@ -63,6 +63,25 @@ static bool source(void *context, uint8_t *bits, size_t count)
 	return true;
 }
 
+static bool receive_compared(
+	struct v92_upstream_data_rx *receiver, int16_t sample,
+	struct v92_upstream_data_frame *frame,
+	enum v92_upstream_data_rx_result *result)
+{
+	struct v92_upstream_data_rx owned = *receiver;
+	struct v92_upstream_data_frame output;
+
+	memcpy(&output, frame, sizeof(output));
+	CHECK(v92_upstream_data_rx_is_valid(receiver), "owned fixture is not validated");
+	*result = v92_upstream_data_rx_sample(receiver, sample, frame);
+	CHECK(v92_upstream_data_rx_sample_owned(&owned, sample, &output) == *result &&
+	      memcmp(receiver, &owned, sizeof(owned)) == 0 &&
+	      memcmp(frame, &output, sizeof(output)) == 0 &&
+	      v92_upstream_data_rx_is_valid(&owned),
+	      "owned/checked receive changed result, output, state, or invariants");
+	return true;
+}
+
 /* A trained FIR with the real causal delay, not a zero-delay stand-in. Feed
  * E2u's first delayed samples before exporting its receive-side boundary. */
 static bool prepare_e2u_at_level(
@@ -382,8 +401,8 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		}
 		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames,
 				&sample) == V92_UPSTREAM_DATA_TX_OK, "data transmitter stopped");
-		result = v92_upstream_data_rx_sample(&receiver,
-			wire_sample(&channel, sample), &frame);
+		CHECK(receive_compared(&receiver, wire_sample(&channel, sample), &frame, &result),
+		      "owned stream diverged");
 		CHECK(result == (symbol % V92_PCM_MAPPING_FRAME_SYMBOLS == 11u ?
 			      V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
 		      "law %u rate %u distortion %u symbol %u stopped: %s",
@@ -432,6 +451,66 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 	}
 	CHECK(delivered == V92_B1U_FRAMES + DATA_FRAMES &&
 	      (postcursor == 0.0 || b1u_error > 0u), "delivery or distortion evidence changed");
+	return true;
+}
+
+static bool test_owned_boundaries(void)
+{
+	struct channel channel = { .gain = 1.0, .law = G711_LAW_PCMU, .polarity = 1 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_data_rx initial, receiver;
+	struct v92_upstream_data_frame frame, sentinel;
+
+	CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+	      v92_cpd_direct_init(&cpd, channel.law, 1u, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, channel.law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_rx_init(&initial, &e2u_rx.signal, &mapping, &direct_plan) ==
+		      V92_UPSTREAM_DATA_RX_OK, "owned boundary fixture failed");
+	memset(&sentinel, 0xa5, sizeof(sentinel));
+	for (unsigned fault = 0; fault < 4; ++fault) {
+		receiver = initial;
+		frame = sentinel;
+		enum v92_upstream_data_rx_result expected, result;
+
+		if (fault == 0) {
+			receiver.failed = true;
+			expected = V92_UPSTREAM_DATA_RX_FAILED;
+		} else if (fault == 1) {
+			receiver.line.input_samples = UINT64_MAX;
+			expected = V92_UPSTREAM_DATA_RX_INVALID_STATE;
+		} else {
+			expected = V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE;
+			if (fault == 2) {
+				receiver.line.equalizer.history[0].in_phase = DBL_MAX;
+				receiver.line.equalizer.coefficients[1].in_phase = 2.0;
+			} else {
+				for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1; ++i)
+					CHECK(v92_upstream_data_rx_sample(&receiver, 0, &frame) ==
+						      V92_UPSTREAM_DATA_RX_OK, "owned late-failure buffering failed");
+				receiver.line.observations[0].history[0].in_phase = DBL_MAX;
+			}
+		}
+		struct v92_upstream_data_rx saved = receiver;
+		if (fault >= 2)
+			saved.failed = true;
+		CHECK(receive_compared(&receiver, fault == 2 ? INT16_MAX : 0, &frame, &result) &&
+		      result == expected && memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&frame, &sentinel, sizeof(frame)) == 0,
+		      "owned failure consumed input or wrote output: %u", fault);
+	}
+	receiver = initial;
+	CHECK(v92_upstream_data_rx_sample_owned(NULL, 0, &frame) ==
+		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_upstream_data_rx_sample_owned(&receiver, 0, NULL) ==
+		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v92_upstream_data_rx_sample_owned(&receiver, 0, (void *)&receiver) ==
+		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &initial, sizeof(receiver)) == 0 &&
+	      memcmp(&frame, &sentinel, sizeof(frame)) == 0,
+	      "owned arguments or aliased output mutated state");
 	return true;
 }
 
@@ -754,8 +833,9 @@ static bool test_channel_plan(
 					mapping.data_bits_per_frame, &predicted) ==
 				      V92_PCM_FRAME_OK, "linear quality prediction failed");
 		}
-		enum v92_upstream_data_rx_result result =
-			v92_upstream_data_rx_sample(&receiver, input, &frame);
+		enum v92_upstream_data_rx_result result;
+		CHECK(receive_compared(&receiver, input, &frame, &result),
+		      "owned raw-coordinate stream diverged");
 
 		if (first_frame) {
 			double error = 0.0;
@@ -1249,5 +1329,5 @@ int main(void)
 			if (!run_stream((enum g711_law)law, -1, false, 8u,
 					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, true))
 				return 1;
-	return test_rejection_and_failure() ? 0 : 1;
+	return test_owned_boundaries() && test_rejection_and_failure() ? 0 : 1;
 }

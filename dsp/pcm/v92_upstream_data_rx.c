@@ -281,9 +281,9 @@ static enum v92_upstream_data_rx_result receive_frame(
 	return V92_UPSTREAM_DATA_RX_FRAME;
 }
 
-enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
+static enum v92_upstream_data_rx_result receive_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
-	struct v92_upstream_data_frame *frame)
+	struct v92_upstream_data_frame *frame, bool owned)
 {
 	struct v92_upstream_data_line next;
 	struct qam_point input;
@@ -293,7 +293,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 	    memory_regions_overlap(receiver, sizeof(*receiver),
 				   frame, sizeof(*frame)))
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!v92_upstream_data_rx_is_valid(receiver) ||
+	if ((!owned && !v92_upstream_data_rx_is_valid(receiver)) ||
 	    receiver->line.input_samples == UINT64_MAX)
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	if (receiver->failed)
@@ -326,6 +326,20 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 		return receive_frame(receiver, &next, frame);
 	receiver->line = next;
 	return V92_UPSTREAM_DATA_RX_OK;
+}
+
+enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
+	struct v92_upstream_data_rx *receiver, int16_t sample,
+	struct v92_upstream_data_frame *frame)
+{
+	return receive_sample(receiver, sample, frame, false);
+}
+
+enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
+	struct v92_upstream_data_rx *receiver, int16_t sample,
+	struct v92_upstream_data_frame *frame)
+{
+	return receive_sample(receiver, sample, frame, true);
 }
 
 const char *v92_upstream_data_rx_result_name(
