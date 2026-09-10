@@ -6203,6 +6203,13 @@ static bool capture_v92_duplex_data(
 			      "V.92 distorted channel did not receive compensating CPd");
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
+			if (offer->expected >= 16u) {
+				static const uint8_t dense_modulus[] = { 27u, 31u, 34u, 39u };
+				unsigned int modulus = dense_modulus[offer->expected - 16u];
+
+				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+					expected.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
+			}
 			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||
 			    (offer->expected == 16u && expected.constellation[0].count == 27u))
 				expected.constellation[0].count = 64u;

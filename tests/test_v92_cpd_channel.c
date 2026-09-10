@@ -50,7 +50,7 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 	uint32_t random = 0x35791bdu;
 	uint64_t energy = 0u;
 	int16_t previous = 0, older = 0;
-	unsigned payload_frames = rate == 16u || rate == 19u ? PAYLOAD_FRAMES : 120u;
+	unsigned payload_frames = rate >= 16u ? PAYLOAD_FRAMES : 120u;
 	unsigned frames = V92_B1U_FRAMES + payload_frames + V92_PCM_RX_DELAY_FRAMES;
 
 	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
@@ -73,6 +73,22 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 		v92_upstream_plan_is_valid(&plan), "invalid receive plan");
 	original.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
+	if (rate >= 16u) {
+		static const uint8_t dense_modulus[] = { 27u, 31u, 34u, 39u };
+		unsigned int modulus = dense_modulus[rate - 16u];
+		__uint128_t capacity = 1u, smaller = 1u;
+		__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rate);
+
+		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+			original.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
+			CHECK(cpd.modulus[symbol] == original.modulus[symbol],
+				"dense rate %u did not balance interval %zu", rate, symbol);
+			capacity *= original.modulus[symbol];
+			smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
+		}
+		CHECK(capacity >= required && smaller < required,
+			"dense rate %u did not use minimum balanced capacity", rate);
+	}
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
 	    (rate == 16u && original.constellation[0].count == 27u))
 		original.constellation[0].count = 64u;
@@ -367,9 +383,10 @@ int main(void)
 			return 1;
 		/* A real second echo belongs in the negotiated feedback filter,
 		 * not in a long, noisy prefilter approximation. Verify delivered data. */
-		if (!test_channel((enum g711_law)law, 0.9, 0.08, 0.02, 16u) ||
-		    !test_channel((enum g711_law)law, 0.9, 0.08, 0.02, 19u) ||
-		    !test_channel((enum g711_law)law, 0.8, -0.15, 0.05, 13u))
+		for (uint8_t rate = 16u; rate <= 19u; ++rate)
+			if (!test_channel((enum g711_law)law, 0.9, 0.08, 0.02, rate))
+				return 1;
+		if (!test_channel((enum g711_law)law, 0.8, -0.15, 0.05, 13u))
 			return 1;
 	}
 	return 0;
