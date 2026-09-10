@@ -202,7 +202,7 @@ static int request_handoff(struct v8_datapump *datapump)
 	 * the ordinary detector can resolve the peer's selection. */
 	if (menu.lapm)
 		datapump->dp.modem->cfg.ec = 1;
-	datapump->dp.modem->dsp_info.qc_lapm = 0;
+	datapump->dp.modem->dsp_info.v8_lapm = menu.lapm;
 	datapump->v34_fallback = v34_fallback;
 	datapump->handoff_requested = true;
 	datapump->dp.status = DPSTAT_CHANGEDP;

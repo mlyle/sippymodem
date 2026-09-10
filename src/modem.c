@@ -158,7 +158,15 @@ const char modem_date[]   = MODEM_DATE;
 #define SPEAKER_CONTROL(m)    ((m)->sregs[SREG_SPEAKER_CONTROL])
 #define SPEAKER_VOLUME(m)     ((m)->sregs[SREG_SPEAKER_VOLUME])
 
-#define QC_SKIP_EC_DETECTION(m) ((m)->caller && (m)->dsp_info.qc_lapm)
+static int modem_skip_ec_detection(const struct modem *m)
+{
+	/* V.92 9.3.1 requires both roles to bypass ODP/ADP after a joint
+	 * V.8 LAPM selection, including conventional-upstream operation.
+	 * Keep detection for other modes: V.8 permits legacy peers that still
+	 * require it despite advertising LAPM in their menu. */
+	return m->dp != NULL && m->dp->id == DP_V92 &&
+	       m->dsp_info.v8_lapm;
+}
 
 
 /*
@@ -626,7 +634,7 @@ void modem_update_status(struct modem *m, unsigned status)
 		modem_set_state(m,STATE_EC_ESTAB);
 		/* start packer */
 		if ((m->cfg.ec && m->cfg.ec_detector &&
-		     !QC_SKIP_EC_DETECTION(m)) ||
+		     !modem_skip_ec_detection(m)) ||
 		    (!m->caller && !m->cfg.ec &&
 		     modem_link_supports_v42(m))) {
 			modem_detector_start(m);
@@ -1488,8 +1496,8 @@ static void modem_setup_config(struct modem *m)
 	m->cfg.comp_max_string = COMP_MAX_STRING;
 
 	/* setup dsp data */
-	/* Only an exchanged V.8 menu can establish quick-connect LAPM. */
-	m->dsp_info.qc_lapm = 0;
+	/* An exchanged V.8 selection belongs only to this physical call. */
+	m->dsp_info.v8_lapm = 0;
 	m->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
 	m->dsp_info.upstream_mode = MODEM_UPSTREAM_UNKNOWN;
 }

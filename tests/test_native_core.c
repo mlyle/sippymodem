@@ -1094,6 +1094,72 @@ static bool test_datapump_error_control_policy(void)
 	return true;
 }
 
+static bool test_v92_negotiated_lapm_bypasses_detection(void)
+{
+	struct datapumps datapumps = { 0 };
+	struct modem_driver driver = {
+		.name = "negotiated LAPM test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	static const struct {
+		enum DP_ID id;
+		bool selected;
+		bool bypass;
+	} cases[] = {
+		{ DP_V92, true, true },
+		{ DP_V92, false, false },
+		{ DP_V90, true, false },
+		{ DP_V34, true, false },
+	};
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
+	      "negotiated LAPM registrations did not start");
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		for (unsigned caller = 0; caller <= 1; ++caller) {
+			struct modem *modem = modem_create(&driver, "negotiated LAPM");
+			struct dp datapump = { .id = cases[i].id, .modem = modem };
+
+			CHECK(modem != NULL, "negotiated LAPM modem allocation failed");
+			modem->dp = &datapump;
+			modem->caller = caller;
+			modem->rx_rate = 26400;
+			modem->tx_rate = 53333;
+			modem->cfg.ec = modem->cfg.ec_detector = 1;
+			modem->dsp_info.v8_lapm = cases[i].selected;
+			modem->dsp_info.upstream_mode = MODEM_UPSTREAM_V34;
+			CHECK(modem_ec_init(modem) == 0, "LAPM initialization failed");
+			modem_dp_connected(modem);
+			for (unsigned epoch = 0; epoch < 2; ++epoch) {
+				CHECK(modem->get_bits == (cases[i].bypass ?
+					      modem_hdlc_get_bits : modem_detector_get_bits) &&
+				      modem->put_bits == (cases[i].bypass ?
+					      modem_hdlc_put_bits : modem_detector_put_bits),
+				      "LAPM detection policy changed: case %zu role %u epoch %u",
+				      i, caller, epoch);
+				if (cases[i].bypass) {
+					CHECK(modem->bit_timer == 0 &&
+					      modem->packer.hdlc.framer == &modem->ec.lapm &&
+					      (modem->packer.hdlc.tx_preamble_flags != 0) ==
+						      (caller != 0),
+					      "negotiated LAPM lost its role-specific HDLC startup");
+				}
+				modem_dp_reconnected(modem);
+			}
+			modem->dp = NULL;
+			CHECK(process_at_command(modem, "ATZ") == 0 &&
+			      process_at_command(modem, "ATDpeer") == 1 &&
+			      modem->dsp_info.v8_lapm == 0,
+			      "a new call inherited the previous V.8 LAPM selection");
+			modem_delete(modem);
+		}
+	}
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "negotiated LAPM registrations did not stop");
+	return true;
+}
+
 static bool complete_raw_v14_detection(struct modem *answerer)
 {
 	uint8_t bits[576];
@@ -1301,6 +1367,12 @@ static bool test_v8_handoff(void)
 		{ DP_V92, DP_V92, DP_V92,
 		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
 		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  true, false, MODEM_PCM_ROLE_DIGITAL, MODEM_PCM_ROLE_ANALOG,
+		  false, true, true },
+		{ DP_V92, DP_V92, DP_V92,
+		  false, true, MODEM_PCM_ROLE_ANALOG, MODEM_PCM_ROLE_DIGITAL,
+		  false, false, true },
 		{ DP_V90, DP_V34, DP_V34,
 		  true, false, MODEM_PCM_ROLE_NONE, MODEM_PCM_ROLE_NONE,
 		  true, true, true },
@@ -1399,8 +1471,12 @@ static bool test_v8_handoff(void)
 				      selections[selection].answerer_role &&
 			      caller->cfg.ec == selections[selection].caller_lapm &&
 			      answerer->cfg.ec == selections[selection].answerer_lapm &&
-			      caller->dsp_info.qc_lapm == 0 &&
-			      answerer->dsp_info.qc_lapm == 0 &&
+			      caller->dsp_info.v8_lapm ==
+				      (selections[selection].caller_lapm &&
+				       selections[selection].answerer_lapm) &&
+			      answerer->dsp_info.v8_lapm ==
+				      (selections[selection].caller_lapm &&
+				       selections[selection].answerer_lapm) &&
 			      v8_datapump_selected_v34_fallback(calling_dp) ==
 				      selections[selection].caller_v34_fallback &&
 			      !v8_datapump_selected_v34_fallback(answering_dp),
@@ -2990,6 +3066,8 @@ int main(void)
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "data-pump error-control policy",
 		  test_datapump_error_control_policy },
+		{ "V.92 negotiated LAPM detection bypass",
+		  test_v92_negotiated_lapm_bypasses_detection },
 		{ "raw V.42 detection residue",
 		  test_raw_answerer_discards_detection_residue },
 		{ "source-built core lifecycle",

@@ -385,7 +385,8 @@ enum modem_upstream_mode {
 struct dsp_info {
 	unsigned connection_type;
 	long     clock_deviation;
-	unsigned qc_lapm;
+	/* Joint V.8 menu selected LAPM; local AT configuration is not proof. */
+	unsigned v8_lapm;
 	unsigned qc_index;
 	enum modem_pcm_role pcm_role;
 	/* Negotiated PCM-session upstream, not the configured capability. */
