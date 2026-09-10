@@ -136,15 +136,34 @@ static bool v90_info1d_is_flat_selection(const struct v34_info1c *info1d)
 	       memcmp(payload, expected, sizeof(payload)) == 0;
 }
 
+static struct v34_info0 full_capabilities(void)
+{
+	return (struct v34_info0){
+		.symbol_rate_2743_supported = true,
+		.symbol_rate_2800_supported = true,
+		.symbol_rate_3429_supported = true,
+		.low_carrier_3000_supported = true,
+		.high_carrier_3000_supported = true,
+		.low_carrier_3200_supported = true,
+		.high_carrier_3200_supported = true,
+		.symbol_rate_3429_transmit_permitted = true,
+		.transmit_power_reduction_supported = true,
+		.maximum_symbol_rate_difference_steps = 5,
+		.constellation_1664_supported = true,
+		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
+	};
+}
+
 static bool test_v90_info1d_selection(void)
 {
 	struct v34_phase2_probe_receiver_measurement measurement =
 		flat_probe_measurement();
 	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info0 peer = full_capabilities();
 	struct v34_info1c selected;
 
 	CHECK(v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true, &selected) ==
+		      &measurement, &configured, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_OK &&
 	      v90_info1d_is_flat_selection(&selected),
 	      "flat V.90 probe did not reproduce the INFO1d profile");
@@ -152,8 +171,9 @@ static bool test_v90_info1d_selection(void)
 	measurement.l2.harmonics[20].mean_square = 1.0 / 64.0;
 	measurement.l2.harmonics[22].mean_square = 1.0 / 128.0;
 	measurement.l2.harmonics[23].mean_square = 1.0 / 256.0;
+	peer.transmit_power_reduction_supported = false;
 	CHECK(v34_phase2_select_v90_info1d(
-		      &measurement, &configured, false, &selected) ==
+		      &measurement, &configured, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_OK &&
 	      selected.common.additional_peer_power_reduction_db == 0 &&
 	      !selected.answer_transmit[V34_SYMBOL_RATE_2800].high_carrier &&
@@ -173,7 +193,7 @@ static bool test_v90_info1d_selection(void)
 		.projected_data_rate_2400_bps_units = 0;
 	measurement = flat_probe_measurement();
 	CHECK(v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true, &selected) ==
+		      &measurement, &configured, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_OK &&
 	      selected.answer_transmit[V34_SYMBOL_RATE_3200]
 			      .projected_data_rate_2400_bps_units == 0 &&
@@ -194,6 +214,7 @@ static bool test_v90_info1d_common_fields(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(offsets); ++index)
 		for (unsigned int power = 0; power < 2u; ++power) {
 			struct v34_info1c configured = v90_info1d_configuration();
+			struct v34_info0 peer = full_capabilities();
 			struct v34_info1c selected;
 			uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
 			unsigned int wire_offset = 0;
@@ -206,8 +227,9 @@ static bool test_v90_info1d_common_fields(void)
 			};
 			struct v34_info1c saved = configured;
 
+			peer.transmit_power_reduction_supported = power != 0u;
 			CHECK(v34_phase2_select_v90_info1d(&measurement, &configured,
-				      power != 0u, &selected) == V34_PHASE2_SELECTION_OK &&
+				      &peer, &selected) == V34_PHASE2_SELECTION_OK &&
 			      selected.common.local_md_length_35_ms_units ==
 				      configured.common.local_md_length_35_ms_units &&
 			      selected.common.frequency_offset_1_50_hz_units == offsets[index] &&
@@ -229,64 +251,131 @@ static bool test_v90_info1d_common_fields(void)
 	return true;
 }
 
+static bool test_v90_info1d_peer_capabilities(void)
+{
+	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info1c saved_configuration = configured;
+
+	for (unsigned int shaped = 0; shaped < 2u; ++shaped) {
+		struct v34_phase2_probe_receiver_measurement measurement = flat_probe_measurement();
+		struct v34_info0 peer = full_capabilities();
+		struct v34_info1c baseline;
+
+		if (shaped) {
+			measurement.l2.harmonics[20].mean_square = 1.0 / 64.0;
+			measurement.l2.harmonics[22].mean_square = 1.0 / 128.0;
+			measurement.l2.harmonics[23].mean_square = 1.0 / 256.0;
+		}
+		CHECK(v34_phase2_select_v90_info1d(&measurement, &configured, &peer, &baseline) ==
+			      V34_PHASE2_SELECTION_OK,
+		      "full-capability INFO1d selection failed");
+		for (enum v34_symbol_rate rate = V34_SYMBOL_RATE_3000;
+		     rate <= V34_SYMBOL_RATE_3200; ++rate)
+			for (unsigned int carriers = 0; carriers < 4u; ++carriers) {
+				bool low = (carriers & 1u) != 0;
+				bool high = (carriers & 2u) != 0;
+				struct v34_info1c expected = baseline, selected;
+				struct v34_info1_probe_result *probe = &expected.answer_transmit[rate];
+
+				peer = full_capabilities();
+				if (rate == V34_SYMBOL_RATE_3000) {
+					peer.low_carrier_3000_supported = low;
+					peer.high_carrier_3000_supported = high;
+				} else {
+					peer.low_carrier_3200_supported = low;
+					peer.high_carrier_3200_supported = high;
+				}
+				struct v34_info0 saved_peer = peer;
+
+				if (!low && !high)
+					memset(probe, 0, sizeof(*probe));
+				else if (!(probe->high_carrier ? high : low))
+					probe->high_carrier = !probe->high_carrier;
+				CHECK(v34_phase2_select_v90_info1d(&measurement, &configured,
+					      &peer, &selected) == V34_PHASE2_SELECTION_OK &&
+				      memcmp(&selected, &expected, sizeof(selected)) == 0 &&
+				      memcmp(&peer, &saved_peer, sizeof(peer)) == 0,
+				      "INFO1d ignored rate %u carrier mask %u, shaped %u",
+				      (unsigned int)rate, carriers, shaped);
+			}
+		for (unsigned int flags = 0; flags < 4u; ++flags) {
+			struct v34_info1c selected;
+
+			peer = full_capabilities();
+			peer.symbol_rate_2800_supported = false;
+			peer.symbol_rate_3429_supported = (flags & 1u) != 0;
+			peer.symbol_rate_3429_transmit_permitted = (flags & 2u) != 0;
+			peer.constellation_1664_supported = false;
+			CHECK(v34_phase2_select_v90_info1d(&measurement, &configured,
+				      &peer, &selected) == V34_PHASE2_SELECTION_OK &&
+			      selected.answer_transmit[V34_SYMBOL_RATE_2800]
+				      .projected_data_rate_2400_bps_units == 0 &&
+			      selected.answer_transmit[V34_SYMBOL_RATE_3429]
+				      .projected_data_rate_2400_bps_units == (flags == 3u ? 12 : 0) &&
+			      selected.answer_transmit[V34_SYMBOL_RATE_3200]
+				      .projected_data_rate_2400_bps_units == (shaped ? 11 : 12),
+			      "INFO1d ignored optional rates, transmit permission or constellation size");
+		}
+	}
+	CHECK(memcmp(&configured, &saved_configuration, sizeof(configured)) == 0,
+	      "peer-limited INFO1d selection changed configured policy");
+	return true;
+}
+
 static bool test_v90_info1d_validation(void)
 {
 	struct v34_phase2_probe_receiver_measurement measurement =
 		flat_probe_measurement();
 	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info0 peer = full_capabilities();
 	struct v34_info1c selected;
 	struct v34_info1c saved;
 
 	memset(&selected, 0xa5, sizeof(selected));
 	saved = selected;
 	CHECK(v34_phase2_select_v90_info1d(
-		      NULL, &configured, true, &selected) ==
+		      NULL, &configured, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      v34_phase2_select_v90_info1d(
-		      &measurement, NULL, true, &selected) ==
+		      &measurement, NULL, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true, NULL) ==
+		      &measurement, &configured, NULL, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, &configured, &peer, NULL) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      memcmp(&selected, &saved, sizeof(selected)) == 0,
 	      "invalid V.90 INFO1d selection changed its output");
 	CHECK(v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true,
+		      &measurement, &configured, &peer,
 		      (struct v34_info1c *)&measurement) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true, &configured) ==
+		      &measurement, &configured, &peer, &configured) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, &configured, &peer, (struct v34_info1c *)&peer) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT,
 	      "aliased V.90 INFO1d selection was accepted");
+	peer.maximum_symbol_rate_difference_steps = 6;
+	CHECK(v34_phase2_select_v90_info1d(
+		      &measurement, &configured, &peer, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      memcmp(&selected, &saved, sizeof(selected)) == 0,
+	      "invalid peer INFO0 changed INFO1d selection");
+	peer = full_capabilities();
 	measurement = (struct v34_phase2_probe_receiver_measurement){
 		.l1.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
 		.l2.sample_count = V34_PHASE2_PROBE_L1_SAMPLES,
 		.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES,
 	};
 	CHECK(v34_phase2_select_v90_info1d(
-		      &measurement, &configured, true, &selected) ==
+		      &measurement, &configured, &peer, &selected) ==
 		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
 	      memcmp(&selected, &saved, sizeof(selected)) == 0,
 	      "silent V.90 probe selected INFO1d");
 	return true;
-}
-
-static struct v34_info0 full_capabilities(void)
-{
-	return (struct v34_info0){
-		.symbol_rate_2743_supported = true,
-		.symbol_rate_2800_supported = true,
-		.symbol_rate_3429_supported = true,
-		.low_carrier_3000_supported = true,
-		.high_carrier_3000_supported = true,
-		.low_carrier_3200_supported = true,
-		.high_carrier_3200_supported = true,
-		.symbol_rate_3429_transmit_permitted = true,
-		.transmit_power_reduction_supported = true,
-		.maximum_symbol_rate_difference_steps = 5,
-		.constellation_1664_supported = true,
-		.transmit_clock_source = V34_INFO0_CLOCK_INTERNAL,
-	};
 }
 
 static struct v34_info1c info1c_fixture(void)
@@ -704,6 +793,7 @@ int main(void)
 		{ "pre-emphasis validation", test_preemphasis_validation },
 		{ "measured V.90 INFO1d", test_v90_info1d_selection },
 		{ "V.90 INFO1d common-field ownership", test_v90_info1d_common_fields },
+		{ "V.90 INFO1d peer capabilities", test_v90_info1d_peer_capabilities },
 		{ "V.90 INFO1d validation", test_v90_info1d_validation },
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },

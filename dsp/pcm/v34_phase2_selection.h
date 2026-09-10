@@ -56,12 +56,13 @@ enum v34_phase2_selection_result v34_phase2_select_preemphasis(
  * modem's L2 spectrum. Nonzero configured groups enable one symbol rate;
  * their placeholder projection and filter values are not retained. MD and
  * frequency-offset fields remain with their configured owners; the spectrum
- * alone does not establish a frequency offset. Power allowance is selected
- * independently of those fields and bounded by peer capability. */
+ * alone does not establish a frequency offset. Peer INFO0 capabilities bound
+ * carriers, symbol rates, constellation size and power allowance. Unsupported
+ * groups remain zero; the measured carrier is preferred when permitted. */
 enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
 	const struct v34_phase2_probe_receiver_measurement *measurement,
 	const struct v34_info1c *configured,
-	bool peer_supports_power_reduction,
+	const struct v34_info0 *peer,
 	struct v34_info1c *selected);
 
 /* INFO1c describes the answerer's possible transmit profiles. A usable entry

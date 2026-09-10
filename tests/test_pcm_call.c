@@ -97,6 +97,8 @@ static struct v90_info0 analog_info0(void)
 		.symbol_rate_3429_supported = true,
 		.low_carrier_3000_supported = true,
 		.high_carrier_3000_supported = true,
+		.low_carrier_3200_supported = true,
+		.high_carrier_3200_supported = true,
 		.symbol_rate_3429_transmit_permitted = true,
 		.transmit_power_reduction_supported = true,
 		.maximum_symbol_rate_difference_steps = 2,
@@ -640,21 +642,32 @@ static void channel_transmit(
 	channel->cursor = (channel->cursor + 1u) % channel->delay;
 }
 
+static bool v34_capabilities(const struct v90_info0 *info0, struct v34_info0 *capabilities)
+{
+	uint8_t payload[V90_INFO0A_PAYLOAD_BYTES];
+
+	/* INFO0a shares V.34's capability bits; reserved clock bits encode
+	 * internal timing. Decode independently of the call's field mapping. */
+	return v90_info0a_encode(info0, payload, sizeof(payload)) == V90_INFO0_OK &&
+	       v34_info0_decode(payload, sizeof(payload), V90_INFO0A_PAYLOAD_BITS,
+				capabilities) == V34_INFO0_OK;
+}
+
 static bool check_v92_measured_info1d(
 	const struct pcm_call *digital, struct v92_info1d *selected)
 {
 	const struct pcm_phase2 *phase2 = &digital->state.phase2;
 	const struct v92_info1d *configured = &digital->local_info1.v92_digital;
 	struct v92_info1d expected = *configured;
+	struct v34_info0 peer;
 
 	CHECK(digital->protocol == PCM_PROTOCOL_V92 &&
 	      digital->local_role == V90_DIGITAL_MODEM &&
 	      digital->stage == PCM_CALL_PHASE2 &&
 	      phase2->stage == PCM_PHASE2_INFO1 &&
+	      v34_capabilities(&digital->peer_info0.v92_analog.v90, &peer) &&
 	      v34_phase2_select_v90_info1d(
-		      &phase2->remote_probe, &configured->v34,
-		      digital->peer_info0.v92_analog.v90
-			      .transmit_power_reduction_supported,
+		      &phase2->remote_probe, &configured->v34, &peer,
 		      &expected.v34) == V34_PHASE2_SELECTION_OK,
 	      "V.92 call did not retain a measured INFO1d boundary");
 	expected.v34.common.local_md_length_35_ms_units =
@@ -759,6 +772,71 @@ static bool test_v92_measured_info1d(void)
 				      "law %u PCM %u power %u ignored the changed channel",
 				      (unsigned int)law, pcm, power);
 			}
+	return true;
+}
+
+static bool run_info1d_peer_capabilities(enum pcm_protocol protocol, enum g711_law law)
+{
+	bool v92 = protocol == PCM_PROTOCOL_V92;
+	struct pcm_call_configuration analog_configuration = v92 ?
+		v92_configuration(V90_ANALOG_MODEM, law) :
+		configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration = v92 ?
+		v92_configuration(V90_DIGITAL_MODEM, law) :
+		configuration(V90_DIGITAL_MODEM, law);
+	struct v90_info0 *peer = v92 ? &analog_configuration.local_info0.v92_analog.v90 :
+		&analog_configuration.local_info0.analog;
+	struct pcm_call analog, digital;
+	struct channel channel;
+
+	peer->low_carrier_3000_supported = true;
+	peer->high_carrier_3000_supported = false;
+	peer->low_carrier_3200_supported = true;
+	peer->high_carrier_3200_supported = false;
+	peer->symbol_rate_3429_supported = false;
+	peer->symbol_rate_3429_transmit_permitted = false;
+	CHECK(channel_init(&channel, law, 3u) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "peer-limited INFO1d endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation analog_observation, digital_observation;
+		uint8_t analog_received, digital_received, analog_transmitted, digital_transmitted;
+
+		channel_receive(&channel, &analog_received, &digital_received);
+		CHECK(pcm_call_octet(&analog, analog_received, decode_octet(law, analog_received),
+			      &analog_transmitted, &analog_observation) == PCM_CALL_OK &&
+		      pcm_call_octet(&digital, digital_received, decode_octet(law, digital_received),
+			      &digital_transmitted, &digital_observation) == PCM_CALL_OK,
+		      "peer-limited INFO1d call stopped at %zu", clock);
+		channel_transmit(&channel, analog_transmitted, digital_transmitted);
+		if (analog_observation.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+			const struct pcm_info1d *wire = &analog.state.phase2.state.info1.digital;
+			const struct v34_info1c *offer = v92 ? &wire->record.v92.v34 : &wire->record.v90;
+
+			CHECK(!offer->answer_transmit[V34_SYMBOL_RATE_3000].high_carrier &&
+			      !offer->answer_transmit[V34_SYMBOL_RATE_3200].high_carrier &&
+			      offer->answer_transmit[V34_SYMBOL_RATE_3000]
+				      .projected_data_rate_2400_bps_units != 0 &&
+			      offer->answer_transmit[V34_SYMBOL_RATE_3200]
+				      .projected_data_rate_2400_bps_units != 0 &&
+			      offer->answer_transmit[V34_SYMBOL_RATE_3429]
+				      .projected_data_rate_2400_bps_units == 0,
+			      "INFO1d wire offer ignored peer carrier or symbol-rate restrictions");
+			CHECK(!v92 || wire->record.v92.pcm_upstream_supported,
+			      "removing 3429 symbols/s also removed V.92 PCM permission");
+			return true;
+		}
+	}
+	CHECK(false, "peer-limited INFO1d did not reach its peer");
+}
+
+static bool test_info1d_peer_capabilities(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_info1d_peer_capabilities(PCM_PROTOCOL_V90, law) &&
+		      run_info1d_peer_capabilities(PCM_PROTOCOL_V92, law),
+		      "law %u ignored peer INFO0a capabilities", (unsigned int)law);
 	return true;
 }
 
@@ -981,14 +1059,14 @@ static bool endpoint_octet(
 	    endpoint->call.local_role == V90_DIGITAL_MODEM &&
 	    observation.phase2.kind == PCM_PHASE2_EVENT_READY_FOR_INFO1) {
 		struct v34_info1c expected;
+		struct v34_info0 peer;
 		const struct pcm_phase2 *phase2 = &endpoint->call.state.phase2;
 
 		if (phase2->stage != PCM_PHASE2_INFO1 ||
+		    !v34_capabilities(&endpoint->call.peer_info0.analog, &peer) ||
 		    v34_phase2_select_v90_info1d(
 			    &phase2->remote_probe,
-			    &endpoint->call.local_info1.digital,
-			    endpoint->call.peer_info0.analog
-				    .transmit_power_reduction_supported,
+			    &endpoint->call.local_info1.digital, &peer,
 			    &expected) != V34_PHASE2_SELECTION_OK ||
 		    !v90_info1d_equal(
 			    &expected,
@@ -8553,6 +8631,7 @@ int main(void)
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
+		{ "PCM INFO1d respects peer capabilities", test_info1d_peer_capabilities },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },
 		{ "missing L1 probes recover online data", test_missing_probe_recovery },

@@ -278,45 +278,92 @@ static bool v90_high_carrier(
 	return false;
 }
 
+static bool transmitter_supports_rate(
+	const struct v34_info0 *transmitter, enum v34_symbol_rate rate,
+	bool high_carrier)
+{
+	switch (rate) {
+	case V34_SYMBOL_RATE_2400:
+		return true;
+	case V34_SYMBOL_RATE_2743:
+		return transmitter->symbol_rate_2743_supported;
+	case V34_SYMBOL_RATE_2800:
+		return transmitter->symbol_rate_2800_supported;
+	case V34_SYMBOL_RATE_3000:
+		return high_carrier ?
+			transmitter->high_carrier_3000_supported :
+			transmitter->low_carrier_3000_supported;
+	case V34_SYMBOL_RATE_3200:
+		return high_carrier ?
+			transmitter->high_carrier_3200_supported :
+			transmitter->low_carrier_3200_supported;
+	case V34_SYMBOL_RATE_3429:
+		return transmitter->symbol_rate_3429_supported &&
+		       transmitter->symbol_rate_3429_transmit_permitted;
+	case V34_SYMBOL_RATE_COUNT:
+		break;
+	}
+	return false;
+}
+
+static bool select_transmit_carrier(
+	const struct v34_info0 *transmitter, enum v34_symbol_rate rate,
+	bool preferred, bool *selected)
+{
+	if (transmitter_supports_rate(transmitter, rate, preferred)) {
+		*selected = preferred;
+		return true;
+	}
+	if (transmitter_supports_rate(transmitter, rate, !preferred)) {
+		*selected = !preferred;
+		return true;
+	}
+	return false;
+}
+
 enum v34_phase2_selection_result v34_phase2_select_v90_info1d(
 	const struct v34_phase2_probe_receiver_measurement *measurement,
 	const struct v34_info1c *configured,
-	bool peer_supports_power_reduction,
+	const struct v34_info0 *peer,
 	struct v34_info1c *selected)
 {
 	uint8_t metrics[V34_PHASE2_PROBE_HIGHEST_HARMONIC];
 	struct v34_info1c result = { 0 };
 
-	if (measurement == NULL || configured == NULL || selected == NULL ||
+	if (measurement == NULL || configured == NULL || peer == NULL ||
+	    selected == NULL ||
 	    memory_regions_overlap(
 		    selected, sizeof(*selected), measurement,
 		    sizeof(*measurement)) ||
 	    memory_regions_overlap(
 		    selected, sizeof(*selected), configured,
-		    sizeof(*configured)))
+		    sizeof(*configured)) ||
+	    memory_regions_overlap(selected, sizeof(*selected), peer, sizeof(*peer)))
 		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
-	if (!v34_info1c_is_valid(configured) ||
+	if (!v34_info1c_is_valid(configured) || !v34_info0_is_valid(peer) ||
 	    !v90_probe_metrics(measurement, metrics))
 		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
 	result.common = configured->common;
 	result.common.minimum_peer_power_reduction_db = 0;
 	result.common.additional_peer_power_reduction_db =
-		peer_supports_power_reduction ?
+		peer->transmit_power_reduction_supported ?
 			V90_INFO1D_ADDITIONAL_POWER_REDUCTION_DB : 0;
 	for (unsigned int index = 0; index < V34_SYMBOL_RATE_COUNT;
 	     ++index) {
 		enum v34_symbol_rate rate = (enum v34_symbol_rate)index;
+		uint8_t projected = v90_projected_rate(rate, metrics);
 		struct v34_info1_probe_result *probe =
 			&result.answer_transmit[index];
 
 		if (configured->answer_transmit[index]
-			    .projected_data_rate_2400_bps_units == 0)
+			    .projected_data_rate_2400_bps_units == 0 || projected == 0 ||
+		    !select_transmit_carrier(
+			    peer, rate, v90_high_carrier(rate, metrics),
+			    &probe->high_carrier))
 			continue;
 		probe->projected_data_rate_2400_bps_units =
-			v90_projected_rate(rate, metrics);
-		if (probe->projected_data_rate_2400_bps_units == 0)
-			continue;
-		probe->high_carrier = v90_high_carrier(rate, metrics);
+			!peer->constellation_1664_supported && projected > 12 ?
+				12 : projected;
 		if (v34_phase2_select_preemphasis(
 			    measurement, rate,
 			    &probe->preemphasis_filter_index) !=
@@ -343,34 +390,6 @@ static bool receiver_supports_rate(
 		return receiver->symbol_rate_2800_supported;
 	case V34_SYMBOL_RATE_3429:
 		return receiver->symbol_rate_3429_supported;
-	case V34_SYMBOL_RATE_COUNT:
-		break;
-	}
-	return false;
-}
-
-static bool transmitter_supports_rate(
-	const struct v34_info0 *transmitter, enum v34_symbol_rate rate,
-	bool high_carrier)
-{
-	switch (rate) {
-	case V34_SYMBOL_RATE_2400:
-		return true;
-	case V34_SYMBOL_RATE_2743:
-		return transmitter->symbol_rate_2743_supported;
-	case V34_SYMBOL_RATE_2800:
-		return transmitter->symbol_rate_2800_supported;
-	case V34_SYMBOL_RATE_3000:
-		return high_carrier ?
-			transmitter->high_carrier_3000_supported :
-			transmitter->low_carrier_3000_supported;
-	case V34_SYMBOL_RATE_3200:
-		return high_carrier ?
-			transmitter->high_carrier_3200_supported :
-			transmitter->low_carrier_3200_supported;
-	case V34_SYMBOL_RATE_3429:
-		return transmitter->symbol_rate_3429_supported &&
-		       transmitter->symbol_rate_3429_transmit_permitted;
 	case V34_SYMBOL_RATE_COUNT:
 		break;
 	}
@@ -463,21 +482,6 @@ bool v34_phase2_info1a_is_consistent(
 		       answerer_info0->maximum_symbol_rate_difference_steps;
 }
 
-static bool select_call_transmit_carrier(
-	const struct v34_info0 *caller_info0, enum v34_symbol_rate rate,
-	bool preferred, bool *selected)
-{
-	if (transmitter_supports_rate(caller_info0, rate, preferred)) {
-		*selected = preferred;
-		return true;
-	}
-	if (transmitter_supports_rate(caller_info0, rate, !preferred)) {
-		*selected = !preferred;
-		return true;
-	}
-	return false;
-}
-
 enum v34_phase2_selection_result v34_phase2_select_answerer_info1a(
 	const struct v34_info0 *caller_info0,
 	const struct v34_info0 *answerer_info0,
@@ -536,7 +540,7 @@ enum v34_phase2_selection_result v34_phase2_select_answerer_info1a(
 		candidate = *preferred;
 		candidate.answer_to_call_symbol_rate = rate;
 		candidate.call_to_answer_symbol_rate = rate;
-		if (!select_call_transmit_carrier(
+		if (!select_transmit_carrier(
 			    caller_info0, rate,
 			    candidate.call_transmit.high_carrier,
 			    &candidate.call_transmit.high_carrier))

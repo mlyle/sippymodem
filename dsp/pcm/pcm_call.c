@@ -1680,6 +1680,7 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		&call->local_info1.v92_digital.v34 : &call->local_info1.digital;
 	const struct v90_info0 *peer = v92 ?
 		&call->peer_info0.v92_analog.v90 : &call->peer_info0.analog;
+	struct v34_info0 capabilities = v34_info0_from_v90(peer);
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_info1c selected;
 	enum pcm_phase2_result result;
@@ -1688,8 +1689,8 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		    &call->state.phase2, &measurement) != PCM_PHASE2_OK)
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	if (v34_phase2_select_v90_info1d(
-		    &measurement, configured, peer->transmit_power_reduction_supported,
-		    &selected) != V34_PHASE2_SELECTION_OK)
+		    &measurement, configured, &capabilities, &selected) !=
+	    V34_PHASE2_SELECTION_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	if (v92) {
 		struct v92_info1d info1 = call->local_info1.v92_digital;
