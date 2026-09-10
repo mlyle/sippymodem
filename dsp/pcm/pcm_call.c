@@ -1675,6 +1675,11 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 
 static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 {
+	bool v92 = call->protocol == PCM_PROTOCOL_V92;
+	const struct v34_info1c *configured = v92 ?
+		&call->local_info1.v92_digital.v34 : &call->local_info1.digital;
+	const struct v90_info0 *peer = v92 ?
+		&call->peer_info0.v92_analog.v90 : &call->peer_info0.analog;
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_info1c selected;
 	enum pcm_phase2_result result;
@@ -1683,12 +1688,26 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 		    &call->state.phase2, &measurement) != PCM_PHASE2_OK)
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	if (v34_phase2_select_v90_info1d(
-		    &measurement, &call->local_info1.digital,
-		    call->peer_info0.analog.transmit_power_reduction_supported,
+		    &measurement, configured, peer->transmit_power_reduction_supported,
 		    &selected) != V34_PHASE2_SELECTION_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
-	result = pcm_phase2_start_v90_digital_info1(
-		&call->state.phase2, &selected);
+	if (v92) {
+		struct v92_info1d info1 = call->local_info1.v92_digital;
+
+		/* Full V.92 Phase 2 shares V.90's measured upstream probe
+		 * groups. Bit 70 is PCM permission, not a carrier selection;
+		 * the configured MD duration and offset have separate owners. */
+		selected.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
+		selected.common.local_md_length_35_ms_units =
+			configured->common.local_md_length_35_ms_units;
+		selected.common.frequency_offset_1_50_hz_units =
+			configured->common.frequency_offset_1_50_hz_units;
+		info1.v34 = selected;
+		result = pcm_phase2_start_v92_digital_info1(
+			&call->state.phase2, &info1);
+	} else
+		result = pcm_phase2_start_v90_digital_info1(
+			&call->state.phase2, &selected);
 	if (result != PCM_PHASE2_OK)
 		return PCM_CALL_SEQUENCE_MISMATCH;
 	return PCM_CALL_OK;
@@ -1732,10 +1751,6 @@ static enum pcm_call_result advance_phase2(
 		if (call->local_role == V90_ANALOG_MODEM)
 			result = pcm_phase2_start_analog_info1(
 				&call->state.phase2);
-		else if (call->protocol == PCM_PROTOCOL_V92)
-			result = pcm_phase2_start_v92_digital_info1(
-				&call->state.phase2,
-				&call->local_info1.v92_digital);
 		else {
 			call_result = start_digital_info1(call);
 			if (call_result != PCM_CALL_OK)

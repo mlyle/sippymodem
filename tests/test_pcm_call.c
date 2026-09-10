@@ -640,6 +640,128 @@ static void channel_transmit(
 	channel->cursor = (channel->cursor + 1u) % channel->delay;
 }
 
+static bool check_v92_measured_info1d(
+	const struct pcm_call *digital, struct v92_info1d *selected)
+{
+	const struct pcm_phase2 *phase2 = &digital->state.phase2;
+	const struct v92_info1d *configured = &digital->local_info1.v92_digital;
+	struct v92_info1d expected = *configured;
+
+	CHECK(digital->protocol == PCM_PROTOCOL_V92 &&
+	      digital->local_role == V90_DIGITAL_MODEM &&
+	      digital->stage == PCM_CALL_PHASE2 &&
+	      phase2->stage == PCM_PHASE2_INFO1 &&
+	      v34_phase2_select_v90_info1d(
+		      &phase2->remote_probe, &configured->v34,
+		      digital->peer_info0.v92_analog.v90
+			      .transmit_power_reduction_supported,
+		      &expected.v34) == V34_PHASE2_SELECTION_OK,
+	      "V.92 call did not retain a measured INFO1d boundary");
+	expected.v34.common.local_md_length_35_ms_units =
+		configured->v34.common.local_md_length_35_ms_units;
+	expected.v34.common.frequency_offset_1_50_hz_units =
+		configured->v34.common.frequency_offset_1_50_hz_units;
+	expected.v34.answer_transmit[V34_SYMBOL_RATE_3429].high_carrier = false;
+	CHECK(v92_digital_info1_equal(
+		      &expected, &phase2->state.info1.digital.record.v92),
+	      "V.92 INFO1d ignored the probe or changed an owned field");
+	*selected = expected;
+	return true;
+}
+
+static bool run_v92_measured_info1d(
+	enum g711_law law, bool pcm_upstream, bool reduce_power,
+	bool shaped, struct v92_info1d *selected)
+{
+	struct pcm_call_configuration analog_configuration =
+		v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration digital_configuration =
+		v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog;
+	struct pcm_call digital;
+	struct channel channel;
+	int16_t previous = 0;
+	bool measured = false;
+
+	analog_configuration.local_info0.v92_analog.v90
+		.transmit_power_reduction_supported = reduce_power;
+	digital_configuration.local_info1.v92_digital.pcm_upstream_supported =
+		pcm_upstream;
+	digital_configuration.local_info1.v92_digital.v34
+		.answer_transmit[V34_SYMBOL_RATE_2800]
+		.projected_data_rate_2400_bps_units = 0;
+	CHECK(channel_init(&channel, law, 3u) &&
+	      pcm_call_init(&analog, &analog_configuration) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &digital_configuration) == PCM_CALL_OK,
+	      "V.92 measured-offer endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		struct pcm_call_observation analog_observation;
+		struct pcm_call_observation digital_observation;
+		uint8_t analog_received, digital_received;
+		uint8_t analog_transmitted, digital_transmitted;
+
+		channel_receive(&channel, &analog_received, &digital_received);
+		CHECK(pcm_call_octet(&analog, analog_received,
+			      decode_octet(law, analog_received), &analog_transmitted,
+			      &analog_observation) == PCM_CALL_OK &&
+		      pcm_call_octet(&digital, digital_received,
+			      decode_octet(law, digital_received), &digital_transmitted,
+			      &digital_observation) == PCM_CALL_OK,
+		      "V.92 measured-offer call stopped at %zu", clock);
+		if (shaped) {
+			int16_t sample = decode_octet(law, analog_transmitted);
+
+			analog_transmitted = encode_octet(law,
+				(int16_t)(((int32_t)sample + previous) / 2));
+			previous = sample;
+		}
+		channel_transmit(&channel, analog_transmitted, digital_transmitted);
+		if (digital_observation.phase2.kind ==
+		    PCM_PHASE2_EVENT_READY_FOR_INFO1) {
+			CHECK(check_v92_measured_info1d(&digital, selected),
+			      "V.92 measured offer failed");
+			measured = true;
+		}
+		if (analog_observation.phase2.kind ==
+		    PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+			CHECK(measured && v92_digital_info1_equal(selected,
+				      &analog.state.phase2.state.info1.digital.record.v92) &&
+			      !v92_digital_info1_equal(selected,
+				      &digital_configuration.local_info1.v92_digital) &&
+			      v92_digital_info1_equal(&digital.local_info1.v92_digital,
+				      &digital_configuration.local_info1.v92_digital),
+			      "V.92 wire offer or configured policy changed");
+			CHECK(selected->pcm_upstream_supported == pcm_upstream &&
+			      selected->v34.common.minimum_peer_power_reduction_db == 0 &&
+			      selected->v34.common.additional_peer_power_reduction_db ==
+				      (reduce_power ? 3 : 0) &&
+			      selected->v34.answer_transmit[V34_SYMBOL_RATE_2800]
+				      .projected_data_rate_2400_bps_units == 0,
+			      "V.92 offer ignored PCM permission, power or disabled rates");
+			return true;
+		}
+	}
+	CHECK(false, "V.92 measured offer did not reach its peer");
+}
+
+static bool test_v92_measured_info1d(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int pcm = 0; pcm < 2u; ++pcm)
+			for (unsigned int power = 0; power < 2u; ++power) {
+				struct v92_info1d flat, shaped;
+
+				CHECK(run_v92_measured_info1d(law, pcm != 0u,
+					      power != 0u, false, &flat) &&
+				      run_v92_measured_info1d(law, pcm != 0u,
+					      power != 0u, true, &shaped) &&
+				      !v92_digital_info1_equal(&flat, &shaped),
+				      "law %u PCM %u power %u ignored the changed channel",
+				      (unsigned int)law, pcm, power);
+			}
+	return true;
+}
+
 static bool endpoint_init_with_dil(
 	struct endpoint *endpoint, enum v90_modem_role role,
 	enum g711_law law, uint32_t enabled_downstream_rate_mask,
@@ -5156,6 +5278,8 @@ static bool run_v92_phase4_control(
 	struct pcm_call digital;
 	struct pcm_call_v92_analog_phase4_control analog_control = { 0 };
 	struct v92_phase4_digital_station digital_control = { 0 };
+	struct v92_info1d selected_info1d = { 0 };
+	bool measured_info1d = false;
 	bool analog_entered_phase3 = false;
 	bool digital_entered_phase3 = false;
 	bool analog_entered_phase4 = false;
@@ -5304,6 +5428,11 @@ static bool run_v92_phase4_control(
 				decode_octet(law, digital_received),
 				&digital_transmitted,
 				&digital_observation);
+		if (digital_observation.phase2.kind == PCM_PHASE2_EVENT_READY_FOR_INFO1) {
+			CHECK(check_v92_measured_info1d(&digital, &selected_info1d),
+			      "V.92 handoff ignored the measured offer");
+			measured_info1d = true;
+		}
 		CHECK(analog_result == (analog_ready ? PCM_CALL_PHASE4_READY :
 						       PCM_CALL_OK) &&
 		      digital_result == (digital_ready ? PCM_CALL_PHASE4_READY :
@@ -5382,12 +5511,12 @@ static bool run_v92_phase4_control(
 		      PCM_PROTOCOL_V92 &&
 	      analog.phase3_entry.selection.upstream == PCM_UPSTREAM_PCM &&
 	      digital.phase3_entry.selection.upstream == PCM_UPSTREAM_PCM &&
-	      v92_digital_info1_equal(
+	      measured_info1d && v92_digital_info1_equal(
 		      &analog.phase3_entry.selection.digital.record.v92,
-		      &digital_configuration.local_info1.v92_digital) &&
+		      &selected_info1d) &&
 	      v92_digital_info1_equal(
 		      &digital.phase3_entry.selection.digital.record.v92,
-		      &digital_configuration.local_info1.v92_digital) &&
+		      &selected_info1d) &&
 	      v92_pcm_info1a_equal(
 		      &analog.phase3_entry.selection.analog.pcm,
 		      &analog_configuration.local_info1.v92_analog) &&
@@ -8423,6 +8552,7 @@ int main(void)
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
+		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },
 		{ "missing L1 probes recover online data", test_missing_probe_recovery },
