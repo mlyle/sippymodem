@@ -18,6 +18,17 @@ static bool bits_are_valid(const uint8_t *bits, size_t bit_count)
 {
 	if (bits == NULL)
 		return false;
+	/* Each byte is a bit. Check whole words without alignment or aliasing
+	 * assumptions; every byte's upper seven bits must be clear. */
+	while (bit_count >= sizeof(uint64_t)) {
+		uint64_t word;
+
+		memcpy(&word, bits, sizeof(word));
+		if (word & UINT64_C(0xfefefefefefefefe))
+			return false;
+		bits += sizeof(word);
+		bit_count -= sizeof(word);
+	}
 	for (size_t bit = 0u; bit < bit_count; ++bit) {
 		if (bits[bit] > 1u)
 			return false;
@@ -606,13 +617,13 @@ bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver)
 		if (path->ambiguous_frames >> receiver->pending_frames)
 			return false;
 		for (size_t frame = 0u; frame < V92_PCM_RX_DELAY_FRAMES; ++frame) {
-			for (size_t bit = 0u; bit < V92_PCM_MAPPING_MAX_BITS; ++bit) {
-				uint8_t limit = frame < receiver->pending_frames &&
-					bit < receiver->mapping.data_bits_per_frame ? 1u : 0u;
+			size_t used = frame < receiver->pending_frames ?
+				receiver->mapping.data_bits_per_frame : 0u;
 
-				if (path->pending[frame][bit] > limit)
-					return false;
-			}
+			if (!bits_are_valid(path->pending[frame], used) ||
+			    !memory_region_is_zero(path->pending[frame] + used,
+				V92_PCM_MAPPING_MAX_BITS - used))
+				return false;
 		}
 	}
 	return normalized;

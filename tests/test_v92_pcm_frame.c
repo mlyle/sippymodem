@@ -309,6 +309,75 @@ static bool test_level_refinement(void)
 	return true;
 }
 
+static bool test_pending_bit_validation(void)
+{
+	static const uint8_t rates[] = { 1u, 2u, 4u, 19u };
+	static const uint8_t depths[] = { 0u, 5u, V92_PCM_RX_DELAY_FRAMES };
+	static const uint8_t values[] = { 1u, 2u, 128u, 255u };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v92_pcm_frame_tx tx;
+			struct v92_pcm_frame_rx rx;
+
+			CHECK(initialize(&tx, rates[rate], (enum g711_law)law) &&
+			      v92_pcm_frame_rx_init(&rx, &tx.mapping, B1U_TEST_LEVEL) ==
+				      V92_PCM_FRAME_OK, "bit-validation initialization failed");
+			/* Unaligned input and nonzero bytes just outside the frame must
+			 * not affect validation; every in-frame upper bit must fail. */
+			for (size_t offset = 0; offset < sizeof(uint64_t); ++offset) {
+				uint8_t storage[V92_PCM_MAPPING_MAX_BITS + sizeof(uint64_t) + 1u];
+				uint8_t *bits = storage + offset;
+				size_t count = tx.mapping.data_bits_per_frame;
+				struct v92_pcm_frame output;
+				struct v92_pcm_frame_tx copy = tx;
+
+				memset(storage, 255, sizeof(storage));
+				memset(bits, 1, count);
+				CHECK(v92_pcm_frame_encode(&copy, bits, count, &output) == V92_PCM_FRAME_OK,
+				      "unaligned valid input rejected");
+				copy = tx;
+				struct v92_pcm_frame saved = output;
+
+				for (size_t bit = 0; bit < count; ++bit) {
+					bits[bit] = bit % 2u ? 2u : 128u;
+					CHECK(v92_pcm_frame_encode(&copy, bits, count, &output) ==
+						      V92_PCM_FRAME_OUT_OF_RANGE &&
+					      memcmp(&copy, &tx, sizeof(copy)) == 0 &&
+					      memcmp(&output, &saved, sizeof(output)) == 0,
+					      "invalid input at offset %zu bit %zu accepted or mutated state", offset, bit);
+					bits[bit] = 1u;
+				}
+			}
+			rx.path_count = 2u;
+			rx.paths[1] = rx.paths[0];
+			for (size_t depth = 0; depth < ARRAY_LENGTH(depths); ++depth) {
+				rx.pending_frames = depths[depth];
+				CHECK(v92_pcm_frame_rx_is_valid(&rx), "zero history rejected");
+				for (size_t path = 0; path < rx.path_count; ++path) {
+					for (size_t frame = 0; frame < V92_PCM_RX_DELAY_FRAMES; ++frame) {
+						for (size_t bit = 0; bit < V92_PCM_MAPPING_MAX_BITS; ++bit) {
+							bool owned = frame < rx.pending_frames &&
+								bit < rx.mapping.data_bits_per_frame;
+							uint8_t *slot = &rx.paths[path].pending[frame][bit];
+
+							for (size_t value = 0; value < ARRAY_LENGTH(values); ++value) {
+								*slot = values[value];
+								CHECK(v92_pcm_frame_rx_is_valid(&rx) ==
+								      (owned && *slot == 1u),
+								      "law %u rate %u depth %u path %zu frame %zu bit %zu value %u",
+								      law, rates[rate], rx.pending_frames, path, frame, bit, *slot);
+							}
+							*slot = 0u;
+						}
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_rejection_and_names(void)
 {
 	static const char *const names[] = {
@@ -376,7 +445,8 @@ static bool test_rejection_and_names(void)
 int main(void)
 {
 	if (!test_b1u_oracle() || !test_rate_matrix_and_reset() ||
-	    !test_filters() || !test_level_refinement() || !test_rejection_and_names())
+	    !test_filters() || !test_level_refinement() ||
+	    !test_pending_bit_validation() || !test_rejection_and_names())
 		return 1;
 	return 0;
 }
