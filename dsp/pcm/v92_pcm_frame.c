@@ -147,11 +147,6 @@ static int positive_modulo(int value, unsigned int modulus)
 	return reduced < 0 ? reduced + (int)modulus : reduced;
 }
 
-static uint8_t parity(int value)
-{
-	return (uint8_t)positive_modulo(value, 2u);
-}
-
 static size_t x_history_count(const struct v92_pcm_mapping *mapping)
 {
 	size_t count =
@@ -185,33 +180,17 @@ static const int32_t *v_history(
 	return x_history(mapping, filter) + x_history_count(mapping);
 }
 
-static bool equivalence_digit(
-	const struct v92_pcm_mapping *mapping, size_t symbol, int eta,
-	const int16_t selected[V92_PCM_MAPPING_FRAME_SYMBOLS], uint8_t y0,
-	uint8_t *digit)
+/* A validated path fixes the fourth-symbol coset before point enumeration.
+ * Other symbols use every index; the fourth uses eta = offset + 2*k. */
+static int equivalence_offset(size_t symbol,
+	const int16_t selected[V92_PCM_MAPPING_FRAME_SYMBOLS], uint8_t y0)
 {
-	unsigned int modulus;
-	int value;
+	if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
+		return 0;
+	size_t base = symbol - 3u;
 
-	if (mapping == NULL || symbol >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
-	    selected == NULL || digit == NULL)
-		return false;
-	modulus = mapping->cpd.modulus[symbol];
-	if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u) {
-		value = positive_modulo(eta, modulus);
-	} else {
-		size_t base = symbol - 3u;
-		uint8_t offset = parity(
-			selected[base] + selected[base + 1u] +
-			selected[base + 2u] + y0);
-		int adjusted = eta - offset;
-
-		if (parity(adjusted) != 0u)
-			return false;
-		value = positive_modulo(adjusted / 2, modulus);
-	}
-	*digit = (uint8_t)value;
-	return true;
+	return positive_modulo(selected[base] + selected[base + 1u] +
+		selected[base + 2u] + y0, 2u);
 }
 
 static int64_t precoder_history(
@@ -331,22 +310,20 @@ static bool select_point(
 			symbol % V92_PCM_MAPPING_PHASES];
 
 	constellation = &mapping->cpd.constellation[constellation_index];
-	for (int eta = -(int)constellation->count;
-	     eta < (int)constellation->count; ++eta) {
-		uint8_t digit;
+	unsigned stride = symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u ? 2u : 1u;
+	unsigned step = stride * mapping->cpd.modulus[symbol];
+	int first = -(int)constellation->count;
+	int offset = equivalence_offset(symbol, selected, y0) + (int)(stride * expected_digit);
+
+	first += positive_modulo(offset - first, step);
+	for (int eta = first; eta < (int)constellation->count; eta += (int)step) {
 		uint8_t ordinal;
 		int16_t positive;
 		int16_t u;
 		int32_t x;
 		int64_t score;
 
-		if (!equivalence_digit(
-			    mapping, symbol, eta, selected, y0, &digit) ||
-		    digit != expected_digit)
-			continue;
 		ordinal = (uint8_t)(eta >= 0 ? eta : -eta - 1);
-		if (ordinal >= constellation->count)
-			continue;
 		positive = constellation->positive_linear[ordinal];
 		u = eta >= 0 ? positive : (int16_t)-positive;
 		x = precoder_output(history, u);
@@ -909,6 +886,8 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 			symbol % V92_PCM_MAPPING_PHASES];
 		const struct v92_cpd_constellation *constellation =
 			&receiver->mapping.cpd.constellation[set];
+		unsigned modulus = receiver->mapping.cpd.modulus[symbol];
+		unsigned stride = symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u ? 2u : 1u;
 		struct frame_candidate candidates[V92_PCM_RX_PATHS];
 		size_t count = 0u;
 		uint64_t weight = 1u;
@@ -938,17 +917,24 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 					&paths[path].state.trellis, &y0) !=
 			    V34_TRELLIS_OK)
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
-			for (int eta = -(int)constellation->count;
-			     eta < (int)constellation->count; ++eta) {
-				uint8_t digit;
+			int offset = equivalence_offset(symbol, paths[path].frame.signed_index, y0);
+			unsigned step = known ? stride * modulus : stride;
+			int residue = offset + (known ? (int)(stride * paths[path].known_digits[symbol]) : 0);
+			int first = -(int)constellation->count;
+
+			first += positive_modulo(residue - first, step);
+			unsigned next_digit = (unsigned)positive_modulo((first - offset) / (int)stride, modulus);
+
+			/* Keep the original ascending eta order, including metric ties.
+			 * Known B1u visits one residue class; data cycles all digits. */
+			for (int eta = first; eta < (int)constellation->count; eta += (int)step) {
+				uint8_t digit = (uint8_t)next_digit;
 				int64_t error;
 				struct frame_candidate candidate;
 
-				if (!equivalence_digit(&receiver->mapping, symbol,
-						       eta, paths[path].frame.signed_index,
-						       y0, &digit) ||
-				    (known && digit != paths[path].known_digits[symbol]))
-					continue;
+				next_digit += !known;
+				if (next_digit == modulus)
+					next_digit = 0u;
 				int16_t u = signed_point(constellation, eta);
 				int32_t v = 0;
 

@@ -283,7 +283,7 @@ static bool test_control_epoch(enum g711_law law, uint8_t rate, bool filtered)
 }
 
 static bool test_constellation_coordinates(
-	enum g711_law law, uint8_t rate, enum v92_cpd_trellis trellis)
+	enum g711_law law, uint8_t rate, enum v92_cpd_trellis trellis, bool uneven)
 {
 	enum { CONTROL_FRAME = V92_B1U_FRAMES + 32, FRAMES = V92_B1U_FRAMES + 128 };
 	struct v92_pcm_mapping mapping;
@@ -295,6 +295,23 @@ static bool test_constellation_coordinates(
 	struct v92_cpd_parameters cpd = mapping.cpd;
 
 	cpd.trellis = trellis;
+	if (uneven) {
+		/* Cross odd residues and a singleton fourth-symbol class with
+		 * six different full-size constellations and each trellis. */
+		for (unsigned symbol = 0u; symbol < 12u; ++symbol)
+			cpd.modulus[symbol] = 8u;
+		cpd.modulus[0] = 255u;
+		cpd.modulus[3] = 1u;
+		cpd.modulus[6] = 3u;
+		memset(cpd.constellation, 0, sizeof(cpd.constellation));
+		for (unsigned phase = 0u; phase < 6u; ++phase) {
+			cpd.frame_constellation[phase] = (uint8_t)phase;
+			cpd.constellation[phase].count = 128u;
+			for (unsigned point = 0u; point < 128u; ++point)
+				cpd.constellation[phase].positive_linear[point] =
+					(int16_t)((2u * point + 1u) * (16u + phase));
+		}
+	}
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD] = (struct v92_cpd_filter){
 		.count = 62u, .coefficient = { [60] = 24576, [61] = 8192 },
 	};
@@ -733,7 +750,9 @@ int main(void)
 		for (size_t rate = 0u; rate < sizeof(rates) / sizeof(rates[0]); ++rate) {
 			for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
 			     trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis) {
-				if (!test_constellation_coordinates((enum g711_law)law, rates[rate], trellis))
+				if (!test_constellation_coordinates((enum g711_law)law, rates[rate], trellis, false) ||
+				    (rates[rate] == 1u &&
+				     !test_constellation_coordinates((enum g711_law)law, 1u, trellis, true)))
 					return 1;
 			}
 		}

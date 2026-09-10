@@ -277,6 +277,13 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 	if (uneven) {
 		cpd.modulus[0]++;
 		cpd.modulus[6]++;
+		if (rate == 1u) {
+			/* Exercise a singleton fourth-symbol class alongside large
+			 * odd moduli, retaining more than enough frame capacity. */
+			cpd.modulus[0] = 255u;
+			cpd.modulus[3] = 1u;
+			cpd.modulus[6] = 3u;
+		}
 	}
 	for (unsigned i = 0; i < 12; ++i)
 		capacity *= cpd.modulus[i];
@@ -345,6 +352,35 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 				a += (long double)u[n - tap - 1] * cpd.filter[0].coefficient[tap] / 32768.L;
 			for (unsigned tap = 0; tap < 2 && tap < n; ++tap)
 				a += (long double)x[n - tap - 1] * cpd.filter[1].coefficient[tap] / 16384.L;
+			/* Our selection policy minimizes |x|, with ascending eta
+			 * breaking ties. Exhaust all indices independently of the
+			 * production class iterator, including negative residues. */
+			long double best = HUGE_VALL;
+			int expected_eta = 0;
+
+			for (int candidate = -(int)points->count; candidate < points->count; ++candidate) {
+				int candidate_residue = candidate;
+
+				if (i % 4 == 3) {
+					candidate_residue -= (int)modulo(frame.signed_index[base] +
+						frame.signed_index[base + 1] + frame.signed_index[base + 2] + y0, 2);
+					if (modulo(candidate_residue, 2))
+						continue;
+					candidate_residue /= 2;
+				}
+				if (modulo(candidate_residue, modulus) != digit)
+					continue;
+				int point = candidate < 0 ? -points->positive_linear[-candidate - 1] :
+					points->positive_linear[candidate];
+				long double score = fabsl(roundl(a - u[n] + point));
+
+				if (score < best) {
+					best = score;
+					expected_eta = candidate;
+				}
+			}
+			CHECK(isfinite(best) && eta == expected_eta,
+			      "equivalence enumeration changed point selection: frame %u symbol %u", f, i);
 			x[n] = (int32_t)roundl(a);
 			for (unsigned tap = 0; tap < 7 && tap <= n; ++tap)
 				b += (long double)x[n - tap] * cpd.filter[2].coefficient[tap] / 32768.L;
