@@ -5156,7 +5156,8 @@ static bool test_rate_renegotiation_16_point_completion(void)
 	return true;
 }
 
-static bool run_unusable_retrain_selection(enum g711_law law)
+static bool run_unusable_retrain_selection(
+	enum pcm_protocol protocol, enum g711_law law)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -5164,13 +5165,15 @@ static bool run_unusable_retrain_selection(enum g711_law law)
 	bool initially_online = false;
 	bool remote_retrain_started = false;
 	bool selection_invalidated = false;
+	bool recovery_started = false;
 
 	CHECK(channel_init(&channel, law, 3u) &&
-	      endpoint_init(
-		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
-	      endpoint_init(
-		      &digital, V90_DIGITAL_MODEM, law,
-		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	      (protocol == PCM_PROTOCOL_V92 ?
+		      endpoint_init_conventional_v92(&analog, V90_ANALOG_MODEM, law) &&
+		      endpoint_init_conventional_v92(&digital, V90_DIGITAL_MODEM, law) :
+		      endpoint_init(&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+		      endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+			      V90_JD_RATE_CAPABILITY_MASK, 0u)),
 	      "law %u unusable-selection endpoints did not initialize",
 	      (unsigned int)law);
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -5205,11 +5208,14 @@ static bool run_unusable_retrain_selection(enum g711_law law)
 			digital_info1 = &digital.call.state.phase2.state.info1;
 			if (analog_info1->digital_record_stored &&
 			    !digital_info1->analog_record_stored) {
+				struct v34_info1c *offer = protocol == PCM_PROTOCOL_V92 ?
+					&digital_info1->digital.record.v92.v34 :
+					&digital_info1->digital.record.v90;
+
 				/* Keep the offer already decoded by the peer, but make
 				 * that peer's returning 3000-symbol/s choice unusable to
 				 * the digital call owner at Phase 3 entry. */
-				digital_info1->digital.record.v90
-					.answer_transmit[V34_SYMBOL_RATE_3000]
+				offer->answer_transmit[V34_SYMBOL_RATE_3000]
 					.projected_data_rate_2400_bps_units = 0u;
 				CHECK(pcm_call_is_valid(&digital.call),
 				      "law %u invalidated INFO1d damaged call state",
@@ -5269,13 +5275,16 @@ static bool run_unusable_retrain_selection(enum g711_law law)
 				      observation.next == PCM_CALL_RETRAIN_SILENCE &&
 				      digital.call.retrain_active &&
 				      digital.call.peer_info0_stored &&
-				      digital.call.protocol == PCM_PROTOCOL_V90 &&
+				      digital.call.protocol == protocol &&
 				      !pcm_call_has_failed(&digital.call),
 				      "law %u unusable retrain selection returned %s/%s",
 				      (unsigned int)law,
 				      pcm_call_result_name(strict_result),
 				      pcm_call_result_name(result));
-				return true;
+				recovery_started = true;
+				channel_transmit(
+					&channel, analog_transmitted, digital_transmitted);
+				break;
 			}
 			CHECK(strict_result == PCM_CALL_OK &&
 			      result == PCM_CALL_OK &&
@@ -5288,7 +5297,31 @@ static bool run_unusable_retrain_selection(enum g711_law law)
 				&channel, analog_transmitted, digital_transmitted);
 		}
 	}
-	CHECK(false, "law %u unusable retrain selection was not received",
+	CHECK(recovery_started, "law %u unusable retrain selection was not received",
+	      (unsigned int)law);
+	/* Prove the new epoch retains the negotiated protocol and returns data,
+	 * not merely that the unusable selection was converted into silence. */
+	analog.resume_frame_index = digital.downstream_source.frames;
+	digital.resume_frame_index = analog.upstream_source.frames;
+	analog.resync_data_frame = true;
+	digital.resync_data_frame = true;
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		CHECK(step_endpoints(&channel, &analog, &digital, law),
+		      "law %u recovery stopped at %zu", (unsigned int)law, clock);
+		if (pcm_call_is_online(&analog.call) && pcm_call_is_online(&digital.call) &&
+		    analog.downstream_frames >=
+			    analog.resume_frame_index + DATA_FRAMES_TO_RECEIVE &&
+		    digital.upstream_frames >=
+			    digital.resume_frame_index + DATA_FRAMES_TO_RECEIVE) {
+			CHECK(analog.call.protocol == protocol &&
+			      digital.call.protocol == protocol &&
+			      !analog.call.retrain_active && !digital.call.retrain_active,
+			      "law %u recovery lost its protocol or retrain boundary",
+			      (unsigned int)law);
+			return true;
+		}
+	}
+	CHECK(false, "law %u recovery did not resume bidirectional data",
 	      (unsigned int)law);
 	return false;
 }
@@ -5297,9 +5330,11 @@ static bool test_unusable_retrain_selection(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
-		CHECK(run_unusable_retrain_selection(law),
-		      "law %u unusable retrain selection did not restart",
-		      (unsigned int)law);
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(run_unusable_retrain_selection(protocol, law),
+			      "protocol %u law %u unusable retrain selection did not restart",
+			      (unsigned int)protocol, (unsigned int)law);
 	return true;
 }
 

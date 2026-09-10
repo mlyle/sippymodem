@@ -1194,12 +1194,12 @@ static enum pcm_call_result recover_unusable_retrain_selection(
 	struct pcm_call *call, enum pcm_call_result result)
 {
 	if (result != PCM_CALL_UNUSABLE_SELECTION ||
-	    call->protocol != PCM_PROTOCOL_V90 || !call->retrain_active ||
-	    call->stage != PCM_CALL_PHASE2)
+	    !call->retrain_active || call->stage != PCM_CALL_PHASE2)
 		return result;
 	/* A peer can answer INFO1 with a symbol rate for which its INFO1d offered
 	 * no usable data rate.  Refuse that profile, but keep the established
-	 * call agreement and request another standards-defined full retrain. */
+	 * call agreement and request another full retrain. V.92 9.3 shares
+	 * V.90's full Phase 2 recovery procedures without dropping V.92. */
 	return begin_retrain(call, false);
 }
 
