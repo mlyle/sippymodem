@@ -1469,7 +1469,8 @@ static bool fallback_pcm_source(void *context, uint8_t *bits, size_t bit_count)
 }
 
 static bool run_fallback_restart(
-	enum g711_law law, bool remote, enum DP_ID protocol, uint8_t pcm_up_max_drn)
+	enum g711_law law, bool remote, enum DP_ID protocol, uint8_t pcm_up_max_drn,
+	bool after_online)
 {
 	enum { BLOCK = MODEM_FRAG };
 	struct bit_endpoint digital_bits = { .transmit_seed = 7, .receive_seed = 19 };
@@ -1497,6 +1498,7 @@ static bool run_fallback_restart(
 	bool peer_returned = false;
 	unsigned int warmup = 0;
 	unsigned int phases = 0;
+	unsigned int expected_phases = after_online ? 3u : 2u;
 	int16_t peer_gain = 0;
 
 	digital.min_rate = 28000;
@@ -1557,6 +1559,7 @@ static bool run_fallback_restart(
 
 				CHECK(digital.dp_requested == DP_V34 &&
 				      v90_datapump_v34_fallback_handoff(dp, &handoff) &&
+				      training_session_is_retraining(&handoff.training) == after_online &&
 				      handoff.restart.protocol == configuration.protocol &&
 				      (protocol != DP_V92 ||
 				       handoff.restart.local_info1.v92_digital.pcm_upstream_supported ==
@@ -1641,7 +1644,8 @@ static bool run_fallback_restart(
 					CHECK(pcm_call_octet(&peer, to_analog[index], sample,
 							    &generated, &observation) == PCM_CALL_OK,
 					      "fallback peer PCM training failed at %zu", clock + index);
-					if (!substituted && observation.phase2.kind ==
+					if (!substituted && (!after_online || phases != 0u) &&
+					    observation.phase2.kind ==
 						    PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
 						const struct v34_info1a selected = {
 							.call_transmit = { .high_carrier = true,
@@ -1677,8 +1681,9 @@ static bool run_fallback_restart(
 			}
 			to_digital[index] = generated;
 		}
-		if (fallback && digital.dp->status == DPSTAT_CONNECT &&
-		    (returned ? pcm_call_is_online(&peer) : v34_call_is_online(&conventional))) {
+		if (digital.dp->status == DPSTAT_CONNECT &&
+		    ((!fallback || returned) ? pcm_call_is_online(&peer) :
+					       v34_call_is_online(&conventional))) {
 			warmup += BLOCK;
 			if (warmup >= 1600u)
 				digital_bits.enabled = analog_bits.enabled = true;
@@ -1689,18 +1694,32 @@ static bool run_fallback_restart(
 		      (unsigned long long)analog_bits.received_bits);
 		if (digital_bits.received_bits >= SUSTAINED_RECEIVED_BITS &&
 		    analog_bits.received_bits >= SUSTAINED_RECEIVED_BITS) {
-			if (++phases == 2u)
+			CHECK(digital.dp->id == (fallback && !returned ? DP_V34 : protocol),
+			      "fallback data used the wrong protocol in phase %u", phases);
+			if (!fallback || returned)
+				CHECK(digital.tx_rate > 33600 && digital.dsp_info.upstream_mode ==
+					      (pcm_up_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34),
+				      "fallback PCM data lost the upstream mode in phase %u", phases);
+			if (++phases == expected_phases)
 				break;
-			digital_bits = (struct bit_endpoint){ .transmit_seed = 31, .receive_seed = 43 };
-			analog_bits = (struct bit_endpoint){ .transmit_seed = 43, .receive_seed = 31 };
+			digital_bits = (struct bit_endpoint){
+				.transmit_seed = (uint8_t)(31u + phases),
+				.receive_seed = (uint8_t)(43u + phases),
+			};
+			analog_bits = (struct bit_endpoint){
+				.transmit_seed = digital_bits.receive_seed,
+				.receive_seed = digital_bits.transmit_seed,
+			};
 			warmup = 0;
 			retrain = true;
-			CHECK(remote ? v34_call_start_retrain(&conventional) == V34_CALL_OK :
+			CHECK(remote ? (fallback ?
+					v34_call_start_retrain(&conventional) == V34_CALL_OK :
+					pcm_call_start_retrain(&peer) == PCM_CALL_OK) :
 				       digital.dp->op->retrain(digital.dp) == 0,
 			      "fallback ATO1 did not start");
 		}
 	}
-	CHECK(phases == 2u && returned && peer_returned &&
+	CHECK(phases == expected_phases && returned && peer_returned &&
 	      digital.dp->id == protocol && digital.tx_rate > 33600 &&
 	      digital.dsp_info.upstream_mode ==
 		      (pcm_up_max_drn != 0 ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34),
@@ -1711,7 +1730,7 @@ static bool run_fallback_restart(
 	return true;
 }
 
-static bool test_fallback_restart(void)
+static bool run_fallback_restarts(bool after_online)
 {
 	CHECK(v90_datapump_register() == 0 && v34_datapump_register() == 0,
 	      "fallback datapumps did not register");
@@ -1720,13 +1739,27 @@ static bool test_fallback_restart(void)
 			enum DP_ID protocol = mode == 0 ? DP_V90 : DP_V92;
 			uint8_t pcm_up_max_drn = mode == 2u ? 4u : 0;
 
-			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn) &&
-			      run_fallback_restart(law, true, protocol, pcm_up_max_drn),
-			      "fallback retrain failed for law %u mode %u", law, mode);
+			CHECK(run_fallback_restart(law, false, protocol, pcm_up_max_drn, after_online) &&
+			      run_fallback_restart(law, true, protocol, pcm_up_max_drn, after_online),
+			      "fallback retrain failed for law %u mode %u online %u",
+			      law, mode, after_online);
 		}
 	CHECK(v90_datapump_unregister() == 0 && v34_datapump_unregister() == 0,
 	      "fallback datapumps leaked ownership");
 	return true;
+}
+
+static bool test_fallback_restart(void)
+{
+	return run_fallback_restarts(false);
+}
+
+static bool test_online_fallback_restart(void)
+{
+	/* An established PCM call can select V.34 in a later INFO1 exchange.
+	 * Require data in all three epochs: PCM, V.34, and PCM again, with the
+	 * retraining origin retained when the datapump owner changes. */
+	return run_fallback_restarts(true);
 }
 
 int main(void)
@@ -1736,6 +1769,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "PCM retrain after V.34 fallback", test_fallback_restart },
+		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
 		{ "cleardown before CONNECT", test_training_cleardown },
 		{ "automatic upstream quality recovery", test_upstream_quality_recovery },
 		{ "long-delay upstream channel",
