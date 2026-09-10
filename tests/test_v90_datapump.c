@@ -1102,9 +1102,10 @@ static bool test_quantized_host_echo(void)
 	      "quantized host-echo V.90 registration failed");
 	/* PCMA quantization of the biased return produces a false S candidate
 	 * during Sd/TRN1d. It cannot acknowledge the not-yet-transmitted Jd.
-	 * Require real negotiated data, not just survival of that prefix. */
+	 * The calibrated -12 dBm0 probe selects 31.2 kbit/s. Require exact
+	 * sustained data at that rate, not just survival of the prefix. */
 	CHECK(run_pair_with_rate_window(
-		      G711_LAW_PCMA, 56000, 4800, 33600, 28800, 3429,
+		      G711_LAW_PCMA, 56000, 4800, 33600, 31200, 3429,
 		      2u * 33600u, true, MODEM_PCM_ROLE_NONE, false,
 		      UNITY_GAIN_Q15, RETURNED_ECHO_DC_BIASED_G711,
 		      UPSTREAM_CHANNEL_CLEAN),

@@ -6,12 +6,14 @@
 
 #include "test.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
 enum {
-	PHASE2_NOMINAL_AMPLITUDE = 5320,
-	DIGITAL_PHASE2_NOMINAL_POWER_CODE = 4,
+	ANALOG_PHASE2_NOMINAL_AMPLITUDE = 5320,
+	DIGITAL_PHASE2_NOMINAL_AMPLITUDE = 5657,
+	DIGITAL_PHASE2_NOMINAL_POWER_CODE = 6,
 	DIGITAL_PHASE2_MAXIMUM_POWER_CODE = 23,
 };
 
@@ -88,8 +90,8 @@ static bool test_downstream_rate_selection(void)
 static bool test_digital_info0_profile(void)
 {
 	static const uint8_t expected[][V90_INFO0D_PAYLOAD_BYTES] = {
-		[G711_LAW_PCMU] = { 0xff, 0x84, 0x17, 0x68 },
-		[G711_LAW_PCMA] = { 0xff, 0x84, 0x17, 0x78 },
+		[G711_LAW_PCMU] = { 0xff, 0x84, 0x37, 0x68 },
+		[G711_LAW_PCMA] = { 0xff, 0x84, 0x37, 0x78 },
 	};
 
 	for (unsigned int law_index = G711_LAW_PCMU;
@@ -106,6 +108,85 @@ static bool test_digital_info0_profile(void)
 			      sizeof(payload)) == V90_INFO0_OK &&
 		      memcmp(payload, expected[law_index], sizeof(payload)) == 0,
 		      "digital V.90 law %u INFO0d profile changed", law_index);
+	}
+	return true;
+}
+
+static bool test_advertised_phase2_power(void)
+{
+	static const char *const names[] = { "B", "INFO", "L2", "L1" };
+	static const double offsets_db[] = { 0.0, 0.0, 0.0, 6.0 };
+	const unsigned int warmup = 800, count = 16000;
+
+	for (int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration configuration;
+		struct v34_phase2_tone_transmitter tone;
+		struct v34_phase2_dpsk_transmitter info;
+		struct v34_phase2_probe_transmitter probe;
+		double energy[ARRAY_LENGTH(names)] = { 0 };
+		uint32_t random = UINT32_C(0x90db012);
+
+		CHECK(v90_profile_init(&configuration, V90_DIGITAL_MODEM,
+			      law, 28000, 56000, NULL) == V90_PROFILE_OK &&
+		      v34_phase2_tone_transmitter_init(&tone,
+			      V34_CALLING_STATION,
+			      configuration.phase2_nominal_amplitude) ==
+			      V34_PHASE2_TONE_OK &&
+		      v34_phase2_dpsk_transmitter_init(&info,
+			      V34_CALLING_STATION,
+			      configuration.phase2_nominal_amplitude) ==
+			      V34_PHASE2_DPSK_OK &&
+		      v34_phase2_probe_transmitter_init(&probe,
+			      configuration.phase2_nominal_amplitude) ==
+			      V34_PHASE2_PROBE_OK,
+		      "digital Phase 2 power fixture did not initialize");
+		for (unsigned int index = 0; index < warmup + count; ++index) {
+			int16_t samples[ARRAY_LENGTH(names)];
+			bool accepted;
+
+			CHECK(v34_phase2_tone_transmitter_sample(
+				      &tone, &samples[0]) == V34_PHASE2_TONE_OK &&
+			      v34_phase2_dpsk_transmitter_sample(&info,
+				      random >> 31, &samples[1], &accepted) ==
+				      V34_PHASE2_DPSK_OK,
+			      "digital Phase 2 tone/INFO generation failed");
+			if (accepted)
+				random = random * UINT32_C(1664525) +
+					 UINT32_C(1013904223);
+			/* Both probe levels use the same phase, without interleaving
+			 * alternate samples of their 160-sample waveform. */
+			struct v34_phase2_probe_transmitter l1 = probe;
+			CHECK(v34_phase2_probe_transmitter_sample(&probe,
+				      V34_PHASE2_PROBE_L2, &samples[2]) ==
+				      V34_PHASE2_PROBE_OK &&
+			      v34_phase2_probe_transmitter_sample(&l1,
+				      V34_PHASE2_PROBE_L1, &samples[3]) ==
+				      V34_PHASE2_PROBE_OK,
+			      "digital Phase 2 probe generation failed");
+			for (size_t signal = 0; signal < ARRAY_LENGTH(names); ++signal) {
+				double sample = law == G711_LAW_PCMU ?
+					g711_decode_pcmu(g711_encode_pcmu(samples[signal])) :
+					g711_decode_pcma(g711_encode_pcma(samples[signal]));
+
+				if (index >= warmup)
+					energy[signal] += sample * sample;
+			}
+		}
+		for (size_t signal = 0; signal < ARRAY_LENGTH(names); ++signal) {
+			/* V.92 Table 6's -12 dBm0 reference is RMS 1000 in
+			 * 14-bit mu-law units, or 500 in 13-bit A-law units:
+			 * both become RMS 4000 in our 16-bit linear samples.
+			 * V.90 8.2 requires nominal power except L1 (+6 dB).
+			 * Allow 0.2 dB for G.711 quantization and finite INFO. */
+			double measured = -12.0 + 10.0 * log10(
+				energy[signal] / (count * 4000.0 * 4000.0));
+			double advertised = -6.0 - configuration.local_info0.digital
+				.nominal_transmit_power + offsets_db[signal];
+
+			CHECK(isfinite(measured) && fabs(measured - advertised) < 0.2,
+			      "law %d %s measured %.3f dBm0, advertised %.3f dBm0",
+			      law, names[signal], measured, advertised);
+		}
 	}
 	return true;
 }
@@ -141,7 +222,9 @@ static bool test_generated_profiles(void)
 				      pcm_call_is_valid(&call) &&
 				      call.local_role == role && call.law == law &&
 				      configuration.phase2_nominal_amplitude ==
-					      PHASE2_NOMINAL_AMPLITUDE &&
+					      (role == V90_DIGITAL_MODEM ?
+					       DIGITAL_PHASE2_NOMINAL_AMPLITUDE :
+					       ANALOG_PHASE2_NOMINAL_AMPLITUDE) &&
 				      call.phase2_nominal_amplitude ==
 					      configuration.phase2_nominal_amplitude,
 				      "role %u law %u rate %u profile did not initialize",
@@ -157,10 +240,10 @@ static bool test_generated_profiles(void)
 						.transport.tone_transmitter;
 				CHECK(role == V90_DIGITAL_MODEM ?
 					      tone->carrier_amplitude ==
-						      PHASE2_NOMINAL_AMPLITUDE &&
+						      DIGITAL_PHASE2_NOMINAL_AMPLITUDE &&
 						      tone->guard_amplitude == 0 :
 					      tone->guard_amplitude ==
-						      PHASE2_NOMINAL_AMPLITUDE,
+						      ANALOG_PHASE2_NOMINAL_AMPLITUDE,
 				      "role %u law %u rate %u Phase 2 level changed",
 				      role_index, law_index, bit_rate);
 				if (role == V90_ANALOG_MODEM) {
@@ -493,6 +576,7 @@ int main(void)
 	} tests[] = {
 		{ "downstream rate selection", test_downstream_rate_selection },
 		{ "digital INFO0 profile", test_digital_info0_profile },
+		{ "advertised Phase 2 power", test_advertised_phase2_power },
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },

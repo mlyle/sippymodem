@@ -2,16 +2,16 @@
 
 #include "v90_profile.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 
 enum {
-	/* Keep both roles at the calibrated PCM line level.  Tone A combines its
-	 * carrier and guard at their specified relative levels; giving it a QAM
-	 * peak level can overdrive a peer whose data-mode gain survives retrain. */
-	V90_PHASE2_NOMINAL_AMPLITUDE = 5320,
-	/* V.90 Table 7 encodes nominal power as -6 dBm0 minus this value. */
-	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 4,
+	/* Preserve the analogue tone A/guard level across retraining. */
+	V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE = 5320,
+	/* V.90 Table 7: -6 minus this code is -12 dBm0. Derive the digital
+	 * waveform amplitude from the same code below. */
+	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 6,
 	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
@@ -329,7 +329,14 @@ enum v90_profile_result v90_profile_init(
 	struct pcm_call_configuration selected = {
 		.local_role = role,
 		.law = law,
-		.phase2_nominal_amplitude = V90_PHASE2_NOMINAL_AMPLITUDE,
+		/* V.92 Table 6's -12 dBm0 reference has RMS 4000 in our
+		 * 16-bit G.711 scale (1000 in mu-law's 14-bit scale). Convert
+		 * that RMS reference to a peak sinusoid at the advertised level.
+		 * INFO and L2 preserve this power; L1 is 6 dB higher. */
+		.phase2_nominal_amplitude = role == V90_DIGITAL_MODEM ?
+			(int16_t)lround(4000.0 * sqrt(2.0) * pow(10.0,
+				(6.0 - V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE) / 20.0)) :
+			V90_PHASE2_ANALOG_NOMINAL_AMPLITUDE,
 	};
 
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
