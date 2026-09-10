@@ -321,6 +321,78 @@ static bool test_generated_sequences(void)
 	return true;
 }
 
+static bool test_sparse_training_wire_digests(void)
+{
+	static const struct {
+		enum g711_law network_law;
+		enum g711_law codec_law;
+		uint8_t ucodes[4];
+		uint64_t digest;
+	} cases[] = {
+		{ G711_LAW_PCMU, G711_LAW_PCMU, { 44, 66, 81, 87 },
+		  UINT64_C(0x619ff550026905f6) },
+		{ G711_LAW_PCMA, G711_LAW_PCMU, { 44, 66, 81, 87 },
+		  UINT64_C(0x6b8f95687aa43116) },
+		{ G711_LAW_PCMU, G711_LAW_PCMA, { 47, 69, 81, 87 },
+		  UINT64_C(0xa21fb56665d29bab) },
+		{ G711_LAW_PCMA, G711_LAW_PCMA, { 47, 69, 81, 87 },
+		  UINT64_C(0xc0a473af56f2a2ab) },
+	};
+	/* Independently calculated from V.90 5.3-5.4 and 8.6.5, not from the
+	 * native receiver or frame encoder. Start zeroed GPC (18,23), parse
+	 * S=5/K=12, divide the modulus word by four six times, and use descending
+	 * Ucodes. Table 4 differential signs feed the two-state shaper with one
+	 * lookahead frame and F(z)=1/(1-z^-1); minimize accumulated squared
+	 * Table 1 linear values. FNV-1a covers the first 2040 network octets.
+	 * These sparse sets span companding chords; codec type must not change
+	 * the negotiated network law. V.90 and V.92 share this training epoch. */
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct v90_cp_parameters parameters = {
+			.kind = V90_CP_TRAINING,
+			.law = cases[i].codec_law,
+			.selected_rate_index = 9,
+			.sign_redundancy = 1,
+			.spectral_lookahead = 1,
+			.shaping_a1_q1_6 = 64,
+			.constellation_count = 1,
+		};
+		struct v90_pcm_mapping mapping;
+
+		for (size_t level = 0; level < ARRAY_LENGTH(cases[i].ucodes); ++level)
+			add_ucode(&parameters.transmit_constellations[0],
+				  cases[i].ucodes[level]);
+		CHECK(v90_pcm_mapping_init_transmit(
+			      &mapping, &parameters, cases[i].network_law) ==
+			      V90_PCM_MAPPING_OK,
+		      "sparse training mapping %zu failed", i);
+		for (unsigned protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol) {
+			struct pcm_downstream_tx transmitter;
+			uint64_t digest = UINT64_C(14695981039346656037);
+
+			CHECK(pcm_downstream_tx_init(&transmitter,
+				      (enum pcm_protocol)protocol, &mapping) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "sparse training %zu protocol %u did not initialize",
+			      i, protocol);
+			for (unsigned symbol = 0; symbol < 2040; ++symbol) {
+				struct pcm_downstream_symbol output;
+
+				CHECK(pcm_downstream_tx_next(&transmitter, &output) ==
+					      PCM_DOWNSTREAM_TX_OK,
+				      "sparse training %zu protocol %u stopped at %u",
+				      i, protocol, symbol);
+				digest = (digest ^ output.pcm.octet) *
+					 UINT64_C(1099511628211);
+			}
+			CHECK(digest == cases[i].digest,
+			      "sparse training %zu protocol %u changed its wire sequence",
+			      i, protocol);
+		}
+	}
+	return true;
+}
+
 static bool run_v92_width(
 	enum g711_law law, uint8_t frame_bits, uint8_t lookahead,
 	bool parameter_exchange, bool cleardown)
@@ -1404,6 +1476,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "generated sequences", test_generated_sequences },
+		{ "sparse training wire digests", test_sparse_training_wire_digests },
 		{ "V.92 sequences", test_v92_sequences },
 		{ "V.92 parameter exchange", test_v92_parameter_exchange },
 		{ "V.92 parameter exchange contracts", test_v92_parameter_exchange_contracts },
