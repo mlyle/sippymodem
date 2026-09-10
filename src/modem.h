@@ -42,6 +42,7 @@
 #define __MODEM_H__
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -505,6 +506,7 @@ extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m);
+extern void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate);
 extern enum modem_ec_compression
 modem_ec_active_compression(const struct modem *m);
 /* Returns a process-lifetime literal, or NULL when no datapump is active. */

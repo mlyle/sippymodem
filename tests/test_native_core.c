@@ -18,6 +18,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 #include <unistd.h>
@@ -2494,6 +2495,105 @@ static bool test_retrain_preserves_detection(void)
 	return true;
 }
 
+static bool test_lapm_timer_follows_rate_changes(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM timer rate change", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, "LAPM timer rate change");
+	uint8_t bits[480];
+	void (*timeout)(struct modem *);
+	static const struct {
+		unsigned parameter;
+		int rate;
+		int remaining;
+	} changes[] = {
+		{ MDMPRM_TX_RATE, 24000, 86400 },
+		{ MDMPRM_RX_RATE, 24000, 144000 },
+		{ MDMPRM_TX_RATE, 4800, 86400 },
+		{ MDMPRM_RX_RATE, 4800, 28800 },
+	};
+
+	CHECK(m != NULL, "LAPM timer modem allocation failed");
+	m->caller = 1;
+	m->cfg.ec = 1;
+	m->rx_rate = m->tx_rate = 4800;
+	CHECK(modem_ec_init(m) == 0, "LAPM timer initialization failed");
+	modem_hdlc_start(m);
+	m->get_bits = modem_hdlc_get_bits;
+	m->put_bits = modem_hdlc_put_bits;
+	modem_ec_start(m);
+	for (unsigned i = 0; m->bit_timer == 0 && i < 10000; ++i)
+		modem_get_bits(m, 1, bits, 1);
+	CHECK(m->bit_timer == 28800 && m->ec.lapm.config &&
+	      m->ec.lapm.rtx_count == 0, "XID did not start its response timer");
+	timeout = m->bit_timer_func;
+	for (size_t i = 0; i < sizeof(changes) / sizeof(changes[0]); ++i) {
+		CHECK(modem_set_param(m, changes[i].parameter, changes[i].rate) == 0 &&
+		      m->bit_timer == changes[i].remaining &&
+		      m->bit_timer_func == timeout && m->ec.lapm.rtx_count == 0,
+		      "rate change %zu altered the remaining LAPM timeout", i);
+	}
+
+	/* Only half a second remains. Preserve that, not a fresh three seconds,
+	 * when both directions change independently to an asymmetric PCM link. */
+	m->bit_timer = 4800;
+	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 48000) == 0 &&
+	      modem_set_param(m, MDMPRM_TX_RATE, 14400) == 0 &&
+	      m->bit_timer == 31200, "partial LAPM timeout was restarted or shortened");
+	for (unsigned tick = 0; tick < 49; ++tick) {
+		CHECK(modem_get_bits(m, 1, bits, 144) == 144,
+		      "LAPM timer transmit failed");
+		memset(bits, 1, sizeof(bits));
+		CHECK(modem_put_bits(m, 1, bits, 480) == 480,
+		      "LAPM timer receive failed");
+	}
+	CHECK(m->bit_timer == 624 && m->ec.lapm.rtx_count == 0 &&
+	      modem_ec_resume_after_retrain(m) == 0 && m->bit_timer == 624,
+	      "LAPM timeout expired early or changed on physical resume");
+	CHECK(modem_get_bits(m, 1, bits, 144) == 144,
+	      "final LAPM timer transmit failed");
+	memset(bits, 1, sizeof(bits));
+	CHECK(modem_put_bits(m, 1, bits, 479) == 479 && m->bit_timer == 1 &&
+	      m->ec.lapm.rtx_count == 0 && modem_put_bits(m, 1, bits, 1) == 1 &&
+	      m->ec.lapm.rtx_count == 1 && m->bit_timer == 187200,
+	      "LAPM retry did not occur at the preserved half-second boundary");
+
+	m->bit_timer = 1;
+	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 1) == 0 &&
+	      modem_set_param(m, MDMPRM_TX_RATE, 1) == 0 && m->bit_timer == 1,
+	      "rate reduction rounded an active timer down to disabled");
+	m->bit_timer = INT_MAX;
+	CHECK(modem_set_param(m, MDMPRM_TX_RATE, INT_MAX) == 0 &&
+	      m->bit_timer == INT_MAX,
+	      "large rate change overflowed the LAPM timer");
+	CHECK(modem_set_param(m, MDMPRM_RX_RATE, -1) == -1 &&
+	      m->rx_rate == 1 && m->bit_timer == INT_MAX,
+	      "negative receive rate altered the modem or timer");
+	CHECK(modem_set_param(m, MDMPRM_TX_RATE, -1) == -1 &&
+	      m->tx_rate == INT_MAX && m->bit_timer == INT_MAX,
+	      "negative transmit rate altered the modem or timer");
+
+	m->rx_rate = m->tx_rate = 0;
+	m->bit_timer = 57600;
+	CHECK(modem_set_param(m, MDMPRM_TX_RATE, 2400) == 0 &&
+	      m->bit_timer == 2400 && modem_set_param(m, MDMPRM_TX_RATE, 0) == 0 &&
+	      m->bit_timer == 57600, "unknown-rate LAPM timer lost its fallback scale");
+	m->bit_timer = 0;
+	CHECK(modem_set_param(m, MDMPRM_RX_RATE, 4800) == 0 && m->bit_timer == 0,
+	      "rate update restarted a stopped LAPM timer");
+	modem_ec_exit(m);
+	modem_detector_start(m);
+	timeout = m->bit_timer_func;
+	CHECK(m->bit_timer == 512 &&
+	      modem_set_param(m, MDMPRM_TX_RATE, 24000) == 0 &&
+	      m->bit_timer == 512 && m->bit_timer_func == timeout,
+	      "rate update rescaled the detector's fixed-bit mark preamble");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_retrain_preserves_lapm_establishment(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -3178,6 +3278,7 @@ int main(void)
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
 		{ "retrain preserves LAPM establishment",
 		  test_retrain_preserves_lapm_establishment },
+		{ "LAPM timer follows rate changes", test_lapm_timer_follows_rate_changes },
 		{ "V.21 brief answer mark",
 		  test_v21_originator_answers_brief_mark },
 		{ "source-built data-pump ownership",

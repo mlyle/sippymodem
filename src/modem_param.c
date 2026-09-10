@@ -193,11 +193,18 @@ long modem_set_param(struct modem *m, unsigned name, int val)
 	case MDMPRM_NONE:
 		break;
 	case MDMPRM_RX_RATE:
-		m->rx_rate = val;
+	case MDMPRM_TX_RATE: {
+		uint64_t previous_rate = (uint64_t)m->rx_rate + m->tx_rate;
+
+		if (val < 0)
+			return -1;
+		if (name == MDMPRM_RX_RATE)
+			m->rx_rate = (unsigned)val;
+		else
+			m->tx_rate = (unsigned)val;
+		modem_ec_update_timer_rate(m, previous_rate);
 		break;
-	case MDMPRM_TX_RATE:
-		m->tx_rate = val;
-		break;
+	}
 	case MDMPRM_DP_REQUESTED:
 		m->dp_requested = val;
 		break;

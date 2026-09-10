@@ -929,6 +929,26 @@ static void t401_timeout(struct modem *m)
 	m->bit_timer_func = t401_timeout;
 }
 
+void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate)
+{
+	uint64_t rate, remaining;
+
+	/* T401 is elapsed time stored in duplex bit units. Other users of the
+	 * shared timer (notably the detector's mark preamble) count fixed bits. */
+	if (m == NULL || m->bit_timer <= 0 || m->bit_timer_func != t401_timeout)
+		return;
+	rate = (uint64_t)m->rx_rate + m->tx_rate;
+	if (rate == 0)
+		rate = LAPM_TIMER_FALLBACK_BIT_RATE;
+	if (previous_rate == 0)
+		previous_rate = LAPM_TIMER_FALLBACK_BIT_RATE;
+	/* Round up so a positive residual cannot become a disabled timer, and
+	 * a publication of either directional rate cannot expire it early. */
+	remaining = ((uint64_t)m->bit_timer * rate + previous_rate - 1) /
+		previous_rate;
+	m->bit_timer = remaining > INT_MAX ? INT_MAX : (int)remaining;
+}
+
 #if T403_IMPLEMENTED
 static void t403_timeout(struct lapm_state *l)
 {
