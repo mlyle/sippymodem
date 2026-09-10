@@ -1780,6 +1780,7 @@ static bool initial_info1_marks_request_retrain(
 	struct pcm_call *call, enum g711_law law)
 {
 	union pcm_info0_record peer_info0 = call->peer_info0;
+	enum pcm_protocol protocol = call->protocol;
 	struct v34_phase2_dpsk_transmitter marks;
 	uint16_t round_trip_delay = call->round_trip_delay_samples;
 	bool retried = false;
@@ -1879,6 +1880,7 @@ static bool initial_info1_marks_request_retrain(
 		}
 	}
 	CHECK(requested && call->retrain_active &&
+	      call->protocol == protocol &&
 	      !call->retrain.peer_tone_retained && call->peer_info0_stored &&
 	      call->round_trip_delay_stored &&
 	      call->round_trip_delay_samples == round_trip_delay &&
@@ -2047,7 +2049,8 @@ static bool info1_retrain_preamble(
 	return true;
 }
 
-static bool check_initial_info1_retrain_tone(enum g711_law law)
+static bool check_initial_info1_retrain_tone(
+	enum g711_law law, enum pcm_protocol protocol)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -2055,13 +2058,24 @@ static bool check_initial_info1_retrain_tone(enum g711_law law)
 	struct pcm_call retained[2];
 	struct pcm_call marks;
 	bool stored[2] = { false, false };
+	bool initialized;
 
-	CHECK(channel_init(&channel, law, 3u) &&
-	      endpoint_init(
-		      &analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
-	      endpoint_init(
-		      &digital, V90_DIGITAL_MODEM, law,
-		      V90_JD_RATE_CAPABILITY_MASK, 0u),
+	if (protocol == PCM_PROTOCOL_V92) {
+		struct pcm_call_configuration ac =
+			v92_configuration(V90_ANALOG_MODEM, law);
+		struct pcm_call_configuration dc =
+			v92_configuration(V90_DIGITAL_MODEM, law);
+
+		analog = (struct endpoint){ .upstream_received_delay = UINT16_MAX };
+		digital = (struct endpoint){ .upstream_received_delay = UINT16_MAX };
+		initialized = pcm_call_init(&analog.call, &ac) == PCM_CALL_OK &&
+			pcm_call_init(&digital.call, &dc) == PCM_CALL_OK;
+	} else
+		initialized = endpoint_init(
+			&analog, V90_ANALOG_MODEM, law, UINT32_C(1), 1u) &&
+			endpoint_init(&digital, V90_DIGITAL_MODEM, law,
+				      V90_JD_RATE_CAPABILITY_MASK, 0u);
+	CHECK(channel_init(&channel, law, 3u) && initialized,
 	      "law %u initial INFO1 guard endpoints did not initialize",
 	      (unsigned int)law);
 	for (size_t clock = 0;
@@ -2083,7 +2097,8 @@ static bool check_initial_info1_retrain_tone(enum g711_law law)
 			stored[1] = true;
 		}
 	}
-	CHECK(stored[0] && stored[1],
+	CHECK(stored[0] && stored[1] &&
+	      retained[0].protocol == protocol && retained[1].protocol == protocol,
 	      "law %u initial INFO1 calls were not retained",
 	      (unsigned int)law);
 	CHECK(info1_timeout_restarts_analog(&retained[0], law),
@@ -2109,9 +2124,11 @@ static bool test_initial_info1_retrain_tone(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU;
 	     law <= G711_LAW_PCMA; ++law)
-		CHECK(check_initial_info1_retrain_tone(law),
-		      "law %u initial INFO1 retrain matrix failed",
-		      (unsigned int)law);
+		for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+		     protocol <= PCM_PROTOCOL_V92; ++protocol)
+			CHECK(check_initial_info1_retrain_tone(law, protocol),
+			      "law %u protocol %u initial INFO1 retrain matrix failed",
+			      (unsigned int)law, (unsigned int)protocol);
 	return true;
 }
 

@@ -1815,7 +1815,7 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 {
 	if (pcm_call_is_disconnecting(call))
 		return false;
-	/* V.90 requires a modem to honor the peer's Tone A/B full-retrain
+	/* V.90 and V.92 require a modem to honor the peer's Tone A/B full-retrain
 	 * request during INFO1 recovery, final training, and online operation.
 	 * The detector's silence preamble distinguishes that request from
 	 * ordinary training. */
@@ -1828,8 +1828,7 @@ static bool retrain_detection_is_active(const struct pcm_call *call)
 	 * Waiting for online data would ignore a peer's Phase 4 retrain request. */
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return true;
-	return call->protocol == PCM_PROTOCOL_V90 &&
-	       call->stage == PCM_CALL_PHASE2 &&
+	return call->stage == PCM_CALL_PHASE2 &&
 	       call->state.phase2.stage == PCM_PHASE2_INFO1 &&
 	       phase2_info1_is_waiting_for_peer(
 		       &call->state.phase2.state.info1.control);

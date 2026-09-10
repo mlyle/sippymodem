@@ -110,8 +110,7 @@ bool pcm_phase2_info1_is_valid(
 	    !phase2_info1_is_valid(&exchange->control) ||
 	    exchange->info1d_resends > 1u ||
 	    (exchange->info1d_resends != 0u &&
-	     (exchange->protocol != PCM_PROTOCOL_V90 ||
-	      exchange->control.signal_role != PHASE2_SIGNAL_B)) ||
+	     exchange->control.signal_role != PHASE2_SIGNAL_B) ||
 	    exchange->control.phase == PHASE2_INFO1_PEER_FRAME_PENDING ||
 	    exchange->control.first_payload_bit_count !=
 		    V34_INFO1C_PAYLOAD_BITS ||
@@ -137,7 +136,6 @@ bool pcm_phase2_info1_retry_pending(
 	const struct pcm_phase2_info1_exchange *exchange)
 {
 	return pcm_phase2_info1_is_valid(exchange) &&
-	       exchange->protocol == PCM_PROTOCOL_V90 &&
 	       exchange->control.signal_role == PHASE2_SIGNAL_B &&
 	       exchange->control.phase == PHASE2_INFO1_RECOVERING &&
 	       exchange->info1d_resends == 0u;
@@ -440,10 +438,10 @@ static bool map_common_event(
 	case PHASE2_INFO1_EVENT_PEER_FRAME_STARTED:
 		return true;
 	case PHASE2_INFO1_EVENT_PEER_INFOMARKS:
-		/* V.90 9.2.1.2.6 permits one INFO1d retransmission after
-		 * INFOMARKSa; a repeated request starts a full retrain. */
-		if (exchange->protocol != PCM_PROTOCOL_V90 ||
-		    exchange->control.signal_role != PHASE2_SIGNAL_B ||
+		/* V.92 9.3 shares V.90 9.2.1.2.6 recovery: INFOMARKSa
+		 * permits INFO1d resend or full retrain. Bound resends to one
+		 * before selecting full retrain on a repeated request. */
+		if (exchange->control.signal_role != PHASE2_SIGNAL_B ||
 		    exchange->control.phase != PHASE2_INFO1_RECOVERING)
 			return true;
 		if (!pcm_phase2_info1_retry_pending(exchange))

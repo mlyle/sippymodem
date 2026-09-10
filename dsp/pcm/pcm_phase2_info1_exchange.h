@@ -71,8 +71,8 @@ enum phase2_info1_result pcm_phase2_info1_init_v92_analog(
 bool pcm_phase2_info1_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange);
 
-/* True only while a V.90 digital modem is recovering from the first INFO1a
- * deadline and still owns its one standards-permitted INFO1d resend. */
+/* True while a digital modem is recovering from the first full-Phase-2
+ * INFO1a deadline and still owns its one INFO1d resend before full retrain. */
 bool pcm_phase2_info1_retry_pending(
 	const struct pcm_phase2_info1_exchange *exchange);
 
