@@ -30,11 +30,17 @@ enum {
 		V34_PHASE2_SAMPLE_RATE * 5,
 	V90_RATE_RENEGOTIATION_ROUND_TRIP_ALLOWANCES = 2,
 	V92_CPU_REPEAT_BASE_SAMPLES = 800,
-	/* Local recovery policy: leave time for a complete Ru qualification,
-	 * its retained FIR delay and one data-frame reporting boundary. */
-	V92_RU_QUALITY_GUARD_SAMPLES = V92_RU_RX_MIN_SYMBOLS +
-		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + V92_RU_RX_FRAME_SYMBOLS,
+	/* A peer's full retrain looks like bad PCM data before its silence and
+	 * tone qualify. Allow the longest legal silence plus the detector's tone
+	 * and onset guards. This also covers Ru acquisition. Freeze one failure
+	 * for this bounded interval; further bad samples cannot restart it. */
+	V92_CONTROL_QUALITY_GUARD_SAMPLES = V34_PHASE2_SAMPLE_RATE * 75 / 1000 +
+		V34_RETRAIN_TONE_SAMPLES + V34_RETRAIN_EDGE_SAMPLES,
 };
+
+_Static_assert(V92_CONTROL_QUALITY_GUARD_SAMPLES >= V92_RU_RX_MIN_SYMBOLS +
+	V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + V92_RU_RX_FRAME_SYMBOLS,
+	"quality recovery must allow a complete Ru qualification");
 
 _Static_assert(PCM_PROTOCOL_V90 == 0,
 	"zero-initialized PCM call configurations must select V.90");
@@ -732,7 +738,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    path->training_mapping.law != call->law ||
 		    !isfinite(path->pending_squared_error) ||
 		    path->pending_squared_error < 0.0 ||
-		    path->quality_guard_samples > V92_RU_QUALITY_GUARD_SAMPLES ||
+		    path->quality_guard_samples > V92_CONTROL_QUALITY_GUARD_SAMPLES ||
 		    (!path->quality_guard_samples &&
 		     (path->pending_squared_error != 0.0 || path->pending_ambiguous)) ||
 		    (path->upstream.failed && !call->failed) ||
@@ -1323,6 +1329,26 @@ static bool peer_b1_received(const struct pcm_call *call)
 			&call->state.data_path.digital);
 }
 
+static enum pcm_call_result retry_v92_upstream(struct pcm_call *call)
+{
+	uint8_t previous = call->v92_upstream_retry_ceiling;
+	uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+	enum pcm_call_result result;
+
+	/* Local receiver policy, not a wire-protocol restriction. A failed
+	 * automatic mapping should try a lower rate from the next peer Ja.
+	 * Keep fixed mappings unchanged; at the lowest rate, online recovery
+	 * still has its existing per-call retry budget. Never raise a ceiling
+	 * retained from an earlier failure. */
+	if (call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
+	    rate > 1u && (previous == 0u || rate <= previous))
+		call->v92_upstream_retry_ceiling = rate - 1u;
+	result = begin_retrain(call, false);
+	if (result != PCM_CALL_OK)
+		call->v92_upstream_retry_ceiling = previous;
+	return result;
+}
+
 static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 {
 	if (!call->b1_deadline_armed)
@@ -1338,8 +1364,6 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	    call->state.data_path.v92_digital.upstream.line.received_frames >=
 		    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 		uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
-		uint8_t previous = call->v92_upstream_retry_ceiling;
-		enum pcm_call_result result;
 
 		/* V.92 9.6.1.2 allows full retrain during Phase 4. Once every B1u
 		 * decision is available, do not repeat a selection that failed it.
@@ -1348,11 +1372,7 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 		 * training timeout. Fixed caller-owned mappings are never replaced. */
 		if (rate <= 1u)
 			return PCM_CALL_UNUSABLE_SELECTION;
-		call->v92_upstream_retry_ceiling = rate - 1u;
-		result = begin_retrain(call, false);
-		if (result != PCM_CALL_OK)
-			call->v92_upstream_retry_ceiling = previous;
-		return result;
+		return retry_v92_upstream(call);
 	}
 	if (call->b1_deadline_remaining_samples != 0u)
 		call->b1_deadline_remaining_samples--;
@@ -3722,7 +3742,7 @@ static enum pcm_call_result observe_v92_data_quality(
 	} else if (quality == V92_DATA_QUALITY_RETRAIN || quality == V92_DATA_QUALITY_EXHAUSTED) {
 		path->pending_squared_error = frame->squared_error;
 		path->pending_ambiguous = frame->ambiguous;
-		path->quality_guard_samples = V92_RU_QUALITY_GUARD_SAMPLES;
+		path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
 	} else {
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
@@ -3801,7 +3821,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			path->pending_squared_error = 0.0;
 			path->pending_ambiguous = false;
 			if (quality == V92_DATA_QUALITY_RETRAIN)
-				return begin_retrain(call, false);
+				return retry_v92_upstream(call);
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 		}
 		if (received == V92_UPSTREAM_DATA_RX_FRAME) {

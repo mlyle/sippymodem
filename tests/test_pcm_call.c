@@ -6012,6 +6012,170 @@ static bool test_v92_duplex_data(void)
 	return true;
 }
 
+static void arm_v92_quality_failure(struct pcm_call *call, bool ambiguous)
+{
+	/* Isolate the policy boundary from the frame scorer: a qualified bad
+	 * observation is waiting for the last sample of the control guard. */
+	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+	path->quality_guard_samples = 1u;
+	path->pending_ambiguous = ambiguous;
+	if (!ambiguous) {
+		call->pcm_upstream_quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u;
+		call->pcm_upstream_quality.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u;
+		path->pending_squared_error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES *
+			V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+	}
+}
+
+static bool v92_quality_backoff_contracts(const struct pcm_call *online)
+{
+	const struct pcm_call_v92_digital_phase4_configuration *configuration =
+		&online->v92_digital_phase4_configuration;
+	uint8_t rate = online->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+	uint8_t ceiling = online->v92_upstream_retry_ceiling;
+
+	if (configuration->upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
+	    rate > 1u && (ceiling == 0u || rate <= ceiling))
+		ceiling = rate - 1u;
+	CHECK(retrain_preserves_protocol(online, online->law), "manual retrain changed rate policy");
+	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget)
+		for (unsigned ambiguous = 0; ambiguous < 2u; ++ambiguous) {
+			struct pcm_call call = *online;
+			struct pcm_call_data_event event;
+			uint8_t octet;
+
+			call.pcm_upstream_quality.automatic_retrains = budget;
+			arm_v92_quality_failure(&call, ambiguous != 0u);
+			CHECK(pcm_call_is_valid(&call), "quality boundary fixture is invalid");
+			enum pcm_call_result result = pcm_call_data_octet(&call,
+				silence_octet(call.law), 0, NULL, &octet, &event);
+			bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
+
+			CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
+			      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
+			      call.v92_upstream_retry_ceiling == (available ? ceiling : online->v92_upstream_retry_ceiling) &&
+			      call.pcm_upstream_quality.automatic_retrains == budget + (available ? 1u : 0u) &&
+			      (available ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed) &&
+			      memcmp(&call.v92_digital_phase4_configuration, configuration, sizeof(*configuration)) == 0,
+			      "quality recovery lost its rate ceiling, fixed mapping, or retry budget");
+		}
+	return true;
+}
+
+static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
+{
+	/* The real silence-to-tone waveform must outrank a PCM quality failure,
+	 * even when its recovery budget is exhausted. Exercise both silence
+	 * tolerance edges, retaining the online decoder's pending data history. */
+	for (unsigned silence_ms = 65u; silence_ms <= 75u; silence_ms += 5u)
+		for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+			struct pcm_call call = *online;
+			struct v34_phase2_tone_transmitter peer;
+			enum v34_station_role role = call.retrain.detector.tone.local_role ==
+				V34_CALLING_STATION ? V34_ANSWERING_STATION : V34_CALLING_STATION;
+			bool guarded = false;
+
+			/* Put the measurement one frame before recovery so even a
+			 * retrain beginning at the worst quality boundary can qualify. */
+			call.pcm_upstream_quality = (struct v92_data_quality){
+				.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u,
+				.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u,
+				.automatic_retrains = budget,
+				.squared_error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES *
+					V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+			};
+			CHECK(v34_phase2_tone_transmitter_init(&peer, role, PHASE2_NOMINAL_AMPLITUDE) ==
+				V34_PHASE2_TONE_OK, "peer retrain tone did not initialize");
+			for (unsigned clock = 0; clock < 1600u && call.stage == PCM_CALL_DATA_PATH; ++clock) {
+				struct pcm_call_data_event event;
+				int16_t sample = 0;
+				uint8_t octet;
+
+				if (clock >= silence_ms * 8u)
+					CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) == V34_PHASE2_TONE_OK,
+					      "peer retrain tone stopped");
+				uint8_t input = encode_octet(call.law, sample);
+				CHECK(pcm_call_data_octet(&call, input, decode_octet(call.law, input), NULL,
+					&octet, &event) == PCM_CALL_OK && pcm_call_is_valid(&call) &&
+				      call.pcm_upstream_quality.automatic_retrains == budget &&
+				      call.v92_upstream_retry_ceiling == online->v92_upstream_retry_ceiling,
+				      "peer full retrain consumed quality recovery at sample %u", clock);
+				if (call.stage == PCM_CALL_DATA_PATH)
+					guarded |= call.state.data_path.v92_digital.quality_guard_samples != 0u;
+				CHECK(!guarded || event.kind == PCM_CALL_DATA_NONE,
+				      "pending retrain quality failure exposed host data");
+			}
+			CHECK(guarded && call.stage == PCM_CALL_RETRAIN_SILENCE && call.retrain.peer_tone_retained,
+			      "peer full retrain did not qualify: law %u silence %u budget %u guard %u stage %u tone %u",
+			      call.law, silence_ms, budget, guarded, call.stage, call.retrain.peer_tone_retained);
+		}
+	return true;
+}
+
+static bool test_v92_quality_rate_recovery(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned fixed = 0; fixed < 2u; ++fixed) {
+			const struct v92_upstream_offer offer = {
+				.peer_mask = (UINT32_C(1) << 12u) | (UINT32_C(1) << 6u) | UINT32_C(1),
+				.local_maximum = 19u, .expected = 13u,
+			};
+			const uint8_t rates[] = { 13u, 7u, 1u };
+			struct v92_online_pair pair;
+
+			CHECK(capture_v92_duplex_data(law, 3u, false, fixed ? NULL : &offer, NULL, &pair),
+			      "quality recovery initial call failed");
+			CHECK(v92_peer_retrain_quality_guard(&pair.digital), "peer full retrain quality guard failed");
+			uint8_t fixed_rate = pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+			for (unsigned epoch = 0; epoch < 3u; ++epoch) {
+				CHECK(v92_quality_backoff_contracts(&pair.digital), "quality boundary contracts failed");
+				if (epoch == 2u)
+					break;
+				arm_v92_quality_failure(&pair.digital, epoch == 0u);
+				struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+				uint32_t frames[2] = { 0u, 0u };
+				bool started[2] = { false, false };
+				for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+					uint8_t rx[2], tx[2];
+					struct pcm_call *calls[] = { &pair.analog, &pair.digital };
+
+					channel_receive(&pair.wire, &rx[0], &rx[1]);
+					for (unsigned side = 0; side < 2u; ++side) {
+						struct pcm_call *call = calls[side];
+						if (pcm_call_phase4_is_ready(call)) {
+							CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "quality recovery handoff failed");
+							started[side] = true;
+						}
+						if (call->stage == PCM_CALL_DATA_PATH && started[side]) {
+							CHECK(v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+								&sources[side], &frames[side], &tx[side]), "quality recovery payload failed");
+						} else if (call->stage == PCM_CALL_DATA_PATH) {
+							struct pcm_call_data_event event;
+							CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]),
+								NULL, &tx[side], &event) == PCM_CALL_OK, "quality retrain detection failed");
+						} else {
+							struct pcm_call_observation event;
+							CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+								&tx[side], &event) == PCM_CALL_OK, "quality retrain negotiation failed");
+						}
+					}
+					channel_transmit(&pair.wire, tx[0], tx[1]);
+					if (frames[0] >= 200u && frames[1] >= 200u)
+						break;
+				}
+				uint8_t expected = fixed ? fixed_rate : rates[epoch + 1u];
+				CHECK(frames[0] >= 200u && frames[1] >= 200u &&
+				      pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
+				      pair.digital.pcm_upstream_quality.automatic_retrains == epoch + 1u &&
+				      pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == expected &&
+				      pair.analog.state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == expected &&
+				      pair.digital.v92_upstream_retry_ceiling == (fixed ? 0u : rates[epoch] - 1u),
+				      "quality recovery did not negotiate the next usable upstream rate and exchange data");
+			}
+		}
+	return true;
+}
+
 struct v92_rate_call {
 	struct pcm_call call;
 	struct v92_phase4_analog_station *analog;
@@ -6147,10 +6311,11 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 	return true;
 }
 
-static bool v92_rejected_ru_recovery(const struct pcm_call *online, int16_t lu)
+static bool v92_rejected_control_recovery(const struct pcm_call *online, int16_t lu, bool quiet)
 {
 	/* A short Ru-like run followed by unrelated energy is not a rate request.
-	 * Do not deliver its ambiguous frame or repeatedly defer its recovery. */
+	 * Neither is indefinite silence. Do not deliver ambiguous frames or
+	 * repeatedly defer recovery while waiting for missing control. */
 	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
 		struct pcm_call call = *online;
 		unsigned guard_started = 0;
@@ -6159,7 +6324,7 @@ static bool v92_rejected_ru_recovery(const struct pcm_call *online, int16_t lu)
 		for (unsigned clock = 0; clock < 8000u; ++clock) {
 			struct pcm_call_data_event event;
 			uint8_t octet;
-			int16_t sample = clock < 180u ?
+			int16_t sample = quiet ? 0 : clock < 180u ?
 				(clock % 6u < 3u ? lu : -lu) : (clock % 2u ? lu / 3 : -lu / 3);
 			enum pcm_call_result result = pcm_call_data_octet(&call,
 				encode_octet(call.law, sample), decode_octet(call.law, encode_octet(call.law, sample)),
@@ -6171,9 +6336,10 @@ static bool v92_rejected_ru_recovery(const struct pcm_call *online, int16_t lu)
 			      (event.kind != PCM_CALL_PCM_UPSTREAM_FRAME || !event.frame.pcm_upstream.ambiguous),
 			      "false Ru entered control or delivered ambiguous data");
 			if (result != PCM_CALL_OK || call.stage == PCM_CALL_RETRAIN_SILENCE) {
-				CHECK(guard_started && clock + 1u - guard_started <=
-				      V92_RU_RX_MIN_SYMBOLS + V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY +
-					V92_RU_RX_FRAME_SYMBOLS && pcm_call_is_valid(&call) &&
+				/* Allow full-retrain qualification as well as Ru, but never
+				 * let a false candidate defer recovery beyond 200 ms. */
+				CHECK(guard_started && clock + 1u - guard_started <= 1600u &&
+				      pcm_call_is_valid(&call) &&
 				      (budget < V92_DATA_QUALITY_MAX_RETRAINS ?
 					(result == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
 					 call.pcm_upstream_quality.automatic_retrains == budget + 1u) :
@@ -6474,7 +6640,9 @@ static bool test_v92_remote_rate_request(void)
 			CHECK(capture_v92_duplex_data(law, 1u, false, &offer, NULL, &pair), "rate request call did not train");
 			struct v92_upstream_data_tx *upstream = &pair.analog.state.data_path.v92_analog.upstream;
 			if (rates[i] == 7u)
-				CHECK(v92_rejected_ru_recovery(&pair.digital, upstream->upstream_level), "false Ru recovery failed");
+				CHECK(v92_rejected_control_recovery(&pair.digital, upstream->upstream_level, false) &&
+				      v92_rejected_control_recovery(&pair.digital, upstream->upstream_level, true),
+				      "false control recovery failed");
 			uint8_t ar, dr, transmitted;
 			struct pcm_call_data_event event;
 			channel_receive(&pair.wire, &ar, &dr);
@@ -8243,6 +8411,7 @@ int main(void)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },

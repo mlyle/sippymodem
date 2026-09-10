@@ -1379,7 +1379,9 @@ static bool test_v92_upstream_quality_recovery(void)
 {
 	CHECK(v90_datapump_register() == 0, "V.92 quality registration failed");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		CHECK(run_pcm_pair(DP_V92, 14, law, 41333, 0, 0, 41333, 0,
+		/* A qualified upstream data failure lowers the automatic selection
+		 * by one rate; the downstream selection and configured cap stay put. */
+		CHECK(run_pcm_pair(DP_V92, 14, law, 41333, 0, 0, 40000, 0,
 			SUSTAINED_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE,
 			false, UNITY_GAIN_Q15, RETURNED_ECHO_NONE,
 			UPSTREAM_CHANNEL_NOISE_BURST),

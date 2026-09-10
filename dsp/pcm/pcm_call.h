@@ -307,7 +307,7 @@ struct pcm_call_v92_digital_data {
 	struct v92_cpu_parameters cpu;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 	double b1u_squared_error;
-	/* Freeze a quality-triggering observation while Ru acquisition finishes.
+	/* Freeze a quality-triggering observation while peer control qualifies.
 	 * A timeout charges the original failure; it never forgives lost data. */
 	double pending_squared_error;
 	uint16_t quality_guard_samples;
@@ -401,7 +401,7 @@ struct pcm_call {
 	enum v90_modem_role local_role;
 	enum g711_law law;
 	enum pcm_call_stage stage;
-	/* Zero until failed PCM-upstream B1u lowers the direct-selection ceiling.
+	/* Zero until B1u or online quality lowers the direct-selection ceiling.
 	 * Retained through retrains; never changes the configured maximum. */
 	uint8_t v92_upstream_retry_ceiling;
 	bool phase3_entry_stored;
