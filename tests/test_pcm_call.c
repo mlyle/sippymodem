@@ -6017,7 +6017,7 @@ struct v92_online_pair {
 static bool capture_v92_duplex_data(
 	enum g711_law law, size_t delay, bool long_cpd,
 	const struct v92_upstream_offer *offer, const struct v92_jp *jp,
-	struct v92_online_pair *capture)
+	unsigned damaged_b1_epochs, struct v92_online_pair *capture)
 {
 	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
@@ -6114,6 +6114,16 @@ static bool capture_v92_duplex_data(
 				}
 			}
 			if (call->stage == PCM_CALL_DATA_PATH) {
+				/* Damage held-out B1u explicitly. A valid tandem-codec
+				 * channel is no longer an appropriate failure injector:
+				 * a better decoder should carry it at the offered rate. */
+				if (role == 1u && retrains[role] < damaged_b1_epochs &&
+				    call->state.data_path.v92_digital.upstream.line.received_frames >=
+					V92_B1U_ACQUISITION_FRAMES &&
+				    call->state.data_path.v92_digital.upstream.line.received_frames < V92_B1U_FRAMES) {
+					received = silence_octet(law);
+					sample = 0;
+				}
 				if (role == 0u && retrains[1] > retrains[0]) {
 					struct pcm_call_data_event event;
 
@@ -6245,7 +6255,7 @@ static bool capture_v92_duplex_data(
 static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd,
 	const struct v92_upstream_offer *offer)
 {
-	return capture_v92_duplex_data(law, delay, long_cpd, offer, NULL, NULL);
+	return capture_v92_duplex_data(law, delay, long_cpd, offer, NULL, 0u, NULL);
 }
 
 static bool test_v92_duplex_data(void)
@@ -6369,7 +6379,7 @@ static bool test_v92_quality_rate_recovery(void)
 			const uint8_t rates[] = { 13u, 7u, 1u };
 			struct v92_online_pair pair;
 
-			CHECK(capture_v92_duplex_data(law, 3u, false, fixed ? NULL : &offer, NULL, &pair),
+			CHECK(capture_v92_duplex_data(law, 3u, false, fixed ? NULL : &offer, NULL, 0u, &pair),
 			      "quality recovery initial call failed");
 			CHECK(v92_peer_retrain_quality_guard(&pair.digital), "peer full retrain quality guard failed");
 			uint8_t fixed_rate = pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
@@ -6896,7 +6906,7 @@ static bool test_v92_remote_rate_request(void)
 				.peer_mask = UINT32_C(1) << (rates[i] - 1u),
 				.local_maximum = rates[i], .expected = rates[i],
 			};
-			CHECK(capture_v92_duplex_data(law, 1u, false, &offer, NULL, &pair), "rate request call did not train");
+			CHECK(capture_v92_duplex_data(law, 1u, false, &offer, NULL, 0u, &pair), "rate request call did not train");
 			struct v92_upstream_data_tx *upstream = &pair.analog.state.data_path.v92_analog.upstream;
 			if (rates[i] == 7u)
 				CHECK(v92_rejected_control_recovery(&pair.digital, upstream->upstream_level, false) &&
@@ -7244,7 +7254,7 @@ static bool test_v92_rate_request(void)
 				.training_constellation = i ? V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
 				.rate_renegotiation_constellation = i ? V92_CONSTELLATION_4_POINT : V92_CONSTELLATION_8_POINT,
 			};
-			CHECK(capture_v92_duplex_data(law, i ? 13u : 1u, false, &offer, &jp, &pair),
+			CHECK(capture_v92_duplex_data(law, i ? 13u : 1u, false, &offer, &jp, 0u, &pair),
 			      "analogue rate fixture did not train");
 			CHECK(pair.analog.state.data_path.v92_analog.rate_renegotiation_constellation ==
 				jp.rate_renegotiation_constellation && pair.digital.state.data_path.v92_digital.ru.constellation ==
@@ -7354,9 +7364,15 @@ static bool test_v92_upstream_negotiation(void)
 
 static bool test_v92_b1_rate_recovery(void)
 {
-	/* The 48k and 46 2/3k mappings fail B1u on this tandem-codec channel.
+	/* First prove that codec noise alone need not force the old 48k->40k
+	 * downshift. Then replace held-out B1u with silence in selected epochs.
 	 * Re-enter the complete on-wire negotiation, skip holes in Ja, rebuild
 	 * CPd for the 40k trellis and verify 2000 exact frames in each direction. */
+	const struct v92_upstream_offer clean = {
+		(UINT32_C(1) << 18u) | (UINT32_C(1) << 12u), 19u, 19u, 0.10, 0.75, 0u,
+	};
+	CHECK(run_v92_duplex_data(G711_LAW_PCMU, 3u, false, &clean),
+	      "V.92 lowered the rate on a usable two-codec channel");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (unsigned retries = 1u; retries <= 2u; ++retries) {
 			const struct v92_upstream_offer offer = {
@@ -7365,14 +7381,14 @@ static bool test_v92_b1_rate_recovery(void)
 				19u, 13u, 0.10, 0.75, retries,
 			};
 
-			CHECK(run_v92_duplex_data(law, 3u, false, &offer),
+			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, retries, NULL),
 			      "V.92 B1 recovery law %u retries %u failed", law, retries);
 		}
 		const struct v92_upstream_offer exhausted = {
 			UINT32_C(1) << 18u, 19u, 0u, 0.10, 0.75, 1u,
 		};
 
-		CHECK(run_v92_duplex_data(law, 3u, false, &exhausted),
+		CHECK(capture_v92_duplex_data(law, 3u, false, &exhausted, NULL, 1u, NULL),
 		      "V.92 retried a failed rate or selected a disabled lower rate");
 	}
 	return true;

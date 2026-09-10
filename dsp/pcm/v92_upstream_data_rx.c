@@ -27,7 +27,8 @@ bool v92_upstream_data_rx_is_valid(
 		    receiver->line.input_samples / V92_PCM_MAPPING_FRAME_SYMBOLS ||
 	    receiver->decoder.pending_frames !=
 		    (receiver->line.received_frames < V92_PCM_RX_DELAY_FRAMES ?
-			     receiver->line.received_frames : V92_PCM_RX_DELAY_FRAMES))
+			     receiver->line.received_frames : V92_PCM_RX_DELAY_FRAMES) ||
+	    !v92_upstream_model_is_valid(receiver))
 		return false;
 	if (receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		const struct v92_upstream_data_line *line = &receiver->line;
@@ -53,7 +54,10 @@ bool v92_upstream_data_rx_is_valid(
 			return false;
 		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			if (line->raw[i] < -32768 || line->raw[i] > 32768 ||
-			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0)))
+			    (line->received[i] && !line->wire_known[i]) ||
+			    (!line->wire_known[i] && line->wire[i] != 0) ||
+			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0 ||
+				line->wire[i] != 0 || line->wire_known[i] || line->received[i])))
 				return false;
 		return true;
 	}
@@ -140,6 +144,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 			    handoff->line.demodulator.lu) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	}
+	v92_upstream_model_init(&initialized);
 	if (!v92_upstream_data_rx_is_valid(&initialized))
 		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	*receiver = initialized;
@@ -155,10 +160,18 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	if (receiver->failed)
 		return V92_UPSTREAM_DATA_RX_FAILED;
-	if (receiver->line.symbol_count != 0u ||
-	    receiver->line.received_frames < V92_B1U_FRAMES ||
-	    v92_pcm_frame_rx_reset_control(&receiver->decoder) != V92_PCM_FRAME_OK)
+	if (receiver->line.symbol_count != 0u || receiver->line.received_frames < V92_B1U_FRAMES)
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	struct v92_pcm_frame_rx decoder = receiver->decoder;
+	struct v92_pcm_frame_rx alternate = receiver->model.alternate;
+	bool paired = (receiver->model.valid & (1u << (receiver->model.primary ^ 1u))) != 0u;
+
+	if (v92_pcm_frame_rx_reset_control(&decoder) != V92_PCM_FRAME_OK ||
+	    (paired && v92_pcm_frame_rx_reset_control(&alternate) != V92_PCM_FRAME_OK))
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	receiver->decoder = decoder;
+	if (paired)
+		receiver->model.alternate = alternate;
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
@@ -183,13 +196,16 @@ static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_frame *frame)
 {
 	struct v92_pcm_frame_rx decoder = receiver->decoder;
+	struct v92_upstream_model model = receiver->model;
 	struct v92_pcm_frame_decision decision;
+	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	struct v92_upstream_data_frame generated = { 0 };
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	bool raw = line->plan.observation == V92_PCM_FRAME_CONSTELLATION;
-	enum v92_pcm_frame_result result = v92_pcm_frame_decode(
-		&decoder, line->samples, b1u, generated.bits,
-		decoder.mapping.data_bits_per_frame, &decision);
+	if (!v92_upstream_model_observe(&model, &decoder, line))
+		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+	enum v92_pcm_frame_result result = v92_upstream_model_decode(
+		&model, &decoder, line, generated.bits, &decision, predictions);
 
 	if (result != V92_PCM_FRAME_OK)
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
@@ -234,11 +250,11 @@ static enum v92_upstream_data_rx_result receive_frame(
 		struct qam_point target = { .in_phase = decision.predicted_samples[symbol] };
 
 		if (raw) {
-			/* Use the decoder's linear observation model in original input
+			/* Use the decoder's channel prediction in original input
 			 * units. G.711 conversion preceded any host conditioning: a
 			 * second quantization here would invent different wire cells.
 			 * Retain actual companding noise and unclipped prediction error. */
-			double error = line->raw[symbol] - target.in_phase / line->calibration.gain;
+			double error = line->raw[symbol] - predictions[symbol] / line->calibration.gain;
 
 			generated.squared_error += error * error;
 			if (!isfinite(generated.squared_error))
@@ -271,11 +287,16 @@ static enum v92_upstream_data_rx_result receive_frame(
 			V92_B1U_FRAMES;
 		generated.ambiguous = decision.ambiguous;
 	}
+	v92_upstream_model_fit(&model, line, &decoder);
 	line->received_frames++;
 	line->symbol_count = 0u;
 	memset(line->observations, 0, sizeof(line->observations));
 	memset(line->samples, 0, sizeof(line->samples));
+	memset(line->wire, 0, sizeof(line->wire));
+	memset(line->wire_known, 0, sizeof(line->wire_known));
+	memset(line->received, 0, sizeof(line->received));
 	receiver->decoder = decoder;
+	receiver->model = model;
 	receiver->line = *line;
 	*frame = generated;
 	return V92_UPSTREAM_DATA_RX_FRAME;
@@ -283,7 +304,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 
 static enum v92_upstream_data_rx_result receive_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
-	struct v92_upstream_data_frame *frame, bool owned)
+	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
+	bool available, bool owned)
 {
 	struct v92_upstream_data_line next;
 	struct qam_point input;
@@ -298,6 +320,8 @@ static enum v92_upstream_data_rx_result receive_sample(
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	if (receiver->failed)
 		return V92_UPSTREAM_DATA_RX_FAILED;
+	if (receiver->model.valid && !wire_known)
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
 	next = receiver->line;
 	if (next.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		++next.input_samples;
@@ -307,6 +331,11 @@ static enum v92_upstream_data_rx_result receive_sample(
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
 		next.raw[next.symbol_count] = (int32_t)next.polarity * sample;
+		next.wire[next.symbol_count] = wire_known ? next.polarity *
+			(receiver->decoder.mapping.law == G711_LAW_PCMU ?
+				g711_decode_pcmu(code) : g711_decode_pcma(code)) : 0;
+		next.wire_known[next.symbol_count] = wire_known;
+		next.received[next.symbol_count] = wire_known && available;
 		next.samples[next.symbol_count] = rounded_sample(next.raw[next.symbol_count] * next.calibration.gain);
 		if (++next.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, &next, frame);
@@ -332,14 +361,28 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, false);
+	return receive_sample(receiver, sample, frame, 0u, false, false, false);
 }
 
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, true);
+	return receive_sample(receiver, sample, frame, 0u, false, false, true);
+}
+
+enum v92_upstream_data_rx_result v92_upstream_data_rx_octet(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
+	bool available, struct v92_upstream_data_frame *frame)
+{
+	return receive_sample(receiver, sample, frame, code, true, available, false);
+}
+
+enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
+	bool available, struct v92_upstream_data_frame *frame)
+{
+	return receive_sample(receiver, sample, frame, code, true, available, true);
 }
 
 const char *v92_upstream_data_rx_result_name(

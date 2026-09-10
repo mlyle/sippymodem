@@ -6,6 +6,7 @@
 #include "v92_pcm_frame.h"
 #include "v92_upstream_rx.h"
 #include "v92_upstream_plan.h"
+#include "v92_upstream_model.h"
 
 enum v92_upstream_data_rx_result {
 	V92_UPSTREAM_DATA_RX_OK,
@@ -34,6 +35,9 @@ struct v92_upstream_data_line {
 		double correlation, energy;
 	} calibration;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	bool wire_known[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	bool received[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t input_samples;
 	uint64_t received_frames;
 	double adaptation;
@@ -45,13 +49,15 @@ struct v92_upstream_data_line {
 struct v92_upstream_data_rx {
 	struct v92_pcm_frame_rx decoder;
 	struct v92_upstream_data_line line;
+	struct v92_upstream_model model;
 	bool failed;
 };
 
 struct v92_upstream_data_frame {
 	/* Residual of the CURRENT frame in signed PCM sample units: equalized
 	 * filter output, or raw line input for a channel-compensated mapping.
-	 * Raw-line residual includes companding noise against the linear model.
+	 * Raw-line residual includes companding noise against the fitted channel
+	 * prediction, or the linear model when no codec fit is available.
 	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
 	/* Payload is delayed by the frame decoder's lookahead. A zero count
@@ -73,6 +79,9 @@ struct v92_upstream_data_frame {
  * decodes raw line samples without another FIR or G.711 quantization. The
  * gain is refined within training LU uncertainty during initial B1u
  * acquisition, then remains fixed through B1u validation and data/control.
+ * When actual wire codes are supplied, the same acquisition interval may fit
+ * a two-codec observation model for a positive one-tap prefilter. Missing
+ * acquisition media or unsupported filters retain the linear receiver.
  * A zero-initialized plan selects the equalized filter-output path above.
  * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
@@ -99,10 +108,20 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
  * OK buffers a sample and leaves frame unchanged. Quality is reported even
  * for damaged B1u; known bits do not imply a usable line. Rejected calls
  * consume nothing and leave outputs unchanged. A new DSP failure latches
- * failed without advancing either line or coding state. */
+ * failed without advancing either line or coding state. Sample-only input
+ * closes codec-model acquisition and is rejected once a model is active:
+ * host-scaled samples must not be quantized again to invent wire codes. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame);
+
+/* Preserve the actual wire code alongside its host-conditioned signed sample.
+ * available=false denotes concealed media, not a received zero. Such input
+ * cannot train a model and carries no likelihood evidence once fitted; its
+ * raw residual is still reported and call-level loss recovery still applies. */
+enum v92_upstream_data_rx_result v92_upstream_data_rx_octet(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
+	bool available, struct v92_upstream_data_frame *frame);
 
 /* Internal call-owner path for an exclusively owned receiver already
  * validated for the current media block. Validate again before releasing
@@ -112,6 +131,9 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame);
+enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
+	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
+	bool available, struct v92_upstream_data_frame *frame);
 
 const char *v92_upstream_data_rx_result_name(
 	enum v92_upstream_data_rx_result result);

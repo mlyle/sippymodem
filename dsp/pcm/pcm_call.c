@@ -3830,8 +3830,8 @@ static enum pcm_call_result v92_data_octet_owned(
 				path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
 			}
 		}
-		received = v92_upstream_data_rx_sample_owned(&path->upstream,
-			received_sample, &frame);
+		received = v92_upstream_data_rx_octet_owned(&path->upstream,
+			received_octet, received_sample, received_available, &frame);
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		ru = v92_ru_line_rx_sample(&path->ru, received_sample);

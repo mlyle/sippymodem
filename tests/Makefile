@@ -2092,6 +2092,7 @@ V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V92_CONTROL_RX_TEST_OBJECTS)))
 V92_UPSTREAM_DATA_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_upstream_data_rx
 V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/test_v92_upstream_data_rx.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
@@ -2273,6 +2274,7 @@ V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 		$(PCM_DOWNSTREAM_RX_TEST_OBJECTS)))
 V92_PHASE4_E2U_TEST_BINARY := $(BUILD_DIR)/test_v92_phase4_e2u
 V92_PHASE4_E2U_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/test_v92_phase4_e2u.o \
 	$(BUILD_DIR)/v92_phase4_e2u.o \
 	$(BUILD_DIR)/v92_upstream_data_rx.o \
@@ -2810,6 +2812,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(V34_PHASE2_TONE_OBJECTS)
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/v92_data_quality.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
 	$(BUILD_DIR)/test_pcm_call.o \
@@ -5552,6 +5555,10 @@ $(BUILD_DIR)/v92_upstream_data_tx.o: \
 
 $(BUILD_DIR)/v92_upstream_data_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_data_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_upstream_model.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_upstream_model.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_data_quality.o: \
