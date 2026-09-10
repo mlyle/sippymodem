@@ -37,7 +37,7 @@ static __uint128_t distance(__uint128_t left, __uint128_t right)
 	return left >= right ? left - right : right - left;
 }
 
-static bool test_channel(enum g711_law law, double main, double post, uint8_t rate)
+static bool test_channel(enum g711_law law, double main, double post, double second, uint8_t rate)
 {
 	struct v92_upstream_channel channel = { 0 };
 	struct v92_cpd_parameters cpd, original;
@@ -49,7 +49,7 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 	int16_t line[SYMBOLS];
 	uint32_t random = 0x35791bdu;
 	uint64_t energy = 0u;
-	int16_t previous = 0;
+	int16_t previous = 0, older = 0;
 	unsigned payload_frames = rate == 16u || rate == 19u ? PAYLOAD_FRAMES : 120u;
 	unsigned frames = V92_B1U_FRAMES + payload_frames + V92_PCM_RX_DELAY_FRAMES;
 
@@ -57,7 +57,8 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		int16_t expected = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
 
 		CHECK(v92_upstream_channel_sample(&channel, expected,
-			quantize(law, main * expected + post * previous)), "measurement failed");
+			quantize(law, main * expected + post * previous + second * older)), "measurement failed");
+		older = previous;
 		previous = expected;
 	}
 	CHECK(v92_cpd_direct_select(&cpd, law, rate, LEVEL, false) == V92_CPD_OK, "initial CPd failed");
@@ -67,7 +68,7 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		CHECK(cpd.constellation[0].count == 27u, "direct 44k did not omit outer points");
 	original = cpd;
 	CHECK(v92_cpd_channel_design(&cpd, &channel, law, LEVEL, &plan),
-		"channel design failed: law=%u rate=%u H=(%g,%g)", law, rate, main, post);
+		"channel design failed: law=%u rate=%u H=(%g,%g,%g)", law, rate, main, post, second);
 	CHECK(plan.observation == V92_PCM_FRAME_CONSTELLATION && plan.delay == 60u &&
 		v92_upstream_plan_is_valid(&plan), "invalid receive plan");
 	original.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
@@ -110,7 +111,7 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 		v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
 		"paired mapping failed");
-	previous = 0;
+	previous = older = 0;
 	for (unsigned frame = 0; frame < frames + 6; ++frame) {
 		struct v92_pcm_frame encoded;
 
@@ -129,7 +130,8 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 				"transmit clipped: law=%u rate=%u H=(%g,%g) frame=%u symbol=%u",
 				law, rate, main, post, frame, symbol);
 			line[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] =
-				quantize(law, main * transmitted + post * previous);
+				quantize(law, main * transmitted + post * previous + second * older);
+			older = previous;
 			previous = transmitted;
 		}
 	}
@@ -164,7 +166,7 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 		if (frame >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
 			CHECK(decision.bits_ready && !decision.ambiguous &&
 				memcmp(bits, payload[frame - V92_PCM_RX_DELAY_FRAMES], mapping.data_bits_per_frame) == 0,
-				"payload failed: law=%u rate=%u H=(%g,%g) frame=%u", law, rate, main, post, frame);
+				"payload failed: law=%u rate=%u H=(%g,%g,%g) frame=%u", law, rate, main, post, second, frame);
 			++delivered;
 		}
 	}
@@ -172,21 +174,26 @@ static bool test_channel(enum g711_law law, double main, double post, uint8_t ra
 	return true;
 }
 
-static bool test_two_tap_selection(void)
+static bool test_short_channel_selection(void)
 {
 	static const struct {
-		double main, post, second, noise;
-		bool simple;
+		double main, post, second, third, noise;
+		unsigned order;
 	} cases[] = {
-		{ 0.55, 0.43, 0.0, 0.0, true },
-		{ 0.55, 0.43, 0.0, 0.003, true },
-		{ 0.55, 0.43, 0.0, 0.01, true },
-		{ 0.55, 0.43, 0.0, 0.02, false },
-		{ 0.55, 0.43, 0.0, 0.04, false },
-		{ 0.55, 0.43, 0.05, 0.0, false },
-		{ 0.43, 0.55, 0.0, 0.0, false },
-		{ 0.50, 0.50, 0.0, 0.0, false },
-		{ 0.80, -0.25, 0.0, 0.0, true },
+		{ 0.55, 0.43, 0.0, 0.0, 0.0, 1 },
+		{ 0.55, 0.43, 0.0, 0.0, 0.003, 1 },
+		{ 0.55, 0.43, 0.0, 0.0, 0.01, 1 },
+		{ 0.55, 0.43, 0.0, 0.0, 0.02, 0 },
+		{ 0.55, 0.43, 0.0, 0.0, 0.04, 0 },
+		{ 0.55, 0.43, 0.05, 0.0, 0.0, 2 },
+		{ 0.43, 0.55, 0.0, 0.0, 0.0, 0 },
+		{ 0.50, 0.50, 0.0, 0.0, 0.0, 0 },
+		{ 0.80, -0.25, 0.0, 0.0, 0.0, 1 },
+		{ 0.90, 0.08, 0.02, 0.0, 0.0, 2 },
+		{ 0.80, -0.15, 0.05, 0.0, 0.003, 2 },
+		{ 0.40, 0.60, 0.30, 0.0, 0.0, 2 },
+		{ 0.40, 0.60, -0.30, 0.0, 0.0, 0 },
+		{ 0.90, 0.08, 0.05, 0.05, 0.0, 0 },
 	};
 
 	for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
@@ -194,15 +201,17 @@ static bool test_two_tap_selection(void)
 		struct v92_cpd_parameters cpd;
 		struct v92_upstream_plan plan;
 		uint32_t random = 0x12345678u, noise_random = 0x87654321u;
-		int16_t previous = 0, second = 0;
+		int16_t previous = 0, second = 0, third = 0;
 
 		for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
 			int16_t target = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
 			int noise = (int)(random_word(&noise_random) % 8192u) - 4096;
 			int32_t input = (int32_t)lround(cases[index].main * target +
-				cases[index].post * previous + cases[index].second * second + cases[index].noise * noise);
+				cases[index].post * previous + cases[index].second * second +
+				cases[index].third * third + cases[index].noise * noise);
 
 			CHECK(v92_upstream_channel_sample(&channel, target, input), "fit measurement failed");
+			third = second;
 			second = previous;
 			previous = target;
 		}
@@ -216,13 +225,58 @@ static bool test_two_tap_selection(void)
 			if (n != V92_UPSTREAM_CHANNEL_DECISION_DELAY &&
 			    cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[n] != 0)
 				simple = false;
-		for (unsigned n = 1; n < V92_UPSTREAM_CHANNEL_P1_TAPS; ++n)
+		for (unsigned n = 2; n < V92_UPSTREAM_CHANNEL_P1_TAPS; ++n)
 			if (cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[n] != 0)
 				simple = false;
-		CHECK(simple == cases[index].simple, "fit selection %zu chose the wrong design", index);
-		if (simple)
-			CHECK(abs(cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0]) < 16384,
-				"quantized two-tap inverse is unstable");
+		int first = cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0];
+		int next = cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[1];
+		unsigned order = simple ? (next == 0 ? 1u : 2u) : 0u;
+
+		CHECK(order == cases[index].order, "fit selection %zu chose order %u, expected %u",
+			index, order, cases[index].order);
+		if (simple) {
+			CHECK(abs(next) < 16384 && first + next < 16384 && next - first < 16384,
+				"quantized short inverse is unstable");
+			CHECK(fabs(first / 16384.0 + cases[index].post / cases[index].main) < 0.003 &&
+				fabs(next / 16384.0 + cases[index].second / cases[index].main) < 0.003,
+				"short inverse did not retain the measured channel coefficients");
+		}
+	}
+	return true;
+}
+
+static bool test_quantized_stability(void)
+{
+	/* Exact moments of white unit-variance input, without sample-rounding
+	 * bias. Each real inverse is stable but rounds onto a unit-circle pole. */
+	const double channels[][2] = {
+		{ 0.0, 65535.0 / 65536.0 },
+		{ -0.5, -32767.0 / 65536.0 },
+		{ 0.5, -32767.0 / 65536.0 },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(channels); ++i) {
+		struct v92_upstream_channel channel = { .symbols = V92_UPSTREAM_CHANNEL_SYMBOLS };
+		struct v92_cpd_parameters cpd;
+		struct v92_upstream_plan plan;
+		double energy = 4294967296.0, b = channels[i][0], c = channels[i][1];
+
+		channel.expected_autocorrelation[0] = (int64_t)energy;
+		channel.previous_expected_energy = channel.second_expected_energy = (int64_t)energy;
+		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS] = (int64_t)energy;
+		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + 1u] = (int64_t)(energy * b);
+		channel.cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + 2u] = (int64_t)(energy * c);
+		channel.observed_autocorrelation[0] = (int64_t)(energy * (1.0 + b * b + c * c));
+		channel.observed_autocorrelation[1] = (int64_t)(energy * b * (1.0 + c));
+		channel.observed_autocorrelation[2] = (int64_t)(energy * c);
+		CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 1u, false) == V92_CPD_OK &&
+			v92_cpd_channel_design(&cpd, &channel, G711_LAW_PCMU, LEVEL, &plan),
+			"stability boundary %zu did not use the general designer", i);
+		bool general = false;
+
+		for (unsigned tap = 0; tap < V92_UPSTREAM_CHANNEL_Z2_TAPS; ++tap)
+			general |= tap != V92_UPSTREAM_CHANNEL_DECISION_DELAY &&
+				cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[tap] != 0;
+		CHECK(general, "quantization made a short inverse unstable at boundary %zu", i);
 	}
 	return true;
 }
@@ -288,27 +342,34 @@ static bool test_receive_plan(void)
 
 int main(void)
 {
-	if (!test_rejections() || !test_receive_plan() || !test_two_tap_selection())
+	if (!test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
+	    !test_quantized_stability())
 		return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* Both laws and trellis families: 24, 28, 32, 36 and 40 kbit/s. */
 		for (uint8_t rate = 1u; rate <= 13u; rate += 3u)
-			if (!test_channel((enum g711_law)law, 1.0, 0.0, rate) ||
-				!test_channel((enum g711_law)law, 0.55, 0.43, rate) ||
-				!test_channel((enum g711_law)law, 0.8, -0.25, rate))
+			if (!test_channel((enum g711_law)law, 1.0, 0.0, 0.0, rate) ||
+				!test_channel((enum g711_law)law, 0.55, 0.43, 0.0, rate) ||
+				!test_channel((enum g711_law)law, 0.8, -0.25, 0.0, rate))
 				return 1;
 		/* Keep the full 48 kbit/s payload through a nontrivial channel,
 		 * including wire CPd, B1u normalization and delayed bit delivery. */
-		if (!test_channel((enum g711_law)law, 0.9, 0.1, 19u) ||
-		    !test_channel((enum g711_law)law, 0.55, 0.43, 19u))
+		if (!test_channel((enum g711_law)law, 0.9, 0.1, 0.0, 19u) ||
+		    !test_channel((enum g711_law)law, 0.55, 0.43, 0.0, 19u))
 			return 1;
 		/* The old 44k map clipped 95 samples in the unity-channel fixture;
 		 * A-law B1u still passed, but the subsequent payload was corrupt.
 		 * Also exercise real memory with small, strong and negative echoes. */
-		if (!test_channel((enum g711_law)law, 1.0, 0.0, 16u) ||
-		    !test_channel((enum g711_law)law, 0.98, 0.02, 16u) ||
-		    !test_channel((enum g711_law)law, 0.55, 0.43, 16u) ||
-		    !test_channel((enum g711_law)law, 0.8, -0.25, 16u))
+		if (!test_channel((enum g711_law)law, 1.0, 0.0, 0.0, 16u) ||
+		    !test_channel((enum g711_law)law, 0.98, 0.02, 0.0, 16u) ||
+		    !test_channel((enum g711_law)law, 0.55, 0.43, 0.0, 16u) ||
+		    !test_channel((enum g711_law)law, 0.8, -0.25, 0.0, 16u))
+			return 1;
+		/* A real second echo belongs in the negotiated feedback filter,
+		 * not in a long, noisy prefilter approximation. Verify delivered data. */
+		if (!test_channel((enum g711_law)law, 0.9, 0.08, 0.02, 16u) ||
+		    !test_channel((enum g711_law)law, 0.9, 0.08, 0.02, 19u) ||
+		    !test_channel((enum g711_law)law, 0.8, -0.15, 0.05, 13u))
 			return 1;
 	}
 	return 0;

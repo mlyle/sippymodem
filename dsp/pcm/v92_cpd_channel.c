@@ -29,7 +29,33 @@ static double cross(const struct v92_upstream_channel *channel, int lag, double 
 	return (double)channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + lag] / scale;
 }
 
-static bool solve_two_tap(const struct v92_upstream_channel *channel, double coefficients[TAPS])
+static bool short_inverse(double main, double post, double second,
+	double error, double observed, double coefficients[TAPS])
+{
+	if (!isfinite(main) || !isfinite(post) || !isfinite(second) || !isfinite(error) ||
+	    main <= 0.0 || fabs(second) >= main || main + post + second <= 0.0 ||
+	    main - post + second <= 0.0 || error < -1.0e-10 * observed || error > 4.0e-4 * observed)
+		return false;
+	long first = lround(-post / main * 16384.0);
+	long next = lround(-second / main * 16384.0);
+
+	/* The real and quantized second-order recurrences must both be stable:
+	 * |p2| < 1, p1+p2 < 1 and p2-p1 < 1 (strict Jury conditions). */
+	if (first < INT16_MIN || first > INT16_MAX || next <= -16384 || next >= 16384 ||
+	    first + next >= 16384 || next - first >= 16384)
+		return false;
+	/* V.92 6.4.2: for H=a+b*z^-1+c*z^-2, choose P1=-(b*z^-1+c*z^-2)/a
+	 * and Z2=z^-D/a. Then H*Z2=(1-P1)*z^-D. Common wire scaling and B1u
+	 * normalization below still apply. Keep the existing 2% relative RMS
+	 * residual limit; channels that do not fit use the general designer. */
+	memset(coefficients, 0, TAPS * sizeof(*coefficients));
+	coefficients[DELAY] = 1.0 / main;
+	coefficients[Z2_TAPS] = first / 16384.0;
+	coefficients[Z2_TAPS + 1u] = next / 16384.0;
+	return true;
+}
+
+static bool solve_short_channel(const struct v92_upstream_channel *channel, double coefficients[TAPS])
 {
 	double scale = fmax(channel->expected_autocorrelation[0],
 		fmax(channel->previous_expected_energy, channel->observed_autocorrelation[0]));
@@ -51,25 +77,27 @@ static bool solve_two_tap(const struct v92_upstream_channel *channel, double coe
 	double post = (py * xx - xy * xp) / determinant;
 	double error = yy - main * xy - post * py;
 
-	if (!isfinite(main) || !isfinite(post) || !isfinite(error) ||
-	    !(main > fabs(post)) || error < -1.0e-10 * yy || error > 4.0e-4 * yy)
-		return false;
-	long feedback = lround(-post / main * 16384.0);
+	if (short_inverse(main, post, 0.0, error, yy, coefficients))
+		return true;
+	/* Add a second delayed target only when the simpler fit was inadequate.
+	 * Eliminate its projection onto the first two columns, using exact
+	 * same-window moments rather than assuming stationarity at the edges. */
+	double ss = channel->second_expected_energy / scale;
+	double xs = channel->expected_autocorrelation[2] / scale;
+	double ps = channel->previous_expected_cross / scale;
+	double sy = cross(channel, 2, scale);
+	double x_projection = (xs * pp - ps * xp) / determinant;
+	double p_projection = (ps * xx - xs * xp) / determinant;
+	double remaining = ss - xs * x_projection - ps * p_projection;
 
-	/* Require stability after coefficient quantization, too. */
-	if (feedback <= -16384 || feedback >= 16384)
+	if (!(ss > 0.0) || remaining <= 1.0e-6 * ss)
 		return false;
-	/* For y(n)=a*v(n)+b*v(n-1), V.92 6.4.2 permits x(n)=u(n)
-	 * -(b/a)*x(n-1). With Z2=z^-D/a, H*Z2=(1-P1)*z^-D.
-	 * Use this measured inverse instead of spreading a simple channel over
-	 * all 175 coefficients. The common wire scaling and B1u normalization
-	 * below still apply. The 2% relative RMS residual limit accommodates
-	 * companding noise (about 1.4% in the mu-law training fixture). Channels
-	 * exceeding it use the general designer instead. */
-	memset(coefficients, 0, TAPS * sizeof(*coefficients));
-	coefficients[DELAY] = 1.0 / main;
-	coefficients[Z2_TAPS] = feedback / 16384.0;
-	return true;
+	double second = (sy - xs * main - ps * post) / remaining;
+
+	main -= x_projection * second;
+	post -= p_projection * second;
+	error = yy - main * xy - post * py - second * sy;
+	return short_inverse(main, post, second, error, yy, coefficients);
 }
 
 /* Apply the symmetric normal matrix without allocating a dense matrix.
@@ -199,7 +227,7 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), channel, sizeof(*channel)) ||
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
-	    (!solve_two_tap(channel, coefficients) && !solve(channel, coefficients)))
+	    (!solve_short_channel(channel, coefficients) && !solve(channel, coefficients)))
 		return false;
 	for (size_t tap = 0; tap < TAPS; ++tap) {
 		if (!isfinite(coefficients[tap]) ||

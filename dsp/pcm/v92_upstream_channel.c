@@ -22,6 +22,8 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 	int64_t bound = (int64_t)used * INT64_C(32768) * INT64_C(32768);
 
 	if (channel->previous_expected_energy < 0 || channel->previous_expected_energy > bound ||
+	    channel->second_expected_energy < 0 || channel->second_expected_energy > bound ||
+	    channel->previous_expected_cross < -bound || channel->previous_expected_cross > bound ||
 	    channel->observed_autocorrelation[0] < 0 || channel->expected_autocorrelation[0] < 0 ||
 	    !correlations_are_bounded(channel->observed_autocorrelation,
 		V92_UPSTREAM_CHANNEL_Z2_TAPS, bound) ||
@@ -57,6 +59,10 @@ bool v92_upstream_channel_sample(
 		return true;
 	channel->previous_expected_energy +=
 		(int64_t)channel->expected_history[1] * channel->expected_history[1];
+	channel->second_expected_energy +=
+		(int64_t)channel->expected_history[2] * channel->expected_history[2];
+	channel->previous_expected_cross +=
+		(int64_t)channel->expected_history[1] * channel->expected_history[2];
 	for (size_t lag = 0; lag < V92_UPSTREAM_CHANNEL_Z2_TAPS; ++lag)
 		channel->observed_autocorrelation[lag] += (int64_t)observed * channel->observed_history[lag];
 	for (size_t lag = 0; lag <= V92_UPSTREAM_CHANNEL_P1_TAPS; ++lag)
