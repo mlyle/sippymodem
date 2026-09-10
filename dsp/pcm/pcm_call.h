@@ -312,6 +312,7 @@ struct pcm_call_v92_digital_data {
 	double pending_squared_error;
 	uint16_t quality_guard_samples;
 	bool pending_ambiguous;
+	/* Missing media can reject B1u before the first delayed decision. */
 	bool b1u_decode_failed;
 };
 
@@ -513,7 +514,11 @@ bool pcm_call_get_data_rates(
 /* Consume and produce one character after start_data_path. `received_octet`
  * preserves exact PCM codeword semantics for the analogue downstream receiver;
  * `received_sample` is the decoded physical line sample owned by the digital
- * upstream receiver and the online retrain detector. A NULL source, or
+ * upstream receiver and the online retrain detector.
+ * `received_available` is false only for known missing media, never from
+ * its sample value. The V.92 PCM-upstream receiver rejects affected B1u
+ * and clamps online payload pending bounded recovery; other paths keep
+ * their existing signal-based behavior. A NULL source, or
  * a NULL sources object, transmits idle ones in that direction. SOURCE_FAILURE
  * consumes neither the received character nor the clock interval and leaves
  * both outputs unchanged. Once transmission succeeds, receive failures consume
@@ -523,6 +528,7 @@ bool pcm_call_get_data_rates(
  * consuming a source or advancing the retained diagnostic state. */
 enum pcm_call_result pcm_call_data_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);
@@ -532,6 +538,7 @@ enum pcm_call_result pcm_call_data_octet(
  * the call. Validate the call again before releasing the block. */
 enum pcm_call_result pcm_call_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);

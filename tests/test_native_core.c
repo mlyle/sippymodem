@@ -336,12 +336,13 @@ static int request_hangup_dp(struct dp *datapump)
 
 static int process_hangup_g711(
 	struct dp *datapump, enum g711_law law, const uint8_t *receive_codewords,
-	void *receive, uint8_t *transmit_codewords, void *transmit, int count,
+	void *receive, const bool *received_mask, uint8_t *transmit_codewords, void *transmit, int count,
 	bool *exact_output)
 {
 	int result = process_retrain_dp(datapump, receive, transmit, count);
 
 	(void)receive_codewords;
+	(void)received_mask;
 	/* Preserve the signed minimum-magnitude codeword through the last
 	 * datapump fragment, including PCMU's otherwise lost negative zero. */
 	uint8_t octet = law == G711_LAW_PCMA ? 0x55 : 0x7f;
@@ -719,7 +720,7 @@ wait_datapump:
 		goto stopped;
 	}
 	retrain_dp.process_result = DPSTAT_DISCONNECT;
-	modem_process_g711(modem, law, receive_codewords, receive,
+	modem_process_g711(modem, law, receive_codewords, receive, NULL,
 		transmit_codewords, transmit, ARRAY_LENGTH(receive), &exact_output);
 	CHECK(modem->state == TEST_STATE_DP_DISC && modem->process == NULL &&
 		      hangup_driver_stop_calls == 0 && exact_output &&
@@ -774,6 +775,8 @@ static bool test_ath0_drains_link_cleardown(void)
 static struct {
 	struct dp datapump;
 	const uint8_t *codewords;
+	const bool *received_mask;
+	unsigned int missing_samples;
 	enum g711_law law;
 	unsigned int linear_calls;
 	unsigned int g711_calls;
@@ -820,7 +823,7 @@ static int process_g711_dp(
 
 static int process_g711_codewords(
 	struct dp *datapump, enum g711_law law,
-	const uint8_t *receive_codewords, void *receive,
+	const uint8_t *receive_codewords, void *receive, const bool *received_mask,
 	uint8_t *transmit_codewords, void *transmit,
 	int count, bool *exact_output)
 {
@@ -832,6 +835,9 @@ static int process_g711_codewords(
 	g711_dp.g711_calls++;
 	g711_dp.law = law;
 	g711_dp.codewords = receive_codewords;
+	g711_dp.received_mask = received_mask;
+	for (int index = 0; received_mask != NULL && index < count; ++index)
+		g711_dp.missing_samples += !received_mask[index];
 	for (int index = 0; index < count; ++index)
 		transmit_codewords[index] = (uint8_t)~receive_codewords[index];
 	memset(transmit, 0, (size_t)count * sizeof(int16_t));
@@ -855,6 +861,7 @@ static bool test_g711_datapump_input(void)
 		.process_g711 = process_g711_codewords,
 	};
 	uint8_t codewords[MODEM_FRAG + 1];
+	bool received_mask[MODEM_FRAG + 1];
 	uint8_t transmit_codewords[MODEM_FRAG + 1] = { 0 };
 	int16_t receive[MODEM_FRAG + 1] = { 0 };
 	int16_t transmit[MODEM_FRAG + 1];
@@ -863,17 +870,20 @@ static bool test_g711_datapump_input(void)
 
 	memset(&g711_dp, 0, sizeof(g711_dp));
 	memset(codewords, 0x7f, sizeof(codewords));
+	for (size_t index = 0; index < ARRAY_LENGTH(received_mask); ++index)
+		received_mask[index] = index != 0 && index != MODEM_FRAG;
 	CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
 	      "G.711 test data pump did not register");
 	modem = modem_create(&driver, "G.711 data pump test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "G.711 test call did not start");
 	modem_process_g711(
-		modem, G711_LAW_PCMU, codewords, receive,
+		modem, G711_LAW_PCMU, codewords, receive, received_mask,
 		transmit_codewords, transmit, MODEM_FRAG, &exact_output);
 	CHECK(g711_dp.g711_calls == 1 && g711_dp.linear_calls == 0 &&
 		      g711_dp.law == G711_LAW_PCMU &&
-		      g711_dp.codewords == codewords && exact_output,
+		      g711_dp.codewords == codewords && exact_output &&
+		      g711_dp.received_mask == received_mask && g711_dp.missing_samples == 1,
 	      "exact codewords did not traverse the opt-in data pump");
 	for (size_t index = 0; index < MODEM_FRAG; ++index) {
 		CHECK(transmit_codewords[index] == (uint8_t)~codewords[index],
@@ -883,10 +893,11 @@ static bool test_g711_datapump_input(void)
 	g711_dp.first_fragment_only = true;
 	exact_output = true;
 	modem_process_g711(
-		modem, G711_LAW_PCMA, codewords, receive,
+		modem, G711_LAW_PCMA, codewords, receive, received_mask,
 		transmit_codewords, transmit, ARRAY_LENGTH(codewords),
 		&exact_output);
-	CHECK(g711_dp.g711_calls == 2 && !exact_output,
+	CHECK(g711_dp.g711_calls == 2 && !exact_output &&
+	      g711_dp.received_mask == received_mask + MODEM_FRAG && g711_dp.missing_samples == 3,
 	      "one exact fragment incorrectly made the whole frame exact");
 	modem_process(modem, receive, transmit, MODEM_FRAG);
 	CHECK(g711_dp.g711_calls == 2 && g711_dp.linear_calls == 1,
@@ -957,7 +968,7 @@ static bool test_receive_dc_frontend(void)
 		transmit = 1;
 		exact_output = false;
 		modem_process_g711(
-			modem, G711_LAW_PCMU, &codeword, &receive,
+			modem, G711_LAW_PCMU, &codeword, &receive, NULL,
 			&transmit_codeword, &transmit, 1, &exact_output);
 		CHECK(receive == cases[index].expected && exact_output,
 		      "%s DC policy changed sample to %d, expected %d",

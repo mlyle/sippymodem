@@ -61,7 +61,7 @@ bool sip_session_media_is_configured(
 enum media_result sip_session_play(
 	struct sip_session *session,
 	int16_t *samples,
-	uint8_t *source_octets,
+	uint8_t *source_octets, bool *received_mask,
 	size_t count,
 	struct rtp_playout_report *report);
 enum rtp_endpoint_result sip_session_send(

@@ -60,19 +60,19 @@ static bool test_prefill_and_concealment(void)
 	CHECK(rtp_receiver_push(&receiver, &packet) ==
 		      RTP_RECEIVE_ACCEPTED,
 	      "receiver rejected its first packet");
-	CHECK(rtp_receiver_play(&receiver, output, 2, &report),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, 2, &report),
 	      "prefill playout failed");
 	CHECK(output[0] == TEST_SILENCE && output[1] == TEST_SILENCE &&
 		      report.prefill_samples == 2 &&
 		      report.first_timestamp == 100,
 	      "prefill did not delay the RTP timeline");
-	CHECK(rtp_receiver_play(&receiver, output, 4, &report),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, 4, &report),
 	      "payload playout failed");
 	CHECK(memcmp(output, payload, sizeof(payload)) == 0 &&
 		      report.received_samples == 4 &&
 		      report.concealed_samples == 0,
 	      "buffered payload was not played intact");
-	CHECK(rtp_receiver_play(&receiver, output, 2, &report),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, 2, &report),
 	      "concealment playout failed");
 	CHECK(output[0] == TEST_SILENCE && output[1] == TEST_SILENCE &&
 		      report.concealed_samples == 2,
@@ -81,6 +81,34 @@ static bool test_prefill_and_concealment(void)
 		      receiver.stats.samples_played == 4 &&
 		      receiver.stats.samples_concealed == 2,
 	      "playout statistics are wrong");
+	return true;
+}
+
+static bool test_received_sample_provenance(void)
+{
+	struct rtp_jitter_slot slots[TEST_SLOT_COUNT];
+	struct rtp_receiver receiver;
+	struct rtp_playout_report report;
+	uint8_t output[6];
+	bool received[6] = { true, true, true, true, true, true };
+	const uint8_t zeros[] = { 0xff, 0x7f };
+	struct rtp_packet_view packet = packet_view(1, 1, UINT32_MAX - 1u, zeros, 2);
+
+	CHECK(init_receiver(&receiver, slots, 1) &&
+	      rtp_receiver_play(&receiver, output, received, 6, &report), "idle playout failed");
+	CHECK(memcmp(received, (bool[6]){ false }, sizeof(received)) == 0 && !report.stream_active,
+	      "idle silence was described as received media");
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED, "zero packet failed");
+	packet = packet_view(1, 3, 1u, zeros, 1);
+	CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED, "future packet failed");
+	struct rtp_receiver saved = receiver;
+	CHECK(!rtp_receiver_play(&receiver, output, (bool *)output, 6, &report) &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0, "overlapping mask advanced playout");
+	CHECK(rtp_receiver_play(&receiver, output, received, 6, &report) &&
+	      memcmp(received, (bool[]){ false, true, true, false, true, false }, sizeof(received)) == 0 &&
+	      memcmp(output, (uint8_t[]){ 0xff, 0xff, 0x7f, 0xff, 0xff, 0xff }, sizeof(output)) == 0 &&
+	      report.prefill_samples == 1 && report.received_samples == 3 && report.concealed_samples == 2,
+	      "received zeros, prefill and holes lost their identity across timestamp wrap");
 	return true;
 }
 
@@ -116,7 +144,7 @@ static bool test_reordering_and_window_bounds(void)
 		      receiver.stats.sequence_out_of_order == 1 &&
 		      receiver.stats.sequence_duplicates == 1,
 	      "sequence continuity statistics are wrong");
-	CHECK(rtp_receiver_play(&receiver, output, sizeof(output),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, sizeof(output),
 				    NULL) &&
 		      memcmp(output, (uint8_t[]){ 1, 2, 3, 4, 5, 6 },
 			     sizeof(output)) == 0,
@@ -157,7 +185,7 @@ static bool test_ssrc_restart_and_wrap(void)
 	CHECK(rtp_receiver_push(&receiver, &packet) ==
 		      RTP_RECEIVE_ACCEPTED,
 	      "wrapped sequence number failed");
-	CHECK(rtp_receiver_play(&receiver, output, sizeof(output),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, sizeof(output),
 				    &report) &&
 		      memcmp(output, new_payload, sizeof(output)) == 0 &&
 		      report.first_timestamp == UINT32_MAX - 1,
@@ -187,7 +215,7 @@ static bool test_validation_and_idle(void)
 					     TEST_SLOT_COUNT),
 	      "receiver accepted an invalid payload type");
 	CHECK(init_receiver(&receiver, slots, 0), "receiver init failed");
-	CHECK(rtp_receiver_play(&receiver, output, sizeof(output),
+	CHECK(rtp_receiver_play(&receiver, output, NULL, sizeof(output),
 				    &report),
 	      "idle playout failed");
 	CHECK(!report.stream_active && output[0] == TEST_SILENCE &&
@@ -216,7 +244,7 @@ static bool test_validation_and_idle(void)
 		      packet_result == RTP_PACKET_TOO_SHORT &&
 		      receiver.stats.malformed_packets == 1,
 	      "receiver did not report malformed wire input");
-	CHECK(!rtp_receiver_play(&receiver, NULL, 2, &report),
+	CHECK(!rtp_receiver_play(&receiver, NULL, NULL, 2, &report),
 	      "playout accepted a null output");
 	rtp_receiver_reset(&receiver);
 	CHECK(!receiver.stream_active && receiver.stats.samples_idle == 0,
@@ -308,7 +336,7 @@ static bool test_remote_clock_preserves_time_through_repeated_loss(void)
 		      "packet %u lost or duplicated a clock interval", frame);
 		clocked += due;
 		for (size_t index = 0; index < due; ++index)
-			CHECK(rtp_receiver_play(&receiver, played, sizeof(played), NULL),
+			CHECK(rtp_receiver_play(&receiver, played, NULL, sizeof(played), NULL),
 			      "post-loss playout failed");
 		CHECK(memcmp(played, payload, sizeof(payload)) == 0,
 		      "packet %u remained delayed behind its missing predecessor", frame);
@@ -323,7 +351,7 @@ static bool test_remote_clock_preserves_time_through_repeated_loss(void)
 			payload, sizeof(payload));
 
 		CHECK(rtp_receiver_push(&receiver, &packet) == RTP_RECEIVE_ACCEPTED &&
-			      rtp_receiver_play(&receiver, played, sizeof(played), NULL),
+			      rtp_receiver_play(&receiver, played, NULL, sizeof(played), NULL),
 		      "unused clock credit test failed");
 	}
 	CHECK(rtp_receiver_take_clock_frames(&receiver, FRAME_SAMPLES) ==
@@ -341,6 +369,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "prefill and concealment", test_prefill_and_concealment },
+		{ "received sample provenance", test_received_sample_provenance },
 		{ "reordering and window bounds",
 		  test_reordering_and_window_bounds },
 		{ "SSRC restart and timestamp wrap",

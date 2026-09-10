@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "rtp_receiver.h"
+#include "memory_region.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -223,7 +224,7 @@ enum rtp_receive_result rtp_receiver_receive(
 
 bool rtp_receiver_play(
 	struct rtp_receiver *receiver,
-	uint8_t *octets,
+	uint8_t *octets, bool *received_mask,
 	size_t count,
 	struct rtp_playout_report *report)
 {
@@ -231,8 +232,19 @@ bool rtp_receiver_play(
 	size_t index = 0;
 
 	if (receiver == NULL || receiver->slots == NULL || octets == NULL ||
-	    count == 0)
+	    count == 0 || count > SIZE_MAX / sizeof(bool))
 		return false;
+	if (received_mask != NULL) {
+		const struct memory_region regions[] = {
+			{ receiver, sizeof(*receiver) },
+			{ receiver->slots, receiver->slot_count * sizeof(receiver->slots[0]) },
+			{ octets, count }, { received_mask, count * sizeof(*received_mask) },
+			{ report, report == NULL ? 0u : sizeof(*report) },
+		};
+		if (memory_region_set_overlaps(regions, sizeof(regions) / sizeof(regions[0])))
+			return false;
+		memset(received_mask, 0, count * sizeof(*received_mask));
+	}
 
 	if (!receiver->stream_active) {
 		memset(octets, receiver->config.silence_octet, count);
@@ -261,6 +273,8 @@ bool rtp_receiver_play(
 
 		if (slot->occupied && slot->timestamp == timestamp) {
 			octets[index] = slot->octet;
+			if (received_mask != NULL)
+				received_mask[index] = true;
 			slot->occupied = false;
 			played.received_samples++;
 			receiver->stats.samples_played++;

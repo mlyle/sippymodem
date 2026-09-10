@@ -72,6 +72,7 @@ struct integration_endpoint {
 	size_t exact_frames;
 	size_t delayed_codeword_cursor;
 	size_t stops;
+	size_t erased_samples;
 	bool delay_codewords;
 };
 
@@ -478,6 +479,7 @@ static bool process_transmit_frame(
 {
 	enum g711_law law;
 	bool exact_output = false;
+	bool received_mask[SIP_FRAME_SAMPLES];
 	int silence;
 
 	if (endpoint == NULL || endpoint->modem == NULL ||
@@ -489,10 +491,19 @@ static bool process_transmit_frame(
 	memset(endpoint->transmit, 0, sizeof(endpoint->transmit));
 	memset(endpoint->transmit_codewords, silence,
 	       sizeof(endpoint->transmit_codewords));
+	CHECK(endpoint->erased_samples <= SIP_FRAME_SAMPLES, "invalid media erasure fixture");
+	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
+		received_mask[index] = index >= endpoint->erased_samples;
+		if (!received_mask[index]) {
+			endpoint->receive_codewords[index] = (uint8_t)silence;
+			endpoint->receive[index] = decode_codeword(law, (uint8_t)silence);
+		}
+	}
 	modem_process_g711(
 		endpoint->modem, law, endpoint->receive_codewords,
-		endpoint->receive, endpoint->transmit_codewords,
+		endpoint->receive, received_mask, endpoint->transmit_codewords,
 		endpoint->transmit, SIP_FRAME_SAMPLES, &exact_output);
+	endpoint->erased_samples = 0;
 	if (!exact_output)
 		return media_encode(
 			       codec, endpoint->transmit, SIP_FRAME_SAMPLES,
@@ -1361,6 +1372,79 @@ static bool exercise_v92_rate_exchange(
 	return true;
 }
 
+static bool exercise_v92_media_loss(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	enum { PAYLOAD = 128 };
+	struct integration_endpoint *ends[] = { caller, answerer };
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	struct lapm_state retained[2];
+	uint8_t payload[2][2 * PAYLOAD];
+	bool poll_seen[2] = { false, false };
+	unsigned settled = 0;
+
+	for (unsigned side = 0; side < 2u; ++side) {
+		struct modem *m = ends[side]->modem;
+		CHECK(modem_is_online(m, DP_V92) && m->cfg.ec && !m->ec.lapm.retrain_poll &&
+		      m->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM,
+		      "media loss fixture requires a settled PCM LAPM link");
+		ends[side]->output_count = 0;
+		uint32_t random = UINT32_C(0x45524153) + side;
+		for (unsigned i = 0; i < PAYLOAD; ++i)
+			payload[side][i] = (uint8_t)noise_state_next(&random);
+		memcpy(payload[side] + PAYLOAD, payload[side], PAYLOAD);
+		CHECK(modem_write(m, (const char *)payload[side], PAYLOAD) == PAYLOAD,
+		      "media loss fixture did not queue LAPM data");
+	}
+	CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+	      endpoint_drain(caller) && endpoint_drain(answerer), "media loss setup failed");
+	for (unsigned side = 0; side < 2u; ++side) {
+		struct modem *m = ends[side]->modem;
+		frame_t *tx = m->packer.hdlc.tx_frame;
+		CHECK(m->ec.lapm.va != m->ec.lapm.vs && tx != NULL &&
+		      (tx->buf[1] & 1u) == 0 && tx->count > 0 && tx->count < tx->size &&
+		      ends[side]->output_count < PAYLOAD,
+		      "media loss did not interrupt side %u's partial LAPM frame", side);
+		retained[side] = m->ec.lapm;
+		/* A 10 ms hole in PCM upstream must cause autonomous recovery,
+		 * not require ATO1 or discard the acknowledged link's queues. */
+		if (m->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL)
+			ends[side]->erased_samples = 80u;
+		CHECK(modem_write(m, (const char *)payload[side] + PAYLOAD, PAYLOAD) == PAYLOAD,
+		      "media loss fixture did not retain following terminal data");
+	}
+	for (unsigned frame = 0; frame < RETRAIN_FRAME_LIMIT + DATA_FRAME_LIMIT; ++frame) {
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "media loss recovery failed");
+		for (unsigned side = 0; side < 2u; ++side) {
+			struct modem *m = ends[side]->modem;
+			CHECK(m->dp == owned[side] && m->cfg.ec && !m->command &&
+			      m->ec.lapm.state == retained[side].state &&
+			      m->ec.lapm.v44_path == retained[side].v44_path &&
+			      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
+				     sizeof(retained[side].v44_session)) == 0,
+			      "media loss replaced side %u's data link", side);
+			poll_seen[side] |= m->ec.lapm.retrain_poll != 0;
+		}
+		bool delivered = caller->output_count == sizeof(payload[1]) &&
+			answerer->output_count == sizeof(payload[0]) &&
+			caller->modem->ec.lapm.va == caller->modem->ec.lapm.vs &&
+			answerer->modem->ec.lapm.va == answerer->modem->ec.lapm.vs;
+		settled = delivered ? settled + 1u : 0u;
+		if (settled == 25u)
+			break;
+	}
+	CHECK(poll_seen[0] && poll_seen[1] && settled == 25u &&
+	      caller->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
+	      answerer->modem->dsp_info.upstream_mode == MODEM_UPSTREAM_PCM &&
+	      memcmp(caller->output, payload[1], sizeof(payload[1])) == 0 &&
+	      memcmp(answerer->output, payload[0], sizeof(payload[0])) == 0,
+	      "media loss recovery lost ordered PCM LAPM data (polls=%d/%d outputs=%zu/%zu settled=%u)",
+	      poll_seen[0], poll_seen[1], caller->output_count, answerer->output_count, settled);
+	return true;
+}
+
 static bool exercise_low_speed_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -2129,6 +2213,11 @@ static bool run_media_call(
 		      "%s carrier loss did not honor the fragmented S10 boundary",
 		      test_case->name);
 	}
+	/* Automatic quality recovery can lower the upstream rate. Exercise it
+	 * after the fixed-rate ATO1 checks, before protocol cleardown. */
+	if (connected_id == DP_V92 && !test_case->raw_transport)
+		CHECK(exercise_v92_media_loss(&caller, &answerer, codec, &recorder),
+		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->cleardown_initiators)
 		CHECK(exercise_cleardown(
 			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),
@@ -3443,7 +3532,7 @@ static bool run_v90_recording_replay(
 			endpoint.modem->dp->id == DP_V90;
 		modem_process_g711(
 			endpoint.modem, law, endpoint.receive_codewords,
-			endpoint.receive, endpoint.transmit_codewords,
+			endpoint.receive, NULL, endpoint.transmit_codewords,
 			endpoint.transmit, (int)frame_count, &exact_output);
 		offset += frame_count;
 		if (modem_is_online(endpoint.modem, DP_V90) ||

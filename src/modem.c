@@ -872,6 +872,7 @@ void modem_dp_reconnected(struct modem *m)
 
 static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 				   const u8 *receive_codewords,
+				   const bool *received_mask,
 				   u8 *transmit_codewords,
 				   bool *exact_output,
 				   void *in, void *out, int count)
@@ -896,7 +897,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		if (receive_codewords != NULL &&
 		    m->dp->op->process_g711 != NULL)
 			ret = m->dp->op->process_g711(
-				m->dp, law, receive_codewords, in,
+				m->dp, law, receive_codewords, in, received_mask,
 				transmit_codewords, out, cnt, &fragment_exact);
 		else {
 			ret = m->dp->op->process(m->dp,in,out,cnt);
@@ -942,6 +943,8 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 		in  += cnt<<MFMT_SHIFT(m->format);
 		if (receive_codewords != NULL)
 			receive_codewords += cnt;
+		if (received_mask != NULL)
+			received_mask += cnt;
 		if (transmit_codewords != NULL)
 			transmit_codewords += cnt;
 		if (stop_processing)
@@ -966,7 +969,7 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 static void modem_dp_process(struct modem *m,void *in,void *out,int count)
 {
 	modem_dp_process_frame(
-		m, G711_LAW_PCMU, NULL, NULL, NULL, in, out, count);
+		m, G711_LAW_PCMU, NULL, NULL, NULL, NULL, in, out, count);
 }
 
 static bool modem_preserve_pcm_input(const struct modem *m)
@@ -987,6 +990,7 @@ static bool modem_preserve_pcm_input(const struct modem *m)
 
 static void modem_process_frame(struct modem *m, enum g711_law law,
 				const u8 *receive_codewords,
+				const bool *received_mask,
 				u8 *transmit_codewords,
 				bool *exact_output,
 				void *in, void *out, int count)
@@ -1004,7 +1008,7 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 	if(m->process) {
 		if (receive_codewords != NULL && m->process == modem_dp_process)
 			modem_dp_process_frame(
-				m, law, receive_codewords, transmit_codewords,
+				m, law, receive_codewords, received_mask, transmit_codewords,
 				exact_output, in, out, count);
 		else
 			m->process(m,in,out,count);
@@ -1024,16 +1028,17 @@ static void modem_process_frame(struct modem *m, enum g711_law law,
 void modem_process(struct modem *m,void *in,void *out,int count)
 {
 	modem_process_frame(
-		m, G711_LAW_PCMU, NULL, NULL, NULL, in, out, count);
+		m, G711_LAW_PCMU, NULL, NULL, NULL, NULL, in, out, count);
 }
 
 void modem_process_g711(struct modem *m, enum g711_law law,
 			 const u8 *receive_codewords, void *receive_samples,
+			 const bool *received_mask,
 			 u8 *transmit_codewords, void *transmit_samples,
 			 int count, bool *exact_output)
 {
 	modem_process_frame(
-		m, law, receive_codewords, transmit_codewords, exact_output,
+		m, law, receive_codewords, received_mask, transmit_codewords, exact_output,
 		receive_samples, transmit_samples, count);
 }
 

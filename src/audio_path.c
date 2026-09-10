@@ -83,11 +83,11 @@ struct audio_path *audio_path_create(
 	if (frame_samples == 0 ||
 	    frame_samples >
 		    (SIZE_MAX - sizeof(*path)) /
-			    (2 * sizeof(int16_t) + 2 * sizeof(uint8_t)))
+			    (2 * sizeof(int16_t) + 2 * sizeof(uint8_t) + sizeof(bool)))
 		return NULL;
 	allocation_size =
 		sizeof(*path) +
-		frame_samples * (2 * sizeof(int16_t) + 2 * sizeof(uint8_t));
+		frame_samples * (2 * sizeof(int16_t) + 2 * sizeof(uint8_t) + sizeof(bool));
 	path = calloc(1, allocation_size);
 	if (path == NULL)
 		return NULL;
@@ -121,6 +121,7 @@ enum audio_path_result audio_path_process_frame(
 	int16_t *transmit_samples;
 	uint8_t *receive_codewords;
 	uint8_t *transmit_codewords;
+	bool *received_mask;
 	enum modem_core_result core_result;
 	bool exact_output = false;
 
@@ -130,8 +131,9 @@ enum audio_path_result audio_path_process_frame(
 	transmit_samples = path->samples + path->frame_samples;
 	receive_codewords = (uint8_t *)(transmit_samples + path->frame_samples);
 	transmit_codewords = receive_codewords + path->frame_samples;
+	received_mask = (bool *)(transmit_codewords + path->frame_samples);
 	path->last_media_result = sip_session_play(
-		path->session, receive_samples, receive_codewords,
+		path->session, receive_samples, receive_codewords, received_mask,
 		path->frame_samples, NULL);
 	if (path->last_media_result != MEDIA_OK)
 		return AUDIO_PATH_PLAYOUT_ERROR;
@@ -150,7 +152,7 @@ enum audio_path_result audio_path_process_frame(
 	if (path->modem_core.process_g711 != NULL)
 		core_result = path->modem_core.process_g711(
 			path->modem_core.context, path->law, receive_codewords,
-			receive_samples, transmit_codewords, transmit_samples,
+			receive_samples, received_mask, transmit_codewords, transmit_samples,
 			path->frame_samples, &exact_output);
 	else
 		core_result = path->modem_core.process(

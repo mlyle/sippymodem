@@ -209,7 +209,7 @@ static bool test_loopback_media_and_recording(void)
 		      memcmp(receiver.recordings.data[0], encoded,
 			     sizeof(encoded)) == 0,
 	      "arrival recording is missing or wrong");
-	CHECK(rtp_stream_play(&receiver.stream, played, NULL,
+	CHECK(rtp_stream_play(&receiver.stream, played, NULL, NULL,
 				  ARRAY_LENGTH(played), &report) ==
 		      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
@@ -381,7 +381,7 @@ static bool test_symmetric_remote_learning(void)
 		      transmit_address.sin_addr.s_addr ==
 				 sender_address.sin_addr.s_addr,
 	      "receiver did not select the learned symmetric route");
-	CHECK(rtp_stream_play(&receiver.stream, played, NULL,
+	CHECK(rtp_stream_play(&receiver.stream, played, NULL, NULL,
 				  ARRAY_LENGTH(played), NULL) ==
 		      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
@@ -393,7 +393,7 @@ static bool test_symmetric_remote_learning(void)
 		      wait_for_datagram(&sender.endpoint) &&
 		      rtp_endpoint_drain(&sender.endpoint, &drained) ==
 			      RTP_ENDPOINT_OK &&
-		      rtp_stream_play(&sender.stream, played, NULL,
+		      rtp_stream_play(&sender.stream, played, NULL, NULL,
 					    ARRAY_LENGTH(played), NULL) ==
 			      MEDIA_OK &&
 		      memcmp(played, expected, sizeof(expected)) == 0,
@@ -490,7 +490,7 @@ static bool test_packet_timeline(void)
 	CHECK(rtp_endpoint_send_g711(&sender.endpoint, codes, samples, ARRAY_LENGTH(codes),
 		packet, sizeof(packet)) == RTP_ENDPOINT_OK && wait_for_datagram(&receiver.endpoint) &&
 		rtp_endpoint_drain(&receiver.endpoint, NULL) == RTP_ENDPOINT_OK &&
-		rtp_stream_play(&receiver.stream, played, NULL, ARRAY_LENGTH(played), NULL) == MEDIA_OK,
+		rtp_stream_play(&receiver.stream, played, NULL, NULL, ARRAY_LENGTH(played), NULL) == MEDIA_OK,
 	      "could not establish wrapped playout timeline");
 	CHECK(sender.recordings.packets[0].sequence == UINT16_MAX &&
 		      sender.recordings.packets[0].timestamp == UINT32_MAX - 3 &&

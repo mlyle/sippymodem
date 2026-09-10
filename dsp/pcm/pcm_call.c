@@ -746,8 +746,6 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    path->b1u_squared_error < 0.0 ||
 		    (path->upstream.line.received_frames == 0u &&
 		     path->b1u_squared_error != 0.0) ||
-		    (path->upstream.line.received_frames <= V92_PCM_RX_DELAY_FRAMES &&
-		     path->b1u_decode_failed) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
 			    V90_PCM_MAPPING_OK)
 			return false;
@@ -3751,6 +3749,7 @@ static enum pcm_call_result observe_v92_data_quality(
 
 static enum pcm_call_result v92_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources, uint8_t *generated,
 	struct pcm_call_data_event *emitted)
 {
@@ -3805,6 +3804,21 @@ static enum pcm_call_result v92_data_octet_owned(
 			return PCM_CALL_SOURCE_FAILURE;
 		if (transmitted != V90_DOWNSTREAM_DATA_STREAM_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
+		/* Concealed media is not a received PCM zero. An erased symbol can
+		 * eliminate the true survivor, including its delayed payload history,
+		 * before a later score tie exposes the uncertainty. Clamp delivery
+		 * immediately and let the existing control guard and retry budget
+		 * own recovery. Repeated loss must not extend that bounded guard.
+		 * Apply this only after transmit succeeds: SOURCE_FAILURE consumes
+		 * neither this sample nor its loss notification. */
+		if (!received_available && !path->upstream.line.delay_remaining) {
+			if (!v92_peer_b1_received_owned(call))
+				path->b1u_decode_failed = true;
+			else if (!path->quality_guard_samples) {
+				path->pending_ambiguous = true;
+				path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
+			}
+		}
 		received = v92_upstream_data_rx_sample(&path->upstream,
 			received_sample, &frame);
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
@@ -3850,6 +3864,7 @@ static enum pcm_call_result v92_data_octet_owned(
 
 static enum pcm_call_result data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -3910,7 +3925,7 @@ static enum pcm_call_result data_octet_owned(
 				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
 	generated = encode_sample(call->law, 0);
 	if (uses_pcm_upstream(call)) {
-		result = v92_data_octet_owned(call, received_octet, received_sample,
+		result = v92_data_octet_owned(call, received_octet, received_sample, received_available,
 			sources, &generated, &emitted);
 		if (retrain_candidate)
 			emitted = (struct pcm_call_data_event){ 0 };
@@ -4003,6 +4018,7 @@ static enum pcm_call_result data_octet_owned(
 
 enum pcm_call_result pcm_call_data_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -4019,7 +4035,7 @@ enum pcm_call_result pcm_call_data_octet(
 	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	result = data_octet_owned(
-		call, received_octet, received_sample, sources,
+		call, received_octet, received_sample, received_available, sources,
 		&generated, &emitted);
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
@@ -4034,6 +4050,7 @@ enum pcm_call_result pcm_call_data_octet(
 
 enum pcm_call_result pcm_call_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -4046,7 +4063,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	return data_octet_owned(
-		call, received_octet, received_sample, sources,
+		call, received_octet, received_sample, received_available, sources,
 		transmit_octet, event);
 }
 

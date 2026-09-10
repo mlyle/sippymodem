@@ -104,9 +104,12 @@ size_t rtp_receiver_take_clock_frames(
 
 /* Playout always fills count octets on success.  Missing media and time before
  * the first stream are represented by the configured silence octet. */
+/* Optional count-element received_mask is true only for actual received
+ * slots, including silence codewords. Idle, prefill and concealment are
+ * false. Output regions, report and receiver storage must not overlap. */
 bool rtp_receiver_play(
 	struct rtp_receiver *receiver,
-	uint8_t *octets,
+	uint8_t *octets, bool *received_mask,
 	size_t count,
 	struct rtp_playout_report *report);
 

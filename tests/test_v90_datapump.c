@@ -343,7 +343,7 @@ static bool check_cleardown(struct dp *dp, enum g711_law law,
 		int16_t generated[MODEM_FRAG];
 		bool exact = false;
 		int result = dp->op->process_g711(
-			dp, law, input, samples, output, generated, MODEM_FRAG,
+			dp, law, input, samples, NULL, output, generated, MODEM_FRAG,
 			&exact);
 
 		CHECK((result == DPSTAT_OK || result == DPSTAT_DISCONNECT) &&
@@ -370,7 +370,7 @@ static bool check_cleardown(struct dp *dp, enum g711_law law,
 
 		CHECK(dp->status == DPSTAT_DISCONNECT && dp->op->retrain(dp) != 0 &&
 		      dp->op->hangup(dp) == 0 &&
-		      dp->op->process_g711(dp, law, input, samples, output, generated,
+		      dp->op->process_g711(dp, law, input, samples, NULL, output, generated,
 					  MODEM_FRAG, &exact) == DPSTAT_DISCONNECT && exact,
 		      "closed datapump lost ownership or attempted to restart");
 		for (unsigned int index = 0u; index < MODEM_FRAG; ++index)
@@ -430,7 +430,7 @@ static bool run_training_cleardown(
 				CHECK(dc_remover_process(&frontend, &sample, 1) == DC_REMOVER_OK,
 				      "training cleardown receive conditioning failed");
 			CHECK(operations->process_g711(pumps[side], law, &received[side],
-				      &sample, &transmitted[side], &generated, 1, &exact) ==
+				      &sample, NULL, &transmitted[side], &generated, 1, &exact) ==
 				      DPSTAT_OK && exact && pumps[side]->status != DPSTAT_CONNECT,
 			      "training cleardown missed control at %zu side %u", clock, side);
 		}
@@ -454,7 +454,7 @@ static bool run_training_cleardown(
 			int16_t generated[MODEM_FRAG];
 			bool exact = false;
 
-			CHECK(operations->process_g711(pumps[initiator], law, input, samples,
+			CHECK(operations->process_g711(pumps[initiator], law, input, samples, NULL,
 				      output, generated, count, &exact) == DPSTAT_OK && exact &&
 			      pumps[initiator]->status != DPSTAT_CONNECT,
 			      "control did not survive to the CONNECT deadline");
@@ -659,7 +659,7 @@ static bool run_pcm_pair(
 		      octet);
 		digital_result = operations->process_g711(
 			digital_dp, law,
-			&digital_received_octet, &digital_receive,
+			&digital_received_octet, &digital_receive, NULL,
 			&next_digital, &digital_transmit, 1, &digital_exact);
 
 		CHECK((digital_result == DPSTAT_OK ||
@@ -682,7 +682,7 @@ static bool run_pcm_pair(
 			analog_receive = decode(law, delivered);
 			analog_result = operations->process_g711(
 				analog_dp, law, &delivered,
-				&analog_receive, &next_analog,
+				&analog_receive, NULL, &next_analog,
 				&analog_transmit, 1, &analog_exact);
 		}
 		CHECK((analog_result == DPSTAT_OK ||
@@ -1216,7 +1216,7 @@ static bool test_training_deadline(void)
 
 		CHECK(operations->process_g711(
 			      datapump, G711_LAW_PCMU,
-			      receive_octets, receive_samples,
+			      receive_octets, receive_samples, NULL,
 			      transmit_octets, transmit_samples,
 			      MODEM_FRAG, &exact) == DPSTAT_OK && exact,
 		      "V.90 training expired before its inclusive deadline");
@@ -1226,7 +1226,7 @@ static bool test_training_deadline(void)
 
 		CHECK(operations->process_g711(
 			      datapump, G711_LAW_PCMU,
-			      receive_octets, receive_samples,
+			      receive_octets, receive_samples, NULL,
 			      transmit_octets, transmit_samples,
 			      1, &exact) == DPSTAT_ERROR && !exact &&
 		      transmit_octets[0] == silence && transmit_samples[0] == 0,
@@ -1234,7 +1234,7 @@ static bool test_training_deadline(void)
 		exact = true;
 		CHECK(operations->process_g711(
 			      datapump, G711_LAW_PCMU,
-			      receive_octets, receive_samples,
+			      receive_octets, receive_samples, NULL,
 			      transmit_octets, transmit_samples,
 			      1, &exact) == DPSTAT_ERROR && !exact,
 		      "V.90 training failure was not latched");
@@ -1314,12 +1314,12 @@ static bool test_v92_pcm_upstream_selection(void)
 
 		digital_result = operations->process_g711(
 			      digital_dp, G711_LAW_PCMU,
-			      &analog_to_digital, &digital_received,
+			      &analog_to_digital, &digital_received, NULL,
 			      &next_digital, &digital_transmitted, 1,
 			      &digital_exact);
 		analog_result = operations->process_g711(
 			      analog_dp, G711_LAW_PCMU,
-			      &digital_to_analog, &analog_received,
+			      &digital_to_analog, &analog_received, NULL,
 			      &next_analog, &analog_transmitted, 1,
 			      &analog_exact);
 		CHECK(digital_result == DPSTAT_OK && digital_exact &&
@@ -1437,7 +1437,7 @@ static bool test_validation(void)
 	      "V.90 accepted lossy linear-PCM processing");
 	CHECK(operations->process_g711(
 		      datapump, (enum g711_law)-1,
-		      &receive_octet, &receive_sample,
+		      &receive_octet, &receive_sample, NULL,
 		      &transmit_octet, &transmit_sample, 1, &exact) ==
 		      DPSTAT_ERROR && !exact && transmit_sample == 0 &&
 	      operations->delete(datapump) == 0,
@@ -1534,7 +1534,7 @@ static bool run_fallback_restart(
 		CHECK(dc_remover_process(&frontend, input, BLOCK) == DC_REMOVER_OK,
 		      "fallback receive conditioning failed");
 		if (dp->id != DP_V34)
-			result = dp->op->process_g711(dp, law, to_digital, input,
+			result = dp->op->process_g711(dp, law, to_digital, input, NULL,
 						   to_analog, output, BLOCK, &exact);
 		else {
 			result = dp->op->process(dp, input, output, BLOCK);
@@ -1629,7 +1629,7 @@ static bool run_fallback_restart(
 					};
 					struct pcm_call_data_event event;
 
-					CHECK(pcm_call_data_octet(&peer, to_analog[index], sample,
+					CHECK(pcm_call_data_octet(&peer, to_analog[index], sample, true,
 								 &sources, &generated, &event) == PCM_CALL_OK,
 					      "fallback peer PCM data failed");
 					if (event.kind == PCM_CALL_DOWNSTREAM_FRAME)

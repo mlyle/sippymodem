@@ -31,7 +31,7 @@ static enum modem_core_result process_modem(
 
 static enum modem_core_result process_modem_g711(
 	void *context, enum g711_law law,
-	const uint8_t *receive_codewords, int16_t *receive_samples,
+	const uint8_t *receive_codewords, int16_t *receive_samples, const bool *received_mask,
 	uint8_t *transmit_codewords, int16_t *transmit_samples,
 	size_t count, bool *exact_output)
 {
@@ -51,7 +51,7 @@ static enum modem_core_result process_modem_g711(
 		return MODEM_CORE_STOPPED;
 
 	modem_process_g711(
-		modem, law, receive_codewords, receive_samples,
+		modem, law, receive_codewords, receive_samples, received_mask,
 		transmit_codewords, transmit_samples, (int)count, exact_output);
 	return modem->started ? MODEM_CORE_OK : MODEM_CORE_STOPPED;
 }

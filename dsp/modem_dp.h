@@ -65,9 +65,12 @@ struct dp_operations {
 	int (*process)(struct dp *, void *in, void *out, int cnt);
 	/* The caller initializes exact_output to false. An implementation may
 	 * set it only after producing every transmit codeword in this fragment;
-	 * otherwise the linear transmit samples remain authoritative. */
+	 * otherwise the linear transmit samples remain authoritative.
+	 * received_mask is borrowed for cnt samples: false means generated playout,
+	 * not a received zero symbol. NULL means provenance is unavailable. */
 	int (*process_g711)(struct dp *, enum g711_law law,
 			     const u8 *receive_codewords, void *receive_samples,
+			     const bool *received_mask,
 			     u8 *transmit_codewords, void *transmit_samples,
 			     int cnt, bool *exact_output);
 	/* Start an in-band retrain without releasing the data-link state. */

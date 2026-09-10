@@ -49,6 +49,7 @@ static int process_v90(
 static int process_v90_g711(
 	struct dp *dp, enum g711_law law,
 	const uint8_t *receive_codewords, void *receive_samples,
+	const bool *received_mask,
 	uint8_t *transmit_codewords, void *transmit_samples,
 	int count, bool *exact_output);
 static int retrain_v90(struct dp *dp);
@@ -591,7 +592,7 @@ static bool start_call(
 
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
-	int16_t received_sample,
+	int16_t received_sample, bool received_available,
 	uint8_t *transmitted, bool *connected, bool *fallback, bool *disconnected)
 {
 	struct pcm_call_data_sources sources = {
@@ -616,7 +617,7 @@ static bool process_octet(
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet_owned(
-			&datapump->call, received, received_sample, &sources,
+			&datapump->call, received, received_sample, received_available, &sources,
 			transmitted, &event);
 	} else {
 		struct pcm_call_observation observation;
@@ -753,6 +754,7 @@ static bool apply_host_echo_margin(struct v90_datapump *datapump)
 static int process_v90_g711(
 	struct dp *dp, enum g711_law law,
 	const uint8_t *receive_codewords, void *receive_samples_buffer,
+	const bool *received_mask,
 	uint8_t *transmit_codewords, void *transmit_samples_buffer,
 	int count, bool *exact_output)
 {
@@ -804,7 +806,7 @@ static int process_v90_g711(
 			goto failure;
 		if (!process_octet(
 			    datapump, receive_codewords[index],
-			    cleaned_sample,
+			    cleaned_sample, received_mask == NULL || received_mask[index],
 			    &pcm_transmit, &connected, &fallback, &disconnected))
 			goto failure;
 		transmit_codewords[index] = pcm_transmit;

@@ -50,12 +50,14 @@ enum rtp_receive_result rtp_stream_receive(
 	size_t packet_size,
 	enum rtp_result *packet_result);
 
-/* source_octets, when non-NULL, receives the exact playout codewords used to
+/* received_mask optionally receives count provenance flags as documented by
+ * rtp_receiver_play; it must not overlap samples, source_octets or stream state.
+ * source_octets, when non-NULL, receives the exact playout codewords used to
  * produce samples.  The two output spans must not overlap. */
 enum media_result rtp_stream_play(
 	struct rtp_stream *stream,
 	int16_t *samples,
-	uint8_t *source_octets,
+	uint8_t *source_octets, bool *received_mask,
 	size_t count,
 	struct rtp_playout_report *report);
 

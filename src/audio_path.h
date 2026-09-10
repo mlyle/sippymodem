@@ -27,6 +27,9 @@ struct modem_core {
 		size_t count);
 	/* Optional exact-codeword path. receive_samples include configured gain;
 	 * receive_codewords retain the original G.711 playout values. The caller
+	 * supplies a count-element received_mask: false marks generated playout,
+	 * not a received silence symbol. NULL means provenance is unavailable.
+	 * All input storage is borrowed only for this call. The caller
 	 * initializes exact_output to false. When set true, all transmit_codewords
 	 * are authoritative and transmit_samples are replaced by their canonical
 	 * decodes before recording and transmission. */
@@ -35,6 +38,7 @@ struct modem_core {
 		enum g711_law law,
 		const uint8_t *receive_codewords,
 		int16_t *receive_samples,
+		const bool *received_mask,
 		uint8_t *transmit_codewords,
 		int16_t *transmit_samples,
 		size_t count,

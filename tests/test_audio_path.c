@@ -16,6 +16,7 @@ enum {
 struct sip_session {
 	size_t frame_samples;
 	uint8_t receive_codewords[TEST_FRAME_SAMPLES];
+	bool received_mask[TEST_FRAME_SAMPLES];
 	int16_t receive_samples[TEST_FRAME_SAMPLES];
 	int16_t sent_samples[TEST_FRAME_SAMPLES];
 	uint8_t sent_codewords[TEST_FRAME_SAMPLES];
@@ -34,7 +35,7 @@ size_t sip_session_frame_samples(
 
 enum media_result sip_session_play(
 	struct sip_session *session, int16_t *samples,
-	uint8_t *source_octets, size_t count,
+	uint8_t *source_octets, bool *received_mask, size_t count,
 	struct rtp_playout_report *report)
 {
 	if (session == NULL || samples == NULL || count != session->frame_samples)
@@ -46,6 +47,8 @@ enum media_result sip_session_play(
 	       count * sizeof(samples[0]));
 	if (source_octets != NULL)
 		memcpy(source_octets, session->receive_codewords, count);
+	if (received_mask != NULL)
+		memcpy(received_mask, session->received_mask, count * sizeof(*received_mask));
 	if (report != NULL)
 		memset(report, 0, sizeof(*report));
 	return MEDIA_OK;
@@ -88,6 +91,7 @@ struct core_capture {
 	unsigned int g711_calls;
 	bool receive_matched;
 	bool codewords_matched;
+	bool mask_matched;
 	bool exact_output;
 	enum g711_law law;
 };
@@ -110,7 +114,7 @@ static enum modem_core_result process_core(
 
 static enum modem_core_result process_core_g711(
 	void *context, enum g711_law law,
-	const uint8_t *receive_codewords, int16_t *receive_samples,
+	const uint8_t *receive_codewords, int16_t *receive_samples, const bool *received_mask,
 	uint8_t *transmit_codewords, int16_t *transmit_samples,
 	size_t count, bool *exact_output)
 {
@@ -123,6 +127,9 @@ static enum modem_core_result process_core_g711(
 		count == TEST_FRAME_SAMPLES &&
 		memcmp(receive_codewords,
 		       (uint8_t[]){ 0x7f, 0xff, 0x55, 0xd5 }, count) == 0;
+	capture->mask_matched = received_mask != NULL && count == TEST_FRAME_SAMPLES &&
+		memcmp(received_mask, (bool[]){ true, false, true, false },
+			count * sizeof(*received_mask)) == 0;
 	result = process_core(context, receive_samples, transmit_samples, count);
 	if (result == MODEM_CORE_OK && capture->exact_output) {
 		memcpy(transmit_codewords, capture->transmit_codewords, count);
@@ -157,6 +164,7 @@ static bool test_processes_gained_recorded_frame(void)
 	struct sip_session session = {
 		.frame_samples = TEST_FRAME_SAMPLES,
 		.receive_codewords = { 0x7f, 0xff, 0x55, 0xd5 },
+		.received_mask = { true, false, true, false },
 		.receive_samples = { 1001, -1001, 20000, -20000 },
 		.play_result = MEDIA_OK,
 		.send_result = RTP_ENDPOINT_OK,
@@ -192,7 +200,7 @@ static bool test_processes_gained_recorded_frame(void)
 		      session.play_calls == 1 && session.send_calls == 1 &&
 		      core.calls == 1 && core.g711_calls == 1 &&
 		      core.law == G711_LAW_PCMU && core.receive_matched &&
-		      core.codewords_matched &&
+		      core.codewords_matched && core.mask_matched &&
 		      memcmp(session.sent_samples, expected_transmit,
 			     sizeof(expected_transmit)) == 0,
 	      "audio path did not process or saturate the frame correctly");

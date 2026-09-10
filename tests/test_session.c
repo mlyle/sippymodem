@@ -236,7 +236,7 @@ static bool test_owns_transport_lifetimes(void)
 	memset(source_octets, 0, sizeof(source_octets));
 	for (size_t index = 0; index < ARRAY_LENGTH(decoded); ++index)
 		decoded[index] = g711_decode_pcmu(transmit_codewords[index]);
-	CHECK(sip_session_play(session, samples, source_octets,
+	CHECK(sip_session_play(session, samples, source_octets, NULL,
 				      ARRAY_LENGTH(samples),
 				      &report) == MEDIA_OK &&
 		      !report.stream_active &&

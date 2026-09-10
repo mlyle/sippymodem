@@ -16,6 +16,7 @@ struct modem_process_capture {
 	void *receive;
 	void *transmit;
 	const uint8_t *codewords;
+	const bool *received_mask;
 	enum g711_law law;
 	unsigned int g711_calls;
 	bool exact_output;
@@ -42,13 +43,14 @@ void modem_process(struct modem *modem, void *receive, void *transmit,
 
 void modem_process_g711(
 	struct modem *modem, enum g711_law law,
-	const uint8_t *receive_codewords, void *receive,
+	const uint8_t *receive_codewords, void *receive, const bool *received_mask,
 	uint8_t *transmit_codewords, void *transmit,
 	int count, bool *exact_output)
 {
 	capture.g711_calls++;
 	capture.law = law;
 	capture.codewords = receive_codewords;
+	capture.received_mask = received_mask;
 	for (int index = 0; index < count; ++index)
 		transmit_codewords[index] = (uint8_t)~receive_codewords[index];
 	*exact_output = capture.exact_output;
@@ -102,13 +104,14 @@ static bool test_forwards_exact_host_frames(void)
 	      "adapter changed or truncated the modem frame");
 	memset(transmit, 0, sizeof(transmit));
 	capture.exact_output = true;
+	const bool received_mask[] = { true, false, true, false };
 	CHECK(core->process_g711(
 		      core->context, G711_LAW_PCMU, codewords,
-		      receive, transmit_codewords, transmit,
+		      receive, received_mask, transmit_codewords, transmit,
 		      ARRAY_LENGTH(receive), &exact_output) == MODEM_CORE_OK &&
 		      capture.calls == 2 && capture.g711_calls == 1 &&
 		      capture.law == G711_LAW_PCMU &&
-		      capture.codewords == codewords &&
+		      capture.codewords == codewords && capture.received_mask == received_mask &&
 		      exact_output &&
 		      memcmp(transmit_codewords,
 			     (uint8_t[]){ 0x80, 0x00, 0xaa, 0x2a },
@@ -170,15 +173,15 @@ static bool test_validation_is_transactional(void)
 	      "adapter accepted an unsafe legacy frame");
 	CHECK(core->process_g711(
 		      core->context, (enum g711_law)99, &codeword,
-		      &sample, &codeword, &sample, 1,
+		      &sample, NULL, &codeword, &sample, 1,
 		      &exact_output) == MODEM_CORE_ERROR &&
 		      core->process_g711(
 			      core->context, G711_LAW_PCMU, NULL,
-			      &sample, &codeword, &sample, 1,
+			      &sample, NULL, &codeword, &sample, 1,
 			      &exact_output) == MODEM_CORE_ERROR &&
 		      core->process_g711(
 			      core->context, G711_LAW_PCMU, &codeword,
-			      &sample, NULL, &sample, 1,
+			      &sample, NULL, NULL, &sample, 1,
 			      &exact_output) == MODEM_CORE_ERROR &&
 		      !exact_output,
 	      "adapter accepted an unsafe G.711 frame");

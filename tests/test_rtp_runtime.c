@@ -201,12 +201,12 @@ static bool test_buffers_scheduler_catchup_burst(void)
 				      RTP_RECEIVE_ACCEPTED,
 			      "initial RTP packet %zu was rejected", packet_index);
 			if (packet_index == 2) {
-				CHECK(rtp_receiver_play(receiver, played,
+				CHECK(rtp_receiver_play(receiver, played, NULL,
 							ARRAY_LENGTH(played), NULL) &&
-					      rtp_receiver_play(receiver, played,
+					      rtp_receiver_play(receiver, played, NULL,
 							ARRAY_LENGTH(played), NULL),
 				      "RTP prefill failed");
-				CHECK(rtp_receiver_play(receiver, played,
+				CHECK(rtp_receiver_play(receiver, played, NULL,
 							ARRAY_LENGTH(played), NULL),
 				      "first RTP frame did not play");
 			}
@@ -222,7 +222,7 @@ static bool test_buffers_scheduler_catchup_burst(void)
 	     packet_index < ARRAY_LENGTH(payloads); ++packet_index) {
 		memcpy(expected + (packet_index - 1) * sizeof(payloads[0]),
 		       payloads[packet_index], sizeof(payloads[packet_index]));
-		CHECK(rtp_receiver_play(receiver, played,
+		CHECK(rtp_receiver_play(receiver, played, NULL,
 					ARRAY_LENGTH(played), NULL),
 		      "buffered catch-up frame did not play");
 		memcpy(actual + actual_count, played, sizeof(played));
@@ -281,11 +281,11 @@ static bool test_buffers_remote_clock_backlog(void)
 	      "remote-clock backlog discarded future media");
 	for (size_t prefill = 0; prefill < 2; ++prefill)
 		CHECK(rtp_receiver_play(
-			      receiver, played, sizeof(played), NULL),
+			      receiver, played, NULL, sizeof(played), NULL),
 		      "remote-clock prefill did not play");
 	for (size_t frame = 0; frame < FRAME_COUNT; ++frame) {
 		CHECK(rtp_receiver_play(
-			      receiver, played, sizeof(played), NULL),
+			      receiver, played, NULL, sizeof(played), NULL),
 		      "remote-clock backlog frame %zu did not play", frame);
 		for (size_t sample = 0; sample < sizeof(played); ++sample)
 			CHECK(played[sample] == (uint8_t)(frame + 1u),

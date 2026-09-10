@@ -3,6 +3,7 @@
 #include "rtp_stream.h"
 
 #include "g711.h"
+#include "memory_region.h"
 #include "rtp.h"
 
 #include <stdint.h>
@@ -65,17 +66,25 @@ enum rtp_receive_result rtp_stream_receive(
 enum media_result rtp_stream_play(
 	struct rtp_stream *stream,
 	int16_t *samples,
-	uint8_t *source_octets,
+	uint8_t *source_octets, bool *received_mask,
 	size_t count,
 	struct rtp_playout_report *report)
 {
 	enum media_result result;
 
 	if (stream == NULL || samples == NULL || count == 0 ||
-	    count > stream->receive_workspace_size)
+	    count > stream->receive_workspace_size || count > SIZE_MAX / sizeof(*samples))
+		return MEDIA_INVALID_ARGUMENT;
+	if (received_mask != NULL &&
+	    (memory_regions_overlap(received_mask, count * sizeof(*received_mask),
+		 samples, count * sizeof(*samples)) ||
+	     memory_regions_overlap(received_mask, count * sizeof(*received_mask),
+		 source_octets, source_octets == NULL ? 0u : count) ||
+	     memory_regions_overlap(received_mask, count * sizeof(*received_mask),
+		 stream, sizeof(*stream))))
 		return MEDIA_INVALID_ARGUMENT;
 	if (!rtp_receiver_play(&stream->receiver,
-					   stream->receive_workspace, count,
+					   stream->receive_workspace, received_mask, count,
 					   report))
 		return MEDIA_INVALID_ARGUMENT;
 	result = media_decode(stream->codec,

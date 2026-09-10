@@ -779,7 +779,7 @@ static bool endpoint_data_octet(
 	event_before = event;
 	selected_sources = endpoint->idle_source_checked ? &sources : NULL;
 	result = pcm_call_data_octet(
-		&endpoint->call, received, received_sample, selected_sources,
+		&endpoint->call, received, received_sample, true, selected_sources,
 		&generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		if (!expecting_source_failure || generated != 0xa5 ||
@@ -792,7 +792,7 @@ static bool endpoint_data_octet(
 		generated = 0xa5;
 		memset(&event, 0x5a, sizeof(event));
 		result = pcm_call_data_octet(
-			&endpoint->call, received, received_sample, &sources,
+			&endpoint->call, received, received_sample, true, &sources,
 			&generated, &event);
 	}
 	if (result != PCM_CALL_OK)
@@ -1017,7 +1017,7 @@ static bool check_peer_cleardown(
 					decode_octet(calls[side].law, received[side]),
 					&transmitted[side], &observation) :
 				pcm_call_data_octet(&calls[side], received[side],
-					decode_octet(calls[side].law, received[side]), NULL,
+					decode_octet(calls[side].law, received[side]), true, NULL,
 					&transmitted[side], &event);
 
 			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) &&
@@ -1058,7 +1058,7 @@ static bool check_peer_cleardown(
 		uint8_t output = 0u;
 
 		memcpy(&before, &calls[side], sizeof(before));
-		CHECK(pcm_call_data_octet(&calls[side], 0u, INT16_MAX, &sources,
+		CHECK(pcm_call_data_octet(&calls[side], 0u, INT16_MAX, true, &sources,
 					 &output, &data_event) == PCM_CALL_CLEARDOWN_COMPLETE &&
 		      output == silence_octet(calls[side].law) &&
 		      data_event.kind == PCM_CALL_DATA_NONE &&
@@ -1108,7 +1108,7 @@ static bool check_training_cleardown(
 		for (unsigned int side = 0; side < 2u; ++side) {
 			struct pcm_call_data_event event;
 			CHECK(pcm_call_data_octet(&calls[side], received[side],
-				      decode_octet(calls[side].law, received[side]), NULL,
+				      decode_octet(calls[side].law, received[side]), true, NULL,
 				      &transmitted[side], &event) == PCM_CALL_OK,
 			      "control cancellation fixture stopped at %zu", clock);
 		}
@@ -1143,7 +1143,7 @@ static bool check_zero_rate_cleardown(
 		uint8_t digital_input;
 		uint8_t output = 0u;
 		enum pcm_call_result result = pcm_call_data_octet(
-			call, silence_octet(call->law), 0, NULL, &output, &event);
+			call, silence_octet(call->law), 0, true, NULL, &output, &event);
 
 		CHECK((result == PCM_CALL_OK ||
 		       result == PCM_CALL_CLEARDOWN_COMPLETE) &&
@@ -2271,7 +2271,7 @@ static bool final_training_accepts_remote_retrain(
 				      "final-training peer tone stopped");
 			received = encode_octet(law, sample);
 			CHECK(pcm_call_data_octet(
-				      call, received, decode_octet(law, received),
+				      call, received, decode_octet(law, received), true,
 				      NULL, &transmitted, &event) == PCM_CALL_OK,
 			      "law %u role %u retrain input failed at %zu",
 			      (unsigned int)law, (unsigned int)call->local_role, index);
@@ -2633,7 +2633,7 @@ static bool run_b1_timeout(
 		uint8_t transmitted;
 
 		tick_result = pcm_call_data_octet(
-			&stalled->call, stall_octet, 0, NULL,
+			&stalled->call, stall_octet, 0, true, NULL,
 			&transmitted, &event);
 		CHECK(tick_result == PCM_CALL_OK &&
 		      event.kind == PCM_CALL_DATA_NONE &&
@@ -2659,7 +2659,7 @@ static bool run_b1_timeout(
 		uint8_t transmitted;
 
 		CHECK(pcm_call_data_octet(
-			      &stalled->call, stall_octet, 0, NULL,
+			      &stalled->call, stall_octet, 0, true, NULL,
 			      &transmitted, &event) == PCM_CALL_OK &&
 		      event.kind == PCM_CALL_DATA_NONE &&
 		      stalled->call.stage == PCM_CALL_RETRAIN_SILENCE &&
@@ -3204,7 +3204,7 @@ static bool idle_retrain_octet(
 	*data = (struct pcm_call_data_event){ 0 };
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return pcm_call_data_octet(
-			       call, received, decode_octet(law, received),
+			       call, received, decode_octet(law, received), true,
 			       NULL, transmitted, data) == PCM_CALL_OK;
 	return pcm_call_octet(
 		       call, received, decode_octet(law, received),
@@ -4278,7 +4278,7 @@ static bool run_rate_renegotiation_case(
 
 		CHECK(pcm_call_data_octet(
 			      &digital.call, digital_received,
-			      decode_octet(law, digital_received), &sources,
+			      decode_octet(law, digital_received), true, &sources,
 			      &transmitted, &event) == PCM_CALL_OK &&
 		      pcm_call_is_online(&digital.call) &&
 		      pcm_call_get_data_rates(
@@ -4304,7 +4304,7 @@ static bool run_rate_renegotiation_case(
 			      "CPs retired or restarted the original response deadline");
 			stalled.rate_renegotiation_deadline_remaining_samples = 1u;
 			CHECK(pcm_call_data_octet(&stalled, digital_received,
-				      decode_octet(law, digital_received), NULL, &output, &ignored) == PCM_CALL_OK &&
+				      decode_octet(law, digital_received), true, NULL, &output, &ignored) == PCM_CALL_OK &&
 			      stalled.stage == PCM_CALL_RETRAIN_SILENCE && !stalled.failed &&
 			      pcm_call_is_valid(&stalled), "missing post-silence CP did not time out");
 			recondition_timeout_checked = true;
@@ -4334,7 +4334,7 @@ static bool run_rate_renegotiation_case(
 			      !pcm_call_is_valid(&invalid) &&
 			      pcm_call_is_valid(&stalled) &&
 			      pcm_call_data_octet(
-				      &stalled, silence_octet(law), 0, NULL,
+				      &stalled, silence_octet(law), 0, true, NULL,
 				      &stalled_transmitted, &stalled_event) ==
 				      PCM_CALL_OK &&
 			      stalled_event.kind == PCM_CALL_DATA_NONE &&
@@ -4488,7 +4488,7 @@ static bool check_rrn_response_deadline(
 	last_sample.rate_renegotiation_deadline_remaining_samples = 1u;
 	CHECK(pcm_call_is_valid(&last_sample) &&
 	      pcm_call_data_octet(
-		      &last_sample, received, decode_octet(before->law, received),
+		      &last_sample, received, decode_octet(before->law, received), true,
 		      NULL, &transmitted, &event) == PCM_CALL_OK &&
 	      last_sample.stage == PCM_CALL_DATA_PATH &&
 	      event.kind == PCM_CALL_DATA_NONE &&
@@ -4670,11 +4670,11 @@ static bool run_paired_remote_rate_renegotiation(
 			digital_response_before = digital.call;
 		CHECK(pcm_call_data_octet(
 			      &analog.call, analog_received,
-			      decode_octet(law, analog_received), &analog_sources,
+			      decode_octet(law, analog_received), true, &analog_sources,
 			      &analog_transmitted, &analog_event) == PCM_CALL_OK &&
 		      pcm_call_data_octet(
 			      &digital.call, digital_received,
-			      decode_octet(law, digital_received), &digital_sources,
+			      decode_octet(law, digital_received), true, &digital_sources,
 			      &digital_transmitted, &digital_event) == PCM_CALL_OK &&
 		      analog.call.stage == PCM_CALL_DATA_PATH &&
 		      digital.call.stage == PCM_CALL_DATA_PATH,
@@ -4811,7 +4811,7 @@ static bool run_paired_remote_rate_renegotiation(
 			stalled.rate_renegotiation_deadline_remaining_samples = 1u;
 			CHECK(pcm_call_data_octet(
 				      &stalled, analog_received,
-				      decode_octet(law, analog_received), NULL,
+				      decode_octet(law, analog_received), true, NULL,
 				      &stalled_octet, &stalled_event) == PCM_CALL_OK &&
 			      stalled.stage == PCM_CALL_RETRAIN_SILENCE &&
 			      stalled.retrain_active && pcm_call_is_valid(&stalled) &&
@@ -5574,15 +5574,21 @@ static bool v92_payload_sample(
 
 	if (!source->rejection_checked)
 		snapshot = *call;
-	result = pcm_call_data_octet(call, received, sample,
+	result = pcm_call_data_octet(call, received, sample, true,
 				    &sources, &generated, &event);
 	if (result == PCM_CALL_SOURCE_FAILURE) {
 		CHECK(!source->rejection_checked && !source->reject &&
 		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
 		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
 		      "V.92 source rejection consumed media or changed output");
+		source->reject = true;
+		CHECK(pcm_call_data_octet(call, received, sample, false, &sources,
+			&generated, &event) == PCM_CALL_SOURCE_FAILURE && !source->reject &&
+		      generated == 0xa5u && memcmp(&event, &sentinel, sizeof(event)) == 0 &&
+		      memcmp(call, &snapshot, sizeof(snapshot)) == 0,
+		      "V.92 source rejection consumed a media loss notification");
 		source->rejection_checked = true;
-		result = pcm_call_data_octet(call, received, sample,
+		result = pcm_call_data_octet(call, received, sample, true,
 					    &sources, &generated, &event);
 	}
 	CHECK(result == PCM_CALL_OK, "V.92 data returned %s", pcm_call_result_name(result));
@@ -5616,13 +5622,24 @@ static bool v92_payload_sample(
 static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 {
 	struct pcm_call damaged = *boundary;
+	struct pcm_call erased = *boundary;
 	struct pcm_call_data_event event;
 	uint8_t transmitted;
 	uint8_t silence = silence_octet(boundary->law);
 
+	while (erased.state.data_path.v92_digital.upstream.line.delay_remaining != 0u)
+		CHECK(pcm_call_data_octet(&erased, silence, 0, false, NULL, &transmitted, &event) ==
+			      PCM_CALL_OK && !erased.state.data_path.v92_digital.b1u_decode_failed,
+		      "media loss in the unused input delay rejected B1u");
+	CHECK(pcm_call_data_octet(&erased, silence, 0, false, NULL, &transmitted, &event) ==
+		      PCM_CALL_OK && pcm_call_is_valid(&erased) && !pcm_call_is_online(&erased) &&
+	      event.kind == PCM_CALL_DATA_NONE && erased.state.data_path.v92_digital.b1u_decode_failed &&
+	      erased.state.data_path.v92_digital.quality_guard_samples == 0,
+	      "first missing B1u sample did not reject training before delayed decisions");
+
 	for (size_t sample = 0u; sample < (size_t)V92_B1U_SYMBOLS +
 	     boundary->state.data_path.v92_digital.upstream.line.delay_remaining; ++sample) {
-		CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) ==
+		CHECK(pcm_call_data_octet(&damaged, silence, 0, true, NULL, &transmitted, &event) ==
 			      PCM_CALL_OK &&
 		      event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
 		      "missing B1u opened the host or failed before its deadline");
@@ -5632,7 +5649,7 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	      damaged.b1_deadline_armed, "known B1u digits hid missing waveform evidence");
 	damaged.b1_deadline_remaining_samples = 1u;
 	CHECK(pcm_call_is_valid(&damaged) &&
-	      pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK &&
+	      pcm_call_data_octet(&damaged, silence, 0, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
 	      damaged.stage == PCM_CALL_RETRAIN_SILENCE && !damaged.failed &&
 	      damaged.protocol == PCM_PROTOCOL_V92 && !damaged.b1_deadline_armed,
 	      "missing V.92 B1 did not start a bounded retrain");
@@ -5653,7 +5670,7 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 	CHECK(v92_pcm_frame_tx_init(&tx, &path->upstream.decoder.mapping) == V92_PCM_FRAME_OK,
 	      "wrong-B1u transmitter failed");
 	while (path->upstream.line.delay_remaining != 0u)
-		CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK,
+		CHECK(pcm_call_data_octet(&damaged, silence, 0, true, NULL, &transmitted, &event) == PCM_CALL_OK,
 		      "wrong-B1u delay failed");
 	for (unsigned frame = 0u; frame < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 2u; ++frame) {
 		struct v92_pcm_frame encoded;
@@ -5674,7 +5691,7 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 
 			CHECK(sample >= INT16_MIN && sample <= INT16_MAX, "wrong-B1u sample overflowed");
 			result = pcm_call_data_octet(&damaged,
-				encode_octet(boundary->law, (int16_t)sample), (int16_t)sample,
+				encode_octet(boundary->law, (int16_t)sample), (int16_t)sample, true,
 				NULL, &transmitted, &event);
 
 			CHECK(event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
@@ -5702,7 +5719,7 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 	      damaged.b1_deadline_armed && pcm_call_is_valid(&damaged),
 	      "small residual concealed a wrong B1u bit");
 	damaged.b1_deadline_remaining_samples = 1u;
-	CHECK(pcm_call_data_octet(&damaged, silence, 0, NULL, &transmitted, &event) == PCM_CALL_OK &&
+	CHECK(pcm_call_data_octet(&damaged, silence, 0, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
 	      damaged.stage == PCM_CALL_RETRAIN_SILENCE && !damaged.failed &&
 	      damaged.protocol == PCM_PROTOCOL_V92 && !damaged.b1_deadline_armed,
 	      "wrong B1u did not retain bounded retrain recovery");
@@ -5717,21 +5734,36 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 	uint8_t checked_octet, owned_octet;
 	uint8_t silence = silence_octet(online->law);
 
-	CHECK(pcm_call_data_octet(&checked, silence, 0, NULL,
+	CHECK(pcm_call_data_octet(&checked, silence, 0, true, NULL,
 				 (uint8_t *)&checked, &checked_event) == PCM_CALL_INVALID_ARGUMENT &&
-	      pcm_call_data_octet_owned(&checked, silence, 0, NULL,
+	      pcm_call_data_octet_owned(&checked, silence, 0, true, NULL,
 				       &checked_octet, (struct pcm_call_data_event *)&checked) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
 	      memcmp(&checked, online, sizeof(checked)) == 0,
 	      "V.92 accepted aliased media outputs");
-	CHECK(pcm_call_data_octet(&checked, silence, 0, NULL, &checked_octet, &checked_event) ==
+	CHECK(pcm_call_data_octet(&checked, silence, 0, true, NULL, &checked_octet, &checked_event) ==
 		      PCM_CALL_OK &&
-	      pcm_call_data_octet_owned(&owned, silence, 0, NULL, &owned_octet, &owned_event) ==
+	      pcm_call_data_octet_owned(&owned, silence, 0, true, NULL, &owned_octet, &owned_event) ==
 		      PCM_CALL_OK &&
 	      pcm_call_is_valid(&owned) && checked_octet == owned_octet &&
 	      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
 	      memcmp(&checked, &owned, sizeof(checked)) == 0,
 	      "validated-block and checked V.92 clocks diverged");
+	if (online->local_role == V90_DIGITAL_MODEM) {
+		CHECK(checked.state.data_path.v92_digital.quality_guard_samples == 0,
+		      "a received zero was treated as an erasure");
+		checked = *online;
+		owned = *online;
+		CHECK(pcm_call_data_octet(&checked, silence, 0, false, NULL, &checked_octet, &checked_event) ==
+			      PCM_CALL_OK &&
+		      pcm_call_data_octet_owned(&owned, silence, 0, false, NULL, &owned_octet, &owned_event) ==
+			      PCM_CALL_OK &&
+		      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+		      checked_event.kind == PCM_CALL_DATA_NONE && owned_event.kind == PCM_CALL_DATA_NONE &&
+		      checked.state.data_path.v92_digital.pending_ambiguous &&
+		      checked.state.data_path.v92_digital.quality_guard_samples != 0 &&
+		      pcm_call_is_valid(&checked), "known loss did not clamp delayed PCM payload");
+	}
 	if (online->local_role == V90_DIGITAL_MODEM && online->state.data_path.v92_digital
 	    .upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
 		checked = *online;
@@ -5749,7 +5781,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 		      "late V.92 receive-failure fixture was invalid");
 		owned.state.data_path.v92_digital.upstream.failed = true;
 		owned.failed = true;
-		CHECK(pcm_call_data_octet(&checked, silence, INT16_MAX, NULL,
+		CHECK(pcm_call_data_octet(&checked, silence, INT16_MAX, true, NULL,
 					 &checked_octet, &checked_event) == PCM_CALL_NUMERIC_FAILURE &&
 		      pcm_call_has_failed(&checked) && checked_octet == owned_octet &&
 		      checked_event.kind == PCM_CALL_DATA_NONE &&
@@ -5881,7 +5913,7 @@ static bool capture_v92_duplex_data(
 					/* The digital peer has stopped its data transmitter.
 					 * Raw transition bytes before tone qualification are
 					 * not payload; keep clocking the analogue receiver. */
-					CHECK(pcm_call_data_octet(call, received, sample, NULL, transmitted, &event) ==
+					CHECK(pcm_call_data_octet(call, received, sample, true, NULL, transmitted, &event) ==
 						      PCM_CALL_OK, "V.92 peer did not accept training recovery");
 				} else {
 					CHECK(v92_payload_sample(call, received, sample, role == 0u ? &upstream : &downstream,
@@ -6048,7 +6080,7 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			arm_v92_quality_failure(&call, ambiguous != 0u);
 			CHECK(pcm_call_is_valid(&call), "quality boundary fixture is invalid");
 			enum pcm_call_result result = pcm_call_data_octet(&call,
-				silence_octet(call.law), 0, NULL, &octet, &event);
+				silence_octet(call.law), 0, true, NULL, &octet, &event);
 			bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
 
 			CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
@@ -6095,7 +6127,7 @@ static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
 					CHECK(v34_phase2_tone_transmitter_sample(&peer, &sample) == V34_PHASE2_TONE_OK,
 					      "peer retrain tone stopped");
 				uint8_t input = encode_octet(call.law, sample);
-				CHECK(pcm_call_data_octet(&call, input, decode_octet(call.law, input), NULL,
+				CHECK(pcm_call_data_octet(&call, input, decode_octet(call.law, input), true, NULL,
 					&octet, &event) == PCM_CALL_OK && pcm_call_is_valid(&call) &&
 				      call.pcm_upstream_quality.automatic_retrains == budget &&
 				      call.v92_upstream_retry_ceiling == online->v92_upstream_retry_ceiling,
@@ -6131,10 +6163,12 @@ static bool test_v92_quality_rate_recovery(void)
 				CHECK(v92_quality_backoff_contracts(&pair.digital), "quality boundary contracts failed");
 				if (epoch == 2u)
 					break;
-				arm_v92_quality_failure(&pair.digital, epoch == 0u);
+				if (epoch != 0u)
+					arm_v92_quality_failure(&pair.digital, false);
 				struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
 				uint32_t frames[2] = { 0u, 0u };
 				bool started[2] = { false, false };
+				unsigned loss_guard = 0u;
 				for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 					uint8_t rx[2], tx[2];
 					struct pcm_call *calls[] = { &pair.analog, &pair.digital };
@@ -6151,8 +6185,19 @@ static bool test_v92_quality_rate_recovery(void)
 								&sources[side], &frames[side], &tx[side]), "quality recovery payload failed");
 						} else if (call->stage == PCM_CALL_DATA_PATH) {
 							struct pcm_call_data_event event;
-							CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]),
+							bool lost = epoch == 0u && side == 1u && clock < 80u;
+							uint8_t input = lost ? silence_octet(law) : rx[side];
+							CHECK(pcm_call_data_octet(call, input, decode_octet(law, input), !lost,
 								NULL, &tx[side], &event) == PCM_CALL_OK, "quality retrain detection failed");
+							if (lost) {
+								if (clock == 0u)
+									loss_guard = call->state.data_path.v92_digital.quality_guard_samples;
+								CHECK(event.kind == PCM_CALL_DATA_NONE &&
+								      loss_guard >= 80u && loss_guard < 8000u &&
+								      call->state.data_path.v92_digital.quality_guard_samples ==
+									      loss_guard - clock,
+								      "repeated media loss exposed payload or extended recovery");
+							}
 						} else {
 							struct pcm_call_observation event;
 							CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
@@ -6223,9 +6268,9 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 		struct pcm_call_data_event checked_data;
 		uint8_t checked_octet;
 		checked_sources.downstream_context = &checked_source;
-		result = pcm_call_data_octet_owned(call, encode_octet(call->law, sample), sample,
+		result = pcm_call_data_octet_owned(call, encode_octet(call->law, sample), sample, true,
 			test->data_started ? &sources : NULL, &octet, &data);
-		CHECK(pcm_call_data_octet(&checked, encode_octet(checked.law, sample), sample,
+		CHECK(pcm_call_data_octet(&checked, encode_octet(checked.law, sample), sample, true,
 			test->data_started ? &checked_sources : NULL, &checked_octet, &checked_data) == result &&
 		      checked_octet == octet && memcmp(&checked_data, &data, sizeof(data)) == 0 &&
 		      memcmp(&checked, call, sizeof(checked)) == 0 &&
@@ -6327,7 +6372,7 @@ static bool v92_rejected_control_recovery(const struct pcm_call *online, int16_t
 			int16_t sample = quiet ? 0 : clock < 180u ?
 				(clock % 6u < 3u ? lu : -lu) : (clock % 2u ? lu / 3 : -lu / 3);
 			enum pcm_call_result result = pcm_call_data_octet(&call,
-				encode_octet(call.law, sample), decode_octet(call.law, encode_octet(call.law, sample)),
+				encode_octet(call.law, sample), decode_octet(call.law, encode_octet(call.law, sample)), true,
 				NULL, &octet, &event);
 			if (call.stage == PCM_CALL_DATA_PATH &&
 			    call.state.data_path.v92_digital.quality_guard_samples && !guard_started)
@@ -6646,7 +6691,7 @@ static bool test_v92_remote_rate_request(void)
 			uint8_t ar, dr, transmitted;
 			struct pcm_call_data_event event;
 			channel_receive(&pair.wire, &ar, &dr);
-			CHECK(pcm_call_data_octet(&pair.digital, dr, decode_octet(law, dr), NULL,
+			CHECK(pcm_call_data_octet(&pair.digital, dr, decode_octet(law, dr), true, NULL,
 				&transmitted, &event) == PCM_CALL_OK, "pending data sample failed");
 			struct pcm_call local = pair.digital;
 			struct v92_upstream_data_tx delayed = *upstream;
@@ -6710,7 +6755,7 @@ static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 		      call.stage == PCM_CALL_RETRAIN_SILENCE && !call.failed &&
 		      !call.v92_rate_renegotiation_active, "missing Rd did not use bounded full retrain");
 		struct pcm_call_data_event event;
-		CHECK(pcm_call_data_octet(&shifted, silence_octet(shifted.law), 0, NULL,
+		CHECK(pcm_call_data_octet(&shifted, silence_octet(shifted.law), 0, true, NULL,
 			&transmitted, &event) == PCM_CALL_OK, "data offset failed");
 	}
 	return true;
@@ -6738,7 +6783,7 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 		int16_t expected;
 		CHECK(pcm_r_tx_next(&rd, &symbol) == PCM_R_TX_OK &&
 		      v92_upstream_data_tx_next(&data, NULL, NULL, &expected) == V92_UPSTREAM_DATA_TX_OK &&
-		      pcm_call_data_octet(&call, symbol.octet, symbol.sample, NULL, &transmitted, &event) == PCM_CALL_OK &&
+		      pcm_call_data_octet(&call, symbol.octet, symbol.sample, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
 		      transmitted == encode_octet(call.law, expected), "remote Rd changed data framing");
 		CHECK(i < PCM_R_RX_MIN_SYMBOLS - 1u || event.kind == PCM_CALL_DATA_NONE,
 		      "qualified Rd escaped as host payload");
@@ -6843,7 +6888,7 @@ static bool v92_digital_rate_prefix_contracts(const struct pcm_call *online)
 		      call.stage == PCM_CALL_RETRAIN_SILENCE && !call.failed && !call.v92_rate_renegotiation_active,
 		      "missing Ru did not use bounded full retrain");
 		struct pcm_call_data_event event;
-		CHECK(pcm_call_data_octet(&shifted, silence_octet(shifted.law), 0, NULL,
+		CHECK(pcm_call_data_octet(&shifted, silence_octet(shifted.law), 0, true, NULL,
 			&transmitted, &event) == PCM_CALL_OK, "digital data offset failed");
 	}
 	return true;
@@ -6937,7 +6982,7 @@ static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned in
 			enum pcm_call_result result;
 			if (call->stage == PCM_CALL_DATA_PATH) {
 				struct pcm_call_data_event event;
-				result = pcm_call_data_octet(call, received[role], decode_octet(law, received[role]),
+				result = pcm_call_data_octet(call, received[role], decode_octet(law, received[role]), true,
 					NULL, &transmitted[role], &event);
 			} else {
 				struct pcm_call_observation observation;
@@ -7022,7 +7067,7 @@ static bool test_v92_rate_request(void)
 								&source[role], &frames[role], &transmitted[role]), "post-rate payload failed");
 						} else if (call->stage == PCM_CALL_DATA_PATH) {
 							struct pcm_call_data_event event;
-							CHECK(pcm_call_data_octet(call, received[role], decode_octet(law, received[role]),
+							CHECK(pcm_call_data_octet(call, received[role], decode_octet(law, received[role]), true,
 								NULL, &transmitted[role], &event) == PCM_CALL_OK, "peer Ru detection failed");
 						} else {
 							struct pcm_call_observation observation;
@@ -7262,7 +7307,7 @@ static bool test_v92_downstream_reselection(void)
 
 						/* Drain the old call until it detects the peer's retrain;
 						 * this epoch's payload starts at the new data handoff. */
-						CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]),
+						CHECK(pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]), true,
 									 NULL, &tx[side], &event) == PCM_CALL_OK,
 						      "downstream-reselection retrain detection failed");
 					} else
@@ -7370,7 +7415,7 @@ static bool test_v92_upstream_reselection(void)
 						      "mode-reselection data handoff failed");
 					enum pcm_call_result result = call->stage == PCM_CALL_DATA_PATH ?
 						pcm_call_data_octet(call, received[side],
-							decode_octet(law, received[side]), NULL,
+							decode_octet(law, received[side]), true, NULL,
 							&transmitted[side], &data) :
 						pcm_call_octet(call, received[side],
 							decode_octet(law, received[side]),
@@ -8012,7 +8057,7 @@ static bool test_validation(void)
 	      transmit_rate == UINT32_C(0xa5a55a5a) &&
 	      receive_rate == UINT32_C(0x5a5aa5a5) &&
 	      pcm_call_data_octet(
-		      &call, silence_octet(G711_LAW_PCMU), 0, NULL,
+		      &call, silence_octet(G711_LAW_PCMU), 0, true, NULL,
 		      &output, &data_event) == PCM_CALL_INVALID_STATE &&
 	      output == 0xa5 &&
 	      memcmp(&observation, &saved_observation,

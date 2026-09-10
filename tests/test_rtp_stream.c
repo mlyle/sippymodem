@@ -92,6 +92,7 @@ static bool test_receive_playout_and_recording(void)
 	uint8_t workspace[TEST_WORKSPACE];
 	uint8_t packet[32];
 	uint8_t source_octets[ARRAY_LENGTH(payload)];
+	bool received_mask[ARRAY_LENGTH(payload)];
 	int16_t samples[ARRAY_LENGTH(payload)];
 	size_t packet_size;
 	enum rtp_result packet_result;
@@ -108,7 +109,14 @@ static bool test_receive_playout_and_recording(void)
 		      packet_result == RTP_OK,
 	      "stream rejected receive packet");
 	CHECK(capture.calls == 0, "arrival was recorded before playout");
-	CHECK(rtp_stream_play(&stream, samples, source_octets,
+	struct rtp_stream before = stream;
+	CHECK(rtp_stream_play(&stream, samples, source_octets, (bool *)samples,
+		ARRAY_LENGTH(samples), &report) == MEDIA_INVALID_ARGUMENT &&
+	      rtp_stream_play(&stream, samples, source_octets, (bool *)source_octets,
+		ARRAY_LENGTH(samples), &report) == MEDIA_INVALID_ARGUMENT &&
+	      memcmp(&stream, &before, sizeof(stream)) == 0 && capture.calls == 0,
+	      "overlapping provenance output consumed playout");
+	CHECK(rtp_stream_play(&stream, samples, source_octets, received_mask,
 				  ARRAY_LENGTH(samples), &report) ==
 		      MEDIA_OK,
 	      "stream playout failed");
@@ -116,7 +124,8 @@ static bool test_receive_playout_and_recording(void)
 		      memcmp(source_octets, expected_octets,
 			     sizeof(expected_octets)) == 0 &&
 		      report.prefill_samples == 2 &&
-		      report.received_samples == 2,
+		      report.received_samples == 2 &&
+		      memcmp(received_mask, (bool[]){ false, false, true, true }, sizeof(received_mask)) == 0,
 	      "stream playout samples or codewords are wrong");
 	CHECK(capture.calls == 2 &&
 		      capture.streams[0] ==
@@ -285,7 +294,7 @@ static bool test_validation_is_transactional(void)
 	CHECK(packet_size == 999 && stream.transmit_header.sequence == sequence &&
 		      capture.calls == 0,
 	      "failed transmit changed state or emitted a recording");
-	CHECK(rtp_stream_play(&stream, playout, NULL,
+	CHECK(rtp_stream_play(&stream, playout, NULL, NULL,
 				  TEST_WORKSPACE + 1, NULL) ==
 		      MEDIA_INVALID_ARGUMENT,
 	      "stream accepted playout beyond its workspace");

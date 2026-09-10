@@ -263,11 +263,11 @@ bool sip_session_media_is_configured(
 
 enum media_result sip_session_play(
 	struct sip_session *session, int16_t *samples,
-	uint8_t *source_octets, size_t count,
+	uint8_t *source_octets, bool *received_mask, size_t count,
 	struct rtp_playout_report *report)
 {
 	return session != NULL ?
-		       rtp_runtime_play(session->rtp, samples, source_octets, count,
+		       rtp_runtime_play(session->rtp, samples, source_octets, received_mask, count,
 						    report) :
 		       MEDIA_INVALID_ARGUMENT;
 }
