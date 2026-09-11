@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 enum {
 	/* Preserve the analogue tone A/guard level across retraining. */
@@ -253,19 +254,60 @@ static uint8_t data_constellation_size(uint8_t rate_index)
 }
 
 static void generate_constellation(
-	struct pcm_constellation *constellation, uint8_t size)
+	struct pcm_constellation *constellation, uint8_t size, uint8_t last)
 {
-	unsigned int span = V90_CONSTELLATION_LAST_UCODE -
-			    V90_CONSTELLATION_FIRST_UCODE;
+	unsigned int first = last + 1u - size;
+	if (first > V90_CONSTELLATION_FIRST_UCODE)
+		first = V90_CONSTELLATION_FIRST_UCODE;
+	unsigned int span = last - first;
 	unsigned int divisor = size - 1u;
 
+	*constellation = (struct pcm_constellation){ 0 };
 	for (unsigned int ordinal = 0; ordinal < size; ++ordinal) {
 		uint8_t ucode = (uint8_t)(
-			V90_CONSTELLATION_FIRST_UCODE +
+			first +
 			(span * ordinal + divisor / 2u) / divisor);
 
 		add_ucode(constellation, ucode);
 	}
+}
+
+bool v90_profile_select_constellation(
+	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
+	struct pcm_constellation *constellation)
+{
+	struct v90_pcm_mapping candidate;
+	uint8_t size;
+
+	if (constellation == NULL || !v90_pcm_mapping_is_valid(mapping) ||
+	    mapping->codec_plane_differs || maximum_power == 0)
+		return false;
+	for (size_t slot = 1; slot < V90_CP_FRAME_INTERVALS; ++slot)
+		if (memcmp(&mapping->transmit[0], &mapping->transmit[slot],
+			   sizeof(mapping->transmit[0])) != 0)
+			return false;
+	size = mapping->modulus[0];
+	candidate = *mapping;
+	/* Preserve distinct labels, reducing the highest level until the exact
+	 * 8.5.2 average fits. A lower K can make the highest labels more likely,
+	 * so start afresh on every negotiated rate rather than retain a cap. */
+	for (int last = V90_CONSTELLATION_LAST_UCODE; last >= size - 1; --last) {
+		uint32_t floor, ceiling;
+
+		generate_constellation(&candidate.transmit[0], size, (uint8_t)last);
+		for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			candidate.transmit[slot] = candidate.transmit[0];
+			candidate.codec[slot] = candidate.transmit[0];
+		}
+		if (v90_pcm_mapping_power(&candidate, V90_PCM_MAPPING_CODEC,
+					 mapping->law, &floor, &ceiling) != V90_PCM_MAPPING_OK)
+			return false;
+		if (ceiling <= maximum_power) {
+			*constellation = candidate.transmit[0];
+			return true;
+		}
+	}
+	return false;
 }
 
 static struct v90_cp_parameters cp_parameters(
@@ -295,7 +337,8 @@ static struct v90_cp_parameters cp_parameters(
 	generate_constellation(
 		&parameters.transmit_constellations[0],
 		kind == V90_CP_TRAINING ? V90_INITIAL_CONSTELLATION_SIZE :
-			data_constellation_size(data_rate_index));
+			data_constellation_size(data_rate_index),
+		V90_CONSTELLATION_LAST_UCODE);
 	return parameters;
 }
 
@@ -350,6 +393,7 @@ enum v90_profile_result v90_profile_init(
 	selected.enabled_downstream_rate_mask =
 		downstream.enabled_mask;
 	if (role == V90_ANALOG_MODEM) {
+		selected.analog_phase4.generate_constellations = true;
 		selected.local_info0.analog = analog_info0();
 		selected.local_info1.analog = analog_info1(&upstream);
 		selected.phase3.analog.nominal_peak_amplitude =

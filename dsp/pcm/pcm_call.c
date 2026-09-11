@@ -5,6 +5,7 @@
 #include "memory_region.h"
 #include "pcm_phase3_entry.h"
 #include "pcm_phase3_handoff.h"
+#include "v90_profile.h"
 #include "v92_data_quality.h"
 #include "v34_phase2_selection.h"
 #include "v92_cpd_direct.h"
@@ -155,6 +156,11 @@ static bool analog_configuration_is_valid(
 	enum g711_law law)
 {
 	return v90_info1a_is_valid(&info1->analog) &&
+	       (!phase4->generate_constellations ||
+		(phase4->training_parameters.constellation_count == 1u &&
+		 !phase4->training_parameters.codec_constellations_differ &&
+		 phase4->data_parameters.constellation_count == 1u &&
+		 !phase4->data_parameters.codec_constellations_differ)) &&
 	       phase3->analog.nominal_peak_amplitude > 0 &&
 	       v90_dil_profile_is_valid(phase3->analog.dil_profile) &&
 	       phase4->training_parameters.kind == V90_CP_TRAINING &&
@@ -202,6 +208,9 @@ static bool v92_analog_configuration_is_valid(
 	if (!info1->pcm_upstream_enabled)
 		return true;
 	return selected->law == law &&
+	       (!phase4->generate_constellations ||
+		(selected->cpt.constellation_count == 1u &&
+		 !selected->cpt.codec_constellations_differ)) &&
 	       selected->local_info1a.local_md_length_276_symbol_units == 0u &&
 	       v92_pcm_info1a_equal(
 		       &info1->v92_analog, &selected->local_info1a) &&
@@ -235,9 +244,11 @@ static bool v92_digital_configuration_is_valid(
 
 static bool v92_analog_phase4_configuration_is_valid(
 	const struct pcm_call_v92_analog_phase4_configuration *configuration,
-	uint32_t enabled_downstream_rate_mask, enum g711_law law)
+	uint32_t enabled_downstream_rate_mask, enum g711_law law, bool generated)
 {
 	return v92_suvu_parameters_are_valid(&configuration->suvu) &&
+	       (!generated || (configuration->cpu.constellation_count == 1u &&
+			       !configuration->cpu.codec_constellations_differ)) &&
 	       !configuration->suvu.acknowledges_cpd &&
 	       v92_cpu_parameters_are_valid(&configuration->cpu) &&
 	       configuration->cpu.law == law &&
@@ -298,7 +309,8 @@ static bool configuration_is_valid(
 				v92_analog_phase4_configuration_is_valid(
 					&configuration->v92_analog_phase4,
 					configuration->enabled_downstream_rate_mask,
-					configuration->law));
+					configuration->law,
+					configuration->analog_phase4.generate_constellations));
 		return v92_info0d_is_valid(
 			       &configuration->local_info0.v92_digital) &&
 		       configuration->local_info0.v92_digital.v92_capable &&
@@ -371,7 +383,8 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 			v92_analog_phase4_configuration_is_valid(
 				&call->v92_analog_phase4_configuration,
 				call->enabled_downstream_rate_mask,
-				call->law)) :
+				call->law,
+				call->analog_phase4_configuration.generate_constellations)) :
 		       v92_digital_configuration_is_valid(
 			       &call->local_info1,
 			       &call->phase3_configuration,
@@ -1599,6 +1612,39 @@ static enum pcm_call_result entry_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
+static uint32_t downstream_power_limit(
+	const struct pcm_call *call, const struct v90_pcm_mapping *training)
+{
+	/* V.90 Table 15, in 16-bit linear RMS units. V.92 INFO0d retains
+	 * the same power code and measurement-point fields. */
+	static const uint16_t rms[] = {
+		15124, 14276, 13480, 12724, 12012, 11340, 10708, 10108,
+		9544, 9008, 8504, 8028, 7580, 7156, 6756, 6380,
+		6020, 5684, 5368, 5068, 4784, 4516, 4264, 4024,
+		3800, 3588, 3388, 3196, 3020, 2852, 2692, 2540,
+	};
+	const struct v90_info0d *peer = call->protocol == PCM_PROTOCOL_V92 ?
+		&call->peer_info0.v92_digital.v90 : &call->peer_info0.digital;
+	uint32_t level = rms[peer->maximum_transmit_power];
+	uint32_t limit = level * level;
+
+	if (training != NULL) {
+		uint32_t lower, upper;
+		enum v90_pcm_mapping_plane plane = peer->measure_power_at_codec_output ?
+			V90_PCM_MAPPING_CODEC : V90_PCM_MAPPING_TRANSMIT;
+
+		if (v90_pcm_mapping_power(training, plane, call->law, &lower, &upper) !=
+		    V90_PCM_MAPPING_OK)
+			return 0;
+		/* V.90 8.5.2 limits data to +3 dB above CPt (not twice the
+		 * power). Use the same conservative design bound for V.92 CPu. */
+		uint32_t relative = (uint32_t)(lower * pow(10.0, 0.3));
+		if (relative < limit)
+			limit = relative;
+	}
+	return limit;
+}
+
 static enum pcm_call_result enter_phase3(struct pcm_call *call)
 {
 	struct pcm_phase3_entry entry;
@@ -1618,9 +1664,23 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 	if (entry.selection.upstream == PCM_UPSTREAM_PCM &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		struct v92_phase3_analog_station station;
+		struct v92_phase3_analog_station_configuration config =
+			call->phase3_configuration.v92_analog;
+
+		if (call->analog_phase4_configuration.generate_constellations) {
+			struct v90_pcm_mapping mapping;
+			uint32_t lower, upper, limit = downstream_power_limit(call, NULL);
+
+			if (v90_pcm_mapping_init_from_v92_cpt(&mapping, &config.cpt) != V90_PCM_MAPPING_OK ||
+			    v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, call->law,
+						  &lower, &upper) != V90_PCM_MAPPING_OK ||
+			    (upper > limit && !v90_profile_select_constellation(&mapping, limit,
+						&config.cpt.transmit_constellations[0])))
+				return PCM_CALL_UNUSABLE_SELECTION;
+		}
 
 		result = pcm_phase3_entry_start_v92_analog(
-			&entry, &call->phase3_configuration.v92_analog,
+			&entry, &config,
 			&station);
 		if (result != PCM_PHASE3_ENTRY_OK)
 			return entry_result(result);
@@ -2191,6 +2251,22 @@ static void limit_analog_phase4_lookahead(
 			maximum_lookahead;
 }
 
+static bool select_analog_constellations(struct pcm_call *call)
+{
+	struct pcm_call_analog_phase4_configuration *config = &call->analog_phase4_configuration;
+	struct v90_pcm_mapping training, data;
+
+	if (!config->generate_constellations)
+		return true;
+	return v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
+	       v90_profile_select_constellation(&training, downstream_power_limit(call, NULL),
+			&config->training_parameters.transmit_constellations[0]) &&
+	       v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
+	       v90_pcm_mapping_init(&data, &config->data_parameters) == V90_PCM_MAPPING_OK &&
+	       v90_profile_select_constellation(&data, downstream_power_limit(call, &training),
+			&config->data_parameters.transmit_constellations[0]);
+}
+
 static enum pcm_call_result enter_phase4(struct pcm_call *call)
 {
 	struct pcm_call next = *call;
@@ -2224,6 +2300,8 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 				.maximum_spectral_shaping_lookahead);
 		next.analog_phase4_configuration.data_parameters
 			.selected_rate_index = selected_rate_index;
+		if (!select_analog_constellations(&next))
+			return PCM_CALL_UNUSABLE_SELECTION;
 		if (!call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
 		result = analog_phase4_result(v90_phase4_analog_station_init(
@@ -2341,8 +2419,8 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		if (!call->v92_peer_jd_stored ||
 		    !call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
-		/* Keep the configured constellation and rate ceiling across retrains.
-		 * A lower common rate needs fewer modulus bits, not a new constellation. */
+		/* Keep the configured capacity and rate ceiling across retrains.
+		 * Generated levels are reselected after K changes; explicit maps stay. */
 		cpu.data_rate_number = highest_downstream_rate(
 			call->enabled_downstream_rate_mask & call->v92_peer_jd.data_rate_capability_mask &
 			((UINT32_C(1) << cpu.data_rate_number) - 1u));
@@ -2352,6 +2430,14 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		    call->v92_peer_jd.maximum_spectral_shaping_lookahead)
 			cpu.spectral_lookahead_frames =
 				call->v92_peer_jd.maximum_spectral_shaping_lookahead;
+		if (call->analog_phase4_configuration.generate_constellations) {
+			struct v90_pcm_mapping mapping;
+			uint32_t limit = downstream_power_limit(call, &mixed->receive.stream.decoder.mapping);
+
+			if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &cpu) != V90_PCM_MAPPING_OK ||
+			    !v90_profile_select_constellation(&mapping, limit, &cpu.transmit_constellations[0]))
+				return PCM_CALL_UNUSABLE_SELECTION;
+		}
 		if (v92_phase3_analog_station_transmit_handoff(
 			    &mixed->phase3, &handoff) !=
 		    V92_PHASE3_ANALOG_STATION_OK)

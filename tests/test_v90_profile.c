@@ -193,6 +193,8 @@ static bool test_generated_profiles(void)
 				      pcm_call_init(&call, &configuration) ==
 					      PCM_CALL_OK &&
 				      pcm_call_is_valid(&call) &&
+				      configuration.analog_phase4.generate_constellations ==
+					      (role == V90_ANALOG_MODEM) &&
 				      call.local_role == role && call.law == law &&
 				      configuration.phase2_nominal_amplitude ==
 					      (role == V90_DIGITAL_MODEM ?
@@ -514,6 +516,73 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static bool test_constellation_power_selection(void)
+{
+	/* Independent normative Table 15 limits; include the entire advertised
+	 * range, not only the default -12 dBm0 peer. Keep capacity for 56k while
+	 * the negotiated K ranges through all 22 downstream rates. */
+	static const uint32_t rms[] = {
+		15124, 14276, 13480, 12724, 12012, 11340, 10708, 10108,
+		9544, 9008, 8504, 8028, 7580, 7156, 6756, 6380,
+		6020, 5684, 5368, 5068, 4784, 4516, 4264, 4024,
+		3800, 3588, 3388, 3196, 3020, 2852, 2692, 2540,
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration profile;
+
+		CHECK(v90_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 56000, NULL) ==
+			      V90_PROFILE_OK, "power selection profile failed");
+		for (size_t code = 0; code < ARRAY_LENGTH(rms); ++code) {
+			for (uint8_t rate = 1; rate <= V90_CP_RATE_INDEX_MAX; ++rate) {
+				struct v90_cp_parameters cp = profile.analog_phase4.data_parameters;
+				struct v90_pcm_mapping mapping, before;
+				struct pcm_constellation selected = { 0 }, saved = selected;
+				uint32_t lower, upper, limit = rms[code] * rms[code];
+
+				cp.selected_rate_index = rate;
+				CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK,
+				      "rate %u mapping failed", rate);
+				before = mapping;
+				CHECK(v90_profile_select_constellation(&mapping, limit, &selected) &&
+				      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+				      "law %u power %zu rate %u selection changed input", law, code, rate);
+				cp.transmit_constellations[0] = selected;
+				CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+				      mapping.modulus[0] == before.modulus[0] &&
+				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
+							    &lower, &upper) == V90_PCM_MAPPING_OK && upper <= limit,
+				      "law %u power %zu rate %u selection exceeded bound or lost capacity", law, code, rate);
+				selected = saved;
+				CHECK(!v90_profile_select_constellation(NULL, limit, &selected) &&
+				      !v90_profile_select_constellation(&mapping, limit, NULL) &&
+				      !v90_profile_select_constellation(&mapping, 0, &selected) &&
+				      !v90_profile_select_constellation(&mapping, 1, &selected) &&
+				      memcmp(&selected, &saved, sizeof(selected)) == 0,
+				      "rejected or impossible selection changed output");
+				/* A valid different codec plane is not a direct-law profile. */
+				unsigned int first = 0;
+				while (!(mapping.codec[0].ucode_mask[first / 8u] & (1u << (first % 8u))))
+					++first;
+				mapping.codec[0].ucode_mask[first / 8u] &= (uint8_t)~(1u << (first % 8u));
+				mapping.codec[0].ucode_mask[15] |= 0x80u;
+				mapping.codec_plane_differs = true;
+				CHECK(v90_pcm_mapping_is_valid(&mapping) &&
+				      !v90_profile_select_constellation(&mapping, limit, &selected) &&
+				      memcmp(&selected, &saved, sizeof(selected)) == 0,
+				      "selection accepted a non-direct mapping");
+				mapping.transmit[0] = mapping.codec[0];
+				mapping.codec_plane_differs = false;
+				CHECK(v90_pcm_mapping_is_valid(&mapping) &&
+				      !v90_profile_select_constellation(&mapping, limit, &selected) &&
+				      memcmp(&selected, &saved, sizeof(selected)) == 0,
+				      "selection accepted unequal interval constellations");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -545,6 +614,7 @@ int main(void)
 		{ "digital INFO0 profile", test_digital_info0_profile },
 		{ "advertised Phase 2 power", test_advertised_phase2_power },
 		{ "generated role and media profiles", test_generated_profiles },
+		{ "generated constellation power selection", test_constellation_power_selection },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 		{ "result names", test_result_names },

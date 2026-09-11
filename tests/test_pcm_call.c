@@ -362,6 +362,8 @@ static struct pcm_call_configuration v92_configuration(
 		.analog_phase4 = conventional.analog_phase4,
 		.digital_phase4 = conventional.digital_phase4,
 	};
+	/* This fixture supplies explicit maps; only native profiles adapt them. */
+	configuration.analog_phase4.generate_constellations = false;
 
 	if (role == V90_ANALOG_MODEM) {
 		configuration.local_info0.v92_analog = (struct v92_info0a){
@@ -3568,7 +3570,7 @@ static bool check_short_quiet_receive(
 
 static bool run_full_retrain(
 	enum pcm_protocol protocol, enum g711_law law,
-	enum v90_modem_role initiating_role)
+	enum v90_modem_role initiating_role, bool generated)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -3595,6 +3597,17 @@ static bool run_full_retrain(
 			      V90_JD_RATE_CAPABILITY_MASK, 0u)),
 	      "law %u retrain endpoints did not initialize",
 	      (unsigned int)law);
+	if (generated) {
+		struct pcm_call_configuration profile;
+
+		CHECK(v90_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 28000, NULL) ==
+			      V90_PROFILE_OK, "generated conventional profile failed");
+		analog.call.analog_phase4_configuration = profile.analog_phase4;
+		/* This variant exercises V.92's conventional child, not the fixture's
+		 * separately supplied multi-plane PCM-upstream CPt/CPu records. */
+		if (protocol == PCM_PROTOCOL_V92)
+			analog.call.local_info1.pcm_upstream_enabled = false;
+	}
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
 		      "law %u retrain setup stopped at %zu",
@@ -3751,6 +3764,18 @@ static bool run_full_retrain(
 	      !pcm_call_has_failed(&digital.call),
 	      "law %u role %u did not complete local/remote retrain",
 	      (unsigned int)law, (unsigned int)initiating_role);
+	if (generated) {
+		const struct pcm_call_analog_phase4_configuration *profile = &analog.call.analog_phase4_configuration;
+		struct v90_pcm_mapping training, data;
+		uint32_t tf, tc, df, dc;
+
+		CHECK(v90_pcm_mapping_init(&training, &profile->training_parameters) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_init(&data, &profile->data_parameters) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&training, V90_PCM_MAPPING_CODEC, law, &tf, &tc) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&data, V90_PCM_MAPPING_CODEC, law, &df, &dc) == V90_PCM_MAPPING_OK &&
+		      tc <= 5368u * 5368u && dc <= 5368u * 5368u && dc <= tf * pow(10.0, 0.3),
+		      "generated conventional call exceeded peer power after retrain");
+	}
 	return true;
 }
 
@@ -3759,8 +3784,10 @@ static bool test_full_retrain(void)
 	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
 	     protocol <= PCM_PROTOCOL_V92; ++protocol)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM) &&
-			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM),
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, false) &&
+			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM, false) &&
+			      run_full_retrain(protocol, law,
+				      law == G711_LAW_PCMU ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, true),
 			      "protocol %u law %u full retrain matrix failed", protocol, law);
 	return true;
 }
@@ -7510,7 +7537,7 @@ static bool test_v92_received_lookahead(void)
 	return true;
 }
 
-static bool test_v92_downstream_reselection(void)
+static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 {
 	static const uint32_t peer_masks[] = {
 		(UINT32_C(1) << 4u) | (UINT32_C(1) << 9u) | (UINT32_C(1) << 18u),
@@ -7519,6 +7546,7 @@ static bool test_v92_downstream_reselection(void)
 	};
 	static const uint8_t expected_rates[] = { 10u, 1u, 11u };
 	static const uint8_t peer_lookaheads[] = { 1u, 3u, 2u };
+	const uint32_t peer_rms = power_code == 23u ? 4024u : 2540u;
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
@@ -7526,6 +7554,19 @@ static bool test_v92_downstream_reselection(void)
 		struct pcm_call calls[2];
 		struct channel line;
 
+		if (generated) {
+			CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000, 56000,
+					      14u, NULL) == V92_PROFILE_OK,
+			      "generated downstream-reselection profile failed");
+			ac.v92_analog_phase4.cpu.data_rate_number = 11u;
+			/* Exercise reduction of an over-power generated training seed as
+			 * well as preservation of the native sparse CPt at the default limit. */
+			if (power_code == 31u)
+				ac.phase3.v92_analog.cpt.transmit_constellations[0] =
+					ac.analog_phase4.training_parameters.transmit_constellations[0];
+			dc.local_info0.v92_digital.v90.maximum_transmit_power = power_code;
+			dc.local_info0.v92_digital.v90.measure_power_at_codec_output = power_code == 23u;
+		}
 		/* Keep holes below the configured CPu ceiling and a common enabled
 		 * rate above it. Neither may replace the highest usable selection. */
 		ac.enabled_downstream_rate_mask = UINT32_C(1) | (UINT32_C(1) << 9u) |
@@ -7544,6 +7585,7 @@ static bool test_v92_downstream_reselection(void)
 			uint32_t frames[2] = { 0u, 0u };
 			bool data_started[2] = { false, false };
 			bool cpt_checked = false;
+			struct v90_pcm_mapping accepted_training;
 			uint32_t at, ar, dt, dr;
 			struct v92_cpu_parameters expected = ac.v92_analog_phase4.cpu;
 			const struct v92_cpu_parameters *received;
@@ -7593,6 +7635,20 @@ static bool test_v92_downstream_reselection(void)
 						size_t sent_bits, got_bits;
 
 						expected_cpt.spectral_lookahead = peer_lookaheads[epoch];
+						if (generated) {
+							uint32_t lower, upper;
+
+							CHECK(v90_pcm_mapping_init_from_v92_cpt(&accepted_training, &cpt) ==
+								      V90_PCM_MAPPING_OK &&
+							      v90_pcm_mapping_power(&accepted_training, V90_PCM_MAPPING_CODEC, law,
+										    &lower, &upper) == V90_PCM_MAPPING_OK &&
+							      upper <= peer_rms * peer_rms &&
+							      accepted_training.modulus[0] ==
+								      pcm_constellation_count(&expected_cpt.transmit_constellations[0]),
+							      "generated CPt exceeded peer power or lost capacity");
+							if (power_code == 31u)
+								expected_cpt.transmit_constellations[0] = cpt.transmit_constellations[0];
+						}
 						CHECK(v92_cpt_encode(&expected_cpt, sent, sizeof(sent), &sent_bits) == V92_CPT_OK &&
 						      v92_cpt_encode(&cpt, got, sizeof(got), &got_bits) == V92_CPT_OK &&
 						      sent_bits == got_bits && memcmp(sent, got, (sent_bits + 7u) / 8u) == 0,
@@ -7617,6 +7673,24 @@ static bool test_v92_downstream_reselection(void)
 			if (expected.spectral_lookahead_frames > peer_lookaheads[epoch])
 				expected.spectral_lookahead_frames = peer_lookaheads[epoch];
 			expected.acknowledges_cpd = received->acknowledges_cpd;
+			if (generated) {
+				struct v90_pcm_mapping data, original;
+				uint32_t tf = 0, tc = 0, df = 0, dc_power = 0;
+				enum v90_pcm_mapping_plane plane = power_code == 31u ?
+					V90_PCM_MAPPING_TRANSMIT : V90_PCM_MAPPING_CODEC;
+
+				CHECK(v90_pcm_mapping_init_from_v92_cpu(&data, received) == V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_init_from_v92_cpu(&original, &expected) == V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_power(&accepted_training, plane, law, &tf, &tc) == V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_power(&data, plane, law, &df, &dc_power) == V90_PCM_MAPPING_OK &&
+				      tc <= peer_rms * peer_rms &&
+				      dc_power <= peer_rms * peer_rms &&
+				      dc_power <= tf * pow(10.0, 0.3) &&
+				      data.modulus[0] == original.modulus[0],
+				      "law %u epoch %zu generated CPu power %u, CPt %u, limit %u, or capacity changed",
+				      law, epoch, dc_power, tf, peer_rms * peer_rms);
+				expected.transmit_constellations[0] = received->transmit_constellations[0];
+			}
 			CHECK(v92_cpu_encode(&expected, 24u, expected_wire, sizeof(expected_wire),
 					     &expected_bits) == V92_CPU_OK &&
 			      v92_cpu_encode(received, 24u, received_wire, sizeof(received_wire),
@@ -7648,6 +7722,13 @@ static bool test_v92_downstream_reselection(void)
 		}
 	}
 	return true;
+}
+
+static bool test_v92_downstream_reselection(void)
+{
+	return run_v92_downstream_reselection(false, 23u) &&
+	       run_v92_downstream_reselection(true, 23u) &&
+	       run_v92_downstream_reselection(true, 31u);
 }
 
 static bool test_v92_upstream_reselection(void)

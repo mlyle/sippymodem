@@ -2,7 +2,6 @@
 
 #include "v92_profile.h"
 
-#include "pcm_rate.h"
 #include "v90_profile.h"
 #include "v92_pcm_dil.h"
 #include "v92_pcm_phase3_trn1u.h"
@@ -12,9 +11,6 @@
 enum {
 	V92_TRAINING_UCODE = 91,
 	V92_SU_MINIMUM_MAGNITUDE = 256,
-	V92_CONSTELLATION_FIRST_UCODE = 24,
-	V92_CONSTELLATION_LAST_UCODE = 108,
-	V92_INITIAL_CONSTELLATION_SIZE = 8,
 	V92_CPT_SELECTED_RATE_INDEX = 9,
 	V92_SIGN_REDUNDANCY = 1,
 };
@@ -26,42 +22,6 @@ static void add_ucode(
 {
 	constellation->ucode_mask[ucode / 8u] |=
 		(uint8_t)(1u << (ucode % 8u));
-}
-
-static void generate_constellation(
-	struct pcm_constellation *constellation, uint8_t size)
-{
-	unsigned int span = V92_CONSTELLATION_LAST_UCODE -
-			    V92_CONSTELLATION_FIRST_UCODE;
-	unsigned int divisor = size - 1u;
-
-	for (unsigned int ordinal = 0; ordinal < size; ++ordinal) {
-		uint8_t ucode = (uint8_t)(
-			V92_CONSTELLATION_FIRST_UCODE +
-			(span * ordinal + divisor / 2u) / divisor);
-
-		add_ucode(constellation, ucode);
-	}
-}
-
-static uint8_t data_constellation_size(uint8_t rate_number)
-{
-	uint8_t sign_bits = V92_CPU_FRAME_INTERVALS - V92_SIGN_REDUNDANCY;
-	uint8_t modulus_bits = (uint8_t)(
-		PCM_DOWNSTREAM_BASE_FRAME_BITS + rate_number - sign_bits);
-	uint64_t required = UINT64_C(1) << modulus_bits;
-
-	for (uint8_t size = V92_INITIAL_CONSTELLATION_SIZE;
-	     size < PCM_CONSTELLATION_UCODES; ++size) {
-		uint64_t capacity = 1;
-
-		for (size_t interval = 0;
-		     interval < V92_CPU_FRAME_INTERVALS; ++interval)
-			capacity *= size;
-		if (capacity >= required)
-			return size;
-	}
-	return PCM_CONSTELLATION_UCODES;
 }
 
 static void generate_cpt_constellation(
@@ -102,27 +62,24 @@ static struct v92_cpt_parameters cpt_parameters(enum g711_law law)
 }
 
 static struct v92_cpu_parameters cpu_parameters(
-	enum g711_law law, uint8_t downstream_rate_number)
+	const struct v90_cp_parameters *data)
 {
 	struct v92_cpu_parameters parameters = {
-		.law = law,
+		.law = data->law,
 		.trn1d_ratio_q3_13 = UINT16_C(0x2000),
-		.data_rate_number = downstream_rate_number,
+		.data_rate_number = data->selected_rate_index,
 		.sign_redundancy = V92_SIGN_REDUNDANCY,
 		.spectral_lookahead_frames = 2,
 		.constellation_count = 1,
 	};
 
-	generate_constellation(
-		&parameters.transmit_constellations[0],
-		data_constellation_size(downstream_rate_number));
+	parameters.transmit_constellations[0] = data->transmit_constellations[0];
 	return parameters;
 }
 
 static void configure_analog(
 	struct pcm_call_configuration *selected,
 	const struct pcm_call_configuration *v90,
-	const struct pcm_downstream_rate_selection *downstream,
 	uint32_t upstream_rate_mask)
 {
 	struct v92_pcm_info1a info1 = analog_info1();
@@ -150,7 +107,7 @@ static void configure_analog(
 		.wait_for_cpu = true,
 	};
 	selected->v92_analog_phase4.cpu = cpu_parameters(
-		selected->law, downstream->selected_data_rate_number);
+		&v90->analog_phase4.data_parameters);
 }
 
 static void configure_digital(
@@ -202,7 +159,6 @@ enum v92_profile_result v92_profile_init(
 {
 	struct pcm_call_configuration v90;
 	struct pcm_call_configuration selected = { 0 };
-	struct pcm_downstream_rate_selection downstream;
 	uint32_t upstream_rate_mask = 0u;
 
 	if (configuration == NULL || !pcm_modem_role_is_valid(role) ||
@@ -211,10 +167,7 @@ enum v92_profile_result v92_profile_init(
 	    maximum_upstream_data_rate_number >
 		    V92_PROFILE_MAX_UPSTREAM_DATA_RATE_NUMBER)
 		return V92_PROFILE_INVALID_ARGUMENT;
-	if (!pcm_downstream_rates_select(
-		    &downstream, minimum_downstream_rate,
-		    maximum_downstream_rate) ||
-	    (maximum_upstream_data_rate_number != 0u &&
+	if ((maximum_upstream_data_rate_number != 0u &&
 	     !v92_pcm_dil_rate_mask_through(
 		    maximum_upstream_data_rate_number,
 		    &upstream_rate_mask)) ||
@@ -228,7 +181,7 @@ enum v92_profile_result v92_profile_init(
 	selected.protocol = PCM_PROTOCOL_V92;
 	if (role == V90_ANALOG_MODEM)
 		configure_analog(
-			&selected, &v90, &downstream, upstream_rate_mask);
+			&selected, &v90, upstream_rate_mask);
 	else
 		configure_digital(
 			&selected, &v90,

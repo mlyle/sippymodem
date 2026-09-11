@@ -18,7 +18,6 @@
 #include <v34_frame_schedule.h>
 #include <v90_profile.h>
 #include <v90_datapump.h>
-#include <v92_profile.h>
 
 #include "channel_bench.h"
 #include "test.h"
@@ -1235,10 +1234,12 @@ static bool preserves_link_across_carrier_return(enum DP_ID id)
 	       id == DP_V22 || id == DP_V23;
 }
 
-static bool contains_v92_ru(const uint8_t *octets, size_t count, enum g711_law law)
+static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g711_law law)
 {
 	/* Observe the exact 384/24 waveform without accessing datapump state or
-	 * using its sequence generator. The accepted data-frame tail comes first. */
+	 * using its sequence generator. These direct-law profiles use one fixed
+	 * magnitude per signal (Ru or Rd), selected during negotiation rather than
+	 * fixed by the profile seed. The accepted data-frame tail comes first. */
 	for (size_t start = 0; start + 408u <= count; ++start) {
 		if (decode_codeword(law, octets[start]) <= 8)
 			continue;
@@ -1266,25 +1267,17 @@ static bool exercise_v92_rate_exchange(
 	struct integration_endpoint *endpoints[] = { caller, answerer };
 	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
-	struct pcm_call_configuration profile;
-	struct v90_pcm_mapping mapping;
 	enum g711_law law;
 
-	CHECK(codec_law(codec, &law) &&
-	      v92_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 28000, 4, NULL) == V92_PROFILE_OK &&
-	      v90_pcm_mapping_init_from_v92_cpu(&mapping, &profile.v92_analog_phase4.cpu) == V90_PCM_MAPPING_OK,
-	      "rate-exchange signal monitor setup failed");
+	CHECK(codec_law(codec, &law), "rate-exchange signal monitor setup failed");
 	for (unsigned epoch = 0; epoch < 4; ++epoch) {
 		uint8_t payload[2][2 * PAYLOAD];
-		uint8_t prefix[PREFIX];
+		uint8_t prefix[2][PREFIX];
 		struct lapm_state retained[2];
-		struct pcm_r_rx rd;
 		unsigned quiet[2] = { 0 };
 		bool poll_seen[2] = { false };
-		size_t prefix_count = 0;
+		size_t prefix_count[2] = { 0 };
 		unsigned settled = 0;
-		CHECK(pcm_r_rx_init(&rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) == PCM_R_RX_OK,
-		      "Rd monitor initialization failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
 			CHECK(modem_is_online(m, DP_V92) && m->cfg.ec &&
@@ -1339,14 +1332,8 @@ static bool exercise_v92_rate_exchange(
 					uint8_t code = endpoints[side]->transmit_codewords[sample];
 					quiet[side] = abs(decode_codeword(law, code)) <= 8 ? quiet[side] + 1u : 0u;
 					CHECK(quiet[side] < QUIET_LIMIT, "rate exchange fell back to full-retrain silence");
-					if (side == analog && prefix_count < sizeof(prefix))
-						prefix[prefix_count++] = code;
-					if (side != analog && !pcm_r_rx_is_complete(&rd)) {
-						enum pcm_r_rx_result result = pcm_r_rx_receive(&rd, code);
-						CHECK(result == PCM_R_RX_BUFFERING || result == PCM_R_RX_SEQUENCE_MISMATCH ||
-						      result == PCM_R_RX_SIGNAL_DETECTED || result == PCM_R_RX_BAR_STARTED ||
-						      result == PCM_R_RX_BAR_COMPLETE, "Rd observation failed");
-					}
+					if (prefix_count[side] < sizeof(prefix[side]))
+						prefix[side][prefix_count[side]++] = code;
 				}
 			}
 			bool delivered = caller->output_count == sizeof(payload[1]) &&
@@ -1358,7 +1345,8 @@ static bool exercise_v92_rate_exchange(
 			if (settled == 25u)
 				break;
 		}
-		CHECK(pcm_r_rx_is_complete(&rd) && contains_v92_ru(prefix, prefix_count, law),
+		CHECK(contains_pcm_rate_signal(prefix[0], prefix_count[0], law) &&
+		      contains_pcm_rate_signal(prefix[1], prefix_count[1], law),
 		      "rate exchange %u did not emit Ru/Rd", epoch);
 		CHECK(poll_seen[0] && poll_seen[1],
 		      "rate exchange %u did not poll retained LAPM state (polls=%d/%d)",

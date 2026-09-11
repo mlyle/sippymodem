@@ -100,6 +100,11 @@ union pcm_call_phase3_configuration {
 };
 
 struct pcm_call_analog_phase4_configuration {
+	/* Generate direct G.711 downstream constellations within the peer's
+	 * power limit after each rate selection (including V.92 CPt/CPu).
+	 * Seeds must use one shared row without a separate codec plane.
+	 * False preserves caller-supplied constellations without remapping. */
+	bool generate_constellations;
 	/* Initial CPt sent when the conventional Phase 3 line completes. */
 	struct v90_cp_parameters training_parameters;
 	/* First data CP sent after the initial CPt/Ri exchange. */

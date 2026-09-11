@@ -39,6 +39,14 @@ enum v90_profile_result v90_profile_init(
 	unsigned int minimum_rate, unsigned int maximum_rate,
 	const struct v90_upstream_policy *upstream);
 
+/* Select a common-row direct G.711 constellation at the mapping's current
+ * K, retaining its cardinality so later retrains can raise the rate again.
+ * Transmit and codec planes must be identical, with one shared row. Power
+ * is mean square in 16-bit linear units. Failure leaves the output alone. */
+bool v90_profile_select_constellation(
+	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
+	struct pcm_constellation *constellation);
+
 const char *v90_profile_result_name(enum v90_profile_result result);
 
 #endif /* V90_PROFILE_H */
