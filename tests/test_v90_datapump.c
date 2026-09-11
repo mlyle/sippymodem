@@ -799,8 +799,8 @@ static bool run_pcm_pair(
 	CHECK(!separate_upstream_sample || sample_codeword_separated,
 	      "PCMA upstream sample never diverged from its test codeword");
 	if (protocol == DP_V90 || pcm_upstream_max_drn == 0) {
-		CHECK(!v90_datapump_start_rate_renegotiation(analog_dp) &&
-		      !v90_datapump_start_rate_renegotiation(digital_dp),
+		CHECK(!v90_datapump_start_rate_renegotiation(analog_dp, false) &&
+		      !v90_datapump_start_rate_renegotiation(digital_dp, true),
 		      "non-PCM-upstream call accepted a V.92 rate exchange");
 	}
 	{
@@ -1298,8 +1298,8 @@ static bool test_v92_pcm_upstream_selection(void)
 	      analog_dp->id == DP_V92 && digital_dp->id == DP_V92 &&
 	      operations->use_count == 2,
 	      "V.92 PCM-upstream peers did not share the PCM call owner");
-	CHECK(!v90_datapump_start_rate_renegotiation(analog_dp) &&
-	      !v90_datapump_start_rate_renegotiation(digital_dp),
+	CHECK(!v90_datapump_start_rate_renegotiation(analog_dp, true) &&
+	      !v90_datapump_start_rate_renegotiation(digital_dp, false),
 	      "untrained PCM-upstream peers accepted a rate exchange");
 	for (size_t index = 0; index < MODEM_FRAG * 2u; ++index) {
 		uint8_t next_analog;
@@ -1428,8 +1428,8 @@ static bool test_validation(void)
 	modem.max_rate = MODEM_MAX_RATE;
 	datapump = operations->create(
 		&modem, DP_V90, 1, MODEM_RATE, MODEM_FRAG, operations);
-	CHECK(!v90_datapump_start_rate_renegotiation(NULL) &&
-	      !v90_datapump_start_rate_renegotiation(datapump),
+	CHECK(!v90_datapump_start_rate_renegotiation(NULL, true) &&
+	      !v90_datapump_start_rate_renegotiation(datapump, false),
 	      "invalid or unstarted datapump accepted a rate exchange");
 	CHECK(datapump != NULL && operations->use_count == 1 &&
 	      operations->process(

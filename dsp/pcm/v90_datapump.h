@@ -22,10 +22,12 @@ bool v90_datapump_is_busy(void);
 
 /* Request an online PCM-upstream rate exchange without changing
  * terminal command mode. Ordinary media processing owns Ru/Rd and reconnects
- * the retained link. Full retraining (including ATO1) remains separate.
+ * the retained link. request_silence requests the intervening timed pause
+ * for this exchange only; it does not change the call's profile preference.
+ * Full retraining (including ATO1) remains separate.
  * Unsupported protocols, non-online calls and duplicates return false
  * without changing the call or its training session. Serialize with media. */
-bool v90_datapump_start_rate_renegotiation(struct dp *dp);
+bool v90_datapump_start_rate_renegotiation(struct dp *dp, bool request_silence);
 
 /* The same retained host-link contract, using V.92 RM/Rf fast exchange and
  * the preceding data modulation instead of Ru/Rd and fresh training. */

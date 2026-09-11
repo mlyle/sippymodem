@@ -1239,7 +1239,7 @@ static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g
 	/* Observe the exact 384/24 waveform without accessing datapump state or
 	 * using its sequence generator. These direct-law profiles use one fixed
 	 * magnitude per constellation, selected during negotiation rather than
-	 * fixed by the profile seed. Rf is ++-- instead of Ru/Rd's +++---.
+	 * fixed by the profile seed. Rf is ++-- instead of Ru/Rd/Rt's +++---.
 	 * The accepted data-frame tail comes first. */
 	for (size_t start = 0; start + 408u <= count; ++start) {
 		if (decode_codeword(law, octets[start]) <= 8)
@@ -1264,21 +1264,26 @@ static bool exercise_v92_rate_exchange(
 	/* A digital request sends Rd before the analogue emits Ru. Allow both
 	 * signals and the media-frame buffering in the bounded Ru observation. */
 	enum { PAYLOAD = 128, PREFIX = 2 * (PCM_R_SYMBOLS + PCM_R_BAR_SYMBOLS + SIP_FRAME_SAMPLES),
-	       FRAME_LIMIT = 250, QUIET_LIMIT = MODEM_RATE * 70 / 1000 };
+	       FRAME_LIMIT = 250, QUIET_LIMIT = MODEM_RATE * 70 / 1000,
+	       PAUSE_LIMIT = 2 * MODEM_RATE };
 	struct integration_endpoint *endpoints[] = { caller, answerer };
 	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	unsigned host_state[] = { caller->modem->state, answerer->modem->state };
 	enum g711_law law;
 
 	CHECK(codec_law(codec, &law), "rate-exchange signal monitor setup failed");
-	for (unsigned epoch = 0; epoch < 8; ++epoch) {
-		bool fast = epoch >= 4u;
-		bool (*start_exchange)(struct dp *) = fast ? v90_datapump_start_fast_exchange :
-			v90_datapump_start_rate_renegotiation;
+	for (unsigned epoch = 0; epoch < 12; ++epoch) {
+		bool fast = epoch >= 4u && epoch < 8u;
+		bool pause = epoch >= 8u && epoch < 11u;
 		uint8_t payload[2][2 * PAYLOAD];
 		uint8_t prefix[2][PREFIX];
+		uint8_t resume[PREFIX];
 		struct lapm_state retained[2];
 		unsigned quiet[2] = { 0 };
+		unsigned longest_silence = 0u;
+		bool resume_started = false;
+		size_t resume_count = 0u;
 		bool poll_seen[2] = { false };
 		size_t prefix_count[2] = { 0 };
 		unsigned settled = 0;
@@ -1308,9 +1313,18 @@ static bool exercise_v92_rate_exchange(
 			      "side %u has no outstanding partial LAPM frame", side);
 			retained[side] = m->ec.lapm;
 		}
-		unsigned initiator = epoch % 4u < 2u ? analog : 1u - analog;
-		CHECK(start_exchange(owned[initiator]) && !start_exchange(owned[initiator]),
+		unsigned initiator = (epoch < 8u ? epoch % 4u < 2u : epoch != 9u) ? analog : 1u - analog;
+		CHECK(fast ? v90_datapump_start_fast_exchange(owned[initiator]) &&
+		      !v90_datapump_start_fast_exchange(owned[initiator]) :
+		      v90_datapump_start_rate_renegotiation(owned[initiator], pause) &&
+		      !v90_datapump_start_rate_renegotiation(owned[initiator], !pause),
 		      "native rate request or duplicate rejection failed");
+		/* Exercise each role requesting silence, simultaneous requests, and
+		 * then a plain exchange that must not inherit the preceding pause. */
+		if (epoch == 10u)
+			CHECK(v90_datapump_start_rate_renegotiation(owned[1u - initiator], true) &&
+			      !v90_datapump_start_rate_renegotiation(owned[1u - initiator], false),
+			      "simultaneous pause request or duplicate rejection failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
 			CHECK(memcmp(&m->ec.lapm, &retained[side], sizeof(retained[side])) == 0 && !m->command,
@@ -1324,7 +1338,8 @@ static bool exercise_v92_rate_exchange(
 			      "rate exchange media failed at frame %u", frame);
 			for (unsigned side = 0; side < 2; ++side) {
 				struct modem *m = endpoints[side]->modem;
-				CHECK(m->dp == owned[side] && m->cfg.ec && !m->command &&
+				CHECK(modem_is_online(m, DP_V92) && m->state == host_state[side] &&
+				      m->dp == owned[side] && m->cfg.ec && !m->command &&
 				      m->ec.lapm.state == retained[side].state &&
 				      m->ec.lapm.v44_path == retained[side].v44_path &&
 				      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
@@ -1333,8 +1348,18 @@ static bool exercise_v92_rate_exchange(
 				poll_seen[side] |= m->ec.lapm.retrain_poll != 0;
 				for (unsigned sample = 0; sample < SIP_FRAME_SAMPLES; ++sample) {
 					uint8_t code = endpoints[side]->transmit_codewords[sample];
-					quiet[side] = abs(decode_codeword(law, code)) <= 8 ? quiet[side] + 1u : 0u;
-					CHECK(quiet[side] < QUIET_LIMIT, "rate exchange fell back to full-retrain silence");
+					bool silent = abs(decode_codeword(law, code)) <= 8;
+					if (pause && side != analog && !silent && quiet[side] >= QUIET_LIMIT)
+						resume_started = true;
+					quiet[side] = silent ? quiet[side] + 1u : 0u;
+					CHECK(quiet[side] < (pause && side != analog ? PAUSE_LIMIT : QUIET_LIMIT),
+					      "rate exchange fell back to full retrain or exceeded its pause bound");
+					if (side != analog) {
+						if (quiet[side] > longest_silence)
+							longest_silence = quiet[side];
+						if (resume_started && resume_count < sizeof(resume))
+							resume[resume_count++] = code;
+					}
 					if (prefix_count[side] < sizeof(prefix[side]))
 						prefix[side][prefix_count[side]++] = code;
 				}
@@ -1352,6 +1377,10 @@ static bool exercise_v92_rate_exchange(
 		      (contains_pcm_rate_signal(prefix[0], prefix_count[0], law, false) &&
 		       contains_pcm_rate_signal(prefix[1], prefix_count[1], law, false)),
 		      "rate exchange %u did not emit %s", epoch, fast ? "Rf" : "Ru/Rd");
+		CHECK(!pause || (longest_silence >= MODEM_RATE * 300 / 1000 &&
+		      contains_pcm_rate_signal(resume, resume_count, law, false)),
+		      "rate exchange %u did not transmit bounded Ucode-zero silence then Rt (silence=%u resume=%zu)",
+		      epoch, longest_silence, resume_count);
 		CHECK(poll_seen[0] && poll_seen[1],
 		      "rate exchange %u did not poll retained LAPM state (polls=%d/%d)",
 		      epoch, poll_seen[0], poll_seen[1]);

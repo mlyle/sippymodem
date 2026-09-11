@@ -313,7 +313,7 @@ static int retrain_v90(struct dp *dp)
 	return 0;
 }
 
-static bool start_parameter_exchange(struct dp *dp, bool fast)
+static bool start_parameter_exchange(struct dp *dp, bool fast, bool request_silence)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
 	struct training_session training;
@@ -324,23 +324,35 @@ static bool start_parameter_exchange(struct dp *dp, bool fast)
 		return false;
 	training = datapump->training;
 	call = datapump->call;
+	if (!fast) {
+		if (datapump->role == V90_ANALOG_MODEM)
+			call.v92_analog_phase4_configuration.suvu.request_silence = request_silence;
+		else
+			call.v92_digital_phase4_configuration.suvd.request_silence = request_silence;
+	}
 	if ((fast ? pcm_call_start_fast_exchange(&call) : pcm_call_start_rate_renegotiation(&call)) != PCM_CALL_OK ||
 	    training_session_start_retrain(&training, TRAINING_LOCAL_RETRAIN) !=
 		    TRAINING_SESSION_OK)
 		return false;
+	/* The rate owner has copied this request into its running SUVu/SUVd.
+	 * Do not make a one-exchange pause sticky for later peer requests. */
+	call.v92_analog_phase4_configuration.suvu.request_silence =
+		datapump->call.v92_analog_phase4_configuration.suvu.request_silence;
+	call.v92_digital_phase4_configuration.suvd.request_silence =
+		datapump->call.v92_digital_phase4_configuration.suvd.request_silence;
 	datapump->call = call;
 	datapump->training = training;
 	return true;
 }
 
-bool v90_datapump_start_rate_renegotiation(struct dp *dp)
+bool v90_datapump_start_rate_renegotiation(struct dp *dp, bool request_silence)
 {
-	return start_parameter_exchange(dp, false);
+	return start_parameter_exchange(dp, false, request_silence);
 }
 
 bool v90_datapump_start_fast_exchange(struct dp *dp)
 {
-	return start_parameter_exchange(dp, true);
+	return start_parameter_exchange(dp, true, false);
 }
 
 static bool observe_upstream_quality(struct v90_datapump *datapump)
