@@ -376,6 +376,52 @@ static bool test_decision_rejection_and_reacquisition(void)
 	return true;
 }
 
+static bool test_decision_type_error_recovery(void)
+{
+	const enum v34_station_role roles[] = {
+		V34_CALLING_STATION, V34_ANSWERING_STATION,
+	};
+	const struct v34_mp_parameters plain = parameters(false);
+	const struct v34_mp_parameters acknowledged = parameters(true);
+	const struct v34_mp_type1_parameters long_ack = type1_parameters(true);
+
+	for (size_t role = 0u; role < ARRAY_LENGTH(roles); ++role)
+	for (unsigned int next = 0u; next < 2u; ++next) {
+		struct phase4_receive_link link;
+		struct v34_mp_receive_event event;
+
+		CHECK(initialize_receive_link(&link, roles[role],
+			      V34_CONSTELLATION_16_POINT, &plain) &&
+		      receive_current_record(&link.transmitter, &link.receiver,
+			      SIZE_MAX, &event) &&
+		      v34_phase4_mp_start_next_type0_record(&link.transmitter,
+			      &plain) == V34_PHASE4_MP_OK &&
+		      receive_current_record(&link.transmitter, &link.receiver,
+			      SIZE_MAX, &event) && event.type == V34_MP_RECEIVE_TYPE0,
+		      "type-error fixture failed to acquire");
+		/* Symbol 4's mapped dibit carries the record type at bit 18. */
+		CHECK(v34_phase4_mp_start_next_type0_record(&link.transmitter,
+			      &plain) == V34_PHASE4_MP_OK &&
+		      receive_current_record(&link.transmitter, &link.receiver,
+			      4u, &event) && event.type == V34_MP_RECEIVE_NO_EVENT &&
+		      link.receiver.records.frame_bit_count == V34_MP_TYPE1_FRAME_BITS,
+		      "symbol error did not change Type 0 into Type 1");
+		CHECK((next == 0u ?
+			v34_phase4_mp_start_next_type0_record(
+				&link.transmitter, &acknowledged) :
+			v34_phase4_mp_start_next_type1_record(
+				&link.transmitter, &long_ack)) == V34_PHASE4_MP_OK &&
+		      receive_current_record(&link.transmitter, &link.receiver,
+			      SIZE_MAX, &event) && event.frame_result == V34_MP_OK &&
+		      (next == 0u ? event.type == V34_MP_RECEIVE_TYPE0 &&
+			parameters_are_equal(&event.parameters.type0, &acknowledged) :
+			event.type == V34_MP_RECEIVE_TYPE1 &&
+			type1_parameters_are_equal(&event.parameters.type1, &long_ack)),
+		      "symbol type error consumed retry role=%zu type=%u", role, next);
+	}
+	return true;
+}
+
 static bool test_receiver_validation(void)
 {
 	struct v34_training_sequence trn;
@@ -908,6 +954,7 @@ int main(void)
 		{ "decided-symbol receiver", test_decided_symbol_receiver },
 		{ "decision rejection and reacquisition",
 		  test_decision_rejection_and_reacquisition },
+		{ "decision type-error recovery", test_decision_type_error_recovery },
 		{ "receiver validation", test_receiver_validation },
 		{ "role and constellation records",
 		  test_role_and_constellation_records },

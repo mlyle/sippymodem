@@ -482,6 +482,20 @@ static void clear_receive_frame(struct v34_mp_receiver *receiver)
 	receiver->stage = V34_MP_SEARCH_SYNC;
 }
 
+static uint8_t receive_trailing_ones(
+	const struct v34_mp_receiver *receiver)
+{
+	uint8_t count = 0u;
+
+	for (size_t bit = receiver->bit_index;
+	     bit > 0u && count < V34_MP_TYPE0_FRAME_SYNC_BITS; --bit) {
+		if (packed_msb_bit(receiver->frame, bit - 1u) == 0u)
+			break;
+		count++;
+	}
+	return count;
+}
+
 static void begin_receive_frame(struct v34_mp_receiver *receiver)
 {
 	clear_receive_frame(receiver);
@@ -497,6 +511,7 @@ static void complete_receive_frame(
 	struct v34_mp_receive_event *event)
 {
 	enum v34_mp_result result;
+	uint8_t suffix_ones;
 
 	if (receiver->frame_bit_count == V34_MP_TYPE0_FRAME_BITS) {
 		struct v34_mp_parameters parameters;
@@ -520,7 +535,11 @@ static void complete_receive_frame(
 	event->frame_result = result;
 	if (result != V34_MP_OK)
 		event->type = V34_MP_RECEIVE_REJECTED;
+	/* Rejection can occur inside the next valid record's sync prefix. */
+	suffix_ones = result == V34_MP_OK ? 0u :
+		receive_trailing_ones(receiver);
 	clear_receive_frame(receiver);
+	receiver->sync_one_count = suffix_ones;
 }
 
 static void receive_frame_bit(
@@ -541,6 +560,12 @@ static void receive_frame_bit(
 		return;
 	}
 
+	/* Mandatory start bits exclude this prefix inside a valid MP. */
+	if (bit == 0u && receive_trailing_ones(receiver) ==
+				V34_MP_TYPE0_FRAME_SYNC_BITS) {
+		begin_receive_frame(receiver);
+		return;
+	}
 	packed_msb_set_bit(receiver->frame, receiver->bit_index, bit != 0);
 	receiver->bit_index++;
 	if (receiver->stage == V34_MP_RECEIVE_TYPE) {

@@ -286,6 +286,67 @@ static bool test_stream_rejection_and_reacquisition(void)
 	return true;
 }
 
+static bool test_stream_truncation_recovery(void)
+{
+	const struct v34_mp_parameters type0 = base_parameters(true);
+	const struct v34_mp_type1_parameters type1 = type1_parameters();
+	const size_t lengths[] = {
+		V34_MP_TYPE0_FRAME_BITS, V34_MP_TYPE1_FRAME_BITS,
+	};
+	uint8_t frames[2][2][V34_MP_TYPE1_FRAME_BYTES] = { 0 };
+
+	for (unsigned int ack = 0u; ack < 2u; ++ack) {
+		struct v34_mp_parameters selected0 = type0;
+		struct v34_mp_type1_parameters selected1 = type1;
+
+		selected0.acknowledges_peer_mp = ack != 0u;
+		selected1.common.acknowledges_peer_mp = ack != 0u;
+		CHECK(v34_mp_type0_encode(&selected0, frames[ack][0],
+					 sizeof(frames[ack][0])) == V34_MP_OK &&
+		      v34_mp_type1_encode(&selected1, frames[ack][1],
+					 sizeof(frames[ack][1])) == V34_MP_OK,
+		      "truncated MP fixture did not encode");
+	}
+	for (unsigned int old = 0u; old < ARRAY_LENGTH(lengths); ++old)
+	for (unsigned int next = 0u; next < ARRAY_LENGTH(lengths); ++next)
+	for (size_t prefix = 0u; prefix < lengths[old]; ++prefix) {
+		struct v34_mp_receiver receiver;
+		struct v34_mp_receive_event event;
+		unsigned int accepted = 0u;
+
+		CHECK(v34_mp_receiver_init(&receiver) == V34_MP_OK,
+		      "truncated MP receiver did not initialize");
+		for (size_t bit = 0u; bit < prefix; ++bit)
+			CHECK(v34_mp_receive_bit(&receiver,
+				      reference_frame_bit(frames[0][old], bit),
+				      &event) == V34_MP_OK &&
+			      event.type == V34_MP_RECEIVE_NO_EVENT,
+			      "truncated MP prefix emitted a record");
+		for (size_t bit = 0u; bit < lengths[next]; ++bit) {
+			CHECK(v34_mp_receive_bit(&receiver,
+				      reference_frame_bit(frames[1][next], bit),
+				      &event) == V34_MP_OK &&
+			      v34_mp_receiver_is_valid(&receiver),
+			      "MP retry stopped at bit %zu", bit);
+			if (event.type == V34_MP_RECEIVE_NO_EVENT ||
+			    event.type == V34_MP_RECEIVE_REJECTED)
+				continue;
+			CHECK(bit + 1u == lengths[next] &&
+			      event.frame_result == V34_MP_OK &&
+			      (next == 0u ? event.type == V34_MP_RECEIVE_TYPE0 &&
+				parameters_are_equal(&event.parameters.type0, &type0) :
+				event.type == V34_MP_RECEIVE_TYPE1 &&
+				type1_parameters_are_equal(&event.parameters.type1, &type1)),
+			      "MP retry accepted the wrong record");
+			accepted++;
+		}
+		CHECK(accepted == 1u && receiver.stage == V34_MP_SEARCH_SYNC &&
+		      receiver.sync_one_count == 0u,
+		      "lost retry old=%u next=%u prefix=%zu", old, next, prefix);
+	}
+	return true;
+}
+
 static bool test_stream_validation(void)
 {
 	struct v34_mp_receiver receiver;
@@ -968,6 +1029,7 @@ int main(void)
 		{ "stream receiver", test_stream_receiver },
 		{ "stream rejection and reacquisition",
 		  test_stream_rejection_and_reacquisition },
+		{ "truncated record recovery", test_stream_truncation_recovery },
 		{ "stream validation", test_stream_validation },
 		{ "known wire images", test_known_wire_images },
 		{ "Type 1 known wire image", test_type1_known_wire_image },
