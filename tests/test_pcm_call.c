@@ -23,7 +23,7 @@
 enum {
 	CALL_SAMPLE_LIMIT = 120000,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
-	MAX_LINE_DELAY_CHARACTERS = 13,
+	MAX_LINE_DELAY_CHARACTERS = 801,
 	PHASE2_NOMINAL_AMPLITUDE = 12000,
 	PHASE3_NOMINAL_AMPLITUDE = 6000,
 	V92_SU_MINIMUM_MAGNITUDE = 256,
@@ -6142,9 +6142,9 @@ static bool v92_data_boundary(struct pcm_call *call)
 	return true;
 }
 
-static bool v92_payload_sample(
+static bool v92_payload_sample_with_idle(
 	struct pcm_call *call, uint8_t received, int16_t sample, struct pcm_payload_source *source,
-	uint32_t *received_frames, uint8_t *transmitted)
+	uint32_t *received_frames, uint8_t *transmitted, uint64_t *idle_frames)
 {
 	struct pcm_call_data_sources sources = {
 		.pcm_upstream = pcm_payload, .pcm_upstream_context = source,
@@ -6194,6 +6194,20 @@ static bool v92_payload_sample(
 			count = event.frame.pcm_upstream.bit_count;
 		}
 		CHECK(count != 0u && count <= sizeof(expected), "invalid PCM payload size");
+		/* Ed/B1d can finish before the digital peer receives E2u. Its
+		 * source is still absent then, so account for the transmitted idle
+		 * prefix separately. The caller verifies its exact frame count;
+		 * neither arbitrary bytes nor idle inside the payload are skipped. */
+		if (idle_frames != NULL && *received_frames == 0u) {
+			bool idle = true;
+			for (size_t bit = 0u; bit < count; ++bit)
+				idle &= bits[bit] == 1u;
+			if (idle) {
+				(*idle_frames)++;
+				*transmitted = generated;
+				return true;
+			}
+		}
 		pcm_payload_bits(expected, count, *received_frames);
 		CHECK(memcmp(bits, expected, count) == 0,
 		      "role %u PCM payload changed at frame %u", call->local_role, *received_frames);
@@ -6201,6 +6215,14 @@ static bool v92_payload_sample(
 	}
 	*transmitted = generated;
 	return true;
+}
+
+static bool v92_payload_sample(
+	struct pcm_call *call, uint8_t received, int16_t sample, struct pcm_payload_source *source,
+	uint32_t *received_frames, uint8_t *transmitted)
+{
+	return v92_payload_sample_with_idle(call, received, sample, source,
+		received_frames, transmitted, NULL);
 }
 
 static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
@@ -6403,6 +6425,7 @@ static bool capture_v92_duplex_data(
 	struct pcm_payload_source upstream = { .reject = true };
 	struct pcm_payload_source downstream = { .reject = true };
 	uint32_t upstream_received = 0u, downstream_received = 0u;
+	uint64_t downstream_idle = 0u, expected_downstream_idle = 0u;
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
 	unsigned retrains[2] = { 0u, 0u };
@@ -6472,6 +6495,7 @@ static bool capture_v92_duplex_data(
 				if (role == 0u) {
 					upstream = (struct pcm_payload_source){ .reject = true };
 					downstream_received = 0u;
+					downstream_idle = 0u;
 				} else {
 					downstream = (struct pcm_payload_source){ .reject = true };
 					upstream_received = 0u;
@@ -6486,6 +6510,11 @@ static bool capture_v92_duplex_data(
 					      "B1 recovery repeated or increased the failed upstream rate");
 					previous_rate = rate;
 					digital_boundary = clock;
+					const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+					uint64_t accepted = path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA ?
+						path->downstream.data.accepted_frames : 0u;
+					expected_downstream_idle = accepted > V90_PHASE4_B1D_FRAMES ?
+						accepted - V90_PHASE4_B1D_FRAMES : 0u;
 					CHECK(v92_bad_b1_stays_clamped(call) && v92_wrong_b1_stays_clamped(call),
 					      "V.92 B1 quality gate failed");
 				}
@@ -6510,9 +6539,10 @@ static bool capture_v92_duplex_data(
 					CHECK(pcm_call_data_octet(call, received, sample, true, NULL, transmitted, &event) ==
 						      PCM_CALL_OK, "V.92 peer did not accept training recovery");
 				} else {
-					CHECK(v92_payload_sample(call, received, sample, role == 0u ? &upstream : &downstream,
+					CHECK(v92_payload_sample_with_idle(call, received, sample, role == 0u ? &upstream : &downstream,
 							      role == 0u ? &downstream_received : &upstream_received,
-							      transmitted), "V.92 payload failed at clock %zu", clock);
+							      transmitted, role == 0u ? &downstream_idle : NULL),
+					      "V.92 payload failed at clock %zu", clock);
 				}
 				if (call->stage == PCM_CALL_RETRAIN_SILENCE)
 					retrains[role]++;
@@ -6551,6 +6581,9 @@ static bool capture_v92_duplex_data(
 		if (upstream_received >= payload_frames && downstream_received >= payload_frames)
 			break;
 	}
+	CHECK(downstream_idle == expected_downstream_idle,
+	      "V.92 downstream idle prefix changed: received %llu, sent %llu",
+	      (unsigned long long)downstream_idle, (unsigned long long)expected_downstream_idle);
 	CHECK(upstream_received >= payload_frames && downstream_received >= payload_frames &&
 	      upstream.rejection_checked && downstream.rejection_checked &&
 	      analog_boundary < digital_boundary && deadline_checked[0] && deadline_checked[1] &&
@@ -6642,6 +6675,27 @@ static bool test_v92_duplex_data(void)
 			CHECK(run_v92_duplex_data(law, delay, false, NULL), "V.92 duplex data failed");
 		CHECK(run_v92_duplex_data(law, 1u, true, NULL), "V.92 long-CPd duplex data failed");
 	}
+	return true;
+}
+
+static bool test_v92_delayed_duplex_data(void)
+{
+	static const uint8_t rates[] = { 1u, 19u };
+	static const size_t delays[] = { 400u, 801u };
+
+	/* 50 and 100.125 ms each way separate the two data handoffs and
+	 * exercise a nonzero six-symbol phase, with actual PCM upstream. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t i = 0u; i < ARRAY_LENGTH(rates); ++i) {
+			const struct v92_upstream_offer offer = {
+				.peer_mask = UINT32_C(1) << (rates[i] - 1u),
+				.local_maximum = rates[i], .expected = rates[i],
+			};
+			for (size_t j = 0u; j < ARRAY_LENGTH(delays); ++j)
+				CHECK(run_v92_duplex_data(law, delays[j], false, &offer),
+				      "V.92 delayed duplex failed: law %u rate %u delay %zu",
+				      law, rates[i], delays[j]);
+		}
 	return true;
 }
 
@@ -9834,6 +9888,7 @@ int main(void)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
