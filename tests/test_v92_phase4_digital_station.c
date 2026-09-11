@@ -859,7 +859,7 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 		full.extend_e2u = compact.extend_e2u = false;
 		CHECK(v92_pcm_mapping_init(&retained, law, &previous) == V92_PCM_MAPPING_OK &&
 		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
-			TEST_LU, &downstream, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_OK &&
+			TEST_LU, &downstream, &cpu, &retained, false, 80u) == V92_PHASE4_ANALOG_STATION_OK &&
 		      !station.cpd_received && !station.transmit.control.received_cpd &&
 		      !station.transmit.control.cpu.acknowledges_cpd && !station.mapping.cpd.acknowledges_cpu &&
 		      !v92_phase4_analog_station_can_handoff(&station) &&
@@ -870,11 +870,11 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 		struct pcm_downstream_rx invalid = downstream;
 		invalid.protocol = PCM_PROTOCOL_V90;
 		CHECK(v92_phase4_analog_station_init_after_ru(NULL, V92_CONSTELLATION_4_POINT,
-			TEST_LU, &downstream, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+			TEST_LU, &downstream, &cpu, &retained, false, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
-			TEST_LU, &invalid, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
+			TEST_LU, &invalid, &cpu, &retained, false, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS &&
 		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
-			TEST_LU, &downstream, &cpu, NULL, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
+			TEST_LU, &downstream, &cpu, NULL, false, 80u) == V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT &&
 		      memcmp(&station, &before, sizeof(station)) == 0, "invalid station reentry was not transactional");
 	}
 	CHECK(v92_cpd_encode(&wire, training_mapping.frame_bits, full_sequence,
@@ -886,8 +886,8 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 		uint8_t invalid[V92_CPD_BASE_MAX_FRAME_BYTES];
 		size_t bits, ignored = 0u;
 		const struct v92_suvd_parameters silence = { .request_silence = true };
-		/* No prior mapping may be invented at initial training. Likewise,
-		 * an unsupported silence request must not falsely complete RRN. */
+		/* Initial training cannot invent a prior mapping. A silence request
+		 * during RRN retains one, but still needs mutual acknowledgement. */
 		CHECK(omitted ?
 		      v92_suvd_encode(&silence, training_mapping.frame_bits, invalid, sizeof(invalid), &bits) == V92_SUVD_OK :
 		      v92_cpd_encode_base(&compact, training_mapping.frame_bits, invalid, sizeof(invalid), &bits) == V92_CPD_OK,
@@ -895,11 +895,13 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 		enum v92_phase4_analog_station_result result = V92_PHASE4_ANALOG_STATION_OK;
 		for (unsigned repeat = 0u; repeat < 3u && result == V92_PHASE4_ANALOG_STATION_OK; ++repeat)
 			result = push_full_cpd_sequence(&rejected_source, &rejected, invalid, bits, &ignored);
-		CHECK(result == V92_PHASE4_ANALOG_STATION_FAILED && rejected.failed &&
+		CHECK((omitted ? result == V92_PHASE4_ANALOG_STATION_OK &&
+		      v92_phase4_analog_tx_silence_requested(&rejected.transmit) :
+		      result == V92_PHASE4_ANALOG_STATION_FAILED && rejected.failed) &&
 		      !v92_phase4_analog_station_can_handoff(&rejected) &&
 		      memcmp(&rejected.mapping, &station.mapping, sizeof(station.mapping)) == 0 &&
-		      memcmp(&rejected.transmit, &station.transmit, sizeof(station.transmit)) == 0,
-		      "unsupported control changed the committed mapping or transmitter");
+		      (omitted || memcmp(&rejected.transmit, &station.transmit, sizeof(station.transmit)) == 0),
+		      "control request changed the committed mapping or prematurely finished");
 	}
 	for (unsigned int repeat = 0u; repeat < 2u; ++repeat)
 		CHECK(push_full_cpd_sequence(
@@ -2276,6 +2278,92 @@ static bool test_silence_status(void)
 	return true;
 }
 
+static bool run_analog_pause_confirmation(enum g711_law law, enum v92_constellation_size constellation,
+	unsigned lookahead, unsigned requests, unsigned confirmation)
+{
+	struct v92_cpt_parameters cpt = cpt_parameters(law);
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_parameters cpd = cpd_parameters(law);
+	struct v92_pcm_mapping upstream;
+	struct v90_pcm_mapping training;
+	struct pcm_downstream_rx receive;
+	struct full_cpd_source source;
+	struct v92_phase4_analog_station station;
+	struct v92_suvd_parameters suvd = { .request_silence = (requests & 2u) != 0u };
+	size_t events = 0;
+	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
+	size_t bits;
+	cpt.spectral_lookahead = lookahead;
+	cpt.sign_redundancy = lookahead ? 1u : 0u;
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt) == V90_PCM_MAPPING_OK &&
+	      v92_pcm_mapping_init(&upstream, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, &training, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_phase4_analog_station_init_after_ru(&station, constellation, TEST_LU, &receive, &cpu,
+		&upstream, (requests & 1u) != 0u, 240u) == V92_PHASE4_ANALOG_STATION_OK &&
+	      full_cpd_source_init(&source, &training) && push_full_cpd_training(&source, &station, &events),
+	      "analogue pause fixture failed");
+	/* Unacknowledged repeats allow the local status ACK to reach its wire
+	 * boundary. Then send a good ACK, a CRC-damaged ACK, or Ed with no ACK.
+	 * Scrambling and shaping continue through the actual encoded records. */
+	for (unsigned record = 0; record < 30u && !v92_phase4_analog_station_can_handoff(&station); ++record) {
+		bool final = station.transmit.control.acknowledgment_sent;
+		suvd.acknowledges_cpu = final && confirmation != 2u;
+		CHECK(v92_suvd_encode(&suvd, training.frame_bits, sequence, sizeof(sequence), &bits) == V92_SUVD_OK,
+		      "pause SUVd encode failed");
+		if (final && confirmation == 1u)
+			sequence[4] ^= 0x80u;
+		for (size_t first = 0; first < bits; first += training.frame_bits) {
+			uint8_t frame[V90_PCM_FRAME_MAX_BITS];
+			for (unsigned n = 0; n < V90_CP_FRAME_INTERVALS; ++n) {
+				int16_t up;
+				CHECK(v92_phase4_analog_station_transmit(&station, &up) == V92_PHASE4_ANALOG_STATION_OK,
+				      "pause upstream status stopped");
+			}
+			for (unsigned n = 0; n < training.frame_bits; ++n)
+				frame[n] = sequence_bit(sequence, first + n);
+			CHECK(push_full_cpd_frame(&source, &station, frame, &events) == V92_PHASE4_ANALOG_STATION_OK,
+			      "pause downstream status stopped");
+		}
+		if (final)
+			break;
+	}
+	CHECK(station.transmit.control.acknowledgment_sent && !station.cpd_received &&
+	      !station.transmit.control.cpu_sent &&
+	      (!confirmation || !v92_phase4_analog_station_can_handoff(&station)),
+	      "lost SUVd acknowledgement completed the pause or started CPu");
+	/* Finish the shaper's retained status tail, then Ed. The final Ed frame
+	 * is consumed once and authorizes only a pause handoff, never new data. */
+	for (unsigned n = 0; n < lookahead + V90_PHASE4_ED_FRAMES + 2u &&
+	     !v92_phase4_analog_station_can_handoff(&station); ++n) {
+		uint8_t zeros[V90_PCM_FRAME_MAX_BITS] = { 0 };
+		CHECK(push_full_cpd_frame(&source, &station, zeros, &events) == V92_PHASE4_ANALOG_STATION_OK,
+		      "pause Ed confirmation failed");
+	}
+	struct v92_phase4_analog_handoff handoff;
+	CHECK(v92_phase4_analog_station_handoff(&station, &handoff) == V92_PHASE4_ANALOG_STATION_OK &&
+	      handoff.pause && !station.cpd_received && !station.transmit.control.cpu_sent &&
+	      (!confirmation || pcm_downstream_rx_is_complete(&handoff.receive)) &&
+	      v92_pcm_mapping_equal(&handoff.mapping, &upstream) &&
+	      handoff.cpu.data_rate_number == cpu.data_rate_number &&
+	      handoff.receive.stream.received_symbols == station.receive.stream.received_symbols,
+	      "pause confirmation lost its previous mapping or exact Ed boundary");
+	return true;
+}
+
+static bool test_analog_pause_confirmation(void)
+{
+	for (unsigned law = 0; law < 2u; ++law)
+		for (unsigned size = 0; size < 2u; ++size)
+			for (unsigned lookahead = 0; lookahead < 4u; ++lookahead)
+				for (unsigned requests = 1; requests < 4u; ++requests)
+					for (unsigned confirmation = 0; confirmation < 3u; ++confirmation)
+						CHECK(run_analog_pause_confirmation(law, size ? V92_CONSTELLATION_8_POINT :
+							V92_CONSTELLATION_4_POINT, lookahead, requests, confirmation),
+						      "analogue pause law=%u size=%u lookahead=%u requests=%u confirmation=%u",
+						      law, size, lookahead, requests, confirmation);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -2294,6 +2382,7 @@ int main(void)
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
 		{ "cleardown physical CP deadlines", test_cleardown_timing },
 		{ "digital silence status agreement", test_silence_status },
+		{ "analogue pause acknowledgement or Ed", test_analog_pause_confirmation },
 	};
 	unsigned int failures = 0u;
 

@@ -50,7 +50,8 @@ struct v92_phase4_analog_station {
 /* Exact duplex boundary after mutual acknowledgement. Finish the pending
  * upstream control record before E2u; downstream may already be through Ed.
  * CPU and CPd retain the independently selected downstream and upstream data
- * mappings for the next owner. */
+ * mappings for the next owner. A status-only pause retains the previous
+ * mappings instead and sets pause; it is not a data-ready boundary. */
 struct v92_phase4_analog_handoff {
 	struct v92_phase4_record_tx transmit;
 	struct pcm_downstream_rx receive;
@@ -77,14 +78,14 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
  * already owns the post-Rd coding boundary. Keep the last complete upstream
  * mapping for optional sections omitted from the first new CPd; none of its
  * old acknowledgements satisfies this exchange. Send a complete nonzero CPu;
- * start_cleardown() remains the local zero-rate operation. This entry rejects
- * requests for the not-yet-implemented intervening silent period. */
+ * start_cleardown() remains the local zero-rate operation. A local or peer
+ * silence request instead agrees a status-only pause with the old mappings. */
 enum v92_phase4_analog_station_result v92_phase4_analog_station_init_after_ru(
 	struct v92_phase4_analog_station *station,
 	enum v92_constellation_size constellation, int16_t lu,
 	const struct pcm_downstream_rx *downstream,
 	const struct v92_cpu_parameters *cpu,
-	const struct v92_pcm_mapping *upstream, uint16_t round_trip_delay_samples);
+	const struct v92_pcm_mapping *upstream, bool request_silence, uint16_t round_trip_delay_samples);
 
 bool v92_phase4_analog_station_is_valid(
 	const struct v92_phase4_analog_station *station);

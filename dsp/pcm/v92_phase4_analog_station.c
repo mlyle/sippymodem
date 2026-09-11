@@ -127,7 +127,8 @@ bool v92_phase4_analog_station_can_handoff(
 	const struct v92_phase4_analog_station *station)
 {
 	return v92_phase4_analog_station_is_valid(station) &&
-	       !station->failed && !station->cleardown.active && station->cpd_received &&
+	       !station->failed && !station->cleardown.active &&
+	       (station->cpd_received || v92_phase4_analog_tx_silence_requested(&station->transmit)) &&
 	       v92_phase4_analog_tx_can_handoff(&station->transmit);
 }
 
@@ -152,10 +153,7 @@ static bool note_suvd(
 	struct v92_phase4_analog_tx transmit;
 	struct v92_suvd_parameters retained;
 
-	/* The call owner does not yet retain this station through the duplex
-	 * E2u/TRN2u/Rt pause. Do not mistake its agreement for a data handoff. */
-	if (!v92_suvd_parameters_are_valid(parameters) ||
-	    (station->transmit.control.renegotiation && parameters->request_silence))
+	if (!v92_suvd_parameters_are_valid(parameters))
 		return false;
 	if (station->suvd_received) {
 		if (station->suvd.request_silence !=
@@ -277,11 +275,12 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init_after_ru(
 	enum v92_constellation_size constellation, int16_t lu,
 	const struct pcm_downstream_rx *downstream,
 	const struct v92_cpu_parameters *cpu,
-	const struct v92_pcm_mapping *upstream, uint16_t round_trip_delay_samples)
+	const struct v92_pcm_mapping *upstream, bool request_silence, uint16_t round_trip_delay_samples)
 {
 	struct v92_phase4_analog_station initialized = { 0 };
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
+		.request_silence = request_silence,
 	};
 	if (station == NULL || downstream == NULL || cpu == NULL || upstream == NULL)
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
@@ -315,10 +314,15 @@ static bool accept_cpd_event(
 	return note_cpd(station, parameters);
 }
 
-static bool arm_ed_if_acknowledged(
+static bool arm_ed_confirmation(
 	struct v92_phase4_analog_station *station, bool acknowledges_cpu)
 {
-	return !acknowledges_cpu ||
+	/* During a status-only pause Ed is itself confirmation. Search at each
+	 * complete record boundary even when the acknowledging SUVd was lost;
+	 * the receiver continues parsing repeated controls alongside Ed. */
+	bool pause = station->suvd_received &&
+		v92_phase4_analog_tx_silence_requested(&station->transmit);
+	return !(acknowledges_cpu || pause) ||
 	       pcm_downstream_rx_expect_ed(&station->receive) ==
 		       PCM_DOWNSTREAM_RX_OK;
 }
@@ -359,7 +363,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    !note_suvd(
 			    station,
 			    &event.control.record.suvd.parameters) ||
-		    !arm_ed_if_acknowledged(
+		    !arm_ed_confirmation(
 			    station,
 			    event.control.record.suvd.parameters
 				    .acknowledges_cpu))
@@ -371,7 +375,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    !accept_cpd_event(
 			    station,
 			    &event.control.record.cpd.parameters) ||
-		    !arm_ed_if_acknowledged(
+		    !arm_ed_confirmation(
 			    station,
 			    event.control.record.cpd.parameters
 				    .acknowledges_cpu))
@@ -379,6 +383,8 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
+		if (!arm_ed_confirmation(station, false))
+			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_ED:
 		if (!v92_phase4_analog_tx_is_e2u_ready(&station->transmit) &&
@@ -536,6 +542,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 		.receive = station->receive,
 		.cpu = station->transmit.control.cpu,
 		.mapping = station->mapping,
+		.pause = v92_phase4_analog_tx_silence_requested(&station->transmit),
 	};
 	if (v92_phase4_analog_tx_handoff(
 		    &station->transmit, &generated.transmit) !=

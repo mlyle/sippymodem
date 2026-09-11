@@ -106,12 +106,13 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
 {
 	struct v92_phase4_digital_station initialized = { 0 };
 	struct v92_cpd_parameters selected;
-	const struct v92_suvd_parameters suvd = { 0 };
 
 	if (station == NULL || ru == NULL || downstream == NULL || cpd == NULL ||
 	    plan == NULL || cpu == NULL)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (!v92_upstream_plan_is_valid(plan) || !v92_cpu_parameters_are_valid(cpu) ||
+	    !pcm_downstream_tx_is_valid(downstream) || downstream->protocol != PCM_PROTOCOL_V92 ||
+	    (downstream->control_configured && downstream->v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD) ||
 	    !v92_cpd_parameters_are_valid(cpd) || !cpu->data_rate_number || !cpd->data_rate_number ||
 	    v92_phase4_digital_rx_init_after_ru(&initialized.receive, ru) != V92_PHASE4_DIGITAL_RX_OK)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
@@ -123,6 +124,9 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
 	selected.acknowledges_cpu = false;
 	/* V.92 Table 30: do not carry initial E2u extension into RRN. */
 	selected.extend_e2u = false;
+	const struct v92_suvd_parameters suvd = {
+		.request_silence = downstream->control_configured && downstream->control.suvd.request_silence,
+	};
 	enum v92_phase4_digital_station_result result = initialize_downstream(
 		&initialized, downstream, &suvd, &selected, round_trip_delay_samples);
 	if (result != V92_PHASE4_DIGITAL_STATION_OK)

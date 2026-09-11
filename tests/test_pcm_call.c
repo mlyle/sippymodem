@@ -7181,7 +7181,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		expected.cpd.extend_e2u = false;
 		CHECK(v92_phase4_analog_station_init_after_ru(&analog, path->ru.constellation,
 			upstream->upstream_level, &test.peer, &test.cpu, &upstream->encoder.mapping,
-			online->round_trip_delay_samples) == V92_PHASE4_ANALOG_STATION_OK,
+			false, online->round_trip_delay_samples) == V92_PHASE4_ANALOG_STATION_OK,
 		      "analogue rate control did not reenter");
 		test.analog = &analog;
 		for (unsigned clock = 0; clock < 16008u && !v92_phase4_analog_station_can_handoff(&analog); ++clock) {
@@ -7901,7 +7901,7 @@ static bool v92_digital_rate_prefix_contracts(const struct pcm_call *online)
 	return true;
 }
 
-static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned initiators)
+static bool v92_call_cleardown(const struct v92_online_pair *online, unsigned initiators)
 {
 	struct v92_online_pair pair = *online;
 	struct pcm_call *calls[] = { &pair.analog, &pair.digital };
@@ -7916,7 +7916,7 @@ static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned in
 	for (unsigned role = 0; role < 2u; ++role) {
 		if (!(initiators & (1u << role)))
 			continue;
-		if (initiators == 3u)
+		if (initiators == 3u && calls[role]->stage == PCM_CALL_DATA_PATH)
 			CHECK(pcm_call_start_rate_renegotiation(calls[role]) == PCM_CALL_OK,
 			      "cleardown could not join an existing rate exchange");
 		CHECK(pcm_call_start_cleardown(calls[role]) == PCM_CALL_OK &&
@@ -7944,6 +7944,8 @@ static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned in
 			transmitted[role] = silence_octet(law);
 			struct v92_cleardown final = { 0 };
 			uint64_t sent = 0;
+			if (call->stage == PCM_CALL_PHASE4 && call->state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL)
+				observing[role] = false;
 			if (call->stage == PCM_CALL_PHASE4 &&
 			    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
 				struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
@@ -8046,24 +8048,35 @@ static bool test_v92_rate_request(void)
 			CHECK(v92_analog_remote_rd(&pair.analog), "remote Rd response failed");
 			CHECK(v92_digital_rate_prefix_contracts(&pair.digital), "digital rate prefix failed");
 			for (unsigned initiators = 1u; initiators <= 3u; ++initiators)
-				CHECK(v92_data_cleardown(&pair, initiators), "PCM data cleardown failed");
+				CHECK(v92_call_cleardown(&pair, initiators), "PCM data cleardown failed");
 			CHECK(pcm_call_start_rate_renegotiation(NULL) == PCM_CALL_INVALID_ARGUMENT,
 			      "null rate request accepted");
-			for (unsigned epoch = 0; epoch < 5u; ++epoch) {
+			for (unsigned epoch = 0; epoch < 12u; ++epoch) {
 				struct pcm_call *calls[] = { &pair.analog, &pair.digital };
 				struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
 				uint32_t frames[2] = { 0 };
 				bool entered[2] = { false, false };
+				bool paused[2] = { false, false }, resumed[2] = { false, false };
+				bool pause_checked = false;
+				unsigned e2u_checked = 0u;
+				unsigned requests = epoch / 3u;
+				bool lose_ack = requests && epoch % 3u == 2u;
+				unsigned damaged = 0u;
+				bool e2u_confirmed = false;
+				pair.analog.v92_analog_phase4_configuration.suvu.request_silence = (requests & 1u) != 0u;
+				pair.digital.v92_digital_phase4_configuration.suvd.request_silence = (requests & 2u) != 0u;
 				pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
-				unsigned initiator = epoch >= 2u && epoch < 4u ? 1u : 0u;
+				unsigned initiator = epoch % 3u == 1u ? 1u : 0u;
 				CHECK(pcm_call_start_rate_renegotiation(calls[initiator]) == PCM_CALL_OK &&
-				      (epoch != 4u || pcm_call_start_rate_renegotiation(&pair.digital) == PCM_CALL_OK),
+				      (epoch % 3u != 2u || pcm_call_start_rate_renegotiation(&pair.digital) == PCM_CALL_OK),
 				      "rate exchange did not start at epoch %u", epoch);
 				for (unsigned clock = 0; clock < 40000u && (frames[0] < 200u || frames[1] < 200u); ++clock) {
 					uint8_t received[2], transmitted[2];
 					channel_receive(&pair.wire, &received[0], &received[1]);
 					for (unsigned role = 0; role < 2u; ++role) {
 						struct pcm_call *call = calls[role];
+						bool was_control = call->stage == PCM_CALL_PHASE4 &&
+							call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL;
 						if (pcm_call_phase4_is_ready(call)) {
 							CHECK(!entered[role] && pcm_call_start_data_path(call) == PCM_CALL_OK,
 							      "rate exchange data handoff failed");
@@ -8085,10 +8098,88 @@ static bool test_v92_rate_request(void)
 							      law, rates[i], epoch, role, clock, pcm_call_result_name(result), call->stage);
 						}
 						CHECK(pcm_call_is_valid(call), "rate exchange state invalid");
+						if (lose_ack && role == 0u && !resumed[role] && call->stage == PCM_CALL_PHASE4) {
+							const struct v92_phase4_record_tx *record = NULL;
+							struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
+							if (state->child == PCM_CALL_V92_PHASE4_CONTROL &&
+							    state->owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU)
+								record = &state->owner.analog.station.transmit.signal.record;
+							else if (state->child == PCM_CALL_V92_PHASE4_E2U && state->owner.e2u.state.analog.finishing_control)
+								record = &state->owner.e2u.state.analog.transmit;
+							struct v92_suvu_parameters status;
+							if (record && record->bit_index == 42u &&
+							    v92_suvu_decode(record->frame, sizeof(record->frame), record->frame_bit_count,
+								12u * v92_phase4_modulator_bits_per_symbol(record->modulator.constellation), &status) == V92_SUVU_OK &&
+							    status.acknowledges_cpd) {
+								/* One on-wire sign error invalidates each pause ACK's CRC;
+								 * neither endpoint's coder or decoded event is altered. */
+								transmitted[role] ^= 0x80u;
+								damaged++;
+							}
+						}
+						if (call->stage == PCM_CALL_PHASE4 && call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE) {
+							CHECK(requests && !pcm_call_phase4_is_ready(call) && !pcm_call_is_online(call),
+							      "timed pause authorized data or appeared without a request");
+							if (!paused[role]) {
+								struct pcm_call invalid = *call;
+								invalid.state.phase4.v92.peer_requested_silence ^= true;
+								CHECK(!pcm_call_is_valid(&invalid), "pause changed the retained request owner");
+								invalid = *call;
+								if (role)
+									invalid.state.phase4.v92.owner.digital_pause.mapping.law ^= 1u;
+								else
+									invalid.state.phase4.v92.owner.analog_pause.mapping.law ^= 1u;
+								struct pcm_call before = invalid;
+								struct pcm_call_observation observation = { 0 }, saved = observation;
+								uint8_t octet = 0x5a;
+								CHECK(!pcm_call_is_valid(&invalid) && pcm_call_octet(&invalid, 0, 0, &octet, &observation) ==
+									PCM_CALL_INVALID_ARGUMENT && octet == 0x5a && memcmp(&observation, &saved, sizeof(saved)) == 0 &&
+								      memcmp(&invalid, &before, sizeof(before)) == 0, "invalid pause consumed a line interval");
+							}
+							paused[role] = true;
+							e2u_confirmed |= role == 1u && was_control;
+						} else if (paused[role] && !resumed[role] && call->stage == PCM_CALL_PHASE4 &&
+							   call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+							CHECK(role ? !call->state.phase4.v92.owner.digital.control.request_silence &&
+								!call->state.phase4.v92.owner.digital.control.cpu_received :
+								!call->state.phase4.v92.owner.analog.station.transmit.control.suvu.request_silence &&
+								!call->state.phase4.v92.owner.analog.station.cpd_received,
+							      "pause reused old requests or parameter acknowledgements");
+							resumed[role] = true;
+						}
 					}
 					channel_transmit(&pair.wire, transmitted[0], transmitted[1]);
+					if (requests && epoch % 3u == 0u) {
+						for (unsigned role = 0; role < 2u; ++role) {
+							if (!(e2u_checked & (1u << role)) && calls[role]->stage == PCM_CALL_PHASE4 &&
+							    calls[role]->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U) {
+								CHECK(v92_call_cleardown(&pair, 1u << role), "E2u pause cleardown failed");
+								e2u_checked |= 1u << role;
+							}
+						}
+						if (!pause_checked && calls[0]->stage == PCM_CALL_PHASE4 && calls[1]->stage == PCM_CALL_PHASE4 &&
+						    calls[0]->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE &&
+						    calls[1]->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE) {
+							for (unsigned mask = 1u; mask <= 3u; ++mask)
+								CHECK(v92_call_cleardown(&pair, mask), "timed pause cleardown failed");
+							for (unsigned role = 0; role < 2u; ++role) {
+								struct pcm_call stalled = *calls[role];
+								struct pcm_call_observation observation;
+								uint8_t octet;
+								stalled.rate_renegotiation_deadline_remaining_samples = 1u;
+								CHECK(pcm_call_octet(&stalled, silence_octet(law), 0, &octet, &observation) == PCM_CALL_OK &&
+								      stalled.stage == PCM_CALL_RETRAIN_SILENCE && !stalled.failed && pcm_call_is_valid(&stalled),
+								      "unanswered timed pause did not reach bounded retrain");
+							}
+							pause_checked = true;
+						}
+					}
 				}
-				CHECK(frames[0] >= 200u && frames[1] >= 200u &&
+				CHECK(paused[0] == (requests != 0u) && paused[1] == (requests != 0u) &&
+				      (!lose_ack || (damaged && e2u_confirmed)) &&
+				      (!requests || epoch % 3u || (pause_checked && e2u_checked == 3u)) &&
+				      resumed[0] == paused[0] && resumed[1] == paused[1] &&
+				      frames[0] >= 200u && frames[1] >= 200u &&
 				      pcm_call_is_online(&pair.analog) && pcm_call_is_online(&pair.digital) &&
 				      !pair.analog.v92_rate_renegotiation_active && !pair.digital.v92_rate_renegotiation_active &&
 				      !pair.analog.rate_renegotiation_deadline_armed && !pair.digital.rate_renegotiation_deadline_armed &&

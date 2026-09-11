@@ -16,6 +16,7 @@
 #include "v92_phase4_analog_station.h"
 #include "v92_phase4_digital_station.h"
 #include "v92_phase4_e2u.h"
+#include "v92_rate_pause.h"
 #include "v92_upstream_data_rx.h"
 #include "v92_upstream_data_tx.h"
 #include "v92_ru_line_rx.h"
@@ -118,6 +119,8 @@ struct pcm_call_digital_phase4_configuration {
 };
 
 struct pcm_call_v92_analog_phase4_configuration {
+	/* The silence preference also applies to each Ru/Rd rate exchange,
+	 * but is cleared for the fresh status exchange following its pause. */
 	struct v92_suvu_parameters suvu;
 	/* Retain configured preferences across retrains. Rate and spectral
 	 * lookahead are ceilings, constrained by the peer's current Jd. */
@@ -130,6 +133,7 @@ enum pcm_call_v92_upstream_selection {
 };
 
 struct pcm_call_v92_digital_phase4_configuration {
+	/* As with SUVu, retain this silence preference across rate requests. */
 	struct v92_suvd_parameters suvd;
 	enum pcm_call_v92_upstream_selection upstream_selection;
 	union {
@@ -233,6 +237,7 @@ enum pcm_call_v92_phase4_child {
 	PCM_CALL_V92_PHASE4_CONTROL,
 	PCM_CALL_V92_PHASE4_E2U,
 	PCM_CALL_V92_PHASE4_RU,
+	PCM_CALL_V92_PHASE4_PAUSE,
 };
 
 struct pcm_call_v92_rate_request {
@@ -250,6 +255,16 @@ union pcm_call_v92_phase4_owner {
 	struct v92_phase4_digital_station digital;
 	struct v92_phase4_e2u e2u;
 	struct pcm_call_v92_rate_request ru;
+	struct {
+		struct v92_rate_pause_analog signal;
+		struct v92_pcm_mapping mapping;
+	} analog_pause;
+	struct {
+		struct v92_rate_pause_digital signal;
+		struct v92_pcm_mapping mapping;
+		struct v92_cpu_parameters cpu;
+		struct v92_upstream_plan plan;
+	} digital_pause;
 };
 
 /* Rd transmission overlaps reception of the peer's post-Ru TRN2u. */
@@ -285,8 +300,10 @@ struct pcm_call_v92_phase4_state {
 	enum v92_constellation_size rate_renegotiation_constellation;
 	enum pcm_call_v92_rate_prefix_stage prefix_stage;
 	enum pcm_call_v92_phase4_child child;
-	/* Retain a local hangup through Ru/Rd and TRN2. The control station
-	 * takes over at the first complete status-record boundary. */
+	/* Carry the peer's request from status through E2u into the timed pause. */
+	bool peer_requested_silence;
+	/* Retain a local hangup through Ru/Rd, TRN2 and any committed pause.
+	 * The control station takes over at a complete status-record boundary. */
 	bool cleardown_requested;
 };
 

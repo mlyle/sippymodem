@@ -77,8 +77,9 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 
 /* Reuse the control owner after Ru-bar. The caller supplies the independently
  * clocked post-Rd TRN2d/SUVd transmitter and the preceding complete CPd/plan
- * and CPu mapping. A fresh SUVu and CPu/CPus are still required; prior
- * acknowledgements are discarded. This path does not request silence. */
+ * and CPu mapping. Retain the transmitter's local silence request, if any;
+ * a status-only agreement precedes that pause. Otherwise fresh SUVu and
+ * CPu/CPus are required. Prior acknowledgements never satisfy either path. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_init_after_ru(
 	struct v92_phase4_digital_station *station, const struct v92_ru_line_rx *ru,
 	const struct pcm_downstream_tx *downstream,
