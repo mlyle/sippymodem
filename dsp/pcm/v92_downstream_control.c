@@ -207,7 +207,7 @@ bool v92_downstream_control_init(struct v92_downstream_control *control,
 	    !pcm_downstream_tx_is_valid(downstream) || downstream->protocol != PCM_PROTOCOL_V92 ||
 	    !v92_suvd_parameters_are_valid(suvd) || suvd->acknowledges_cpu ||
 	    (downstream->encoder.mapping.kind == V90_CP_DATA &&
-	     (suvd->request_silence || previous_cpu == NULL)) ||
+	     (suvd->request_silence || previous_cpu == NULL || cpd->extend_e2u)) ||
 	    (downstream->control_configured &&
 	     (downstream->v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
 	      downstream->control.suvd.acknowledges_cpu ||
@@ -250,6 +250,7 @@ bool v92_downstream_control_select(struct v92_downstream_control *control,
 	struct v92_phase4_cpd_tx transmit;
 	if (!v92_downstream_control_is_valid(control) || control->failed || cpd == NULL ||
 	    control->cleardown.active || cpd->acknowledges_cpu ||
+	    (control->transmit.encoder.mapping.kind == V90_CP_DATA && cpd->extend_e2u) ||
 	    (control->transmit_stage != V92_DOWNSTREAM_CONTROL_INITIAL_SUVD &&
 	     control->transmit_stage != V92_DOWNSTREAM_CONTROL_READY_FOR_CPD) ||
 	    !v92_phase4_cpd_tx_init(&transmit, &control->transmit, cpd))

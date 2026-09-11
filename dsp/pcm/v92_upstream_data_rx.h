@@ -107,6 +107,21 @@ bool v92_upstream_data_rx_b1u_complete(
 enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 	struct v92_upstream_data_rx *receiver);
 
+/* Start the accepted fast-exchange B1u mapping at its first decision boundary,
+ * AFTER all 48 old-mapping FB1u frames have entered the decoder. E2u payload
+ * itself arrives ten frames late: the caller must account for that lookahead
+ * when scheduling this boundary. Pending old FB1u bits are discarded, not
+ * emitted as host data. Reset coding and mapping-dependent codec acquisition;
+ * retain physical input history, equalizer, polarity, and the LU estimate.
+ * The receive plan may change gain, but must keep the same observation domain
+ * and latency. A different physical alignment needs a training handoff, not
+ * this in-place switch. The new CPd must not request extended E2u (Table 30).
+ * Partial-frame, pre-B1u, failed, aliased or incompatible calls change nothing. */
+enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
+	struct v92_upstream_data_rx *receiver,
+	const struct v92_pcm_mapping *mapping,
+	const struct v92_upstream_plan *plan);
+
 /* Consume one signed 8 kHz sample. FRAME reports each twelve-symbol decision;
  * OK buffers a sample and leaves frame unchanged. Quality is reported even
  * for damaged B1u; known bits do not imply a usable line. Rejected calls

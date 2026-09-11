@@ -14,6 +14,7 @@ enum v92_upstream_data_tx_result {
 	V92_UPSTREAM_DATA_TX_OUT_OF_RANGE,
 	V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE,
 	V92_UPSTREAM_DATA_TX_RM_COMPLETE,
+	V92_UPSTREAM_DATA_TX_FB1U_COMPLETE,
 };
 
 /* Supply one complete post-B1u frame, in earliest-bit-first order. Initialize
@@ -31,6 +32,8 @@ struct v92_upstream_data_tx {
 	uint16_t b1u_symbols_remaining;
 	/* Pending old-frame tail plus 384 RM and 24 RM-prime symbols. */
 	uint16_t rm_symbols_remaining;
+	/* One E2u frame followed by 48 FB1u frames in the old data mapping. */
+	uint16_t finish_symbols_remaining;
 	uint8_t queue_count;
 };
 
@@ -42,7 +45,7 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_init(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
 bool v92_upstream_data_tx_is_valid(
 	const struct v92_upstream_data_tx *transmitter);
-/* True after all 576 B1u samples and any requested RM sequence have left. */
+/* True when no B1u, request, or finish sequence remains to be emitted. */
 bool v92_upstream_data_tx_is_online(
 	const struct v92_upstream_data_tx *transmitter);
 
@@ -62,8 +65,19 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_reset_control(
 enum v92_upstream_data_tx_result v92_upstream_data_tx_start_rm(
 	struct v92_upstream_data_tx *transmitter);
 
-/* Emit exactly one signed sample. Acquire at most one complete source frame,
- * and never call the source while sending B1u/RM or draining a queued frame.
+/* Finish fast exchange at the complete upstream control-record boundary.
+ * Emit one scrambled-zero E2u frame and 48 scrambled-one FB1u frames, without
+ * resetting coding or fetching source bits. The caller must first establish
+ * mutual control acknowledgment and drain the whole record, not just a frame.
+ * FB1U_COMPLETE accompanies the final sample; then init() with the accepted
+ * CPd and retained LU starts new-mapping B1u with fully reset coding. V.92
+ * Table 30 requires the new CPd's E2u-extension bit clear during fast exchange.
+ * A partial frame, B1u, or pending request/finish is rejected unchanged. */
+enum v92_upstream_data_tx_result v92_upstream_data_tx_start_e2u(
+	struct v92_upstream_data_tx *transmitter);
+
+/* Emit exactly one signed sample. Acquire at most one complete source frame.
+ * Never call the source during B1u, RM, E2u/FB1u, or a queued frame's tail.
  * Rejected calls leave transmitter and sample unchanged. */
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	struct v92_upstream_data_tx *transmitter,

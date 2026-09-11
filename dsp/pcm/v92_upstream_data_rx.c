@@ -175,6 +175,50 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
+enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
+	struct v92_upstream_data_rx *receiver,
+	const struct v92_pcm_mapping *mapping,
+	const struct v92_upstream_plan *plan)
+{
+	if (receiver == NULL || mapping == NULL || plan == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), mapping, sizeof(*mapping)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), plan, sizeof(*plan)))
+		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+	if (!v92_upstream_data_rx_is_valid(receiver))
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	if (receiver->failed)
+		return V92_UPSTREAM_DATA_RX_FAILED;
+	if (receiver->line.symbol_count != 0u || receiver->line.received_frames < V92_B1U_FRAMES)
+		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
+	if (!v92_pcm_mapping_is_valid(mapping) || !v92_upstream_plan_is_valid(plan) ||
+	    mapping->law != receiver->decoder.mapping.law || mapping->cpd.extend_e2u ||
+	    plan->observation != receiver->line.plan.observation || plan->delay != receiver->line.plan.delay)
+		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+	struct v92_upstream_data_rx next = *receiver;
+	if (plan->observation == V92_PCM_FRAME_CONSTELLATION) {
+		double ratio = plan->gain / receiver->line.plan.gain;
+		next.line.calibration.gain *= ratio;
+		/* The old bounds contain the nominal gain. Preserve that invariant
+		 * exactly: multiplying by a rounded ratio can miss it by one ULP. */
+		next.line.calibration.minimum = fmin(plan->gain, next.line.calibration.minimum * ratio);
+		next.line.calibration.maximum = fmax(plan->gain, next.line.calibration.maximum * ratio);
+		next.line.calibration.correlation = next.line.calibration.energy = 0.0;
+		if (v92_pcm_frame_rx_init_constellation(&next.decoder, mapping) != V92_PCM_FRAME_OK)
+			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+	} else if (v92_pcm_frame_rx_init(&next.decoder, mapping, receiver->decoder.upstream_level) != V92_PCM_FRAME_OK) {
+		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+	}
+	next.line.plan = *plan;
+	next.line.received_frames = 0;
+	/* A new mapping changes the codec fit's coordinates. Reacquire it from
+	 * the new known B1u, retaining the warm physical line and calibrated LU. */
+	v92_upstream_model_init(&next);
+	if (!v92_upstream_data_rx_is_valid(&next))
+		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+	*receiver = next;
+	return V92_UPSTREAM_DATA_RX_OK;
+}
+
 static int16_t rounded_sample(double level)
 {
 	if (level >= INT16_MAX)

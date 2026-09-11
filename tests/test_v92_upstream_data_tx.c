@@ -295,6 +295,76 @@ static bool test_rm_matrix(void)
 	return true;
 }
 
+static bool test_finish_sequence(enum g711_law law, uint8_t rate, bool filtered)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_data_tx tx;
+	struct source_state input = { 0 };
+	int16_t sample;
+	CHECK(mapping_init(&mapping, law, rate, filtered), "finish mapping failed");
+	/* The OLD CPd can retain initial training's extension request. */
+	mapping.cpd.extend_e2u = filtered;
+	CHECK(v92_upstream_data_tx_init(&tx, &mapping, TEST_LEVEL) == V92_UPSTREAM_DATA_TX_OK,
+	      "finish initialization failed");
+	for (unsigned i = 0; i < V92_B1U_SYMBOLS + 48; ++i) {
+		CHECK(v92_upstream_data_tx_next(&tx, source, &input, &sample) == V92_UPSTREAM_DATA_TX_OK,
+		      "finish warmup failed");
+		if (tx.queue_count) {
+			struct v92_upstream_data_tx saved = tx;
+			CHECK(v92_upstream_data_tx_start_e2u(&tx) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+			      memcmp(&tx, &saved, sizeof(tx)) == 0, "partial-frame finish accepted");
+		}
+	}
+	struct v92_pcm_frame_tx frames = tx.encoder;
+	CHECK(v92_upstream_data_tx_start_e2u(&tx) == V92_UPSTREAM_DATA_TX_OK,
+	      "finish did not start");
+	struct v92_upstream_data_tx pending = tx;
+	CHECK(v92_upstream_data_tx_start_e2u(&tx) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      v92_upstream_data_tx_start_rm(&tx) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      v92_upstream_data_tx_reset_control(&tx) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      memcmp(&tx, &pending, sizeof(tx)) == 0, "pending finish was restarted/reset");
+	input.invalid = 1;
+	for (unsigned f = 0; f <= V92_B1U_FRAMES; ++f) {
+		struct v92_pcm_frame frame;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		memset(bits, f != 0, mapping.data_bits_per_frame);
+		CHECK(v92_pcm_frame_encode(&frames, bits, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "finish frame failed");
+		if (f == 1) {
+			struct v92_pcm_frame_tx reset;
+			struct v92_pcm_frame wrong;
+			CHECK(v92_pcm_frame_tx_init(&reset, &mapping) == V92_PCM_FRAME_OK &&
+			      v92_pcm_frame_encode(&reset, bits, mapping.data_bits_per_frame, &wrong) == V92_PCM_FRAME_OK &&
+			      memcmp(frame.v, wrong.v, sizeof(frame.v)) != 0,
+			      "FB1u fixture cannot detect a premature coding reset");
+		}
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			bool complete = f == V92_B1U_FRAMES && i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1;
+			int16_t expected;
+			CHECK(!v92_upstream_data_tx_is_online(&tx) &&
+			      v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
+			      v92_upstream_data_tx_next(&tx, source, &input, &sample) ==
+			      (complete ? V92_UPSTREAM_DATA_TX_FB1U_COMPLETE : V92_UPSTREAM_DATA_TX_OK) &&
+			      sample == expected && input.calls == 4 &&
+			      v92_upstream_data_tx_is_valid(&tx) &&
+			      v92_upstream_data_tx_is_online(&tx) == complete &&
+			      memcmp(&tx.encoder, &frames, sizeof(frames)) == 0,
+			      "E2u/FB1u discontinuity: law %u rate %u filtered %u frame %u sample %u",
+			      law, rate, filtered, f, i);
+		}
+	}
+	return true;
+}
+
+static bool test_finish_matrix(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 1; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+			for (unsigned filtered = 0; filtered < 2; ++filtered)
+				CHECK(test_finish_sequence(law, rate, filtered != 0), "finish matrix failed");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v92_pcm_mapping mapping;
@@ -312,6 +382,8 @@ static bool test_validation(void)
 	      v92_upstream_data_tx_reset_control(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
 	      v92_upstream_data_tx_start_rm(NULL) == V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_start_rm(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      v92_upstream_data_tx_start_e2u(NULL) == V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_start_e2u(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
 	      v92_upstream_data_tx_init(NULL, &mapping, TEST_LEVEL) ==
 		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_init(&transmit, NULL, TEST_LEVEL) ==
@@ -348,6 +420,18 @@ static bool test_validation(void)
 	transmit.rm_symbols_remaining = 420u;
 	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "overlong RM sequence accepted");
 	transmit = saved;
+	transmit.finish_symbols_remaining = 588;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "finish during B1u accepted");
+	transmit.b1u_symbols_remaining = 0;
+	CHECK(v92_upstream_data_tx_is_valid(&transmit), "aligned finish rejected");
+	transmit.rm_symbols_remaining = 408;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "overlapping finish/RM accepted");
+	transmit.rm_symbols_remaining = 0;
+	transmit.finish_symbols_remaining = 587;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "finish queue mismatch accepted");
+	transmit.finish_symbols_remaining = 600;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "overlong finish accepted");
+	transmit = saved;
 	transmit.queue[11] = 1;
 	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "unowned queue sample accepted");
 	return true;
@@ -356,5 +440,5 @@ static bool test_validation(void)
 int main(void)
 {
 	return test_stream(false) && test_stream(true) &&
-	       test_rm_matrix() && test_rejected_sources_and_idle() && test_validation() ? 0 : 1;
+	       test_rm_matrix() && test_finish_matrix() && test_rejected_sources_and_idle() && test_validation() ? 0 : 1;
 }

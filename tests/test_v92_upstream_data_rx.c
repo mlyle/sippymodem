@@ -519,7 +519,7 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	const struct v92_cpd_parameters *cpd, const struct v92_cpu_parameters *previous)
 {
 	const struct v92_suvd_parameters status = { 0 };
-	for (unsigned invalid = 0; invalid < 7; ++invalid) {
+	for (unsigned invalid = 0; invalid < 8; ++invalid) {
 		struct v92_downstream_control candidate = *initial;
 		struct v92_cpu_parameters cpu = *previous;
 		struct v92_cpd_parameters selection = *cpd;
@@ -533,11 +533,16 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 		case 4: suvd.request_silence = true; break;
 		case 5: suvd.acknowledges_cpu = true; break;
 		case 6: selection.acknowledges_cpu = true; break;
+		case 7: selection.extend_e2u = true; break;
 		}
 		CHECK(!v92_downstream_control_init(&candidate, &initial->transmit, &suvd, &selection, prior, 80) &&
 		      memcmp(&candidate, initial, sizeof(candidate)) == 0, "invalid FPE entry %u changed state", invalid);
 	}
 	struct v92_downstream_control selected = *initial;
+	struct v92_cpd_parameters extended = *cpd;
+	extended.extend_e2u = true;
+	CHECK(!v92_downstream_control_select(&selected, &extended) &&
+	      memcmp(&selected, initial, sizeof(selected)) == 0, "FPE selected extended E2u");
 	struct pcm_downstream_rx peer;
 	CHECK(pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &initial->transmit.encoder.mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK, "early SUVu peer failed");
@@ -769,6 +774,207 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 	      law, rate, suv_count, cpu_count, ack_count);
 }
 
+static bool b1u_switch_contracts(const struct v92_upstream_data_rx *initial,
+	const struct v92_pcm_mapping *mapping, const struct v92_upstream_plan *plan)
+{
+	for (unsigned fault = 0; fault < 12; ++fault) {
+		struct v92_upstream_data_rx rx = *initial;
+		struct v92_pcm_mapping selection = *mapping;
+		struct v92_upstream_plan proposed = *plan;
+		const struct v92_pcm_mapping *map = &selection;
+		const struct v92_upstream_plan *next_plan = &proposed;
+		enum v92_upstream_data_rx_result expected = V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
+		switch (fault) {
+		case 0: map = NULL; break;
+		case 1: next_plan = NULL; break;
+		case 2: map = &rx.decoder.mapping; break;
+		case 3: next_plan = &rx.line.plan; break;
+		case 4: selection.data_bits_per_frame = 0; expected = V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS; break;
+		case 5: selection.cpd.extend_e2u = true; expected = V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS; break;
+		case 6: proposed.delay++; expected = V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS; break;
+		case 7: rx.failed = true; expected = V92_UPSTREAM_DATA_RX_FAILED; break;
+		case 8: rx.line.symbol_count = 12; expected = V92_UPSTREAM_DATA_RX_INVALID_STATE; break;
+		case 9: rx.line.received_frames = 0; expected = V92_UPSTREAM_DATA_RX_INVALID_STATE; break;
+		case 10: {
+			struct v92_cpd_parameters cpd;
+			enum g711_law other = mapping->law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+			CHECK(v92_cpd_direct_init(&cpd, other, 1, false) == V92_CPD_OK &&
+			      v92_pcm_mapping_init(&selection, other, &cpd) == V92_PCM_MAPPING_OK,
+			      "conflicting-law fixture failed");
+			expected = V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+			break;
+		}
+		case 11:
+			proposed = plan->observation == V92_PCM_FRAME_CONSTELLATION ? direct_plan :
+				(struct v92_upstream_plan){ .observation = V92_PCM_FRAME_CONSTELLATION,
+					.gain = 1.0, .delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY };
+			expected = V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+			break;
+		}
+		struct v92_upstream_data_rx saved = rx;
+		CHECK(v92_upstream_data_rx_start_b1u(&rx, map, next_plan) == expected &&
+		      memcmp(&rx, &saved, sizeof(rx)) == 0, "B1u handoff fault %u changed state", fault);
+	}
+	CHECK(v92_upstream_data_rx_start_b1u(NULL, mapping, plan) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT,
+	      "null B1u receiver accepted");
+	return true;
+}
+
+/* Two codec conversions with channel memory, followed by inverted polarity. */
+static uint8_t finish_codec_sample(enum g711_law law, int16_t sample, int16_t history[2])
+{
+	int16_t q = law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+	int16_t mixed = (int16_t)lround(-(.9 * q + .08 * history[0] + .02 * history[1]));
+	history[1] = history[0];
+	history[0] = q;
+	return law == G711_LAW_PCMU ? g711_encode_pcmu(mixed) : g711_encode_pcma(mixed);
+}
+
+/* A real sample-level handoff with mock control payload: E2u + 48 FB1u use
+ * the old coder continuously, then a different CPd starts B1u and data. The
+ * separately tested control owners, not this fixture, authorize the finish. */
+static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_rate, bool codec)
+{
+	enum { CONTROL = 80, E2U = 144, NEW = E2U + 1 + V92_B1U_FRAMES, END = NEW + V92_B1U_FRAMES + 26 };
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = -1 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping old_mapping, new_mapping;
+	struct v92_upstream_plan old_plan = direct_plan, new_plan = direct_plan;
+	struct v92_upstream_channel measured = { 0 };
+	struct v92_upstream_data_tx tx;
+	struct v92_upstream_data_rx rx;
+	struct v92_phase4_record_tx initial_tx;
+	struct v92_e2u_rx initial_rx;
+	uint8_t expected[END][V92_PCM_MAPPING_MAX_BITS] = { { 0 } };
+	int16_t wire[END * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	int16_t history[2] = { 0 };
+	unsigned switch_at = 0, epoch = 0, fb1u_count = 0, data_count = 0;
+	if (codec) {
+		uint32_t random = 0x35791bdu;
+		for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			int16_t sample = (int16_t)((int)(random >> 19) - TEST_LU);
+			uint8_t code = finish_codec_sample(law, sample, history);
+			int16_t decoded = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
+			CHECK(v92_upstream_channel_sample(&measured, sample, (int16_t)lround(-.75 * decoded)),
+			      "finish channel measurement failed");
+		}
+		history[0] = history[1] = 0;
+	}
+	CHECK(v92_cpd_direct_init(&cpd, law, old_rate, false) == V92_CPD_OK &&
+	      (!codec || v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &old_plan)) &&
+	      v92_pcm_mapping_init(&old_mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_cpd_direct_init(&cpd, law, new_rate, false) == V92_CPD_OK &&
+	      (!codec || v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &new_plan)) &&
+	      v92_pcm_mapping_init(&new_mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&tx, &old_mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK,
+	      "fast finish setup failed");
+	for (unsigned f = 0; f < END; ++f) {
+		if (f == CONTROL)
+			CHECK(v92_upstream_data_tx_reset_control(&tx) == V92_UPSTREAM_DATA_TX_OK, "control reset failed");
+		if (f == E2U)
+			CHECK(v92_upstream_data_tx_start_e2u(&tx) == V92_UPSTREAM_DATA_TX_OK, "E2u start failed");
+		if (f == NEW)
+			CHECK(v92_upstream_data_tx_init(&tx, &new_mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK,
+			      "new B1u start failed");
+		if (f < V92_B1U_FRAMES || (f > E2U && f < NEW + V92_B1U_FRAMES))
+			memset(expected[f], 1, tx.encoder.mapping.data_bits_per_frame);
+		else if (f != E2U)
+			payload(expected[f], tx.encoder.mapping.data_bits_per_frame, f);
+		unsigned input_frame = f;
+		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; ++s) {
+			unsigned index = f * V92_PCM_MAPPING_FRAME_SYMBOLS + s;
+			CHECK(v92_upstream_data_tx_next(&tx, source, &input_frame,
+				      &wire[index]) ==
+			      (f == NEW - 1 && s == V92_PCM_MAPPING_FRAME_SYMBOLS - 1 ?
+				      V92_UPSTREAM_DATA_TX_FB1U_COMPLETE : V92_UPSTREAM_DATA_TX_OK),
+			      "finish TX stopped at frame %u", f);
+			if (codec)
+				wire[index] = finish_codec_sample(law, wire[index], history);
+		}
+		CHECK(input_frame == f + (f >= V92_B1U_FRAMES && (f < E2U || f >= NEW + V92_B1U_FRAMES)),
+		      "finish/B1u consumed host payload");
+	}
+	CHECK(prepare_e2u(&channel, false, &initial_tx, &initial_rx), "initial E2u failed");
+	/* The codec fixture starts with an established training handoff, as in
+	 * test_codec_model; the direct fixture also decodes actual initial E2u. */
+	unsigned cursor = codec ? V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY : 0;
+	while (!codec && !v92_e2u_rx_is_complete(&initial_rx)) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&initial_tx))
+			CHECK(v92_phase4_record_tx_next(&initial_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+			      "initial E2u TX failed");
+		else
+			sample = wire[cursor++];
+		enum v92_e2u_rx_result r = v92_e2u_rx_sample(&initial_rx, wire_sample(&channel, sample));
+		CHECK(r == V92_E2U_RX_OK || r == V92_E2U_RX_COMPLETE, "initial E2u RX failed");
+	}
+	CHECK(v92_upstream_data_rx_init(&rx, &initial_rx.signal, &old_mapping, &old_plan) ==
+	      V92_UPSTREAM_DATA_RX_OK, "finish data init failed");
+	for (; cursor < ARRAY_LENGTH(wire); ++cursor) {
+		unsigned input_frame = epoch + rx.line.received_frames;
+		if (!rx.line.symbol_count && input_frame == CONTROL)
+			CHECK(v92_upstream_data_rx_reset_control(&rx) == V92_UPSTREAM_DATA_RX_OK, "RX reset failed");
+		if (switch_at && input_frame == switch_at && !epoch && !rx.line.symbol_count) {
+			CHECK(switch_at == NEW && b1u_switch_contracts(&rx, &new_mapping, &new_plan) &&
+			      (!codec || (rx.model.valid == 3 && old_plan.gain != new_plan.gain)),
+			      "finish handoff contracts failed");
+			struct v92_upstream_data_line line = rx.line;
+			enum v92_upstream_data_rx_result switched = v92_upstream_data_rx_start_b1u(&rx, &new_mapping, &new_plan);
+			CHECK(switched == V92_UPSTREAM_DATA_RX_OK,
+			      "new B1u RX failed: %u law=%u rates=%u->%u gain=%g->%g calibrated=%g [%g,%g]",
+			      switched, law, old_rate, new_rate, line.plan.gain, new_plan.gain,
+			      line.calibration.gain, line.calibration.minimum, line.calibration.maximum);
+			line.received_frames = 0;
+			line.plan = new_plan;
+			if (codec) {
+				double ratio = new_plan.gain / old_plan.gain;
+				line.calibration.gain *= ratio;
+				line.calibration.minimum = fmin(new_plan.gain, line.calibration.minimum * ratio);
+				line.calibration.maximum = fmax(new_plan.gain, line.calibration.maximum * ratio);
+				line.calibration.correlation = line.calibration.energy = 0;
+				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
+			}
+			epoch = NEW;
+			CHECK(v92_upstream_data_rx_is_valid(&rx) && memcmp(&line, &rx.line, sizeof(line)) == 0,
+			      "B1u handoff disturbed warm physical state");
+		}
+		struct v92_upstream_data_frame frame;
+		uint8_t code = (uint8_t)wire[cursor];
+		int16_t decoded = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
+		enum v92_upstream_data_rx_result r = codec ? v92_upstream_data_rx_octet(&rx, code,
+			(int16_t)lround(.75 * decoded), true, &frame) :
+			v92_upstream_data_rx_sample(&rx, wire_sample(&channel, wire[cursor]), &frame);
+		CHECK(r == V92_UPSTREAM_DATA_RX_OK || r == V92_UPSTREAM_DATA_RX_FRAME, "finish RX failed: %u", r);
+		if (rx.line.symbol_count) {
+			struct v92_upstream_data_rx saved = rx;
+			CHECK(v92_upstream_data_rx_start_b1u(&rx, &new_mapping, &new_plan) ==
+			      V92_UPSTREAM_DATA_RX_INVALID_STATE && memcmp(&rx, &saved, sizeof(rx)) == 0,
+			      "partial-frame B1u handoff accepted");
+		}
+		if (codec && r == V92_UPSTREAM_DATA_RX_FRAME && rx.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
+			CHECK(rx.model.valid == 3 && !rx.model.acquiring, "B1u did not fit new codec models");
+		if (r != V92_UPSTREAM_DATA_RX_FRAME || !frame.bit_count)
+			continue;
+		unsigned delivered = epoch + rx.line.received_frames - 1 - V92_PCM_RX_DELAY_FRAMES;
+		CHECK(!frame.ambiguous && memcmp(frame.bits, expected[delivered], frame.bit_count) == 0,
+		      "finish bits differ: law %u rates %u->%u frame %u", law, old_rate, new_rate, delivered);
+		if (delivered == E2U)
+			switch_at = rx.line.received_frames + V92_B1U_FRAMES - V92_PCM_RX_DELAY_FRAMES;
+		else if (delivered > E2U && delivered < NEW)
+			fb1u_count++;
+		else if (delivered >= NEW + V92_B1U_FRAMES)
+			data_count++;
+	}
+	unsigned delayed = codec ? (new_plan.delay + V92_PCM_MAPPING_FRAME_SYMBOLS - 1) /
+		V92_PCM_MAPPING_FRAME_SYMBOLS : 1;
+	CHECK(epoch == NEW && fb1u_count == V92_B1U_FRAMES - V92_PCM_RX_DELAY_FRAMES &&
+	      data_count == 26 - V92_PCM_RX_DELAY_FRAMES - delayed,
+	      "finish incomplete: epoch=%u FB1u=%u data=%u", epoch, fb1u_count, data_count);
+	return true;
+}
+
 static bool test_owned_boundaries(void)
 {
 	struct channel channel = { .gain = 1.0, .law = G711_LAW_PCMU, .polarity = 1 };
@@ -866,6 +1072,7 @@ static bool test_rejection_and_failure(void)
 	      !v92_upstream_data_rx_b1u_complete(NULL) &&
 	      v92_upstream_data_rx_reset_control(NULL) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
+	      v92_upstream_data_rx_start_b1u(&receiver, &mapping, &direct_plan) == V92_UPSTREAM_DATA_RX_INVALID_STATE &&
 	      v92_upstream_data_rx_init(NULL, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
 	      v92_upstream_data_rx_init(&receiver, NULL, &mapping, &direct_plan) ==
@@ -1869,7 +2076,9 @@ int main(void)
 	const uint8_t rm_rates[] = { 1u, 16u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned i = 0; i < ARRAY_LENGTH(rm_rates); ++i)
-			if (!test_fast_control(law, rm_rates[i])) return 1;
+			if (!test_fast_control(law, rm_rates[i]) ||
+			    !test_fast_finish(law, rm_rates[i], rm_rates[(i + 1) % ARRAY_LENGTH(rm_rates)], false) ||
+			    !test_fast_finish(law, rm_rates[i], rm_rates[(i + 1) % ARRAY_LENGTH(rm_rates)], true)) return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned i = 0u; i < ARRAY_LENGTH(rm_rates); ++i)
