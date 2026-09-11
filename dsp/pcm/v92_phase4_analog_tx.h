@@ -3,11 +3,9 @@
 #ifndef V92_PHASE4_ANALOG_TX_H
 #define V92_PHASE4_ANALOG_TX_H
 
-#include "v92_cpu.h"
 #include "v92_pcm_phase4_trn2u.h"
 #include "v92_phase4_record_tx.h"
-#include "v92_suvd.h"
-#include "v92_suvu.h"
+#include "v92_upstream_control.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -37,19 +35,8 @@ struct v92_phase4_analog_tx {
 		struct v92_pcm_phase4_trn2u trn2u;
 		struct v92_phase4_record_tx record;
 	} signal;
-	struct v92_suvu_parameters suvu;
-	struct v92_cpu_parameters cpu;
-	uint64_t completed_cpu_records;
+	struct v92_upstream_control control;
 	enum v92_phase4_analog_tx_stage stage;
-	bool received_suvd;
-	bool received_cpd;
-	/* Either a peer acknowledgment bit or receipt of Ed. */
-	bool peer_confirmation_received;
-	bool peer_requests_silence;
-	bool cpu_pending;
-	bool cpu_sent;
-	bool acknowledgment_sent;
-	bool current_record_acknowledges_cpd;
 	bool renegotiation;
 };
 

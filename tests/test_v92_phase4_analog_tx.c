@@ -145,7 +145,7 @@ static bool test_early_peer_sequence(void)
 	      emit_symbols(&tx, 13u) &&
 	      v92_phase4_analog_tx_note_suvd(&tx, &suvd) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      tx.cpu_pending && v92_phase4_analog_tx_silence_requested(&tx) &&
+	      tx.control.cpu_pending && v92_phase4_analog_tx_silence_requested(&tx) &&
 	      emit_symbols(&tx, 11u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_TRN2U &&
 	      tx.signal.trn2u.emitted_symbols == 24u,
@@ -154,13 +154,13 @@ static bool test_early_peer_sequence(void)
 	      tx.stage == V92_PHASE4_ANALOG_TX_SUVU &&
 	      tx.signal.record.bit_index == 2u &&
 	      current_suvu_acknowledges_cpd(&tx, false) &&
-	      finish_record(&tx) && tx.cpu_pending,
+	      finish_record(&tx) && tx.control.cpu_pending,
 	      "early SUVd did not produce the first SUVu");
 	CHECK(emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
-	      !tx.cpu_pending && current_cpu_acknowledges_cpd(&tx, false) &&
-	      finish_record(&tx) && tx.cpu_sent &&
-	      tx.completed_cpu_records == 1u &&
+	      !tx.control.cpu_pending && current_cpu_acknowledges_cpd(&tx, false) &&
+	      finish_record(&tx) && tx.control.cpu_sent &&
+	      tx.control.completed_cpu_records == 1u &&
 	      v92_phase4_record_tx_is_complete(&tx.signal.record),
 	      "first CPu was not sent after downstream status");
 	CHECK(emit_symbols(&tx, 1u) &&
@@ -171,7 +171,7 @@ static bool test_early_peer_sequence(void)
 	suvd.acknowledges_cpu = true;
 	CHECK(v92_phase4_analog_tx_note_suvd(&tx, &suvd) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      finish_record(&tx) && !tx.acknowledgment_sent &&
+	      finish_record(&tx) && !tx.control.acknowledgment_sent &&
 	      emit_symbols(&tx, 1u) &&
 	      current_suvu_acknowledges_cpd(&tx, true) &&
 	      finish_record(&tx) &&
@@ -203,8 +203,8 @@ static bool test_training_boundaries(void)
 				enum v92_phase4_analog_tx_result result = mode ?
 					v92_phase4_analog_tx_init_after_ru(&tx, points, TEST_LU, &suvu, &cpu) :
 					v92_phase4_analog_tx_init(&tx, points, 1u, TEST_LU, &suvu, &cpu);
-				CHECK(result == V92_PHASE4_ANALOG_TX_OK && !tx.cpu.acknowledges_cpd &&
-				      !tx.received_cpd && !tx.peer_confirmation_received &&
+				CHECK(result == V92_PHASE4_ANALOG_TX_OK && !tx.control.cpu.acknowledges_cpd &&
+				      !tx.control.received_cpd && !tx.control.peer_confirmation_received &&
 				      v92_pcm_phase4_trn2u_init(&expected, points, mode ? 0u : 1u, TEST_LU) ==
 					V92_PCM_PHASE4_TRN2U_OK, "training boundary did not initialize");
 				unsigned end = mode ? 2400u : 12000u;
@@ -252,8 +252,8 @@ static bool test_timeout_and_retry(void)
 		      V92_PHASE4_ANALOG_TX_OK &&
 	      finish_record(&tx) && emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
-	      finish_record(&tx) && tx.cpu_sent &&
-	      tx.completed_cpu_records == 1u &&
+	      finish_record(&tx) && tx.control.cpu_sent &&
+	      tx.control.completed_cpu_records == 1u &&
 	      emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_SUVU,
 	      "timeout path did not send its first CPu");
@@ -263,8 +263,8 @@ static bool test_timeout_and_retry(void)
 		      V92_PHASE4_ANALOG_TX_INVALID_STATE &&
 	      finish_record(&tx) && emit_symbols(&tx, 1u) &&
 	      tx.stage == V92_PHASE4_ANALOG_TX_CPU &&
-	      finish_record(&tx) && tx.cpu_sent &&
-	      tx.completed_cpu_records == 2u &&
+	      finish_record(&tx) && tx.control.cpu_sent &&
+	      tx.control.completed_cpu_records == 2u &&
 	      !v92_phase4_analog_tx_is_e2u_ready(&tx),
 	      "timer-requested CPu retry was not exactly one record");
 	CHECK(emit_symbols(&tx, 1u) &&
@@ -272,7 +272,7 @@ static bool test_timeout_and_retry(void)
 		      V92_PHASE4_ANALOG_TX_OK &&
 	      finish_record(&tx) && emit_symbols(&tx, 1u) &&
 	      current_suvu_acknowledges_cpd(&tx, true) &&
-	      finish_record(&tx) && tx.acknowledgment_sent &&
+	      finish_record(&tx) && tx.control.acknowledgment_sent &&
 	      !v92_phase4_analog_tx_is_e2u_ready(&tx) &&
 	      v92_phase4_analog_tx_note_ed(&tx) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
@@ -294,7 +294,7 @@ static bool test_pending_handoff(enum v92_constellation_size constellation,
 	      v92_phase4_analog_tx_note_cpd(&tx, false) == V92_PHASE4_ANALOG_TX_OK &&
 	      emit_symbols(&tx, 25u) && finish_record(&tx) &&
 	      emit_symbols(&tx, 1u) && finish_record(&tx) &&
-	      tx.cpu_sent && tx.acknowledgment_sent && emit_symbols(&tx, 5u),
+	      tx.control.cpu_sent && tx.control.acknowledgment_sent && emit_symbols(&tx, 5u),
 	      "acknowledged control fixture did not prepare");
 	if (repeat_cpu)
 		CHECK(v92_phase4_analog_tx_repeat_cpu(&tx) == V92_PHASE4_ANALOG_TX_OK &&
@@ -327,6 +327,85 @@ static bool test_pending_handoff(enum v92_constellation_size constellation,
 	CHECK(v92_phase4_analog_tx_is_e2u_ready(&tx) &&
 	      memcmp(&handoff, &tx.signal.record, sizeof(handoff)) == 0,
 	      "pending control did not finish at the E2u boundary");
+	return true;
+}
+
+static bool test_control_records(void)
+{
+	/* Identical policy at both training widths and every PCM data width.
+	 * Neither record creation nor receipt of an ACK counts an unsent tail. */
+	for (unsigned width = 24; width <= 72; width = width == 24 ? 36 : width + 2) {
+		struct v92_upstream_control control;
+		struct v92_suvu_parameters suvu = suvu_parameters(), decoded_suvu;
+		struct v92_cpu_parameters cpu = cpu_parameters(), decoded_cpu;
+		struct v92_suvd_parameters suvd = { 0 };
+		uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+		size_t bits;
+		CHECK(v92_upstream_control_init(&control, &suvu, &cpu) &&
+		      v92_upstream_control_note_suvd(&control, &suvd) &&
+		      v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits) &&
+		      bits % width == 0 &&
+		      v92_suvu_decode(frame, sizeof(frame), bits, width, &decoded_suvu) == V92_SUVU_OK &&
+		      !decoded_suvu.acknowledges_cpd && !decoded_suvu.request_silence &&
+		      v92_upstream_control_note_cpd(&control, false) &&
+		      v92_upstream_control_complete(&control) && !control.acknowledgment_sent,
+		      "width %u changed the initial SUVu or retroactively acknowledged CPd", width);
+		CHECK(v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits) &&
+		      bits % width == 0 &&
+		      v92_cpu_decode(frame, sizeof(frame), bits, width, &decoded_cpu) == V92_CPU_OK &&
+		      decoded_cpu.acknowledges_cpd && decoded_cpu.data_rate_number == cpu.data_rate_number &&
+		      !control.cpu_sent && !control.acknowledgment_sent &&
+		      v92_upstream_control_complete(&control) && control.completed_cpu_records == 1 &&
+		      control.acknowledgment_sent && !v92_upstream_control_can_finish(&control),
+		      "width %u lost CPu alignment/completion", width);
+		CHECK(v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits) &&
+		      v92_upstream_control_repeat_cpu(&control) &&
+		      v92_upstream_control_complete(&control) &&
+		      v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits) &&
+		      control.record == V92_UPSTREAM_CONTROL_CPU,
+		      "width %u did not schedule exactly one retry", width);
+		suvd.acknowledges_cpu = true;
+		CHECK(v92_upstream_control_note_suvd(&control, &suvd) &&
+		      v92_upstream_control_can_finish(&control) && !control.record_complete &&
+		      !v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits) &&
+		      v92_upstream_control_complete(&control) && control.completed_cpu_records == 2 &&
+		      !v92_upstream_control_complete(&control) &&
+		      !v92_upstream_control_start(&control, width, frame, sizeof(frame), &bits),
+		      "width %u discarded the acknowledged CPu tail or repeated after completion", width);
+	}
+	return true;
+}
+
+static bool test_control_contracts(void)
+{
+	struct v92_upstream_control control, saved;
+	struct v92_suvu_parameters suvu = suvu_parameters();
+	struct v92_cpu_parameters cpu = cpu_parameters();
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES], before[sizeof(frame)];
+	size_t bits = 999;
+	CHECK(v92_upstream_control_init(&control, &suvu, &cpu), "control init failed");
+	saved = control;
+	memset(frame, 0xa5, sizeof(frame));
+	memcpy(before, frame, sizeof(frame));
+	CHECK(!v92_upstream_control_start(NULL, 36, frame, sizeof(frame), &bits) &&
+	      !v92_upstream_control_start(&control, 37, frame, sizeof(frame), &bits) &&
+	      !v92_upstream_control_start(&control, 36, frame, 1, &bits) &&
+	      !v92_upstream_control_start(&control, 36, frame, sizeof(frame), (void *)frame) &&
+	      !v92_upstream_control_start(&control, 36, (void *)&control, sizeof(control), &bits) &&
+	      !v92_upstream_control_start(&control, 36, frame, sizeof(frame), (void *)&control) &&
+	      !v92_upstream_control_complete(&control) &&
+	      !v92_upstream_control_repeat_cpu(&control) &&
+	      memcmp(&saved, &control, sizeof(saved)) == 0 && bits == 999 &&
+	      memcmp(frame, before, sizeof(frame)) == 0,
+	      "rejected control operation changed state/output");
+	control.record = V92_UPSTREAM_CONTROL_CPU;
+	control.record_complete = false;
+	control.received_suvd = control.cpu_sent = true;
+	control.completed_cpu_records = UINT64_MAX;
+	saved = control;
+	CHECK(v92_upstream_control_is_valid(&control) &&
+	      !v92_upstream_control_complete(&control) && memcmp(&saved, &control, sizeof(saved)) == 0,
+	      "record counter overflow changed state");
 	return true;
 }
 
@@ -389,7 +468,7 @@ static bool test_contracts(void)
 	CHECK(initialize(&ed_tx, V92_CONSTELLATION_4_POINT) &&
 	      v92_phase4_analog_tx_note_ed(&ed_tx) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      ed_tx.peer_confirmation_received && !ed_tx.received_cpd,
+	      ed_tx.control.peer_confirmation_received && !ed_tx.control.received_cpd,
 	      "Ed was confused with receipt of CPd");
 	CHECK(initialize(&cancel_tx, V92_CONSTELLATION_4_POINT) &&
 	      v92_phase4_analog_tx_note_suvd(&cancel_tx, &suvd) ==
@@ -399,10 +478,10 @@ static bool test_contracts(void)
 	      emit_symbols(&cancel_tx, 1u) &&
 	      v92_phase4_analog_tx_repeat_cpu(&cancel_tx) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      cancel_tx.cpu_pending &&
+	      cancel_tx.control.cpu_pending &&
 	      v92_phase4_analog_tx_note_ed(&cancel_tx) ==
 		      V92_PHASE4_ANALOG_TX_OK &&
-	      !cancel_tx.cpu_pending,
+	      !cancel_tx.control.cpu_pending,
 	      "peer confirmation did not cancel a queued CPu retry");
 	before = tx;
 	memset(&handoff, 0xa5, sizeof(handoff));
@@ -461,7 +540,8 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
-	if (!test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
+	if (!test_control_records() || !test_control_contracts() ||
+	    !test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, false) ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, true) ||
 	    !test_pending_handoff(V92_CONSTELLATION_8_POINT, false) ||

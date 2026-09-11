@@ -66,7 +66,7 @@ static bool owned_mapping_is_valid(
 	struct v92_cpd_base_parameters base = station->cpd_received ?
 		station->cpd : cpd_base(&station->mapping.cpd);
 	return g711_law_is_valid(station->mapping.law) &&
-	       station->mapping.law == station->transmit.cpu.law &&
+	       station->mapping.law == station->transmit.control.cpu.law &&
 	       station->mapping.data_bits_per_frame != 0u &&
 	       station->mapping.data_bits_per_frame ==
 		       v92_pcm_mapping_data_bits(
@@ -85,8 +85,8 @@ static bool owned_state_is_valid(
 		v92_suvd_parameters_are_valid(&station->suvd) :
 		suvd_is_empty(&station->suvd)) &&
 	       owned_mapping_is_valid(station) &&
-	       station->transmit.received_suvd == station->suvd_received &&
-	       station->transmit.received_cpd == station->cpd_received;
+	       station->transmit.control.received_suvd == station->suvd_received &&
+	       station->transmit.control.received_cpd == station->cpd_received;
 }
 
 bool v92_phase4_analog_station_is_valid(
@@ -97,11 +97,11 @@ bool v92_phase4_analog_station_is_valid(
 		return false;
 	if (station->cleardown.active)
 		return station->receive.protocol == PCM_PROTOCOL_V92 &&
-			v92_cpu_parameters_are_valid(&station->transmit.cpu) &&
-			station->receive.stream.decoder.mapping.law == station->transmit.cpu.law &&
+			v92_cpu_parameters_are_valid(&station->transmit.control.cpu) &&
+			station->receive.stream.decoder.mapping.law == station->transmit.control.cpu.law &&
 			station->cleardown.cp_end <= station->transmitted_symbols &&
 			station->cleardown.acknowledgement_end <= station->transmitted_symbols &&
-			(!station->cleardown_cp_started || station->transmit.cpu.data_rate_number == 0u) &&
+			(!station->cleardown_cp_started || station->transmit.control.cpu.data_rate_number == 0u) &&
 			(station->transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U ?
 			 v92_phase4_analog_tx_is_valid(&station->transmit) :
 			 (station->transmit.stage >= V92_PHASE4_ANALOG_TX_SUVU &&
@@ -113,7 +113,7 @@ bool v92_phase4_analog_station_is_valid(
 	       station->receive.stream.decoder.decision_plane ==
 		       V90_PCM_MAPPING_TRANSMIT &&
 	       station->receive.stream.decoder.mapping.law ==
-		       station->transmit.cpu.law &&
+		       station->transmit.control.cpu.law &&
 	       owned_state_is_valid(station);
 }
 
@@ -207,7 +207,7 @@ static bool note_cpd(
 		}
 		selected.modulus_present = selected.filters_present = selected.constellations_present = true;
 	}
-	if (v92_pcm_mapping_init(&mapping, station->transmit.cpu.law, &selected) != V92_PCM_MAPPING_OK)
+	if (v92_pcm_mapping_init(&mapping, station->transmit.control.cpu.law, &selected) != V92_PCM_MAPPING_OK)
 		return false;
 	if (station->cpd_received) {
 		mapping.cpd.acknowledges_cpu = station->mapping.cpd.acknowledges_cpu;
@@ -415,7 +415,7 @@ static enum v92_phase4_analog_station_result transmit_cleardown(
 			size_t bits;
 			unsigned int width = V92_CPU_SYMBOLS_PER_FRAME *
 				v92_phase4_modulator_bits_per_symbol(record->modulator.constellation);
-			struct v92_cpu_parameters cpu = tx->cpu;
+			struct v92_cpu_parameters cpu = tx->control.cpu;
 
 			if (v92_cleardown_is_ready(&station->cleardown, station->transmitted_symbols))
 				return V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE;
@@ -425,7 +425,7 @@ static enum v92_phase4_analog_station_result transmit_cleardown(
 			    v92_phase4_record_tx_start_next(record, frame, sizeof(frame), bits) !=
 				V92_PHASE4_RECORD_TX_OK)
 				return fail(station);
-			tx->cpu = cpu;
+			tx->control.cpu = cpu;
 			station->cleardown_cp_started = true;
 		}
 		if (v92_phase4_record_tx_next(record, sample) != V92_PHASE4_RECORD_TX_OK)
@@ -434,7 +434,7 @@ static enum v92_phase4_analog_station_result transmit_cleardown(
 	station->transmitted_symbols++;
 	if (station->cleardown_cp_started && v92_phase4_record_tx_is_complete(record))
 		v92_cleardown_sent(&station->cleardown, station->transmitted_symbols,
-			tx->cpu.acknowledges_cpd);
+			tx->control.cpu.acknowledges_cpd);
 	return V92_PHASE4_ANALOG_STATION_OK;
 }
 
@@ -523,7 +523,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_handoff(
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_analog_handoff){
 		.receive = station->receive,
-		.cpu = station->transmit.cpu,
+		.cpu = station->transmit.control.cpu,
 		.mapping = station->mapping,
 	};
 	if (v92_phase4_analog_tx_handoff(

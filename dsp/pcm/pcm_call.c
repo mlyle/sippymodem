@@ -560,13 +560,13 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 		&call->state.phase4.v92.owner.analog;
 	uint32_t expected_interval = V92_CPU_REPEAT_BASE_SAMPLES +
 		call->round_trip_delay_samples;
-	bool confirmed = state->station.transmit.peer_confirmation_received;
+	bool confirmed = state->station.transmit.control.peer_confirmation_received;
 	bool timer_valid;
 
 	if (state->station.cleardown.active)
 		return v92_phase4_analog_station_is_valid(&state->station);
 	if (state->observed_cpu_records !=
-	    state->station.transmit.completed_cpu_records)
+	    state->station.transmit.control.completed_cpu_records)
 		return false;
 	if (confirmed)
 		timer_valid = !state->awaiting_cpu_completion &&
@@ -3005,7 +3005,7 @@ static enum pcm_call_result observe_v92_cpu_completion(
 	bool *completed_this_sample)
 {
 	uint64_t completed =
-		state->station.transmit.completed_cpu_records;
+		state->station.transmit.control.completed_cpu_records;
 
 	*completed_this_sample = false;
 	if (completed == state->observed_cpu_records)
@@ -3016,7 +3016,7 @@ static enum pcm_call_result observe_v92_cpu_completion(
 	state->observed_cpu_records = completed;
 	state->awaiting_cpu_completion = false;
 	state->cpu_repeat_remaining_samples =
-		state->station.transmit.peer_confirmation_received ?
+		state->station.transmit.control.peer_confirmation_received ?
 			0u : state->cpu_repeat_interval_samples;
 	*completed_this_sample = true;
 	return PCM_CALL_OK;
@@ -3026,7 +3026,7 @@ static enum pcm_call_result advance_v92_cpu_repeat(
 	struct pcm_call_v92_analog_phase4_control *state,
 	bool completed_this_sample)
 {
-	if (state->station.transmit.peer_confirmation_received) {
+	if (state->station.transmit.control.peer_confirmation_received) {
 		state->cpu_repeat_remaining_samples = 0u;
 		state->awaiting_cpu_completion = false;
 		return PCM_CALL_OK;
@@ -3048,7 +3048,7 @@ static enum pcm_call_result advance_v92_cpu_repeat(
 static void cancel_v92_cpu_repeat_if_confirmed(
 	struct pcm_call_v92_analog_phase4_control *state)
 {
-	if (!state->station.transmit.peer_confirmation_received)
+	if (!state->station.transmit.control.peer_confirmation_received)
 		return;
 	state->cpu_repeat_remaining_samples = 0u;
 	state->awaiting_cpu_completion = false;

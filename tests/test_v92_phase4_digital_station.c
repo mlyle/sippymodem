@@ -857,8 +857,8 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 		CHECK(v92_pcm_mapping_init(&retained, law, &previous) == V92_PCM_MAPPING_OK &&
 		      v92_phase4_analog_station_init_after_ru(&station, V92_CONSTELLATION_4_POINT,
 			TEST_LU, &downstream, &cpu, &retained, 80u) == V92_PHASE4_ANALOG_STATION_OK &&
-		      !station.cpd_received && !station.transmit.received_cpd &&
-		      !station.transmit.cpu.acknowledges_cpd && !station.mapping.cpd.acknowledges_cpu &&
+		      !station.cpd_received && !station.transmit.control.received_cpd &&
+		      !station.transmit.control.cpu.acknowledges_cpd && !station.mapping.cpd.acknowledges_cpu &&
 		      !v92_phase4_analog_station_can_handoff(&station) &&
 		      station.mapping.cpd.data_rate_number == previous.data_rate_number,
 		      "rate reentry reused an acknowledgement or lost the prior mapping");
@@ -1142,7 +1142,7 @@ static bool check_cleardown_pair(
 	struct v92_phase4_digital_station digital = *digital_start;
 	bool done[2] = { false, false };
 	uint64_t ended[2] = { 0, 0 };
-	enum g711_law law = analog.transmit.cpu.law;
+	enum g711_law law = analog.transmit.control.cpu.law;
 	uint16_t rtd = 161u;
 
 	analog.round_trip_delay_samples = rtd;
@@ -1332,7 +1332,7 @@ static bool run_paired_station_exchange(
 		      v92_phase4_analog_station_result_name(analog_result));
 		if (analog.transmit.stage == V92_PHASE4_ANALOG_TX_CPU)
 			expected_cpu.acknowledges_cpd =
-				analog.transmit.current_record_acknowledges_cpd;
+				analog.transmit.control.current_record_acknowledges_cpd;
 		CHECK(v92_phase4_digital_station_transmit(
 			      &digital, &downstream_octet) ==
 			      V92_PHASE4_DIGITAL_STATION_OK,
@@ -1350,8 +1350,8 @@ static bool run_paired_station_exchange(
 		      analog_result == V92_PHASE4_ANALOG_STATION_EVENT,
 		      "paired analogue receive stopped at %zu: %s", symbol,
 		      v92_phase4_analog_station_result_name(analog_result));
-		if (analog.transmit.cpu_sent && !digital.cpu_received &&
-		    !analog.transmit.cpu_pending) {
+		if (analog.transmit.control.cpu_sent && !digital.cpu_received &&
+		    !analog.transmit.control.cpu_pending) {
 			if (cpu_repeat_wait == 0u)
 				cpu_repeat_wait = 800u;
 			else if (--cpu_repeat_wait == 0u)
@@ -1448,10 +1448,10 @@ static bool run_paired_station_exchange(
 	      (unsigned int)law, (unsigned int)constellation, ready,
 	      terminal_status_seen,
 	      analog.suvd_received, analog.cpd_received,
-	      analog.transmit.cpu_sent, analog.transmit.acknowledgment_sent,
-	      analog.transmit.peer_confirmation_received,
+	      analog.transmit.control.cpu_sent, analog.transmit.control.acknowledgment_sent,
+	      analog.transmit.control.peer_confirmation_received,
 	      analog.transmit.stage, analog.receive.stage,
-	      analog.transmit.received_suvd, analog.transmit.received_cpd,
+	      analog.transmit.control.received_suvd, analog.transmit.control.received_cpd,
 	      digital.suvu_received, digital.cpu_received,
 	      digital.peer_acknowledged_cpd,
 	      digital.transmit_acknowledges_cpu);
@@ -1619,8 +1619,8 @@ static bool test_analog_early_control(void)
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      station.suvd_received && station.cpd_received &&
 	      v92_pcm_mapping_is_valid(&station.mapping) &&
-	      station.transmit.received_suvd &&
-	      station.transmit.received_cpd &&
+	      station.transmit.control.received_suvd &&
+	      station.transmit.control.received_cpd &&
 	      v92_phase4_analog_tx_silence_requested(&station.transmit),
 	      "early downstream controls were not retained");
 	memset(&exported, 0xa5, sizeof(exported));

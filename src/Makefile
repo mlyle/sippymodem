@@ -257,6 +257,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_suvd.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_control_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_analog_tx.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_upstream_control.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_rx.c \

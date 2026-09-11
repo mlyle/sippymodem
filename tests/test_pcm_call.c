@@ -5807,13 +5807,13 @@ static bool run_v92_phase4_control(
 			struct v92_phase4_analog_station predicted =
 				analog.state.phase4.v92.owner.analog.station;
 			uint64_t completed =
-				predicted.transmit.completed_cpu_records;
+				predicted.transmit.control.completed_cpu_records;
 			int16_t predicted_sample;
 
 			if (v92_phase4_analog_station_transmit(
 				    &predicted, &predicted_sample) ==
 				    V92_PHASE4_ANALOG_STATION_OK &&
-			    predicted.transmit.completed_cpu_records ==
+			    predicted.transmit.control.completed_cpu_records ==
 				    completed + 1u) {
 				struct pcm_call collision = analog;
 				struct pcm_call_observation collision_observation;
@@ -5836,7 +5836,7 @@ static bool run_v92_phase4_control(
 					      .observed_cpu_records ==
 					      collision.state.phase4.v92.owner.analog
 						      .station.transmit
-						      .completed_cpu_records,
+						      .control.completed_cpu_records,
 				      "V.92 CPu completion hid a receive failure");
 				completion_failure_checked = true;
 			}
@@ -5914,7 +5914,7 @@ static bool run_v92_phase4_control(
 		if (analog.stage == PCM_CALL_PHASE4 &&
 		    analog.state.phase4.v92.child ==
 			    PCM_CALL_V92_PHASE4_CONTROL &&
-		    analog.state.phase4.v92.owner.analog.station.transmit.cpu_sent &&
+		    analog.state.phase4.v92.owner.analog.station.transmit.control.cpu_sent &&
 		    first_cpu_sent == SIZE_MAX)
 			first_cpu_sent = clock;
 		if (digital.stage == PCM_CALL_PHASE4 &&
@@ -5990,7 +5990,7 @@ static bool run_v92_phase4_control(
 	      analog_control.cpu_repeat_remaining_samples == 0u &&
 	      !analog_control.awaiting_cpu_completion &&
 	      analog_control.observed_cpu_records ==
-		      analog_control.station.transmit.completed_cpu_records &&
+		      analog_control.station.transmit.control.completed_cpu_records &&
 	      analog_control.observed_cpu_records >= 2u &&
 	      v92_cpu_frame_bits(
 		      &analog_configuration.v92_analog_phase4.cpu, 24u) /
@@ -6041,7 +6041,7 @@ static bool run_v92_phase4_control(
 	      first_cpu_sent, first_cpu_received,
 	      (unsigned long long)analog_control.observed_cpu_records,
 	      (unsigned long long)analog_control.station
-		      .transmit.completed_cpu_records,
+		      .transmit.control.completed_cpu_records,
 	      analog_control.cpu_repeat_interval_samples,
 	      analog_control.cpu_repeat_remaining_samples,
 	      analog.round_trip_delay_samples);
@@ -7788,7 +7788,7 @@ static bool run_v92_excess_lookahead(enum g711_law law, uint8_t maximum, bool cp
 		}
 		if (!injected && !cpt && calls[0].stage == PCM_CALL_PHASE4 &&
 		    calls[0].state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
-			calls[0].state.phase4.v92.owner.analog.station.transmit.cpu
+			calls[0].state.phase4.v92.owner.analog.station.transmit.control.cpu
 				.spectral_lookahead_frames = maximum + 1u;
 			injected = true;
 		}

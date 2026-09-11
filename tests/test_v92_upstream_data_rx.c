@@ -9,10 +9,12 @@
 #include <v92_phase4_record_tx.h>
 #include <v92_ru_line_rx.h>
 #include <v92_upstream_control_line_rx.h>
+#include <v92_upstream_control.h>
 #include <v92_upstream_data_rx.h>
 #include <v92_upstream_data_tx.h>
 
 #include "test.h"
+#include "packed_bits.h"
 
 #include <float.h>
 #include <math.h>
@@ -479,6 +481,137 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 	CHECK(delivered == V92_B1U_FRAMES + DATA_FRAMES &&
 	      (postcursor == 0.0 || b1u_error > 0u), "delivery or distortion evidence changed");
 	return true;
+}
+
+struct fast_control_source {
+	struct v92_upstream_control control;
+	uint8_t record[V92_CPU_MAX_FRAME_BYTES];
+	size_t bits, index;
+	unsigned data_frames;
+	bool active;
+};
+
+static bool fast_control_source(void *context, uint8_t *bits, size_t count)
+{
+	struct fast_control_source *source_state = context;
+	if (!source_state->active)
+		return source(&source_state->data_frames, bits, count);
+	if (source_state->control.record_complete) {
+		/* Only flush receive lookahead after the final control record. This
+		 * fixture does not claim to exercise E2u/FB1u or a complete FPE. */
+		if (v92_upstream_control_can_finish(&source_state->control)) {
+			memset(bits, 1, count);
+			return true;
+		}
+		if (!v92_upstream_control_start(&source_state->control, count,
+			    source_state->record, sizeof(source_state->record), &source_state->bits))
+			return false;
+		source_state->index = 0;
+	}
+	if (count > source_state->bits - source_state->index)
+		return false;
+	for (size_t bit = 0; bit < count; ++bit)
+		bits[bit] = packed_msb_bit(source_state->record, source_state->index++);
+	return true;
+}
+
+static bool test_fast_control(enum g711_law law, uint8_t rate)
+{
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_data_tx tx;
+	struct v92_upstream_data_rx rx;
+	struct v92_control_rx parser;
+	struct fast_control_source input = { 0 };
+	struct v92_suvu_parameters suvu = { .prefilter_level_db_q2_2 = -16 };
+	struct v92_cpu_parameters cpu = {
+		.law = law, .trn1d_ratio_q3_13 = 0x2000, .data_rate_number = 21,
+		.sign_redundancy = 1, .spectral_lookahead_frames = 1,
+		.constellation_count = 1,
+		.transmit_constellations = { { .ucode_mask = { 2, 0, 0, 128 } } },
+	};
+	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_upstream_data_tx_init(&tx, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
+	      v92_upstream_control_init(&input.control, &suvu, &cpu) &&
+	      v92_control_rx_init_upstream(&parser, mapping.data_bits_per_frame) == V92_CONTROL_RX_OK &&
+	      prepare_e2u(&channel, false, &e2u_tx, &e2u_rx), "fast control fixture failed");
+	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx))
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+			      "fast control E2u failed");
+		else
+			CHECK(v92_upstream_data_tx_next(&tx, fast_control_source, &input, &sample) ==
+			      V92_UPSTREAM_DATA_TX_OK, "fast control B1u failed");
+		enum v92_e2u_rx_result result = v92_e2u_rx_sample(&e2u_rx, wire_sample(&channel, sample));
+		CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE, "E2u receive failed");
+	}
+	CHECK(v92_upstream_data_rx_init(&rx, &e2u_rx.signal, &mapping, &direct_plan) ==
+	      V92_UPSTREAM_DATA_RX_OK, "fast control data handoff failed");
+	bool requested = false, receiving = false;
+	unsigned suv_count = 0, cpu_count = 0, ack_count = 0;
+	for (unsigned i = 0; i < 6000; ++i) {
+		if (!requested && input.data_frames == 16 && !tx.queue_count) {
+			CHECK(v92_upstream_data_tx_start_rm(&tx) == V92_UPSTREAM_DATA_TX_OK, "RM failed");
+			requested = true;
+		}
+		int16_t sample;
+		enum v92_upstream_data_tx_result result = v92_upstream_data_tx_next(
+			&tx, fast_control_source, &input, &sample);
+		CHECK(result == V92_UPSTREAM_DATA_TX_OK || result == V92_UPSTREAM_DATA_TX_RM_COMPLETE,
+		      "fast control transmitter stopped");
+		if (result == V92_UPSTREAM_DATA_TX_RM_COMPLETE)
+			input.active = true;
+		if (input.active && !input.control.record_complete &&
+		    input.index == input.bits && !tx.queue_count)
+			CHECK(v92_upstream_control_complete(&input.control), "control wire completion failed");
+		struct v92_upstream_data_frame frame;
+		enum v92_upstream_data_rx_result received = v92_upstream_data_rx_sample(
+			&rx, wire_sample(&channel, sample), &frame);
+		CHECK(received == V92_UPSTREAM_DATA_RX_OK || received == V92_UPSTREAM_DATA_RX_FRAME,
+		      "fast control receiver stopped");
+		if (received != V92_UPSTREAM_DATA_RX_FRAME)
+			continue;
+		if (frame.rm == V92_PCM_FRAME_RM_COMPLETE) {
+			CHECK(v92_upstream_data_rx_reset_control(&rx) == V92_UPSTREAM_DATA_RX_OK,
+			      "RM did not preserve the control receive boundary");
+			receiving = true;
+		}
+		if (!receiving || !frame.bit_count)
+			continue;
+		CHECK(!frame.ambiguous && !frame.b1u, "control did not retain the data coding epoch");
+		for (size_t bit = 0; bit < frame.bit_count; ++bit) {
+			struct v92_control_event event;
+			CHECK(v92_control_rx_receive_bit(&parser, frame.bits[bit], &event) == V92_CONTROL_RX_OK,
+			      "fast control parser stopped");
+			if (event.type == V92_CONTROL_EVENT_SUVU) {
+				CHECK(!event.record.suvu.parameters.request_silence, "FPE SUVu requested silence");
+				ack_count += event.record.suvu.parameters.acknowledges_cpd;
+				if (!suv_count++) {
+					struct v92_suvd_parameters suvd = { 0 };
+					CHECK(v92_upstream_control_note_suvd(&input.control, &suvd), "SUVd failed");
+				}
+			} else if (event.type == V92_CONTROL_EVENT_CPU) {
+				CHECK(!cpu_count++ && event.record.cpu.parameters.data_rate_number == cpu.data_rate_number &&
+				      !event.record.cpu.parameters.acknowledges_cpd &&
+				      v92_upstream_control_note_cpd(&input.control, true), "CPu/CPd exchange failed");
+			} else {
+				CHECK(event.type == V92_CONTROL_EVENT_NONE, "control wire record rejected: %u", event.type);
+			}
+		}
+		if (ack_count && input.control.record_complete && v92_upstream_control_can_finish(&input.control)) {
+			CHECK(cpu_count == 1 && input.control.completed_cpu_records == 1 &&
+			      input.data_frames == 16 && memcmp(&tx.encoder.mapping, &mapping, sizeof(mapping)) == 0,
+			      "fast control changed old mapping, repeated CPu, or fetched host payload");
+			return true;
+		}
+	}
+	CHECK(false, "law %u rate %u fast control did not finish: SUVu=%u CPu=%u ack=%u",
+	      law, rate, suv_count, cpu_count, ack_count);
 }
 
 static bool test_owned_boundaries(void)
@@ -1579,6 +1712,9 @@ int main(void)
 					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, STREAM_RESET))
 				return 1;
 	const uint8_t rm_rates[] = { 1u, 16u, 19u };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned i = 0; i < ARRAY_LENGTH(rm_rates); ++i)
+			if (!test_fast_control(law, rm_rates[i])) return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned i = 0u; i < ARRAY_LENGTH(rm_rates); ++i)

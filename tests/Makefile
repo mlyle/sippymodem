@@ -2049,6 +2049,7 @@ V92_PHASE4_ANALOG_TX_TEST_BINARY := \
 V92_PHASE4_ANALOG_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx.o \
 	$(BUILD_DIR)/v92_phase4_analog_tx.o \
+	$(BUILD_DIR)/v92_upstream_control.o \
 	$(BUILD_DIR)/v92_phase4_record_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u.o \
 	$(BUILD_DIR)/v92_phase4_modulator.o \
@@ -2092,6 +2093,7 @@ V92_UPSTREAM_CONTROL_LINE_RX_TEST_OBJECTS := $(sort \
 		$(V92_CONTROL_RX_TEST_OBJECTS)))
 V92_UPSTREAM_DATA_RX_TEST_BINARY := $(BUILD_DIR)/test_v92_upstream_data_rx
 V92_UPSTREAM_DATA_RX_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_upstream_control.o \
 	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/test_v92_upstream_data_rx.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
@@ -2240,6 +2242,7 @@ V92_PHASE4_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_digital_station
 V92_PHASE4_DIGITAL_STATION_OBJECTS := \
 	$(BUILD_DIR)/v92_phase4_analog_tx.o \
+	$(BUILD_DIR)/v92_upstream_control.o \
 	$(BUILD_DIR)/v92_phase4_analog_station.o \
 	$(BUILD_DIR)/v92_phase4_cpd_tx.o \
 	$(BUILD_DIR)/v92_phase4_digital_station.o \
@@ -5520,6 +5523,10 @@ $(BUILD_DIR)/v92_phase4_analog_station.o: \
 
 $(BUILD_DIR)/v92_phase4_analog_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_analog_tx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_upstream_control.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_upstream_control.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/pcm_binary_sign.o: \
