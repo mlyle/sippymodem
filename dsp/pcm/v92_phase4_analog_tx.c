@@ -48,7 +48,8 @@ bool v92_phase4_analog_tx_silence_requested(
 	const struct v92_phase4_analog_tx *tx)
 {
 	return v92_phase4_analog_tx_is_valid(tx) &&
-	       tx->control.peer_requests_silence;
+	       tx->control.renegotiation &&
+	       (tx->control.suvu.request_silence || tx->control.peer_requests_silence);
 }
 
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
@@ -91,7 +92,7 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init_after_ru(
 		&initialized, constellation, 0u, lu, suvu, &selected);
 	if (result != V92_PHASE4_ANALOG_TX_OK)
 		return result;
-	initialized.renegotiation = true;
+	initialized.control.renegotiation = true;
 	*tx = initialized;
 	return V92_PHASE4_ANALOG_TX_OK;
 }
@@ -234,7 +235,7 @@ static bool trn2u_complete(const struct v92_phase4_analog_tx *tx)
 	uint32_t count = tx->signal.trn2u.emitted_symbols;
 	/* V.92 9.6.2.1.1 and 9.8.2: use the earliest permitted local end,
 	 * or the next aligned boundary after receipt of SUVd. */
-	uint32_t minimum = tx->renegotiation ? 2400u :
+	uint32_t minimum = tx->control.renegotiation ? 2400u :
 		V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS;
 	return count && count % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
 		(tx->control.received_suvd || count >= minimum);

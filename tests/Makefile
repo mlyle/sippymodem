@@ -2048,6 +2048,7 @@ V92_PHASE4_ANALOG_TX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx
 V92_PHASE4_ANALOG_TX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase4_analog_tx.o \
+	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/v92_phase4_analog_tx.o \
 	$(BUILD_DIR)/v92_upstream_control.o \
 	$(BUILD_DIR)/v92_phase4_record_tx.o \

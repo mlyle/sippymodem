@@ -24,6 +24,9 @@ enum v92_upstream_retry {
  * only at an aligned boundary, finishes its entire wire tail before complete(),
  * and owns the initial 100 ms + RTD wait. Expiry only enables a retry: a
  * complete subsequent CPd/SUVd decides whether repeated CPu is required.
+ * Rate renegotiation may instead agree on a silence interval using SUVu/SUVd
+ * acknowledgements, without sending CPu or claiming receipt of CPd. That
+ * completion is an E2u/pause boundary, never permission to enter data.
  * Training uses 24/36-bit alignment;
  * fast exchange uses the preceding data frame width, not the newly offered CPd.
  * Each operation is serialized; rejected operations leave state/output intact. */
@@ -33,6 +36,8 @@ struct v92_upstream_control {
 	uint64_t completed_cpu_records;
 	enum v92_upstream_control_record record;
 	enum v92_upstream_retry retry;
+	/* Selected by Ru entry on a fresh owner; immutable during the exchange. */
+	bool renegotiation;
 	bool record_complete;
 	bool received_suvd;
 	bool received_cpd;
@@ -41,13 +46,14 @@ struct v92_upstream_control {
 	bool cpu_pending;
 	bool cpu_sent;
 	bool acknowledgment_sent;
-	bool current_record_acknowledges_cpd;
+	bool current_record_acknowledges;
 };
 
 bool v92_upstream_control_init(struct v92_upstream_control *control,
 	const struct v92_suvu_parameters *suvu, const struct v92_cpu_parameters *cpu);
 bool v92_upstream_control_is_valid(const struct v92_upstream_control *control);
-/* Mutual acknowledgment may precede the end of the current record. */
+/* Mutual acknowledgment may precede the end of the current record. For a
+ * silence request during renegotiation this authorizes only E2u/TRN2u. */
 bool v92_upstream_control_can_finish(const struct v92_upstream_control *control);
 bool v92_upstream_control_note_suvd(struct v92_upstream_control *control,
 	const struct v92_suvd_parameters *suvd);

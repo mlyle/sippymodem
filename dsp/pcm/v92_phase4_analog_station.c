@@ -61,7 +61,7 @@ static bool owned_mapping_is_valid(
 {
 	if (!station->cpd_received && !cpd_is_empty(&station->cpd))
 		return false;
-	if (!station->cpd_received && !station->transmit.renegotiation)
+	if (!station->cpd_received && !station->transmit.control.renegotiation)
 		return station->mapping.data_bits_per_frame == 0u;
 	struct v92_cpd_base_parameters base = station->cpd_received ?
 		station->cpd : cpd_base(&station->mapping.cpd);
@@ -152,8 +152,10 @@ static bool note_suvd(
 	struct v92_phase4_analog_tx transmit;
 	struct v92_suvd_parameters retained;
 
+	/* The call owner does not yet retain this station through the duplex
+	 * E2u/TRN2u/Rt pause. Do not mistake its agreement for a data handoff. */
 	if (!v92_suvd_parameters_are_valid(parameters) ||
-	    (station->transmit.renegotiation && parameters->request_silence))
+	    (station->transmit.control.renegotiation && parameters->request_silence))
 		return false;
 	if (station->suvd_received) {
 		if (station->suvd.request_silence !=
@@ -194,7 +196,7 @@ static bool note_cpd(
 	     (station->cpd.acknowledges_cpu && !base.acknowledges_cpu)))
 		return false;
 	selected = *parameters;
-	if (station->cpd_received || station->transmit.renegotiation) {
+	if (station->cpd_received || station->transmit.control.renegotiation) {
 		const struct v92_cpd_parameters *previous = &station->mapping.cpd;
 		if (!selected.modulus_present)
 			memcpy(selected.modulus, previous->modulus, sizeof(selected.modulus));

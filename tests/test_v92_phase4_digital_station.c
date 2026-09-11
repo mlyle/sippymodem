@@ -1334,7 +1334,7 @@ static bool run_paired_station_exchange(
 		      v92_phase4_analog_station_result_name(analog_result));
 		if (analog.transmit.stage == V92_PHASE4_ANALOG_TX_CPU)
 			expected_cpu.acknowledges_cpd =
-				analog.transmit.control.current_record_acknowledges_cpd;
+				analog.transmit.control.current_record_acknowledges;
 		CHECK(v92_phase4_digital_station_transmit(
 			      &digital, &downstream_octet) ==
 			      V92_PHASE4_DIGITAL_STATION_OK,
@@ -1703,7 +1703,8 @@ static bool test_analog_early_control(void)
 	      v92_pcm_mapping_is_valid(&station.mapping) &&
 	      station.transmit.control.received_suvd &&
 	      station.transmit.control.received_cpd &&
-	      v92_phase4_analog_tx_silence_requested(&station.transmit),
+	      station.transmit.control.peer_requests_silence &&
+	      !v92_phase4_analog_tx_silence_requested(&station.transmit),
 	      "early downstream controls were not retained");
 	memset(&exported, 0xa5, sizeof(exported));
 	exported_before = exported;

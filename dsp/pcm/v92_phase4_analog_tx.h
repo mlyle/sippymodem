@@ -37,7 +37,6 @@ struct v92_phase4_analog_tx {
 	} signal;
 	struct v92_upstream_control control;
 	enum v92_phase4_analog_tx_stage stage;
-	bool renegotiation;
 };
 
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
@@ -49,7 +48,9 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init(
 
 /* Start the first TRN2u after Ru/Ru-bar. Both coding memories start at zero;
  * prior control acknowledgements are not evidence for this exchange. This
- * owner sends a complete CPu, so the selected mapping may also change. */
+ * owner sends a complete CPu unless either side requests silence, in which
+ * case it sends only SUVu through the pause agreement. The caller must retain
+ * the control coder across E2u/TRN2u and resume after Rt, not enter data. */
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init_after_ru(
 	struct v92_phase4_analog_tx *tx,
 	enum v92_constellation_size constellation, int16_t lu,
@@ -61,11 +62,14 @@ bool v92_phase4_analog_tx_is_e2u_ready(
 	const struct v92_phase4_analog_tx *tx);
 bool v92_phase4_analog_tx_can_handoff(
 	const struct v92_phase4_analog_tx *tx);
+/* Selects the pause, rather than data, after the acknowledged E2u boundary.
+ * Only rate renegotiation uses this procedure; initial training does not. */
 bool v92_phase4_analog_tx_silence_requested(
 	const struct v92_phase4_analog_tx *tx);
 
 /* Accept complete, CRC-checked downstream records. A first SUVd schedules one
- * CPu. CPd parameters themselves belong to the later receive/data handoff. */
+ * CPu, or a silence acknowledgement during rate renegotiation. CPd parameters
+ * themselves belong to the later receive/data handoff. */
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_suvd(
 	struct v92_phase4_analog_tx *tx,
 	const struct v92_suvd_parameters *suvd);

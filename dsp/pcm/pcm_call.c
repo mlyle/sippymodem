@@ -844,7 +844,7 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 		const struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
 		if (!call->v92_rate_renegotiation_active || call->local_role != V90_ANALOG_MODEM ||
 		    state->child != PCM_CALL_V92_PHASE4_CONTROL ||
-		    !state->owner.analog.station.transmit.renegotiation ||
+		    !state->owner.analog.station.transmit.control.renegotiation ||
 		    !v92_pcm_phase3_ru_is_valid(&prefix->transmit) ||
 		    prefix->transmit.law != call->law ||
 		    !pcm_r_rx_is_valid(&prefix->receive) || prefix->receive.mapping.law != call->law ||
