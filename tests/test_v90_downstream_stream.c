@@ -451,21 +451,33 @@ static bool make_rrn_octet(
 
 static bool verify_rrn_detection(
 	enum g711_law law, enum v90_pcm_mapping_plane plane,
-	uint8_t offset, bool inverted)
+	uint8_t offset, bool inverted, enum pcm_r_signal signal)
 {
 	struct v90_pcm_mapping mapping;
 	struct pcm_r_rx receiver;
 	uint8_t octet;
 	size_t rd_symbols = PCM_R_SYMBOLS - offset;
 
-	CHECK(make_r_mapping(&mapping, law, V90_CP_DATA, 3) &&
-	      pcm_r_rx_init(&receiver, &mapping, plane, PCM_R_RD) ==
+	CHECK(make_r_mapping(&mapping, law, signal == PCM_R_RT ? V90_CP_TRAINING : V90_CP_DATA, 3) &&
+	      pcm_r_rx_init(&receiver, &mapping, plane, signal) ==
 		      PCM_R_RX_OK &&
 	      pcm_r_rx_is_valid(&receiver) &&
 	      !pcm_r_rx_signal_detected(&receiver) &&
 	      !pcm_r_rx_is_complete(&receiver),
 	      "law %u plane %u offset %u polarity %u RRN init failed",
 	      law, plane, offset, inverted);
+	/* Silence is not a request, including A-law's nonzero decoded silence.
+	 * Matching signs at a lower constellation power must not acquire either. */
+	for (unsigned i = 0; i < 600u; ++i) {
+		uint8_t ucode = 0;
+		bool positive = i % 6u < 3u;
+		if (i >= 300u)
+			CHECK(v90_pcm_mapping_ucode(&mapping, plane, i % 6u, 1, &ucode) == V90_PCM_MAPPING_OK,
+			      "could not select lower-power R impostor");
+		CHECK(g711_ucode_octet(law, ucode, positive, &octet) &&
+		      pcm_r_rx_receive(&receiver, octet) == PCM_R_RX_BUFFERING,
+		      "R detector accepted silence or wrong magnitude at %u", i);
+	}
 	for (size_t index = 0; index < rd_symbols; ++index) {
 		uint8_t interval =
 			(uint8_t)((offset + index) %
@@ -529,26 +541,25 @@ static bool test_rrn_detection(void)
 		     plane <= V90_PCM_MAPPING_CODEC; ++plane) {
 			for (uint8_t offset = 0;
 			     offset < V90_CP_FRAME_INTERVALS; ++offset) {
-				CHECK(verify_rrn_detection(
-					      law, plane, offset, false) &&
-				      verify_rrn_detection(
-					      law, plane, offset, true),
-				      "RRN detector matrix failed");
+				for (enum pcm_r_signal signal = PCM_R_RD; signal <= PCM_R_RT; ++signal)
+					CHECK(verify_rrn_detection(law, plane, offset, false, signal) &&
+					      verify_rrn_detection(law, plane, offset, true, signal),
+					      "R detector matrix failed signal=%u", signal);
 			}
 		}
 	}
 	return true;
 }
 
-static bool test_rrn_rejection(void)
+static bool run_rrn_rejection(enum g711_law law, enum pcm_r_signal signal)
 {
 	struct v90_pcm_mapping mapping;
 	struct pcm_r_rx receiver;
 	uint8_t octet;
 
-	CHECK(make_r_mapping(&mapping, G711_LAW_PCMU, V90_CP_DATA, 3) &&
+	CHECK(make_r_mapping(&mapping, law, signal == PCM_R_RT ? V90_CP_TRAINING : V90_CP_DATA, 3) &&
 	      pcm_r_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, signal) ==
 		      PCM_R_RX_OK,
 	      "RRN rejection fixture did not initialize");
 	for (size_t index = 0; index < 234u; ++index) {
@@ -573,7 +584,7 @@ static bool test_rrn_rejection(void)
 	CHECK(!pcm_r_rx_signal_detected(&receiver),
 	      "short Rd/Rd-bar sequence was accepted");
 	CHECK(pcm_r_rx_init(
-		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) ==
+		      &receiver, &mapping, V90_PCM_MAPPING_TRANSMIT, signal) ==
 		      PCM_R_RX_OK,
 	      "RRN mismatch fixture did not reset");
 	for (size_t index = 0;
@@ -599,6 +610,25 @@ static bool test_rrn_rejection(void)
 	      pcm_r_rx_is_valid(&receiver) &&
 	      !pcm_r_rx_signal_detected(&receiver),
 	      "off-boundary Rd-bar transition was accepted");
+	/* An interrupted request must leave the detector able to reacquire a
+	 * complete new request, not retain the damaged phase reversal. */
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		enum pcm_r_rx_result expected = i + 1u == PCM_R_SEQUENCE_SYMBOLS ? PCM_R_RX_BAR_COMPLETE :
+			i == PCM_R_SYMBOLS ? PCM_R_RX_BAR_STARTED :
+			i + 1u == PCM_R_RX_MIN_SYMBOLS ? PCM_R_RX_SIGNAL_DETECTED : PCM_R_RX_BUFFERING;
+		CHECK(make_rrn_octet(&mapping, V90_PCM_MAPPING_TRANSMIT, i % 6u,
+			      false, i >= PCM_R_SYMBOLS, &octet) &&
+		      pcm_r_rx_receive(&receiver, octet) == expected,
+		      "R detector did not recover after damaged reversal at %u", i);
+	}
+	return true;
+}
+
+static bool test_rrn_rejection(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum pcm_r_signal signal = PCM_R_RD; signal <= PCM_R_RT; ++signal)
+			CHECK(run_rrn_rejection(law, signal), "R rejection law=%u signal=%u", law, signal);
 	return true;
 }
 
@@ -1402,8 +1432,8 @@ int main(void)
 	} tests[] = {
 		{ "continuous streams", test_continuous_streams },
 		{ "Rd and Rd-bar sequence", test_rd_sequence },
-		{ "Rd and Rd-bar detection", test_rrn_detection },
-		{ "Rd and Rd-bar rejection", test_rrn_rejection },
+		{ "Rd/Rt and phase reversal detection", test_rrn_detection },
+		{ "Rd/Rt phase reversal rejection and recovery", test_rrn_rejection },
 		{ "Rd receiver contracts", test_rrn_contracts },
 		{ "Rf sequence and rejection matrix", test_rf_matrix },
 		{ "Rf contracts and recovery", test_rf_contracts },

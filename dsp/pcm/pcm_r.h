@@ -78,11 +78,13 @@ enum pcm_r_rx_result {
 	PCM_R_RX_INTERNAL_ERROR,
 };
 
-/* Detect the selected Rd or Rf directly in authoritative G.711 characters.
+/* Detect the selected Rd, Rt or Rf directly in authoritative G.711 characters.
  * Six constellation phases and both polarities cover every entry phase:
  * Rf's second six-symbol half is the first half with polarity inverted.
  * Exact constellation magnitudes reject unrelated data with matching signs.
- * A V.90 caller must select Rd; Rf is only a V.92 fast-exchange request. */
+ * Rd/Rf use the data mapping; Rt uses the training mapping during the
+ * intervening silent period. Rf is only a V.92 fast-exchange request.
+ * R signals do not advance the suspended control decoder's coding history. */
 struct pcm_r_rx {
 	struct v90_pcm_mapping mapping;
 	uint16_t candidate_runs[PCM_R_RX_HYPOTHESES];
@@ -96,7 +98,7 @@ struct pcm_r_rx {
 
 enum pcm_r_rx_result pcm_r_rx_init(
 	struct pcm_r_rx *receiver,
-	const struct v90_pcm_mapping *current_data_mapping,
+	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane, enum pcm_r_signal signal);
 bool pcm_r_rx_is_valid(
 	const struct pcm_r_rx *receiver);
@@ -108,9 +110,9 @@ bool pcm_r_rx_is_complete(
 /* BUFFERING consumes one character. SIGNAL_DETECTED is reported on the 240th
  * consecutive R character, BAR_STARTED on the exact frame-boundary
  * polarity reversal, and BAR_COMPLETE on the 24th R-bar character. The
- * next character remains unconsumed for TRN2d (Rd) or SUVd (Rf).  A post-lock
- * SEQUENCE_MISMATCH consumes that character and restarts the phase/polarity
- * search with it as the first new candidate. */
+ * next character remains unconsumed for TRN2d (Rd), MP/SUVd (Rt) or SUVd (Rf).
+ * A post-lock SEQUENCE_MISMATCH consumes that character and restarts the
+ * phase/polarity search with it as the first new candidate. */
 enum pcm_r_rx_result pcm_r_rx_receive(
 	struct pcm_r_rx *receiver, uint8_t network_octet);
 

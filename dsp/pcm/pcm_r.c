@@ -7,9 +7,12 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool signal_is_valid(enum pcm_r_signal signal)
+static bool mapping_matches_signal(const struct v90_pcm_mapping *mapping,
+	enum pcm_r_signal signal)
 {
-	return signal == PCM_R_RD || signal == PCM_R_RT || signal == PCM_R_RF;
+	return (signal == PCM_R_RD || signal == PCM_R_RT || signal == PCM_R_RF) &&
+		v90_pcm_mapping_is_valid(mapping) &&
+		mapping->kind == (signal == PCM_R_RT ? V90_CP_TRAINING : V90_CP_DATA);
 }
 
 static unsigned signal_period(enum pcm_r_signal signal)
@@ -53,9 +56,7 @@ bool pcm_r_rx_is_valid(
 	const struct pcm_r_rx *receiver)
 {
 	if (receiver == NULL ||
-	    !v90_pcm_mapping_is_valid(&receiver->mapping) ||
-	    receiver->mapping.kind != V90_CP_DATA ||
-	    (receiver->signal != PCM_R_RD && receiver->signal != PCM_R_RF) ||
+	    !mapping_matches_signal(&receiver->mapping, receiver->signal) ||
 	    !plane_is_valid(receiver->decision_plane) ||
 	    !stage_is_valid(receiver->stage) ||
 	    receiver->phase >= signal_period(receiver->signal) ||
@@ -84,19 +85,16 @@ bool pcm_r_rx_is_valid(
 
 enum pcm_r_rx_result pcm_r_rx_init(
 	struct pcm_r_rx *receiver,
-	const struct v90_pcm_mapping *current_data_mapping,
+	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane, enum pcm_r_signal signal)
 {
 	struct pcm_r_rx initialized = { 0 };
 
-	if (receiver == NULL || current_data_mapping == NULL)
+	if (receiver == NULL || mapping == NULL)
 		return PCM_R_RX_INVALID_ARGUMENT;
-	if (!v90_pcm_mapping_is_valid(current_data_mapping) ||
-	    current_data_mapping->kind != V90_CP_DATA ||
-	    !plane_is_valid(decision_plane) ||
-	    (signal != PCM_R_RD && signal != PCM_R_RF))
+	if (!mapping_matches_signal(mapping, signal) || !plane_is_valid(decision_plane))
 		return PCM_R_RX_INVALID_PARAMETERS;
-	initialized.mapping = *current_data_mapping;
+	initialized.mapping = *mapping;
 	initialized.decision_plane = decision_plane;
 	initialized.signal = signal;
 	initialized.stage = PCM_R_RX_SEARCH;
@@ -364,10 +362,7 @@ const char *pcm_r_rx_result_name(
 bool pcm_r_tx_is_valid(const struct pcm_r_tx *transmitter)
 {
 	return transmitter != NULL &&
-	       signal_is_valid(transmitter->signal) &&
-	       v90_pcm_mapping_is_valid(&transmitter->mapping) &&
-	       transmitter->mapping.kind == (transmitter->signal == PCM_R_RT ?
-		       V90_CP_TRAINING : V90_CP_DATA) &&
+	       mapping_matches_signal(&transmitter->mapping, transmitter->signal) &&
 	       transmitter->transmitted_symbols <= PCM_R_SEQUENCE_SYMBOLS;
 }
 
@@ -385,8 +380,7 @@ enum pcm_r_tx_result pcm_r_tx_init(
 
 	if (transmitter == NULL || mapping == NULL)
 		return PCM_R_TX_INVALID_ARGUMENT;
-	if (!signal_is_valid(signal) || !v90_pcm_mapping_is_valid(mapping) ||
-	    mapping->kind != (signal == PCM_R_RT ? V90_CP_TRAINING : V90_CP_DATA))
+	if (!mapping_matches_signal(mapping, signal))
 		return PCM_R_TX_INVALID_PARAMETERS;
 	initialized.mapping = *mapping;
 	initialized.signal = signal;
