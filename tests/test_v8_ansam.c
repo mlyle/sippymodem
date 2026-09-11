@@ -327,6 +327,53 @@ static bool test_reversal_alignment(void)
 	return true;
 }
 
+static bool test_gain_stability(void)
+{
+	static const struct {
+		uint16_t reference, gain;
+		bool stable;
+	} cases[] = {
+		{ 512, 511, true }, { 512, 513, true },
+		{ 512, 487, true }, { 512, 537, true },
+		{ 512, 486, false }, { 512, 538, false },
+		{ 512, 1536, false }, { 512, 2560, false },
+		{ 1, INT16_MAX, false }, { INT16_MAX, 1, false },
+	};
+	const uint16_t stable_samples = V8_ANSAM_SAMPLE_RATE / 10;
+	const int16_t samples[V8_LINE_INPUT_QUEUE_SAMPLES] = { 0 };
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		for (unsigned int was_stable = 0; was_stable < 2; ++was_stable) {
+			struct v8_ansam_detector detector;
+			struct v8_line_conditioner line;
+			uint16_t elapsed = stable_samples -
+				(was_stable ? 0 : V8_ANSAM_BLOCK_SAMPLES);
+			bool detected = false;
+
+			CHECK(v8_ansam_detector_init(&detector) == V8_ANSAM_OK &&
+			      v8_line_conditioner_init(&line, V8_CALLING_STATION) ==
+				      V8_LINE_CONDITIONER_OK,
+			      "gain stability setup failed");
+			/* Observe one block with frozen gain, either just before the
+			 * stability threshold or after stability was already latched. */
+			detector.stage = V8_ANSAM_WAIT_MODULATION;
+			detector.signal_ref_gain = cases[index].reference;
+			detector.signal_stable_time = elapsed;
+			detector.signal_stable = was_stable != 0;
+			line.gain = cases[index].gain;
+			CHECK(v8_ansam_detect(&detector, &line, samples,
+				      ARRAY_LENGTH(samples), &detected) == V8_ANSAM_OK &&
+			      !detected && line.gain == cases[index].gain &&
+			      detector.signal_stable == cases[index].stable &&
+			      detector.signal_stable_time == (cases[index].stable ?
+				      elapsed + V8_ANSAM_BLOCK_SAMPLES : 0),
+			      "gain %u -> %u had wrong stability (previous=%u)",
+			      cases[index].reference, cases[index].gain, was_stable);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v8_ansam_generator generator;
@@ -420,6 +467,7 @@ int main(void)
 		{ "generated waveform", test_generated_waveform },
 		{ "detection and rejection", test_detection_and_rejection },
 		{ "phase-reversal alignment", test_reversal_alignment },
+		{ "gain stability", test_gain_stability },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

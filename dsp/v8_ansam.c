@@ -272,15 +272,17 @@ static void update_signal_stability(
 	int16_t timer = (int16_t)(detector->signal_timer +
 				  V8_ANSAM_BLOCK_SAMPLES);
 	int16_t current_gain;
-	int16_t delta;
+	int32_t delta;
 
 	if (timer < V8_ANSAM_SIGNAL_STABILITY_SAMPLES) {
 		int16_t reference_gain = (int16_t)detector->signal_ref_gain;
 
 		detector->signal_timer = (uint16_t)timer;
 		current_gain = (int16_t)line_gain;
-		delta = (int16_t)((((int32_t)current_gain - reference_gain) << 14) /
-				  reference_gain);
+		/* Positive 16-bit gains keep the scaled difference in int32_t.
+		 * Retain it there: narrowing can make a large change look stable. */
+		delta = ((int32_t)current_gain - reference_gain) * 16384 /
+			 reference_gain;
 	} else {
 		current_gain = (int16_t)line_gain;
 		detector->signal_timer = 0;
@@ -288,7 +290,7 @@ static void update_signal_stability(
 		delta = 0;
 	}
 	if (delta < 0)
-		delta = (int16_t)-delta;
+		delta = -delta;
 	if (delta > 0x0333) {
 		detector->signal_stable_time = 0;
 		detector->signal_stable = false;
