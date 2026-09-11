@@ -515,6 +515,14 @@ static bool test_analog_contracts(void)
 	      !v92_phase3_analog_station_transmit_complete(&station) &&
 	      !v92_phase3_analog_station_receive_complete(&station),
 	      "fresh analogue station contracts differed");
+	station.post_ja_silence_samples = 1u;
+	before = station;
+	CHECK(!v92_phase3_analog_station_is_valid(&station) &&
+	      v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &before, sizeof(station)) == 0,
+	      "silence clock before Ja ended was accepted");
+	station.post_ja_silence_samples = 0u;
 	before = station;
 	memset(&downstream, 0xa5, sizeof(downstream));
 	downstream_before = downstream;

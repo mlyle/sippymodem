@@ -3220,6 +3220,166 @@ static bool test_v92_phase3_deadlines(void)
 	return passed;
 }
 
+static bool v92_analog_missing_response(const struct pcm_call *boundary, unsigned kind)
+{
+	struct pcm_call call = *boundary;
+	struct v90_phase3_sd sd;
+	struct v90_phase3_signs trn1d;
+	uint8_t ucode = call.state.phase3.v92_analog.downstream_training_ucode;
+	unsigned deadline = kind == 2u ? 36000u : 12000u;
+	unsigned elapsed = kind == 2u ? call.state.phase3.v92_analog.post_ja_silence_samples :
+		(unsigned)call.state.phase3.v92_analog.transmit.initial.sequence.ja.emitted_symbols;
+	CHECK(v90_phase3_sd_init(&sd, call.law, ucode, V90_PHASE3_SD) == V90_PHASE3_SD_OK &&
+		v90_phase3_signs_init(&trn1d, call.law, ucode) == V90_PHASE3_SIGNS_OK,
+		"analogue response generators did not initialize");
+	while (++elapsed <= deadline) {
+		struct v90_pcm_symbol input = { .octet = silence_octet(call.law) };
+		struct pcm_call_observation event;
+		uint8_t output;
+		if (kind == 1u) {
+			if (v90_phase3_sd_remaining(&sd) == 0u)
+				CHECK(v90_phase3_sd_init(&sd, call.law, ucode, V90_PHASE3_SD) ==
+					V90_PHASE3_SD_OK, "repeated Sd failed");
+			CHECK(v90_phase3_sd_next(&sd, &input) == V90_PHASE3_SD_OK, "Sd generation failed");
+		} else if (kind == 2u) {
+			CHECK(v90_phase3_signs_next_trn1d(&trn1d, &input) == V90_PHASE3_SIGNS_OK,
+				"TRN1d generation failed");
+		}
+		CHECK(pcm_call_octet(&call, input.octet, input.sample, &output, &event) == PCM_CALL_OK &&
+			call.stage == (elapsed < deadline ? PCM_CALL_PHASE3 : PCM_CALL_RETRAIN_SILENCE),
+			"law %u kind %u missed analogue deadline %u/%u, stage %u",
+			call.law, kind, elapsed, deadline, call.stage);
+	}
+	CHECK(call.retrain_active && call.protocol == PCM_PROTOCOL_V92 && call.peer_info0_stored &&
+		!call.b1_deadline_armed && !call.failed && pcm_call_is_valid(&call),
+		"analogue timeout lost the retained V.92 call");
+	return true;
+}
+
+static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t input,
+	uint8_t next_input, bool sd)
+{
+	struct pcm_call call = *before;
+	struct v92_phase3_analog_station *station = &call.state.phase3.v92_analog;
+	struct pcm_call_observation event;
+	uint8_t output;
+	/* Keep the real receiver history and detection sample, changing only
+	 * the elapsed counter. Receive must win on the last allowed tick. */
+	if (sd)
+		station->transmit.initial.sequence.ja.emitted_symbols = 11999u;
+	else
+		station->post_ja_silence_samples = 35999u;
+	CHECK(pcm_call_is_valid(&call) &&
+		pcm_call_octet(&call, input, decode_octet(call.law, input), &output, &event) == PCM_CALL_OK &&
+		call.stage == PCM_CALL_PHASE3 && !call.retrain_active,
+		"last-tick analogue response lost to timeout");
+	if (sd) {
+		CHECK(station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD_BAR &&
+			station->transmit.initial.stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
+			station->post_ja_silence_samples == 0u,
+			"last-tick Sd reversal did not end Ja on its twelve-symbol boundary");
+		int16_t sample = 1;
+		CHECK(v92_phase3_analog_station_transmit(station, NULL, &sample) ==
+			V92_PHASE3_ANALOG_STATION_OK && sample == 0 && station->post_ja_silence_samples == 1u,
+			"silence clock did not start after the last Ja symbol");
+		station->post_ja_silence_samples = UINT32_MAX;
+		CHECK(v92_phase3_analog_station_transmit(station, NULL, &sample) ==
+			V92_PHASE3_ANALOG_STATION_OK && sample == 0 && station->post_ja_silence_samples == UINT32_MAX,
+			"unattended station silence counter wrapped");
+	} else {
+		CHECK(station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
+			station->post_ja_silence_samples == 36000u,
+			"accepted Jd has transmit stage %u and silence count %u",
+			station->transmit_stage, station->post_ja_silence_samples);
+		enum pcm_call_result result = pcm_call_octet(&call, next_input,
+			decode_octet(call.law, next_input), &output, &event);
+		CHECK(result == PCM_CALL_OK &&
+			call.stage == PCM_CALL_PHASE3 && station->post_ja_silence_samples == 36000u,
+			"accepted Jd next input returned %s, stage %u, silence %u",
+			pcm_call_result_name(result), call.stage, station->post_ja_silence_samples);
+	}
+	return true;
+}
+
+static bool run_v92_analog_phase3_deadlines(enum g711_law law, size_t delay)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2], boundaries[2];
+	struct channel wire;
+	bool captured[2] = { false }, timely[2] = { false }, plain_sd_seen = false;
+	CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+		pcm_call_init(&calls[1], &dc) == PCM_CALL_OK && channel_init(&wire, law, delay),
+		"analogue deadline endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT && !timely[1]; ++clock) {
+		struct pcm_call before = calls[0];
+		uint8_t rx[2], tx[2];
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_observation event;
+			CHECK(pcm_call_octet(&calls[side], rx[side], decode_octet(law, rx[side]),
+				&tx[side], &event) == PCM_CALL_OK, "analogue deadline setup failed at %zu", clock);
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (calls[0].stage != PCM_CALL_PHASE3)
+			continue;
+		const struct v92_phase3_analog_station *station = &calls[0].state.phase3.v92_analog;
+		const struct v92_pcm_phase3_initial_tx *initial = &station->transmit.initial;
+		if (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_INITIAL) {
+			if (station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
+			    station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD) {
+				CHECK(initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA && !initial->finish_requested &&
+					station->post_ja_silence_samples == 0u, "plain Sd ended Ja before its reversal");
+				plain_sd_seen = true;
+			}
+			if (!captured[0] && initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
+			    initial->sequence.ja.emitted_symbols == 1u) {
+				boundaries[0] = calls[0];
+				captured[0] = true;
+			}
+			if (!captured[1] && station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_J) {
+				CHECK(initial->stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
+					initial->sequence.ja.emitted_symbols % 12u == 0u &&
+					station->receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D,
+					"Jd wait did not follow an aligned Ja and complete Sd-bar");
+				boundaries[1] = calls[0];
+				captured[1] = true;
+			}
+		}
+		if (before.stage != PCM_CALL_PHASE3)
+			continue;
+		const struct v92_phase3_analog_station *previous = &before.state.phase3.v92_analog;
+		if (!timely[0] && previous->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
+		    previous->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD &&
+		    station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD_BAR) {
+			CHECK(v92_analog_timely_response(&before, rx[0], 0u, true), "timely Sd failed");
+			timely[0] = true;
+		}
+		if (!timely[1] && previous->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_INITIAL &&
+		    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU) {
+			uint8_t following[2];
+			channel_receive(&wire, &following[0], &following[1]);
+			CHECK(v92_analog_timely_response(&before, rx[0], following[0], false), "timely Jd failed");
+			timely[1] = true;
+		}
+	}
+	CHECK(captured[0] && captured[1] && timely[0] && timely[1] && plain_sd_seen,
+		"did not capture both analogue response boundaries");
+	bool passed = true;
+	for (unsigned kind = 0; kind < 3; ++kind)
+		passed = v92_analog_missing_response(&boundaries[kind == 2u], kind) && passed;
+	return passed;
+}
+
+static bool test_v92_analog_phase3_deadlines(void)
+{
+	bool passed = true;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned delay = 3; delay <= 13; delay += 10)
+			passed = run_v92_analog_phase3_deadlines(law, delay) && passed;
+	return passed;
+}
+
 static bool run_phase3_return_timeout(enum g711_law law, size_t delay)
 {
 	struct channel channel;
@@ -9032,6 +9192,7 @@ int main(void)
 		{ "lost Ri-bar recovers online data", test_missing_ri_bar },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
 		{ "standards-timed V.92 digital Phase 3 responses", test_v92_phase3_deadlines },
+		{ "standards-timed V.92 analogue Phase 3 responses", test_v92_analog_phase3_deadlines },
 		{ "standards-timed V.90 Sd response", test_phase3_sd_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },

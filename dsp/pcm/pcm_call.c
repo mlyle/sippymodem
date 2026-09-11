@@ -22,8 +22,9 @@ enum {
 	V90_UPSTREAM_RATE_UNIT = 2400,
 	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
-	V90_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
+	PCM_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
 	V92_PHASE3_JA_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
+	V92_PHASE3_JD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
@@ -2612,8 +2613,22 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 	if (uses_pcm_upstream(call)) {
 		const struct v92_phase3_digital_station *station;
 
-		if (call->local_role != V90_DIGITAL_MODEM)
-			return false;
+		if (call->local_role == V90_ANALOG_MODEM) {
+			const struct v92_phase3_analog_station *analog = &call->state.phase3.v92_analog;
+			const struct v92_pcm_phase3_initial_tx *initial = &analog->transmit.initial;
+
+			if (analog->transmit_stage != V92_PHASE3_ANALOG_TRANSMIT_INITIAL)
+				return false;
+			/* V.92 9.5.2.2: Sd reversal within 1500 ms of starting Ja;
+			 * Jd within 4500 ms of ending Ja. Receive runs first, so
+			 * a last-sample response cancels either deadline. */
+			if (initial->stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE)
+				return analog->post_ja_silence_samples >= V92_PHASE3_JD_DEADLINE_SAMPLES;
+			return initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
+				analog->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
+				analog->receive.sd.stage < V90_PHASE3_SD_RECEIVER_SD_BAR &&
+				initial->sequence.ja.emitted_symbols >= PCM_PHASE3_SD_DEADLINE_SAMPLES;
+		}
 		station = &call->state.phase3.v92_digital;
 		if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL) {
 			/* V.92 9.5.1.2.1: Ja is due 4500 ms + RTD after INFO1a.
@@ -2663,7 +2678,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 			  carrier->symbol_period_units + carrier->symbol_phase_units;
 		if (carrier->symbol_phase_units < carrier->channel.symbol_rate_numerator)
 			elapsed += carrier->symbol_period_units;
-		return elapsed >= (uint64_t)V90_PHASE3_SD_DEADLINE_SAMPLES *
+		return elapsed >= (uint64_t)PCM_PHASE3_SD_DEADLINE_SAMPLES *
 				  carrier->channel.symbol_rate_numerator;
 	}
 	transmit = &call->state.phase3.digital.transmit;

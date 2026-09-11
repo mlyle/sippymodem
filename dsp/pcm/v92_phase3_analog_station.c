@@ -44,6 +44,8 @@ static bool transmit_is_valid(
 	case V92_PHASE3_ANALOG_TRANSMIT_INITIAL:
 		return v92_pcm_phase3_initial_tx_is_valid(
 			&station->transmit.initial) &&
+		       (station->post_ja_silence_samples == 0u ||
+			station->transmit.initial.stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE) &&
 		       station->transmit.initial.law == station->law &&
 		       station->transmit.initial.lu_ucode ==
 			       station->upstream_lu_ucode &&
@@ -249,6 +251,8 @@ static enum v92_phase3_analog_station_result transmit_initial(
 	if (result == V92_PCM_PHASE3_INITIAL_TX_NEED_MD_SYMBOL)
 		return V92_PHASE3_ANALOG_STATION_NEED_MD_SYMBOL;
 	if (result == V92_PCM_PHASE3_INITIAL_TX_DONE) {
+		if (station->post_ja_silence_samples < UINT32_MAX)
+			++station->post_ja_silence_samples;
 		*sample = 0;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
@@ -369,9 +373,11 @@ static enum v92_phase3_analog_station_result receive_sd(
 			&station->receive.sd, network_octet);
 
 	if (result == V90_PHASE3_SD_RECEIVER_OK ||
-	    result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED)
+	    result == V90_PHASE3_SD_RECEIVER_SD_DETECTED)
 		return V92_PHASE3_ANALOG_STATION_OK;
-	if (result == V90_PHASE3_SD_RECEIVER_SD_DETECTED)
+	/* V.92 9.5.2.1.3: keep Ja through Sd, then stop at the next
+	 * twelve-symbol boundary after the reversal is detected. */
+	if (result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED)
 		return v92_pcm_phase3_initial_tx_request_finish(
 			       &station->transmit.initial) ==
 			       V92_PCM_PHASE3_INITIAL_TX_OK ?
