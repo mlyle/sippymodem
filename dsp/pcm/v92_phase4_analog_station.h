@@ -56,6 +56,9 @@ struct v92_phase4_analog_handoff {
 	struct pcm_downstream_rx receive;
 	struct v92_cpu_parameters cpu;
 	struct v92_pcm_mapping mapping;
+	/* Status-only rate agreement: retain the previous selections and
+	 * training coder through Ed/E2u, never enter B1/data at this boundary. */
+	bool pause;
 };
 
 /* Resume from exact Phase 3 handoffs. Optional early controls preserve a

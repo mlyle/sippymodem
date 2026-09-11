@@ -27,6 +27,9 @@ enum v92_phase4_e2u_result {
 enum v92_phase4_e2u_downstream_stage {
 	V92_PHASE4_E2U_DOWNSTREAM_TRAINING,
 	V92_PHASE4_E2U_DOWNSTREAM_DATA,
+	/* Own the training union through Ed and the following silence. Ed
+	 * completion does not change mappings or discard either coder. */
+	V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
 };
 
 union v92_phase4_e2u_analog_downstream {
@@ -64,8 +67,9 @@ union v92_phase4_e2u_state {
 };
 
 /* Own the final upstream control tail and duplex E2u/Ed crossing. E2u
- * determines completion; the independent downstream path may still be in Ed
- * training or may already have entered B1d data coding. */
+ * determines completion; the independent downstream path may still be in Ed.
+ * Normal agreement enters B1d, while a pause retains the training coder and
+ * sends Ucode-0 silence after Ed. The next owner times TRN2u and detects Rt. */
 struct v92_phase4_e2u {
 	union v92_phase4_e2u_state state;
 	enum v90_modem_role local_role;
@@ -107,6 +111,8 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 bool v92_phase4_e2u_is_valid(const struct v92_phase4_e2u *owner);
 bool v92_phase4_e2u_has_failed(const struct v92_phase4_e2u *owner);
 bool v92_phase4_e2u_is_complete(const struct v92_phase4_e2u *owner);
+/* A completed status-only pause is not permission to enter B1u or data. */
+bool v92_phase4_e2u_is_data_ready(const struct v92_phase4_e2u *owner);
 
 /* Consume and produce one simultaneous 8 kHz media interval. The authoritative
  * downstream codeword and upstream sample are supplied together; only the
@@ -127,7 +133,10 @@ enum v92_phase4_e2u_result v92_phase4_e2u_handoff(
  * exclusively owns and validates the inherited union, stage and selections;
  * outputs must be distinct. A transmit SOURCE_FAILURE consumes nothing.
  * Receive BUFFERING includes accepted control records and the Ed boundary;
- * subsequent B1d/data results retain the shared downstream receiver contract. */
+ * subsequent B1d/data results retain the shared downstream receiver contract.
+ * PAUSE instead retains the complete Ed coder unchanged: transmit sends Ucode
+ * 0, receive ignores silence/Rt until its owner resumes after Rt-bar. The
+ * owner retains six-symbol alignment and exclusively detects/times that step. */
 enum v90_downstream_data_rx_result v92_downstream_receive_owned(
 	union v92_phase4_e2u_analog_downstream *downstream,
 	enum v92_phase4_e2u_downstream_stage *stage,

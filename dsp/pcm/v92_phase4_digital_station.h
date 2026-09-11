@@ -48,6 +48,8 @@ struct v92_phase4_digital_handoff {
 	/* The complete CPd actually transmitted, not a regenerated profile. */
 	struct v92_pcm_mapping mapping;
 	struct v92_upstream_plan upstream_plan;
+	/* Status-only rate agreement, not acknowledgement of new parameters. */
+	bool pause;
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running

@@ -1478,7 +1478,7 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 	if (uses_pcm_upstream(call))
 		return call->state.phase4.v92.child ==
 			       PCM_CALL_V92_PHASE4_E2U &&
-		       v92_phase4_e2u_is_complete(
+		       v92_phase4_e2u_is_data_ready(
 			       &call->state.phase4.v92.owner.e2u);
 	return call->local_role == V90_ANALOG_MODEM ?
 		       v90_phase4_analog_startup_is_complete(
@@ -3590,7 +3590,8 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 {
 	struct v92_phase4_e2u_handoff handoff;
 
-	if (v92_phase4_e2u_handoff(&call->state.phase4.v92.owner.e2u, &handoff) !=
+	if (!v92_phase4_e2u_is_data_ready(&call->state.phase4.v92.owner.e2u) ||
+	    v92_phase4_e2u_handoff(&call->state.phase4.v92.owner.e2u, &handoff) !=
 	    V92_PHASE4_E2U_OK)
 		return false;
 	if (call->local_role == V90_ANALOG_MODEM) {

@@ -223,6 +223,11 @@ bool v92_phase4_digital_handoff_is_valid(
 	const struct v92_phase4_digital_handoff *handoff)
 {
 	return handoff != NULL &&
+	       (!handoff->pause || (handoff->receive.signal.line.renegotiation &&
+		!handoff->transmit.cpd_pending &&
+		handoff->transmit.transmit.encoder.mapping.kind == V90_CP_TRAINING &&
+		handoff->transmit.transmit.v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+		handoff->transmit.transmit.control.suvd.acknowledges_cpu)) &&
 	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       !v92_upstream_control_line_rx_has_failed(&handoff->receive) &&
 	       handoff->receive.signal.training_tail_remaining == 0u &&

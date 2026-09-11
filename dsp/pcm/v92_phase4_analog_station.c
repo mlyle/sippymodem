@@ -496,6 +496,15 @@ bool v92_phase4_analog_station_cpd_parameters(
 bool v92_phase4_analog_handoff_is_valid(
 	const struct v92_phase4_analog_handoff *handoff)
 {
+	if (handoff != NULL && handoff->pause) {
+		struct v92_suvu_parameters status;
+		unsigned bits = v92_phase4_modulator_bits_per_symbol(handoff->transmit.modulator.constellation);
+		if (handoff->receive.stream.decoder.mapping.kind != V90_CP_TRAINING ||
+		    v92_suvu_decode(handoff->transmit.frame, sizeof(handoff->transmit.frame),
+			    handoff->transmit.frame_bit_count, bits * V92_SUVU_SYMBOLS_PER_FRAME, &status) !=
+			V92_SUVU_OK || !status.acknowledges_cpd)
+			return false;
+	}
 	return handoff != NULL &&
 	       v92_phase4_record_tx_is_valid(&handoff->transmit) &&
 	       pcm_downstream_rx_is_valid(&handoff->receive) &&
