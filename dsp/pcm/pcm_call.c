@@ -514,8 +514,6 @@ static bool v92_digital_mixed_is_valid(
 {
 	const struct pcm_call_v92_digital_mixed_state *mixed =
 		&call->state.mixed.v92_digital;
-	const struct pcm_call_v92_digital_phase4_configuration *configuration =
-		&call->v92_digital_phase4_configuration;
 	struct v92_cpt_parameters parameters;
 	struct v90_pcm_mapping mapping;
 
@@ -523,14 +521,8 @@ static bool v92_digital_mixed_is_valid(
 	    mixed->phase3.law != call->law ||
 	    !pcm_downstream_tx_is_valid(&mixed->transmit) ||
 	    mixed->transmit.protocol != PCM_PROTOCOL_V92 ||
-	    (mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D &&
-	     mixed->transmit.stage != PCM_DOWNSTREAM_TX_V92_CONTROL) ||
-	    (configuration->upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT ?
-		mixed->transmit.control_configured :
-		(!mixed->transmit.control_configured ||
-		 mixed->transmit.v92_control_kind != PCM_DOWNSTREAM_V92_CONTROL_SUVD ||
-		 mixed->transmit.control.suvd.request_silence != configuration->suvd.request_silence ||
-		 mixed->transmit.control.suvd.acknowledges_cpu)) ||
+	    mixed->transmit.stage != PCM_DOWNSTREAM_TX_TRN2D ||
+	    mixed->transmit.control_configured ||
 	    mixed->transmit.finish_requested || mixed->transmit.complete)
 		return false;
 	if (call->failed)
@@ -561,7 +553,7 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 		&call->state.phase4.v92.owner.analog;
 	uint32_t expected_interval = V92_CPU_REPEAT_BASE_SAMPLES +
 		call->round_trip_delay_samples;
-	bool confirmed = state->station.transmit.control.peer_confirmation_received;
+	const struct v92_upstream_control *control = &state->station.transmit.control;
 	bool timer_valid;
 
 	if (state->station.cleardown.active)
@@ -569,13 +561,8 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 	if (state->observed_cpu_records !=
 	    state->station.transmit.control.completed_cpu_records)
 		return false;
-	if (confirmed)
-		timer_valid = !state->awaiting_cpu_completion &&
-			state->cpu_repeat_remaining_samples == 0u;
-	else if (state->observed_cpu_records == 0u)
-		timer_valid = !state->awaiting_cpu_completion &&
-			state->cpu_repeat_remaining_samples == 0u;
-	else if (state->awaiting_cpu_completion)
+	if (control->peer_confirmation_received || state->observed_cpu_records == 0u ||
+	    control->retry != V92_UPSTREAM_RETRY_IDLE)
 		timer_valid = state->cpu_repeat_remaining_samples == 0u;
 	else
 		timer_valid = state->cpu_repeat_remaining_samples != 0u &&
@@ -2294,13 +2281,10 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (pcm_downstream_tx_init(
 			    &mixed.transmit, PCM_PROTOCOL_V92, &mapping) !=
-			    PCM_DOWNSTREAM_TX_OK ||
-		    (call->v92_digital_phase4_configuration.upstream_selection != PCM_CALL_V92_UPSTREAM_DIRECT &&
-		     pcm_downstream_tx_start_suvd(
-			    &mixed.transmit,
-			    &call->v92_digital_phase4_configuration.suvd) !=
-			    PCM_DOWNSTREAM_TX_OK))
+			    PCM_DOWNSTREAM_TX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
+		/* An explicit CPd selection does not make the upstream receiver
+		 * ready any earlier. The Phase 4 owner enables SUVd after training. */
 		next.state.mixed.v92_digital = mixed;
 	}
 	next.stage = PCM_CALL_PHASE3_MIXED;
@@ -3084,9 +3068,9 @@ static enum pcm_call_result observe_v92_cpu_completion(
 	    completed != state->observed_cpu_records + 1u)
 		return PCM_CALL_NUMERIC_FAILURE;
 	state->observed_cpu_records = completed;
-	state->awaiting_cpu_completion = false;
 	state->cpu_repeat_remaining_samples =
-		state->station.transmit.control.peer_confirmation_received ?
+		state->station.transmit.control.peer_confirmation_received ||
+		state->station.transmit.control.retry != V92_UPSTREAM_RETRY_IDLE ?
 			0u : state->cpu_repeat_interval_samples;
 	*completed_this_sample = true;
 	return PCM_CALL_OK;
@@ -3096,22 +3080,20 @@ static enum pcm_call_result advance_v92_cpu_repeat(
 	struct pcm_call_v92_analog_phase4_control *state,
 	bool completed_this_sample)
 {
-	if (state->station.transmit.control.peer_confirmation_received) {
+	if (state->station.transmit.control.peer_confirmation_received ||
+	    state->station.transmit.control.retry != V92_UPSTREAM_RETRY_IDLE) {
 		state->cpu_repeat_remaining_samples = 0u;
-		state->awaiting_cpu_completion = false;
 		return PCM_CALL_OK;
 	}
-	if (completed_this_sample || state->observed_cpu_records == 0u ||
-	    state->awaiting_cpu_completion)
+	if (completed_this_sample || state->observed_cpu_records == 0u)
 		return PCM_CALL_OK;
 	if (state->cpu_repeat_remaining_samples == 0u)
 		return PCM_CALL_NUMERIC_FAILURE;
 	if (--state->cpu_repeat_remaining_samples != 0u)
 		return PCM_CALL_OK;
-	if (v92_phase4_analog_station_repeat_cpu(&state->station) !=
+	if (v92_phase4_analog_station_expire_cpu_wait(&state->station) !=
 	    V92_PHASE4_ANALOG_STATION_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
-	state->awaiting_cpu_completion = true;
 	return PCM_CALL_OK;
 }
 
@@ -3121,7 +3103,6 @@ static void cancel_v92_cpu_repeat_if_confirmed(
 	if (!state->station.transmit.control.peer_confirmation_received)
 		return;
 	state->cpu_repeat_remaining_samples = 0u;
-	state->awaiting_cpu_completion = false;
 }
 
 static bool v92_phase4_control_is_ready(const struct pcm_call *call)
@@ -3380,6 +3361,11 @@ static enum pcm_call_result sample_v92_phase4(
 			state, &completed_this_sample);
 		if (result != PCM_CALL_OK)
 			return result;
+		/* Expire before consuming this sample so a whole peer record
+		 * ending exactly at the threshold can qualify or cancel retry. */
+		result = advance_v92_cpu_repeat(state, completed_this_sample);
+		if (result != PCM_CALL_OK)
+			return result;
 		result = v92_analog_phase4_result(
 			v92_phase4_analog_station_receive(
 				&state->station, received_octet));
@@ -3397,8 +3383,7 @@ static enum pcm_call_result sample_v92_phase4(
 			     &state->station.mapping.cpd,
 			     &call->phase3_entry.selection.analog.pcm)))
 			return PCM_CALL_UNUSABLE_SELECTION;
-		return advance_v92_cpu_repeat(
-			state, completed_this_sample);
+		return PCM_CALL_OK;
 	}
 	{
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
@@ -4091,16 +4076,17 @@ static enum pcm_call_result v92_fast_analog_transmit(struct pcm_call *call,
 		else {
 			if (!v92_upstream_control_complete(&fast->control))
 				return PCM_CALL_NUMERIC_FAILURE;
-			if (fast->control.record == V92_UPSTREAM_CONTROL_CPU && !fast->control.peer_confirmation_received) {
+			if (fast->control.record == V92_UPSTREAM_CONTROL_CPU && !fast->control.peer_confirmation_received &&
+			    fast->control.retry == V92_UPSTREAM_RETRY_IDLE) {
 				fast->repeat_remaining = V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples;
 				return PCM_CALL_OK;
 			}
 		}
 	}
-	if (fast->control.peer_confirmation_received || fast->cleardown.active)
+	if (fast->control.peer_confirmation_received || fast->control.retry != V92_UPSTREAM_RETRY_IDLE || fast->cleardown.active)
 		fast->repeat_remaining = 0u;
 	if (fast->repeat_remaining && --fast->repeat_remaining == 0u &&
-	    !v92_upstream_control_repeat_cpu(&fast->control))
+	    !v92_upstream_control_expire_cpu_wait(&fast->control))
 		return PCM_CALL_NUMERIC_FAILURE;
 	return PCM_CALL_OK;
 }

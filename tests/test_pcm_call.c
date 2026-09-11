@@ -5850,6 +5850,14 @@ static bool run_v92_phase4_control(
 				decode_octet(law, analog_received),
 				&analog_transmitted,
 				&analog_observation);
+		/* Lose the first CPu on the wire, not by announcing digital readiness
+		 * before the receiver listens for control. Keep SUVu intact so its
+		 * repeated peer status can qualify the 100 ms + RTD retry. */
+		if (analog.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
+		    analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_CPU &&
+		    !analog.state.phase4.v92.owner.analog.station.transmit.control.cpu_sent)
+			analog_transmitted = silence_octet(law);
 		if (analog_control_ready) {
 			struct v92_phase4_record_tx expected =
 				analog_control.station.transmit.signal.record;
@@ -5989,7 +5997,7 @@ static bool run_v92_phase4_control(
 	      analog_control.cpu_repeat_interval_samples ==
 		      800u + analog.round_trip_delay_samples &&
 	      analog_control.cpu_repeat_remaining_samples == 0u &&
-	      !analog_control.awaiting_cpu_completion &&
+	      analog_control.station.transmit.control.retry == V92_UPSTREAM_RETRY_IDLE &&
 	      analog_control.observed_cpu_records ==
 		      analog_control.station.transmit.control.completed_cpu_records &&
 	      analog_control.observed_cpu_records >= 2u &&

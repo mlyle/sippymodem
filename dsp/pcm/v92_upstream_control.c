@@ -12,6 +12,9 @@ bool v92_upstream_control_is_valid(const struct v92_upstream_control *control)
 	    control->suvu.acknowledges_cpd || !v92_cpu_parameters_are_valid(&control->cpu) ||
 	    control->cpu.acknowledges_cpd ||
 	    control->cpu_sent != (control->completed_cpu_records != 0u) ||
+	    control->retry < V92_UPSTREAM_RETRY_IDLE || control->retry > V92_UPSTREAM_RETRY_ACTIVE ||
+	    (control->retry != V92_UPSTREAM_RETRY_IDLE &&
+	     (!control->cpu_sent || control->peer_confirmation_received || control->cpu_pending)) ||
 	    (!control->received_suvd && control->cpu_pending) ||
 	    (!control->received_cpd && (control->acknowledgment_sent ||
 		control->current_record_acknowledges_cpd)))
@@ -57,8 +60,14 @@ static bool accepts_events(const struct v92_upstream_control *control)
 static void confirm(struct v92_upstream_control *control, bool ack)
 {
 	control->peer_confirmation_received |= ack;
-	if (control->cpu_sent && control->peer_confirmation_received)
+	if (control->cpu_sent && control->peer_confirmation_received) {
 		control->cpu_pending = false;
+		control->retry = V92_UPSTREAM_RETRY_IDLE;
+	} else if (control->retry == V92_UPSTREAM_RETRY_ELIGIBLE) {
+		/* Called only for complete validated CPd/SUVd, or the final Ed.
+		 * A partial or rejected record never authorizes a retry. */
+		control->retry = V92_UPSTREAM_RETRY_ACTIVE;
+	}
 }
 
 bool v92_upstream_control_note_suvd(struct v92_upstream_control *control,
@@ -94,13 +103,13 @@ bool v92_upstream_control_note_ed(struct v92_upstream_control *control)
 	return true;
 }
 
-bool v92_upstream_control_repeat_cpu(struct v92_upstream_control *control)
+bool v92_upstream_control_expire_cpu_wait(struct v92_upstream_control *control)
 {
 	if (!accepts_events(control) || !control->cpu_sent ||
 	    control->peer_confirmation_received || control->cpu_pending ||
-	    control->record != V92_UPSTREAM_CONTROL_SUVU)
+	    control->record != V92_UPSTREAM_CONTROL_SUVU || control->retry != V92_UPSTREAM_RETRY_IDLE)
 		return false;
-	control->cpu_pending = true;
+	control->retry = V92_UPSTREAM_RETRY_ELIGIBLE;
 	return true;
 }
 
@@ -115,7 +124,8 @@ bool v92_upstream_control_start(struct v92_upstream_control *control,
 	    memory_regions_overlap(control, sizeof(*control), bit_count, sizeof(*bit_count)) ||
 	    memory_regions_overlap(frame, capacity, bit_count, sizeof(*bit_count)))
 		return false;
-	bool cpu = control->record != V92_UPSTREAM_CONTROL_NONE && control->cpu_pending;
+	bool cpu = control->record != V92_UPSTREAM_CONTROL_NONE &&
+		(control->cpu_pending || control->retry == V92_UPSTREAM_RETRY_ACTIVE);
 	if (cpu) {
 		struct v92_cpu_parameters parameters = control->cpu;
 		parameters.acknowledges_cpd = control->received_cpd;

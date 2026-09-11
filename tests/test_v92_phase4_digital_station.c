@@ -1274,8 +1274,6 @@ static bool run_paired_station_exchange(
 	      pcm_downstream_tx_init(
 		      &downstream_tx, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
-	      pcm_downstream_tx_start_suvd(&downstream_tx, &suvd) ==
-		      PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(
 		      &downstream_rx, PCM_PROTOCOL_V92, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
@@ -1285,11 +1283,15 @@ static bool run_paired_station_exchange(
 		      V92_PHASE4_ANALOG_STATION_OK &&
 	      v92_phase4_digital_station_init(
 		      &digital, &digital_handoff, constellation,
-		      &downstream_tx, &downstream_tx.control.suvd, &cpd, 0u) ==
+		      &downstream_tx, &suvd, &cpd, 0u) ==
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "paired station initialization failed law=%u constellation=%u",
 	      (unsigned int)law, (unsigned int)constellation);
 
+	/* Leave SUVd readiness to the station's channel measurement. Sending it
+	 * before the receiver listens for control can lose all initial SUVu;
+	 * a conforming peer then repeats only CPu after its first wait. */
+	CHECK(!digital.control.transmit.control_configured, "fixture announced readiness early");
 	/* The warm receive handoff already owns these delayed input symbols. */
 	for (size_t symbol = 0u;
 	     symbol < digital_handoff.input_advance_symbols; ++symbol) {
@@ -1351,11 +1353,12 @@ static bool run_paired_station_exchange(
 		      "paired analogue receive stopped at %zu: %s", symbol,
 		      v92_phase4_analog_station_result_name(analog_result));
 		if (analog.transmit.control.cpu_sent && !digital.control.cpu_received &&
-		    !analog.transmit.control.cpu_pending) {
+		    !analog.transmit.control.cpu_pending &&
+		    analog.transmit.control.retry == V92_UPSTREAM_RETRY_IDLE) {
 			if (cpu_repeat_wait == 0u)
 				cpu_repeat_wait = 800u;
 			else if (--cpu_repeat_wait == 0u)
-				CHECK(v92_phase4_analog_station_repeat_cpu(&analog) ==
+				CHECK(v92_phase4_analog_station_expire_cpu_wait(&analog) ==
 					      V92_PHASE4_ANALOG_STATION_OK,
 				      "paired CPu repeat was rejected at %zu",
 				      symbol);
@@ -1577,6 +1580,85 @@ static bool test_selected_filters(void)
 		      run_paired_station_exchange(law, V92_CONSTELLATION_8_POINT, 1u, -1, &cpd),
 		      "175-coefficient selected filter exchange failed law=%u", (unsigned int)law);
 	}
+	return true;
+}
+
+static bool run_analog_retry_boundary(enum g711_law law, bool parameters, bool ack, bool corrupt)
+{
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
+	};
+	struct v92_suvd_parameters suvd = { 0 };
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_parameters cpd = cpd_parameters(law);
+	struct v92_cpt_parameters cpt = cpt_parameters(law);
+	const struct v92_phase3_analog_transmit_handoff handoff = {
+		.lu = TEST_LU, .training_constellation = V92_CONSTELLATION_4_POINT,
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx downstream;
+	struct v92_phase4_analog_station station;
+	struct full_cpd_source source;
+	uint8_t sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES];
+	size_t bits, events = 0;
+	bool expired = false;
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
+		V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_phase4_analog_station_init(&station, &handoff, &downstream, &suvu, &cpu,
+		&suvd, &cpd) == V92_PHASE4_ANALOG_STATION_OK &&
+	      full_cpd_source_init(&source, &mapping) &&
+	      push_full_cpd_training(&source, &station, &events), "retry fixture setup failed");
+	for (unsigned symbol = 0; symbol < 4000u &&
+	     (!station.transmit.control.cpu_sent || station.transmit.stage != V92_PHASE4_ANALOG_TX_SUVU); ++symbol) {
+		int16_t sample;
+		CHECK(v92_phase4_analog_station_transmit(&station, &sample) == V92_PHASE4_ANALOG_STATION_OK,
+		      "retry fixture did not send the first CPu");
+	}
+	CHECK(station.transmit.control.cpu_sent && station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU &&
+	      !events, "retry fixture did not reach the first CPu wait");
+	cpd.acknowledges_cpu = suvd.acknowledges_cpu = ack;
+	CHECK(parameters ?
+	      v92_cpd_encode(&cpd, mapping.frame_bits, sequence, sizeof(sequence), &bits) == V92_CPD_OK :
+	      v92_suvd_encode(&suvd, mapping.frame_bits, sequence, sizeof(sequence), &bits) == V92_SUVD_OK,
+	      "retry boundary record did not encode");
+	/* Damage a payload bit, retaining sync and record length but invalidating CRC. */
+	if (corrupt)
+		sequence[5] ^= 0x80u;
+	for (unsigned repeat = 0; repeat < 4u && events < (corrupt ? 2u : 1u); ++repeat) {
+		for (size_t first = 0; first < bits && events < (corrupt ? 2u : 1u); first += mapping.frame_bits) {
+			const struct v92_control_rx *receive = &station.receive.control.v92;
+			if (!expired && receive->bit_index >= 32u && receive->bit_index < receive->frame_bit_count) {
+				CHECK(v92_phase4_analog_station_expire_cpu_wait(&station) == V92_PHASE4_ANALOG_STATION_OK,
+				      "expiry during a partial peer record was rejected");
+				expired = true;
+			}
+			uint8_t frame[V90_PCM_FRAME_MAX_BITS];
+			for (size_t bit = 0; bit < mapping.frame_bits; ++bit)
+				frame[bit] = sequence_bit(sequence, first + bit);
+			CHECK(push_full_cpd_frame(&source, &station, frame, &events) == V92_PHASE4_ANALOG_STATION_OK,
+			      "retry boundary wire receive failed");
+			if (expired && (corrupt || !events))
+				CHECK(station.transmit.control.retry == V92_UPSTREAM_RETRY_ELIGIBLE &&
+				      !station.transmit.control.peer_confirmation_received,
+				      "partial or CRC-rejected peer record changed retry state");
+		}
+	}
+	CHECK(expired && events == (corrupt ? 2u : 1u), "retry test missed the peer record boundary");
+	CHECK(station.transmit.control.retry == (corrupt ? V92_UPSTREAM_RETRY_ELIGIBLE :
+		ack ? V92_UPSTREAM_RETRY_IDLE : V92_UPSTREAM_RETRY_ACTIVE) &&
+	      station.transmit.control.peer_confirmation_received == (ack && !corrupt),
+	      "complete peer record did not resolve retry: law=%u CPd=%u ACK=%u corrupt=%u",
+	      (unsigned)law, parameters, ack, corrupt);
+	return true;
+}
+
+static bool test_analog_retry_boundary(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned variant = 0; variant < 8u; ++variant)
+			CHECK(run_analog_retry_boundary(law, variant & 1u, variant & 2u, variant & 4u),
+			      "analogue retry boundary failed law=%u variant=%u", (unsigned)law, variant);
 	return true;
 }
 
@@ -2001,6 +2083,7 @@ int main(void)
 		  test_paired_station_matrix },
 		{ "selected CPd filter handoff and payload", test_selected_filters },
 		{ "analogue early control handoff", test_analog_early_control },
+		{ "analogue retry at complete peer records", test_analog_retry_boundary },
 		{ "compact station boundary", test_compact_boundary },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },

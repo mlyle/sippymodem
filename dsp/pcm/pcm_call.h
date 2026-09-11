@@ -227,7 +227,6 @@ struct pcm_call_v92_analog_phase4_control {
 	uint64_t observed_cpu_records;
 	uint32_t cpu_repeat_interval_samples;
 	uint32_t cpu_repeat_remaining_samples;
-	bool awaiting_cpu_completion;
 };
 
 enum pcm_call_v92_phase4_child {

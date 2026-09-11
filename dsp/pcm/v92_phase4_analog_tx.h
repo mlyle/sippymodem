@@ -74,9 +74,9 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_cpd(
 enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_ed(
 	struct v92_phase4_analog_tx *tx);
 
-/* The procedure timer may request another single CPu after 100 ms plus the
- * measured round-trip delay. Timing remains outside this symbol owner. */
-enum v92_phase4_analog_tx_result v92_phase4_analog_tx_repeat_cpu(
+/* Expiry enables repeated CPu only after the next complete non-ACK peer
+ * control record. Timing remains outside this symbol owner. */
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_expire_cpu_wait(
 	struct v92_phase4_analog_tx *tx);
 
 /* Emit one 8000-symbol/s signed level. E2U_READY_RESULT consumes no symbol and

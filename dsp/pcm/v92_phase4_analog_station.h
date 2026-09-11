@@ -105,10 +105,10 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 enum v92_phase4_analog_station_result v92_phase4_analog_station_transmit(
 	struct v92_phase4_analog_station *station, int16_t *sample);
 
-/* The call timer may request one complete CPu repeat after its normative
- * deadline. */
+/* Notify the initial CPu wait expiry; a complete peer control record still
+ * has to qualify repetition. */
 enum v92_phase4_analog_station_result
-v92_phase4_analog_station_repeat_cpu(
+v92_phase4_analog_station_expire_cpu_wait(
 	struct v92_phase4_analog_station *station);
 
 /* Export both continuous line directions and their selected mappings after

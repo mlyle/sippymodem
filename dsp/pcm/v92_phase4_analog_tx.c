@@ -170,7 +170,7 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_note_ed(
 	return V92_PHASE4_ANALOG_TX_OK;
 }
 
-enum v92_phase4_analog_tx_result v92_phase4_analog_tx_repeat_cpu(
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_expire_cpu_wait(
 	struct v92_phase4_analog_tx *tx)
 {
 	struct v92_phase4_analog_tx next;
@@ -180,7 +180,7 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_repeat_cpu(
 	if (!v92_phase4_analog_tx_is_valid(tx))
 		return V92_PHASE4_ANALOG_TX_INVALID_STATE;
 	next = *tx;
-	if (!v92_upstream_control_repeat_cpu(&next.control))
+	if (!v92_upstream_control_expire_cpu_wait(&next.control))
 		return V92_PHASE4_ANALOG_TX_INVALID_STATE;
 	if (!v92_phase4_analog_tx_is_valid(&next))
 		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;

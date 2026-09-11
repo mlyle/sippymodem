@@ -464,14 +464,14 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_transmit(
 }
 
 enum v92_phase4_analog_station_result
-v92_phase4_analog_station_repeat_cpu(
+v92_phase4_analog_station_expire_cpu_wait(
 	struct v92_phase4_analog_station *station)
 {
 	if (station == NULL)
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
 	if (!v92_phase4_analog_station_is_valid(station) || station->failed || station->cleardown.active)
 		return V92_PHASE4_ANALOG_STATION_INVALID_STATE;
-	return v92_phase4_analog_tx_repeat_cpu(&station->transmit) ==
+	return v92_phase4_analog_tx_expire_cpu_wait(&station->transmit) ==
 		       V92_PHASE4_ANALOG_TX_OK ?
 		       V92_PHASE4_ANALOG_STATION_OK :
 		       V92_PHASE4_ANALOG_STATION_INVALID_STATE;
