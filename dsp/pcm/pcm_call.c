@@ -20,9 +20,10 @@
 enum {
 	V90_NETWORK_CHARACTERS_PER_SECOND = 8000,
 	V90_UPSTREAM_RATE_UNIT = 2400,
-	V90_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
+	PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES =
 		V34_PHASE2_SAMPLE_RATE * 51 / 10,
 	V90_PHASE3_SD_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 3 / 2,
+	V92_PHASE3_JA_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 9 / 2,
 	V90_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 15,
 	V90_B1_ROUND_TRIP_ALLOWANCES = 5,
 	V92_B1_BASE_DEADLINE_SAMPLES = V34_PHASE2_SAMPLE_RATE * 20,
@@ -2608,8 +2609,36 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 	const struct pcm_phase3_digital_tx *transmit;
 	uint64_t elapsed;
 
-	if (!pcm_call_uses_conventional_upstream(call))
-		return false;
+	if (uses_pcm_upstream(call)) {
+		const struct v92_phase3_digital_station *station;
+
+		if (call->local_role != V90_DIGITAL_MODEM)
+			return false;
+		station = &call->state.phase3.v92_digital;
+		if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL) {
+			/* V.92 9.5.1.2.1: Ja is due 4500 ms + RTD after INFO1a.
+			 * Reuse that boundary's B1 clock; this sample is received
+			 * before its remaining count advances. */
+			return call->b1_deadline_armed &&
+			       b1_deadline_limit(call) - call->b1_deadline_remaining_samples + 1u >=
+				V92_PHASE3_JA_BASE_DEADLINE_SAMPLES + (uint32_t)call->round_trip_delay_samples;
+		}
+		if (station->receive_stage != V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE &&
+		    station->receive_stage != V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE)
+			return false;
+		transmit = &station->downstream;
+		if (transmit->stage != PCM_PHASE3_DIGITAL_TX_JD &&
+		    transmit->stage != PCM_PHASE3_DIGITAL_TX_JP)
+			return false;
+		/* V.92 9.5.1.2.2 times the final Su reversal from TRN1d,
+		 * including both Jd and Jp. Receiving it on the last allowed
+		 * sample moves to second TRN1u before this check. */
+		elapsed = (uint64_t)transmit->sequence.signs.trn1d_symbols +
+			  ((uint64_t)transmit->jd_records + transmit->jp_records) * PCM_J_FRAME_BITS +
+			  transmit->bit_index;
+		return elapsed >= PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
+			(uint32_t)call->round_trip_delay_samples;
+	}
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct v90_phase3_analog_station *station =
 			&call->state.phase3.analog;
@@ -2650,7 +2679,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 	elapsed = (uint64_t)transmit->sequence.signs.trn1d_symbols +
 		  (uint64_t)transmit->jd_records * PCM_J_FRAME_BITS +
 		  transmit->bit_index;
-	return elapsed >= V90_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
+	return elapsed >= PCM_PHASE3_RETURN_BASE_DEADLINE_SAMPLES +
 			  (uint32_t)call->round_trip_delay_samples;
 }
 

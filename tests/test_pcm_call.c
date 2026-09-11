@@ -3076,6 +3076,150 @@ static bool test_probe_response_timeout(void)
 	return true;
 }
 
+/* V.92 9.5.1.2: Ja is timed from INFO1a; both Su waits are timed
+ * from TRN1d. Capture real receive edges before testing stalled copies. */
+static uint32_t v92_phase3_response_elapsed(const struct pcm_call *call, unsigned kind)
+{
+	const struct pcm_phase3_digital_tx *tx = &call->state.phase3.v92_digital.downstream;
+	if (kind == 0u)
+		return 160000u + 6u * call->round_trip_delay_samples - call->b1_deadline_remaining_samples;
+	if (tx->stage == PCM_PHASE3_DIGITAL_TX_PREFIX)
+		return tx->sequence.prefix.sequence.signs.trn1d_symbols;
+	return tx->sequence.signs.trn1d_symbols +
+		(tx->jd_records + tx->jp_records) * PCM_J_FRAME_BITS + tx->bit_index;
+}
+
+static bool v92_phase3_missing_response(const struct pcm_call *boundary, unsigned kind)
+{
+	struct pcm_call call = *boundary;
+	uint32_t deadline = (kind == 0u ? 36000u : 40800u) + call.round_trip_delay_samples;
+
+	for (uint32_t elapsed = v92_phase3_response_elapsed(&call, kind) + 1u; elapsed <= deadline; ++elapsed) {
+		struct pcm_call_observation event;
+		uint8_t output, silence = silence_octet(call.law);
+		enum pcm_call_result result = pcm_call_octet(&call, silence, 0, &output, &event);
+		CHECK(result == PCM_CALL_OK && call.stage ==
+			(elapsed < deadline ? PCM_CALL_PHASE3 : PCM_CALL_RETRAIN_SILENCE),
+			"law %u kind %u elapsed %u/%u result %s stage %u",
+			call.law, kind, elapsed, deadline, pcm_call_result_name(result), call.stage);
+	}
+	CHECK(call.retrain_active && call.protocol == PCM_PROTOCOL_V92 && call.peer_info0_stored &&
+		!call.b1_deadline_armed && !call.failed && pcm_call_is_valid(&call),
+		"timeout lost the retained V.92 call");
+	{
+		struct pcm_call_observation event;
+		uint8_t output, silence = silence_octet(call.law);
+		CHECK(pcm_call_octet(&call, silence, 0, &output, &event) == PCM_CALL_OK &&
+		      event.processed == PCM_CALL_RETRAIN_SILENCE && output == silence,
+		      "missing response did not begin protocol retrain silence");
+	}
+	return true;
+}
+
+static bool v92_phase3_timely_response(const struct pcm_call *before, uint8_t received, bool ja)
+{
+	struct pcm_call call = *before;
+	struct pcm_call_observation event;
+	uint8_t transmitted, silence = silence_octet(call.law);
+	uint32_t deadline = (ja ? 36000u : 40800u) + call.round_trip_delay_samples;
+
+	/* Move only the elapsed counts: the generated receive history and
+	 * detection sample remain exact. A buffered record may still complete
+	 * if just its last input sample is erased; test absence separately. */
+	if (ja) {
+		call.b1_deadline_remaining_samples =
+			160000u + 6u * call.round_trip_delay_samples - deadline + 1u;
+	} else {
+		struct pcm_phase3_digital_tx *tx = &call.state.phase3.v92_digital.downstream;
+		CHECK(tx->stage == PCM_PHASE3_DIGITAL_TX_JP, "final Su did not arrive during Jp");
+		uint32_t tail = deadline - 1u - tx->sequence.signs.trn1d_symbols - PCM_J_FRAME_BITS;
+		tx->jd_records = 1u;
+		tx->jp_records = tail / PCM_J_FRAME_BITS;
+		tx->bit_index = tail % PCM_J_FRAME_BITS;
+	}
+	CHECK(pcm_call_is_valid(&call), "rebased response is invalid");
+	CHECK(pcm_call_octet(&call, received, decode_octet(call.law, received), &transmitted, &event) ==
+		PCM_CALL_OK && call.stage == PCM_CALL_PHASE3 && !call.retrain_active &&
+		call.state.phase3.v92_digital.receive_stage == (ja ? V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE :
+			V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U), "last-tick response lost to timeout");
+	if (!ja) {
+		call.state.phase3.v92_digital.downstream.jd_records += 1000u;
+		CHECK(pcm_call_is_valid(&call) && pcm_call_octet(&call, silence, 0, &transmitted, &event) ==
+			PCM_CALL_OK && call.stage == PCM_CALL_PHASE3 && !call.retrain_active,
+			"accepted Su did not cancel its deadline while Jp drains");
+	}
+	return true;
+}
+
+static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2], boundaries[3];
+	struct channel wire;
+	bool captured[3] = { false };
+	bool timely[2] = { false };
+	CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+		pcm_call_init(&calls[1], &dc) == PCM_CALL_OK && channel_init(&wire, law, delay),
+		"V.92 deadline endpoints did not initialize");
+	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT && !timely[1]; ++clock) {
+		uint8_t rx[2], tx[2];
+		struct pcm_call before = calls[1];
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_observation event;
+			CHECK(pcm_call_octet(&calls[side], rx[side], decode_octet(law, rx[side]),
+				&tx[side], &event) == PCM_CALL_OK, "V.92 deadline setup failed at %zu side %u", clock, side);
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (calls[1].stage != PCM_CALL_PHASE3)
+			continue;
+		const struct v92_phase3_digital_station *station = &calls[1].state.phase3.v92_digital;
+		const struct pcm_phase3_digital_tx *txp = &station->downstream;
+		if (before.stage == PCM_CALL_PHASE3) {
+			enum v92_phase3_digital_receive_stage previous = before.state.phase3.v92_digital.receive_stage;
+			if (previous == V92_PHASE3_DIGITAL_RECEIVE_INITIAL &&
+			    station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE) {
+				CHECK(v92_phase3_timely_response(&before, rx[1], true), "timely Ja failed");
+				timely[0] = true;
+			}
+			if (previous == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE &&
+			    station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U) {
+				CHECK(v92_phase3_timely_response(&before, rx[1], false), "timely Su failed");
+				timely[1] = true;
+			}
+		}
+		bool reached[] = {
+			station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL,
+			station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM &&
+				txp->stage == PCM_PHASE3_DIGITAL_TX_PREFIX &&
+				txp->sequence.prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_TRN1D &&
+				txp->sequence.prefix.sequence.signs.trn1d_symbols == 0u,
+			station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE,
+		};
+		for (unsigned kind = 0; kind < 3; ++kind)
+			if (!captured[kind] && reached[kind]) {
+				boundaries[kind] = calls[1];
+				captured[kind] = true;
+			}
+	}
+	CHECK(captured[0] && captured[1] && captured[2] && timely[0] && timely[1],
+		"did not capture all three response boundaries");
+	bool passed = true;
+	for (unsigned kind = 0; kind < 3; ++kind)
+		passed = v92_phase3_missing_response(&boundaries[kind], kind) && passed;
+	return passed;
+}
+
+static bool test_v92_phase3_deadlines(void)
+{
+	bool passed = true;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned delay = 3; delay <= 13; delay += 10)
+			passed = run_v92_phase3_deadlines(law, delay) && passed;
+	return passed;
+}
+
 static bool run_phase3_return_timeout(enum g711_law law, size_t delay)
 {
 	struct channel channel;
@@ -8887,6 +9031,7 @@ int main(void)
 		{ "standards-timed V.90 B1 retrain", test_b1_timeout },
 		{ "lost Ri-bar recovers online data", test_missing_ri_bar },
 		{ "standards-timed V.90 Phase 3 return", test_phase3_return_timeout },
+		{ "standards-timed V.92 digital Phase 3 responses", test_v92_phase3_deadlines },
 		{ "standards-timed V.90 Sd response", test_phase3_sd_timeout },
 		{ "downstream rate negotiation",
 		  test_downstream_rate_negotiation },
