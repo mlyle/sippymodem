@@ -221,12 +221,16 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		model->cost[other] - model->cost[chosen] : UINT64_MAX;
 
 	*decision = decisions[chosen];
+	if ((model->valid & (1u << other)) && gap <= UINT64_C(3000000) &&
+	    decisions[other].rm != decision->rm)
+		decision->rm = V92_PCM_FRAME_RM_NONE;
 	memcpy(predictions, likelihood[chosen].predicted_samples,
 		sizeof(likelihood[chosen].predicted_samples));
 	if (decision->bits_ready) {
 		memcpy(bits, output[chosen], count);
 		if ((model->valid & (1u << other)) && gap <= UINT64_C(3000000) &&
-		    (decisions[other].ambiguous || memcmp(output[chosen], output[other], count)))
+		    (!decisions[other].bits_ready || decisions[other].ambiguous ||
+		     memcmp(output[chosen], output[other], count)))
 			decision->ambiguous = true;
 	}
 	if (chosen != primary) {

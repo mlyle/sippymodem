@@ -19,6 +19,8 @@ enum {
 	/* 120-symbol (15 ms) traceback with bounded competing histories. */
 	V92_PCM_RX_PATHS = 32,
 	V92_PCM_RX_DELAY_FRAMES = 10,
+	/* Qualify 240T inside the 384T request, before its 24T prime tail. */
+	V92_PCM_RM_QUALIFY_FRAMES = 20,
 };
 
 enum v92_pcm_frame_result {
@@ -66,7 +68,17 @@ struct v92_pcm_frame_rx_path {
 	uint64_t metric;
 	uint8_t pending[V92_PCM_RX_DELAY_FRAMES][V92_PCM_MAPPING_MAX_BITS];
 	uint16_t ambiguous_frames;
+	uint16_t nondata_frames;
 	uint8_t differential;
+	uint8_t rm_frames;
+	uint8_t rm_prime_frames;
+};
+
+enum v92_pcm_frame_rm {
+	V92_PCM_FRAME_RM_NONE,
+	V92_PCM_FRAME_RM_SIGNAL,
+	V92_PCM_FRAME_RM_PRIME,
+	V92_PCM_FRAME_RM_COMPLETE,
 };
 
 enum v92_pcm_frame_observation {
@@ -106,6 +118,10 @@ struct v92_pcm_frame_decision {
 	bool bits_ready;
 	/* Equal-distance histories disagree about the delivered payload. */
 	bool ambiguous;
+	/* Current-frame request evidence, independent of delayed bits. A single
+	 * in-range RM-like word remains payload. Qualified RM and its two prime
+	 * frames are signaling; the caller owns the response/control transition. */
+	enum v92_pcm_frame_rm rm;
 };
 
 enum v92_pcm_frame_result v92_pcm_frame_tx_init(
@@ -185,8 +201,11 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
  * Predicted samples and squared error use those same coordinates and remain
  * unweighted even when the sequence search uses learned noise weights.
  * A bounded sequence search retains competing histories across frames.
- * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; before
- * that, bits remain untouched while state and decision advance normally.
+ * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; while
+ * buffering or delivering a non-payload slot, bits remain untouched. RM's
+ * exact spare modulus words are signaling, not invalid payload codewords.
+ * Qualified RM also clamps its pending in-range words without discarding
+ * preceding data. Non-payload tags follow each competing delayed history.
  * B1u constrains source bits to ones; its residual is training evidence, not
  * an automatic pass. Ordinary data has no payload-dependent constraints.
  * Ambiguity and residuals are quality evidence for the call owner, not a

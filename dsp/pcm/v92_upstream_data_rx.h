@@ -54,6 +54,8 @@ struct v92_upstream_data_rx {
 };
 
 struct v92_upstream_data_frame {
+	/* Qualified current-frame request, separate from delayed payload below. */
+	enum v92_pcm_frame_rm rm;
 	/* Residual of the CURRENT frame in signed PCM sample units: equalized
 	 * filter output, or raw line input for a channel-compensated mapping.
 	 * Raw-line residual includes companding noise against the fitted channel
@@ -61,7 +63,8 @@ struct v92_upstream_data_frame {
 	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
 	/* Payload is delayed by the frame decoder's lookahead. A zero count
-	 * means no payload is ready; b1u and ambiguous apply only to these bits. */
+	 * means buffering or a non-payload slot; b1u and ambiguous apply only
+	 * to these bits. RM signaling never becomes a fabricated payload word. */
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 	uint8_t bit_count;
 	bool b1u;

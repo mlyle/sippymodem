@@ -289,9 +289,14 @@ static bool test_quantized_level_tracking(
 	return true;
 }
 
+enum stream_control { STREAM_DATA, STREAM_RESET, STREAM_RM };
+
 static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
-		       uint8_t rate, double gain, double postcursor, bool control)
+		       uint8_t rate, double gain, double postcursor, enum stream_control control)
 {
+	enum { RM_START = V92_B1U_FRAMES + 16, RM_PRIME = RM_START + 32,
+		RM_END = RM_PRIME + 2 };
+	bool rm = control == STREAM_RM, requested = false;
 	struct channel channel = { .gain = gain, .postcursor = postcursor,
 		.law = law, .polarity = polarity };
 	bool distorted = gain != 1.0 || postcursor != 0.0;
@@ -345,7 +350,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "E2u lost pending B1u inputs or changed the trained FIR");
 	for (unsigned int symbol = 0u;
-	     symbol < (V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES) *
+	     symbol < (V92_B1U_FRAMES + DATA_FRAMES + V92_PCM_RX_DELAY_FRAMES + (rm ? 34u : 0u)) *
 		      V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 		struct v92_upstream_data_frame frame;
@@ -357,7 +362,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		/* Two epochs closer than traceback: both pending generations must
 		 * survive. Transmit and equalized receive boundaries differ by the
 		 * trained FIR's physical delay. No request acquisition is simulated. */
-		if (control && transmitter.queue_count == 0u &&
+		if (control == STREAM_RESET && transmitter.queue_count == 0u &&
 		    (source_frames == 16u || source_frames == 18u)) {
 			struct v92_upstream_data_tx expected = transmitter;
 
@@ -368,7 +373,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			      memcmp(&transmitter, &expected, sizeof(expected)) == 0,
 			      "transmit control reset changed retained state");
 		}
-		if (control && receiver.line.symbol_count == 0u &&
+		if (control == STREAM_RESET && receiver.line.symbol_count == 0u &&
 		    (receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
 		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
 			struct v92_upstream_data_rx expected = receiver;
@@ -382,7 +387,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			      memcmp(&receiver, &expected, sizeof(expected)) == 0,
 			      "receive control reset changed retained state");
 		}
-		if (control && receiver.line.received_frames == V92_B1U_FRAMES + 16u &&
+		if (control == STREAM_RESET && receiver.line.received_frames == V92_B1U_FRAMES + 16u &&
 		    receiver.line.symbol_count != 0u) {
 			struct v92_upstream_data_rx expected = receiver;
 
@@ -391,7 +396,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			      memcmp(&receiver, &expected, sizeof(expected)) == 0,
 			      "partial equalized frame accepted a control reset");
 		}
-		if (control && source_frames == 17u && transmitter.queue_count != 0u) {
+		if (control == STREAM_RESET && source_frames == 17u && transmitter.queue_count != 0u) {
 			struct v92_upstream_data_tx expected = transmitter;
 
 			CHECK(v92_upstream_data_tx_reset_control(&transmitter) ==
@@ -399,8 +404,18 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			      memcmp(&transmitter, &expected, sizeof(expected)) == 0,
 			      "partial transmit frame accepted a control reset");
 		}
-		CHECK(v92_upstream_data_tx_next(&transmitter, source, &source_frames,
-				&sample) == V92_UPSTREAM_DATA_TX_OK, "data transmitter stopped");
+		if (rm && !requested && source_frames == 16u && transmitter.queue_count == 0u) {
+			CHECK(v92_upstream_data_tx_start_rm(&transmitter) == V92_UPSTREAM_DATA_TX_OK,
+			      "stream RM request failed");
+			requested = true;
+		}
+		if (rm && receiver.line.symbol_count == 0u && receiver.line.received_frames == RM_END)
+			CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK,
+			      "stream RM control handoff failed");
+		enum v92_upstream_data_tx_result tx_result = v92_upstream_data_tx_next(
+			&transmitter, source, &source_frames, &sample);
+		CHECK(tx_result == V92_UPSTREAM_DATA_TX_OK ||
+		      (rm && tx_result == V92_UPSTREAM_DATA_TX_RM_COMPLETE), "data transmitter stopped");
 		CHECK(receive_compared(&receiver, wire_sample(&channel, sample), &frame, &result),
 		      "owned stream diverged");
 		CHECK(result == (symbol % V92_PCM_MAPPING_FRAME_SYMBOLS == 11u ?
@@ -417,8 +432,20 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 		}
 		if (decisions < V92_B1U_FRAMES)
 			b1u_error += frame.squared_error;
-		CHECK((frame.bit_count != 0u) == (decisions >= V92_PCM_RX_DELAY_FRAMES),
-		      "payload delay changed");
+		enum v92_pcm_frame_rm expected_rm = !rm || decisions < RM_START +
+			V92_PCM_RM_QUALIFY_FRAMES - 1u || decisions >= RM_END ? V92_PCM_FRAME_RM_NONE :
+			decisions < RM_PRIME ? V92_PCM_FRAME_RM_SIGNAL :
+			decisions == RM_PRIME ? V92_PCM_FRAME_RM_PRIME : V92_PCM_FRAME_RM_COMPLETE;
+		CHECK(frame.rm == expected_rm, "law %u rate %u frame %u RM stage %u != %u",
+		      law, rate, decisions, frame.rm, expected_rm);
+		unsigned output_frame = decisions - V92_PCM_RX_DELAY_FRAMES;
+		bool request_slot = rm && output_frame >= RM_START && output_frame < RM_END;
+		if (!request_slot)
+			CHECK((frame.bit_count != 0u) == (decisions >= V92_PCM_RX_DELAY_FRAMES),
+			      "payload delay changed");
+		if (rm && decisions >= RM_START + V92_PCM_RM_QUALIFY_FRAMES - 1u &&
+		    output_frame < RM_END)
+			CHECK(frame.bit_count == 0u, "qualified RM leaked delayed data");
 		decisions++;
 		if (decisions == V92_B1U_FRAMES) {
 			bool retained = false;
@@ -433,7 +460,7 @@ static bool run_stream(enum g711_law law, int8_t polarity, bool extended,
 			CHECK(retained, "law %u rate %u distortion %u lost known B1u history",
 			      (unsigned int)law, rate, distorted);
 		}
-		if (frame.bit_count == 0u)
+		if (frame.bit_count == 0u || request_slot)
 			continue;
 		CHECK(frame.b1u == (delivered < V92_B1U_FRAMES), "delayed B1u misclassified");
 		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
@@ -1279,9 +1306,11 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 
 /* Two codec conversions with channel memory and post-codec host gain. Keep
  * wire octets: requantizing the .75-scaled samples produces different cells. */
-static bool test_codec_model(int polarity)
+static bool test_codec_model(int polarity, bool rm)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
+	enum { RM_START = V92_B1U_FRAMES + 16, RM_PRIME = RM_START + 32, RM_END = RM_PRIME + 2 };
+	unsigned frames = FRAMES + (rm ? 34u : 0u);
 	struct channel training = { .gain = 1.0, .law = G711_LAW_PCMU, .polarity = polarity };
 	struct v92_upstream_channel measured = { 0 };
 	struct v92_cpd_parameters cpd;
@@ -1292,7 +1321,7 @@ static bool test_codec_model(int polarity)
 	struct v92_e2u_rx e2u_rx;
 	struct v92_upstream_data_rx receiver, initial;
 	struct v92_observation frozen[2];
-	uint8_t codes[(FRAMES + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	uint8_t codes[(FRAMES + 34 + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t random = 0x35791bdu;
 	int16_t previous = 0, second = 0;
 	unsigned delivered = 0u;
@@ -1319,22 +1348,25 @@ static bool test_codec_model(int polarity)
 	      "codec model initialization failed");
 	initial = receiver;
 	previous = second = 0;
-	for (unsigned f = 0u; f < FRAMES + PREFIX; ++f) {
+	for (unsigned f = 0u; f < frames + PREFIX; ++f) {
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame frame;
 
 		if (f < V92_B1U_FRAMES)
 			memset(bits, 1, mapping.data_bits_per_frame);
 		else
-			payload(bits, mapping.data_bits_per_frame, f - V92_B1U_FRAMES);
+			payload(bits, mapping.data_bits_per_frame,
+				f - V92_B1U_FRAMES - (rm && f >= RM_END ? 34u : 0u));
 		/* Both coding hypotheses must retain two closely-spaced control
 		 * epochs even while older payload is still in traceback. */
-		if (f == V92_B1U_FRAMES + 16u || f == V92_B1U_FRAMES + 18u) {
+		if (rm ? f == RM_END : f == V92_B1U_FRAMES + 16u || f == V92_B1U_FRAMES + 18u) {
 			transmitter.state.scrambler.history = 0u;
 			transmitter.state.differential = 0u;
 		}
-		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
-			&frame) == V92_PCM_FRAME_OK, "codec frame encode failed");
+		CHECK((rm && f >= RM_START && f < RM_END ?
+			v92_pcm_frame_encode_rm(&transmitter, f >= RM_PRIME, &frame) :
+			v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &frame)) ==
+			V92_PCM_FRAME_OK, "codec frame encode failed");
 		for (unsigned s = 0u; s < V92_PCM_MAPPING_FRAME_SYMBOLS; ++s) {
 			int16_t sample;
 
@@ -1348,14 +1380,15 @@ static bool test_codec_model(int polarity)
 		}
 	}
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
-	     receiver.line.received_frames < FRAMES; ++i) {
+	     receiver.line.received_frames < frames; ++i) {
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
 		struct v92_upstream_data_rx owned = receiver;
 		uint8_t code = codes[i];
 		int16_t sample = (int16_t)lround(.75 * g711_decode_pcmu(code));
 
 		if (receiver.line.symbol_count == 0u &&
-		    (receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
+		    (rm ? receiver.line.received_frames == RM_END :
+		     receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
 		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
 			CHECK(receiver.model.valid == 3u &&
 			      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK,
@@ -1381,7 +1414,17 @@ static bool test_codec_model(int polarity)
 			CHECK(memcmp(frozen, receiver.model.model, sizeof(frozen)) == 0,
 			      "held-out B1u or payload retrained the codec models");
 		}
-		if (!frame.bit_count)
+		unsigned f = (unsigned)receiver.line.received_frames - 1u;
+		enum v92_pcm_frame_rm expected_rm = !rm || f < RM_START +
+			V92_PCM_RM_QUALIFY_FRAMES - 1u || f >= RM_END ? V92_PCM_FRAME_RM_NONE :
+			f < RM_PRIME ? V92_PCM_FRAME_RM_SIGNAL :
+			f == RM_PRIME ? V92_PCM_FRAME_RM_PRIME : V92_PCM_FRAME_RM_COMPLETE;
+		CHECK(frame.rm == expected_rm, "codec RM stage differs at %u: %u/%u", f, frame.rm, expected_rm);
+		if (rm && f >= RM_START + V92_PCM_RM_QUALIFY_FRAMES - 1u &&
+		    f < RM_END + V92_PCM_RX_DELAY_FRAMES)
+			CHECK(!frame.bit_count, "codec RM leaked a delayed word");
+		if (!frame.bit_count || (rm && f >= RM_START + V92_PCM_RX_DELAY_FRAMES &&
+			f < RM_END + V92_PCM_RX_DELAY_FRAMES))
 			continue;
 		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 
@@ -1396,6 +1439,30 @@ static bool test_codec_model(int polarity)
 	}
 	CHECK(delivered == FRAMES - V92_PCM_RX_DELAY_FRAMES, "codec payload count changed");
 	struct v92_upstream_data_rx saved = receiver;
+	/* With no new likelihood evidence, equally ranked codec hypotheses can
+	 * disagree about an old non-payload slot. Never compare unwritten bits
+	 * from the suppressed branch or release a placeholder from the winner. */
+	for (unsigned suppressed = 0u; suppressed < 2u; ++suppressed) {
+		struct v92_upstream_data_rx paired = saved;
+		struct v92_upstream_data_frame frame = { 0 };
+
+		paired.model.primary = 0u;
+		paired.model.cost[0] = paired.model.cost[1] = 0u;
+		paired.model.alternate = paired.decoder;
+		struct v92_pcm_frame_rx *branch = suppressed ? &paired.model.alternate : &paired.decoder;
+		for (unsigned i = 0u; i < branch->path_count; ++i)
+			branch->paths[i].nondata_frames = 1u;
+		CHECK(v92_upstream_data_rx_is_valid(&paired), "paired non-payload fixture invalid");
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			CHECK(v92_upstream_data_rx_octet(&paired, 0u, 0, false, &frame) ==
+				(i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
+				 V92_UPSTREAM_DATA_RX_OK), "paired non-payload decoding failed");
+		CHECK(paired.model.valid == 3u && paired.model.primary == 0u &&
+			paired.model.cost[0] == 0u && paired.model.cost[1] == 0u &&
+			(suppressed ? frame.bit_count == mapping.data_bits_per_frame && frame.ambiguous :
+			 frame.bit_count == 0u) && v92_upstream_data_rx_is_valid(&paired),
+			"tied codec models mishandled branch %u's non-payload slot", suppressed);
+	}
 	struct v92_upstream_data_frame output, unchanged;
 	memset(&output, 0xa5, sizeof(output));
 	unchanged = output;
@@ -1458,7 +1525,8 @@ static bool test_codec_model(int polarity)
 
 int main(void)
 {
-	if (!test_codec_model(1) || !test_codec_model(-1))
+	if (!test_codec_model(1, false) || !test_codec_model(-1, false) ||
+	    !test_codec_model(1, true) || !test_codec_model(-1, true))
 		return 1;
 	fprintf(stderr, "[ RUN      ] retained PCM data-to-Ru control channel\n");
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -1503,12 +1571,17 @@ int main(void)
 				for (size_t index = 0u; index < sizeof(cases) / sizeof(cases[0]); ++index)
 					if (!run_stream((enum g711_law)law, polarity, extended,
 							cases[index].rate, cases[index].gain,
-							cases[index].postcursor, false))
+							cases[index].postcursor, STREAM_DATA))
 						return 1;
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned int distorted = 0u; distorted < 2u; ++distorted)
 			if (!run_stream((enum g711_law)law, -1, false, 8u,
-					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, true))
+					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, STREAM_RESET))
 				return 1;
+	const uint8_t rm_rates[] = { 1u, 16u, 19u };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned i = 0u; i < ARRAY_LENGTH(rm_rates); ++i)
+				if (!run_stream(law, polarity, false, rm_rates[i], 1.0, 0.0, STREAM_RM)) return 1;
 	return test_owned_boundaries() && test_rejection_and_failure() ? 0 : 1;
 }

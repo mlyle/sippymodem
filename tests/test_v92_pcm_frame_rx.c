@@ -608,6 +608,98 @@ static bool test_uncertain_level(enum g711_law law, uint8_t rate, int16_t level)
 	return true;
 }
 
+static bool test_rm_receive(enum g711_law law, uint8_t rate,
+	enum v92_cpd_trellis trellis, unsigned scenario)
+{
+	enum { START = 64, PRIME = START + 32, CONTROL = PRIME + 2, END = CONTROL + 14,
+		FRAMES = END + V92_PCM_RX_DELAY_FRAMES };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	uint8_t payload[FRAMES][V92_PCM_MAPPING_MAX_BITS] = { { 0 } };
+	unsigned delivered_tail = 0u, delivered_control = 0u;
+
+	CHECK(mapping_init(&mapping, law, rate, trellis == V92_CPD_TRELLIS_64_STATE),
+		"RM mapping failed");
+	mapping.cpd.trellis = trellis;
+	CHECK(v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+		"RM receiver initialization failed");
+	for (unsigned f = 0u; f < FRAMES; ++f) {
+		bool request = scenario != 1u && f >= START && f < CONTROL &&
+			!(scenario == 2u && f == START + 16u);
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+
+		source_bits(payload[f], mapping.data_bits_per_frame, f);
+		if (scenario == 1u && f == START) {
+			/* A single genuine payload word can equal RM. Construct it
+			 * through inverse mapping; it must not alter coding/routing. */
+			uint8_t digits[12], differential = tx.state.differential;
+			struct v34_scrambler descrambler = tx.state.scrambler;
+
+			for (unsigned i = 0u; i < 12u; ++i)
+				digits[i] = i % 4u < 2u ? (uint8_t)(mapping.cpd.modulus[i] - 1u) : 0u;
+			CHECK(v92_pcm_mapping_decode(&mapping, digits, &differential, decoded,
+				mapping.data_bits_per_frame) == V92_PCM_MAPPING_OK, "RM collision has no payload");
+			for (unsigned i = 0u; i < mapping.data_bits_per_frame; ++i)
+				CHECK(v34_descramble_group(&descrambler, decoded[i], 1u, &payload[f][i]) ==
+					V34_FRAMING_OK, "collision descramble failed");
+		}
+		if (f == CONTROL) {
+			struct v92_pcm_frame_rx expected = rx;
+			for (unsigned p = 0u; p < expected.path_count; ++p) {
+				expected.paths[p].descrambler.history = 0u;
+				expected.paths[p].differential = 0u;
+				expected.paths[p].rm_frames = 0u;
+				expected.paths[p].rm_prime_frames = 0u;
+			}
+			CHECK(v92_pcm_frame_tx_reset_control(&tx) == V92_PCM_FRAME_OK &&
+				v92_pcm_frame_rx_reset_control(&rx) == V92_PCM_FRAME_OK &&
+				memcmp(&rx, &expected, sizeof(rx)) == 0,
+				"control reset lost delayed tags, trellis, filters or payload");
+		}
+		CHECK((request ? v92_pcm_frame_encode_rm(&tx, f >= PRIME, &frame) :
+			v92_pcm_frame_encode(&tx, payload[f], mapping.data_bits_per_frame, &frame)) ==
+			V92_PCM_FRAME_OK, "RM frame generation failed");
+		memset(decoded, 0xa5, sizeof(decoded));
+		CHECK(v92_pcm_frame_decode(&rx, frame.u, f < V92_B1U_FRAMES, decoded,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+			v92_pcm_frame_rx_is_valid(&rx) && !decision.squared_error &&
+			memcmp(frame.digit, decision.frame.digit, sizeof(frame.digit)) == 0,
+			"RM coding failed law %u rate %u trellis %u scenario %u frame %u",
+			law, rate, trellis, scenario, f);
+		enum v92_pcm_frame_rm expected = V92_PCM_FRAME_RM_NONE;
+		if (scenario == 0u && f >= START + V92_PCM_RM_QUALIFY_FRAMES - 1u && f < CONTROL)
+			expected = f < PRIME ? V92_PCM_FRAME_RM_SIGNAL :
+				f == PRIME ? V92_PCM_FRAME_RM_PRIME : V92_PCM_FRAME_RM_COMPLETE;
+		CHECK(decision.rm == expected, "RM qualification differs at frame %u: %u/%u",
+			f, decision.rm, expected);
+		CHECK(rx.pending_frames == (f < V92_PCM_RX_DELAY_FRAMES ? f + 1u :
+			V92_PCM_RX_DELAY_FRAMES), "suppression changed the lookahead depth");
+		if (scenario == 0u && f >= START + V92_PCM_RM_QUALIFY_FRAMES - 1u &&
+			f < CONTROL + V92_PCM_RX_DELAY_FRAMES)
+			CHECK(!decision.bits_ready, "qualified/delayed RM leaked payload at %u", f);
+		if (!decision.bits_ready) {
+			for (unsigned i = 0u; i < sizeof(decoded); ++i)
+				CHECK(decoded[i] == 0xa5, "non-payload slot overwrote caller bits");
+		}
+		if (f < V92_PCM_RX_DELAY_FRAMES) continue;
+		unsigned original = f - V92_PCM_RX_DELAY_FRAMES;
+		if (scenario == 1u || original < START || original >= CONTROL) {
+			CHECK(decision.bits_ready && !decision.ambiguous &&
+				memcmp(decoded, payload[original], mapping.data_bits_per_frame) == 0,
+				"RM changed real payload/control at %u", original);
+			delivered_tail += original >= V92_B1U_FRAMES && original < START;
+			delivered_control += original >= CONTROL;
+		}
+	}
+	CHECK(delivered_tail == START - V92_B1U_FRAMES && delivered_control == END - CONTROL,
+		"RM lost the preceding payload tail or following control");
+	return true;
+}
+
 static bool test_rejection_and_training_evidence(void)
 {
 	struct v92_pcm_mapping mapping;
@@ -674,6 +766,18 @@ static bool test_rejection_and_training_evidence(void)
 	receiver = saved;
 	receiver.paths[0].ambiguous_frames = 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unowned ambiguity accepted");
+	receiver = saved;
+	receiver.paths[0].nondata_frames = 1u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unowned non-payload tag accepted");
+	receiver = saved;
+	receiver.paths[0].rm_frames = V92_PCM_RM_QUALIFY_FRAMES + 1u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unbounded RM run accepted");
+	receiver = saved;
+	receiver.paths[0].rm_prime_frames = 1u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "prime without qualified RM accepted");
+	receiver.paths[0].rm_frames = V92_PCM_RM_QUALIFY_FRAMES;
+	receiver.paths[0].rm_prime_frames = 3u;
+	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "overlong prime accepted");
 	receiver = saved;
 	receiver.paths[0].metric = 1u;
 	CHECK(!v92_pcm_frame_rx_is_valid(&receiver), "unnormalized metric accepted");
@@ -903,6 +1007,13 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		static const uint8_t rates[] = { 1u, 13u, 19u };
 		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
+		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
+		     trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis) {
+			for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+				if (!test_rm_receive((enum g711_law)law, rate, trellis, 0u)) return 1;
+			for (unsigned scenario = 1u; scenario <= 2u; ++scenario)
+				if (!test_rm_receive((enum g711_law)law, 1u, trellis, scenario)) return 1;
+		}
 
 		if (!test_observed_channel((enum g711_law)law)) return 1;
 

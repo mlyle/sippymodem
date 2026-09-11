@@ -281,6 +281,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		    QAM_EQUALIZER_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	}
+	generated.rm = decision.rm;
 	if (decision.bits_ready) {
 		generated.bit_count = decoder.mapping.data_bits_per_frame;
 		generated.b1u = line->received_frames - V92_PCM_RX_DELAY_FRAMES <
