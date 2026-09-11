@@ -93,13 +93,16 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 		    &next.records, dibit, &differential_event) != V90_CP_OK)
 		return V90_CP_INVALID_ARGUMENT;
 	if (next.constellation == V34_CONSTELLATION_16_POINT) {
+		/* One noisy symbol can terminate two rejected CP candidates. */
 		if (v34_descramble_mapped_dibit(
 			    &next.descrambler, quarter_point,
 			    &dibit) != V34_FRAMING_OK ||
 		    receive_dibit(
 			    &next.records, dibit, &mapped_event) != V90_CP_OK ||
 		    (differential_event.type != V90_CP_RECEIVE_NO_EVENT &&
-		     mapped_event.type != V90_CP_RECEIVE_NO_EVENT))
+		     mapped_event.type != V90_CP_RECEIVE_NO_EVENT &&
+		     (differential_event.type != V90_CP_RECEIVE_REJECTED ||
+		      mapped_event.type != V90_CP_RECEIVE_REJECTED)))
 			return V90_CP_INVALID_ARGUMENT;
 	}
 	emitted = differential_event.type != V90_CP_RECEIVE_NO_EVENT ?

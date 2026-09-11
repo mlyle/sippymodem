@@ -273,6 +273,85 @@ static bool test_fixed_phase_ambiguity(void)
 	return true;
 }
 
+static bool test_two_rejections_in_one_symbol(void)
+{
+	const enum v34_station_role roles[] = {
+		V34_CALLING_STATION, V34_ANSWERING_STATION,
+	};
+	struct v90_cp_parameters selected =
+		parameters(V90_CP_TRAINING, 1u, false, 0u);
+
+	/* Sixteen consecutive constellation bits precede a mandatory start zero.
+	 * Corrupting it and the next candidate's type bit rejects twice within
+	 * one four-bit symbol: that is line noise, not an invalid API call. */
+	for (uint8_t code = 0u; code < 16u; ++code)
+		add_ucode(&selected.transmit_constellations[0], code);
+	selected.acknowledges_peer = false;
+	for (size_t role = 0u; role < ARRAY_LENGTH(roles); ++role) {
+		for (unsigned int points = 0u; points < 2u; ++points) {
+			struct v90_phase4_cp_tx tx;
+			struct v90_phase4_cp_rx rx;
+			struct v90_cp_receive_event event;
+			struct v90_cp_parameters retry = selected;
+			bool complete = false;
+			unsigned int rejected = 0u;
+
+			CHECK(v90_phase4_cp_tx_init(
+				      &tx, roles[role], V34_CONSTELLATION_16_POINT,
+				      &selected) == V90_PHASE4_CP_TX_OK &&
+			      v90_phase4_cp_rx_init(
+				      &rx, roles[role], V34_CONSTELLATION_16_POINT) ==
+				      V90_CP_OK,
+			      "noisy-symbol fixture did not initialize");
+			for (size_t symbol = 0u; !complete; ++symbol) {
+				struct qam_point point;
+				uint8_t quarter, rotation;
+				enum v90_cp_result result;
+
+				CHECK(symbol < V90_PHASE4_CP_MAX_4_POINT_SYMBOLS &&
+				      v90_phase4_cp_tx_next(
+					      &tx, &point, &quarter, &rotation, &complete) ==
+					      V90_PHASE4_CP_TX_OK,
+				      "noisy-symbol transmitter stopped");
+				if (symbol == 38u) {
+					quarter ^= 2u;
+					rotation ^= 2u;
+				}
+				if (points != 0u) {
+					CHECK(v34_training_constellation_point(
+						      V34_CONSTELLATION_16_POINT, quarter,
+						      rotation, &point) == V34_CONSTELLATION_OK,
+					      "noisy point did not map");
+					result = v90_phase4_cp_rx_receive_point(
+						&rx, &point, &event);
+				} else {
+					result = v90_phase4_cp_rx_receive_decision(
+						&rx, quarter, rotation, &event);
+				}
+				CHECK(result == V90_CP_OK,
+				      "noise became API failure at symbol %zu, role %zu, points %u",
+				      symbol, role, points);
+				CHECK(event.type != V90_CP_RECEIVE_FRAME,
+				      "corrupt record was accepted");
+				rejected += event.type == V90_CP_RECEIVE_REJECTED;
+			}
+			CHECK(rejected != 0u, "corrupt record was not rejected");
+			retry.acknowledges_peer = true;
+			CHECK(v90_phase4_cp_tx_start_next_record(&tx, &retry) ==
+				      V90_PHASE4_CP_TX_OK &&
+			      transfer_record(
+				      &tx, &rx, points != 0u, SIZE_MAX, 0u, &event) &&
+			      event.type == V90_CP_RECEIVE_FRAME &&
+			      event.frame_result == V90_CP_OK &&
+			      parameters_are_equal(&event.parameters, &retry),
+			      "noisy symbol prevented clean retry");
+			CHECK(rx.descrambler.history == tx.scrambler.history,
+			      "noisy symbol lost continuous history");
+		}
+	}
+	return true;
+}
+
 static bool test_transactional_contracts(void)
 {
 	struct v90_phase4_cp_rx rx;
@@ -340,6 +419,7 @@ int main(void)
 		{ "corruption and reacquisition",
 		  test_corruption_and_reacquisition },
 		{ "fixed phase ambiguity", test_fixed_phase_ambiguity },
+		{ "two rejections in one symbol", test_two_rejections_in_one_symbol },
 		{ "transactional contracts", test_transactional_contracts },
 	};
 	unsigned int failures = 0;
