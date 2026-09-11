@@ -838,6 +838,13 @@ static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
 {
 	const struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
 
+	if (state->prefix_queue_count >= V90_CP_FRAME_INTERVALS ||
+	    (state->prefix_queue_count && (state->prefix_stage != PCM_CALL_V92_PREFIX_RD ||
+		state->prefix.rd.transmitted_symbols)))
+		return false;
+	for (unsigned i = state->prefix_queue_count; i < V90_CP_FRAME_INTERVALS; ++i)
+		if (state->prefix_queue[i])
+			return false;
 	if (state->cleardown_requested && (!call->v92_rate_renegotiation_active ||
 	    state->child == PCM_CALL_V92_PHASE4_E2U))
 		return false;
@@ -3197,6 +3204,13 @@ static enum pcm_call_result transmit_v92_rate_prefix(
 	struct v90_pcm_symbol symbol;
 	enum v90_downstream_data_stream_result result;
 
+	if (state->prefix_queue_count) {
+		*octet = state->prefix_queue[0];
+		state->prefix_queue_count--;
+		memmove(state->prefix_queue, state->prefix_queue + 1, state->prefix_queue_count);
+		state->prefix_queue[state->prefix_queue_count] = 0;
+		return PCM_CALL_OK;
+	}
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RU) {
 		struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
 		if (prefix->queue_count) {
@@ -3894,6 +3908,33 @@ static enum pcm_call_result begin_v92_rate_request(struct pcm_call *call, bool l
 
 	if (path->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA)
 		return PCM_CALL_SEQUENCE_MISMATCH;
+	if (path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
+		/* V.92 9.9.1.1.2 gives Ru priority. The caller has observed its
+		 * phase reversal: retain the pending output frame and start Rd at
+		 * the next six-symbol boundary, with the preceding data mapping. */
+		state.prefix_stage = PCM_CALL_V92_PREFIX_DRAIN;
+		if (path->fast.stage == PCM_CALL_V92_FAST_RF) {
+			struct pcm_r_tx rf = path->fast.rf;
+			while (rf.transmitted_symbols % V90_CP_FRAME_INTERVALS) {
+				struct v90_pcm_symbol symbol;
+				if (pcm_r_tx_next(&rf, &symbol) != PCM_R_TX_OK)
+					return PCM_CALL_NUMERIC_FAILURE;
+				state.prefix_queue[state.prefix_queue_count++] = symbol.octet;
+			}
+		} else if (path->fast.stage == PCM_CALL_V92_FAST_CONTROL) {
+			const struct pcm_downstream_tx *transmit = &path->fast.control.transmit;
+			state.prefix_queue_count = transmit->queue_count;
+			for (unsigned i = 0; i < transmit->queue_count; ++i)
+				state.prefix_queue[i] = transmit->queue[i].pcm.octet;
+		}
+		if (path->fast.stage == PCM_CALL_V92_FAST_RF || path->fast.stage == PCM_CALL_V92_FAST_CONTROL) {
+			struct pcm_r_tx rd;
+			if (pcm_r_tx_init(&rd, &path->fast.rf.mapping, PCM_R_RD) != PCM_R_TX_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+			state.prefix.rd = rd;
+			state.prefix_stage = PCM_CALL_V92_PREFIX_RD;
+		}
+	}
 	/* Both directions reuse the old channel selection. Configure SUVd now
 	 * so a delayed Ru cannot leave TRN2d running beyond V.92 9.8.1.1.2.
 	 * The continuous coder sends 2040T before starting the status records. */
@@ -4437,6 +4478,12 @@ static enum pcm_call_result v92_data_octet_owned(
 		ru = v92_ru_line_rx_sample(&path->ru, received_sample);
 		if (ru == V92_RU_RX_DETECTED && data_path_is_online_owned(call))
 			return begin_v92_rate_request(call, false);
+		if (path->fast.stage != PCM_CALL_V92_FAST_IDLE && path->fast.stage != PCM_CALL_V92_FAST_FINISH &&
+		    !path->fast.control.cleardown.active && path->ru.signal.run == V92_RU_RX_MIN_SYMBOLS) {
+			/* Stop interpreting Ru as RM/control, but keep the independent
+			 * transmitter running until the qualified Ru-to-Ru-bar edge. */
+			return ru == V92_RU_RX_BAR_STARTED ? begin_v92_rate_request(call, false) : PCM_CALL_OK;
+		}
 		if (ru != V92_RU_RX_BUFFERING && ru != V92_RU_RX_MISMATCH && ru != V92_RU_RX_DETECTED)
 			return PCM_CALL_SEQUENCE_MISMATCH;
 		if (received == V92_UPSTREAM_DATA_RX_FRAME && path->fast.stage == PCM_CALL_V92_FAST_IDLE &&

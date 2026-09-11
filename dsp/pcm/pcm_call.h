@@ -279,6 +279,10 @@ struct pcm_call_v92_phase4_state {
 		struct pcm_call_v92_analog_rate_prefix analog;
 	} prefix;
 	struct v90_pcm_mapping training_mapping;
+	/* A collided fast exchange drains only its current Rf/control frame
+	 * before Rd, never resumes the already finished data source. */
+	uint8_t prefix_queue[V90_CP_FRAME_INTERVALS];
+	uint8_t prefix_queue_count;
 	enum v92_constellation_size rate_renegotiation_constellation;
 	enum pcm_call_v92_rate_prefix_stage prefix_stage;
 	enum pcm_call_v92_phase4_child child;

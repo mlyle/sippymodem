@@ -8074,6 +8074,137 @@ static bool test_v92_rate_request(void)
 	return true;
 }
 
+static bool v92_collision_wire(struct pcm_call_v92_fast_exchange *fast,
+	uint8_t *octets, unsigned *count)
+{
+	*count = 0;
+	if (fast->stage == PCM_CALL_V92_FAST_RF) {
+		do {
+			struct v90_pcm_symbol symbol;
+			CHECK(pcm_r_tx_next(&fast->rf, &symbol) == PCM_R_TX_OK, "expected Rf tail failed");
+			octets[(*count)++] = symbol.octet;
+		} while (fast->rf.transmitted_symbols % V90_CP_FRAME_INTERVALS);
+	} else {
+		CHECK(v92_downstream_control_transmit(&fast->control, octets), "expected control interval failed");
+		*count = 1;
+		for (unsigned i = 0; i < fast->control.transmit.queue_count; ++i)
+			octets[(*count)++] = fast->control.transmit.queue[i].pcm.octet;
+	}
+	struct pcm_r_tx rd;
+	CHECK(pcm_r_tx_init(&rd, &fast->rf.mapping, PCM_R_RD) == PCM_R_TX_OK, "expected Rd setup failed");
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		struct v90_pcm_symbol symbol;
+		CHECK(pcm_r_tx_next(&rd, &symbol) == PCM_R_TX_OK, "expected Rd failed");
+		octets[(*count)++] = symbol.octet;
+	}
+	return true;
+}
+
+static bool run_v92_fast_rate_pair(struct v92_online_pair *pair, unsigned fast_role, int offset, unsigned *coverage)
+{
+	struct pcm_call *calls[] = { &pair->analog, &pair->digital };
+	struct pcm_payload_source source[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0 };
+	bool entered[2] = { false, false }, rate_seen[2] = { false, false };
+	uint8_t expected[V90_CP_FRAME_INTERVALS + PCM_R_SEQUENCE_SYMBOLS];
+	unsigned expected_count = 0, checked = 0;
+	pair->digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
+	unsigned fast_start = offset < 0 ? (unsigned)-offset : 0u;
+	unsigned rate_start = offset > 0 ? (unsigned)offset : 0u;
+	for (unsigned clock = 0; clock < 40000u; ++clock) {
+		if (clock == fast_start)
+			CHECK(pcm_call_start_fast_exchange(calls[fast_role]) == PCM_CALL_OK, "collision fast start failed");
+		if (clock == rate_start)
+			CHECK(pcm_call_start_rate_renegotiation(calls[1u - fast_role]) == PCM_CALL_OK,
+			      "collision rate start failed: fast role %u offset %d", fast_role, offset);
+		uint8_t received[2], transmitted[2];
+		channel_receive(&pair->wire, &received[0], &received[1]);
+		for (unsigned role = 0; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			bool audit = role == 1u && call->stage == PCM_CALL_DATA_PATH && !entered[role] &&
+				(call->state.data_path.v92_digital.fast.stage == PCM_CALL_V92_FAST_RF ||
+				 call->state.data_path.v92_digital.fast.stage == PCM_CALL_V92_FAST_CONTROL) &&
+				call->state.data_path.v92_digital.ru.signal.run == V92_RU_RX_MIN_SYMBOLS;
+			struct pcm_call_v92_fast_exchange before;
+			if (audit)
+				before = call->state.data_path.v92_digital.fast;
+			if (pcm_call_phase4_is_ready(call)) {
+				CHECK(!entered[role] && pcm_call_start_data_path(call) == PCM_CALL_OK, "collision data entry failed");
+				entered[role] = true;
+			}
+			if (call->stage == PCM_CALL_DATA_PATH && entered[role]) {
+				CHECK(v92_payload_sample(call, received[role], decode_octet(call->law, received[role]),
+					&source[role], &frames[role], &transmitted[role]), "collision payload failed");
+			} else if (call->stage == PCM_CALL_DATA_PATH) {
+				struct pcm_call_data_event event;
+				CHECK(pcm_call_data_octet(call, received[role], decode_octet(call->law, received[role]),
+					true, NULL, &transmitted[role], &event) == PCM_CALL_OK, "collision data clock failed");
+				if (clock >= fast_start && clock >= rate_start)
+					CHECK(event.kind == PCM_CALL_DATA_NONE, "collision exposed control as payload");
+			} else {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, received[role], decode_octet(call->law, received[role]),
+					&transmitted[role], &observation) == PCM_CALL_OK, "collision control clock failed");
+			}
+			if (audit && call->stage == PCM_CALL_PHASE4) {
+				CHECK(!expected_count && call->state.phase4.v92.owner.ru.receive.signal.bar_symbols == 1u,
+				      "collision did not wait for the first reversed Ru symbol");
+				*coverage |= 1u << (before.stage - PCM_CALL_V92_FAST_RF);
+				CHECK(v92_collision_wire(&before, expected, &expected_count), "collision wire setup failed");
+				CHECK(call->state.phase4.v92.prefix_queue_count == expected_count - PCM_R_SEQUENCE_SYMBOLS - 1u,
+				      "collision lost the partial transmit frame");
+				struct pcm_call invalid = *call;
+				invalid.state.phase4.v92.prefix_queue_count = V90_CP_FRAME_INTERVALS;
+				CHECK(!pcm_call_is_valid(&invalid), "oversized collision tail accepted");
+				invalid = *call;
+				invalid.state.phase4.v92.prefix_queue[V90_CP_FRAME_INTERVALS - 1u] = 1;
+				CHECK(!pcm_call_is_valid(&invalid), "unowned collision tail accepted");
+			}
+			if (role == 1u && checked < expected_count) {
+				CHECK(transmitted[role] == expected[checked], "collision tail/Rd wire changed at interval %u", checked);
+				checked++;
+			}
+			rate_seen[role] |= call->v92_rate_renegotiation_active;
+			CHECK(pcm_call_is_valid(call) && (call->stage == PCM_CALL_PHASE4 || call->stage == PCM_CALL_DATA_PATH),
+			      "fast/rate collision retrained: fast role %u offset %d role %u clock %u stage %u",
+			      fast_role, offset, role, clock, call->stage);
+		}
+		channel_transmit(&pair->wire, transmitted[0], transmitted[1]);
+		if (frames[0] >= 20u && frames[1] >= 20u) {
+			CHECK((!fast_role || (expected_count && checked == expected_count)) &&
+			      rate_seen[0] && rate_seen[1] && pcm_call_is_online(calls[0]) && pcm_call_is_online(calls[1]) &&
+			      !calls[0]->retrain_active && !calls[1]->retrain_active &&
+			      !calls[0]->rate_renegotiation_deadline_armed && !calls[1]->rate_renegotiation_deadline_armed &&
+			      pair->digital.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+			      "collision did not complete rate exchange");
+			return true;
+		}
+	}
+	CHECK(false, "fast/rate collision did not resume duplex data");
+}
+
+static bool test_v92_fast_rate_collision(void)
+{
+	const int offsets[] = { -200, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 100, 200 };
+	const unsigned rates[] = { 1u, 19u };
+	unsigned coverage = 0;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned r = 0; r < ARRAY_LENGTH(rates); ++r) {
+		struct v92_online_pair pair;
+		const struct v92_upstream_offer offer = {
+			.peer_mask = 1u << (rates[r] - 1u), .local_maximum = rates[r], .expected = rates[r],
+		};
+		CHECK(capture_v92_duplex_data(law, r ? 13u : 1u, false, &offer, NULL, 0u, &pair), "collision pair did not train");
+		for (unsigned role = 0; role < 2u; ++role)
+			for (unsigned i = 0; i < ARRAY_LENGTH(offsets); ++i) {
+				struct v92_online_pair trial = pair;
+				CHECK(run_v92_fast_rate_pair(&trial, role, offsets[i], &coverage), "collision law %u failed", law);
+			}
+	}
+	CHECK(coverage == 3u, "collision did not cover both Rf and SUVd output tails");
+	return true;
+}
+
 static bool test_v92_upstream_negotiation(void)
 {
 	static const struct v92_upstream_offer offers[] = {
@@ -9591,6 +9722,7 @@ int main(void)
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
 		{ "V.92 paired fast exchange", test_v92_fast_pair },
+		{ "V.92 fast/rate exchange collision", test_v92_fast_rate_collision },
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
