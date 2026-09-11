@@ -56,8 +56,9 @@ struct pcm_trn2d_frame {
 
 /* A successful event result writes exactly one corresponding member. MP and
  * MP_PRIME differ only in the decoded acknowledge bit. The V.92 control
- * member identifies either SUVd or CPd. ED_REJECTED reports the number of
- * nonzero descrambled bits across its exact two-frame window. */
+ * member identifies either SUVd or CPd. V.90 ED_REJECTED reports the number
+ * of nonzero descrambled bits across its exact two-frame window. V.92 keeps
+ * searching through damaged repeated control until two zero frames arrive. */
 struct pcm_downstream_event {
 	struct pcm_trn2d_frame trn2d;
 	struct v90_mp_event mp;

@@ -83,16 +83,18 @@ static bool make_mapping(
 
 static bool make_width_mapping(
 	struct v90_pcm_mapping *mapping, enum g711_law law,
-	uint8_t frame_bits)
+	uint8_t frame_bits, bool parameter_exchange)
 {
 	struct v90_cp_parameters parameters = {
-		.kind = V90_CP_TRAINING,
+		.kind = parameter_exchange ? V90_CP_DATA : V90_CP_TRAINING,
 		.law = law,
-		.selected_rate_index = (uint8_t)(frame_bits - 8u),
+		.selected_rate_index = (uint8_t)(frame_bits -
+			(parameter_exchange ? 20u : 8u)),
 		.constellation_count = V90_CP_MAX_CONSTELLATIONS,
 	};
-	uint8_t sign_bits = frame_bits > 27u ?
-				    (uint8_t)(frame_bits - 24u) : 3u;
+	uint8_t modulus_limit = parameter_exchange ? 36u : 24u;
+	uint8_t sign_bits = frame_bits > modulus_limit + 3u ?
+				    (uint8_t)(frame_bits - modulus_limit) : 3u;
 	uint8_t modulus_bits = (uint8_t)(frame_bits - sign_bits);
 
 	parameters.sign_redundancy =
@@ -109,7 +111,8 @@ static bool make_width_mapping(
 		for (uint8_t ordinal = 0u; ordinal < count; ++ordinal) {
 			add_ucode(
 				&parameters.transmit_constellations[interval],
-				(uint8_t)(4u + interval * 20u + ordinal));
+				(uint8_t)(4u + interval *
+					(parameter_exchange ? 8u : 20u) + ordinal));
 		}
 	}
 	return v90_pcm_mapping_init(mapping, &parameters) ==
@@ -888,7 +891,7 @@ static bool test_v92_buffered_prefix_ed(void)
 	return true;
 }
 
-static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
+static bool run_v92_width(enum g711_law law, uint8_t frame_bits, bool parameter_exchange)
 {
 	const struct v92_suvd_parameters parameters = {
 		.request_silence = (frame_bits & 1u) != 0u,
@@ -907,25 +910,31 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 	struct v92_observer observer = { 0 };
 	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
 	uint8_t cpd_sequence[V92_CPD_MAX_FRAME_BYTES];
+	uint8_t rejected_prefix[V92_CPD_MAX_FRAME_BYTES];
 	uint8_t zeros[V90_PCM_FRAME_MAX_BITS] = { 0 };
+	uint8_t nonzero[V90_PCM_FRAME_MAX_BITS] = { 1u };
 	size_t sequence_bits = 0u;
 	size_t cpd_bits = 0u;
+	size_t rejected_bits = (75u + frame_bits - 1u) / frame_bits * frame_bits;
 	size_t expected_frames;
+	size_t training_frames = parameter_exchange ? 0u :
+		V90_PHASE4_TRN2D_MINIMUM_FRAMES + EXTRA_TRN2D_FRAMES;
 
-	CHECK(make_width_mapping(&mapping, law, frame_bits) &&
+	CHECK(make_width_mapping(&mapping, law, frame_bits, parameter_exchange) &&
 	      mapping.frame_bits == frame_bits &&
 	      source_init(&source, &mapping) &&
 	      pcm_downstream_rx_init(
 		      &receiver, PCM_PROTOCOL_V92, &mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      receiver.protocol == PCM_PROTOCOL_V92 &&
-	      pcm_downstream_rx_is_fresh(&receiver),
+	      (parameter_exchange ?
+		      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL &&
+		      receiver.stream.received_symbols == 0u && receiver.stream.descrambler.history == 0u :
+		      pcm_downstream_rx_is_fresh(&receiver)),
 	      "V.92 width %u law %u fixture did not initialize",
 	      frame_bits, law);
 	CHECK(push_v92_trn2d(
-		      &source,
-		      V90_PHASE4_TRN2D_MINIMUM_FRAMES +
-			      EXTRA_TRN2D_FRAMES,
+		      &source, training_frames,
 		      &receiver, &observer) &&
 	      v92_suvd_encode(
 		      &parameters, frame_bits, sequence, sizeof(sequence),
@@ -943,23 +952,54 @@ static bool run_v92_width(enum g711_law law, uint8_t frame_bits)
 	      pcm_downstream_rx_expect_ed(&receiver) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      pcm_downstream_rx_expect_ed(&receiver) ==
-		      PCM_DOWNSTREAM_RX_OK &&
-	      push_v92_sequence(
+		      PCM_DOWNSTREAM_RX_OK,
+	      "V.92 width %u law %u did not arm Ed", frame_bits, law);
+	/* Losing a repeated record's prefix leaves ordinary nonzero frames
+	 * between records. They must neither finish Ed nor poison its search.
+	 * One zero frame on either side of noise/control is not two-frame Ed. */
+	CHECK(push_v92_frame(&source, nonzero, &receiver, &observer) &&
+	      push_v92_frame(&source, nonzero, &receiver, &observer) &&
+	      push_v92_frame(&source, zeros, &receiver, &observer) &&
+	      push_v92_frame(&source, nonzero, &receiver, &observer) &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_ED_SEARCH &&
+	      receiver.ed_frames == 0u && receiver.ed_bit_errors == 0u &&
+	      observer.ed_events == 0u && pcm_downstream_rx_is_valid(&receiver) &&
+	      push_v92_frame(&source, zeros, &receiver, &observer) &&
+	      receiver.ed_frames == 1u && observer.ed_events == 0u,
+	      "V.92 width %u law %u mistook noise for Ed", frame_bits, law);
+	/* Reject a malformed fixed CPd header at bit 51, then start a fresh
+	 * candidate in the tail. An event and a partial parser can coexist at
+	 * the mapping-frame boundary; only an empty parser may start Ed. */
+	memcpy(rejected_prefix, cpd_sequence, sizeof(rejected_prefix));
+	rejected_prefix[34u / 8u] ^= (uint8_t)(1u << (7u - 34u % 8u));
+	for (size_t bit = 51u; bit < rejected_bits; ++bit) {
+		uint8_t mask = (uint8_t)(1u << (7u - bit % 8u));
+		if (bit >= rejected_bits - 24u && bit < rejected_bits - 7u)
+			rejected_prefix[bit / 8u] |= mask;
+		else
+			rejected_prefix[bit / 8u] &= (uint8_t)~mask;
+	}
+	CHECK(push_v92_sequence(&source, rejected_prefix, rejected_bits, &receiver, &observer) &&
+	      observer.cpd_invalid_frames == 1u && observer.ed_events == 0u &&
+	      receiver.stage == PCM_DOWNSTREAM_RX_V92_CONTROL && receiver.ed_frames == 0u &&
+	      receiver.control.v92.bit_index == 24u && pcm_downstream_rx_is_valid(&receiver),
+	      "V.92 width %u law %u lost the candidate after a rejected CPd", frame_bits, law);
+	CHECK(push_v92_sequence(
 		      &source, cpd_sequence, cpd_bits,
 		      &receiver, &observer) &&
+	      receiver.ed_frames == 0u && observer.ed_events == 0u &&
 	      push_v92_frame(&source, zeros, &receiver, &observer) &&
 	      push_v92_frame(&source, zeros, &receiver, &observer) &&
 	      finish_v92_source(&source, &receiver, &observer),
 	      "V.92 width %u law %u line stream stopped", frame_bits, law);
-	expected_frames = V90_PHASE4_TRN2D_MINIMUM_FRAMES +
-			  EXTRA_TRN2D_FRAMES +
-			  (sequence_bits + 2u * cpd_bits) / frame_bits +
-			  V90_PHASE4_ED_FRAMES;
-	CHECK(observer.training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
+	expected_frames = training_frames +
+			  (sequence_bits + 2u * cpd_bits + rejected_bits) / frame_bits +
+			  5u + V90_PHASE4_ED_FRAMES;
+	CHECK(observer.training_frames == (parameter_exchange ? 0u : V90_PHASE4_TRN2D_MINIMUM_FRAMES) &&
 	      observer.records == 1u && observer.invalid_frames == 0u &&
 	      observer.crc_mismatches == 0u &&
 	      observer.cpd_records == 2u &&
-	      observer.cpd_invalid_frames == 0u &&
+	      observer.cpd_invalid_frames == 1u &&
 	      observer.cpd_crc_mismatches == 0u &&
 	      observer.last_parameters.request_silence ==
 		      parameters.request_silence &&
@@ -994,8 +1034,12 @@ static bool test_v92_control_widths(void)
 		     frame_bits <=
 			     V92_STATUS_UPDATE_DOWNSTREAM_FRAME_MAX_BITS;
 		     ++frame_bits) {
-			CHECK(run_v92_width((enum g711_law)law, frame_bits),
+			CHECK(run_v92_width((enum g711_law)law, frame_bits, false),
 			      "V.92 downstream width matrix stopped");
+		}
+		for (uint8_t frame_bits = 21u; frame_bits <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS; ++frame_bits) {
+			CHECK(run_v92_width((enum g711_law)law, frame_bits, true),
+			      "V.92 fast-exchange width matrix stopped");
 		}
 	}
 	return true;

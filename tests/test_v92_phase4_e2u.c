@@ -1340,14 +1340,19 @@ static bool test_pause_rejected_ed(const struct v92_phase4_e2u_handoff *ah,
 			down = symbol.octet;
 			corrupted = true;
 		}
-		if (!v92_rate_pause_analog_receive(&analog, down)) {
-			CHECK(corrupted && analog.failed && analog.downstream.ed_bit_errors != 0 &&
-			      !v92_rate_pause_analog_is_ready(&analog), "bad Ed did not fail the pause");
+		bool received = v92_rate_pause_analog_receive(&analog, down);
+		CHECK(!pcm_downstream_rx_is_complete(&analog.downstream) &&
+		      !v92_rate_pause_analog_is_ready(&analog), "corrupt Ed authorized silence/return");
+		if (!received) {
+			CHECK(corrupted && analog.failed, "pause failed before corrupt Ed");
 			return true;
 		}
 	}
-	CHECK(false, "corrupt Ed was treated as successful silence: injected=%u frames=%u errors=%u stage=%u",
-	      corrupted, analog.downstream.ed_frames, analog.downstream.ed_bit_errors, analog.downstream.stage);
+	/* The decoder may keep searching after loss of Ed. Its call owner,
+	 * not this signal helper, owns the bounded recovery deadline. */
+	CHECK(corrupted && v92_rate_pause_analog_is_valid(&analog) && !analog.failed,
+	      "corrupt Ed did not remain pending or explicitly fail");
+	return true;
 }
 
 static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size constellation,

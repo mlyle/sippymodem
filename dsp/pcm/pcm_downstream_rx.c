@@ -438,12 +438,20 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 			receiver->stage = PCM_DOWNSTREAM_RX_V92_CONTROL;
 			receiver->ed_frames = 0u;
 			receiver->ed_bit_errors = 0u;
-			if (result != PCM_DOWNSTREAM_RX_BUFFERING)
+			if (result != PCM_DOWNSTREAM_RX_BUFFERING &&
+			    v92_control_is_fresh(&receiver->control.v92))
 				begin_ed_search(receiver);
 			return result;
 		}
 		if (receiver->stage == PCM_DOWNSTREAM_RX_V92_CONTROL)
 			begin_ed_search(receiver);
+		/* A damaged repeated control prefix is not evidence that Ed began.
+		 * Keep looking for two complete zero frames; a nonzero frame breaks
+		 * the candidate without ending this continuous decoding epoch. */
+		if (nonzero_bits(frame) != 0u) {
+			receiver->ed_frames = 0u;
+			return PCM_DOWNSTREAM_RX_BUFFERING;
+		}
 	} else {
 		result = feed_mp_frame(receiver, frame, event);
 
