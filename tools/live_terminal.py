@@ -13,7 +13,7 @@ import selectors
 import termios
 import time
 import tty
-from typing import Callable, IO
+from typing import IO
 
 
 DEVICE_PATH_RE = re.compile(r"/dev/pts/[0-9]+\Z")
@@ -187,9 +187,9 @@ class ResponseDecoder:
     def online(self) -> bool:
         return self._online
 
-    def take_online_data(self) -> bytes:
-        data = bytes(self._online_data)
-        self._online_data.clear()
+    def take_online_data(self, limit: int = ONLINE_CAPTURE_MAX) -> bytes:
+        data = bytes(self._online_data[:limit])
+        del self._online_data[:limit]
         return data
 
     @property
@@ -334,9 +334,10 @@ class ModemTerminal:
             or len(expected) > ONLINE_PATTERN_MAX
         ):
             raise LiveTerminalError("invalid online terminal exchange")
-        return self._exchange_online(
-            send, lambda received: expected in received, timeout_seconds
+        match, received = self._exchange_online(
+            send, re.compile(re.escape(expected)), timeout_seconds
         )
+        return match is not None, received
 
     def exchange_online_pattern(
         self,
@@ -351,11 +352,12 @@ class ModemTerminal:
             or len(expression) > ONLINE_PATTERN_MAX
         ):
             raise LiveTerminalError("invalid online terminal pattern")
-        return self._exchange_online(
+        match, received = self._exchange_online(
             send,
-            lambda received: pattern.search(received) is not None,
+            pattern,
             timeout_seconds,
         )
+        return match is not None, received
 
     def send_online(self, data: bytes, timeout_seconds: float) -> None:
         if (
@@ -404,12 +406,11 @@ class ModemTerminal:
     def start_remote_retrain(
         self, timeout_seconds: float
     ) -> tuple[bytes | None, bytes]:
-        verified, received = self.exchange_online_pattern(
+        match, received = self._exchange_online(
             REMOTE_RETRAIN_REQUEST,
             REMOTE_RETRAIN_START_RE,
             timeout_seconds,
         )
-        match = REMOTE_RETRAIN_START_RE.search(received) if verified else None
         return (match.group("nonce").lower() if match is not None else None), received
 
     def complete_remote_retrain(
@@ -429,33 +430,40 @@ class ModemTerminal:
             + re.escape(nonce)
             + rb":[0-9]{1,20}(?:\r\n|\r|\n)"
         )
-        _, combined = self._exchange_online(
+        match, continuation = self._exchange_online(
             b"",
-            lambda data: pattern.search(data) is not None,
+            pattern,
             timeout_seconds,
             initial=received,
         )
-        complete = pattern.search(combined) is not None
         return RemoteRetrainReport(
-            complete,
-            combined[len(received):],
+            match is not None,
+            continuation,
         )
 
     def probe_online_ping(self, timeout_seconds: float) -> tuple[bool, bytes]:
-        return self._exchange_online(
+        return self.exchange_online_pattern(
             ONLINE_PING_REQUEST,
-            lambda received: ONLINE_PONG_RE.search(received) is not None,
+            ONLINE_PONG_RE,
             timeout_seconds,
         )
 
     def _exchange_online(
         self,
         send: bytes,
-        complete: Callable[[bytearray], bool],
+        pattern: re.Pattern[bytes],
         timeout_seconds: float,
         *,
         initial: bytes = b"",
-    ) -> tuple[bool, bytes]:
+    ) -> tuple[re.Match[bytes] | None, bytes]:
+        """Search a rolling window, returning only retained newly read bytes.
+
+        Raw training transitions can exceed the capture size. Retain half a
+        window across reads for split payloads/markers, but never extend the
+        deadline. Matches must fit in that overlap; `initial` seeds matching
+        across calls without being returned as duplicate evidence. Return
+        the actual match so callers never re-interpret a clipped line start.
+        """
         if (
             not isinstance(send, bytes)
             or len(send) > ONLINE_PATTERN_MAX
@@ -469,28 +477,38 @@ class ModemTerminal:
         if send:
             self._write(send, deadline)
         received = bytearray(initial)
-        received.extend(self._decoder.take_online_data())
-        while not complete(received):
-            if len(received) >= ONLINE_CAPTURE_MAX:
-                raise LiveTerminalError("online terminal data is too long")
+        initial_remaining = len(initial)
+        clipped = False
+        chunk_size = ONLINE_CAPTURE_MAX // 2
+        while True:
+            # The first byte after clipping has no predecessor in this
+            # window. Do not let ^ mistake it for the stream's real start.
+            match = pattern.search(received, 1 if clipped else 0)
+            if match is not None:
+                return match, bytes(received[initial_remaining:])
+            discard = max(0, len(received) - chunk_size)
+            if discard:
+                del received[:discard]
+                initial_remaining = max(0, initial_remaining - discard)
+                clipped = True
+            buffered = self._decoder.take_online_data(chunk_size)
+            if buffered:
+                received.extend(buffered)
+                continue
             try:
                 _wait_for_descriptor(
                     self._descriptor, selectors.EVENT_READ, deadline
                 )
             except TimeoutError:
-                return False, bytes(received)
+                return None, bytes(received[initial_remaining:])
             try:
-                data = os.read(
-                    self._descriptor,
-                    min(4096, ONLINE_CAPTURE_MAX - len(received)),
-                )
+                data = os.read(self._descriptor, chunk_size)
             except (BlockingIOError, InterruptedError):
                 continue
             if not data:
                 raise OSError("modem terminal closed")
             self._decoder.feed(data)
-            received.extend(self._decoder.take_online_data())
-        return True, bytes(received)
+            received.extend(self._decoder.take_online_data(chunk_size))
 
     def _write(self, data: bytes, deadline: float) -> None:
         view = memoryview(data)

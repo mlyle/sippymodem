@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.live_terminal import (  # noqa: E402
     LiveTerminalError,
     ModemTerminal,
+    ONLINE_CAPTURE_MAX,
     ONLINE_INITIAL_RESPONSE,
     ONLINE_PING_REQUEST,
     REMOTE_RETRAIN_REQUEST,
@@ -23,6 +24,134 @@ from tools.live_terminal import (  # noqa: E402
 
 
 class LiveTerminalTests(unittest.TestCase):
+    def run_stream(self, chunks, operation):
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 48000\r\n")
+        chunks = iter(chunks)
+
+        def read(_descriptor, limit):
+            data = next(chunks)
+            self.assertLessEqual(len(data), limit)
+            return data
+
+        with (
+            mock.patch.object(terminal, "_write"),
+            mock.patch("tools.live_terminal._wait_for_descriptor"),
+            mock.patch("tools.live_terminal.os.read", side_effect=read),
+        ):
+            return operation(terminal)
+
+    def test_online_payload_survives_long_raw_transition(self) -> None:
+        expected = bytes(range(256)) * 2
+        # Both sides of the half-window boundary, with every possible split
+        # of the longest supported exact payload. No bytes may be skipped.
+        chunk = ONLINE_CAPTURE_MAX // 2
+        for split in range(1, len(expected)):
+            with self.subTest(split=split):
+                verified, received = self.run_stream(
+                    [b"x" * chunk] * 7
+                    + [b"x" * (chunk - split) + expected[:split],
+                       expected[split:]],
+                    lambda terminal: terminal.exchange_online(b"", expected, 1.0),
+                )
+                self.assertTrue(verified)
+                self.assertTrue(received.endswith(expected))
+                self.assertLessEqual(len(received), ONLINE_CAPTURE_MAX)
+
+    def test_online_noise_keeps_original_deadline_and_requires_exact_data(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 48000\r\n")
+        noise = b"x" * (ONLINE_CAPTURE_MAX // 2)
+        with (
+            mock.patch("tools.live_terminal.time.monotonic", return_value=12.0),
+            mock.patch("tools.live_terminal._wait_for_descriptor",
+                       side_effect=[None] * 20 + [TimeoutError]) as wait,
+            mock.patch("tools.live_terminal.os.read", return_value=noise),
+        ):
+            verified, received = terminal.exchange_online(b"", b"xxxYxxx", 2.0)
+        self.assertFalse(verified)
+        self.assertTrue(received)
+        self.assertLessEqual(len(received), ONLINE_CAPTURE_MAX)
+        self.assertEqual(wait.call_count, 21)
+        self.assertTrue(all(call.args[-1] == 14.0 for call in wait.call_args_list))
+
+    def test_rolling_window_does_not_invent_line_start(self) -> None:
+        nonce = b"a" * 32
+        start = b"GETTY:RETRAIN:START:" + nonce + b"\r\n"
+        chunk = ONLINE_CAPTURE_MAX // 2
+        # This mid-line marker moves to offset zero only after clipping.
+        # A later real line boundary must still be required and recognized.
+        false_start = start + b"x" * (chunk - len(start))
+        observed, received = self.run_stream(
+            [b"x" * chunk, false_start, b"x" * chunk, b"\r\n" + start],
+            lambda terminal: terminal.start_remote_retrain(1.0),
+        )
+        self.assertEqual(observed, nonce)
+        self.assertTrue(received.endswith(b"\r\n" + start))
+
+    def test_retrain_continuation_tracks_new_bytes_after_clipping(self) -> None:
+        nonce = b"a" * 32
+        start = b"GETTY:RETRAIN:START:" + nonce + b"\r\n"
+        end = b"GETTY:RETRAIN:END:" + nonce + b":1234\r\n"
+        noise = b"x" * (ONLINE_CAPTURE_MAX // 2)
+        report = self.run_stream(
+            [noise] * 8 + [end[:20], end[20:]],
+            lambda terminal: terminal.complete_remote_retrain(nonce, start, 1.0),
+        )
+        self.assertTrue(report.complete)
+        self.assertTrue(report.continuation.endswith(end))
+        self.assertNotIn(start, report.continuation)
+        self.assertLessEqual(len(report.continuation), ONLINE_CAPTURE_MAX)
+
+        # An END split between the seed and a fresh read must retain context
+        # for matching, but must not duplicate that context in the capture.
+        for prefix in (start, b"x" * (ONLINE_CAPTURE_MAX - 20)):
+            report = self.run_stream(
+                [end[20:]],
+                lambda terminal: terminal.complete_remote_retrain(
+                    nonce, prefix + end[:20], 1.0),
+            )
+            self.assertTrue(report.complete)
+            self.assertEqual(report.continuation, end[20:])
+
+    def test_retrain_nonce_comes_from_the_qualified_match(self) -> None:
+        chunk = ONLINE_CAPTURE_MAX // 2
+        false_start = b"GETTY:RETRAIN:START:" + b"a" * 32 + b"\r\n"
+        true_start = b"GETTY:RETRAIN:START:" + b"b" * 32 + b"\r\n"
+        nonce, received = self.run_stream(
+            [b"x" * chunk,
+             false_start + b"x" * (chunk - len(false_start)),
+             b"\r\n" + true_start],
+            lambda terminal: terminal.start_remote_retrain(1.0),
+        )
+        # Clipping retains the mid-line marker at offset zero. Extraction
+        # must use the original qualified match, not search this tail again.
+        self.assertTrue(received.startswith(false_start))
+        self.assertEqual(nonce, b"b" * 32)
+
+    def test_buffered_online_bytes_are_not_lost_after_a_match(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 48000\r\n")
+        chunk = ONLINE_CAPTURE_MAX // 2
+        first = b"x" * (chunk - 5) + b"FIRST"
+        second = b"y" * (chunk - 6) + b"SECOND"
+        terminal._decoder.feed(first + second)
+        with mock.patch("tools.live_terminal._wait_for_descriptor") as wait:
+            self.assertEqual(terminal.exchange_online(b"", b"FIRST", 1.0), (True, first))
+            self.assertEqual(terminal.exchange_online(b"", b"SECOND", 1.0), (True, second))
+        wait.assert_not_called()
+
+    def test_completed_retrain_seed_leaves_buffered_data_for_next_exchange(self) -> None:
+        terminal = ModemTerminal(-1)
+        terminal._decoder.feed(b"CONNECT 48000\r\nnext-payload")
+        nonce = b"a" * 32
+        end = b"GETTY:RETRAIN:END:" + nonce + b":1234\r\n"
+        report = terminal.complete_remote_retrain(nonce, end, 1.0)
+        self.assertTrue(report.complete)
+        self.assertEqual(report.continuation, b"")
+        self.assertEqual(terminal.exchange_online(b"", b"next-payload", 1.0),
+                         (True, b"next-payload"))
+
     def test_upstream_report_is_explicit_allowlisted_and_reset(self) -> None:
         decoder = ResponseDecoder()
         for value, expected in ((b"PCM", "PCM"), (b"V34", "V.34"),
