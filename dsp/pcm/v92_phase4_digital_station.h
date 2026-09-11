@@ -4,6 +4,7 @@
 #define V92_PHASE4_DIGITAL_STATION_H
 
 #include "v92_downstream_control.h"
+#include "v92_e2u_rx.h"
 #include "v92_phase4_digital_rx.h"
 #include "v92_pcm_mapping.h"
 #include "v92_upstream_plan.h"
@@ -36,11 +37,15 @@ struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
 	struct v92_downstream_control control;
 	struct v92_upstream_plan upstream_plan;
+	/* During silence agreement E2u can replace a lost acknowledging SUVu.
+	 * Keep its candidate beside, not in place of, the control parser. */
+	struct v92_e2u_rx e2u;
+	bool searching_e2u;
 };
 
-/* Exact duplex boundary after both selected controls are acknowledged. The
- * warm upstream line continues into E2u while the downstream coder completes
- * its current CPd/SUVd and Ed. */
+/* Exact duplex boundary after parameter or status-only pause agreement. The
+ * warm upstream line continues into E2u (or retains it if already received)
+ * while the downstream coder completes its current CPd/SUVd and Ed. */
 struct v92_phase4_digital_handoff {
 	struct v92_upstream_control_line_rx receive;
 	struct v92_phase4_ed_tx transmit;
@@ -50,6 +55,10 @@ struct v92_phase4_digital_handoff {
 	struct v92_upstream_plan upstream_plan;
 	/* Status-only rate agreement, not acknowledgement of new parameters. */
 	bool pause;
+	/* A pause may already have consumed part or all of E2u before Ed is
+	 * authorized. Transfer that candidate instead of restarting it. */
+	struct v92_e2u_rx e2u;
+	bool searching_e2u;
 };
 
 /* Continue from the exact Phase 3 receive handoff and the already-running
@@ -83,7 +92,9 @@ bool v92_phase4_digital_station_has_failed(
 
 /* Cancel the current Phase 4 exchange with zero-rate CPd. Finish any
  * in-flight record, acknowledge a peer zero-rate CP, and retain the line
- * until Amendment 1, 9.11 permits release. No Ed or data handoff follows. */
+ * until Amendment 1, 9.11 permits release. No Ed or data handoff follows.
+ * After receiving complete E2u, the caller retains its local request across
+ * the pause and submits it to the resumed control owner instead. */
 bool v92_phase4_digital_station_start_cleardown(
 	struct v92_phase4_digital_station *station);
 
@@ -96,7 +107,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstrea
 
 /* Consume one signed 8 kHz upstream sample. EVENT reports a complete decoded
  * record. Rejected wire records advance only the receive line and do not
- * alter downstream procedure state. Invalid calls consume no sample. */
+ * alter downstream procedure state. Complete E2u confirms a pause with OK;
+ * is_pause_ready then directs the handoff. Invalid calls consume no sample. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	struct v92_phase4_digital_station *station, int16_t sample);
 
@@ -119,6 +131,11 @@ bool v92_phase4_digital_station_peer_acknowledged_cpd(
  * acknowledged, and an acknowledging downstream record has been sourced.
  * The handoff drains any current CPd/SUVd before Ed without losing E2u. */
 bool v92_phase4_digital_station_is_ed_ready(
+	const struct v92_phase4_digital_station *station);
+
+/* Status-only agreement also hands off through Ed/E2u, but must enter the
+ * timed pause rather than data. E2u itself can confirm a lost SUVu ACK. */
+bool v92_phase4_digital_station_is_pause_ready(
 	const struct v92_phase4_digital_station *station);
 
 bool v92_phase4_digital_handoff_is_valid(

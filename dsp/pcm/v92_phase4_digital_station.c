@@ -3,6 +3,7 @@
 #include "v92_phase4_digital_station.h"
 
 #include "memory_region.h"
+#include "v92_phase4_record_tx.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -15,11 +16,26 @@ static enum g711_law receive_law(
 		       receiver->signal.control.signal.line.law;
 }
 
+static bool pause_candidate_is_valid(const struct v92_e2u_rx *e2u,
+	const struct v92_upstream_control_line_rx *control)
+{
+	return v92_e2u_rx_is_valid(e2u) &&
+		e2u->expected_symbols == V92_PHASE4_E2U_SYMBOLS &&
+		e2u->signal.line.renegotiation && control->signal.line.renegotiation &&
+		e2u->signal.line.law == control->signal.line.law &&
+		e2u->signal.line.demodulator.constellation == control->signal.line.demodulator.constellation;
+}
+
 bool v92_phase4_digital_station_is_valid(const struct v92_phase4_digital_station *station)
 {
 	return station != NULL && v92_phase4_digital_rx_is_valid(&station->receive) &&
 		v92_downstream_control_is_valid(&station->control) &&
 		receive_law(&station->receive) == station->control.transmit.encoder.mapping.law &&
+		(!station->searching_e2u ||
+		 (v92_phase4_digital_rx_is_receiving_control(&station->receive) &&
+		  pause_candidate_is_valid(&station->e2u, &station->receive.signal.control) &&
+		  (station->control.failed || (!station->e2u.failed &&
+		   v92_downstream_control_silence_requested(&station->control))))) &&
 		(station->control.cleardown.active ||
 		 (v92_upstream_plan_is_valid(&station->upstream_plan) &&
 		  station->control.previous_cpu == v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
@@ -33,8 +49,12 @@ bool v92_phase4_digital_station_has_failed(const struct v92_phase4_digital_stati
 
 bool v92_phase4_digital_station_start_cleardown(struct v92_phase4_digital_station *station)
 {
-	return v92_phase4_digital_station_is_valid(station) &&
-		v92_downstream_control_start_cleardown(&station->control);
+	if (!v92_phase4_digital_station_is_valid(station) ||
+	    (station->searching_e2u && v92_e2u_rx_is_complete(&station->e2u)) ||
+	    !v92_downstream_control_start_cleardown(&station->control))
+		return false;
+	station->searching_e2u = false;
+	return true;
 }
 
 static enum v92_phase4_digital_station_result initialize_downstream(
@@ -154,12 +174,37 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	if (station->control.failed)
 		return V92_PHASE4_DIGITAL_STATION_FAILED;
-	enum v92_phase4_digital_rx_result result =
-		v92_phase4_digital_rx_sample(&station->receive, sample, &event);
+	if (station->searching_e2u && v92_e2u_rx_is_complete(&station->e2u))
+		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
+	enum v92_phase4_digital_rx_result result;
+	if (station->searching_e2u) {
+		enum v92_e2u_rx_result received = v92_e2u_rx_search(
+			&station->e2u, &station->receive.signal.control, sample, &event);
+		if (received == V92_E2U_RX_COMPLETE)
+			return v92_downstream_control_note_e2u(&station->control) ?
+				V92_PHASE4_DIGITAL_STATION_OK : fail(station);
+		if (received != V92_E2U_RX_OK)
+			return fail(station);
+		result = event.type == V92_CONTROL_EVENT_NONE ? V92_PHASE4_DIGITAL_RX_OK :
+			V92_PHASE4_DIGITAL_RX_EVENT;
+	} else {
+		result = v92_phase4_digital_rx_sample(&station->receive, sample, &event);
+	}
 	if (!v92_downstream_control_receive(&station->control, &event))
 		return fail(station);
-	if (station->control.cleardown.active)
+	if (station->control.cleardown.active) {
+		station->searching_e2u = false;
 		return V92_PHASE4_DIGITAL_STATION_OK;
+	}
+	/* A complete SUVu (including a CRC-rejected repeat) marks an exact E2u
+	 * candidate boundary. Start before confirmation; waiting for the SUVu
+	 * ACK here would deadlock when that is the record lost on the line. */
+	if (!station->searching_e2u && event.type != V92_CONTROL_EVENT_NONE &&
+	    v92_downstream_control_silence_requested(&station->control)) {
+		if (v92_e2u_rx_init(&station->e2u, &station->receive.signal.control.signal, false) != V92_E2U_RX_OK)
+			return fail(station);
+		station->searching_e2u = true;
+	}
 	if ((result != V92_PHASE4_DIGITAL_RX_OK && result != V92_PHASE4_DIGITAL_RX_ALIGNED &&
 	     result != V92_PHASE4_DIGITAL_RX_EVENT) || !v92_phase4_digital_station_is_valid(station))
 		return fail(station);
@@ -219,16 +264,24 @@ bool v92_phase4_digital_station_is_ed_ready(const struct v92_phase4_digital_stat
 		v92_downstream_control_is_ed_ready(&station->control);
 }
 
+bool v92_phase4_digital_station_is_pause_ready(const struct v92_phase4_digital_station *station)
+{
+	return v92_phase4_digital_station_is_valid(station) &&
+		v92_downstream_control_is_silence_ready(&station->control);
+}
+
 bool v92_phase4_digital_handoff_is_valid(
 	const struct v92_phase4_digital_handoff *handoff)
 {
 	return handoff != NULL &&
+	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
+	       (!handoff->searching_e2u || (handoff->pause && !handoff->e2u.failed &&
+		pause_candidate_is_valid(&handoff->e2u, &handoff->receive))) &&
 	       (!handoff->pause || (handoff->receive.signal.line.renegotiation &&
 		!handoff->transmit.cpd_pending &&
 		handoff->transmit.transmit.encoder.mapping.kind == V90_CP_TRAINING &&
 		handoff->transmit.transmit.v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
 		handoff->transmit.transmit.control.suvd.acknowledges_cpu)) &&
-	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       !v92_upstream_control_line_rx_has_failed(&handoff->receive) &&
 	       handoff->receive.signal.training_tail_remaining == 0u &&
 	       v92_phase4_ed_tx_is_valid(&handoff->transmit) &&
@@ -251,14 +304,19 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 	    memory_regions_overlap(
 		    station, sizeof(*station), handoff, sizeof(*handoff)))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (!v92_phase4_digital_station_is_ed_ready(station) ||
+	if ((!v92_phase4_digital_station_is_ed_ready(station) &&
+	     !v92_phase4_digital_station_is_pause_ready(station)) ||
 	    !v92_phase4_digital_rx_is_receiving_control(&station->receive))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_digital_handoff){
 		.receive = station->receive.signal.control,
 		.cpu = station->control.cpu,
 		.upstream_plan = station->upstream_plan,
+		.pause = v92_phase4_digital_station_is_pause_ready(station),
+		.searching_e2u = station->searching_e2u,
 	};
+	if (station->searching_e2u)
+		generated.e2u = station->e2u;
 	if (!v92_phase4_ed_tx_init(&generated.transmit, &station->control.transmit,
 		    station->control.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD ?
 			    &station->control.initial_cpd : NULL))

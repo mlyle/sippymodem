@@ -148,6 +148,54 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 	return next.matched ? V92_E2U_RX_COMPLETE : V92_E2U_RX_NO_MATCH;
 }
 
+enum v92_e2u_rx_result v92_e2u_rx_search(
+	struct v92_e2u_rx *receiver,
+	struct v92_upstream_control_line_rx *control, int16_t sample,
+	struct v92_control_event *event)
+{
+	if (receiver == NULL || control == NULL || event == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), control, sizeof(*control)) ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), event, sizeof(*event)) ||
+	    memory_regions_overlap(control, sizeof(*control), event, sizeof(*event)))
+		return V92_E2U_RX_INVALID_ARGUMENT;
+	if (!v92_e2u_rx_is_valid(receiver) ||
+	    !v92_upstream_control_line_rx_is_valid(control) ||
+	    receiver->signal.line.law != control->signal.line.law ||
+	    receiver->signal.line.renegotiation != control->signal.line.renegotiation ||
+	    receiver->signal.line.demodulator.constellation != control->signal.line.demodulator.constellation ||
+	    control->signal.training_tail_remaining != 0u)
+		return V92_E2U_RX_INVALID_STATE;
+	if (receiver->failed || v92_upstream_control_line_rx_has_failed(control))
+		return V92_E2U_RX_FAILED;
+	if (receiver->matched)
+		return V92_E2U_RX_COMPLETE;
+	struct v92_e2u_rx next = *receiver;
+	struct v92_upstream_control_line_rx line = *control;
+	struct v92_control_event emitted = { 0 };
+	enum v92_upstream_control_line_rx_result result =
+		v92_upstream_control_line_rx_sample(&line, sample, &emitted);
+	if (next.received_symbols < next.expected_symbols) {
+		enum v92_e2u_rx_result trial = v92_e2u_rx_sample(&next, sample);
+		if (trial == V92_E2U_RX_COMPLETE) {
+			*receiver = next;
+			*event = (struct v92_control_event){ 0 };
+			return V92_E2U_RX_COMPLETE;
+		}
+		if (trial != V92_E2U_RX_OK && trial != V92_E2U_RX_NO_MATCH)
+			return fail(receiver);
+	}
+	if (result != V92_UPSTREAM_CONTROL_LINE_RX_OK && result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+		return fail(receiver);
+	if (result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT &&
+	    v92_e2u_rx_init(&next, &line.signal,
+		    receiver->expected_symbols == V92_PHASE4_E2U_EXTENDED_SYMBOLS) != V92_E2U_RX_OK)
+		return fail(receiver);
+	*receiver = next;
+	*control = line;
+	*event = emitted;
+	return V92_E2U_RX_OK;
+}
+
 enum v92_e2u_rx_result v92_e2u_rx_handoff(
 	const struct v92_e2u_rx *receiver,
 	struct v92_upstream_rx *signal)

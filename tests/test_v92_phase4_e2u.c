@@ -1562,6 +1562,230 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 	return true;
 }
 
+static bool pause_confirmation_contracts(const struct v92_phase4_digital_station *station,
+	const struct v92_phase4_modulator *modulator)
+{
+	struct v92_phase4_digital_station trial = *station;
+	struct v92_phase4_record_tx wire;
+	enum g711_law law = station->control.cpu.law;
+	CHECK(station->searching_e2u && station->control.acknowledgement_end_frame == 0u &&
+	      v92_phase4_record_tx_init_e2u(&wire, modulator, false) == V92_PHASE4_RECORD_TX_OK,
+	      "premature E2u fixture did not precede our acknowledgement");
+	while (!v92_phase4_record_tx_is_complete(&wire)) {
+		int16_t sample;
+		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK,
+		      "premature E2u transmitter failed");
+		enum v92_phase4_digital_station_result result = v92_phase4_digital_station_receive(&trial, quantize(law, sample));
+		CHECK(result == (v92_phase4_record_tx_is_complete(&wire) ?
+		      V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR : V92_PHASE4_DIGITAL_STATION_OK),
+		      "premature E2u did not reject at the sequence boundary");
+	}
+	CHECK(v92_phase4_digital_station_has_failed(&trial) && !v92_phase4_digital_station_is_pause_ready(&trial),
+	      "E2u bypassed our unsent acknowledgement");
+	trial = *station;
+	if (trial.control.transmit.stage == PCM_DOWNSTREAM_TX_V92_CONTROL)
+		CHECK(v92_phase4_digital_station_start_cleardown(&trial) && trial.control.cleardown.active &&
+		      !trial.searching_e2u && v92_phase4_digital_station_is_valid(&trial), "local cleardown retained an E2u candidate");
+	else
+		CHECK(!v92_phase4_digital_station_start_cleardown(&trial) && memcmp(&trial, station, sizeof(trial)) == 0,
+		      "training accepted local cleardown or changed its retained line");
+	trial = *station;
+	const struct v92_cpus_parameters zero = { 0 };
+	uint8_t frame[V92_CPUS_MAX_FRAME_BYTES];
+	size_t bits;
+	CHECK(v92_cpus_encode(&zero, 12u * v92_phase4_modulator_bits_per_symbol(modulator->constellation),
+		frame, sizeof(frame), &bits) == V92_CPU_OK &&
+	      v92_phase4_record_tx_init(&wire, modulator, frame, sizeof(frame), bits) == V92_PHASE4_RECORD_TX_OK,
+	      "peer zero-rate record failed to encode");
+	while (!v92_phase4_record_tx_is_complete(&wire)) {
+		int16_t sample;
+		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_phase4_digital_station_receive(&trial, quantize(law, sample)) == V92_PHASE4_DIGITAL_STATION_OK,
+		      "E2u candidate hid peer cleardown");
+	}
+	CHECK(trial.control.cleardown.active && !trial.searching_e2u &&
+	      !v92_phase4_digital_station_is_pause_ready(&trial), "peer cleardown authorized a pause");
+	struct v92_e2u_rx candidate = station->e2u, saved = candidate;
+	struct v92_upstream_control_line_rx control = station->receive.signal.control, saved_control = control;
+	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU }, saved_event = event;
+	CHECK(v92_e2u_rx_search(NULL, &control, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, NULL, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, 0, NULL) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, (void *)&candidate, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, 0, (void *)&control) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, 0, (void *)&candidate) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      memcmp(&candidate, &saved, sizeof(saved)) == 0 && memcmp(&control, &saved_control, sizeof(control)) == 0 &&
+	      memcmp(&event, &saved_event, sizeof(event)) == 0, "invalid E2u search changed state or event");
+	control.signal.line.law ^= 1u;
+	CHECK(v92_e2u_rx_search(&candidate, &control, 0, &event) == V92_E2U_RX_INVALID_STATE &&
+	      memcmp(&candidate, &saved, sizeof(saved)) == 0 && memcmp(&event, &saved_event, sizeof(event)) == 0,
+	      "E2u search accepted a different line law");
+	return true;
+}
+
+static bool pause_station_sample(struct v92_phase4_digital_station *station,
+	struct pcm_downstream_rx *peer, int16_t sample, bool *acknowledged)
+{
+	uint8_t down;
+	struct pcm_downstream_event event;
+	CHECK(v92_phase4_digital_station_transmit(station, &down) == V92_PHASE4_DIGITAL_STATION_OK,
+	      "pause confirmation downstream stopped");
+	enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(peer, down, &event);
+	CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD ||
+	      (result == PCM_DOWNSTREAM_RX_TRN2D_FRAME && !*acknowledged),
+	      "unconfirmed pause transmitted Ed or parameters: %s", pcm_downstream_rx_result_name(result));
+	if (result == PCM_DOWNSTREAM_RX_SUVD && event.control.record.suvd.parameters.acknowledges_cpu) {
+		*acknowledged = true;
+		CHECK(peer->ed_requested || pcm_downstream_rx_expect_ed(peer) == PCM_DOWNSTREAM_RX_OK,
+		      "peer could not arm Ed at the acknowledgement boundary");
+	}
+	enum v92_phase4_digital_station_result received = v92_phase4_digital_station_receive(station,
+		quantize(station->control.cpu.law, sample));
+	CHECK(received == V92_PHASE4_DIGITAL_STATION_OK || received == V92_PHASE4_DIGITAL_STATION_EVENT,
+	      "pause confirmation upstream stopped: %s", v92_phase4_digital_station_result_name(received));
+	return true;
+}
+
+static bool run_pause_confirmation(enum g711_law law, enum v92_constellation_size constellation,
+	unsigned lookahead, unsigned requests, unsigned confirmation)
+{
+	struct v92_phase4_digital_station station = { 0 };
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_parameters cpd;
+	struct v90_pcm_mapping training;
+	struct pcm_downstream_tx down;
+	struct pcm_downstream_rx peer;
+	struct v92_upstream_control_line_rx line;
+	struct v92_phase4_record_tx wire;
+	const struct v92_suvd_parameters suvd = { .request_silence = (requests & 1u) != 0u };
+	struct v92_suvu_parameters suvu = { .request_silence = (requests & 2u) != 0u };
+	bool acknowledged = false;
+	bool lost_ack = confirmation == 1u || confirmation == 2u;
+	unsigned handoff_delay = confirmation == 3u ? 6u : 0u;
+	cpu.acknowledges_cpd = false;
+	CHECK(v92_cpd_direct_init(&cpd, law, 12u, false) == V92_CPD_OK &&
+	      training_mapping(&training, law, lookahead) &&
+	      pcm_downstream_tx_init(&down, PCM_PROTOCOL_V92, &training) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &training, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      upstream_line(law, constellation, &wire, &line), "pause confirmation fixture failed");
+	line.signal.line.renegotiation = true;
+	CHECK(v92_phase4_digital_rx_resume(&station.receive, &line) == V92_PHASE4_DIGITAL_RX_OK &&
+	      v92_downstream_control_init(&station.control, &down, &suvd, &cpd, &cpu, 240u) &&
+	      v92_downstream_control_ready(&station.control) && v92_phase4_digital_station_is_valid(&station),
+	      "pause confirmation station failed to initialize");
+	/* Wait for the digital acknowledgement while continuing real unacknowledged
+	 * SUVu records. No parameter exchange or fake training counter is involved. */
+	for (unsigned record = 0; record < 100u && !acknowledged; ++record) {
+		uint8_t frame[V92_SUVU_FRAME_BYTES];
+		size_t bits;
+		struct v92_phase4_modulator modulator = wire.modulator;
+		CHECK(v92_suvu_encode(&suvu, 12u * v92_phase4_modulator_bits_per_symbol(constellation),
+			frame, sizeof(frame), &bits) == V92_SUVU_OK &&
+		      v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), bits) == V92_PHASE4_RECORD_TX_OK,
+		      "unacknowledged SUVu failed to encode");
+		while (!v92_phase4_record_tx_is_complete(&wire)) {
+			int16_t sample;
+			CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      pause_station_sample(&station, &peer, sample, &acknowledged), "initial pause status failed");
+			CHECK(!v92_phase4_digital_station_is_pause_ready(&station), "unacknowledged SUVu confirmed the pause");
+		}
+		if (record == 0u && confirmation == 0u)
+			CHECK(pause_confirmation_contracts(&station, &wire.modulator), "pause confirmation contracts failed");
+	}
+	CHECK(acknowledged && station.searching_e2u && !station.control.cpu_received &&
+	      station.control.initial_cpd.bit_index == 0u, "pause did not retain status-only agreement");
+	struct v92_phase4_digital_station cleared = station;
+	CHECK(v92_phase4_digital_station_start_cleardown(&cleared) && cleared.control.cleardown.active &&
+	      !cleared.searching_e2u && v92_phase4_digital_station_is_valid(&cleared),
+	      "local cleardown failed to cancel the unconfirmed E2u search");
+	/* Transmit a final status with a good ACK, CRC-damaged ACK, or no ACK.
+	 * Damage is on the encoded wire record, not an injected decoder event. */
+	uint8_t frame[V92_SUVU_FRAME_BYTES];
+	size_t bits;
+	suvu.acknowledges_cpd = confirmation != 2u;
+	CHECK(v92_suvu_encode(&suvu, 12u * v92_phase4_modulator_bits_per_symbol(constellation),
+		frame, sizeof(frame), &bits) == V92_SUVU_OK, "final pause SUVu encode failed");
+	if (confirmation == 1u)
+		frame[4] ^= 0x80u;
+	struct v92_phase4_modulator modulator = wire.modulator;
+	CHECK(v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), bits) == V92_PHASE4_RECORD_TX_OK,
+	      "final pause SUVu transmitter failed");
+	while (!v92_phase4_record_tx_is_complete(&wire)) {
+		int16_t sample;
+		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
+		      pause_station_sample(&station, &peer, sample, &acknowledged), "final pause status failed");
+	}
+	CHECK(v92_phase4_digital_station_is_pause_ready(&station) == !lost_ack &&
+	      !v92_phase4_digital_station_is_ed_ready(&station) && station.e2u.received_symbols == 0u &&
+	      !station.control.cpu_received, "lost ACK advanced the pause or failed to rearm E2u");
+	struct v92_phase4_digital_handoff dh;
+	struct v92_phase4_e2u e2u;
+	modulator = wire.modulator;
+	CHECK(v92_phase4_record_tx_init_e2u(&wire, &modulator, false) == V92_PHASE4_RECORD_TX_OK,
+	      "pause E2u transmitter failed");
+	struct v92_e2u_rx expected = station.e2u;
+	for (unsigned n = 0; n < V92_PHASE4_E2U_SYMBOLS; ++n) {
+		if (!lost_ack && n == handoff_delay) {
+			CHECK(v92_phase4_digital_station_handoff(&station, &dh) == V92_PHASE4_DIGITAL_STATION_OK &&
+			      dh.pause && dh.searching_e2u && dh.e2u.received_symbols == handoff_delay &&
+			      v92_phase4_e2u_init_digital(&e2u, &dh) == V92_PHASE4_E2U_OK,
+			      "acknowledged pause lost its partial E2u candidate");
+			struct v92_phase4_digital_handoff bad = dh;
+			struct v92_phase4_e2u saved = e2u;
+			bad.e2u.failed = true;
+			CHECK(!v92_phase4_digital_handoff_is_valid(&bad) &&
+			      v92_phase4_e2u_init_digital(&e2u, &bad) == V92_PHASE4_E2U_INVALID_PARAMETERS &&
+			      memcmp(&e2u, &saved, sizeof(saved)) == 0, "failed E2u candidate crossed handoff");
+			bad = dh;
+			bad.pause = false;
+			CHECK(!v92_phase4_digital_handoff_is_valid(&bad), "pause E2u candidate authorized data");
+		}
+		int16_t sample;
+		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_e2u_rx_sample(&expected, quantize(law, sample)) ==
+			(n + 1u == V92_PHASE4_E2U_SYMBOLS ? V92_E2U_RX_COMPLETE : V92_E2U_RX_OK),
+		      "reference E2u failed at %u", n);
+		if (!lost_ack && n >= handoff_delay) {
+			uint8_t octet;
+			struct pcm_downstream_event event;
+			CHECK(v92_phase4_e2u_next(&e2u, 0, quantize(law, sample), &octet) ==
+			      (n + 1u == V92_PHASE4_E2U_SYMBOLS ? V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK),
+			      "acknowledged E2u crossing failed");
+			enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&peer, octet, &event);
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD ||
+			      result == PCM_DOWNSTREAM_RX_ED, "acknowledged Ed failed");
+		} else {
+			CHECK(pause_station_sample(&station, &peer, sample, &acknowledged) &&
+			      v92_phase4_digital_station_is_pause_ready(&station) == (!lost_ack || n + 1u == V92_PHASE4_E2U_SYMBOLS),
+			      "E2u did not confirm exactly at its final sample");
+		}
+	}
+	if (lost_ack) {
+		struct v92_phase4_digital_station saved = station;
+		CHECK(v92_phase4_digital_station_receive(&station, 0) == V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+		      !v92_phase4_digital_station_start_cleardown(&station) && memcmp(&station, &saved, sizeof(saved)) == 0,
+		      "completed E2u consumed another control sample or cleardown");
+		CHECK(v92_phase4_digital_station_handoff(&station, &dh) == V92_PHASE4_DIGITAL_STATION_OK &&
+		      dh.pause && dh.searching_e2u && v92_phase4_e2u_init_digital(&e2u, &dh) == V92_PHASE4_E2U_OK &&
+		      v92_phase4_e2u_is_complete(&e2u), "completed E2u was restarted at handoff");
+	}
+	struct v92_phase4_e2u_handoff after;
+	struct v92_phase4_e2u_handoff analog = {
+		.local_role = V90_ANALOG_MODEM,
+		.state.analog = {
+			.transmit = wire.modulator, .downstream.training = peer, .cpu = cpu,
+			.downstream_stage = V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
+		},
+	};
+	CHECK(v92_pcm_mapping_init(&analog.state.analog.mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_phase4_e2u_handoff(&e2u, &after) == V92_PHASE4_E2U_OK &&
+	      memcmp(&after.state.digital.receive, &expected.signal, sizeof(expected.signal)) == 0 &&
+	      !v92_phase4_e2u_is_data_ready(&e2u) &&
+	      run_timed_pause(&analog, &after, (requests & 2u) != 0u, (requests & 1u) != 0u),
+	      "confirmed pause failed its retained-line Ed/silence/Rt/resume exchange");
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_phase4_e2u owner;
@@ -1594,6 +1818,17 @@ static bool test_contracts(void)
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned size = 0; size < 2; ++size)
+			for (unsigned lookahead = 0; lookahead < 4; ++lookahead)
+				for (unsigned requests = 1; requests <= 3; ++requests)
+					for (unsigned confirmation = 0; confirmation < 4; ++confirmation)
+						if (!run_pause_confirmation(law, size ? V92_CONSTELLATION_8_POINT :
+							V92_CONSTELLATION_4_POINT, lookahead, requests, confirmation)) {
+							fprintf(stderr, "confirmation law=%u size=%u lookahead=%u requests=%u mode=%u\n",
+								law, size, lookahead, requests, confirmation);
+							return 1;
+						}
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned size = 0u; size < 2u; ++size)
 			for (unsigned extended = 0u; extended < 2u; ++extended)

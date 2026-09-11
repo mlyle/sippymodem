@@ -232,11 +232,12 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 	initialized.state.digital.upstream_plan = handoff->upstream_plan;
 	initialized.state.digital.downstream_stage =
 		handoff->pause ? V92_PHASE4_E2U_DOWNSTREAM_PAUSE : V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
-	if (v92_e2u_rx_init(
-		    &initialized.state.digital.receive,
-		    &handoff->receive.signal, handoff->mapping.cpd.extend_e2u) !=
-		    V92_E2U_RX_OK ||
-	    !v92_phase4_e2u_is_valid(&initialized))
+	if (handoff->searching_e2u)
+		initialized.state.digital.receive = handoff->e2u;
+	else if (v92_e2u_rx_init(&initialized.state.digital.receive,
+		    &handoff->receive.signal, handoff->mapping.cpd.extend_e2u) != V92_E2U_RX_OK)
+		return V92_PHASE4_E2U_INVALID_PARAMETERS;
+	if (!v92_phase4_e2u_is_valid(&initialized))
 		return V92_PHASE4_E2U_INVALID_PARAMETERS;
 	*owner = initialized;
 	return V92_PHASE4_E2U_OK;
@@ -442,7 +443,7 @@ static bool retain_matching_cpu(
 	return true;
 }
 
-static bool control_event_rearms_trial(
+static bool accept_upstream_control(
 	struct v92_phase4_e2u_digital_state *state,
 	const struct v92_control_event *event)
 {
@@ -488,35 +489,15 @@ static bool control_event_rearms_trial(
 static enum v92_phase4_e2u_result digital_receive(
 	struct v92_phase4_e2u_digital_state *state, int16_t sample)
 {
-	struct v92_upstream_control_line_rx control = state->control;
 	struct v92_control_event event = { 0 };
-	enum v92_upstream_control_line_rx_result control_result;
-	enum v92_e2u_rx_result trial_result = V92_E2U_RX_NO_MATCH;
-	bool trial_active = state->receive.received_symbols <
-		state->receive.expected_symbols;
-
-	control_result = v92_upstream_control_line_rx_sample(
-		&control, sample, &event);
-	if (trial_active) {
-		trial_result = v92_e2u_rx_sample(&state->receive, sample);
-		if (trial_result == V92_E2U_RX_COMPLETE)
-			return V92_PHASE4_E2U_COMPLETE;
-		if (trial_result != V92_E2U_RX_OK &&
-		    trial_result != V92_E2U_RX_NO_MATCH)
-			return V92_PHASE4_E2U_FAILED;
-	}
-	if (control_result != V92_UPSTREAM_CONTROL_LINE_RX_OK &&
-	    control_result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+	enum v92_e2u_rx_result result = v92_e2u_rx_search(
+		&state->receive, &state->control, sample, &event);
+	if (result == V92_E2U_RX_COMPLETE)
+		return V92_PHASE4_E2U_COMPLETE;
+	if (result != V92_E2U_RX_OK)
 		return V92_PHASE4_E2U_FAILED;
-	state->control = control;
-	if (control_result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
-		return V92_PHASE4_E2U_OK;
-	if (!control_event_rearms_trial(state, &event))
+	if (event.type != V92_CONTROL_EVENT_NONE && !accept_upstream_control(state, &event))
 		return V92_PHASE4_E2U_SEQUENCE_MISMATCH;
-	if (v92_e2u_rx_init(
-		    &state->receive, &state->control.signal,
-		    state->mapping.cpd.extend_e2u) != V92_E2U_RX_OK)
-		return V92_PHASE4_E2U_FAILED;
 	return V92_PHASE4_E2U_OK;
 }
 

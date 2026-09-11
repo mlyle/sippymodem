@@ -4,6 +4,7 @@
 #define V92_E2U_RX_H
 
 #include "v92_upstream_rx.h"
+#include "v92_upstream_control_line_rx.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -43,6 +44,20 @@ bool v92_e2u_rx_has_failed(const struct v92_e2u_rx *receiver);
 
 enum v92_e2u_rx_result v92_e2u_rx_sample(
 	struct v92_e2u_rx *receiver, int16_t sample);
+
+/* Search alongside the continuous control parser. Initialize the candidate
+ * at an exact record boundary first; every complete or rejected record rearms
+ * it there. The caller validates emitted records against its procedure.
+ * COMPLETE consumes the final E2u sample and retains its authoritative line;
+ * the speculative control decoder is not committed for that interval.
+ * OK consumes one sample and replaces event (NONE unless a record ended).
+ * Invalid/terminal calls leave all state and outputs unchanged; processing
+ * failure latches receiver->failed without committing control or event.
+ * All three objects must be distinct. */
+enum v92_e2u_rx_result v92_e2u_rx_search(
+	struct v92_e2u_rx *receiver,
+	struct v92_upstream_control_line_rx *control, int16_t sample,
+	struct v92_control_event *event);
 
 /* Export the exact post-E2u line state. Rejected and premature calls leave
  * signal unchanged. */

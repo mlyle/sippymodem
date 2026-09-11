@@ -496,7 +496,10 @@ bool v92_phase4_analog_station_cpd_parameters(
 bool v92_phase4_analog_handoff_is_valid(
 	const struct v92_phase4_analog_handoff *handoff)
 {
-	if (handoff != NULL && handoff->pause) {
+	if (handoff == NULL || !v92_phase4_record_tx_is_valid(&handoff->transmit) ||
+	    !pcm_downstream_rx_is_valid(&handoff->receive))
+		return false;
+	if (handoff->pause) {
 		struct v92_suvu_parameters status;
 		unsigned bits = v92_phase4_modulator_bits_per_symbol(handoff->transmit.modulator.constellation);
 		if (handoff->receive.stream.decoder.mapping.kind != V90_CP_TRAINING ||
@@ -505,10 +508,7 @@ bool v92_phase4_analog_handoff_is_valid(
 			V92_SUVU_OK || !status.acknowledges_cpd)
 			return false;
 	}
-	return handoff != NULL &&
-	       v92_phase4_record_tx_is_valid(&handoff->transmit) &&
-	       pcm_downstream_rx_is_valid(&handoff->receive) &&
-	       !pcm_downstream_rx_has_failed(&handoff->receive) &&
+	return !pcm_downstream_rx_has_failed(&handoff->receive) &&
 	       handoff->receive.protocol == PCM_PROTOCOL_V92 &&
 	       handoff->receive.stage != PCM_DOWNSTREAM_RX_TRN2D &&
 	       handoff->receive.stream.decoder.decision_plane ==
