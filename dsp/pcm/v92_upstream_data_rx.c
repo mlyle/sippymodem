@@ -320,8 +320,16 @@ static enum v92_upstream_data_rx_result receive_frame(
 		generated.squared_error += error * error;
 		if (!isfinite(generated.squared_error))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+		/* A decision farther away than silence is not a reliable channel
+		 * target. In particular, nonzero codec silence must not amplify
+		 * normalized updates while the received signal is absent. Keep
+		 * consuming observations and reporting the full residual; known
+		 * B1u and ordinary, nearby decisions retain their tracking step. */
+		double adaptation = line->adaptation;
+		if (!b1u && fabs(error) > fabs(line->observations[symbol].output.in_phase))
+			adaptation = 0.0;
 		if (qam_equalizer_adapt_observation(&line->equalizer,
-				&line->observations[symbol], &target, line->adaptation) !=
+				&line->observations[symbol], &target, adaptation) !=
 		    QAM_EQUALIZER_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	}

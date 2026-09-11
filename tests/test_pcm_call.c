@@ -7585,7 +7585,8 @@ static bool v92_fast_analog_contracts(const struct pcm_call *snapshot, uint8_t r
 	return true;
 }
 
-static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators, unsigned hangup)
+static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators, unsigned hangup,
+	unsigned burst_symbols)
 {
 	struct pcm_call *calls[] = { &pair->analog, &pair->digital };
 	struct pcm_payload_source source[2] = { 0 };
@@ -7594,6 +7595,7 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 	bool closed[2] = { false, false }, zero_received[2] = { false, false };
 	bool hangup_requested = false;
 	unsigned checked = 0u;
+	unsigned damaged = 0u;
 	/* A saved setup may request silence, but fast exchange must not inherit it. */
 	pair->analog.v92_analog_phase4_configuration.suvu.request_silence = true;
 	for (unsigned role = 0; role < 2u; ++role) {
@@ -7654,6 +7656,14 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 				frames[role]++;
 			}
 		}
+		const struct pcm_call_v92_analog_fast *fast = &pair->analog.state.data_path.v92_analog.fast;
+		/* Corrupt generated CPu octets, not receiver event flags. The peer
+		 * must recover its continuous decoder and qualify a later repeat. */
+		if (damaged < burst_symbols && (damaged || (fast->rm_complete && !fast->finish_started &&
+		    fast->control.record == V92_UPSTREAM_CONTROL_CPU && fast->record_index > 0u))) {
+			transmitted[0] = silence_octet(pair->analog.law);
+			++damaged;
+		}
 		channel_transmit(&pair->wire, transmitted[0], transmitted[1]);
 		if (hangup && !hangup_requested && pair->digital.state.data_path.v92_digital.fast.stage == PCM_CALL_V92_FAST_CONTROL &&
 		    pair->analog.state.data_path.v92_analog.fast.rm_complete) {
@@ -7670,7 +7680,8 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 		if (frames[0] >= 20u && frames[1] >= 20u) {
 			CHECK(pcm_call_is_online(calls[0]) && pcm_call_is_online(calls[1]) &&
 			      !calls[0]->retrain_active && !calls[1]->retrain_active && (checked & 29u) == 29u &&
-			      (initiators != 1u || checked == 31u), "fast pair did not resume online or check every boundary");
+			      (initiators != 1u || checked == 31u) && damaged == burst_symbols,
+			      "fast pair did not resume online or check every boundary");
 			return true;
 		}
 	}
@@ -7695,8 +7706,14 @@ static bool test_v92_fast_pair(void)
 			for (unsigned initiators = 1u; initiators <= 3u; ++initiators)
 			for (unsigned hangup = 0; hangup <= 3u; ++hangup) {
 				struct v92_online_pair trial = pair;
-				CHECK(run_v92_fast_pair(&trial, initiators, hangup), "fast pair law %u rate %u hangup %u failed", law, rates[rate], hangup);
+				CHECK(run_v92_fast_pair(&trial, initiators, hangup, 0u), "fast pair law %u rate %u hangup %u failed", law, rates[rate], hangup);
 			}
+			if (rates[rate] == 19u)
+				for (unsigned initiators = 1u; initiators <= 3u; ++initiators) {
+					struct v92_online_pair trial = pair;
+					CHECK(run_v92_fast_pair(&trial, initiators, 0u, 80u),
+					      "fast CPu burst recovery failed law %u initiators %u", law, initiators);
+				}
 		}
 	return true;
 }

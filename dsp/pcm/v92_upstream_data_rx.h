@@ -74,7 +74,9 @@ struct v92_upstream_data_frame {
 /* Start at the first B1u decision after E2u, preserving the trained equalizer,
  * its pending physical inputs, polarity, and LU. Reset only data coding.
  * Bound the inherited adaptation step for decision-directed data tracking;
- * a smaller step, including disabled adaptation, remains unchanged. Known
+ * a smaller step, including disabled adaptation, remains unchanged. Unknown
+ * decisions farther from the equalized observation than silence do not
+ * adapt the FIR, but retain their full residual and decoding evidence. Known
  * B1u frames refine LU and its surviving interval only within the original
  * G.711 quantization cell; ordinary payload never changes that estimate.
  * A constellation-coordinate plan instead retains polarity and the measured

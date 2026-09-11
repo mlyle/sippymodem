@@ -179,9 +179,11 @@ static bool after_idle(void *context, uint8_t *bits, size_t count)
 }
 
 static bool test_quantized_level_tracking(
-	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select)
+	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select,
+	unsigned burst_symbols)
 {
-	enum { IDLE_FRAMES = 2000, PAYLOAD_FRAMES = 400 };
+	unsigned idle_frames = burst_symbols ? 64u : 2000u;
+	unsigned payload_frames = burst_symbols ? 128u : 400u;
 	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
@@ -190,9 +192,11 @@ static bool test_quantized_level_tracking(
 	struct v92_upstream_rx handoff;
 	struct v92_upstream_data_tx transmitter;
 	struct v92_upstream_data_rx receiver;
-	struct idle_source source = { .idle_frames = IDLE_FRAMES };
+	struct idle_source source = { .idle_frames = idle_frames };
 	unsigned int delivered = 0u;
 	double b1u_error = 0.0;
+	double burst_error = 0.0;
+	unsigned damaged = 0u;
 	int16_t trained_lu = 0;
 	int16_t trained_minimum = 0, trained_maximum = 0;
 	int16_t measured_lu = law == G711_LAW_PCMU ?
@@ -233,7 +237,7 @@ static bool test_quantized_level_tracking(
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "tracking handoff changed learned coefficients or pending inputs");
 	for (unsigned int symbol = 0u;
-	     symbol < (V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES +
+	     symbol < (V92_B1U_FRAMES + idle_frames + payload_frames +
 		       V92_PCM_RX_DELAY_FRAMES) * V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 		struct v92_upstream_data_frame frame;
@@ -243,17 +247,29 @@ static bool test_quantized_level_tracking(
 		 * the learned FIR is not a substitute for stable data tracking. */
 		if (drift)
 			channel.postcursor = 0.02 * symbol /
-				((V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES) *
+				((V92_B1U_FRAMES + idle_frames + payload_frames) *
 				 V92_PCM_MAPPING_FRAME_SYMBOLS);
 		CHECK(v92_upstream_data_tx_next(&transmitter, after_idle, &source,
 				&sample) == V92_UPSTREAM_DATA_TX_OK, "tracking transmitter stopped");
-		result = v92_upstream_data_rx_sample(&receiver,
-			wire_sample(&channel, sample), &frame);
+		int16_t received = wire_sample(&channel, sample);
+		/* Damage real post-training media without erasure metadata. A-law
+		 * silence is nonzero, so unguarded normalized adaptation can turn
+		 * this short dropout into permanent corruption of a trained FIR. */
+		if (symbol >= (V92_B1U_FRAMES + 16u) * V92_PCM_MAPPING_FRAME_SYMBOLS + 5u &&
+		    damaged < burst_symbols) {
+			received = law == G711_LAW_PCMU ?
+				g711_decode_pcmu(g711_encode_pcmu(0)) :
+				g711_decode_pcma(g711_encode_pcma(0));
+			++damaged;
+		}
+		result = v92_upstream_data_rx_sample(&receiver, received, &frame);
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "tracking receiver stopped");
 		if (result == V92_UPSTREAM_DATA_RX_FRAME &&
 		    receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1u_error += frame.squared_error;
+		else if (result == V92_UPSTREAM_DATA_RX_FRAME && damaged)
+			burst_error += frame.squared_error;
 		if (receiver.line.received_frames == V92_B1U_FRAMES) {
 			trained_lu = receiver.decoder.upstream_level;
 			trained_minimum = receiver.decoder.minimum_level;
@@ -268,20 +284,27 @@ static bool test_quantized_level_tracking(
 			continue;
 		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 
-		if (delivered < V92_B1U_FRAMES + IDLE_FRAMES)
+		if (delivered < V92_B1U_FRAMES + idle_frames)
 			memset(expected, 1, mapping.data_bits_per_frame);
 		else
 			payload(expected, mapping.data_bits_per_frame,
-				delivered - V92_B1U_FRAMES - IDLE_FRAMES);
-		CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
-		      memcmp(expected, frame.bits, frame.bit_count) == 0,
+				delivered - V92_B1U_FRAMES - idle_frames);
+		/* Only the bounded damaged/reacquisition interval may disagree.
+		 * Keep exact framing, then verify every subsequent idle/payload bit. */
+		bool recovering = burst_symbols && delivered >= V92_B1U_FRAMES + 14u &&
+			delivered < V92_B1U_FRAMES + 48u;
+		CHECK(frame.bit_count == mapping.data_bits_per_frame && (recovering || (!frame.ambiguous &&
+		      memcmp(expected, frame.bits, frame.bit_count) == 0)),
 		      "law %u rate %u drift %u frame %u changed data: LU=%d ambiguous=%u error=%.2f",
 		      (unsigned int)law, rate, drift, delivered, receiver.decoder.upstream_level,
 		      frame.ambiguous, frame.squared_error);
 		delivered++;
 	}
-	CHECK(delivered == V92_B1U_FRAMES + IDLE_FRAMES + PAYLOAD_FRAMES,
+	CHECK(delivered == V92_B1U_FRAMES + idle_frames + payload_frames && damaged == burst_symbols,
 	      "tracking lost payload frames");
+	CHECK(!burst_symbols || burst_error > (double)burst_symbols *
+	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "burst residual was hidden instead of reporting damaged media");
 	CHECK(trained_minimum <= lu && trained_maximum >= lu,
 	      "training excluded the transmitted LU");
 	CHECK(b1u_error <= (double)V92_B1U_SYMBOLS *
@@ -2040,14 +2063,19 @@ int main(void)
 					if (!test_channel_plan((enum g711_law)law, polarity, extended,
 							fixture == 1u, fixture == 2u))
 						return 1;
-	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false, TEST_LU, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true, TEST_LU, false) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, 7164, true) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, 7040, true))
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false, TEST_LU, false, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true, TEST_LU, false, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, 7164, true, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, 7040, true, 0u))
 		return 1;
+	fprintf(stderr, "[ RUN      ] PCM upstream codec-silence burst recovery\n");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!test_quantized_level_tracking(law, 19u, false, TEST_LU, false, 80u))
+			return 1;
+	fprintf(stderr, "[       OK ] PCM upstream codec-silence burst recovery\n");
 	const struct {
 		uint8_t rate;
 		double gain;
