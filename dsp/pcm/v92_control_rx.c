@@ -184,6 +184,15 @@ static void clear_candidate(struct v92_control_rx *receiver)
 	receiver->stage = V92_CONTROL_RX_SEARCH_SYNC;
 }
 
+/* A rejected candidate may end inside the next record's sync prefix. */
+static void finish_candidate(struct v92_control_rx *receiver, bool accepted)
+{
+	uint8_t sync_one_count = accepted ? 0u : receiver->sync_one_count;
+
+	clear_candidate(receiver);
+	receiver->sync_one_count = sync_one_count;
+}
+
 static void begin_candidate(struct v92_control_rx *receiver)
 {
 	clear_candidate(receiver);
@@ -216,7 +225,7 @@ static void reject_cpd(
 {
 	event->type = V92_CONTROL_EVENT_CPD_REJECTED;
 	event->record.cpd.frame_result = result;
-	clear_candidate(receiver);
+	finish_candidate(receiver, false);
 }
 
 static void reject_cpu(
@@ -232,7 +241,7 @@ static void reject_cpu(
 		event->type = V92_CONTROL_EVENT_CPU_REJECTED;
 		event->record.cpu.frame_result = result;
 	}
-	clear_candidate(receiver);
+	finish_candidate(receiver, false);
 }
 
 static void finish_suvd(
@@ -252,7 +261,7 @@ static void finish_suvd(
 	} else {
 		event->type = V92_CONTROL_EVENT_SUVD_REJECTED;
 	}
-	clear_candidate(receiver);
+	finish_candidate(receiver, result == V92_SUVD_OK);
 }
 
 static void finish_suvu(
@@ -272,7 +281,7 @@ static void finish_suvu(
 	} else {
 		event->type = V92_CONTROL_EVENT_SUVU_REJECTED;
 	}
-	clear_candidate(receiver);
+	finish_candidate(receiver, result == V92_SUVU_OK);
 }
 
 static void finish_cpd(
@@ -292,7 +301,7 @@ static void finish_cpd(
 	} else {
 		event->type = V92_CONTROL_EVENT_CPD_REJECTED;
 	}
-	clear_candidate(receiver);
+	finish_candidate(receiver, result == V92_CPD_OK);
 }
 
 static void finish_cpu(
@@ -332,7 +341,7 @@ static void finish_cpu(
 	} else {
 		event->type = V92_CONTROL_EVENT_CPU_REJECTED;
 	}
-	clear_candidate(receiver);
+	finish_candidate(receiver, result == V92_CPU_OK);
 }
 
 static void finish_status(

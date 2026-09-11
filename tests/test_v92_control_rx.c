@@ -389,6 +389,98 @@ static bool test_upstream_records(void)
 	return true;
 }
 
+/* A truncated candidate can fail while consuming the next sync prefix.
+ * The complete retry must survive that rejection, even without an idle gap. */
+static bool check_truncated_record_recovery(
+	const uint8_t *frame, size_t bit_count, uint8_t width,
+	enum v92_control_direction direction,
+	enum v92_control_event_type expected)
+{
+	for (size_t prefix = 0u; prefix < bit_count; ++prefix) {
+		struct v92_control_rx receiver;
+		struct v92_control_event event;
+		unsigned int accepted = 0u;
+
+		CHECK((direction == V92_CONTROL_DOWNSTREAM ?
+			      v92_control_rx_init_downstream(&receiver, width) :
+			      v92_control_rx_init_upstream(&receiver, width)) ==
+			      V92_CONTROL_RX_OK &&
+		      feed_frame(&receiver, frame, 0u, prefix, &event) &&
+		      event.type == V92_CONTROL_EVENT_NONE,
+		      "truncated record fixture failed");
+		for (size_t bit = 0u; bit < bit_count; ++bit) {
+			CHECK(receive_bit(&receiver, frame_bit(frame, bit), &event),
+			      "replacement stopped at bit %zu", bit);
+			switch (event.type) {
+			case V92_CONTROL_EVENT_CPD:
+			case V92_CONTROL_EVENT_SUVD:
+			case V92_CONTROL_EVENT_CPU:
+			case V92_CONTROL_EVENT_SUVU:
+			case V92_CONTROL_EVENT_CPUS:
+				CHECK(event.type == expected && bit + 1u == bit_count,
+				      "type %u width %u prefix %zu accepted an old candidate",
+				      expected, width, prefix);
+				accepted++;
+				break;
+			default:
+				break;
+			}
+		}
+		CHECK(accepted == 1u &&
+		      receiver.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+		      receiver.sync_one_count == 0u,
+		      "type %u width %u prefix %zu lost the complete retry",
+		      expected, width, prefix);
+	}
+	return true;
+}
+
+static bool test_truncated_record_recovery(void)
+{
+	const struct v92_cpd_parameters cpd = cpd_selection(0u);
+	const struct v92_cpu_parameters cpu = cpu_selection(1u, false);
+	const struct v92_suvd_parameters suvd = { .acknowledges_cpu = true };
+	const struct v92_suvu_parameters suvu = {
+		.wait_for_cpu = true, .acknowledges_cpd = true,
+	};
+	const struct v92_cpus_parameters cpus = {
+		.data_rate_number = 3u, .acknowledges_cpd = true,
+	};
+	uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
+	size_t bits = 0u;
+
+	for (uint8_t width = V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
+	     width <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS; ++width) {
+		CHECK(v92_cpd_encode(&cpd, width, frame, sizeof(frame), &bits) ==
+			      V92_CPD_OK &&
+		      check_truncated_record_recovery(frame, bits, width,
+			      V92_CONTROL_DOWNSTREAM, V92_CONTROL_EVENT_CPD) &&
+		      v92_suvd_encode(&suvd, width, frame, sizeof(frame), &bits) ==
+			      V92_SUVD_OK &&
+		      check_truncated_record_recovery(frame, bits, width,
+			      V92_CONTROL_DOWNSTREAM, V92_CONTROL_EVENT_SUVD),
+		      "downstream width %u lost a control retry", width);
+	}
+	for (uint8_t width = 24u; width <= 72u; width += 2u) {
+		if (!v92_control_upstream_alignment_is_valid(width))
+			continue;
+		CHECK(v92_cpu_encode(&cpu, width, frame, sizeof(frame), &bits) ==
+			      V92_CPU_OK &&
+		      check_truncated_record_recovery(frame, bits, width,
+			      V92_CONTROL_UPSTREAM, V92_CONTROL_EVENT_CPU) &&
+		      v92_suvu_encode(&suvu, width, frame, sizeof(frame), &bits) ==
+			      V92_SUVU_OK &&
+		      check_truncated_record_recovery(frame, bits, width,
+			      V92_CONTROL_UPSTREAM, V92_CONTROL_EVENT_SUVU) &&
+		      v92_cpus_encode(&cpus, width, frame, sizeof(frame), &bits) ==
+			      V92_CPU_OK &&
+		      check_truncated_record_recovery(frame, bits, width,
+			      V92_CONTROL_UPSTREAM, V92_CONTROL_EVENT_CPUS),
+		      "upstream width %u lost a control retry", width);
+	}
+	return true;
+}
+
 static bool test_short_recovery(void)
 {
 	const struct v92_cpus_parameters parameters = {
@@ -650,6 +742,7 @@ int main(void)
 	fprintf(stderr, "[ RUN      ] V.92 control receiver\n");
 	if (!test_all_frame_widths() || !test_cpd_matrix() ||
 	    !test_upstream_records() ||
+	    !test_truncated_record_recovery() ||
 	    !test_short_recovery() ||
 	    !test_upstream_recovery_and_rejection() ||
 	    !test_recovery_and_rejection() ||
