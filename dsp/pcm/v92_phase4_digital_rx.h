@@ -12,6 +12,8 @@
 enum v92_phase4_digital_rx_stage {
 	V92_PHASE4_DIGITAL_RX_TRN2U,
 	V92_PHASE4_DIGITAL_RX_CONTROL,
+	/* Retained control line after a pause; no new channel measurement. */
+	V92_PHASE4_DIGITAL_RX_RESUMED_CONTROL,
 };
 
 enum v92_phase4_digital_rx_result {
@@ -54,6 +56,12 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
  * CPd/receive plan until a subsequent full training measures the channel. */
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init_after_ru(
 	struct v92_phase4_digital_rx *receiver, const struct v92_ru_line_rx *ru);
+/* Resume the exact post-pause parser/equalizer, including a partial record.
+ * The preceding CPd/receive plan belongs to the enclosing station. Do not
+ * manufacture TRN2u observations to satisfy the initial-training contract. */
+enum v92_phase4_digital_rx_result v92_phase4_digital_rx_resume(
+	struct v92_phase4_digital_rx *receiver,
+	const struct v92_upstream_control_line_rx *line);
 bool v92_phase4_digital_rx_is_renegotiating(
 	const struct v92_phase4_digital_rx *receiver);
 bool v92_phase4_digital_rx_is_valid(

@@ -252,7 +252,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 		    station, sizeof(*station), handoff, sizeof(*handoff)))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (!v92_phase4_digital_station_is_ed_ready(station) ||
-	    station->receive.stage != V92_PHASE4_DIGITAL_RX_CONTROL)
+	    !v92_phase4_digital_rx_is_receiving_control(&station->receive))
 		return V92_PHASE4_DIGITAL_STATION_INVALID_STATE;
 	generated = (struct v92_phase4_digital_handoff){
 		.receive = station->receive.signal.control,

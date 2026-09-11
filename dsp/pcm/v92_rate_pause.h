@@ -58,4 +58,17 @@ bool v92_rate_pause_analog_receive(struct v92_rate_pause_analog *pause, uint8_t 
 bool v92_rate_pause_digital_transmit(struct v92_rate_pause_digital *pause, uint8_t *octet);
 bool v92_rate_pause_digital_receive(struct v92_rate_pause_digital *pause, int16_t sample);
 
+/* Rejoin the ordinary control stations at the completed Rt boundary. Keep
+ * preceding selections, warm coders and partial records; consume any complete
+ * early upstream status/zero-rate event exactly once. Old acknowledgements
+ * do not satisfy the new exchange. Failure changes neither input nor output.
+ * Pause and destination storage must not overlap. */
+bool v92_rate_pause_analog_resume(struct v92_phase4_analog_station *station,
+	const struct v92_rate_pause_analog *pause, const struct v92_pcm_mapping *upstream,
+	uint16_t round_trip_delay_samples);
+bool v92_rate_pause_digital_resume(struct v92_phase4_digital_station *station,
+	const struct v92_rate_pause_digital *pause, const struct v92_cpd_parameters *cpd,
+	const struct v92_upstream_plan *plan, const struct v92_cpu_parameters *cpu,
+	uint16_t round_trip_delay_samples);
+
 #endif /* V92_RATE_PAUSE_H */

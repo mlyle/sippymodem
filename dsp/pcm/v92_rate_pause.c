@@ -218,3 +218,67 @@ fail:
 	pause->failed = true;
 	return false;
 }
+
+bool v92_rate_pause_analog_resume(struct v92_phase4_analog_station *station,
+	const struct v92_rate_pause_analog *pause, const struct v92_pcm_mapping *upstream,
+	uint16_t round_trip_delay_samples)
+{
+	if (!station || !v92_rate_pause_analog_is_ready(pause) ||
+	    memory_regions_overlap(station, sizeof(*station), pause, sizeof(*pause)) ||
+	    !v92_pcm_mapping_is_valid(upstream) || upstream->law != pause->cpu.law)
+		return false;
+	struct v92_phase4_analog_station next = {
+		.transmit = pause->upstream.status,
+		.receive = pause->downstream,
+		.mapping = *upstream,
+		.round_trip_delay_samples = round_trip_delay_samples,
+	};
+	next.mapping.cpd.acknowledges_cpu = false;
+	if (!v92_phase4_analog_station_is_valid(&next) ||
+	    next.receive.stage != PCM_DOWNSTREAM_RX_V92_CONTROL ||
+	    !next.transmit.control.renegotiation || next.transmit.control.suvu.request_silence ||
+	    next.transmit.control.suvu.acknowledges_cpd || next.transmit.control.cpu.acknowledges_cpd)
+		return false;
+	*station = next;
+	return true;
+}
+
+bool v92_rate_pause_digital_resume(struct v92_phase4_digital_station *station,
+	const struct v92_rate_pause_digital *pause, const struct v92_cpd_parameters *cpd,
+	const struct v92_upstream_plan *plan, const struct v92_cpu_parameters *cpu,
+	uint16_t round_trip_delay_samples)
+{
+	if (!station || !v92_rate_pause_digital_is_ready(pause) ||
+	    memory_regions_overlap(station, sizeof(*station), pause, sizeof(*pause)) ||
+	    !v92_cpd_parameters_are_valid(cpd) || !cpd->data_rate_number ||
+	    !v92_upstream_plan_is_valid(plan) || !v92_cpu_parameters_are_valid(cpu) ||
+	    cpu->law != pause->upstream.signal.line.law || !cpu->data_rate_number)
+		return false;
+	struct v92_phase4_digital_station next = { .upstream_plan = *plan };
+	struct v92_cpd_parameters selected = *cpd;
+	const struct v92_suvd_parameters suvd = { 0 };
+	struct v92_control_event event = pause->event;
+	selected.acknowledges_cpu = false;
+	selected.extend_e2u = false;
+	if (event.type == V92_CONTROL_EVENT_SUVU &&
+	    (event.record.suvu.frame_result != V92_SUVU_OK ||
+	     !v92_suvu_parameters_are_valid(&event.record.suvu.parameters)))
+		return false;
+	/* Only fresh cleared SUVu may qualify the resumed parameter exchange.
+	 * A preceding pause acknowledgement is not confirmation of this CPd. */
+	if (event.type == V92_CONTROL_EVENT_SUVU &&
+	    (event.record.suvu.parameters.request_silence || event.record.suvu.parameters.acknowledges_cpd))
+		event = (struct v92_control_event){ 0 };
+	if ((event.type != V92_CONTROL_EVENT_NONE && event.type != V92_CONTROL_EVENT_SUVU &&
+	     event.type != V92_CONTROL_EVENT_CPU && event.type != V92_CONTROL_EVENT_CPUS) ||
+	    (event.type == V92_CONTROL_EVENT_CPU && event.record.cpu.parameters.data_rate_number) ||
+	    (event.type == V92_CONTROL_EVENT_CPUS && event.record.cpus.parameters.data_rate_number) ||
+	    v92_phase4_digital_rx_resume(&next.receive, &pause->upstream) != V92_PHASE4_DIGITAL_RX_OK ||
+	    !v92_downstream_control_init(&next.control, &pause->downstream, &suvd, &selected, cpu,
+		    round_trip_delay_samples) ||
+	    !v92_downstream_control_receive(&next.control, &event) ||
+	    !v92_phase4_digital_station_is_valid(&next))
+		return false;
+	*station = next;
+	return true;
+}
