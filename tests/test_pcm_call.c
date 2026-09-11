@@ -7213,7 +7213,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 	}
 	CHECK(test.control_started && test.call.state.phase4.v92.owner.digital.receive.channel.symbols == 12u &&
 	      !test.call.state.phase4.v92.owner.digital.control.cpu_received &&
-	      !test.call.state.phase4.v92.owner.digital.control.peer_acknowledged_cpd,
+	      !test.call.state.phase4.v92.owner.digital.control.peer_confirmation_received,
 	      "rate exchange reused initial training or acknowledgement state");
 	{
 		struct pcm_call expired = test.call;

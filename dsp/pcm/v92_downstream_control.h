@@ -12,6 +12,7 @@ enum v92_downstream_control_stage {
 	V92_DOWNSTREAM_CONTROL_READY_FOR_CPD,
 	V92_DOWNSTREAM_CONTROL_CPD,
 	V92_DOWNSTREAM_CONTROL_STATUS_SUVD,
+	V92_DOWNSTREAM_CONTROL_SILENCE_SUVD,
 };
 
 /* Digital-side 9.6.1 control exchange, shared by training, renegotiation and
@@ -37,7 +38,8 @@ struct v92_downstream_control {
 	bool suvu_received;
 	bool cpu_received;
 	bool transmit_acknowledges_cpu;
-	bool peer_acknowledged_cpd;
+	/* CPu/SUVu ACK, or E2u during the status-only silence agreement. */
+	bool peer_confirmation_received;
 	bool repeat_cpd;
 	bool failed;
 };
@@ -67,5 +69,11 @@ bool v92_downstream_control_start_cleardown(struct v92_downstream_control *contr
 /* The receiver may begin E2u while the independent transmitter still drains
  * its current record. The caller uses v92_phase4_ed_tx for that final tail. */
 bool v92_downstream_control_is_ed_ready(const struct v92_downstream_control *control);
+/* Rate-renegotiation silence agrees via SUVu/SUVd, not CPu/CPd. A ready
+ * pause authorizes draining SUVd/Ed into silence, never entering data.
+ * A receiver may also supply a complete E2u instead of the peer's SUVu ACK. */
+bool v92_downstream_control_silence_requested(const struct v92_downstream_control *control);
+bool v92_downstream_control_is_silence_ready(const struct v92_downstream_control *control);
+bool v92_downstream_control_note_e2u(struct v92_downstream_control *control);
 
 #endif

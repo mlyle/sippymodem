@@ -595,11 +595,11 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS };
 	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
 	CHECK(v92_downstream_control_receive(&selected, &event) && selected.cpu_received &&
-	      !selected.peer_acknowledged_cpd && selected.cpu.data_rate_number == previous->data_rate_number - 1 &&
+	      !selected.peer_confirmation_received && selected.cpu.data_rate_number == previous->data_rate_number - 1 &&
 	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
 	      "short CPu lost previous parameters or replaced the active data mapping");
 	event.record.cpus.parameters.acknowledges_cpd = true;
-	CHECK(v92_downstream_control_receive(&selected, &event) && selected.peer_acknowledged_cpd &&
+	CHECK(v92_downstream_control_receive(&selected, &event) && selected.peer_confirmation_received &&
 	      !v92_downstream_control_is_ed_ready(&selected), "received acknowledgment counted as transmitted");
 	event.record.cpus.parameters.acknowledges_cpd = false;
 	CHECK(!v92_downstream_control_receive(&selected, &event) && selected.failed,
@@ -669,13 +669,15 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 	      pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &old_downstream,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_downstream_control_init(&digital, &downstream, &suvd, &cpd, &previous_cpu, 80) &&
-	      !digital.cpu_received && !digital.peer_acknowledged_cpd && !digital.cpu.acknowledges_cpd &&
+	      !digital.cpu_received && !digital.peer_confirmation_received && !digital.cpu.acknowledges_cpd &&
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_tx_init(&tx, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
 	      v92_upstream_control_init(&input.control, &suvu, &cpu) &&
 	      v92_control_rx_init_upstream(&parser, mapping.data_bits_per_frame) == V92_CONTROL_RX_OK &&
 	      prepare_e2u(&channel, false, &e2u_tx, &e2u_rx), "fast control fixture failed");
 	CHECK(downstream_control_contracts(&digital, &cpd, &previous_cpu), "digital FPE contract failed");
+	CHECK(!v92_downstream_control_silence_requested(&digital) &&
+	      !v92_downstream_control_note_e2u(&digital), "FPE entered the silence procedure");
 	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
 		int16_t sample;
 		if (!v92_phase4_record_tx_is_complete(&e2u_tx))
@@ -1548,7 +1550,7 @@ static bool rate_exchange_init(struct rate_exchange *exchange,
 		      &previous, plan, &cpu, 161) == V92_PHASE4_DIGITAL_STATION_OK &&
 	      v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
 	      !station->control.cpu_received && !station->control.suvu_received &&
-	      !station->control.cpu.acknowledges_cpd && !station->control.peer_acknowledged_cpd &&
+	      !station->control.cpu.acknowledges_cpd && !station->control.peer_confirmation_received &&
 	      !station->control.transmit_acknowledges_cpu && !station->control.cleardown.active &&
 	      !v92_phase4_digital_station_is_ed_ready(station) &&
 	      station->control.transmit.control_configured &&
@@ -1808,7 +1810,7 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 			retained_cpu.acknowledges_cpd = which == 4;
 			CHECK(v92_phase4_digital_station_cpu_parameters(&exchange.station, &selected) &&
 			      memcmp(&selected, &retained_cpu, sizeof(selected)) == 0 &&
-			      exchange.station.control.peer_acknowledged_cpd == (which == 4) &&
+			      exchange.station.control.peer_confirmation_received == (which == 4) &&
 			      !exchange.station.control.cleardown.active,
 			      "CPus lost the retained mapping or reused an old acknowledgement");
 		}

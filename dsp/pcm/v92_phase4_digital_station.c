@@ -208,7 +208,9 @@ bool v92_phase4_digital_station_peer_acknowledged_cpd(
 	const struct v92_phase4_digital_station *station)
 {
 	return v92_phase4_digital_station_is_valid(station) &&
-	       !station->control.failed && station->control.peer_acknowledged_cpd;
+	       !station->control.failed && !station->control.cleardown.active &&
+	       !v92_downstream_control_silence_requested(&station->control) &&
+	       station->control.peer_confirmation_received;
 }
 
 bool v92_phase4_digital_station_is_ed_ready(const struct v92_phase4_digital_station *station)

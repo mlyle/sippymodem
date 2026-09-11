@@ -523,6 +523,9 @@ static bool run_exchange(
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "law %u constellation %u station did not initialize",
 	      (unsigned int)law, (unsigned int)constellation);
+	CHECK(!v92_downstream_control_silence_requested(&station.control) &&
+	      !v92_downstream_control_note_e2u(&station.control),
+	      "initial training entered the rate-renegotiation silence procedure");
 	CHECK(v92_phase4_digital_station_select_upstream(&station, &cpd, &plan) ==
 		      V92_PHASE4_DIGITAL_STATION_INVALID_STATE,
 	      "selected upstream before channel measurement");
@@ -673,7 +676,7 @@ static bool run_exchange(
 	      station.control.transmit_stage ==
 		      V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
 	      station.control.cpu_received && station.control.transmit_acknowledges_cpu &&
-	      station.control.peer_acknowledged_cpd &&
+	      station.control.peer_confirmation_received &&
 	      station.control.suvu.acknowledges_cpd &&
 	      counts.initial_suvd >= 1u && (retry ? counts.cpd >= 4u : counts.cpd == 1u) &&
 	      counts.status_suvd >= 1u &&
@@ -1456,7 +1459,7 @@ static bool run_paired_station_exchange(
 	      analog.transmit.stage, analog.receive.stage,
 	      analog.transmit.control.received_suvd, analog.transmit.control.received_cpd,
 	      digital.control.suvu_received, digital.control.cpu_received,
-	      digital.control.peer_acknowledged_cpd,
+	      digital.control.peer_confirmation_received,
 	      digital.control.transmit_acknowledges_cpu);
 	CHECK(v92_phase4_analog_station_handoff(
 		      &analog, &analog_handoff_out) ==
@@ -2015,7 +2018,7 @@ static bool run_short_cpu(bool zero_rate)
 				}
 				CHECK(result == V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR &&
 				      station.control.failed && !station.control.cpu_received &&
-				      !station.control.peer_acknowledged_cpd,
+				      !station.control.peer_confirmation_received,
 				      "initial training accepted a CPus in place of a full mapping");
 				return true;
 			}
@@ -2072,6 +2075,207 @@ static bool test_cleardown_timing(void)
 	return true;
 }
 
+static bool run_silence_status(enum g711_law law, unsigned redundancy,
+	unsigned lookahead, unsigned requests, unsigned arrival, bool inverted, unsigned confirmation)
+{
+	struct v92_cpt_parameters cpt = cpt_parameters(law);
+	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	struct v92_cpd_parameters cpd = cpd_parameters(law);
+	struct v92_suvd_parameters suvd = { .request_silence = (requests & 1u) != 0u };
+	struct v92_control_event upstream = {
+		.type = V92_CONTROL_EVENT_SUVU,
+		.record.suvu = {
+			.frame_result = V92_SUVU_OK,
+			.parameters = {
+				.request_silence = (requests & 2u) != 0u,
+				.acknowledges_cpd = confirmation == 0u,
+			},
+		},
+	};
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx transmit;
+	struct pcm_downstream_rx receive;
+	struct v92_downstream_control control;
+	unsigned plain = 0u, acknowledged = 0u;
+
+	cpt.sign_redundancy = redundancy;
+	cpt.spectral_lookahead = lookahead;
+	cpd.extend_e2u = false;
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(&transmit, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+	      v92_downstream_control_init(&control, &transmit, &suvd, &cpd, &cpu, 160u) &&
+	      v92_downstream_control_ready(&control) &&
+	      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, &mapping,
+		V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK,
+	      "digital silence fixture did not initialize");
+	struct v92_downstream_control before = control;
+	CHECK(!v92_downstream_control_note_e2u(&control) &&
+	      memcmp(&control, &before, sizeof(before)) == 0,
+	      "silence accepted E2u before sending its acknowledgement");
+	for (unsigned clock = 0u; clock < 5000u; ++clock) {
+		if (clock == arrival) {
+			struct pcm_downstream_tx before = control.transmit;
+			CHECK(v92_downstream_control_receive(&control, &upstream) &&
+			      memcmp(&before, &control.transmit, sizeof(before)) == 0,
+			      "silence request rewrote the pending downstream record");
+		}
+		uint8_t octet;
+		struct pcm_downstream_event event;
+		CHECK(v92_downstream_control_transmit(&control, &octet) &&
+		      control.cpd_start_frame == 0u && !control.cpu_received &&
+		      !control.transmit_acknowledges_cpu && !v92_downstream_control_is_ed_ready(&control) &&
+		      (!v92_downstream_control_is_silence_ready(&control) || confirmation == 0u),
+		      "digital silence sent or invented parameter negotiation");
+		enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&receive,
+			inverted ? octet ^ 0x80u : octet, &event);
+		if (result == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(event.control.record.suvd.frame_result == V92_SUVD_OK &&
+			      event.control.record.suvd.parameters.request_silence == suvd.request_silence,
+			      "silence status lost its request or CRC");
+			if (event.control.record.suvd.parameters.acknowledges_cpu) {
+				CHECK(plain != 0u && clock >= arrival, "silence ACK replaced the first SUVd");
+				acknowledged++;
+				if (!receive.ed_requested)
+					CHECK(pcm_downstream_rx_expect_ed(&receive) == PCM_DOWNSTREAM_RX_OK,
+					      "silence receiver could not arm Ed after its status boundary");
+			} else {
+				CHECK(acknowledged == 0u, "silence ACK regressed");
+				plain++;
+			}
+		} else {
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
+			      "unexpected silence wire result %s", pcm_downstream_rx_result_name(result));
+		}
+		if (confirmation == 0u ? v92_downstream_control_is_silence_ready(&control) :
+		    acknowledged >= 2u && control.transmit.control_bit_index != 0u)
+			break;
+	}
+	CHECK((confirmation == 0u ? plain != 0u :
+		(acknowledged >= 2u && control.transmit.control_bit_index != 0u)) &&
+	      v92_downstream_control_is_silence_ready(&control) == (confirmation == 0u) &&
+	      memcmp(&control.cpu, &cpu, sizeof(cpu)) == 0,
+	      "digital silence did not acknowledge while retaining prior CPu");
+	/* Invalid parameter traffic cannot reinterpret the pause or replace its
+	 * retained mapping, but zero-rate cleardown remains authoritative. */
+	{
+		struct v92_downstream_control rejected = control;
+		struct v92_control_event event = upstream;
+		event.type = V92_CONTROL_EVENT_SUVU_REJECTED;
+		CHECK(v92_downstream_control_receive(&rejected, &event) &&
+		      memcmp(&rejected, &control, sizeof(control)) == 0,
+		      "damaged SUVu acknowledged silence or changed its state");
+		event = upstream;
+		event.record.suvu.parameters.request_silence = !event.record.suvu.parameters.request_silence;
+		CHECK(!v92_downstream_control_receive(&rejected, &event) && rejected.failed,
+		      "late silence change was accepted");
+		rejected.failed = false;
+		CHECK(memcmp(&rejected, &control, sizeof(control)) == 0,
+		      "rejected silence change altered the pending record");
+		event = (struct v92_control_event){
+			.type = V92_CONTROL_EVENT_CPU,
+			.record.cpu = { .frame_result = V92_CPU_OK, .parameters = cpu },
+		};
+		CHECK(!v92_downstream_control_receive(&rejected, &event) && rejected.failed,
+		      "silence accepted an ordinary CPu");
+		rejected.failed = false;
+		CHECK(memcmp(&rejected, &control, sizeof(control)) == 0,
+		      "rejected CPu replaced the retained parameters");
+		event.record.cpu.parameters.data_rate_number = 0u;
+		CHECK(v92_downstream_control_receive(&rejected, &event) && rejected.cleardown.active &&
+		      !v92_downstream_control_is_silence_ready(&rejected) &&
+		      !v92_downstream_control_note_e2u(&rejected),
+		      "silence hid a zero-rate cleardown request");
+		for (unsigned invalid = 0u; invalid < 4u; ++invalid) {
+			rejected = control;
+			switch (invalid) {
+			case 0: rejected.cpu_received = true; break;
+			case 1: rejected.repeat_cpd = true; break;
+			case 2: rejected.transmit_acknowledges_cpu = true; break;
+			case 3: rejected.cpd_start_frame = 1u; break;
+			}
+			CHECK(!v92_downstream_control_is_valid(&rejected),
+			      "silence admitted parameter state %u", invalid);
+		}
+		if (requests == 2u) {
+			rejected = control;
+			rejected.suvu.request_silence = false;
+			rejected.cpd_start_frame = 1u;
+			rejected.acknowledgement_end_frame = 0u;
+			CHECK(!v92_downstream_control_is_valid(&rejected),
+			      "parameter negotiation admitted the silence-only transmit stage");
+		}
+	}
+	before = control;
+	upstream.record.suvu.parameters.acknowledges_cpd = true;
+	CHECK((confirmation == 2u ? v92_downstream_control_note_e2u(&control) :
+		v92_downstream_control_receive(&control, &upstream)) &&
+	      v92_downstream_control_is_silence_ready(&control) && !v92_downstream_control_is_ed_ready(&control) &&
+	      memcmp(&before.transmit, &control.transmit, sizeof(control.transmit)) == 0 &&
+	      memcmp(&before.initial_cpd, &control.initial_cpd, sizeof(control.initial_cpd)) == 0,
+	      "silence confirmation lost the record tail or authorized data");
+	if (confirmation == 2u) {
+		upstream.record.suvu.parameters.acknowledges_cpd = false;
+		CHECK(v92_downstream_control_receive(&control, &upstream) &&
+		      v92_downstream_control_is_silence_ready(&control),
+		      "an in-flight non-ACK SUVu erased E2u confirmation");
+	}
+	/* Ed drains this partial SUVd and the coder's lookahead, not a CPd. */
+	uint64_t end_frame = control.transmit.accepted_frames +
+		(control.transmit.control_bit_index ?
+		 (control.transmit.control_sequence_bits - control.transmit.control_bit_index) / mapping.frame_bits : 0u);
+	struct v92_phase4_ed_tx tail;
+	bool ed_received = false;
+	CHECK(v92_phase4_ed_tx_init(&tail, &control.transmit, NULL) && !tail.cpd_pending,
+	      "silence Ed handoff required CPd");
+	for (unsigned clock = 0u; clock < 256u && !tail.transmit.complete; ++clock) {
+		struct pcm_downstream_symbol symbol;
+		enum pcm_downstream_tx_result generated = v92_phase4_ed_tx_next(&tail, &symbol);
+		if (generated == PCM_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(generated == PCM_DOWNSTREAM_TX_OK, "silence Ed transmitter stopped");
+		struct pcm_downstream_event event;
+		enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&receive,
+			inverted ? symbol.pcm.octet ^ 0x80u : symbol.pcm.octet, &event);
+		if (result == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(event.control.record.suvd.frame_result == V92_SUVD_OK &&
+			      event.control.record.suvd.parameters.acknowledges_cpu &&
+			      event.control.record.suvd.parameters.request_silence == suvd.request_silence,
+			      "final silence SUVd was truncated or changed");
+			acknowledged++;
+			if (!receive.ed_requested)
+				CHECK(pcm_downstream_rx_expect_ed(&receive) == PCM_DOWNSTREAM_RX_OK,
+				      "queued acknowledgement did not arm Ed");
+		} else if (result == PCM_DOWNSTREAM_RX_ED) {
+			CHECK(!ed_received && event.ed.bit_errors == 0u, "silence Ed lost continuous coding");
+			ed_received = true;
+		} else
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING, "silence tail emitted %s",
+			      pcm_downstream_rx_result_name(result));
+	}
+	CHECK(tail.transmit.complete && acknowledged != 0u && ed_received &&
+	      tail.transmit.accepted_frames == end_frame + 2u &&
+	      tail.transmit.transmitted_symbols == tail.transmit.accepted_frames * V90_CP_FRAME_INTERVALS,
+	      "silence handoff lost its complete SUVd, two Ed frames or six-symbol alignment");
+	return true;
+}
+
+static bool test_silence_status(void)
+{
+	static const unsigned arrivals[] = { 0u, 2041u, 2303u };
+	for (unsigned law = 0u; law < 2u; ++law)
+		for (unsigned redundancy = 0u; redundancy < 4u; ++redundancy)
+			for (unsigned lookahead = 0u; lookahead < 4u; ++lookahead)
+				for (unsigned requests = 1u; requests < 4u; ++requests)
+					for (size_t arrival = 0u; arrival < ARRAY_LENGTH(arrivals); ++arrival)
+						for (unsigned inverted = 0u; inverted < 2u; ++inverted)
+							for (unsigned confirmation = 0u; confirmation < 3u; ++confirmation)
+								CHECK(run_silence_status(law, redundancy, lookahead, requests,
+									arrivals[arrival], inverted, confirmation),
+								      "silence law=%u redundancy=%u lookahead=%u requests=%u arrival=%u invert=%u confirmation=%u",
+								      law, redundancy, lookahead, requests, arrivals[arrival], inverted, confirmation);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -2089,6 +2293,7 @@ int main(void)
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
 		{ "cleardown physical CP deadlines", test_cleardown_timing },
+		{ "digital silence status agreement", test_silence_status },
 	};
 	unsigned int failures = 0u;
 

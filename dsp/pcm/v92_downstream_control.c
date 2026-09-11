@@ -8,6 +8,12 @@
 
 enum { CPD_REPEAT_BASE_SAMPLES = 800 };
 
+static bool silence_requested(const struct v92_downstream_control *control)
+{
+	return control->previous_cpu && control->transmit.encoder.mapping.kind == V90_CP_TRAINING &&
+		(control->request_silence || (control->suvu_received && control->suvu.request_silence));
+}
+
 static bool cpu_storage_is_empty(
 	const struct v92_downstream_control *control)
 {
@@ -67,7 +73,8 @@ static bool transmit_stage_is_valid(
 	return stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD ||
 	       stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD ||
 	       stage == V92_DOWNSTREAM_CONTROL_CPD ||
-	       stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD;
+	       stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD ||
+	       stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD;
 }
 
 static bool downstream_state_matches(
@@ -103,6 +110,10 @@ static bool downstream_state_matches(
 			       control->transmit_acknowledges_cpu &&
 		       tx->control.suvd.request_silence ==
 			       control->request_silence;
+	case V92_DOWNSTREAM_CONTROL_SILENCE_SUVD:
+		return tx->v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
+			tx->control.suvd.acknowledges_cpu &&
+			tx->control.suvd.request_silence == control->request_silence;
 	}
 	return false;
 }
@@ -110,8 +121,24 @@ static bool downstream_state_matches(
 static bool owned_state_is_valid(
 	const struct v92_downstream_control *control)
 {
+	if (silence_requested(control))
+		return v92_phase4_cpd_tx_is_valid(&control->initial_cpd) &&
+			!control->initial_cpd.complete && control->initial_cpd.bit_index == 0u &&
+			control->cpd_start_frame == 0u && control->status_start_frame == 0u &&
+			!control->cpu_received && !control->transmit_acknowledges_cpu && !control->repeat_cpd &&
+			v92_cpu_parameters_are_valid(&control->cpu) && control->cpu.data_rate_number != 0u &&
+			control->cpu.law == control->transmit.encoder.mapping.law && !control->cpu.acknowledges_cpd &&
+			(control->suvu_received ? v92_suvu_parameters_are_valid(&control->suvu) :
+				(suvu_storage_is_empty(control) && !control->peer_confirmation_received)) &&
+			(!control->suvu.acknowledges_cpd || control->peer_confirmation_received) &&
+			(control->transmit_stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD ? control->suvu_received :
+				((control->transmit_stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD ||
+				  control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD) &&
+				 control->acknowledgement_end_frame == 0u)) &&
+			downstream_state_matches(control);
 	return v92_phase4_cpd_tx_is_valid(&control->initial_cpd) &&
 	       transmit_stage_is_valid(control->transmit_stage) &&
+	       control->transmit_stage != V92_DOWNSTREAM_CONTROL_SILENCE_SUVD &&
 	       (control->transmit_stage ==
 			V92_DOWNSTREAM_CONTROL_INITIAL_SUVD ||
 		control->transmit_stage ==
@@ -142,7 +169,7 @@ static bool owned_state_is_valid(
 	       (!control->cpu_received || control->suvu_received) &&
 	       (!control->repeat_cpd || control->cpd_start_frame != 0u) &&
 	       (!control->acknowledgement_end_frame || control->cpu_received) &&
-	       (!control->peer_acknowledged_cpd || control->suvu_received) &&
+	       (!control->peer_confirmation_received || control->suvu_received) &&
 	       (!control->transmit_acknowledges_cpu ||
 		((control->transmit_stage ==
 			 V92_DOWNSTREAM_CONTROL_CPD ||
@@ -158,7 +185,7 @@ static bool owned_state_is_valid(
 		 control->cpu.law == control->transmit.encoder.mapping.law &&
 		 (!control->cpu.acknowledges_cpd || control->cpu_received)) :
 		cpu_storage_is_empty(control)) &&
-	       control->peer_acknowledged_cpd ==
+	       control->peer_confirmation_received ==
 		((control->suvu_received &&
 		  control->suvu.acknowledges_cpd) ||
 		 (control->cpu_received &&
@@ -278,7 +305,8 @@ static bool fail(struct v92_downstream_control *control)
 static bool accept_cpu(struct v92_downstream_control *control,
 		       const struct v92_cpu_parameters *cpu)
 {
-	if (!v92_cpu_parameters_are_valid(cpu) || cpu->law != control->transmit.encoder.mapping.law)
+	if (silence_requested(control) || !v92_cpu_parameters_are_valid(cpu) ||
+	    cpu->law != control->transmit.encoder.mapping.law)
 		return false;
 	if (!control->suvu_received)
 		return true;
@@ -291,7 +319,7 @@ static bool accept_cpu(struct v92_downstream_control *control,
 			return false;
 		control->cpu.acknowledges_cpd |= cpu->acknowledges_cpd;
 	}
-	control->peer_acknowledged_cpd = control->suvu.acknowledges_cpd || control->cpu.acknowledges_cpd;
+	control->peer_confirmation_received = control->suvu.acknowledges_cpd || control->cpu.acknowledges_cpd;
 	return true;
 }
 
@@ -322,7 +350,7 @@ static bool accept_event(
 			control->suvu.acknowledges_cpd |=
 				event->record.suvu.parameters.acknowledges_cpd;
 		}
-		control->peer_acknowledged_cpd =
+		control->peer_confirmation_received |=
 			control->suvu.acknowledges_cpd ||
 			(control->cpu_received &&
 			 control->cpu.acknowledges_cpd);
@@ -393,7 +421,7 @@ bool v92_downstream_control_receive(struct v92_downstream_control *control,
 	 * valid CPu/SUVu at or after the deadline; damaged records do not count.
 	 * The output clock includes queued coder frames, so use the CPd's wire
 	 * end rather than the earlier instant its last source frame was accepted. */
-	if (!control->peer_acknowledged_cpd &&
+	if (!control->peer_confirmation_received &&
 	    control->transmit_stage == V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
 	    (event.type == V92_CONTROL_EVENT_CPU ||
 	     event.type == V92_CONTROL_EVENT_CPUS ||
@@ -423,6 +451,16 @@ static bool apply_pending_downstream(
 			return true;
 		control->transmit_stage =
 			V92_DOWNSTREAM_CONTROL_READY_FOR_CPD;
+	}
+	if (control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD &&
+	    control->suvu_received && silence_requested(control)) {
+		const struct v92_suvd_parameters suvd = {
+			.request_silence = control->request_silence, .acknowledges_cpu = true,
+		};
+		if (pcm_downstream_tx_start_suvd(&control->transmit, &suvd) != PCM_DOWNSTREAM_TX_OK)
+			return false;
+		control->transmit_stage = V92_DOWNSTREAM_CONTROL_SILENCE_SUVD;
+		return true;
 	}
 	if (control->suvu_received &&
 	    (control->transmit_stage == V92_DOWNSTREAM_CONTROL_READY_FOR_CPD ||
@@ -588,7 +626,9 @@ bool v92_downstream_control_transmit(
 			return fail(control);
 		/* Merely updating the stored SUVd while CPd is in flight does not
 		 * send an acknowledgement. Count the record only once sourced. */
-		if (control->transmit_acknowledges_cpu && !control->acknowledgement_end_frame &&
+		if ((control->transmit_acknowledges_cpu ||
+		     control->transmit_stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD) &&
+		    !control->acknowledgement_end_frame &&
 		    control->transmit.accepted_frames > before)
 			control->acknowledgement_end_frame = record_end;
 	}
@@ -606,8 +646,35 @@ bool v92_downstream_control_is_ed_ready(
 	 * the leading E2u symbols while the independent transmitter drains. */
 	return v92_downstream_control_is_valid(control) &&
 	       !control->failed && !control->cleardown.active && control->cpu_received &&
-	       control->peer_acknowledged_cpd &&
+	       control->peer_confirmation_received &&
 	       control->transmit_acknowledges_cpu &&
 	       control->acknowledgement_end_frame != 0u &&
 	       control->transmit.accepted_frames >= control->acknowledgement_end_frame;
+}
+
+bool v92_downstream_control_silence_requested(const struct v92_downstream_control *control)
+{
+	return v92_downstream_control_is_valid(control) && !control->failed &&
+		!control->cleardown.active && silence_requested(control);
+}
+
+static bool silence_acknowledgement_sent(const struct v92_downstream_control *control)
+{
+	return v92_downstream_control_silence_requested(control) &&
+		control->transmit_stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD &&
+		control->acknowledgement_end_frame != 0u &&
+		control->transmit.accepted_frames >= control->acknowledgement_end_frame;
+}
+
+bool v92_downstream_control_is_silence_ready(const struct v92_downstream_control *control)
+{
+	return silence_acknowledgement_sent(control) && control->peer_confirmation_received;
+}
+
+bool v92_downstream_control_note_e2u(struct v92_downstream_control *control)
+{
+	if (!silence_acknowledgement_sent(control))
+		return false;
+	control->peer_confirmation_received = true;
+	return true;
 }
