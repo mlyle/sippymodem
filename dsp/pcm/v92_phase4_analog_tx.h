@@ -56,6 +56,12 @@ enum v92_phase4_analog_tx_result v92_phase4_analog_tx_init_after_ru(
 	enum v92_constellation_size constellation, int16_t lu,
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu);
+/* Resume SUVu after the second TRN2u, retaining GPA and differential sign.
+ * Both status flags and prior parameter acknowledgements start clear. */
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_resume(
+	struct v92_phase4_analog_tx *tx,
+	const struct v92_phase4_modulator *modulator,
+	const struct v92_cpu_parameters *cpu);
 bool v92_phase4_analog_tx_is_valid(
 	const struct v92_phase4_analog_tx *tx);
 bool v92_phase4_analog_tx_is_e2u_ready(

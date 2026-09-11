@@ -2281,6 +2281,7 @@ V90_DOWNSTREAM_STREAM_TEST_OBJECTS := $(sort \
 		$(PCM_DOWNSTREAM_RX_TEST_OBJECTS)))
 V92_PHASE4_E2U_TEST_BINARY := $(BUILD_DIR)/test_v92_phase4_e2u
 V92_PHASE4_E2U_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_rate_pause.o \
 	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/test_v92_phase4_e2u.o \
 	$(BUILD_DIR)/v92_phase4_e2u.o \
@@ -5498,6 +5499,10 @@ $(BUILD_DIR)/v92_e2u_rx.o: \
 
 $(BUILD_DIR)/v92_phase4_e2u.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_e2u.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_rate_pause.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_rate_pause.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_phase4_digital_rx.o: \

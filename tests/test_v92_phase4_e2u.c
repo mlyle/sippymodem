@@ -8,6 +8,7 @@
 #include <v92_control_rx.h>
 #include <v92_cpd_direct.h>
 #include <v92_phase4_e2u.h>
+#include <v92_rate_pause.h>
 #include <v92_suvu.h>
 #include <v92_upstream_data_tx.h>
 #include <v92_upstream_data_rx.h>
@@ -912,6 +913,280 @@ static bool run_crossing(
 	return true;
 }
 
+static bool run_timed_pause(const struct v92_phase4_e2u_handoff *ah,
+	const struct v92_phase4_e2u_handoff *dh, bool analog_requested, bool digital_requested)
+{
+	struct v92_rate_pause_analog analog;
+	struct v92_rate_pause_digital digital;
+	struct v92_phase4_modulator expected = ah->state.analog.transmit;
+	enum g711_law law = ah->state.analog.cpu.law;
+	unsigned trn_symbols = 0u, rt_symbols = 0u;
+	bool fresh_suvd = false, fresh_suvu = false, silent = false;
+	struct v92_suvd_parameters resumed_suvd = { 0 };
+	CHECK(v92_rate_pause_analog_init(&analog, ah, digital_requested) &&
+	      v92_rate_pause_digital_init(&digital, dh, analog_requested), "timed pause init failed");
+	for (unsigned n = 0u; n < 12000u && !(fresh_suvd && fresh_suvu &&
+	     v92_rate_pause_analog_is_ready(&analog) && v92_rate_pause_digital_is_ready(&digital)); ++n) {
+		int16_t up, wanted;
+		uint8_t down;
+		bool analog_ready = v92_rate_pause_analog_is_ready(&analog);
+		bool digital_ready = v92_rate_pause_digital_is_ready(&digital);
+		struct pcm_downstream_tx saved = digital.downstream;
+		bool ed_done = pcm_downstream_tx_is_complete(&digital.downstream);
+		if (analog_ready) {
+			CHECK(v92_phase4_analog_tx_next(&analog.upstream.status, &up) == V92_PHASE4_ANALOG_TX_OK,
+			      "resumed analogue status stopped");
+		} else {
+			CHECK(v92_rate_pause_analog_transmit(&analog, &up), "pause analogue TX stopped at %u", n);
+			if (!analog.sending_status) {
+				unsigned bits = v92_phase4_modulator_bits_per_symbol(expected.constellation);
+				CHECK(v92_phase4_modulator_next(&expected, (1u << bits) - 1u, &wanted) ==
+					V92_PHASE4_MODULATOR_OK && wanted == up, "pause reset upstream coding at %u", n);
+				++trn_symbols;
+			}
+		}
+		if (digital_ready) {
+			struct pcm_downstream_symbol symbol;
+			CHECK(pcm_downstream_tx_next(&digital.downstream, &symbol) == PCM_DOWNSTREAM_TX_OK,
+			      "resumed digital status stopped");
+			down = symbol.pcm.octet;
+		} else {
+			CHECK(v92_rate_pause_digital_transmit(&digital, &down), "pause digital TX stopped at %u", n);
+			if (digital.sending_rt)
+				++rt_symbols;
+			else if (ed_done) {
+				struct v90_pcm_symbol zero;
+				CHECK(v90_pcm_symbol_make(&zero, law, 0u, true) && down == zero.octet &&
+				      memcmp(&saved, &digital.downstream, sizeof(saved)) == 0,
+				      "silence advanced the downstream coder");
+				silent = true;
+			}
+		}
+		if (analog_ready) {
+			struct pcm_downstream_event event;
+			enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&analog.downstream, down, &event);
+			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD,
+			      "fresh downstream status decoding failed: %s", pcm_downstream_rx_result_name(result));
+			if (result == PCM_DOWNSTREAM_RX_SUVD) {
+				CHECK(!event.control.record.suvd.parameters.request_silence &&
+				      !event.control.record.suvd.parameters.acknowledges_cpu,
+				      "pause retained old downstream acknowledgement");
+				fresh_suvd = true;
+				resumed_suvd = event.control.record.suvd.parameters;
+			}
+		} else
+			CHECK(v92_rate_pause_analog_receive(&analog, down), "pause analogue RX stopped at %u", n);
+		if (digital_ready) {
+			struct v92_control_event event;
+			enum v92_upstream_control_line_rx_result result =
+				v92_upstream_control_line_rx_sample(&digital.upstream, quantize(law, up), &event);
+			CHECK(result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT,
+			      "resumed upstream status stopped");
+			if (result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+				digital.event = event;
+		} else
+			CHECK(v92_rate_pause_digital_receive(&digital, quantize(law, up)), "pause digital RX stopped at %u", n);
+		if (digital.event.type == V92_CONTROL_EVENT_SUVU) {
+			CHECK(!digital.event.record.suvu.parameters.request_silence &&
+			      !digital.event.record.suvu.parameters.acknowledges_cpd &&
+			      digital.event.record.suvu.parameters.prefilter_level_db_q2_2 == V92_SUVU_NO_MEASUREMENT_Q2_2,
+			      "pause retained old upstream acknowledgement");
+			fresh_suvu = true;
+		}
+		CHECK(!digital.sending_rt || !analog_requested || fresh_suvu,
+		      "digital ignored the peer's outstanding silence request");
+	}
+	CHECK(fresh_suvd && fresh_suvu && silent && rt_symbols == PCM_R_SEQUENCE_SYMBOLS &&
+	      v92_rate_pause_analog_is_ready(&analog) && v92_rate_pause_digital_is_ready(&digital) &&
+	      trn_symbols % V92_PCM_PHASE4_TRN2U_ALIGNMENT == 0u &&
+	      (analog_requested ? trn_symbols == V92_RATE_PAUSE_TRN2U_SYMBOLS :
+		trn_symbols < V92_RATE_PAUSE_TRN2U_SYMBOLS),
+	      "timed pause incomplete: requested=%u/%u TRN=%u Rt=%u fresh=%u/%u",
+	      analog_requested, digital_requested, trn_symbols, rt_symbols, fresh_suvu, fresh_suvd);
+	struct v92_rate_pause_analog saved_a = analog;
+	struct v92_rate_pause_digital saved_d = digital;
+	int16_t stopped_up = 1234;
+	uint8_t stopped_down = 0x5a;
+	CHECK(!v92_rate_pause_analog_transmit(&analog, &stopped_up) &&
+	      !v92_rate_pause_digital_transmit(&digital, &stopped_down) &&
+	      !v92_rate_pause_analog_receive(&analog, 0) &&
+	      memcmp(&saved_a, &analog, sizeof(analog)) == 0 &&
+	      memcmp(&saved_d, &digital, sizeof(digital)) == 0 && stopped_up == 1234 && stopped_down == 0x5a,
+	      "ready pause consumed another signal interval");
+	/* The next control owner consumes the retained partial record, not a new
+	 * receiver epoch. Fresh SUVd releases the unchanged CPU with ACK cleared. */
+	CHECK(v92_phase4_analog_tx_note_suvd(&analog.upstream.status, &resumed_suvd) == V92_PHASE4_ANALOG_TX_OK,
+	      "resumed SUVd did not release CPu");
+	for (unsigned n = 0; n < V92_CPU_MAX_FRAME_BITS; ++n) {
+		int16_t up;
+		struct v92_control_event event;
+		CHECK(v92_phase4_analog_tx_next(&analog.upstream.status, &up) == V92_PHASE4_ANALOG_TX_OK,
+		      "resumed CPu transmitter stopped");
+		enum v92_upstream_control_line_rx_result result =
+			v92_upstream_control_line_rx_sample(&digital.upstream, quantize(law, up), &event);
+		CHECK(result == V92_UPSTREAM_CONTROL_LINE_RX_OK || result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT,
+		      "resumed CPu receiver stopped");
+		if (result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
+			continue;
+		CHECK(event.type == V92_CONTROL_EVENT_SUVU || event.type == V92_CONTROL_EVENT_CPU,
+		      "resumed control record rejected: %u", event.type);
+		if (event.type == V92_CONTROL_EVENT_CPU) {
+			uint8_t actual[V92_CPU_MAX_FRAME_BYTES] = { 0 }, wanted[V92_CPU_MAX_FRAME_BYTES] = { 0 };
+			size_t actual_bits, wanted_bits;
+			struct v92_cpu_parameters cpu = ah->state.analog.cpu;
+			unsigned width = 12u * v92_phase4_modulator_bits_per_symbol(expected.constellation);
+			cpu.acknowledges_cpd = false;
+			CHECK(v92_cpu_encode(&cpu, width, wanted, sizeof(wanted), &wanted_bits) == V92_CPU_OK &&
+			      v92_cpu_encode(&event.record.cpu.parameters, width, actual, sizeof(actual), &actual_bits) == V92_CPU_OK &&
+			      actual_bits == wanted_bits && memcmp(actual, wanted, sizeof(actual)) == 0,
+			      "pause changed resumed CPu parameters");
+			return true;
+		}
+	}
+	CHECK(false, "pause never resumed CPu");
+}
+
+static bool test_pause_contracts(const struct v92_phase4_e2u_handoff *ah,
+	const struct v92_phase4_e2u_handoff *dh)
+{
+	struct v92_rate_pause_analog analog, saved_a;
+	struct v92_rate_pause_digital digital, saved_d;
+	CHECK(v92_rate_pause_analog_init(&analog, ah, true) &&
+	      v92_rate_pause_digital_init(&digital, dh, true), "pause contract init failed");
+	saved_a = analog;
+	saved_d = digital;
+	CHECK(!v92_rate_pause_analog_init(&analog, dh, true) &&
+	      !v92_rate_pause_digital_init(&digital, ah, true) &&
+	      !v92_rate_pause_analog_init(&analog, NULL, false) &&
+	      !v92_rate_pause_digital_init(&digital, NULL, false) &&
+	      !v92_rate_pause_analog_transmit(&analog, NULL) &&
+	      !v92_rate_pause_digital_transmit(&digital, NULL) &&
+	      !v92_rate_pause_analog_transmit(&analog, (int16_t *)&analog) &&
+	      !v92_rate_pause_digital_transmit(&digital, (uint8_t *)&digital) &&
+	      memcmp(&analog, &saved_a, sizeof(analog)) == 0 &&
+	      memcmp(&digital, &saved_d, sizeof(digital)) == 0,
+	      "rejected pause call changed state");
+	struct v92_phase4_e2u_handoff codec = *ah;
+	codec.state.analog.downstream.training.stream.decoder.decision_plane = V90_PCM_MAPPING_CODEC;
+	CHECK(v92_rate_pause_analog_init(&analog, &codec, true) && analog.rt.decision_plane == V90_PCM_MAPPING_CODEC,
+	      "pause discarded the codec decision plane");
+	/* Overflow is a processing failure, not successful silence forever. */
+	digital.silence_symbols = UINT32_MAX;
+	uint8_t output = 0x5a;
+	CHECK(!v92_rate_pause_digital_transmit(&digital, &output) && digital.failed && output == 0x5a &&
+	      !v92_rate_pause_digital_is_ready(&digital), "silence overflow did not latch failure");
+	struct v92_phase4_analog_tx resumed, saved_tx;
+	struct v92_phase4_modulator invalid = ah->state.analog.transmit;
+	CHECK(v92_phase4_analog_tx_resume(&resumed, &invalid, &ah->state.analog.cpu) == V92_PHASE4_ANALOG_TX_OK,
+	      "resume contract fixture failed");
+	saved_tx = resumed;
+	invalid.previous_encoded_sign = 2;
+	CHECK(v92_phase4_analog_tx_resume(&resumed, &invalid, &ah->state.analog.cpu) ==
+	      V92_PHASE4_ANALOG_TX_INVALID_PARAMETERS &&
+	      v92_phase4_analog_tx_resume(&resumed, NULL, &ah->state.analog.cpu) ==
+	      V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT && memcmp(&saved_tx, &resumed, sizeof(resumed)) == 0,
+	      "invalid resume changed the status transmitter");
+	/* Ordinary rate selection is not allowed to bypass the silence agreement. */
+	digital = saved_d;
+	struct v92_phase4_record_tx rejected;
+	CHECK(start_cpu_record(&rejected, &ah->state.analog.transmit, &ah->state.analog.cpu, true),
+	      "late nonzero CPu fixture failed");
+	while (!v92_phase4_record_tx_is_complete(&rejected)) {
+		int16_t sample;
+		CHECK(v92_phase4_record_tx_next(&rejected, &sample) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_rate_pause_digital_transmit(&digital, &output), "late CPu transmitter stopped");
+		if (!v92_rate_pause_digital_receive(&digital, quantize(ah->state.analog.cpu.law, sample))) {
+			CHECK(v92_phase4_record_tx_is_complete(&rejected), "late CPu failed before its complete record");
+			break;
+		}
+	}
+	CHECK(digital.failed && !v92_rate_pause_digital_is_ready(&digital), "pause accepted a late nonzero CPu");
+	for (unsigned short_cp = 0; short_cp < 2; ++short_cp) {
+		digital = saved_d;
+		struct v92_phase4_modulator modulator = ah->state.analog.transmit;
+		unsigned width = 12u * v92_phase4_modulator_bits_per_symbol(modulator.constellation);
+		/* A peer-requested pause cannot time out into Rt on its own. */
+		for (unsigned n = 0; n < 2508; ++n) {
+			int16_t sample;
+			CHECK(v92_phase4_modulator_next(&modulator, (1u << (width / 12u)) - 1u, &sample) ==
+			      V92_PHASE4_MODULATOR_OK && v92_rate_pause_digital_transmit(&digital, &output) &&
+			      v92_rate_pause_digital_receive(&digital, quantize(ah->state.analog.cpu.law, sample)) &&
+			      !digital.sending_rt, "peer-requested pause ended without a fresh record");
+		}
+		/* Reject CRC damage, retain repeated request/old ACK, then let a
+		 * zero-rate CP supersede status for the eventual cleardown owner. */
+		for (unsigned record = 0; record < 5; ++record) {
+			uint8_t frame[V92_CPU_MAX_FRAME_BYTES] = { 0 };
+			size_t bits;
+			struct v92_phase4_record_tx tx;
+			if (record == 3) {
+				struct v92_cpu_parameters cpu = ah->state.analog.cpu;
+				const struct v92_cpus_parameters cpus = { 0 };
+				cpu.data_rate_number = 0;
+				CHECK((short_cp ? v92_cpus_encode(&cpus, width, frame, sizeof(frame), &bits) :
+				       v92_cpu_encode(&cpu, width, frame, sizeof(frame), &bits)) == V92_CPU_OK,
+				      "zero-rate pause record failed to encode");
+			} else {
+				struct v92_suvu_parameters suvu = {
+					.request_silence = record == 1,
+					.acknowledges_cpd = record == 2,
+				};
+				CHECK(v92_suvu_encode(&suvu, width, frame, sizeof(frame), &bits) == V92_SUVU_OK,
+				      "pause status fixture failed");
+				if (record == 0)
+					frame[4] ^= 0x80; /* Request bit with its original CRC. */
+			}
+			CHECK(v92_phase4_record_tx_init(&tx, &modulator, frame, sizeof(frame), bits) ==
+			      V92_PHASE4_RECORD_TX_OK, "pause record modulator failed");
+			while (!v92_phase4_record_tx_is_complete(&tx)) {
+				int16_t sample;
+				CHECK(v92_phase4_record_tx_next(&tx, &sample) == V92_PHASE4_RECORD_TX_OK &&
+				      v92_rate_pause_digital_transmit(&digital, &output) &&
+				      v92_rate_pause_digital_receive(&digital, quantize(ah->state.analog.cpu.law, sample)),
+				      "pause control wire stopped at record %u", record);
+				CHECK(record >= 3 || !digital.sending_rt, "damaged or stale status released Rt");
+			}
+			modulator = tx.modulator;
+		}
+		CHECK(digital.sending_rt && digital.event.type ==
+		      (short_cp ? V92_CONTROL_EVENT_CPUS : V92_CONTROL_EVENT_CPU),
+		      "later SUVu erased a pending zero-rate record");
+	}
+	return true;
+}
+
+static bool test_pause_rejected_ed(const struct v92_phase4_e2u_handoff *ah,
+	const struct v92_phase4_e2u_handoff *dh)
+{
+	struct v92_rate_pause_analog analog;
+	struct v92_rate_pause_digital digital;
+	bool corrupted = false;
+	CHECK(v92_rate_pause_analog_init(&analog, ah, true) &&
+	      v92_rate_pause_digital_init(&digital, dh, true), "rejected Ed init failed");
+	for (unsigned n = 0; n < 1000; ++n) {
+		uint8_t down;
+		CHECK(v92_rate_pause_digital_transmit(&digital, &down), "rejected Ed transmitter stopped");
+		if (!corrupted && analog.downstream.stage == PCM_DOWNSTREAM_RX_ED_SEARCH &&
+		    analog.downstream.ed_frames == V90_PHASE4_ED_FRAMES - 1u) {
+			/* Change a modulus label rather than a redundant shaping sign. */
+			struct v90_pcm_symbol symbol;
+			enum g711_law law = ah->state.analog.cpu.law;
+			CHECK(v90_pcm_symbol_parse(&symbol, law, down) &&
+			      v90_pcm_symbol_make(&symbol, law, symbol.ucode == 24u ? 36u : 24u, symbol.positive),
+			      "corrupt Ed symbol fixture failed");
+			down = symbol.octet;
+			corrupted = true;
+		}
+		if (!v92_rate_pause_analog_receive(&analog, down)) {
+			CHECK(corrupted && analog.failed && analog.downstream.ed_bit_errors != 0 &&
+			      !v92_rate_pause_analog_is_ready(&analog), "bad Ed did not fail the pause");
+			return true;
+		}
+	}
+	CHECK(false, "corrupt Ed was treated as successful silence: injected=%u frames=%u errors=%u stage=%u",
+	      corrupted, analog.downstream.ed_frames, analog.downstream.ed_bit_errors, analog.downstream.stage);
+}
+
 static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size constellation,
 	bool extended, uint8_t lookahead, unsigned offset, bool early_ed)
 {
@@ -1018,6 +1293,27 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 	      ah.state.analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE &&
 	      dh.state.digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
 	      "silence agreement entered a parameter/data handoff");
+	if (!early_ed) {
+		/* Independent downstream scheduling: E2u has completed while the
+		 * digital side still has a whole acknowledging SUVd/Ed tail to send.
+		 * Build that tail on the wire rather than inventing coder counters. */
+		CHECK(prepare_downstream(law, lookahead, NULL, &tx,
+		      &ah.state.analog.downstream.training, false, false) &&
+		      v92_phase4_ed_tx_init(&dh.state.digital.downstream.training, &tx, NULL),
+		      "delayed downstream pause tail failed");
+		enum pcm_downstream_rx_result armed = pcm_downstream_rx_expect_ed(&ah.state.analog.downstream.training);
+		CHECK(armed == PCM_DOWNSTREAM_RX_OK ||
+		      (armed == PCM_DOWNSTREAM_RX_INVALID_STATE &&
+		       ah.state.analog.downstream.training.stage == PCM_DOWNSTREAM_RX_V92_CONTROL),
+		      "delayed downstream tail could not arm Ed");
+	}
+	CHECK(run_timed_pause(&ah, &dh, true, false) &&
+	      run_timed_pause(&ah, &dh, false, true) &&
+	      run_timed_pause(&ah, &dh, true, true), "duplex timed pause failed");
+	if (!extended && early_ed && lookahead == 3u && offset == 0u)
+		CHECK(test_pause_contracts(&ah, &dh), "pause boundary contracts failed");
+	if (!extended && !early_ed && lookahead == 0u && offset == 1u)
+		CHECK(test_pause_rejected_ed(&ah, &dh), "pause rejected-Ed contract failed");
 	struct v92_phase4_e2u_analog_handoff *at = &ah.state.analog;
 	struct v92_phase4_e2u_digital_handoff *dt = &dh.state.digital;
 	struct v92_pcm_phase4_trn2u trn = { .modulator = at->transmit };

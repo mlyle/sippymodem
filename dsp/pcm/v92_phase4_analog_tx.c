@@ -230,6 +230,30 @@ static bool record_completed(struct v92_phase4_analog_tx *tx)
 	return true;
 }
 
+enum v92_phase4_analog_tx_result v92_phase4_analog_tx_resume(
+	struct v92_phase4_analog_tx *tx,
+	const struct v92_phase4_modulator *modulator,
+	const struct v92_cpu_parameters *cpu)
+{
+	struct v92_phase4_analog_tx next = { 0 };
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
+	};
+	if (tx == NULL || modulator == NULL || cpu == NULL)
+		return V92_PHASE4_ANALOG_TX_INVALID_ARGUMENT;
+	if (!v92_phase4_modulator_is_valid(modulator) ||
+	    !v92_upstream_control_init(&next.control, &suvu, cpu))
+		return V92_PHASE4_ANALOG_TX_INVALID_PARAMETERS;
+	next.control.cpu.acknowledges_cpd = false;
+	next.control.renegotiation = true;
+	next.signal.trn2u.modulator = *modulator;
+	if (start_record(&next, true) != V92_PHASE4_ANALOG_TX_OK ||
+	    !v92_phase4_analog_tx_is_valid(&next))
+		return V92_PHASE4_ANALOG_TX_INTERNAL_ERROR;
+	*tx = next;
+	return V92_PHASE4_ANALOG_TX_OK;
+}
+
 static bool trn2u_complete(const struct v92_phase4_analog_tx *tx)
 {
 	uint32_t count = tx->signal.trn2u.emitted_symbols;

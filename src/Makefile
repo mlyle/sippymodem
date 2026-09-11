@@ -247,6 +247,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_e2u_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_e2u.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_rate_pause.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_control_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_digital_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_channel.c \
