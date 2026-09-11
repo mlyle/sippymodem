@@ -335,11 +335,11 @@ static bool clock_downstream(
 	      "station downstream transmit stopped: %s valid=%u failed=%u "
 	      "suvu/tx/cpu/ack=%u/%u/%u/%u child=%u/%u bit=%zu",
 	      v92_phase4_digital_station_result_name(station_result),
-	      v92_phase4_digital_station_is_valid(station), station->failed,
-	      station->suvu_received, station->transmit_stage,
-	      station->cpu_received, station->transmit_acknowledges_cpu,
-	      station->transmit.stage, station->transmit.v92_control_kind,
-	      station->transmit.control_bit_index);
+	      v92_phase4_digital_station_is_valid(station), station->control.failed,
+	      station->control.suvu_received, station->control.transmit_stage,
+	      station->control.cpu_received, station->control.transmit_acknowledges_cpu,
+	      station->control.transmit.stage, station->control.transmit.v92_control_kind,
+	      station->control.transmit.control_bit_index);
 	result = pcm_downstream_rx_receive(receiver, octet, &event);
 	if (result == PCM_DOWNSTREAM_RX_BUFFERING ||
 	    result == PCM_DOWNSTREAM_RX_TRN2D_FRAME)
@@ -367,8 +367,8 @@ static bool clock_downstream(
 		      event.control.record.cpd.frame_result == V92_CPD_OK &&
 		      cpd_selection_equal(
 			      &event.control.record.cpd.parameters,
-			      &expected, station->transmit.encoder.mapping.law) &&
-		      (!expected.acknowledges_cpu || station->cpu_received),
+			      &expected, station->control.transmit.encoder.mapping.law) &&
+		      (!expected.acknowledges_cpu || station->control.cpu_received),
 		      "station emitted malformed CPd");
 		counts->cpd++;
 		return true;
@@ -441,26 +441,26 @@ static bool exercise_cpd_retry(
 	const struct v92_suvu_parameters *suvu, const struct v92_cpd_parameters *cpd,
 	enum g711_law law, int8_t polarity, bool silence, size_t *events)
 {
-	uint64_t deadline = station->status_start_frame * V90_CP_FRAME_INTERVALS +
-		800u + station->round_trip_delay_samples;
+	uint64_t deadline = station->control.status_start_frame * V90_CP_FRAME_INTERVALS +
+		800u + station->control.round_trip_delay_samples;
 	size_t status_count;
 
-	CHECK(station->transmit.transmitted_symbols < deadline, "retry deadline already passed");
-	while (station->transmit.transmitted_symbols + 1u < deadline)
+	CHECK(station->control.transmit.transmitted_symbols < deadline, "retry deadline already passed");
+	while (station->control.transmit.transmitted_symbols + 1u < deadline)
 		CHECK(clock_downstream(station, receive, counts, cpd, silence),
 		      "pre-deadline downstream stopped");
 	CHECK(feed_retry_status(station, source, suvu, false, law, polarity, events) &&
-	      !station->repeat_cpd, "valid SUVu retried before 100 ms + RTD");
+	      !station->control.repeat_cpd, "valid SUVu retried before 100 ms + RTD");
 	/* Flush the receiver's delayed valid decision before crossing the timer. */
 	CHECK(feed_retry_status(station, source, suvu, true, law, polarity, events) &&
-	      !station->repeat_cpd, "damaged SUVu retried before the deadline");
+	      !station->control.repeat_cpd, "damaged SUVu retried before the deadline");
 	CHECK(clock_downstream(station, receive, counts, cpd, silence) &&
-	      station->transmit.transmitted_symbols == deadline && !station->repeat_cpd,
+	      station->control.transmit.transmitted_symbols == deadline && !station->control.repeat_cpd,
 	      "timer alone restarted CPd");
 	CHECK(feed_retry_status(station, source, suvu, true, law, polarity, events) &&
-	      !station->repeat_cpd, "CRC-rejected SUVu triggered CPd retry");
+	      !station->control.repeat_cpd, "CRC-rejected SUVu triggered CPd retry");
 	CHECK(feed_retry_status(station, source, suvu, false, law, polarity, events) &&
-	      station->repeat_cpd, "complete unacknowledging SUVu did not trigger CPd retry");
+	      station->control.repeat_cpd, "complete unacknowledging SUVu did not trigger CPd retry");
 	for (size_t index = 0u; counts->cpd < 2u && index < DOWNSTREAM_LIMIT; ++index)
 		CHECK(clock_downstream(station, receive, counts, cpd, silence),
 		      "first repeated CPd stopped");
@@ -585,12 +585,12 @@ static bool run_exchange(
 			}
 		}
 		if (repeat == 1u)
-			CHECK(!station.suvu_received &&
-			      (station.transmit_stage ==
-				       V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD ||
-			       station.transmit_stage ==
-				       V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD) &&
-			      station.transmit.v92_control_kind ==
+			CHECK(!station.control.suvu_received &&
+			      (station.control.transmit_stage ==
+				       V92_DOWNSTREAM_CONTROL_INITIAL_SUVD ||
+			       station.control.transmit_stage ==
+				       V92_DOWNSTREAM_CONTROL_READY_FOR_CPD) &&
+			      station.control.transmit.v92_control_kind ==
 				      PCM_DOWNSTREAM_V92_CONTROL_SUVD,
 			      "rejected SUVu changed downstream procedure state");
 	}
@@ -603,19 +603,19 @@ static bool run_exchange(
 			      suvd.request_silence),
 		      "station CPd/SUVd completion stopped");
 	CHECK(counts.cpd == 1u && counts.status_suvd >= 1u &&
-	      station.transmit_stage ==
-		      V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
-	      !station.transmit_acknowledges_cpu &&
+	      station.control.transmit_stage ==
+		      V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
+	      !station.control.transmit_acknowledges_cpu &&
 	      !v92_phase4_digital_station_is_ed_ready(&station),
 	      "station did not send one CPd followed by SUVd: %zu/%zu/%zu "
 	      "events=%zu suvu=%u stage=%u child=%u/%u frame=%llu bit=%zu "
 	      "rx=%u errors=%llu",
 	      counts.initial_suvd, counts.cpd, counts.status_suvd, events,
-	      station.suvu_received,
-	      station.transmit_stage, station.transmit.stage,
-	      station.transmit.v92_control_kind,
-	      (unsigned long long)station.transmit.accepted_frames,
-	      station.transmit.control_bit_index, downstream_rx.stage,
+	      station.control.suvu_received,
+	      station.control.transmit_stage, station.control.transmit.stage,
+	      station.control.transmit.v92_control_kind,
+	      (unsigned long long)station.control.transmit.accepted_frames,
+	      station.control.transmit.control_bit_index, downstream_rx.stage,
 	      (unsigned long long)downstream_rx.trn2d_bit_errors);
 	if (retry)
 		CHECK(exercise_cpd_retry(&station, &downstream_rx, &counts, &suvu_tx,
@@ -669,12 +669,12 @@ static bool run_exchange(
 			      &station, &downstream_rx, &counts, &cpd,
 			      suvd.request_silence),
 		      "station downstream completion stopped");
-	CHECK(events >= 5u && (retry || events <= 7u) && station.suvu_received &&
-	      station.transmit_stage ==
-		      V92_PHASE4_DIGITAL_STATION_STATUS_SUVD &&
-	      station.cpu_received && station.transmit_acknowledges_cpu &&
-	      station.peer_acknowledged_cpd &&
-	      station.suvu.acknowledges_cpd &&
+	CHECK(events >= 5u && (retry || events <= 7u) && station.control.suvu_received &&
+	      station.control.transmit_stage ==
+		      V92_DOWNSTREAM_CONTROL_STATUS_SUVD &&
+	      station.control.cpu_received && station.control.transmit_acknowledges_cpu &&
+	      station.control.peer_acknowledged_cpd &&
+	      station.control.suvu.acknowledges_cpd &&
 	      counts.initial_suvd >= 1u && (retry ? counts.cpd >= 4u : counts.cpd == 1u) &&
 	      counts.status_suvd >= 1u &&
 	      counts.acknowledged_suvd >= 1u &&
@@ -1046,20 +1046,20 @@ static bool check_digital_mapping_handoff(
 	struct v92_cpd_parameters parameters;
 
 	/* A retained CPd-prime changes only the acknowledgment in the record. */
-	CHECK(v92_cpd_decode(prime.initial_cpd.sequence,
-		      sizeof(prime.initial_cpd.sequence), prime.initial_cpd.sequence_bits,
-		      prime.initial_cpd.frame_bits, &selection) == V92_CPD_OK,
+	CHECK(v92_cpd_decode(prime.control.initial_cpd.sequence,
+		      sizeof(prime.control.initial_cpd.sequence), prime.control.initial_cpd.sequence_bits,
+		      prime.control.initial_cpd.frame_bits, &selection) == V92_CPD_OK,
 	      "retained CPd fixture did not decode");
 	selection.acknowledges_cpu = true;
-	CHECK(v92_phase4_cpd_tx_init(&prime.initial_cpd, &prime.transmit, &selection),
+	CHECK(v92_phase4_cpd_tx_init(&prime.control.initial_cpd, &prime.control.transmit, &selection),
 	      "CPd-prime fixture did not encode");
-	prime.initial_cpd.bit_index = prime.initial_cpd.sequence_bits;
-	prime.initial_cpd.complete = true;
+	prime.control.initial_cpd.bit_index = prime.control.initial_cpd.sequence_bits;
+	prime.control.initial_cpd.complete = true;
 	CHECK(v92_phase4_digital_station_is_valid(&prime) &&
-	      v92_cpd_decode(prime.initial_cpd.sequence,
-		      sizeof(prime.initial_cpd.sequence), prime.initial_cpd.sequence_bits,
-		      prime.initial_cpd.frame_bits, &parameters) == V92_CPD_OK &&
-	      v92_pcm_mapping_init(&expected, prime.transmit.encoder.mapping.law,
+	      v92_cpd_decode(prime.control.initial_cpd.sequence,
+		      sizeof(prime.control.initial_cpd.sequence), prime.control.initial_cpd.sequence_bits,
+		      prime.control.initial_cpd.frame_bits, &parameters) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&expected, prime.control.transmit.encoder.mapping.law,
 		      &parameters) == V92_PCM_MAPPING_OK &&
 	      v92_phase4_digital_station_handoff(&prime, &handoff) ==
 		      V92_PHASE4_DIGITAL_STATION_OK &&
@@ -1146,7 +1146,7 @@ static bool check_cleardown_pair(
 	uint16_t rtd = 161u;
 
 	analog.round_trip_delay_samples = rtd;
-	digital.round_trip_delay_samples = rtd;
+	digital.control.round_trip_delay_samples = rtd;
 	if (initiators & 1u)
 		CHECK(v92_phase4_analog_station_start_cleardown(&analog) &&
 		      v92_phase4_analog_station_start_cleardown(&analog), "analogue cancellation failed");
@@ -1171,7 +1171,7 @@ static bool check_cleardown_pair(
 			      result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE,
 			      "digital close stopped at %u: %s", clock, v92_phase4_digital_station_result_name(result));
 			done[1] = result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE;
-			if (done[1]) ended[1] = digital.transmit.transmitted_symbols;
+			if (done[1]) ended[1] = digital.control.transmit.transmitted_symbols;
 		}
 		if (!drop_peer) {
 			if (!done[0]) {
@@ -1192,7 +1192,7 @@ static bool check_cleardown_pair(
 		     (done[0] && done[1]))) break;
 	}
 	for (unsigned int side = 0; side < 2u; ++side) {
-		const struct v92_cleardown *state = side == 0u ? &analog.cleardown : &digital.cleardown;
+		const struct v92_cleardown *state = side == 0u ? &analog.cleardown : &digital.control.cleardown;
 		if (drop_peer && !(initiators & (1u << side))) continue;
 		CHECK(done[side] && state->cp_end && v92_cleardown_is_ready(state, ended[side]),
 		      "side %u never completed bounded cleardown (%u/%u)", side, done[0], done[1]);
@@ -1211,7 +1211,7 @@ static bool check_cleardown_pair(
 		      analog.transmitted_symbols == ended[0]), "analogue close emitted another symbol");
 		CHECK(!done[1] || (v92_phase4_digital_station_transmit(&digital, &down) ==
 		      V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE && down == 123u &&
-		      digital.transmit.transmitted_symbols == ended[1]), "digital close emitted another symbol");
+		      digital.control.transmit.transmitted_symbols == ended[1]), "digital close emitted another symbol");
 	}
 	CHECK(!v92_phase4_analog_station_can_handoff(&analog) &&
 	      !v92_phase4_digital_station_is_ed_ready(&digital), "cleardown restarted data");
@@ -1305,8 +1305,8 @@ static bool run_paired_station_exchange(
 		enum v92_phase4_analog_station_result analog_result;
 		enum v92_phase4_digital_station_result digital_result;
 
-		if (!cleardown_checked && digital.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
-		    digital.initial_cpd.bit_index > digital.initial_cpd.frame_bits &&
+		if (!cleardown_checked && digital.control.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD &&
+		    digital.control.initial_cpd.bit_index > digital.control.initial_cpd.frame_bits &&
 		    analog.transmit.stage != V92_PHASE4_ANALOG_TX_TRN2U) {
 			for (unsigned int initiators = 1u; initiators <= 3u; ++initiators)
 				CHECK(check_cleardown_pair(&analog, &digital, polarity, initiators, false),
@@ -1350,7 +1350,7 @@ static bool run_paired_station_exchange(
 		      analog_result == V92_PHASE4_ANALOG_STATION_EVENT,
 		      "paired analogue receive stopped at %zu: %s", symbol,
 		      v92_phase4_analog_station_result_name(analog_result));
-		if (analog.transmit.control.cpu_sent && !digital.cpu_received &&
+		if (analog.transmit.control.cpu_sent && !digital.control.cpu_received &&
 		    !analog.transmit.control.cpu_pending) {
 			if (cpu_repeat_wait == 0u)
 				cpu_repeat_wait = 800u;
@@ -1452,9 +1452,9 @@ static bool run_paired_station_exchange(
 	      analog.transmit.control.peer_confirmation_received,
 	      analog.transmit.stage, analog.receive.stage,
 	      analog.transmit.control.received_suvd, analog.transmit.control.received_cpd,
-	      digital.suvu_received, digital.cpu_received,
-	      digital.peer_acknowledged_cpd,
-	      digital.transmit_acknowledges_cpu);
+	      digital.control.suvu_received, digital.control.cpu_received,
+	      digital.control.peer_acknowledged_cpd,
+	      digital.control.transmit_acknowledges_cpu);
 	CHECK(v92_phase4_analog_station_handoff(
 		      &analog, &analog_handoff_out) ==
 		      V92_PHASE4_ANALOG_STATION_OK &&
@@ -1473,9 +1473,9 @@ static bool run_paired_station_exchange(
 		     &digital.receive.signal.control,
 		     sizeof(digital_handoff_out.receive)) == 0 &&
 	      digital_handoff_out.transmit.transmit.transmitted_symbols ==
-		      digital.transmit.transmitted_symbols &&
+		      digital.control.transmit.transmitted_symbols &&
 	      memcmp(&digital_handoff_out.transmit.transmit.encoder,
-		     &digital.transmit.encoder, sizeof(digital.transmit.encoder)) == 0 &&
+		     &digital.control.transmit.encoder, sizeof(digital.control.transmit.encoder)) == 0 &&
 	      cpu_equal(&digital_handoff_out.cpu, &expected_cpu) &&
 	      v92_pcm_mapping_equal(&digital_handoff_out.mapping,
 				    &expected_upstream_mapping),
@@ -1794,10 +1794,10 @@ static bool test_early_cpu_acknowledgement(void)
 		      &downstream, &downstream.control.suvd, &cpd, 0u) == V92_PHASE4_DIGITAL_STATION_OK,
 	      "early-CPu station did not inherit completed SUVd");
 	CHECK(cpd_tx_contracts_are_transactional(
-		      &station.initial_cpd, &station.transmit),
+		      &station.control.initial_cpd, &station.control.transmit),
 	      "full CPd owner contract changed");
 	{
-		struct pcm_downstream_tx overlapping = station.transmit;
+		struct pcm_downstream_tx overlapping = station.control.transmit;
 		struct pcm_downstream_tx before = overlapping;
 
 		CHECK(!v92_phase4_cpd_tx_init(
@@ -1806,33 +1806,33 @@ static bool test_early_cpu_acknowledgement(void)
 		      memcmp(&overlapping, &before, sizeof(overlapping)) == 0,
 		      "overlapping full CPd initialization changed the line");
 	}
-	station.suvu_received = true;
-	station.suvu = (struct v92_suvu_parameters){
+	station.control.suvu_received = true;
+	station.control.suvu = (struct v92_suvu_parameters){
 		.prefilter_level_db_q2_2 = -7,
 		.wait_for_cpu = true,
 	};
-	station.cpu = cpu_parameters(G711_LAW_PCMU);
-	station.cpu_received = true;
+	station.control.cpu = cpu_parameters(G711_LAW_PCMU);
+	station.control.cpu_received = true;
 	CHECK(v92_phase4_digital_station_is_valid(&station),
 	      "early-CPu fixture is invalid");
 	for (size_t symbol = 0u;
-	     station.transmit_stage != V92_PHASE4_DIGITAL_STATION_CPD &&
+	     station.control.transmit_stage != V92_DOWNSTREAM_CONTROL_CPD &&
 		     symbol < DOWNSTREAM_LIMIT;
 	     ++symbol)
 		CHECK(v92_phase4_digital_station_transmit(&station, &octet) ==
 			      V92_PHASE4_DIGITAL_STATION_OK,
 		      "early-CPu downstream stopped at %zu", symbol);
 	cpd.acknowledges_cpu = true;
-	CHECK(station.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
-	      station.transmit_acknowledges_cpu &&
-	      station.transmit.v92_control_kind ==
+	CHECK(station.control.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD &&
+	      station.control.transmit_acknowledges_cpu &&
+	      station.control.transmit.v92_control_kind ==
 		      PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
-	      station.transmit.control.suvd.acknowledges_cpu &&
+	      station.control.transmit.control.suvd.acknowledges_cpu &&
 	      v92_cpd_decode(
-		      station.initial_cpd.sequence,
-		      sizeof(station.initial_cpd.sequence),
-		      station.initial_cpd.sequence_bits,
-		      station.initial_cpd.frame_bits, &selected_cpd) ==
+		      station.control.initial_cpd.sequence,
+		      sizeof(station.control.initial_cpd.sequence),
+		      station.control.initial_cpd.sequence_bits,
+		      station.control.initial_cpd.frame_bits, &selected_cpd) ==
 		      V92_CPD_OK &&
 	      selected_cpd.acknowledges_cpu &&
 	      selected_cpd.modulus_present && selected_cpd.filters_present &&
@@ -1902,7 +1902,7 @@ static bool run_short_cpu(bool zero_rate)
 			(void)v92_phase4_digital_rx_sample(&observer, raw, &event);
 			result = v92_phase4_digital_station_receive(&station, raw);
 			if (event.type == V92_CONTROL_EVENT_CPUS_REJECTED) {
-				CHECK(!station.failed && !station.cleardown.active,
+				CHECK(!station.control.failed && !station.control.cleardown.active,
 				      "corrupt zero-rate CPus started cleardown");
 				rejected = true;
 			}
@@ -1910,16 +1910,16 @@ static bool run_short_cpu(bool zero_rate)
 				CHECK(rejected, "CPus corruption case was not observed");
 				if (zero_rate) {
 					CHECK(result == V92_PHASE4_DIGITAL_STATION_OK &&
-					      !station.failed && station.cleardown.active &&
-					      station.cleardown.peer_requested && !station.cpu_received &&
+					      !station.control.failed && station.control.cleardown.active &&
+					      station.control.cleardown.peer_requested && !station.control.cpu_received &&
 					      !v92_phase4_digital_station_is_ed_ready(&station),
 					      "zero-rate CPus was treated as a data selection");
 					for (unsigned int clock = 0u; clock < 16000u; ++clock) {
 						uint8_t down;
 						result = v92_phase4_digital_station_transmit(&station, &down);
 						if (result == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE) {
-							CHECK(station.cleardown.acknowledgement_end &&
-							      !station.transmit.ed_requested &&
+							CHECK(station.control.cleardown.acknowledgement_end &&
+							      !station.control.transmit.ed_requested &&
 							      v92_phase4_digital_station_is_valid(&station),
 							      "early zero-rate CPus did not drain its acknowledgement");
 							return true;
@@ -1931,8 +1931,8 @@ static bool run_short_cpu(bool zero_rate)
 					return true;
 				}
 				CHECK(result == V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR &&
-				      station.failed && !station.cpu_received &&
-				      !station.peer_acknowledged_cpd,
+				      station.control.failed && !station.control.cpu_received &&
+				      !station.control.peer_acknowledged_cpd,
 				      "initial training accepted a CPus in place of a full mapping");
 				return true;
 			}

@@ -1211,7 +1211,7 @@ static bool check_peer_cleardown(
 			const struct v34_full_retrain retrain_before = calls[side].retrain;
 			bool closing_control = calls[side].stage == PCM_CALL_PHASE4 &&
 				(side == 0u ? calls[side].state.phase4.v92.owner.analog.station.cleardown.active :
-				 calls[side].state.phase4.v92.owner.digital.cleardown.active);
+				 calls[side].state.phase4.v92.owner.digital.control.cleardown.active);
 			struct pcm_call_data_event event = { 0 };
 			struct pcm_call_observation observation;
 			enum pcm_call_result result = calls[side].stage == PCM_CALL_PHASE4 ?
@@ -5769,8 +5769,8 @@ static bool run_v92_phase4_control(
 		if (!cleardown_checked && digital_control_active && analog.stage == PCM_CALL_PHASE4 &&
 		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
 		    analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU &&
-		    digital.state.phase4.v92.owner.digital.transmit_stage == V92_PHASE4_DIGITAL_STATION_CPD &&
-		    digital.state.phase4.v92.owner.digital.initial_cpd.bit_index != 0u) {
+		    digital.state.phase4.v92.owner.digital.control.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD &&
+		    digital.state.phase4.v92.owner.digital.control.initial_cpd.bit_index != 0u) {
 			CHECK(check_peer_cleardown(&analog, &digital, &channel, 0u) &&
 			      check_peer_cleardown(&analog, &digital, &channel, 1u),
 			      "PCM-upstream control cleardown failed");
@@ -5920,7 +5920,7 @@ static bool run_v92_phase4_control(
 		if (digital.stage == PCM_CALL_PHASE4 &&
 		    digital.state.phase4.v92.child ==
 			    PCM_CALL_V92_PHASE4_CONTROL &&
-		    digital.state.phase4.v92.owner.digital.cpu_received &&
+		    digital.state.phase4.v92.owner.digital.control.cpu_received &&
 		    first_cpu_received == SIZE_MAX)
 			first_cpu_received = clock;
 		if (analog_handoff_reached && digital_handoff_reached)
@@ -6029,7 +6029,7 @@ static bool run_v92_phase4_control(
 		      digital_configuration.v92_digital_phase4.cpd.extend_e2u &&
 	      v90_pcm_mapping_equal(
 		      &analog_control.station.receive.stream.decoder.mapping,
-		      &digital_control.transmit.encoder.mapping),
+		      &digital_control.control.transmit.encoder.mapping),
 	      "law %u delay %zu V.92 handoff failed: "
 	      "handoff=%u/%u control=%u/%u phase=%u/%u stage=%u/%u "
 	      "cpu=%zu/%zu records=%llu/%llu timer=%u/%u rtd=%u",
@@ -7203,8 +7203,8 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "TRN2u failed");
 	}
 	CHECK(test.control_started && test.call.state.phase4.v92.owner.digital.receive.channel.symbols == 12u &&
-	      !test.call.state.phase4.v92.owner.digital.cpu_received &&
-	      !test.call.state.phase4.v92.owner.digital.peer_acknowledged_cpd,
+	      !test.call.state.phase4.v92.owner.digital.control.cpu_received &&
+	      !test.call.state.phase4.v92.owner.digital.control.peer_acknowledged_cpd,
 	      "rate exchange reused initial training or acknowledgement state");
 	{
 		struct pcm_call expired = test.call;
@@ -7252,8 +7252,8 @@ static bool run_v92_rate_request(struct pcm_call *online,
 			struct v92_cpu_parameters cpu = path->cpu;
 			cpu.data_rate_number--;
 			cpu.acknowledges_cpd = false;
-			CHECK(test.call.state.phase4.v92.owner.digital.cpu_received &&
-			      memcmp(&cpu, &test.call.state.phase4.v92.owner.digital.cpu, sizeof(cpu)) == 0,
+			CHECK(test.call.state.phase4.v92.owner.digital.control.cpu_received &&
+			      memcmp(&cpu, &test.call.state.phase4.v92.owner.digital.control.cpu, sizeof(cpu)) == 0,
 			      "CPus did not retain the negotiated mapping");
 		}
 	}
@@ -7544,8 +7544,8 @@ static bool v92_data_cleardown(const struct v92_online_pair *online, unsigned in
 				} else {
 					if (!observing[role])
 						upstream = state->owner.digital.receive;
-					final = state->owner.digital.cleardown;
-					sent = state->owner.digital.transmit.transmitted_symbols;
+					final = state->owner.digital.control.cleardown;
+					sent = state->owner.digital.control.transmit.transmitted_symbols;
 				}
 				observing[role] |= receiving;
 			}
@@ -7813,10 +7813,10 @@ static bool run_v92_excess_lookahead(enum g711_law law, uint8_t maximum, bool cp
 				} else {
 					CHECK(calls[1].stage == PCM_CALL_PHASE4 &&
 					      calls[1].state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
-					      calls[1].state.phase4.v92.owner.digital.cpu_received &&
-					      calls[1].state.phase4.v92.owner.digital.cpu
+					      calls[1].state.phase4.v92.owner.digital.control.cpu_received &&
+					      calls[1].state.phase4.v92.owner.digital.control.cpu
 						      .spectral_lookahead_frames == maximum + 1u &&
-					      !calls[1].state.phase4.v92.owner.digital.transmit_acknowledges_cpu,
+					      !calls[1].state.phase4.v92.owner.digital.control.transmit_acknowledges_cpu,
 					      "excess CPu lookahead was acknowledged before rejection");
 				}
 				return true;
@@ -7829,7 +7829,7 @@ static bool run_v92_excess_lookahead(enum g711_law law, uint8_t maximum, bool cp
 		      "law %u digital accepted CPt lookahead %u above Jd %u", law, maximum + 1u, maximum);
 		CHECK(cpt || calls[1].stage != PCM_CALL_PHASE4 ||
 		      calls[1].state.phase4.v92.child != PCM_CALL_V92_PHASE4_CONTROL ||
-		      !calls[1].state.phase4.v92.owner.digital.cpu_received,
+		      !calls[1].state.phase4.v92.owner.digital.control.cpu_received,
 		      "law %u digital accepted CPu lookahead %u above Jd %u", law, maximum + 1u, maximum);
 	}
 	CHECK(false, "law %u CP%c excess lookahead never arrived", law, cpt ? 't' : 'u');
@@ -8220,8 +8220,8 @@ static bool run_v92_unavailable_selection(
 			struct v92_phase4_digital_station *station =
 				&digital.state.phase4.v92.owner.digital;
 
-			CHECK(station->transmit_stage == V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD &&
-			      v92_phase4_cpd_tx_init(&station->initial_cpd, &station->transmit,
+			CHECK(station->control.transmit_stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD &&
+			      v92_phase4_cpd_tx_init(&station->control.initial_cpd, &station->control.transmit,
 						    &unsupported),
 			      "could not inject the unsupported peer CPd");
 			injected = true;

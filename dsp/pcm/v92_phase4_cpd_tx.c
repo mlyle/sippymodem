@@ -28,7 +28,7 @@ bool v92_phase4_cpd_tx_is_valid(
 
 	if (transmitter == NULL || !g711_law_is_valid(transmitter->law) ||
 	    transmitter->frame_bits < V92_CPD_DOWNSTREAM_FRAME_MIN_BITS ||
-	    transmitter->frame_bits > V92_CPD_DOWNSTREAM_FRAME_MAX_BITS ||
+	    transmitter->frame_bits > V92_CPD_DOWNSTREAM_DATA_MAX_BITS ||
 	    transmitter->sequence_bits == 0u ||
 	    transmitter->sequence_bits > V92_CPD_MAX_FRAME_BITS ||
 	    transmitter->sequence_bits % transmitter->frame_bits != 0u ||
@@ -60,12 +60,11 @@ bool v92_phase4_cpd_tx_init(
 		    transmitter, sizeof(*transmitter), parameters,
 		    sizeof(*parameters)))
 		return false;
-	if (!pcm_downstream_tx_is_valid(downstream) ||
-	    downstream->protocol != PCM_PROTOCOL_V92 ||
-	    downstream->encoder.mapping.kind != V90_CP_TRAINING)
+	if (!pcm_downstream_tx_is_valid(downstream) || downstream->protocol != PCM_PROTOCOL_V92)
 		return false;
-	/* Initial negotiation must establish a complete usable mapping. Compact
-	 * records can acknowledge an existing mapping, but cannot create one. */
+	/* A selected CPd must describe a complete usable upstream mapping, whether
+	 * carried by downstream training or the old data mapping during FPE.
+	 * Compact records may acknowledge a mapping, but cannot create one. */
 	if (v92_pcm_mapping_init(&mapping, downstream->encoder.mapping.law,
 				 parameters) != V92_PCM_MAPPING_OK)
 		return false;

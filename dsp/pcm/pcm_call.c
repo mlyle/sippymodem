@@ -592,7 +592,7 @@ static bool cleardown_is_active_owned(const struct pcm_call *call)
 	    call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL)
 		return call->local_role == V90_ANALOG_MODEM ?
 			call->state.phase4.v92.owner.analog.station.cleardown.active :
-			call->state.phase4.v92.owner.digital.cleardown.active;
+			call->state.phase4.v92.owner.digital.control.cleardown.active;
 	return pcm_call_uses_conventional_upstream(call) &&
 	       call->stage == PCM_CALL_DATA_PATH &&
 	       (call->local_role == V90_ANALOG_MODEM ?
@@ -3087,7 +3087,7 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 		struct v92_phase4_digital_handoff handoff;
 
 		next.state.phase4.v92.training_mapping =
-			call->state.phase4.v92.owner.digital.transmit.encoder.mapping;
+			call->state.phase4.v92.owner.digital.control.transmit.encoder.mapping;
 		if (v92_phase4_digital_station_handoff(
 			    &call->state.phase4.v92.owner.digital,
 			    &handoff) != V92_PHASE4_DIGITAL_STATION_OK)
@@ -3234,7 +3234,7 @@ static bool activate_v92_cleardown(struct pcm_call *call)
 			v92_phase4_analog_station_start_cleardown(station);
 	}
 	struct v92_phase4_digital_station *station = &state->owner.digital;
-	return station->transmit.stage == PCM_DOWNSTREAM_TX_TRN2D ||
+	return station->control.transmit.stage == PCM_DOWNSTREAM_TX_TRN2D ||
 		v92_phase4_digital_station_start_cleardown(station);
 }
 
@@ -3327,7 +3327,7 @@ static enum pcm_call_result sample_v92_phase4(
 		const struct v92_jd *jd = &call->phase3_configuration.v92_digital.jd;
 		struct v92_phase4_digital_station *station = &call->state.phase4.v92.owner.digital;
 		uint16_t measured_symbols = station->receive.channel.symbols;
-		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.cpu;
+		const struct v92_cpu_parameters *cpu = &call->state.phase4.v92.owner.digital.control.cpu;
 		enum v92_phase4_digital_station_result station_result = prefix_sent ?
 			V92_PHASE4_DIGITAL_STATION_OK : v92_phase4_digital_station_transmit(
 				&call->state.phase4.v92.owner.digital,
@@ -3342,7 +3342,7 @@ static enum pcm_call_result sample_v92_phase4(
 		result = v92_digital_phase4_result(station_result);
 		if (result != PCM_CALL_OK)
 			return result;
-		if (station->cleardown.active)
+		if (station->control.cleardown.active)
 			return PCM_CALL_OK;
 		/* The final delayed TRN2u target completes the channel measurement
 		 * before SUVu can start CPd. Freeze wire filters and local receive
@@ -3357,7 +3357,7 @@ static enum pcm_call_result sample_v92_phase4(
 		    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 			struct v92_cpd_parameters cpd;
 			struct v92_upstream_plan plan;
-			const struct v92_phase4_cpd_tx *wire = &station->initial_cpd;
+			const struct v92_phase4_cpd_tx *wire = &station->control.initial_cpd;
 			int16_t level = station->receive.signal.control.signal.line.demodulator.lu;
 
 			if (v92_cpd_decode(wire->sequence, sizeof(wire->sequence),
@@ -3370,7 +3370,7 @@ static enum pcm_call_result sample_v92_phase4(
 			if (result != PCM_CALL_OK)
 				return result;
 		}
-		if (call->state.phase4.v92.owner.digital.cpu_received &&
+		if (call->state.phase4.v92.owner.digital.control.cpu_received &&
 		    (!downstream_rate_is_enabled(jd->data_rate_capability_mask, cpu->data_rate_number) ||
 		     cpu->spectral_lookahead_frames > jd->maximum_spectral_shaping_lookahead))
 			return PCM_CALL_UNUSABLE_SELECTION;

@@ -515,6 +515,99 @@ static bool fast_control_source(void *context, uint8_t *bits, size_t count)
 	return true;
 }
 
+static bool downstream_control_contracts(const struct v92_downstream_control *initial,
+	const struct v92_cpd_parameters *cpd, const struct v92_cpu_parameters *previous)
+{
+	const struct v92_suvd_parameters status = { 0 };
+	for (unsigned invalid = 0; invalid < 7; ++invalid) {
+		struct v92_downstream_control candidate = *initial;
+		struct v92_cpu_parameters cpu = *previous;
+		struct v92_cpd_parameters selection = *cpd;
+		struct v92_suvd_parameters suvd = status;
+		const struct v92_cpu_parameters *prior = &cpu;
+		switch (invalid) {
+		case 0: prior = NULL; break;
+		case 1: cpu.data_rate_number--; break;
+		case 2: cpu.data_rate_number = 0; break;
+		case 3: cpu.law = (enum g711_law)99; break;
+		case 4: suvd.request_silence = true; break;
+		case 5: suvd.acknowledges_cpu = true; break;
+		case 6: selection.acknowledges_cpu = true; break;
+		}
+		CHECK(!v92_downstream_control_init(&candidate, &initial->transmit, &suvd, &selection, prior, 80) &&
+		      memcmp(&candidate, initial, sizeof(candidate)) == 0, "invalid FPE entry %u changed state", invalid);
+	}
+	struct v92_downstream_control selected = *initial;
+	struct pcm_downstream_rx peer;
+	CHECK(pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &initial->transmit.encoder.mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK, "early SUVu peer failed");
+	struct v92_control_event early = { .type = V92_CONTROL_EVENT_SUVU };
+	CHECK(v92_downstream_control_receive(&selected, &early), "early SUVu rejected");
+	unsigned statuses = 0, selections = 0;
+	for (unsigned clock = 0; clock < 4000 && !selections; ++clock) {
+		uint8_t octet;
+		struct pcm_downstream_event record;
+		CHECK(v92_downstream_control_transmit(&selected, &octet), "early SUVu stopped first transmit");
+		enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&peer, octet, &record);
+		CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_SUVD ||
+		      result == PCM_DOWNSTREAM_RX_CPD, "early SUVu corrupted downstream record: %u", result);
+		statuses += result == PCM_DOWNSTREAM_RX_SUVD;
+		selections += result == PCM_DOWNSTREAM_RX_CPD;
+		CHECK(!selections || statuses == 1, "CPd preceded the first complete SUVd");
+	}
+	CHECK(selections == 1 && selected.cpd_start_frame != 0 && !selected.failed,
+	      "early SUVu did not produce SUVd then CPd");
+	selected = *initial;
+	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPUS };
+	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
+	CHECK(v92_downstream_control_receive(&selected, &event) && !selected.cpu_received,
+	      "CPus before SUVu changed selection");
+	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_SUVU };
+	CHECK(v92_downstream_control_receive(&selected, &event), "SUVu did not open selection");
+	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS };
+	event.record.cpus.parameters.data_rate_number = previous->data_rate_number - 1;
+	CHECK(v92_downstream_control_receive(&selected, &event) && selected.cpu_received &&
+	      !selected.peer_acknowledged_cpd && selected.cpu.data_rate_number == previous->data_rate_number - 1 &&
+	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
+	      "short CPu lost previous parameters or replaced the active data mapping");
+	event.record.cpus.parameters.acknowledges_cpd = true;
+	CHECK(v92_downstream_control_receive(&selected, &event) && selected.peer_acknowledged_cpd &&
+	      !v92_downstream_control_is_ed_ready(&selected), "received acknowledgment counted as transmitted");
+	event.record.cpus.parameters.acknowledges_cpd = false;
+	CHECK(!v92_downstream_control_receive(&selected, &event) && selected.failed,
+	      "conflicting repeated CPus was accepted");
+	for (unsigned invalid = 0; invalid < 4; ++invalid) {
+		selected = *initial;
+		event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPU };
+		event.record.cpu.parameters = *previous;
+		event.record.cpu.parameters.data_rate_number = 0;
+		switch (invalid) {
+		case 0: event.record.cpu.frame_result = V92_CPU_CRC_MISMATCH; break;
+		case 1: event.record.cpu.parameters.law = (enum g711_law)99; break;
+		case 2: event.record.cpu.parameters.law = previous->law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU; break;
+		case 3:
+			event.type = V92_CONTROL_EVENT_CPUS;
+			event.record.cpus.frame_result = V92_CPU_CRC_MISMATCH;
+			event.record.cpus.parameters.data_rate_number = 0;
+			break;
+		}
+		CHECK(!v92_downstream_control_receive(&selected, &event) && !selected.cleardown.active,
+		      "invalid zero-rate record %u caused cleardown", invalid);
+	}
+	selected = *initial;
+	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS_REJECTED };
+	CHECK(v92_downstream_control_receive(&selected, &event) && memcmp(&selected, initial, sizeof(selected)) == 0,
+	      "damaged control record changed exchange state");
+	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_SUVU };
+	event.record.suvu.parameters.request_silence = true;
+	CHECK(!v92_downstream_control_receive(&selected, &event) && selected.failed,
+	      "FPE accepted an SUVu silence request");
+	uint8_t octet = 123;
+	CHECK(!v92_downstream_control_transmit(&selected, &octet) && octet == 123,
+	      "failed exchange emitted a network octet");
+	return true;
+}
+
 static bool test_fast_control(enum g711_law law, uint8_t rate)
 {
 	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
@@ -525,20 +618,36 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 	struct v92_upstream_data_tx tx;
 	struct v92_upstream_data_rx rx;
 	struct v92_control_rx parser;
+	struct v92_downstream_control digital;
+	struct pcm_downstream_tx downstream;
+	struct pcm_downstream_rx peer;
+	struct v90_pcm_mapping old_downstream;
 	struct fast_control_source input = { 0 };
 	struct v92_suvu_parameters suvu = { .prefilter_level_db_q2_2 = -16 };
 	struct v92_cpu_parameters cpu = {
-		.law = law, .trn1d_ratio_q3_13 = 0x2000, .data_rate_number = 21,
+		.law = law, .trn1d_ratio_q3_13 = 0x2000, .data_rate_number = 11,
 		.sign_redundancy = 1, .spectral_lookahead_frames = 1,
 		.constellation_count = 1,
-		.transmit_constellations = { { .ucode_mask = { 2, 0, 0, 128 } } },
 	};
+	for (unsigned ucode = 16; ucode < 112; ++ucode)
+		cpu.transmit_constellations[0].ucode_mask[ucode / 8] |= (uint8_t)(1u << (ucode % 8));
+	struct v92_cpu_parameters previous_cpu = cpu;
+	previous_cpu.data_rate_number = rate == 1 ? 9 : rate == 16 ? 17 : 22;
+	previous_cpu.acknowledges_cpd = true;
+	const struct v92_suvd_parameters suvd = { 0 };
 	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&old_downstream, &previous_cpu) == V90_PCM_MAPPING_OK &&
+	      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &old_downstream) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &old_downstream,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_downstream_control_init(&digital, &downstream, &suvd, &cpd, &previous_cpu, 80) &&
+	      !digital.cpu_received && !digital.peer_acknowledged_cpd && !digital.cpu.acknowledges_cpd &&
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_tx_init(&tx, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
 	      v92_upstream_control_init(&input.control, &suvu, &cpu) &&
 	      v92_control_rx_init_upstream(&parser, mapping.data_bits_per_frame) == V92_CONTROL_RX_OK &&
 	      prepare_e2u(&channel, false, &e2u_tx, &e2u_rx), "fast control fixture failed");
+	CHECK(downstream_control_contracts(&digital, &cpd, &previous_cpu), "digital FPE contract failed");
 	while (!v92_e2u_rx_is_complete(&e2u_rx)) {
 		int16_t sample;
 		if (!v92_phase4_record_tx_is_complete(&e2u_tx))
@@ -553,7 +662,7 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 	CHECK(v92_upstream_data_rx_init(&rx, &e2u_rx.signal, &mapping, &direct_plan) ==
 	      V92_UPSTREAM_DATA_RX_OK, "fast control data handoff failed");
 	bool requested = false, receiving = false;
-	unsigned suv_count = 0, cpu_count = 0, ack_count = 0;
+	unsigned suv_count = 0, cpu_count = 0, ack_count = 0, cpd_count = 0;
 	for (unsigned i = 0; i < 6000; ++i) {
 		if (!requested && input.data_frames == 16 && !tx.queue_count) {
 			CHECK(v92_upstream_data_tx_start_rm(&tx) == V92_UPSTREAM_DATA_TX_OK, "RM failed");
@@ -574,6 +683,31 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 			&rx, wire_sample(&channel, sample), &frame);
 		CHECK(received == V92_UPSTREAM_DATA_RX_OK || received == V92_UPSTREAM_DATA_RX_FRAME,
 		      "fast control receiver stopped");
+		/* Exercise both control owners through the preceding data mappings.
+		 * Rf/Rf-bar and the final E2u/FB1u/B1u handoff are not included here. */
+		if (receiving) {
+			uint8_t octet;
+			struct pcm_downstream_event event;
+			CHECK(v92_downstream_control_transmit(&digital, &octet), "digital control stopped");
+			enum pcm_downstream_rx_result r = pcm_downstream_rx_receive(&peer, octet, &event);
+			CHECK(r == PCM_DOWNSTREAM_RX_BUFFERING || r == PCM_DOWNSTREAM_RX_SUVD || r == PCM_DOWNSTREAM_RX_CPD,
+			      "downstream control rejected: %u", r);
+			if (!v92_upstream_control_can_finish(&input.control)) {
+				if (r == PCM_DOWNSTREAM_RX_SUVD)
+					CHECK(!event.control.record.suvd.parameters.request_silence &&
+					      v92_upstream_control_note_suvd(&input.control, &event.control.record.suvd.parameters),
+					      "SUVd failed");
+				if (r == PCM_DOWNSTREAM_RX_CPD) {
+					cpd_count++;
+					CHECK(event.control.record.cpd.parameters.data_rate_number == cpd.data_rate_number &&
+					      v92_upstream_control_note_cpd(&input.control,
+						      event.control.record.cpd.parameters.acknowledges_cpu), "CPd failed");
+				}
+			}
+			if (!peer.ed_requested && v92_upstream_control_can_finish(&input.control) &&
+			    (r == PCM_DOWNSTREAM_RX_SUVD || r == PCM_DOWNSTREAM_RX_CPD))
+				CHECK(pcm_downstream_rx_expect_ed(&peer) == PCM_DOWNSTREAM_RX_OK, "Ed receive boundary lost");
+		}
 		if (received != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
 		if (frame.rm == V92_PCM_FRAME_RM_COMPLETE) {
@@ -591,23 +725,44 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 			if (event.type == V92_CONTROL_EVENT_SUVU) {
 				CHECK(!event.record.suvu.parameters.request_silence, "FPE SUVu requested silence");
 				ack_count += event.record.suvu.parameters.acknowledges_cpd;
-				if (!suv_count++) {
-					struct v92_suvd_parameters suvd = { 0 };
-					CHECK(v92_upstream_control_note_suvd(&input.control, &suvd), "SUVd failed");
-				}
+				suv_count++;
 			} else if (event.type == V92_CONTROL_EVENT_CPU) {
-				CHECK(!cpu_count++ && event.record.cpu.parameters.data_rate_number == cpu.data_rate_number &&
-				      !event.record.cpu.parameters.acknowledges_cpd &&
-				      v92_upstream_control_note_cpd(&input.control, true), "CPu/CPd exchange failed");
+				CHECK(!cpu_count++ && event.record.cpu.parameters.data_rate_number == cpu.data_rate_number,
+				      "CPu selection changed");
 			} else {
 				CHECK(event.type == V92_CONTROL_EVENT_NONE, "control wire record rejected: %u", event.type);
 			}
+			CHECK(v92_downstream_control_receive(&digital, &event), "digital rejected upstream record %u", event.type);
 		}
-		if (ack_count && input.control.record_complete && v92_upstream_control_can_finish(&input.control)) {
-			CHECK(cpu_count == 1 && input.control.completed_cpu_records == 1 &&
-			      input.data_frames == 16 && memcmp(&tx.encoder.mapping, &mapping, sizeof(mapping)) == 0,
+		if (ack_count && input.control.record_complete && v92_upstream_control_can_finish(&input.control) &&
+		    v92_downstream_control_is_ed_ready(&digital) && peer.ed_requested) {
+			CHECK(cpu_count == 1 && cpd_count == 1 && input.control.completed_cpu_records == 1 &&
+			      input.data_frames == 16 && memcmp(&tx.encoder.mapping, &mapping, sizeof(mapping)) == 0 &&
+			      memcmp(&digital.transmit.encoder.mapping, &old_downstream, sizeof(old_downstream)) == 0 &&
+			      digital.cpu.data_rate_number == cpu.data_rate_number && digital.previous_cpu,
 			      "fast control changed old mapping, repeated CPu, or fetched host payload");
-			return true;
+			CHECK(!v92_downstream_control_select(&digital, &cpd), "accepted CPd selection changed in flight");
+			struct v92_phase4_ed_tx tail;
+			CHECK(v92_phase4_ed_tx_init(&tail, &digital.transmit,
+				      digital.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD ? &digital.initial_cpd : NULL),
+			      "data-mode Ed tail was rejected");
+			for (unsigned clock = 0; clock < 2000; ++clock) {
+				struct pcm_downstream_symbol symbol;
+				enum pcm_downstream_tx_result r = v92_phase4_ed_tx_next(&tail, &symbol);
+				if (r == PCM_DOWNSTREAM_TX_COMPLETE) {
+					CHECK(pcm_downstream_rx_is_complete(&peer) &&
+					      v90_pcm_mapping_equal(&tail.transmit.encoder.mapping, &old_downstream),
+					      "Ed missing or old data mapping replaced before handoff");
+					return true;
+				}
+				CHECK(r == PCM_DOWNSTREAM_TX_OK, "data-mode Ed tail stopped");
+				struct pcm_downstream_event event;
+				enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&peer, symbol.pcm.octet, &event);
+				CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING || received == PCM_DOWNSTREAM_RX_CPD ||
+				      received == PCM_DOWNSTREAM_RX_SUVD || received == PCM_DOWNSTREAM_RX_ED,
+				      "invalid data-mode Ed tail: %u", received);
+			}
+			CHECK(false, "data-mode Ed tail never completed");
 		}
 	}
 	CHECK(false, "law %u rate %u fast control did not finish: SUVu=%u CPu=%u ack=%u",
@@ -1162,17 +1317,17 @@ static bool rate_exchange_init(struct rate_exchange *exchange,
 	CHECK(v92_phase4_digital_station_init_after_ru(station, ru, &tx,
 		      &previous, plan, &cpu, 161) == V92_PHASE4_DIGITAL_STATION_OK &&
 	      v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
-	      !station->cpu_received && !station->suvu_received &&
-	      !station->cpu.acknowledges_cpd && !station->peer_acknowledged_cpd &&
-	      !station->transmit_acknowledges_cpu && !station->cleardown.active &&
+	      !station->control.cpu_received && !station->control.suvu_received &&
+	      !station->control.cpu.acknowledges_cpd && !station->control.peer_acknowledged_cpd &&
+	      !station->control.transmit_acknowledges_cpu && !station->control.cleardown.active &&
 	      !v92_phase4_digital_station_is_ed_ready(station) &&
-	      station->transmit.control_configured &&
+	      station->control.transmit.control_configured &&
 	      memcmp(&station->upstream_plan, plan, sizeof(*plan)) == 0,
 	      "rate exchange reused acknowledgements or lost the receive plan");
 	cpu.acknowledges_cpd = false;
-	CHECK(memcmp(&station->cpu, &cpu, sizeof(cpu)) == 0 &&
-	      v92_cpd_decode(station->initial_cpd.sequence, sizeof(station->initial_cpd.sequence),
-		      station->initial_cpd.sequence_bits, station->initial_cpd.frame_bits, &previous) == V92_CPD_OK &&
+	CHECK(memcmp(&station->control.cpu, &cpu, sizeof(cpu)) == 0 &&
+	      v92_cpd_decode(station->control.initial_cpd.sequence, sizeof(station->control.initial_cpd.sequence),
+		      station->control.initial_cpd.sequence_bits, station->control.initial_cpd.frame_bits, &previous) == V92_CPD_OK &&
 	      !previous.acknowledges_cpu, "rate exchange lost prior CPu or reused old CPd acknowledgement");
 	return true;
 }
@@ -1193,9 +1348,9 @@ static bool rate_exchange_clock(struct rate_exchange *exchange, const int16_t *s
 	enum v92_phase4_digital_station_result r = v92_phase4_digital_station_transmit(station, &octet);
 	if (r == V92_PHASE4_DIGITAL_STATION_CLEARDOWN_COMPLETE) {
 		exchange->complete = true;
-		CHECK(exchange->zero_acknowledgements && !station->transmit.ed_requested &&
-		      station->transmit.transmitted_symbols >= station->cleardown.acknowledgement_end &&
-		      station->transmit.transmitted_symbols >= station->cleardown.cp_end + 881u,
+		CHECK(exchange->zero_acknowledgements && !station->control.transmit.ed_requested &&
+		      station->control.transmit.transmitted_symbols >= station->control.cleardown.acknowledgement_end &&
+		      station->control.transmit.transmitted_symbols >= station->control.cleardown.cp_end + 881u,
 		      "cleardown completed without wire acknowledgement/deadline");
 		return true;
 	}
@@ -1337,7 +1492,7 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	      training_rx.demodulator.previous_encoded_sign == 0 && training_rx.renegotiation,
 	      "Ru-bar handoff lost filter history or failed to reset coding");
 	CHECK(rate_exchange_init(&exchange, &ru, &cpd, &plan), "rate exchange did not start");
-	struct v92_cpu_parameters retained_cpu = exchange.station.cpu;
+	struct v92_cpu_parameters retained_cpu = exchange.station.control.cpu;
 	while (!v92_pcm_phase4_trn2u_line_rx_can_handoff(&training_rx)) {
 		int16_t sample;
 		CHECK(training_tx.emitted_symbols < 12 &&
@@ -1423,13 +1578,13 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 			retained_cpu.acknowledges_cpd = which == 4;
 			CHECK(v92_phase4_digital_station_cpu_parameters(&exchange.station, &selected) &&
 			      memcmp(&selected, &retained_cpu, sizeof(selected)) == 0 &&
-			      exchange.station.peer_acknowledged_cpd == (which == 4) &&
-			      !exchange.station.cleardown.active,
+			      exchange.station.control.peer_acknowledged_cpd == (which == 4) &&
+			      !exchange.station.control.cleardown.active,
 			      "CPus lost the retained mapping or reused an old acknowledgement");
 		}
 	}
 	CHECK(suvu_count == 1 && cpu_count >= 1, "missing post-Ru status/cleardown record");
-	CHECK(exchange.station.cleardown.active && exchange.station.cleardown.peer_requested &&
+	CHECK(exchange.station.control.cleardown.active && exchange.station.control.cleardown.peer_requested &&
 	      !v92_phase4_digital_station_is_ed_ready(&exchange.station), "zero CPus did not select cleardown");
 	for (unsigned i = 0; i < 4000 && !exchange.complete; ++i)
 		CHECK(rate_exchange_clock(&exchange, NULL), "rate exchange cleardown stopped");

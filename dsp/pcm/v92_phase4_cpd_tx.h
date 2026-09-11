@@ -10,8 +10,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Own a complete CPd record without enlarging the continuous
- * downstream transmitter's compact status-record storage. */
+/* Own a complete CPd record without enlarging the continuous downstream
+ * transmitter's compact status storage. Training and fast exchange use the
+ * supplied coder's current mapping; CPd selects only the future upstream. */
 struct v92_phase4_cpd_tx {
 	uint8_t sequence[V92_CPD_MAX_FRAME_BYTES];
 	size_t sequence_bits;

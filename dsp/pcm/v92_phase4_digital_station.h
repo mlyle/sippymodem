@@ -3,12 +3,10 @@
 #ifndef V92_PHASE4_DIGITAL_STATION_H
 #define V92_PHASE4_DIGITAL_STATION_H
 
-#include "pcm_downstream_tx.h"
-#include "v92_phase4_cpd_tx.h"
+#include "v92_downstream_control.h"
 #include "v92_phase4_digital_rx.h"
 #include "v92_pcm_mapping.h"
 #include "v92_upstream_plan.h"
-#include "v92_cleardown.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -24,13 +22,6 @@ enum v92_phase4_digital_station_result {
 	V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR,
 };
 
-enum v92_phase4_digital_station_tx_stage {
-	V92_PHASE4_DIGITAL_STATION_INITIAL_SUVD,
-	V92_PHASE4_DIGITAL_STATION_READY_FOR_CPD,
-	V92_PHASE4_DIGITAL_STATION_CPD,
-	V92_PHASE4_DIGITAL_STATION_STATUS_SUVD,
-};
-
 /* Own the digital modem's V.92 Phase 4 control exchange after E1u. The
  * upstream receiver remains continuous with the Phase 3 equalizer while the
  * inherited downstream transmitter remains continuous with TRN2d. A valid
@@ -43,26 +34,8 @@ enum v92_phase4_digital_station_tx_stage {
  * is serialized; receive and transmit share procedure state. */
 struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
-	struct pcm_downstream_tx transmit;
-	struct v92_phase4_cpd_tx initial_cpd;
+	struct v92_downstream_control control;
 	struct v92_upstream_plan upstream_plan;
-	/* During renegotiation this initially retains the preceding mapping,
-	 * without acknowledging it or setting cpu_received for the new exchange. */
-	struct v92_cpu_parameters cpu;
-	struct v92_suvu_parameters suvu;
-	struct v92_cleardown cleardown;
-	uint64_t cpd_start_frame;
-	uint64_t status_start_frame;
-	uint64_t acknowledgement_end_frame;
-	uint16_t round_trip_delay_samples;
-	enum v92_phase4_digital_station_tx_stage transmit_stage;
-	bool request_silence;
-	bool suvu_received;
-	bool cpu_received;
-	bool transmit_acknowledges_cpu;
-	bool peer_acknowledged_cpd;
-	bool repeat_cpd;
-	bool failed;
 };
 
 /* Exact duplex boundary after both selected controls are acknowledged. The
