@@ -691,6 +691,15 @@ static bool run_v92_width(
 		      PCM_DOWNSTREAM_TX_COMPLETE,
 	      "V.92 width %u law %u did not complete Ed exactly",
 	      frame_bits, law);
+	if (mapping.kind == V90_CP_DATA) {
+		struct pcm_downstream_tx saved_tx = transmitter;
+		struct pcm_downstream_rx saved_rx = receiver;
+		CHECK(pcm_downstream_tx_resume_after_rt(&transmitter) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
+		      pcm_downstream_rx_resume_after_rt(&receiver, true) == PCM_DOWNSTREAM_RX_INVALID_STATE &&
+		      memcmp(&transmitter, &saved_tx, sizeof(transmitter)) == 0 &&
+		      memcmp(&receiver, &saved_rx, sizeof(receiver)) == 0,
+		      "FPE's data-mapped Ed accepted Rt or changed on rejection");
+	}
 	return true;
 }
 

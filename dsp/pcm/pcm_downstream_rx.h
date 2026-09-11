@@ -95,10 +95,14 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	enum pcm_protocol protocol,
 	const struct v90_pcm_mapping *mapping,
 	enum v90_pcm_mapping_plane decision_plane);
-/* Resume the completed CPs/Ed decoder after Rt-bar. MP continues the
- * preceding coding histories without initial TRN2d. */
+/* Resume a completed training-mapped Ed decoder immediately after Rt-bar,
+ * without initial TRN2d. V.90 MP retains its coding histories. V.92 SUVd
+ * retains GPC and shaped histories; its unshaped sign chain starts with the
+ * final received Rt-bar sign (rt_bar_positive). The latter is ignored for
+ * V.90 and is not necessarily positive on a polarity-inverted channel.
+ * FPE's data-mapped control epoch cannot resume through Rt. */
 enum pcm_downstream_rx_result pcm_downstream_rx_resume_after_rt(
-	struct pcm_downstream_rx *receiver);
+	struct pcm_downstream_rx *receiver, bool rt_bar_positive);
 bool pcm_downstream_rx_is_valid(
 	const struct pcm_downstream_rx *receiver);
 

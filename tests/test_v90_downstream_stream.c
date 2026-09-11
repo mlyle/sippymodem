@@ -883,6 +883,185 @@ static bool test_rf_control_handoff(void)
 	return true;
 }
 
+static bool run_v92_rt_resume(enum g711_law law, uint8_t redundancy, uint8_t lookahead,
+	bool inverted, unsigned *ed_signs)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_tx tx;
+	struct pcm_downstream_rx rx;
+	const struct v92_suvd_parameters silence = {
+		.request_silence = true, .acknowledges_cpu = true,
+	};
+	unsigned records = 0;
+	CHECK(make_mapping_with_shaping(&mapping, law, V90_CP_TRAINING, redundancy, lookahead) &&
+	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_suvd(&tx, &silence) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_init(&rx, PCM_PROTOCOL_V92, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      PCM_DOWNSTREAM_RX_OK, "V.92 Rt fixture did not initialize");
+	for (unsigned i = 0; i < 4000u && !pcm_downstream_tx_is_complete(&tx); ++i) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		enum pcm_downstream_tx_result sent = pcm_downstream_tx_next(&tx, &symbol);
+		if (sent == PCM_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(sent == PCM_DOWNSTREAM_TX_OK, "V.92 pre-silence transmitter stopped");
+		enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&rx,
+			symbol.pcm.octet ^ (inverted ? 0x80u : 0u), &event);
+		if (received == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(event.control.record.suvd.parameters.request_silence &&
+			      event.control.record.suvd.parameters.acknowledges_cpu,
+			      "pre-silence status lost its request or acknowledgment");
+			if (++records == 2u + lookahead)
+				CHECK(pcm_downstream_tx_request_ed(&tx) == PCM_DOWNSTREAM_TX_OK &&
+				      pcm_downstream_rx_expect_ed(&rx) == PCM_DOWNSTREAM_RX_OK,
+				      "V.92 pre-silence Ed was rejected");
+		} else {
+			CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING || received == PCM_DOWNSTREAM_RX_TRN2D_FRAME ||
+			      received == PCM_DOWNSTREAM_RX_ED, "V.92 pre-silence receive: %s",
+			      pcm_downstream_rx_result_name(received));
+		}
+	}
+	CHECK(pcm_downstream_tx_is_complete(&tx) && pcm_downstream_rx_is_complete(&rx),
+	      "pre-silence Ed did not finish in both directions");
+	struct pcm_downstream_tx before_tx = tx;
+	struct pcm_downstream_rx before_rx = rx;
+	if (redundancy == 0u)
+		*ed_signs |= 1u << tx.encoder.signs.previous_pcm_sign;
+	struct pcm_r_tx rt_tx;
+	struct pcm_r_rx rt_rx;
+	CHECK(pcm_r_tx_init(&rt_tx, &mapping, PCM_R_RT) == PCM_R_TX_OK &&
+	      pcm_r_rx_init(&rt_rx, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RT) == PCM_R_RX_OK,
+	      "Rt receiver rejected the training mapping");
+	/* Silence and nonscrambled Rt bypass the suspended control coder. */
+	uint8_t zero;
+	CHECK(g711_ucode_octet(law, 0, !inverted, &zero), "could not make codec silence");
+	for (unsigned i = 0; i < 8004u; ++i)
+		CHECK(pcm_r_rx_receive(&rt_rx, zero) == PCM_R_RX_BUFFERING,
+		      "codec silence was mistaken for Rt");
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+		struct v90_pcm_symbol symbol;
+		CHECK(pcm_r_tx_next(&rt_tx, &symbol) == PCM_R_TX_OK, "Rt transmit stopped");
+		enum pcm_r_rx_result expected = i + 1u == PCM_R_SEQUENCE_SYMBOLS ? PCM_R_RX_BAR_COMPLETE :
+			i == PCM_R_SYMBOLS ? PCM_R_RX_BAR_STARTED :
+			i + 1u == PCM_R_RX_MIN_SYMBOLS ? PCM_R_RX_SIGNAL_DETECTED : PCM_R_RX_BUFFERING;
+		CHECK(pcm_r_rx_receive(&rt_rx, symbol.octet ^ (inverted ? 0x80u : 0u)) == expected,
+		      "Rt boundary changed at %u", i);
+	}
+	CHECK(pcm_downstream_tx_resume_after_rt(&tx) == PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_rx_resume_after_rt(&rx, !inverted) == PCM_DOWNSTREAM_RX_OK,
+	      "V.92 refused post-Rt control reentry");
+	before_tx.encoder.finishing = before_tx.encoder.shaper.finishing = false;
+	if (redundancy == 0u) {
+		before_tx.encoder.signs.previous_pcm_sign = 1u;
+		before_rx.stream.decoder.signs.previous_pcm_sign = !inverted;
+	}
+	CHECK(memcmp(&tx.encoder, &before_tx.encoder, sizeof(tx.encoder)) == 0 &&
+	      memcmp(&tx.scrambler, &before_tx.scrambler, sizeof(tx.scrambler)) == 0 &&
+	      memcmp(&rx.stream, &before_rx.stream, sizeof(rx.stream)) == 0 &&
+	      tx.accepted_frames == before_tx.accepted_frames &&
+	      tx.transmitted_symbols == before_tx.transmitted_symbols &&
+	      !tx.ed_requested && !rx.ed_requested && !tx.v92_control_record_accepted,
+	      "Rt lost coding history, consumed a frame, or kept stale completion state");
+	struct pcm_downstream_tx resumed_tx = tx;
+	struct pcm_downstream_rx resumed_rx = rx;
+	CHECK(pcm_downstream_tx_resume_after_rt(&tx) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
+	      pcm_downstream_rx_resume_after_rt(&rx, !inverted) == PCM_DOWNSTREAM_RX_INVALID_STATE &&
+	      memcmp(&tx, &resumed_tx, sizeof(tx)) == 0 && memcmp(&rx, &resumed_rx, sizeof(rx)) == 0,
+	      "Rt reentry accepted an unfinished exchange");
+	records = 0;
+	uint32_t history = before_tx.scrambler.history;
+	uint8_t previous_sign = 1u;
+	for (unsigned i = 0; i < 1000u && records < 3u; ++i) {
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
+		      "post-Rt SUVd transmitter stopped");
+		if (redundancy == 0u && i < 6u) {
+			/* First six source bits are SUVd sync ones. Independently
+			 * apply GPC and 5.4.5.1/V.90, seeded by Rt-bar's final +. */
+			uint8_t scrambled = (1u ^ (history >> 17) ^ (history >> 22)) & 1u;
+			history = (history << 1) | scrambled;
+			previous_sign ^= scrambled;
+			CHECK(symbol.pcm.positive == (previous_sign != 0u),
+			      "first post-Rt sign %u did not follow the wire predecessor", i);
+		}
+		enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&rx,
+			symbol.pcm.octet ^ (inverted ? 0x80u : 0u), &event);
+		CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING || received == PCM_DOWNSTREAM_RX_SUVD,
+		      "post-Rt control rejected or restarted TRN2d: %s", pcm_downstream_rx_result_name(received));
+		if (received == PCM_DOWNSTREAM_RX_SUVD) {
+			++records;
+			CHECK(!event.control.record.suvd.parameters.request_silence &&
+			      !event.control.record.suvd.parameters.acknowledges_cpu &&
+			      i + 1u == records * v92_suvd_frame_bits(mapping.frame_bits) / mapping.frame_bits * 6u,
+			      "post-Rt SUVd lost its boundary or retained stale acknowledgment/silence");
+		}
+	}
+	CHECK(records == 3u, "post-Rt SUVd did not resume");
+	unsigned stage = 0u, cpd_records = 0u, acknowledgements = 0u;
+	for (unsigned i = 0; i < 1000u && !pcm_downstream_tx_is_complete(&tx); ++i) {
+		if (pcm_downstream_tx_is_v92_control_boundary(&tx)) {
+			if (stage == 0u) {
+				const struct v92_cpd_base_parameters cpd = {
+					.four_times_gain_q0_16 = 0x4321u, .data_rate_number = 4u,
+				};
+				CHECK(pcm_downstream_tx_start_cpd(&tx, &cpd) == PCM_DOWNSTREAM_TX_OK,
+				      "post-Rt CPd was rejected");
+				stage = 1u;
+			} else if (stage == 1u && tx.v92_control_record_accepted) {
+				const struct v92_suvd_parameters ack = { .acknowledges_cpu = true };
+				CHECK(pcm_downstream_tx_start_suvd(&tx, &ack) == PCM_DOWNSTREAM_TX_OK,
+				      "post-Rt acknowledgment was rejected");
+				stage = 2u;
+			}
+		}
+		struct pcm_downstream_symbol symbol;
+		struct pcm_downstream_event event;
+		enum pcm_downstream_tx_result sent = pcm_downstream_tx_next(&tx, &symbol);
+		if (sent == PCM_DOWNSTREAM_TX_COMPLETE)
+			break;
+		CHECK(sent == PCM_DOWNSTREAM_TX_OK, "post-Rt parameter exchange stopped");
+		enum pcm_downstream_rx_result received = pcm_downstream_rx_receive(&rx,
+			symbol.pcm.octet ^ (inverted ? 0x80u : 0u), &event);
+		if (received == PCM_DOWNSTREAM_RX_CPD) {
+			CHECK(event.control.record.cpd.parameters.data_rate_number == 4u &&
+			      event.control.record.cpd.parameters.four_times_gain_q0_16 == 0x4321u &&
+			      !event.control.record.cpd.parameters.acknowledges_cpu,
+			      "post-Rt CPd changed");
+			cpd_records++;
+		} else if (received == PCM_DOWNSTREAM_RX_SUVD) {
+			CHECK(!event.control.record.suvd.parameters.request_silence,
+			      "post-Rt status requested silence again");
+			if (event.control.record.suvd.parameters.acknowledges_cpu && acknowledgements++ == 0u)
+				CHECK(pcm_downstream_tx_request_ed(&tx) == PCM_DOWNSTREAM_TX_OK &&
+				      pcm_downstream_rx_expect_ed(&rx) == PCM_DOWNSTREAM_RX_OK,
+				      "post-Rt Ed could not be armed");
+		} else {
+			CHECK(received == PCM_DOWNSTREAM_RX_BUFFERING ||
+			      (received == PCM_DOWNSTREAM_RX_ED && event.ed.bit_errors == 0u),
+			      "post-Rt parameter exchange rejected %s", pcm_downstream_rx_result_name(received));
+		}
+	}
+	CHECK(cpd_records == 1u && acknowledgements != 0u &&
+	      pcm_downstream_tx_is_complete(&tx) && pcm_downstream_rx_is_complete(&rx),
+	      "post-Rt CPd/SUVd/Ed did not finish exactly");
+	return true;
+}
+
+static bool test_v92_rt_resume(void)
+{
+	unsigned ed_signs = 0;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t redundancy = 0; redundancy <= 3; ++redundancy)
+			for (uint8_t lookahead = 0; lookahead <= 3; ++lookahead)
+				for (unsigned inverted = 0; inverted < 2u; ++inverted)
+					CHECK(run_v92_rt_resume(law, redundancy, lookahead, inverted, &ed_signs),
+					      "V.92 Rt law=%u redundancy=%u lookahead=%u inverted=%u",
+					      law, redundancy, lookahead, inverted);
+	CHECK(ed_signs == 3u, "Rt reentry did not cover both pre-silence ending signs");
+	return true;
+}
+
 static bool check_rt_resume(
 	const struct pcm_downstream_tx *completed_tx,
 	const struct pcm_downstream_rx *completed_rx)
@@ -898,7 +1077,7 @@ static bool check_rt_resume(
 	encoder.finishing = false;
 	encoder.shaper.finishing = false;
 	CHECK(pcm_downstream_tx_resume_after_rt(&tx) == PCM_DOWNSTREAM_TX_OK &&
-	      pcm_downstream_rx_resume_after_rt(&rx) == PCM_DOWNSTREAM_RX_OK &&
+	      pcm_downstream_rx_resume_after_rt(&rx, true) == PCM_DOWNSTREAM_RX_OK &&
 	      memcmp(&tx.encoder, &encoder, sizeof(encoder)) == 0 &&
 	      memcmp(&tx.scrambler, &completed_tx->scrambler, sizeof(tx.scrambler)) == 0 &&
 	      memcmp(&rx.stream, &completed_rx->stream, sizeof(rx.stream)) == 0 &&
@@ -908,7 +1087,7 @@ static bool check_rt_resume(
 	resumed = tx;
 	resumed_rx = rx;
 	CHECK(pcm_downstream_tx_resume_after_rt(&tx) == PCM_DOWNSTREAM_TX_INVALID_STATE &&
-	      pcm_downstream_rx_resume_after_rt(&rx) == PCM_DOWNSTREAM_RX_INVALID_STATE &&
+	      pcm_downstream_rx_resume_after_rt(&rx, true) == PCM_DOWNSTREAM_RX_INVALID_STATE &&
 	      memcmp(&tx, &resumed, sizeof(tx)) == 0 &&
 	      memcmp(&rx, &resumed_rx, sizeof(rx)) == 0,
 	      "Rt resumed an incomplete control exchange");
@@ -1438,6 +1617,7 @@ int main(void)
 		{ "Rf sequence and rejection matrix", test_rf_matrix },
 		{ "Rf contracts and recovery", test_rf_contracts },
 		{ "Rf to V.92 control handoff", test_rf_control_handoff },
+		{ "V.92 control reentry after Rt", test_v92_rt_resume },
 		{ "record-boundary request", test_boundary_request },
 		{ "contracts", test_contracts },
 	};

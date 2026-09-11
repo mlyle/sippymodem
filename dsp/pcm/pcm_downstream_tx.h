@@ -140,10 +140,12 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	struct pcm_downstream_tx *transmitter,
 	const struct v90_mp_record *record);
 
-/* V.90 9.6.1.2.6 resumes the completed CPs/Ed control coder with MP after
- * Rt-bar. Preserve scrambling, differential and spectral histories; no
- * intervening TRN2d starts a new coding epoch. Rt follows a validated CP;
- * queue its acknowledgement after one complete MP record. */
+/* Resume a completed training-mapped Ed coder after Rt-bar, without TRN2d.
+ * V.90 9.6.1.2.6 retains coding histories and queues the validated CP's
+ * acknowledgement after one complete MP. V.92 9.8 restarts SUVd with clear
+ * acknowledgement/silence flags, retaining GPC and shaped histories; its
+ * unshaped differential chain uses Rt-bar's final positive sign (8.8.5).
+ * The call owner must finish Rt-bar before consuming resumed output. */
 enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
 	struct pcm_downstream_tx *transmitter);
 

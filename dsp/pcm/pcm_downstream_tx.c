@@ -601,19 +601,38 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 enum pcm_downstream_tx_result pcm_downstream_tx_resume_after_rt(
 	struct pcm_downstream_tx *transmitter)
 {
-	struct pcm_downstream_tx next = { .protocol = PCM_PROTOCOL_V90 };
+	struct pcm_downstream_tx next = { 0 };
 	enum pcm_downstream_tx_result result;
 
 	if (!pcm_downstream_tx_is_complete(transmitter) ||
-	    transmitter->protocol != PCM_PROTOCOL_V90 ||
+	    transmitter->encoder.mapping.kind != V90_CP_TRAINING ||
 	    transmitter->stage != PCM_DOWNSTREAM_TX_ED)
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
+
+	next.protocol = transmitter->protocol;
 	next.encoder = transmitter->encoder;
 	next.encoder.finishing = false;
 	next.encoder.shaper.finishing = false;
 	next.scrambler = transmitter->scrambler;
 	next.accepted_frames = transmitter->accepted_frames;
 	next.transmitted_symbols = transmitter->transmitted_symbols;
+	if (next.protocol == PCM_PROTOCOL_V92) {
+		const struct v92_suvd_parameters suvd = { 0 };
+
+		/* Rt is outside the continuous scrambled/shaped stream. For
+		 * the single-sign coder, 8.8.5/V.92 seeds SUVd from Rt-bar's
+		 * final positive symbol, not the old Ed sign. */
+		if (next.encoder.mapping.sign_redundancy == 0u)
+			next.encoder.signs.previous_pcm_sign = 1u;
+		result = pcm_downstream_tx_start_suvd(&next, &suvd);
+		if (result != PCM_DOWNSTREAM_TX_OK)
+			return result;
+		next.stage = PCM_DOWNSTREAM_TX_V92_CONTROL;
+		if (!pcm_downstream_tx_is_valid(&next))
+			return PCM_DOWNSTREAM_TX_INTERNAL_ERROR;
+		*transmitter = next;
+		return PCM_DOWNSTREAM_TX_OK;
+	}
 	result = pcm_downstream_tx_start_mp(&next, &transmitter->control.mp);
 	if (result != PCM_DOWNSTREAM_TX_OK)
 		return result;

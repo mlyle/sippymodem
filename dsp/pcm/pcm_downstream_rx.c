@@ -46,6 +46,15 @@ static bool control_is_fresh(const struct pcm_downstream_rx *receiver)
 		       v92_control_is_fresh(&receiver->control.v92);
 }
 
+static bool initialize_control(struct pcm_downstream_rx *receiver)
+{
+	uint8_t frame_bits = receiver->stream.decoder.mapping.frame_bits;
+
+	return receiver->protocol == PCM_PROTOCOL_V90 ?
+		v90_mp_receiver_init(&receiver->control.mp, frame_bits) == V90_MP_RECEIVER_OK :
+		v92_control_rx_init_downstream(&receiver->control.v92, frame_bits) == V92_CONTROL_RX_OK;
+}
+
 static bool stage_matches_protocol(const struct pcm_downstream_rx *receiver)
 {
 	if (receiver->stage == PCM_DOWNSTREAM_RX_TRN2D)
@@ -126,7 +135,6 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 {
 	struct pcm_downstream_rx initialized = { 0 };
 	enum v90_pcm_stream_rx_result stream_result;
-	bool control_initialized;
 
 	if (receiver == NULL || mapping == NULL ||
 	    !pcm_protocol_is_valid(protocol))
@@ -144,16 +152,7 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 	if (stream_result != V90_PCM_STREAM_RX_OK)
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	initialized.protocol = protocol;
-	if (protocol == PCM_PROTOCOL_V90) {
-		control_initialized = v90_mp_receiver_init(
-			&initialized.control.mp,
-			mapping->frame_bits) == V90_MP_RECEIVER_OK;
-	} else {
-		control_initialized = v92_control_rx_init_downstream(
-			&initialized.control.v92,
-			mapping->frame_bits) == V92_CONTROL_RX_OK;
-	}
-	if (!control_initialized)
+	if (!initialize_control(&initialized))
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	initialized.stage = mapping->kind == V90_CP_TRAINING ?
 		PCM_DOWNSTREAM_RX_TRN2D : PCM_DOWNSTREAM_RX_V92_CONTROL;
@@ -164,21 +163,23 @@ enum pcm_downstream_rx_result pcm_downstream_rx_init(
 }
 
 enum pcm_downstream_rx_result pcm_downstream_rx_resume_after_rt(
-	struct pcm_downstream_rx *receiver)
+	struct pcm_downstream_rx *receiver, bool rt_bar_positive)
 {
-	struct pcm_downstream_rx resumed = {
-		.protocol = PCM_PROTOCOL_V90,
-		.stage = PCM_DOWNSTREAM_RX_MP_SEARCH,
-	};
+	struct pcm_downstream_rx resumed = { 0 };
 
 	if (!pcm_downstream_rx_is_complete(receiver) ||
-	    receiver->protocol != PCM_PROTOCOL_V90)
+	    receiver->stream.decoder.mapping.kind != V90_CP_TRAINING)
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
+	resumed.protocol = receiver->protocol;
 	resumed.stream = receiver->stream;
-	if (v90_mp_receiver_init(
-		    &resumed.control.mp, resumed.stream.decoder.mapping.frame_bits) !=
-		    V90_MP_RECEIVER_OK ||
-	    !pcm_downstream_rx_is_valid(&resumed))
+	if (resumed.protocol == PCM_PROTOCOL_V90) {
+		resumed.stage = PCM_DOWNSTREAM_RX_MP_SEARCH;
+	} else {
+		resumed.stage = PCM_DOWNSTREAM_RX_V92_CONTROL;
+		if (resumed.stream.decoder.mapping.sign_redundancy == 0u)
+			resumed.stream.decoder.signs.previous_pcm_sign = rt_bar_positive;
+	}
+	if (!initialize_control(&resumed) || !pcm_downstream_rx_is_valid(&resumed))
 		return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 	*receiver = resumed;
 	return PCM_DOWNSTREAM_RX_OK;

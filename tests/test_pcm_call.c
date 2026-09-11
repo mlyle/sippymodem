@@ -4413,7 +4413,7 @@ static bool rrn_peer_receive(
 		    octet != expected.octet)
 			return false;
 		if (++peer->rt_symbols == PCM_R_SEQUENCE_SYMBOLS) {
-			if (pcm_downstream_rx_resume_after_rt(&peer->downstream.training) != PCM_DOWNSTREAM_RX_OK)
+			if (pcm_downstream_rx_resume_after_rt(&peer->downstream.training, positive) != PCM_DOWNSTREAM_RX_OK)
 				return false;
 			peer->downstream_stage = RRN_PEER_DOWNSTREAM_TRAINING;
 		}
