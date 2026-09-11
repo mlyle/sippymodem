@@ -512,27 +512,25 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		s->bit += nbits;
 		bit_cnt --;
 		ret++;
+		/* Flags are synchronous eight-bit patterns, not async characters.
+		 * Require adjacent flags and inspect every newly received bit end. */
+		for (int bit = nbits - 1; bit >= 0; --bit) {
+			if (((s->data >> bit) & 0xffffu) != 0x7e7eu ||
+			    d->ec_enable || (!m->caller && d->tx_count != 0))
+				continue;
+			if (!m->caller)
+				detector_start_adp_reply(m);
+			else {
+				d->ec_enable = m->cfg.ec != 0;
+				finish = 1;
+			}
+		}
 		while(s->bit && s->data&(0x1<<(s->bit-1))) /* skip marks */
 			s->bit--;
 		while (s->bit >= 10 ) {
 			ch = s->data >> (s->bit-9);
 			s->bit-= 10;
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
-			if (ch == HDLC_FLAG) {
-				PACK_DBG("hdlc flag detected.\n");
-				/* A peer may resume HDLC immediately after physical
-				 * retrain. Reply once; continued flags must not keep
-				 * postponing the selected V.42 transition. */
-				if (!d->ec_enable && (m->caller || d->tx_count == 0)) {
-					if (!m->caller)
-						detector_start_adp_reply(m);
-					else {
-						d->ec_enable = m->cfg.ec != 0;
-						finish = 1;
-					}
-				}
-				continue;
-			}
 			if (!detector_accept_pattern_character(m, d, ch))
 				continue;
 
@@ -580,7 +578,8 @@ void modem_detector_start(struct modem *m)
 			rate * V42_T400_MS / 1000;
 	}
 	m->pack.bit  = m->unpack.bit  = 0;
-	m->pack.data = m->unpack.data = 0;
+	m->pack.data = 0;
+	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */
 }
 
 void modem_detector_reframe(struct modem *m)
@@ -589,7 +588,8 @@ void modem_detector_reframe(struct modem *m)
 	 * selected reply or the suspended detection timer (V.42 7.10/7.11). */
 	m->packer.detector.rx_count = 0;
 	m->pack.bit = m->unpack.bit = 0;
-	m->pack.data = m->unpack.data = 0;
+	m->pack.data = 0;
+	m->unpack.data = 0xffffu; /* No flag history before this carrier epoch. */
 }
 
 

@@ -490,6 +490,82 @@ static bool test_v42_flags_do_not_extend_detection(void)
 	return true;
 }
 
+static bool receive_detection_bits(
+	struct modem *modem, const uint8_t *bits, size_t count, unsigned int width)
+{
+	for (size_t offset = 0; offset < count;) {
+		unsigned int chunk = count - offset < width ?
+			(unsigned int)(count - offset) : width;
+		uint8_t value = 0;
+
+		for (unsigned int bit = 0; bit < chunk; ++bit)
+			value = (uint8_t)((value << 1) | bits[offset++]);
+		CHECK(modem_detector_put_bits(modem, (int)chunk, &value, 1) == 1,
+		      "detector did not consume a %u-bit group", chunk);
+	}
+	return true;
+}
+
+static bool test_v42_requires_adjacent_synchronous_flags(void)
+{
+	static const struct {
+		uint32_t bits;
+		unsigned int count;
+		bool flags;
+	} patterns[] = {
+		{ 0x7e7e, 16, true },
+		{ 0x0fd, 10, false }, /* Start, async 0x7e, stop. */
+		{ 0x7e, 8, false },
+		{ (0x7e << 9) | 0x100 | 0x7e, 17, false }, /* Mark gap. */
+		{ 0x7e7e, 15, false }, /* Missing the first flag's opening zero. */
+	};
+
+	for (int caller = 0; caller <= 1; ++caller) {
+		for (unsigned int width = 1; width <= 8; ++width) {
+			struct modem modem = {
+				.name = "V.42 flag boundary", .caller = caller,
+				.tx_rate = 9600, .cfg = { .ec = 1, .ec_detector = 1 },
+			};
+			uint8_t bits[64];
+
+			for (unsigned int prefix = 0; prefix < 8; ++prefix) {
+				for (size_t pattern = 0; pattern < ARRAY_LENGTH(patterns);
+				     ++pattern) {
+					memset(bits, 1, sizeof(bits));
+					for (unsigned int bit = 0; bit < patterns[pattern].count;
+					     ++bit)
+						bits[prefix + bit] = (uint8_t)((patterns[pattern].bits >>
+							(patterns[pattern].count - bit - 1)) & 1u);
+					modem_detector_start(&modem);
+					CHECK(receive_detection_bits(&modem, bits, sizeof(bits), width),
+					      "flag fixture stopped");
+					CHECK((modem.packer.detector.ec_enable != 0) ==
+					      patterns[pattern].flags,
+					      "flag decision changed for pattern %zu, caller %d, width %u, prefix %u",
+					      pattern, caller, width, prefix);
+				}
+			}
+			for (unsigned int split = 1; split < 16; ++split) {
+				memset(bits, 1, sizeof(bits));
+				for (unsigned int bit = 0; bit < 16; ++bit)
+					bits[bit] = (uint8_t)((0x7e7eu >> (15 - bit)) & 1u);
+				modem_detector_start(&modem);
+				CHECK(receive_detection_bits(&modem, bits, split, width),
+				      "pre-retrain flags stopped");
+				modem_detector_reframe(&modem);
+				CHECK(receive_detection_bits(
+					      &modem, bits + split, sizeof(bits) - split, width) &&
+				      modem.packer.detector.ec_enable == 0,
+				      "flag adjacency survived retrain at bit %u", split);
+				CHECK(receive_detection_bits(&modem, bits, sizeof(bits), width) &&
+				      modem.packer.detector.ec_enable == 1,
+				      "post-retrain flags were lost at bit %u", split);
+			}
+		}
+	}
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -651,6 +727,8 @@ int main(void)
 		  test_v42_waits_for_a_delayed_peer },
 		{ "V.42 bounded HDLC flag transition",
 		  test_v42_flags_do_not_extend_detection },
+		{ "V.42 synchronous flag boundaries",
+		  test_v42_requires_adjacent_synchronous_flags },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
