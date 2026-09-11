@@ -305,8 +305,32 @@ struct pcm_call_v92_analog_data {
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 };
 
+enum pcm_call_v92_fast_stage {
+	PCM_CALL_V92_FAST_IDLE,
+	PCM_CALL_V92_FAST_WAIT_PRIME,
+	PCM_CALL_V92_FAST_DRAIN,
+	PCM_CALL_V92_FAST_RF,
+	PCM_CALL_V92_FAST_CONTROL,
+	PCM_CALL_V92_FAST_FINISH,
+};
+
+/* Digital response to RM retains the live upstream decoder. The downstream
+ * data owner drains before Rf, then takes back Ed/B1d at mutual acknowledgment.
+ * Receive E2u/FB1u and transmit Ed have independent completion boundaries. */
+struct pcm_call_v92_fast_exchange {
+	struct v92_downstream_control control;
+	struct v92_control_rx receive;
+	struct pcm_r_tx rf;
+	uint64_t b1_frame;
+	uint32_t deadline_remaining;
+	enum pcm_call_v92_fast_stage stage;
+	bool rm_complete;
+	bool b1_started;
+};
+
 struct pcm_call_v92_digital_data {
 	struct v92_upstream_data_rx upstream;
+	struct pcm_call_v92_fast_exchange fast;
 	struct v92_ru_line_rx ru;
 	struct v90_pcm_mapping training_mapping;
 	union v92_phase4_e2u_digital_downstream downstream;

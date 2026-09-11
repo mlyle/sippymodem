@@ -12,6 +12,7 @@
 #include <v90_upstream_data.h>
 #include <v92_cpd_direct.h>
 #include <v92_profile.h>
+#include <packed_bits.h>
 
 #include "test.h"
 
@@ -7305,6 +7306,242 @@ static bool test_v92_remote_rate_request(void)
 	return true;
 }
 
+struct v92_fast_peer_source {
+	struct v92_upstream_control control;
+	uint8_t record[V92_CPU_MAX_FRAME_BYTES];
+	size_t bit_count, bit_index;
+	uint32_t data_frames;
+	bool active;
+	bool cleardown;
+	bool zero_received;
+};
+
+static bool v92_fast_peer_bits(void *context, uint8_t *bits, size_t count)
+{
+	struct v92_fast_peer_source *source = context;
+	if (!source->active) {
+		pcm_payload_bits(bits, count, source->data_frames++);
+		return true;
+	}
+	if (source->bit_index == source->bit_count) {
+		if (source->cleardown) {
+			const struct v92_cpus_parameters zero = { .acknowledges_cpd = source->zero_received };
+			if (v92_cpus_encode(&zero, count, source->record, sizeof(source->record), &source->bit_count) != V92_CPU_OK)
+				return false;
+		} else if (!v92_upstream_control_start(&source->control, count, source->record,
+			sizeof(source->record), &source->bit_count))
+			return false;
+		source->bit_index = 0u;
+	}
+	for (size_t bit = 0; bit < count; ++bit)
+		bits[bit] = packed_msb_bit(source->record, source->bit_index++);
+	return true;
+}
+
+static bool v92_fast_boundary_checks(const struct pcm_call *snapshot, uint8_t received)
+{
+	struct pcm_call call = *snapshot;
+	struct pcm_call_data_event event;
+	uint8_t generated;
+	call.state.data_path.v92_digital.fast.deadline_remaining = 1u;
+	CHECK(pcm_call_is_valid(&call) && pcm_call_data_octet(&call, received, decode_octet(call.law, received),
+		true, NULL, &generated, &event) == PCM_CALL_OK && call.stage == PCM_CALL_RETRAIN_SILENCE &&
+	      call.retrain_active && !call.failed && pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
+	      call.pcm_upstream_quality.automatic_retrains == snapshot->pcm_upstream_quality.automatic_retrains &&
+	      memcmp(&call.local_info0, &snapshot->local_info0, sizeof(call.local_info0)) == 0 &&
+	      memcmp(&call.peer_info0, &snapshot->peer_info0, sizeof(call.peer_info0)) == 0,
+	      "fast timeout lost its bounded full-retrain recovery");
+	call = *snapshot;
+	call.state.data_path.v92_digital.fast.stage = PCM_CALL_V92_FAST_FINISH + 1;
+	CHECK(!pcm_call_is_valid(&call), "invalid fast owner was accepted");
+	call = *snapshot;
+	CHECK(pcm_call_start_rate_renegotiation(&call) == PCM_CALL_INVALID_STATE &&
+	      memcmp(&call, snapshot, sizeof(call)) == 0, "nested rate exchange disturbed the fast owner");
+	if (snapshot->state.data_path.v92_digital.fast.stage == PCM_CALL_V92_FAST_CONTROL) {
+		CHECK(pcm_call_start_cleardown(&call) == PCM_CALL_OK, "silent-peer fast hangup did not start");
+		for (unsigned clock = 0; clock < 8000u && call.stage != PCM_CALL_CLOSED; ++clock) {
+			enum pcm_call_result result = pcm_call_data_octet(&call, silence_octet(call.law), 0, true,
+				NULL, &generated, &event);
+			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) && pcm_call_is_valid(&call) &&
+			      call.stage != PCM_CALL_RETRAIN_SILENCE, "silent peer prevented bounded fast hangup: %s", pcm_call_result_name(result));
+		}
+		CHECK(call.stage == PCM_CALL_CLOSED, "fast hangup waited indefinitely for silent peer");
+	}
+	return true;
+}
+
+static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
+{
+	struct pcm_call *call = &pair->digital;
+	struct v92_upstream_data_tx *upstream = &pair->analog.state.data_path.v92_analog.upstream;
+	struct v92_pcm_mapping mapping = upstream->encoder.mapping;
+	struct v92_cpu_parameters cpu = call->state.data_path.v92_digital.cpu;
+	struct v90_pcm_mapping downstream_mapping = call->state.data_path.v92_digital.downstream.data.transmitter.encoder.mapping;
+	struct v92_fast_peer_source peer = { 0 };
+	struct pcm_payload_source source = { 0 };
+	struct pcm_r_rx rf;
+	struct pcm_downstream_rx control;
+	struct v90_downstream_data_rx data;
+	uint32_t up_frames = 0, down_frames = 0, held_frames = 0;
+	bool held = false, new_upstream = false, ed = false, finishing = false;
+	unsigned checked_stages = 0;
+	bool backpressure_checked = false;
+	bool hangup_requested = false;
+	cpu.acknowledges_cpd = false;
+	cpu.data_rate_number--;
+	CHECK(v92_upstream_control_init(&peer.control, &pair->analog.v92_analog_phase4_configuration.suvu, &cpu) &&
+	      pcm_r_rx_init(&rf, &downstream_mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) == PCM_R_RX_OK &&
+	      pcm_downstream_rx_init(&control, PCM_PROTOCOL_V92, &downstream_mapping, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      v92_upstream_data_tx_start_rm(upstream) == V92_UPSTREAM_DATA_TX_OK,
+	      "fast response fixture did not initialize");
+	unsigned old_budget = call->pcm_upstream_quality.automatic_retrains;
+	for (unsigned clock = 0; clock < 16000u; ++clock) {
+		uint8_t ar, dr, transmitted;
+		int16_t sample;
+		struct pcm_call_data_event event;
+		const struct pcm_call_data_sources sources = { .downstream = pcm_payload, .downstream_context = &source };
+		channel_receive(&pair->wire, &ar, &dr);
+		if (!hangup && !finishing && peer.active && peer.control.record_complete && !upstream->queue_count &&
+		    v92_upstream_control_can_finish(&peer.control)) {
+			CHECK(v92_upstream_data_tx_start_e2u(upstream) == V92_UPSTREAM_DATA_TX_OK, "fast E2u failed");
+			finishing = true;
+		}
+		enum v92_upstream_data_tx_result tx = v92_upstream_data_tx_next(upstream, v92_fast_peer_bits, &peer, &sample);
+		CHECK(tx == V92_UPSTREAM_DATA_TX_OK || tx == V92_UPSTREAM_DATA_TX_RM_COMPLETE ||
+		      tx == V92_UPSTREAM_DATA_TX_FB1U_COMPLETE, "fast peer TX failed");
+		if (tx == V92_UPSTREAM_DATA_TX_RM_COMPLETE)
+			peer.active = true;
+		if (peer.active && !peer.control.record_complete && peer.bit_index == peer.bit_count && !upstream->queue_count)
+			CHECK(v92_upstream_control_complete(&peer.control), "fast peer record did not finish");
+		if (tx == V92_UPSTREAM_DATA_TX_FB1U_COMPLETE) {
+			CHECK(v92_upstream_data_tx_init(upstream, &mapping, upstream->upstream_level) == V92_UPSTREAM_DATA_TX_OK,
+			      "fast new B1u failed");
+			peer.active = false;
+			peer.data_frames = 0;
+			new_upstream = true;
+		}
+		enum pcm_call_result result = pcm_call_data_octet(call, dr, decode_octet(call->law, dr), true,
+			&sources, &transmitted, &event);
+		if (hangup && result == PCM_CALL_CLEARDOWN_COMPLETE) {
+			CHECK(peer.zero_received && call->stage == PCM_CALL_CLOSED && pcm_call_is_disconnecting(call) &&
+			      pcm_call_is_valid(call) && !call->failed, "fast hangup omitted zero-rate CPd");
+			return true;
+		}
+		CHECK(result == PCM_CALL_OK && pcm_call_is_valid(call) && call->stage == PCM_CALL_DATA_PATH &&
+		      call->pcm_upstream_quality.automatic_retrains == old_budget,
+		      "fast response failed at %u: %s stage=%u fast=%u", clock, pcm_call_result_name(result),
+		      call->stage, call->state.data_path.v92_digital.fast.stage);
+		struct pcm_call_v92_fast_exchange *fast = &call->state.data_path.v92_digital.fast;
+		if (!hangup && fast->stage != PCM_CALL_V92_FAST_IDLE && !(checked_stages & (1u << fast->stage))) {
+			CHECK(v92_fast_boundary_checks(call, dr), "fast boundary contract failed");
+			checked_stages |= 1u << fast->stage;
+		}
+		if (hangup == 1u && !hangup_requested && fast->stage == PCM_CALL_V92_FAST_CONTROL) {
+			CHECK(pcm_call_start_cleardown(call) == PCM_CALL_OK && pcm_call_is_disconnecting(call) &&
+			      pcm_call_is_valid(call), "local fast hangup failed");
+			hangup_requested = true;
+		}
+		if (!backpressure_checked && fast->stage == PCM_CALL_V92_FAST_FINISH &&
+		    call->state.data_path.v92_digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA) {
+			struct pcm_call rejected = *call;
+			struct pcm_payload_source rejecting = { .reject = true };
+			struct pcm_call_data_event ignored_event;
+			uint8_t ignored_octet;
+			const struct pcm_call_data_sources blocked = { .downstream = pcm_payload, .downstream_context = &rejecting };
+			enum pcm_call_result r = pcm_call_data_octet(&rejected, dr, decode_octet(call->law, dr), true,
+				&blocked, &ignored_octet, &ignored_event);
+			if (r == PCM_CALL_SOURCE_FAILURE) {
+				CHECK(memcmp(&rejected, call, sizeof(rejected)) == 0 && !rejecting.reject,
+				      "fast source failure consumed media or changed receive/deadline state");
+				backpressure_checked = true;
+			}
+		}
+		if (!held && fast->stage != PCM_CALL_V92_FAST_IDLE) {
+			held = true;
+			held_frames = source.frames;
+		}
+		if (held && fast->stage != PCM_CALL_V92_FAST_IDLE && fast->stage != PCM_CALL_V92_FAST_FINISH)
+			CHECK(source.frames == held_frames && event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(call),
+			      "fast response consumed source or exposed control payload");
+		if (new_upstream && event.kind == PCM_CALL_PCM_UPSTREAM_FRAME)
+			CHECK(v92_rate_payload(event.frame.pcm_upstream.bits, event.frame.pcm_upstream.bit_count, &up_frames),
+			      "fast upstream payload changed");
+		if (!pcm_r_rx_is_complete(&rf)) {
+			enum pcm_r_rx_result r = pcm_r_rx_receive(&rf, ar);
+			CHECK(r == PCM_R_RX_BUFFERING || r == PCM_R_RX_SIGNAL_DETECTED ||
+			      r == PCM_R_RX_BAR_STARTED || r == PCM_R_RX_BAR_COMPLETE, "fast Rf failed");
+		} else if (!ed) {
+			struct pcm_downstream_event received;
+			enum pcm_downstream_rx_result r = pcm_downstream_rx_receive(&control, ar, &received);
+			CHECK(r == PCM_DOWNSTREAM_RX_BUFFERING || r == PCM_DOWNSTREAM_RX_SUVD ||
+			      r == PCM_DOWNSTREAM_RX_CPD || r == PCM_DOWNSTREAM_RX_ED, "fast downstream control failed: %u", r);
+			if (hangup == 2u && r == PCM_DOWNSTREAM_RX_SUVD)
+				peer.cleardown = true;
+			if (hangup && r == PCM_DOWNSTREAM_RX_CPD && !received.control.record.cpd.parameters.data_rate_number) {
+				peer.cleardown = true;
+				peer.zero_received = true;
+			}
+			if (!peer.cleardown && !v92_upstream_control_can_finish(&peer.control)) {
+				if (r == PCM_DOWNSTREAM_RX_SUVD)
+					CHECK(v92_upstream_control_note_suvd(&peer.control, &received.control.record.suvd.parameters), "SUVd rejected");
+				if (r == PCM_DOWNSTREAM_RX_CPD)
+					CHECK(v92_pcm_mapping_init(&mapping, call->law, &received.control.record.cpd.parameters) == V92_PCM_MAPPING_OK &&
+					      v92_upstream_control_note_cpd(&peer.control, received.control.record.cpd.parameters.acknowledges_cpu), "CPd rejected");
+			}
+			if (!control.ed_requested && v92_upstream_control_can_finish(&peer.control) &&
+			    (r == PCM_DOWNSTREAM_RX_SUVD || r == PCM_DOWNSTREAM_RX_CPD))
+				CHECK(pcm_downstream_rx_expect_ed(&control) == PCM_DOWNSTREAM_RX_OK, "Ed boundary lost");
+			if (r == PCM_DOWNSTREAM_RX_ED) {
+				CHECK(v90_pcm_mapping_init_from_v92_cpu(&downstream_mapping, &cpu) == V90_PCM_MAPPING_OK &&
+				      v90_downstream_data_rx_start_after_ed(&data, &control, &downstream_mapping) == V90_DOWNSTREAM_DATA_RX_OK,
+				      "new B1d failed");
+				ed = true;
+			}
+		} else {
+			struct v90_pcm_stream_frame frame;
+			enum v90_downstream_data_rx_result r = v90_downstream_data_rx_receive_octet(&data, ar, &frame);
+			CHECK(r == V90_DOWNSTREAM_DATA_RX_BUFFERING || r == V90_DOWNSTREAM_DATA_RX_B1D_FRAME ||
+			      r == V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE || r == V90_DOWNSTREAM_DATA_RX_DATA_FRAME, "new downstream data failed");
+			if (r == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
+				uint32_t index = held_frames + down_frames;
+				CHECK(v92_rate_payload(frame.bits, frame.bit_count, &index), "fast downstream payload changed");
+				down_frames++;
+			}
+		}
+		channel_transmit(&pair->wire, encode_octet(call->law, sample), transmitted);
+		if (up_frames >= 20u && down_frames >= 20u) {
+			CHECK(held && backpressure_checked && checked_stages == 62u && pcm_call_is_online(call) && !call->retrain_active &&
+			      fast->stage == PCM_CALL_V92_FAST_IDLE && !mapping.cpd.extend_e2u &&
+			      call->state.data_path.v92_digital.cpu.data_rate_number == cpu.data_rate_number,
+			      "fast response did not resume the call at the accepted mapping");
+			return true;
+		}
+	}
+	CHECK(false, "fast response did not resume duplex data: %u/%u finish=%u new=%u stage=%u b1=%llu/%u frames=%llu bad=%u err=%g",
+		up_frames, down_frames, finishing, new_upstream, call->state.data_path.v92_digital.fast.stage,
+		(unsigned long long)call->state.data_path.v92_digital.fast.b1_frame, call->state.data_path.v92_digital.fast.b1_started,
+		(unsigned long long)call->state.data_path.v92_digital.upstream.line.received_frames,
+		call->state.data_path.v92_digital.b1u_decode_failed, call->state.data_path.v92_digital.b1u_squared_error);
+}
+
+static bool test_v92_fast_response(void)
+{
+	const unsigned rates[] = { 1u, 7u, 19u };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v92_online_pair pair;
+			const struct v92_upstream_offer offer = {
+				.peer_mask = 1u << (rates[rate] - 1u), .local_maximum = rates[rate], .expected = rates[rate],
+			};
+			CHECK(capture_v92_duplex_data(law, rate ? 13u : 1u, false, &offer, NULL, 0u, &pair), "fast call did not train");
+			for (unsigned hangup = 0; hangup < 3; ++hangup) {
+				struct v92_online_pair trial = pair;
+				CHECK(run_v92_fast_response(&trial, hangup), "law %u rate %u hangup %u fast response failed", law, rates[rate], hangup);
+			}
+		}
+	return true;
+}
+
 static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 {
 	struct pcm_call shifted = *online;
@@ -9201,6 +9438,7 @@ int main(void)
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
+		{ "V.92 digital fast-exchange response", test_v92_fast_response },
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },
