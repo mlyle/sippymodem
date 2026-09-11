@@ -13,6 +13,7 @@ enum v92_upstream_data_tx_result {
 	V92_UPSTREAM_DATA_TX_INVALID_STATE,
 	V92_UPSTREAM_DATA_TX_OUT_OF_RANGE,
 	V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE,
+	V92_UPSTREAM_DATA_TX_RM_COMPLETE,
 };
 
 /* Supply one complete post-B1u frame, in earliest-bit-first order. Initialize
@@ -28,6 +29,8 @@ struct v92_upstream_data_tx {
 	int16_t queue[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t upstream_level;
 	uint16_t b1u_symbols_remaining;
+	/* Pending old-frame tail plus 384 RM and 24 RM-prime symbols. */
+	uint16_t rm_symbols_remaining;
 	uint8_t queue_count;
 };
 
@@ -39,7 +42,7 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_init(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
 bool v92_upstream_data_tx_is_valid(
 	const struct v92_upstream_data_tx *transmitter);
-/* True only after all 576 B1u samples have left the transmitter. */
+/* True after all 576 B1u samples and any requested RM sequence have left. */
 bool v92_upstream_data_tx_is_online(
 	const struct v92_upstream_data_tx *transmitter);
 
@@ -50,8 +53,17 @@ bool v92_upstream_data_tx_is_online(
 enum v92_upstream_data_tx_result v92_upstream_data_tx_reset_control(
 	struct v92_upstream_data_tx *transmitter);
 
+/* Request fast exchange on the next data-frame boundary (V.92 9.9.2).
+ * Drain the already encoded data tail, then emit 384 RM + 24 RM-prime
+ * samples without fetching source bits. The final sample returns RM_COMPLETE
+ * and resets only scrambler/differential state. Subsequent next() calls use
+ * the caller's control source in the preceding data modulation, without B1u.
+ * Reject B1u or an already pending request without changing state. */
+enum v92_upstream_data_tx_result v92_upstream_data_tx_start_rm(
+	struct v92_upstream_data_tx *transmitter);
+
 /* Emit exactly one signed sample. Acquire at most one complete source frame,
- * and never call the source while sending B1u or draining a queued frame.
+ * and never call the source while sending B1u/RM or draining a queued frame.
  * Rejected calls leave transmitter and sample unchanged. */
 enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	struct v92_upstream_data_tx *transmitter,

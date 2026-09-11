@@ -130,6 +130,14 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame);
 
+/* Encode one RM or RM-prime frame (V.92 8.7.4) in the active data mapping.
+ * Trellis, precoder and prefilter histories continue. Scrambler/differential
+ * state is untouched; these signals specify modulus-output digits directly,
+ * so frame_sign is zero. The caller owns repetition and the control reset.
+ * Rejected calls leave state/output unchanged; they must not overlap. */
+enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
+	struct v92_pcm_frame_tx *transmitter, bool prime, struct v92_pcm_frame *frame);
+
 /* Apply CPd's 4G and the trained upstream level to one prefilter output. */
 enum v92_pcm_frame_result v92_pcm_frame_scale(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level,

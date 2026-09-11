@@ -254,7 +254,8 @@ static void trellis_step(uint8_t delay[6], unsigned states, const int16_t eta[4]
 static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 	unsigned law, bool uneven)
 {
-	enum { FRAMES = 56, SYMBOLS = FRAMES * 12 };
+	enum { RM_START = 56, RM_PRIME_START = RM_START + 32, CONTROL_START = RM_PRIME_START + 2,
+		FRAMES = CONTROL_START + 4, SYMBOLS = FRAMES * 12 };
 	struct v92_cpd_parameters cpd = parameters(rate);
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
@@ -303,29 +304,51 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame frame;
 		__uint128_t value = 0;
+		bool rm = f >= RM_START && f < CONTROL_START;
+		bool prime = f >= RM_PRIME_START;
+		uint8_t sign = 0;
 
+		if (f == CONTROL_START) {
+			CHECK(v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_OK,
+				"post-RM control reset failed");
+			memset(history, 0, sizeof(history));
+			differential = 0;
+			cursor = 0;
+		}
 		generated_bits(bits, mapping.data_bits_per_frame, f + rate * 71u);
 		if (f < 48)
 			memset(bits, 1, mapping.data_bits_per_frame);
-		/* GPA = 1 + x^-5 + x^-23, including across B1u -> data. */
-		for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit) {
-			uint8_t scrambled = bits[bit] ^ history[(cursor + 18) % 23] ^ history[cursor];
+		if (rm) {
+			struct v92_pcm_frame_tx_state before = transmitter.state;
 
-			history[cursor] = scrambled;
-			cursor = (cursor + 1) % 23;
-			value |= (__uint128_t)scrambled << bit;
+			CHECK(v92_pcm_frame_encode_rm(&transmitter, prime, &frame) == V92_PCM_FRAME_OK &&
+				memcmp(&before.scrambler, &transmitter.state.scrambler,
+					sizeof(before.scrambler)) == 0 &&
+				before.differential == transmitter.state.differential,
+				"RM changed scrambler/differential history");
+		} else {
+			/* GPA = 1 + x^-5 + x^-23, including across B1u -> data. */
+			for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit) {
+				uint8_t scrambled = bits[bit] ^ history[(cursor + 18) % 23] ^ history[cursor];
+
+				history[cursor] = scrambled;
+				cursor = (cursor + 1) % 23;
+				value |= (__uint128_t)scrambled << bit;
+			}
+			sign = (uint8_t)(differential ^ (value > (capacity - 1) / 2));
+			if (differential)
+				value = capacity - 1 - value;
+			differential = sign;
+			CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
+				&frame) == V92_PCM_FRAME_OK, "equation encoding failed");
 		}
-		uint8_t sign = (uint8_t)(differential ^ (value > (capacity - 1) / 2));
-		if (differential)
-			value = capacity - 1 - value;
-		differential = sign;
-		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame,
-			&frame) == V92_PCM_FRAME_OK, "equation encoding failed");
 		CHECK(frame.frame_sign == sign, "modulus sign differs at frame %u", f);
 		signs |= 1u << sign;
 		for (unsigned i = 0; i < 12; ++i) {
 			unsigned n = f * 12 + i, modulus = cpd.modulus[i];
 			unsigned digit = (unsigned)(value % modulus), base = i - i % 4;
+			if (rm)
+				digit = (i % 4u < 2u) != prime ? modulus - 1u : 0u;
 			uint8_t y0 = delay[3 + trellis];
 			int eta = frame.signed_index[i];
 			int residue = eta;
@@ -653,6 +676,14 @@ static bool test_rejection_and_names(void)
 	      "invalid gain changed its output");
 	struct v92_pcm_frame_tx invalid = transmitter;
 
+	CHECK(v92_pcm_frame_encode_rm(NULL, false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved, true, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved, false, (struct v92_pcm_frame *)&saved) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&transmitter, true, &output) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&transmitter, &invalid, sizeof(transmitter)) == 0 &&
+	      memcmp(&output, &output_saved, sizeof(output)) == 0,
+	      "invalid RM encoding changed state/output");
 	CHECK(v92_pcm_frame_tx_reset_control(NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_tx_reset_control(&transmitter) == V92_PCM_FRAME_INVALID_PARAMETERS &&
 	      memcmp(&transmitter, &invalid, sizeof(transmitter)) == 0,

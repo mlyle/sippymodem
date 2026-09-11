@@ -203,6 +203,98 @@ static bool test_rejected_sources_and_idle(void)
 	return true;
 }
 
+static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, unsigned offset)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_data_tx transmit;
+	struct source_state input = { 0 };
+	int16_t sample;
+
+	CHECK(mapping_init(&mapping, law, rate, filtered) &&
+		v92_upstream_data_tx_init(&transmit, &mapping, TEST_LEVEL) == V92_UPSTREAM_DATA_TX_OK,
+		"RM fixture initialization failed");
+	for (unsigned i = 0; i < V92_B1U_SYMBOLS + 36u + offset; ++i)
+		CHECK(v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
+			V92_UPSTREAM_DATA_TX_OK, "RM fixture did not reach data");
+	struct v92_upstream_data_tx before = transmit;
+	struct v92_pcm_frame_tx frames = transmit.encoder;
+	unsigned source_calls = input.calls;
+
+	input.invalid = 1u;
+	CHECK(v92_upstream_data_tx_start_rm(&transmit) == V92_UPSTREAM_DATA_TX_OK &&
+		transmit.rm_symbols_remaining == 408u + before.queue_count &&
+		!v92_upstream_data_tx_is_online(&transmit), "RM request did not queue");
+	struct v92_upstream_data_tx pending = transmit;
+	CHECK(v92_upstream_data_tx_start_rm(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+		v92_upstream_data_tx_reset_control(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+		memcmp(&transmit, &pending, sizeof(transmit)) == 0,
+		"pending RM request was restarted/reset");
+	for (unsigned i = 0; i < before.queue_count; ++i)
+		CHECK(v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
+			V92_UPSTREAM_DATA_TX_OK && sample == before.queue[i] &&
+			memcmp(&transmit.encoder, &before.encoder, sizeof(before.encoder)) == 0,
+			"RM damaged the pending data-frame tail");
+	for (unsigned f = 0; f < 34u; ++f) {
+		struct v92_pcm_frame frame;
+
+		CHECK(v92_pcm_frame_encode_rm(&frames, f >= 32u, &frame) == V92_PCM_FRAME_OK,
+			"RM frame did not encode");
+		for (unsigned i = 0; i < 12u; ++i) {
+			bool complete = f == 33u && i == 11u;
+			int16_t expected;
+
+			if (complete)
+				CHECK(v92_pcm_frame_tx_reset_control(&frames) == V92_PCM_FRAME_OK,
+					"RM control reset failed");
+			CHECK(v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) ==
+				V92_PCM_FRAME_OK &&
+				v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
+				(complete ? V92_UPSTREAM_DATA_TX_RM_COMPLETE : V92_UPSTREAM_DATA_TX_OK) &&
+				sample == expected && input.calls == source_calls &&
+				transmit.rm_symbols_remaining == 407u - (f * 12u + i) &&
+				v92_upstream_data_tx_is_valid(&transmit) &&
+				v92_upstream_data_tx_is_online(&transmit) == complete &&
+				memcmp(&transmit.encoder, &frames, sizeof(frames)) == 0,
+				"RM discontinuity: law %u rate %u filtered %u offset %u frame %u symbol %u",
+				law, rate, filtered, offset, f, i);
+		}
+	}
+	/* The next source is control in the previous data mapping, with no B1u.
+	 * Backpressure here must leave the completed request boundary intact. */
+	pending = transmit;
+	sample = 12345;
+	CHECK(v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
+		V92_UPSTREAM_DATA_TX_SOURCE_FAILURE && sample == 12345 &&
+		memcmp(&transmit, &pending, sizeof(transmit)) == 0,
+		"rejected post-RM control source consumed the boundary");
+	input = (struct source_state){ 0 };
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	struct v92_pcm_frame frame;
+	pattern(bits, mapping.data_bits_per_frame, 0u);
+	CHECK(v92_pcm_frame_encode(&frames, bits, mapping.data_bits_per_frame, &frame) ==
+		V92_PCM_FRAME_OK, "post-RM control frame failed");
+	for (unsigned i = 0; i < 12u; ++i) {
+		int16_t expected;
+
+		CHECK(v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
+			v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
+			V92_UPSTREAM_DATA_TX_OK && sample == expected && input.calls == 1u,
+			"post-RM control reset the channel or inserted B1u");
+	}
+	return true;
+}
+
+static bool test_rm_matrix(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+			for (unsigned filtered = 0u; filtered < 2u; ++filtered)
+				for (unsigned offset = 0u; offset < 12u; ++offset)
+					CHECK(test_rm_sequence(law, rate, filtered != 0u, offset),
+						"RM sequence matrix failed");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v92_pcm_mapping mapping;
@@ -218,6 +310,8 @@ static bool test_validation(void)
 	      !v92_upstream_data_tx_is_online(NULL) &&
 	      v92_upstream_data_tx_reset_control(NULL) == V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_reset_control(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
+	      v92_upstream_data_tx_start_rm(NULL) == V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_start_rm(&transmit) == V92_UPSTREAM_DATA_TX_INVALID_STATE &&
 	      v92_upstream_data_tx_init(NULL, &mapping, TEST_LEVEL) ==
 		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_init(&transmit, NULL, TEST_LEVEL) ==
@@ -245,6 +339,15 @@ static bool test_validation(void)
 	      memcmp(&transmit, &invalid, sizeof(transmit)) == 0,
 	      "control reset accepted invalid state");
 	transmit = saved;
+	transmit.rm_symbols_remaining = 408u;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "RM during B1u accepted");
+	transmit.b1u_symbols_remaining = 0u;
+	CHECK(v92_upstream_data_tx_is_valid(&transmit), "aligned RM state rejected");
+	transmit.rm_symbols_remaining = 409u;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "RM queue/count mismatch accepted");
+	transmit.rm_symbols_remaining = 420u;
+	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "overlong RM sequence accepted");
+	transmit = saved;
 	transmit.queue[11] = 1;
 	CHECK(!v92_upstream_data_tx_is_valid(&transmit), "unowned queue sample accepted");
 	return true;
@@ -253,5 +356,5 @@ static bool test_validation(void)
 int main(void)
 {
 	return test_stream(false) && test_stream(true) &&
-	       test_rejected_sources_and_idle() && test_validation() ? 0 : 1;
+	       test_rm_matrix() && test_rejected_sources_and_idle() && test_validation() ? 0 : 1;
 }

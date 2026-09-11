@@ -467,6 +467,50 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
 	return V92_PCM_FRAME_OK;
 }
 
+static bool encode_digits(const struct v92_pcm_mapping *mapping,
+	struct v92_pcm_frame_tx_state *state, struct v92_pcm_frame *frame)
+{
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		uint8_t y0;
+
+		if (v34_convolutional_encoder_output(&state->trellis, &y0) != V34_TRELLIS_OK ||
+		    !select_point(mapping, &state->filter, symbol, frame->digit[symbol],
+			frame->signed_index, y0, &frame->signed_index[symbol], &frame->u[symbol]))
+			return false;
+		frame->y0[symbol] = y0;
+		filter_step(mapping, &state->filter, frame->u[symbol], &frame->x[symbol],
+			&frame->v[symbol]);
+		if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u &&
+		    !advance_trellis(&state->trellis, frame->signed_index, symbol))
+			return false;
+	}
+	return true;
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
+	struct v92_pcm_frame_tx *transmitter, bool prime, struct v92_pcm_frame *frame)
+{
+	struct v92_pcm_frame encoded = { 0 };
+
+	if (transmitter == NULL || frame == NULL ||
+	    memory_regions_overlap(transmitter, sizeof(*transmitter), frame, sizeof(*frame)))
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_tx_is_valid(transmitter))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	struct v92_pcm_frame_tx_state next = transmitter->state;
+
+	/* V.92 Tables 25/26 specify digits at the modulus encoder output,
+	 * bypassing scrambling and differential coding, not the channel coder. */
+	for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+		encoded.digit[i] = (i % 4u < 2u) != prime ?
+			(uint8_t)(transmitter->mapping.cpd.modulus[i] - 1u) : 0u;
+	if (!encode_digits(&transmitter->mapping, &next, &encoded))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	transmitter->state = next;
+	*frame = encoded;
+	return V92_PCM_FRAME_OK;
+}
+
 enum v92_pcm_frame_result v92_pcm_frame_encode(
 	struct v92_pcm_frame_tx *transmitter,
 	const uint8_t *bits, size_t bit_count,
@@ -495,27 +539,8 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 		    &next.differential, encoded.digit,
 		    &encoded.frame_sign) != V92_PCM_MAPPING_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	for (size_t symbol = 0u;
-	     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-		uint8_t y0;
-
-		if (v34_convolutional_encoder_output(
-			    &next.trellis, &y0) != V34_TRELLIS_OK ||
-		    !select_point(
-			    &transmitter->mapping, &next.filter, symbol,
-			    encoded.digit[symbol], encoded.signed_index, y0,
-			    &encoded.signed_index[symbol], &encoded.u[symbol]))
-			return V92_PCM_FRAME_INVALID_PARAMETERS;
-		encoded.y0[symbol] = y0;
-		filter_step(
-			&transmitter->mapping, &next.filter,
-			encoded.u[symbol], &encoded.x[symbol],
-			&encoded.v[symbol]);
-		if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u &&
-		    !advance_trellis(
-			    &next.trellis, encoded.signed_index, symbol))
-			return V92_PCM_FRAME_INVALID_PARAMETERS;
-	}
+	if (!encode_digits(&transmitter->mapping, &next, &encoded))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	transmitter->state = next;
 	*frame = encoded;
 	return V92_PCM_FRAME_OK;

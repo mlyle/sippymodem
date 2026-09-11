@@ -7,6 +7,8 @@
 
 #include <string.h>
 
+enum { RM_SYMBOLS = 384, RM_PRIME_SYMBOLS = 24 };
+
 bool v92_upstream_data_tx_is_valid(
 	const struct v92_upstream_data_tx *transmitter)
 {
@@ -14,6 +16,12 @@ bool v92_upstream_data_tx_is_valid(
 	    !v92_pcm_frame_tx_is_valid(&transmitter->encoder) ||
 	    transmitter->upstream_level <= 0 ||
 	    transmitter->b1u_symbols_remaining > V92_B1U_SYMBOLS ||
+	    transmitter->rm_symbols_remaining > RM_SYMBOLS + RM_PRIME_SYMBOLS +
+		    V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ||
+	    (transmitter->rm_symbols_remaining != 0u &&
+	     (transmitter->b1u_symbols_remaining != 0u ||
+	      transmitter->rm_symbols_remaining % V92_PCM_MAPPING_FRAME_SYMBOLS !=
+		      transmitter->queue_count)) ||
 	    transmitter->queue_count >= V92_PCM_MAPPING_FRAME_SYMBOLS ||
 	    (transmitter->b1u_symbols_remaining != 0u &&
 	     transmitter->b1u_symbols_remaining % V92_PCM_MAPPING_FRAME_SYMBOLS !=
@@ -51,7 +59,20 @@ bool v92_upstream_data_tx_is_online(
 	const struct v92_upstream_data_tx *transmitter)
 {
 	return v92_upstream_data_tx_is_valid(transmitter) &&
-	       transmitter->b1u_symbols_remaining == 0u;
+	       transmitter->b1u_symbols_remaining == 0u &&
+	       transmitter->rm_symbols_remaining == 0u;
+}
+
+enum v92_upstream_data_tx_result v92_upstream_data_tx_start_rm(
+	struct v92_upstream_data_tx *transmitter)
+{
+	if (transmitter == NULL)
+		return V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT;
+	if (!v92_upstream_data_tx_is_online(transmitter))
+		return V92_UPSTREAM_DATA_TX_INVALID_STATE;
+	transmitter->rm_symbols_remaining = RM_SYMBOLS + RM_PRIME_SYMBOLS +
+		transmitter->queue_count;
+	return V92_UPSTREAM_DATA_TX_OK;
 }
 
 enum v92_upstream_data_tx_result v92_upstream_data_tx_reset_control(
@@ -79,17 +100,22 @@ static enum v92_upstream_data_tx_result generate_frame(
 
 	/* B1u is exactly 48 complete known-one frames. Fetching the first data
 	 * frame does not reset or reseed any of the active coding histories. */
-	if (transmitter->b1u_symbols_remaining != 0u || source == NULL) {
-		memset(bits, 1, count);
+	if (transmitter->rm_symbols_remaining != 0u) {
+		if (v92_pcm_frame_encode_rm(&encoder,
+			transmitter->rm_symbols_remaining <= RM_PRIME_SYMBOLS, &frame) != V92_PCM_FRAME_OK)
+			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	} else {
-		memset(bits, 2, count);
-		if (!source(context, bits, count) ||
-		    !unpacked_bits_are_binary(bits, count))
-			return V92_UPSTREAM_DATA_TX_SOURCE_FAILURE;
+		if (transmitter->b1u_symbols_remaining != 0u || source == NULL) {
+			memset(bits, 1, count);
+		} else {
+			memset(bits, 2, count);
+			if (!source(context, bits, count) ||
+			    !unpacked_bits_are_binary(bits, count))
+				return V92_UPSTREAM_DATA_TX_SOURCE_FAILURE;
+		}
+		if (v92_pcm_frame_encode(&encoder, bits, count, &frame) != V92_PCM_FRAME_OK)
+			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	}
-	if (v92_pcm_frame_encode(&encoder, bits, count, &frame) !=
-	    V92_PCM_FRAME_OK)
-		return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	for (size_t index = 0u; index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {
 		if (v92_pcm_frame_scale(
 			    &encoder.mapping, transmitter->upstream_level,
@@ -117,6 +143,10 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 		if (result != V92_UPSTREAM_DATA_TX_OK)
 			return result;
 	}
+	bool rm_complete = transmitter->rm_symbols_remaining == 1u;
+
+	if (rm_complete && v92_pcm_frame_tx_reset_control(&transmitter->encoder) != V92_PCM_FRAME_OK)
+		return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	*sample = transmitter->queue[0];
 	transmitter->queue_count--;
 	memmove(transmitter->queue, transmitter->queue + 1,
@@ -124,5 +154,7 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	transmitter->queue[transmitter->queue_count] = 0;
 	if (transmitter->b1u_symbols_remaining != 0u)
 		transmitter->b1u_symbols_remaining--;
-	return V92_UPSTREAM_DATA_TX_OK;
+	if (transmitter->rm_symbols_remaining != 0u)
+		transmitter->rm_symbols_remaining--;
+	return rm_complete ? V92_UPSTREAM_DATA_TX_RM_COMPLETE : V92_UPSTREAM_DATA_TX_OK;
 }
