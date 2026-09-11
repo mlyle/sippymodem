@@ -3,6 +3,7 @@
 #include "pcm_call.h"
 
 #include "memory_region.h"
+#include "packed_bits.h"
 #include "pcm_phase3_entry.h"
 #include "pcm_phase3_handoff.h"
 #include "v90_profile.h"
@@ -603,8 +604,9 @@ static bool cleardown_is_active_owned(const struct pcm_call *call)
 static bool v92_fast_is_active_owned(const struct pcm_call *call)
 {
 	return uses_pcm_upstream(call) && call->stage == PCM_CALL_DATA_PATH &&
-		call->local_role == V90_DIGITAL_MODEM &&
-		call->state.data_path.v92_digital.fast.stage != PCM_CALL_V92_FAST_IDLE;
+		(call->local_role == V90_ANALOG_MODEM ?
+		 call->state.data_path.v92_analog.fast.deadline_remaining != 0u :
+		 call->state.data_path.v92_digital.fast.stage != PCM_CALL_V92_FAST_IDLE);
 }
 
 bool pcm_call_is_disconnecting(const struct pcm_call *call)
@@ -613,7 +615,8 @@ bool pcm_call_is_disconnecting(const struct pcm_call *call)
 		(uses_pcm_upstream(call) && call->stage == PCM_CALL_PHASE4 &&
 		 call->state.phase4.v92.cleardown_requested) ||
 		cleardown_is_active_owned(call) || (v92_fast_is_active_owned(call) &&
-		 call->state.data_path.v92_digital.fast.control.cleardown.active));
+		 (call->local_role == V90_ANALOG_MODEM ? call->state.data_path.v92_analog.fast.cleardown.active :
+		  call->state.data_path.v92_digital.fast.control.cleardown.active)));
 }
 
 static bool rate_renegotiation_is_active_owned(
@@ -741,6 +744,25 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 	if (call->local_role == V90_ANALOG_MODEM) {
 		const struct pcm_call_v92_analog_data *path =
 			&call->state.data_path.v92_analog;
+		const struct pcm_call_v92_analog_fast *fast = &path->fast;
+		if (!fast->deadline_remaining && (fast->record_bits || fast->record_index || fast->repeat_remaining ||
+		    fast->transmitted_symbols || fast->rm_complete || fast->finish_started || fast->b1_started ||
+		    fast->zero_record || fast->zero_ack || fast->cleardown.active || fast->mapping.data_bits_per_frame ||
+		    path->upstream.rm_symbols_remaining || path->upstream.finish_symbols_remaining))
+			return false;
+		if (fast->deadline_remaining &&
+		    (!call->retrain_active || call->v92_rate_renegotiation_active ||
+		     fast->deadline_remaining > b1_deadline_limit(call) ||
+		     !v92_upstream_control_is_valid(&fast->control) || fast->control.suvu.request_silence ||
+		     !v92_pcm_mapping_is_valid(&fast->mapping) ||
+		     fast->mapping.law != call->law || !v92_cleardown_is_valid(&fast->cleardown) ||
+		     (fast->rm_complete != (path->upstream.rm_symbols_remaining == 0u)) ||
+		     (fast->control.received_cpd && fast->mapping.cpd.extend_e2u) ||
+		     (fast->zero_record && !fast->cleardown.active) ||
+		     fast->record_bits > sizeof(fast->record) * 8u || fast->record_index > fast->record_bits ||
+		     fast->repeat_remaining > (uint32_t)V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples ||
+		     (fast->finish_started && !fast->rm_complete) || (fast->b1_started && !fast->finish_started)))
+			return false;
 
 		cpu = &path->cpu;
 		upstream = &path->upstream.encoder.mapping;
@@ -749,6 +771,9 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		     stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) ||
 		    !v92_upstream_data_tx_is_valid(&path->upstream) ||
 		    !pcm_r_rx_is_valid(&path->rd) || path->rd.signal != PCM_R_RD ||
+		    !pcm_r_rx_is_valid(&path->rf) || path->rf.signal != PCM_R_RF ||
+		    path->rf.decision_plane != V90_PCM_MAPPING_TRANSMIT ||
+		    !v90_pcm_mapping_equal(&path->rd.mapping, &path->rf.mapping) ||
 		    path->rd.decision_plane != V90_PCM_MAPPING_TRANSMIT ||
 		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
 		    path->training_mapping.law != call->law ||
@@ -762,7 +787,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 				(call->failed || !pcm_downstream_rx_has_failed(
 					&path->downstream.training)) &&
 				path->downstream.training.protocol == PCM_PROTOCOL_V92 &&
-				path->downstream.training.ed_requested &&
+				(path->downstream.training.ed_requested || fast->deadline_remaining) &&
 				path->downstream.training.stream.decoder.mapping.law == call->law;
 		else
 			child_valid = v90_downstream_data_rx_is_valid(
@@ -1317,7 +1342,8 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 		const struct pcm_call_v92_analog_data *path =
 			&call->state.data_path.v92_analog;
 
-		return path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		return (!path->fast.deadline_remaining || pcm_r_rx_is_complete(&path->rf)) &&
+		       path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
 		       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
 	}
 	const struct pcm_call_v92_digital_data *path =
@@ -1335,8 +1361,11 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 
 static bool v92_local_b1_sent_owned(const struct pcm_call *call)
 {
-	if (call->local_role == V90_ANALOG_MODEM)
-		return call->state.data_path.v92_analog.upstream.b1u_symbols_remaining == 0u;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		const struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+		return (!path->fast.deadline_remaining || path->fast.b1_started) &&
+			path->upstream.b1u_symbols_remaining == 0u;
+	}
 	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 
 	return (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.stage == PCM_CALL_V92_FAST_FINISH) &&
@@ -3503,6 +3532,13 @@ enum pcm_call_result pcm_call_start_cleardown(struct pcm_call *call)
 		return PCM_CALL_INVALID_ARGUMENT;
 	if (pcm_call_is_disconnecting(call))
 		return PCM_CALL_OK;
+	if (v92_fast_is_active_owned(call) && call->local_role == V90_ANALOG_MODEM) {
+		struct pcm_call_v92_analog_fast *fast = &call->state.data_path.v92_analog.fast;
+		if (fast->finish_started)
+			return PCM_CALL_INVALID_STATE;
+		v92_cleardown_start(&fast->cleardown, call->round_trip_delay_samples, true);
+		return PCM_CALL_OK;
+	}
 	if (v92_fast_is_active_owned(call) &&
 	    call->state.data_path.v92_digital.fast.stage != PCM_CALL_V92_FAST_FINISH)
 		return v92_downstream_control_start_cleardown(&call->state.data_path.v92_digital.fast.control) ?
@@ -3572,7 +3608,8 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		path->rate_renegotiation_constellation = call->state.phase4.v92.rate_renegotiation_constellation;
 		struct v90_pcm_mapping mapping;
 		if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &path->cpu) != V90_PCM_MAPPING_OK ||
-		    pcm_r_rx_init(&path->rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) != PCM_R_RX_OK)
+		    pcm_r_rx_init(&path->rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) != PCM_R_RX_OK ||
+		    pcm_r_rx_init(&path->rf, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) != PCM_R_RX_OK)
 			return false;
 	} else {
 		const struct v92_phase4_e2u_digital_handoff *from = &handoff.state.digital;
@@ -3932,6 +3969,169 @@ enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+static bool begin_v92_analog_fast(struct pcm_call *call)
+{
+	struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+	struct pcm_call_v92_analog_fast fast = {
+		.mapping = path->upstream.encoder.mapping,
+		.deadline_remaining = b1_deadline_limit(call),
+	};
+	struct v92_cpu_parameters cpu = path->cpu;
+	struct v92_suvu_parameters suvu = call->v92_analog_phase4_configuration.suvu;
+	cpu.acknowledges_cpd = false;
+	/* V.92 9.9: fast exchange keeps the trained line; SUVu bit 32 is clear. */
+	suvu.request_silence = false;
+	if (!v92_upstream_control_init(&fast.control, &suvu, &cpu) ||
+	    v92_upstream_data_tx_start_rm(&path->upstream) != V92_UPSTREAM_DATA_TX_OK)
+		return false;
+	path->fast = fast;
+	call->retrain_active = true;
+	return true;
+}
+
+static bool v92_fast_upstream_bits(void *context, uint8_t *bits, size_t count)
+{
+	struct pcm_call_v92_analog_fast *fast = context;
+	if (fast->record_index == fast->record_bits) {
+		if (fast->cleardown.active) {
+			const struct v92_cpus_parameters zero = { .acknowledges_cpd = fast->cleardown.peer_requested };
+			if (v92_cpus_encode(&zero, count, fast->record, sizeof(fast->record), &fast->record_bits) != V92_CPU_OK)
+				return false;
+			fast->zero_record = true;
+			fast->zero_ack = zero.acknowledges_cpd;
+		} else if (!v92_upstream_control_start(&fast->control, count, fast->record,
+			sizeof(fast->record), &fast->record_bits))
+			return false;
+		fast->record_index = 0u;
+	}
+	if (count > fast->record_bits - fast->record_index)
+		return false;
+	for (size_t bit = 0; bit < count; ++bit)
+		bits[bit] = packed_msb_bit(fast->record, fast->record_index++);
+	return true;
+}
+
+static enum pcm_call_result v92_fast_analog_transmit(struct pcm_call *call,
+	const struct pcm_call_data_sources *sources, int16_t *sample)
+{
+	struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+	struct pcm_call_v92_analog_fast *fast = &path->fast;
+	bool boundary = fast->rm_complete && !path->upstream.queue_count &&
+		fast->record_index == fast->record_bits;
+	if (boundary && fast->cleardown.active && v92_cleardown_is_ready(&fast->cleardown, fast->transmitted_symbols))
+		return PCM_CALL_CLEARDOWN_COMPLETE;
+	if (boundary && !fast->finish_started && !fast->cleardown.active &&
+	    v92_upstream_control_can_finish(&fast->control)) {
+		if (v92_upstream_data_tx_start_e2u(&path->upstream) != V92_UPSTREAM_DATA_TX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		fast->finish_started = true;
+	}
+	enum v92_upstream_data_tx_result result = v92_upstream_data_tx_next(&path->upstream,
+		fast->b1_started ? sources->pcm_upstream : v92_fast_upstream_bits,
+		fast->b1_started ? sources->pcm_upstream_context : fast, sample);
+	if (result == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
+		return fast->b1_started ? PCM_CALL_SOURCE_FAILURE : PCM_CALL_NUMERIC_FAILURE;
+	if (result != V92_UPSTREAM_DATA_TX_OK && result != V92_UPSTREAM_DATA_TX_RM_COMPLETE &&
+	    result != V92_UPSTREAM_DATA_TX_FB1U_COMPLETE)
+		return PCM_CALL_NUMERIC_FAILURE;
+	fast->transmitted_symbols++;
+	if (result == V92_UPSTREAM_DATA_TX_RM_COMPLETE)
+		fast->rm_complete = true;
+	if (result == V92_UPSTREAM_DATA_TX_FB1U_COMPLETE) {
+		if (v92_upstream_data_tx_init(&path->upstream, &fast->mapping, path->upstream.upstream_level) != V92_UPSTREAM_DATA_TX_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
+		fast->b1_started = true;
+	}
+	bool record_complete = fast->rm_complete && !fast->finish_started && fast->record_bits &&
+		fast->record_index == fast->record_bits && !path->upstream.queue_count;
+	if (record_complete) {
+		if (fast->zero_record)
+			v92_cleardown_sent(&fast->cleardown, fast->transmitted_symbols, fast->zero_ack);
+		else {
+			if (!v92_upstream_control_complete(&fast->control))
+				return PCM_CALL_NUMERIC_FAILURE;
+			if (fast->control.record == V92_UPSTREAM_CONTROL_CPU && !fast->control.peer_confirmation_received) {
+				fast->repeat_remaining = V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples;
+				return PCM_CALL_OK;
+			}
+		}
+	}
+	if (fast->control.peer_confirmation_received || fast->cleardown.active)
+		fast->repeat_remaining = 0u;
+	if (fast->repeat_remaining && --fast->repeat_remaining == 0u &&
+	    !v92_upstream_control_repeat_cpu(&fast->control))
+		return PCM_CALL_NUMERIC_FAILURE;
+	return PCM_CALL_OK;
+}
+
+static bool v92_fast_analog_receive(struct pcm_call *call, uint8_t octet)
+{
+	struct pcm_call_v92_analog_data *path = &call->state.data_path.v92_analog;
+	struct pcm_call_v92_analog_fast *fast = &path->fast;
+	struct pcm_downstream_event event;
+	struct pcm_downstream_rx *receive = &path->downstream.training;
+	/* Ed may supply the peer's acknowledgment. Arm its aligned search after
+	 * our acknowledged record has drained, even if all peer ack bits were lost.
+	 * Repeated whole control records remain legal while this search is armed. */
+	if (!fast->cleardown.active && !receive->ed_requested && fast->control.received_cpd &&
+	    fast->control.acknowledgment_sent && receive->stream.pending_count == 0u &&
+	    receive->control.v92.stage == V92_CONTROL_RX_SEARCH_SYNC &&
+	    !receive->control.v92.bit_index && !receive->control.v92.sync_one_count &&
+	    pcm_downstream_rx_expect_ed(receive) != PCM_DOWNSTREAM_RX_OK)
+		return false;
+	enum pcm_downstream_rx_result result = pcm_downstream_rx_receive(&path->downstream.training, octet, &event);
+	bool ready = v92_upstream_control_can_finish(&fast->control);
+	bool ack = false;
+	/* An unresponsive peer cannot stop an accepted zero-rate tail. Only a
+	 * decoded CPd affects its acknowledgement; the transmitter owns the bound. */
+	if (fast->cleardown.active && result != PCM_DOWNSTREAM_RX_CPD)
+		return true;
+	if (result == PCM_DOWNSTREAM_RX_CPD) {
+		struct v92_cpd_parameters selected = event.control.record.cpd.parameters;
+		if (!selected.data_rate_number)
+			v92_cleardown_start(&fast->cleardown, call->round_trip_delay_samples, false);
+		if (fast->cleardown.active) {
+			v92_cleardown_receive(&fast->cleardown, !selected.data_rate_number,
+				selected.acknowledges_cpu, fast->transmitted_symbols);
+			return true;
+		}
+		if (selected.extend_e2u || !v92_pcm_dil_rate_is_enabled(
+			call->phase3_configuration.v92_analog.upstream_rate_mask, selected.data_rate_number))
+			return false;
+		/* Parameter-mode CPd may inherit omitted sections from the preceding
+		 * selection, but cannot change a selection already acknowledged here. */
+		const struct v92_cpd_parameters *old = &fast->mapping.cpd;
+		if (!selected.modulus_present)
+			memcpy(selected.modulus, old->modulus, sizeof(selected.modulus));
+		if (!selected.filters_present)
+			memcpy(selected.filter, old->filter, sizeof(selected.filter));
+		if (!selected.constellations_present) {
+			memcpy(selected.constellation, old->constellation, sizeof(selected.constellation));
+			memcpy(selected.frame_constellation, old->frame_constellation, sizeof(selected.frame_constellation));
+		}
+		selected.modulus_present = selected.filters_present = selected.constellations_present = true;
+		struct v92_pcm_mapping mapping;
+		ack = selected.acknowledges_cpu;
+		selected.acknowledges_cpu = old->acknowledges_cpu;
+		if (v92_pcm_mapping_init(&mapping, call->law, &selected) != V92_PCM_MAPPING_OK ||
+		    (fast->control.received_cpd && !v92_pcm_mapping_equal(&mapping, &fast->mapping)) ||
+		    (!ready && !v92_upstream_control_note_cpd(&fast->control, ack)))
+			return false;
+		fast->mapping = mapping;
+	} else if (result == PCM_DOWNSTREAM_RX_SUVD) {
+		const struct v92_suvd_parameters *suvd = &event.control.record.suvd.parameters;
+		if (suvd->request_silence || (!ready && !v92_upstream_control_note_suvd(&fast->control, suvd)))
+			return false;
+		ack = suvd->acknowledges_cpu;
+	} else if (result == PCM_DOWNSTREAM_RX_ED) {
+		return ready || v92_upstream_control_note_ed(&fast->control);
+	} else if (result != PCM_DOWNSTREAM_RX_BUFFERING && result != PCM_DOWNSTREAM_RX_SUVD_REJECTED &&
+		result != PCM_DOWNSTREAM_RX_CPD_REJECTED)
+		return false;
+	return !ack || path->downstream.training.ed_requested ||
+		pcm_downstream_rx_expect_ed(&path->downstream.training) == PCM_DOWNSTREAM_RX_OK;
+}
+
 static bool begin_v92_fast_response(struct pcm_call *call)
 {
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
@@ -3959,6 +4159,27 @@ static bool begin_v92_fast_response(struct pcm_call *call)
 	path->pending_ambiguous = false;
 	call->retrain_active = true;
 	return true;
+}
+
+enum pcm_call_result pcm_call_start_fast_exchange(struct pcm_call *call)
+{
+	if (!pcm_call_is_valid(call))
+		return PCM_CALL_INVALID_ARGUMENT;
+	if (!uses_pcm_upstream(call) || !pcm_call_is_online(call) || call->retrain_active)
+		return PCM_CALL_INVALID_STATE;
+	struct pcm_call next = *call;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		if (!begin_v92_analog_fast(&next))
+			return PCM_CALL_NUMERIC_FAILURE;
+	} else {
+		if (!begin_v92_fast_response(&next))
+			return PCM_CALL_NUMERIC_FAILURE;
+		next.state.data_path.v92_digital.fast.stage = PCM_CALL_V92_FAST_DRAIN;
+	}
+	if (!pcm_call_is_valid(&next))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = next;
+	return PCM_CALL_OK;
 }
 
 static enum pcm_call_result v92_fast_transmit(struct pcm_call_v92_digital_data *path,
@@ -4088,15 +4309,23 @@ static enum pcm_call_result v92_data_octet_owned(
 		enum v92_upstream_data_tx_result transmitted;
 		int16_t sample;
 
-		transmitted = v92_upstream_data_tx_next(&path->upstream,
-			sources->pcm_upstream, sources->pcm_upstream_context, &sample);
-		if (transmitted == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
-			return PCM_CALL_SOURCE_FAILURE;
-		if (transmitted != V92_UPSTREAM_DATA_TX_OK)
-			return PCM_CALL_NUMERIC_FAILURE;
+		if (path->fast.deadline_remaining) {
+			enum pcm_call_result result = v92_fast_analog_transmit(call, sources, &sample);
+			if (result != PCM_CALL_OK)
+				return result;
+			if (--path->fast.deadline_remaining == 0u)
+				return path->fast.cleardown.active ? PCM_CALL_CLEARDOWN_COMPLETE : begin_retrain(call, false);
+		} else {
+			transmitted = v92_upstream_data_tx_next(&path->upstream,
+				sources->pcm_upstream, sources->pcm_upstream_context, &sample);
+			if (transmitted == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
+				return PCM_CALL_SOURCE_FAILURE;
+			if (transmitted != V92_UPSTREAM_DATA_TX_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+		}
 		*generated = encode_sample(call->law, sample);
 		bool suppress_frame = false;
-		if (data_path_is_online_owned(call)) {
+		if (data_path_is_online_owned(call) || path->fast.deadline_remaining) {
 			enum pcm_r_rx_result rd = pcm_r_rx_receive(&path->rd, received_octet);
 			if (rd == PCM_R_RX_BAR_STARTED)
 				return begin_v92_analog_rate_request(call);
@@ -4104,6 +4333,31 @@ static enum pcm_call_result v92_data_octet_owned(
 			    rd != PCM_R_RX_SEQUENCE_MISMATCH)
 				return PCM_CALL_SEQUENCE_MISMATCH;
 			suppress_frame = pcm_r_rx_signal_detected(&path->rd);
+			if (!pcm_r_rx_is_complete(&path->rf)) {
+				enum pcm_r_rx_result rf = pcm_r_rx_receive(&path->rf, received_octet);
+				if (rf != PCM_R_RX_BUFFERING && rf != PCM_R_RX_SIGNAL_DETECTED &&
+				    rf != PCM_R_RX_BAR_STARTED && rf != PCM_R_RX_BAR_COMPLETE && rf != PCM_R_RX_SEQUENCE_MISMATCH)
+					return PCM_CALL_SEQUENCE_MISMATCH;
+				suppress_frame |= pcm_r_rx_signal_detected(&path->rf);
+				if (rf == PCM_R_RX_BAR_STARTED && !path->fast.deadline_remaining && !begin_v92_analog_fast(call))
+					return PCM_CALL_NUMERIC_FAILURE;
+				if (rf == PCM_R_RX_BAR_COMPLETE) {
+					struct pcm_downstream_rx control;
+					if (!path->fast.deadline_remaining || pcm_downstream_rx_init(&control, PCM_PROTOCOL_V92,
+						&path->rf.mapping, V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK)
+						return PCM_CALL_NUMERIC_FAILURE;
+					path->downstream = (union v92_phase4_e2u_analog_downstream){ .training = control };
+					path->downstream_stage = V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
+					return PCM_CALL_OK;
+				}
+			}
+		}
+		if (path->fast.deadline_remaining) {
+			if (!pcm_r_rx_is_complete(&path->rf))
+				return PCM_CALL_OK;
+			if (path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING &&
+			    !pcm_downstream_rx_is_complete(&path->downstream.training))
+				return v92_fast_analog_receive(call, received_octet) ? PCM_CALL_OK : begin_retrain(call, false);
 		}
 		received = v92_downstream_receive_owned(&path->downstream,
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
@@ -4117,6 +4371,11 @@ static enum pcm_call_result v92_data_octet_owned(
 			   received != V90_DOWNSTREAM_DATA_RX_B1D_FRAME &&
 			   received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE) {
 			return PCM_CALL_SEQUENCE_MISMATCH;
+		}
+		if (path->fast.deadline_remaining && data_path_is_online_owned(call)) {
+			if (pcm_r_rx_init(&path->rf, &path->rd.mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) != PCM_R_RX_OK)
+				return PCM_CALL_NUMERIC_FAILURE;
+			path->fast = (struct pcm_call_v92_analog_fast){ 0 };
 		}
 	} else {
 		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;

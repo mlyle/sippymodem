@@ -293,11 +293,26 @@ union pcm_call_phase4_state {
 	struct pcm_call_v92_phase4_state v92;
 };
 
+/* The analogue fast exchange keeps its existing data transmitter through RM,
+ * control, E2u and FB1u. The accepted CPd only takes effect at the next B1u. */
+struct pcm_call_v92_analog_fast {
+	struct v92_upstream_control control;
+	struct v92_pcm_mapping mapping;
+	struct v92_cleardown cleardown;
+	uint8_t record[V92_CPU_MAX_FRAME_BYTES];
+	size_t record_bits, record_index;
+	uint32_t deadline_remaining, repeat_remaining, transmitted_symbols;
+	bool rm_complete, finish_started, b1_started;
+	bool zero_record, zero_ack;
+};
+
 /* PCM upstream replaces only the conventional direction. The downstream
  * union crosses E2u unchanged and continues the shared Ed/B1d/data epoch. */
 struct pcm_call_v92_analog_data {
 	struct v92_upstream_data_tx upstream;
+	struct pcm_call_v92_analog_fast fast;
 	struct pcm_r_rx rd;
+	struct pcm_r_rx rf;
 	struct v90_pcm_mapping training_mapping;
 	union v92_phase4_e2u_analog_downstream downstream;
 	struct v92_cpu_parameters cpu;
@@ -460,6 +475,12 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call);
  * frame is consumed until data resumes after B1. Full retrain remains separate.
  * Unsupported protocols and non-online calls are rejected unchanged. */
 enum pcm_call_result pcm_call_start_rate_renegotiation(struct pcm_call *call);
+
+/* V.92 PCM-upstream fast exchange, from either online role. Keep the current
+ * data-frame alignment and trained line, drain accepted data before RM/Rf,
+ * and exchange parameters in the old mapping. Continue with data_octet();
+ * new B1, not control acknowledgment alone, makes the call online again. */
+enum pcm_call_result pcm_call_start_fast_exchange(struct pcm_call *call);
 
 /* Begin V.90 zero-rate cleardown on the current continuous data or CP/MP
  * line. A rate exchange can be cancelled before CONNECT or during retrain;

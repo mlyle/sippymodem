@@ -27,6 +27,10 @@ bool v90_datapump_is_busy(void);
  * without changing the call or its training session. Serialize with media. */
 bool v90_datapump_start_rate_renegotiation(struct dp *dp);
 
+/* The same retained host-link contract, using V.92 RM/Rf fast exchange and
+ * the preceding data modulation instead of Ru/Rd and fresh training. */
+bool v90_datapump_start_fast_exchange(struct dp *dp);
+
 /* Copy a completed PCM-to-V.34 fallback while the modem still owns the old
  * datapump. The ordinary datapump switch creates the V.34 owner before
  * deleting this one, so no process-global transfer slot is needed. */

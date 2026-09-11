@@ -1234,19 +1234,20 @@ static bool preserves_link_across_carrier_return(enum DP_ID id)
 	       id == DP_V22 || id == DP_V23;
 }
 
-static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g711_law law)
+static bool contains_pcm_rate_signal(const uint8_t *octets, size_t count, enum g711_law law, bool fast)
 {
 	/* Observe the exact 384/24 waveform without accessing datapump state or
 	 * using its sequence generator. These direct-law profiles use one fixed
-	 * magnitude per signal (Ru or Rd), selected during negotiation rather than
-	 * fixed by the profile seed. The accepted data-frame tail comes first. */
+	 * magnitude per constellation, selected during negotiation rather than
+	 * fixed by the profile seed. Rf is ++-- instead of Ru/Rd's +++---.
+	 * The accepted data-frame tail comes first. */
 	for (size_t start = 0; start + 408u <= count; ++start) {
 		if (decode_codeword(law, octets[start]) <= 8)
 			continue;
 		size_t sample = 0;
 		for (; sample < 408u; ++sample) {
-			bool positive = (sample % 6u < 3u) != (sample >= 384u);
-			uint8_t expected = octets[start] ^ (positive ? 0u : 0x80u);
+			bool positive = (fast ? sample % 4u < 2u : sample % 6u < 3u) != (sample >= 384u);
+			uint8_t expected = (octets[start + sample % 6u] & 0x7fu) | (positive ? 0x80u : 0u);
 			if (octets[start + sample] != expected)
 				break;
 		}
@@ -1270,7 +1271,10 @@ static bool exercise_v92_rate_exchange(
 	enum g711_law law;
 
 	CHECK(codec_law(codec, &law), "rate-exchange signal monitor setup failed");
-	for (unsigned epoch = 0; epoch < 4; ++epoch) {
+	for (unsigned epoch = 0; epoch < 8; ++epoch) {
+		bool fast = epoch >= 4u;
+		bool (*start_exchange)(struct dp *) = fast ? v90_datapump_start_fast_exchange :
+			v90_datapump_start_rate_renegotiation;
 		uint8_t payload[2][2 * PAYLOAD];
 		uint8_t prefix[2][PREFIX];
 		struct lapm_state retained[2];
@@ -1304,9 +1308,8 @@ static bool exercise_v92_rate_exchange(
 			      "side %u has no outstanding partial LAPM frame", side);
 			retained[side] = m->ec.lapm;
 		}
-		unsigned initiator = epoch < 2u ? analog : 1u - analog;
-		CHECK(v90_datapump_start_rate_renegotiation(owned[initiator]) &&
-		      !v90_datapump_start_rate_renegotiation(owned[initiator]),
+		unsigned initiator = epoch % 4u < 2u ? analog : 1u - analog;
+		CHECK(start_exchange(owned[initiator]) && !start_exchange(owned[initiator]),
 		      "native rate request or duplicate rejection failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = endpoints[side]->modem;
@@ -1345,9 +1348,10 @@ static bool exercise_v92_rate_exchange(
 			if (settled == 25u)
 				break;
 		}
-		CHECK(contains_pcm_rate_signal(prefix[0], prefix_count[0], law) &&
-		      contains_pcm_rate_signal(prefix[1], prefix_count[1], law),
-		      "rate exchange %u did not emit Ru/Rd", epoch);
+		CHECK(fast ? contains_pcm_rate_signal(prefix[1u - analog], prefix_count[1u - analog], law, true) :
+		      (contains_pcm_rate_signal(prefix[0], prefix_count[0], law, false) &&
+		       contains_pcm_rate_signal(prefix[1], prefix_count[1], law, false)),
+		      "rate exchange %u did not emit %s", epoch, fast ? "Rf" : "Ru/Rd");
 		CHECK(poll_seen[0] && poll_seen[1],
 		      "rate exchange %u did not poll retained LAPM state (polls=%d/%d)",
 		      epoch, poll_seen[0], poll_seen[1]);

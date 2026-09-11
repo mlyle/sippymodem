@@ -7542,6 +7542,157 @@ static bool test_v92_fast_response(void)
 	return true;
 }
 
+static bool v92_fast_analog_contracts(const struct pcm_call *snapshot, uint8_t received)
+{
+	struct pcm_call call = *snapshot;
+	struct pcm_call_data_event event;
+	uint8_t generated;
+	call.state.data_path.v92_analog.fast.deadline_remaining = 1u;
+	CHECK(pcm_call_data_octet(&call, received, decode_octet(call.law, received), true, NULL, &generated, &event) == PCM_CALL_OK &&
+	      call.stage == PCM_CALL_RETRAIN_SILENCE && pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
+	      call.pcm_upstream_quality.automatic_retrains == snapshot->pcm_upstream_quality.automatic_retrains,
+	      "analogue fast timeout did not retain bounded recovery");
+	call = *snapshot;
+	call.state.data_path.v92_analog.fast.record_index = sizeof(call.state.data_path.v92_analog.fast.record) * 8u + 1u;
+	CHECK(!pcm_call_is_valid(&call), "oversized fast record accepted");
+	call = *snapshot;
+	call.state.data_path.v92_analog.fast.deadline_remaining = 0u;
+	CHECK(!pcm_call_is_valid(&call), "expired fast owner reported idle");
+	call = *snapshot;
+	call.state.data_path.v92_analog.fast.control.suvu.request_silence = true;
+	CHECK(!pcm_call_is_valid(&call), "fast owner accepted a silence request");
+	call = *snapshot;
+	CHECK(pcm_call_start_rate_renegotiation(&call) == PCM_CALL_INVALID_STATE &&
+	      memcmp(&call, snapshot, sizeof(call)) == 0, "nested rate request changed fast owner");
+	if (pcm_r_rx_is_complete(&call.state.data_path.v92_analog.rf) &&
+	    !call.state.data_path.v92_analog.fast.finish_started) {
+		CHECK(pcm_call_start_cleardown(&call) == PCM_CALL_OK, "silent-peer fast close rejected");
+		for (unsigned clock = 0; clock < 8000u && call.stage != PCM_CALL_CLOSED; ++clock) {
+			enum pcm_call_result result = pcm_call_data_octet(&call, silence_octet(call.law), 0, true, NULL, &generated, &event);
+			CHECK((result == PCM_CALL_OK || result == PCM_CALL_CLEARDOWN_COMPLETE) && pcm_call_is_valid(&call) &&
+			      call.stage != PCM_CALL_RETRAIN_SILENCE, "silent peer interrupted fast close: %s", pcm_call_result_name(result));
+		}
+		CHECK(call.stage == PCM_CALL_CLOSED, "silent peer prevented bounded fast close");
+	}
+	return true;
+}
+
+static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators, unsigned hangup)
+{
+	struct pcm_call *calls[] = { &pair->analog, &pair->digital };
+	struct pcm_payload_source source[2] = { 0 };
+	uint32_t held[2] = { 0 }, frames[2] = { 0 };
+	bool seen[2] = { false, false };
+	bool closed[2] = { false, false }, zero_received[2] = { false, false };
+	bool hangup_requested = false;
+	unsigned checked = 0u;
+	/* A saved setup may request silence, but fast exchange must not inherit it. */
+	pair->analog.v92_analog_phase4_configuration.suvu.request_silence = true;
+	for (unsigned role = 0; role < 2u; ++role) {
+		if (!(initiators & (1u << role)))
+			continue;
+		CHECK(pcm_call_start_fast_exchange(calls[role]) == PCM_CALL_OK, "fast pair request failed role %u", role);
+		struct pcm_call retained = *calls[role];
+		CHECK(pcm_call_start_fast_exchange(calls[role]) == PCM_CALL_INVALID_STATE &&
+		      memcmp(calls[role], &retained, sizeof(retained)) == 0, "duplicate fast request changed state");
+	}
+	for (unsigned clock = 0; clock < 24000u; ++clock) {
+		uint8_t received[2], transmitted[2];
+		channel_receive(&pair->wire, &received[0], &received[1]);
+		for (unsigned role = 0; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			transmitted[role] = silence_octet(call->law);
+			if (closed[role])
+				continue;
+			const struct pcm_call_data_sources sources = {
+				.downstream = pcm_payload, .downstream_context = &source[role],
+				.pcm_upstream = pcm_payload, .pcm_upstream_context = &source[role],
+			};
+			struct pcm_call_data_event event;
+			enum pcm_call_result result = pcm_call_data_octet(call, received[role], decode_octet(call->law, received[role]),
+				true, &sources, &transmitted[role], &event);
+			if (hangup && result == PCM_CALL_CLEARDOWN_COMPLETE) {
+				CHECK(call->stage == PCM_CALL_CLOSED && pcm_call_is_valid(call), "fast close left invalid call");
+				closed[role] = true;
+				continue;
+			}
+			CHECK(result == PCM_CALL_OK && call->stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(call),
+			      "fast pair mask %u role %u clock %u failed: %s stage=%u", initiators, role, clock,
+			      pcm_call_result_name(result), call->stage);
+			if (!seen[role] && call->retrain_active) {
+				seen[role] = true;
+				held[role] = source[role].frames;
+				if (!role)
+					CHECK(!call->state.data_path.v92_analog.fast.control.suvu.request_silence &&
+					      call->v92_analog_phase4_configuration.suvu.request_silence,
+					      "fast exchange inherited silence or changed saved setup");
+			}
+			if (!hangup && !role && call->state.data_path.v92_analog.fast.deadline_remaining) {
+				const struct pcm_call_v92_analog_fast *fast = &call->state.data_path.v92_analog.fast;
+				unsigned phase = !fast->rm_complete ? 0u : !pcm_r_rx_is_complete(&call->state.data_path.v92_analog.rf) ? 1u :
+					!fast->finish_started ? 2u : !fast->b1_started ? 3u : 4u;
+				if (!(checked & (1u << phase))) {
+					CHECK(v92_fast_analog_contracts(call, received[role]), "fast analogue boundary failed");
+					checked |= 1u << phase;
+				}
+			}
+			zero_received[role] |= role ? call->state.data_path.v92_digital.fast.control.cleardown.peer_requested :
+				call->state.data_path.v92_analog.fast.cleardown.peer_requested;
+			if (!hangup && seen[0] && seen[1] && event.kind != PCM_CALL_DATA_NONE) {
+				const uint8_t *bits = role ? event.frame.pcm_upstream.bits : event.frame.downstream.bits;
+				size_t count = role ? event.frame.pcm_upstream.bit_count : event.frame.downstream.bit_count;
+				uint32_t index = held[1u - role] + frames[role];
+				CHECK(v92_rate_payload(bits, count, &index), "fast pair payload changed role %u clock %u", role, clock);
+				frames[role]++;
+			}
+		}
+		channel_transmit(&pair->wire, transmitted[0], transmitted[1]);
+		if (hangup && !hangup_requested && pair->digital.state.data_path.v92_digital.fast.stage == PCM_CALL_V92_FAST_CONTROL &&
+		    pair->analog.state.data_path.v92_analog.fast.rm_complete) {
+			for (unsigned role = 0; role < 2u; ++role)
+				if (hangup & (1u << role))
+					CHECK(pcm_call_start_cleardown(calls[role]) == PCM_CALL_OK, "fast hangup request failed role %u", role);
+			hangup_requested = true;
+		}
+		if (closed[0] && closed[1]) {
+			CHECK(zero_received[0] && zero_received[1] && source[0].frames == held[0] && source[1].frames == held[1],
+			      "fast hangup did not exchange zero CP or consumed payload: zero=%u/%u", zero_received[0], zero_received[1]);
+			return true;
+		}
+		if (frames[0] >= 20u && frames[1] >= 20u) {
+			CHECK(pcm_call_is_online(calls[0]) && pcm_call_is_online(calls[1]) &&
+			      !calls[0]->retrain_active && !calls[1]->retrain_active && (checked & 29u) == 29u &&
+			      (initiators != 1u || checked == 31u), "fast pair did not resume online or check every boundary");
+			return true;
+		}
+	}
+	CHECK(false, "fast pair timed out frames=%u/%u af=%u/%u/%u rx=%u df=%u rm=%u b1=%u",
+		frames[0], frames[1], pair->analog.state.data_path.v92_analog.fast.rm_complete,
+		pair->analog.state.data_path.v92_analog.fast.finish_started, pair->analog.state.data_path.v92_analog.fast.b1_started,
+		pair->analog.state.data_path.v92_analog.downstream.training.stage,
+		pair->digital.state.data_path.v92_digital.fast.stage, pair->digital.state.data_path.v92_digital.fast.rm_complete,
+		pair->digital.state.data_path.v92_digital.fast.b1_started);
+}
+
+static bool test_v92_fast_pair(void)
+{
+	const unsigned rates[] = { 1u, 7u, 19u };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+			struct v92_online_pair pair;
+			const struct v92_upstream_offer offer = {
+				.peer_mask = 1u << (rates[rate] - 1u), .local_maximum = rates[rate], .expected = rates[rate],
+			};
+			CHECK(capture_v92_duplex_data(law, rate ? 13u : 1u, false, &offer, NULL, 0u, &pair), "fast pair did not train");
+			for (unsigned initiators = 1u; initiators <= 3u; ++initiators)
+			for (unsigned hangup = 0; hangup <= 3u; ++hangup) {
+				struct v92_online_pair trial = pair;
+				CHECK(run_v92_fast_pair(&trial, initiators, hangup), "fast pair law %u rate %u hangup %u failed", law, rates[rate], hangup);
+			}
+		}
+	return true;
+}
+
 static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 {
 	struct pcm_call shifted = *online;
@@ -9439,6 +9590,7 @@ int main(void)
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
+		{ "V.92 paired fast exchange", test_v92_fast_pair },
 		{ "V.92 local and simultaneous rate exchange", test_v92_rate_request },
 		{ "V.92 peer-limited upstream data", test_v92_upstream_negotiation },
 		{ "V.92 failed B1 rate recovery", test_v92_b1_rate_recovery },

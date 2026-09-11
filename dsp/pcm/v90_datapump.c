@@ -313,7 +313,7 @@ static int retrain_v90(struct dp *dp)
 	return 0;
 }
 
-bool v90_datapump_start_rate_renegotiation(struct dp *dp)
+static bool start_parameter_exchange(struct dp *dp, bool fast)
 {
 	struct v90_datapump *datapump = v90_from_dp(dp);
 	struct training_session training;
@@ -324,13 +324,23 @@ bool v90_datapump_start_rate_renegotiation(struct dp *dp)
 		return false;
 	training = datapump->training;
 	call = datapump->call;
-	if (pcm_call_start_rate_renegotiation(&call) != PCM_CALL_OK ||
+	if ((fast ? pcm_call_start_fast_exchange(&call) : pcm_call_start_rate_renegotiation(&call)) != PCM_CALL_OK ||
 	    training_session_start_retrain(&training, TRAINING_LOCAL_RETRAIN) !=
 		    TRAINING_SESSION_OK)
 		return false;
 	datapump->call = call;
 	datapump->training = training;
 	return true;
+}
+
+bool v90_datapump_start_rate_renegotiation(struct dp *dp)
+{
+	return start_parameter_exchange(dp, false);
+}
+
+bool v90_datapump_start_fast_exchange(struct dp *dp)
+{
+	return start_parameter_exchange(dp, true);
 }
 
 static bool observe_upstream_quality(struct v90_datapump *datapump)
