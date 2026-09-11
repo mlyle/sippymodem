@@ -1049,14 +1049,14 @@ static int reject_info(struct lapm_state *l)
 static int ack_info(struct lapm_state *l, u8 nr)
 {
 	int n = 0;
-	//EC_DBG1("ack info: nr %d...\n", nr);
-	/* check for valid nr ( va <= nr <= vs && vs-va<= k ) */
-	// fixme: optimize this
-	if (!( ((nr-l->va)&0x7f) >= 0 &&
-	       ((l->vs-nr)&0x7f) >= 0 &&
-	       ((l->vs-l->va)&0x7f) <= l->tx_win_size) ) {
-		EC_ERR("nr sequince error. disconnect!\n");
-		// TBD notify  CF
+	unsigned int outstanding = (l->vs - l->va) & 0x7f;
+	unsigned int acknowledged = (nr - l->va) & 0x7f;
+
+	/* V.42 8.5.2: V(A) <= N(R) <= V(S), in modulo-128 order.
+	 * Validate the entire acknowledgement before releasing any frame. */
+	if (acknowledged > outstanding || outstanding > l->tx_win_size) {
+		EC_ERR("invalid acknowledgement %u outside window %u..%u\n",
+		       nr, l->va, l->vs);
 		lapm_disconnect(l);
 		return -1;
 	}
@@ -1249,7 +1249,6 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 
 static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 {
-	int n;
 	//LAPM_PRINT_FRAME("rx super:",1,f);
 
 	/* note 8.4.7:
@@ -1258,7 +1257,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_RR:
 		/* clear peer_busy state */
 		l->peer_busy = 0;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		/* p=1 may be used for status checking */
 		if (FRAME_S_PF(f) || !tx_info(l)) {
 			if (l->busy)
@@ -1270,7 +1270,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_RNR:
 		/* going to peer_busy state */
 		l->peer_busy = 1;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		/* if p=1 may be used for status checking ?? */
 		if (FRAME_S_PF(f)) {
 			if (l->busy)
@@ -1282,7 +1283,8 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 	case FRAME_S_REJ:
 		/* clear peer_busy state */
 		l->peer_busy = 0;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		if (!l->rtx_count) {
 			TIMER_STOP(l);
 			reject_info(l);
@@ -1307,7 +1309,6 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 
 static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 {
-	int n;
 	bool retrain_response = l->retrain_poll && l->rtx_count &&
 		FRAME_S_PF(f);
 	//LAPM_PRINT_FRAME("rx_super",0,f);
@@ -1320,7 +1321,8 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 	switch(FRAME_CTRL(f)) {
 	case FRAME_S_RR:
 		l->peer_busy = 0;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		if (l->rtx_count && FRAME_S_PF(f)) {
 			reject_info(l);
 			TIMER_STOP(l);
@@ -1328,7 +1330,8 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_S_RNR:
 		l->peer_busy = 1;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		if (l->rtx_count && FRAME_S_PF(f)) {
 			reject_info(l);
 			TIMER_STOP(l); // fixme: need stop even on RNR ??
@@ -1338,7 +1341,8 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 		break;
 	case FRAME_S_REJ:
 		l->peer_busy = 0;
-		n = ack_info(l,FRAME_NR(f));
+		if (ack_info(l,FRAME_NR(f)) < 0)
+			return;
 		if (!l->rtx_count || FRAME_S_PF(f)) {
 			reject_info(l);
 			TIMER_STOP(l);
@@ -1545,7 +1549,9 @@ static frame_t *lapm_get_tx_frame(void *framer)
 		return f;
 	}
 	/* get info frame */
-	if ( l->peer_busy || l->config || l->state != LAPM_DATA)
+	/* V.42 8.4.6/8.4.8: clearing peer busy with an ordinary RR/REJ must
+	 * not release information while our recovery enquiry is outstanding. */
+	if (l->peer_busy || l->rtx_count || l->config || l->state != LAPM_DATA)
 		return 0;
 	if ( l->tx_info == l->info_list && !tx_info(l) )
 		return 0;

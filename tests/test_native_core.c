@@ -2145,6 +2145,115 @@ static bool test_lapm_receive_backpressure(void)
 	return true;
 }
 
+static bool test_lapm_acknowledgement_window(void)
+{
+	enum { LAPM_DATA_STATE = 2, LAPM_DISC_STATE = 3 };
+	static const uint8_t starts[] = { 5, 126 };
+	static const unsigned int distances[] = { 127, 0, 1, 3, 4 };
+	/* I command, then RR/RNR/REJ commands and solicited responses. */
+	static const uint8_t controls[] = { 0, 1, 5, 9, 1, 5, 9 };
+	static const uint8_t payload[] = { 'a', 'b', 'c' };
+	struct modem_driver driver = {
+		.name = "LAPM acknowledgement window", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t start = 0; start < ARRAY_LENGTH(starts); ++start)
+	for (unsigned int pending = 0; pending <= 3; pending += 3)
+	for (size_t kind = 0; kind < ARRAY_LENGTH(controls); ++kind)
+	for (size_t index = 0; index < ARRAY_LENGTH(distances); ++index) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_state *l;
+		frame_t *retained, *outgoing;
+		unsigned int distance = distances[index];
+		uint8_t nr = (uint8_t)((starts[start] + distance) & 0x7f);
+		uint8_t wire[3];
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+
+		CHECK(m != NULL, "LAPM acknowledgement fixture allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_win_size = 3;
+		m->cfg.ec_tx_info_size = 1;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "LAPM acknowledgement initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		l = &m->ec.lapm;
+		l->state = LAPM_DATA_STATE;
+		l->va = l->vs = starts[start];
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = pending;
+		lapm_source.offset = 0;
+		retained = l->sent_info;
+		for (unsigned int frame = 0; frame < pending; ++frame) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4,
+			      "LAPM acknowledgement fixture did not queue information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		/* Exercise the response to a real post-retrain status enquiry,
+		 * including the clean-window case with peer flow control retained. */
+		l->peer_busy = 1;
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->retrain_poll,
+		      "LAPM acknowledgement fixture did not poll after retrain");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 1,
+		      "LAPM acknowledgement fixture lost its poll");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[0] = kind < 4 ? l->rsp_addr : l->cmd_addr;
+		wire[1] = controls[kind];
+		wire[2] = (uint8_t)((nr << 1) | 1u);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		if (distance <= pending) {
+			CHECK(l->state == LAPM_DATA_STATE && l->va == nr,
+			      "valid acknowledgement rejected (base=%u pending=%u kind=%zu nr=%u)",
+			      starts[start], pending, kind, nr);
+			if (kind == 1 || kind == 3) {
+				/* An RR/REJ command clears peer busy, but it is not the
+				 * final response to our outstanding recovery enquiry. */
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(outgoing != NULL && outgoing->buf[1] == 1,
+				      "recovery command did not get its supervisory reply");
+				m->packer.hdlc.tx_complete(l, outgoing);
+				lapm_source.offset = 0;
+				lapm_source.length = 1;
+				CHECK(l->rtx_count && l->retrain_poll && !l->peer_busy &&
+				      m->packer.hdlc.get_tx_frame(l) == NULL,
+				      "RR/REJ command released information before the final reply");
+				wire[0] = l->cmd_addr;
+				wire[1] = 1;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				outgoing = m->packer.hdlc.get_tx_frame(l);
+				CHECK(!l->rtx_count && !l->retrain_poll && outgoing != NULL &&
+				      (outgoing->buf[1] & 1u) == 0,
+				      "final recovery reply did not release information");
+				m->packer.hdlc.tx_complete(l, outgoing);
+			}
+		} else {
+			CHECK(l->state == LAPM_DISC_STATE && l->va == starts[start] &&
+			      l->vs == ((starts[start] + pending) & 0x7f) &&
+			      l->sent_info == retained && l->sent_count == (int)pending &&
+			      m->bit_timer > 0 && l->rtx_count == 0,
+			      "invalid acknowledgement consumed pending frames or disconnect timer "
+			      "(base=%u pending=%u kind=%zu nr=%u)", starts[start], pending, kind, nr);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 2 &&
+			      outgoing->buf[1] == 0x53,
+			      "invalid acknowledgement did not queue DISC");
+			m->packer.hdlc.tx_complete(l, outgoing);
+			CHECK(m->packer.hdlc.get_tx_frame(l) == NULL,
+			      "invalid acknowledgement queued traffic after DISC");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_lapm_retrain_preserves_link_state(void)
 {
 	enum {
@@ -3273,6 +3382,7 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
+		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
