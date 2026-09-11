@@ -1122,6 +1122,59 @@ static bool test_v92_control_recovery(void)
 	return true;
 }
 
+static bool run_truncated_mp_ed(enum g711_law law, bool long_retry)
+{
+	const struct v90_mp_record old = type0_record(false);
+	const struct v90_mp_record retry = long_retry ?
+		type1_record(true) : type0_record(true);
+	struct v90_pcm_mapping mapping;
+	struct pcm_downstream_rx receiver;
+	struct source source;
+	struct observer observer = { 0 };
+	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+	const uint8_t ed[FRAME_BITS] = { 0 };
+	size_t bits;
+
+	CHECK(make_mapping(&mapping, law, 2, 2) && source_init(&source, &mapping) &&
+	      pcm_downstream_rx_init(&receiver, PCM_PROTOCOL_V90, &mapping,
+		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
+	      push_trn2d(&source,
+		      V90_PHASE4_TRN2D_MINIMUM_FRAMES + mapping.spectral_lookahead,
+		      &receiver, &observer) &&
+	      pcm_downstream_rx_expect_ed(&receiver) == PCM_DOWNSTREAM_RX_OK,
+	      "truncated MP fixture failed");
+	/* Omit the last 17 bits of the old record. The new prefix then fills
+	 * the old candidate exactly, so rejecting it must not erase the prefix.
+	 * Both the retry and Ed remain mapping-frame aligned on the PCM wire. */
+	CHECK(encode_record(&old, sequence, &bits) &&
+	      push_sequence(&source, sequence, bits - FRAME_BITS, &receiver, &observer) &&
+	      encode_record(&retry, sequence, &bits) &&
+	      push_sequence(&source, sequence, bits, &receiver, &observer) &&
+	      push_frame(&source, ed, &receiver, &observer) &&
+	      push_frame(&source, ed, &receiver, &observer) &&
+	      finish_source(&source, &receiver, &observer), "truncated MP stream failed");
+	CHECK(observer.event_count == 3u &&
+	      observer.events[0].result == PCM_DOWNSTREAM_RX_MP_REJECTED &&
+	      observer.events[1].result == PCM_DOWNSTREAM_RX_MP_PRIME &&
+	      records_match(&observer.events[1].mp.record, &retry) &&
+	      observer.events[2].result == PCM_DOWNSTREAM_RX_ED &&
+	      observer.events[2].ed.bit_count == V90_PHASE4_ED_FRAMES * FRAME_BITS &&
+	      observer.events[2].ed.bit_errors == 0u &&
+	      pcm_downstream_rx_is_valid(&receiver) &&
+	      pcm_downstream_rx_is_complete(&receiver),
+	      "lost retry/Ed law=%u long=%u events=%zu stage=%u", law, long_retry,
+	      observer.event_count, receiver.stage);
+	return true;
+}
+
+static bool test_truncated_mp_ed(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!run_truncated_mp_ed(law, false) || !run_truncated_mp_ed(law, true))
+			return false;
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_pcm_mapping mapping;
@@ -1251,6 +1304,7 @@ int main(void)
 		{ "TRN2d error accounting", test_trn2d_error_accounting },
 		{ "Ed transition", test_ed_transition },
 		{ "Ed boundary request", test_ed_boundary_request },
+		{ "truncated MP and Ed", test_truncated_mp_ed },
 		{ "V.92 buffered-prefix Ed", test_v92_buffered_prefix_ed },
 		{ "V.92 control width matrix", test_v92_control_widths },
 		{ "V.92 control recovery", test_v92_control_recovery },

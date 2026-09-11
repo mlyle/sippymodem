@@ -223,6 +223,54 @@ static bool test_overlapping_reacquisition(void)
 	return true;
 }
 
+static bool test_truncation_recovery(void)
+{
+	const struct v90_mp_record records[] = {
+		type0_record(true), type1_record(),
+	};
+
+	for (uint8_t width = V90_MP_TRAINING_FRAME_MINIMUM_BITS;
+	     width <= V90_MP_TRAINING_FRAME_MAXIMUM_BITS; ++width)
+	for (unsigned old = 0u; old < ARRAY_LENGTH(records); ++old)
+	for (unsigned next = 0u; next < ARRAY_LENGTH(records); ++next) {
+		uint8_t first[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+		uint8_t retry[V90_MP_MAXIMUM_SEQUENCE_BYTES];
+		size_t first_bits, retry_bits;
+
+		CHECK(encode_record(&records[old], width, first, &first_bits) &&
+		      encode_record(&records[next], width, retry, &retry_bits),
+		      "truncated MP fixture did not encode");
+		for (size_t prefix = 0u; prefix < first_bits; ++prefix) {
+			struct v90_mp_receiver receiver;
+			struct v90_mp_event event;
+			unsigned accepted = 0u;
+
+			CHECK(v90_mp_receiver_init(&receiver, width) == V90_MP_RECEIVER_OK &&
+			      feed_bits(&receiver, first, 0u, prefix, &event, false),
+			      "truncated MP prefix did not initialize");
+			for (size_t bit = 0u; bit < retry_bits; ++bit) {
+				CHECK(v90_mp_receive_bit(&receiver,
+						packed_bit(retry, bit), &event) ==
+					      V90_MP_RECEIVER_OK &&
+				      v90_mp_receiver_is_valid(&receiver),
+				      "MP retry stopped at bit %zu", bit);
+				if (event.type == V90_MP_EVENT_NONE ||
+				    event.type == V90_MP_EVENT_REJECTED)
+					continue;
+				CHECK(bit + 1u == retry_bits && event.frame_result == V90_MP_OK &&
+				      records_match(&event.record, &records[next], width),
+				      "MP retry accepted the wrong record");
+				accepted++;
+			}
+			CHECK(accepted == 1u && receiver.stage == V90_MP_SEARCH_SYNC &&
+			      receiver.sync_one_count == 0u,
+			      "lost retry width=%u old=%u next=%u prefix=%zu",
+			      width, old, next, prefix);
+		}
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v90_mp_receiver receiver;
@@ -282,6 +330,7 @@ int main(void)
 		{ "continuous records", test_continuous_records },
 		{ "rejection and recovery", test_rejection_and_recovery },
 		{ "overlapping reacquisition", test_overlapping_reacquisition },
+		{ "truncated record recovery", test_truncation_recovery },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

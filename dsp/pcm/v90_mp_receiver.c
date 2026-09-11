@@ -137,6 +137,7 @@ static void finish_candidate(
 	enum v90_mp_result result = v90_mp_decode(
 		receiver->sequence, receiver->sequence_bit_count,
 		receiver->training_frame_bits, &record);
+	uint8_t suffix_ones = receiver->sync_one_count;
 
 	event->frame_result = result;
 	if (result == V90_MP_OK) {
@@ -148,6 +149,9 @@ static void finish_candidate(
 		event->type = V90_MP_EVENT_REJECTED;
 	}
 	clear_candidate(receiver);
+	/* Rejection can occur inside the next valid record's sync prefix. */
+	if (result != V90_MP_OK)
+		receiver->sync_one_count = suffix_ones;
 }
 
 static void receive_valid_bit(
