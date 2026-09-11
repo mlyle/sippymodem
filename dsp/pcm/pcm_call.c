@@ -1645,6 +1645,26 @@ static uint32_t downstream_power_limit(
 	return limit;
 }
 
+static bool select_training_ucode(const struct pcm_call *call, uint8_t *ucode)
+{
+	uint32_t limit = downstream_power_limit(call, NULL);
+
+	/* V.90 Table 10 / V.92 Tables 18 and 19: UINFO is greater than 66
+	 * and its two-point power cannot exceed the peer's INFO0d maximum.
+	 * Keep a quieter local preference; only lower an over-power request. */
+	for (unsigned selected = *ucode; selected >= V90_INFO1A_MIN_TRAINING_UCODE; --selected) {
+		int16_t sample;
+
+		if (!g711_ucode_sample(call->law, (uint8_t)selected, true, &sample))
+			return false;
+		if ((uint32_t)sample * (uint32_t)sample <= limit) {
+			*ucode = (uint8_t)selected;
+			return true;
+		}
+	}
+	return false;
+}
+
 static enum pcm_call_result enter_phase3(struct pcm_call *call)
 {
 	struct pcm_phase3_entry entry;
@@ -1667,6 +1687,9 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		struct v92_phase3_analog_station_configuration config =
 			call->phase3_configuration.v92_analog;
 
+		/* The retained proposal is a ceiling; train with the INFO1a that
+		 * actually went over the wire after applying the peer power limit. */
+		config.local_info1a = entry.selection.analog.pcm;
 		if (call->analog_phase4_configuration.generate_constellations) {
 			struct v90_pcm_mapping mapping;
 			uint32_t lower, upper, limit = downstream_power_limit(call, NULL);
@@ -1818,6 +1841,7 @@ static enum pcm_call_result advance_phase2(
 	}
 	if (call->local_role == V90_ANALOG_MODEM &&
 	    event->kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED) {
+		union pcm_call_local_info1 selected = call->local_info1;
 		bool pcm_upstream = false;
 
 		if (call->protocol == PCM_PROTOCOL_V92) {
@@ -1829,13 +1853,16 @@ static enum pcm_call_result advance_phase2(
 			pcm_upstream = peer.pcm_upstream_supported &&
 				call->local_info1.pcm_upstream_enabled;
 		}
+		if (!select_training_ucode(call, pcm_upstream ?
+			&selected.v92_analog.training_ucode : &selected.analog.training_ucode))
+			return PCM_CALL_UNUSABLE_SELECTION;
 		result = pcm_upstream ?
 			pcm_phase2_reply_pcm(
 				&call->state.phase2,
-				&call->local_info1.v92_analog) :
+				&selected.v92_analog) :
 			pcm_phase2_reply_conventional(
 				&call->state.phase2,
-				&call->local_info1.analog);
+				&selected.analog);
 		if (result != PCM_PHASE2_OK)
 			return PCM_CALL_SEQUENCE_MISMATCH;
 	}

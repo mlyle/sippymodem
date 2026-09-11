@@ -3347,7 +3347,7 @@ static bool run_phase3_sd_timeout(
 		struct v90_phase3_sd sequence;
 
 		CHECK(v90_phase3_sd_init(&sequence, law,
-			      analog_config.local_info1.analog.training_ucode, kind) ==
+			      analog.call.phase3_entry.selection.analog.conventional.training_ucode, kind) ==
 			      V90_PHASE3_SD_OK,
 		      "Sd-timeout response did not initialize");
 		while (v90_phase3_sd_remaining(&sequence) != 0u) {
@@ -5622,6 +5622,8 @@ static bool run_v92_phase4_control(
 		if (analog_handoff_reached && digital_handoff_reached)
 			break;
 	}
+	struct v92_pcm_info1a expected_info1a = analog_configuration.local_info1.v92_analog;
+	expected_info1a.training_ucode = analog.phase3_entry.selection.analog.pcm.training_ucode;
 	CHECK(analog_handoff_reached && digital_handoff_reached &&
 	      analog_control_reached && digital_control_reached &&
 	      analog_e2u_started && digital_e2u_started &&
@@ -5659,10 +5661,10 @@ static bool run_v92_phase4_control(
 		      &selected_info1d) &&
 	      v92_pcm_info1a_equal(
 		      &analog.phase3_entry.selection.analog.pcm,
-		      &analog_configuration.local_info1.v92_analog) &&
+		      &expected_info1a) &&
 	      v92_pcm_info1a_equal(
 		      &digital.phase3_entry.selection.analog.pcm,
-		      &analog_configuration.local_info1.v92_analog) &&
+		      &expected_info1a) &&
 	      analog.stage == PCM_CALL_PHASE4 &&
 	      digital.stage == PCM_CALL_PHASE4 &&
 	      analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U &&
@@ -8760,6 +8762,90 @@ static bool test_result_names(void)
 	return true;
 }
 
+static bool run_info1a_training_power(
+	unsigned mode, enum g711_law law, uint8_t power_code, uint16_t rms, uint8_t proposal)
+{
+	struct pcm_call_configuration ac = mode == 0u ?
+		configuration(V90_ANALOG_MODEM, law) : v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = mode == 0u ?
+		configuration(V90_DIGITAL_MODEM, law) : v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2];
+	struct channel wire;
+	uint8_t expected = 0u;
+	struct v90_info0d *info0d = mode == 0u ?
+		&dc.local_info0.digital : &dc.local_info0.v92_digital.v90;
+
+	info0d->maximum_transmit_power = power_code;
+	info0d->measure_power_at_codec_output = (power_code & 1u) != 0u;
+	ac.local_info1.analog.training_ucode = proposal;
+	if (mode != 0u) {
+		ac.local_info1.v92_analog.training_ucode = proposal;
+		ac.phase3.v92_analog.local_info1a = ac.local_info1.v92_analog;
+		ac.local_info1.pcm_upstream_enabled = mode == 2u;
+	}
+	for (unsigned code = 67u; code <= proposal; ++code) {
+		int16_t point;
+
+		CHECK(g711_ucode_sample(law, (uint8_t)code, true, &point), "invalid test Ucode");
+		if (point <= rms)
+			expected = (uint8_t)code;
+	}
+	CHECK(expected != 0u && channel_init(&wire, law, 3u) &&
+	      pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "training-power setup failed");
+	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (size_t side = 0u; side < 2u; ++side) {
+			struct pcm_call_observation event;
+
+			CHECK(pcm_call_octet(&calls[side], rx[side], decode_octet(law, rx[side]),
+				&tx[side], &event) == PCM_CALL_OK,
+			      "mode %u law %u power %u INFO1 failed", mode, law, power_code);
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (calls[0].phase3_entry_stored && calls[1].phase3_entry_stored)
+			break;
+	}
+	for (size_t side = 0u; side < 2u; ++side) {
+		const struct pcm_info1_selection *selection = &calls[side].phase3_entry.selection;
+		uint8_t actual = mode == 2u ? selection->analog.pcm.training_ucode :
+			selection->analog.conventional.training_ucode;
+
+		CHECK(calls[side].phase3_entry_stored && actual == expected &&
+		      (selection->upstream == PCM_UPSTREAM_PCM) == (mode == 2u),
+		      "mode %u law %u power %u proposed %u got %u expected %u",
+		      mode, law, power_code, proposal, actual, expected);
+	}
+	CHECK(memcmp(&calls[0].local_info1, &ac.local_info1, sizeof(ac.local_info1)) == 0 &&
+	      memcmp(&calls[0].phase3_configuration, &ac.phase3, sizeof(ac.phase3)) == 0,
+	      "power selection changed configured training preferences");
+	if (mode == 2u)
+		CHECK(calls[0].state.phase3.v92_analog.downstream_training_ucode == expected,
+		      "V.92 receiver trained at the proposal rather than the transmitted Ucode");
+	return true;
+}
+
+static bool test_info1a_training_power(void)
+{
+	static const struct { uint8_t code; uint16_t rms; } limits[] = {
+		{ 0u, 15124u }, { 18u, 5368u }, { 23u, 4024u }, { 31u, 2540u },
+	};
+	static const uint8_t proposals[] = { 67u, 91u };
+
+	/* Decode actual INFO1a through both call owners, including the V.92
+	 * conventional-upstream branch. A quieter preference is not raised,
+	 * and the configured proposal remains available for later retrains. */
+	for (unsigned mode = 0u; mode < 3u; ++mode)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (size_t power = 0u; power < ARRAY_LENGTH(limits); ++power)
+				for (size_t proposal = 0u; proposal < ARRAY_LENGTH(proposals); ++proposal)
+					CHECK(run_info1a_training_power(mode, law, limits[power].code,
+						limits[power].rms, proposals[proposal]), "training power selection failed");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -8771,6 +8857,7 @@ int main(void)
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
 		{ "PCM INFO1d respects peer capabilities", test_info1d_peer_capabilities },
+		{ "PCM INFO1a respects peer training power", test_info1a_training_power },
 		{ "PCM probe-response timeout recovery", test_probe_response_timeout },
 		{ "lost initial probe responses recover online data", test_initial_probe_loss },
 		{ "missing L1 probes recover online data", test_missing_probe_recovery },

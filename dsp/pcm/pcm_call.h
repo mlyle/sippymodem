@@ -61,7 +61,8 @@ union pcm_call_local_info1 {
 	struct v92_info1d v92_digital;
 	/* The analogue modem retains both proposals until INFO1d selects which
 	 * upstream waveform the connection can use. Digital V.92 INFO1d already
-	 * contains its conventional probing fields. */
+	 * contains its conventional probing fields. The training Ucode is a
+	 * local ceiling; the transmitted INFO1a also respects peer INFO0d power. */
 	struct {
 		struct v90_info1a analog;
 		struct v92_pcm_info1a v92_analog;
