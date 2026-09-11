@@ -7004,6 +7004,9 @@ static bool test_v92_remote_rate_request(void)
 static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 {
 	struct pcm_call shifted = *online;
+	/* A future full retrain may use a different nominal preference. Ru
+	 * must retain the live upstream level, including negotiated reduction. */
+	shifted.phase3_configuration.v92_analog.upstream_lu_ucode -= 4u;
 	for (unsigned offset = 0; offset < V92_PCM_MAPPING_FRAME_SYMBOLS; ++offset) {
 		struct pcm_call call = shifted;
 		struct v92_upstream_data_tx data = call.state.data_path.v92_analog.upstream;
@@ -7026,9 +7029,7 @@ static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 			} else {
 				unsigned symbol = i - queued;
 				bool positive = (symbol % 6u < 3u) != (symbol >= 384u);
-				CHECK(g711_ucode_sample(call.law,
-					call.phase3_configuration.v92_analog.upstream_lu_ucode, positive, &expected),
-				      "expected Ru level failed");
+				expected = positive ? data.upstream_level : -data.upstream_level;
 			}
 			CHECK(pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
 			      transmitted == encode_octet(call.law, expected),
@@ -7052,6 +7053,7 @@ static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 static bool v92_analog_remote_rd(const struct pcm_call *online)
 {
 	struct pcm_call call = *online;
+	call.phase3_configuration.v92_analog.upstream_lu_ucode -= 4u;
 	struct pcm_r_tx rd;
 	struct v92_upstream_data_tx data = call.state.data_path.v92_analog.upstream;
 	struct v90_pcm_mapping mapping;
@@ -7090,8 +7092,8 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 			      "remote Rd expected drain failed");
 		} else {
 			unsigned n = i - queued;
-			CHECK(g711_ucode_sample(call.law, call.phase3_configuration.v92_analog.upstream_lu_ucode,
-				(n % 6u < 3u) != (n >= 384u), &expected), "remote Rd expected Ru failed");
+			bool positive = (n % 6u < 3u) != (n >= 384u);
+			expected = positive ? data.upstream_level : -data.upstream_level;
 		}
 		if (!pcm_r_tx_is_complete(&rd)) {
 			CHECK(pcm_r_tx_next(&rd, &symbol) == PCM_R_TX_OK, "remote Rd tail failed");

@@ -637,6 +637,80 @@ static bool test_v92_pcm_starts(void)
 	return true;
 }
 
+static bool test_v92_upstream_power(void)
+{
+	static const uint8_t proposals[] = { 67, 91 };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (size_t proposal = 0; proposal < ARRAY_LENGTH(proposals); ++proposal)
+	for (unsigned minimum = 0; minimum <= V34_INFO1_MAX_POWER_REDUCTION_DB; ++minimum)
+	for (unsigned optional = 0; optional <= 7; optional += 7) {
+		struct pcm_info1_selection selected = pcm_upstream_selection();
+		struct v90_info0d info0 = digital_info0((enum g711_law)law);
+		struct pcm_phase3_entry entry;
+		struct v92_phase3_analog_station station;
+		struct v92_phase3_analog_station_configuration configuration, saved;
+		int16_t nominal, adjacent, selected_level;
+		double limit;
+
+		selected.digital.record.v92.v34.common.minimum_peer_power_reduction_db = minimum;
+		selected.digital.record.v92.v34.common.additional_peer_power_reduction_db = optional;
+		selected.analog.pcm.local_md_length_276_symbol_units = 0;
+		configuration = v92_analog_configuration((enum g711_law)law, &selected);
+		configuration.upstream_lu_ucode = proposals[proposal];
+		saved = configuration;
+		CHECK(g711_ucode_sample((enum g711_law)law, proposals[proposal], true, &nominal) &&
+		      pcm_phase3_entry_init(&entry, V90_ANALOG_MODEM, (enum g711_law)law,
+			&info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+		      pcm_phase3_entry_start_v92_analog(&entry, &configuration, &station) ==
+			PCM_PHASE3_ENTRY_OK, "PCM upstream power setup failed");
+		limit = nominal * pow(10.0, -(double)minimum / 20.0);
+		CHECK(station.upstream_lu <= limit &&
+		      (station.upstream_lu_ucode == proposals[proposal] ||
+		       (g711_ucode_sample((enum g711_law)law, station.upstream_lu_ucode + 1u,
+			true, &adjacent) && adjacent > limit)),
+		      "law %u proposal %u mandatory %u optional %u produced Lu=%d (limit %.3f)",
+		      law, proposals[proposal], minimum, optional, station.upstream_lu, limit);
+		CHECK(memcmp(&configuration, &saved, sizeof(configuration)) == 0 &&
+		      station.downstream_training_ucode == selected.analog.pcm.training_ucode,
+		      "upstream reduction changed the retained proposal or downstream UINFO");
+		selected_level = station.upstream_lu;
+		for (unsigned sample = 0; sample < V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS +
+		     V92_PCM_PHASE3_RU_SYMBOLS + V92_PCM_PHASE3_RU_BAR_SYMBOLS +
+		     V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS; ++sample) {
+			int16_t output;
+			CHECK(v92_phase3_analog_station_transmit(&station, NULL, &output) ==
+				V92_PHASE3_ANALOG_STATION_OK, "reduced upstream training failed");
+			if (sample >= V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS)
+				CHECK(output == station.upstream_lu || output == -station.upstream_lu,
+				      "Ru/TRN1u did not use the selected upstream power");
+		}
+		/* Re-enter from the same nominal proposal without accumulating reductions. */
+		CHECK(pcm_phase3_entry_start_v92_analog(&entry, &configuration, &station) ==
+			PCM_PHASE3_ENTRY_OK && station.upstream_lu == selected_level,
+		      "retrain did not restore the selected upstream power");
+	}
+	{
+		struct pcm_info1_selection selected = pcm_upstream_selection();
+		struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
+		struct pcm_phase3_entry entry;
+		struct v92_phase3_analog_station station, saved;
+		struct v92_phase3_analog_station_configuration configuration =
+			v92_analog_configuration(G711_LAW_PCMU, &selected);
+
+		configuration.upstream_lu_ucode = 1u;
+		memset(&station, 0xa5, sizeof(station));
+		saved = station;
+		CHECK(pcm_phase3_entry_init(&entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+			&info0, &selected) == PCM_PHASE3_ENTRY_OK &&
+		      pcm_phase3_entry_start_v92_analog(&entry, &configuration, &station) ==
+			PCM_PHASE3_ENTRY_UNUSABLE_SELECTION &&
+		      memcmp(&station, &saved, sizeof(station)) == 0,
+		      "unrepresentable upstream reduction changed the station");
+	}
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -678,6 +752,7 @@ int main(void)
 		{ "peer MD entry", test_peer_md_entry },
 		{ "conventional branch guards", test_conventional_branch_guards },
 		{ "V.92 PCM station starts", test_v92_pcm_starts },
+		{ "V.92 mandatory upstream power", test_v92_upstream_power },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;

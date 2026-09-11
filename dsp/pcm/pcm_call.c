@@ -3804,10 +3804,15 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 		.prefix.analog.queue_count = path->upstream.queue_count,
 	};
 	struct v90_pcm_mapping mapping;
+	struct v90_pcm_symbol level;
 	struct pcm_downstream_rx downstream;
 	struct pcm_call_v92_analog_rate_prefix *prefix = &state.prefix.analog;
 
-	if (v90_pcm_mapping_init_rate_renegotiation(&mapping, &path->training_mapping,
+	/* Ru belongs to the current data epoch. Do not restore the nominal
+	 * Phase 3 preference and undo the peer's negotiated power reduction. */
+	if (!v90_pcm_symbol_parse(&level, call->law,
+		encode_sample(call->law, path->upstream.upstream_level)) ||
+	    v90_pcm_mapping_init_rate_renegotiation(&mapping, &path->training_mapping,
 		&path->rd.mapping) != V90_PCM_MAPPING_OK ||
 	    pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
 		V90_PCM_MAPPING_TRANSMIT) != PCM_DOWNSTREAM_RX_OK ||
@@ -3815,8 +3820,7 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 		path->rate_renegotiation_constellation, path->upstream.upstream_level, &downstream,
 		&path->cpu, &path->upstream.encoder.mapping,
 		call->round_trip_delay_samples) != V92_PHASE4_ANALOG_STATION_OK ||
-	    v92_pcm_phase3_ru_init(&prefix->transmit, call->law,
-		call->phase3_configuration.v92_analog.upstream_lu_ucode,
+	    v92_pcm_phase3_ru_init(&prefix->transmit, call->law, level.ucode,
 		V92_PCM_PHASE3_RU) != V92_PCM_PHASE3_RU_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	memcpy(prefix->queue, path->upstream.queue, sizeof(prefix->queue));

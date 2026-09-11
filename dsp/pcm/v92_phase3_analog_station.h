@@ -44,6 +44,7 @@ struct v92_phase3_analog_station_configuration {
 	uint32_t upstream_rate_mask;
 	uint32_t initial_trn1u_symbols;
 	enum g711_law law;
+	/* Nominal upstream level at call entry, independent of downstream UINFO. */
 	uint8_t upstream_lu_ucode;
 };
 

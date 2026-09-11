@@ -5,6 +5,7 @@
 #include "v92_phase3_analog_station.h"
 #include "v92_phase3_digital_station.h"
 
+#include <math.h>
 #include <stddef.h>
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
@@ -12,7 +13,10 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	const struct v92_phase3_analog_station_configuration *configuration,
 	struct v92_phase3_analog_station *station)
 {
+	struct v92_phase3_analog_station_configuration selected;
 	enum v92_phase3_analog_station_result result;
+	int16_t nominal, level;
+	double limit;
 
 	if (!pcm_phase3_entry_is_valid(entry) || configuration == NULL ||
 	    station == NULL)
@@ -27,7 +31,26 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 		    &configuration->local_info1a,
 		    &entry->selection.analog.pcm))
 		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
-	result = v92_phase3_analog_station_init(station, configuration);
+	if (!v92_phase3_analog_station_configuration_is_valid(configuration) ||
+	    !g711_ucode_sample(configuration->law, configuration->upstream_lu_ucode,
+		true, &nominal))
+		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
+	/* V.92 3.8 and Table 17: Lu follows the requested analogue transmit
+	 * power reduction, not downstream UINFO. Additional reduction is only
+	 * permission. Choose the highest representable level within the bound;
+	 * retain the nominal proposal so retrains do not compound reductions. */
+	selected = *configuration;
+	limit = nominal * pow(10.0, -(double)entry->selection.digital.record.v92.v34
+		.common.minimum_peer_power_reduction_db / 20.0);
+	for (;;) {
+		if (!g711_ucode_sample(selected.law, selected.upstream_lu_ucode, true, &level))
+			return PCM_PHASE3_ENTRY_INTERNAL_ERROR;
+		if (level <= limit)
+			break;
+		if (--selected.upstream_lu_ucode == 0u)
+			return PCM_PHASE3_ENTRY_UNUSABLE_SELECTION;
+	}
+	result = v92_phase3_analog_station_init(station, &selected);
 	if (result == V92_PHASE3_ANALOG_STATION_OK)
 		return PCM_PHASE3_ENTRY_OK;
 	return result == V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT ?
