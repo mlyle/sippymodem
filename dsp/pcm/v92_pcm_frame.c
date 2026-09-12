@@ -402,65 +402,75 @@ static uint64_t level_error(
 	return error;
 }
 
-static bool same_level_waveform(
-	const struct v92_pcm_mapping *mapping, const struct v92_pcm_frame *frame,
-	int16_t first, int16_t second)
-{
-	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-		if (quantized_sample(mapping->law, scale_sample(mapping, first, frame->v[symbol])) !=
-		    quantized_sample(mapping->law, scale_sample(mapping, second, frame->v[symbol])))
-			return false;
-	}
-	return true;
-}
-
 enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
-	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
-	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
-	int16_t minimum_level, int16_t maximum_level)
+	struct v92_pcm_frame_rx *receiver, struct v92_pcm_level_fit *fit,
+	const struct v92_pcm_frame *frame,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS])
 {
-	if (receiver == NULL || frame == NULL || samples == NULL ||
+	if (receiver == NULL || fit == NULL || frame == NULL || samples == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver), fit, sizeof(*fit)) ||
 	    memory_regions_overlap(receiver, sizeof(*receiver), frame, sizeof(*frame)) ||
 	    memory_regions_overlap(receiver, sizeof(*receiver), samples,
+				   V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples)) ||
+	    memory_regions_overlap(fit, sizeof(*fit), frame, sizeof(*frame)) ||
+	    memory_regions_overlap(fit, sizeof(*fit), samples,
 				   V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*samples)))
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver) ||
-	    receiver->observation != V92_PCM_FRAME_FILTER_OUTPUT || minimum_level <= 0 ||
-	    minimum_level > receiver->upstream_level || maximum_level < receiver->upstream_level)
+	    receiver->observation != V92_PCM_FRAME_FILTER_OUTPUT || fit->frames >= V92_B1U_FRAMES)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	int16_t best = receiver->upstream_level;
-	uint64_t best_error = level_error(&receiver->mapping, best, frame, samples);
-	int distance = 1;
+	struct v92_pcm_level_fit next = *fit;
+	int16_t lower = receiver->minimum_level, upper = receiver->maximum_level;
 
-	/* Quantization makes the objective piecewise constant. Visit closest
-	 * integer levels first rather than moving arbitrarily across a plateau. */
-	while (best_error != 0u &&
-	       (receiver->upstream_level - distance >= minimum_level ||
-		receiver->upstream_level + distance <= maximum_level)) {
-		for (int direction = -1; direction <= 1; direction += 2) {
-			int candidate = receiver->upstream_level + direction * distance;
-
-			if (candidate < minimum_level || candidate > maximum_level)
-				continue;
-			uint64_t error = level_error(&receiver->mapping,
-				(int16_t)candidate, frame, samples);
-
-			if (error < best_error) {
-				best_error = error;
-				best = (int16_t)candidate;
-			}
-		}
-		distance++;
+	if (fit->frames == 0u) {
+		struct g711_interval interval;
+		if (!g711_quantization_interval(receiver->mapping.law, receiver->upstream_level, &interval))
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		lower = interval.lower < 1 ? 1 : interval.lower;
+		upper = interval.upper;
+		next = (struct v92_pcm_level_fit){ .minimum = lower, .maximum = upper };
 	}
-	int16_t low = best;
-	int16_t high = best;
+	if (next.minimum <= 0 || next.minimum > receiver->upstream_level ||
+	    next.maximum < receiver->upstream_level ||
+	    next.maximum - next.minimum >= V92_PCM_LEVEL_FIT_POINTS)
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	int16_t preferred = receiver->upstream_level;
+	uint64_t frame_error = UINT64_MAX;
+	int nearest = INT_MAX;
 
-	while (low > minimum_level &&
-	       same_level_waveform(&receiver->mapping, frame, best, (int16_t)(low - 1)))
+	/* Use the current frame only to break cumulative-score ties, preferring
+	 * the nearest estimate in the prior plateau. All original candidates
+	 * keep accumulating evidence, including those outside that plateau. */
+	for (int level = next.minimum; level <= next.maximum; ++level) {
+		uint64_t error = level_error(&receiver->mapping, (int16_t)level, frame, samples);
+		int distance = level < receiver->upstream_level ?
+			receiver->upstream_level - level : level - receiver->upstream_level;
+		if (level >= lower && level <= upper &&
+		    (error < frame_error || (error == frame_error && distance < nearest))) {
+			frame_error = error;
+			nearest = distance;
+			preferred = (int16_t)level;
+		}
+		if (next.error[level - next.minimum] > UINT64_MAX - error)
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		next.error[level - next.minimum] += error;
+	}
+	int16_t best = preferred;
+	uint64_t best_error = UINT64_MAX;
+	for (int level = next.minimum; level <= next.maximum; ++level) {
+		uint64_t error = next.error[level - next.minimum];
+		if (error < best_error || (error == best_error && level == preferred)) {
+			best_error = error;
+			best = (int16_t)level;
+		}
+	}
+	int16_t low = best, high = best;
+	while (low > next.minimum && next.error[low - next.minimum - 1] == best_error)
 		low--;
-	while (high < maximum_level &&
-	       same_level_waveform(&receiver->mapping, frame, best, (int16_t)(high + 1)))
+	while (high < next.maximum && next.error[high - next.minimum + 1] == best_error)
 		high++;
+	next.frames++;
+	*fit = next;
 	receiver->upstream_level = best;
 	receiver->minimum_level = low;
 	receiver->maximum_level = high;

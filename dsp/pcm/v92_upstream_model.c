@@ -43,6 +43,16 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
 
+	if (receiver->line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
+		const struct v92_pcm_level_fit *fit = &model->level;
+		unsigned frames = receiver->line.received_frames < V92_B1U_FRAMES ?
+			(unsigned)receiver->line.received_frames : 0u;
+		if (fit->frames != frames || (frames &&
+		    (fit->minimum <= 0 || fit->minimum > receiver->decoder.upstream_level ||
+		     fit->maximum < receiver->decoder.upstream_level ||
+		     fit->maximum - fit->minimum >= V92_PCM_LEVEL_FIT_POINTS)))
+			return false;
+	}
 	if (model->valid > 3u || model->primary > 1u || model->coefficient < 0)
 		return false;
 	if (!model->acquiring && !model->valid)

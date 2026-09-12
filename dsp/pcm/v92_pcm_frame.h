@@ -21,6 +21,8 @@ enum {
 	V92_PCM_RX_DELAY_FRAMES = 10,
 	/* Qualify 240T inside the 384T request, before its 24T prime tail. */
 	V92_PCM_RM_QUALIFY_FRAMES = 20,
+	/* Includes the enlarged final (clipped) positive PCMU cell. */
+	V92_PCM_LEVEL_FIT_POINTS = 2048,
 };
 
 enum v92_pcm_frame_result {
@@ -177,16 +179,24 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_init_constellation(
 	const struct v92_pcm_mapping *mapping);
 bool v92_pcm_frame_rx_is_valid(const struct v92_pcm_frame_rx *receiver);
 
-/* Refine the receive level against known training, retaining the contiguous
- * LU interval that predicts the same quantized waveform as the best estimate.
- * Feed that interval into subsequent refinement calls. Ordinary data uses its
- * nearest possible codeword without changing the trained interval. Coding
- * histories are unchanged; the line owner still qualifies unrounded error.
- * Only filter-output receivers have a receive-level interval. */
+/* One zero-initialized fit per B1u mapping epoch. Scores cover the ORIGINAL
+ * training cell; an early frame cannot permanently exclude a level supported
+ * by later training. The line owner discards this scratch after B1u. */
+struct v92_pcm_level_fit {
+	uint64_t error[V92_PCM_LEVEL_FIT_POINTS];
+	int16_t minimum, maximum;
+	uint8_t frames;
+};
+
+/* Accumulate known B1u evidence and retain the contiguous equal-cost interval
+ * around its best level. Ordinary data never refines this fit. Coding histories
+ * are unchanged; the line owner still qualifies unrounded error. Only
+ * filter-output receivers have a receive-level interval. Rejection changes
+ * neither receiver nor fit; calls beyond the 48 B1u frames are rejected. */
 enum v92_pcm_frame_result v92_pcm_frame_rx_refine_level(
-	struct v92_pcm_frame_rx *receiver, const struct v92_pcm_frame *frame,
-	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
-	int16_t minimum_level, int16_t maximum_level);
+	struct v92_pcm_frame_rx *receiver, struct v92_pcm_level_fit *fit,
+	const struct v92_pcm_frame *frame,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS]);
 
 /* Receive the matching control boundary. Reset descrambler and differential
  * state on EVERY surviving path, retaining metrics, ambiguity, filters,

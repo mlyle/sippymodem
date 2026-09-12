@@ -517,6 +517,7 @@ static bool test_level_refinement(void)
 	struct v92_pcm_frame frame;
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	struct v92_pcm_level_fit fit = { 0 };
 
 	memset(bits, 1, sizeof(bits));
 	CHECK(initialize(&tx, 13u, G711_LAW_PCMU) &&
@@ -532,32 +533,103 @@ static bool test_level_refinement(void)
 	}
 	struct v92_pcm_frame_rx saved = rx;
 
-	CHECK(v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4000, 4200) ==
+	struct g711_interval interval;
+	CHECK(g711_quantization_interval(G711_LAW_PCMU, B1U_TEST_LEVEL, &interval),
+	      "training level had no cell");
+	CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) ==
 		      V92_PCM_FRAME_OK && rx.upstream_level == B1U_TEST_LEVEL &&
-	      rx.minimum_level >= 4000 && rx.maximum_level <= 4200,
+	      rx.minimum_level >= interval.lower && rx.maximum_level <= interval.upper &&
+	      fit.frames == 1u && fit.minimum == interval.lower && fit.maximum == interval.upper,
 	      "equal-error refinement changed LU or exceeded the interval");
 	saved.minimum_level = rx.minimum_level;
 	saved.maximum_level = rx.maximum_level;
 	CHECK(memcmp(&rx, &saved, sizeof(rx)) == 0,
 	      "equal-error refinement changed coding history");
-	CHECK(v92_pcm_frame_rx_refine_level(NULL, &frame, samples, 4000, 4200) ==
+	struct v92_pcm_level_fit fit_saved = fit;
+	CHECK(v92_pcm_frame_rx_refine_level(NULL, &fit, &frame, samples) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_rx_refine_level(&rx, NULL, samples, 4000, 4200) ==
+	      v92_pcm_frame_rx_refine_level(&rx, NULL, &frame, samples) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_rx_refine_level(&rx, &frame, NULL, 4000, 4200) ==
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, NULL, samples) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_rx_refine_level(&rx, (const struct v92_pcm_frame *)&rx,
-		      samples, 4000, 4200) == V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_rx_refine_level(&rx, &frame, (const int16_t *)&rx,
-		      4000, 4200) == V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 0, 4200) ==
-		      V92_PCM_FRAME_INVALID_PARAMETERS &&
-	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4100, 4200) ==
-		      V92_PCM_FRAME_INVALID_PARAMETERS &&
-	      v92_pcm_frame_rx_refine_level(&rx, &frame, samples, 4000, 4090) ==
-		      V92_PCM_FRAME_INVALID_PARAMETERS &&
-	      memcmp(&rx, &saved, sizeof(rx)) == 0,
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, NULL) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, (struct v92_pcm_level_fit *)&rx,
+		      &frame, samples) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, (const struct v92_pcm_frame *)&rx,
+		      samples) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, (const int16_t *)&rx) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, (const struct v92_pcm_frame *)&fit,
+		      samples) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, (const int16_t *)&fit) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 && memcmp(&fit, &fit_saved, sizeof(fit)) == 0,
 	      "invalid refinement changed LU or coding history");
+	for (unsigned invalid = 0u; invalid < 4u; ++invalid) {
+		fit = fit_saved;
+		if (invalid == 0u) fit.minimum = 0;
+		if (invalid == 1u) fit.minimum = B1U_TEST_LEVEL + 1;
+		if (invalid == 2u) fit.maximum = B1U_TEST_LEVEL - 1;
+		if (invalid == 3u) fit.maximum = fit.minimum + V92_PCM_LEVEL_FIT_POINTS;
+		struct v92_pcm_level_fit before = fit;
+		CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS && memcmp(&fit, &before, sizeof(fit)) == 0 &&
+		      memcmp(&rx, &saved, sizeof(rx)) == 0, "invalid fit changed owned state");
+	}
+	/* A biased first frame may temporarily favor a different level, but
+	 * later known training must be allowed to correct it within the original
+	 * cell. The old frame-by-frame intersection made that impossible. */
+	fit = (struct v92_pcm_level_fit){ 0 };
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int16_t sample;
+		CHECK(v92_pcm_frame_scale(&tx.mapping, interval.upper, frame.v[symbol], &sample) ==
+		      V92_PCM_FRAME_OK, "biased-frame scaling failed");
+		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
+	}
+	CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) == V92_PCM_FRAME_OK &&
+	      rx.minimum_level > B1U_TEST_LEVEL, "bias did not isolate the early-narrowing regression");
+	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+		int16_t sample;
+		CHECK(v92_pcm_frame_scale(&tx.mapping, B1U_TEST_LEVEL, frame.v[symbol], &sample) ==
+		      V92_PCM_FRAME_OK, "clean-frame scaling failed");
+		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
+	}
+	while (fit.frames < V92_B1U_FRAMES)
+		CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) == V92_PCM_FRAME_OK,
+		      "cumulative refinement failed");
+	CHECK(rx.minimum_level <= B1U_TEST_LEVEL && rx.maximum_level >= B1U_TEST_LEVEL,
+	      "early biased frame permanently excluded the true level");
+	saved = rx;
+	fit_saved = fit;
+	CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 && memcmp(&fit, &fit_saved, sizeof(fit)) == 0,
+	      "post-B1 data changed the fit");
+	fit.frames = 1u;
+	for (size_t i = 0; i < V92_PCM_LEVEL_FIT_POINTS; ++i) fit.error[i] = UINT64_MAX;
+	fit_saved = fit;
+	CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 && memcmp(&fit, &fit_saved, sizeof(fit)) == 0,
+	      "cost overflow changed the fit");
+	/* The final PCMU cell includes clipping headroom and is wider than an
+	 * ordinary 1024-unit cell. The bounded scratch must cover both laws. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		CHECK(initialize(&tx, 13u, law) &&
+		      v92_pcm_frame_rx_init(&rx, &tx.mapping, INT16_MAX) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &frame) == V92_PCM_FRAME_OK,
+		      "clipped-cell fixture failed");
+		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			int16_t sample;
+			CHECK(v92_pcm_frame_scale(&tx.mapping, INT16_MAX, frame.v[symbol], &sample) ==
+			      V92_PCM_FRAME_OK, "clipped-cell scaling failed");
+			samples[symbol] = law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu(sample)) :
+				g711_decode_pcma(g711_encode_pcma(sample));
+		}
+		fit = (struct v92_pcm_level_fit){ 0 };
+		CHECK(v92_pcm_frame_rx_refine_level(&rx, &fit, &frame, samples) == V92_PCM_FRAME_OK &&
+		      fit.maximum == INT16_MAX && fit.maximum - fit.minimum < V92_PCM_LEVEL_FIT_POINTS,
+		      "clipped training cell exceeded bounded fit");
+	}
 	return true;
 }
 

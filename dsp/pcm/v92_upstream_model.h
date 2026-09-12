@@ -14,9 +14,15 @@
 struct v92_upstream_model {
 	struct v92_observation model[2];
 	struct v92_pcm_frame_rx alternate;
-	struct v92_pcm_frame_tx_state known;
-	int32_t x[V92_OBSERVATION_TRAINING], raw[V92_OBSERVATION_TRAINING];
-	int16_t u[V92_OBSERVATION_TRAINING], wire[V92_OBSERVATION_TRAINING];
+	/* The observation contract owns exactly one training scratch. */
+	union {
+		struct {
+			struct v92_pcm_frame_tx_state known;
+			int32_t x[V92_OBSERVATION_TRAINING], raw[V92_OBSERVATION_TRAINING];
+			int16_t u[V92_OBSERVATION_TRAINING], wire[V92_OBSERVATION_TRAINING];
+		};
+		struct v92_pcm_level_fit level;
+	};
 	uint64_t cost[2];
 	int16_t coefficient;
 	uint8_t valid, primary;

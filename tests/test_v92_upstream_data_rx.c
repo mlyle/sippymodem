@@ -961,6 +961,11 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 				line.calibration.correlation = line.calibration.energy = 0;
 				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
 			}
+			else {
+				const struct v92_pcm_level_fit cleared = { 0 };
+				CHECK(memcmp(&rx.model.level, &cleared, sizeof(cleared)) == 0,
+				      "new B1u retained the old level fit");
+			}
 			epoch = NEW;
 			CHECK(v92_upstream_data_rx_is_valid(&rx) && memcmp(&line, &rx.line, sizeof(line)) == 0,
 			      "B1u handoff disturbed warm physical state");
@@ -2109,6 +2114,24 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME, "receive");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
+		if (rx.line.received_frames < V92_B1U_FRAMES) {
+			CHECK(rx.model.level.frames == rx.line.received_frames,
+			      "B1u level fit missed a frame");
+			for (unsigned fault = 0u; fault < 3u; ++fault) {
+				struct v92_upstream_data_rx invalid = rx;
+				if (fault == 0u)
+					invalid.model.level.frames--;
+				else if (fault == 1u)
+					invalid.model.level.minimum = 0;
+				else
+					invalid.model.level.maximum = rx.decoder.upstream_level - 1;
+				CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid level fit was accepted");
+			}
+		} else {
+			const struct v92_pcm_level_fit cleared = { 0 };
+			CHECK(memcmp(&rx.model.level, &cleared, sizeof(cleared)) == 0,
+			      "level fit survived B1u training");
+		}
 		if (rx.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
 			trained_level = rx.decoder.upstream_level;
 			minimum = rx.decoder.minimum_level;
@@ -2225,6 +2248,12 @@ int main(void)
 			if (!test_quantized_level_tracking(law, rate, false, 4092, true, 0u) ||
 			    !test_quantized_level_tracking(law, rate, false, 7164, true, 0u))
 				return 1;
+	/* Later B1u evidence must recover LU values excluded by an early,
+	 * slightly biased equalized frame, before freezing the estimate. */
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 16u, false, 2019, true, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 4187, true, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 7139, true, 0u))
+		return 1;
 	const uint8_t rm_rates[] = { 1u, 16u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned i = 0; i < ARRAY_LENGTH(rm_rates); ++i)

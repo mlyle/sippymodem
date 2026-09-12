@@ -554,6 +554,7 @@ static bool test_compensated_channel(enum g711_law law)
 
 static bool test_uncertain_level(enum g711_law law, uint8_t rate, int16_t level)
 {
+	struct v92_pcm_level_fit fit = { 0 };
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_pcm_frame_rx receiver;
@@ -582,9 +583,9 @@ static bool test_uncertain_level(enum g711_law law, uint8_t rate, int16_t level)
 		if (b1u) {
 			struct v92_pcm_frame_rx saved = receiver;
 
-			CHECK(v92_pcm_frame_rx_refine_level(&receiver, &decision.frame,
-				      samples, low, high) == V92_PCM_FRAME_OK &&
-			      receiver.minimum_level >= low && receiver.maximum_level <= high &&
+			CHECK(v92_pcm_frame_rx_refine_level(&receiver, &fit, &decision.frame,
+				      samples) == V92_PCM_FRAME_OK &&
+			      receiver.minimum_level >= fit.minimum && receiver.maximum_level <= fit.maximum &&
 			      receiver.minimum_level <= level && receiver.maximum_level >= level,
 			      "law %u rate %u level %d frame %u lost feasible LU", law, rate, level, frame);
 			saved.upstream_level = receiver.upstream_level;
@@ -796,13 +797,14 @@ static bool test_rejection_and_training_evidence(void)
 	      "constellation initialization failed");
 	saved = receiver;
 	struct v92_pcm_mapping invalid_mapping = mapping;
+	struct v92_pcm_level_fit fit = { 0 };
 
 	invalid_mapping.data_bits_per_frame = 0u;
 	CHECK(v92_pcm_frame_rx_init_constellation(NULL, &mapping) == V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_rx_init_constellation(&receiver, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
 	      v92_pcm_frame_rx_init_constellation(&receiver, &invalid_mapping) ==
 		      V92_PCM_FRAME_INVALID_PARAMETERS &&
-	      v92_pcm_frame_rx_refine_level(&receiver, &decision.frame, samples, 1, 2) ==
+	      v92_pcm_frame_rx_refine_level(&receiver, &fit, &decision.frame, samples) ==
 		      V92_PCM_FRAME_INVALID_PARAMETERS &&
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "constellation receiver accepted level refinement or changed on rejection");

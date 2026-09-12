@@ -273,22 +273,14 @@ static enum v92_upstream_data_rx_result receive_frame(
 			line->calibration.gain = fmax(line->calibration.minimum,
 				fmin(line->calibration.maximum, line->calibration.correlation / line->calibration.energy));
 	}
-	/* LU came from a quantized training waveform. A tiny level error can
-	 * put a dense CPd point on the opposite side of a much wider G.711 cell.
-	 * Fit the known B1u waveform inside that initial uncertainty, not by
-	 * weakening the residual ceiling or adapting level from unknown data. */
+	/* Combine known training inside the original LU cell. An early biased
+	 * frame must not exclude a level supported by later B1u observations. */
 	if (b1u && !raw) {
-		struct g711_interval levels = { decoder.minimum_level, decoder.maximum_level };
-
-		if (line->received_frames == 0u &&
-		    !g711_quantization_interval(decoder.mapping.law, decoder.upstream_level, &levels))
+		if (v92_pcm_frame_rx_refine_level(&decoder, &model.level, &decision.frame,
+			    line->samples) != V92_PCM_FRAME_OK)
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-		if (levels.lower < 1)
-			levels.lower = 1;
-
-		if (v92_pcm_frame_rx_refine_level(&decoder, &decision.frame,
-			    line->samples, levels.lower, levels.upper) != V92_PCM_FRAME_OK)
-			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+		if (line->received_frames + 1u == V92_B1U_FRAMES)
+			memset(&model.level, 0, sizeof(model.level));
 	}
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		struct qam_point target = { .in_phase = decision.predicted_samples[symbol] };
