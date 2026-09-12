@@ -371,10 +371,12 @@ struct pcm_call_v92_digital_data {
 	union v92_phase4_e2u_digital_downstream downstream;
 	struct v92_cpu_parameters cpu;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
-	/* Residual over the post-acquisition B1u validation symbols only. */
+	/* Quality-score residual over post-acquisition B1u validation only,
+	 * with identified post-codec host gain removed. */
 	double b1u_squared_error;
 	/* Freeze a quality-triggering observation while peer control qualifies.
-	 * A timeout charges the original failure; it never forgives lost data. */
+	 * Already in quality-score units: a timeout charges the original failure
+	 * without scaling it again or forgiving lost data. */
 	double pending_squared_error;
 	uint16_t quality_guard_samples;
 	bool pending_ambiguous;

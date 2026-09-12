@@ -6484,7 +6484,9 @@ static bool run_v92_b1_quality_window(enum g711_law law)
 				if (probe.line.received_frames <= V92_B1U_ACQUISITION_FRAMES)
 					acquisition += frame.squared_error;
 				else
-					validation += frame.squared_error;
+					validation += probe.line.host.gain > 0.0 ?
+						frame.squared_error / probe.line.host.gain / probe.line.host.gain :
+						frame.squared_error;
 				++checked;
 			}
 			struct pcm_call_data_event event;
@@ -6688,8 +6690,11 @@ static bool capture_v92_duplex_data(
 			uint8_t *transmitted = role == 0u ? &at : &dt;
 			int16_t sample = decode_octet(law, received);
 
-			if (role == 1u && offer != NULL && offer->receive_gain != 0.0)
-				sample = (int16_t)lround(sample * offer->receive_gain);
+			if (role == 1u && offer != NULL && offer->receive_gain != 0.0) {
+				double scaled = round(sample * offer->receive_gain);
+				CHECK(scaled >= INT16_MIN && scaled <= INT16_MAX, "host-gain fixture clipped its input");
+				sample = (int16_t)scaled;
+			}
 
 			if (pcm_call_phase4_is_ready(call)) {
 				CHECK(v92_data_boundary(call), "V.92 handoff failed");
@@ -6905,12 +6910,16 @@ static bool test_v92_codec_noise_recovery(void)
 		/* Sparse 24k maps should carry a noisier channel without inheriting
 		 * the dense-map recovery expectation. Exercise real training and
 		 * exact payloads; leave the B1 and online quality limits intact. */
-		const struct v92_upstream_offer sparse = {
-			.peer_mask = UINT32_C(1), .local_maximum = 1u, .expected = 1u,
-			.postcursor = .10, .noise_peak = 64u, .payload_frames = 4000u,
-		};
-		CHECK(run_v92_duplex_data(law, 3u, false, &sparse),
-		      "codec %u failed noisy sparse PCM-upstream data", law);
+		for (unsigned boosted = 0u; boosted <= 1u; ++boosted) {
+			const struct v92_upstream_offer sparse = {
+				.peer_mask = UINT32_C(1), .local_maximum = 1u, .expected = 1u,
+				.postcursor = .10, .noise_peak = 64u, .payload_frames = 4000u,
+				/* Host gain after the wire codec must not change quality units. */
+				.receive_gain = boosted ? 1.25 : 1.0,
+			};
+			CHECK(run_v92_duplex_data(law, 3u, false, &sparse),
+			      "codec %u failed noisy sparse PCM-upstream data at gain %g", law, sparse.receive_gain);
+		}
 	}
 	return true;
 }
@@ -6971,6 +6980,10 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 
 			call.pcm_upstream_quality.automatic_retrains = budget;
 			arm_v92_quality_failure(&call, reason == 1u);
+			/* A pending observation is already in quality units. Applying
+			 * host gain again here would incorrectly forgive the error. */
+			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION)
+				call.state.data_path.v92_digital.upstream.line.host.gain = 2.0;
 			if (reason == 2u) {
 				call.state.data_path.v92_digital.pending_squared_error = 0.0;
 				call.state.data_path.v92_digital.pending_uncertain = true;

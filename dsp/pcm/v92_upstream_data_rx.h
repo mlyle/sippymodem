@@ -7,6 +7,7 @@
 #include "v92_upstream_rx.h"
 #include "v92_upstream_plan.h"
 #include "v92_upstream_model.h"
+#include "pcm_gain.h"
 
 enum v92_upstream_data_rx_result {
 	V92_UPSTREAM_DATA_RX_OK,
@@ -34,6 +35,13 @@ struct v92_upstream_data_line {
 		double gain, minimum, maximum;
 		double correlation, energy;
 	} calibration;
+	/* Actual wire/sample pairs identify only post-codec host conditioning,
+	 * not analogue channel or mapping gain. Freeze before B1u validation;
+	 * zero gain means unidentified and preserves raw quality-score units. */
+	struct {
+		struct pcm_gain fit;
+		double gain;
+	} host;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool wire_known[V92_PCM_MAPPING_FRAME_SYMBOLS];
@@ -88,9 +96,12 @@ struct v92_upstream_data_frame {
  * decodes raw line samples without another FIR or G.711 quantization. The
  * gain is refined within training LU uncertainty during initial B1u
  * acquisition, then remains fixed through B1u validation and data/control.
- * When actual wire codes are supplied, the same acquisition interval may fit
- * a two-codec observation model for a positive one-tap prefilter. Missing
- * acquisition media or unsupported filters retain the linear receiver.
+ * When actual wire codes are supplied, the same acquisition interval fits
+ * post-codec host gain for call-level quality scoring, independently of the
+ * mapping's calibration gain. Missing or inconsistent pairs close this fit.
+ * It may also fit a two-codec observation model for a positive one-tap
+ * prefilter. Missing acquisition media or unsupported filters retain the
+ * linear receiver.
  * A zero-initialized plan selects the equalized filter-output path above.
  * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(

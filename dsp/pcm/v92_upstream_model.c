@@ -3,7 +3,6 @@
 #include "v92_upstream_model.h"
 #include "v92_upstream_data_rx.h"
 #include "integer_math.h"
-#include "pcm_gain.h"
 
 #include <limits.h>
 #include <math.h>
@@ -141,28 +140,17 @@ bool v92_upstream_model_observe(struct v92_upstream_model *model,
 void v92_upstream_model_fit(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
-	struct pcm_gain host;
 	int16_t samples[V92_OBSERVATION_TRAINING];
-	double gain;
 
 	if (!model->acquiring || line->received_frames + 1u != V92_B1U_ACQUISITION_FRAMES)
 		return;
-	pcm_gain_init(&host);
-	for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i) {
-		/* Host clipping preceded polarity correction. Undo polarity for the
-		 * host-gain estimate, but retain it in fitted channel coordinates. */
-		if (!pcm_gain_observe(&host, model->wire[i] * line->polarity,
-				model->raw[i] * line->polarity)) {
-			close_acquisition(model);
-			return;
-		}
-		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
-			round(model->raw[i] * line->calibration.gain)));
-	}
-	if (!pcm_gain_estimate(&host, &gain)) {
+	if (line->host.gain <= 0.0) {
 		close_acquisition(model);
 		return;
 	}
+	for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i)
+		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
+			round(model->raw[i] * line->calibration.gain)));
 	for (unsigned candidate = 0u; candidate < 2u; ++candidate) {
 		struct v92_observation *fit = &model->model[candidate];
 		int32_t x[V92_OBSERVATION_TRAINING];
@@ -174,7 +162,8 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 					(int64_t)x[i] * model->coefficient, 15u);
 		const struct v92_observation_training training = {
 			.input = x, .linear = model->u, .sample = samples, .levels = model->wire,
-			.count = V92_OBSERVATION_TRAINING, .host_gain = gain * line->calibration.gain,
+			.count = V92_OBSERVATION_TRAINING,
+			.host_gain = line->host.gain * line->calibration.gain,
 			.law = decoder->mapping.law,
 		};
 		if (v92_observation_fit(fit, &training)) {

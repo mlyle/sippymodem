@@ -4434,6 +4434,15 @@ static bool v92_fast_receive(struct pcm_call *call, const struct v92_upstream_da
 	return true;
 }
 
+static double v92_quality_error(const struct pcm_call_v92_digital_data *path,
+	double squared_error)
+{
+	/* Remove only measured post-codec host gain, never mapping or analogue
+	 * channel gain. Keep the frame's original residual as diagnostic evidence. */
+	double gain = path->upstream.line.host.gain;
+	return gain > 0.0 ? squared_error / gain / gain : squared_error;
+}
+
 static enum pcm_call_result observe_v92_data_quality(
 	struct pcm_call *call, const struct v92_upstream_data_frame *frame,
 	struct pcm_call_data_event *event)
@@ -4444,14 +4453,15 @@ static enum pcm_call_result observe_v92_data_quality(
 
 	if (path->quality_guard_samples)
 		return PCM_CALL_OK;
-	quality = v92_data_quality_observe(&next, frame->squared_error,
+	double error = v92_quality_error(path, frame->squared_error);
+	quality = v92_data_quality_observe(&next, error,
 		frame->ambiguous, frame->uncertain);
 	if (quality == V92_DATA_QUALITY_OK) {
 		call->pcm_upstream_quality = next;
 		event->frame.pcm_upstream = *frame;
 		event->kind = PCM_CALL_PCM_UPSTREAM_FRAME;
 	} else if (quality == V92_DATA_QUALITY_RETRAIN || quality == V92_DATA_QUALITY_EXHAUSTED) {
-		path->pending_squared_error = frame->squared_error;
+		path->pending_squared_error = error;
 		path->pending_ambiguous = frame->ambiguous;
 		path->pending_uncertain = frame->uncertain;
 		path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
@@ -4669,7 +4679,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			 * must not force another retrain on a now-usable channel. */
 			if (path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
 			    path->upstream.line.received_frames <= V92_B1U_FRAMES) {
-				double error = path->b1u_squared_error + frame.squared_error;
+				double error = path->b1u_squared_error + v92_quality_error(path, frame.squared_error);
 
 				if (!isfinite(error))
 					return PCM_CALL_NUMERIC_FAILURE;

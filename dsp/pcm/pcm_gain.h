@@ -17,6 +17,7 @@ struct pcm_gain {
 };
 
 void pcm_gain_init(struct pcm_gain *gain);
+bool pcm_gain_is_valid(const struct pcm_gain *gain);
 
 /* Pass actually received, aligned pairs before any polarity correction or
  * equalization. Skip erasures, which carry no measured codec level. A zero

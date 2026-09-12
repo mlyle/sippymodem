@@ -8,7 +8,8 @@
 
 enum {
 	/* Receiver policy in signed PCM sample units, not a normative threshold:
-	 * equalized filter output, or raw input for a channel-compensated CPd.
+	 * equalized filter output, or wire PCM for a channel-compensated CPd with
+	 * identified post-codec host gain (otherwise unscaled raw input).
 	 * Initial B1u and online recovery use the same ceiling. */
 	V92_DATA_MAX_RMS_ERROR = 64,
 	V92_DATA_QUALITY_WINDOW_FRAMES = 128,

@@ -6,7 +6,7 @@
 #include <limits.h>
 #include <math.h>
 
-static bool valid(const struct pcm_gain *gain)
+bool pcm_gain_is_valid(const struct pcm_gain *gain)
 {
 	return gain && isfinite(gain->lower) && gain->lower >= 0. &&
 		gain->upper > 0. && gain->upper >= gain->lower &&
@@ -22,7 +22,7 @@ void pcm_gain_init(struct pcm_gain *gain)
 
 bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
 {
-	if (!valid(gain))
+	if (!pcm_gain_is_valid(gain))
 		return false;
 	if (wire == 0)
 		return sample == 0;
@@ -45,7 +45,7 @@ bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
 		next.correlation += (double)wire * sample;
 		next.energy += (double)wire * wire;
 	}
-	if (!valid(&next))
+	if (!pcm_gain_is_valid(&next))
 		return false;
 	*gain = next;
 	return true;
@@ -53,7 +53,7 @@ bool pcm_gain_observe(struct pcm_gain *gain, int16_t wire, int16_t sample)
 
 bool pcm_gain_estimate(const struct pcm_gain *gain, double *estimate)
 {
-	if (!estimate || !valid(gain) ||
+	if (!estimate || !pcm_gain_is_valid(gain) ||
 		memory_regions_overlap(gain, sizeof(*gain), estimate, sizeof(*estimate)) ||
 		!isfinite(gain->upper) || gain->energy <= 0. || gain->correlation <= 0.)
 		return false;

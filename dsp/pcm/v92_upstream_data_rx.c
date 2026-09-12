@@ -36,6 +36,11 @@ bool v92_upstream_data_rx_is_valid(
 
 		if (line->adaptation != 0.0 ||
 		    !memory_region_is_zero(&line->equalizer, sizeof(line->equalizer)) ||
+		    !isfinite(line->host.gain) || line->host.gain < 0.0 ||
+		    (line->received_frames < V92_B1U_ACQUISITION_FRAMES && line->host.gain != 0.0) ||
+		    (!memory_region_is_zero(&line->host.fit, sizeof(line->host.fit)) &&
+		     (line->received_frames >= V92_B1U_ACQUISITION_FRAMES ||
+		      !pcm_gain_is_valid(&line->host.fit))) ||
 		    !isfinite(line->calibration.gain) ||
 		    !isfinite(line->calibration.minimum) ||
 		    !isfinite(line->calibration.maximum) ||
@@ -63,6 +68,7 @@ bool v92_upstream_data_rx_is_valid(
 		return true;
 	}
 	if (!memory_region_is_zero(&receiver->line.calibration, sizeof(receiver->line.calibration)) ||
+	    !memory_region_is_zero(&receiver->line.host, sizeof(receiver->line.host)) ||
 	    !qam_equalizer_is_handoff_ready(&receiver->line.equalizer) ||
 	    receiver->line.equalizer.tap_count != V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS ||
 	    receiver->line.equalizer.decision_delay != V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY ||
@@ -125,6 +131,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 
 		initialized.line.calibration.gain = plan->gain;
+		pcm_gain_init(&initialized.line.host.fit);
 		initialized.line.calibration.minimum = fmax(1.0 / 32768.0,
 			plan->gain * lu / levels.upper);
 		/* LU is positive even when its PCMU cell also contains zero. */
@@ -204,6 +211,8 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 		next.line.calibration.minimum = fmin(plan->gain, next.line.calibration.minimum * ratio);
 		next.line.calibration.maximum = fmax(plan->gain, next.line.calibration.maximum * ratio);
 		next.line.calibration.correlation = next.line.calibration.energy = 0.0;
+		pcm_gain_init(&next.line.host.fit);
+		next.line.host.gain = 0.0;
 		if (v92_pcm_frame_rx_init_constellation(&next.decoder, mapping) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	} else if (v92_pcm_frame_rx_init(&next.decoder, mapping, receiver->decoder.upstream_level) != V92_PCM_FRAME_OK) {
@@ -234,6 +243,28 @@ static enum v92_upstream_data_rx_result fail(
 {
 	receiver->failed = true;
 	return result;
+}
+
+static void observe_host_gain(struct v92_upstream_data_line *line)
+{
+	if (line->plan.observation != V92_PCM_FRAME_CONSTELLATION ||
+	    line->received_frames >= V92_B1U_ACQUISITION_FRAMES ||
+	    line->host.fit.upper == 0.0)
+		return;
+	for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+		/* Clipping occurred before polarity correction. Missing media or
+		 * non-scalar conditioning must not supply a quality normalization. */
+		if (!line->wire_known[i] || !line->received[i] ||
+		    !pcm_gain_observe(&line->host.fit, line->wire[i] * line->polarity,
+			    line->raw[i] * line->polarity)) {
+			memset(&line->host, 0, sizeof(line->host));
+			return;
+		}
+	}
+	if (line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
+		pcm_gain_estimate(&line->host.fit, &line->host.gain);
+		memset(&line->host.fit, 0, sizeof(line->host.fit));
+	}
 }
 
 static enum v92_upstream_data_rx_result receive_frame(
@@ -336,6 +367,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 			V92_B1U_FRAMES;
 		generated.ambiguous = decision.ambiguous;
 	}
+	observe_host_gain(line);
 	v92_upstream_model_fit(&model, line, &decoder);
 	line->received_frames++;
 	line->symbol_count = 0u;

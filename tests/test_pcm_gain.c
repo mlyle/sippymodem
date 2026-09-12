@@ -20,7 +20,7 @@ static bool check_estimate(const struct pcm_gain *gain, double actual)
 	struct pcm_gain saved = *gain;
 	double estimate = -1.;
 
-	CHECK(gain->lower <= actual && actual <= gain->upper,
+	CHECK(pcm_gain_is_valid(gain) && gain->lower <= actual && actual <= gain->upper,
 	      "gain %.17g outside [%.17g,%.17g]", actual, gain->lower, gain->upper);
 	CHECK(pcm_gain_estimate(gain, &estimate) &&
 	      estimate >= gain->lower && estimate <= gain->upper,
@@ -117,7 +117,7 @@ static bool test_rejections(void)
 		      memcmp(&gain, &saved, sizeof(gain)) == 0,
 		      "rejected pair %zu changed state", i);
 	}
-	CHECK(!pcm_gain_observe(NULL, 0, 0) &&
+	CHECK(!pcm_gain_is_valid(NULL) && !pcm_gain_observe(NULL, 0, 0) &&
 	      !pcm_gain_estimate(NULL, &estimate) && estimate == -1. &&
 	      !pcm_gain_estimate(&gain, NULL), "NULL arguments");
 	CHECK(!pcm_gain_estimate(&gain, &gain.lower) &&
@@ -134,13 +134,13 @@ static bool test_rejections(void)
 	for (size_t i = 0; i < ARRAY_LENGTH(invalid); i++) {
 		gain = invalid[i];
 		saved = gain;
-		CHECK(!pcm_gain_observe(&gain, 1, 1) &&
+		CHECK(!pcm_gain_is_valid(&gain) && !pcm_gain_observe(&gain, 1, 1) &&
 		      !pcm_gain_estimate(&gain, &estimate) && estimate == -1. &&
 		      memcmp(&gain, &saved, sizeof(gain)) == 0,
 		      "invalid state %zu was accepted or changed", i);
 	}
 	pcm_gain_init(&gain);
-	CHECK(gain.lower == 0. && isinf(gain.upper) && gain.upper > 0. &&
+	CHECK(pcm_gain_is_valid(&gain) && gain.lower == 0. && isinf(gain.upper) && gain.upper > 0. &&
 	      gain.correlation == 0. && gain.energy == 0., "reset retained training");
 	pcm_gain_init(NULL);
 	return true;

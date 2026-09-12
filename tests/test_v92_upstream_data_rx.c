@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_downstream_rx.h>
+#include <memory_region.h>
 #include <v92_cpd_direct.h>
 #include <v92_cpd_channel.h>
 #include <v92_data_quality.h>
@@ -974,6 +975,8 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 				line.calibration.minimum = fmin(new_plan.gain, line.calibration.minimum * ratio);
 				line.calibration.maximum = fmax(new_plan.gain, line.calibration.maximum * ratio);
 				line.calibration.correlation = line.calibration.energy = 0;
+				pcm_gain_init(&line.host.fit);
+				line.host.gain = 0.0;
 				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
 			}
 			else {
@@ -999,7 +1002,8 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 			      "partial-frame B1u handoff accepted");
 		}
 		if (codec && r == V92_UPSTREAM_DATA_RX_FRAME && rx.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
-			CHECK(rx.model.valid == 3 && !rx.model.acquiring, "B1u did not fit new codec models");
+			CHECK(rx.model.valid == 3 && !rx.model.acquiring && fabs(rx.line.host.gain - .75) < 1e-12,
+			      "B1u did not fit new codec models and host gain");
 		if (r != V92_UPSTREAM_DATA_RX_FRAME || !frame.bit_count)
 			continue;
 		unsigned delivered = epoch + rx.line.received_frames - 1 - V92_PCM_RX_DELAY_FRAMES;
@@ -1451,6 +1455,8 @@ static bool test_channel_plan(
 		      "channel-plan frame boundary moved");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
+		CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
+		      "sample-only input invented host gain");
 		if (receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
@@ -1903,6 +1909,18 @@ static bool test_codec_model(int polarity, bool rm)
 		V92_UPSTREAM_DATA_RX_OK && receiver.model.acquiring,
 	      "codec model initialization failed");
 	initial = receiver;
+	for (unsigned fault = 0; fault < 4; ++fault) {
+		struct v92_upstream_data_rx invalid = initial;
+		if (fault == 0)
+			invalid.line.host.gain = .75;
+		else if (fault == 1)
+			invalid.line.host.fit.lower = NAN;
+		else if (fault == 2)
+			invalid.line.host.fit.energy = -1;
+		else
+			invalid.line.host.fit.upper = -1;
+		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid host acquisition accepted");
+	}
 	previous = second = 0;
 	for (unsigned f = 0u; f < frames + PREFIX; ++f) {
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
@@ -1946,8 +1964,10 @@ static bool test_codec_model(int polarity, bool rm)
 		    (rm ? receiver.line.received_frames == RM_END :
 		     receiver.line.received_frames == V92_B1U_FRAMES + 16u ||
 		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
+			struct v92_upstream_data_line saved_line = receiver.line;
 			CHECK(receiver.model.valid == 3u &&
-			      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK,
+			      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
+			      memcmp(&saved_line, &receiver.line, sizeof(saved_line)) == 0,
 			      "paired codec control reset failed");
 			owned = receiver;
 		}
@@ -1965,10 +1985,18 @@ static bool test_codec_model(int polarity, bool rm)
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
 			CHECK(receiver.model.valid == 3u && !receiver.model.acquiring,
 			      "codec B1u did not fit both hypotheses");
+			CHECK(fabs(receiver.line.host.gain - .75) < 1e-12 &&
+			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
+			      "host gain did not freeze at the acquisition boundary");
 			memcpy(frozen, receiver.model.model, sizeof(frozen));
 		} else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
-			CHECK(memcmp(frozen, receiver.model.model, sizeof(frozen)) == 0,
+			CHECK(memcmp(frozen, receiver.model.model, sizeof(frozen)) == 0 &&
+			      fabs(receiver.line.host.gain - .75) < 1e-12 &&
+			      memory_region_is_zero(&receiver.line.host.fit, sizeof(receiver.line.host.fit)),
 			      "held-out B1u or payload retrained the codec models");
+		} else {
+			CHECK(receiver.line.host.gain == 0.0 && pcm_gain_is_valid(&receiver.line.host.fit),
+			      "host gain froze before the acquisition boundary");
 		}
 		unsigned f = (unsigned)receiver.line.received_frames - 1u;
 		enum v92_pcm_frame_rm expected_rm = !rm || f < RM_START +
@@ -1995,6 +2023,16 @@ static bool test_codec_model(int polarity, bool rm)
 	}
 	CHECK(delivered == FRAMES - V92_PCM_RX_DELAY_FRAMES, "codec payload count changed");
 	struct v92_upstream_data_rx saved = receiver;
+	for (unsigned fault = 0; fault < 3; ++fault) {
+		struct v92_upstream_data_rx invalid = saved;
+		if (fault == 0)
+			invalid.line.host.gain = NAN;
+		else if (fault == 1)
+			invalid.line.host.gain = -1;
+		else
+			pcm_gain_init(&invalid.line.host.fit);
+		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid frozen host gain accepted");
+	}
 	/* With no new likelihood evidence, equally ranked codec hypotheses can
 	 * disagree about an old non-payload slot. Never compare unwritten bits
 	 * from the suppressed branch or release a placeholder from the winner. */
@@ -2032,7 +2070,9 @@ static bool test_codec_model(int polarity, bool rm)
 		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, INT16_MAX, false, &output) ==
 		      (i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
 			V92_UPSTREAM_DATA_RX_OK), "erased codec frame stopped");
-	CHECK(output.squared_error > 1e9, "erased media hid its raw residual");
+	CHECK(output.squared_error > 1e9 &&
+	      memcmp(&receiver.line.host, &saved.line.host, sizeof(saved.line.host)) == 0,
+	      "erased media hid its raw residual or retrained host gain");
 	/* Finite model parameters can still overflow at a codec boundary. A
 	 * failed frame must not partly advance either coding hypothesis. */
 	receiver = saved;
@@ -2057,17 +2097,25 @@ static bool test_codec_model(int polarity, bool rm)
 	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
 	      V92_UPSTREAM_DATA_RX_OK && memcmp(&initial, &receiver, sizeof(initial)) == 0,
 	      "new training epoch retained codec state");
-	for (unsigned missing = 0u; missing < 2u; ++missing) {
+	for (unsigned missing = 0u; missing < 3u; ++missing) {
 		receiver = initial;
-		while (receiver.line.received_frames == 0u) {
-			enum v92_upstream_data_rx_result result = missing ?
-				v92_upstream_data_rx_octet(&receiver, 0xffu, 0, false, &output) :
-				v92_upstream_data_rx_sample(&receiver, 0, &output);
+		/* Keep the coded sample stream aligned. Only the first frame lacks
+		 * matching wire evidence; later pairs must not reopen acquisition. */
+		for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+		     receiver.line.received_frames <= V92_B1U_ACQUISITION_FRAMES; ++i) {
+			uint8_t code = codes[i];
+			int16_t sample = (int16_t)lround(.75 * g711_decode_pcmu(code));
+			bool first = receiver.line.received_frames == 0u;
+			enum v92_upstream_data_rx_result result = first && missing == 0u ?
+				v92_upstream_data_rx_sample(&receiver, sample, &output) :
+				v92_upstream_data_rx_octet(&receiver, first && missing == 2u ? 0xffu : code,
+					sample, !(first && missing == 1u), &output);
 			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
-			      "missing acquisition input stopped linear fallback");
+			      "closed acquisition stopped linear fallback");
 		}
 		CHECK(!receiver.model.acquiring && !receiver.model.valid &&
-		      v92_upstream_data_rx_is_valid(&receiver), "missing media trained a codec model");
+		      memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)) &&
+		      v92_upstream_data_rx_is_valid(&receiver), "missing or inconsistent media trained a model");
 	}
 	/* A multi-tap prefilter is outside this model, not a one-tap fit with
 	 * silently ignored coefficients. Keep the existing linear receiver. */
@@ -2076,6 +2124,15 @@ static bool test_codec_model(int polarity, bool rm)
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
 	      V92_UPSTREAM_DATA_RX_OK && !receiver.model.acquiring && !receiver.model.valid,
 	      "unsupported prefilter enabled the codec model");
+	for (unsigned i = 0; receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
+		uint8_t code = codes[i];
+		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(&receiver, code,
+			(int16_t)lround(.75 * g711_decode_pcmu(code)), true, &output);
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+		      "general prefilter host acquisition stopped");
+	}
+	CHECK(fabs(receiver.line.host.gain - .75) < 1e-12 && !receiver.model.valid,
+	      "host gain depended on the mapping's codec-model support");
 	return true;
 }
 
