@@ -927,6 +927,14 @@ static void modem_dp_process_frame(struct modem *m, enum g711_law law,
 			stop_processing = true;
 			break;
 		}
+		/* Bit timers run inside datapump source/sink callbacks. Defer a
+		 * link-quality retrain until the datapump has returned, and never
+		 * turn it into an unsolicited terminal CONNECT or reset LAPM. */
+		if (ret == DPSTAT_OK && IS_STATE_ONLINE(m->state) && m->dp != NULL &&
+		    m->dp->op->retrain != NULL && modem_ec_take_retrain_request(m)) {
+			int result = m->dp->op->retrain(m->dp);
+			MODEM_DBG("stalled LAPM retrain: %s\n", result == 0 ? "accepted" : "unavailable");
+		}
 
 		count -= cnt;
 		out += cnt<<MFMT_SHIFT(m->format);

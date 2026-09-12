@@ -63,6 +63,8 @@ enum {
 	LAPM_TIMER_FRAME_OVERHEAD_OCTETS = 7,
 	LAPM_TIMER_STUFFED_BITS_PER_OCTET = 10,
 	LAPM_TIMER_FALLBACK_BIT_RATE = 57600,
+	/* Give ordinary retransmission two complete T401 intervals first. */
+	LAPM_RETRAIN_POLLS = 2,
 };
 
 /* The shared bit timer advances with both line directions. Express T401 in
@@ -170,7 +172,8 @@ static unsigned lapm_originator_preamble_flags(const struct modem *m)
 			  (l)->modem->bit_timer = lapm_timer_timeout(l); \
 			  (l)->modem->bit_timer_func = t401_timeout; }
 #define T401_STOP(l) 	{ EC_DBG("T401 stop.\n"); \
-                          (l)->modem->bit_timer = 0; (l)->rtx_count = 0; }
+                          (l)->modem->bit_timer = 0; (l)->rtx_count = 0; \
+                          (l)->stalled_retrain = false; }
 #if T403_IMPLEMENTED
 #define TIMER_START(l)  { EC_DBG("T403 stop, T401 start.\n"); \
                           (l)->rtx_count = 0; \
@@ -1729,6 +1732,7 @@ static void reset_lapm_sequence(struct lapm_state *l)
 	l->busy = 0;
 	l->peer_busy = 0;
 	l->retrain_poll = 0;
+	l->stalled_retrain = false;
 	l->reject = 0;
 	l->vs = 0;
 	l->va = 0;
@@ -1876,6 +1880,27 @@ void modem_ec_stop(struct modem *m)
 	h->tx_preamble_complete = NULL;
 	m->packer_process = NULL;
 	lapm_disconnect(l);
+}
+
+bool modem_ec_take_retrain_request(struct modem *m)
+{
+	struct lapm_state *l;
+
+	if (m == NULL || !m->cfg.ec || m->get_bits != modem_hdlc_get_bits ||
+	    m->put_bits != modem_hdlc_put_bits)
+		return false;
+	l = &m->ec.lapm;
+	if (l->state != LAPM_DATA || l->config || l->busy || l->peer_busy ||
+	    l->va == l->vs || l->rtx_count < LAPM_RETRAIN_POLLS ||
+	    l->stalled_retrain)
+		return false;
+	/* A PCM frame-phase slip can produce legal symbols but no usable HDLC
+	 * frames. Try physical recovery once before LAPM exhausts N400. Keep
+	 * the queues and T401 progress, even if the datapump rejects the request.
+	 * A completed timer-recovery episode rearms this allowance; starting or
+	 * resuming retraining does not. Peer flow control is not a channel fault. */
+	l->stalled_retrain = true;
+	return true;
 }
 
 int modem_ec_resume_after_retrain(struct modem *m)

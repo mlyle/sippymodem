@@ -327,6 +327,20 @@ static int request_retrain_dp(struct dp *datapump)
 	return retrain_dp.retrain_result;
 }
 
+static int process_stalled_lapm_dp(
+	struct dp *datapump, void *receive, void *transmit, int count)
+{
+	unsigned before = retrain_dp.retrain_calls;
+	uint8_t bit;
+
+	/* Force a real bit-timer expiry inside the datapump's source callback. */
+	datapump->modem->bit_timer = 1;
+	modem_get_bits(datapump->modem, 1, &bit, 1);
+	if (retrain_dp.retrain_calls != before)
+		return DPSTAT_ERROR;
+	return process_retrain_dp(datapump, receive, transmit, count);
+}
+
 static int request_hangup_dp(struct dp *datapump)
 {
 	if (datapump != &retrain_dp.datapump)
@@ -2502,6 +2516,110 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 	return true;
 }
 
+static bool test_lapm_stalled_retrain(void)
+{
+	enum { ONLINE = 5, LAPM_DATA_STATE = 2, LAPM_DISC_STATE = 3 };
+	struct modem_driver driver = {
+		.name = "LAPM stalled retrain", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	static const uint8_t payload[] = { 'a', 'b' };
+	int16_t receive[MODEM_FRAG] = { 0 }, transmit[MODEM_FRAG];
+
+	for (int result = -1; result <= 0; ++result) {
+		struct dp_operations operations = {
+			.name = "LAPM stalled retrain", .create = create_retrain_dp,
+			.delete = delete_retrain_dp, .process = process_retrain_dp,
+			.retrain = request_retrain_dp,
+		};
+		memset(&retrain_dp, 0, sizeof(retrain_dp));
+		retrain_dp.retrain_result = result;
+		CHECK(modem_dp_register(DP_CALLPROG, &operations) == 0,
+		      "stall datapump registration failed");
+		struct modem *m = modem_create(&driver, driver.name);
+		CHECK(m != NULL && modem_dial(m) == 0, "stall fixture did not start");
+		m->state = ONLINE;
+		m->caller = 0;
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_win_size = 3;
+		m->cfg.ec_tx_info_size = 1;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "stall LAPM initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		l->state = LAPM_DATA_STATE;
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = sizeof(payload);
+		lapm_source.offset = 0;
+		for (unsigned frame = 0; frame < 2; ++frame) {
+			frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4, "stall fixture lacks I frame");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		frame_t *retained = l->sent_info;
+		/* No requests for flow control, establishment, raw mode, shutdown,
+		 * an unsupported datapump, or just the first unanswered poll. */
+		for (unsigned excluded = 0; excluded < 10; ++excluded) {
+			l->rtx_count = excluded == 7 ? 1 : 2;
+			l->busy = excluded == 0;
+			l->peer_busy = excluded == 1;
+			l->config = excluded == 2;
+			l->state = excluded == 3 ? 1 : LAPM_DATA_STATE;
+			m->cfg.ec = excluded != 4;
+			m->state = excluded == 5 ? 7 : ONLINE;
+			operations.retrain = excluded == 6 ? NULL : request_retrain_dp;
+			m->get_bits = excluded == 8 ? modem_async_get_bits : modem_hdlc_get_bits;
+			l->va = excluded == 9 ? l->vs : 0;
+			modem_process(m, receive, transmit, MODEM_FRAG);
+			CHECK(!retrain_dp.retrain_calls && !l->stalled_retrain,
+			      "excluded stall %u requested retrain", excluded);
+		}
+		l->rtx_count = 0;
+		l->va = 0;
+		operations.process = process_stalled_lapm_dp;
+		modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(l->rtx_count == 1 && !retrain_dp.retrain_calls, "retrained before two polls");
+		modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(l->rtx_count == 2 && retrain_dp.retrain_calls == 1 && l->stalled_retrain &&
+		      m->state == ONLINE && !m->command && !m->retrain_pending &&
+		      l->sent_info == retained && l->sent_count == 2 && l->va == 0 && l->vs == 2,
+		      "deferred stall retrain lost state or ran inside the datapump");
+		operations.process = process_retrain_dp;
+		for (unsigned frame = 0; frame < 20; ++frame)
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(retrain_dp.retrain_calls == 1, "stall retrain repeated on each media chunk");
+		CHECK(modem_ec_resume_after_retrain(m) == 0 && l->stalled_retrain,
+		      "physical retrain rearmed its own recovery allowance");
+		uint8_t reply[] = { l->cmd_addr, 1, 5 }; /* RR F=1, N(R)=2 */
+		frame_t incoming = { .buf = reply, .count = sizeof(reply) };
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(!l->stalled_retrain && !l->rtx_count && l->sent_count == 0 && l->va == 2,
+		      "successful poll did not acknowledge and rearm recovery");
+		lapm_source.offset = 0;
+		/* Drain the retained poll, then place a new information window. */
+		for (unsigned frame = 0; frame < LAPM_CTRL_FRAMES + 2 && l->vs == l->va; ++frame) {
+			frame_t *outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL, "no frame after recovered poll");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		CHECK(l->vs != l->va, "recovered poll did not start the new information window");
+		operations.process = process_stalled_lapm_dp;
+		for (unsigned expiry = 0; expiry < 8 && l->state == LAPM_DATA_STATE; ++expiry)
+			modem_process(m, receive, transmit, MODEM_FRAG);
+		CHECK(retrain_dp.retrain_calls == 2 && l->state == LAPM_DISC_STATE,
+		      "absent peer was not bounded by normal LAPM retry exhaustion");
+		CHECK(modem_stop_now(m) == 0 && operations.use_count == 0, "stall fixture did not stop");
+		modem_delete(m);
+		CHECK(modem_dp_deregister(DP_CALLPROG, &operations) == 0, "stall deregistration failed");
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_lapm_peer_busy_acknowledgement(void)
 {
 	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5, REJ = 9 };
@@ -3830,6 +3948,7 @@ int main(void)
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
 		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
+		{ "bounded LAPM stalled retrain", test_lapm_stalled_retrain },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },

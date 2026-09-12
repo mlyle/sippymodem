@@ -73,6 +73,8 @@ struct integration_endpoint {
 	size_t stops;
 	size_t erased_samples;
 	bool delay_codewords;
+	bool delay_one_sample;
+	uint8_t prior_codeword;
 };
 
 struct recording_capture {
@@ -490,6 +492,14 @@ static bool process_transmit_frame(
 	memset(endpoint->transmit, 0, sizeof(endpoint->transmit));
 	memset(endpoint->transmit_codewords, silence,
 	       sizeof(endpoint->transmit_codewords));
+	if (endpoint->delay_one_sample) {
+		for (unsigned sample = 0; sample < SIP_FRAME_SAMPLES; ++sample) {
+			uint8_t current = endpoint->receive_codewords[sample];
+			endpoint->receive_codewords[sample] = endpoint->prior_codeword;
+			endpoint->receive[sample] = decode_codeword(law, endpoint->prior_codeword);
+			endpoint->prior_codeword = current;
+		}
+	}
 	CHECK(endpoint->erased_samples <= SIP_FRAME_SAMPLES, "invalid media erasure fixture");
 	for (size_t index = 0; index < SIP_FRAME_SAMPLES; ++index) {
 		received_mask[index] = index >= endpoint->erased_samples;
@@ -1466,6 +1476,65 @@ static bool exercise_v92_media_loss(
 	return true;
 }
 
+static bool exercise_pcm_downstream_slip(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	enum { PAYLOAD = 384, FRAME_LIMIT = 1500 };
+	struct integration_endpoint *ends[] = { caller, answerer };
+	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
+	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	uint8_t payload[2][PAYLOAD];
+	unsigned upstream = caller->modem->dsp_info.upstream_mode;
+	bool recovered = false;
+	unsigned settled = 0;
+
+	for (unsigned side = 0; side < 2; ++side) {
+		CHECK(ends[side]->modem->cfg.ec, "PCM slip requires LAPM");
+		ends[side]->output_count = 0;
+		uint32_t random = UINT32_C(0x534c4950) + side;
+		for (unsigned i = 0; i < PAYLOAD; ++i)
+			payload[side][i] = (uint8_t)noise_state_next(&random);
+		CHECK(modem_write(ends[side]->modem, (const char *)payload[side], PAYLOAD) == PAYLOAD,
+		      "PCM slip did not queue terminal data");
+	}
+	CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+	      endpoint_drain(caller) && endpoint_drain(answerer), "PCM slip setup failed");
+	CHECK(ends[analog]->modem->ec.lapm.va != ends[analog]->modem->ec.lapm.vs &&
+	      ends[1u - analog]->modem->ec.lapm.va != ends[1u - analog]->modem->ec.lapm.vs,
+	      "PCM slip has no unacknowledged frames");
+	/* Repeat one downstream sample, retaining the added delay through the
+	 * recovery. These are available G.711 symbols, not flagged erasures. A
+	 * mapper-phase slip can leave every hard decision legal but HDLC broken.
+	 * Keep the delay through the following cleardown, too. */
+	ends[analog]->prior_codeword = ends[analog]->receive_codewords[0];
+	ends[analog]->delay_one_sample = true;
+	for (unsigned frame = 0; frame < FRAME_LIMIT; ++frame) {
+		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+		      endpoint_drain(caller) && endpoint_drain(answerer), "PCM slip media failed");
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = ends[side]->modem;
+			recovered |= m->ec.lapm.stalled_retrain;
+			CHECK(m->dp == owned[side] && m->cfg.ec && !m->command && !m->retrain_pending &&
+			      ends[side]->output_count <= PAYLOAD &&
+			      memcmp(ends[side]->output, payload[1u - side], ends[side]->output_count) == 0,
+			      "PCM slip changed the link or delivered incorrect bytes");
+		}
+		bool delivered = caller->output_count == PAYLOAD && answerer->output_count == PAYLOAD &&
+			caller->modem->ec.lapm.va == caller->modem->ec.lapm.vs &&
+			answerer->modem->ec.lapm.va == answerer->modem->ec.lapm.vs;
+		settled = delivered ? settled + 1u : 0u;
+		if (settled == 50)
+			break;
+	}
+	CHECK(recovered && settled == 50 &&
+	      caller->modem->dsp_info.upstream_mode == upstream &&
+	      answerer->modem->dsp_info.upstream_mode == upstream,
+	      "PCM slip did not retrain and preserve all queued data (%zu/%zu, recovered=%d)",
+	      caller->output_count, answerer->output_count, recovered);
+	return true;
+}
+
 static bool exercise_low_speed_carrier_recovery(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -2239,6 +2308,9 @@ static bool run_media_call(
 	if (connected_id == DP_V92 && !test_case->raw_transport)
 		CHECK(exercise_v92_media_loss(&caller, &answerer, codec, &recorder),
 		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
+	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport)
+		CHECK(exercise_pcm_downstream_slip(&caller, &answerer, codec, &recorder),
+		      "%s downstream slip did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->cleardown_initiators)
 		CHECK(exercise_cleardown(
 			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),

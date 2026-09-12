@@ -246,6 +246,7 @@ struct lapm_state {
         int busy;
         int peer_busy;
         int retrain_poll;
+        bool stalled_retrain;
         u8  cmd_addr;
         u8  rsp_addr;
         u8 vs;
@@ -508,6 +509,8 @@ extern int  modem_ec_init(struct modem *m);
 extern void modem_ec_exit(struct modem *m);
 extern void modem_ec_start(struct modem *m);
 extern void modem_ec_stop(struct modem *m);
+/* Consume a bounded request; the host invokes retrain outside DSP callbacks. */
+extern bool modem_ec_take_retrain_request(struct modem *m);
 extern int modem_ec_resume_after_retrain(struct modem *m);
 extern void modem_ec_update_timer_rate(struct modem *m, uint64_t previous_rate);
 extern enum modem_ec_compression
