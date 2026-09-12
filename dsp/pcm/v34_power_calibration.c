@@ -3,6 +3,7 @@
 #include "v34_power_calibration.h"
 
 #include "v34_data_points.h"
+#include "v34_pulse_modulator.h"
 #include "v34_rate_profile.h"
 #include "v34_training_line.h"
 
@@ -268,15 +269,15 @@ static enum v34_power_calibration_result observe_line_sample(
 		       V34_POWER_CALIBRATION_NUMERIC_FAILURE;
 }
 
-static enum v34_power_calibration_result carrier_result(
-	enum v34_data_carrier_result result)
+static enum v34_power_calibration_result pulse_result(
+	enum v34_pulse_modulator_result result)
 {
 	switch (result) {
-	case V34_DATA_CARRIER_OK:
+	case V34_PULSE_MODULATOR_OK:
 		return V34_POWER_CALIBRATION_OK;
-	case V34_DATA_CARRIER_NUMERIC_FAILURE:
+	case V34_PULSE_MODULATOR_NUMERIC_FAILURE:
 		return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-	case V34_DATA_CARRIER_INVALID_ARGUMENT:
+	case V34_PULSE_MODULATOR_INVALID_ARGUMENT:
 		break;
 	}
 	return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
@@ -334,7 +335,8 @@ v34_calibrate_line_power(
 	struct v34_line_power_measurement *measurement)
 {
 	struct v34_data_points points;
-	struct v34_data_carrier carrier;
+	struct v34_pulse_modulator carrier;
+	struct qam_channel channel;
 	struct v34_line_power_measurement measured = { 0 };
 	uint32_t random_state = V34_POWER_CALIBRATION_SEED;
 	uint32_t frames_per_superframe;
@@ -344,6 +346,7 @@ v34_calibrate_line_power(
 
 	if (!v34_phase3_profile_is_valid(profile) ||
 	    !v34_frame_schedule_is_valid(initial_schedule) ||
+	    initial_schedule->geometry.symbol_rate != profile->symbol_rate ||
 	    !v34_transmit_scrambler_is_valid(
 		    initial_scrambler, profile->local_role) ||
 	    !v34_4d_encoder_is_valid(initial_encoder) ||
@@ -357,9 +360,12 @@ v34_calibrate_line_power(
 		    initial_encoder, normalizer, profile->local_role) !=
 	    V34_DATA_POINTS_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
-	if (v34_data_carrier_init(
-		    &carrier, profile, &points.schedule.geometry, normalizer,
-		    sample_rate) != V34_DATA_CARRIER_OK)
+	if (v34_line_channel_init(profile, sample_rate, &channel) !=
+		    V34_LINE_CHANNEL_OK ||
+	    v34_pulse_modulator_init(
+		    &carrier, profile, &channel,
+		    normalizer->maximum_normalized_point_power) !=
+		    V34_PULSE_MODULATOR_OK)
 		return V34_POWER_CALIBRATION_INVALID_ARGUMENT;
 	frames_per_superframe =
 		(uint32_t)points.schedule.geometry.data_frames_per_superframe *
@@ -389,14 +395,14 @@ v34_calibrate_line_power(
 
 			if (++frame_samples > maximum_frame_samples)
 				return V34_POWER_CALIBRATION_NUMERIC_FAILURE;
-			if (v34_data_carrier_needs_point(&carrier)) {
+			if (v34_pulse_modulator_needs_point(&carrier)) {
 				result = data_points_result(v34_data_points_next(
 					&points, &point));
 				if (result != V34_POWER_CALIBRATION_OK)
 					return result;
 				point_pointer = &point;
 			}
-			result = carrier_result(v34_data_carrier_sample(
+			result = pulse_result(v34_pulse_modulator_sample(
 				&carrier, point_pointer, &line_sample,
 				&symbol_accepted));
 			if (result != V34_POWER_CALIBRATION_OK)

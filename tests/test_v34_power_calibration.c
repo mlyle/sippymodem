@@ -319,6 +319,8 @@ static bool test_generated_line_power(void)
 	saved_schedule = fixture.schedule;
 	saved_scrambler = fixture.scrambler;
 	saved_encoder = fixture.encoder;
+	/* Phase 4 may exceed the earlier Phase 2 projection. */
+	profile.projected_data_rate_2400_bps_units = 7;
 	CHECK(v34_calibrate_line_power(
 		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
 		      &normalizer, &profile, 8000, &unfiltered) ==
@@ -331,6 +333,9 @@ static bool test_generated_line_power(void)
 	      unfiltered.mean_squared_amplitude ==
 		      repeated.mean_squared_amplitude &&
 	      unfiltered.peak_amplitude == repeated.peak_amplitude &&
+	      mean_powers_are_equal(unfiltered.mean_squared_amplitude,
+				   0x1.3c1005a350754p-4) &&
+	      unfiltered.peak_amplitude == 0x1.b2c8p-1 &&
 	      unfiltered.sample_count == expected_samples &&
 	      repeated.sample_count == expected_samples &&
 	      schedules_are_equal(&fixture.schedule, &saved_schedule) &&
@@ -345,8 +350,95 @@ static bool test_generated_line_power(void)
 	      v34_line_power_measurement_is_valid(&emphasized) &&
 	      emphasized.sample_count == expected_samples &&
 	      emphasized.mean_squared_amplitude !=
-		      unfiltered.mean_squared_amplitude,
+		      unfiltered.mean_squared_amplitude &&
+	      mean_powers_are_equal(emphasized.mean_squared_amplitude,
+				   0x1.bcba7167b1fbfp-4) &&
+	      emphasized.peak_amplitude == 0x1.072p+0,
 	      "line-power calibration ignored pre-emphasis");
+	return true;
+}
+
+static bool test_line_validation(void)
+{
+	static const uint32_t INVALID_SAMPLE_RATES[] = {
+		0, 7000, 7999, 8001, 16000, UINT32_MAX,
+	};
+	struct calibration_fixture fixture;
+	struct v34_power_normalizer normalizer;
+	struct v34_power_normalizer invalid_normalizer;
+	struct v34_line_power_measurement measurement;
+	struct v34_info1_probe_result probe = {
+		.projected_data_rate_2400_bps_units = 8,
+		.high_carrier = true,
+	};
+	struct v34_phase3_profile profile;
+	struct v34_phase3_profile other_rate;
+	struct v34_phase3_profile other_role;
+	struct v34_phase3_profile invalid_profile;
+
+	CHECK(initialize_fixture(&fixture, V34_CALLING_STATION,
+				 V34_TRELLIS_16_STATE, 0, 0) &&
+	      v34_calibrate_mapping_power(
+		      &fixture.schedule, &fixture.scrambler, &fixture.encoder,
+		      V34_NONLINEAR_THETA_ZERO, &normalizer) ==
+		      V34_POWER_CALIBRATION_OK &&
+	      v34_phase3_profile_init(&profile, V34_CALLING_STATION,
+		      V34_SYMBOL_RATE_3000, &probe, 0, 0) ==
+		      V34_PHASE3_PROFILE_OK &&
+	      v34_phase3_profile_init(&other_rate, V34_CALLING_STATION,
+		      V34_SYMBOL_RATE_2800, &probe, 0, 0) ==
+		      V34_PHASE3_PROFILE_OK,
+	      "line validation fixture did not initialize");
+	other_role = profile;
+	other_role.local_role = V34_ANSWERING_STATION;
+	invalid_profile = profile;
+	invalid_profile.preemphasis_filter_index =
+		V34_PREEMPHASIS_MAX_FILTER_INDEX + 1u;
+	invalid_normalizer = normalizer;
+	invalid_normalizer.maximum_normalized_point_power = NAN;
+	memset(&measurement, 0xa5, sizeof(measurement));
+	CHECK(v34_calibrate_line_power(NULL, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, &profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, NULL,
+		      &fixture.encoder, &normalizer, &profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      NULL, &normalizer, &profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, NULL, &profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, NULL, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, &profile, 8000,
+		      NULL) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, &other_rate, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, &other_role, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &normalizer, &invalid_profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      v34_calibrate_line_power(&fixture.schedule, &fixture.scrambler,
+		      &fixture.encoder, &invalid_normalizer, &profile, 8000,
+		      &measurement) == V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+	      bytes_are_filled(&measurement, sizeof(measurement), 0xa5),
+	      "invalid line calibration changed its destination");
+	for (size_t index = 0; index < ARRAY_LENGTH(INVALID_SAMPLE_RATES);
+	     ++index) {
+		CHECK(v34_calibrate_line_power(&fixture.schedule,
+			      &fixture.scrambler, &fixture.encoder, &normalizer,
+			      &profile, INVALID_SAMPLE_RATES[index], &measurement) ==
+			      V34_POWER_CALIBRATION_INVALID_ARGUMENT &&
+		      bytes_are_filled(&measurement, sizeof(measurement), 0xa5),
+		      "unsupported line sample rate %u changed its destination",
+		      INVALID_SAMPLE_RATES[index]);
+	}
 	return true;
 }
 
@@ -548,6 +640,7 @@ int main(void)
 		{ "rate profile", test_rate_profile },
 		{ "generated calibration", test_generated_calibration },
 		{ "generated line power", test_generated_line_power },
+		{ "line validation", test_line_validation },
 		{ "configuration sweep", test_configuration_sweep },
 		{ "transactional validation", test_transactional_validation },
 	};

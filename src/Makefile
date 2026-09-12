@@ -181,7 +181,6 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_decoder.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_mapping_frame_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_constellation.c \
-	$(DSP_PCM_SOURCE_DIR)/v34_data_carrier.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_mapping.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_mode.c \
 	$(DSP_PCM_SOURCE_DIR)/v34_data_startup.c \

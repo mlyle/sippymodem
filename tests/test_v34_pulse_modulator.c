@@ -130,7 +130,11 @@ static uint64_t waveform_hash(
 
 	profile.preemphasis_filter_index = preemphasis_filter_index;
 
-	if (v34_pulse_modulator_init(
+	/* Exercise line-channel construction for every waveform profile. */
+	if (!v34_line_channel_matches(&profile, &channel) ||
+	    v34_line_channel_init(&profile, TEST_SAMPLE_RATE, &channel) !=
+		    V34_LINE_CHANNEL_OK ||
+	    v34_pulse_modulator_init(
 		    &modulator, &profile, &channel, 2.0) !=
 	    V34_PULSE_MODULATOR_OK)
 		return 0;
@@ -257,6 +261,7 @@ static bool test_transactional_contract(void)
 	struct v34_pulse_modulator before;
 	struct qam_point point = { 0.5, -0.25 };
 	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point excessive = { 1.5, 0.0 };
 	double sample = 123.0;
 	bool accepted = true;
 
@@ -267,10 +272,16 @@ static bool test_transactional_contract(void)
 	      "transaction fixture did not initialize");
 	before = modulator;
 	CHECK(v34_pulse_modulator_sample(
+		      NULL, &point, &sample, &accepted) ==
+		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
+	      v34_pulse_modulator_sample(
 		      &modulator, NULL, &sample, &accepted) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_sample(
 		      &modulator, &invalid, &sample, &accepted) ==
+		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
+	      v34_pulse_modulator_sample(
+		      &modulator, &excessive, &sample, &accepted) ==
 		      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
 	      v34_pulse_modulator_sample(
 		      &modulator, &point, NULL, &accepted) ==

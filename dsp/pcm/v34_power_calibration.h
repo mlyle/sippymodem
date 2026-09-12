@@ -3,8 +3,8 @@
 #ifndef V34_POWER_CALIBRATION_H
 #define V34_POWER_CALIBRATION_H
 
-#include "v34_data_carrier.h"
 #include "v34_mapping_frame_transmitter.h"
+#include "v34_phase3_profile.h"
 #include "v34_symbol_power.h"
 
 #include <stdbool.h>
