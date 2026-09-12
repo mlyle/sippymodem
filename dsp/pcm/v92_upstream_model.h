@@ -17,7 +17,6 @@ struct v92_upstream_model {
 	/* The observation contract owns exactly one training scratch. */
 	union {
 		struct {
-			struct v92_pcm_frame_tx_state known;
 			int32_t x[V92_OBSERVATION_TRAINING], raw[V92_OBSERVATION_TRAINING];
 			int16_t u[V92_OBSERVATION_TRAINING], wire[V92_OBSERVATION_TRAINING];
 		};
@@ -36,8 +35,8 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver);
 /* Internal, exclusively owned state. The enclosing frame transaction commits
  * these mutations only after decoding, quality evaluation and fitting succeed. */
-bool v92_upstream_model_observe(struct v92_upstream_model *model,
-	const struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line);
+void v92_upstream_model_observe(struct v92_upstream_model *model,
+	const struct v92_pcm_frame *frame, const struct v92_upstream_data_line *line);
 void v92_upstream_model_fit(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder);
 enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *model,

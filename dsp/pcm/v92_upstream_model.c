@@ -15,7 +15,6 @@ _Static_assert(V92_OBSERVATION_TRAINING ==
 static void close_acquisition(struct v92_upstream_model *model)
 {
 	model->acquiring = false;
-	memset(&model->known, 0, sizeof(model->known));
 	memset(model->x, 0, sizeof(model->x));
 	memset(model->raw, 0, sizeof(model->raw));
 	memset(model->u, 0, sizeof(model->u));
@@ -106,35 +105,28 @@ void v92_upstream_model_init(struct v92_upstream_data_rx *receiver)
 	model->acquiring = true;
 }
 
-bool v92_upstream_model_observe(struct v92_upstream_model *model,
-	const struct v92_pcm_frame_rx *decoder, const struct v92_upstream_data_line *line)
+void v92_upstream_model_observe(struct v92_upstream_model *model,
+	const struct v92_pcm_frame *frame, const struct v92_upstream_data_line *line)
 {
 	if (!model->acquiring || line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
-		return true;
+		return;
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
 		if (!line->wire_known[i] || !line->received[i]) {
 			close_acquisition(model);
-			return true;
+			return;
 		}
 	}
-	struct v92_pcm_frame_tx known = { .mapping = decoder->mapping, .state = model->known };
-	struct v92_pcm_frame frame;
-	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 	size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
 
-	if (line->received_frames == 0u &&
-	    v92_pcm_frame_tx_init(&known, &decoder->mapping) != V92_PCM_FRAME_OK)
-		return false;
-	memset(bits, 1, decoder->mapping.data_bits_per_frame);
-	if (v92_pcm_frame_encode(&known, bits, decoder->mapping.data_bits_per_frame,
-			&frame) != V92_PCM_FRAME_OK)
-		return false;
-	model->known = known.state;
-	memcpy(model->x + offset, frame.x, sizeof(frame.x));
-	memcpy(model->u + offset, frame.u, sizeof(frame.u));
+	/* V.92 6.4.2 permits any representative in the encoded residue class.
+	 * Known B1u bits constrain that class, not the peer's power-selection
+	 * policy. Train from the received points and reconstructed filter state,
+	 * never a locally encoded waveform. The held-out half of B1u still
+	 * validates the resulting fit with unconstrained bit decisions. */
+	memcpy(model->x + offset, frame->x, sizeof(frame->x));
+	memcpy(model->u + offset, frame->u, sizeof(frame->u));
 	memcpy(model->raw + offset, line->raw, sizeof(line->raw));
 	memcpy(model->wire + offset, line->wire, sizeof(line->wire));
-	return true;
 }
 
 void v92_upstream_model_fit(struct v92_upstream_model *model,

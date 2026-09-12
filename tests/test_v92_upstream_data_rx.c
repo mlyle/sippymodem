@@ -15,6 +15,7 @@
 #include <v92_upstream_data_tx.h>
 
 #include "test.h"
+#include "integer_math.h"
 #include "packed_bits.h"
 
 #include <float.h>
@@ -1866,9 +1867,55 @@ static bool test_rate_request_line(enum g711_law law, int polarity,
 	return true;
 }
 
+/* Choose other legal points without changing the encoded bits or trellis.
+ * Multiples of four preserve V.34 subset labels; multiples of stride*M
+ * preserve V.92 6.4.2's residue class. Reconstruct the actual CPd waveform
+ * and histories independently of the transmitter's minimum-power policy. */
+static bool peer_frame(struct v92_pcm_frame_tx *tx, struct v92_pcm_frame *frame,
+	struct v92_pcm_frame_filter_state initial, unsigned index, unsigned *changed)
+{
+	const struct v92_cpd_parameters *cpd = &tx->mapping.cpd;
+	const struct v92_cpd_filter *p1 = &cpd->filter[V92_CPD_PRECODER_FEEDBACK];
+	const struct v92_cpd_filter *z2 = &cpd->filter[V92_CPD_PREFILTER_FEED_FORWARD];
+	unsigned history = p1->count;
+
+	CHECK(!cpd->filter[V92_CPD_PRECODER_FEED_FORWARD].count &&
+	      !cpd->filter[V92_CPD_PREFILTER_FEEDBACK].count && z2->count,
+	      "peer fixture requires feedback precoding and FIR prefiltering");
+	if (history < z2->count - 1u) history = z2->count - 1u;
+	for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; ++s) {
+		const struct v92_cpd_constellation *set =
+			&cpd->constellation[cpd->frame_constellation[s % V92_PCM_MAPPING_PHASES]];
+		unsigned step = cpd->modulus[s] * (s % 4u == 3u ? 2u : 1u);
+		int eta = frame->signed_index[s];
+
+		CHECK(step % 4u == 0u, "peer fixture cannot preserve trellis labels");
+		if ((index + s) % 3u == 0u) {
+			if (eta + (int)step < set->count) { eta += step; ++*changed; }
+			else if (eta - (int)step >= -(int)set->count) { eta -= step; ++*changed; }
+		}
+		frame->signed_index[s] = eta;
+		frame->u[s] = (eta < 0 ? -1 : 1) * set->positive_linear[eta < 0 ? -eta - 1 : eta];
+		int64_t x = (int64_t)frame->u[s] * 16384;
+		for (unsigned k = 0; k < p1->count; ++k)
+			x += (int64_t)initial.history[k] * p1->coefficient[k];
+		frame->x[s] = round_shift_s64_to_s32_saturating(x, 14);
+		int64_t v = (int64_t)frame->x[s] * z2->coefficient[0];
+		for (unsigned k = 1; k < z2->count; ++k)
+			v += (int64_t)initial.history[k - 1] * z2->coefficient[k];
+		frame->v[s] = round_shift_s64_to_s32_saturating(v, 15);
+		if (history) {
+			memmove(initial.history + 1, initial.history, (history - 1u) * sizeof(initial.history[0]));
+			initial.history[0] = frame->x[s];
+		}
+	}
+	tx->state.filter = initial;
+	return true;
+}
+
 /* Two codec conversions with channel memory and post-codec host gain. Keep
  * wire octets: requantizing the .75-scaled samples produces different cells. */
-static bool test_codec_model(int polarity, bool rm)
+static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
 	enum { RM_START = V92_B1U_FRAMES + 16, RM_PRIME = RM_START + 32, RM_END = RM_PRIME + 2 };
@@ -1887,6 +1934,8 @@ static bool test_codec_model(int polarity, bool rm)
 	uint32_t random = 0x35791bdu;
 	int16_t previous = 0, second = 0;
 	unsigned delivered = 0u;
+	unsigned changed = 0u;
+	double b1_error = 0.0;
 
 	for (unsigned i = 0u; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
 		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
@@ -1900,7 +1949,7 @@ static bool test_codec_model(int polarity, bool rm)
 		second = previous;
 		previous = q;
 	}
-	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMU, 19u, TEST_LU, false) == V92_CPD_OK &&
+	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMU, rate, TEST_LU, false) == V92_CPD_OK &&
 	      v92_cpd_channel_design(&cpd, &measured, G711_LAW_PCMU, TEST_LU, &plan) &&
 	      v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
@@ -1925,6 +1974,7 @@ static bool test_codec_model(int polarity, bool rm)
 	for (unsigned f = 0u; f < frames + PREFIX; ++f) {
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_filter_state initial_filter = transmitter.state.filter;
 
 		if (f < V92_B1U_FRAMES)
 			memset(bits, 1, mapping.data_bits_per_frame);
@@ -1941,11 +1991,14 @@ static bool test_codec_model(int polarity, bool rm)
 			v92_pcm_frame_encode_rm(&transmitter, f >= RM_PRIME, &frame) :
 			v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &frame)) ==
 			V92_PCM_FRAME_OK, "codec frame encode failed");
+		if (peer && !peer_frame(&transmitter, &frame, initial_filter, f, &changed))
+			return false;
 		for (unsigned s = 0u; s < V92_PCM_MAPPING_FRAME_SYMBOLS; ++s) {
 			int16_t sample;
 
 			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, frame.v[s], &sample) ==
 				V92_PCM_FRAME_OK, "codec frame scale failed");
+			CHECK(sample > -32000 && sample < 32000, "codec fixture clipped");
 			int16_t q = g711_decode_pcmu(g711_encode_pcmu(sample));
 			codes[f * V92_PCM_MAPPING_FRAME_SYMBOLS + s] = g711_encode_pcmu(
 				(int16_t)lround(polarity * (.9 * q + .08 * previous + .02 * second)));
@@ -1982,6 +2035,9 @@ static bool test_codec_model(int polarity, bool rm)
 		      v92_upstream_data_rx_is_valid(&receiver), "codec owned/checked disagreement");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
+		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    receiver.line.received_frames <= V92_B1U_FRAMES)
+			b1_error += frame.squared_error;
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
 			CHECK(receiver.model.valid == 3u && !receiver.model.acquiring,
 			      "codec B1u did not fit both hypotheses");
@@ -2022,6 +2078,9 @@ static bool test_codec_model(int polarity, bool rm)
 		++delivered;
 	}
 	CHECK(delivered == FRAMES - V92_PCM_RX_DELAY_FRAMES, "codec payload count changed");
+	CHECK(!peer || changed > V92_B1U_SYMBOLS / 4u, "peer fixture kept canonical points");
+	CHECK(b1_error / (.75 * .75 * V92_B1U_VALIDATION_SYMBOLS) <=
+	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR, "codec B1u failed quality");
 	struct v92_upstream_data_rx saved = receiver;
 	for (unsigned fault = 0; fault < 3; ++fault) {
 		struct v92_upstream_data_rx invalid = saved;
@@ -2295,9 +2354,13 @@ int main(void)
 				for (unsigned control = 0u; control < 2u; ++control)
 					if (!test_direct_b1_validation(law, polarity, fault, control))
 						return 1;
-	if (!test_codec_model(1, false) || !test_codec_model(-1, false) ||
-	    !test_codec_model(1, true) || !test_codec_model(-1, true))
+	if (!test_codec_model(1, false, 19u, false) || !test_codec_model(-1, false, 19u, false) ||
+	    !test_codec_model(1, true, 19u, false) || !test_codec_model(-1, true, 19u, false))
 		return 1;
+	for (int polarity = -1; polarity <= 1; polarity += 2)
+		if (!test_codec_model(polarity, false, 1u, true) ||
+		    !test_codec_model(polarity, false, 4u, true))
+			return 1;
 	fprintf(stderr, "[ RUN      ] retained PCM data-to-Ru control channel\n");
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)

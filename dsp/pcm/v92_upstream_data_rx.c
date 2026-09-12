@@ -278,8 +278,6 @@ static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_frame generated = { 0 };
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	bool raw = line->plan.observation == V92_PCM_FRAME_CONSTELLATION;
-	if (!v92_upstream_model_observe(&model, &decoder, line))
-		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	enum v92_pcm_frame_result result = v92_upstream_model_decode(
 		&model, &decoder, line, generated.bits, &decision, predictions);
 
@@ -287,6 +285,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		return fail(receiver, result == V92_PCM_FRAME_NO_PATH ?
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
+	v92_upstream_model_observe(&model, &decision.frame, line);
 	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES) {
 		/* TRN2u's sparse, quantized levels leave a small scalar uncertainty
 		 * in the inverse. Fit only known B1u coordinates, and never outside
