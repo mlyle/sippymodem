@@ -856,6 +856,48 @@ static int16_t predicted_observation(
 		predicted_sample(receiver, v, observed, b1u);
 }
 
+/* Pre-codec noise moves the source within or between G.711 input cells.
+ * Reconstructed-level distance can prefer a distant source merely because
+ * its codeword is closer to the received codeword. Rank by input distance;
+ * retain decoded-space predictions and residuals for line adaptation and
+ * quality reporting. The caller has already validated the mapping and LU. */
+static uint64_t input_cell_metric(
+	const struct v92_pcm_frame_rx *receiver, int32_t v,
+	const struct g711_interval *cell)
+{
+	int a = scale_sample(&receiver->mapping, receiver->minimum_level, v);
+	int b = scale_sample(&receiver->mapping, receiver->maximum_level, v);
+	int low = a < b ? a : b, high = a > b ? a : b;
+	int64_t error = low > cell->upper ? low - cell->upper :
+		high < cell->lower ? high - cell->lower : 0;
+
+	if (!error && low < cell->lower && high > cell->upper) {
+		/* LU is an integer, not a continuum. Large scale steps can skip
+		 * a received cell even when the endpoints surround it. */
+		int left = v < 0 ? receiver->maximum_level : receiver->minimum_level;
+		int right = v < 0 ? receiver->minimum_level : receiver->maximum_level;
+
+		while (right - left > 1 || left - right > 1) {
+			int middle = left + (right - left) / 2;
+			int sample = scale_sample(&receiver->mapping, (int16_t)middle, v);
+
+			if (sample < cell->lower) {
+				left = middle;
+				low = sample;
+			} else if (sample > cell->upper) {
+				right = middle;
+				high = sample;
+			} else {
+				return 0;
+			}
+		}
+		error = cell->lower - low < high - cell->upper ?
+			cell->lower - low : high - cell->upper;
+	}
+
+	return (uint64_t)(error * error);
+}
+
 static bool b1u_digits(
 	const struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_frame_rx_path *path,
@@ -987,6 +1029,11 @@ static enum v92_pcm_frame_result decode_frame(
 		size_t count = 0u;
 		uint64_t weight = 1u;
 		bool present = !received || received[symbol];
+		struct g711_interval cell;
+
+		if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+		    !g711_quantization_interval(receiver->mapping.law, samples[symbol], &cell))
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
 		if (model && present && !v92_observation_symbol_level(&cache,
 			samples[symbol], levels ? levels + symbol : NULL))
@@ -1098,6 +1145,9 @@ static enum v92_pcm_frame_result decode_frame(
 					.eta = (int16_t)eta, .path = (uint8_t)path,
 					.digit = digit,
 				};
+				if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
+					candidate.metric = add_u64_saturating(paths[path].state.metric,
+						input_cell_metric(receiver, v, &cell));
 				if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)

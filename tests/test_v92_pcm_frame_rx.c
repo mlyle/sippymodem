@@ -162,7 +162,12 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered, bool coll
 	if (collision)
 		CHECK(ambiguous != 0u && different != 0u,
 		      "dense A-law CPd collision was not identified");
-	else
+	else if (law == G711_LAW_PCMA && rate == 17u && !filtered) {
+		/* This level-neutral template also admits indistinguishable
+		 * payload histories. Both choices must report ambiguity and
+		 * reproduce the exact wire waveform, as checked above. */
+		CHECK(ambiguous != 0u, "45.3k template collision was not identified");
+	} else
 		CHECK(different == 0u, "clean channel changed payload");
 	return true;
 }
@@ -197,6 +202,88 @@ static bool test_direct_44k_level(enum g711_law law, int16_t level)
 			      "44k law %u LU %d frame %u changed bits", law, level, frame);
 		}
 	}
+	return true;
+}
+
+static bool test_precodec_noise(bool uncertain)
+{
+	/* A compact CPd with a(eta)=30000*(x+7*x^3)/8, x=(2eta+1)/77.
+	 * At LU 7777, input 8711 encodes to 8960; noise -8 yields 8448.
+	 * Decoded distance incorrectly favors input 7965 (codeword 8064).
+	 * Keep this peer mapping independent of our constellation selector. */
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	const int16_t level = 7777;
+	uint32_t random = UINT32_C(0xac62e5b9);
+	uint64_t residual = 0;
+
+	CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMA, 19, false) == V92_CPD_OK,
+		"CPd init failed");
+	cpd.four_times_gain_q0_16 = 20;
+	cpd.constellation[0].count = 39;
+	memset(cpd.constellation[0].positive_linear, 0, sizeof(cpd.constellation[0].positive_linear));
+	for (unsigned i = 0; i < 12; ++i)
+		cpd.modulus[i] = i % 4 == 3 ? 39 : 78;
+	for (unsigned i = 0; i < 39; ++i) {
+		uint64_t x = 2 * i + 1, width = 77;
+		uint64_t denominator = 8 * width * width * width;
+		uint64_t numerator = 30000 * x * (width * width + 7 * x * x);
+		cpd.constellation[0].positive_linear[i] = (int16_t)((numerator + denominator / 2) / denominator);
+	}
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMA, &cpd) == V92_PCM_MAPPING_OK &&
+		v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init(&rx, &mapping, level) == V92_PCM_FRAME_OK, "init failed");
+	for (unsigned f = 0; f < V92_B1U_FRAMES + 400 + V92_PCM_RX_DELAY_FRAMES; ++f) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[12];
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		bool b1u = f < V92_B1U_FRAMES;
+
+		if (f == V92_B1U_FRAMES && uncertain) {
+			rx.upstream_level = 7788;
+			rx.minimum_level = 7771;
+			rx.maximum_level = 7788;
+		}
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) == V92_PCM_FRAME_OK,
+			"encode failed");
+		for (unsigned i = 0; i < 12; ++i) {
+			int16_t sample;
+			CHECK(v92_pcm_frame_scale(&mapping, level, frame.v[i], &sample) == V92_PCM_FRAME_OK,
+				"scale failed");
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			int noise = b1u ? 0 : (int)((random >> 16) % 17) - 8;
+			samples[i] = quantize(G711_LAW_PCMA, (int16_t)(sample + noise));
+		}
+		CHECK(v92_pcm_frame_decode(&rx, samples, b1u, decoded, mapping.data_bits_per_frame,
+			&decision) == V92_PCM_FRAME_OK, "decode failed");
+		uint64_t error = 0;
+		for (unsigned i = 0; i < 12; ++i) {
+			int64_t e = (int64_t)samples[i] - decision.predicted_samples[i];
+			uint64_t nearest = UINT64_MAX;
+			for (int lu = rx.minimum_level; lu <= rx.maximum_level; ++lu) {
+				int16_t predicted;
+				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)lu, decision.frame.v[i],
+					&predicted) == V92_PCM_FRAME_OK, "prediction failed");
+				int64_t difference = (int64_t)samples[i] - quantize(G711_LAW_PCMA, predicted);
+				uint64_t cost = (uint64_t)(difference * difference);
+				if (cost < nearest) nearest = cost;
+			}
+			CHECK((uint64_t)(e * e) == nearest, "prediction left reachable codec levels");
+			error += (uint64_t)(e * e);
+		}
+		CHECK(error == decision.squared_error, "likelihood hid physical residual");
+		residual += error;
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, f - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!decision.ambiguous && !memcmp(bits, decoded, mapping.data_bits_per_frame),
+				"uncertain %u frame %u changed data", uncertain, f);
+		}
+	}
+	CHECK(residual > 0, "test did not perturb codec output");
 	return true;
 }
 
@@ -1005,6 +1092,9 @@ static bool test_observed_channel(enum g711_law law)
 int main(void)
 {
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
+
+	if (!test_precodec_noise(false) || !test_precodec_noise(true))
+		return 1;
 
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		static const uint8_t rates[] = { 1u, 13u, 19u };

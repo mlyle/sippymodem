@@ -209,7 +209,8 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
 /* Decode one aligned twelve-symbol frame in the initialized observation
  * coordinates: decoded G.711 filter output, or recovered linear u(n).
  * Predicted samples and squared error use those same coordinates and remain
- * unweighted even when the sequence search uses learned noise weights.
+ * unweighted even when the sequence search uses learned noise weights or
+ * pre-codec distance to the received G.711 input cell.
  * A bounded sequence search retains competing histories across frames.
  * Bits become ready after V92_PCM_RX_DELAY_FRAMES lookahead frames; while
  * buffering or delivering a non-payload slot, bits remain untouched. RM's

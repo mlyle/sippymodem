@@ -1211,6 +1211,22 @@ static bool test_rejection_and_failure(void)
 		      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
 	      v92_upstream_data_rx_b1u_complete(&receiver),
 	      "known B1u bits hid unusable samples or moved the boundary");
+	/* Once decisions are unknown, a large excursion must report damage
+	 * without adapting the FIR toward that unreliable decoded point. */
+	memset(receiver.line.equalizer.coefficients, 0,
+	       sizeof(receiver.line.equalizer.coefficients));
+	receiver.line.equalizer.coefficients[0].in_phase = 4.0;
+	struct qam_point coefficients[QAM_EQUALIZER_MAX_TAP_COUNT];
+
+	memcpy(coefficients, receiver.line.equalizer.coefficients, sizeof(coefficients));
+	for (size_t sample = 0u; sample < V92_PCM_MAPPING_FRAME_SYMBOLS; ++sample)
+		CHECK(v92_upstream_data_rx_sample(&receiver, INT16_MAX, &frame) ==
+			      (sample + 1u == V92_PCM_MAPPING_FRAME_SYMBOLS ?
+				       V92_UPSTREAM_DATA_RX_FRAME : V92_UPSTREAM_DATA_RX_OK),
+		      "unusable data stopped reporting evidence");
+	CHECK(frame.squared_error > 12.0 * 65535.0 * 65535.0 &&
+	      memcmp(coefficients, receiver.line.equalizer.coefficients, sizeof(coefficients)) == 0,
+	      "unusable data hid its residual or trained the FIR");
 	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &direct_plan) ==
 		      V92_UPSTREAM_DATA_RX_OK, "clipped-input initialization failed");
 	memset(receiver.line.equalizer.coefficients, 0,

@@ -3,6 +3,7 @@
 #include "v92_upstream_data_rx.h"
 
 #include "memory_region.h"
+#include "v92_data_quality.h"
 
 #include <limits.h>
 #include <math.h>
@@ -312,13 +313,15 @@ static enum v92_upstream_data_rx_result receive_frame(
 		generated.squared_error += error * error;
 		if (!isfinite(generated.squared_error))
 			return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-		/* A decision farther away than silence is not a reliable channel
-		 * target. In particular, nonzero codec silence must not amplify
-		 * normalized updates while the received signal is absent. Keep
-		 * consuming observations and reporting the full residual; known
-		 * B1u and ordinary, nearby decisions retain their tracking step. */
+		/* Unusable decisions must not train an unrelated signal into an
+		 * apparently clean constellation before quality recovery runs.
+		 * Also reject targets farther away than silence: nonzero codec
+		 * silence can otherwise amplify normalized updates. Retain every
+		 * observation and its full residual; known B1u and nearby data
+		 * decisions keep their tracking step. */
 		double adaptation = line->adaptation;
-		if (!b1u && fabs(error) > fabs(line->observations[symbol].output.in_phase))
+		if (!b1u && (fabs(error) > V92_DATA_MAX_RMS_ERROR ||
+		    fabs(error) > fabs(line->observations[symbol].output.in_phase)))
 			adaptation = 0.0;
 		if (qam_equalizer_adapt_observation(&line->equalizer,
 				&line->observations[symbol], &target, adaptation) !=
