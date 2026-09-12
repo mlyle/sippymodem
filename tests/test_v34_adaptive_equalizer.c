@@ -1421,6 +1421,77 @@ static bool test_paired_data_quality_windows(void)
 	return true;
 }
 
+static bool test_data_quality_rearm(void)
+{
+	for (unsigned budget = 1; budget <= V34_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+		struct v34_adaptive_equalizer_quality measurement = { .decision_metric = 40 };
+		struct v34_data_quality quality = { .automatic_retrains = budget };
+
+		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
+			      &measurement) == V34_DATA_QUALITY_OK,
+		      "rearm fixture did not start");
+		for (unsigned window = 1; window <= V34_DATA_QUALITY_REARM_WINDOWS; ++window) {
+			measurement.window_position = 1;
+			for (unsigned repeat = 0; repeat < 4; ++repeat)
+				CHECK(v34_data_quality_observe(&quality, &measurement) ==
+					      V34_DATA_QUALITY_OK && quality.automatic_retrains == budget,
+				      "partial or unchanged measurement rearmed recovery");
+			CHECK(publish_quality_window(&quality, &measurement, 40) ==
+				      V34_DATA_QUALITY_OK && quality.automatic_retrains ==
+				      (window == V34_DATA_QUALITY_REARM_WINDOWS ? 0 : budget) &&
+				      v34_data_quality_is_valid(&quality),
+			      "recovery budget did not rearm at the clean-window boundary: %u", window);
+		}
+		for (unsigned attempt = 0; attempt <= V34_DATA_QUALITY_MAX_RETRAINS; ++attempt) {
+			measurement.decision_metric = 40;
+			CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
+				      &measurement) == V34_DATA_QUALITY_OK,
+			      "rearmed quality did not restart");
+			for (unsigned window = 0; window < V34_DATA_QUALITY_LOSS_WINDOWS; ++window) {
+				enum v34_data_quality_result expected = window == 0 ?
+					V34_DATA_QUALITY_FREEZE_TIMING :
+					(window + 1 == V34_DATA_QUALITY_LOSS_WINDOWS &&
+					 attempt < V34_DATA_QUALITY_MAX_RETRAINS ?
+					 V34_DATA_QUALITY_RETRAIN : V34_DATA_QUALITY_OK);
+
+				CHECK(publish_quality_window(&quality, &measurement, 200) == expected,
+				      "rearmed quality bypassed the consecutive-failure bound");
+			}
+		}
+	}
+	for (unsigned interruption = 0; interruption < 4; ++interruption) {
+		struct v34_adaptive_equalizer_quality measurement = { .decision_metric = 40 };
+		struct v34_data_quality quality = { .automatic_retrains = 2 };
+
+		CHECK(v34_data_quality_start(&quality, V34_SYMBOL_RATE_3429, 12,
+			      &measurement) == V34_DATA_QUALITY_OK, "interruption fixture did not start");
+		for (unsigned window = 1; window < V34_DATA_QUALITY_REARM_WINDOWS; ++window)
+			CHECK(publish_quality_window(&quality, &measurement, 40) == V34_DATA_QUALITY_OK,
+			      "clean window failed before interruption");
+		if (interruption < 2) {
+			/* Frozen timing below the retrain threshold is not healthy evidence. */
+			CHECK(publish_quality_window(&quality, &measurement, interruption ? 200 : 90) ==
+				      V34_DATA_QUALITY_FREEZE_TIMING && quality.automatic_retrains == 2,
+			      "uncertain or bad quality rearmed recovery");
+		} else {
+			measurement.decision_metric = interruption == 3 ? 5000 : 40;
+			CHECK(v34_data_quality_start(&quality,
+				      interruption == 3 ? V34_SYMBOL_RATE_2400 : V34_SYMBOL_RATE_3429,
+				      interruption == 3 ? 1 : 12, &measurement) == V34_DATA_QUALITY_OK,
+			      "quality restart failed");
+		}
+		for (unsigned window = 1; window <= V34_DATA_QUALITY_REARM_WINDOWS; ++window) {
+			CHECK(publish_quality_window(&quality, &measurement, 40) ==
+				      (window == 1 && interruption < 2 ?
+				       V34_DATA_QUALITY_RESUME_TIMING : V34_DATA_QUALITY_OK) &&
+				      quality.automatic_retrains ==
+				      (window == V34_DATA_QUALITY_REARM_WINDOWS && interruption != 3 ? 0 : 2),
+			      "interruption %u did not clear clean credit at window %u", interruption, window);
+		}
+	}
+	return true;
+}
+
 static bool test_data_quality_transactionality(void)
 {
 	struct v34_adaptive_equalizer_quality measurement = {
@@ -1482,6 +1553,21 @@ static bool test_data_quality_transactionality(void)
 	quality.window_position = V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS;
 	CHECK(!v34_data_quality_is_valid(&quality),
 	      "invalid completed-window position was accepted");
+	for (unsigned invalid = 0; invalid < 6; ++invalid) {
+		quality = saved;
+		quality.automatic_retrains = 1;
+		quality.good_windows = 1;
+		switch (invalid) {
+		case 0: quality.good_windows = V34_DATA_QUALITY_REARM_WINDOWS; break;
+		case 1: quality.automatic_retrains = 0; break;
+		case 2: quality.bad_windows = 1; break;
+		case 3: quality.threshold = 0; break;
+		case 4: quality.timing_frozen = true; break;
+		case 5: quality.active = false; break;
+		}
+		CHECK(!v34_data_quality_is_valid(&quality),
+		      "invalid healthy-credit state %u accepted", invalid);
+	}
 	return true;
 }
 
@@ -1500,7 +1586,8 @@ int main(void)
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||
 	    !test_recent_rate_measurement() ||
-	    !test_paired_data_quality_windows() || !test_data_quality_transactionality())
+	    !test_paired_data_quality_windows() || !test_data_quality_rearm() ||
+	    !test_data_quality_transactionality())
 		return 1;
 	return 0;
 }

@@ -12,6 +12,10 @@
 enum {
 	V34_DATA_QUALITY_LOSS_WINDOWS = 3,
 	V34_DATA_QUALITY_MAX_RETRAINS = 2,
+	/* Local policy: require over ten times the loss interval before treating
+	 * a later fault as a separate incident. These are measurement windows,
+	 * not wall-clock ticks; skipped equalizer decisions contribute nothing. */
+	V34_DATA_QUALITY_REARM_WINDOWS = 32,
 };
 
 enum v34_data_quality_result {
@@ -25,13 +29,14 @@ enum v34_data_quality_result {
 
 /* Own the rate-relative online quality policy.  The adaptive equalizer owns
  * the measurements themselves; this compact owner consumes each completed
- * 1024-symbol window exactly once and bounds automatic full retraining. */
+ * 1024-decision window exactly once and bounds automatic full retraining. */
 struct v34_data_quality {
 	int16_t baseline;
 	int16_t threshold;
 	uint16_t window_position;
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
+	uint8_t good_windows;
 	bool timing_frozen;
 	bool active;
 };
@@ -51,8 +56,8 @@ enum v34_data_quality_result v34_data_quality_select_receive_rate(
 	const struct v34_adaptive_equalizer_quality *measurement,
 	uint8_t *selected_rate_2400_bps_units);
 
-/* Start a new data generation while retaining the automatic-retrain budget.
- * Only a subsequently completed online window affects policy. */
+/* Start a new data generation while retaining used automatic-retrain attempts,
+ * not healthy credit. Only a subsequently completed window affects policy. */
 enum v34_data_quality_result v34_data_quality_start(
 	struct v34_data_quality *quality,
 	enum v34_symbol_rate symbol_rate,
@@ -66,8 +71,9 @@ enum v34_data_quality_result v34_data_quality_start(
  * low-gain tracking profile after recovery.  Return RETRAIN once after three
  * consecutive complete bad windows.  The owner becomes inactive in that
  * result and is restarted after retraining.  Once its two-retrain budget is
- * exhausted, later windows remain observable but do not repeatedly request
- * an impossible recovery. */
+ * exhausted, later windows remain observable but cannot request recovery
+ * until sustained clean measurements rearm the allowance. A disabled
+ * threshold, bad window, or frozen timing breaks healthy credit. */
 enum v34_data_quality_result v34_data_quality_observe(
 	struct v34_data_quality *quality,
 	const struct v34_adaptive_equalizer_quality *measurement);

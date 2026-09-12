@@ -88,6 +88,11 @@ bool v34_data_quality_is_valid(const struct v34_data_quality *quality)
 	if (quality == NULL ||
 	    quality->bad_windows > V34_DATA_QUALITY_LOSS_WINDOWS ||
 	    quality->automatic_retrains > V34_DATA_QUALITY_MAX_RETRAINS ||
+	    quality->good_windows >= V34_DATA_QUALITY_REARM_WINDOWS ||
+	    (quality->good_windows != 0 &&
+	     (!quality->active || quality->automatic_retrains == 0 ||
+	      quality->bad_windows != 0 || quality->threshold == 0 ||
+	      quality->timing_frozen)) ||
 	    quality->window_position >= V34_ADAPTIVE_EQUALIZER_QUALITY_SYMBOLS ||
 	    quality->baseline < 0 || quality->threshold < 0 ||
 	    (quality->timing_frozen &&
@@ -185,6 +190,7 @@ enum v34_data_quality_result v34_data_quality_start(
 	next.baseline = measurement->decision_metric;
 	next.threshold = threshold;
 	next.bad_windows = 0;
+	next.good_windows = 0;
 	next.window_position = measurement->window_position;
 	next.timing_frozen = false;
 	next.active = true;
@@ -240,6 +246,13 @@ enum v34_data_quality_result v34_data_quality_observe(
 			next.bad_windows = 0;
 		} else if (next.bad_windows < V34_DATA_QUALITY_LOSS_WINDOWS) {
 			next.bad_windows++;
+		}
+		if (next.threshold == 0 || next.bad_windows != 0 || next.timing_frozen) {
+			next.good_windows = 0;
+		} else if (next.automatic_retrains != 0 &&
+			   ++next.good_windows == V34_DATA_QUALITY_REARM_WINDOWS) {
+			next.automatic_retrains = 0;
+			next.good_windows = 0;
 		}
 	}
 	next.window_position = measurement->window_position;
