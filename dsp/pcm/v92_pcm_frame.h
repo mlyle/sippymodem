@@ -16,6 +16,8 @@ enum {
 	/* Receiver-only split; the wire still carries all 48 training frames. */
 	V92_B1U_ACQUISITION_FRAMES = V92_B1U_FRAMES / 2,
 	V92_B1U_SYMBOLS = V92_B1U_FRAMES * V92_PCM_MAPPING_FRAME_SYMBOLS,
+	V92_B1U_VALIDATION_SYMBOLS = (V92_B1U_FRAMES - V92_B1U_ACQUISITION_FRAMES) *
+		V92_PCM_MAPPING_FRAME_SYMBOLS,
 	/* 120-symbol (15 ms) traceback with bounded competing histories. */
 	V92_PCM_RX_PATHS = 32,
 	V92_PCM_RX_DELAY_FRAMES = 10,

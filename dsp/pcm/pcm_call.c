@@ -804,7 +804,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    (path->upstream.failed && !call->failed) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
-		    (path->upstream.line.received_frames == 0u &&
+		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
 		     path->b1u_squared_error != 0.0) ||
 		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
 			    V90_PCM_MAPPING_OK)
@@ -1377,7 +1377,7 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 	return (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
 	       path->upstream.line.received_frames >= V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES &&
 	       !path->b1u_decode_failed &&
-	       path->b1u_squared_error <= (double)V92_B1U_SYMBOLS *
+	       path->b1u_squared_error <= (double)V92_B1U_VALIDATION_SYMBOLS *
 		       V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
 }
 
@@ -4660,7 +4660,11 @@ static enum pcm_call_result v92_data_octet_owned(
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 		}
 		if (received == V92_UPSTREAM_DATA_RX_FRAME) {
-			if (path->upstream.line.received_frames <= V92_B1U_FRAMES) {
+			/* The first half fits the receive model. Score only the
+			 * following validation frames: a corrected acquisition error
+			 * must not force another retrain on a now-usable channel. */
+			if (path->upstream.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+			    path->upstream.line.received_frames <= V92_B1U_FRAMES) {
 				double error = path->b1u_squared_error + frame.squared_error;
 
 				if (!isfinite(error))

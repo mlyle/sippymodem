@@ -6342,6 +6342,9 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 	double b1_error = 0.0;
 	unsigned received_frames = 0u;
 
+	/* Keep the validly coded wrong bit below the validation-only residual
+	 * ceiling, so this test requires bit validation rather than a power alarm. */
+	ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	ac.phase3.v92_analog.upstream_rate_mask = UINT32_C(1) << 12u;
 	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 13u, NULL) == V92_PROFILE_OK &&
 	      channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
@@ -6406,9 +6409,11 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 				CHECK(!fault || event.kind == PCM_CALL_DATA_NONE, "bad B1 delivered payload");
 				if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
 					CHECK(fault && injected && received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u &&
-					      b1_error < (double)V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
+					      b1_error < (double)V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
 					      call->v92_upstream_retry_ceiling == 12u && !pcm_call_is_online(call) &&
-					      event.kind == PCM_CALL_DATA_NONE && pcm_call_is_valid(call), "bad direct B1 recovery failed");
+					      event.kind == PCM_CALL_DATA_NONE && pcm_call_is_valid(call),
+					      "bad direct B1 recovery failed: law=%u fault=%u injected=%u frame=%u error=%g retry_ceiling=%u",
+					      law, fault, injected, received_frames, b1_error, call->v92_upstream_retry_ceiling);
 					return true;
 				}
 				if (pcm_call_is_online(call)) {
@@ -6429,6 +6434,95 @@ static bool test_v92_direct_b1_validation(void)
 			if (!run_wrong_direct_b1(law, fault))
 				return false;
 	return true;
+}
+
+static bool run_v92_b1_quality_window(enum g711_law law)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2];
+	struct channel wire;
+	int16_t previous = 0;
+	double acquisition = 0.0, validation = 0.0;
+	unsigned checked = 0u;
+
+	ac.phase3.v92_analog.upstream_rate_mask = UINT32_C(1) << 18u;
+	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 quality window setup failed");
+	for (unsigned clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t received[2], transmitted[2];
+		channel_receive(&wire, &received[0], &received[1]);
+		/* Keep the ordinary training level through a channel with memory
+		 * and a second codec. Acquisition has a large correctable residual;
+		 * validation uses the fitted model without changing the error limit. */
+		int16_t current = decode_octet(law, received[1]);
+		received[1] = encode_octet(law, (int16_t)lround(.9 * current + .1 * previous));
+		previous = current;
+		for (unsigned side = 0u; side < 2u; ++side) {
+			struct pcm_call *call = &calls[side];
+			int16_t sample = decode_octet(law, received[side]);
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(v92_data_boundary(call), "B1 quality window handoff failed");
+			if (call->stage != PCM_CALL_DATA_PATH) {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, received[side], sample, &transmitted[side], &observation) == PCM_CALL_OK,
+				      "B1 quality window training failed");
+				continue;
+			}
+			struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+			bool boundary = side == 1u &&
+				path->upstream.line.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u &&
+				path->upstream.line.received_frames < V92_B1U_FRAMES;
+			if (boundary) {
+				/* Independently account for each receiver observation, so
+				 * the call cannot silently include or skip a boundary frame. */
+				struct v92_upstream_data_rx probe = path->upstream;
+				struct v92_upstream_data_frame frame;
+				CHECK(v92_upstream_data_rx_octet(&probe, received[side], sample, true, &frame) == V92_UPSTREAM_DATA_RX_FRAME,
+				      "B1 quality frame probe failed");
+				if (probe.line.received_frames <= V92_B1U_ACQUISITION_FRAMES)
+					acquisition += frame.squared_error;
+				else
+					validation += frame.squared_error;
+				++checked;
+			}
+			struct pcm_call_data_event event;
+			CHECK(pcm_call_data_octet(call, received[side], sample, true, NULL, &transmitted[side], &event) == PCM_CALL_OK &&
+			      (side == 0u || pcm_call_is_online(call) || event.kind == PCM_CALL_DATA_NONE),
+			      "B1 quality window failed or released undecided payload");
+			if (boundary)
+				CHECK(path->b1u_squared_error == validation,
+				      "B1 acquisition error contaminated validation: law=%u frame=%u got=%g wanted=%g",
+				      law, checked, path->b1u_squared_error, validation);
+			if (boundary && checked == V92_B1U_ACQUISITION_FRAMES) {
+				struct pcm_call invalid = *call;
+				invalid.state.data_path.v92_digital.b1u_squared_error = 1.0;
+				CHECK(!pcm_call_is_valid(&invalid), "B1 accepted validation error before validation began");
+			}
+		}
+		channel_transmit(&wire, transmitted[0], transmitted[1]);
+		if (pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
+			const double symbols = (V92_B1U_FRAMES - V92_B1U_ACQUISITION_FRAMES) * V92_PCM_MAPPING_FRAME_SYMBOLS;
+			const double ceiling = symbols * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR;
+			CHECK(checked == V92_B1U_FRAMES && acquisition > ceiling && validation < ceiling,
+			      "B1 fixture missed acquisition transient: law=%u frames=%u acquisition=%g validation=%g",
+			      law, checked, acquisition, validation);
+			struct pcm_call limit = calls[1];
+			limit.state.data_path.v92_digital.b1u_squared_error = ceiling;
+			CHECK(pcm_call_is_valid(&limit) && pcm_call_is_online(&limit), "B1 rejected exact validation bound");
+			limit.state.data_path.v92_digital.b1u_squared_error++;
+			CHECK(pcm_call_is_valid(&limit) && !pcm_call_is_online(&limit),
+			      "B1 used acquisition symbols in its validation bound");
+			return true;
+		}
+	}
+	CHECK(false, "B1 quality window did not connect");
+}
+
+static bool test_v92_b1_quality_window(void)
+{
+	return run_v92_b1_quality_window(G711_LAW_PCMU) && run_v92_b1_quality_window(G711_LAW_PCMA);
 }
 
 static bool v92_data_error_contracts(const struct pcm_call *online)
@@ -10099,6 +10193,7 @@ int main(void)
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 codec-noise likelihood and recovery", test_v92_codec_noise_recovery },
 		{ "V.92 direct B1 bit validation", test_v92_direct_b1_validation },
+		{ "V.92 post-acquisition B1 quality", test_v92_b1_quality_window },
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
