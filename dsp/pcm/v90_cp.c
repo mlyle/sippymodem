@@ -241,10 +241,9 @@ static bool framing_is_valid(
 		if (packed_msb_bit(frame, index) != 0)
 			return false;
 	}
-	return packed_msb_bit(frame, 18) == 0 &&
-	       packed_msb_bits_are_zero(frame, 25, 5) &&
-	       packed_msb_bits_are_zero(frame, 129, 7) &&
-	       packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
+	/* Table 14's reserved information bits are not interpreted by the
+	 * receiver. Keep them in the CRC, but only validate wire framing here. */
+	return packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
 	       packed_msb_bits_are_zero(
 		       frame, frame_bit_count,
 		       (8u - frame_bit_count % 8u) % 8u);

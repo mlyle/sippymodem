@@ -621,8 +621,8 @@ static bool test_corrupt_frames(void)
 	replace_frame_bit(changed, 25, 1);
 	CHECK(rejected_decode_is_transactional(
 		      changed, frame_bytes, frame_bits,
-		      V90_CP_INVALID_FRAME),
-	      "CP accepted a reserved bit");
+		      V90_CP_CRC_MISMATCH),
+	      "CP ignored a reserved bit's CRC contribution");
 	memcpy(changed, valid, frame_bytes);
 	replace_frame_bit(changed, CP_MINIMUM_PAYLOAD_BITS + 17u, 1);
 	CHECK(rejected_decode_is_transactional(
@@ -668,6 +668,53 @@ static bool test_corrupt_frames(void)
 	return true;
 }
 
+static bool test_reserved_bits(void)
+{
+	/* Table 14: the sender clears these bits; the receiver does not
+	 * interpret them. They remain part of the CRC-protected payload. */
+	static const size_t reserved[] = {
+		18, 25, 26, 27, 28, 29, 129, 130, 131, 132, 133, 134, 135,
+	};
+
+	for (uint8_t count = 1; count <= V90_CP_MAX_CONSTELLATIONS; ++count) {
+		for (unsigned int codec_copy = 0; codec_copy < 2; ++codec_copy) {
+			struct v90_cp_parameters parameters =
+				variable_parameters(count, codec_copy != 0);
+			uint8_t valid[V90_CP_MAX_FRAME_BYTES];
+			size_t bits;
+
+			parameters.kind = count % 2u ? V90_CP_TRAINING : V90_CP_DATA;
+			CHECK(v90_cp_encode(&parameters, valid, sizeof(valid), &bits) ==
+			      V90_CP_OK, "reserved-bit fixture did not encode");
+			for (size_t pattern = 0; pattern <= ARRAY_LENGTH(reserved); ++pattern) {
+				struct v90_cp_parameters decoded;
+				uint8_t changed[V90_CP_MAX_FRAME_BYTES];
+				uint8_t encoded[V90_CP_MAX_FRAME_BYTES];
+				size_t encoded_bits;
+				size_t bytes = (bits + 7u) / 8u;
+
+				memcpy(changed, valid, bytes);
+				for (size_t bit = 0; bit < ARRAY_LENGTH(reserved); ++bit) {
+					CHECK(reference_frame_bit(valid, reserved[bit]) == 0,
+					      "CP encoder set reserved bit %zu", reserved[bit]);
+					if (pattern == bit || pattern == ARRAY_LENGTH(reserved))
+						replace_frame_bit(changed, reserved[bit], 1);
+				}
+				replace_crc(changed, bits - V90_CP_TRAILER_BITS);
+				CHECK(v90_cp_decode(changed, bytes, bits, &decoded) == V90_CP_OK &&
+				      parameters_are_equal(&decoded, &parameters),
+				      "CP interpreted reserved pattern %zu, count %u, codec %u",
+				      pattern, count, codec_copy);
+				CHECK(v90_cp_encode(&decoded, encoded, sizeof(encoded), &encoded_bits) ==
+				      V90_CP_OK && encoded_bits == bits &&
+				      memcmp(encoded, valid, bytes) == 0,
+				      "CP re-encoding preserved received reserved bits");
+			}
+		}
+	}
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -686,6 +733,7 @@ int main(void)
 		{ "cleardown ignores unused constellations", test_cleardown },
 		{ "call contracts", test_call_contracts },
 		{ "corrupt frames", test_corrupt_frames },
+		{ "uninterpreted reserved bits", test_reserved_bits },
 	};
 	unsigned int failures = 0;
 

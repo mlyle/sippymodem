@@ -65,9 +65,7 @@ static bool prefix_is_valid(const uint8_t *frame)
 static bool bit_must_be_zero(
 	size_t bit_index, size_t frame_bit_count)
 {
-	return bit_index % 17u == 0 || bit_index == 18u ||
-	       (bit_index >= 25u && bit_index <= 29u) ||
-	       (bit_index >= 129u && bit_index <= 135u) ||
+	return bit_index % 17u == 0 ||
 	       (frame_bit_count != 0 &&
 		bit_index >= frame_bit_count - 3u);
 }
@@ -90,8 +88,9 @@ bool v90_cp_receiver_is_valid(
 			       sizeof(receiver->frame));
 	case V90_CP_RECEIVER_READ_HEADER:
 		/* begin_frame() clears the bounded record, and receive_bit()
-		 * rejects every nonzero reserved/start bit as it arrives.  Do not
-		 * rescan the growing prefix on every 8 kHz sample. */
+		 * rejects every nonzero start bit as it arrives. Reserved
+		 * information bits are uninterpreted but still CRC-protected.
+		 * Do not rescan the growing prefix on every 8 kHz sample. */
 		return receiver->frame_bit_count == 0 &&
 		       receiver->bit_index >= CP_INFORMATION_FIRST_BIT &&
 		       receiver->bit_index <= CP_HEADER_LAST_BIT &&

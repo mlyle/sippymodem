@@ -233,6 +233,65 @@ static bool test_crc_rejection_and_recovery(void)
 	return true;
 }
 
+static void replace_crc(uint8_t *frame, size_t bits)
+{
+	size_t payload_end = bits - V90_CP_TRAILER_BITS;
+	uint16_t remainder = 0xffff;
+
+	for (size_t bit = 18; bit < payload_end; ++bit) {
+		bool feedback;
+
+		if (bit % 17u == 0)
+			continue;
+		feedback = ((remainder >> 15) ^ packed_bit(frame, bit)) != 0;
+		remainder = (uint16_t)(remainder << 1);
+		if (feedback)
+			remainder ^= 0x1021;
+	}
+	for (size_t bit = 0; bit < 16; ++bit)
+		replace_bit(frame, payload_end + 1u + bit,
+			    (uint8_t)((remainder >> (15u - bit)) & 1u));
+}
+
+static bool test_reserved_bits(void)
+{
+	static const size_t reserved[] = {
+		18, 25, 26, 27, 28, 29, 129, 130, 131, 132, 133, 134, 135,
+	};
+	struct v90_cp_receiver receiver;
+
+	CHECK(v90_cp_receiver_init(&receiver) == V90_CP_OK,
+	      "reserved-bit receiver did not initialize");
+	for (uint8_t count = 1; count <= V90_CP_MAX_CONSTELLATIONS; ++count) {
+		struct v90_cp_parameters parameters =
+			parameters_for(count, count % 2u == 0);
+		struct v90_cp_receive_event event;
+		uint8_t valid[V90_CP_MAX_FRAME_BYTES];
+		uint8_t changed[V90_CP_MAX_FRAME_BYTES];
+		size_t bits;
+
+		CHECK(encode_frame(&parameters, valid, &bits), "reserved fixture failed");
+		for (size_t pattern = 0; pattern <= ARRAY_LENGTH(reserved); ++pattern) {
+			memcpy(changed, valid, sizeof(changed));
+			for (size_t bit = 0; bit < ARRAY_LENGTH(reserved); ++bit) {
+				if (pattern == bit || pattern == ARRAY_LENGTH(reserved))
+					replace_bit(changed, reserved[bit], 1);
+			}
+			CHECK(feed_frame(&receiver, changed, 0, bits, &event) &&
+			      event.type == V90_CP_RECEIVE_REJECTED &&
+			      event.frame_result == V90_CP_CRC_MISMATCH,
+			      "CP ignored reserved CRC bits or rejected them before CRC");
+			replace_crc(changed, bits);
+			CHECK(feed_frame(&receiver, changed, 0, bits, &event) &&
+			      event_reencodes_frame(&event, valid, bits) &&
+			      feed_frame(&receiver, valid, 0, bits, &event) &&
+			      event_reencodes_frame(&event, valid, bits),
+			      "CP stream interpreted reserved pattern %zu, count %u", pattern, count);
+		}
+	}
+	return true;
+}
+
 static bool test_overlapping_prefix_recovery(void)
 {
 	struct v90_cp_parameters parameters = parameters_for(1, false);
@@ -352,6 +411,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "variable frames and noise", test_variable_frames_and_noise },
 		{ "CRC rejection and recovery", test_crc_rejection_and_recovery },
+		{ "uninterpreted reserved bits", test_reserved_bits },
 		{ "overlapping prefix recovery", test_overlapping_prefix_recovery },
 		{ "header rejection", test_header_rejection },
 		{ "API transactionality", test_api_transactionality },
