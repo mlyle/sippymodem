@@ -2363,6 +2363,201 @@ static bool test_lapm_repeated_sequence_error_poll(void)
 	return true;
 }
 
+static bool test_lapm_peer_busy_acknowledgement(void)
+{
+	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5, REJ = 9 };
+	static const uint8_t starts[] = { 0, 126 };
+	static const uint8_t payload[] = { 'A', 'B', 'C' };
+	struct modem_driver driver = {
+		.name = "LAPM busy acknowledgement", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t start = 0; start < ARRAY_LENGTH(starts); ++start)
+	for (unsigned int acknowledged = 1; acknowledged <= 2; ++acknowledged)
+	for (unsigned int recovery = 0; recovery < 2; ++recovery)
+	for (unsigned int sequenced = 0; sequenced < 2; ++sequenced) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_state *l;
+		frame_t *outgoing;
+		unsigned int base = starts[start];
+		unsigned int nr = (base + acknowledged) & 127;
+		uint8_t wire[] = { 0, RNR, (uint8_t)(base << 1), 'X' };
+		frame_t incoming = { .buf = wire, .count = 3 };
+		int timer;
+
+		CHECK(m != NULL, "LAPM busy-acknowledgement allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_info_size = 1;
+		m->cfg.ec_tx_win_size = 3;
+		m->rx_rate = m->tx_rate = 26400;
+		CHECK(modem_ec_init(m) == 0, "LAPM busy-acknowledgement initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		l = &m->ec.lapm;
+		l->state = LAPM_DATA_STATE;
+		l->va = l->vs = base;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = 2;
+		lapm_source.offset = 0;
+		for (unsigned int i = 0; i < 2; ++i) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4,
+			      "LAPM busy-acknowledgement fixture did not queue information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		/* RNR may close the peer's receive window while it continues to
+		 * send us I frames acknowledging our previously transmitted data. */
+		wire[0] = l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->peer_busy && !l->rtx_count && m->bit_timer > 0,
+		      "RNR did not start the peer-busy enquiry timer");
+		if (recovery) {
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == RR &&
+			      (outgoing->buf[2] & 1), "peer-busy enquiry was not transmitted");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		m->bit_timer /= 2;
+		timer = m->bit_timer;
+		wire[0] = l->rsp_addr;
+		wire[1] = sequenced ? 0 : 254;
+		wire[2] = (uint8_t)((nr << 1) | 1);
+		incoming.count = sizeof(wire);
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->va == nr && l->vs == ((base + 2) & 127) &&
+		      l->vr == sequenced && l->peer_busy && l->sent_count == 2 - (int)acknowledged &&
+		      m->bit_timer == timer && l->rtx_count == (int)recovery &&
+		      lapm_sink.length == sequenced && (!sequenced || lapm_sink.data[0] == 'X'),
+		      "I acknowledgement changed peer-busy enquiry (base=%u ack=%u recovery=%u sequenced=%u timer=%d/%d)",
+		      base, acknowledged, recovery, sequenced, m->bit_timer, timer);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[0] == l->rsp_addr &&
+		      outgoing->buf[1] == (sequenced ? RR : REJ) &&
+		      outgoing->buf[2] == 2 * sequenced + 1,
+		      "I poll did not receive its supervisory final reply");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		lapm_source.length = sizeof(payload);
+		CHECK(m->packer.hdlc.get_tx_frame(l) == NULL && lapm_source.offset == 2,
+		      "I acknowledgement cleared peer busy or consumed queued terminal data");
+		/* If the peer's eventual ready indication is lost, the preserved
+		 * timer must still be able to ask and release the retained window. */
+		m->bit_timer_func(m);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[0] == l->cmd_addr &&
+		      outgoing->buf[1] == RR && outgoing->buf[2] == 2 * sequenced + 1 &&
+		      l->rtx_count == (int)recovery + 1 && m->bit_timer > 0,
+		      "acknowledged busy link lost its status enquiry");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		wire[0] = l->cmd_addr;
+		wire[1] = RR;
+		incoming.count = 3;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(!l->peer_busy && !l->rtx_count && m->bit_timer == 0 &&
+		      l->va == nr && l->vs == nr,
+		      "RR final did not release the acknowledged busy link");
+		for (unsigned int i = acknowledged; i < sizeof(payload); ++i) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4 &&
+			      outgoing->buf[1] == (((base + i) & 127) << 1) &&
+			      outgoing->buf[3] == payload[i],
+			      "busy recovery did not resume retained and queued bytes in order");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		CHECK(lapm_source.offset == sizeof(payload), "busy recovery lost queued terminal data");
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_lapm_peer_busy_timer(void)
+{
+	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5 };
+	static const uint8_t payload[] = { 'A', 'B' };
+	struct modem_driver driver = {
+		.name = "LAPM busy timer", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned int pending = 0; pending <= 2; pending += 2)
+	for (unsigned int acknowledged = 0; acknowledged <= pending; ++acknowledged)
+	for (unsigned int command = 0; command < 2; ++command)
+	for (unsigned int poll = 0; poll < 2; ++poll)
+	for (unsigned int recovery = 0; recovery < 2; ++recovery) {
+		struct modem *m;
+		struct lapm_state *l;
+		frame_t *outgoing;
+		uint8_t wire[] = { 0, RNR, (uint8_t)((acknowledged << 1) | poll) };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		int remaining, expected;
+
+		/* A final response is solicited only during timer recovery. */
+		if ((!command && poll && !recovery) || (!pending && recovery))
+			continue;
+		m = modem_create(&driver, driver.name);
+		CHECK(m != NULL, "LAPM busy-timer allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_info_size = 1;
+		m->cfg.ec_tx_win_size = 3;
+		m->rx_rate = m->tx_rate = 26400;
+		CHECK(modem_ec_init(m) == 0, "LAPM busy-timer initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		l = &m->ec.lapm;
+		l->state = LAPM_DATA_STATE;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = pending;
+		lapm_source.offset = 0;
+		for (unsigned int i = 0; i < pending; ++i) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4,
+			      "LAPM busy-timer fixture did not transmit information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (recovery) {
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == RR &&
+			      (outgoing->buf[2] & 1), "LAPM busy-timer fixture did not poll");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		m->bit_timer /= 2;
+		remaining = m->bit_timer;
+		expected = recovery && (command || !poll) ? remaining :
+			3 * (int)(m->rx_rate + m->tx_rate);
+		wire[0] = command ? l->rsp_addr : l->cmd_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(l->peer_busy && l->va == acknowledged &&
+		      l->vs == (recovery && !command && poll ? acknowledged : pending) &&
+		      m->bit_timer == expected &&
+		      l->rtx_count == (int)(recovery && (command || !poll)),
+		      "RNR lost its enquiry timer (pending=%u ack=%u command=%u poll=%u recovery=%u timer=%d/%d)",
+		      pending, acknowledged, command, poll, recovery, m->bit_timer, expected);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		if (command && poll) {
+			CHECK(outgoing != NULL && outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == RR && outgoing->buf[2] == 1,
+			      "RNR command poll did not receive RR final");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		} else {
+			CHECK(outgoing == NULL, "RNR unexpectedly released information");
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	return true;
+}
+
 static bool test_lapm_retrain_preserves_link_state(void)
 {
 	enum {
@@ -3493,6 +3688,8 @@ int main(void)
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
+		{ "LAPM peer-busy acknowledgement", test_lapm_peer_busy_acknowledgement },
+		{ "LAPM peer-busy timer", test_lapm_peer_busy_timer },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },

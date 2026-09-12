@@ -1072,12 +1072,9 @@ static int ack_info(struct lapm_state *l, u8 nr)
 		l->va = (l->va+1)&0x7f;
 		n++;
 	}
-	/* stop T401 , start T403 */
-#if 1
-	if(n > 0 && !l->rtx_count) {
-#else
-	if(n > 0 && !l->rtx_count && !l->peer_busy) {
-#endif
+	/* V.42 8.4.3.2: an I acknowledgement must not stop or restart
+	 * T401 while our status poll or the peer's busy condition persists. */
+	if (n > 0 && !l->rtx_count && !l->peer_busy) {
 		TIMER_STOP(l);
 		if ((l->vs-l->va)&0x7f)
 			TIMER_START(l); // exp.8.4.8
@@ -1278,6 +1275,10 @@ static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 		l->peer_busy = 1;
 		if (ack_info(l,FRAME_NR(f)) < 0)
 			return;
+		/* V.42 8.4.6: enquire even with no outstanding information,
+		 * but do not postpone an already transmitted status poll. */
+		if (!l->rtx_count)
+			TIMER_START(l);
 		/* if p=1 may be used for status checking ?? */
 		if (FRAME_S_PF(f)) {
 			if (l->busy)
