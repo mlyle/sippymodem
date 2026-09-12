@@ -211,13 +211,25 @@ enum v92_pcm_mapping_result v92_pcm_mapping_decode(
 	uint8_t *differential_state,
 	uint8_t *bits, size_t bit_count)
 {
+	if (!v92_pcm_mapping_is_valid(mapping))
+		return V92_PCM_MAPPING_INVALID_ARGUMENT;
+	return v92_pcm_mapping_decode_owned(
+		mapping, digits, differential_state, bits, bit_count);
+}
+
+enum v92_pcm_mapping_result v92_pcm_mapping_decode_owned(
+	const struct v92_pcm_mapping *mapping,
+	const uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	uint8_t *differential_state,
+	uint8_t *bits, size_t bit_count)
+{
 	uint32_t bases[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t encoded[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
 	uint8_t next_state;
 	enum mixed_radix_result result;
 
-	if (!v92_pcm_mapping_is_valid(mapping) || digits == NULL ||
+	if (mapping == NULL || digits == NULL ||
 	    differential_state == NULL || bits == NULL)
 		return V92_PCM_MAPPING_INVALID_ARGUMENT;
 	if (bit_count != mapping->data_bits_per_frame)

@@ -1226,9 +1226,10 @@ static enum v92_pcm_frame_result decode_frame(
 		bool request_word = observe_rm(&receiver->mapping, paths[index].frame.digit, b1u, state);
 		bool nondata = false;
 
-		if (v92_pcm_mapping_decode(&receiver->mapping, paths[index].frame.digit,
-					   &state->differential, candidate_bits,
-					   bit_count) != V92_PCM_MAPPING_OK) {
+		/* Frame entry validated this mapping, which candidates never change. */
+		if (v92_pcm_mapping_decode_owned(&receiver->mapping, paths[index].frame.digit,
+						 &state->differential, candidate_bits,
+						 bit_count) != V92_PCM_MAPPING_OK) {
 			if (!request_word) continue;
 			memset(candidate_bits, 0, bit_count);
 			nondata = true;

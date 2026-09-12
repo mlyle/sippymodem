@@ -77,6 +77,7 @@ static bool test_rate_matrix(void)
 			struct v92_pcm_mapping copy;
 			uint8_t encoded_state = 0u;
 			uint8_t decoded_state = 0u;
+			uint8_t owned_state = 0u;
 
 			CHECK(v92_pcm_mapping_init(
 				      &mapping, (enum g711_law)law, &cpd) ==
@@ -92,6 +93,7 @@ static bool test_rate_matrix(void)
 			for (unsigned int frame = 0u; frame < 8u; ++frame) {
 				uint8_t input[V92_PCM_MAPPING_MAX_BITS];
 				uint8_t output[V92_PCM_MAPPING_MAX_BITS] = { 0 };
+				uint8_t owned_output[V92_PCM_MAPPING_MAX_BITS] = { 0 };
 				uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
 				uint8_t sign = 0xffu;
 
@@ -113,6 +115,13 @@ static bool test_rate_matrix(void)
 				      memcmp(input, output,
 					     mapping.data_bits_per_frame) == 0,
 				      "rate %u law %u frame %u changed bits",
+				      rate, law, frame);
+				CHECK(v92_pcm_mapping_decode_owned(
+					      &mapping, digits, &owned_state, owned_output,
+					      mapping.data_bits_per_frame) == V92_PCM_MAPPING_OK &&
+				      owned_state == decoded_state &&
+				      memcmp(owned_output, output, sizeof(output)) == 0,
+				      "rate %u law %u frame %u changed owned decode",
 				      rate, law, frame);
 			}
 		}
@@ -260,6 +269,64 @@ static bool test_rejection_and_transactionality(void)
 	return true;
 }
 
+static bool test_decode_contracts(void)
+{
+	struct v92_cpd_parameters cpd = parameters(1u);
+	struct v92_pcm_mapping mapping;
+	/* More capacity than 2^K provides genuine spare codewords. */
+	cpd.modulus[0]++;
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) ==
+	      V92_PCM_MAPPING_OK, "spare mapping did not initialize");
+	enum v92_pcm_mapping_result (*const decoders[])(
+		const struct v92_pcm_mapping *, const uint8_t *, uint8_t *,
+		uint8_t *, size_t) = {
+		v92_pcm_mapping_decode, v92_pcm_mapping_decode_owned,
+	};
+	for (size_t decoder = 0u; decoder < ARRAY_LENGTH(decoders); decoder++) {
+		for (unsigned scenario = 0u; scenario < 5u; scenario++) {
+			uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+			uint8_t output[V92_PCM_MAPPING_MAX_BITS], before[sizeof(output)];
+			uint8_t state = scenario == 1u ? 2u : 0u;
+			uint8_t original_state = state;
+			size_t count = mapping.data_bits_per_frame;
+
+			if (scenario == 0u) count--;
+			if (scenario == 2u) digits[0] = mapping.cpd.modulus[0];
+			if (scenario == 3u)
+				for (size_t i = 0u; i < ARRAY_LENGTH(digits); i++)
+					digits[i] = mapping.cpd.modulus[i] - 1u;
+			if (scenario == 4u) count = SIZE_MAX;
+			memset(output, 0x5a, sizeof(output));
+			memcpy(before, output, sizeof(output));
+			CHECK(decoders[decoder](&mapping, digits, &state, output, count) ==
+			      V92_PCM_MAPPING_OUT_OF_RANGE && state == original_state &&
+			      memcmp(output, before, sizeof(output)) == 0,
+			      "decoder %zu scenario %u changed rejected output", decoder, scenario);
+			CHECK(decoders[decoder](NULL, digits, &state, output, count) ==
+				      V92_PCM_MAPPING_INVALID_ARGUMENT &&
+			      decoders[decoder](&mapping, NULL, &state, output, count) ==
+				      V92_PCM_MAPPING_INVALID_ARGUMENT &&
+			      decoders[decoder](&mapping, digits, NULL, output, count) ==
+				      V92_PCM_MAPPING_INVALID_ARGUMENT &&
+			      decoders[decoder](&mapping, digits, &state, NULL, count) ==
+				      V92_PCM_MAPPING_INVALID_ARGUMENT &&
+			      state == original_state && memcmp(output, before, sizeof(output)) == 0,
+			      "decoder %zu changed rejected null output", decoder);
+		}
+	}
+	/* The checked entry must still reject invalid immutable geometry. */
+	uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+	uint8_t state = 0u, output[V92_PCM_MAPPING_MAX_BITS], before[sizeof(output)];
+	memset(output, 0x5a, sizeof(output));
+	memcpy(before, output, sizeof(output));
+	mapping.cpd.filters_present = false;
+	CHECK(v92_pcm_mapping_decode(&mapping, digits, &state, output,
+		mapping.data_bits_per_frame) == V92_PCM_MAPPING_INVALID_ARGUMENT &&
+		state == 0u && memcmp(output, before, sizeof(output)) == 0,
+		"checked decoder accepted invalid mapping");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	CHECK(strcmp(v92_pcm_mapping_result_name(V92_PCM_MAPPING_OK), "ok") ==
@@ -293,6 +360,7 @@ int main(void)
 		{ "rejection and transactionality",
 		  test_rejection_and_transactionality },
 		{ "result names", test_result_names },
+		{ "decode contracts", test_decode_contracts },
 	};
 	unsigned int failures = 0u;
 

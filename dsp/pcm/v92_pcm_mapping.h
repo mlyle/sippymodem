@@ -59,6 +59,16 @@ enum v92_pcm_mapping_result v92_pcm_mapping_decode(
 	uint8_t *differential_state,
 	uint8_t *bits, size_t bit_count);
 
+/* Internal frame-owner path: mapping must already be validated and remain
+ * unchanged for the operation. Skip only the immutable CPd/geometry scan;
+ * null arguments, digit ranges, frame length, differential state and spare
+ * codewords retain the checked decoder's transactional rejection contract. */
+enum v92_pcm_mapping_result v92_pcm_mapping_decode_owned(
+	const struct v92_pcm_mapping *mapping,
+	const uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	uint8_t *differential_state,
+	uint8_t *bits, size_t bit_count);
+
 /* Resolve the positive half-constellation selected for one frame symbol.
  * Signed point selection and trellis equivalence remain the frame coder's
  * responsibility. Rejected calls leave level unchanged. */
