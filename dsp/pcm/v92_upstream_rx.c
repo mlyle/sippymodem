@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_upstream_rx.h"
+#include "v92_control_target.h"
 
 #include "memory_region.h"
 
@@ -94,8 +95,10 @@ static enum v92_upstream_rx_result sample(
 	struct qam_point input;
 	struct qam_point target;
 	int16_t expected_level = 0;
+	int16_t nominal_level, gradient_target;
 	unsigned int bits;
 	bool ready;
+	bool adapt = true;
 
 	if (receiver == NULL || decision == NULL ||
 	    memory_regions_overlap(
@@ -129,6 +132,7 @@ static enum v92_upstream_rx_result sample(
 		    &generated.group, &generated.nearest_level) !=
 		    V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
+	nominal_level = known ? expected_level : generated.nearest_level;
 	if (next.training_tail_remaining != 0u) {
 		size_t target_index =
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY -
@@ -136,27 +140,16 @@ static enum v92_upstream_rx_result sample(
 		int16_t selected = quantize(
 			next.line.law, generated.nearest_level);
 
-		target = (struct qam_point){
-			.in_phase = next.line.pending_training_targets[target_index],
-		};
+		nominal_level = generated.nearest_level;
+		adapt = selected == next.line.pending_training_targets[target_index];
 		next.training_tail_remaining--;
-		if (selected == (int16_t)target.in_phase &&
-		    qam_equalizer_adapt_observation(
-			    &next.line.equalizer, &observation, &target,
-			    next.line.adaptation) != QAM_EQUALIZER_OK)
+	}
+	if (adapt) {
+		if (!v92_control_target(next.line.law, &next.line.demodulator,
+				nominal_level, observation.output.in_phase, &gradient_target))
 			return fail(receiver);
-	} else if (known) {
 		target = (struct qam_point){
-			.in_phase = quantize(next.line.law, expected_level),
-		};
-		if (qam_equalizer_adapt_observation(
-			    &next.line.equalizer, &observation, &target,
-			    next.line.adaptation) != QAM_EQUALIZER_OK)
-			return fail(receiver);
-	} else {
-		target = (struct qam_point){
-			.in_phase = quantize(
-				next.line.law, generated.nearest_level),
+			.in_phase = gradient_target,
 		};
 		if (qam_equalizer_adapt_observation(
 			    &next.line.equalizer, &observation, &target,

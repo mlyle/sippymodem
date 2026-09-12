@@ -245,6 +245,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase4_trn2u.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_phase4_trn2u_line_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_control_target.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_e2u_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_phase4_e2u.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_rate_pause.c \

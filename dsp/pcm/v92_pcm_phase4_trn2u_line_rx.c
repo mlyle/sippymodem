@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_pcm_phase4_trn2u_line_rx.h"
+#include "v92_control_target.h"
 #include "v92_ru_line_rx.h"
 
 #include <limits.h>
@@ -340,6 +341,14 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	    !isfinite(next.squared_error_sum + error * error))
 		return fail(receiver);
 	if (selected == next_expected) {
+		int16_t gradient_target;
+
+		/* Retain nominal residual evidence above; only the training
+		 * gradient allows the uncertainty inherited from TRN1u's LU. */
+		if (!v92_control_target(next.law, &next.demodulator, selected_level,
+				observation.output.in_phase, &gradient_target))
+			return fail(receiver);
+		target.in_phase = gradient_target;
 		if (qam_equalizer_adapt_observation(
 			    &next.equalizer, &observation, &target,
 			    next.adaptation) != QAM_EQUALIZER_OK)

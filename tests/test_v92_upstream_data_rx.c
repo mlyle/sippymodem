@@ -236,6 +236,11 @@ static bool test_quantized_level_tracking(
 	      memcmp(&receiver.line.equalizer, &handoff.line.equalizer,
 		      sizeof(handoff.line.equalizer)) == 0,
 	      "tracking handoff changed learned coefficients or pending inputs");
+	for (size_t tap = 0u; tap < handoff.line.equalizer.tap_count; ++tap)
+		CHECK(handoff.line.equalizer.coefficients[tap].in_phase ==
+			      (tap == handoff.line.equalizer.decision_delay ? 1.0 : 0.0) &&
+		      handoff.line.equalizer.coefficients[tap].quadrature == 0.0,
+		      "E2u quantized LU invented a channel tap: law=%u LU=%d tap=%zu", law, lu, tap);
 	for (unsigned int symbol = 0u;
 	     symbol < (V92_B1U_FRAMES + idle_frames + payload_frames +
 		       V92_PCM_RX_DELAY_FRAMES) * V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {

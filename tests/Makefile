@@ -1979,6 +1979,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station
 V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_digital_station.o \
+	$(BUILD_DIR)/v92_control_target.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
 	$(BUILD_DIR)/v92_ru_line_rx.o \
 	$(BUILD_DIR)/v92_ru_rx.o \
@@ -2064,6 +2065,7 @@ V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_pcm_phase4_trn2u_line_rx
 V92_PCM_PHASE4_TRN2U_LINE_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_pcm_phase4_trn2u_line_rx.o \
+	$(BUILD_DIR)/v92_control_target.o \
 	$(BUILD_DIR)/v92_pcm_phase4_trn2u_line_rx.o \
 	$(BUILD_DIR)/v92_ru_line_rx.o \
 	$(BUILD_DIR)/v92_ru_rx.o \
@@ -5492,6 +5494,10 @@ $(BUILD_DIR)/v92_upstream_control_line_rx.o: \
 
 $(BUILD_DIR)/v92_upstream_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_upstream_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_control_target.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_control_target.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_e2u_rx.o: \
