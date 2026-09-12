@@ -1476,21 +1476,29 @@ static bool exercise_v92_media_loss(
 	return true;
 }
 
-static bool exercise_pcm_downstream_slip(
+static bool exercise_pcm_sample_slip(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
-	enum media_codec codec, const struct media_recorder *recorder)
+	enum media_codec codec, const struct media_recorder *recorder, bool downstream)
 {
 	enum { PAYLOAD = 384, FRAME_LIMIT = 1500 };
 	struct integration_endpoint *ends[] = { caller, answerer };
 	unsigned analog = caller->modem->dsp_info.pcm_role == MODEM_PCM_ROLE_ANALOG ? 0u : 1u;
+	unsigned receiver = downstream ? analog : 1u - analog;
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	struct v44_character_path *compression[] = {
+		caller->modem->ec.lapm.v44_path, answerer->modem->ec.lapm.v44_path,
+	};
 	uint8_t payload[2][PAYLOAD];
 	unsigned upstream = caller->modem->dsp_info.upstream_mode;
 	bool recovered = false;
 	unsigned settled = 0;
 
+	CHECK(downstream || upstream == MODEM_UPSTREAM_PCM,
+	      "upstream slip requires negotiated PCM upstream");
 	for (unsigned side = 0; side < 2; ++side) {
-		CHECK(ends[side]->modem->cfg.ec, "PCM slip requires LAPM");
+		CHECK(ends[side]->modem->cfg.ec && !ends[side]->modem->ec.lapm.retrain_poll &&
+		      !ends[side]->modem->ec.lapm.stalled_retrain,
+		      "PCM slip requires a settled LAPM link");
 		ends[side]->output_count = 0;
 		uint32_t random = UINT32_C(0x534c4950) + side;
 		for (unsigned i = 0; i < PAYLOAD; ++i)
@@ -1503,19 +1511,22 @@ static bool exercise_pcm_downstream_slip(
 	CHECK(ends[analog]->modem->ec.lapm.va != ends[analog]->modem->ec.lapm.vs &&
 	      ends[1u - analog]->modem->ec.lapm.va != ends[1u - analog]->modem->ec.lapm.vs,
 	      "PCM slip has no unacknowledged frames");
-	/* Repeat one downstream sample, retaining the added delay through the
+	/* Repeat one received sample, retaining the added delay through the
 	 * recovery. These are available G.711 symbols, not flagged erasures. A
-	 * mapper-phase slip can leave every hard decision legal but HDLC broken.
+	 * downstream mapper-phase slip can leave every hard decision legal but HDLC
+	 * broken; upstream recovery can instead start at the physical quality gate.
 	 * Keep the delay through the following cleardown, too. */
-	ends[analog]->prior_codeword = ends[analog]->receive_codewords[0];
-	ends[analog]->delay_one_sample = true;
+	CHECK(!ends[receiver]->delay_one_sample, "PCM receiver already has a sample delay");
+	ends[receiver]->prior_codeword = ends[receiver]->receive_codewords[0];
+	ends[receiver]->delay_one_sample = true;
 	for (unsigned frame = 0; frame < FRAME_LIMIT; ++frame) {
 		CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
 		      endpoint_drain(caller) && endpoint_drain(answerer), "PCM slip media failed");
 		for (unsigned side = 0; side < 2; ++side) {
 			struct modem *m = ends[side]->modem;
-			recovered |= m->ec.lapm.stalled_retrain;
+			recovered |= downstream ? m->ec.lapm.stalled_retrain : m->ec.lapm.retrain_poll;
 			CHECK(m->dp == owned[side] && m->cfg.ec && !m->command && !m->retrain_pending &&
+			      m->ec.lapm.v44_path == compression[side] &&
 			      ends[side]->output_count <= PAYLOAD &&
 			      memcmp(ends[side]->output, payload[1u - side], ends[side]->output_count) == 0,
 			      "PCM slip changed the link or delivered incorrect bytes");
@@ -2305,11 +2316,14 @@ static bool run_media_call(
 	}
 	/* Automatic quality recovery can lower the upstream rate. Exercise it
 	 * after the fixed-rate ATO1 checks, before protocol cleardown. */
-	if (connected_id == DP_V92 && !test_case->raw_transport)
+	if (connected_id == DP_V92 && !test_case->raw_transport) {
 		CHECK(exercise_v92_media_loss(&caller, &answerer, codec, &recorder),
 		      "%s media loss did not preserve outstanding LAPM data", test_case->name);
+		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, false),
+		      "%s upstream slip did not preserve outstanding LAPM data", test_case->name);
+	}
 	if ((connected_id == DP_V90 || connected_id == DP_V92) && !test_case->raw_transport)
-		CHECK(exercise_pcm_downstream_slip(&caller, &answerer, codec, &recorder),
+		CHECK(exercise_pcm_sample_slip(&caller, &answerer, codec, &recorder, true),
 		      "%s downstream slip did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->cleardown_initiators)
 		CHECK(exercise_cleardown(
