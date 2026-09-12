@@ -1785,8 +1785,8 @@ static bool test_lapm_xid_envelopes(void)
 	uint8_t payload[96];
 	uint8_t discarded[80];
 	uint8_t recovery[112];
-	uint8_t preamble[79];
-	uint8_t expected_preamble[79];
+	uint8_t preamble[109];
+	uint8_t expected_preamble[109];
 	frame_t incoming = { .buf = received };
 	frame_t *outgoing;
 	int command_size;
@@ -1800,7 +1800,7 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
 	modem_ec_start(answerer);
-	CHECK(caller->packer.hdlc.tx_preamble_flags == 79u &&
+	CHECK(caller->packer.hdlc.tx_preamble_flags == 109u &&
 		      caller->packer.hdlc.tx_preamble_complete != NULL &&
 		      caller->packer.hdlc.get_tx_frame == NULL &&
 		      caller->bit_timer == 0,
@@ -2086,6 +2086,145 @@ static bool test_lapm_xid_envelopes(void)
 	modem_ec_exit(answerer);
 	modem_delete(caller);
 	modem_delete(answerer);
+	return true;
+}
+
+static bool run_lapm_startup_pair(unsigned tx_rate, unsigned rx_rate, bool long_adp)
+{
+	enum { LAPM_DATA_STATE = 2 };
+	struct modem_driver driver = {
+		.name = "LAPM directional startup",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *peers[] = {
+		modem_create(&driver, "caller"), modem_create(&driver, "answerer"),
+	};
+	struct dp pumps[] = {
+		{ .id = DP_V90, .modem = peers[0] },
+		{ .id = DP_V90, .modem = peers[1] },
+	};
+	unsigned phase[2] = { 0 };
+	unsigned answer_pattern_bits = 0;
+	bool connected = false;
+
+	for (unsigned side = 0; side < 2; ++side) {
+		struct modem *m = peers[side];
+
+		CHECK(m != NULL, "directional LAPM allocation failed");
+		m->dp = &pumps[side];
+		m->caller = side == 0;
+		m->tx_rate = side == 0 ? tx_rate : rx_rate;
+		m->rx_rate = side == 0 ? rx_rate : tx_rate;
+		m->cfg.ec = m->cfg.ec_detector = 1;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "directional LAPM initialization failed");
+		modem_dp_connected(m);
+	}
+	/* Independent wire clocks expose a first XID that outruns the slower
+	 * answerer's ADP. Do not let a later T401 retry conceal that lost frame. */
+	for (unsigned tick = 0; tick < 8000 && !connected; ++tick) {
+		for (unsigned side = 0; side < 2; ++side) {
+			struct modem *m = peers[side];
+
+			phase[side] += m->tx_rate;
+			while (phase[side] >= 8000) {
+				uint8_t bit;
+
+				phase[side] -= 8000;
+				/* Extend each native 18-bit character group with eight
+				 * marks, exercising V.42's allowed 16-mark spacing. The
+				 * answerer's detection timer is stopped during its reply. */
+				bool extra_mark = side == 1 && long_adp &&
+					m->get_bits == modem_detector_get_bits &&
+					m->packer.detector.tx_count > 0;
+				if (extra_mark)
+					extra_mark = answer_pattern_bits++ % 26 < 8;
+				if (extra_mark) {
+					CHECK(m->bit_timer == 0, "ADP padding skipped an active timer");
+					bit = 1;
+				} else {
+					CHECK(modem_get_bits(m, 1, &bit, 1) == 1,
+					      "directional LAPM source failed");
+				}
+				CHECK(modem_put_bits(peers[1 - side], 1, &bit, 1) == 1,
+				      "directional LAPM exchange failed");
+				if (side == 0 && m->get_bits == modem_hdlc_get_bits &&
+				    m->packer.hdlc.tx_frame != NULL)
+					CHECK(peers[1]->put_bits == modem_hdlc_put_bits,
+					      "first XID outran peer ADP: tx=%u rx=%u tick=%u",
+					      tx_rate, rx_rate, tick);
+			}
+		}
+		connected = peers[0]->ec.lapm.state == LAPM_DATA_STATE &&
+			peers[1]->ec.lapm.state == LAPM_DATA_STATE;
+	}
+	CHECK(connected, "directional LAPM needed an establishment retry: tx=%u rx=%u",
+	      tx_rate, rx_rate);
+	for (unsigned side = 0; side < 2; ++side) {
+		peers[side]->dp = NULL;
+		modem_delete(peers[side]);
+	}
+	return true;
+}
+
+static bool test_lapm_directional_preamble(void)
+{
+	static const struct {
+		unsigned tx, rx, flags;
+	} cases[] = {
+		{ 0, 0, 109 }, { 52000, 0, 109 }, { 0, 24000, 109 },
+		{ 31200, 31200, 109 }, { 52000, 24000, 218 },
+		{ 24000, 52000, 59 }, { 56000, 4800, 1101 },
+		{ 4800, 56000, 24 }, { 56000, 48000, 125 },
+		{ 53333, 26400, 204 },
+		{ UINT_MAX, UINT_MAX, 109 }, { UINT_MAX, 1, UINT_MAX },
+		{ 1, UINT_MAX, 17 },
+	};
+	struct modem_driver driver = {
+		.name = "LAPM preamble bounds",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct modem *m = modem_create(&driver, "LAPM preamble bounds");
+
+		CHECK(m != NULL, "LAPM preamble allocation failed");
+		m->caller = 1;
+		m->tx_rate = cases[index].tx;
+		m->rx_rate = cases[index].rx;
+		m->cfg.ec = 1;
+		CHECK(modem_ec_init(m) == 0, "LAPM preamble initialization failed");
+		modem_hdlc_start(m);
+		m->get_bits = modem_hdlc_get_bits;
+		m->put_bits = modem_hdlc_put_bits;
+		modem_ec_start(m);
+		CHECK(m->packer.hdlc.tx_preamble_flags == cases[index].flags &&
+		      m->packer.hdlc.tx_preamble_complete != NULL &&
+		      m->packer.hdlc.get_tx_frame == NULL && m->bit_timer == 0,
+		      "wrong LAPM preamble: tx=%u rx=%u flags=%u/%u",
+		      cases[index].tx, cases[index].rx,
+		      m->packer.hdlc.tx_preamble_flags, cases[index].flags);
+		uint8_t bit;
+		CHECK(modem_get_bits(m, 1, &bit, 1) == 1,
+		      "LAPM preamble could not begin a flag");
+		m->tx_rate = 52000;
+		m->rx_rate = 24000;
+		CHECK(modem_ec_resume_after_retrain(m) == 0 &&
+		      m->packer.hdlc.tx_preamble_flags == 218 &&
+		      m->packer.hdlc.tx_preamble_complete != NULL &&
+		      m->packer.hdlc.get_tx_frame == NULL && m->bit_timer == 0,
+		      "unfinished LAPM preamble ignored the retrained rates");
+		modem_delete(m);
+		if (cases[index].tx >= 1200 && cases[index].tx <= 56000 &&
+		    cases[index].rx >= 1200 && cases[index].rx <= 56000)
+			CHECK(run_lapm_startup_pair(cases[index].tx, cases[index].rx, false) &&
+			      run_lapm_startup_pair(cases[index].tx, cases[index].rx, true),
+			      "directional LAPM startup failed");
+	}
 	return true;
 }
 
@@ -3685,6 +3824,7 @@ int main(void)
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
+		{ "LAPM directional preamble", test_lapm_directional_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },

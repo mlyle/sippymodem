@@ -199,6 +199,9 @@ extern int  modem_comp_flush_decoder(struct modem *m, char *buf, int n);
 
 enum {
 	V42_DETECTION_PATTERN_BITS = 36,
+	/* V.42 7.2.1 permits 8 to 16 marks after each 10-bit character. */
+	V42_DETECTION_MAX_MARK_BITS = 16,
+	V42_DETECTION_MAX_PATTERN_BITS = 2 * (10 + V42_DETECTION_MAX_MARK_BITS),
 	V42_ORIGINATOR_MATCH_PATTERNS = 2,
 	V42_MINIMUM_ANSWER_PATTERNS = 10,
 	/* A longer bounded reply gives a damaged pattern room to recover. */

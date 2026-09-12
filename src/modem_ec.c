@@ -133,16 +133,26 @@ static int lapm_timer_timeout(const struct lapm_state *l)
 #define FRAME_NS(f)   ((f)->buf[1]>>1)
 #define FRAME_NR(f)   ((f)->buf[2]>>1)
 
-enum {
-	/* The originator recognizes two ADPs before the answerer's robust reply
-	 * is complete.  Keep flags on the wire for the remaining ADPs and then
-	 * for the protocol preamble required before the first XID. */
-	LAPM_ORIGINATOR_PREAMBLE_FLAGS =
-		((V42_ANSWER_REPLY_PATTERNS -
-		  V42_ORIGINATOR_MATCH_PATTERNS) *
-		 V42_DETECTION_PATTERN_BITS + 7) / 8 +
-		V42_PROTOCOL_PREAMBLE_FLAGS,
-};
+/* Budget the usual answerer reply at the peer's bit rate, including the
+ * longest legal inter-character marks. Then add the local 16-flag preamble
+ * (V.42 8.10.2). A fixed flag count can outrun ADP on asymmetric PCM calls. */
+static unsigned lapm_originator_preamble_flags(const struct modem *m)
+{
+	uint64_t reply_bits = (V42_ANSWER_REPLY_PATTERNS -
+		V42_ORIGINATOR_MATCH_PATTERNS) * V42_DETECTION_MAX_PATTERN_BITS +
+		V42_DETECTION_MAX_MARK_BITS;
+	uint64_t divisor = 8;
+	uint64_t flags;
+
+	/* Recognition ends at the second C character, before its trailing marks.
+	 * Before rates are known, retain an equal-rate guard. */
+	if (m->tx_rate != 0 && m->rx_rate != 0) {
+		reply_bits *= m->tx_rate;
+		divisor *= m->rx_rate;
+	}
+	flags = (reply_bits + divisor - 1) / divisor + V42_PROTOCOL_PREAMBLE_FLAGS;
+	return flags > UINT_MAX ? UINT_MAX : (unsigned)flags;
+}
 
 /* tx unnumbered */
 #define TX_SABME(l) tx_unnum(l,l->cmd_addr,FRAME_U_SABME|0x10,0,0)
@@ -1845,7 +1855,7 @@ void modem_ec_start(struct modem *m)
 		/* V.42 requires at least 16 transmitted flags before the
 		 * originator's first XID. Count wire flags rather than callbacks,
 		 * and cover an answerer that finishes its required ADP reply first. */
-		h->tx_preamble_flags = LAPM_ORIGINATOR_PREAMBLE_FLAGS;
+		h->tx_preamble_flags = lapm_originator_preamble_flags(m);
 		h->tx_preamble_complete = modem_ec_negotiate;
 	}
 	else {
@@ -1895,7 +1905,7 @@ int modem_ec_resume_after_retrain(struct modem *m)
 	if (l->state != LAPM_DATA) {
 		if (m->packer.hdlc.tx_preamble_complete != NULL)
 			m->packer.hdlc.tx_preamble_flags =
-				LAPM_ORIGINATOR_PREAMBLE_FLAGS;
+				lapm_originator_preamble_flags(m);
 		return 0;
 	}
 	/* A physical interruption loses HDLC framing and leaves the peer's
