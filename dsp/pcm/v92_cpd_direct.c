@@ -239,7 +239,7 @@ static int level_separation(
 		if (lower <= INT16_MIN || upper >= INT16_MAX)
 			return 0;
 		if (eta != -count) {
-			int gap = cpd->data_rate_number == 18u ?
+			int gap = cpd->data_rate_number >= 18u ?
 				input_margin(law, previous, lower) :
 				quantize(law, (int16_t)lower) -
 					quantize(law, (int16_t)previous);
@@ -258,11 +258,13 @@ static int direct_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu,
 	bool disjoint_ranges, int required_margin)
 {
-	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 18u)
+	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 19u)
 		return level_separation(cpd, law, lu, lu, required_margin);
 	/* TRN1u supplies a quantized LU. Every balanced alphabet must stay
 	 * injective at each level in that cell. Prefer disjoint symbol ranges
-	 * at 46.7k so the receiver need not resolve LU to distinguish them. */
+	 * at 46.7k so the receiver need not resolve LU to distinguish them.
+	 * At 48k, maximize per-level noise margin instead: B1u refines LU,
+	 * while separating entire cells can sacrifice most of that margin. */
 	struct g711_interval interval;
 	int minimum = INT16_MAX;
 
@@ -297,14 +299,14 @@ static enum v92_cpd_result select_mapping(
 	if (upstream_level <= 0 ||
 	    v92_cpd_direct_init(&candidate, law, data_rate_number, extend_e2u) != V92_CPD_OK)
 		return V92_CPD_INVALID_PARAMETERS;
-	/* Use 48/24, 62/31 and 68/34 moduli for 64-, 68- and 70-bit frames.
-	 * These are the smallest uniform signed alphabets satisfying
+	/* Use 48/24, 62/31, 68/34 and 78/39 moduli for 64-, 68-, 70- and
+	 * 72-bit frames. These are the smallest uniform signed alphabets satisfying
 	 * (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2). Keep this direct
 	 * allocation out of the channel designer's level-neutral template. */
 	if (data_rate_number == 15u || data_rate_number == 17u ||
-	    data_rate_number == 18u) {
+	    data_rate_number == 18u || data_rate_number == 19u) {
 		uint8_t points = data_rate_number == 15u ? 24u :
-			data_rate_number == 17u ? 31u : 34u;
+			data_rate_number == 17u ? 31u : data_rate_number == 18u ? 34u : 39u;
 
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
 			candidate.modulus[symbol] = symbol % 4u == 3u ? points : 2u * points;
@@ -322,7 +324,10 @@ static enum v92_cpd_result select_mapping(
 		memset(candidate.constellation[0].positive_linear + 32u, 0,
 			(V92_CPD_MAX_CONSTELLATION_POINTS - 32u) * sizeof(int16_t));
 	}
-	if (direct_separation(&candidate, law, upstream_level, disjoint_ranges, 0) > 0) {
+	/* At 48k a merely distinct template can have almost no input margin.
+	 * Rank all candidates rather than returning the first usable one. */
+	if (data_rate_number != 19u &&
+	    direct_separation(&candidate, law, upstream_level, disjoint_ranges, 0) > 0) {
 		*parameters = candidate;
 		return V92_CPD_OK;
 	}
@@ -362,22 +367,27 @@ static enum v92_cpd_result select_mapping(
 			best = candidate;
 		}
 	}
-	if (best_separation == 0 && data_rate_number >= 15u && data_rate_number <= 18u) {
+	if ((best_separation == 0 || data_rate_number == 19u) &&
+	    data_rate_number >= 15u && data_rate_number <= 19u) {
 		/* Contiguous codec windows can have no placement that survives the
 		 * whole LU cell. Try a bounded family of linear/cubic grids:
 		 * a(x) = 30000 * (x + s*x^3)/(1+s), x=(2i+1)/(2N-1), s=0..16.
 		 * The linear term keeps spacing near zero; curvature increases the
-		 * outer gaps. Integer rounding makes generation deterministic, and
-		 * all intermediates fit uint64_t for N<=64. Reuse B1u frequencies
+		 * outer gaps. At 48k, use quarter steps and compare against the codec
+		 * windows too: integer shapes can miss useful source separation.
+		 * Integer rounding makes generation deterministic; all intermediates
+		 * fit uint64_t for N<=64. Reuse B1u frequencies
 		 * because monotone spacing does not change inner representatives. */
 		uint64_t width = 2u * count - 1u;
+		unsigned resolution = data_rate_number == 19u ? 4u : 1u;
 
-		for (unsigned shape = 0u; shape <= 16u; ++shape) {
-			uint64_t denominator = (shape + 1u) * width * width * width;
+		for (unsigned shape = 0u; shape <= 16u * resolution; ++shape) {
+			uint64_t denominator = (shape + resolution) * width * width * width;
 
 			for (unsigned point = 0u; point < count; ++point) {
 				uint64_t x = 2u * point + 1u;
-				uint64_t numerator = 30000u * x * (width * width + shape * x * x);
+				uint64_t numerator = 30000u * x *
+					(resolution * width * width + shape * x * x);
 
 				candidate.constellation[0].positive_linear[point] =
 					(int16_t)((numerator + denominator / 2u) / denominator);

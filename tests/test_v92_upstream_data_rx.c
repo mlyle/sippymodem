@@ -2208,6 +2208,15 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 
 int main(void)
 {
+	/* Minimal 48k alphabets must preserve payload after real B1u level
+	 * refinement, not merely separate symbols at a nominal training LU. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!test_quantized_level_tracking(law, 19u, false, 9461, true, 0u, 0u) ||
+		    !test_quantized_level_tracking(law, 19u, false, 4091, true, 0u, 16u) ||
+		    !test_quantized_level_tracking(law, 19u, false, 5471, true, 0u, 32u) ||
+		    !test_quantized_level_tracking(law, 19u, false, 7777, true, 0u, 32u) ||
+		    !test_quantized_level_tracking(law, 19u, false, 7040, true, 0u, 32u))
+			return 1;
 	/* The 46 2/3k selector must survive level uncertainty, long idle, and
 	 * bounded pre-codec noise, not just produce nominally distinct points. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

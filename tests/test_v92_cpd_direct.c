@@ -342,8 +342,8 @@ static bool test_level_selection(void)
 				      gain_is_nearest(&cpd, law) &&
 				      quantized_points_are_distinct(&cpd, law, levels[level]),
 				      "law %u LU %d rate %u selection failed", law, levels[level], rates[rate]);
-				if (rates[rate] >= 15u && rates[rate] <= 18u) {
-					static const uint8_t minimum_points[] = { 24u, 27u, 31u, 34u };
+				if (rates[rate] >= 15u && rates[rate] <= 19u) {
+					static const uint8_t minimum_points[] = { 24u, 27u, 31u, 34u, 39u };
 					unsigned points = cpd.constellation[0].count;
 					__uint128_t capacity = 1u, smaller = 1u;
 					__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rates[rate]);
@@ -375,8 +375,8 @@ static bool test_level_selection(void)
 			}
 	struct v92_cpd_parameters cpd, before;
 
-	CHECK(v92_cpd_direct_init(&before, G711_LAW_PCMU, 19u, false) == V92_CPD_OK &&
-	      v92_cpd_direct_select(&cpd, G711_LAW_PCMU, 19u, 4092, false) == V92_CPD_OK &&
+	CHECK(v92_cpd_direct_init(&before, G711_LAW_PCMU, 4u, false) == V92_CPD_OK &&
+	      v92_cpd_direct_select(&cpd, G711_LAW_PCMU, 4u, 4092, false) == V92_CPD_OK &&
 	      memcmp(&cpd, &before, sizeof(cpd)) == 0, "usable template changed");
 	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, 19u, 1, false) ==
 		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0,
@@ -389,7 +389,7 @@ static bool test_level_selection(void)
 		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0 &&
 	      v92_cpd_direct_select(NULL, G711_LAW_PCMA, 19u, 7040, false) ==
 		      V92_CPD_INVALID_ARGUMENT, "invalid level-selection arguments accepted");
-	for (uint8_t rate = 15u; rate <= 18u; ++rate)
+	for (uint8_t rate = 15u; rate <= 19u; ++rate)
 		CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, rate, 1, false) ==
 			      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0,
 		      "unusable balanced selection changed output");
@@ -439,10 +439,59 @@ static bool test_uncertain_symbol_ranges(void)
 	return true;
 }
 
+static bool test_48k_input_noise_margin(void)
+{
+	const struct { int16_t lu; int noise; } cases[] = {
+		{ 4091, 16 }, { 5471, 32 }, { 7040, 32 }, { 7777, 32 },
+	};
+	/* Check the wire cells independently of the selector's score. At each
+	 * possible training level, even opposite peak perturbations must leave
+	 * adjacent symbols distinct. Do not require different LU hypotheses
+	 * to separate: known B1u resolves that uncertainty before payload. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t index = 0u; index < ARRAY_LENGTH(cases); ++index) {
+			struct g711_interval interval;
+			struct v92_cpd_parameters cpd;
+			struct v92_pcm_mapping mapping;
+
+			CHECK(g711_quantization_interval(law, cases[index].lu, &interval) &&
+			      v92_cpd_direct_select(&cpd, law, 19u, cases[index].lu, false) == V92_CPD_OK &&
+			      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+			      "48k noise-margin mapping failed");
+			const struct v92_cpd_constellation *points = &cpd.constellation[0];
+			for (int lu = interval.lower; lu <= interval.upper; ++lu) {
+				int previous_maximum = INT16_MIN;
+
+				for (int eta = -(int)points->count; eta < points->count; ++eta) {
+					int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+						points->positive_linear[eta];
+					int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+					int16_t linear;
+
+					CHECK(v92_pcm_frame_scale(&mapping, (int16_t)lu, v, &linear) == V92_PCM_FRAME_OK &&
+					      linear - cases[index].noise >= INT16_MIN &&
+					      linear + cases[index].noise <= INT16_MAX, "48k symbol clipped");
+					int minimum = law == G711_LAW_PCMU ?
+						g711_decode_pcmu(g711_encode_pcmu(linear - cases[index].noise)) :
+						g711_decode_pcma(g711_encode_pcma(linear - cases[index].noise));
+					int maximum = law == G711_LAW_PCMU ?
+						g711_decode_pcmu(g711_encode_pcmu(linear + cases[index].noise)) :
+						g711_decode_pcma(g711_encode_pcma(linear + cases[index].noise));
+
+					CHECK(minimum > previous_maximum,
+					      "48k law %u LU %d eta %d lost input-noise margin", law, lu, eta);
+					previous_maximum = maximum;
+				}
+			}
+		}
+	return true;
+}
+
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
-	    !test_transactionality() || !test_level_selection() || !test_uncertain_symbol_ranges())
+	    !test_transactionality() || !test_level_selection() ||
+	    !test_uncertain_symbol_ranges() || !test_48k_input_noise_margin())
 		return 1;
 	return 0;
 }
