@@ -377,6 +377,7 @@ struct pcm_call_v92_digital_data {
 	double pending_squared_error;
 	uint16_t quality_guard_samples;
 	bool pending_ambiguous;
+	bool pending_uncertain;
 	/* Missing media can reject B1u before the first delayed decision. */
 	bool b1u_decode_failed;
 };

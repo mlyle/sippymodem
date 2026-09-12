@@ -14,7 +14,7 @@ static bool window(struct v92_data_quality *quality, double rms,
 {
 	for (unsigned int frame = 0; frame < V92_DATA_QUALITY_WINDOW_FRAMES; ++frame) {
 		enum v92_data_quality_result result = v92_data_quality_observe(
-			quality, rms * rms * V92_PCM_MAPPING_FRAME_SYMBOLS, false);
+			quality, rms * rms * V92_PCM_MAPPING_FRAME_SYMBOLS, false, false);
 
 		CHECK(result == (frame + 1u == V92_DATA_QUALITY_WINDOW_FRAMES ?
 			expected : V92_DATA_QUALITY_OK), "unexpected window boundary %u", frame);
@@ -58,17 +58,17 @@ static bool test_ambiguity(void)
 	struct v92_data_quality quality = { 0 };
 
 	for (unsigned int attempt = 0; attempt < V92_DATA_QUALITY_MAX_RETRAINS; ++attempt) {
-		CHECK(v92_data_quality_observe(&quality, 0, false) == V92_DATA_QUALITY_OK &&
-		      v92_data_quality_observe(&quality, 0, true) == V92_DATA_QUALITY_RETRAIN &&
+		CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
+		      v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
 		      quality.automatic_retrains == attempt + 1u &&
 		      quality.frames == 0 && v92_data_quality_restart(&quality),
 		      "ambiguity did not request immediate bounded recovery");
 	}
 	struct v92_data_quality before = quality;
-	CHECK(v92_data_quality_observe(&quality, 0, true) == V92_DATA_QUALITY_EXHAUSTED &&
+	CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_EXHAUSTED &&
 	      memcmp(&before, &quality, sizeof(quality)) == 0,
 	      "exhausted ambiguity replenished budget");
-	CHECK(v92_data_quality_observe(&quality, 100, false) == V92_DATA_QUALITY_OK &&
+	CHECK(v92_data_quality_observe(&quality, 100, false, false) == V92_DATA_QUALITY_OK &&
 	      v92_data_quality_restart(&quality) && quality.frames == 0 &&
 	      quality.squared_error == 0 && quality.automatic_retrains == 2,
 	      "restart retained measurement or replenished budget");
@@ -81,11 +81,11 @@ static bool test_invalid(void)
 	const double invalid[] = { -1.0, NAN, INFINITY, -INFINITY };
 
 	CHECK(!v92_data_quality_is_valid(NULL) && !v92_data_quality_restart(NULL) &&
-	      v92_data_quality_observe(NULL, 0, false) == V92_DATA_QUALITY_INVALID_ARGUMENT,
+	      v92_data_quality_observe(NULL, 0, false, false) == V92_DATA_QUALITY_INVALID_ARGUMENT,
 	      "null state accepted");
 	for (unsigned int n = 0; n < sizeof(invalid) / sizeof(invalid[0]); ++n) {
 		before = quality;
-		CHECK(v92_data_quality_observe(&quality, invalid[n], true) ==
+		CHECK(v92_data_quality_observe(&quality, invalid[n], true, false) ==
 		      V92_DATA_QUALITY_INVALID_ARGUMENT &&
 		      memcmp(&before, &quality, sizeof(quality)) == 0,
 		      "invalid metric changed state");
@@ -93,13 +93,13 @@ static bool test_invalid(void)
 	quality.squared_error = DBL_MAX;
 	quality.frames = 1;
 	before = quality;
-	CHECK(v92_data_quality_observe(&quality, DBL_MAX, false) ==
+	CHECK(v92_data_quality_observe(&quality, DBL_MAX, false, false) ==
 	      V92_DATA_QUALITY_INVALID_ARGUMENT && memcmp(&before, &quality, sizeof(quality)) == 0,
 	      "metric overflow changed state");
 	quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES;
 	before = quality;
 	CHECK(!v92_data_quality_is_valid(&quality) && !v92_data_quality_restart(&quality) &&
-	      v92_data_quality_observe(&quality, 0, false) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
+	      v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&before, &quality, sizeof(quality)) == 0, "invalid window accepted");
 	quality = (struct v92_data_quality){ .automatic_retrains = 3 };
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid budget accepted");
@@ -107,10 +107,42 @@ static bool test_invalid(void)
 	CHECK(!v92_data_quality_is_valid(&quality), "invalid loss count accepted");
 	quality = (struct v92_data_quality){ .squared_error = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned measurement accepted");
+	quality = (struct v92_data_quality){ .uncertain_window = true };
+	CHECK(!v92_data_quality_is_valid(&quality), "unowned confidence accepted");
+	return true;
+}
+
+static bool test_uncertainty(void)
+{
+	struct v92_data_quality quality = { 0 };
+	const bool uncertain[] = { true, true, false, true, false, true, true, true };
+	unsigned bad = 0;
+
+	/* One disputed observation makes a weak window, not a payload erasure
+	 * or an immediate retrain. Good windows break the consecutive run. */
+	for (unsigned n = 0; n < sizeof(uncertain) / sizeof(uncertain[0]); ++n) {
+		for (unsigned f = 0; f < V92_DATA_QUALITY_WINDOW_FRAMES; ++f) {
+			bool weak = uncertain[n] && f == V92_DATA_QUALITY_WINDOW_FRAMES / 2u;
+			enum v92_data_quality_result expected = n == 7u &&
+				f + 1u == V92_DATA_QUALITY_WINDOW_FRAMES ?
+				V92_DATA_QUALITY_RETRAIN : V92_DATA_QUALITY_OK;
+
+			CHECK(v92_data_quality_observe(&quality, 0, false, weak) == expected,
+				"uncertainty recovered at the wrong boundary %u/%u", n, f);
+		}
+		bad = uncertain[n] ? bad + 1u : 0u;
+		if (bad == V92_DATA_QUALITY_BAD_WINDOWS) bad = 0;
+		CHECK(quality.bad_windows == bad && !quality.uncertain_window &&
+			v92_data_quality_is_valid(&quality), "uncertainty window did not clear");
+	}
+	CHECK(quality.automatic_retrains == 1u &&
+		v92_data_quality_observe(&quality, 0, false, true) == V92_DATA_QUALITY_OK &&
+		v92_data_quality_restart(&quality) && !quality.uncertain_window &&
+		quality.automatic_retrains == 1u, "restart lost confidence ownership or retry budget");
 	return true;
 }
 
 int main(void)
 {
-	return test_windows() && test_ambiguity() && test_invalid() ? 0 : 1;
+	return test_windows() && test_ambiguity() && test_uncertainty() && test_invalid() ? 0 : 1;
 }

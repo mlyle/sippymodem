@@ -26,13 +26,16 @@ enum v92_data_quality_result {
 /* Online PCM-upstream policy, separate from the frame decoder. A zero
  * initializer begins a new call. Each observation covers one twelve-symbol
  * frame before equalizer adaptation. Three consecutive bad 192 ms windows
- * request full retraining; an ambiguous payload requests it immediately.
+ * request full retraining. A window is bad on excess residual or low-margin
+ * sequence disagreement; a single uncertain window cannot force recovery.
+ * A decoder-reported ambiguous payload requests recovery immediately.
  * Neither condition licenses delivering ambiguous bits to the host. */
 struct v92_data_quality {
 	double squared_error;
 	uint16_t frames;
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
+	bool uncertain_window;
 };
 
 bool v92_data_quality_is_valid(const struct v92_data_quality *quality);
@@ -41,6 +44,7 @@ bool v92_data_quality_restart(struct v92_data_quality *quality);
 /* RETRAIN consumes one of two per-call attempts and clears the measurement.
  * EXHAUSTED is terminal for the host adapter. Invalid inputs change nothing. */
 enum v92_data_quality_result v92_data_quality_observe(
-	struct v92_data_quality *quality, double squared_error, bool ambiguous);
+	struct v92_data_quality *quality, double squared_error, bool ambiguous,
+	bool uncertain);
 
 #endif /* V92_DATA_QUALITY_H */

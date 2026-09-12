@@ -713,6 +713,7 @@ struct frame_path {
 	uint8_t known_digits[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool output_ambiguous;
 	bool output_nondata;
+	bool uncertain;
 };
 
 static enum v92_pcm_frame_rm rm_state(const struct v92_pcm_frame_rx_path *path)
@@ -1196,6 +1197,25 @@ static enum v92_pcm_frame_result decode_frame(
 		next = swap;
 		path_count = count;
 	}
+	/* Direct input-cell distance is not a likelihood. Use the best symbol
+	 * path's CURRENT-frame cost as an optimistic residual scale, excluding
+	 * its inherited path penalty. Gaps within three mean symbol energies
+	 * are weak evidence, not exact ambiguity or permission to discard bits.
+	 * The call owner can qualify repeated uncertainty over time. */
+	bool measure_confidence = !b1u &&
+		receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
+	uint64_t resolution = 0u;
+	if (measure_confidence) {
+		size_t closest = 0u;
+
+		for (size_t i = 1u; i < path_count; ++i)
+			if (paths[i].state.metric < paths[closest].state.metric)
+				closest = i;
+		uint64_t cost = paths[closest].state.metric -
+			receiver->paths[paths[closest].origin].metric;
+
+		resolution = cost / (V92_PCM_MAPPING_FRAME_SYMBOLS / 3u);
+	}
 	/* Spare payload words remain invalid, except the exact RM sequences
 	 * defined at the modulus encoder output rather than its bit input. */
 	size_t valid = 0u;
@@ -1269,6 +1289,15 @@ static enum v92_pcm_frame_result decode_frame(
 		 * payload when coding histories merge. Keep the winning state. */
 		bool unresolved = gap == 0u || (model && gap <= UINT64_C(3000000));
 
+		/* Once future-equivalent paths merge, later samples cannot settle
+		 * their disputed payload. Tag either possible winner for this
+		 * observation only; leave its delayed ambiguity tags unchanged. */
+		if (measure_confidence && survivor != valid && gap <= resolution &&
+		    (memcmp(paths[survivor].output_bits, paths[index].output_bits, bit_count) != 0 ||
+		     memcmp(paths[survivor].state.pending, state->pending, sizeof(state->pending)) != 0)) {
+			paths[survivor].uncertain = true;
+			paths[index].uncertain = true;
+		}
 		if (survivor == valid)
 			paths[valid++] = paths[index];
 		else if (state->metric < paths[survivor].state.metric && !unresolved)
@@ -1305,9 +1334,14 @@ static enum v92_pcm_frame_result decode_frame(
 	memcpy(decoded, paths[best].output_bits, bit_count);
 	bool ambiguous = paths[best].output_ambiguous;
 	bool nondata = paths[best].output_nondata;
+	bool uncertain = paths[best].uncertain;
 	enum v92_pcm_frame_rm rm = rm_state(&paths[best].state);
 
 	for (size_t index = 0u; index < valid; ++index) {
+		if (measure_confidence &&
+		    paths[index].state.metric - paths[best].state.metric <= resolution &&
+		    memcmp(decoded, paths[index].output_bits, bit_count) != 0)
+			uncertain = true;
 		if (paths[index].state.metric == paths[best].state.metric) {
 			ambiguous |= paths[index].output_ambiguous ||
 				nondata != paths[index].output_nondata ||
@@ -1318,6 +1352,7 @@ static enum v92_pcm_frame_result decode_frame(
 	struct v92_pcm_frame_decision result = {
 		.frame = paths[best].frame,
 		.squared_error = paths[best].frame_metric,
+		.uncertain = uncertain,
 		.bits_ready = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && !nondata,
 		.ambiguous = receiver->pending_frames == V92_PCM_RX_DELAY_FRAMES && ambiguous,
 		.rm = rm,

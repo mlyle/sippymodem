@@ -62,6 +62,8 @@ struct v92_upstream_data_frame {
 	 * prediction, or the linear model when no codec fit is available.
 	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
+	/* Current-frame low-margin sequence disagreement, not a payload erasure. */
+	bool uncertain;
 	/* Payload is delayed by the frame decoder's lookahead. A zero count
 	 * means buffering or a non-payload slot; b1u and ambiguous apply only
 	 * to these bits. RM signaling never becomes a fabricated payload word. */

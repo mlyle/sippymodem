@@ -117,8 +117,12 @@ struct v92_pcm_frame_decision {
 	struct v92_pcm_frame frame;
 	int16_t predicted_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t squared_error;
+	/* Current direct-path low-margin disagreement. Unlike an ambiguity flag,
+	 * this is soft quality evidence: selected bits and coding are unchanged.
+	 * It does not persist into later frames or label bits as an erasure. */
+	bool uncertain;
 	bool bits_ready;
-	/* Equal-distance histories disagree about the delivered payload. */
+	/* Unresolved histories disagree about the delivered payload. */
 	bool ambiguous;
 	/* Current-frame request evidence, independent of delayed bits. A single
 	 * in-range RM-like word remains payload. Qualified RM and its two prime

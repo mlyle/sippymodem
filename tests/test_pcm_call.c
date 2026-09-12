@@ -6825,13 +6825,17 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 		ceiling = rate - 1u;
 	CHECK(retrain_preserves_protocol(online, online->law), "manual retrain changed rate policy");
 	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget)
-		for (unsigned ambiguous = 0; ambiguous < 2u; ++ambiguous) {
+		for (unsigned reason = 0; reason < 3u; ++reason) {
 			struct pcm_call call = *online;
 			struct pcm_call_data_event event;
 			uint8_t octet;
 
 			call.pcm_upstream_quality.automatic_retrains = budget;
-			arm_v92_quality_failure(&call, ambiguous != 0u);
+			arm_v92_quality_failure(&call, reason == 1u);
+			if (reason == 2u) {
+				call.state.data_path.v92_digital.pending_squared_error = 0.0;
+				call.state.data_path.v92_digital.pending_uncertain = true;
+			}
 			CHECK(pcm_call_is_valid(&call), "quality boundary fixture is invalid");
 			enum pcm_call_result result = pcm_call_data_octet(&call,
 				silence_octet(call.law), 0, true, NULL, &octet, &event);

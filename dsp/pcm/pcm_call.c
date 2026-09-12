@@ -799,7 +799,8 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    path->pending_squared_error < 0.0 ||
 		    path->quality_guard_samples > V92_CONTROL_QUALITY_GUARD_SAMPLES ||
 		    (!path->quality_guard_samples &&
-		     (path->pending_squared_error != 0.0 || path->pending_ambiguous)) ||
+		     (path->pending_squared_error != 0.0 || path->pending_ambiguous ||
+		      path->pending_uncertain)) ||
 		    (path->upstream.failed && !call->failed) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
@@ -4319,6 +4320,7 @@ static bool begin_v92_fast_response(struct pcm_call *call)
 	path->quality_guard_samples = 0u;
 	path->pending_squared_error = 0.0;
 	path->pending_ambiguous = false;
+	path->pending_uncertain = false;
 	call->retrain_active = true;
 	return true;
 }
@@ -4443,7 +4445,8 @@ static enum pcm_call_result observe_v92_data_quality(
 
 	if (path->quality_guard_samples)
 		return PCM_CALL_OK;
-	quality = v92_data_quality_observe(&next, frame->squared_error, frame->ambiguous);
+	quality = v92_data_quality_observe(&next, frame->squared_error,
+		frame->ambiguous, frame->uncertain);
 	if (quality == V92_DATA_QUALITY_OK) {
 		call->pcm_upstream_quality = next;
 		event->frame.pcm_upstream = *frame;
@@ -4451,6 +4454,7 @@ static enum pcm_call_result observe_v92_data_quality(
 	} else if (quality == V92_DATA_QUALITY_RETRAIN || quality == V92_DATA_QUALITY_EXHAUSTED) {
 		path->pending_squared_error = frame->squared_error;
 		path->pending_ambiguous = frame->ambiguous;
+		path->pending_uncertain = frame->uncertain;
 		path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
 	} else {
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -4634,10 +4638,12 @@ static enum pcm_call_result v92_data_octet_owned(
 		}
 		if (path->quality_guard_samples && --path->quality_guard_samples == 0u) {
 			enum v92_data_quality_result quality = v92_data_quality_observe(
-				&call->pcm_upstream_quality, path->pending_squared_error, path->pending_ambiguous);
+				&call->pcm_upstream_quality, path->pending_squared_error,
+				path->pending_ambiguous, path->pending_uncertain);
 
 			path->pending_squared_error = 0.0;
 			path->pending_ambiguous = false;
+			path->pending_uncertain = false;
 			if (quality == V92_DATA_QUALITY_RETRAIN)
 				return retry_v92_upstream(call);
 			return quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;

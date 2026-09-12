@@ -12,7 +12,8 @@ bool v92_data_quality_is_valid(const struct v92_data_quality *quality)
 	return quality != NULL && isfinite(quality->squared_error) &&
 	       quality->squared_error >= 0.0 &&
 	       quality->frames < V92_DATA_QUALITY_WINDOW_FRAMES &&
-	       (quality->frames != 0u || quality->squared_error == 0.0) &&
+	       (quality->frames != 0u ||
+		(quality->squared_error == 0.0 && !quality->uncertain_window)) &&
 	       quality->bad_windows < V92_DATA_QUALITY_BAD_WINDOWS &&
 	       quality->automatic_retrains <= V92_DATA_QUALITY_MAX_RETRAINS;
 }
@@ -28,7 +29,8 @@ bool v92_data_quality_restart(struct v92_data_quality *quality)
 }
 
 enum v92_data_quality_result v92_data_quality_observe(
-	struct v92_data_quality *quality, double squared_error, bool ambiguous)
+	struct v92_data_quality *quality, double squared_error, bool ambiguous,
+	bool uncertain)
 {
 	const double limit = (double)V92_DATA_QUALITY_WINDOW_FRAMES *
 		V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR *
@@ -43,12 +45,14 @@ enum v92_data_quality_result v92_data_quality_observe(
 	next.squared_error += squared_error;
 	if (!isfinite(next.squared_error))
 		return V92_DATA_QUALITY_INVALID_ARGUMENT;
+	next.uncertain_window |= uncertain;
 	if (++next.frames == V92_DATA_QUALITY_WINDOW_FRAMES) {
-		next.bad_windows = next.squared_error > limit ?
+		next.bad_windows = next.squared_error > limit || next.uncertain_window ?
 			next.bad_windows + 1u : 0u;
 		recover |= next.bad_windows == V92_DATA_QUALITY_BAD_WINDOWS;
 		next.frames = 0u;
 		next.squared_error = 0.0;
+		next.uncertain_window = false;
 	}
 	if (recover) {
 		if (next.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS)
