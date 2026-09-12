@@ -153,7 +153,8 @@ static bool constellations_are_valid(
 		}
 		return populated == 0u;
 	}
-	return populated != 0u && referenced == populated;
+	/* Table 30 requires each selected set to exist, not every set to be used. */
+	return (referenced & populated) == referenced;
 }
 
 bool v92_cpd_parameters_are_valid(
@@ -303,7 +304,7 @@ static enum v92_cpd_result probe_constellation_extent(
 		}
 		point_count += count;
 	}
-	if (populated == 0u || referenced != populated)
+	if ((referenced & populated) != referenced)
 		return V92_CPD_INVALID_FRAME;
 	*payload_bits += V92_CPD_CONSTELLATION_HEADER_BITS +
 		point_count * V92_CPD_WORD_BITS;

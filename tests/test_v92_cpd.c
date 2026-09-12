@@ -332,6 +332,77 @@ static bool test_optional_section_matrix(void)
 	return true;
 }
 
+static bool test_unselected_constellations(void)
+{
+	/* Table 30 selects six interval indices independently of its packed
+	 * nonempty constellation list. A peer need not select every listed set.
+	 * Mutate an ordinary wire image so neither decoding nor extent probing
+	 * depends on our encoder accepting that distinction first. */
+	for (unsigned int sections = 4u; sections < 8u; ++sections) {
+		for (uint8_t selected = 0u; selected < 3u; ++selected) {
+			for (unsigned int alignment = V92_CPD_DOWNSTREAM_FRAME_MIN_BITS;
+			     alignment <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS; ++alignment) {
+				struct v92_cpd_parameters parameters = selection(sections), decoded;
+				uint8_t frame[V92_CPD_MAX_FRAME_BYTES], reencoded[sizeof(frame)];
+				size_t frame_bits, reencoded_bits, probed = SIZE_MAX;
+				size_t header_end = expected_probe_bits(sections);
+				size_t header = header_end - V92_CPD_CONSTELLATION_HEADER_BITS;
+				size_t payload_end = expected_payload_bits(sections);
+
+				CHECK(v92_cpd_encode(&parameters, alignment, frame, sizeof(frame),
+					      &frame_bits) == V92_CPD_OK, "CPd fixture did not encode");
+				for (size_t interval = 0u; interval < V92_CPD_FRAME_INTERVALS; ++interval) {
+					size_t field = interval < 4u ? 1u + 4u * interval :
+						V92_CPD_WORD_BITS + 1u + 4u * (interval - 4u);
+
+					packed_msb_write_lsb_field(frame, header + field, 4u, selected);
+					parameters.frame_constellation[interval] = selected;
+				}
+				packed_msb_write_msb_field(frame, payload_end + 1u, CPD_CRC_BITS,
+					test_crc(frame, payload_end));
+				CHECK(v92_cpd_probe_frame_bits(frame, sizeof(frame), header_end - 1u,
+					      alignment, &probed) == V92_CPD_INCOMPLETE && probed == SIZE_MAX &&
+				      v92_cpd_probe_frame_bits(frame, sizeof(frame), header_end,
+					      alignment, &probed) == V92_CPD_OK && probed == frame_bits,
+				      "CPd extent rejected spare sets: sections %u selected %u alignment %u",
+				      sections, selected, alignment);
+				CHECK(v92_cpd_decode(frame, sizeof(frame), frame_bits, alignment,
+					      &decoded) == V92_CPD_OK && parameters_equal(&decoded, &parameters),
+				      "CPd decode rejected or discarded unselected sets");
+				CHECK(v92_cpd_encode(&parameters, alignment, reencoded, sizeof(reencoded),
+					      &reencoded_bits) == V92_CPD_OK && reencoded_bits == frame_bits &&
+				      memcmp(frame, reencoded, (frame_bits + 7u) / 8u) == 0,
+				      "CPd encoder changed spare constellation wire image");
+				/* Unselected sets remain CRC-covered and must still contain
+				 * ordered nonzero points; they are not unvalidated padding. */
+				size_t unused_point = header_end + 1u + (selected == 0u ? 2u * V92_CPD_WORD_BITS : 0u);
+				uint32_t point = packed_msb_read_lsb_field(frame, unused_point, 16u);
+
+				packed_msb_write_lsb_field(frame, unused_point, 16u, point + 1u);
+				CHECK(v92_cpd_decode(frame, sizeof(frame), frame_bits, alignment,
+					      &decoded) == V92_CPD_CRC_MISMATCH && parameters_equal(&decoded, &parameters),
+				      "damaged spare constellation changed the decoded selection");
+				packed_msb_write_lsb_field(frame, unused_point, 16u, 0u);
+				packed_msb_write_msb_field(frame, payload_end + 1u, CPD_CRC_BITS,
+					test_crc(frame, payload_end));
+				CHECK(v92_cpd_decode(frame, sizeof(frame), frame_bits, alignment,
+					      &decoded) == V92_CPD_INVALID_FRAME && parameters_equal(&decoded, &parameters),
+				      "zero point in an unselected constellation was accepted");
+				packed_msb_write_lsb_field(reencoded, header + 1u, 4u, 3u);
+				packed_msb_write_msb_field(reencoded, payload_end + 1u, CPD_CRC_BITS,
+					test_crc(reencoded, payload_end));
+				probed = SIZE_MAX;
+				CHECK(v92_cpd_probe_frame_bits(reencoded, sizeof(reencoded), header_end,
+					      alignment, &probed) == V92_CPD_INVALID_FRAME && probed == SIZE_MAX &&
+				      v92_cpd_decode(reencoded, sizeof(reencoded), frame_bits, alignment,
+					      &decoded) == V92_CPD_INVALID_FRAME && parameters_equal(&decoded, &parameters),
+				      "empty constellation reference was accepted alongside spare sets");
+			}
+		}
+	}
+	return true;
+}
+
 static struct v92_cpd_parameters maximum_selection(void)
 {
 	struct v92_cpd_parameters parameters = {
@@ -657,6 +728,7 @@ int main(void)
 		{ "cleardown wire image", test_cleardown_wire_image },
 		{ "base encoding", test_base_encoding },
 		{ "optional section matrix", test_optional_section_matrix },
+		{ "unselected constellations", test_unselected_constellations },
 		{ "maximum extent", test_maximum_extent },
 		{ "parameter validation", test_parameter_validation },
 		{ "wire rejection and contracts", test_wire_rejection_and_contracts },
