@@ -180,9 +180,9 @@ static bool after_idle(void *context, uint8_t *bits, size_t count)
 
 static bool test_quantized_level_tracking(
 	enum g711_law law, uint8_t rate, bool drift, int16_t lu, bool select,
-	unsigned burst_symbols)
+	unsigned burst_symbols, unsigned noise_peak)
 {
-	unsigned idle_frames = burst_symbols ? 64u : 2000u;
+	unsigned idle_frames = noise_peak ? 32u : burst_symbols ? 64u : 2000u;
 	unsigned payload_frames = burst_symbols ? 128u : 400u;
 	struct channel channel = { .gain = 1.0, .law = law, .polarity = 1 };
 	struct v92_cpd_parameters cpd;
@@ -197,6 +197,7 @@ static bool test_quantized_level_tracking(
 	double b1u_error = 0.0;
 	double burst_error = 0.0;
 	unsigned damaged = 0u;
+	uint32_t random = UINT32_C(0xac62e5b9) ^ ((uint32_t)rate << 16u) ^ (uint16_t)lu;
 	int16_t trained_lu = 0;
 	int16_t trained_minimum = 0, trained_maximum = 0;
 	int16_t measured_lu = law == G711_LAW_PCMU ?
@@ -256,6 +257,15 @@ static bool test_quantized_level_tracking(
 				 V92_PCM_MAPPING_FRAME_SYMBOLS);
 		CHECK(v92_upstream_data_tx_next(&transmitter, after_idle, &source,
 				&sample) == V92_UPSTREAM_DATA_TX_OK, "tracking transmitter stopped");
+		/* Perturb real source samples before companding, after clean B1u
+		 * and eight payload frames. No erasure hints or relaxed comparisons. */
+		if (noise_peak && source.frames > idle_frames + 8u) {
+			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+			long noisy = lround(sample + noise_peak * (2.0 * (random >> 16u) / 65535.0 - 1.0));
+
+			CHECK(noisy >= INT16_MIN && noisy <= INT16_MAX, "noise clipped source");
+			sample = (int16_t)noisy;
+		}
 		int16_t received = wire_sample(&channel, sample);
 		/* Damage real post-training media without erasure metadata. A-law
 		 * silence is nonzero, so unguarded normalized adaptation can turn
@@ -2182,12 +2192,20 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 
 int main(void)
 {
+	/* The 46 2/3k selector must survive level uncertainty, long idle, and
+	 * bounded pre-codec noise, not just produce nominally distinct points. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!test_quantized_level_tracking(law, 18u, false, 2019, true, 0u, 0u) ||
+		    !test_quantized_level_tracking(law, 18u, false, 5471, true, 0u, 0u) ||
+		    !test_quantized_level_tracking(law, 18u, false, 5471, true, 0u, 16u) ||
+		    !test_quantized_level_tracking(law, 18u, false, 7040, true, 0u, 32u))
+			return 1;
 	/* A constellation that is distinct only at the decoded TRN1u level
 	 * can become ambiguous at another level in the same quantizer cell.
 	 * Exercise 44k through B1u, long idle and payload under both laws. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		if (!test_quantized_level_tracking(law, 16u, false, 5987, true, 0u) ||
-		    !test_quantized_level_tracking(law, 16u, false, 7139, true, 0u))
+		if (!test_quantized_level_tracking(law, 16u, false, 5987, true, 0u, 0u) ||
+		    !test_quantized_level_tracking(law, 16u, false, 7139, true, 0u, 0u))
 			return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
@@ -2215,17 +2233,17 @@ int main(void)
 					if (!test_channel_plan((enum g711_law)law, polarity, extended,
 							fixture == 1u, fixture == 2u))
 						return 1;
-	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false, TEST_LU, false, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true, TEST_LU, false, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, 7164, true, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, 7040, true, 0u))
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 13u, false, TEST_LU, false, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 13u, false, TEST_LU, false, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 8u, true, TEST_LU, false, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, 7164, true, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, 7040, true, 0u, 0u))
 		return 1;
 	fprintf(stderr, "[ RUN      ] PCM upstream codec-silence burst recovery\n");
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		if (!test_quantized_level_tracking(law, 19u, false, TEST_LU, false, 80u))
+		if (!test_quantized_level_tracking(law, 19u, false, TEST_LU, false, 80u, 0u))
 			return 1;
 	fprintf(stderr, "[       OK ] PCM upstream codec-silence burst recovery\n");
 	const struct {
@@ -2257,14 +2275,14 @@ int main(void)
 	 * through E2u, all B1u decisions, long idle and exact payload. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (uint8_t rate = 15u; rate <= 17u; rate += 2u)
-			if (!test_quantized_level_tracking(law, rate, false, 4092, true, 0u) ||
-			    !test_quantized_level_tracking(law, rate, false, 7164, true, 0u))
+			if (!test_quantized_level_tracking(law, rate, false, 4092, true, 0u, 0u) ||
+			    !test_quantized_level_tracking(law, rate, false, 7164, true, 0u, 0u))
 				return 1;
 	/* Later B1u evidence must recover LU values excluded by an early,
 	 * slightly biased equalized frame, before freezing the estimate. */
-	if (!test_quantized_level_tracking(G711_LAW_PCMU, 16u, false, 2019, true, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 4187, true, 0u) ||
-	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 7139, true, 0u))
+	if (!test_quantized_level_tracking(G711_LAW_PCMU, 16u, false, 2019, true, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 4187, true, 0u, 0u) ||
+	    !test_quantized_level_tracking(G711_LAW_PCMU, 17u, false, 7139, true, 0u, 0u))
 		return 1;
 	const uint8_t rm_rates[] = { 1u, 16u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

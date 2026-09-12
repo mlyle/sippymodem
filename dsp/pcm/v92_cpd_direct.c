@@ -177,51 +177,102 @@ enum v92_cpd_result v92_cpd_direct_init(
 	return V92_CPD_OK;
 }
 
-/* Identity-filter output followed by the analogue LU/G scaling and network
- * quantizer. Check both signs: integer rounding need not be symmetric. */
-static int level_separation(
-	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
+static int quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+/* First integer pre-codec noise peak at which adjacent source levels can
+ * share a reconstructed value. Decoded-code spacing alone overstates the
+ * margin when one symbol sits near a quantizer boundary. */
+static int input_margin(enum g711_law law, int lower, int upper)
+{
+	struct g711_interval cell;
+
+	if (lower >= upper ||
+	    !g711_quantization_interval(
+		    law, (int16_t)(lower + (upper - lower) / 2), &cell))
+		return 0;
+	/* Any common cell reached before the inputs cross must contain their
+	 * midpoint. Move both inputs just far enough to enter that cell; when
+	 * an odd midpoint straddles a boundary they can instead cross there. */
+	int margin = cell.lower - lower;
+
+	if (upper - cell.upper > margin)
+		margin = upper - cell.upper;
+	if (margin < 0)
+		margin = 0;
+	int crossing = (upper - lower + 1) / 2;
+
+	return margin < crossing ? margin : crossing;
+}
+
+/* Identity prefilter followed by the analogue LU/G scale. Keep the same
+ * two rounding steps as the transmitter. */
+static int scaled_point(const struct v92_cpd_parameters *cpd, int eta, int lu)
 {
 	const struct v92_cpd_constellation *points = &cpd->constellation[0];
+	int u = eta < 0 ? -points->positive_linear[-eta - 1] :
+		points->positive_linear[eta];
+	int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+
+	return round_shift_s64_to_s32_saturating(
+		(int64_t)v * cpd->four_times_gain_q0_16 * lu, 18u);
+}
+
+/* Both signs matter: the transmitter's integer rounding is not symmetric.
+ * For an LU interval, monotonicity bounds each symbol by its endpoints.
+ * Reject a candidate as soon as it cannot beat the retained margin. */
+static int level_separation(
+	const struct v92_cpd_parameters *cpd, enum g711_law law,
+	int lower_lu, int upper_lu, int required_margin)
+{
+	int count = cpd->constellation[0].count;
 	int previous = 0, minimum = INT16_MAX;
 
-	for (int eta = -(int)points->count; eta < points->count; ++eta) {
-		int u = eta < 0 ? -points->positive_linear[-eta - 1] :
-			points->positive_linear[eta];
-		int32_t v = round_shift_s64_to_s32_saturating(
-			(int64_t)u * INT16_MAX, 15u);
-		int32_t scaled = round_shift_s64_to_s32_saturating(
-			(int64_t)v * cpd->four_times_gain_q0_16 * lu, 18u);
-		int sample;
+	for (int eta = -count; eta < count; ++eta) {
+		int lower = scaled_point(cpd, eta, eta < 0 ? upper_lu : lower_lu);
+		int upper = scaled_point(cpd, eta, eta < 0 ? lower_lu : upper_lu);
 
-		if (scaled <= INT16_MIN || scaled >= INT16_MAX)
+		if (lower <= INT16_MIN || upper >= INT16_MAX)
 			return 0;
-		sample = law == G711_LAW_PCMA ?
-			g711_decode_pcma(g711_encode_pcma((int16_t)scaled)) :
-			g711_decode_pcmu(g711_encode_pcmu((int16_t)scaled));
-		if (eta != -(int)points->count && sample - previous < minimum)
-			minimum = sample - previous;
-		previous = sample;
+		if (eta != -count) {
+			int gap = cpd->data_rate_number == 18u ?
+				input_margin(law, previous, lower) :
+				quantize(law, (int16_t)lower) -
+					quantize(law, (int16_t)previous);
+
+			if (gap <= required_margin)
+				return 0;
+			if (gap < minimum)
+				minimum = gap;
+		}
+		previous = upper;
 	}
 	return minimum;
 }
 
 static int direct_separation(
-	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
+	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu,
+	bool disjoint_ranges, int required_margin)
 {
-	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 17u)
-		return level_separation(cpd, law, lu);
-	/* TRN1u supplies a quantized LU. The balanced direct alphabet must
-	 * remain injective at every scalar consistent with that observation,
-	 * not only its decoded centre. Adjacent points can otherwise collapse
-	 * inside the cell even though the selected nominal spacing is large. */
+	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 18u)
+		return level_separation(cpd, law, lu, lu, required_margin);
+	/* TRN1u supplies a quantized LU. Every balanced alphabet must stay
+	 * injective at each level in that cell. Prefer disjoint symbol ranges
+	 * at 46.7k so the receiver need not resolve LU to distinguish them. */
 	struct g711_interval interval;
 	int minimum = INT16_MAX;
 
 	if (!g711_quantization_interval(law, lu, &interval) || interval.lower <= 0)
 		return 0;
+	if (disjoint_ranges)
+		return level_separation(
+			cpd, law, interval.lower, interval.upper, required_margin);
 	for (int level = interval.lower; level <= interval.upper; ++level) {
-		int separation = level_separation(cpd, law, (int16_t)level);
+		int separation = level_separation(cpd, law, level, level, required_margin);
 
 		if (separation == 0)
 			return 0;
@@ -231,9 +282,10 @@ static int direct_separation(
 	return minimum;
 }
 
-enum v92_cpd_result v92_cpd_direct_select(
+static enum v92_cpd_result select_mapping(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
-	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
+	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u,
+	bool disjoint_ranges)
 {
 	struct v92_cpd_parameters candidate, best;
 	uint16_t frequencies[2 * V92_CPD_DIRECT_MAX_POINTS];
@@ -245,12 +297,14 @@ enum v92_cpd_result v92_cpd_direct_select(
 	if (upstream_level <= 0 ||
 	    v92_cpd_direct_init(&candidate, law, data_rate_number, extend_e2u) != V92_CPD_OK)
 		return V92_CPD_INVALID_PARAMETERS;
-	/* Use 48/24 and 62/31 moduli for the 64- and 68-bit direct frames.
+	/* Use 48/24, 62/31 and 68/34 moduli for 64-, 68- and 70-bit frames.
 	 * These are the smallest uniform signed alphabets satisfying
 	 * (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2). Keep this direct
 	 * allocation out of the channel designer's level-neutral template. */
-	if (data_rate_number == 15u || data_rate_number == 17u) {
-		uint8_t points = data_rate_number == 15u ? 24u : 31u;
+	if (data_rate_number == 15u || data_rate_number == 17u ||
+	    data_rate_number == 18u) {
+		uint8_t points = data_rate_number == 15u ? 24u :
+			data_rate_number == 17u ? 31u : 34u;
 
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
 			candidate.modulus[symbol] = symbol % 4u == 3u ? points : 2u * points;
@@ -268,7 +322,7 @@ enum v92_cpd_result v92_cpd_direct_select(
 		memset(candidate.constellation[0].positive_linear + 32u, 0,
 			(V92_CPD_MAX_CONSTELLATION_POINTS - 32u) * sizeof(int16_t));
 	}
-	if (direct_separation(&candidate, law, upstream_level) > 0) {
+	if (direct_separation(&candidate, law, upstream_level, disjoint_ranges, 0) > 0) {
 		*parameters = candidate;
 		return V92_CPD_OK;
 	}
@@ -301,13 +355,14 @@ enum v92_cpd_result v92_cpd_direct_select(
 		}
 		if (!normalize_gain(&candidate, frequencies))
 			return V92_CPD_INVALID_PARAMETERS;
-		separation = direct_separation(&candidate, law, upstream_level);
+		separation = direct_separation(
+			&candidate, law, upstream_level, disjoint_ranges, best_separation);
 		if (separation > best_separation) {
 			best_separation = separation;
 			best = candidate;
 		}
 	}
-	if (best_separation == 0 && data_rate_number >= 15u && data_rate_number <= 17u) {
+	if (best_separation == 0 && data_rate_number >= 15u && data_rate_number <= 18u) {
 		/* Contiguous codec windows can have no placement that survives the
 		 * whole LU cell. Try a bounded family of linear/cubic grids:
 		 * a(x) = 30000 * (x + s*x^3)/(1+s), x=(2i+1)/(2N-1), s=0..16.
@@ -329,7 +384,8 @@ enum v92_cpd_result v92_cpd_direct_select(
 			}
 			if (!normalize_gain(&candidate, frequencies))
 				return V92_CPD_INVALID_PARAMETERS;
-			int separation = direct_separation(&candidate, law, upstream_level);
+			int separation = direct_separation(
+				&candidate, law, upstream_level, disjoint_ranges, best_separation);
 
 			if (separation > best_separation) {
 				best_separation = separation;
@@ -341,4 +397,21 @@ enum v92_cpd_result v92_cpd_direct_select(
 		return V92_CPD_INVALID_PARAMETERS;
 	*parameters = best;
 	return V92_CPD_OK;
+}
+
+enum v92_cpd_result v92_cpd_direct_select(
+	struct v92_cpd_parameters *parameters, enum g711_law law,
+	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
+{
+	if (data_rate_number == 18u) {
+		enum v92_cpd_result result = select_mapping(
+			parameters, law, data_rate_number, upstream_level, extend_e2u, true);
+
+		if (result != V92_CPD_INVALID_PARAMETERS)
+			return result;
+	}
+	/* Disjoint ranges may be unavailable even with a useful injective
+	 * alphabet. In that case retain the ordinary B1u-refined LU path. */
+	return select_mapping(
+		parameters, law, data_rate_number, upstream_level, extend_e2u, false);
 }

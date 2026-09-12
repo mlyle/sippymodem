@@ -8501,6 +8501,10 @@ static bool test_v92_upstream_negotiation(void)
 		{ UINT32_C(1) << 14u, 15u, 15u, 0.0, 0.75, 0u },
 		{ (UINT32_C(1) << 16u) | (UINT32_C(1) << 15u), 17u, 17u, 0.0, 0.0, 0u },
 		{ UINT32_C(1) << 16u, 17u, 17u, 0.0, 0.75, 0u },
+		/* Exercise the 70-bit balanced mapping through real CPd exchange,
+		 * training and duplex data, including post-codec receive gain. */
+		{ (UINT32_C(1) << 17u) | (UINT32_C(1) << 15u), 18u, 18u, 0.0, 0.0, 0u },
+		{ UINT32_C(1) << 17u, 18u, 18u, 0.0, 0.75, 0u },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
 		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u },

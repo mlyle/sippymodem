@@ -221,8 +221,8 @@ static bool test_quantization_interval_input_space(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		unsigned int intervals = 0;
 
-		/* Independently enumerate each constant run, without the helper's
-		 * binary searches. Every linear input must recover that whole run. */
+		/* Independently enumerate each constant reconstructed-level run.
+		 * Every linear input must recover that whole run. */
 		for (int32_t lower = INT16_MIN; lower <= INT16_MAX; ) {
 			int16_t level = reconstruct_sample(law, (int16_t)lower);
 			int32_t upper = lower;

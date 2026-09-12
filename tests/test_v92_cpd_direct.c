@@ -327,7 +327,7 @@ static bool quantized_points_are_distinct(
 static bool test_level_selection(void)
 {
 	static const int16_t levels[] = { 4092, 4096, 4224, 5987, 7040, 7139, 7164 };
-	static const uint8_t rates[] = { 1, 4, 13, 15, 16, 17, 19 };
+	static const uint8_t rates[] = { 1, 4, 13, 15, 16, 17, 18, 19 };
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (size_t level = 0u; level < ARRAY_LENGTH(levels); ++level)
@@ -342,8 +342,8 @@ static bool test_level_selection(void)
 				      gain_is_nearest(&cpd, law) &&
 				      quantized_points_are_distinct(&cpd, law, levels[level]),
 				      "law %u LU %d rate %u selection failed", law, levels[level], rates[rate]);
-				if (rates[rate] >= 15u && rates[rate] <= 17u) {
-					static const uint8_t minimum_points[] = { 24u, 27u, 31u };
+				if (rates[rate] >= 15u && rates[rate] <= 18u) {
+					static const uint8_t minimum_points[] = { 24u, 27u, 31u, 34u };
 					unsigned points = cpd.constellation[0].count;
 					__uint128_t capacity = 1u, smaller = 1u;
 					__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rates[rate]);
@@ -389,17 +389,60 @@ static bool test_level_selection(void)
 		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0 &&
 	      v92_cpd_direct_select(NULL, G711_LAW_PCMA, 19u, 7040, false) ==
 		      V92_CPD_INVALID_ARGUMENT, "invalid level-selection arguments accepted");
-	for (uint8_t rate = 15u; rate <= 17u; ++rate)
+	for (uint8_t rate = 15u; rate <= 18u; ++rate)
 		CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, rate, 1, false) ==
 			      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0,
 		      "unusable balanced selection changed output");
 	return true;
 }
 
+static bool test_uncertain_symbol_ranges(void)
+{
+	/* At ordinary direct levels a 46 2/3k alphabet can keep neighboring
+	 * symbols distinct without first knowing LU's position in its cell. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		int16_t lu = law == G711_LAW_PCMU ? 6908 : 7040;
+		struct g711_interval interval;
+		struct v92_cpd_parameters cpd;
+		struct v92_pcm_mapping mapping;
+		int previous_maximum = INT16_MIN;
+
+		CHECK(g711_quantization_interval(law, lu, &interval) &&
+		      v92_cpd_direct_select(&cpd, law, 18u, lu, false) == V92_CPD_OK &&
+		      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+		      "uncertain direct mapping did not initialize");
+		const struct v92_cpd_constellation *points = &cpd.constellation[0];
+		for (int eta = -(int)points->count; eta < points->count; ++eta) {
+			int minimum = INT16_MAX, maximum = INT16_MIN;
+			int u = eta < 0 ? -points->positive_linear[-eta - 1] : points->positive_linear[eta];
+			int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
+
+			for (int level = interval.lower; level <= interval.upper; ++level) {
+				int16_t linear;
+
+				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)level, v, &linear) == V92_PCM_FRAME_OK,
+				      "uncertain symbol clipped");
+				int decoded = law == G711_LAW_PCMU ?
+					g711_decode_pcmu(g711_encode_pcmu(linear)) :
+					g711_decode_pcma(g711_encode_pcma(linear));
+
+				if (decoded < minimum)
+					minimum = decoded;
+				if (decoded > maximum)
+					maximum = decoded;
+			}
+			CHECK(minimum > previous_maximum,
+			      "law %u point %d overlaps its neighbor under LU uncertainty", law, eta);
+			previous_maximum = maximum;
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	if (!test_rate_and_law_matrix() || !test_known_boundaries() ||
-	    !test_transactionality() || !test_level_selection())
+	    !test_transactionality() || !test_level_selection() || !test_uncertain_symbol_ranges())
 		return 1;
 	return 0;
 }
