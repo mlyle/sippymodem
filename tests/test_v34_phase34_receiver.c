@@ -22,6 +22,7 @@ enum {
 struct line_source {
 	struct v34_training_transmitter training;
 	struct v34_data_mapping mapping;
+	struct v34_data_stream_preparation preparation;
 	struct v34_data_stream data;
 	struct v34_data_direction_parameters parameters;
 	struct v34_mp_parameters initial_mp;
@@ -121,7 +122,9 @@ static bool source_init(
 		    V34_TRAINING_TRANSMITTER_OK ||
 	    v34_data_mapping_prepare(
 		    &initialized.mapping, transmitting_profile,
-		    &initialized.parameters, false) != V34_DATA_MAPPING_OK)
+		    &initialized.parameters, false) != V34_DATA_MAPPING_OK ||
+	    v34_data_stream_prepare(&initialized.preparation,
+		    &initialized.mapping, SAMPLE_RATE) != V34_DATA_STREAM_OK)
 		return false;
 	*source = initialized;
 	return true;
@@ -169,7 +172,7 @@ static bool source_sample(struct line_source *source, int16_t *sample)
 		if (!source->data_started) {
 			if (v34_data_stream_continue_prepared_b1(
 				    &source->data, &source->training.line,
-				    &source->mapping) != V34_DATA_STREAM_OK)
+				    &source->preparation) != V34_DATA_STREAM_OK)
 				return false;
 			source->data_started = true;
 		}

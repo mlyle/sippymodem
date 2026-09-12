@@ -1,12 +1,36 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <v34_data_stream.h>
+#include <v34_power_calibration.h>
 
 #include "test.h"
 
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+
+static unsigned int line_calibrations;
+
+enum v34_power_calibration_result __real_v34_calibrate_line_power(
+	const struct v34_frame_schedule *, const struct v34_scrambler *,
+	const struct v34_4d_encoder *, const struct v34_power_normalizer *,
+	const struct v34_phase3_profile *, uint32_t,
+	struct v34_line_power_measurement *);
+
+enum v34_power_calibration_result __wrap_v34_calibrate_line_power(
+	const struct v34_frame_schedule *schedule,
+	const struct v34_scrambler *scrambler,
+	const struct v34_4d_encoder *encoder,
+	const struct v34_power_normalizer *normalizer,
+	const struct v34_phase3_profile *profile, uint32_t sample_rate,
+	struct v34_line_power_measurement *measurement)
+{
+	line_calibrations++;
+	return __real_v34_calibrate_line_power(schedule, scrambler, encoder,
+					     normalizer, profile, sample_rate,
+					     measurement);
+}
 
 static struct v34_data_stream_configuration
 configuration_fixture(void)
@@ -321,6 +345,7 @@ static bool test_selected_continuation(void)
 		struct v34_data_stream_configuration configuration =
 			configuration_fixture();
 		struct v34_data_mapping mapping;
+		struct v34_data_stream_preparation preparation;
 		struct v34_training_line line;
 		struct v34_training_line expected_line;
 		struct v34_data_stream expected;
@@ -328,13 +353,31 @@ static bool test_selected_continuation(void)
 
 		configuration.profile.local_role =
 			(enum v34_station_role)role;
+		line_calibrations = 0;
 		CHECK(prepare_mapping(&configuration, &mapping) &&
+		      v34_data_stream_prepare(&preparation, &mapping,
+			      configuration.sample_rate) == V34_DATA_STREAM_OK &&
 		      v34_training_line_init(
 			      &line, &configuration.profile,
 			      configuration.sample_rate,
 			      configuration.nominal_peak_amplitude) ==
 			      V34_TRAINING_LINE_OK,
 		      "continuation inputs failed for role %u", role);
+		CHECK(line_calibrations == 1,
+		      "preparation did not calibrate exactly once");
+		/* Preparation must not capture history: keep transmitting training
+		 * after it is ready, then attach the live carrier/filter state. */
+		for (unsigned int sample_index = 0; sample_index < 137; ++sample_index) {
+			const struct qam_point point = { 0.6, 0.2 };
+			int16_t sample;
+			bool accepted;
+
+			CHECK(v34_training_line_sample(&line,
+				      v34_training_line_needs_point(&line) ? &point : NULL,
+				      &sample, &accepted) ==
+				      V34_TRAINING_LINE_OK,
+			      "training continuation failed");
+		}
 		expected_line = line;
 		if (expected_line.carrier.maximum_point_power <
 		    mapping.normalizer.maximum_normalized_point_power)
@@ -342,11 +385,13 @@ static bool test_selected_continuation(void)
 				mapping.normalizer.maximum_normalized_point_power;
 		CHECK(
 		      v34_data_stream_continue_prepared_b1(
-			      &expected, &line, &mapping) ==
+			      &expected, &line, &preparation) ==
 			      V34_DATA_STREAM_OK &&
+		      line_calibrations == 1 &&
 		      v34_data_stream_continue_b1(
 			      &actual, &line, &configuration) ==
 			      V34_DATA_STREAM_OK &&
+		      line_calibrations == 2 &&
 		      memcmp(&expected.line, &expected_line,
 			     sizeof(expected_line)) == 0 &&
 		      memcmp(&actual.line, &expected_line,
@@ -355,6 +400,97 @@ static bool test_selected_continuation(void)
 		      streams_match_through_b1(&actual, &expected),
 		      "continued stream mismatch for role %u", role);
 	}
+	return true;
+}
+
+static bool test_preparation_boundaries(void)
+{
+	struct v34_data_stream_configuration configuration = configuration_fixture();
+	struct v34_data_mapping mapping, invalid_mapping;
+	struct v34_data_stream_preparation preparation, invalid, rejected;
+	struct v34_training_line line;
+	struct v34_data_stream stream;
+	struct v34_line_power_measurement measurement;
+	const double invalid_peaks[] = { 0.0, -1.0, NAN, INFINITY };
+	unsigned int clipped = 0, passed = 0;
+
+	CHECK(prepare_mapping(&configuration, &mapping), "mapping failed");
+	memset(&rejected, 0xa5, sizeof(rejected));
+	CHECK(!v34_data_stream_preparation_is_valid(NULL) &&
+	      v34_data_stream_prepare(NULL, &mapping, 8000) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_prepare(&rejected, NULL, 8000) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      v34_data_stream_prepare(&rejected, &mapping, 0) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "invalid preparation changed destination");
+	invalid_mapping = mapping;
+	invalid_mapping.schedule.data_frame_in_superframe = 0;
+	CHECK(v34_data_stream_prepare(&rejected, &invalid_mapping, 8000) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5),
+	      "invalid mapping changed preparation");
+	CHECK(v34_data_stream_prepare(&preparation, &mapping, 8000) ==
+		      V34_DATA_STREAM_OK &&
+	      v34_data_stream_preparation_is_valid(&preparation) &&
+	      v34_calibrate_line_power(&mapping.schedule, &mapping.scrambler,
+		      &mapping.encoder, &mapping.normalizer,
+		      &mapping.transmitting_profile, 8000, &measurement) ==
+		      V34_POWER_CALIBRATION_OK &&
+	      preparation.line_peak == measurement.peak_amplitude,
+	      "stored peak changed the calibration result");
+	CHECK(v34_training_line_init(&line, &configuration.profile, 8000,
+		      configuration.nominal_peak_amplitude) == V34_TRAINING_LINE_OK,
+	      "line failed");
+	memset(&stream, 0xa5, sizeof(stream));
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid_peaks); ++index) {
+		invalid = preparation;
+		invalid.line_peak = invalid_peaks[index];
+		CHECK(!v34_data_stream_preparation_is_valid(&invalid) &&
+		      v34_data_stream_continue_prepared_b1(&stream, &line, &invalid) ==
+			      V34_DATA_STREAM_INVALID_ARGUMENT &&
+		      bytes_are_filled(&stream, sizeof(stream), 0xa5),
+		      "invalid peak accepted at %zu", index);
+	}
+	invalid = preparation;
+	invalid.sample_rate = 16000;
+	CHECK(v34_data_stream_continue_prepared_b1(&stream, &line, &invalid) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&stream, sizeof(stream), 0xa5),
+	      "preparation reused at a different sample rate");
+	invalid.sample_rate = 0;
+	CHECK(!v34_data_stream_preparation_is_valid(&invalid),
+	      "zero sample rate was accepted");
+	invalid = preparation;
+	invalid.mapping.transmitting_profile.preemphasis_filter_index++;
+	CHECK(v34_data_stream_continue_prepared_b1(&stream, &line, &invalid) ==
+		      V34_DATA_STREAM_INVALID_ARGUMENT &&
+	      bytes_are_filled(&stream, sizeof(stream), 0xa5),
+	      "preparation reused for a different waveform");
+	/* Both paths must retain the same gain-dependent clipping boundary. */
+	for (int16_t amplitude = 1000; amplitude < 32000; amplitude += 1000) {
+		enum v34_data_stream_result expected;
+		enum v34_training_line_result line_result = v34_training_line_init(
+			&line, &configuration.profile, 8000, amplitude);
+
+		if (line_result == V34_TRAINING_LINE_CLIPPING_RISK)
+			continue;
+		CHECK(line_result == V34_TRAINING_LINE_OK, "gain fixture failed");
+		expected = measurement.peak_amplitude * line.output_gain >=
+			INT16_MAX + 0.5 ? V34_DATA_STREAM_CLIPPING_RISK : V34_DATA_STREAM_OK;
+		memset(&stream, 0xa5, sizeof(stream));
+		CHECK(v34_data_stream_continue_prepared_b1(&stream, &line, &preparation) ==
+			      expected, "clipping decision changed at %d", amplitude);
+		if (expected == V34_DATA_STREAM_CLIPPING_RISK) {
+			clipped++;
+			CHECK(bytes_are_filled(&stream, sizeof(stream), 0xa5),
+			      "clipping rejection changed destination");
+		} else {
+			passed++;
+		}
+	}
+	CHECK(clipped != 0 && passed != 0, "clipping boundary was not exercised");
 	return true;
 }
 
@@ -495,7 +631,8 @@ static bool test_transactional_boundaries(void)
 	struct v34_data_stream_configuration configuration =
 		configuration_fixture();
 	struct v34_data_mapping mapping;
-	struct v34_data_mapping wrong_position;
+	struct v34_data_stream_preparation preparation;
+	struct v34_data_stream_preparation wrong_position;
 	struct v34_training_line line;
 	struct v34_data_stream stream;
 	struct v34_data_stream rejected;
@@ -506,19 +643,21 @@ static bool test_transactional_boundaries(void)
 	bool accepted = true;
 
 	CHECK(prepare_mapping(&configuration, &mapping) &&
+	      v34_data_stream_prepare(&preparation, &mapping,
+		      configuration.sample_rate) == V34_DATA_STREAM_OK &&
 	      v34_training_line_init(
 		      &line, &configuration.profile, configuration.sample_rate,
 		      configuration.nominal_peak_amplitude) ==
 		      V34_TRAINING_LINE_OK,
 	      "validation inputs did not initialize");
-	wrong_position = mapping;
-	wrong_position.schedule.data_frame_in_superframe = 0;
+	wrong_position = preparation;
+	wrong_position.mapping.schedule.data_frame_in_superframe = 0;
 	memset(&rejected, 0xa5, sizeof(rejected));
 	CHECK(v34_data_stream_continue_prepared_b1(
-		      NULL, &line, &mapping) ==
+		      NULL, &line, &preparation) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      v34_data_stream_continue_prepared_b1(
-		      &rejected, NULL, &mapping) ==
+		      &rejected, NULL, &preparation) ==
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      v34_data_stream_continue_prepared_b1(
 		      &rejected, &line, NULL) ==
@@ -528,7 +667,7 @@ static bool test_transactional_boundaries(void)
 		      V34_DATA_STREAM_INVALID_ARGUMENT &&
 	      bytes_are_filled(&rejected, sizeof(rejected), 0xa5) &&
 	      v34_data_stream_continue_prepared_b1(
-		      &stream, &line, &mapping) ==
+		      &stream, &line, &preparation) ==
 		      V34_DATA_STREAM_OK &&
 	      advance_to_b1_handoff(&stream),
 	      "B1 validation boundary was not reached");
@@ -583,6 +722,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "selected continuation", test_selected_continuation },
+		{ "preparation boundaries", test_preparation_boundaries },
 		{ "word-aligned host handoff", test_word_aligned_host_handoff },
 		{ "initialization failures", test_initialization_failures },
 		{ "B1 and host handoff", test_b1_and_host_handoff },

@@ -467,7 +467,7 @@ static bool renegotiating_peer_sample(
 				      &peer->local_mp, &remote, &mode) == V34_DATA_MODE_OK &&
 			      v34_data_startup_prepare(&peer->startup, &mode,
 				      &peer->training.line.profile,
-				      &peer->receive.transmitting_profile) == V34_DATA_STARTUP_OK,
+				      &peer->receive.transmitting_profile, SAMPLE_RATE) == V34_DATA_STARTUP_OK,
 			      "rate renegotiation peer could not select data");
 			peer->peer_mp_received = true;
 		}

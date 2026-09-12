@@ -852,14 +852,14 @@ static bool check_retrain_selects_new_rate(bool pcma)
 		      &caller, &answerer, &channel,
 		      pcma ? V34_ANSWERING_STATION : V34_CALLING_STATION) &&
 	      caller.call.state.phase4.data_startup.transmit
-		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
+		      .mapping.transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
 	      caller.call.state.phase4.data_startup.receive
 		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
 	      caller.call.local_info1.calling
 		      .answer_transmit[V34_SYMBOL_RATE_2400]
 		      .projected_data_rate_2400_bps_units == 4 &&
 	      answerer.call.state.phase4.data_startup.transmit
-		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
+		      .mapping.transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400 &&
 	      answerer.call.state.phase4.data_startup.receive
 		      .transmitting_profile.symbol_rate == V34_SYMBOL_RATE_2400,
 	      "retrain did not adopt the new INFO1a symbol rates");

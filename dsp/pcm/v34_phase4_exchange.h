@@ -84,7 +84,8 @@ union v34_phase4_transmit_path {
  * receiving the answerer's complete S/S-bar marker and reaching a J-pattern
  * boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
- * calibration outside the real-time callback. A valid final peer MP-prime
+ * and line-peak calibration at a separate preparation boundary, before E/B1.
+ * A valid final peer MP-prime
  * record arms E reception at that exact record boundary. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
  * outputs. Calls on one instance must be serialized. One physical receiver

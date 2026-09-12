@@ -135,7 +135,7 @@ static const struct v34_phase3_profile *local_transmit_profile(
 	const struct v34_phase4_exchange *exchange)
 {
 	return exchange->transmit_data_active ?
-	       &exchange->data_startup.transmit.transmitting_profile :
+	       &exchange->data_startup.transmit.mapping.transmitting_profile :
 	       &exchange->transmit.training.line.profile;
 }
 
@@ -228,11 +228,11 @@ static bool data_state_is_valid(
 	if (exchange->transmit_data_active) {
 		if (!v34_data_stream_is_valid(&exchange->transmit.data) ||
 		    !v34_phase3_profile_is_equal(
-			    &exchange->data_startup.transmit.transmitting_profile,
+			    &exchange->data_startup.transmit.mapping.transmitting_profile,
 			    &exchange->transmit.data.line.profile))
 			return false;
 	} else if (!v34_phase3_profile_is_equal(
-			   &exchange->data_startup.transmit.transmitting_profile,
+			   &exchange->data_startup.transmit.mapping.transmitting_profile,
 			   &exchange->transmit.training.line.profile)) {
 		return false;
 	}
@@ -779,7 +779,8 @@ enum v34_phase4_exchange_result v34_phase4_exchange_prepare_data_startup(
 			exchange, V34_PHASE4_EXCHANGE_NUMERIC_FAILURE);
 	startup_result = v34_data_startup_prepare(
 		&startup, &mode, &exchange->transmit.training.line.profile,
-		peer_transmit_profile(exchange));
+		peer_transmit_profile(exchange),
+		exchange->transmit.training.line.carrier.channel.sample_rate);
 	if (startup_result != V34_DATA_STARTUP_OK) {
 		result = startup_result == V34_DATA_STARTUP_OUT_OF_RANGE ?
 			V34_PHASE4_EXCHANGE_OUT_OF_RANGE :

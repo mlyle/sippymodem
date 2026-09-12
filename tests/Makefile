@@ -1169,6 +1169,9 @@ V34_DATA_STARTUP_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_data_startup.o \
 	$(filter-out $(BUILD_DIR)/test_v34_data_mapping.o, \
 		$(V34_DATA_MAPPING_TEST_OBJECTS)) \
+	$(BUILD_DIR)/v34_phase3_s_sequence.o \
+	$(BUILD_DIR)/v34_training_line.o \
+	$(BUILD_DIR)/v34_data_stream.o \
 	$(BUILD_DIR)/v34_data_startup.o
 V34_DATA_STREAM_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_data_stream
@@ -4185,7 +4188,7 @@ $(V34_DATA_STARTUP_TEST_BINARY): $(V34_DATA_STARTUP_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_DATA_STREAM_TEST_BINARY): $(V34_DATA_STREAM_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^ -lm
+	$(CC) $(LDFLAGS) -Wl,--wrap=v34_calibrate_line_power -o $@ $^ -lm
 
 $(V34_ANALYTIC_FILTER_TEST_BINARY): \
 	$(V34_ANALYTIC_FILTER_TEST_OBJECTS)

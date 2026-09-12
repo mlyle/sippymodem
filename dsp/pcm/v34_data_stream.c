@@ -7,6 +7,7 @@
 #include "v34_power_calibration.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -125,6 +126,7 @@ enum v34_data_stream_result v34_data_stream_continue_b1(
 	const struct v34_data_stream_configuration *configuration)
 {
 	struct v34_data_mapping mapping;
+	struct v34_data_stream_preparation preparation;
 	enum v34_data_stream_result result;
 
 	if (stream == NULL ||
@@ -133,39 +135,72 @@ enum v34_data_stream_result v34_data_stream_continue_b1(
 	result = prepare_mapping(configuration, &mapping);
 	if (result != V34_DATA_STREAM_OK)
 		return result;
+	result = v34_data_stream_prepare(
+		&preparation, &mapping, configuration->sample_rate);
+	if (result != V34_DATA_STREAM_OK)
+		return result;
 	return v34_data_stream_continue_prepared_b1(
-		stream, active_line, &mapping);
+		stream, active_line, &preparation);
+}
+
+bool v34_data_stream_preparation_is_valid(
+	const struct v34_data_stream_preparation *preparation)
+{
+	return preparation != NULL &&
+	       v34_data_mapping_is_valid(&preparation->mapping) &&
+	       preparation->sample_rate != 0 &&
+	       isfinite(preparation->line_peak) && preparation->line_peak > 0.0;
+}
+
+enum v34_data_stream_result v34_data_stream_prepare(
+	struct v34_data_stream_preparation *preparation,
+	const struct v34_data_mapping *mapping, uint32_t sample_rate)
+{
+	struct v34_line_power_measurement measurement;
+	enum v34_data_stream_result result;
+
+	if (preparation == NULL || !v34_data_mapping_is_valid(mapping))
+		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	result = calibration_result(v34_calibrate_line_power(
+		&mapping->schedule, &mapping->scrambler, &mapping->encoder,
+		&mapping->normalizer, &mapping->transmitting_profile,
+		sample_rate, &measurement));
+	if (result != V34_DATA_STREAM_OK)
+		return result;
+	*preparation = (struct v34_data_stream_preparation){
+		.mapping = *mapping,
+		.line_peak = measurement.peak_amplitude,
+		.sample_rate = sample_rate,
+	};
+	return V34_DATA_STREAM_OK;
 }
 
 enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 	struct v34_data_stream *stream,
 	const struct v34_training_line *active_line,
-	const struct v34_data_mapping *mapping)
+	const struct v34_data_stream_preparation *preparation)
 {
 	struct v34_data_points points;
 	struct v34_training_line line;
-	struct v34_line_power_measurement measurement;
+	const struct v34_data_mapping *mapping;
 	enum v34_data_stream_result result;
 
-	if (stream == NULL || !v34_data_mapping_is_valid(mapping) ||
+	if (stream == NULL || !v34_data_stream_preparation_is_valid(preparation) ||
 	    !v34_training_line_is_valid(active_line) ||
+	    preparation->sample_rate != active_line->carrier.channel.sample_rate ||
 	    !v34_phase3_profile_is_equal(
-		    &mapping->transmitting_profile,
+		    &preparation->mapping.transmitting_profile,
 		    &active_line->profile))
 		return V34_DATA_STREAM_INVALID_ARGUMENT;
+	mapping = &preparation->mapping;
+
 	result = points_result(v34_data_points_init(
 		&points, &mapping->schedule, &mapping->scrambler,
 		&mapping->encoder, &mapping->normalizer,
 		active_line->profile.local_role));
 	if (result != V34_DATA_STREAM_OK)
 		return result;
-	result = calibration_result(v34_calibrate_line_power(
-		&mapping->schedule, &mapping->scrambler, &mapping->encoder,
-		&mapping->normalizer, &active_line->profile,
-		active_line->carrier.channel.sample_rate, &measurement));
-	if (result != V34_DATA_STREAM_OK)
-		return result;
-	if (measurement.peak_amplitude * active_line->output_gain >=
+	if (preparation->line_peak * active_line->output_gain >=
 	    INT16_MAX + 0.5)
 		return V34_DATA_STREAM_CLIPPING_RISK;
 	line = *active_line;

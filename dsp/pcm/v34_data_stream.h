@@ -55,6 +55,21 @@ struct v34_data_stream_configuration {
 	bool expanded_shaping;
 };
 
+/* Immutable B1 preparation, including the profile- and sample-rate-specific
+ * peak used by the clipping preflight. No carrier/filter history is captured:
+ * that remains owned by the active training waveform until the E boundary. */
+struct v34_data_stream_preparation {
+	struct v34_data_mapping mapping;
+	double line_peak;
+	uint32_t sample_rate;
+};
+
+bool v34_data_stream_preparation_is_valid(
+	const struct v34_data_stream_preparation *preparation);
+enum v34_data_stream_result v34_data_stream_prepare(
+	struct v34_data_stream_preparation *preparation,
+	const struct v34_data_mapping *mapping, uint32_t sample_rate);
+
 /* Derive the first B1 mapping frame while continuing an active training
  * waveform with the exact same profile and line settings. */
 enum v34_data_stream_result v34_data_stream_continue_b1(
@@ -62,13 +77,13 @@ enum v34_data_stream_result v34_data_stream_continue_b1(
 	const struct v34_training_line *active_line,
 	const struct v34_data_stream_configuration *configuration);
 
-/* Continue an active training waveform with a mapping prepared before the E
- * boundary. This avoids repeating deterministic calibration while the first
- * B1 samples are already due. */
+/* Continue an active training waveform with the completed preparation. Only
+ * attach live line history and check its gain here: no generated calibration
+ * stream may run while the first B1 samples are already due. */
 enum v34_data_stream_result v34_data_stream_continue_prepared_b1(
 	struct v34_data_stream *stream,
 	const struct v34_training_line *active_line,
-	const struct v34_data_mapping *mapping);
+	const struct v34_data_stream_preparation *preparation);
 bool v34_data_stream_is_valid(
 	const struct v34_data_stream *stream);
 bool v34_data_stream_is_transmitting_b1(

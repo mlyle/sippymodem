@@ -12,8 +12,7 @@ static bool mapping_matches_direction(
 	const struct v34_data_direction_parameters *direction,
 	bool auxiliary_channel_enabled)
 {
-	return v34_data_mapping_is_valid(mapping) &&
-	       mapping->schedule.geometry.primary_data_rate_2400_bps_units ==
+	return mapping->schedule.geometry.primary_data_rate_2400_bps_units ==
 		       direction->primary_data_rate_2400_bps_units &&
 	       mapping->schedule.geometry.auxiliary_channel_enabled ==
 		       auxiliary_channel_enabled &&
@@ -63,11 +62,12 @@ bool v34_data_startup_is_valid(
 	const struct v34_data_startup *startup)
 {
 	return startup != NULL && v34_data_mode_is_valid(&startup->mode) &&
+	       v34_data_stream_preparation_is_valid(&startup->transmit) &&
 	       startup->receive.transmitting_profile.local_role ==
 		       v34_station_peer_role(
-			       startup->transmit.transmitting_profile.local_role) &&
+			       startup->transmit.mapping.transmitting_profile.local_role) &&
 	       mapping_matches_direction(
-		       &startup->transmit, &startup->mode.transmit,
+		       &startup->transmit.mapping, &startup->mode.transmit,
 		       startup->mode.auxiliary_channel_enabled) &&
 	       receive_matches_direction(
 		       &startup->receive, &startup->mode.receive,
@@ -94,32 +94,43 @@ enum v34_data_startup_result v34_data_startup_prepare(
 	struct v34_data_startup *startup,
 	const struct v34_data_mode *mode,
 	const struct v34_phase3_profile *transmit_profile,
-	const struct v34_phase3_profile *receive_profile)
+	const struct v34_phase3_profile *receive_profile,
+	uint32_t sample_rate)
 {
 	struct v34_data_startup prepared = { 0 };
-	struct v34_data_mapping receive_mapping;
+	struct v34_data_mapping mapping;
 	enum v34_data_mapping_result result;
 
-	if (startup == NULL || !v34_data_mode_is_valid(mode) ||
+	if (startup == NULL || sample_rate == 0 || !v34_data_mode_is_valid(mode) ||
 	    !v34_phase3_profile_is_valid(transmit_profile) ||
 	    !v34_phase3_profile_is_valid(receive_profile) ||
 	    receive_profile->local_role !=
 		    v34_station_peer_role(transmit_profile->local_role))
 		return V34_DATA_STARTUP_INVALID_ARGUMENT;
 	result = v34_data_mapping_prepare(
-		&prepared.transmit, transmit_profile, &mode->transmit,
+		&mapping, transmit_profile, &mode->transmit,
 		mode->auxiliary_channel_enabled);
 	if (result != V34_DATA_MAPPING_OK)
 		return mapping_result(result);
+	switch (v34_data_stream_prepare(&prepared.transmit, &mapping, sample_rate)) {
+	case V34_DATA_STREAM_OK:
+		break;
+	case V34_DATA_STREAM_INVALID_ARGUMENT:
+		return V34_DATA_STARTUP_INVALID_ARGUMENT;
+	case V34_DATA_STREAM_OUT_OF_RANGE:
+		return V34_DATA_STARTUP_OUT_OF_RANGE;
+	default:
+		return V34_DATA_STARTUP_NUMERIC_FAILURE;
+	}
 	result = v34_data_mapping_prepare(
-		&receive_mapping, receive_profile, &mode->receive,
+		&mapping, receive_profile, &mode->receive,
 		mode->auxiliary_channel_enabled);
 	if (result != V34_DATA_MAPPING_OK)
 		return mapping_result(result);
 	prepared.mode = *mode;
 	prepared.receive.transmitting_profile = *receive_profile;
-	prepared.receive.geometry = receive_mapping.schedule.geometry;
-	prepared.receive.normalizer = receive_mapping.normalizer;
+	prepared.receive.geometry = mapping.schedule.geometry;
+	prepared.receive.normalizer = mapping.normalizer;
 	memcpy(prepared.receive.precoder_coefficients,
 	       mode->receive.precoder_coefficients,
 	       sizeof(prepared.receive.precoder_coefficients));
