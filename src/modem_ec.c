@@ -1174,8 +1174,14 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 		/* TBD */ /* is info may be send */
 		EC_DBG("seq.error: ns %d, vr %d\n",FRAME_NS(f),l->vr);
 		// reject should be sent
-		if (l->reject) /* already sent */
+		if (l->reject) {
+			/* V.42 8.5.1: even a repeated sequence error carries a
+			 * valid poll. Reply without repeating REJ or accepting
+			 * its payload; own-receiver busy is handled above. */
+			if (FRAME_I_PF(f))
+				TX_RR(l, l->rsp_addr, 1);
 			return -1;
+		}
 		EC_DBG("tx reject...\n");
 		TX_REJ(l,l->rsp_addr,FRAME_I_PF(f));
 		/* TX_REJ(l,l->cmd_addr,1); */

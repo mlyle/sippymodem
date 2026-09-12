@@ -2254,6 +2254,115 @@ static bool test_lapm_acknowledgement_window(void)
 	return true;
 }
 
+static bool test_lapm_repeated_sequence_error_poll(void)
+{
+	enum { LAPM_DATA_STATE = 2, RR = 1, RNR = 5, REJ = 9 };
+	static const unsigned int receive_starts[] = { 0, 5, 127 };
+	static const uint8_t payload[] = { 'A', 'B' };
+	struct modem_driver driver = {
+		.name = "LAPM repeated sequence error", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t start = 0; start < ARRAY_LENGTH(receive_starts); ++start)
+	for (unsigned int recovery = 0; recovery < 2; ++recovery)
+	for (unsigned int busy = 0; busy < 2; ++busy) {
+		struct modem *m = modem_create(&driver, driver.name);
+		struct lapm_state *l;
+		frame_t *retained, *outgoing;
+		unsigned int vr = receive_starts[start];
+		uint8_t wire[] = { 0, (uint8_t)(((vr + 127) & 127) << 1), 254, 'X' };
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		int timer, retries;
+
+		CHECK(m != NULL, "LAPM repeated-poll allocation failed");
+		m->cfg.ec = 1;
+		m->cfg.ec_tx_win_size = 3;
+		m->cfg.ec_tx_info_size = 1;
+		m->rx_rate = m->tx_rate = 26400;
+		CHECK(modem_ec_init(m) == 0, "LAPM repeated-poll initialization failed");
+		modem_hdlc_start(m);
+		modem_ec_start(m);
+		l = &m->ec.lapm;
+		l->state = LAPM_DATA_STATE;
+		l->vr = vr;
+		l->vs = l->va = 126;
+		m->get_chars = scripted_lapm_source;
+		lapm_source.data = payload;
+		lapm_source.length = sizeof(payload);
+		lapm_source.offset = 0;
+		retained = l->sent_info->next;
+		for (unsigned int i = 0; i < sizeof(payload); ++i) {
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 4,
+			      "LAPM repeated-poll fixture did not queue information");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		m->get_chars = NULL;
+		if (recovery) {
+			m->bit_timer_func(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->buf[1] == RR &&
+			      (outgoing->buf[2] & 1) && l->rtx_count == 1,
+			      "LAPM fixture did not enter timer recovery");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		/* An old I frame acknowledges the first of our two pending frames.
+		 * Reject its payload, but still process N(R) across the wrap. */
+		wire[0] = l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(l->reject && l->vr == vr && l->va == 127 && l->vs == 0 &&
+		      l->sent_info == retained && l->sent_count == 1 &&
+		      outgoing != NULL && outgoing->buf[1] == REJ && outgoing->buf[2] == 2 * vr,
+		      "first LAPM sequence error did not preserve information and send REJ");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		l->busy = busy;
+		timer = m->bit_timer;
+		retries = l->rtx_count;
+		for (unsigned int repeat = 0; repeat < 4; ++repeat) {
+			unsigned int poll = repeat & 1;
+			wire[2] = 254 | poll;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(l->reject && l->vr == vr && l->va == 127 && l->vs == 0 &&
+			      l->sent_info == retained && l->sent_count == 1 &&
+			      m->bit_timer == timer && l->rtx_count == retries,
+			      "duplicate LAPM information changed retained recovery state");
+			if (poll) {
+				CHECK(outgoing != NULL && outgoing->buf[0] == l->rsp_addr &&
+				      outgoing->buf[1] == (busy ? RNR : RR) && outgoing->buf[2] == 2 * vr + 1,
+				      "duplicate I poll has no final reply (vr=%u recovery=%u busy=%u)",
+				      vr, recovery, busy);
+				m->packer.hdlc.tx_complete(l, outgoing);
+			} else {
+				CHECK(outgoing == NULL, "unpolled duplicate repeated REJ or sent information");
+			}
+		}
+		/* The expected I frame, not another duplicate, resolves the REJ
+		 * exception and delivers its payload exactly once. */
+		l->busy = 0;
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		wire[1] = (uint8_t)(vr << 1);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(!l->reject && l->vr == ((vr + 1) & 127) &&
+		      lapm_sink.length == 1 && lapm_sink.data[0] == 'X' &&
+		      outgoing != NULL && outgoing->buf[1] == RR &&
+		      outgoing->buf[2] == (((vr + 1) & 127) * 2 + 1) &&
+		      m->bit_timer == timer && l->rtx_count == retries,
+		      "expected LAPM information did not resolve REJ while preserving our enquiry");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_source, 0, sizeof(lapm_source));
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
 static bool test_lapm_retrain_preserves_link_state(void)
 {
 	enum {
@@ -3383,6 +3492,7 @@ int main(void)
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
+		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
 		{ "LAPM retrain preserves link state",
 		  test_lapm_retrain_preserves_link_state },
 		{ "retrain preserves V.42 detection", test_retrain_preserves_detection },
