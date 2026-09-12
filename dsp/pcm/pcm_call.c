@@ -1438,9 +1438,12 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call)
 	 * Keep fixed mappings unchanged; at the lowest rate, online recovery
 	 * still has its existing per-call retry budget. Never raise a ceiling
 	 * retained from an earlier failure. */
-	if (call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
-	    rate > 1u && (previous == 0u || rate <= previous))
-		call->v92_upstream_retry_ceiling = rate - 1u;
+	if (call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
+		if (rate <= 1u && call->b1_deadline_armed)
+			return PCM_CALL_UNUSABLE_SELECTION;
+		if (rate > 1u && (previous == 0u || rate <= previous))
+			call->v92_upstream_retry_ceiling = rate - 1u;
+	}
 	result = begin_retrain(call, false);
 	if (result != PCM_CALL_OK)
 		call->v92_upstream_retry_ceiling = previous;
@@ -1461,15 +1464,11 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
 	    call->state.data_path.v92_digital.upstream.line.received_frames >=
 		    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-		uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
-
 		/* V.92 9.6.1.2 allows full retrain during Phase 4. Once every B1u
 		 * decision is available, do not repeat a selection that failed it.
 		 * Ja in the next epoch still decides which lower rates are usable.
 		 * Strictly decreasing ceilings bound recovery, even without a host
 		 * training timeout. Fixed caller-owned mappings are never replaced. */
-		if (rate <= 1u)
-			return PCM_CALL_UNUSABLE_SELECTION;
 		return retry_v92_upstream(call);
 	}
 	if (call->b1_deadline_remaining_samples != 0u)
@@ -4598,12 +4597,17 @@ static enum pcm_call_result v92_data_octet_owned(
 		}
 		received = v92_upstream_data_rx_octet_owned(&path->upstream,
 			received_octet, received_sample, received_available, &frame);
-		if (received == V92_UPSTREAM_DATA_RX_NO_PATH && v92_peer_b1_received_owned(call)) {
+		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
 			/* A noise burst can eliminate every valid coded word. The
-			 * failed decoder cannot continue, but the established link
-			 * can recover through the same bounded quality retrain as an
-			 * ambiguous payload. Do not turn signal damage into a numeric
-			 * failure or invent bits from the discarded receive history. */
+			 * failed decoder cannot continue, including during B1u or a
+			 * fast exchange. Use the strictly decreasing initial-training
+			 * ceiling, or the quality retry budget for established calls
+			 * and fixed mappings. Never invent the discarded payload. */
+			if (path->fast.control.cleardown.active)
+				return PCM_CALL_CLEARDOWN_COMPLETE;
+			if (call->b1_deadline_armed &&
+			    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT)
+				return retry_v92_upstream(call);
 			enum v92_data_quality_result quality = v92_data_quality_observe(
 				&call->pcm_upstream_quality, 0.0, true, false);
 			return quality == V92_DATA_QUALITY_RETRAIN ? retry_v92_upstream(call) :

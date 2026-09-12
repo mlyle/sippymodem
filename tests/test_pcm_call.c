@@ -6980,6 +6980,57 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 	return true;
 }
 
+static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_t received)
+{
+	unsigned rate = before->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+	bool training = before->b1_deadline_armed;
+
+	for (unsigned fixed = 0u; fixed < 2u; ++fixed)
+		for (unsigned fast = 0u; fast < (training ? 1u : 3u); ++fast)
+			for (unsigned budget = 0u; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+				struct pcm_call checked = *before;
+				struct pcm_call_data_event event, owned_event;
+				uint8_t transmitted, owned_transmitted;
+				bool closing = fast == 2u;
+				bool available = !closing && ((!fixed && training) || budget < V92_DATA_QUALITY_MAX_RETRAINS);
+
+				/* Preserve the negotiated mapping, but exercise ownership by
+				 * the caller as well as automatic rate-selection policy. */
+				if (fixed) {
+					checked.v92_digital_phase4_configuration.upstream_selection = PCM_CALL_V92_UPSTREAM_CONFIGURED;
+					checked.v92_digital_phase4_configuration.cpd =
+						before->state.data_path.v92_digital.upstream.decoder.mapping.cpd;
+					checked.v92_digital_phase4_configuration.cpd.acknowledges_cpu = false;
+				}
+				checked.pcm_upstream_quality.automatic_retrains = budget;
+				CHECK(pcm_call_is_valid(&checked) && (!fast || pcm_call_start_fast_exchange(&checked) == PCM_CALL_OK) &&
+				      (!closing || pcm_call_start_cleardown(&checked) == PCM_CALL_OK),
+				      "no-path policy setup failed");
+				struct pcm_call owned = checked;
+				struct pcm_call_v92_digital_phase4_configuration configuration = checked.v92_digital_phase4_configuration;
+				int16_t linear = decode_octet(before->law, received);
+				enum pcm_call_result result = pcm_call_data_octet(
+					&checked, received, linear, true, NULL, &transmitted, &event);
+				enum pcm_call_result owned_result = pcm_call_data_octet_owned(
+					&owned, received, linear, true, NULL, &owned_transmitted, &owned_event);
+
+				CHECK(result == (closing ? PCM_CALL_CLEARDOWN_COMPLETE : available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
+				      result == owned_result && transmitted == owned_transmitted &&
+				      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+				      memcmp(&event, &owned_event, sizeof(event)) == 0 &&
+				      pcm_call_is_valid(&checked) && event.kind == PCM_CALL_DATA_NONE &&
+				      checked.protocol == PCM_PROTOCOL_V92 &&
+				      checked.pcm_upstream_quality.automatic_retrains == budget + (available && (fixed || !training)) &&
+				      checked.v92_upstream_retry_ceiling == (available && !fixed ? rate - 1u : 0u) &&
+				      (closing ? checked.stage == PCM_CALL_CLOSED && !checked.failed :
+				       available ? checked.stage == PCM_CALL_RETRAIN_SILENCE && !checked.failed : checked.failed) &&
+				      memcmp(&checked.v92_digital_phase4_configuration, &configuration, sizeof(configuration)) == 0,
+				      "no-path recovery lost budget, selection, or payload clamp: law=%u training=%u fixed=%u fast=%u budget=%u result=%s",
+				      before->law, training, fixed, fast, budget, pcm_call_result_name(result));
+			}
+	return true;
+}
+
 static bool run_v92_no_path_recovery(enum g711_law law)
 {
 	const struct v92_upstream_offer offer = {
@@ -7010,25 +7061,7 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 		enum v92_upstream_data_rx_result rx = v92_upstream_data_rx_octet(
 			&probe, received, linear, true, &frame);
 		if (rx == V92_UPSTREAM_DATA_RX_NO_PATH) {
-			for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
-				struct pcm_call copy = call;
-				bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
-
-				copy.pcm_upstream_quality.automatic_retrains = budget;
-				enum pcm_call_result result = pcm_call_data_octet(
-					&copy, received, linear, true, NULL, &transmitted, &event);
-				CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
-				      pcm_call_is_valid(&copy) && event.kind == PCM_CALL_DATA_NONE &&
-				      copy.protocol == PCM_PROTOCOL_V92 &&
-				      copy.pcm_upstream_quality.automatic_retrains == budget + (available ? 1u : 0u) &&
-				      copy.v92_upstream_retry_ceiling == (available ? 18u : call.v92_upstream_retry_ceiling) &&
-				      (available ? copy.stage == PCM_CALL_RETRAIN_SILENCE && !copy.failed : copy.failed) &&
-				      memcmp(&copy.v92_digital_phase4_configuration, &call.v92_digital_phase4_configuration,
-					     sizeof(call.v92_digital_phase4_configuration)) == 0,
-				      "no-path recovery lost its budget, selection, or payload clamp: law=%u budget=%u result=%s",
-				      law, budget, pcm_call_result_name(result));
-			}
-			return true;
+			return v92_no_path_recovery_contracts(&call, received);
 		}
 		CHECK(pcm_call_data_octet(&call, received, linear, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
 		      call.stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(&call),
@@ -7040,6 +7073,77 @@ static bool run_v92_no_path_recovery(enum g711_law law)
 static bool test_v92_no_path_recovery(void)
 {
 	return run_v92_no_path_recovery(G711_LAW_PCMU) && run_v92_no_path_recovery(G711_LAW_PCMA);
+}
+
+static bool run_v92_b1_no_path_recovery(enum g711_law law)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call calls[2];
+	struct channel wire;
+	uint32_t noise = UINT32_C(0x81374aef);
+	unsigned injected = 0u;
+	bool recovered = false;
+
+	ac.phase3.v92_analog.upstream_rate_mask = (UINT32_C(1) << 19u) - 1u;
+	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 no-path setup failed");
+	for (unsigned clock = 0u; clock < 2u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t received[2], transmitted[2];
+		channel_receive(&wire, &received[0], &received[1]);
+		for (unsigned side = 0u; side < 2u; ++side) {
+			struct pcm_call *call = &calls[side];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(v92_data_boundary(call), "B1 no-path handoff failed");
+			if (call->stage != PCM_CALL_DATA_PATH) {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, received[side], decode_octet(law, received[side]),
+					&transmitted[side], &observation) == PCM_CALL_OK, "B1 no-path training failed");
+				continue;
+			}
+			struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+			bool damage = side == 1u && !recovered &&
+				path->upstream.line.received_frames >= V92_B1U_ACQUISITION_FRAMES;
+			if (damage) {
+				/* A bounded unannounced noise burst, not injected decoder
+				 * state: the delayed B1 decisions must stay clamped. */
+				noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
+				int32_t n = (int32_t)(noise >> 16);
+				received[side] = encode_octet(law, (int16_t)(n > INT16_MAX ? n - 65536 : n));
+				CHECK(++injected <= 512u && !pcm_call_is_online(call), "B1 burst escaped training");
+				struct v92_upstream_data_rx probe = path->upstream;
+				struct v92_upstream_data_frame frame;
+				enum v92_upstream_data_rx_result rx = v92_upstream_data_rx_octet(
+					&probe, received[side], decode_octet(law, received[side]), true, &frame);
+				if (rx == V92_UPSTREAM_DATA_RX_NO_PATH) {
+					CHECK(v92_no_path_recovery_contracts(call, received[side]), "B1 no-path recovery contract failed");
+					recovered = true;
+				}
+			}
+			struct pcm_call_data_event event;
+			CHECK(pcm_call_data_octet(call, received[side], decode_octet(law, received[side]), true,
+				NULL, &transmitted[side], &event) == PCM_CALL_OK && pcm_call_is_valid(call) &&
+			      (!damage || event.kind == PCM_CALL_DATA_NONE), "B1 no-path call failed or released payload");
+		}
+		channel_transmit(&wire, transmitted[0], transmitted[1]);
+		if (recovered && pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1])) {
+			CHECK(calls[1].v92_upstream_retry_ceiling == 18u && calls[1].pcm_upstream_quality.automatic_retrains == 0u &&
+			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == 18u &&
+			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == 18u,
+			      "B1 no-path recovery did not negotiate the lower rate: law=%u ceiling=%u budget=%u digital=%u analog=%u",
+			      law, calls[1].v92_upstream_retry_ceiling, calls[1].pcm_upstream_quality.automatic_retrains,
+			      calls[1].state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number,
+			      calls[0].state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number);
+			return true;
+		}
+	}
+	CHECK(false, "B1 no-path recovery did not return online");
+}
+
+static bool test_v92_b1_no_path_recovery(void)
+{
+	return run_v92_b1_no_path_recovery(G711_LAW_PCMU) && run_v92_b1_no_path_recovery(G711_LAW_PCMA);
 }
 
 static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
@@ -10197,6 +10301,7 @@ int main(void)
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
+		{ "V.92 lost B1 decoder paths retrain", test_v92_b1_no_path_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
 		{ "V.92 paired fast exchange", test_v92_fast_pair },

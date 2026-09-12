@@ -23,12 +23,14 @@ enum v92_data_quality_result {
 	V92_DATA_QUALITY_INVALID_ARGUMENT,
 };
 
-/* Online PCM-upstream policy, separate from the frame decoder. A zero
+/* PCM-upstream quality policy, separate from the frame decoder. A zero
  * initializer begins a new call. Each observation covers one twelve-symbol
  * frame before equalizer adaptation. Three consecutive bad 192 ms windows
  * request full retraining. A window is bad on excess residual or low-margin
  * sequence disagreement; a single uncertain window cannot force recovery.
- * A decoder-reported ambiguous payload requests recovery immediately.
+ * A decoder-reported ambiguous payload or loss of all decoder paths requests
+ * recovery immediately. Fixed mappings also use this budget for lost paths
+ * during B1u; automatic initial selection instead lowers its rate ceiling.
  * Neither condition licenses delivering ambiguous bits to the host. */
 struct v92_data_quality {
 	double squared_error;
