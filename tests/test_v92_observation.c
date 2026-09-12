@@ -229,7 +229,21 @@ static void check_scores(const struct v92_observation *model,
 	assert(v92_observation_symbol(&cache, 0));
 }
 
-static void check_channel(enum g711_law law, double gain)
+static void check_rebinding(const struct v92_observation *a, const struct v92_observation *b)
+{
+	struct v92_observation_cache cache;
+	struct v92_observation rebound;
+	/* Real fits at different gains exercise both wider buckets and direct
+	 * integer lookup. Refresh dimensions even when model storage is reused
+	 * between coding epochs rather than assigning a different address. */
+	for (unsigned i = 0; i < 3; i++) {
+		rebound = i == 1 ? *b : *a;
+		v92_observation_begin(&cache, &rebound, 0.);
+		check_geometry(&cache);
+	}
+}
+
+static void check_channel(enum g711_law law, double gain, struct v92_observation *previous)
 {
 	int32_t x[SAMPLES];
 	int16_t q[SAMPLES], y[SAMPLES], u[TRAINING] = { 0 };
@@ -264,6 +278,8 @@ static void check_channel(enum g711_law law, double gain)
 	check_scores(&model, x, y);
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);
+	if (previous->count) check_rebinding(previous, &model);
+	*previous = model;
 	printf("V.92 observation law=%u gain=%.9g heldout_rms=%.6f\n", law, gain, rms);
 }
 
@@ -303,9 +319,10 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 int main(void)
 {
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
+	struct v92_observation previous = { 0 };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
-			check_channel(law, gains[i]);
+			check_channel(law, gains[i], &previous);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
 			check_noise_fit(law, sigma);

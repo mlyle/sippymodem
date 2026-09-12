@@ -81,6 +81,9 @@ struct v92_observation_point {
 /* Frame-local scratch, borrowing the validated immutable model. Its symbols
  * may have different observed samples and noise; scores cannot cross symbols. */
 struct v92_observation_cache {
+	/* Derived once at begin(), like the other immutable per-fit constants. */
+	unsigned bucket_shift;
+	int64_t bucket_extent;
 	uint64_t key[V92_OBSERVATION_CACHE], value[V92_OBSERVATION_CACHE];
 	int32_t second_key[V92_OBSERVATION_CACHE];
 	uint8_t stamp[V92_OBSERVATION_CACHE], generation;

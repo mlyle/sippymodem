@@ -502,10 +502,11 @@ bool v92_observation_fit(struct v92_observation *model,
 	return true;
 }
 
-static size_t point_span(const struct v92_observation *model, int32_t x)
+static size_t point_span(const struct v92_observation_cache *cache, int32_t x)
 {
-	unsigned shift = bucket_shift(model);
-	int64_t extent = (int64_t)(V92_OBSERVATION_BUCKETS / 2u) << shift;
+	const struct v92_observation *model = cache->model;
+	unsigned shift = cache->bucket_shift;
+	int64_t extent = cache->bucket_extent;
 	if (x >= extent) return model->count - 1;
 	if (x < -extent) return 0;
 	unsigned bucket = (unsigned)(((int64_t)x + extent) >> shift);
@@ -595,6 +596,8 @@ void v92_observation_begin(struct v92_observation_cache *cache,
 	memset(cache->point_tag, 0, sizeof(cache->point_tag));
 	cache->generation = 0;
 	cache->model = model;
+	cache->bucket_shift = bucket_shift(model);
+	cache->bucket_extent = (int64_t)(V92_OBSERVATION_BUCKETS / 2u) << cache->bucket_shift;
 	cache->relative_noise = relative_noise;
 	cache->observed = 0;
 	cache->variance = cache->bound_scale = 0.;
@@ -697,7 +700,7 @@ struct v92_observation_point v92_observation_point(struct v92_observation_cache 
 {
 	if (cache->model->input_coefficient)
 		x = round_shift_s64_to_s32_saturating((int64_t)x * cache->model->input_coefficient, 15u);
-	size_t span = point_span(cache->model, x);
+	size_t span = point_span(cache, x);
 	struct v92_observation_values values = *point_values(cache, span);
 	return (struct v92_observation_point){ values, x, values.stable ? cache->model->first[span] : x, span };
 }
@@ -709,7 +712,7 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 	const struct v92_observation *model = cache->model;
 	if (model->input_coefficient)
 		x = round_shift_s64_to_s32_saturating((int64_t)x * model->input_coefficient, 15u);
-	size_t span = point_span(model, x);
+	size_t span = point_span(cache, x);
 	const struct v92_observation_values *a = point_values(cache, span), *b = &previous->values;
 	if (budget != UINT64_MAX) {
 		/* Every mixture mean lies in this deliberately enlarged envelope.
@@ -764,7 +767,7 @@ struct v92_observation_range v92_observation_range(struct v92_observation_cache 
 {
 	if (cache->model->input_coefficient)
 		x = round_shift_s64_to_s32_saturating((int64_t)x * cache->model->input_coefficient, 15u);
-	const struct v92_observation_values *values = point_values(cache, point_span(cache->model, x));
+	const struct v92_observation_values *values = point_values(cache, point_span(cache, x));
 	return (struct v92_observation_range){ values->main_low, values->main_high };
 }
 
