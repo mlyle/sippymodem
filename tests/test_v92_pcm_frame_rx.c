@@ -172,6 +172,64 @@ static bool run_stream(enum g711_law law, uint8_t rate, bool filtered, bool coll
 	return true;
 }
 
+static bool test_peer_point_selection(enum g711_law law, enum v92_cpd_trellis trellis)
+{
+	enum { FRAMES = V92_B1U_FRAMES + 32, SHIFT = 32 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+
+	CHECK(v92_cpd_direct_init(&cpd, law, 1u, false) == V92_CPD_OK,
+		"peer point CPd failed");
+	cpd.trellis = trellis;
+	memset(cpd.filter, 0, sizeof(cpd.filter));
+	cpd.constellation[0].count = 64u;
+	for (unsigned point = 0; point < 64u; point++)
+		cpd.constellation[0].positive_linear[point] = (int16_t)((2u * point + 1u) * 128u);
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+		v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+		"peer point initialization failed");
+	for (unsigned f = 0; f < FRAMES + V92_PCM_RX_DELAY_FRAMES; f++) {
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+			V92_PCM_FRAME_OK, "peer point encoding failed");
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++) {
+			/* V.92 6.4.2 permits any point in E(Ki). Our minimum-|x|
+			 * transmitter policy is not a receive constraint. This shift
+			 * preserves both the digit and eta modulo 4 (the inverse map),
+			 * so the next trellis state is unchanged. There are no filters. */
+			unsigned step = cpd.modulus[i] * (i % 4u == 3u ? 2u : 1u);
+			int eta = frame.signed_index[i];
+			eta += eta < 0 ? -SHIFT : SHIFT;
+			CHECK(SHIFT % step == 0u && eta >= -64 && eta < 64,
+				"peer point left its equivalence class");
+			int16_t u = cpd.constellation[0].positive_linear[eta < 0 ? -eta - 1 : eta];
+			samples[i] = eta < 0 ? (int16_t)-u : u;
+			CHECK((int32_t)samples[i] * samples[i] > (int32_t)frame.u[i] * frame.u[i],
+				"peer point did not exercise a higher-power choice");
+		}
+		CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES, decoded,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+			decision.squared_error == 0u && !decision.ambiguous &&
+			decision.bits_ready == (f >= V92_PCM_RX_DELAY_FRAMES) &&
+			!memcmp(decision.frame.u, samples, sizeof(samples)),
+			"law %u trellis %u frame %u rejected peer point selection", law, trellis, f);
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, f - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!memcmp(bits, decoded, mapping.data_bits_per_frame),
+				"peer point selection changed payload");
+		}
+	}
+	return true;
+}
+
 static bool test_direct_44k_level(enum g711_law law, int16_t level)
 {
 	struct v92_cpd_parameters cpd;
@@ -1177,6 +1235,7 @@ int main(void)
 		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
 		     trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis) {
+			if (!test_peer_point_selection((enum g711_law)law, trellis)) return 1;
 			for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
 				if (!test_rm_receive((enum g711_law)law, rate, trellis, 0u)) return 1;
 			for (unsigned scenario = 1u; scenario <= 2u; ++scenario)
