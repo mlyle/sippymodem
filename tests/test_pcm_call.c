@@ -6886,7 +6886,7 @@ static bool test_v92_codec_noise_recovery(void)
 	 * disagreements. Keep clean data through 4000 frames, then inject bounded
 	 * noise before the tandem codec throughout real training and payload.
 	 * Never arm quality state or tolerate a wrong delivered payload here. */
-	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		for (unsigned noisy = 0; noisy <= 1; noisy++) {
 			bool recovery = noisy && law == G711_LAW_PCMU;
 			struct v92_upstream_offer offer = {
@@ -6902,6 +6902,16 @@ static bool test_v92_codec_noise_recovery(void)
 			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == offer.expected_retrains,
 			      "codec noise did not trigger the expected online quality recovery");
 		}
+		/* Sparse 24k maps should carry a noisier channel without inheriting
+		 * the dense-map recovery expectation. Exercise real training and
+		 * exact payloads; leave the B1 and online quality limits intact. */
+		const struct v92_upstream_offer sparse = {
+			.peer_mask = UINT32_C(1), .local_maximum = 1u, .expected = 1u,
+			.postcursor = .10, .noise_peak = 64u, .payload_frames = 4000u,
+		};
+		CHECK(run_v92_duplex_data(law, 3u, false, &sparse),
+		      "codec %u failed noisy sparse PCM-upstream data", law);
+	}
 	return true;
 }
 
