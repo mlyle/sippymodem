@@ -47,16 +47,13 @@ static uint64_t independent_score(const struct v92_observation *model,
 		last = next;
 	}
 	assert(transitions <= 255);
-	double lower = 0., upper = 0.;
-	if (model->quantizer_gain > 0.) {
-		struct g711_interval bin;
-		assert(g711_quantization_interval(model->law,
-			quantize(model->law, observed / model->quantizer_gain), &bin));
-		lower = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5) * model->quantizer_gain;
-		upper = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5) * model->quantizer_gain;
-		lower -= observed;
-		upper -= observed;
-	}
+	struct g711_interval bin;
+	assert(model->quantizer_gain > 0. && g711_quantization_interval(model->law,
+		quantize(model->law, observed / model->quantizer_gain), &bin));
+	double lower = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5) * model->quantizer_gain;
+	double upper = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5) * model->quantizer_gain;
+	lower -= observed;
+	upper -= observed;
 	double likelihood = 0.;
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		const struct v92_observation_interval *fit = &model->intervals[i];
@@ -79,7 +76,7 @@ static uint64_t independent_score(const struct v92_observation *model,
 				fit->post * quantize(model->law, gain * input[1]) -
 				fit->second * quantize(model->law, gain * input[2]);
 			double probability;
-			if (model->quantizer_gain == 0.) {
+			if (lower == upper) {
 				probability = exp(-.5 * error * error / model->variance);
 			} else {
 				double a = (error + lower) / sqrt(2. * model->variance);
@@ -118,25 +115,37 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	const int16_t *u, const int16_t *y)
 {
 	struct v92_observation before = *model;
-	assert(!v92_observation_fit(model, model->law, x, u, y, TRAINING + 1));
-	assert(!v92_observation_fit(model, model->law, x, u, y, 3));
-	assert(!v92_observation_fit(model, (enum g711_law)-1, x, u, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, NULL, u, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, x, NULL, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, x, u, NULL, TRAINING));
-	assert(!v92_observation_fit(NULL, model->law, x, u, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, x, y, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, model->first, u, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, x, (const int16_t *)model, y, TRAINING));
-	assert(!v92_observation_fit(model, model->law, x, u, (const int16_t *)model, TRAINING));
-	assert(!v92_observation_refit_bins(model, x, y, y, TRAINING + 1));
-	assert(!v92_observation_refit_bins(model, model->first, y, y, TRAINING));
-	assert(!v92_observation_refit_bins(model, x, (const int16_t *)model, y, TRAINING));
-	assert(!v92_observation_refit_bins(model, x, y, (const int16_t *)model, TRAINING));
-	assert(!v92_observation_refit_bins(model, NULL, y, y, TRAINING));
-	int16_t invalid[TRAINING] = { 1 }; /* 1 is not a reconstructed codec level. */
-	assert(!v92_observation_refit_bins(model, x, y, invalid, TRAINING));
-	assert(memcmp(model, &before, sizeof(before)) == 0);
+	const struct v92_observation_training good = {
+		.input = x, .linear = u, .sample = y, .levels = y,
+		.count = TRAINING, .host_gain = model->quantizer_gain, .law = model->law,
+	};
+	int16_t invalid[TRAINING] = { 1 }; /* Not a reconstructed codec level. */
+	assert(!v92_observation_fit(NULL, &good));
+	assert(!v92_observation_fit(model, NULL));
+	assert(!v92_observation_fit(model, (const struct v92_observation_training *)model));
+	for (unsigned fault = 0; fault < 16; fault++) {
+		struct v92_observation_training bad = good;
+		switch (fault) {
+		case 0: bad.count = TRAINING + 1; break;
+		case 1: bad.count = 3; break;
+		case 2: bad.law = (enum g711_law)-1; break;
+		case 3: bad.input = NULL; break;
+		case 4: bad.linear = NULL; break;
+		case 5: bad.sample = NULL; break;
+		case 6: bad.linear = y; break;
+		case 7: bad.input = model->first; break;
+		case 8: bad.linear = (const int16_t *)model; break;
+		case 9: bad.sample = (const int16_t *)model; break;
+		case 10: bad.levels = (const int16_t *)model; break;
+		case 11: bad.levels = invalid; break;
+		case 12: bad.host_gain = 0.; break;
+		case 13: bad.host_gain = -1.; break;
+		case 14: bad.host_gain = NAN; break;
+		case 15: bad.host_gain = INFINITY; break;
+		}
+		assert(!v92_observation_fit(model, &bad));
+		assert(memcmp(model, &before, sizeof(before)) == 0);
+	}
 	assert(!v92_observation_is_valid(NULL));
 	model->variance = NAN;
 	assert(!v92_observation_is_valid(model));
@@ -151,7 +160,7 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	assert(!v92_observation_is_valid(model));
 	*model = before;
 	model->quantizer_gain = 0.;
-	assert(!v92_observation_refit_bins(model, x, y, y, TRAINING));
+	assert(!v92_observation_is_valid(model));
 	assert(isnan(v92_observation_predict(model, x)));
 	*model = before;
 }
@@ -186,20 +195,15 @@ static void check_scores(const struct v92_observation *model,
 		assert(v92_observation_symbol(&fresh, y[i]));
 		assert(v92_observation_score(&fresh, x[i], &previous, &second, UINT64_MAX) == score);
 	}
-	struct v92_observation point_model = *model;
-	point_model.quantizer_gain = 0.;
-	for (unsigned bins = 0; bins < 2; bins++) {
-		const struct v92_observation *reference = bins ? model : &point_model;
-		v92_observation_begin(&cache, reference, 0.);
-		for (unsigned i = TRAINING; i < TRAINING + 8; i++) {
-			int32_t input[] = { x[i], x[i - 1], x[i - 2] };
-			struct v92_observation_point b = v92_observation_point(&cache, input[1]);
-			struct v92_observation_point c = v92_observation_point(&cache, input[2]);
-			assert(v92_observation_symbol(&cache, y[i]));
-			uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
-			uint64_t expected = independent_score(reference, input, y[i]);
-			assert(actual <= expected + 1 && expected <= actual + 1);
-		}
+	v92_observation_begin(&cache, model, 0.);
+	for (unsigned i = TRAINING; i < TRAINING + 8; i++) {
+		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
+		struct v92_observation_point b = v92_observation_point(&cache, input[1]);
+		struct v92_observation_point c = v92_observation_point(&cache, input[2]);
+		assert(v92_observation_symbol(&cache, y[i]));
+		uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
+		uint64_t expected = independent_score(model, input, y[i]);
+		assert(actual <= expected + 1 && expected <= actual + 1);
 	}
 	struct v92_observation_cache saved = cache;
 	int16_t invalid = 1;
@@ -237,12 +241,18 @@ static void check_channel(enum g711_law law, double gain)
 		y[i] = quantize(law, sample);
 	}
 	struct v92_observation model;
-	assert(v92_observation_fit(&model, law, x, u, y, TRAINING));
-	assert(v92_observation_is_valid(&model));
-	model.quantizer_gain = 1.;
-	assert(v92_observation_refit_bins(&model, x, y, y, TRAINING));
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = y,
+		.count = TRAINING, .host_gain = 1., .law = law,
+	};
+	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
 	struct v92_observation before = model;
+	struct v92_observation inferred;
+	struct v92_observation_training without_levels = training;
+	without_levels.levels = NULL;
+	assert(v92_observation_fit(&inferred, &without_levels));
+	assert(memcmp(&inferred, &model, sizeof(model)) == 0);
 	double error = 0.;
 	for (size_t i = TRAINING; i < SAMPLES; i++) {
 		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
@@ -276,9 +286,11 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 		if (j >= 3) noise_energy += noise * noise;
 	}
 	struct v92_observation model;
-	assert(v92_observation_fit(&model, law, x, u, y, TRAINING));
-	model.quantizer_gain = 1.;
-	assert(v92_observation_refit_bins(&model, x, y, y, TRAINING));
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = y,
+		.count = TRAINING, .host_gain = 1., .law = law,
+	};
+	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
 	double measured = noise_energy / (TRAINING - 3);
 	/* Allow finite-training uncertainty, but reject the severe downward
@@ -302,7 +314,11 @@ int main(void)
 	before = model;
 	int32_t zero[TRAINING] = { 0 };
 	int16_t y[TRAINING] = { 0 };
-	assert(!v92_observation_fit(&model, G711_LAW_PCMU, zero, y, y, TRAINING));
+	const struct v92_observation_training training = {
+		.input = zero, .linear = y, .sample = y, .levels = y,
+		.count = TRAINING, .host_gain = 1., .law = G711_LAW_PCMU,
+	};
+	assert(!v92_observation_fit(&model, &training));
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	puts("V.92 observation checks passed");
 	return 0;

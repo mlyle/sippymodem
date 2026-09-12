@@ -20,7 +20,8 @@ struct interval { double low, high, main, post, second, error, weight; };
 struct moments { double aa, ab, ac, bb, bc, cc, ay, by, cy, yy; };
 struct boundary { double at; unsigned next; };
 
-static bool compile_geometry(struct v92_observation *model);
+static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
+	const int16_t *level, double *lower, double *upper);
 
 static bool solve3(double aa, double ab, double ac, double bb, double bc, double cc,
 	double ay, double by, double cy, double *a, double *b, double *c)
@@ -132,19 +133,17 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
 static bool refit_bins(struct v92_observation *model,
 	const int32_t *x, const int16_t *y, const int16_t *levels, size_t count)
 {
-	if (!v92_observation_is_valid(model) || model->quantizer_gain <= 0. ||
-		count > V92_OBSERVATION_TRAINING || count < 4) return false;
-	struct v92_observation_cache cache;
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
 	double costs[INTERVALS], variances[INTERVALS], best = HUGE_VAL, total = 0.;
 	int16_t q[INTERVALS][V92_OBSERVATION_TRAINING];
 	unsigned chosen = 0;
-	v92_observation_begin(&cache, model, 0.);
 	for (size_t j = 0; j < count; j++) {
-		if (!v92_observation_symbol_level(&cache, y[j], levels ? levels + j : NULL))
+		double lower, upper;
+		if (!codec_bounds(model->law, model->quantizer_gain, y[j],
+			levels ? levels + j : NULL, &lower, &upper))
 			return false;
-		low[j] = y[j] + cache.lower;
-		high[j] = y[j] + cache.upper;
+		low[j] = y[j] + lower;
+		high[j] = y[j] + upper;
 	}
 	for (unsigned i = 0; i < INTERVALS; i++) {
 		struct v92_observation_interval *fit = &model->intervals[i];
@@ -174,20 +173,6 @@ static bool refit_bins(struct v92_observation *model,
 	}
 	if (!(total > 0.)) return false;
 	for (unsigned i = 0; i < INTERVALS; i++) model->intervals[i].weight /= total;
-	return v92_observation_is_valid(model);
-}
-
-bool v92_observation_refit_bins(struct v92_observation *model,
-	const int32_t *x, const int16_t *y, const int16_t *levels, size_t count)
-{
-	if (!model || !x || !y || count < 4 || count > V92_OBSERVATION_TRAINING ||
-		memory_regions_overlap(model, sizeof(*model), x, count * sizeof(*x)) ||
-		memory_regions_overlap(model, sizeof(*model), y, count * sizeof(*y)) ||
-		(levels && memory_regions_overlap(model, sizeof(*model), levels, count * sizeof(*levels))))
-		return false;
-	struct v92_observation next = *model;
-	if (!refit_bins(&next, x, y, levels, count) || !compile_geometry(&next)) return false;
-	*model = next;
 	return true;
 }
 
@@ -207,6 +192,20 @@ static int16_t scaled(enum g711_law law, double gain, int32_t x)
 	if (sample <= INT16_MIN) return quantize(law, INT16_MIN);
 	sample = round(sample);
 	return quantize(law, (int16_t)sample);
+}
+
+/* Bounds relative to the host sample. Use the same arithmetic for training
+ * and scoring, including subnormal gain and one-sided codec clipping. */
+static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
+	const int16_t *level, double *lower, double *upper)
+{
+	int16_t reconstructed = level ? *level : scaled(law, 1. / gain, observed);
+	struct g711_interval interval;
+	if (quantize(law, reconstructed) != reconstructed ||
+		!g711_quantization_interval(law, reconstructed, &interval)) return false;
+	*lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) - observed;
+	*upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) - observed;
+	return true;
 }
 
 static int16_t magnitude_code(enum g711_law law, int32_t x, unsigned magnitude)
@@ -380,8 +379,7 @@ static bool compile_geometry(struct v92_observation *model)
 	model->first[2] = 0;
 	model->first[3] = 1;
 	for (size_t i = 0; i < INTERVALS; i++) for (unsigned end = 0; end < 2; end++) {
-		/* Only exact zero is inactive. Refit may reactivate an interval,
-		 * so successful refits rebuild this immutable geometry too. */
+		/* Only exact zero is inactive; compile the final refined weights. */
 		if (model->intervals[i].weight == 0.0) continue;
 		double gain = end ? model->intervals[i].high : model->intervals[i].low;
 		int32_t first = INT32_MIN;
@@ -417,19 +415,12 @@ static bool compile_geometry(struct v92_observation *model)
 	return true;
 }
 
-static bool compile(struct v92_observation *model, const struct interval fits[INTERVALS])
-{
-	for (size_t i = 0; i < INTERVALS; i++) model->intervals[i] = (struct v92_observation_interval){
-		fits[i].low, fits[i].high, fits[i].main, fits[i].post, fits[i].second, fits[i].weight };
-	return compile_geometry(model);
-}
-
 bool v92_observation_is_valid(const struct v92_observation *model)
 {
 	if (!model || model->count < 4 || model->count > V92_OBSERVATION_STEPS ||
 		(model->law != G711_LAW_PCMU && model->law != G711_LAW_PCMA) ||
 		!isfinite(model->variance) || model->variance < 1. ||
-		!isfinite(model->quantizer_gain) || model->quantizer_gain < 0. ||
+		!isfinite(model->quantizer_gain) || model->quantizer_gain <= 0. ||
 		model->input_coefficient < 0 ||
 		!isfinite(model->energy) || model->energy <= 0. || model->first[0] != INT32_MIN)
 		return false;
@@ -458,14 +449,22 @@ bool v92_observation_is_valid(const struct v92_observation *model)
 	return true;
 }
 
-bool v92_observation_fit(struct v92_observation *model, enum g711_law law,
-	const int32_t *x, const int16_t *u, const int16_t *y, size_t count)
+bool v92_observation_fit(struct v92_observation *model,
+	const struct v92_observation_training *training)
 {
-	if (!model || !x || !u || !y || count < 4 || count > V92_OBSERVATION_TRAINING ||
+	if (!model || !training ||
+		memory_regions_overlap(model, sizeof(*model), training, sizeof(*training))) return false;
+	const int32_t *x = training->input;
+	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
+	size_t count = training->count;
+	enum g711_law law = training->law;
+	if (!x || !u || !y || count < 4 || count > V92_OBSERVATION_TRAINING ||
 		(law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
+		!isfinite(training->host_gain) || training->host_gain <= 0. ||
 		memory_regions_overlap(model, sizeof(*model), x, count * sizeof(*x)) ||
 		memory_regions_overlap(model, sizeof(*model), u, count * sizeof(*u)) ||
-		memory_regions_overlap(model, sizeof(*model), y, count * sizeof(*y))) return false;
+		memory_regions_overlap(model, sizeof(*model), y, count * sizeof(*y)) ||
+		(levels && memory_regions_overlap(model, sizeof(*model), levels, count * sizeof(*levels)))) return false;
 	double energy = 0, linear_error = 0;
 	for (size_t i = 3; i < count; i++) {
 		double error = (double)y[i] - u[i];
@@ -475,7 +474,7 @@ bool v92_observation_fit(struct v92_observation *model, enum g711_law law,
 	struct interval fits[INTERVALS];
 	if (!fit_intervals(fits, law, x, y, count)) return false;
 	struct v92_observation initialized = { .law = law, .energy = energy / (count - 3),
-		.variance = fmax(1., fits[0].error) };
+		.variance = fmax(1., fits[0].error), .quantizer_gain = training->host_gain };
 	double total = 0;
 	for (size_t i = 0; i < INTERVALS; i++) {
 		fits[i].weight = exp(-.5 * (count - 3) * (fits[i].error - fits[0].error) / initialized.variance) *
@@ -494,7 +493,10 @@ bool v92_observation_fit(struct v92_observation *model, enum g711_law law,
 		double error = y[j] - predicted;
 		error_energy += error * error;
 	}
-	if (!isfinite(error_energy) || error_energy >= linear_error || !compile(&initialized, fits) ||
+	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
+	for (size_t i = 0; i < INTERVALS; i++) initialized.intervals[i] = (struct v92_observation_interval){
+		fits[i].low, fits[i].high, fits[i].main, fits[i].post, fits[i].second, fits[i].weight };
+	if (!refit_bins(&initialized, x, y, levels, count) || !compile_geometry(&initialized) ||
 		!v92_observation_is_valid(&initialized)) return false;
 	*model = initialized;
 	return true;
@@ -619,16 +621,8 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 		(1. + cache->relative_noise * model->energy);
 	double scale = V92_SCORE_SCALE / variance;
 	if (!isfinite(variance) || variance <= 0. || !isfinite(scale) || scale <= 0.) return false;
-	double lower = 0., upper = 0.;
-	if (model->quantizer_gain > 0.) {
-		double gain = model->quantizer_gain;
-		int16_t reconstructed = level ? *level : scaled(model->law, 1. / gain, observed);
-		struct g711_interval interval;
-		if (quantize(model->law, reconstructed) != reconstructed ||
-			!g711_quantization_interval(model->law, reconstructed, &interval)) return false;
-		lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) - observed;
-		upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) - observed;
-	}
+	double lower, upper;
+	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, &lower, &upper)) return false;
 	if (++cache->generation == 0) {
 		memset(cache->stamp, 0, sizeof(cache->stamp));
 		cache->generation = 1;

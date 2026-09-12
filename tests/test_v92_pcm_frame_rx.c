@@ -1035,12 +1035,14 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 		enum v92_pcm_frame_result rc = v92_pcm_frame_decode_observed(rx, samples, false,
 			bits, rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood);
 		model->quantizer_gain = gain; failed_prediction = 0;
-		CHECK(rc == V92_PCM_FRAME_NO_PATH &&
+		/* Zero host gain is now an invalid final model, not an intermediate
+		 * point-observation model that can fail later during prediction. */
+		CHECK(rc == (i == 3 ? V92_PCM_FRAME_INVALID_PARAMETERS : V92_PCM_FRAME_NO_PATH) &&
 			!memcmp(rx, &initial, sizeof(initial)) &&
 			!memcmp(bits, saved_bits, sizeof(bits)) &&
 			!memcmp(&decision, &saved_decision, sizeof(decision)) &&
 			!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
-			"prediction failure %u changed output or receiver", failures[i]);
+			"prediction failure %u changed output or receiver (result %d)", failures[i], rc);
 	}
 	int16_t invalid_levels[12]; memcpy(invalid_levels, levels, sizeof(invalid_levels));
 	invalid_levels[11] = 1;
@@ -1108,9 +1110,11 @@ static bool test_observed_channel(enum g711_law law)
 		channel_samples(law, &frame, memory, wire + 12 * f, y + 12 * f);
 	}
 	struct v92_observation model;
-	CHECK(v92_observation_fit(&model, law, x, u, y, ARRAY_LENGTH(x)), "fit failed");
-	model.quantizer_gain = .75;
-	CHECK(v92_observation_refit_bins(&model, x, y, wire, ARRAY_LENGTH(x)), "refit failed");
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = wire,
+		.count = ARRAY_LENGTH(x), .host_gain = .75, .law = law,
+	};
+	CHECK(v92_observation_fit(&model, &training), "fit failed");
 	struct v92_observation frozen = model;
 	CHECK(v92_pcm_frame_tx_reset_b1u(&tx) == V92_PCM_FRAME_OK, "reset failed");
 	memset(memory, 0, sizeof(memory));

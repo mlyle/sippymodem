@@ -39,8 +39,7 @@ struct v92_observation {
 	int32_t first[V92_OBSERVATION_STEPS];
 	struct v92_observation_interval intervals[V92_OBSERVATION_INTERVALS];
 	uint16_t bucket[V92_OBSERVATION_BUCKETS + 1];
-	/* quantizer_gain is the positive host gain after the final codec;
-	 * zero selects point observations during the initial center fit. */
+	/* Positive host gain after the final codec. */
 	double variance, energy, quantizer_gain;
 	size_t count;
 	enum g711_law law;
@@ -49,26 +48,30 @@ struct v92_observation {
 	int16_t input_coefficient;
 };
 
-/* Fit at most the first 24 known B1u frames. x is the signal before the first
- * codec; y is the received host sample; u is the existing linear prediction.
- * Reject a fit that does not improve on u. This is not an arbitrary channel:
- * the supported model is Q(g*x), three channel taps, then a final codec.
+/* Borrowed, aligned samples from at most the first 24 known B1u frames.
+ * input precedes the first codec; sample follows the final codec and positive
+ * host gain. levels optionally supplies decoded wire levels before host gain,
+ * avoiding inference from sample. linear is the existing linear prediction. */
+struct v92_observation_training {
+	const int32_t *input;
+	const int16_t *linear, *sample, *levels;
+	size_t count;
+	double host_gain;
+	enum g711_law law;
+};
+
+/* Fit Q(g*input), three channel taps and Gaussian noise, then a final codec.
+ * The center fit must improve on linear before codec-bin refinement. Compile
+ * only the final model: no partially fitted model is exposed to the caller.
  *
- * A rejected fit leaves output unchanged. At a new training epoch the caller
- * must invalidate its previous model before collecting acquisition decisions.
+ * Output may not overlap training or any of its arrays. Rejection leaves it
+ * unchanged. Set input_coefficient only after fitting already-rounded inputs.
+ * At a new training epoch, invalidate the previous model before collecting
+ * acquisition decisions.
  * Fitting is not B1 admission: held-out decoded bits and line quality must pass. */
-bool v92_observation_fit(struct v92_observation *model, enum g711_law law,
-	const int32_t *x, const int16_t *u, const int16_t *y, size_t count);
+bool v92_observation_fit(struct v92_observation *model,
+	const struct v92_observation_training *training);
 bool v92_observation_is_valid(const struct v92_observation *model);
-/* After setting the positive final-codec host quantizer_gain, jointly refine
- * channel taps and noise variance against the observed codec intervals.
- * levels optionally supplies aligned decoded wire levels (before host gain),
- * avoiding inference from y.
- * x must use the same coordinates as the initial fit. Set input_coefficient
- * only after fitting/refitting already-rounded training inputs. Neither fit
- * may overlap its output with any input; rejection leaves output unchanged. */
-bool v92_observation_refit_bins(struct v92_observation *model,
-	const int32_t *x, const int16_t *y, const int16_t *levels, size_t count);
 
 struct v92_observation_point {
 	struct v92_observation_values values;

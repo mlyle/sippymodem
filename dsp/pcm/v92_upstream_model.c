@@ -72,7 +72,6 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 		if (!(model->valid & (1u << i)))
 			continue;
 		if (!v92_observation_is_valid(&model->model[i]) ||
-		    model->model[i].quantizer_gain <= 0.0 ||
 		    model->model[i].law != receiver->decoder.mapping.law ||
 		    model->model[i].input_coefficient != (i ? model->coefficient : 0))
 			return false;
@@ -173,15 +172,12 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 			for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i)
 				x[i] = round_shift_s64_to_s32_saturating(
 					(int64_t)x[i] * model->coefficient, 15u);
-		bool valid = v92_observation_fit(fit, decoder->mapping.law,
-			x, model->u, samples, V92_OBSERVATION_TRAINING);
-
-		if (valid) {
-			fit->quantizer_gain = gain * line->calibration.gain;
-			valid = v92_observation_refit_bins(fit, x, samples,
-				model->wire, V92_OBSERVATION_TRAINING);
-		}
-		if (valid) {
+		const struct v92_observation_training training = {
+			.input = x, .linear = model->u, .sample = samples, .levels = model->wire,
+			.count = V92_OBSERVATION_TRAINING, .host_gain = gain * line->calibration.gain,
+			.law = decoder->mapping.law,
+		};
+		if (v92_observation_fit(fit, &training)) {
 			fit->input_coefficient = candidate ? model->coefficient : 0;
 			model->valid |= (uint8_t)(1u << candidate);
 		} else {
