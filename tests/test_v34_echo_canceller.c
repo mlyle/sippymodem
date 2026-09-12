@@ -199,10 +199,8 @@ static bool test_near_cancellation(void)
 
 int main(void)
 {
-	CHECK(test_validation_and_transactionality(),
-	      "validation/transactionality failed");
-	CHECK(test_near_cancellation(),
-	      "generated near cancellation failed");
+	if (!test_validation_and_transactionality() || !test_near_cancellation())
+		return 1;
 	puts("V.34 echo canceller tests passed");
 	return 0;
 }

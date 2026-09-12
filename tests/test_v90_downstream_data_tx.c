@@ -283,12 +283,7 @@ static bool test_contract(void)
 
 int main(void)
 {
-	CHECK(run_stream(G711_LAW_PCMU, 3, 3),
-	      "shaped PCMU stream failed");
-	CHECK(run_stream(G711_LAW_PCMA, 3, 3),
-	      "shaped PCMA stream failed");
-	CHECK(run_stream(G711_LAW_PCMU, 0, 0),
-	      "unshaped PCMU stream failed");
-	CHECK(test_contract(), "contract test failed");
-	return 0;
+	return run_stream(G711_LAW_PCMU, 3, 3) &&
+	       run_stream(G711_LAW_PCMA, 3, 3) &&
+	       run_stream(G711_LAW_PCMU, 0, 0) && test_contract() ? 0 : 1;
 }

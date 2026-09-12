@@ -279,8 +279,8 @@ static bool test_long_delay_scan(void)
 
 int main(void)
 {
-	CHECK(test_ring_and_contracts(), "ring/contracts failed");
-	CHECK(test_long_delay_scan(), "long-delay scan failed");
+	if (!test_ring_and_contracts() || !test_long_delay_scan())
+		return 1;
 	puts("PCM echo reference tests passed");
 	return 0;
 }

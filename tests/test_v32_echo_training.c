@@ -427,7 +427,7 @@ static bool test_contracts(
 	return true;
 }
 
-int main(void)
+static bool test_roles(void)
 {
 	struct v32_echo_training calling;
 	struct v32_echo_training answering;
@@ -440,7 +440,7 @@ int main(void)
 		    V32_ANSWERING_TRANSMITTER, &answering,
 		    &answering_path) ||
 	    !test_contracts(&calling, &calling_path))
-		return 1;
+		return false;
 	CHECK(calling.conditioning.trn_symbols ==
 		      V32_CALLING_ECHO_TRAINING_SYMBOLS &&
 	      calling.s_extension_symbols == TEST_CALLING_S_EXTENSION &&
@@ -450,6 +450,13 @@ int main(void)
 	      answering.s_extension_symbols == 0 &&
 	      answering.s_extension_emitted == 0,
 	      "role-specific echo-training lengths changed");
+	return true;
+}
+
+int main(void)
+{
+	if (!test_roles())
+		return 1;
 	puts("V.32 echo training tests passed");
 	return 0;
 }
