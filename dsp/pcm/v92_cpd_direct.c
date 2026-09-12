@@ -179,7 +179,7 @@ enum v92_cpd_result v92_cpd_direct_init(
 
 /* Identity-filter output followed by the analogue LU/G scaling and network
  * quantizer. Check both signs: integer rounding need not be symmetric. */
-static int direct_separation(
+static int level_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
 {
 	const struct v92_cpd_constellation *points = &cpd->constellation[0];
@@ -206,6 +206,31 @@ static int direct_separation(
 	return minimum;
 }
 
+static int direct_separation(
+	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
+{
+	if (cpd->data_rate_number != 15u && cpd->data_rate_number != 17u)
+		return level_separation(cpd, law, lu);
+	/* TRN1u supplies a quantized LU. The balanced direct alphabet must
+	 * remain injective at every scalar consistent with that observation,
+	 * not only its decoded centre. Adjacent points can otherwise collapse
+	 * inside the cell even though the selected nominal spacing is large. */
+	struct g711_interval interval;
+	int minimum = INT16_MAX;
+
+	if (!g711_quantization_interval(law, lu, &interval) || interval.lower <= 0)
+		return 0;
+	for (int level = interval.lower; level <= interval.upper; ++level) {
+		int separation = level_separation(cpd, law, (int16_t)level);
+
+		if (separation == 0)
+			return 0;
+		if (separation < minimum)
+			minimum = separation;
+	}
+	return minimum;
+}
+
 enum v92_cpd_result v92_cpd_direct_select(
 	struct v92_cpd_parameters *parameters, enum g711_law law,
 	uint8_t data_rate_number, int16_t upstream_level, bool extend_e2u)
@@ -220,6 +245,21 @@ enum v92_cpd_result v92_cpd_direct_select(
 	if (upstream_level <= 0 ||
 	    v92_cpd_direct_init(&candidate, law, data_rate_number, extend_e2u) != V92_CPD_OK)
 		return V92_CPD_INVALID_PARAMETERS;
+	/* Use 48/24 and 62/31 moduli for the 64- and 68-bit direct frames.
+	 * These are the smallest uniform signed alphabets satisfying
+	 * (2N)^9 * N^3 >= 2^K (V.92 6.4.1-6.4.2). Keep this direct
+	 * allocation out of the channel designer's level-neutral template. */
+	if (data_rate_number == 15u || data_rate_number == 17u) {
+		uint8_t points = data_rate_number == 15u ? 24u : 31u;
+
+		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+			candidate.modulus[symbol] = symbol % 4u == 3u ? points : 2u * points;
+		memset(&candidate.constellation[0], 0, sizeof(candidate.constellation[0]));
+		if (!direct_constellation(&candidate.constellation[0], law, points) ||
+		    !b1u_frequencies(&candidate, law, frequencies) ||
+		    !normalize_gain(&candidate, frequencies))
+			return V92_CPD_INVALID_PARAMETERS;
+	}
 	/* The identity precoder always selects the inner representatives. At
 	 * 40k its outer 32 positive points are unreachable; do not let unused
 	 * points constrain placement or add competing receive branches. */
@@ -265,6 +305,36 @@ enum v92_cpd_result v92_cpd_direct_select(
 		if (separation > best_separation) {
 			best_separation = separation;
 			best = candidate;
+		}
+	}
+	if (best_separation == 0 && (data_rate_number == 15u || data_rate_number == 17u)) {
+		/* Contiguous codec windows can have no placement that survives the
+		 * whole LU cell. Try a bounded family of linear/cubic grids:
+		 * a(x) = 30000 * (x + s*x^3)/(1+s), x=(2i+1)/(2N-1), s=0..16.
+		 * The linear term keeps spacing near zero; curvature increases the
+		 * outer gaps. Integer rounding makes generation deterministic, and
+		 * all intermediates fit uint64_t for N<=64. Reuse B1u frequencies
+		 * because monotone spacing does not change inner representatives. */
+		uint64_t width = 2u * count - 1u;
+
+		for (unsigned shape = 0u; shape <= 16u; ++shape) {
+			uint64_t denominator = (shape + 1u) * width * width * width;
+
+			for (unsigned point = 0u; point < count; ++point) {
+				uint64_t x = 2u * point + 1u;
+				uint64_t numerator = 30000u * x * (width * width + shape * x * x);
+
+				candidate.constellation[0].positive_linear[point] =
+					(int16_t)((numerator + denominator / 2u) / denominator);
+			}
+			if (!normalize_gain(&candidate, frequencies))
+				return V92_CPD_INVALID_PARAMETERS;
+			int separation = direct_separation(&candidate, law, upstream_level);
+
+			if (separation > best_separation) {
+				best_separation = separation;
+				best = candidate;
+			}
 		}
 	}
 	if (best_separation == 0)

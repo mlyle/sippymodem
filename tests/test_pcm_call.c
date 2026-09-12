@@ -6533,9 +6533,9 @@ static bool capture_v92_duplex_data(
 		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
 	int16_t previous_upstream = 0;
-	/* Use a longer payload for compensated 40k and balanced 44k maps to
+	/* Use a longer payload for compensated 40k and balanced direct maps to
 	 * catch rare errors not exercised by the all-ones B1u sequence. */
-	unsigned payload_frames = offer != NULL && (offer->expected == 16u ||
+	unsigned payload_frames = offer != NULL && ((offer->expected >= 15u && offer->expected <= 17u) ||
 		(offer->postcursor != 0.0 && offer->expected == 13u)) ? 2000u : 200u;
 
 	if (offer != NULL) {
@@ -7848,7 +7848,7 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 
 static bool test_v92_fast_pair(void)
 {
-	const unsigned rates[] = { 1u, 7u, 19u };
+	const unsigned rates[] = { 1u, 7u, 15u, 17u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
 			struct v92_online_pair pair;
@@ -8495,6 +8495,12 @@ static bool test_v92_upstream_negotiation(void)
 		 * without falling back to the peer's lower 41 1/3 kbit/s offer. */
 		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 16u, 0.0, 0.0, 0u },
 		{ UINT32_C(1) << 15u, 16u, 16u, 0.0, 0.75, 0u },
+		/* The neighboring 42 2/3k and 45 1/3k direct offers must not be
+		 * skipped because the initial template concentrates trellis points. */
+		{ (UINT32_C(1) << 14u) | (UINT32_C(1) << 13u), 15u, 15u, 0.0, 0.0, 0u },
+		{ UINT32_C(1) << 14u, 15u, 15u, 0.0, 0.75, 0u },
+		{ (UINT32_C(1) << 16u) | (UINT32_C(1) << 15u), 17u, 17u, 0.0, 0.0, 0u },
+		{ UINT32_C(1) << 16u, 17u, 17u, 0.0, 0.75, 0u },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
 		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u },

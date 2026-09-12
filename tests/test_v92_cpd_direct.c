@@ -327,7 +327,7 @@ static bool quantized_points_are_distinct(
 static bool test_level_selection(void)
 {
 	static const int16_t levels[] = { 4092, 4096, 4224, 7040, 7164 };
-	static const uint8_t rates[] = { 1, 4, 13, 16, 19 };
+	static const uint8_t rates[] = { 1, 4, 13, 15, 16, 17, 19 };
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (size_t level = 0u; level < ARRAY_LENGTH(levels); ++level)
@@ -342,6 +342,31 @@ static bool test_level_selection(void)
 				      gain_is_nearest(&cpd, law) &&
 				      quantized_points_are_distinct(&cpd, law, levels[level]),
 				      "law %u LU %d rate %u selection failed", law, levels[level], rates[rate]);
+				if (rates[rate] == 15u || rates[rate] == 17u) {
+					unsigned points = cpd.constellation[0].count;
+					__uint128_t capacity = 1u, smaller = 1u;
+					__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rates[rate]);
+
+					CHECK(points == (rates[rate] == 15u ? 24u : 31u),
+					      "direct selection retained an oversized alphabet");
+					for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
+						unsigned factor = symbol % 4u == 3u ? 1u : 2u;
+
+						CHECK(cpd.modulus[symbol] == factor * points,
+						      "direct selection did not balance its intervals");
+						capacity *= cpd.modulus[symbol];
+						smaller *= factor * (points - 1u);
+					}
+					CHECK(smaller < required && capacity >= required,
+					      "balanced alphabet was not minimal or lost data capacity");
+					struct g711_interval interval;
+
+					CHECK(g711_quantization_interval(law, levels[level], &interval),
+					      "training level has no quantization interval");
+					for (int actual = interval.lower; actual <= interval.upper; ++actual)
+						CHECK(quantized_points_are_distinct(&cpd, law, (int16_t)actual),
+						      "balanced selection collapsed within training uncertainty");
+				}
 				CHECK(v92_cpd_encode(&cpd, 17u, wire, sizeof(wire), &bits) == V92_CPD_OK &&
 				      v92_cpd_decode(wire, (bits + 7u) / 8u, bits, 17u, &decoded) == V92_CPD_OK &&
 				      memcmp(&cpd, &decoded, sizeof(cpd)) == 0,
@@ -363,6 +388,10 @@ static bool test_level_selection(void)
 		      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0 &&
 	      v92_cpd_direct_select(NULL, G711_LAW_PCMA, 19u, 7040, false) ==
 		      V92_CPD_INVALID_ARGUMENT, "invalid level-selection arguments accepted");
+	for (uint8_t rate = 15u; rate <= 17u; rate += 2u)
+		CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMA, rate, 1, false) ==
+			      V92_CPD_INVALID_PARAMETERS && memcmp(&cpd, &before, sizeof(cpd)) == 0,
+		      "unusable balanced selection changed output");
 	return true;
 }
 

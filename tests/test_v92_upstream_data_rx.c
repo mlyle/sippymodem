@@ -2218,6 +2218,13 @@ int main(void)
 			if (!run_stream((enum g711_law)law, -1, false, 8u,
 					distorted ? 0.75 : 1.0, distorted ? 0.10 : 0.0, STREAM_RESET))
 				return 1;
+	/* Exercise both quantized-LU offsets and the normal training level
+	 * through E2u, all B1u decisions, long idle and exact payload. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 15u; rate <= 17u; rate += 2u)
+			if (!test_quantized_level_tracking(law, rate, false, 4092, true, 0u) ||
+			    !test_quantized_level_tracking(law, rate, false, 7164, true, 0u))
+				return 1;
 	const uint8_t rm_rates[] = { 1u, 16u, 19u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned i = 0; i < ARRAY_LENGTH(rm_rates); ++i)
