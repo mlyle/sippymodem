@@ -15,6 +15,9 @@ bool v92_data_quality_is_valid(const struct v92_data_quality *quality)
 	       (quality->frames != 0u ||
 		(quality->squared_error == 0.0 && !quality->uncertain_window)) &&
 	       quality->bad_windows < V92_DATA_QUALITY_BAD_WINDOWS &&
+	       quality->good_windows < V92_DATA_QUALITY_REARM_WINDOWS &&
+	       (quality->good_windows == 0u ||
+		(quality->automatic_retrains != 0u && quality->bad_windows == 0u)) &&
 	       quality->automatic_retrains <= V92_DATA_QUALITY_MAX_RETRAINS;
 }
 
@@ -50,6 +53,13 @@ enum v92_data_quality_result v92_data_quality_observe(
 		next.bad_windows = next.squared_error > limit || next.uncertain_window ?
 			next.bad_windows + 1u : 0u;
 		recover |= next.bad_windows == V92_DATA_QUALITY_BAD_WINDOWS;
+		if (next.bad_windows || ambiguous) {
+			next.good_windows = 0u;
+		} else if (next.automatic_retrains &&
+			   ++next.good_windows == V92_DATA_QUALITY_REARM_WINDOWS) {
+			next.automatic_retrains = 0u;
+			next.good_windows = 0u;
+		}
 		next.frames = 0u;
 		next.squared_error = 0.0;
 		next.uncertain_window = false;

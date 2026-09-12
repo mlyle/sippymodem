@@ -14,6 +14,9 @@ enum {
 	V92_DATA_QUALITY_WINDOW_FRAMES = 128,
 	V92_DATA_QUALITY_BAD_WINDOWS = 3,
 	V92_DATA_QUALITY_MAX_RETRAINS = 2,
+	/* 64 clean 192 ms windows separate recovered incidents. This is local
+	 * receiver policy, not a V.92 timer or permission to deliver weak data. */
+	V92_DATA_QUALITY_REARM_WINDOWS = 64,
 };
 
 enum v92_data_quality_result {
@@ -38,13 +41,15 @@ struct v92_data_quality {
 	uint8_t bad_windows;
 	uint8_t automatic_retrains;
 	bool uncertain_window;
+	uint8_t good_windows;
 };
 
 bool v92_data_quality_is_valid(const struct v92_data_quality *quality);
-/* A new CONNECT discards the old measurement window, never the call budget. */
+/* A new CONNECT discards measurements and healthy credit, not used attempts. */
 bool v92_data_quality_restart(struct v92_data_quality *quality);
-/* RETRAIN consumes one of two per-call attempts and clears the measurement.
- * EXHAUSTED is terminal for the host adapter. Invalid inputs change nothing. */
+/* RETRAIN consumes one of two attempts until sustained clean reception rearms
+ * recovery. Bad or uncertain windows break healthy credit. EXHAUSTED is
+ * terminal for the host adapter. Invalid inputs change nothing. */
 enum v92_data_quality_result v92_data_quality_observe(
 	struct v92_data_quality *quality, double squared_error, bool ambiguous,
 	bool uncertain);

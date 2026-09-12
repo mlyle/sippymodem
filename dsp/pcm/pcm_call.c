@@ -1436,7 +1436,7 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call)
 	/* Local receiver policy, not a wire-protocol restriction. A failed
 	 * automatic mapping should try a lower rate from the next peer Ja.
 	 * Keep fixed mappings unchanged; at the lowest rate, online recovery
-	 * still has its existing per-call retry budget. Never raise a ceiling
+	 * still has its bounded quality retry allowance. Never raise a ceiling
 	 * retained from an earlier failure. */
 	if (call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 		if (rate <= 1u && call->b1_deadline_armed)

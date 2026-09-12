@@ -109,6 +109,14 @@ static bool test_invalid(void)
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned measurement accepted");
 	quality = (struct v92_data_quality){ .uncertain_window = true };
 	CHECK(!v92_data_quality_is_valid(&quality), "unowned confidence accepted");
+	quality = (struct v92_data_quality){
+		.automatic_retrains = 1, .good_windows = V92_DATA_QUALITY_REARM_WINDOWS,
+	};
+	CHECK(!v92_data_quality_is_valid(&quality), "unbounded healthy credit accepted");
+	quality = (struct v92_data_quality){ .good_windows = 1 };
+	CHECK(!v92_data_quality_is_valid(&quality), "healthy credit without used attempts accepted");
+	quality = (struct v92_data_quality){ .automatic_retrains = 1, .good_windows = 1, .bad_windows = 1 };
+	CHECK(!v92_data_quality_is_valid(&quality), "concurrent good and bad windows accepted");
 	return true;
 }
 
@@ -142,7 +150,80 @@ static bool test_uncertainty(void)
 	return true;
 }
 
+static bool test_healthy_rearm(void)
+{
+	for (unsigned budget = 1; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+		struct v92_data_quality quality = { .automatic_retrains = budget };
+
+		for (unsigned n = 0; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n) {
+			CHECK(window(&quality, V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK),
+			      "clean reception failed");
+			CHECK(quality.automatic_retrains ==
+			      (n + 1u == V92_DATA_QUALITY_REARM_WINDOWS ? 0u : budget),
+			      "healthy reception rearmed at wrong window %u", n);
+		}
+		CHECK(quality.good_windows == 0 && v92_data_quality_is_valid(&quality),
+		      "rearmed state retained healthy credit");
+		for (unsigned n = 0; n < V92_DATA_QUALITY_MAX_RETRAINS; ++n)
+			CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
+			      quality.automatic_retrains == n + 1u && v92_data_quality_restart(&quality),
+			      "rearmed recovery did not retain its bound");
+		CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_EXHAUSTED,
+		      "continuous failure escaped rearmed limit");
+	}
+	return true;
+}
+
+static bool test_interrupted_healthy_credit(void)
+{
+	for (unsigned interruption = 0; interruption < 3; ++interruption) {
+		struct v92_data_quality quality = { .automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS };
+
+		for (unsigned n = 1; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n)
+			CHECK(window(&quality, 0, V92_DATA_QUALITY_OK), "healthy setup failed");
+		CHECK(quality.good_windows == V92_DATA_QUALITY_REARM_WINDOWS - 1u,
+		      "healthy credit was not retained");
+		if (interruption == 0) {
+			CHECK(window(&quality, 2 * V92_DATA_MAX_RMS_ERROR, V92_DATA_QUALITY_OK),
+			      "isolated noisy window forced recovery");
+		} else if (interruption == 1) {
+			for (unsigned f = 0; f < V92_DATA_QUALITY_WINDOW_FRAMES; ++f)
+				CHECK(v92_data_quality_observe(&quality, 0, false, f == 0) == V92_DATA_QUALITY_OK,
+				      "isolated uncertain window forced recovery");
+		} else {
+			CHECK(v92_data_quality_restart(&quality), "restart failed");
+		}
+		CHECK(quality.good_windows == 0 &&
+		      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS &&
+		      window(&quality, 0, V92_DATA_QUALITY_OK) && quality.good_windows == 1,
+		      "interruption retained healthy credit or replenished attempts");
+	}
+	return true;
+}
+
+static bool test_ambiguous_rearm_boundary(void)
+{
+	struct v92_data_quality quality = { .automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS };
+
+	for (unsigned n = 1; n < V92_DATA_QUALITY_REARM_WINDOWS; ++n)
+		CHECK(window(&quality, 0, V92_DATA_QUALITY_OK), "healthy setup failed");
+	for (unsigned f = 1; f < V92_DATA_QUALITY_WINDOW_FRAMES; ++f)
+		CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
+		      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+		      "partial clean window replenished attempts");
+	struct v92_data_quality before = quality;
+	CHECK(v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_EXHAUSTED &&
+	      memcmp(&quality, &before, sizeof(quality)) == 0,
+	      "ambiguous final frame rearmed recovery or changed exhausted state");
+	CHECK(v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_OK &&
+	      quality.automatic_retrains == 0 && quality.good_windows == 0,
+	      "complete clean window did not rearm recovery");
+	return true;
+}
+
 int main(void)
 {
-	return test_windows() && test_ambiguity() && test_uncertainty() && test_invalid() ? 0 : 1;
+	return test_windows() && test_ambiguity() && test_uncertainty() &&
+		test_healthy_rearm() && test_interrupted_healthy_credit() &&
+		test_ambiguous_rearm_boundary() && test_invalid() ? 0 : 1;
 }

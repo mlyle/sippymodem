@@ -6933,6 +6933,7 @@ static void arm_v92_quality_failure(struct pcm_call *call, bool ambiguous)
 	struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 	path->quality_guard_samples = 1u;
 	path->pending_ambiguous = ambiguous;
+	call->pcm_upstream_quality.good_windows = 0u;
 	if (!ambiguous) {
 		call->pcm_upstream_quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES - 1u;
 		call->pcm_upstream_quality.bad_windows = V92_DATA_QUALITY_BAD_WINDOWS - 1u;
