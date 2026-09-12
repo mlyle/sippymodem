@@ -8,7 +8,9 @@
 /* One acquisition per mapping epoch, followed by immutable channel fits.
  * Fractional and rounded prefilter hypotheses share the line input, but not
  * coding histories. The data receiver owns the primary decoder; only the
- * alternate lives here. Neither model is copied into traceback paths. */
+ * alternate lives here. Neither model is copied into traceback paths. Direct
+ * calls instead reuse the alternate for independent B1u validation, from the
+ * end of acquisition until the final delayed B1u decision. */
 struct v92_upstream_model {
 	struct v92_observation model[2];
 	struct v92_pcm_frame_rx alternate;
@@ -25,6 +27,7 @@ struct v92_upstream_data_rx;
 struct v92_upstream_data_line;
 void v92_upstream_model_init(struct v92_upstream_data_rx *receiver);
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver);
+bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver);
 /* Internal, exclusively owned state. The enclosing frame transaction commits
  * these mutations only after decoding, quality evaluation and fitting succeed. */
 bool v92_upstream_model_observe(struct v92_upstream_model *model,

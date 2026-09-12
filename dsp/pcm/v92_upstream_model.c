@@ -23,6 +23,22 @@ static void close_acquisition(struct v92_upstream_model *model)
 	memset(model->wire, 0, sizeof(model->wire));
 }
 
+bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver)
+{
+	if (receiver->line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT)
+		return receiver->line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		       receiver->line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+	return (receiver->model.valid & (1u << (receiver->model.primary ^ 1u))) != 0u;
+}
+
+static bool alternate_is_valid(const struct v92_upstream_data_rx *receiver)
+{
+	return v92_pcm_frame_rx_is_valid(&receiver->model.alternate) &&
+	       v92_pcm_mapping_equal(&receiver->model.alternate.mapping, &receiver->decoder.mapping) &&
+	       receiver->model.alternate.observation == receiver->decoder.observation &&
+	       receiver->model.alternate.pending_frames == receiver->decoder.pending_frames;
+}
+
 bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 {
 	const struct v92_upstream_model *model = &receiver->model;
@@ -30,7 +46,8 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 	if (model->valid > 3u || model->primary > 1u || model->coefficient < 0)
 		return false;
 	if (!model->acquiring && !model->valid)
-		return model->primary == 0u && model->cost[0] == 0u && model->cost[1] == 0u;
+		return model->primary == 0u && model->cost[0] == 0u && model->cost[1] == 0u &&
+		       (!v92_upstream_model_has_alternate(receiver) || alternate_is_valid(receiver));
 	if (receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
 	    model->coefficient == 0)
 		return false;
@@ -51,10 +68,7 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 			return false;
 	}
 	if (model->valid & (1u << (model->primary ^ 1u)))
-		return v92_pcm_frame_rx_is_valid(&model->alternate) &&
-		       v92_pcm_mapping_equal(&model->alternate.mapping, &receiver->decoder.mapping) &&
-		       model->alternate.observation == receiver->decoder.observation &&
-		       model->alternate.pending_frames == receiver->decoder.pending_frames;
+		return alternate_is_valid(receiver);
 	return true;
 }
 
@@ -182,12 +196,41 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 	size_t count = decoder->mapping.data_bits_per_frame;
 
 	if (!model->valid) {
+		bool validate = decoder->observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+			line->received_frames >= V92_B1U_ACQUISITION_FRAMES &&
+			line->received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES;
+
+		/* Known-one decisions retain the primary training and calibration
+		 * path, but cannot prove that the peer sent ones: a wrong late bit
+		 * can fit below the aggregate residual ceiling. Decode the remaining
+		 * B1u independently at the acquired level, without imposing its bits
+		 * or changing primary histories, predictions, or data decisions. */
+		if (validate && line->received_frames == V92_B1U_ACQUISITION_FRAMES)
+			model->alternate = *decoder;
 		enum v92_pcm_frame_result result = v92_pcm_frame_decode(decoder,
 			line->samples, b1u, bits, count, decision);
 
-		if (result == V92_PCM_FRAME_OK)
-			for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-				predictions[i] = decision->predicted_samples[i];
+		if (result != V92_PCM_FRAME_OK)
+			return result;
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			predictions[i] = decision->predicted_samples[i];
+		if (validate) {
+			uint8_t checked[V92_PCM_MAPPING_MAX_BITS];
+			struct v92_pcm_frame_decision validation;
+			bool failed = v92_pcm_frame_decode(&model->alternate, line->samples,
+				false, checked, count, &validation) != V92_PCM_FRAME_OK;
+
+			if (!failed) {
+				failed = !validation.bits_ready || validation.ambiguous;
+				if (validation.bits_ready)
+					for (size_t i = 0u; i < count; ++i)
+						failed |= checked[i] != 1u;
+			}
+			if (decision->bits_ready)
+				decision->ambiguous |= failed;
+			if (line->received_frames + 1u == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+				memset(&model->alternate, 0, sizeof(model->alternate));
+		}
 		return result;
 	}
 	struct v92_pcm_frame_likelihood likelihood[2];

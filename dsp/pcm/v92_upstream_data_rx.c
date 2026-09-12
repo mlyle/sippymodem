@@ -164,7 +164,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	struct v92_pcm_frame_rx decoder = receiver->decoder;
 	struct v92_pcm_frame_rx alternate = receiver->model.alternate;
-	bool paired = (receiver->model.valid & (1u << (receiver->model.primary ^ 1u))) != 0u;
+	bool paired = v92_upstream_model_has_alternate(receiver);
 
 	if (v92_pcm_frame_rx_reset_control(&decoder) != V92_PCM_FRAME_OK ||
 	    (paired && v92_pcm_frame_rx_reset_control(&alternate) != V92_PCM_FRAME_OK))

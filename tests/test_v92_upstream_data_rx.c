@@ -2043,8 +2043,123 @@ static bool test_codec_model(int polarity, bool rm)
 	return true;
 }
 
+/* A validly coded wrong bit in the final 40k B1u frame has RMS error below
+ * the call's limit. Known-one decoding alone must not qualify this waveform.
+ * Also reset control at frame 48, while ten B1u decisions remain buffered. */
+static bool test_direct_b1_validation(enum g711_law law, int polarity, bool fault, bool control)
+{
+	struct channel channel = { .gain = 1.0, .law = law, .polarity = polarity };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame encoded;
+	struct v92_upstream_data_rx rx;
+	bool ready = false, wrong_seen = false;
+	unsigned frame_number = 0u, symbol = 0u, delivered = 0u;
+	int16_t trained_level = 0, minimum = 0, maximum = 0;
+	double error = 0.0;
+
+	CHECK(prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+	      v92_cpd_direct_select(&cpd, law, 13u, TEST_LU, false) == V92_CPD_OK &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK, "direct B1 fixture failed");
+	for (unsigned clock = 0u; clock < 2000u && delivered < V92_B1U_FRAMES; ++clock) {
+		int16_t sample;
+		if (!v92_phase4_record_tx_is_complete(&e2u_tx)) {
+			CHECK(v92_phase4_record_tx_next(&e2u_tx, &sample) == V92_PHASE4_RECORD_TX_OK,
+				"E2u transmit");
+		} else {
+			if (symbol == 0u) {
+				uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+				memset(bits, 1, mapping.data_bits_per_frame);
+				if (control && frame_number == V92_B1U_FRAMES)
+					CHECK(v92_pcm_frame_tx_reset_control(&tx) == V92_PCM_FRAME_OK, "control TX reset");
+				if (fault && frame_number == V92_B1U_FRAMES - 1u)
+					bits[55] = 0u;
+				CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+					V92_PCM_FRAME_OK, "encode");
+			}
+			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, encoded.v[symbol], &sample) ==
+				V92_PCM_FRAME_OK, "scale");
+			if (++symbol == V92_PCM_MAPPING_FRAME_SYMBOLS) {
+				symbol = 0u;
+				++frame_number;
+			}
+		}
+		sample = wire_sample(&channel, sample);
+		if (!ready) {
+			enum v92_e2u_rx_result result = v92_e2u_rx_sample(&e2u_rx, sample);
+			CHECK(result == V92_E2U_RX_OK || result == V92_E2U_RX_COMPLETE, "E2u receive");
+			if (result == V92_E2U_RX_COMPLETE) {
+				struct v92_upstream_rx handoff;
+				CHECK(v92_e2u_rx_handoff(&e2u_rx, &handoff) == V92_E2U_RX_OK &&
+					v92_upstream_data_rx_init(&rx, &handoff, &mapping, &direct_plan) ==
+					V92_UPSTREAM_DATA_RX_OK, "handoff");
+				ready = true;
+			}
+			continue;
+		}
+		struct v92_upstream_data_frame frame = { 0 };
+		enum v92_upstream_data_rx_result result;
+
+		CHECK(receive_compared(&rx, sample, &frame, &result), "checked/owned B1 mismatch");
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME, "receive");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME)
+			continue;
+		if (rx.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
+			trained_level = rx.decoder.upstream_level;
+			minimum = rx.decoder.minimum_level;
+			maximum = rx.decoder.maximum_level;
+		}
+		if (rx.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    rx.line.received_frames < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+			CHECK(rx.model.alternate.upstream_level == trained_level &&
+			      rx.model.alternate.minimum_level == minimum && rx.model.alternate.maximum_level == maximum,
+			      "validation changed the acquired level");
+			struct v92_upstream_data_rx invalid = rx;
+			invalid.model.alternate.pending_frames = 0u;
+			CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid validator was accepted");
+		}
+		if (control && rx.line.received_frames == V92_B1U_FRAMES) {
+			struct v92_pcm_frame_rx expected = rx.model.alternate;
+
+			CHECK(v92_pcm_frame_rx_reset_control(&expected) == V92_PCM_FRAME_OK &&
+			      v92_upstream_data_rx_reset_control(&rx) == V92_UPSTREAM_DATA_RX_OK &&
+			      memcmp(&rx.model.alternate, &expected, sizeof(expected)) == 0,
+			      "control reset left the delayed B1 validator in the old epoch");
+		}
+		if (rx.line.received_frames <= V92_B1U_FRAMES)
+			error += frame.squared_error;
+		if (frame.bit_count == 0u)
+			continue;
+		CHECK(frame.b1u && frame.bit_count == mapping.data_bits_per_frame, "classification");
+		if (delivered == V92_B1U_FRAMES - 1u)
+			wrong_seen = frame.ambiguous || frame.bits[55] != 1u;
+		else
+			CHECK(!frame.ambiguous, "clean B1 prefix became ambiguous");
+		++delivered;
+	}
+	CHECK(delivered == V92_B1U_FRAMES && wrong_seen == fault, "known bits concealed wrong B1u: law=%u polarity=%d",
+		law, polarity);
+	CHECK(error < V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		"wrong-bit fixture failed merely through residual");
+	const struct v92_pcm_frame_rx cleared = { 0 };
+	CHECK(memcmp(&rx.model.alternate, &cleared, sizeof(cleared)) == 0,
+		"validator survived final B1 decision");
+	return true;
+}
+
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned fault = 0u; fault < 2u; ++fault)
+				for (unsigned control = 0u; control < 2u; ++control)
+					if (!test_direct_b1_validation(law, polarity, fault, control))
+						return 1;
 	if (!test_codec_model(1, false) || !test_codec_model(-1, false) ||
 	    !test_codec_model(1, true) || !test_codec_model(-1, true))
 		return 1;

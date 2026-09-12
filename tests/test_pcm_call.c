@@ -6332,6 +6332,105 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 	return true;
 }
 
+static bool run_wrong_direct_b1(enum g711_law law, bool fault)
+{
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel wire;
+	bool injected = false;
+	double b1_error = 0.0;
+	unsigned received_frames = 0u;
+
+	ac.phase3.v92_analog.upstream_rate_mask = UINT32_C(1) << 12u;
+	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 13u, NULL) == V92_PROFILE_OK &&
+	      channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "wrong direct B1 setup failed");
+	for (unsigned clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t ar, dr, at, dt;
+		struct pcm_call *calls[] = { &analog, &digital };
+
+		channel_receive(&wire, &ar, &dr);
+		for (unsigned role = 0u; role < 2u; ++role) {
+			struct pcm_call *call = calls[role];
+			uint8_t received = role == 0u ? ar : dr;
+			uint8_t *transmitted = role == 0u ? &at : &dt;
+
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(v92_data_boundary(call), "wrong direct B1 handoff failed");
+			if (call->stage != PCM_CALL_DATA_PATH) {
+				struct pcm_call_observation observation;
+				CHECK(pcm_call_octet(call, received, decode_octet(law, received),
+					transmitted, &observation) == PCM_CALL_OK, "wrong direct B1 training failed");
+				continue;
+			}
+			struct v92_pcm_frame_tx encoder;
+			bool inject = role == 0u && fault && !injected &&
+				call->state.data_path.v92_analog.upstream.b1u_symbols_remaining == V92_PCM_MAPPING_FRAME_SYMBOLS;
+
+			if (inject)
+				encoder = call->state.data_path.v92_analog.upstream.encoder;
+			if (role == 1u) {
+				const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+				CHECK(path->upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT,
+				      "wrong B1 fixture lost direct observation");
+				b1_error = path->b1u_squared_error;
+				received_frames = path->upstream.line.received_frames;
+			}
+			struct pcm_call_data_event event;
+			CHECK(pcm_call_data_octet(call, received, decode_octet(law, received), true,
+				NULL, transmitted, &event) == PCM_CALL_OK, "wrong direct B1 data clock failed");
+			if (inject) {
+				struct v92_upstream_data_tx *tx = &call->state.data_path.v92_analog.upstream;
+				struct v92_pcm_frame encoded;
+				uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+				int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+				memset(bits, 1, encoder.mapping.data_bits_per_frame);
+				/* One late source bit changes the wire, but remains below
+				 * the aggregate B1u error ceiling. Carry the changed
+				 * coding state into the following idle frames as well. */
+				bits[55] = 0u;
+				CHECK(v92_pcm_frame_encode(&encoder, bits, encoder.mapping.data_bits_per_frame, &encoded) ==
+					V92_PCM_FRAME_OK, "wrong direct B1 encoding failed");
+				for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+					CHECK(v92_pcm_frame_scale(&encoder.mapping, tx->upstream_level, encoded.v[i], &samples[i]) ==
+						V92_PCM_FRAME_OK, "wrong direct B1 scale failed");
+				CHECK(tx->queue_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u, "wrong B1 missed frame boundary");
+				tx->encoder = encoder;
+				memcpy(tx->queue, samples + 1u, tx->queue_count * sizeof(*samples));
+				*transmitted = encode_octet(law, samples[0]);
+				injected = true;
+			}
+			if (role == 1u) {
+				CHECK(!fault || event.kind == PCM_CALL_DATA_NONE, "bad B1 delivered payload");
+				if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
+					CHECK(fault && injected && received_frames == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u &&
+					      b1_error < (double)V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR &&
+					      call->v92_upstream_retry_ceiling == 12u && !pcm_call_is_online(call) &&
+					      event.kind == PCM_CALL_DATA_NONE && pcm_call_is_valid(call), "bad direct B1 recovery failed");
+					return true;
+				}
+				if (pcm_call_is_online(call)) {
+					CHECK(!fault, "wrong direct B1 opened data path");
+					return true;
+				}
+			}
+		}
+		channel_transmit(&wire, at, dt);
+	}
+	CHECK(false, "wrong direct B1 test timed out");
+}
+
+static bool test_v92_direct_b1_validation(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned fault = 0u; fault < 2u; ++fault)
+			if (!run_wrong_direct_b1(law, fault))
+				return false;
+	return true;
+}
+
 static bool v92_data_error_contracts(const struct pcm_call *online)
 {
 	struct pcm_call checked = *online;
@@ -9888,6 +9987,7 @@ int main(void)
 		{ "V.92 role-local Phase 4 handoffs",
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
+		{ "V.92 direct B1 bit validation", test_v92_direct_b1_validation },
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
