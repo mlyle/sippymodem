@@ -105,45 +105,49 @@ int16_t g711_decode_pcma(uint8_t octet)
 	return (int16_t)(((code & 0x80) != 0) ? magnitude : -magnitude);
 }
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 bool g711_quantization_interval(
 	enum g711_law law, int16_t sample, struct g711_interval *interval)
 {
 	if (!g711_law_is_valid(law) || interval == NULL)
 		return false;
-	int16_t level = quantize(law, sample);
-	int32_t low = INT16_MIN, high = sample;
+	int lower, upper;
 
-	/* Both reconstructed-level functions are monotone, including PCMU's
-	 * two zeros. Search integer inputs so clipping and sign boundaries do
-	 * not need a second copy of the codec's segment rules. */
-	while (low < high) {
-		int32_t middle = low + (high - low) / 2;
+	if (law == G711_LAW_PCMU) {
+		unsigned code = (uint8_t)~g711_encode_pcmu(sample) & 0x7fu;
+		unsigned shift = (code >> 4u) + 3u;
 
-		if (quantize(law, (int16_t)middle) < level)
-			low = middle + 1;
-		else
-			high = middle;
+		/* Invert the encoder's biased segment bin. The top bin includes
+		 * saturation; both signed zero codewords reconstruct to one level. */
+		lower = (int)((16u + (code & 15u)) << shift) - G711_PCMU_BIAS;
+		upper = (int)((17u + (code & 15u)) << shift) - G711_PCMU_BIAS - 1;
+		if (code == 0u) {
+			lower = -3;
+			upper = 3;
+		} else if (sample < 0) {
+			int positive_lower = lower;
+
+			lower = code == 127u ? INT16_MIN : -upper;
+			upper = -positive_lower;
+		} else if (code == 127u) {
+			upper = INT16_MAX;
+		}
+	} else {
+		unsigned code = (g711_encode_pcma(sample) ^ G711_PCMA_POSITIVE_MASK) & 0x7fu;
+		unsigned segment = code >> 4u;
+		unsigned width = segment == 0u ? 16u : 1u << (segment + 3u);
+
+		/* A-law's two inner segments share a 16-sample width. Restore
+		 * the discarded low input bits before complementing a negative bin. */
+		lower = (int)(((code & 15u) + (segment == 0u ? 0u : 16u)) * width);
+		upper = lower + (int)width - 1;
+		if (sample < 0) {
+			int positive_lower = lower;
+
+			lower = -upper - 1;
+			upper = -positive_lower - 1;
+		}
 	}
-	int16_t lower = (int16_t)low;
-
-	low = sample;
-	high = INT16_MAX;
-	while (low < high) {
-		int32_t middle = low + (high - low + 1) / 2;
-
-		if (quantize(law, (int16_t)middle) > level)
-			high = middle - 1;
-		else
-			low = middle;
-	}
-	*interval = (struct g711_interval){ lower, (int16_t)low };
+	*interval = (struct g711_interval){ (int16_t)lower, (int16_t)upper };
 	return true;
 }
 
