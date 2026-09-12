@@ -35,25 +35,100 @@ static bool solve3(double aa, double ab, double ac, double bb, double bc, double
 	return isfinite(*a) && isfinite(*b) && isfinite(*c);
 }
 
-static double interval_residual(double predicted, double lower, double upper)
+/* Gaussian interval probability with arguments scaled by sqrt(2)*sigma.
+ * erfc(28) is below half the smallest binary64 subnormal; erf(6) rounds
+ * to one. These are representable-value tails, not probability cutoffs. */
+static double gaussian_probability(double a, double b)
 {
-	return predicted - fmax(lower, fmin(upper, predicted));
-}
-
-static double outside_bin_error(const int16_t *q, const double *low,
-	const double *high, size_t count, double a, double b, double c)
-{
-	double error = 0.;
-	for (size_t j = 3; j < count; j++) {
-		double residual = interval_residual(a * q[j] + b * q[j - 1] + c * q[j - 2],
-			low[j], high[j]);
-		error += residual * residual;
+	if (a > 0.) {
+		if (a >= 28.) return 0.;
+		return .5 * (erfc(a) - (b >= 28. ? 0. : erfc(b)));
 	}
-	return error;
+	if (b < 0.) {
+		if (b <= -28.) return 0.;
+		return .5 * (erfc(-b) - (a <= -28. ? 0. : erfc(-a)));
+	}
+	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
 }
 
-/* Fit channel taps to final-codec intervals. The first-codec gain
- * intervals were selected by the initial center fit. */
+static double bin_cost(const int16_t *q, const double *low, const double *high,
+	size_t count, const struct v92_observation_interval *fit, double variance)
+{
+	double cost = 0., divisor = sqrt(2. * variance);
+	for (size_t j = 3; j < count; j++) {
+		double mean = fit->main * q[j] + fit->post * q[j - 1] + fit->second * q[j - 2];
+		double probability = gaussian_probability((low[j] - mean) / divisor, (high[j] - mean) / divisor);
+		if (!(probability > 0.)) return HUGE_VAL;
+		cost -= 2. * log(probability);
+	}
+	return cost;
+}
+
+/* Conditional moments of a Gaussian inside the received codec interval.
+ * Measuring only distance OUTSIDE the interval underestimates noise: a
+ * prediction inside the bin is not evidence that no noise was present. */
+static bool bin_moments(double low, double high, double mean, double variance,
+	double *expected, double *deviation)
+{
+	double sigma = sqrt(variance), a = (low - mean) / sigma, b = (high - mean) / sigma;
+	double probability = gaussian_probability(a / sqrt(2.), b / sqrt(2.));
+	if (!(probability > 0.)) return false;
+	double pa = exp(-.5 * a * a) / sqrt(2. * acos(-1.));
+	double pb = exp(-.5 * b * b) / sqrt(2. * acos(-1.));
+	double shift = (pa - pb) / probability;
+	double ap = isfinite(a) ? a * pa : 0., bp = isfinite(b) ? b * pb : 0.;
+	*expected = mean + sigma * shift;
+	*deviation = variance * fmax(0., 1. + (ap - bp) / probability - shift * shift);
+	return isfinite(*expected) && isfinite(*deviation);
+}
+
+/* Bounded expectation/maximization, starting with the center fit. The E
+ * step conditions latent samples on their codec bins; the M step fits the
+ * three taps and noise together. A one-sample variance floor bounds numeric
+ * precision, not channel quality. Payload never updates these parameters. */
+static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t *q,
+	const int16_t *y, const double *low, const double *high, size_t count, double *variance)
+{
+	struct moments m = { 0 };
+	double a = fit->main, b = fit->post, c = fit->second, noise = 0.;
+	for (size_t j = 3; j < count; j++) {
+		double qa = q[j], qb = q[j - 1], qc = q[j - 2];
+		m.aa += qa * qa; m.ab += qa * qb; m.ac += qa * qc;
+		m.bb += qb * qb; m.bc += qb * qc; m.cc += qc * qc;
+		double residual = y[j] - a * qa - b * qb - c * qc;
+		noise += residual * residual;
+	}
+	noise = fmax(1., noise / (count - 3));
+	for (unsigned iteration = 0; iteration < 96; iteration++) {
+		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
+		double ay = 0., by = 0., cy = 0.;
+		for (size_t j = 3; j < count; j++) {
+			if (!bin_moments(low[j], high[j], a * q[j] + b * q[j - 1] + c * q[j - 2],
+				noise, targets + j, deviations + j)) return false;
+			ay += q[j] * targets[j]; by += q[j - 1] * targets[j]; cy += q[j - 2] * targets[j];
+		}
+		double next_a, next_b, next_c, next_noise = 0.;
+		if (!solve3(m.aa, m.ab, m.ac, m.bb, m.bc, m.cc, ay, by, cy,
+			&next_a, &next_b, &next_c) || next_a <= 0.) return false;
+		for (size_t j = 3; j < count; j++) {
+			double residual = targets[j] - next_a * q[j] - next_b * q[j - 1] - next_c * q[j - 2];
+			next_noise += deviations[j] + residual * residual;
+		}
+		next_noise = fmax(1., next_noise / (count - 3));
+		if (!isfinite(next_noise)) return false;
+		bool settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
+			fabs(next_a - a) + fabs(next_b - b) + fabs(next_c - c) < 1e-10 * (1. + a);
+		a = next_a; b = next_b; c = next_c; noise = next_noise;
+		if (settled) break;
+	}
+	fit->main = a; fit->post = b; fit->second = c;
+	*variance = noise;
+	return true;
+}
+
+/* The first-codec gain intervals come from the initial center fit. Select
+ * noise from the best likelihood fit, then compare all retained hypotheses
+ * under that common variance and their log-uniform gain prior. */
 static bool refit_bins(struct v92_observation *model,
 	const int32_t *x, const int16_t *y, const int16_t *levels, size_t count)
 {
@@ -61,7 +136,9 @@ static bool refit_bins(struct v92_observation *model,
 		count > V92_OBSERVATION_TRAINING || count < 4) return false;
 	struct v92_observation_cache cache;
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
-	double errors[INTERVALS], best = HUGE_VAL, total = 0.;
+	double costs[INTERVALS], variances[INTERVALS], best = HUGE_VAL, total = 0.;
+	int16_t q[INTERVALS][V92_OBSERVATION_TRAINING];
+	unsigned chosen = 0;
 	v92_observation_begin(&cache, model, 0.);
 	for (size_t j = 0; j < count; j++) {
 		if (!v92_observation_symbol_level(&cache, y[j], levels ? levels + j : NULL))
@@ -71,62 +148,27 @@ static bool refit_bins(struct v92_observation *model,
 	}
 	for (unsigned i = 0; i < INTERVALS; i++) {
 		struct v92_observation_interval *fit = &model->intervals[i];
-		int16_t q[V92_OBSERVATION_TRAINING];
 		double gain = sqrt(fit->low * fit->high);
 		for (size_t j = 0; j < count; j++) {
 			double value = fmax(INT16_MIN, fmin(INT16_MAX, round(gain * x[j])));
-			q[j] = model->law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu((int16_t)value)) :
+			q[i][j] = model->law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu((int16_t)value)) :
 				g711_decode_pcma(g711_encode_pcma((int16_t)value));
 		}
-		double a = fit->main, b = fit->post, c = fit->second;
-		double error = outside_bin_error(q, low, high, count, a, b, c);
-		for (unsigned iteration = 0; iteration < 128; iteration++) {
-			double aa = 0., ab = 0., ac = 0., bb = 0., bc = 0., cc = 0.;
-			double ga = 0., gb = 0., gc = 0.;
-			for (size_t j = 3; j < count; j++) {
-				double residual = interval_residual(a * q[j] + b * q[j - 1] + c * q[j - 2],
-					low[j], high[j]);
-				if (residual == 0.) continue;
-				aa += (double)q[j] * q[j];
-				ab += (double)q[j] * q[j - 1];
-				bb += (double)q[j - 1] * q[j - 1];
-				ac += (double)q[j] * q[j - 2];
-				bc += (double)q[j - 1] * q[j - 2];
-				cc += (double)q[j - 2] * q[j - 2];
-				ga += q[j] * residual;
-				gb += q[j - 1] * residual;
-				gc += q[j - 2] * residual;
-			}
-
-			double da, db, dc;
-			if (aa + bb + cc == 0.) break;
-			if (!solve3(aa, ab, ac, bb, bc, cc, ga, gb, gc, &da, &db, &dc)) {
-				da = ga / (aa + bb + cc);
-				db = gb / (aa + bb + cc);
-				dc = gc / (aa + bb + cc);
-			}
-			bool improved = false;
-			for (unsigned step = 0; step < 32; step++) {
-				double factor = ldexp(1., -(int)step);
-				double next_a = a - factor * da, next_b = b - factor * db, next_c = c - factor * dc;
-				double next = outside_bin_error(q, low, high, count, next_a, next_b, next_c);
-				if (next_a > 0. && next < error) {
-					a = next_a; b = next_b; c = next_c;
-					error = next;
-					improved = true;
-					break;
-				}
-			}
-			if (!improved || error < 1e-18) break;
-		}
-		fit->main = a; fit->post = b; fit->second = c;
-		errors[i] = error / (count - 3);
-		best = fmin(best, errors[i]);
+		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, variances + i) ?
+			bin_cost(q[i], low, high, count, fit, variances[i]) : HUGE_VAL;
+		if (costs[i] < best) { best = costs[i]; chosen = i; }
 	}
-	model->variance = fmax(1., best);
+	if (!isfinite(best)) return false;
+	model->variance = variances[chosen];
+	best = HUGE_VAL;
+	for (unsigned i = 0; i < INTERVALS; i++) {
+		if (isfinite(costs[i]))
+			costs[i] = bin_cost(q[i], low, high, count, model->intervals + i, model->variance);
+		best = fmin(best, costs[i]);
+	}
 	for (unsigned i = 0; i < INTERVALS; i++) {
 		struct v92_observation_interval *fit = &model->intervals[i];
-		fit->weight = exp(-.5 * (count - 3) * (errors[i] - best) / model->variance) *
+		fit->weight = exp(-.5 * (costs[i] - best)) *
 			log(fit->high / fit->low);
 		total += fit->weight;
 	}
@@ -480,19 +522,7 @@ static size_t point_span(const struct v92_observation *model, int32_t x)
 static double bin_probability(double error, double variance, double divisor, double lower, double upper)
 {
 	if (lower == upper) return exp(-.5 * error * error / variance);
-	double a = (error + lower) / divisor, b = (error + upper) / divisor;
-	/* erfc(28) is below half the smallest binary64 subnormal;
-	 * erf(6) rounds to one. These are representable-value tails, not
-	 * discarded model weights or approximated nonzero probabilities. */
-	if (a > 0.) {
-		if (a >= 28.) return 0.;
-		return .5 * (erfc(a) - (b >= 28. ? 0. : erfc(b)));
-	}
-	if (b < 0.) {
-		if (b <= -28.) return 0.;
-		return .5 * (erfc(-b) - (a <= -28. ? 0. : erfc(-a)));
-	}
-	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
+	return gaussian_probability((error + lower) / divisor, (error + upper) / divisor);
 }
 
 /* General per-observation integral: all three symbols share the same log-uniform

@@ -257,12 +257,46 @@ static void check_channel(enum g711_law law, double gain)
 	printf("V.92 observation law=%u gain=%.9g heldout_rms=%.6f\n", law, gain, rms);
 }
 
+static void check_noise_fit(enum g711_law law, unsigned sigma)
+{
+	int32_t x[TRAINING];
+	int16_t q[TRAINING], y[TRAINING], u[TRAINING] = { 0 };
+	uint32_t seed = UINT32_C(0x32acdc78);
+	double noise_energy = 0.;
+	for (unsigned j = 0; j < TRAINING; j++) {
+		x[j] = 8 * ((int)(random_value(&seed) % 40001) - 20000);
+		q[j] = quantize(law, .125 * x[j]);
+		/* Independent Gaussian samples, injected before the final codec.
+		 * Open uniforms keep Box-Muller finite at every generator value. */
+		double a = (random_value(&seed) + .5) / 4294967296.;
+		double b = (random_value(&seed) + .5) / 4294967296.;
+		double noise = sigma * sqrt(-2. * log(a)) * cos(2. * acos(-1.) * b);
+		y[j] = quantize(law, .63 * q[j] + (j ? .07 * q[j - 1] : 0.) -
+			(j > 1 ? .02 * q[j - 2] : 0.) + noise);
+		if (j >= 3) noise_energy += noise * noise;
+	}
+	struct v92_observation model;
+	assert(v92_observation_fit(&model, law, x, u, y, TRAINING));
+	model.quantizer_gain = 1.;
+	assert(v92_observation_refit_bins(&model, x, y, y, TRAINING));
+	assert(v92_observation_is_valid(&model));
+	double measured = noise_energy / (TRAINING - 3);
+	/* Allow finite-training uncertainty, but reject the severe downward
+	 * bias from treating predictions inside a codec bin as noise-free. */
+	assert(model.variance > .5 * measured && model.variance < 2. * measured);
+	printf("V.92 noise law=%u sigma=%u measured=%.6f fitted=%.6f\n",
+		law, sigma, measured, model.variance);
+}
+
 int main(void)
 {
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
 			check_channel(law, gains[i]);
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
+			check_noise_fit(law, sigma);
 	struct v92_observation model, before;
 	memset(&model, 0x5a, sizeof(model));
 	before = model;

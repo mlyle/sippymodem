@@ -60,9 +60,10 @@ struct v92_observation {
 bool v92_observation_fit(struct v92_observation *model, enum g711_law law,
 	const int32_t *x, const int16_t *u, const int16_t *y, size_t count);
 bool v92_observation_is_valid(const struct v92_observation *model);
-/* After setting the positive final-codec host quantizer_gain, refine the fit
- * against the observed codec intervals. levels optionally supplies aligned
- * decoded wire levels (before host gain), avoiding inference from y.
+/* After setting the positive final-codec host quantizer_gain, jointly refine
+ * channel taps and noise variance against the observed codec intervals.
+ * levels optionally supplies aligned decoded wire levels (before host gain),
+ * avoiding inference from y.
  * x must use the same coordinates as the initial fit. Set input_coefficient
  * only after fitting/refitting already-rounded training inputs. Neither fit
  * may overlap its output with any input; rejection leaves output unchanged. */
