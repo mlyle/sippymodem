@@ -2177,6 +2177,13 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 
 int main(void)
 {
+	/* A constellation that is distinct only at the decoded TRN1u level
+	 * can become ambiguous at another level in the same quantizer cell.
+	 * Exercise 44k through B1u, long idle and payload under both laws. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		if (!test_quantized_level_tracking(law, 16u, false, 5987, true, 0u) ||
+		    !test_quantized_level_tracking(law, 16u, false, 7139, true, 0u))
+			return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned fault = 0u; fault < 2u; ++fault)

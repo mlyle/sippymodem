@@ -209,7 +209,7 @@ static int level_separation(
 static int direct_separation(
 	const struct v92_cpd_parameters *cpd, enum g711_law law, int16_t lu)
 {
-	if (cpd->data_rate_number != 15u && cpd->data_rate_number != 17u)
+	if (cpd->data_rate_number < 15u || cpd->data_rate_number > 17u)
 		return level_separation(cpd, law, lu);
 	/* TRN1u supplies a quantized LU. The balanced direct alphabet must
 	 * remain injective at every scalar consistent with that observation,
@@ -307,7 +307,7 @@ enum v92_cpd_result v92_cpd_direct_select(
 			best = candidate;
 		}
 	}
-	if (best_separation == 0 && (data_rate_number == 15u || data_rate_number == 17u)) {
+	if (best_separation == 0 && data_rate_number >= 15u && data_rate_number <= 17u) {
 		/* Contiguous codec windows can have no placement that survives the
 		 * whole LU cell. Try a bounded family of linear/cubic grids:
 		 * a(x) = 30000 * (x + s*x^3)/(1+s), x=(2i+1)/(2N-1), s=0..16.
