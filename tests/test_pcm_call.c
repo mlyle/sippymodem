@@ -6886,6 +6886,68 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 	return true;
 }
 
+static bool run_v92_no_path_recovery(enum g711_law law)
+{
+	const struct v92_upstream_offer offer = {
+		.peer_mask = (UINT32_C(1) << 19u) - 1u,
+		.local_maximum = 19u, .expected = 19u,
+	};
+	struct v92_online_pair pair;
+	uint32_t noise = UINT32_C(0x81374aef);
+
+	CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
+	      "no-path recovery initial call failed");
+	struct pcm_call call = pair.digital;
+
+	/* Damage real media without an erasure notification. Probe an owned
+	 * receiver copy to identify the exact sample that eliminates all paths,
+	 * then feed that same sample through the complete call at each budget.
+	 * This distinguishes decoder failure from a later quality-window alarm. */
+	for (unsigned sample = 0; sample < 64u; ++sample) {
+		noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
+		int32_t signed_noise = (int32_t)(noise >> 16);
+		int16_t linear = (int16_t)(signed_noise > INT16_MAX ? signed_noise - 65536 : signed_noise);
+		uint8_t received = encode_octet(law, linear), transmitted;
+		struct v92_upstream_data_rx probe = call.state.data_path.v92_digital.upstream;
+		struct v92_upstream_data_frame frame;
+		struct pcm_call_data_event event;
+
+		linear = decode_octet(law, received);
+		enum v92_upstream_data_rx_result rx = v92_upstream_data_rx_octet(
+			&probe, received, linear, true, &frame);
+		if (rx == V92_UPSTREAM_DATA_RX_NO_PATH) {
+			for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget) {
+				struct pcm_call copy = call;
+				bool available = budget < V92_DATA_QUALITY_MAX_RETRAINS;
+
+				copy.pcm_upstream_quality.automatic_retrains = budget;
+				enum pcm_call_result result = pcm_call_data_octet(
+					&copy, received, linear, true, NULL, &transmitted, &event);
+				CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
+				      pcm_call_is_valid(&copy) && event.kind == PCM_CALL_DATA_NONE &&
+				      copy.protocol == PCM_PROTOCOL_V92 &&
+				      copy.pcm_upstream_quality.automatic_retrains == budget + (available ? 1u : 0u) &&
+				      copy.v92_upstream_retry_ceiling == (available ? 18u : call.v92_upstream_retry_ceiling) &&
+				      (available ? copy.stage == PCM_CALL_RETRAIN_SILENCE && !copy.failed : copy.failed) &&
+				      memcmp(&copy.v92_digital_phase4_configuration, &call.v92_digital_phase4_configuration,
+					     sizeof(call.v92_digital_phase4_configuration)) == 0,
+				      "no-path recovery lost its budget, selection, or payload clamp: law=%u budget=%u result=%s",
+				      law, budget, pcm_call_result_name(result));
+			}
+			return true;
+		}
+		CHECK(pcm_call_data_octet(&call, received, linear, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
+		      call.stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(&call),
+		      "no-path fixture recovered before losing its decoder paths");
+	}
+	CHECK(false, "no-path fixture did not eliminate the decoder paths");
+}
+
+static bool test_v92_no_path_recovery(void)
+{
+	return run_v92_no_path_recovery(G711_LAW_PCMU) && run_v92_no_path_recovery(G711_LAW_PCMA);
+}
+
 static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
 {
 	/* The real silence-to-tone waveform must outrank a PCM quality failure,
@@ -10039,6 +10101,7 @@ int main(void)
 		{ "V.92 direct B1 bit validation", test_v92_direct_b1_validation },
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
+		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },
 		{ "V.92 paired fast exchange", test_v92_fast_pair },

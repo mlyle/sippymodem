@@ -4598,6 +4598,17 @@ static enum pcm_call_result v92_data_octet_owned(
 		}
 		received = v92_upstream_data_rx_octet_owned(&path->upstream,
 			received_octet, received_sample, received_available, &frame);
+		if (received == V92_UPSTREAM_DATA_RX_NO_PATH && v92_peer_b1_received_owned(call)) {
+			/* A noise burst can eliminate every valid coded word. The
+			 * failed decoder cannot continue, but the established link
+			 * can recover through the same bounded quality retrain as an
+			 * ambiguous payload. Do not turn signal damage into a numeric
+			 * failure or invent bits from the discarded receive history. */
+			enum v92_data_quality_result quality = v92_data_quality_observe(
+				&call->pcm_upstream_quality, 0.0, true, false);
+			return quality == V92_DATA_QUALITY_RETRAIN ? retry_v92_upstream(call) :
+				quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+		}
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		ru = v92_ru_line_rx_sample(&path->ru, received_sample);
