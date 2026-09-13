@@ -63,8 +63,10 @@ bool v92_phase3_j_receiver_is_complete(
 enum v92_phase3_j_receiver_result v92_phase3_j_receiver_begin_jd_search(
 	struct v92_phase3_j_receiver *receiver);
 
-/* Consume one raw G.711 network character. Rejected calls leave state
- * unchanged. Calls after completion return COMPLETE without consuming it. */
+/* Consume one raw G.711 network character after Sd has qualified the signal.
+ * Decode signs despite amplitude-code deviations and isolated training errors;
+ * Jd/Jp remain CRC-protected. Rejected calls leave state unchanged. Calls after
+ * completion return COMPLETE without consuming the supplied character. */
 enum v92_phase3_j_receiver_result v92_phase3_j_receiver_receive(
 	struct v92_phase3_j_receiver *receiver, uint8_t network_octet);
 

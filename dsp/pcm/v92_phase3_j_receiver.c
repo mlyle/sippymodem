@@ -128,9 +128,12 @@ static enum v92_phase3_j_receiver_result receive_trn1d(
 	if (receiver->trn1d_symbols == UINT32_MAX ||
 	    v34_descramble_group(
 		    &receiver->descrambler, sign, 1, &bit) !=
-		    V34_FRAMING_OK ||
-	    bit != 1)
+		    V34_FRAMING_OK)
 		return V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE;
+	/* As in V.90, keep the self-synchronizing GPC history moving across
+	 * individual slicing errors. Repeated CRC-protected J records, not
+	 * error-free training ones, authorize the next protocol transitions. */
+	(void)bit;
 	receiver->last_sign = sign;
 	receiver->trn1d_symbols++;
 	return receiver->trn1d_symbols == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
@@ -267,9 +270,11 @@ enum v92_phase3_j_receiver_result v92_phase3_j_receiver_receive(
 		return V92_PHASE3_J_RECEIVER_INVALID_STATE;
 	if (receiver->stage == V92_PHASE3_J_RECEIVER_DONE)
 		return V92_PHASE3_J_RECEIVER_COMPLETE;
-	if (!v90_pcm_symbol_parse(&symbol, receiver->law, network_octet) ||
-	    symbol.ucode != receiver->training_ucode)
-		return V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE;
+	if (!v90_pcm_symbol_parse(&symbol, receiver->law, network_octet))
+		return V92_PHASE3_J_RECEIVER_INVALID_STATE;
+	/* Sd has qualified the training signal. The information in TRN1d and
+	 * Jd/Jp is carried by sign; an analogue channel need not preserve the
+	 * transmitter's amplitude code. */
 	next = *receiver;
 	result = next.stage == V92_PHASE3_J_RECEIVER_TRN1D ?
 			 receive_trn1d(&next, symbol.positive ? 1u : 0u) :
