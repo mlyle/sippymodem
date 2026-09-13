@@ -683,6 +683,39 @@ static bool test_constellation_power_selection(void)
 	return true;
 }
 
+static bool test_generated_data_capacity(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned redundancy = 0u; redundancy <= 3u; ++redundancy)
+			for (uint8_t rate = 1u; rate <= V90_CP_RATE_INDEX_MAX; ++rate) {
+				struct v90_cp_parameters cp = {
+					.kind = V90_CP_DATA, .law = law, .selected_rate_index = rate,
+					.sign_redundancy = redundancy, .constellation_count = 1u,
+				};
+				struct v90_pcm_mapping mapping;
+				uint32_t floor, ceiling;
+				CHECK(v90_profile_generate_data_constellation(law, rate, redundancy, 4024u * 4024u,
+					&cp.transmit_constellations[0]) && v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &floor, &ceiling) == V90_PCM_MAPPING_OK &&
+				      ceiling <= 4024u * 4024u, "generated data capacity/power failed");
+				uint64_t smaller_capacity = 1u;
+				for (unsigned slot = 0u; slot < V90_CP_FRAME_INTERVALS; ++slot)
+					smaller_capacity *= mapping.modulus[0] - 1u;
+				CHECK(mapping.modulus[0] == 8u || smaller_capacity < (UINT64_C(1) << mapping.modulus_bits),
+				      "generated map retained unnecessary capacity");
+				struct pcm_constellation saved = cp.transmit_constellations[0];
+				CHECK(!v90_profile_generate_data_constellation(law, 0u, redundancy, 100u, &cp.transmit_constellations[0]) &&
+				      !v90_profile_generate_data_constellation(law, 23u, redundancy, 100u, &cp.transmit_constellations[0]) &&
+				      !v90_profile_generate_data_constellation(law, rate, 4u, 100u, &cp.transmit_constellations[0]) &&
+				      !v90_profile_generate_data_constellation(law, rate, redundancy, 0u, &cp.transmit_constellations[0]) &&
+				      !v90_profile_generate_data_constellation((enum g711_law)99, rate, redundancy, 100u, &cp.transmit_constellations[0]) &&
+				      !v90_profile_generate_data_constellation(law, rate, redundancy, 100u, NULL) &&
+				      memcmp(&saved, &cp.transmit_constellations[0], sizeof(saved)) == 0,
+				      "rejected data generation changed output");
+			}
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -715,6 +748,7 @@ int main(void)
 		{ "advertised Phase 2 power", test_advertised_phase2_power },
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "generated constellation power selection", test_constellation_power_selection },
+		{ "generated data capacity", test_generated_data_capacity },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 		{ "result names", test_result_names },

@@ -50,6 +50,15 @@ bool v90_profile_select_constellation(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
+/* Generated CP/CPu data maps use the smallest common row of at least eight
+ * levels supporting the selected rate and sign redundancy, then maximize signed
+ * distance under the exact power budget above. Regenerate on every rate
+ * selection; explicit caller-owned mappings must not use this policy.
+ * Failure leaves the output unchanged. */
+bool v90_profile_generate_data_constellation(enum g711_law law,
+	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
+	struct pcm_constellation *constellation);
+
 const char *v90_profile_result_name(enum v90_profile_result result);
 
 #endif /* V90_PROFILE_H */

@@ -91,12 +91,16 @@ static uint8_t highest_downstream_rate(uint32_t mask)
 }
 
 static bool cp_supports_rate_mask(
-	const struct v90_cp_parameters *parameters, uint32_t mask)
+	const struct pcm_call_analog_phase4_configuration *configuration, uint32_t mask)
 {
-	struct v90_cp_parameters selected = *parameters;
+	struct v90_cp_parameters selected = configuration->data_parameters;
 	struct v90_pcm_mapping mapping;
 
-	selected.selected_rate_index = highest_downstream_rate(mask);
+	/* Explicit constellations must accommodate every configured rate.
+	 * Generated maps are resized at each selection; validate their current
+	 * capacity without making the active map restrict future retrains. */
+	if (!configuration->generate_constellations)
+		selected.selected_rate_index = highest_downstream_rate(mask);
 	return selected.selected_rate_index != 0 &&
 	       v90_pcm_mapping_init(&mapping, &selected) == V90_PCM_MAPPING_OK;
 }
@@ -205,7 +209,7 @@ static bool v92_analog_configuration_is_valid(
 	if (!analog_configuration_is_valid(info1, phase3, phase4, law) ||
 	    !downstream_rate_is_enabled(enabled_downstream_rate_mask,
 		    phase4->data_parameters.selected_rate_index) ||
-	    !cp_supports_rate_mask(&phase4->data_parameters,
+	    !cp_supports_rate_mask(phase4,
 		    enabled_downstream_rate_mask))
 		return false;
 	if (!info1->pcm_upstream_enabled)
@@ -342,7 +346,7 @@ static bool configuration_is_valid(
 			       configuration->analog_phase4.data_parameters
 				       .selected_rate_index) &&
 		       cp_supports_rate_mask(
-			       &configuration->analog_phase4.data_parameters,
+			       &configuration->analog_phase4,
 			       configuration->enabled_downstream_rate_mask) &&
 		       analog_configuration_is_valid(
 			       &configuration->local_info1,
@@ -405,7 +409,7 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 			       call->analog_phase4_configuration.data_parameters
 				       .selected_rate_index) &&
 		       cp_supports_rate_mask(
-			       &call->analog_phase4_configuration.data_parameters,
+			       &call->analog_phase4_configuration,
 			       call->enabled_downstream_rate_mask) &&
 		       analog_configuration_is_valid(
 			       &call->local_info1,
@@ -897,6 +901,10 @@ static bool call_is_valid(
 	     (call->local_role != V90_ANALOG_MODEM || call->downstream_equalizer.law != call->law ||
 	      !uses_pcm_upstream(call))) ||
 	    !v92_data_quality_is_valid(&call->pcm_upstream_quality) ||
+	    (call->downstream_retry_ceiling != 0u &&
+	     (call->local_role != V90_ANALOG_MODEM ||
+	      !call->analog_phase4_configuration.generate_constellations ||
+	      call->downstream_retry_ceiling >= highest_downstream_rate(call->enabled_downstream_rate_mask))) ||
 	    (call->v92_rate_renegotiation_active &&
 	     (!uses_pcm_upstream(call) ||
 	      !call->retrain_active ||
@@ -1345,7 +1353,8 @@ static bool analog_downstream_is_online_owned(
 	       (path->rate_renegotiation_active ||
 		(path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
 		 path->downstream.data.stage ==
-			 V90_DOWNSTREAM_DATA_RX_STAGE_DATA));
+			 V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
+		 path->downstream.data.b1d_bit_errors == 0u));
 }
 
 static bool digital_downstream_is_online_owned(
@@ -1375,7 +1384,8 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 
 		return (!path->fast.deadline_remaining || pcm_r_rx_is_complete(&path->rf)) &&
 		       path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
-		       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
+		       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
+		       path->downstream.data.b1d_bit_errors == 0u;
 	}
 	const struct pcm_call_v92_digital_data *path =
 		&call->state.data_path.v92_digital;
@@ -1467,6 +1477,32 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 		call->b1_deadline_remaining_samples = 0u;
 		call->b1_deadline_armed = false;
 		return PCM_CALL_OK;
+	}
+	if (call->stage == PCM_CALL_DATA_PATH && call->local_role == V90_ANALOG_MODEM) {
+		const struct v90_downstream_data_rx *rx = NULL;
+		if (uses_pcm_upstream(call)) {
+			if (call->state.data_path.v92_analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
+				rx = &call->state.data_path.v92_analog.downstream.data;
+		} else if (call->state.data_path.analog.downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA)
+			rx = &call->state.data_path.analog.downstream.data;
+		if (rx && rx->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA && rx->b1d_bit_errors != 0u) {
+			/* V.90 8.6.1 / V.92 8.8.1 transmit known ones throughout B1d.
+			 * A frame boundary alone cannot qualify data. Phase 4 permits
+			 * full retrain; an automatic profile tries a strictly lower K.
+			 * Explicit maps and exhausted rate masks fail without silently
+			 * replacing caller policy or repeating an unusable selection. */
+			uint8_t rate = rx->stream.decoder.mapping.frame_bits - PCM_DOWNSTREAM_BASE_FRAME_BITS;
+			uint32_t lower = call->enabled_downstream_rate_mask & ((UINT32_C(1) << (rate - 1u)) - 1u);
+			if (!call->analog_phase4_configuration.generate_constellations || !lower)
+				return PCM_CALL_UNUSABLE_SELECTION;
+			uint8_t previous = call->downstream_retry_ceiling;
+			if (previous == 0u || rate <= previous)
+				call->downstream_retry_ceiling = rate - 1u;
+			enum pcm_call_result result = begin_retrain(call, false);
+			if (result != PCM_CALL_OK)
+				call->downstream_retry_ceiling = previous;
+			return result;
+		}
 	}
 	if (call->stage == PCM_CALL_DATA_PATH && uses_pcm_upstream(call) &&
 	    call->local_role == V90_DIGITAL_MODEM &&
@@ -2407,7 +2443,7 @@ static void limit_analog_phase4_lookahead(
 static bool select_analog_constellations(struct pcm_call *call)
 {
 	struct pcm_call_analog_phase4_configuration *config = &call->analog_phase4_configuration;
-	struct v90_pcm_mapping training, data;
+	struct v90_pcm_mapping training;
 
 	if (!config->generate_constellations)
 		return true;
@@ -2415,9 +2451,18 @@ static bool select_analog_constellations(struct pcm_call *call)
 	       v90_profile_select_constellation(&training, downstream_power_limit(call, NULL),
 			&config->training_parameters.transmit_constellations[0]) &&
 	       v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
-	       v90_pcm_mapping_init(&data, &config->data_parameters) == V90_PCM_MAPPING_OK &&
-	       v90_profile_select_constellation(&data, downstream_power_limit(call, &training),
+	       v90_profile_generate_data_constellation(call->law,
+			config->data_parameters.selected_rate_index, config->data_parameters.sign_redundancy,
+			downstream_power_limit(call, &training),
 			&config->data_parameters.transmit_constellations[0]);
+}
+
+static uint32_t downstream_selection_mask(const struct pcm_call *call)
+{
+	uint32_t mask = call->enabled_downstream_rate_mask;
+	if (call->downstream_retry_ceiling)
+		mask &= (UINT32_C(1) << call->downstream_retry_ceiling) - 1u;
+	return mask;
 }
 
 static enum pcm_call_result enter_phase4(struct pcm_call *call)
@@ -2443,7 +2488,7 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 			    V90_PHASE3_ANALOG_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
 		selected_rate_index = highest_downstream_rate(
-			call->enabled_downstream_rate_mask &
+			downstream_selection_mask(call) &
 			receive_handoff.jd.data_rate_capability_mask);
 		if (selected_rate_index == 0)
 			return PCM_CALL_UNUSABLE_SELECTION;
@@ -2575,7 +2620,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		/* Keep the configured capacity and rate ceiling across retrains.
 		 * Generated levels are reselected after K changes; explicit maps stay. */
 		cpu.data_rate_number = highest_downstream_rate(
-			call->enabled_downstream_rate_mask & call->v92_peer_jd.data_rate_capability_mask &
+			downstream_selection_mask(call) & call->v92_peer_jd.data_rate_capability_mask &
 			((UINT32_C(1) << cpu.data_rate_number) - 1u));
 		if (cpu.data_rate_number == 0u)
 			return PCM_CALL_UNUSABLE_SELECTION;
@@ -2584,11 +2629,10 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			cpu.spectral_lookahead_frames =
 				call->v92_peer_jd.maximum_spectral_shaping_lookahead;
 		if (call->analog_phase4_configuration.generate_constellations) {
-			struct v90_pcm_mapping mapping;
 			uint32_t limit = downstream_power_limit(call, &mixed->receive.stream.decoder.mapping);
 
-			if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &cpu) != V90_PCM_MAPPING_OK ||
-			    !v90_profile_select_constellation(&mapping, limit, &cpu.transmit_constellations[0]))
+			if (!v90_profile_generate_data_constellation(call->law, cpu.data_rate_number,
+				cpu.sign_redundancy, limit, &cpu.transmit_constellations[0]))
 				return PCM_CALL_UNUSABLE_SELECTION;
 		}
 		if (v92_phase3_analog_station_transmit_handoff(
@@ -4596,7 +4640,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
 			received_octet, &frame);
 		if (received == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
-			if (!suppress_frame) {
+			if (!suppress_frame && path->downstream.data.b1d_bit_errors == 0u) {
 				emitted->frame.downstream = frame;
 				emitted->kind = PCM_CALL_DOWNSTREAM_FRAME;
 			}
@@ -4876,7 +4920,8 @@ static enum pcm_call_result data_octet_owned(
 		result = recover_rate_renegotiation_failure(call, result);
 		if (!retrain_candidate &&
 		    result == PCM_CALL_OK &&
-		    analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
+		    analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME &&
+		    call->state.data_path.analog.downstream.data.b1d_bit_errors == 0u) {
 			emitted.frame.downstream = downstream_frame;
 			emitted.kind = PCM_CALL_DOWNSTREAM_FRAME;
 		}

@@ -49,7 +49,8 @@ bool v90_downstream_data_rx_b1d_complete(
 
 /* Consume one hard decision at the known mapper phase. A complete frame is
  * always returned, including the 48th B1d frame reported by B1D_COMPLETE.
- * B1d departures from binary ones are diagnostic and do not delay DATA. */
+ * B1d departures from binary ones do not shift this decoder's DATA boundary.
+ * The call owner must qualify b1d_bit_errors before admitting online data. */
 enum v90_downstream_data_rx_result
 v90_downstream_data_rx_receive_decision(
 	struct v90_downstream_data_rx *receiver, uint8_t ucode,

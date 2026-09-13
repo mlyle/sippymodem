@@ -6437,6 +6437,133 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 	CHECK(false, "wrong direct B1 test timed out");
 }
 
+/* Faults: none, one bad epoch, every epoch, or a fixed caller-owned map. */
+static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsigned fault)
+{
+	struct pcm_call_configuration ac, dc;
+	struct pcm_call calls[2];
+	struct channel wire;
+	bool injected = false;
+	bool recovered = false;
+	bool payload_enabled = false;
+	struct pcm_payload_source payload = { 0 };
+	unsigned received_frames = 0u;
+
+	if (mode == 0u) {
+		CHECK(v90_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, NULL) == V90_PROFILE_OK &&
+		      v90_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, NULL) == V90_PROFILE_OK,
+		      "downstream B1 profile failed");
+	} else {
+		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
+		      "downstream B1 V.92 profile failed");
+		if (mode == 1u)
+			ac.local_info1.pcm_upstream_enabled = false;
+	}
+	/* Each side has a different hole. After 56k fails, only 28k is common;
+	 * neither the local 41.3k nor the peer's 33.3k offer can be selected. */
+	ac.enabled_downstream_rate_mask = UINT32_C(1) | (UINT32_C(1) << 10u) | (UINT32_C(1) << 21u);
+	dc.enabled_downstream_rate_mask = UINT32_C(1) | (UINT32_C(1) << 4u) | (UINT32_C(1) << 21u);
+	dc.phase3.digital.jd.data_rate_capability_mask = dc.enabled_downstream_rate_mask;
+	if (mode != 0u)
+		dc.phase3.v92_digital.jd.data_rate_capability_mask = dc.enabled_downstream_rate_mask;
+	if (fault == 3u)
+		ac.analog_phase4.generate_constellations = false;
+	CHECK(channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "downstream B1 setup failed");
+	for (unsigned clock = 0u; clock < 3u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0u; side < 2u; ++side) {
+			struct pcm_call *call = &calls[side];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "downstream B1 handoff failed");
+			if (call->stage != PCM_CALL_DATA_PATH) {
+				struct pcm_call_observation event;
+				CHECK(pcm_call_octet(call, rx[side], decode_octet(law, rx[side]), &tx[side], &event) ==
+				      PCM_CALL_OK, "downstream B1 training failed: mode=%u law=%u clock=%u", mode, law, clock);
+				continue;
+			}
+			if (side == 1u && fault && !injected) {
+				struct v90_downstream_data_stream *stream = NULL;
+				if (mode == 2u && call->state.data_path.v92_digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA)
+					stream = &call->state.data_path.v92_digital.downstream.data;
+				if (mode != 2u && call->state.data_path.digital.downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA)
+					stream = &call->state.data_path.digital.downstream.data;
+				if (stream && stream->transmitter.b1d_frames == V90_PHASE4_B1D_FRAMES - 1u && !stream->queue_count) {
+					/* A valid waveform with a wrong late scrambled bit must
+					 * not qualify merely because all 48 frames elapsed. */
+					stream->transmitter.scrambler.history ^= UINT32_C(1) << 22u;
+					injected = true;
+				}
+			}
+			struct pcm_call_data_event event;
+			const struct pcm_call_data_sources sources = {
+				.downstream = pcm_payload, .downstream_context = &payload,
+			};
+			enum pcm_call_result result = pcm_call_data_octet(call, rx[side], decode_octet(law, rx[side]), true,
+				payload_enabled ? &sources : NULL, &tx[side], &event);
+			if (side == 0u && result == PCM_CALL_UNUSABLE_SELECTION) {
+				CHECK(injected && (fault == 3u || (fault == 2u && recovered)) &&
+				      !pcm_call_is_online(call) && event.kind == PCM_CALL_DATA_NONE &&
+				      call->enabled_downstream_rate_mask == ac.enabled_downstream_rate_mask &&
+				      (fault != 3u || (!call->downstream_retry_ceiling &&
+					memcmp(&call->analog_phase4_configuration, &ac.analog_phase4, sizeof(ac.analog_phase4)) == 0)),
+				      "failed B1d did not preserve explicit or exhausted policy");
+				return true;
+			}
+			CHECK(result == PCM_CALL_OK, "downstream B1 data clock failed: mode=%u law=%u fault=%u result=%s",
+			      mode, law, fault, pcm_call_result_name(result));
+			if (side == 0u) {
+				CHECK(!fault || recovered || event.kind == PCM_CALL_DATA_NONE, "bad B1d delivered payload");
+				if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
+					CHECK(fault && injected && !recovered && !pcm_call_is_online(call) &&
+					      call->downstream_retry_ceiling == 21u && pcm_call_is_valid(call) &&
+					      call->enabled_downstream_rate_mask == ac.enabled_downstream_rate_mask,
+					      "unexpected B1d retrain");
+					recovered = true;
+					if (fault == 2u)
+						injected = false;
+				}
+				if (pcm_call_is_online(call)) {
+					uint32_t upstream, downstream;
+					CHECK(!fault || (fault == 1u && recovered),
+					      "wrong B1d opened data path: mode=%u law=%u injected=%u", mode, law, injected);
+					CHECK(pcm_call_get_data_rates(call, &upstream, &downstream) &&
+					      downstream == (fault ? 28000u : 56000u), "B1d recovery ignored rate masks");
+				}
+				if (payload_enabled && event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
+					const struct v90_pcm_stream_frame *frame = &event.frame.downstream;
+					bool idle = true;
+					for (size_t bit = 0u; bit < frame->bit_count; ++bit)
+						idle &= frame->bits[bit] == 1u;
+					if (received_frames || !idle) {
+						uint8_t expected[V90_PCM_FRAME_MAX_BITS];
+						pcm_payload_bits(expected, frame->bit_count, received_frames++);
+						CHECK(memcmp(expected, frame->bits, frame->bit_count) == 0, "B1d recovery corrupted payload");
+						if (received_frames == 100u)
+							return true;
+					}
+				}
+			}
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		payload_enabled |= pcm_call_is_online(&calls[0]) && pcm_call_is_online(&calls[1]);
+	}
+	CHECK(false, "downstream B1 timed out: mode=%u law=%u fault=%u injected=%u recovered=%u stages=%u/%u online=%u/%u payload=%u/%u",
+		mode, law, fault, injected, recovered, calls[0].stage, calls[1].stage,
+		pcm_call_is_online(&calls[0]), pcm_call_is_online(&calls[1]), payload.frames, received_frames);
+}
+
+static bool test_downstream_b1_validation(void)
+{
+	for (unsigned mode = 0u; mode < 3u; ++mode)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (unsigned fault = 0u; fault < 4u; ++fault)
+				CHECK(run_downstream_b1_validation(mode, law, fault), "downstream B1 validation failed");
+	return true;
+}
+
 static bool test_v92_direct_b1_validation(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -9280,8 +9407,8 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 				      tc <= peer_rms * peer_rms &&
 				      dc_power <= peer_rms * peer_rms &&
 				      dc_power <= tf * pow(10.0, 0.3) &&
-				      data.modulus[0] == original.modulus[0],
-				      "law %u epoch %zu generated CPu power %u, CPt %u, limit %u, or capacity changed",
+				      data.modulus[0] <= original.modulus[0],
+				      "law %u epoch %zu generated CPu power %u, CPt %u, limit %u, or capacity grew",
 				      law, epoch, dc_power, tf, peer_rms * peer_rms);
 				expected.transmit_constellations[0] = received->transmit_constellations[0];
 			}
@@ -10506,6 +10633,7 @@ int main(void)
 		{ "V.92 two-postcursor PCM data", test_v92_two_postcursor_data },
 		{ "V.92 codec-noise likelihood and recovery", test_v92_codec_noise_recovery },
 		{ "V.92 direct B1 bit validation", test_v92_direct_b1_validation },
+		{ "PCM downstream B1 bit validation", test_downstream_b1_validation },
 		{ "V.92 post-acquisition B1 quality", test_v92_b1_quality_window },
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },

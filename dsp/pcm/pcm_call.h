@@ -481,6 +481,9 @@ struct pcm_call {
 	/* Zero until B1u or online quality lowers the direct-selection ceiling.
 	 * Retained through retrains; never changes the configured maximum. */
 	uint8_t v92_upstream_retry_ceiling;
+	/* Failed B1d lowers only generated downstream selections. Zero means
+	 * no restriction beyond the configured mask and the current peer Jd. */
+	uint8_t downstream_retry_ceiling;
 	bool phase3_entry_stored;
 	bool peer_info0_stored;
 	bool v92_peer_jd_stored;

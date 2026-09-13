@@ -231,10 +231,10 @@ static void add_ucode(
 		(uint8_t)(1u << (ucode % 8u));
 }
 
-static uint8_t data_constellation_size(uint8_t rate_index)
+static uint8_t data_constellation_size(uint8_t rate_index, uint8_t sign_redundancy)
 {
 	uint8_t sign_bits =
-		V90_CP_FRAME_INTERVALS - V90_SIGN_REDUNDANCY;
+		V90_CP_FRAME_INTERVALS - sign_redundancy;
 	uint8_t modulus_bits =
 		(uint8_t)(PCM_DOWNSTREAM_BASE_FRAME_BITS + rate_index -
 			  sign_bits);
@@ -380,6 +380,30 @@ bool v90_profile_select_constellation(
 	return false;
 }
 
+bool v90_profile_generate_data_constellation(enum g711_law law,
+	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
+	struct pcm_constellation *constellation)
+{
+	struct v90_cp_parameters parameters = {
+		.kind = V90_CP_DATA, .law = law,
+		.selected_rate_index = rate_index,
+		.sign_redundancy = sign_redundancy, .constellation_count = 1u,
+	};
+	struct v90_pcm_mapping mapping;
+
+	if (!g711_law_is_valid(law) || rate_index == 0u ||
+	    rate_index > V90_CP_RATE_INDEX_MAX || sign_redundancy > 3u)
+		return false;
+	/* Regenerate capacity at the selected K. Retaining a former high-rate
+	 * map defeats the noise margin that a lower rate is meant to provide.
+	 * Only K and S affect the exact average-power weights, not the shaping
+	 * coefficients or lookahead used by the caller's spectral encoder. */
+	generate_constellation(&parameters.transmit_constellations[0],
+		data_constellation_size(rate_index, sign_redundancy), V90_CONSTELLATION_LAST_UCODE);
+	return v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK &&
+		v90_profile_select_constellation(&mapping, maximum_power, constellation);
+}
+
 static struct v90_cp_parameters cp_parameters(
 	enum g711_law law, enum v90_cp_kind kind,
 	uint8_t data_rate_index, uint16_t upstream_rate_mask)
@@ -407,7 +431,7 @@ static struct v90_cp_parameters cp_parameters(
 	generate_constellation(
 		&parameters.transmit_constellations[0],
 		kind == V90_CP_TRAINING ? V90_INITIAL_CONSTELLATION_SIZE :
-			data_constellation_size(data_rate_index),
+			data_constellation_size(data_rate_index, V90_SIGN_REDUNDANCY),
 		V90_CONSTELLATION_LAST_UCODE);
 	return parameters;
 }
