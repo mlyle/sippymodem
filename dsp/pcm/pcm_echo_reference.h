@@ -41,10 +41,11 @@ enum pcm_echo_reference_result {
 };
 
 struct pcm_echo_reference_scan_result {
+	/* Cover the strongest return's cluster; its peak need not be first. */
 	uint32_t best_window_delay_samples;
 	uint32_t current_window_delay_samples;
 	uint32_t sample_count;
-	uint32_t best_correlation_ppm;
+	uint32_t best_correlation_ppm; /* Peak-bin strength, not a window sum. */
 	uint32_t current_correlation_ppm;
 };
 

@@ -29,6 +29,8 @@ enum {
 	RETURNED_ECHO_TAP_1 = RETURNED_ECHO_DELAY + 7,
 	RETURNED_ECHO_TAP_2 = RETURNED_ECHO_DELAY + 23,
 	RETURNED_ECHO_HISTORY = RETURNED_ECHO_TAP_2 + 1,
+	SPREAD_ECHO_DELAY = 2967,
+	SPREAD_LINK_DELAY = 2136,
 	/* At 3429 symbols/s, 49 samples contain exactly 21 symbols. With the
 	 * fixed 16-symbol decision delay, this echo begins just beyond the
 	 * conventional 37-tap span. */
@@ -47,6 +49,7 @@ enum returned_echo_mode {
 	RETURNED_ECHO_DC_BIASED,
 	RETURNED_ECHO_DC_BIASED_G711,
 	RETURNED_ECHO_WEAK_G711,
+	RETURNED_ECHO_SPREAD_G711,
 };
 
 enum upstream_channel_mode {
@@ -304,6 +307,14 @@ static int16_t returned_echo(
 	const int16_t history[RETURNED_ECHO_HISTORY], size_t write,
 	size_t fill, enum returned_echo_mode mode)
 {
+	if (mode == RETURNED_ECHO_SPREAD_G711) {
+		int32_t sample = 0;
+		for (unsigned int tap = 0; tap < 8u; ++tap)
+			sample += scale_q15(history_sample(history, RETURNED_ECHO_HISTORY,
+				write, fill, SPREAD_ECHO_DELAY + 17u * tap),
+				tap % 3u == 0u ? -1024 : 1024);
+		return add_s16(sample);
+	}
 	int32_t sample = scale_q15(
 		history_sample(
 			history, RETURNED_ECHO_HISTORY, write, fill,
@@ -506,6 +517,8 @@ static bool run_pcm_pair(
 	enum upstream_channel_mode upstream_channel)
 {
 	int16_t echo_history[RETURNED_ECHO_HISTORY] = { 0 };
+	uint8_t downstream_delay[SPREAD_LINK_DELAY];
+	size_t downstream_delay_write = 0;
 	int16_t upstream_history[UPSTREAM_ECHO_HISTORY] = { 0 };
 	struct bit_endpoint analog_bits = {
 		.transmit_seed = 0x35,
@@ -546,6 +559,7 @@ static bool run_pcm_pair(
 	size_t echo_history_fill = 0;
 	size_t upstream_history_write = 0;
 	size_t upstream_history_fill = 0;
+	memset(downstream_delay, encode(law, 0), sizeof(downstream_delay));
 
 	if (protocol == DP_V92) {
 		analog.sregs[SREG_V92_PCM_UPSTREAM] = pcm_upstream_max_drn != 0;
@@ -652,7 +666,8 @@ static bool run_pcm_pair(
 					echo_history, echo_history_write,
 					echo_history_fill, echo_mode));
 		if (echo_mode == RETURNED_ECHO_DC_BIASED_G711 ||
-		    echo_mode == RETURNED_ECHO_WEAK_G711) {
+		    echo_mode == RETURNED_ECHO_WEAK_G711 ||
+		    echo_mode == RETURNED_ECHO_SPREAD_G711) {
 			/* The analogue return, echo and bias share one codec input. */
 			digital_received_octet = encode(law, digital_receive);
 			digital_receive = decode(law, digital_received_octet);
@@ -687,6 +702,11 @@ static bool run_pcm_pair(
 			uint8_t delivered = digital_to_analog;
 
 			digital_to_analog = next_digital;
+			if (echo_mode == RETURNED_ECHO_SPREAD_G711) {
+				digital_to_analog = downstream_delay[downstream_delay_write];
+				downstream_delay[downstream_delay_write] = next_digital;
+				downstream_delay_write = (downstream_delay_write + 1u) % SPREAD_LINK_DELAY;
+			}
 			analog_receive = decode(law, delivered);
 			analog_result = operations->process_g711(
 				analog_dp, law, &delivered,
@@ -1414,6 +1434,28 @@ static bool test_v92_quantized_host_echo(void)
 	return true;
 }
 
+static bool test_v92_spread_host_echo(void)
+{
+	CHECK(v90_datapump_register() == 0, "V.92 spread echo registration failed");
+	/* Ranging and the echo return have different delays. The strongest
+	 * correlation can be a later tap: both reacting peers must negotiate
+	 * usable PCM parameters and pass arbitrary bits after quantization. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_pcm_pair(DP_V92, 1, law, 41333, 0, 0, 24000, 0,
+			MAXIMUM_RATE_RECEIVED_BITS, true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+			RETURNED_ECHO_SPREAD_G711, UPSTREAM_CHANNEL_CLEAN),
+		      "law %u spread echo lost low-rate PCM data", law);
+		for (enum modem_pcm_role role = MODEM_PCM_ROLE_ANALOG;
+		     role <= MODEM_PCM_ROLE_DIGITAL; ++role)
+			CHECK(run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
+				MAXIMUM_RATE_RECEIVED_BITS, true, role, false, UNITY_GAIN_Q15,
+				RETURNED_ECHO_SPREAD_G711, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u spread echo lost retrained PCM data", law, role);
+	}
+	CHECK(v90_datapump_unregister() == 0, "V.92 spread echo leaked ownership");
+	return true;
+}
+
 static bool test_v92_conventional_host_data(void)
 {
 	CHECK(v90_datapump_register() == 0, "V.92 conventional registration failed");
@@ -1835,6 +1877,8 @@ int main(void)
 		  test_v92_pcm_host_echo },
 		{ "V.92 PCM-upstream data and retrain through quantized host echo",
 		  test_v92_quantized_host_echo },
+		{ "V.92 PCM-upstream data and retrain through spread host echo",
+		  test_v92_spread_host_echo },
 		{ "V.92 PCM host data and retrain", test_v92_pcm_host_data },
 		{ "V.92 conventional host data and retrain", test_v92_conventional_host_data },
 		{ "V.92 automatic upstream quality recovery", test_v92_upstream_quality_recovery },

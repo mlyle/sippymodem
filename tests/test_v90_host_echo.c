@@ -420,24 +420,26 @@ static bool test_weak_joint_margin(void)
 	return true;
 }
 
-static int16_t distributed_echo_sample(size_t index, size_t returns)
+static int16_t distributed_echo_sample(size_t index, size_t returns, bool late_peak)
 {
 	int32_t sample = 0;
 
 	/* A delay bin captures only a fraction of the return energy. Readiness
 	 * must instead predict the sum on later, untrained samples. */
-	for (size_t tap = 0; tap < returns; ++tap)
+	for (size_t tap = 0; tap < returns; ++tap) {
+		int16_t gain = late_peak && tap + 1u == returns ? 1600 : 1024;
 		sample += scale_q15(transmit_sample(index - 2967 - 17 * tap),
-			tap % 3 == 0 ? -1024 : 1024);
+			tap % 3 == 0 ? -gain : gain);
+	}
 	return add_s16(sample);
 }
 
-static bool test_distributed_echo(bool acquire)
+static bool test_distributed_echo(bool acquire, bool late_peak)
 {
 	struct v90_host_echo echo;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	const size_t training = acquire ? 8000 : 4000;
-	const size_t returns = acquire ? 8 : 16;
+	const size_t returns = acquire && !late_peak ? 8 : 16;
 	uint64_t echo_energy = 0, residual_energy = 0;
 
 	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
@@ -445,7 +447,7 @@ static bool test_distributed_echo(bool acquire)
 	      "distributed echo owner did not initialize");
 	for (size_t index = 0; index < history + training; ++index) {
 		bool train = index >= history;
-		int16_t received = train ? distributed_echo_sample(index, returns) : 0;
+		int16_t received = train ? distributed_echo_sample(index, returns, late_peak) : 0;
 		int16_t cleaned;
 
 		CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
@@ -466,7 +468,7 @@ static bool test_distributed_echo(bool acquire)
 	for (size_t index = history + training;
 	     index < history + training + VERIFY_SAMPLES; ++index) {
 		int16_t remote = remote_sample(index);
-		int16_t returned = distributed_echo_sample(index, returns);
+		int16_t returned = distributed_echo_sample(index, returns, late_peak);
 		int16_t cleaned;
 		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
 			add_s16((int32_t)remote + returned), &cleaned),
@@ -604,7 +606,8 @@ int main(void)
 	    !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
-	    !test_distributed_echo(false) || !test_distributed_echo(true) ||
+	    !test_distributed_echo(false, false) || !test_distributed_echo(true, false) ||
+	    !test_distributed_echo(true, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	puts("V.90 host echo tests passed");

@@ -277,9 +277,48 @@ static bool test_long_delay_scan(void)
 	return true;
 }
 
+static bool test_cluster_scan(uint32_t first_return, uint32_t pre_samples)
+{
+	struct pcm_echo_reference reference;
+	struct pcm_echo_reference_scan_result scan;
+	const uint32_t last_return = first_return + 254u;
+	const uint32_t current = last_return > pre_samples ? last_return - pre_samples : 1u;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+
+	CHECK(pcm_echo_reference_init(&reference) == PCM_ECHO_REFERENCE_OK &&
+	      pcm_echo_reference_start_scan(&reference, current, pre_samples) == PCM_ECHO_REFERENCE_OK,
+	      "cluster scan did not initialize");
+	for (size_t index = 0; index < history; ++index)
+		CHECK(pcm_echo_reference_push(&reference, reference_sample(index)) == PCM_ECHO_REFERENCE_OK,
+		      "cluster history did not fill");
+	for (size_t index = history; index < history + PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES; ++index) {
+		/* A later, stronger return must not hide earlier comparable paths. */
+		int16_t received = reference_sample(index - first_return) / 4 +
+			reference_sample(index - first_return - 126u) / 4 +
+			3 * reference_sample(index - last_return) / 8;
+		enum pcm_echo_reference_result result =
+			pcm_echo_reference_scan_observe(&reference, received, &scan);
+		CHECK(result == (index + 1u == history + PCM_ECHO_REFERENCE_SCAN_MIN_SAMPLES ?
+			PCM_ECHO_REFERENCE_SCAN_READY : PCM_ECHO_REFERENCE_OK) &&
+		      pcm_echo_reference_push(&reference, reference_sample(index)) == PCM_ECHO_REFERENCE_OK,
+		      "cluster scan failed at %zu", index);
+	}
+	CHECK(scan.best_window_delay_samples <= first_return &&
+	      scan.best_window_delay_samples + PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES > last_return &&
+	      scan.current_window_delay_samples == current && scan.best_correlation_ppm > 100000u,
+	      "cluster window missed returns %u..%u: pre=%u window=%u strength=%u",
+	      first_return, last_return, pre_samples, scan.best_window_delay_samples, scan.best_correlation_ppm);
+	return true;
+}
+
 int main(void)
 {
-	if (!test_ring_and_contracts() || !test_long_delay_scan())
+	if (!test_ring_and_contracts() || !test_long_delay_scan() ||
+	    !test_cluster_scan(80u, FILTER_PRE_SAMPLES) ||
+	    !test_cluster_scan(2967u, FILTER_PRE_SAMPLES) ||
+	    !test_cluster_scan(11424u, FILTER_PRE_SAMPLES) ||
+	    !test_cluster_scan(2u, 0u) ||
+	    !test_cluster_scan(2967u, PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES - 1u))
 		return 1;
 	puts("PCM echo reference tests passed");
 	return 0;

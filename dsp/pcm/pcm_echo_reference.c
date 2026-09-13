@@ -270,6 +270,45 @@ static bool find_best_scan(
 			*best_score = score;
 		}
 	}
+
+	if (found && *best_score > 0.0L) {
+		/* A multipath return need not put its largest correlation first.
+		 * Position the filter to cover the strongest cluster around that
+		 * peak, rather than cutting off comparable earlier returns.
+		 * Ignore bins below one quarter of the peak's squared correlation
+		 * to keep weak scan-noise bins from dominating the placement.
+		 * This is acquisition evidence only, not cancellation readiness. */
+		uint32_t bins = (PCM_ECHO_REFERENCE_MAX_WINDOW_SAMPLES -
+			reference->scan_pre_samples) / reference->scan_step;
+		uint32_t peak = *best_index;
+		if (bins == 0u)
+			bins = 1u;
+		uint32_t first = peak >= bins ? peak - bins + 1u : 0u;
+		long double mass = 0.0L, best_mass = -1.0L;
+		for (uint32_t index = first; index < peak + bins; ++index) {
+			long double score = index < reference->scan_count ? correlation_score(
+				reference->scan_reference_energy[index],
+				reference->scan_input_energy,
+				reference->scan_cross_energy[index]) : -1.0L;
+			if (score >= *best_score / 4.0L)
+				mass += score;
+			if (index >= first + bins) {
+				uint32_t expired = index - bins;
+				long double removed = correlation_score(
+					reference->scan_reference_energy[expired],
+					reference->scan_input_energy,
+					reference->scan_cross_energy[expired]);
+				if (removed >= *best_score / 4.0L)
+					mass -= removed;
+			}
+			/* Ties favor the original peak placement, preserving single
+			 * returns and avoiding unnecessary shifts into earlier noise. */
+			if (index + 1u >= first + bins && mass >= best_mass) {
+				best_mass = mass;
+				*best_index = index + 1u - bins;
+			}
+		}
+	}
 	return found;
 }
 
