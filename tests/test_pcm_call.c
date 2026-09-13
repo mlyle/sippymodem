@@ -7040,6 +7040,28 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 					&checked, received, linear, true, NULL, &transmitted, &event);
 				enum pcm_call_result owned_result = pcm_call_data_octet_owned(
 					&owned, received, linear, linear, true, NULL, &owned_transmitted, &owned_event);
+				if (!training && !fast) {
+					CHECK(result == PCM_CALL_OK && owned_result == result &&
+					      pcm_call_is_valid(&checked) && checked.state.data_path.v92_digital.upstream.failed &&
+					      checked.state.data_path.v92_digital.quality_guard_samples &&
+					      checked.state.data_path.v92_digital.pending_ambiguous &&
+					      checked.pcm_upstream_quality.automatic_retrains == budget &&
+					      checked.v92_upstream_retry_ceiling == before->v92_upstream_retry_ceiling,
+					      "online lost paths bypassed the control guard");
+					struct v92_upstream_data_rx stopped = checked.state.data_path.v92_digital.upstream;
+					unsigned samples = 0;
+					while (result == PCM_CALL_OK && checked.stage == PCM_CALL_DATA_PATH && samples++ < 1600u) {
+						CHECK(transmitted == owned_transmitted && event.kind == PCM_CALL_DATA_NONE &&
+						      memcmp(&event, &owned_event, sizeof(event)) == 0 &&
+						      memcmp(&checked, &owned, sizeof(checked)) == 0 && pcm_call_is_valid(&checked) &&
+						      memcmp(&checked.state.data_path.v92_digital.upstream, &stopped, sizeof(stopped)) == 0,
+						      "lost decoder advanced or emitted data during its guard");
+						result = pcm_call_data_octet(&checked, received, linear, true, NULL, &transmitted, &event);
+						owned_result = pcm_call_data_octet_owned(&owned, received, linear, linear, true, NULL,
+							&owned_transmitted, &owned_event);
+					}
+					CHECK(samples <= 1600u, "lost paths extended the control guard");
+				}
 
 				CHECK(result == (closing ? PCM_CALL_CLEARDOWN_COMPLETE : available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 				      result == owned_result && transmitted == owned_transmitted &&
@@ -7173,7 +7195,7 @@ static bool test_v92_b1_no_path_recovery(void)
 	return run_v92_b1_no_path_recovery(G711_LAW_PCMU) && run_v92_b1_no_path_recovery(G711_LAW_PCMA);
 }
 
-static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
+static bool v92_peer_retrain_quality_guard(const struct pcm_call *online, int16_t amplitude)
 {
 	/* The real silence-to-tone waveform must outrank a PCM quality failure,
 	 * even when its recovery budget is exhausted. Exercise both silence
@@ -7195,7 +7217,7 @@ static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
 				.squared_error = 2.0 * V92_DATA_QUALITY_WINDOW_FRAMES *
 					V92_PCM_MAPPING_FRAME_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 			};
-			CHECK(v34_phase2_tone_transmitter_init(&peer, role, PHASE2_NOMINAL_AMPLITUDE) ==
+			CHECK(v34_phase2_tone_transmitter_init(&peer, role, amplitude) ==
 				V34_PHASE2_TONE_OK, "peer retrain tone did not initialize");
 			for (unsigned clock = 0; clock < 1600u && call.stage == PCM_CALL_DATA_PATH; ++clock) {
 				struct pcm_call_data_event event;
@@ -7223,6 +7245,24 @@ static bool v92_peer_retrain_quality_guard(const struct pcm_call *online)
 	return true;
 }
 
+static bool test_v92_peer_retrain_lost_paths(void)
+{
+	/* A lower-amplitude full-retrain onset can eliminate every dense PCM
+	 * path before its tone qualifies. Retain control priority at all retry
+	 * budgets, not just when the receiver returns a low-margin frame. */
+	const struct v92_upstream_offer offer = {
+		.peer_mask = (UINT32_C(1) << 19u) - 1u,
+		.local_maximum = 19u, .expected = 19u,
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct v92_online_pair pair;
+		CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair) &&
+		      v92_peer_retrain_quality_guard(&pair.digital, 4800),
+		      "dense PCM decoder rejected a peer full retrain");
+	}
+	return true;
+}
+
 static bool test_v92_quality_rate_recovery(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -7236,7 +7276,7 @@ static bool test_v92_quality_rate_recovery(void)
 
 			CHECK(capture_v92_duplex_data(law, 3u, false, fixed ? NULL : &offer, NULL, 0u, &pair),
 			      "quality recovery initial call failed");
-			CHECK(v92_peer_retrain_quality_guard(&pair.digital), "peer full retrain quality guard failed");
+			CHECK(v92_peer_retrain_quality_guard(&pair.digital, PHASE2_NOMINAL_AMPLITUDE), "peer full retrain quality guard failed");
 			uint8_t fixed_rate = pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
 			for (unsigned epoch = 0; epoch < 3u; ++epoch) {
 				CHECK(v92_quality_backoff_contracts(&pair.digital), "quality boundary contracts failed");
@@ -10345,6 +10385,7 @@ int main(void)
 		{ "V.92 delayed duplex PCM data", test_v92_delayed_duplex_data },
 		{ "V.92 online quality rate recovery", test_v92_quality_rate_recovery },
 		{ "V.92 lost decoder paths recover within budget", test_v92_no_path_recovery },
+		{ "V.92 peer retrain outranks lost PCM paths", test_v92_peer_retrain_lost_paths },
 		{ "V.92 lost B1 decoder paths retrain", test_v92_b1_no_path_recovery },
 		{ "V.92 online Ru/Rd control exchange", test_v92_remote_rate_request },
 		{ "V.92 digital fast-exchange response", test_v92_fast_response },

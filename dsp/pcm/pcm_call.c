@@ -803,7 +803,9 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    (!path->quality_guard_samples &&
 		     (path->pending_squared_error != 0.0 || path->pending_ambiguous ||
 		      path->pending_uncertain)) ||
-		    (path->upstream.failed && !call->failed) ||
+		    (path->upstream.failed && !call->failed &&
+		     (!path->quality_guard_samples || !path->pending_ambiguous ||
+		      call->b1_deadline_armed || path->fast.stage != PCM_CALL_V92_FAST_IDLE)) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
 		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
@@ -4609,8 +4611,12 @@ static enum pcm_call_result v92_data_octet_owned(
 				path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
 			}
 		}
-		received = v92_upstream_data_rx_octet_owned(&path->upstream,
-			received_octet, received_sample, host_sample, received_available, &frame);
+		/* A lost decoder cannot resume on its old coding history. Keep
+		 * transmitting and clocking the independent control detectors while
+		 * the bounded online guard owns that failure; never emit its data. */
+		received = path->upstream.failed ? V92_UPSTREAM_DATA_RX_OK :
+			v92_upstream_data_rx_octet_owned(&path->upstream,
+				received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
 			/* A noise burst can eliminate every valid coded word. The
 			 * failed decoder cannot continue, including during B1u or a
@@ -4622,10 +4628,19 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (call->b1_deadline_armed &&
 			    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT)
 				return retry_v92_upstream(call);
-			enum v92_data_quality_result quality = v92_data_quality_observe(
-				&call->pcm_upstream_quality, 0.0, true, false);
-			return quality == V92_DATA_QUALITY_RETRAIN ? retry_v92_upstream(call) :
-				quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+			if (call->b1_deadline_armed || path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
+				enum v92_data_quality_result quality = v92_data_quality_observe(
+					&call->pcm_upstream_quality, 0.0, true, false);
+				return quality == V92_DATA_QUALITY_RETRAIN ? retry_v92_upstream(call) :
+					quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+			}
+			/* A full-retrain onset can also eliminate every path. Give it
+			 * the same control priority as ambiguous data without extending
+			 * an already running guard or spending the quality retry budget. */
+			path->pending_ambiguous = true;
+			if (!path->quality_guard_samples)
+				path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
+			received = V92_UPSTREAM_DATA_RX_OK;
 		}
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
