@@ -1056,11 +1056,11 @@ static bool test_rejection_and_training_evidence(void)
 }
 
 static unsigned failed_prediction, prediction_count;
-double __real_v92_observation_predict(const struct v92_observation *, const int32_t [3]);
-double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t x[3])
+double __real_v92_observation_predict(const struct v92_observation *, const int32_t [3], double);
+double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t x[3], double offset)
 {
 	if (++prediction_count == failed_prediction) return NAN;
-	return __real_v92_observation_predict(model, x);
+	return __real_v92_observation_predict(model, x, offset);
 }
 
 static void channel_samples(enum g711_law law, const struct v92_pcm_frame *frame,
@@ -1084,7 +1084,7 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	memset(&decision, 0xa5, sizeof(decision)); saved_decision = decision;
 	memset(&likelihood, 0xa5, sizeof(likelihood)); saved_likelihood = likelihood;
 	memset(bits, 0xa5, sizeof(bits)); memcpy(saved_bits, bits, sizeof(bits));
-	struct v92_pcm_frame_channel channel = { model, levels, NULL };
+	struct v92_pcm_frame_channel channel = { .model = model, .levels = levels };
 	const unsigned failures[] = { 1, 6, 12, 0 };
 	for (unsigned i = 0; i < ARRAY_LENGTH(failures); i++) {
 		double gain = model->quantizer_gain;
@@ -1108,6 +1108,23 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
 		rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
 		V92_PCM_FRAME_INVALID_PARAMETERS, "invalid final wire level accepted");
+	channel.levels = levels;
+	double offsets[12] = { 0 };
+	for (unsigned fault = 0; fault < 5; fault++) {
+		channel.offsets = offsets;
+		channel.levels = fault == 3 ? NULL : levels;
+		offsets[11] = fault == 0 ? NAN : fault == 1 ? INFINITY : fault == 2 ? -INFINITY : 0.;
+		if (fault == 4) channel.offsets = (const double *)&likelihood;
+		CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
+			rx->mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			(fault == 4 ? V92_PCM_FRAME_INVALID_ARGUMENT : V92_PCM_FRAME_INVALID_PARAMETERS),
+			"invalid or aliased host correction accepted");
+		CHECK(!memcmp(rx, &initial, sizeof(initial)) && !memcmp(bits, saved_bits, sizeof(bits)) &&
+			!memcmp(&decision, &saved_decision, sizeof(decision)) &&
+			!memcmp(&likelihood, &saved_likelihood, sizeof(likelihood)),
+			"invalid host correction changed outputs or receiver");
+	}
+	channel.offsets = NULL;
 	channel.levels = levels;
 	CHECK(v92_pcm_frame_decode_observed(rx, samples, false, bits,
 		rx->mapping.data_bits_per_frame, &decision, &channel,
@@ -1187,7 +1204,7 @@ static bool test_observed_channel(enum g711_law law)
 			V92_PCM_FRAME_OK, "payload encode failed");
 		channel_samples(law, &frame, memory, levels, samples);
 		if (f == 60 && !observed_rejection(&rx, &model, samples, levels)) return false;
-		struct v92_pcm_frame_channel channel = { &model, levels, received };
+		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
 		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
 		struct v92_pcm_frame_rx erased_rx = rx;
 		if (f == 72) { received[5] = false; levels[5] = 1; samples[5] = INT16_MAX; }

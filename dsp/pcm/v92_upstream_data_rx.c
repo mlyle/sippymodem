@@ -37,6 +37,10 @@ bool v92_upstream_data_rx_is_valid(
 		if (line->adaptation != 0.0 ||
 		    !memory_region_is_zero(&line->equalizer, sizeof(line->equalizer)) ||
 		    !isfinite(line->host.gain) || line->host.gain < 0.0 ||
+		    !isfinite(line->host.lower) || !isfinite(line->host.upper) ||
+		    line->host.lower < 0.0 || line->host.lower > line->host.gain ||
+		    line->host.upper < line->host.gain ||
+		    (line->host.gain == 0.0 && line->host.upper != 0.0) ||
 		    (line->received_frames < V92_B1U_ACQUISITION_FRAMES && line->host.gain != 0.0) ||
 		    (!memory_region_is_zero(&line->host.fit, sizeof(line->host.fit)) &&
 		     (line->received_frames >= V92_B1U_ACQUISITION_FRAMES ||
@@ -62,8 +66,10 @@ bool v92_upstream_data_rx_is_valid(
 			if (line->raw[i] < -32768 || line->raw[i] > 32768 ||
 			    (line->received[i] && !line->wire_known[i]) ||
 			    (!line->wire_known[i] && line->wire[i] != 0) ||
+			    (!line->wire_known[i] && line->host_samples[i] != 0) ||
 			    (i >= line->symbol_count && (line->raw[i] != 0 || line->samples[i] != 0 ||
-				line->wire[i] != 0 || line->wire_known[i] || line->received[i])))
+				line->wire[i] != 0 || line->host_samples[i] != 0 ||
+				line->wire_known[i] || line->received[i])))
 				return false;
 		return true;
 	}
@@ -212,7 +218,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 		next.line.calibration.maximum = fmax(plan->gain, next.line.calibration.maximum * ratio);
 		next.line.calibration.correlation = next.line.calibration.energy = 0.0;
 		pcm_gain_init(&next.line.host.fit);
-		next.line.host.gain = 0.0;
+		next.line.host.gain = next.line.host.lower = next.line.host.upper = 0.0;
 		if (v92_pcm_frame_rx_init_constellation(&next.decoder, mapping) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	} else if (v92_pcm_frame_rx_init(&next.decoder, mapping, receiver->decoder.upstream_level) != V92_PCM_FRAME_OK) {
@@ -256,13 +262,16 @@ static void observe_host_gain(struct v92_upstream_data_line *line)
 		 * non-scalar conditioning must not supply a quality normalization. */
 		if (!line->wire_known[i] || !line->received[i] ||
 		    !pcm_gain_observe(&line->host.fit, line->wire[i] * line->polarity,
-			    line->raw[i] * line->polarity)) {
+			    line->host_samples[i])) {
 			memset(&line->host, 0, sizeof(line->host));
 			return;
 		}
 	}
 	if (line->received_frames + 1u == V92_B1U_ACQUISITION_FRAMES) {
-		pcm_gain_estimate(&line->host.fit, &line->host.gain);
+		if (pcm_gain_estimate(&line->host.fit, &line->host.gain)) {
+			line->host.lower = line->host.fit.lower;
+			line->host.upper = line->host.fit.upper;
+		}
 		memset(&line->host.fit, 0, sizeof(line->host.fit));
 	}
 }
@@ -373,6 +382,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 	memset(line->observations, 0, sizeof(line->observations));
 	memset(line->samples, 0, sizeof(line->samples));
 	memset(line->wire, 0, sizeof(line->wire));
+	memset(line->host_samples, 0, sizeof(line->host_samples));
 	memset(line->wire_known, 0, sizeof(line->wire_known));
 	memset(line->received, 0, sizeof(line->received));
 	receiver->decoder = decoder;
@@ -385,7 +395,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 static enum v92_upstream_data_rx_result receive_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
-	bool available, bool owned)
+	int16_t host_sample, bool available, bool owned)
 {
 	struct v92_upstream_data_line next;
 	struct qam_point input;
@@ -415,6 +425,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 			(receiver->decoder.mapping.law == G711_LAW_PCMU ?
 				g711_decode_pcmu(code) : g711_decode_pcma(code)) : 0;
 		next.wire_known[next.symbol_count] = wire_known;
+		next.host_samples[next.symbol_count] = wire_known ? host_sample : 0;
 		next.received[next.symbol_count] = wire_known && available;
 		next.samples[next.symbol_count] = rounded_sample(next.raw[next.symbol_count] * next.calibration.gain);
 		if (++next.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
@@ -441,28 +452,28 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_sample(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, 0u, false, false, false);
+	return receive_sample(receiver, sample, frame, 0u, false, 0, false, false);
 }
 
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, 0u, false, false, true);
+	return receive_sample(receiver, sample, frame, 0u, false, 0, false, true);
 }
 
 enum v92_upstream_data_rx_result v92_upstream_data_rx_octet(
 	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
 	bool available, struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, code, true, available, false);
+	return receive_sample(receiver, sample, frame, code, true, sample, available, false);
 }
 
 enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
 	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
-	bool available, struct v92_upstream_data_frame *frame)
+	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame)
 {
-	return receive_sample(receiver, sample, frame, code, true, available, true);
+	return receive_sample(receiver, sample, frame, code, true, host_sample, available, true);
 }
 
 const char *v92_upstream_data_rx_result_name(

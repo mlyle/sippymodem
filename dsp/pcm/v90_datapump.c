@@ -620,7 +620,7 @@ static bool start_call(
 
 static bool process_octet(
 	struct v90_datapump *datapump, uint8_t received,
-	int16_t received_sample, bool received_available,
+	int16_t received_sample, int16_t host_sample, bool received_available,
 	uint8_t *transmitted, bool *connected, bool *fallback, bool *disconnected)
 {
 	struct pcm_call_data_sources sources = {
@@ -645,7 +645,7 @@ static bool process_octet(
 		return false;
 	if (datapump->call.stage == PCM_CALL_DATA_PATH) {
 		result = pcm_call_data_octet_owned(
-			&datapump->call, received, received_sample, received_available, &sources,
+			&datapump->call, received, received_sample, host_sample, received_available, &sources,
 			transmitted, &event);
 	} else {
 		struct pcm_call_observation observation;
@@ -843,7 +843,7 @@ static int process_v90_g711(
 			goto failure;
 		if (!process_octet(
 			    datapump, receive_codewords[index],
-			    cleaned_sample, received_mask == NULL || received_mask[index],
+			    cleaned_sample, receive_samples[index], received_mask == NULL || received_mask[index],
 			    &pcm_transmit, &connected, &fallback, &disconnected))
 			goto failure;
 		transmit_codewords[index] = pcm_transmit;

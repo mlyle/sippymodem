@@ -21,7 +21,7 @@ struct moments { double aa, ab, ac, bb, bc, cc, ay, by, cy, yy; };
 struct boundary { double at; unsigned next; };
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double *lower, double *upper);
+	const int16_t *level, double offset, double *lower, double *upper);
 
 static bool solve3(double aa, double ab, double ac, double bb, double bc, double cc,
 	double ay, double by, double cy, double *a, double *b, double *c)
@@ -131,7 +131,8 @@ static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t 
  * noise from the best likelihood fit, then compare all retained hypotheses
  * under that common variance and their log-uniform gain prior. */
 static bool refit_bins(struct v92_observation *model,
-	const int32_t *x, const int16_t *y, const int16_t *levels, size_t count)
+	const int32_t *x, const int16_t *y, const int16_t *levels,
+	const double *offsets, size_t count)
 {
 	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
 	double costs[INTERVALS], variances[INTERVALS], best = HUGE_VAL, total = 0.;
@@ -140,7 +141,7 @@ static bool refit_bins(struct v92_observation *model,
 	for (size_t j = 0; j < count; j++) {
 		double lower, upper;
 		if (!codec_bounds(model->law, model->quantizer_gain, y[j],
-			levels ? levels + j : NULL, &lower, &upper))
+			levels ? levels + j : NULL, offsets ? offsets[j] : 0., &lower, &upper))
 			return false;
 		low[j] = y[j] + lower;
 		high[j] = y[j] + upper;
@@ -197,15 +198,18 @@ static int16_t scaled(enum g711_law law, double gain, int32_t x)
 /* Bounds relative to the host sample. Use the same arithmetic for training
  * and scoring, including subnormal gain and one-sided codec clipping. */
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
-	const int16_t *level, double *lower, double *upper)
+	const int16_t *level, double offset, double *lower, double *upper)
 {
+	if (!isfinite(offset) || (offset != 0. && !level)) return false;
 	int16_t reconstructed = level ? *level : scaled(law, 1. / gain, observed);
 	struct g711_interval interval;
 	if (quantize(law, reconstructed) != reconstructed ||
 		!g711_quantization_interval(law, reconstructed, &interval)) return false;
-	*lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) - observed;
-	*upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) - observed;
-	return true;
+	*lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) + offset - observed;
+	*upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) + offset - observed;
+	/* A finite but unrepresentably large shift can erase the interval's
+	 * width. That is not a point observation with a perfect residual. */
+	return offset == 0. || *lower < *upper;
 }
 
 static int16_t magnitude_code(enum g711_law law, int32_t x, unsigned magnitude)
@@ -456,6 +460,7 @@ bool v92_observation_fit(struct v92_observation *model,
 		memory_regions_overlap(model, sizeof(*model), training, sizeof(*training))) return false;
 	const int32_t *x = training->input;
 	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
+	const double *offsets = training->offsets;
 	size_t count = training->count;
 	enum g711_law law = training->law;
 	if (!x || !u || !y || count < 4 || count > V92_OBSERVATION_TRAINING ||
@@ -464,7 +469,12 @@ bool v92_observation_fit(struct v92_observation *model,
 		memory_regions_overlap(model, sizeof(*model), x, count * sizeof(*x)) ||
 		memory_regions_overlap(model, sizeof(*model), u, count * sizeof(*u)) ||
 		memory_regions_overlap(model, sizeof(*model), y, count * sizeof(*y)) ||
-		(levels && memory_regions_overlap(model, sizeof(*model), levels, count * sizeof(*levels)))) return false;
+		(levels && memory_regions_overlap(model, sizeof(*model), levels, count * sizeof(*levels))) ||
+		(offsets && (!levels || memory_regions_overlap(model, sizeof(*model), offsets,
+			count * sizeof(*offsets))))) return false;
+	if (offsets)
+		for (size_t i = 0; i < count; i++)
+			if (!isfinite(offsets[i])) return false;
 	double energy = 0, linear_error = 0;
 	for (size_t i = 3; i < count; i++) {
 		double error = (double)y[i] - u[i];
@@ -496,7 +506,7 @@ bool v92_observation_fit(struct v92_observation *model,
 	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
 	for (size_t i = 0; i < INTERVALS; i++) initialized.intervals[i] = (struct v92_observation_interval){
 		fits[i].low, fits[i].high, fits[i].main, fits[i].post, fits[i].second, fits[i].weight };
-	if (!refit_bins(&initialized, x, y, levels, count) || !compile_geometry(&initialized) ||
+	if (!refit_bins(&initialized, x, y, levels, offsets, count) || !compile_geometry(&initialized) ||
 		!v92_observation_is_valid(&initialized)) return false;
 	*model = initialized;
 	return true;
@@ -616,7 +626,7 @@ void v92_observation_begin(struct v92_observation_cache *cache,
 }
 
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
-	int16_t observed, const int16_t *level)
+	int16_t observed, const int16_t *level, double offset)
 {
 	const struct v92_observation *model = cache->model;
 	if (!isfinite(cache->relative_noise) || cache->relative_noise < 0.) return false;
@@ -625,7 +635,7 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 	double scale = V92_SCORE_SCALE / variance;
 	if (!isfinite(variance) || variance <= 0. || !isfinite(scale) || scale <= 0.) return false;
 	double lower, upper;
-	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, &lower, &upper)) return false;
+	if (!codec_bounds(model->law, model->quantizer_gain, observed, level, offset, &lower, &upper)) return false;
 	if (++cache->generation == 0) {
 		memset(cache->stamp, 0, sizeof(cache->stamp));
 		cache->generation = 1;
@@ -641,7 +651,7 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 
 bool v92_observation_symbol(struct v92_observation_cache *cache, int16_t observed)
 {
-	return v92_observation_symbol_level(cache, observed, NULL);
+	return v92_observation_symbol_level(cache, observed, NULL, 0.);
 }
 
 /* Taps are finite and codec levels are bounded integers. Products may
@@ -772,9 +782,9 @@ struct v92_observation_range v92_observation_range(struct v92_observation_cache 
 }
 
 double v92_observation_predict(const struct v92_observation *model,
-	const int32_t input[3])
+	const int32_t input[3], double offset)
 {
-	if (!(model->quantizer_gain > 0.)) return NAN;
+	if (!(model->quantizer_gain > 0.) || !isfinite(offset)) return NAN;
 	int32_t x[3];
 	for (unsigned j = 0; j < 3; j++)
 		x[j] = model->input_coefficient ? round_shift_s64_to_s32_saturating(
@@ -800,7 +810,7 @@ double v92_observation_predict(const struct v92_observation *model,
 			double weight = p->weight * log1p((end - begin) / begin) / width;
 			double linear = p->main * q[0] + p->post * q[1] + p->second * q[2];
 			double sample = fmax(INT16_MIN,
-				fmin(INT16_MAX, round(linear / model->quantizer_gain)));
+				fmin(INT16_MAX, round((linear - offset) / model->quantizer_gain)));
 			prediction += weight * model->quantizer_gain *
 				quantize(model->law, (int16_t)sample);
 			if (end == p->high) break;
@@ -812,5 +822,5 @@ double v92_observation_predict(const struct v92_observation *model,
 			begin = end;
 		}
 	}
-	return prediction;
+	return prediction + offset;
 }

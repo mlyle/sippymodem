@@ -6537,14 +6537,14 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 
 	CHECK(pcm_call_data_octet(&checked, silence, 0, true, NULL,
 				 (uint8_t *)&checked, &checked_event) == PCM_CALL_INVALID_ARGUMENT &&
-	      pcm_call_data_octet_owned(&checked, silence, 0, true, NULL,
+	      pcm_call_data_octet_owned(&checked, silence, 0, 0, true, NULL,
 				       &checked_octet, (struct pcm_call_data_event *)&checked) ==
 		      PCM_CALL_INVALID_ARGUMENT &&
 	      memcmp(&checked, online, sizeof(checked)) == 0,
 	      "V.92 accepted aliased media outputs");
 	CHECK(pcm_call_data_octet(&checked, silence, 0, true, NULL, &checked_octet, &checked_event) ==
 		      PCM_CALL_OK &&
-	      pcm_call_data_octet_owned(&owned, silence, 0, true, NULL, &owned_octet, &owned_event) ==
+	      pcm_call_data_octet_owned(&owned, silence, 0, 0, true, NULL, &owned_octet, &owned_event) ==
 		      PCM_CALL_OK &&
 	      pcm_call_is_valid(&owned) && checked_octet == owned_octet &&
 	      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
@@ -6557,7 +6557,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 		owned = *online;
 		CHECK(pcm_call_data_octet(&checked, silence, 0, false, NULL, &checked_octet, &checked_event) ==
 			      PCM_CALL_OK &&
-		      pcm_call_data_octet_owned(&owned, silence, 0, false, NULL, &owned_octet, &owned_event) ==
+		      pcm_call_data_octet_owned(&owned, silence, 0, 0, false, NULL, &owned_octet, &owned_event) ==
 			      PCM_CALL_OK &&
 		      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
 		      checked_event.kind == PCM_CALL_DATA_NONE && owned_event.kind == PCM_CALL_DATA_NONE &&
@@ -6982,8 +6982,11 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 			arm_v92_quality_failure(&call, reason == 1u);
 			/* A pending observation is already in quality units. Applying
 			 * host gain again here would incorrectly forgive the error. */
-			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION)
+			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 				call.state.data_path.v92_digital.upstream.line.host.gain = 2.0;
+				call.state.data_path.v92_digital.upstream.line.host.lower = 2.0;
+				call.state.data_path.v92_digital.upstream.line.host.upper = 2.0;
+			}
 			if (reason == 2u) {
 				call.state.data_path.v92_digital.pending_squared_error = 0.0;
 				call.state.data_path.v92_digital.pending_uncertain = true;
@@ -7036,7 +7039,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				enum pcm_call_result result = pcm_call_data_octet(
 					&checked, received, linear, true, NULL, &transmitted, &event);
 				enum pcm_call_result owned_result = pcm_call_data_octet_owned(
-					&owned, received, linear, true, NULL, &owned_transmitted, &owned_event);
+					&owned, received, linear, linear, true, NULL, &owned_transmitted, &owned_event);
 
 				CHECK(result == (closing ? PCM_CALL_CLEARDOWN_COMPLETE : available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 				      result == owned_result && transmitted == owned_transmitted &&
@@ -7344,7 +7347,7 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 		struct pcm_call_data_event checked_data;
 		uint8_t checked_octet;
 		checked_sources.downstream_context = &checked_source;
-		result = pcm_call_data_octet_owned(call, encode_octet(call->law, sample), sample, true,
+		result = pcm_call_data_octet_owned(call, encode_octet(call->law, sample), sample, sample, true,
 			test->data_started ? &sources : NULL, &octet, &data);
 		CHECK(pcm_call_data_octet(&checked, encode_octet(checked.law, sample), sample, true,
 			test->data_started ? &checked_sources : NULL, &checked_octet, &checked_data) == result &&

@@ -40,10 +40,14 @@ struct v92_upstream_data_line {
 	 * zero gain means unidentified and preserves raw quality-score units. */
 	struct {
 		struct pcm_gain fit;
-		double gain;
+		/* Retain the rounding interval too: the estimate alone cannot
+		 * certify a later, previously unseen wire level. */
+		double gain, lower, upper;
 	} host;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t wire[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	/* Gain-only physical samples, before echo subtraction or polarity. */
+	int16_t host_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool wire_known[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	bool received[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint64_t input_samples;
@@ -166,9 +170,13 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_octet(
 enum v92_upstream_data_rx_result v92_upstream_data_rx_sample_owned(
 	struct v92_upstream_data_rx *receiver, int16_t sample,
 	struct v92_upstream_data_frame *frame);
+/* host_sample is the gain-only physical sample before independent echo
+ * subtraction; sample is its cleaned counterpart. Supply identical samples
+ * without cancellation. Clipped or gain-inconsistent evidence cannot support
+ * an affine codec model; concealed samples never train the gain or model. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_octet_owned(
 	struct v92_upstream_data_rx *receiver, uint8_t code, int16_t sample,
-	bool available, struct v92_upstream_data_frame *frame);
+	int16_t host_sample, bool available, struct v92_upstream_data_frame *frame);
 
 const char *v92_upstream_data_rx_result_name(
 	enum v92_upstream_data_rx_result result);

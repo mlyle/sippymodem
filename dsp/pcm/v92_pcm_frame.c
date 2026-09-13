@@ -969,6 +969,7 @@ static enum v92_pcm_frame_result decode_frame(
 {
 	const struct v92_observation *model = channel ? channel->model : NULL;
 	const int16_t *levels = channel ? channel->levels : NULL;
+	const double *offsets = channel ? channel->offsets : NULL;
 	const bool *received = channel ? channel->received : NULL;
 	struct frame_path banks[2][V92_PCM_RX_PATHS];
 	struct frame_path *paths = banks[0];
@@ -985,6 +986,7 @@ static enum v92_pcm_frame_result decode_frame(
 		{ channel, channel ? sizeof(*channel) : 0u },
 		{ likelihood, likelihood ? sizeof(*likelihood) : 0u },
 		{ levels, levels ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*levels) : 0u },
+		{ offsets, offsets ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*offsets) : 0u },
 		{ received, received ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*received) : 0u },
 	};
 
@@ -994,6 +996,13 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (offsets) {
+		if (!model || !levels)
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+			if (!isfinite(offsets[i]))
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+	}
 	if (model && (!v92_observation_is_valid(model) ||
 		model->law != receiver->mapping.law ||
 		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
@@ -1037,7 +1046,8 @@ static enum v92_pcm_frame_result decode_frame(
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
 		if (model && present && !v92_observation_symbol_level(&cache,
-			samples[symbol], levels ? levels + symbol : NULL))
+			samples[symbol], levels ? levels + symbol : NULL,
+			offsets ? offsets[symbol] : 0.))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
 		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION) {
@@ -1369,7 +1379,7 @@ static enum v92_pcm_frame_result decode_frame(
 			int32_t input[3] = { result.frame.x[symbol],
 				symbol ? result.frame.x[symbol - 1] : previous[0],
 				symbol > 1 ? result.frame.x[symbol - 2] : previous[1 - symbol] };
-			estimated[symbol] = v92_observation_predict(model, input);
+			estimated[symbol] = v92_observation_predict(model, input, offsets ? offsets[symbol] : 0.);
 			if (!isfinite(estimated[symbol]))
 				return V92_PCM_FRAME_NO_PATH;
 		}

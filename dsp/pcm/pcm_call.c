@@ -4477,7 +4477,7 @@ static enum pcm_call_result observe_v92_data_quality(
 
 static enum pcm_call_result v92_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	bool received_available,
+	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources, uint8_t *generated,
 	struct pcm_call_data_event *emitted)
 {
@@ -4610,7 +4610,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			}
 		}
 		received = v92_upstream_data_rx_octet_owned(&path->upstream,
-			received_octet, received_sample, received_available, &frame);
+			received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
 			/* A noise burst can eliminate every valid coded word. The
 			 * failed decoder cannot continue, including during B1u or a
@@ -4707,7 +4707,7 @@ static enum pcm_call_result v92_data_octet_owned(
 
 static enum pcm_call_result data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	bool received_available,
+	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -4768,7 +4768,7 @@ static enum pcm_call_result data_octet_owned(
 				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
 	generated = encode_sample(call->law, 0);
 	if (uses_pcm_upstream(call)) {
-		result = v92_data_octet_owned(call, received_octet, received_sample, received_available,
+		result = v92_data_octet_owned(call, received_octet, received_sample, host_sample, received_available,
 			sources, &generated, &emitted);
 		if (retrain_candidate)
 			emitted = (struct pcm_call_data_event){ 0 };
@@ -4878,7 +4878,7 @@ enum pcm_call_result pcm_call_data_octet(
 	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	result = data_octet_owned(
-		call, received_octet, received_sample, received_available, sources,
+		call, received_octet, received_sample, received_sample, received_available, sources,
 		&generated, &emitted);
 	if (result == PCM_CALL_SOURCE_FAILURE)
 		return result;
@@ -4893,7 +4893,7 @@ enum pcm_call_result pcm_call_data_octet(
 
 enum pcm_call_result pcm_call_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	bool received_available,
+	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event)
@@ -4906,7 +4906,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 	if (call->stage != PCM_CALL_DATA_PATH && call->stage != PCM_CALL_CLOSED)
 		return PCM_CALL_INVALID_STATE;
 	return data_octet_owned(
-		call, received_octet, received_sample, received_available, sources,
+		call, received_octet, received_sample, host_sample, received_available, sources,
 		transmit_octet, event);
 }
 

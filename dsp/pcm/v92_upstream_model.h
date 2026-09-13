@@ -19,6 +19,7 @@ struct v92_upstream_model {
 		struct {
 			int32_t x[V92_OBSERVATION_TRAINING], raw[V92_OBSERVATION_TRAINING];
 			int16_t u[V92_OBSERVATION_TRAINING], wire[V92_OBSERVATION_TRAINING];
+			int16_t host[V92_OBSERVATION_TRAINING];
 		};
 		struct v92_pcm_level_fit level;
 	};

@@ -36,7 +36,8 @@ static int compare_double(const void *a, const void *b)
  * constant codec cell. This does not use the model's compiled geometry,
  * cached cells, transition formula, or likelihood implementation. */
 static uint64_t independent_score(const struct v92_observation *model,
-	const int32_t input[3], int16_t observed)
+	const int32_t input[3], int16_t observed, int16_t level, double offset,
+	double *prediction)
 {
 	double thresholds[256];
 	size_t transitions = 0;
@@ -49,12 +50,13 @@ static uint64_t independent_score(const struct v92_observation *model,
 	assert(transitions <= 255);
 	struct g711_interval bin;
 	assert(model->quantizer_gain > 0. && g711_quantization_interval(model->law,
-		quantize(model->law, observed / model->quantizer_gain), &bin));
+		level, &bin));
 	double lower = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5) * model->quantizer_gain;
 	double upper = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5) * model->quantizer_gain;
-	lower -= observed;
-	upper -= observed;
+	lower += offset - observed;
+	upper += offset - observed;
 	double likelihood = 0.;
+	*prediction = offset;
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		const struct v92_observation_interval *fit = &model->intervals[i];
 		if (fit->weight == 0.) continue;
@@ -75,6 +77,9 @@ static uint64_t independent_score(const struct v92_observation *model,
 			double error = observed - fit->main * quantize(model->law, gain * input[0]) -
 				fit->post * quantize(model->law, gain * input[1]) -
 				fit->second * quantize(model->law, gain * input[2]);
+			*prediction += fit->weight * model->quantizer_gain *
+				quantize(model->law, (observed - error - offset) / model->quantizer_gain) *
+				log1p((cuts[j] - cuts[j - 1]) / cuts[j - 1]) / log1p((fit->high - fit->low) / fit->low);
 			double probability;
 			if (lower == upper) {
 				probability = exp(-.5 * error * error / model->variance);
@@ -123,7 +128,8 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	assert(!v92_observation_fit(NULL, &good));
 	assert(!v92_observation_fit(model, NULL));
 	assert(!v92_observation_fit(model, (const struct v92_observation_training *)model));
-	for (unsigned fault = 0; fault < 16; fault++) {
+	double offsets[TRAINING] = { 0 };
+	for (unsigned fault = 0; fault < 21; fault++) {
 		struct v92_observation_training bad = good;
 		switch (fault) {
 		case 0: bad.count = TRAINING + 1; break;
@@ -142,6 +148,11 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 		case 13: bad.host_gain = -1.; break;
 		case 14: bad.host_gain = NAN; break;
 		case 15: bad.host_gain = INFINITY; break;
+		case 16: bad.offsets = (const double *)model; break;
+		case 17: bad.offsets = offsets; bad.levels = NULL; break;
+		case 18: bad.offsets = offsets; offsets[TRAINING - 1] = NAN; break;
+		case 19: bad.offsets = offsets; offsets[TRAINING - 1] = INFINITY; break;
+		case 20: bad.offsets = offsets; offsets[TRAINING - 1] = -INFINITY; break;
 		}
 		assert(!v92_observation_fit(model, &bad));
 		assert(memcmp(model, &before, sizeof(before)) == 0);
@@ -161,7 +172,7 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	*model = before;
 	model->quantizer_gain = 0.;
 	assert(!v92_observation_is_valid(model));
-	assert(isnan(v92_observation_predict(model, x)));
+	assert(isnan(v92_observation_predict(model, x, 0.)));
 	*model = before;
 }
 
@@ -173,7 +184,7 @@ static void check_scores(const struct v92_observation *model,
 	v92_observation_begin(&cache, model, .001);
 	check_geometry(&cache);
 	for (size_t i = TRAINING; i < SAMPLES; i++) {
-		assert(v92_observation_symbol_level(&cache, y[i], y + i));
+		assert(v92_observation_symbol_level(&cache, y[i], y + i, 0.));
 		struct v92_observation_point previous = v92_observation_point(&cache, x[i - 1]);
 		struct v92_observation_point second = v92_observation_point(&cache, x[i - 2]);
 		int32_t candidates[] = { x[i], -x[i], 0, INT32_MIN, INT32_MAX };
@@ -202,12 +213,14 @@ static void check_scores(const struct v92_observation *model,
 		struct v92_observation_point c = v92_observation_point(&cache, input[2]);
 		assert(v92_observation_symbol(&cache, y[i]));
 		uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
-		uint64_t expected = independent_score(model, input, y[i]);
+		double prediction;
+		uint64_t expected = independent_score(model, input, y[i], y[i], 0., &prediction);
 		assert(actual <= expected + 1 && expected <= actual + 1);
+		assert(fabs(v92_observation_predict(model, input, 0.) - prediction) < 1e-7);
 	}
 	struct v92_observation_cache saved = cache;
 	int16_t invalid = 1;
-	assert(!v92_observation_symbol_level(&cache, 42, &invalid));
+	assert(!v92_observation_symbol_level(&cache, 42, &invalid, 0.));
 	assert(memcmp(&cache, &saved, sizeof(cache)) == 0);
 	/* The known input rounding belongs before the first codec. */
 	struct v92_observation rounded = *model;
@@ -218,7 +231,7 @@ static void check_scores(const struct v92_observation *model,
 		transformed[i] = round_shift_s64_to_s32_saturating((int64_t)input[i] * 24576, 15u);
 		assert(v92_observation_point(&cache, input[i]).x == transformed[i]);
 	}
-	assert(v92_observation_predict(&rounded, input) == v92_observation_predict(model, transformed));
+	assert(v92_observation_predict(&rounded, input, 0.) == v92_observation_predict(model, transformed, 0.));
 	cache.relative_noise = NAN;
 	assert(!v92_observation_symbol(&cache, 0));
 	cache.relative_noise = -1.;
@@ -270,7 +283,7 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	double error = 0.;
 	for (size_t i = TRAINING; i < SAMPLES; i++) {
 		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
-		double residual = v92_observation_predict(&model, input) - y[i];
+		double residual = v92_observation_predict(&model, input, 0.) - y[i];
 		error += residual * residual;
 	}
 	double rms = sqrt(error / (SAMPLES - TRAINING));
@@ -281,6 +294,72 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	if (previous->count) check_rebinding(previous, &model);
 	*previous = model;
 	printf("V.92 observation law=%u gain=%.9g heldout_rms=%.6f\n", law, gain, rms);
+}
+
+static void check_conditioned_channel(enum g711_law law, double host_gain)
+{
+	int32_t x[SAMPLES];
+	int16_t q[SAMPLES], wire[SAMPLES], y[SAMPLES], u[TRAINING] = { 0 };
+	double offsets[SAMPLES];
+	uint32_t state = 0x471921abu;
+	for (unsigned i = 0; i < SAMPLES; i++) {
+		x[i] = 8 * ((int)(random_value(&state) % 40001) - 20000);
+		q[i] = quantize(law, .125 * x[i]);
+		double echo = 4 * ((int)(random_value(&state) % 201) - 100);
+		double signal = .63 * q[i] + (i ? .07 * q[i - 1] : 0.) - (i > 1 ? .02 * q[i - 2] : 0.);
+		wire[i] = quantize(law, signal + echo);
+		offsets[i] = -host_gain * echo;
+		y[i] = (int16_t)round(host_gain * wire[i] + offsets[i]);
+	}
+	struct v92_observation model;
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = wire, .offsets = offsets,
+		.count = TRAINING, .host_gain = host_gain, .law = law,
+	};
+	assert(v92_observation_fit(&model, &training));
+	struct v92_observation_cache cache;
+	v92_observation_begin(&cache, &model, 0.);
+	double error = 0., unconditioned = 0.;
+	for (unsigned i = TRAINING; i < SAMPLES; i++) {
+		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
+		assert(v92_observation_symbol_level(&cache, y[i], wire + i, offsets[i]));
+		double residual = v92_observation_predict(&model, input, offsets[i]) - y[i];
+		error += residual * residual;
+		residual = v92_observation_predict(&model, input, 0.) - y[i];
+		unconditioned += residual * residual;
+		if (i < TRAINING + 8) {
+			double prediction;
+			uint64_t expected = independent_score(&model, input, y[i], wire[i], offsets[i], &prediction);
+			struct v92_observation_point b = v92_observation_point(&cache, input[1]);
+			struct v92_observation_point c = v92_observation_point(&cache, input[2]);
+			uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
+			assert(actual <= expected + 1 && expected <= actual + 1);
+			assert(fabs(v92_observation_predict(&model, input, offsets[i]) - prediction) < 1e-7);
+		}
+	}
+	assert(error < unconditioned && sqrt(error / (SAMPLES - TRAINING)) < 100. * host_gain);
+	/* Final-codec saturation retains one-sided bins after translation; it
+	 * is not host clipping after the correction (which the caller excludes). */
+	for (int sign = -1; sign <= 1; sign += 2) {
+		int16_t level = quantize(law, sign * 32767.);
+		int16_t observed = (int16_t)(sign * 30000);
+		double offset = observed - host_gain * level;
+		assert(v92_observation_symbol_level(&cache, observed, &level, offset));
+		assert(sign < 0 ? isinf(cache.lower) && cache.lower < 0. : isinf(cache.upper) && cache.upper > 0.);
+	}
+	struct v92_observation_cache before = cache;
+	const double bad[] = { NAN, INFINITY, -INFINITY };
+	for (unsigned i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		assert(!v92_observation_symbol_level(&cache, y[0], wire, bad[i]));
+		assert(!memcmp(&cache, &before, sizeof(cache)));
+		assert(isnan(v92_observation_predict(&model, x, bad[i])));
+	}
+	assert(!v92_observation_symbol_level(&cache, 0, NULL, 1.));
+	assert(!v92_observation_symbol_level(&cache, y[0], wire, DBL_MAX));
+	assert(!v92_observation_symbol_level(&cache, y[0], wire, -DBL_MAX));
+	assert(!memcmp(&cache, &before, sizeof(cache)));
+	printf("V.92 conditioned law=%u host=%.2f heldout_rms=%.6f unconditioned_rms=%.6f\n",
+		law, host_gain, sqrt(error / (SAMPLES - TRAINING)), sqrt(unconditioned / (SAMPLES - TRAINING)));
 }
 
 static void check_noise_fit(enum g711_law law, unsigned sigma)
@@ -320,6 +399,9 @@ int main(void)
 {
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
 	struct v92_observation previous = { 0 };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned quarter = 3; quarter <= 5; quarter++)
+			check_conditioned_channel(law, quarter / 4.);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
 			check_channel(law, gains[i], &previous);

@@ -19,6 +19,7 @@ static void close_acquisition(struct v92_upstream_model *model)
 	memset(model->raw, 0, sizeof(model->raw));
 	memset(model->u, 0, sizeof(model->u));
 	memset(model->wire, 0, sizeof(model->wire));
+	memset(model->host, 0, sizeof(model->host));
 }
 
 bool v92_upstream_model_has_alternate(const struct v92_upstream_data_rx *receiver)
@@ -127,12 +128,39 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 	memcpy(model->u + offset, frame->u, sizeof(frame->u));
 	memcpy(model->raw + offset, line->raw, sizeof(line->raw));
 	memcpy(model->wire + offset, line->wire, sizeof(line->wire));
+	memcpy(model->host + offset, line->host_samples, sizeof(line->host_samples));
+}
+
+/* Echo subtraction is independent of the decoded candidate. Identify gain
+ * from the unmodified host sample, then translate the actual wire cell into
+ * decoder coordinates by only the independently subtracted echo. Clipping
+ * loses that affine contract; a changed host gain must not become an echo
+ * correction. Unqualified acquisition retains the linear receiver, while
+ * loss of this contract after fitting takes the ordinary no-path recovery. */
+static bool observation_offset(const struct v92_upstream_data_line *line,
+	int32_t raw, int16_t wire, int16_t host, double *offset)
+{
+	double sample = raw * line->calibration.gain;
+	int32_t physical = raw * line->polarity;
+	/* Test containment using the acquired rounding interval, not the
+	 * chosen point estimate. Do not narrow it using held-out data. */
+	struct pcm_gain gain = { .lower = line->host.lower, .upper = line->host.upper };
+	if (host == INT16_MIN || host == INT16_MAX ||
+	    physical <= INT16_MIN || physical >= INT16_MAX ||
+	    sample <= INT16_MIN || sample >= INT16_MAX ||
+	    !pcm_gain_observe(&gain, wire * line->polarity, host))
+		return false;
+	/* Rounding the calibrated sample does not shift the codec interval.
+	 * In particular, no echo subtraction must leave exactly zero offset. */
+	*offset = (raw - (int32_t)host * line->polarity) * line->calibration.gain;
+	return isfinite(*offset);
 }
 
 void v92_upstream_model_fit(struct v92_upstream_model *model,
 	const struct v92_upstream_data_line *line, const struct v92_pcm_frame_rx *decoder)
 {
 	int16_t samples[V92_OBSERVATION_TRAINING];
+	double offsets[V92_OBSERVATION_TRAINING];
 
 	if (!model->acquiring || line->received_frames + 1u != V92_B1U_ACQUISITION_FRAMES)
 		return;
@@ -140,9 +168,14 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 		close_acquisition(model);
 		return;
 	}
-	for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i)
+	for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i) {
+		if (!observation_offset(line, model->raw[i], model->wire[i], model->host[i], offsets + i)) {
+			close_acquisition(model);
+			return;
+		}
 		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
 			round(model->raw[i] * line->calibration.gain)));
+	}
 	for (unsigned candidate = 0u; candidate < 2u; ++candidate) {
 		struct v92_observation *fit = &model->model[candidate];
 		int32_t x[V92_OBSERVATION_TRAINING];
@@ -154,6 +187,7 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 					(int64_t)x[i] * model->coefficient, 15u);
 		const struct v92_observation_training training = {
 			.input = x, .linear = model->u, .sample = samples, .levels = model->wire,
+			.offsets = offsets,
 			.count = V92_OBSERVATION_TRAINING,
 			.host_gain = line->host.gain * line->calibration.gain,
 			.law = decoder->mapping.law,
@@ -221,6 +255,11 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		return result;
 	}
 	struct v92_pcm_frame_likelihood likelihood[2];
+	double offsets[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+	for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+		if (line->received[i] && !observation_offset(line,
+			line->raw[i], line->wire[i], line->host_samples[i], offsets + i))
+			return V92_PCM_FRAME_NO_PATH;
 	struct v92_pcm_frame_decision decisions[2];
 	uint8_t output[2][V92_PCM_MAPPING_MAX_BITS];
 	unsigned primary = model->primary;
@@ -233,6 +272,7 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			continue;
 		struct v92_pcm_frame_channel channel = {
 			.model = &model->model[i], .levels = line->wire, .received = line->received,
+			.offsets = offsets,
 		};
 		enum v92_pcm_frame_result result = v92_pcm_frame_decode_observed(branch[i],
 			line->samples, b1u, output[i], count, &decisions[i], &channel, &likelihood[i]);

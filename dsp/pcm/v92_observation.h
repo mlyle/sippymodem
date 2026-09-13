@@ -55,6 +55,13 @@ struct v92_observation {
 struct v92_observation_training {
 	const int32_t *input;
 	const int16_t *linear, *sample, *levels;
+	/* Optional additive host corrections after the final codec and gain,
+	 * in sample coordinates (e.g. independently estimated echo subtraction).
+	 * For y = gain * level + offset, translate the wire cell by offset and
+	 * predict gain * Q((linear - offset) / gain) + offset in the same units.
+	 * Requires levels. No host clipping may follow the affine correction;
+	 * its provenance/validity belongs to the caller, never a decoded candidate. */
+	const double *offsets;
 	size_t count;
 	double host_gain;
 	enum g711_law law;
@@ -104,8 +111,10 @@ struct v92_observation_cache {
 void v92_observation_begin(struct v92_observation_cache *cache,
 	const struct v92_observation *model, double relative_noise);
 bool v92_observation_symbol(struct v92_observation_cache *cache, int16_t observed);
+/* A nonzero offset requires the actual wire level; no requantization of
+ * the conditioned sample may stand in for missing wire evidence. */
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
-	int16_t observed, const int16_t *level);
+	int16_t observed, const int16_t *level, double offset);
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
 /* Exact below budget; may return a conservative lower bound >= budget when
@@ -121,8 +130,10 @@ struct v92_observation_range v92_observation_range(
 /* Predict the final reconstructed sample for a validated fitted model with
  * positive quantizer_gain. Integrate the same shared gain across current,
  * previous and second-previous input, without conditioning on the observed
- * sample. Non-finite output means no prediction, never a zero residual. */
+ * sample. offset is the same independent additive host correction supplied
+ * to symbol_level(), not a residual fitted to the winning candidate.
+ * Non-finite output means no prediction, never a zero residual. */
 double v92_observation_predict(const struct v92_observation *model,
-	const int32_t input[3]);
+	const int32_t input[3], double offset);
 
 #endif /* V92_OBSERVATION_H */

@@ -613,10 +613,13 @@ enum pcm_call_result pcm_call_data_octet(
 
 /* Consume a data character while the caller exclusively owns a call already
  * validated for the current media block. Outputs must be distinct and outside
- * the call. Validate the call again before releasing the block. */
+ * the call. Validate the call again before releasing the block. host_sample
+ * preserves the gain-only signed sample before independent echo subtraction;
+ * received_sample is the cleaned line sample. Pass equal samples when no
+ * echo conditioning was applied. PCM upstream alone uses this metadata. */
 enum pcm_call_result pcm_call_data_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	bool received_available,
+	int16_t host_sample, bool received_available,
 	const struct pcm_call_data_sources *sources,
 	uint8_t *transmit_octet,
 	struct pcm_call_data_event *event);

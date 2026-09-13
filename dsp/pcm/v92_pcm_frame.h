@@ -243,6 +243,10 @@ struct v92_pcm_frame_channel {
 	 * level must be a G.711 reconstruction value. NULL infers bins from
 	 * samples and the model's host gain. Arrays contain twelve symbols. */
 	const int16_t *levels;
+	/* Optional independent affine host corrections, in sample coordinates.
+	 * Requires levels; see v92_observation_training. All twelve must be
+	 * finite, including erased positions (whose quality is still reported). */
+	const double *offsets;
 	/* NULL means all received; false ignores the corresponding sample and
 	 * level in likelihood scoring. Erasures still advance coding history. */
 	const bool *received;
@@ -250,8 +254,8 @@ struct v92_pcm_frame_channel {
 
 struct v92_pcm_frame_likelihood {
 	uint64_t cost;
-	/* Model-only predictions in the supplied sample coordinates. Never
-	 * conditioned on the received values used to select the coding path. */
+	/* Model predictions with the independently supplied host correction.
+	 * Never fitted to the received values used to select the coding path. */
 	double predicted_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 };
 

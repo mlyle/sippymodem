@@ -977,7 +977,7 @@ static bool test_fast_finish(enum g711_law law, uint8_t old_rate, uint8_t new_ra
 				line.calibration.maximum = fmax(new_plan.gain, line.calibration.maximum * ratio);
 				line.calibration.correlation = line.calibration.energy = 0;
 				pcm_gain_init(&line.host.fit);
-				line.host.gain = 0.0;
+				line.host.gain = line.host.lower = line.host.upper = 0.0;
 				CHECK(!rx.model.valid && rx.model.acquiring, "new B1u retained the old codec model");
 			}
 			else {
@@ -1915,7 +1915,12 @@ static bool peer_frame(struct v92_pcm_frame_tx *tx, struct v92_pcm_frame *frame,
 
 /* Two codec conversions with channel memory and post-codec host gain. Keep
  * wire octets: requantizing the .75-scaled samples produces different cells. */
-static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
+static int codec_echo(unsigned index)
+{
+	return 4 * ((int)(index * 17u % 43u) - 21);
+}
+
+static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
 	enum { RM_START = V92_B1U_FRAMES + 16, RM_PRIME = RM_START + 32, RM_END = RM_PRIME + 2 };
@@ -2001,7 +2006,8 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
 			CHECK(sample > -32000 && sample < 32000, "codec fixture clipped");
 			int16_t q = g711_decode_pcmu(g711_encode_pcmu(sample));
 			codes[f * V92_PCM_MAPPING_FRAME_SYMBOLS + s] = g711_encode_pcmu(
-				(int16_t)lround(polarity * (.9 * q + .08 * previous + .02 * second)));
+				(int16_t)lround(polarity * (.9 * q + .08 * previous + .02 * second +
+					(echo ? codec_echo(f * V92_PCM_MAPPING_FRAME_SYMBOLS + s) : 0))));
 			second = previous;
 			previous = q;
 		}
@@ -2011,7 +2017,8 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
 		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
 		struct v92_upstream_data_rx owned = receiver;
 		uint8_t code = codes[i];
-		int16_t sample = (int16_t)lround(.75 * g711_decode_pcmu(code));
+		int16_t host = (int16_t)lround(.75 * g711_decode_pcmu(code));
+		int16_t sample = host - (echo ? polarity * 3 * (codec_echo(i) / 4) : 0);
 
 		if (receiver.line.symbol_count == 0u &&
 		    (rm ? receiver.line.received_frames == RM_END :
@@ -2024,12 +2031,13 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
 			      "paired codec control reset failed");
 			owned = receiver;
 		}
-		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(
+		enum v92_upstream_data_rx_result result = echo ? v92_upstream_data_rx_octet_owned(
+			&receiver, code, sample, host, true, &frame) : v92_upstream_data_rx_octet(
 			&receiver, code, sample, true, &frame);
 
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 		      "codec receiver stopped: %u at sample %u", result, i);
-		CHECK(v92_upstream_data_rx_octet_owned(&owned, code, sample, true, &compared) == result &&
+		CHECK(v92_upstream_data_rx_octet_owned(&owned, code, sample, host, true, &compared) == result &&
 		      memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
 		      memcmp(&frame, &compared, sizeof(frame)) == 0 &&
 		      v92_upstream_data_rx_is_valid(&receiver), "codec owned/checked disagreement");
@@ -2082,12 +2090,41 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer)
 	CHECK(b1_error / (.75 * .75 * V92_B1U_VALIDATION_SYMBOLS) <=
 	      V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR, "codec B1u failed quality");
 	struct v92_upstream_data_rx saved = receiver;
-	for (unsigned fault = 0; fault < 3; ++fault) {
+	/* Gain changes and clipping must not be interpreted as independently
+	 * known echo. The failed frame retains both coding paths and outputs. */
+	for (unsigned fault = 0; fault < 3; fault++) {
+		struct v92_upstream_data_rx conditioned = saved;
+		struct v92_upstream_data_frame out, before;
+		memset(&out, 0xa5, sizeof(out)); before = out;
+		uint8_t code = g711_encode_pcmu(4096);
+		int16_t host = (int16_t)lround(.75 * g711_decode_pcmu(code));
+		int16_t sample = host;
+		if (fault == 0) sample = INT16_MAX;
+		if (fault == 1) host = INT16_MAX;
+		if (fault == 2) host += 8;
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1; i++)
+			CHECK(v92_upstream_data_rx_octet_owned(&conditioned, code, sample, host, true, &out) ==
+				V92_UPSTREAM_DATA_RX_OK, "conditioning fault prefix stopped");
+		struct v92_upstream_data_rx retained = conditioned;
+		retained.failed = true;
+		CHECK(v92_upstream_data_rx_octet_owned(&conditioned, code, sample, host, true, &out) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&conditioned, &retained, sizeof(retained)) &&
+			!memcmp(&out, &before, sizeof(out)), "conditioning fault changed coding state or payload");
+	}
+	for (unsigned fault = 0; fault < 7; ++fault) {
 		struct v92_upstream_data_rx invalid = saved;
 		if (fault == 0)
 			invalid.line.host.gain = NAN;
 		else if (fault == 1)
 			invalid.line.host.gain = -1;
+		else if (fault == 2)
+			invalid.line.host.lower = NAN;
+		else if (fault == 3)
+			invalid.line.host.upper = INFINITY;
+		else if (fault == 4)
+			invalid.line.host.lower = invalid.line.host.gain + .1;
+		else if (fault == 5)
+			invalid.line.host.upper = invalid.line.host.gain - .1;
 		else
 			pcm_gain_init(&invalid.line.host.fit);
 		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid frozen host gain accepted");
@@ -2354,12 +2391,13 @@ int main(void)
 				for (unsigned control = 0u; control < 2u; ++control)
 					if (!test_direct_b1_validation(law, polarity, fault, control))
 						return 1;
-	if (!test_codec_model(1, false, 19u, false) || !test_codec_model(-1, false, 19u, false) ||
-	    !test_codec_model(1, true, 19u, false) || !test_codec_model(-1, true, 19u, false))
+	if (!test_codec_model(1, false, 19u, false, false) || !test_codec_model(-1, false, 19u, false, false) ||
+	    !test_codec_model(1, true, 19u, false, false) || !test_codec_model(-1, true, 19u, false, false))
 		return 1;
 	for (int polarity = -1; polarity <= 1; polarity += 2)
-		if (!test_codec_model(polarity, false, 1u, true) ||
-		    !test_codec_model(polarity, false, 4u, true))
+		if (!test_codec_model(polarity, false, 1u, true, false) ||
+		    !test_codec_model(polarity, false, 4u, true, false) ||
+		    !test_codec_model(polarity, false, 1u, true, true))
 			return 1;
 	fprintf(stderr, "[ RUN      ] retained PCM data-to-Ru control channel\n");
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
