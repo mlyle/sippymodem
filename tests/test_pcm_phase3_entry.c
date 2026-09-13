@@ -592,13 +592,13 @@ static bool test_v92_pcm_starts(void)
 		     sizeof(saved_analog)) == 0,
 	      "V.92 analogue entry selected the wrong owner");
 	CHECK(pcm_phase3_entry_start_v92_digital(
-		      &digital_entry, 0.0, 256u, &jd, &jp, &digital) ==
+		      &digital_entry, V90_PHASE3_TRN1D_MIN_SYMBOLS, 0.0, 256u, &jd, &jp, &digital) ==
 		      PCM_PHASE3_ENTRY_OK &&
 	      v92_phase3_digital_station_is_valid(&digital) &&
 	      digital.law == digital_entry.law &&
 	      digital.training_ucode == selected.analog.pcm.training_ucode &&
 	      pcm_phase3_entry_start_v92_digital(
-		      &analog_entry, 0.0, 256u, &jd, &jp,
+		      &analog_entry, V90_PHASE3_TRN1D_MIN_SYMBOLS, 0.0, 256u, &jd, &jp,
 		      &saved_digital) == PCM_PHASE3_ENTRY_ROLE_MISMATCH &&
 	      memcmp(&saved_digital, &untouched_digital,
 		     sizeof(saved_digital)) == 0,
@@ -621,16 +621,16 @@ static bool test_v92_pcm_starts(void)
 	      memcmp(&analog, &saved_analog, sizeof(analog)) == 0,
 	      "invalid V.92 analogue entry changed state");
 	CHECK(pcm_phase3_entry_start_v92_digital(
-		      NULL, 0.0, 256u, &jd, &jp, &digital) ==
+		      NULL, V90_PHASE3_TRN1D_MIN_SYMBOLS, 0.0, 256u, &jd, &jp, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v92_digital(
-		      &digital_entry, NAN, 256u, &jd, &jp, &digital) ==
+		      &digital_entry, V90_PHASE3_TRN1D_MIN_SYMBOLS, NAN, 256u, &jd, &jp, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v92_digital(
-		      &digital_entry, 0.0, 0u, &jd, &jp, &digital) ==
+		      &digital_entry, V90_PHASE3_TRN1D_MIN_SYMBOLS, 0.0, 0u, &jd, &jp, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      pcm_phase3_entry_start_v92_digital(
-		      &digital_entry, 0.0, 256u, NULL, &jp, &digital) ==
+		      &digital_entry, V90_PHASE3_TRN1D_MIN_SYMBOLS, 0.0, 256u, NULL, &jp, &digital) ==
 		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
 	      memcmp(&digital, &saved_digital, sizeof(digital)) == 0,
 	      "invalid V.92 digital entry changed state");

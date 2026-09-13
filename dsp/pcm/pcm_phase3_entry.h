@@ -81,7 +81,8 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	struct v92_phase3_analog_station *station);
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_digital(
-	const struct pcm_phase3_entry *entry, double equalizer_adaptation,
+	const struct pcm_phase3_entry *entry, uint32_t trn1d_symbols,
+	double equalizer_adaptation,
 	uint16_t su_minimum_magnitude, const struct v92_jd *jd,
 	const struct v92_jp *jp,
 	struct v92_phase3_digital_station *station);

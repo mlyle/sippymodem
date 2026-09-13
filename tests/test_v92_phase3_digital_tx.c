@@ -68,6 +68,7 @@ static bool advance_exact_prefix(
 	struct reference_scrambler *scrambler, uint8_t *last_sign,
 	enum g711_law law, uint8_t training_ucode)
 {
+	uint32_t duration = transmitter->sequence.prefix.trn1d_target_symbols;
 	uint8_t sd_ucode =
 		(uint8_t)((training_ucode + 16u) & UINT8_C(0x7f));
 
@@ -94,7 +95,7 @@ static bool advance_exact_prefix(
 		      (unsigned int)law, index);
 	}
 	for (size_t index = 0;
-	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
+	     index < duration; ++index) {
 		struct v90_pcm_symbol symbol;
 		uint8_t sign = reference_scramble(scrambler, 1);
 
@@ -109,7 +110,7 @@ static bool advance_exact_prefix(
 	CHECK(transmitter->stage == PCM_PHASE3_DIGITAL_TX_JD &&
 	      transmitter->bit_index == 0 &&
 	      transmitter->jd_records == 0,
-	      "minimum TRN1d did not hand off to V.92 Jd");
+	      "configured TRN1d did not hand off to V.92 Jd");
 	return true;
 }
 
@@ -153,7 +154,7 @@ static bool emit_checked_scr(
 	return true;
 }
 
-static bool run_timeline(enum g711_law law, bool nonzero_dil)
+static bool run_timeline(enum g711_law law, bool nonzero_dil, uint32_t duration)
 {
 	struct v92_jd jd = jd_parameters();
 	struct v92_jp jp = jp_parameters();
@@ -176,7 +177,7 @@ static bool run_timeline(enum g711_law law, bool nonzero_dil)
 	CHECK(v92_jd_encode(&jd, jd_frame, sizeof(jd_frame)) == V92_J_OK &&
 	      v92_jp_encode(&jp, jp_frame, sizeof(jp_frame)) == V92_J_OK &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, law, training_ucode, &jd,
+		      &transmitter, law, training_ucode, duration, &jd,
 		      &jp_template, nonzero_dil ? &dil : &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_exact_prefix(
@@ -326,10 +327,16 @@ static bool run_timeline(enum g711_law law, bool nonzero_dil)
 
 static bool test_timelines(void)
 {
-	return run_timeline(G711_LAW_PCMU, false) &&
-	       run_timeline(G711_LAW_PCMA, false) &&
-	       run_timeline(G711_LAW_PCMU, true) &&
-	       run_timeline(G711_LAW_PCMA, true);
+	static const uint32_t durations[] = {
+		V90_PHASE3_TRN1D_MIN_SYMBOLS, V90_PHASE3_TRN1D_SYMBOLS,
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(durations); ++i)
+		CHECK(run_timeline(G711_LAW_PCMU, false, durations[i]) &&
+		      run_timeline(G711_LAW_PCMA, false, durations[i]) &&
+		      run_timeline(G711_LAW_PCMU, true, durations[i]) &&
+		      run_timeline(G711_LAW_PCMA, true, durations[i]),
+		      "TRN1d duration %u changed the coding epoch", durations[i]);
+	return true;
 }
 
 static bool advance_to_jd(struct pcm_phase3_digital_tx *transmitter)
@@ -351,7 +358,7 @@ static bool test_minimum_and_boundary_records(void)
 	struct v90_pcm_symbol symbol;
 
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 91, &jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 91, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_to_jd(&transmitter) &&
 	      pcm_phase3_digital_tx_finish_jd(&transmitter) ==
@@ -375,7 +382,7 @@ static bool test_minimum_and_boundary_records(void)
 	      "minimum Jp record did not advance to Jp-prime");
 
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMA, 78, &jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMA, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      advance_to_jd(&transmitter),
 	      "boundary fixture did not reach Jd");
@@ -416,33 +423,41 @@ static bool test_validation(void)
 	bad_jd.maximum_spectral_shaping_lookahead = 0;
 	bad_jp.training_constellation = (enum v92_constellation_size)6;
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      NULL, G711_LAW_PCMU, 78, &jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, 0u, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, (enum g711_law)2, 78, &jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS + 1u,
+		      &jd, &jp, &zero_dil) == PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
+	      "invalid TRN1d duration changed the transmitter");
+	CHECK(pcm_phase3_digital_tx_init_v92(
+		      NULL, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 66, &jd, &jp, &zero_dil) ==
+		      &transmitter, (enum g711_law)2, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, NULL, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 66, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, NULL, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, NULL, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &bad_jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, NULL, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, &bad_jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &bad_jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, &jp, NULL) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &bad_jp, &zero_dil) ==
+		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
+	      pcm_phase3_digital_tx_init_v92(
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, NULL) ==
 		      PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
 	      "invalid initialization changed state");
 	CHECK(pcm_phase3_digital_tx_init_v92(
-		      &transmitter, G711_LAW_PCMU, 78, &jd, &jp, &zero_dil) ==
+		      &transmitter, G711_LAW_PCMU, 78, V90_PHASE3_TRN1D_MIN_SYMBOLS, &jd, &jp, &zero_dil) ==
 		      PCM_PHASE3_DIGITAL_TX_OK,
 	      "validation fixture did not initialize");
 	saved = transmitter;

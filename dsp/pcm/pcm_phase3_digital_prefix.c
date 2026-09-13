@@ -10,7 +10,7 @@ static bool stage_is_valid(enum pcm_phase3_digital_prefix_stage stage)
 	       stage <= PCM_PHASE3_DIGITAL_PREFIX_COMPLETE;
 }
 
-static bool target_is_valid(uint32_t target)
+bool pcm_phase3_digital_prefix_duration_is_valid(uint32_t target)
 {
 	return target >= V90_PHASE3_TRN1D_MIN_SYMBOLS &&
 	       target <= V90_PHASE3_TRN1D_MAX_SYMBOLS &&
@@ -21,7 +21,7 @@ bool pcm_phase3_digital_prefix_is_valid(
 	const struct pcm_phase3_digital_prefix *prefix)
 {
 	if (prefix == NULL || !stage_is_valid(prefix->stage) ||
-	    !target_is_valid(prefix->trn1d_target_symbols))
+	    !pcm_phase3_digital_prefix_duration_is_valid(prefix->trn1d_target_symbols))
 		return false;
 	switch (prefix->stage) {
 	case PCM_PHASE3_DIGITAL_PREFIX_SD:
@@ -62,7 +62,8 @@ enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_init(
 		.stage = PCM_PHASE3_DIGITAL_PREFIX_SD,
 	};
 
-	if (prefix == NULL || !target_is_valid(trn1d_target_symbols) ||
+	if (prefix == NULL ||
+	    !pcm_phase3_digital_prefix_duration_is_valid(trn1d_target_symbols) ||
 	    v90_phase3_sd_init(
 		    &initialized.sequence.sd, law, training_ucode,
 		    V90_PHASE3_SD) != V90_PHASE3_SD_OK)

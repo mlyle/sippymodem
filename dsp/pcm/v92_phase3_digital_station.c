@@ -143,6 +143,7 @@ bool v92_phase3_digital_station_is_valid(
 	    !g711_law_is_valid(station->law) ||
 	    station->training_ucode < V90_INFO1A_MIN_TRAINING_UCODE ||
 	    station->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
+	    !pcm_phase3_digital_prefix_duration_is_valid(station->trn1d_symbols) ||
 	    !qam_adaptation_is_valid(station->equalizer_adaptation) ||
 	    station->su_minimum_magnitude == 0u ||
 	    !v92_jd_is_valid(&station->jd) || !v92_jp_is_valid(&station->jp) ||
@@ -168,13 +169,14 @@ bool v92_phase3_digital_station_has_failed(
 }
 
 bool v92_phase3_digital_station_parameters_are_valid(
-	enum g711_law law, uint8_t training_ucode,
+	enum g711_law law, uint8_t training_ucode, uint32_t trn1d_symbols,
 	double equalizer_adaptation, uint16_t su_minimum_magnitude,
 	const struct v92_jd *jd, const struct v92_jp *jp)
 {
 	return g711_law_is_valid(law) &&
 	       training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
 	       training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
+	       pcm_phase3_digital_prefix_duration_is_valid(trn1d_symbols) &&
 	       qam_adaptation_is_valid(equalizer_adaptation) &&
 	       su_minimum_magnitude != 0u &&
 	       v92_jd_is_valid(jd) && v92_jp_is_valid(jp);
@@ -182,7 +184,7 @@ bool v92_phase3_digital_station_parameters_are_valid(
 
 enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 	struct v92_phase3_digital_station *station, enum g711_law law,
-	uint8_t training_ucode, double equalizer_adaptation,
+	uint8_t training_ucode, uint32_t trn1d_symbols, double equalizer_adaptation,
 	uint16_t su_minimum_magnitude, const struct v92_jd *jd,
 	const struct v92_jp *jp)
 {
@@ -190,6 +192,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 		.jd = jd != NULL ? *jd : (struct v92_jd){ 0 },
 		.jp = jp != NULL ? *jp : (struct v92_jp){ 0 },
 		.equalizer_adaptation = equalizer_adaptation,
+		.trn1d_symbols = trn1d_symbols,
 		.receive_stage = V92_PHASE3_DIGITAL_RECEIVE_INITIAL,
 		.transmit_stage = V92_PHASE3_DIGITAL_TRANSMIT_SILENCE,
 		.law = law,
@@ -199,7 +202,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 
 	if (station == NULL ||
 	    !v92_phase3_digital_station_parameters_are_valid(
-		    law, training_ucode, equalizer_adaptation,
+		    law, training_ucode, trn1d_symbols, equalizer_adaptation,
 		    su_minimum_magnitude, jd, jp) ||
 	    v92_pcm_phase3_initial_rx_init(
 		    &initialized.receive.initial, equalizer_adaptation) !=
@@ -320,7 +323,8 @@ static enum v92_phase3_digital_station_result receive_initial(
 			phase_minimum = 8u;
 		if (pcm_phase3_digital_tx_init_v92(
 			    &downstream, station->law,
-			    station->training_ucode, &station->jd,
+			    station->training_ucode, station->trn1d_symbols,
+			    &station->jd,
 			    &station->jp, &parameters.downstream) !=
 			    PCM_PHASE3_DIGITAL_TX_OK ||
 		    v92_su_rx_init(

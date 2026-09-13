@@ -60,9 +60,10 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 	uint8_t training_ucode,
 	const struct v90_jd_parameters *jd_parameters,
 	const struct v90_dil_parameters *dil_parameters);
+/* TRN1d duration is explicit and must satisfy the common prefix bounds. */
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
-	uint8_t training_ucode, const struct v92_jd *jd,
+	uint8_t training_ucode, uint32_t trn1d_symbols, const struct v92_jd *jd,
 	const struct v92_jp *jp,
 	const struct v90_dil_parameters *dil_parameters);
 bool pcm_phase3_digital_tx_is_valid(

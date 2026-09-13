@@ -9864,6 +9864,23 @@ static bool test_v92_validation(void)
 	CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK,
 	      "valid digital V.92 configuration was rejected");
 	{
+		static const uint32_t bad_durations[] = {
+			V90_PHASE3_TRN1D_MIN_SYMBOLS - V90_PHASE3_TRN1D_ALIGNMENT,
+			V90_PHASE3_TRN1D_MIN_SYMBOLS + 1u,
+			V90_PHASE3_TRN1D_MAX_SYMBOLS + V90_PHASE3_TRN1D_ALIGNMENT,
+		};
+		for (size_t i = 0; i < ARRAY_LENGTH(bad_durations); ++i) {
+			selected.phase3.v92_digital.trn1d_symbols = bad_durations[i];
+			CHECK(pcm_call_init(&untouched, &selected) == PCM_CALL_INVALID_ARGUMENT &&
+			      memcmp(&untouched, &before, sizeof(before)) == 0,
+			      "invalid TRN1d duration changed the call");
+		}
+		selected.phase3.v92_digital.trn1d_symbols = V90_PHASE3_TRN1D_SYMBOLS;
+		CHECK(pcm_call_init(&digital, &selected) == PCM_CALL_OK,
+		      "host echo-training duration was rejected");
+		selected.phase3.v92_digital.trn1d_symbols = 0u;
+	}
+	{
 		struct pcm_call invalid = analog;
 
 		invalid.v92_upstream_retry_ceiling = 1u;

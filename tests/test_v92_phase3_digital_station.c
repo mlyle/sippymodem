@@ -17,7 +17,7 @@
 enum {
 	TEST_UCODE = 91,
 	TEST_SU_THRESHOLD = 256,
-	SAMPLE_LIMIT = 20000,
+	SAMPLE_LIMIT = V90_PHASE3_TRN1D_SYMBOLS + 18000,
 };
 
 static void add_ucode(
@@ -127,7 +127,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	CHECK(v92_phase3_analog_station_init(&analog, &configuration) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      v92_phase3_digital_station_init(
-		      &digital, law, TEST_UCODE, 0.0,
+		      &digital, law, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_OK,
 	      "V.92 station pair did not initialize for law %u",
@@ -295,7 +295,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 		      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
 	      v92_pcm_dil_encode(&request, descriptor, sizeof(descriptor), &bits) ==
 		      V92_PCM_DIL_OK &&
-	      v92_phase3_digital_station_init(&digital, law, TEST_UCODE, 0.0,
+	      v92_phase3_digital_station_init(&digital, law, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) == V92_PHASE3_DIGITAL_STATION_OK &&
 	      v92_pcm_phase3_trn1u_init(&initial, law, TEST_UCODE) ==
 		      V92_PCM_PHASE3_TRN1U_OK &&
@@ -645,23 +645,23 @@ static bool test_digital_contracts(void)
 	memset(&station, 0xa5, sizeof(station));
 	before = station;
 	CHECK(v92_phase3_digital_station_parameters_are_valid(
-		      G711_LAW_PCMU, TEST_UCODE, 0.0,
+		      G711_LAW_PCMU, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) &&
 	      !v92_phase3_digital_station_parameters_are_valid(
-		      G711_LAW_PCMU, TEST_UCODE, NAN,
+		      G711_LAW_PCMU, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, NAN,
 		      TEST_SU_THRESHOLD, &jd, &jp) &&
 	      v92_phase3_digital_station_init(
-		      NULL, G711_LAW_PCMU, TEST_UCODE, 0.0,
+		      NULL, G711_LAW_PCMU, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_digital_station_init(
-		      &station, G711_LAW_PCMU, TEST_UCODE, NAN,
+		      &station, G711_LAW_PCMU, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, NAN,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &before, sizeof(station)) == 0,
 	      "invalid digital initialization changed its destination");
 	CHECK(v92_phase3_digital_station_init(
-		      &station, G711_LAW_PCMU, TEST_UCODE, 0.0,
+		      &station, G711_LAW_PCMU, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) ==
 		      V92_PHASE3_DIGITAL_STATION_OK &&
 	      v92_phase3_digital_station_is_valid(&station) &&

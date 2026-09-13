@@ -57,6 +57,7 @@ struct v92_phase3_digital_station {
 	struct v92_jd jd;
 	struct v92_jp jp;
 	double equalizer_adaptation;
+	uint32_t trn1d_symbols;
 	uint32_t upstream_rate_mask;
 	enum v92_phase3_digital_receive_stage receive_stage;
 	enum v92_phase3_digital_transmit_stage transmit_stage;
@@ -71,12 +72,12 @@ struct v92_phase3_digital_station {
 };
 
 bool v92_phase3_digital_station_parameters_are_valid(
-	enum g711_law law, uint8_t training_ucode,
+	enum g711_law law, uint8_t training_ucode, uint32_t trn1d_symbols,
 	double equalizer_adaptation, uint16_t su_minimum_magnitude,
 	const struct v92_jd *jd, const struct v92_jp *jp);
 enum v92_phase3_digital_station_result v92_phase3_digital_station_init(
 	struct v92_phase3_digital_station *station, enum g711_law law,
-	uint8_t training_ucode, double equalizer_adaptation,
+	uint8_t training_ucode, uint32_t trn1d_symbols, double equalizer_adaptation,
 	uint16_t su_minimum_magnitude, const struct v92_jd *jd,
 	const struct v92_jp *jp);
 bool v92_phase3_digital_station_is_valid(

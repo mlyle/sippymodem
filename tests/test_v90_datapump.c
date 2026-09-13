@@ -1361,6 +1361,28 @@ static bool test_v92_pcm_host_data(void)
 	return true;
 }
 
+static bool test_v92_pcm_host_echo(void)
+{
+	CHECK(v90_datapump_register() == 0, "V.92 echo registration failed");
+	/* The 700 ms, three-tap returned downstream is independent of the
+	 * upstream source. Require exact PCM host bits, not a V.34 fallback or
+	 * CONNECT alone. Exercise both fresh training and each retrain origin. */
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		CHECK(run_pcm_pair(DP_V92, 1, law, 41333, 0, 0, 24000, 0,
+			100000, true, MODEM_PCM_ROLE_NONE, false, UNITY_GAIN_Q15,
+			RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN),
+		      "law %u V.92 low-rate data failed through returned echo", law);
+		for (enum modem_pcm_role role = MODEM_PCM_ROLE_ANALOG;
+		     role <= MODEM_PCM_ROLE_DIGITAL; ++role)
+			CHECK(run_pcm_pair(DP_V92, 4, law, 41333, 0, 0, 28000, 0,
+				100000, true, role, false, UNITY_GAIN_Q15,
+				RETURNED_ECHO_STABLE, UPSTREAM_CHANNEL_CLEAN),
+			      "law %u role %u V.92 echo retrain lost PCM host data", law, role);
+	}
+	CHECK(v90_datapump_unregister() == 0, "V.92 echo registration leaked");
+	return true;
+}
+
 static bool test_v92_conventional_host_data(void)
 {
 	CHECK(v90_datapump_register() == 0, "V.92 conventional registration failed");
@@ -1778,6 +1800,8 @@ int main(void)
 		  test_attenuated_upstream },
 		{ "V.92 PCM-upstream selection",
 		  test_v92_pcm_upstream_selection },
+		{ "V.92 PCM-upstream data and retrain through host echo",
+		  test_v92_pcm_host_echo },
 		{ "V.92 PCM host data and retrain", test_v92_pcm_host_data },
 		{ "V.92 conventional host data and retrain", test_v92_conventional_host_data },
 		{ "V.92 automatic upstream quality recovery", test_v92_upstream_quality_recovery },

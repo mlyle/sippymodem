@@ -29,7 +29,7 @@ union pcm_phase3_digital_prefix_sequence {
 };
 
 /* Own the V.90-defined digital Phase 3 prefix shared by V.90 and V.92:
- * Sd, Sd-bar, and the minimum aligned TRN1d. The successor owns the record
+ * Sd, Sd-bar, and a bounded aligned TRN1d. The successor owns the record
  * format and continues the GPC scrambler and final TRN1d sign. */
 struct pcm_phase3_digital_prefix {
 	union pcm_phase3_digital_prefix_sequence sequence;
@@ -40,6 +40,7 @@ struct pcm_phase3_digital_prefix {
 enum pcm_phase3_digital_prefix_result pcm_phase3_digital_prefix_init(
 	struct pcm_phase3_digital_prefix *prefix, enum g711_law law,
 	uint8_t training_ucode, uint32_t trn1d_target_symbols);
+bool pcm_phase3_digital_prefix_duration_is_valid(uint32_t target);
 bool pcm_phase3_digital_prefix_is_valid(
 	const struct pcm_phase3_digital_prefix *prefix);
 bool pcm_phase3_digital_prefix_is_complete(

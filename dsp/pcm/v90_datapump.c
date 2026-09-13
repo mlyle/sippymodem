@@ -604,8 +604,14 @@ static bool start_call(
 		     datapump->dp.modem->min_rate,
 		     datapump->dp.modem->max_rate,
 		     datapump->maximum_pcm_upstream_data_rate_number, &upstream) !=
-		     V92_PROFILE_OK) ||
-	    pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
+		     V92_PROFILE_OK))
+		return false;
+	/* This host owns delayed echo acquisition; bare PCM calls need not
+	 * lengthen their default training interval to accommodate that owner. */
+	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->host_echo != NULL)
+		configuration.phase3.v92_digital.trn1d_symbols =
+			V90_PHASE3_TRN1D_SYMBOLS;
+	if (pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
 		return false;
 	datapump->media_law = media_law;
 	datapump->call_started = true;
@@ -704,18 +710,27 @@ static enum v90_host_echo_mode host_echo_mode(
 	const struct v90_datapump *datapump)
 {
 	const struct pcm_call *call = &datapump->call;
+	const struct pcm_phase3_digital_tx *transmit = NULL;
 
-	if (datapump->host_echo == NULL ||
-	    (call->phase3_entry_stored && !pcm_call_uses_conventional_upstream(call)))
+	if (datapump->host_echo == NULL)
 		return V90_HOST_ECHO_BYPASS;
-	if (call->stage == PCM_CALL_PHASE3 &&
-	    call->state.phase3.digital.transmit_started &&
-	    call->state.phase3.digital.transmit.stage ==
-		    PCM_PHASE3_DIGITAL_TX_PREFIX &&
-	    call->state.phase3.digital.transmit.sequence.prefix.stage ==
-		    PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
-		return V90_HOST_ECHO_TRAIN;
-	/* The conventional receiver owns physical samples through retrain
+	/* Both upstream procedures make the analogue peer quiet during TRN1d.
+	 * Learn from that interval only, then freeze while receiving the peer.
+	 * Select the active Phase 3 owner before inspecting its common TX. */
+	if (call->stage == PCM_CALL_PHASE3) {
+		if (pcm_call_uses_conventional_upstream(call)) {
+			if (call->state.phase3.digital.transmit_started)
+				transmit = &call->state.phase3.digital.transmit;
+		} else if (call->state.phase3.v92_digital.transmit_stage ==
+				V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM) {
+			transmit = &call->state.phase3.v92_digital.downstream;
+		}
+		if (transmit != NULL &&
+		    transmit->stage == PCM_PHASE3_DIGITAL_TX_PREFIX &&
+		    transmit->sequence.prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
+			return V90_HOST_ECHO_TRAIN;
+	}
+	/* The upstream receiver owns physical samples through retrain
 	 * ranging, both return markers, and the completed-return drain. A ready
 	 * filter removes returning data or local Jd/DIL in those intervals;
 	 * FILTER leaves samples unchanged while readiness is incomplete. */

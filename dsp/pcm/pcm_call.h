@@ -85,6 +85,9 @@ struct pcm_call_v92_digital_phase3_configuration {
 	struct v92_jd jd;
 	struct v92_jp jp;
 	double equalizer_adaptation;
+	/* Zero selects the minimum. A host echo owner may request a longer
+	 * aligned TRN1d within the protocol deadline. Retained across retrains. */
+	uint32_t trn1d_symbols;
 	uint16_t su_minimum_magnitude;
 };
 

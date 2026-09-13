@@ -59,7 +59,8 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 }
 
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_digital(
-	const struct pcm_phase3_entry *entry, double equalizer_adaptation,
+	const struct pcm_phase3_entry *entry, uint32_t trn1d_symbols,
+	double equalizer_adaptation,
 	uint16_t su_minimum_magnitude, const struct v92_jd *jd,
 	const struct v92_jp *jp,
 	struct v92_phase3_digital_station *station)
@@ -77,7 +78,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_digital(
 	result = v92_phase3_digital_station_init(
 		station, entry->law,
 		entry->selection.analog.pcm.training_ucode,
-		equalizer_adaptation, su_minimum_magnitude, jd, jp);
+		trn1d_symbols, equalizer_adaptation, su_minimum_magnitude, jd, jp);
 	if (result == V92_PHASE3_DIGITAL_STATION_OK)
 		return PCM_PHASE3_ENTRY_OK;
 	return result == V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT ?

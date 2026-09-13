@@ -55,13 +55,6 @@ static bool v92_jp_frame_is_valid(const uint8_t *frame)
 	       memcmp(frame, canonical, sizeof(canonical)) == 0;
 }
 
-static uint32_t protocol_trn1d_symbols(enum pcm_protocol protocol)
-{
-	return protocol == PCM_PROTOCOL_V90 ?
-		       V90_PHASE3_TRN1D_SYMBOLS :
-		       V90_PHASE3_TRN1D_MIN_SYMBOLS;
-}
-
 static bool frames_are_valid(
 	const struct pcm_phase3_digital_tx *transmitter)
 {
@@ -199,8 +192,8 @@ bool pcm_phase3_digital_tx_is_valid(
 	} else {
 		if (!v90_phase3_signs_is_valid(&transmitter->sequence.signs) ||
 		    transmitter->sequence.signs.phase != V90_PHASE3_SIGNS_JD ||
-		    transmitter->sequence.signs.trn1d_symbols !=
-			    protocol_trn1d_symbols(transmitter->protocol))
+		    !pcm_phase3_digital_prefix_duration_is_valid(
+			    transmitter->sequence.signs.trn1d_symbols))
 			return false;
 		law = transmitter->sequence.signs.law;
 	}
@@ -244,7 +237,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 		    &initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
 		    &initialized.sequence.prefix, law, training_ucode,
-		    protocol_trn1d_symbols(PCM_PROTOCOL_V90)) !=
+		    V90_PHASE3_TRN1D_SYMBOLS) !=
 		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
 	    !pcm_phase3_digital_tx_is_valid(&initialized))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;
@@ -254,7 +247,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v90(
 
 enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	struct pcm_phase3_digital_tx *transmitter, enum g711_law law,
-	uint8_t training_ucode, const struct v92_jd *jd,
+	uint8_t training_ucode, uint32_t trn1d_symbols, const struct v92_jd *jd,
 	const struct v92_jp *jp,
 	const struct v90_dil_parameters *dil_parameters)
 {
@@ -273,7 +266,7 @@ enum pcm_phase3_digital_tx_result pcm_phase3_digital_tx_init_v92(
 	    !initialize_dil(&initialized.dil, dil_parameters, law) ||
 	    pcm_phase3_digital_prefix_init(
 		    &initialized.sequence.prefix, law, training_ucode,
-		    protocol_trn1d_symbols(PCM_PROTOCOL_V92)) !=
+		    trn1d_symbols) !=
 		    PCM_PHASE3_DIGITAL_PREFIX_OK ||
 	    !pcm_phase3_digital_tx_is_valid(&initialized))
 		return PCM_PHASE3_DIGITAL_TX_INVALID_ARGUMENT;

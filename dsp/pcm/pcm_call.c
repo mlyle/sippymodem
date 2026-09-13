@@ -240,6 +240,8 @@ static bool v92_digital_configuration_is_valid(
 		       enabled_downstream_rate_mask &&
 	       v92_phase3_digital_station_parameters_are_valid(
 		       law, V90_INFO1A_MIN_TRAINING_UCODE,
+		       selected->trn1d_symbols ? selected->trn1d_symbols :
+			       V90_PHASE3_TRN1D_MIN_SYMBOLS,
 		       selected->equalizer_adaptation,
 		       selected->su_minimum_magnitude,
 		       &selected->jd, &selected->jp);
@@ -1800,7 +1802,9 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		struct v92_phase3_digital_station station;
 
 		result = pcm_phase3_entry_start_v92_digital(
-			&entry, config->equalizer_adaptation,
+			&entry, config->trn1d_symbols ? config->trn1d_symbols :
+				V90_PHASE3_TRN1D_MIN_SYMBOLS,
+			config->equalizer_adaptation,
 			config->su_minimum_magnitude, &config->jd, &config->jp,
 			&station);
 		if (result != PCM_PHASE3_ENTRY_OK)
