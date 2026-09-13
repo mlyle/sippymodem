@@ -516,6 +516,95 @@ static bool test_transactionality(void)
 	return true;
 }
 
+static bool check_constellation_spacing(const struct v90_pcm_mapping *mapping,
+	uint32_t limit, uint32_t *distance)
+{
+	int16_t previous = 0, level;
+	uint32_t spacing = UINT32_MAX;
+	struct v90_pcm_mapping narrower = *mapping;
+	struct pcm_constellation lower_bound = { 0 };
+
+	for (unsigned int code = 0; code < 128; ++code) {
+		if (!(mapping->transmit[0].ucode_mask[code / 8u] & (1u << (code % 8u))))
+			continue;
+		CHECK(code <= 108 && g711_ucode_sample(mapping->law, code, true, &level) &&
+		      level > previous, "selected level exceeds rail or aliases zero");
+		uint32_t gap = previous == 0 ? 2u * level : (uint32_t)(level - previous);
+		if (gap < spacing)
+			spacing = gap;
+		previous = level;
+	}
+	*distance = spacing;
+
+	/* Independently bound every ordered level of any more widely spaced
+	 * set. Its first positive level must exceed spacing/2; each next one
+	 * must be more than spacing above its predecessor. All modulus-label
+	 * power weights are nonnegative, so no set can beat this power bound. */
+	unsigned int code = 0;
+	previous = 0;
+	for (unsigned int point = 0; point < mapping->modulus[0]; ++point) {
+		for (; code <= 108; ++code) {
+			CHECK(g711_ucode_sample(mapping->law, code, true, &level),
+			      "spacing bound could not decode level");
+			if ((point == 0 && 2u * level > spacing) ||
+			    (point != 0 && (uint32_t)(level - previous) > spacing))
+				break;
+		}
+		if (code > 108)
+			return true; /* A larger distance cannot fit below the rail. */
+		lower_bound.ucode_mask[code / 8u] |= (uint8_t)(1u << (code % 8u));
+		previous = level;
+		++code;
+	}
+	for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+		narrower.transmit[slot] = lower_bound;
+		narrower.codec[slot] = lower_bound;
+	}
+	uint32_t floor, ceiling;
+	CHECK(v90_pcm_mapping_power(&narrower, V90_PCM_MAPPING_CODEC, mapping->law,
+				    &floor, &ceiling) == V90_PCM_MAPPING_OK && ceiling > limit,
+	      "distance %u is not maximal at power %u (next bound %u)",
+	      spacing, limit, ceiling);
+	return true;
+}
+
+static bool check_training_constellation(struct v90_cp_parameters cp,
+	uint32_t limit)
+{
+	struct v90_pcm_mapping mapping;
+	struct pcm_constellation selected, expected = { 0 };
+	bool found = false;
+
+	CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+	      v90_profile_select_constellation(&mapping, limit, &selected),
+	      "training constellation selection failed");
+	/* Independently enumerate the previous eight-point CPt family: evenly
+	 * spaced companded codes, with the highest feasible upper rail. Data
+	 * spacing must not also alter training or its scrambler decisions. */
+	for (unsigned int last = 7; last <= 108; ++last) {
+		unsigned int first = last > 31 ? 24 : last - 7;
+		uint32_t floor, ceiling;
+
+		cp.transmit_constellations[0] = (struct pcm_constellation){ 0 };
+		for (unsigned int point = 0; point < 8; ++point) {
+			unsigned int code = first + ((last - first) * point + 3u) / 7u;
+			cp.transmit_constellations[0].ucode_mask[code / 8u] |=
+				(uint8_t)(1u << (code % 8u));
+		}
+		CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, cp.law,
+					    &floor, &ceiling) == V90_PCM_MAPPING_OK,
+		      "training constellation power fixture failed");
+		if (ceiling <= limit) {
+			expected = cp.transmit_constellations[0];
+			found = true;
+		}
+	}
+	CHECK(found && memcmp(&selected, &expected, sizeof(selected)) == 0,
+	      "data spacing changed training law %u power %u", cp.law, limit);
+	return true;
+}
+
 static bool test_constellation_power_selection(void)
 {
 	/* Independent normative Table 15 limits; include the entire advertised
@@ -530,10 +619,16 @@ static bool test_constellation_power_selection(void)
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct pcm_call_configuration profile;
+		uint32_t last_distance[V90_CP_RATE_INDEX_MAX + 1];
+
+		for (size_t rate = 0; rate < ARRAY_LENGTH(last_distance); ++rate)
+			last_distance[rate] = UINT32_MAX;
 
 		CHECK(v90_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 56000, NULL) ==
 			      V90_PROFILE_OK, "power selection profile failed");
 		for (size_t code = 0; code < ARRAY_LENGTH(rms); ++code) {
+			CHECK(check_training_constellation(profile.analog_phase4.training_parameters,
+				      rms[code] * rms[code]), "training constellation changed");
 			for (uint8_t rate = 1; rate <= V90_CP_RATE_INDEX_MAX; ++rate) {
 				struct v90_cp_parameters cp = profile.analog_phase4.data_parameters;
 				struct v90_pcm_mapping mapping, before;
@@ -553,6 +648,11 @@ static bool test_constellation_power_selection(void)
 				      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law,
 							    &lower, &upper) == V90_PCM_MAPPING_OK && upper <= limit,
 				      "law %u power %zu rate %u selection exceeded bound or lost capacity", law, code, rate);
+				uint32_t distance;
+				CHECK(check_constellation_spacing(&mapping, limit, &distance) &&
+				      distance <= last_distance[rate],
+				      "law %u power %zu rate %u spacing is not maximal/monotone", law, code, rate);
+				last_distance[rate] = distance;
 				selected = saved;
 				CHECK(!v90_profile_select_constellation(NULL, limit, &selected) &&
 				      !v90_profile_select_constellation(&mapping, limit, NULL) &&

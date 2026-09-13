@@ -272,6 +272,74 @@ static void generate_constellation(
 	}
 }
 
+static bool spaced_constellation(struct pcm_constellation *constellation,
+	enum g711_law law, uint8_t size, uint32_t spacing)
+{
+	uint32_t threshold = (spacing + 1u) / 2u;
+
+	*constellation = (struct pcm_constellation){ 0 };
+	/* The lowest available level at each step minimizes power for this
+	 * distance. Include the innermost positive/negative pair, which evenly
+	 * spaced companded codes would leave particularly crowded. */
+	for (unsigned int code = 0; code <= V90_CONSTELLATION_LAST_UCODE; ++code) {
+		int16_t level;
+
+		if (!g711_ucode_sample(law, (uint8_t)code, true, &level))
+			return false;
+		if ((uint32_t)level < threshold)
+			continue;
+		add_ucode(constellation, (uint8_t)code);
+		if (--size == 0)
+			return true;
+		threshold = (uint32_t)level + spacing;
+	}
+	return false;
+}
+
+/* Called only for a validated direct-law mapping with a common row. */
+static bool select_data_constellation(const struct v90_pcm_mapping *mapping,
+	uint32_t maximum_power, struct pcm_constellation *constellation)
+{
+	struct v90_pcm_mapping candidate = *mapping;
+	struct pcm_constellation best = { 0 };
+	uint8_t size = mapping->modulus[0];
+	int16_t peak;
+	bool found = false;
+
+	if (!g711_ucode_sample(mapping->law, V90_CONSTELLATION_LAST_UCODE, true, &peak))
+		return false;
+	uint32_t low = 1, high = 2u * (uint32_t)peak / (2u * size - 1u);
+
+	/* At fixed K and cardinality, each ordered level has a nonnegative
+	 * exact 8.5.2 power weight. The greedy set minimizes every level for
+	 * a given distance, so feasibility is monotone and can be bisected. */
+	while (low <= high) {
+		uint32_t spacing = low + (high - low) / 2u;
+		uint32_t floor, ceiling;
+
+		if (!spaced_constellation(&candidate.transmit[0], mapping->law, size, spacing)) {
+			high = spacing - 1u;
+			continue;
+		}
+		for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			candidate.transmit[slot] = candidate.transmit[0];
+			candidate.codec[slot] = candidate.transmit[0];
+		}
+		if (v90_pcm_mapping_power(&candidate, V90_PCM_MAPPING_CODEC,
+					 mapping->law, &floor, &ceiling) != V90_PCM_MAPPING_OK)
+			return false;
+		if (ceiling <= maximum_power) {
+			best = candidate.transmit[0];
+			found = true;
+			low = spacing + 1u;
+		} else
+			high = spacing - 1u;
+	}
+	if (found)
+		*constellation = best;
+	return found;
+}
+
 bool v90_profile_select_constellation(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
 	struct pcm_constellation *constellation)
@@ -286,6 +354,8 @@ bool v90_profile_select_constellation(
 		if (memcmp(&mapping->transmit[0], &mapping->transmit[slot],
 			   sizeof(mapping->transmit[0])) != 0)
 			return false;
+	if (mapping->kind == V90_CP_DATA)
+		return select_data_constellation(mapping, maximum_power, constellation);
 	size = mapping->modulus[0];
 	candidate = *mapping;
 	/* Preserve distinct labels, reducing the highest level until the exact

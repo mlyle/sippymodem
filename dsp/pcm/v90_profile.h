@@ -41,6 +41,9 @@ enum v90_profile_result v90_profile_init(
 
 /* Select a common-row direct G.711 constellation at the mapping's current
  * K, retaining its cardinality so later retrains can raise the rate again.
+ * Data mappings maximize minimum signed linear-level distance within the
+ * generated upper rail and exact power budget. Training keeps its existing
+ * companded-code spacing. This does not estimate channel noise or change K.
  * Transmit and codec planes must be identical, with one shared row. Power
  * is mean square in 16-bit linear units. Failure leaves the output alone. */
 bool v90_profile_select_constellation(
