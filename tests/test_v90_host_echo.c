@@ -420,68 +420,82 @@ static bool test_weak_joint_margin(void)
 	return true;
 }
 
-static bool test_scan_window_correlation(void)
+static int16_t distributed_echo_sample(size_t index)
 {
-	const int first_bin = -V90_HOST_ECHO_FILTER_PRE_SAMPLES /
-		PCM_ECHO_REFERENCE_SCAN_STEP;
-	const int last_bin = (V90_HOST_ECHO_FILTER_TAPS -
-		V90_HOST_ECHO_FILTER_PRE_SAMPLES) / PCM_ECHO_REFERENCE_SCAN_STEP - 1;
-	const struct {
-		int offset;
-		bool covered;
-	} cases[] = {
-		{ first_bin - 1, false }, { first_bin, true },
-		{ 1, true }, { 3, true },
-		{ last_bin, true }, { last_bin + 1, false },
-	};
+	int32_t sample = 0;
 
-	for (size_t trial = 0; trial < sizeof(cases) / sizeof(cases[0]); ++trial) {
-		struct v90_host_echo echo;
-		struct pcm_echo_reference *reference = &echo.reference;
+	/* Sixteen independent returns each contribute less than one eighth of
+	 * the energy. No single delay bin should establish readiness, but the
+	 * learned filter must predict their sum on later, untrained samples. */
+	for (size_t tap = 0; tap < 16; ++tap)
+		sample += scale_q15(transmit_sample(index - 2967 - 17 * tap),
+			tap % 3 == 0 ? -1024 : 1024);
+	return add_s16(sample);
+}
+
+static bool test_distributed_echo(void)
+{
+	struct v90_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	const size_t training = 4000;
+	uint64_t echo_energy = 0, residual_energy = 0;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_seed_phase2_delay(&echo, 2967) == V90_HOST_ECHO_OK,
+	      "distributed echo owner did not initialize");
+	for (size_t index = 0; index < history + training; ++index) {
+		bool train = index >= history;
+		int16_t received = train ? distributed_echo_sample(index) : 0;
 		int16_t cleaned;
 
+		CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
+			V90_HOST_ECHO_BYPASS, index, received, &cleaned),
+		      "distributed training failed at %zu", index);
+		CHECK(cleaned == received, "training changed input");
+	}
+	CHECK(v90_host_echo_is_ready(&echo) && !echo.delay_acquired &&
+	      echo.window_delay_samples == 2967 - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+	      "distributed model did not qualify: ready=%d delay=%u",
+	      echo.filter_ready, echo.window_delay_samples);
+	for (size_t index = history + training;
+	     index < history + training + VERIFY_SAMPLES; ++index) {
+		int16_t remote = remote_sample(index);
+		int16_t returned = distributed_echo_sample(index);
+		int16_t cleaned;
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+			add_s16((int32_t)remote + returned), &cleaned),
+		      "distributed verification failed at %zu", index);
+		echo_energy = energy_add(echo_energy, returned);
+		residual_energy = energy_add(residual_energy, (int32_t)cleaned - remote);
+	}
+	CHECK(residual_energy * 100 < echo_energy,
+	      "distributed suppression too small: residual=%" PRIu64 " source=%" PRIu64,
+	      residual_energy, echo_energy);
+	return true;
+}
+
+static bool test_prediction_energy_saturation(void)
+{
+	for (int sign = -1; sign <= 1; sign += 2) {
+		struct v90_host_echo echo;
+		int16_t received = sign * 100;
+
 		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
-		      "scan-window owner did not initialize");
-		uint32_t window = echo.window_delay_samples;
-
-		for (size_t index = 0; index < reference->scan_required_fill; ++index)
-			CHECK(pcm_echo_reference_push(reference, 100) == PCM_ECHO_REFERENCE_OK,
-			      "scan-window reference fill failed");
-		uint32_t bin = (uint32_t)((int)reference->scan_current_index +
-			cases[trial].offset);
-
-		CHECK(bin < reference->scan_count, "scan-window test bin missing");
-		echo.coefficients[0] = 1.0f;
-		echo.reference_energy = UINT64_C(1000000000);
-		echo.input_energy = UINT64_C(1000000000);
-		echo.error_energy = 0;
-		echo.cross_energy = 0;
-		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 1u;
-		echo.train_samples = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES - 1u;
-		echo.train_peak = 100;
-		reference->scan_reference_energy[bin] = UINT64_C(1000000000);
-		reference->scan_input_energy = UINT64_C(1000000000);
-		reference->scan_cross_energy[bin] = INT64_C(1000000000);
-		reference->scan_samples = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES /
-			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES - 1u;
-
-		/* This sample completes both training and the coarse scan. A
-		 * covered correlation must qualify the learned model before the
-		 * newly completed scan can discard it to recenter the window.
-		 * Correlation outside the active taps must still acquire anew. */
-		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN,
-			reference->scan_required_fill, 100, &cleaned),
-		      "scan-window completion failed: %zu", trial);
-		CHECK(cleaned == 100 && echo.filter_ready == cases[trial].covered &&
-		      echo.delay_acquired != cases[trial].covered &&
-		      ((echo.window_delay_samples == window) == cases[trial].covered),
-		      "scan-window decision incorrect: bin=%d ready=%d acquired=%d",
-		      cases[trial].offset, echo.filter_ready, echo.delay_acquired);
-		if (cases[trial].covered)
-			CHECK(reference->scan_samples < echo.train_samples &&
-			      (uint64_t)reference->scan_samples *
-				      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES >= echo.train_samples,
-			      "decimated correlation did not cover training");
+		      "saturation owner did not initialize");
+		for (size_t index = 0; index < PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+		     ++index)
+			CHECK(pcm_echo_reference_push(&echo.reference, 100) ==
+			      PCM_ECHO_REFERENCE_OK, "saturation history fill failed");
+		echo.coefficients[0] = 1e20f;
+		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES;
+		CHECK(v90_host_echo_advance(&echo, V90_HOST_ECHO_TRAIN,
+			received, received, 100) == V90_HOST_ECHO_OK &&
+		      v90_host_echo_is_valid(&echo) && !v90_host_echo_is_ready(&echo),
+		      "finite oversized prediction broke training");
+		CHECK(echo.prediction_energy == UINT64_MAX &&
+		      echo.error_energy == UINT64_MAX &&
+		      echo.prediction_cross_energy == (sign < 0 ? INT64_MIN : INT64_MAX),
+		      "prediction evidence did not saturate safely: sign=%d", sign);
 	}
 	return true;
 }
@@ -490,6 +504,8 @@ static bool test_unrelated_input_does_not_train(void)
 {
 	struct v90_host_echo echo;
 
+	/* Adaptation improves the current sample's fit even for independent
+	 * noise. Readiness must use predictions made before that update. */
 	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
 	      "noise owner did not initialize");
 	for (size_t index = 0; index < FALSE_TRAIN_SAMPLES; ++index) {
@@ -504,7 +520,7 @@ static bool test_unrelated_input_does_not_train(void)
 	}
 	CHECK(!v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
 	      "uncorrelated input produced a ready model: delay=%u corr=%" PRIi64,
-	      echo.window_delay_samples, echo.cross_energy);
+	      echo.window_delay_samples, echo.prediction_cross_energy);
 	CHECK(echo.reference.scan_samples != 0 &&
 	      echo.reference.scan_samples <=
 		      FALSE_TRAIN_SAMPLES /
@@ -572,11 +588,12 @@ static bool test_acquisition_after_unrelated_prefix(void)
 
 int main(void)
 {
-	if (!test_contracts() || !test_long_delay_cancellation() ||
+	if (!test_contracts() || !test_prediction_energy_saturation() ||
+	    !test_unrelated_input_does_not_train() ||
+	    !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
-	    !test_scan_window_correlation() ||
-	    !test_unrelated_input_does_not_train() ||
+	    !test_distributed_echo() ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	puts("V.90 host echo tests passed");

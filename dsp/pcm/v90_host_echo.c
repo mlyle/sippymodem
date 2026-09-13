@@ -22,10 +22,10 @@
 
 struct training_step {
 	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
-	uint64_t reference_energy;
+	uint64_t prediction_energy;
 	uint64_t input_energy;
 	uint64_t error_energy;
-	int64_t cross_energy;
+	int64_t prediction_cross_energy;
 	uint32_t train_samples;
 	uint16_t train_peak;
 	bool available;
@@ -85,10 +85,10 @@ bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
 static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
 {
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
-	echo->reference_energy = 0;
+	echo->prediction_energy = 0;
 	echo->input_energy = 0;
 	echo->error_energy = 0;
-	echo->cross_energy = 0;
+	echo->prediction_cross_energy = 0;
 	echo->quiet_samples = 0;
 	echo->train_samples = 0;
 	echo->train_peak = 0;
@@ -129,8 +129,8 @@ enum v90_host_echo_result v90_host_echo_init(
 
 static bool training_is_pristine(const struct v90_host_echo *echo)
 {
-	if (echo->reference_energy != 0 || echo->input_energy != 0 ||
-	    echo->error_energy != 0 || echo->cross_energy != 0 ||
+	if (echo->prediction_energy != 0 || echo->input_energy != 0 ||
+	    echo->error_energy != 0 || echo->prediction_cross_energy != 0 ||
 	    echo->quiet_samples != 0 || echo->train_samples != 0 ||
 	    echo->train_peak != 0 || echo->delay_acquired ||
 	    echo->filter_ready || echo->weak_margin)
@@ -273,6 +273,15 @@ static uint64_t double_square_u64(double value)
 	return square >= UINT64_MAX ? UINT64_MAX : (uint64_t)(square + 0.5L);
 }
 
+static int64_t round_s64(double value)
+{
+	if (value >= (double)INT64_MAX)
+		return INT64_MAX;
+	if (value <= (double)INT64_MIN)
+		return INT64_MIN;
+	return (int64_t)(value >= 0.0 ? value + 0.5 : value - 0.5);
+}
+
 static enum v90_host_echo_result prepare_training_step(
 	const struct v90_host_echo *echo, int16_t received_sample,
 	struct training_step *step)
@@ -315,15 +324,17 @@ static enum v90_host_echo_result prepare_training_step(
 	}
 	if (!isfinite(post_estimate))
 		return V90_HOST_ECHO_NUMERIC_FAILURE;
-	step->reference_energy = add_u64_saturating(
-		echo->reference_energy,
-		square_s16(references[V90_HOST_ECHO_FILTER_PRE_SAMPLES]));
+	/* A spread-out return can have no strongly correlated individual delay
+	 * bin. Qualify the full model instead, using its prediction BEFORE the
+	 * current input adapts it; a post-update fit can correlate with noise. */
+	step->prediction_energy = add_u64_saturating(
+		echo->prediction_energy,
+		double_square_u64(estimate));
 	step->input_energy = add_u64_saturating(
 		echo->input_energy, square_s16(received_sample));
-	step->cross_energy = add_s64_saturating(
-		echo->cross_energy,
-		(int64_t)references[V90_HOST_ECHO_FILTER_PRE_SAMPLES] *
-			received_sample);
+	step->prediction_cross_energy = add_s64_saturating(
+		echo->prediction_cross_energy,
+		round_s64((double)received_sample * estimate));
 	step->error_energy = add_u64_saturating(
 		echo->error_energy,
 		double_square_u64((double)received_sample - post_estimate));
@@ -337,52 +348,19 @@ static enum v90_host_echo_result prepare_training_step(
 }
 
 static bool correlation_at_least(
-	uint64_t reference_energy, uint64_t input_energy,
+	uint64_t prediction_energy, uint64_t input_energy,
 	int64_t cross_energy)
 {
 	uint64_t cross;
 	__uint128_t left;
 	__uint128_t right;
 
-	if (reference_energy == 0 || input_energy == 0)
+	if (prediction_energy == 0 || input_energy == 0)
 		return false;
 	cross = magnitude_s64(cross_energy);
 	left = (__uint128_t)cross * cross;
-	right = (__uint128_t)reference_energy * input_energy;
+	right = (__uint128_t)prediction_energy * input_energy;
 	return left >= right / 8u + (right % 8u != 0);
-}
-
-static bool correlation_is_ready(const struct v90_host_echo *echo)
-{
-	const struct pcm_echo_reference *reference = &echo->reference;
-
-	if (correlation_at_least(
-		    echo->reference_energy, echo->input_energy,
-		    echo->cross_energy))
-		return true;
-	/* A ranging estimate locates the filter window, not an exact echo tap.
-	 * Any scan bin wholly covered by that window can establish correlation;
-	 * the learned model must still meet the ordinary residual bounds. */
-	for (uint32_t index = 0; index < reference->scan_count; ++index) {
-		uint32_t delay = reference->scan_start +
-			index * reference->scan_step;
-		uint32_t first = delay + reference->scan_pre_samples;
-		uint32_t last = first + reference->scan_step - 1u;
-		uint64_t scanned_training_samples =
-			(uint64_t)reference->scan_samples *
-			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES;
-
-		if (first < echo->window_delay_samples ||
-		    last >= echo->window_delay_samples + V90_HOST_ECHO_FILTER_TAPS ||
-		    scanned_training_samples < echo->train_samples)
-			continue;
-		if (correlation_at_least(
-			    reference->scan_reference_energy[index],
-			    reference->scan_input_energy,
-			    reference->scan_cross_energy[index]))
-			return true;
-	}
-	return false;
 }
 
 static double coefficient_sum(const struct v90_host_echo *echo)
@@ -403,7 +381,8 @@ static void maybe_mark_ready(struct v90_host_echo *echo)
 	if (echo->filter_ready || echo->train_samples < train_min ||
 	    echo->train_peak < V90_HOST_ECHO_READY_MIN_PEAK ||
 	    coefficient_sum(echo) < V90_HOST_ECHO_COEFFICIENT_MIN_SUM ||
-	    !correlation_is_ready(echo) || echo->input_energy == 0 ||
+	    !correlation_at_least(echo->prediction_energy, echo->input_energy,
+				  echo->prediction_cross_energy) ||
 	    (__uint128_t)echo->error_energy * 2u > echo->input_energy)
 		return;
 	echo->weak_margin =
@@ -442,10 +421,10 @@ static void commit_training_step(
 {
 	memcpy(echo->coefficients, step->coefficients,
 	       sizeof(echo->coefficients));
-	echo->reference_energy = step->reference_energy;
+	echo->prediction_energy = step->prediction_energy;
 	echo->input_energy = step->input_energy;
 	echo->error_energy = step->error_energy;
-	echo->cross_energy = step->cross_energy;
+	echo->prediction_cross_energy = step->prediction_cross_energy;
 	echo->train_samples = step->train_samples;
 	echo->train_peak = step->train_peak;
 }

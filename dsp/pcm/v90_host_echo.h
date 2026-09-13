@@ -50,10 +50,11 @@ enum v90_host_echo_result {
 struct v90_host_echo {
 	struct pcm_echo_reference reference;
 	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
-	uint64_t reference_energy;
+	/* Correlate input against predictions made before fitting that input. */
+	uint64_t prediction_energy;
 	uint64_t input_energy;
 	uint64_t error_energy;
-	int64_t cross_energy;
+	int64_t prediction_cross_energy;
 	uint32_t window_delay_samples;
 	uint32_t quiet_samples;
 	uint32_t train_samples;
