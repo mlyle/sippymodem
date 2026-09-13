@@ -55,19 +55,27 @@ POST_ATO1_SETTLE_SECONDS = 1.0
 @dataclass
 class EndpointState:
     connected: bool = False
-    exchange_verified: bool = False
+    verified_bytes: int = 0
     transmitted: bytes = b""
     received: bytes = b""
     connect_report: ConnectReport = field(default_factory=ConnectReport)
     log_truncated: bool = False
 
+    def record_received(self, expected: bytes, exchange: tuple[bool, bytes]) -> None:
+        verified, received = exchange
+        self.received += received
+        if verified:
+            self.verified_bytes += len(expected)
+
     def public_dict(self, expected_bytes: int) -> dict[str, object]:
         report = self.connect_report
         return {
             "connected": self.connected,
-            "exchange_verified": self.exchange_verified,
+            "exchange_verified": (
+                expected_bytes > 0 and self.verified_bytes == expected_bytes
+            ),
             "expected_bytes": expected_bytes,
-            "verified_bytes": expected_bytes if self.exchange_verified else 0,
+            "verified_bytes": self.verified_bytes,
             "transmitted_bytes": len(self.transmitted),
             "received_bytes": len(self.received),
             "modulation": report.modulation,
@@ -316,16 +324,15 @@ def run_interop(
                 data_deadline,
                 turn_taking,
             )
-            originator_state.exchange_verified, originator_state.received = (
-                origin_exchange
+            originator_state.record_received(
+                config.answerer_payload, origin_exchange
             )
-            answerer_state.exchange_verified, answerer_state.received = (
-                answer_exchange
+            answerer_state.record_received(
+                config.originator_payload, answer_exchange
             )
             outcome = (
                 "passed"
-                if originator_state.exchange_verified
-                and answerer_state.exchange_verified
+                if origin_exchange[0] and answer_exchange[0]
                 else "data-error"
             )
             if outcome == "passed" and ato1_role is not None:
@@ -360,13 +367,15 @@ def run_interop(
                     )
                     originator_state.transmitted += post_ato1_payloads[0]
                     answerer_state.transmitted += post_ato1_payloads[1]
-                    originator_state.received += origin_exchange[1]
-                    answerer_state.received += answer_exchange[1]
+                    originator_state.record_received(
+                        post_ato1_payloads[1], origin_exchange
+                    )
+                    answerer_state.record_received(
+                        post_ato1_payloads[0], answer_exchange
+                    )
                     post_ato1_exchange_verified = (
                         origin_exchange[0] and answer_exchange[0]
                     )
-                    originator_state.exchange_verified &= origin_exchange[0]
-                    answerer_state.exchange_verified &= answer_exchange[0]
                     outcome = (
                         "passed"
                         if post_ato1_exchange_verified

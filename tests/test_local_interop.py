@@ -8,11 +8,20 @@ import stat
 import sys
 import tempfile
 import textwrap
+from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from tools import local_interop  # noqa: E402
+from tools.interop_config import (  # noqa: E402
+    EndpointConfig,
+    InteropConfig,
+    InteropPorts,
+)
+from tools.live_terminal import ConnectReport  # noqa: E402
 from tools.local_interop import (  # noqa: E402
     load_interop_config,
     run_interop,
@@ -298,6 +307,104 @@ class LocalInteropTests(unittest.TestCase):
             self.assertFalse(result["originator"]["connected"])
             self.assertTrue(result["answerer"]["connected"])
             self.assertLess(result["duration_seconds"], 1.5)
+
+
+class ExchangeAccountingTests(unittest.TestCase):
+    def run_case(
+        self, initial, post=None, *, retrain=True, error=None, request_retrain=True
+    ):
+        with tempfile.TemporaryDirectory() as temporary:
+            endpoint_config = EndpointConfig(Path(sys.executable), (), (), ())
+            config = InteropConfig(
+                enabled=True,
+                artifact_directory=Path(temporary),
+                originator=endpoint_config,
+                answerer=endpoint_config,
+                originator_payload=b"origin",
+                answerer_payload=b"answer-data",
+                startup_timeout_seconds=1,
+                setup_timeout_seconds=1,
+                connect_timeout_seconds=1,
+                online_timeout_seconds=1,
+                cleanup_timeout_seconds=1,
+                ports=InteropPorts(41001, 41002, 41003, 41004),
+            )
+            endpoints = []
+            for _ in range(2):
+                terminal = Mock(connect_report=ConnectReport())
+                terminal.return_online.return_value = SimpleNamespace(connected=retrain)
+                terminal.return_online.side_effect = error
+                endpoints.append(Mock(terminal=terminal, log_truncated=False))
+            exchanges = [initial] if post is None else [initial, post]
+            with (
+                patch.object(local_interop, "EndpointProcess", side_effect=endpoints),
+                patch.object(local_interop, "_setup_endpoint"),
+                patch.object(local_interop, "_connect_endpoints",
+                             return_value=("connect", "connect")),
+                patch.object(local_interop, "_exchange_endpoints", side_effect=exchanges),
+                patch.object(local_interop, "_stop_endpoints", return_value=(True, True)),
+                patch.object(local_interop.time, "sleep"),
+            ):
+                options = {} if not request_retrain else {
+                    "ato1_role": "originator",
+                    "post_ato1_payloads": (b"post-origin", b"post-answer-data"),
+                }
+                return run_interop(config, **options).public_dict()
+
+    def check_counts(self, result, originator, answerer):
+        self.assertEqual(result["originator"]["verified_bytes"], originator)
+        self.assertEqual(result["answerer"]["verified_bytes"], answerer)
+
+    def test_initial_only_counts_patterns_not_extra_raw_bytes(self):
+        result = self.run_case(
+            ((True, b"+++answer-data\xff"), (True, b"noiseorigin")),
+            request_retrain=False,
+        )
+        self.assertEqual(result["outcome"], "passed")
+        self.check_counts(result, 11, 6)
+        self.assertEqual(result["originator"]["received_bytes"], 15)
+
+    def test_failed_ato1_counts_only_initial_data(self):
+        for error in (None, TimeoutError()):
+            with self.subTest(error=error):
+                result = self.run_case(
+                    ((True, b"answer-data"), (True, b"origin")),
+                    retrain=False, error=error,
+                )
+                self.assertEqual(result["outcome"], "ato1-error")
+                self.check_counts(result, 11, 6)
+                self.assertFalse(result["originator"]["exchange_verified"])
+                self.assertFalse(result["answerer"]["exchange_verified"])
+
+    def test_initial_failure_does_not_credit_unattempted_post_data(self):
+        result = self.run_case(((True, b"answer-data"), (False, b"noise")))
+        self.assertEqual(result["outcome"], "data-error")
+        self.check_counts(result, 11, 0)
+        self.assertFalse(result["originator"]["exchange_verified"])
+
+    def test_post_failure_retains_verified_initial_bytes(self):
+        for successful_endpoint in ("originator", "answerer"):
+            with self.subTest(successful_endpoint=successful_endpoint):
+                origin_ok = successful_endpoint == "originator"
+                result = self.run_case(
+                    ((True, b"answer-data"), (True, b"origin")),
+                    ((origin_ok, b"+++post-answer-data" if origin_ok else b"noise"),
+                     (not origin_ok, b"noise" if origin_ok else b"post-origin")),
+                )
+                self.assertEqual(result["outcome"], "post-ato1-data-error")
+                self.check_counts(result, 27 if origin_ok else 11, 6 if origin_ok else 17)
+                self.assertEqual(result["originator"]["exchange_verified"], origin_ok)
+                self.assertEqual(result["answerer"]["exchange_verified"], not origin_ok)
+
+    def test_complete_retrain_counts_both_patterns(self):
+        result = self.run_case(
+            ((True, b"answer-data"), (True, b"origin")),
+            ((True, b"post-answer-data"), (True, b"post-origin")),
+        )
+        self.assertEqual(result["outcome"], "passed")
+        self.check_counts(result, 27, 17)
+        self.assertTrue(result["originator"]["exchange_verified"])
+        self.assertTrue(result["answerer"]["exchange_verified"])
 
 
 if __name__ == "__main__":

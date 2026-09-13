@@ -72,7 +72,7 @@ def passed_result(
     baseline_rates = baseline_rates or case.baseline_rates
     candidate = EndpointState(
         connected=True,
-        exchange_verified=True,
+        verified_bytes=1,
         connect_report=ConnectReport(
             receive_bit_rate=candidate_rates.receive,
             transmit_bit_rate=candidate_rates.transmit,
@@ -80,7 +80,7 @@ def passed_result(
     )
     baseline = EndpointState(
         connected=True,
-        exchange_verified=True,
+        verified_bytes=1,
         connect_report=ConnectReport(
             receive_bit_rate=baseline_rates.receive,
             transmit_bit_rate=baseline_rates.transmit,
