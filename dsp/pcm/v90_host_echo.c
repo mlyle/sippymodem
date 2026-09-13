@@ -360,17 +360,20 @@ static bool correlation_is_ready(const struct v90_host_echo *echo)
 		    echo->reference_energy, echo->input_energy,
 		    echo->cross_energy))
 		return true;
+	/* A ranging estimate locates the filter window, not an exact echo tap.
+	 * Any scan bin wholly covered by that window can establish correlation;
+	 * the learned model must still meet the ordinary residual bounds. */
 	for (uint32_t index = 0; index < reference->scan_count; ++index) {
 		uint32_t delay = reference->scan_start +
 			index * reference->scan_step;
-		uint32_t delta = delay > echo->window_delay_samples ?
-			delay - echo->window_delay_samples :
-			echo->window_delay_samples - delay;
+		uint32_t first = delay + reference->scan_pre_samples;
+		uint32_t last = first + reference->scan_step - 1u;
 		uint64_t scanned_training_samples =
 			(uint64_t)reference->scan_samples *
 			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES;
 
-		if (delta > reference->scan_step ||
+		if (first < echo->window_delay_samples ||
+		    last >= echo->window_delay_samples + V90_HOST_ECHO_FILTER_TAPS ||
 		    scanned_training_samples < echo->train_samples)
 			continue;
 		if (correlation_at_least(
@@ -492,6 +495,12 @@ enum v90_host_echo_result v90_host_echo_advance(
 			    reference_result !=
 				    PCM_ECHO_REFERENCE_SCAN_READY)
 				return V90_HOST_ECHO_INVALID_STATE;
+			/* Qualify the current model before a completed scan considers
+			 * discarding it just to recenter the same covered echo. */
+			if (training.available) {
+				commit_training_step(echo, &training);
+				maybe_mark_ready(echo);
+			}
 			if (reference_result ==
 				    PCM_ECHO_REFERENCE_SCAN_READY &&
 			    scan_should_retime(echo, &scan)) {
@@ -504,10 +513,6 @@ enum v90_host_echo_result v90_host_echo_advance(
 			}
 		}
 		echo->quiet_samples = next_quiet;
-		if (training.available) {
-			commit_training_step(echo, &training);
-			maybe_mark_ready(echo);
-		}
 		if (!echo->filter_ready &&
 		    echo->train_samples >= V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES &&
 		    restart_training(echo) != V90_HOST_ECHO_OK)

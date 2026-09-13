@@ -326,24 +326,34 @@ static bool test_phase2_delay_seed(void)
 
 static bool test_long_phase2_delay_seed(void)
 {
-	static const uint32_t delays[] = { 2640, 3128, 5600 };
+	static const struct {
+		uint32_t delay;
+		int seed_offset;
+	} paths[] = {
+		{ 2640, 0 }, { 3128, 0 }, { 5600, 0 },
+		{ 2967, 3 }, { 2967, -5 }, { 2967, 31 }, { 2967, -31 },
+		{ 2967, 63 }, { 2967, -317 },
+	};
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	const size_t training = 4000;
 
-	for (size_t trial = 0; trial < sizeof(delays) / sizeof(delays[0]);
+	for (size_t trial = 0; trial < sizeof(paths) / sizeof(paths[0]);
 	     ++trial) {
 		struct v90_host_echo echo;
-		uint32_t delay = delays[trial];
+		uint32_t delay = paths[trial].delay;
+		uint32_t seed = (uint32_t)((int)delay + paths[trial].seed_offset);
 		uint64_t echo_energy = 0;
 		uint64_t residual_energy = 0;
 
 		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-		      v90_host_echo_seed_phase2_delay(&echo, delay) ==
+		      v90_host_echo_seed_phase2_delay(&echo, seed) ==
 			      V90_HOST_ECHO_OK,
 		      "long ranging seed failed: %u", delay);
 		/* Phase 2 has already supplied TX history. A measured return inside
 		 * that history should train without first searching from the default
-		 * short delay; readiness must still require actual correlated echo. */
+		 * short delay. Small ranging errors still fit inside the filter;
+		 * do not discard that model merely to recenter it. Readiness must
+		 * still require actual correlated echo. */
 		for (size_t index = 0; index < history + training; ++index) {
 			bool train = index >= history;
 			int16_t received = train ? scale_q15(
@@ -360,7 +370,7 @@ static bool test_long_phase2_delay_seed(void)
 		}
 		CHECK(v90_host_echo_is_ready(&echo) && !echo.delay_acquired &&
 		      echo.window_delay_samples ==
-			      delay - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+			      seed - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
 		      "long measured delay needed a fresh search: %u ready=%d window=%u",
 		      delay, v90_host_echo_is_ready(&echo), echo.window_delay_samples);
 		for (size_t index = history + training;
@@ -410,57 +420,69 @@ static bool test_weak_joint_margin(void)
 	return true;
 }
 
-static bool test_decimated_adjacent_correlation(void)
+static bool test_scan_window_correlation(void)
 {
-	struct v90_host_echo echo;
-	struct pcm_echo_reference *reference = &echo.reference;
-	uint32_t adjacent;
-	int16_t cleaned;
+	const int first_bin = -V90_HOST_ECHO_FILTER_PRE_SAMPLES /
+		PCM_ECHO_REFERENCE_SCAN_STEP;
+	const int last_bin = (V90_HOST_ECHO_FILTER_TAPS -
+		V90_HOST_ECHO_FILTER_PRE_SAMPLES) / PCM_ECHO_REFERENCE_SCAN_STEP - 1;
+	const struct {
+		int offset;
+		bool covered;
+	} cases[] = {
+		{ first_bin - 1, false }, { first_bin, true },
+		{ 1, true }, { 3, true },
+		{ last_bin, true }, { last_bin + 1, false },
+	};
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
-	      "decimated-correlation owner did not initialize");
-	for (size_t index = 0;
-	     index < reference->scan_required_fill;
-	     ++index)
-		CHECK(pcm_echo_reference_push(reference, 100) ==
-			      PCM_ECHO_REFERENCE_OK,
-		      "decimated-correlation reference fill failed");
+	for (size_t trial = 0; trial < sizeof(cases) / sizeof(cases[0]); ++trial) {
+		struct v90_host_echo echo;
+		struct pcm_echo_reference *reference = &echo.reference;
+		int16_t cleaned;
 
-	adjacent = reference->scan_current_index + 1u;
-	CHECK(adjacent < reference->scan_count,
-	      "decimated-correlation scan has no adjacent delay");
-	echo.coefficients[0] = 1.0f;
-	echo.reference_energy = UINT64_C(1000000000);
-	echo.input_energy = UINT64_C(1000000000);
-	echo.error_energy = 0;
-	echo.cross_energy = 0;
-	echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 1u;
-	echo.train_samples = V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES - 1u;
-	echo.train_peak = 100;
-	echo.delay_acquired = true;
-	reference->scan_reference_energy[adjacent] = UINT64_C(1000000000);
-	reference->scan_input_energy = UINT64_C(1000000000);
-	reference->scan_cross_energy[adjacent] = INT64_C(1000000000);
-	reference->scan_samples =
-		V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES /
-			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES -
-		1u;
+		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+		      "scan-window owner did not initialize");
+		uint32_t window = echo.window_delay_samples;
 
-	CHECK(echo_step(
-		      &echo, V90_HOST_ECHO_TRAIN,
-		      reference->scan_required_fill,
-		      100, &cleaned),
-	      "decimated adjacent-correlation step failed");
-	CHECK(cleaned == 100 &&
-	      reference->scan_samples < echo.train_samples &&
-	      (uint64_t)reference->scan_samples *
-			      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES >=
-		      echo.train_samples &&
-	      v90_host_echo_is_ready(&echo),
-	      "full-rate training rejected covered decimated correlation: "
-	      "scan=%u train=%u ready=%d",
-	      reference->scan_samples, echo.train_samples,
-	      v90_host_echo_is_ready(&echo));
+		for (size_t index = 0; index < reference->scan_required_fill; ++index)
+			CHECK(pcm_echo_reference_push(reference, 100) == PCM_ECHO_REFERENCE_OK,
+			      "scan-window reference fill failed");
+		uint32_t bin = (uint32_t)((int)reference->scan_current_index +
+			cases[trial].offset);
+
+		CHECK(bin < reference->scan_count, "scan-window test bin missing");
+		echo.coefficients[0] = 1.0f;
+		echo.reference_energy = UINT64_C(1000000000);
+		echo.input_energy = UINT64_C(1000000000);
+		echo.error_energy = 0;
+		echo.cross_energy = 0;
+		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 1u;
+		echo.train_samples = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES - 1u;
+		echo.train_peak = 100;
+		reference->scan_reference_energy[bin] = UINT64_C(1000000000);
+		reference->scan_input_energy = UINT64_C(1000000000);
+		reference->scan_cross_energy[bin] = INT64_C(1000000000);
+		reference->scan_samples = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES /
+			V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES - 1u;
+
+		/* This sample completes both training and the coarse scan. A
+		 * covered correlation must qualify the learned model before the
+		 * newly completed scan can discard it to recenter the window.
+		 * Correlation outside the active taps must still acquire anew. */
+		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN,
+			reference->scan_required_fill, 100, &cleaned),
+		      "scan-window completion failed: %zu", trial);
+		CHECK(cleaned == 100 && echo.filter_ready == cases[trial].covered &&
+		      echo.delay_acquired != cases[trial].covered &&
+		      ((echo.window_delay_samples == window) == cases[trial].covered),
+		      "scan-window decision incorrect: bin=%d ready=%d acquired=%d",
+		      cases[trial].offset, echo.filter_ready, echo.delay_acquired);
+		if (cases[trial].covered)
+			CHECK(reference->scan_samples < echo.train_samples &&
+			      (uint64_t)reference->scan_samples *
+				      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES >= echo.train_samples,
+			      "decimated correlation did not cover training");
+	}
 	return true;
 }
 
@@ -553,7 +575,7 @@ int main(void)
 	if (!test_contracts() || !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
-	    !test_decimated_adjacent_correlation() ||
+	    !test_scan_window_correlation() ||
 	    !test_unrelated_input_does_not_train() ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
