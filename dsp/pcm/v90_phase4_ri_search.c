@@ -178,7 +178,8 @@ static enum v90_phase4_ri_search_result receive_hunt(
 	uint8_t phase;
 
 	if (!v90_pcm_symbol_parse(&symbol, search->law, network_octet) ||
-	    symbol.ucode != search->training_ucode) {
+	    !v90_phase4_ri_level_matches(
+		    search->law, search->training_ucode, symbol.sample)) {
 		search->history_count = 0;
 		search->history_cursor = 0;
 		return V90_PHASE4_RI_SEARCH_OK;

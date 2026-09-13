@@ -508,7 +508,7 @@ static bool test_contracts(void)
 	}
 
 	CHECK(v90_pcm_symbol_make(
-		      &wrong, G711_LAW_PCMU, TRAINING_UCODE - 1u,
+		      &wrong, G711_LAW_PCMU, 0,
 		      true) &&
 	      v90_phase4_ri_tx_init(
 		      &ri, G711_LAW_PCMU, TRAINING_UCODE) ==

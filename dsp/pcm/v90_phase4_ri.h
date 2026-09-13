@@ -57,7 +57,8 @@ enum v90_phase4_ri_result v90_phase4_ri_tx_next(
 
 /* Detect the corresponding Ri-to-Ri-bar transition at the raw network
  * character boundary. The first sign establishes the possible whole-signal
- * polarity reversal; all following signs and magnitudes are exact. */
+ * polarity reversal. Signs remain exact; sampled magnitudes must stay within
+ * a quarter of the negotiated UINFO level. */
 struct v90_phase4_ri_rx {
 	enum v90_phase4_ri_stage stage;
 	enum g711_law law;
@@ -76,6 +77,12 @@ bool v90_phase4_ri_rx_is_valid(const struct v90_phase4_ri_rx *rx);
 bool v90_phase4_ri_rx_is_complete(const struct v90_phase4_ri_rx *rx);
 enum v90_phase4_ri_result v90_phase4_ri_rx_receive(
 	struct v90_phase4_ri_rx *rx, uint8_t network_octet);
+
+/* Shared magnitude qualification for aligned reception and sliding search.
+ * Anchor the window to UINFO, not to the candidate signal: unrelated tones
+ * must not teach the receiver a new Ri level. Invalid laws/codes fail closed. */
+bool v90_phase4_ri_level_matches(
+	enum g711_law law, uint8_t training_ucode, int16_t sample);
 
 const char *v90_phase4_ri_result_name(enum v90_phase4_ri_result result);
 

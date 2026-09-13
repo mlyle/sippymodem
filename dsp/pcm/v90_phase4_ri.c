@@ -13,6 +13,23 @@ static bool ucode_is_valid(uint8_t ucode)
 	       ucode <= V90_INFO1A_MAX_TRAINING_UCODE;
 }
 
+bool v90_phase4_ri_level_matches(
+	enum g711_law law, uint8_t training_ucode, int16_t sample)
+{
+	int16_t level;
+	int32_t magnitude = sample < 0 ? -(int32_t)sample : sample;
+	int32_t error;
+
+	if (!ucode_is_valid(training_ucode) ||
+	    !g711_ucode_sample(law, training_ucode, true, &level))
+		return false;
+	/* V.90 8.6.4 transmits one UINFO magnitude. Allow modest filtering,
+	 * gain error and G.711 requantization without reducing Ri to a sign-only
+	 * tone detector. Valid UINFO levels are nonzero in both laws. */
+	error = magnitude - level;
+	return error >= -level / 4 && error <= level / 4;
+}
+
 static bool common_state_is_valid(
 	enum v90_phase4_ri_stage stage, enum g711_law law,
 	uint16_t ri_symbols, uint8_t ri_bar_symbols,
@@ -216,7 +233,8 @@ enum v90_phase4_ri_result v90_phase4_ri_rx_receive(
 	if (v90_phase4_ri_rx_is_complete(rx))
 		return V90_PHASE4_RI_DONE;
 	if (!v90_pcm_symbol_parse(&symbol, rx->law, network_octet) ||
-	    symbol.ucode != rx->training_ucode)
+	    !v90_phase4_ri_level_matches(
+		    rx->law, rx->training_ucode, symbol.sample))
 		return V90_PHASE4_RI_INVALID_SEQUENCE;
 	next = *rx;
 	result = next.stage == V90_PHASE4_RI ?

@@ -29,8 +29,9 @@ enum v90_phase4_ri_search_result {
 	V90_PHASE4_RI_SEARCH_INVALID_SEQUENCE,
 };
 
-/* Acquire Ri after a preceding, unframed Phase 3 stream. The exact 36-symbol
- * window makes an accidental match in scrambled Phase 3 data negligible.
+/* Acquire Ri after a preceding, unframed Phase 3 stream. The exact 36-sign
+ * window makes an accidental match in scrambled Phase 3 data negligible;
+ * each sample must also pass the shared UINFO magnitude qualification.
  * Ri alone cannot distinguish a whole-signal polarity reversal from a
  * three-symbol phase shift, so both equivalent hypotheses are retained until
  * Ri-bar resolves the ambiguity. */
