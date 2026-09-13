@@ -470,6 +470,76 @@ static bool test_quantized_lu_training(void)
 	return true;
 }
 
+static bool test_pending_target_membership(void)
+{
+	const int16_t levels[] = { 2, 3, 6, 1800, TEST_LU, 21000, 24424, INT16_MAX };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned points = 4; points <= 8; points *= 2) {
+			struct v92_pcm_phase3_cpt_line_handoff initial;
+			struct v92_pcm_phase4_trn2u transmitter;
+			struct v92_pcm_phase4_trn2u_line_rx receiver;
+			struct line_channel channel;
+			CHECK(make_handoff(law, points, 0, 0.0, 0, 1, TEST_LU,
+				&initial, &transmitter, &channel) &&
+			      v92_pcm_phase4_trn2u_line_rx_init(&receiver, &initial, points) ==
+				V92_PCM_PHASE4_TRN2U_LINE_RX_OK, "membership fixture failed");
+			struct v92_pcm_phase4_trn2u_line_handoff handoff = {
+				.equalizer = receiver.equalizer, .demodulator = receiver.demodulator,
+				.training_symbols = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
+				.input_samples = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
+				.law = law, .polarity = 1,
+			};
+			for (size_t li = 0; li < ARRAY_LENGTH(levels); ++li) {
+				bool member[UINT16_MAX + 1u] = { false };
+				bool usable = true;
+				int16_t first = 0;
+				for (unsigned sign = 0; sign < 2; ++sign) {
+					for (unsigned magnitude = 0; magnitude < points / 2; ++magnitude) {
+						int16_t raw;
+						if (v92_phase4_modulator_level(points, levels[li], magnitude, sign,
+							&raw) != V92_PHASE4_MODULATOR_OK) {
+							usable = false;
+							continue;
+						}
+						first = quantize(law, raw);
+						member[(uint16_t)first] = true;
+					}
+				}
+				receiver.demodulator.lu = receiver.reference.modulator.lu = levels[li];
+				handoff.demodulator.lu = levels[li];
+				for (size_t i = 0; i < ARRAY_LENGTH(receiver.expected); ++i)
+					receiver.expected[i] = handoff.pending_training_targets[i] = first;
+				/* Exhaust every signed sample, rotating through all queue slots.
+				 * Include collapsed low-LU points and clipped constellations. */
+				for (int candidate = INT16_MIN; candidate <= INT16_MAX; ++candidate) {
+					size_t slot = (unsigned)(candidate - INT16_MIN) % ARRAY_LENGTH(receiver.expected);
+					receiver.expected[slot] = handoff.pending_training_targets[slot] = (int16_t)candidate;
+					bool accepted = usable && member[(uint16_t)candidate];
+					CHECK(v92_pcm_phase4_trn2u_line_rx_is_valid(&receiver) == accepted &&
+					      v92_pcm_phase4_trn2u_line_handoff_is_valid(&handoff) == accepted,
+					      "membership law=%u points=%u LU=%d slot=%zu sample=%d",
+					      law, points, levels[li], slot, candidate);
+					receiver.expected[slot] = handoff.pending_training_targets[slot] = first;
+				}
+				for (size_t slot = 0; slot < ARRAY_LENGTH(receiver.expected); ++slot) {
+					receiver.expected[slot] = handoff.pending_training_targets[slot] = INT16_MIN;
+					struct v92_pcm_phase4_trn2u_line_rx before = receiver;
+					struct v92_pcm_phase4_trn2u_line_handoff saved = handoff;
+					CHECK(v92_pcm_phase4_trn2u_line_rx_sample(&receiver, 0) ==
+						V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+					      v92_pcm_phase4_trn2u_line_rx_handoff(&receiver, &handoff) ==
+						V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+					      memcmp(&receiver, &before, sizeof(before)) == 0 &&
+					      memcmp(&handoff, &saved, sizeof(saved)) == 0,
+					      "bad pending target changed receiver/handoff");
+					receiver.expected[slot] = handoff.pending_training_targets[slot] = first;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
@@ -605,6 +675,7 @@ int main(void)
 		{ "long postcursor adaptation", test_long_postcursor },
 		{ "quantized control targets", test_control_targets },
 		{ "quantized LU training", test_quantized_lu_training },
+		{ "pending target membership", test_pending_target_membership },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0;

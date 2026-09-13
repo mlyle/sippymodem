@@ -28,14 +28,19 @@ static unsigned control_search_minimum(bool renegotiation)
 		V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS;
 }
 
-static bool target_is_member(
+static bool targets_are_valid(
 	const struct v92_phase4_demodulator *demodulator,
-	enum g711_law law, int16_t target)
+	enum g711_law law, const int16_t *targets)
 {
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
 		demodulator->constellation);
 	unsigned int magnitudes = bits == 0u ? 0u : 1u << (bits - 1u);
+	int16_t points[V92_CONSTELLATION_8_POINT];
+	size_t count = 0;
 
+	/* All pending decisions share the same constellation and LU. Generate
+	 * its codec points once, retaining both signs: G.711 quantization is
+	 * not sign-symmetric near zero. No derived state survives this check. */
 	for (uint8_t sign = 0u; sign <= 1u; ++sign) {
 		for (unsigned int magnitude = 0u;
 		     magnitude < magnitudes; ++magnitude) {
@@ -47,20 +52,15 @@ static bool target_is_member(
 				    (uint8_t)magnitude, sign, &level) !=
 			    V92_PHASE4_MODULATOR_OK)
 				return false;
-			if (quantize(law, level) == target)
-				return true;
+			points[count++] = quantize(law, level);
 		}
 	}
-	return false;
-}
-
-static bool targets_are_valid(
-	const struct v92_phase4_demodulator *demodulator,
-	enum g711_law law, const int16_t *targets)
-{
 	for (size_t index = 0;
 	     index < V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; ++index) {
-		if (!target_is_member(demodulator, law, targets[index]))
+		size_t point = 0;
+		while (point < count && points[point] != targets[index])
+			++point;
+		if (point == count)
 			return false;
 	}
 	return true;
