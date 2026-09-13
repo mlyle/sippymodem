@@ -45,9 +45,11 @@ bool v92_e2u_rx_has_failed(const struct v92_e2u_rx *receiver);
 enum v92_e2u_rx_result v92_e2u_rx_sample(
 	struct v92_e2u_rx *receiver, int16_t sample);
 
-/* Search alongside the continuous control parser. Initialize the candidate
- * at an exact record boundary first; every complete or rejected record rearms
- * it there. The caller validates emitted records against its procedure.
+/* Search alongside the continuous control parser. Only a complete record
+ * boundary arms a candidate; a mid-record handoff continues parsing first.
+ * eligible must remain false until the peer could have received and answered
+ * our acknowledgement. Ineligible samples discard any candidate but still
+ * advance control. The caller validates emitted records against its procedure.
  * COMPLETE consumes the final E2u sample and retains its authoritative line;
  * the speculative control decoder is not committed for that interval.
  * OK consumes one sample and replaces event (NONE unless a record ended).
@@ -56,7 +58,7 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
  * All three objects must be distinct. */
 enum v92_e2u_rx_result v92_e2u_rx_search(
 	struct v92_e2u_rx *receiver,
-	struct v92_upstream_control_line_rx *control, int16_t sample,
+	struct v92_upstream_control_line_rx *control, bool eligible, int16_t sample,
 	struct v92_control_event *event);
 
 /* Export the exact post-E2u line state. Rejected and premature calls leave

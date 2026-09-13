@@ -150,7 +150,7 @@ enum v92_e2u_rx_result v92_e2u_rx_sample(
 
 enum v92_e2u_rx_result v92_e2u_rx_search(
 	struct v92_e2u_rx *receiver,
-	struct v92_upstream_control_line_rx *control, int16_t sample,
+	struct v92_upstream_control_line_rx *control, bool eligible, int16_t sample,
 	struct v92_control_event *event)
 {
 	if (receiver == NULL || control == NULL || event == NULL ||
@@ -172,9 +172,14 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	struct v92_e2u_rx next = *receiver;
 	struct v92_upstream_control_line_rx line = *control;
 	struct v92_control_event emitted = { 0 };
+	bool extended = receiver->expected_symbols == V92_PHASE4_E2U_EXTENDED_SYMBOLS;
+	if (eligible && control->control.record_boundary &&
+	    v92_e2u_rx_init(&next, &control->signal, extended) != V92_E2U_RX_OK)
+		return fail(receiver);
 	enum v92_upstream_control_line_rx_result result =
 		v92_upstream_control_line_rx_sample(&line, sample, &emitted);
-	if (next.received_symbols < next.expected_symbols) {
+	if (eligible && (control->control.record_boundary || next.received_symbols != 0u) &&
+	    next.received_symbols < next.expected_symbols) {
 		enum v92_e2u_rx_result trial = v92_e2u_rx_sample(&next, sample);
 		if (trial == V92_E2U_RX_COMPLETE) {
 			*receiver = next;
@@ -186,9 +191,8 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	}
 	if (result != V92_UPSTREAM_CONTROL_LINE_RX_OK && result != V92_UPSTREAM_CONTROL_LINE_RX_EVENT)
 		return fail(receiver);
-	if (result == V92_UPSTREAM_CONTROL_LINE_RX_EVENT &&
-	    v92_e2u_rx_init(&next, &line.signal,
-		    receiver->expected_symbols == V92_PHASE4_E2U_EXTENDED_SYMBOLS) != V92_E2U_RX_OK)
+	if ((!eligible || line.control.record_boundary) &&
+	    v92_e2u_rx_init(&next, &line.signal, extended) != V92_E2U_RX_OK)
 		return fail(receiver);
 	*receiver = next;
 	*control = line;

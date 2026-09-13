@@ -537,6 +537,55 @@ static bool run_rearmed_crossing(
 	return true;
 }
 
+static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned prefix, uint64_t delay)
+{
+	struct digital_fixture fixture;
+	struct v92_phase4_record_tx record, zeros;
+	CHECK(prepare_digital_fixture(law, extended, false, &fixture), "boundary fixture failed");
+	struct v92_phase4_e2u_digital_state *state = &fixture.owner.state.digital;
+	struct v92_phase4_digital_handoff handoff = {
+		.receive = state->control, .transmit = state->downstream.training,
+		.cpu = state->cpu, .mapping = state->mapping, .upstream_plan = state->upstream_plan,
+		.e2u_delay_samples = delay,
+	};
+	CHECK(start_cpu_record(&record, &fixture.transmit, &fixture.cpu, true), "CPu failed to start");
+	/* Downstream acknowledgement can finish while CPu is still at bit 92.
+	 * Even a perfect zero sequence there is not an E2u record boundary. */
+	for (unsigned n = 0; n < prefix; ++n) {
+		int16_t raw;
+		struct v92_control_event event;
+		CHECK(v92_phase4_record_tx_next(&record, &raw) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_upstream_control_line_rx_sample(&handoff.receive, quantize(law, raw), &event) ==
+			V92_UPSTREAM_CONTROL_LINE_RX_OK, "CPu prefix failed");
+	}
+	CHECK((!prefix || (handoff.receive.control.stage == V92_CONTROL_RX_RECEIVE_PARAMETERS &&
+	      handoff.receive.control.bit_index == prefix * 2u)) &&
+	      v92_phase4_e2u_init_digital(&fixture.owner, &handoff) == V92_PHASE4_E2U_OK &&
+	      v92_phase4_record_tx_init_e2u(&zeros, &record.modulator, extended) == V92_PHASE4_RECORD_TX_OK,
+	      "mid-CPu handoff failed");
+	CHECK(feed_control_record(&fixture.owner, &zeros), "mid-CPu zeros falsely completed E2u");
+	struct v92_phase4_modulator modulator = zeros.modulator;
+	do {
+		CHECK(start_cpu_record(&record, &modulator, &fixture.cpu, true) &&
+		      feed_control_record(&fixture.owner, &record),
+		      "control search did not recover while acknowledgement was in flight");
+		modulator = record.modulator;
+	} while (fixture.owner.state.digital.e2u_delay_samples != 0u);
+	CHECK(!delay || fixture.owner.state.digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA,
+	      "receive response guard held back downstream Ed/B1d");
+	CHECK(v92_phase4_record_tx_init_e2u(&zeros, &modulator, extended) == V92_PHASE4_RECORD_TX_OK,
+	      "real E2u failed to start");
+	while (!v92_phase4_record_tx_is_complete(&zeros)) {
+		int16_t raw;
+		uint8_t octet;
+		CHECK(v92_phase4_record_tx_next(&zeros, &raw) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_phase4_e2u_next(&fixture.owner, 0u, quantize(law, raw), &octet) ==
+			(v92_phase4_record_tx_is_complete(&zeros) ? V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK),
+		      "real E2u lost after control boundary");
+	}
+	return true;
+}
+
 enum rejected_control {
 	CHANGED_CPU_SHAPING,
 	INITIAL_CPUS,
@@ -923,8 +972,9 @@ static bool run_resumed_exchange(const struct v92_rate_pause_analog *ap,
 		.delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + 3u,
 	};
 	enum g711_law law = ap->cpu.law;
-	CHECK(v92_rate_pause_analog_resume(&analog, ap, mapping, 240u) &&
-	      v92_rate_pause_digital_resume(&digital, dp, &mapping->cpd, &plan, &ap->cpu, 240u),
+	/* These paired stations exchange samples without transport delay. */
+	CHECK(v92_rate_pause_analog_resume(&analog, ap, mapping, 0u) &&
+	      v92_rate_pause_digital_resume(&digital, dp, &mapping->cpd, &plan, &ap->cpu, 0u),
 	      "pause could not resume control stations");
 	CHECK(memcmp(&analog.transmit, &ap->upstream.status, sizeof(analog.transmit)) == 0 &&
 	      memcmp(&analog.receive, &ap->downstream, sizeof(analog.receive)) == 0 &&
@@ -1581,11 +1631,11 @@ static bool pause_confirmation_contracts(const struct v92_phase4_digital_station
 		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK,
 		      "premature E2u transmitter failed");
 		enum v92_phase4_digital_station_result result = v92_phase4_digital_station_receive(&trial, quantize(law, sample));
-		CHECK(result == (v92_phase4_record_tx_is_complete(&wire) ?
-		      V92_PHASE4_DIGITAL_STATION_INTERNAL_ERROR : V92_PHASE4_DIGITAL_STATION_OK),
-		      "premature E2u did not reject at the sequence boundary");
+		CHECK(result == V92_PHASE4_DIGITAL_STATION_OK,
+		      "premature zeros stopped the control search");
 	}
-	CHECK(v92_phase4_digital_station_has_failed(&trial) && !v92_phase4_digital_station_is_pause_ready(&trial),
+	CHECK(!v92_phase4_digital_station_has_failed(&trial) && !v92_phase4_digital_station_is_pause_ready(&trial) &&
+	      !v92_e2u_rx_is_complete(&trial.e2u),
 	      "E2u bypassed our unsent acknowledgement");
 	trial = *station;
 	if (trial.control.transmit.stage == PCM_DOWNSTREAM_TX_V92_CONTROL)
@@ -1613,16 +1663,16 @@ static bool pause_confirmation_contracts(const struct v92_phase4_digital_station
 	struct v92_e2u_rx candidate = station->e2u, saved = candidate;
 	struct v92_upstream_control_line_rx control = station->receive.signal.control, saved_control = control;
 	struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU }, saved_event = event;
-	CHECK(v92_e2u_rx_search(NULL, &control, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
-	      v92_e2u_rx_search(&candidate, NULL, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
-	      v92_e2u_rx_search(&candidate, &control, 0, NULL) == V92_E2U_RX_INVALID_ARGUMENT &&
-	      v92_e2u_rx_search(&candidate, (void *)&candidate, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
-	      v92_e2u_rx_search(&candidate, &control, 0, (void *)&control) == V92_E2U_RX_INVALID_ARGUMENT &&
-	      v92_e2u_rx_search(&candidate, &control, 0, (void *)&candidate) == V92_E2U_RX_INVALID_ARGUMENT &&
+	CHECK(v92_e2u_rx_search(NULL, &control, true, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, NULL, true, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, true, 0, NULL) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, (void *)&candidate, true, 0, &event) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, true, 0, (void *)&control) == V92_E2U_RX_INVALID_ARGUMENT &&
+	      v92_e2u_rx_search(&candidate, &control, true, 0, (void *)&candidate) == V92_E2U_RX_INVALID_ARGUMENT &&
 	      memcmp(&candidate, &saved, sizeof(saved)) == 0 && memcmp(&control, &saved_control, sizeof(control)) == 0 &&
 	      memcmp(&event, &saved_event, sizeof(event)) == 0, "invalid E2u search changed state or event");
 	control.signal.line.law ^= 1u;
-	CHECK(v92_e2u_rx_search(&candidate, &control, 0, &event) == V92_E2U_RX_INVALID_STATE &&
+	CHECK(v92_e2u_rx_search(&candidate, &control, true, 0, &event) == V92_E2U_RX_INVALID_STATE &&
 	      memcmp(&candidate, &saved, sizeof(saved)) == 0 && memcmp(&event, &saved_event, sizeof(event)) == 0,
 	      "E2u search accepted a different line law");
 	return true;
@@ -1675,7 +1725,7 @@ static bool run_pause_confirmation(enum g711_law law, enum v92_constellation_siz
 	      upstream_line(law, constellation, &wire, &line), "pause confirmation fixture failed");
 	line.signal.line.renegotiation = true;
 	CHECK(v92_phase4_digital_rx_resume(&station.receive, &line) == V92_PHASE4_DIGITAL_RX_OK &&
-	      v92_downstream_control_init(&station.control, &down, &suvd, &cpd, &cpu, 240u) &&
+	      v92_downstream_control_init(&station.control, &down, &suvd, &cpd, &cpu, 0u) &&
 	      v92_downstream_control_ready(&station.control) && v92_phase4_digital_station_is_valid(&station),
 	      "pause confirmation station failed to initialize");
 	/* Wait for the digital acknowledgement while continuing real unacknowledged
@@ -1823,6 +1873,12 @@ static bool test_contracts(void)
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned extended = 0; extended < 2; ++extended)
+			if (!test_guarded_handoff(law, extended, 46u, 0u) ||
+			    !test_guarded_handoff(law, extended, 0u, 2130u) ||
+			    !test_guarded_handoff(law, extended, 46u, 2130u))
+				return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned size = 0; size < 2; ++size)
 			for (unsigned lookahead = 0; lookahead < 4; ++lookahead)

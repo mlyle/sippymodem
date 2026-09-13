@@ -53,6 +53,8 @@ struct v92_phase4_digital_handoff {
 	/* The complete CPd actually transmitted, not a regenerated profile. */
 	struct v92_pcm_mapping mapping;
 	struct v92_upstream_plan upstream_plan;
+	/* Receive-only guard; the current downstream record and Ed still drain. */
+	uint64_t e2u_delay_samples;
 	/* Status-only rate agreement, not acknowledgement of new parameters. */
 	bool pause;
 	/* A pause may already have consumed part or all of E2u before Ed is

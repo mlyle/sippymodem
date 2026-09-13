@@ -1050,6 +1050,23 @@ static bool check_digital_mapping_handoff(
 	struct v92_pcm_mapping expected;
 	struct v92_cpd_parameters parameters;
 
+	struct v92_downstream_control timed = ready->control;
+	timed.round_trip_delay_samples = 2130u;
+	uint64_t delay = v92_downstream_control_e2u_delay(&timed);
+	CHECK(delay != 0u && delay != UINT64_MAX &&
+	      timed.transmit.transmitted_symbols + delay ==
+		      timed.acknowledgement_end_frame * V90_CP_FRAME_INTERVALS + 2130u,
+	      "E2u deadline did not include the wire tail and round trip");
+	for (uint64_t n = 0u; n <= delay; ++n) {
+		uint8_t octet;
+		CHECK(v92_downstream_control_e2u_delay(&timed) == (n < delay ? delay - n : 0u) &&
+		      v92_downstream_control_transmit(&timed, &octet), "E2u response guard lost the wire clock");
+	}
+	CHECK(v92_downstream_control_e2u_delay(&timed) == 0u, "response guard restarted after expiry");
+	timed.acknowledgement_end_frame = UINT64_MAX;
+	CHECK(v92_downstream_control_e2u_delay(&timed) == UINT64_MAX &&
+	      v92_downstream_control_e2u_delay(NULL) == UINT64_MAX, "invalid response deadline accepted");
+
 	/* A retained CPd-prime changes only the acknowledgment in the record. */
 	CHECK(v92_cpd_decode(prime.control.initial_cpd.sequence,
 		      sizeof(prime.control.initial_cpd.sequence), prime.control.initial_cpd.sequence_bits,
@@ -1069,17 +1086,20 @@ static bool check_digital_mapping_handoff(
 	      v92_phase4_digital_station_handoff(&prime, &handoff) ==
 		      V92_PHASE4_DIGITAL_STATION_OK &&
 	      handoff.mapping.cpd.acknowledges_cpu &&
+	      handoff.e2u_delay_samples == v92_downstream_control_e2u_delay(&prime.control) &&
 	      v92_pcm_mapping_equal(&handoff.mapping, &expected),
 	      "handoff regenerated CPd instead of retaining the transmitted record");
-	for (unsigned int mutation = 0u; mutation < 3u; ++mutation) {
+	for (unsigned int mutation = 0u; mutation < 4u; ++mutation) {
 		struct v92_phase4_digital_handoff rejected = handoff;
 
 		if (mutation == 0u)
 			rejected.mapping.data_bits_per_frame++;
 		else if (mutation == 1u)
 			rejected.mapping.law ^= 1u;
-		else
+		else if (mutation == 2u)
 			rejected.receive.signal.line.law ^= 1u;
+		else
+			rejected.e2u_delay_samples = UINT64_MAX;
 		CHECK(!v92_phase4_digital_handoff_is_valid(&rejected),
 		      "inconsistent digital mapping handoff %u accepted", mutation);
 	}

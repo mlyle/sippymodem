@@ -209,6 +209,9 @@ static bool feed_frame(
 
 		CHECK(receive_bit(receiver, frame_bit(frame, bit), &event),
 		      "control frame stopped at bit %zu", bit);
+		CHECK(!receiver->record_boundary ||
+		      (event.type != V92_CONTROL_EVENT_NONE && bit + 1u == bit_count),
+		      "control boundary appeared inside a record at bit %zu", bit);
 		if (event.type == V92_CONTROL_EVENT_NONE)
 			continue;
 		CHECK(observed.type == V92_CONTROL_EVENT_NONE,
@@ -557,6 +560,7 @@ static bool test_upstream_recovery_and_rejection(void)
 	CHECK(feed_frame(
 		      &receiver, suvu_corrupt, 0u, suvu_bits, &event) &&
 	      event.type == V92_CONTROL_EVENT_SUVU_REJECTED &&
+	      receiver.record_boundary &&
 	      event.record.suvu.frame_result == V92_SUVU_CRC_MISMATCH,
 	      "corrupt SUVu did not emit a CRC rejection");
 	memcpy(cpu_corrupt, cpu_frame, sizeof(cpu_corrupt));
@@ -564,6 +568,7 @@ static bool test_upstream_recovery_and_rejection(void)
 	CHECK(feed_frame(
 		      &receiver, cpu_corrupt, 0u, cpu_bits, &event) &&
 	      event.type == V92_CONTROL_EVENT_CPU_REJECTED &&
+	      receiver.record_boundary &&
 	      event.record.cpu.frame_result == V92_CPU_CRC_MISMATCH,
 	      "corrupt CPu did not emit a CRC rejection");
 	memcpy(cpu_corrupt, cpu_frame, sizeof(cpu_corrupt));
@@ -573,9 +578,11 @@ static bool test_upstream_recovery_and_rejection(void)
 		      &event) &&
 	      event.type == V92_CONTROL_EVENT_CPU_REJECTED &&
 	      event.record.cpu.frame_result == V92_CPU_INVALID_FRAME &&
+	      !receiver.record_boundary &&
 	      feed_frame(
 		      &receiver, cpu_frame, 0u, cpu_bits, &event) &&
 	      event.type == V92_CONTROL_EVENT_CPU &&
+	      receiver.record_boundary &&
 	      cpu_parameters_match(&event.record.cpu.parameters, &cpu),
 	      "malformed CPu prevented upstream-stream recovery");
 	return true;

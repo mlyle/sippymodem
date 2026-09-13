@@ -58,6 +58,7 @@ struct v92_phase4_e2u_digital_state {
 	struct v92_cpu_parameters cpu;
 	struct v92_pcm_mapping mapping;
 	struct v92_upstream_plan upstream_plan;
+	uint64_t e2u_delay_samples;
 	enum v92_phase4_e2u_downstream_stage downstream_stage;
 };
 

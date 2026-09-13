@@ -183,7 +183,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	enum v92_phase4_digital_rx_result result;
 	if (station->searching_e2u) {
 		enum v92_e2u_rx_result received = v92_e2u_rx_search(
-			&station->e2u, &station->receive.signal.control, sample, &event);
+			&station->e2u, &station->receive.signal.control,
+			v92_downstream_control_e2u_delay(&station->control) == 0u, sample, &event);
 		if (received == V92_E2U_RX_COMPLETE)
 			return v92_downstream_control_note_e2u(&station->control) ?
 				V92_PHASE4_DIGITAL_STATION_OK : fail(station);
@@ -204,6 +205,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	 * candidate boundary. Start before confirmation; waiting for the SUVu
 	 * ACK here would deadlock when that is the record lost on the line. */
 	if (!station->searching_e2u && event.type != V92_CONTROL_EVENT_NONE &&
+	    station->receive.signal.control.control.record_boundary &&
 	    v92_downstream_control_silence_requested(&station->control)) {
 		if (v92_e2u_rx_init(&station->e2u, &station->receive.signal.control.signal, false) != V92_E2U_RX_OK)
 			return fail(station);
@@ -278,6 +280,8 @@ bool v92_phase4_digital_handoff_is_valid(
 	const struct v92_phase4_digital_handoff *handoff)
 {
 	return handoff != NULL &&
+	       handoff->e2u_delay_samples != UINT64_MAX &&
+	       (!handoff->searching_e2u || !handoff->e2u.received_symbols || !handoff->e2u_delay_samples) &&
 	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       (!handoff->searching_e2u || (handoff->pause && !handoff->e2u.failed &&
 		pause_candidate_is_valid(&handoff->e2u, &handoff->receive))) &&
@@ -316,6 +320,7 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_handoff(
 		.receive = station->receive.signal.control,
 		.cpu = station->control.cpu,
 		.upstream_plan = station->upstream_plan,
+		.e2u_delay_samples = v92_downstream_control_e2u_delay(&station->control),
 		.pause = v92_phase4_digital_station_is_pause_ready(station),
 		.searching_e2u = station->searching_e2u,
 	};

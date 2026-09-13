@@ -82,6 +82,7 @@ bool v92_control_rx_is_valid(
 	size_t status_bits;
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
+	    (receiver->record_boundary && receiver->stage != V92_CONTROL_RX_SEARCH_SYNC) ||
 	    !configuration_is_valid(receiver) ||
 	    receiver->sync_one_count > CONTROL_SYNC_BITS ||
 	    receiver->bit_index > maximum_frame_bits(receiver) ||
@@ -428,6 +429,7 @@ static bool receive_valid_bit(
 			finish_status(receiver, event);
 		else
 			finish_parameters(receiver, event);
+		receiver->record_boundary = true;
 	}
 	return true;
 }
@@ -444,6 +446,7 @@ enum v92_control_rx_result v92_control_rx_receive_bit(
 	if (!v92_control_rx_is_valid(receiver))
 		return V92_CONTROL_RX_INVALID_STATE;
 	next = *receiver;
+	next.record_boundary = false;
 	if (!receive_valid_bit(&next, bit, &emitted))
 		return V92_CONTROL_RX_INTERNAL_ERROR;
 	if (!v92_control_rx_is_valid(&next))

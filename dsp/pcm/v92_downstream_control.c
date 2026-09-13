@@ -658,6 +658,19 @@ bool v92_downstream_control_silence_requested(const struct v92_downstream_contro
 		!control->cleardown.active && silence_requested(control);
 }
 
+uint64_t v92_downstream_control_e2u_delay(const struct v92_downstream_control *control)
+{
+	if (!v92_downstream_control_is_valid(control) || control->failed ||
+	    control->cleardown.active || !control->acknowledgement_end_frame ||
+	    control->acknowledgement_end_frame >
+		(UINT64_MAX - control->round_trip_delay_samples) / V90_CP_FRAME_INTERVALS)
+		return UINT64_MAX;
+	uint64_t end = control->acknowledgement_end_frame * V90_CP_FRAME_INTERVALS +
+		control->round_trip_delay_samples;
+	return end > control->transmit.transmitted_symbols ?
+		end - control->transmit.transmitted_symbols : 0u;
+}
+
 static bool silence_acknowledgement_sent(const struct v92_downstream_control *control)
 {
 	return v92_downstream_control_silence_requested(control) &&

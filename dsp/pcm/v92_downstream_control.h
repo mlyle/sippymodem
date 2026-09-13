@@ -69,6 +69,11 @@ bool v92_downstream_control_start_cleardown(struct v92_downstream_control *contr
 /* The receiver may begin E2u while the independent transmitter still drains
  * its current record. The caller uses v92_phase4_ed_tx for that final tail. */
 bool v92_downstream_control_is_ed_ready(const struct v92_downstream_control *control);
+/* Remaining 8 kHz intervals until an E2u response is physically possible:
+ * the acknowledging record must leave the wire, then traverse the round trip.
+ * UINT64_MAX means no acknowledgement has been scheduled or invalid state.
+ * This receive guard does not delay independent Ed transmission. */
+uint64_t v92_downstream_control_e2u_delay(const struct v92_downstream_control *control);
 /* Rate-renegotiation silence agrees via SUVu/SUVd, not CPu/CPd. A ready
  * pause authorizes draining SUVd/Ed into silence, never entering data.
  * A receiver may also supply a complete E2u instead of the peer's SUVu ACK. */

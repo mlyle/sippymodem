@@ -92,6 +92,8 @@ static bool digital_state_is_valid(
 				&data_mapping);
 	}
 	return v92_e2u_rx_is_valid(&state->receive) &&
+	       state->e2u_delay_samples != UINT64_MAX &&
+	       (!state->e2u_delay_samples || !state->receive.received_symbols) &&
 	       v92_upstream_plan_is_valid(&state->upstream_plan) &&
 	       v92_upstream_control_line_rx_is_valid(&state->control) &&
 	       !v92_upstream_control_line_rx_has_failed(&state->control) &&
@@ -230,6 +232,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_init_digital(
 	initialized.state.digital.cpu = handoff->cpu;
 	initialized.state.digital.mapping = handoff->mapping;
 	initialized.state.digital.upstream_plan = handoff->upstream_plan;
+	initialized.state.digital.e2u_delay_samples = handoff->e2u_delay_samples;
 	initialized.state.digital.downstream_stage =
 		handoff->pause ? V92_PHASE4_E2U_DOWNSTREAM_PAUSE : V92_PHASE4_E2U_DOWNSTREAM_TRAINING;
 	if (handoff->searching_e2u)
@@ -491,7 +494,9 @@ static enum v92_phase4_e2u_result digital_receive(
 {
 	struct v92_control_event event = { 0 };
 	enum v92_e2u_rx_result result = v92_e2u_rx_search(
-		&state->receive, &state->control, sample, &event);
+		&state->receive, &state->control, state->e2u_delay_samples == 0u, sample, &event);
+	if (state->e2u_delay_samples != 0u)
+		--state->e2u_delay_samples;
 	if (result == V92_E2U_RX_COMPLETE)
 		return V92_PHASE4_E2U_COMPLETE;
 	if (result != V92_E2U_RX_OK)

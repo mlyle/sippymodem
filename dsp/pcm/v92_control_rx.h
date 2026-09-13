@@ -97,6 +97,9 @@ struct v92_control_rx {
 	uint8_t alignment_bits;
 	enum v92_control_direction direction;
 	enum v92_control_rx_stage stage;
+	/* The last bit completed a whole record, even if its CRC failed.
+	 * Sync hunting and early rejection of an invalid header are not boundaries. */
+	bool record_boundary;
 };
 
 /* Both directions take the negotiated mapping-frame bit width: 9..42
