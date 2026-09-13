@@ -14,7 +14,10 @@
 #define V90_HOST_ECHO_ADAPTATION 0.35
 #define V90_HOST_ECHO_ENERGY_FLOOR 1048576.0
 #define V90_HOST_ECHO_COEFFICIENT_MIN_SUM 0.010
-#define V90_HOST_ECHO_READY_CORRELATION_PPM 125000u
+/* A delay candidate sees one return, not the complete multipath model.
+ * Require r-squared >= 1/32 to move an unqualified window; only the later
+ * independent whole-filter prediction can authorize subtraction. */
+#define V90_HOST_ECHO_SCAN_CORRELATION_PPM 31250u
 #define V90_HOST_ECHO_SCAN_IMPROVEMENT 4u
 /* Allow a bounded local return path beyond the Phase-2 reversal interval. */
 #define V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES \
@@ -412,7 +415,7 @@ static bool scan_should_retime(
 	       scan->best_window_delay_samples !=
 		       scan->current_window_delay_samples &&
 	       scan->best_correlation_ppm >=
-		       V90_HOST_ECHO_READY_CORRELATION_PPM &&
+		       V90_HOST_ECHO_SCAN_CORRELATION_PPM &&
 	       scan->best_correlation_ppm >= improvement;
 }
 

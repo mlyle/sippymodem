@@ -420,47 +420,53 @@ static bool test_weak_joint_margin(void)
 	return true;
 }
 
-static int16_t distributed_echo_sample(size_t index)
+static int16_t distributed_echo_sample(size_t index, size_t returns)
 {
 	int32_t sample = 0;
 
-	/* Sixteen independent returns each contribute less than one eighth of
-	 * the energy. No single delay bin should establish readiness, but the
-	 * learned filter must predict their sum on later, untrained samples. */
-	for (size_t tap = 0; tap < 16; ++tap)
+	/* A delay bin captures only a fraction of the return energy. Readiness
+	 * must instead predict the sum on later, untrained samples. */
+	for (size_t tap = 0; tap < returns; ++tap)
 		sample += scale_q15(transmit_sample(index - 2967 - 17 * tap),
 			tap % 3 == 0 ? -1024 : 1024);
 	return add_s16(sample);
 }
 
-static bool test_distributed_echo(void)
+static bool test_distributed_echo(bool acquire)
 {
 	struct v90_host_echo echo;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-	const size_t training = 4000;
+	const size_t training = acquire ? 8000 : 4000;
+	const size_t returns = acquire ? 8 : 16;
 	uint64_t echo_energy = 0, residual_energy = 0;
 
 	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_seed_phase2_delay(&echo, 2967) == V90_HOST_ECHO_OK,
+	      v90_host_echo_seed_phase2_delay(&echo, acquire ? 2138 : 2967) == V90_HOST_ECHO_OK,
 	      "distributed echo owner did not initialize");
 	for (size_t index = 0; index < history + training; ++index) {
 		bool train = index >= history;
-		int16_t received = train ? distributed_echo_sample(index) : 0;
+		int16_t received = train ? distributed_echo_sample(index, returns) : 0;
 		int16_t cleaned;
 
 		CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
 			V90_HOST_ECHO_BYPASS, index, received, &cleaned),
 		      "distributed training failed at %zu", index);
 		CHECK(cleaned == received, "training changed input");
+		if (echo.delay_acquired &&
+		    echo.train_samples < V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES)
+			CHECK(!v90_host_echo_is_ready(&echo),
+			      "delay acquisition alone qualified a filter");
 	}
-	CHECK(v90_host_echo_is_ready(&echo) && !echo.delay_acquired &&
-	      echo.window_delay_samples == 2967 - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+	CHECK(v90_host_echo_is_ready(&echo) && echo.delay_acquired == acquire &&
+	      (acquire || echo.window_delay_samples == 2967 - V90_HOST_ECHO_FILTER_PRE_SAMPLES) &&
+	      echo.window_delay_samples <= 2967 &&
+	      echo.window_delay_samples + V90_HOST_ECHO_FILTER_TAPS > 2967 + 17 * (returns - 1),
 	      "distributed model did not qualify: ready=%d delay=%u",
 	      echo.filter_ready, echo.window_delay_samples);
 	for (size_t index = history + training;
 	     index < history + training + VERIFY_SAMPLES; ++index) {
 		int16_t remote = remote_sample(index);
-		int16_t returned = distributed_echo_sample(index);
+		int16_t returned = distributed_echo_sample(index, returns);
 		int16_t cleaned;
 		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
 			add_s16((int32_t)remote + returned), &cleaned),
@@ -500,23 +506,25 @@ static bool test_prediction_energy_saturation(void)
 	return true;
 }
 
-static bool test_unrelated_input_does_not_train(void)
+static bool test_unrelated_input_does_not_train(uint32_t salt, int16_t span)
 {
 	struct v90_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 
 	/* Adaptation improves the current sample's fit even for independent
 	 * noise. Readiness must use predictions made before that update. */
 	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
 	      "noise owner did not initialize");
-	for (size_t index = 0; index < FALSE_TRAIN_SAMPLES; ++index) {
-		int16_t input = generated_sample(
-			index, UINT32_C(0x31415927), 1000);
+	for (size_t index = 0; index < history + FALSE_TRAIN_SAMPLES; ++index) {
+		int16_t input = generated_sample(index, salt, span);
 		int16_t cleaned;
 
 		CHECK(echo_step(
-			      &echo, V90_HOST_ECHO_TRAIN, index,
+			      &echo, index < history ? V90_HOST_ECHO_BYPASS : V90_HOST_ECHO_TRAIN, index,
 			      input, &cleaned),
 		      "noise training failed at sample %zu", index);
+		CHECK(cleaned == input && !v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
+		      "uncorrelated input acquired or enabled a filter at %zu", index);
 	}
 	CHECK(!v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
 	      "uncorrelated input produced a ready model: delay=%u corr=%" PRIi64,
@@ -588,12 +596,15 @@ static bool test_acquisition_after_unrelated_prefix(void)
 
 int main(void)
 {
+	for (uint32_t trial = 0; trial < 4; ++trial)
+		if (!test_unrelated_input_does_not_train(
+			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
+			return 1;
 	if (!test_contracts() || !test_prediction_energy_saturation() ||
-	    !test_unrelated_input_does_not_train() ||
 	    !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
-	    !test_distributed_echo() ||
+	    !test_distributed_echo(false) || !test_distributed_echo(true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	puts("V.90 host echo tests passed");
