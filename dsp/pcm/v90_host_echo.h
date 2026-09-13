@@ -50,6 +50,9 @@ enum v90_host_echo_result {
 struct v90_host_echo {
 	struct pcm_echo_reference reference;
 	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
+	/* Preserve qualified cancellation while an earlier window acquires. */
+	float retained_coefficients[V90_HOST_ECHO_FILTER_TAPS];
+	uint32_t retained_delay_samples;
 	/* Correlate input against predictions made before fitting that input. */
 	uint64_t prediction_energy;
 	uint64_t input_energy;
@@ -74,6 +77,7 @@ enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
 bool v90_host_echo_is_valid(const struct v90_host_echo *echo);
 bool v90_host_echo_is_ready(const struct v90_host_echo *echo);
 bool v90_host_echo_has_weak_margin(const struct v90_host_echo *echo);
+/* Current acquisition window; FILTER can retain a previously qualified model. */
 uint32_t v90_host_echo_window_delay_samples(
 	const struct v90_host_echo *echo);
 

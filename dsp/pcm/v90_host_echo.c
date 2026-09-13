@@ -64,6 +64,11 @@ static bool header_is_valid(const struct v90_host_echo *echo)
 		   V90_HOST_ECHO_FILTER_TAPS - 1u;
 	if (last_age > PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
 		return false;
+	if (echo->retained_delay_samples &&
+	    (echo->filter_ready || !echo->delay_acquired ||
+	     echo->retained_delay_samples > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES ||
+	     echo->reference.fill < echo->retained_delay_samples + V90_HOST_ECHO_FILTER_TAPS - 1u))
+		return false;
 	ready_min = echo->delay_acquired ?
 		V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
 		V90_HOST_ECHO_TRAIN_MIN_SAMPLES;
@@ -79,7 +84,9 @@ bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
 	if (!header_is_valid(echo))
 		return false;
 	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
-		if (!isfinite(echo->coefficients[tap]))
+		if (!isfinite(echo->coefficients[tap]) ||
+		    !isfinite(echo->retained_coefficients[tap]) ||
+		    (!echo->retained_delay_samples && echo->retained_coefficients[tap] != 0.0f))
 			return false;
 	}
 	return true;
@@ -136,10 +143,11 @@ static bool training_is_pristine(const struct v90_host_echo *echo)
 	    echo->error_energy != 0 || echo->prediction_cross_energy != 0 ||
 	    echo->quiet_samples != 0 || echo->train_samples != 0 ||
 	    echo->train_peak != 0 || echo->delay_acquired ||
-	    echo->filter_ready || echo->weak_margin)
+	    echo->filter_ready || echo->weak_margin || echo->retained_delay_samples)
 		return false;
 	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
-		if (echo->coefficients[tap] != 0.0f)
+		if (echo->coefficients[tap] != 0.0f ||
+		    echo->retained_coefficients[tap] != 0.0f)
 			return false;
 	}
 	return true;
@@ -180,12 +188,12 @@ enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
 
 bool v90_host_echo_is_ready(const struct v90_host_echo *echo)
 {
-	return header_is_valid(echo) && echo->filter_ready;
+	return header_is_valid(echo) && (echo->filter_ready || echo->retained_delay_samples);
 }
 
 bool v90_host_echo_has_weak_margin(const struct v90_host_echo *echo)
 {
-	return v90_host_echo_is_ready(echo) && echo->weak_margin;
+	return v90_host_echo_is_ready(echo) && (echo->weak_margin || echo->retained_delay_samples);
 }
 
 uint32_t v90_host_echo_window_delay_samples(
@@ -198,9 +206,11 @@ static enum v90_host_echo_result read_filter_window(
 	const struct v90_host_echo *echo,
 	int16_t references[V90_HOST_ECHO_FILTER_TAPS])
 {
+	uint32_t delay = echo->retained_delay_samples ?
+		echo->retained_delay_samples : echo->window_delay_samples;
 	enum pcm_echo_reference_result result =
 		pcm_echo_reference_read_window(
-			&echo->reference, echo->window_delay_samples,
+			&echo->reference, delay,
 			references, V90_HOST_ECHO_FILTER_TAPS);
 
 	return result == PCM_ECHO_REFERENCE_OK ?
@@ -256,12 +266,15 @@ enum v90_host_echo_result v90_host_echo_predict(
 	    memory_regions_overlap(
 		    echo, sizeof(*echo), cleaned_sample, sizeof(*cleaned_sample)))
 		return V90_HOST_ECHO_INVALID_ARGUMENT;
-	if (mode == V90_HOST_ECHO_FILTER && echo->filter_ready) {
+	if (mode == V90_HOST_ECHO_FILTER && (echo->filter_ready || echo->retained_delay_samples)) {
+		const float *coefficients = echo->retained_delay_samples ?
+			echo->retained_coefficients : echo->coefficients;
+
 		result = read_filter_window(echo, references);
 		if (result != V90_HOST_ECHO_OK)
 			return result;
 		if (!estimate_echo(
-			    echo->coefficients, references, &estimate, &energy))
+			    coefficients, references, &estimate, &energy))
 			return V90_HOST_ECHO_NUMERIC_FAILURE;
 		generated = round_s16((double)received_sample - estimate);
 	}
@@ -388,9 +401,16 @@ static void maybe_mark_ready(struct v90_host_echo *echo)
 				  echo->prediction_cross_energy) ||
 	    (__uint128_t)echo->error_energy * 2u > echo->input_energy)
 		return;
-	echo->weak_margin =
-		(__uint128_t)echo->error_energy * 6u >= echo->input_energy;
+	bool weak = (__uint128_t)echo->error_energy * 6u >= echo->input_energy;
+
+	/* A newly acquired partial model is not an improvement over the
+	 * qualified one retained for short training. Require stronger margin. */
+	if (echo->retained_delay_samples && weak)
+		return;
+	echo->weak_margin = weak;
 	echo->filter_ready = true;
+	echo->retained_delay_samples = 0;
+	memset(echo->retained_coefficients, 0, sizeof(echo->retained_coefficients));
 }
 
 static bool scan_should_retime(
@@ -408,7 +428,13 @@ static bool scan_should_retime(
 		(uint64_t)scan->current_correlation_ppm *
 		V90_HOST_ECHO_SCAN_IMPROVEMENT;
 
-	return !echo->filter_ready &&
+	/* A weak model may cover only later returns. Allow an earlier peak
+	 * outside its window to widen coverage without discarding that model. */
+	bool extend_weak_window = echo->filter_ready && echo->weak_margin &&
+		scan->best_window_delay_samples + V90_HOST_ECHO_FILTER_PRE_SAMPLES +
+			echo->reference.scan_step < scan->current_window_delay_samples;
+
+	return (!echo->filter_ready || extend_weak_window) &&
 	       echo->train_peak >= V90_HOST_ECHO_READY_MIN_PEAK &&
 	       delta > echo->reference.scan_step &&
 	       scan->best_window_delay_samples != 0 &&
@@ -416,7 +442,7 @@ static bool scan_should_retime(
 		       scan->current_window_delay_samples &&
 	       scan->best_correlation_ppm >=
 		       V90_HOST_ECHO_SCAN_CORRELATION_PPM &&
-	       scan->best_correlation_ppm >= improvement;
+	       (extend_weak_window || scan->best_correlation_ppm >= improvement);
 }
 
 static void commit_training_step(
@@ -486,6 +512,11 @@ enum v90_host_echo_result v90_host_echo_advance(
 			if (reference_result ==
 				    PCM_ECHO_REFERENCE_SCAN_READY &&
 			    scan_should_retime(echo, &scan)) {
+				if (echo->filter_ready) {
+					memcpy(echo->retained_coefficients, echo->coefficients,
+					       sizeof(echo->coefficients));
+					echo->retained_delay_samples = echo->window_delay_samples;
+				}
 				echo->window_delay_samples =
 					scan.best_window_delay_samples;
 				echo->delay_acquired = true;

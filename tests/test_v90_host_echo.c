@@ -482,6 +482,81 @@ static bool test_distributed_echo(bool acquire, bool late_peak)
 	return true;
 }
 
+static bool test_retained_cancellation(size_t training, bool unrelated)
+{
+	struct v90_host_echo echo;
+	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
+	uint64_t source_energy = 0, residual_energy = 0;
+	bool ready = false, retained = false;
+	float saved[V90_HOST_ECHO_FILTER_TAPS];
+
+	/* The seeded window covers enough later returns to qualify weakly,
+	 * but leaves the first returns outside. A new window needs more time
+	 * to qualify; short training must keep the original cancellation. */
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_seed_phase2_delay(&echo, 3067) == V90_HOST_ECHO_OK,
+	      "retained echo owner did not initialize");
+	for (size_t i = 0; i < history + training; ++i) {
+		int16_t clean, received = i >= history ? distributed_echo_sample(i, 8, false) : 0;
+
+		if (retained && unrelated)
+			received = generated_sample(i, UINT32_C(0xf4a8b223), 30000);
+		CHECK(echo_step(&echo, i >= history ? V90_HOST_ECHO_TRAIN : V90_HOST_ECHO_BYPASS,
+			      i, received, &clean), "retained training failed at %zu", i);
+		CHECK(clean == received && (!ready || v90_host_echo_is_ready(&echo)),
+		      "training changed input or lost qualified cancellation at %zu", i);
+		ready |= v90_host_echo_is_ready(&echo);
+		if (echo.retained_delay_samples) {
+			if (!retained)
+				memcpy(saved, echo.retained_coefficients, sizeof(saved));
+			CHECK(!memcmp(saved, echo.retained_coefficients, sizeof(saved)),
+			      "retained coefficients were refitted");
+			CHECK(!echo.filter_ready && v90_host_echo_has_weak_margin(&echo),
+			      "unqualified replacement lost retained quality");
+			retained = true;
+		}
+	}
+	CHECK(retained && v90_host_echo_is_ready(&echo),
+	      "fixture did not retain its partial model");
+	bool replaced = training >= 6500 && !unrelated;
+
+	CHECK((echo.retained_delay_samples == 0) == replaced && echo.filter_ready == replaced,
+	      "replacement did not wait for stronger qualification");
+	for (size_t i = history + training; i < history + training + VERIFY_SAMPLES; ++i) {
+		int16_t returned = distributed_echo_sample(i, 8, false);
+		int16_t peer = remote_sample(i), clean;
+
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, i,
+			      add_s16((int32_t)returned + peer), &clean),
+		      "retained filtering failed at %zu", i);
+		source_energy = energy_add(source_energy, returned);
+		residual_energy = energy_add(residual_energy, (int32_t)clean - peer);
+	}
+	CHECK(residual_energy * (replaced ? 20u : 2u) < source_energy,
+	      "retained cancellation failed: training=%zu unrelated=%u residual=%" PRIu64
+	      " source=%" PRIu64, training, unrelated, residual_energy, source_energy);
+	if (echo.retained_delay_samples) {
+		struct v90_host_echo invalid = echo;
+
+		invalid.retained_delay_samples = PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES + 1u;
+		CHECK(!v90_host_echo_is_valid(&invalid), "out-of-history retained model accepted");
+		invalid = echo;
+		invalid.retained_coefficients[0] = NAN;
+		CHECK(!v90_host_echo_is_valid(&invalid), "nonfinite retained model accepted");
+		invalid = echo;
+		invalid.filter_ready = true;
+		CHECK(!v90_host_echo_is_valid(&invalid), "two active models accepted");
+		invalid = echo;
+		invalid.retained_delay_samples = 0;
+		CHECK(!v90_host_echo_is_valid(&invalid), "unowned retained coefficients accepted");
+	}
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK, "retained owner reset failed");
+	echo.retained_coefficients[0] = 1.0f;
+	CHECK(v90_host_echo_seed_phase2_delay(&echo, 3067) == V90_HOST_ECHO_INVALID_STATE,
+	      "unowned retained coefficients accepted as pristine");
+	return true;
+}
+
 static bool test_prediction_energy_saturation(void)
 {
 	for (int sign = -1; sign <= 1; sign += 2) {
@@ -608,6 +683,9 @@ int main(void)
 	    !test_weak_joint_margin() ||
 	    !test_distributed_echo(false, false) || !test_distributed_echo(true, false) ||
 	    !test_distributed_echo(true, true) ||
+	    !test_retained_cancellation(4100, false) || !test_retained_cancellation(5000, false) ||
+	    !test_retained_cancellation(6500, false) || !test_retained_cancellation(8000, false) ||
+	    !test_retained_cancellation(12000, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
 	puts("V.90 host echo tests passed");
