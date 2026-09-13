@@ -1332,7 +1332,8 @@ static bool test_rejection_and_failure(void)
  * samples. The channel-compensating filter has a different causal delay:
  * receive its remaining prefix exactly once, not as B1u or payload. */
 static bool test_channel_plan(
-	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned)
+	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
+	bool changed_history)
 {
 	struct channel channel = {
 		.gain = 1.0, .law = law, .polarity = polarity,
@@ -1365,6 +1366,9 @@ static bool test_channel_plan(
 	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
 	      prepare_e2u(&channel, extended, &e2u_tx, &e2u_rx), "channel-plan fixture failed");
+	/* A receive-side coding-context mismatch must settle without poisoning
+	 * the gain fit. This tests acquisition, not a different normative seed. */
+	transmitter.encoder.state.scrambler.history = changed_history;
 	/* A sparse training-level estimate can bias the nominal inverse without
 	 * changing the peer's CPd waveform. Known B1u must refine that scalar. */
 	if (biased)
@@ -1458,8 +1462,15 @@ static bool test_channel_plan(
 			continue;
 		CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
 		      "sample-only input invented host gain");
-		if (receiver.line.received_frames <= V92_B1U_FRAMES)
+		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
+		    receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
+		if (!receiver.model.acquiring && !receiver.model.valid &&
+		    receiver.line.received_frames + V92_PCM_RX_DELAY_FRAMES <= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(receiver.line.calibration.gain == plan.gain &&
+			      receiver.line.calibration.correlation == 0.0 && receiver.line.calibration.energy == 0.0,
+			      "unsettled coding predictions changed the acquisition gain at frame %llu",
+			      (unsigned long long)receiver.line.received_frames);
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
 			trained = receiver.line;
 		else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES)
@@ -1476,10 +1487,12 @@ static bool test_channel_plan(
 	struct v92_upstream_data_line saved = receiver.line;
 
 	CHECK(delivered == DATA_FRAMES, "channel-plan data did not arrive");
-	CHECK(b1_error < V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
-	      "channel-plan B1u residual too large: %g", sqrt(b1_error / V92_B1U_SYMBOLS));
+	/* Qualify the same held-out window as the call owner. Acquisition
+	 * residual is still reported and independently checked above. */
+	CHECK(b1_error < V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+	      "channel-plan B1u residual too large: %g", sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS));
 	CHECK(rejected_error > V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
-	      "fixed gain or wrong polarity accepted bad training: %g", sqrt(rejected_error / V92_B1U_SYMBOLS));
+	      "fixed gain or wrong polarity hid bad training: %g", sqrt(rejected_error / V92_B1U_SYMBOLS));
 	if (biased)
 		CHECK(receiver.line.calibration.gain < plan.gain &&
 		      receiver.line.calibration.gain >= receiver.line.calibration.minimum,
@@ -2413,9 +2426,9 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned int extended = 0u; extended < 2u; ++extended)
-				for (unsigned int fixture = 0u; fixture < 3u; ++fixture)
+				for (unsigned int fixture = 0u; fixture < 4u; ++fixture)
 					if (!test_channel_plan((enum g711_law)law, polarity, extended,
-							fixture == 1u, fixture == 2u))
+							fixture == 1u, fixture == 2u, fixture == 3u))
 						return 1;
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u, 0u) ||

@@ -295,12 +295,15 @@ static enum v92_upstream_data_rx_result receive_frame(
 			V92_UPSTREAM_DATA_RX_NO_PATH :
 			V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 	v92_upstream_model_observe(&model, &decision.frame, line);
-	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES) {
+	if (raw && line->received_frames < V92_B1U_ACQUISITION_FRAMES &&
+	    (model.acquiring || line->received_frames >=
+		V92_B1U_ACQUISITION_FRAMES - V92_PCM_RX_DELAY_FRAMES)) {
 		/* TRN2u's sparse, quantized levels leave a small scalar uncertainty
-		 * in the inverse. Fit only known B1u coordinates, and never outside
-		 * the original training cell: quiet/noisy input must not be scaled
-		 * into apparently valid training. Freeze it before the decoder tests
-		 * the remaining B1u with ordinary, unconstrained decisions. */
+		 * in the inverse. Outside explicit codec-model acquisition, wait
+		 * until forced coding history is released: early wrong predictions
+		 * must not bias the fit used by every later decision. Retain the
+		 * original training-cell bounds and freeze before held-out B1u;
+		 * quiet/noisy input must not be scaled into valid training. */
 		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 			double sample = line->raw[symbol];
 
