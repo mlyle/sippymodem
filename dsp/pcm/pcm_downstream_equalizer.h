@@ -7,7 +7,7 @@
 #include "qam_equalizer.h"
 
 /* The sampled downstream channel outlives its control/data coding epochs.
- * Zero initialization bypasses it until qualified Ri provides a level. */
+ * Zero initialization bypasses it until qualified binary training begins. */
 struct pcm_downstream_equalizer {
 	struct qam_equalizer filter;
 	enum g711_law law;
@@ -18,7 +18,7 @@ bool pcm_downstream_equalizer_init(struct pcm_downstream_equalizer *equalizer,
 	enum g711_law law, int16_t training_level);
 bool pcm_downstream_equalizer_is_valid(const struct pcm_downstream_equalizer *equalizer);
 
-/* Adapt only on already-qualified Ri/Ri-bar samples. Preserve the received
+/* Adapt only on already-qualified binary training samples. Preserve the received
  * polarity; protocol framing owns its interpretation. Rejected calls do not
  * change the instance. */
 bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,

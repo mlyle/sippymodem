@@ -24,8 +24,8 @@ bool pcm_downstream_equalizer_init(struct pcm_downstream_equalizer *equalizer,
 	if (equalizer == NULL || !g711_law_is_valid(law) || training_level <= 0 ||
 	    qam_equalizer_init_geometry(&next.filter, &unity, &unity, 3, 0) != QAM_EQUALIZER_OK)
 		return false;
-	/* Ri's six-symbol binary period identifies three real taps. A causal
-	 * span avoids changing its established Ri-bar/first-TRN2d boundary. */
+	/* A causal span preserves symbol boundaries as the binary-trained
+	 * filter moves through control and data reception. */
 	*equalizer = next;
 	return true;
 }

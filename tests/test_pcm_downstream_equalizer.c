@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_downstream_equalizer.h>
+#include <v90_phase3_signs.h>
+#include <v90_phase4_ri_search.h>
 
 #include "test.h"
 
@@ -114,6 +116,75 @@ static bool test_filtered_channel(void)
 	return true;
 }
 
+static uint8_t strong_channel_receive(struct channel *channel, enum g711_law law, int16_t sample)
+{
+	double shaped = .85 * sample + .10 * channel->previous + .05 * channel->second;
+	channel->second = channel->previous;
+	channel->previous = sample;
+	return encode(law, (int16_t)lround(shaped));
+}
+
+static bool test_training_before_ri(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned offset = 0; offset < V90_PHASE4_RI_PERIOD; ++offset)
+	for (unsigned inverted = 0; inverted < 2; ++inverted) {
+		struct pcm_downstream_equalizer equalizer;
+		struct v90_phase3_signs training;
+		struct v90_phase4_ri_tx tx;
+		struct v90_phase4_ri_search raw, corrected;
+		struct channel channel = { 0 };
+		int16_t level;
+		unsigned complete = 0, transitions = 0, rejected_levels = 0;
+
+		CHECK(g711_ucode_sample(law, 88, true, &level) &&
+		      pcm_downstream_equalizer_init(&equalizer, law, level) &&
+		      v90_phase3_signs_init(&training, law, 88) == V90_PHASE3_SIGNS_OK,
+		      "early training init failed");
+		for (unsigned n = 0; n < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++n) {
+			struct v90_pcm_symbol symbol;
+			CHECK(v90_phase3_signs_next_trn1d(&training, &symbol) == V90_PHASE3_SIGNS_OK &&
+			      pcm_downstream_equalizer_train(&equalizer, strong_channel_receive(&channel,
+				law, inverted ? -symbol.sample : symbol.sample)), "TRN1d training failed");
+		}
+		struct pcm_downstream_equalizer trained = equalizer;
+		CHECK(v90_phase4_ri_tx_init(&tx, law, 88) == V90_PHASE4_RI_OK &&
+		      v90_phase4_ri_tx_request_finish(&tx) == V90_PHASE4_RI_OK &&
+		      v90_phase4_ri_search_init(&raw, law, 88) == V90_PHASE4_RI_SEARCH_OK &&
+		      v90_phase4_ri_search_init(&corrected, law, 88) == V90_PHASE4_RI_SEARCH_OK,
+		      "Ri search init failed");
+		for (unsigned n = 0; !v90_phase4_ri_tx_is_complete(&tx); ++n) {
+			uint8_t octet, decision;
+			CHECK(v90_phase4_ri_tx_next(&tx, &octet) == V90_PHASE4_RI_OK, "Ri source failed");
+			int16_t sample = decode(law, octet);
+			uint8_t received = strong_channel_receive(&channel, law, inverted ? -sample : sample);
+			CHECK(pcm_downstream_equalizer_receive(&equalizer, received, &decision),
+			      "Ri equalization failed");
+			rejected_levels += !v90_phase4_ri_level_matches(law, 88, decode(law, received));
+			if (n < offset)
+				continue;
+			CHECK(v90_phase4_ri_search_receive(&raw, received) == V90_PHASE4_RI_SEARCH_OK,
+			      "fixture no longer demonstrates unconditioned Ri rejection");
+			enum v90_phase4_ri_search_result result = v90_phase4_ri_search_receive(&corrected, decision);
+			CHECK(result <= V90_PHASE4_RI_SEARCH_DONE, "conditioned Ri failed");
+			if (result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED) {
+				CHECK(n == V90_PHASE4_RI_MIN_SYMBOLS, "Ri-bar boundary moved");
+				++transitions;
+			}
+			if (result == V90_PHASE4_RI_SEARCH_DONE) {
+				CHECK(n + 1 == V90_PHASE4_RI_MIN_SYMBOLS + V90_PHASE4_RI_BAR_SYMBOLS,
+				      "first TRN2d boundary moved");
+				++complete;
+			}
+		}
+		CHECK(complete == 1 && transitions == 1 && rejected_levels > 60 &&
+		      memcmp(equalizer.filter.coefficients, trained.filter.coefficients,
+			     sizeof(equalizer.filter.coefficients)) == 0,
+		      "law %u offset %u inversion %u did not retain trained Ri acquisition", law, offset, inverted);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct pcm_downstream_equalizer equalizer = { 0 }, before = equalizer;
@@ -145,5 +216,5 @@ static bool test_validation(void)
 
 int main(void)
 {
-	return test_identity() && test_filtered_channel() && test_validation() ? 0 : 1;
+	return test_identity() && test_filtered_channel() && test_training_before_ri() && test_validation() ? 0 : 1;
 }

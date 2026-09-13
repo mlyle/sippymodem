@@ -2096,6 +2096,9 @@ PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_equaliz
 PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_downstream_equalizer.o \
 	$(BUILD_DIR)/pcm_downstream_equalizer.o \
+	$(BUILD_DIR)/v90_phase3_signs.o $(BUILD_DIR)/v34_framing.o \
+	$(BUILD_DIR)/self_sync_scrambler.o $(BUILD_DIR)/v90_pcm_symbol.o \
+	$(BUILD_DIR)/v90_phase4_ri.o $(BUILD_DIR)/v90_phase4_ri_search.o \
 	$(BUILD_DIR)/qam_equalizer.o $(BUILD_DIR)/qam.o $(BUILD_DIR)/g711.o
 PCM_DOWNSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_rx
 PCM_DOWNSTREAM_RX_TEST_OBJECTS := \

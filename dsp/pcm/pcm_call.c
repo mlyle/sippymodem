@@ -1686,25 +1686,28 @@ static bool condition_downstream(struct pcm_call *call, uint8_t *octet)
 		return true;
 	struct pcm_downstream_equalizer *equalizer = &call->downstream_equalizer;
 	if (call->stage == PCM_CALL_PHASE3 &&
-	    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI) {
-		const struct v90_phase4_ri_search *ri = &call->state.phase3.v92_analog.receive.ri;
-		/* Acquisition sees the original waveform, never its own decisions.
-		 * Discard the fit if Ri returns to hunt. An accepted sign/magnitude
-		 * window supplies the binary target without using later payload. */
-		if (!v90_phase4_ri_search_is_acquired(ri) ||
-		    !v90_phase4_ri_level_matches(call->law, ri->training_ucode,
-			decode_octet(call->law, *octet))) {
-			if (equalizer->training_level)
-				*equalizer = (struct pcm_downstream_equalizer){ 0 };
-			return true;
-		}
+	    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_J &&
+	    call->state.phase3.v92_analog.receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D) {
+		const struct v92_phase3_j_receiver *j = &call->state.phase3.v92_analog.receive.j;
+		/* Sd-bar has qualified the binary training interval. Learn from its
+		 * received signs before Ri needs amplitude qualification; waiting for
+		 * Ri first deadlocks on channels that distort its sign transitions.
+		 * Keep the original TRN1d signs for descrambler synchronization. */
 		if (!equalizer->training_level) {
 			int16_t level;
-			if (!g711_ucode_sample(call->law, ri->training_ucode, true, &level) ||
+			if (!g711_ucode_sample(call->law, j->training_ucode, true, &level) ||
 			    !pcm_downstream_equalizer_init(equalizer, call->law, level))
 				return false;
 		}
-		return pcm_downstream_equalizer_train(equalizer, *octet);
+		struct v90_pcm_symbol symbol;
+		if (!v90_pcm_symbol_parse(&symbol, call->law, *octet))
+			return false;
+		if (symbol.ucode != 0)
+			return pcm_downstream_equalizer_train(equalizer, *octet);
+		/* G.711 silence (including A-law's nonzero quiet level) advances
+		 * history without inventing a binary training target. */
+		uint8_t ignored;
+		return pcm_downstream_equalizer_receive(equalizer, *octet, &ignored);
 	}
 	return pcm_downstream_equalizer_receive(equalizer, *octet, octet);
 }

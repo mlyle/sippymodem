@@ -6624,6 +6624,24 @@ struct v92_online_pair {
 	struct channel wire;
 };
 
+static bool v92_quiet_downstream_training(const struct pcm_call *boundary)
+{
+	struct pcm_call call = *boundary;
+	uint8_t quiet = silence_octet(call.law), transmitted;
+	struct pcm_call_observation observation;
+
+	for (unsigned n = 0; n < 16; ++n)
+		CHECK(pcm_call_octet(&call, quiet, decode_octet(call.law, quiet),
+			&transmitted, &observation) == PCM_CALL_OK, "quiet TRN1d stopped the call");
+	CHECK(memcmp(call.downstream_equalizer.filter.coefficients,
+		boundary->downstream_equalizer.filter.coefficients,
+		sizeof(call.downstream_equalizer.filter.coefficients)) == 0 &&
+	      call.state.phase3.v92_analog.receive.j.trn1d_symbols ==
+		boundary->state.phase3.v92_analog.receive.j.trn1d_symbols + 16u,
+	      "quiet TRN1d adapted the channel or failed to advance synchronization");
+	return true;
+}
+
 static bool capture_v92_duplex_data(
 	enum g711_law law, size_t delay, bool long_cpd,
 	const struct v92_upstream_offer *offer, const struct v92_jp *jp,
@@ -6639,6 +6657,7 @@ static bool capture_v92_duplex_data(
 	uint64_t downstream_idle = 0u, expected_downstream_idle = 0u;
 	size_t analog_boundary = SIZE_MAX, digital_boundary = SIZE_MAX;
 	bool deadline_checked[2] = { false, false };
+	bool early_downstream_training_checked = false;
 	unsigned retrains[2] = { 0u, 0u };
 	uint8_t previous_rate = 0u;
 	size_t sample_limit = CALL_SAMPLE_LIMIT *
@@ -6708,6 +6727,17 @@ static bool capture_v92_duplex_data(
 			uint8_t received = role == 0u ? ar : dr;
 			uint8_t *transmitted = role == 0u ? &at : &dt;
 			int16_t sample = decode_octet(law, received);
+
+			if (role == 0u && call->stage == PCM_CALL_PHASE3 &&
+			    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_J &&
+			    call->state.phase3.v92_analog.receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D &&
+			    call->state.phase3.v92_analog.receive.j.trn1d_symbols >= 512u) {
+				CHECK(call->downstream_equalizer.training_level > 0,
+				      "V.92 waited for Ri before training its downstream equalizer");
+				if (!early_downstream_training_checked)
+					CHECK(v92_quiet_downstream_training(call), "quiet training recovery failed");
+				early_downstream_training_checked = true;
+			}
 
 			if (role == 1u && offer != NULL && offer->receive_gain != 0.0) {
 				double scaled = round(sample * offer->receive_gain);
@@ -6831,6 +6861,7 @@ static bool capture_v92_duplex_data(
 	      "V.92 downstream idle prefix changed: received %llu, sent %llu",
 	      (unsigned long long)downstream_idle, (unsigned long long)expected_downstream_idle);
 	CHECK(upstream_received >= payload_frames && downstream_received >= payload_frames &&
+	      early_downstream_training_checked &&
 	      analog.downstream_equalizer.training_level > 0 &&
 	      digital.downstream_equalizer.training_level == 0 &&
 	      upstream.rejection_checked && downstream.rejection_checked &&
