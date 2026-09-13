@@ -6605,6 +6605,8 @@ struct v92_upstream_offer {
 	unsigned noise_peak, payload_frames;
 	/* Replace the TRN2u tail with silence in this many initial epochs. */
 	unsigned damaged_trn2u_epochs;
+	/* A second delayed sample distinguishes a two-postcursor channel. */
+	double second_postcursor;
 };
 
 struct v92_online_pair {
@@ -6633,11 +6635,14 @@ static bool capture_v92_duplex_data(
 		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
 	int16_t previous_upstream = 0;
+	int16_t second_upstream = 0;
+	bool channel_memory = offer != NULL &&
+		(offer->postcursor != 0.0 || offer->second_postcursor != 0.0);
 	uint32_t noise_state = UINT32_C(0x713812ad);
 	/* Use a longer payload for compensated 40k and balanced direct maps to
 	 * catch rare errors not exercised by the all-ones B1u sequence. */
 	unsigned payload_frames = offer != NULL && ((offer->expected >= 15u && offer->expected <= 17u) ||
-		(offer->postcursor != 0.0 && offer->expected == 13u)) ? 2000u : 200u;
+		(channel_memory && offer->expected == 13u)) ? 2000u : 200u;
 	if (offer != NULL && offer->payload_frames != 0u)
 		payload_frames = offer->payload_frames;
 
@@ -6650,7 +6655,7 @@ static bool capture_v92_duplex_data(
 		/* The impaired fixture adds memory and a second G.711 conversion
 		 * to the octet transport. Use a roughly 2k training level so this
 		 * deliberate tandem quantization stays inside the B1 quality bound. */
-		if (offer->postcursor != 0.0)
+		if (channel_memory)
 			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	}
 	if (jp != NULL)
@@ -6675,15 +6680,16 @@ static bool capture_v92_duplex_data(
 		struct pcm_call *calls[] = { &analog, &digital };
 
 		channel_receive(&wire, &ar, &dr);
-		if (offer != NULL && (offer->postcursor != 0.0 || offer->noise_peak != 0u)) {
+		if (offer != NULL && (channel_memory || offer->noise_peak != 0u)) {
 			int16_t current = decode_octet(law, dr);
 			noise_state = noise_state * UINT32_C(1664525) + UINT32_C(1013904223);
 			int noise = (int)((noise_state >> 16) % (2u * offer->noise_peak + 1u)) -
 				(int)offer->noise_peak;
-			double impaired = (1.0 - offer->postcursor) * current +
-				offer->postcursor * previous_upstream + noise;
+			double impaired = (1.0 - offer->postcursor - offer->second_postcursor) * current +
+				offer->postcursor * previous_upstream + offer->second_postcursor * second_upstream + noise;
 
 			dr = encode_octet(law, (int16_t)lround(fmax(INT16_MIN, fmin(INT16_MAX, impaired))));
+			second_upstream = previous_upstream;
 			previous_upstream = current;
 		}
 		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
@@ -6844,10 +6850,10 @@ static bool capture_v92_duplex_data(
 		      "V.92 expected upstream selection did not initialize");
 		const struct v92_upstream_data_rx *rx = &digital.state.data_path.v92_digital.upstream;
 
-		CHECK(rx->line.plan.observation == (offer->postcursor == 0.0 ?
+		CHECK(rx->line.plan.observation == (!channel_memory ?
 			V92_PCM_FRAME_FILTER_OUTPUT : V92_PCM_FRAME_CONSTELLATION),
 		      "V.92 selected the wrong receive coordinates for its measured channel");
-		if (offer->postcursor != 0.0) {
+		if (channel_memory) {
 			CHECK(rx->decoder.mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK].count == 90u &&
 			      rx->decoder.mapping.cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count == 85u,
 			      "V.92 distorted channel did not receive compensating CPd");
@@ -6930,6 +6936,31 @@ static bool test_v92_trn2u_recovery(void)
 				CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == epochs &&
 				      pair.digital.v92_upstream_retry_ceiling == 0u,
 				      "successful training reset its budget or downshifted an unmeasured rate");
+		}
+	return true;
+}
+
+static bool test_v92_two_postcursor_data(void)
+{
+	/* Exercise both trellis families through a unity-DC-gain channel with
+	 * two delayed samples and tandem quantization. This protects the whole
+	 * negotiated CPd/B1u/data path, not just the channel designer's fit. */
+	const uint8_t rates[] = { 13u, 19u };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t r = 0u; r < ARRAY_LENGTH(rates); ++r) {
+			const struct v92_upstream_offer offer = {
+				.peer_mask = UINT32_C(1) << (rates[r] - 1u),
+				.local_maximum = rates[r], .expected = rates[r],
+				.postcursor = .08, .second_postcursor = .02,
+				.receive_gain = .75, .payload_frames = 4000u,
+			};
+			struct v92_online_pair pair;
+			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
+			      "law %u rate %u failed two-postcursor PCM data", law, rates[r]);
+			const struct v92_cpd_parameters *cpd =
+				&pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd;
+			CHECK(cpd->filter[V92_CPD_PRECODER_FEEDBACK].coefficient[1] != 0,
+			      "two-postcursor call lost its second feedback tap");
 		}
 	return true;
 }
@@ -8892,37 +8923,37 @@ static bool test_v92_upstream_negotiation(void)
 {
 	static const struct v92_upstream_offer offers[] = {
 		/* Recorded peer mask: 24k through 28k, against 48k and 36k caps. */
-		{ UINT32_C(0xf), 19u, 4u, 0.0, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(0xf), 10u, 4u, 0.0, 0.0, 0u, 0u, 0u, 0u },
+		{ UINT32_C(0xf), 19u, 4u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(0xf), 10u, 4u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
 		/* Holes below and rates above our cap are not usable alternatives. */
-		{ UINT32_C(0x40009), 3u, 1u, 0.0, 0.0, 0u, 0u, 0u, 0u },
+		{ UINT32_C(0x40009), 3u, 1u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
 		/* Selecting 40k must also rebuild the mapping for the 32-state trellis. */
-		{ UINT32_C(1) << 12u, 19u, 13u, 0.0, 0.0, 0u, 0u, 0u, 0u },
+		{ UINT32_C(1) << 12u, 19u, 13u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
 		/* Dense maps must use the trained LU, not just normalize B1u power. */
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.0, 0u, 0u, 0u, 0u },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
 		/* Gain alone must retain the quantizer-aware direct selection and
 		 * learned receive FIR, including the dense maximum-rate mapping. */
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1), 1u, 1u, 0.0, 0.75, 0u, 0u, 0u, 0u },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1) << 18u, 19u, 19u, 0.0, 0.5, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1), 1u, 1u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
 		/* Balanced 44k must now carry data at the ordinary trained level,
 		 * without falling back to the peer's lower 41 1/3 kbit/s offer. */
-		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 16u, 0.0, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1) << 15u, 16u, 16u, 0.0, 0.75, 0u, 0u, 0u, 0u },
+		{ (UINT32_C(1) << 15u) | (UINT32_C(1) << 13u), 16u, 16u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1) << 15u, 16u, 16u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
 		/* The neighboring 42 2/3k and 45 1/3k direct offers must not be
 		 * skipped because the initial template concentrates trellis points. */
-		{ (UINT32_C(1) << 14u) | (UINT32_C(1) << 13u), 15u, 15u, 0.0, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1) << 14u, 15u, 15u, 0.0, 0.75, 0u, 0u, 0u, 0u },
-		{ (UINT32_C(1) << 16u) | (UINT32_C(1) << 15u), 17u, 17u, 0.0, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1) << 16u, 17u, 17u, 0.0, 0.75, 0u, 0u, 0u, 0u },
+		{ (UINT32_C(1) << 14u) | (UINT32_C(1) << 13u), 15u, 15u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1) << 14u, 15u, 15u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
+		{ (UINT32_C(1) << 16u) | (UINT32_C(1) << 15u), 17u, 17u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1) << 16u, 17u, 17u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
 		/* Exercise the 70-bit balanced mapping through real CPd exchange,
 		 * training and duplex data, including post-codec receive gain. */
-		{ (UINT32_C(1) << 17u) | (UINT32_C(1) << 15u), 18u, 18u, 0.0, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1) << 17u, 18u, 18u, 0.0, 0.75, 0u, 0u, 0u, 0u },
+		{ (UINT32_C(1) << 17u) | (UINT32_C(1) << 15u), 18u, 18u, 0.0, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1) << 17u, 18u, 18u, 0.0, 0.75, 0u, 0u, 0u, 0u, 0.0 },
 		/* A real channel-memory boundary must select and use the filters,
 		 * not pass only because both coders share an identity mapping. */
-		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u, 0u, 0u, 0u },
-		{ UINT32_C(1), 1u, 1u, 0.10, 0.75, 0u, 0u, 0u, 0u },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.0, 0u, 0u, 0u, 0u, 0.0 },
+		{ UINT32_C(1), 1u, 1u, 0.10, 0.75, 0u, 0u, 0u, 0u, 0.0 },
 	};
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
@@ -8934,7 +8965,7 @@ static bool test_v92_upstream_negotiation(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (uint8_t rate = 10u; rate <= 13u; rate += 3u) {
 			const struct v92_upstream_offer compensated = {
-				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75, 0u, 0u, 0u, 0u,
+				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75, 0u, 0u, 0u, 0u, 0.0,
 			};
 
 			CHECK(run_v92_duplex_data(law, 3u, false, &compensated),
@@ -8951,7 +8982,7 @@ static bool test_v92_b1_rate_recovery(void)
 	 * Re-enter the complete on-wire negotiation, skip holes in Ja, rebuild
 	 * CPd for the 40k trellis and verify 2000 exact frames in each direction. */
 	const struct v92_upstream_offer clean = {
-		(UINT32_C(1) << 18u) | (UINT32_C(1) << 12u), 19u, 19u, 0.10, 0.75, 0u, 0u, 0u, 0u,
+		(UINT32_C(1) << 18u) | (UINT32_C(1) << 12u), 19u, 19u, 0.10, 0.75, 0u, 0u, 0u, 0u, 0.0,
 	};
 	CHECK(run_v92_duplex_data(G711_LAW_PCMU, 3u, false, &clean),
 	      "V.92 lowered the rate on a usable two-codec channel");
@@ -8960,14 +8991,14 @@ static bool test_v92_b1_rate_recovery(void)
 			const struct v92_upstream_offer offer = {
 				(UINT32_C(1) << 18u) | (UINT32_C(1) << 12u) |
 					(retries == 2u ? UINT32_C(1) << 17u : 0u),
-				19u, 13u, 0.10, 0.75, retries, 0u, 0u, 0u,
+				19u, 13u, 0.10, 0.75, retries, 0u, 0u, 0u, 0.0,
 			};
 
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, retries, NULL),
 			      "V.92 B1 recovery law %u retries %u failed", law, retries);
 		}
 		const struct v92_upstream_offer exhausted = {
-			UINT32_C(1) << 18u, 19u, 0u, 0.10, 0.75, 1u, 0u, 0u, 0u,
+			UINT32_C(1) << 18u, 19u, 0u, 0.10, 0.75, 1u, 0u, 0u, 0u, 0.0,
 		};
 
 		CHECK(capture_v92_duplex_data(law, 3u, false, &exhausted, NULL, 1u, NULL),
@@ -10429,6 +10460,7 @@ int main(void)
 		  test_v92_phase4_control },
 		{ "V.92 continuous duplex PCM data", test_v92_duplex_data },
 		{ "V.92 damaged TRN2u recovers within budget", test_v92_trn2u_recovery },
+		{ "V.92 two-postcursor PCM data", test_v92_two_postcursor_data },
 		{ "V.92 codec-noise likelihood and recovery", test_v92_codec_noise_recovery },
 		{ "V.92 direct B1 bit validation", test_v92_direct_b1_validation },
 		{ "V.92 post-acquisition B1 quality", test_v92_b1_quality_window },
