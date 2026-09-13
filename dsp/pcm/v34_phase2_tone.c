@@ -8,6 +8,7 @@
 #include <limits.h>
 #include <math.h>
 #include <stddef.h>
+#include <string.h>
 
 static const double V34_PHASE2_TONE_ANSWERING_CARRIER_GAIN =
 	0.8912509381337456; /* -1 dB. */
@@ -141,18 +142,19 @@ static double minimum_carrier_share(
 static struct single_tone_detector_profile detector_profile(
 	enum v34_station_role local_role)
 {
-	return (struct single_tone_detector_profile){
-		.minimum_line_power = V34_PHASE2_TONE_MIN_LINE_POWER,
-		.minimum_carrier_share = minimum_carrier_share(local_role),
-		.maximum_carrier_share = V34_PHASE2_TONE_MAX_CARRIER_SHARE,
-		.sample_rate_hz = V34_PHASE2_SAMPLE_RATE,
-		.frequency_hz = (uint16_t)v34_phase2_carrier_hz(
-			v34_station_peer_role(local_role)),
-		.window_samples = V34_PHASE2_TONE_WINDOW_SAMPLES,
-		.acquire_samples = V34_PHASE2_TONE_ACQUIRE_SAMPLES,
-		.loss_samples = V34_PHASE2_TONE_LOSS_SAMPLES,
-		.retain_reference_on_loss = true,
-	};
+	struct single_tone_detector_profile profile;
+
+	memset(&profile, 0, sizeof(profile));
+	profile.minimum_line_power = V34_PHASE2_TONE_MIN_LINE_POWER;
+	profile.minimum_carrier_share = minimum_carrier_share(local_role);
+	profile.maximum_carrier_share = V34_PHASE2_TONE_MAX_CARRIER_SHARE;
+	profile.sample_rate_hz = V34_PHASE2_SAMPLE_RATE;
+	profile.frequency_hz = (uint16_t)v34_phase2_carrier_hz(v34_station_peer_role(local_role));
+	profile.window_samples = V34_PHASE2_TONE_WINDOW_SAMPLES;
+	profile.acquire_samples = V34_PHASE2_TONE_ACQUIRE_SAMPLES;
+	profile.loss_samples = V34_PHASE2_TONE_LOSS_SAMPLES;
+	profile.retain_reference_on_loss = true;
+	return profile;
 }
 
 static bool profile_matches_role(

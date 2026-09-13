@@ -223,8 +223,9 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
  * exact spare modulus words are signaling, not invalid payload codewords.
  * Qualified RM also clamps its pending in-range words without discarding
  * preceding data. Non-payload tags follow each competing delayed history.
- * B1u constrains source bits to ones; its residual is training evidence, not
- * an automatic pass. Ordinary data has no payload-dependent constraints.
+ * B1u initially constrains source bits to ones. In constellation coordinates,
+ * ordinary decisions resume one traceback before the validation half. Its
+ * residual is training evidence, not an automatic pass. Data is unconstrained.
  * Ambiguity and residuals are quality evidence for the call owner, not a
  * guarantee of correct payload. CPd points can coincide after quantization.
  * State, bits and decision commit together; rejected calls change none.
@@ -234,6 +235,15 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS], bool b1u,
 	uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame_decision *decision);
+
+/* A channel-model owner needs known coordinates throughout its acquisition
+ * window. This explicit path retains known-one constraints for the first
+ * 24 raw-coordinate B1u frames only; later calls reject transactionally.
+ * It must not be used as independent validation of that model. */
+enum v92_pcm_frame_result v92_pcm_frame_acquire_model(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision);
 
 struct v92_observation;
 struct v92_pcm_frame_channel {

@@ -2220,7 +2220,8 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
 	      V92_UPSTREAM_DATA_RX_OK && !receiver.model.acquiring && !receiver.model.valid,
 	      "unsupported prefilter enabled the codec model");
-	for (unsigned i = 0; receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
+	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+	     receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
 		uint8_t code = codes[i];
 		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet(&receiver, code,
 			(int16_t)lround(.75 * g711_decode_pcmu(code)), true, &output);

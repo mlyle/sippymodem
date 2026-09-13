@@ -134,12 +134,10 @@ enum v92_pcm_mapping_result v92_pcm_mapping_init(
 	    !cpd->modulus_present || !cpd->filters_present ||
 	    !cpd->constellations_present)
 		return V92_PCM_MAPPING_INVALID_PARAMETERS;
-	initialized = (struct v92_pcm_mapping){
-		.cpd = *cpd,
-		.law = law,
-		.data_bits_per_frame =
-			v92_pcm_mapping_data_bits(cpd->data_rate_number),
-	};
+	memset(&initialized, 0, sizeof(initialized));
+	initialized.cpd = *cpd;
+	initialized.law = law;
+	initialized.data_bits_per_frame = v92_pcm_mapping_data_bits(cpd->data_rate_number);
 	if (!v92_pcm_mapping_is_valid(&initialized))
 		return V92_PCM_MAPPING_INVALID_PARAMETERS;
 	*mapping = initialized;

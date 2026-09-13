@@ -228,8 +228,9 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		 * or changing primary histories, predictions, or data decisions. */
 		if (validate && line->received_frames == V92_B1U_ACQUISITION_FRAMES)
 			model->alternate = *decoder;
-		enum v92_pcm_frame_result result = v92_pcm_frame_decode(decoder,
-			line->samples, b1u, bits, count, decision);
+		enum v92_pcm_frame_result result = model->acquiring ?
+			v92_pcm_frame_acquire_model(decoder, line->samples, bits, count, decision) :
+			v92_pcm_frame_decode(decoder, line->samples, b1u, bits, count, decision);
 
 		if (result != V92_PCM_FRAME_OK)
 			return result;

@@ -140,6 +140,105 @@ static bool test_b1u_oracle(void)
 	return true;
 }
 
+static bool test_b1u_coding_acquisition(void)
+{
+	const uint8_t rates[] = { 1u, 7u, 13u, 19u };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (size_t rate = 0u; rate < ARRAY_LENGTH(rates); ++rate) {
+			for (unsigned changed_history = 0u; changed_history <= (rates[rate] == 1u); ++changed_history) {
+				struct v92_pcm_frame_tx tx;
+				struct v92_pcm_frame_rx rx;
+				uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+				struct v92_pcm_frame frame;
+
+				CHECK(initialize(&tx, rates[rate], (enum g711_law)law), "coding acquisition TX init");
+				CHECK(v92_pcm_frame_rx_init_constellation(&rx, &tx.mapping) == V92_PCM_FRAME_OK,
+				      "coding acquisition RX init");
+				size_t count = tx.mapping.data_bits_per_frame;
+
+				/* Exercise a mismatched scrambler context at the 24k receive
+				 * boundary, without claiming a different seed is normative.
+				 * The transmitter's zero-state reset has separate oracle tests.
+				 * Higher-rate clean calls must retain their validation/payload. */
+				memset(bits, 1, count);
+				tx.state.scrambler.history = changed_history;
+				unsigned validated = 0u, payload = 0u;
+				for (unsigned f = 0u; f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 4u; ++f) {
+					uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+					struct v92_pcm_frame_decision decision;
+
+					if (f >= V92_B1U_FRAMES)
+						generated_bits(bits, count, f);
+					CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK &&
+					      v92_pcm_frame_decode(&rx, frame.u, f < V92_B1U_FRAMES,
+						      decoded, count, &decision) == V92_PCM_FRAME_OK,
+					      "coding acquisition frame %u law %u rate %u", f, law, rates[rate]);
+					if (f < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
+						continue;
+					unsigned delivered = f - V92_PCM_RX_DELAY_FRAMES;
+
+					CHECK(decision.bits_ready && !decision.ambiguous,
+					      "unsettled coding: law %u rate %u history %u frame %u",
+					      law, rates[rate], changed_history, delivered);
+					if (delivered < V92_B1U_FRAMES) {
+						for (size_t i = 0u; i < count; ++i)
+							CHECK(decoded[i] == 1u,
+							      "B1u coding history: law %u rate %u history %u frame %u bit %zu",
+							      law, rates[rate], changed_history, delivered, i);
+						validated++;
+					} else {
+						uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+
+						generated_bits(expected, count, delivered);
+						CHECK(memcmp(decoded, expected, count) == 0, "post-B1u coding changed payload");
+						payload++;
+					}
+				}
+				CHECK(validated == V92_B1U_FRAMES - V92_B1U_ACQUISITION_FRAMES && payload == 4u,
+				      "coding acquisition shortened validation or payload");
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_model_acquisition_boundary(void)
+{
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	struct v92_pcm_frame frame;
+	struct v92_pcm_frame_decision decision;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+
+	CHECK(initialize(&tx, 1u, G711_LAW_PCMU) &&
+	      v92_pcm_frame_rx_init_constellation(&rx, &tx.mapping) == V92_PCM_FRAME_OK,
+	      "model acquisition init");
+	size_t count = tx.mapping.data_bits_per_frame;
+
+	memset(bits, 1, sizeof(bits));
+	memset(decoded, 0x5a, sizeof(decoded));
+	for (unsigned f = 0u; f < V92_B1U_ACQUISITION_FRAMES; ++f)
+		CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_acquire_model(&rx, frame.u, decoded, count, &decision) == V92_PCM_FRAME_OK,
+		      "model acquisition frame %u", f);
+	struct v92_pcm_frame_rx saved = rx;
+	struct v92_pcm_frame_decision saved_decision = decision;
+	uint8_t saved_bits[sizeof(decoded)];
+
+	memcpy(saved_bits, decoded, sizeof(decoded));
+	CHECK(v92_pcm_frame_acquire_model(&rx, frame.u, decoded, count, &decision) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&rx, &saved, sizeof(rx)) == 0 &&
+	      memcmp(&decision, &saved_decision, sizeof(decision)) == 0 &&
+	      memcmp(decoded, saved_bits, sizeof(decoded)) == 0,
+	      "model acquisition consumed a validation frame or changed rejected output");
+	CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_decode(&rx, frame.u, true, decoded, count, &decision) == V92_PCM_FRAME_OK &&
+	      rx.noise.frames == V92_B1U_ACQUISITION_FRAMES + 1u,
+	      "model acquisition did not hand off to ordinary validation");
+	return true;
+}
+
 static bool test_rate_matrix_and_reset(void)
 {
 	for (unsigned int law = G711_LAW_PCMU;
@@ -776,7 +875,8 @@ static bool test_rejection_and_names(void)
 
 int main(void)
 {
-	if (!test_b1u_oracle() || !test_rate_matrix_and_reset() ||
+	if (!test_b1u_oracle() || !test_b1u_coding_acquisition() ||
+	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_level_refinement() ||
 	    !test_pending_bit_validation() || !test_rejection_and_names())

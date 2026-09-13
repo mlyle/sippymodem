@@ -965,7 +965,7 @@ static enum v92_pcm_frame_result decode_frame(
 	uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame_decision *decision,
 	const struct v92_pcm_frame_channel *channel,
-	struct v92_pcm_frame_likelihood *likelihood)
+	struct v92_pcm_frame_likelihood *likelihood, bool acquire_model)
 {
 	const struct v92_observation *model = channel ? channel->model : NULL;
 	const int16_t *levels = channel ? channel->levels : NULL;
@@ -996,6 +996,9 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (acquire_model && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
+	    !b1u || receiver->noise.frames >= V92_B1U_ACQUISITION_FRAMES))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (offsets) {
 		if (!model || !levels)
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
@@ -1014,11 +1017,13 @@ static enum v92_pcm_frame_result decode_frame(
 	struct v92_observation_cache cache;
 	if (model)
 		v92_observation_begin(&cache, model, receiver->noise.relative_variance);
-	/* Acquire with known bits, then test the settled raw-coordinate path
-	 * using ordinary decisions. Constraining all 48 frames to ones would
-	 * conceal a channel that cannot recover data at the selected rate. */
-	bool known = b1u && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
-		receiver->noise.frames < V92_B1U_ACQUISITION_FRAMES);
+	/* Known bits acquire the raw-coordinate path, but also force its coding
+	 * history. Release them a full traceback before validation, so an
+	 * acquisition error cannot poison the first independently checked frame.
+	 * The same final 24 B1u frames must still decode as unconstrained ones. */
+	bool known = b1u && (acquire_model ||
+		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
+		receiver->noise.frames + V92_PCM_RX_DELAY_FRAMES < V92_B1U_ACQUISITION_FRAMES);
 
 	for (size_t index = 0u; index < path_count; ++index) {
 		paths[index] = (struct frame_path){
@@ -1415,7 +1420,16 @@ enum v92_pcm_frame_result v92_pcm_frame_decode(
 	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision)
 {
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
-		NULL, NULL);
+		NULL, NULL, false);
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_acquire_model(
+	struct v92_pcm_frame_rx *receiver,
+	const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision)
+{
+	return decode_frame(receiver, samples, true, bits, bit_count, decision,
+		NULL, NULL, true);
 }
 
 const char *v92_pcm_frame_result_name(
@@ -1447,5 +1461,5 @@ enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
 	if (!channel || !channel->model || !likelihood)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
-		channel, likelihood);
+		channel, likelihood, false);
 }

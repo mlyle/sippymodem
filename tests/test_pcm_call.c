@@ -6272,7 +6272,7 @@ static bool v92_bad_b1_stays_clamped(const struct pcm_call *boundary)
 	return true;
 }
 
-static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
+static bool v92_b1_bit_validation(const struct pcm_call *boundary, unsigned fault_frame)
 {
 	struct pcm_call damaged = *boundary;
 	struct pcm_call_v92_digital_data *path = &damaged.state.data_path.v92_digital;
@@ -6280,9 +6280,14 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 	struct pcm_call_data_event event;
 	uint8_t transmitted;
 	uint8_t silence = silence_octet(boundary->law);
+	bool acquisition = fault_frame < V92_B1U_ACQUISITION_FRAMES;
 
 	if (path->upstream.line.plan.observation != V92_PCM_FRAME_CONSTELLATION)
 		return true;
+	/* The synthetic samples below are raw coordinates, not a second pass
+	 * through the physical channel and codec. Do not fit a wire model to
+	 * them; that independent acquisition is covered by the duplex fixture. */
+	path->upstream.model = (struct v92_upstream_model){ 0 };
 	CHECK(v92_pcm_frame_tx_init(&tx, &path->upstream.decoder.mapping) == V92_PCM_FRAME_OK,
 	      "wrong-B1u transmitter failed");
 	while (path->upstream.line.delay_remaining != 0u)
@@ -6293,7 +6298,7 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 
 		memset(bits, 1, tx.mapping.data_bits_per_frame);
-		if (frame == V92_B1U_FRAMES - 1u)
+		if (frame == fault_frame)
 			bits[0] = 0u;
 		CHECK(v92_pcm_frame_encode(&tx, bits, tx.mapping.data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
 		      "wrong-B1u encoding failed");
@@ -6310,6 +6315,15 @@ static bool v92_wrong_b1_stays_clamped(const struct pcm_call *boundary)
 				encode_octet(boundary->law, (int16_t)sample), (int16_t)sample, true,
 				NULL, &transmitted, &event);
 
+			if (acquisition && frame == V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES - 1u &&
+			    symbol == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u) {
+				CHECK(result == PCM_CALL_OK && !path->b1u_decode_failed &&
+				      !damaged.b1_deadline_armed && pcm_call_is_valid(&damaged),
+				      "corrected acquisition bit rejected the held-out B1u: result=%s bits=%u armed=%u error=%g",
+				      pcm_call_result_name(result), path->b1u_decode_failed, damaged.b1_deadline_armed,
+				      path->b1u_squared_error);
+				return true;
+			}
 			CHECK(event.kind == PCM_CALL_DATA_NONE && !pcm_call_is_online(&damaged),
 			      "wrong B1u or its undecided tail opened the host at frame %u", frame);
 			if (result == PCM_CALL_UNUSABLE_SELECTION || damaged.stage == PCM_CALL_RETRAIN_SILENCE) {
@@ -6898,7 +6912,10 @@ static bool capture_v92_duplex_data(
 						path->downstream.data.accepted_frames : 0u;
 					expected_downstream_idle = accepted > V90_PHASE4_B1D_FRAMES ?
 						accepted - V90_PHASE4_B1D_FRAMES : 0u;
-					CHECK(v92_bad_b1_stays_clamped(call) && v92_wrong_b1_stays_clamped(call),
+					CHECK(v92_bad_b1_stays_clamped(call) &&
+					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES - 2u) &&
+					      v92_b1_bit_validation(call, V92_B1U_ACQUISITION_FRAMES) &&
+					      v92_b1_bit_validation(call, V92_B1U_FRAMES - 1u),
 					      "V.92 B1 quality gate failed");
 				}
 			}
@@ -7324,8 +7341,12 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				      (closing ? checked.stage == PCM_CALL_CLOSED && !checked.failed :
 				       available ? checked.stage == PCM_CALL_RETRAIN_SILENCE && !checked.failed : checked.failed) &&
 				      memcmp(&checked.v92_digital_phase4_configuration, &configuration, sizeof(configuration)) == 0,
-				      "no-path recovery lost budget, selection, or payload clamp: law=%u training=%u fixed=%u fast=%u budget=%u result=%s",
-				      before->law, training, fixed, fast, budget, pcm_call_result_name(result));
+				      "no-path recovery lost budget, selection, or payload clamp: law=%u training=%u fixed=%u fast=%u budget=%u result=%s stage=%u valid=%u ceiling=%u retrains=%u compare=%d/%d event=%u failed=%u frames=%zu",
+				      before->law, training, fixed, fast, budget, pcm_call_result_name(result), checked.stage,
+				      pcm_call_is_valid(&checked), checked.v92_upstream_retry_ceiling,
+				      checked.pcm_upstream_quality.automatic_retrains, memcmp(&checked, &owned, sizeof(checked)),
+				      memcmp(&event, &owned_event, sizeof(event)), event.kind, checked.failed,
+				      (size_t)before->state.data_path.v92_digital.upstream.line.received_frames);
 			}
 	return true;
 }
