@@ -968,6 +968,7 @@ static enum v92_pcm_frame_result decode_frame(
 	struct v92_pcm_frame_likelihood *likelihood, bool acquire_model)
 {
 	const struct v92_observation *model = channel ? channel->model : NULL;
+	const struct v92_pcm_frame_cell *cells = channel ? channel->cells : NULL;
 	const int16_t *levels = channel ? channel->levels : NULL;
 	const double *offsets = channel ? channel->offsets : NULL;
 	const bool *received = channel ? channel->received : NULL;
@@ -988,6 +989,7 @@ static enum v92_pcm_frame_result decode_frame(
 		{ levels, levels ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*levels) : 0u },
 		{ offsets, offsets ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*offsets) : 0u },
 		{ received, received ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*received) : 0u },
+		{ cells, cells ? V92_PCM_MAPPING_FRAME_SYMBOLS * sizeof(*cells) : 0u },
 	};
 
 	if (receiver == NULL || samples == NULL || bits == NULL ||
@@ -996,6 +998,14 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_rx_is_valid(receiver))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	if (cells) {
+		if (model || levels || offsets || receiver->observation != V92_PCM_FRAME_CONSTELLATION)
+			return V92_PCM_FRAME_INVALID_PARAMETERS;
+		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			if (!isfinite(cells[i].lower) || !isfinite(cells[i].upper) ||
+			    cells[i].lower > cells[i].upper)
+				return V92_PCM_FRAME_INVALID_PARAMETERS;
+	}
 	if (acquire_model && (receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
 	    !b1u || receiver->noise.frames >= V92_B1U_ACQUISITION_FRAMES))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
@@ -1164,6 +1174,14 @@ static enum v92_pcm_frame_result decode_frame(
 				if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
 					candidate.metric = add_u64_saturating(paths[path].state.metric,
 						input_cell_metric(receiver, v, &cell));
+				if (cells) {
+					double distance = fmax(cells[symbol].lower - u,
+						fmax(u - cells[symbol].upper, 0.0));
+					double cost = present ? distance * distance * weight : 0.0;
+
+					candidate.metric = add_u64_saturating(paths[path].state.metric,
+						cost >= UINT64_MAX ? UINT64_MAX : (uint64_t)cost);
+				}
 				if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)
@@ -1377,6 +1395,8 @@ static enum v92_pcm_frame_result decode_frame(
 		result.predicted_samples[symbol] = predicted_observation(receiver,
 			result.frame.u[symbol], result.frame.v[symbol], samples[symbol], b1u);
 	double estimated[V92_PCM_MAPPING_FRAME_SYMBOLS];
+	for (size_t symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol)
+		estimated[symbol] = result.predicted_samples[symbol];
 	if (model) {
 		const int32_t *previous = x_history(&receiver->mapping,
 			&receiver->paths[paths[best].origin].filter);
@@ -1458,7 +1478,7 @@ enum v92_pcm_frame_result v92_pcm_frame_decode_observed(
 	const struct v92_pcm_frame_channel *channel,
 	struct v92_pcm_frame_likelihood *likelihood)
 {
-	if (!channel || !channel->model || !likelihood)
+	if (!channel || (!channel->model && !channel->cells) || !likelihood)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	return decode_frame(receiver, samples, b1u, bits, bit_count, decision,
 		channel, likelihood, false);

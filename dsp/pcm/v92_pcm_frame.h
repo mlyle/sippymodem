@@ -246,9 +246,17 @@ enum v92_pcm_frame_result v92_pcm_frame_acquire_model(
 	uint8_t *bits, size_t bit_count, struct v92_pcm_frame_decision *decision);
 
 struct v92_observation;
+struct v92_pcm_frame_cell {
+	double lower, upper;
+};
 struct v92_pcm_frame_channel {
 	/* Borrowed, frozen for this coding epoch. Acquisition is caller-owned. */
 	const struct v92_observation *model;
+	/* Alternative to a fitted model: actual final-codec input intervals
+	 * translated into calibrated constellation coordinates by the owner.
+	 * No levels/offsets accompany these twelve finite, ordered intervals.
+	 * Their provenance must be independent of decoded candidate points. */
+	const struct v92_pcm_frame_cell *cells;
 	/* Optional aligned decoded wire levels before host gain. Each present
 	 * level must be a G.711 reconstruction value. NULL infers bins from
 	 * samples and the model's host gain. Arrays contain twelve symbols. */
@@ -269,8 +277,10 @@ struct v92_pcm_frame_likelihood {
 	double predicted_samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 };
 
-/* Decode calibrated samples using the frozen codec/channel likelihood.
- * Requires a constellation-coordinate receiver with two x-history entries.
+/* Decode calibrated samples using codec intervals or a frozen channel model.
+ * Requires a constellation-coordinate receiver; fitted models additionally
+ * require two x-history entries. Cells rank by distance outside the interval,
+ * but retain the full linear predictions/residuals for quality assessment.
  * The channel and likelihood are required. Cost is the winning increment
  * before path-metric normalization; compare it only within a frozen epoch.
  * Near-tied merged histories retain disputed payload as ambiguous.

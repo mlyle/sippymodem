@@ -34,6 +34,7 @@ struct channel {
 	int16_t previous;
 	enum g711_law law;
 	int8_t polarity;
+	uint8_t code;
 };
 
 static int16_t wire_sample(struct channel *channel, int16_t sample)
@@ -45,6 +46,9 @@ static int16_t wire_sample(struct channel *channel, int16_t sample)
 	int16_t decoded = channel->law == G711_LAW_PCMU ?
 		g711_decode_pcmu(g711_encode_pcmu(mixed)) :
 		g711_decode_pcma(g711_encode_pcma(mixed));
+	channel->code = channel->law == G711_LAW_PCMU ?
+		g711_encode_pcmu(channel->polarity * decoded) :
+		g711_encode_pcma(channel->polarity * decoded);
 	return channel->polarity * (channel->receive_gain != 0.0 ?
 		(int16_t)lround(decoded * channel->receive_gain) : decoded);
 }
@@ -1333,7 +1337,7 @@ static bool test_rejection_and_failure(void)
  * receive its remaining prefix exactly once, not as B1u or payload. */
 static bool test_channel_plan(
 	enum g711_law law, int polarity, bool extended, bool biased, bool conditioned,
-	bool changed_history)
+	bool changed_history, bool wire)
 {
 	struct channel channel = {
 		.gain = 1.0, .law = law, .polarity = polarity,
@@ -1362,8 +1366,16 @@ static bool test_channel_plan(
 			    polarity * wire_sample(&channel, sample)), "channel measurement failed");
 	}
 	CHECK(v92_cpd_direct_init(&cpd, law, 1u, extended) == V92_CPD_OK &&
-	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan) &&
-	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan),
+	      "channel-plan design failed");
+	if (wire) {
+		/* A small residual prefilter tap exercises the general-coordinate
+		 * path, outside the optional pure-delay codec-model fitter. */
+		struct v92_cpd_filter *filter = &cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD];
+		CHECK(plan.delay + 1u < filter->count, "prefilter has no postcursor tap");
+		filter->coefficient[plan.delay + 1u] = filter->coefficient[plan.delay] / 256;
+	}
+	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_tx_init(&transmitter, &mapping, TEST_LU) == V92_UPSTREAM_DATA_TX_OK &&
 	      prepare_e2u(&channel, extended, &e2u_tx, &e2u_rx), "channel-plan fixture failed");
 	/* A receive-side coding-context mismatch must settle without poisoning
@@ -1392,6 +1404,7 @@ static bool test_channel_plan(
 	CHECK(leading == V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.line.delay_remaining == plan.delay - leading, "E2u/data delay lost");
+	CHECK(!wire || !receiver.model.acquiring, "wire fixture entered pure-delay fitter");
 	comparison_rx = receiver;
 	if (biased)
 		comparison_rx.line.calibration.minimum = comparison_rx.line.calibration.maximum = plan.gain;
@@ -1426,8 +1439,20 @@ static bool test_channel_plan(
 				      V92_PCM_FRAME_OK, "linear quality prediction failed");
 		}
 		enum v92_upstream_data_rx_result result;
-		CHECK(receive_compared(&receiver, input, &frame, &result),
-		      "owned raw-coordinate stream diverged");
+		if (wire) {
+			struct v92_upstream_data_rx owned = receiver;
+			struct v92_upstream_data_frame output;
+
+			memset(&frame, 0xa5, sizeof(frame)); output = frame;
+			result = v92_upstream_data_rx_octet(&receiver, channel.code, input, true, &frame);
+			CHECK(v92_upstream_data_rx_octet_owned(&owned, channel.code, input, input,
+			      true, &output) == result && !memcmp(&owned, &receiver, sizeof(owned)) &&
+			      !memcmp(&output, &frame, sizeof(output)) && v92_upstream_data_rx_is_valid(&receiver),
+			      "owned wire-cell stream diverged");
+		} else {
+			CHECK(receive_compared(&receiver, input, &frame, &result),
+			      "owned raw-coordinate stream diverged");
+		}
 
 		if (first_frame) {
 			double error = 0.0;
@@ -1460,8 +1485,12 @@ static bool test_channel_plan(
 		      "channel-plan frame boundary moved");
 		if (result != V92_UPSTREAM_DATA_RX_FRAME)
 			continue;
-		CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
-		      "sample-only input invented host gain");
+		if (!wire)
+			CHECK(memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)),
+			      "sample-only input invented host gain");
+		else if (receiver.line.received_frames >= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(fabs(receiver.line.host.gain - (conditioned ? .75 : 1.0)) < 0.001,
+			      "wire cells confused host gain with analogue calibration");
 		if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES &&
 		    receiver.line.received_frames <= V92_B1U_FRAMES)
 			b1_error += frame.squared_error;
@@ -1474,14 +1503,16 @@ static bool test_channel_plan(
 		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES)
 			trained = receiver.line;
 		else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES)
-			CHECK(memcmp(&receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0,
-			      "B1u validation or payload continued gain calibration");
+			CHECK(memcmp(&receiver.line.calibration, &trained.calibration, sizeof(trained.calibration)) == 0 &&
+			      memcmp(&receiver.line.host, &trained.host, sizeof(trained.host)) == 0,
+			      "B1u validation or payload continued analogue/host gain calibration");
 		if (frame.bit_count == 0u || frame.b1u)
 			continue;
 		payload(expected, mapping.data_bits_per_frame, delivered);
 		CHECK(!frame.ambiguous && frame.bit_count == mapping.data_bits_per_frame &&
 		      memcmp(frame.bits, expected, frame.bit_count) == 0,
-		      "channel-plan payload lost at frame %u", delivered);
+		      "channel-plan payload lost: law %u polarity %d wire %d frame %u",
+		      law, polarity, wire, delivered);
 		++delivered;
 	}
 	struct v92_upstream_data_line saved = receiver.line;
@@ -2426,9 +2457,10 @@ int main(void)
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned int extended = 0u; extended < 2u; ++extended)
-				for (unsigned int fixture = 0u; fixture < 4u; ++fixture)
+				for (unsigned int fixture = 0u; fixture < 8u; ++fixture)
 					if (!test_channel_plan((enum g711_law)law, polarity, extended,
-							fixture == 1u, fixture == 2u, fixture == 3u))
+							fixture % 4u == 1u, fixture % 4u == 2u,
+							fixture % 4u == 3u, fixture >= 4u))
 						return 1;
 	if (!test_quantized_level_tracking(G711_LAW_PCMU, 19u, false, TEST_LU, false, 0u, 0u) ||
 	    !test_quantized_level_tracking(G711_LAW_PCMA, 19u, false, TEST_LU, false, 0u, 0u) ||

@@ -1239,6 +1239,106 @@ static bool test_observed_channel(enum g711_law law)
 	return true;
 }
 
+static bool test_constellation_cells(enum g711_law law, double gain)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	uint64_t residual = 0;
+
+	CHECK(mapping_init(&mapping, law, 4u, true) &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+	      "cell fixture initialization failed");
+	for (unsigned f = 0; f < V92_B1U_FRAMES + 128u; ++f) {
+		struct v92_pcm_frame encoded;
+		struct v92_pcm_frame_decision decision;
+		struct v92_pcm_frame_likelihood likelihood;
+		struct v92_pcm_frame_cell cells[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		struct v92_pcm_frame_channel channel = { .cells = cells };
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+		double expected_cost = 0;
+		uint64_t expected_error = 0;
+
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
+		      V92_PCM_FRAME_OK, "cell fixture encoding failed");
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			struct g711_interval cell;
+			/* The codec precedes gain and an independently known host
+			 * correction. Never re-encode this conditioned observation. */
+			int16_t wire = quantize(law, (int16_t)lround(encoded.u[i] / gain));
+			double offset = i % 2u ? 13.0 : -7.0;
+			CHECK(g711_quantization_interval(law, wire, &cell), "wire cell missing");
+			samples[i] = (int16_t)lround(wire * gain + offset);
+			cells[i] = (struct v92_pcm_frame_cell){
+				.lower = cell.lower * gain + offset,
+				.upper = cell.upper * gain + offset,
+			};
+			int64_t error = samples[i] - encoded.u[i];
+			double distance = fmax(cells[i].lower - encoded.u[i],
+				fmax(encoded.u[i] - cells[i].upper, 0.0));
+			uint64_t weight = (uint64_t)(65536.0 /
+				(1.0 + rx.noise.relative_variance * samples[i] * samples[i]));
+
+			expected_error += (uint64_t)(error * error);
+			expected_cost += (uint64_t)(distance * distance * (weight ? weight : 1u));
+		}
+		if (f == 24u) {
+			struct v92_pcm_frame_rx saved = rx;
+			struct v92_pcm_frame_decision untouched;
+			struct v92_pcm_frame_likelihood unchanged;
+			int16_t incompatible_levels[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+			memset(&decision, 0xa5, sizeof(decision)); untouched = decision;
+			memset(&likelihood, 0xa5, sizeof(likelihood)); unchanged = likelihood;
+			memset(decoded, 0xa5, sizeof(decoded));
+			double upper = cells[11].upper;
+			cells[11].upper = NAN;
+			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)) &&
+			      !memcmp(&decision, &untouched, sizeof(decision)) &&
+			      !memcmp(&likelihood, &unchanged, sizeof(likelihood)) && decoded[0] == 0xa5,
+			      "invalid final cell was not transactional");
+			cells[11].upper = cells[11].lower - 1.0;
+			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
+			      "reversed cell was accepted");
+			cells[11].upper = upper;
+			channel.levels = incompatible_levels;
+			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			      V92_PCM_FRAME_INVALID_PARAMETERS && !memcmp(&rx, &saved, sizeof(rx)),
+			      "cells accepted a conflicting observation source");
+			channel.levels = NULL;
+			channel.cells = (const struct v92_pcm_frame_cell *)&rx;
+			CHECK(v92_pcm_frame_decode_observed(&rx, samples, true, decoded,
+			      mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+			      V92_PCM_FRAME_INVALID_ARGUMENT && !memcmp(&rx, &saved, sizeof(rx)),
+			      "aliased cells changed receiver");
+			channel.cells = cells;
+		}
+		CHECK(v92_pcm_frame_decode_observed(&rx, samples, f < V92_B1U_FRAMES, decoded,
+		      mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_is_valid(&rx), "cell decode failed: law %u frame %u", law, f);
+		CHECK(!memcmp(decision.frame.u, encoded.u, sizeof(encoded.u)) &&
+		      decision.squared_error == expected_error && likelihood.cost == expected_cost,
+		      "cell ranking changed points or hid physical residual: law %u frame %u", law, f);
+		for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			CHECK(likelihood.predicted_samples[i] == encoded.u[i], "cell prediction followed sample");
+		residual += decision.squared_error;
+		if (decision.bits_ready) {
+			source_bits(bits, mapping.data_bits_per_frame, f - V92_PCM_RX_DELAY_FRAMES);
+			CHECK(!decision.ambiguous && !memcmp(bits, decoded, mapping.data_bits_per_frame),
+			      "cell decoder corrupted payload");
+		}
+	}
+	CHECK(residual > 0, "cell fixture hid companding noise");
+	return true;
+}
+
 int main(void)
 {
 	if (!test_direct_confidence()) return 1;
@@ -1248,6 +1348,8 @@ int main(void)
 		return 1;
 
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		if (!test_constellation_cells((enum g711_law)law, 0.8) ||
+		    !test_constellation_cells((enum g711_law)law, 1.25)) return 1;
 		static const uint8_t rates[] = { 1u, 13u, 19u };
 		static const int16_t direct_44k_levels[] = { 2016, 4096, 7164, 8192 };
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
