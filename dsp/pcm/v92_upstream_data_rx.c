@@ -300,7 +300,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 		V92_B1U_ACQUISITION_FRAMES - V92_PCM_RX_DELAY_FRAMES)) {
 		/* TRN2u's sparse, quantized levels leave a small scalar uncertainty
 		 * in the inverse. Outside explicit codec-model acquisition, wait
-		 * until forced coding history is released: early wrong predictions
+		 * for initial coding decisions to settle: early wrong predictions
 		 * must not bias the fit used by every later decision. Retain the
 		 * original training-cell bounds and freeze before held-out B1u;
 		 * quiet/noisy input must not be scaled into valid training. */

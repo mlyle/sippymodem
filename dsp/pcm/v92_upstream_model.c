@@ -111,12 +111,6 @@ void v92_upstream_model_observe(struct v92_upstream_model *model,
 {
 	if (!model->acquiring || line->received_frames >= V92_B1U_ACQUISITION_FRAMES)
 		return;
-	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
-		if (!line->wire_known[i] || !line->received[i]) {
-			close_acquisition(model);
-			return;
-		}
-	}
 	size_t offset = line->received_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
 
 	/* V.92 6.4.2 permits any representative in the encoded residue class.
@@ -223,8 +217,8 @@ static bool wire_cells(const struct v92_upstream_data_line *line, enum g711_law 
 	/* Only actual wire/host pairs identify post-codec conditioning. During
 	 * acquisition use the independent accumulated fit; held-out B1u and
 	 * payload may verify its frozen bounds but must never refit the gain.
-	 * Preserve the initial known-bit acquisition ranking; interval evidence
-	 * starts when those constraints release the receive coding history. */
+	 * Let initial coding decisions settle before interval evidence changes
+	 * the ranking used by the independently bounded analogue gain fit. */
 	if (acquiring && !pcm_gain_estimate(&bounds, &gain))
 		return false;
 	if (gain <= 0.0)
@@ -260,6 +254,15 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 {
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	size_t count = decoder->mapping.data_bits_per_frame;
+	/* A model cannot be fitted without every actual wire observation. Decline
+	 * it before imposing a known-bit decision on this frame, so missing media
+	 * or sample-only input retains ordinary linear coding acquisition. */
+	if (model->acquiring)
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			if (!line->wire_known[i] || !line->received[i]) {
+				close_acquisition(model);
+				break;
+			}
 
 	if (!model->valid) {
 		bool validate = decoder->observation == V92_PCM_FRAME_FILTER_OUTPUT &&

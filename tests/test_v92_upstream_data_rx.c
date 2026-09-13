@@ -1355,7 +1355,8 @@ static bool test_channel_plan(
 	struct v92_upstream_data_line trained;
 	uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
 	unsigned int source_frames = 0u, leading = 0u, delivered = 0u;
-	double b1_error = 0.0, rejected_error = 0.0;
+	double b1_error = 0.0, comparison_error = 0.0;
+	unsigned comparison_bad_bits = 0u, comparison_payload = 0u;
 	uint32_t random = UINT32_C(9376271);
 
 	for (unsigned int i = 0u; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
@@ -1467,14 +1468,30 @@ static bool test_channel_plan(
 			      "raw quality rounded, clipped or requantized its linear prediction");
 		}
 
-		if (comparison_rx.line.received_frames < V92_B1U_FRAMES) {
+		{
 			struct v92_upstream_data_frame comparison;
 			enum v92_upstream_data_rx_result comparison_result =
 				v92_upstream_data_rx_sample(&comparison_rx, input, &comparison);
 
 			CHECK(comparison_result == result, "B1u comparison lost frame timing");
-			if (comparison_result == V92_UPSTREAM_DATA_RX_FRAME)
-				rejected_error += comparison.squared_error;
+			if (comparison_result == V92_UPSTREAM_DATA_RX_FRAME) {
+				unsigned frames = comparison_rx.line.received_frames;
+				if (frames > V92_B1U_ACQUISITION_FRAMES && frames <= V92_B1U_FRAMES)
+					comparison_error += comparison.squared_error;
+				if (comparison.b1u && frames > V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
+					comparison_bad_bits += comparison.ambiguous ||
+						comparison.bit_count != mapping.data_bits_per_frame;
+					for (unsigned bit = 0u; bit < comparison.bit_count; ++bit)
+						comparison_bad_bits += comparison.bits[bit] != 1u;
+				}
+				if (comparison.bit_count && !comparison.b1u) {
+					uint8_t wanted[V92_PCM_MAPPING_MAX_BITS];
+					payload(wanted, mapping.data_bits_per_frame, comparison_payload++);
+					CHECK(!comparison.ambiguous && comparison.bit_count == mapping.data_bits_per_frame &&
+					      memcmp(wanted, comparison.bits, comparison.bit_count) == 0,
+					      "comparison channel lost payload");
+				}
+			}
 		}
 
 		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
@@ -1522,12 +1539,21 @@ static bool test_channel_plan(
 	 * residual is still reported and independently checked above. */
 	CHECK(b1_error < V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
 	      "channel-plan B1u residual too large: %g", sqrt(b1_error / V92_B1U_VALIDATION_SYMBOLS));
-	CHECK(rejected_error > V92_B1U_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
-	      "fixed gain or wrong polarity hid bad training: %g", sqrt(rejected_error / V92_B1U_SYMBOLS));
-	if (biased)
+	CHECK(comparison_payload == DATA_FRAMES, "comparison channel shortened payload");
+	if (biased) {
+		CHECK(comparison_error > V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		      "fixed gain hid bad training: %g", sqrt(comparison_error / V92_B1U_VALIDATION_SYMBOLS));
 		CHECK(receiver.line.calibration.gain < plan.gain &&
 		      receiver.line.calibration.gain >= receiver.line.calibration.minimum,
 		      "gain fixture did not recover rejected B1u within training bounds");
+	} else {
+		/* Unconstrained coding can acquire the inverted constellation too:
+		 * polarity alone is not damage. Require its independent B1u and all
+		 * payload to pass, not a large forced-history acquisition residual. */
+		CHECK(comparison_bad_bits == 0u && comparison_error <
+		      V92_B1U_VALIDATION_SYMBOLS * V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		      "inverted constellation did not acquire valid B1u");
+	}
 	CHECK(memcmp(&receiver.line.plan, &plan, sizeof(plan)) == 0,
 	      "B1u calibration changed the negotiated receive plan");
 	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&

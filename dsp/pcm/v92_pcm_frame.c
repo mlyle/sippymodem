@@ -1027,13 +1027,12 @@ static enum v92_pcm_frame_result decode_frame(
 	struct v92_observation_cache cache;
 	if (model)
 		v92_observation_begin(&cache, model, receiver->noise.relative_variance);
-	/* Known bits acquire the raw-coordinate path, but also force its coding
-	 * history. Release them a full traceback before validation, so an
-	 * acquisition error cannot poison the first independently checked frame.
-	 * The same final 24 B1u frames must still decode as unconstrained ones. */
+	/* Linear constellation samples can acquire coding without forcing the
+	 * initial B1u history. A wrong early constraint can otherwise outlive
+	 * acquisition and bias the gain used by held-out training and payload.
+	 * Codec-model acquisition explicitly requests known coordinates instead. */
 	bool known = b1u && (acquire_model ||
-		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
-		receiver->noise.frames + V92_PCM_RX_DELAY_FRAMES < V92_B1U_ACQUISITION_FRAMES);
+		receiver->observation != V92_PCM_FRAME_CONSTELLATION);
 
 	for (size_t index = 0u; index < path_count; ++index) {
 		paths[index] = (struct frame_path){

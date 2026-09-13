@@ -143,9 +143,12 @@ static bool test_b1u_oracle(void)
 static bool test_b1u_coding_acquisition(void)
 {
 	const uint8_t rates[] = { 1u, 7u, 13u, 19u };
+	const unsigned histories[] = { 0u, 1u, 6u };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (size_t rate = 0u; rate < ARRAY_LENGTH(rates); ++rate) {
-			for (unsigned changed_history = 0u; changed_history <= (rates[rate] == 1u); ++changed_history) {
+			unsigned cases = rates[rate] == 1u ? ARRAY_LENGTH(histories) : 1u;
+			for (unsigned index = 0u; index < cases; ++index) {
+				unsigned changed_history = histories[index];
 				struct v92_pcm_frame_tx tx;
 				struct v92_pcm_frame_rx rx;
 				uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
@@ -159,6 +162,7 @@ static bool test_b1u_coding_acquisition(void)
 				/* Exercise a mismatched scrambler context at the 24k receive
 				 * boundary, without claiming a different seed is normative.
 				 * The transmitter's zero-state reset has separate oracle tests.
+				 * A small gain error must not lock in the wrong early history.
 				 * Higher-rate clean calls must retain their validation/payload. */
 				memset(bits, 1, count);
 				tx.state.scrambler.history = changed_history;
@@ -169,8 +173,12 @@ static bool test_b1u_coding_acquisition(void)
 
 					if (f >= V92_B1U_FRAMES)
 						generated_bits(bits, count, f);
-					CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK &&
-					      v92_pcm_frame_decode(&rx, frame.u, f < V92_B1U_FRAMES,
+					CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK,
+					      "coding acquisition encode");
+					int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+					for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+						samples[i] = (int16_t)lround(frame.u[i] * (changed_history == 6u ? .99 : 1.0));
+					CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES,
 						      decoded, count, &decision) == V92_PCM_FRAME_OK,
 					      "coding acquisition frame %u law %u rate %u", f, law, rates[rate]);
 					if (f < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)

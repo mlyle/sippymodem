@@ -223,9 +223,9 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
  * exact spare modulus words are signaling, not invalid payload codewords.
  * Qualified RM also clamps its pending in-range words without discarding
  * preceding data. Non-payload tags follow each competing delayed history.
- * B1u initially constrains source bits to ones. In constellation coordinates,
- * ordinary decisions resume one traceback before the validation half. Its
- * residual is training evidence, not an automatic pass. Data is unconstrained.
+ * Filter-output B1u constrains source bits to ones. Linear constellation
+ * coordinates acquire coding from unconstrained sample decisions instead.
+ * B1u residual is training evidence, not an automatic pass. Data is unconstrained.
  * Ambiguity and residuals are quality evidence for the call owner, not a
  * guarantee of correct payload. CPd points can coincide after quantization.
  * State, bits and decision commit together; rejected calls change none.
