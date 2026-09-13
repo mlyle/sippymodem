@@ -39,6 +39,12 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 		     (channel->observed_history[index] != 0 || channel->expected_history[index] != 0)))
 			return false;
 	}
+	for (size_t index = 0; index < V92_UPSTREAM_CHANNEL_MAX_LAG; ++index)
+		if (channel->observed_boundary[index] < -32768 ||
+		    channel->observed_boundary[index] > 32768 ||
+		    (channel->symbols <= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
+		     (channel->observed_boundary[index] || channel->expected_boundary[index])))
+			return false;
 	return true;
 }
 
@@ -49,6 +55,12 @@ bool v92_upstream_channel_sample(
 		return false;
 	if (channel->symbols == V92_UPSTREAM_CHANNEL_SYMBOLS)
 		return true;
+	if (channel->symbols == V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS) {
+		memcpy(channel->observed_boundary, channel->observed_history,
+			sizeof(channel->observed_boundary));
+		memcpy(channel->expected_boundary, channel->expected_history,
+			sizeof(channel->expected_boundary));
+	}
 	memmove(channel->observed_history + 1, channel->observed_history,
 		V92_UPSTREAM_CHANNEL_MAX_LAG * sizeof(channel->observed_history[0]));
 	memmove(channel->expected_history + 1, channel->expected_history,

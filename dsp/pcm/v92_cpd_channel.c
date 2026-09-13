@@ -100,34 +100,85 @@ static bool solve_short_channel(const struct v92_upstream_channel *channel, doub
 	return short_inverse(main, post, second, error, yy, coefficients);
 }
 
+static int64_t boundary_product(const struct v92_upstream_channel *channel,
+	bool left_observed, unsigned left, bool right_observed, unsigned right)
+{
+	int32_t begin_left = left_observed ? channel->observed_boundary[left] : channel->expected_boundary[left];
+	int32_t begin_right = right_observed ? channel->observed_boundary[right] : channel->expected_boundary[right];
+	int32_t end_left = left_observed ? channel->observed_history[left] : channel->expected_history[left];
+	int32_t end_right = right_observed ? channel->observed_history[right] : channel->expected_history[right];
+
+	return (int64_t)begin_left * begin_right - (int64_t)end_left * end_right;
+}
+
+/* Correlations anchor the later signal at the measured window. Moving both
+ * signals back by m adds m pairs before that window and removes m at its end.
+ * This gives the exact finite-window Gram entry, not a stationary estimate. */
+static int64_t moment(const struct v92_upstream_channel *channel,
+	bool left_observed, unsigned left, bool right_observed, unsigned right)
+{
+	unsigned shift = left < right ? left : right;
+	int lag = (int)right - (int)left;
+	int64_t value;
+
+	if (left_observed == right_observed) {
+		unsigned distance = left > right ? left - right : right - left;
+
+		value = left_observed ? channel->observed_autocorrelation[distance] :
+			channel->expected_autocorrelation[distance];
+	} else {
+		value = channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS +
+			(left_observed ? lag : -lag)];
+	}
+	for (unsigned i = 0; i < shift; ++i)
+		value += boundary_product(channel, left_observed, left - shift + i,
+			right_observed, right - shift + i);
+	return value;
+}
+
 /* Apply the symmetric normal matrix without allocating a dense matrix.
- * H(z)Z2(z) = z^-DELAY (1-P1(z)); unknowns are z2 then p1. */
+ * H(z)Z2(z) = z^-DELAY (1-P1(z)); unknowns are z2 then p1. Walking each
+ * diagonal updates its exact covariance with just two boundary products,
+ * retaining quadratic work/storage-linear workspace per CG iteration. */
 static void apply_normal(const struct v92_upstream_channel *channel,
 	const double input[TAPS], double regularization, double scale, double output[TAPS])
 {
-	for (size_t row = 0; row < Z2_TAPS; ++row) {
-		double value = regularization * input[row];
+	for (unsigned i = 0; i < TAPS; ++i)
+		output[i] = regularization * input[i];
+	for (unsigned block = 0; block < 2u; ++block) {
+		bool observed = block == 0;
+		unsigned count = observed ? Z2_TAPS : P1_TAPS;
+		unsigned delay = observed ? 0u : DELAY + 1u;
+		unsigned offset = observed ? 0u : Z2_TAPS;
 
-		for (size_t col = 0; col < Z2_TAPS; ++col) {
-			size_t lag = row > col ? row - col : col - row;
+		for (unsigned lag = 0; lag < count; ++lag) {
+			int64_t value = moment(channel, observed, delay + lag, observed, delay);
 
-			value += (double)channel->observed_autocorrelation[lag] / scale * input[col];
+			for (unsigned col = 0, row = lag; row < count; ++col, ++row) {
+				double covariance = (double)value / scale;
+
+				output[offset + row] += covariance * input[offset + col];
+				if (row != col)
+					output[offset + col] += covariance * input[offset + row];
+				if (row + 1u < count)
+					value += boundary_product(channel, observed, delay + row, observed, delay + col);
+			}
 		}
-		for (size_t col = 0; col < P1_TAPS; ++col)
-			value += cross(channel, DELAY + (int)col + 1 - (int)row, scale) * input[Z2_TAPS + col];
-		output[row] = value;
 	}
-	for (size_t row = 0; row < P1_TAPS; ++row) {
-		double value = regularization * input[Z2_TAPS + row];
+	for (int lag = DELAY + 2 - Z2_TAPS; lag <= DELAY + P1_TAPS; ++lag) {
+		unsigned y = lag < DELAY + 1 ? (unsigned)(DELAY + 1 - lag) : 0u;
+		unsigned x = (unsigned)((int)y + lag);
+		int64_t value = moment(channel, true, y, false, x);
 
-		for (size_t col = 0; col < Z2_TAPS; ++col)
-			value += cross(channel, DELAY + (int)row + 1 - (int)col, scale) * input[col];
-		for (size_t col = 0; col < P1_TAPS; ++col) {
-			size_t lag = row > col ? row - col : col - row;
+		for (; y < Z2_TAPS && x <= DELAY + P1_TAPS; ++y, ++x) {
+			unsigned col = Z2_TAPS + x - DELAY - 1u;
+			double covariance = (double)value / scale;
 
-			value += (double)channel->expected_autocorrelation[lag] / scale * input[Z2_TAPS + col];
+			output[y] += covariance * input[col];
+			output[col] += covariance * input[y];
+			if (y + 1u < Z2_TAPS && x < DELAY + P1_TAPS)
+				value += boundary_product(channel, true, y, false, x);
 		}
-		output[Z2_TAPS + row] = value;
 	}
 }
 
@@ -136,16 +187,17 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 	double residual[TAPS], direction[TAPS], normal[TAPS], rhs[TAPS];
 	double observed = (double)channel->observed_autocorrelation[0];
 	double expected = (double)channel->expected_autocorrelation[0];
+	double target = (double)moment(channel, false, DELAY, false, DELAY);
 	double scale = fmax(observed, expected);
 
-	if (observed <= 0.0 || expected <= 0.0)
+	if (observed <= 0.0 || expected <= 0.0 || target <= 0.0)
 		return false;
 	double regularization = 1.0e-3 * (Z2_TAPS * observed + P1_TAPS * expected) / (TAPS * scale);
 
 	for (size_t tap = 0; tap < Z2_TAPS; ++tap)
-		rhs[tap] = cross(channel, DELAY - (int)tap, scale);
+		rhs[tap] = (double)moment(channel, true, tap, false, DELAY) / scale;
 	for (size_t tap = 0; tap < P1_TAPS; ++tap)
-		rhs[Z2_TAPS + tap] = (double)channel->expected_autocorrelation[tap + 1u] / scale;
+		rhs[Z2_TAPS + tap] = (double)moment(channel, false, DELAY + tap + 1u, false, DELAY) / scale;
 	memcpy(residual, rhs, sizeof(residual));
 	memcpy(direction, rhs, sizeof(direction));
 	memset(coefficients, 0, TAPS * sizeof(*coefficients));
@@ -173,9 +225,10 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 			/* Reject a solved but uninformative/noisy inverse. This is an
 			 * implementation quality bound, not a negotiated wire limit. */
 			apply_normal(channel, coefficients, 0.0, scale, normal);
-			double error = expected / scale - 2.0 * dot(coefficients, rhs) + dot(coefficients, normal);
+			double error = target / scale - 2.0 * dot(coefficients, rhs) + dot(coefficients, normal);
 
-			return isfinite(error) && error <= 0.05 * expected / scale;
+			return isfinite(error) && error >= -1.0e-10 * target / scale &&
+				error <= 0.05 * target / scale;
 		}
 		for (size_t tap = 0; tap < TAPS; ++tap)
 			direction[tap] = residual[tap] + next_norm / norm * direction[tap];

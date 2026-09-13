@@ -36,6 +36,14 @@ static bool test_correlations(bool full_scale)
 		      v92_upstream_channel_is_valid(&channel), "channel accumulation failed");
 		if (index < V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS)
 			CHECK(channel.observed_autocorrelation[0] == 0, "channel included settling symbols");
+		for (int lag = 0; lag < V92_UPSTREAM_CHANNEL_MAX_LAG; ++lag) {
+			bool measured = index >= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+			int start = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS - 1 - lag;
+
+			CHECK(channel.observed_boundary[lag] == (measured ? observed(start, full_scale) : 0) &&
+			      channel.expected_boundary[lag] == (measured ? expected(start, full_scale) : 0),
+			      "measurement boundary moved at symbol %d lag %d", index, lag);
+		}
 	}
 	/* Compute each complete sum independently, without the streaming history. */
 	int64_t previous_energy = 0, second_energy = 0, previous_cross = 0;
@@ -115,6 +123,15 @@ static bool test_rejection(void)
 	channel = (struct v92_upstream_channel){ 0 };
 	channel.expected_history[1] = 1;
 	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned history accepted");
+	channel = (struct v92_upstream_channel){ 0 };
+	channel.expected_boundary[0] = 1;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned boundary accepted");
+	channel.symbols = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "boundary captured before measurement");
+	channel.symbols++;
+	CHECK(v92_upstream_channel_is_valid(&channel), "measured boundary rejected");
+	channel.observed_boundary[V92_UPSTREAM_CHANNEL_MAX_LAG - 1u] = 32769;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "unbounded starting observation accepted");
 	return true;
 }
 

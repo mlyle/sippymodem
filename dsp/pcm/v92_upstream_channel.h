@@ -43,6 +43,12 @@ struct v92_upstream_channel {
 	int64_t cross_correlation[V92_UPSTREAM_CHANNEL_CROSS_LAGS];
 	int32_t observed_history[V92_UPSTREAM_CHANNEL_MAX_LAG + 1];
 	int16_t expected_history[V92_UPSTREAM_CHANNEL_MAX_LAG + 1];
+	/* Samples immediately before the measurement window, newest first.
+	 * Together with the final histories these correct shifted covariance
+	 * windows exactly, without retaining the full training or a dense Gram
+	 * matrix. Captured once when the first measured symbol arrives. */
+	int32_t observed_boundary[V92_UPSTREAM_CHANNEL_MAX_LAG];
+	int16_t expected_boundary[V92_UPSTREAM_CHANNEL_MAX_LAG];
 	uint16_t symbols;
 };
 

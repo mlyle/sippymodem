@@ -297,6 +297,88 @@ static bool test_quantized_stability(void)
 	return true;
 }
 
+static bool test_finite_window_inverse(bool strong_boundaries)
+{
+	enum { Z = V92_UPSTREAM_CHANNEL_Z2_TAPS, P = V92_UPSTREAM_CHANNEL_P1_TAPS, N = Z + P };
+	struct v92_upstream_channel channel = { 0 };
+	struct v92_cpd_parameters cpd;
+	struct v92_upstream_plan plan;
+	int16_t x[V92_UPSTREAM_CHANNEL_SYMBOLS], y[V92_UPSTREAM_CHANNEL_SYMBOLS];
+	double gram[N][N] = { { 0 } }, rhs[N] = { 0 }, row[N], solution[N];
+	double xx = 0.0, yy = 0.0;
+	uint32_t random = 0x62735198u;
+
+	for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+		int value = (int)(random_word(&random) % 8192u) - 4096;
+		bool edge = n < V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS ||
+			n >= V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MAX_LAG;
+
+		x[n] = (int16_t)(strong_boundaries && !edge ? value / 8 : value);
+		y[n] = quantize(G711_LAW_PCMU, 0.7 * x[n] -
+			(n ? 0.2 * x[n - 1u] : 0.0) + (n >= 3u ? 0.1 * x[n - 3u] : 0.0));
+		CHECK(v92_upstream_channel_sample(&channel, x[n], y[n]), "finite-window measurement failed");
+	}
+	/* Independent dense least squares uses the actual shifted columns over
+	 * one common window. Deliberately different edge energy exposes the
+	 * stationary Toeplitz approximation; no production moments are reused. */
+	for (unsigned n = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+		for (unsigned i = 0; i < Z; ++i)
+			row[i] = y[n - i];
+		for (unsigned i = 0; i < P; ++i)
+			row[Z + i] = x[n - V92_UPSTREAM_CHANNEL_DECISION_DELAY - 1u - i];
+		double target = x[n - V92_UPSTREAM_CHANNEL_DECISION_DELAY];
+
+		for (unsigned i = 0; i < N; ++i) {
+			rhs[i] += row[i] * target;
+			for (unsigned j = 0; j <= i; ++j)
+				gram[i][j] += row[i] * row[j];
+		}
+		xx += (double)x[n] * x[n];
+		yy += (double)y[n] * y[n];
+	}
+	double ridge = 1.0e-3 * (Z * yy + P * xx) / N;
+
+	/* Cholesky is intentionally different from the matrix-free CG solver. */
+	for (unsigned i = 0; i < N; ++i) {
+		gram[i][i] += ridge;
+		for (unsigned j = 0; j <= i; ++j) {
+			double value = gram[i][j];
+
+			for (unsigned k = 0; k < j; ++k)
+				value -= gram[i][k] * gram[j][k];
+			CHECK(i != j || value > 0.0, "regularized Gram matrix is not positive definite");
+			gram[i][j] = i == j ? sqrt(value) : value / gram[j][j];
+		}
+		double value = rhs[i];
+
+		for (unsigned j = 0; j < i; ++j)
+			value -= gram[i][j] * solution[j];
+		solution[i] = value / gram[i][i];
+	}
+	for (unsigned i = N; i-- > 0u;) {
+		for (unsigned j = i + 1u; j < N; ++j)
+			solution[i] -= gram[j][i] * solution[j];
+		solution[i] /= gram[i][i];
+	}
+	CHECK(v92_cpd_direct_select(&cpd, G711_LAW_PCMU, 1u, LEVEL, false) == V92_CPD_OK &&
+		v92_cpd_channel_design(&cpd, &channel, G711_LAW_PCMU, LEVEL, &plan),
+		"finite-window inverse rejected (strong boundaries=%d)", strong_boundaries);
+	double largest = 0.0;
+
+	for (unsigned i = 0; i < Z; ++i)
+		largest = fmax(largest, fabs(solution[i]));
+	for (unsigned i = 0; i < N; ++i) {
+		long wanted = lround(solution[i] * (i < Z ? 24576.0 / largest : 16384.0));
+		int actual = i < Z ? cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[i] :
+			cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[i - Z];
+
+		CHECK(labs(actual - wanted) <= 1,
+			"finite-window tap %u: got %d expected %ld (strong boundaries=%d)",
+			i, actual, wanted, strong_boundaries);
+	}
+	return true;
+}
+
 static bool test_rejections(void)
 {
 	struct v92_upstream_channel channel = { 0 };
@@ -359,7 +441,8 @@ static bool test_receive_plan(void)
 int main(void)
 {
 	if (!test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
-	    !test_quantized_stability())
+	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
+	    !test_finite_window_inverse(true))
 		return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		/* Both laws and trellis families: 24, 28, 32, 36 and 40 kbit/s. */
