@@ -81,6 +81,7 @@ static bool test_invalid(void)
 	const double invalid[] = { -1.0, NAN, INFINITY, -INFINITY };
 
 	CHECK(!v92_data_quality_is_valid(NULL) && !v92_data_quality_restart(NULL) &&
+	      v92_data_quality_retrain(NULL) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      v92_data_quality_observe(NULL, 0, false, false) == V92_DATA_QUALITY_INVALID_ARGUMENT,
 	      "null state accepted");
 	for (unsigned int n = 0; n < sizeof(invalid) / sizeof(invalid[0]); ++n) {
@@ -99,6 +100,7 @@ static bool test_invalid(void)
 	quality.frames = V92_DATA_QUALITY_WINDOW_FRAMES;
 	before = quality;
 	CHECK(!v92_data_quality_is_valid(&quality) && !v92_data_quality_restart(&quality) &&
+	      v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      v92_data_quality_observe(&quality, 0, false, false) == V92_DATA_QUALITY_INVALID_ARGUMENT &&
 	      memcmp(&before, &quality, sizeof(quality)) == 0, "invalid window accepted");
 	quality = (struct v92_data_quality){ .automatic_retrains = 3 };
@@ -117,6 +119,23 @@ static bool test_invalid(void)
 	CHECK(!v92_data_quality_is_valid(&quality), "healthy credit without used attempts accepted");
 	quality = (struct v92_data_quality){ .automatic_retrains = 1, .good_windows = 1, .bad_windows = 1 };
 	CHECK(!v92_data_quality_is_valid(&quality), "concurrent good and bad windows accepted");
+	return true;
+}
+
+static bool test_training_recovery(void)
+{
+	struct v92_data_quality quality = { .frames = 1, .squared_error = 100.0 };
+
+	CHECK(v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_RETRAIN &&
+	      quality.automatic_retrains == 1u && quality.frames == 0u && quality.squared_error == 0.0 &&
+	      v92_data_quality_restart(&quality) &&
+	      v92_data_quality_observe(&quality, 0, true, false) == V92_DATA_QUALITY_RETRAIN &&
+	      quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
+	      "training and data failures did not share their recovery budget");
+	struct v92_data_quality before = quality;
+	CHECK(v92_data_quality_retrain(&quality) == V92_DATA_QUALITY_EXHAUSTED &&
+	      memcmp(&quality, &before, sizeof(quality)) == 0,
+	      "exhausted training recovery changed state");
 	return true;
 }
 
@@ -223,7 +242,7 @@ static bool test_ambiguous_rearm_boundary(void)
 
 int main(void)
 {
-	return test_windows() && test_ambiguity() && test_uncertainty() &&
+	return test_windows() && test_ambiguity() && test_uncertainty() && test_training_recovery() &&
 		test_healthy_rearm() && test_interrupted_healthy_credit() &&
 		test_ambiguous_rearm_boundary() && test_invalid() ? 0 : 1;
 }

@@ -3560,9 +3560,21 @@ static enum pcm_call_result sample_v92_phase4(
 			int16_t level = station->receive.signal.control.signal.line.demodulator.lu;
 
 			if (v92_cpd_decode(wire->sequence, sizeof(wire->sequence),
-				    wire->sequence_bits, wire->frame_bits, &cpd) != V92_CPD_OK ||
-			    !v92_cpd_channel_design(&cpd, &station->receive.channel, call->law, level, &plan) ||
-			    !v92_filters_fit_capabilities(&cpd, &call->phase3_entry.selection.analog.pcm))
+				    wire->sequence_bits, wire->frame_bits, &cpd) != V92_CPD_OK)
+				return PCM_CALL_UNUSABLE_SELECTION;
+			if (!v92_cpd_channel_design(&cpd, &station->receive.channel, call->law, level, &plan)) {
+				/* A truncated or corrupted TRN2u cannot identify a usable
+				 * channel. V.92 9.6.1.2 permits full retrain during Phase 4;
+				 * do not accept the bad fit or renegotiate a data rate before
+				 * data exists. Share the receiver's bounded recovery budget. */
+				enum v92_data_quality_result quality =
+					v92_data_quality_retrain(&call->pcm_upstream_quality);
+
+				return quality == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
+					quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_UNUSABLE_SELECTION :
+					PCM_CALL_NUMERIC_FAILURE;
+			}
+			if (!v92_filters_fit_capabilities(&cpd, &call->phase3_entry.selection.analog.pcm))
 				return PCM_CALL_UNUSABLE_SELECTION;
 			result = v92_digital_phase4_result(
 				v92_phase4_digital_station_select_upstream(station, &cpd, &plan));

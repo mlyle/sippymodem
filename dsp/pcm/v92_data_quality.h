@@ -35,7 +35,8 @@ enum v92_data_quality_result {
  * A decoder-reported ambiguous payload or loss of all decoder paths requests
  * recovery immediately. Fixed mappings also use this budget for lost paths
  * during B1u; automatic initial selection instead lowers its rate ceiling.
- * Neither condition licenses delivering ambiguous bits to the host. */
+ * Unusable TRN2u channel measurements share the same retry budget.
+ * None of these conditions licenses delivering ambiguous bits to the host. */
 struct v92_data_quality {
 	double squared_error;
 	uint16_t frames;
@@ -48,6 +49,9 @@ struct v92_data_quality {
 bool v92_data_quality_is_valid(const struct v92_data_quality *quality);
 /* A new CONNECT discards measurements and healthy credit, not used attempts. */
 bool v92_data_quality_restart(struct v92_data_quality *quality);
+/* Consume an immediate recovery attempt for unusable training or decoding.
+ * Exhausted or invalid state is unchanged; measurements do not carry over. */
+enum v92_data_quality_result v92_data_quality_retrain(struct v92_data_quality *quality);
 /* RETRAIN consumes one of two attempts until sustained clean reception rearms
  * recovery. Bad or uncertain windows break healthy credit. EXHAUSTED is
  * terminal for the host adapter. Invalid inputs change nothing. */

@@ -31,6 +31,18 @@ bool v92_data_quality_restart(struct v92_data_quality *quality)
 	return true;
 }
 
+enum v92_data_quality_result v92_data_quality_retrain(struct v92_data_quality *quality)
+{
+	if (!v92_data_quality_is_valid(quality))
+		return V92_DATA_QUALITY_INVALID_ARGUMENT;
+	if (quality->automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS)
+		return V92_DATA_QUALITY_EXHAUSTED;
+	*quality = (struct v92_data_quality){
+		.automatic_retrains = quality->automatic_retrains + 1u,
+	};
+	return V92_DATA_QUALITY_RETRAIN;
+}
+
 enum v92_data_quality_result v92_data_quality_observe(
 	struct v92_data_quality *quality, double squared_error, bool ambiguous,
 	bool uncertain)
@@ -64,13 +76,8 @@ enum v92_data_quality_result v92_data_quality_observe(
 		next.squared_error = 0.0;
 		next.uncertain_window = false;
 	}
-	if (recover) {
-		if (next.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS)
-			return V92_DATA_QUALITY_EXHAUSTED;
-		next = (struct v92_data_quality){
-			.automatic_retrains = next.automatic_retrains + 1u,
-		};
-	}
+	if (recover)
+		return v92_data_quality_retrain(quality);
 	*quality = next;
-	return recover ? V92_DATA_QUALITY_RETRAIN : V92_DATA_QUALITY_OK;
+	return V92_DATA_QUALITY_OK;
 }
