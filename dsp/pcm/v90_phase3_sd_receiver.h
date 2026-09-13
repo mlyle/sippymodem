@@ -43,6 +43,7 @@ struct v90_phase3_sd_receiver {
 	uint8_t bar_candidate_symbols;
 	uint8_t bar_symbols;
 	uint8_t bar_errors;
+	int32_t level;
 };
 
 enum v90_phase3_sd_receiver_result v90_phase3_sd_receiver_init(
@@ -53,9 +54,10 @@ bool v90_phase3_sd_receiver_is_valid(
 bool v90_phase3_sd_receiver_is_complete(
 	const struct v90_phase3_sd_receiver *receiver);
 
-/* Consume one raw network character.  Keeping the G.711 octet intact is
- * necessary to distinguish both zero characters in PCMU.  A call after
- * completion returns SEQUENCE_COMPLETE without consuming the supplied octet. */
+/* Consume one network character. Sd is qualified against its six-sample
+ * waveform at the acquired level, not exact G.711 amplitudes. Raw characters
+ * retain the distinction between signed zeros for sub-threshold signals.
+ * A call after completion does not consume the supplied octet. */
 enum v90_phase3_sd_receiver_result v90_phase3_sd_receiver_receive(
 	struct v90_phase3_sd_receiver *receiver, uint8_t network_octet);
 

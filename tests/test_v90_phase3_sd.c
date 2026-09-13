@@ -233,7 +233,7 @@ static bool test_receiver_acquisition(void)
 		CHECK(next_octet(&sd, &octet),
 		      "could not generate acquisition symbol %zu", index);
 		if (index == 3 || index == 14)
-			octet ^= UINT8_C(0x01);
+			octet ^= UINT8_C(0x80);
 		result = v90_phase3_sd_receiver_receive(&receiver, octet);
 		CHECK(result == (index ==
 				       V90_PHASE3_SD_ACQUISITION_SYMBOLS - 1u ?
@@ -271,10 +271,10 @@ static bool test_receiver_sbar_error_budget(void)
 
 		CHECK(next_octet(&sd_bar, &octet), "could not generate S-bar");
 		if (index == 20 || index == 30)
-			octet ^= UINT8_C(0x01);
+			octet ^= UINT8_C(0x80);
 		if (index == 40) {
 			struct v90_phase3_sd_receiver saved = receiver;
-			uint8_t corrupt = octet ^ UINT8_C(0x01);
+			uint8_t corrupt = expected_octet(G711_LAW_PCMA, 107, true);
 
 			CHECK(v90_phase3_sd_receiver_receive(
 				      &receiver, corrupt) ==
@@ -296,6 +296,157 @@ static bool test_receiver_sbar_error_budget(void)
 	CHECK(receiver.bar_errors == V90_PHASE3_SD_BAR_MAX_ERRORS &&
 		      v90_phase3_sd_receiver_is_complete(&receiver),
 	      "S-bar receiver did not retain its error budget");
+	return true;
+}
+
+static bool check_sampled_receiver(
+	enum g711_law law, uint8_t training_ucode, unsigned int starting_phase,
+	unsigned int gain_percent, bool inverted)
+{
+	struct v90_phase3_sd_receiver receiver;
+	int32_t previous = 0, second = 0;
+	unsigned int changed = 0, detected = 0, bar_detected = 0;
+	size_t received = 0;
+
+	CHECK(v90_phase3_sd_receiver_init(&receiver, law, training_ucode) ==
+		      V90_PHASE3_SD_RECEIVER_OK, "sampled receiver init failed");
+	for (enum v90_phase3_sd_kind kind = V90_PHASE3_SD;
+	     kind <= V90_PHASE3_SD_BAR; ++kind) {
+		struct v90_phase3_sd tx;
+
+		CHECK(v90_phase3_sd_init(&tx, law, training_ucode, kind) ==
+			      V90_PHASE3_SD_OK, "sampled source init failed");
+		for (size_t i = 0; v90_phase3_sd_remaining(&tx); ++i) {
+			struct v90_pcm_symbol symbol;
+			enum v90_phase3_sd_receiver_result result;
+			int32_t filtered;
+			uint8_t octet;
+
+			CHECK(v90_phase3_sd_next(&tx, &symbol) == V90_PHASE3_SD_OK,
+			      "sampled source failed");
+			/* Gain, two postcursors, and a second G.711 boundary. The
+			 * filter is continuous through both acquisition and reversal. */
+			filtered = (90 * symbol.sample + 8 * previous + 2 * second) *
+				   (int32_t)gain_percent / 10000;
+			second = previous;
+			previous = symbol.sample;
+			if (inverted)
+				filtered = -filtered;
+			octet = encode_sample(law, (int16_t)filtered);
+			changed += octet != symbol.octet;
+			if (kind == V90_PHASE3_SD && i < starting_phase)
+				continue;
+			result = v90_phase3_sd_receiver_receive(&receiver, octet);
+			received++;
+			if (result == V90_PHASE3_SD_RECEIVER_SD_DETECTED) {
+				CHECK(kind == V90_PHASE3_SD && received ==
+					      V90_PHASE3_SD_ACQUISITION_SYMBOLS,
+				      "sampled Sd acquired at the wrong boundary");
+				detected++;
+			} else if (result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED) {
+				CHECK(kind == V90_PHASE3_SD_BAR && i + 1 ==
+					      V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS,
+				      "sampled S-bar acquired at the wrong boundary");
+				bar_detected++;
+			} else {
+				CHECK(result == (kind == V90_PHASE3_SD_BAR &&
+						 i + 1 == V90_PHASE3_SD_BAR_SYMBOLS ?
+					V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE :
+					V90_PHASE3_SD_RECEIVER_OK),
+				      "sampled Sd returned %s at kind %u index %zu",
+				      v90_phase3_sd_receiver_result_name(result),
+				      (unsigned int)kind, i);
+			}
+		}
+	}
+	CHECK(changed > V90_PHASE3_SD_SYMBOLS / 2 && detected == 1 &&
+		      bar_detected == 1 &&
+		      v90_phase3_sd_receiver_is_complete(&receiver),
+	      "sampled Sd was not acquired through a lossy channel");
+	return true;
+}
+
+static bool test_sampled_receiver(void)
+{
+	static const uint8_t codes[] = { 67, 79, 91 };
+	static const unsigned int gains[] = { 50, 100, 125 };
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (size_t c = 0; c < ARRAY_LENGTH(codes); ++c)
+			for (size_t g = 0; g < ARRAY_LENGTH(gains); ++g)
+				for (unsigned int phase = 0; phase < 6; ++phase)
+					for (unsigned int invert = 0; invert < 2; ++invert)
+						CHECK(check_sampled_receiver(law, codes[c],
+							      phase, gains[g], invert != 0),
+						      "law=%u code=%u phase=%u gain=%u invert=%u",
+						      (unsigned int)law, codes[c], phase,
+						      gains[g], invert);
+	return true;
+}
+
+static bool test_reject_unrelated_samples(void)
+{
+	static const int16_t tone[] = { 1000, 500, -500, -1000, -500, 500 };
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned int kind = 0; kind < 5; ++kind) {
+			struct v90_phase3_sd_receiver receiver;
+			uint32_t noise = UINT32_C(0x8a1937cb);
+
+			CHECK(v90_phase3_sd_receiver_init(&receiver, law, 79) ==
+				      V90_PHASE3_SD_RECEIVER_OK, "noise init failed");
+			for (unsigned int i = 0; i < 16000; ++i) {
+				int16_t sample = kind == 0 ? 0 : kind == 1 ? 2000 :
+					kind == 2 ? tone[i % ARRAY_LENGTH(tone)] :
+					(i % 2 == 0 ? 2000 : -2000);
+				uint8_t octet = encode_sample(law, sample);
+
+				noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
+				if (kind == 4)
+					octet = (uint8_t)(noise >> 24);
+				CHECK(v90_phase3_sd_receiver_receive(&receiver, octet) ==
+					      V90_PHASE3_SD_RECEIVER_OK &&
+					      receiver.stage == V90_PHASE3_SD_RECEIVER_SEARCH,
+				      "false Sd: law=%u kind=%u sample=%u",
+				      (unsigned int)law, kind, i);
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_short_reversal(void)
+{
+	struct v90_phase3_sd_receiver receiver;
+	struct v90_phase3_sd sequence;
+	uint8_t octet;
+
+	CHECK(v90_phase3_sd_receiver_init(&receiver, G711_LAW_PCMU, 79) ==
+		      V90_PHASE3_SD_RECEIVER_OK &&
+	      v90_phase3_sd_init(&sequence, G711_LAW_PCMU, 79, V90_PHASE3_SD) ==
+		      V90_PHASE3_SD_OK, "short-reversal init failed");
+	for (unsigned int i = 0; i < V90_PHASE3_SD_ACQUISITION_SYMBOLS; ++i) {
+		CHECK(next_octet(&sequence, &octet), "short-reversal source failed");
+		(void)v90_phase3_sd_receiver_receive(&receiver, octet);
+	}
+	CHECK(receiver.stage == V90_PHASE3_SD_RECEIVER_SD && receiver.level > 0,
+	      "short-reversal test did not acquire sampled Sd");
+	const int32_t level = receiver.level;
+
+	for (unsigned int i = 0; i < 36; ++i) {
+		CHECK(next_octet(&sequence, &octet), "short-reversal source failed");
+		if (i < 6)
+			octet ^= UINT8_C(0x80);
+		else if (i < 18)
+			octet = encode_sample(G711_LAW_PCMU, 0);
+		CHECK(v90_phase3_sd_receiver_receive(&receiver, octet) ==
+			      V90_PHASE3_SD_RECEIVER_OK &&
+		      receiver.stage == V90_PHASE3_SD_RECEIVER_SD &&
+		      receiver.level == level,
+		      "short reversal or silence qualified S-bar or retuned its level");
+	}
+	CHECK(receiver.bar_candidate_symbols == 0,
+	      "short-reversal qualification did not reset");
 	return true;
 }
 
@@ -338,6 +489,18 @@ static bool test_receiver_validation(void)
 			     (enum v90_phase3_sd_receiver_result)7),
 			     "unknown") == 0,
 	      "receiver result names are wrong");
+	CHECK(v90_phase3_sd_receiver_init(&receiver, G711_LAW_PCMU, 79) ==
+		      V90_PHASE3_SD_RECEIVER_OK, "level validation init failed");
+	const int32_t invalid_levels[] = { -1, 1, INT32_MAX };
+
+	for (size_t i = 0; i < ARRAY_LENGTH(invalid_levels); ++i) {
+		receiver.level = invalid_levels[i];
+		saved = receiver;
+		CHECK(v90_phase3_sd_receiver_receive(&receiver, 0xff) ==
+			      V90_PHASE3_SD_RECEIVER_INVALID_STATE &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "invalid sampled level was not transactional");
+	}
 	return true;
 }
 
@@ -408,6 +571,10 @@ int main(void)
 		{ "receiver acquisition", test_receiver_acquisition },
 		{ "receiver S-bar error budget",
 		  test_receiver_sbar_error_budget },
+		{ "sampled receiver gain and two-postcursor channel",
+		  test_sampled_receiver },
+		{ "reject unrelated sampled signals", test_reject_unrelated_samples },
+		{ "reject short reversal and silence", test_short_reversal },
 		{ "receiver validation", test_receiver_validation },
 		{ "validation and transactionality", test_validation },
 	};

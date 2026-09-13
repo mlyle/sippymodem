@@ -9,6 +9,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+enum { SD_MIN_SAMPLED_LEVEL = 128, SD_MAX_SAMPLED_LEVEL = 32768 };
+
 static bool stage_is_valid(enum v90_phase3_sd_receiver_stage stage)
 {
 	return stage >= V90_PHASE3_SD_RECEIVER_SEARCH &&
@@ -24,7 +26,10 @@ bool v90_phase3_sd_receiver_is_valid(
 	    receiver->training_ucode > V90_INFO1A_MAX_TRAINING_UCODE ||
 	    receiver->history_count > V90_PHASE3_SD_ACQUISITION_SYMBOLS ||
 	    receiver->history_cursor >= V90_PHASE3_SD_ACQUISITION_SYMBOLS ||
-	    receiver->next_phase >= V90_PHASE3_SD_PATTERN_SYMBOLS)
+	    receiver->next_phase >= V90_PHASE3_SD_PATTERN_SYMBOLS ||
+	    (receiver->level != 0 &&
+	     (receiver->level < SD_MIN_SAMPLED_LEVEL ||
+	      receiver->level > SD_MAX_SAMPLED_LEVEL)))
 		return false;
 
 	switch (receiver->stage) {
@@ -93,8 +98,36 @@ static bool symbol_matches(
 			   V90_PHASE3_SD_TRAINING_OFFSET) & UINT8_C(0x7f));
 	bool expected_positive = (phase < 3) != inverted;
 
+	if (receiver->level != 0) {
+		int32_t expected = phase == 1 || phase == 4 ? 0 :
+			(expected_positive ? receiver->level : -receiver->level);
+		int32_t error = symbol->sample - expected;
+
+		/* A quarter-level window admits quantization and modest ISI,
+		 * including residual energy in the zero slots. The six-phase
+		 * template still rejects constant levels and single tones. */
+		return error >= -receiver->level / 4 &&
+		       error <= receiver->level / 4;
+	}
 	return symbol->ucode == expected_ucode &&
 	       symbol->positive == expected_positive;
+}
+
+static int32_t acquired_level(const struct v90_phase3_sd_receiver *receiver)
+{
+	int32_t magnitude = 0;
+
+	for (size_t i = 0; i < V90_PHASE3_SD_ACQUISITION_SYMBOLS; ++i) {
+		int32_t sample = receiver->law == G711_LAW_PCMU ?
+			g711_decode_pcmu(receiver->history[i]) :
+			g711_decode_pcma(receiver->history[i]);
+
+		magnitude += sample < 0 ? -sample : sample;
+	}
+	/* Four of each six Sd samples carry W. Averaging across three periods
+	 * makes the level independent of the entry phase. Keep it fixed through
+	 * S-bar so reversal, silence, and unrelated data cannot retune the test. */
+	return magnitude / (V90_PHASE3_SD_ACQUISITION_SYMBOLS * 4 / 6);
 }
 
 static void push_history(
@@ -157,8 +190,16 @@ static enum v90_phase3_sd_receiver_result receive_search(
 	uint8_t phase;
 
 	push_history(receiver, network_octet);
-	if (receiver->history_count < V90_PHASE3_SD_ACQUISITION_SYMBOLS ||
-	    !find_sd_phase(receiver, &phase))
+	if (receiver->history_count < V90_PHASE3_SD_ACQUISITION_SYMBOLS)
+		return V90_PHASE3_SD_RECEIVER_OK;
+	receiver->level = acquired_level(receiver);
+	if (receiver->level > SD_MAX_SAMPLED_LEVEL) {
+		receiver->level = 0;
+		return V90_PHASE3_SD_RECEIVER_OK;
+	}
+	if (receiver->level < SD_MIN_SAMPLED_LEVEL)
+		receiver->level = 0;
+	if (!find_sd_phase(receiver, &phase))
 		return V90_PHASE3_SD_RECEIVER_OK;
 	receiver->stage = V90_PHASE3_SD_RECEIVER_SD;
 	receiver->next_phase = phase;
