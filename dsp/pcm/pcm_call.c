@@ -892,6 +892,10 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    !pcm_downstream_equalizer_is_valid(&call->downstream_equalizer) ||
+	    (call->downstream_equalizer.training_level &&
+	     (call->local_role != V90_ANALOG_MODEM || call->downstream_equalizer.law != call->law ||
+	      !uses_pcm_upstream(call))) ||
 	    !v92_data_quality_is_valid(&call->pcm_upstream_quality) ||
 	    (call->v92_rate_renegotiation_active &&
 	     (!uses_pcm_upstream(call) ||
@@ -1271,6 +1275,7 @@ static enum pcm_call_result begin_retrain(
 	    V34_PHASE2_TONE_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
 	next.state = (union pcm_call_state){ 0 };
+	next.downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
 	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
 	next.v92_peer_jd = (struct v92_jd){ 0 };
 	next.b1_deadline_remaining_samples = 0u;
@@ -1673,6 +1678,35 @@ static int16_t decode_octet(enum g711_law law, uint8_t octet)
 {
 	return law == G711_LAW_PCMA ?
 		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
+}
+
+static bool condition_downstream(struct pcm_call *call, uint8_t *octet)
+{
+	if (call->local_role != V90_ANALOG_MODEM || !uses_pcm_upstream(call))
+		return true;
+	struct pcm_downstream_equalizer *equalizer = &call->downstream_equalizer;
+	if (call->stage == PCM_CALL_PHASE3 &&
+	    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI) {
+		const struct v90_phase4_ri_search *ri = &call->state.phase3.v92_analog.receive.ri;
+		/* Acquisition sees the original waveform, never its own decisions.
+		 * Discard the fit if Ri returns to hunt. An accepted sign/magnitude
+		 * window supplies the binary target without using later payload. */
+		if (!v90_phase4_ri_search_is_acquired(ri) ||
+		    !v90_phase4_ri_level_matches(call->law, ri->training_ucode,
+			decode_octet(call->law, *octet))) {
+			if (equalizer->training_level)
+				*equalizer = (struct pcm_downstream_equalizer){ 0 };
+			return true;
+		}
+		if (!equalizer->training_level) {
+			int16_t level;
+			if (!g711_ucode_sample(call->law, ri->training_ucode, true, &level) ||
+			    !pcm_downstream_equalizer_init(equalizer, call->law, level))
+				return false;
+		}
+		return pcm_downstream_equalizer_train(equalizer, *octet);
+	}
+	return pcm_downstream_equalizer_receive(equalizer, *octet, octet);
 }
 
 static enum pcm_call_result entry_result(
@@ -4012,6 +4046,7 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 
 static void complete_cleardown(struct pcm_call *call)
 {
+	call->downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
 	if (uses_pcm_upstream(call))
 		memset(&call->state, 0, sizeof(call->state));
 	call->stage = PCM_CALL_CLOSED;
@@ -4517,6 +4552,8 @@ static enum pcm_call_result v92_data_octet_owned(
 				return PCM_CALL_NUMERIC_FAILURE;
 		}
 		*generated = encode_sample(call->law, sample);
+		if (!condition_downstream(call, &received_octet))
+			return PCM_CALL_NUMERIC_FAILURE;
 		bool suppress_frame = false;
 		if (data_path_is_online_owned(call) || path->fast.deadline_remaining) {
 			enum pcm_r_rx_result rd = pcm_r_rx_receive(&path->rd, received_octet);
@@ -4960,6 +4997,10 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_V34_FALLBACK_READY;
 	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
+	if (!condition_downstream(call, &received_octet)) {
+		call->failed = true;
+		return PCM_CALL_NUMERIC_FAILURE;
+	}
 	generated = encode_sample(call->law, 0);
 	emitted.processed = call->stage;
 	switch (call->stage) {

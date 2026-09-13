@@ -37,7 +37,7 @@ V34_NATIVE_OBJECTS := \
 	$(V34_NATIVE_SOURCE_NAMES:%.c=$(BUILD_DIR)/%.o)
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
-	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c \
+	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
 	pcm_echo_reference.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
 	pcm_binary_sign.c \
@@ -2092,6 +2092,11 @@ V90_MP_RECEIVER_TEST_OBJECTS := \
 	$(CRC16_CCITT_FALSE_OBJECT) \
 	$(BUILD_DIR)/v90_mp.o \
 	$(BUILD_DIR)/v90_mp_receiver.o
+PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_equalizer
+PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_downstream_equalizer.o \
+	$(BUILD_DIR)/pcm_downstream_equalizer.o \
+	$(BUILD_DIR)/qam_equalizer.o $(BUILD_DIR)/qam.o $(BUILD_DIR)/g711.o
 PCM_DOWNSTREAM_RX_TEST_BINARY := $(BUILD_DIR)/test_pcm_downstream_rx
 PCM_DOWNSTREAM_RX_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_downstream_rx.o \
@@ -2806,6 +2811,7 @@ PCM_CALL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v92_upstream_data_tx.o \
 	$(BUILD_DIR)/v34_data_quality.o \
 	$(BUILD_DIR)/pcm_call.o \
+	$(BUILD_DIR)/pcm_downstream_equalizer.o \
 	$(BUILD_DIR)/v34_info0.o \
 	$(BUILD_DIR)/v34_phase2_selection.o \
 	$(BUILD_DIR)/v90_phase4_startup.o \
@@ -3303,6 +3309,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_MP_TEST_BINARY) \
 	$(V90_MP_RECEIVER_TEST_BINARY) \
 	$(PCM_DOWNSTREAM_RX_TEST_BINARY) \
+	$(PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY) \
 	$(V90_CP_TEST_BINARY) \
 	$(V90_PCM_MAPPING_TEST_BINARY) \
 	$(V90_PCM_FRAME_ENCODER_TEST_BINARY) \
@@ -3628,6 +3635,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_MP_TEST_OBJECTS:.o=.d) \
 	$(V90_MP_RECEIVER_TEST_OBJECTS:.o=.d) \
 	$(PCM_DOWNSTREAM_RX_TEST_OBJECTS:.o=.d) \
+	$(PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS:.o=.d) \
 	$(V90_CP_TEST_OBJECTS:.o=.d) \
 	$(V90_PCM_MAPPING_TEST_OBJECTS:.o=.d) \
 	$(V90_PCM_FRAME_ENCODER_TEST_OBJECTS:.o=.d) \
@@ -4517,6 +4525,9 @@ $(V90_PCM_STREAM_RX_TEST_BINARY): $(V90_PCM_STREAM_RX_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(PCM_DOWNSTREAM_RX_TEST_BINARY): $(PCM_DOWNSTREAM_RX_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(PCM_DOWNSTREAM_EQUALIZER_TEST_BINARY): $(PCM_DOWNSTREAM_EQUALIZER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_CP_RECEIVER_TEST_BINARY): $(V90_CP_RECEIVER_TEST_OBJECTS)
@@ -5613,6 +5624,10 @@ $(BUILD_DIR)/v90_pcm_stream_rx.o: \
 
 $(BUILD_DIR)/pcm_downstream_rx.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_rx.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_downstream_equalizer.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_equalizer.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_cp_receiver.o: \

@@ -263,6 +263,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_mp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_rx.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_downstream_equalizer.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_cp_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_pcm_mapping.c \

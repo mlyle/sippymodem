@@ -5,6 +5,7 @@
 
 #include "pcm_phase3_entry.h"
 #include "pcm_downstream_rx.h"
+#include "pcm_downstream_equalizer.h"
 #include "pcm_downstream_tx.h"
 #include "v90_analog_path.h"
 #include "v90_digital_path.h"
@@ -463,6 +464,9 @@ struct pcm_call {
 	struct pcm_call_v92_digital_phase4_configuration
 		v92_digital_phase4_configuration;
 	struct v34_full_retrain retrain;
+	/* V.92 PCM channel memory, independent of control/data coding epochs.
+	 * A full retrain clears it; Ri learns the next channel. */
+	struct pcm_downstream_equalizer downstream_equalizer;
 	struct v92_data_quality pcm_upstream_quality;
 	struct v92_jd v92_peer_jd;
 	uint32_t enabled_downstream_rate_mask;
@@ -557,7 +561,9 @@ enum pcm_call_result pcm_call_init_from_v34(
  * Phase 4, and retrain observation consume that sample without G.711
  * requantization. Phase 2 gain measurements thus describe the same physical
  * input inherited by Phase 3. Analogue PCM downstream and V.92 PCM upstream,
- * including their Phase 2 frontends, retain exact octets.
+ * including their Phase 2 frontends, retain exact octets. With PCM upstream
+ * selected, qualified Ri trains the analogue downstream sample equalizer;
+ * the physical sample remains unchanged for retrain observation.
  * A phase change takes effect
  * on the following call. PHASE4_READY stops V.90 after its
  * initial Phase 4 exchange and V.92 after its role-local E2u interval. The

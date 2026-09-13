@@ -998,8 +998,8 @@ static bool endpoint_data_octet(
 			&endpoint->call, received, received_sample, true, &sources,
 			&generated, &event);
 	}
-	if (result != PCM_CALL_OK)
-		return false;
+	CHECK(result == PCM_CALL_OK, "data role %u stage %u: %s",
+	      endpoint->call.local_role, endpoint->call.stage, pcm_call_result_name(result));
 	endpoint->idle_source_checked = true;
 	if (event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
 		size_t expected = endpoint->resync_data_frame ?
@@ -1008,8 +1008,8 @@ static bool endpoint_data_octet(
 		if (endpoint->call.local_role != V90_ANALOG_MODEM)
 			return false;
 		if (!downstream_frame_matches(&event.frame.downstream, expected)) {
-			if (!endpoint->resync_data_frame)
-				return false;
+			CHECK(endpoint->resync_data_frame, "downstream frame %zu (%u bits) differs",
+			      expected, event.frame.downstream.bit_count);
 		} else {
 			endpoint->resync_data_frame = false;
 			endpoint->downstream_frames = expected + 1u;
@@ -1023,8 +1023,7 @@ static bool endpoint_data_octet(
 		if (!upstream_frame_matches(
 			    &event.frame.upstream,
 			    &endpoint->upstream_received_delay, expected)) {
-			if (!endpoint->resync_data_frame)
-				return false;
+			CHECK(endpoint->resync_data_frame, "upstream frame %zu differs", expected);
 		} else {
 			endpoint->resync_data_frame = false;
 			endpoint->upstream_frames = expected + 1u;
@@ -1043,8 +1042,11 @@ static bool endpoint_octet(
 	struct pcm_call_observation observation;
 
 	if (pcm_call_phase4_is_ready(&endpoint->call)) {
+		struct pcm_downstream_equalizer channel = endpoint->call.downstream_equalizer;
+
 		if (!phase4_boundary_is_transactional(&endpoint->call, law) ||
-		    pcm_call_start_data_path(&endpoint->call) != PCM_CALL_OK)
+		    pcm_call_start_data_path(&endpoint->call) != PCM_CALL_OK ||
+		    memcmp(&channel, &endpoint->call.downstream_equalizer, sizeof(channel)) != 0)
 			return false;
 		if (endpoint->call.local_role == V90_DIGITAL_MODEM)
 			endpoint->upstream_received_delay = UINT16_MAX;
@@ -1054,10 +1056,11 @@ static bool endpoint_octet(
 	if (pcm_call_current_stage(&endpoint->call) == PCM_CALL_DATA_PATH)
 		return endpoint_data_octet(
 			endpoint, received, received_sample, transmitted);
-	if (pcm_call_octet(
+	enum pcm_call_result result = pcm_call_octet(
 		    &endpoint->call, received, received_sample, transmitted,
-		    &observation) != PCM_CALL_OK)
-		return false;
+		    &observation);
+	CHECK(result == PCM_CALL_OK, "training role %u stage %u: %s",
+	      endpoint->call.local_role, endpoint->call.stage, pcm_call_result_name(result));
 	if (endpoint->call.protocol == PCM_PROTOCOL_V90 &&
 	    endpoint->call.local_role == V90_DIGITAL_MODEM &&
 	    observation.phase2.kind == PCM_PHASE2_EVENT_READY_FOR_INFO1) {
@@ -1686,6 +1689,8 @@ static bool run_configured_call(
 
 		CHECK(pcm_call_is_online(&analog.call) &&
 		      pcm_call_is_online(&digital.call) &&
+		      analog.call.downstream_equalizer.training_level == 0 &&
+		      digital.call.downstream_equalizer.training_level == 0 &&
 		      !analog.call.retrain_active &&
 		      !digital.call.retrain_active &&
 		      !analog.call.b1_deadline_armed &&
@@ -3967,6 +3972,7 @@ static bool run_full_retrain(
 		.carrier.profile.minimum_line_power;
 	CHECK(pcm_call_start_retrain(&initiator->call) == PCM_CALL_OK &&
 	      initiator->call.stage == PCM_CALL_RETRAIN_SILENCE &&
+	      initiator->call.downstream_equalizer.training_level == 0 &&
 	      initiator->call.retrain_active &&
 	      initiator->call.round_trip_delay_stored &&
 	      initiator->call.round_trip_delay_samples == initiator_prior_rtd &&
@@ -4019,6 +4025,7 @@ static bool run_full_retrain(
 		if (!remote_retrain_started &&
 		    responder->call.stage == PCM_CALL_RETRAIN_SILENCE) {
 			CHECK(responder->call.retrain_active &&
+			      responder->call.downstream_equalizer.training_level == 0 &&
 			      responder->call.round_trip_delay_stored &&
 			      responder->call.round_trip_delay_samples ==
 				      responder_prior_rtd,
@@ -5679,6 +5686,7 @@ static bool retrain_preserves_protocol(
 
 	if (pcm_call_start_retrain(&retraining) != PCM_CALL_OK ||
 	    retraining.stage != PCM_CALL_RETRAIN_SILENCE ||
+	    retraining.downstream_equalizer.training_level != 0 ||
 	    !retraining.round_trip_delay_stored ||
 	    retraining.round_trip_delay_samples != prior_round_trip_delay)
 		return false;
@@ -6104,6 +6112,8 @@ static bool v92_data_boundary(struct pcm_call *call)
 	      v92_phase4_e2u_handoff(&call->state.phase4.v92.owner.e2u, &handoff) ==
 		      V92_PHASE4_E2U_OK &&
 	      pcm_call_start_data_path(call) == PCM_CALL_OK &&
+	      memcmp(&call->downstream_equalizer, &snapshot.downstream_equalizer,
+		      sizeof(call->downstream_equalizer)) == 0 &&
 	      call->stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(call) &&
 	      !pcm_call_is_online(call) && call->b1_deadline_armed &&
 	      call->b1_deadline_remaining_samples == snapshot.b1_deadline_remaining_samples,
@@ -6821,6 +6831,8 @@ static bool capture_v92_duplex_data(
 	      "V.92 downstream idle prefix changed: received %llu, sent %llu",
 	      (unsigned long long)downstream_idle, (unsigned long long)expected_downstream_idle);
 	CHECK(upstream_received >= payload_frames && downstream_received >= payload_frames &&
+	      analog.downstream_equalizer.training_level > 0 &&
+	      digital.downstream_equalizer.training_level == 0 &&
 	      upstream.rejection_checked && downstream.rejection_checked &&
 	      analog_boundary < digital_boundary && deadline_checked[0] && deadline_checked[1] &&
 	      pcm_call_is_online(&analog) && pcm_call_is_online(&digital) &&
