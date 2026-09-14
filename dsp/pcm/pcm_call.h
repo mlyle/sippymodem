@@ -153,6 +153,25 @@ struct pcm_call_v92_digital_phase4_configuration {
 	};
 };
 
+/* Explicit inputs from a prior or caller-configured short-startup profile.
+ * They do not stand in for a received INFO1d or fresh probe. The upstream
+ * mode and conventional carrier/rate identify the retained training policy.
+ * Digital receive gain is used only for conventional upstream; PCM leaves
+ * all conventional-only fields zero. The analogue role retains prior RTD,
+ * while the digital role obtains a fresh value during short ranging.
+ * Configured settings permit a local short INFO0 offer; both wire offers
+ * must select short startup before these settings are used. This owner
+ * neither learns profiles nor performs the Quick Connect Phase 1 handshake. */
+struct pcm_call_short_startup {
+	struct pcm_phase3_short_training training;
+	uint16_t round_trip_delay_samples;
+	int16_t digital_receive_gain;
+	enum pcm_upstream_mode upstream;
+	enum v34_symbol_rate conventional_symbol_rate;
+	bool conventional_high_carrier;
+	bool configured;
+};
+
 struct pcm_call_configuration {
 	enum pcm_protocol protocol;
 	enum v90_modem_role local_role;
@@ -165,6 +184,7 @@ struct pcm_call_configuration {
 	union pcm_info0_record local_info0;
 	union pcm_call_local_info1 local_info1;
 	union pcm_call_phase3_configuration phase3;
+	struct pcm_call_short_startup short_startup;
 	struct pcm_call_analog_phase4_configuration analog_phase4;
 	struct pcm_call_digital_phase4_configuration digital_phase4;
 	struct pcm_call_v92_analog_phase4_configuration v92_analog_phase4;
@@ -178,6 +198,7 @@ struct pcm_fallback_restart {
 	union pcm_info0_record local_info0;
 	union pcm_info0_record peer_info0;
 	union pcm_call_local_info1 local_info1;
+	struct pcm_call_short_startup short_startup;
 	struct pcm_call_digital_phase3_configuration phase3;
 	struct pcm_call_v92_digital_phase3_configuration v92_phase3;
 	struct pcm_call_digital_phase4_configuration phase4;
@@ -455,6 +476,7 @@ struct pcm_call {
 	union pcm_info0_record peer_info0;
 	union pcm_call_local_info1 local_info1;
 	union pcm_call_phase3_configuration phase3_configuration;
+	struct pcm_call_short_startup short_startup;
 	struct pcm_call_analog_phase4_configuration
 		analog_phase4_configuration;
 	struct pcm_call_digital_phase4_configuration

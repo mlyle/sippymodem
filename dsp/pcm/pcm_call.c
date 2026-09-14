@@ -290,6 +290,43 @@ static bool v92_digital_phase4_configuration_is_valid(
 	return false;
 }
 
+static bool short_startup_is_valid(
+	const struct pcm_call_short_startup *profile,
+	enum pcm_protocol protocol, enum v90_modem_role role,
+	const union pcm_info0_record *info0, const union pcm_call_local_info1 *info1)
+{
+	if (protocol != PCM_PROTOCOL_V92)
+		return !profile->configured;
+	if (!profile->configured)
+		return role == V90_ANALOG_MODEM ?
+			!info0->v92_analog.short_phase2_requested :
+			!info0->v92_digital.short_phase2_requested;
+	if (profile->round_trip_delay_samples > PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+		    PHASE2_RANGING_TURNAROUND_SAMPLES ||
+	    profile->training.power_reduction_db > V34_INFO1_MAX_POWER_REDUCTION_DB ||
+	    profile->training.preemphasis_filter_index >
+		    V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX ||
+	    profile->training.projected_data_rate_2400_bps_units >
+		    V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS ||
+	    profile->digital_receive_gain < 0)
+		return false;
+	if (profile->upstream == PCM_UPSTREAM_PCM)
+		return pcm_upstream_is_enabled(role, info1) &&
+			!profile->conventional_symbol_rate &&
+			!profile->conventional_high_carrier &&
+			!profile->training.preemphasis_filter_index &&
+			!profile->training.projected_data_rate_2400_bps_units &&
+			!profile->digital_receive_gain;
+	return profile->upstream == PCM_UPSTREAM_V34 &&
+		profile->conventional_symbol_rate >= V34_SYMBOL_RATE_3000 &&
+		profile->conventional_symbol_rate <= V34_SYMBOL_RATE_3429 &&
+		profile->training.projected_data_rate_2400_bps_units != 0 &&
+		(role == V90_ANALOG_MODEM ?
+			profile->conventional_symbol_rate ==
+				info1->analog.upstream_symbol_rate :
+			profile->digital_receive_gain > 0);
+}
+
 static bool configuration_is_valid(
 	const struct pcm_call_configuration *configuration)
 {
@@ -299,15 +336,16 @@ static bool configuration_is_valid(
 	    !g711_law_is_valid(configuration->law) ||
 	    !downstream_rate_mask_is_valid(
 		    configuration->enabled_downstream_rate_mask) ||
-	    configuration->phase2_nominal_amplitude <= 0)
+	    configuration->phase2_nominal_amplitude <= 0 ||
+	    !short_startup_is_valid(&configuration->short_startup,
+		    configuration->protocol, configuration->local_role,
+		    &configuration->local_info0, &configuration->local_info1))
 		return false;
 	if (configuration->protocol == PCM_PROTOCOL_V92) {
 		if (configuration->local_role == V90_ANALOG_MODEM)
 			return v92_info0a_is_valid(
 				       &configuration->local_info0.v92_analog) &&
 			       configuration->local_info0.v92_analog.v92_capable &&
-			       !configuration->local_info0.v92_analog
-				       .short_phase2_requested &&
 			       v92_analog_configuration_is_valid(
 				       &configuration->local_info1,
 				       &configuration->phase3,
@@ -323,8 +361,6 @@ static bool configuration_is_valid(
 		return v92_info0d_is_valid(
 			       &configuration->local_info0.v92_digital) &&
 		       configuration->local_info0.v92_digital.v92_capable &&
-		       !configuration->local_info0.v92_digital
-			       .short_phase2_requested &&
 		       info0_law(
 			       &configuration->local_info0.v92_digital.v90) ==
 			       configuration->law &&
@@ -372,6 +408,8 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 	    !pcm_modem_role_is_valid(call->local_role) ||
 	    !g711_law_is_valid(call->law) ||
 	    call->phase2_nominal_amplitude <= 0 ||
+	    !short_startup_is_valid(&call->short_startup, call->protocol,
+		    call->local_role, &call->local_info0, &call->local_info1) ||
 	    !stored_local_info0_is_valid(call) ||
 	    !stored_peer_info0_is_valid(call) ||
 	    !v34_full_retrain_is_valid(&call->retrain) ||
@@ -1192,6 +1230,7 @@ enum pcm_call_result pcm_call_init(
 		return PCM_CALL_INVALID_ARGUMENT;
 	/* Keep the complete role-local proposal and policy together. */
 	initialized.local_info1 = configuration->local_info1;
+	initialized.short_startup = configuration->short_startup;
 	if (configuration->protocol == PCM_PROTOCOL_V92 &&
 	    configuration->local_role == V90_ANALOG_MODEM) {
 		initialized.phase3_configuration.analog = configuration->phase3.analog;
@@ -1301,16 +1340,20 @@ static enum pcm_call_result begin_retrain(
 	return PCM_CALL_OK;
 }
 
-static enum pcm_call_result recover_unusable_retrain_selection(
+static enum pcm_call_result recover_unusable_phase2_selection(
 	struct pcm_call *call, enum pcm_call_result result)
 {
 	if (result != PCM_CALL_UNUSABLE_SELECTION ||
-	    !call->retrain_active || call->stage != PCM_CALL_PHASE2)
+	    call->stage != PCM_CALL_PHASE2 ||
+	    (!call->retrain_active &&
+	     call->state.phase2.startup.phase2 != PCM_PHASE2_SHORT))
 		return result;
 	/* A peer can answer INFO1 with a symbol rate for which its INFO1d offered
 	 * no usable data rate.  Refuse that profile, but keep the established
 	 * call agreement and request another full retrain. V.92 9.3 shares
-	 * V.90's full Phase 2 recovery procedures without dropping V.92. */
+	 * V.90's full Phase 2 recovery procedures without dropping V.92.
+	 * A short-startup profile that no longer matches the peer also needs
+	 * full training. Recover after the old INFO1 event, without arming B1. */
 	return begin_retrain(call, false);
 }
 
@@ -1642,6 +1685,7 @@ enum pcm_call_result pcm_call_v34_fallback_handoff(
 		.local_info0 = call->local_info0,
 		.peer_info0 = call->peer_info0,
 		.local_info1 = call->local_info1,
+		.short_startup = call->short_startup,
 		.phase3 = call->phase3_configuration.digital,
 		.v92_phase3 = call->phase3_configuration.v92_digital,
 		.phase4 = call->digital_phase4_configuration,
@@ -1678,6 +1722,7 @@ enum pcm_call_result pcm_call_init_from_v34(
 		.phase2_nominal_amplitude = restart->phase2_nominal_amplitude,
 		.local_info0 = restart->local_info0,
 		.local_info1 = restart->local_info1,
+		.short_startup = restart->short_startup,
 		.phase3.digital = restart->phase3,
 		.phase3.v92_digital = restart->v92_phase3,
 		.digital_phase4 = restart->phase4,
@@ -1832,9 +1877,28 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 {
 	struct pcm_phase3_entry entry;
 	struct pcm_call next;
-	enum pcm_phase3_entry_result result =
-		pcm_phase3_entry_from_phase2(
-			&entry, &call->state.phase2, call->law, NULL);
+	const struct pcm_call_short_startup *profile = &call->short_startup;
+	const bool short_startup =
+		call->state.phase2.startup.phase2 == PCM_PHASE2_SHORT;
+
+	if (short_startup && !profile->configured)
+		return PCM_CALL_UNUSABLE_SELECTION;
+	/* Check the wire choice before applying any retained training policy.
+	 * A stale mode, carrier, or symbol rate requires fresh full training. */
+	if (short_startup) {
+		const struct pcm_phase2_info1a *wire = &call->state.phase2.state.info1.analog;
+
+		if ((wire->kind == PCM_INFO1A_PCM) !=
+			    (profile->upstream == PCM_UPSTREAM_PCM) ||
+		    (wire->kind == PCM_INFO1A_CONVENTIONAL &&
+		     (wire->record.conventional.upstream_symbol_rate !=
+			      profile->conventional_symbol_rate ||
+		      wire->short_high_carrier != profile->conventional_high_carrier)))
+			return PCM_CALL_UNUSABLE_SELECTION;
+	}
+	enum pcm_phase3_entry_result result = pcm_phase3_entry_from_phase2(
+		&entry, &call->state.phase2, call->law,
+		short_startup ? &profile->training : NULL);
 
 	if (result != PCM_PHASE3_ENTRY_OK)
 		return entry_result(result);
@@ -1901,7 +1965,11 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		struct v90_phase3_digital_station station;
 		int16_t receive_gain;
 
-		if (pcm_phase2_receive_gain(
+		if (short_startup) {
+			receive_gain = call->short_startup.digital_receive_gain;
+			if (receive_gain <= 0)
+				return PCM_CALL_UNUSABLE_SELECTION;
+		} else if (pcm_phase2_receive_gain(
 			    &call->state.phase2, &receive_gain) != PCM_PHASE2_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		result = pcm_phase3_entry_start_v90_digital(
@@ -1957,6 +2025,38 @@ static enum pcm_call_result start_digital_info1(struct pcm_call *call)
 	return PCM_CALL_OK;
 }
 
+static enum pcm_phase2_result start_short_analog_info1(struct pcm_call *call)
+{
+	struct pcm_info1_selection selection = {
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_SHORT },
+		.upstream = call->short_startup.upstream,
+	};
+
+	if (!call->short_startup.configured)
+		return PCM_PHASE2_INVALID_STATE;
+	if (selection.upstream == PCM_UPSTREAM_PCM) {
+		if (!call->local_info1.pcm_upstream_enabled)
+			return PCM_PHASE2_INVALID_STATE;
+		selection.analog.pcm = call->local_info1.v92_analog;
+		if (!select_training_ucode(call, &selection.analog.pcm.training_ucode))
+			return PCM_PHASE2_INVALID_STATE;
+	} else {
+		selection.short_high_carrier = call->short_startup.conventional_high_carrier;
+		selection.analog.conventional = call->local_info1.analog;
+		selection.analog.conventional.frequency_offset_1_50_hz_units =
+			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+		if (!select_training_ucode(call, &selection.analog.conventional.training_ucode))
+			return PCM_PHASE2_INVALID_STATE;
+	}
+	enum pcm_phase2_result result = pcm_phase2_start_short_analog_info1(
+		&call->state.phase2, &selection);
+	if (result == PCM_PHASE2_OK) {
+		call->round_trip_delay_samples = call->short_startup.round_trip_delay_samples;
+		call->round_trip_delay_stored = true;
+	}
+	return result;
+}
+
 static enum pcm_call_result advance_phase2(
 	struct pcm_call *call, const struct pcm_phase2_event *event)
 {
@@ -1993,8 +2093,9 @@ static enum pcm_call_result advance_phase2(
 		if (startup.protocol != call->protocol)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (call->local_role == V90_ANALOG_MODEM)
-			result = pcm_phase2_start_analog_info1(
-				&call->state.phase2);
+			result = startup.phase2 == PCM_PHASE2_SHORT ?
+				start_short_analog_info1(call) :
+				pcm_phase2_start_analog_info1(&call->state.phase2);
 		else {
 			call_result = start_digital_info1(call);
 			if (call_result != PCM_CALL_OK)
@@ -5086,7 +5187,7 @@ enum pcm_call_result pcm_call_octet(
 	default:
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
-	result = recover_unusable_retrain_selection(call, result);
+	result = recover_unusable_phase2_selection(call, result);
 	result = recover_rate_renegotiation_failure(call, result);
 	if (cleardown_is_active_owned(call)) {
 		call->b1_deadline_armed = false;
