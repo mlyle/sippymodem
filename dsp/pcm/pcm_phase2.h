@@ -61,7 +61,7 @@ struct pcm_phase2_event {
 };
 
 union pcm_phase2_state {
-	struct v90_phase2_ranging ranging;
+	struct pcm_phase2_ranging ranging;
 	struct v90_phase2_initial_probe initial_probe;
 	struct v90_phase2_probe_turnaround turnaround;
 	struct v90_phase2_reciprocal_probe reciprocal_probe;

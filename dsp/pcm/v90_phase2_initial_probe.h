@@ -4,13 +4,13 @@
 #define V90_PHASE2_INITIAL_PROBE_H
 
 #include "phase2_initial_probe.h"
-#include "v90_phase2_ranging.h"
+#include "pcm_phase2_ranging.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
 struct v90_phase2_initial_probe {
-	struct v90_phase2_ranging ranging;
+	struct pcm_phase2_ranging ranging;
 	struct phase2_initial_probe control;
 };
 
@@ -19,7 +19,7 @@ struct v90_phase2_initial_probe {
  * acquisition on the next received sample. */
 enum phase2_initial_probe_result v90_phase2_initial_probe_init(
 	struct v90_phase2_initial_probe *probe,
-	const struct v90_phase2_ranging *completed_ranging);
+	const struct pcm_phase2_ranging *completed_ranging);
 bool v90_phase2_initial_probe_is_valid(
 	const struct v90_phase2_initial_probe *probe);
 

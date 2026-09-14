@@ -211,7 +211,7 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 		return false;
 	switch (phase2->stage) {
 	case PCM_PHASE2_RANGING:
-		child_valid = v90_phase2_ranging_is_valid(
+		child_valid = pcm_phase2_ranging_is_valid(
 			&phase2->state.ranging);
 		break;
 	case PCM_PHASE2_INITIAL_PROBE:
@@ -825,15 +825,15 @@ static bool sample_ranging(
 	struct pcm_phase2 *phase2, int16_t received_sample,
 	int16_t *transmit_sample, struct pcm_phase2_event *event)
 {
-	struct v90_phase2_ranging_event child;
+	struct pcm_phase2_ranging_event child;
 	enum phase2_ranging_event_kind ready =
 		phase2->local_role == V90_ANALOG_MODEM ?
 			PHASE2_PROBE_TRANSMIT_READY :
 			PHASE2_PROBE_RECEIVE_READY;
 
-	if (v90_phase2_ranging_sample(
+	if (pcm_phase2_ranging_sample(
 		    &phase2->state.ranging, received_sample,
-		    transmit_sample, &child) != V90_PHASE2_RANGING_OK)
+		    transmit_sample, &child) != PCM_PHASE2_RANGING_OK)
 		return false;
 	if (child.exchange_event.peer_info0_event == PCM_PEER_INFO0_RECEIVED) {
 		phase2->peer_info0 = child.exchange_event.peer_info0;
@@ -896,7 +896,7 @@ static bool sample_initial_probe(
 		       enter_turnaround(phase2, event);
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
 		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
-			struct v90_phase2_ranging next =
+			struct pcm_phase2_ranging next =
 				phase2->state.initial_probe.ranging;
 
 			if (phase2_ranging_restart_after_probe(

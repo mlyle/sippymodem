@@ -39,7 +39,7 @@ struct test_delay_line {
 };
 
 struct test_endpoint {
-	struct v90_phase2_ranging ranging;
+	struct pcm_phase2_ranging ranging;
 	struct v90_phase2_initial_probe probe;
 	bool probing;
 	bool analog;
@@ -790,14 +790,14 @@ static bool endpoint_sample(
 			       transmit_sample, probe_event) ==
 		       PHASE2_INITIAL_PROBE_OK;
 	{
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_event_kind ready =
 			endpoint->analog ? PHASE2_PROBE_TRANSMIT_READY :
 					   PHASE2_PROBE_RECEIVE_READY;
 
-		if (v90_phase2_ranging_sample(
+		if (pcm_phase2_ranging_sample(
 			    &endpoint->ranging, received_sample,
-			    transmit_sample, &event) != V90_PHASE2_RANGING_OK)
+			    transmit_sample, &event) != PCM_PHASE2_RANGING_OK)
 			return false;
 		*probe_event = (struct phase2_initial_probe_event){ 0 };
 		if (event.kind == ready) {
@@ -830,12 +830,12 @@ static bool check_initial_probe(enum test_codec codec)
 	bool digital_probe_complete = false;
 	bool tone_pair_active = false;
 
-	CHECK(v90_phase2_ranging_init_analog(
+	CHECK(pcm_phase2_ranging_init_analog(
 		      &analog.ranging, TEST_AMPLITUDE, &analog_info) ==
-		      V90_PHASE2_RANGING_OK &&
-	      v90_phase2_ranging_init_digital(
+		      PCM_PHASE2_RANGING_OK &&
+	      pcm_phase2_ranging_init_digital(
 		      &digital.ranging, TEST_AMPLITUDE, &digital_info) ==
-		      V90_PHASE2_RANGING_OK,
+		      PCM_PHASE2_RANGING_OK,
 	      "V.90 initial-probe endpoints did not initialize");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {

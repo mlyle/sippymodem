@@ -321,7 +321,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri.c \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info0_exchange.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_ranging.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_short_ranging.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_initial_probe.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase2_probe_turnaround.c \

@@ -42,6 +42,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
 	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
+	pcm_phase2_ranging.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_digital_tx.c \
 	pcm_phase3_entry.c \
@@ -2741,10 +2742,10 @@ V92_SHORT_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_short_ranging.o \
 	$(BUILD_DIR)/v92_short_ranging.o \
 	$(BUILD_DIR)/g711.o $(V34_PHASE2_TONE_OBJECTS)
-V90_PHASE2_RANGING_TEST_BINARY := \
-	$(BUILD_DIR)/test_v90_phase2_ranging
-V90_PHASE2_RANGING_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v90_phase2_ranging.o \
+PCM_PHASE2_RANGING_TEST_BINARY := \
+	$(BUILD_DIR)/test_pcm_phase2_ranging
+PCM_PHASE2_RANGING_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_phase2_ranging.o \
 	$(BUILD_DIR)/agc.o \
 	$(BUILD_DIR)/v34_gain_control.o \
 	$(BUILD_DIR)/g711.o \
@@ -2758,7 +2759,7 @@ V90_PHASE2_RANGING_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/phase2_ranging.o \
 	$(BUILD_DIR)/pcm_phase2_info0_exchange.o \
-	$(BUILD_DIR)/v90_phase2_ranging.o \
+	$(BUILD_DIR)/pcm_phase2_ranging.o \
 	$(V34_PHASE2_TONE_OBJECTS)
 V90_PHASE2_INITIAL_PROBE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v90_phase2_initial_probe
@@ -2782,7 +2783,7 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(BUILD_DIR)/phase2_info0_exchange.o \
 	$(BUILD_DIR)/phase2_ranging.o \
 	$(BUILD_DIR)/pcm_phase2_info0_exchange.o \
-	$(BUILD_DIR)/v90_phase2_ranging.o \
+	$(BUILD_DIR)/pcm_phase2_ranging.o \
 	$(BUILD_DIR)/phase2_initial_probe.o \
 	$(BUILD_DIR)/v90_phase2_initial_probe.o \
 	$(BUILD_DIR)/phase2_probe_turnaround.o \
@@ -3071,12 +3072,12 @@ PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS := $(sort \
 	$(filter-out \
 		$(BUILD_DIR)/test_pcm_info1.o \
 		$(BUILD_DIR)/test_phase2_info1_exchange.o \
-		$(BUILD_DIR)/test_v90_phase2_ranging.o \
+		$(BUILD_DIR)/test_pcm_phase2_ranging.o \
 		$(BUILD_DIR)/test_v34_phase2_probe_acquisition.o \
 		$(BUILD_DIR)/test_v34_phase2_probe_sequence.o, \
 		$(PCM_INFO1_TEST_OBJECTS) \
 		$(PHASE2_INFO1_EXCHANGE_TEST_OBJECTS) \
-		$(V90_PHASE2_RANGING_TEST_OBJECTS) \
+		$(PCM_PHASE2_RANGING_TEST_OBJECTS) \
 		$(V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS) \
 		$(V34_PHASE2_PROBE_SEQUENCE_TEST_OBJECTS)))
 V34_PHASE2_TONE_TEST_BINARY := \
@@ -3397,7 +3398,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_MARKER_TEST_BINARY) \
 	$(V90_PHASE3_RETURN_TX_TEST_BINARY) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY) \
-	$(V90_PHASE2_RANGING_TEST_BINARY) \
+	$(PCM_PHASE2_RANGING_TEST_BINARY) \
 	$(V92_SHORT_RANGING_TEST_BINARY) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_BINARY) \
 	$(PCM_CALL_TEST_BINARY) \
@@ -3726,7 +3727,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V90_PHASE3_RETURN_MARKER_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE3_RETURN_TX_TEST_OBJECTS:.o=.d) \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS:.o=.d) \
-	$(V90_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
+	$(PCM_PHASE2_RANGING_TEST_OBJECTS:.o=.d) \
 	$(V92_SHORT_RANGING_TEST_OBJECTS:.o=.d) \
 	$(V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS:.o=.d) \
 	$(PCM_CALL_TEST_OBJECTS:.o=.d) \
@@ -4705,7 +4706,7 @@ $(PCM_PHASE2_INFO0_EXCHANGE_TEST_BINARY): \
 	$(PCM_PHASE2_INFO0_EXCHANGE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
-$(V90_PHASE2_RANGING_TEST_BINARY): $(V90_PHASE2_RANGING_TEST_OBJECTS)
+$(PCM_PHASE2_RANGING_TEST_BINARY): $(PCM_PHASE2_RANGING_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_SHORT_RANGING_TEST_BINARY): $(V92_SHORT_RANGING_TEST_OBJECTS)
@@ -5887,8 +5888,8 @@ $(BUILD_DIR)/pcm_phase2_info0_exchange.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_info0_exchange.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_phase2_ranging.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase2_ranging.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase2_ranging.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase2_ranging.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase2_initial_probe.o: \

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <g711.h>
-#include <v90_phase2_ranging.h>
+#include <pcm_phase2_ranging.h>
 
 #include "test.h"
 
@@ -92,8 +92,8 @@ static bool check_ranging(
 {
 	struct v90_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
-	struct v90_phase2_ranging analog_end;
-	struct v90_phase2_ranging digital_end;
+	struct pcm_phase2_ranging analog_end;
+	struct pcm_phase2_ranging digital_end;
 	struct test_delay_line analog_to_digital = { 0 };
 	struct test_delay_line digital_to_analog = { 0 };
 	uint16_t analog_delay = 0;
@@ -106,12 +106,12 @@ static bool check_ranging(
 	size_t analog_ack_tone_start = SIZE_MAX;
 	size_t analog_first_reversal = SIZE_MAX;
 
-	CHECK(v90_phase2_ranging_init_analog(
+	CHECK(pcm_phase2_ranging_init_analog(
 		      &analog_end, amplitude, &analog) ==
-		      V90_PHASE2_RANGING_OK &&
-	      v90_phase2_ranging_init_digital(
+		      PCM_PHASE2_RANGING_OK &&
+	      pcm_phase2_ranging_init_digital(
 		      &digital_end, amplitude, &digital) ==
-		      V90_PHASE2_RANGING_OK &&
+		      PCM_PHASE2_RANGING_OK &&
 	      analog_end.info0_exchange.transport.signal_role ==
 		      PHASE2_SIGNAL_A &&
 	      digital_end.info0_exchange.transport.signal_role ==
@@ -119,10 +119,10 @@ static bool check_ranging(
 	      "V.90 ranging endpoints did not initialize");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
-		struct v90_phase2_ranging_event analog_event;
-		struct v90_phase2_ranging_event digital_event;
-		enum v90_phase2_ranging_result analog_result;
-		enum v90_phase2_ranging_result digital_result;
+		struct pcm_phase2_ranging_event analog_event;
+		struct pcm_phase2_ranging_event digital_event;
+		enum pcm_phase2_ranging_result analog_result;
+		enum pcm_phase2_ranging_result digital_result;
 		enum phase2_info0_transmit_phase analog_transmit_before =
 			analog_end.info0_exchange.transport.transmit_phase;
 		enum phase2_ranging_phase analog_phase_before =
@@ -130,14 +130,14 @@ static bool check_ranging(
 		int16_t analog_transmit;
 		int16_t digital_transmit;
 
-		analog_result = v90_phase2_ranging_sample(
+		analog_result = pcm_phase2_ranging_sample(
 			&analog_end, delay_line_receive(&digital_to_analog),
 			&analog_transmit, &analog_event);
-		digital_result = v90_phase2_ranging_sample(
+		digital_result = pcm_phase2_ranging_sample(
 			&digital_end, delay_line_receive(&analog_to_digital),
 			&digital_transmit, &digital_event);
-		CHECK(analog_result == V90_PHASE2_RANGING_OK &&
-		      digital_result == V90_PHASE2_RANGING_OK,
+		CHECK(analog_result == PCM_PHASE2_RANGING_OK &&
+		      digital_result == PCM_PHASE2_RANGING_OK,
 		      "V.90 ranging failed for codec %d at sample %zu (analog %d digital %d)",
 		      codec, index, analog_result, digital_result);
 		delay_line_transmit(
@@ -300,7 +300,7 @@ static bool encode_peer_info0(
 }
 
 static bool initialize_interrupted_ranging(
-	struct v90_phase2_ranging *ranging,
+	struct pcm_phase2_ranging *ranging,
 	struct phase2_info0_exchange *peer,
 	enum v90_modem_role local_role, enum pcm_protocol protocol,
 	enum test_codec codec, uint8_t *peer_payload,
@@ -327,13 +327,13 @@ static bool initialize_interrupted_ranging(
 			       PHASE2_SIGNAL_A : PHASE2_SIGNAL_B,
 		       TEST_AMPLITUDE, peer_payload, *peer_payload_bits,
 		       expected_bits) == PHASE2_INFO0_EXCHANGE_OK &&
-	       v90_phase2_ranging_is_valid(ranging);
+	       pcm_phase2_ranging_is_valid(ranging);
 }
 
 static bool check_info_interrupted_reversal(
 	enum test_codec codec, enum pcm_protocol protocol)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t payload_bits = 0;
@@ -352,11 +352,11 @@ static bool check_info_interrupted_reversal(
 	      "interrupted ranging fixture did not initialize");
 	ranging.control.prior_round_trip_delay_samples =
 		RETRAIN_PRIOR_RTD_SAMPLES;
-	CHECK(v90_phase2_ranging_is_valid(&ranging),
+	CHECK(pcm_phase2_ranging_is_valid(&ranging),
 	      "interrupted ranging rejected prior retrain delay");
 	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 		int16_t peer_line;
 		int16_t ignored;
@@ -378,9 +378,9 @@ static bool check_info_interrupted_reversal(
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, codec_round_trip(peer_line, codec),
-			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+			      &ignored, &event) == PCM_PHASE2_RANGING_OK,
 		      "interrupted ranging failed at %zu", index);
 		if (event.exchange_event.recovery_event ==
 		    PCM_INFO0_RECOVERY_STARTED) {
@@ -442,7 +442,7 @@ static bool test_info_interrupted_reversal(void)
 static bool check_response_after_repeat(
 	enum test_codec codec, enum pcm_protocol protocol, bool acknowledge)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	struct test_delay_line peer_to_local = { 0 };
 	struct test_delay_line local_to_peer = { 0 };
@@ -473,7 +473,7 @@ static bool check_response_after_repeat(
 	      "response-after-repeat fixture did not initialize");
 	for (size_t index = 0; index < 3u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 
 		if (!first_edge_started &&
@@ -518,9 +518,9 @@ static bool check_response_after_repeat(
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, delay_line_receive(&local_to_peer),
 			      &peer_line, &peer_event) == PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, delay_line_receive(&peer_to_local),
-			      &local_line, &event) == V90_PHASE2_RANGING_OK,
+			      &local_line, &event) == PCM_PHASE2_RANGING_OK,
 		      "response-after-repeat failed at %zu for %d/%d/%d",
 		      index, codec, protocol, acknowledge);
 		delay_line_transmit(&local_to_peer, codec_round_trip(local_line, codec));
@@ -621,7 +621,7 @@ static bool test_response_after_repeat(void)
 static bool check_deferred_first_reversal(
 	enum test_codec codec, enum pcm_protocol protocol)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t local_frame_bits = v34_phase2_info_frame_bit_count(
@@ -646,13 +646,13 @@ static bool check_deferred_first_reversal(
 		      &peer, PHASE2_SIGNAL_A, TEST_AMPLITUDE,
 		      payload, V90_INFO0A_PAYLOAD_BITS,
 		      V90_INFO0D_PAYLOAD_BITS) == PHASE2_INFO0_EXCHANGE_OK &&
-	      v90_phase2_ranging_is_valid(&ranging),
+	      pcm_phase2_ranging_is_valid(&ranging),
 	      "deferred-reversal fixture did not initialize for %d/%d",
 	      codec, protocol);
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 		const struct v34_phase2_info_generator *local_frame =
 			&ranging.info0_exchange.transport.info_transmitter.frame;
@@ -676,9 +676,9 @@ static bool check_deferred_first_reversal(
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, codec_round_trip(peer_line, codec),
-			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+			      &ignored, &event) == PCM_PHASE2_RANGING_OK,
 		      "deferred reversal failed at %zu for %d/%d",
 		      index, codec, protocol);
 		if (last_transmit_phase == PHASE2_INFO0_CARRIER_TAIL &&
@@ -734,7 +734,7 @@ static bool check_retrain_early_second_reversal(
 	uint16_t prior_round_trip_delay_samples,
 	uint16_t edge_advance_samples, bool expect_acceptance)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t payload_bits = 0;
@@ -752,12 +752,12 @@ static bool check_retrain_early_second_reversal(
 	      "retrain early-edge fixture did not initialize");
 	ranging.control.prior_round_trip_delay_samples =
 		prior_round_trip_delay_samples;
-	CHECK(v90_phase2_ranging_is_valid(&ranging),
+	CHECK(pcm_phase2_ranging_is_valid(&ranging),
 	      "retrain prior RTD made ranging invalid");
 
 	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 		uint16_t measurement_before =
 			ranging.control.measurement_elapsed_samples;
@@ -789,10 +789,10 @@ static bool check_retrain_early_second_reversal(
 			      &peer, codec_round_trip(local_line, TEST_CODEC_PCMU),
 			      &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging,
 			      codec_round_trip(peer_line, TEST_CODEC_PCMU),
-			      &local_line, &event) == V90_PHASE2_RANGING_OK,
+			      &local_line, &event) == PCM_PHASE2_RANGING_OK,
 		      "retrain early-edge ranging failed at %zu", index);
 		if (phase_before == PHASE2_RESPONSE_DELAY &&
 		    ranging.control.phase == PHASE2_RESPONSE_TONE_TAIL)
@@ -861,7 +861,7 @@ static bool test_retrain_early_second_reversal(void)
 static bool check_first_reversal_timeout_recovery(
 	enum test_codec codec, enum pcm_protocol protocol, bool interrupt_tone)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t payload_bits = 0;
@@ -880,7 +880,7 @@ static bool check_first_reversal_timeout_recovery(
 	     index < PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES + 2u * TEST_SAMPLE_LIMIT;
 	     ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase before = ranging.control.phase;
 		bool muted = interrupt_tone && first_edge != SIZE_MAX &&
 			index - first_edge >= PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES - 100u &&
@@ -896,9 +896,9 @@ static bool check_first_reversal_timeout_recovery(
 			      "peer did not answer the retried first reversal");
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) == PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, muted ? 0 : codec_round_trip(peer_line, codec),
-			      &local_line, &event) == V90_PHASE2_RANGING_OK,
+			      &local_line, &event) == PCM_PHASE2_RANGING_OK,
 		      "missing first response aborted at %zu for %d/%d/%d",
 		      index, codec, protocol, interrupt_tone);
 		if (before == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
@@ -952,7 +952,7 @@ static bool test_first_reversal_timeout_recovery(void)
 
 static bool test_second_reversal_timeout_recovery(void)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t payload_bits = 0;
@@ -976,7 +976,7 @@ static bool test_second_reversal_timeout_recovery(void)
 	      "second-reversal recovery fixture did not initialize");
 	ranging.control.prior_round_trip_delay_samples =
 		RETRAIN_PRIOR_RTD_SAMPLES;
-	CHECK(v90_phase2_ranging_is_valid(&ranging),
+	CHECK(pcm_phase2_ranging_is_valid(&ranging),
 	      "second-reversal recovery prior RTD was invalid");
 
 	for (size_t index = 0;
@@ -984,7 +984,7 @@ static bool test_second_reversal_timeout_recovery(void)
 			     2u * TEST_SAMPLE_LIMIT;
 	     ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 		int16_t peer_line;
 
@@ -1023,11 +1023,11 @@ static bool test_second_reversal_timeout_recovery(void)
 			      codec_round_trip(local_line, TEST_CODEC_PCMU),
 			      &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging,
 			      codec_round_trip(peer_line, TEST_CODEC_PCMU),
 			      &local_line, &event) ==
-			      V90_PHASE2_RANGING_OK,
+			      PCM_PHASE2_RANGING_OK,
 		      "second-reversal recovery failed at %zu", index);
 		if (!first_response_started &&
 		    phase_before == PHASE2_RESPONSE_DELAY &&
@@ -1087,7 +1087,7 @@ static bool test_second_reversal_timeout_recovery(void)
 static bool check_rejected_edge_before_info(
 	enum test_codec codec, enum pcm_protocol protocol)
 {
-	struct v90_phase2_ranging ranging = { 0 };
+	struct pcm_phase2_ranging ranging = { 0 };
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES] = { 0 };
 	size_t payload_bits = 0;
@@ -1104,7 +1104,7 @@ static bool check_rejected_edge_before_info(
 	      "rejected-edge fixture did not initialize");
 	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
 		int16_t peer_line;
 		int16_t ignored;
@@ -1112,9 +1112,9 @@ static bool check_rejected_edge_before_info(
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, codec_round_trip(peer_line, codec),
-			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+			      &ignored, &event) == PCM_PHASE2_RANGING_OK,
 		      "rejected-edge ranging failed at %zu for %d/%d",
 		      index, codec, protocol);
 		if (event.exchange_event.tone_event.kind ==
@@ -1202,7 +1202,7 @@ static bool check_completed_exchange_repeat(
 	struct v90_info0 analog = analog_capabilities();
 	struct v90_info0d digital = digital_capabilities(codec);
 	struct v90_info0d repeated = digital;
-	struct v90_phase2_ranging ranging;
+	struct pcm_phase2_ranging ranging;
 	struct phase2_info0_exchange peer;
 	uint8_t payload[V90_INFO0D_PAYLOAD_BYTES];
 	int16_t peer_line = 0;
@@ -1220,9 +1220,9 @@ static bool check_completed_exchange_repeat(
 	digital.common.acknowledges_peer_info0 = false;
 	if (reject_repeat)
 		repeated.nominal_transmit_power++;
-	CHECK(v90_phase2_ranging_init_analog(
+	CHECK(pcm_phase2_ranging_init_analog(
 		      &ranging, TEST_AMPLITUDE, &analog) ==
-		      V90_PHASE2_RANGING_OK &&
+		      PCM_PHASE2_RANGING_OK &&
 	      v90_info0d_encode(
 		      &digital, payload, sizeof(payload)) == V90_INFO0_OK &&
 	      phase2_info0_exchange_init(
@@ -1233,7 +1233,7 @@ static bool check_completed_exchange_repeat(
 
 	for (size_t index = 0; index < 2u * TEST_SAMPLE_LIMIT; ++index) {
 		struct phase2_info0_exchange_event peer_event;
-		struct v90_phase2_ranging_event event;
+		struct pcm_phase2_ranging_event event;
 		enum v34_phase2_info_receive_stage receive_stage_before =
 			ranging.info0_exchange.transport.info_receiver.frame.stage;
 		enum phase2_ranging_phase phase_before = ranging.control.phase;
@@ -1242,9 +1242,9 @@ static bool check_completed_exchange_repeat(
 		CHECK(phase2_info0_exchange_sample(
 			      &peer, 0, &peer_line, &peer_event) ==
 			      PHASE2_INFO0_EXCHANGE_OK &&
-		      v90_phase2_ranging_sample(
+		      pcm_phase2_ranging_sample(
 			      &ranging, codec_round_trip(peer_line, codec),
-			      &ignored, &event) == V90_PHASE2_RANGING_OK,
+			      &ignored, &event) == PCM_PHASE2_RANGING_OK,
 		      "completed-repeat ranging failed at %zu for %d/%d",
 		      index, codec, reject_repeat);
 		if (repeat_started &&
@@ -1353,31 +1353,31 @@ static bool test_completed_exchange_repeat(void)
 static bool test_validation(void)
 {
 	struct v90_info0 analog = analog_capabilities();
-	struct v90_phase2_ranging ranging;
-	struct v90_phase2_ranging before;
-	struct v90_phase2_ranging_event event = {
+	struct pcm_phase2_ranging ranging;
+	struct pcm_phase2_ranging before;
+	struct pcm_phase2_ranging_event event = {
 		.kind = PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	};
 	int16_t sample = 1234;
 
-	CHECK(v90_phase2_ranging_init_analog(
+	CHECK(pcm_phase2_ranging_init_analog(
 		      &ranging, TEST_AMPLITUDE, &analog) ==
-		      V90_PHASE2_RANGING_OK,
+		      PCM_PHASE2_RANGING_OK,
 	      "validation fixture did not initialize");
 	ranging.info0_exchange.transport.info_receiver.modulation.detector_output =
 		NAN;
 	before = ranging;
-	CHECK(v90_phase2_ranging_sample(
+	CHECK(pcm_phase2_ranging_sample(
 		      &ranging, 0, &sample, &event) ==
-		      V90_PHASE2_RANGING_INVALID_ARGUMENT &&
+		      PCM_PHASE2_RANGING_INVALID_ARGUMENT &&
 	      memcmp(&ranging, &before, sizeof(ranging)) == 0 &&
 	      sample == 1234 && event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED,
 	      "invalid V.90 ranging state mutated state or outputs");
 	CHECK(strcmp(
-		      v90_phase2_ranging_result_name(V90_PHASE2_RANGING_OK),
+		      pcm_phase2_ranging_result_name(PCM_PHASE2_RANGING_OK),
 		      "ok") == 0 &&
-	      strcmp(v90_phase2_ranging_result_name(
-			     (enum v90_phase2_ranging_result)99),
+	      strcmp(pcm_phase2_ranging_result_name(
+			     (enum pcm_phase2_ranging_result)99),
 		     "unknown") == 0,
 	      "V.90 ranging result names changed");
 	return true;

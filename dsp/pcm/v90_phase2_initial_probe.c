@@ -8,7 +8,7 @@ bool v90_phase2_initial_probe_is_valid(
 	const struct v90_phase2_initial_probe *probe)
 {
 	return probe != NULL &&
-	       v90_phase2_ranging_is_valid(&probe->ranging) &&
+	       pcm_phase2_ranging_is_valid(&probe->ranging) &&
 	       probe->ranging.control.phase == PHASE2_RANGING_PROBE_READY &&
 	       phase2_initial_probe_is_valid(
 		       &probe->control,
@@ -17,12 +17,12 @@ bool v90_phase2_initial_probe_is_valid(
 
 enum phase2_initial_probe_result v90_phase2_initial_probe_init(
 	struct v90_phase2_initial_probe *probe,
-	const struct v90_phase2_ranging *completed_ranging)
+	const struct pcm_phase2_ranging *completed_ranging)
 {
 	struct v90_phase2_initial_probe initialized;
 
 	if (probe == NULL ||
-	    !v90_phase2_ranging_is_valid(completed_ranging) ||
+	    !pcm_phase2_ranging_is_valid(completed_ranging) ||
 	    completed_ranging->control.phase != PHASE2_RANGING_PROBE_READY)
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	initialized.ranging = *completed_ranging;

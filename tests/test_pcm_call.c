@@ -2984,7 +2984,7 @@ static bool run_probe_response_timeout(
 			      "probe deadline lost its failure observation");
 	}
 	if (role == V90_ANALOG_MODEM) {
-		const struct v90_phase2_ranging *ranging =
+		const struct pcm_phase2_ranging *ranging =
 			&waiting.state.phase2.state.ranging;
 		struct v34_phase2_tone_transmitter expected =
 			ranging->info0_exchange.transport.tone_transmitter;
