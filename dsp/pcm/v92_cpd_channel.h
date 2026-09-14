@@ -8,7 +8,7 @@
 
 /* Refine a complete initial direct CPd for the measured channel. Solve the
  * regularized joint p1/z2 channel inverse, quantize it to the wire formats,
- * spread dense constellation points, balance dense moduli across trellis
+ * spread dense constellation points, balance higher-rate moduli across trellis
  * groups, and normalize actual filtered B1u power. Rate and trellis remain
  * fixed. The matching LOCAL receive
  * plan carries gain and delay separately. A complete 12000-symbol measurement

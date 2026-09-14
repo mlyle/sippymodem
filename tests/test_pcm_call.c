@@ -7046,12 +7046,19 @@ static bool capture_v92_duplex_data(
 			      "V.92 distorted channel did not receive compensating CPd");
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
-			if (offer->expected >= 16u) {
-				static const uint8_t dense_modulus[] = { 27u, 31u, 34u, 39u };
-				unsigned int modulus = dense_modulus[offer->expected - 16u];
+			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {
+				unsigned int modulus = rx->decoder.mapping.cpd.modulus[3];
+				__uint128_t capacity = 1u, smaller = 1u;
+				__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(offer->expected);
 
-				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+				CHECK(modulus > 1u, "V.92 selected an empty balanced alphabet");
+				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 					expected.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
+					capacity *= expected.modulus[symbol];
+					smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
+				}
+				CHECK(capacity >= required && smaller < required,
+				      "V.92 did not exchange the minimum balanced alphabet");
 			}
 			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||
 			    (offer->expected == 16u && expected.constellation[0].count == 27u))
@@ -9154,7 +9161,7 @@ static bool test_v92_upstream_negotiation(void)
 	/* Both trellis families through the complete compensated CPd/B1u/data
 	 * handoff, with amplitude-dependent noise from tandem quantization. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		for (uint8_t rate = 10u; rate <= 13u; rate += 3u) {
+		for (uint8_t rate = 9u; rate <= 13u; ++rate) {
 			const struct v92_upstream_offer compensated = {
 				UINT32_C(1) << (rate - 1u), 19u, rate, 0.10, 0.75, 0u, 0u, 0u, 0u, 0.0,
 			};

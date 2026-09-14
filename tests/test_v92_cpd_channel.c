@@ -39,6 +39,10 @@ static __uint128_t distance(__uint128_t left, __uint128_t right)
 
 static bool test_channel(enum g711_law law, double main, double post, double second, uint8_t rate)
 {
+	/* Intermediate power-of-two moduli concentrated large points in some
+	 * trellis slots. At the higher LU used by native calls, those symbols
+	 * clipped after normalization even on a unity channel. */
+	const int level = rate >= 9u && rate <= 12u ? 7168 : LEVEL;
 	struct v92_upstream_channel channel = { 0 };
 	struct v92_cpd_parameters cpd, original;
 	struct v92_upstream_plan plan;
@@ -61,33 +65,33 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 		older = previous;
 		previous = expected;
 	}
-	CHECK(v92_cpd_direct_select(&cpd, law, rate, LEVEL, false) == V92_CPD_OK, "initial CPd failed");
+	CHECK(v92_cpd_direct_select(&cpd, law, rate, level, false) == V92_CPD_OK, "initial CPd failed");
 	if (rate == 13u)
 		CHECK(cpd.constellation[0].count == 32u, "direct 40k did not omit outer points");
 	if (rate == 16u)
 		CHECK(cpd.constellation[0].count == 27u, "direct 44k did not omit outer points");
 	original = cpd;
-	CHECK(v92_cpd_channel_design(&cpd, &channel, law, LEVEL, &plan),
+	CHECK(v92_cpd_channel_design(&cpd, &channel, law, level, &plan),
 		"channel design failed: law=%u rate=%u H=(%g,%g,%g)", law, rate, main, post, second);
 	CHECK(plan.observation == V92_PCM_FRAME_CONSTELLATION && plan.delay == 60u &&
 		v92_upstream_plan_is_valid(&plan), "invalid receive plan");
 	original.four_times_gain_q0_16 = cpd.four_times_gain_q0_16;
 	memcpy(original.filter, cpd.filter, sizeof(cpd.filter));
-	if (rate >= 16u) {
-		static const uint8_t dense_modulus[] = { 27u, 31u, 34u, 39u };
-		unsigned int modulus = dense_modulus[rate - 16u];
+	if (rate >= 9u && cpd.trellis == V92_CPD_TRELLIS_16_STATE) {
+		unsigned int modulus = cpd.modulus[3];
 		__uint128_t capacity = 1u, smaller = 1u;
 		__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(rate);
 
+		CHECK(modulus > 1u, "rate %u has no balanced alphabet", rate);
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
 			original.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
 			CHECK(cpd.modulus[symbol] == original.modulus[symbol],
-				"dense rate %u did not balance interval %zu", rate, symbol);
+				"rate %u did not balance interval %zu", rate, symbol);
 			capacity *= original.modulus[symbol];
 			smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
 		}
 		CHECK(capacity >= required && smaller < required,
-			"dense rate %u did not use minimum balanced capacity", rate);
+			"rate %u did not use minimum balanced capacity", rate);
 	}
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
 	    (rate == 16u && original.constellation[0].count == 27u))
@@ -140,7 +144,7 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 
 			if (frame < V92_B1U_FRAMES)
 				energy += (uint64_t)((int64_t)encoded.v[symbol] * encoded.v[symbol]);
-			CHECK(v92_pcm_frame_scale(&mapping, LEVEL, encoded.v[symbol], &transmitted) ==
+			CHECK(v92_pcm_frame_scale(&mapping, level, encoded.v[symbol], &transmitted) ==
 				V92_PCM_FRAME_OK, "frame %u scale failed", frame);
 			CHECK(transmitted != INT16_MIN && transmitted != INT16_MAX,
 				"transmit clipped: law=%u rate=%u H=(%g,%g) frame=%u symbol=%u",
@@ -445,8 +449,8 @@ int main(void)
 	    !test_finite_window_inverse(true))
 		return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		/* Both laws and trellis families: 24, 28, 32, 36 and 40 kbit/s. */
-		for (uint8_t rate = 1u; rate <= 13u; rate += 3u)
+		/* Both laws, both trellis families, and every intermediate rate. */
+		for (uint8_t rate = 1u; rate <= 15u; ++rate)
 			if (!test_channel((enum g711_law)law, 1.0, 0.0, 0.0, rate) ||
 				!test_channel((enum g711_law)law, 0.55, 0.43, 0.0, rate) ||
 				!test_channel((enum g711_law)law, 0.8, -0.25, 0.0, rate))

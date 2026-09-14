@@ -322,10 +322,11 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 			return false;
 		next.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[tap] = (int16_t)value;
 	}
-	/* Balance dense channel mappings instead of concentrating twice as many
-	 * points in some trellis intervals. Companding can otherwise erase whole
-	 * payload distinctions. Keep the level-selected direct mappings separate. */
-	if (next.data_rate_number >= 16u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
+	/* Balance 16-state channel mappings from 34.667k upward. Concentrating
+	 * large points in some trellis intervals can clip after B1u normalization
+	 * or erase payload distinctions during companding. Keep the low-rate
+	 * and level-selected direct mappings separate. */
+	if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
 		uint8_t modulus = balanced_modulus(v92_pcm_mapping_data_bits(next.data_rate_number));
 
 		if (modulus == 0u)
