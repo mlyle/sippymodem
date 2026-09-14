@@ -119,13 +119,13 @@ retrains per call; ambiguous bits are never delivered. V.92 zero-rate cleardown
 is not yet implemented. Generated-channel tests are not evidence of robust
 operation on a physical line.
 
-The V.92 short-Phase-2 ranging controller is tested separately for both codec
-laws, including physical reversal timing and bounded recovery. Its typed
-INFO1a decision preserves the short conventional carrier selection and shares
-the PCM-upstream record codec without requiring an unsent INFO1d. The ranging
-and INFO1a handoff, retained-history training inputs, and Phase 3 entry are not
-yet connected to the call owner; these components do not enable modem-level
-Quick Connect.
+The PCM call owner supports V.92 shortened Phase 2/3 using caller-retained
+training settings. Its read-only profile query uses the actual training
+selection and live receive gain, rejecting retrain, rate exchange, and
+cleardown. Tests reuse successful full-call settings through two successive
+shortened calls on both codec laws, including 52000/40000 bit/s PCM data.
+Peer-keyed history retention and the Quick Connect Phase 1 handshake are not
+yet integrated into the modem; this does not enable modem-level Quick Connect.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 

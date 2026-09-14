@@ -160,8 +160,9 @@ struct pcm_call_v92_digital_phase4_configuration {
  * all conventional-only fields zero. The analogue role retains prior RTD,
  * while the digital role obtains a fresh value during short ranging.
  * Configured settings permit a local short INFO0 offer; both wire offers
- * must select short startup before these settings are used. This owner
- * neither learns profiles nor performs the Quick Connect Phase 1 handshake. */
+ * must select short startup before these settings are used. The call can
+ * export its trained settings but does not cache them or perform the Quick
+ * Connect Phase 1 handshake. */
 struct pcm_call_short_startup {
 	struct pcm_phase3_short_training training;
 	uint16_t round_trip_delay_samples;
@@ -556,6 +557,14 @@ bool pcm_call_has_failed(const struct pcm_call *call);
 bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
+
+/* Export the actual V.92 training selection and live receive gain only from
+ * stable online data, not retrain, rate exchange, or cleardown. No call state
+ * is changed; rejection leaves the non-overlapping output unchanged. The host
+ * owns admission after useful data, peer/role/law identity, and expiry. These
+ * inputs alone do not establish agreement to use Quick Connect next time. */
+bool pcm_call_get_short_startup(
+	const struct pcm_call *call, struct pcm_call_short_startup *profile);
 
 /* Inspect only the active owner's shutdown state, not the child DSP graph.
  * The serialized host uses this between media-block validations to let an

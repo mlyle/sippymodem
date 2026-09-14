@@ -1607,6 +1607,45 @@ bool pcm_call_is_online(const struct pcm_call *call)
 	return pcm_call_is_valid(call) && data_path_is_online_owned(call);
 }
 
+bool pcm_call_get_short_startup(
+	const struct pcm_call *call, struct pcm_call_short_startup *profile)
+{
+	if (profile == NULL || !pcm_call_is_online(call) ||
+	    call->protocol != PCM_PROTOCOL_V92 || call->retrain_active ||
+	    rate_renegotiation_is_active_owned(call) || v92_fast_is_active_owned(call) ||
+	    memory_regions_overlap(call, sizeof(*call), profile, sizeof(*profile)))
+		return false;
+	const struct pcm_phase3_entry *entry = &call->phase3_entry;
+	struct pcm_call_short_startup selected = {
+		.configured = true,
+		.upstream = entry->selection.upstream,
+		.round_trip_delay_samples = call->round_trip_delay_samples,
+	};
+	if (uses_pcm_upstream(call)) {
+		selected.training.power_reduction_db =
+			entry->selection.startup.phase2 == PCM_PHASE2_SHORT ?
+			entry->short_power_reduction_db :
+			entry->selection.digital.record.v92.v34.common.minimum_peer_power_reduction_db;
+	} else {
+		const struct v34_phase3_profile *trained = &entry->conventional_profile;
+		selected.conventional_symbol_rate = trained->symbol_rate;
+		selected.conventional_high_carrier = trained->high_carrier;
+		selected.training = (struct pcm_phase3_short_training){
+			.power_reduction_db = trained->transmit_power_reduction_db,
+			.preemphasis_filter_index = trained->preemphasis_filter_index,
+			.projected_data_rate_2400_bps_units = trained->projected_data_rate_2400_bps_units,
+		};
+		if (call->local_role == V90_DIGITAL_MODEM) {
+			selected.digital_receive_gain =
+				call->state.data_path.digital.upstream.data.line.timing.gain.gain;
+			if (selected.digital_receive_gain <= 0)
+				return false;
+		}
+	}
+	*profile = selected;
+	return true;
+}
+
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call)
 {
 	return pcm_call_is_valid(call) ? call->stage :

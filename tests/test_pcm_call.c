@@ -73,6 +73,17 @@ struct endpoint {
 	size_t resume_frame_index;
 };
 
+static bool short_startup_rejected(const struct pcm_call *call)
+{
+	struct pcm_call_short_startup profile;
+	memset(&profile, 0xa5, sizeof(profile));
+	const struct pcm_call_short_startup before = profile;
+	CHECK(!pcm_call_get_short_startup(call, &profile) &&
+	      memcmp(&profile, &before, sizeof(profile)) == 0,
+	      "rejected short profile changed output");
+	return true;
+}
+
 static uint8_t silence_octet(enum g711_law law)
 {
 	return law == G711_LAW_PCMA ?
@@ -5139,7 +5150,8 @@ static bool run_paired_remote_rate_renegotiation(
 			break;
 		}
 	}
-	CHECK(initially_online &&
+	CHECK(initially_online && short_startup_rejected(&analog.call) &&
+	      short_startup_rejected(&digital.call) &&
 	      pcm_call_get_data_rates(
 		      &analog.call, &analog_rates[0], &analog_rates[1]) &&
 	      pcm_call_get_data_rates(
@@ -6792,6 +6804,46 @@ struct v92_online_pair {
 	struct channel wire;
 };
 
+static bool short_startup_contracts(const struct pcm_call *online)
+{
+	struct pcm_call call = *online;
+	struct pcm_call_short_startup profile;
+	CHECK(pcm_call_get_short_startup(&call, &profile) && profile.configured &&
+	      profile.upstream == call.phase3_entry.selection.upstream &&
+	      profile.round_trip_delay_samples == call.round_trip_delay_samples &&
+	      !pcm_call_get_short_startup(&call, NULL) &&
+	      !pcm_call_get_short_startup(&call, &call.short_startup) &&
+	      memcmp(&call, online, sizeof(call)) == 0 && short_startup_rejected(NULL),
+	      "short profile query mutated or aliased the call");
+	for (unsigned transition = 0; transition < 4; ++transition) {
+		/* Rate and fast request APIs apply only to PCM upstream. */
+		if ((transition == 1 || transition == 3) && profile.upstream != PCM_UPSTREAM_PCM)
+			continue;
+		call = *online;
+		enum pcm_call_result result = transition == 0 ? pcm_call_start_retrain(&call) :
+			transition == 1 ? pcm_call_start_rate_renegotiation(&call) :
+			transition == 2 ? pcm_call_start_cleardown(&call) : pcm_call_start_fast_exchange(&call);
+		CHECK(result == PCM_CALL_OK && short_startup_rejected(&call),
+		      "short profile accepted transition %u role %u", transition, online->local_role);
+	}
+	/* A full INFO1 selection and a retained shortened selection carry power
+	 * reduction in different places. Neither is the next-call proposal. */
+	if (profile.upstream == PCM_UPSTREAM_PCM) {
+		call = *online;
+		if (call.phase3_entry.selection.startup.phase2 == PCM_PHASE2_SHORT)
+			call.phase3_entry.short_power_reduction_db = 2;
+		else
+			call.phase3_entry.selection.digital.record.v92.v34.common.minimum_peer_power_reduction_db = 2;
+		CHECK(pcm_call_is_valid(&call) && pcm_call_get_short_startup(&call, &profile) &&
+		      profile.training.power_reduction_db == 2 &&
+		      !profile.training.preemphasis_filter_index &&
+		      !profile.training.projected_data_rate_2400_bps_units &&
+		      !profile.digital_receive_gain && !profile.conventional_symbol_rate &&
+		      !profile.conventional_high_carrier, "short PCM profile lost its selected power or leaked V.34 fields");
+	}
+	return true;
+}
+
 static bool v92_short_data_epoch(
 	struct v92_online_pair *pair, unsigned expected_short, bool full, int initiator)
 {
@@ -6947,14 +6999,62 @@ static bool test_v92_short_calls(void)
 	return true;
 }
 
+static bool short_profile_during_conventional_rate_exchange(
+	struct endpoint analog, struct endpoint digital, struct channel wire)
+{
+	bool seen[2] = { false, false };
+	bool qualified = false;
+	for (unsigned sample = 0; sample < 8000; ++sample) {
+		uint8_t ar, dr, at, dt;
+		struct pcm_call_data_event event;
+		channel_receive(&wire, &ar, &dr);
+		if (!qualified) {
+			/* A real marker completes on an equalizer observation, not
+			 * halfway through its pending input interval. */
+			struct v34_line_receiver next = digital.call.state.data_path.digital.upstream.data.line;
+			struct v34_adaptive_equalizer_observation observation;
+			if (v34_line_receiver_sample(&next, decode_octet(analog.call.law, dr), &observation) ==
+			    V34_LINE_RECEIVER_OBSERVATION_READY) {
+				CHECK(complete_rate_renegotiation_monitor(
+					&digital.call.state.data_path.digital.upstream.data.rate_renegotiation),
+				      "could not qualify conventional rate request");
+				qualified = true;
+			}
+		}
+		/* Inspect the control owners, not payload from the artificial
+		 * request. The surrounding learned-call test checks exact data. */
+		CHECK(pcm_call_data_octet(&analog.call, ar, decode_octet(analog.call.law, ar),
+			true, NULL, &at, &event) == PCM_CALL_OK &&
+		      pcm_call_data_octet(&digital.call, dr, decode_octet(digital.call.law, dr),
+			true, NULL, &dt, &event) == PCM_CALL_OK,
+		      "conventional rate exchange failed before short-profile query");
+		channel_transmit(&wire, at, dt);
+		if (!seen[0] && analog.call.stage == PCM_CALL_DATA_PATH &&
+		    analog.call.state.data_path.analog.rate_renegotiation_active) {
+			CHECK(short_startup_rejected(&analog.call), "analogue rate exchange exported profile");
+			seen[0] = true;
+		}
+		if (!seen[1] && digital.call.stage == PCM_CALL_DATA_PATH &&
+		    digital.call.state.data_path.digital.rate_renegotiation_active) {
+			/* CONNECT can remain true while the union owns control, not
+			 * the DATA receiver from which gain would otherwise be read. */
+			CHECK(pcm_call_is_online(&digital.call) && short_startup_rejected(&digital.call),
+			      "online digital rate exchange exported a control union as gain");
+			seen[1] = true;
+		}
+		if (seen[0] && seen[1])
+			return true;
+	}
+	CHECK(false, "did not observe both conventional rate-exchange owners");
+}
+
 static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 {
 	struct pcm_call_configuration ac = conventional_v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = conventional_v92_configuration(V90_DIGITAL_MODEM, law);
 	struct pcm_call_short_startup retained[2] = { 0 };
-	int16_t receive_gain = 0;
 
-	for (unsigned shortened = 0; shortened < 2; ++shortened) {
+	for (unsigned shortened = 0; shortened < 3; ++shortened) {
 		struct endpoint analog = { .upstream_received_delay = UINT16_MAX };
 		struct endpoint digital = { .upstream_received_delay = UINT16_MAX };
 		struct channel wire;
@@ -6966,15 +7066,11 @@ static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 		}
 		CHECK(channel_init(&wire, law, delay) &&
 		      pcm_call_init(&analog.call, &ac) == PCM_CALL_OK &&
-		      pcm_call_init(&digital.call, &dc) == PCM_CALL_OK,
+		      pcm_call_init(&digital.call, &dc) == PCM_CALL_OK &&
+		      short_startup_rejected(&analog.call) && short_startup_rejected(&digital.call),
 		      "conventional short setup law %u delay %zu short %u", law, delay, shortened);
 		size_t end = 0;
 		for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
-			if (!shortened && digital.call.stage == PCM_CALL_PHASE2) {
-				int16_t measured;
-				if (pcm_phase2_receive_gain(&digital.call.state.phase2, &measured) == PCM_PHASE2_OK)
-					receive_gain = measured;
-			}
 			CHECK(step_endpoints(&wire, &analog, &digital, law),
 			      "conventional short sample law %u delay %zu short %u clock %zu", law, delay, shortened, clock);
 			CHECK(analog.call.stage != PCM_CALL_RETRAIN_SILENCE &&
@@ -6986,29 +7082,20 @@ static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 			}
 		}
 		CHECK(end && pcm_call_is_online(&analog.call) && pcm_call_is_online(&digital.call),
-		      "conventional short no data law %u delay %zu short %u data %zu/%zu gain %d",
-		      law, delay, shortened, analog.downstream_frames, digital.upstream_frames, receive_gain);
+		      "conventional short no data law %u delay %zu short %u data %zu/%zu",
+		      law, delay, shortened, analog.downstream_frames, digital.upstream_frames);
 		const struct pcm_call *calls[] = { &analog.call, &digital.call };
 		for (unsigned role = 0; role < 2; ++role) {
 			const struct pcm_phase3_entry *entry = &calls[role]->phase3_entry;
-			const struct v34_phase3_profile *profile = &entry->conventional_profile;
 			CHECK(entry->selection.upstream == PCM_UPSTREAM_V34 &&
-			      entry->selection.startup.phase2 == (shortened ? PCM_PHASE2_SHORT : PCM_PHASE2_FULL),
+			      entry->selection.startup.phase2 == (shortened ? PCM_PHASE2_SHORT : PCM_PHASE2_FULL) &&
+			      pcm_call_get_short_startup(calls[role], &retained[role]) &&
+			      short_startup_contracts(calls[role]),
 			      "conventional actual wire selection changed");
-			if (!shortened)
-				retained[role] = (struct pcm_call_short_startup){
-					.configured = true, .upstream = PCM_UPSTREAM_V34,
-					.conventional_symbol_rate = profile->symbol_rate,
-					.conventional_high_carrier = profile->high_carrier,
-					.training = {
-						.power_reduction_db = profile->transmit_power_reduction_db,
-						.preemphasis_filter_index = profile->preemphasis_filter_index,
-						.projected_data_rate_2400_bps_units = profile->projected_data_rate_2400_bps_units,
-					},
-					.round_trip_delay_samples = calls[role]->round_trip_delay_samples,
-					.digital_receive_gain = role == 1 ? receive_gain : 0,
-				};
 		}
+		if (!shortened)
+			CHECK(short_profile_during_conventional_rate_exchange(analog, digital, wire),
+			      "conventional rate profile query law %u", law);
 	}
 	return true;
 }
@@ -7017,6 +7104,36 @@ static bool test_v92_short_conventional(void)
 {
 	return run_v92_short_conventional(G711_LAW_PCMU, 13) &&
 	       run_v92_short_conventional(G711_LAW_PCMA, 257);
+}
+
+static bool test_v92_learned_short_pcm(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_call_configuration ac, dc;
+		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK &&
+		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK,
+		      "learned PCM profile setup");
+		/* Full training may replace this proposal after probing. Retain the
+		 * actual wire selection, not the initial configuration. */
+		dc.local_info1.v92_digital.v34.common.minimum_peer_power_reduction_db = 2;
+		for (unsigned shortened = 0; shortened < 3; ++shortened) {
+			struct v92_online_pair pair;
+			CHECK(channel_init(&pair.wire, law, law == G711_LAW_PCMU ? 13 : 257) &&
+			      pcm_call_init(&pair.analog, &ac) == PCM_CALL_OK &&
+			      pcm_call_init(&pair.digital, &dc) == PCM_CALL_OK &&
+			      short_startup_rejected(&pair.analog) && short_startup_rejected(&pair.digital) &&
+			      v92_short_data_epoch(&pair, shortened ? 3u : 0u, !shortened, -1) &&
+			      pcm_call_get_short_startup(&pair.analog, &ac.short_startup) &&
+			      pcm_call_get_short_startup(&pair.digital, &dc.short_startup) &&
+			      ac.short_startup.training.power_reduction_db == 0 &&
+			      dc.short_startup.training.power_reduction_db == 0 &&
+			      short_startup_contracts(&pair.analog) && short_startup_contracts(&pair.digital),
+			      "learned 52/40 PCM epoch law %u short %u", law, shortened);
+			ac.local_info0.v92_analog.short_phase2_requested = true;
+			dc.local_info0.v92_digital.short_phase2_requested = true;
+		}
+	}
+	return true;
 }
 
 static bool v92_quiet_downstream_training(const struct pcm_call *boundary)
@@ -10972,6 +11089,7 @@ int main(void)
 		{ "V.92 short-profile validation", test_v92_short_validation },
 		{ "V.92 short PCM data and full recovery", test_v92_short_calls },
 		{ "V.92 conventional short-startup data", test_v92_short_conventional },
+		{ "V.92 learned short PCM startup", test_v92_learned_short_pcm },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
 		{ "PCM INFO1d respects peer capabilities", test_info1d_peer_capabilities },
