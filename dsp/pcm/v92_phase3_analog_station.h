@@ -3,7 +3,7 @@
 #ifndef V92_PHASE3_ANALOG_STATION_H
 #define V92_PHASE3_ANALOG_STATION_H
 
-#include "v90_phase3_sd_receiver.h"
+#include "pcm_s_pattern_rx.h"
 #include "v90_phase4_ri_search.h"
 #include "v92_pcm_phase3_cpt_tx.h"
 #include "v92_pcm_phase3_initial_tx.h"
@@ -49,7 +49,7 @@ struct v92_phase3_analog_station_configuration {
 };
 
 union v92_phase3_analog_receive {
-	struct v90_phase3_sd_receiver sd;
+	struct pcm_s_pattern_rx sd;
 	struct v92_phase3_j_receiver j;
 	struct v90_phase4_ri_search ri;
 };

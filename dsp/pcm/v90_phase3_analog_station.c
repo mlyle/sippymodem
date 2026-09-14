@@ -3,6 +3,7 @@
 #include "v90_phase3_analog_station.h"
 
 #include "v90_info1.h"
+#include "v90_phase3_sd.h"
 #include "v90_phase3_signs.h"
 
 #include <stddef.h>
@@ -63,10 +64,14 @@ static bool receive_is_valid(
 {
 	switch (station->receive_stage) {
 	case V90_PHASE3_ANALOG_RECEIVE_SD:
-		return v90_phase3_sd_receiver_is_valid(&station->receive.sd);
+		return pcm_s_pattern_rx_is_valid(&station->receive.sd) &&
+		       station->receive.sd.signal_ucode ==
+			       ((station->training_ucode +
+			         V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu);
 	case V90_PHASE3_ANALOG_RECEIVE_SIGNS:
 		return v90_phase3_sign_receiver_is_valid(
-			&station->receive.signs);
+			&station->receive.signs) &&
+		       station->receive.signs.training_ucode == station->training_ucode;
 	}
 	return false;
 }
@@ -105,7 +110,10 @@ static bool return_controls_are_causal(
 bool v90_phase3_analog_station_owned_state_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
-	return station != NULL && transmit_owned_state_is_valid(station) &&
+	return station != NULL &&
+	       station->training_ucode >= V90_INFO1A_MIN_TRAINING_UCODE &&
+	       station->training_ucode <= V90_INFO1A_MAX_TRAINING_UCODE &&
+	       transmit_owned_state_is_valid(station) &&
 	       receive_is_valid(station) && dil_state_is_valid(station) &&
 	       return_controls_are_causal(station);
 }
@@ -131,6 +139,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 {
 	struct v90_phase3_analog_station initialized = {
 		.dil_profile = dil_profile,
+		.training_ucode = training_ucode,
 	};
 	struct v90_dil_parameters dil;
 	enum v90_phase3_analog_line_tx_result transmit_result;
@@ -150,9 +159,10 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 	if (transmit_result == V90_PHASE3_ANALOG_LINE_TX_CLIPPING_RISK)
 		return V90_PHASE3_ANALOG_STATION_CLIPPING_RISK;
 	if (transmit_result != V90_PHASE3_ANALOG_LINE_TX_OK ||
-	    v90_phase3_sd_receiver_init(
-		    &initialized.receive.sd, law, training_ucode) !=
-		    V90_PHASE3_SD_RECEIVER_OK ||
+	    pcm_s_pattern_rx_init(
+		    &initialized.receive.sd, law,
+		    (training_ucode + V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu) !=
+		    PCM_S_PATTERN_RX_OK ||
 	    !v90_phase3_analog_station_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	*station = initialized;
@@ -163,7 +173,7 @@ static bool sd_bar_seen(
 	const struct v90_phase3_analog_station *station)
 {
 	return station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
-	       station->receive.sd.stage >= V90_PHASE3_SD_RECEIVER_SD_BAR;
+	       station->receive.sd.stage >= PCM_S_PATTERN_RX_REVERSED;
 }
 
 static enum v90_phase3_analog_station_result start_or_finish_ja(
@@ -378,23 +388,23 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
 static enum v90_phase3_analog_station_result receive_sd(
 	struct v90_phase3_analog_station *station, uint8_t network_octet)
 {
-	enum v90_phase3_sd_receiver_result result =
-		v90_phase3_sd_receiver_receive(
+	enum pcm_s_pattern_rx_result result =
+		pcm_s_pattern_rx_receive(
 			&station->receive.sd, network_octet);
 
-	if (result == V90_PHASE3_SD_RECEIVER_INVALID_SEQUENCE)
+	if (result == PCM_S_PATTERN_RX_INVALID_SEQUENCE)
 		return V90_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-	if (result == V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT ||
-	    result == V90_PHASE3_SD_RECEIVER_INVALID_STATE)
+	if (result == PCM_S_PATTERN_RX_INVALID_ARGUMENT ||
+	    result == PCM_S_PATTERN_RX_INVALID_STATE)
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
-	if (result != V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE)
+	if (result != PCM_S_PATTERN_RX_SEQUENCE_COMPLETE)
 		return V90_PHASE3_ANALOG_STATION_OK;
 	{
 		struct v90_phase3_sign_receiver signs;
 
 		if (v90_phase3_sign_receiver_init(
 			    &signs, station->receive.sd.law,
-			    station->receive.sd.training_ucode) !=
+			    station->training_ucode) !=
 		    V90_PHASE3_SIGN_RECEIVER_OK)
 			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->receive =

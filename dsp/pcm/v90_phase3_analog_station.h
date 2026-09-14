@@ -5,7 +5,7 @@
 
 #include "v90_phase3_analog_line_tx.h"
 #include "v90_phase3_return_line_tx.h"
-#include "v90_phase3_sd_receiver.h"
+#include "pcm_s_pattern_rx.h"
 #include "v90_phase3_sign_receiver.h"
 
 #include <stdbool.h>
@@ -40,7 +40,7 @@ union v90_phase3_analog_station_transmit {
 };
 
 union v90_phase3_analog_station_receive {
-	struct v90_phase3_sd_receiver sd;
+	struct pcm_s_pattern_rx sd;
 	struct v90_phase3_sign_receiver signs;
 };
 
@@ -69,6 +69,8 @@ struct v90_phase3_analog_station {
 	enum v90_phase3_analog_transmit_stage transmit_stage;
 	enum v90_phase3_analog_receive_stage receive_stage;
 	enum v90_dil_profile dil_profile;
+	/* INFO1 training magnitude, retained independently of Sd's W code. */
+	uint8_t training_ucode;
 	bool failed;
 };
 

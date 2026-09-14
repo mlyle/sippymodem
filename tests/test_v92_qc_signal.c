@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_qc_signal.h"
+#include "pcm_s_pattern_rx.h"
 #include "test.h"
 
 #include <limits.h>
@@ -40,6 +41,69 @@ static bool test_qts(void)
 			}
 		}
 	}
+	return true;
+}
+
+static bool test_qts_receiver(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned index = 0; index < 15; ++index)
+			for (unsigned channel = 0; channel < 3; ++channel)
+				for (unsigned omit = 0; omit < 6; ++omit) {
+					struct v90_pcm_symbol symbol;
+					struct pcm_s_pattern_rx receiver;
+					unsigned acquired = 0, reversed = 0, complete = 0;
+					int16_t previous = 0;
+
+					CHECK(v92_qts_symbol(law, index, 0, &symbol) &&
+					      pcm_s_pattern_rx_init(&receiver, law,
+						      symbol.ucode) == PCM_S_PATTERN_RX_OK,
+					      "QTS receiver init failed");
+					for (unsigned i = 0; i < V92_QTS_TOTAL_SYMBOLS; ++i) {
+						enum pcm_s_pattern_rx_result result;
+						int16_t sample;
+						uint8_t octet;
+
+						CHECK(v92_qts_symbol(law, index, i, &symbol),
+						      "QTS receiver source failed");
+						sample = symbol.sample;
+						/* Exact octets, half gain with a 12.5% relative
+						 * postcursor, or reversed line polarity. */
+						if (channel == 1)
+							sample = sample / 2 + previous / 16;
+						else if (channel == 2)
+							sample = -sample;
+						previous = symbol.sample;
+						if (i < omit)
+							continue;
+						octet = channel ? encode(law, sample) : symbol.octet;
+						result = pcm_s_pattern_rx_receive(&receiver, octet);
+						if (result == PCM_S_PATTERN_RX_ACQUIRED) {
+							CHECK(i + 1 == omit + PCM_S_PATTERN_ACQUISITION_SYMBOLS,
+							      "QTS acquisition shifted");
+							++acquired;
+						} else if (result == PCM_S_PATTERN_RX_REVERSAL_DETECTED) {
+							CHECK(i + 1 == V92_QTS_SYMBOLS + PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS,
+							      "QTS reversal shifted");
+							++reversed;
+						} else if (result == PCM_S_PATTERN_RX_SEQUENCE_COMPLETE) {
+							CHECK(i + 1 == V92_QTS_TOTAL_SYMBOLS,
+							      "QTS consumed beyond the final reversed symbol");
+							++complete;
+						} else {
+							CHECK(result == PCM_S_PATTERN_RX_OK,
+							      "QTS receiver returned %s", pcm_s_pattern_rx_result_name(result));
+						}
+					}
+					CHECK(acquired == 1 && reversed == 1 && complete == 1,
+					      "QTS law %u index %u channel %u phase %u did not complete",
+					      law, index, channel, omit);
+					struct pcm_s_pattern_rx saved = receiver;
+					CHECK(pcm_s_pattern_rx_receive(&receiver, 0xa5) ==
+						      PCM_S_PATTERN_RX_SEQUENCE_COMPLETE &&
+					      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+					      "completed QTS receiver consumed the next signal");
+				}
 	return true;
 }
 
@@ -180,6 +244,7 @@ int main(void)
 {
 	const struct { const char *name; bool (*run)(void); } tests[] = {
 		{ "QTS codewords and signed zeros", test_qts },
+		{ "shared QTS acquisition and reversal", test_qts_receiver },
 		{ "ANSpcm normative digests and reversals", test_anspcm },
 		{ "signal validation", test_validation },
 		{ "independent signal instances", test_independent_signals },

@@ -2895,7 +2895,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 				return analog->post_ja_silence_samples >= V92_PHASE3_JD_DEADLINE_SAMPLES;
 			return initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
 				analog->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
-				analog->receive.sd.stage < V90_PHASE3_SD_RECEIVER_SD_BAR &&
+				analog->receive.sd.stage < PCM_S_PATTERN_RX_REVERSED &&
 				initial->sequence.ja.emitted_symbols >= PCM_PHASE3_SD_DEADLINE_SAMPLES;
 		}
 		station = &call->state.phase3.v92_digital;
@@ -2931,7 +2931,7 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 
 		if (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_INITIAL ||
 		    station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SD ||
-		    station->receive.sd.stage >= V90_PHASE3_SD_RECEIVER_SD_BAR)
+		    station->receive.sd.stage >= PCM_S_PATTERN_RX_REVERSED)
 			return false;
 		initial = &station->transmit.initial;
 		if (initial->symbols.stage != V90_PHASE3_ANALOG_TX_JA ||

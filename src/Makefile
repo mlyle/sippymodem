@@ -318,7 +318,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_marker.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_return_tx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sd_receiver.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_s_pattern_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sign_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase4_ri.c \

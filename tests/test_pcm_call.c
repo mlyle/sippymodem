@@ -3307,7 +3307,7 @@ static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t in
 		call.stage == PCM_CALL_PHASE3 && !call.retrain_active,
 		"last-tick analogue response lost to timeout");
 	if (sd) {
-		CHECK(station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD_BAR &&
+		CHECK(station->receive.sd.stage == PCM_S_PATTERN_RX_REVERSED &&
 			station->transmit.initial.stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
 			station->post_ja_silence_samples == 0u,
 			"last-tick Sd reversal did not end Ja on its twelve-symbol boundary");
@@ -3360,7 +3360,7 @@ static bool run_v92_analog_phase3_deadlines(enum g711_law law, size_t delay)
 		const struct v92_pcm_phase3_initial_tx *initial = &station->transmit.initial;
 		if (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_INITIAL) {
 			if (station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
-			    station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD) {
+			    station->receive.sd.stage == PCM_S_PATTERN_RX_LOCKED) {
 				CHECK(initial->stage == V92_PCM_PHASE3_INITIAL_TX_JA && !initial->finish_requested &&
 					station->post_ja_silence_samples == 0u, "plain Sd ended Ja before its reversal");
 				plain_sd_seen = true;
@@ -3383,8 +3383,8 @@ static bool run_v92_analog_phase3_deadlines(enum g711_law law, size_t delay)
 			continue;
 		const struct v92_phase3_analog_station *previous = &before.state.phase3.v92_analog;
 		if (!timely[0] && previous->receive_stage == V92_PHASE3_ANALOG_RECEIVE_SD &&
-		    previous->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD &&
-		    station->receive.sd.stage == V90_PHASE3_SD_RECEIVER_SD_BAR) {
+		    previous->receive.sd.stage == PCM_S_PATTERN_RX_LOCKED &&
+		    station->receive.sd.stage == PCM_S_PATTERN_RX_REVERSED) {
 			CHECK(v92_analog_timely_response(&before, rx[0], 0u, true), "timely Sd failed");
 			timely[0] = true;
 		}
@@ -3570,9 +3570,9 @@ static bool check_phase3_sd_deadline(
 	uint8_t silence = silence_octet(law);
 	const uint32_t deadline = 12000u;
 	const uint32_t first_sd = deadline - V90_PHASE3_SD_SYMBOLS -
-		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS + 1u + response_delay;
+		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS + 1u + response_delay;
 	const uint32_t tail = V90_PHASE3_SD_BAR_SYMBOLS -
-		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS;
+		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS;
 	bool timeout = response_delay != 0u;
 
 	/* The source has emitted exactly the first Ja sample. A full generated
@@ -3599,7 +3599,7 @@ static bool check_phase3_sd_deadline(
 			CHECK(waiting.state.phase3.analog.receive_stage ==
 				      V90_PHASE3_ANALOG_RECEIVE_SD &&
 			      waiting.state.phase3.analog.receive.sd.stage ==
-				      V90_PHASE3_SD_RECEIVER_SD_BAR &&
+				      PCM_S_PATTERN_RX_REVERSED &&
 			      !waiting.retrain_active,
 			      "Sd/Sd-bar detection did not win on the deadline");
 	}
@@ -3711,7 +3711,7 @@ static bool run_phase3_sd_timeout(
 		if (analog.call.state.phase3.analog.receive_stage ==
 			    V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
 		    analog.call.state.phase3.analog.receive.sd.stage >=
-			    V90_PHASE3_SD_RECEIVER_SD_BAR) {
+			    PCM_S_PATTERN_RX_REVERSED) {
 			sd_bar_seen = true;
 			break;
 		}

@@ -4,6 +4,7 @@
 #include <v90_dil_sequence.h>
 #include <v90_phase3_analog_station.h>
 #include <v90_phase3_digital_station.h>
+#include <v90_phase3_sd.h>
 
 #include "test.h"
 
@@ -308,6 +309,41 @@ static bool test_generated_exchange(void)
 	return true;
 }
 
+static bool test_training_code_ownership(void)
+{
+	struct v34_phase3_profile selected = profile();
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned code = 67; code <= 127; ++code) {
+			struct v90_phase3_analog_station station;
+
+			CHECK(v90_phase3_analog_station_init(&station, &selected, law,
+				      code, NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
+				      V90_PHASE3_ANALOG_STATION_OK &&
+			      station.training_ucode == code &&
+			      station.receive.sd.signal_ucode == ((code + 16u) & 0x7fu),
+			      "INFO1 code %u was not converted at the Sd boundary", code);
+			for (enum v90_phase3_sd_kind kind = V90_PHASE3_SD;
+			     kind <= V90_PHASE3_SD_BAR; ++kind) {
+				struct v90_phase3_sd source;
+				struct v90_pcm_symbol symbol;
+
+				CHECK(v90_phase3_sd_init(&source, law, code, kind) ==
+					      V90_PHASE3_SD_OK, "training source init");
+				while (v90_phase3_sd_remaining(&source))
+					CHECK(v90_phase3_sd_next(&source, &symbol) == V90_PHASE3_SD_OK &&
+					      v90_phase3_analog_station_receive(&station, symbol.octet) ==
+						      V90_PHASE3_ANALOG_STATION_OK,
+					      "station lost Sd code %u law %u", code, law);
+			}
+			CHECK(station.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
+			      station.receive.signs.training_ucode == code &&
+			      station.training_ucode == code,
+			      "Sd-to-TRN1d handoff changed INFO1 code %u", code);
+		}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_phase3_profile selected = profile();
@@ -338,6 +374,14 @@ static bool test_validation(void)
 		      &station, &selected, (enum g711_law)99, 91,
 		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
 		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_analog_station_init(
+		      &station, &selected, G711_LAW_PCMU, 66,
+		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
+		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_analog_station_init(
+		      &station, &selected, G711_LAW_PCMU, 128,
+		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
+		      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      memcmp(&station, &saved, sizeof(station)) == 0,
 	      "invalid initialization changed station state");
 	CHECK(v90_phase3_analog_station_init(
@@ -345,6 +389,8 @@ static bool test_validation(void)
 		      NOMINAL_AMPLITUDE, V90_DIL_PROFILE_NONE) ==
 		      V90_PHASE3_ANALOG_STATION_OK,
 	      "validation station did not initialize");
+	CHECK(station.training_ucode == 91 && station.receive.sd.signal_ucode == 107,
+	      "Sd magnitude replaced retained INFO1 training code");
 	saved = station;
 	memset(&line, 0xa5, sizeof(line));
 	saved_line = line;
@@ -362,12 +408,12 @@ static bool test_validation(void)
 	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
 	      memcmp(&handoff, &saved_handoff, sizeof(handoff)) == 0,
 	      "invalid station calls were not transactional");
-	station.receive.sd.stage = V90_PHASE3_SD_RECEIVER_SD_BAR;
+	station.receive.sd.stage = PCM_S_PATTERN_RX_REVERSED;
 	station.receive.sd.history_count =
-		V90_PHASE3_SD_ACQUISITION_SYMBOLS;
+		PCM_S_PATTERN_ACQUISITION_SYMBOLS;
 	station.receive.sd.bar_symbols =
-		V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS;
-	station.receive.sd.bar_errors = V90_PHASE3_SD_BAR_MAX_ERRORS;
+		PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS;
+	station.receive.sd.bar_errors = PCM_S_PATTERN_BAR_MAX_ERRORS;
 	CHECK(v90_pcm_symbol_make(
 		      &wrong_sd_bar, G711_LAW_PCMU, 91, true),
 	      "could not make mismatch fixture");
@@ -450,6 +496,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated DIL exchanges", test_generated_exchange },
+		{ "training-code ownership through Sd", test_training_code_ownership },
 		{ "validation and failure", test_validation },
 	};
 	unsigned int failures = 0;

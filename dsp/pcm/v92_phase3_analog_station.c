@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_phase3_analog_station.h"
+#include "v90_phase3_sd.h"
 
 #include <stddef.h>
 
@@ -23,8 +24,11 @@ static bool receive_is_valid(
 {
 	switch (station->receive_stage) {
 	case V92_PHASE3_ANALOG_RECEIVE_SD:
-		return v90_phase3_sd_receiver_is_valid(&station->receive.sd) &&
-		       !v90_phase3_sd_receiver_is_complete(&station->receive.sd);
+		return pcm_s_pattern_rx_is_valid(&station->receive.sd) &&
+		       station->receive.sd.signal_ucode ==
+			       ((station->downstream_training_ucode +
+			         V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu) &&
+		       !pcm_s_pattern_rx_is_complete(&station->receive.sd);
 	case V92_PHASE3_ANALOG_RECEIVE_J:
 		return v92_phase3_j_receiver_is_valid(&station->receive.j) &&
 		       !v92_phase3_j_receiver_is_complete(&station->receive.j);
@@ -201,10 +205,11 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 		    configuration->upstream_rate_mask,
 		    configuration->initial_trn1u_symbols) !=
 		    V92_PCM_PHASE3_INITIAL_TX_OK ||
-	    v90_phase3_sd_receiver_init(
+	    pcm_s_pattern_rx_init(
 		    &initialized.receive.sd, configuration->law,
-		    configuration->local_info1a.training_ucode) !=
-		    V90_PHASE3_SD_RECEIVER_OK)
+		    (configuration->local_info1a.training_ucode +
+		     V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu) !=
+		    PCM_S_PATTERN_RX_OK)
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	fractional_delay_init(&initialized.transmit_delay);
 	initialized.cpt_parameters = configuration->cpt;
@@ -368,22 +373,22 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 static enum v92_phase3_analog_station_result receive_sd(
 	struct v92_phase3_analog_station *station, uint8_t network_octet)
 {
-	enum v90_phase3_sd_receiver_result result =
-		v90_phase3_sd_receiver_receive(
+	enum pcm_s_pattern_rx_result result =
+		pcm_s_pattern_rx_receive(
 			&station->receive.sd, network_octet);
 
-	if (result == V90_PHASE3_SD_RECEIVER_OK ||
-	    result == V90_PHASE3_SD_RECEIVER_SD_DETECTED)
+	if (result == PCM_S_PATTERN_RX_OK ||
+	    result == PCM_S_PATTERN_RX_ACQUIRED)
 		return V92_PHASE3_ANALOG_STATION_OK;
 	/* V.92 9.5.2.1.3: keep Ja through Sd, then stop at the next
 	 * twelve-symbol boundary after the reversal is detected. */
-	if (result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED)
+	if (result == PCM_S_PATTERN_RX_REVERSAL_DETECTED)
 		return v92_pcm_phase3_initial_tx_request_finish(
 			       &station->transmit.initial) ==
 			       V92_PCM_PHASE3_INITIAL_TX_OK ?
 			       V92_PHASE3_ANALOG_STATION_OK :
 			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-	if (result == V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE) {
+	if (result == PCM_S_PATTERN_RX_SEQUENCE_COMPLETE) {
 		struct v92_phase3_j_receiver j;
 
 		if (v92_phase3_j_receiver_init(
@@ -396,7 +401,7 @@ static enum v92_phase3_analog_station_result receive_sd(
 		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_J;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
-	return result == V90_PHASE3_SD_RECEIVER_INVALID_SEQUENCE ?
+	return result == PCM_S_PATTERN_RX_INVALID_SEQUENCE ?
 		       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH :
 		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 }

@@ -5,7 +5,7 @@
 #include "g711.h"
 #include "v90_info1.h"
 #include "v90_phase3_sd.h"
-#include "v90_phase3_sd_receiver.h"
+#include "pcm_s_pattern_rx.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -113,15 +113,15 @@ static bool next_octet(
 static bool check_receiver(
 	enum g711_law law, uint8_t training_ucode, uint8_t starting_phase)
 {
-	struct v90_phase3_sd_receiver receiver;
+	struct pcm_s_pattern_rx receiver;
 	struct v90_phase3_sd sd;
 	struct v90_phase3_sd sd_bar;
-	enum v90_phase3_sd_receiver_result result;
+	enum pcm_s_pattern_rx_result result;
 	uint8_t octet;
 
-	CHECK(v90_phase3_sd_receiver_init(
-		      &receiver, law, training_ucode) ==
-		      V90_PHASE3_SD_RECEIVER_OK &&
+	CHECK(pcm_s_pattern_rx_init(
+		      &receiver, law, (training_ucode + 16u) & 0x7fu) ==
+		      PCM_S_PATTERN_RX_OK &&
 		      v90_phase3_sd_init(
 			      &sd, law, training_ucode,
 			      V90_PHASE3_SD) == V90_PHASE3_SD_OK &&
@@ -138,40 +138,40 @@ static bool check_receiver(
 	     index < V90_PHASE3_SD_SYMBOLS; ++index) {
 		CHECK(next_octet(&sd, &octet),
 		      "could not generate Sd symbol %zu", index);
-		result = v90_phase3_sd_receiver_receive(&receiver, octet);
+		result = pcm_s_pattern_rx_receive(&receiver, octet);
 		CHECK(result == (index == starting_phase +
-				       V90_PHASE3_SD_ACQUISITION_SYMBOLS - 1u ?
-				       V90_PHASE3_SD_RECEIVER_SD_DETECTED :
-				       V90_PHASE3_SD_RECEIVER_OK),
+				       PCM_S_PATTERN_ACQUISITION_SYMBOLS - 1u ?
+				       PCM_S_PATTERN_RX_ACQUIRED :
+				       PCM_S_PATTERN_RX_OK),
 		      "receiver returned %s at Sd symbol %zu",
-		      v90_phase3_sd_receiver_result_name(result), index);
+		      pcm_s_pattern_rx_result_name(result), index);
 	}
 	for (size_t index = 0; index < V90_PHASE3_SD_BAR_SYMBOLS; ++index) {
 		CHECK(next_octet(&sd_bar, &octet),
 		      "could not generate S-bar symbol %zu", index);
-		result = v90_phase3_sd_receiver_receive(&receiver, octet);
-		if (index == V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS - 1u)
+		result = pcm_s_pattern_rx_receive(&receiver, octet);
+		if (index == PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS - 1u)
 			CHECK(result ==
-				      V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED,
+				      PCM_S_PATTERN_RX_REVERSAL_DETECTED,
 			      "receiver did not qualify S-bar at symbol %zu",
 			      index);
 		else if (index == V90_PHASE3_SD_BAR_SYMBOLS - 1u)
 			CHECK(result ==
-				      V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE,
+				      PCM_S_PATTERN_RX_SEQUENCE_COMPLETE,
 			      "receiver did not complete S-bar at symbol %zu",
 			      index);
 		else
-			CHECK(result == V90_PHASE3_SD_RECEIVER_OK,
+			CHECK(result == PCM_S_PATTERN_RX_OK,
 			      "receiver returned %s at S-bar symbol %zu",
-			      v90_phase3_sd_receiver_result_name(result), index);
+			      pcm_s_pattern_rx_result_name(result), index);
 	}
-	CHECK(v90_phase3_sd_receiver_is_complete(&receiver),
+	CHECK(pcm_s_pattern_rx_is_complete(&receiver),
 	      "receiver did not retain completion");
 	{
-		struct v90_phase3_sd_receiver saved = receiver;
+		struct pcm_s_pattern_rx saved = receiver;
 
-		CHECK(v90_phase3_sd_receiver_receive(&receiver, 0xa5) ==
-			      V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE &&
+		CHECK(pcm_s_pattern_rx_receive(&receiver, 0xa5) ==
+			      PCM_S_PATTERN_RX_SEQUENCE_COMPLETE &&
 			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 		      "completed receiver consumed another character");
 	}
@@ -205,56 +205,56 @@ static bool test_receiver_exact_sequences(void)
 
 static bool test_receiver_acquisition(void)
 {
-	struct v90_phase3_sd_receiver receiver;
+	struct pcm_s_pattern_rx receiver;
 	struct v90_phase3_sd sd;
 	uint32_t noise = UINT32_C(0x36a9f17b);
 	uint8_t octet;
 
-	CHECK(v90_phase3_sd_receiver_init(
-		      &receiver, G711_LAW_PCMU, 91) ==
-		      V90_PHASE3_SD_RECEIVER_OK,
+	CHECK(pcm_s_pattern_rx_init(
+		      &receiver, G711_LAW_PCMU, 107) ==
+		      PCM_S_PATTERN_RX_OK,
 	      "could not initialize receiver for noise test");
 	for (size_t index = 0; index < 256; ++index) {
 		noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
-		CHECK(v90_phase3_sd_receiver_receive(
+		CHECK(pcm_s_pattern_rx_receive(
 			      &receiver, (uint8_t)(noise >> 24)) ==
-			      V90_PHASE3_SD_RECEIVER_OK,
+			      PCM_S_PATTERN_RX_OK,
 		      "random input falsely acquired Sd at symbol %zu", index);
 	}
-	CHECK(receiver.stage == V90_PHASE3_SD_RECEIVER_SEARCH &&
+	CHECK(receiver.stage == PCM_S_PATTERN_RX_SEARCH &&
 		      v90_phase3_sd_init(
 			      &sd, G711_LAW_PCMU, 91,
 			      V90_PHASE3_SD) == V90_PHASE3_SD_OK,
 	      "noise search damaged receiver state");
 	for (size_t index = 0;
-	     index < V90_PHASE3_SD_ACQUISITION_SYMBOLS; ++index) {
-		enum v90_phase3_sd_receiver_result result;
+	     index < PCM_S_PATTERN_ACQUISITION_SYMBOLS; ++index) {
+		enum pcm_s_pattern_rx_result result;
 
 		CHECK(next_octet(&sd, &octet),
 		      "could not generate acquisition symbol %zu", index);
 		if (index == 3 || index == 14)
 			octet ^= UINT8_C(0x80);
-		result = v90_phase3_sd_receiver_receive(&receiver, octet);
+		result = pcm_s_pattern_rx_receive(&receiver, octet);
 		CHECK(result == (index ==
-				       V90_PHASE3_SD_ACQUISITION_SYMBOLS - 1u ?
-				       V90_PHASE3_SD_RECEIVER_SD_DETECTED :
-				       V90_PHASE3_SD_RECEIVER_OK),
+				       PCM_S_PATTERN_ACQUISITION_SYMBOLS - 1u ?
+				       PCM_S_PATTERN_RX_ACQUIRED :
+				       PCM_S_PATTERN_RX_OK),
 		      "two-error acquisition returned %s at symbol %zu",
-		      v90_phase3_sd_receiver_result_name(result), index);
+		      pcm_s_pattern_rx_result_name(result), index);
 	}
 	return true;
 }
 
 static bool test_receiver_sbar_error_budget(void)
 {
-	struct v90_phase3_sd_receiver receiver;
+	struct pcm_s_pattern_rx receiver;
 	struct v90_phase3_sd sd;
 	struct v90_phase3_sd sd_bar;
 	uint8_t octet;
 
-	CHECK(v90_phase3_sd_receiver_init(
-		      &receiver, G711_LAW_PCMA, 91) ==
-		      V90_PHASE3_SD_RECEIVER_OK &&
+	CHECK(pcm_s_pattern_rx_init(
+		      &receiver, G711_LAW_PCMA, 107) ==
+		      PCM_S_PATTERN_RX_OK &&
 		      v90_phase3_sd_init(
 			      &sd, G711_LAW_PCMA, 91,
 			      V90_PHASE3_SD) == V90_PHASE3_SD_OK &&
@@ -264,37 +264,37 @@ static bool test_receiver_sbar_error_budget(void)
 	      "could not initialize S-bar error test");
 	for (size_t index = 0; index < V90_PHASE3_SD_SYMBOLS; ++index) {
 		CHECK(next_octet(&sd, &octet), "could not generate Sd");
-		(void)v90_phase3_sd_receiver_receive(&receiver, octet);
+		(void)pcm_s_pattern_rx_receive(&receiver, octet);
 	}
 	for (size_t index = 0; index < V90_PHASE3_SD_BAR_SYMBOLS; ++index) {
-		enum v90_phase3_sd_receiver_result result;
+		enum pcm_s_pattern_rx_result result;
 
 		CHECK(next_octet(&sd_bar, &octet), "could not generate S-bar");
 		if (index == 20 || index == 30)
 			octet ^= UINT8_C(0x80);
 		if (index == 40) {
-			struct v90_phase3_sd_receiver saved = receiver;
+			struct pcm_s_pattern_rx saved = receiver;
 			uint8_t corrupt = expected_octet(G711_LAW_PCMA, 107, true);
 
-			CHECK(v90_phase3_sd_receiver_receive(
+			CHECK(pcm_s_pattern_rx_receive(
 				      &receiver, corrupt) ==
-				      V90_PHASE3_SD_RECEIVER_INVALID_SEQUENCE &&
+				      PCM_S_PATTERN_RX_INVALID_SEQUENCE &&
 				      memcmp(&receiver, &saved,
 					     sizeof(receiver)) == 0,
 			      "third S-bar error was not transactional");
 		}
-		result = v90_phase3_sd_receiver_receive(&receiver, octet);
+		result = pcm_s_pattern_rx_receive(&receiver, octet);
 		CHECK(result == (index == V90_PHASE3_SD_BAR_SYMBOLS - 1u ?
-				       V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE :
+				       PCM_S_PATTERN_RX_SEQUENCE_COMPLETE :
 				       index ==
-					       V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS - 1u ?
-				       V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED :
-				       V90_PHASE3_SD_RECEIVER_OK),
+					       PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS - 1u ?
+				       PCM_S_PATTERN_RX_REVERSAL_DETECTED :
+				       PCM_S_PATTERN_RX_OK),
 		      "S-bar error test returned %s at symbol %zu",
-		      v90_phase3_sd_receiver_result_name(result), index);
+		      pcm_s_pattern_rx_result_name(result), index);
 	}
-	CHECK(receiver.bar_errors == V90_PHASE3_SD_BAR_MAX_ERRORS &&
-		      v90_phase3_sd_receiver_is_complete(&receiver),
+	CHECK(receiver.bar_errors == PCM_S_PATTERN_BAR_MAX_ERRORS &&
+		      pcm_s_pattern_rx_is_complete(&receiver),
 	      "S-bar receiver did not retain its error budget");
 	return true;
 }
@@ -303,13 +303,14 @@ static bool check_sampled_receiver(
 	enum g711_law law, uint8_t training_ucode, unsigned int starting_phase,
 	unsigned int gain_percent, bool inverted)
 {
-	struct v90_phase3_sd_receiver receiver;
+	struct pcm_s_pattern_rx receiver;
 	int32_t previous = 0, second = 0;
 	unsigned int changed = 0, detected = 0, bar_detected = 0;
 	size_t received = 0;
 
-	CHECK(v90_phase3_sd_receiver_init(&receiver, law, training_ucode) ==
-		      V90_PHASE3_SD_RECEIVER_OK, "sampled receiver init failed");
+	CHECK(pcm_s_pattern_rx_init(&receiver, law,
+		      (training_ucode + 16u) & 0x7fu) ==
+		      PCM_S_PATTERN_RX_OK, "sampled receiver init failed");
 	for (enum v90_phase3_sd_kind kind = V90_PHASE3_SD;
 	     kind <= V90_PHASE3_SD_BAR; ++kind) {
 		struct v90_phase3_sd tx;
@@ -318,7 +319,7 @@ static bool check_sampled_receiver(
 			      V90_PHASE3_SD_OK, "sampled source init failed");
 		for (size_t i = 0; v90_phase3_sd_remaining(&tx); ++i) {
 			struct v90_pcm_symbol symbol;
-			enum v90_phase3_sd_receiver_result result;
+			enum pcm_s_pattern_rx_result result;
 			int32_t filtered;
 			uint8_t octet;
 
@@ -336,32 +337,32 @@ static bool check_sampled_receiver(
 			changed += octet != symbol.octet;
 			if (kind == V90_PHASE3_SD && i < starting_phase)
 				continue;
-			result = v90_phase3_sd_receiver_receive(&receiver, octet);
+			result = pcm_s_pattern_rx_receive(&receiver, octet);
 			received++;
-			if (result == V90_PHASE3_SD_RECEIVER_SD_DETECTED) {
+			if (result == PCM_S_PATTERN_RX_ACQUIRED) {
 				CHECK(kind == V90_PHASE3_SD && received ==
-					      V90_PHASE3_SD_ACQUISITION_SYMBOLS,
+					      PCM_S_PATTERN_ACQUISITION_SYMBOLS,
 				      "sampled Sd acquired at the wrong boundary");
 				detected++;
-			} else if (result == V90_PHASE3_SD_RECEIVER_SD_BAR_DETECTED) {
+			} else if (result == PCM_S_PATTERN_RX_REVERSAL_DETECTED) {
 				CHECK(kind == V90_PHASE3_SD_BAR && i + 1 ==
-					      V90_PHASE3_SD_BAR_QUALIFY_SYMBOLS,
+					      PCM_S_PATTERN_BAR_QUALIFY_SYMBOLS,
 				      "sampled S-bar acquired at the wrong boundary");
 				bar_detected++;
 			} else {
 				CHECK(result == (kind == V90_PHASE3_SD_BAR &&
 						 i + 1 == V90_PHASE3_SD_BAR_SYMBOLS ?
-					V90_PHASE3_SD_RECEIVER_SEQUENCE_COMPLETE :
-					V90_PHASE3_SD_RECEIVER_OK),
+					PCM_S_PATTERN_RX_SEQUENCE_COMPLETE :
+					PCM_S_PATTERN_RX_OK),
 				      "sampled Sd returned %s at kind %u index %zu",
-				      v90_phase3_sd_receiver_result_name(result),
+				      pcm_s_pattern_rx_result_name(result),
 				      (unsigned int)kind, i);
 			}
 		}
 	}
 	CHECK(changed > V90_PHASE3_SD_SYMBOLS / 2 && detected == 1 &&
 		      bar_detected == 1 &&
-		      v90_phase3_sd_receiver_is_complete(&receiver),
+		      pcm_s_pattern_rx_is_complete(&receiver),
 	      "sampled Sd was not acquired through a lossy channel");
 	return true;
 }
@@ -390,11 +391,11 @@ static bool test_reject_unrelated_samples(void)
 
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (unsigned int kind = 0; kind < 5; ++kind) {
-			struct v90_phase3_sd_receiver receiver;
+			struct pcm_s_pattern_rx receiver;
 			uint32_t noise = UINT32_C(0x8a1937cb);
 
-			CHECK(v90_phase3_sd_receiver_init(&receiver, law, 79) ==
-				      V90_PHASE3_SD_RECEIVER_OK, "noise init failed");
+			CHECK(pcm_s_pattern_rx_init(&receiver, law, 95) ==
+				      PCM_S_PATTERN_RX_OK, "noise init failed");
 			for (unsigned int i = 0; i < 16000; ++i) {
 				int16_t sample = kind == 0 ? 0 : kind == 1 ? 2000 :
 					kind == 2 ? tone[i % ARRAY_LENGTH(tone)] :
@@ -404,9 +405,9 @@ static bool test_reject_unrelated_samples(void)
 				noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
 				if (kind == 4)
 					octet = (uint8_t)(noise >> 24);
-				CHECK(v90_phase3_sd_receiver_receive(&receiver, octet) ==
-					      V90_PHASE3_SD_RECEIVER_OK &&
-					      receiver.stage == V90_PHASE3_SD_RECEIVER_SEARCH,
+				CHECK(pcm_s_pattern_rx_receive(&receiver, octet) ==
+					      PCM_S_PATTERN_RX_OK &&
+					      receiver.stage == PCM_S_PATTERN_RX_SEARCH,
 				      "false Sd: law=%u kind=%u sample=%u",
 				      (unsigned int)law, kind, i);
 			}
@@ -417,19 +418,19 @@ static bool test_reject_unrelated_samples(void)
 
 static bool test_short_reversal(void)
 {
-	struct v90_phase3_sd_receiver receiver;
+	struct pcm_s_pattern_rx receiver;
 	struct v90_phase3_sd sequence;
 	uint8_t octet;
 
-	CHECK(v90_phase3_sd_receiver_init(&receiver, G711_LAW_PCMU, 79) ==
-		      V90_PHASE3_SD_RECEIVER_OK &&
+	CHECK(pcm_s_pattern_rx_init(&receiver, G711_LAW_PCMU, 95) ==
+		      PCM_S_PATTERN_RX_OK &&
 	      v90_phase3_sd_init(&sequence, G711_LAW_PCMU, 79, V90_PHASE3_SD) ==
 		      V90_PHASE3_SD_OK, "short-reversal init failed");
-	for (unsigned int i = 0; i < V90_PHASE3_SD_ACQUISITION_SYMBOLS; ++i) {
+	for (unsigned int i = 0; i < PCM_S_PATTERN_ACQUISITION_SYMBOLS; ++i) {
 		CHECK(next_octet(&sequence, &octet), "short-reversal source failed");
-		(void)v90_phase3_sd_receiver_receive(&receiver, octet);
+		(void)pcm_s_pattern_rx_receive(&receiver, octet);
 	}
-	CHECK(receiver.stage == V90_PHASE3_SD_RECEIVER_SD && receiver.level > 0,
+	CHECK(receiver.stage == PCM_S_PATTERN_RX_LOCKED && receiver.level > 0,
 	      "short-reversal test did not acquire sampled Sd");
 	const int32_t level = receiver.level;
 
@@ -439,9 +440,9 @@ static bool test_short_reversal(void)
 			octet ^= UINT8_C(0x80);
 		else if (i < 18)
 			octet = encode_sample(G711_LAW_PCMU, 0);
-		CHECK(v90_phase3_sd_receiver_receive(&receiver, octet) ==
-			      V90_PHASE3_SD_RECEIVER_OK &&
-		      receiver.stage == V90_PHASE3_SD_RECEIVER_SD &&
+		CHECK(pcm_s_pattern_rx_receive(&receiver, octet) ==
+			      PCM_S_PATTERN_RX_OK &&
+		      receiver.stage == PCM_S_PATTERN_RX_LOCKED &&
 		      receiver.level == level,
 		      "short reversal or silence qualified S-bar or retuned its level");
 	}
@@ -452,52 +453,63 @@ static bool test_short_reversal(void)
 
 static bool test_receiver_validation(void)
 {
-	struct v90_phase3_sd_receiver receiver;
-	struct v90_phase3_sd_receiver saved;
+	struct pcm_s_pattern_rx receiver;
+	struct pcm_s_pattern_rx saved;
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
-	CHECK(v90_phase3_sd_receiver_init(
+	CHECK(pcm_s_pattern_rx_init(
 		      NULL, G711_LAW_PCMU, 91) ==
-		      V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sd_receiver_init(
+		      PCM_S_PATTERN_RX_INVALID_ARGUMENT &&
+		      pcm_s_pattern_rx_init(
 			      &receiver, (enum g711_law)2, 91) ==
-			      V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sd_receiver_init(
-			      &receiver, G711_LAW_PCMU,
-			      V90_INFO1A_MIN_TRAINING_UCODE - 1u) ==
-			      V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sd_receiver_init(
-			      &receiver, G711_LAW_PCMU,
-			      V90_INFO1A_MAX_TRAINING_UCODE + 1u) ==
-			      V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT &&
+			      PCM_S_PATTERN_RX_INVALID_ARGUMENT &&
+		      pcm_s_pattern_rx_init(
+			      &receiver, G711_LAW_PCMU, 128) ==
+			      PCM_S_PATTERN_RX_INVALID_ARGUMENT &&
+		      pcm_s_pattern_rx_init(
+			      &receiver, G711_LAW_PCMU, 255) ==
+			      PCM_S_PATTERN_RX_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid receiver initialization changed state");
-	CHECK(v90_phase3_sd_receiver_receive(NULL, 0) ==
-		      V90_PHASE3_SD_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sd_receiver_receive(&receiver, 0) ==
-			      V90_PHASE3_SD_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_s_pattern_rx_receive(NULL, 0) ==
+		      PCM_S_PATTERN_RX_INVALID_ARGUMENT &&
+		      pcm_s_pattern_rx_receive(&receiver, 0) ==
+			      PCM_S_PATTERN_RX_INVALID_STATE &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
-		      !v90_phase3_sd_receiver_is_valid(&receiver) &&
-		      !v90_phase3_sd_receiver_is_complete(&receiver) &&
-		      !v90_phase3_sd_receiver_is_valid(NULL),
+		      !pcm_s_pattern_rx_is_valid(&receiver) &&
+		      !pcm_s_pattern_rx_is_complete(&receiver) &&
+		      !pcm_s_pattern_rx_is_valid(NULL),
 	      "invalid receiver state was not rejected transactionally");
-	CHECK(strcmp(v90_phase3_sd_receiver_result_name(
-			     V90_PHASE3_SD_RECEIVER_SD_DETECTED),
-		     "Sd detected") == 0 &&
-		      strcmp(v90_phase3_sd_receiver_result_name(
-			     (enum v90_phase3_sd_receiver_result)7),
+	CHECK(strcmp(pcm_s_pattern_rx_result_name(
+			     PCM_S_PATTERN_RX_ACQUIRED),
+		     "pattern acquired") == 0 &&
+		      strcmp(pcm_s_pattern_rx_result_name(
+			     (enum pcm_s_pattern_rx_result)7),
 			     "unknown") == 0,
 	      "receiver result names are wrong");
-	CHECK(v90_phase3_sd_receiver_init(&receiver, G711_LAW_PCMU, 79) ==
-		      V90_PHASE3_SD_RECEIVER_OK, "level validation init failed");
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		CHECK(pcm_s_pattern_rx_init(&receiver, law, 0) == PCM_S_PATTERN_RX_OK &&
+		      receiver.signal_ucode == 0 && pcm_s_pattern_rx_is_valid(&receiver) &&
+		      pcm_s_pattern_rx_init(&receiver, law, 127) == PCM_S_PATTERN_RX_OK &&
+		      receiver.signal_ucode == 127 && pcm_s_pattern_rx_is_valid(&receiver),
+		      "shared receiver rejected a signal-code boundary");
+	}
+	receiver.signal_ucode = 128;
+	saved = receiver;
+	CHECK(pcm_s_pattern_rx_receive(&receiver, 0xff) ==
+		      PCM_S_PATTERN_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "invalid retained signal code was not transactional");
+	CHECK(pcm_s_pattern_rx_init(&receiver, G711_LAW_PCMU, 95) ==
+		      PCM_S_PATTERN_RX_OK, "level validation init failed");
 	const int32_t invalid_levels[] = { -1, 1, INT32_MAX };
 
 	for (size_t i = 0; i < ARRAY_LENGTH(invalid_levels); ++i) {
 		receiver.level = invalid_levels[i];
 		saved = receiver;
-		CHECK(v90_phase3_sd_receiver_receive(&receiver, 0xff) ==
-			      V90_PHASE3_SD_RECEIVER_INVALID_STATE &&
+		CHECK(pcm_s_pattern_rx_receive(&receiver, 0xff) ==
+			      PCM_S_PATTERN_RX_INVALID_STATE &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 		      "invalid sampled level was not transactional");
 	}
