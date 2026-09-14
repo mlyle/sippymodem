@@ -31,6 +31,24 @@ static int compare_double(const void *a, const void *b)
 	return (x > y) - (x < y);
 }
 
+/* Independent complete sum of final-codec cell probabilities. */
+static double independent_mean(enum g711_law law, double mean, double sigma)
+{
+	double sum = 0.;
+	for (unsigned code = 0; code < 256; ++code) {
+		int16_t level = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
+		if (law == G711_LAW_PCMU && code == 127) continue; /* Shared zero bin. */
+		struct g711_interval bin;
+		assert(g711_quantization_interval(law, level, &bin));
+		double a = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5 - mean) / (sqrt(2.) * sigma);
+		double b = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5 - mean) / (sqrt(2.) * sigma);
+		double probability = a > 0. ? .5 * (erfc(a) - erfc(b)) :
+			b < 0. ? .5 * (erfc(-b) - erfc(-a)) : .5 * (erf(b) - erf(a));
+		sum += level * probability;
+	}
+	return sum;
+}
+
 /* Independent integration: enumerate the encoder's integer transitions,
  * partition their union for all three inputs, and evaluate one point per
  * constant codec cell. This does not use the model's compiled geometry,
@@ -78,7 +96,8 @@ static uint64_t independent_score(const struct v92_observation *model,
 				fit->post * quantize(model->law, gain * input[1]) -
 				fit->second * quantize(model->law, gain * input[2]);
 			*prediction += fit->weight * model->quantizer_gain *
-				quantize(model->law, (observed - error - offset) / model->quantizer_gain) *
+				independent_mean(model->law, (observed - error - offset) / model->quantizer_gain,
+					sqrt(model->variance) / model->quantizer_gain) *
 				log1p((cuts[j] - cuts[j - 1]) / cuts[j - 1]) / log1p((fit->high - fit->low) / fit->low);
 			double probability;
 			if (lower == upper) {
@@ -256,6 +275,38 @@ static void check_rebinding(const struct v92_observation *a, const struct v92_ob
 	}
 }
 
+static void check_predictive_noise(const struct v92_observation *trained)
+{
+	const double gains[] = { .03125, 1., 2. };
+	const double sigmas[] = { .01, 1., 16., 256., 10000. };
+	const double shifts[] = { -40000., -1659.5, -3.5, 0., 3.5, 1659.5, 40000. };
+	const int32_t input[3] = { 0 };
+	struct v92_observation model = *trained;
+	for (size_t g = 0; g < sizeof(gains) / sizeof(*gains); ++g)
+		for (size_t s = 0; s < sizeof(sigmas) / sizeof(*sigmas); ++s)
+			for (size_t o = 0; o < sizeof(shifts) / sizeof(*shifts); ++o) {
+				model.quantizer_gain = gains[g];
+				model.variance = fmax(1., sigmas[s] * sigmas[s] * gains[g] * gains[g]);
+				assert(v92_observation_is_valid(&model));
+				double expected, offset = gains[g] * shifts[o];
+				independent_score(&model, input, 0, quantize(model.law, 0), offset, &expected);
+				double actual = v92_observation_predict(&model, input, offset);
+				assert(isfinite(actual) && fabs(actual - expected) < 1e-7);
+			}
+	/* At a mu-law boundary, symmetric uncertainty predicts the mean of
+	 * neighbouring reconstructed levels, not either hard codec decision. */
+	if (model.law == G711_LAW_PCMU) {
+		model.quantizer_gain = 1.; model.variance = 1.;
+		assert(fabs(v92_observation_predict(&model, input, -1659.5) - .5) < 1e-7);
+	}
+	model.quantizer_gain = DBL_TRUE_MIN;
+	model.variance = DBL_MAX;
+	assert(v92_observation_is_valid(&model));
+	double tiny = v92_observation_predict(&model, input, 0.);
+	assert(isfinite(tiny) && fabs(tiny) <= 65536. * DBL_TRUE_MIN);
+	printf("V.92 predictive noise law=%u checks passed\n", model.law);
+}
+
 static void check_channel(enum g711_law law, double gain, struct v92_observation *previous)
 {
 	int32_t x[SAMPLES];
@@ -289,6 +340,7 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	double rms = sqrt(error / (SAMPLES - TRAINING));
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
+	if (gain == .125) check_predictive_noise(&model);
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);
 	if (previous->count) check_rebinding(previous, &model);

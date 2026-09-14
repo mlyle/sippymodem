@@ -855,6 +855,39 @@ struct v92_observation_range v92_observation_range(struct v92_observation_cache 
 	return (struct v92_observation_range){ values->main_low, values->main_high };
 }
 
+/* E[Q(mean + noise)], not Q(E[mean + noise]). A small channel-fit error
+ * near a codec boundary must not jump the predicted sample by a whole
+ * quantization step. Sum level jumps times Gaussian tail probabilities,
+ * starting at the mean to avoid cancellation between saturated levels.
+ * Work in host coordinates so a tiny codec gain cannot overflow variance.
+ * erfc(28) is unrepresentable, as in gaussian_probability; this is a
+ * numeric tail boundary, not a channel-noise cutoff. */
+static double codec_mean(enum g711_law law, double mean, double variance, double gain)
+{
+	if (!isfinite(mean) || !isfinite(variance) || variance <= 0. ||
+	    !isfinite(gain) || gain <= 0.) return NAN;
+	double divisor = sqrt(variance) * sqrt(2.);
+	int16_t center = quantize(law, (int16_t)fmax(INT16_MIN,
+		fmin(INT16_MAX, round(mean / gain))));
+	double prediction = center;
+	for (int direction = -1; direction <= 1; direction += 2) {
+		int16_t level = center;
+		for (unsigned step = 0; step < 256; step++) {
+			struct g711_interval bin;
+			if (!g711_quantization_interval(law, level, &bin)) return NAN;
+			int edge = direction < 0 ? bin.lower : bin.upper;
+			if (edge == (direction < 0 ? INT16_MIN : INT16_MAX)) break;
+			double boundary = (edge + direction * .5) * gain;
+			double distance = direction * (boundary - mean) / divisor;
+			if (distance >= 28.) break;
+			int16_t next = quantize(law, (int16_t)(edge + direction));
+			prediction += (next - level) * .5 * erfc(distance);
+			level = next;
+		}
+	}
+	return gain * prediction;
+}
+
 double v92_observation_predict(const struct v92_observation *model,
 	const int32_t input[3], double offset)
 {
@@ -883,10 +916,8 @@ double v92_observation_predict(const struct v92_observation *model,
 			if (end < begin || steps > 3u * 128u) return NAN;
 			double weight = p->weight * log1p((end - begin) / begin) / width;
 			double linear = p->main * q[0] + p->post * q[1] + p->second * q[2];
-			double sample = fmax(INT16_MIN,
-				fmin(INT16_MAX, round((linear - offset) / model->quantizer_gain)));
-			prediction += weight * model->quantizer_gain *
-				quantize(model->law, (int16_t)sample);
+			prediction += weight * codec_mean(model->law, linear - offset,
+				model->variance, model->quantizer_gain);
 			if (end == p->high) break;
 			for (unsigned j = 0; j < 3; j++) {
 				if (bound[j].at != end) continue;

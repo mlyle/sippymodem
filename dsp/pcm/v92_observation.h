@@ -141,11 +141,12 @@ struct v92_observation_range { double low, high; };
 struct v92_observation_range v92_observation_range(
 	struct v92_observation_cache *cache, int32_t x);
 
-/* Predict the final reconstructed sample for a validated fitted model with
- * positive quantizer_gain. Integrate the same shared gain across current,
- * previous and second-previous input, without conditioning on the observed
- * sample. offset is the same independent additive host correction supplied
- * to symbol_level(), not a residual fitted to the winning candidate.
+/* Predict the mean final reconstructed sample for a validated fitted model
+ * with positive quantizer_gain. Integrate fitted Gaussian channel noise and
+ * the same shared gain across current, previous and second-previous input,
+ * without conditioning on the observed sample. offset is the same independent
+ * additive host correction supplied to symbol_level(), not a residual fitted
+ * to the winning candidate.
  * Non-finite output means no prediction, never a zero residual. */
 double v92_observation_predict(const struct v92_observation *model,
 	const int32_t input[3], double offset);
