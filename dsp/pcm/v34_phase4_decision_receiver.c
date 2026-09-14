@@ -12,14 +12,11 @@ enum {
 	V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_MAX_ERRORS = 1,
 };
 
-static bool s_is_initial(const struct v34_phase3_s_receiver *receiver)
+static bool s_is_initial(const struct v34_phase3_s_hunt *receiver)
 {
-	return receiver->next_decision == 0u &&
-	       receiver->buffered_decisions == 0u &&
-	       receiver->pending_symbols == 0u &&
-	       receiver->post_marker_symbols == 0u &&
-	       receiver->next_target_rotation == 0u &&
-	       !receiver->detection_pending && !receiver->target_seeded &&
+	return receiver->recent_observation_count == 0u &&
+	       receiver->prefix.recurrence_points == 0u &&
+	       !receiver->prefix.previous_valid && !receiver->candidate &&
 	       !receiver->complete;
 }
 
@@ -106,12 +103,12 @@ static bool answer_s_state_is_valid(
 	bool answering_peer = receiver->mp_receiver.transmitting_role ==
 		V34_ANSWERING_STATION;
 
-	if (!v34_phase3_s_receiver_is_valid(&receiver->answer_s))
+	if (!v34_phase3_s_hunt_is_valid(&receiver->answer_s))
 		return false;
 	if (!answering_peer)
 		return receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 		       s_is_initial(&receiver->answer_s);
-	return v34_phase3_s_receiver_is_complete(&receiver->answer_s) ==
+	return v34_phase3_s_hunt_is_complete(&receiver->answer_s) ==
 	       (receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S);
 }
 
@@ -252,9 +249,7 @@ v34_phase4_decision_receiver_init(
 	    !v34_phase3_j_sequence_at_pattern_boundary(j_sequence) ||
 	    !v34_station_role_is_valid(transmitting_role) ||
 	    !v34_constellation_size_is_valid(constellation) ||
-	    v34_phase3_s_receiver_init_fixed_suffix(
-		    &initialized.answer_s,
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
+	    v34_phase3_s_hunt_init(&initialized.answer_s) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_training_sequence_init(
 		    &initialized.expected_trn, transmitting_role,
@@ -338,15 +333,14 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 	struct v34_phase4_decision_receiver *receiver,
 	const struct v34_adaptive_equalizer_observation *observation,
 	uint16_t decoder_power_q15,
-	const struct v34_fixed_training_decision *hard,
 	struct v34_receive_action *output)
 {
 	struct v34_phase3_s_adaptation adaptation;
+	bool control;
 	enum v34_phase3_s_receiver_result result =
-		v34_phase3_s_receiver_receive_adaptive(
-			&receiver->answer_s, hard->quarter_point,
-			hard->clockwise_quarter_turns, observation->decision,
-			&adaptation);
+		v34_phase3_s_hunt_receive(
+			&receiver->answer_s, observation->decision,
+			&adaptation, &control);
 
 	if (result == V34_PHASE3_S_RECEIVER_OK) {
 		*output = adaptation.adapt ?
@@ -740,7 +734,7 @@ v34_phase4_decision_receiver_observe(
 			&generated);
 	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
 		result = receive_answer_s(
-			&next, observation, decoder_power_q15, &hard,
+			&next, observation, decoder_power_q15,
 			&generated);
 	else if (next.stage == V34_PHASE4_DECISION_RECEIVER_MP)
 		result = receive_mp(

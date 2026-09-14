@@ -30,6 +30,7 @@ struct receive_fixture {
 	unsigned int rejected_records;
 	unsigned int unacknowledged_records;
 	unsigned int acknowledged_records;
+	unsigned int answer_s_symbols;
 };
 
 static struct v34_mp_parameters parameters(bool acknowledges_peer)
@@ -178,31 +179,12 @@ static bool receive_observation(
 	struct v34_analytic_sample expected_target = target;
 	bool answer_s = fixture->receiver.stage ==
 		V34_PHASE4_DECISION_RECEIVER_ANSWER_S;
-	bool answer_s_matches = false;
 	bool answer_s_adapt;
 	enum v34_receive_action_kind action;
 	enum v34_adaptive_equalizer_adaptation adaptation =
 		V34_ADAPTIVE_EQUALIZER_FULL;
 	enum v34_phase4_decision_receiver_result result;
 
-	if (answer_s) {
-		struct v34_fixed_training_decision hard;
-		uint8_t rotation;
-
-		CHECK(v34_training_constellation_fixed_slice(
-			      V34_CONSTELLATION_4_POINT, point, &hard) ==
-			      V34_CONSTELLATION_OK,
-		      "answer S point did not slice");
-		rotation = fixture->receiver.answer_s.target_seeded ?
-			fixture->receiver.answer_s.next_target_rotation :
-			hard.clockwise_quarter_turns;
-		CHECK(v34_training_constellation_fixed_point(
-			      V34_CONSTELLATION_4_POINT, 0u, rotation,
-			      &expected_target) == V34_CONSTELLATION_OK,
-		      "answer S target did not generate");
-		answer_s_matches = point.in_phase == expected_target.in_phase &&
-			point.quadrature == expected_target.quadrature;
-	}
 	memset(&event, 0xa5, sizeof(event));
 	saved_event = event;
 	result = v34_phase4_decision_receiver_observe(
@@ -213,11 +195,18 @@ static bool receive_observation(
 	       result == V34_PHASE4_DECISION_RECEIVER_OK),
 	      "fixed observation returned %d instead of %d", result,
 	      expected);
+	/* These fixtures supply a complete ideal S, so expect a recurrence
+	 * prefix, a bounded adaptation window, then an untouched marker tail. */
 	answer_s_adapt = answer_s &&
-		result == V34_PHASE4_DECISION_RECEIVER_OK &&
-		answer_s_matches &&
-		fixture->receiver.answer_s.target_seeded &&
-		!fixture->receiver.answer_s.detection_pending;
+		fixture->answer_s_symbols + 1u >=
+			V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS &&
+		fixture->answer_s_symbols + 1u <
+			V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS +
+			V34_PHASE3_S_HUNT_ADAPTATION_SYMBOLS;
+	if (answer_s)
+		fixture->answer_s_symbols++;
+	if (answer_s_adapt)
+		expected_target = point;
 	action = answer_s &&
 		 result == V34_PHASE4_DECISION_RECEIVER_S_DETECTED ?
 		V34_RECEIVE_BEGIN_TRACKING :
@@ -637,7 +626,8 @@ static bool test_role_constellation_timelines(void)
 	return true;
 }
 
-static bool test_delayed_answer_marker_alignment(void)
+static bool delayed_answer_marker_alignment(
+	enum v34_constellation_size constellation, uint8_t offset)
 {
 	struct receive_fixture fixture = {
 		.clock.lineage = UINT64_C(14695981039346656037),
@@ -652,14 +642,48 @@ static bool test_delayed_answer_marker_alignment(void)
 	uint8_t rotation;
 
 	CHECK(make_j_sequence(
-		      V34_ANSWERING_STATION, V34_CONSTELLATION_4_POINT,
+		      V34_ANSWERING_STATION, constellation,
 		      &j_sequence) &&
 	      v34_phase4_decision_receiver_init(
-		      &fixture.receiver, &j_sequence,
-		      V34_CONSTELLATION_4_POINT) ==
+		      &fixture.receiver, &j_sequence, constellation) ==
 		      V34_PHASE4_DECISION_RECEIVER_OK &&
 	      v34_phase3_s_sequence_init(&s) == V34_PHASE3_S_SEQUENCE_OK,
 	      "delayed answer marker did not initialize");
+	/* A delayed peer can still be sending Phase 3 J when local J starts.
+	 * Do not adapt before qualifying recurrence, or manufacture a complete S
+	 * marker from that signal and the following silence. A short accidental
+	 * S-like prefix in J can open a bounded candidate, but cannot commit the
+	 * protocol handoff. */
+	for (unsigned int symbol = 0; symbol < 2048u + 512u; ++symbol) {
+		struct v34_receive_action output;
+		struct v34_mp_receive_event event = { 0 };
+		struct v34_adaptive_equalizer_observation input;
+
+		point = (struct v34_analytic_sample){ 0 };
+		if (symbol < 2048u) {
+			CHECK(v34_phase3_j_sequence_next_fixed(
+				      &j_sequence, &point, &rotation) ==
+				      V34_PHASE3_J_SEQUENCE_OK &&
+			      v34_training_constellation_fixed_point(
+				      V34_CONSTELLATION_4_POINT, 0u,
+				      (uint8_t)((rotation + offset) & 3u),
+				      &point) == V34_CONSTELLATION_OK,
+			      "delayed J source stopped");
+		}
+		input = observation(&fixture.clock, point);
+		CHECK(v34_phase4_decision_receiver_observe(
+			      &fixture.receiver, &input, TEST_DECODER_POWER_Q15,
+			      &output, &event) == V34_PHASE4_DECISION_RECEIVER_OK &&
+		      fixture.receiver.stage ==
+			      V34_PHASE4_DECISION_RECEIVER_ANSWER_S,
+		      "J/silence became S at %u, constellation=%u rotation=%u",
+		      symbol, (unsigned int)constellation, offset);
+		if (symbol + 1u < V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS ||
+		    symbol > 2048u + V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS)
+			CHECK(output.action == V34_RECEIVE_DISCARD,
+			      "unqualified J/silence became S feedback at %u",
+			      symbol);
+	}
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 		enum v34_phase4_decision_receiver_result expected =
@@ -682,8 +706,8 @@ static bool test_delayed_answer_marker_alignment(void)
 	}
 	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
 	      v34_training_sequence_init(
-		      &trn, V34_ANSWERING_STATION,
-		      V34_CONSTELLATION_4_POINT) == V34_TRAINING_SEQUENCE_OK,
+		      &trn, V34_ANSWERING_STATION, constellation) ==
+		      V34_TRAINING_SEQUENCE_OK,
 	      "delayed answer marker was not detected");
 	CHECK(fixture.receiver.trn_symbols == 0u &&
 	      memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
@@ -693,6 +717,18 @@ static bool test_delayed_answer_marker_alignment(void)
 	      receive_fixed(
 		      &fixture, point, V34_PHASE4_DECISION_RECEIVER_OK),
 	      "first post-marker TRN target was misaligned");
+	return true;
+}
+
+static bool test_delayed_answer_marker_alignment(void)
+{
+	for (uint8_t offset = 0; offset < 4u; ++offset) {
+		CHECK(delayed_answer_marker_alignment(
+			      V34_CONSTELLATION_4_POINT, offset) &&
+		      delayed_answer_marker_alignment(
+			      V34_CONSTELLATION_16_POINT, offset),
+		      "delayed answer marker failed at rotation %u", offset);
+	}
 	return true;
 }
 

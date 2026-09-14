@@ -53,12 +53,13 @@ enum v34_phase4_decision_receiver_result {
  * known TRN decisions. Four-point reception advances that known lineage until
  * the physical MP boundary diverges; sixteen-point reception lets the
  * continuous MP decoder self-synchronize. The answering peer first supplies
- * its S/S-bar boundary. The physical timing and one adaptive equalizer remain
- * in the aggregate receive owner through B1 and data. A complete MP event
- * pauses this owner until the controller decides whether to continue MP or
- * start E. */
+ * its S/S-bar boundary. Qualify S recurrence before using it as equalizer
+ * feedback: delayed Phase 3 J is not a training target. The physical timing
+ * and one adaptive equalizer remain in the aggregate receive owner through
+ * B1 and data. A complete MP event pauses this owner until the controller
+ * decides whether to continue MP or start E. */
 struct v34_phase4_decision_receiver {
-	struct v34_phase3_s_receiver answer_s;
+	struct v34_phase3_s_hunt answer_s;
 	struct v34_phase4_j_prime_receiver call_j_prime;
 	struct v34_training_sequence expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;

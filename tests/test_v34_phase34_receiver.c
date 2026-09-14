@@ -585,7 +585,7 @@ static bool test_training_case(
 		case V34_PHASE34_RECEIVER_PHASE4_S_DETECTED:
 			CHECK(receiver.tracking_started &&
 			      receiver.tracking_symbols == 0u &&
-			      v34_phase3_s_receiver_is_complete(
+			      v34_phase3_s_hunt_is_complete(
 				      &receiver.semantic.phase4.answer_s),
 			      "role %u rate %u did not start Phase 4 tracking",
 			      role, rate);
