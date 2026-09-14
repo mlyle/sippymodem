@@ -671,6 +671,104 @@ static bool test_acquisition_after_unrelated_prefix(void)
 	return true;
 }
 
+static bool test_frozen_delay_tracking(int changed_delay, bool transient)
+{
+	struct v90_host_echo echo;
+	uint64_t source_energy = 0, residual_energy = 0;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "timing owner did not initialize");
+	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
+		int16_t cleaned;
+
+		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN, index,
+			       echo_sample(index) / 16, &cleaned),
+		      "weak-return training failed at %zu", index);
+	}
+	CHECK(v90_host_echo_is_ready(&echo), "weak return was not qualified");
+	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
+	uint32_t original_delay = echo.window_delay_samples;
+
+	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
+	/* A weak echo changes delay after training while the remote remains
+	 * much louder. Only timing may change; never fit the remote as echo. */
+	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 48000; ++index) {
+		int16_t remote = remote_sample(index) * 7;
+		int shift = transient && index >= TRAIN_SAMPLES + V90_HOST_ECHO_TIMING_WINDOW ?
+			0 : changed_delay;
+		int16_t returned = echo_sample((size_t)((int64_t)index - shift)) / 16;
+		int16_t cleaned;
+
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+			       add_s16((int32_t)remote + returned), &cleaned),
+		      "changed-return filtering failed at %zu", index);
+		if (index >= TRAIN_SAMPLES + 40000) {
+			source_energy = energy_add(source_energy, returned);
+			residual_energy = energy_add(residual_energy,
+						    (int32_t)cleaned - remote);
+		}
+	}
+	CHECK((int64_t)echo.window_delay_samples ==
+		      (int64_t)original_delay + (transient ? 0 : changed_delay),
+	      "frozen return did not retime: %u -> %u", original_delay,
+	      echo.window_delay_samples);
+	CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+	      "timing correction changed filter coefficients");
+	CHECK(residual_energy * 50 < source_energy,
+	      "retimed residual too large: %" PRIu64 " / %" PRIu64,
+	      residual_energy, source_energy);
+	{
+		struct v90_host_echo saved = echo;
+		int16_t cleaned;
+
+		CHECK(v90_host_echo_advance(&echo, V90_HOST_ECHO_FILTER,
+			0, INT16_MIN, 0) == V90_HOST_ECHO_SEQUENCE_MISMATCH &&
+		      memcmp(&echo, &saved, sizeof(echo)) == 0,
+		      "bad prediction advanced timing evidence");
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER,
+			       TRAIN_SAMPLES + 48000, INT16_MAX, &cleaned) &&
+		      echo.timing.fill == 0 && echo.timing.count == 0,
+		      "clipped input retained timing evidence");
+		CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+		      "clipped input changed the frozen response");
+	}
+	return true;
+}
+
+static bool test_unrelated_input_does_not_retime(uint32_t salt)
+{
+	struct v90_host_echo echo;
+
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "false-timing owner did not initialize");
+	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
+		int16_t cleaned;
+
+		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN, index,
+			       echo_sample(index) / 16, &cleaned),
+		      "false-timing training failed at %zu", index);
+	}
+	CHECK(v90_host_echo_is_ready(&echo), "false-timing model not qualified");
+	uint32_t original_delay = echo.window_delay_samples;
+
+	/* Remove the echo entirely. Coloured remote noise plus a tone must not
+	 * authorize moving a previously qualified filter onto unrelated data. */
+	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 96000; ++index) {
+		int32_t remote = generated_sample(index, salt, 3000) +
+			generated_sample(index - 1, salt, 3000);
+		int16_t cleaned;
+
+		remote = remote / 2 + (int16_t)(500 * sin(index * .7));
+		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+			       (int16_t)remote, &cleaned),
+		      "unrelated input failed at %zu", index);
+		CHECK(echo.window_delay_samples == original_delay,
+		      "unrelated data moved echo at %zu: %u -> %u", index,
+		      original_delay, echo.window_delay_samples);
+	}
+	return true;
+}
+
 int main(void)
 {
 	for (uint32_t trial = 0; trial < 4; ++trial)
@@ -688,6 +786,16 @@ int main(void)
 	    !test_retained_cancellation(12000, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
+	const int shifts[] = {0, 8, -60, -V90_HOST_ECHO_TIMING_RADIUS,
+		V90_HOST_ECHO_TIMING_RADIUS};
+	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
+		if (!test_frozen_delay_tracking(shifts[index], false))
+			return 1;
+	if (!test_frozen_delay_tracking(8, true))
+		return 1;
+	for (uint32_t salt = 1; salt <= 8; ++salt)
+		if (!test_unrelated_input_does_not_retime(salt * UINT32_C(7919)))
+			return 1;
 	puts("V.90 host echo tests passed");
 	return 0;
 }

@@ -27,6 +27,10 @@ enum {
 	 * fill and leaves the retimed filter its required 250 ms in TRN1d. */
 	V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES = 4,
 	V90_HOST_ECHO_READY_MIN_PEAK = 64,
+	/* Requalify small host timing changes without adapting to peer data. */
+	V90_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 50,
+	V90_HOST_ECHO_TIMING_BINS = 2 * V90_HOST_ECHO_TIMING_RADIUS + 1,
+	V90_HOST_ECHO_TIMING_WINDOW = 8192,
 };
 
 _Static_assert((unsigned)V90_HOST_ECHO_FILTER_TAPS ==
@@ -47,6 +51,22 @@ enum v90_host_echo_result {
 	V90_HOST_ECHO_NUMERIC_FAILURE,
 };
 
+struct v90_host_echo_timing_evidence {
+	int64_t cross, current_cross;
+	uint64_t energy, current_energy, input;
+};
+
+struct v90_host_echo_timing {
+	int32_t prediction[V90_HOST_ECHO_TIMING_BINS];
+	int16_t received[V90_HOST_ECHO_TIMING_BINS];
+	int64_t cross[V90_HOST_ECHO_TIMING_BINS];
+	uint64_t energy[V90_HOST_ECHO_TIMING_BINS];
+	struct v90_host_echo_timing_evidence first;
+	uint64_t input;
+	uint16_t write, fill, count, candidate;
+	bool second, first_qualified;
+};
+
 struct v90_host_echo {
 	struct pcm_echo_reference reference;
 	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
@@ -65,6 +85,7 @@ struct v90_host_echo {
 	bool delay_acquired;
 	bool filter_ready;
 	bool weak_margin;
+	struct v90_host_echo_timing timing;
 };
 
 enum v90_host_echo_result v90_host_echo_init(
@@ -81,8 +102,9 @@ bool v90_host_echo_has_weak_margin(const struct v90_host_echo *echo);
 uint32_t v90_host_echo_window_delay_samples(
 	const struct v90_host_echo *echo);
 
-/* Prediction is pure.  TRAIN retains the raw sample while learning; FILTER
- * subtracts only a model that passed the owned readiness evidence. */
+/* Prediction is pure. TRAIN retains raw input while learning. FILTER keeps
+ * coefficients frozen; independently qualified timing changes may reposition
+ * the model, but cannot learn the peer's signal as a new echo response. */
 enum v90_host_echo_result v90_host_echo_predict(
 	const struct v90_host_echo *echo, enum v90_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample);

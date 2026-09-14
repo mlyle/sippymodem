@@ -54,6 +54,10 @@ static bool header_is_valid(const struct v90_host_echo *echo)
 	uint32_t ready_min;
 
 	if (echo == NULL || !pcm_echo_reference_is_valid(&echo->reference) ||
+	    echo->timing.write >= V90_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.fill > V90_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.count >= V90_HOST_ECHO_TIMING_WINDOW ||
+	    echo->timing.candidate >= V90_HOST_ECHO_TIMING_BINS ||
 	    echo->reference.scan_count == 0 ||
 	    echo->window_delay_samples == 0 ||
 	    echo->window_delay_samples >
@@ -94,6 +98,7 @@ bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
 
 static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
 {
+	memset(&echo->timing, 0, sizeof(echo->timing));
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
 	echo->prediction_energy = 0;
 	echo->input_energy = 0;
@@ -458,6 +463,103 @@ static void commit_training_step(
 	echo->train_peak = step->train_peak;
 }
 
+static bool timing_is_qualified(
+	const struct v90_host_echo_timing_evidence *e,
+	unsigned samples, unsigned strength)
+{
+	/* Require useful cancellation as well as correlation. Compare against
+	 * the current delay on the same input, including the peer's signal.
+	 * Strength is sample_count * r-squared: require 9 independently in each
+	 * window and 36 together. These are timing-confidence gates, not SNR
+	 * estimates; agreement and a half-prediction-energy improvement are also
+	 * required so unrelated input cannot win just by choosing another bin. */
+	__int128 improvement = 2 * ((__int128)e->cross - e->current_cross) -
+		((__int128)e->energy - e->current_energy);
+
+	return e->cross > 0 && e->energy != 0 &&
+	       (__uint128_t)e->cross * 2 >= e->energy &&
+	       (__uint128_t)e->cross * e->cross * samples >=
+		       (__uint128_t)strength * e->input * e->energy &&
+	       improvement > 0 && (__uint128_t)improvement * 2 >= e->energy;
+}
+
+static void track_timing(
+	struct v90_host_echo *echo, int16_t received, int16_t cleaned)
+{
+	struct v90_host_echo_timing *t = &echo->timing;
+	const unsigned bins = V90_HOST_ECHO_TIMING_BINS;
+	const unsigned radius = V90_HOST_ECHO_TIMING_RADIUS;
+	unsigned index = t->write;
+	int16_t input;
+
+	/* Clipped subtraction does not describe the frozen filter prediction. */
+	if (cleaned == INT16_MIN || cleaned == INT16_MAX ||
+	    received == INT16_MIN || received == INT16_MAX) {
+		memset(t, 0, sizeof(*t));
+		return;
+	}
+	t->prediction[index] = (int32_t)received - cleaned;
+	t->received[index] = received;
+	t->write = (index + 1) % bins;
+	if (t->fill < bins && ++t->fill < bins)
+		return;
+	/* Delay the observation so earlier AND later predictions are available.
+	 * Reuse already computed predictions; do not run one FIR per candidate. */
+	input = t->received[(index + bins - radius) % bins];
+	t->input += square_s16(input);
+	for (unsigned candidate = 0; candidate < bins; ++candidate) {
+		int32_t predicted = t->prediction[index];
+
+		t->cross[candidate] += (int64_t)input * predicted;
+		t->energy[candidate] += (int64_t)predicted * predicted;
+		index = index == 0 ? bins - 1 : index - 1;
+	}
+	if (++t->count != V90_HOST_ECHO_TIMING_WINDOW)
+		return;
+	unsigned best = radius;
+	for (unsigned candidate = 0; candidate < bins; ++candidate)
+		if (2 * t->cross[candidate] - (int64_t)t->energy[candidate] >
+		    2 * t->cross[best] - (int64_t)t->energy[best])
+			best = candidate;
+	struct v90_host_echo_timing_evidence evidence = {
+		.cross = t->cross[best], .current_cross = t->cross[radius],
+		.energy = t->energy[best], .current_energy = t->energy[radius],
+		.input = t->input,
+	};
+	bool qualified = timing_is_qualified(
+		&evidence, V90_HOST_ECHO_TIMING_WINDOW, 9);
+	if (t->second && t->first_qualified && qualified && best == t->candidate) {
+		struct v90_host_echo_timing_evidence combined = {
+			.cross = evidence.cross + t->first.cross,
+			.current_cross = evidence.current_cross + t->first.current_cross,
+			.energy = evidence.energy + t->first.energy,
+			.current_energy = evidence.current_energy + t->first.current_energy,
+			.input = evidence.input + t->first.input,
+		};
+		int64_t delay = (int64_t)echo->window_delay_samples + best - radius;
+
+		/* Two disjoint windows must choose the same useful delay, and
+		 * the combined normalized correlation must be stronger still. */
+		if (timing_is_qualified(&combined, 2 * V90_HOST_ECHO_TIMING_WINDOW, 36) &&
+		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
+		    (uint64_t)delay + V90_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
+		    pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
+					  V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK) {
+			echo->window_delay_samples = (uint32_t)delay;
+			memset(t, 0, sizeof(*t));
+			return;
+		}
+	}
+	t->second = !t->second;
+	t->first = evidence;
+	t->candidate = best;
+	t->first_qualified = qualified;
+	t->count = 0;
+	t->input = 0;
+	memset(t->cross, 0, sizeof(t->cross));
+	memset(t->energy, 0, sizeof(t->energy));
+}
+
 enum v90_host_echo_result v90_host_echo_advance(
 	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
 	int16_t received_sample, int16_t cleaned_sample,
@@ -480,6 +582,10 @@ enum v90_host_echo_result v90_host_echo_advance(
 		return result;
 	if (expected != cleaned_sample)
 		return V90_HOST_ECHO_SEQUENCE_MISMATCH;
+	if (mode != V90_HOST_ECHO_FILTER && echo->timing.fill != 0)
+		memset(&echo->timing, 0, sizeof(echo->timing));
+	if (mode == V90_HOST_ECHO_FILTER && echo->filter_ready)
+		track_timing(echo, received_sample, cleaned_sample);
 
 	if (mode == V90_HOST_ECHO_TRAIN) {
 		next_quiet = echo->quiet_samples == UINT32_MAX ? UINT32_MAX :
