@@ -359,14 +359,16 @@ static bool run_exchange(
 		      "quality-selection path did not initialize");
 		for (size_t sample = 0; sample < CHARACTER_LIMIT; ++sample) {
 			struct pcm_downstream_tx *transmit = &path.downstream.training;
-			bool final_window = transmit->accepted_frames >=
-				V90_PHASE4_TRN2D_WAIT_CP_FRAMES - 10u;
+			/* Conditioning can recover late, after echo timing settles.
+			 * A stale poor estimate must not freeze MP at 1.815 seconds
+			 * when CP is absent and the legal interval remains available. */
+			bool final_window = transmit->transmitted_symbols >= 15200u;
 
 			path.upstream.startup.state.cp.line.equalizer.quality =
 				(struct v34_adaptive_equalizer_quality){
 					.decision_metric = 0,
 					.recent_decision_metric = final_window ?
-						decision_metric : 0,
+						decision_metric : INT16_MAX,
 					.recent_symbol_count =
 						V34_ADAPTIVE_EQUALIZER_RECENT_SYMBOLS,
 				};

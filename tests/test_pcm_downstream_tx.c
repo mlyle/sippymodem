@@ -1328,7 +1328,9 @@ static bool verify_zero_rate_cleardown(unsigned int law, uint8_t lookahead,
 	else if (replacement == 2u)
 		CHECK(pcm_downstream_tx_request_mp_prime(&tx) == PCM_DOWNSTREAM_TX_OK,
 		      "MP-prime fixture did not start");
-	for (; symbols < 16000u; ++symbols) {
+	/* A replacement follows initial conditioning and a complete MP; the
+	 * two zero-rate records have their own bounded duration after that. */
+	for (; symbols < V90_PHASE4_TRN2D_WAIT_CP_SYMBOLS + 4096u; ++symbols) {
 		struct pcm_downstream_symbol symbol;
 		struct pcm_downstream_event event;
 		enum pcm_downstream_tx_result sent;
@@ -1408,8 +1410,8 @@ static bool test_zero_rate_cleardown(void)
 	return true;
 }
 
-static bool verify_conditioning(enum g711_law law, uint8_t lookahead,
-	unsigned int cp_arrival)
+static bool verify_conditioning(enum g711_law law, uint8_t redundancy,
+	uint8_t lookahead, unsigned int cp_arrival)
 {
 	const struct v90_mp_record mp = {
 		.type = V90_MP_RECORD_TYPE0,
@@ -1421,13 +1423,17 @@ static bool verify_conditioning(enum g711_law law, uint8_t lookahead,
 	};
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx tx;
+	struct v90_pcm_stream_rx rx;
 	uint64_t expected_frames = cp_arrival == 1u ?
 		V90_PHASE4_TRN2D_INITIAL_FRAMES : V90_PHASE4_TRN2D_WAIT_CP_FRAMES;
 	bool requested = false;
+	bool mp_started = false;
 
-	CHECK(make_mapping(&mapping, V90_CP_TRAINING, law, 3u, lookahead) &&
+	CHECK(make_mapping(&mapping, V90_CP_TRAINING, law, redundancy, lookahead) &&
 	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
+	      v90_pcm_stream_rx_init(&rx, &mapping, V90_PCM_MAPPING_TRANSMIT) ==
+		      V90_PCM_STREAM_RX_OK &&
 	      pcm_downstream_tx_start_mp(&tx, &mp) == PCM_DOWNSTREAM_TX_OK,
 	      "conditioning fixture did not initialize");
 	CHECK(!pcm_downstream_tx_mp_starts_next_frame(NULL) &&
@@ -1454,18 +1460,34 @@ static bool verify_conditioning(enum g711_law law, uint8_t lookahead,
 			requested = true;
 		}
 		CHECK(pcm_downstream_tx_mp_starts_next_frame(&tx) ==
-		      (tx.accepted_frames >= expected_frames && tx.queue_count == 0u),
+		      (!mp_started && tx.accepted_frames >= expected_frames && tx.queue_count == 0u),
 		      "MP boundary ignored conditioning or queued output");
 		CHECK(pcm_downstream_tx_next(&tx, &symbol) == PCM_DOWNSTREAM_TX_OK,
 		      "conditioning stopped at symbol %u", symbols);
-		if (tx.stage == PCM_DOWNSTREAM_TX_MP) {
+		if (!mp_started && tx.stage == PCM_DOWNSTREAM_TX_MP) {
 			CHECK(tx.accepted_frames == expected_frames + 1u &&
 			      requested == (cp_arrival != 0u),
 			      "CP arrival %u: MP began after %llu frames, expected %llu",
 			      cp_arrival, (unsigned long long)(tx.accepted_frames - 1u),
 			      (unsigned long long)expected_frames);
-			return true;
+			mp_started = true;
 		}
+		/* Observe actual emitted codewords, not just the coder's stage:
+		 * shaping look-ahead can still contain trailing TRN2d. MP's first
+		 * zero source bit must arrive before the two-second wire deadline. */
+		struct v90_pcm_stream_frame frame;
+		enum v90_pcm_stream_rx_result result =
+			v90_pcm_stream_rx_receive_octet(&rx, symbol.pcm.octet, &frame);
+		CHECK(result == V90_PCM_STREAM_RX_BUFFERING ||
+		      result == V90_PCM_STREAM_RX_FRAME_READY,
+		      "conditioning wire decoder failed");
+		if (result == V90_PCM_STREAM_RX_FRAME_READY)
+			for (unsigned int bit = 0u; bit < frame.bit_count; ++bit)
+				if (frame.bits[bit] == 0u) {
+					CHECK(mp_started && rx.received_frames > expected_frames,
+					      "wire MP truncated the training interval");
+					return true;
+				}
 	}
 	CHECK(false, "MP missed its two-second deadline");
 }
@@ -1473,11 +1495,12 @@ static bool verify_conditioning(enum g711_law law, uint8_t lookahead,
 static bool test_conditioning(void)
 {
 	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-		for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead)
-			for (unsigned int cp_arrival = 0u; cp_arrival <= 2u; ++cp_arrival)
-				CHECK(verify_conditioning(law, lookahead, cp_arrival),
-				      "law %u lookahead %u CP arrival %u failed",
-				      law, lookahead, cp_arrival);
+		for (uint8_t redundancy = 0u; redundancy <= 3u; ++redundancy)
+			for (uint8_t lookahead = 0u; lookahead <= 3u; ++lookahead)
+				for (unsigned int cp_arrival = 0u; cp_arrival <= 2u; ++cp_arrival)
+					CHECK(verify_conditioning(law, redundancy, lookahead, cp_arrival),
+					      "law %u redundancy %u lookahead %u CP arrival %u failed",
+					      law, redundancy, lookahead, cp_arrival);
 	return true;
 }
 

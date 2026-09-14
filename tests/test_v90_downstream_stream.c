@@ -1131,6 +1131,7 @@ static bool run_stream(
 	size_t training_frames = 0;
 	size_t mp_records = 0;
 	size_t first_mp_symbol = 0;
+	size_t mp_sequence_bits;
 	size_t prime_records = 0;
 	size_t expected_prime_records = training_lookahead == 0 ? 2u : 3u;
 	size_t symbols = 0;
@@ -1144,6 +1145,7 @@ static bool run_stream(
 		      &mapping, law, V90_CP_TRAINING,
 		      training_redundancy, training_lookahead) &&
 	      mapping.frame_bits == FRAME_BITS &&
+	      v90_mp_sequence_size(record.type, FRAME_BITS, &mp_sequence_bits) == V90_MP_OK &&
 	      pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -1263,7 +1265,9 @@ static bool run_stream(
 	      ed_requested && ed_received &&
 	      training_frames == V90_PHASE4_TRN2D_MINIMUM_FRAMES &&
 	      first_mp_symbol >= V90_PHASE4_TRN2D_INITIAL_SYMBOLS &&
-	      first_mp_symbol < 16000u &&
+	      /* The two-second deadline bounds MP's start, not its completion. */
+	      first_mp_symbol >= mp_sequence_bits / FRAME_BITS * V90_CP_FRAME_INTERVALS &&
+	      first_mp_symbol - mp_sequence_bits / FRAME_BITS * V90_CP_FRAME_INTERVALS < 16000u &&
 	      mp_records == 1 && prime_records == expected_prime_records &&
 	      transmitter.stage == PCM_DOWNSTREAM_TX_ED &&
 	      transmitter.ed_frames == V90_PHASE4_ED_FRAMES &&
