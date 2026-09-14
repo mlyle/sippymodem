@@ -176,6 +176,11 @@ upstream, not the enabled capability. A PCM-upstream case requires explicit PCM
 evidence at the initial CONNECT: the V.92 label and bit rate alone are insufficient.
 Missing or conventional-upstream reports count as mismatches, without stopping
 the data and retrain exercises.
+Results save the fresh local-ATO1 CONNECT separately in `retrain_*` profile
+fields, even if the subsequent PONG fails. History adds an indented `after ATO1:`
+line when this profile changes. Initial scoring is unchanged; missing retrain
+details remain unknown rather than inheriting the initial rates or PCM label.
+This final profile does not describe the intervening remote-retrain interval.
 
 The default standard campaign has 100 curated call configurations rather than
 a Cartesian matrix: 53 raw datapump baselines plus 47 LAPM variants. LAPM is

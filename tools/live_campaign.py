@@ -423,6 +423,7 @@ class _AttemptState:
     retrain_connected: bool = False
     retrain_data: bool = False
     report: ConnectReport = field(default_factory=ConnectReport)
+    retrain_report: ConnectReport = field(default_factory=ConnectReport)
     profile_error: str = ""
     detail: str = ""
     setup_trace: list[dict[str, str]] = field(default_factory=list)
@@ -655,6 +656,9 @@ def _exercise_online(
         else:
             state.detail = "retrain returned " + str(report.retrain_result)
         return
+    # Keep the fresh CONNECT separate from the initial profile, including
+    # when the subsequent online probe fails. Unreported fields stay unknown.
+    state.retrain_report = terminal.connect_report
     progress.set("checking post-retrain data")
     try:
         time.sleep(config.online_settle_seconds)
@@ -1047,6 +1051,12 @@ def run_physical_attempt(
         receive_rate=state.report.receive_bit_rate,
         transmit_rate=state.report.transmit_bit_rate,
         upstream_mode=state.report.upstream_mode,
+        retrain_modulation=state.retrain_report.modulation,
+        retrain_protocol=state.retrain_report.protocol,
+        retrain_compression=state.retrain_report.compression,
+        retrain_receive_rate=state.retrain_report.receive_bit_rate,
+        retrain_transmit_rate=state.retrain_report.transmit_bit_rate,
+        retrain_upstream_mode=state.retrain_report.upstream_mode,
         profile_error=state.profile_error,
         detail=state.detail,
         artifact=artifacts.directory.name,

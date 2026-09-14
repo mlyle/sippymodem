@@ -510,6 +510,55 @@ class LiveCampaignReportTests(unittest.TestCase):
                     self.assertNotIn("up=", dashboard)
                     self.assertNotIn("private-value", dashboard)
 
+    def test_changed_retrain_profile_does_not_reclassify_initial_results(self) -> None:
+        case = next(case for case in cases_for_suite("standard")
+                    if case.family == "v92" and case.feature == "pcm-upstream"
+                    and case.role == "originator" and case.link_mode == "raw")
+        initial = dict(modulation="V.92", protocol="none", compression="none",
+                       receive_rate=24000, transmit_rate=56000, upstream_mode="PCM")
+        common = dict(case_name=case.name, family=case.family, role=case.role,
+                      connected=True, initial_data=True, remote_retrain=True,
+                      retrain_connected=True, retrain_data=True)
+
+        def dashboard(result: AttemptResult, limit: int = 3) -> str:
+            return render_dashboard((case,), 1, (result,), revision="e" * 40,
+                                    campaign_id="test-campaign", elapsed_seconds=3,
+                                    recent_limit=limit)
+
+        legacy = self.result(**common, **initial)
+        unchanged = self.result(**common, **initial,
+                                **{"retrain_" + name: value for name, value in initial.items()})
+        self.assertEqual(dashboard(unchanged), dashboard(legacy))
+        for upstream in ("V.34", None, "private-value"):
+            with self.subTest(upstream=upstream):
+                post = dict(initial, transmit_rate=52000, upstream_mode=upstream)
+                changed = self.result(**common, **initial,
+                                      **{"retrain_" + name: value for name, value in post.items()})
+                rendered = dashboard(changed)
+                self.assertEqual(rendered.split("Recent calls")[0],
+                                 dashboard(legacy).split("Recent calls")[0])
+                self.assertEqual(changed.maturity, MATURITY_FULL)
+                self.assertTrue(changed.successful())
+                self.assertIn("full up=PCM", rendered)
+                self.assertTrue(rendered.endswith(
+                    "     after ATO1: V.92 24000/52000 r up="
+                    + ("V.34" if upstream == "V.34" else "?")))
+                self.assertNotIn("private-value", rendered)
+                bounded = dashboard(changed, 1)
+                self.assertNotIn("after ATO1", bounded)
+                self.assertFalse(any(line[:3].isdigit() for line in bounded.splitlines()))
+
+        mismatch = self.result(**common, **initial, profile_error="requested rate not selected",
+                               retrain_modulation="V.34", retrain_protocol="LAPM",
+                               retrain_compression="V.42bis", retrain_receive_rate=28800,
+                               retrain_transmit_rate=28800)
+        self.assertNotIn("after ATO1", dashboard(mismatch, 2))
+        complete = dashboard(mismatch, 3).splitlines()
+        self.assertTrue(complete[-3].endswith("full/mismatch up=PCM"))
+        self.assertTrue(complete[-2].startswith("     tried:"))
+        self.assertEqual(complete[-1],
+                         "     after ATO1: V.34 28800/28800 l up=? compression=V.42bis")
+
     def test_pcm_fallback_credits_v34_without_regrouping_scheduled_progress(self) -> None:
         cases = cases_for_suite("standard")
         for feature in ("analogue-fallback", "digital-headend"):

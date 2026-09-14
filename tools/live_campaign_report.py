@@ -116,6 +116,14 @@ class AttemptResult:
     detail: str = ""
     artifact: str = ""
     upstream_mode: str | None = None
+    # The initial profile above owns scoring. These independent observations
+    # describe the CONNECT after local ATO1, not the remote retrain interval.
+    retrain_modulation: str | None = None
+    retrain_protocol: str | None = None
+    retrain_compression: str | None = None
+    retrain_receive_rate: int | None = None
+    retrain_transmit_rate: int | None = None
+    retrain_upstream_mode: str | None = None
 
     @property
     def profile_mismatch(self) -> bool:
@@ -289,6 +297,27 @@ def _negotiated_group(
             protocol, requested[1] if protocol is None and not mismatch else "?"
         ),
     )
+
+
+def _retrain_profile_line(result: AttemptResult) -> str | None:
+    fields = ("modulation", "protocol", "compression", "receive_rate",
+              "transmit_rate", "upstream_mode")
+    initial = tuple(getattr(result, name) for name in fields)
+    retrained = tuple(getattr(result, "retrain_" + name) for name in fields)
+    if (not result.retrain_connected or not any(value is not None for value in retrained)
+            or retrained == initial):
+        return None
+    mode = {"LAPM": "l", "none": "r"}.get(result.retrain_protocol, "?")
+    line = (
+        f"     after ATO1: {(result.retrain_modulation or '?')[:7]} "
+        f"{result.retrain_receive_rate or '-'}/{result.retrain_transmit_rate or '-'} {mode}"
+    )
+    upstream = result.retrain_upstream_mode
+    if upstream in {"PCM", "V.34"} or result.upstream_mode in {"PCM", "V.34"}:
+        line += f" up={upstream if upstream in {'PCM', 'V.34'} else '?'}"
+    if result.retrain_compression != result.compression:
+        line += f" compression={result.retrain_compression or '-'}"
+    return line
 
 
 def render_dashboard(
@@ -553,9 +582,10 @@ def render_dashboard(
                 result.callback_request_profile_mismatch if request
                 else result.profile_mismatch
             )
-            # Keep the actual and requested profiles together within the
+            retrain_line = None if request else _retrain_profile_line(result)
+            # Keep the initial, requested and retrained profiles together within the
             # available terminal rows; never leave an orphaned annotation.
-            history_rows = 1 + int(profile_mismatch)
+            history_rows = 1 + int(profile_mismatch) + int(retrain_line is not None)
             if history_rows > recent_limit:
                 break
             recent_limit -= history_rows
@@ -663,4 +693,6 @@ def render_dashboard(
                     if case.feature == "analogue-fallback":
                         tried += " (analogue fallback)"
                 rows.append(f"     tried: {tried}")
+            if retrain_line is not None:
+                rows.append(retrain_line)
     return "\n".join(rows)

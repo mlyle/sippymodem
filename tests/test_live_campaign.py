@@ -72,9 +72,15 @@ ring_sent = False
 callback_requested = False
 callback_nonce = b"0123456789abcdef0123456789abcdef"
 raw_transport = False
+retrained = False
 
 def connect_response():
-    if mode == "pcm-conventional":
+    if "pcm-retrain" in mode:
+        if retrained and mode == "pcm-retrain-unknown":
+            return b"\r\nCONNECT 24000\r\n"
+        modulation = b"V34" if retrained and mode.startswith("callback") else b"V92"
+        rate = b"24000"
+    elif mode == "pcm-conventional":
         modulation = b"V92"
         rate = b"24000"
     elif "wrong-profile" in mode:
@@ -89,6 +95,9 @@ def connect_response():
     protocol = b"NONE" if raw_transport or mode == "wrong-link" else b"LAPM"
     upstream = b"Upstream: V34\r\n" if mode == "pcm-conventional" else b""
     tx_rate = b"56000" if mode == "pcm-conventional" else rate
+    if "pcm-retrain" in mode:
+        upstream = b"Upstream: V34\r\n" if retrained else b"Upstream: PCM\r\n"
+        tx_rate = (rate if mode.startswith("callback") else b"52000") if retrained else b"56000"
     return (
         b"\r\nModulation: " + modulation + b"\r\n" + upstream + b"Protocol: " + protocol
         + b"\r\nCompression: NONE\r\nTxRate: " + tx_rate
@@ -146,7 +155,8 @@ while True:
             os.write(master, b"\r\nOK\r\n")
         elif b"PING" in buffer:
             buffer.clear()
-            os.write(master, pong)
+            if not (retrained and mode == "pcm-retrain-no-data"):
+                os.write(master, pong)
         elif b"RETRAIN" in buffer:
             buffer.clear()
             if mode in ("online-prefix-before-retrain-end", "wrong-profile-no-end"):
@@ -195,8 +205,12 @@ while True:
             )
             online = True
         elif command == b"ATO1":
-            os.write(master, b"\r\nOK\r\n" + connect_response())
-            online = True
+            retrained = True
+            if mode == "pcm-retrain-failed":
+                os.write(master, b"\r\nOK\r\nNO CARRIER\r\n")
+            else:
+                os.write(master, b"\r\nOK\r\n" + connect_response())
+                online = True
         elif command == b"ATH0":
             print("ATH0", flush=True)
             if callback_requested:
@@ -883,6 +897,48 @@ class LiveCampaignTests(unittest.TestCase):
                     self.assertEqual(result.detail, "")
                     self.assertIn(b"ATO1", tx)
                     self.assertIn(b"PING", tx)
+
+    def test_retrain_profile_is_saved_separately_before_the_data_probe(self) -> None:
+        for mode in ("pcm-retrain-fallback", "callback-pcm-retrain-fallback",
+                     "pcm-retrain-no-data", "pcm-retrain-unknown", "pcm-retrain-failed"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                script = root / "fake.py"
+                script.write_text(textwrap.dedent(FAKE_MODEM), encoding="utf-8")
+                role = "callback" if mode.startswith("callback") else "originator"
+                scheduled = ScheduledAttempt(CASES_BY_NAME[f"v92-pcmup-24000-raw-{role}"], 1)
+                artifacts = self.artifacts(root, scheduled)
+                config = self.config(root, script, mode, root / "callback-ready")
+                if mode.endswith("no-data"):
+                    config = replace(config, online_timeout_seconds=0.1)
+                with mock.patch("tools.live_terminal.time.sleep"):
+                    result = run_physical_attempt(
+                        config,
+                        FrozenBinary(root, Path(sys.executable), "a" * 40, "b" * 64, False),
+                        scheduled, 1, artifacts, True,
+                    )
+                initial = ("V.92", "none", "none", 24000, 56000, "PCM")
+                fields = ("modulation", "protocol", "compression", "receive_rate",
+                          "transmit_rate", "upstream_mode")
+                self.assertEqual(tuple(getattr(result, name) for name in fields), initial)
+                self.assertFalse(result.profile_mismatch)
+                self.assertTrue(result.initial_data)
+                self.assertTrue(result.remote_retrain)
+                if mode.endswith("failed"):
+                    expected = (None,) * len(fields)
+                    self.assertFalse(result.retrain_connected)
+                elif mode.endswith("unknown"):
+                    expected = (None, None, None, 24000, None, None)
+                elif role == "callback":
+                    expected = ("V.34", "none", "none", 24000, 24000, "V.34")
+                else:
+                    expected = ("V.92", "none", "none", 24000, 52000, "V.34")
+                saved = json.loads((artifacts.directory / "result.json").read_text())["result"]
+                for name, value in zip(fields, expected):
+                    self.assertEqual(getattr(result, "retrain_" + name), value)
+                    self.assertEqual(saved["retrain_" + name], value)
+                self.assertEqual(tuple(saved[name] for name in fields), initial)
+                self.assertEqual(result.retrain_data, not mode.endswith(("no-data", "failed")))
 
     def test_online_bytes_before_retrain_end_are_ordinary_payload(
         self,
