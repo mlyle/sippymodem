@@ -288,11 +288,11 @@ static bool ready_for_phase3(const struct pcm_phase2 *phase2)
 	    phase2->stage != PCM_PHASE2_INFO1)
 		return false;
 	info1 = &phase2->state.info1;
-	/* The conventional Phase 3 child owns the post-INFO1a line interval,
-	 * including when INFO0 retained a V.92 agreement. */
+	/* Both PCM-family Phase 3 children own the post-INFO1a line interval.
+	 * A V.34 fallback still finishes the shared timeline before transfer. */
 	return info1->control.phase == PHASE2_INFO1_SILENCE &&
 	       info1->digital_record_stored && info1->analog_record_stored &&
-	       info1->analog.kind == PCM_INFO1A_CONVENTIONAL;
+	       info1->analog.kind != PCM_INFO1A_V34_FALLBACK;
 }
 
 bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2)

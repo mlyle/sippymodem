@@ -1414,22 +1414,17 @@ static bool check_phase2_controller(
 		}
 		if (analog_event.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT) {
 			analog_sent = index;
-			CHECK(mode != TEST_INFO1_V92_PCM ?
-				      pcm_phase2_is_ready_for_phase3(&analog) &&
-					      analog.state.info1.control.phase ==
-						      PHASE2_INFO1_SILENCE :
-				      !pcm_phase2_is_ready_for_phase3(&analog),
+			CHECK(pcm_phase2_is_ready_for_phase3(&analog) &&
+			      analog.state.info1.control.phase == PHASE2_INFO1_SILENCE &&
+			      analog.state.info1.control.silence_samples == 0,
 			      "PCM Phase 2 mode %d used the wrong local INFO1a "
 			      "handoff boundary",
 			      mode);
 		}
 		if (digital_event.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
 			digital_received = index;
-			CHECK(mode != TEST_INFO1_V92_PCM ?
-				      pcm_phase2_is_ready_for_phase3(&digital) &&
-					      digital.state.info1.control.phase ==
-						      PHASE2_INFO1_SILENCE :
-				      !pcm_phase2_is_ready_for_phase3(&digital),
+			CHECK(pcm_phase2_is_ready_for_phase3(&digital) &&
+			      digital.state.info1.control.phase == PHASE2_INFO1_SILENCE,
 			      "PCM Phase 2 mode %d used the wrong peer INFO1a "
 			      "handoff boundary",
 			      mode);
@@ -1451,15 +1446,13 @@ static bool check_phase2_controller(
 				&digital, &peer_info1a) == PCM_PHASE2_OK &&
 				info1a_equal(
 					&peer_info1a, &conventional_info1a);
-		bool handoff_boundary_matches = mode != TEST_INFO1_V92_PCM ?
-			digital.state.info1.control.phase ==
-				PHASE2_INFO1_SILENCE &&
-				digital.state.info1.control.silence_samples <
-					PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES :
-			analog.state.info1.control.phase ==
-					PHASE2_INFO1_COMPLETE &&
-				digital.state.info1.control.phase ==
-					PHASE2_INFO1_COMPLETE;
+		bool handoff_boundary_matches =
+			analog.state.info1.control.phase == PHASE2_INFO1_SILENCE &&
+			analog.state.info1.control.silence_samples <
+				PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES &&
+			digital.state.info1.control.phase == PHASE2_INFO1_SILENCE &&
+			digital.state.info1.control.silence_samples <
+				PHASE2_INFO1_POST_INFO1A_SILENCE_SAMPLES;
 
 		CHECK(digital_sent < analog_received &&
 		      analog_received < analog_sent &&

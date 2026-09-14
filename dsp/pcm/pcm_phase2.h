@@ -130,10 +130,10 @@ enum pcm_phase2_result pcm_phase2_init_retrain_v92_digital(
 bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2);
 bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2);
 bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2);
-/* A selected V.90 call is ready at the INFO1 silence boundary: its analogue
- * Phase 3 transmitter owns the one required quiet interval, while its digital
- * transmitter remains silent until Ja. Other branches retain the complete
- * shared INFO1 timeline as their handoff boundary. */
+/* Both conventional and PCM upstream are ready at the INFO1 silence boundary:
+ * the analogue Phase 3 child owns the one required quiet interval, while the
+ * digital transmitter remains silent until Ja. A V.34 fallback retains the
+ * complete shared INFO1 timeline as its handoff boundary. */
 bool pcm_phase2_is_ready_for_phase3(const struct pcm_phase2 *phase2);
 /* A V.90 digital modem may receive a conventional V.34 INFO1a instead of
  * the PCM-selecting record. The completed Phase 2 owner remains available for

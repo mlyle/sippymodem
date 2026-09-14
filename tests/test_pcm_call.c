@@ -3165,6 +3165,8 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 	struct channel wire;
 	bool captured[3] = { false };
 	bool timely[2] = { false };
+	size_t info1a_end = SIZE_MAX;
+	bool ru_started = false;
 	CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 		pcm_call_init(&calls[1], &dc) == PCM_CALL_OK && channel_init(&wire, law, delay),
 		"V.92 deadline endpoints did not initialize");
@@ -3176,6 +3178,23 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 			struct pcm_call_observation event;
 			CHECK(pcm_call_octet(&calls[side], rx[side], decode_octet(law, rx[side]),
 				&tx[side], &event) == PCM_CALL_OK, "V.92 deadline setup failed at %zu side %u", clock, side);
+			if (side == 0u) {
+				int16_t output = decode_octet(law, tx[side]);
+
+				if (event.processed == PCM_CALL_PHASE2 &&
+				    event.phase2.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT)
+					info1a_end = clock;
+				if (!ru_started && info1a_end != SIZE_MAX && clock > info1a_end &&
+				    (output < -32 || output > 32)) {
+					/* V.92 9.5.2.1.1: measure the emitted line, not a
+					 * child counter that could hide a second quiet interval
+					 * in Phase 2. Allow either codec's zero representation. */
+					CHECK(clock - info1a_end - 1u == V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS,
+					      "law %u delay %zu emitted %zu quiet samples after INFO1a, expected 560",
+					      law, delay, clock - info1a_end - 1u);
+					ru_started = true;
+				}
+			}
 		}
 		channel_transmit(&wire, tx[0], tx[1]);
 		if (calls[1].stage != PCM_CALL_PHASE3)
@@ -3209,8 +3228,8 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 				captured[kind] = true;
 			}
 	}
-	CHECK(captured[0] && captured[1] && captured[2] && timely[0] && timely[1],
-		"did not capture all three response boundaries");
+	CHECK(ru_started && captured[0] && captured[1] && captured[2] && timely[0] && timely[1],
+		"did not capture Ru and all three response boundaries");
 	bool passed = true;
 	for (unsigned kind = 0; kind < 3; ++kind)
 		passed = v92_phase3_missing_response(&boundaries[kind], kind) && passed;
@@ -6746,7 +6765,7 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 struct v92_upstream_offer {
 	uint32_t peer_mask;
 	uint8_t local_maximum;
-	/* Zero expects exhaustion after a failed B1u and fresh peer offer. */
+	/* Zero expects exhaustion after bounded recovery and a fresh peer offer. */
 	uint8_t expected;
 	double postcursor;
 	/* Zero keeps the received sample unchanged; scaling follows G.711. */
@@ -6974,7 +6993,7 @@ static bool capture_v92_duplex_data(
 				if (offer != NULL && offer->expected == 0u && result == PCM_CALL_UNUSABLE_SELECTION) {
 					CHECK(role == 1u && retrains[0] == offer->expected_retrains &&
 					      retrains[1] == offer->expected_retrains && call->failed &&
-					      call->v92_upstream_retry_ceiling == offer->local_maximum - 1u &&
+					      call->v92_upstream_retry_ceiling == previous_rate - 1u &&
 					      call->v92_digital_phase4_configuration.direct_maximum_data_rate_number ==
 						      offer->local_maximum && pcm_call_is_valid(call) && !pcm_call_is_online(call),
 					      "V.92 exhausted peer rates without bounded recovery");
@@ -7169,17 +7188,31 @@ static bool test_v92_codec_noise_recovery(void)
 		for (unsigned noisy = 0; noisy <= 1; noisy++) {
 			bool recovery = noisy && law == G711_LAW_PCMU;
 			struct v92_upstream_offer offer = {
-				.peer_mask = (UINT32_C(1) << 18) | (recovery ? UINT32_C(1) << 17 : 0u),
-				.local_maximum = 19u, .expected = recovery ? 18u : 19u,
+				.peer_mask = (UINT32_C(1) << 18) | (recovery ?
+					(UINT32_C(1) << 17) | (UINT32_C(1) << 12) : 0u),
+				.local_maximum = 19u, .expected = recovery ? 13u : 19u,
 				.postcursor = .10, .receive_gain = .75,
-				.expected_retrains = recovery ? 1u : 0u,
+				.expected_retrains = recovery ? 2u : 0u,
 				.noise_peak = noisy ? 8u : 0u, .payload_frames = 4000u,
 			};
+			/* With the single post-INFO1a quiet interval, this seeded
+			 * channel has ambiguous payload at both 48k and 46.667k.
+			 * It must recover at the offered 40k, not guess those bits
+			 * or invent an intermediate rate the peer did not offer. */
 			struct v92_online_pair pair;
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 			      "codec %u noise %u failed sustained PCM data or recovery", law, offer.noise_peak);
 			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == offer.expected_retrains,
 			      "codec noise did not trigger the expected online quality recovery");
+			if (recovery) {
+				/* Preserve the original restricted offer and noisy wire:
+				 * without 40k, exhaust the peer rates instead of reporting
+				 * success or delivering the ambiguous payload. */
+				offer.peer_mask &= ~(UINT32_C(1) << 12);
+				offer.expected = 0u;
+				CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, NULL),
+				      "codec noise did not reject an exhausted peer offer");
+			}
 		}
 		/* Sparse 24k maps should carry a noisier channel without inheriting
 		 * the dense-map recovery expectation. Exercise real training and
