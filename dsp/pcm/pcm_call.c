@@ -1834,7 +1834,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 	struct pcm_call next;
 	enum pcm_phase3_entry_result result =
 		pcm_phase3_entry_from_phase2(
-			&entry, &call->state.phase2, call->law);
+			&entry, &call->state.phase2, call->law, NULL);
 
 	if (result != PCM_PHASE3_ENTRY_OK)
 		return entry_result(result);

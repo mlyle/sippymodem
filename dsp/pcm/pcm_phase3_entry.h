@@ -43,7 +43,25 @@ struct pcm_phase3_entry {
 	struct v34_phase3_profile conventional_profile;
 	enum g711_law law;
 	enum v90_modem_role local_role;
+	uint8_t short_power_reduction_db;
 };
+
+/* Inputs retained or selected locally for short Phase 2. They are not a
+ * received INFO1d. Conventional carrier/rate/MD come from the actual INFO1a;
+ * PCM upstream requires the conventional-only fields below to be zero. */
+struct pcm_phase3_short_training {
+	uint8_t power_reduction_db;
+	uint8_t preemphasis_filter_index;
+	uint8_t projected_data_rate_2400_bps_units;
+};
+
+/* Reject invalid or unusable short settings without changing entry. */
+enum pcm_phase3_entry_result pcm_phase3_entry_init_short(
+	struct pcm_phase3_entry *entry,
+	enum v90_modem_role local_role, enum g711_law media_law,
+	const struct v90_info0d *digital_info0,
+	const struct pcm_info1_selection *selection,
+	const struct pcm_phase3_short_training *training);
 
 bool pcm_phase3_entry_is_valid(
 	const struct pcm_phase3_entry *entry);
@@ -58,7 +76,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 	const struct v90_info0d *digital_info0,
 	const struct pcm_info1_selection *selection);
 
-/* Initialize the conventional-upstream child for entry.local_role. Full
+/* Initialize the conventional-upstream child for entry.local_role.
  * V.90 and V.92 sessions share this waveform when INFO1 selects V.34 upstream.
  * PCM-upstream entries are rejected without changing the station. */
 enum pcm_phase3_entry_result pcm_phase3_entry_start_v90_analog(

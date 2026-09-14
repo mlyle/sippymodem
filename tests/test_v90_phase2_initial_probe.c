@@ -1221,7 +1221,7 @@ static bool check_phase2_controller(
 	CHECK(pcm_phase3_entry_from_phase2(
 		      &untouched_entry, &analog,
 		      codec == TEST_CODEC_PCMU ? G711_LAW_PCMU :
-						 G711_LAW_PCMA) ==
+						 G711_LAW_PCMA, NULL) ==
 		      PCM_PHASE3_ENTRY_INVALID_STATE &&
 	      memcmp(
 		      &untouched_entry, &untouched_entry_before,
@@ -1521,14 +1521,22 @@ static bool check_phase2_controller(
 		bool parameters_match;
 
 		CHECK(pcm_phase3_entry_from_phase2(
-			      &analog_entry, &analog, law) ==
+			      &analog_entry, &analog, law, NULL) ==
 			      PCM_PHASE3_ENTRY_OK &&
 		      pcm_phase3_entry_from_phase2(
-			      &digital_entry, &digital, law) ==
+			      &digital_entry, &digital, law, NULL) ==
 			      PCM_PHASE3_ENTRY_OK &&
 		      pcm_phase3_entry_is_valid(&analog_entry) &&
 		      pcm_phase3_entry_is_valid(&digital_entry),
 		      "PCM Phase 2 mode %d did not form Phase 3 entries", mode);
+		{
+			const struct pcm_phase3_short_training stale_policy = {0};
+			struct pcm_phase3_entry before = analog_entry;
+			CHECK(pcm_phase3_entry_from_phase2(&analog_entry, &analog, law,
+				      &stale_policy) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+			      memcmp(&before, &analog_entry, sizeof(before)) == 0,
+			      "full startup accepted stale short training policy");
+		}
 		parameters_match = upstream == PCM_UPSTREAM_PCM ?
 			pcm_info1a_equal(
 				&analog_entry.selection.analog.pcm,

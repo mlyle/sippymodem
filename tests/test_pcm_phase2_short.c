@@ -3,6 +3,7 @@
 #include <g711.h>
 #include <pcm_phase2.h>
 #include <pcm_phase2_info1_handoff.h>
+#include <pcm_phase3_handoff.h>
 
 #include "test.h"
 
@@ -42,6 +43,42 @@ static bool check_handoff(const struct pcm_phase2 *owner,
 	      memcmp(&measure, &before, sizeof(measure)) == 0 &&
 	      pcm_phase2_receive_gain(owner, &gain) == PCM_PHASE2_INVALID_STATE && gain == 123,
 	      "short owner invented probe/gain");
+	struct pcm_phase3_short_training training = { .power_reduction_db = 2 };
+	struct pcm_phase3_entry entry, sentinel;
+	const struct v90_info0d *info0 = owner->local_role == V90_DIGITAL_MODEM ?
+		&owner->local_info0.v92_digital.v90 : &owner->peer_info0.v92_digital.v90;
+	enum g711_law law = info0->pcm_law == V90_PCM_A_LAW ? G711_LAW_PCMA : G711_LAW_PCMU;
+
+	if (actual.upstream == PCM_UPSTREAM_V34) {
+		training.preemphasis_filter_index = 3;
+		training.projected_data_rate_2400_bps_units = 8;
+	}
+	memset(&entry, 0x5a, sizeof(entry));
+	sentinel = entry;
+	CHECK(pcm_phase3_entry_from_phase2(&entry, owner, law, NULL) ==
+		      PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      memcmp(&entry, &sentinel, sizeof(entry)) == 0,
+	      "short training handoff accepted missing settings");
+	CHECK(pcm_phase3_entry_from_phase2(&entry, owner,
+		      law == G711_LAW_PCMA ? G711_LAW_PCMU : G711_LAW_PCMA, &training) ==
+		      PCM_PHASE3_ENTRY_MEDIA_MISMATCH &&
+	      memcmp(&entry, &sentinel, sizeof(entry)) == 0,
+	      "short training handoff accepted a different media law");
+	CHECK(pcm_phase3_entry_from_phase2(&entry, owner, law, &training) ==
+		      PCM_PHASE3_ENTRY_OK && pcm_phase3_entry_is_valid(&entry) &&
+	      entry.selection.startup.phase2 == PCM_PHASE2_SHORT &&
+	      entry.selection.upstream == actual.upstream &&
+	      entry.short_power_reduction_db == training.power_reduction_db &&
+	      entry.local_role == owner->local_role && entry.law == law &&
+	      pcm_info1_encode_short(&entry.selection, received, sizeof(received)) == PCM_INFO1_OK &&
+	      memcmp(wanted, received, sizeof(wanted)) == 0,
+	      "short training handoff changed negotiated selection or explicit settings");
+	if (actual.upstream == PCM_UPSTREAM_V34)
+		CHECK(entry.conventional_profile.high_carrier == actual.short_high_carrier &&
+		      entry.conventional_profile.symbol_rate == actual.analog.conventional.upstream_symbol_rate &&
+		      entry.conventional_profile.preemphasis_filter_index == 3 &&
+		      entry.conventional_profile.projected_data_rate_2400_bps_units == 8,
+		      "short training handoff read nonexistent INFO1d");
 	return true;
 }
 

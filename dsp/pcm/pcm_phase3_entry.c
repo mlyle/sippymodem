@@ -21,10 +21,20 @@ bool pcm_phase3_entry_is_valid(
 	    !pcm_modem_role_is_valid(entry->local_role) ||
 	    !g711_law_is_valid(entry->law) ||
 	    !pcm_info1_selection_is_valid(&entry->selection) ||
-	    entry->selection.startup.phase2 != PCM_PHASE2_FULL)
+	    entry->short_power_reduction_db > V34_INFO1_MAX_POWER_REDUCTION_DB ||
+	    (entry->selection.startup.phase2 == PCM_PHASE2_FULL &&
+	     entry->short_power_reduction_db != 0))
 		return false;
 	if (entry->selection.upstream == PCM_UPSTREAM_PCM)
 		return entry->selection.startup.protocol == PCM_PROTOCOL_V92;
+	if (entry->selection.startup.phase2 == PCM_PHASE2_SHORT &&
+	    (entry->conventional_profile.high_carrier !=
+		     entry->selection.short_high_carrier ||
+	     entry->conventional_profile.symbol_rate !=
+		     entry->selection.analog.conventional.upstream_symbol_rate ||
+	     entry->conventional_profile.transmit_power_reduction_db !=
+		     entry->short_power_reduction_db))
+		return false;
 	return v34_phase3_profile_is_valid(
 		       &entry->conventional_profile) &&
 	       entry->conventional_profile.local_role ==
@@ -67,6 +77,59 @@ enum pcm_phase3_entry_result pcm_phase3_entry_init(
 		if (local_role == V90_ANALOG_MODEM &&
 		    initialized.conventional_profile.md_symbol_count != 0)
 			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
+	}
+	if (!pcm_phase3_entry_is_valid(&initialized))
+		return PCM_PHASE3_ENTRY_INTERNAL_ERROR;
+	*entry = initialized;
+	return PCM_PHASE3_ENTRY_OK;
+}
+
+enum pcm_phase3_entry_result pcm_phase3_entry_init_short(
+	struct pcm_phase3_entry *entry,
+	enum v90_modem_role local_role, enum g711_law media_law,
+	const struct v90_info0d *digital_info0,
+	const struct pcm_info1_selection *selection,
+	const struct pcm_phase3_short_training *training)
+{
+	struct pcm_phase3_entry initialized = {
+		.law = media_law,
+		.local_role = local_role,
+	};
+
+	if (entry == NULL || training == NULL ||
+	    !pcm_modem_role_is_valid(local_role) || !g711_law_is_valid(media_law) ||
+	    !v90_info0d_is_valid(digital_info0) ||
+	    !pcm_info1_selection_is_valid(selection) ||
+	    training->power_reduction_db > V34_INFO1_MAX_POWER_REDUCTION_DB)
+		return PCM_PHASE3_ENTRY_INVALID_ARGUMENT;
+	if (selection->startup.phase2 != PCM_PHASE2_SHORT)
+		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
+	if (selected_law(digital_info0) != media_law)
+		return PCM_PHASE3_ENTRY_MEDIA_MISMATCH;
+	initialized.selection = *selection;
+	initialized.short_power_reduction_db = training->power_reduction_db;
+	if (selection->upstream == PCM_UPSTREAM_V34) {
+		const struct v34_info1_probe_result chosen = {
+			.high_carrier = selection->short_high_carrier,
+			.preemphasis_filter_index = training->preemphasis_filter_index,
+			.projected_data_rate_2400_bps_units =
+				training->projected_data_rate_2400_bps_units,
+		};
+		enum v34_phase3_profile_result result = v34_phase3_profile_init(
+			&initialized.conventional_profile, V34_ANSWERING_STATION,
+			selection->analog.conventional.upstream_symbol_rate, &chosen,
+			training->power_reduction_db,
+			selection->analog.conventional.local_md_length_35_ms_units);
+
+		if (result == V34_PHASE3_PROFILE_UNUSABLE_SELECTION)
+			return PCM_PHASE3_ENTRY_UNUSABLE_SELECTION;
+		if (result != V34_PHASE3_PROFILE_OK ||
+		    (local_role == V90_ANALOG_MODEM &&
+		     initialized.conventional_profile.md_symbol_count != 0))
+			return PCM_PHASE3_ENTRY_INVALID_SELECTION;
+	} else if (training->preemphasis_filter_index != 0 ||
+		   training->projected_data_rate_2400_bps_units != 0) {
+		return PCM_PHASE3_ENTRY_INVALID_SELECTION;
 	}
 	if (!pcm_phase3_entry_is_valid(&initialized))
 		return PCM_PHASE3_ENTRY_INTERNAL_ERROR;

@@ -17,6 +17,7 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	enum v92_phase3_analog_station_result result;
 	int16_t nominal, level;
 	double limit;
+	uint8_t power_reduction;
 
 	if (!pcm_phase3_entry_is_valid(entry) || configuration == NULL ||
 	    station == NULL)
@@ -40,8 +41,10 @@ enum pcm_phase3_entry_result pcm_phase3_entry_start_v92_analog(
 	 * permission. Choose the highest representable level within the bound;
 	 * retain the nominal proposal so retrains do not compound reductions. */
 	selected = *configuration;
-	limit = nominal * pow(10.0, -(double)entry->selection.digital.record.v92.v34
-		.common.minimum_peer_power_reduction_db / 20.0);
+	power_reduction = entry->selection.startup.phase2 == PCM_PHASE2_SHORT ?
+		entry->short_power_reduction_db :
+		entry->selection.digital.record.v92.v34.common.minimum_peer_power_reduction_db;
+	limit = nominal * pow(10.0, -(double)power_reduction / 20.0);
 	for (;;) {
 		if (!g711_ucode_sample(selected.law, selected.upstream_lu_ucode, true, &level))
 			return PCM_PHASE3_ENTRY_INTERNAL_ERROR;

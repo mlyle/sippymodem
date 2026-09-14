@@ -3095,6 +3095,9 @@ PCM_PHASE2_SHORT_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_pcm_phase2_short.o \
 	$(BUILD_DIR)/pcm_phase2.o \
 	$(BUILD_DIR)/pcm_phase2_info1_handoff.o \
+	$(BUILD_DIR)/pcm_phase3_handoff.o \
+	$(filter-out $(BUILD_DIR)/test_pcm_phase3_entry.o, \
+		$(PCM_PHASE3_ENTRY_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_pcm_phase2_info1_exchange.o, \
 		$(PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS)))
 V34_PHASE2_TONE_TEST_BINARY := \

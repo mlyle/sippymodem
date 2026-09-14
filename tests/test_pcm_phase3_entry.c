@@ -352,7 +352,7 @@ static bool test_selection_rejection(void)
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
 		      &info0, &selected) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
 	      memcmp(&entry, &saved, sizeof(entry)) == 0,
-	      "unimplemented short Phase 2 entered Phase 3");
+	      "full Phase 3 constructor accepted short startup without retained settings");
 
 	selected = conventional_selection(
 		PCM_PROTOCOL_V90, V34_SYMBOL_RATE_3200, true);
@@ -714,6 +714,129 @@ static bool test_v92_upstream_power(void)
 	return true;
 }
 
+static struct pcm_info1_selection short_selection(
+	bool pcm, bool high, enum v34_symbol_rate rate)
+{
+	const struct pcm_info1_selection full = pcm ? pcm_upstream_selection() :
+		conventional_selection(PCM_PROTOCOL_V92, rate, high);
+	struct pcm_info1_selection result = {
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_SHORT },
+		.upstream = full.upstream,
+		.analog = full.analog,
+	};
+
+	if (pcm)
+		result.analog.pcm.local_md_length_276_symbol_units = 0;
+	else {
+		result.short_high_carrier = high;
+		result.analog.conventional.frequency_offset_1_50_hz_units =
+			V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+	}
+	return result;
+}
+
+static bool check_short_entry(enum g711_law law, enum v90_modem_role role,
+	const struct pcm_info1_selection *selection, unsigned power)
+{
+	bool pcm = selection->upstream == PCM_UPSTREAM_PCM;
+	struct v90_info0d info0 = digital_info0(law);
+	struct pcm_phase3_short_training policy = {
+		.power_reduction_db = power,
+		.preemphasis_filter_index = pcm ? 0 : 3,
+		.projected_data_rate_2400_bps_units = pcm ? 0 : 8,
+	};
+	struct pcm_phase3_entry entry;
+
+	CHECK(pcm_phase3_entry_init_short(&entry, role, law, &info0,
+		      selection, &policy) == PCM_PHASE3_ENTRY_OK &&
+	      pcm_phase3_entry_is_valid(&entry), "short entry init");
+	if (!pcm) {
+		CHECK(entry.conventional_profile.high_carrier == selection->short_high_carrier &&
+		      entry.conventional_profile.symbol_rate == selection->analog.conventional.upstream_symbol_rate &&
+		      entry.conventional_profile.preemphasis_filter_index == 3 &&
+		      entry.conventional_profile.projected_data_rate_2400_bps_units == 8 &&
+		      entry.conventional_profile.transmit_power_reduction_db == power,
+		      "short local/wire settings were conflated");
+	} else if (role == V90_ANALOG_MODEM) {
+		struct v92_phase3_analog_station station;
+		struct v92_phase3_analog_station_configuration config =
+			v92_analog_configuration(law, selection), before = config;
+		int16_t nominal, adjacent;
+
+		CHECK(pcm_phase3_entry_start_v92_analog(&entry, &config, &station) ==
+			      PCM_PHASE3_ENTRY_OK &&
+		      g711_ucode_sample(law, config.upstream_lu_ucode, true, &nominal),
+		      "short PCM station start");
+		double limit = nominal * pow(10.0, -(double)power / 20.0);
+		CHECK(station.upstream_lu <= limit &&
+		      (station.upstream_lu_ucode == config.upstream_lu_ucode ||
+		       (g711_ucode_sample(law, station.upstream_lu_ucode + 1u, true, &adjacent) &&
+			adjacent > limit)) && memcmp(&before, &config, sizeof(config)) == 0,
+		      "short PCM power policy was not applied exactly once");
+	} else {
+		struct v92_phase3_digital_station station;
+		struct v92_jd jd = v92_jd_parameters();
+		struct v92_jp jp = v92_jp_parameters();
+
+		CHECK(pcm_phase3_entry_start_v92_digital(&entry, V90_PHASE3_TRN1D_SYMBOLS,
+			      0.0, 100, &jd, &jp, &station) == PCM_PHASE3_ENTRY_OK,
+		      "short digital PCM start");
+	}
+	return true;
+}
+
+static bool test_short_entries(void)
+{
+	const struct pcm_info1_selection pcm = short_selection(true, false, V34_SYMBOL_RATE_3000);
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v90_modem_role role = V90_ANALOG_MODEM; role <= V90_DIGITAL_MODEM; ++role)
+			for (unsigned power = 0; power <= V34_INFO1_MAX_POWER_REDUCTION_DB; ++power) {
+				CHECK(check_short_entry(law, role, &pcm, power), "short PCM entry");
+				for (unsigned rate = 0; rate < ARRAY_LENGTH(symbol_rates); ++rate)
+					for (unsigned high = 0; high < 2; ++high) {
+						struct pcm_info1_selection conventional =
+							short_selection(false, high, symbol_rates[rate]);
+						CHECK(check_short_entry(law, role, &conventional, power),
+						      "short conventional entry");
+					}
+			}
+	return true;
+}
+
+static bool test_short_rejection(void)
+{
+	struct pcm_info1_selection selection = short_selection(true, false, V34_SYMBOL_RATE_3000);
+	struct v90_info0d info0 = digital_info0(G711_LAW_PCMU);
+	struct pcm_phase3_short_training policy = {0};
+	struct pcm_phase3_entry entry, before;
+
+	memset(&entry, 0xa5, sizeof(entry));
+	before = entry;
+	CHECK(pcm_phase3_entry_init_short(&entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selection, NULL) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      memcmp(&entry, &before, sizeof(entry)) == 0, "missing short settings changed entry");
+	CHECK(pcm_phase3_entry_init_short(&entry, V90_ANALOG_MODEM, G711_LAW_PCMA,
+		      &info0, &selection, &policy) == PCM_PHASE3_ENTRY_MEDIA_MISMATCH &&
+	      memcmp(&entry, &before, sizeof(entry)) == 0, "wrong short media law changed entry");
+	policy.power_reduction_db = V34_INFO1_MAX_POWER_REDUCTION_DB + 1u;
+	CHECK(pcm_phase3_entry_init_short(&entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selection, &policy) == PCM_PHASE3_ENTRY_INVALID_ARGUMENT &&
+	      memcmp(&entry, &before, sizeof(entry)) == 0, "invalid short power changed entry");
+	policy.power_reduction_db = 0;
+	policy.preemphasis_filter_index = 1;
+	CHECK(pcm_phase3_entry_init_short(&entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selection, &policy) == PCM_PHASE3_ENTRY_INVALID_SELECTION &&
+	      memcmp(&entry, &before, sizeof(entry)) == 0, "PCM used conventional policy");
+	selection = short_selection(false, true, V34_SYMBOL_RATE_3200);
+	policy = (struct pcm_phase3_short_training){0};
+	CHECK(pcm_phase3_entry_init_short(&entry, V90_ANALOG_MODEM, G711_LAW_PCMU,
+		      &info0, &selection, &policy) == PCM_PHASE3_ENTRY_UNUSABLE_SELECTION &&
+	      memcmp(&entry, &before, sizeof(entry)) == 0,
+	      "zero-rate retained policy did not report an unusable selection");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -756,6 +879,8 @@ int main(void)
 		{ "conventional branch guards", test_conventional_branch_guards },
 		{ "V.92 PCM station starts", test_v92_pcm_starts },
 		{ "V.92 mandatory upstream power", test_v92_upstream_power },
+		{ "short Phase 3 retained training settings", test_short_entries },
+		{ "short Phase 3 rejection", test_short_rejection },
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
