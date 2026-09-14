@@ -296,37 +296,37 @@ static int64_t divide_round(int64_t numerator, int64_t denominator)
 		       -((-numerator + denominator / 2) / denominator);
 }
 
-static int16_t interpolated_coefficient(
+static const int16_t *phase_coefficients(
 	const struct pulse_profile *profile, uint32_t target_phase,
-	uint32_t target_phase_count, int symbol)
+	uint32_t target_phase_count, int16_t interpolated[V34_PULSE_TAPS])
 {
 	int64_t scaled_phase =
 		(int64_t)target_phase * profile->phase_count;
 	int phase = (int)(scaled_phase / target_phase_count);
 	int64_t fraction = scaled_phase % target_phase_count;
 	int64_t scale = target_phase_count;
-	int64_t p1 = source_coefficient(profile, phase, symbol);
-	int64_t p0;
-	int64_t p2;
-	int64_t p3;
-	int64_t fraction_squared;
-	int64_t numerator;
-	int64_t denominator;
 
 	if (fraction == 0)
-		return (int16_t)p1;
-	p0 = source_coefficient(profile, phase - 1, symbol);
-	p2 = source_coefficient(profile, phase + 1, symbol);
-	p3 = source_coefficient(profile, phase + 2, symbol);
-	fraction_squared = fraction * fraction;
-	numerator = 2 * p1 * scale * scale * scale;
-	numerator += (-p0 + p2) * fraction * scale * scale;
-	numerator += (2 * p0 - 5 * p1 + 4 * p2 - p3) *
-		fraction_squared * scale;
-	numerator += (-p0 + 3 * p1 - 3 * p2 + p3) *
-		fraction_squared * fraction;
-	denominator = 2 * scale * scale * scale;
-	return clamp_s16(divide_round(numerator, denominator));
+		return &profile->coefficients[(size_t)phase * V34_PULSE_TAPS];
+
+	/* The cubic phase weights are shared by every tap in this sample. */
+	int64_t denominator = 2 * scale * scale * scale;
+	int64_t linear = fraction * scale * scale;
+	int64_t quadratic = fraction * fraction * scale;
+	int64_t cubic = fraction * fraction * fraction;
+
+	for (int symbol = 0; symbol < V34_PULSE_TAPS; ++symbol) {
+		int64_t p0 = source_coefficient(profile, phase - 1, symbol);
+		int64_t p1 = source_coefficient(profile, phase, symbol);
+		int64_t p2 = source_coefficient(profile, phase + 1, symbol);
+		int64_t p3 = source_coefficient(profile, phase + 2, symbol);
+		int64_t numerator = p1 * denominator + (-p0 + p2) * linear +
+			(2 * p0 - 5 * p1 + 4 * p2 - p3) * quadratic +
+			(-p0 + 3 * p1 - 3 * p2 + p3) * cubic;
+
+		interpolated[symbol] = clamp_s16(divide_round(numerator, denominator));
+	}
+	return interpolated;
 }
 
 static bool outputs_are_disjoint(
@@ -368,6 +368,8 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	struct v34_pulse_modulator next;
 	struct pulse_profile profile;
 	struct fixed_phase_q14 phasor;
+	int16_t interpolated[V34_PULSE_TAPS];
+	const int16_t *coefficients;
 	const int16_t *preemphasis;
 	uint32_t divisor;
 	uint32_t row_count;
@@ -419,10 +421,9 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		next.symbol_period_units);
 	row_count = (uint32_t)(next.symbol_period_units / divisor);
 	row = (uint32_t)(next.symbol_phase_units / divisor);
+	coefficients = phase_coefficients(&profile, row, row_count, interpolated);
 	for (size_t index = 0; index < V34_PULSE_TAPS; ++index) {
-		int16_t coefficient = interpolated_coefficient(
-			&profile, row, row_count,
-			V34_PULSE_TAPS - 1 - (int)index);
+		int16_t coefficient = coefficients[V34_PULSE_TAPS - 1u - index];
 
 		in_phase += multiply_low_s32(
 			next.in_phase_history[index], coefficient);
