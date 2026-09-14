@@ -81,6 +81,59 @@ static bool recovered_matches(
 	return true;
 }
 
+static bool test_short_frame_damage(
+	const struct v34_4d_decoder *decoder,
+	const struct v34_mapping_frame *frame,
+	const struct v34_encoded_mapping_frame *encoded,
+	const uint8_t primary[V34_MAX_MAPPING_FRAME_BITS], uint8_t auxiliary)
+{
+	struct v34_4d_decoder damaged = *decoder;
+	struct v34_decided_4d_interval decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+	struct v34_recovered_mapping_frame recovered;
+	struct v34_parsed_mapping_frame parsed = encoded->parsed;
+	uint8_t expected[V34_MAX_MAPPING_FRAME_BITS];
+	const unsigned last = V34_4D_INTERVALS_PER_MAPPING_FRAME - 1u;
+
+	decisions_from_encoded(encoded, decided);
+	memcpy(expected, primary, sizeof(expected));
+	/* A half-turn error in the last 4D decision changes only its I3 bit.
+	 * Clause 9.3.2 carries that bit in 12-bit frames, but fixes it to zero
+	 * in shorter frames. Keep payload errors; discard only unused bits. */
+	for (unsigned symbol = 0; symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
+		decided[last].mapper_output[symbol].in_phase *= -1;
+		decided[last].mapper_output[symbol].quadrature *= -1;
+	}
+	if (frame->data_bits == 12u)
+		expected[frame->primary_bits - 1u] ^= 1u;
+	CHECK(v34_decode_mapping_frame(&damaged, frame, decided, &recovered) ==
+		      V34_MAPPING_FRAME_DECODER_OK &&
+	      recovered_matches(&recovered, frame, expected, auxiliary) &&
+	      damaged.previous_differential_output ==
+		      (encoded->interval[last].differential_output ^ 2u),
+	      "%u-bit received frame rejected corruption or lost differential state",
+	      frame->data_bits);
+	/* Normalization belongs to the receiver, not the strict parsed input API. */
+	parsed.interval[last].differential_input ^= 2u;
+	CHECK(v34_parsed_mapping_frame_is_valid(&parsed, &decoder->parameters, frame) ==
+		      (frame->data_bits == 12u),
+	      "strict parser accepted a nonzero fixed bit");
+	for (unsigned bits = 0; bits <= UINT8_MAX; ++bits) {
+		struct v34_mapping_frame malformed = *frame;
+		struct v34_4d_decoder saved = damaged;
+		struct v34_recovered_mapping_frame saved_output = recovered;
+
+		if (bits == frame->data_bits)
+			continue;
+		malformed.data_bits = (uint8_t)bits;
+		CHECK(v34_decode_mapping_frame(&damaged, &malformed, decided, &recovered) ==
+			      V34_MAPPING_FRAME_DECODER_INVALID_ARGUMENT &&
+		      memcmp(&damaged, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&recovered, &saved_output, sizeof(saved_output)) == 0,
+		      "short-frame normalization accepted malformed bit count %u", bits);
+	}
+	return true;
+}
+
 static bool test_all_supported_mapping_frames(void)
 {
 	bool point_width_seen[6] = { false };
@@ -88,6 +141,7 @@ static bool test_all_supported_mapping_frames(void)
 	bool auxiliary_seen[2] = { false };
 	bool inversion_seen[2] = { false };
 	bool nonzero_shell_seen = false;
+	unsigned short_layouts = 0;
 	size_t configuration_count = 0;
 	size_t mapping_frame_count = 0;
 
@@ -170,6 +224,12 @@ static bool test_all_supported_mapping_frames(void)
 						      symbol_index, rate, auxiliary, expanded,
 						      frame.index);
 						decisions_from_encoded(&encoded, decided);
+						if (parameters.mapping_frame_bits <= 12u) {
+							CHECK(test_short_frame_damage(&decoder, &frame,
+								&encoded, primary, auxiliary_bit),
+							      "short-frame corruption did not recover");
+							short_layouts |= 1u << frame.data_bits;
+						}
 						CHECK(v34_decode_mapping_frame(
 							      &decoder, &frame, decided, &recovered) ==
 							      V34_MAPPING_FRAME_DECODER_OK &&
@@ -194,7 +254,8 @@ static bool test_all_supported_mapping_frames(void)
 	CHECK(configuration_count == 260u && mapping_frame_count == 3680u &&
 	      high_frame_seen[0] && high_frame_seen[1] && auxiliary_seen[0] &&
 	      auxiliary_seen[1] && inversion_seen[0] && inversion_seen[1] &&
-	      nonzero_shell_seen,
+	      nonzero_shell_seen &&
+	      short_layouts == ((1u << 8) | (1u << 9) | (1u << 11) | (1u << 12)),
 	      "mapping-frame decoder coverage changed at %zu/%zu",
 	      configuration_count, mapping_frame_count);
 	for (size_t width = 0; width < ARRAY_LENGTH(point_width_seen); ++width)

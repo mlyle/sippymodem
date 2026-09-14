@@ -26,7 +26,9 @@ struct v34_recovered_mapping_frame {
  * inverse precoding, and trellis survivor selection precede this boundary.
  * decided[].trellis_output is U0 after the scheduled 4D inversion. Primary
  * bits are returned earliest first, one bit per byte; the auxiliary bit is
- * returned raw. Decoder state and recovered output are unchanged on failure. */
+ * returned raw. Non-payload I3 positions in short frames are discarded even
+ * when channel errors make them nonzero. Decoder state and recovered output
+ * are unchanged on failure. */
 enum v34_mapping_frame_decoder_result
 v34_decode_mapping_frame(
 	struct v34_4d_decoder *decoder,

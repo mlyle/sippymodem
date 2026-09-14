@@ -307,8 +307,10 @@ static bool test_data_erasure(
 	for (unsigned int index = 0; index < 320u; ++index) {
 		int16_t sample;
 
+		/* Lose 10 ms of input, then retain the erasure guard through
+		 * the receive filters' tail before resuming adaptation. */
 		CHECK(source_sample(source, &sample) &&
-		      v34_phase34_receiver_sample(receiver, sample, &output) ==
+		      v34_phase34_receiver_sample(receiver, index < 80u ? 0 : sample, &output) ==
 			      V34_PHASE34_RECEIVER_OK &&
 		      memcmp(&output, &saved_output, sizeof(output)) == 0,
 		      "role %u rate %u data erasure failed at sample %u", role,

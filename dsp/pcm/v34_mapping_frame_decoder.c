@@ -69,6 +69,13 @@ v34_decode_mapping_frame(
 		    &next.parameters, &rings, shell_bits,
 		    &parsed.shell_label) != V34_SHELL_MAPPER_OK)
 		return V34_MAPPING_FRAME_DECODER_INVALID_ARGUMENT;
+	/* Clause 9.3.2 assigns eight I1/I2 bits, then I3 in the first data_bits-8
+	 * intervals. A corrupt fixed I3 is a channel error, not invalid state.
+	 * Retain the observed differential state; discard only unused bits. */
+	if (next.parameters.mapping_frame_bits <= 12u && mapping_frame->data_bits >= 8u)
+		for (unsigned interval = mapping_frame->data_bits - 8u;
+		     interval < V34_4D_INTERVALS_PER_MAPPING_FRAME; ++interval)
+			parsed.interval[interval].differential_input &= 1u;
 	generated.primary_bit_count = mapping_frame->primary_bits;
 	generated.auxiliary_bit_count =
 		(uint8_t)mapping_frame->carries_auxiliary_bit;
