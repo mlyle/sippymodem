@@ -225,6 +225,10 @@ enum v92_pcm_frame_result v92_pcm_frame_rx_reset_control(
  * preceding data. Non-payload tags follow each competing delayed history.
  * Filter-output B1u constrains source bits to ones. Linear constellation
  * coordinates acquire coding from unconstrained sample decisions instead.
+ * The first such frame admits either initial polarity's coding history;
+ * this does not replace the caller's channel/polarity compensation or change
+ * the known-state control reset. Later training and data still reject spare
+ * modulus words other than the qualified RM signaling described above.
  * B1u residual is training evidence, not an automatic pass. Data is unconstrained.
  * Ambiguity and residuals are quality evidence for the call owner, not a
  * guarantee of correct payload. CPd points can coincide after quantization.

@@ -1042,6 +1042,19 @@ static enum v92_pcm_frame_result decode_frame(
 				      paths[index].known_digits))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 	}
+	bool initial = !known && b1u && receiver->noise.frames == 0u &&
+		receiver->pending_frames == 0u;
+	/* Inverting the four coordinates complements only convolutional input
+	 * Y3. The 16/32-state codes ignore it; the 64-state recurrence instead
+	 * preserves Y0 when delay bit 5 is complemented. Retain that alternative
+	 * initial coding history without constraining the received B1u bits. */
+	if (initial && path_count == 1u &&
+	    receiver->mapping.cpd.trellis == V92_CPD_TRELLIS_64_STATE) {
+		paths[1] = paths[0];
+		paths[1].state.trellis.state ^= 32u;
+		paths[1].state.differential ^= 1u;
+		++path_count;
+	}
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		uint8_t set = receiver->mapping.cpd.frame_constellation[
 			symbol % V92_PCM_MAPPING_PHASES];
@@ -1259,9 +1272,20 @@ static enum v92_pcm_frame_result decode_frame(
 		bool nondata = false;
 
 		/* Frame entry validated this mapping, which candidates never change. */
-		if (v92_pcm_mapping_decode_owned(&receiver->mapping, paths[index].frame.digit,
-						 &state->differential, candidate_bits,
-						 bit_count) != V92_PCM_MAPPING_OK) {
+		enum v92_pcm_mapping_result mapped = v92_pcm_mapping_decode_owned(
+			&receiver->mapping, paths[index].frame.digit,
+			&state->differential, candidate_bits, bit_count);
+		/* The other codes share symbol paths under inversion, so defer the
+		 * initial differential alternative until modulus decoding. A spare
+		 * word must not discard the right path before coding can synchronize.
+		 * Never relax payload, later B1u or known-history model acquisition. */
+		if (mapped == V92_PCM_MAPPING_OUT_OF_RANGE && initial &&
+		    receiver->mapping.cpd.trellis != V92_CPD_TRELLIS_64_STATE) {
+			state->differential ^= 1u;
+			mapped = v92_pcm_mapping_decode_owned(&receiver->mapping,
+				paths[index].frame.digit, &state->differential, candidate_bits, bit_count);
+		}
+		if (mapped != V92_PCM_MAPPING_OK) {
 			if (!request_word) continue;
 			memset(candidate_bits, 0, bit_count);
 			nondata = true;

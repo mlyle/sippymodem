@@ -524,6 +524,167 @@ static bool test_constellation_coordinates(
 	return true;
 }
 
+static bool test_trellis_polarity(void)
+{
+	const enum v34_trellis_selection selections[] = {
+		V34_TRELLIS_16_STATE, V34_TRELLIS_32_STATE, V34_TRELLIS_64_STATE,
+	};
+	for (unsigned mode = 0u; mode < ARRAY_LENGTH(selections); ++mode) {
+		uint8_t mask = selections[mode] == V34_TRELLIS_64_STATE ? 32u : 0u;
+		for (uint8_t first = 0u; first < V34_SUBSET_LABEL_COUNT; ++first) {
+			for (uint8_t second = 0u; second < V34_SUBSET_LABEL_COUNT; ++second) {
+				struct v34_convolutional_input normal, inverted;
+				/* Negating both odd grid coordinates complements label bit 1. */
+				CHECK(v34_convolutional_input_from_subset_labels(first, second, &normal) == V34_TRELLIS_OK &&
+					v34_convolutional_input_from_subset_labels(first ^ 2u, second ^ 2u, &inverted) == V34_TRELLIS_OK,
+					"polarity subset conversion failed");
+				for (uint8_t state = 0u; state < v34_trellis_state_count(selections[mode]); ++state) {
+					struct v34_convolutional_encoder a = { .state = state, .selection = selections[mode] };
+					struct v34_convolutional_encoder b = { .state = state ^ mask, .selection = selections[mode] };
+					uint8_t a0, b0;
+					CHECK(v34_convolutional_encoder_output(&a, &a0) == V34_TRELLIS_OK &&
+						v34_convolutional_encoder_output(&b, &b0) == V34_TRELLIS_OK && a0 == b0 &&
+						v34_convolutional_encoder_advance(&a, &normal) == V34_TRELLIS_OK &&
+						v34_convolutional_encoder_advance(&b, &inverted) == V34_TRELLIS_OK &&
+						b.state == (a.state ^ mask), "polarity trellis transform failed");
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool polarity_mapping(struct v92_pcm_mapping *mapping,
+	enum g711_law law, uint8_t rate, enum v92_cpd_trellis trellis, bool balanced)
+{
+	struct v92_cpd_parameters cpd;
+
+	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK,
+		"polarity CPd initialization failed");
+	if (balanced) {
+		/* Include spare mixed-radix words, not only power-of-two maps.
+		 * Choose the minimum N with (2N)^9 * N^3 >= 2^K. */
+		unsigned n;
+		for (n = 1u; n <= 64u; ++n) {
+			__uint128_t capacity = 1u;
+			for (unsigned i = 0u; i < V92_CPD_MODULUS_COUNT; ++i)
+				capacity *= i % 4u == 3u ? n : 2u * n;
+			if (capacity >= ((__uint128_t)1u << v92_pcm_mapping_data_bits(rate)))
+				break;
+		}
+		CHECK(n <= 64u, "polarity modulus exceeds fixture constellation");
+		for (unsigned i = 0u; i < V92_CPD_MODULUS_COUNT; ++i)
+			cpd.modulus[i] = (uint8_t)(i % 4u == 3u ? n : 2u * n);
+	}
+	cpd.trellis = trellis;
+	/* Exact linear coordinates isolate coding from codec and gain errors. */
+	cpd.constellation[0].count = 64u;
+	for (unsigned i = 0u; i < 64u; ++i)
+		cpd.constellation[0].positive_linear[i] = (int16_t)((2u * i + 1u) * 128u);
+	CHECK(v92_pcm_mapping_init(mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+		"polarity mapping initialization failed");
+	return true;
+}
+
+static bool test_constellation_polarity(enum g711_law law, uint8_t rate,
+	enum v92_cpd_trellis trellis, bool balanced, int polarity)
+{
+	enum { PAYLOAD_FRAMES = 100 };
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx rx;
+	unsigned delivered = 0u;
+
+	CHECK(polarity_mapping(&mapping, law, rate, trellis, balanced) &&
+		v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK,
+		"polarity frame pair initialization failed");
+	for (unsigned f = 0u; f < V92_B1U_FRAMES + PAYLOAD_FRAMES + V92_PCM_RX_DELAY_FRAMES; ++f) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame frame;
+		struct v92_pcm_frame_decision decision;
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		source_bits(bits, mapping.data_bits_per_frame, f);
+		/* Polarity acquisition must not hide a genuine held-out B1u error. */
+		if (f == V92_B1U_FRAMES - 1u) bits[0] = 0u;
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+			V92_PCM_FRAME_OK, "polarity frame encoding failed");
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+			samples[i] = (int16_t)(polarity * frame.u[i]);
+		memset(decoded, 0xa5, sizeof(decoded));
+		CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES,
+			decoded, mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+			v92_pcm_frame_rx_is_valid(&rx) && decision.squared_error == 0u &&
+			!memcmp(decision.frame.u, samples, sizeof(samples)),
+			"polarity decode: law=%u rate=%u trellis=%u balanced=%u polarity=%d frame=%u",
+			law, rate, trellis, balanced, polarity, f);
+		CHECK(decision.bits_ready == (f >= V92_PCM_RX_DELAY_FRAMES),
+			"polarity acquisition changed delivery delay");
+		for (size_t i = decision.bits_ready ? mapping.data_bits_per_frame : 0u;
+		     i < sizeof(decoded); ++i)
+			CHECK(decoded[i] == 0xa5, "polarity decoder wrote unowned payload");
+		if (!decision.bits_ready) continue;
+		unsigned original = f - V92_PCM_RX_DELAY_FRAMES;
+		source_bits(bits, mapping.data_bits_per_frame, original);
+		if (original == V92_B1U_FRAMES - 1u) bits[0] = 0u;
+		/* Only the initial inverted acquisition window may contain errors. */
+		if (polarity > 0 || original >= V92_B1U_ACQUISITION_FRAMES)
+			CHECK(!decision.ambiguous && !memcmp(decoded, bits, mapping.data_bits_per_frame),
+				"polarity payload: law=%u rate=%u trellis=%u balanced=%u polarity=%d frame=%u",
+				law, rate, trellis, balanced, polarity, original);
+		delivered += original >= V92_B1U_FRAMES;
+	}
+	CHECK(delivered == PAYLOAD_FRAMES, "polarity decoder shortened payload");
+	return true;
+}
+
+static bool test_polarity_acquisition_boundary(void)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	struct v92_pcm_frame_rx fresh;
+	struct v92_pcm_frame frame;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+	CHECK(polarity_mapping(&mapping, G711_LAW_PCMU, 2u, V92_CPD_TRELLIS_16_STATE, true) &&
+		v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK &&
+		v92_pcm_frame_rx_init_constellation(&fresh, &mapping) == V92_PCM_FRAME_OK,
+		"polarity boundary initialization failed");
+	memset(bits, 1, mapping.data_bits_per_frame);
+	CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+		V92_PCM_FRAME_OK, "polarity boundary encoding failed");
+	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
+		samples[i] = (int16_t)-frame.u[i];
+	for (unsigned scenario = 0u; scenario < 5u; ++scenario) {
+		struct v92_pcm_frame_rx rx = fresh;
+		struct v92_pcm_frame_decision decision, saved;
+		memset(&decision, 0xa5, sizeof(decision)); saved = decision;
+		memset(bits, 0xa5, sizeof(bits));
+		if (scenario == 2u) rx.noise.frames = 1u;
+		if (scenario == 3u) rx.pending_frames = 1u;
+		struct v92_pcm_frame_rx original = rx;
+		enum v92_pcm_frame_result result = scenario == 4u ?
+			v92_pcm_frame_acquire_model(&rx, samples, bits, mapping.data_bits_per_frame, &decision) :
+			v92_pcm_frame_decode(&rx, samples, scenario != 1u,
+				bits, mapping.data_bits_per_frame, &decision);
+		if (scenario == 0u)
+			CHECK(result == V92_PCM_FRAME_OK && !decision.bits_ready && decision.squared_error == 0u,
+				"initial polarity not acquired");
+		else if (scenario == 4u)
+			CHECK(result == V92_PCM_FRAME_OK && !decision.bits_ready && decision.squared_error > 0u,
+				"known history lost its constraint");
+		else
+			CHECK(result == V92_PCM_FRAME_NO_PATH && !memcmp(&rx, &original, sizeof(rx)) &&
+				!memcmp(&decision, &saved, sizeof(decision)),
+				"polarity retry escaped acquisition boundary %u", scenario);
+		for (size_t i = 0u; i < sizeof(bits); ++i)
+			CHECK(bits[i] == 0xa5, "buffered or rejected polarity decode wrote bits");
+	}
+	return true;
+}
+
 static bool test_b1u_validation(enum g711_law law)
 {
 	struct v92_pcm_mapping mapping;
@@ -1342,6 +1503,8 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 int main(void)
 {
 	if (!test_direct_confidence()) return 1;
+	if (!test_trellis_polarity()) return 1;
+	if (!test_polarity_acquisition_boundary()) return 1;
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };
 
 	if (!test_precodec_noise(false) || !test_precodec_noise(true))
@@ -1355,6 +1518,11 @@ int main(void)
 		for (enum v92_cpd_trellis trellis = V92_CPD_TRELLIS_16_STATE;
 		     trellis <= V92_CPD_TRELLIS_64_STATE; ++trellis) {
 			if (!test_peer_point_selection((enum g711_law)law, trellis)) return 1;
+			for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+				for (unsigned balanced = 0u; balanced < 2u; ++balanced)
+					for (int polarity = -1; polarity <= 1; polarity += 2)
+						if (!test_constellation_polarity((enum g711_law)law, rate,
+							trellis, balanced, polarity)) return 1;
 			for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
 				if (!test_rm_receive((enum g711_law)law, rate, trellis, 0u)) return 1;
 			for (unsigned scenario = 1u; scenario <= 2u; ++scenario)
