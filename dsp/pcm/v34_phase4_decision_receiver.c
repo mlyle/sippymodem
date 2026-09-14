@@ -103,7 +103,8 @@ static bool answer_s_state_is_valid(
 	bool answering_peer = receiver->mp_receiver.transmitting_role ==
 		V34_ANSWERING_STATION;
 
-	if (!v34_phase3_s_hunt_is_valid(&receiver->answer_s))
+	if (!v34_phase3_s_hunt_is_valid(&receiver->answer_s) ||
+	    !receiver->answer_s.acquire_phase)
 		return false;
 	if (!answering_peer)
 		return receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
@@ -249,7 +250,7 @@ v34_phase4_decision_receiver_init(
 	    !v34_phase3_j_sequence_at_pattern_boundary(j_sequence) ||
 	    !v34_station_role_is_valid(transmitting_role) ||
 	    !v34_constellation_size_is_valid(constellation) ||
-	    v34_phase3_s_hunt_init(&initialized.answer_s) !=
+	    v34_phase3_s_hunt_init_training(&initialized.answer_s) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_training_sequence_init(
 		    &initialized.expected_trn, transmitting_role,

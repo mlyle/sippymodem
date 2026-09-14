@@ -157,6 +157,9 @@ struct v34_phase3_s_hunt {
 	uint8_t post_marker_symbols;
 	uint8_t next_target_rotation;
 	uint8_t recent_observation_count;
+	/* Training may acquire phase across hard-decision quadrant boundaries;
+	 * online data keeps the stricter adjacent-quadrant candidate gate. */
+	bool acquire_phase;
 	bool candidate;
 	bool s_bar_seen;
 	bool complete;
@@ -165,6 +168,10 @@ struct v34_phase3_s_hunt {
 bool v34_phase3_s_hunt_is_valid(
 	const struct v34_phase3_s_hunt *hunt);
 enum v34_phase3_s_receiver_result v34_phase3_s_hunt_init(
+	struct v34_phase3_s_hunt *hunt);
+/* Use only while waiting for training, never while delivering online data.
+ * Retains the measured recurrence gate and complete S/S-bar requirement. */
+enum v34_phase3_s_receiver_result v34_phase3_s_hunt_init_training(
 	struct v34_phase3_s_hunt *hunt);
 bool v34_phase3_s_hunt_is_complete(
 	const struct v34_phase3_s_hunt *hunt);

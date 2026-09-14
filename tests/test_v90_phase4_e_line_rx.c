@@ -488,6 +488,9 @@ static bool run_line(
 		      memcmp(&rejected, &saved_rejected,
 			     sizeof(rejected)) == 0,
 		      "completed-E handoff contracts changed state");
+		continued.rate_renegotiation.s.acquire_phase = true;
+		CHECK(!v34_data_line_receiver_is_valid(&continued),
+		      "online handoff accepted training-only phase acquisition");
 	}
 	CHECK(verify_online_marker(
 		      &data_tx, &data_rx, &cp_tx.symbols, &final, law,

@@ -11,6 +11,7 @@
 enum {
 	SAMPLE_LIMIT = 140000,
 	LINE_DELAY_SAMPLES = 13,
+	LINE_DELAY_CAPACITY = 1440,
 	ECHO_DELAY_CAPACITY = 256,
 	TEST_ECHO_DELAY_SAMPLES = 32,
 	NOMINAL_AMPLITUDE = 7000,
@@ -25,10 +26,12 @@ struct self_echo {
 };
 
 struct channel {
-	int16_t call_to_answer[LINE_DELAY_SAMPLES];
-	int16_t answer_to_call[LINE_DELAY_SAMPLES];
+	int16_t call_to_answer[LINE_DELAY_CAPACITY];
+	int16_t answer_to_call[LINE_DELAY_CAPACITY];
 	struct self_echo echo[V34_ANSWERING_STATION + 1];
 	size_t cursor;
+	/* Zero retains the ordinary short-delay fixture. */
+	size_t delay_samples;
 	bool pcma;
 };
 
@@ -472,7 +475,9 @@ static void channel_transmit(
 		codec_round_trip(caller, channel->pcma);
 	channel->answer_to_call[channel->cursor] =
 		codec_round_trip(answerer, channel->pcma);
-	channel->cursor = (channel->cursor + 1u) % LINE_DELAY_SAMPLES;
+	channel->cursor = (channel->cursor + 1u) %
+		(channel->delay_samples != 0u ? channel->delay_samples :
+					       LINE_DELAY_SAMPLES);
 }
 
 static bool channel_sample_pair(
@@ -541,6 +546,36 @@ static bool run_online_pair(
 	*answerer = answering;
 	if (connected_channel != NULL)
 		*connected_channel = channel;
+	return true;
+}
+
+static bool test_delayed_calls(void)
+{
+	/* At this delay the asymmetric 3000/3200-baud pair reaches final S near
+	 * a hard-decision quadrant boundary. Both endpoints must acquire it and
+	 * exchange verified mapped data, not just report training completion. */
+	for (unsigned int pcma = 0; pcma < 2u; ++pcma) {
+		struct endpoint caller;
+		struct endpoint answerer;
+		struct channel channel = {
+			.pcma = pcma != 0u,
+			.delay_samples = LINE_DELAY_CAPACITY,
+		};
+
+		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+		      endpoint_init(&answerer, V34_ANSWERING_STATION),
+		      "delayed call endpoints did not initialize");
+		caller.generated_mapping_frames = answerer.generated_mapping_frames = true;
+		caller.mapping_pattern_seed = answerer.peer_mapping_pattern_seed =
+			UINT32_C(0x34c011ab);
+		answerer.mapping_pattern_seed = caller.peer_mapping_pattern_seed =
+			UINT32_C(0x34a05e17);
+		CHECK(run_initialized_pair(&caller, &answerer, &channel),
+		      "delayed law %u call did not reach two-way mapped data", pcma);
+		CHECK(caller.receive_primary_bits > 0u &&
+		      answerer.receive_primary_bits > 0u,
+		      "delayed law %u call did not verify payload", pcma);
+	}
 	return true;
 }
 
@@ -1879,6 +1914,7 @@ int main(void)
 		{ "cleardown waits for peer MP-prime", test_cleardown_waits_for_prime },
 		{ "completed Phase 2 handoff", test_phase2_handoff },
 		{ "generated PCMU call", test_pcmu_call },
+		{ "delayed PCMU and PCMA calls", test_delayed_calls },
 		{ "generated station echo", test_echo_calls },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },

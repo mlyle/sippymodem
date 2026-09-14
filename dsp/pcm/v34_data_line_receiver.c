@@ -19,7 +19,8 @@ static bool monitor_is_valid(
 {
 	if (!monitor->enabled)
 		return true;
-	return v34_phase3_s_hunt_is_valid(&monitor->s);
+	return !monitor->s.acquire_phase &&
+	       v34_phase3_s_hunt_is_valid(&monitor->s);
 }
 
 static const struct v34_frame_geometry *data_geometry(

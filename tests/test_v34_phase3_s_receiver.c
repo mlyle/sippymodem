@@ -1169,6 +1169,7 @@ static bool test_online_hunt_rejects_non_s_recurrence(void)
 	static const struct v34_analytic_sample pairs[][2] = {
 		{ { 4000, 1000 }, { 1000, 4000 } },
 		{ { 4000, 1000 }, { -1000, -4000 } },
+		{ { -3150, 420 }, { -50, 3250 } },
 	};
 	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
 
@@ -1215,6 +1216,74 @@ static bool test_online_hunt_rejects_non_s_recurrence(void)
 					       V34_PHASE3_S_RECEIVER_OK),
 			      "S marker after rejected pair %zu failed at symbol %zu",
 			      pair, symbol);
+		}
+	}
+	return true;
+}
+
+static bool test_training_hunt_acquires_phase(void)
+{
+	/* A recurrent near-quarter turn can put both points in quadrant II.
+	 * Fitting the pair jointly selects adjacent II/I targets, in either
+	 * temporal order and with any fixed quarter-turn ambiguity. */
+	static const struct v34_analytic_sample points[] = {
+		{ -3150, 420 }, { -50, 3250 },
+	};
+	static const uint8_t target_rotations[] = { 3u, 0u };
+
+	CHECK(v34_phase3_s_hunt_init_training(NULL) ==
+		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT,
+	      "training hunt accepted null storage");
+	for (uint8_t offset = 0u; offset < 4u; ++offset) {
+		for (size_t order = 0u; order < 2u; ++order) {
+			struct v34_phase3_s_hunt hunt;
+
+			CHECK(v34_phase3_s_hunt_init_training(&hunt) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "training hunt did not initialize");
+			/* Expiry must preserve the training-only acquisition policy. */
+			for (size_t attempt = 0u; attempt < 2u; ++attempt) {
+				struct v34_phase3_s_adaptation adaptation = { 0 };
+				bool control = false;
+
+				for (size_t symbol = 0u;
+				     symbol < V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS;
+				     ++symbol) {
+					size_t index = (symbol + order) & 1u;
+					struct v34_analytic_sample point = points[index];
+					struct v34_analytic_sample target;
+					bool qualified = symbol + 1u ==
+						V34_PHASE3_S_HUNT_CANDIDATE_PREFIX_SYMBOLS;
+
+					for (uint8_t turn = 0u; turn < offset; ++turn)
+						point = (struct v34_analytic_sample){
+							point.quadrature, -point.in_phase,
+						};
+					CHECK(v34_phase3_s_hunt_receive(
+						      &hunt, point, &adaptation, &control) ==
+						      V34_PHASE3_S_RECEIVER_OK &&
+					      control == qualified &&
+					      adaptation.adapt == qualified,
+					      "training phase gate changed at symbol %zu", symbol);
+					CHECK(v34_training_constellation_fixed_point(
+						      V34_CONSTELLATION_4_POINT, 0u,
+						      (uint8_t)((target_rotations[index] + offset) & 3u),
+						      &target) == V34_CONSTELLATION_OK &&
+					      (!qualified ||
+					       (adaptation.target.in_phase == target.in_phase &&
+						adaptation.target.quadrature == target.quadrature)),
+					      "training hunt did not fit the adjacent pair jointly");
+				}
+				for (size_t symbol = 0u;
+				     symbol < V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS; ++symbol)
+					CHECK(v34_phase3_s_hunt_receive(
+						      &hunt, (struct v34_analytic_sample){ 0 },
+						      &adaptation, &control) ==
+						      V34_PHASE3_S_RECEIVER_OK,
+					      "training hunt did not expire");
+				CHECK(!hunt.candidate && !hunt.complete && hunt.acquire_phase,
+				      "expiry changed the training acquisition policy");
+			}
 		}
 	}
 	return true;
@@ -1296,6 +1365,8 @@ int main(void)
 		  test_online_hunt_requires_physical_recurrence },
 		{ "online S hunt non-S recurrence",
 		  test_online_hunt_rejects_non_s_recurrence },
+		{ "training S hunt phase acquisition",
+		  test_training_hunt_acquires_phase },
 		{ "online S hunt reset and validation",
 		  test_online_hunt_reset_and_validation },
 	};

@@ -54,6 +54,7 @@ static bool semantic_state_is_valid(
 		       receiver->semantic.phase4.mp_receiver.constellation ==
 			       receiver->phase4_constellation;
 	return receiver->stage == V34_PHASE34_RECEIVER_DATA &&
+	       !receiver->rate_renegotiation.acquire_phase &&
 	       v34_phase3_s_hunt_is_valid(&receiver->rate_renegotiation) &&
 	       v34_data_decision_receiver_is_valid(
 		       &receiver->semantic.data) &&

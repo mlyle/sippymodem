@@ -771,9 +771,9 @@ bool v34_phase3_s_hunt_is_complete(
 	return v34_phase3_s_hunt_is_valid(hunt) && hunt->complete;
 }
 
-static bool reset_hunt(struct v34_phase3_s_hunt *hunt)
+static bool reset_hunt(struct v34_phase3_s_hunt *hunt, bool acquire_phase)
 {
-	struct v34_phase3_s_hunt reset = { 0 };
+	struct v34_phase3_s_hunt reset = { .acquire_phase = acquire_phase };
 
 	if (v34_phase3_s_receiver_init_suffix(
 		    &reset.marker[0],
@@ -795,11 +795,21 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_init(
 {
 	struct v34_phase3_s_hunt initialized;
 
-	if (hunt == NULL || !reset_hunt(&initialized) ||
+	if (hunt == NULL || !reset_hunt(&initialized, false) ||
 	    !v34_phase3_s_hunt_is_valid(&initialized))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	*hunt = initialized;
 	return V34_PHASE3_S_RECEIVER_OK;
+}
+
+enum v34_phase3_s_receiver_result v34_phase3_s_hunt_init_training(
+	struct v34_phase3_s_hunt *hunt)
+{
+	enum v34_phase3_s_receiver_result result = v34_phase3_s_hunt_init(hunt);
+
+	if (result == V34_PHASE3_S_RECEIVER_OK)
+		hunt->acquire_phase = true;
+	return result;
 }
 
 static struct qam_point normalized_fixed_observation(
@@ -819,6 +829,7 @@ static bool try_start_hunt_candidate(
 {
 	uint8_t previous_quarter;
 	uint8_t previous_rotation;
+	uint8_t current_rotation = current->clockwise_quarter_turns;
 	uint8_t delta;
 
 	if (hunt->prefix.recurrence_points !=
@@ -831,10 +842,28 @@ static bool try_start_hunt_candidate(
 		return false;
 	delta = (uint8_t)((previous_rotation + 4u -
 			   current->clockwise_quarter_turns) & 3u);
-	/* Measured near-quarter turns need not slice to adjacent quadrants.
-	 * That rejects the S hypothesis, not the ordinary data carrying it. */
-	if (delta != 1u && delta != 3u)
-		return reset_hunt(hunt);
+	if (delta != 1u && delta != 3u) {
+		const struct qam_point *points = hunt->prefix.recurrence;
+		int sign = hunt->prefix.previous_turn == 1u ? 1 : -1;
+		struct qam_point aligned = {
+			.in_phase = points[1].in_phase - sign * points[0].quadrature,
+			.quadrature = points[1].quadrature + sign * points[0].in_phase,
+		};
+
+		/* Unacquired S can recur near quadrant boundaries while its hard
+		 * decisions are not adjacent. During training, align the previous
+		 * point by the measured quarter turn and slice their sum: this
+		 * selects the nearest adjacent target pair jointly. Do not let
+		 * this acquisition rule interrupt ordinary online QAM data. */
+		if (!hunt->acquire_phase)
+			return reset_hunt(hunt, false);
+		if (v34_training_constellation_slice(
+			    V34_CONSTELLATION_4_POINT, &aligned,
+			    &previous_quarter, &current_rotation) != V34_CONSTELLATION_OK)
+			return false;
+		previous_rotation = (uint8_t)(
+			(current_rotation + hunt->prefix.previous_turn) & 3u);
+	}
 	if (v34_phase3_s_receiver_init_suffix(
 		    &hunt->marker[0],
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
@@ -844,7 +873,7 @@ static bool try_start_hunt_candidate(
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK)
 		return false;
-	hunt->candidate_rotation[0] = current->clockwise_quarter_turns;
+	hunt->candidate_rotation[0] = current_rotation;
 	hunt->candidate_rotation[1] = previous_rotation;
 	hunt->next_target_rotation = previous_rotation;
 	hunt->candidate = true;
@@ -1012,7 +1041,8 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 			return result;
 		generated_control = true;
 		if (result != V34_PHASE3_S_RECEIVER_DETECTED &&
-		    --next.candidate_symbols == 0u && !reset_hunt(&next))
+		    --next.candidate_symbols == 0u &&
+		    !reset_hunt(&next, next.acquire_phase))
 			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 	} else {
 		/* Qualify recurrence from measured points. Slicing first would make
@@ -1034,7 +1064,11 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 			if (result != V34_PHASE3_S_RECEIVER_OK)
 				return result;
 			generated_control = true;
-			generated.target = hard.target;
+			if (v34_training_constellation_fixed_point(
+				    V34_CONSTELLATION_4_POINT, 0u,
+				    next.candidate_rotation[0], &generated.target) !=
+			    V34_CONSTELLATION_OK)
+				return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 			generated.adapt = true;
 		}
 	}

@@ -866,6 +866,10 @@ static bool test_training_case(
 	      !receiver.line.equalizer.decision_pending,
 	      "role %u rate %u receiver did not retain its physical lineage",
 	      role, rate);
+	receiver.rate_renegotiation.acquire_phase = true;
+	CHECK(!v34_phase34_receiver_is_valid(&receiver),
+	      "online receiver accepted training-only phase acquisition");
+	receiver.rate_renegotiation.acquire_phase = false;
 	return test_data_erasure(&receiver, &source, role, rate);
 }
 

@@ -996,6 +996,10 @@ static bool test_validation_and_transactionality(void)
 		      &receiver, &input, TEST_DECODER_POWER_Q15, &output,
 		      &event) == V34_PHASE4_DECISION_RECEIVER_INVALID_ARGUMENT,
 	      "zero observation epoch was accepted");
+	receiver.answer_s.acquire_phase = false;
+	CHECK(!v34_phase4_decision_receiver_is_valid(&receiver),
+	      "training receiver accepted the online-only acquisition policy");
+	receiver.answer_s.acquire_phase = true;
 	receiver.stage = (enum v34_phase4_decision_receiver_stage)99;
 	CHECK(!v34_phase4_decision_receiver_is_valid(NULL) &&
 	      !v34_phase4_decision_receiver_is_valid(&receiver) &&
