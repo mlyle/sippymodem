@@ -119,6 +119,11 @@ retrains per call; ambiguous bits are never delivered. V.92 zero-rate cleardown
 is not yet implemented. Generated-channel tests are not evidence of robust
 operation on a physical line.
 
+The V.92 short-Phase-2 ranging controller is tested separately for both codec
+laws, including physical reversal timing and bounded recovery. Its INFO1a
+handoff and retained-history startup are not yet connected to the call owner;
+this component does not enable modem-level Quick Connect.
+
 Initialize the pinned pjproject submodule once, then build with `make`:
 
 ```
