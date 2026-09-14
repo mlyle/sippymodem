@@ -85,9 +85,11 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_init(
 {
 	struct v92_phase4_digital_station initialized = { 0 };
 
-	if (station == NULL || receive_handoff == NULL)
+	if (station == NULL || receive_handoff == NULL || downstream == NULL)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
-	if (v92_phase4_digital_rx_init(&initialized.receive, receive_handoff, constellation) !=
+	if (!pcm_downstream_tx_is_valid(downstream) ||
+	    v92_phase4_digital_rx_init(&initialized.receive, receive_handoff, constellation,
+		    downstream->encoder.mapping.law) !=
 	    V92_PHASE4_DIGITAL_RX_OK)
 		return V92_PHASE4_DIGITAL_STATION_INVALID_PARAMETERS;
 	enum v92_phase4_digital_station_result result = initialize_downstream(
@@ -294,10 +296,9 @@ bool v92_phase4_digital_handoff_is_valid(
 	       handoff->receive.signal.training_tail_remaining == 0u &&
 	       v92_phase4_ed_tx_is_valid(&handoff->transmit) &&
 	       v92_cpu_parameters_are_valid(&handoff->cpu) &&
-	       handoff->cpu.law == handoff->transmit.transmit.encoder.mapping.law &&
 	       v92_pcm_mapping_is_valid(&handoff->mapping) &&
 	       v92_upstream_plan_is_valid(&handoff->upstream_plan) &&
-	       handoff->mapping.law == handoff->cpu.law &&
+	       handoff->mapping.law == handoff->transmit.transmit.encoder.mapping.law &&
 	       handoff->receive.signal.line.law == handoff->mapping.law;
 }
 

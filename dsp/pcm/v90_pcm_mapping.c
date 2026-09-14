@@ -301,7 +301,7 @@ v90_pcm_mapping_init_rate_renegotiation(
 
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	struct v90_pcm_mapping *mapping,
-	const struct v92_cpt_parameters *parameters)
+	const struct v92_cpt_parameters *parameters, enum g711_law law)
 {
 	struct v90_cp_parameters common = { 0 };
 
@@ -330,12 +330,12 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	       sizeof(common.codec_constellations));
 	memcpy(common.frame_constellation, parameters->frame_constellation,
 	       sizeof(common.frame_constellation));
-	return v90_pcm_mapping_init(mapping, &common);
+	return v90_pcm_mapping_init_transmit(mapping, &common, law);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
 	struct v90_pcm_mapping *mapping,
-	const struct v92_cpu_parameters *parameters)
+	const struct v92_cpu_parameters *parameters, enum g711_law law)
 {
 	struct v90_cp_parameters common = { 0 };
 
@@ -364,7 +364,7 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
 	       sizeof(common.codec_constellations));
 	memcpy(common.frame_constellation, parameters->frame_constellation,
 	       sizeof(common.frame_constellation));
-	return v90_pcm_mapping_init(mapping, &common);
+	return v90_pcm_mapping_init_transmit(mapping, &common, law);
 }
 
 enum v90_pcm_mapping_result v90_pcm_mapping_encode_modulus(

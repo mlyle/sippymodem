@@ -80,7 +80,7 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_resume(
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 	struct v92_phase4_digital_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
-	enum v92_constellation_size constellation)
+	enum v92_constellation_size constellation, enum g711_law law)
 {
 	struct v92_phase4_digital_rx initialized = { 0 };
 	enum v92_pcm_phase4_trn2u_line_rx_result result;
@@ -90,7 +90,7 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 	    v92_phase4_modulator_bits_per_symbol(constellation) == 0u)
 		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
 	result = v92_pcm_phase4_trn2u_line_rx_init(
-		&initialized.signal.trn2u, handoff, constellation);
+		&initialized.signal.trn2u, handoff, constellation, law);
 	if (result == V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT)
 		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
 	if (result != V92_PCM_PHASE4_TRN2U_LINE_RX_OK)

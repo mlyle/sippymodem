@@ -475,10 +475,16 @@ static bool test_v92_cpt_mapping(void)
 			CHECK(v90_pcm_mapping_init(&from_v90, &source) ==
 				      V90_PCM_MAPPING_OK &&
 			      v90_pcm_mapping_init_from_v92_cpt(
-				      &from_v92, &cpt) == V90_PCM_MAPPING_OK &&
+				      &from_v92, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 			      v90_pcm_mapping_equal(&from_v90, &from_v92),
 			      "V.92 CPt map differs at law %u rate %u",
 			      law, rate);
+			cpt.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+			struct v92_cpt_parameters retained = cpt;
+			CHECK(v90_pcm_mapping_init_from_v92_cpt(&from_v92, &cpt, law) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_equal(&from_v90, &from_v92) &&
+			      memcmp(&retained, &cpt, sizeof(cpt)) == 0,
+			      "peer CPt codec changed network map or received record");
 		}
 	}
 	{
@@ -490,13 +496,17 @@ static bool test_v92_cpt_mapping(void)
 
 		memset(&mapping, 0xa5, sizeof(mapping));
 		before = mapping;
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &invalid, (enum g711_law)99) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+		      "invalid network encoding changed the CPt mapping");
 		invalid.selected_rate_index = 0u;
-		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &invalid) ==
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &invalid, invalid.law) ==
 			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
 		      memcmp(&mapping, &before, sizeof(mapping)) == 0 &&
-		      v90_pcm_mapping_init_from_v92_cpt(NULL, &invalid) ==
+		      v90_pcm_mapping_init_from_v92_cpt(NULL, &invalid, invalid.law) ==
 			      V90_PCM_MAPPING_INVALID_ARGUMENT &&
-		      v90_pcm_mapping_init_from_v92_cpt(&mapping, NULL) ==
+		      v90_pcm_mapping_init_from_v92_cpt(&mapping, NULL, G711_LAW_PCMU) ==
 			      V90_PCM_MAPPING_INVALID_ARGUMENT,
 		      "rejected V.92 CPt changed the mapping");
 	}
@@ -560,10 +570,16 @@ static bool test_v92_cpu_mapping(void)
 			CHECK(v90_pcm_mapping_init(&from_v90, &source) ==
 				      V90_PCM_MAPPING_OK &&
 			      v90_pcm_mapping_init_from_v92_cpu(
-				      &from_v92, &cpu) == V90_PCM_MAPPING_OK &&
+				      &from_v92, &cpu, cpu.law) == V90_PCM_MAPPING_OK &&
 			      v90_pcm_mapping_equal(&from_v90, &from_v92),
 			      "V.92 CPu map differs at law %u rate %u",
 			      law, rate);
+			cpu.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+			struct v92_cpu_parameters retained = cpu;
+			CHECK(v90_pcm_mapping_init_from_v92_cpu(&from_v92, &cpu, law) == V90_PCM_MAPPING_OK &&
+			      v90_pcm_mapping_equal(&from_v90, &from_v92) &&
+			      memcmp(&retained, &cpu, sizeof(cpu)) == 0,
+			      "peer CPu codec changed network map or received record");
 		}
 	}
 	{
@@ -575,19 +591,23 @@ static bool test_v92_cpu_mapping(void)
 
 		memset(&mapping, 0xa5, sizeof(mapping));
 		before = mapping;
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid, (enum g711_law)99) ==
+			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
+		      memcmp(&mapping, &before, sizeof(mapping)) == 0,
+		      "invalid network encoding changed the CPu mapping");
 		invalid.data_rate_number = 0u;
-		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid) ==
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid, invalid.law) ==
 			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
 		      memcmp(&mapping, &before, sizeof(mapping)) == 0,
 		      "V.92 CPu cleardown changed the mapping");
 		invalid = v92_cpu_parameters(&source);
 		add_ucode(&invalid.transmit_constellations[2], 3u);
-		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid) ==
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &invalid, invalid.law) ==
 			      V90_PCM_MAPPING_INVALID_PARAMETERS &&
 		      memcmp(&mapping, &before, sizeof(mapping)) == 0 &&
-		      v90_pcm_mapping_init_from_v92_cpu(NULL, &invalid) ==
+		      v90_pcm_mapping_init_from_v92_cpu(NULL, &invalid, invalid.law) ==
 			      V90_PCM_MAPPING_INVALID_ARGUMENT &&
-		      v90_pcm_mapping_init_from_v92_cpu(&mapping, NULL) ==
+		      v90_pcm_mapping_init_from_v92_cpu(&mapping, NULL, G711_LAW_PCMU) ==
 			      V90_PCM_MAPPING_INVALID_ARGUMENT,
 		      "rejected V.92 CPu changed the mapping");
 	}

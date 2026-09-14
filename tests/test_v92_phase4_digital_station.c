@@ -475,7 +475,7 @@ static bool exercise_cpd_retry(
 
 static bool run_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
-	uint8_t previous_sign, int8_t polarity, bool retry)
+	uint8_t previous_sign, int8_t polarity, bool retry, bool other_codec)
 {
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
@@ -485,7 +485,9 @@ static bool run_exchange(
 	const struct v92_suvd_parameters suvd = {
 		.request_silence = law == G711_LAW_PCMA,
 	};
-	struct v92_cpu_parameters cpu = cpu_parameters(law);
+	enum g711_law peer_codec = other_codec ?
+		(law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU) : law;
+	struct v92_cpu_parameters cpu = cpu_parameters(peer_codec);
 	struct v92_cpd_parameters cpd = cpd_parameters(law);
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
@@ -505,9 +507,10 @@ static bool run_exchange(
 
 	CHECK(build_predecessor(
 		      law, constellation, previous_sign, polarity,
-		      &upstream, &handoff) &&
-	      v90_pcm_mapping_init_from_v92_cpt(
-		      &mapping, &handoff.parameters) == V90_PCM_MAPPING_OK &&
+		      &upstream, &handoff), "station predecessor failed");
+	handoff.parameters.law = peer_codec;
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(
+		      &mapping, &handoff.parameters, law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(
 		      &downstream_tx, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -523,6 +526,10 @@ static bool run_exchange(
 		      V92_PHASE4_DIGITAL_STATION_OK,
 	      "law %u constellation %u station did not initialize",
 	      (unsigned int)law, (unsigned int)constellation);
+	CHECK(station.receive.signal.trn2u.law == law &&
+	      station.control.transmit.encoder.mapping.law == law &&
+	      handoff.parameters.law == peer_codec,
+	      "peer codec changed network encoding or CPt metadata");
 	CHECK(!v92_downstream_control_silence_requested(&station.control) &&
 	      !v92_downstream_control_note_e2u(&station.control),
 	      "initial training entered the rate-renegotiation silence procedure");
@@ -773,10 +780,12 @@ static bool test_generated_exchange(void)
 				      constellation,
 				      (uint8_t)((law + index) & 1u),
 				      constellation == V92_CONSTELLATION_4_POINT ?
-					      1 : -1, false) &&
-			      run_exchange((enum g711_law)law, constellation, 1u, 1, true),
+					      1 : -1, false, false) &&
+			      run_exchange((enum g711_law)law, constellation, 1u, 1, true, false),
 			      "generated station matrix stopped");
 		}
+		CHECK(run_exchange(law, V92_CONSTELLATION_4_POINT, 0u, 1, false, true),
+		      "opposite peer codec changed the network-law exchange");
 	}
 	return true;
 }
@@ -840,7 +849,7 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 
 	CHECK(full_cpd_parameters(law, &full) &&
 	      v90_pcm_mapping_init_from_v92_cpt(
-		      &training_mapping, &cpt) == V90_PCM_MAPPING_OK &&
+		      &training_mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(
 		      &downstream, PCM_PROTOCOL_V92, &training_mapping,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
@@ -1294,7 +1303,7 @@ static bool run_paired_station_exchange(
 	digital_handoff.parameters.spectral_lookahead = (uint8_t)(2u * law +
 		(constellation == V92_CONSTELLATION_8_POINT));
 	CHECK(v90_pcm_mapping_init_from_v92_cpt(
-		      &mapping, &digital_handoff.parameters) ==
+		      &mapping, &digital_handoff.parameters, digital_handoff.parameters.law) ==
 		      V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(
 		      &downstream_tx, PCM_PROTOCOL_V92, &mapping) ==
@@ -1627,7 +1636,7 @@ static bool run_analog_retry_boundary(enum g711_law law, bool parameters, bool a
 	uint8_t sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES];
 	size_t bits, events = 0;
 	bool expired = false;
-	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) == V90_PCM_MAPPING_OK &&
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
 		V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_analog_station_init(&station, &handoff, &downstream, &suvu, &cpu,
@@ -1712,7 +1721,7 @@ static bool test_analog_early_control(void)
 	{
 		struct v92_cpt_parameters cpt = cpt_parameters(G711_LAW_PCMU);
 
-		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) ==
+		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) ==
 			      V90_PCM_MAPPING_OK,
 		      "early-control mapping differed");
 	}
@@ -1764,7 +1773,7 @@ static bool test_compact_boundary(void)
 		      G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1,
 		      &upstream, &handoff) &&
 	      v90_pcm_mapping_init_from_v92_cpt(
-		      &mapping, &handoff.parameters) == V90_PCM_MAPPING_OK &&
+		      &mapping, &handoff.parameters, handoff.parameters.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(
 		      &downstream, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -1882,7 +1891,7 @@ static bool test_early_cpu_acknowledgement(void)
 		      G711_LAW_PCMU, V92_CONSTELLATION_4_POINT, 0u, 1,
 		      &upstream, &handoff) &&
 	      v90_pcm_mapping_init_from_v92_cpt(
-		      &mapping, &handoff.parameters) == V90_PCM_MAPPING_OK &&
+		      &mapping, &handoff.parameters, handoff.parameters.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(
 		      &downstream, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -1969,7 +1978,7 @@ static bool run_short_cpu(bool zero_rate)
 
 	CHECK(build_predecessor(G711_LAW_PCMU, V92_CONSTELLATION_4_POINT,
 		      0u, 1, &upstream, &handoff) &&
-	      v90_pcm_mapping_init_from_v92_cpt(&mapping, &handoff.parameters) ==
+	      v90_pcm_mapping_init_from_v92_cpt(&mapping, &handoff.parameters, handoff.parameters.law) ==
 		      V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&
@@ -2123,7 +2132,7 @@ static bool run_silence_status(enum g711_law law, unsigned redundancy,
 	cpt.sign_redundancy = redundancy;
 	cpt.spectral_lookahead = lookahead;
 	cpd.extend_e2u = false;
-	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt) == V90_PCM_MAPPING_OK &&
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(&transmit, PCM_PROTOCOL_V92, &mapping) == PCM_DOWNSTREAM_TX_OK &&
 	      v92_downstream_control_init(&control, &transmit, &suvd, &cpd, &cpu, 160u) &&
 	      v92_downstream_control_ready(&control) &&
@@ -2315,7 +2324,7 @@ static bool run_analog_pause_confirmation(enum g711_law law, enum v92_constellat
 	size_t bits;
 	cpt.spectral_lookahead = lookahead;
 	cpt.sign_redundancy = lookahead ? 1u : 0u;
-	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt) == V90_PCM_MAPPING_OK &&
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      v92_pcm_mapping_init(&upstream, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, &training, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_analog_station_init_after_ru(&station, constellation, TEST_LU, &receive, &cpu,

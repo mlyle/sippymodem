@@ -7745,7 +7745,7 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 	}
 	if (received == PCM_DOWNSTREAM_RX_ED) {
 		struct v90_pcm_mapping mapping;
-		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &test->cpu) == V90_PCM_MAPPING_OK &&
+		CHECK(v90_pcm_mapping_init_from_v92_cpu(&mapping, &test->cpu, call->law) == V90_PCM_MAPPING_OK &&
 		      v90_downstream_data_rx_start_after_ed(&test->data_peer, &test->peer, &mapping) == V90_DOWNSTREAM_DATA_RX_OK,
 		      "peer could not enter post-Ru B1d");
 		test->peer_data_started = true;
@@ -8090,6 +8090,20 @@ static bool test_v92_remote_rate_request(void)
 			channel_receive(&pair.wire, &ar, &dr);
 			CHECK(pcm_call_data_octet(&pair.digital, dr, decode_octet(law, dr), true, NULL,
 				&transmitted, &event) == PCM_CALL_OK, "pending data sample failed");
+			if (rates[i] == 7u) {
+				/* CPus retains the earlier peer codec; it must not change
+				 * network encoding during either side's rate request. */
+				for (unsigned initiator = 0u; initiator < 2u; ++initiator) {
+					struct pcm_call different = pair.digital;
+					struct v92_upstream_data_tx source = *upstream;
+					enum g711_law codec = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+					different.state.data_path.v92_digital.cpu.law = codec;
+					CHECK(pcm_call_is_valid(&different) && v92_data_error_contracts(&different) &&
+					      run_v92_rate_request(&different, &source, 1u, initiator != 0u) &&
+					      different.state.data_path.v92_digital.cpu.law == codec && different.law == law,
+					      "rate exchange changed peer codec or network encoding");
+				}
+			}
 			struct pcm_call local = pair.digital;
 			struct v92_upstream_data_tx delayed = *upstream;
 			CHECK(run_v92_rate_request(&local, &delayed, 1u, true),
@@ -8296,7 +8310,7 @@ static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
 			    (r == PCM_DOWNSTREAM_RX_SUVD || r == PCM_DOWNSTREAM_RX_CPD))
 				CHECK(pcm_downstream_rx_expect_ed(&control) == PCM_DOWNSTREAM_RX_OK, "Ed boundary lost");
 			if (r == PCM_DOWNSTREAM_RX_ED) {
-				CHECK(v90_pcm_mapping_init_from_v92_cpu(&downstream_mapping, &cpu) == V90_PCM_MAPPING_OK &&
+				CHECK(v90_pcm_mapping_init_from_v92_cpu(&downstream_mapping, &cpu, cpu.law) == V90_PCM_MAPPING_OK &&
 				      v90_downstream_data_rx_start_after_ed(&data, &control, &downstream_mapping) == V90_DOWNSTREAM_DATA_RX_OK,
 				      "new B1d failed");
 				ed = true;
@@ -9387,7 +9401,7 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 						if (generated) {
 							uint32_t lower, upper;
 
-							CHECK(v90_pcm_mapping_init_from_v92_cpt(&accepted_training, &cpt) ==
+							CHECK(v90_pcm_mapping_init_from_v92_cpt(&accepted_training, &cpt, cpt.law) ==
 								      V90_PCM_MAPPING_OK &&
 							      v90_pcm_mapping_power(&accepted_training, V90_PCM_MAPPING_CODEC, law,
 										    &lower, &upper) == V90_PCM_MAPPING_OK &&
@@ -9428,8 +9442,8 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 				enum v90_pcm_mapping_plane plane = power_code == 31u ?
 					V90_PCM_MAPPING_TRANSMIT : V90_PCM_MAPPING_CODEC;
 
-				CHECK(v90_pcm_mapping_init_from_v92_cpu(&data, received) == V90_PCM_MAPPING_OK &&
-				      v90_pcm_mapping_init_from_v92_cpu(&original, &expected) == V90_PCM_MAPPING_OK &&
+				CHECK(v90_pcm_mapping_init_from_v92_cpu(&data, received, received->law) == V90_PCM_MAPPING_OK &&
+				      v90_pcm_mapping_init_from_v92_cpu(&original, &expected, expected.law) == V90_PCM_MAPPING_OK &&
 				      v90_pcm_mapping_power(&accepted_training, plane, law, &tf, &tc) == V90_PCM_MAPPING_OK &&
 				      v90_pcm_mapping_power(&data, plane, law, &df, &dc_power) == V90_PCM_MAPPING_OK &&
 				      tc <= peer_rms * peer_rms &&

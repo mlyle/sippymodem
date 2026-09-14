@@ -73,18 +73,19 @@ v90_pcm_mapping_init_rate_renegotiation(
 	const struct v90_pcm_mapping *training,
 	const struct v90_pcm_mapping *preceding_data);
 
-/* Derive the shared Phase 4 training map from the common fields carried by
- * V.92 CPt. Rejected calls leave mapping unchanged. */
+/* Derive V.92 maps with an explicitly owned network encoding, independent
+ * of the peer codec field in CPt/CPu. Preserve the received parameters.
+ * Rejected calls leave mapping unchanged. */
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpt(
 	struct v90_pcm_mapping *mapping,
-	const struct v92_cpt_parameters *parameters);
+	const struct v92_cpt_parameters *parameters, enum g711_law law);
 
 /* Derive the shared downstream data map from an accepted V.92 CPu. A rate
  * number of zero requests cleardown and is rejected. Rejected calls leave
  * mapping unchanged. */
 enum v90_pcm_mapping_result v90_pcm_mapping_init_from_v92_cpu(
 	struct v90_pcm_mapping *mapping,
-	const struct v92_cpu_parameters *parameters);
+	const struct v92_cpu_parameters *parameters, enum g711_law law);
 bool v90_pcm_mapping_is_valid(const struct v90_pcm_mapping *mapping);
 bool v90_pcm_mapping_equal(
 	const struct v90_pcm_mapping *left,

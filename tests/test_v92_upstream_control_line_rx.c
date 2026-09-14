@@ -149,7 +149,7 @@ static bool build_boundary(
 		      law, constellation, previous_sign, polarity,
 		      transmitter, &cpt_handoff) &&
 	      v92_pcm_phase4_trn2u_line_rx_init(
-		      &training, &cpt_handoff, constellation) ==
+		      &training, &cpt_handoff, constellation, cpt_handoff.parameters.law) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
 	      "control-line training receiver did not initialize");
 	for (uint32_t symbol = 0;
@@ -279,7 +279,7 @@ static bool run_records(
 		      law, constellation, previous_sign, polarity,
 		      &transmitter, &handoff) &&
 	      v92_phase4_digital_rx_init(
-		      &receiver, &handoff, constellation) ==
+		      &receiver, &handoff, constellation, handoff.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_OK,
 	      "digital Phase 4 line did not initialize");
 	CHECK(v92_pcm_phase4_trn2u_init(&reference, constellation, previous_sign, TEST_LU) ==
@@ -887,26 +887,29 @@ static bool test_digital_receive_contracts(void)
 	unrepresentable = handoff;
 	unrepresentable.signal_level = 32768.0;
 	CHECK(v92_phase4_digital_rx_init(
-		      NULL, &handoff, V92_CONSTELLATION_4_POINT) ==
+		      &untouched, &handoff, V92_CONSTELLATION_4_POINT, (enum g711_law)99) ==
 		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
 	      v92_phase4_digital_rx_init(
-		      &untouched, NULL, V92_CONSTELLATION_4_POINT) ==
+		      NULL, &handoff, V92_CONSTELLATION_4_POINT, handoff.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
 	      v92_phase4_digital_rx_init(
-		      &untouched, &invalid, V92_CONSTELLATION_4_POINT) ==
+		      &untouched, NULL, V92_CONSTELLATION_4_POINT, G711_LAW_PCMU) ==
+		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
+	      v92_phase4_digital_rx_init(
+		      &untouched, &invalid, V92_CONSTELLATION_4_POINT, invalid.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_cpt_line_handoff_is_valid(&unrepresentable) &&
 	      v92_phase4_digital_rx_init(
 		      &untouched, &unrepresentable,
-		      V92_CONSTELLATION_4_POINT) ==
+		      V92_CONSTELLATION_4_POINT, unrepresentable.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
 	      v92_phase4_digital_rx_init(
 		      &untouched, &handoff,
-		      (enum v92_constellation_size)99) ==
+		      (enum v92_constellation_size)99, handoff.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &saved, sizeof(saved)) == 0 &&
 	      v92_phase4_digital_rx_init(
-		      &receiver, &handoff, V92_CONSTELLATION_4_POINT) ==
+		      &receiver, &handoff, V92_CONSTELLATION_4_POINT, handoff.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_OK &&
 	      v92_phase4_digital_rx_is_valid(&receiver) &&
 	      !v92_phase4_digital_rx_has_failed(&receiver) &&

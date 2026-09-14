@@ -633,7 +633,7 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 		switch (invalid) {
 		case 0: event.record.cpu.frame_result = V92_CPU_CRC_MISMATCH; break;
 		case 1: event.record.cpu.parameters.law = (enum g711_law)99; break;
-		case 2: event.record.cpu.parameters.law = previous->law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU; break;
+		case 2: event.record.cpu.parameters.sign_redundancy = 4; break;
 		case 3:
 			event.type = V92_CONTROL_EVENT_CPUS;
 			event.record.cpus.frame_result = V92_CPU_CRC_MISMATCH;
@@ -643,6 +643,18 @@ static bool downstream_control_contracts(const struct v92_downstream_control *in
 		CHECK(!v92_downstream_control_receive(&selected, &event) && !selected.cleardown.active,
 		      "invalid zero-rate record %u caused cleardown", invalid);
 	}
+	/* The peer codec is not the local network law, including in a valid
+	 * zero-rate request. Cleardown must retain the active wire mapping. */
+	selected = *initial;
+	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPU };
+	event.record.cpu.parameters = *previous;
+	event.record.cpu.parameters.data_rate_number = 0;
+	event.record.cpu.parameters.law = previous->law == G711_LAW_PCMU ?
+		G711_LAW_PCMA : G711_LAW_PCMU;
+	CHECK(v92_downstream_control_receive(&selected, &event) && selected.cleardown.active &&
+	      selected.cleardown.peer_requested && !selected.failed &&
+	      v90_pcm_mapping_equal(&selected.transmit.encoder.mapping, &initial->transmit.encoder.mapping),
+	      "peer codec blocked cleardown or changed the network mapping");
 	selected = *initial;
 	event = (struct v92_control_event){ .type = V92_CONTROL_EVENT_CPUS_REJECTED };
 	CHECK(v92_downstream_control_receive(&selected, &event) && memcmp(&selected, initial, sizeof(selected)) == 0,
@@ -685,7 +697,7 @@ static bool test_fast_control(enum g711_law law, uint8_t rate)
 	previous_cpu.acknowledges_cpd = true;
 	const struct v92_suvd_parameters suvd = { 0 };
 	CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
-	      v90_pcm_mapping_init_from_v92_cpu(&old_downstream, &previous_cpu) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&old_downstream, &previous_cpu, previous_cpu.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92, &old_downstream) == PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(&peer, PCM_PROTOCOL_V92, &old_downstream,
 		      V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
@@ -1632,8 +1644,8 @@ static bool rate_exchange_init(struct rate_exchange *exchange,
 	/* A responder can still be sending Rd when Ru-bar ends. Keep receiving
 	 * the peer's fresh TRN2u while the independent transmit clock waits. */
 	exchange->withheld_transmit_samples = ru->constellation == V92_CONSTELLATION_8_POINT ? 384u : 0u;
-	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt) == V90_PCM_MAPPING_OK &&
-	      v90_pcm_mapping_init_from_v92_cpu(&data, &cpu) == V90_PCM_MAPPING_OK &&
+	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&data, &cpu, cpu.law) == V90_PCM_MAPPING_OK &&
 	      v90_pcm_mapping_init_rate_renegotiation(&control, &training, &data) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_tx_init(&tx, PCM_PROTOCOL_V92, &control) == PCM_DOWNSTREAM_TX_OK &&
 	      pcm_downstream_rx_init(&exchange->peer, PCM_PROTOCOL_V92, &control,

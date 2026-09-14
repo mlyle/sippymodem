@@ -16,10 +16,10 @@ static bool downstream_stage_is_valid(
 }
 
 static bool downstream_mapping(
-	const struct v92_cpu_parameters *cpu,
+	const struct v92_cpu_parameters *cpu, enum g711_law law,
 	struct v90_pcm_mapping *mapping)
 {
-	return v90_pcm_mapping_init_from_v92_cpu(mapping, cpu) ==
+	return v90_pcm_mapping_init_from_v92_cpu(mapping, cpu, law) ==
 	       V90_PCM_MAPPING_OK;
 }
 
@@ -35,7 +35,7 @@ static bool analog_state_is_valid(
 	    !v92_cpu_parameters_are_valid(&state->cpu) ||
 	    !v92_pcm_mapping_is_valid(&state->mapping) ||
 	    state->mapping.law != state->cpu.law ||
-	    !downstream_mapping(&state->cpu, &data_mapping))
+	    !downstream_mapping(&state->cpu, state->mapping.law, &data_mapping))
 		return false;
 	if (state->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) {
 		const struct pcm_downstream_rx *training =
@@ -73,7 +73,7 @@ static bool digital_state_is_valid(
 
 	if (!downstream_stage_is_valid(state->downstream_stage) ||
 	    !v92_cpu_parameters_are_valid(&state->cpu) ||
-	    !downstream_mapping(&state->cpu, &data_mapping))
+	    !downstream_mapping(&state->cpu, state->mapping.law, &data_mapping))
 		return false;
 	if (state->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) {
 		const struct v92_phase4_ed_tx *training =
@@ -83,7 +83,7 @@ static bool digital_state_is_valid(
 			(state->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_PAUSE ||
 			 (state->control.signal.line.renegotiation && !training->cpd_pending &&
 			  training->transmit.encoder.mapping.kind == V90_CP_TRAINING)) &&
-			state->cpu.law == training->transmit.encoder.mapping.law;
+			state->mapping.law == training->transmit.encoder.mapping.law;
 	} else {
 		downstream_valid = v90_downstream_data_stream_is_valid(
 			&state->downstream.data) &&
@@ -99,7 +99,6 @@ static bool digital_state_is_valid(
 	       !v92_upstream_control_line_rx_has_failed(&state->control) &&
 	       downstream_valid &&
 	       v92_pcm_mapping_is_valid(&state->mapping) &&
-	       state->mapping.law == state->cpu.law &&
 	       state->receive.signal.line.law == state->mapping.law &&
 	       state->control.signal.line.law == state->mapping.law &&
 	       state->receive.expected_symbols ==
@@ -254,7 +253,7 @@ static bool start_analog_downstream_data(
 	struct v90_downstream_data_rx data;
 	struct v90_pcm_mapping mapping;
 
-	if (!downstream_mapping(cpu, &mapping) ||
+	if (!downstream_mapping(cpu, downstream->training.stream.decoder.mapping.law, &mapping) ||
 	    v90_downstream_data_rx_start_after_ed(
 		    &data, &downstream->training, &mapping) !=
 		    V90_DOWNSTREAM_DATA_RX_OK)
@@ -380,7 +379,7 @@ static bool start_digital_downstream_data(
 	struct v90_downstream_data_stream data;
 	struct v90_pcm_mapping mapping;
 
-	if (!downstream_mapping(cpu, &mapping) ||
+	if (!downstream_mapping(cpu, downstream->training.transmit.encoder.mapping.law, &mapping) ||
 	    v90_downstream_data_stream_start_after_ed(
 		    &data, &downstream->training.transmit, &mapping) !=
 		    V90_DOWNSTREAM_DATA_STREAM_OK)
@@ -411,7 +410,8 @@ enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
 			return V90_DOWNSTREAM_DATA_STREAM_OK;
 		}
 		if (result == PCM_DOWNSTREAM_TX_COMPLETE && *stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE) {
-			if (!v90_pcm_symbol_make(&symbol, cpu->law, 0u, true))
+			if (!v90_pcm_symbol_make(&symbol,
+				    downstream->training.transmit.encoder.mapping.law, 0u, true))
 				return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 			*octet = symbol.octet;
 			return V90_DOWNSTREAM_DATA_STREAM_OK;
@@ -436,10 +436,11 @@ static bool retain_matching_cpu(
 	struct v90_pcm_mapping candidate_mapping;
 
 	if (!v92_cpu_parameters_are_valid(parameters) ||
+	    retained->law != parameters->law ||
 	    retained->trn1d_ratio_q3_13 != parameters->trn1d_ratio_q3_13 ||
 	    (retained->acknowledges_cpd && !parameters->acknowledges_cpd) ||
-	    !downstream_mapping(retained, &retained_mapping) ||
-	    !downstream_mapping(parameters, &candidate_mapping) ||
+	    !downstream_mapping(retained, retained->law, &retained_mapping) ||
+	    !downstream_mapping(parameters, parameters->law, &candidate_mapping) ||
 	    !v90_pcm_mapping_equal(&retained_mapping, &candidate_mapping))
 		return false;
 	retained->acknowledges_cpd |= parameters->acknowledges_cpd;
@@ -594,7 +595,7 @@ bool v92_phase4_e2u_handoff_is_valid(
 
 		if (!downstream_stage_is_valid(analog->downstream_stage) ||
 		    !v92_cpu_parameters_are_valid(&analog->cpu) ||
-		    !downstream_mapping(&analog->cpu, &mapping))
+		    !downstream_mapping(&analog->cpu, analog->mapping.law, &mapping))
 			return false;
 		if (analog->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) {
 			downstream_valid = pcm_downstream_rx_is_valid(
@@ -628,7 +629,7 @@ bool v92_phase4_e2u_handoff_is_valid(
 
 		if (!downstream_stage_is_valid(digital->downstream_stage) ||
 		    !v92_cpu_parameters_are_valid(&digital->cpu) ||
-		    !downstream_mapping(&digital->cpu, &mapping))
+		    !downstream_mapping(&digital->cpu, digital->mapping.law, &mapping))
 			return false;
 		if (digital->downstream_stage != V92_PHASE4_E2U_DOWNSTREAM_DATA) {
 			downstream_valid = v92_phase4_ed_tx_is_valid(
@@ -637,7 +638,7 @@ bool v92_phase4_e2u_handoff_is_valid(
 				 (digital->receive.line.renegotiation && !digital->downstream.training.cpd_pending &&
 				  digital->downstream.training.transmit.encoder.mapping.kind == V90_CP_TRAINING)) &&
 				digital->downstream.training.transmit.encoder.mapping.law ==
-					digital->cpu.law;
+					digital->mapping.law;
 		} else {
 			downstream_valid = v90_downstream_data_stream_is_valid(
 				&digital->downstream.data) &&
@@ -651,7 +652,6 @@ bool v92_phase4_e2u_handoff_is_valid(
 		       !v92_upstream_rx_has_failed(&digital->receive) &&
 		       downstream_valid &&
 		       v92_pcm_mapping_is_valid(&digital->mapping) &&
-		       digital->mapping.law == digital->cpu.law &&
 		       digital->receive.line.law == digital->mapping.law;
 	}
 }

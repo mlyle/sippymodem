@@ -68,12 +68,13 @@ struct v92_pcm_phase4_trn2u_line_handoff {
 };
 
 /* The receive-side LU scale is the measured TRN1u level retained by handoff.
- * constellation is the initial training choice from Jp. */
+ * constellation is the initial training choice from Jp; law is the local
+ * network encoding, not the peer downstream codec field in CPt. */
 enum v92_pcm_phase4_trn2u_line_rx_result
 v92_pcm_phase4_trn2u_line_rx_init(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
-	enum v92_constellation_size constellation);
+	enum v92_constellation_size constellation, enum g711_law law);
 
 struct v92_ru_line_rx;
 /* First TRN2u after aligned Ru-bar (V.92 Amendment 1, 8.7.6). Retain the

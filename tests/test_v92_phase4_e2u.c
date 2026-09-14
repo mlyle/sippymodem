@@ -287,7 +287,7 @@ struct digital_fixture {
 
 static bool prepare_digital_fixture(
 	enum g711_law law, bool extended, bool renegotiation,
-	struct digital_fixture *fixture)
+	bool other_codec, struct digital_fixture *fixture)
 {
 	struct v92_cpd_parameters full_cpd;
 	struct v92_cpd_base_parameters cpd;
@@ -298,6 +298,8 @@ static bool prepare_digital_fixture(
 	struct v92_phase4_record_tx control;
 
 	fixture->cpu = cpu_parameters(law);
+	if (other_codec)
+		fixture->cpu.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
 	if (v92_cpd_direct_init(
 		    &full_cpd, law, 12u, extended) != V92_CPD_OK)
 		return false;
@@ -438,7 +440,7 @@ static bool feed_control_record(
 			    V92_PHASE4_RECORD_TX_OK ||
 		    v92_phase4_e2u_next(
 			    owner, 0u,
-			    quantize(owner->state.digital.cpu.law, raw),
+			    quantize(owner->state.digital.mapping.law, raw),
 			    &octet) !=
 			    V92_PHASE4_E2U_OK)
 			return false;
@@ -467,7 +469,7 @@ static bool start_cpus_record(
 
 static bool run_rearmed_crossing(
 	enum g711_law law, bool extended, unsigned int extra_records,
-	bool renegotiation)
+	bool renegotiation, bool other_codec)
 {
 	struct digital_fixture fixture;
 	struct v92_phase4_record_tx control;
@@ -477,7 +479,7 @@ static bool run_rearmed_crossing(
 				    V92_PHASE4_E2U_SYMBOLS;
 
 	CHECK(extra_records != 0u &&
-	      prepare_digital_fixture(law, extended, renegotiation, &fixture),
+	      prepare_digital_fixture(law, extended, renegotiation, other_codec, &fixture),
 	      "law %u extra %u digital fixture did not initialize",
 	      (unsigned int)law, extra_records);
 	struct v92_upstream_plan plan = fixture.owner.state.digital.upstream_plan;
@@ -530,8 +532,15 @@ static bool run_rearmed_crossing(
 	struct v92_phase4_e2u_handoff handoff;
 
 	CHECK(v92_phase4_e2u_handoff(&fixture.owner, &handoff) == V92_PHASE4_E2U_OK &&
-	      memcmp(&handoff.state.digital.upstream_plan, &plan, sizeof(plan)) == 0,
+	      memcmp(&handoff.state.digital.upstream_plan, &plan, sizeof(plan)) == 0 &&
+	      handoff.state.digital.cpu.law == fixture.cpu.law &&
+	      handoff.state.digital.mapping.law == law &&
+	      handoff.state.digital.receive.line.law == law,
 	      "repeated controls or E2u changed receive plan");
+	if (other_codec)
+		CHECK(handoff.state.digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
+		      handoff.state.digital.downstream.data.transmitter.encoder.mapping.law == law,
+		      "peer codec changed downstream data encoding");
 	handoff.state.digital.upstream_plan.delay = 0u;
 	CHECK(!v92_phase4_e2u_handoff_is_valid(&handoff), "invalid plan crossed E2u handoff");
 	return true;
@@ -541,7 +550,7 @@ static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned pref
 {
 	struct digital_fixture fixture;
 	struct v92_phase4_record_tx record, zeros;
-	CHECK(prepare_digital_fixture(law, extended, false, &fixture), "boundary fixture failed");
+	CHECK(prepare_digital_fixture(law, extended, false, false, &fixture), "boundary fixture failed");
 	struct v92_phase4_e2u_digital_state *state = &fixture.owner.state.digital;
 	struct v92_phase4_digital_handoff handoff = {
 		.receive = state->control, .transmit = state->downstream.training,
@@ -588,6 +597,7 @@ static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned pref
 
 enum rejected_control {
 	CHANGED_CPU_SHAPING,
+	CHANGED_CPU_CODEC,
 	INITIAL_CPUS,
 	CHANGED_CPUS_RATE,
 	CPUS_ACK_ROLLBACK,
@@ -600,16 +610,18 @@ static bool run_control_rejection(enum g711_law law, enum rejected_control kind)
 	struct v92_cpu_parameters changed;
 	bool rejected = false;
 
-	CHECK(prepare_digital_fixture(law, false, kind >= CHANGED_CPUS_RATE, &fixture),
+	CHECK(prepare_digital_fixture(law, false, kind >= CHANGED_CPUS_RATE, false, &fixture),
 	      "law %u rejected-control fixture did not initialize", (unsigned int)law);
 	changed = fixture.cpu;
 	if (kind == CHANGED_CPU_SHAPING)
 		changed.shaping_a1_q1_6++;
+	else if (kind == CHANGED_CPU_CODEC)
+		changed.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
 	else if (kind == CHANGED_CPUS_RATE)
 		changed.data_rate_number++;
 	else if (kind == CPUS_ACK_ROLLBACK)
 		changed.acknowledges_cpd = false;
-	CHECK(kind == CHANGED_CPU_SHAPING ?
+	CHECK(kind <= CHANGED_CPU_CODEC ?
 	      start_cpu_record(&record, &fixture.transmit, &changed, true) :
 	      start_cpus_record(&record, &fixture.transmit, &changed),
 	      "law %u rejected control %u did not start", (unsigned int)law, kind);
@@ -972,6 +984,12 @@ static bool run_resumed_exchange(const struct v92_rate_pause_analog *ap,
 		.delay = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY + 3u,
 	};
 	enum g711_law law = ap->cpu.law;
+	struct v92_cpu_parameters peer_codec = ap->cpu;
+	peer_codec.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
+	CHECK(v92_rate_pause_digital_resume(&digital, dp, &mapping->cpd, &plan, &peer_codec, 0u) &&
+	      digital.control.cpu.law == peer_codec.law &&
+	      digital.control.transmit.encoder.mapping.law == law,
+	      "resuming control changed peer codec or network encoding");
 	/* These paired stations exchange samples without transport delay. */
 	CHECK(v92_rate_pause_analog_resume(&analog, ap, mapping, 0u) &&
 	      v92_rate_pause_digital_resume(&digital, dp, &mapping->cpd, &plan, &ap->cpu, 0u),
@@ -1007,7 +1025,7 @@ static bool run_resumed_exchange(const struct v92_rate_pause_analog *ap,
 	CHECK(v92_phase4_digital_rx_resume(&digital.receive, &bad_line) == V92_PHASE4_DIGITAL_RX_INVALID_STATE &&
 	      memcmp(&digital, &saved_d, sizeof(digital)) == 0, "initial-training line accepted as resumed control");
 	struct v92_cpu_parameters wrong_law = ap->cpu;
-	wrong_law.law ^= 1u;
+	wrong_law.law = (enum g711_law)99;
 	struct v92_upstream_plan bad_plan = plan;
 	bad_plan.delay = 0;
 	CHECK(!v92_rate_pause_digital_resume(&digital, dp, &mapping->cpd, &bad_plan, &ap->cpu, 240u) &&
@@ -1406,7 +1424,7 @@ static bool test_pause_rejected_ed(const struct v92_phase4_e2u_handoff *ah,
 }
 
 static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size constellation,
-	bool extended, uint8_t lookahead, unsigned offset, bool early_ed)
+	bool extended, uint8_t lookahead, unsigned offset, bool early_ed, bool other_codec)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_phase4_analog_handoff a = { .cpu = cpu_parameters(law), .pause = true };
@@ -1421,6 +1439,8 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 	/* No parameter exchange occurs in this fixture: only status records.
 	 * CPU/mapping are the retained preceding data selections, ACK clear. */
 	a.cpu.acknowledges_cpd = d.cpu.acknowledges_cpd = false;
+	if (other_codec)
+		d.cpu.law = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
 	CHECK(v92_cpd_direct_init(&cpd, law, 12u, extended) == V92_CPD_OK &&
 	      v92_pcm_mapping_init(&a.mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      prepare_downstream(law, lookahead, NULL, &tx, &a.receive, false, false) &&
@@ -1511,6 +1531,8 @@ static bool run_pause_crossing(enum g711_law law, enum v92_constellation_size co
 	      ah.state.analog.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE &&
 	      dh.state.digital.downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_PAUSE,
 	      "silence agreement entered a parameter/data handoff");
+	CHECK(dh.state.digital.cpu.law == d.cpu.law && dh.state.digital.mapping.law == law,
+	      "pause changed peer codec or network encoding");
 	if (!early_ed) {
 		/* Independent downstream scheduling: E2u has completed while the
 		 * digital side still has a whole acknowledging SUVd/Ed tail to send.
@@ -1897,7 +1919,7 @@ int main(void)
 					for (unsigned offset = 0u; offset <= 3u; ++offset)
 						for (unsigned early_ed = 0u; early_ed < 2u; ++early_ed)
 							if (!run_pause_crossing(law, size ? V92_CONSTELLATION_8_POINT :
-								V92_CONSTELLATION_4_POINT, extended, lookahead, offset, early_ed)) {
+									V92_CONSTELLATION_4_POINT, extended, lookahead, offset, early_ed, false)) {
 								fprintf(stderr, "pause law=%u size=%u extended=%u lookahead=%u offset=%u early_ed=%u\n",
 									law, size, extended, lookahead, offset, early_ed);
 								return 1;
@@ -1913,11 +1935,14 @@ int main(void)
 		    !run_crossing((enum g711_law)law, false, true, false, SUVU_TAIL) ||
 		    !run_crossing((enum g711_law)law, true, true, false, CPU_TAIL) ||
 		    !run_rearmed_crossing(
-			    (enum g711_law)law, false, 1u, false) ||
+			    (enum g711_law)law, false, 1u, false, false) ||
 		    !run_rearmed_crossing(
-			    (enum g711_law)law, true, 3u, false) ||
-		    !run_rearmed_crossing((enum g711_law)law, false, 3u, true) ||
-		    !run_rearmed_crossing((enum g711_law)law, true, 3u, true))
+			    (enum g711_law)law, true, 3u, false, false) ||
+		    !run_rearmed_crossing((enum g711_law)law, false, 3u, true, false) ||
+		    !run_rearmed_crossing((enum g711_law)law, true, 3u, true, false) ||
+		    !run_rearmed_crossing(law, false, 3u, false, true) ||
+		    !run_rearmed_crossing(law, false, 3u, true, true) ||
+		    !run_pause_crossing(law, V92_CONSTELLATION_4_POINT, false, 0u, 0u, true, true))
 			return 1;
 		for (enum rejected_control kind = CHANGED_CPU_SHAPING; kind <= CPUS_ACK_ROLLBACK; ++kind)
 			if (!run_control_rejection((enum g711_law)law, kind))

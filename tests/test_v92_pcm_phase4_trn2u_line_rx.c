@@ -180,7 +180,7 @@ static bool run_line(
 		      echo_gain_q15, polarity, TEST_LU, &handoff, &transmitter,
 		      &channel) &&
 	      v92_pcm_phase4_trn2u_line_rx_init(
-		      &receiver, &handoff, constellation) ==
+		      &receiver, &handoff, constellation, handoff.parameters.law) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
 	      "TRN2u line fixture did not initialize");
 	CHECK(v92_phase4_modulator_init(
@@ -428,7 +428,7 @@ static bool test_quantized_lu_training(void)
 			CHECK(make_handoff(law, constellation, 0u, 0.05, 0, -1, lu,
 					&handoff, &transmitter, &channel), "quantized fixture failed");
 			handoff.signal_level = quantize(law, lu);
-			CHECK(v92_pcm_phase4_trn2u_line_rx_init(&receiver, &handoff, constellation) ==
+			CHECK(v92_pcm_phase4_trn2u_line_rx_init(&receiver, &handoff, constellation, handoff.parameters.law) ==
 				      V92_PCM_PHASE4_TRN2U_LINE_RX_OK, "quantized training failed");
 			for (unsigned n = 0u; n < RECEIVED_TRAINING_SYMBOLS; ++n) {
 				int16_t raw;
@@ -481,7 +481,7 @@ static bool test_pending_target_membership(void)
 			struct line_channel channel;
 			CHECK(make_handoff(law, points, 0, 0.0, 0, 1, TEST_LU,
 				&initial, &transmitter, &channel) &&
-			      v92_pcm_phase4_trn2u_line_rx_init(&receiver, &initial, points) ==
+			      v92_pcm_phase4_trn2u_line_rx_init(&receiver, &initial, points, initial.parameters.law) ==
 				V92_PCM_PHASE4_TRN2U_LINE_RX_OK, "membership fixture failed");
 			struct v92_pcm_phase4_trn2u_line_handoff handoff = {
 				.equalizer = receiver.equalizer, .demodulator = receiver.demodulator,
@@ -568,23 +568,26 @@ static bool test_contracts(void)
 	invalid_handoff = handoff;
 	invalid_handoff.previous_sign = 2u;
 	CHECK(v92_pcm_phase4_trn2u_line_rx_init(
-		      NULL, &handoff, V92_CONSTELLATION_4_POINT) ==
+		      &untouched, &handoff, V92_CONSTELLATION_4_POINT, (enum g711_law)99) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_line_rx_init(
-		      &untouched, NULL, V92_CONSTELLATION_4_POINT) ==
+		      NULL, &handoff, V92_CONSTELLATION_4_POINT, handoff.parameters.law) ==
+		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
+	      v92_pcm_phase4_trn2u_line_rx_init(
+		      &untouched, NULL, V92_CONSTELLATION_4_POINT, G711_LAW_PCMU) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_line_rx_init(
 		      &untouched, &invalid_handoff,
-		      V92_CONSTELLATION_4_POINT) ==
+		      V92_CONSTELLATION_4_POINT, invalid_handoff.parameters.law) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
 	      v92_pcm_phase4_trn2u_line_rx_init(
 		      &untouched, &handoff,
-		      (enum v92_constellation_size)6) ==
+		      (enum v92_constellation_size)6, handoff.parameters.law) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &saved_untouched, sizeof(untouched)) == 0,
 	      "invalid TRN2u line initialization changed output");
 	CHECK(v92_pcm_phase4_trn2u_line_rx_init(
-		      &receiver, &handoff, V92_CONSTELLATION_4_POINT) ==
+		      &receiver, &handoff, V92_CONSTELLATION_4_POINT, handoff.parameters.law) ==
 		      V92_PCM_PHASE4_TRN2U_LINE_RX_OK &&
 	      v92_pcm_phase4_trn2u_next(&transmitter, &raw) ==
 		      V92_PCM_PHASE4_TRN2U_OK,

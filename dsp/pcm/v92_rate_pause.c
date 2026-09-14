@@ -252,7 +252,7 @@ bool v92_rate_pause_digital_resume(struct v92_phase4_digital_station *station,
 	    memory_regions_overlap(station, sizeof(*station), pause, sizeof(*pause)) ||
 	    !v92_cpd_parameters_are_valid(cpd) || !cpd->data_rate_number ||
 	    !v92_upstream_plan_is_valid(plan) || !v92_cpu_parameters_are_valid(cpu) ||
-	    cpu->law != pause->upstream.signal.line.law || !cpu->data_rate_number)
+	    !cpu->data_rate_number)
 		return false;
 	struct v92_phase4_digital_station next = { .upstream_plan = *plan };
 	struct v92_cpd_parameters selected = *cpd;

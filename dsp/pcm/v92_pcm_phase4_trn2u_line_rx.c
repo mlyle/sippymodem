@@ -200,14 +200,14 @@ enum v92_pcm_phase4_trn2u_line_rx_result
 v92_pcm_phase4_trn2u_line_rx_init(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
-	enum v92_constellation_size constellation)
+	enum v92_constellation_size constellation, enum g711_law law)
 {
 	struct v92_pcm_phase4_trn2u_line_rx initialized = { 0 };
 	unsigned int bits;
 	int16_t outer_level;
 	long rounded_level;
 
-	if (receiver == NULL ||
+	if (receiver == NULL || !g711_law_is_valid(law) ||
 	    !v92_pcm_phase3_cpt_line_handoff_is_valid(handoff))
 		return V92_PCM_PHASE4_TRN2U_LINE_RX_INVALID_ARGUMENT;
 	rounded_level = lround(handoff->signal_level);
@@ -223,7 +223,7 @@ v92_pcm_phase4_trn2u_line_rx_init(
 		.starting_input_samples = handoff->input_samples,
 		.input_samples = handoff->input_samples,
 		.adaptation = handoff->adaptation,
-		.law = handoff->parameters.law,
+		.law = law,
 		.polarity = handoff->polarity,
 	};
 	if (qam_equalizer_extend_span(

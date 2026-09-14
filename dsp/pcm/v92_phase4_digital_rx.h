@@ -49,7 +49,7 @@ struct v92_phase4_digital_rx {
 enum v92_phase4_digital_rx_result v92_phase4_digital_rx_init(
 	struct v92_phase4_digital_rx *receiver,
 	const struct v92_pcm_phase3_cpt_line_handoff *handoff,
-	enum v92_constellation_size constellation);
+	enum v92_constellation_size constellation, enum g711_law law);
 
 /* Reenter at the observed Ru-bar boundary. The short training prefix does
  * not constitute a new complete channel measurement; reuse the preceding

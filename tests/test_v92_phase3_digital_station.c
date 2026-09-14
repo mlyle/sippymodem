@@ -425,7 +425,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 
 		CHECK(digital.early_trn2u_samples >= V90_PHASE4_RI_BAR_SYMBOLS &&
 		      v92_pcm_phase4_trn2u_line_rx_init(
-			      &receiver, &handoff, jp.training_constellation) ==
+			      &receiver, &handoff, jp.training_constellation, handoff.parameters.law) ==
 			      V92_PCM_PHASE4_TRN2U_LINE_RX_OK,
 		      "Ri-bar overlap did not retain early TRN2u");
 		for (size_t index = 0; index < digital.early_trn2u_samples; ++index)

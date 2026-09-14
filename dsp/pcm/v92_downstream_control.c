@@ -127,7 +127,7 @@ static bool owned_state_is_valid(
 			control->cpd_start_frame == 0u && control->status_start_frame == 0u &&
 			!control->cpu_received && !control->transmit_acknowledges_cpu && !control->repeat_cpd &&
 			v92_cpu_parameters_are_valid(&control->cpu) && control->cpu.data_rate_number != 0u &&
-			control->cpu.law == control->transmit.encoder.mapping.law && !control->cpu.acknowledges_cpd &&
+			!control->cpu.acknowledges_cpd &&
 			(control->suvu_received ? v92_suvu_parameters_are_valid(&control->suvu) :
 				(suvu_storage_is_empty(control) && !control->peer_confirmation_received)) &&
 			(!control->suvu.acknowledges_cpd || control->peer_confirmation_received) &&
@@ -182,7 +182,6 @@ static bool owned_state_is_valid(
 	       (control->cpu_received || control->previous_cpu ?
 		(v92_cpu_parameters_are_valid(&control->cpu) &&
 		 control->cpu.data_rate_number != 0u &&
-		 control->cpu.law == control->transmit.encoder.mapping.law &&
 		 (!control->cpu.acknowledges_cpd || control->cpu_received)) :
 		cpu_storage_is_empty(control)) &&
 	       control->peer_confirmation_received ==
@@ -256,7 +255,8 @@ bool v92_downstream_control_init(struct v92_downstream_control *control,
 	}
 	if (downstream->encoder.mapping.kind == V90_CP_DATA) {
 		struct v90_pcm_mapping previous;
-		if (v90_pcm_mapping_init_from_v92_cpu(&previous, previous_cpu) != V90_PCM_MAPPING_OK ||
+		if (v90_pcm_mapping_init_from_v92_cpu(&previous, previous_cpu,
+			    downstream->encoder.mapping.law) != V90_PCM_MAPPING_OK ||
 		    !v90_pcm_mapping_equal(&previous, &downstream->encoder.mapping))
 			return false;
 	}
@@ -305,8 +305,7 @@ static bool fail(struct v92_downstream_control *control)
 static bool accept_cpu(struct v92_downstream_control *control,
 		       const struct v92_cpu_parameters *cpu)
 {
-	if (silence_requested(control) || !v92_cpu_parameters_are_valid(cpu) ||
-	    cpu->law != control->transmit.encoder.mapping.law)
+	if (silence_requested(control) || !v92_cpu_parameters_are_valid(cpu))
 		return false;
 	if (!control->suvu_received)
 		return true;
@@ -392,8 +391,7 @@ bool v92_downstream_control_receive(struct v92_downstream_control *control,
 	 * must not bypass selection validation and trigger cleardown. */
 	if ((event.type == V92_CONTROL_EVENT_CPU &&
 	     (event.record.cpu.frame_result != V92_CPU_OK ||
-	      !v92_cpu_parameters_are_valid(&event.record.cpu.parameters) ||
-	      event.record.cpu.parameters.law != control->transmit.encoder.mapping.law)) ||
+	      !v92_cpu_parameters_are_valid(&event.record.cpu.parameters))) ||
 	    (event.type == V92_CONTROL_EVENT_CPUS &&
 	     (event.record.cpus.frame_result != V92_CPU_OK ||
 	      event.record.cpus.parameters.data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)))

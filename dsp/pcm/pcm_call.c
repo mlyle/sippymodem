@@ -504,7 +504,7 @@ static bool v92_analog_mixed_is_valid(
 	if (v92_phase3_analog_station_downstream_handoff(
 		    &mixed->phase3, &parameters) !=
 		    V92_PHASE3_ANALOG_STATION_OK ||
-	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters) !=
+	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters, call->law) !=
 		    V90_PCM_MAPPING_OK)
 		return false;
 	return v92_phase3_analog_station_receive_complete(&mixed->phase3) &&
@@ -536,7 +536,7 @@ static bool v92_digital_mixed_is_valid(
 	if (v92_phase3_digital_station_downstream_handoff(
 		    &mixed->phase3, &parameters) !=
 		    V92_PHASE3_DIGITAL_STATION_OK ||
-	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters) !=
+	    v90_pcm_mapping_init_from_v92_cpt(&mapping, &parameters, call->law) !=
 		    V90_PCM_MAPPING_OK)
 		return false;
 	return v92_phase3_digital_station_transmit_complete(&mixed->phase3) &&
@@ -771,7 +771,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    !v90_pcm_mapping_is_valid(&path->training_mapping) ||
 		    path->training_mapping.law != call->law ||
 		    !v92_constellation_size_is_valid(path->rate_renegotiation_constellation) ||
-		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
+		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu, call->law) !=
 			    V90_PCM_MAPPING_OK || !v90_pcm_mapping_equal(&expected, &path->rd.mapping))
 			return false;
 		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
@@ -814,7 +814,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		    path->b1u_squared_error < 0.0 ||
 		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
 		     path->b1u_squared_error != 0.0) ||
-		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu) !=
+		    v90_pcm_mapping_init_from_v92_cpu(&expected, cpu, call->law) !=
 			    V90_PCM_MAPPING_OK)
 			return false;
 		if (stage == V92_PHASE4_E2U_DOWNSTREAM_TRAINING)
@@ -827,7 +827,8 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 				v90_pcm_mapping_equal(&expected,
 					&path->downstream.data.transmitter.encoder.mapping);
 	}
-	return cpu->law == call->law && upstream->law == call->law && child_valid;
+	return (call->local_role != V90_ANALOG_MODEM || cpu->law == call->law) &&
+		upstream->law == call->law && child_valid;
 }
 
 static bool v92_rate_prefix_is_valid(const struct pcm_call *call)
@@ -1045,7 +1046,7 @@ static bool call_is_valid(
 				ru->transmit.v92_control_kind == PCM_DOWNSTREAM_V92_CONTROL_SUVD &&
 				!ru->transmit.control.suvd.acknowledges_cpu &&
 				!ru->transmit.finish_requested && !ru->transmit.ed_requested &&
-				v92_upstream_plan_is_valid(&ru->plan) && ru->cpu.law == call->law &&
+				v92_upstream_plan_is_valid(&ru->plan) &&
 				v92_cpd_parameters_are_valid(&ru->cpd) &&
 				v92_cpu_parameters_are_valid(&ru->cpu);
 			child_failed = false;
@@ -1070,7 +1071,6 @@ static bool call_is_valid(
 					v92_pcm_mapping_is_valid(&owner->digital_pause.mapping) &&
 					owner->digital_pause.mapping.law == call->law &&
 					v92_cpu_parameters_are_valid(&owner->digital_pause.cpu) &&
-					owner->digital_pause.cpu.law == call->law &&
 					owner->digital_pause.cpu.data_rate_number != 0u &&
 					v92_upstream_plan_is_valid(&owner->digital_pause.plan);
 				child_failed = owner->digital_pause.signal.failed;
@@ -1857,7 +1857,7 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 			struct v90_pcm_mapping mapping;
 			uint32_t lower, upper, limit = downstream_power_limit(call, NULL);
 
-			if (v90_pcm_mapping_init_from_v92_cpt(&mapping, &config.cpt) != V90_PCM_MAPPING_OK ||
+			if (v90_pcm_mapping_init_from_v92_cpt(&mapping, &config.cpt, call->law) != V90_PCM_MAPPING_OK ||
 			    v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, call->law,
 						  &lower, &upper) != V90_PCM_MAPPING_OK ||
 			    (upper > limit && !v90_profile_select_constellation(&mapping, limit,
@@ -2366,7 +2366,7 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 			    V92_PHASE3_ANALOG_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
 		if (v90_pcm_mapping_init_from_v92_cpt(
-			    &mapping, &parameters) != V90_PCM_MAPPING_OK)
+			    &mapping, &parameters, call->law) != V90_PCM_MAPPING_OK)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (pcm_downstream_rx_init(
 			    &mixed.receive, PCM_PROTOCOL_V92, &mapping,
@@ -2383,7 +2383,7 @@ static enum pcm_call_result enter_v92_mixed_phase3(struct pcm_call *call)
 			    V92_PHASE3_DIGITAL_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
 		if (v90_pcm_mapping_init_from_v92_cpt(
-			    &mapping, &parameters) != V90_PCM_MAPPING_OK)
+			    &mapping, &parameters, call->law) != V90_PCM_MAPPING_OK)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (pcm_downstream_tx_init(
 			    &mixed.transmit, PCM_PROTOCOL_V92, &mapping) !=
@@ -3837,7 +3837,7 @@ static bool start_v92_data_path(struct pcm_call *next, const struct pcm_call *ca
 		path->training_mapping = call->state.phase4.v92.training_mapping;
 		path->rate_renegotiation_constellation = call->state.phase4.v92.rate_renegotiation_constellation;
 		struct v90_pcm_mapping mapping;
-		if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &path->cpu) != V90_PCM_MAPPING_OK ||
+		if (v90_pcm_mapping_init_from_v92_cpu(&mapping, &path->cpu, call->law) != V90_PCM_MAPPING_OK ||
 		    pcm_r_rx_init(&path->rd, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RD) != PCM_R_RX_OK ||
 		    pcm_r_rx_init(&path->rf, &mapping, V90_PCM_MAPPING_TRANSMIT, PCM_R_RF) != PCM_R_RX_OK)
 			return false;

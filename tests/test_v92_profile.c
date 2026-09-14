@@ -165,7 +165,7 @@ static bool test_generated_profiles(void)
 						      &phase3->cpt
 						       .transmit_constellations[0]) &&
 					      v90_pcm_mapping_init_from_v92_cpt(
-						      &cpt_mapping, &phase3->cpt) ==
+						      &cpt_mapping, &phase3->cpt, phase3->cpt.law) ==
 						      V90_PCM_MAPPING_OK &&
 					      v90_pcm_mapping_is_valid(&cpt_mapping) &&
 					      cpt_mapping.kind == V90_CP_TRAINING &&
