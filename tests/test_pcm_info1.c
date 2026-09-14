@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <pcm_info1.h>
+#include <packed_bits.h>
 
 #include "test.h"
 
@@ -157,6 +158,10 @@ static bool test_selection_matrix(void)
 	      "V.90 upstream selection changed");
 	for (unsigned int short_phase2 = 0; short_phase2 <= 1;
 	     ++short_phase2) {
+		enum pcm_info1_result success = short_phase2 ?
+			PCM_INFO1_INVALID_RECORD : PCM_INFO1_OK;
+		enum pcm_info1_result unavailable = short_phase2 ?
+			PCM_INFO1_INVALID_RECORD : PCM_INFO1_PCM_UNAVAILABLE;
 		struct pcm_startup_selection startup = {
 			.protocol = PCM_PROTOCOL_V92,
 			.phase2 = short_phase2 ? PCM_PHASE2_SHORT :
@@ -165,20 +170,189 @@ static bool test_selection_matrix(void)
 
 		CHECK(run_selection(
 			      &startup, &v92_without_pcm,
-			      conventional_payload, PCM_INFO1_OK,
+			      conventional_payload, success,
 			      PCM_UPSTREAM_V34) &&
 		      run_selection(
 			      &startup, &v92_without_pcm, pcm_payload,
-			      PCM_INFO1_PCM_UNAVAILABLE, PCM_UPSTREAM_PCM) &&
+			      unavailable,
+			      PCM_UPSTREAM_PCM) &&
 		      run_selection(
 			      &startup, &v92_with_pcm,
-			      conventional_payload, PCM_INFO1_OK,
+			      conventional_payload, success,
 			      PCM_UPSTREAM_V34) &&
 		      run_selection(
 			      &startup, &v92_with_pcm, pcm_payload,
-			      PCM_INFO1_OK, PCM_UPSTREAM_PCM),
+			      success, PCM_UPSTREAM_PCM),
 		      "V.92 full/short selection %u changed", short_phase2);
 	}
+	return true;
+}
+
+static struct pcm_info1_selection short_conventional(void)
+{
+	struct pcm_info1_selection selected = {
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_SHORT },
+		.short_high_carrier = true,
+		.analog.conventional = conventional(),
+		.upstream = PCM_UPSTREAM_V34,
+	};
+	selected.analog.conventional.frequency_offset_1_50_hz_units =
+		V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
+	return selected;
+}
+
+static bool test_short_conventional(void)
+{
+	struct pcm_info1_selection sent = short_conventional(), received;
+	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES], canonical[sizeof(payload)];
+	const uint8_t table19[] = { 0x02, 0x83, 0x94, 0xb0, 0x04 };
+
+	CHECK(pcm_info1_encode_short(&sent, payload, sizeof(payload)) == PCM_INFO1_OK &&
+	      memcmp(payload, table19, sizeof(payload)) == 0,
+	      "short conventional INFO1a disagrees with Table 19 bits");
+	for (unsigned rate = V34_SYMBOL_RATE_3000; rate <= V34_SYMBOL_RATE_3429; ++rate) {
+		for (unsigned high = 0; high <= 1; ++high) {
+			sent.analog.conventional.upstream_symbol_rate = (enum v34_symbol_rate)rate;
+			sent.short_high_carrier = high;
+			CHECK(pcm_info1_encode_short(&sent, payload, sizeof(payload)) == PCM_INFO1_OK &&
+			      packed_msb_bits_are_zero(payload, 0, 6) && !packed_msb_bit(payload, 20) &&
+			      packed_msb_bit(payload, 21) == high &&
+			      packed_msb_read_lsb_field(payload, 22, 3) == rate &&
+			      packed_msb_read_lsb_field(payload, 25, 3) == 6 &&
+			      packed_msb_read_lsb_field(payload, 28, 10) == 512,
+			      "short upstream rate/carrier encoding changed");
+			CHECK(pcm_info1_select_short(&sent.startup, payload, sizeof(payload),
+			      V90_INFO1A_PAYLOAD_BITS, &received) == PCM_INFO1_OK &&
+			      pcm_info1_selection_is_valid(&received) &&
+			      received.upstream == PCM_UPSTREAM_V34 &&
+			      received.short_high_carrier == high &&
+			      received.analog.conventional.upstream_symbol_rate == (enum v34_symbol_rate)rate,
+			      "short INFO1a did not preserve its own carrier selection");
+			memcpy(canonical, payload, sizeof(payload));
+			/* Receive ignores reserved bits and the unavailable offset; TX
+			 * canonicalizes them, while retaining the meaningful carrier. */
+			packed_msb_write_lsb_field(payload, 0, 6, 63);
+			packed_msb_set_bit(payload, 20, true);
+			packed_msb_write_lsb_field(payload, 28, 10, 17);
+			CHECK(pcm_info1_select_short(&sent.startup, payload, sizeof(payload),
+			      V90_INFO1A_PAYLOAD_BITS, &received) == PCM_INFO1_OK &&
+			      received.analog.conventional.frequency_offset_1_50_hz_units == -512 &&
+			      pcm_info1_encode_short(&received, payload, sizeof(payload)) == PCM_INFO1_OK &&
+			      memcmp(payload, canonical, sizeof(payload)) == 0,
+			      "short INFO1a interpreted a reserved field");
+		}
+	}
+	return true;
+}
+
+static bool test_short_pcm(void)
+{
+	struct pcm_info1_selection sent = {
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_SHORT },
+		.short_high_carrier = false,
+		.analog.pcm = pcm(),
+		.upstream = PCM_UPSTREAM_PCM,
+	}, received;
+	uint8_t payload[V92_PCM_INFO1A_PAYLOAD_BYTES], expected[sizeof(payload)];
+
+	CHECK(v92_pcm_info1a_encode(&sent.analog.pcm, expected, sizeof(expected)) == V92_PCM_INFO1A_OK &&
+	      pcm_info1_encode_short(&sent, payload, sizeof(payload)) == PCM_INFO1_OK &&
+	      memcmp(payload, expected, sizeof(payload)) == 0 &&
+	      pcm_info1_select_short(&sent.startup, payload, sizeof(payload),
+		      V92_PCM_INFO1A_PAYLOAD_BITS, &received) == PCM_INFO1_OK &&
+	      pcm_info1_selection_is_valid(&received) && received.upstream == PCM_UPSTREAM_PCM &&
+	      !received.short_high_carrier &&
+	      v92_pcm_info1a_equal(&sent.analog.pcm, &received.analog.pcm),
+	      "short PCM upstream invented an INFO1d capability requirement");
+	packed_msb_set_bit(payload, 21, true);
+	CHECK(pcm_info1_select_short(&sent.startup, payload, sizeof(payload),
+	      V92_PCM_INFO1A_PAYLOAD_BITS, &received) == PCM_INFO1_OK &&
+	      !received.short_high_carrier, "PCM INFO1a interpreted its reserved carrier bit");
+	return true;
+}
+
+static bool test_short_validation(void)
+{
+	struct pcm_info1_selection sent = short_conventional(), received;
+	struct pcm_startup_selection full = { PCM_PROTOCOL_V92, PCM_PHASE2_FULL };
+	struct pcm_startup_selection v90 = { PCM_PROTOCOL_V90, PCM_PHASE2_SHORT };
+	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES], saved[sizeof(received)];
+
+	CHECK(pcm_info1_encode_short(&sent, payload, sizeof(payload)) == PCM_INFO1_OK,
+	      "short validation fixture failed");
+	memset(&received, 0xa5, sizeof(received));
+	memcpy(saved, &received, sizeof(saved));
+	CHECK(pcm_info1_select_short(&full, payload, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_RECORD &&
+	      pcm_info1_select_short(&v90, payload, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_RECORD &&
+	      pcm_info1_select_short(NULL, payload, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_select_short(&sent.startup, NULL, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_select_short(&sent.startup, payload, sizeof(payload), 38, NULL) ==
+		      PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_select_short(&sent.startup, payload, sizeof(payload) - 1, 38, &received) ==
+		      PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_select_short(&sent.startup, payload, sizeof(payload), 37, &received) ==
+		      PCM_INFO1_INVALID_PAYLOAD,
+	      "short INFO1a accepted invalid arguments or a full startup");
+	payload[4] |= 1;
+	CHECK(pcm_info1_select_short(&sent.startup, payload, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_PAYLOAD &&
+	      memcmp(saved, &received, sizeof(saved)) == 0,
+	      "short INFO1a malformed input changed output");
+	payload[4] &= ~1u;
+	for (unsigned rate = 0; rate < 8; ++rate) {
+		if (rate >= 3 && rate <= 6)
+			continue;
+		packed_msb_write_lsb_field(payload, 22, 3, rate);
+		CHECK(pcm_info1_select_short(&sent.startup, payload, sizeof(payload), 38, &received) ==
+		      PCM_INFO1_INVALID_PAYLOAD && memcmp(saved, &received, sizeof(saved)) == 0,
+		      "short INFO1a accepted a non-PCM-family upstream symbol rate");
+	}
+	memset(payload, 0xa5, sizeof(payload));
+	CHECK(pcm_info1_encode_short(NULL, payload, sizeof(payload)) == PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_encode_short(&sent, NULL, sizeof(payload)) == PCM_INFO1_INVALID_ARGUMENT &&
+	      pcm_info1_encode_short(&sent, payload, sizeof(payload) - 1) == PCM_INFO1_INVALID_ARGUMENT &&
+	      memcmp(payload, saved, sizeof(payload)) == 0,
+	      "short encoder accepted invalid output storage");
+	sent.analog.conventional.frequency_offset_1_50_hz_units = 0;
+	CHECK(!pcm_info1_selection_is_valid(&sent) &&
+	      pcm_info1_encode_short(&sent, payload, sizeof(payload)) == PCM_INFO1_INVALID_RECORD &&
+	      memcmp(payload, saved, sizeof(payload)) == 0,
+	      "short encoder accepted a measured offset or changed rejected output");
+	return true;
+}
+
+static bool test_short_storage_and_full_boundary(void)
+{
+	struct pcm_info1_selection sent = short_conventional(), decoded;
+	struct v92_info1d record = { .v34 = v90_digital(), .pcm_upstream_supported = true };
+	struct pcm_info1d digital;
+	struct pcm_startup_selection full = { PCM_PROTOCOL_V92, PCM_PHASE2_FULL };
+	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
+	uint8_t saved[sizeof(payload)];
+
+	CHECK(pcm_info1_encode_short(&sent, saved, sizeof(saved)) == PCM_INFO1_OK &&
+	      pcm_info1_encode_short(&sent, (uint8_t *)&sent, sizeof(sent)) == PCM_INFO1_OK &&
+	      memcmp(&sent, saved, sizeof(saved)) == 0,
+	      "aliased encoding overwrote the short carrier before reading it");
+	memcpy(&decoded, saved, sizeof(saved));
+	sent = short_conventional();
+	CHECK(pcm_info1_select_short(&sent.startup, (const uint8_t *)&decoded, sizeof(decoded),
+	      V90_INFO1A_PAYLOAD_BITS, &decoded) == PCM_INFO1_OK &&
+	      pcm_info1_selection_is_valid(&decoded) && decoded.short_high_carrier,
+	      "aliased decoding lost the short INFO1a selection");
+	CHECK(pcm_info1d_init_v92(&digital, &record) == PCM_INFO1_OK &&
+	      pcm_info1_select(&full, &digital, saved, sizeof(saved),
+	      V90_INFO1A_PAYLOAD_BITS, &decoded) == PCM_INFO1_OK &&
+	      pcm_info1_selection_is_valid(&decoded), "full decision fixture failed");
+	memset(payload, 0xa5, sizeof(payload));
+	memcpy(saved, payload, sizeof(payload));
+	CHECK(pcm_info1_encode_short(&decoded, payload, sizeof(payload)) == PCM_INFO1_INVALID_RECORD &&
+	      memcmp(payload, saved, sizeof(payload)) == 0,
+	      "short encoder consumed a full INFO1d-backed decision");
 	return true;
 }
 
@@ -261,6 +435,10 @@ int main(void)
 	} tests[] = {
 		{ "constructors", test_constructors },
 		{ "selection matrix", test_selection_matrix },
+		{ "short conventional INFO1a", test_short_conventional },
+		{ "short PCM INFO1a", test_short_pcm },
+		{ "short validation", test_short_validation },
+		{ "short storage and full boundary", test_short_storage_and_full_boundary },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

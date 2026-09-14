@@ -51,12 +51,17 @@ enum pcm_info1a_kind {
 	PCM_INFO1A_V34_FALLBACK,
 };
 
-/* Self-contained INFO1 decision for the selected Phase 3 child. The
- * conventional record is shared by V.90 and V.92; PCM upstream is possible
- * only for V.92 when the digital INFO1d advertised support. */
+/* Self-contained INFO1 decision for the selected Phase 3 child. Full Phase 2
+ * retains INFO1d; short Phase 2 has no digital INFO1 record and takes the
+ * conventional upstream carrier choice from INFO1a instead. The startup
+ * phase2 tag selects the union member. Short PCM upstream uses Table 18
+ * unchanged and leaves short_high_carrier false. */
 struct pcm_info1_selection {
 	struct pcm_startup_selection startup;
-	struct pcm_info1d digital;
+	union {
+		struct pcm_info1d digital;
+		bool short_high_carrier;
+	};
 	union pcm_info1a_record analog;
 	enum pcm_upstream_mode upstream;
 };
@@ -70,13 +75,27 @@ enum pcm_info1_result pcm_info1d_init_v90(
 enum pcm_info1_result pcm_info1d_init_v92(
 	struct pcm_info1d *info1d, const struct v92_info1d *record);
 
-/* Decode the analog INFO1 payload and select the Phase 3 child. Malformed or
- * unsupported input leaves selection unchanged. */
+/* Decode the full-Phase-2 analog INFO1 payload against the digital INFO1d.
+ * Malformed or unsupported input leaves selection unchanged. */
 enum pcm_info1_result pcm_info1_select(
 	const struct pcm_startup_selection *startup,
 	const struct pcm_info1d *digital, const uint8_t *analog_payload,
 	size_t payload_capacity, size_t payload_bit_count,
 	struct pcm_info1_selection *selection);
+
+/* V.92 9.4 and Amendment 1 Tables 18/19: short Phase 2 exchanges only INFO1a.
+ * Both INFO0 records must already have selected short Phase 2. The owner
+ * supplies retained training policy separately at the Phase 3 boundary;
+ * this decision neither invents INFO1d nor enables modem-level Quick Connect.
+ * The ignored conventional frequency-offset field is normalized to -512.
+ * Rejected calls leave selection/payload unchanged. */
+enum pcm_info1_result pcm_info1_select_short(
+	const struct pcm_startup_selection *startup,
+	const uint8_t *analog_payload, size_t payload_capacity,
+	size_t payload_bit_count, struct pcm_info1_selection *selection);
+enum pcm_info1_result pcm_info1_encode_short(
+	const struct pcm_info1_selection *selection,
+	uint8_t *payload, size_t payload_capacity);
 
 const char *pcm_info1_result_name(enum pcm_info1_result result);
 

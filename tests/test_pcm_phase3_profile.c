@@ -206,6 +206,21 @@ static bool test_rejection_is_transactional(void)
 		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
 	      memcmp(&profile, before, sizeof(profile)) == 0,
 	      "PCM or invalid selection entered the conventional path");
+	selection = (struct pcm_info1_selection){
+		.startup = { PCM_PROTOCOL_V92, PCM_PHASE2_SHORT },
+		.short_high_carrier = true,
+		.analog.conventional = {
+			.training_ucode = 91,
+			.upstream_symbol_rate = V34_SYMBOL_RATE_3200,
+			.frequency_offset_1_50_hz_units = -512,
+		},
+		.upstream = PCM_UPSTREAM_V34,
+	};
+	CHECK(pcm_info1_selection_is_valid(&selection) &&
+	      pcm_phase3_conventional_profile(&selection, &profile) ==
+		      V34_PHASE3_PROFILE_INVALID_ARGUMENT &&
+	      memcmp(&profile, before, sizeof(profile)) == 0,
+	      "short decision consumed an absent INFO1d as a full training profile");
 	return true;
 }
 

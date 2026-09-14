@@ -344,6 +344,9 @@ static bool test_selection_rejection(void)
 	selected = conventional_selection(
 		PCM_PROTOCOL_V92, V34_SYMBOL_RATE_3200, true);
 	selected.startup.phase2 = PCM_PHASE2_SHORT;
+	selected.short_high_carrier = true;
+	selected.analog.conventional.frequency_offset_1_50_hz_units =
+		V34_INFO1_FREQUENCY_OFFSET_UNAVAILABLE;
 	CHECK(pcm_info1_selection_is_valid(&selected) &&
 	      pcm_phase3_entry_init(
 		      &entry, V90_ANALOG_MODEM, G711_LAW_PCMU,

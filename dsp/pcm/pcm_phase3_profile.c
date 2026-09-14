@@ -21,6 +21,7 @@ enum v34_phase3_profile_result pcm_phase3_conventional_profile(
 	enum v34_symbol_rate symbol_rate;
 
 	if (profile == NULL || !pcm_info1_selection_is_valid(selection) ||
+	    selection->startup.phase2 != PCM_PHASE2_FULL ||
 	    selection->upstream != PCM_UPSTREAM_V34)
 		return V34_PHASE3_PROFILE_INVALID_ARGUMENT;
 	digital = digital_v34_info1(selection);

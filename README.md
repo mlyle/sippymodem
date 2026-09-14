@@ -120,9 +120,12 @@ is not yet implemented. Generated-channel tests are not evidence of robust
 operation on a physical line.
 
 The V.92 short-Phase-2 ranging controller is tested separately for both codec
-laws, including physical reversal timing and bounded recovery. Its INFO1a
-handoff and retained-history startup are not yet connected to the call owner;
-this component does not enable modem-level Quick Connect.
+laws, including physical reversal timing and bounded recovery. Its typed
+INFO1a decision preserves the short conventional carrier selection and shares
+the PCM-upstream record codec without requiring an unsent INFO1d. The ranging
+and INFO1a handoff, retained-history training inputs, and Phase 3 entry are not
+yet connected to the call owner; these components do not enable modem-level
+Quick Connect.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 
