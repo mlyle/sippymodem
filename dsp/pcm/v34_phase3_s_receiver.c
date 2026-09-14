@@ -707,55 +707,25 @@ static bool hunt_prefix_is_candidate(
 bool v34_phase3_s_hunt_is_valid(
 	const struct v34_phase3_s_hunt *hunt)
 {
-	bool first_complete;
-	bool second_complete;
-
 	if (hunt == NULL ||
-	    !v34_phase3_s_receiver_is_valid(&hunt->marker[0]) ||
-	    !v34_phase3_s_receiver_is_valid(&hunt->marker[1]) ||
-	    hunt->marker[0].s_symbols !=
+	    !v34_phase3_s_receiver_is_valid(&hunt->marker) ||
+	    hunt->marker.s_symbols !=
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS ||
-	    hunt->marker[1].s_symbols !=
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS ||
-	    hunt->marker[0].metric_enabled || hunt->marker[1].metric_enabled ||
-	    hunt->marker[0].target_seeded || hunt->marker[1].target_seeded ||
+	    hunt->marker.metric_enabled ||
 	    !v34_phase3_s_prefix_is_valid(&hunt->prefix) ||
 	    hunt->candidate_symbols > V34_PHASE3_S_HUNT_CANDIDATE_SYMBOLS ||
-	    hunt->post_marker_symbols >
-		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ||
+	    hunt->marker.post_marker_symbols > hunt->recent_observation_count ||
 	    hunt->recent_observation_count >
 		    V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS ||
 	    hunt->next_target_rotation >= 4u ||
-	    hunt->candidate != (hunt->candidate_symbols != 0u) ||
-	    (hunt->complete &&
-	     (!hunt->candidate ||
-	      hunt->post_marker_symbols > hunt->recent_observation_count)) ||
-	    (hunt->complete ?
-		     !v34_phase3_s_detection_is_valid(&hunt->detection) :
-		     hunt->detection.clockwise_quarter_turn_offset != 0u ||
-		     hunt->detection.s_errors != 0u ||
-		     hunt->detection.s_bar_errors != 0u))
-		return false;
-	first_complete =
-		v34_phase3_s_receiver_is_complete(&hunt->marker[0]);
-	second_complete =
-		v34_phase3_s_receiver_is_complete(&hunt->marker[1]);
-	if (hunt->complete != (first_complete || second_complete) ||
-	    (!hunt->complete && hunt->post_marker_symbols != 0u) ||
-	    (hunt->complete &&
-	     !((first_complete &&
-		hunt->post_marker_symbols ==
-			hunt->marker[0].post_marker_symbols) ||
-	       (second_complete &&
-		hunt->post_marker_symbols ==
-			hunt->marker[1].post_marker_symbols))))
+	    hunt->candidate != (hunt->candidate_symbols != 0u))
 		return false;
 	if (!hunt->candidate)
 		return hunt->candidate_rotation[0] == 0u &&
 		       hunt->candidate_rotation[1] == 0u &&
 		       hunt->next_target_rotation == 0u &&
 		       !hunt->s_bar_seen &&
-		       !first_complete && !second_complete;
+		       hunt->marker.buffered_decisions == 0u;
 	return hunt_prefix_is_candidate(&hunt->prefix) &&
 	       hunt->candidate_rotation[0] < 4u &&
 	       hunt->candidate_rotation[1] < 4u &&
@@ -768,7 +738,7 @@ bool v34_phase3_s_hunt_is_valid(
 bool v34_phase3_s_hunt_is_complete(
 	const struct v34_phase3_s_hunt *hunt)
 {
-	return v34_phase3_s_hunt_is_valid(hunt) && hunt->complete;
+	return v34_phase3_s_hunt_is_valid(hunt) && hunt->marker.complete;
 }
 
 static bool reset_hunt(struct v34_phase3_s_hunt *hunt, bool acquire_phase)
@@ -776,11 +746,7 @@ static bool reset_hunt(struct v34_phase3_s_hunt *hunt, bool acquire_phase)
 	struct v34_phase3_s_hunt reset = { .acquire_phase = acquire_phase };
 
 	if (v34_phase3_s_receiver_init_suffix(
-		    &reset.marker[0],
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
-		    V34_PHASE3_S_RECEIVER_OK ||
-	    v34_phase3_s_receiver_init_suffix(
-		    &reset.marker[1],
+		    &reset.marker,
 		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
 		    V34_PHASE3_S_RECEIVER_OK ||
 	    v34_phase3_s_prefix_init_recurrent(&reset.prefix) !=
@@ -864,15 +830,6 @@ static bool try_start_hunt_candidate(
 		previous_rotation = (uint8_t)(
 			(current_rotation + hunt->prefix.previous_turn) & 3u);
 	}
-	if (v34_phase3_s_receiver_init_suffix(
-		    &hunt->marker[0],
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
-		    V34_PHASE3_S_RECEIVER_OK ||
-	    v34_phase3_s_receiver_init_suffix(
-		    &hunt->marker[1],
-		    V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) !=
-		    V34_PHASE3_S_RECEIVER_OK)
-		return false;
 	hunt->candidate_rotation[0] = current_rotation;
 	hunt->candidate_rotation[1] = previous_rotation;
 	hunt->next_target_rotation = previous_rotation;
@@ -922,44 +879,6 @@ static bool prepare_hunt_adaptation(
 	return true;
 }
 
-static uint8_t mapped_hunt_rotation(
-	const struct v34_phase3_s_hunt *hunt, size_t hypothesis,
-	uint8_t rotation)
-{
-	uint8_t current = hunt->candidate_rotation[0];
-	uint8_t previous = hunt->candidate_rotation[1];
-
-	if (rotation == current)
-		return hypothesis == 0u ? 0u : 3u;
-	if (rotation == previous)
-		return hypothesis == 0u ? 3u : 0u;
-	if (rotation == ((current + 2u) & 3u))
-		return hypothesis == 0u ? 2u : 1u;
-	return hypothesis == 0u ? 1u : 2u;
-}
-
-static bool complete_hunt(
-	struct v34_phase3_s_hunt *hunt, size_t hypothesis)
-{
-	struct v34_phase3_s_detection detection;
-
-	if (!v34_phase3_s_receiver_get_detection(
-		    &hunt->marker[hypothesis], &detection))
-		return false;
-	for (uint8_t rotation = 0u; rotation < 4u; ++rotation) {
-		if (mapped_hunt_rotation(hunt, hypothesis, rotation) !=
-		    detection.clockwise_quarter_turn_offset)
-			continue;
-		detection.clockwise_quarter_turn_offset = rotation;
-		hunt->detection = detection;
-		hunt->post_marker_symbols =
-			hunt->marker[hypothesis].post_marker_symbols;
-		hunt->complete = true;
-		return true;
-	}
-	return false;
-}
-
 static void remember_hunt_observation(
 	struct v34_phase3_s_hunt *hunt,
 	struct v34_analytic_sample observation)
@@ -973,30 +892,6 @@ static void remember_hunt_observation(
 		hunt->recent_observation_count--;
 	}
 	hunt->recent_observation[hunt->recent_observation_count++] = observation;
-}
-
-static enum v34_phase3_s_receiver_result receive_hunt_candidate(
-	struct v34_phase3_s_hunt *hunt,
-	const struct v34_fixed_training_decision *hard)
-{
-	for (size_t hypothesis = 0u; hypothesis < 2u; ++hypothesis) {
-		enum v34_phase3_s_receiver_result result =
-			v34_phase3_s_receiver_receive(
-				&hunt->marker[hypothesis], hard->quarter_point,
-				mapped_hunt_rotation(
-					hunt, hypothesis,
-					hard->clockwise_quarter_turns));
-
-		if (result != V34_PHASE3_S_RECEIVER_OK &&
-		    result != V34_PHASE3_S_RECEIVER_DETECTED)
-			return result;
-		if (result == V34_PHASE3_S_RECEIVER_DETECTED &&
-		    !complete_hunt(hunt, hypothesis))
-			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
-		if (result == V34_PHASE3_S_RECEIVER_DETECTED)
-			return result;
-	}
-	return V34_PHASE3_S_RECEIVER_OK;
 }
 
 enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
@@ -1027,7 +922,7 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		    V34_CONSTELLATION_4_POINT, observation, &hard) !=
 		    V34_CONSTELLATION_OK)
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
-	if (hunt->complete)
+	if (hunt->marker.complete)
 		return V34_PHASE3_S_RECEIVER_COMPLETE;
 	next = *hunt;
 	remember_hunt_observation(&next, observation);
@@ -1035,7 +930,8 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		if (!prepare_hunt_adaptation(
 			    &next, observation, &generated))
 			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
-		result = receive_hunt_candidate(&next, &hard);
+		result = v34_phase3_s_receiver_receive(
+			&next.marker, hard.quarter_point, hard.clockwise_quarter_turns);
 		if (result != V34_PHASE3_S_RECEIVER_OK &&
 		    result != V34_PHASE3_S_RECEIVER_DETECTED)
 			return result;
@@ -1060,7 +956,8 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		    !try_start_hunt_candidate(&next, &hard))
 			return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
 		if (next.candidate) {
-			result = receive_hunt_candidate(&next, &hard);
+			result = v34_phase3_s_receiver_receive(
+				&next.marker, hard.quarter_point, hard.clockwise_quarter_turns);
 			if (result != V34_PHASE3_S_RECEIVER_OK)
 				return result;
 			generated_control = true;
@@ -1084,10 +981,9 @@ bool v34_phase3_s_hunt_get_detection(
 	const struct v34_phase3_s_hunt *hunt,
 	struct v34_phase3_s_detection *detection)
 {
-	if (!v34_phase3_s_hunt_is_valid(hunt) || detection == NULL ||
-	    !hunt->complete)
+	if (!v34_phase3_s_hunt_is_complete(hunt) || detection == NULL)
 		return false;
-	*detection = hunt->detection;
+	*detection = hunt->marker.detection;
 	return true;
 }
 
@@ -1096,7 +992,7 @@ bool v34_phase3_s_hunt_get_post_marker_symbols(
 {
 	if (!v34_phase3_s_hunt_is_complete(hunt) || symbols == NULL)
 		return false;
-	*symbols = hunt->post_marker_symbols;
+	*symbols = hunt->marker.post_marker_symbols;
 	return true;
 }
 
@@ -1107,9 +1003,9 @@ bool v34_phase3_s_hunt_get_post_marker_observation(
 	size_t first;
 
 	if (!v34_phase3_s_hunt_is_complete(hunt) || observation == NULL ||
-	    index >= hunt->post_marker_symbols)
+	    index >= hunt->marker.post_marker_symbols)
 		return false;
-	first = hunt->recent_observation_count - hunt->post_marker_symbols;
+	first = hunt->recent_observation_count - hunt->marker.post_marker_symbols;
 	*observation = hunt->recent_observation[first + index];
 	return true;
 }

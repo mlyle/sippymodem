@@ -16,8 +16,7 @@ static bool s_is_initial(const struct v34_phase3_s_hunt *receiver)
 {
 	return receiver->recent_observation_count == 0u &&
 	       receiver->prefix.recurrence_points == 0u &&
-	       !receiver->prefix.previous_valid && !receiver->candidate &&
-	       !receiver->complete;
+	       !receiver->prefix.previous_valid && !receiver->candidate;
 }
 
 static bool trn_is_initial(const struct v34_training_sequence *trn)
@@ -337,6 +336,7 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 	struct v34_receive_action *output)
 {
 	struct v34_phase3_s_adaptation adaptation;
+	uint8_t post_marker_symbols;
 	bool control;
 	enum v34_phase3_s_receiver_result result =
 		v34_phase3_s_hunt_receive(
@@ -354,8 +354,9 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 	}
 	*output = v34_receive_action_only(V34_RECEIVE_DISCARD);
 	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
-	    !advance_trn_prefix(
-		    receiver, receiver->answer_s.post_marker_symbols))
+	    !v34_phase3_s_hunt_get_post_marker_symbols(
+		    &receiver->answer_s, &post_marker_symbols) ||
+	    !advance_trn_prefix(receiver, post_marker_symbols))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
 	receiver->stage = V34_PHASE4_DECISION_RECEIVER_TRN;
 	*output = v34_receive_action_only(V34_RECEIVE_BEGIN_TRACKING);

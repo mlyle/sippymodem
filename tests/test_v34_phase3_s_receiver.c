@@ -1118,6 +1118,71 @@ static bool test_online_hunt_boundaries(void)
 	return true;
 }
 
+static bool test_online_hunt_damaged_phase_anchor(void)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+
+	CHECK(generate_marker(rotations), "damaged S marker did not generate");
+	/* One damaged final S point must not select a mirrored, one-symbol-early
+	 * marker with a different carrier phase. Retain the real boundary and
+	 * replay the four distinct decisions consumed while confirming it. */
+	rotations[V34_PHASE3_S_SYMBOLS - 2u] = (uint8_t)(
+		(rotations[V34_PHASE3_S_SYMBOLS - 2u] + 1u) & 3u);
+	for (uint8_t offset = 0u; offset < 4u; ++offset) {
+		for (size_t skip = 0u; skip < 2u; ++skip) {
+			struct v34_phase3_s_hunt hunt;
+			struct v34_phase3_s_detection detection;
+			struct v34_analytic_sample tail[
+				V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS];
+			uint8_t post_symbols = 0u;
+
+			CHECK(v34_phase3_s_hunt_init(&hunt) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "damaged S hunt did not initialize");
+			for (size_t symbol = skip;
+			     symbol < ARRAY_LENGTH(rotations) + ARRAY_LENGTH(tail);
+			     ++symbol) {
+				struct v34_analytic_sample observation;
+				struct v34_phase3_s_adaptation adaptation;
+				bool control;
+				uint8_t rotation = symbol < ARRAY_LENGTH(rotations) ?
+					rotations[symbol] :
+					(uint8_t)((symbol - ARRAY_LENGTH(rotations) + 1u) & 3u);
+				enum v34_phase3_s_receiver_result expected =
+					symbol + 1u == ARRAY_LENGTH(rotations) + ARRAY_LENGTH(tail) ?
+						V34_PHASE3_S_RECEIVER_DETECTED :
+						V34_PHASE3_S_RECEIVER_OK;
+
+				CHECK(v34_training_constellation_fixed_point(
+					      V34_CONSTELLATION_4_POINT, 0u,
+					      (uint8_t)((rotation + offset) & 3u),
+					      &observation) == V34_CONSTELLATION_OK,
+				      "damaged S point did not generate");
+				if (symbol >= ARRAY_LENGTH(rotations))
+					tail[symbol - ARRAY_LENGTH(rotations)] = observation;
+				CHECK(v34_phase3_s_hunt_receive(
+					      &hunt, observation, &adaptation, &control) == expected,
+				      "damaged S boundary changed offset=%u skip=%zu symbol=%zu",
+				      offset, skip, symbol);
+			}
+			CHECK(v34_phase3_s_hunt_get_detection(&hunt, &detection) &&
+			      detection.clockwise_quarter_turn_offset == offset &&
+			      v34_phase3_s_hunt_get_post_marker_symbols(&hunt, &post_symbols) &&
+			      post_symbols == ARRAY_LENGTH(tail),
+			      "damaged S marker lost its phase or confirmation tail");
+			for (uint8_t index = 0u; index < post_symbols; ++index) {
+				struct v34_analytic_sample observation;
+
+				CHECK(v34_phase3_s_hunt_get_post_marker_observation(
+					      &hunt, index, &observation) &&
+				      memcmp(&observation, &tail[index], sizeof(observation)) == 0,
+				      "damaged S marker lost tail observation %u", index);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_online_hunt_requires_physical_recurrence(void)
 {
 	/* These points alternate between adjacent quadrants, but their actual
@@ -1281,7 +1346,8 @@ static bool test_training_hunt_acquires_phase(void)
 						      &adaptation, &control) ==
 						      V34_PHASE3_S_RECEIVER_OK,
 					      "training hunt did not expire");
-				CHECK(!hunt.candidate && !hunt.complete && hunt.acquire_phase,
+				CHECK(!hunt.candidate &&
+				      !v34_phase3_s_hunt_is_complete(&hunt) && hunt.acquire_phase,
 				      "expiry changed the training acquisition policy");
 			}
 		}
@@ -1317,7 +1383,7 @@ static bool test_online_hunt_reset_and_validation(void)
 			      &hunt, observation, &adaptation, &control) ==
 			      V34_PHASE3_S_RECEIVER_OK,
 		      "uncompleted online S candidate did not expire");
-	CHECK(!hunt.candidate && !hunt.complete &&
+	CHECK(!hunt.candidate && !v34_phase3_s_hunt_is_complete(&hunt) &&
 	      v34_phase3_s_hunt_is_valid(&hunt),
 	      "expired online S candidate kept protocol state");
 	saved = hunt;
@@ -1330,6 +1396,9 @@ static bool test_online_hunt_reset_and_validation(void)
 	      memcmp(&hunt, &saved, sizeof(hunt)) == 0 &&
 	      !v34_phase3_s_hunt_is_valid(NULL),
 	      "invalid online S call changed the hunt");
+	hunt.marker.buffered_decisions = 1u;
+	CHECK(!v34_phase3_s_hunt_is_valid(&hunt),
+	      "inactive hunt retained candidate history");
 	return true;
 }
 
@@ -1361,6 +1430,8 @@ int main(void)
 		{ "fixed metric margin", test_fixed_metric_margin },
 		{ "completion and validation", test_completion_and_validation },
 		{ "online S hunt boundaries", test_online_hunt_boundaries },
+		{ "online S hunt damaged phase anchor",
+		  test_online_hunt_damaged_phase_anchor },
 		{ "online S hunt physical recurrence",
 		  test_online_hunt_requires_physical_recurrence },
 		{ "online S hunt non-S recurrence",

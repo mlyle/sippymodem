@@ -145,16 +145,15 @@ struct v34_phase3_s_receiver {
  * the bounded suffix receiver supplies known S targets and stops adapting at
  * S-bar. */
 struct v34_phase3_s_hunt {
-	struct v34_phase3_s_receiver marker[2];
+	/* One absolute decision history covers every fixed carrier rotation. */
+	struct v34_phase3_s_receiver marker;
 	struct v34_phase3_s_prefix prefix;
-	struct v34_phase3_s_detection detection;
 	/* Keep the detector's bounded confirmation tail so the next protocol
 	 * owner can replay decisions consumed beyond the exact S-bar boundary. */
 	struct v34_analytic_sample
 		recent_observation[V34_PHASE3_S_RECEIVER_MAX_S_BAR_ERRORS];
 	uint16_t candidate_symbols;
 	uint8_t candidate_rotation[2];
-	uint8_t post_marker_symbols;
 	uint8_t next_target_rotation;
 	uint8_t recent_observation_count;
 	/* Training may acquire phase across hard-decision quadrant boundaries;
@@ -162,7 +161,6 @@ struct v34_phase3_s_hunt {
 	bool acquire_phase;
 	bool candidate;
 	bool s_bar_seen;
-	bool complete;
 };
 
 bool v34_phase3_s_hunt_is_valid(
