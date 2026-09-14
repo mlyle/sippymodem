@@ -1119,17 +1119,19 @@ static bool check_initial_probe(enum test_codec codec)
 }
 
 static bool check_phase2_controller(
-	enum test_codec codec, enum test_info1_mode mode)
+	enum test_codec codec, enum test_info1_mode mode, unsigned short_offer)
 {
 	struct v90_info0 analog_info = analog_capabilities();
 	struct v90_info0d digital_info = digital_capabilities(codec);
 	struct v92_info0a v92_analog_info = {
 		.v90 = analog_info,
 		.v92_capable = true,
+		.short_phase2_requested = short_offer == 1u,
 	};
 	struct v92_info0d v92_digital_info = {
 		.v90 = digital_info,
 		.v92_capable = true,
+		.short_phase2_requested = short_offer == 2u,
 	};
 	struct v34_info1c v90_info1d = digital_info1();
 	struct v92_info1d v92_info1d = v92_digital_info1(mode);
@@ -1614,12 +1616,14 @@ static bool check_v92_fallback(enum test_codec codec)
 	memset(&untouched, 0xa5, sizeof(untouched));
 	untouched_before = untouched;
 	analog_info.short_phase2_requested = true;
+	analog_info.v92_capable = false;
 	CHECK(pcm_phase2_init_v92_analog(
 		      &untouched, TEST_AMPLITUDE, &analog_info) ==
 		      PCM_PHASE2_INVALID_ARGUMENT &&
 	      memcmp(&untouched, &untouched_before, sizeof(untouched)) == 0,
-	      "unsupported V.92 short Phase 2 mutated the controller");
+	      "invalid V.92 short capabilities mutated the controller");
 	analog_info.short_phase2_requested = false;
+	analog_info.v92_capable = true;
 	CHECK(pcm_phase2_init_v92_analog(
 		      &analog, TEST_AMPLITUDE, &analog_info) == PCM_PHASE2_OK &&
 	      pcm_phase2_init_v90_digital(
@@ -1672,11 +1676,16 @@ static bool test_pcm_initial_probe(void)
 		      "PCM initial probe failed for codec %d", codec);
 		for (enum test_info1_mode mode = TEST_INFO1_V90;
 		     mode <= TEST_INFO1_V92_PCM; ++mode)
-			CHECK(check_phase2_controller(codec, mode),
+			CHECK(check_phase2_controller(codec, mode, 0),
 			      "PCM Phase 2 mode %d failed for codec %d",
 			      mode, codec);
 		CHECK(check_v92_fallback(codec),
 		      "V.92 fallback failed for codec %d", codec);
+		for (unsigned offer = 1; offer <= 2; ++offer)
+			for (enum test_info1_mode mode = TEST_INFO1_V92_CONVENTIONAL;
+			     mode <= TEST_INFO1_V92_PCM; ++mode)
+				CHECK(check_phase2_controller(codec, mode, offer),
+				      "unilateral short offer %u mode %d codec %d", offer, mode, codec);
 	}
 	return true;
 }

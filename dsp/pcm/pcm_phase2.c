@@ -17,13 +17,10 @@ static bool local_info0_is_valid(const struct pcm_phase2 *phase2)
 			return v92_info0a_is_valid(
 				       &phase2->local_info0.v92_analog) &&
 			       phase2->local_info0.v92_analog.v92_capable &&
-			       !phase2->local_info0.v92_analog
-					.short_phase2_requested &&
 			       !phase2->local_info0.v92_analog.v90
 					.acknowledges_peer_info0;
 		return v92_info0d_is_valid(&phase2->local_info0.v92_digital) &&
 		       phase2->local_info0.v92_digital.v92_capable &&
-		       !phase2->local_info0.v92_digital.short_phase2_requested &&
 		       !phase2->local_info0.v92_digital.v90.common
 				.acknowledges_peer_info0;
 	}
@@ -71,8 +68,7 @@ static bool derive_startup(
 				&phase2->peer_info0.v92_digital;
 
 		return pcm_startup_select(analog, digital, selection) ==
-			       PCM_STARTUP_OK &&
-		       selection->phase2 == PCM_PHASE2_FULL;
+		       PCM_STARTUP_OK;
 	}
 }
 
@@ -81,9 +77,16 @@ static bool startup_is_valid(const struct pcm_phase2 *phase2)
 	struct pcm_startup_selection expected;
 
 	if (!phase2->peer_info0_stored)
-		return phase2->stage == PCM_PHASE2_RANGING;
-	return derive_startup(phase2, &expected) &&
-	       phase2->startup.protocol == expected.protocol &&
+		return phase2->stage == PCM_PHASE2_RANGING &&
+		       !phase2->short_recovered;
+	if (!derive_startup(phase2, &expected))
+		return false;
+	if (phase2->short_recovered) {
+		if (expected.phase2 != PCM_PHASE2_SHORT)
+			return false;
+		expected.phase2 = PCM_PHASE2_FULL;
+	}
+	return phase2->startup.protocol == expected.protocol &&
 	       phase2->startup.phase2 == expected.phase2;
 }
 
@@ -98,7 +101,10 @@ static bool remote_probe_state_is_valid(const struct pcm_phase2 *phase2)
 	if (phase2->stage == PCM_PHASE2_RANGING)
 		return !phase2->remote_probe_stored;
 	if (phase2->stage == PCM_PHASE2_INFO1)
-		return phase2->remote_probe_stored;
+		return phase2->remote_probe_stored ==
+		       (phase2->startup.phase2 == PCM_PHASE2_FULL);
+	if (phase2->startup.phase2 == PCM_PHASE2_SHORT)
+		return false;
 	if (phase2->local_role == V90_ANALOG_MODEM)
 		return phase2->stage == PCM_PHASE2_RECIPROCAL_PROBE ||
 		       !phase2->remote_probe_stored;
@@ -195,6 +201,21 @@ static enum pcm_phase2_failure active_failure(
 	return PCM_PHASE2_FAILURE_INTERNAL;
 }
 
+static bool short_info1_recovery_is_valid(const struct pcm_phase2 *phase2)
+{
+	const struct pcm_phase2_ranging *recovery = &phase2->state.short_recovery;
+
+	if (phase2->local_role == V90_ANALOG_MODEM)
+		return true;
+	return pcm_phase2_ranging_is_valid(recovery) &&
+	       recovery->path == PCM_RANGING_SHORT_FINISHED &&
+	       recovery->info0_exchange.local_role == V90_DIGITAL_MODEM &&
+	       recovery->short_control.elapsed_samples <
+		       V92_SHORT_RANGING_TIMEOUT_SAMPLES &&
+	       phase2->state.info1.control.short_receive_budget_samples ==
+		       V92_SHORT_RANGING_TIMEOUT_SAMPLES - recovery->short_control.elapsed_samples;
+}
+
 bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 {
 	enum pcm_phase2_failure child_failure;
@@ -227,11 +248,11 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 			&phase2->state.reciprocal_probe);
 		break;
 	case PCM_PHASE2_INFO1:
-		child_valid = phase2->peer_info0_stored &&
-			      phase2->remote_probe_stored &&
-			      phase2->state.info1.protocol ==
-				      phase2->startup.protocol &&
-			      pcm_phase2_info1_is_valid(&phase2->state.info1);
+		child_valid = pcm_phase2_info1_is_valid(&phase2->state.info1) &&
+			      phase2->state.info1.control.short_exchange ==
+				      (phase2->startup.phase2 == PCM_PHASE2_SHORT);
+		if (child_valid && phase2->startup.phase2 == PCM_PHASE2_SHORT)
+			child_valid = short_info1_recovery_is_valid(phase2);
 		break;
 	default:
 		return false;
@@ -255,6 +276,13 @@ bool pcm_phase2_has_failed(const struct pcm_phase2 *phase2)
 
 static bool ready_for_info1(const struct pcm_phase2 *phase2)
 {
+	if (phase2->failure == PCM_PHASE2_FAILURE_NONE &&
+	    phase2->stage == PCM_PHASE2_RANGING && phase2->peer_info0_stored &&
+	    phase2->startup.phase2 == PCM_PHASE2_SHORT &&
+	    phase2->local_role == V90_ANALOG_MODEM)
+		return phase2->state.ranging.path == PCM_RANGING_SHORT_FINISHED &&
+		       phase2->state.ranging.short_control.tail_samples ==
+			       PHASE2_RANGING_TONE_TAIL_SAMPLES;
 	if (phase2->failure != PCM_PHASE2_FAILURE_NONE ||
 	    phase2->stage != PCM_PHASE2_RECIPROCAL_PROBE ||
 	    !phase2->remote_probe_stored)
@@ -291,7 +319,8 @@ static bool ready_for_phase3(const struct pcm_phase2 *phase2)
 	/* Both PCM-family Phase 3 children own the post-INFO1a line interval.
 	 * A V.34 fallback still finishes the shared timeline before transfer. */
 	return info1->control.phase == PHASE2_INFO1_SILENCE &&
-	       info1->digital_record_stored && info1->analog_record_stored &&
+	       (info1->control.short_exchange || info1->digital_record_stored) &&
+	       info1->analog_record_stored &&
 	       info1->analog.kind != PCM_INFO1A_V34_FALLBACK;
 }
 
@@ -374,7 +403,6 @@ enum pcm_phase2_result pcm_phase2_init_v92_analog(
 	union pcm_info0_record local = { 0 };
 
 	if (phase2 == NULL || !v92_info0a_is_valid(local_info0a) ||
-	    local_info0a->short_phase2_requested ||
 	    pcm_phase2_info0_exchange_init_v92_analog(
 		    &exchange, nominal_amplitude, local_info0a) !=
 		    PCM_PHASE2_INFO0_EXCHANGE_OK)
@@ -392,7 +420,6 @@ enum pcm_phase2_result pcm_phase2_init_v92_digital(
 	union pcm_info0_record local = { 0 };
 
 	if (phase2 == NULL || !v92_info0d_is_valid(local_info0d) ||
-	    local_info0d->short_phase2_requested ||
 	    pcm_phase2_info0_exchange_init_v92_digital(
 		    &exchange, nominal_amplitude, local_info0d) !=
 		    PCM_PHASE2_INFO0_EXCHANGE_OK)
@@ -422,8 +449,14 @@ static enum pcm_phase2_result initialize_retrain(
 	exchange->state = PCM_PHASE2_INFO0_RETRAIN;
 	restarted.state.ranging.control.prior_round_trip_delay_samples =
 		prior_round_trip_delay_samples;
-	if (!derive_startup(&restarted, &restarted.startup) ||
-	    phase2_info0_exchange_start_tone(&exchange->transport) !=
+	if (!derive_startup(&restarted, &restarted.startup))
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (restarted.startup.phase2 == PCM_PHASE2_SHORT) {
+		restarted.short_recovered = true;
+		restarted.startup.phase2 = PCM_PHASE2_FULL;
+		restarted.state.ranging.path = PCM_RANGING_SHORT_FULL_RECOVERY;
+	}
+	if (phase2_info0_exchange_start_tone(&exchange->transport) !=
 		    PHASE2_INFO0_EXCHANGE_OK ||
 	    !pcm_phase2_is_valid(&restarted))
 		return PCM_PHASE2_INVALID_ARGUMENT;
@@ -576,6 +609,9 @@ static enum pcm_phase2_result enter_info1(
 	struct pcm_phase2 next;
 
 	next = *phase2;
+	if (exchange->control.short_exchange &&
+	    phase2->local_role == V90_DIGITAL_MODEM)
+		next.state.short_recovery = phase2->state.ranging;
 	next.state.info1 = *exchange;
 	next.stage = PCM_PHASE2_INFO1;
 	if (!pcm_phase2_is_valid(&next))
@@ -630,6 +666,7 @@ enum pcm_phase2_result pcm_phase2_start_analog_info1(
 	if (!pcm_phase2_is_valid(phase2))
 		return PCM_PHASE2_INVALID_ARGUMENT;
 	if (phase2->local_role != V90_ANALOG_MODEM ||
+	    phase2->startup.phase2 != PCM_PHASE2_FULL ||
 	    !ready_for_info1(phase2))
 		return PCM_PHASE2_INVALID_STATE;
 	if ((phase2->startup.protocol == PCM_PROTOCOL_V90 ?
@@ -640,6 +677,26 @@ enum pcm_phase2_result pcm_phase2_start_analog_info1(
 			     &exchange,
 			     &phase2->state.reciprocal_probe)) !=
 	    PHASE2_INFO1_OK)
+		return PCM_PHASE2_INVALID_STATE;
+	return enter_info1(phase2, &exchange);
+}
+
+enum pcm_phase2_result pcm_phase2_start_short_analog_info1(
+	struct pcm_phase2 *phase2, const struct pcm_info1_selection *selection)
+{
+	struct pcm_phase2_info1_exchange exchange;
+
+	if (!pcm_phase2_is_valid(phase2) ||
+	    !pcm_info1_selection_is_valid(selection))
+		return PCM_PHASE2_INVALID_ARGUMENT;
+	if (phase2->local_role != V90_ANALOG_MODEM ||
+	    phase2->startup.phase2 != PCM_PHASE2_SHORT || !ready_for_info1(phase2) ||
+	    selection->startup.protocol != phase2->startup.protocol ||
+	    selection->startup.phase2 != phase2->startup.phase2)
+		return PCM_PHASE2_INVALID_STATE;
+	if (pcm_phase2_info1_init_short_analog(&exchange,
+		    &phase2->state.ranging.info0_exchange.transport.tone_transmitter,
+		    selection) != PHASE2_INFO1_OK)
 		return PCM_PHASE2_INVALID_STATE;
 	return enter_info1(phase2, &exchange);
 }
@@ -830,6 +887,10 @@ static bool sample_ranging(
 		phase2->local_role == V90_ANALOG_MODEM ?
 			PHASE2_PROBE_TRANSMIT_READY :
 			PHASE2_PROBE_RECEIVE_READY;
+	if (phase2->state.ranging.path == PCM_RANGING_SHORT_FINISHED) {
+		*transmit_sample = 0;
+		return true;
+	}
 
 	if (pcm_phase2_ranging_sample(
 		    &phase2->state.ranging, received_sample,
@@ -840,6 +901,33 @@ static bool sample_ranging(
 		phase2->peer_info0_stored = true;
 		if (!select_startup(phase2))
 			return false;
+		if (phase2->short_recovered)
+			phase2->startup.phase2 = PCM_PHASE2_FULL;
+	}
+	switch (child.short_step.event) {
+	case V92_SHORT_RANGING_NO_EVENT:
+		break;
+	case V92_SHORT_RANGING_TRANSMIT_INFO1A:
+		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;
+		return true;
+	case V92_SHORT_RANGING_RECEIVE_INFO1A: {
+		struct pcm_phase2_info1_exchange info1;
+		if (pcm_phase2_info1_init_short_digital(&info1, &phase2->startup,
+			    child.short_step.info1a_remaining_samples) != PHASE2_INFO1_OK ||
+		    enter_info1(phase2, &info1) != PCM_PHASE2_OK)
+			return false;
+		event->kind = PCM_PHASE2_EVENT_ROUND_TRIP_DELAY;
+		event->round_trip_delay_samples = child.short_step.round_trip_delay_samples;
+		return true;
+	}
+	case V92_SHORT_RANGING_RECOVER_FULL_PHASE2:
+		phase2->short_recovered = true;
+		phase2->startup.phase2 = PCM_PHASE2_FULL;
+		event->kind = PCM_PHASE2_EVENT_SHORT_RECOVERY_STARTED;
+		return true;
+	case V92_SHORT_RANGING_REQUEST_FULL_RETRAIN:
+		event->kind = PCM_PHASE2_EVENT_RETRAIN_REQUESTED;
+		return true;
 	}
 	switch (child.kind) {
 	case PHASE2_RANGING_NO_EVENT:
@@ -1025,6 +1113,19 @@ static bool sample_info1(
 		event->kind = PCM_PHASE2_EVENT_RETRAIN_REQUESTED;
 		return true;
 	case PCM_PHASE2_INFO1_EVENT_FAILED:
+		if (phase2->startup.phase2 == PCM_PHASE2_SHORT) {
+			struct pcm_phase2_ranging recovered = phase2->state.short_recovery;
+			if (phase2->local_role != V90_DIGITAL_MODEM ||
+			    child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
+			    !pcm_phase2_ranging_recover_short_info1(&recovered))
+				return false;
+			phase2->state.ranging = recovered;
+			phase2->stage = PCM_PHASE2_RANGING;
+			phase2->short_recovered = true;
+			phase2->startup.phase2 = PCM_PHASE2_FULL;
+			event->kind = PCM_PHASE2_EVENT_SHORT_RECOVERY_STARTED;
+			return true;
+		}
 		if (child.failure != PHASE2_INFO1_PEER_TIMEOUT ||
 		    phase2_info1_recover(&phase2->state.info1.control) !=
 			    PHASE2_INFO1_OK)
@@ -1091,7 +1192,8 @@ enum pcm_phase2_result pcm_phase2_measure_remote_probe(
 {
 	if (!pcm_phase2_is_valid(phase2) || measurement == NULL)
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	if (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1)
+	if (!phase2->remote_probe_stored ||
+	    (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1))
 		return PCM_PHASE2_INVALID_STATE;
 	*measurement = phase2->remote_probe;
 	return PCM_PHASE2_OK;
@@ -1102,7 +1204,8 @@ enum pcm_phase2_result pcm_phase2_receive_gain(
 {
 	if (!pcm_phase2_is_valid(phase2) || receive_gain == NULL)
 		return PCM_PHASE2_INVALID_ARGUMENT;
-	if (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1)
+	if (!phase2->remote_probe_stored ||
+	    (!ready_for_info1(phase2) && phase2->stage != PCM_PHASE2_INFO1))
 		return PCM_PHASE2_INVALID_STATE;
 	*receive_gain = phase2->remote_receive_gain;
 	return PCM_PHASE2_OK;

@@ -18,12 +18,15 @@ enum pcm_info1_result pcm_phase2_info1_handoff(
 		return PCM_INFO1_INVALID_RECORD;
 	selected = (struct pcm_info1_selection){
 		.startup = phase2->startup,
-		.digital = phase2->state.info1.digital,
 		.analog = phase2->state.info1.analog.record,
 		.upstream = phase2->state.info1.analog.kind ==
 					    PCM_INFO1A_PCM ?
 				PCM_UPSTREAM_PCM : PCM_UPSTREAM_V34,
 	};
+	if (selected.startup.phase2 == PCM_PHASE2_SHORT)
+		selected.short_high_carrier = phase2->state.info1.analog.short_high_carrier;
+	else
+		selected.digital = phase2->state.info1.digital;
 	if (!pcm_info1_selection_is_valid(&selected))
 		return PCM_INFO1_INVALID_RECORD;
 	*selection = selected;

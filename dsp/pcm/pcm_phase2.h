@@ -47,6 +47,7 @@ enum pcm_phase2_event_kind {
 	PCM_PHASE2_EVENT_PEER_INFO1_REJECTED,
 	PCM_PHASE2_EVENT_INFO1_RECOVERY_STARTED,
 	PCM_PHASE2_EVENT_RETRAIN_REQUESTED,
+	PCM_PHASE2_EVENT_SHORT_RECOVERY_STARTED,
 	PCM_PHASE2_EVENT_FAILED,
 };
 
@@ -65,7 +66,12 @@ union pcm_phase2_state {
 	struct v90_phase2_initial_probe initial_probe;
 	struct v90_phase2_probe_turnaround turnaround;
 	struct v90_phase2_reciprocal_probe reciprocal_probe;
-	struct pcm_phase2_info1_exchange info1;
+	struct {
+		struct pcm_phase2_info1_exchange info1;
+		/* The silent short INFO1a receiver must resume Tone B and full
+		 * ranging on timeout, retaining the actual INFO0 exchange. */
+		struct pcm_phase2_ranging short_recovery;
+	};
 };
 
 /* Own one analog or digital modem's continuous INFO0, probing, and INFO1
@@ -85,11 +91,14 @@ struct pcm_phase2 {
 	enum pcm_protocol info0_protocol;
 	bool peer_info0_stored;
 	bool remote_probe_stored;
+	/* Runtime full recovery does not rewrite the received short INFO0 bits. */
+	bool short_recovered;
 };
 
-/* The local INFO0 offer codec is immutable. V.92 initialization currently
- * admits the full Phase 2 branch only; short Phase 2 will be added as another
- * branch of this same owner. A V.92 offer may still negotiate down to V.90. */
+/* The local INFO0 offer codec is immutable. Both actual V.92 offers must
+ * select short Phase 2; otherwise the common full timeline remains active.
+ * A V.92 offer may still negotiate down to V.90. This owner starts after
+ * Phase 1 and does not itself enable Quick Connect or retain call policy. */
 enum pcm_phase2_result pcm_phase2_init_v90_analog(
 	struct pcm_phase2 *phase2, int16_t nominal_amplitude,
 	const struct v90_info0 *local_info0a);
@@ -157,7 +166,7 @@ enum pcm_phase2_result pcm_phase2_startup_selection(
 	const struct pcm_phase2 *phase2,
 	struct pcm_startup_selection *selection);
 
-/* The caller supplies mode policy only at the two explicit INFO1 boundaries.
+/* Full Phase 2 supplies mode policy at the two explicit INFO1 boundaries.
  * The digital modem sends INFO1d immediately; the analog modem continues
  * Tone A until peer_info1d() succeeds and one reply function supplies INFO1a. */
 enum pcm_phase2_result pcm_phase2_start_v90_digital_info1(
@@ -166,6 +175,12 @@ enum pcm_phase2_result pcm_phase2_start_v92_digital_info1(
 	struct pcm_phase2 *phase2, const struct v92_info1d *local_info1d);
 enum pcm_phase2_result pcm_phase2_start_analog_info1(
 	struct pcm_phase2 *phase2);
+/* Short Phase 2 has no probe or INFO1d. The analogue caller supplies its
+ * selected INFO1a immediately at READY_FOR_INFO1; the digital receive handoff
+ * is automatic and keeps the original ranging timeout. A short recovery
+ * either continues full ranging or requests a full retrain from the caller. */
+enum pcm_phase2_result pcm_phase2_start_short_analog_info1(
+	struct pcm_phase2 *phase2, const struct pcm_info1_selection *selection);
 enum pcm_phase2_result pcm_phase2_reply_conventional(
 	struct pcm_phase2 *phase2, const struct v90_info1a *local_info1a);
 enum pcm_phase2_result pcm_phase2_reply_pcm(
