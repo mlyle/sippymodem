@@ -80,6 +80,20 @@ bool v92_observation_fit(struct v92_observation *model,
 	const struct v92_observation_training *training);
 bool v92_observation_is_valid(const struct v92_observation *model);
 
+/* Optional single-codec prediction when the tandem model cannot explain a
+ * channel. Fit a positive gain on training.linear using the actual final
+ * wire levels and independent host corrections. The shared training/alias
+ * contracts apply; levels is required. Commit only if reconstruction improves
+ * on linear, leaving gain unchanged on rejection. This is not B1 admission:
+ * freeze the result before held-out bits and line-quality validation.
+ * predict_scalar takes a linear constellation point, never the observed value;
+ * host_gain and offset describe the same final-codec affine transform as above.
+ * It returns NAN for invalid parameters or unrepresentable arithmetic. */
+bool v92_observation_fit_scalar(double *gain,
+	const struct v92_observation_training *training);
+double v92_observation_predict_scalar(enum g711_law law, double gain,
+	double host_gain, int16_t linear, double offset);
+
 struct v92_observation_point {
 	struct v92_observation_values values;
 	int32_t x, key;

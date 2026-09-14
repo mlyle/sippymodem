@@ -413,7 +413,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
 	if (receiver->failed)
 		return V92_UPSTREAM_DATA_RX_FAILED;
-	if (receiver->model.valid && !wire_known)
+	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
 	next = receiver->line;
 	if (next.plan.observation == V92_PCM_FRAME_CONSTELLATION) {

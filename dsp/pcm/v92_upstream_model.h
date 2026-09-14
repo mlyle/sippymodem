@@ -24,6 +24,8 @@ struct v92_upstream_model {
 		struct v92_pcm_level_fit level;
 	};
 	uint64_t cost[2];
+	/* Frozen single-codec quality prediction if neither tandem model fits. */
+	double scalar_gain;
 	int16_t coefficient;
 	uint8_t valid, primary;
 	bool acquiring;

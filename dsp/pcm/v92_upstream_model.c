@@ -52,7 +52,11 @@ bool v92_upstream_model_is_valid(const struct v92_upstream_data_rx *receiver)
 		     fit->maximum - fit->minimum >= V92_PCM_LEVEL_FIT_POINTS)))
 			return false;
 	}
-	if (model->valid > 3u || model->primary > 1u || model->coefficient < 0)
+	if (model->valid > 3u || model->primary > 1u || model->coefficient < 0 ||
+	    !isfinite(model->scalar_gain) || model->scalar_gain < 0. ||
+	    (model->scalar_gain && (model->acquiring || model->valid || model->coefficient == 0 ||
+		 receiver->line.plan.observation != V92_PCM_FRAME_CONSTELLATION ||
+		 receiver->line.received_frames < V92_B1U_ACQUISITION_FRAMES || receiver->line.host.gain <= 0.)))
 		return false;
 	if (!model->acquiring && !model->valid)
 		return model->primary == 0u && model->cost[0] == 0u && model->cost[1] == 0u &&
@@ -170,6 +174,11 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
 			round(model->raw[i] * line->calibration.gain)));
 	}
+	const struct v92_observation_training training = {
+		.input = model->x, .linear = model->u, .sample = samples, .levels = model->wire,
+		.offsets = offsets, .count = V92_OBSERVATION_TRAINING,
+		.host_gain = line->host.gain * line->calibration.gain, .law = decoder->mapping.law,
+	};
 	for (unsigned candidate = 0u; candidate < 2u; ++candidate) {
 		struct v92_observation *fit = &model->model[candidate];
 		int32_t x[V92_OBSERVATION_TRAINING];
@@ -179,14 +188,9 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 			for (size_t i = 0u; i < V92_OBSERVATION_TRAINING; ++i)
 				x[i] = round_shift_s64_to_s32_saturating(
 					(int64_t)x[i] * model->coefficient, 15u);
-		const struct v92_observation_training training = {
-			.input = x, .linear = model->u, .sample = samples, .levels = model->wire,
-			.offsets = offsets,
-			.count = V92_OBSERVATION_TRAINING,
-			.host_gain = line->host.gain * line->calibration.gain,
-			.law = decoder->mapping.law,
-		};
-		if (v92_observation_fit(fit, &training)) {
+		struct v92_observation_training candidate_training = training;
+		candidate_training.input = x;
+		if (v92_observation_fit(fit, &candidate_training)) {
 			fit->input_coefficient = candidate ? model->coefficient : 0;
 			model->valid |= (uint8_t)(1u << candidate);
 		} else {
@@ -197,7 +201,8 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 		model->primary = (model->valid & 1u) ? 0u : 1u;
 		if (model->valid == 3u)
 			model->alternate = *decoder;
-	}
+	} else
+		v92_observation_fit_scalar(&model->scalar_gain, &training);
 	/* Later B1u decisions and payload validate, but never train, these fits. */
 	close_acquisition(model);
 }
@@ -264,6 +269,13 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 				break;
 			}
 
+	double offsets[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+	if (model->valid || model->scalar_gain)
+		for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
+			if (line->received[i] && !observation_offset(line,
+				line->raw[i], line->wire[i], line->host_samples[i], offsets + i))
+				return V92_PCM_FRAME_NO_PATH;
+
 	if (!model->valid) {
 		bool validate = decoder->observation == V92_PCM_FRAME_FILTER_OUTPUT &&
 			line->received_frames >= V92_B1U_ACQUISITION_FRAMES &&
@@ -292,8 +304,12 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 
 		if (result != V92_PCM_FRAME_OK)
 			return result;
-		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-			predictions[i] = decision->predicted_samples[i];
+		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+			predictions[i] = model->scalar_gain ? v92_observation_predict_scalar(
+				decoder->mapping.law, model->scalar_gain, line->host.gain * line->calibration.gain,
+				decision->predicted_samples[i], offsets[i]) : decision->predicted_samples[i];
+			if (!isfinite(predictions[i])) return V92_PCM_FRAME_NO_PATH;
+		}
 		if (validate) {
 			uint8_t checked[V92_PCM_MAPPING_MAX_BITS];
 			struct v92_pcm_frame_decision validation;
@@ -314,11 +330,6 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 		return result;
 	}
 	struct v92_pcm_frame_likelihood likelihood[2];
-	double offsets[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
-	for (size_t i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; i++)
-		if (line->received[i] && !observation_offset(line,
-			line->raw[i], line->wire[i], line->host_samples[i], offsets + i))
-			return V92_PCM_FRAME_NO_PATH;
 	struct v92_pcm_frame_decision decisions[2];
 	uint8_t output[2][V92_PCM_MAPPING_MAX_BITS];
 	unsigned primary = model->primary;

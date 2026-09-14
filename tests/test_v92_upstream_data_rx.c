@@ -1990,6 +1990,154 @@ static int codec_echo(unsigned index)
 	return 4 * ((int)(index * 17u % 43u) - 21);
 }
 
+/* The single final codec quantizes both signal and echo, which is then
+ * independently removed at the host. Keep real wire octets and both host
+ * sample versions; fitted predictions must not replace bit validation. */
+static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
+{
+	enum { FRAMES = V92_B1U_FRAMES + 24 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
+	struct channel channel = { .gain = .9, .law = law, .polarity = polarity };
+	struct v92_upstream_channel measured = { 0 };
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_plan plan;
+	struct v92_pcm_frame_tx transmitter;
+	struct v92_phase4_record_tx e2u_tx;
+	struct v92_e2u_rx e2u_rx;
+	struct v92_upstream_data_rx receiver, initial;
+	uint8_t codes[(FRAMES + PREFIX) * V92_PCM_MAPPING_FRAME_SYMBOLS];
+	uint32_t random = UINT32_C(0x35791bd);
+	unsigned delivered = 0, bad = 0;
+	double frozen = 0., error = 0., linear_error = 0.;
+	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; i++) {
+		random = random * UINT32_C(1664525) + UINT32_C(1013904223);
+		int16_t sample = (int16_t)((int)(random >> 19) - TEST_LU);
+		CHECK(v92_upstream_channel_sample(&measured, sample, polarity * wire_sample(&channel, sample)),
+			"scalar channel measurement failed");
+	}
+	CHECK(v92_cpd_direct_select(&cpd, law, 19u, TEST_LU, false) == V92_CPD_OK &&
+	      v92_cpd_channel_design(&cpd, &measured, law, TEST_LU, &plan) &&
+	      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+	      prepare_e2u(&channel, false, &e2u_tx, &e2u_rx) &&
+	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      receiver.model.acquiring, "scalar initialization failed");
+	initial = receiver;
+	for (unsigned f = 0; f < FRAMES + PREFIX; f++) {
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+		struct v92_pcm_frame frame;
+		if (f < V92_B1U_FRAMES) memset(bits, 1, mapping.data_bits_per_frame);
+		else payload(bits, mapping.data_bits_per_frame, f - V92_B1U_FRAMES);
+		if (wrong_bit && f == V92_B1U_FRAMES - 1u) bits[0] = 0;
+		CHECK(v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &frame) ==
+			V92_PCM_FRAME_OK, "scalar encode failed");
+		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; s++) {
+			int16_t sample;
+			unsigned i = f * V92_PCM_MAPPING_FRAME_SYMBOLS + s;
+			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, frame.v[s], &sample) == V92_PCM_FRAME_OK,
+				"scalar frame scale failed");
+			double mixed = polarity * (.9 * sample + codec_echo(i));
+			CHECK(fabs(mixed) < 32000, "scalar fixture clipped");
+			codes[i] = law == G711_LAW_PCMU ? g711_encode_pcmu((int16_t)lround(mixed)) :
+				g711_encode_pcma((int16_t)lround(mixed));
+		}
+	}
+	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY; receiver.line.received_frames < FRAMES; i++) {
+		struct v92_upstream_data_frame frame = { 0 }, compared = { 0 };
+		struct v92_upstream_data_rx independent = receiver;
+		struct v92_upstream_data_rx linear = receiver;
+		linear.model.scalar_gain = 0.;
+		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(codes[i]) : g711_decode_pcma(codes[i]);
+		int16_t sample = host - polarity * codec_echo(i);
+		enum v92_upstream_data_rx_result result = v92_upstream_data_rx_octet_owned(
+			&receiver, codes[i], sample, host, true, &frame);
+		CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
+			"scalar receiver stopped: %u at %u", result, i);
+		CHECK(v92_upstream_data_rx_octet_owned(&independent, codes[i], sample, host, true, &compared) == result &&
+		      !memcmp(&receiver, &independent, sizeof(receiver)) && !memcmp(&frame, &compared, sizeof(frame)) &&
+		      v92_upstream_data_rx_is_valid(&receiver), "scalar receivers shared mutable state");
+		if (result != V92_UPSTREAM_DATA_RX_FRAME) continue;
+		/* Removing only the quality predictor must leave every coding
+		 * decision intact. Its original residual remains an independent
+		 * comparison, not a fitting target during held-out B1u. */
+		if (frozen) {
+			CHECK(v92_upstream_data_rx_octet_owned(&linear, codes[i], sample, host, true, &compared) == result &&
+			      !memcmp(&linear.decoder, &receiver.decoder, sizeof(linear.decoder)) &&
+			      compared.bit_count == frame.bit_count && compared.ambiguous == frame.ambiguous &&
+			      !memcmp(compared.bits, frame.bits, frame.bit_count), "scalar predictor changed decoded bits");
+			if (receiver.line.received_frames <= V92_B1U_FRAMES) linear_error += compared.squared_error;
+		}
+		if (receiver.line.received_frames == V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(!receiver.model.acquiring && !receiver.model.valid && receiver.model.scalar_gain > 0.,
+				"single codec fit missing: tandem=%u scalar=%g", receiver.model.valid, receiver.model.scalar_gain);
+			frozen = receiver.model.scalar_gain;
+		} else if (receiver.line.received_frames > V92_B1U_ACQUISITION_FRAMES) {
+			CHECK(receiver.model.scalar_gain == frozen, "held-out data changed scalar fit");
+			if (receiver.line.received_frames <= V92_B1U_FRAMES) error += frame.squared_error;
+		}
+		if (!frame.bit_count) continue;
+		uint8_t expected[V92_PCM_MAPPING_MAX_BITS];
+		if (delivered < V92_B1U_FRAMES) {
+			for (unsigned b = 0; b < frame.bit_count; b++) bad += frame.bits[b] != 1;
+			bad += frame.ambiguous;
+		} else {
+			payload(expected, mapping.data_bits_per_frame, delivered - V92_B1U_FRAMES);
+			CHECK(!frame.ambiguous && !memcmp(frame.bits, expected, frame.bit_count), "scalar payload corrupted");
+		}
+		++delivered;
+	}
+	CHECK(delivered == FRAMES - V92_PCM_RX_DELAY_FRAMES && (wrong_bit ? bad > 0 : bad == 0),
+		"scalar B1u bit validation or payload count changed: %u bad", bad);
+	CHECK(error / V92_B1U_VALIDATION_SYMBOLS < V92_DATA_MAX_RMS_ERROR * V92_DATA_MAX_RMS_ERROR,
+		"scalar B1u RMS failed: %g", sqrt(error / V92_B1U_VALIDATION_SYMBOLS));
+	CHECK(error < linear_error, "single-codec prediction did not improve held-out quality");
+	struct v92_upstream_data_rx saved = receiver;
+	struct v92_upstream_data_frame output, before;
+	memset(&output, 0xa5, sizeof(output)); before = output;
+	CHECK(v92_upstream_data_rx_sample(&receiver, 0, &output) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      !memcmp(&receiver, &saved, sizeof(saved)) && !memcmp(&output, &before, sizeof(output)),
+	      "scalar prediction invented missing wire evidence");
+	for (unsigned fault = 0; fault < 3; fault++) {
+		struct v92_upstream_data_rx clipped = saved;
+		uint8_t code = law == G711_LAW_PCMU ? g711_encode_pcmu(4096) : g711_encode_pcma(4096);
+		int16_t host = law == G711_LAW_PCMU ? g711_decode_pcmu(code) : g711_decode_pcma(code);
+		int16_t sample = fault == 0 ? INT16_MAX : host;
+		if (fault == 1) host = INT16_MAX;
+		if (fault == 2) host += 8;
+		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; s++)
+			CHECK(v92_upstream_data_rx_octet_owned(&clipped, code, sample, host, true, &output) ==
+				V92_UPSTREAM_DATA_RX_OK, "scalar clipping prefix failed");
+		struct v92_upstream_data_rx retained = clipped;
+		retained.failed = true;
+		CHECK(v92_upstream_data_rx_octet_owned(&clipped, code, sample, host, true, &output) ==
+			V92_UPSTREAM_DATA_RX_NO_PATH && !memcmp(&clipped, &retained, sizeof(retained)) &&
+			!memcmp(&output, &before, sizeof(output)), "scalar clipping advanced state or released payload");
+	}
+	for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; s++)
+		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, INT16_MAX, false, &output) ==
+			(s == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
+			 V92_UPSTREAM_DATA_RX_OK), "scalar erasure stopped receiver");
+	CHECK(output.squared_error > 1e9 && receiver.model.scalar_gain == frozen &&
+	      !memcmp(&receiver.line.host, &saved.line.host, sizeof(saved.line.host)),
+	      "scalar erasure hid its residual or changed the fit");
+	receiver = saved;
+	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	      receiver.model.scalar_gain == frozen && !memcmp(&receiver.line, &saved.line, sizeof(saved.line)),
+	      "control reset discarded the established scalar channel");
+	for (unsigned fault = 0; fault < 5; fault++) {
+		struct v92_upstream_data_rx invalid = saved;
+		if (fault == 0) invalid.model.scalar_gain = NAN;
+		if (fault == 1) invalid.model.scalar_gain = -1.;
+		if (fault == 2) invalid.model.acquiring = true;
+		if (fault == 3) invalid.model.coefficient = 0;
+		if (fault == 4) invalid.line.host.gain = 0.;
+		CHECK(!v92_upstream_data_rx_is_valid(&invalid), "invalid scalar state accepted");
+	}
+	CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) == V92_UPSTREAM_DATA_RX_OK &&
+	      !memcmp(&receiver, &initial, sizeof(initial)), "scalar fit survived a new training epoch");
+	return true;
+}
+
 static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, bool echo)
 {
 	enum { FRAMES = V92_B1U_FRAMES + 36 + V92_PCM_RX_DELAY_FRAMES, PREFIX = 6 };
@@ -2279,7 +2427,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			CHECK(result == V92_UPSTREAM_DATA_RX_OK || result == V92_UPSTREAM_DATA_RX_FRAME,
 			      "closed acquisition stopped linear fallback");
 		}
-		CHECK(!receiver.model.acquiring && !receiver.model.valid &&
+		CHECK(!receiver.model.acquiring && !receiver.model.valid && !receiver.model.scalar_gain &&
 		      memory_region_is_zero(&receiver.line.host, sizeof(receiver.line.host)) &&
 		      v92_upstream_data_rx_is_valid(&receiver), "missing or inconsistent media trained a model");
 	}
@@ -2288,7 +2436,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[plan.delay + 1u] = 1;
 	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
 	      v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
-	      V92_UPSTREAM_DATA_RX_OK && !receiver.model.acquiring && !receiver.model.valid,
+	      V92_UPSTREAM_DATA_RX_OK && !receiver.model.acquiring && !receiver.model.valid && !receiver.model.scalar_gain,
 	      "unsupported prefilter enabled the codec model");
 	for (unsigned i = V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
 	     receiver.line.received_frames < V92_B1U_ACQUISITION_FRAMES; ++i) {
@@ -2432,6 +2580,10 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 
 int main(void)
 {
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (unsigned fault = 0; fault < 2; fault++)
+				if (!test_scalar_model(law, polarity, fault)) return 1;
 	/* Minimal 48k alphabets must preserve payload after real B1u level
 	 * refinement, not merely separate symbols at a nominal training LU. */
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)

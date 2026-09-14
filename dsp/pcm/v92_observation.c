@@ -453,11 +453,11 @@ bool v92_observation_is_valid(const struct v92_observation *model)
 	return true;
 }
 
-bool v92_observation_fit(struct v92_observation *model,
+static bool training_is_valid(const void *output, size_t size,
 	const struct v92_observation_training *training)
 {
-	if (!model || !training ||
-		memory_regions_overlap(model, sizeof(*model), training, sizeof(*training))) return false;
+	if (!output || !training ||
+		memory_regions_overlap(output, size, training, sizeof(*training))) return false;
 	const int32_t *x = training->input;
 	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
 	const double *offsets = training->offsets;
@@ -466,15 +466,27 @@ bool v92_observation_fit(struct v92_observation *model,
 	if (!x || !u || !y || count < 4 || count > V92_OBSERVATION_TRAINING ||
 		(law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
 		!isfinite(training->host_gain) || training->host_gain <= 0. ||
-		memory_regions_overlap(model, sizeof(*model), x, count * sizeof(*x)) ||
-		memory_regions_overlap(model, sizeof(*model), u, count * sizeof(*u)) ||
-		memory_regions_overlap(model, sizeof(*model), y, count * sizeof(*y)) ||
-		(levels && memory_regions_overlap(model, sizeof(*model), levels, count * sizeof(*levels))) ||
-		(offsets && (!levels || memory_regions_overlap(model, sizeof(*model), offsets,
+		memory_regions_overlap(output, size, x, count * sizeof(*x)) ||
+		memory_regions_overlap(output, size, u, count * sizeof(*u)) ||
+		memory_regions_overlap(output, size, y, count * sizeof(*y)) ||
+		(levels && memory_regions_overlap(output, size, levels, count * sizeof(*levels))) ||
+		(offsets && (!levels || memory_regions_overlap(output, size, offsets,
 			count * sizeof(*offsets))))) return false;
 	if (offsets)
 		for (size_t i = 0; i < count; i++)
 			if (!isfinite(offsets[i])) return false;
+	return true;
+}
+
+bool v92_observation_fit(struct v92_observation *model,
+	const struct v92_observation_training *training)
+{
+	if (!training_is_valid(model, sizeof(*model), training)) return false;
+	const int32_t *x = training->input;
+	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
+	const double *offsets = training->offsets;
+	size_t count = training->count;
+	enum g711_law law = training->law;
 	double energy = 0, linear_error = 0;
 	for (size_t i = 3; i < count; i++) {
 		double error = (double)y[i] - u[i];
@@ -509,6 +521,68 @@ bool v92_observation_fit(struct v92_observation *model,
 	if (!refit_bins(&initialized, x, y, levels, offsets, count) || !compile_geometry(&initialized) ||
 		!v92_observation_is_valid(&initialized)) return false;
 	*model = initialized;
+	return true;
+}
+
+double v92_observation_predict_scalar(enum g711_law law, double gain,
+	double host_gain, int16_t linear, double offset)
+{
+	if ((law != G711_LAW_PCMU && law != G711_LAW_PCMA) ||
+	    !isfinite(gain) || gain <= 0. || !isfinite(host_gain) || host_gain <= 0. ||
+	    !isfinite(offset)) return NAN;
+	double physical = (gain * linear - offset) / host_gain;
+	if (!isfinite(physical)) return NAN;
+	int16_t sample = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX, round(physical)));
+	double prediction = host_gain * quantize(law, sample) + offset;
+	return isfinite(prediction) ? prediction : NAN;
+}
+
+bool v92_observation_fit_scalar(double *gain,
+	const struct v92_observation_training *training)
+{
+	if (!training_is_valid(gain, sizeof(*gain), training) || !training->levels) return false;
+	double low[V92_OBSERVATION_TRAINING], high[V92_OBSERVATION_TRAINING];
+	double xx = 0., xy = 0., linear_error = 0.;
+	size_t count = training->count;
+	for (size_t i = 0; i < count; i++) {
+		double lower, upper, x = training->linear[i], y = training->sample[i];
+		if (!codec_bounds(training->law, training->host_gain, training->sample[i],
+			training->levels + i, training->offsets ? training->offsets[i] : 0.,
+			&lower, &upper)) return false;
+		low[i] = y + lower; high[i] = y + upper;
+		xx += x * x; xy += x * y; linear_error += (x - y) * (x - y);
+	}
+	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
+	double fitted = xy / xx, variance = fmax(1., linear_error / count);
+	/* The same bounded conditional-bin fit as the tandem channel, with
+	 * one gain instead of three taps. Fitting distance only outside bins
+	 * would mistake quantization uncertainty for noise-free observations. */
+	for (unsigned iteration = 0; iteration < 96; iteration++) {
+		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
+		double next_xy = 0., next_variance = 0.;
+		for (size_t i = 0; i < count; i++) {
+			if (!bin_moments(low[i], high[i], fitted * training->linear[i], variance,
+				targets + i, deviations + i)) return false;
+			next_xy += training->linear[i] * targets[i];
+		}
+		fitted = next_xy / xx;
+		if (!isfinite(fitted) || fitted <= 0.) return false;
+		for (size_t i = 0; i < count; i++) {
+			double error = targets[i] - fitted * training->linear[i];
+			next_variance += deviations[i] + error * error;
+		}
+		variance = fmax(1., next_variance / count);
+		if (!isfinite(variance)) return false;
+	}
+	double error_energy = 0.;
+	for (size_t i = 0; i < count; i++) {
+		double predicted = v92_observation_predict_scalar(training->law, fitted,
+			training->host_gain, training->linear[i], training->offsets ? training->offsets[i] : 0.);
+		double error = training->sample[i] - predicted;
+		error_energy += error * error;
+	}
+	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
+	*gain = fitted;
 	return true;
 }
 

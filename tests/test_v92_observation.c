@@ -395,10 +395,93 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 		law, sigma, measured, model.variance);
 }
 
+/* One physical codec after a linear source and independently known echo.
+ * The fit only sees the training prefix; different later points and echo
+ * validate prediction without pretending quantized centres are noiseless. */
+static void check_scalar(enum g711_law law, double host_gain)
+{
+	int32_t x[SAMPLES];
+	int16_t u[SAMPLES], y[SAMPLES], levels[SAMPLES];
+	double offsets[SAMPLES];
+	uint32_t seed = UINT32_C(0x4368217b);
+	const double actual_gain = .9983;
+	for (unsigned i = 0; i < SAMPLES; i++) {
+		x[i] = u[i] = (int16_t)((int)(random_value(&seed) % 40001) - 20000);
+		double echo = (int)(random_value(&seed) % 1401) - 700;
+		levels[i] = quantize(law, actual_gain * u[i] / host_gain + echo);
+		double corrected = host_gain * (levels[i] - echo);
+		y[i] = (int16_t)lround(corrected);
+		offsets[i] = -host_gain * echo;
+	}
+	const struct v92_observation_training training = {
+		.input = x, .linear = u, .sample = y, .levels = levels, .offsets = offsets,
+		.count = TRAINING, .host_gain = host_gain, .law = law,
+	};
+	double fitted = 0.;
+	assert(v92_observation_fit_scalar(&fitted, &training));
+	assert(fabs(fitted - actual_gain) < .002);
+	double error = 0., linear_error = 0.;
+	for (unsigned i = TRAINING; i < SAMPLES; i++) {
+		double predicted = v92_observation_predict_scalar(law, fitted, host_gain, u[i], offsets[i]);
+		assert(predicted == host_gain * quantize(law, (fitted * u[i] - offsets[i]) / host_gain) + offsets[i]);
+		error += (predicted - y[i]) * (predicted - y[i]);
+		linear_error += (u[i] - y[i]) * (u[i] - y[i]);
+	}
+	assert(error < linear_error / 4.);
+	assert(!v92_observation_fit_scalar(NULL, &training));
+	assert(!v92_observation_fit_scalar(&fitted, NULL));
+	double before = fitted;
+	for (unsigned fault = 0; fault < 17; fault++) {
+		struct v92_observation_training bad = training;
+		switch (fault) {
+		case 0: bad.input = NULL; break;
+		case 1: bad.linear = NULL; break;
+		case 2: bad.sample = NULL; break;
+		case 3: bad.levels = NULL; break;
+		case 4: bad.count = 3; break;
+		case 5: bad.count = TRAINING + 1; break;
+		case 6: bad.law = (enum g711_law)-1; break;
+		case 7: bad.host_gain = NAN; break;
+		case 8: bad.host_gain = 0.; break;
+		case 9: bad.host_gain = INFINITY; break;
+		case 10: bad.input = (const int32_t *)&fitted; break;
+		case 11: bad.linear = (const int16_t *)&fitted; break;
+		case 12: bad.sample = (const int16_t *)&fitted; break;
+		case 13: bad.levels = (const int16_t *)&fitted; break;
+		case 14: bad.offsets = &fitted; break;
+		case 15: bad.offsets = offsets; offsets[TRAINING - 1] = NAN; break;
+		case 16: bad.offsets = offsets; offsets[TRAINING - 1] = INFINITY; break;
+		}
+		assert(!v92_observation_fit_scalar(&fitted, &bad) && fitted == before);
+	}
+	assert(!v92_observation_fit_scalar((double *)&training, &training));
+	offsets[TRAINING - 1] = 0.;
+	levels[TRAINING - 1] = 1; /* Not an actual codec level. */
+	assert(!v92_observation_fit_scalar(&fitted, &training) && fitted == before);
+	levels[TRAINING - 1] = quantize(law, 0);
+	memset(u, 0, sizeof(u));
+	assert(!v92_observation_fit_scalar(&fitted, &training) && fitted == before);
+	assert(isnan(v92_observation_predict_scalar((enum g711_law)-1, 1., 1., 0, 0.)));
+	assert(isnan(v92_observation_predict_scalar(law, NAN, 1., 0, 0.)));
+	assert(isnan(v92_observation_predict_scalar(law, 0., 1., 0, 0.)));
+	assert(isnan(v92_observation_predict_scalar(law, 1., DBL_TRUE_MIN, 32767, 0.)));
+	assert(isnan(v92_observation_predict_scalar(law, DBL_MAX, 1., 32767, 0.)));
+	assert(isnan(v92_observation_predict_scalar(law, 1., 1., 0, INFINITY)));
+	for (int sign = -1; sign <= 1; sign += 2)
+		assert(v92_observation_predict_scalar(law, 2., 1., sign * 32767, 0.) ==
+			quantize(law, sign * 65534.));
+	printf("V.92 scalar law=%u host=%.2f gain=%.6f heldout_rms=%.6f linear_rms=%.6f\n",
+		law, host_gain, fitted, sqrt(error / (SAMPLES - TRAINING)),
+		sqrt(linear_error / (SAMPLES - TRAINING)));
+}
+
 int main(void)
 {
 	const double gains[] = { .00002, .02, .125, 4., 16.39453125, 21.859375, 512. };
 	struct v92_observation previous = { 0 };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		for (unsigned quarter = 3; quarter <= 5; quarter++)
+			check_scalar(law, quarter / 4.);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned quarter = 3; quarter <= 5; quarter++)
 			check_conditioned_channel(law, quarter / 4.);

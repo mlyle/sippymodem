@@ -70,8 +70,8 @@ struct v92_upstream_data_frame {
 	enum v92_pcm_frame_rm rm;
 	/* Residual of the CURRENT frame in signed PCM sample units: equalized
 	 * filter output, or raw line input for a channel-compensated mapping.
-	 * Raw-line residual includes companding noise against the fitted channel
-	 * prediction, or the linear model when no codec fit is available.
+	 * Raw-line residual compares against fitted codec reconstruction, or
+	 * the linear model when no codec fit is available.
 	 * Includes excursions clipped only at the frame decoder's input. */
 	double squared_error;
 	/* Current-frame low-margin sequence disagreement, not a payload erasure. */
@@ -104,8 +104,10 @@ struct v92_upstream_data_frame {
  * post-codec host gain for call-level quality scoring, independently of the
  * mapping's calibration gain. Missing or inconsistent pairs close this fit.
  * It may also fit a two-codec observation model for a positive one-tap
- * prefilter. Missing acquisition media or unsupported filters retain the
- * linear receiver.
+ * prefilter. If those models decline, a scalar single-codec fit can predict
+ * quality without changing the wire-cell decoder. All fits freeze before
+ * held-out B1u. Missing acquisition media or unsupported filters retain the
+ * linear receiver without a fitted codec prediction.
  * A zero-initialized plan selects the equalized filter-output path above.
  * The mapping and plan must belong to the complete CPd sent to the peer. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
