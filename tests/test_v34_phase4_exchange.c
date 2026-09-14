@@ -676,15 +676,15 @@ static bool test_mp_transition_schedule(void)
 		enum v34_symbol_rate rate;
 		uint32_t zero_delay;
 		uint32_t delayed_answerer;
-		uint32_t delayed_caller;
 	} cases[] = {
-		{ V34_SYMBOL_RATE_2400, 4212u, 4655u, 6430u },
-		{ V34_SYMBOL_RATE_2743, 4732u, 5249u, 7024u },
-		{ V34_SYMBOL_RATE_2800, 4818u, 5335u, 7110u },
-		{ V34_SYMBOL_RATE_3000, 5121u, 5675u, 7450u },
-		{ V34_SYMBOL_RATE_3200, 5423u, 6015u, 7790u },
-		{ V34_SYMBOL_RATE_3429, 5770u, 6404u, 8179u },
+		{ V34_SYMBOL_RATE_2400, 4200u, 4733u },
+		{ V34_SYMBOL_RATE_2743, 4800u, 5409u },
+		{ V34_SYMBOL_RATE_2800, 4900u, 5522u },
+		{ V34_SYMBOL_RATE_3000, 5250u, 5916u },
+		{ V34_SYMBOL_RATE_3200, 5600u, 6310u },
+		{ V34_SYMBOL_RATE_3429, 6000u, 6761u },
 	};
+	static const uint16_t delays[] = { 0u, 1u, 1775u, 3920u, UINT16_MAX };
 	const uint16_t measured_delay = 1775u;
 	struct v34_phase3_profile caller;
 	struct v34_phase3_profile answerer;
@@ -715,9 +715,35 @@ static bool test_mp_transition_schedule(void)
 		      symbols == cases[index].delayed_answerer &&
 		      v34_phase4_mp_transition_symbols(
 			      &caller, measured_delay, &symbols) &&
-		      symbols == cases[index].delayed_caller,
+		      symbols == cases[index].zero_delay,
 		      "Phase 4 MP transition changed for rate %u",
 		      (unsigned int)cases[index].rate);
+		for (size_t delay = 0; delay < ARRAY_LENGTH(delays); ++delay) {
+			uint32_t caller_symbols;
+			uint64_t duration;
+			uint64_t limit;
+
+			CHECK(v34_phase4_mp_transition_symbols(
+				      &caller, delays[delay], &caller_symbols) &&
+			      caller_symbols == cases[index].zero_delay &&
+			      v34_phase4_mp_transition_symbols(
+				      &answerer, delays[delay], &symbols),
+			      "RTD changed caller TRN or rejected answerer TRN");
+			/* Cross-multiply to check wall-clock limits independently
+			 * of the implementation's sample-to-symbol conversion. */
+			duration = (uint64_t)caller_symbols *
+				caller.symbol_rate_denominator;
+			CHECK(caller_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+			      duration <= 2u * caller.symbol_rate_numerator,
+			      "caller TRN is outside the 512T..2s window");
+			duration = (uint64_t)symbols * SAMPLE_RATE *
+				answerer.symbol_rate_denominator;
+			limit = (uint64_t)(2u * SAMPLE_RATE + delays[delay]) *
+				answerer.symbol_rate_numerator;
+			CHECK(symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+			      duration <= limit,
+			      "answerer TRN is outside the 512T..2s+RTD window");
+		}
 	}
 	invalid = caller;
 	invalid.local_role = (enum v34_station_role)99;
@@ -796,7 +822,7 @@ static bool test_generated_online_exchange(void)
 	      caller.j_symbols_at_finish % V34_PHASE3_J_PATTERN_SYMBOLS == 0 &&
 	      caller.trn_symbols_at_mp >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
 	      caller.trn_symbols_at_mp <= 2u * 3000u &&
-	      answerer.trn_symbols_at_mp == 5121u &&
+	      answerer.trn_symbols_at_mp == 5250u &&
 	      caller.constellations_routed &&
 	      answerer.constellations_routed &&
 	      caller.mapping_frames_supplied >=

@@ -63,8 +63,9 @@ struct v34_phase4_exchange_configuration {
 	struct v34_mp_record transmit_mp;
 };
 
-/* Derive the TRN-to-MP transition. The measured Phase 2 round-trip delay
- * remains in 8 kHz sample units. */
+/* Derive the TRN-to-MP transition at the exact transmit symbol rate.
+ * Only the answerer's duration includes the measured Phase 2 round-trip
+ * delay, supplied in 8 kHz sample units. */
 bool v34_phase4_mp_transition_symbols(
 	const struct v34_phase3_profile *transmitting_profile,
 	uint16_t round_trip_delay_samples, uint32_t *symbols);

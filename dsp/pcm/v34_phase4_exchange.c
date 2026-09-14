@@ -75,45 +75,31 @@ static bool outputs_overlap(
 	return memory_region_set_overlaps(regions, sizeof regions / sizeof *regions);
 }
 
-static const uint16_t MP_WAIT_MULTIPLIER_Q14[V34_SYMBOL_RATE_COUNT] = {
-	[V34_SYMBOL_RATE_2400] = 0x1000u,
-	[V34_SYMBOL_RATE_2743] = 0x12abu,
-	[V34_SYMBOL_RATE_2800] = 0x12abu,
-	[V34_SYMBOL_RATE_3000] = 0x1400u,
-	[V34_SYMBOL_RATE_3200] = 0x1555u,
-	[V34_SYMBOL_RATE_3429] = 0x16dcu,
-};
-
 bool v34_phase4_mp_transition_symbols(
 	const struct v34_phase3_profile *transmitting_profile,
 	uint16_t round_trip_delay_samples, uint32_t *symbols)
 {
-	uint32_t baud;
-	uint32_t wait;
-	uint32_t transition;
+	uint32_t samples;
+	uint32_t denominator;
+	uint64_t numerator;
 
 	if (!v34_phase3_profile_is_valid(transmitting_profile) ||
 	    symbols == NULL)
 		return false;
-	baud = (transmitting_profile->symbol_rate_numerator +
-		transmitting_profile->symbol_rate_denominator / 2u) /
+	/* V.34 (02/1998) 11.4.1.1.2 / 11.4.1.2.2: both roles send at
+	 * least 512T; only the answerer extends its TRN window by RTD.
+	 * Use 1750 ms, leaving margin below the 2000 ms limit at every
+	 * symbol rate. PP and S have already finished and are not TRN.
+	 * Convert the complete duration from 8 kHz samples to exact symbol
+	 * units once, rounding up by less than one symbol. */
+	samples = V34_RECEIVE_TIMING_SAMPLE_RATE * 7u / 4u;
+	if (transmitting_profile->local_role == V34_ANSWERING_STATION)
+		samples += round_trip_delay_samples;
+	numerator = (uint64_t)samples *
+		transmitting_profile->symbol_rate_numerator;
+	denominator = V34_RECEIVE_TIMING_SAMPLE_RATE *
 		transmitting_profile->symbol_rate_denominator;
-	wait = (uint32_t)round_trip_delay_samples +
-		V34_PHASE3_S_SEQUENCE_SYMBOLS;
-	wait = (uint32_t)(((uint64_t)wait *
-		MP_WAIT_MULTIPLIER_Q14[transmitting_profile->symbol_rate]) >> 14);
-	/* The physical schedule carries the two completed PP spans into the
-	 * 1.5-second TRN window. A caller also retains one complete measured
-	 * echo-path interval; an answerer has already paid that interval while
-	 * turning the line around. This software line has no separate DMA or
-	 * hardware-echo delay to add. */
-	transition = baud + baud / 2u + wait +
-		2u * V34_PHASE3_PP_SEQUENCE_SYMBOLS;
-	if (transmitting_profile->local_role == V34_CALLING_STATION)
-		transition += round_trip_delay_samples;
-	if (transition < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
-		return false;
-	*symbols = transition;
+	*symbols = (uint32_t)((numerator + denominator - 1u) / denominator);
 	return true;
 }
 
