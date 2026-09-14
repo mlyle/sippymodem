@@ -3057,6 +3057,28 @@ V34_PHASE2_PROBE_SEQUENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v34_phase2_probe_sequence.o \
 	$(BUILD_DIR)/v34_phase2_probe.o \
 	$(BUILD_DIR)/v34_phase2_probe_sequence.o
+PCM_PHASE2_INFO1_EXCHANGE_TEST_BINARY := \
+	$(BUILD_DIR)/test_pcm_phase2_info1_exchange
+PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/test_pcm_phase2_info1_exchange.o \
+	$(BUILD_DIR)/pcm_phase2_info1_exchange.o \
+	$(BUILD_DIR)/phase2_initial_probe.o \
+	$(BUILD_DIR)/v90_phase2_initial_probe.o \
+	$(BUILD_DIR)/phase2_probe_turnaround.o \
+	$(BUILD_DIR)/v90_phase2_probe_turnaround.o \
+	$(BUILD_DIR)/phase2_reciprocal_probe.o \
+	$(BUILD_DIR)/v90_phase2_reciprocal_probe.o \
+	$(filter-out \
+		$(BUILD_DIR)/test_pcm_info1.o \
+		$(BUILD_DIR)/test_phase2_info1_exchange.o \
+		$(BUILD_DIR)/test_v90_phase2_ranging.o \
+		$(BUILD_DIR)/test_v34_phase2_probe_acquisition.o \
+		$(BUILD_DIR)/test_v34_phase2_probe_sequence.o, \
+		$(PCM_INFO1_TEST_OBJECTS) \
+		$(PHASE2_INFO1_EXCHANGE_TEST_OBJECTS) \
+		$(V90_PHASE2_RANGING_TEST_OBJECTS) \
+		$(V34_PHASE2_PROBE_ACQUISITION_TEST_OBJECTS) \
+		$(V34_PHASE2_PROBE_SEQUENCE_TEST_OBJECTS)))
 V34_PHASE2_TONE_TEST_BINARY := \
 	$(BUILD_DIR)/test_v34_phase2_tone
 V34_PHASE2_TONE_TEST_OBJECTS := \
@@ -3396,6 +3418,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE2_INITIAL_PROBE_TEST_BINARY) \
 	$(V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY) \
 	$(PHASE2_INFO1_EXCHANGE_TEST_BINARY) \
+	$(PCM_PHASE2_INFO1_EXCHANGE_TEST_BINARY) \
 	$(V34_PHASE2_INFO1_EXCHANGE_TEST_BINARY) \
 	$(V34_PHASE2_TONE_TEST_BINARY) \
 	$(QAM_TEST_BINARY) \
@@ -3724,6 +3747,7 @@ DEPENDENCIES := $(PACK_TEST_OBJECTS:.o=.d) $(MODEM_OBJECT:.o=.d) \
 	$(V34_PHASE2_INITIAL_PROBE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_RECIPROCAL_PROBE_TEST_OBJECTS:.o=.d) \
 	$(PHASE2_INFO1_EXCHANGE_TEST_OBJECTS:.o=.d) \
+	$(PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS:.o=.d) \
 	$(V34_PHASE2_TONE_TEST_OBJECTS:.o=.d) \
 	$(QAM_TEST_OBJECTS:.o=.d) \
@@ -4752,6 +4776,9 @@ $(V34_PHASE2_RECIPROCAL_PROBE_TEST_BINARY): \
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(PHASE2_INFO1_EXCHANGE_TEST_BINARY): $(PHASE2_INFO1_EXCHANGE_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(PCM_PHASE2_INFO1_EXCHANGE_TEST_BINARY): $(PCM_PHASE2_INFO1_EXCHANGE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_PHASE2_INFO1_EXCHANGE_TEST_BINARY): \

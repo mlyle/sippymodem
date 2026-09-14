@@ -80,6 +80,21 @@ static bool phase_has_local_analog_record(
 static bool analog_record_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange)
 {
+	if (exchange->control.short_exchange) {
+		struct pcm_info1_selection selected = {
+			.startup = { exchange->protocol, PCM_PHASE2_SHORT },
+			.short_high_carrier = exchange->analog.short_high_carrier,
+			.analog = exchange->analog.record,
+			.upstream = exchange->analog.kind == PCM_INFO1A_PCM ?
+				PCM_UPSTREAM_PCM : PCM_UPSTREAM_V34,
+		};
+
+		return (exchange->analog.kind == PCM_INFO1A_PCM ||
+			exchange->analog.kind == PCM_INFO1A_CONVENTIONAL) &&
+		       pcm_info1_selection_is_valid(&selected);
+	}
+	if (exchange->analog.short_high_carrier)
+		return false;
 	switch (exchange->analog.kind) {
 	case PCM_INFO1A_CONVENTIONAL:
 		return v90_info1a_is_valid(
@@ -111,13 +126,17 @@ bool pcm_phase2_info1_is_valid(
 	     exchange->control.signal_role != PHASE2_SIGNAL_B) ||
 	    exchange->control.phase == PHASE2_INFO1_PEER_FRAME_PENDING ||
 	    exchange->control.first_payload_bit_count !=
-		    V34_INFO1C_PAYLOAD_BITS ||
+		    (exchange->control.short_exchange ? 0u : V34_INFO1C_PAYLOAD_BITS) ||
 	    exchange->control.second_payload_bit_count !=
 		    V90_INFO1A_PAYLOAD_BITS)
 		return false;
+	if (exchange->control.short_exchange &&
+	    (exchange->protocol != PCM_PROTOCOL_V92 ||
+	     exchange->info1d_resends != 0u))
+		return false;
 	peer_record = phase_has_peer_record(exchange);
-	expect_digital = exchange->control.signal_role == PHASE2_SIGNAL_B ||
-			 peer_record;
+	expect_digital = !exchange->control.short_exchange &&
+		(exchange->control.signal_role == PHASE2_SIGNAL_B || peer_record);
 	expect_analog = exchange->control.signal_role == PHASE2_SIGNAL_A ?
 			phase_has_local_analog_record(exchange) : peer_record;
 	if (exchange->digital_record_stored != expect_digital ||
@@ -128,6 +147,53 @@ bool pcm_phase2_info1_is_valid(
 	     exchange->digital.protocol != exchange->protocol))
 		return false;
 	return !expect_analog || analog_record_is_valid(exchange);
+}
+
+enum phase2_info1_result pcm_phase2_info1_init_short_analog(
+	struct pcm_phase2_info1_exchange *exchange,
+	const struct v34_phase2_tone_transmitter *tone,
+	const struct pcm_info1_selection *selection)
+{
+	struct pcm_phase2_info1_exchange initialized = {
+		.protocol = PCM_PROTOCOL_V92,
+	};
+	uint8_t payload[V90_INFO1A_PAYLOAD_BYTES];
+
+	if (exchange == NULL ||
+	    pcm_info1_encode_short(selection, payload, sizeof(payload)) !=
+		    PCM_INFO1_OK ||
+	    phase2_info1_init_short_signal_a(&initialized.control, tone, payload,
+		    V90_INFO1A_PAYLOAD_BITS) != PHASE2_INFO1_OK)
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	initialized.analog = (struct pcm_phase2_info1a){
+		.record = selection->analog,
+		.kind = selection->upstream == PCM_UPSTREAM_PCM ?
+			PCM_INFO1A_PCM : PCM_INFO1A_CONVENTIONAL,
+		.short_high_carrier = selection->short_high_carrier,
+	};
+	initialized.analog_record_stored = true;
+	if (!pcm_phase2_info1_is_valid(&initialized))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	*exchange = initialized;
+	return PHASE2_INFO1_OK;
+}
+
+enum phase2_info1_result pcm_phase2_info1_init_short_digital(
+	struct pcm_phase2_info1_exchange *exchange,
+	const struct pcm_startup_selection *startup, uint16_t remaining_samples)
+{
+	struct pcm_phase2_info1_exchange initialized = {
+		.protocol = PCM_PROTOCOL_V92,
+	};
+
+	if (exchange == NULL || !pcm_startup_selection_is_valid(startup) ||
+	    startup->phase2 != PCM_PHASE2_SHORT ||
+	    phase2_info1_init_short_signal_b(&initialized.control, remaining_samples,
+		    V90_INFO1A_PAYLOAD_BITS) != PHASE2_INFO1_OK ||
+	    !pcm_phase2_info1_is_valid(&initialized))
+		return PHASE2_INFO1_INVALID_ARGUMENT;
+	*exchange = initialized;
+	return PHASE2_INFO1_OK;
 }
 
 bool pcm_phase2_info1_retry_pending(
@@ -347,6 +413,25 @@ static bool decode_analog_record(
 	bool conventional_valid;
 	bool fallback_valid;
 	bool pcm_valid;
+
+	if (exchange->control.short_exchange) {
+		const struct pcm_startup_selection startup = {
+			exchange->protocol, PCM_PHASE2_SHORT,
+		};
+		struct pcm_info1_selection selected;
+
+		if (pcm_info1_select_short(&startup, frame->payload,
+			    sizeof(frame->payload),
+			    frame->payload_bit_count, &selected) != PCM_INFO1_OK)
+			return false;
+		*decoded = (struct pcm_phase2_info1a){
+			.record = selected.analog,
+			.kind = selected.upstream == PCM_UPSTREAM_PCM ?
+				PCM_INFO1A_PCM : PCM_INFO1A_CONVENTIONAL,
+			.short_high_carrier = selected.short_high_carrier,
+		};
+		return true;
+	}
 
 	conventional_valid = v90_info1a_decode(
 		frame->payload, sizeof(frame->payload),

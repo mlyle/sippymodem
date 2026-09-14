@@ -24,6 +24,8 @@ enum pcm_phase2_info1_event_kind {
 struct pcm_phase2_info1a {
 	union pcm_info1a_record record;
 	enum pcm_info1a_kind kind;
+	/* Short conventional INFO1a selects this carrier; full startup uses INFO1d. */
+	bool short_high_carrier;
 };
 
 union pcm_phase2_info1_peer_record {
@@ -48,6 +50,16 @@ struct pcm_phase2_info1_exchange {
 	bool digital_record_stored;
 	bool analog_record_stored;
 };
+
+/* One-way short Phase 2, after both actual INFO0 records select it.
+ * There is no digital record or measured full-startup probe at this boundary. */
+enum phase2_info1_result pcm_phase2_info1_init_short_analog(
+	struct pcm_phase2_info1_exchange *exchange,
+	const struct v34_phase2_tone_transmitter *tone,
+	const struct pcm_info1_selection *selection);
+enum phase2_info1_result pcm_phase2_info1_init_short_digital(
+	struct pcm_phase2_info1_exchange *exchange,
+	const struct pcm_startup_selection *startup, uint16_t remaining_samples);
 
 /* INFO1 transport and deadlines are shared. These constructors nail the
  * record codecs to one immutable protocol before the digital modem sends
@@ -76,8 +88,9 @@ bool pcm_phase2_info1_is_valid(
 bool pcm_phase2_info1_retry_pending(
 	const struct pcm_phase2_info1_exchange *exchange);
 
-/* V.90 and V.92 can select conventional V.34 upstream. PCM upstream is a
- * V.92-only branch and is accepted only when the received INFO1d permits it. */
+/* Reply to full-startup INFO1d. V.90 and V.92 can select conventional V.34
+ * upstream; PCM upstream is accepted only when V.92 INFO1d permits it.
+ * Short startup supplies its selection at construction instead. */
 enum phase2_info1_result pcm_phase2_info1_reply_conventional(
 	struct pcm_phase2_info1_exchange *exchange,
 	const struct v90_info1a *local_info1a);
