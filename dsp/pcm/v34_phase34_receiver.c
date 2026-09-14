@@ -511,7 +511,8 @@ static enum v34_phase34_receiver_result receive_data(
 	struct v34_phase3_s_adaptation adaptation;
 	bool control = false;
 
-	if (!v34_data_decision_receiver_is_receiving_b1(&data)) {
+	if (!receiver->data_erasure &&
+	    !v34_data_decision_receiver_is_receiving_b1(&data)) {
 		enum v34_phase3_s_receiver_result marker =
 			v34_phase3_s_hunt_receive(&receiver->rate_renegotiation,
 				observation->decision, &adaptation, &control);
@@ -547,6 +548,17 @@ static enum v34_phase34_receiver_result receive_data(
 
 	if (!semantic_result_consumed(mapped))
 		return discard_and_fail(receiver, observation, mapped);
+	/* A missing line fragment does not stop the peer's mapping schedule.
+	 * Consume its symbol positions without learning from erased decisions or
+	 * exposing their frames. Otherwise a short gap permanently offsets data. */
+	if (receiver->data_erasure) {
+		if (v34_adaptive_equalizer_discard(
+			    &receiver->line.equalizer, observation) !=
+		    V34_ADAPTIVE_EQUALIZER_OK)
+			return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
+		receiver->semantic.data = data;
+		return V34_PHASE34_RECEIVER_OK;
+	}
 	/* Preserve the established V.34 schedule: advance the first symbol
 	 * without adaptation, then train from the current 4-D decision. */
 	decision = decoded.equalizer[result == V34_DATA_RECEIVE_OK ? 0u : 1u];
@@ -598,15 +610,6 @@ static enum v34_phase34_receiver_result receive_line_sample(
 		return V34_PHASE34_RECEIVER_TIMING_ACQUIRED;
 	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY)
 		return fail(receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-	if (receiver->stage == V34_PHASE34_RECEIVER_DATA &&
-	    receiver->data_erasure) {
-		if (v34_adaptive_equalizer_discard(
-			    &receiver->line.equalizer, &observation) !=
-		    V34_ADAPTIVE_EQUALIZER_OK)
-			return fail(
-				receiver, V34_PHASE34_RECEIVER_NUMERIC_FAILURE);
-		return V34_PHASE34_RECEIVER_OK;
-	}
 	result = receive_observation(receiver, &observation, output);
 	if (!v34_phase34_receiver_is_valid(receiver))
 		return V34_PHASE34_RECEIVER_INVALID_STATE;

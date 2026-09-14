@@ -1403,6 +1403,48 @@ static bool exercise_v92_rate_exchange(
 	return true;
 }
 
+static bool exercise_v34_media_gap(
+	struct integration_endpoint *caller, struct integration_endpoint *answerer,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	struct integration_endpoint *ends[] = { caller, answerer };
+	uint8_t payload[2][64];
+
+	for (unsigned side = 0; side < 2u; ++side) {
+		uint32_t random = UINT32_C(0x47415000) + side;
+		for (unsigned i = 0; i < sizeof(payload[side]); ++i)
+			payload[side][i] = (uint8_t)noise_state_next(&random);
+	}
+	for (unsigned lost_side = 0; lost_side < 2u; ++lost_side) {
+		ends[lost_side]->erased_samples = 80u;
+		/* Clock the missing 10 ms and recovery tail. Raw bytes spanning the
+		 * gap may be corrupt; later bytes must not retain a framing offset. */
+		for (unsigned frame = 0; frame < 50u; ++frame)
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer),
+			      "V.34 gap recovery media failed");
+		for (unsigned side = 0; side < 2u; ++side) {
+			CHECK(modem_is_online(ends[side]->modem, DP_V34) &&
+			      !ends[side]->modem->cfg.ec, "V.34 gap lost its raw link");
+			ends[side]->output_count = 0;
+			CHECK(modem_write(ends[side]->modem, (const char *)payload[side],
+					  sizeof(payload[side])) == sizeof(payload[side]),
+			      "V.34 gap payload could not be queued");
+		}
+		for (unsigned frame = 0; frame < 50u; ++frame)
+			CHECK(process_sip_frame(caller, answerer, codec, recorder) &&
+			      endpoint_drain(caller) && endpoint_drain(answerer),
+			      "V.34 gap payload media failed");
+		for (unsigned side = 0; side < 2u; ++side)
+			CHECK(ends[side]->output_count == sizeof(payload[side]) &&
+			      memcmp(ends[side]->output, payload[1u - side],
+				     sizeof(payload[side])) == 0,
+			      "V.34 gap at side %u corrupted side %u's later data (%zu bytes)",
+			      lost_side, side, ends[side]->output_count);
+	}
+	return true;
+}
+
 static bool exercise_v92_media_loss(
 	struct integration_endpoint *caller, struct integration_endpoint *answerer,
 	enum media_codec codec, const struct media_recorder *recorder)
@@ -2238,6 +2280,9 @@ static bool run_media_call(
 		CHECK(exercise_v92_rate_exchange(&caller, &answerer, codec, &recorder),
 		      "%s rate exchange did not preserve outstanding LAPM data", test_case->name);
 	if (test_case->test_retrain) {
+		if (connected_id == DP_V34 && test_case->raw_transport)
+			CHECK(exercise_v34_media_gap(&caller, &answerer, codec, &recorder),
+			      "%s did not recover after a short media gap", test_case->name);
 		CHECK(caller.modem->cfg.ec == !test_case->raw_transport &&
 		      answerer.modem->cfg.ec == !test_case->raw_transport,
 		      "%s did not retain its requested transport", test_case->name);

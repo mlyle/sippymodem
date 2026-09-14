@@ -152,8 +152,8 @@ enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_timing_frozen(
 	struct v34_phase34_receiver *receiver, bool frozen);
 
-/* Suppress semantic data decisions across a known line erasure while keeping
- * the physical timing, carrier, and equalizer input clocks continuous. */
+/* Suppress adaptation and data delivery across a known line erasure while
+ * advancing the physical clocks and the peer's mapping-frame schedule. */
 enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_erasure(
 	struct v34_phase34_receiver *receiver, bool erasure);

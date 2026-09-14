@@ -315,7 +315,7 @@ static bool test_data_erasure(
 		      rate, index);
 	}
 	CHECK(memcmp(&receiver->semantic, &saved.semantic,
-		     sizeof(receiver->semantic)) == 0 &&
+		     sizeof(receiver->semantic)) != 0 &&
 	      receiver->tracking_symbols == saved.tracking_symbols &&
 	      memcmp(&receiver->line.equalizer.feedback, &saved.line.equalizer.feedback,
 		     sizeof(receiver->line.equalizer.feedback)) == 0 &&
@@ -353,13 +353,31 @@ static bool test_data_erasure(
 		     sizeof(receiver->line.timing)) != 0 &&
 	      !receiver->line.equalizer.decision_pending &&
 	      v34_phase34_receiver_is_valid(receiver),
-	      "role %u rate %u data erasure changed adaptive or semantic state",
+	      "role %u rate %u data erasure adapted or stopped the mapping clock",
 	      role, rate);
 	CHECK(v34_phase34_receiver_set_data_erasure(receiver, false) ==
 		      V34_PHASE34_RECEIVER_OK &&
 	      !receiver->data_erasure &&
 	      v34_phase34_receiver_is_valid(receiver),
 	      "role %u rate %u did not leave data erasure", role, rate);
+	unsigned int recovered_frames = 0;
+	for (unsigned int index = 0; index < 1600u; ++index) {
+		int16_t sample;
+		CHECK(source_sample(source, &sample), "erasure recovery source failed");
+		enum v34_phase34_receiver_result result =
+			v34_phase34_receiver_sample(receiver, sample, &output);
+		CHECK(result == V34_PHASE34_RECEIVER_OK ||
+		      result == V34_PHASE34_RECEIVER_INTERVAL_READY ||
+		      result == V34_PHASE34_RECEIVER_MAPPING_FRAME_READY,
+		      "role %u rate %u erasure recovery failed at sample %u: %u",
+		      role, rate, index, result);
+		if (index >= 800u && result == V34_PHASE34_RECEIVER_MAPPING_FRAME_READY) {
+			CHECK(received_all_ones(&output.received),
+			      "role %u rate %u lost framing after erasure", role, rate);
+			recovered_frames++;
+		}
+	}
+	CHECK(recovered_frames >= 10u, "erasure recovery produced no mapped data");
 
 	pending = *receiver;
 	while (pending.line.equalizer.inputs_since_observation <
