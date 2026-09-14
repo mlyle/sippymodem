@@ -67,7 +67,11 @@ struct phase2_info1_exchange {
 	struct v34_phase2_info_audio_receiver receiver;
 	struct v34_phase2_tone_transmitter signal_a_tone;
 	uint32_t peer_deadline_elapsed_samples;
-	uint16_t round_trip_delay_samples;
+	/* short_exchange selects a remaining budget instead of full-startup RTD. */
+	union {
+		uint16_t round_trip_delay_samples;
+		uint16_t short_receive_budget_samples;
+	};
 	uint16_t silence_samples;
 	size_t first_payload_bit_count;
 	size_t second_payload_bit_count;
@@ -76,7 +80,20 @@ struct phase2_info1_exchange {
 	enum phase2_signal_role signal_role;
 	enum phase2_info1_phase phase;
 	enum phase2_info1_failure failure;
+	bool short_exchange;
 };
+
+/* One-way INFO1a after short ranging. Signal A starts phase-continuously
+ * from the retained tone; Signal B emits silence and receives the record.
+ * Its budget is the remaining interval from the original B reversal, not
+ * a fresh protocol timeout. No INFO1d or synthetic peer record is created. */
+enum phase2_info1_result phase2_info1_init_short_signal_a(
+	struct phase2_info1_exchange *exchange,
+	const struct v34_phase2_tone_transmitter *signal_a_tone,
+	const uint8_t *payload, size_t payload_bit_count);
+enum phase2_info1_result phase2_info1_init_short_signal_b(
+	struct phase2_info1_exchange *exchange,
+	uint16_t remaining_samples, size_t payload_bit_count);
 
 /* Signal B sends the first record immediately and then waits for Signal A's
  * second record. The supplied payload is copied into bounded transmitter
@@ -119,7 +136,9 @@ enum phase2_info1_result phase2_info1_reject_peer(
  * B remains silent while Signal A retains Tone A. A late peer INFO frame can
  * therefore complete the same exchange without reconstructing Phase 2.
  * Retained Tone A is only an ownership handoff: a Signal A call owner must
- * initiate full retrain or supply INFOMARKSa, not remain on steady tone. */
+ * initiate full retrain or supply INFOMARKSa, not remain on steady tone.
+ * This recovery is unavailable to short exchanges: their owner must send
+ * Tone B and return to full Phase 2 after a missing INFO1a (V.92 9.4.1.2.3). */
 enum phase2_info1_result phase2_info1_recover(
 	struct phase2_info1_exchange *exchange);
 
