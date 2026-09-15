@@ -49,6 +49,9 @@ _Static_assert(V92_CONTROL_QUALITY_GUARD_SAMPLES >= V92_RU_RX_MIN_SYMBOLS +
 _Static_assert(PCM_PROTOCOL_V90 == 0,
 	"zero-initialized PCM call configurations must select V.90");
 
+_Static_assert(PHASE2_INFO0_POST_V8_SILENCE_SAMPLES >= V34_PHASE2_SAMPLE_RATE * 75 / 1000,
+	"QC silence credit must fit the Phase 2 guard");
+
 static bool uses_pcm_upstream(const struct pcm_call *call)
 {
 	return call->phase3_entry_stored &&
@@ -935,6 +938,10 @@ static bool call_is_valid(
 	bool child_failed;
 
 	if (call == NULL || !stored_configuration_is_valid(call) ||
+	    call->qc_frame_interval >= V90_CP_FRAME_INTERVALS ||
+	    (call->qc_frame_pending ?
+		(call->protocol != PCM_PROTOCOL_V92 || call->local_role != V90_DIGITAL_MODEM) :
+		call->qc_frame_interval != 0) ||
 	    !pcm_downstream_equalizer_is_valid(&call->downstream_equalizer) ||
 	    (call->downstream_equalizer.training_level &&
 	     (call->local_role != V90_ANALOG_MODEM || call->downstream_equalizer.law != call->law ||
@@ -994,6 +1001,7 @@ static bool call_is_valid(
 	    (!call->rate_renegotiation_deadline_armed &&
 	     rate_renegotiation_deadline_has_started(call)) ||
 	    (call->stage != PCM_CALL_PHASE2 &&
+	     call->stage != PCM_CALL_QC &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
 	     !call->peer_info0_stored) ||
 	    (call->retrain_active && !call->peer_info0_stored) ||
@@ -1002,11 +1010,26 @@ static bool call_is_valid(
 	    (v34_full_retrain_response_is_active(&call->retrain) !=
 	     (call->stage == PCM_CALL_RETRAIN_SILENCE)) ||
 	    ((call->stage == PCM_CALL_PHASE2 ||
+	      call->stage == PCM_CALL_QC ||
 	      call->stage == PCM_CALL_RETRAIN_SILENCE) ?
 		     call->phase3_entry_stored : !call->phase3_entry_stored) ||
 	    (call->phase3_entry_stored && !phase3_entry_matches_call(call)))
 		return false;
 	switch (call->stage) {
+	case PCM_CALL_QC:
+		if (call->protocol != PCM_PROTOCOL_V92 || call->peer_info0_stored)
+			return false;
+		child_valid = call->local_role == V90_ANALOG_MODEM ?
+			v92_qc_analog_is_valid(&call->state.qc.analog) &&
+			call->state.qc.analog.qts.law == call->law &&
+			call->state.qc.analog.stage != V92_QC_ANALOG_TRAIL_SILENCE &&
+			call->state.qc.analog.stage != V92_QC_ANALOG_PHASE2 :
+			v92_qc_digital_is_valid(&call->state.qc.digital) &&
+			call->state.qc.digital.anspcm.law == call->law &&
+			call->state.qc.digital.stage != V92_QC_DIGITAL_TRAIL_SILENCE &&
+			call->state.qc.digital.stage != V92_QC_DIGITAL_PHASE2;
+		child_failed = false;
+		break;
 	case PCM_CALL_PHASE2:
 		child_valid = pcm_phase2_is_valid(&call->state.phase2) &&
 			      call->state.phase2.local_role == call->local_role &&
@@ -1196,37 +1219,34 @@ static bool pcm_call_owned_state_is_valid(const struct pcm_call *call)
 	return call_is_valid(call, true);
 }
 
+static enum pcm_phase2_result initialize_phase2(struct pcm_call *call)
+{
+	if (call->protocol == PCM_PROTOCOL_V92)
+		return call->local_role == V90_ANALOG_MODEM ?
+			pcm_phase2_init_v92_analog(&call->state.phase2,
+				call->phase2_nominal_amplitude, &call->local_info0.v92_analog) :
+			pcm_phase2_init_v92_digital(&call->state.phase2,
+				call->phase2_nominal_amplitude, &call->local_info0.v92_digital);
+	return call->local_role == V90_ANALOG_MODEM ?
+		pcm_phase2_init_v90_analog(&call->state.phase2,
+			call->phase2_nominal_amplitude, &call->local_info0.analog) :
+		pcm_phase2_init_v90_digital(&call->state.phase2,
+			call->phase2_nominal_amplitude, &call->local_info0.digital);
+}
+
 enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,
 	const struct pcm_call_configuration *configuration)
 {
 	struct pcm_call initialized = { 0 };
-	enum pcm_phase2_result result;
 
 	if (call == NULL || !configuration_is_valid(configuration))
 		return PCM_CALL_INVALID_ARGUMENT;
-	if (configuration->protocol == PCM_PROTOCOL_V92 &&
-	    configuration->local_role == V90_ANALOG_MODEM)
-		result = pcm_phase2_init_v92_analog(
-			&initialized.state.phase2,
-			configuration->phase2_nominal_amplitude,
-			&configuration->local_info0.v92_analog);
-	else if (configuration->protocol == PCM_PROTOCOL_V92)
-		result = pcm_phase2_init_v92_digital(
-			&initialized.state.phase2,
-			configuration->phase2_nominal_amplitude,
-			&configuration->local_info0.v92_digital);
-	else if (configuration->local_role == V90_ANALOG_MODEM)
-		result = pcm_phase2_init_v90_analog(
-			&initialized.state.phase2,
-			configuration->phase2_nominal_amplitude,
-			&configuration->local_info0.analog);
-	else
-		result = pcm_phase2_init_v90_digital(
-			&initialized.state.phase2,
-			configuration->phase2_nominal_amplitude,
-			&configuration->local_info0.digital);
-	if (result != PCM_PHASE2_OK)
+	initialized.protocol = configuration->protocol;
+	initialized.local_role = configuration->local_role;
+	initialized.local_info0 = configuration->local_info0;
+	initialized.phase2_nominal_amplitude = configuration->phase2_nominal_amplitude;
+	if (initialize_phase2(&initialized) != PCM_PHASE2_OK)
 		return PCM_CALL_INVALID_ARGUMENT;
 	/* Keep the complete role-local proposal and policy together. */
 	initialized.local_info1 = configuration->local_info1;
@@ -1257,12 +1277,8 @@ enum pcm_call_result pcm_call_init(
 		initialized.digital_phase4_configuration =
 			configuration->digital_phase4;
 	}
-	initialized.protocol = configuration->protocol;
-	initialized.local_role = configuration->local_role;
 	initialized.law = configuration->law;
 	initialized.local_info0 = initialized.state.phase2.local_info0;
-	initialized.phase2_nominal_amplitude =
-		configuration->phase2_nominal_amplitude;
 	initialized.enabled_downstream_rate_mask =
 		configuration->enabled_downstream_rate_mask;
 	initialized.stage = PCM_CALL_PHASE2;
@@ -1275,6 +1291,42 @@ enum pcm_call_result pcm_call_init(
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = initialized;
 	return PCM_CALL_OK;
+}
+
+enum pcm_call_result pcm_call_init_qc(
+	struct pcm_call *call, const struct pcm_call_configuration *configuration,
+	const struct v92_qc1_message *local, const struct v92_qc1_message *peer)
+{
+	struct pcm_call initialized;
+	enum pcm_call_result result;
+
+	if (call == NULL || configuration == NULL || local == NULL || peer == NULL ||
+	    configuration->protocol != PCM_PROTOCOL_V92)
+		return PCM_CALL_INVALID_ARGUMENT;
+	result = pcm_call_init(&initialized, configuration);
+	if (result != PCM_CALL_OK)
+		return result;
+	initialized.state = (union pcm_call_state){ 0 };
+	if (!(initialized.local_role == V90_ANALOG_MODEM ?
+		v92_qc_analog_init(&initialized.state.qc.analog, initialized.law, local, peer,
+			initialized.phase2_nominal_amplitude) :
+		v92_qc_digital_init(&initialized.state.qc.digital, initialized.law, local, peer)))
+		return PCM_CALL_INVALID_ARGUMENT;
+	initialized.stage = PCM_CALL_QC;
+	/* The 600-symbol leading silence is an integer number of frames, so
+	 * interval zero here is also the first QTS symbol (V.92 8.3.6). */
+	initialized.qc_frame_pending = initialized.local_role == V90_DIGITAL_MODEM;
+	if (!pcm_call_is_valid(&initialized))
+		return PCM_CALL_NUMERIC_FAILURE;
+	*call = initialized;
+	return PCM_CALL_OK;
+}
+
+static bool qc_needs_v8(const struct pcm_call *call)
+{
+	return call->stage == PCM_CALL_QC && (call->local_role == V90_ANALOG_MODEM ?
+		call->state.qc.analog.stage == V92_QC_ANALOG_V8 :
+		call->state.qc.digital.stage == V92_QC_DIGITAL_V8);
 }
 
 static enum pcm_phase2_result initialize_retrain_phase2(
@@ -2216,6 +2268,44 @@ static enum pcm_call_result sample_phase2(
 		arm_b1_deadline(call, &observation->phase2) : call_result;
 }
 
+static enum pcm_call_result sample_qc(
+	struct pcm_call *call, int16_t input, uint8_t *output,
+	struct pcm_call_observation *observation)
+{
+	bool silence;
+	if (call->local_role == V90_ANALOG_MODEM) {
+		int16_t sample;
+		enum v92_qc_analog_stage stage = v92_qc_analog_sample(&call->state.qc.analog, input, &sample);
+		if (stage == V92_QC_ANALOG_INVALID)
+			return PCM_CALL_NUMERIC_FAILURE;
+		*output = encode_sample(call->law, sample);
+		silence = stage == V92_QC_ANALOG_TRAIL_SILENCE;
+	} else {
+		struct v90_pcm_symbol symbol;
+		enum v92_qc_digital_stage stage = v92_qc_digital_sample(&call->state.qc.digital, input, &symbol);
+		if (stage == V92_QC_DIGITAL_INVALID)
+			return PCM_CALL_NUMERIC_FAILURE;
+		*output = symbol.octet;
+		silence = stage == V92_QC_DIGITAL_TRAIL_SILENCE;
+	}
+	if (qc_needs_v8(call))
+		return PCM_CALL_V8_FALLBACK_READY;
+	if (!silence)
+		return PCM_CALL_OK;
+	/* V.92 9.4.1.1.1/9.4.2.1.1: listen during the final 75 ms, using
+	 * Phase 2's existing silence owner. Analogue has emitted its first
+	 * quiet sample; digital just emitted its last ANSpcm sample. */
+	if (initialize_phase2(call) != PCM_PHASE2_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	/* Ordinary V.8 leaves an extra 3 ms for late peer completion. QC has
+	 * an explicit signal boundary, so use its nominal 75 ms interval. */
+	call->state.phase2.state.ranging.info0_exchange.transport.post_v8_silence_samples =
+		PHASE2_INFO0_POST_V8_SILENCE_SAMPLES - V34_PHASE2_SAMPLE_RATE * 75 / 1000;
+	call->stage = PCM_CALL_PHASE2;
+	return call->local_role == V90_ANALOG_MODEM ?
+		sample_phase2(call, input, output, observation) : PCM_CALL_OK;
+}
+
 static enum pcm_call_result sample_retrain_silence(
 	struct pcm_call *call, int16_t received_sample,
 	uint8_t *transmit_octet)
@@ -3014,6 +3104,26 @@ static bool phase3_response_timed_out(const struct pcm_call *call)
 			  (uint32_t)call->round_trip_delay_samples;
 }
 
+static bool qc_wait_for_frame(struct pcm_call *call)
+{
+	if (!call->qc_frame_pending)
+		return false;
+	if (uses_pcm_upstream(call)) {
+		if (call->state.phase3.v92_digital.transmit_stage !=
+		    V92_PHASE3_DIGITAL_TRANSMIT_DOWNSTREAM)
+			return false;
+	} else if (!call->state.phase3.digital.transmit_started ||
+		   call->state.phase3.digital.post_ja_silence_symbols_remaining != 0) {
+		return false;
+	}
+	/* Extend silence by at most five symbols; receive keeps running. Once
+	 * Sd begins, the ordinary contiguous PCM transmitter owns this phase. */
+	if (call->qc_frame_interval != 0)
+		return true;
+	call->qc_frame_pending = false;
+	return false;
+}
+
 static enum pcm_call_result sample_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
@@ -3037,7 +3147,7 @@ static enum pcm_call_result sample_phase3(
 		if (result == PCM_CALL_OK)
 			result = retain_v92_peer_jd(call);
 	} else if (uses_pcm_upstream(call)) {
-		result = v92_digital_phase3_result(
+		result = qc_wait_for_frame(call) ? PCM_CALL_OK : v92_digital_phase3_result(
 			v92_phase3_digital_station_transmit(
 				&call->state.phase3.v92_digital,
 				transmit_octet));
@@ -3075,7 +3185,7 @@ static enum pcm_call_result sample_phase3(
 			if (result != PCM_CALL_OK)
 				return result;
 		}
-		result = digital_phase3_result(
+		result = qc_wait_for_frame(call) ? PCM_CALL_OK : digital_phase3_result(
 			v90_phase3_digital_station_transmit(
 				&call->state.phase3.digital, transmit_octet));
 		if (result != PCM_CALL_OK)
@@ -5190,6 +5300,8 @@ enum pcm_call_result pcm_call_octet(
 		return PCM_CALL_FAILED;
 	if (call->stage == PCM_CALL_DATA_PATH)
 		return PCM_CALL_INVALID_STATE;
+	if (qc_needs_v8(call))
+		return PCM_CALL_V8_FALLBACK_READY;
 	if (call->stage == PCM_CALL_PHASE2 &&
 	    pcm_phase2_is_ready_for_v34_fallback(&call->state.phase2))
 		return PCM_CALL_V34_FALLBACK_READY;
@@ -5204,6 +5316,10 @@ enum pcm_call_result pcm_call_octet(
 	switch (call->stage) {
 	case PCM_CALL_CLOSED:
 		result = PCM_CALL_CLEARDOWN_COMPLETE;
+		break;
+	case PCM_CALL_QC:
+		result = sample_qc(call, call->local_role == V90_DIGITAL_MODEM ?
+			received_sample : decode_octet(call->law, received_octet), &generated, &emitted);
 		break;
 	case PCM_CALL_PHASE2:
 		result = sample_phase2(
@@ -5254,9 +5370,12 @@ enum pcm_call_result pcm_call_octet(
 		complete_cleardown(call);
 	if (result != PCM_CALL_OK &&
 	    result != PCM_CALL_CLEARDOWN_COMPLETE &&
+	    result != PCM_CALL_V8_FALLBACK_READY &&
 	    result != PCM_CALL_V34_FALLBACK_READY)
 		call->failed = true;
 	emitted.next = call->stage;
+	if (call->qc_frame_pending)
+		call->qc_frame_interval = (call->qc_frame_interval + 1u) % V90_CP_FRAME_INTERVALS;
 	if (!pcm_call_owned_state_is_valid(call)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -5299,6 +5418,8 @@ const char *pcm_call_result_name(enum pcm_call_result result)
 		return "sequence mismatch";
 	case PCM_CALL_NUMERIC_FAILURE:
 		return "numeric failure";
+	case PCM_CALL_V8_FALLBACK_READY:
+		return "V.8 fallback ready";
 	}
 	return "unknown";
 }

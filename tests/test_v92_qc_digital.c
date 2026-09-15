@@ -231,6 +231,22 @@ static bool test_validation(void)
 	      memcmp(&exchange, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&output, &before, sizeof(output)) == 0,
 	      "invalid input changed state or output");
+	CHECK(v92_qc_digital_is_valid(&exchange) && !v92_qc_digital_is_valid(NULL), "invalid QC state query");
+	for (unsigned field = 0; field < 4; ++field) {
+		exchange = saved;
+		switch (field) {
+		case 0: exchange.position = 600; break;
+		case 1: exchange.answer_deadline = 16001; break;
+		case 2: exchange.qts_index = 15; break;
+		case 3: exchange.anspcm.position = 2u * V92_ANSPCM_REVERSAL_PERIOD; break;
+		}
+		const struct v92_qc_digital invalid = exchange;
+		CHECK(!v92_qc_digital_is_valid(&exchange) &&
+		      v92_qc_digital_sample(&exchange, 0, &output) == V92_QC_DIGITAL_INVALID &&
+		      memcmp(&output, &before, sizeof(output)) == 0 &&
+		      memcmp(&exchange, &invalid, sizeof(exchange)) == 0,
+		      "invalid digital QC field %u consumed a sample", field);
+	}
 	return true;
 }
 

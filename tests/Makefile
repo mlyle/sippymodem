@@ -2844,6 +2844,8 @@ V90_PHASE2_INITIAL_PROBE_TEST_OBJECTS := \
 	$(V34_PHASE2_TONE_OBJECTS)
 PCM_CALL_TEST_BINARY := $(BUILD_DIR)/test_pcm_call
 PCM_CALL_TEST_OBJECTS := $(sort \
+	$(BUILD_DIR)/v92_qc_analog.o $(BUILD_DIR)/v92_qc_digital.o \
+	$(BUILD_DIR)/v92_qc_signal.o $(BUILD_DIR)/v92_qc1.o \
 	$(BUILD_DIR)/v92_upstream_model.o $(BUILD_DIR)/pcm_gain.o \
 	$(BUILD_DIR)/v92_rate_pause.o \
 	$(BUILD_DIR)/v92_data_quality.o \

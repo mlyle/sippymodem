@@ -6862,6 +6862,29 @@ static bool short_startup_contracts(const struct pcm_call *online)
 	return true;
 }
 
+/* The independently counted QC clock must meet the first Sd at interval zero.
+ * Thereafter the ordinary continuous transmitter owns downstream framing. */
+static bool check_qc_frame(const struct pcm_call *digital, int *interval)
+{
+	if (*interval < 0)
+		return true;
+	if (digital->qc_frame_pending) {
+		*interval = (*interval + 1) % 6;
+		CHECK(digital->qc_frame_interval == *interval, "QC frame clock stopped during startup");
+	} else {
+		CHECK(*interval == 0 && digital->stage == PCM_CALL_PHASE3,
+		      "QC frame anchor retired away from Sd interval zero");
+		const struct pcm_phase3_digital_tx *tx = digital->phase3_entry.selection.upstream == PCM_UPSTREAM_PCM ?
+			&digital->state.phase3.v92_digital.downstream : &digital->state.phase3.digital.transmit;
+		CHECK(tx->stage == PCM_PHASE3_DIGITAL_TX_PREFIX &&
+		      tx->sequence.prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_SD &&
+		      tx->sequence.prefix.sequence.sd.emitted_symbols == 1,
+		      "QC frame anchor was not handed to the first Sd symbol");
+		*interval = -1;
+	}
+	return true;
+}
+
 static bool v92_short_data_epoch(
 	struct v92_online_pair *pair, unsigned expected_short, bool full, int initiator)
 {
@@ -6872,6 +6895,7 @@ static bool v92_short_data_epoch(
 	unsigned entered_short = 0, entered_full = 0, started = 0;
 	bool recovered = false;
 	const enum g711_law law = pair->analog.law;
+	int qc_interval = pair->digital.qc_frame_pending ? pair->digital.qc_frame_interval : -1;
 
 	if (initiator >= 0)
 		CHECK(pcm_call_start_retrain(calls[initiator]) == PCM_CALL_OK,
@@ -6929,13 +6953,15 @@ static bool v92_short_data_epoch(
 				recovered = true;
 				CHECK(!call->b1_deadline_armed, "old INFO1a armed B1 after full recovery started");
 			}
+			if (side == 1)
+				CHECK(check_qc_frame(call, &qc_interval), "short PCM lost QTS frame alignment");
 		}
 		channel_transmit(&pair->wire, tx[0], tx[1]);
 		if (frames[0] >= 128 && frames[1] >= 128)
 			break;
 	}
 	uint32_t at, ar, dt, dr;
-	CHECK(entered_short == expected_short && entered_full == (full ? 3u : 0u) &&
+	CHECK(qc_interval == -1 && entered_short == expected_short && entered_full == (full ? 3u : 0u) &&
 	      recovered == (initiator >= 0 || (full && expected_short != 0)) &&
 	      frames[0] >= 128 && frames[1] >= 128 && idle == expected_idle &&
 	      sources[0].rejection_checked && sources[1].rejection_checked &&
@@ -7066,7 +7092,87 @@ static bool short_profile_during_conventional_rate_exchange(
 	CHECK(false, "did not observe both conventional rate-exchange owners");
 }
 
-static bool run_v92_short_conventional(enum g711_law law, size_t delay)
+static struct v92_qc1_message qc_record(enum v90_modem_role role, bool answerer)
+{
+	struct v92_qc1_message record = { .sender = role, .acknowledgment = answerer };
+	if (role == V90_ANALOG_MODEM)
+		record.signal.qts_index = 7;
+	else
+		record.signal.anspcm_level = 2;
+	return record;
+}
+
+static bool begin_qc_pair(struct pcm_call *analog, struct pcm_call *digital,
+	const struct pcm_call_configuration *ac, const struct pcm_call_configuration *dc,
+	struct channel *wire, bool digital_caller)
+{
+	const struct v92_qc1_message am = qc_record(V90_ANALOG_MODEM, digital_caller);
+	const struct v92_qc1_message dm = qc_record(V90_DIGITAL_MODEM, !digital_caller);
+	CHECK(pcm_call_init_qc(analog, ac, &am, &dm) == PCM_CALL_OK &&
+	      pcm_call_init_qc(digital, dc, &dm, &am) == PCM_CALL_OK,
+	      "QC role-local init failed");
+	/* Independent signal owners define the exact boundary. The call must
+	 * listen with Phase 2 during this same silence, not append a second one. */
+	struct v92_qc_analog aq = analog->state.qc.analog;
+	struct v92_qc_digital dq = digital->state.qc.digital;
+	struct pcm_call *calls[] = { analog, digital };
+	bool done[2] = { false, false };
+	for (unsigned clock = 0; clock < 16000; ++clock) {
+		uint8_t rx[2], tx[2];
+		channel_receive(wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call_observation observation;
+			bool was_done = done[side], quiet = false;
+			unsigned quiet_samples = 0;
+			uint8_t expected = silence_octet(ac->law);
+			int16_t input = decode_octet(ac->law, rx[side]);
+			if (!was_done && side == 0) {
+				int16_t output;
+				enum v92_qc_analog_stage stage = v92_qc_analog_sample(&aq, input, &output);
+				CHECK(stage != V92_QC_ANALOG_INVALID && stage != V92_QC_ANALOG_V8,
+				      "QC analogue reference did not advance");
+				done[side] = stage == V92_QC_ANALOG_PHASE2;
+				quiet = stage == V92_QC_ANALOG_TRAIL_SILENCE || done[side];
+				quiet_samples = aq.position;
+				expected = encode_octet(ac->law, output);
+			} else if (!was_done) {
+				struct v90_pcm_symbol output;
+				enum v92_qc_digital_stage stage = v92_qc_digital_sample(&dq, input, &output);
+				CHECK(stage != V92_QC_DIGITAL_INVALID && stage != V92_QC_DIGITAL_V8,
+				      "QC digital reference did not advance");
+				done[side] = stage == V92_QC_DIGITAL_PHASE2;
+				quiet = stage == V92_QC_DIGITAL_TRAIL_SILENCE || done[side];
+				quiet_samples = done[side] ? 600 : dq.position;
+				expected = output.octet;
+			}
+			CHECK(pcm_call_octet(calls[side], rx[side], input, &tx[side], &observation) == PCM_CALL_OK &&
+			      (was_done || tx[side] == expected), "QC output boundary law %u side %u clock %u",
+			      ac->law, side, clock);
+			CHECK(side == 0 ? !analog->qc_frame_pending :
+			      digital->qc_frame_pending && digital->qc_frame_interval == (clock + 1) % 6,
+			      "QTS frame clock was lost at the QC/Phase 2 handoff");
+			if (!was_done && quiet) {
+				const struct phase2_info0_exchange *info =
+					&calls[side]->state.phase2.state.ranging.info0_exchange.transport;
+				CHECK(calls[side]->stage == PCM_CALL_PHASE2 &&
+				      info->post_v8_silence_samples == PHASE2_INFO0_POST_V8_SILENCE_SAMPLES - 600 + quiet_samples &&
+				      info->tone_detector.carrier.history_count ==
+					(quiet_samples < V34_PHASE2_TONE_WINDOW_SAMPLES ? quiet_samples : V34_PHASE2_TONE_WINDOW_SAMPLES),
+				      "QC silence/receive side %u clock %u stage %u count %u quiet %u history %zu",
+				      side, clock, calls[side]->stage, info->post_v8_silence_samples, quiet_samples,
+				      info->tone_detector.carrier.history_count);
+			} else if (!was_done) {
+				CHECK(calls[side]->stage == PCM_CALL_QC, "QC skipped peer signal qualification");
+			}
+		}
+		channel_transmit(wire, tx[0], tx[1]);
+		if (done[0] && done[1])
+			return true;
+	}
+	CHECK(false, "QC signal exchange timed out");
+}
+
+static bool run_v92_short_conventional(enum g711_law law, size_t delay, int qc_caller)
 {
 	struct pcm_call_configuration ac = conventional_v92_configuration(V90_ANALOG_MODEM, law);
 	struct pcm_call_configuration dc = conventional_v92_configuration(V90_DIGITAL_MODEM, law);
@@ -7083,14 +7189,16 @@ static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 			dc.short_startup = retained[1];
 		}
 		CHECK(channel_init(&wire, law, delay) &&
-		      pcm_call_init(&analog.call, &ac) == PCM_CALL_OK &&
-		      pcm_call_init(&digital.call, &dc) == PCM_CALL_OK &&
+		      (qc_caller >= 0 ? begin_qc_pair(&analog.call, &digital.call, &ac, &dc, &wire, qc_caller != 0) :
+			pcm_call_init(&analog.call, &ac) == PCM_CALL_OK && pcm_call_init(&digital.call, &dc) == PCM_CALL_OK) &&
 		      short_startup_rejected(&analog.call) && short_startup_rejected(&digital.call),
 		      "conventional short setup law %u delay %zu short %u", law, delay, shortened);
 		size_t end = 0;
+		int qc_interval = digital.call.qc_frame_pending ? digital.call.qc_frame_interval : -1;
 		for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 			CHECK(step_endpoints(&wire, &analog, &digital, law),
 			      "conventional short sample law %u delay %zu short %u clock %zu", law, delay, shortened, clock);
+			CHECK(check_qc_frame(&digital.call, &qc_interval), "conventional PCM lost QTS frame alignment");
 			CHECK(analog.call.stage != PCM_CALL_RETRAIN_SILENCE &&
 			      digital.call.stage != PCM_CALL_RETRAIN_SILENCE,
 			      "conventional short silently recovered to full");
@@ -7099,7 +7207,7 @@ static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 				break;
 			}
 		}
-		CHECK(end && pcm_call_is_online(&analog.call) && pcm_call_is_online(&digital.call),
+		CHECK(end && qc_interval == -1 && pcm_call_is_online(&analog.call) && pcm_call_is_online(&digital.call),
 		      "conventional short no data law %u delay %zu short %u data %zu/%zu",
 		      law, delay, shortened, analog.downstream_frames, digital.upstream_frames);
 		const struct pcm_call *calls[] = { &analog.call, &digital.call };
@@ -7120,11 +7228,11 @@ static bool run_v92_short_conventional(enum g711_law law, size_t delay)
 
 static bool test_v92_short_conventional(void)
 {
-	return run_v92_short_conventional(G711_LAW_PCMU, 13) &&
-	       run_v92_short_conventional(G711_LAW_PCMA, 257);
+	return run_v92_short_conventional(G711_LAW_PCMU, 13, -1) &&
+	       run_v92_short_conventional(G711_LAW_PCMA, 257, -1);
 }
 
-static bool test_v92_learned_short_pcm(void)
+static bool run_v92_learned_short_pcm(int qc_caller)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct pcm_call_configuration ac, dc;
@@ -7137,8 +7245,9 @@ static bool test_v92_learned_short_pcm(void)
 		for (unsigned shortened = 0; shortened < 3; ++shortened) {
 			struct v92_online_pair pair;
 			CHECK(channel_init(&pair.wire, law, law == G711_LAW_PCMU ? 13 : 257) &&
-			      pcm_call_init(&pair.analog, &ac) == PCM_CALL_OK &&
-			      pcm_call_init(&pair.digital, &dc) == PCM_CALL_OK &&
+			      (qc_caller >= 0 ? begin_qc_pair(&pair.analog, &pair.digital, &ac, &dc,
+				      &pair.wire, qc_caller != 0) :
+				pcm_call_init(&pair.analog, &ac) == PCM_CALL_OK && pcm_call_init(&pair.digital, &dc) == PCM_CALL_OK) &&
 			      short_startup_rejected(&pair.analog) && short_startup_rejected(&pair.digital) &&
 			      v92_short_data_epoch(&pair, shortened ? 3u : 0u, !shortened, -1) &&
 			      pcm_call_get_short_startup(&pair.analog, &ac.short_startup) &&
@@ -7151,6 +7260,90 @@ static bool test_v92_learned_short_pcm(void)
 			dc.local_info0.v92_digital.short_phase2_requested = true;
 		}
 	}
+	return true;
+}
+
+static bool test_v92_learned_short_pcm(void)
+{
+	return run_v92_learned_short_pcm(-1);
+}
+
+static bool test_v92_qc_calls(void)
+{
+	for (int caller = 0; caller < 2; ++caller)
+		CHECK(run_v92_learned_short_pcm(caller) &&
+		      run_v92_short_conventional(G711_LAW_PCMU, 13, caller) &&
+		      run_v92_short_conventional(G711_LAW_PCMA, 257, caller),
+		      "QC full/retained data failed with caller %d", caller);
+	return true;
+}
+
+static bool test_v92_qc_contracts(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (enum v90_modem_role role = V90_ANALOG_MODEM; role <= V90_DIGITAL_MODEM; ++role)
+			for (unsigned answerer = 0; answerer < 2; ++answerer) {
+				struct pcm_call_configuration config = conventional_v92_configuration(role, law);
+				struct v92_qc1_message local = qc_record(role, answerer);
+				struct v92_qc1_message peer = qc_record(role == V90_ANALOG_MODEM ?
+					V90_DIGITAL_MODEM : V90_ANALOG_MODEM, !answerer);
+				struct pcm_call call, before;
+				memset(&call, 0xa5, sizeof(call));
+				before = call;
+				CHECK(pcm_call_init_qc(NULL, &config, &local, &peer) == PCM_CALL_INVALID_ARGUMENT &&
+				      pcm_call_init_qc(&call, NULL, &local, &peer) == PCM_CALL_INVALID_ARGUMENT &&
+				      pcm_call_init_qc(&call, &config, NULL, &peer) == PCM_CALL_INVALID_ARGUMENT &&
+				      pcm_call_init_qc(&call, &config, &local, NULL) == PCM_CALL_INVALID_ARGUMENT &&
+				      pcm_call_init_qc(&call, &config, &peer, &local) == PCM_CALL_INVALID_ARGUMENT,
+				      "QC accepted missing or reversed records");
+				peer.acknowledgment = local.acknowledgment;
+				CHECK(pcm_call_init_qc(&call, &config, &local, &peer) == PCM_CALL_INVALID_ARGUMENT,
+				      "QC accepted an unacknowledged exchange");
+				peer.acknowledgment = !local.acknowledgment;
+				config.protocol = PCM_PROTOCOL_V90;
+				CHECK(pcm_call_init_qc(&call, &config, &local, &peer) == PCM_CALL_INVALID_ARGUMENT &&
+				      memcmp(&call, &before, sizeof(call)) == 0, "QC admitted V.90 or mutated rejected init");
+				config.protocol = PCM_PROTOCOL_V92;
+				if (role == V90_ANALOG_MODEM)
+					config.local_info0.v92_analog.short_phase2_requested = true;
+				else
+					config.local_info0.v92_digital.short_phase2_requested = true;
+				CHECK(pcm_call_init_qc(&call, &config, &local, &peer) == PCM_CALL_INVALID_ARGUMENT &&
+				      memcmp(&call, &before, sizeof(call)) == 0, "QC bypassed retained-training admission");
+				if (role == V90_ANALOG_MODEM)
+					config.local_info0.v92_analog.short_phase2_requested = false;
+				else
+					config.local_info0.v92_digital.short_phase2_requested = false;
+				CHECK(pcm_call_init_qc(&call, &config, &local, &peer) == PCM_CALL_OK &&
+				      !pcm_call_is_online(&call) && !pcm_call_phase4_is_ready(&call) &&
+				      short_startup_rejected(&call), "QC fabricated trained data or history");
+				before = call;
+				call.qc_frame_interval = 6;
+				CHECK(!pcm_call_is_valid(&call), "QC accepted an invalid frame interval");
+				call = before;
+				call.qc_frame_pending = !call.qc_frame_pending;
+				call.qc_frame_interval = 1;
+				CHECK(!pcm_call_is_valid(&call), "QC accepted an unowned frame clock");
+				call = before;
+				for (unsigned clock = 1; clock <= 16000; ++clock) {
+					uint8_t output;
+					struct pcm_call_observation observation;
+					enum pcm_call_result result = pcm_call_octet(&call, silence_octet(law), 0, &output, &observation);
+					CHECK(result == (answerer && clock == 16000 ? PCM_CALL_V8_FALLBACK_READY : PCM_CALL_OK) &&
+					      observation.processed == PCM_CALL_QC && observation.next == PCM_CALL_QC &&
+					      !pcm_call_has_failed(&call), "QC silent-peer deadline role %u answerer %u clock %u",
+					      role, answerer, clock);
+				}
+				if (answerer) {
+					uint8_t output = 0xa5;
+					struct pcm_call_observation observation = { .next = PCM_CALL_DATA_PATH };
+					const struct pcm_call_observation saved = observation;
+					before = call;
+					CHECK(pcm_call_octet(&call, 0, 1234, &output, &observation) == PCM_CALL_V8_FALLBACK_READY &&
+					      output == 0xa5 && memcmp(&saved, &observation, sizeof(saved)) == 0 &&
+					      memcmp(&call, &before, sizeof(call)) == 0, "terminal QC fallback consumed another sample");
+				}
+			}
 	return true;
 }
 
@@ -11003,6 +11196,7 @@ static bool test_result_names(void)
 		"clipping risk",
 		"sequence mismatch",
 		"numeric failure",
+		"V.8 fallback ready",
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(expected); ++index)
@@ -11114,6 +11308,8 @@ int main(void)
 		{ "V.92 short PCM data and full recovery", test_v92_short_calls },
 		{ "V.92 conventional short-startup data", test_v92_short_conventional },
 		{ "V.92 learned short PCM startup", test_v92_learned_short_pcm },
+		{ "V.92 QC full and retained data", test_v92_qc_calls },
+		{ "V.92 QC admission and fallback", test_v92_qc_contracts },
 		{ "Phase 2 input ownership", test_phase2_input_ownership },
 		{ "V.92 measured INFO1d wire offers", test_v92_measured_info1d },
 		{ "PCM INFO1d respects peer capabilities", test_info1d_peer_capabilities },

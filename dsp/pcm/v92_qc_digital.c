@@ -11,6 +11,18 @@ enum {
 	QC_ANSWER_TIMEOUT_SAMPLES = 16000,
 };
 
+bool v92_qc_digital_is_valid(const struct v92_qc_digital *exchange)
+{
+	return exchange != NULL &&
+		exchange->stage >= V92_QC_DIGITAL_LEAD_SILENCE && exchange->stage <= V92_QC_DIGITAL_V8 &&
+		exchange->position < (exchange->stage == V92_QC_DIGITAL_QTS ?
+			V92_QTS_TOTAL_SYMBOLS : QC_SILENCE_SAMPLES) &&
+		exchange->answer_deadline <= QC_ANSWER_TIMEOUT_SAMPLES && exchange->qts_index < 15 &&
+		g711_law_is_valid(exchange->anspcm.law) &&
+		exchange->anspcm.position < 2u * V92_ANSPCM_REVERSAL_PERIOD &&
+		single_tone_detector_is_valid(&exchange->toneq);
+}
+
 bool v92_qc_digital_init(struct v92_qc_digital *exchange, enum g711_law law,
 	const struct v92_qc1_message *local, const struct v92_qc1_message *peer)
 {
@@ -53,11 +65,9 @@ enum v92_qc_digital_stage v92_qc_digital_sample(
 {
 	struct single_tone_event event;
 
-	if (exchange == NULL || output == NULL ||
+	if (!v92_qc_digital_is_valid(exchange) || output == NULL ||
 	    memory_regions_overlap(exchange, sizeof(*exchange),
-		output, sizeof(*output)) ||
-	    exchange->stage < V92_QC_DIGITAL_LEAD_SILENCE ||
-	    exchange->stage > V92_QC_DIGITAL_V8)
+		output, sizeof(*output)))
 		return V92_QC_DIGITAL_INVALID;
 	if (exchange->stage == V92_QC_DIGITAL_PHASE2 ||
 	    exchange->stage == V92_QC_DIGITAL_V8)

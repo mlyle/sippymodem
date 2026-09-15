@@ -32,6 +32,7 @@ struct v92_qc_digital {
  * No message or history storage is borrowed. Invalid init changes no state. */
 bool v92_qc_digital_init(struct v92_qc_digital *exchange, enum g711_law law,
 	const struct v92_qc1_message *local, const struct v92_qc1_message *peer);
+bool v92_qc_digital_is_valid(const struct v92_qc_digital *exchange);
 
 /* Consume one 8 kHz input sample and emit one exact PCM symbol. Return the
  * stage after that sample. PHASE2 completes 75 ms of handoff silence; V8

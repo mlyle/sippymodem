@@ -12,6 +12,18 @@ enum {
 	QC_ANSWER_TIMEOUT_SAMPLES = 16000,
 };
 
+bool v92_qc_analog_is_valid(const struct v92_qc_analog *exchange)
+{
+	return exchange != NULL &&
+		exchange->stage >= V92_QC_ANALOG_QTS && exchange->stage <= V92_QC_ANALOG_V8 &&
+		exchange->position <= QC_SILENCE_SAMPLES &&
+		(exchange->stage != V92_QC_ANALOG_TONEQ || exchange->position <= QC_TONEQ_MIN_SAMPLES) &&
+		exchange->answer_deadline <= QC_ANSWER_TIMEOUT_SAMPLES &&
+		pcm_s_pattern_rx_is_valid(&exchange->qts) &&
+		single_tone_detector_is_valid(&exchange->anspcm) &&
+		single_tone_transmitter_is_valid(&exchange->toneq);
+}
+
 bool v92_qc_analog_init(struct v92_qc_analog *exchange, enum g711_law law,
 	const struct v92_qc1_message *local, const struct v92_qc1_message *peer,
 	int16_t toneq_amplitude)
@@ -52,9 +64,8 @@ enum v92_qc_analog_stage v92_qc_analog_sample(
 	struct single_tone_event event;
 	int16_t generated = 0;
 
-	if (exchange == NULL || output == NULL ||
-	    memory_regions_overlap(exchange, sizeof(*exchange), output, sizeof(*output)) ||
-	    exchange->stage < V92_QC_ANALOG_QTS || exchange->stage > V92_QC_ANALOG_V8)
+	if (!v92_qc_analog_is_valid(exchange) || output == NULL ||
+	    memory_regions_overlap(exchange, sizeof(*exchange), output, sizeof(*output)))
 		return V92_QC_ANALOG_INVALID;
 	if (exchange->stage == V92_QC_ANALOG_PHASE2 || exchange->stage == V92_QC_ANALOG_V8)
 		return exchange->stage;

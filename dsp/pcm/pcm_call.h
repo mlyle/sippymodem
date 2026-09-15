@@ -23,6 +23,8 @@
 #include "v92_ru_line_rx.h"
 #include "v92_pcm_phase3_ru.h"
 #include "v92_data_quality.h"
+#include "v92_qc_analog.h"
+#include "v92_qc_digital.h"
 #include "v34_phase2_tone.h"
 #include "v34_phase2_selection.h"
 
@@ -38,6 +40,8 @@ enum pcm_call_stage {
 	PCM_CALL_RETRAIN_SILENCE,
 	/* Local output has drained or the peer sent a zero-rate CP/MP. */
 	PCM_CALL_CLOSED,
+	/* Agreed QC1/QCA1 opening, before INFO0 selects full or short Phase 2. */
+	PCM_CALL_QC,
 };
 
 enum pcm_call_result {
@@ -56,6 +60,7 @@ enum pcm_call_result {
 	PCM_CALL_CLIPPING_RISK,
 	PCM_CALL_SEQUENCE_MISMATCH,
 	PCM_CALL_NUMERIC_FAILURE,
+	PCM_CALL_V8_FALLBACK_READY,
 };
 
 union pcm_call_local_info1 {
@@ -419,6 +424,10 @@ union pcm_call_data_path_state {
 };
 
 union pcm_call_state {
+	union {
+		struct v92_qc_analog analog;
+		struct v92_qc_digital digital;
+	} qc;
 	struct pcm_phase2 phase2;
 	union pcm_call_phase3_state phase3;
 	union pcm_call_mixed_state mixed;
@@ -507,6 +516,10 @@ struct pcm_call {
 	/* Failed B1d lowers only generated downstream selections. Zero means
 	 * no restriction beyond the configured mask and the current peer Jd. */
 	uint8_t downstream_retry_ceiling;
+	/* Carry QTS's six-symbol phase through Phase 2 and the wait for Ja.
+	 * The continuous downstream transmitter takes ownership at the first Sd. */
+	uint8_t qc_frame_interval;
+	bool qc_frame_pending;
 	bool phase3_entry_stored;
 	bool peer_info0_stored;
 	bool v92_peer_jd_stored;
@@ -521,6 +534,18 @@ struct pcm_call {
 enum pcm_call_result pcm_call_init(
 	struct pcm_call *call,
 	const struct pcm_call_configuration *configuration);
+
+/* Begin immediately after the final QC1/QCA1 sample. The role-matched records
+ * must contain exactly one ACK. This owns QTS/ANSpcm/TONEq and shares the final
+ * 75 ms silence with Phase 2's receiver, without adding another quiet interval.
+ * Digital frame alignment is preserved from QTS through the first Sd.
+ * QC opening alone never selects short Phase 2: that requires retained training
+ * and agreement in INFO0. The host owns admission and the overall call timeout.
+ * V8_FALLBACK_READY asks the host to restart normal V.8; repeated octet() calls
+ * then leave all state and outputs unchanged. Invalid init changes no state. */
+enum pcm_call_result pcm_call_init_qc(
+	struct pcm_call *call, const struct pcm_call_configuration *configuration,
+	const struct v92_qc1_message *local, const struct v92_qc1_message *peer);
 
 /* Start a full retrain while retaining the negotiated PCM protocol and INFO0
  * records. The following line character begins the 70 ms silence interval. */

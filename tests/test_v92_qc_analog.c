@@ -300,6 +300,21 @@ static bool test_validation(void)
 	      v92_qc_analog_sample(&a, 0, NULL) == V92_QC_ANALOG_INVALID &&
 	      v92_qc_analog_sample(&a, 0, (int16_t *)&a) == V92_QC_ANALOG_INVALID &&
 	      output == 1234 && memcmp(&a, &saved, sizeof(a)) == 0, "invalid call changed state");
+	CHECK(v92_qc_analog_is_valid(&a) && !v92_qc_analog_is_valid(NULL), "invalid QC state query");
+	for (unsigned field = 0; field < 4; ++field) {
+		a = saved;
+		switch (field) {
+		case 0: a.position = 601; break;
+		case 1: a.answer_deadline = 16001; break;
+		case 2: a.qts.law = (enum g711_law)2; break;
+		case 3: a.stage = V92_QC_ANALOG_TONEQ; a.position = 401; break;
+		}
+		const struct v92_qc_analog invalid = a;
+		CHECK(!v92_qc_analog_is_valid(&a) &&
+		      v92_qc_analog_sample(&a, 0, &output) == V92_QC_ANALOG_INVALID &&
+		      output == 1234 && memcmp(&a, &invalid, sizeof(a)) == 0,
+		      "invalid analogue QC field %u consumed a sample", field);
+	}
 	return true;
 }
 

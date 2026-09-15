@@ -34,6 +34,7 @@ struct v92_qc_analog {
 bool v92_qc_analog_init(struct v92_qc_analog *exchange, enum g711_law law,
 	const struct v92_qc1_message *local, const struct v92_qc1_message *peer,
 	int16_t toneq_amplitude);
+bool v92_qc_analog_is_valid(const struct v92_qc_analog *exchange);
 
 /* One conditioned 8 kHz input sample and one linear transmit sample.
  * PHASE2 includes all 75 ms of post-TONEq silence. V8 requests normal V.8,
