@@ -1452,6 +1452,10 @@ static bool exercise_v92_media_loss(
 	enum { PAYLOAD = 128 };
 	struct integration_endpoint *ends[] = { caller, answerer };
 	struct dp *owned[] = { caller->modem->dp, answerer->modem->dp };
+	uint32_t rates[2][2] = {
+		{ caller->modem->tx_rate, caller->modem->rx_rate },
+		{ answerer->modem->tx_rate, answerer->modem->rx_rate },
+	};
 	struct lapm_state retained[2];
 	uint8_t payload[2][2 * PAYLOAD];
 	bool poll_seen[2] = { false, false };
@@ -1515,6 +1519,10 @@ static bool exercise_v92_media_loss(
 	      memcmp(answerer->output, payload[0], sizeof(payload[0])) == 0,
 	      "media loss recovery lost ordered PCM LAPM data (polls=%d/%d outputs=%zu/%zu settled=%u)",
 	      poll_seen[0], poll_seen[1], caller->output_count, answerer->output_count, settled);
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(ends[side]->modem->tx_rate == rates[side][0] &&
+		      ends[side]->modem->rx_rate == rates[side][1],
+		      "known media loss unnecessarily lowered the negotiated PCM rates");
 	return true;
 }
 

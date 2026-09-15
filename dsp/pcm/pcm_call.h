@@ -412,6 +412,8 @@ struct pcm_call_v92_digital_data {
 	uint16_t quality_guard_samples;
 	bool pending_ambiguous;
 	bool pending_uncertain;
+	/* A known media hole requires recovery, not a lower mapping rate. */
+	bool pending_media_loss;
 	/* Missing media can reject B1u before the first delayed decision. */
 	bool b1u_decode_failed;
 };

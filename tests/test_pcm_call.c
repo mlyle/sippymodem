@@ -6767,8 +6767,20 @@ static bool v92_data_error_contracts(const struct pcm_call *online)
 		      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
 		      checked_event.kind == PCM_CALL_DATA_NONE && owned_event.kind == PCM_CALL_DATA_NONE &&
 		      checked.state.data_path.v92_digital.pending_ambiguous &&
+		      checked.state.data_path.v92_digital.pending_media_loss &&
 		      checked.state.data_path.v92_digital.quality_guard_samples != 0 &&
 		      pcm_call_is_valid(&checked), "known loss did not clamp delayed PCM payload");
+		checked = *online;
+		checked.state.data_path.v92_digital.pending_media_loss = true;
+		CHECK(!pcm_call_is_valid(&checked), "unowned media-loss recovery accepted");
+		checked = *online;
+		checked.state.data_path.v92_digital.quality_guard_samples = 64u;
+		checked.state.data_path.v92_digital.pending_ambiguous = true;
+		CHECK(pcm_call_is_valid(&checked) &&
+		      pcm_call_data_octet(&checked, silence, 0, false, NULL, &checked_octet, &checked_event) ==
+			      PCM_CALL_OK && !checked.state.data_path.v92_digital.pending_media_loss &&
+		      checked.state.data_path.v92_digital.quality_guard_samples == 63u,
+		      "later media loss replaced an existing decoder failure or extended its guard");
 	}
 	if (online->local_role == V90_DIGITAL_MODEM && online->state.data_path.v92_digital
 	    .upstream.line.plan.observation == V92_PCM_FRAME_FILTER_OUTPUT) {
@@ -7846,13 +7858,14 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 		ceiling = rate - 1u;
 	CHECK(retrain_preserves_protocol(online, online->law), "manual retrain changed rate policy");
 	for (unsigned budget = 0; budget <= V92_DATA_QUALITY_MAX_RETRAINS; ++budget)
-		for (unsigned reason = 0; reason < 3u; ++reason) {
+		for (unsigned reason = 0; reason < 4u; ++reason) {
 			struct pcm_call call = *online;
 			struct pcm_call_data_event event;
 			uint8_t octet;
 
 			call.pcm_upstream_quality.automatic_retrains = budget;
-			arm_v92_quality_failure(&call, reason == 1u);
+			arm_v92_quality_failure(&call, reason == 1u || reason == 3u);
+			call.state.data_path.v92_digital.pending_media_loss = reason == 3u;
 			/* A pending observation is already in quality units. Applying
 			 * host gain again here would incorrectly forgive the error. */
 			if (call.state.data_path.v92_digital.upstream.line.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
@@ -7871,7 +7884,7 @@ static bool v92_quality_backoff_contracts(const struct pcm_call *online)
 
 			CHECK(result == (available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 			      pcm_call_is_valid(&call) && event.kind == PCM_CALL_DATA_NONE &&
-			      call.v92_upstream_retry_ceiling == (available ? ceiling : online->v92_upstream_retry_ceiling) &&
+			      call.v92_upstream_retry_ceiling == (available && reason != 3u ? ceiling : online->v92_upstream_retry_ceiling) &&
 			      call.pcm_upstream_quality.automatic_retrains == budget + (available ? 1u : 0u) &&
 			      (available ? call.stage == PCM_CALL_RETRAIN_SILENCE : call.failed) &&
 			      memcmp(&call.v92_digital_phase4_configuration, configuration, sizeof(*configuration)) == 0,
@@ -8151,7 +8164,7 @@ static bool test_v92_quality_rate_recovery(void)
 				.peer_mask = (UINT32_C(1) << 12u) | (UINT32_C(1) << 6u) | UINT32_C(1),
 				.local_maximum = 19u, .expected = 13u,
 			};
-			const uint8_t rates[] = { 13u, 7u, 1u };
+			const uint8_t rates[] = { 13u, 13u, 7u };
 			struct v92_online_pair pair;
 
 			CHECK(capture_v92_duplex_data(law, 3u, false, fixed ? NULL : &offer, NULL, 0u, &pair),
@@ -8192,6 +8205,7 @@ static bool test_v92_quality_rate_recovery(void)
 								if (clock == 0u)
 									loss_guard = call->state.data_path.v92_digital.quality_guard_samples;
 								CHECK(event.kind == PCM_CALL_DATA_NONE &&
+								      call->state.data_path.v92_digital.pending_media_loss &&
 								      loss_guard >= 80u && loss_guard < 8000u &&
 								      call->state.data_path.v92_digital.quality_guard_samples ==
 									      loss_guard - clock,
@@ -8213,8 +8227,8 @@ static bool test_v92_quality_rate_recovery(void)
 				      pair.digital.pcm_upstream_quality.automatic_retrains == epoch + 1u &&
 				      pair.digital.state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number == expected &&
 				      pair.analog.state.data_path.v92_analog.upstream.encoder.mapping.cpd.data_rate_number == expected &&
-				      pair.digital.v92_upstream_retry_ceiling == (fixed ? 0u : rates[epoch] - 1u),
-				      "quality recovery did not negotiate the next usable upstream rate and exchange data");
+				      pair.digital.v92_upstream_retry_ceiling == (fixed || epoch == 0u ? 0u : rates[epoch] - 1u),
+				      "quality recovery did not retain the media-loss rate or back off a bad mapping");
 			}
 		}
 	return true;
