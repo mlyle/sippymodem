@@ -173,12 +173,19 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	struct v92_upstream_control_line_rx line = *control;
 	struct v92_control_event emitted = { 0 };
 	bool extended = receiver->expected_symbols == V92_PHASE4_E2U_EXTENDED_SYMBOLS;
-	if (eligible && control->control.record_boundary &&
+	/* V.92 9.6.2.1.4 finishes the current CPu before E2u. Once repeated
+	 * CPu timing is confirmed, a damaged header must not erase its end.
+	 * A newly parsed record still owns its full length; never search its
+	 * zero-filled interior at the old repetition period. */
+	bool boundary = control->control.record_boundary ||
+		(control->cpu_repeat_confirmed && !control->cpu_repeat_remaining &&
+		 control->control.stage == V92_CONTROL_RX_SEARCH_SYNC);
+	if (eligible && boundary &&
 	    v92_e2u_rx_init(&next, &control->signal, extended) != V92_E2U_RX_OK)
 		return fail(receiver);
 	enum v92_upstream_control_line_rx_result result =
 		v92_upstream_control_line_rx_sample(&line, sample, &emitted);
-	if (eligible && (control->control.record_boundary || next.received_symbols != 0u) &&
+	if (eligible && (boundary || next.received_symbols != 0u) &&
 	    next.received_symbols < next.expected_symbols) {
 		enum v92_e2u_rx_result trial = v92_e2u_rx_sample(&next, sample);
 		if (trial == V92_E2U_RX_COMPLETE) {

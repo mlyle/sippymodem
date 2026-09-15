@@ -45,8 +45,10 @@ bool v92_e2u_rx_has_failed(const struct v92_e2u_rx *receiver);
 enum v92_e2u_rx_result v92_e2u_rx_sample(
 	struct v92_e2u_rx *receiver, int16_t sample);
 
-/* Search alongside the continuous control parser. Only a complete record
- * boundary arms a candidate; a mid-record handoff continues parsing first.
+/* Search alongside the continuous control parser. A complete record boundary
+ * or a confirmed CPu repetition boundary after lost framing arms a candidate;
+ * a mid-record handoff continues parsing first. Recovered timing does not
+ * admit damaged control records or change negotiated parameters.
  * eligible must remain false until the peer could have received and answered
  * our acknowledgement. Ineligible samples discard any candidate but still
  * advance control. The caller validates emitted records against its procedure.

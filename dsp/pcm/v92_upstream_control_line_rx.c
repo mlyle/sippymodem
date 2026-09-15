@@ -17,7 +17,12 @@ static bool line_state_is_valid(
 	return v92_upstream_rx_is_valid(&receiver->signal) &&
 	       v92_control_rx_is_valid(&receiver->control) &&
 	       receiver->control.direction == V92_CONTROL_UPSTREAM &&
-	       receiver->control.alignment_bits == expected_alignment;
+	       receiver->control.alignment_bits == expected_alignment &&
+	       receiver->cpu_repeat_symbols <= V92_CPU_MAX_FRAME_BITS /
+		       (expected_alignment / V92_CPU_SYMBOLS_PER_FRAME) &&
+	       receiver->cpu_repeat_symbols % V92_CPU_SYMBOLS_PER_FRAME == 0u &&
+	       receiver->cpu_repeat_remaining <= receiver->cpu_repeat_symbols &&
+	       (!receiver->cpu_repeat_confirmed || receiver->cpu_repeat_symbols != 0u);
 }
 
 bool v92_upstream_control_line_rx_is_valid(
@@ -88,6 +93,31 @@ static bool receive_group(
 	return true;
 }
 
+static void track_cpu_repetition(struct v92_upstream_control_line_rx *receiver,
+	const struct v92_control_event *event, unsigned bits_per_symbol)
+{
+	if (receiver->cpu_repeat_symbols) {
+		if (!receiver->cpu_repeat_remaining)
+			receiver->cpu_repeat_remaining = receiver->cpu_repeat_symbols;
+		--receiver->cpu_repeat_remaining;
+	}
+	if (event->type == V92_CONTROL_EVENT_SUVU ||
+	    (event->type == V92_CONTROL_EVENT_SUVU_REJECTED && receiver->control.record_boundary)) {
+		receiver->cpu_repeat_symbols = 0u;
+		receiver->cpu_repeat_remaining = 0u;
+		receiver->cpu_repeat_confirmed = false;
+	} else if (event->type == V92_CONTROL_EVENT_CPU || event->type == V92_CONTROL_EVENT_CPUS) {
+		size_t bits = event->type == V92_CONTROL_EVENT_CPU ?
+			v92_cpu_frame_bits(&event->record.cpu.parameters, receiver->control.alignment_bits) :
+			v92_cpus_frame_bits(receiver->control.alignment_bits);
+		uint16_t symbols = (uint16_t)(bits / bits_per_symbol);
+		receiver->cpu_repeat_confirmed = symbols == receiver->cpu_repeat_symbols &&
+			receiver->cpu_repeat_remaining == 0u;
+		receiver->cpu_repeat_symbols = symbols;
+		receiver->cpu_repeat_remaining = 0u;
+	}
+}
+
 enum v92_upstream_control_line_rx_result
 v92_upstream_control_line_rx_sample(
 	struct v92_upstream_control_line_rx *receiver, int16_t sample,
@@ -117,6 +147,7 @@ v92_upstream_control_line_rx_sample(
 	if (bits == 0u || !receive_group(
 				  &next.control, decision.group, bits, &emitted))
 		return fail(receiver);
+	track_cpu_repetition(&next, &emitted, bits);
 	if (!v92_upstream_control_line_rx_is_valid(&next))
 		return fail(receiver);
 	*receiver = next;

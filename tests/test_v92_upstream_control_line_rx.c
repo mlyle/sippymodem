@@ -826,6 +826,26 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "control-line null calls changed state");
+	for (unsigned fault = 0; fault < 5; ++fault) {
+		untouched = receiver;
+		switch (fault) {
+		case 0: untouched.cpu_repeat_symbols = 1u; break;
+		case 1: untouched.cpu_repeat_symbols = UINT16_MAX - UINT16_MAX % V92_CPU_SYMBOLS_PER_FRAME; break;
+		case 2: untouched.cpu_repeat_remaining = 1u; break;
+		case 3: untouched.cpu_repeat_confirmed = true; break;
+		case 4:
+			untouched.cpu_repeat_symbols = V92_CPU_SYMBOLS_PER_FRAME;
+			untouched.cpu_repeat_remaining = V92_CPU_SYMBOLS_PER_FRAME + 1u;
+			break;
+		}
+		saved = untouched;
+		CHECK(!v92_upstream_control_line_rx_is_valid(&untouched) &&
+		      v92_upstream_control_line_rx_sample(&untouched, 0, &event) ==
+			      V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&untouched, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&event, &event_before, sizeof(event)) == 0,
+		      "invalid CPu repetition clock changed state, fault %u", fault);
+	}
 	receiver.signal.failed = true;
 	saved = receiver;
 	CHECK(v92_upstream_control_line_rx_has_failed(&receiver) &&
