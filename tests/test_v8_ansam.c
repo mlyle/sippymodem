@@ -374,6 +374,56 @@ static bool test_gain_stability(void)
 	return true;
 }
 
+static bool test_interrupted_carrier(void)
+{
+	static const struct {
+		const char *name;
+		size_t resume_sample;
+		unsigned interruption_hz;
+		size_t earliest, latest;
+	} cases[] = {
+		{ "silence", 24000, 0, 0, 0 },
+		{ "V.21 mark", 24000, 1850, 0, 0 },
+		{ "returning carrier", 8000, 0, 16000, 20000 },
+		{ "10 ms gap", 4080, 0, 8000, 10000 },
+	};
+
+	for (enum test_codec codec = TEST_LINEAR; codec <= TEST_PCMA; ++codec) {
+		for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+			struct v8_ansam_generator generator;
+			struct v8_ansam_detector detector;
+			struct v8_line_conditioner line;
+			size_t detection = 0;
+
+			CHECK(v8_ansam_generator_init(&generator, TEST_AMPLITUDE, true) ==
+				      V8_ANSAM_OK && v8_ansam_detector_init(&detector) ==
+				      V8_ANSAM_OK && v8_line_conditioner_init(&line,
+				      V8_CALLING_STATION) == V8_LINE_CONDITIONER_OK,
+			      "interrupted ANSam fixture");
+			for (size_t clock = 0; clock < 24000 && detection == 0; ++clock) {
+				int16_t sample;
+				bool detected;
+
+				CHECK(v8_ansam_generate(&generator, &sample, 1) == V8_ANSAM_OK,
+				      "interrupted ANSam generation");
+				if (clock >= 4000 && clock < cases[index].resume_sample)
+					sample = (int16_t)lround(TEST_AMPLITUDE * sin(TEST_TWO_PI *
+						cases[index].interruption_hz * clock / V8_ANSAM_SAMPLE_RATE));
+				sample = codec_round_trip(sample, codec);
+				CHECK(v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
+					      V8_ANSAM_OK, "interrupted ANSam detection");
+				if (detected)
+					detection = clock + 1;
+			}
+			CHECK(detection >= cases[index].earliest &&
+			      detection <= cases[index].latest,
+			      "codec %u %s: stale or missing ANSam at %zu",
+			      codec, cases[index].name, detection);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v8_ansam_generator generator;
@@ -446,6 +496,13 @@ static bool test_validation(void)
 		      V8_ANSAM_INVALID_ARGUMENT,
 	      "ANSam API accepted invalid state");
 	detector = saved;
+	detector.carrier_loss_blocks = UINT8_MAX;
+	CHECK(!v8_ansam_detector_is_valid(&detector) &&
+	      v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
+		      V8_ANSAM_INVALID_ARGUMENT && !detected &&
+	      memcmp(&line, &saved_line, sizeof(line)) == 0,
+	      "ANSam API accepted an invalid carrier-loss count");
+	detector = saved;
 	line.gain = 0;
 	CHECK(!v8_line_conditioner_is_valid(&line) &&
 	      v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
@@ -468,6 +525,7 @@ int main(void)
 		{ "detection and rejection", test_detection_and_rejection },
 		{ "phase-reversal alignment", test_reversal_alignment },
 		{ "gain stability", test_gain_stability },
+		{ "interrupted carrier", test_interrupted_carrier },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -68,6 +68,7 @@ struct v8_ansam_detector {
 	uint16_t signal_ref_gain;
 	uint16_t signal_stable_time;
 	uint16_t dwell_blocks;
+	uint8_t carrier_loss_blocks;
 	uint16_t modulation_energy;
 	enum v8_ansam_detector_stage stage;
 	bool signal_stable;

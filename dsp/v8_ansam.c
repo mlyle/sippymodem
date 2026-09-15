@@ -106,6 +106,9 @@ enum {
 	V8_ANSAM_SIGNAL_STABILITY_SAMPLES = V8_ANSAM_SAMPLE_RATE / 10,
 	V8_ANSAM_TONE_WARMUP_BLOCKS = 43,
 	V8_ANSAM_TONE_HIGH_BLOCKS = 84,
+	/* Tolerate phase reversals and short gaps, not a lost carrier. */
+	V8_ANSAM_CARRIER_LOSS_BLOCKS = V8_ANSAM_SAMPLE_RATE / 20 /
+		V8_ANSAM_BLOCK_SAMPLES,
 	V8_ANSAM_TONE_LOW_THRESHOLD = 0x05dc,
 	V8_ANSAM_TONE_ENERGY_POLE_Q14 = 0x3c2e,
 	V8_ANSAM_TONE_ENERGY_GAIN_Q14 = 0x706d,
@@ -141,6 +144,7 @@ bool v8_ansam_detector_is_valid(
 	if (detector == NULL || detector->signal_timer >=
 		    V8_ANSAM_SIGNAL_STABILITY_SAMPLES ||
 	    detector->signal_timer % V8_ANSAM_BLOCK_SAMPLES != 0 ||
+	    detector->carrier_loss_blocks >= V8_ANSAM_CARRIER_LOSS_BLOCKS ||
 	    detector->signal_ref_gain == 0 ||
 	    (int16_t)detector->signal_ref_gain <= 0 ||
 	    detector->tone.warmup_count > V8_ANSAM_TONE_WARMUP_BLOCKS ||
@@ -171,7 +175,7 @@ enum v8_ansam_result v8_ansam_detector_init(
 
 static bool detect_carrier(
 	struct v8_ansam_tone_detector *tone,
-	int16_t samples[V8_ANSAM_BLOCK_SAMPLES])
+	const int16_t samples[V8_ANSAM_BLOCK_SAMPLES])
 {
 	for (size_t sample_index = 0;
 	     sample_index < V8_ANSAM_BLOCK_SAMPLES; ++sample_index) {
@@ -193,7 +197,6 @@ static bool detect_carrier(
 				tone->tone_output[1 - index];
 		}
 		tone->tone_output[0] = (uint16_t)output;
-		samples[sample_index] = wrap_s16_from_s32(output);
 
 		{
 			int32_t stage = arithmetic_shift_right_u32(
@@ -248,7 +251,7 @@ static bool detect_carrier(
 		if ((int16_t)tone->filtered_energy <=
 		    V8_ANSAM_TONE_LOW_THRESHOLD)
 			tone->counter = 0;
-		else
+		else if (tone->counter <= V8_ANSAM_TONE_HIGH_BLOCKS)
 			tone->counter++;
 	} else {
 		if ((int16_t)tone->filtered_energy > 0x30) {
@@ -345,13 +348,14 @@ static uint16_t modulation_energy(const struct v8_ansam_dft *dft)
 static bool process_block(
 	struct v8_ansam_detector *detector,
 	struct v8_line_conditioner *conditioner,
-	struct v8_line_conditioned_block *block)
+	const struct v8_line_conditioned_block *block)
 {
 	enum v8_ansam_detector_stage stage = detector->stage;
-	int16_t *samples = block->samples;
+	const int16_t *samples = block->samples;
 
 	if (block->gain_reset && stage == V8_ANSAM_WAIT_MODULATION) {
 		detector->stage = V8_ANSAM_WAIT_CARRIER;
+		detector->carrier_loss_blocks = 0;
 		detector->modulation_energy = 0;
 		detector->tone.counter = 0;
 		detector->tone.warmup_count = 0;
@@ -376,6 +380,15 @@ static bool process_block(
 	if (stage != V8_ANSAM_WAIT_MODULATION)
 		return true;
 
+	/* Continue observing carrier while the modulation evidence accumulates. */
+	(void)detect_carrier(&detector->tone, samples);
+	if ((int16_t)detector->tone.filtered_energy <=
+	    V8_ANSAM_TONE_LOW_THRESHOLD) {
+		if (++detector->carrier_loss_blocks == V8_ANSAM_CARRIER_LOSS_BLOCKS)
+			return v8_ansam_detector_init(detector) == V8_ANSAM_OK;
+	} else {
+		detector->carrier_loss_blocks = 0;
+	}
 	update_signal_stability(detector, conditioner->gain);
 	if (detector->signal_stable)
 		accumulate_modulation(&detector->modulation, samples);
