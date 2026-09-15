@@ -124,6 +124,9 @@ training settings. Its read-only profile query uses the actual training
 selection and live receive gain, rejecting retrain, rate exchange, and
 cleardown. Tests reuse successful full-call settings through two successive
 shortened calls on both codec laws, including 52000/40000 bit/s PCM data.
+The digital Quick Connect signal exchange sends timed QTS/ANSpcm, qualifies
+TONEq, and preserves Phase 2 handoff silence. Its answer-side timeout requests
+normal V.8 fallback instead of reporting a successful shortened handshake.
 Peer-keyed history retention and the Quick Connect Phase 1 handshake are not
 yet integrated into the modem; this does not enable modem-level Quick Connect.
 

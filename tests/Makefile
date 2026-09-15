@@ -1555,6 +1555,12 @@ V92_QC_SIGNAL_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_qc_signal.o $(BUILD_DIR)/v92_qc_signal.o \
 	$(BUILD_DIR)/pcm_s_pattern_rx.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o $(BUILD_DIR)/g711.o
+V92_QC_DIGITAL_TEST_BINARY := $(BUILD_DIR)/test_v92_qc_digital
+V92_QC_DIGITAL_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_v92_qc_digital.o $(BUILD_DIR)/v92_qc_digital.o \
+	$(BUILD_DIR)/v92_qc1.o $(BUILD_DIR)/v92_qc_signal.o \
+	$(BUILD_DIR)/single_tone.o \
+	$(BUILD_DIR)/v90_pcm_symbol.o $(BUILD_DIR)/g711.o
 V92_INFO0_TEST_BINARY := $(BUILD_DIR)/test_v92_info0
 V92_INFO0_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_info0.o \
@@ -3326,6 +3332,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V92_INFO0_TEST_BINARY) \
 	$(V92_QC1_TEST_BINARY) \
 	$(V92_QC_SIGNAL_TEST_BINARY) \
+	$(V92_QC_DIGITAL_TEST_BINARY) \
 	$(PCM_STARTUP_TEST_BINARY) \
 	$(PCM_INFO1_TEST_BINARY) \
 	$(PCM_PHASE3_PROFILE_TEST_BINARY) \
@@ -4092,6 +4099,9 @@ $(V92_QC1_TEST_BINARY): $(V92_QC1_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V92_QC_SIGNAL_TEST_BINARY): $(V92_QC_SIGNAL_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(V92_QC_DIGITAL_TEST_BINARY): $(V92_QC_DIGITAL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(PCM_STARTUP_TEST_BINARY): $(PCM_STARTUP_TEST_OBJECTS)
@@ -5120,6 +5130,10 @@ $(BUILD_DIR)/v92_qc1.o: \
 
 $(BUILD_DIR)/v92_qc_signal.o: \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc_signal.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/v92_qc_digital.o: \
+	$(DSP_PCM_SOURCE_DIR)/v92_qc_digital.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_info1.o: \
