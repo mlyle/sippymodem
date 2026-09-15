@@ -1544,17 +1544,20 @@ static bool peer_b1_received(const struct pcm_call *call)
 
 static enum pcm_call_result retry_v92_upstream(struct pcm_call *call, bool backoff)
 {
+	const struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 	uint8_t previous = call->v92_upstream_retry_ceiling;
-	uint8_t rate = call->state.data_path.v92_digital.upstream.decoder.mapping.cpd.data_rate_number;
+	uint8_t rate = path->upstream.decoder.mapping.cpd.data_rate_number;
 	enum pcm_call_result result;
 
 	/* Local receiver policy, not a wire-protocol restriction. A failed
 	 * automatic mapping should try a lower rate from the next peer Ja.
 	 * Keep fixed mappings unchanged; at the lowest rate, online recovery
 	 * still has its bounded quality retry allowance. Never raise a ceiling
-	 * retained from an earlier failure. Known missing media says nothing about
-	 * the usable rate: retain that ceiling while still performing recovery. */
-	if (backoff && call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
+	 * retained from an earlier failure. Missing media and a failed fast control
+	 * exchange do not invalidate a usable rate. The new fast B1u must start
+	 * before its data quality can justify backoff; keep recovery bounded. */
+	if (backoff && (path->fast.stage == PCM_CALL_V92_FAST_IDLE || path->fast.b1_started) &&
+	    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT) {
 		if (rate <= 1u && call->b1_deadline_armed)
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (rate > 1u && (previous == 0u || rate <= previous))

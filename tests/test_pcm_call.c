@@ -7950,6 +7950,8 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 					CHECK(samples <= 1600u, "lost paths extended the control guard");
 				}
 
+				/* Losing fast control before the new B1u does not invalidate
+				 * the previously usable data rate or forgive its retry cost. */
 				CHECK(result == (closing ? PCM_CALL_CLEARDOWN_COMPLETE : available ? PCM_CALL_OK : PCM_CALL_FAILED) &&
 				      result == owned_result && transmitted == owned_transmitted &&
 				      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
@@ -7957,7 +7959,7 @@ static bool v92_no_path_recovery_contracts(const struct pcm_call *before, uint8_
 				      pcm_call_is_valid(&checked) && event.kind == PCM_CALL_DATA_NONE &&
 				      checked.protocol == PCM_PROTOCOL_V92 &&
 				      checked.pcm_upstream_quality.automatic_retrains == budget + (available && (fixed || !training)) &&
-				      checked.v92_upstream_retry_ceiling == (available && !fixed ? rate - 1u : 0u) &&
+				      checked.v92_upstream_retry_ceiling == (available && !fixed && !fast ? rate - 1u : 0u) &&
 				      (closing ? checked.stage == PCM_CALL_CLOSED && !checked.failed :
 				       available ? checked.stage == PCM_CALL_RETRAIN_SILENCE && !checked.failed : checked.failed) &&
 				      memcmp(&checked.v92_digital_phase4_configuration, &configuration, sizeof(configuration)) == 0,
