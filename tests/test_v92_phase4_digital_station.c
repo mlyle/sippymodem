@@ -2376,38 +2376,60 @@ static bool test_silence_status(void)
 	return true;
 }
 
-static bool run_analog_pause_confirmation(enum g711_law law, enum v92_constellation_size constellation,
-	unsigned lookahead, unsigned requests, unsigned confirmation)
+static bool run_analog_confirmation(enum g711_law law, enum v92_constellation_size constellation,
+	unsigned lookahead, unsigned requests, unsigned confirmation, bool renegotiation)
 {
 	struct v92_cpt_parameters cpt = cpt_parameters(law);
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
 	struct v92_cpd_parameters cpd = cpd_parameters(law);
 	struct v92_pcm_mapping upstream;
 	struct v90_pcm_mapping training;
+	struct v90_pcm_mapping downstream_data;
 	struct pcm_downstream_rx receive;
 	struct full_cpd_source source;
 	struct v92_phase4_analog_station station;
+	const struct v92_phase3_analog_transmit_handoff previous = {
+		.lu = TEST_LU, .training_constellation = constellation,
+	};
+	const struct v92_suvu_parameters suvu = {
+		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
+	};
 	struct v92_suvd_parameters suvd = { .request_silence = (requests & 2u) != 0u };
 	size_t events = 0;
-	uint8_t sequence[V92_SUVD_MAX_FRAME_BYTES];
+	uint8_t sequence[V92_CPD_MAX_FRAME_BYTES];
 	size_t bits;
 	cpt.spectral_lookahead = lookahead;
 	cpt.sign_redundancy = lookahead ? 1u : 0u;
+	/* Unlike the parser-only CPU fixture, this selection must support data
+	 * so the returned handoff is usable by the next receiver owner. */
+	cpu.data_rate_number = 1u;
+	memset(cpu.transmit_constellations, 0, sizeof(cpu.transmit_constellations));
+	for (unsigned n = 0; n < 8u; ++n)
+		add_ucode(&cpu.transmit_constellations[0], (uint8_t)(24u + 12u * n));
+	if (!requests)
+		cpd.extend_e2u = !renegotiation && constellation == V92_CONSTELLATION_8_POINT;
 	CHECK(v90_pcm_mapping_init_from_v92_cpt(&training, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_mapping_init_from_v92_cpu(&downstream_data, &cpu, law) == V90_PCM_MAPPING_OK &&
 	      v92_pcm_mapping_init(&upstream, law, &cpd) == V92_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(&receive, PCM_PROTOCOL_V92, &training, V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
-	      v92_phase4_analog_station_init_after_ru(&station, constellation, TEST_LU, &receive, &cpu,
-		&upstream, (requests & 1u) != 0u, 240u) == V92_PHASE4_ANALOG_STATION_OK &&
+	      (renegotiation ?
+	       v92_phase4_analog_station_init_after_ru(&station, constellation, TEST_LU, &receive, &cpu,
+		&upstream, (requests & 1u) != 0u, 240u) :
+	       v92_phase4_analog_station_init(&station, &previous, &receive, &suvu, &cpu, NULL, NULL)) ==
+		V92_PHASE4_ANALOG_STATION_OK &&
 	      full_cpd_source_init(&source, &training) && push_full_cpd_training(&source, &station, &events),
-	      "analogue pause fixture failed");
-	/* Unacknowledged repeats allow the local status ACK to reach its wire
-	 * boundary. Then send a good ACK, a CRC-damaged ACK, or Ed with no ACK.
-	 * Scrambling and shaping continue through the actual encoded records. */
+	      "analogue confirmation fixture failed");
+	/* Ordinary exchange receives SUVd then CPd; a pause retains its mapping.
+	 * Unacknowledged repeats let our ACK reach the wire before a good final
+	 * ACK, a CRC-damaged ACK, or Ed with no ACK. Keep the same scrambler and
+	 * shaper throughout, including their retained control tail before Ed. */
 	for (unsigned record = 0; record < 30u && !v92_phase4_analog_station_can_handoff(&station); ++record) {
 		bool final = station.transmit.control.acknowledgment_sent;
 		suvd.acknowledges_cpu = final && confirmation != 2u;
-		CHECK(v92_suvd_encode(&suvd, training.frame_bits, sequence, sizeof(sequence), &bits) == V92_SUVD_OK,
-		      "pause SUVd encode failed");
+		CHECK(!requests && record == 1u ?
+		      v92_cpd_encode(&cpd, training.frame_bits, sequence, sizeof(sequence), &bits) == V92_CPD_OK :
+		      v92_suvd_encode(&suvd, training.frame_bits, sequence, sizeof(sequence), &bits) == V92_SUVD_OK,
+		      "confirmation control encode failed");
 		if (final && confirmation == 1u)
 			sequence[4] ^= 0x80u;
 		for (size_t first = 0; first < bits; first += training.frame_bits) {
@@ -2415,36 +2437,42 @@ static bool run_analog_pause_confirmation(enum g711_law law, enum v92_constellat
 			for (unsigned n = 0; n < V90_CP_FRAME_INTERVALS; ++n) {
 				int16_t up;
 				CHECK(v92_phase4_analog_station_transmit(&station, &up) == V92_PHASE4_ANALOG_STATION_OK,
-				      "pause upstream status stopped");
+				      "confirmation upstream control stopped");
 			}
 			for (unsigned n = 0; n < training.frame_bits; ++n)
 				frame[n] = sequence_bit(sequence, first + n);
 			CHECK(push_full_cpd_frame(&source, &station, frame, &events) == V92_PHASE4_ANALOG_STATION_OK,
-			      "pause downstream status stopped");
+			      "confirmation downstream control stopped");
+			CHECK(station.transmit.control.acknowledgment_sent ||
+			      !v92_phase4_analog_station_can_handoff(&station),
+			      "confirmation bypassed the local wire acknowledgement");
+			if (!requests && !station.cpd_received)
+				CHECK(!station.receive.ed_requested, "Ed armed before receiving CPd");
 		}
 		if (final)
 			break;
 	}
-	CHECK(station.transmit.control.acknowledgment_sent && !station.cpd_received &&
-	      !station.transmit.control.cpu_sent &&
+	CHECK(station.transmit.control.acknowledgment_sent && station.cpd_received == !requests &&
+	      station.transmit.control.cpu_sent == !requests &&
 	      (!confirmation || !v92_phase4_analog_station_can_handoff(&station)),
-	      "lost SUVd acknowledgement completed the pause or started CPu");
-	/* Finish the shaper's retained status tail, then Ed. The final Ed frame
-	 * is consumed once and authorizes only a pause handoff, never new data. */
+	      "lost acknowledgement completed control or changed parameter ownership");
+	/* The final Ed frame belongs to this receiver and must survive handoff. */
 	for (unsigned n = 0; n < lookahead + V90_PHASE4_ED_FRAMES + 2u &&
 	     !v92_phase4_analog_station_can_handoff(&station); ++n) {
 		uint8_t zeros[V90_PCM_FRAME_MAX_BITS] = { 0 };
 		CHECK(push_full_cpd_frame(&source, &station, zeros, &events) == V92_PHASE4_ANALOG_STATION_OK,
-		      "pause Ed confirmation failed");
+		      "Ed confirmation failed");
 	}
 	struct v92_phase4_analog_handoff handoff;
 	CHECK(v92_phase4_analog_station_handoff(&station, &handoff) == V92_PHASE4_ANALOG_STATION_OK &&
-	      handoff.pause && !station.cpd_received && !station.transmit.control.cpu_sent &&
+	      handoff.pause == (requests != 0u) && station.cpd_received == !requests &&
+	      station.transmit.control.cpu_sent == !requests &&
 	      (!confirmation || pcm_downstream_rx_is_complete(&handoff.receive)) &&
+	      (!confirmation || (!station.cpd.acknowledges_cpu && !station.suvd.acknowledges_cpu)) &&
 	      v92_pcm_mapping_equal(&handoff.mapping, &upstream) &&
 	      handoff.cpu.data_rate_number == cpu.data_rate_number &&
 	      handoff.receive.stream.received_symbols == station.receive.stream.received_symbols,
-	      "pause confirmation lost its previous mapping or exact Ed boundary");
+	      "confirmation lost its mapping, exact Ed boundary, or actual ACK flags");
 	return true;
 }
 
@@ -2455,10 +2483,24 @@ static bool test_analog_pause_confirmation(void)
 			for (unsigned lookahead = 0; lookahead < 4u; ++lookahead)
 				for (unsigned requests = 1; requests < 4u; ++requests)
 					for (unsigned confirmation = 0; confirmation < 3u; ++confirmation)
-						CHECK(run_analog_pause_confirmation(law, size ? V92_CONSTELLATION_8_POINT :
-							V92_CONSTELLATION_4_POINT, lookahead, requests, confirmation),
+						CHECK(run_analog_confirmation(law, size ? V92_CONSTELLATION_8_POINT :
+							V92_CONSTELLATION_4_POINT, lookahead, requests, confirmation, true),
 						      "analogue pause law=%u size=%u lookahead=%u requests=%u confirmation=%u",
 						      law, size, lookahead, requests, confirmation);
+	return true;
+}
+
+static bool test_analog_data_confirmation(void)
+{
+	for (unsigned law = 0; law < 2u; ++law)
+		for (unsigned size = 0; size < 2u; ++size)
+			for (unsigned lookahead = 0; lookahead < 4u; ++lookahead)
+				for (unsigned renegotiation = 0; renegotiation < 2u; ++renegotiation)
+					for (unsigned confirmation = 0; confirmation < 3u; ++confirmation)
+						CHECK(run_analog_confirmation(law, size ? V92_CONSTELLATION_8_POINT :
+							V92_CONSTELLATION_4_POINT, lookahead, 0u, confirmation, renegotiation),
+						      "analogue data law=%u size=%u lookahead=%u renegotiation=%u confirmation=%u",
+						      law, size, lookahead, renegotiation, confirmation);
 	return true;
 }
 
@@ -2481,6 +2523,7 @@ int main(void)
 		{ "cleardown physical CP deadlines", test_cleardown_timing },
 		{ "digital silence status agreement", test_silence_status },
 		{ "analogue pause acknowledgement or Ed", test_analog_pause_confirmation },
+		{ "analogue data acknowledgement or Ed", test_analog_data_confirmation },
 	};
 	unsigned int failures = 0u;
 

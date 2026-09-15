@@ -315,14 +315,15 @@ static bool accept_cpd_event(
 }
 
 static bool arm_ed_confirmation(
-	struct v92_phase4_analog_station *station, bool acknowledges_cpu)
+	struct v92_phase4_analog_station *station)
 {
-	/* During a status-only pause Ed is itself confirmation. Search at each
-	 * complete record boundary even when the acknowledging SUVd was lost;
-	 * the receiver continues parsing repeated controls alongside Ed. */
-	bool pause = station->suvd_received &&
-		v92_phase4_analog_tx_silence_requested(&station->transmit);
-	return !(acknowledges_cpu || pause) ||
+	/* V.92 9.6.2.1.4 permits Ed to confirm the exchange when the final ACK
+	 * was lost. Once parameters (or pause status) are owned, search at each
+	 * complete record boundary while continuing to parse repeated controls.
+	 * The transmitter still requires our ACK to finish on the wire. */
+	bool ready = station->cpd_received || (station->suvd_received &&
+		v92_phase4_analog_tx_silence_requested(&station->transmit));
+	return !ready ||
 	       pcm_downstream_rx_expect_ed(&station->receive) ==
 		       PCM_DOWNSTREAM_RX_OK;
 }
@@ -363,10 +364,7 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    !note_suvd(
 			    station,
 			    &event.control.record.suvd.parameters) ||
-		    !arm_ed_confirmation(
-			    station,
-			    event.control.record.suvd.parameters
-				    .acknowledges_cpu))
+		    !arm_ed_confirmation(station))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_CPD:
@@ -375,15 +373,12 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    !accept_cpd_event(
 			    station,
 			    &event.control.record.cpd.parameters) ||
-		    !arm_ed_confirmation(
-			    station,
-			    event.control.record.cpd.parameters
-				    .acknowledges_cpu))
+		    !arm_ed_confirmation(station))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
-		if (!arm_ed_confirmation(station, false))
+		if (!arm_ed_confirmation(station))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
 	case PCM_DOWNSTREAM_RX_ED:
