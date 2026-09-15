@@ -847,7 +847,7 @@ static bool v92_data_path_is_valid(const struct pcm_call *call)
 		      path->pending_uncertain)) ||
 		    (path->upstream.failed && !call->failed &&
 		     (!path->quality_guard_samples || !path->pending_ambiguous ||
-		      call->b1_deadline_armed || path->fast.stage != PCM_CALL_V92_FAST_IDLE)) ||
+		      path->fast.stage != PCM_CALL_V92_FAST_IDLE)) ||
 		    !isfinite(path->b1u_squared_error) ||
 		    path->b1u_squared_error < 0.0 ||
 		    (path->upstream.line.received_frames <= V92_B1U_ACQUISITION_FRAMES &&
@@ -1512,6 +1512,13 @@ static enum pcm_call_result retry_v92_upstream(struct pcm_call *call)
 	return result;
 }
 
+static void guard_v92_upstream_failure(struct pcm_call_v92_digital_data *path)
+{
+	path->pending_ambiguous = true;
+	if (!path->quality_guard_samples)
+		path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
+}
+
 static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 {
 	if (!call->b1_deadline_armed)
@@ -1552,12 +1559,13 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 	    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT &&
 	    call->state.data_path.v92_digital.upstream.line.received_frames >=
 		    V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES) {
-		/* V.92 9.6.1.2 allows full retrain during Phase 4. Once every B1u
-		 * decision is available, do not repeat a selection that failed it.
-		 * Ja in the next epoch still decides which lower rates are usable.
-		 * Strictly decreasing ceilings bound recovery, even without a host
-		 * training timeout. Fixed caller-owned mappings are never replaced. */
-		return retry_v92_upstream(call);
+		/* A peer's full-retrain onset is not failed B1u. Give its silence
+		 * and tone the same bounded guard as online quality recovery before
+		 * lowering the initial rate. Further bad frames cannot extend it. */
+		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
+		if (path->fast.stage != PCM_CALL_V92_FAST_IDLE)
+			return retry_v92_upstream(call);
+		guard_v92_upstream_failure(path);
 	}
 	if (call->b1_deadline_remaining_samples != 0u)
 		call->b1_deadline_remaining_samples--;
@@ -4051,9 +4059,8 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call)
 		next.state.data_path.digital = path;
 	}
 	next.stage = PCM_CALL_DATA_PATH;
-	if (v34_retrain_detector_reset(&next.retrain.detector) !=
-	    V34_PHASE2_TONE_OK)
-		return PCM_CALL_NUMERIC_FAILURE;
+	/* E/B1 is a continuous receive boundary. A peer's Phase 4 retrain
+	 * request can straddle it; retain the already observed silence/tone. */
 	if (!pcm_call_is_valid(&next))
 		return PCM_CALL_NUMERIC_FAILURE;
 	*call = next;
@@ -4849,33 +4856,28 @@ static enum pcm_call_result v92_data_octet_owned(
 		}
 		/* A lost decoder cannot resume on its old coding history. Keep
 		 * transmitting and clocking the independent control detectors while
-		 * the bounded online guard owns that failure; never emit its data. */
+		 * the bounded guard owns that failure; never emit its data. */
 		received = path->upstream.failed ? V92_UPSTREAM_DATA_RX_OK :
 			v92_upstream_data_rx_octet_owned(&path->upstream,
 				received_octet, received_sample, host_sample, received_available, &frame);
 		if (received == V92_UPSTREAM_DATA_RX_NO_PATH) {
-			/* A noise burst can eliminate every valid coded word. The
-			 * failed decoder cannot continue, including during B1u or a
-			 * fast exchange. Use the strictly decreasing initial-training
-			 * ceiling, or the quality retry budget for established calls
-			 * and fixed mappings. Never invent the discarded payload. */
 			if (path->fast.control.cleardown.active)
 				return PCM_CALL_CLEARDOWN_COMPLETE;
-			if (call->b1_deadline_armed &&
-			    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT)
-				return retry_v92_upstream(call);
-			if (call->b1_deadline_armed || path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
+			if (path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
+				if (call->b1_deadline_armed &&
+				    call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT)
+					return retry_v92_upstream(call);
 				enum v92_data_quality_result quality = v92_data_quality_observe(
 					&call->pcm_upstream_quality, 0.0, true, false);
 				return quality == V92_DATA_QUALITY_RETRAIN ? retry_v92_upstream(call) :
 					quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
 			}
-			/* A full-retrain onset can also eliminate every path. Give it
-			 * the same control priority as ambiguous data without extending
-			 * an already running guard or spending the quality retry budget. */
-			path->pending_ambiguous = true;
-			if (!path->quality_guard_samples)
-				path->quality_guard_samples = V92_CONTROL_QUALITY_GUARD_SAMPLES;
+			/* A full-retrain onset can eliminate every path even during
+			 * B1u. Clamp the failed decoder while the independent tone
+			 * detector qualifies it; neither retry nor lower the rate yet. */
+			if (call->b1_deadline_armed)
+				path->b1u_decode_failed = true;
+			guard_v92_upstream_failure(path);
 			received = V92_UPSTREAM_DATA_RX_OK;
 		}
 		if (received != V92_UPSTREAM_DATA_RX_FRAME && received != V92_UPSTREAM_DATA_RX_OK)
@@ -4917,7 +4919,11 @@ static enum pcm_call_result v92_data_octet_owned(
 				path->fast = (struct pcm_call_v92_fast_exchange){ 0 };
 		}
 		if (path->quality_guard_samples && --path->quality_guard_samples == 0u) {
-			enum v92_data_quality_result quality = v92_data_quality_observe(
+			/* Initial automatic selection has its own decreasing rate
+			 * ceiling. Preserve the online/fixed-map retry budget. */
+			enum v92_data_quality_result quality = call->b1_deadline_armed &&
+				call->v92_digital_phase4_configuration.upstream_selection == PCM_CALL_V92_UPSTREAM_DIRECT ?
+				V92_DATA_QUALITY_RETRAIN : v92_data_quality_observe(
 				&call->pcm_upstream_quality, path->pending_squared_error,
 				path->pending_ambiguous, path->pending_uncertain);
 
