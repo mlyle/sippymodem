@@ -381,13 +381,20 @@ enum modem_upstream_mode {
 #define DPSTAT_CHANGEDP   10
 #define DPSTAT_DISCONNECT 11
 
+enum modem_startup {
+	MODEM_STARTUP_UNKNOWN,
+	MODEM_STARTUP_V8,
+	MODEM_STARTUP_QC,
+	MODEM_STARTUP_V8_FALLBACK,
+};
+
 /* dsp info structure */
 struct dsp_info {
 	unsigned connection_type;
 	long     clock_deviation;
-	/* Joint V.8 menu selected LAPM; local AT configuration is not proof. */
+	/* Both V.8 menus or QC1/QCA1 records selected LAPM. */
 	unsigned v8_lapm;
-	unsigned qc_index;
+	enum modem_startup startup;
 	enum modem_pcm_role pcm_role;
 	/* Negotiated PCM-session upstream, not the configured capability. */
 	enum modem_upstream_mode upstream_mode;

@@ -10,6 +10,7 @@
 #include <g711.h>
 #include <modem.h>
 #include <modem_param.h>
+#include <v8_datapump.h>
 
 #include "test.h"
 
@@ -74,13 +75,7 @@ struct bit_endpoint {
 static struct dp_operations *registered_v90;
 static struct dp_operations *registered_v92;
 static struct dp_operations *registered_v34;
-
-/* This direct datapump bench bypasses V.8 entirely. */
-bool v8_datapump_selected_v34_fallback(struct dp *dp)
-{
-	(void)dp;
-	return false;
-}
+static struct dp_operations *registered_v8;
 
 int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
 {
@@ -92,6 +87,8 @@ int modem_dp_register(enum DP_ID id, struct dp_operations *operations)
 		registered = &registered_v92;
 	else if (id == DP_V34)
 		registered = &registered_v34;
+	else if (id == DP_V8)
+		registered = &registered_v8;
 	else
 		return -1;
 	if (operations == NULL || *registered != NULL)
@@ -110,6 +107,8 @@ int modem_dp_deregister(enum DP_ID id, struct dp_operations *operations)
 		registered = &registered_v92;
 	else if (id == DP_V34)
 		registered = &registered_v34;
+	else if (id == DP_V8)
+		registered = &registered_v8;
 	else
 		return -1;
 	if (operations == NULL || *registered != operations ||
@@ -127,6 +126,8 @@ struct dp_operations *modem_dp_get_registered_ops(enum DP_ID id)
 		return registered_v92;
 	if (id == DP_V34)
 		return registered_v34;
+	if (id == DP_V8)
+		return registered_v8;
 	return NULL;
 }
 
@@ -145,6 +146,8 @@ long modem_get_param(struct modem *modem, unsigned int name)
 		return modem->sregs[SREG_V92_QUICK_CONNECT] != 0;
 	if (name == MDMPRM_V92_PCM_UPSTREAM)
 		return modem->sregs[SREG_V92_PCM_UPSTREAM] != 0;
+	if (name == MDMPRM_V90_DIGITAL_INDICATION)
+		return modem->dsp_info.pcm_role == MODEM_PCM_ROLE_DIGITAL;
 	return -1;
 }
 
@@ -270,6 +273,174 @@ static uint8_t encode(enum g711_law law, int16_t sample)
 {
 	return law == G711_LAW_PCMA ?
 		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
+}
+
+static bool qc_adapter_step(struct modem *modem, enum g711_law law,
+	const uint8_t *input, uint8_t *output, unsigned count, int *status)
+{
+	struct dp *old = modem->dp;
+	int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+	bool exact = false;
+
+	for (unsigned i = 0; i < count; ++i)
+		receive[i] = decode(law, input[i]);
+	if (old->op->process_g711 != NULL)
+		*status = old->op->process_g711(old, law, input, receive, NULL,
+			output, transmit, (int)count, &exact);
+	else
+		*status = old->op->process(old, receive, transmit, (int)count);
+	if (!exact)
+		for (unsigned i = 0; i < count; ++i)
+			output[i] = encode(law, transmit[i]);
+	if (*status == DPSTAT_CHANGEDP) {
+		enum DP_ID target = modem->dp_requested;
+		struct dp_operations *ops = modem_dp_get_registered_ops(target == 0 ? DP_V8 : target);
+		struct dp *next = ops == NULL ? NULL : ops->create(modem,
+			target == 0 ? DP_V92 : target, modem->caller, MODEM_RATE, MODEM_FRAG, ops);
+
+		CHECK(next != NULL, "QC owner transfer failed from %u to %u", old->id, target);
+		modem->dp = next;
+		CHECK(old->op->delete(old) == 0, "QC transfer retained its old owner");
+	}
+	return true;
+}
+
+static bool check_qc_adapter(enum g711_law law, bool digital_caller, bool pcm_upstream,
+	bool decline, unsigned block)
+{
+	struct bit_endpoint bits[2] = {
+		{ .transmit_seed = 19, .receive_seed = 73 },
+		{ .transmit_seed = 73, .receive_seed = 19 },
+	};
+	struct modem modems[2] = {
+		endpoint_modem(MODEM_PCM_ROLE_ANALOG, &bits[0]),
+		endpoint_modem(MODEM_PCM_ROLE_DIGITAL, &bits[1]),
+	};
+	uint8_t channel[2][MODEM_FRAG];
+	bool linked[2] = { false, false };
+
+	CHECK(v8_datapump_register() == 0 && v90_datapump_register() == 0,
+	      "QC adapter registrations failed");
+	for (unsigned side = 0; side < 2; ++side) {
+		struct modem *m = &modems[side];
+
+		m->caller = (side == 1) == digital_caller;
+		m->min_rate = m->max_rate = 52000;
+		m->sregs[SREG_V92_PCM_UPSTREAM] = pcm_upstream;
+		m->sregs[SREG_V92_PCM_UPSTREAM_MAX_DRN] = 13; /* 40000 bit/s. */
+		m->sregs[SREG_V92_QUICK_CONNECT] = !decline || m->caller;
+		/* Single-sample cases also exercise asymmetric LAPM capability. */
+		m->sregs[SREG_EC] = pcm_upstream && (side == 1 || block != 1);
+		m->dp = registered_v8->create(m, DP_V92, m->caller,
+			MODEM_RATE, MODEM_FRAG, registered_v8);
+		CHECK(m->dp != NULL, "QC V.8 owner creation failed");
+		memset(channel[side], encode(law, 0), sizeof(channel[side]));
+	}
+	for (unsigned clock = 0; clock < 30u * MODEM_RATE; clock += block) {
+		for (unsigned side = 0; side < 2; ++side) {
+			int status;
+
+			CHECK(qc_adapter_step(&modems[side], law, channel[1 - side], channel[side], block, &status) &&
+			      (status == DPSTAT_OK || status == DPSTAT_CHANGEDP || status == DPSTAT_CONNECT),
+			      "QC adapter failed: law %u caller %u pcm %u decline %u block %u clock %u side %u status %d",
+			      law, digital_caller, pcm_upstream, decline, block, clock, side, status);
+			linked[side] |= status == DPSTAT_CONNECT;
+		}
+		if (linked[0] && linked[1])
+			bits[0].enabled = bits[1].enabled = true;
+		if (bits[0].received_bits >= SUSTAINED_RECEIVED_BITS && bits[1].received_bits >= SUSTAINED_RECEIVED_BITS)
+			break;
+	}
+	for (unsigned side = 0; side < 2; ++side) {
+		CHECK((side == 0 ? modems[side].rx_rate : modems[side].tx_rate) == 52000 &&
+		      (!pcm_upstream || (side == 0 ? modems[side].tx_rate : modems[side].rx_rate) == 40000),
+		      "QC adapter rates: law %u caller %u pcm %u decline %u side %u tx/rx %u/%u",
+		      law, digital_caller, pcm_upstream, decline, side, modems[side].tx_rate, modems[side].rx_rate);
+		CHECK(bits[side].received_bits >= SUSTAINED_RECEIVED_BITS && !bits[side].mismatch &&
+		      modems[side].dsp_info.startup == (decline ? MODEM_STARTUP_V8 : MODEM_STARTUP_QC) &&
+		      modems[side].dsp_info.v8_lapm == (pcm_upstream && block != 1) &&
+		      modems[side].dsp_info.upstream_mode == (pcm_upstream ? MODEM_UPSTREAM_PCM : MODEM_UPSTREAM_V34),
+		      "QC adapter lacked exact data or observed selection: law %u caller %u pcm %u decline %u side %u bits %llu mismatch %u startup %u",
+		      law, digital_caller, pcm_upstream, decline, side,
+		      (unsigned long long)bits[side].received_bits, bits[side].mismatch, modems[side].dsp_info.startup);
+		CHECK(modems[side].dp->op->delete(modems[side].dp) == 0, "QC owner deletion failed");
+	}
+	CHECK(v8_datapump_unregister() == 0 && v90_datapump_unregister() == 0,
+	      "QC adapter leaked registrations");
+	return true;
+}
+
+static bool test_qc_adapter(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned caller = 0; caller < 2; ++caller) {
+			for (unsigned pcm = 0; pcm < 2; ++pcm)
+				CHECK(check_qc_adapter(law, caller, pcm, false, MODEM_FRAG),
+				      "QC fragment handoff failed");
+			CHECK(check_qc_adapter(law, caller, true, false, 1) &&
+			      check_qc_adapter(law, caller, true, true, MODEM_FRAG),
+			      "QC exact/declined opening failed");
+		}
+	return true;
+}
+
+static bool check_qc_adapter_timeout(enum g711_law law, bool digital_answerer)
+{
+	struct bit_endpoint bits[2] = { 0 };
+	struct modem modems[2] = {
+		endpoint_modem(digital_answerer ? MODEM_PCM_ROLE_ANALOG : MODEM_PCM_ROLE_DIGITAL, &bits[0]),
+		endpoint_modem(digital_answerer ? MODEM_PCM_ROLE_DIGITAL : MODEM_PCM_ROLE_ANALOG, &bits[1]),
+	};
+	uint8_t channel[2][MODEM_FRAG];
+	bool accepted = false, restarted = false, failed = false;
+	unsigned clock;
+
+	CHECK(v8_datapump_register() == 0 && v90_datapump_register() == 0,
+	      "QC timeout registrations failed");
+	for (unsigned side = 0; side < 2; ++side) {
+		modems[side].caller = side == 0;
+		modems[side].sregs[SREG_V92_QUICK_CONNECT] = 1;
+		modems[side].sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 8;
+		modems[side].dp = registered_v8->create(&modems[side], DP_V92, side == 0,
+			MODEM_RATE, MODEM_FRAG, registered_v8);
+		CHECK(modems[side].dp != NULL, "QC timeout owner creation failed");
+		memset(channel[side], encode(law, 0), sizeof(channel[side]));
+	}
+	for (clock = 0; clock < 9u * MODEM_RATE; clock += MODEM_FRAG) {
+		int status;
+
+		if (!accepted)
+			CHECK(qc_adapter_step(&modems[0], law, channel[1], channel[0], MODEM_FRAG, &status),
+			      "QC timeout caller failed");
+		else
+			memset(channel[0], encode(law, 0), sizeof(channel[0]));
+		CHECK(qc_adapter_step(&modems[1], law, channel[0], channel[1], MODEM_FRAG, &status),
+		      "QC timeout answerer failed");
+		accepted |= modems[1].dp->id == DP_V92;
+		if (accepted && modems[1].dp->id == DP_V8)
+			restarted = true;
+		if (status == DPSTAT_ERROR) {
+			failed = true;
+			break;
+		}
+	}
+	CHECK(accepted && restarted && failed && clock == 8u * MODEM_RATE &&
+	      modems[1].dsp_info.startup != MODEM_STARTUP_QC,
+	      "QC fallback reset the deadline or claimed startup: law %u digital answer %u clock %u states %u/%u/%u",
+	      law, digital_answerer, clock, accepted, restarted, failed);
+	for (unsigned side = 0; side < 2; ++side)
+		CHECK(modems[side].dp->op->delete(modems[side].dp) == 0, "QC timeout retained owner");
+	CHECK(v8_datapump_unregister() == 0 && v90_datapump_unregister() == 0,
+	      "QC timeout leaked registrations");
+	return true;
+}
+
+static bool test_qc_adapter_timeout(void)
+{
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned digital = 0; digital < 2; ++digital)
+			CHECK(check_qc_adapter_timeout(law, digital), "QC fallback deadline failed");
+	return true;
 }
 
 static int16_t add_s16(int32_t sample)
@@ -1316,7 +1487,7 @@ static bool test_v92_pcm_upstream_selection(void)
 	CHECK(operations->create(
 		      &analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG,
 		      operations) == NULL,
-	      "V.92 accepted quick connect without retained history");
+	      "V.92 accepted quick connect without a V.8 handoff");
 	analog.sregs[SREG_V92_QUICK_CONNECT] = 0;
 	analog_dp = operations->create(
 		&analog, DP_V92, 1, MODEM_RATE, MODEM_FRAG, operations);
@@ -1863,6 +2034,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.92 Quick Connect adapter data", test_qc_adapter },
+		{ "V.92 Quick Connect fallback deadline", test_qc_adapter_timeout },
 		{ "PCM retrain after V.34 fallback", test_fallback_restart },
 		{ "online PCM retrain through V.34 fallback", test_online_fallback_restart },
 		{ "cleardown before CONNECT", test_training_cleardown },

@@ -8,6 +8,7 @@
 #include "modem_param.h"
 #include "pcm_call.h"
 #include "training_session.h"
+#include "v8_datapump.h"
 #include "v34_data_quality.h"
 #include "v34_datapump.h"
 #include "v90_host_echo.h"
@@ -27,6 +28,7 @@ struct v90_datapump {
 	struct training_session training;
 	struct v34_data_quality upstream_quality;
 	struct pcm_v34_fallback_handoff fallback;
+	struct v8_pcm_handoff startup;
 	struct v90_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
@@ -35,6 +37,7 @@ struct v90_datapump {
 	bool caller;
 	bool call_started;
 	bool fallback_ready;
+	bool v8_fallback_ready;
 	bool host_echo_margin_evaluated;
 	bool host_echo_delay_seeded;
 	bool upstream_quality_ready;
@@ -83,8 +86,7 @@ static bool v92_profile_requested(
 {
 	int configured, enabled;
 
-	if (modem == NULL || maximum_data_rate_number == NULL ||
-	    modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) != 0)
+	if (modem == NULL || maximum_data_rate_number == NULL)
 		return false;
 	enabled = modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM);
 	if (enabled != 0 && enabled != 1)
@@ -130,6 +132,9 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	closed = datapump->call_started && datapump->call.stage == PCM_CALL_CLOSED;
 	disconnecting = datapump->call_started && pcm_call_is_disconnecting(&datapump->call);
 	if (&datapump->dp != dp || datapump->role != role ||
+	    (datapump->v8_fallback_ready &&
+	     (!datapump->startup.quick_connect || !datapump->call_started ||
+	      datapump->call.stage != PCM_CALL_QC)) ||
 	    (closed && dp->status != DPSTAT_DISCONNECT) ||
 	    datapump->protocol != protocol ||
 	    ((role == V90_DIGITAL_MODEM) !=
@@ -194,6 +199,18 @@ bool v90_datapump_v34_fallback_handoff(
 	return true;
 }
 
+bool v90_datapump_v8_fallback_handoff(struct dp *dp, struct training_session *training)
+{
+	struct v90_datapump *datapump = v90_from_dp(dp);
+
+	if (datapump == NULL || training == NULL || !datapump->v8_fallback_ready ||
+	    training_session_has_failed(&datapump->training) ||
+	    memory_regions_overlap(datapump, sizeof(*datapump), training, sizeof(*training)))
+		return false;
+	*training = datapump->training;
+	return true;
+}
+
 static struct dp *create_v90(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -204,6 +221,7 @@ static struct dp *create_v90(
 	enum v90_modem_role role;
 	uint8_t maximum_pcm_upstream_data_rate_number = 0;
 	bool from_v34;
+	bool from_v8;
 
 	if (modem == NULL || !protocol_from_id(id, &protocol) ||
 	    (caller != 0 && caller != 1) ||
@@ -219,6 +237,15 @@ static struct dp *create_v90(
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
+	from_v8 = protocol == PCM_PROTOCOL_V92 && modem->dp != NULL &&
+		modem->dp->id == DP_V8;
+	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
+	if ((from_v8 && !v8_datapump_pcm_handoff(modem->dp, &datapump->startup)) ||
+	    (protocol == PCM_PROTOCOL_V92 && modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT) &&
+	     !from_v8 && !from_v34)) {
+		free(datapump);
+		return NULL;
+	}
 	datapump->role = role;
 	datapump->protocol = protocol;
 	datapump->caller = caller != 0;
@@ -243,7 +270,8 @@ static struct dp *create_v90(
 		free(datapump);
 		return NULL;
 	}
-	from_v34 = modem->dp != NULL && modem->dp->id == DP_V34;
+	if (from_v8)
+		datapump->training = datapump->startup.training;
 	if (from_v34) {
 		if (role != V90_DIGITAL_MODEM ||
 		    !v34_datapump_pcm_retrain_handoff(
@@ -611,8 +639,31 @@ static bool start_call(
 	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->host_echo != NULL)
 		configuration.phase3.v92_digital.trn1d_symbols =
 			V90_PHASE3_TRN1D_SYMBOLS;
-	if (pcm_call_init(&datapump->call, &configuration) != PCM_CALL_OK)
+	if ((datapump->startup.quick_connect ?
+	     pcm_call_init_qc(&datapump->call, &configuration,
+		     &datapump->startup.local, &datapump->startup.peer) :
+	     pcm_call_init(&datapump->call, &configuration)) != PCM_CALL_OK)
 		return false;
+	for (unsigned int index = 0; index < datapump->startup.tail_count; ++index) {
+		struct pcm_call_observation observation;
+		int16_t input = datapump->startup.receive_tail[index];
+		uint8_t received = media_law == G711_LAW_PCMU ?
+			g711_encode_pcmu(input) : g711_encode_pcma(input);
+		uint8_t silence = media_law == G711_LAW_PCMU ?
+			g711_encode_pcmu(0) : g711_encode_pcma(0);
+		uint8_t output;
+
+		/* V.8 already emitted these quiet samples and charged the training
+		 * clock. Replay their RX history before accepting the next fragment. */
+		if (pcm_call_octet(&datapump->call, received, input,
+			    &output, &observation) != PCM_CALL_OK ||
+		    output != silence)
+			return false;
+		if (datapump->host_echo != NULL &&
+		    v90_host_echo_advance(datapump->host_echo, V90_HOST_ECHO_BYPASS,
+			    input, input, 0) != V90_HOST_ECHO_OK)
+			return false;
+	}
 	datapump->media_law = media_law;
 	datapump->call_started = true;
 	return true;
@@ -634,6 +685,7 @@ static bool process_octet(
 	struct pcm_call_data_event event = { 0 };
 	enum pcm_call_result result;
 	bool was_online = training_session_is_online(&datapump->training);
+	bool was_qc = datapump->call.stage == PCM_CALL_QC;
 
 	/* The datapump is the serialized owner of a call that every public
 	 * transition validates.  Consult its stage directly here instead of
@@ -666,6 +718,13 @@ static bool process_octet(
 		*fallback = true;
 		return true;
 	}
+	if (result == PCM_CALL_V8_FALLBACK_READY) {
+		datapump->v8_fallback_ready = true;
+		*transmitted = datapump->media_law == G711_LAW_PCMU ?
+			g711_encode_pcmu(0) : g711_encode_pcma(0);
+		*fallback = true;
+		return true;
+	}
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
 		datapump->dp.status = DPSTAT_DISCONNECT;
 		*disconnected = true;
@@ -673,6 +732,8 @@ static bool process_octet(
 	}
 	if (result != PCM_CALL_OK)
 		return false;
+	if (was_qc && datapump->call.stage == PCM_CALL_PHASE2)
+		datapump->dp.modem->dsp_info.startup = MODEM_STARTUP_QC;
 	if (was_online &&
 	    datapump->call.retrain_active && !pcm_call_is_online(&datapump->call) &&
 	    training_session_start_retrain(
@@ -895,8 +956,9 @@ static int process_v90_g711(
 			/* V.90 has completed the shared Phase 2 exchange.  Give the
 			 * V.34 owner a complete bounded Phase 3/4 interval instead of
 			 * charging it for the preceding PCM negotiation. */
-			if (training_session_transfer(&datapump->training) !=
-			    TRAINING_SESSION_OK)
+			if (!datapump->v8_fallback_ready &&
+			    training_session_transfer(&datapump->training) !=
+				    TRAINING_SESSION_OK)
 				goto failure;
 			datapump->fallback.training = datapump->training;
 			mute_output(
@@ -904,7 +966,7 @@ static int process_v90_g711(
 				transmit_samples + index + 1, remaining);
 			if (modem_set_param(
 				    datapump->dp.modem, MDMPRM_DP_REQUESTED,
-				    DP_V34) != 0)
+				    datapump->v8_fallback_ready ? 0 : DP_V34) != 0)
 				goto failure;
 			*exact_output = true;
 			return DPSTAT_CHANGEDP;

@@ -39,4 +39,8 @@ bool v90_datapump_start_fast_exchange(struct dp *dp);
 bool v90_datapump_v34_fallback_handoff(
 	struct dp *dp, struct pcm_v34_fallback_handoff *handoff);
 
+/* QC signal timeout restarts ordinary V.8 once, retaining the deadline. */
+bool v90_datapump_v8_fallback_handoff(
+	struct dp *dp, struct training_session *training);
+
 #endif /* V90_DATAPUMP_H */

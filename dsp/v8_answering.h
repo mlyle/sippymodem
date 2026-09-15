@@ -75,8 +75,8 @@ struct v8_answering {
 enum v8_answering_result v8_answering_init(
 	struct v8_answering *answering,
 	const struct v8_menu *local_menu);
-/* Opt in before processing any samples, after the owner admits retained
- * history for this peer. Copy the local QCA1 response; borrow no history.
+/* Opt in before processing samples with role-local signal parameters.
+ * Short Phase 2 needs separately admitted retained training. Copy QCA1.
  * Only complementary analogue/digital QC1 requests are acknowledged. Other
  * requests, or no opt-in, retain ordinary CM/JM negotiation.
  * QC_COMPLETE ends the QCA1 transmit-filter tail, not the full short Phase 1.

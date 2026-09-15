@@ -3,12 +3,27 @@
 #ifndef V8_DATAPUMP_H
 #define V8_DATAPUMP_H
 
-#include "modem_defs.h"
+#include "modem.h"
+#include "training_session.h"
 #include "v8_menu.h"
+#include "v92_qc1.h"
 
 #include <stdbool.h>
 
 struct dp;
+
+/* Copied before the V.8 owner is deleted. QC transfers after the final
+ * QC1/QCA1 sample; the fragment tail was already emitted as silence. */
+struct v8_pcm_handoff {
+	struct training_session training;
+	struct v92_qc1_message local;
+	struct v92_qc1_message peer;
+	int16_t receive_tail[MODEM_FRAG - 1];
+	unsigned int tail_count;
+	bool quick_connect;
+};
+
+bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff);
 
 /* Returns the classic V.8 mode carried with the requested datapump. */
 static inline enum v8_modulation

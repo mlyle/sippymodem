@@ -53,6 +53,7 @@ CONNECT_MODULATIONS = {
 }
 CONNECT_PROTOCOLS = {b"LAPM": "LAPM", b"NONE": "none"}
 CONNECT_UPSTREAM_MODES = {b"V34": "V.34", b"PCM": "PCM"}
+CONNECT_STARTUPS = {b"QC": "QC", b"V8": "V.8", b"V8-FALLBACK": "V.8 fallback"}
 CONNECT_COMPRESSIONS = {
     b"V44": "V.44",
     b"V42BIS": "V.42bis",
@@ -88,6 +89,7 @@ class ConnectReport:
     receive_bit_rate: int | None = None
     transmit_bit_rate: int | None = None
     upstream_mode: str | None = None
+    startup: str | None = None
 
 
 @dataclass(frozen=True)
@@ -136,6 +138,7 @@ class ResponseDecoder:
         self._receive_bit_rate: int | None = None
         self._transmit_bit_rate: int | None = None
         self._upstream_mode: str | None = None
+        self._startup: str | None = None
 
     def feed(self, data: bytes) -> None:
         for byte in data:
@@ -164,6 +167,8 @@ class ResponseDecoder:
                             self._transmit_bit_rate = value
                         elif name == "upstream_mode":
                             self._upstream_mode = value
+                        elif name == "startup":
+                            self._startup = value
                     result = _classify_response(line)
                     if result is not None:
                         self._results.append(result)
@@ -201,6 +206,7 @@ class ResponseDecoder:
             receive_bit_rate=self._receive_bit_rate,
             transmit_bit_rate=self._transmit_bit_rate,
             upstream_mode=self._upstream_mode,
+            startup=self._startup,
         )
 
     def begin_command_response(self) -> None:
@@ -216,6 +222,7 @@ class ResponseDecoder:
         self._receive_bit_rate = None
         self._transmit_bit_rate = None
         self._upstream_mode = None
+        self._startup = None
 
 
 def _classify_response(line: bytes) -> str | None:
@@ -247,6 +254,7 @@ def _classify_connect_detail(line: bytes) -> tuple[str, str | int] | None:
         (b"PROTOCOL:", "protocol", CONNECT_PROTOCOLS),
         (b"COMPRESSION:", "compression", CONNECT_COMPRESSIONS),
         (b"UPSTREAM:", "upstream_mode", CONNECT_UPSTREAM_MODES),
+        (b"STARTUP:", "startup", CONNECT_STARTUPS),
     )
     for prefix, name, values in text_fields:
         if normalized.startswith(prefix):

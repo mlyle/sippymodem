@@ -65,8 +65,8 @@ struct v8_calling {
 enum v8_calling_result v8_calling_init(
 	struct v8_calling *calling,
 	const struct v8_menu *local_menu);
-/* Opt in before processing samples, after the caller has admitted retained
- * settings for this peer and modem role. The request is copied. QC_COMPLETE
+/* Opt in before processing samples with role-local signal parameters.
+ * Short Phase 2 needs separately admitted retained training. QC_COMPLETE
  * hands off to the remaining short Phase 1; it is not full menu negotiation.
  * Use single-sample processing for an exact QC handoff. */
 enum v8_calling_result v8_calling_enable_quick_connect(

@@ -998,6 +998,52 @@ static bool test_receive_dc_frontend(void)
 	return true;
 }
 
+static bool test_connect_reports_observed_startup(void)
+{
+	struct modem_driver driver = {
+		.name = "startup report test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	static const struct {
+		enum modem_startup startup;
+		const char *text;
+	} cases[] = {
+		{ MODEM_STARTUP_UNKNOWN, NULL },
+		{ MODEM_STARTUP_QC, "Startup: QC\r\n" },
+		{ MODEM_STARTUP_V8, "Startup: V8\r\n" },
+		{ MODEM_STARTUP_V8_FALLBACK, "Startup: V8-FALLBACK\r\n" },
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		struct modem *modem = modem_create(&driver, driver.name);
+		char response[256];
+		int result_pipe[2];
+		ssize_t length;
+
+		CHECK(modem != NULL && pipe(result_pipe) == 0,
+		      "startup report fixture failed");
+		modem->pty = result_pipe[1];
+		modem->sregs[SREG_CONNNECT_MSG_FORMAT] = 1;
+		modem->sregs[SREG_V92_QUICK_CONNECT] = 1;
+		modem->dsp_info.startup = cases[index].startup;
+		modem_update_status(modem, STATUS_EC_LINK);
+		close(result_pipe[1]);
+		modem->pty = -1;
+		length = read(result_pipe[0], response, sizeof(response) - 1);
+		close(result_pipe[0]);
+		CHECK(length > 0, "CONNECT produced no startup report");
+		response[length] = '\0';
+		CHECK(strstr(response, "CONNECT") != NULL &&
+		      (cases[index].text != NULL ? strstr(response, cases[index].text) != NULL :
+		       strstr(response, "Startup:") == NULL),
+		      "CONNECT substituted configuration for observed startup: %s", response);
+		modem_delete(modem);
+	}
+	return true;
+}
+
 static bool test_datapump_error_control_policy(void)
 {
 	struct modem_driver driver = {
@@ -1163,9 +1209,11 @@ static bool test_v92_negotiated_lapm_bypasses_detection(void)
 				modem_dp_reconnected(modem);
 			}
 			modem->dp = NULL;
+			modem->dsp_info.startup = MODEM_STARTUP_QC;
 			CHECK(process_at_command(modem, "ATZ") == 0 &&
 			      process_at_command(modem, "ATDpeer") == 1 &&
-			      modem->dsp_info.v8_lapm == 0,
+			      modem->dsp_info.v8_lapm == 0 &&
+			      modem->dsp_info.startup == MODEM_STARTUP_UNKNOWN,
 			      "a new call inherited the previous V.8 LAPM selection");
 			modem_delete(modem);
 		}
@@ -3922,6 +3970,7 @@ int main(void)
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
 		{ "modulation report identity", test_modulation_report_identity },
+		{ "observed CONNECT startup", test_connect_reports_observed_startup },
 		{ "data-pump error-control policy",
 		  test_datapump_error_control_policy },
 		{ "V.92 negotiated LAPM detection bypass",

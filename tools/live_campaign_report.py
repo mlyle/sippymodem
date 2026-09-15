@@ -124,6 +124,8 @@ class AttemptResult:
     retrain_receive_rate: int | None = None
     retrain_transmit_rate: int | None = None
     retrain_upstream_mode: str | None = None
+    startup: str | None = None
+    retrain_startup: str | None = None
 
     @property
     def profile_mismatch(self) -> bool:

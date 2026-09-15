@@ -110,14 +110,12 @@ standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 V.92 are registered. V.90 can select every standard PCM downstream rate from
 28000 through 56000 bit/s and a conventional V.34 upstream from 4800 through
 33600 bit/s at 3000, 3200, or 3429 symbol/s. V.90 and V.92 share one PCM call
-state machine. The implemented V.92 profile uses PCM upstream with quick
-connect disabled; V.92 conventional upstream and quick connect remain
-unavailable and fail closed during profile selection. This experimental profile
+state machine. V.92 supports PCM or conventional upstream and optional
+QC1/QCA1 Quick Connect startup (`AT+V92Q=1`). These experimental profiles
 can carry native duplex host data and perform full retrains. Sustained excessive
 PCM-upstream residuals or ambiguous payload trigger up to two automatic full
-retrains per call; ambiguous bits are never delivered. V.92 zero-rate cleardown
-is not yet implemented. Generated-channel tests are not evidence of robust
-operation on a physical line.
+retrains per call; ambiguous bits are never delivered. Generated-channel tests
+are not evidence of robust operation on a physical line.
 
 The PCM call owner supports V.92 shortened Phase 2/3 using caller-retained
 training settings. Its read-only profile query uses the actual training
@@ -136,8 +134,13 @@ The V.8 calling and answering owners exchange explicitly admitted QC1/QCA1
 messages using their existing FSK streams, while retaining ordinary menu
 negotiation for unadmitted or unsuitable requests. A digital caller recognizes
 continued ANSam as refusal without treating silence as refusal. Peer-keyed
-history retention and complete Quick Connect Phase 1 are not yet integrated
-into the modem; these boundaries do not enable modem-level Quick Connect.
+history retention is not yet integrated into the modem, so its Quick Connect
+opening uses full Phase 2 rather than claiming saved channel training. The
+modem copies QC1/QCA1 and the received fragment tail into the PCM call owner,
+preserves the training deadline across ordinary-V.8 fallback, and reports
+`Startup: QC`, `V8`, or `V8-FALLBACK` from the observed exchange. Live Quick
+Connect cases require that evidence; fallback calls still exercise data and
+retrains but are reported as profile mismatches.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 

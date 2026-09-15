@@ -847,6 +847,18 @@ class LiveCampaignTests(unittest.TestCase):
                         else:
                             self.assertIn("upstream instead of PCM", error)
 
+    def test_quick_connect_requires_observed_startup(self) -> None:
+        for mode, protocol in (("raw", "none"), ("lapm", "LAPM")):
+            case = CASES_BY_NAME[f"v92-quick-connect-{mode}-callback"]
+            for startup in (None, "V.8", "V.8 fallback", "QC"):
+                report = ConnectReport("V.92", protocol, "none", 24000, 52000,
+                                       startup=startup)
+                error = _case_connect_error(case, report)
+                if startup == "QC":
+                    self.assertIsNone(error)
+                else:
+                    self.assertIn("startup instead of Quick Connect", error)
+
     def test_mismatched_calls_continue_data_and_both_retrains(self) -> None:
         for mode, name in (
             ("wrong-profile", "v21-300-originator"),

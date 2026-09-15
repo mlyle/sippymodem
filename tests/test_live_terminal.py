@@ -165,6 +165,18 @@ class LiveTerminalTests(unittest.TestCase):
         decoder.feed(b"Modulation: V92\r\nCONNECT 48000\r\n")
         self.assertIsNone(decoder.connect_report.upstream_mode)
 
+    def test_startup_report_is_observed_allowlisted_and_reset(self) -> None:
+        decoder = ResponseDecoder()
+        for value, expected in ((b"QC", "QC"), (b"V8", "V.8"),
+                                (b"V8-FALLBACK", "V.8 fallback"),
+                                (b"private-peer", None)):
+            decoder.begin_command_response()
+            decoder.feed(b"Startup: " + value + b"\r\nCONNECT 52000\r\n")
+            self.assertEqual(decoder.connect_report.startup, expected)
+        decoder.begin_command_response()
+        decoder.feed(b"CONNECT 52000\r\n")
+        self.assertIsNone(decoder.connect_report.startup)
+
     def test_response_decoder_allowlists_high_speed_profile_labels(self) -> None:
         for wire_name, expected in (
             (b"V34", "V.34"),

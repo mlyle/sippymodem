@@ -557,6 +557,9 @@ def _case_connect_error(
         else FAMILY_CONNECT_MODULATIONS[case.family]
     )
     protocol = "none" if case.link_mode == LINK_RAW else "LAPM"
+    if case.feature == "quick-connect" and report.startup != "QC":
+        actual = report.startup or "unreported"
+        return f"CONNECT used {actual} startup instead of Quick Connect"
     if (case.feature == "pcm-upstream" and report.modulation == "V.92"
             and report.upstream_mode != "PCM"):
         actual = report.upstream_mode or "unreported"
@@ -1051,12 +1054,14 @@ def run_physical_attempt(
         receive_rate=state.report.receive_bit_rate,
         transmit_rate=state.report.transmit_bit_rate,
         upstream_mode=state.report.upstream_mode,
+        startup=state.report.startup,
         retrain_modulation=state.retrain_report.modulation,
         retrain_protocol=state.retrain_report.protocol,
         retrain_compression=state.retrain_report.compression,
         retrain_receive_rate=state.retrain_report.receive_bit_rate,
         retrain_transmit_rate=state.retrain_report.transmit_bit_rate,
         retrain_upstream_mode=state.retrain_report.upstream_mode,
+        retrain_startup=state.retrain_report.startup,
         profile_error=state.profile_error,
         detail=state.detail,
         artifact=artifacts.directory.name,

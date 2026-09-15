@@ -2,10 +2,13 @@
 
 #include "v8_datapump.h"
 
+#include "datapump_timing.h"
+#include "memory_region.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "v8_answering.h"
 #include "v8_calling.h"
+#include "v90_datapump.h"
 
 #include <limits.h>
 #include <stdint.h>
@@ -18,11 +21,13 @@ struct v8_datapump {
 		struct v8_calling calling;
 		struct v8_answering answering;
 	} handshake;
+	struct v8_pcm_handoff handoff;
 	enum DP_ID requested_datapump;
 	enum v8_modulation negotiated_modulation;
 	bool caller;
 	bool handoff_requested;
 	bool v34_fallback;
+	bool restarted;
 };
 
 static struct dp *create_v8(
@@ -52,7 +57,11 @@ static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 		datapump->requested_datapump);
 	if (&datapump->dp != dp ||
 	    modulation == V8_MODULATION_NONE ||
-	    modulation != datapump->negotiated_modulation)
+	    modulation != datapump->negotiated_modulation ||
+	    datapump->handoff.tail_count >= MODEM_FRAG ||
+	    (!datapump->handoff.quick_connect && datapump->handoff.tail_count != 0) ||
+	    (datapump->requested_datapump == DP_V92 &&
+	     !training_session_is_valid(&datapump->handoff.training)))
 		return NULL;
 	return datapump;
 }
@@ -71,8 +80,10 @@ static struct dp *create_v8(
 	enum v8_modulation modulation =
 		v8_datapump_modulation(id);
 	enum v8_menu_result menu_result;
-	bool digital;
+	bool digital = false;
 	bool lapm;
+	bool restarting = modem != NULL && modem->dp != NULL &&
+		modem->dp->id == DP_V92;
 
 	if (modem == NULL || (caller != 0 && caller != 1) ||
 	    sample_rate != MODEM_RATE || max_fragment != MODEM_FRAG ||
@@ -111,6 +122,36 @@ static struct dp *create_v8(
 	}
 	datapump->requested_datapump = id;
 	datapump->negotiated_modulation = modulation;
+	if (id == DP_V92) {
+		if (restarting ?
+		    !v90_datapump_v8_fallback_handoff(modem->dp, &datapump->handoff.training) :
+		    training_session_init(&datapump->handoff.training,
+			    datapump_carrier_wait_ticks(modem)) != TRAINING_SESSION_OK) {
+			free(datapump);
+			return NULL;
+		}
+		datapump->restarted = restarting;
+		if (restarting && !caller)
+			datapump->handshake.answering.quiet_samples = 0;
+		if (!restarting && modem_get_param(modem, MDMPRM_V92_QUICK_CONNECT)) {
+			struct v92_qc1_message local = {
+				.sender = digital ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
+				.acknowledgment = !caller,
+				.lapm = lapm,
+			};
+
+			/* Table 2 index 0 selects UQTS 61; Table 11 level 0 selects
+			 * -9.5 dBm0 ANSpcm. These are fresh signal parameters, not
+			 * saved channel training or permission for short Phase 2. */
+			if (caller ? v8_calling_enable_quick_connect(
+				    &datapump->handshake.calling, &local) != V8_CALLING_OK :
+			    v8_answering_enable_quick_connect(
+				    &datapump->handshake.answering, &local) != V8_ANSWERING_OK) {
+				free(datapump);
+				return NULL;
+			}
+		}
+	}
 	datapump->dp = (struct dp){
 		.id = DP_V8,
 		.modem = modem,
@@ -167,6 +208,26 @@ static int request_handoff(struct v8_datapump *datapump)
 	enum DP_ID handoff = datapump->requested_datapump;
 	bool selected;
 	bool v34_fallback = false;
+	bool lapm;
+	bool qc = datapump->caller ?
+		datapump->handshake.calling.state == V8_CALLING_QC_COMPLETE :
+		datapump->handshake.answering.state == V8_ANSWERING_QC_COMPLETE;
+
+	if (qc) {
+		if (handoff != DP_V92 || datapump->restarted)
+			return DPSTAT_ERROR;
+		datapump->handoff.local = datapump->caller ?
+			datapump->handshake.calling.qc_request :
+			datapump->handshake.answering.qc_response;
+		datapump->handoff.peer = datapump->caller ?
+			datapump->handshake.calling.qc_response :
+			datapump->handshake.answering.qc_request;
+		datapump->handoff.quick_connect = true;
+		pcm_role = datapump->handoff.local.sender == V90_DIGITAL_MODEM ?
+			MODEM_PCM_ROLE_DIGITAL : MODEM_PCM_ROLE_ANALOG;
+		lapm = datapump->handoff.local.lapm && datapump->handoff.peer.lapm;
+		goto selected;
+	}
 
 	if (datapump->caller) {
 		selected = v8_calling_selection(
@@ -192,6 +253,8 @@ static int request_handoff(struct v8_datapump *datapump)
 	} else if (menu.pcm_present) {
 		return DPSTAT_ERROR;
 	}
+	lapm = menu.lapm;
+selected:
 	if (modem_set_param(
 		    datapump->dp.modem, MDMPRM_DP_REQUESTED,
 		    handoff) != 0)
@@ -200,17 +263,19 @@ static int request_handoff(struct v8_datapump *datapump)
 	/* V.8 prot0 can select LAPM without ODP/ADP, but omitting prot0 does
 	 * not decline later V.42 negotiation.  Retain the local AT\N choice so
 	 * the ordinary detector can resolve the peer's selection. */
-	if (menu.lapm)
+	if (lapm)
 		datapump->dp.modem->cfg.ec = 1;
-	datapump->dp.modem->dsp_info.v8_lapm = menu.lapm;
+	datapump->dp.modem->dsp_info.v8_lapm = lapm;
+	datapump->dp.modem->dsp_info.startup = qc ? MODEM_STARTUP_UNKNOWN :
+		datapump->restarted ? MODEM_STARTUP_V8_FALLBACK : MODEM_STARTUP_V8;
 	datapump->v34_fallback = v34_fallback;
 	datapump->handoff_requested = true;
 	datapump->dp.status = DPSTAT_CHANGEDP;
 	return DPSTAT_CHANGEDP;
 }
 
-static int process_v8(
-	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+static int process_v8_samples(
+	struct dp *dp, const void *receive_buffer, void *transmit_buffer, int count)
 {
 	struct v8_datapump *datapump = v8_from_dp(dp);
 	const int16_t *receive = receive_buffer;
@@ -253,6 +318,49 @@ static int process_v8(
 		return DPSTAT_ERROR;
 	}
 	return complete ? request_handoff(datapump) : DPSTAT_OK;
+}
+
+static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+{
+	struct v8_datapump *datapump = v8_from_dp(dp);
+	const int16_t *receive = receive_buffer;
+	int16_t *transmit = transmit_buffer;
+
+	if (datapump == NULL || datapump->requested_datapump != DP_V92 ||
+	    receive == NULL || transmit == NULL || count <= 0 || count > MODEM_FRAG ||
+	    datapump->handoff_requested)
+		return process_v8_samples(dp, receive_buffer, transmit_buffer, count);
+	if (training_session_advance(&datapump->handoff.training, (unsigned)count) != TRAINING_SESSION_OK) {
+		memset(transmit, 0, (size_t)count * sizeof(*transmit));
+		return DPSTAT_ERROR;
+	}
+	for (int index = 0; index < count; ++index) {
+		int result = process_v8_samples(dp, receive + index, transmit + index, 1);
+
+		if (result == DPSTAT_OK)
+			continue;
+		if (result == DPSTAT_CHANGEDP && datapump->handoff.quick_connect) {
+			datapump->handoff.tail_count = (unsigned)(count - index - 1);
+			memcpy(datapump->handoff.receive_tail, receive + index + 1,
+			       datapump->handoff.tail_count * sizeof(*receive));
+		}
+		memset(transmit + index + 1, 0, (size_t)(count - index - 1) * sizeof(*transmit));
+		return result;
+	}
+	return DPSTAT_OK;
+}
+
+bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff)
+{
+	const struct v8_datapump *datapump = v8_from_dp_const(dp);
+
+	if (datapump == NULL || handoff == NULL || !datapump->handoff_requested ||
+	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback ||
+	    training_session_has_failed(&datapump->handoff.training) ||
+	    memory_regions_overlap(datapump, sizeof(*datapump), handoff, sizeof(*handoff)))
+		return false;
+	*handoff = datapump->handoff;
+	return true;
 }
 
 int v8_datapump_register(void)
