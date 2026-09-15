@@ -147,13 +147,16 @@ static bool detect_generated(enum test_codec codec)
 	struct v8_ansam_generator generator;
 	struct v8_ansam_detector blocked;
 	struct v8_ansam_detector samplewise;
+	struct v8_ansam_detector observed;
 	struct v8_line_conditioner blocked_line;
 	struct v8_line_conditioner samplewise_line;
+	struct v8_line_conditioner observed_line;
 	/* A-law uses the G.191 one's-complement quantization intervals. */
 	static const uint16_t expected_energy[] = { 4680, 4637, 4686 };
 	int16_t samples[73];
 	bool blocked_detected = false;
 	bool sample_detected = false;
+	bool observed_detected = false;
 	size_t detection_sample = 0;
 	size_t total = 0;
 
@@ -171,6 +174,8 @@ static bool detect_generated(enum test_codec codec)
 		      &samplewise_line, V8_CALLING_STATION) ==
 		      V8_LINE_CONDITIONER_OK,
 	      "ANSam loopback did not initialize");
+	observed = samplewise;
+	observed_line = samplewise_line;
 	while (!sample_detected && total < 2u * V8_ANSAM_SAMPLE_RATE) {
 		CHECK(v8_ansam_generate(
 			      &generator, samples, ARRAY_LENGTH(samples)) ==
@@ -184,12 +189,29 @@ static bool detect_generated(enum test_codec codec)
 			      &blocked_detected) == V8_ANSAM_OK,
 		      "ANSam loopback detection failed");
 		for (size_t index = 0; index < ARRAY_LENGTH(samples); ++index) {
+			struct v8_line_conditioned_block block, saved_block;
+			bool ready;
+
 			CHECK(v8_ansam_detect(
 				      &samplewise, &samplewise_line,
 				      &samples[index], 1,
 				      &sample_detected) ==
 				      V8_ANSAM_OK,
 			      "samplewise ANSam detection failed");
+			CHECK(v8_line_conditioner_process_sample(&observed_line,
+				      samples[index], &block, &ready) == V8_LINE_CONDITIONER_OK,
+			      "shared ANSam conditioning failed");
+			if (ready) {
+				memcpy(&saved_block, &block, sizeof(block));
+				CHECK(v8_ansam_observe_block(&observed, &observed_line,
+					      &block, &observed_detected) == V8_ANSAM_OK &&
+				      memcmp(&block, &saved_block, sizeof(block)) == 0,
+				      "ANSam block observation modified its input");
+			}
+			CHECK(observed_detected == sample_detected &&
+			      memcmp(&observed, &samplewise, sizeof(observed)) == 0 &&
+			      memcmp(&observed_line, &samplewise_line, sizeof(observed_line)) == 0,
+			      "ANSam block observation changed the samplewise oracle");
 			if (sample_detected && detection_sample == 0)
 				detection_sample = total + index + 1u;
 		}
@@ -392,17 +414,24 @@ static bool test_interrupted_carrier(void)
 		for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
 			struct v8_ansam_generator generator;
 			struct v8_ansam_detector detector;
+			struct v8_ansam_detector observed;
 			struct v8_line_conditioner line;
+			struct v8_line_conditioner observed_line;
 			size_t detection = 0;
+			bool observed_detected = false;
 
 			CHECK(v8_ansam_generator_init(&generator, TEST_AMPLITUDE, true) ==
 				      V8_ANSAM_OK && v8_ansam_detector_init(&detector) ==
 				      V8_ANSAM_OK && v8_line_conditioner_init(&line,
 				      V8_CALLING_STATION) == V8_LINE_CONDITIONER_OK,
 			      "interrupted ANSam fixture");
+			observed = detector;
+			observed_line = line;
 			for (size_t clock = 0; clock < 24000 && detection == 0; ++clock) {
 				int16_t sample;
 				bool detected;
+				struct v8_line_conditioned_block block;
+				bool ready;
 
 				CHECK(v8_ansam_generate(&generator, &sample, 1) == V8_ANSAM_OK,
 				      "interrupted ANSam generation");
@@ -412,6 +441,14 @@ static bool test_interrupted_carrier(void)
 				sample = codec_round_trip(sample, codec);
 				CHECK(v8_ansam_detect(&detector, &line, &sample, 1, &detected) ==
 					      V8_ANSAM_OK, "interrupted ANSam detection");
+				CHECK(v8_line_conditioner_process_sample(&observed_line, sample,
+					      &block, &ready) == V8_LINE_CONDITIONER_OK &&
+				      (!ready || v8_ansam_observe_block(&observed, &observed_line,
+					      &block, &observed_detected) == V8_ANSAM_OK) &&
+				      observed_detected == detected &&
+				      memcmp(&observed, &detector, sizeof(detector)) == 0 &&
+				      memcmp(&observed_line, &line, sizeof(line)) == 0,
+				      "interrupted block observation differs from samplewise detection");
 				if (detected)
 					detection = clock + 1;
 			}
@@ -421,6 +458,40 @@ static bool test_interrupted_carrier(void)
 			      codec, cases[index].name, detection);
 		}
 	}
+	return true;
+}
+
+static bool test_block_validation(void)
+{
+	struct v8_ansam_detector detector, saved;
+	struct v8_line_conditioner line, saved_line;
+	struct v8_line_conditioned_block block = { 0 }, saved_block = { 0 };
+	bool detected = true;
+
+	CHECK(v8_ansam_detector_init(&detector) == V8_ANSAM_OK &&
+	      v8_line_conditioner_init(&line, V8_CALLING_STATION) == V8_LINE_CONDITIONER_OK,
+	      "ANSam block validation fixture");
+	saved = detector;
+	saved_line = line;
+	CHECK(v8_ansam_observe_block(NULL, &line, &block, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, NULL, &block, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, NULL, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, &block, NULL) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, (void *)&detector, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, (void *)&line, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, &block, (void *)&block) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, &block, (void *)&detector) == V8_ANSAM_INVALID_ARGUMENT &&
+	      v8_ansam_observe_block(&detector, &line, &block, (void *)&line) == V8_ANSAM_INVALID_ARGUMENT &&
+	      memcmp(&detector, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
+	      memcmp(&block, &saved_block, sizeof(block)) == 0 && detected,
+	      "ANSam block rejection changed state, input, or output");
+	line.role = V8_ANSWERING_STATION;
+	saved_line = line;
+	CHECK(v8_ansam_observe_block(&detector, &line, &block, &detected) == V8_ANSAM_INVALID_ARGUMENT &&
+	      memcmp(&detector, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&line, &saved_line, sizeof(line)) == 0 && detected,
+	      "ANSam block accepted the wrong line role");
 	return true;
 }
 
@@ -526,6 +597,7 @@ int main(void)
 		{ "phase-reversal alignment", test_reversal_alignment },
 		{ "gain stability", test_gain_stability },
 		{ "interrupted carrier", test_interrupted_carrier },
+		{ "block validation", test_block_validation },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

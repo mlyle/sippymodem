@@ -85,6 +85,13 @@ enum v8_ansam_result v8_ansam_detector_init(
 	struct v8_ansam_detector *detector);
 bool v8_ansam_detector_is_valid(
 	const struct v8_ansam_detector *detector);
+/* Observe a block already produced by the shared line conditioner. The block
+ * stays read-only and the conditioner is not advanced again. Gain requests
+ * apply to following samples. Invalid calls leave state and output intact. */
+enum v8_ansam_result v8_ansam_observe_block(
+	struct v8_ansam_detector *detector,
+	struct v8_line_conditioner *conditioner,
+	const struct v8_line_conditioned_block *block, bool *detected);
 enum v8_ansam_result v8_ansam_detect(
 	struct v8_ansam_detector *detector,
 	struct v8_line_conditioner *conditioner,

@@ -407,6 +407,45 @@ static bool process_block(
 	return true;
 }
 
+enum v8_ansam_result v8_ansam_observe_block(
+	struct v8_ansam_detector *detector,
+	struct v8_line_conditioner *conditioner,
+	const struct v8_line_conditioned_block *block, bool *detected)
+{
+	struct v8_ansam_detector next;
+	struct v8_line_conditioner next_line;
+
+	if (!v8_ansam_detector_is_valid(detector) ||
+	    !v8_line_conditioner_is_valid(conditioner) ||
+	    conditioner->role != V8_CALLING_STATION || block == NULL ||
+	    detected == NULL ||
+	    memory_regions_overlap(
+		    detector, sizeof(*detector), conditioner, sizeof(*conditioner)) ||
+	    memory_regions_overlap(
+		    detector, sizeof(*detector), block, sizeof(*block)) ||
+	    memory_regions_overlap(
+		    conditioner, sizeof(*conditioner), block, sizeof(*block)) ||
+	    memory_regions_overlap(
+		    detector, sizeof(*detector), detected, sizeof(*detected)) ||
+	    memory_regions_overlap(
+		    conditioner, sizeof(*conditioner), detected, sizeof(*detected)) ||
+	    memory_regions_overlap(
+		    block, sizeof(*block), detected, sizeof(*detected)))
+		return V8_ANSAM_INVALID_ARGUMENT;
+
+	next = *detector;
+	next_line = *conditioner;
+	if ((next.stage != V8_ANSAM_DETECTED &&
+	     !process_block(&next, &next_line, block)) ||
+	    !v8_ansam_detector_is_valid(&next) ||
+	    !v8_line_conditioner_is_valid(&next_line))
+		return V8_ANSAM_INVALID_ARGUMENT;
+	*detector = next;
+	*conditioner = next_line;
+	*detected = next.stage == V8_ANSAM_DETECTED;
+	return V8_ANSAM_OK;
+}
+
 enum v8_ansam_result v8_ansam_detect(
 	struct v8_ansam_detector *detector,
 	struct v8_line_conditioner *conditioner,

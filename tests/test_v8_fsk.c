@@ -127,6 +127,7 @@ static bool menu_round_trip(
 	struct v8_menu detected = { 0 };
 	struct v8_fsk source;
 	struct v8_fsk destination;
+	struct v8_fsk blocked;
 	uint8_t information[V8_MAX_INFORMATION_OCTETS];
 	uint8_t transmit_bit = 1;
 	size_t information_count;
@@ -153,6 +154,7 @@ static bool menu_round_trip(
 			      V8_CALLING_STATION) ==
 		      V8_FSK_OK,
 	      "V.8 menu audio endpoints did not initialize");
+	blocked = destination;
 
 	for (size_t sample_index = 0;
 	     sample_index < 3u * V21_SAMPLE_RATE && !confirmed;
@@ -161,6 +163,10 @@ static bool menu_round_trip(
 		uint8_t receive_bit;
 		bool bit_consumed;
 		bool bit_ready;
+		struct v8_line_conditioned_block block, saved_block;
+		struct v8_line_conditioner saved_line;
+		uint8_t blocked_bit = 0;
+		bool ready, blocked_ready = false;
 
 		if (v8_fsk_can_accept_bit(&source)) {
 			bool sequence_complete;
@@ -181,6 +187,20 @@ static bool menu_round_trip(
 			      &receive_bit, &bit_ready) ==
 			      V8_FSK_OK,
 		      "V.8 menu audio processing failed");
+		CHECK(v8_line_conditioner_process_sample(&blocked.line,
+			      codec_round_trip(sample, codec), &block, &ready) == V8_LINE_CONDITIONER_OK,
+		      "shared FSK conditioning failed");
+		if (ready) {
+			memcpy(&saved_block, &block, sizeof(block));
+			saved_line = blocked.line;
+			CHECK(v8_fsk_receive_block(&blocked, &block, &blocked_bit, &blocked_ready) == V8_FSK_OK &&
+			      memcmp(&saved_line, &blocked.line, sizeof(saved_line)) == 0 &&
+			      memcmp(&saved_block, &block, sizeof(block)) == 0,
+			      "FSK block processing advanced the line or modified input");
+		}
+		CHECK(blocked_bit == receive_bit && blocked_ready == bit_ready &&
+		      memcmp(&blocked, &destination, sizeof(blocked)) == 0,
+		      "FSK block processing changed samplewise state or decisions");
 		if (bit_ready)
 			CHECK(v8_menu_detect_bit(
 				      &detector, receive_bit, &detected,
@@ -203,6 +223,37 @@ static bool test_menu_audio_round_trip(void)
 		if (!menu_round_trip(V8_CALLING_STATION, codec) ||
 		    !menu_round_trip(V8_ANSWERING_STATION, codec))
 			return false;
+	return true;
+}
+
+static bool test_block_validation(void)
+{
+	struct v8_fsk fsk, saved;
+	struct v8_line_conditioned_block block = { 0 }, saved_block = { 0 };
+	uint8_t bit = 7;
+	bool ready = true;
+
+	CHECK(v8_fsk_init(&fsk, V8_CALLING_STATION) == V8_FSK_OK,
+	      "FSK block validation fixture");
+	saved = fsk;
+	CHECK(v8_fsk_receive_block(NULL, &block, &bit, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, NULL, &bit, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, NULL, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, &bit, NULL) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, (void *)&fsk, &bit, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, (void *)&fsk, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, &bit, (void *)&fsk) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, (void *)&block, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, &bit, (void *)&block) == V8_FSK_INVALID_ARGUMENT &&
+	      v8_fsk_receive_block(&fsk, &block, (void *)&ready, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      memcmp(&fsk, &saved, sizeof(fsk)) == 0 &&
+	      memcmp(&block, &saved_block, sizeof(block)) == 0 && bit == 7 && ready,
+	      "FSK block rejection changed state, input, or output");
+	fsk.line.role = V8_ANSWERING_STATION;
+	saved = fsk;
+	CHECK(v8_fsk_receive_block(&fsk, &block, &bit, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      memcmp(&fsk, &saved, sizeof(fsk)) == 0 && bit == 7 && ready,
+	      "FSK block accepted inconsistent line ownership");
 	return true;
 }
 
@@ -284,6 +335,7 @@ int main(void)
 		{ "station channels", test_station_channels },
 		{ "transmit oracle", test_transmit_oracle },
 		{ "menu audio round trip", test_menu_audio_round_trip },
+		{ "block validation", test_block_validation },
 		{ "validation and reset", test_validation_and_reset },
 	};
 	unsigned int failures = 0;

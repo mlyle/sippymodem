@@ -241,6 +241,55 @@ enum v8_fsk_result v8_fsk_filter_transmit_sample(
 	return V8_FSK_OK;
 }
 
+static bool receive_block(struct fsk_receiver *receiver,
+	const struct v8_line_conditioned_block *block,
+	uint8_t *bit, bool *ready)
+{
+	*bit = 0;
+	*ready = false;
+	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
+		uint8_t candidate;
+		bool candidate_ready;
+
+		if (fsk_receiver_sample(receiver, block->samples[index],
+			&candidate, &candidate_ready) != FSK_OK ||
+		    (*ready && candidate_ready))
+			return false;
+		if (candidate_ready) {
+			*bit = candidate;
+			*ready = true;
+		}
+	}
+	return true;
+}
+
+enum v8_fsk_result v8_fsk_receive_block(
+	struct v8_fsk *fsk, const struct v8_line_conditioned_block *block,
+	uint8_t *bit, bool *bit_ready)
+{
+	struct fsk_receiver next;
+	uint8_t received;
+	bool ready;
+
+	if (!fsk_is_configured(fsk) || block == NULL || bit == NULL ||
+	    bit_ready == NULL ||
+	    memory_regions_overlap(fsk, sizeof(*fsk), block, sizeof(*block)) ||
+	    memory_regions_overlap(fsk, sizeof(*fsk), bit, sizeof(*bit)) ||
+	    memory_regions_overlap(fsk, sizeof(*fsk), bit_ready, sizeof(*bit_ready)) ||
+	    memory_regions_overlap(block, sizeof(*block), bit, sizeof(*bit)) ||
+	    memory_regions_overlap(block, sizeof(*block), bit_ready, sizeof(*bit_ready)) ||
+	    memory_regions_overlap(bit, sizeof(*bit), bit_ready, sizeof(*bit_ready)))
+		return V8_FSK_INVALID_ARGUMENT;
+
+	next = fsk->receiver;
+	if (!receive_block(&next, block, &received, &ready))
+		return V8_FSK_INVALID_ARGUMENT;
+	fsk->receiver = next;
+	*bit = received;
+	*bit_ready = ready;
+	return V8_FSK_OK;
+}
+
 enum v8_fsk_result v8_fsk_receive_sample(
 	struct v8_fsk *fsk, int16_t sample, uint8_t *bit,
 	bool *bit_ready)
@@ -265,22 +314,8 @@ enum v8_fsk_result v8_fsk_receive_sample(
 		    &next_line, sample, &block, &block_ready) !=
 	    V8_LINE_CONDITIONER_OK)
 		return V8_FSK_INVALID_ARGUMENT;
-	if (block_ready) {
-		for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
-			uint8_t candidate;
-			bool candidate_ready;
-
-			if (fsk_receiver_sample(
-				    &next, block.samples[index], &candidate,
-				    &candidate_ready) != FSK_OK ||
-			    (ready && candidate_ready))
-				return V8_FSK_INVALID_ARGUMENT;
-			if (candidate_ready) {
-				received = candidate;
-				ready = true;
-			}
-		}
-	}
+	if (block_ready && !receive_block(&next, &block, &received, &ready))
+		return V8_FSK_INVALID_ARGUMENT;
 	fsk->line = next_line;
 	fsk->receiver = next;
 	*bit = received;
