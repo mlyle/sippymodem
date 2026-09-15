@@ -201,6 +201,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc1.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc_signal.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc_digital.c \
+	$(DSP_PCM_SOURCE_DIR)/v92_qc_analog.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info1.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_info1d.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_pcm_info1a.c \

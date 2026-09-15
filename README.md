@@ -127,6 +127,11 @@ shortened calls on both codec laws, including 52000/40000 bit/s PCM data.
 The digital Quick Connect signal exchange sends timed QTS/ANSpcm, qualifies
 TONEq, and preserves Phase 2 handoff silence. Its answer-side timeout requests
 normal V.8 fallback instead of reporting a successful shortened handshake.
+The analogue exchange receives QTS and its reversal before qualifying ANSpcm,
+sends at least 50 ms of TONEq, waits for ANSpcm to end, and retains the final
+75 ms silence. Paired tests exercise the complete QC1 Phase 1 in both calling
+directions; receive conditioning and retained-history admission remain owned
+by the caller, not inferred from the signal exchange alone.
 The V.8 calling and answering owners exchange explicitly admitted QC1/QCA1
 messages using their existing FSK streams, while retaining ordinary menu
 negotiation for unadmitted or unsuitable requests. A digital caller recognizes
