@@ -127,11 +127,12 @@ shortened calls on both codec laws, including 52000/40000 bit/s PCM data.
 The digital Quick Connect signal exchange sends timed QTS/ANSpcm, qualifies
 TONEq, and preserves Phase 2 handoff silence. Its answer-side timeout requests
 normal V.8 fallback instead of reporting a successful shortened handshake.
-The V.8 answering owner can acknowledge an explicitly admitted QC1 request
-using its existing FSK stream, while retaining ordinary menu negotiation for
-unadmitted or unsuitable requests. Peer-keyed history retention and complete
-Quick Connect Phase 1 are not yet integrated into the modem; these boundaries
-do not enable modem-level Quick Connect.
+The V.8 calling and answering owners exchange explicitly admitted QC1/QCA1
+messages using their existing FSK streams, while retaining ordinary menu
+negotiation for unadmitted or unsuitable requests. A digital caller recognizes
+continued ANSam as refusal without treating silence as refusal. Peer-keyed
+history retention and complete Quick Connect Phase 1 are not yet integrated
+into the modem; these boundaries do not enable modem-level Quick Connect.
 
 Initialize the pinned pjproject submodule once, then build with `make`:
 

@@ -511,6 +511,9 @@ V8_ANSWERING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_answering.o \
 V8_CALLING_TEST_BINARY := $(BUILD_DIR)/test_v8_calling
 V8_CALLING_TEST_OBJECTS := $(BUILD_DIR)/test_v8_calling.o \
 	$(BUILD_DIR)/v8_calling.o \
+	$(BUILD_DIR)/v8_answering.o \
+	$(BUILD_DIR)/v92_qc1.o \
+	$(BUILD_DIR)/g711.o \
 	$(BUILD_DIR)/v8_ansam.o \
 	$(BUILD_DIR)/v8_fsk.o \
 	$(BUILD_DIR)/v8_menu.o \

@@ -6,6 +6,7 @@
 #include "v8_ansam.h"
 #include "v8_fsk.h"
 #include "v8_menu.h"
+#include "v92_qc1.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -24,6 +25,9 @@ enum v8_calling_state {
 	V8_CALLING_WAIT_ANSWER_SIGNAL,
 	V8_CALLING_EXCHANGE_MENUS,
 	V8_CALLING_SEND_CJ,
+	V8_CALLING_SEND_QC1,
+	V8_CALLING_QC_TX_TAIL,
+	V8_CALLING_QC_COMPLETE,
 	V8_CALLING_COMPLETE,
 	V8_CALLING_FAILED,
 };
@@ -44,18 +48,29 @@ struct v8_calling {
 	struct v8_menu_detector joint_menu_detector;
 	struct v8_menu local_menu;
 	struct v8_menu negotiated_menu;
+	struct v92_qc1_receiver qc_receiver;
+	struct v92_qc1_message qc_request;
+	struct v92_qc1_message qc_response;
 	enum v8_modulation selected_modulation;
 	enum v8_calling_state state;
 	enum v8_calling_result terminal_result;
 	uint32_t state_samples;
 	size_t cj_bit_index;
+	size_t qc_bit_index;
 	uint8_t transmit_bit;
 	bool negotiated;
+	bool qc_enabled;
 };
 
 enum v8_calling_result v8_calling_init(
 	struct v8_calling *calling,
 	const struct v8_menu *local_menu);
+/* Opt in before processing samples, after the caller has admitted retained
+ * settings for this peer and modem role. The request is copied. QC_COMPLETE
+ * hands off to the remaining short Phase 1; it is not full menu negotiation.
+ * Use single-sample processing for an exact QC handoff. */
+enum v8_calling_result v8_calling_enable_quick_connect(
+	struct v8_calling *calling, const struct v92_qc1_message *request);
 /* COMPLETE transfers the next sample to the selected datapump after the CJ
  * tail has left the V.21 transmit filter. */
 enum v8_calling_result v8_calling_process(
