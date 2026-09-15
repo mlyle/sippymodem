@@ -421,6 +421,23 @@ static bool test_contracts(
 		      &training, (struct v32_symbol_encoder *)&training) ==
 		      V32_ECHO_TRAINING_INVALID_ARGUMENT,
 	      "complete echo training advanced twice or aliased its handoff");
+	CHECK(agc_freeze(&path.line.gain) == AGC_OK &&
+	      v32_echo_training_path_is_valid(&training, &path),
+	      "completed echo training retained ownership of receive gain");
+	saved_path = path;
+	CHECK(v32_echo_training_next(&training, &path, &quadrant) ==
+		      V32_ECHO_TRAINING_COMPLETE &&
+	      memcmp(&training, &saved_training, sizeof(training)) == 0 &&
+	      memcmp(&path, &saved_path, sizeof(path)) == 0 &&
+	      quadrant == saved_quadrant,
+	      "completed echo training changed a later frozen receive path");
+	path.echo_training = true;
+	CHECK(!v32_echo_training_path_is_valid(&training, &path),
+	      "completed echo training accepted an active training path");
+	path = saved_path;
+	path.line.gain.gain_shift = -1;
+	CHECK(!v32_echo_training_path_is_valid(&training, &path),
+	      "completed echo training accepted invalid receive gain");
 	training.conditioning.trn_symbols++;
 	CHECK(!v32_echo_training_is_valid(&training),
 	      "echo training accepted an out-of-range conditioning count");

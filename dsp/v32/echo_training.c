@@ -131,8 +131,7 @@ static bool gain_lifecycle_matches(
 	const struct v32_echo_training *training,
 	const struct v32_receive_path *path)
 {
-	if (training->complete ||
-	    training_role(training) == V32_ANSWERING_TRANSMITTER)
+	if (training_role(training) == V32_ANSWERING_TRANSMITTER)
 		return path->line.gain.gain_mode == AGC_GAIN_TRACKING;
 	return path->line.gain.gain_mode == AGC_GAIN_FROZEN &&
 	       path->line.gain.gain_mantissa_q15 != 0 &&
@@ -148,11 +147,13 @@ bool v32_echo_training_path_is_valid(
 	uint16_t symbols;
 
 	if (!v32_echo_training_is_valid(training) ||
-	    !v32_receive_path_is_valid(path) ||
-	    !gain_lifecycle_matches(training, path))
+	    !v32_receive_path_is_valid(path))
 		return false;
+	/* Later receive phases own gain once echo training has released it. */
 	if (training->complete)
 		return !path->echo_training && !path->echo.echo.adapting;
+	if (!gain_lifecycle_matches(training, path))
+		return false;
 	if (training->s_extension_emitted == 0 &&
 	    training->conditioning.emitted_symbols == 0)
 		return !path->echo_training && !path->echo.echo.adapting;

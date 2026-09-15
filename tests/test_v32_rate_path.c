@@ -676,6 +676,13 @@ static bool run_role(
 	      "B1 path initialized invalid for role/mode %d/%u:%u", role,
 	      selected_offer->rates,
 	      selected_offer->trellis_at_highest_rate);
+	CHECK(b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      b1.receive.line.gain.gain_mantissa_q15 ==
+		      end_handoff.receive.line.gain.gain_mantissa_q15 &&
+	      b1.receive.line.gain.gain_shift ==
+		      end_handoff.receive.line.gain.gain_shift &&
+	      memcmp(&end_handoff, completed_end_handoff, sizeof(end_handoff)) == 0,
+	      "B1 handoff did not retain trained gain or changed its source");
 	*b1_started = b1;
 	for (unsigned int index = 0;
 	     index < TEST_LINE_SAMPLE_LIMIT && !complete; ++index) {
@@ -703,6 +710,11 @@ static bool run_role(
 		complete = result == V32_B1_PATH_COMPLETE;
 	}
 	CHECK(complete && v32_b1_path_is_complete(&b1) &&
+	      b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      b1.receive.line.gain.gain_mantissa_q15 ==
+		      b1_started->receive.line.gain.gain_mantissa_q15 &&
+	      b1.receive.line.gain.gain_shift ==
+		      b1_started->receive.line.gain.gain_shift &&
 	      b1.observations == V32_B1_PATH_SYMBOLS &&
 	      b1.observation_epoch ==
 		      end_handoff.observation_epoch + V32_B1_PATH_SYMBOLS &&
@@ -742,6 +754,13 @@ static bool run_role(
 	      "data path did not retain the B1 boundary for role/mode %d/%u:%u",
 	      role, selected_offer->rates,
 	      selected_offer->trellis_at_highest_rate);
+	CHECK(data.b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      data.b1.receive.line.gain.gain_mantissa_q15 ==
+		      b1.receive.line.gain.gain_mantissa_q15 &&
+	      data.b1.receive.line.gain.gain_shift ==
+		      b1.receive.line.gain.gain_shift &&
+	      memcmp(&b1, b1_completed, sizeof(b1)) == 0,
+	      "data handoff did not retain trained gain or changed its B1 source");
 	*data_started = data;
 	for (unsigned int index = 0;
 	     index < TEST_LINE_SAMPLE_LIMIT && data_groups < TEST_DATA_GROUPS;
@@ -766,6 +785,11 @@ static bool run_role(
 	}
 	CHECK(data_groups >= TEST_DATA_GROUPS && multiple_data_groups &&
 	      v32_data_path_is_valid(&data) &&
+	      data.b1.receive.line.gain.gain_mode == AGC_GAIN_FROZEN &&
+	      data.b1.receive.line.gain.gain_mantissa_q15 ==
+		      data_started->b1.receive.line.gain.gain_mantissa_q15 &&
+	      data.b1.receive.line.gain.gain_shift ==
+		      data_started->b1.receive.line.gain.gain_shift &&
 	      data.b1.observations == V32_B1_PATH_SYMBOLS &&
 	      data.b1.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&

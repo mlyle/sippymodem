@@ -355,8 +355,13 @@ static bool observe_s(
 	receiver->previous_turn = turn;
 	if (receiver->phase == V32_CONDITIONING_SEARCH_S_BAR &&
 	    receiver->alternating_transitions ==
-		    V32_CONDITIONING_S_DETECT_TRANSITIONS)
+		    V32_CONDITIONING_S_DETECT_TRANSITIONS) {
+		/* Age the edge detector from qualified S, not preceding silence
+		 * or gain acquisition, whose transient is not an S-bar edge. */
+		receiver->epoch_detector =
+			(struct v32_conditioning_epoch_detector){0};
 		receiver->phase = V32_CONDITIONING_MATCH_TRN;
+	}
 	return epoch;
 }
 

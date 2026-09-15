@@ -366,6 +366,59 @@ static bool test_s_qualification_expires(void)
 	return true;
 }
 
+static bool test_s_acquisition_gain_step(void)
+{
+	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
+	     role <= V32_ANSWERING_TRANSMITTER; ++role) {
+		struct v32_conditioning_receiver receiver;
+		struct v32_conditioning_transmitter transmitter;
+		bool ready = false;
+
+		CHECK(v32_conditioning_receiver_init(&receiver, role) ==
+			      V32_CONDITIONING_RECEIVER_OK &&
+		      v32_conditioning_transmitter_init(&transmitter, role,
+			      V32_CONDITIONING_TRN_MIN_SYMBOLS) == V32_CONDITIONING_OK,
+		      "V.32 acquisition gain fixture did not initialize");
+		/* The detector can already be old when the first signal arrives. */
+		for (unsigned symbol = 0; symbol < 140; ++symbol) {
+			struct v32_equalizer_observation received;
+			CHECK(generated_observation(0, &received),
+			      "V.32 acquisition silence fixture failed");
+			received.i = received.q = received.magnitude = 0;
+			CHECK(observe(&receiver, &received, &ready) ==
+				      V32_CONDITIONING_RECEIVER_OK && !ready,
+			      "V.32 acquisition silence accepted training");
+		}
+		for (unsigned symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+			struct v32_equalizer_observation received;
+			uint8_t quadrant;
+
+			CHECK(v32_conditioning_transmitter_next(&transmitter, &quadrant) ==
+				      V32_CONDITIONING_OK &&
+			      generated_observation(quadrant, &received),
+			      "V.32 acquisition signal fixture failed");
+			received.magnitude = 0x3299;
+			/* An acquisition gain change is not an S-to-S-bar reversal. */
+			if (symbol < 16) {
+				received.i /= 4;
+				received.q /= 4;
+				received.magnitude /= 4;
+			}
+			CHECK(observe(&receiver, &received, &ready) ==
+				      V32_CONDITIONING_RECEIVER_OK,
+			      "V.32 gain-step receiver failed at %u", symbol);
+			CHECK(symbol >= V32_CONDITIONING_S_SYMBOLS ||
+			      (receiver.phase != V32_CONDITIONING_COUNT_S_BAR &&
+			       receiver.trn_symbols == 0),
+			      "V.32 gain acquisition mistaken for S-bar at %u role %d",
+			      symbol, role);
+		}
+		CHECK(ready && receiver.trn_symbols == V32_CONDITIONING_TRN_MIN_SYMBOLS,
+		      "V.32 gain-step training did not complete for role %d", role);
+	}
+	return true;
+}
+
 static bool test_epoch_phase_slip_recovery(void)
 {
 	static const uint16_t phase_steps[] = {
@@ -1094,6 +1147,7 @@ int main(void)
 		{ "smeared S/S-bar epoch",
 		  test_s_bar_epoch_survives_boundary_smear },
 		{ "interrupted S qualification", test_s_qualification_expires },
+		{ "S acquisition gain step", test_s_acquisition_gain_step },
 		{ "epoch phase-slip recovery",
 		  test_epoch_phase_slip_recovery },
 		{ "epoch wrong-sequence rejection",
