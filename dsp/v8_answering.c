@@ -37,6 +37,26 @@ static bool selection_is_valid(
 		(answering->local_menu.lapm && answering->call_menu.lapm));
 }
 
+static bool qc_response_is_usable(const struct v8_menu *menu,
+	const struct v92_qc1_message *response)
+{
+	return v92_qc1_bit_count(response) != 0 && response->acknowledgment &&
+	       response->lapm == menu->lapm && menu->pcm_present &&
+	       (menu->pcm_availability & (response->sender == V90_DIGITAL_MODEM ?
+		V8_PCM_DIGITAL : V8_PCM_ANALOG)) != 0 &&
+	       (response->sender != V90_ANALOG_MODEM ||
+		response->signal.qts_index != 15);
+}
+
+static bool qc_request_is_usable(const struct v8_answering *answering,
+	const struct v92_qc1_message *request)
+{
+	return v92_qc1_bit_count(request) != 0 && !request->acknowledgment &&
+	       request->sender != answering->qc_response.sender &&
+	       (request->sender != V90_ANALOG_MODEM ||
+		request->signal.qts_index != 15);
+}
+
 static bool answering_is_valid(
 	const struct v8_answering *answering)
 {
@@ -56,6 +76,19 @@ static bool answering_is_valid(
 	    (answering->state == V8_ANSWERING_FAILED) !=
 		    (answering->terminal_result != V8_ANSWERING_OK))
 		return false;
+	if (answering->qc_enabled && !qc_response_is_usable(
+		    &answering->local_menu, &answering->qc_response))
+		return false;
+	if (answering->state == V8_ANSWERING_SEND_QCA1 ||
+	    answering->state == V8_ANSWERING_QC_COMPLETE) {
+		if (!answering->qc_enabled || answering->negotiated ||
+		    !qc_request_is_usable(answering, &answering->qc_request) ||
+		    answering->qc_bit_index >
+			    v92_qc1_bit_count(&answering->qc_response))
+			return false;
+	} else if (answering->qc_bit_index != 0) {
+		return false;
+	}
 	if (answering->negotiated) {
 		if (!selection_is_valid(answering))
 			return false;
@@ -85,6 +118,11 @@ static bool answering_is_valid(
 	case V8_ANSWERING_SEND_JOINT_MENU:
 		return answering->negotiated && answering->state_samples <
 		       V8_ANSWERING_CJ_TIMEOUT_SAMPLES;
+	case V8_ANSWERING_SEND_QCA1:
+		return answering->state_samples < V8_FSK_TRANSMIT_FILTER_TAPS;
+	case V8_ANSWERING_QC_COMPLETE:
+		return answering->state_samples == 0 && answering->qc_bit_index ==
+			v92_qc1_bit_count(&answering->qc_response);
 	case V8_ANSWERING_COMPLETE:
 		return answering->negotiated && answering->state_samples == 0;
 	case V8_ANSWERING_FAILED:
@@ -153,6 +191,26 @@ enum v8_answering_result v8_answering_init(
 	return V8_ANSWERING_OK;
 }
 
+enum v8_answering_result v8_answering_enable_quick_connect(
+	struct v8_answering *answering,
+	const struct v92_qc1_message *response)
+{
+	struct v8_answering next;
+
+	if (!answering_is_valid(answering) ||
+	    answering->state != V8_ANSWERING_WAIT_CALL_MENU ||
+	    answering->state_samples != 0 ||
+	    !qc_response_is_usable(&answering->local_menu, response))
+		return V8_ANSWERING_INVALID_ARGUMENT;
+	next = *answering;
+	next.qc_response = *response;
+	next.qc_enabled = true;
+	if (!v92_qc1_receiver_init(&next.qc_receiver))
+		return V8_ANSWERING_INVALID_ARGUMENT;
+	*answering = next;
+	return V8_ANSWERING_OK;
+}
+
 static enum v8_answering_result select_joint_menu(
 	struct v8_answering *answering,
 	const struct v8_menu *call_menu)
@@ -213,6 +271,20 @@ static enum v8_answering_result wait_call_menu_sample(
 		    &answering->fsk, receive, &bit, &ready) !=
 		    V8_FSK_OK)
 		return V8_ANSWERING_INVALID_ARGUMENT;
+	if (ready && answering->qc_enabled) {
+		struct v92_qc1_message request;
+		bool complete;
+
+		/* QC1 and CM use the same continuous V.21 receive stream. */
+		if (!v92_qc1_receive_bit(&answering->qc_receiver, bit,
+			    &request, &complete))
+			return V8_ANSWERING_INVALID_ARGUMENT;
+		if (complete && qc_request_is_usable(answering, &request)) {
+			answering->qc_request = request;
+			enter_state(answering, V8_ANSWERING_SEND_QCA1);
+			return V8_ANSWERING_OK;
+		}
+	}
 	if (ready &&
 	    v8_menu_detect_bit(
 		    &answering->call_menu_detector, bit, &call_menu,
@@ -288,6 +360,31 @@ static enum v8_answering_result send_joint_menu_sample(
 	return V8_ANSWERING_OK;
 }
 
+static enum v8_answering_result send_qca1_sample(
+	struct v8_answering *answering, int16_t *transmit)
+{
+	bool consumed;
+
+	if (v8_fsk_can_accept_bit(&answering->fsk)) {
+		if (answering->qc_bit_index ==
+			    v92_qc1_bit_count(&answering->qc_response)) {
+			if (v8_fsk_filter_transmit_sample(&answering->fsk, 0,
+				    transmit) != V8_FSK_OK)
+				return V8_ANSWERING_INVALID_ARGUMENT;
+			if (++answering->state_samples == V8_FSK_TRANSMIT_FILTER_TAPS)
+				enter_state(answering, V8_ANSWERING_QC_COMPLETE);
+			return V8_ANSWERING_OK;
+		}
+		if (!v92_qc1_bit(&answering->qc_response,
+			    answering->qc_bit_index, &answering->transmit_bit))
+			return V8_ANSWERING_INVALID_ARGUMENT;
+		answering->qc_bit_index++;
+	}
+	return v8_fsk_transmit_sample(&answering->fsk, answering->transmit_bit,
+		transmit, &consumed) == V8_FSK_OK ? V8_ANSWERING_OK :
+		V8_ANSWERING_INVALID_ARGUMENT;
+}
+
 static enum v8_answering_result process_one(
 	struct v8_answering *answering, int16_t receive,
 	int16_t *transmit)
@@ -296,7 +393,10 @@ static enum v8_answering_result process_one(
 		return wait_call_menu_sample(answering, receive, transmit);
 	if (answering->state == V8_ANSWERING_SEND_JOINT_MENU)
 		return send_joint_menu_sample(answering, receive, transmit);
-	if (answering->state == V8_ANSWERING_COMPLETE)
+	if (answering->state == V8_ANSWERING_SEND_QCA1)
+		return send_qca1_sample(answering, transmit);
+	if (answering->state == V8_ANSWERING_COMPLETE ||
+	    answering->state == V8_ANSWERING_QC_COMPLETE)
 		return V8_ANSWERING_OK;
 	if (answering->state == V8_ANSWERING_FAILED)
 		return answering->terminal_result;
@@ -342,7 +442,8 @@ bool v8_answering_is_complete(
 	const struct v8_answering *answering)
 {
 	return answering_is_valid(answering) &&
-	       answering->state == V8_ANSWERING_COMPLETE;
+	       (answering->state == V8_ANSWERING_COMPLETE ||
+		answering->state == V8_ANSWERING_QC_COMPLETE);
 }
 
 enum v8_answering_result v8_answering_selection(

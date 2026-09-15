@@ -2,6 +2,7 @@
 
 #include <v8_answering.h>
 #include <v8_calling.h>
+#include <g711.h>
 
 #include "test.h"
 
@@ -341,6 +342,231 @@ static bool test_cj_completion_fallback(void)
 	return true;
 }
 
+static int16_t qc_channel(int16_t sample, enum g711_law law,
+	bool impaired, uint32_t *noise)
+{
+	if (impaired) {
+		*noise = *noise * 1664525u + 1013904223u;
+		sample = sample / 2 + (int)(*noise >> 27) - 16;
+	}
+	return law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
+static bool qc_message_equal(const struct v92_qc1_message *a,
+	const struct v92_qc1_message *b)
+{
+	return a->sender == b->sender && a->acknowledgment == b->acknowledgment &&
+		a->lapm == b->lapm && (a->sender == V90_DIGITAL_MODEM ?
+		a->signal.anspcm_level == b->signal.anspcm_level :
+		a->signal.qts_index == b->signal.qts_index);
+}
+
+static bool qc_answer_case(bool digital, unsigned lapm, enum g711_law law,
+	bool impaired, unsigned variant)
+{
+	struct v92_qc1_message response = {
+		.sender = digital ? V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
+		.acknowledgment = true, .lapm = (lapm & 1u) != 0,
+	};
+	struct v92_qc1_message request = {
+		.sender = digital ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM,
+		.lapm = (lapm & 2u) != 0,
+	};
+	struct v8_answering answering;
+	struct v8_menu answer_menu, call_menu;
+	struct v8_ansam_detector ansam;
+	struct v8_fsk caller;
+	struct v8_control_generator cm;
+	struct v8_menu_detector jm;
+	struct v92_qc1_receiver qca;
+	int16_t to_caller[257] = { 0 }, to_answerer[257] = { 0 };
+	const size_t delay = impaired ? 257 : 13;
+	size_t cursor = 0, sent = 0, qca_start = 0, qca_end = 0;
+	uint8_t information[V8_MAX_INFORMATION_OCTETS], transmit_bit = 1;
+	size_t information_count;
+	uint32_t noise = 0xabc456ef;
+	unsigned acknowledgements = 0;
+	bool started = false, menu_received = false;
+
+	response.signal.qts_index = digital ? 2 : 10;
+	request.signal.qts_index = digital ? 7 : 1;
+	if (variant == 2) { /* Same-role QC is optional; use full V.8 instead. */
+		request.sender = response.sender;
+		request.signal.qts_index = 1;
+	} else if (variant == 3) {
+		request.acknowledgment = true;
+	} else if (variant == 4) {
+		request.sender = V90_ANALOG_MODEM;
+		request.signal.qts_index = 15; /* On-hold cleardown, not startup. */
+	}
+	CHECK(v8_pcm_call_menu_init(&answer_menu, digital ? V8_PCM_DIGITAL :
+		      V8_PCM_ANALOG, digital ? V8_PSTN_DIGITAL : 0,
+		      response.lapm) == V8_MENU_OK &&
+	      v8_pcm_call_menu_init(&call_menu, digital ? V8_PCM_ANALOG :
+		      V8_PCM_DIGITAL, digital ? 0 : V8_PSTN_DIGITAL,
+		      request.lapm) == V8_MENU_OK &&
+	      v8_answering_init(&answering, &answer_menu) == V8_ANSWERING_OK &&
+	      (variant == 1 || v8_answering_enable_quick_connect(&answering,
+		      &response) == V8_ANSWERING_OK) &&
+	      v8_ansam_detector_init(&ansam) == V8_ANSAM_OK &&
+	      v8_fsk_init(&caller, V8_CALLING_STATION) == V8_FSK_OK &&
+	      v92_qc1_receiver_init(&qca) && v8_menu_detector_init(&jm) == V8_MENU_OK &&
+	      v8_menu_encode(&call_menu, information, sizeof(information),
+		      &information_count) == V8_MENU_OK &&
+	      v8_control_generator_init(&cm, information, information_count) ==
+		      V8_FRAMING_OK, "QC answer fixture");
+	if (variant != 1) {
+		response.signal.qts_index ^= 1;
+		CHECK(!qc_message_equal(&answering.qc_response, &response),
+		      "QC response borrowed caller storage");
+		response.signal.qts_index ^= 1;
+	}
+	for (size_t clock = 0; clock < 64000; ++clock) {
+		int16_t answer_tx, caller_tx = 0;
+		enum v8_answering_state before = answering.state;
+		bool ready, consumed;
+		uint8_t bit;
+
+		CHECK(v8_answering_process(&answering, &to_answerer[cursor],
+			      &answer_tx, 1) == V8_ANSWERING_OK,
+		      "QC answer processing at %zu", clock);
+		if (before != answering.state) {
+			if (answering.state == V8_ANSWERING_SEND_QCA1)
+				qca_start = clock;
+			if (answering.state == V8_ANSWERING_QC_COMPLETE)
+				qca_end = clock;
+		}
+		if (before == V8_ANSWERING_QC_COMPLETE)
+			CHECK(answer_tx == 0, "QCA1 repeated after completion");
+		if (!started) {
+			CHECK(v8_ansam_detect(&ansam, &caller.line, &to_caller[cursor],
+				      1, &started) == V8_ANSAM_OK, "initial ANSam");
+		} else {
+			if (acknowledgements == 0) {
+				if (v8_fsk_can_accept_bit(&caller)) {
+					bool end;
+
+					if (variant != 6 && sent < v92_qc1_bit_count(&request)) {
+						CHECK(v92_qc1_bit(&request, sent, &transmit_bit),
+						      "QC1 source");
+						if (variant == 5 && sent == 52)
+							transmit_bit ^= 1;
+						sent++;
+					} else {
+						CHECK(v8_control_next_bit(&cm, &transmit_bit,
+							      &end) == V8_FRAMING_OK, "CM source");
+					}
+				}
+				CHECK(v8_fsk_transmit_sample(&caller, transmit_bit,
+					      &caller_tx, &consumed) == V8_FSK_OK, "caller FSK");
+			}
+			CHECK(v8_fsk_receive_sample(&caller, to_caller[cursor], &bit,
+				      &ready) == V8_FSK_OK, "caller receiver");
+			if (ready) {
+				struct v92_qc1_message actual;
+				struct v8_menu menu;
+				bool complete;
+
+				CHECK(v92_qc1_receive_bit(&qca, bit, &actual, &complete) &&
+				      v8_menu_detect_bit(&jm, bit, &menu, &menu_received) ==
+					      V8_MENU_OK, "QC and menu decoding");
+				if (complete) {
+					CHECK(qc_message_equal(&actual, &response), "QCA1 fields");
+					acknowledgements++;
+				}
+			}
+		}
+		to_caller[cursor] = qc_channel(answer_tx, law, impaired, &noise);
+		to_answerer[cursor] = qc_channel(caller_tx, law, impaired, &noise);
+		cursor = (cursor + 1) % delay;
+		if ((qca_end != 0 && clock > qca_end + delay + 800) || menu_received)
+			break;
+	}
+	if (variant == 0) {
+		struct v8_menu menu;
+		enum v8_modulation modulation = V8_MODULATION_NONE;
+
+		CHECK(started && acknowledgements == 1 && !menu_received &&
+		      answering.state == V8_ANSWERING_QC_COMPLETE &&
+		      v8_answering_is_complete(&answering) &&
+		      qc_message_equal(&answering.qc_request, &request) &&
+		      qc_message_equal(&answering.qc_response, &response) &&
+		      qca_end - qca_start == (70 * 8000 + 299) / 300 +
+			      V8_FSK_TRANSMIT_FILTER_TAPS &&
+		      v8_answering_selection(&answering, &menu, &modulation) ==
+			      V8_ANSWERING_NOT_READY && modulation == V8_MODULATION_NONE,
+		      "QC completion or handoff timing: %zu..%zu ACKs=%u",
+		      qca_start, qca_end, acknowledgements);
+	} else {
+		CHECK(started && menu_received && acknowledgements == 0 &&
+		      answering.state == V8_ANSWERING_SEND_JOINT_MENU && qca_start == 0,
+		      "QC variant %u did not retain ordinary V.8", variant);
+	}
+	return true;
+}
+
+static bool test_quick_connect(void)
+{
+	for (unsigned digital = 0; digital < 2; ++digital)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (unsigned impaired = 0; impaired < 2; ++impaired) {
+				for (unsigned lapm = 0; lapm < 4; ++lapm)
+					CHECK(qc_answer_case(digital, lapm, law, impaired, 0),
+					      "QC role=%u law=%u impaired=%u LAPM=%u",
+					      digital, law, impaired, lapm);
+				for (unsigned variant = 1; variant <= 6; ++variant)
+					CHECK(qc_answer_case(digital, 3, law, impaired, variant),
+					      "QC fallback role=%u law=%u impaired=%u variant=%u",
+					      digital, law, impaired, variant);
+			}
+	return true;
+}
+
+static bool test_quick_connect_validation(void)
+{
+	for (unsigned mutation = 0; mutation < 10; ++mutation) {
+		struct v8_answering answering, saved;
+		struct v8_menu menu;
+		struct v92_qc1_message response = {
+			.sender = V90_DIGITAL_MODEM, .acknowledgment = true,
+			.lapm = true, .signal.anspcm_level = 2,
+		};
+		int16_t silence = 0, transmit;
+
+		CHECK(v8_pcm_call_menu_init(&menu, V8_PCM_DIGITAL,
+			      V8_PSTN_DIGITAL, true) == V8_MENU_OK, "QC validation menu");
+		switch (mutation) {
+		case 2: response.acknowledgment = false; break;
+		case 3: response.sender = (enum v90_modem_role)99; break;
+		case 4: response.signal.anspcm_level = 4; break;
+		case 5: response.lapm = false; break;
+		case 6: menu.pcm_availability = V8_PCM_ANALOG; break;
+		case 7:
+			CHECK(v8_call_menu_init(&menu, V8_MODULATION_V21, true) ==
+				      V8_MENU_OK, "non-PCM menu");
+			break;
+		case 9:
+			menu.pcm_availability = V8_PCM_ANALOG;
+			response.sender = V90_ANALOG_MODEM;
+			response.signal.qts_index = 15;
+			break;
+		default: break;
+		}
+		CHECK(v8_answering_init(&answering, &menu) == V8_ANSWERING_OK,
+		      "QC validation init");
+		if (mutation == 8)
+			CHECK(v8_answering_process(&answering, &silence, &transmit, 1) ==
+				      V8_ANSWERING_OK, "late configuration fixture");
+		saved = answering;
+		CHECK(v8_answering_enable_quick_connect(mutation == 0 ? NULL : &answering,
+			      mutation == 1 ? NULL : &response) == V8_ANSWERING_INVALID_ARGUMENT &&
+		      memcmp(&answering, &saved, sizeof(saved)) == 0,
+		      "invalid QC admission %u changed state", mutation);
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v8_answering answering;
@@ -399,6 +625,8 @@ int main(void)
 	} tests[] = {
 		{ "answer signal wire", test_answer_signal_wire },
 		{ "call negotiation", test_call_negotiation },
+		{ "Quick Connect admission and V.8 fallback", test_quick_connect },
+		{ "Quick Connect configuration validation", test_quick_connect_validation },
 		{ "no common modulation", test_no_common_modulation },
 		{ "call menu timeout", test_call_menu_timeout },
 		{ "CJ timeout", test_cj_timeout },
