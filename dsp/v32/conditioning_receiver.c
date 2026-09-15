@@ -348,6 +348,10 @@ static bool observe_s(
 	} else {
 		receiver->alternating_transitions = 0;
 	}
+	/* Preserve one smeared boundary decision, not a stale S qualification. */
+	if (!epoch && receiver->alternating_transitions == 0 &&
+	    (receiver->previous_turn & 1u) == 0)
+		receiver->phase = V32_CONDITIONING_SEARCH_S_BAR;
 	receiver->previous_turn = turn;
 	if (receiver->phase == V32_CONDITIONING_SEARCH_S_BAR &&
 	    receiver->alternating_transitions ==

@@ -283,6 +283,89 @@ static bool test_s_bar_epoch_survives_boundary_smear(void)
 	return true;
 }
 
+static bool test_s_qualification_expires(void)
+{
+	for (enum v32_transmitter_role role = V32_CALLING_TRANSMITTER;
+	     role <= V32_ANSWERING_TRANSMITTER; ++role) {
+		for (unsigned carrier = 0; carrier < 2; ++carrier) {
+			struct v32_conditioning_receiver receiver;
+			struct v32_conditioning_transmitter transmitter;
+			bool ready = false;
+			CHECK(v32_conditioning_receiver_init(&receiver, role) ==
+				      V32_CONDITIONING_RECEIVER_OK &&
+			      v32_conditioning_transmitter_init(
+				      &transmitter, role,
+				      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+				      V32_CONDITIONING_OK,
+			      "V.32 interrupted S fixture did not initialize");
+			for (unsigned symbol = 0; symbol < 10; ++symbol) {
+				uint8_t quadrant;
+				struct v32_equalizer_observation received;
+				CHECK(v32_conditioning_transmitter_next(
+					      &transmitter, &quadrant) ==
+					      V32_CONDITIONING_OK &&
+				      generated_observation(quadrant, &received) &&
+				      observe(&receiver, &received, &ready) ==
+					      V32_CONDITIONING_RECEIVER_OK,
+				      "V.32 short S lead-in failed at %u", symbol);
+			}
+			CHECK(receiver.phase == V32_CONDITIONING_MATCH_TRN && !ready,
+			      "V.32 lead-in did not qualify S");
+			/* One smeared decision must not erase an imminent S-bar edge. */
+			for (unsigned repeated = 0; repeated < 2; ++repeated) {
+				struct v32_equalizer_observation received;
+				CHECK(generated_observation(
+					      receiver.previous_quadrant, &received) &&
+				      observe(&receiver, &received, &ready) ==
+					      V32_CONDITIONING_RECEIVER_OK &&
+				      receiver.phase == (repeated == 0 ?
+					      V32_CONDITIONING_MATCH_TRN :
+					      V32_CONDITIONING_SEARCH_S_BAR),
+				      "V.32 S qualification after %u repeated decisions",
+				      repeated + 1u);
+			}
+			/* Longer than the energy detector's minimum epoch interval. */
+			for (unsigned symbol = 0; symbol < 160; ++symbol) {
+				struct v32_equalizer_observation received;
+				CHECK(generated_observation(0, &received),
+				      "V.32 quiet interval fixture failed");
+				if (!carrier)
+					received.i = received.q = received.magnitude = 0;
+				CHECK(observe(&receiver, &received, &ready) ==
+					      V32_CONDITIONING_RECEIVER_OK && !ready,
+				      "V.32 non-alternating interval qualified training");
+			}
+			CHECK(v32_conditioning_transmitter_init(
+				      &transmitter, role,
+				      V32_CONDITIONING_TRN_MIN_SYMBOLS) ==
+				      V32_CONDITIONING_OK,
+			      "V.32 returning training did not initialize");
+			for (unsigned symbol = 0; symbol < TEST_SEQUENCE_SYMBOLS; ++symbol) {
+				uint8_t quadrant;
+				struct v32_equalizer_observation received;
+				CHECK(v32_conditioning_transmitter_next(
+					      &transmitter, &quadrant) ==
+					      V32_CONDITIONING_OK &&
+				      generated_observation(quadrant, &received) &&
+				      observe(&receiver, &received, &ready) ==
+					      V32_CONDITIONING_RECEIVER_OK,
+				      "V.32 returning training role %d carrier %u symbol %u",
+				      role, carrier, symbol);
+				CHECK(symbol >= V32_CONDITIONING_S_SYMBOLS ||
+				      (receiver.phase != V32_CONDITIONING_COUNT_S_BAR &&
+				       receiver.trn_symbols == 0),
+				      "V.32 returning S mistaken for S-bar: role %d carrier %u symbol %u",
+				      role, carrier, symbol);
+			}
+			CHECK(ready && receiver.trn_symbols ==
+				      V32_CONDITIONING_TRN_MIN_SYMBOLS,
+			      "V.32 training did not recover after non-S interval role %d carrier %u",
+			      role, carrier);
+		}
+	}
+	return true;
+}
+
 static bool test_epoch_phase_slip_recovery(void)
 {
 	static const uint16_t phase_steps[] = {
@@ -1010,6 +1093,7 @@ int main(void)
 		{ "S/S-bar epoch boundary", test_s_bar_epoch_boundary },
 		{ "smeared S/S-bar epoch",
 		  test_s_bar_epoch_survives_boundary_smear },
+		{ "interrupted S qualification", test_s_qualification_expires },
 		{ "epoch phase-slip recovery",
 		  test_epoch_phase_slip_recovery },
 		{ "epoch wrong-sequence rejection",
