@@ -1916,8 +1916,8 @@ static bool run_pause_confirmation(enum g711_law law, enum v92_constellation_siz
 			      v92_phase4_e2u_init_digital(&e2u, &bad) == V92_PHASE4_E2U_INVALID_PARAMETERS &&
 			      memcmp(&e2u, &saved, sizeof(saved)) == 0, "failed E2u candidate crossed handoff");
 			bad = dh;
-			bad.pause = false;
-			CHECK(!v92_phase4_digital_handoff_is_valid(&bad), "pause E2u candidate authorized data");
+			++bad.e2u.expected_symbols;
+			CHECK(!v92_phase4_digital_handoff_is_valid(&bad), "E2u candidate changed the selected length");
 		}
 		int16_t sample;
 		CHECK(v92_phase4_record_tx_next(&wire, &sample) == V92_PHASE4_RECORD_TX_OK &&

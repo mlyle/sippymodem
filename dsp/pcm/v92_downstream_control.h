@@ -38,8 +38,9 @@ struct v92_downstream_control {
 	bool suvu_received;
 	bool cpu_received;
 	bool transmit_acknowledges_cpu;
-	/* CPu/SUVu ACK, or E2u during the status-only silence agreement. */
+	/* CPu/SUVu ACK or E2u (9.6.1.1.4); do not invent a wire ACK. */
 	bool peer_confirmation_received;
+	bool e2u_received;
 	bool repeat_cpd;
 	bool failed;
 };
@@ -79,6 +80,8 @@ uint64_t v92_downstream_control_e2u_delay(const struct v92_downstream_control *c
  * A receiver may also supply a complete E2u instead of the peer's SUVu ACK. */
 bool v92_downstream_control_silence_requested(const struct v92_downstream_control *control);
 bool v92_downstream_control_is_silence_ready(const struct v92_downstream_control *control);
+/* Complete E2u confirms parameters or silence after our acknowledgement has
+ * left the wire. The signal receiver enforces e2u_delay before detection. */
 bool v92_downstream_control_note_e2u(struct v92_downstream_control *control);
 
 #endif

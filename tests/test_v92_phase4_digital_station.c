@@ -475,7 +475,7 @@ static bool exercise_cpd_retry(
 
 static bool run_exchange(
 	enum g711_law law, enum v92_constellation_size constellation,
-	uint8_t previous_sign, int8_t polarity, bool retry, bool other_codec)
+	uint8_t previous_sign, int8_t polarity, bool retry, bool other_codec, bool e2u_confirmation)
 {
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = -7,
@@ -489,6 +489,8 @@ static bool run_exchange(
 		(law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU) : law;
 	struct v92_cpu_parameters cpu = cpu_parameters(peer_codec);
 	struct v92_cpd_parameters cpd = cpd_parameters(law);
+	if (e2u_confirmation)
+		cpd.extend_e2u = constellation == V92_CONSTELLATION_8_POINT;
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v92_pcm_phase4_trn2u upstream;
 	struct v92_phase4_record_tx suvu_tx;
@@ -631,7 +633,7 @@ static bool run_exchange(
 		CHECK(exercise_cpd_retry(&station, &downstream_rx, &counts, &suvu_tx,
 			      &suvu, &cpd, law, polarity, suvd.request_silence, &events),
 		      "CPd retry procedure failed");
-	acknowledged_suvu.acknowledges_cpd = true;
+	acknowledged_suvu.acknowledges_cpd = !e2u_confirmation;
 	CHECK(v92_record_fixture_start_suvu(
 		      &suvu_tx, NULL, &acknowledged_suvu),
 	      "acknowledging SUVu did not start");
@@ -651,7 +653,7 @@ static bool run_exchange(
 	      v92_record_fixture_start_cpu(&cpu_tx, &modulator, &cpu),
 	      "station CPu did not initialize");
 	for (unsigned int repeat = 0u; repeat < 3u; ++repeat) {
-		if (repeat == 1u) {
+		if (repeat == 1u && !e2u_confirmation) {
 			cpu.acknowledges_cpd = true;
 		}
 		if (repeat != 0u)
@@ -669,6 +671,72 @@ static bool run_exchange(
 				      suvd.request_silence),
 			      "station CPu stopped");
 		}
+	}
+	if (e2u_confirmation) {
+		CHECK(v92_phase4_record_tx_handoff(&cpu_tx, &modulator) == V92_PHASE4_RECORD_TX_OK,
+		      "unacknowledged CPu did not retain its modulator");
+		for (unsigned repeat = 0; repeat < 8u; ++repeat) {
+			CHECK(v92_record_fixture_start_suvu(&suvu_tx, repeat ? NULL : &modulator, &suvu),
+			      "unacknowledged status did not start");
+			while (!v92_phase4_record_tx_is_complete(&suvu_tx)) {
+				int16_t raw;
+				CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) == V92_PHASE4_RECORD_TX_OK &&
+				      receive_upstream_sample(&station, &downstream_rx, &counts, law,
+					polarity, raw, &events, &cpd, suvd.request_silence) &&
+				      !v92_phase4_digital_station_is_ed_ready(&station),
+				      "unacknowledged control falsely completed the exchange");
+			}
+		}
+		CHECK(station.control.cpu_received && counts.acknowledged_suvd &&
+		      v92_downstream_control_e2u_delay(&station.control) == 0u,
+		      "local acknowledgement did not reach the peer");
+		/* Lose the final SUVu' to a CRC error, not a missing input interval.
+		 * E2u is the alternative confirmation in V.92 9.6.1.1.4. */
+		uint8_t damaged[V92_SUVU_FRAME_BYTES];
+		size_t bits;
+		acknowledged_suvu.acknowledges_cpd = true;
+		CHECK(v92_suvu_encode(&acknowledged_suvu,
+			v92_phase4_modulator_bits_per_symbol(constellation) * V92_SUVU_SYMBOLS_PER_FRAME,
+			damaged, sizeof(damaged), &bits) == V92_SUVU_OK, "final SUVu encode failed");
+		damaged[4] ^= 0x80u;
+		CHECK(v92_phase4_record_tx_start_next(&suvu_tx, damaged, sizeof(damaged), bits) ==
+		      V92_PHASE4_RECORD_TX_OK, "damaged final SUVu did not start");
+		while (!v92_phase4_record_tx_is_complete(&suvu_tx)) {
+			int16_t raw;
+			CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) == V92_PHASE4_RECORD_TX_OK &&
+			      receive_upstream_sample(&station, &downstream_rx, &counts, law,
+				polarity, raw, &events, &cpd, suvd.request_silence), "final SUVu failed");
+		}
+		CHECK(v92_phase4_record_tx_handoff(&suvu_tx, &modulator) == V92_PHASE4_RECORD_TX_OK &&
+		      v92_phase4_record_tx_init_e2u(&suvu_tx, &modulator, cpd.extend_e2u) ==
+		      V92_PHASE4_RECORD_TX_OK, "E2u did not start");
+		for (unsigned n = 0; n < 128u && !v92_phase4_digital_station_is_ed_ready(&station); ++n) {
+			int16_t raw = 0;
+			if (!v92_phase4_record_tx_is_complete(&suvu_tx))
+				CHECK(v92_phase4_record_tx_next(&suvu_tx, &raw) == V92_PHASE4_RECORD_TX_OK,
+				      "E2u generation failed");
+			/* Zero tail only flushes the causal receive delay after exact E2u. */
+			CHECK(receive_upstream_sample(&station, &downstream_rx, &counts, law,
+				polarity, raw, &events, &cpd, suvd.request_silence), "E2u reception failed");
+		}
+		struct v92_phase4_digital_handoff selected;
+		CHECK(v92_phase4_digital_station_handoff(&station, &selected) == V92_PHASE4_DIGITAL_STATION_OK &&
+		      !selected.pause && selected.searching_e2u && v92_e2u_rx_is_complete(&selected.e2u) &&
+		      !station.control.cpu.acknowledges_cpd && !station.control.suvu.acknowledges_cpd &&
+		      selected.mapping.cpd.extend_e2u == cpd.extend_e2u,
+		      "lost acknowledgement prevented the exact E2u handoff");
+		struct v92_control_event repeat = {
+			.type = V92_CONTROL_EVENT_CPU,
+			.record.cpu = { .frame_result = V92_CPU_OK, .parameters = cpu },
+		};
+		CHECK(v92_downstream_control_receive(&station.control, &repeat) &&
+		      v92_phase4_digital_station_is_ed_ready(&station),
+		      "an in-flight CPu erased E2u confirmation");
+		struct v92_phase4_digital_station saved = station;
+		CHECK(v92_phase4_digital_station_receive(&station, 0) == V92_PHASE4_DIGITAL_STATION_INVALID_STATE &&
+		      memcmp(&station, &saved, sizeof(station)) == 0,
+		      "completed E2u consumed the next owner's sample");
+		return true;
 	}
 	for (size_t symbol = 0u;
 	     (counts.acknowledged_suvd == 0u ||
@@ -780,11 +848,12 @@ static bool test_generated_exchange(void)
 				      constellation,
 				      (uint8_t)((law + index) & 1u),
 				      constellation == V92_CONSTELLATION_4_POINT ?
-					      1 : -1, false, false) &&
-			      run_exchange((enum g711_law)law, constellation, 1u, 1, true, false),
+					      1 : -1, false, false, false) &&
+			      run_exchange((enum g711_law)law, constellation, 1u, 1, true, false, false) &&
+			      run_exchange((enum g711_law)law, constellation, 1u, -1, false, false, true),
 			      "generated station matrix stopped");
 		}
-		CHECK(run_exchange(law, V92_CONSTELLATION_4_POINT, 0u, 1, false, true),
+		CHECK(run_exchange(law, V92_CONSTELLATION_4_POINT, 0u, 1, false, true, false),
 		      "opposite peer codec changed the network-law exchange");
 	}
 	return true;

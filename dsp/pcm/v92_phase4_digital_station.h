@@ -37,7 +37,7 @@ struct v92_phase4_digital_station {
 	struct v92_phase4_digital_rx receive;
 	struct v92_downstream_control control;
 	struct v92_upstream_plan upstream_plan;
-	/* During silence agreement E2u can replace a lost acknowledging SUVu.
+	/* E2u can replace a lost acknowledging CPu/SUVu, including during pause.
 	 * Keep its candidate beside, not in place of, the control parser. */
 	struct v92_e2u_rx e2u;
 	bool searching_e2u;
@@ -57,7 +57,7 @@ struct v92_phase4_digital_handoff {
 	uint64_t e2u_delay_samples;
 	/* Status-only rate agreement, not acknowledgement of new parameters. */
 	bool pause;
-	/* A pause may already have consumed part or all of E2u before Ed is
+	/* Control may already have consumed part or all of E2u before Ed is
 	 * authorized. Transfer that candidate instead of restarting it. */
 	struct v92_e2u_rx e2u;
 	bool searching_e2u;
@@ -110,8 +110,8 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_select_upstrea
 
 /* Consume one signed 8 kHz upstream sample. EVENT reports a complete decoded
  * record. Rejected wire records advance only the receive line and do not
- * alter downstream procedure state. Complete E2u confirms a pause with OK;
- * is_pause_ready then directs the handoff. Invalid calls consume no sample. */
+ * alter downstream procedure state. Complete E2u confirms parameters or a
+ * pause with OK; the ready queries direct handoff. Invalid calls consume no sample. */
 enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 	struct v92_phase4_digital_station *station, int16_t sample);
 
@@ -126,7 +126,7 @@ bool v92_phase4_digital_station_cpu_parameters(
 	const struct v92_phase4_digital_station *station,
 	struct v92_cpu_parameters *parameters);
 
-/* Report whether a valid SUVu or CPu has acknowledged the selected CPd. */
+/* Report whether valid SUVu/CPu or complete E2u confirmed the selected CPd. */
 bool v92_phase4_digital_station_peer_acknowledged_cpd(
 	const struct v92_phase4_digital_station *station);
 

@@ -16,12 +16,12 @@ static enum g711_law receive_law(
 		       receiver->signal.control.signal.line.law;
 }
 
-static bool pause_candidate_is_valid(const struct v92_e2u_rx *e2u,
+static bool e2u_candidate_is_valid(const struct v92_e2u_rx *e2u,
 	const struct v92_upstream_control_line_rx *control)
 {
 	return v92_e2u_rx_is_valid(e2u) &&
-		e2u->expected_symbols == V92_PHASE4_E2U_SYMBOLS &&
-		e2u->signal.line.renegotiation && control->signal.line.renegotiation &&
+		e2u->signal.line.renegotiation == control->signal.line.renegotiation &&
+		(!control->signal.line.renegotiation || e2u->expected_symbols == V92_PHASE4_E2U_SYMBOLS) &&
 		e2u->signal.line.law == control->signal.line.law &&
 		e2u->signal.line.demodulator.constellation == control->signal.line.demodulator.constellation;
 }
@@ -33,9 +33,10 @@ bool v92_phase4_digital_station_is_valid(const struct v92_phase4_digital_station
 		receive_law(&station->receive) == station->control.transmit.encoder.mapping.law &&
 		(!station->searching_e2u ||
 		 (v92_phase4_digital_rx_is_receiving_control(&station->receive) &&
-		  pause_candidate_is_valid(&station->e2u, &station->receive.signal.control) &&
+		  e2u_candidate_is_valid(&station->e2u, &station->receive.signal.control) &&
 		  (station->control.failed || (!station->e2u.failed &&
-		   v92_downstream_control_silence_requested(&station->control))))) &&
+		   (station->control.cpu_received ||
+		    v92_downstream_control_silence_requested(&station->control)))))) &&
 		(station->control.cleardown.active ||
 		 (v92_upstream_plan_is_valid(&station->upstream_plan) &&
 		  station->control.previous_cpu == v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
@@ -203,13 +204,17 @@ enum v92_phase4_digital_station_result v92_phase4_digital_station_receive(
 		station->searching_e2u = false;
 		return V92_PHASE4_DIGITAL_STATION_OK;
 	}
-	/* A complete SUVu (including a CRC-rejected repeat) marks an exact E2u
+	/* A complete record (including a CRC-rejected repeat) marks an exact E2u
 	 * candidate boundary. Start before confirmation; waiting for the SUVu
 	 * ACK here would deadlock when that is the record lost on the line. */
 	if (!station->searching_e2u && event.type != V92_CONTROL_EVENT_NONE &&
 	    station->receive.signal.control.control.record_boundary &&
-	    v92_downstream_control_silence_requested(&station->control)) {
-		if (v92_e2u_rx_init(&station->e2u, &station->receive.signal.control.signal, false) != V92_E2U_RX_OK)
+	    (station->control.cpu_received || v92_downstream_control_silence_requested(&station->control))) {
+		struct v92_cpd_parameters cpd;
+		if (v92_cpd_decode(station->control.initial_cpd.sequence,
+			    sizeof(station->control.initial_cpd.sequence), station->control.initial_cpd.sequence_bits,
+			    station->control.initial_cpd.frame_bits, &cpd) != V92_CPD_OK ||
+		    v92_e2u_rx_init(&station->e2u, &station->receive.signal.control.signal, cpd.extend_e2u) != V92_E2U_RX_OK)
 			return fail(station);
 		station->searching_e2u = true;
 	}
@@ -282,11 +287,12 @@ bool v92_phase4_digital_handoff_is_valid(
 	const struct v92_phase4_digital_handoff *handoff)
 {
 	return handoff != NULL &&
+	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
 	       handoff->e2u_delay_samples != UINT64_MAX &&
 	       (!handoff->searching_e2u || !handoff->e2u.received_symbols || !handoff->e2u_delay_samples) &&
-	       v92_upstream_control_line_rx_is_valid(&handoff->receive) &&
-	       (!handoff->searching_e2u || (handoff->pause && !handoff->e2u.failed &&
-		pause_candidate_is_valid(&handoff->e2u, &handoff->receive))) &&
+	       (!handoff->searching_e2u || (!handoff->e2u.failed &&
+		e2u_candidate_is_valid(&handoff->e2u, &handoff->receive) &&
+		handoff->e2u.expected_symbols == V92_PHASE4_E2U_SYMBOLS + handoff->mapping.cpd.extend_e2u)) &&
 	       (!handoff->pause || (handoff->receive.signal.line.renegotiation &&
 		!handoff->transmit.cpd_pending &&
 		handoff->transmit.transmit.encoder.mapping.kind == V90_CP_TRAINING &&
