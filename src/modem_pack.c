@@ -530,6 +530,13 @@ int modem_detector_put_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt
 		while (s->bit >= 10 ) {
 			ch = s->data >> (s->bit-9);
 			s->bit-= 10;
+			/* V.42 7.2.1 requires correctly received adjacent pattern
+			 * characters. A bad stop breaks an unfinished match. */
+			if (!(s->data & ((u32)1 << s->bit))) {
+				if (d->rx_count < DETECTOR_MATCH_CHARACTERS)
+					d->rx_count = 0;
+				continue;
+			}
 			PACK_DBG("rx pattern: 0x%02x.\n",ch);
 			if (!detector_accept_pattern_character(m, d, ch))
 				continue;

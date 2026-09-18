@@ -566,6 +566,63 @@ static bool test_v42_requires_adjacent_synchronous_flags(void)
 	return true;
 }
 
+static bool test_v42_rejects_bad_detection_stops(void)
+{
+	static const struct {
+		bool caller;
+		uint8_t characters[2];
+		bool reliable;
+	} patterns[] = {
+		{ false, { 0x11, 0x91 }, true },
+		{ true, { 'E', 'C' }, true },
+		{ true, { 'E', 0 }, false },
+	};
+
+	for (size_t pattern = 0; pattern < ARRAY_LENGTH(patterns); ++pattern) {
+		for (unsigned width = 1; width <= 8; ++width) {
+			for (unsigned broken = 0; broken < 4; ++broken) {
+				struct modem modem = {
+					.name = "V.42 detection stop", .caller = patterns[pattern].caller,
+					.tx_rate = 9600, .cfg = { .ec = 1, .ec_detector = 1 },
+				};
+				uint8_t bits[80];
+				size_t count = 3;
+
+				memset(bits, 1, sizeof(bits));
+				for (unsigned character = 0; character < 4; ++character) {
+					CHECK(append_async_character(bits, sizeof(bits), &count,
+						patterns[pattern].characters[character % 2], character != broken),
+					      "detection fixture overflow");
+					count += 8;
+				}
+				modem_detector_start(&modem);
+				CHECK(receive_detection_bits(&modem, bits, count, width) &&
+				      modem.packer.detector.rx_count < 4 &&
+				      modem.packer.detector.tx_count == 0,
+				      "accepted bad stop: pattern %zu width %u character %u",
+				      pattern, width, broken);
+				bits[3 + broken * 18 + 9] = 1;
+				CHECK(receive_detection_bits(&modem, bits, count, width) &&
+				      modem.packer.detector.rx_count == 4 &&
+				      (modem.packer.detector.ec_enable != 0) == patterns[pattern].reliable,
+				      "valid detection did not recover: pattern %zu width %u character %u",
+				      pattern, width, broken);
+				if (!modem.caller) {
+					/* Once selected, damaged input must not restart the
+					 * answerer's partly transmitted ADP reply. */
+					modem.packer.detector.tx_count = 7;
+					bits[3 + broken * 18 + 9] = 0;
+					CHECK(receive_detection_bits(&modem, bits, count, width) &&
+					      modem.packer.detector.rx_count == 4 &&
+					      modem.packer.detector.tx_count == 7,
+					      "bad stop restarted an accepted ADP reply");
+				}
+			}
+		}
+	}
+	return true;
+}
+
 struct hdlc_fixture {
 	struct hdlc_frame transmit_frame;
 	const uint8_t *payload;
@@ -729,6 +786,8 @@ int main(void)
 		  test_v42_flags_do_not_extend_detection },
 		{ "V.42 synchronous flag boundaries",
 		  test_v42_requires_adjacent_synchronous_flags },
+		{ "V.42 detection stop validation",
+		  test_v42_rejects_bad_detection_stops },
 		{ "HDLC transmit preamble", test_hdlc_transmit_preamble },
 		{ "HDLC round trip", test_hdlc_round_trip },
 	};
