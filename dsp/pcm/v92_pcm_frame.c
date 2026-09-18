@@ -748,7 +748,10 @@ static bool observe_rm(const struct v92_pcm_mapping *mapping, const uint8_t *dig
 }
 
 struct frame_candidate {
+	/* Heap rank includes any remaining-symbol lower bound; path_metric
+	 * contains only observations already consumed by this candidate. */
 	uint64_t metric;
+	uint64_t path_metric;
 	uint64_t frame_metric;
 	int16_t eta;
 	uint8_t path;
@@ -806,6 +809,23 @@ static int16_t signed_point(
 {
 	return eta >= 0 ? constellation->positive_linear[eta] :
 		(int16_t)-constellation->positive_linear[-eta - 1];
+}
+
+static uint64_t constellation_weight(const struct v92_pcm_frame_rx *receiver, int16_t sample)
+{
+	double variance = 1.0 + receiver->noise.relative_variance * (double)sample * sample;
+	uint64_t weight = (uint64_t)(65536.0 / variance);
+
+	return weight ? weight : 1u;
+}
+
+static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
+	int16_t point, uint64_t weight, bool present)
+{
+	double distance = fmax(cell->lower - point, fmax(point - cell->upper, 0.0));
+	double cost = present ? distance * distance * weight : 0.0;
+
+	return cost >= UINT64_MAX ? UINT64_MAX : (uint64_t)cost;
 }
 
 static int16_t level_sample(const struct v92_pcm_frame_rx *receiver, int16_t level, int32_t v)
@@ -1033,6 +1053,39 @@ static enum v92_pcm_frame_result decode_frame(
 	 * Codec-model acquisition explicitly requests known coordinates instead. */
 	bool known = b1u && (acquire_model ||
 		receiver->observation != V92_PCM_FRAME_CONSTELLATION);
+	/* The fourth symbol must satisfy the group's parity. Ranking partial
+	 * groups without its cost can fill the beam with cheap prefixes whose
+	 * legal completion is expensive. The independent cell scores permit an
+	 * exact minimum remaining cost for each parity, computed backwards.
+	 * This orders the existing beam; it never adds future costs to history
+	 * or changes B1u, filter-dependent scoring, or the delivered residual. */
+	bool lookahead = cells && !b1u;
+	uint64_t tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2] = { { 0 } };
+	if (lookahead) {
+		for (unsigned symbol = V92_PCM_MAPPING_FRAME_SYMBOLS; symbol-- > 0;) {
+			unsigned set = receiver->mapping.cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES];
+			const struct v92_cpd_constellation *constellation = &receiver->mapping.cpd.constellation[set];
+			uint64_t minimum[2] = { UINT64_MAX, UINT64_MAX };
+			uint64_t weight = constellation_weight(receiver, samples[symbol]);
+
+			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
+				uint64_t cost = cell_metric(cells + symbol, signed_point(constellation, eta),
+					weight, !received || received[symbol]);
+				unsigned parity = (unsigned)eta & 1u;
+
+				if (cost < minimum[parity]) minimum[parity] = cost;
+			}
+			for (unsigned parity = 0; parity < 2; ++parity) {
+				if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u)
+					tail[symbol][parity] = minimum[parity];
+				else {
+					uint64_t even = add_u64_saturating(minimum[0], tail[symbol + 1][parity]);
+					uint64_t odd = add_u64_saturating(minimum[1], tail[symbol + 1][parity ^ 1u]);
+					tail[symbol][parity] = even < odd ? even : odd;
+				}
+			}
+		}
+	}
 
 	for (size_t index = 0u; index < path_count; ++index) {
 		paths[index] = (struct frame_path){
@@ -1081,12 +1134,7 @@ static enum v92_pcm_frame_result decode_frame(
 			/* Companding noise grows with amplitude. Estimate reliability
 			 * from the observation, independently of each candidate point.
 			 * Compute once per symbol, outside the bounded path search. */
-			double variance = 1.0 + receiver->noise.relative_variance *
-				(double)samples[symbol] * samples[symbol];
-
-			weight = (uint64_t)(65536.0 / variance);
-			if (weight == 0u)
-				weight = 1u;
+			weight = constellation_weight(receiver, samples[symbol]);
 		}
 
 		for (size_t path = 0u; path < path_count; ++path) {
@@ -1110,6 +1158,11 @@ static enum v92_pcm_frame_result decode_frame(
 					&paths[path].state.trellis, &y0) !=
 			    V34_TRELLIS_OK)
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
+			unsigned parity = y0;
+			if (lookahead)
+				for (size_t previous = symbol - symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS;
+				     previous < symbol; ++previous)
+					parity ^= (unsigned)paths[path].frame.signed_index[previous] & 1u;
 			int first_eta = -(int)constellation->count, end_eta = constellation->count;
 			/* A full heap supplies a budget which can only decrease as this
 			 * path is visited. Trim only tails whose enlarged observation
@@ -1186,14 +1239,9 @@ static enum v92_pcm_frame_result decode_frame(
 				if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
 					candidate.metric = add_u64_saturating(paths[path].state.metric,
 						input_cell_metric(receiver, v, &cell));
-				if (cells) {
-					double distance = fmax(cells[symbol].lower - u,
-						fmax(u - cells[symbol].upper, 0.0));
-					double cost = present ? distance * distance * weight : 0.0;
-
+				if (cells)
 					candidate.metric = add_u64_saturating(paths[path].state.metric,
-						cost >= UINT64_MAX ? UINT64_MAX : (uint64_t)cost);
-				}
+						cell_metric(cells + symbol, u, weight, present));
 				if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)
@@ -1205,6 +1253,10 @@ static enum v92_pcm_frame_result decode_frame(
 						!present ? 0 :
 						v92_observation_score(&cache, precoder_output(precoder, u), &previous, &second, budget));
 				}
+				candidate.path_metric = candidate.metric;
+				if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
+					candidate.metric = add_u64_saturating(candidate.metric,
+						tail[symbol + 1][parity ^ ((unsigned)eta & 1u)]);
 				if (count < V92_PCM_RX_PATHS) {
 					candidates[count++] = candidate;
 					candidate_push(candidates, count);
@@ -1221,7 +1273,7 @@ static enum v92_pcm_frame_result decode_frame(
 
 			next[index] = paths[candidate->path];
 			next[index].frame_metric = candidate->frame_metric;
-			next[index].state.metric = candidate->metric;
+			next[index].state.metric = candidate->path_metric;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
 			frame->u[symbol] = signed_point(constellation, candidate->eta);
