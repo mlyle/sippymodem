@@ -14,12 +14,13 @@ enum {
 	V92_OBSERVATION_BUCKETS = 4096,
 	V92_OBSERVATION_CACHE = 2048,
 	V92_OBSERVATION_POINTS = 1024,
+	V92_OBSERVATION_TAPS = 4,
 };
 
-/* A log-uniform first-codec gain interval and its fitted three channel taps.
+/* A log-uniform first-codec gain interval and its fitted channel taps.
  * Training retains the eight lowest-error identifiable intervals. */
 struct v92_observation_interval {
-	double low, high, main, post, second, weight;
+	double low, high, coefficient[V92_OBSERVATION_TAPS], weight;
 };
 /* Equal endpoints are constant. A zero crossing with unequal endpoints
  * denotes multiple transitions, handled by the general codec-cell integral. */
@@ -28,7 +29,7 @@ struct v92_observation_cell {
 	uint16_t crossing;
 };
 struct v92_observation_values {
-	double main_low, main_high, post_low, post_high, second_low, second_high;
+	double low[V92_OBSERVATION_TAPS], high[V92_OBSERVATION_TAPS];
 	struct v92_observation_cell cell[V92_OBSERVATION_INTERVALS];
 	bool stable;
 };
@@ -42,6 +43,7 @@ struct v92_observation {
 	/* Positive host gain after the final codec. */
 	double variance, energy, quantizer_gain;
 	size_t count;
+	unsigned taps;
 	enum g711_law law;
 	/* Zero means identity; otherwise apply the known one-tap CPd prefilter
 	 * rounding before the unknown first-codec gain. Delay is line-owned. */
@@ -63,11 +65,13 @@ struct v92_observation_training {
 	 * its provenance/validity belongs to the caller, never a decoded candidate. */
 	const double *offsets;
 	size_t count;
+	/* Fit three or four causal channel coefficients. */
+	unsigned taps;
 	double host_gain;
 	enum g711_law law;
 };
 
-/* Fit Q(g*input), three channel taps and Gaussian noise, then a final codec.
+/* Fit Q(g*input), the selected channel taps and noise, then a final codec.
  * The center fit must improve on linear before codec-bin refinement. Compile
  * only the final model: no partially fitted model is exposed to the caller.
  *
@@ -105,15 +109,15 @@ struct v92_observation_cache {
 	/* Derived once at begin(), like the other immutable per-fit constants. */
 	unsigned bucket_shift;
 	int64_t bucket_extent;
-	uint64_t key[V92_OBSERVATION_CACHE], value[V92_OBSERVATION_CACHE];
-	int32_t second_key[V92_OBSERVATION_CACHE];
+	uint64_t value[V92_OBSERVATION_CACHE];
+	int32_t key[V92_OBSERVATION_CACHE][V92_OBSERVATION_TAPS];
 	uint8_t stamp[V92_OBSERVATION_CACHE], generation;
 	struct v92_observation_values points[V92_OBSERVATION_POINTS];
 	uint16_t point_tag[V92_OBSERVATION_POINTS];
 	const struct v92_observation *model;
 	double relative_noise, variance, bound_scale, lower, upper;
 	/* Immutable per-fit constants and the current symbol's Gaussian scale. */
-	double width[V92_OBSERVATION_INTERVALS], margin[3], divisor;
+	double width[V92_OBSERVATION_INTERVALS], margin[V92_OBSERVATION_TAPS], divisor;
 	int16_t observed;
 };
 
@@ -132,10 +136,10 @@ bool v92_observation_symbol_level(struct v92_observation_cache *cache,
 struct v92_observation_point v92_observation_point(
 	struct v92_observation_cache *cache, int32_t x);
 /* Exact below budget; may return a conservative lower bound >= budget when
- * the candidate cannot win. UINT64_MAX requests an unbounded exact score. */
+ * the candidate cannot win. UINT64_MAX requests an unbounded exact score.
+ * previous contains model->taps - 1 points, newest first. */
 uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
-	const struct v92_observation_point *previous,
-	const struct v92_observation_point *second, uint64_t budget);
+	const struct v92_observation_point *previous, uint64_t budget);
 
 struct v92_observation_range { double low, high; };
 struct v92_observation_range v92_observation_range(
@@ -143,12 +147,12 @@ struct v92_observation_range v92_observation_range(
 
 /* Predict the mean final reconstructed sample for a validated fitted model
  * with positive quantizer_gain. Integrate fitted Gaussian channel noise and
- * the same shared gain across current, previous and second-previous input,
+ * the same shared gain across model->taps current and preceding inputs,
  * without conditioning on the observed sample. offset is the same independent
  * additive host correction supplied to symbol_level(), not a residual fitted
  * to the winning candidate.
  * Non-finite output means no prediction, never a zero residual. */
 double v92_observation_predict(const struct v92_observation *model,
-	const int32_t input[3], double offset);
+	const int32_t *input, double offset);
 
 #endif /* V92_OBSERVATION_H */

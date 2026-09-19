@@ -50,11 +50,11 @@ static double independent_mean(enum g711_law law, double mean, double sigma)
 }
 
 /* Independent integration: enumerate the encoder's integer transitions,
- * partition their union for all three inputs, and evaluate one point per
+ * partition their union for all active inputs, and evaluate one point per
  * constant codec cell. This does not use the model's compiled geometry,
  * cached cells, transition formula, or likelihood implementation. */
 static uint64_t independent_score(const struct v92_observation *model,
-	const int32_t input[3], int16_t observed, int16_t level, double offset,
+	const int32_t *input, int16_t observed, int16_t level, double offset,
 	double *prediction)
 {
 	double thresholds[256];
@@ -78,9 +78,9 @@ static uint64_t independent_score(const struct v92_observation *model,
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
 		const struct v92_observation_interval *fit = &model->intervals[i];
 		if (fit->weight == 0.) continue;
-		double cuts[3 * 256 + 2] = { fit->low, fit->high };
+		double cuts[V92_OBSERVATION_TAPS * 256 + 2] = { fit->low, fit->high };
 		size_t count = 2;
-		for (unsigned j = 0; j < 3; j++) {
+		for (unsigned j = 0; j < model->taps; j++) {
 			if (!input[j]) continue;
 			for (size_t k = 0; k < transitions; k++) {
 				double gain = thresholds[k] / input[j];
@@ -92,9 +92,9 @@ static uint64_t independent_score(const struct v92_observation *model,
 		for (size_t j = 1; j < count; j++) {
 			if (cuts[j] == cuts[j - 1]) continue;
 			double gain = sqrt(cuts[j - 1] * cuts[j]);
-			double error = observed - fit->main * quantize(model->law, gain * input[0]) -
-				fit->post * quantize(model->law, gain * input[1]) -
-				fit->second * quantize(model->law, gain * input[2]);
+			double error = observed;
+			for (unsigned k = 0; k < model->taps; k++)
+				error -= fit->coefficient[k] * quantize(model->law, gain * input[k]);
 			*prediction += fit->weight * model->quantizer_gain *
 				independent_mean(model->law, (observed - error - offset) / model->quantizer_gain,
 					sqrt(model->variance) / model->quantizer_gain) *
@@ -128,8 +128,8 @@ static void check_geometry(struct v92_observation_cache *cache)
 			struct v92_observation_point point = v92_observation_point(cache, x);
 			assert(point.span == expected);
 			struct v92_observation_range range = v92_observation_range(cache, x);
-			assert(range.low == point.values.main_low);
-			assert(range.high == point.values.main_high);
+			assert(range.low == point.values.low[0]);
+			assert(range.high == point.values.high[0]);
 		}
 	}
 	assert(v92_observation_point(cache, INT32_MAX).span == model->count - 1);
@@ -141,14 +141,14 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	struct v92_observation before = *model;
 	const struct v92_observation_training good = {
 		.input = x, .linear = u, .sample = y, .levels = y,
-		.count = TRAINING, .host_gain = model->quantizer_gain, .law = model->law,
+		.count = TRAINING, .taps = model->taps, .host_gain = model->quantizer_gain, .law = model->law,
 	};
 	int16_t invalid[TRAINING] = { 1 }; /* Not a reconstructed codec level. */
 	assert(!v92_observation_fit(NULL, &good));
 	assert(!v92_observation_fit(model, NULL));
 	assert(!v92_observation_fit(model, (const struct v92_observation_training *)model));
 	double offsets[TRAINING] = { 0 };
-	for (unsigned fault = 0; fault < 21; fault++) {
+	for (unsigned fault = 0; fault < 25; fault++) {
 		struct v92_observation_training bad = good;
 		switch (fault) {
 		case 0: bad.count = TRAINING + 1; break;
@@ -172,11 +172,29 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 		case 18: bad.offsets = offsets; offsets[TRAINING - 1] = NAN; break;
 		case 19: bad.offsets = offsets; offsets[TRAINING - 1] = INFINITY; break;
 		case 20: bad.offsets = offsets; offsets[TRAINING - 1] = -INFINITY; break;
+		case 21: bad.taps = 0; break;
+		case 22: bad.taps = 2; break;
+		case 23: bad.taps = V92_OBSERVATION_TAPS + 1; break;
+		case 24: bad.count = bad.taps; break;
 		}
 		assert(!v92_observation_fit(model, &bad));
 		assert(memcmp(model, &before, sizeof(before)) == 0);
 	}
 	assert(!v92_observation_is_valid(NULL));
+	model->taps = 2;
+	assert(!v92_observation_is_valid(model));
+	*model = before;
+	model->taps = V92_OBSERVATION_TAPS + 1;
+	assert(!v92_observation_is_valid(model));
+	*model = before;
+	model->intervals[0].coefficient[3] = NAN;
+	assert(!v92_observation_is_valid(model));
+	*model = before;
+	if (model->taps == 3) {
+		model->intervals[0].coefficient[3] = .01;
+		assert(!v92_observation_is_valid(model));
+		*model = before;
+	}
 	model->variance = NAN;
 	assert(!v92_observation_is_valid(model));
 	*model = before;
@@ -218,8 +236,8 @@ static void check_tail_scores(const struct v92_observation *fitted)
 	model.variance = 256.;
 	model.quantizer_gain = 1.;
 	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
-		model.intervals[i].main = 1.;
-		model.intervals[i].post = model.intervals[i].second = 0.;
+		model.intervals[i].coefficient[0] = 1.;
+		model.intervals[i].coefficient[1] = model.intervals[i].coefficient[2] = 0.;
 		model.intervals[i].weight = i == 0 ? 1. : 0.;
 	}
 	assert(v92_observation_is_valid(&model));
@@ -240,13 +258,13 @@ static void check_tail_scores(const struct v92_observation *fitted)
 			if (sign < 0) { double swap = a; a = -b; b = -swap; }
 			double expected = tail_score(a, b);
 			assert(v92_observation_symbol_level(&cache, observed, &observed, 0.));
-			uint64_t actual = v92_observation_score(&cache, 0, &zero, &zero, UINT64_MAX);
+			uint64_t actual = v92_observation_score(&cache, 0, (struct v92_observation_point[]){ zero, zero }, UINT64_MAX);
 			assert(fabs((double)actual - expected) <= 1.);
 			assert(actual > previous);
 			if (magnitude >= 1024) assert(actual > (uint64_t)(-2e6 * log(1e-300)));
 			uint64_t budgets[] = { actual / 2, actual, actual + 1, UINT64_MAX };
 			for (unsigned j = 0; j < sizeof(budgets) / sizeof(*budgets); j++) {
-				uint64_t bounded = v92_observation_score(&cache, 0, &zero, &zero, budgets[j]);
+				uint64_t bounded = v92_observation_score(&cache, 0, (struct v92_observation_point[]){ zero, zero }, budgets[j]);
 				assert(bounded <= actual && (bounded == actual || bounded >= budgets[j]));
 			}
 			previous = actual;
@@ -256,14 +274,14 @@ static void check_tail_scores(const struct v92_observation *fitted)
 	 * probability floor. Exercise both finite and overflowing squared errors. */
 	const double scales[] = { 1e8, 1e300 };
 	for (unsigned i = 0; i < sizeof(scales) / sizeof(*scales); i++) {
-		model.intervals[0].main = scales[i];
+		model.intervals[0].coefficient[0] = scales[i];
 		assert(v92_observation_is_valid(&model));
 		v92_observation_begin(&cache, &model, 0.);
 		zero = v92_observation_point(&cache, 0);
 		int16_t observed = quantize(model.law, 0);
 		assert(v92_observation_symbol_level(&cache, observed, &observed, 0.));
-		assert(v92_observation_score(&cache, INT32_MAX, &zero, &zero, UINT64_MAX) == UINT64_MAX);
-		assert(v92_observation_score(&cache, INT32_MAX, &zero, &zero, 1) == UINT64_MAX);
+		assert(v92_observation_score(&cache, INT32_MAX, (struct v92_observation_point[]){ zero, zero }, UINT64_MAX) == UINT64_MAX);
+		assert(v92_observation_score(&cache, INT32_MAX, (struct v92_observation_point[]){ zero, zero }, 1) == UINT64_MAX);
 	}
 }
 
@@ -276,34 +294,47 @@ static void check_scores(const struct v92_observation *model,
 	check_geometry(&cache);
 	for (size_t i = TRAINING; i < SAMPLES; i++) {
 		assert(v92_observation_symbol_level(&cache, y[i], y + i, 0.));
-		struct v92_observation_point previous = v92_observation_point(&cache, x[i - 1]);
-		struct v92_observation_point second = v92_observation_point(&cache, x[i - 2]);
+		struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+		for (unsigned j = 1; j < model->taps; j++)
+			history[j - 1] = v92_observation_point(&cache, x[i - j]);
 		int32_t candidates[] = { x[i], -x[i], 0, INT32_MIN, INT32_MAX };
 		for (unsigned k = 0; k < sizeof(candidates) / sizeof(candidates[0]); k++) {
-			uint64_t exact = v92_observation_score(&cache, candidates[k], &previous, &second, UINT64_MAX);
+			uint64_t exact = v92_observation_score(&cache, candidates[k], history, UINT64_MAX);
 			uint64_t budgets[] = { 0, exact / 2, exact, exact + 1, UINT64_MAX };
 			for (unsigned j = 0; j < sizeof(budgets) / sizeof(budgets[0]); j++) {
-				uint64_t value = v92_observation_score(&cache, candidates[k], &previous, &second, budgets[j]);
+				uint64_t value = v92_observation_score(&cache, candidates[k], history, budgets[j]);
 				assert(value <= exact);
 				assert(value == exact || value >= budgets[j]);
 			}
-			assert(v92_observation_score(&cache, candidates[k], &previous, &second, UINT64_MAX) == exact);
+			assert(v92_observation_score(&cache, candidates[k], history, UINT64_MAX) == exact);
 		}
 		/* Invalidate every score through a fresh cache and compare the result,
 		 * including across the 8-bit per-symbol generation wrap. */
-		uint64_t score = v92_observation_score(&cache, x[i], &previous, &second, UINT64_MAX);
+		uint64_t score = v92_observation_score(&cache, x[i], history, UINT64_MAX);
 		struct v92_observation_cache fresh;
 		v92_observation_begin(&fresh, model, .001);
 		assert(v92_observation_symbol(&fresh, y[i]));
-		assert(v92_observation_score(&fresh, x[i], &previous, &second, UINT64_MAX) == score);
+		assert(v92_observation_score(&fresh, x[i], history, UINT64_MAX) == score);
+		/* A changed oldest symbol must not reuse the preceding history's
+		 * cached score, including when only the new fourth tap changes. */
+		unsigned oldest = model->taps - 2;
+		struct v92_observation_point saved = history[oldest];
+		history[oldest] = v92_observation_point(&cache, -history[oldest].x);
+		uint64_t changed = v92_observation_score(&cache, x[i], history, UINT64_MAX);
+		v92_observation_begin(&fresh, model, .001);
+		assert(v92_observation_symbol(&fresh, y[i]));
+		assert(v92_observation_score(&fresh, x[i], history, UINT64_MAX) == changed);
+		history[oldest] = saved;
+		assert(v92_observation_score(&cache, x[i], history, UINT64_MAX) == score);
 	}
 	v92_observation_begin(&cache, model, 0.);
 	for (unsigned i = TRAINING; i < TRAINING + 8; i++) {
-		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
-		struct v92_observation_point b = v92_observation_point(&cache, input[1]);
-		struct v92_observation_point c = v92_observation_point(&cache, input[2]);
+		int32_t input[] = { x[i], x[i - 1], x[i - 2], x[i - 3] };
+		struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
+		for (unsigned j = 1; j < model->taps; j++)
+			history[j - 1] = v92_observation_point(&cache, input[j]);
 		assert(v92_observation_symbol(&cache, y[i]));
-		uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
+		uint64_t actual = v92_observation_score(&cache, input[0], history, UINT64_MAX);
 		double prediction;
 		uint64_t expected = independent_score(model, input, y[i], y[i], 0., &prediction);
 		assert(actual <= expected + 1 && expected <= actual + 1);
@@ -317,8 +348,8 @@ static void check_scores(const struct v92_observation *model,
 	struct v92_observation rounded = *model;
 	rounded.input_coefficient = 24576;
 	v92_observation_begin(&cache, &rounded, 0.);
-	int32_t input[] = { -19234, 22857, 5377 }, transformed[3];
-	for (unsigned i = 0; i < 3; i++) {
+	int32_t input[] = { -19234, 22857, 5377, -831 }, transformed[V92_OBSERVATION_TAPS];
+	for (unsigned i = 0; i < model->taps; i++) {
 		transformed[i] = round_shift_s64_to_s32_saturating((int64_t)input[i] * 24576, 15u);
 		assert(v92_observation_point(&cache, input[i]).x == transformed[i]);
 	}
@@ -379,7 +410,7 @@ static void check_predictive_noise(const struct v92_observation *trained)
 	printf("V.92 predictive noise law=%u checks passed\n", model.law);
 }
 
-static void check_channel(enum g711_law law, double gain, struct v92_observation *previous)
+static void check_channel(enum g711_law law, double gain, unsigned taps, struct v92_observation *previous)
 {
 	int32_t x[SAMPLES];
 	int16_t q[SAMPLES], y[SAMPLES], u[TRAINING] = { 0 };
@@ -388,12 +419,13 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 		x[i] = (int32_t)round(((int)(random_value(&state) % 40001) - 20000) / gain);
 		q[i] = quantize(law, gain * x[i]);
 		double sample = .63 * q[i] + (i ? .07 * q[i - 1] : 0.) - (i > 1 ? .02 * q[i - 2] : 0.);
+		if (taps == 4 && i > 2) sample += .03 * q[i - 3];
 		y[i] = quantize(law, sample);
 	}
 	struct v92_observation model;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = y,
-		.count = TRAINING, .host_gain = 1., .law = law,
+		.count = TRAINING, .taps = taps, .host_gain = 1., .law = law,
 	};
 	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
@@ -405,14 +437,14 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	assert(memcmp(&inferred, &model, sizeof(model)) == 0);
 	double error = 0.;
 	for (size_t i = TRAINING; i < SAMPLES; i++) {
-		int32_t input[] = { x[i], x[i - 1], x[i - 2] };
+		int32_t input[] = { x[i], x[i - 1], x[i - 2], x[i - 3] };
 		double residual = v92_observation_predict(&model, input, 0.) - y[i];
 		error += residual * residual;
 	}
 	double rms = sqrt(error / (SAMPLES - TRAINING));
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
-	if (gain == .125) {
+	if (gain == .125 && taps == 3) {
 		check_predictive_noise(&model);
 		check_tail_scores(&model);
 	}
@@ -420,7 +452,7 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	check_failures(&model, x, u, y);
 	if (previous->count) check_rebinding(previous, &model);
 	*previous = model;
-	printf("V.92 observation law=%u gain=%.9g heldout_rms=%.6f\n", law, gain, rms);
+	printf("V.92 observation law=%u taps=%u gain=%.9g heldout_rms=%.6f\n", law, taps, gain, rms);
 }
 
 static void check_conditioned_channel(enum g711_law law, double host_gain)
@@ -441,7 +473,7 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 	struct v92_observation model;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = wire, .offsets = offsets,
-		.count = TRAINING, .host_gain = host_gain, .law = law,
+		.count = TRAINING, .taps = 3, .host_gain = host_gain, .law = law,
 	};
 	assert(v92_observation_fit(&model, &training));
 	struct v92_observation_cache cache;
@@ -459,7 +491,7 @@ static void check_conditioned_channel(enum g711_law law, double host_gain)
 			uint64_t expected = independent_score(&model, input, y[i], wire[i], offsets[i], &prediction);
 			struct v92_observation_point b = v92_observation_point(&cache, input[1]);
 			struct v92_observation_point c = v92_observation_point(&cache, input[2]);
-			uint64_t actual = v92_observation_score(&cache, input[0], &b, &c, UINT64_MAX);
+			uint64_t actual = v92_observation_score(&cache, input[0], (struct v92_observation_point[]){ b, c }, UINT64_MAX);
 			assert(actual <= expected + 1 && expected <= actual + 1);
 			assert(fabs(v92_observation_predict(&model, input, offsets[i]) - prediction) < 1e-7);
 		}
@@ -510,7 +542,7 @@ static void check_noise_fit(enum g711_law law, unsigned sigma)
 	struct v92_observation model;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = y,
-		.count = TRAINING, .host_gain = 1., .law = law,
+		.count = TRAINING, .taps = 3, .host_gain = 1., .law = law,
 	};
 	assert(v92_observation_fit(&model, &training));
 	assert(v92_observation_is_valid(&model));
@@ -542,7 +574,7 @@ static void check_scalar(enum g711_law law, double host_gain)
 	}
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = levels, .offsets = offsets,
-		.count = TRAINING, .host_gain = host_gain, .law = law,
+		.count = TRAINING, .taps = 3, .host_gain = host_gain, .law = law,
 	};
 	double fitted = 0.;
 	assert(v92_observation_fit_scalar(&fitted, &training));
@@ -614,7 +646,9 @@ int main(void)
 			check_conditioned_channel(law, quarter / 4.);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned i = 0; i < sizeof(gains) / sizeof(gains[0]); i++)
-			check_channel(law, gains[i], &previous);
+			check_channel(law, gains[i], 3, &previous);
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
+		check_channel(law, 4., 4, &previous);
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (unsigned sigma = 16; sigma <= 64; sigma *= 2)
 			check_noise_fit(law, sigma);
@@ -625,7 +659,7 @@ int main(void)
 	int16_t y[TRAINING] = { 0 };
 	const struct v92_observation_training training = {
 		.input = zero, .linear = y, .sample = y, .levels = y,
-		.count = TRAINING, .host_gain = 1., .law = G711_LAW_PCMU,
+		.count = TRAINING, .taps = 3, .host_gain = 1., .law = G711_LAW_PCMU,
 	};
 	assert(!v92_observation_fit(&model, &training));
 	assert(memcmp(&model, &before, sizeof(model)) == 0);

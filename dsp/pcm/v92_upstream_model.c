@@ -174,9 +174,11 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
 			round(model->raw[i] * line->calibration.gain)));
 	}
+	const struct v92_cpd_filter *feedback = &decoder->mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK];
 	const struct v92_observation_training training = {
 		.input = model->x, .linear = model->u, .sample = samples, .levels = model->wire,
 		.offsets = offsets, .count = V92_OBSERVATION_TRAINING,
+		.taps = feedback->count >= 3 && feedback->coefficient[2] ? 4 : 3,
 		.host_gain = line->host.gain * line->calibration.gain, .law = decoder->mapping.law,
 	};
 	for (unsigned candidate = 0u; candidate < 2u; ++candidate) {

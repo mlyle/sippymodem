@@ -1039,7 +1039,7 @@ static enum v92_pcm_frame_result decode_frame(
 	if (model && (!v92_observation_is_valid(model) ||
 		model->law != receiver->mapping.law ||
 		receiver->observation != V92_PCM_FRAME_CONSTELLATION ||
-		x_history_count(&receiver->mapping) < 2u))
+		x_history_count(&receiver->mapping) < model->taps - 1u))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
@@ -1140,7 +1140,7 @@ static enum v92_pcm_frame_result decode_frame(
 		for (size_t path = 0u; path < path_count; ++path) {
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
-			struct v92_observation_point previous = { 0 }, second = { 0 };
+			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
 
 			if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
 				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
@@ -1148,10 +1148,9 @@ static enum v92_pcm_frame_result decode_frame(
 			}
 			if (model) {
 				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
-				previous = v92_observation_point(&cache,
-					x_history(&receiver->mapping, &paths[path].state.filter)[0]);
-				second = v92_observation_point(&cache,
-					x_history(&receiver->mapping, &paths[path].state.filter)[1]);
+				const int32_t *previous = x_history(&receiver->mapping, &paths[path].state.filter);
+				for (unsigned i = 1; i < model->taps; i++)
+					history[i - 1] = v92_observation_point(&cache, previous[i - 1]);
 			}
 
 			if (v34_convolutional_encoder_output(
@@ -1173,10 +1172,12 @@ static enum v92_pcm_frame_result decode_frame(
 				uint64_t budget = candidates[0].metric - paths[path].state.metric;
 
 				double radius = sqrt((budget + 1. + 1e-9 * budget) / cache.bound_scale);
-				double minimum = cache.observed + cache.lower - radius -
-					previous.values.post_high - second.values.second_high;
-				double maximum = cache.observed + cache.upper + radius -
-					previous.values.post_low - second.values.second_low;
+				double minimum = cache.observed + cache.lower - radius;
+				double maximum = cache.observed + cache.upper + radius;
+				for (unsigned i = 1; i < model->taps; i++) {
+					minimum -= history[i - 1].values.high[i];
+					maximum -= history[i - 1].values.low[i];
+				}
 				int low = first_eta, high = end_eta;
 
 				while (low < high) {
@@ -1249,7 +1250,7 @@ static enum v92_pcm_frame_result decode_frame(
 
 					candidate.metric = add_u64_saturating(paths[path].state.metric,
 						!present ? 0 :
-						v92_observation_score(&cache, precoder_output(precoder, u), &previous, &second, budget));
+						v92_observation_score(&cache, precoder_output(precoder, u), history, budget));
 				}
 				candidate.path_metric = candidate.metric;
 				if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
@@ -1474,9 +1475,9 @@ static enum v92_pcm_frame_result decode_frame(
 		const int32_t *previous = x_history(&receiver->mapping,
 			&receiver->paths[paths[best].origin].filter);
 		for (size_t symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-			int32_t input[3] = { result.frame.x[symbol],
-				symbol ? result.frame.x[symbol - 1] : previous[0],
-				symbol > 1 ? result.frame.x[symbol - 2] : previous[1 - symbol] };
+			int32_t input[V92_OBSERVATION_TAPS];
+			for (unsigned i = 0; i < model->taps; i++)
+				input[i] = symbol >= i ? result.frame.x[symbol - i] : previous[i - symbol - 1];
 			estimated[symbol] = v92_observation_predict(model, input, offsets ? offsets[symbol] : 0.);
 			if (!isfinite(estimated[symbol]))
 				return V92_PCM_FRAME_NO_PATH;

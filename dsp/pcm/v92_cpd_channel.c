@@ -136,6 +136,53 @@ static int64_t moment(const struct v92_upstream_channel *channel,
 	return value;
 }
 
+/* A third postcursor can be small enough to survive the linear inverse
+ * yet large enough to change tandem-codec decisions. Use the same finite
+ * measurement window and residual limit as the shorter fits. */
+static bool solve_four_tap_channel(const struct v92_upstream_channel *channel,
+	double coefficients[TAPS])
+{
+	double system[4][5], fit[4], observed = channel->observed_autocorrelation[0];
+
+	if (!(observed > 0.)) return false;
+	for (unsigned i = 0; i < 4; i++) {
+		for (unsigned j = 0; j < 4; j++)
+			system[i][j] = moment(channel, false, i, false, j) / observed;
+		system[i][4] = cross(channel, i, observed);
+	}
+	for (unsigned i = 0; i < 4; i++) {
+		double pivot = system[i][i];
+		if (!(pivot > 1e-8)) return false;
+		for (unsigned k = i; k < 5; k++) system[i][k] /= pivot;
+		for (unsigned j = 0; j < 4; j++) if (i != j) {
+			double factor = system[j][i];
+			for (unsigned k = i; k < 5; k++) system[j][k] -= factor * system[i][k];
+		}
+	}
+	double error = 1., feedback = 0.;
+	for (unsigned i = 0; i < 4; i++) {
+		fit[i] = system[i][4];
+		if (!isfinite(fit[i])) return false;
+		error -= fit[i] * cross(channel, i, observed);
+		if (i) feedback += fabs(fit[i]);
+	}
+	/* Sum |P1| < 1 is a sufficient stability condition for this third-order
+	 * recurrence; verify it again after quantization. Other channels still
+	 * use the general designer rather than an unproven short inverse. */
+	if (fit[0] <= feedback || !isfinite(error) || error < -1e-10 || error > 4e-4)
+		return false;
+	long quantized[3], magnitude = 0;
+	for (unsigned i = 0; i < 3; i++) {
+		quantized[i] = lround(-fit[i + 1] / fit[0] * 16384.);
+		magnitude += quantized[i] < 0 ? -quantized[i] : quantized[i];
+	}
+	if (magnitude >= 16384) return false;
+	memset(coefficients, 0, TAPS * sizeof(*coefficients));
+	coefficients[DELAY] = 1. / fit[0];
+	for (unsigned i = 0; i < 3; i++) coefficients[Z2_TAPS + i] = quantized[i] / 16384.;
+	return true;
+}
+
 /* Apply the symmetric normal matrix without allocating a dense matrix.
  * H(z)Z2(z) = z^-DELAY (1-P1(z)); unknowns are z2 then p1. Walking each
  * diagonal updates its exact covariance with just two boundary products,
@@ -296,7 +343,8 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), channel, sizeof(*channel)) ||
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
-	    (!solve_short_channel(channel, coefficients) && !solve(channel, coefficients)))
+	    (!solve_short_channel(channel, coefficients) &&
+	     !solve_four_tap_channel(channel, coefficients) && !solve(channel, coefficients)))
 		return false;
 	for (size_t tap = 0; tap < TAPS; ++tap) {
 		if (!isfinite(coefficients[tap]) ||

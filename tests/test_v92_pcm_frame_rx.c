@@ -1217,21 +1217,22 @@ static bool test_rejection_and_training_evidence(void)
 }
 
 static unsigned failed_prediction, prediction_count;
-double __real_v92_observation_predict(const struct v92_observation *, const int32_t [3], double);
-double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t x[3], double offset)
+double __real_v92_observation_predict(const struct v92_observation *, const int32_t *, double);
+double __wrap_v92_observation_predict(const struct v92_observation *model, const int32_t *x, double offset)
 {
 	if (++prediction_count == failed_prediction) return NAN;
 	return __real_v92_observation_predict(model, x, offset);
 }
 
-static void channel_samples(enum g711_law law, const struct v92_pcm_frame *frame,
-	int16_t memory[2], int16_t levels[12], int16_t samples[12])
+static void channel_samples(enum g711_law law, unsigned taps, const struct v92_pcm_frame *frame,
+	int16_t memory[3], int16_t levels[12], int16_t samples[12])
 {
 	for (unsigned i = 0; i < 12; i++) {
 		int16_t q = quantize(law, (int16_t)round(.5 * frame->x[i]));
-		levels[i] = quantize(law, (int16_t)round(1.8 * q + .16 * memory[0] + .04 * memory[1]));
+		levels[i] = quantize(law, (int16_t)round(1.8 * q + .16 * memory[0] +
+			.04 * memory[1] + (taps == 4 ? .03 * memory[2] : 0.)));
 		samples[i] = (int16_t)round(.75 * levels[i]);
-		memory[1] = memory[0]; memory[0] = q;
+		memory[2] = memory[1]; memory[1] = memory[0]; memory[0] = q;
 	}
 }
 
@@ -1321,12 +1322,12 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	return true;
 }
 
-static bool test_observed_channel(enum g711_law law)
+static bool test_observed_channel(enum g711_law law, unsigned taps)
 {
 	struct v92_cpd_parameters cpd;
 	struct v92_pcm_mapping mapping;
 	CHECK(v92_cpd_direct_init(&cpd, law, 1, false) == V92_CPD_OK, "CPd failed");
-	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = 3;
+	cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].count = taps;
 	CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK, "mapping failed");
 	struct v92_pcm_frame_tx tx;
 	struct v92_pcm_frame_rx rx;
@@ -1334,7 +1335,7 @@ static bool test_observed_channel(enum g711_law law)
 		v92_pcm_frame_rx_init_constellation(&rx, &mapping) == V92_PCM_FRAME_OK, "init failed");
 	int32_t x[V92_OBSERVATION_TRAINING];
 	int16_t u[V92_OBSERVATION_TRAINING], y[V92_OBSERVATION_TRAINING];
-	int16_t wire[V92_OBSERVATION_TRAINING], memory[2] = { 0 };
+	int16_t wire[V92_OBSERVATION_TRAINING], memory[3] = { 0 };
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS], decoded[V92_PCM_MAPPING_MAX_BITS];
 	memset(bits, 1, mapping.data_bits_per_frame);
 	for (unsigned f = 0; f < V92_B1U_ACQUISITION_FRAMES; f++) {
@@ -1343,12 +1344,12 @@ static bool test_observed_channel(enum g711_law law)
 			V92_PCM_FRAME_OK, "training encode failed");
 		memcpy(x + 12 * f, frame.x, sizeof(frame.x));
 		memcpy(u + 12 * f, frame.u, sizeof(frame.u));
-		channel_samples(law, &frame, memory, wire + 12 * f, y + 12 * f);
+		channel_samples(law, taps, &frame, memory, wire + 12 * f, y + 12 * f);
 	}
 	struct v92_observation model;
 	const struct v92_observation_training training = {
 		.input = x, .linear = u, .sample = y, .levels = wire,
-		.count = ARRAY_LENGTH(x), .host_gain = .75, .law = law,
+		.count = ARRAY_LENGTH(x), .taps = taps, .host_gain = .75, .law = law,
 	};
 	CHECK(v92_observation_fit(&model, &training), "fit failed");
 	struct v92_observation frozen = model;
@@ -1363,7 +1364,7 @@ static bool test_observed_channel(enum g711_law law)
 		source_bits(bits, mapping.data_bits_per_frame, f);
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
 			V92_PCM_FRAME_OK, "payload encode failed");
-		channel_samples(law, &frame, memory, levels, samples);
+		channel_samples(law, taps, &frame, memory, levels, samples);
 		if (f == 60 && !observed_rejection(&rx, &model, samples, levels)) return false;
 		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
 		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
@@ -1529,7 +1530,8 @@ int main(void)
 				if (!test_rm_receive((enum g711_law)law, 1u, trellis, scenario)) return 1;
 		}
 
-		if (!test_observed_channel((enum g711_law)law)) return 1;
+		for (unsigned taps = 3; taps <= 4; taps++)
+			if (!test_observed_channel((enum g711_law)law, taps)) return 1;
 
 		for (size_t level = 0u; level < ARRAY_LENGTH(direct_44k_levels); ++level)
 			if (!test_direct_44k_level((enum g711_law)law, direct_44k_levels[level]))

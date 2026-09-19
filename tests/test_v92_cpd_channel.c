@@ -213,7 +213,11 @@ static bool test_short_channel_selection(void)
 		{ 0.80, -0.15, 0.05, 0.0, 0.003, 2 },
 		{ 0.40, 0.60, 0.30, 0.0, 0.0, 2 },
 		{ 0.40, 0.60, -0.30, 0.0, 0.0, 0 },
-		{ 0.90, 0.08, 0.05, 0.05, 0.0, 0 },
+		{ 0.90, 0.08, 0.05, 0.05, 0.0, 3 },
+		{ 0.77, 0.16, 0.04, 0.03, 0.0, 3 },
+		{ 0.85, 0.16, -0.04, 0.03, 0.003, 3 },
+		{ 0.77, 0.16, 0.04, 0.03, 0.04, 0 },
+		{ 0.40, 0.45, 0.10, 0.08, 0.0, 0 },
 	};
 
 	for (size_t index = 0; index < sizeof(cases) / sizeof(cases[0]); ++index) {
@@ -245,20 +249,23 @@ static bool test_short_channel_selection(void)
 			if (n != V92_UPSTREAM_CHANNEL_DECISION_DELAY &&
 			    cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[n] != 0)
 				simple = false;
-		for (unsigned n = 2; n < V92_UPSTREAM_CHANNEL_P1_TAPS; ++n)
+		for (unsigned n = 3; n < V92_UPSTREAM_CHANNEL_P1_TAPS; ++n)
 			if (cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[n] != 0)
 				simple = false;
 		int first = cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[0];
 		int next = cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[1];
-		unsigned order = simple ? (next == 0 ? 1u : 2u) : 0u;
+		int third_tap = cpd.filter[V92_CPD_PRECODER_FEEDBACK].coefficient[2];
+		unsigned order = simple ? (third_tap ? 3u : next ? 2u : 1u) : 0u;
 
 		CHECK(order == cases[index].order, "fit selection %zu chose order %u, expected %u",
 			index, order, cases[index].order);
 		if (simple) {
-			CHECK(abs(next) < 16384 && first + next < 16384 && next - first < 16384,
+			CHECK(order == 3 ? abs(first) + abs(next) + abs(third_tap) < 16384 :
+				abs(next) < 16384 && first + next < 16384 && next - first < 16384,
 				"quantized short inverse is unstable");
 			CHECK(fabs(first / 16384.0 + cases[index].post / cases[index].main) < 0.003 &&
-				fabs(next / 16384.0 + cases[index].second / cases[index].main) < 0.003,
+				fabs(next / 16384.0 + cases[index].second / cases[index].main) < 0.003 &&
+				fabs(third_tap / 16384.0 + cases[index].third / cases[index].main) < 0.003,
 				"short inverse did not retain the measured channel coefficients");
 		}
 	}
@@ -318,8 +325,10 @@ static bool test_finite_window_inverse(bool strong_boundaries)
 			n >= V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_MAX_LAG;
 
 		x[n] = (int16_t)(strong_boundaries && !edge ? value / 8 : value);
+		/* A fourth postcursor keeps this on the general designer; the
+		 * short inverse now covers the three-postcursor case separately. */
 		y[n] = quantize(G711_LAW_PCMU, 0.7 * x[n] -
-			(n ? 0.2 * x[n - 1u] : 0.0) + (n >= 3u ? 0.1 * x[n - 3u] : 0.0));
+			(n ? 0.2 * x[n - 1u] : 0.0) + (n >= 4u ? 0.1 * x[n - 4u] : 0.0));
 		CHECK(v92_upstream_channel_sample(&channel, x[n], y[n]), "finite-window measurement failed");
 	}
 	/* Independent dense least squares uses the actual shifted columns over

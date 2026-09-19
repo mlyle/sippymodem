@@ -11,29 +11,48 @@
 
 #define V92_SCORE_SCALE 1e6
 
-enum { INTERVALS = V92_OBSERVATION_INTERVALS };
+enum { INTERVALS = V92_OBSERVATION_INTERVALS, TAPS = V92_OBSERVATION_TAPS };
 _Static_assert(V92_OBSERVATION_STEPS < UINT16_MAX, "geometry tags must fit");
 _Static_assert((V92_OBSERVATION_CACHE & (V92_OBSERVATION_CACHE - 1)) == 0 &&
 	(V92_OBSERVATION_POINTS & (V92_OBSERVATION_POINTS - 1)) == 0,
 	"cache sizes must be powers of two");
-struct interval { double low, high, main, post, second, error, weight; };
-struct moments { double aa, ab, ac, bb, bc, cc, ay, by, cy, yy; };
+struct interval { double low, high, coefficient[TAPS], error, weight; };
+struct moments { double gram[TAPS][TAPS], rhs[TAPS], energy; };
 struct boundary { double at; unsigned next; };
 
 static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	const int16_t *level, double offset, double *lower, double *upper);
 
-static bool solve3(double aa, double ab, double ac, double bb, double bc, double cc,
-	double ay, double by, double cy, double *a, double *b, double *c)
+/* Normalize columns before eliminating the small positive-definite system.
+ * Reject unidentifiable fits using its normalized determinant. */
+static bool solve_channel(const struct moments *moments, unsigned taps, double fitted[TAPS])
 {
-	double p = bb * cc - bc * bc, q = ac * bc - ab * cc, r = ab * bc - ac * bb;
-	double determinant = aa * p + ab * q + ac * r;
-	if (!(aa > 0. && bb > 0. && cc > 0.) ||
-		determinant <= 64 * DBL_EPSILON * aa * bb * cc) return false;
-	*a = (p * ay + q * by + r * cy) / determinant;
-	*b = (q * ay + (aa * cc - ac * ac) * by + (ab * ac - aa * bc) * cy) / determinant;
-	*c = (r * ay + (ab * ac - aa * bc) * by + (aa * bb - ab * ab) * cy) / determinant;
-	return isfinite(*a) && isfinite(*b) && isfinite(*c);
+	double system[TAPS][TAPS + 1] = { { 0 } }, scale[TAPS], determinant = 1.;
+	for (unsigned i = 0; i < taps; i++) {
+		if (!(moments->gram[i][i] > 0.)) return false;
+		scale[i] = sqrt(moments->gram[i][i]);
+	}
+	for (unsigned i = 0; i < taps; i++) {
+		for (unsigned j = 0; j < taps; j++)
+			system[i][j] = moments->gram[i][j] / (scale[i] * scale[j]);
+		system[i][taps] = moments->rhs[i] / scale[i];
+	}
+	for (unsigned i = 0; i < taps; i++) {
+		double pivot = system[i][i];
+		if (!(pivot > 0.)) return false;
+		determinant *= pivot;
+		for (unsigned k = i; k <= taps; k++) system[i][k] /= pivot;
+		for (unsigned j = 0; j < taps; j++) if (j != i) {
+			double factor = system[j][i];
+			for (unsigned k = i; k <= taps; k++) system[j][k] -= factor * system[i][k];
+		}
+	}
+	if (!(determinant > 64. * DBL_EPSILON)) return false;
+	for (unsigned i = 0; i < taps; i++) {
+		fitted[i] = system[i][taps] / scale[i];
+		if (!isfinite(fitted[i])) return false;
+	}
+	return fitted[0] > 0.;
 }
 
 /* Gaussian interval probability with arguments scaled by sqrt(2)*sigma.
@@ -94,11 +113,12 @@ static uint64_t score_value(double value)
 }
 
 static double bin_cost(const int16_t *q, const double *low, const double *high,
-	size_t count, const struct v92_observation_interval *fit, double variance)
+	size_t count, unsigned taps, const struct v92_observation_interval *fit, double variance)
 {
 	double cost = 0., divisor = sqrt(2. * variance);
-	for (size_t j = 3; j < count; j++) {
-		double mean = fit->main * q[j] + fit->post * q[j - 1] + fit->second * q[j - 2];
+	for (size_t j = taps; j < count; j++) {
+		double mean = 0.;
+		for (unsigned i = 0; i < taps; i++) mean += fit->coefficient[i] * q[j - i];
 		double probability = gaussian_probability((low[j] - mean) / divisor, (high[j] - mean) / divisor);
 		if (!(probability > 0.)) return HUGE_VAL;
 		cost -= 2. * log(probability);
@@ -126,44 +146,48 @@ static bool bin_moments(double low, double high, double mean, double variance,
 
 /* Bounded expectation/maximization, starting with the center fit. The E
  * step conditions latent samples on their codec bins; the M step fits the
- * three taps and noise together. A one-sample variance floor bounds numeric
+ * channel taps and noise together. A one-sample variance floor bounds numeric
  * precision, not channel quality. Payload never updates these parameters. */
 static bool fit_bin_channel(struct v92_observation_interval *fit, const int16_t *q,
-	const int16_t *y, const double *low, const double *high, size_t count, double *variance)
+	const int16_t *y, const double *low, const double *high, size_t count, unsigned taps, double *variance)
 {
 	struct moments m = { 0 };
-	double a = fit->main, b = fit->post, c = fit->second, noise = 0.;
-	for (size_t j = 3; j < count; j++) {
-		double qa = q[j], qb = q[j - 1], qc = q[j - 2];
-		m.aa += qa * qa; m.ab += qa * qb; m.ac += qa * qc;
-		m.bb += qb * qb; m.bc += qb * qc; m.cc += qc * qc;
-		double residual = y[j] - a * qa - b * qb - c * qc;
+	double noise = 0.;
+	for (size_t j = taps; j < count; j++) {
+		double residual = y[j];
+		for (unsigned a = 0; a < taps; a++) {
+			residual -= fit->coefficient[a] * q[j - a];
+			for (unsigned b = 0; b < taps; b++)
+				m.gram[a][b] += (double)q[j - a] * q[j - b];
+		}
 		noise += residual * residual;
 	}
-	noise = fmax(1., noise / (count - 3));
+	noise = fmax(1., noise / (count - taps));
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
 		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
-		double ay = 0., by = 0., cy = 0.;
-		for (size_t j = 3; j < count; j++) {
-			if (!bin_moments(low[j], high[j], a * q[j] + b * q[j - 1] + c * q[j - 2],
-				noise, targets + j, deviations + j)) return false;
-			ay += q[j] * targets[j]; by += q[j - 1] * targets[j]; cy += q[j - 2] * targets[j];
+		double next[TAPS] = { 0 }, next_noise = 0.;
+		memset(m.rhs, 0, sizeof(m.rhs));
+		for (size_t j = taps; j < count; j++) {
+			double mean = 0.;
+			for (unsigned i = 0; i < taps; i++) mean += fit->coefficient[i] * q[j - i];
+			if (!bin_moments(low[j], high[j], mean, noise, targets + j, deviations + j)) return false;
+			for (unsigned i = 0; i < taps; i++) m.rhs[i] += q[j - i] * targets[j];
 		}
-		double next_a, next_b, next_c, next_noise = 0.;
-		if (!solve3(m.aa, m.ab, m.ac, m.bb, m.bc, m.cc, ay, by, cy,
-			&next_a, &next_b, &next_c) || next_a <= 0.) return false;
-		for (size_t j = 3; j < count; j++) {
-			double residual = targets[j] - next_a * q[j] - next_b * q[j - 1] - next_c * q[j - 2];
+		if (!solve_channel(&m, taps, next)) return false;
+		for (size_t j = taps; j < count; j++) {
+			double residual = targets[j];
+			for (unsigned i = 0; i < taps; i++) residual -= next[i] * q[j - i];
 			next_noise += deviations[j] + residual * residual;
 		}
-		next_noise = fmax(1., next_noise / (count - 3));
+		next_noise = fmax(1., next_noise / (count - taps));
 		if (!isfinite(next_noise)) return false;
+		double change = 0.;
+		for (unsigned i = 0; i < taps; i++) change += fabs(next[i] - fit->coefficient[i]);
 		bool settled = fabs(next_noise - noise) < 1e-8 * (1. + noise) &&
-			fabs(next_a - a) + fabs(next_b - b) + fabs(next_c - c) < 1e-10 * (1. + a);
-		a = next_a; b = next_b; c = next_c; noise = next_noise;
+			change < 1e-10 * (1. + next[0]);
+		memcpy(fit->coefficient, next, sizeof(next)); noise = next_noise;
 		if (settled) break;
 	}
-	fit->main = a; fit->post = b; fit->second = c;
 	*variance = noise;
 	return true;
 }
@@ -195,8 +219,8 @@ static bool refit_bins(struct v92_observation *model,
 			q[i][j] = model->law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu((int16_t)value)) :
 				g711_decode_pcma(g711_encode_pcma((int16_t)value));
 		}
-		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, variances + i) ?
-			bin_cost(q[i], low, high, count, fit, variances[i]) : HUGE_VAL;
+		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, model->taps, variances + i) ?
+			bin_cost(q[i], low, high, count, model->taps, fit, variances[i]) : HUGE_VAL;
 		if (costs[i] < best) { best = costs[i]; chosen = i; }
 	}
 	if (!isfinite(best)) return false;
@@ -204,7 +228,7 @@ static bool refit_bins(struct v92_observation *model,
 	best = HUGE_VAL;
 	for (unsigned i = 0; i < INTERVALS; i++) {
 		if (isfinite(costs[i]))
-			costs[i] = bin_cost(q[i], low, high, count, model->intervals + i, model->variance);
+			costs[i] = bin_cost(q[i], low, high, count, model->taps, model->intervals + i, model->variance);
 		best = fmin(best, costs[i]);
 	}
 	for (unsigned i = 0; i < INTERVALS; i++) {
@@ -295,7 +319,7 @@ static void heap_down(size_t *heap, size_t count, const struct boundary *events)
 }
 
 static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
-	const int32_t *x, const int16_t *y, size_t count)
+	const int32_t *x, const int16_t *y, size_t count, unsigned taps)
 {
 	struct boundary events[V92_OBSERVATION_TRAINING];
 	size_t heap[V92_OBSERVATION_TRAINING], used = 0;
@@ -317,11 +341,13 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 			child = parent;
 		}
 	}
-	for (size_t j = 3; j < count; j++) {
-		double a = q[j], b = q[j - 1], c = q[j - 2];
-		m.aa += a * a; m.ab += a * b; m.bb += b * b;
-		m.ac += a * c; m.bc += b * c; m.cc += c * c;
-		m.ay += a * y[j]; m.by += b * y[j]; m.cy += c * y[j]; m.yy += (double)y[j] * y[j];
+	for (size_t j = taps; j < count; j++) {
+		for (unsigned a = 0; a < taps; a++) {
+			m.rhs[a] += (double)q[j - a] * y[j];
+			for (unsigned b = 0; b < taps; b++)
+				m.gram[a][b] += (double)q[j - a] * q[j - b];
+		}
+		m.energy += (double)y[j] * y[j];
 	}
 	/* Every known input crosses finitely many codec boundaries. Search all
 	 * bounded cells; the all-saturated tail has no identifiable gain and
@@ -331,14 +357,14 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 		if (!isfinite(high)) break;
 
 		if (!(high > low)) return false;
-		double a, b, c;
-		if (low > 0. && solve3(m.aa, m.ab, m.ac, m.bb, m.bc, m.cc, m.ay, m.by, m.cy, &a, &b, &c)) {
-			double error = fmax(0., (m.yy - a * m.ay - b * m.by - c * m.cy) / (count - 3));
-			if (isfinite(a) && isfinite(b) && isfinite(error) && a > 0.) {
-				struct interval fit = { .low = low, .high = high,
-					.main = a, .post = b, .second = c, .error = error };
+		struct interval fit = { .low = low, .high = high };
+		if (low > 0. && solve_channel(&m, taps, fit.coefficient)) {
+			double error = m.energy;
+			for (unsigned i = 0; i < taps; i++) error -= fit.coefficient[i] * m.rhs[i];
+			fit.error = fmax(0., error / (count - taps));
+			if (isfinite(fit.error)) {
 				for (size_t i = 0; i < INTERVALS; i++) {
-					if (error >= fits[i].error) continue;
+					if (fit.error >= fits[i].error) continue;
 					memmove(fits + i + 1, fits + i, (INTERVALS - i - 1) * sizeof(*fits));
 					fits[i] = fit;
 					break;
@@ -349,17 +375,15 @@ static bool fit_intervals(struct interval fits[INTERVALS], enum g711_law law,
 			size_t j = heap[0];
 			int16_t value = magnitude_code(law, x[j], events[j].next);
 			double change = value - q[j], square = (double)value * value - (double)q[j] * q[j];
-			if (j >= 3) {
-				m.aa += square; m.ab += change * q[j - 1];
-				m.ac += change * q[j - 2]; m.ay += change * y[j];
-			}
-			if (j >= 2 && j + 1 < count) {
-				m.bb += square; m.ab += change * q[j + 1];
-				m.bc += change * q[j - 1]; m.by += change * y[j + 1];
-			}
-			if (j + 2 < count) {
-				m.cc += square; m.ac += change * q[j + 2];
-				m.bc += change * q[j + 1]; m.cy += change * y[j + 2];
+			for (unsigned a = 0; a < taps; a++) {
+				size_t row = j + a;
+				if (row < taps || row >= count) continue;
+				m.rhs[a] += change * y[row];
+				m.gram[a][a] += square;
+				for (unsigned b = 0; b < taps; b++) if (b != a) {
+					double delta = change * q[row - b];
+					m.gram[a][b] += delta; m.gram[b][a] += delta;
+				}
 			}
 			q[j] = value;
 			events[j] = next_boundary(law, x[j], events[j].next);
@@ -462,7 +486,7 @@ static bool compile_geometry(struct v92_observation *model)
 
 bool v92_observation_is_valid(const struct v92_observation *model)
 {
-	if (!model || model->count < 4 || model->count > V92_OBSERVATION_STEPS ||
+	if (!model || (model->taps != 3 && model->taps != 4) || model->count < 4 || model->count > V92_OBSERVATION_STEPS ||
 		(model->law != G711_LAW_PCMU && model->law != G711_LAW_PCMA) ||
 		!isfinite(model->variance) || model->variance < 1. ||
 		!isfinite(model->quantizer_gain) || model->quantizer_gain <= 0. ||
@@ -473,8 +497,10 @@ bool v92_observation_is_valid(const struct v92_observation *model)
 	for (size_t i = 0; i < INTERVALS; i++) {
 		const struct v92_observation_interval *fit = model->intervals + i;
 		if (!isfinite(fit->low) || !isfinite(fit->high) || fit->low <= 0. ||
-			fit->high <= fit->low || !isfinite(fit->main) || fit->main <= 0. ||
-			!isfinite(fit->post) || !isfinite(fit->second) || !isfinite(fit->weight) || fit->weight < 0. || fit->weight > 1.) return false;
+			fit->high <= fit->low || fit->coefficient[0] <= 0. ||
+			!isfinite(fit->weight) || fit->weight < 0. || fit->weight > 1.) return false;
+		for (unsigned j = 0; j < TAPS; j++)
+			if (!isfinite(fit->coefficient[j]) || (j >= model->taps && fit->coefficient[j] != 0.)) return false;
 		total += fit->weight;
 	}
 	if (fabs(total - 1.) > 32 * DBL_EPSILON) return false;
@@ -522,43 +548,47 @@ static bool training_is_valid(const void *output, size_t size,
 bool v92_observation_fit(struct v92_observation *model,
 	const struct v92_observation_training *training)
 {
-	if (!training_is_valid(model, sizeof(*model), training)) return false;
+	if (!training_is_valid(model, sizeof(*model), training) ||
+		(training->taps != 3 && training->taps != 4) || training->count <= training->taps) return false;
 	const int32_t *x = training->input;
 	const int16_t *u = training->linear, *y = training->sample, *levels = training->levels;
 	const double *offsets = training->offsets;
 	size_t count = training->count;
+	unsigned taps = training->taps;
 	enum g711_law law = training->law;
 	double energy = 0, linear_error = 0;
-	for (size_t i = 3; i < count; i++) {
+	for (size_t i = taps; i < count; i++) {
 		double error = (double)y[i] - u[i];
 		energy += (double)y[i] * y[i]; linear_error += error * error;
 	}
 	if (energy == 0. || linear_error == 0.) return false;
 	struct interval fits[INTERVALS];
-	if (!fit_intervals(fits, law, x, y, count)) return false;
-	struct v92_observation initialized = { .law = law, .energy = energy / (count - 3),
+	if (!fit_intervals(fits, law, x, y, count, taps)) return false;
+	struct v92_observation initialized = { .law = law, .taps = taps, .energy = energy / (count - taps),
 		.variance = fmax(1., fits[0].error), .quantizer_gain = training->host_gain };
 	double total = 0;
 	for (size_t i = 0; i < INTERVALS; i++) {
-		fits[i].weight = exp(-.5 * (count - 3) * (fits[i].error - fits[0].error) / initialized.variance) *
+		fits[i].weight = exp(-.5 * (count - taps) * (fits[i].error - fits[0].error) / initialized.variance) *
 			log(fits[i].high / fits[i].low);
 		total += fits[i].weight;
 	}
 	if (!(total > 0.) || !isfinite(total)) return false;
 	for (size_t i = 0; i < INTERVALS; i++) fits[i].weight /= total;
 	double error_energy = 0;
-	for (size_t j = 3; j < count; j++) {
+	for (size_t j = taps; j < count; j++) {
 		double predicted = 0;
-		for (size_t i = 0; i < INTERVALS; i++) predicted += fits[i].weight * (
-			fits[i].main * interval_mean(law, fits + i, x[j]) +
-			fits[i].post * interval_mean(law, fits + i, x[j - 1]) +
-			fits[i].second * interval_mean(law, fits + i, x[j - 2]));
+		for (size_t i = 0; i < INTERVALS; i++)
+			for (unsigned k = 0; k < taps; k++)
+				predicted += fits[i].weight * fits[i].coefficient[k] * interval_mean(law, fits + i, x[j - k]);
 		double error = y[j] - predicted;
 		error_energy += error * error;
 	}
 	if (!isfinite(error_energy) || error_energy >= linear_error) return false;
-	for (size_t i = 0; i < INTERVALS; i++) initialized.intervals[i] = (struct v92_observation_interval){
-		fits[i].low, fits[i].high, fits[i].main, fits[i].post, fits[i].second, fits[i].weight };
+	for (size_t i = 0; i < INTERVALS; i++) {
+		initialized.intervals[i] = (struct v92_observation_interval){
+			.low = fits[i].low, .high = fits[i].high, .weight = fits[i].weight };
+		memcpy(initialized.intervals[i].coefficient, fits[i].coefficient, sizeof(fits[i].coefficient));
+	}
 	if (!refit_bins(&initialized, x, y, levels, offsets, count) || !compile_geometry(&initialized) ||
 		!v92_observation_is_valid(&initialized)) return false;
 	*model = initialized;
@@ -596,7 +626,7 @@ bool v92_observation_fit_scalar(double *gain,
 	if (!(xx > 0. && xy > 0. && linear_error > 0.)) return false;
 	double fitted = xy / xx, variance = fmax(1., linear_error / count);
 	/* The same bounded conditional-bin fit as the tandem channel, with
-	 * one gain instead of three taps. Fitting distance only outside bins
+ * one gain instead of a channel kernel. Fitting distance only outside bins
 	 * would mistake quantization uncertainty for noise-free observations. */
 	for (unsigned iteration = 0; iteration < 96; iteration++) {
 		double targets[V92_OBSERVATION_TRAINING], deviations[V92_OBSERVATION_TRAINING];
@@ -653,27 +683,25 @@ static double bin_log_probability(double error, double variance, double divisor,
 	return gaussian_log_probability((error + lower) / divisor, (error + upper) / divisor);
 }
 
-/* General per-observation integral: all three symbols share the same log-uniform
+/* General per-observation integral: all symbols share the same log-uniform
  * codec scale. Merge their exact quantizer boundaries, not independent means. */
 static double compiled_log_likelihood(enum g711_law law, const struct v92_observation_interval *fit,
-	const struct v92_observation_cell *cells[3], const int32_t x[3],
+	const struct v92_observation_cell *const *cells, const int32_t *x, unsigned taps,
 	int16_t observed, double variance, double divisor, double width, double lower, double upper)
 {
 	double begin = fit->low, likelihood = -HUGE_VAL;
-	if (cells[0]->low == cells[0]->high && cells[1]->low == cells[1]->high &&
-		cells[2]->low == cells[2]->high) {
+	bool stable = true;
+	for (unsigned i = 0; i < taps; i++) stable &= cells[i]->low == cells[i]->high;
+	if (stable) {
 		double error = observed;
-		error -= fit->main * cells[0]->low;
-		error -= fit->post * cells[1]->low;
-		error -= fit->second * cells[2]->low;
+		for (unsigned i = 0; i < taps; i++) error -= fit->coefficient[i] * cells[i]->low;
 		return bin_log_probability(error, variance, divisor, lower, upper);
 	}
-	double tap[3] = { fit->main, fit->post, fit->second };
-	struct boundary boundary[3];
-	unsigned magnitude[3];
-	bool general[3];
-	int16_t value[3];
-	for (unsigned i = 0; i < 3; i++) {
+	struct boundary boundary[TAPS];
+	unsigned magnitude[TAPS];
+	bool general[TAPS];
+	int16_t value[TAPS];
+	for (unsigned i = 0; i < taps; i++) {
 		const struct v92_observation_cell *cell = cells[i];
 		general[i] = cell->low != cell->high && !cell->crossing;
 		value[i] = cell->low;
@@ -689,16 +717,16 @@ static double compiled_log_likelihood(enum g711_law law, const struct v92_observ
 	}
 	for (;;) {
 		double end = fit->high, error = observed;
-		for (unsigned i = 0; i < 3; i++) {
+		for (unsigned i = 0; i < taps; i++) {
 			end = fmin(end, boundary[i].at);
-			error -= tap[i] * value[i];
+			error -= fit->coefficient[i] * value[i];
 		}
 		if (end < begin) return NAN;
 		if (end > begin)
 			likelihood = log_add(likelihood, bin_log_probability(error, variance, divisor, lower, upper) +
 				log(log1p((end - begin) / begin) / width));
 		if (end == fit->high) return likelihood;
-		for (unsigned i = 0; i < 3; i++) {
+		for (unsigned i = 0; i < taps; i++) {
 			if (boundary[i].at != end) continue;
 			if (general[i]) {
 				magnitude[i] = boundary[i].next;
@@ -726,17 +754,15 @@ void v92_observation_begin(struct v92_observation_cache *cache,
 	cache->observed = 0;
 	cache->variance = cache->bound_scale = 0.;
 	cache->divisor = 0.;
-	double extent[3] = { 0., 0., 0. };
+	double extent[TAPS] = { 0. };
 	for (size_t i = 0; i < INTERVALS; i++) {
 		const struct v92_observation_interval *fit = model->intervals + i;
 		cache->width[i] = log1p((fit->high - fit->low) / fit->low);
-		if (fit->weight > 0.) {
-			extent[0] = fmax(extent[0], fabs(fit->main));
-			extent[1] = fmax(extent[1], fabs(fit->post));
-			extent[2] = fmax(extent[2], fabs(fit->second));
-		}
+		if (fit->weight > 0.)
+			for (unsigned j = 0; j < model->taps; j++)
+				extent[j] = fmax(extent[j], fabs(fit->coefficient[j]));
 	}
-	for (unsigned i = 0; i < 3; i++) cache->margin[i] = 1e-12 * (1. + 65536. * extent[i]);
+	for (unsigned i = 0; i < TAPS; i++) cache->margin[i] = 1e-12 * (1. + 65536. * extent[i]);
 }
 
 bool v92_observation_symbol_level(struct v92_observation_cache *cache,
@@ -790,17 +816,19 @@ static const struct v92_observation_values *point_values(struct v92_observation_
 	const struct v92_observation *model = cache->model;
 	int32_t x = model->first[span];
 	struct v92_observation_values *values = cache->points + chosen;
-	*values = (struct v92_observation_values){ .main_low = HUGE_VAL, .post_low = HUGE_VAL,
-		.second_low = HUGE_VAL, .main_high = -HUGE_VAL, .post_high = -HUGE_VAL,
-		.second_high = -HUGE_VAL, .stable = true };
+	*values = (struct v92_observation_values){ .stable = true };
+	for (unsigned j = 0; j < model->taps; j++) {
+		values->low[j] = HUGE_VAL;
+		values->high[j] = -HUGE_VAL;
+	}
 	for (size_t i = 0; i < INTERVALS; i++) {
 		const struct v92_observation_interval *fit = model->intervals + i;
 		if (fit->weight == 0.) continue;
 		struct v92_observation_cell *cell = values->cell + i;
 		cell->low = scaled(model->law, fit->low, x); cell->high = scaled(model->law, fit->high, x);
-		extend_envelope(&values->main_low, &values->main_high, fit->main, cell->low, cell->high);
-		extend_envelope(&values->post_low, &values->post_high, fit->post, cell->low, cell->high);
-		extend_envelope(&values->second_low, &values->second_high, fit->second, cell->low, cell->high);
+		for (unsigned j = 0; j < model->taps; j++)
+			extend_envelope(&values->low[j], &values->high[j],
+				fit->coefficient[j], cell->low, cell->high);
 		if (cell->low != cell->high) {
 			values->stable = false;
 			unsigned limit = x < 0 ? 32768u : 32767u;
@@ -813,9 +841,10 @@ static const struct v92_observation_values *point_values(struct v92_observation_
 	 * envelope across point spans, including a plateau in one endpoint.
 	 * A margin proportional to both current endpoints can decrease a
 	 * plateau when only the other endpoint increases. */
-	double mt = cache->margin[0], pt = cache->margin[1], st = cache->margin[2];
-	values->main_low -= mt; values->main_high += mt; values->post_low -= pt; values->post_high += pt;
-	values->second_low -= st; values->second_high += st;
+	for (unsigned j = 0; j < model->taps; j++) {
+		values->low[j] -= cache->margin[j];
+		values->high[j] += cache->margin[j];
+	}
 	cache->point_tag[chosen] = (uint16_t)(span + 1);
 	return values;
 }
@@ -830,22 +859,24 @@ struct v92_observation_point v92_observation_point(struct v92_observation_cache 
 }
 
 uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
-	const struct v92_observation_point *previous,
-	const struct v92_observation_point *second, uint64_t budget)
+	const struct v92_observation_point *previous, uint64_t budget)
 {
 	const struct v92_observation *model = cache->model;
 	if (model->input_coefficient)
 		x = round_shift_s64_to_s32_saturating((int64_t)x * model->input_coefficient, 15u);
 	size_t span = point_span(cache, x);
-	const struct v92_observation_values *a = point_values(cache, span), *b = &previous->values;
+	const struct v92_observation_values *a = point_values(cache, span);
 	if (budget != UINT64_MAX) {
 		/* Every mixture mean lies in this deliberately enlarged envelope.
 		 * At distance d from the observed codec cell, its Gaussian mass is
 		 * at most exp(-d*d/(2*variance)), hence the score is at least
 		 * SCORE_SCALE*d*d/variance. Correlation between taps can only shrink
 		 * the envelope. */
-		double low = a->main_low + b->post_low + second->values.second_low;
-		double high = a->main_high + b->post_high + second->values.second_high;
+		double low = a->low[0], high = a->high[0];
+		for (unsigned j = 1; j < model->taps; j++) {
+			low += previous[j - 1].values.low[j];
+			high += previous[j - 1].values.high[j];
+		}
 		double distance = low - (cache->observed + cache->upper);
 		double opposite = cache->observed + cache->lower - high;
 		if (opposite > distance) distance = opposite;
@@ -858,28 +889,34 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 			return minimum;
 	}
 
-	int32_t xkey = a->stable ? model->first[span] : x;
-	uint64_t key = ((uint64_t)(uint32_t)xkey << 32) | (uint32_t)previous->key;
-	uint64_t hash = (key ^ (key >> 33) ^ (uint32_t)second->key) * UINT64_C(0xff51afd7ed558ccd);
+	int32_t key[TAPS] = { a->stable ? model->first[span] : x };
+	uint64_t hash = (uint32_t)key[0];
+	for (unsigned j = 1; j < model->taps; j++) {
+		key[j] = previous[j - 1].key;
+		hash = (hash ^ (hash >> 33) ^ (uint32_t)key[j]) * UINT64_C(0xff51afd7ed558ccd);
+	}
 	size_t slot = (hash ^ (hash >> 33)) & (V92_OBSERVATION_CACHE - 1);
 	size_t vacant = V92_OBSERVATION_CACHE;
 	for (size_t probe = 0; probe < 4; probe++) {
 		size_t index = (slot + probe) & (V92_OBSERVATION_CACHE - 1);
 		if (cache->stamp[index] != cache->generation) { vacant = index; break; }
-		if (cache->key[index] == key && cache->second_key[index] == second->key) return cache->value[index];
+		if (!memcmp(cache->key[index], key, sizeof(key))) return cache->value[index];
 	}
 	double likelihood = -HUGE_VAL;
 	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
+		const struct v92_observation_cell *cells[TAPS] = { a->cell + i };
+		int32_t input[TAPS] = { x };
+		for (unsigned j = 1; j < model->taps; j++) {
+			cells[j] = previous[j - 1].values.cell + i;
+			input[j] = previous[j - 1].x;
+		}
 		likelihood = log_add(likelihood, log(model->intervals[i].weight) +
-			compiled_log_likelihood(model->law, model->intervals + i,
-			(const struct v92_observation_cell *[]){ a->cell + i, b->cell + i, second->values.cell + i },
-			(int32_t[]){ x, previous->x, second->x }, cache->observed, cache->variance,
-			cache->divisor, cache->width[i], cache->lower, cache->upper));
+			compiled_log_likelihood(model->law, model->intervals + i, cells, input, model->taps,
+			cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper));
 	}
 	uint64_t value = score_value(-2. * V92_SCORE_SCALE * likelihood);
 	if (vacant != V92_OBSERVATION_CACHE) {
-		cache->key[vacant] = key;
-		cache->second_key[vacant] = second->key;
+		memcpy(cache->key[vacant], key, sizeof(key));
 		cache->value[vacant] = value;
 		cache->stamp[vacant] = cache->generation;
 	}
@@ -891,7 +928,7 @@ struct v92_observation_range v92_observation_range(struct v92_observation_cache 
 	if (cache->model->input_coefficient)
 		x = round_shift_s64_to_s32_saturating((int64_t)x * cache->model->input_coefficient, 15u);
 	const struct v92_observation_values *values = point_values(cache, point_span(cache, x));
-	return (struct v92_observation_range){ values->main_low, values->main_high };
+	return (struct v92_observation_range){ values->low[0], values->high[0] };
 }
 
 /* E[Q(mean + noise)], not Q(E[mean + noise]). A small channel-fit error
@@ -928,11 +965,11 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 }
 
 double v92_observation_predict(const struct v92_observation *model,
-	const int32_t input[3], double offset)
+	const int32_t *input, double offset)
 {
 	if (!(model->quantizer_gain > 0.) || !isfinite(offset)) return NAN;
-	int32_t x[3];
-	for (unsigned j = 0; j < 3; j++)
+	int32_t x[TAPS];
+	for (unsigned j = 0; j < model->taps; j++)
 		x[j] = model->input_coefficient ? round_shift_s64_to_s32_saturating(
 			(int64_t)input[j] * model->input_coefficient, 15u) : input[j];
 	double prediction = 0;
@@ -940,9 +977,9 @@ double v92_observation_predict(const struct v92_observation *model,
 		const struct v92_observation_interval *p = model->intervals + i;
 		if (p->weight == 0) continue;
 		double begin = p->low, width = log1p((p->high - p->low) / p->low);
-		struct boundary bound[3];
-		int16_t q[3];
-		for (unsigned j = 0; j < 3; j++) {
+		struct boundary bound[TAPS];
+		int16_t q[TAPS];
+		for (unsigned j = 0; j < model->taps; j++) {
 			unsigned limit = x[j] < 0 ? 32768u : 32767u;
 			double sample = begin * fabs((double)x[j]);
 			unsigned magnitude = sample >= limit ? limit : (unsigned)round(sample);
@@ -951,14 +988,15 @@ double v92_observation_predict(const struct v92_observation *model,
 		}
 		for (unsigned steps = 0;; steps++) {
 			double end = p->high;
-			for (unsigned j = 0; j < 3; j++) end = fmin(end, bound[j].at);
-			if (end < begin || steps > 3u * 128u) return NAN;
+			for (unsigned j = 0; j < model->taps; j++) end = fmin(end, bound[j].at);
+			if (end < begin || steps > model->taps * 128u) return NAN;
 			double weight = p->weight * log1p((end - begin) / begin) / width;
-			double linear = p->main * q[0] + p->post * q[1] + p->second * q[2];
+			double linear = 0.;
+			for (unsigned j = 0; j < model->taps; j++) linear += p->coefficient[j] * q[j];
 			prediction += weight * codec_mean(model->law, linear - offset,
 				model->variance, model->quantizer_gain);
 			if (end == p->high) break;
-			for (unsigned j = 0; j < 3; j++) {
+			for (unsigned j = 0; j < model->taps; j++) {
 				if (bound[j].at != end) continue;
 				q[j] = magnitude_code(model->law, x[j], bound[j].next);
 				bound[j] = next_boundary(model->law, x[j], bound[j].next);

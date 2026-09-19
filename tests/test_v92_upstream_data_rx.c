@@ -2405,7 +2405,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	for (unsigned i = 0u; i < 2u; ++i) {
 		receiver.model.model[i].quantizer_gain = DBL_MAX;
 		for (unsigned j = 0u; j < V92_OBSERVATION_INTERVALS; ++j)
-			receiver.model.model[i].intervals[j].main = DBL_MAX;
+			receiver.model.model[i].intervals[j].coefficient[0] = DBL_MAX;
 	}
 	CHECK(v92_upstream_data_rx_is_valid(&receiver), "numeric-failure fixture is invalid");
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++i)
