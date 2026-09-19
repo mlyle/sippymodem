@@ -52,6 +52,47 @@ static double gaussian_probability(double a, double b)
 	return .5 * ((b >= 6. ? 1. : erf(b)) - (a <= -6. ? -1. : erf(a)));
 }
 
+/* log P(N(0,1) > x). Beyond 12 sigma the decreasing asymptotic series
+ * reaches binary64 precision before its terms start growing. Working in
+ * logs preserves candidate ordering even when the mass underflows. */
+static double gaussian_log_tail(double x)
+{
+	if (x < 12.) return log(.5 * erfc(x / sqrt(2.)));
+	double term = 1., sum = 1.;
+	for (unsigned i = 1; i < 32; i++) {
+		double next = term * (-(double)(2 * i - 1) / (x * x));
+		if (fabs(next) > fabs(term)) break;
+		sum += next; term = next;
+		if (fabs(term) < DBL_EPSILON * fabs(sum)) break;
+	}
+	return -.5 * x * x - log(x) - .5 * log(2. * acos(-1.)) + log(sum);
+}
+
+static double gaussian_log_probability(double a, double b)
+{
+	double probability = gaussian_probability(a, b);
+	if (probability >= DBL_MIN) return log(probability);
+	if (b < 0.) { double swap = a; a = -b; b = -swap; }
+	if (a == HUGE_VAL) return -HUGE_VAL;
+	/* Arguments above are scaled by sqrt(2)*sigma, unlike log_tail. */
+	double low = gaussian_log_tail(a * sqrt(2.)), high = gaussian_log_tail(b * sqrt(2.));
+	return low + log(-expm1(high - low));
+}
+
+static double log_add(double a, double b)
+{
+	if (isnan(a) || isnan(b)) return NAN;
+	if (a == -HUGE_VAL) return b;
+	if (b == -HUGE_VAL) return a;
+	return fmax(a, b) + log1p(exp(fmin(a, b) - fmax(a, b)));
+}
+
+static uint64_t score_value(double value)
+{
+	if (value <= 0.) return 0;
+	return value < (double)UINT64_MAX ? (uint64_t)value : UINT64_MAX;
+}
+
 static double bin_cost(const int16_t *q, const double *low, const double *high,
 	size_t count, const struct v92_observation_interval *fit, double variance)
 {
@@ -605,29 +646,27 @@ static size_t point_span(const struct v92_observation_cache *cache, int32_t x)
 	return low;
 }
 
-/* Probability of the observed final-codec bin under one Gaussian mean. */
-static double bin_probability(double error, double variance, double divisor, double lower, double upper)
+/* Log probability of the observed final-codec bin under one Gaussian mean. */
+static double bin_log_probability(double error, double variance, double divisor, double lower, double upper)
 {
-	if (lower == upper) return exp(-.5 * error * error / variance);
-	return gaussian_probability((error + lower) / divisor, (error + upper) / divisor);
+	if (lower == upper) return -.5 * error * error / variance;
+	return gaussian_log_probability((error + lower) / divisor, (error + upper) / divisor);
 }
 
 /* General per-observation integral: all three symbols share the same log-uniform
  * codec scale. Merge their exact quantizer boundaries, not independent means. */
-static double compiled_likelihood(enum g711_law law, const struct v92_observation_interval *fit,
+static double compiled_log_likelihood(enum g711_law law, const struct v92_observation_interval *fit,
 	const struct v92_observation_cell *cells[3], const int32_t x[3],
 	int16_t observed, double variance, double divisor, double width, double lower, double upper)
 {
-	double begin = fit->low, likelihood = 0.;
+	double begin = fit->low, likelihood = -HUGE_VAL;
 	if (cells[0]->low == cells[0]->high && cells[1]->low == cells[1]->high &&
 		cells[2]->low == cells[2]->high) {
 		double error = observed;
 		error -= fit->main * cells[0]->low;
 		error -= fit->post * cells[1]->low;
 		error -= fit->second * cells[2]->low;
-		/* Preserve the general integral's arithmetic, including rounding
-		 * through multiplication and division by the equal interval width. */
-		return bin_probability(error, variance, divisor, lower, upper) * width / width;
+		return bin_log_probability(error, variance, divisor, lower, upper);
 	}
 	double tap[3] = { fit->main, fit->post, fit->second };
 	struct boundary boundary[3];
@@ -655,8 +694,9 @@ static double compiled_likelihood(enum g711_law law, const struct v92_observatio
 			error -= tap[i] * value[i];
 		}
 		if (end < begin) return NAN;
-		likelihood += bin_probability(error, variance, divisor, lower, upper) *
-			log1p((end - begin) / begin) / width;
+		if (end > begin)
+			likelihood = log_add(likelihood, bin_log_probability(error, variance, divisor, lower, upper) +
+				log(log1p((end - begin) / begin) / width));
 		if (end == fit->high) return likelihood;
 		for (unsigned i = 0; i < 3; i++) {
 			if (boundary[i].at != end) continue;
@@ -803,7 +843,7 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 		 * At distance d from the observed codec cell, its Gaussian mass is
 		 * at most exp(-d*d/(2*variance)), hence the score is at least
 		 * SCORE_SCALE*d*d/variance. Correlation between taps can only shrink
-		 * the envelope. Respect the exact scorer's probability floor too. */
+		 * the envelope. */
 		double low = a->main_low + b->post_low + second->values.second_low;
 		double high = a->main_high + b->post_high + second->values.second_high;
 		double distance = low - (cache->observed + cache->upper);
@@ -811,10 +851,8 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 		if (opposite > distance) distance = opposite;
 		if (distance < 0.) distance = 0.;
 		double bound = cache->bound_scale * distance * distance;
-		const double ceiling = -2. * V92_SCORE_SCALE * log(1e-300);
-		if (bound > ceiling) bound = ceiling;
-		bound -= 64. * DBL_EPSILON * (1. + bound);
-		uint64_t minimum = bound > 0. ? (uint64_t)bound : 0;
+		if (isfinite(bound)) bound -= 64. * DBL_EPSILON * (1. + bound);
+		uint64_t minimum = isnan(bound) ? 0 : score_value(bound);
 
 		if (minimum >= budget)
 			return minimum;
@@ -830,14 +868,15 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 		if (cache->stamp[index] != cache->generation) { vacant = index; break; }
 		if (cache->key[index] == key && cache->second_key[index] == second->key) return cache->value[index];
 	}
-	double likelihood = 0.;
+	double likelihood = -HUGE_VAL;
 	for (size_t i = 0; i < INTERVALS; i++) if (model->intervals[i].weight > 0.) {
-		likelihood += model->intervals[i].weight * compiled_likelihood(model->law, model->intervals + i,
+		likelihood = log_add(likelihood, log(model->intervals[i].weight) +
+			compiled_log_likelihood(model->law, model->intervals + i,
 			(const struct v92_observation_cell *[]){ a->cell + i, b->cell + i, second->values.cell + i },
 			(int32_t[]){ x, previous->x, second->x }, cache->observed, cache->variance,
-			cache->divisor, cache->width[i], cache->lower, cache->upper);
+			cache->divisor, cache->width[i], cache->lower, cache->upper));
 	}
-	uint64_t value = (uint64_t)(-2 * V92_SCORE_SCALE * log(fmin(1., fmax(1e-300, likelihood))));
+	uint64_t value = score_value(-2. * V92_SCORE_SCALE * likelihood);
 	if (vacant != V92_OBSERVATION_CACHE) {
 		cache->key[vacant] = key;
 		cache->second_key[vacant] = second->key;

@@ -195,6 +195,78 @@ static void check_failures(struct v92_observation *model, const int32_t *x,
 	*model = before;
 }
 
+/* Integrate a rescaled Gaussian tail without erfc or underflow. With t=a*s,
+ * the integrand is exp(-t-t*t/(2*a*a)); truncation at 60 loses < exp(-60).
+ * Simpson integration is independent of the production likelihood code. */
+static double tail_score(double a, double b)
+{
+	assert(a > 20. && b > a);
+	const unsigned steps = 4096;
+	double end = fmin(60., a * (b - a)), step = end / steps, integral = 0.;
+	for (unsigned i = 0; i <= steps; i++) {
+		double t = i * step;
+		unsigned weight = i == 0 || i == steps ? 1 : i % 2 ? 4 : 2;
+		integral += weight * exp(-t - .5 * (t / a) * (t / a));
+	}
+	integral *= step / 3.;
+	return -2e6 * (-.5 * a * a - log(a) - .5 * log(2. * acos(-1.)) + log(integral));
+}
+
+static void check_tail_scores(const struct v92_observation *fitted)
+{
+	struct v92_observation model = *fitted;
+	model.variance = 256.;
+	model.quantizer_gain = 1.;
+	for (unsigned i = 0; i < V92_OBSERVATION_INTERVALS; i++) {
+		model.intervals[i].main = 1.;
+		model.intervals[i].post = model.intervals[i].second = 0.;
+		model.intervals[i].weight = i == 0 ? 1. : 0.;
+	}
+	assert(v92_observation_is_valid(&model));
+	struct v92_observation_cache cache;
+	v92_observation_begin(&cache, &model, 0.);
+	struct v92_observation_point zero = v92_observation_point(&cache, 0);
+	double mean = quantize(model.law, 0);
+	const int magnitudes[] = { 512, 1024, 2048, 4096, 32767 };
+	for (int sign = -1; sign <= 1; sign += 2) {
+		uint64_t previous = 0;
+		for (unsigned k = 0; k < sizeof(magnitudes) / sizeof(*magnitudes); k++) {
+			int magnitude = magnitudes[k];
+			int16_t observed = quantize(model.law, sign * magnitude);
+			struct g711_interval bin;
+			assert(g711_quantization_interval(model.law, observed, &bin));
+			double a = bin.lower == INT16_MIN ? -HUGE_VAL : (bin.lower - .5 - mean) / 16.;
+			double b = bin.upper == INT16_MAX ? HUGE_VAL : (bin.upper + .5 - mean) / 16.;
+			if (sign < 0) { double swap = a; a = -b; b = -swap; }
+			double expected = tail_score(a, b);
+			assert(v92_observation_symbol_level(&cache, observed, &observed, 0.));
+			uint64_t actual = v92_observation_score(&cache, 0, &zero, &zero, UINT64_MAX);
+			assert(fabs((double)actual - expected) <= 1.);
+			assert(actual > previous);
+			if (magnitude >= 1024) assert(actual > (uint64_t)(-2e6 * log(1e-300)));
+			uint64_t budgets[] = { actual / 2, actual, actual + 1, UINT64_MAX };
+			for (unsigned j = 0; j < sizeof(budgets) / sizeof(*budgets); j++) {
+				uint64_t bounded = v92_observation_score(&cache, 0, &zero, &zero, budgets[j]);
+				assert(bounded <= actual && (bounded == actual || bounded >= budgets[j]));
+			}
+			previous = actual;
+		}
+	}
+	/* The metric saturates at the integer representation limit, not at a
+	 * probability floor. Exercise both finite and overflowing squared errors. */
+	const double scales[] = { 1e8, 1e300 };
+	for (unsigned i = 0; i < sizeof(scales) / sizeof(*scales); i++) {
+		model.intervals[0].main = scales[i];
+		assert(v92_observation_is_valid(&model));
+		v92_observation_begin(&cache, &model, 0.);
+		zero = v92_observation_point(&cache, 0);
+		int16_t observed = quantize(model.law, 0);
+		assert(v92_observation_symbol_level(&cache, observed, &observed, 0.));
+		assert(v92_observation_score(&cache, INT32_MAX, &zero, &zero, UINT64_MAX) == UINT64_MAX);
+		assert(v92_observation_score(&cache, INT32_MAX, &zero, &zero, 1) == UINT64_MAX);
+	}
+}
+
 static void check_scores(const struct v92_observation *model,
 	const int32_t *x, const int16_t *y)
 {
@@ -340,7 +412,10 @@ static void check_channel(enum g711_law law, double gain, struct v92_observation
 	double rms = sqrt(error / (SAMPLES - TRAINING));
 	assert(isfinite(rms) && rms < 100.);
 	check_scores(&model, x, y);
-	if (gain == .125) check_predictive_noise(&model);
+	if (gain == .125) {
+		check_predictive_noise(&model);
+		check_tail_scores(&model);
+	}
 	assert(memcmp(&model, &before, sizeof(model)) == 0);
 	check_failures(&model, x, u, y);
 	if (previous->count) check_rebinding(previous, &model);

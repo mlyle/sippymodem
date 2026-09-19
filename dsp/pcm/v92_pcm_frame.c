@@ -1172,34 +1172,32 @@ static enum v92_pcm_frame_result decode_frame(
 					continue;
 				uint64_t budget = candidates[0].metric - paths[path].state.metric;
 
-				if (budget < (uint64_t)(-2.e6 * log(1e-300))) {
-					double radius = sqrt((budget + 1. + 1e-9 * budget) / cache.bound_scale);
-					double minimum = cache.observed + cache.lower - radius -
-						previous.values.post_high - second.values.second_high;
-					double maximum = cache.observed + cache.upper + radius -
-						previous.values.post_low - second.values.second_low;
-					int low = first_eta, high = end_eta;
+				double radius = sqrt((budget + 1. + 1e-9 * budget) / cache.bound_scale);
+				double minimum = cache.observed + cache.lower - radius -
+					previous.values.post_high - second.values.second_high;
+				double maximum = cache.observed + cache.upper + radius -
+					previous.values.post_low - second.values.second_low;
+				int low = first_eta, high = end_eta;
 
-					while (low < high) {
-						int mid = low + (high - low) / 2;
-						struct v92_observation_range point = v92_observation_range(&cache,
-							precoder_output(precoder, signed_point(constellation, mid)));
+				while (low < high) {
+					int mid = low + (high - low) / 2;
+					struct v92_observation_range point = v92_observation_range(&cache,
+						precoder_output(precoder, signed_point(constellation, mid)));
 
-						if (point.high < minimum) low = mid + 1;
-						else high = mid;
-					}
-					first_eta = low;
-					high = end_eta;
-					while (low < high) {
-						int mid = low + (high - low) / 2;
-						struct v92_observation_range point = v92_observation_range(&cache,
-							precoder_output(precoder, signed_point(constellation, mid)));
-
-						if (point.low <= maximum) low = mid + 1;
-						else high = mid;
-					}
-					end_eta = low;
+					if (point.high < minimum) low = mid + 1;
+					else high = mid;
 				}
+				first_eta = low;
+				high = end_eta;
+				while (low < high) {
+					int mid = low + (high - low) / 2;
+					struct v92_observation_range point = v92_observation_range(&cache,
+						precoder_output(precoder, signed_point(constellation, mid)));
+
+					if (point.low <= maximum) low = mid + 1;
+					else high = mid;
+				}
+				end_eta = low;
 			}
 			int offset = equivalence_offset(symbol, paths[path].frame.signed_index, y0);
 			unsigned step = known ? stride * modulus : stride;
