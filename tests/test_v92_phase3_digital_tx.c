@@ -137,23 +137,6 @@ static bool emit_checked_bit(
 	return true;
 }
 
-static bool emit_checked_scr(
-	struct pcm_phase3_digital_tx *transmitter,
-	struct reference_scrambler *scrambler, enum g711_law law,
-	uint8_t training_ucode, size_t index)
-{
-	struct v90_pcm_symbol symbol;
-	uint8_t sign = reference_scramble(scrambler, 1);
-
-	CHECK(pcm_phase3_digital_tx_next(transmitter, &symbol) ==
-		      PCM_PHASE3_DIGITAL_TX_OK &&
-	      symbol_matches(
-		      &symbol, law, training_ucode, sign != 0),
-	      "SCR mismatch for law %u at symbol %zu",
-	      (unsigned int)law, index);
-	return true;
-}
-
 static bool run_timeline(enum g711_law law, bool nonzero_dil, uint32_t duration)
 {
 	struct v92_jd jd = jd_parameters();
@@ -291,19 +274,21 @@ static bool run_timeline(enum g711_law law, bool nonzero_dil, uint32_t duration)
 	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_SCR &&
 	      transmitter.scr_symbols == 0,
 	      "Jp-prime did not enter zero-DIL SCR");
+	/* V.92 Amendment 1, 8.6.6: continue both the scrambler and the
+	 * differential encoder from the final Jp-prime sign. */
 	for (size_t index = 0; index < 8; ++index)
-		CHECK(emit_checked_scr(
-			      &transmitter, &scrambler, law,
-			      training_ucode, index),
+		CHECK(emit_checked_bit(
+			      &transmitter, &scrambler, &last_sign, 1, law,
+			      training_ucode, "SCR", index),
 		      "could not emit SCR");
 	CHECK(pcm_phase3_digital_tx_finish_scr(&transmitter) ==
 		      PCM_PHASE3_DIGITAL_TX_OK &&
 	      transmitter.stage == PCM_PHASE3_DIGITAL_TX_SCR,
 	      "mid-interval SCR completion did not latch");
 	for (size_t index = 8; index < 12; ++index)
-		CHECK(emit_checked_scr(
-			      &transmitter, &scrambler, law,
-			      training_ucode, index),
+		CHECK(emit_checked_bit(
+			      &transmitter, &scrambler, &last_sign, 1, law,
+			      training_ucode, "SCR", index),
 		      "could not complete SCR");
 	CHECK(transmitter.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
 	      transmitter.scr_symbols == 12 &&

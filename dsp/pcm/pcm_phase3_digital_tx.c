@@ -375,15 +375,12 @@ static enum pcm_phase3_digital_tx_result next_scr(
 	struct pcm_phase3_digital_tx *transmitter,
 	struct v90_pcm_symbol *symbol)
 {
-	uint8_t sign;
-
+	/* V.92 Amendment 1, 8.6.6: SCR continues Jp-prime's scrambling
+	 * and differential encoding, with binary ones as input. */
 	if (transmitter->scr_symbols == UINT32_MAX - 1u ||
-	    v34_scramble_group(
-		    &transmitter->sequence.signs.scrambler,
-		    1u, 1u, &sign) != V34_FRAMING_OK ||
-	    !v90_pcm_symbol_make(
-		    symbol, transmitter->sequence.signs.law,
-		    transmitter->sequence.signs.training_ucode, sign != 0u))
+	    v90_phase3_signs_next_jd_bit(
+		    &transmitter->sequence.signs, 1u, symbol) !=
+		    V90_PHASE3_SIGNS_OK)
 		return PCM_PHASE3_DIGITAL_TX_INTERNAL_ERROR;
 	transmitter->scr_symbols++;
 	if (transmitter->finish_scr_requested &&
