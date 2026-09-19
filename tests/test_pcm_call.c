@@ -5784,6 +5784,7 @@ static bool run_v92_phase4_control(
 	bool digital_handoff_reached = false;
 	bool completion_failure_checked = false;
 	bool cleardown_checked = false;
+	bool wait_started = false, wait_advanced = false, wait_expired = false;
 	size_t first_cpu_sent = SIZE_MAX;
 	size_t first_cpu_received = SIZE_MAX;
 
@@ -5880,23 +5881,42 @@ static bool run_v92_phase4_control(
 					      PCM_CALL_UNUSABLE_SELECTION &&
 				      pcm_call_is_valid(&collision) &&
 				      pcm_call_has_failed(&collision) &&
-				      collision.state.phase4.v92.owner.analog
-					      .observed_cpu_records ==
-					      collision.state.phase4.v92.owner.analog
-						      .station.transmit
-						      .control.completed_cpu_records,
+				      collision.state.phase4.v92.owner.analog.station
+					      .transmit.control.completed_cpu_records == completed + 1u,
 				      "V.92 CPu completion hid a receive failure");
 				completion_failure_checked = true;
 			}
 		}
 		analog_observation = (struct pcm_call_observation){ 0 };
 		digital_observation = (struct pcm_call_observation){ 0 };
+		bool timed_control = analog.stage == PCM_CALL_PHASE4 &&
+			analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL;
+		uint64_t completed_before = timed_control ?
+			analog.state.phase4.v92.owner.analog.station.transmit.control.completed_cpu_records : 0u;
+		uint32_t wait_before = timed_control ?
+			analog.state.phase4.v92.owner.analog.cpu_repeat_remaining_samples : 0u;
 		analog_result = analog_ready ? PCM_CALL_PHASE4_READY :
 			pcm_call_octet(
 				&analog, analog_received,
 				decode_octet(law, analog_received),
 				&analog_transmitted,
 				&analog_observation);
+		if (timed_control && analog_result == PCM_CALL_OK && analog.stage == PCM_CALL_PHASE4 &&
+		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
+			const struct pcm_call_v92_analog_phase4_control *state = &analog.state.phase4.v92.owner.analog;
+			const struct v92_upstream_control *control = &state->station.transmit.control;
+			uint32_t expected = 0u;
+			if (!control->peer_confirmation_received && control->retry == V92_UPSTREAM_RETRY_IDLE &&
+			    control->completed_cpu_records != 0u) {
+				bool completed = control->completed_cpu_records != completed_before;
+				expected = completed ? 800u + analog.round_trip_delay_samples : wait_before - 1u;
+				wait_started |= completed;
+				wait_advanced |= !completed;
+			}
+			wait_expired |= wait_before == 1u && control->retry != V92_UPSTREAM_RETRY_IDLE;
+			CHECK(state->cpu_repeat_remaining_samples == expected,
+			      "CPu wait did not follow its wire completion and sample clock");
+		}
 		/* Lose the first CPu on the wire, not by announcing digital readiness
 		 * before the receiver listens for control. Keep SUVu intact so its
 		 * repeated peer status can qualify the 100 ms + RTD retry. */
@@ -5984,7 +6004,8 @@ static bool run_v92_phase4_control(
 	}
 	struct v92_pcm_info1a expected_info1a = analog_configuration.local_info1.v92_analog;
 	expected_info1a.training_ucode = analog.phase3_entry.selection.analog.pcm.training_ucode;
-	CHECK(analog_handoff_reached && digital_handoff_reached &&
+	CHECK(wait_started && wait_advanced && wait_expired &&
+	      analog_handoff_reached && digital_handoff_reached &&
 	      analog_control_reached && digital_control_reached &&
 	      analog_e2u_started && digital_e2u_started &&
 	      (law != G711_LAW_PCMU || delay != 1u ||
@@ -5994,7 +6015,7 @@ static bool run_v92_phase4_control(
 	      first_cpu_sent != SIZE_MAX && first_cpu_received != SIZE_MAX &&
 	      first_cpu_received >= first_cpu_sent &&
 	      first_cpu_received - first_cpu_sent >=
-		      analog_control.cpu_repeat_interval_samples &&
+		      800u + analog.round_trip_delay_samples &&
 	      pcm_call_is_valid(&analog) && pcm_call_is_valid(&digital) &&
 	      !pcm_call_has_failed(&analog) && !pcm_call_has_failed(&digital) &&
 	      analog.phase3_entry_stored && digital.phase3_entry_stored &&
@@ -6041,17 +6062,13 @@ static bool run_v92_phase4_control(
 	      analog.round_trip_delay_samples != 0u &&
 	      digital.round_trip_delay_stored &&
 	      digital.round_trip_delay_samples != 0u &&
-	      analog_control.cpu_repeat_interval_samples ==
-		      800u + analog.round_trip_delay_samples &&
 	      analog_control.cpu_repeat_remaining_samples == 0u &&
 	      analog_control.station.transmit.control.retry == V92_UPSTREAM_RETRY_IDLE &&
-	      analog_control.observed_cpu_records ==
-		      analog_control.station.transmit.control.completed_cpu_records &&
-	      analog_control.observed_cpu_records >= 2u &&
+	      analog_control.station.transmit.control.completed_cpu_records >= 2u &&
 	      v92_cpu_frame_bits(
 		      &analog_configuration.v92_analog_phase4.cpu, 24u) /
 		      2u >
-		      analog_control.cpu_repeat_interval_samples &&
+		      800u + analog.round_trip_delay_samples &&
 	      v92_phase4_analog_station_can_handoff(
 		      &analog_control.station) &&
 	      v92_cpu_parameters_are_valid(
@@ -6088,17 +6105,15 @@ static bool run_v92_phase4_control(
 		      &digital_control.control.transmit.encoder.mapping),
 	      "law %u delay %zu V.92 handoff failed: "
 	      "handoff=%u/%u control=%u/%u phase=%u/%u stage=%u/%u "
-	      "cpu=%zu/%zu records=%llu/%llu timer=%u/%u rtd=%u",
+	      "cpu=%zu/%zu records=%llu timer=%u rtd=%u",
 	      (unsigned int)law, delay,
 	      analog_handoff_reached, digital_handoff_reached,
 	      analog_control_reached, digital_control_reached,
 	      analog_entered_phase4, digital_entered_phase4,
 	      (unsigned int)analog.stage, (unsigned int)digital.stage,
 	      first_cpu_sent, first_cpu_received,
-	      (unsigned long long)analog_control.observed_cpu_records,
 	      (unsigned long long)analog_control.station
 		      .transmit.control.completed_cpu_records,
-	      analog_control.cpu_repeat_interval_samples,
 	      analog_control.cpu_repeat_remaining_samples,
 	      analog.round_trip_delay_samples);
 	CHECK(phase4_boundary_is_transactional(&analog, law) &&

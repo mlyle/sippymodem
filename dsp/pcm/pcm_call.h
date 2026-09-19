@@ -259,8 +259,6 @@ union pcm_call_mixed_state {
 
 struct pcm_call_v92_analog_phase4_control {
 	struct v92_phase4_analog_station station;
-	uint64_t observed_cpu_records;
-	uint32_t cpu_repeat_interval_samples;
 	uint32_t cpu_repeat_remaining_samples;
 };
 

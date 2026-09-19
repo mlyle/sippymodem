@@ -605,10 +605,7 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 
 	if (state->station.cleardown.active)
 		return v92_phase4_analog_station_is_valid(&state->station);
-	if (state->observed_cpu_records !=
-	    state->station.transmit.control.completed_cpu_records)
-		return false;
-	if (control->peer_confirmation_received || state->observed_cpu_records == 0u ||
+	if (control->peer_confirmation_received || control->completed_cpu_records == 0u ||
 	    control->retry != V92_UPSTREAM_RETRY_IDLE)
 		timer_valid = state->cpu_repeat_remaining_samples == 0u;
 	else
@@ -617,7 +614,6 @@ static bool v92_analog_phase4_state_is_valid(const struct pcm_call *call)
 
 	return v92_phase4_analog_station_is_valid(&state->station) &&
 	       v92_constellation_size_is_valid(call->state.phase4.v92.rate_renegotiation_constellation) &&
-	       state->cpu_repeat_interval_samples == expected_interval &&
 	       timer_valid;
 }
 
@@ -2891,12 +2887,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		station.round_trip_delay_samples = call->round_trip_delay_samples;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
 			.rate_renegotiation_constellation = mixed->phase3.rate_renegotiation_constellation,
-			.owner.analog = {
-				.station = station,
-				.cpu_repeat_interval_samples =
-					V92_CPU_REPEAT_BASE_SAMPLES +
-					call->round_trip_delay_samples,
-			},
+			.owner.analog.station = station,
 			.child = PCM_CALL_V92_PHASE4_CONTROL,
 		};
 	} else {
@@ -3431,38 +3422,22 @@ static enum pcm_call_result v92_digital_phase4_result(
 	return PCM_CALL_NUMERIC_FAILURE;
 }
 
-static enum pcm_call_result observe_v92_cpu_completion(
-	struct pcm_call_v92_analog_phase4_control *state,
-	bool *completed_this_sample)
-{
-	uint64_t completed =
-		state->station.transmit.control.completed_cpu_records;
-
-	*completed_this_sample = false;
-	if (completed == state->observed_cpu_records)
-		return PCM_CALL_OK;
-	if (state->observed_cpu_records == UINT64_MAX ||
-	    completed != state->observed_cpu_records + 1u)
-		return PCM_CALL_NUMERIC_FAILURE;
-	state->observed_cpu_records = completed;
-	state->cpu_repeat_remaining_samples =
-		state->station.transmit.control.peer_confirmation_received ||
-		state->station.transmit.control.retry != V92_UPSTREAM_RETRY_IDLE ?
-			0u : state->cpu_repeat_interval_samples;
-	*completed_this_sample = true;
-	return PCM_CALL_OK;
-}
-
 static enum pcm_call_result advance_v92_cpu_repeat(
 	struct pcm_call_v92_analog_phase4_control *state,
-	bool completed_this_sample)
+	uint64_t completed_before, uint16_t round_trip_delay_samples)
 {
-	if (state->station.transmit.control.peer_confirmation_received ||
-	    state->station.transmit.control.retry != V92_UPSTREAM_RETRY_IDLE) {
+	const struct v92_upstream_control *control = &state->station.transmit.control;
+	if (control->peer_confirmation_received || control->retry != V92_UPSTREAM_RETRY_IDLE) {
 		state->cpu_repeat_remaining_samples = 0u;
 		return PCM_CALL_OK;
 	}
-	if (completed_this_sample || state->observed_cpu_records == 0u)
+	/* The transmitter commits this count only after the CPu wire tail.
+	 * Start the wait there without consuming its first sample immediately. */
+	if (control->completed_cpu_records != completed_before) {
+		state->cpu_repeat_remaining_samples = V92_CPU_REPEAT_BASE_SAMPLES + round_trip_delay_samples;
+		return PCM_CALL_OK;
+	}
+	if (completed_before == 0u)
 		return PCM_CALL_OK;
 	if (state->cpu_repeat_remaining_samples == 0u)
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -3744,9 +3719,7 @@ static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
 		*transmit_octet = encode_sample(call->law, sample);
 		if (!v92_rate_pause_analog_is_ready(pause))
 			return PCM_CALL_OK;
-		struct pcm_call_v92_analog_phase4_control resumed = {
-			.cpu_repeat_interval_samples = V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples,
-		};
+		struct pcm_call_v92_analog_phase4_control resumed = { 0 };
 		if (!v92_rate_pause_analog_resume(&resumed.station, pause,
 			&state->owner.analog_pause.mapping, call->round_trip_delay_samples))
 			return PCM_CALL_NUMERIC_FAILURE;
@@ -3817,7 +3790,7 @@ static enum pcm_call_result sample_v92_phase4(
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_v92_analog_phase4_control *state =
 			&call->state.phase4.v92.owner.analog;
-		bool completed_this_sample;
+		uint64_t completed_before = state->station.transmit.control.completed_cpu_records;
 		int16_t sample;
 		enum pcm_call_result result = prefix_sent ? PCM_CALL_OK : v92_analog_phase4_result(
 			v92_phase4_analog_station_transmit(
@@ -3838,13 +3811,9 @@ static enum pcm_call_result sample_v92_phase4(
 		if (state->station.cleardown.active)
 			return v92_analog_phase4_result(v92_phase4_analog_station_receive(
 				&state->station, received_octet));
-		result = observe_v92_cpu_completion(
-			state, &completed_this_sample);
-		if (result != PCM_CALL_OK)
-			return result;
 		/* Expire before consuming this sample so a whole peer record
 		 * ending exactly at the threshold can qualify or cancel retry. */
-		result = advance_v92_cpu_repeat(state, completed_this_sample);
+		result = advance_v92_cpu_repeat(state, completed_before, call->round_trip_delay_samples);
 		if (result != PCM_CALL_OK)
 			return result;
 		result = v92_analog_phase4_result(
@@ -4439,8 +4408,6 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 		.rate_renegotiation_constellation = path->rate_renegotiation_constellation,
 		.prefix_stage = PCM_CALL_V92_PREFIX_RU,
 		.child = PCM_CALL_V92_PHASE4_CONTROL,
-		.owner.analog.cpu_repeat_interval_samples =
-			V92_CPU_REPEAT_BASE_SAMPLES + call->round_trip_delay_samples,
 		.prefix.analog.receive = path->rd,
 		.prefix.analog.queue_count = path->upstream.queue_count,
 	};
