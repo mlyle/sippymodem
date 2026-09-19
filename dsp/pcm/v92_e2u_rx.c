@@ -79,6 +79,23 @@ static uint8_t group_bit_errors(uint8_t group, unsigned int bits)
 
 static bool sequence_matches(const struct v92_e2u_rx *receiver)
 {
+	const struct qam_equalizer *equalizer = &receiver->signal.line.equalizer;
+	double lu = receiver->signal.line.demodulator.lu;
+	double input_energy = 0.0;
+
+	/* LU is the acquired receive level. Decision-directed adaptation can
+	 * lift quiet biased input to an inner point, which then correlates with
+	 * scrambled zeros. Require carrier in the existing FIR window before
+	 * trusting that normalized match. This receiver-policy floor is 18 dB
+	 * below acquisition, below even the weakest eight-point symbol; using
+	 * the full window includes the control tail without new power state. */
+	for (unsigned int tap = 0u; tap < equalizer->tap_count; ++tap) {
+		double input = equalizer->history[tap].in_phase;
+		input_energy += input * input;
+	}
+	if (input_energy * 64.0 < equalizer->tap_count * lu * lu)
+		return false;
+
 	unsigned int bits = v92_phase4_modulator_bits_per_symbol(
 		receiver->signal.line.demodulator.constellation);
 	double correlation_squared =

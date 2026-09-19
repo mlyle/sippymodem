@@ -615,6 +615,58 @@ static bool test_e2u(void)
 	return true;
 }
 
+static bool run_e2u_carrier(enum g711_law law,
+	enum v92_constellation_size points, int16_t lu, bool quiet)
+{
+	struct v92_pcm_phase4_trn2u transmitter;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct v92_upstream_rx signal;
+	struct v92_upstream_decision decision;
+	struct v92_e2u_rx receiver;
+	int16_t level;
+	enum v92_e2u_rx_result result = V92_E2U_RX_OK;
+
+	CHECK(build_boundary(law, points, 0u, 1, &transmitter, &boundary),
+	      "carrier predecessor failed");
+	boundary.demodulator.lu = lu;
+	CHECK(v92_phase4_modulator_level(points, lu, 0u, 0u, &level) ==
+		      V92_PHASE4_MODULATOR_OK,
+	      "carrier level did not initialize");
+	for (size_t index = 0u;
+	     index < ARRAY_LENGTH(boundary.pending_training_targets); ++index)
+		boundary.pending_training_targets[index] = line_sample(law, 1, level);
+	CHECK(v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK,
+	      "carrier line did not initialize");
+	/* The weakest legal point is a valid zero sequence after the scrambler
+	 * settles. Quiet biased input can produce the same decisions when the
+	 * equalizer adapts it upward; correlation alone is insufficient.
+	 * Scale both cases to the acquired line level. */
+	level = line_sample(law, 1, quiet ? lu / 32 : level);
+	for (unsigned int sample = 0u; sample < 1000u; ++sample)
+		CHECK(v92_upstream_rx_sample(&signal, level, &decision) ==
+			      V92_UPSTREAM_RX_OK,
+		      "carrier settling failed");
+	CHECK(v92_e2u_rx_init(&receiver, &signal, false) == V92_E2U_RX_OK,
+	      "carrier trial did not initialize");
+	for (unsigned int sample = 0u; sample < V92_PHASE4_E2U_SYMBOLS; ++sample)
+		result = v92_e2u_rx_sample(&receiver, level);
+	CHECK(result == (quiet ? V92_E2U_RX_NO_MATCH : V92_E2U_RX_COMPLETE),
+	      "carrier qualification differed law=%u points=%u lu=%d quiet=%u result=%s",
+	      law, points, lu, quiet, v92_e2u_rx_result_name(result));
+	return true;
+}
+
+static bool test_e2u_carrier(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int points = 4u; points <= 8u; points += 4u)
+			for (unsigned int scale = 1u; scale <= 8u; scale *= 8u)
+				CHECK(run_e2u_carrier(law, points, TEST_LU / scale, false) &&
+				      run_e2u_carrier(law, points, TEST_LU / scale, true),
+				      "carrier qualification matrix stopped");
+	return true;
+}
+
 static bool test_e2u_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
@@ -1012,6 +1064,7 @@ int main(void)
 	} tests[] = {
 		{ "generated digital Phase 4 lines", test_generated_lines },
 		{ "generated E2u boundaries", test_e2u },
+		{ "E2u carrier qualification", test_e2u_carrier },
 		{ "E2u contracts", test_e2u_contracts },
 		{ "control-line contracts", test_contracts },
 		{ "digital receive contracts", test_digital_receive_contracts },
