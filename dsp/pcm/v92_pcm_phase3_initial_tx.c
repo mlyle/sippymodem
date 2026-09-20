@@ -43,14 +43,17 @@ static bool trn1u_matches(
 static bool ja_matches(const struct v92_pcm_phase3_initial_tx *tx)
 {
 	const struct v92_pcm_phase3_ja_tx *ja = &tx->sequence.ja;
-	uint32_t rate_mask;
+	struct v92_pcm_dil_parameters parameters;
 
 	return v92_pcm_phase3_ja_tx_is_valid(ja) && ja->law == tx->law &&
 	       ja->lu_ucode == tx->lu_ucode &&
-	       v92_pcm_dil_decode_zero(
-		       ja->descriptor, sizeof(ja->descriptor), &rate_mask) ==
+	       v92_pcm_dil_decode(
+		       ja->descriptor, sizeof(ja->descriptor),
+		       ja->descriptor_bits, &parameters) ==
 		       V92_PCM_DIL_OK &&
-	       rate_mask == tx->upstream_rate_mask;
+	       parameters.upstream_rate_mask == tx->upstream_rate_mask &&
+	       (parameters.downstream.segment_count == 0u) ==
+		       (tx->dil_profile == V90_DIL_PROFILE_NONE);
 }
 
 bool v92_pcm_phase3_initial_tx_is_valid(
@@ -62,6 +65,7 @@ bool v92_pcm_phase3_initial_tx_is_valid(
 	    tx->md_length_276_symbol_units >
 		    V92_PCM_INFO1A_MAX_MD_LENGTH_UNITS ||
 	    !v92_pcm_dil_rate_mask_is_valid(tx->upstream_rate_mask) ||
+	    !v90_dil_profile_is_valid(tx->dil_profile) ||
 	    !trn1u_goal_is_valid(tx->trn1u_goal_symbols))
 		return false;
 	switch (tx->stage) {
@@ -90,11 +94,13 @@ bool v92_pcm_phase3_initial_tx_is_complete(
 enum v92_pcm_phase3_initial_tx_result v92_pcm_phase3_initial_tx_init(
 	struct v92_pcm_phase3_initial_tx *tx, enum g711_law law,
 	uint8_t lu_ucode, const struct v92_pcm_info1a *info1a,
-	uint32_t upstream_rate_mask, uint32_t trn1u_goal_symbols)
+	uint32_t upstream_rate_mask, uint32_t trn1u_goal_symbols,
+	enum v90_dil_profile dil_profile)
 {
 	struct v92_pcm_phase3_initial_tx initialized = {
 		.trn1u_goal_symbols = trn1u_goal_symbols,
 		.upstream_rate_mask = upstream_rate_mask,
+		.dil_profile = dil_profile,
 		.stage = V92_PCM_PHASE3_INITIAL_TX_OPENING,
 		.law = law,
 		.lu_ucode = lu_ucode,
@@ -102,6 +108,7 @@ enum v92_pcm_phase3_initial_tx_result v92_pcm_phase3_initial_tx_init(
 
 	if (tx == NULL || !v92_pcm_info1a_is_valid(info1a) ||
 	    !v92_pcm_dil_rate_mask_is_valid(upstream_rate_mask) ||
+	    !v90_dil_profile_is_valid(dil_profile) ||
 	    !trn1u_goal_is_valid(trn1u_goal_symbols) ||
 	    v92_pcm_phase3_opening_init(
 		    &initialized.sequence.opening, law, lu_ucode, info1a) !=
@@ -159,10 +166,15 @@ static enum v92_pcm_phase3_initial_tx_result next_trn1u(
 		return V92_PCM_PHASE3_INITIAL_TX_OK;
 	{
 		struct v92_pcm_phase3_ja_tx ja;
+		struct v92_pcm_dil_parameters parameters = {
+			.upstream_rate_mask = tx->upstream_rate_mask,
+		};
 
-		if (v92_pcm_phase3_ja_tx_init(
-			    &ja, &tx->sequence.trn1u,
-			    tx->upstream_rate_mask) != V92_PCM_PHASE3_JA_OK)
+		if (v90_dil_profile_init(&parameters.downstream,
+			    tx->dil_profile) != V90_DIL_OK ||
+		    v92_pcm_phase3_ja_tx_init_dil(
+			    &ja, &tx->sequence.trn1u, &parameters) !=
+			    V92_PCM_PHASE3_JA_OK)
 			return V92_PCM_PHASE3_INITIAL_TX_INTERNAL_ERROR;
 		tx->sequence =
 			(union v92_pcm_phase3_initial_tx_sequence){ .ja = ja };

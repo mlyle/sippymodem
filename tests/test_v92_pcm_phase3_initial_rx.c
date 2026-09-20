@@ -64,7 +64,7 @@ static bool check_line(
 	      v90_pcm_symbol_make(&md_symbol, law, 17u, false) &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &transmitter, law, TEST_UCODE, &selection, rate_mask,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_OK &&
 	      v92_pcm_phase3_initial_rx_init(&receiver, adaptation) ==
 		      V92_PCM_PHASE3_INITIAL_RX_OK,

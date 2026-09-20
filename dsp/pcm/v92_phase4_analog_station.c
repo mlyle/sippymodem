@@ -230,7 +230,7 @@ static bool note_cpd(
 
 enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	struct v92_phase4_analog_station *station,
-	const struct v92_phase3_analog_transmit_handoff *transmit_handoff,
+	const struct v92_pcm_phase4_trn2u *transmit_handoff,
 	const struct pcm_downstream_rx *downstream,
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu,
@@ -243,7 +243,8 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	if (station == NULL || transmit_handoff == NULL || downstream == NULL ||
 	    suvu == NULL || cpu == NULL)
 		return V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT;
-	if (!pcm_downstream_rx_is_valid(downstream) ||
+	if (!v92_pcm_phase4_trn2u_is_valid(transmit_handoff) ||
+	    !pcm_downstream_rx_is_valid(downstream) ||
 	    downstream->protocol != PCM_PROTOCOL_V92 ||
 	    downstream->stream.decoder.decision_plane !=
 		    V90_PCM_MAPPING_TRANSMIT ||
@@ -256,11 +257,12 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 		return V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	if (v92_phase4_analog_tx_init(
 		    &initialized.transmit,
-		    transmit_handoff->training_constellation,
-		    transmit_handoff->previous_encoded_sign,
-		    transmit_handoff->lu, suvu, cpu) !=
+		    transmit_handoff->modulator.constellation,
+		    transmit_handoff->modulator.previous_encoded_sign,
+		    transmit_handoff->modulator.lu, suvu, cpu) !=
 	    V92_PHASE4_ANALOG_TX_OK)
 		return V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
+	initialized.transmit.signal.trn2u = *transmit_handoff;
 	initialized.receive = *downstream;
 	if ((early_suvd != NULL && !note_suvd(&initialized, early_suvd)) ||
 	    (early_cpd != NULL && !note_cpd(&initialized, early_cpd)) ||

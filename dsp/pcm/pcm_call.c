@@ -2849,7 +2849,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			&call->state.mixed.v92_analog;
 		const struct v92_suvd_parameters *early_suvd =
 			mixed->early_suvd_received ? &mixed->early_suvd : NULL;
-		struct v92_phase3_analog_transmit_handoff handoff;
+		struct v92_pcm_phase4_trn2u handoff;
 		struct v92_phase4_analog_station station;
 		struct v92_cpu_parameters cpu = call->v92_analog_phase4_configuration.cpu;
 

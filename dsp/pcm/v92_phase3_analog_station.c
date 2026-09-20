@@ -16,7 +16,7 @@ static bool transmit_stage_is_valid(
 	enum v92_phase3_analog_transmit_stage stage)
 {
 	return stage >= V92_PHASE3_ANALOG_TRANSMIT_INITIAL &&
-	       stage <= V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+	       stage <= V92_PHASE3_ANALOG_TRANSMIT_TRN2U;
 }
 
 static bool receive_is_valid(
@@ -54,7 +54,8 @@ static bool transmit_is_valid(
 		       station->transmit.initial.lu_ucode ==
 			       station->upstream_lu_ucode &&
 		       station->transmit.initial.upstream_rate_mask ==
-			       station->upstream_rate_mask;
+			       station->upstream_rate_mask &&
+		       station->transmit.initial.dil_profile == station->dil_profile;
 	case V92_PHASE3_ANALOG_TRANSMIT_SU:
 		return v92_su_is_valid(&station->transmit.su) &&
 		       !v92_su_is_complete(&station->transmit.su) &&
@@ -64,9 +65,8 @@ static bool transmit_is_valid(
 		return v92_pcm_phase3_cpt_tx_is_valid(&station->transmit.cpt) &&
 		       !v92_pcm_phase3_cpt_tx_is_complete(
 			       &station->transmit.cpt);
-	case V92_PHASE3_ANALOG_TRANSMIT_COMPLETE:
-		return v92_pcm_phase3_cpt_tx_is_complete(
-			&station->transmit.cpt);
+	case V92_PHASE3_ANALOG_TRANSMIT_TRN2U:
+		return v92_pcm_phase4_trn2u_is_valid(&station->transmit.trn2u);
 	}
 	return false;
 }
@@ -96,12 +96,12 @@ static bool coordination_is_valid(
 		return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_CPT ||
 		       station->transmit_stage ==
-			       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+			       V92_PHASE3_ANALOG_TRANSMIT_TRN2U;
 	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
 		return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_CPT ||
 		       station->transmit_stage ==
-			       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+			       V92_PHASE3_ANALOG_TRANSMIT_TRN2U;
 	}
 	return false;
 }
@@ -156,6 +156,7 @@ bool v92_phase3_analog_station_is_valid(
 	       station->upstream_lu > 0 &&
 	       station->upstream_rate_mask != 0u &&
 	       v92_pcm_dil_rate_mask_is_valid(station->upstream_rate_mask) &&
+	       v90_dil_profile_is_valid(station->dil_profile) &&
 	       v92_cpt_parameters_are_valid(&station->cpt_parameters) &&
 	       station->cpt_parameters.law == station->law &&
 	       fractional_delay_is_valid(&station->transmit_delay) &&
@@ -178,6 +179,7 @@ bool v92_phase3_analog_station_configuration_is_valid(
 	       configuration->upstream_lu_ucode != 0u &&
 	       configuration->upstream_lu_ucode <= 127u &&
 	       configuration->upstream_rate_mask != 0u &&
+	       v90_dil_profile_is_valid(configuration->dil_profile) &&
 	       v92_pcm_dil_rate_mask_is_valid(
 		       configuration->upstream_rate_mask) &&
 	       v92_pcm_info1a_is_valid(&configuration->local_info1a) &&
@@ -203,7 +205,8 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 		    configuration->upstream_lu_ucode,
 		    &configuration->local_info1a,
 		    configuration->upstream_rate_mask,
-		    configuration->initial_trn1u_symbols) !=
+		    configuration->initial_trn1u_symbols,
+		    configuration->dil_profile) !=
 		    V92_PCM_PHASE3_INITIAL_TX_OK ||
 	    pcm_s_pattern_rx_init(
 		    &initialized.receive.sd, configuration->law,
@@ -214,6 +217,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	fractional_delay_init(&initialized.transmit_delay);
 	initialized.cpt_parameters = configuration->cpt;
 	initialized.upstream_rate_mask = configuration->upstream_rate_mask;
+	initialized.dil_profile = configuration->dil_profile;
 	initialized.receive_stage = V92_PHASE3_ANALOG_RECEIVE_SD;
 	initialized.transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
 	initialized.law = configuration->law;
@@ -233,7 +237,8 @@ bool v92_phase3_analog_station_transmit_complete(
 	return v92_phase3_analog_station_is_valid(station) &&
 	       !station->failed &&
 	       station->transmit_stage ==
-		       V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+		       V92_PHASE3_ANALOG_TRANSMIT_TRN2U &&
+	       station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_COMPLETE;
 }
 
 bool v92_phase3_analog_station_receive_complete(
@@ -291,17 +296,29 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	    V92_PCM_PHASE3_CPT_TX_OK)
 		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	*sample = symbol.sample;
-	/* V.92 9.5.2.1.10: zero-DIL CPt acknowledges the received Ri. */
+	/* V.92 9.5.2.1.10-11: N=0 waits for Ri. With DIL the configured
+	 * map is already available: start CPt after the minimum TRN1u.
+	 * Waiting for a full DIL traversal can exceed the five-second limit. */
 	if (station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
-	    v90_phase4_ri_search_is_acquired(&station->receive.ri) &&
+	    (station->dil_profile != V90_DIL_PROFILE_NONE ||
+	     v90_phase4_ri_search_is_acquired(&station->receive.ri)) &&
 	    v92_pcm_phase3_trn1u_can_handoff(
 		    &station->transmit.cpt.trn1u) &&
 	    v92_pcm_phase3_cpt_tx_start(&station->transmit.cpt) !=
 		    V92_PCM_PHASE3_CPT_TX_OK)
 		return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-	if (v92_pcm_phase3_cpt_tx_is_complete(&station->transmit.cpt))
-		station->transmit_stage =
-			V92_PHASE3_ANALOG_TRANSMIT_COMPLETE;
+	if (v92_pcm_phase3_cpt_tx_is_complete(&station->transmit.cpt)) {
+		struct v92_pcm_phase4_trn2u trn2u;
+
+		if (v92_pcm_phase4_trn2u_init(&trn2u,
+			    station->phase4_training_constellation,
+			    station->transmit.cpt.coding.previous_sign,
+			    station->upstream_lu) != V92_PCM_PHASE4_TRN2U_OK)
+			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		station->transmit =
+			(union v92_phase3_analog_transmit){ .trn2u = trn2u };
+		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_TRN2U;
+	}
 	return V92_PHASE3_ANALOG_STATION_OK;
 }
 
@@ -346,8 +363,12 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 	case V92_PHASE3_ANALOG_TRANSMIT_CPT:
 		result = transmit_cpt(&next, &generated);
 		break;
-	case V92_PHASE3_ANALOG_TRANSMIT_COMPLETE:
-		return V92_PHASE3_ANALOG_STATION_COMPLETE;
+	case V92_PHASE3_ANALOG_TRANSMIT_TRN2U:
+		result = v92_pcm_phase4_trn2u_next(&next.transmit.trn2u,
+			&generated) == V92_PCM_PHASE4_TRN2U_OK ?
+			V92_PHASE3_ANALOG_STATION_OK :
+			V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		break;
 	default:
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	}
@@ -490,19 +511,29 @@ static enum v92_phase3_analog_station_result receive_j(
 static enum v92_phase3_analog_station_result receive_ri(
 	struct v92_phase3_analog_station *station, uint8_t network_octet)
 {
+	/* A nonzero-DIL peer cannot acknowledge CPt before receiving it.
+	 * Do not hunt for Ri in the preceding training symbols. */
+	if (station->dil_profile != V90_DIL_PROFILE_NONE &&
+	    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+	    station->transmit.cpt.completed_records == 0u)
+		return V92_PHASE3_ANALOG_STATION_OK;
 	enum v90_phase4_ri_search_result result =
 		v90_phase4_ri_search_receive(
 			&station->receive.ri, network_octet);
 
-	if (result == V90_PHASE4_RI_SEARCH_OK ||
-	    result == V90_PHASE4_RI_SEARCH_ACQUIRED)
-		return V92_PHASE3_ANALOG_STATION_OK;
-	if (result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED)
+	/* The acknowledgement ending CPt is Ri-bar for N=0, plain Ri for DIL. */
+	if (result == (station->dil_profile == V90_DIL_PROFILE_NONE ?
+		V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED :
+		V90_PHASE4_RI_SEARCH_ACQUIRED))
 		return v92_pcm_phase3_cpt_tx_request_finish(
 			       &station->transmit.cpt) ==
 			       V92_PCM_PHASE3_CPT_TX_OK ?
 			       V92_PHASE3_ANALOG_STATION_OK :
 			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	if (result == V90_PHASE4_RI_SEARCH_OK ||
+	    result == V90_PHASE4_RI_SEARCH_ACQUIRED ||
+	    result == V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED)
+		return V92_PHASE3_ANALOG_STATION_OK;
 	if (result == V90_PHASE4_RI_SEARCH_DONE) {
 		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_COMPLETE;
 		return V92_PHASE3_ANALOG_STATION_COMPLETE;
@@ -576,24 +607,15 @@ v92_phase3_analog_station_downstream_handoff(
 enum v92_phase3_analog_station_result
 v92_phase3_analog_station_transmit_handoff(
 	const struct v92_phase3_analog_station *station,
-	struct v92_phase3_analog_transmit_handoff *handoff)
+	struct v92_pcm_phase4_trn2u *handoff)
 {
-	struct v92_phase3_analog_transmit_handoff generated;
-
 	if (!v92_phase3_analog_station_is_valid(station) || handoff == NULL)
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_ANALOG_STATION_FAILED;
 	if (!v92_phase3_analog_station_transmit_complete(station))
 		return V92_PHASE3_ANALOG_STATION_INVALID_STATE;
-	generated = (struct v92_phase3_analog_transmit_handoff){
-		.lu = station->upstream_lu,
-		.training_constellation =
-			station->phase4_training_constellation,
-		.previous_encoded_sign =
-			station->transmit.cpt.coding.previous_sign,
-	};
-	*handoff = generated;
+	*handoff = station->transmit.trn2u;
 	return V92_PHASE3_ANALOG_STATION_OK;
 }
 

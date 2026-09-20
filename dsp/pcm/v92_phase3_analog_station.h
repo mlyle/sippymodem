@@ -7,6 +7,7 @@
 #include "v90_phase4_ri_search.h"
 #include "v92_pcm_phase3_cpt_tx.h"
 #include "v92_pcm_phase3_initial_tx.h"
+#include "v92_pcm_phase4_trn2u.h"
 #include "v92_phase3_j_receiver.h"
 #include "v92_su.h"
 
@@ -24,7 +25,7 @@ enum v92_phase3_analog_transmit_stage {
 	V92_PHASE3_ANALOG_TRANSMIT_INITIAL,
 	V92_PHASE3_ANALOG_TRANSMIT_SU,
 	V92_PHASE3_ANALOG_TRANSMIT_CPT,
-	V92_PHASE3_ANALOG_TRANSMIT_COMPLETE,
+	V92_PHASE3_ANALOG_TRANSMIT_TRN2U,
 };
 
 enum v92_phase3_analog_station_result {
@@ -40,9 +41,12 @@ enum v92_phase3_analog_station_result {
 
 struct v92_phase3_analog_station_configuration {
 	struct v92_pcm_info1a local_info1a;
+	/* Caller-selected downstream map; DIL impairment learning is not owned
+	 * by this station. With nonzero DIL, CPt starts after minimum TRN1u. */
 	struct v92_cpt_parameters cpt;
 	uint32_t upstream_rate_mask;
 	uint32_t initial_trn1u_symbols;
+	enum v90_dil_profile dil_profile;
 	enum g711_law law;
 	/* Nominal upstream level at call entry, independent of downstream UINFO. */
 	uint8_t upstream_lu_ucode;
@@ -58,24 +62,22 @@ union v92_phase3_analog_transmit {
 	struct v92_pcm_phase3_initial_tx initial;
 	struct v92_su su;
 	struct v92_pcm_phase3_cpt_tx cpt;
+	struct v92_pcm_phase4_trn2u trn2u;
 };
 
-struct v92_phase3_analog_transmit_handoff {
-	int16_t lu;
-	enum v92_constellation_size training_constellation;
-	uint8_t previous_encoded_sign;
-};
-
-/* Own both directions of the analogue modem's zero-DIL V.92 Phase 3
+/* Own both directions of the analogue modem's V.92 Phase 3
  * procedure. Raw downstream network characters drive Sd, Jd/Jp, and Ri;
  * signed-linear upstream samples carry the opening, Su, second TRN1u, CPt,
- * and E1u. Calls on one instance are serialized. */
+ * and E1u. Nonzero DIL can finish E1u before Ri-bar; keep sending TRN2u
+ * until its exact generator can pass to the next owner. Calls on one
+ * instance are serialized. */
 struct v92_phase3_analog_station {
 	union v92_phase3_analog_receive receive;
 	union v92_phase3_analog_transmit transmit;
 	struct fractional_delay transmit_delay;
 	struct v92_cpt_parameters cpt_parameters;
 	uint32_t upstream_rate_mask;
+	enum v90_dil_profile dil_profile;
 	/* Emitted silence after Ja, frozen once Jd starts Su; saturates. */
 	uint32_t post_ja_silence_samples;
 	enum v92_constellation_size phase4_training_constellation;
@@ -123,13 +125,12 @@ v92_phase3_analog_station_downstream_handoff(
 	const struct v92_phase3_analog_station *station,
 	struct v92_cpt_parameters *parameters);
 
-/* Export the exact level, Jp-selected constellation, and differential-sign
- * continuity for initial Phase 4 TRN2u. Rejected calls leave handoff
- * unchanged. */
+/* Transfer the exact TRN2u generator, including symbols sent while waiting
+ * for Ri-bar. Rejected calls leave handoff unchanged. */
 enum v92_phase3_analog_station_result
 v92_phase3_analog_station_transmit_handoff(
 	const struct v92_phase3_analog_station *station,
-	struct v92_phase3_analog_transmit_handoff *handoff);
+	struct v92_pcm_phase4_trn2u *handoff);
 
 const char *v92_phase3_analog_station_result_name(
 	enum v92_phase3_analog_station_result result);

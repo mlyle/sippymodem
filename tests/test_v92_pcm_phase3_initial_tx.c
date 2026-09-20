@@ -71,7 +71,7 @@ static bool compare_opening(
 
 static bool compare_case(
 	enum g711_law law, uint8_t md_units, uint32_t rate_mask,
-	uint32_t trn1u_goal)
+	uint32_t trn1u_goal, enum v90_dil_profile dil_profile)
 {
 	struct v92_pcm_info1a selection = info1a(md_units);
 	struct v92_pcm_phase3_initial_tx tx;
@@ -79,9 +79,11 @@ static bool compare_case(
 	struct v92_pcm_phase3_trn1u trn1u;
 	struct v92_pcm_phase3_ja_tx ja;
 	struct v90_pcm_symbol md_symbol;
+	struct v92_pcm_dil_parameters parameters = { .upstream_rate_mask = rate_mask };
 
-	CHECK(v92_pcm_phase3_initial_tx_init(
-		      &tx, law, 91u, &selection, rate_mask, trn1u_goal) ==
+	CHECK(v90_dil_profile_init(&parameters.downstream, dil_profile) == V90_DIL_OK &&
+	      v92_pcm_phase3_initial_tx_init(
+		      &tx, law, 91u, &selection, rate_mask, trn1u_goal, dil_profile) ==
 		      V92_PCM_PHASE3_INITIAL_TX_OK &&
 	      v92_pcm_phase3_initial_tx_is_valid(&tx) &&
 	      v92_pcm_phase3_opening_init(
@@ -106,13 +108,14 @@ static bool compare_case(
 		      "composed TRN1u differed at symbol %u", index);
 	}
 	CHECK(tx.stage == V92_PCM_PHASE3_INITIAL_TX_JA &&
-	      v92_pcm_phase3_ja_tx_init(&ja, &trn1u, rate_mask) ==
+	      v92_pcm_phase3_ja_tx_init_dil(&ja, &trn1u, &parameters) ==
 		      V92_PCM_PHASE3_JA_OK &&
 	      v92_pcm_phase3_initial_tx_request_finish(&tx) ==
 		      V92_PCM_PHASE3_INITIAL_TX_OK &&
 	      tx.stage == V92_PCM_PHASE3_INITIAL_TX_JA,
 	      "TRN1u did not hand off to a minimum-length Ja");
-	for (size_t index = 0; index < V92_PCM_PHASE3_JA_MIN_SYMBOLS; ++index) {
+	size_t minimum = V92_PCM_PHASE3_JA_PREAMBLE_BITS + ja.descriptor_bits;
+	for (size_t index = 0; index < minimum; ++index) {
 		struct v90_pcm_symbol expected;
 		struct v90_pcm_symbol actual;
 
@@ -125,7 +128,7 @@ static bool compare_case(
 	}
 	CHECK(v92_pcm_phase3_initial_tx_is_complete(&tx) &&
 	      tx.sequence.ja.emitted_symbols ==
-		      V92_PCM_PHASE3_JA_MIN_SYMBOLS,
+		      minimum,
 	      "Ja did not stop at its first permitted boundary");
 	{
 		struct v92_pcm_phase3_initial_tx before = tx;
@@ -150,7 +153,7 @@ static bool advance_to_ja(struct v92_pcm_phase3_initial_tx *tx)
 
 	if (v92_pcm_phase3_initial_tx_init(
 		    tx, G711_LAW_PCMU, 91u, &selection, 1u,
-		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) !=
+		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) !=
 	    V92_PCM_PHASE3_INITIAL_TX_OK)
 		return false;
 	while (tx->stage != V92_PCM_PHASE3_INITIAL_TX_JA) {
@@ -199,39 +202,43 @@ static bool test_contracts(void)
 	memcpy(tx_before, &tx, sizeof(tx));
 	CHECK(v92_pcm_phase3_initial_tx_init(
 		      NULL, G711_LAW_PCMU, 91u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, (enum g711_law)-1, 91u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 0u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 91u, NULL, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 91u, &selection,
 		      UINT32_C(1) << V92_PCM_DIL_MAX_DATA_RATE_NUMBER,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 91u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS - 1u) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS - 1u, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 91u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + 1u) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS + 1u, V90_DIL_PROFILE_NONE) ==
+		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
+	      v92_pcm_phase3_initial_tx_init(
+		      &tx, G711_LAW_PCMU, 91u, &selection, 1u,
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, (enum v90_dil_profile)-1) ==
 		      V92_PCM_PHASE3_INITIAL_TX_INVALID_ARGUMENT &&
 	      memcmp(&tx, tx_before, sizeof(tx)) == 0,
 	      "invalid initialization changed its destination");
 
 	CHECK(v92_pcm_phase3_initial_tx_init(
 		      &tx, G711_LAW_PCMU, 91u, &selection, 1u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ==
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ==
 		      V92_PCM_PHASE3_INITIAL_TX_OK,
 	      "contract stream did not initialize");
 	memset(&symbol, 0xa5, sizeof(symbol));
@@ -291,11 +298,15 @@ int main(void)
 	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream initial Phase 3\n");
 	if (!compare_case(
 		    G711_LAW_PCMU, 0u, UINT32_C(0x52491),
-		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS) ||
+		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_NONE) ||
 	    !compare_case(
 		    G711_LAW_PCMA, 1u, V92_PCM_DIL_RATE_MASK_ALL,
 		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
-			    V92_PCM_PHASE3_TRN1U_ALIGNMENT) ||
+			    V92_PCM_PHASE3_TRN1U_ALIGNMENT, V90_DIL_PROFILE_NONE) ||
+	    !compare_case(G711_LAW_PCMU, 0u, 0xf,
+		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_CONVENTIONAL) ||
+	    !compare_case(G711_LAW_PCMA, 1u, V92_PCM_DIL_RATE_MASK_ALL,
+		    V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, V90_DIL_PROFILE_CONVENTIONAL) ||
 	    !test_finish_boundaries() || !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream initial Phase 3\n");
 		return 1;

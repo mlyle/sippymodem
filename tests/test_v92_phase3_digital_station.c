@@ -94,9 +94,10 @@ static int16_t media_sample(enum g711_law law, int16_t sample)
 		       g711_decode_pcmu(g711_encode_pcmu(sample));
 }
 
-static bool run_exchange(enum g711_law law, bool delayed)
+static bool run_exchange(enum g711_law law, unsigned delay,
+	enum v90_dil_profile dil_profile)
 {
-	const enum v92_constellation_size training_constellation = delayed ?
+	const enum v92_constellation_size training_constellation = delay ?
 		V92_CONSTELLATION_4_POINT : V92_CONSTELLATION_8_POINT;
 	struct v92_jd jd = {
 		.data_rate_capability_mask = UINT32_C(0x002a1555),
@@ -108,23 +109,33 @@ static bool run_exchange(enum g711_law law, bool delayed)
 			V92_CONSTELLATION_4_POINT,
 	};
 	const uint32_t rate_mask = UINT32_C(0x52491);
-	const struct v92_phase3_analog_station_configuration configuration =
+	struct v92_phase3_analog_station_configuration configuration =
 		analog_configuration(law, rate_mask);
+	struct v90_dil_parameters dil;
+	uint32_t dil_symbols;
 	struct v92_phase3_analog_station analog;
 	struct v92_phase3_digital_station digital;
 	struct v92_pcm_phase4_trn2u trn2u;
 	struct v92_pcm_phase3_cpt_line_handoff receive_handoff;
-	struct v92_phase3_analog_transmit_handoff transmit_handoff;
+	struct v92_pcm_phase4_trn2u transmit_handoff;
 	struct v92_cpt_parameters analog_downstream;
 	struct v92_cpt_parameters digital_downstream;
 	uint32_t received_mask = 0u;
-	uint8_t downstream_delay = law == G711_LAW_PCMA ?
-		g711_encode_pcma(0) : g711_encode_pcmu(0);
-	int16_t upstream_delay = 0;
+	uint8_t downstream_delay[4096];
+	int16_t upstream_delay[4096] = { 0 };
+	unsigned cursor = 0;
+	size_t su_started = SIZE_MAX;
+	bool cpt_started = false;
 	bool trn2u_started = false;
 	bool finished = false;
 
-	CHECK(v92_phase3_analog_station_init(&analog, &configuration) ==
+	configuration.dil_profile = dil_profile;
+	CHECK(delay <= ARRAY_LENGTH(downstream_delay), "delay exceeds test wire");
+	memset(downstream_delay, law == G711_LAW_PCMA ?
+		g711_encode_pcma(0) : g711_encode_pcmu(0), sizeof(downstream_delay));
+	CHECK(v90_dil_profile_init(&dil, dil_profile) == V90_DIL_OK &&
+	      v90_dil_training_symbol_count(&dil, &dil_symbols) &&
+	      v92_phase3_analog_station_init(&analog, &configuration) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      v92_phase3_digital_station_init(
 		      &digital, law, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
@@ -132,7 +143,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 		      V92_PHASE3_DIGITAL_STATION_OK,
 	      "V.92 station pair did not initialize for law %u",
 	      (unsigned int)law);
-	for (size_t index = 0; index < SAMPLE_LIMIT && !finished; ++index) {
+	for (size_t index = 0; index < SAMPLE_LIMIT + dil_symbols + 6u * delay && !finished; ++index) {
 		uint8_t octet = law == G711_LAW_PCMA ?
 			g711_encode_pcma(0) : g711_encode_pcmu(0);
 		int16_t sample;
@@ -148,10 +159,10 @@ static bool run_exchange(enum g711_law law, bool delayed)
 			      v92_phase3_digital_station_result_name(tx_result));
 		}
 		if (!v92_phase3_analog_station_receive_complete(&analog)) {
-			uint8_t delivered = delayed ? downstream_delay : octet;
+			uint8_t delivered = delay ? downstream_delay[cursor] : octet;
 			enum v92_phase3_analog_station_result result;
 
-			downstream_delay = octet;
+			downstream_delay[cursor] = octet;
 			result = v92_phase3_analog_station_receive(
 				&analog, delivered);
 			CHECK(result == V92_PHASE3_ANALOG_STATION_OK ||
@@ -161,6 +172,17 @@ static bool run_exchange(enum g711_law law, bool delayed)
 		}
 
 		if (!v92_phase3_analog_station_transmit_complete(&analog)) {
+			if (analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
+			    analog.transmit.su.stage == V92_SU_JP_BAR_RESPONSE &&
+			    su_started == SIZE_MAX)
+				su_started = index;
+			if (dil_symbols && !cpt_started &&
+			    analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+			    analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_RECORD) {
+				CHECK(su_started != SIZE_MAX && index - su_started <= 40000u,
+				      "CPt missed five-second Su deadline: %zu samples", index - su_started);
+				cpt_started = true;
+			}
 			enum v92_phase3_analog_station_result result =
 				v92_phase3_analog_station_transmit(
 					&analog, NULL, &sample);
@@ -173,16 +195,9 @@ static bool run_exchange(enum g711_law law, bool delayed)
 			if (!trn2u_started) {
 				CHECK(v92_phase3_analog_station_transmit_handoff(
 					      &analog, &transmit_handoff) ==
-					      V92_PHASE3_ANALOG_STATION_OK &&
-				      v92_pcm_phase4_trn2u_init(
-					      &trn2u,
-					      transmit_handoff
-						      .training_constellation,
-					      transmit_handoff
-						      .previous_encoded_sign,
-					      transmit_handoff.lu) ==
-					      V92_PCM_PHASE4_TRN2U_OK,
+					      V92_PHASE3_ANALOG_STATION_OK,
 				      "analogue Phase 4 handoff failed");
+				trn2u = transmit_handoff;
 				trn2u_started = true;
 			}
 			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
@@ -191,7 +206,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 		}
 		sample = media_sample(law, sample);
 		if (!v92_phase3_digital_station_receive_complete(&digital)) {
-			int16_t delivered = delayed ? upstream_delay : sample;
+			int16_t delivered = delay ? upstream_delay[cursor] : sample;
 			bool receiving_ja =
 				digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL &&
 				digital.receive.initial.stage == V92_PCM_PHASE3_INITIAL_RX_JA;
@@ -202,7 +217,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 				v92_phase3_digital_station_receive(
 					&digital, delivered);
 
-			upstream_delay = sample;
+			upstream_delay[cursor] = sample;
 			CHECK(result == V92_PHASE3_DIGITAL_STATION_OK ||
 			      result == V92_PHASE3_DIGITAL_STATION_COMPLETE,
 			      "digital receiver returned %s at %zu",
@@ -215,6 +230,7 @@ static bool run_exchange(enum g711_law law, bool delayed)
 					      expected_phase_minimum,
 				      "Su did not retain separate sign and measured-level phase thresholds");
 		}
+		cursor = delay ? (cursor + 1u) % delay : 0u;
 		finished =
 			v92_phase3_analog_station_transmit_complete(&analog) &&
 			v92_phase3_analog_station_receive_complete(&analog) &&
@@ -224,12 +240,15 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	CHECK(finished && trn2u_started &&
 	      !v92_phase3_analog_station_has_failed(&analog) &&
 	      !v92_phase3_digital_station_has_failed(&digital) &&
-	      analog.transmit.cpt.finish_requested &&
-	      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_COMPLETE &&
+	      analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_TRN2U &&
+	      v92_pcm_phase4_trn2u_is_valid(&analog.transmit.trn2u) &&
 	      analog.receive.ri.stage == V90_PHASE4_RI_SEARCH_COMPLETE &&
 	      digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE &&
-	      digital.downstream.scr_symbols >= 6u &&
-	      digital.downstream.scr_symbols % 6u == 0u &&
+	      (dil_symbols ?
+		(cpt_started && digital.downstream.dil.parameters.segment_count == dil.segment_count &&
+		 analog.transmit.trn2u.emitted_symbols != 0u) :
+		(digital.downstream.scr_symbols >= 6u &&
+		 digital.downstream.scr_symbols % 6u == 0u)) &&
 	      digital.ri.finish_requested &&
 	      digital.ri.stage == V90_PHASE4_RI_COMPLETE &&
 	      digital.jp.su_phase_extension_q16 != 0u,
@@ -254,13 +273,30 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	      v92_phase3_analog_station_transmit_handoff(
 		      &analog, &transmit_handoff) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
-	      transmit_handoff.lu > 0 &&
-	      transmit_handoff.training_constellation ==
+	      transmit_handoff.modulator.lu > 0 &&
+	      transmit_handoff.modulator.constellation ==
 		      training_constellation &&
-	      transmit_handoff.previous_encoded_sign ==
-		      analog.transmit.cpt.coding.previous_sign,
+	      transmit_handoff.emitted_symbols == analog.transmit.trn2u.emitted_symbols,
 	      "V.92 Phase 4 handoff changed negotiated state");
+	struct v92_pcm_phase4_trn2u expected = analog.transmit.trn2u;
+	for (unsigned i = 0; i < 24; ++i) {
+		int16_t actual_sample, expected_sample;
+
+		CHECK(v92_pcm_phase4_trn2u_next(&transmit_handoff, &actual_sample) == V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_pcm_phase4_trn2u_next(&expected, &expected_sample) == V92_PCM_PHASE4_TRN2U_OK &&
+		      actual_sample == expected_sample, "TRN2u handoff changed sample %u", i);
+	}
 	return true;
+}
+
+static bool test_nonzero_station_pair(void)
+{
+	return run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_CONVENTIONAL) &&
+	       run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_CONVENTIONAL) &&
+	       run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_CONVENTIONAL) &&
+	       run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_CONVENTIONAL) &&
+	       run_exchange(G711_LAW_PCMU, 4096u, V90_DIL_PROFILE_CONVENTIONAL) &&
+	       run_exchange(G711_LAW_PCMA, 4096u, V90_DIL_PROFILE_CONVENTIONAL);
 }
 
 static bool run_delayed_ri(enum g711_law law)
@@ -550,10 +586,12 @@ static bool test_analog_contracts(void)
 		analog_configuration(G711_LAW_PCMU, 1u);
 	struct v92_phase3_analog_station station;
 	struct v92_phase3_analog_station before;
-	struct v92_phase3_analog_transmit_handoff handoff = {
-		.lu = 123,
-		.training_constellation = (enum v92_constellation_size)16,
-		.previous_encoded_sign = 1,
+	struct v92_pcm_phase4_trn2u handoff = {
+		.modulator = {
+			.lu = 123,
+			.constellation = (enum v92_constellation_size)16,
+			.previous_encoded_sign = 1,
+		},
 	};
 	struct v92_cpt_parameters downstream;
 	struct v92_cpt_parameters downstream_before;
@@ -589,6 +627,14 @@ static bool test_analog_contracts(void)
 	      !v92_phase3_analog_station_transmit_complete(&station) &&
 	      !v92_phase3_analog_station_receive_complete(&station),
 	      "fresh analogue station contracts differed");
+	station.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
+	before = station;
+	CHECK(!v92_phase3_analog_station_is_valid(&station) &&
+	      v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
+		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+	      memcmp(&station, &before, sizeof(station)) == 0 && sample == 1234,
+	      "station accepted a DIL selection different from its opening");
+	station.dil_profile = configuration.dil_profile;
 	station.post_ja_silence_samples = 1u;
 	before = station;
 	CHECK(!v92_phase3_analog_station_is_valid(&station) &&
@@ -608,10 +654,10 @@ static bool test_analog_contracts(void)
 		      V92_PHASE3_ANALOG_STATION_INVALID_STATE &&
 	      memcmp(&downstream, &downstream_before,
 		     sizeof(downstream)) == 0 &&
-	      handoff.lu == 123 &&
-	      handoff.training_constellation ==
+	      handoff.modulator.lu == 123 &&
+	      handoff.modulator.constellation ==
 		      (enum v92_constellation_size)16 &&
-	      handoff.previous_encoded_sign == 1u &&
+	      handoff.modulator.previous_encoded_sign == 1u &&
 	      v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
 		      V92_PHASE3_ANALOG_STATION_OK &&
 	      sample == 0,
@@ -795,6 +841,7 @@ int main(void)
 		{ "PCMA delayed station exchange", NULL },
 		{ "zero-DIL waits for delayed Ri", test_delayed_ri },
 		{ "nonzero-DIL station exchange", test_nonzero_dil },
+		{ "native nonzero-DIL station pair", test_nonzero_station_pair },
 		{ "second TRN1u overlaps Jp", test_early_second_trn1u },
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
@@ -807,13 +854,13 @@ int main(void)
 
 		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
 		if (index == 0u)
-			passed = run_exchange(G711_LAW_PCMU, false);
+			passed = run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_NONE);
 		else if (index == 1u)
-			passed = run_exchange(G711_LAW_PCMA, false);
+			passed = run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_NONE);
 		else if (index == 2u)
-			passed = run_exchange(G711_LAW_PCMU, true);
+			passed = run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_NONE);
 		else if (index == 3u)
-			passed = run_exchange(G711_LAW_PCMA, true);
+			passed = run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_NONE);
 		else
 			passed = tests[index].run();
 		if (passed)

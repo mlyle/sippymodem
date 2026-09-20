@@ -41,6 +41,7 @@ struct v92_pcm_phase3_initial_tx {
 	union v92_pcm_phase3_initial_tx_sequence sequence;
 	uint32_t trn1u_goal_symbols;
 	uint32_t upstream_rate_mask;
+	enum v90_dil_profile dil_profile;
 	enum v92_pcm_phase3_initial_tx_stage stage;
 	enum g711_law law;
 	uint8_t lu_ucode;
@@ -51,7 +52,8 @@ struct v92_pcm_phase3_initial_tx {
 enum v92_pcm_phase3_initial_tx_result v92_pcm_phase3_initial_tx_init(
 	struct v92_pcm_phase3_initial_tx *tx, enum g711_law law,
 	uint8_t lu_ucode, const struct v92_pcm_info1a *info1a,
-	uint32_t upstream_rate_mask, uint32_t trn1u_goal_symbols);
+	uint32_t upstream_rate_mask, uint32_t trn1u_goal_symbols,
+	enum v90_dil_profile dil_profile);
 bool v92_pcm_phase3_initial_tx_is_valid(
 	const struct v92_pcm_phase3_initial_tx *tx);
 bool v92_pcm_phase3_initial_tx_is_complete(

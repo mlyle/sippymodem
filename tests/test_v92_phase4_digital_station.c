@@ -899,11 +899,7 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 	struct v92_cpd_parameters wire;
 	struct v92_cpd_parameters expected;
 	struct v92_cpd_base_parameters compact = compact_cpd_parameters(law);
-	struct v92_phase3_analog_transmit_handoff handoff = {
-		.lu = TEST_LU,
-		.training_constellation = V92_CONSTELLATION_4_POINT,
-		.previous_encoded_sign = 1u,
-	};
+	struct v92_pcm_phase4_trn2u handoff;
 	struct v92_cpt_parameters cpt = cpt_parameters(law);
 	struct v90_pcm_mapping training_mapping;
 	struct v92_pcm_mapping expected_mapping;
@@ -916,7 +912,9 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 	size_t compact_bits = 0u;
 	size_t events = 0u;
 
-	CHECK(full_cpd_parameters(law, &full) &&
+	CHECK(v92_pcm_phase4_trn2u_init(&handoff, V92_CONSTELLATION_4_POINT,
+		      1u, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
+	      full_cpd_parameters(law, &full) &&
 	      v90_pcm_mapping_init_from_v92_cpt(
 		      &training_mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(
@@ -1337,11 +1335,7 @@ static bool run_paired_station_exchange(
 	struct v92_cpd_parameters cpd = selected != NULL ? *selected : cpd_parameters(law);
 	struct v92_cpd_parameters full_cpd = cpd;
 	struct v92_pcm_phase3_cpt_line_handoff digital_handoff;
-	struct v92_phase3_analog_transmit_handoff analog_handoff = {
-		.lu = TEST_LU,
-		.training_constellation = constellation,
-		.previous_encoded_sign = previous_sign,
-	};
+	struct v92_pcm_phase4_trn2u analog_handoff;
 	struct v92_pcm_phase4_trn2u upstream;
 	struct v90_pcm_mapping mapping;
 	struct v92_pcm_mapping expected_upstream_mapping;
@@ -1365,7 +1359,9 @@ static bool run_paired_station_exchange(
 	bool terminal_probe_initialized = false;
 	bool cleardown_checked = false;
 
-	CHECK(build_predecessor(
+	CHECK(v92_pcm_phase4_trn2u_init(&analog_handoff, constellation,
+		      previous_sign, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
+	      build_predecessor(
 		      law, constellation, previous_sign, polarity,
 		      &upstream, &digital_handoff), "paired training predecessor failed");
 	/* Cover physical source-to-wire offsets at every supported lookahead. */
@@ -1695,9 +1691,7 @@ static bool run_analog_retry_boundary(enum g711_law law, bool parameters, bool a
 	struct v92_cpu_parameters cpu = cpu_parameters(law);
 	struct v92_cpd_parameters cpd = cpd_parameters(law);
 	struct v92_cpt_parameters cpt = cpt_parameters(law);
-	const struct v92_phase3_analog_transmit_handoff handoff = {
-		.lu = TEST_LU, .training_constellation = V92_CONSTELLATION_4_POINT,
-	};
+	struct v92_pcm_phase4_trn2u handoff;
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_rx downstream;
 	struct v92_phase4_analog_station station;
@@ -1705,7 +1699,9 @@ static bool run_analog_retry_boundary(enum g711_law law, bool parameters, bool a
 	uint8_t sequence[V92_CPD_DIRECT_MAX_FRAME_BYTES];
 	size_t bits, events = 0;
 	bool expired = false;
-	CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
+	CHECK(v92_pcm_phase4_trn2u_init(&handoff, V92_CONSTELLATION_4_POINT,
+		0u, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK &&
+	      v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) == V90_PCM_MAPPING_OK &&
 	      pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
 		V90_PCM_MAPPING_TRANSMIT) == PCM_DOWNSTREAM_RX_OK &&
 	      v92_phase4_analog_station_init(&station, &handoff, &downstream, &suvu, &cpu,
@@ -1776,11 +1772,7 @@ static bool test_analog_early_control(void)
 	};
 	struct v92_cpu_parameters cpu = cpu_parameters(G711_LAW_PCMU);
 	struct v92_cpd_parameters early_cpd;
-	struct v92_phase3_analog_transmit_handoff handoff = {
-		.lu = TEST_LU,
-		.training_constellation = V92_CONSTELLATION_4_POINT,
-		.previous_encoded_sign = 1u,
-	};
+	struct v92_pcm_phase4_trn2u handoff;
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_rx downstream;
 	struct v92_phase4_analog_station station;
@@ -1793,6 +1785,14 @@ static bool test_analog_early_control(void)
 		CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, cpt.law) ==
 			      V90_PCM_MAPPING_OK,
 		      "early-control mapping differed");
+	}
+	CHECK(v92_pcm_phase4_trn2u_init(&handoff, V92_CONSTELLATION_4_POINT,
+		      1u, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK,
+	      "early training did not initialize");
+	for (unsigned i = 0; i < 137u; ++i) {
+		int16_t sample;
+		CHECK(v92_pcm_phase4_trn2u_next(&handoff, &sample) ==
+			V92_PCM_PHASE4_TRN2U_OK, "early training stopped");
 	}
 	CHECK(full_cpd_parameters(G711_LAW_PCMU, &early_cpd) &&
 	      pcm_downstream_rx_init(
@@ -1809,6 +1809,26 @@ static bool test_analog_early_control(void)
 	      station.transmit.control.peer_requests_silence &&
 	      !v92_phase4_analog_tx_silence_requested(&station.transmit),
 	      "early downstream controls were not retained");
+	CHECK(station.transmit.signal.trn2u.emitted_symbols == handoff.emitted_symbols,
+	      "early training count was reset");
+	/* The already received SUVd ends TRN2u at the next 12-symbol boundary. */
+	for (unsigned i = 0; i < 7u; ++i) {
+		int16_t expected, actual;
+
+		CHECK(v92_pcm_phase4_trn2u_next(&handoff, &expected) ==
+			      V92_PCM_PHASE4_TRN2U_OK &&
+		      v92_phase4_analog_station_transmit(&station, &actual) ==
+			      V92_PHASE4_ANALOG_STATION_OK &&
+		      actual == expected &&
+		      station.transmit.signal.trn2u.emitted_symbols == handoff.emitted_symbols,
+		      "training discontinuity at sample %u after handoff", i);
+	}
+	int16_t status_sample;
+	CHECK(handoff.emitted_symbols == 144u &&
+	      v92_phase4_analog_station_transmit(&station, &status_sample) ==
+		      V92_PHASE4_ANALOG_STATION_OK &&
+	      station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU,
+	      "early SUVd did not end preserved training at its aligned boundary");
 	memset(&exported, 0xa5, sizeof(exported));
 	exported_before = exported;
 	CHECK(!v92_phase4_analog_handoff_is_valid(NULL) &&
@@ -2388,9 +2408,7 @@ static bool run_analog_confirmation(enum g711_law law, enum v92_constellation_si
 	struct pcm_downstream_rx receive;
 	struct full_cpd_source source;
 	struct v92_phase4_analog_station station;
-	const struct v92_phase3_analog_transmit_handoff previous = {
-		.lu = TEST_LU, .training_constellation = constellation,
-	};
+	struct v92_pcm_phase4_trn2u previous;
 	const struct v92_suvu_parameters suvu = {
 		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
 	};
@@ -2403,6 +2421,8 @@ static bool run_analog_confirmation(enum g711_law law, enum v92_constellation_si
 	/* Unlike the parser-only CPU fixture, this selection must support data
 	 * so the returned handoff is usable by the next receiver owner. */
 	cpu.data_rate_number = 1u;
+	CHECK(v92_pcm_phase4_trn2u_init(&previous, constellation,
+		0u, TEST_LU) == V92_PCM_PHASE4_TRN2U_OK, "training handoff setup failed");
 	memset(cpu.transmit_constellations, 0, sizeof(cpu.transmit_constellations));
 	for (unsigned n = 0; n < 8u; ++n)
 		add_ucode(&cpu.transmit_constellations[0], (uint8_t)(24u + 12u * n));

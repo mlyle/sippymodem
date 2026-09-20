@@ -5,7 +5,6 @@
 
 #include "pcm_downstream_rx.h"
 #include "v92_pcm_mapping.h"
-#include "v92_phase3_analog_station.h"
 #include "v92_phase4_analog_tx.h"
 #include "v92_cleardown.h"
 
@@ -67,7 +66,7 @@ struct v92_phase4_analog_handoff {
  * Rejected initialization leaves station unchanged. */
 enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 	struct v92_phase4_analog_station *station,
-	const struct v92_phase3_analog_transmit_handoff *transmit_handoff,
+	const struct v92_pcm_phase4_trn2u *transmit_handoff,
 	const struct pcm_downstream_rx *downstream,
 	const struct v92_suvu_parameters *suvu,
 	const struct v92_cpu_parameters *cpu,
