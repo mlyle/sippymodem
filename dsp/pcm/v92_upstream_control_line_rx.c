@@ -101,6 +101,14 @@ static void track_cpu_repetition(struct v92_upstream_control_line_rx *receiver,
 			receiver->cpu_repeat_remaining = receiver->cpu_repeat_symbols;
 		--receiver->cpu_repeat_remaining;
 	}
+	/* A rejected status cannot replace a confirmed CPu frame epoch with
+	 * an off-frame boundary. Keep the clock for the real CPu end/E2u. */
+	if (event->type == V92_CONTROL_EVENT_SUVU_REJECTED &&
+	    receiver->control.record_boundary && receiver->cpu_repeat_confirmed &&
+	    receiver->cpu_repeat_remaining % V92_CPU_SYMBOLS_PER_FRAME != 0u) {
+		receiver->control.record_boundary = false;
+		return;
+	}
 	if (event->type == V92_CONTROL_EVENT_SUVU ||
 	    (event->type == V92_CONTROL_EVENT_SUVU_REJECTED && receiver->control.record_boundary)) {
 		receiver->cpu_repeat_symbols = 0u;

@@ -532,7 +532,9 @@ static bool run_rearmed_crossing(
 	struct v92_phase4_e2u_handoff handoff;
 
 	CHECK(v92_phase4_e2u_handoff(&fixture.owner, &handoff) == V92_PHASE4_E2U_OK &&
-	      memcmp(&handoff.state.digital.upstream_plan, &plan, sizeof(plan)) == 0 &&
+	      handoff.state.digital.upstream_plan.observation == plan.observation &&
+	      handoff.state.digital.upstream_plan.gain == plan.gain &&
+	      handoff.state.digital.upstream_plan.delay == plan.delay &&
 	      handoff.state.digital.cpu.law == fixture.cpu.law &&
 	      handoff.state.digital.mapping.law == law &&
 	      handoff.state.digital.receive.line.law == law,
@@ -596,7 +598,8 @@ static bool test_guarded_handoff(enum g711_law law, bool extended, unsigned pref
 }
 
 static bool test_damaged_cpu_repetition(enum g711_law law,
-	enum v92_constellation_size constellation, bool extended, unsigned intact)
+	enum v92_constellation_size constellation, bool extended, unsigned intact,
+	bool false_status)
 {
 	struct v92_upstream_control_line_rx line;
 	struct v92_phase4_record_tx wire;
@@ -622,10 +625,29 @@ static bool test_damaged_cpu_repetition(enum g711_law law,
 			frame[1] ^= 0x04;
 			frame[4] ^= 0x20;
 			memset(frame + 9, 0, 6);
+			if (false_status) {
+				/* A damaged CPu can resemble a complete SUVu ending off
+				 * the established twelve-symbol frame epoch. Its zero
+				 * tail must not become an early, misaligned E2u. */
+				struct v92_suvu_parameters status = { .acknowledges_cpd = true };
+				uint8_t status_frame[V92_SUVU_FRAME_BYTES];
+				size_t status_bits;
+				CHECK(v92_suvu_encode(&status, bits * V92_CPU_SYMBOLS_PER_FRAME,
+					status_frame, sizeof(status_frame), &status_bits) == V92_SUVU_OK,
+					"false SUVu failed to encode");
+				status_frame[4] ^= 0x80; /* Retain the original CRC. */
+				size_t begin = frame_bits - status_bits - 15u * bits;
+				for (size_t bit = begin; bit < frame_bits; ++bit) {
+					unsigned value = bit - begin < status_bits ?
+						(status_frame[(bit - begin) / 8u] >> (7u - (bit - begin) % 8u)) & 1u : 0u;
+					uint8_t mask = (uint8_t)(0x80u >> (bit % 8u));
+					frame[bit / 8u] = (frame[bit / 8u] & (uint8_t)~mask) | (value ? mask : 0u);
+				}
+			}
 		}
 		CHECK(v92_phase4_record_tx_init(&wire, &modulator, frame, sizeof(frame), frame_bits) ==
 		      V92_PHASE4_RECORD_TX_OK, "CPu repeat did not start");
-		unsigned accepted = 0;
+		unsigned accepted = 0, rejected = 0;
 		while (!v92_phase4_record_tx_is_complete(&wire)) {
 			struct v92_control_event event;
 			int16_t sample;
@@ -633,8 +655,10 @@ static bool test_damaged_cpu_repetition(enum g711_law law,
 			      v92_e2u_rx_search(&e2u, &line, true, quantize(law, sample), &event) == V92_E2U_RX_OK,
 			      "CPu interior falsely ended E2u search, repeat %u", repeat);
 			accepted += event.type == V92_CONTROL_EVENT_CPU;
+			rejected += event.type == V92_CONTROL_EVENT_SUVU_REJECTED;
 		}
 		CHECK(accepted == (repeat < intact ? 1u : 0u) &&
+		      (!false_status || rejected == (repeat < intact ? 0u : 1u)) &&
 		      v92_phase4_record_tx_handoff(&wire, &modulator) == V92_PHASE4_RECORD_TX_OK,
 		      "damaged CPu changed admitted parameters");
 	}
@@ -1168,7 +1192,9 @@ static bool run_resumed_exchange(const struct v92_rate_pause_analog *ap,
 	      v92_phase4_digital_station_handoff(&digital, &dh) == V92_PHASE4_DIGITAL_STATION_OK &&
 	      !ah.pause && !dh.pause && !ah.mapping.cpd.extend_e2u &&
 	      v92_pcm_mapping_equal(&ah.mapping, &dh.mapping) &&
-	      memcmp(&dh.upstream_plan, &plan, sizeof(plan)) == 0 && digital.receive.channel.symbols == 0u,
+	      dh.upstream_plan.observation == plan.observation &&
+	      dh.upstream_plan.gain == plan.gain && dh.upstream_plan.delay == plan.delay &&
+	      digital.receive.channel.symbols == 0u,
 	      "resumed exchange did not negotiate matching maps and retain the receive plan");
 	struct v92_phase4_e2u a, d;
 	CHECK(v92_phase4_e2u_init_analog(&a, &ah) == V92_PHASE4_E2U_OK &&
@@ -2005,7 +2031,8 @@ int main(void)
 				return 1;
 			for (unsigned extended = 0; extended < 2; ++extended)
 				for (unsigned intact = 1; intact <= 2; ++intact)
-					if (!test_damaged_cpu_repetition(law, constellation, extended, intact))
+					if (!test_damaged_cpu_repetition(law, constellation, extended, intact, false) ||
+					    (intact == 2 && !test_damaged_cpu_repetition(law, constellation, extended, intact, true)))
 						return 1;
 		}
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
