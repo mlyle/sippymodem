@@ -2408,15 +2408,25 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			receiver.model.model[i].intervals[j].coefficient[0] = DBL_MAX;
 	}
 	CHECK(v92_upstream_data_rx_is_valid(&receiver), "numeric-failure fixture is invalid");
+	struct v92_upstream_data_rx owned = receiver;
+	struct v92_upstream_data_frame owned_output = output;
 	for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS - 1u; ++i)
 		CHECK(v92_upstream_data_rx_octet(&receiver, 0u, 100, true, &output) ==
-		      V92_UPSTREAM_DATA_RX_OK, "numeric-failure prefix stopped");
+		      V92_UPSTREAM_DATA_RX_OK &&
+		      v92_upstream_data_rx_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
+		      V92_UPSTREAM_DATA_RX_OK && memcmp(&receiver, &owned, sizeof(owned)) == 0 &&
+		      memcmp(&output, &owned_output, sizeof(output)) == 0,
+		      "checked/owned numeric-failure buffering differs");
 	saved = receiver;
 	unchanged = output;
 	CHECK(v92_upstream_data_rx_octet(&receiver, 0u, 100, true, &output) ==
+	      V92_UPSTREAM_DATA_RX_NO_PATH &&
+	      v92_upstream_data_rx_octet_owned(&owned, 0u, 100, 100, true, &owned_output) ==
 	      V92_UPSTREAM_DATA_RX_NO_PATH, "unrepresentable codec frame did not fail");
 	saved.failed = true;
 	CHECK(memcmp(&saved, &receiver, sizeof(saved)) == 0 &&
+	      memcmp(&saved, &owned, sizeof(saved)) == 0 &&
+	      memcmp(&unchanged, &owned_output, sizeof(output)) == 0 &&
 	      memcmp(&unchanged, &output, sizeof(output)) == 0,
 	      "failed codec frame advanced state or wrote payload");
 	/* No retained fit may cross a mapping/retrain epoch. */

@@ -400,7 +400,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 	struct v92_upstream_data_frame *frame, uint8_t code, bool wire_known,
 	int16_t host_sample, bool available, bool owned)
 {
-	struct v92_upstream_data_line next;
+	struct v92_upstream_data_line next, *line;
 	struct qam_point input;
 	bool ready;
 
@@ -415,25 +415,29 @@ static enum v92_upstream_data_rx_result receive_sample(
 		return V92_UPSTREAM_DATA_RX_FAILED;
 	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
-	next = receiver->line;
-	if (next.plan.observation == V92_PCM_FRAME_CONSTELLATION) {
-		++next.input_samples;
-		if (next.delay_remaining != 0u) {
-			--next.delay_remaining;
-			receiver->line = next;
+	/* Validated raw-coordinate buffering cannot fail. Keep a private line
+	 * only for the final frame sample or fallible FIR processing. */
+	bool buffered_raw = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION &&
+		receiver->line.symbol_count + 1u < V92_PCM_MAPPING_FRAME_SYMBOLS;
+	line = buffered_raw ? &receiver->line : &next;
+	if (!buffered_raw)
+		next = receiver->line;
+	if (line->plan.observation == V92_PCM_FRAME_CONSTELLATION) {
+		++line->input_samples;
+		if (line->delay_remaining != 0u) {
+			--line->delay_remaining;
 			return V92_UPSTREAM_DATA_RX_OK;
 		}
-		next.raw[next.symbol_count] = (int32_t)next.polarity * sample;
-		next.wire[next.symbol_count] = wire_known ? next.polarity *
+		line->raw[line->symbol_count] = (int32_t)line->polarity * sample;
+		line->wire[line->symbol_count] = wire_known ? line->polarity *
 			(receiver->decoder.mapping.law == G711_LAW_PCMU ?
 				g711_decode_pcmu(code) : g711_decode_pcma(code)) : 0;
-		next.wire_known[next.symbol_count] = wire_known;
-		next.host_samples[next.symbol_count] = wire_known ? host_sample : 0;
-		next.received[next.symbol_count] = wire_known && available;
-		next.samples[next.symbol_count] = rounded_sample(next.raw[next.symbol_count] * next.calibration.gain);
-		if (++next.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
-			return receive_frame(receiver, &next, frame);
-		receiver->line = next;
+		line->wire_known[line->symbol_count] = wire_known;
+		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
+		line->received[line->symbol_count] = wire_known && available;
+		line->samples[line->symbol_count] = rounded_sample(line->raw[line->symbol_count] * line->calibration.gain);
+		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
+			return receive_frame(receiver, line, frame);
 		return V92_UPSTREAM_DATA_RX_OK;
 	}
 	input = (struct qam_point){ .in_phase = next.polarity * (double)sample };
