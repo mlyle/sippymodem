@@ -162,9 +162,10 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
 	struct v92_pcm_frame_tx *transmitter, bool prime, struct v92_pcm_frame *frame);
 
-/* Apply CPd's 4G and the trained upstream level to one prefilter output. */
+/* Apply nonzero CPd 4G and positive trained LU to one prefilter output.
+ * Rejected calls leave the sample unchanged. */
 enum v92_pcm_frame_result v92_pcm_frame_scale(
-	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
+	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample);
 
 /* Initialize at B1u with the accepted CPd and trained LU. The continuous

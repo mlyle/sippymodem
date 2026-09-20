@@ -144,7 +144,7 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 
 			if (frame < V92_B1U_FRAMES)
 				energy += (uint64_t)((int64_t)encoded.v[symbol] * encoded.v[symbol]);
-			CHECK(v92_pcm_frame_scale(&mapping, level, encoded.v[symbol], &transmitted) ==
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, level, encoded.v[symbol], &transmitted) ==
 				V92_PCM_FRAME_OK, "frame %u scale failed", frame);
 			CHECK(transmitted != INT16_MIN && transmitted != INT16_MAX,
 				"transmit clipped: law=%u rate=%u H=(%g,%g) frame=%u symbol=%u",

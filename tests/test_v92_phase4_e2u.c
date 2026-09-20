@@ -1031,8 +1031,7 @@ static bool run_crossing(
 
 		CHECK(v92_upstream_data_tx_next(&upstream, NULL, NULL, &actual) ==
 			      V92_UPSTREAM_DATA_TX_OK &&
-		      v92_pcm_frame_scale(
-			      &handoff->mapping, handoff->transmit.lu,
+		      v92_pcm_frame_scale(handoff->mapping.cpd.four_times_gain_q0_16, handoff->transmit.lu,
 			      b1u.v[symbol], &expected) == V92_PCM_FRAME_OK &&
 		      actual == expected,
 		      "law %u extended %u first B1u frame changed at %zu",

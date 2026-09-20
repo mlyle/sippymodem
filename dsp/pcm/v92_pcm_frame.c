@@ -372,11 +372,11 @@ static bool advance_trellis(
 }
 
 static int16_t scale_sample(
-	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
+	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t v)
 {
 	return clamp_s16(round_shift_s64_to_s32_saturating(
-		(int64_t)v * mapping->cpd.four_times_gain_q0_16 *
+		(int64_t)v * four_times_gain_q0_16 *
 			upstream_level, V92_PCM_GAIN_SHIFT));
 }
 
@@ -395,7 +395,8 @@ static uint64_t level_error(
 
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int64_t residual = (int64_t)samples[symbol] - quantized_sample(
-			mapping->law, scale_sample(mapping, level, frame->v[symbol]));
+			mapping->law, scale_sample(mapping->cpd.four_times_gain_q0_16,
+				level, frame->v[symbol]));
 
 		error += (uint64_t)(residual * residual);
 	}
@@ -557,16 +558,16 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_scale(
-	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
+	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample)
 {
-	if (mapping == NULL || sample == NULL)
+	if (sample == NULL)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_mapping_is_valid(mapping))
+	if (four_times_gain_q0_16 == 0u)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (upstream_level <= 0)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
-	*sample = scale_sample(mapping, upstream_level, prefilter_output);
+	*sample = scale_sample(four_times_gain_q0_16, upstream_level, prefilter_output);
 	return V92_PCM_FRAME_OK;
 }
 
@@ -829,7 +830,8 @@ static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
 
 static int16_t level_sample(const struct v92_pcm_frame_rx *receiver, int16_t level, int32_t v)
 {
-	return quantized_sample(receiver->mapping.law, scale_sample(&receiver->mapping, level, v));
+	return quantized_sample(receiver->mapping.law,
+		scale_sample(receiver->mapping.cpd.four_times_gain_q0_16, level, v));
 }
 
 static int16_t predicted_sample(
@@ -885,8 +887,10 @@ static uint64_t input_cell_metric(
 	const struct v92_pcm_frame_rx *receiver, int32_t v,
 	const struct g711_interval *cell)
 {
-	int a = scale_sample(&receiver->mapping, receiver->minimum_level, v);
-	int b = scale_sample(&receiver->mapping, receiver->maximum_level, v);
+	int a = scale_sample(receiver->mapping.cpd.four_times_gain_q0_16,
+		receiver->minimum_level, v);
+	int b = scale_sample(receiver->mapping.cpd.four_times_gain_q0_16,
+		receiver->maximum_level, v);
 	int low = a < b ? a : b, high = a > b ? a : b;
 	int64_t error = low > cell->upper ? low - cell->upper :
 		high < cell->lower ? high - cell->lower : 0;
@@ -899,7 +903,8 @@ static uint64_t input_cell_metric(
 
 		while (right - left > 1 || left - right > 1) {
 			int middle = left + (right - left) / 2;
-			int sample = scale_sample(&receiver->mapping, (int16_t)middle, v);
+			int sample = scale_sample(receiver->mapping.cpd.four_times_gain_q0_16,
+				(int16_t)middle, v);
 
 			if (sample < cell->lower) {
 				left = middle;

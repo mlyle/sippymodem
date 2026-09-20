@@ -70,7 +70,7 @@ static bool waveform(
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 
-		if (v92_pcm_frame_scale(&transmitter->mapping, level,
+		if (v92_pcm_frame_scale(transmitter->mapping.cpd.four_times_gain_q0_16, level,
 				frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
 			return false;
 		samples[symbol] = quantize(transmitter->mapping.law, sample);
@@ -310,7 +310,7 @@ static bool test_precodec_noise(bool uncertain)
 			"encode failed");
 		for (unsigned i = 0; i < 12; ++i) {
 			int16_t sample;
-			CHECK(v92_pcm_frame_scale(&mapping, level, frame.v[i], &sample) == V92_PCM_FRAME_OK,
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, level, frame.v[i], &sample) == V92_PCM_FRAME_OK,
 				"scale failed");
 			random = random * UINT32_C(1664525) + UINT32_C(1013904223);
 			int noise = b1u ? 0 : (int)((random >> 16) % 17) - 8;
@@ -324,7 +324,7 @@ static bool test_precodec_noise(bool uncertain)
 			uint64_t nearest = UINT64_MAX;
 			for (int lu = rx.minimum_level; lu <= rx.maximum_level; ++lu) {
 				int16_t predicted;
-				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)lu, decision.frame.v[i],
+				CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)lu, decision.frame.v[i],
 					&predicted) == V92_PCM_FRAME_OK, "prediction failed");
 				int64_t difference = (int64_t)samples[i] - quantize(G711_LAW_PCMA, predicted);
 				uint64_t cost = (uint64_t)(difference * difference);
@@ -1026,7 +1026,7 @@ static bool test_direct_confidence(void)
 		int16_t source;
 		struct g711_interval cell;
 
-		CHECK(v92_pcm_frame_scale(&mapping, UPSTREAM_LEVEL, frame.v[i], &source) ==
+		CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, UPSTREAM_LEVEL, frame.v[i], &source) ==
 			V92_PCM_FRAME_OK, "confidence sample failed");
 		samples[i] = quantize(mapping.law, (int16_t)(source + 128));
 		CHECK(g711_quantization_interval(mapping.law, samples[i], &cell), "invalid cell");

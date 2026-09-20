@@ -118,7 +118,7 @@ static bool test_stream(bool filtered)
 					      v92_upstream_data_tx_next(&transmit,
 						      source, &input, &actual) ==
 						      V92_UPSTREAM_DATA_TX_OK &&
-					      v92_pcm_frame_scale(&mapping, TEST_LEVEL,
+					      v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LEVEL,
 						      frame.v[symbol], &expected) ==
 						      V92_PCM_FRAME_OK &&
 					      actual == expected &&
@@ -196,7 +196,7 @@ static bool test_rejected_sources_and_idle(void)
 
 		CHECK(v92_upstream_data_tx_next(&transmit, NULL, NULL, &output) ==
 			      V92_UPSTREAM_DATA_TX_OK &&
-		      v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[index], &expected) ==
+		      v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LEVEL, frame.v[index], &expected) ==
 			      V92_PCM_FRAME_OK && output == expected,
 		      "idle did not preserve the coding epoch");
 	}
@@ -246,7 +246,7 @@ static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, uns
 			if (complete)
 				CHECK(v92_pcm_frame_tx_reset_control(&frames) == V92_PCM_FRAME_OK,
 					"RM control reset failed");
-			CHECK(v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) ==
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LEVEL, frame.v[i], &expected) ==
 				V92_PCM_FRAME_OK &&
 				v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
 				(complete ? V92_UPSTREAM_DATA_TX_RM_COMPLETE : V92_UPSTREAM_DATA_TX_OK) &&
@@ -276,7 +276,7 @@ static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, uns
 	for (unsigned i = 0; i < 12u; ++i) {
 		int16_t expected;
 
-		CHECK(v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
+		CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
 			v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
 			V92_UPSTREAM_DATA_TX_OK && sample == expected && input.calls == 1u,
 			"post-RM control reset the channel or inserted B1u");
@@ -342,7 +342,7 @@ static bool test_finish_sequence(enum g711_law law, uint8_t rate, bool filtered)
 			bool complete = f == V92_B1U_FRAMES && i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1;
 			int16_t expected;
 			CHECK(!v92_upstream_data_tx_is_online(&tx) &&
-			      v92_pcm_frame_scale(&mapping, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
+			      v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LEVEL, frame.v[i], &expected) == V92_PCM_FRAME_OK &&
 			      v92_upstream_data_tx_next(&tx, source, &input, &sample) ==
 			      (complete ? V92_UPSTREAM_DATA_TX_FB1U_COMPLETE : V92_UPSTREAM_DATA_TX_OK) &&
 			      sample == expected && input.calls == 4 &&

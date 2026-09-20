@@ -2046,7 +2046,7 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 		for (unsigned s = 0; s < V92_PCM_MAPPING_FRAME_SYMBOLS; s++) {
 			int16_t sample;
 			unsigned i = f * V92_PCM_MAPPING_FRAME_SYMBOLS + s;
-			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, frame.v[s], &sample) == V92_PCM_FRAME_OK,
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LU, frame.v[s], &sample) == V92_PCM_FRAME_OK,
 				"scalar frame scale failed");
 			double mixed = polarity * (.9 * sample + codec_echo(i));
 			CHECK(fabs(mixed) < 32000, "scalar fixture clipped");
@@ -2231,7 +2231,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		for (unsigned s = 0u; s < V92_PCM_MAPPING_FRAME_SYMBOLS; ++s) {
 			int16_t sample;
 
-			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, frame.v[s], &sample) ==
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LU, frame.v[s], &sample) ==
 				V92_PCM_FRAME_OK, "codec frame scale failed");
 			CHECK(sample > -32000 && sample < 32000, "codec fixture clipped");
 			int16_t q = g711_decode_pcmu(g711_encode_pcmu(sample));
@@ -2512,7 +2512,7 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 				CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &encoded) ==
 					V92_PCM_FRAME_OK, "encode");
 			}
-			CHECK(v92_pcm_frame_scale(&mapping, TEST_LU, encoded.v[symbol], &sample) ==
+			CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, TEST_LU, encoded.v[symbol], &sample) ==
 				V92_PCM_FRAME_OK, "scale");
 			if (++symbol == V92_PCM_MAPPING_FRAME_SYMBOLS) {
 				symbol = 0u;

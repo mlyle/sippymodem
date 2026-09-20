@@ -139,7 +139,7 @@ static enum v92_upstream_data_tx_result generate_frame(
 	}
 	for (size_t index = 0u; index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {
 		if (v92_pcm_frame_scale(
-			    &encoder.mapping, transmitter->upstream_level,
+			    encoder.mapping.cpd.four_times_gain_q0_16, transmitter->upstream_level,
 			    frame.v[index], &samples[index]) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	}

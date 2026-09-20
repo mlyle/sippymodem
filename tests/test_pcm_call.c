@@ -6501,7 +6501,7 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 				CHECK(v92_pcm_frame_encode(&encoder, bits, encoder.mapping.data_bits_per_frame, &encoded) ==
 					V92_PCM_FRAME_OK, "wrong direct B1 encoding failed");
 				for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
-					CHECK(v92_pcm_frame_scale(&encoder.mapping, tx->upstream_level, encoded.v[i], &samples[i]) ==
+					CHECK(v92_pcm_frame_scale(encoder.mapping.cpd.four_times_gain_q0_16, tx->upstream_level, encoded.v[i], &samples[i]) ==
 						V92_PCM_FRAME_OK, "wrong direct B1 scale failed");
 				CHECK(tx->queue_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u, "wrong B1 missed frame boundary");
 				tx->encoder = encoder;

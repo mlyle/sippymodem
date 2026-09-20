@@ -343,7 +343,8 @@ static enum v92_upstream_data_rx_result receive_frame(
 		if (b1u) {
 			int16_t sample;
 
-			if (v92_pcm_frame_scale(&decoder.mapping, decoder.upstream_level,
+			if (v92_pcm_frame_scale(decoder.mapping.cpd.four_times_gain_q0_16,
+					decoder.upstream_level,
 					decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
 				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
 			target.in_phase = quantize(decoder.mapping.law, sample);

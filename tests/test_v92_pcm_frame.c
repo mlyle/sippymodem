@@ -126,8 +126,7 @@ static bool test_b1u_oracle(void)
 		     symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 			int16_t sample;
 
-			CHECK(v92_pcm_frame_scale(
-				      &transmitter.mapping, B1U_TEST_LEVEL,
+			CHECK(v92_pcm_frame_scale(transmitter.mapping.cpd.four_times_gain_q0_16, B1U_TEST_LEVEL,
 				      frame.v[symbol], &sample) ==
 				      V92_PCM_FRAME_OK,
 			      "B1u symbol %zu did not scale", symbol);
@@ -525,7 +524,7 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 				int16_t expected = (int16_t)fmaxl(INT16_MIN, fminl(INT16_MAX, scaled));
 				int16_t sample;
 
-				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)level, frame.v[i],
+				CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)level, frame.v[i],
 					&sample) == V92_PCM_FRAME_OK && sample == expected,
 				      "prefilter gain or PCM saturation differs");
 			}
@@ -634,7 +633,7 @@ static bool test_level_refinement(void)
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
 
-		CHECK(v92_pcm_frame_scale(&tx.mapping, B1U_TEST_LEVEL, frame.v[symbol],
+		CHECK(v92_pcm_frame_scale(tx.mapping.cpd.four_times_gain_q0_16, B1U_TEST_LEVEL, frame.v[symbol],
 			      &sample) == V92_PCM_FRAME_OK, "level-refinement scaling failed");
 		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
 	}
@@ -690,7 +689,7 @@ static bool test_level_refinement(void)
 	fit = (struct v92_pcm_level_fit){ 0 };
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
-		CHECK(v92_pcm_frame_scale(&tx.mapping, interval.upper, frame.v[symbol], &sample) ==
+		CHECK(v92_pcm_frame_scale(tx.mapping.cpd.four_times_gain_q0_16, interval.upper, frame.v[symbol], &sample) ==
 		      V92_PCM_FRAME_OK, "biased-frame scaling failed");
 		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
 	}
@@ -698,7 +697,7 @@ static bool test_level_refinement(void)
 	      rx.minimum_level > B1U_TEST_LEVEL, "bias did not isolate the early-narrowing regression");
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 		int16_t sample;
-		CHECK(v92_pcm_frame_scale(&tx.mapping, B1U_TEST_LEVEL, frame.v[symbol], &sample) ==
+		CHECK(v92_pcm_frame_scale(tx.mapping.cpd.four_times_gain_q0_16, B1U_TEST_LEVEL, frame.v[symbol], &sample) ==
 		      V92_PCM_FRAME_OK, "clean-frame scaling failed");
 		samples[symbol] = g711_decode_pcmu(g711_encode_pcmu(sample));
 	}
@@ -727,7 +726,7 @@ static bool test_level_refinement(void)
 		      "clipped-cell fixture failed");
 		for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
 			int16_t sample;
-			CHECK(v92_pcm_frame_scale(&tx.mapping, INT16_MAX, frame.v[symbol], &sample) ==
+			CHECK(v92_pcm_frame_scale(tx.mapping.cpd.four_times_gain_q0_16, INT16_MAX, frame.v[symbol], &sample) ==
 			      V92_PCM_FRAME_OK, "clipped-cell scaling failed");
 			samples[symbol] = law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu(sample)) :
 				g711_decode_pcma(g711_encode_pcma(sample));
@@ -849,10 +848,16 @@ static bool test_rejection_and_names(void)
 		      transmitter.mapping.data_bits_per_frame,
 		      &output) == V92_PCM_FRAME_INVALID_PARAMETERS,
 	      "invalid state encoded a frame");
-	CHECK(v92_pcm_frame_scale(
-		      &saved.mapping, 0, 123, &sample) ==
+	CHECK(v92_pcm_frame_scale(saved.mapping.cpd.four_times_gain_q0_16, 0, 123, &sample) ==
 		      V92_PCM_FRAME_OUT_OF_RANGE && sample == 1234,
 	      "invalid gain changed its output");
+	CHECK(v92_pcm_frame_scale(0u, 1, 123, &sample) ==
+		      V92_PCM_FRAME_INVALID_PARAMETERS && sample == 1234 &&
+	      v92_pcm_frame_scale(1u, -1, 123, &sample) ==
+		      V92_PCM_FRAME_OUT_OF_RANGE && sample == 1234 &&
+	      v92_pcm_frame_scale(0u, 0, 123, NULL) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT,
+	      "invalid scalar gain/level/output changed its contract");
 	struct v92_pcm_frame_tx invalid = transmitter;
 
 	CHECK(v92_pcm_frame_encode_rm(NULL, false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&

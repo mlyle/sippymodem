@@ -1211,7 +1211,7 @@ static bool check_mapping_payload(
 			      transmit_mapping->data_bits_per_frame, &encoded) == V92_PCM_FRAME_OK,
 		      "selected mapping stopped encoding frame %u", frame);
 		for (size_t symbol = 0u; symbol < ARRAY_LENGTH(samples); ++symbol) {
-			CHECK(v92_pcm_frame_scale(transmit_mapping, 4096, encoded.v[symbol],
+			CHECK(v92_pcm_frame_scale(transmit_mapping->cpd.four_times_gain_q0_16, 4096, encoded.v[symbol],
 				      &samples[symbol]) == V92_PCM_FRAME_OK,
 			      "selected mapping did not scale symbol %zu", symbol);
 			samples[symbol] = line_sample(transmit_mapping->law, 1, samples[symbol]);

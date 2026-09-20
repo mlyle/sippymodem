@@ -312,7 +312,7 @@ static bool quantized_points_are_distinct(
 		int16_t linear;
 		int sample;
 
-		CHECK(v92_pcm_frame_scale(&mapping, lu, v, &linear) == V92_PCM_FRAME_OK &&
+		CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, lu, v, &linear) == V92_PCM_FRAME_OK &&
 		      linear > INT16_MIN && linear < INT16_MAX, "selected point clipped");
 		sample = law == G711_LAW_PCMA ?
 			g711_decode_pcma(g711_encode_pcma(linear)) :
@@ -420,7 +420,7 @@ static bool test_uncertain_symbol_ranges(void)
 			for (int level = interval.lower; level <= interval.upper; ++level) {
 				int16_t linear;
 
-				CHECK(v92_pcm_frame_scale(&mapping, (int16_t)level, v, &linear) == V92_PCM_FRAME_OK,
+				CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)level, v, &linear) == V92_PCM_FRAME_OK,
 				      "uncertain symbol clipped");
 				int decoded = law == G711_LAW_PCMU ?
 					g711_decode_pcmu(g711_encode_pcmu(linear)) :
@@ -468,7 +468,7 @@ static bool test_48k_input_noise_margin(void)
 					int32_t v = round_shift_s64_to_s32_saturating((int64_t)u * INT16_MAX, 15u);
 					int16_t linear;
 
-					CHECK(v92_pcm_frame_scale(&mapping, (int16_t)lu, v, &linear) == V92_PCM_FRAME_OK &&
+					CHECK(v92_pcm_frame_scale(mapping.cpd.four_times_gain_q0_16, (int16_t)lu, v, &linear) == V92_PCM_FRAME_OK &&
 					      linear - cases[index].noise >= INT16_MIN &&
 					      linear + cases[index].noise <= INT16_MAX, "48k symbol clipped");
 					int minimum = law == G711_LAW_PCMU ?
