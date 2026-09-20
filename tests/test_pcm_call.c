@@ -36,6 +36,12 @@ struct channel {
 	uint8_t digital_to_analog[MAX_LINE_DELAY_CHARACTERS];
 	size_t delay;
 	size_t cursor;
+	enum g711_law law;
+	/* Receive-side memory belongs to the wire, including across retrains. */
+	double postcursor[3];
+	int16_t upstream_history[3];
+	unsigned noise_peak;
+	uint32_t noise_state;
 };
 
 struct downstream_source {
@@ -632,20 +638,37 @@ static bool channel_init(
 	if (channel == NULL || delay == 0 ||
 	    delay > MAX_LINE_DELAY_CHARACTERS)
 		return false;
+	*channel = (struct channel){
+		.law = law, .delay = delay, .noise_state = UINT32_C(0x713812ad),
+	};
 	for (size_t index = 0; index < MAX_LINE_DELAY_CHARACTERS; ++index) {
 		channel->analog_to_digital[index] = silence;
 		channel->digital_to_analog[index] = silence;
 	}
-	channel->delay = delay;
-	channel->cursor = 0;
 	return true;
 }
 
 static void channel_receive(
-	const struct channel *channel, uint8_t *analog, uint8_t *digital)
+	struct channel *channel, uint8_t *analog, uint8_t *digital)
 {
 	*analog = channel->digital_to_analog[channel->cursor];
 	*digital = channel->analog_to_digital[channel->cursor];
+	if (channel->postcursor[0] != 0.0 || channel->postcursor[1] != 0.0 ||
+	    channel->postcursor[2] != 0.0 || channel->noise_peak != 0u) {
+		int16_t current = decode_octet(channel->law, *digital);
+		const double *p = channel->postcursor;
+		int16_t *history = channel->upstream_history;
+		channel->noise_state = channel->noise_state * UINT32_C(1664525) + UINT32_C(1013904223);
+		int noise = (int)((channel->noise_state >> 16) % (2u * channel->noise_peak + 1u)) -
+			(int)channel->noise_peak;
+		double impaired = (1.0 - p[0] - p[1] - p[2]) * current +
+			p[0] * history[0] + p[1] * history[1] + p[2] * history[2] + noise;
+		*digital = encode_octet(channel->law,
+			(int16_t)lround(fmax(INT16_MIN, fmin(INT16_MAX, impaired))));
+		history[2] = history[1];
+		history[1] = history[0];
+		history[0] = current;
+	}
 }
 
 static void channel_transmit(
@@ -7415,12 +7438,8 @@ static bool capture_v92_duplex_data(
 	size_t sample_limit = CALL_SAMPLE_LIMIT *
 		(offer == NULL ? 1u : offer->expected_retrains + 1u);
 	int16_t selected_lu = 0;
-	int16_t previous_upstream = 0;
-	int16_t second_upstream = 0;
-	int16_t third_upstream = 0;
 	bool channel_memory = offer != NULL &&
 		(offer->postcursor != 0.0 || offer->second_postcursor != 0.0 || offer->third_postcursor != 0.0);
-	uint32_t noise_state = UINT32_C(0x713812ad);
 	/* Use a longer payload for compensated 40k and balanced direct maps to
 	 * catch rare errors not exercised by the all-ones B1u sequence. */
 	unsigned payload_frames = offer != NULL && ((offer->expected >= 15u && offer->expected <= 17u) ||
@@ -7467,25 +7486,17 @@ static bool capture_v92_duplex_data(
 	}
 	CHECK(channel_init(&wire, law, delay) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "V.92 duplex initialization failed");
+	if (offer != NULL) {
+		wire.postcursor[0] = offer->postcursor;
+		wire.postcursor[1] = offer->second_postcursor;
+		wire.postcursor[2] = offer->third_postcursor;
+		wire.noise_peak = offer->noise_peak;
+	}
 	for (size_t clock = 0u; clock < sample_limit; ++clock) {
 		uint8_t ar, dr, at, dt;
 		struct pcm_call *calls[] = { &analog, &digital };
 
 		channel_receive(&wire, &ar, &dr);
-		if (offer != NULL && (channel_memory || offer->noise_peak != 0u)) {
-			int16_t current = decode_octet(law, dr);
-			noise_state = noise_state * UINT32_C(1664525) + UINT32_C(1013904223);
-			int noise = (int)((noise_state >> 16) % (2u * offer->noise_peak + 1u)) -
-				(int)offer->noise_peak;
-			double impaired = (1.0 - offer->postcursor - offer->second_postcursor - offer->third_postcursor) * current +
-				offer->postcursor * previous_upstream + offer->second_postcursor * second_upstream +
-				offer->third_postcursor * third_upstream + noise;
-
-			dr = encode_octet(law, (int16_t)lround(fmax(INT16_MIN, fmin(INT16_MAX, impaired))));
-			third_upstream = second_upstream;
-			second_upstream = previous_upstream;
-			previous_upstream = current;
-		}
 		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
 			struct pcm_call *call = calls[role];
 			enum pcm_call_stage previous_stage = call->stage;
@@ -9578,13 +9589,18 @@ static bool v92_call_cleardown(const struct v92_online_pair *online, unsigned in
 
 static bool test_v92_rate_request(void)
 {
-	const unsigned rates[] = { 1u, 19u };
+	const unsigned rates[] = { 1u, 19u, 13u };
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 		for (unsigned i = 0; i < ARRAY_LENGTH(rates); ++i) {
 			struct v92_online_pair pair;
 			const struct v92_upstream_offer offer = {
 				.peer_mask = UINT32_C(1) << (rates[i] - 1u),
 				.local_maximum = rates[i], .expected = rates[i],
+				/* Keep the same distorted wire through startup, all twelve
+				 * rate exchanges, resumed data and copied cleardown calls. */
+				.postcursor = rates[i] == 13u ? .16 : 0,
+				.second_postcursor = rates[i] == 13u ? .04 : 0,
+				.downstream_rate = rates[i] == 13u ? 52000u : 0u,
 			};
 			const struct v92_jp jp = {
 				.training_constellation = i ? V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
@@ -9736,7 +9752,17 @@ static bool test_v92_rate_request(void)
 				      !pair.analog.rate_renegotiation_deadline_armed && !pair.digital.rate_renegotiation_deadline_armed &&
 				      pair.digital.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
 				      "rate exchange did not return to ordered duplex data");
+				uint32_t at, ar, dt, dr;
+				CHECK(pcm_call_get_data_rates(&pair.analog, &at, &ar) &&
+				      pcm_call_get_data_rates(&pair.digital, &dt, &dr) &&
+				      at == (rates[i] + 17u) * 8000u / 6u && at == dr &&
+				      ar == dt && ar == (offer.downstream_rate ? offer.downstream_rate : 41333u),
+				      "rate exchange changed the requested PCM rates");
 			}
+			if (rates[i] == 13u)
+				for (int initiator = 0; initiator < 2; ++initiator)
+					CHECK(v92_short_data_epoch(&pair, 0u, true, initiator),
+					      "distorted 52/40 channel did not survive full retrain");
 		}
 	return true;
 }
