@@ -752,7 +752,6 @@ struct frame_candidate {
 	 * contains only observations already consumed by this candidate. */
 	uint64_t metric;
 	uint64_t path_metric;
-	uint64_t frame_metric;
 	int16_t eta;
 	uint8_t path;
 	uint8_t digit;
@@ -1119,9 +1118,11 @@ static enum v92_pcm_frame_result decode_frame(
 		size_t count = 0u;
 		uint64_t weight = 1u;
 		bool present = !received || received[symbol];
+		bool input_metric = !b1u &&
+			receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
 		struct g711_interval cell;
 
-		if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT &&
+		if (input_metric &&
 		    !g711_quantization_interval(receiver->mapping.law, samples[symbol], &cell))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
@@ -1225,17 +1226,15 @@ static enum v92_pcm_frame_result decode_frame(
 					v = prefilter_output(&receiver->mapping, prefilter, x);
 				}
 
-				error = (int64_t)samples[symbol] -
+				error = input_metric ? 0 : (int64_t)samples[symbol] -
 					predicted_observation(receiver, u, v, samples[symbol], b1u);
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric,
 						(uint64_t)(error * error) * weight),
-					.frame_metric = paths[path].frame_metric +
-						(uint64_t)(error * error),
 					.eta = (int16_t)eta, .path = (uint8_t)path,
 					.digit = digit,
 				};
-				if (!b1u && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
+				if (input_metric)
 					candidate.metric = add_u64_saturating(paths[path].state.metric,
 						input_cell_metric(receiver, v, &cell));
 				if (cells)
@@ -1269,9 +1268,9 @@ static enum v92_pcm_frame_result decode_frame(
 		for (size_t index = 0u; index < count; ++index) {
 			const struct frame_candidate *candidate = &candidates[index];
 			struct v92_pcm_frame *frame = &next[index].frame;
+			int64_t error;
 
 			next[index] = paths[candidate->path];
-			next[index].frame_metric = candidate->frame_metric;
 			next[index].state.metric = candidate->path_metric;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
@@ -1282,6 +1281,11 @@ static enum v92_pcm_frame_result decode_frame(
 				return V92_PCM_FRAME_INVALID_PARAMETERS;
 			filter_step(&receiver->mapping, &next[index].state.filter,
 				    frame->u[symbol], &frame->x[symbol], &frame->v[symbol]);
+			/* Reconstructed error reports residuals, not input-cell rank.
+			 * Only retained paths need that quantized prediction. */
+			error = (int64_t)samples[symbol] - predicted_observation(receiver,
+				frame->u[symbol], frame->v[symbol], samples[symbol], b1u);
+			next[index].frame_metric += (uint64_t)(error * error);
 			if (symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS == 3u &&
 			    !advance_trellis(&next[index].state.trellis,
 					     frame->signed_index, symbol))

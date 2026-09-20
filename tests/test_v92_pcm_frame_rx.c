@@ -1385,6 +1385,20 @@ static bool test_observed_channel(enum g711_law law, unsigned taps)
 				!memcmp(other_bits, decoded, mapping.data_bits_per_frame) &&
 				!memcmp(&likelihood, &other_likelihood, sizeof(likelihood)),
 				"erased symbol influenced likelihood or state");
+			/* Erased samples leave likelihood unchanged, but remain in
+			 * the raw reconstruction residual. */
+			uint64_t error = 0, other_error = 0;
+
+			for (unsigned i = 0; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i) {
+				int64_t delta = (int64_t)(i == 5 ? INT16_MAX : samples[i]) -
+					decision.frame.u[i];
+				int64_t other_delta = (int64_t)samples[i] - other.frame.u[i];
+
+				error += (uint64_t)(delta * delta);
+				other_error += (uint64_t)(other_delta * other_delta);
+			}
+			CHECK(decision.squared_error == error && other.squared_error == other_error,
+				"erased symbol was omitted from the raw residual");
 		}
 		CHECK(decision.bits_ready == (f >= V92_PCM_RX_DELAY_FRAMES), "traceback delay changed");
 		if (decision.bits_ready) {
