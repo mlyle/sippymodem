@@ -36,10 +36,19 @@ static bool traceback_step_is_valid(
 	uint8_t state_count, uint8_t branch_count)
 {
 	uint8_t inversion_bit = step->branch[0].inversion_bit;
+	/* Legal counts are powers of two, and states come in whole words.
+	 * Check every byte without alignment or aliasing assumptions. */
+	uint64_t state_mask = UINT64_C(0x0101010101010101) *
+		(uint8_t)~(state_count - 1u);
+	uint64_t branch_mask = UINT64_C(0x0101010101010101) *
+		(uint8_t)~(branch_count - 1u);
 
-	for (uint8_t state = 0; state < state_count; ++state) {
-		if (step->predecessor[state] >= state_count ||
-		    step->branch_index[state] >= branch_count)
+	for (uint8_t state = 0; state < state_count; state += sizeof(uint64_t)) {
+		uint64_t predecessor, branch_index;
+
+		memcpy(&predecessor, step->predecessor + state, sizeof(predecessor));
+		memcpy(&branch_index, step->branch_index + state, sizeof(branch_index));
+		if ((predecessor & state_mask) || (branch_index & branch_mask))
 			return false;
 	}
 	for (uint8_t branch = 0; branch < branch_count; ++branch) {

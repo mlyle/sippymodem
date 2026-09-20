@@ -531,6 +531,53 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_traceback_index_bounds(void)
+{
+	struct v34_mapping_parameters parameters;
+
+	CHECK(initialize_parameters(&parameters), "index-bound parameters failed");
+	for (enum v34_trellis_selection selection = V34_TRELLIS_16_STATE;
+	     selection <= V34_TRELLIS_64_STATE; ++selection) {
+		struct v34_4d_encoder encoder;
+		struct v34_4d_encoder_output encoded;
+		struct v34_4d_encoder_input input = fixture_input(&parameters, selection, 0);
+		struct v34_branch_set branches;
+		struct v34_survivor survivor;
+		struct v34_survivor_decision current, traceback;
+		bool ready;
+
+		CHECK(v34_4d_encoder_init(&encoder, &parameters, COEFFICIENTS, selection) ==
+			V34_4D_ENCODER_OK &&
+		      v34_4d_encoder_step(&encoder, &input, &encoded) == V34_4D_ENCODER_OK &&
+		      build_branches(&encoded, input.inversion_bit, NULL, false, selection, &branches) &&
+		      v34_survivor_init(&survivor, selection) == V34_SURVIVOR_OK &&
+		      v34_survivor_advance(&survivor, &branches, &current, &traceback, &ready) ==
+			V34_SURVIVOR_OK && !ready && v34_survivor_is_valid(&survivor),
+		      "index-bound fixture failed for trellis %u", selection);
+		uint8_t *indices[] = { survivor.path[0].predecessor, survivor.path[0].branch_index };
+		const uint8_t states = v34_trellis_state_count(selection);
+		const uint8_t limits[] = { states, v34_trellis_branch_count(selection) };
+
+		for (size_t field = 0; field < ARRAY_LENGTH(indices); ++field) {
+			const uint8_t values[] = { 0, limits[field] - 1u, limits[field], UINT8_MAX };
+
+			for (unsigned state = 0; state < V34_MAX_TRELLIS_STATES; ++state) {
+				uint8_t saved = indices[field][state];
+
+				for (size_t value = 0; value < ARRAY_LENGTH(values); ++value) {
+					indices[field][state] = values[value];
+					CHECK(v34_survivor_is_valid(&survivor) ==
+						(state >= states || values[value] < limits[field]),
+					      "trellis %u field %zu state %u value %u changed bounds",
+					      selection, field, state, values[value]);
+				}
+				indices[field][state] = saved;
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_decision_parity(void)
 {
 	/* All signed modulo-eight residues, the legal rails, off-grid values,
@@ -583,6 +630,7 @@ int main(void)
 		{ "generated round trip", test_generated_round_trip },
 		{ "path correction", test_path_correction },
 		{ "transactional validation", test_validation },
+		{ "traceback index bounds", test_traceback_index_bounds },
 	};
 	unsigned int failures = 0;
 
