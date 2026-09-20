@@ -7,30 +7,28 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool grid_point_label(
-	const struct v34_grid_point *point, uint8_t *label)
-{
-	return v34_grid_point_is_bounded(point) &&
-	       v34_grid_subset_label(point, label) ==
-		       V34_TRELLIS_OK;
-}
-
 bool v34_survivor_decision_is_valid(
 	const struct v34_survivor_decision *decision)
 {
-	uint8_t label[2];
+	uint16_t parity = 0;
 
 	if (decision == NULL || decision->convolutional_output > 1u ||
 	    decision->inversion_bit > 1u)
 		return false;
 	for (uint8_t symbol = 0;
 	     symbol < V34_2D_SYMBOLS_PER_4D_INTERVAL; ++symbol) {
-		if (!grid_point_label(
-			    &decision->channel_output[symbol], &label[symbol]))
+		const struct v34_grid_point *point =
+			&decision->channel_output[symbol];
+
+		if (!v34_grid_point_is_bounded(point) ||
+		    !v34_grid_point_coordinates_are_odd(point))
 			return false;
+		/* Only bit zero of Figure 9's subset label enters Y0. For odd
+		 * coordinates it is the XOR of their second-lowest bits. */
+		parity ^= (uint16_t)point->in_phase ^ (uint16_t)point->quadrature;
 	}
 	return decision->convolutional_output ==
-	       ((label[0] ^ label[1] ^ decision->inversion_bit) & 1u);
+	       (((parity >> 1) ^ decision->inversion_bit) & 1u);
 }
 
 static bool traceback_step_is_valid(
