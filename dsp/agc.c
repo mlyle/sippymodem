@@ -4,23 +4,12 @@
 #include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stdint.h>
 
 enum {
 	AGC_ENERGY_SCALE_Q15 = 0x038e,
 	AGC_WEIGHT_TOTAL_Q15 = 0x8000,
 };
-
-static int32_t shift_q15(uint32_t bits)
-{
-	int64_t value = bits <= INT32_MAX ?
-			(int64_t)bits :
-			(int64_t)bits - (INT64_C(1) << 32);
-
-	return (int32_t)(value >= 0 ? value / INT32_C(0x8000) :
-			 -((-value + INT32_C(0x7fff)) / INT32_C(0x8000)));
-}
 
 /* Exact formula for the normalized 128-entry reciprocal profile. */
 static uint16_t reciprocal_profile(
@@ -54,7 +43,8 @@ enum agc_result agc_measure_level_s16(
 	for (size_t index = 0; index < count; ++index) {
 		int32_t product =
 			(int32_t)samples[index] * AGC_ENERGY_SCALE_Q15;
-		int32_t scaled = shift_q15((uint32_t)product);
+		int32_t scaled = arithmetic_shift_right_u32(
+			(uint32_t)product, 15u);
 
 		energy += (uint32_t)(scaled * (int32_t)samples[index]);
 	}
@@ -154,12 +144,12 @@ enum agc_result agc_process(
 		   (block_gain != 0 &&
 		    level < next.config.tracking_threshold));
 	if (active) {
-		int32_t history = shift_q15(
+		int32_t history = arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)next.config.history_weight_q15 *
-				   next.smoothed_level));
-		int32_t observed = shift_q15(
+				   next.smoothed_level), 15u);
+		int32_t observed = arithmetic_shift_right_u32(
 			(uint32_t)((int32_t)level *
-				   next.config.input_weight_q15));
+				   next.config.input_weight_q15), 15u);
 
 		block_gain = wrap_s16_from_s32(history + observed);
 		next.smoothed_level = block_gain;
@@ -170,9 +160,9 @@ enum agc_result agc_process(
 
 			next.gain_shift = (int16_t)exponent - 1;
 			next.gain_mantissa_q15 = wrap_s16_from_s32(
-				shift_q15(
+				arithmetic_shift_right_u32(
 					(uint32_t)((int32_t)reciprocal *
-						   next.config.target_level_q15)));
+						   next.config.target_level_q15), 15u));
 		}
 	}
 	next.signal_present = active;
@@ -185,7 +175,8 @@ enum agc_result agc_process(
 		} else {
 			int32_t product =
 				(int32_t)input[index] * next.gain_mantissa_q15;
-			int32_t normalized = shift_q15((uint32_t)product);
+			int32_t normalized = arithmetic_shift_right_u32(
+				(uint32_t)product, 15u);
 			uint16_t shift = (uint16_t)next.gain_shift & 0x1fu;
 
 			output[index] = clamp_s16(

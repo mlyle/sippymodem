@@ -2,6 +2,8 @@
 
 #include "v92_pcm_phase3_trn1u_line_rx.h"
 
+#include "packed_bits.h"
+
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -36,16 +38,6 @@ static bool geometry_is_valid(const struct qam_equalizer *equalizer)
 		       V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
 }
 
-static bool expected_is_valid(const uint8_t *expected)
-{
-	for (size_t index = 0;
-	     index < V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS; ++index) {
-		if (expected[index] > 1u)
-			return false;
-	}
-	return true;
-}
-
 static bool aligned_state_is_valid(
 	const struct v92_pcm_phase3_trn1u_line_rx *receiver)
 {
@@ -73,7 +65,9 @@ bool v92_pcm_phase3_trn1u_line_rx_is_valid(
 	    receiver->sync.stage != V92_PHASE3_SYNC_TRAINING ||
 	    !v34_scrambler_is_valid(&receiver->reference) ||
 	    receiver->reference.polynomial != V34_POLYNOMIAL_GPA ||
-	    !expected_is_valid(receiver->expected) ||
+	    !unpacked_bits_are_binary(
+		    receiver->expected,
+		    V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS) ||
 	    receiver->window_count >
 		    V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS ||
 	    receiver->window_index >=

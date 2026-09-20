@@ -2,16 +2,7 @@
 
 #include "v90_sign_decoder.h"
 
-static bool signs_are_binary(const uint8_t *signs, size_t count)
-{
-	if (signs == NULL)
-		return false;
-	for (size_t index = 0; index < count; ++index) {
-		if (signs[index] > 1)
-			return false;
-	}
-	return true;
-}
+#include "packed_bits.h"
 
 bool v90_sign_decoder_is_valid(
 	const struct v90_sign_decoder *decoder)
@@ -143,7 +134,7 @@ enum v90_sign_decoder_result v90_sign_decoder_decode(
 	if (!v90_sign_decoder_is_valid(decoder))
 		return V90_SIGN_DECODER_INVALID_STATE;
 	if (sign_count != V90_CP_FRAME_INTERVALS ||
-	    !signs_are_binary(signs, sign_count))
+	    !unpacked_bits_are_binary(signs, sign_count))
 		return V90_SIGN_DECODER_INVALID_SIGNS;
 	next = *decoder;
 	if (next.sign_redundancy == 0)

@@ -2,24 +2,14 @@
 
 #include "v22bis_symbols.h"
 
+#include "packed_bits.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <string.h>
 
 static const double V22BIS_COORDINATE_SCALE =
 	0.23570226039551584146694812070162; /* 1 / sqrt(18) */
-
-static bool bits_are_valid(
-	const uint8_t bits[V22BIS_BITS_PER_SYMBOL])
-{
-	if (bits == NULL)
-		return false;
-	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
-	     ++index)
-		if (bits[index] > 1)
-			return false;
-	return true;
-}
 
 static bool encoder_is_valid(
 	const struct v22bis_symbol_encoder *encoder)
@@ -58,7 +48,8 @@ enum v22_framing_result v22bis_symbol_encode(
 	uint8_t scrambled[V22BIS_BITS_PER_SYMBOL];
 	uint8_t quadrant;
 
-	if (!encoder_is_valid(encoder) || !bits_are_valid(bits) ||
+	if (!encoder_is_valid(encoder) ||
+	    !unpacked_bits_are_binary(bits, V22BIS_BITS_PER_SYMBOL) ||
 	    symbol == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	next = *encoder;

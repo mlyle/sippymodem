@@ -2,10 +2,10 @@
 
 #include "echo_frontend.h"
 
+#include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -179,21 +179,6 @@ enum v32_echo_result v32_echo_frontend_freeze(
 	return v32_echo_canceller_freeze(&frontend->echo);
 }
 
-static int16_t arithmetic_shift_q15(uint32_t bits)
-{
-	int64_t value = bits <= INT32_MAX ?
-			(int64_t)bits :
-			(int64_t)bits - (INT64_C(1) << 32);
-	int64_t shifted = value >= 0 ?
-			  value / (INT64_C(1) << 15) :
-			  -((-value + (INT64_C(1) << 15) - 1) /
-			    (INT64_C(1) << 15));
-	uint16_t low = (uint16_t)(uint64_t)shifted;
-
-	return low <= INT16_MAX ?
-		       (int16_t)low : (int16_t)((int32_t)low - 65536);
-}
-
 static int16_t filter_output(
 	const struct v32_echo_frontend_filter *filter)
 {
@@ -212,7 +197,8 @@ static int16_t filter_output(
 				  V32_ECHO_FRONTEND_FILTER_TAPS - 1u :
 				  history - 1u;
 	}
-	return arithmetic_shift_q15(accumulator);
+	return wrap_s16_from_s32(
+		arithmetic_shift_right_u32(accumulator, 15u));
 }
 
 static bool filter_sample(

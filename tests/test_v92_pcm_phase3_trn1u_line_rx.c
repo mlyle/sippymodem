@@ -206,6 +206,20 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_trn1u_line_rx_is_valid(&receiver) &&
 	      !v92_pcm_phase3_trn1u_line_rx_is_complete(&receiver),
 	      "TRN1u line initialization contracts failed");
+	for (unsigned int fault = 0u; fault < 4u; ++fault) {
+		struct v92_pcm_phase3_trn1u_line_rx invalid = receiver;
+		size_t index = fault % 2u == 0u ? 0u :
+			V92_PCM_PHASE3_TRN1U_LINE_EQUALIZER_TAPS - 1u;
+
+		invalid.expected[index] = fault < 2u ? 2u : UINT8_MAX;
+		before = invalid;
+		CHECK(!v92_pcm_phase3_trn1u_line_rx_is_valid(&invalid) &&
+		      v92_pcm_phase3_trn1u_line_rx_sample(&invalid, 0) ==
+			      V92_PCM_PHASE3_TRN1U_LINE_RX_INVALID_ARGUMENT &&
+		      memcmp(&invalid, &before, sizeof(invalid)) == 0,
+		      "nonbinary TRN1u reference at %zu was not rejected "
+		      "transactionally (fault %u)", index, fault);
+	}
 	memset(&handoff, 0xa5, sizeof(handoff));
 	before_handoff = handoff;
 	CHECK(v92_pcm_phase3_trn1u_line_rx_handoff(
