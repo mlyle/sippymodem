@@ -35,7 +35,7 @@ bool v92_upstream_control_line_rx_has_failed(
 	const struct v92_upstream_control_line_rx *receiver)
 {
 	return v92_upstream_control_line_rx_is_valid(receiver) &&
-	       v92_upstream_rx_has_failed(&receiver->signal);
+	       receiver->signal.failed;
 }
 
 enum v92_upstream_control_line_rx_result
@@ -139,7 +139,7 @@ v92_upstream_control_line_rx_sample(
 
 	if (!v92_upstream_control_line_rx_is_valid(receiver) || event == NULL)
 		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
-	if (v92_upstream_control_line_rx_has_failed(receiver))
+	if (receiver->signal.failed)
 		return V92_UPSTREAM_CONTROL_LINE_RX_FAILED;
 	next = *receiver;
 	signal_result = v92_upstream_rx_sample(

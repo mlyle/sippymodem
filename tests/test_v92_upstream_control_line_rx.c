@@ -252,6 +252,38 @@ static bool receive_sample(
 	return true;
 }
 
+static bool check_digital_failures(const struct v92_phase4_digital_rx *receiver)
+{
+	for (unsigned fault = 0u; fault < 4u; ++fault) {
+		struct v92_phase4_digital_rx rejected = *receiver;
+		struct v92_control_event event = { .type = V92_CONTROL_EVENT_CPU };
+		struct v92_control_event before = event;
+		bool *child_failed = rejected.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			&rejected.signal.trn2u.failed : &rejected.signal.control.signal.failed;
+		int16_t *lu = rejected.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			&rejected.signal.trn2u.demodulator.lu :
+			&rejected.signal.control.signal.line.demodulator.lu;
+
+		if (fault % 2u)
+			*child_failed = true;
+		else
+			rejected.failed = true;
+		if (fault >= 2u)
+			*lu = 0;
+		struct v92_phase4_digital_rx saved = rejected;
+
+		CHECK(v92_phase4_digital_rx_is_valid(&rejected) == (fault < 2u) &&
+		      v92_phase4_digital_rx_has_failed(&rejected) == (fault < 2u) &&
+		      !v92_phase4_digital_rx_is_receiving_control(&rejected) &&
+		      v92_phase4_digital_rx_sample(&rejected, 0, &event) ==
+			      (fault < 2u ? V92_PHASE4_DIGITAL_RX_FAILED : V92_PHASE4_DIGITAL_RX_INVALID_STATE) &&
+		      memcmp(&rejected, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&event, &before, sizeof(before)) == 0,
+		      "digital failure contract changed stage=%u fault=%u", receiver->stage, fault);
+	}
+	return true;
+}
+
 static bool run_records(
 	enum g711_law law, enum v92_constellation_size constellation,
 	uint8_t previous_sign, int8_t polarity, int16_t offset)
@@ -282,6 +314,7 @@ static bool run_records(
 		      &receiver, &handoff, constellation, handoff.parameters.law) ==
 		      V92_PHASE4_DIGITAL_RX_OK,
 	      "digital Phase 4 line did not initialize");
+	CHECK(check_digital_failures(&receiver), "training failure contract changed");
 	CHECK(v92_pcm_phase4_trn2u_init(&reference, constellation, previous_sign, TEST_LU) ==
 		      V92_PCM_PHASE4_TRN2U_OK, "channel reference did not initialize");
 	for (uint32_t symbol = 0;
@@ -413,6 +446,13 @@ static bool run_records(
 	      "control-line records or retained state differed");
 	CHECK(memcmp(&receiver.channel, &expected_channel, sizeof(expected_channel)) == 0,
 	      "control records changed the completed training measurement");
+	CHECK(check_digital_failures(&receiver), "control failure contract changed");
+	struct v92_phase4_digital_rx resumed = {
+		.stage = V92_PHASE4_DIGITAL_RX_RESUMED_CONTROL,
+		.signal.control = receiver.signal.control,
+	};
+	resumed.signal.control.signal.line.renegotiation = true;
+	CHECK(check_digital_failures(&resumed), "resumed failure contract changed");
 	return true;
 }
 
@@ -878,8 +918,9 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0,
 	      "control-line null calls changed state");
-	for (unsigned fault = 0; fault < 5; ++fault) {
+	for (unsigned fault = 0; fault < 7; ++fault) {
 		untouched = receiver;
+		untouched.signal.failed = true;
 		switch (fault) {
 		case 0: untouched.cpu_repeat_symbols = 1u; break;
 		case 1: untouched.cpu_repeat_symbols = UINT16_MAX - UINT16_MAX % V92_CPU_SYMBOLS_PER_FRAME; break;
@@ -889,14 +930,17 @@ static bool test_contracts(void)
 			untouched.cpu_repeat_symbols = V92_CPU_SYMBOLS_PER_FRAME;
 			untouched.cpu_repeat_remaining = V92_CPU_SYMBOLS_PER_FRAME + 1u;
 			break;
+		case 5: untouched.signal.line.demodulator.lu = 0; break;
+		case 6: untouched.control.alignment_bits = 0u; break;
 		}
 		saved = untouched;
 		CHECK(!v92_upstream_control_line_rx_is_valid(&untouched) &&
+		      !v92_upstream_control_line_rx_has_failed(&untouched) &&
 		      v92_upstream_control_line_rx_sample(&untouched, 0, &event) ==
 			      V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT &&
 		      memcmp(&untouched, &saved, sizeof(saved)) == 0 &&
 		      memcmp(&event, &event_before, sizeof(event)) == 0,
-		      "invalid CPu repetition clock changed state, fault %u", fault);
+		      "invalid control line changed state, fault %u", fault);
 	}
 	receiver.signal.failed = true;
 	saved = receiver;

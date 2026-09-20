@@ -40,24 +40,28 @@ bool v92_phase4_digital_rx_is_valid(
 			       &receiver->signal.control);
 }
 
+/* The enclosing receive state, including its active child, is validated first. */
+static bool state_has_failed(
+	const struct v92_phase4_digital_rx *receiver)
+{
+	return receiver->failed ||
+	       (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+			receiver->signal.trn2u.failed :
+			receiver->signal.control.signal.failed);
+}
+
 bool v92_phase4_digital_rx_has_failed(
 	const struct v92_phase4_digital_rx *receiver)
 {
-	if (!v92_phase4_digital_rx_is_valid(receiver))
-		return false;
-	return receiver->failed ||
-	       (receiver->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
-			v92_pcm_phase4_trn2u_line_rx_has_failed(
-				&receiver->signal.trn2u) :
-			v92_upstream_control_line_rx_has_failed(
-				&receiver->signal.control));
+	return v92_phase4_digital_rx_is_valid(receiver) &&
+	       state_has_failed(receiver);
 }
 
 bool v92_phase4_digital_rx_is_receiving_control(
 	const struct v92_phase4_digital_rx *receiver)
 {
 	return v92_phase4_digital_rx_is_valid(receiver) &&
-	       !v92_phase4_digital_rx_has_failed(receiver) &&
+	       !state_has_failed(receiver) &&
 	       receiver->stage != V92_PHASE4_DIGITAL_RX_TRN2U;
 }
 
@@ -71,7 +75,7 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_resume(
 		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
 	initialized.signal.control = *line;
 	if (!v92_phase4_digital_rx_is_valid(&initialized) ||
-	    v92_phase4_digital_rx_has_failed(&initialized))
+	    state_has_failed(&initialized))
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
 	*receiver = initialized;
 	return V92_PHASE4_DIGITAL_RX_OK;
@@ -260,7 +264,7 @@ enum v92_phase4_digital_rx_result v92_phase4_digital_rx_sample(
 		return V92_PHASE4_DIGITAL_RX_INVALID_ARGUMENT;
 	if (!v92_phase4_digital_rx_is_valid(receiver))
 		return V92_PHASE4_DIGITAL_RX_INVALID_STATE;
-	if (v92_phase4_digital_rx_has_failed(receiver))
+	if (state_has_failed(receiver))
 		return V92_PHASE4_DIGITAL_RX_FAILED;
 	next = *receiver;
 	result = next.stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
