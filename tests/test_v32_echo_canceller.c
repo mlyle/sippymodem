@@ -570,6 +570,51 @@ static bool test_reentrant_fragment_equivalence(void)
 	return true;
 }
 
+static bool check_point_validation(
+	struct v32_echo_canceller *canceller, struct qam_point *point)
+{
+	static const double values[] = {
+		0.0, -0.0, DBL_TRUE_MIN, -DBL_TRUE_MIN, DBL_MIN, -DBL_MIN,
+		DBL_MAX, -DBL_MAX, INFINITY, -INFINITY, NAN, -NAN,
+	};
+	double *components[] = { &point->in_phase, &point->quadrature };
+
+	for (size_t axis = 0; axis < ARRAY_LENGTH(components); ++axis) {
+		for (size_t value = 0; value < ARRAY_LENGTH(values); ++value) {
+			*components[axis] = values[value];
+			CHECK(v32_echo_canceller_is_valid(canceller) ==
+				      (isfinite(values[value]) != 0),
+			      "echo point axis %zu value %zu validation changed",
+			      axis, value);
+		}
+		*components[axis] = 0.0;
+	}
+	return true;
+}
+
+static bool test_complete_finite_state_validation(void)
+{
+	struct v32_echo_canceller canceller;
+
+	CHECK(v32_echo_canceller_init(
+		      &canceller, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_ECHO_OK, "finite-state fixture did not initialize");
+	/* Even unused history and frozen coefficients belong to the full-state
+	 * validator; every component must participate in its reduction. */
+	for (size_t index = 0; index < V32_ECHO_REFERENCE_CAPACITY; ++index)
+		CHECK(check_point_validation(&canceller, &canceller.reference[index]),
+		      "reference %zu escaped validation", index);
+	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase)
+		for (size_t window = 0; window < V32_ECHO_WINDOW_COUNT; ++window)
+			for (size_t tap = 0; tap < V32_ECHO_WINDOW_SYMBOLS; ++tap)
+				CHECK(check_point_validation(
+					      &canceller,
+					      &canceller.coefficients[phase][window][tap]),
+				      "coefficient %zu/%zu/%zu escaped validation",
+				      phase, window, tap);
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -577,6 +622,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "validation and aliases", test_validation_and_aliases },
+		{ "complete finite-state validation",
+		  test_complete_finite_state_validation },
 		{ "convergence, freeze, and resume",
 		  test_convergence_freeze_and_resume },
 		{ "reentrant fragment equivalence",

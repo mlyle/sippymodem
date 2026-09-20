@@ -44,26 +44,30 @@ static bool state_header_is_valid(
 bool v32_echo_canceller_is_valid(
 	const struct v32_echo_canceller *canceller)
 {
+	/* Keep the complete scan as a full-width reduction so it can vectorize. */
+	unsigned int finite = 1;
+
 	if (!state_header_is_valid(canceller))
 		return false;
 	for (size_t index = 0; index < V32_ECHO_REFERENCE_CAPACITY;
 	     ++index) {
-		if (!point_is_finite(&canceller->reference[index]))
-			return false;
+		finite &= !!isfinite(canceller->reference[index].in_phase) &
+			  !!isfinite(canceller->reference[index].quadrature);
 	}
 	for (size_t phase = 0; phase < V32_ECHO_PHASE_COUNT; ++phase) {
 		for (size_t window = 0;
 		     window < V32_ECHO_WINDOW_COUNT; ++window) {
 			for (size_t tap = 0;
 			     tap < V32_ECHO_WINDOW_SYMBOLS; ++tap) {
-				if (!point_is_finite(
-					    &canceller->coefficients[phase]
-							 [window][tap]))
-					return false;
+				const struct qam_point *point =
+					&canceller->coefficients[phase][window][tap];
+
+				finite &= !!isfinite(point->in_phase) &
+					  !!isfinite(point->quadrature);
 			}
 		}
 	}
-	return true;
+	return finite;
 }
 
 enum v32_echo_result v32_echo_canceller_init(
