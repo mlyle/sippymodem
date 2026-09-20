@@ -8749,6 +8749,56 @@ static bool run_v92_rate_request(struct pcm_call *online,
 	return true;
 }
 
+static bool v92_ru_filter_contracts(const struct v92_ru_line_rx *online)
+{
+	for (int polarity = -1; polarity <= 1; polarity += 2) {
+		struct v92_ru_line_rx receiver = *online;
+		struct qam_equalizer expected = receiver.equalizer;
+		struct v92_ru_rx signal = receiver.signal;
+		uint32_t random = 1;
+		receiver.polarity = polarity;
+		for (unsigned i = 0; i < 512; ++i) {
+			random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+			int16_t sample = (int)(random & 0xffffu) - 32768;
+			struct qam_point input = { .in_phase = polarity * (double)sample };
+			struct qam_equalizer_observation observation = { 0 };
+			bool ready;
+			CHECK(qam_equalizer_observe(&expected, &input, &observation, &ready) == QAM_EQUALIZER_OK && ready,
+			      "retained Ru reference filter failed");
+			CHECK(v92_ru_line_rx_sample(&receiver, sample) == v92_ru_rx_sample(&signal, observation.output.in_phase) &&
+			      receiver.input_samples == online->input_samples + i + 1u &&
+			      memcmp(&receiver.equalizer, &expected, sizeof(expected)) == 0 &&
+			      memcmp(&receiver.signal, &signal, sizeof(signal)) == 0 && v92_ru_line_rx_is_valid(&receiver),
+			      "Ru filtering changed history, adaptation ownership or signal timing");
+		}
+	}
+	for (unsigned fault = 0; fault < 2; ++fault) {
+		struct v92_ru_line_rx receiver = *online;
+		if (!fault)
+			receiver.input_samples = UINT64_MAX;
+		else {
+			/* Finite valid state can still overflow the next FIR sum. */
+			for (unsigned i = 0; i < receiver.equalizer.tap_count; ++i) {
+				receiver.equalizer.coefficients[i].in_phase = 1;
+				receiver.equalizer.history[i].in_phase = 1e308;
+			}
+		}
+		struct v92_ru_line_rx before = receiver;
+		CHECK(v92_ru_line_rx_is_valid(&receiver) &&
+		      v92_ru_line_rx_sample(&receiver, 1) == V92_RU_RX_INVALID_STATE &&
+		      memcmp(&receiver, &before, sizeof(receiver)) == 0, "failed Ru sample mutated retained state");
+	}
+	struct v92_ru_line_rx complete = *online;
+	complete.signal.run = V92_RU_RX_MIN_SYMBOLS;
+	complete.signal.bar_symbols = V92_RU_RX_BAR_SYMBOLS;
+	complete.signal.phase = 0;
+	struct v92_ru_line_rx before = complete;
+	CHECK(v92_ru_line_rx_is_valid(&complete) &&
+	      v92_ru_line_rx_sample(&complete, 1234) == V92_RU_RX_COMPLETE &&
+	      memcmp(&complete, &before, sizeof(complete)) == 0, "completed Ru filter consumed training tail");
+	return true;
+}
+
 static bool test_v92_remote_rate_request(void)
 {
 	const unsigned rates[] = { 1, 7, 13, 19 };
@@ -8760,6 +8810,8 @@ static bool test_v92_remote_rate_request(void)
 				.local_maximum = rates[i], .expected = rates[i],
 			};
 			CHECK(capture_v92_duplex_data(law, 1u, false, &offer, NULL, 0u, &pair), "rate request call did not train");
+			CHECK(v92_ru_filter_contracts(&pair.digital.state.data_path.v92_digital.ru),
+			      "retained Ru filter contract failed");
 			struct v92_upstream_data_tx *upstream = &pair.analog.state.data_path.v92_analog.upstream;
 			if (rates[i] == 7u)
 				CHECK(v92_rejected_control_recovery(&pair.digital, upstream->upstream_level, false) &&

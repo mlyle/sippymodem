@@ -44,8 +44,7 @@ enum v92_ru_rx_result v92_ru_line_rx_sample(struct v92_ru_line_rx *receiver,
 					  int16_t sample)
 {
 	struct v92_ru_line_rx next;
-	struct qam_equalizer_observation observation = { 0 };
-	struct qam_point input;
+	struct qam_point input, output;
 	bool ready;
 	enum v92_ru_rx_result result;
 	if (receiver == NULL)
@@ -58,10 +57,13 @@ enum v92_ru_rx_result v92_ru_line_rx_sample(struct v92_ru_line_rx *receiver,
 		return V92_RU_RX_INVALID_STATE;
 	next = *receiver;
 	input = (struct qam_point){ .in_phase = next.polarity * (double)sample };
-	if (qam_equalizer_observe(&next.equalizer, &input, &observation, &ready) !=
+	if (qam_equalizer_push(&next.equalizer, &input, &output, &ready) !=
 	    QAM_EQUALIZER_OK || !ready)
 		return V92_RU_RX_INVALID_STATE;
-	result = v92_ru_rx_sample(&next.signal, observation.output.in_phase);
+	/* Ru uses the retained FIR without adapting it. Discard this output's
+	 * adaptation opportunity without constructing a gradient snapshot. */
+	next.equalizer.can_adapt = false;
+	result = v92_ru_rx_sample(&next.signal, output.in_phase);
 	if (result == V92_RU_RX_INVALID_ARGUMENT || result == V92_RU_RX_INVALID_STATE)
 		return result;
 	next.input_samples++;
