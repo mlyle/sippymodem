@@ -460,6 +460,66 @@ static bool test_configurable_rate_and_tone_pair(void)
 	       check_payload(&channel_75_baud, false);
 }
 
+static int64_t linear_projection_power(
+	const int16_t *samples, const struct fsk_tone_projection *projection,
+	size_t count)
+{
+	int64_t in_phase = 0;
+	int64_t quadrature = 0;
+
+	for (size_t tap = 0; tap < count; ++tap) {
+		in_phase += (int64_t)floor(
+			(double)samples[tap] * projection->in_phase[tap] / 256.0);
+		quadrature += (int64_t)floor(
+			(double)samples[tap] * projection->quadrature[tap] / 256.0);
+	}
+	return in_phase * in_phase + quadrature * quadrature;
+}
+
+static bool test_detector_ring_wrap(void)
+{
+	uint32_t random = UINT32_C(0x971a463b);
+
+	for (size_t window = 3; window <= FSK_MAX_DETECTOR_WINDOW; ++window) {
+		struct fsk_channel channel = v21_channel_1;
+		struct fsk_receiver receiver;
+		int16_t newest_first[FSK_MAX_DETECTOR_WINDOW] = { 0 };
+
+		channel.detector_window = window;
+		CHECK(fsk_receiver_init(&receiver, &channel) == FSK_OK,
+		      "detector window %zu did not initialize", window);
+		for (size_t index = 0; index < 3 * window; ++index) {
+			int16_t sample = index % 3 == 0 ? INT16_MIN :
+				index % 3 == 1 ? INT16_MAX :
+				word_to_s16((uint16_t)(fixture_random(&random) >> 16));
+			uint64_t line_power = 0;
+			uint8_t bit;
+			bool ready;
+
+			memmove(newest_first + 1, newest_first,
+				(window - 1) * sizeof(newest_first[0]));
+			newest_first[0] = sample;
+			CHECK(fsk_receiver_detect(&receiver, sample, &bit, &ready) ==
+			      FSK_OK && ready == (index + 1 >= window) &&
+			      receiver.history_index == (index + 1) % window,
+			      "detector ring failed at window %zu sample %zu", window, index);
+			if (!ready)
+				continue;
+			for (size_t tap = 0; tap < window; ++tap)
+				line_power += (uint64_t)((int64_t)newest_first[tap] *
+					newest_first[tap]);
+			CHECK(receiver.mark_power == linear_projection_power(
+				newest_first, &receiver.mark, window) &&
+			      receiver.space_power == linear_projection_power(
+				newest_first, &receiver.space, window) &&
+			      receiver.line_power == line_power,
+			      "detector projection changed at window %zu sample %zu",
+			      window, index);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -472,6 +532,7 @@ int main(void)
 		{ "continuous tone detection", test_continuous_tone_detection },
 		{ "V.21 profiles", test_v21_profiles },
 		{ "fixed detector arithmetic", test_fixed_detector_arithmetic },
+		{ "detector ring wrap", test_detector_ring_wrap },
 		{ "V.21 channel pairs", test_v21_channel_pairs },
 		{ "configurable rate and tone pair",
 		  test_configurable_rate_and_tone_pair },

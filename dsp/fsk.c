@@ -252,10 +252,10 @@ static int64_t projection_power(
 	int64_t in_phase = 0;
 	int64_t quadrature = 0;
 	size_t window = receiver->channel.detector_window;
+	size_t index = receiver->history_index;
 
 	for (size_t tap = 0; tap < window; ++tap) {
-		size_t index =
-			(receiver->history_index + window - 1 - tap) % window;
+		index = index != 0 ? index - 1 : window - 1;
 		int32_t sample = receiver->history[index];
 
 		in_phase += arithmetic_shift_right_u32(
