@@ -183,9 +183,9 @@ static bool receive_is_complete(
 static bool receive_is_receiving_b1(
 	const struct v34_phase4_exchange *exchange)
 {
+	/* The enclosing exchange validator already checked the receive state. */
 	return exchange->receive.stage == V34_PHASE34_RECEIVER_DATA &&
-	       v34_data_decision_receiver_is_receiving_b1(
-		       &exchange->receive.semantic.data);
+	       exchange->receive.semantic.data.data_receiver.data_receiver.b1_active;
 }
 
 static bool data_state_is_valid(
