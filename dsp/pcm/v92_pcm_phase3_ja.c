@@ -8,19 +8,37 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* The encoder validates the complete request once. Guard the owned bytes
+ * and their selection without decoding the same DIL at every 8 kHz sample. */
+static uint32_t descriptor_fingerprint(
+	const struct v92_pcm_phase3_ja_tx *tx)
+{
+	uint32_t fingerprint = UINT32_C(2166136261);
+	size_t bytes = (tx->descriptor_bits + 7u) / 8u;
+
+	for (size_t index = 0; index < bytes; ++index) {
+		fingerprint ^= tx->descriptor[index];
+		fingerprint *= UINT32_C(16777619);
+	}
+	fingerprint = (fingerprint ^ (uint32_t)tx->descriptor_bits) *
+		UINT32_C(16777619);
+	fingerprint = (fingerprint ^ tx->upstream_rate_mask) *
+		UINT32_C(16777619);
+	return (fingerprint ^ tx->dil_segments) * UINT32_C(16777619);
+}
+
 bool v92_pcm_phase3_ja_tx_is_valid(
 	const struct v92_pcm_phase3_ja_tx *tx)
 {
-	struct v92_pcm_dil_parameters parameters;
-
 	return tx != NULL && g711_law_is_valid(tx->law) &&
 	       tx->lu_ucode > 0u && tx->lu_ucode <= 127u &&
 	       pcm_binary_sign_is_valid(&tx->coding) &&
 	       tx->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	       v92_pcm_dil_decode(
-		       tx->descriptor, sizeof(tx->descriptor),
-		       tx->descriptor_bits, &parameters) ==
-		       V92_PCM_DIL_OK;
+	       tx->descriptor_bits >= V92_PCM_DIL_ZERO_DESCRIPTOR_BITS &&
+	       tx->descriptor_bits <= V92_PCM_DIL_MAX_DESCRIPTOR_BITS &&
+	       tx->descriptor_bits % V92_PCM_PHASE3_JA_ALIGNMENT == 0u &&
+	       v92_pcm_dil_rate_mask_is_valid(tx->upstream_rate_mask) &&
+	       tx->descriptor_fingerprint == descriptor_fingerprint(tx);
 }
 
 enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init_dil(
@@ -41,8 +59,12 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init_dil(
 	    v92_pcm_dil_encode(
 		    parameters, initialized.descriptor,
 		    sizeof(initialized.descriptor),
-		    &initialized.descriptor_bits) != V92_PCM_DIL_OK ||
-	    !v92_pcm_phase3_ja_tx_is_valid(&initialized))
+		    &initialized.descriptor_bits) != V92_PCM_DIL_OK)
+		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
+	initialized.upstream_rate_mask = parameters->upstream_rate_mask;
+	initialized.dil_segments = parameters->downstream.segment_count;
+	initialized.descriptor_fingerprint = descriptor_fingerprint(&initialized);
+	if (!v92_pcm_phase3_ja_tx_is_valid(&initialized))
 		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
 	*tx = initialized;
 	return V92_PCM_PHASE3_JA_OK;

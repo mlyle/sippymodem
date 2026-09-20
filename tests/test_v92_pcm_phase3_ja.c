@@ -97,6 +97,8 @@ static bool check_stream(
 	      v92_pcm_phase3_ja_tx_is_valid(&tx) &&
 	      tx.emitted_symbols == 0u &&
 	      tx.descriptor_bits == bits &&
+	      tx.upstream_rate_mask == rate_mask &&
+	      tx.dil_segments == request.downstream.segment_count &&
 	      tx.coding.previous_sign == history[trn1u_symbols - 1u] &&
 	      tx.coding.scrambler.history == trn1u.scrambler.history &&
 	      memcmp(tx.descriptor, descriptor, sizeof(descriptor)) == 0 &&
@@ -297,10 +299,49 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_owned_descriptor(void)
+{
+	struct v92_pcm_phase3_trn1u trn1u;
+	struct v92_pcm_phase3_ja_tx tx;
+	struct v92_pcm_dil_parameters request = { .upstream_rate_mask = 0x1fff };
+	uint8_t history[REFERENCE_SYMBOLS] = { 0 };
+
+	CHECK(prepare_trn1u(&trn1u, G711_LAW_PCMU, 91u,
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, history) &&
+	      v90_dil_profile_init(&request.downstream,
+		      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+	      v92_pcm_phase3_ja_tx_init_dil(&tx, &trn1u, &request) ==
+		      V92_PCM_PHASE3_JA_OK,
+	      "owned Ja fixture did not initialize");
+	/* Check every owned bit, not only the header or CRC. The bit bounds
+	 * must also be checked before the integrity check reads the buffer. */
+	for (size_t bit = 0; bit < tx.descriptor_bits; ++bit) {
+		struct v92_pcm_phase3_ja_tx bad = tx;
+		struct v90_pcm_symbol symbol = { 0 }, before = symbol;
+
+		bad.descriptor[bit / 8u] ^= (uint8_t)(1u << (7u - bit % 8u));
+		struct v92_pcm_phase3_ja_tx saved = bad;
+		CHECK(!v92_pcm_phase3_ja_tx_is_valid(&bad) &&
+		      !v92_pcm_phase3_ja_tx_can_stop(&bad) &&
+		      v92_pcm_phase3_ja_tx_next(&bad, &symbol) ==
+			      V92_PCM_PHASE3_JA_INVALID_STATE &&
+		      memcmp(&bad, &saved, sizeof(bad)) == 0 &&
+		      memcmp(&symbol, &before, sizeof(symbol)) == 0,
+		      "modified Ja bit %zu was accepted", bit);
+	}
+	tx.upstream_rate_mask ^= 1u;
+	CHECK(!v92_pcm_phase3_ja_tx_is_valid(&tx), "changed Ja rates accepted");
+	tx.upstream_rate_mask ^= 1u;
+	tx.dil_segments++;
+	CHECK(!v92_pcm_phase3_ja_tx_is_valid(&tx), "changed Ja DIL count accepted");
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream Ja\n");
-	if (!test_generated_streams() || !test_nonzero_streams() || !test_contracts()) {
+	if (!test_generated_streams() || !test_nonzero_streams() ||
+	    !test_contracts() || !test_owned_descriptor()) {
 		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream Ja\n");
 		return 1;
 	}

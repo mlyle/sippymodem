@@ -34,12 +34,16 @@ struct v92_pcm_phase3_ja_tx {
 	uint64_t emitted_symbols;
 	size_t descriptor_bits;
 	uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES];
+	uint32_t descriptor_fingerprint;
+	uint32_t upstream_rate_mask;
+	uint8_t dil_segments;
 	enum g711_law law;
 	uint8_t lu_ucode;
 };
 
 /* The rate-only initializer retains the N=0 request. The DIL initializer
- * owns a copy of the full request; later caller mutations cannot alter Ja. */
+ * owns a copy of the full request; later caller mutations cannot alter Ja.
+ * Its descriptor and selection are immutable after initialization. */
 enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init(
 	struct v92_pcm_phase3_ja_tx *tx,
 	const struct v92_pcm_phase3_trn1u *trn1u,

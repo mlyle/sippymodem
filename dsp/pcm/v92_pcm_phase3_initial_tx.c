@@ -43,16 +43,11 @@ static bool trn1u_matches(
 static bool ja_matches(const struct v92_pcm_phase3_initial_tx *tx)
 {
 	const struct v92_pcm_phase3_ja_tx *ja = &tx->sequence.ja;
-	struct v92_pcm_dil_parameters parameters;
 
 	return v92_pcm_phase3_ja_tx_is_valid(ja) && ja->law == tx->law &&
 	       ja->lu_ucode == tx->lu_ucode &&
-	       v92_pcm_dil_decode(
-		       ja->descriptor, sizeof(ja->descriptor),
-		       ja->descriptor_bits, &parameters) ==
-		       V92_PCM_DIL_OK &&
-	       parameters.upstream_rate_mask == tx->upstream_rate_mask &&
-	       (parameters.downstream.segment_count == 0u) ==
+	       ja->upstream_rate_mask == tx->upstream_rate_mask &&
+	       (ja->dil_segments == 0u) ==
 		       (tx->dil_profile == V90_DIL_PROFILE_NONE);
 }
 
