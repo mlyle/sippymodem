@@ -291,7 +291,9 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	    V92_PCM_PHASE3_CPT_TX_OK)
 		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	*sample = symbol.sample;
+	/* V.92 9.5.2.1.10: zero-DIL CPt acknowledges the received Ri. */
 	if (station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    v90_phase4_ri_search_is_acquired(&station->receive.ri) &&
 	    v92_pcm_phase3_trn1u_can_handoff(
 		    &station->transmit.cpt.trn1u) &&
 	    v92_pcm_phase3_cpt_tx_start(&station->transmit.cpt) !=

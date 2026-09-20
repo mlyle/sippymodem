@@ -263,6 +263,89 @@ static bool run_exchange(enum g711_law law, bool delayed)
 	return true;
 }
 
+static bool run_delayed_ri(enum g711_law law)
+{
+	const struct v92_phase3_analog_station_configuration configuration =
+		analog_configuration(law, 0xf);
+	const struct v92_jd jd = { .data_rate_capability_mask = 1,
+		.maximum_spectral_shaping_lookahead = 3 };
+	const struct v92_jp jp = { .training_constellation = V92_CONSTELLATION_4_POINT,
+		.rate_renegotiation_constellation = V92_CONSTELLATION_4_POINT };
+	struct v92_phase3_analog_station analog;
+	struct v92_phase3_digital_station digital;
+	struct pcm_phase3_digital_tx scr = { 0 };
+	struct v92_pcm_phase3_trn1u training;
+	struct v90_phase4_ri_tx ri;
+	bool studying = false;
+
+	CHECK(v92_phase3_analog_station_init(&analog, &configuration) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      v92_phase3_digital_station_init(&digital, law, TEST_UCODE,
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, 0.0, TEST_SU_THRESHOLD, &jd, &jp) ==
+		      V92_PHASE3_DIGITAL_STATION_OK, "delayed-Ri pair did not initialize");
+	for (size_t i = 0; i < SAMPLE_LIMIT && !studying; ++i) {
+		uint8_t octet;
+		int16_t sample;
+
+		CHECK(v92_phase3_digital_station_transmit(&digital, &octet) ==
+			      V92_PHASE3_DIGITAL_STATION_OK &&
+		      v92_phase3_analog_station_receive(&analog, octet) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_phase3_digital_station_receive(&digital, media_sample(law, sample)) ==
+			      V92_PHASE3_DIGITAL_STATION_OK, "delayed-Ri startup failed at %zu", i);
+		studying = analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI &&
+			digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_SCR;
+		if (studying)
+			scr = digital.downstream;
+	}
+	CHECK(studying && !scr.finish_scr_requested, "no open SCR boundary");
+	training = analog.transmit.cpt.trn1u;
+	/* Continue the actual SCR coding history as a peer still training its
+	 * receiver. Drive only wire input; do not inject analogue receive state. */
+	for (size_t i = 0; i < 6000; ++i) {
+		struct v90_pcm_symbol downstream, expected;
+		int16_t sample;
+
+		CHECK(pcm_phase3_digital_tx_next(&scr, &downstream) == PCM_PHASE3_DIGITAL_TX_OK &&
+		      v92_phase3_analog_station_receive(&analog, downstream.octet) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_pcm_phase3_trn1u_next(&training, &expected) == V92_PCM_PHASE3_TRN1U_OK,
+		      "extended SCR failed at %zu", i);
+		CHECK(!v90_phase4_ri_search_is_acquired(&analog.receive.ri) &&
+		      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+		      sample == expected.sample, "analogue left TRN1u before Ri at %zu", i);
+	}
+	CHECK(v90_phase4_ri_tx_init(&ri, law, TEST_UCODE) == V90_PHASE4_RI_OK,
+	      "delayed Ri did not initialize");
+	for (size_t i = 0; i < 192; ++i) {
+		uint8_t octet;
+		int16_t sample;
+
+		CHECK(v90_phase4_ri_tx_next(&ri, &octet) == V90_PHASE4_RI_OK &&
+		      v92_phase3_analog_station_receive(&analog, octet) == V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK, "delayed Ri delivery failed at %zu", i);
+		CHECK(v90_phase4_ri_search_is_acquired(&analog.receive.ri) ||
+		      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U,
+		      "unqualified Ri permitted CPt");
+	}
+	CHECK(v90_phase4_ri_search_is_acquired(&analog.receive.ri) &&
+	      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_RECORD &&
+	      analog.transmit.cpt.trn1u.emitted_symbols % V92_PCM_PHASE3_TRN1U_ALIGNMENT == 0 &&
+	      !analog.transmit.cpt.finish_requested,
+	      "Ri did not start aligned CPt, or finished it before Ri-bar");
+	return true;
+}
+
+static bool test_delayed_ri(void)
+{
+	return run_delayed_ri(G711_LAW_PCMU) && run_delayed_ri(G711_LAW_PCMA);
+}
+
 static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 {
 	/* A scripted peer requests DIL, then sends CPt while DIL is active.
@@ -710,6 +793,7 @@ int main(void)
 		{ "PCMA zero-DIL station exchange", NULL },
 		{ "PCMU delayed station exchange", NULL },
 		{ "PCMA delayed station exchange", NULL },
+		{ "zero-DIL waits for delayed Ri", test_delayed_ri },
 		{ "nonzero-DIL station exchange", test_nonzero_dil },
 		{ "second TRN1u overlaps Jp", test_early_second_trn1u },
 		{ "analogue station contracts", test_analog_contracts },
