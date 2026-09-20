@@ -145,7 +145,8 @@ static bool test_b1u_coding_acquisition(void)
 	const unsigned histories[] = { 0u, 1u, 6u };
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (size_t rate = 0u; rate < ARRAY_LENGTH(rates); ++rate) {
-			unsigned cases = rates[rate] == 1u ? ARRAY_LENGTH(histories) : 1u;
+			/* Include both a 60-bit partial group and a 72-bit full group. */
+			unsigned cases = rates[rate] == 7u ? 1u : ARRAY_LENGTH(histories);
 			for (unsigned index = 0u; index < cases; ++index) {
 				unsigned changed_history = histories[index];
 				struct v92_pcm_frame_tx tx;
@@ -158,18 +159,18 @@ static bool test_b1u_coding_acquisition(void)
 				      "coding acquisition RX init");
 				size_t count = tx.mapping.data_bits_per_frame;
 
-				/* Exercise a mismatched scrambler context at the 24k receive
-				 * boundary, without claiming a different seed is normative.
+				/* Exercise mismatched scrambler contexts without claiming
+				 * that a different seed is normative.
 				 * The transmitter's zero-state reset has separate oracle tests.
-				 * A small gain error must not lock in the wrong early history.
-				 * Higher-rate clean calls must retain their validation/payload. */
+				 * A small gain error must not lock in the wrong early history. */
 				memset(bits, 1, count);
 				tx.state.scrambler.history = changed_history;
 				unsigned validated = 0u, payload = 0u;
 				for (unsigned f = 0u; f < V92_B1U_FRAMES + V92_PCM_RX_DELAY_FRAMES + 4u; ++f) {
-					uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+					uint8_t decoded[V92_PCM_MAPPING_MAX_BITS + 1u];
 					struct v92_pcm_frame_decision decision;
 
+					memset(decoded, 0xa5, sizeof(decoded));
 					if (f >= V92_B1U_FRAMES)
 						generated_bits(bits, count, f);
 					CHECK(v92_pcm_frame_encode(&tx, bits, count, &frame) == V92_PCM_FRAME_OK,
@@ -180,6 +181,8 @@ static bool test_b1u_coding_acquisition(void)
 					CHECK(v92_pcm_frame_decode(&rx, samples, f < V92_B1U_FRAMES,
 						      decoded, count, &decision) == V92_PCM_FRAME_OK,
 					      "coding acquisition frame %u law %u rate %u", f, law, rates[rate]);
+					for (size_t i = count; i < sizeof(decoded); ++i)
+						CHECK(decoded[i] == 0xa5, "coding acquisition wrote beyond payload");
 					if (f < V92_B1U_ACQUISITION_FRAMES + V92_PCM_RX_DELAY_FRAMES)
 						continue;
 					unsigned delivered = f - V92_PCM_RX_DELAY_FRAMES;
