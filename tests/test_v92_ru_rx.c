@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -120,6 +121,49 @@ static bool test_rejection_and_recovery(void)
 	return true;
 }
 
+static bool test_rippled_acquisition(void)
+{
+	/* A coherent tone need not have a flat per-symbol envelope after
+	 * channel equalization. Retain its signs and original frame phase. */
+	for (unsigned skip = 0; skip < 12; ++skip) {
+		struct v92_ru_rx rx;
+		unsigned detected = 0;
+		CHECK(v92_ru_rx_init(&rx, 1000, skip), "init failed");
+		for (unsigned i = skip; i < 384; ++i) {
+			double scale = i % 3u == 1u ? 1.3 : 0.7;
+			scale += i % 2u ? 0.04 : -0.04;
+			enum v92_ru_rx_result result = v92_ru_rx_sample(&rx, ru_level(i, 1000 * scale));
+			detected += result == V92_RU_RX_DETECTED;
+			CHECK(result == V92_RU_RX_BUFFERING || result == V92_RU_RX_DETECTED,
+			      "lost coherent rippled Ru");
+			CHECK(i - skip >= 239 || !detected, "ripple shortened qualification");
+			CHECK(v92_ru_rx_is_valid(&rx), "invalid rippled receiver");
+		}
+		CHECK(detected == 1 && rx.phase == 0, "rippled Ru not acquired");
+		for (unsigned i = 0; i < 24; ++i)
+			CHECK(v92_ru_rx_sample(&rx, -ru_level(i, 1000)) ==
+			      (i == 0 ? V92_RU_RX_BAR_STARTED : i == 23 ? V92_RU_RX_COMPLETE : V92_RU_RX_BUFFERING),
+			      "ripple moved reversal/training boundary");
+	}
+	/* Amplitude smoothing must not hide even one wrong-polarity symbol
+	 * or let previous matched samples shorten fresh qualification. */
+	for (unsigned corrupt = 0; corrupt < 240; ++corrupt) {
+		struct v92_ru_rx rx;
+		CHECK(v92_ru_rx_init(&rx, 1000, 0), "init failed");
+		for (unsigned i = 0; i < corrupt; ++i)
+			CHECK(v92_ru_rx_sample(&rx, ru_level(rx.phase, 1000)) ==
+			      V92_RU_RX_BUFFERING, "early acquisition");
+		CHECK(v92_ru_rx_sample(&rx, -ru_level(rx.phase, 1000)) ==
+		      V92_RU_RX_BUFFERING && rx.run == 0 && rx.mean_level == 0,
+		      "smoothed over a polarity error");
+		for (unsigned i = 0; i < 240; ++i)
+			CHECK(v92_ru_rx_sample(&rx, ru_level(rx.phase, 1000)) ==
+			      (i == 239 ? V92_RU_RX_DETECTED : V92_RU_RX_BUFFERING),
+			      "polarity error reused acquisition history");
+	}
+	return true;
+}
+
 static bool test_invalid_inputs(void)
 {
 	struct v92_ru_rx rx, before;
@@ -137,6 +181,19 @@ static bool test_invalid_inputs(void)
 	CHECK(!v92_ru_rx_is_valid(&rx) &&
 	      v92_ru_rx_sample(&rx, 1000) == V92_RU_RX_INVALID_STATE &&
 	      memcmp(&rx, &before, sizeof(rx)) == 0, "invalid state mutated");
+	const double invalid_levels[] = { -1, NAN, INFINITY };
+	for (unsigned i = 0; i < ARRAY_LENGTH(invalid_levels); ++i) {
+		CHECK(v92_ru_rx_init(&rx, 1000, 0), "init failed");
+		rx.mean_level = invalid_levels[i];
+		before = rx;
+		CHECK(!v92_ru_rx_is_valid(&rx) &&
+		      v92_ru_rx_sample(&rx, 1000) == V92_RU_RX_INVALID_STATE &&
+		      memcmp(&rx, &before, sizeof(rx)) == 0, "invalid amplitude state mutated");
+	}
+	CHECK(v92_ru_rx_init(&rx, 1000, 0), "init failed");
+	for (unsigned i = 0; i < 800; ++i)
+		CHECK(v92_ru_rx_sample(&rx, ru_level(i, DBL_MAX)) == V92_RU_RX_BUFFERING &&
+		      v92_ru_rx_is_valid(&rx), "finite overload acquired or overflowed");
 	return true;
 }
 
@@ -176,7 +233,7 @@ int main(void)
 {
 	fprintf(stderr, "[ RUN      ] frame-aligned V.92 Ru reception\n");
 	if (!test_transmitted_sequences() || !test_rejection_and_recovery() ||
-	    !test_invalid_inputs() || !test_acquisition_limits()) {
+	    !test_invalid_inputs() || !test_acquisition_limits() || !test_rippled_acquisition()) {
 		fprintf(stderr, "[  FAILED  ] frame-aligned V.92 Ru reception\n");
 		return 1;
 	}

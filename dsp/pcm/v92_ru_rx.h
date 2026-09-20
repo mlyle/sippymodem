@@ -28,6 +28,7 @@ enum v92_ru_rx_result {
  * in the established 12-symbol data frame; never reacquire it from Ru.
  * The caller owns the channel filter/delay and the subsequent TRN2u epoch. */
 struct v92_ru_rx {
+	double mean_level;
 	int16_t lu;
 	uint16_t run;
 	uint8_t phase;
@@ -38,8 +39,9 @@ bool v92_ru_rx_init(struct v92_ru_rx *receiver, int16_t lu,
 		    unsigned frame_phase);
 bool v92_ru_rx_is_valid(const struct v92_ru_rx *receiver);
 
-/* Require 240 consecutive levels within LU/4 of the expected +/-LU.
- * This is a conservative acquisition tolerance, not a normative limit.
+/* Require 240 consecutive correct-polarity symbols whose smoothed matched
+ * amplitude stays within LU/4. This is an acquisition tolerance, not a
+ * normative limit. Check each reversed symbol within LU/4 of -LU.
  * Report the first reversed symbol only at a data-frame boundary, and
  * COMPLETE on the 24th reversed symbol. Once complete, consume nothing:
  * the next level belongs to TRN2u. MISMATCH consumes its level and resets
