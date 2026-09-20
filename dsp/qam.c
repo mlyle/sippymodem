@@ -736,15 +736,15 @@ static void matched_filter_sample(
 	const struct qam_demodulator *demodulator,
 	double *in_phase, double *quadrature)
 {
+	size_t index = demodulator->history_index;
+
 	*in_phase = 0.0;
 	*quadrature = 0.0;
 	for (size_t tap = 0; tap < demodulator->matched_filter_count; ++tap) {
-		size_t index =
-			(demodulator->history_index +
-			 demodulator->matched_filter_count - 1 - tap) %
-			demodulator->matched_filter_count;
 		double coefficient = demodulator->matched_coefficients[tap];
 
+		index = index != 0 ? index - 1 :
+			demodulator->matched_filter_count - 1;
 		*in_phase += demodulator->in_phase_history[index] * coefficient;
 		*quadrature +=
 			demodulator->quadrature_history[index] * coefficient;

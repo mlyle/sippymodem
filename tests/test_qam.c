@@ -1097,6 +1097,76 @@ static bool test_configurable_point_power(void)
 	return true;
 }
 
+static bool test_matched_filter_ring_wrap(void)
+{
+	static const struct {
+		uint32_t sample_rate;
+		uint32_t symbol_rate;
+		unsigned int span;
+	} shapes[] = {
+		{ 8000, 8000, 2 }, /* Minimum three-tap filter. */
+		{ 8000, 600, 6 },  /* V.22's 81-tap filter. */
+		{ 5100, 200, 10 }, /* Maximum 256-tap filter. */
+	};
+	static const int16_t samples[] = { 0, INT16_MIN, INT16_MAX };
+
+	for (size_t shape = 0; shape < ARRAY_LENGTH(shapes); ++shape) {
+		struct qam_channel channel = v22_channel(1200);
+		struct qam_demodulator initialized;
+
+		channel.sample_rate = shapes[shape].sample_rate;
+		channel.symbol_rate_numerator = shapes[shape].symbol_rate;
+		channel.pulse_span_symbols = shapes[shape].span;
+		CHECK(qam_demodulator_init(&initialized, &channel) == QAM_OK,
+		      "matched-filter ring fixture did not initialize");
+		for (size_t head = 0; head < initialized.matched_filter_count;
+		     ++head) {
+			struct qam_demodulator receiver = initialized;
+			size_t count = receiver.matched_filter_count;
+
+			receiver.history_count = count;
+			receiver.history_index = head;
+			for (size_t index = 0; index < count; ++index) {
+				receiver.in_phase_history[index] = (int)(index % 17) - 8;
+				receiver.quadrature_history[index] = (int)(index % 13) - 6;
+			}
+			for (size_t sample = 0; sample < ARRAY_LENGTH(samples);
+			     ++sample) {
+				struct qam_point point;
+				struct qam_point expected = { 0 };
+				const struct qam_point *matched;
+				bool ready;
+
+				CHECK(qam_demodulator_sample(&receiver, samples[sample],
+					&point, &ready) == QAM_OK &&
+				      receiver.matched_history_count != 0 &&
+				      receiver.history_index == (head + sample + 1) % count,
+				      "matched-filter ring failed at %zu/%zu/%zu",
+				      shape, head, sample);
+				/* Direct convolution retains tap order across ring wrap. */
+				for (size_t tap = 0; tap < count; ++tap) {
+					size_t index =
+						(receiver.history_index + count - 1 - tap) % count;
+					double coefficient =
+						receiver.matched_coefficients[tap];
+
+					expected.in_phase +=
+						receiver.in_phase_history[index] * coefficient;
+					expected.quadrature +=
+						receiver.quadrature_history[index] * coefficient;
+				}
+				matched = &receiver.matched_history[
+					receiver.matched_history_count - 1];
+				CHECK(matched->in_phase == expected.in_phase &&
+				      matched->quadrature == expected.quadrature,
+				      "matched-filter sum changed at %zu/%zu/%zu",
+				      shape, head, sample);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct qam_channel channel = v22_channel(1200);
@@ -1275,6 +1345,7 @@ int main(void)
 		{ "channel carriers", test_channel_carriers },
 		{ "floating transmit path", test_floating_transmit_path },
 		{ "receive loopback", test_receive_loopback },
+		{ "matched-filter ring wrap", test_matched_filter_ring_wrap },
 		{ "receive tolerance", test_receive_tolerance },
 		{ "receive clock tracking", test_receive_clock_tracking },
 		{ "filtered clock tracking", test_filtered_clock_tracking },
