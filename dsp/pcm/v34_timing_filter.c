@@ -212,8 +212,6 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 	struct v34_analytic_sample *output)
 {
 	struct v34_timing_filter next;
-	uint32_t current;
-	uint32_t previous;
 	uint32_t real = 0;
 	uint32_t imag = 0;
 	struct v34_analytic_sample generated;
@@ -224,21 +222,16 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 			filter, sizeof(*filter), output, sizeof(*output)))
 		return V34_TIMING_FILTER_INVALID_ARGUMENT;
 	next = *filter;
-	current = pack_sample(next.current);
-	previous = pack_sample(next.previous);
-	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS;
-	     tap += 2u) {
-		uint32_t old_current = next.prefilter_history[tap];
-		uint32_t old_previous = next.prefilter_history[tap + 1u];
+	memmove(next.prefilter_history + 2, next.prefilter_history,
+		sizeof(next.prefilter_history) -
+		2 * sizeof(next.prefilter_history[0]));
+	next.prefilter_history[0] = pack_sample(next.current);
+	next.prefilter_history[1] = pack_sample(next.previous);
+	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS; ++tap) {
+		uint32_t sample = next.prefilter_history[tap];
 
-		next.prefilter_history[tap] = current;
-		next.prefilter_history[tap + 1u] = previous;
-		real += multiply_low_s32(high_s16(current), PREFILTER[tap]);
-		real += multiply_low_s32(high_s16(previous), PREFILTER[tap + 1u]);
-		imag += multiply_low_s32(low_s16(current), PREFILTER[tap]);
-		imag += multiply_low_s32(low_s16(previous), PREFILTER[tap + 1u]);
-		current = old_current;
-		previous = old_previous;
+		real += multiply_low_s32(high_s16(sample), PREFILTER[tap]);
+		imag += multiply_low_s32(low_s16(sample), PREFILTER[tap]);
 	}
 	generated = (struct v34_analytic_sample){
 		.in_phase = round_shift_s32_word_to_s16(imag, 14),

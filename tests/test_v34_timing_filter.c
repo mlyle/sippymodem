@@ -85,11 +85,25 @@ static bool test_exact_filter(void)
 			error_hash = hash_word(error_hash, (uint16_t)error);
 			if (slot == 1 || slot == 3 || slot == 5) {
 				struct v34_analytic_sample output;
+				uint32_t previous_history[V34_TIMING_FILTER_FIR_TAPS];
 
+				memcpy(previous_history, filter.prefilter_history,
+				       sizeof(previous_history));
 				CHECK(v34_timing_filter_prefilter(
 					      &filter, &output) ==
 					      V34_TIMING_FILTER_OK,
 				      "V.34 timing prefilter failed at %u/%u",
+				      group, slot);
+				CHECK(filter.prefilter_history[0] ==
+					      (((uint32_t)(uint16_t)filter.current.quadrature << 16) |
+					       (uint16_t)filter.current.in_phase) &&
+				      filter.prefilter_history[1] ==
+					      (((uint32_t)(uint16_t)filter.previous.quadrature << 16) |
+					       (uint16_t)filter.previous.in_phase) &&
+				      memcmp(filter.prefilter_history + 2, previous_history,
+					     sizeof(previous_history) -
+					     2 * sizeof(previous_history[0])) == 0,
+				      "V.34 prefilter pair history changed at %u/%u",
 				      group, slot);
 				sample_hash = hash_word(
 					sample_hash, (uint16_t)output.in_phase);
