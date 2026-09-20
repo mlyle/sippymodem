@@ -11,8 +11,8 @@
 
 enum {
 	TRN1U_EXTRA_SYMBOLS = V92_PCM_PHASE3_TRN1U_ALIGNMENT,
-	JA_TEST_SYMBOLS = V92_PCM_PHASE3_JA_MIN_SYMBOLS +
-			  V92_PCM_DIL_ZERO_DESCRIPTOR_BITS + 36,
+	JA_TEST_SYMBOLS = V92_PCM_PHASE3_JA_PREAMBLE_BITS +
+			  2 * V92_PCM_DIL_MAX_DESCRIPTOR_BITS + 36,
 	REFERENCE_SYMBOLS = V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
 			    TRN1U_EXTRA_SYMBOLS + JA_TEST_SYMBOLS,
 };
@@ -70,32 +70,45 @@ static bool prepare_trn1u(
 
 static bool check_stream(
 	enum g711_law law, uint8_t lu_ucode, uint32_t rate_mask,
-	size_t trn1u_symbols)
+	size_t trn1u_symbols, const struct v90_dil_parameters *dil)
 {
 	struct v92_pcm_phase3_trn1u trn1u;
 	struct v92_pcm_phase3_ja_tx tx;
-	uint8_t descriptor[V92_PCM_DIL_ZERO_DESCRIPTOR_BYTES];
+	struct v92_pcm_dil_parameters request = {
+		.downstream = { .sign_pattern_bits = 1, .training_pattern_bits = 1 },
+		.upstream_rate_mask = rate_mask,
+	};
+	uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES] = { 0 };
 	uint8_t history[REFERENCE_SYMBOLS] = { 0 };
 	uint8_t differential_memory;
+	size_t bits;
 
+	if (dil != NULL)
+		request.downstream = *dil;
 	CHECK(prepare_trn1u(
 		      &trn1u, law, lu_ucode, trn1u_symbols, history) &&
 	      v92_pcm_phase3_trn1u_can_handoff(&trn1u) &&
-	      v92_pcm_dil_encode_zero(
-		      rate_mask, descriptor, sizeof(descriptor)) ==
+	      v92_pcm_dil_encode(
+		      &request, descriptor, sizeof(descriptor), &bits) ==
 		      V92_PCM_DIL_OK &&
-	      v92_pcm_phase3_ja_tx_init(&tx, &trn1u, rate_mask) ==
+	      (dil == NULL ? v92_pcm_phase3_ja_tx_init(&tx, &trn1u, rate_mask) :
+		v92_pcm_phase3_ja_tx_init_dil(&tx, &trn1u, &request)) ==
 		      V92_PCM_PHASE3_JA_OK &&
 	      v92_pcm_phase3_ja_tx_is_valid(&tx) &&
 	      tx.emitted_symbols == 0u &&
+	      tx.descriptor_bits == bits &&
 	      tx.coding.previous_sign == history[trn1u_symbols - 1u] &&
 	      tx.coding.scrambler.history == trn1u.scrambler.history &&
 	      memcmp(tx.descriptor, descriptor, sizeof(descriptor)) == 0 &&
 	      !v92_pcm_phase3_ja_tx_can_stop(&tx),
 	      "Ja did not initialize for law %u LU %u mask 0x%05x",
 	      (unsigned int)law, lu_ucode, (unsigned int)rate_mask);
+	/* The transmitter must retain its own descriptor, not the source object. */
+	memset(&request, 0, sizeof(request));
 	differential_memory = history[trn1u_symbols - 1u];
-	for (size_t ja_index = 0; ja_index < JA_TEST_SYMBOLS; ++ja_index) {
+	for (size_t ja_index = 0;
+	     ja_index < V92_PCM_PHASE3_JA_PREAMBLE_BITS + 2 * bits + 36;
+	     ++ja_index) {
 		struct v90_pcm_symbol symbol;
 		size_t stream_index = trn1u_symbols + ja_index;
 		uint8_t input = ja_index < V92_PCM_PHASE3_JA_PREAMBLE_BITS ?
@@ -104,11 +117,11 @@ static bool check_stream(
 					descriptor,
 					(ja_index -
 					 V92_PCM_PHASE3_JA_PREAMBLE_BITS) %
-						V92_PCM_DIL_ZERO_DESCRIPTOR_BITS);
+						bits);
 		uint8_t scrambled = reference_scramble(
 			input, stream_index, history);
 		bool can_stop = ja_index + 1u >=
-					V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
+					V92_PCM_PHASE3_JA_PREAMBLE_BITS + bits &&
 				(ja_index + 1u) %
 					V92_PCM_PHASE3_JA_ALIGNMENT == 0u;
 
@@ -138,17 +151,39 @@ static bool test_generated_streams(void)
 	      "Ja dimensions changed");
 	CHECK(check_stream(
 		      G711_LAW_PCMU, 91u, 0u,
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS),
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, NULL),
 	      "zero-mask PCMU Ja stream failed");
 	CHECK(check_stream(
 		      G711_LAW_PCMA, 103u, V92_PCM_DIL_RATE_MASK_ALL,
 		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS +
-			      TRN1U_EXTRA_SYMBOLS),
+			      TRN1U_EXTRA_SYMBOLS, NULL),
 	      "full-mask PCMA Ja stream failed");
 	CHECK(check_stream(
 		      G711_LAW_PCMU, 127u, UINT32_C(0x52491),
-		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS),
+		      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, NULL),
 	      "sparse-mask PCMU Ja stream failed");
+	return true;
+}
+
+static bool test_nonzero_streams(void)
+{
+	struct v90_dil_parameters dil;
+	static const unsigned int segments[] = { 1, 192, 255 };
+	static const enum g711_law laws[] = { G711_LAW_PCMU, G711_LAW_PCMA };
+
+	CHECK(v90_dil_profile_init(&dil, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK,
+	      "DIL stream parameters did not initialize");
+	for (size_t n = 0; n < ARRAY_LENGTH(segments); ++n) {
+		dil.segment_count = (uint8_t)segments[n];
+		dil.sign_pattern_bits = n == 2 ? 128 : 120;
+		dil.training_pattern_bits = dil.sign_pattern_bits;
+		for (size_t i = 0; i < sizeof(dil.training_ucodes); ++i)
+			dil.training_ucodes[i] = i < segments[n] ? (uint8_t)(i % 128) : 0;
+		for (size_t law = 0; law < ARRAY_LENGTH(laws); ++law)
+			CHECK(check_stream(laws[law], 78, 0xf,
+				      V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS, &dil),
+			      "nonzero Ja failed: law=%u N=%u", laws[law], segments[n]);
+	}
 	return true;
 }
 
@@ -188,9 +223,41 @@ static bool test_contracts(void)
 	      v92_pcm_phase3_ja_tx_init(&tx, &trn1u, 1u) ==
 		      V92_PCM_PHASE3_JA_OK,
 	      "Ja contract instance did not initialize transactionally");
+	{
+		struct v92_pcm_dil_parameters invalid = { .upstream_rate_mask = 1 };
+
+		memcpy(tx_before, &tx, sizeof(tx));
+		CHECK(v92_pcm_phase3_ja_tx_init_dil(NULL, &trn1u, &invalid) ==
+			      V92_PCM_PHASE3_JA_INVALID_ARGUMENT &&
+		      v92_pcm_phase3_ja_tx_init_dil(&tx, NULL, &invalid) ==
+			      V92_PCM_PHASE3_JA_INVALID_ARGUMENT &&
+		      v92_pcm_phase3_ja_tx_init_dil(&tx, &trn1u, NULL) ==
+			      V92_PCM_PHASE3_JA_INVALID_ARGUMENT &&
+		      v92_pcm_phase3_ja_tx_init_dil(&tx, &trn1u, &invalid) ==
+			      V92_PCM_PHASE3_JA_INVALID_ARGUMENT &&
+		      memcmp(&tx, tx_before, sizeof(tx)) == 0,
+		      "invalid DIL request changed the Ja transmitter");
+	}
 
 	memset(&symbol, 0xa5, sizeof(symbol));
 	memcpy(symbol_before, &symbol, sizeof(symbol));
+	{
+		static const size_t lengths[] = { 0, 275, 277,
+			V92_PCM_DIL_MAX_DESCRIPTOR_BITS + 12, SIZE_MAX };
+
+		for (size_t i = 0; i < ARRAY_LENGTH(lengths); ++i) {
+			tx.descriptor_bits = lengths[i];
+			memcpy(tx_before, &tx, sizeof(tx));
+			CHECK(!v92_pcm_phase3_ja_tx_is_valid(&tx) &&
+			      !v92_pcm_phase3_ja_tx_can_stop(&tx) &&
+			      v92_pcm_phase3_ja_tx_next(&tx, &symbol) ==
+				      V92_PCM_PHASE3_JA_INVALID_STATE &&
+			      memcmp(&tx, tx_before, sizeof(tx)) == 0 &&
+			      memcmp(&symbol, symbol_before, sizeof(symbol)) == 0,
+			      "invalid Ja length %zu was not transactional", lengths[i]);
+		}
+		tx.descriptor_bits = V92_PCM_DIL_ZERO_DESCRIPTOR_BITS;
+	}
 	tx.descriptor[0] = 0u;
 	memcpy(tx_before, &tx, sizeof(tx));
 	CHECK(!v92_pcm_phase3_ja_tx_is_valid(NULL) &&
@@ -233,7 +300,7 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 PCM-upstream Ja\n");
-	if (!test_generated_streams() || !test_contracts()) {
+	if (!test_generated_streams() || !test_nonzero_streams() || !test_contracts()) {
 		fprintf(stderr, "[  FAILED  ] V.92 PCM-upstream Ja\n");
 		return 1;
 	}

@@ -11,26 +11,26 @@
 bool v92_pcm_phase3_ja_tx_is_valid(
 	const struct v92_pcm_phase3_ja_tx *tx)
 {
-	uint32_t rate_mask;
+	struct v92_pcm_dil_parameters parameters;
 
 	return tx != NULL && g711_law_is_valid(tx->law) &&
 	       tx->lu_ucode > 0u && tx->lu_ucode <= 127u &&
 	       pcm_binary_sign_is_valid(&tx->coding) &&
 	       tx->coding.scrambler.polynomial == V34_POLYNOMIAL_GPA &&
-	       v92_pcm_dil_decode_zero(
-		       tx->descriptor, sizeof(tx->descriptor), &rate_mask) ==
+	       v92_pcm_dil_decode(
+		       tx->descriptor, sizeof(tx->descriptor),
+		       tx->descriptor_bits, &parameters) ==
 		       V92_PCM_DIL_OK;
 }
 
-enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init(
+enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init_dil(
 	struct v92_pcm_phase3_ja_tx *tx,
 	const struct v92_pcm_phase3_trn1u *trn1u,
-	uint32_t upstream_rate_mask)
+	const struct v92_pcm_dil_parameters *parameters)
 {
 	struct v92_pcm_phase3_ja_tx initialized = { 0 };
 
-	if (tx == NULL || !v92_pcm_phase3_trn1u_can_handoff(trn1u) ||
-	    !v92_pcm_dil_rate_mask_is_valid(upstream_rate_mask))
+	if (tx == NULL || !v92_pcm_phase3_trn1u_can_handoff(trn1u))
 		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
 	initialized.law = trn1u->law;
 	initialized.lu_ucode = trn1u->lu_ucode;
@@ -38,20 +38,35 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init(
 		    &initialized.coding, &trn1u->scrambler,
 		    (uint8_t)(trn1u->scrambler.history & 1u)) !=
 		    PCM_BINARY_SIGN_OK ||
-	    v92_pcm_dil_encode_zero(
-		    upstream_rate_mask, initialized.descriptor,
-		    sizeof(initialized.descriptor)) != V92_PCM_DIL_OK ||
+	    v92_pcm_dil_encode(
+		    parameters, initialized.descriptor,
+		    sizeof(initialized.descriptor),
+		    &initialized.descriptor_bits) != V92_PCM_DIL_OK ||
 	    !v92_pcm_phase3_ja_tx_is_valid(&initialized))
 		return V92_PCM_PHASE3_JA_INVALID_ARGUMENT;
 	*tx = initialized;
 	return V92_PCM_PHASE3_JA_OK;
 }
 
+enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_init(
+	struct v92_pcm_phase3_ja_tx *tx,
+	const struct v92_pcm_phase3_trn1u *trn1u,
+	uint32_t upstream_rate_mask)
+{
+	const struct v92_pcm_dil_parameters parameters = {
+		.downstream = { .sign_pattern_bits = 1, .training_pattern_bits = 1 },
+		.upstream_rate_mask = upstream_rate_mask,
+	};
+
+	return v92_pcm_phase3_ja_tx_init_dil(tx, trn1u, &parameters);
+}
+
 bool v92_pcm_phase3_ja_tx_can_stop(
 	const struct v92_pcm_phase3_ja_tx *tx)
 {
 	return v92_pcm_phase3_ja_tx_is_valid(tx) &&
-	       tx->emitted_symbols >= V92_PCM_PHASE3_JA_MIN_SYMBOLS &&
+	       tx->emitted_symbols >=
+		       V92_PCM_PHASE3_JA_PREAMBLE_BITS + tx->descriptor_bits &&
 	       tx->emitted_symbols % V92_PCM_PHASE3_JA_ALIGNMENT == 0u;
 }
 
@@ -75,7 +90,7 @@ enum v92_pcm_phase3_ja_result v92_pcm_phase3_ja_tx_next(
 	} else {
 		descriptor_index =
 			(next.emitted_symbols - V92_PCM_PHASE3_JA_PREAMBLE_BITS) %
-			V92_PCM_DIL_ZERO_DESCRIPTOR_BITS;
+			next.descriptor_bits;
 		input_bit = packed_msb_bit(
 			next.descriptor, (size_t)descriptor_index);
 	}

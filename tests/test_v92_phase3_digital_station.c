@@ -4,7 +4,7 @@
 #include <v92_pcm_phase4_trn2u_line_rx.h>
 #include <v92_phase3_analog_station.h>
 #include <v92_phase3_digital_station.h>
-#include <packed_bits.h>
+#include <v92_pcm_phase3_ja.h>
 
 #include "test.h"
 
@@ -275,7 +275,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 		.rate_renegotiation_constellation = V92_CONSTELLATION_4_POINT };
 	struct v92_pcm_dil_parameters request = { .upstream_rate_mask = 0xf };
 	struct v92_pcm_phase3_trn1u initial;
-	struct pcm_binary_sign coding;
+	struct v92_pcm_phase3_ja_tx ja;
 	struct v92_su su;
 	struct fractional_delay delay;
 	struct v92_pcm_phase3_cpt_tx cpt;
@@ -283,8 +283,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 	struct v92_cpt_parameters parameters = cpt_parameters(law), received;
 	struct v92_pcm_phase3_cpt_line_handoff handoff;
 	struct v90_pcm_symbol level;
-	uint8_t descriptor[V92_PCM_DIL_MAX_DESCRIPTOR_BYTES];
-	size_t bits, ja_symbols = 0, ri_symbols = 0;
+	size_t ri_symbols = 0;
 	bool mid_segment_finish = false, e1u_started = false, finished = false;
 	bool trn2u_started = false;
 	bool trn1u_overlapped_jp = false;
@@ -293,8 +292,6 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 	fractional_delay_init(&delay);
 	CHECK(v90_dil_profile_init(&request.downstream,
 		      V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
-	      v92_pcm_dil_encode(&request, descriptor, sizeof(descriptor), &bits) ==
-		      V92_PCM_DIL_OK &&
 	      v92_phase3_digital_station_init(&digital, law, TEST_UCODE, V90_PHASE3_TRN1D_SYMBOLS, 0.0,
 		      TEST_SU_THRESHOLD, &jd, &jp) == V92_PHASE3_DIGITAL_STATION_OK &&
 	      v92_pcm_phase3_trn1u_init(&initial, law, TEST_UCODE) ==
@@ -311,13 +308,12 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 				      V92_PHASE3_DIGITAL_STATION_OK,
 			      "nonzero DIL transmit failed at %zu", index);
 		if (peer == PEER_TRN1U && initial.emitted_symbols == 2040) {
-			CHECK(pcm_binary_sign_init_from_scrambler(&coding,
-				      &initial.scrambler, initial.scrambler.history & 1u) ==
-				      PCM_BINARY_SIGN_OK, "Ja coding handoff failed");
+			CHECK(v92_pcm_phase3_ja_tx_init_dil(&ja, &initial, &request) ==
+				      V92_PCM_PHASE3_JA_OK, "Ja coding handoff failed");
 			peer = PEER_JA;
 		}
 		if (peer == PEER_JA && digital.downstream.jd_records != 0 &&
-		    ja_symbols % 12u == 0) {
+		    v92_pcm_phase3_ja_tx_can_stop(&ja)) {
 			CHECK(v92_su_init(&su, level.sample) == V92_SU_OK &&
 			      memcmp(&digital.downstream.dil.parameters, &request.downstream,
 				     sizeof(request.downstream)) == 0 &&
@@ -346,13 +342,8 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 				      V92_PCM_PHASE3_TRN1U_OK, "initial TRN1u failed");
 			sample = symbol.sample;
 		} else if (peer == PEER_JA) {
-			uint8_t sign;
-			uint8_t bit = ja_symbols < 24 ? 1u :
-				packed_msb_bit(descriptor, (ja_symbols - 24u) % bits);
-			CHECK(pcm_binary_sign_encode(&coding, bit, &sign) == PCM_BINARY_SIGN_OK &&
-			      v90_pcm_symbol_make(&symbol, law, TEST_UCODE, sign == 0u),
+			CHECK(v92_pcm_phase3_ja_tx_next(&ja, &symbol) == V92_PCM_PHASE3_JA_OK,
 			      "nonzero Ja generation failed");
-			ja_symbols++;
 			sample = symbol.sample;
 		} else if (peer == PEER_SU) {
 			enum v92_su_result result = v92_su_next(&su, &delay, &sample);
