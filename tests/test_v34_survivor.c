@@ -578,6 +578,34 @@ static bool test_traceback_index_bounds(void)
 	return true;
 }
 
+static bool check_decision_controls(struct v34_survivor_decision *decision)
+{
+	uint8_t labels[2] = { 0 };
+	bool valid = true;
+
+	for (unsigned symbol = 0; symbol < 2; ++symbol) {
+		const struct v34_grid_point *point = &decision->channel_output[symbol];
+
+		valid &= v34_grid_point_is_bounded(point) &&
+			v34_grid_subset_label(point, &labels[symbol]) == V34_TRELLIS_OK;
+	}
+	for (uint8_t inversion = 0; inversion <= 2; ++inversion)
+		for (uint8_t output = 0; output <= 2; ++output) {
+			decision->inversion_bit = inversion;
+			decision->convolutional_output = output;
+			bool expected = valid && inversion <= 1 && output <= 1 &&
+				output == ((labels[0] ^ labels[1] ^ inversion) & 1u);
+
+			CHECK(v34_survivor_decision_is_valid(decision) == expected,
+			      "decision parity changed for (%d,%d),(%d,%d) inversion %u output %u",
+			      decision->channel_output[0].in_phase,
+			      decision->channel_output[0].quadrature,
+			      decision->channel_output[1].in_phase,
+			      decision->channel_output[1].quadrature, inversion, output);
+		}
+	return true;
+}
+
 static bool test_decision_parity(void)
 {
 	/* All signed modulo-eight residues, the legal rails, off-grid values,
@@ -591,9 +619,7 @@ static bool test_decision_parity(void)
 	CHECK(!v34_survivor_decision_is_valid(NULL), "null decision accepted");
 	for (size_t index = 0; index < count * count * count * count; ++index) {
 		struct v34_survivor_decision decision = { 0 };
-		uint8_t labels[2] = { 0 };
 		size_t digits = index;
-		bool valid = true;
 
 		for (unsigned symbol = 0; symbol < 2; ++symbol) {
 			struct v34_grid_point *point = &decision.channel_output[symbol];
@@ -602,20 +628,34 @@ static bool test_decision_parity(void)
 			digits /= count;
 			point->quadrature = coordinates[digits % count];
 			digits /= count;
-			valid &= v34_grid_point_is_bounded(point) &&
-				v34_grid_subset_label(point, &labels[symbol]) == V34_TRELLIS_OK;
 		}
-		for (uint8_t inversion = 0; inversion <= 2; ++inversion)
-			for (uint8_t output = 0; output <= 2; ++output) {
-				decision.inversion_bit = inversion;
-				decision.convolutional_output = output;
-				bool expected = valid && inversion <= 1 && output <= 1 &&
-					output == ((labels[0] ^ labels[1] ^ inversion) & 1u);
+		CHECK(check_decision_controls(&decision), "coordinate case %zu failed", index);
+	}
+	return true;
+}
 
-				CHECK(v34_survivor_decision_is_valid(&decision) == expected,
-				      "decision parity changed for coordinates %zu inversion %u output %u",
-				      index, inversion, output);
-			}
+static bool test_decision_coordinate_range(void)
+{
+	struct v34_survivor_decision decision = {
+		.channel_output = { { -255, -1 }, { 1, 255 } },
+	};
+	int16_t *coordinates[] = {
+		&decision.channel_output[0].in_phase,
+		&decision.channel_output[0].quadrature,
+		&decision.channel_output[1].in_phase,
+		&decision.channel_output[1].quadrature,
+	};
+
+	/* Hold the other coordinates on-grid so they cannot mask a bad slot. */
+	for (size_t slot = 0; slot < ARRAY_LENGTH(coordinates); ++slot) {
+		int16_t saved = *coordinates[slot];
+
+		for (int32_t value = INT16_MIN; value <= INT16_MAX; ++value) {
+			*coordinates[slot] = (int16_t)value;
+			CHECK(check_decision_controls(&decision),
+			      "coordinate slot %zu value %d failed", slot, (int)value);
+		}
+		*coordinates[slot] = saved;
 	}
 	return true;
 }
@@ -627,6 +667,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "bounded decision parity", test_decision_parity },
+		{ "full coordinate range", test_decision_coordinate_range },
 		{ "generated round trip", test_generated_round_trip },
 		{ "path correction", test_path_correction },
 		{ "transactional validation", test_validation },

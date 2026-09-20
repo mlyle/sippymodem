@@ -11,6 +11,10 @@ bool v34_survivor_decision_is_valid(
 	const struct v34_survivor_decision *decision)
 {
 	uint16_t parity = 0;
+	uint16_t outside = 0;
+
+	_Static_assert(V34_CHANNEL_COORDINATE_LIMIT == 255,
+		       "odd-grid mask requires the -255..255 lattice");
 
 	if (decision == NULL || decision->convolutional_output > 1u ||
 	    decision->inversion_bit > 1u)
@@ -20,14 +24,15 @@ bool v34_survivor_decision_is_valid(
 		const struct v34_grid_point *point =
 			&decision->channel_output[symbol];
 
-		if (!v34_grid_point_is_bounded(point) ||
-		    !v34_grid_point_coordinates_are_odd(point))
-			return false;
+		/* Biasing -255..255 by 255 leaves only even values in 0..510. */
+		outside |= (uint16_t)(point->in_phase + 255u) |
+			   (uint16_t)(point->quadrature + 255u);
 		/* Only bit zero of Figure 9's subset label enters Y0. For odd
 		 * coordinates it is the XOR of their second-lowest bits. */
 		parity ^= (uint16_t)point->in_phase ^ (uint16_t)point->quadrature;
 	}
-	return decision->convolutional_output ==
+	return (outside & UINT16_C(0xfe01)) == 0 &&
+	       decision->convolutional_output ==
 	       (((parity >> 1) ^ decision->inversion_bit) & 1u);
 }
 
