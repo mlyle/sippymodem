@@ -2362,17 +2362,40 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 	/* With no new likelihood evidence, equally ranked codec hypotheses can
 	 * disagree about an old non-payload slot. Never compare unwritten bits
 	 * from the suppressed branch or release a placeholder from the winner. */
+	for (unsigned primary = 0u; primary < 2u; ++primary)
 	for (unsigned suppressed = 0u; suppressed < 2u; ++suppressed) {
 		struct v92_upstream_data_rx paired = saved;
 		struct v92_upstream_data_frame frame = { 0 };
 
-		paired.model.primary = 0u;
+		paired.model.primary = (uint8_t)primary;
 		paired.model.cost[0] = paired.model.cost[1] = 0u;
 		paired.model.alternate = paired.decoder;
-		struct v92_pcm_frame_rx *branch = suppressed ? &paired.model.alternate : &paired.decoder;
+		struct v92_pcm_frame_rx *branch = suppressed == primary ?
+			&paired.decoder : &paired.model.alternate;
 		for (unsigned i = 0u; i < branch->path_count; ++i)
 			branch->paths[i].nondata_frames = 1u;
 		CHECK(v92_upstream_data_rx_is_valid(&paired), "paired non-payload fixture invalid");
+		/* Advance both model-indexed paths independently. A normalized
+		 * primary-1 tie must transfer model 0 into the primary owner. */
+		struct v92_pcm_frame_rx expected[2];
+		const int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS] = { 0 };
+		const bool received[V92_PCM_MAPPING_FRAME_SYMBOLS] = { false };
+
+		expected[primary] = paired.decoder;
+		expected[primary ^ 1u] = paired.model.alternate;
+		for (unsigned model = 0u; model < 2u; ++model) {
+			struct v92_pcm_frame_channel channel = {
+				.model = &paired.model.model[model], .received = received,
+			};
+			struct v92_pcm_frame_decision decision;
+			struct v92_pcm_frame_likelihood likelihood;
+			uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+			CHECK(v92_pcm_frame_decode_observed(&expected[model], samples, false,
+				bits, mapping.data_bits_per_frame, &decision, &channel, &likelihood) ==
+				V92_PCM_FRAME_OK && likelihood.cost == 0u,
+				"erased codec path changed its normalized metric");
+		}
 		for (unsigned i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 			CHECK(v92_upstream_data_rx_octet(&paired, 0u, 0, false, &frame) ==
 				(i == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u ? V92_UPSTREAM_DATA_RX_FRAME :
@@ -2382,6 +2405,9 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			(suppressed ? frame.bit_count == mapping.data_bits_per_frame && frame.ambiguous :
 			 frame.bit_count == 0u) && v92_upstream_data_rx_is_valid(&paired),
 			"tied codec models mishandled branch %u's non-payload slot", suppressed);
+		CHECK(memcmp(&paired.decoder, &expected[0], sizeof(expected[0])) == 0 &&
+			memcmp(&paired.model.alternate, &expected[1], sizeof(expected[1])) == 0,
+			"tied codec models changed primary/alternate decoder ownership");
 	}
 	struct v92_upstream_data_frame output, unchanged;
 	memset(&output, 0xa5, sizeof(output));

@@ -376,10 +376,19 @@ enum v92_pcm_frame_result v92_upstream_model_decode(struct v92_upstream_model *m
 			decision->ambiguous = true;
 	}
 	if (chosen != primary) {
-		struct v92_pcm_frame_rx old = *decoder;
+		unsigned char *current = (unsigned char *)decoder;
+		unsigned char *alternate = (unsigned char *)&model->alternate;
+		unsigned char old[16];
 
-		*decoder = model->alternate;
-		model->alternate = old;
+		for (size_t i = 0; i < sizeof(*decoder); i += sizeof(old)) {
+			size_t count = sizeof(*decoder) - i;
+
+			if (count > sizeof(old))
+				count = sizeof(old);
+			memcpy(old, current + i, count);
+			memcpy(current + i, alternate + i, count);
+			memcpy(alternate + i, old, count);
+		}
 		model->primary = chosen;
 	}
 	/* Relative evidence bounds growth over arbitrarily long calls. */
