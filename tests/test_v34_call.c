@@ -879,6 +879,29 @@ static bool test_full_retrain(void)
 	return true;
 }
 
+static bool test_echo_retrain(void)
+{
+	for (unsigned int law = 0; law < 2; ++law) {
+		struct endpoint caller;
+		struct endpoint answerer;
+		struct channel channel = { .pcma = law != 0 };
+
+		channel.echo[V34_ANSWERING_STATION] = (struct self_echo){
+			.delay_samples = TEST_ECHO_DELAY_SAMPLES,
+			.gain_q15 = 14000,
+		};
+		CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
+		      endpoint_init(&answerer, V34_ANSWERING_STATION) &&
+		      run_initialized_pair(&caller, &answerer, &channel) &&
+		      retrain_online_pair(&caller, &answerer, &channel,
+				  V34_CALLING_STATION) &&
+		      retrain_online_pair(&caller, &answerer, &channel,
+				  V34_ANSWERING_STATION),
+		      "law %u retrain lost mapped data through answerer echo", law);
+	}
+	return true;
+}
+
 static bool check_retrain_selects_new_rate(bool pcma)
 {
 	struct endpoint caller;
@@ -1933,6 +1956,7 @@ int main(void)
 		{ "generated station echo", test_echo_calls },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
+		{ "full retrain through answerer echo", test_echo_retrain },
 		{ "retrain selects new INFO1a rate pair",
 		  test_retrain_selects_new_rate },
 		{ "unanswered probe recovery", test_probe_recovery },

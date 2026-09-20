@@ -622,20 +622,16 @@ static bool sample_ranging(
 	measured = child.round_trip_delay_samples;
 	prior = phase2->prior_round_trip_delay_samples;
 	separation = measured > prior ? measured - prior : prior - measured;
-	if (prior != 0u && measured > prior &&
-	    phase2->state.ranging.control.round_trip_delay_valid &&
-	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
-	     child.kind == PHASE2_PROBE_RECEIVE_READY ||
-	     child.kind == PHASE2_PROBE_TRANSMIT_READY) &&
-	    separation > PHASE2_RANGING_TURNAROUND_SAMPLES &&
-	    phase2->local_role == V34_ANSWERING_STATION)
-		phase2->concurrent_probe_receive = true;
 	if (prior != 0u &&
 	    phase2->state.ranging.control.round_trip_delay_valid &&
 	    (child.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED ||
 	     child.kind == PHASE2_PROBE_RECEIVE_READY ||
 	     child.kind == PHASE2_PROBE_TRANSMIT_READY) &&
 	    separation > PHASE2_RANGING_TURNAROUND_SAMPLES) {
+		/* Either alias can leave the caller probing before our own probe.
+		 * Retain that measurement instead of waiting for it a second time. */
+		if (phase2->local_role == V34_ANSWERING_STATION)
+			phase2->concurrent_probe_receive = true;
 		child.round_trip_delay_samples = prior;
 		phase2->state.ranging.control.round_trip_delay_samples = prior;
 	}

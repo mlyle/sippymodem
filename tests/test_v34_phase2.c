@@ -508,7 +508,7 @@ static bool test_generated_timelines(void)
 	return true;
 }
 
-static bool test_retrain_timeline(void)
+static bool check_retrain_timeline(bool late_alias)
 {
 	struct v34_info0 caller_info0 = test_v34_phase2_capabilities(
 		V34_CALLING_STATION);
@@ -542,7 +542,7 @@ static bool test_retrain_timeline(void)
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
 
-		if (!answerer_late_alias_injected &&
+		if (late_alias && !answerer_late_alias_injected &&
 		    pair.answerer.stage == V34_PHASE2_RANGING &&
 		    pair.answerer.state.ranging.control.phase ==
 			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
@@ -578,7 +578,7 @@ static bool test_retrain_timeline(void)
 			break;
 		}
 	}
-	CHECK(ready && answerer_late_alias_injected &&
+	CHECK(ready && answerer_late_alias_injected == late_alias &&
 	      answerer_concurrent_receive_armed &&
 	      caller_trial_rejected &&
 	      caller_rtd == RETRAIN_PRIOR_RTD_SAMPLES &&
@@ -595,7 +595,17 @@ static bool test_retrain_timeline(void)
 	return true;
 }
 
-static bool test_initial_concurrent_trial(void)
+static bool test_retrain_timeline(void)
+{
+	/* The short generated line measures less than the retained RTD. Adding
+	 * an extra reversal interval makes the opposite alias; both must retain
+	 * the established delay and listen for an overlapping peer probe. */
+	CHECK(check_retrain_timeline(false), "early retrain alias failed");
+	CHECK(check_retrain_timeline(true), "late retrain alias failed");
+	return true;
+}
+
+static bool check_concurrent_trial(bool retraining)
 {
 	struct v34_phase2_probe_receiver_measurement measurement;
 	struct v34_phase2_probe_sequence peer_probe;
@@ -610,14 +620,30 @@ static bool test_initial_concurrent_trial(void)
 	bool handed_off = false;
 
 	CHECK(pair_init(&pair, TEST_CODEC_LINEAR, 1),
-	      "initial concurrent-trial pair did not initialize");
+	      "concurrent-trial pair did not initialize");
+	if (retraining) {
+		struct v34_info0 caller = test_v34_phase2_capabilities(
+			V34_CALLING_STATION);
+		struct v34_info0 answerer = test_v34_phase2_capabilities(
+			V34_ANSWERING_STATION);
+
+		CHECK(v34_phase2_init_retrain(
+			      &pair.caller, V34_CALLING_STATION, TEST_AMPLITUDE,
+			      &caller, &answerer, RETRAIN_PRIOR_RTD_SAMPLES) ==
+			      V34_PHASE2_OK &&
+		      v34_phase2_init_retrain(
+			      &pair.answerer, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+			      &answerer, &caller, RETRAIN_PRIOR_RTD_SAMPLES) ==
+			      V34_PHASE2_OK,
+		      "concurrent retrain pair did not initialize");
+	}
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_event caller_event;
 		struct v34_phase2_event answerer_event;
 		int16_t caller_transmit;
 		int16_t answerer_transmit;
 
-		if (!delay_injected &&
+		if (!retraining && !delay_injected &&
 		    pair.answerer.stage == V34_PHASE2_RANGING &&
 		    pair.answerer.state.ranging.control.phase ==
 			    PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
@@ -644,10 +670,10 @@ static bool test_initial_concurrent_trial(void)
 			break;
 		}
 	}
-	CHECK(delay_injected && armed &&
+	CHECK(delay_injected == !retraining && armed &&
 	      measured_round_trip_delay >=
 		      V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES,
-	      "echo-safe initial answerer trial was not armed");
+	      "answerer concurrent trial was not armed");
 	empty_trial = pair.answerer;
 	for (size_t index = 0;
 	     index <= V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
@@ -664,11 +690,13 @@ static bool test_initial_concurrent_trial(void)
 			break;
 		}
 	}
-	CHECK(disabled &&
-	      !empty_trial.state.initial_probe.concurrent_receive_enabled &&
+	CHECK(disabled == !retraining &&
+	      empty_trial.state.initial_probe.concurrent_receive_enabled ==
+		      retraining &&
+	      !empty_trial.remote_probe_stored &&
 	      v34_phase2_is_valid(&empty_trial) &&
 	      !v34_phase2_has_failed(&empty_trial),
-	      "empty initial trial did not disable itself transactionally");
+	      "empty concurrent trial did not preserve its receive policy");
 	CHECK(v34_phase2_probe_sequence_init(
 		      &peer_probe, TEST_AMPLITUDE,
 		      measured_round_trip_delay) ==
@@ -686,7 +714,17 @@ static bool test_initial_concurrent_trial(void)
 			      &pair.answerer.state.initial_probe,
 			      peer_transmit, &receive_event) ==
 			      V34_PHASE2_INITIAL_PROBE_OK,
-		      "initial overlapping probe stopped at %zu", index);
+		      "overlapping probe stopped at %zu", index);
+		/* The initial-call trial must not adopt a later returned copy of
+		 * the local probe after its echo-safe capture has expired. */
+		if (!retraining)
+			CHECK(v34_phase2_initial_probe_sample_concurrent(
+				      &empty_trial.state.initial_probe,
+				      peer_transmit, &receive_event) ==
+				      V34_PHASE2_INITIAL_PROBE_OK &&
+			      !empty_trial.state.initial_probe.concurrent_receive_enabled &&
+			      !empty_trial.remote_probe_stored,
+			      "expired initial trial adopted delayed echo at %zu", index);
 		if (pair.answerer.state.initial_probe.concurrent_receive.phase ==
 		    V34_PHASE2_PROBE_ACQUISITION_COMPLETE) {
 			received = true;
@@ -694,7 +732,7 @@ static bool test_initial_concurrent_trial(void)
 		}
 	}
 	CHECK(received && v34_phase2_is_valid(&pair.answerer),
-	      "initial answerer did not retain its overlapping probe");
+	      "answerer did not retain its overlapping probe");
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_event caller_event;
 		struct v34_phase2_event answerer_event;
@@ -718,7 +756,14 @@ static bool test_initial_concurrent_trial(void)
 	      v34_phase2_receive_gain(
 		      &pair.answerer, &receive_gain) == V34_PHASE2_OK &&
 	      measurement_is_finite(&measurement) && receive_gain > 0,
-	      "initial concurrent measurement did not cross the reciprocal handoff");
+	      "concurrent measurement did not cross the reciprocal handoff");
+	return true;
+}
+
+static bool test_concurrent_trials(void)
+{
+	CHECK(check_concurrent_trial(false), "initial concurrent trial failed");
+	CHECK(check_concurrent_trial(true), "short-alias concurrent trial failed");
 	return true;
 }
 
@@ -1043,8 +1088,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated probe timelines", test_generated_timelines },
-		{ "initial concurrent probe trial",
-		  test_initial_concurrent_trial },
+		{ "concurrent probe trials", test_concurrent_trials },
 		{ "generated retrain timeline", test_retrain_timeline },
 		{ "retrain probe boundaries", test_retrain_probe_boundaries },
 		{ "validation", test_validation },
