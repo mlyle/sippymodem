@@ -621,6 +621,21 @@ static bool test_pcmu_call(void)
 	      answerer.mapping_frames_supplied >=
 		      caller.mapping_frames_received,
 	      "full call lost a phase or mapping frame");
+	{
+		struct v34_call failed = caller.call;
+
+		failed.state.phase4.failed = true;
+		CHECK(!v34_call_is_valid(&failed) && !v34_call_has_failed(&failed),
+		      "call accepted an unpropagated child failure");
+		failed.failed = true;
+		CHECK(v34_call_is_valid(&failed) && v34_call_has_failed(&failed),
+		      "call rejected a propagated child failure");
+		failed.state.phase4.receive.semantic.data.data_receiver
+			.channel_receiver.frame_decoder.channel_decoder
+			.survivor.path_index = V34_SURVIVOR_TRACEBACK_INTERVALS;
+		CHECK(!v34_call_is_valid(&failed) && !v34_call_has_failed(&failed),
+		      "failure flag hid invalid nested receive history");
+	}
 	return true;
 }
 

@@ -1266,6 +1266,21 @@ static bool test_validation_and_transactionality(void)
 	CHECK(run_pair(
 		      &caller, &answerer, &caller_seen, &answerer_seen),
 	      "validation Phase 4 pair failed");
+	exchange = caller.phase4;
+	exchange.receive.failed = true;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange) &&
+	      !v34_phase4_exchange_has_failed(&exchange),
+	      "Phase 4 accepted an unpropagated receiver failure");
+	exchange.failed = true;
+	CHECK(v34_phase4_exchange_is_valid(&exchange) &&
+	      v34_phase4_exchange_has_failed(&exchange),
+	      "Phase 4 rejected a propagated receiver failure");
+	exchange.receive.semantic.data.data_receiver.channel_receiver
+		.frame_decoder.channel_decoder.survivor.path_index =
+			V34_SURVIVOR_TRACEBACK_INTERVALS;
+	CHECK(!v34_phase4_exchange_is_valid(&exchange) &&
+	      !v34_phase4_exchange_has_failed(&exchange),
+	      "failure flag hid invalid nested Phase 4 receive history");
 	{
 		struct v34_phase4_exchange_configuration configuration =
 			phase4_configuration(V34_CALLING_STATION);

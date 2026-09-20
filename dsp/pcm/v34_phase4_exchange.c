@@ -223,8 +223,7 @@ static bool data_state_is_valid(
 		return false;
 	}
 	if (exchange->receive_data_active) {
-		if (!v34_phase34_receiver_is_valid(&exchange->receive) ||
-		    !v34_phase3_profile_is_equal(
+		if (!v34_phase3_profile_is_equal(
 			    &exchange->data_startup.receive.transmitting_profile,
 			    &exchange->receive.transmitting_profile) ||
 		    exchange->receive.stage != V34_PHASE34_RECEIVER_DATA)
@@ -362,8 +361,7 @@ bool v34_phase4_exchange_is_valid(
 	      exchange->mp_transition_symbols > maximum_transition)) ||
 	    local_role(exchange) == peer_transmit_profile(exchange)->local_role ||
 	    transmit_sample_rate(exchange) != V34_RECEIVE_TIMING_SAMPLE_RATE ||
-	    (v34_phase34_receiver_has_failed(&exchange->receive) &&
-	     !exchange->failed) ||
+	    (exchange->receive.failed && !exchange->failed) ||
 	    (exchange->transmit_mp_started && !trn_ready_for_mp(exchange)) ||
 	    exchange->transmit_mp_records_completed >
 		    (exchange->transmit_mp_prime_started ?

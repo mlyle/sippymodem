@@ -146,12 +146,12 @@ bool v34_call_is_valid(const struct v34_call *call)
 		break;
 	case V34_CALL_PHASE3:
 		child_valid = v34_phase3_exchange_is_valid(&call->state.phase3);
-		child_failed = v34_phase3_exchange_has_failed(&call->state.phase3);
+		child_failed = call->state.phase3.failed;
 		child_role = call->state.phase3.local_role;
 		break;
 	case V34_CALL_PHASE4:
 		child_valid = v34_phase4_exchange_is_valid(&call->state.phase4);
-		child_failed = v34_phase4_exchange_has_failed(&call->state.phase4);
+		child_failed = call->state.phase4.failed;
 		child_role = v34_station_peer_role(
 			call->state.phase4.receive.transmitting_profile.local_role);
 		break;
