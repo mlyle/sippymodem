@@ -313,13 +313,30 @@ static bool test_transactional_validation(void)
 	      memcmp(&points, &before, sizeof(points)) == 0 &&
 	      mapping_frames_are_equal(&request, &saved_request),
 	      "pending frame was replaced");
-	points.point[0].in_phase = NAN;
-	CHECK(!v34_data_points_is_valid(&points),
-	      "non-finite queued point was accepted");
-	points = before;
-	points.next_point = V34_SYMBOLS_PER_MAPPING_FRAME + 1u;
-	CHECK(!v34_data_points_is_valid(&points),
-	      "out-of-range point cursor was accepted");
+	for (unsigned int corruption = 0; corruption < 3; ++corruption) {
+		points = before;
+		if (corruption == 0)
+			points.point[V34_SYMBOLS_PER_MAPPING_FRAME - 1u].in_phase = NAN;
+		else if (corruption == 1)
+			points.next_point = V34_SYMBOLS_PER_MAPPING_FRAME + 1u;
+		else
+			points.normalizer.normalization_gain = NAN;
+		rejected = points;
+		CHECK(!v34_data_points_is_valid(&points) &&
+		      !v34_data_points_needs_mapping_frame(&points) &&
+		      v34_data_points_preview_mapping_frame(&points, &request) ==
+			      V34_DATA_POINTS_INVALID_ARGUMENT &&
+		      v34_data_points_queue_mapping_frame(
+			      &points, bits, request.primary_bits, auxiliary) ==
+			      V34_DATA_POINTS_INVALID_ARGUMENT &&
+		      v34_data_points_next(&points, &output) ==
+			      V34_DATA_POINTS_INVALID_ARGUMENT &&
+		      memcmp(&points, &rejected, sizeof(points)) == 0 &&
+		      mapping_frames_are_equal(&request, &saved_request) &&
+		      output.in_phase == 123.0 && output.quadrature == -456.0,
+		      "corrupt point state %u was accepted or changed outputs",
+		      corruption);
+	}
 	return true;
 }
 
