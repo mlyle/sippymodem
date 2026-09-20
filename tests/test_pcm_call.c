@@ -8629,12 +8629,21 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "data queue drain failed");
 	}
 	bool broken_checked = false;
+	double ru_history[2] = {-upstream->upstream_level, -upstream->upstream_level};
 	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
 		int sign = i % 6u < 3u ? 1 : -1;
 		if (i >= PCM_R_SYMBOLS)
 			sign = -sign;
+		double input = sign * upstream->upstream_level;
+		double filtered = input;
+		/* The same residual channel affects the request and its reversal;
+		 * retain history across that boundary. Other epochs stay clean. */
+		if (epoch == 1u)
+			filtered = 0.8 * input + 0.25 * ru_history[0] - 0.25 * ru_history[1];
+		ru_history[1] = ru_history[0];
+		ru_history[0] = input;
 		CHECK(v92_rate_call_sample(&test, decode_octet(law,
-			encode_octet(law, (int16_t)(sign * upstream->upstream_level)))), "Ru/bar failed");
+			encode_octet(law, (int16_t)filtered))), "Ru/bar failed");
 		if (local && test.call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU &&
 		    test.call.state.phase4.v92.owner.ru.receive.signal.bar_symbols == 1u) {
 			struct pcm_call broken = test.call;

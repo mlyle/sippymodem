@@ -104,14 +104,17 @@ static bool test_rejection_and_recovery(void)
 		      V92_RU_RX_MISMATCH && rx.phase == (shift + 1u) % 12u,
 		      "accepted off-frame reversal or moved alignment");
 	}
-	for (unsigned corrupt = 0; corrupt < 24; ++corrupt) {
+	/* Silence at every position, and wrong polarity after bar starts.
+	 * At position zero the old polarity is simply continuing Ru. */
+	for (unsigned wrong_polarity = 0; wrong_polarity < 2; ++wrong_polarity)
+	for (unsigned corrupt = wrong_polarity; corrupt < 24; ++corrupt) {
 		CHECK(acquire(&rx), "acquisition failed");
 		for (unsigned i = 0; i < corrupt; ++i)
 			CHECK(v92_ru_rx_sample(&rx, -ru_level(i, 1000)) ==
 			      (i == 0 ? V92_RU_RX_BAR_STARTED : V92_RU_RX_BUFFERING),
 			      "lost bar");
-		CHECK(v92_ru_rx_sample(&rx, 0) == V92_RU_RX_MISMATCH &&
-		      rx.run == 0 && rx.bar_symbols == 0 &&
+		CHECK(v92_ru_rx_sample(&rx, wrong_polarity ? ru_level(corrupt, 1000) : 0) == V92_RU_RX_MISMATCH &&
+		      rx.run == 0 && rx.bar_symbols == 0 && rx.mean_level == 0 &&
 		      rx.phase == (corrupt + 1u) % 12u, "accepted damaged bar");
 		for (unsigned i = 0; i < 240; ++i)
 			CHECK(v92_ru_rx_sample(&rx, ru_level(rx.phase, 1000)) ==
@@ -197,6 +200,52 @@ static bool test_invalid_inputs(void)
 	return true;
 }
 
+static bool test_filtered_reversal(void)
+{
+	/* Residual equalizer error persists through the reversal. Do not reset
+	 * the three-tap channel history at the Ru/Ru-bar boundary. */
+	const double taps[][3] = {
+		{1, 0, 0}, {0.9, 0.1, -0.1}, {0.8, 0.25, -0.25}, {0.7, 0.3, -0.3},
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned ucode = 1; ucode <= 127; ++ucode) {
+			struct v90_pcm_symbol symbol;
+			CHECK(v90_pcm_symbol_make(&symbol, law, ucode, true), "invalid LU");
+			for (unsigned channel = 0; channel < ARRAY_LENGTH(taps); ++channel) {
+				for (unsigned skip = 0; skip < 12; ++skip) {
+					struct v92_ru_rx rx;
+					double history[2] = {-symbol.sample, -symbol.sample};
+					unsigned detected = 0;
+					CHECK(v92_ru_rx_init(&rx, symbol.sample, skip), "init failed");
+					for (unsigned i = 0; i < 408; ++i) {
+						double input = ru_level(i, symbol.sample) * (i < 384 ? 1 : -1);
+						double output = taps[channel][0] * input +
+							taps[channel][1] * history[0] + taps[channel][2] * history[1];
+						history[1] = history[0];
+						history[0] = input;
+						if (i < skip)
+							continue;
+						enum v92_ru_rx_result result = v92_ru_rx_sample(&rx, output);
+						if (i < 384) {
+							detected += result == V92_RU_RX_DETECTED;
+							CHECK(result == V92_RU_RX_BUFFERING || result == V92_RU_RX_DETECTED,
+							      "filtered Ru lost");
+							CHECK(i - skip >= 239 || !detected, "shortened qualification");
+						} else {
+							CHECK(detected == 1 && result == (i == 384 ? V92_RU_RX_BAR_STARTED :
+							      i == 407 ? V92_RU_RX_COMPLETE : V92_RU_RX_BUFFERING),
+							      "filtered reversal failed law=%u LU=%u channel=%u skip=%u i=%u",
+							      law, ucode, channel, skip, i);
+						}
+						CHECK(v92_ru_rx_is_valid(&rx), "invalid filtered state");
+					}
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_acquisition_limits(void)
 {
 	struct v92_ru_rx rx;
@@ -215,8 +264,19 @@ static bool test_acquisition_limits(void)
 		CHECK(v92_ru_rx_sample(&rx, ru_level(i, i % 2 ? 750 : 1250)) ==
 		      (i == 239 ? V92_RU_RX_DETECTED : V92_RU_RX_BUFFERING),
 		      "inclusive LU tolerance failed");
-	CHECK(v92_ru_rx_sample(&rx, -749) == V92_RU_RX_MISMATCH,
-	      "accepted Ru-bar outside the LU tolerance");
+	for (unsigned gain = 0; gain < 2; ++gain) {
+		CHECK(acquire(&rx), "acquisition failed");
+		bool rejected = false;
+		for (unsigned i = 0; i < 24; ++i) {
+			enum v92_ru_rx_result result = v92_ru_rx_sample(&rx, -ru_level(i, gain ? 1500 : 500));
+			CHECK(result != V92_RU_RX_COMPLETE, "accepted sustained wrong-amplitude reversal");
+			if (result == V92_RU_RX_MISMATCH) {
+				rejected = true;
+				break;
+			}
+		}
+		CHECK(rejected, "wrong reversal amplitude did not clear acquisition");
+	}
 	CHECK(v92_ru_rx_init(&rx, 1000, 0), "init failed");
 	uint32_t state = 1;
 	for (unsigned i = 0; i < 8000; ++i) {
@@ -233,7 +293,8 @@ int main(void)
 {
 	fprintf(stderr, "[ RUN      ] frame-aligned V.92 Ru reception\n");
 	if (!test_transmitted_sequences() || !test_rejection_and_recovery() ||
-	    !test_invalid_inputs() || !test_acquisition_limits() || !test_rippled_acquisition()) {
+	    !test_invalid_inputs() || !test_acquisition_limits() || !test_rippled_acquisition() ||
+	    !test_filtered_reversal()) {
 		fprintf(stderr, "[  FAILED  ] frame-aligned V.92 Ru reception\n");
 		return 1;
 	}

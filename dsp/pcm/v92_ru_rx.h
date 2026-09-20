@@ -40,8 +40,9 @@ bool v92_ru_rx_init(struct v92_ru_rx *receiver, int16_t lu,
 bool v92_ru_rx_is_valid(const struct v92_ru_rx *receiver);
 
 /* Require 240 consecutive correct-polarity symbols whose smoothed matched
- * amplitude stays within LU/4. This is an acquisition tolerance, not a
- * normative limit. Check each reversed symbol within LU/4 of -LU.
+ * amplitude stays within LU/4. This is a receiver tolerance, not a
+ * normative limit. Apply the same amplitude check to the reversed symbols,
+ * requiring each symbol to have the reversed polarity.
  * Report the first reversed symbol only at a data-frame boundary, and
  * COMPLETE on the 24th reversed symbol. Once complete, consume nothing:
  * the next level belongs to TRN2u. MISMATCH consumes its level and resets

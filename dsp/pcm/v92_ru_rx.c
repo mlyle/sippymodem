@@ -36,7 +36,7 @@ enum v92_ru_rx_result v92_ru_rx_sample(struct v92_ru_rx *receiver,
 {
 	enum v92_ru_rx_result result = V92_RU_RX_BUFFERING;
 	double level;
-	bool ru, bar;
+	bool reversed, matched, ru, bar;
 
 	if (receiver == NULL || !isfinite(equalized_level))
 		return V92_RU_RX_INVALID_ARGUMENT;
@@ -46,17 +46,22 @@ enum v92_ru_rx_result v92_ru_rx_sample(struct v92_ru_rx *receiver,
 		return V92_RU_RX_COMPLETE;
 	level = receiver->phase % 6u < 3u ?
 		equalized_level : -equalized_level;
-	/* Residual ISI can ripple individual Ru levels while preserving its
-	 * sign sequence and matched amplitude. Smooth over its six-symbol
-	 * period, but never smooth over a polarity error or move frame phase. */
+	reversed = receiver->bar_symbols != 0 ||
+		(receiver->run == V92_RU_RX_MIN_SYMBOLS && receiver->phase == 0 && level < 0);
+	if (reversed)
+		level = -level;
+	/* Residual ISI can ripple both Ru and Ru-bar. Retain the matched
+	 * amplitude across their frame-aligned reversal, but never smooth
+	 * over a wrong-polarity symbol or move the established frame phase. */
 	if (level <= 0)
 		receiver->mean_level = 0;
 	else if (receiver->mean_level == 0)
 		receiver->mean_level = level;
 	else
 		receiver->mean_level += (level - receiver->mean_level) / 6.0;
-	ru = level > 0 && fabs(receiver->mean_level - receiver->lu) <= receiver->lu * 0.25;
-	bar = fabs(level + receiver->lu) <= receiver->lu * 0.25;
+	matched = level > 0 && fabs(receiver->mean_level - receiver->lu) <= receiver->lu * 0.25;
+	ru = !reversed && matched;
+	bar = reversed && matched;
 	if (receiver->bar_symbols != 0) {
 		if (bar) {
 			receiver->bar_symbols++;
