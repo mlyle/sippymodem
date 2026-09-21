@@ -44,6 +44,47 @@ static bool test_sync_suffix(void)
 	return true;
 }
 
+static bool check_start_range(size_t first, size_t end)
+{
+	uint8_t frame[V92_CPD_MAX_FRAME_BYTES];
+
+	memset(frame, 0xff, sizeof(frame));
+	/* Independent per-bit predicate: everything except in-range start bits
+	 * stays nonzero, including the sync, information and unreceived tail. */
+	for (size_t bit = 0; bit < sizeof(frame) * 8u; ++bit)
+		if (bit >= first && bit < end && bit % 17u == 0u)
+			frame[bit / 8u] &= (uint8_t)~(0x80u >> (bit % 8u));
+	CHECK(pcm_control_frame_starts_are_zero(frame, first, end),
+	      "valid start range rejected: %zu/%zu", first, end);
+	for (size_t bit = 0; bit < end + 17u; ++bit) {
+		uint8_t mask = (uint8_t)(0x80u >> (bit % 8u));
+		bool required = bit >= first && bit < end && bit % 17u == 0u;
+
+		frame[bit / 8u] ^= mask;
+		CHECK(pcm_control_frame_starts_are_zero(frame, first, end) == !required,
+		      "start range %zu/%zu misclassified bit %zu", first, end, bit);
+		frame[bit / 8u] ^= mask;
+	}
+	return true;
+}
+
+static bool test_start_ranges(void)
+{
+	const size_t first_bits[] = { 17u, 34u, 136u };
+	const size_t long_ends[] = { 289u, 1768u, V92_CPD_MAX_PAYLOAD_BITS };
+
+	for (size_t i = 0; i < ARRAY_LENGTH(first_bits); ++i) {
+		for (size_t length = 0; length <= 51u; ++length)
+			CHECK(check_start_range(first_bits[i], first_bits[i] + length),
+			      "empty or partial word range failed");
+		for (size_t j = 0; j < ARRAY_LENGTH(long_ends); ++j)
+			CHECK(check_start_range(first_bits[i], long_ends[j]) &&
+			      check_start_range(first_bits[i], long_ends[j] + 1u),
+			      "payload/CRC boundary failed");
+	}
+	return true;
+}
+
 static bool check_payload_end(const uint8_t *frame, size_t end)
 {
 	uint8_t information[V92_CPD_MAX_FRAME_BYTES] = { 0 };
@@ -166,7 +207,7 @@ static bool test_constellation_rows(void)
 
 int main(void)
 {
-	return test_sync_prefix() && test_sync_suffix() &&
+	return test_sync_prefix() && test_sync_suffix() && test_start_ranges() &&
 	       test_known_check() && test_payload_bounds() &&
 	       test_constellation_rows() ? 0 : 1;
 }

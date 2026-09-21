@@ -270,6 +270,48 @@ static bool test_header_and_overlap_recovery(void)
 	return true;
 }
 
+static bool test_received_framing_validation(void)
+{
+	struct v92_cpt_parameters parameters = parameters_for(6u, true);
+	uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
+	size_t frame_bits;
+
+	CHECK(encode_frame(&parameters, frame, &frame_bits),
+	      "framing validation fixture did not encode");
+	for (size_t end = 18u; end < frame_bits; ++end) {
+		struct v92_cpt_receiver receiver;
+
+		/* Every partial type/header boundary, each start-bit boundary, and
+		 * the final partial record. Include the bit just before each start. */
+		if (end > 22u && end % 17u > 1u && end % 17u != 16u &&
+		    end + 1u != frame_bits)
+			continue;
+		CHECK(v92_cpt_receiver_init(&receiver) == V92_CPT_OK &&
+		      feed_without_event(&receiver, frame, 0u, end) &&
+		      v92_cpt_receiver_is_valid(&receiver),
+		      "valid partial frame rejected at %zu", end);
+		for (size_t bit = 17u; bit < end; ++bit) {
+			struct v92_cpt_receiver changed = receiver, before;
+			struct v92_cpt_receive_event event, event_before;
+
+			if (bit % 17u != 0u && (bit < 18u || bit > 20u))
+				continue;
+			replace_bit(changed.frame, bit, 1u);
+			before = changed;
+			memset(&event, 0xa5, sizeof(event));
+			event_before = event;
+			CHECK(!v92_cpt_receiver_is_valid(&changed) &&
+			      v92_cpt_receiver_receive_bit(&changed, 0u, &event) ==
+				      V92_CPT_INVALID_ARGUMENT &&
+			      memcmp(&changed, &before, sizeof(changed)) == 0 &&
+			      memcmp(&event, &event_before, sizeof(event)) == 0,
+			      "nonzero received framing bit %zu at %zu accepted or mutated",
+			      bit, end);
+		}
+	}
+	return true;
+}
+
 static bool test_contracts(void)
 {
 	struct v92_cpt_receiver receiver;
@@ -329,6 +371,7 @@ int main(void)
 		  test_crc_rejection_and_recovery },
 		{ "header and overlap recovery",
 		  test_header_and_overlap_recovery },
+		{ "received framing validation", test_received_framing_validation },
 		{ "contracts", test_contracts },
 	};
 	unsigned int failures = 0u;

@@ -196,14 +196,11 @@ static bool framing_is_valid(
 {
 	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff))
 		return false;
-	for (size_t index = CP_START_FIRST_BIT;
-	     index <= payload_end; index += 17u) {
-		if (packed_msb_bit(frame, index) != 0)
-			return false;
-	}
 	/* Table 14's reserved information bits are not interpreted by the
 	 * receiver. Keep them in the CRC, but only validate wire framing here. */
-	return packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
+	return pcm_control_frame_starts_are_zero(
+		       frame, CP_START_FIRST_BIT, payload_end + 1u) &&
+	       packed_msb_bits_are_zero(frame, payload_end + 17u, 3) &&
 	       packed_msb_bits_are_zero(
 		       frame, frame_bit_count,
 		       (8u - frame_bit_count % 8u) % 8u);

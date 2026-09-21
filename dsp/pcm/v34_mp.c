@@ -263,13 +263,9 @@ static bool framing_bits_are_valid(
 	if (!frame_sync_is_valid(frame) ||
 	    packed_msb_bit(frame, V34_MP_TYPE_BIT) != (uint8_t)type1)
 		return false;
-	for (size_t index = V34_MP_START0_BIT; index < crc_first_bit;
-	     index += V34_MP_FIELD_STRIDE_BITS) {
-		if (packed_msb_bit(frame, index) != 0)
-			return false;
-	}
-	return packed_msb_bits_are_zero(
-		frame, fill_first_bit, fill_bit_count);
+	return pcm_control_frame_starts_are_zero(
+		       frame, V34_MP_START0_BIT, crc_first_bit) &&
+	       packed_msb_bits_are_zero(frame, fill_first_bit, fill_bit_count);
 }
 
 enum v34_mp_result v34_mp_type0_decode(

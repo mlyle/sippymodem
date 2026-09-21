@@ -31,6 +31,19 @@ static inline uint8_t pcm_control_frame_trailing_ones(
 	return count;
 }
 
+/* Check only the zero start bits of consecutive 17-bit control words.
+ * The caller supplies a start-bit position and a bounded exclusive end;
+ * a partial final word still has its start bit checked. Information and
+ * bits outside this range are deliberately ignored. */
+static inline bool pcm_control_frame_starts_are_zero(
+	const uint8_t *frame, size_t first_start, size_t end)
+{
+	for (size_t bit = first_start; bit < end; bit += 17u)
+		if (packed_msb_bit(frame, bit) != 0u)
+			return false;
+	return true;
+}
+
 /* MP and CP-family records carry 16 information bits after each zero start
  * bit. Exclude the 17-bit sync prefix and start bits from the unreflected CRC.
  * The caller validates storage and supplies the exclusive payload end; this

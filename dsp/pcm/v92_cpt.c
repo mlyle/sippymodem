@@ -171,11 +171,8 @@ static bool framing_is_valid(
 {
 	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff))
 		return false;
-	for (size_t index = 17u; index <= payload_end; index += 17u) {
-		if (packed_msb_bit(frame, index) != 0)
-			return false;
-	}
-	return packed_msb_bits_are_zero(frame, 18u, 3u) &&
+	return pcm_control_frame_starts_are_zero(frame, 17u, payload_end + 1u) &&
+	       packed_msb_bits_are_zero(frame, 18u, 3u) &&
 	       packed_msb_bits_are_zero(
 		       frame, payload_end + 1u + CPT_CRC_BITS,
 		       frame_bit_count - payload_end - 1u - CPT_CRC_BITS) &&

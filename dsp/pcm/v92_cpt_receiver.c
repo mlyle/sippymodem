@@ -79,13 +79,13 @@ static bool bit_must_be_zero(size_t bit_index)
 static bool received_bits_are_valid(
 	const struct v92_cpt_receiver *receiver)
 {
-	for (size_t index = CPT_INFORMATION_FIRST_BIT;
-	     index < receiver->bit_index; ++index) {
-		if (bit_must_be_zero(index) &&
-		    packed_msb_bit(receiver->frame, index) != 0u)
-			return false;
-	}
-	return true;
+	size_t type_end = receiver->bit_index < 21u ? receiver->bit_index : 21u;
+
+	return packed_msb_bits_are_zero(
+		       receiver->frame, CPT_INFORMATION_FIRST_BIT,
+		       type_end - CPT_INFORMATION_FIRST_BIT) &&
+	       pcm_control_frame_starts_are_zero(
+		       receiver->frame, 34u, receiver->bit_index);
 }
 
 bool v92_cpt_receiver_is_valid(

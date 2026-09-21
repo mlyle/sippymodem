@@ -335,14 +335,11 @@ static bool framing_bits_are_valid(
 	if (packed_msb_read_msb_field(
 		    sequence, 0u, V90_MP_FRAME_SYNC_BITS) != UINT32_C(0x1ffff))
 		return false;
-	for (size_t bit = V90_MP_START0_BIT; bit <= crc_start_bit;
-	     bit += V90_MP_FIELD_STRIDE_BITS) {
-		if (packed_msb_bit(sequence, bit) != 0)
-			return false;
-	}
-	return packed_msb_bits_are_zero(
-		sequence, crc_start_bit + 1u + V90_MP_CRC_BITS,
-		sequence_bit_count - crc_start_bit - 1u - V90_MP_CRC_BITS);
+	return pcm_control_frame_starts_are_zero(
+		       sequence, V90_MP_START0_BIT, crc_start_bit + 1u) &&
+	       packed_msb_bits_are_zero(
+		       sequence, crc_start_bit + 1u + V90_MP_CRC_BITS,
+		       sequence_bit_count - crc_start_bit - 1u - V90_MP_CRC_BITS);
 }
 
 static int16_t decode_twos_complement(uint16_t value)

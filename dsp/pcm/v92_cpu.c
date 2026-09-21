@@ -395,21 +395,6 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 	return V92_CPU_OK;
 }
 
-static bool row_starts_are_zero(
-	const uint8_t *frame, size_t row_count)
-{
-	for (size_t row = 0u; row < row_count; ++row) {
-		size_t first = CPU_MASKS_FIRST_BIT +
-			row * V92_CPU_CONSTELLATION_BITS;
-
-		for (size_t group = 0u; group < 8u; ++group) {
-			if (packed_msb_bit(frame, first + group * 17u) != 0u)
-				return false;
-		}
-	}
-	return true;
-}
-
 enum v92_cpu_result v92_cpu_decode(
 	const uint8_t *frame, size_t frame_capacity,
 	size_t frame_bit_count, unsigned int mapping_frame_bits,
@@ -447,8 +432,8 @@ enum v92_cpu_result v92_cpu_decode(
 	row_count = sets * decoded.constellation_count;
 	payload_end = CPU_MASKS_FIRST_BIT +
 		row_count * V92_CPU_CONSTELLATION_BITS;
-	if (!row_starts_are_zero(frame, row_count) ||
-	    packed_msb_bit(frame, payload_end) != 0u ||
+	if (!pcm_control_frame_starts_are_zero(
+		    frame, CPU_MASKS_FIRST_BIT, payload_end + 1u) ||
 	    !packed_msb_bits_are_zero(
 		    frame, payload_end + 1u + CPU_CRC_BITS,
 		    frame_bit_count - payload_end - 1u - CPU_CRC_BITS) ||

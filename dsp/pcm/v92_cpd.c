@@ -225,17 +225,6 @@ size_t v92_cpd_frame_bytes(
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
 
-static bool rows_start_with_zero(
-	const uint8_t *frame, size_t first_bit, size_t row_count)
-{
-	for (size_t row = 0u; row < row_count; ++row) {
-		if (packed_msb_bit(
-			    frame, first_bit + row * V92_CPD_WORD_BITS) != 0u)
-			return false;
-	}
-	return true;
-}
-
 static bool received_contains(
 	size_t received_bit_count, size_t first_bit, size_t bit_count)
 {
@@ -257,7 +246,8 @@ static enum v92_cpd_result probe_constellation_extent(
 		    received_bit_count, first_bit,
 		    V92_CPD_CONSTELLATION_HEADER_BITS))
 		return V92_CPD_INCOMPLETE;
-	if (!rows_start_with_zero(frame, first_bit, 5u))
+	if (!pcm_control_frame_starts_are_zero(
+		    frame, first_bit, first_bit + V92_CPD_CONSTELLATION_HEADER_BITS))
 		return V92_CPD_INVALID_FRAME;
 	for (size_t interval = 0u;
 	     interval < V92_CPD_FRAME_INTERVALS; ++interval) {
@@ -340,8 +330,8 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 			    received_bit_count, payload_bits,
 			    V92_CPD_MODULUS_BITS))
 			return V92_CPD_INCOMPLETE;
-		if (!rows_start_with_zero(
-			    frame, payload_bits, V92_CPD_MODULUS_COUNT / 2u))
+		if (!pcm_control_frame_starts_are_zero(
+			    frame, payload_bits, payload_bits + V92_CPD_MODULUS_BITS))
 			return V92_CPD_INVALID_FRAME;
 		payload_bits += V92_CPD_MODULUS_BITS;
 	}
@@ -352,9 +342,9 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 			    received_bit_count, payload_bits,
 			    V92_CPD_FILTER_HEADER_BITS))
 			return V92_CPD_INCOMPLETE;
-		if (!rows_start_with_zero(
+		if (!pcm_control_frame_starts_are_zero(
 			    frame, payload_bits,
-			    V92_CPD_FILTER_SECTION_COUNT))
+			    payload_bits + V92_CPD_FILTER_HEADER_BITS))
 			return V92_CPD_INVALID_FRAME;
 		for (size_t section = 0u;
 		     section < V92_CPD_FILTER_SECTION_COUNT; ++section) {
@@ -376,8 +366,9 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 			    coefficient_count * V92_CPD_WORD_BITS))
 			return V92_CPD_INCOMPLETE;
 		if (constellations_present &&
-		    !rows_start_with_zero(
-			    frame, payload_bits, coefficient_count))
+		    !pcm_control_frame_starts_are_zero(
+			    frame, payload_bits,
+			    payload_bits + coefficient_count * V92_CPD_WORD_BITS))
 			return V92_CPD_INVALID_FRAME;
 		payload_bits += coefficient_count * V92_CPD_WORD_BITS;
 	}
