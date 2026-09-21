@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -77,6 +78,14 @@ static bool test_point_validation(void)
 	const struct qam_point finite = { 1.0, -2.0 };
 	const struct qam_point bad_in_phase = { NAN, 0.0 };
 	const struct qam_point bad_quadrature = { 0.0, INFINITY };
+	const struct qam_point invalid_power[] = {
+		{ 0.0, -0.0 }, bad_in_phase, bad_quadrature, { DBL_MAX, 0.0 },
+		{ nextafter(1e-6, 0.0), 0.0 }, { 1e-6, 0.0 },
+	};
+	const struct qam_point above = { nextafter(1e-6, INFINITY), 0.0 };
+	struct qam_point alias_i = finite, alias_q = finite;
+	struct qam_point rejected_alias = { 1e-6, 0.0 };
+	double power = 7.0;
 
 	CHECK(point_is_finite(&finite) &&
 	      !point_is_finite(NULL) &&
@@ -91,6 +100,23 @@ static bool test_point_validation(void)
 	      !qam_point_fits_power(&finite, 0.0) &&
 	      !qam_point_fits_power(&finite, NAN),
 	      "QAM point power bounds changed");
+	CHECK(!qam_point_nonzero_power(NULL, &power) && power == 7.0,
+	      "null power input changed output");
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid_power); ++index)
+		CHECK(!qam_point_nonzero_power(&invalid_power[index], &power) &&
+		      power == 7.0,
+		      "invalid power case %zu changed output", index);
+	CHECK(qam_point_nonzero_power(&finite, &power) && power == 5.0 &&
+	      qam_point_nonzero_power(&finite, NULL) &&
+	      qam_point_nonzero_power(&above, NULL) &&
+	      qam_point_nonzero_power(&alias_i, &alias_i.in_phase) &&
+	      alias_i.in_phase == 5.0 && alias_i.quadrature == -2.0 &&
+	      qam_point_nonzero_power(&alias_q, &alias_q.quadrature) &&
+	      alias_q.in_phase == 1.0 && alias_q.quadrature == 5.0,
+	      "nonzero power boundary, optional output, or aliasing changed");
+	CHECK(!qam_point_nonzero_power(&rejected_alias, &rejected_alias.in_phase) &&
+	      rejected_alias.in_phase == 1e-6 && rejected_alias.quadrature == 0.0,
+	      "rejected aliased power changed the input point");
 	return true;
 }
 
@@ -139,6 +165,49 @@ static bool test_flat_gain_round_trip(void)
 			      point);
 		}
 	}
+	return true;
+}
+
+static bool test_flat_gain_product_boundaries(void)
+{
+	const struct qam_point gain = { 2.0, -0.5 };
+	const struct qam_point inputs[] = {
+		{ 1.5, -2.0 }, { -0.0, -0.0 }, { 0.0, -0.0 },
+		{ DBL_MIN, -DBL_MIN },
+	};
+	struct qam_gain tracker;
+	struct qam_gain saved;
+	struct qam_point point = { DBL_MAX, DBL_MAX };
+	struct qam_point saved_point = point;
+	struct qam_point expected = complex_product(&gain, &gain);
+
+	CHECK(qam_gain_init(&tracker, &gain, 0.5) == QAM_GAIN_OK,
+	      "product boundary gain did not initialize");
+	for (size_t index = 0; index < ARRAY_LENGTH(inputs); ++index) {
+		struct qam_point actual = inputs[index];
+		struct qam_point product = complex_product(&gain, &actual);
+
+		CHECK(qam_gain_predict(&tracker, &actual, &actual) == QAM_GAIN_OK &&
+		      actual.in_phase == product.in_phase &&
+		      actual.quadrature == product.quadrature &&
+		      signbit(actual.in_phase) == signbit(product.in_phase) &&
+		      signbit(actual.quadrature) == signbit(product.quadrature),
+		      "in-place gain product changed exact result %zu", index);
+	}
+	saved = tracker;
+	CHECK(qam_gain_predict(&tracker, &point, &point) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_predict(&tracker, NULL, &point) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      memcmp(&point, &saved_point, sizeof(point)) == 0 &&
+	      memcmp(&tracker, &saved, sizeof(tracker)) == 0,
+	      "overflow or null input changed gain state/output");
+	CHECK(qam_gain_predict(
+		      &tracker, &tracker.channel_gain, &tracker.channel_gain) ==
+		      QAM_GAIN_OK &&
+	      tracker.channel_gain.in_phase == expected.in_phase &&
+	      tracker.channel_gain.quadrature == expected.quadrature,
+	      "owner-aliased gain product changed");
 	return true;
 }
 
@@ -196,6 +265,7 @@ static bool test_flat_gain_validation(void)
 	struct qam_point gain = { 0.8, -0.2 };
 	struct qam_point zero = { 0 };
 	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point overflow = { DBL_MAX, 0.0 };
 	struct qam_point output = { 7.0, -9.0 };
 	struct qam_point saved_output = output;
 
@@ -239,6 +309,8 @@ static bool test_flat_gain_validation(void)
 	      qam_gain_track(&tracker, &zero, &gain) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
 	      qam_gain_track(&tracker, &invalid, &gain) ==
+		      QAM_GAIN_INVALID_ARGUMENT &&
+	      qam_gain_track(&tracker, &overflow, &gain) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
 	      qam_gain_track(&tracker, &gain, &zero) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
@@ -1337,6 +1409,7 @@ int main(void)
 	} tests[] = {
 		{ "point validation", test_point_validation },
 		{ "flat gain round trip", test_flat_gain_round_trip },
+		{ "flat gain product boundaries", test_flat_gain_product_boundaries },
 		{ "flat gain adaptation", test_flat_gain_adaptation },
 		{ "flat gain validation", test_flat_gain_validation },
 		{ "generated pulse", test_generated_pulse },

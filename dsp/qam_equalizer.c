@@ -98,18 +98,6 @@ bool qam_equalizer_observation_is_pending(
 	return true;
 }
 
-static struct qam_point multiply(
-	const struct qam_point *left,
-	const struct qam_point *right)
-{
-	return (struct qam_point){
-		.in_phase = left->in_phase * right->in_phase -
-			    left->quadrature * right->quadrature,
-		.quadrature = left->in_phase * right->quadrature +
-			      left->quadrature * right->in_phase,
-	};
-}
-
 static bool inverse_channel(
 	const struct qam_point *received,
 	const struct qam_point *transmitted,
@@ -339,7 +327,7 @@ enum qam_equalizer_result qam_equalizer_push(
 	next.history[0] = *received;
 	for (size_t index = 0; index < next.tap_count;
 	     ++index) {
-		struct qam_point term = multiply(
+		struct qam_point term = qam_point_multiply(
 			&next.coefficients[index], &next.history[index]);
 
 		filtered.in_phase += term.in_phase;
@@ -440,7 +428,7 @@ static bool apply_adaptation(
 			.in_phase = history[index].in_phase,
 			.quadrature = -history[index].quadrature,
 		};
-		struct qam_point update = multiply(&error, &conjugate);
+		struct qam_point update = qam_point_multiply(&error, &conjugate);
 
 		equalizer->coefficients[index].in_phase +=
 			adaptation * update.in_phase / power;

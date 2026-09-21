@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -784,6 +785,48 @@ static bool test_span_extension(void)
 	return true;
 }
 
+static bool test_product_boundaries(void)
+{
+	const struct qam_point unity = { 1.0, 0.0 };
+	const struct qam_point gain = { 2.0, -0.5 };
+	const struct qam_point large = { 0x1p511, 0.0 };
+	const struct qam_point target = { -DBL_MAX, 0.0 };
+	struct qam_equalizer equalizer;
+	struct qam_equalizer saved;
+	struct qam_point point = { 1.5, -2.0 };
+	struct qam_point product = multiply(gain, point);
+	struct qam_point saved_point;
+	bool ready = false;
+
+	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &gain, 1, 0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(&equalizer, &point, &point, &ready) ==
+		      QAM_EQUALIZER_OK && ready &&
+	      point.in_phase == product.in_phase &&
+	      point.quadrature == product.quadrature,
+	      "in-place equalizer product changed exact result");
+	saved = equalizer;
+	point = (struct qam_point){ DBL_MAX, DBL_MAX };
+	saved_point = point;
+	ready = false;
+	CHECK(qam_equalizer_push(&equalizer, &point, &point, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT && !ready &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+	      memcmp(&point, &saved_point, sizeof(point)) == 0,
+	      "equalizer product overflow changed state/output");
+	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &large, 1, 0) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(&equalizer, &large, &point, &ready) ==
+		      QAM_EQUALIZER_OK && ready && point.in_phase == 0x1p1022,
+	      "finite large-product fixture did not initialize");
+	saved = equalizer;
+	CHECK(qam_equalizer_adapt(&equalizer, &target, 0.5) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "non-finite adaptation product changed state");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct qam_point reference = { 1.0, -1.0 };
@@ -946,6 +989,7 @@ int main(void)
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
 		{ "span extension", test_span_extension },
+		{ "product boundaries", test_product_boundaries },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

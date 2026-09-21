@@ -41,6 +41,19 @@ struct qam_point {
 	double quadrature;
 };
 
+/* Raw arithmetic on readable points; callers retain their numeric checks. */
+static inline struct qam_point qam_point_multiply(
+	const struct qam_point *left,
+	const struct qam_point *right)
+{
+	return (struct qam_point){
+		.in_phase = left->in_phase * right->in_phase -
+			    left->quadrature * right->quadrature,
+		.quadrature = left->in_phase * right->quadrature +
+			      left->quadrature * right->in_phase,
+	};
+}
+
 static inline bool qam_adaptation_is_valid(double adaptation)
 {
 	return isfinite(adaptation) && adaptation >= 0.0 &&
@@ -51,6 +64,24 @@ static inline bool point_is_finite(const struct qam_point *point)
 {
 	return point != NULL && isfinite(point->in_phase) &&
 	       isfinite(point->quadrature);
+}
+
+/* Require finite coordinates and finite power strictly above 1e-12.
+ * Optional power may alias a coordinate; rejection leaves it unchanged. */
+static inline bool qam_point_nonzero_power(
+	const struct qam_point *point, double *power)
+{
+	double value;
+
+	if (!point_is_finite(point))
+		return false;
+	value = point->in_phase * point->in_phase +
+		point->quadrature * point->quadrature;
+	if (!isfinite(value) || value <= 1e-12)
+		return false;
+	if (power != NULL)
+		*power = value;
+	return true;
 }
 
 /* Accept a finite point whose squared magnitude fits a finite positive limit.

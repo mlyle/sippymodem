@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <string.h>
 
@@ -226,6 +227,7 @@ static bool test_validation(void)
 	struct qam_point reference = { 0.8, -0.2 };
 	struct qam_point zero = { 0.0, 0.0 };
 	struct qam_point invalid = { NAN, 0.0 };
+	struct qam_point overflow = { DBL_MAX, 0.0 };
 	uint8_t bits[4] = { UINT8_MAX, UINT8_MAX, UINT8_MAX, UINT8_MAX };
 	bool matches = true;
 
@@ -254,6 +256,10 @@ static bool test_validation(void)
 		      v22bis_receiver_decode(
 			      &receiver, &invalid, bits) ==
 			      V22BIS_RECEIVER_INVALID_ARGUMENT &&
+		      v22bis_receiver_decode(&receiver, &overflow, bits) ==
+			      V22BIS_RECEIVER_INVALID_ARGUMENT &&
+		      v22bis_receiver_matches_v22(&receiver, &overflow, &matches) ==
+			      V22BIS_RECEIVER_INVALID_ARGUMENT && matches &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      bits[0] == UINT8_MAX && bits[1] == UINT8_MAX &&
 		      bits[2] == UINT8_MAX && bits[3] == UINT8_MAX,

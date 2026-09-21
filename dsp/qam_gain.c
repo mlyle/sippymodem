@@ -2,48 +2,7 @@
 
 #include "qam_gain.h"
 
-#include <math.h>
 #include <stddef.h>
-
-static const double QAM_GAIN_MINIMUM_POWER = 1e-12;
-
-static bool nonzero_point_power(
-	const struct qam_point *point, double *power)
-{
-	double value;
-
-	if (!point_is_finite(point))
-		return false;
-	value = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	if (!isfinite(value) || value <= QAM_GAIN_MINIMUM_POWER)
-		return false;
-	if (power != NULL)
-		*power = value;
-	return true;
-}
-
-static bool multiply_points(
-	const struct qam_point *left,
-	const struct qam_point *right,
-	struct qam_point *product)
-{
-	struct qam_point next;
-
-	if (!point_is_finite(left) || !point_is_finite(right) ||
-	    product == NULL)
-		return false;
-	next = (struct qam_point){
-		.in_phase = left->in_phase * right->in_phase -
-			    left->quadrature * right->quadrature,
-		.quadrature = left->in_phase * right->quadrature +
-			      left->quadrature * right->in_phase,
-	};
-	if (!point_is_finite(&next))
-		return false;
-	*product = next;
-	return true;
-}
 
 static bool divide_points(
 	const struct qam_point *numerator,
@@ -54,7 +13,7 @@ static bool divide_points(
 	double power;
 
 	if (!point_is_finite(numerator) || quotient == NULL ||
-	    !nonzero_point_power(denominator, &power))
+	    !qam_point_nonzero_power(denominator, &power))
 		return false;
 	next = (struct qam_point){
 		.in_phase =
@@ -76,7 +35,7 @@ bool qam_gain_is_valid(
 	const struct qam_gain *tracker)
 {
 	return tracker != NULL &&
-	       nonzero_point_power(&tracker->channel_gain, NULL) &&
+	       qam_point_nonzero_power(&tracker->channel_gain, NULL) &&
 	       qam_adaptation_is_valid(tracker->adaptation);
 }
 
@@ -119,7 +78,10 @@ enum qam_gain_result qam_gain_predict(
 	struct qam_point predicted;
 
 	if (!qam_gain_is_valid(tracker) || received == NULL ||
-	    !multiply_points(&tracker->channel_gain, transmitted, &predicted))
+	    !point_is_finite(transmitted))
+		return QAM_GAIN_INVALID_ARGUMENT;
+	predicted = qam_point_multiply(&tracker->channel_gain, transmitted);
+	if (!point_is_finite(&predicted))
 		return QAM_GAIN_INVALID_ARGUMENT;
 	*received = predicted;
 	return QAM_GAIN_OK;
@@ -148,7 +110,7 @@ enum qam_gain_result qam_gain_track(
 	struct qam_point observed_gain;
 
 	if (!qam_gain_is_valid(tracker) ||
-	    !nonzero_point_power(received, NULL) ||
+	    !qam_point_nonzero_power(received, NULL) ||
 	    !divide_points(received, transmitted, &observed_gain))
 		return QAM_GAIN_INVALID_ARGUMENT;
 	next = *tracker;

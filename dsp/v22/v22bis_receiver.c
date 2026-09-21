@@ -7,26 +7,8 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-static const double V22BIS_MIN_POINT_POWER = 1e-12;
 static const double V22BIS_CHANNEL_ADAPTATION = 1.0 / 32.0;
 static const double V22BIS_V22_REFERENCE_ERROR_RATIO = 0.08;
-
-static bool point_power(
-	const struct qam_point *point, double *power)
-{
-	double value;
-
-	if (point == NULL || !isfinite(point->in_phase) ||
-	    !isfinite(point->quadrature))
-		return false;
-	value = point->in_phase * point->in_phase +
-		point->quadrature * point->quadrature;
-	if (!isfinite(value) || value <= V22BIS_MIN_POINT_POWER)
-		return false;
-	if (power != NULL)
-		*power = value;
-	return true;
-}
 
 bool v22bis_receiver_is_valid(
 	const struct v22bis_receiver *receiver)
@@ -78,7 +60,7 @@ v22bis_receiver_matches_v22(
 	double best_power = 0.0;
 
 	if (!v22bis_receiver_is_valid(receiver) ||
-	    receiver->v22bis_started || !point_power(point, NULL) ||
+	    receiver->v22bis_started || !qam_point_nonzero_power(point, NULL) ||
 	    matches == NULL)
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	for (uint8_t quadrant = 0;
@@ -95,7 +77,7 @@ v22bis_receiver_matches_v22(
 		    QAM_GAIN_OK)
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 		error = squared_error(point, &predicted);
-		if (!point_power(&predicted, &predicted_power))
+		if (!qam_point_nonzero_power(&predicted, &predicted_power))
 			return V22BIS_RECEIVER_INVALID_ARGUMENT;
 
 		if (error < best_error) {
@@ -119,7 +101,7 @@ v22bis_receiver_track_v22(
 	if (!v22bis_receiver_is_valid(receiver) ||
 	    receiver->v22bis_started ||
 	    quarter_turns >= QPSK_QUADRANT_COUNT ||
-	    !point_power(point, NULL))
+	    !qam_point_nonzero_power(point, NULL))
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	next.decoder.phase_quadrant =
@@ -149,7 +131,7 @@ enum v22bis_receiver_result v22bis_receiver_decode(
 	double best_error = DBL_MAX;
 
 	if (!v22bis_receiver_is_valid(receiver) ||
-	    !point_power(point, NULL) || bits == NULL)
+	    !qam_point_nonzero_power(point, NULL) || bits == NULL)
 		return V22BIS_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
 	for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT;
