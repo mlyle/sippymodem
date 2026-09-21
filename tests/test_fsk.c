@@ -503,8 +503,11 @@ static bool test_detector_ring_wrap(void)
 			      FSK_OK && ready == (index + 1 >= window) &&
 			      receiver.history_index == (index + 1) % window,
 			      "detector ring failed at window %zu sample %zu", window, index);
-			if (!ready)
+			if (!ready) {
+				CHECK(receiver.mark_power == 0 && receiver.space_power == 0 &&
+				      receiver.line_power == 0, "detector power changed during warmup");
 				continue;
+			}
 			for (size_t tap = 0; tap < window; ++tap)
 				line_power += (uint64_t)((int64_t)newest_first[tap] *
 					newest_first[tap]);

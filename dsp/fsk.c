@@ -245,33 +245,15 @@ void fsk_receiver_reset(
 	reset_stream_state(receiver);
 }
 
-static int64_t projection_power(
-	const struct fsk_receiver *receiver,
-	const struct fsk_tone_projection *projection)
-{
-	int64_t in_phase = 0;
-	int64_t quadrature = 0;
-	size_t window = receiver->channel.detector_window;
-	size_t index = receiver->history_index;
-
-	for (size_t tap = 0; tap < window; ++tap) {
-		index = index != 0 ? index - 1 : window - 1;
-		int32_t sample = receiver->history[index];
-
-		in_phase += arithmetic_shift_right_u32(
-			(uint32_t)(sample * projection->in_phase[tap]), 8);
-		quadrature += arithmetic_shift_right_u32(
-			(uint32_t)(sample * projection->quadrature[tap]), 8);
-	}
-	return in_phase * in_phase + quadrature * quadrature;
-}
-
 static void update_detector(
 	struct fsk_receiver *receiver, int16_t sample)
 {
+	int64_t mark_i = 0, mark_q = 0;
+	int64_t space_i = 0, space_q = 0;
 	uint64_t line_power = 0;
 	int64_t metric;
 	size_t window = receiver->channel.detector_window;
+	size_t index;
 
 	receiver->history[receiver->history_index] = sample;
 	receiver->history_index = (receiver->history_index + 1) % window;
@@ -280,13 +262,23 @@ static void update_detector(
 	if (receiver->history_count < window)
 		return;
 
-	receiver->mark_power = projection_power(receiver, &receiver->mark);
-	receiver->space_power = projection_power(receiver, &receiver->space);
-	for (size_t index = 0; index < window; ++index) {
+	index = receiver->history_index;
+	for (size_t tap = 0; tap < window; ++tap) {
+		index = index != 0 ? index - 1 : window - 1;
 		int32_t value = receiver->history[index];
 
+		mark_i += arithmetic_shift_right_u32(
+			(uint32_t)(value * receiver->mark.in_phase[tap]), 8);
+		mark_q += arithmetic_shift_right_u32(
+			(uint32_t)(value * receiver->mark.quadrature[tap]), 8);
+		space_i += arithmetic_shift_right_u32(
+			(uint32_t)(value * receiver->space.in_phase[tap]), 8);
+		space_q += arithmetic_shift_right_u32(
+			(uint32_t)(value * receiver->space.quadrature[tap]), 8);
 		line_power += (uint64_t)(value * value);
 	}
+	receiver->mark_power = mark_i * mark_i + mark_q * mark_q;
+	receiver->space_power = space_i * space_i + space_q * space_q;
 	receiver->line_power = line_power;
 	metric = receiver->mark_power - receiver->space_power;
 	receiver->smoothed_metric += arithmetic_shift_right_u64(
