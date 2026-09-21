@@ -4,6 +4,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -161,6 +162,94 @@ static bool test_contracts(void)
 	return true;
 }
 
+/* Immediate decisions must agree with an observation retained for one step. */
+static bool check_immediate_adaptation(
+	unsigned tap_count, bool tracking, int8_t polarity, double adaptation)
+{
+	static const int16_t samples[] = {
+		INT16_MIN, -4096, -1, 0, 1, 4096, INT16_MAX,
+	};
+	const struct qam_point reference = { .in_phase = TEST_MAGNITUDE };
+	struct qam_equalizer trained;
+	struct binary_equalizer receiver;
+	unsigned delay = tap_count - 1u;
+
+	CHECK(qam_equalizer_init_geometry(&trained, &reference, &reference,
+	      tap_count, delay) == QAM_EQUALIZER_OK, "immediate test geometry failed");
+	for (unsigned i = 0; i <= delay; ++i) {
+		struct qam_point output;
+		bool ready;
+		CHECK(qam_equalizer_push(&trained, &reference, &output, &ready) ==
+		      QAM_EQUALIZER_OK && (!ready || qam_equalizer_adapt(
+		      &trained, &reference, 0.0) == QAM_EQUALIZER_OK),
+		      "immediate test history failed");
+	}
+	if (tracking) {
+		CHECK(qam_equalizer_enable_carrier_tracking(&trained, .01, .001) ==
+		      QAM_EQUALIZER_OK && qam_equalizer_set_carrier_error_limit(
+		      &trained, .25) == QAM_EQUALIZER_OK, "carrier setup failed");
+		trained.carrier_phase = .031;
+		trained.carrier_frequency = .002;
+	}
+	CHECK(binary_equalizer_init(&receiver, &trained, TEST_MAGNITUDE,
+	      adaptation, polarity) == BINARY_EQUALIZER_OK, "receiver setup failed");
+	for (size_t i = 0; i < 4u * ARRAY_LENGTH(samples); ++i) {
+		int16_t sample = samples[i % ARRAY_LENGTH(samples)];
+		struct qam_point input = { .in_phase = polarity * (double)sample };
+		struct qam_point target;
+		struct qam_equalizer_observation observation = { 0 };
+		bool ready;
+		uint8_t sign = 0xa5;
+
+		CHECK(qam_equalizer_observe(&trained, &input, &observation, &ready) ==
+		      QAM_EQUALIZER_OK && ready, "retained observation failed");
+		target = (struct qam_point){ .in_phase =
+			observation.output.in_phase < 0.0 ? -TEST_MAGNITUDE : TEST_MAGNITUDE };
+		CHECK(qam_equalizer_adapt_observation(&trained, &observation, &target,
+		      adaptation) == QAM_EQUALIZER_OK &&
+		      binary_equalizer_receive(&receiver, sample, &sign) == BINARY_EQUALIZER_OK &&
+		      sign == (uint8_t)(target.in_phase < 0.0) &&
+		      memcmp(&receiver.equalizer, &trained, sizeof(trained)) == 0,
+		      "immediate/retained mismatch at step %zu", i);
+	}
+	return true;
+}
+
+static bool test_immediate_adaptation(void)
+{
+	static const unsigned spans[] = { 1, 7, QAM_EQUALIZER_MAX_TAP_COUNT };
+	static const double adaptations[] = { 0.0, 0.125, 1.0 };
+
+	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span)
+		for (unsigned tracking = 0; tracking < 2; ++tracking)
+			for (int polarity = -1; polarity <= 1; polarity += 2)
+				for (size_t a = 0; a < ARRAY_LENGTH(adaptations); ++a)
+					CHECK(check_immediate_adaptation(spans[span], tracking,
+					      (int8_t)polarity, adaptations[a]),
+					      "span %u tracking %u polarity %d adaptation %g",
+					      spans[span], tracking, polarity, adaptations[a]);
+	return true;
+}
+
+static bool test_failed_adaptation_preserves_owner(void)
+{
+	struct qam_equalizer trained;
+	struct binary_equalizer receiver, before;
+	uint8_t sign = 0xa5;
+
+	CHECK(trained_equalizer(&trained), "failure test training failed");
+	/* Finite history is accepted, but its squared adaptation energy overflows. */
+	trained.history[1].in_phase = DBL_MAX / 4.0;
+	CHECK(binary_equalizer_init(&receiver, &trained, TEST_MAGNITUDE, .125, 1) ==
+	      BINARY_EQUALIZER_OK, "failure test owner rejected prematurely");
+	before = receiver;
+	CHECK(binary_equalizer_receive(&receiver, TEST_MAGNITUDE, &sign) ==
+	      BINARY_EQUALIZER_INTERNAL_ERROR && sign == 0xa5 &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      "failed immediate adaptation changed owner or output");
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] binary equalizer decisions\n");
@@ -170,7 +259,8 @@ int main(void)
 	}
 	fprintf(stderr, "[       OK ] binary equalizer decisions\n");
 	fprintf(stderr, "[ RUN      ] binary equalizer contracts\n");
-	if (!test_contracts()) {
+	if (!test_contracts() || !test_immediate_adaptation() ||
+	    !test_failed_adaptation_preserves_owner()) {
 		fprintf(stderr, "[  FAILED  ] binary equalizer contracts\n");
 		return 1;
 	}
