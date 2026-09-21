@@ -44,16 +44,6 @@ static bool selected_mode(
 	return false;
 }
 
-static bool observation_epoch_is_valid(
-	const struct v32_receive_path *receive, uint64_t observation_epoch)
-{
-	if (!receive->equalizer.decision_pending)
-		return observation_epoch == receive->equalizer.epoch;
-	return observation_epoch != UINT64_MAX &&
-	       observation_epoch + 1u ==
-		       receive->equalizer.pending_observation.epoch;
-}
-
 static bool active_receiver_is_valid(const struct v32_b1_path *path)
 {
 	switch (path->mode) {
@@ -87,7 +77,7 @@ static bool path_header_is_valid(const struct v32_b1_path *path)
 	    !selected_mode(&path->selected_offer, &selected, &data_bits) ||
 	    selected != path->mode || data_bits != path->data_bits_per_symbol ||
 	    !active_receiver_is_valid(path) ||
-	    !observation_epoch_is_valid(
+	    !v32_receive_path_epoch_matches(
 		    &path->receive, path->observation_epoch))
 		return false;
 	adaptation = path->receive.equalizer.adaptation;

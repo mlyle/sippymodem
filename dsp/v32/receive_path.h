@@ -39,6 +39,18 @@ struct v32_receive_path {
 	bool echo_training;
 };
 
+/* Match the last committed observation to an open or pending decision.
+ * Requires readable path storage; this is not a full owner validator. */
+static inline bool v32_receive_path_epoch_matches(
+	const struct v32_receive_path *path, uint64_t observation_epoch)
+{
+	if (!path->equalizer.decision_pending)
+		return observation_epoch == path->equalizer.epoch;
+	return observation_epoch != UINT64_MAX &&
+	       observation_epoch + 1u ==
+		       path->equalizer.pending_observation.epoch;
+}
+
 enum v32_receive_path_result v32_receive_path_init(
 	struct v32_receive_path *path,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);

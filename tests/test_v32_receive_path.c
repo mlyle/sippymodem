@@ -900,9 +900,44 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_observation_epoch(void)
+{
+	static const uint64_t epochs[] = { 0, 1, 2, UINT64_MAX - 1u, UINT64_MAX };
+	struct v32_receive_path path = { 0 };
+
+	/* The predicate checks only the receive boundary. Full owner validity
+	 * is separate, including agreement between the two equalizer epochs. */
+	for (size_t current = 0; current < ARRAY_LENGTH(epochs); ++current)
+		for (size_t pending = 0; pending < ARRAY_LENGTH(epochs); ++pending)
+			for (unsigned active = 0; active < 2u; ++active) {
+				struct v32_receive_path saved;
+
+				path.equalizer.epoch = epochs[current];
+				path.equalizer.pending_observation.epoch =
+					epochs[pending];
+				path.equalizer.decision_pending = active != 0;
+				memcpy(&saved, &path, sizeof(saved));
+				for (size_t observed = 0;
+				     observed < ARRAY_LENGTH(epochs); ++observed) {
+					bool expected = active ?
+						epochs[pending] != 0 &&
+							epochs[observed] == epochs[pending] - 1u :
+						epochs[observed] == epochs[current];
+
+					CHECK(v32_receive_path_epoch_matches(
+						      &path, epochs[observed]) == expected,
+					      "receive observation epoch mismatch");
+				}
+				CHECK(memcmp(&path, &saved, sizeof(path)) == 0,
+				      "observation epoch check changed receive state");
+			}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_composed_path() || !test_buffered_commits() ||
+	if (!test_observation_epoch() ||
+	    !test_composed_path() || !test_buffered_commits() ||
 	    !test_boundary_adaptation() ||
 	    !test_echo_adaptation_lifecycle() || !test_gain_lifecycle() ||
 	    !test_conditioning_reacquisition() || !test_contracts())

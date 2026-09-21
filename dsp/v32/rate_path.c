@@ -7,16 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool observation_epoch_is_valid(
-	const struct v32_receive_path *receive, uint64_t observation_epoch)
-{
-	if (!receive->equalizer.decision_pending)
-		return observation_epoch == receive->equalizer.epoch;
-	return observation_epoch != UINT64_MAX &&
-	       observation_epoch + 1u ==
-		       receive->equalizer.pending_observation.epoch;
-}
-
 static bool path_header_is_valid(const struct v32_rate_path *path)
 {
 	return path != NULL &&
@@ -24,7 +14,7 @@ static bool path_header_is_valid(const struct v32_rate_path *path)
 	       v32_rate_signal_detector_is_valid(&path->detector) &&
 	       path->receive.equalizer.adaptation ==
 		       V32_EQUALIZER_ADAPTATION_FINE &&
-	       observation_epoch_is_valid(
+	       v32_receive_path_epoch_matches(
 		       &path->receive, path->observation_epoch);
 }
 
@@ -163,7 +153,7 @@ bool v32_rate_path_handoff_is_valid(
 	    !v32_rate_offers_match(&handoff->offer, &decoded) ||
 	    handoff->receive.equalizer.adaptation !=
 		    V32_EQUALIZER_ADAPTATION_FINE ||
-	    !observation_epoch_is_valid(
+	    !v32_receive_path_epoch_matches(
 		    &handoff->receive, handoff->observation_epoch))
 		return false;
 	pending = handoff->receive.equalizer.decision_pending;

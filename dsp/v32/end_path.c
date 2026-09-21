@@ -32,16 +32,6 @@ static bool adaptation_is_valid(
 	       adaptation == V32_EQUALIZER_ADAPTATION_FINE;
 }
 
-static bool observation_epoch_is_valid(
-	const struct v32_receive_path *receive, uint64_t observation_epoch)
-{
-	if (!receive->equalizer.decision_pending)
-		return observation_epoch == receive->equalizer.epoch;
-	return observation_epoch != UINT64_MAX &&
-	       observation_epoch + 1u ==
-		       receive->equalizer.pending_observation.epoch;
-}
-
 static bool detector_state_is_valid(const struct v32_end_path *path)
 {
 	struct v32_rate_offer offer;
@@ -80,7 +70,7 @@ static bool path_header_is_valid(const struct v32_end_path *path)
 		       path->selected_offer.rates &&
 	       detector_state_is_valid(path) &&
 	       adaptation_state_is_valid(path) &&
-	       observation_epoch_is_valid(
+	       v32_receive_path_epoch_matches(
 		       &path->receive, path->observation_epoch);
 }
 
@@ -278,7 +268,7 @@ bool v32_end_path_handoff_is_valid(
 	    !v32_four_point_receiver_is_valid(&handoff->four_point) ||
 	    !offer_is_valid(&handoff->selected_offer, V32_END_SIGNAL) ||
 	    !adaptation_is_valid(handoff->receive.equalizer.adaptation) ||
-	    !observation_epoch_is_valid(
+	    !v32_receive_path_epoch_matches(
 		    &handoff->receive, handoff->observation_epoch))
 		return false;
 	pending = handoff->receive.equalizer.decision_pending;
