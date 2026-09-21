@@ -2,32 +2,10 @@
 
 #include "v90_mp_receiver.h"
 
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
-
-static bool prefix_is_valid(const uint8_t *sequence)
-{
-	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(sequence, bit) == 0)
-			return false;
-	}
-	return packed_msb_bit(sequence, V90_MP_FRAME_SYNC_BITS) == 0;
-}
-
-static uint8_t trailing_one_count(
-	const uint8_t *sequence, size_t bit_count)
-{
-	uint8_t count = 0;
-
-	while (bit_count != 0 && count < V90_MP_FRAME_SYNC_BITS) {
-		if (packed_msb_bit(sequence, bit_count - 1u) == 0)
-			break;
-		count++;
-		bit_count--;
-	}
-	return count;
-}
 
 static bool stage_is_valid(enum v90_mp_receive_stage stage)
 {
@@ -55,9 +33,10 @@ bool v90_mp_receiver_is_valid(
 	if (receiver->stage == V90_MP_SEARCH_SYNC)
 		return receiver->sequence_bit_count == 0 &&
 		       receiver->bit_index == 0;
-	if (!prefix_is_valid(receiver->sequence) ||
+	if (!pcm_control_frame_prefix_is_valid(receiver->sequence) ||
 	    receiver->sync_one_count !=
-		    trailing_one_count(receiver->sequence, receiver->bit_index))
+		    pcm_control_frame_trailing_ones(
+			    receiver->sequence, receiver->bit_index))
 		return false;
 	if (receiver->stage == V90_MP_RECEIVE_TYPE)
 		return receiver->sequence_bit_count == 0 &&

@@ -6,6 +6,44 @@
 
 #include <string.h>
 
+static bool test_sync_prefix(void)
+{
+	uint8_t frame[3];
+
+	/* Exhaust all eighteen prefix bits; the following six bits are ignored. */
+	for (uint32_t prefix = 0; prefix < (1u << 18); ++prefix) {
+		frame[0] = (uint8_t)(prefix >> 10);
+		frame[1] = (uint8_t)(prefix >> 2);
+		frame[2] = (uint8_t)((prefix << 6) | 0x3fu);
+		CHECK(pcm_control_frame_prefix_is_valid(frame) ==
+			      (prefix == 0x3fffeu),
+		      "sync prefix 0x%x was misclassified", prefix);
+	}
+	return true;
+}
+
+static bool test_sync_suffix(void)
+{
+	uint8_t frame[32];
+
+	for (size_t end = 0; end <= sizeof(frame) * 8u; ++end) {
+		for (size_t run = 0; run <= 32u; ++run) {
+			size_t expected = run < end ? run : end;
+
+			if (expected > 17u)
+				expected = 17u;
+			/* Set the suffix and the unreceived tail, leaving a zero before
+			 * the suffix. Nonzero tail bits must not affect the count. */
+			memset(frame, 0, sizeof(frame));
+			for (size_t bit = 0; bit < sizeof(frame) * 8u; ++bit)
+				packed_msb_set_bit(frame, bit, bit + run >= end);
+			CHECK(pcm_control_frame_trailing_ones(frame, end) == expected,
+			      "sync suffix changed for end %zu/run %zu", end, run);
+		}
+	}
+	return true;
+}
+
 static bool check_payload_end(const uint8_t *frame, size_t end)
 {
 	uint8_t information[V92_CPD_MAX_FRAME_BYTES] = { 0 };
@@ -72,5 +110,6 @@ static bool test_known_check(void)
 
 int main(void)
 {
-	return test_known_check() && test_payload_bounds() ? 0 : 1;
+	return test_sync_prefix() && test_sync_suffix() &&
+	       test_known_check() && test_payload_bounds() ? 0 : 1;
 }

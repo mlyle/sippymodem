@@ -2,13 +2,13 @@
 
 #include "v90_cp_receiver.h"
 
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
 
 enum {
 	CP_SYNC_BITS = 17,
-	CP_START_BIT = 17,
 	CP_INFORMATION_FIRST_BIT = 18,
 	CP_MAP_FIRST_BIT = 103,
 	CP_MAP_BITS = 4,
@@ -53,15 +53,6 @@ static bool stage_is_valid(enum v90_cp_receive_stage stage)
 	       stage == V90_CP_RECEIVER_READ_FRAME;
 }
 
-static bool prefix_is_valid(const uint8_t *frame)
-{
-	for (size_t index = 0; index < CP_SYNC_BITS; ++index) {
-		if (packed_msb_bit(frame, index) == 0)
-			return false;
-	}
-	return packed_msb_bit(frame, CP_START_BIT) == 0;
-}
-
 static bool bit_must_be_zero(
 	size_t bit_index, size_t frame_bit_count)
 {
@@ -95,14 +86,14 @@ bool v90_cp_receiver_is_valid(
 		       receiver->bit_index >= CP_INFORMATION_FIRST_BIT &&
 		       receiver->bit_index <= CP_HEADER_LAST_BIT &&
 		       receiver->sync_one_count == 0 &&
-		       prefix_is_valid(receiver->frame);
+		       pcm_control_frame_prefix_is_valid(receiver->frame);
 	case V90_CP_RECEIVER_READ_FRAME:
 		return receiver->frame_bit_count >= V90_CP_MIN_FRAME_BITS &&
 		       receiver->frame_bit_count <= V90_CP_MAX_FRAME_BITS &&
 		       receiver->bit_index > CP_HEADER_LAST_BIT &&
 		       receiver->bit_index < receiver->frame_bit_count &&
 		       receiver->sync_one_count == 0 &&
-		       prefix_is_valid(receiver->frame) &&
+		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
 		       infer_frame_bit_count(receiver->frame, &inferred_bits) &&
 		       inferred_bits == receiver->frame_bit_count;
 	}
@@ -140,26 +131,13 @@ static void begin_frame(struct v90_cp_receiver *receiver)
 	receiver->stage = V90_CP_RECEIVER_READ_HEADER;
 }
 
-static uint8_t trailing_ones(
-	const struct v90_cp_receiver *receiver)
-{
-	uint8_t count = 0;
-
-	for (size_t index = receiver->bit_index;
-	     index > 0 && count < CP_SYNC_BITS; --index) {
-		if (packed_msb_bit(receiver->frame, index - 1u) == 0)
-			break;
-		++count;
-	}
-	return count;
-}
-
 static void reject_frame(
 	struct v90_cp_receiver *receiver,
 	struct v90_cp_receive_event *event,
 	enum v90_cp_result result)
 {
-	uint8_t suffix_ones = trailing_ones(receiver);
+	uint8_t suffix_ones = pcm_control_frame_trailing_ones(
+		receiver->frame, receiver->bit_index);
 	size_t observed_bits = receiver->bit_index;
 
 	clear_frame(receiver);

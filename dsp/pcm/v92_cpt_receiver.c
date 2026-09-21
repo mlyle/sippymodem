@@ -2,6 +2,7 @@
 
 #include "v92_cpt_receiver.h"
 
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <stdbool.h>
@@ -11,7 +12,6 @@
 
 enum {
 	CPT_SYNC_BITS = 17,
-	CPT_START_BIT = 17,
 	CPT_INFORMATION_FIRST_BIT = 18,
 	CPT_MAP_FIRST_BIT = 103,
 	CPT_MAP_BITS = 4,
@@ -70,15 +70,6 @@ static bool stage_is_valid(enum v92_cpt_receive_stage stage)
 	       stage <= V92_CPT_RECEIVER_READ_FRAME;
 }
 
-static bool prefix_is_valid(const uint8_t *frame)
-{
-	for (size_t index = 0; index < CPT_SYNC_BITS; ++index) {
-		if (packed_msb_bit(frame, index) == 0u)
-			return false;
-	}
-	return packed_msb_bit(frame, CPT_START_BIT) == 0u;
-}
-
 static bool bit_must_be_zero(size_t bit_index)
 {
 	return bit_index % 17u == 0u ||
@@ -118,7 +109,7 @@ bool v92_cpt_receiver_is_valid(
 		       receiver->bit_index >= CPT_INFORMATION_FIRST_BIT &&
 		       receiver->bit_index <= CPT_HEADER_LAST_BIT &&
 		       receiver->sync_one_count == 0u &&
-		       prefix_is_valid(receiver->frame) &&
+		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
 		       received_bits_are_valid(receiver);
 	case V92_CPT_RECEIVER_READ_FRAME:
 		return receiver->frame_bit_count >= V92_CPT_MIN_FRAME_BITS &&
@@ -128,7 +119,7 @@ bool v92_cpt_receiver_is_valid(
 		       receiver->bit_index > CPT_HEADER_LAST_BIT &&
 		       receiver->bit_index < receiver->frame_bit_count &&
 		       receiver->sync_one_count == 0u &&
-		       prefix_is_valid(receiver->frame) &&
+		       pcm_control_frame_prefix_is_valid(receiver->frame) &&
 		       received_bits_are_valid(receiver) &&
 		       infer_frame_bit_count(
 			       receiver->frame, &inferred_bits) &&
@@ -185,26 +176,13 @@ enum v92_cpt_result v92_cpt_receiver_begin_after_sync(
 	return V92_CPT_OK;
 }
 
-static uint8_t trailing_ones(
-	const struct v92_cpt_receiver *receiver)
-{
-	uint8_t count = 0u;
-
-	for (size_t index = receiver->bit_index;
-	     index > 0u && count < CPT_SYNC_BITS; --index) {
-		if (packed_msb_bit(receiver->frame, index - 1u) == 0u)
-			break;
-		count++;
-	}
-	return count;
-}
-
 static void reject_frame(
 	struct v92_cpt_receiver *receiver,
 	struct v92_cpt_receive_event *event,
 	enum v92_cpt_result result)
 {
-	uint8_t suffix_ones = trailing_ones(receiver);
+	uint8_t suffix_ones = pcm_control_frame_trailing_ones(
+		receiver->frame, receiver->bit_index);
 	size_t observed_bits = receiver->bit_index;
 
 	clear_frame(receiver);

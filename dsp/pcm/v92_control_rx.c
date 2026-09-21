@@ -2,13 +2,13 @@
 
 #include "v92_control_rx.h"
 
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
 
 enum {
 	CONTROL_SYNC_BITS = 17,
-	CONTROL_START_BIT = 17,
 	CONTROL_MARKER_BIT = 18,
 };
 
@@ -52,29 +52,6 @@ static size_t status_frame_bits(
 	return v92_suvu_frame_bits(receiver->alignment_bits);
 }
 
-static bool prefix_is_valid(const uint8_t *frame)
-{
-	for (size_t bit = 0u; bit < CONTROL_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(frame, bit) == 0u)
-			return false;
-	}
-	return packed_msb_bit(frame, CONTROL_START_BIT) == 0u;
-}
-
-static uint8_t trailing_one_count(
-	const uint8_t *frame, size_t bit_count)
-{
-	uint8_t count = 0u;
-
-	while (bit_count != 0u && count < CONTROL_SYNC_BITS) {
-		if (packed_msb_bit(frame, bit_count - 1u) == 0u)
-			break;
-		count++;
-		bit_count--;
-	}
-	return count;
-}
-
 bool v92_control_rx_is_valid(
 	const struct v92_control_rx *receiver)
 {
@@ -93,8 +70,8 @@ bool v92_control_rx_is_valid(
 	if (receiver->stage == V92_CONTROL_RX_SEARCH_SYNC)
 		return receiver->frame_bit_count == 0u &&
 		       receiver->bit_index == 0u;
-	if (!prefix_is_valid(receiver->frame) ||
-	    receiver->sync_one_count != trailing_one_count(
+	if (!pcm_control_frame_prefix_is_valid(receiver->frame) ||
+	    receiver->sync_one_count != pcm_control_frame_trailing_ones(
 		    receiver->frame, receiver->bit_index))
 		return false;
 	if (receiver->stage == V92_CONTROL_RX_READ_MARKER)

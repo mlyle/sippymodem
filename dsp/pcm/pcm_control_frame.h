@@ -6,6 +6,30 @@
 #include "crc16_ccitt_false.h"
 #include "packed_bits.h"
 
+/* The caller owns storage bounds. A complete prefix needs three bytes:
+ * seventeen one bits followed by the first zero start bit, MSB first. */
+static inline bool pcm_control_frame_prefix_is_valid(const uint8_t *frame)
+{
+	return frame[0] == UINT8_MAX && frame[1] == UINT8_MAX &&
+	       (frame[2] & 0xc0u) == 0x80u;
+}
+
+/* Retain a rejected record's possible sync suffix, capped at the prefix's
+ * seventeen ones. Bits at or after bit_count are not part of the record. */
+static inline uint8_t pcm_control_frame_trailing_ones(
+	const uint8_t *frame, size_t bit_count)
+{
+	uint8_t count = 0;
+
+	while (bit_count != 0 && count < 17u) {
+		if (packed_msb_bit(frame, bit_count - 1u) == 0u)
+			break;
+		count++;
+		bit_count--;
+	}
+	return count;
+}
+
 /* MP and CP-family records carry 16 information bits after each zero start
  * bit. Exclude the 17-bit sync prefix and start bits from the unreflected CRC.
  * The caller validates storage and supplies the exclusive payload end; this
