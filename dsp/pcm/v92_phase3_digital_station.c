@@ -250,7 +250,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_DIGITAL_STATION_FAILED;
-	if (v92_phase3_digital_station_transmit_complete(station))
+	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE)
 		return V92_PHASE3_DIGITAL_STATION_COMPLETE;
 	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_SILENCE) {
 		*network_octet = g711_encode(station->law, 0);
@@ -531,7 +531,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_receive(
 		return V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_DIGITAL_STATION_FAILED;
-	if (v92_phase3_digital_station_receive_complete(station)) {
+	if (station->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_COMPLETE) {
 		if (station->early_trn2u_samples ==
 		    sizeof(station->early_trn2u) / sizeof(station->early_trn2u[0])) {
 			station->failed = true;

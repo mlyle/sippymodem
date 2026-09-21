@@ -286,6 +286,38 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 		      v92_pcm_phase4_trn2u_next(&expected, &expected_sample) == V92_PCM_PHASE4_TRN2U_OK &&
 		      actual_sample == expected_sample, "TRN2u handoff changed sample %u", i);
 	}
+	{
+		struct v92_phase3_analog_station saved;
+		int16_t sample = 1234;
+
+		analog.downstream_training_ucode = 0;
+		memcpy(&saved, &analog, sizeof(saved));
+		CHECK(!v92_phase3_analog_station_transmit_complete(&analog) &&
+		      !v92_phase3_analog_station_receive_complete(&analog) &&
+		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+		      v92_phase3_analog_station_receive(&analog, 0xa5) ==
+			      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+		      sample == 1234 &&
+		      memcmp(&analog, &saved, sizeof(analog)) == 0,
+		      "invalid completed analogue state bypassed validation");
+	}
+	{
+		struct v92_phase3_digital_station saved;
+		uint8_t octet = 0xa5;
+
+		digital.training_ucode = 0;
+		memcpy(&saved, &digital, sizeof(saved));
+		CHECK(!v92_phase3_digital_station_transmit_complete(&digital) &&
+		      !v92_phase3_digital_station_receive_complete(&digital) &&
+		      v92_phase3_digital_station_transmit(&digital, &octet) ==
+			      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v92_phase3_digital_station_receive(&digital, 1234) ==
+			      V92_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      octet == 0xa5 &&
+		      memcmp(&digital, &saved, sizeof(digital)) == 0,
+		      "invalid completed digital state bypassed validation");
+	}
 	return true;
 }
 

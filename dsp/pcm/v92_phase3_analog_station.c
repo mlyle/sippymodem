@@ -343,7 +343,8 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_ANALOG_STATION_FAILED;
-	if (v92_phase3_analog_station_transmit_complete(station))
+	if (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_TRN2U &&
+	    station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_COMPLETE)
 		return V92_PHASE3_ANALOG_STATION_COMPLETE;
 	if (md_symbol != NULL &&
 	    (station->transmit_stage !=
@@ -554,7 +555,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V92_PHASE3_ANALOG_STATION_FAILED;
-	if (v92_phase3_analog_station_receive_complete(station))
+	if (station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_COMPLETE)
 		return V92_PHASE3_ANALOG_STATION_COMPLETE;
 	next = *station;
 	switch (next.receive_stage) {

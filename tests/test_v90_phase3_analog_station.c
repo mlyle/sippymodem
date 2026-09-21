@@ -282,6 +282,17 @@ static bool run_exchange(
 		      memcmp(&analog, &saved, sizeof(analog)) == 0,
 		      "law %u complete station consumed media",
 		      (unsigned int)law);
+		analog.training_ucode = 0;
+		memcpy(&saved, &analog, sizeof(saved));
+		CHECK(!v90_phase3_analog_station_transmit_complete(&analog) &&
+		      !v90_phase3_analog_station_receive_complete(&analog) &&
+		      v90_phase3_analog_station_transmit(&analog, &sample) ==
+			      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+		      v90_phase3_analog_station_receive(&analog, 0xa5) ==
+			      V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
+		      sample == 1234 &&
+		      memcmp(&analog, &saved, sizeof(analog)) == 0,
+		      "invalid completed analogue state bypassed validation");
 	}
 	{
 		struct v90_phase3_digital_station saved = digital;
@@ -295,6 +306,17 @@ static bool run_exchange(
 		      memcmp(&digital, &saved, sizeof(digital)) == 0,
 		      "law %u complete digital station consumed media",
 		      (unsigned int)law);
+		digital.training_ucode = 0;
+		memcpy(&saved, &digital, sizeof(saved));
+		CHECK(!v90_phase3_digital_station_transmit_complete(&digital) &&
+		      !v90_phase3_digital_station_receive_complete(&digital) &&
+		      v90_phase3_digital_station_transmit(&digital, &octet) ==
+			      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      v90_phase3_digital_station_receive(&digital, 1234) ==
+			      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+		      octet == 0xa5 &&
+		      memcmp(&digital, &saved, sizeof(digital)) == 0,
+		      "invalid completed digital state bypassed validation");
 	}
 	return true;
 }

@@ -133,7 +133,8 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_transmit(
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_DIGITAL_STATION_FAILED;
-	if (v90_phase3_digital_station_transmit_complete(station))
+	if (station->transmit_started &&
+	    station->transmit.stage == PCM_PHASE3_DIGITAL_TX_COMPLETE)
 		return V90_PHASE3_DIGITAL_STATION_COMPLETE;
 	if (!station->transmit_started) {
 		*network_octet = g711_encode(station->law, 0);
@@ -316,7 +317,8 @@ enum v90_phase3_digital_station_result v90_phase3_digital_station_receive(
 		return V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_DIGITAL_STATION_FAILED;
-	if (v90_phase3_digital_station_receive_complete(station))
+	if (station->transmit_started &&
+	    v90_phase3_return_marker_is_complete(&station->receive.returning.marker))
 		return V90_PHASE3_DIGITAL_STATION_COMPLETE;
 	next = *station;
 	result = next.receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ?

@@ -24,15 +24,6 @@ static bool transmit_owned_state_is_valid(
 	return false;
 }
 
-static bool transmit_is_valid(
-	const struct v90_phase3_analog_station *station)
-{
-	return transmit_owned_state_is_valid(station) &&
-	       (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_INITIAL ||
-		v90_phase3_analog_line_tx_is_valid(
-			&station->transmit.initial));
-}
-
 static bool dil_state_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
@@ -123,7 +114,9 @@ bool v90_phase3_analog_station_is_valid(
 	const struct v90_phase3_analog_station *station)
 {
 	return v90_phase3_analog_station_owned_state_is_valid(station) &&
-	       transmit_is_valid(station);
+	       (station->transmit_stage != V90_PHASE3_ANALOG_TRANSMIT_INITIAL ||
+		v90_phase3_analog_line_tx_is_valid(
+			&station->transmit.initial));
 }
 
 bool v90_phase3_analog_station_has_failed(
@@ -319,11 +312,11 @@ static enum v90_phase3_analog_station_result control_transmit(
 	return control_dil_return_transmit(station);
 }
 
-static bool transmit_is_complete_owned(
+/* Completion predicates below require validated owned state. */
+static bool transmit_is_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return v90_phase3_analog_station_owned_state_is_valid(station) &&
-	       !station->failed &&
+	return !station->failed &&
 	       station->transmit_stage ==
 		       (station->dil_profile == V90_DIL_PROFILE_NONE ?
 			       V90_PHASE3_ANALOG_TRANSMIT_RETURN :
@@ -335,7 +328,8 @@ static bool transmit_is_complete_owned(
 bool v90_phase3_analog_station_transmit_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return transmit_is_complete_owned(station);
+	return v90_phase3_analog_station_owned_state_is_valid(station) &&
+	       transmit_is_complete(station);
 }
 
 enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
@@ -350,7 +344,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_transmit(
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_ANALOG_STATION_FAILED;
-	if (transmit_is_complete_owned(station))
+	if (transmit_is_complete(station))
 		return V90_PHASE3_ANALOG_STATION_COMPLETE;
 	next = *station;
 	control_result = control_transmit(&next);
@@ -451,11 +445,10 @@ static enum v90_phase3_analog_station_result receive_dil(
 	return V90_PHASE3_ANALOG_STATION_OK;
 }
 
-static bool receive_is_complete_owned(
+static bool receive_is_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return v90_phase3_analog_station_owned_state_is_valid(station) &&
-	       !station->failed &&
+	return !station->failed &&
 	       station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
 	       pcm_phase3_j_receiver_is_complete(&station->receive.signs) &&
 	       (station->dil_profile == V90_DIL_PROFILE_NONE ||
@@ -465,7 +458,8 @@ static bool receive_is_complete_owned(
 bool v90_phase3_analog_station_receive_complete(
 	const struct v90_phase3_analog_station *station)
 {
-	return receive_is_complete_owned(station);
+	return v90_phase3_analog_station_owned_state_is_valid(station) &&
+	       receive_is_complete(station);
 }
 
 enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
@@ -478,7 +472,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE3_ANALOG_STATION_FAILED;
-	if (receive_is_complete_owned(station))
+	if (receive_is_complete(station))
 		return V90_PHASE3_ANALOG_STATION_COMPLETE;
 	next = *station;
 	if (next.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SD)
