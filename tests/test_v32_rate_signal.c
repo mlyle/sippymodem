@@ -14,6 +14,72 @@ static bool offers_are_equal(
 	       left->trellis_at_highest_rate == right->trellis_at_highest_rate;
 }
 
+static bool test_offer_helpers(void)
+{
+	static const uint8_t rates[] = {
+		V32_RATE_CAPABILITY_4800, V32_RATE_CAPABILITY_7200,
+		V32_RATE_CAPABILITY_9600, V32_RATE_CAPABILITY_12000,
+		V32_RATE_CAPABILITY_14400,
+	};
+
+	for (unsigned int mask = 0; mask <= UINT8_MAX; ++mask) {
+		uint8_t expected = 0;
+
+		for (size_t index = 0; index < ARRAY_LENGTH(rates); ++index)
+			if ((mask & rates[index]) != 0)
+				expected = rates[index];
+		CHECK(v32_rate_highest((uint8_t)mask) == expected,
+		      "highest capability changed for mask %u", mask);
+		for (unsigned int other = 0; other <= UINT8_MAX; ++other) {
+			for (unsigned int flags = 0; flags < 4u; ++flags) {
+				struct v32_rate_offer left = {
+					(uint8_t)mask, (flags & 1u) != 0,
+				};
+				struct v32_rate_offer right = {
+					(uint8_t)other, (flags & 2u) != 0,
+				};
+
+				CHECK(v32_rate_offers_match(&left, &right) ==
+					      offers_are_equal(&left, &right),
+				      "rate-offer equality changed");
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_retained_offer(void)
+{
+	struct v32_rate_signal_detector detector = { 0 };
+	struct v32_rate_offer offer = { 0 };
+	const struct v32_rate_offer empty = offer;
+
+	CHECK(!v32_rate_signal_detector_offer(NULL, &offer) &&
+		      !v32_rate_signal_detector_offer(&detector, NULL),
+	      "retained offer accepted missing storage");
+	for (unsigned int word = 0; word <= UINT16_MAX; ++word) {
+		struct v32_rate_offer decoded;
+		enum v32_rate_signal_type type;
+		bool is_rate = v32_rate_signal_decode(
+			(uint16_t)word, &type, &decoded) == V32_RATE_SIGNAL_OK &&
+			type == V32_RATE_SIGNAL;
+
+		detector.locked_rate_word = (uint16_t)word;
+		detector.aligned = false;
+		offer = empty;
+		CHECK(!v32_rate_signal_detector_offer(&detector, &offer) &&
+			      offers_are_equal(&offer, &empty),
+		      "unaligned detector exposed an offer");
+		detector.aligned = true;
+		const struct v32_rate_signal_detector saved = detector;
+		CHECK(v32_rate_signal_detector_offer(&detector, &offer) == is_rate &&
+			      (!is_rate || offers_are_equal(&offer, &decoded)) &&
+			      memcmp(&detector, &saved, sizeof(detector)) == 0,
+		      "retained rate query changed word 0x%04x or detector", word);
+	}
+	return true;
+}
+
 static bool test_normative_words(void)
 {
 	static const struct {
@@ -355,6 +421,8 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "shared rate-offer helpers", test_offer_helpers },
+		{ "aligned retained offer", test_retained_offer },
 		{ "normative words", test_normative_words },
 		{ "capability round trip", test_capability_round_trip },
 		{ "transmission order", test_transmission_order },

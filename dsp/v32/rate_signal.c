@@ -45,21 +45,6 @@ static bool has_one_rate(uint8_t rates)
 	return rates != 0 && (rates & (uint8_t)(rates - 1u)) == 0;
 }
 
-static uint8_t highest_rate(uint8_t rates)
-{
-	if ((rates & V32_RATE_CAPABILITY_14400) != 0)
-		return V32_RATE_CAPABILITY_14400;
-	if ((rates & V32_RATE_CAPABILITY_12000) != 0)
-		return V32_RATE_CAPABILITY_12000;
-	if ((rates & V32_RATE_CAPABILITY_9600) != 0)
-		return V32_RATE_CAPABILITY_9600;
-	if ((rates & V32_RATE_CAPABILITY_7200) != 0)
-		return V32_RATE_CAPABILITY_7200;
-	if ((rates & V32_RATE_CAPABILITY_4800) != 0)
-		return V32_RATE_CAPABILITY_4800;
-	return 0;
-}
-
 static bool rate_requires_trellis(uint8_t rate)
 {
 	return rate == V32_RATE_CAPABILITY_7200 ||
@@ -79,7 +64,7 @@ static bool offer_is_valid(
 		return false;
 	if (type == V32_END_SIGNAL && !has_one_rate(offer->rates))
 		return false;
-	highest = highest_rate(offer->rates);
+	highest = v32_rate_highest(offer->rates);
 	if (highest == V32_RATE_CAPABILITY_9600)
 		return true;
 	return offer->trellis_at_highest_rate == rate_requires_trellis(highest);

@@ -7,28 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool offers_match(
-	const struct v32_rate_offer *left,
-	const struct v32_rate_offer *right)
-{
-	return left->rates == right->rates &&
-	       left->trellis_at_highest_rate ==
-		       right->trellis_at_highest_rate;
-}
-
-static bool detector_offer(
-	const struct v32_rate_signal_detector *detector,
-	struct v32_rate_offer *offer)
-{
-	enum v32_rate_signal_type type;
-
-	return detector != NULL && detector->aligned && offer != NULL &&
-	       v32_rate_signal_decode(
-		       detector->locked_rate_word, &type, offer) ==
-		       V32_RATE_SIGNAL_OK &&
-	       type == V32_RATE_SIGNAL;
-}
-
 static bool observation_epoch_is_valid(
 	const struct v32_receive_path *receive, uint64_t observation_epoch)
 {
@@ -181,8 +159,8 @@ bool v32_rate_path_handoff_is_valid(
 	    !v32_receive_path_is_valid(&handoff->receive) ||
 	    !v32_four_point_receiver_is_valid(&handoff->four_point) ||
 	    !v32_rate_signal_detector_is_valid(&handoff->detector) ||
-	    !detector_offer(&handoff->detector, &decoded) ||
-	    !offers_match(&handoff->offer, &decoded) ||
+	    !v32_rate_signal_detector_offer(&handoff->detector, &decoded) ||
+	    !v32_rate_offers_match(&handoff->offer, &decoded) ||
 	    handoff->receive.equalizer.adaptation !=
 		    V32_EQUALIZER_ADAPTATION_FINE ||
 	    !observation_epoch_is_valid(
@@ -217,7 +195,8 @@ enum v32_rate_path_result v32_rate_path_handoff(
 	generated.receive = path->receive;
 	generated.four_point = path->four_point;
 	generated.detector = path->detector;
-	if (!detector_offer(&generated.detector, &generated.offer))
+	if (!v32_rate_signal_detector_offer(
+		    &generated.detector, &generated.offer))
 		return V32_RATE_PATH_INVALID_STATE;
 	generated.observation_epoch = path->observation_epoch;
 	generated.observation_ready =

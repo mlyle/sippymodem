@@ -7,15 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool offers_match(
-	const struct v32_rate_offer *left,
-	const struct v32_rate_offer *right)
-{
-	return left->rates == right->rates &&
-	       left->trellis_at_highest_rate ==
-		       right->trellis_at_highest_rate;
-}
-
 static bool offer_is_valid(
 	const struct v32_rate_offer *offer,
 	enum v32_rate_signal_type type)
@@ -24,19 +15,6 @@ static bool offer_is_valid(
 
 	return v32_rate_signal_encode(type, offer, &word) ==
 	       V32_RATE_SIGNAL_OK;
-}
-
-static bool detector_offer(
-	const struct v32_rate_signal_detector *detector,
-	struct v32_rate_offer *offer)
-{
-	enum v32_rate_signal_type type;
-
-	return detector != NULL && detector->aligned && offer != NULL &&
-	       v32_rate_signal_decode(
-		       detector->locked_rate_word, &type, offer) ==
-		       V32_RATE_SIGNAL_OK &&
-	       type == V32_RATE_SIGNAL;
 }
 
 static bool detector_is_reset(
@@ -72,9 +50,9 @@ static bool detector_state_is_valid(const struct v32_end_path *path)
 		return detector_is_reset(&path->detector);
 	if (!path->detector.aligned)
 		return true;
-	return detector_offer(&path->detector, &offer) &&
-	       (offers_match(&offer, &path->initial_offer) ||
-		offers_match(&offer, &path->selected_offer));
+	return v32_rate_signal_detector_offer(&path->detector, &offer) &&
+	       (v32_rate_offers_match(&offer, &path->initial_offer) ||
+		v32_rate_offers_match(&offer, &path->selected_offer));
 }
 
 static bool adaptation_state_is_valid(const struct v32_end_path *path)
@@ -125,9 +103,9 @@ static bool event_is_allowed(
 	if (event == V32_RATE_SIGNAL_NO_EVENT)
 		return true;
 	if (event == V32_END_SIGNAL_DETECTED)
-		return offers_match(offer, &path->selected_offer);
-	return offers_match(offer, &path->initial_offer) ||
-	       offers_match(offer, &path->selected_offer);
+		return v32_rate_offers_match(offer, &path->selected_offer);
+	return v32_rate_offers_match(offer, &path->initial_offer) ||
+	       v32_rate_offers_match(offer, &path->selected_offer);
 }
 
 static enum v32_end_path_result commit_observations(

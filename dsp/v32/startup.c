@@ -16,8 +16,6 @@ enum {
 				V32_RATE_CAPABILITY_14400,
 };
 
-static uint8_t highest_rate(uint8_t rates);
-
 static bool rate_requires_trellis(uint8_t rate)
 {
 	return rate == V32_RATE_CAPABILITY_7200 ||
@@ -42,7 +40,7 @@ static struct v32_rate_offer rate_offer(uint8_t rates)
 	return (struct v32_rate_offer){
 		.rates = rates,
 		.trellis_at_highest_rate = rate_requires_trellis(
-			highest_rate(rates)),
+			v32_rate_highest(rates)),
 	};
 }
 
@@ -393,21 +391,6 @@ enum v32_startup_result v32_startup_next_transmit(
 	return V32_STARTUP_OK;
 }
 
-static uint8_t highest_rate(uint8_t rates)
-{
-	if ((rates & V32_RATE_CAPABILITY_14400) != 0)
-		return V32_RATE_CAPABILITY_14400;
-	if ((rates & V32_RATE_CAPABILITY_12000) != 0)
-		return V32_RATE_CAPABILITY_12000;
-	if ((rates & V32_RATE_CAPABILITY_9600) != 0)
-		return V32_RATE_CAPABILITY_9600;
-	if ((rates & V32_RATE_CAPABILITY_7200) != 0)
-		return V32_RATE_CAPABILITY_7200;
-	if ((rates & V32_RATE_CAPABILITY_4800) != 0)
-		return V32_RATE_CAPABILITY_4800;
-	return 0;
-}
-
 static uint8_t compatible_rates(
 	const struct v32_startup *startup,
 	const struct v32_rate_offer *offer)
@@ -415,8 +398,8 @@ static uint8_t compatible_rates(
 	uint8_t common = startup->supported_rates & offer->rates;
 
 	if (!offer->trellis_at_highest_rate &&
-	    highest_rate(offer->rates) == V32_RATE_CAPABILITY_9600)
-		common &= (uint8_t)~highest_rate(offer->rates);
+	    v32_rate_highest(offer->rates) == V32_RATE_CAPABILITY_9600)
+		common &= (uint8_t)~v32_rate_highest(offer->rates);
 	return common;
 }
 
@@ -456,7 +439,8 @@ static enum v32_startup_result observe_rate_event(
 			startup->selection_expected = false;
 		}
 	} else if (startup->phase == V32_ANSWERER_SEND_OFFER) {
-		uint8_t selected = highest_rate(compatible_rates(startup, offer));
+		uint8_t selected =
+			v32_rate_highest(compatible_rates(startup, offer));
 
 		if (selected == 0)
 			return V32_STARTUP_NO_COMMON_RATE;
