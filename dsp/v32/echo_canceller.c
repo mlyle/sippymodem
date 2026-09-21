@@ -74,17 +74,12 @@ enum v32_echo_result v32_echo_canceller_init(
 	struct v32_echo_canceller *canceller,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols)
 {
-	struct v32_echo_canceller initialized;
-
 	if (canceller == NULL ||
 	    !geometry_is_valid(near_delay_symbols, round_trip_symbols))
 		return V32_ECHO_INVALID_ARGUMENT;
-	memset(&initialized, 0, sizeof(initialized));
-	initialized.near_delay_symbols = near_delay_symbols;
-	initialized.round_trip_symbols = round_trip_symbols;
-	if (!v32_echo_canceller_is_valid(&initialized))
-		return V32_ECHO_INVALID_ARGUMENT;
-	*canceller = initialized;
+	memset(canceller, 0, sizeof(*canceller));
+	canceller->near_delay_symbols = near_delay_symbols;
+	canceller->round_trip_symbols = round_trip_symbols;
 	return V32_ECHO_OK;
 }
 

@@ -185,6 +185,45 @@ static bool active_corruption_is_transactional(
 	return true;
 }
 
+static bool test_initialization_and_reset(void)
+{
+	const uint16_t delays[] = { 0, V32_ECHO_MAX_NEAR_DELAY_SYMBOLS };
+	const uint16_t trips[] = {
+		V32_ECHO_MIN_ROUND_TRIP_SYMBOLS, V32_ECHO_MAX_ROUND_TRIP_SYMBOLS,
+	};
+	struct v32_echo_canceller canceller;
+	struct v32_echo_canceller expected;
+	struct qam_point reference = { 0.5, -0.25 };
+
+	CHECK(v32_echo_canceller_init(NULL, 0, trips[0]) ==
+		      V32_ECHO_INVALID_ARGUMENT, "null owner initialized");
+	for (size_t delay = 0; delay < ARRAY_LENGTH(delays); ++delay) {
+		for (size_t trip = 0; trip < ARRAY_LENGTH(trips); ++trip) {
+			memset(&canceller, 0xa5, sizeof(canceller));
+			memset(&expected, 0, sizeof(expected));
+			expected.near_delay_symbols = delays[delay];
+			expected.round_trip_symbols = trips[trip];
+			CHECK(v32_echo_canceller_init(
+				      &canceller, delays[delay], trips[trip]) ==
+				      V32_ECHO_OK &&
+			      v32_echo_canceller_is_valid(&canceller) &&
+			      memcmp(&canceller, &expected, sizeof(expected)) == 0,
+			      "boundary geometry did not initialize the complete owner");
+			CHECK(v32_echo_canceller_start_adaptation(&canceller, 0.5) ==
+				      V32_ECHO_OK &&
+			      v32_echo_canceller_push_reference(&canceller, &reference) ==
+				      V32_ECHO_OK, "reset fixture did not advance");
+			CHECK(v32_echo_canceller_init(
+				      &canceller, delays[delay], trips[trip]) ==
+				      V32_ECHO_OK &&
+			      v32_echo_canceller_is_valid(&canceller) &&
+			      memcmp(&canceller, &expected, sizeof(expected)) == 0,
+			      "reset retained pending history or adaptation state");
+		}
+	}
+	return true;
+}
+
 static bool test_validation_and_aliases(void)
 {
 	struct v32_echo_canceller canceller;
@@ -621,6 +660,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "initialization and reset", test_initialization_and_reset },
 		{ "validation and aliases", test_validation_and_aliases },
 		{ "complete finite-state validation",
 		  test_complete_finite_state_validation },

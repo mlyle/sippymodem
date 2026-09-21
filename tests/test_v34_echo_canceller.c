@@ -113,11 +113,16 @@ static bool test_validation_and_transactionality(void)
 	CHECK(v34_echo_canceller_init(NULL) ==
 		      V34_ECHO_CANCELLER_INVALID_ARGUMENT,
 	      "null owner initialized");
+	memset(&canceller, 0xa5, sizeof(canceller));
 	CHECK(v34_echo_canceller_init(&canceller) ==
 		      V34_ECHO_CANCELLER_OK &&
 		      v34_echo_canceller_is_valid(&canceller) &&
 		      v34_echo_canceller_is_adapting(&canceller),
 	      "ordinary owner did not initialize");
+	memset(&saved, 0, sizeof(saved));
+	saved.adapting = true;
+	CHECK(memcmp(&canceller, &saved, sizeof(saved)) == 0,
+	      "initialization did not clear the complete owner");
 	CHECK(v34_echo_canceller_predict(&canceller, 17, NULL) ==
 		      V34_ECHO_CANCELLER_INVALID_ARGUMENT,
 	      "null prediction output accepted");
@@ -148,6 +153,11 @@ static bool test_validation_and_transactionality(void)
 		      V34_ECHO_CANCELLER_INVALID_STATE &&
 	      output == 17,
 	      "corrupt owner was accepted or changed output");
+	CHECK(v34_echo_canceller_init(&canceller) ==
+		      V34_ECHO_CANCELLER_OK &&
+	      v34_echo_canceller_is_valid(&canceller) &&
+	      memcmp(&canceller, &saved, sizeof(saved)) == 0,
+	      "reset retained echo history or frozen state");
 	return true;
 }
 

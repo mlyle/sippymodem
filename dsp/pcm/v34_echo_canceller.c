@@ -49,15 +49,10 @@ bool v34_echo_canceller_is_adapting(
 enum v34_echo_canceller_result v34_echo_canceller_init(
 	struct v34_echo_canceller *canceller)
 {
-	struct v34_echo_canceller initialized;
-
 	if (canceller == NULL)
 		return V34_ECHO_CANCELLER_INVALID_ARGUMENT;
-	memset(&initialized, 0, sizeof(initialized));
-	initialized.adapting = true;
-	if (!v34_echo_canceller_is_valid(&initialized))
-		return V34_ECHO_CANCELLER_INVALID_STATE;
-	*canceller = initialized;
+	memset(canceller, 0, sizeof(*canceller));
+	canceller->adapting = true;
 	return V34_ECHO_CANCELLER_OK;
 }
 

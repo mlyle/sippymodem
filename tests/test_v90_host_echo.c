@@ -569,6 +569,42 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 	return true;
 }
 
+static bool test_training_quiet_boundary(void)
+{
+	for (unsigned scenario = 0; scenario < 3; ++scenario) {
+		struct v90_host_echo echo;
+
+		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+		      "quiet-boundary owner did not initialize");
+		if (scenario != 0) {
+			for (unsigned index = 0;
+			     index < echo.window_delay_samples +
+				     V90_HOST_ECHO_FILTER_TAPS - 1u; ++index)
+				CHECK(pcm_echo_reference_push(
+					      &echo.reference, scenario == 2 ? 100 : 0) ==
+					      PCM_ECHO_REFERENCE_OK,
+				      "quiet-boundary reference did not fill");
+		}
+		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 2u;
+		for (unsigned step = 0; step < 2; ++step) {
+			unsigned trained = scenario == 2 && step == 1;
+
+			CHECK(v90_host_echo_advance(
+				      &echo, V90_HOST_ECHO_TRAIN, 100, 100, 100) ==
+				      V90_HOST_ECHO_OK &&
+			      echo.quiet_samples ==
+				      V90_HOST_ECHO_QUIET_SAMPLES - 1u + step &&
+			      echo.train_samples == trained &&
+			      (trained ? echo.coefficients[0] > 0.0f :
+					 echo.coefficients[0] == 0.0f) &&
+			      v90_host_echo_is_valid(&echo),
+			      "quiet-boundary scenario %u step %u changed training",
+			      scenario, step);
+		}
+	}
+	return true;
+}
+
 static bool test_prediction_energy_saturation(void)
 {
 	for (int sign = -1; sign <= 1; sign += 2) {
@@ -787,7 +823,8 @@ int main(void)
 		if (!test_unrelated_input_does_not_train(
 			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
 			return 1;
-	if (!test_contracts() || !test_prediction_energy_saturation() ||
+	if (!test_contracts() || !test_training_quiet_boundary() ||
+	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||

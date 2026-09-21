@@ -584,7 +584,6 @@ enum v90_host_echo_result v90_host_echo_advance(
 	if (mode == V90_HOST_ECHO_TRAIN) {
 		next_quiet = echo->quiet_samples == UINT32_MAX ? UINT32_MAX :
 			echo->quiet_samples + 1u;
-		memset(&training, 0, sizeof(training));
 		if (next_quiet >= V90_HOST_ECHO_QUIET_SAMPLES) {
 			result = prepare_training_step(
 				echo, received_sample, &training);
