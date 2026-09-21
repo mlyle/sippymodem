@@ -127,6 +127,70 @@ static bool test_point_validation(void)
 	return true;
 }
 
+static bool test_point_quotient(void)
+{
+	static const struct {
+		struct qam_point numerator, denominator, expected;
+	} cases[] = {
+		{ { 6, 2 }, { 2, 0 }, { 3, 1 } },
+		{ { 6, 2 }, { 0, 2 }, { 1, -3 } },
+		{ { 2, 4 }, { 1, 1 }, { 3, 1 } },
+		{ { 2, 4 }, { -1, 1 }, { 1, -3 } },
+		{ { 0x1p480, 0 }, { 0x1p240, 0 }, { 0x1p240, 0 } },
+	};
+
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct qam_point result = qam_point_quotient(
+			&cases[i].numerator, &cases[i].denominator,
+			qam_point_power(&cases[i].denominator));
+
+		CHECK(result.in_phase == cases[i].expected.in_phase &&
+		      result.quadrature == cases[i].expected.quadrature,
+		      "raw quotient case %zu changed the complex division", i);
+	}
+	return true;
+}
+
+static bool test_point_correlation(void)
+{
+	static const struct {
+		struct qam_point reference, sample, expected;
+	} cases[] = {
+		{ { 1, 2 }, { 3, 4 }, { 11, -2 } },
+		{ { 3, 4 }, { 1, 2 }, { 11, 2 } },
+		{ { -1, 2 }, { 3, 4 }, { 5, -10 } },
+		{ { 0x1p511, 0 }, { 0x1p511, 0 }, { 0x1p1022, 0 } },
+		{ { 0x1p-530, 0 }, { 0x1p-530, 0 }, { 0x1p-1060, 0 } },
+	};
+	for (size_t i = 0; i < ARRAY_LENGTH(cases); ++i) {
+		struct qam_point result = qam_point_correlation(
+			&cases[i].reference, &cases[i].sample);
+		CHECK(result.in_phase == cases[i].expected.in_phase &&
+		      result.quadrature == cases[i].expected.quadrature,
+		      "correlation case %zu conjugated the wrong operand", i);
+	}
+	for (unsigned signs = 0; signs < 16; ++signs) {
+		struct qam_point a = { signs & 1 ? -0.0 : 0.0, signs & 2 ? -0.0 : 0.0 };
+		struct qam_point b = { signs & 4 ? -0.0 : 0.0, signs & 8 ? -0.0 : 0.0 };
+		struct qam_point expected = {
+			a.in_phase * b.in_phase + a.quadrature * b.quadrature,
+			a.in_phase * b.quadrature - a.quadrature * b.in_phase,
+		};
+		struct qam_point result = qam_point_correlation(&a, &b);
+		CHECK(memcmp(&result, &expected, sizeof(result)) == 0,
+		      "correlation changed signed zero %u", signs);
+	}
+	struct qam_point large = { DBL_MAX, 0.0 }, sample = { 2.0, 3.0 };
+	struct qam_point result = qam_point_correlation(&large, &sample);
+	CHECK(isinf(result.in_phase) && isinf(result.quadrature),
+	      "raw correlation unexpectedly changed overflow policy");
+	large.in_phase = NAN;
+	result = qam_point_correlation(&large, &sample);
+	CHECK(isnan(result.in_phase) && isnan(result.quadrature),
+	      "raw correlation unexpectedly rejected NaN");
+	return true;
+}
+
 static bool test_flat_gain_prediction(void)
 {
 	static const struct qam_point gains[] = {
@@ -1304,6 +1368,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "point validation", test_point_validation },
+		{ "point correlation", test_point_correlation },
+		{ "point quotient", test_point_quotient },
 		{ "flat gain prediction", test_flat_gain_prediction },
 		{ "flat gain product boundaries", test_flat_gain_product_boundaries },
 		{ "flat gain adaptation", test_flat_gain_adaptation },

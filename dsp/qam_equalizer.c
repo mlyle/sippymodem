@@ -105,15 +105,7 @@ static bool inverse_channel(
 	power = qam_point_power(received);
 	if (!isfinite(power) || power <= QAM_EQUALIZER_MINIMUM_POWER)
 		return false;
-	*inverse = (struct qam_point){
-		.in_phase = (transmitted->in_phase * received->in_phase +
-			     transmitted->quadrature * received->quadrature) /
-			    power,
-		.quadrature =
-			(transmitted->quadrature * received->in_phase -
-			 transmitted->in_phase * received->quadrature) /
-			power,
-	};
+	*inverse = qam_point_quotient(transmitted, received, power);
 	return point_is_finite(inverse) &&
 	       qam_point_power(transmitted) > QAM_EQUALIZER_MINIMUM_POWER;
 }

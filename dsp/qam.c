@@ -30,20 +30,17 @@ enum qam_result qam_nearest_quarter_turn(
 	const struct qam_point *previous,
 	const struct qam_point *current, uint8_t *quarter_turns)
 {
-	double cross;
-	double dot;
+	struct qam_point correlation;
 	int turns;
 
 	if (!point_is_finite(previous) || !point_is_finite(current) ||
 	    quarter_turns == NULL)
 		return QAM_INVALID_ARGUMENT;
-	dot = previous->in_phase * current->in_phase +
-	      previous->quadrature * current->quadrature;
-	cross = previous->in_phase * current->quadrature -
-		previous->quadrature * current->in_phase;
-	if (!isfinite(dot) || !isfinite(cross))
+	correlation = qam_point_correlation(previous, current);
+	if (!point_is_finite(&correlation))
 		return QAM_INVALID_ARGUMENT;
-	turns = (int)lround(atan2(cross, dot) / (QAM_PI / 2.0));
+	turns = (int)lround(atan2(correlation.quadrature, correlation.in_phase) /
+		(QAM_PI / 2.0));
 	*quarter_turns = (uint8_t)((unsigned int)turns & 3u);
 	return QAM_OK;
 }

@@ -827,6 +827,35 @@ static bool test_product_boundaries(void)
 	return true;
 }
 
+static bool test_reference_division_boundaries(void)
+{
+	struct qam_equalizer equalizer, saved;
+	const struct qam_point unity = { 1.0, 0.0 };
+	const struct qam_point received = { 0x1p480, 0.0 };
+	const struct qam_point transmitted = { 0x1p520, 0.0 };
+	const struct qam_point above = { nextafter(1e-6, INFINITY), 0.0 };
+	const struct qam_point too_small[] = {
+		{ 0.0, -0.0 }, { 1e-6, 0.0 }, { nextafter(1e-6, 0.0), 0.0 },
+	};
+
+	CHECK(qam_equalizer_init_geometry(&equalizer, &received, &transmitted, 1, 0) ==
+		      QAM_EQUALIZER_OK && equalizer.coefficients[0].in_phase == 0x1p40 &&
+	      equalizer.coefficients[0].quadrature == 0.0,
+	      "finite inverse rejected large transmitted-reference power");
+	saved = equalizer;
+	for (size_t index = 0; index < ARRAY_LENGTH(too_small); ++index)
+		CHECK(qam_equalizer_init_geometry(&equalizer, &above, &too_small[index], 1, 0) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      qam_equalizer_init_geometry(&equalizer, &too_small[index], &unity, 1, 0) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
+		      "invalid reference %zu changed the equalizer", index);
+	CHECK(qam_equalizer_init_geometry(&equalizer, &above, &above, 1, 0) ==
+		      QAM_EQUALIZER_OK && equalizer.coefficients[0].in_phase == 1.0,
+	      "just-above-threshold references rejected");
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const struct qam_point reference = { 1.0, -1.0 };
@@ -990,6 +1019,7 @@ int main(void)
 		{ "delayed observations", test_delayed_observations },
 		{ "span extension", test_span_extension },
 		{ "product boundaries", test_product_boundaries },
+		{ "reference division boundaries", test_reference_division_boundaries },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

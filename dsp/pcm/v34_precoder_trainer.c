@@ -91,17 +91,6 @@ enum v34_precoder_trainer_result v34_precoder_trainer_init(
 	return V34_PRECODER_TRAINER_OK;
 }
 
-static struct qam_point multiply_conjugate(
-	struct qam_point left, struct qam_point right)
-{
-	return (struct qam_point){
-		.in_phase = left.in_phase * right.in_phase +
-			    left.quadrature * right.quadrature,
-		.quadrature = left.in_phase * right.quadrature -
-			      left.quadrature * right.in_phase,
-	};
-}
-
 static double bounded_component(double value)
 {
 	if (value > V34_PRECODER_MAXIMUM_COMPONENT)
@@ -142,8 +131,8 @@ enum v34_precoder_trainer_result v34_precoder_trainer_observe(
 	    !point_is_finite(&feedback_error))
 		return V34_PRECODER_TRAINER_NUMERIC_FAILURE;
 	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		struct qam_point gradient = multiply_conjugate(
-			next.error_history[tap], feedback_error);
+		struct qam_point gradient = qam_point_correlation(
+			&next.error_history[tap], &feedback_error);
 
 		next.coefficients[tap].in_phase = bounded_component(
 			next.coefficients[tap].in_phase -

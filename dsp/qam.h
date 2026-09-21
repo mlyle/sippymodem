@@ -60,6 +60,35 @@ static inline struct qam_point qam_point_multiply(
 	};
 }
 
+/* Raw complex quotient using the denominator power already measured by the
+ * caller. As with multiplication, numeric validation belongs to the owner. */
+static inline struct qam_point qam_point_quotient(
+	const struct qam_point *numerator,
+	const struct qam_point *denominator, double denominator_power)
+{
+	return (struct qam_point){
+		.in_phase = (numerator->in_phase * denominator->in_phase +
+			     numerator->quadrature * denominator->quadrature) /
+			    denominator_power,
+		.quadrature = (numerator->quadrature * denominator->in_phase -
+			       numerator->in_phase * denominator->quadrature) /
+			      denominator_power,
+	};
+}
+
+/* Complex correlation: conjugate the reference, then multiply by the sample.
+ * Like the raw product above, callers retain finite-input/result checks. */
+static inline struct qam_point qam_point_correlation(
+	const struct qam_point *reference, const struct qam_point *sample)
+{
+	return (struct qam_point){
+		.in_phase = reference->in_phase * sample->in_phase +
+			    reference->quadrature * sample->quadrature,
+		.quadrature = reference->in_phase * sample->quadrature -
+			      reference->quadrature * sample->in_phase,
+	};
+}
+
 static inline bool qam_adaptation_is_valid(double adaptation)
 {
 	return isfinite(adaptation) && adaptation >= 0.0 &&

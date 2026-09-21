@@ -15,16 +15,7 @@ static bool divide_points(
 	if (!point_is_finite(numerator) || quotient == NULL ||
 	    !qam_point_nonzero_power(denominator, &power))
 		return false;
-	next = (struct qam_point){
-		.in_phase =
-			(numerator->in_phase * denominator->in_phase +
-			 numerator->quadrature * denominator->quadrature) /
-			power,
-		.quadrature =
-			(numerator->quadrature * denominator->in_phase -
-			 numerator->in_phase * denominator->quadrature) /
-			power,
-	};
+	next = qam_point_quotient(numerator, denominator, power);
 	if (!point_is_finite(&next))
 		return false;
 	*quotient = next;
