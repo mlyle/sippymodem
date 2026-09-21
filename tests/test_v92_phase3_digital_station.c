@@ -627,6 +627,21 @@ static bool test_analog_contracts(void)
 	      !v92_phase3_analog_station_transmit_complete(&station) &&
 	      !v92_phase3_analog_station_receive_complete(&station),
 	      "fresh analogue station contracts differed");
+	{
+		struct v92_phase3_analog_station checking = station;
+
+		checking.receive_stage = V92_PHASE3_ANALOG_RECEIVE_J;
+		CHECK(pcm_phase3_j_receiver_init(&checking.receive.j,
+			      PCM_PROTOCOL_V92, checking.law,
+			      checking.downstream_training_ucode) ==
+			      PCM_PHASE3_J_RECEIVER_OK &&
+		      v92_phase3_analog_station_is_valid(&checking),
+		      "V.92 station rejected its selected J receiver");
+		checking.receive.j.protocol = PCM_PROTOCOL_V90;
+		CHECK(pcm_phase3_j_receiver_is_valid(&checking.receive.j) &&
+		      !v92_phase3_analog_station_is_valid(&checking),
+		      "V.92 station accepted a V.90 receiver");
+	}
 	station.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
 	before = station;
 	CHECK(!v92_phase3_analog_station_is_valid(&station) &&

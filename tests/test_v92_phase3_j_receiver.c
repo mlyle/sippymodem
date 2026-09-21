@@ -3,7 +3,7 @@
 #include "test.h"
 
 #include "v90_phase3_signs.h"
-#include "v92_phase3_j_receiver.h"
+#include "pcm_phase3_j_receiver.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -51,19 +51,19 @@ static uint8_t frame_bit(const uint8_t *frame, size_t index)
 
 static bool feed_trn1d(
 	struct v90_phase3_signs *transmitter,
-	struct v92_phase3_j_receiver *receiver, size_t count)
+	struct pcm_phase3_j_receiver *receiver, size_t count)
 {
 	for (size_t index = 0; index < count; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v92_phase3_j_receiver_result expected =
+		enum pcm_phase3_j_receiver_result expected =
 			receiver->trn1d_symbols + 1u ==
 					V90_PHASE3_TRN1D_MIN_SYMBOLS ?
-				V92_PHASE3_J_RECEIVER_TRN1D_READY :
-				V92_PHASE3_J_RECEIVER_OK;
+				PCM_PHASE3_J_RECEIVER_TRN1D_READY :
+				PCM_PHASE3_J_RECEIVER_OK;
 
 		CHECK(v90_phase3_signs_next_trn1d(
 			      transmitter, &symbol) == V90_PHASE3_SIGNS_OK &&
-		      v92_phase3_j_receiver_receive(
+		      pcm_phase3_j_receiver_receive(
 			      receiver, symbol.octet) == expected,
 		      "TRN1d receiver mismatch at symbol %zu", index);
 	}
@@ -72,23 +72,27 @@ static bool feed_trn1d(
 
 static bool feed_frame(
 	struct v90_phase3_signs *transmitter,
-	struct v92_phase3_j_receiver *receiver, const uint8_t *frame,
-	enum v92_phase3_j_receiver_result final_result)
+	struct pcm_phase3_j_receiver *receiver, const uint8_t *frame,
+	enum pcm_phase3_j_receiver_result final_result)
 {
 	for (size_t index = 0; index < V92_J_FRAME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v92_phase3_j_receiver_result result;
+		struct pcm_phase3_j_receiver saved = *receiver;
+		enum pcm_phase3_j_receiver_result result;
 
 		CHECK(v90_phase3_signs_next_jd_bit(
 			      transmitter, frame_bit(frame, index), &symbol) ==
 			      V90_PHASE3_SIGNS_OK,
 		      "could not generate J bit %zu", index);
-		result = v92_phase3_j_receiver_receive(receiver, symbol.octet);
+		result = pcm_phase3_j_receiver_receive(receiver, symbol.octet);
 		CHECK(result == (index == V92_J_FRAME_BITS - 1u ?
 				       final_result :
-				       V92_PHASE3_J_RECEIVER_OK),
+				       PCM_PHASE3_J_RECEIVER_OK),
 		      "J receiver returned %s at bit %zu",
-		      v92_phase3_j_receiver_result_name(result), index);
+		      pcm_phase3_j_receiver_result_name(result), index);
+		CHECK(result != PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE ||
+		      memcmp(receiver, &saved, sizeof(saved)) == 0,
+		      "rejected J record changed receiver state");
 	}
 	return true;
 }
@@ -100,14 +104,14 @@ static bool run_round_trip(enum g711_law law)
 	struct v92_jd received_jd;
 	struct v92_jp received_jp;
 	struct v90_phase3_signs transmitter;
-	struct v92_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	uint8_t jd_frame[V92_J_FRAME_BYTES];
 	uint8_t jp_frame[V92_J_FRAME_BYTES];
 
 	CHECK(v90_phase3_signs_init(&transmitter, law, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-	      v92_phase3_j_receiver_init(&receiver, law, 78) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	      pcm_phase3_j_receiver_init(&receiver, PCM_PROTOCOL_V92, law, 78) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      v92_jd_encode(
 		      &transmitted_jd, jd_frame, sizeof(jd_frame)) ==
 		      V92_J_OK &&
@@ -119,55 +123,72 @@ static bool run_round_trip(enum g711_law law)
 		      V90_PHASE3_TRN1D_MIN_SYMBOLS),
 	      "could not initialize J receiver for law %u",
 	      (unsigned int)law);
-	CHECK(v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      v90_phase3_signs_begin_jd(&transmitter) ==
 		      V90_PHASE3_SIGNS_OK &&
 	      feed_frame(
 		      &transmitter, &receiver, jd_frame,
-		      V92_PHASE3_J_RECEIVER_JD_DETECTED) &&
-	      v92_phase3_j_receiver_jd(&receiver, &received_jd) &&
+		      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
+	      pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
 	      jd_equal(&received_jd, &transmitted_jd),
 	      "receiver did not recover Jd for law %u", (unsigned int)law);
 	CHECK(feed_frame(
 		      &transmitter, &receiver, jd_frame,
-		      V92_PHASE3_J_RECEIVER_JD_REPEATED),
+		      PCM_PHASE3_J_RECEIVER_JD_REPEATED),
 	      "receiver did not recover repeated Jd for law %u",
 	      (unsigned int)law);
+	for (size_t index = 0; index < V92_PHASE3_JP_PRIME_BITS; ++index) {
+		struct v90_pcm_symbol symbol;
+
+		CHECK(v90_phase3_signs_next_jd_bit(
+			      &transmitter, 0, &symbol) == V90_PHASE3_SIGNS_OK &&
+		      pcm_phase3_j_receiver_receive(&receiver, symbol.octet) ==
+			      PCM_PHASE3_J_RECEIVER_OK &&
+		      receiver.stage == PCM_PHASE3_J_RECEIVER_JD,
+		      "V.92 completed on Jd-prime without Jp");
+	}
 	CHECK(feed_frame(
 		      &transmitter, &receiver, jp_frame,
-		      V92_PHASE3_J_RECEIVER_JP_DETECTED) &&
-	      v92_phase3_j_receiver_jp(&receiver, &received_jp) &&
+		      PCM_PHASE3_J_RECEIVER_JP_DETECTED) &&
+	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
 	      jp_equal(&received_jp, &transmitted_jp),
 	      "receiver did not recover Jp for law %u", (unsigned int)law);
 	CHECK(feed_frame(
 		      &transmitter, &receiver, jp_frame,
-		      V92_PHASE3_J_RECEIVER_JP_REPEATED),
+		      PCM_PHASE3_J_RECEIVER_JP_REPEATED),
 	      "receiver did not recover repeated Jp for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < V92_PHASE3_JP_PRIME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v92_phase3_j_receiver_result result;
+		enum pcm_phase3_j_receiver_result result;
 
 		CHECK(v90_phase3_signs_next_jd_bit(
 			      &transmitter, 0, &symbol) == V90_PHASE3_SIGNS_OK,
 		      "could not generate Jp-prime bit %zu", index);
-		result = v92_phase3_j_receiver_receive(
+		result = pcm_phase3_j_receiver_receive(
 			&receiver, symbol.octet);
 		CHECK(result == (index == V92_PHASE3_JP_PRIME_BITS - 1u ?
-				       V92_PHASE3_J_RECEIVER_COMPLETE :
-				       V92_PHASE3_J_RECEIVER_OK),
+				       PCM_PHASE3_J_RECEIVER_COMPLETE :
+				       PCM_PHASE3_J_RECEIVER_OK),
 		      "Jp-prime receiver returned %s at bit %zu",
-		      v92_phase3_j_receiver_result_name(result), index);
+		      pcm_phase3_j_receiver_result_name(result), index);
 	}
-	CHECK(v92_phase3_j_receiver_is_complete(&receiver),
+	CHECK(pcm_phase3_j_receiver_is_complete(&receiver),
 	      "receiver did not retain completion for law %u",
 	      (unsigned int)law);
 	{
-		struct v92_phase3_j_receiver saved = receiver;
+		struct v90_jd_parameters jd = { .data_rate_capability_mask = 123 };
 
-		CHECK(v92_phase3_j_receiver_receive(&receiver, 0xa5) ==
-			      V92_PHASE3_J_RECEIVER_COMPLETE &&
+		CHECK(!pcm_phase3_j_receiver_v90_jd(&receiver, &jd) &&
+		      jd.data_rate_capability_mask == 123,
+		      "V.92 receiver exposed V.90 parameters");
+	}
+	{
+		struct pcm_phase3_j_receiver saved = receiver;
+
+		CHECK(pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
+			      PCM_PHASE3_J_RECEIVER_COMPLETE &&
 		      memcmp(&receiver, &saved, sizeof(saved)) == 0,
 		      "completed receiver consumed another character");
 	}
@@ -184,20 +205,20 @@ static bool test_early_search(void)
 {
 	struct v92_jd jd = jd_parameters();
 	struct v90_phase3_signs transmitter;
-	struct v92_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	uint8_t frame[V92_J_FRAME_BYTES];
 
 	CHECK(v90_phase3_signs_init(
 		      &transmitter, G711_LAW_PCMU, 91) ==
 		      V90_PHASE3_SIGNS_OK &&
-	      v92_phase3_j_receiver_init(
-		      &receiver, G711_LAW_PCMU, 91) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	      pcm_phase3_j_receiver_init(
+		&receiver, PCM_PROTOCOL_V92, G711_LAW_PCMU, 91) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      feed_trn1d(
 		      &transmitter, &receiver,
 		      V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
-	      v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      feed_trn1d(&transmitter, &receiver, 60),
 	      "could not start early Jd search");
 	CHECK(v90_phase3_signs_begin_jd(&transmitter) ==
@@ -205,10 +226,10 @@ static bool test_early_search(void)
 	      v92_jd_encode(&jd, frame, sizeof(frame)) == V92_J_OK &&
 	      feed_frame(
 		      &transmitter, &receiver, frame,
-		      V92_PHASE3_J_RECEIVER_OK) &&
+		      PCM_PHASE3_J_RECEIVER_OK) &&
 	      feed_frame(
 		      &transmitter, &receiver, frame,
-		      V92_PHASE3_J_RECEIVER_JD_DETECTED),
+		      PCM_PHASE3_J_RECEIVER_JD_DETECTED),
 	      "receiver did not reacquire after an early search");
 	return true;
 }
@@ -239,14 +260,14 @@ static uint8_t sampled_octet(
 
 static bool run_sampled_signs(enum g711_law law)
 {
-	static const enum v92_phase3_j_receiver_result detected[] = {
-		V92_PHASE3_J_RECEIVER_JD_DETECTED, V92_PHASE3_J_RECEIVER_JP_DETECTED,
+	static const enum pcm_phase3_j_receiver_result detected[] = {
+		PCM_PHASE3_J_RECEIVER_JD_DETECTED, PCM_PHASE3_J_RECEIVER_JP_DETECTED,
 	};
-	static const enum v92_phase3_j_receiver_result repeated[] = {
-		V92_PHASE3_J_RECEIVER_JD_REPEATED, V92_PHASE3_J_RECEIVER_JP_REPEATED,
+	static const enum pcm_phase3_j_receiver_result repeated[] = {
+		PCM_PHASE3_J_RECEIVER_JD_REPEATED, PCM_PHASE3_J_RECEIVER_JP_REPEATED,
 	};
 	struct v90_phase3_signs transmitter;
-	struct v92_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	struct v92_jd jd = jd_parameters(), received_jd;
 	struct v92_jp jp = jp_parameters(), received_jp;
 	struct sampled_channel channel = { 0 };
@@ -254,18 +275,18 @@ static bool run_sampled_signs(enum g711_law law)
 
 	CHECK(v90_phase3_signs_init(&transmitter, law, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-	      v92_phase3_j_receiver_init(&receiver, law, 78) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	      pcm_phase3_j_receiver_init(&receiver, PCM_PROTOCOL_V92, law, 78) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      v92_jd_encode(&jd, frames[0], sizeof(frames[0])) == V92_J_OK &&
 	      v92_jp_encode(&jp, frames[1], sizeof(frames[1])) == V92_J_OK,
 	      "could not initialize sampled signs for law %u", (unsigned int)law);
 	for (size_t index = 0; index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
 		struct v90_pcm_symbol symbol;
 		uint8_t octet;
-		enum v92_phase3_j_receiver_result expected =
+		enum pcm_phase3_j_receiver_result expected =
 			index + 1u == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
-				V92_PHASE3_J_RECEIVER_TRN1D_READY :
-				V92_PHASE3_J_RECEIVER_OK;
+				PCM_PHASE3_J_RECEIVER_TRN1D_READY :
+				PCM_PHASE3_J_RECEIVER_OK;
 
 		CHECK(v90_phase3_signs_next_trn1d(&transmitter, &symbol) ==
 			      V90_PHASE3_SIGNS_OK, "could not generate TRN1d");
@@ -274,12 +295,12 @@ static bool run_sampled_signs(enum g711_law law)
 		if (index == 0 || index == 200 ||
 		    index + 1u == V90_PHASE3_TRN1D_MIN_SYMBOLS)
 			octet ^= 0x80u;
-		CHECK(v92_phase3_j_receiver_receive(&receiver, octet) == expected,
+		CHECK(pcm_phase3_j_receiver_receive(&receiver, octet) == expected,
 		      "sampled TRN1d stalled for law %u at %zu",
 		      (unsigned int)law, index);
 	}
-	CHECK(v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      v90_phase3_signs_begin_jd(&transmitter) == V90_PHASE3_SIGNS_OK,
 	      "could not start sampled Jd search");
 	for (size_t kind = 0; kind < ARRAY_LENGTH(frames); ++kind) {
@@ -287,8 +308,8 @@ static bool run_sampled_signs(enum g711_law law)
 			for (size_t index = 0; index < V92_J_FRAME_BITS; ++index) {
 				struct v90_pcm_symbol symbol;
 				uint8_t octet;
-				enum v92_phase3_j_receiver_result expected =
-					V92_PHASE3_J_RECEIVER_OK;
+				enum pcm_phase3_j_receiver_result expected =
+					PCM_PHASE3_J_RECEIVER_OK;
 
 				CHECK(v90_phase3_signs_next_jd_bit(
 					      &transmitter, frame_bit(frames[kind], index),
@@ -299,28 +320,28 @@ static bool run_sampled_signs(enum g711_law law)
 					octet ^= 0x80u;
 				if (repeat != 0 && index + 1u == V92_J_FRAME_BITS)
 					expected = repeat == 1 ? detected[kind] : repeated[kind];
-				CHECK(v92_phase3_j_receiver_receive(&receiver, octet) == expected,
+				CHECK(pcm_phase3_j_receiver_receive(&receiver, octet) == expected,
 				      "CRC recovery failed for law %u record %zu repeat %zu bit %zu",
 				      (unsigned int)law, kind, repeat, index);
 			}
 		}
 	}
-	CHECK(v92_phase3_j_receiver_jd(&receiver, &received_jd) &&
+	CHECK(pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
 	      jd_equal(&received_jd, &jd) &&
-	      v92_phase3_j_receiver_jp(&receiver, &received_jp) &&
+	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
 	      jp_equal(&received_jp, &jp), "sampled J parameters changed");
 	for (size_t index = 0; index < V92_PHASE3_JP_PRIME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
 
 		CHECK(v90_phase3_signs_next_jd_bit(&transmitter, 0, &symbol) ==
 			      V90_PHASE3_SIGNS_OK &&
-		      v92_phase3_j_receiver_receive(
+		      pcm_phase3_j_receiver_receive(
 			      &receiver, sampled_octet(&channel, law, &symbol)) ==
 			      (index + 1u == V92_PHASE3_JP_PRIME_BITS ?
-			       V92_PHASE3_J_RECEIVER_COMPLETE : V92_PHASE3_J_RECEIVER_OK),
+			       PCM_PHASE3_J_RECEIVER_COMPLETE : PCM_PHASE3_J_RECEIVER_OK),
 		      "sampled Jp-prime boundary changed at %zu", index);
 	}
-	CHECK(v92_phase3_j_receiver_is_complete(&receiver) &&
+	CHECK(pcm_phase3_j_receiver_is_complete(&receiver) &&
 	      channel.changed_codes == V90_PHASE3_TRN1D_MIN_SYMBOLS +
 		      6u * V92_J_FRAME_BITS + V92_PHASE3_JP_PRIME_BITS,
 	      "sampled sequence did not complete with changed amplitude codes");
@@ -336,27 +357,28 @@ static bool test_sampled_signs(void)
 static bool test_unqualified_signs(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		struct v92_phase3_j_receiver receiver;
+		struct pcm_phase3_j_receiver receiver;
 		uint32_t noise = UINT32_C(0x1c87a459);
 
-		CHECK(v92_phase3_j_receiver_init(&receiver, law, 78) ==
-			      V92_PHASE3_J_RECEIVER_OK, "could not initialize noise test");
+		CHECK(pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V92, law, 78) ==
+			      PCM_PHASE3_J_RECEIVER_OK, "could not initialize noise test");
 		for (size_t index = 0; index < 16000; ++index) {
-			enum v92_phase3_j_receiver_result expected =
+			enum pcm_phase3_j_receiver_result expected =
 				index + 1u == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
-					V92_PHASE3_J_RECEIVER_TRN1D_READY :
-					V92_PHASE3_J_RECEIVER_OK;
+					PCM_PHASE3_J_RECEIVER_TRN1D_READY :
+					PCM_PHASE3_J_RECEIVER_OK;
 
 			noise = noise * UINT32_C(1664525) + UINT32_C(1013904223);
-			CHECK(v92_phase3_j_receiver_receive(
+			CHECK(pcm_phase3_j_receiver_receive(
 				      &receiver, (uint8_t)(noise >> 24)) == expected,
 			      "unqualified signs advanced the protocol at %zu", index);
-			if (expected == V92_PHASE3_J_RECEIVER_TRN1D_READY)
-				CHECK(v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-					      V92_PHASE3_J_RECEIVER_OK,
+			if (expected == PCM_PHASE3_J_RECEIVER_TRN1D_READY)
+				CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+					      PCM_PHASE3_J_RECEIVER_OK,
 				      "could not start noise Jd search");
 		}
-		CHECK(receiver.stage == V92_PHASE3_J_RECEIVER_JD_SEARCH,
+		CHECK(receiver.stage == PCM_PHASE3_J_RECEIVER_JD_SEARCH,
 		      "unqualified signs escaped Jd search");
 	}
 	return true;
@@ -364,19 +386,19 @@ static bool test_unqualified_signs(void)
 
 static bool start_records(
 	struct v90_phase3_signs *transmitter,
-	struct v92_phase3_j_receiver *receiver)
+	struct pcm_phase3_j_receiver *receiver)
 {
 	return v90_phase3_signs_init(
 		       transmitter, G711_LAW_PCMU, 78) ==
 		       V90_PHASE3_SIGNS_OK &&
-	       v92_phase3_j_receiver_init(
-		       receiver, G711_LAW_PCMU, 78) ==
-		       V92_PHASE3_J_RECEIVER_OK &&
+	       pcm_phase3_j_receiver_init(
+		receiver, PCM_PROTOCOL_V92, G711_LAW_PCMU, 78) ==
+		       PCM_PHASE3_J_RECEIVER_OK &&
 	       feed_trn1d(
 		       transmitter, receiver,
 		       V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
-	       v92_phase3_j_receiver_begin_jd_search(receiver) ==
-		       V92_PHASE3_J_RECEIVER_OK &&
+	       pcm_phase3_j_receiver_begin_jd_search(receiver) ==
+		       PCM_PHASE3_J_RECEIVER_OK &&
 	       v90_phase3_signs_begin_jd(transmitter) ==
 		       V90_PHASE3_SIGNS_OK;
 }
@@ -390,7 +412,7 @@ static bool test_parameter_consistency(void)
 	struct v92_jd received_jd;
 	struct v92_jp received_jp;
 	struct v90_phase3_signs transmitter;
-	struct v92_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	uint8_t jd_frame[V92_J_FRAME_BYTES];
 	uint8_t different_jd_frame[V92_J_FRAME_BYTES];
 	uint8_t jp_frame[V92_J_FRAME_BYTES];
@@ -410,24 +432,24 @@ static bool test_parameter_consistency(void)
 	CHECK(start_records(&transmitter, &receiver) &&
 	      feed_frame(
 		      &transmitter, &receiver, jd_frame,
-		      V92_PHASE3_J_RECEIVER_JD_DETECTED) &&
+		      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
 	      feed_frame(
 		      &transmitter, &receiver, different_jd_frame,
-		      V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
-	      v92_phase3_j_receiver_jd(&receiver, &received_jd) &&
+		      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
+	      pcm_phase3_j_receiver_v92_jd(&receiver, &received_jd) &&
 	      jd_equal(&received_jd, &jd),
 	      "receiver accepted changed Jd parameters");
 	CHECK(start_records(&transmitter, &receiver) &&
 	      feed_frame(
 		      &transmitter, &receiver, jd_frame,
-		      V92_PHASE3_J_RECEIVER_JD_DETECTED) &&
+		      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
 	      feed_frame(
 		      &transmitter, &receiver, jp_frame,
-		      V92_PHASE3_J_RECEIVER_JP_DETECTED) &&
+		      PCM_PHASE3_J_RECEIVER_JP_DETECTED) &&
 	      feed_frame(
 		      &transmitter, &receiver, different_jp_frame,
-		      V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
-	      v92_phase3_j_receiver_jp(&receiver, &received_jp) &&
+		      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
+	      pcm_phase3_j_receiver_v92_jp(&receiver, &received_jp) &&
 	      jp_equal(&received_jp, &jp),
 	      "receiver accepted changed Jp parameters");
 	return true;
@@ -436,71 +458,83 @@ static bool test_parameter_consistency(void)
 static bool test_boundaries_and_validation(void)
 {
 	struct v90_phase3_signs transmitter;
-	struct v92_phase3_j_receiver receiver;
-	struct v92_phase3_j_receiver saved;
+	struct pcm_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver saved;
 	struct v92_jd jd = { .data_rate_capability_mask = 0xa5 };
 	struct v92_jp jp = { .su_phase_extension_q16 = 0xa5a5 };
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
-	CHECK(v92_phase3_j_receiver_init(NULL, G711_LAW_PCMU, 78) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
-	      v92_phase3_j_receiver_init(
-		      &receiver, (enum g711_law)2, 78) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
-	      v92_phase3_j_receiver_init(
-		      &receiver, G711_LAW_PCMU, 66) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(pcm_phase3_j_receiver_init(
+		      &receiver, (enum pcm_protocol)99, G711_LAW_PCMU, 78) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "invalid protocol changed receiver storage");
+	CHECK(pcm_phase3_j_receiver_init(NULL, PCM_PROTOCOL_V92, G711_LAW_PCMU, 78) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	      pcm_phase3_j_receiver_init(
+		&receiver, PCM_PROTOCOL_V92, (enum g711_law)2, 78) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	      pcm_phase3_j_receiver_init(
+		&receiver, PCM_PROTOCOL_V92, G711_LAW_PCMU, 66) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
 	      "invalid initialization changed state");
 	CHECK(v90_phase3_signs_init(
 		      &transmitter, G711_LAW_PCMA, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-	      v92_phase3_j_receiver_init(
-		      &receiver, G711_LAW_PCMA, 78) ==
-		      V92_PHASE3_J_RECEIVER_OK &&
+	      pcm_phase3_j_receiver_init(
+		&receiver, PCM_PROTOCOL_V92, G711_LAW_PCMA, 78) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 	      feed_trn1d(
 		      &transmitter, &receiver,
 		      V90_PHASE3_TRN1D_MIN_SYMBOLS - 1u),
 	      "could not reach early TRN1d boundary");
 	saved = receiver;
-	CHECK(v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      feed_trn1d(&transmitter, &receiver, 2),
 	      "early search was not transactional");
 	saved = receiver;
-	CHECK(v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
 	      feed_trn1d(&transmitter, &receiver, 5) &&
-	      v92_phase3_j_receiver_begin_jd_search(&receiver) ==
-		      V92_PHASE3_J_RECEIVER_OK,
+	      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK,
 	      "unaligned Jd-search boundary was not enforced");
-	CHECK(v92_phase3_j_receiver_receive(NULL, 0) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
-	      v92_phase3_j_receiver_begin_jd_search(NULL) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
-	      !v92_phase3_j_receiver_jd(&receiver, &jd) &&
-	      !v92_phase3_j_receiver_jd(NULL, &jd) &&
-	      !v92_phase3_j_receiver_jd(&receiver, NULL) &&
-	      !v92_phase3_j_receiver_jp(&receiver, &jp) &&
-	      !v92_phase3_j_receiver_jp(NULL, &jp) &&
-	      !v92_phase3_j_receiver_jp(&receiver, NULL) &&
-	      !v92_phase3_j_receiver_is_valid(NULL) &&
-	      !v92_phase3_j_receiver_is_complete(NULL),
+	CHECK(pcm_phase3_j_receiver_receive(NULL, 0) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	      pcm_phase3_j_receiver_begin_jd_search(NULL) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+	      !pcm_phase3_j_receiver_v92_jd(&receiver, &jd) &&
+	      !pcm_phase3_j_receiver_v92_jd(NULL, &jd) &&
+	      !pcm_phase3_j_receiver_v92_jd(&receiver, NULL) &&
+	      !pcm_phase3_j_receiver_v92_jp(&receiver, &jp) &&
+	      !pcm_phase3_j_receiver_v92_jp(NULL, &jp) &&
+	      !pcm_phase3_j_receiver_v92_jp(&receiver, NULL) &&
+	      !pcm_phase3_j_receiver_is_valid(NULL) &&
+	      !pcm_phase3_j_receiver_is_complete(NULL),
 	      "invalid operation changed state or output");
-	receiver.stage = (enum v92_phase3_j_receiver_stage)99;
+	receiver.protocol = (enum pcm_protocol)99;
 	saved = receiver;
-	CHECK(v92_phase3_j_receiver_receive(&receiver, 0) ==
-		      V92_PHASE3_J_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_phase3_j_receiver_receive(&receiver, 0) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+	      "invalid protocol changed receiver state");
+	receiver.protocol = PCM_PROTOCOL_V92;
+	receiver.stage = (enum pcm_phase3_j_receiver_stage)99;
+	saved = receiver;
+	CHECK(pcm_phase3_j_receiver_receive(&receiver, 0) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
 	      memcmp(&receiver, &saved, sizeof(saved)) == 0,
 	      "invalid receiver changed state");
-	CHECK(strcmp(v92_phase3_j_receiver_result_name(
-		     V92_PHASE3_J_RECEIVER_JP_DETECTED),
+	CHECK(strcmp(pcm_phase3_j_receiver_result_name(
+		     PCM_PHASE3_J_RECEIVER_JP_DETECTED),
 		     "Jp detected") == 0 &&
-	      strcmp(v92_phase3_j_receiver_result_name(
-		     (enum v92_phase3_j_receiver_result)10),
+	      strcmp(pcm_phase3_j_receiver_result_name(
+		     (enum pcm_phase3_j_receiver_result)10),
 		     "unknown") == 0,
 	      "result names changed");
 	return true;

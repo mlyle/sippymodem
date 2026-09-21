@@ -3407,7 +3407,7 @@ static bool run_v92_analog_phase3_deadlines(enum g711_law law, size_t delay)
 			if (!captured[1] && station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_J) {
 				CHECK(initial->stage == V92_PCM_PHASE3_INITIAL_TX_COMPLETE &&
 					initial->sequence.ja.emitted_symbols % 12u == 0u &&
-					station->receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D,
+					station->receive.j.stage == PCM_PHASE3_J_RECEIVER_TRN1D,
 					"Jd wait did not follow an aligned Ja and complete Sd-bar");
 				boundaries[1] = calls[0];
 				captured[1] = true;
@@ -7506,7 +7506,7 @@ static bool capture_v92_duplex_data(
 
 			if (role == 0u && call->stage == PCM_CALL_PHASE3 &&
 			    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_J &&
-			    call->state.phase3.v92_analog.receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D &&
+			    call->state.phase3.v92_analog.receive.j.stage == PCM_PHASE3_J_RECEIVER_TRN1D &&
 			    call->state.phase3.v92_analog.receive.j.trn1d_symbols >= 512u) {
 				CHECK(call->downstream_equalizer.training_level > 0,
 				      "V.92 waited for Ri before training its downstream equalizer");

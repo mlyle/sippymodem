@@ -8,7 +8,7 @@
 #include "v92_pcm_phase3_cpt_tx.h"
 #include "v92_pcm_phase3_initial_tx.h"
 #include "v92_pcm_phase4_trn2u.h"
-#include "v92_phase3_j_receiver.h"
+#include "pcm_phase3_j_receiver.h"
 #include "v92_su.h"
 
 #include <stdbool.h>
@@ -54,7 +54,7 @@ struct v92_phase3_analog_station_configuration {
 
 union v92_phase3_analog_receive {
 	struct pcm_s_pattern_rx sd;
-	struct v92_phase3_j_receiver j;
+	struct pcm_phase3_j_receiver j;
 	struct v90_phase4_ri_search ri;
 };
 

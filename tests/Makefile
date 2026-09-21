@@ -45,7 +45,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_phase2_ranging.c \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_digital_tx.c \
-	pcm_phase3_entry.c \
+	pcm_phase3_entry.c pcm_phase3_j_receiver.c \
 	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_rate.c \
 	pcm_startup.c pcm_s_pattern_rx.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c)) \
@@ -1805,7 +1805,8 @@ V92_PHASE3_J_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v92_phase3_j_receiver
 V92_PHASE3_J_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v92_phase3_j_receiver.o \
-	$(BUILD_DIR)/v92_phase3_j_receiver.o \
+	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
+	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
@@ -1997,7 +1998,7 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_jd.o \
 	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/pcm_j_frame.o \
-	$(BUILD_DIR)/v92_phase3_j_receiver.o \
+	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_rx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_initial_tx.o \
 	$(BUILD_DIR)/v92_pcm_phase3_opening.o \
@@ -2491,7 +2492,8 @@ V90_PHASE3_SD_TEST_OBJECTS := \
 V90_PHASE3_SIGNS_TEST_BINARY := $(BUILD_DIR)/test_v90_phase3_signs
 V90_PHASE3_SIGNS_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v90_phase3_signs.o \
-	$(BUILD_DIR)/v90_phase3_sign_receiver.o \
+	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
+	$(BUILD_DIR)/v92_j.o \
 	$(BUILD_DIR)/v90_phase3_signs.o \
 	$(BUILD_DIR)/v90_pcm_symbol.o \
 	$(BUILD_DIR)/v90_jd.o \
@@ -2722,7 +2724,7 @@ V90_PHASE3_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/v90_phase3_analog_station.o \
 	$(BUILD_DIR)/v90_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_s_pattern_rx.o \
-	$(BUILD_DIR)/v90_phase3_sign_receiver.o \
+	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_digital_tx.o, \
 		$(V90_PHASE3_DIGITAL_TX_TEST_OBJECTS)) \
 	$(filter-out $(BUILD_DIR)/test_v90_phase3_return_line_rx.o, \
@@ -5236,8 +5238,8 @@ $(BUILD_DIR)/pcm_phase3_digital_tx.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_digital_tx.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v92_phase3_j_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v92_phase3_j_receiver.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_phase3_j_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_phase3_j_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v92_su.o: \
@@ -5590,10 +5592,6 @@ $(BUILD_DIR)/v90_pcm_symbol.o: \
 
 $(BUILD_DIR)/v90_phase3_signs.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_signs.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/v90_phase3_sign_receiver.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_phase3_sign_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_phase4_ri.o: \

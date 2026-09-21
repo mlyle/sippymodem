@@ -38,7 +38,7 @@ static bool dil_state_is_valid(
 {
 	bool signs_complete =
 		station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
-		v90_phase3_sign_receiver_is_complete(&station->receive.signs);
+		pcm_phase3_j_receiver_is_complete(&station->receive.signs);
 
 	if (!v90_dil_profile_is_valid(station->dil_profile))
 		return false;
@@ -69,7 +69,8 @@ static bool receive_is_valid(
 			       ((station->training_ucode +
 			         V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu);
 	case V90_PHASE3_ANALOG_RECEIVE_SIGNS:
-		return v90_phase3_sign_receiver_is_valid(
+		return station->receive.signs.protocol == PCM_PROTOCOL_V90 &&
+		       pcm_phase3_j_receiver_is_valid(
 			&station->receive.signs) &&
 		       station->receive.signs.training_ucode == station->training_ucode;
 	}
@@ -88,7 +89,7 @@ static bool return_controls_are_causal(
 	    V90_PHASE3_ANALOG_TRANSMIT_DIL_RETURN) {
 		if (station->dil_profile != V90_DIL_PROFILE_CONVENTIONAL ||
 		    station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
-		    !v90_phase3_sign_receiver_is_complete(
+		    !pcm_phase3_j_receiver_is_complete(
 			    &station->receive.signs))
 			return false;
 		if (returning->stage == V90_PHASE3_RETURN_TX_SILENCE)
@@ -101,10 +102,10 @@ static bool return_controls_are_causal(
 	if (returning->stage == V90_PHASE3_RETURN_TX_SILENCE)
 		return true;
 	if (station->receive_stage != V90_PHASE3_ANALOG_RECEIVE_SIGNS ||
-	    station->receive.signs.stage < V90_PHASE3_SIGN_RECEIVER_JD)
+	    station->receive.signs.stage < PCM_PHASE3_J_RECEIVER_JD)
 		return false;
 	return !returning->finish_s_requested ||
-	       v90_phase3_sign_receiver_is_complete(&station->receive.signs);
+	       pcm_phase3_j_receiver_is_complete(&station->receive.signs);
 }
 
 bool v90_phase3_analog_station_owned_state_is_valid(
@@ -222,7 +223,7 @@ static enum v90_phase3_analog_station_result enter_dil_return_transmit(
 		    V90_PHASE3_RETURN_LINE_TX_OK ||
 	    v90_phase3_return_line_tx_init_scr(
 		    &returning, &line,
-		    station->receive.signs.jd.training_constellation) !=
+		    station->receive.signs.parameters.v90.training_constellation) !=
 		    V90_PHASE3_RETURN_LINE_TX_OK)
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	station->transmit.returning = returning;
@@ -258,9 +259,9 @@ static enum v90_phase3_analog_station_result control_return_transmit(
 		&station->transmit.returning;
 	bool jd_received =
 		station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
-		station->receive.signs.stage >= V90_PHASE3_SIGN_RECEIVER_JD;
+		station->receive.signs.stage >= PCM_PHASE3_J_RECEIVER_JD;
 	bool jd_prime_received = jd_received &&
-		v90_phase3_sign_receiver_is_complete(&station->receive.signs);
+		pcm_phase3_j_receiver_is_complete(&station->receive.signs);
 
 	if (jd_received &&
 	    returning->points.stage == V90_PHASE3_RETURN_TX_SILENCE &&
@@ -400,12 +401,12 @@ static enum v90_phase3_analog_station_result receive_sd(
 	if (result != PCM_S_PATTERN_RX_SEQUENCE_COMPLETE)
 		return V90_PHASE3_ANALOG_STATION_OK;
 	{
-		struct v90_phase3_sign_receiver signs;
+		struct pcm_phase3_j_receiver signs;
 
-		if (v90_phase3_sign_receiver_init(
-			    &signs, station->receive.sd.law,
+		if (pcm_phase3_j_receiver_init(
+			    &signs, PCM_PROTOCOL_V90, station->receive.sd.law,
 			    station->training_ucode) !=
-		    V90_PHASE3_SIGN_RECEIVER_OK)
+		    PCM_PHASE3_J_RECEIVER_OK)
 			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v90_phase3_analog_station_receive){ 0 };
@@ -418,18 +419,18 @@ static enum v90_phase3_analog_station_result receive_sd(
 static enum v90_phase3_analog_station_result receive_sign(
 	struct v90_phase3_analog_station *station, uint8_t network_octet)
 {
-	enum v90_phase3_sign_receiver_result result =
-		v90_phase3_sign_receiver_receive(
+	enum pcm_phase3_j_receiver_result result =
+		pcm_phase3_j_receiver_receive(
 			&station->receive.signs, network_octet);
 
-	if (result == V90_PHASE3_SIGN_RECEIVER_INVALID_SEQUENCE)
+	if (result == PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE)
 		return V90_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-	if (result == V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT ||
-	    result == V90_PHASE3_SIGN_RECEIVER_INVALID_STATE)
+	if (result == PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT ||
+	    result == PCM_PHASE3_J_RECEIVER_INVALID_STATE)
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
-	if (result == V90_PHASE3_SIGN_RECEIVER_TRN1D_READY &&
-	    v90_phase3_sign_receiver_begin_jd_search(
-		    &station->receive.signs) != V90_PHASE3_SIGN_RECEIVER_OK)
+	if (result == PCM_PHASE3_J_RECEIVER_TRN1D_READY &&
+	    pcm_phase3_j_receiver_begin_jd_search(
+		    &station->receive.signs) != PCM_PHASE3_J_RECEIVER_OK)
 		return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	return V90_PHASE3_ANALOG_STATION_OK;
 }
@@ -456,7 +457,7 @@ static bool receive_is_complete_owned(
 	return v90_phase3_analog_station_owned_state_is_valid(station) &&
 	       !station->failed &&
 	       station->receive_stage == V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
-	       v90_phase3_sign_receiver_is_complete(&station->receive.signs) &&
+	       pcm_phase3_j_receiver_is_complete(&station->receive.signs) &&
 	       (station->dil_profile == V90_DIL_PROFILE_NONE ||
 		station->dil_received_symbols > station->dil_training_symbols);
 }
@@ -482,7 +483,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
 	next = *station;
 	if (next.receive_stage == V90_PHASE3_ANALOG_RECEIVE_SD)
 		result = receive_sd(&next, network_octet);
-	else if (!v90_phase3_sign_receiver_is_complete(&next.receive.signs))
+	else if (!pcm_phase3_j_receiver_is_complete(&next.receive.signs))
 		result = receive_sign(&next, network_octet);
 	else
 		result = receive_dil(&next);
@@ -537,7 +538,7 @@ v90_phase3_analog_station_receive_handoff(
 	struct v90_phase3_analog_receive_handoff *handoff)
 {
 	struct v90_phase3_analog_receive_handoff generated;
-	const struct v90_phase3_sign_receiver *signs;
+	const struct pcm_phase3_j_receiver *signs;
 
 	if (!v90_phase3_analog_station_is_valid(station) || handoff == NULL)
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
@@ -548,7 +549,7 @@ v90_phase3_analog_station_receive_handoff(
 	signs = &station->receive.signs;
 	generated = (struct v90_phase3_analog_receive_handoff){
 		.descrambler = signs->descrambler,
-		.jd = signs->jd,
+		.jd = signs->parameters.v90,
 		.law = signs->law,
 		.trn1d_symbols = signs->trn1d_symbols,
 		.training_ucode = signs->training_ucode,

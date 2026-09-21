@@ -446,7 +446,7 @@ static bool analog_mixed_is_valid(const struct pcm_call *call)
 {
 	const struct pcm_call_analog_mixed_state *mixed =
 		&call->state.mixed.analog;
-	const struct v90_phase3_sign_receiver *signs =
+	const struct pcm_phase3_j_receiver *signs =
 		&mixed->phase3.receive.signs;
 	bool transmit_complete =
 		v90_phase3_analog_station_transmit_complete(&mixed->phase3);
@@ -454,7 +454,7 @@ static bool analog_mixed_is_valid(const struct pcm_call *call)
 	return v90_phase3_analog_station_is_valid(&mixed->phase3) &&
 	       mixed->phase3.receive_stage ==
 		       V90_PHASE3_ANALOG_RECEIVE_SIGNS &&
-	       v90_phase3_sign_receiver_is_complete(signs) &&
+	       pcm_phase3_j_receiver_is_complete(signs) &&
 	       (call->failed || !transmit_complete);
 }
 
@@ -1832,8 +1832,8 @@ static bool condition_downstream(struct pcm_call *call, uint8_t *octet)
 	struct pcm_downstream_equalizer *equalizer = &call->downstream_equalizer;
 	if (call->stage == PCM_CALL_PHASE3 &&
 	    call->state.phase3.v92_analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_J &&
-	    call->state.phase3.v92_analog.receive.j.stage == V92_PHASE3_J_RECEIVER_TRN1D) {
-		const struct v92_phase3_j_receiver *j = &call->state.phase3.v92_analog.receive.j;
+	    call->state.phase3.v92_analog.receive.j.stage == PCM_PHASE3_J_RECEIVER_TRN1D) {
+		const struct pcm_phase3_j_receiver *j = &call->state.phase3.v92_analog.receive.j;
 		/* Sd-bar has qualified the binary training interval. Learn from its
 		 * received signs before Ri needs amplitude qualification; waiting for
 		 * Ri first deadlocks on channels that distort its sign transitions.
@@ -2957,7 +2957,7 @@ static enum pcm_call_result retain_v92_peer_jd(
 	struct v92_jd jd;
 
 	if (station->receive_stage != V92_PHASE3_ANALOG_RECEIVE_J ||
-	    !v92_phase3_j_receiver_jd(&station->receive.j, &jd))
+	    !pcm_phase3_j_receiver_v92_jd(&station->receive.j, &jd))
 		return PCM_CALL_OK;
 	if (call->v92_peer_jd_stored) {
 		return call->v92_peer_jd.data_rate_capability_mask == jd.data_rate_capability_mask &&

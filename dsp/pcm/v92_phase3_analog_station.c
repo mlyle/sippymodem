@@ -30,8 +30,9 @@ static bool receive_is_valid(
 			         V90_PHASE3_SD_TRAINING_OFFSET) & 0x7fu) &&
 		       !pcm_s_pattern_rx_is_complete(&station->receive.sd);
 	case V92_PHASE3_ANALOG_RECEIVE_J:
-		return v92_phase3_j_receiver_is_valid(&station->receive.j) &&
-		       !v92_phase3_j_receiver_is_complete(&station->receive.j);
+		return station->receive.j.protocol == PCM_PROTOCOL_V92 &&
+		       pcm_phase3_j_receiver_is_valid(&station->receive.j) &&
+		       station->receive.j.stage != PCM_PHASE3_J_RECEIVER_DONE;
 	case V92_PHASE3_ANALOG_RECEIVE_RI:
 		return v90_phase4_ri_search_is_valid(&station->receive.ri) &&
 		       !v90_phase4_ri_search_is_complete(&station->receive.ri);
@@ -80,15 +81,15 @@ static bool coordination_is_valid(
 		       V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
 	case V92_PHASE3_ANALOG_RECEIVE_J:
 		switch (station->receive.j.stage) {
-		case V92_PHASE3_J_RECEIVER_TRN1D:
-		case V92_PHASE3_J_RECEIVER_JD_SEARCH:
+		case PCM_PHASE3_J_RECEIVER_TRN1D:
+		case PCM_PHASE3_J_RECEIVER_JD_SEARCH:
 			return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
-		case V92_PHASE3_J_RECEIVER_JD:
-		case V92_PHASE3_J_RECEIVER_JP:
+		case PCM_PHASE3_J_RECEIVER_JD:
+		case PCM_PHASE3_J_RECEIVER_JP:
 			return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_SU;
-		case V92_PHASE3_J_RECEIVER_DONE:
+		case PCM_PHASE3_J_RECEIVER_DONE:
 			return false;
 		}
 		return false;
@@ -115,19 +116,19 @@ static bool phase4_constellation_is_valid(
 		       station->rate_renegotiation_constellation == 0;
 	case V92_PHASE3_ANALOG_RECEIVE_J:
 		switch (station->receive.j.stage) {
-		case V92_PHASE3_J_RECEIVER_TRN1D:
-		case V92_PHASE3_J_RECEIVER_JD_SEARCH:
-		case V92_PHASE3_J_RECEIVER_JD:
+		case PCM_PHASE3_J_RECEIVER_TRN1D:
+		case PCM_PHASE3_J_RECEIVER_JD_SEARCH:
+		case PCM_PHASE3_J_RECEIVER_JD:
 			return station->phase4_training_constellation == 0 &&
 			       station->rate_renegotiation_constellation == 0;
-		case V92_PHASE3_J_RECEIVER_JP:
+		case PCM_PHASE3_J_RECEIVER_JP:
 			return v92_constellation_size_is_valid(
 				       station->phase4_training_constellation) &&
 			       station->phase4_training_constellation ==
-				       station->receive.j.jp.training_constellation &&
+				       station->receive.j.parameters.v92.jp.training_constellation &&
 			       station->rate_renegotiation_constellation ==
-				       station->receive.j.jp.rate_renegotiation_constellation;
-		case V92_PHASE3_J_RECEIVER_DONE:
+				       station->receive.j.parameters.v92.jp.rate_renegotiation_constellation;
+		case PCM_PHASE3_J_RECEIVER_DONE:
 			return false;
 		}
 		return false;
@@ -412,12 +413,12 @@ static enum v92_phase3_analog_station_result receive_sd(
 			       V92_PHASE3_ANALOG_STATION_OK :
 			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 	if (result == PCM_S_PATTERN_RX_SEQUENCE_COMPLETE) {
-		struct v92_phase3_j_receiver j;
+		struct pcm_phase3_j_receiver j;
 
-		if (v92_phase3_j_receiver_init(
-			    &j, station->law,
+		if (pcm_phase3_j_receiver_init(
+			    &j, PCM_PROTOCOL_V92, station->law,
 			    station->downstream_training_ucode) !=
-		    V92_PHASE3_J_RECEIVER_OK)
+		    PCM_PHASE3_J_RECEIVER_OK)
 			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->receive =
 			(union v92_phase3_analog_receive){ .j = j };
@@ -432,27 +433,27 @@ static enum v92_phase3_analog_station_result receive_sd(
 static enum v92_phase3_analog_station_result receive_j(
 	struct v92_phase3_analog_station *station, uint8_t network_octet)
 {
-	enum v92_phase3_j_receiver_result result =
-		v92_phase3_j_receiver_receive(
+	enum pcm_phase3_j_receiver_result result =
+		pcm_phase3_j_receiver_receive(
 			&station->receive.j, network_octet);
 
-	if (result == V92_PHASE3_J_RECEIVER_OK ||
-	    result == V92_PHASE3_J_RECEIVER_JD_REPEATED ||
-	    result == V92_PHASE3_J_RECEIVER_JP_REPEATED)
+	if (result == PCM_PHASE3_J_RECEIVER_OK ||
+	    result == PCM_PHASE3_J_RECEIVER_JD_REPEATED ||
+	    result == PCM_PHASE3_J_RECEIVER_JP_REPEATED)
 		return V92_PHASE3_ANALOG_STATION_OK;
-	if (result == V92_PHASE3_J_RECEIVER_TRN1D_READY)
-		return v92_phase3_j_receiver_begin_jd_search(
+	if (result == PCM_PHASE3_J_RECEIVER_TRN1D_READY)
+		return pcm_phase3_j_receiver_begin_jd_search(
 			       &station->receive.j) ==
-			       V92_PHASE3_J_RECEIVER_OK ?
+			       PCM_PHASE3_J_RECEIVER_OK ?
 			       V92_PHASE3_ANALOG_STATION_OK :
 			       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-	if (result == V92_PHASE3_J_RECEIVER_JD_DETECTED) {
+	if (result == PCM_PHASE3_J_RECEIVER_JD_DETECTED) {
 		struct v92_su su;
 		struct v92_jd jd;
 
 		if (!v92_pcm_phase3_initial_tx_is_complete(
 			    &station->transmit.initial) ||
-		    !v92_phase3_j_receiver_jd(&station->receive.j, &jd))
+		    !pcm_phase3_j_receiver_v92_jd(&station->receive.j, &jd))
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 		/* CPt selects a training map the peer must be able to transmit.
 		 * Clamp the station-owned copy; a retrain starts from configuration. */
@@ -467,10 +468,10 @@ static enum v92_phase3_analog_station_result receive_j(
 		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_SU;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
-	if (result == V92_PHASE3_J_RECEIVER_JP_DETECTED) {
+	if (result == PCM_PHASE3_J_RECEIVER_JP_DETECTED) {
 		struct v92_jp jp;
 
-		if (!v92_phase3_j_receiver_jp(&station->receive.j, &jp) ||
+		if (!pcm_phase3_j_receiver_v92_jp(&station->receive.j, &jp) ||
 		    v92_su_accept_jp(&station->transmit.su, &jp) != V92_SU_OK)
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 		station->phase4_training_constellation =
@@ -478,7 +479,7 @@ static enum v92_phase3_analog_station_result receive_j(
 		station->rate_renegotiation_constellation = jp.rate_renegotiation_constellation;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
-	if (result == V92_PHASE3_J_RECEIVER_COMPLETE) {
+	if (result == PCM_PHASE3_J_RECEIVER_COMPLETE) {
 		struct v92_pcm_phase3_cpt_tx cpt;
 		struct v90_phase4_ri_search ri;
 
@@ -503,7 +504,7 @@ static enum v92_phase3_analog_station_result receive_j(
 		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_RI;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
-	return result == V92_PHASE3_J_RECEIVER_INVALID_SEQUENCE ?
+	return result == PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE ?
 		       V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH :
 		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 }

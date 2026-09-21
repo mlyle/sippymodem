@@ -6,7 +6,7 @@
 #include "v90_phase3_analog_line_tx.h"
 #include "v90_phase3_return_line_tx.h"
 #include "pcm_s_pattern_rx.h"
-#include "v90_phase3_sign_receiver.h"
+#include "pcm_phase3_j_receiver.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -41,7 +41,7 @@ union v90_phase3_analog_station_transmit {
 
 union v90_phase3_analog_station_receive {
 	struct pcm_s_pattern_rx sd;
-	struct v90_phase3_sign_receiver signs;
+	struct pcm_phase3_j_receiver signs;
 };
 
 /* State needed to continue decoding the digital network-character stream at

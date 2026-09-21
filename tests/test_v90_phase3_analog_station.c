@@ -340,6 +340,13 @@ static bool test_training_code_ownership(void)
 			      station.receive.signs.training_ucode == code &&
 			      station.training_ucode == code,
 			      "Sd-to-TRN1d handoff changed INFO1 code %u", code);
+			CHECK(station.receive.signs.protocol == PCM_PROTOCOL_V90 &&
+			      v90_phase3_analog_station_is_valid(&station),
+			      "V.90 station selected the wrong J protocol");
+			station.receive.signs.protocol = PCM_PROTOCOL_V92;
+			CHECK(pcm_phase3_j_receiver_is_valid(&station.receive.signs) &&
+			      !v90_phase3_analog_station_is_valid(&station),
+			      "V.90 station accepted a V.92 receiver");
 		}
 	return true;
 }

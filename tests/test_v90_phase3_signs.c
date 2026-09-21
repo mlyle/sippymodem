@@ -4,7 +4,7 @@
 
 #include "g711.h"
 #include "v90_jd.h"
-#include "v90_phase3_sign_receiver.h"
+#include "pcm_phase3_j_receiver.h"
 #include "v90_phase3_signs.h"
 
 #include <stdbool.h>
@@ -189,19 +189,19 @@ static bool jd_parameters_match(
 
 static bool feed_trn1d(
 	struct v90_phase3_signs *transmitter,
-	struct v90_phase3_sign_receiver *receiver, size_t count)
+	struct pcm_phase3_j_receiver *receiver, size_t count)
 {
 	for (size_t index = 0; index < count; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v90_phase3_sign_receiver_result expected =
+		enum pcm_phase3_j_receiver_result expected =
 			receiver->trn1d_symbols + 1u ==
 					V90_PHASE3_TRN1D_MIN_SYMBOLS ?
-				V90_PHASE3_SIGN_RECEIVER_TRN1D_READY :
-				V90_PHASE3_SIGN_RECEIVER_OK;
+				PCM_PHASE3_J_RECEIVER_TRN1D_READY :
+				PCM_PHASE3_J_RECEIVER_OK;
 
 		CHECK(v90_phase3_signs_next_trn1d(
 			      transmitter, &symbol) == V90_PHASE3_SIGNS_OK &&
-			      v90_phase3_sign_receiver_receive(
+			      pcm_phase3_j_receiver_receive(
 				      receiver, symbol.octet) == expected,
 		      "TRN1d receiver mismatch at symbol %zu", index);
 	}
@@ -210,24 +210,28 @@ static bool feed_trn1d(
 
 static bool feed_jd_record(
 	struct v90_phase3_signs *transmitter,
-	struct v90_phase3_sign_receiver *receiver, const uint8_t *frame,
-	enum v90_phase3_sign_receiver_result final_result)
+	struct pcm_phase3_j_receiver *receiver, const uint8_t *frame,
+	enum pcm_phase3_j_receiver_result final_result)
 {
 	for (size_t index = 0; index < V90_JD_FRAME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v90_phase3_sign_receiver_result result;
+		struct pcm_phase3_j_receiver saved = *receiver;
+		enum pcm_phase3_j_receiver_result result;
 
 		CHECK(v90_phase3_signs_next_jd_bit(
 			      transmitter, frame_bit(frame, index), &symbol) ==
 			      V90_PHASE3_SIGNS_OK,
 		      "could not generate Jd bit %zu", index);
-		result = v90_phase3_sign_receiver_receive(
+		result = pcm_phase3_j_receiver_receive(
 			receiver, symbol.octet);
 		CHECK(result == (index == V90_JD_FRAME_BITS - 1u ?
 				       final_result :
-				       V90_PHASE3_SIGN_RECEIVER_OK),
+				       PCM_PHASE3_J_RECEIVER_OK),
 		      "Jd receiver returned %s at bit %zu",
-		      v90_phase3_sign_receiver_result_name(result), index);
+		      pcm_phase3_j_receiver_result_name(result), index);
+		CHECK(result != PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE ||
+		      memcmp(receiver, &saved, sizeof(saved)) == 0,
+		      "rejected Jd changed receiver state");
 	}
 	return true;
 }
@@ -242,13 +246,14 @@ static bool run_sign_receiver(enum g711_law law)
 	};
 	struct v90_jd_parameters received;
 	struct v90_phase3_signs transmitter;
-	struct v90_phase3_sign_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	uint8_t frame[V90_JD_FRAME_BYTES];
 
 	CHECK(v90_phase3_signs_init(&transmitter, law, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-		      v90_phase3_sign_receiver_init(&receiver, law, 78) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK &&
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, law, 78) ==
+			      PCM_PHASE3_J_RECEIVER_OK &&
 		      v90_jd_encode(&transmitted, frame, sizeof(frame)) ==
 			      V90_JD_OK &&
 		      feed_trn1d(
@@ -256,47 +261,68 @@ static bool run_sign_receiver(enum g711_law law)
 			      V90_PHASE3_TRN1D_MIN_SYMBOLS),
 	      "could not initialize sign receiver for law %u",
 	      (unsigned int)law);
-	CHECK(v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-		      V90_PHASE3_SIGN_RECEIVER_OK &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 		      v90_phase3_signs_begin_jd(&transmitter) ==
 			      V90_PHASE3_SIGNS_OK &&
 		      feed_jd_record(
 			      &transmitter, &receiver, frame,
-			      V90_PHASE3_SIGN_RECEIVER_JD_DETECTED) &&
-		      v90_phase3_sign_receiver_jd(&receiver, &received) &&
+			      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
+		      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
 		      jd_parameters_match(&received, &transmitted),
 	      "receiver did not recover the first Jd record for law %u",
 	      (unsigned int)law);
 	CHECK(feed_jd_record(
 		      &transmitter, &receiver, frame,
-		      V90_PHASE3_SIGN_RECEIVER_JD_REPEATED),
+		      PCM_PHASE3_J_RECEIVER_JD_REPEATED),
 	      "receiver did not recover repeated Jd for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0; index < V90_PHASE3_JD_PRIME_BITS; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v90_phase3_sign_receiver_result result;
+		enum pcm_phase3_j_receiver_result result;
 
 		CHECK(v90_phase3_signs_next_jd_bit(
 			      &transmitter, 0, &symbol) == V90_PHASE3_SIGNS_OK,
 		      "could not generate Jd-prime bit %zu", index);
-		result = v90_phase3_sign_receiver_receive(
+		result = pcm_phase3_j_receiver_receive(
 			&receiver, symbol.octet);
 		CHECK(result == (index == V90_PHASE3_JD_PRIME_BITS - 1u ?
-				       V90_PHASE3_SIGN_RECEIVER_COMPLETE :
-				       V90_PHASE3_SIGN_RECEIVER_OK),
+				       PCM_PHASE3_J_RECEIVER_COMPLETE :
+				       PCM_PHASE3_J_RECEIVER_OK),
 		      "Jd-prime receiver returned %s at bit %zu",
-		      v90_phase3_sign_receiver_result_name(result), index);
+		      pcm_phase3_j_receiver_result_name(result), index);
 	}
-	CHECK(v90_phase3_sign_receiver_is_complete(&receiver),
+	CHECK(pcm_phase3_j_receiver_is_complete(&receiver),
 	      "sign receiver did not retain completion for law %u",
 	      (unsigned int)law);
 	{
-		struct v90_phase3_sign_receiver saved = receiver;
+		struct v92_jd jd = { .data_rate_capability_mask = 123 };
+		struct v92_jp jp = { .su_phase_extension_q16 = 456 };
 
-		CHECK(v90_phase3_sign_receiver_receive(&receiver, 0xa5) ==
-			      V90_PHASE3_SIGN_RECEIVER_COMPLETE &&
+		CHECK(!pcm_phase3_j_receiver_v92_jd(&receiver, &jd) &&
+		      !pcm_phase3_j_receiver_v92_jp(&receiver, &jp) &&
+		      jd.data_rate_capability_mask == 123 &&
+		      jp.su_phase_extension_q16 == 456,
+		      "V.90 receiver exposed V.92 parameters");
+	}
+	{
+		struct pcm_phase3_j_receiver saved = receiver;
+
+		CHECK(pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
+			      PCM_PHASE3_J_RECEIVER_COMPLETE &&
 			      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 		      "completed sign receiver consumed another character");
+	}
+	receiver.stage = PCM_PHASE3_J_RECEIVER_JP;
+	receiver.prime_zero_bits = 0;
+	{
+		struct pcm_phase3_j_receiver saved = receiver;
+
+		CHECK(!pcm_phase3_j_receiver_is_valid(&receiver) &&
+		      pcm_phase3_j_receiver_receive(&receiver, 0xa5) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
+		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+		      "V.90 accepted a V.92-only Jp state");
 	}
 	return true;
 }
@@ -305,6 +331,47 @@ static bool test_sign_receiver_round_trip(void)
 {
 	return run_sign_receiver(G711_LAW_PCMU) &&
 	       run_sign_receiver(G711_LAW_PCMA);
+}
+
+static bool test_jd_consistency(void)
+{
+	const struct v90_jd_parameters original = {
+		.data_rate_capability_mask = 1,
+		.training_constellation = V34_CONSTELLATION_16_POINT,
+		.rate_renegotiation_constellation = V34_CONSTELLATION_4_POINT,
+		.maximum_spectral_shaping_lookahead = 2,
+	};
+
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned field = 0; field < 4; ++field) {
+			struct v90_jd_parameters changed = original, received;
+			struct v90_phase3_signs transmitter;
+			struct pcm_phase3_j_receiver receiver;
+			uint8_t frame[V90_JD_FRAME_BYTES];
+
+			switch (field) {
+			case 0: changed.data_rate_capability_mask = 2; break;
+			case 1: changed.training_constellation = V34_CONSTELLATION_4_POINT; break;
+			case 2: changed.rate_renegotiation_constellation = V34_CONSTELLATION_16_POINT; break;
+			case 3: changed.maximum_spectral_shaping_lookahead = 3; break;
+			}
+			CHECK(v90_phase3_signs_init(&transmitter, law, 78) == V90_PHASE3_SIGNS_OK &&
+			      pcm_phase3_j_receiver_init(&receiver, PCM_PROTOCOL_V90, law, 78) ==
+				      PCM_PHASE3_J_RECEIVER_OK &&
+			      feed_trn1d(&transmitter, &receiver, V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
+			      pcm_phase3_j_receiver_begin_jd_search(&receiver) == PCM_PHASE3_J_RECEIVER_OK &&
+			      v90_phase3_signs_begin_jd(&transmitter) == V90_PHASE3_SIGNS_OK &&
+			      v90_jd_encode(&original, frame, sizeof(frame)) == V90_JD_OK &&
+			      feed_jd_record(&transmitter, &receiver, frame,
+				      PCM_PHASE3_J_RECEIVER_JD_DETECTED) &&
+			      v90_jd_encode(&changed, frame, sizeof(frame)) == V90_JD_OK &&
+			      feed_jd_record(&transmitter, &receiver, frame,
+				      PCM_PHASE3_J_RECEIVER_INVALID_SEQUENCE) &&
+			      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
+			      jd_parameters_match(&received, &original),
+			      "changed Jd field %u was accepted for law %u", field, law);
+		}
+	return true;
 }
 
 static bool test_sign_receiver_early_search(void)
@@ -316,29 +383,29 @@ static bool test_sign_receiver_early_search(void)
 		.maximum_spectral_shaping_lookahead = 2,
 	};
 	struct v90_phase3_signs transmitter;
-	struct v90_phase3_sign_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	uint8_t frame[V90_JD_FRAME_BYTES];
 
 	CHECK(v90_phase3_signs_init(
 		      &transmitter, G711_LAW_PCMU, 91) ==
 		      V90_PHASE3_SIGNS_OK &&
-		      v90_phase3_sign_receiver_init(
-			      &receiver, G711_LAW_PCMU, 91) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK &&
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, G711_LAW_PCMU, 91) ==
+			      PCM_PHASE3_J_RECEIVER_OK &&
 		      feed_trn1d(
 			      &transmitter, &receiver,
 			      V90_PHASE3_TRN1D_MIN_SYMBOLS) &&
-		      v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK,
+		      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+			      PCM_PHASE3_J_RECEIVER_OK,
 	      "could not start early Jd search");
 	for (size_t index = 0; index < 60; ++index) {
 		struct v90_pcm_symbol symbol;
 
 		CHECK(v90_phase3_signs_next_trn1d(
 			      &transmitter, &symbol) == V90_PHASE3_SIGNS_OK &&
-			      v90_phase3_sign_receiver_receive(
+			      pcm_phase3_j_receiver_receive(
 				      &receiver, symbol.octet) ==
-				      V90_PHASE3_SIGN_RECEIVER_OK,
+				      PCM_PHASE3_J_RECEIVER_OK,
 		      "early Jd search failed on remaining TRN1d at %zu", index);
 	}
 	CHECK(v90_phase3_signs_begin_jd(&transmitter) ==
@@ -346,10 +413,10 @@ static bool test_sign_receiver_early_search(void)
 		      v90_jd_encode(&parameters, frame, sizeof(frame)) == V90_JD_OK &&
 		      feed_jd_record(
 			      &transmitter, &receiver, frame,
-			      V90_PHASE3_SIGN_RECEIVER_OK) &&
+			      PCM_PHASE3_J_RECEIVER_OK) &&
 		      feed_jd_record(
 			      &transmitter, &receiver, frame,
-			      V90_PHASE3_SIGN_RECEIVER_JD_DETECTED),
+			      PCM_PHASE3_J_RECEIVER_JD_DETECTED),
 	      "receiver did not resynchronize after an early Jd search");
 	return true;
 }
@@ -363,24 +430,25 @@ static bool run_sign_receiver_error_recovery(enum g711_law law)
 		.maximum_spectral_shaping_lookahead = 3,
 	};
 	struct v90_phase3_signs transmitter;
-	struct v90_phase3_sign_receiver receiver;
+	struct pcm_phase3_j_receiver receiver;
 	struct v90_jd_parameters received;
 	uint8_t frame[V90_JD_FRAME_BYTES];
 	bool detected = false;
 
 	CHECK(v90_phase3_signs_init(&transmitter, law, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-		      v90_phase3_sign_receiver_init(&receiver, law, 78) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK,
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, law, 78) ==
+			      PCM_PHASE3_J_RECEIVER_OK,
 	      "could not initialize error recovery for law %u",
 	      (unsigned int)law);
 	for (size_t index = 0;
 	     index < V90_PHASE3_TRN1D_MIN_SYMBOLS; ++index) {
 		struct v90_pcm_symbol symbol;
-		enum v90_phase3_sign_receiver_result expected =
+		enum pcm_phase3_j_receiver_result expected =
 			index + 1u == V90_PHASE3_TRN1D_MIN_SYMBOLS ?
-				V90_PHASE3_SIGN_RECEIVER_TRN1D_READY :
-				V90_PHASE3_SIGN_RECEIVER_OK;
+				PCM_PHASE3_J_RECEIVER_TRN1D_READY :
+				PCM_PHASE3_J_RECEIVER_OK;
 
 		CHECK(v90_phase3_signs_next_trn1d(
 			      &transmitter, &symbol) == V90_PHASE3_SIGNS_OK,
@@ -393,13 +461,13 @@ static bool run_sign_receiver_error_recovery(enum g711_law law)
 			CHECK(v90_pcm_symbol_make(
 				      &symbol, law, 78, !symbol.positive),
 			      "could not perturb the recovery training sign");
-		CHECK(v90_phase3_sign_receiver_receive(
+		CHECK(pcm_phase3_j_receiver_receive(
 			      &receiver, symbol.octet) == expected,
 		      "TRN1d error became terminal for law %u at %zu",
 		      (unsigned int)law, index);
 	}
-	CHECK(v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-		      V90_PHASE3_SIGN_RECEIVER_OK &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_OK &&
 		      v90_phase3_signs_begin_jd(&transmitter) ==
 			      V90_PHASE3_SIGNS_OK &&
 		      v90_jd_encode(&parameters, frame, sizeof(frame)) == V90_JD_OK,
@@ -408,7 +476,7 @@ static bool run_sign_receiver_error_recovery(enum g711_law law)
 	for (size_t repeat = 0; repeat < 4u && !detected; ++repeat) {
 		for (size_t index = 0; index < V90_JD_FRAME_BITS; ++index) {
 			struct v90_pcm_symbol symbol;
-			enum v90_phase3_sign_receiver_result result;
+			enum pcm_phase3_j_receiver_result result;
 
 			CHECK(v90_phase3_signs_next_jd_bit(
 				      &transmitter, frame_bit(frame, index),
@@ -419,18 +487,18 @@ static bool run_sign_receiver_error_recovery(enum g711_law law)
 					      &symbol, law, 79,
 					      !symbol.positive),
 				      "could not perturb recovery Jd");
-			result = v90_phase3_sign_receiver_receive(
+			result = pcm_phase3_j_receiver_receive(
 				&receiver, symbol.octet);
-			CHECK(result == V90_PHASE3_SIGN_RECEIVER_OK ||
-			      result == V90_PHASE3_SIGN_RECEIVER_JD_DETECTED,
+			CHECK(result == PCM_PHASE3_J_RECEIVER_OK ||
+			      result == PCM_PHASE3_J_RECEIVER_JD_DETECTED,
 			      "Jd error became terminal for law %u at %zu/%zu",
 			      (unsigned int)law, repeat, index);
 			detected |=
-				result == V90_PHASE3_SIGN_RECEIVER_JD_DETECTED;
+				result == PCM_PHASE3_J_RECEIVER_JD_DETECTED;
 		}
 	}
 	CHECK(detected &&
-		      v90_phase3_sign_receiver_jd(&receiver, &received) &&
+		      pcm_phase3_j_receiver_v90_jd(&receiver, &received) &&
 		      jd_parameters_match(&received, &parameters),
 	      "receiver did not recover a repeated Jd for law %u",
 	      (unsigned int)law);
@@ -446,75 +514,74 @@ static bool test_sign_receiver_error_recovery(void)
 static bool test_sign_receiver_boundaries(void)
 {
 	struct v90_phase3_signs transmitter;
-	struct v90_phase3_sign_receiver receiver;
-	struct v90_phase3_sign_receiver saved;
+	struct pcm_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver saved;
 
 	CHECK(v90_phase3_signs_init(
 		      &transmitter, G711_LAW_PCMA, 78) ==
 		      V90_PHASE3_SIGNS_OK &&
-		      v90_phase3_sign_receiver_init(
-			      &receiver, G711_LAW_PCMA, 78) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK &&
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, G711_LAW_PCMA, 78) ==
+			      PCM_PHASE3_J_RECEIVER_OK &&
 		      feed_trn1d(
 			      &transmitter, &receiver,
 			      V90_PHASE3_TRN1D_MIN_SYMBOLS - 1u),
 	      "could not reach early TRN1d boundary");
 	saved = receiver;
-	CHECK(v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-		      V90_PHASE3_SIGN_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      feed_trn1d(&transmitter, &receiver, 2),
 	      "early Jd search was not transactional");
 	saved = receiver;
-	CHECK(v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-		      V90_PHASE3_SIGN_RECEIVER_INVALID_STATE &&
+	CHECK(pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 		      feed_trn1d(&transmitter, &receiver, 5) &&
-		      v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-			      V90_PHASE3_SIGN_RECEIVER_OK,
+		      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+			      PCM_PHASE3_J_RECEIVER_OK,
 	      "unaligned Jd-search boundary was not enforced");
 	return true;
 }
 
 static bool test_sign_receiver_validation(void)
 {
-	struct v90_phase3_sign_receiver receiver;
-	struct v90_phase3_sign_receiver saved;
+	struct pcm_phase3_j_receiver receiver;
+	struct pcm_phase3_j_receiver saved;
 	struct v90_jd_parameters parameters;
 
 	memset(&receiver, 0xa5, sizeof(receiver));
 	saved = receiver;
-	CHECK(v90_phase3_sign_receiver_init(
-		      NULL, G711_LAW_PCMU, 78) ==
-		      V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sign_receiver_init(
-			      &receiver, (enum g711_law)2, 78) ==
-			      V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sign_receiver_init(
-			      &receiver, G711_LAW_PCMU, 66) ==
-			      V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(pcm_phase3_j_receiver_init(NULL, PCM_PROTOCOL_V90, G711_LAW_PCMU, 78) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, (enum g711_law)2, 78) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+		      pcm_phase3_j_receiver_init(
+			&receiver, PCM_PROTOCOL_V90, G711_LAW_PCMU, 66) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid sign-receiver initialization changed state");
-	CHECK(v90_phase3_sign_receiver_receive(NULL, 0) ==
-		      V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sign_receiver_begin_jd_search(NULL) ==
-			      V90_PHASE3_SIGN_RECEIVER_INVALID_ARGUMENT &&
-		      v90_phase3_sign_receiver_receive(&receiver, 0) ==
-			      V90_PHASE3_SIGN_RECEIVER_INVALID_STATE &&
-		      v90_phase3_sign_receiver_begin_jd_search(&receiver) ==
-			      V90_PHASE3_SIGN_RECEIVER_INVALID_STATE &&
-		      !v90_phase3_sign_receiver_jd(&receiver, &parameters) &&
-		      !v90_phase3_sign_receiver_jd(NULL, &parameters) &&
-		      !v90_phase3_sign_receiver_jd(&receiver, NULL) &&
-		      !v90_phase3_sign_receiver_is_valid(&receiver) &&
-		      !v90_phase3_sign_receiver_is_complete(&receiver) &&
+	CHECK(pcm_phase3_j_receiver_receive(NULL, 0) ==
+		      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+		      pcm_phase3_j_receiver_begin_jd_search(NULL) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_ARGUMENT &&
+		      pcm_phase3_j_receiver_receive(&receiver, 0) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
+		      pcm_phase3_j_receiver_begin_jd_search(&receiver) ==
+			      PCM_PHASE3_J_RECEIVER_INVALID_STATE &&
+		      !pcm_phase3_j_receiver_v90_jd(&receiver, &parameters) &&
+		      !pcm_phase3_j_receiver_v90_jd(NULL, &parameters) &&
+		      !pcm_phase3_j_receiver_v90_jd(&receiver, NULL) &&
+		      !pcm_phase3_j_receiver_is_valid(&receiver) &&
+		      !pcm_phase3_j_receiver_is_complete(&receiver) &&
 		      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
 	      "invalid sign-receiver operation changed state");
-	CHECK(strcmp(v90_phase3_sign_receiver_result_name(
-			     V90_PHASE3_SIGN_RECEIVER_JD_DETECTED),
+	CHECK(strcmp(pcm_phase3_j_receiver_result_name(
+			     PCM_PHASE3_J_RECEIVER_JD_DETECTED),
 		     "Jd detected") == 0 &&
-		      strcmp(v90_phase3_sign_receiver_result_name(
-			     (enum v90_phase3_sign_receiver_result)8),
+		      strcmp(pcm_phase3_j_receiver_result_name(
+			     (enum pcm_phase3_j_receiver_result)99),
 			     "unknown") == 0,
 	      "sign-receiver result names are wrong");
 	return true;
@@ -590,6 +657,7 @@ int main(void)
 		{ "Jd handoff boundary", test_jd_boundary },
 		{ "exact PCM symbol parsing", test_pcm_symbol_parsing },
 		{ "sign receiver round trip", test_sign_receiver_round_trip },
+		{ "stable Jd parameters", test_jd_consistency },
 		{ "sign receiver early search", test_sign_receiver_early_search },
 		{ "sign receiver error recovery", test_sign_receiver_error_recovery },
 		{ "sign receiver boundaries", test_sign_receiver_boundaries },
