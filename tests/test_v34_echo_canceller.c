@@ -197,9 +197,54 @@ static bool test_near_cancellation(void)
 	return true;
 }
 
+static bool test_rounding_boundaries(void)
+{
+	static const struct {
+		int16_t alpha, received;
+		uint16_t coefficient, residue;
+	} cases[] = {
+		{ 1, 4096, 0, 1 },       /* Positive half rounds upward. */
+		{ 1, -4096, 0, 0 },      /* Negative half rounds upward. */
+		{ 16384, 16384, UINT16_MAX, 0x8000 }, /* Wrap, not clamp. */
+		{ INT16_MIN, INT16_MIN, 0, 0 },      /* Unsigned doubling. */
+	};
+	struct v34_echo_canceller canceller;
+	int16_t output;
+
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+		CHECK(v34_echo_canceller_init(&canceller) == V34_ECHO_CANCELLER_OK,
+		      "rounding owner did not initialize");
+		canceller.references[0] = 1;
+		canceller.reference_write = canceller.reference_fill = 1;
+		canceller.training_started = true;
+		canceller.alpha = cases[i].alpha;
+		CHECK(v34_echo_canceller_predict(
+			      &canceller, cases[i].received, &output) == V34_ECHO_CANCELLER_OK &&
+		      output == cases[i].received &&
+		      v34_echo_canceller_advance(&canceller, cases[i].received, output, 0) ==
+			      V34_ECHO_CANCELLER_OK &&
+		      (uint16_t)canceller.coefficients[0] == cases[i].coefficient &&
+		      (uint16_t)canceller.residues[0] == cases[i].residue,
+		      "adaptation rounding case %zu changed", i);
+	}
+	for (int sign = -1; sign <= 1; sign += 2) {
+		CHECK(v34_echo_canceller_init(&canceller) == V34_ECHO_CANCELLER_OK,
+		      "smoothing owner did not initialize");
+		canceller.training_started = true;
+		canceller.sample_count = 2024;
+		canceller.alpha = (int16_t)(sign * 4096);
+		CHECK(v34_echo_canceller_advance(&canceller, 0, 0, 0) ==
+			      V34_ECHO_CANCELLER_OK &&
+		      canceller.alpha == (sign > 0 ? 4076 : -4075),
+		      "smoothing half tie changed for sign %d", sign);
+	}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_validation_and_transactionality() || !test_near_cancellation())
+	if (!test_validation_and_transactionality() || !test_near_cancellation() ||
+	    !test_rounding_boundaries())
 		return 1;
 	puts("V.34 echo canceller tests passed");
 	return 0;

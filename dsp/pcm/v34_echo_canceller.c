@@ -155,19 +155,10 @@ static int16_t update_alpha(
 	if (energy != 0)
 		alpha = alpha_from_energy(energy, energy_scale);
 	if (smooth)
-		alpha = wrap_s16_from_s32(arithmetic_shift_right_u32(
-			multiply_low_s32(alpha, V34_ECHO_ALPHA_SMOOTH_SCALE) +
-				0x4000u,
-			15));
+		alpha = round_shift_s32_word_to_s16(
+			multiply_low_s32(alpha, V34_ECHO_ALPHA_SMOOTH_SCALE),
+			15u);
 	return alpha;
-}
-
-static int16_t adaptation_error(int16_t alpha, int16_t cleaned)
-{
-	uint32_t scaled = multiply_low_s32(alpha, cleaned);
-
-	return wrap_s16_from_s32(arithmetic_shift_right_u32(
-		scaled * 2u + 0x2000u, 14));
 }
 
 static void calculate_step(
@@ -198,7 +189,8 @@ static void calculate_step(
 		energy = reference_energy(canceller);
 	step->alpha = update_alpha(
 		step->alpha, energy, smooth, V34_ECHO_ENERGY_SCALE);
-	step->error = adaptation_error(step->alpha, step->residual);
+	step->error = round_shift_s32_word_to_s16(
+		multiply_low_s32(step->alpha, step->residual) * 2u, 14u);
 	step->adapt = step->sample_count < V34_ECHO_NEAR_ADAPT_SAMPLES;
 }
 

@@ -365,6 +365,38 @@ static bool test_validation_is_transactional(void)
 	return true;
 }
 
+static bool test_acquisition_magnitude(void)
+{
+	const int16_t samples[] = {
+		INT16_MIN, -32767, -257, -256, -1, 0, 1, 256, 257, INT16_MAX,
+	};
+	const uint16_t thresholds[] = { 256, 32767, 32768 };
+
+	for (size_t s = 0; s < ARRAY_LENGTH(samples); ++s) {
+		uint16_t magnitude = (uint16_t)(samples[s] < 0 ?
+			-(int32_t)samples[s] : samples[s]);
+		for (size_t t = 0; t < ARRAY_LENGTH(thresholds); ++t) {
+			struct v92_su_rx receiver;
+			unsigned acquired = 0;
+			CHECK(v92_su_rx_init(&receiver, V92_SU_RX_TRANSITION_ONLY,
+			      thresholds[t], 1) == V92_SU_RX_OK, "magnitude fixture init failed");
+			for (unsigned i = 0; i < 32; ++i) {
+				enum v92_su_rx_result result = v92_su_rx_sample(&receiver, samples[s]);
+				CHECK(result == V92_SU_RX_OK || result == V92_SU_RX_ACQUIRED,
+				      "constant periodic input returned %d", result);
+				acquired += result == V92_SU_RX_ACQUIRED;
+			}
+			bool qualifies = magnitude > thresholds[t];
+			CHECK(acquired == (unsigned)qualifies &&
+			      receiver.peak == (qualifies ? magnitude : 0) &&
+			      receiver.stage == (qualifies ? V92_SU_RX_WAITING_TRANSITION :
+				V92_SU_RX_ACQUIRING),
+			      "sample %d at threshold %u changed acquisition", samples[s], thresholds[t]);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -372,6 +404,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "phase estimator", check_phase_estimator },
+		{ "acquisition magnitude", test_acquisition_magnitude },
 		{ "generated phase probe", test_generated_phase_probe },
 		{ "absent phase rejection", test_absent_phase_is_rejected },
 		{ "reusable transition receiver",

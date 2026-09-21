@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_su_rx.h"
+#include "integer_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -131,16 +132,10 @@ bool v92_su_rx_has_failed(const struct v92_su_rx *receiver)
 	       receiver->stage == V92_SU_RX_FAILED;
 }
 
-static uint16_t magnitude_i16(int16_t sample)
-{
-	return sample == INT16_MIN ? UINT16_C(32768) :
-	       sample < 0 ? (uint16_t)-sample : (uint16_t)sample;
-}
-
 static enum su_comparison classify_sample(
 	struct v92_su_rx *receiver, int16_t sample)
 {
-	uint16_t magnitude = magnitude_i16(sample);
+	uint16_t magnitude = (uint16_t)magnitude_s16(sample);
 	bool valid = magnitude > receiver->minimum_magnitude;
 	bool positive = sample >= 0;
 	bool previous_valid = (receiver->history_valid & UINT8_C(0x20)) != 0u;
@@ -208,8 +203,8 @@ static enum v92_su_rx_result acquire_sample(
 	}
 	if (receiver->stable_symbols != UINT32_MAX)
 		receiver->stable_symbols++;
-	if (receiver->peak < magnitude_i16(sample))
-		receiver->peak = magnitude_i16(sample);
+	if (receiver->peak < magnitude_s16(sample))
+		receiver->peak = (uint16_t)magnitude_s16(sample);
 	if (receiver->stable_symbols < V92_SU_RX_MIN_STABLE_SYMBOLS)
 		return V92_SU_RX_OK;
 	receiver->last_periodic_symbol = receiver->total_symbols;
