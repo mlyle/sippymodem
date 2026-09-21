@@ -222,12 +222,6 @@ bool v92_phase3_digital_station_transmit_complete(
 		       V92_PHASE3_DIGITAL_TRANSMIT_COMPLETE;
 }
 
-static uint8_t silence_octet(enum g711_law law)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(0) : g711_encode_pcmu(0);
-}
-
 static bool begin_ri_if_downstream_complete(
 	struct v92_phase3_digital_station *station)
 {
@@ -259,7 +253,7 @@ enum v92_phase3_digital_station_result v92_phase3_digital_station_transmit(
 	if (v92_phase3_digital_station_transmit_complete(station))
 		return V92_PHASE3_DIGITAL_STATION_COMPLETE;
 	if (station->transmit_stage == V92_PHASE3_DIGITAL_TRANSMIT_SILENCE) {
-		*network_octet = silence_octet(station->law);
+		*network_octet = g711_encode(station->law, 0);
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	}
 	next = *station;

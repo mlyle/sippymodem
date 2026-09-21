@@ -857,12 +857,6 @@ static bool output_overlaps_path(
 	return memory_regions_overlap(path, sizeof(*path), output, output_size);
 }
 
-static uint8_t silence_octet(enum g711_law law)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(0) : g711_encode_pcmu(0);
-}
-
 enum v90_digital_path_result v90_digital_path_transmit(
 	struct v90_digital_path *path,
 	v90_downstream_frame_source source, void *source_context,
@@ -876,7 +870,7 @@ enum v90_digital_path_result v90_digital_path_transmit(
 		return V90_DIGITAL_PATH_INVALID_ARGUMENT;
 	if (path->failed)
 		return V90_DIGITAL_PATH_FAILED;
-	generated = silence_octet(path->law);
+	generated = g711_encode(path->law, 0);
 	result = emit_downstream(
 		path, source, source_context, &generated);
 	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)
@@ -935,7 +929,7 @@ static enum v90_digital_path_result sample_owned(
 	bool frame_ready = false;
 	enum v90_digital_path_result result;
 
-	generated = silence_octet(path->law);
+	generated = g711_encode(path->law, 0);
 	result = emit_downstream(
 		path, source, source_context, &generated);
 	if (result == V90_DIGITAL_PATH_SOURCE_FAILURE)

@@ -92,6 +92,8 @@ static bool test_pcmu_code_space(void)
 		uint8_t encoded = g711_encode_pcmu(sample);
 		uint8_t expected = code == 0x7f ? 0xff : (uint8_t)code;
 
+		CHECK(g711_decode(G711_LAW_PCMU, (uint8_t)code) == sample,
+		      "PCMU shared decode differs at code %u", code);
 		CHECK(encoded == expected,
 		      "PCMU code %#02x round-tripped as %#02x", code, encoded);
 		CHECK(g711_decode_pcmu((uint8_t)(code ^ 0x80)) ==
@@ -107,6 +109,8 @@ static bool test_pcma_code_space(void)
 		int16_t sample = g711_decode_pcma((uint8_t)code);
 		uint8_t encoded = g711_encode_pcma(sample);
 
+		CHECK(g711_decode(G711_LAW_PCMA, (uint8_t)code) == sample,
+		      "PCMA shared decode differs at code %u", code);
 		CHECK(encoded == code,
 		      "PCMA code %#02x round-tripped as %#02x", code, encoded);
 		CHECK(g711_decode_pcma((uint8_t)(code ^ 0x80)) ==
@@ -161,6 +165,9 @@ static bool test_all_linear_samples(void)
 		uint8_t pcmu_round_trip =
 			g711_encode_pcmu(pcmu_linear);
 
+		CHECK(g711_encode(G711_LAW_PCMU, (int16_t)sample) == pcmu &&
+		      g711_encode(G711_LAW_PCMA, (int16_t)sample) == pcma,
+		      "shared encoding differs at sample %d", (int)sample);
 		CHECK(g711_quantize(G711_LAW_PCMU, (int16_t)sample) == pcmu_linear,
 		      "PCMU reconstructed sample differs at %d", (int)sample);
 		CHECK(g711_quantize(G711_LAW_PCMA, (int16_t)sample) == pcma_linear,

@@ -523,12 +523,6 @@ static enum v90_analog_path_result emit_upstream(
 	}
 }
 
-static uint8_t encode_sample(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
-}
-
 static bool output_overlaps_path(
 	const struct v90_analog_path *path,
 	const void *output, size_t output_size)
@@ -565,7 +559,7 @@ enum v90_analog_path_result v90_analog_path_transmit(
 	if (result == V90_ANALOG_PATH_SOURCE_FAILURE)
 		return result;
 	if (result == V90_ANALOG_PATH_CLEARDOWN_COMPLETE) {
-		*transmit_octet = encode_sample(path->law, 0);
+		*transmit_octet = g711_encode(path->law, 0);
 		return result;
 	}
 	if (result != V90_ANALOG_PATH_OK)
@@ -573,7 +567,7 @@ enum v90_analog_path_result v90_analog_path_transmit(
 	path->receive_pending = true;
 	if (!v90_analog_path_is_valid(path))
 		return fail_path(path, V90_ANALOG_PATH_INTERNAL_ERROR);
-	*transmit_octet = encode_sample(path->law, sample);
+	*transmit_octet = g711_encode(path->law, sample);
 	return V90_ANALOG_PATH_OK;
 }
 

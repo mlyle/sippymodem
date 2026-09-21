@@ -30,11 +30,6 @@ bool pcm_downstream_equalizer_init(struct pcm_downstream_equalizer *equalizer,
 	return true;
 }
 
-static int16_t decode(enum g711_law law, uint8_t octet)
-{
-	return law == G711_LAW_PCMU ? g711_decode_pcmu(octet) : g711_decode_pcma(octet);
-}
-
 bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,
 	uint8_t octet)
 {
@@ -44,7 +39,7 @@ bool pcm_downstream_equalizer_train(struct pcm_downstream_equalizer *equalizer,
 
 	if (!pcm_downstream_equalizer_is_valid(equalizer) || !equalizer->training_level)
 		return false;
-	int16_t sample = decode(equalizer->law, octet);
+	int16_t sample = g711_decode(equalizer->law, octet);
 	if (sample == 0)
 		return false;
 	next = *equalizer;
@@ -72,7 +67,7 @@ bool pcm_downstream_equalizer_receive(struct pcm_downstream_equalizer *equalizer
 		*decision = octet;
 		return true;
 	}
-	int16_t sample = decode(equalizer->law, octet);
+	int16_t sample = g711_decode(equalizer->law, octet);
 	struct qam_point input = { sample / 32768.0, 0.0 };
 	if (qam_equalizer_push(&equalizer->filter, &input, &output, &ready) != QAM_EQUALIZER_OK || !ready)
 		return false;
@@ -88,6 +83,6 @@ bool pcm_downstream_equalizer_receive(struct pcm_downstream_equalizer *equalizer
 	if (linear < INT16_MIN)
 		linear = INT16_MIN;
 	sample = (int16_t)lround(linear);
-	*decision = equalizer->law == G711_LAW_PCMU ? g711_encode_pcmu(sample) : g711_encode_pcma(sample);
+	*decision = g711_encode(equalizer->law, sample);
 	return true;
 }

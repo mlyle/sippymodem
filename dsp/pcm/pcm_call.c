@@ -1849,18 +1849,6 @@ enum pcm_call_result pcm_call_init_from_v34(
 	return PCM_CALL_OK;
 }
 
-static uint8_t encode_sample(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_encode_pcma(sample) : g711_encode_pcmu(sample);
-}
-
-static int16_t decode_octet(enum g711_law law, uint8_t octet)
-{
-	return law == G711_LAW_PCMA ?
-		       g711_decode_pcma(octet) : g711_decode_pcmu(octet);
-}
-
 static bool condition_downstream(struct pcm_call *call, uint8_t *octet)
 {
 	if (call->local_role != V90_ANALOG_MODEM || !uses_pcm_upstream(call))
@@ -2250,7 +2238,7 @@ static enum pcm_call_result sample_phase2(
 
 	if (result != PCM_PHASE2_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
-	*transmit_octet = encode_sample(call->law, transmitted_sample);
+	*transmit_octet = g711_encode(call->law, transmitted_sample);
 	if (call->state.phase2.peer_info0_stored) {
 		call->peer_info0 = call->state.phase2.peer_info0;
 		call->peer_info0_stored = true;
@@ -2279,7 +2267,7 @@ static enum pcm_call_result sample_qc(
 		enum v92_qc_analog_stage stage = v92_qc_analog_sample(&call->state.qc.analog, input, &sample);
 		if (stage == V92_QC_ANALOG_INVALID)
 			return PCM_CALL_NUMERIC_FAILURE;
-		*output = encode_sample(call->law, sample);
+		*output = g711_encode(call->law, sample);
 		silence = stage == V92_QC_ANALOG_TRAIL_SILENCE;
 	} else {
 		struct v90_pcm_symbol symbol;
@@ -2315,7 +2303,7 @@ static enum pcm_call_result sample_retrain_silence(
 	struct v34_full_retrain next_retrain = call->retrain;
 	enum v34_full_retrain_response_event event;
 
-	*transmit_octet = encode_sample(call->law, 0);
+	*transmit_octet = g711_encode(call->law, 0);
 	if (v34_full_retrain_sample_response(
 		    &next_retrain, received_sample, &event) !=
 	    V34_PHASE2_TONE_OK)
@@ -3135,7 +3123,7 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.v92_analog, NULL, &sample));
 		if (result != PCM_CALL_OK)
 			return result;
-		*transmit_octet = encode_sample(call->law, sample);
+		*transmit_octet = g711_encode(call->law, sample);
 		result = v92_analog_phase3_result(
 			v92_phase3_analog_station_receive(
 				&call->state.phase3.v92_analog,
@@ -3152,7 +3140,7 @@ static enum pcm_call_result sample_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&call->state.phase3.v92_digital,
-				decode_octet(call->law, received_octet)));
+				g711_decode(call->law, received_octet)));
 	} else if (call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 
@@ -3161,7 +3149,7 @@ static enum pcm_call_result sample_phase3(
 				&call->state.phase3.analog, &sample));
 		if (result != PCM_CALL_OK)
 			return result;
-		*transmit_octet = encode_sample(call->law, sample);
+		*transmit_octet = g711_encode(call->law, sample);
 		result = analog_phase3_result(
 			v90_phase3_analog_station_receive(
 				&call->state.phase3.analog, received_octet));
@@ -3295,7 +3283,7 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 				&mixed->phase3, NULL, &sample));
 		if (result != PCM_CALL_OK)
 			return result;
-		*transmit_octet = encode_sample(call->law, sample);
+		*transmit_octet = g711_encode(call->law, sample);
 		result = receive_v92_mixed_downstream(mixed, received_octet);
 	} else {
 		struct pcm_call_v92_digital_mixed_state *mixed =
@@ -3310,7 +3298,7 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&mixed->phase3,
-				decode_octet(call->law, received_octet)));
+				g711_decode(call->law, received_octet)));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
@@ -3335,7 +3323,7 @@ static enum pcm_call_result sample_mixed_phase3(
 				&mixed->phase3, &sample));
 		if (result != PCM_CALL_OK)
 			return result;
-		*transmit_octet = encode_sample(call->law, sample);
+		*transmit_octet = g711_encode(call->law, sample);
 		return advance_phase3(call);
 	} else {
 		struct pcm_call_digital_mixed_state *mixed =
@@ -3604,7 +3592,7 @@ static enum pcm_call_result transmit_v92_rate_prefix(
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RU) {
 		struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
 		if (prefix->queue_count) {
-			*octet = encode_sample(prefix->transmit.law, prefix->queue[0]);
+			*octet = g711_encode(prefix->transmit.law, prefix->queue[0]);
 			prefix->queue_count--;
 			memmove(prefix->queue, prefix->queue + 1,
 				prefix->queue_count * sizeof(prefix->queue[0]));
@@ -3716,7 +3704,7 @@ static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
 		if (!v92_rate_pause_analog_transmit(pause, &sample) ||
 		    !v92_rate_pause_analog_receive(pause, received_octet))
 			return PCM_CALL_SEQUENCE_MISMATCH;
-		*transmit_octet = encode_sample(call->law, sample);
+		*transmit_octet = g711_encode(call->law, sample);
 		if (!v92_rate_pause_analog_is_ready(pause))
 			return PCM_CALL_OK;
 		struct pcm_call_v92_analog_phase4_control resumed = { 0 };
@@ -3799,7 +3787,7 @@ static enum pcm_call_result sample_v92_phase4(
 		if (result != PCM_CALL_OK)
 			return result;
 		if (!prefix_sent)
-			*transmit_octet = encode_sample(call->law, sample);
+			*transmit_octet = g711_encode(call->law, sample);
 		if (call->state.phase4.v92.prefix_stage == PCM_CALL_V92_PREFIX_RU &&
 		    !pcm_r_rx_is_complete(&call->state.phase4.v92.prefix.analog.receive)) {
 			enum pcm_r_rx_result received = pcm_r_rx_receive(
@@ -4419,7 +4407,7 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 	/* Ru belongs to the current data epoch. Do not restore the nominal
 	 * Phase 3 preference and undo the peer's negotiated power reduction. */
 	if (!v90_pcm_symbol_parse(&level, call->law,
-		encode_sample(call->law, path->upstream.upstream_level)) ||
+		g711_encode(call->law, path->upstream.upstream_level)) ||
 	    v90_pcm_mapping_init_rate_renegotiation(&mapping, &path->training_mapping,
 		&path->rd.mapping) != V90_PCM_MAPPING_OK ||
 	    pcm_downstream_rx_init(&downstream, PCM_PROTOCOL_V92, &mapping,
@@ -4828,7 +4816,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (transmitted != V92_UPSTREAM_DATA_TX_OK)
 				return PCM_CALL_NUMERIC_FAILURE;
 		}
-		*generated = encode_sample(call->law, sample);
+		*generated = g711_encode(call->law, sample);
 		if (!condition_downstream(call, &received_octet))
 			return PCM_CALL_NUMERIC_FAILURE;
 		bool suppress_frame = false;
@@ -4896,7 +4884,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (result != PCM_CALL_OK)
 				return result;
 			if (--path->fast.deadline_remaining == 0u) {
-				*generated = encode_sample(call->law, 0);
+				*generated = g711_encode(call->law, 0);
 				if (path->fast.control.cleardown.active)
 					return PCM_CALL_CLEARDOWN_COMPLETE;
 				return begin_retrain(call, false);
@@ -4984,7 +4972,7 @@ static enum pcm_call_result v92_data_octet_owned(
 		if (path->fast.stage != PCM_CALL_V92_FAST_IDLE) {
 			if ((received == V92_UPSTREAM_DATA_RX_FRAME && !v92_fast_receive(call, &frame)) ||
 			    ru == V92_RU_RX_DETECTED) {
-				*generated = encode_sample(call->law, 0);
+				*generated = g711_encode(call->law, 0);
 				return begin_retrain(call, false);
 			}
 			if (path->fast.stage == PCM_CALL_V92_FAST_CONTROL &&
@@ -5073,12 +5061,12 @@ static enum pcm_call_result data_octet_owned(
 	enum pcm_call_result result;
 
 	if (call->stage == PCM_CALL_CLOSED) {
-		*transmit_octet = encode_sample(call->law, 0);
+		*transmit_octet = g711_encode(call->law, 0);
 		*event = emitted;
 		return PCM_CALL_CLEARDOWN_COMPLETE;
 	}
 	if (cleardown_is_active_owned(call)) {
-		generated = encode_sample(call->law, 0);
+		generated = g711_encode(call->law, 0);
 		if (call->local_role == V90_ANALOG_MODEM) {
 			result = analog_path_result(v90_analog_path_transmit(
 				&call->state.data_path.analog,
@@ -5113,7 +5101,7 @@ static enum pcm_call_result data_octet_owned(
 			retrain_silence_ceiling(
 				call, 256u * 256u *
 				      V34_RETRAIN_SILENCE_WINDOW_SAMPLES));
-	generated = encode_sample(call->law, 0);
+	generated = g711_encode(call->law, 0);
 	if (uses_pcm_upstream(call)) {
 		result = v92_data_octet_owned(call, received_octet, received_sample, host_sample, received_available,
 			sources, &generated, &emitted);
@@ -5198,7 +5186,7 @@ static enum pcm_call_result data_octet_owned(
 		result = update_rate_renegotiation_deadline(call);
 	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
 		complete_cleardown(call);
-		generated = encode_sample(call->law, 0);
+		generated = g711_encode(call->law, 0);
 		emitted = (struct pcm_call_data_event){ 0 };
 	} else if (result != PCM_CALL_OK)
 		call->failed = true;
@@ -5287,7 +5275,7 @@ enum pcm_call_result pcm_call_octet(
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
-	generated = encode_sample(call->law, 0);
+	generated = g711_encode(call->law, 0);
 	emitted.processed = call->stage;
 	switch (call->stage) {
 	case PCM_CALL_CLOSED:
@@ -5295,14 +5283,14 @@ enum pcm_call_result pcm_call_octet(
 		break;
 	case PCM_CALL_QC:
 		result = sample_qc(call, call->local_role == V90_DIGITAL_MODEM ?
-			received_sample : decode_octet(call->law, received_octet), &generated, &emitted);
+			received_sample : g711_decode(call->law, received_octet), &generated, &emitted);
 		break;
 	case PCM_CALL_PHASE2:
 		result = sample_phase2(
 			call,
 			call->local_role == V90_DIGITAL_MODEM ?
 				received_sample :
-				decode_octet(call->law, received_octet),
+				g711_decode(call->law, received_octet),
 			&generated, &emitted);
 		break;
 	case PCM_CALL_PHASE3:
