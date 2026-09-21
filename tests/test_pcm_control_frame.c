@@ -108,8 +108,65 @@ static bool test_known_check(void)
 	return true;
 }
 
+static bool test_constellation_rows(void)
+{
+	struct pcm_constellation rows[6], decoded[7], expected_rows[7];
+	uint8_t frame[256], expected[256];
+
+	/* Both planes, all row extents (including empty), each Ucode, and the
+	 * empty/full masks. Independently place bits by advancing a wire cursor
+	 * through eight framed words, and retain non-mask bits as sentinels. */
+	for (size_t first = 0; first <= 12u; ++first) {
+		for (size_t count = 0; count <= 6u && first + count <= 12u; ++count) {
+			for (unsigned int pattern = 0; pattern < 130u; ++pattern) {
+				size_t cursor = 136u + first * 136u;
+
+				memset(rows, 0, sizeof(rows));
+				memset(frame, 0xa5, sizeof(frame));
+				memcpy(expected, frame, sizeof(frame));
+				for (size_t row = 0; row < count; ++row) {
+					if (pattern < 128u) {
+						unsigned int ucode = (pattern + row * 7u) % 128u;
+
+						rows[row].ucode_mask[ucode / 8u] =
+							(uint8_t)(1u << (ucode % 8u));
+					} else if (pattern == 129u) {
+						memset(&rows[row], 0xff, sizeof(rows[row]));
+					}
+					for (unsigned int ucode = 0; ucode < 128u; ++ucode) {
+						if (ucode % 16u == 0u)
+							++cursor;
+						uint8_t mask = (uint8_t)(0x80u >> (cursor % 8u));
+
+						if (rows[row].ucode_mask[ucode / 8u] &
+						    (1u << (ucode % 8u)))
+							expected[cursor / 8u] |= mask;
+						else
+							expected[cursor / 8u] &= (uint8_t)~mask;
+						++cursor;
+					}
+				}
+				pcm_control_frame_write_constellations(frame, first, rows, count);
+				CHECK(memcmp(frame, expected, sizeof(frame)) == 0,
+				      "wire mask or sentinel changed: %zu/%zu/%u",
+				      first, count, pattern);
+				memset(decoded, 0x5a, sizeof(decoded));
+				memcpy(expected_rows, decoded, sizeof(decoded));
+				memcpy(expected_rows, rows, count * sizeof(rows[0]));
+				pcm_control_frame_read_constellations(
+					expected, first, decoded, count);
+				CHECK(memcmp(decoded, expected_rows, sizeof(decoded)) == 0,
+				      "decoded mask or sentinel changed: %zu/%zu/%u",
+				      first, count, pattern);
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	return test_sync_prefix() && test_sync_suffix() &&
-	       test_known_check() && test_payload_bounds() ? 0 : 1;
+	       test_known_check() && test_payload_bounds() &&
+	       test_constellation_rows() ? 0 : 1;
 }

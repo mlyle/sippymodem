@@ -5,6 +5,7 @@
 
 #include "crc16_ccitt_false.h"
 #include "packed_bits.h"
+#include "pcm_constellation.h"
 
 /* The caller owns storage bounds. A complete prefix needs three bytes:
  * seventeen one bits followed by the first zero start bit, MSB first. */
@@ -46,6 +47,39 @@ static inline uint16_t pcm_control_frame_crc(
 				remainder, packed_msb_bit(frame, bit) != 0u);
 	}
 	return remainder;
+}
+
+/* CP, CPt and CPu share 136-bit constellation rows after a 136-bit header.
+ * Each row carries eight words: a start bit followed by sixteen Ucode bits,
+ * lowest Ucode first. The caller validates row counts and storage bounds.
+ * Only mask information is read/written; framing and padding stay with the
+ * record owner. Decoding replaces each mask without requiring zeroed rows. */
+static inline void pcm_control_frame_write_constellations(
+	uint8_t *frame, size_t first_row,
+	const struct pcm_constellation *rows, size_t count)
+{
+	for (size_t row = 0; row < count; ++row) {
+		size_t first = (first_row + row + 1u) * 136u + 1u;
+
+		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
+			packed_msb_write_lsb_field(frame,
+				first + byte * 8u + byte / 2u, 8u,
+				rows[row].ucode_mask[byte]);
+	}
+}
+
+static inline void pcm_control_frame_read_constellations(
+	const uint8_t *frame, size_t first_row,
+	struct pcm_constellation *rows, size_t count)
+{
+	for (size_t row = 0; row < count; ++row) {
+		size_t first = (first_row + row + 1u) * 136u + 1u;
+
+		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
+			rows[row].ucode_mask[byte] =
+				(uint8_t)packed_msb_read_lsb_field(frame,
+					first + byte * 8u + byte / 2u, 8u);
+	}
 }
 
 #endif /* PCM_CONTROL_FRAME_H */

@@ -30,7 +30,6 @@ enum {
 	CP_MAP_FIRST_BIT = 103,
 	CP_MAP_BITS = 4,
 	CP_CODEC_DIFFERENCE_BIT = 128,
-	CP_MASKS_FIRST_BIT = V90_CP_HEADER_BITS,
 	CP_CRC_BITS = 16,
 };
 
@@ -98,24 +97,6 @@ static size_t map_first_bit(size_t interval)
 {
 	return CP_MAP_FIRST_BIT + interval * CP_MAP_BITS +
 	       (interval >= 4u ? 1u : 0u);
-}
-
-static size_t mask_bit(size_t set_index, uint8_t ucode)
-{
-	return CP_MASKS_FIRST_BIT + set_index * V90_CP_CONSTELLATION_BITS +
-	       (size_t)(ucode / 16u) * 17u + 1u + ucode % 16u;
-}
-
-static void encode_constellation(
-	uint8_t *frame, size_t set_index,
-	const struct pcm_constellation *constellation)
-{
-	for (uint8_t ucode = 0;
-	     ucode < V90_CP_CONSTELLATION_UCODES; ++ucode) {
-		packed_msb_set_bit(
-			frame, mask_bit(set_index, ucode),
-			pcm_constellation_contains(constellation, ucode));
-	}
 }
 
 static void encode_header(
@@ -190,17 +171,13 @@ enum v90_cp_result v90_cp_encode(
 		return V90_CP_INVALID_ARGUMENT;
 	encode_header(encoded, parameters);
 	set_count = parameters->constellation_count;
-	for (size_t index = 0;
-	     index < parameters->constellation_count; ++index)
-		encode_constellation(
-			encoded, index,
-			&parameters->transmit_constellations[index]);
+	pcm_control_frame_write_constellations(
+		encoded, 0u, parameters->transmit_constellations,
+		parameters->constellation_count);
 	if (parameters->codec_constellations_differ) {
-		for (size_t index = 0;
-		     index < parameters->constellation_count; ++index)
-			encode_constellation(
-				encoded, set_count + index,
-				&parameters->codec_constellations[index]);
+		pcm_control_frame_write_constellations(
+			encoded, set_count, parameters->codec_constellations,
+			parameters->constellation_count);
 		set_count += parameters->constellation_count;
 	}
 	payload_end = V90_CP_HEADER_BITS +
@@ -240,18 +217,6 @@ static int8_t decode_signed_q1_6(
 
 	return raw <= INT8_MAX ? (int8_t)raw :
 	       (int8_t)(-1 - (int16_t)(UINT8_MAX - raw));
-}
-
-static void decode_constellation(
-	const uint8_t *frame, size_t set_index,
-	struct pcm_constellation *constellation)
-{
-	for (uint8_t ucode = 0;
-	     ucode < V90_CP_CONSTELLATION_UCODES; ++ucode) {
-		if (packed_msb_bit(frame, mask_bit(set_index, ucode)) != 0)
-			constellation->ucode_mask[ucode / 8u] |=
-				(uint8_t)(1u << (ucode % 8u));
-	}
 }
 
 static void decode_header(
@@ -341,14 +306,12 @@ enum v90_cp_result v90_cp_decode(
 
 	decode_header(frame, &decoded);
 	decoded.constellation_count = (uint8_t)constellation_count;
-	for (size_t index = 0; index < constellation_count; ++index)
-		decode_constellation(
-			frame, index, &decoded.transmit_constellations[index]);
+	pcm_control_frame_read_constellations(
+		frame, 0u, decoded.transmit_constellations, constellation_count);
 	if (decoded.codec_constellations_differ) {
-		for (size_t index = 0; index < constellation_count; ++index)
-			decode_constellation(
-				frame, constellation_count + index,
-				&decoded.codec_constellations[index]);
+		pcm_control_frame_read_constellations(
+			frame, constellation_count, decoded.codec_constellations,
+			constellation_count);
 	}
 	if (!v90_cp_parameters_are_valid(&decoded))
 		return V90_CP_INVALID_FRAME;
