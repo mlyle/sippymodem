@@ -127,7 +127,7 @@ static bool test_point_validation(void)
 	return true;
 }
 
-static bool test_flat_gain_round_trip(void)
+static bool test_flat_gain_prediction(void)
 {
 	static const struct qam_point gains[] = {
 		{ 1.0, 0.0 },
@@ -157,17 +157,11 @@ static bool test_flat_gain_round_trip(void)
 			struct qam_point expected = complex_product(
 				&gains[fixture], &transmitted[point]);
 			struct qam_point predicted;
-			struct qam_point equalized;
 
 			CHECK(qam_gain_predict(
 				      &tracker, &transmitted[point], &predicted) ==
 				      QAM_GAIN_OK &&
-			      points_are_close(&predicted, &expected) &&
-			      qam_gain_equalize(
-				      &tracker, &predicted, &equalized) ==
-				      QAM_GAIN_OK &&
-			      points_are_close(
-				      &equalized, &transmitted[point]),
+			      points_are_close(&predicted, &expected),
 			      "QAM gain fixture %zu changed point %zu", fixture,
 			      point);
 		}
@@ -306,10 +300,6 @@ static bool test_flat_gain_validation(void)
 	      qam_gain_predict(&tracker, &invalid, &output) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
 	      qam_gain_predict(&tracker, &gain, NULL) ==
-		      QAM_GAIN_INVALID_ARGUMENT &&
-	      qam_gain_equalize(&tracker, &invalid, &output) ==
-		      QAM_GAIN_INVALID_ARGUMENT &&
-	      qam_gain_equalize(&tracker, &gain, NULL) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
 	      qam_gain_track(NULL, &gain, &gain) ==
 		      QAM_GAIN_INVALID_ARGUMENT &&
@@ -1314,7 +1304,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "point validation", test_point_validation },
-		{ "flat gain round trip", test_flat_gain_round_trip },
+		{ "flat gain prediction", test_flat_gain_prediction },
 		{ "flat gain product boundaries", test_flat_gain_product_boundaries },
 		{ "flat gain adaptation", test_flat_gain_adaptation },
 		{ "flat gain validation", test_flat_gain_validation },

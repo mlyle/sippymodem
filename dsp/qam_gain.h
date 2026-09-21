@@ -29,16 +29,12 @@ enum qam_gain_result qam_gain_init_from_reference(
 bool qam_gain_is_valid(
 	const struct qam_gain *tracker);
 
-/* Predict the received point for a transmitted point, or remove the tracked
- * gain from a received point. Rejected calls leave output unchanged. */
+/* Predict the received point for a transmitted point.
+ * Rejected calls leave output unchanged. */
 enum qam_gain_result qam_gain_predict(
 	const struct qam_gain *tracker,
 	const struct qam_point *transmitted,
 	struct qam_point *received);
-enum qam_gain_result qam_gain_equalize(
-	const struct qam_gain *tracker,
-	const struct qam_point *received,
-	struct qam_point *equalized);
 
 /* Update from a nonzero received observation of a known nonzero transmitted
  * point. Rejected calls leave the estimate unchanged. */

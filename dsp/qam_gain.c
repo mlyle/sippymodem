@@ -87,20 +87,6 @@ enum qam_gain_result qam_gain_predict(
 	return QAM_GAIN_OK;
 }
 
-enum qam_gain_result qam_gain_equalize(
-	const struct qam_gain *tracker,
-	const struct qam_point *received,
-	struct qam_point *equalized)
-{
-	struct qam_point next;
-
-	if (!qam_gain_is_valid(tracker) || equalized == NULL ||
-	    !divide_points(received, &tracker->channel_gain, &next))
-		return QAM_GAIN_INVALID_ARGUMENT;
-	*equalized = next;
-	return QAM_GAIN_OK;
-}
-
 enum qam_gain_result qam_gain_track(
 	struct qam_gain *tracker,
 	const struct qam_point *received,
