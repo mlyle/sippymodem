@@ -51,6 +51,7 @@ struct pcm_echo_reference_scan_result {
 
 /*
  * Own the host-rate transmit history and one bounded delay-correlation scan.
+ * Zero-initialize before use or to reset to empty history with no scan.
  * Delay candidates identify the start of a later adaptive-filter window;
  * pre_samples selects the known reference point within that window.  Each
  * correlation bin covers scan_step consecutive sample delays so a bounded
@@ -74,8 +75,6 @@ struct pcm_echo_reference {
 	uint32_t scan_epoch;
 };
 
-enum pcm_echo_reference_result pcm_echo_reference_init(
-	struct pcm_echo_reference *reference);
 bool pcm_echo_reference_is_valid(
 	const struct pcm_echo_reference *reference);
 

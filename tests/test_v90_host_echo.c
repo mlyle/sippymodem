@@ -116,6 +116,7 @@ static bool test_contracts(void)
 
 	CHECK(v90_host_echo_init(NULL) == V90_HOST_ECHO_INVALID_ARGUMENT,
 	      "null owner initialized");
+	memset(&echo, 0xa5, sizeof(echo));
 	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
 	      v90_host_echo_is_valid(&echo) &&
 	      !v90_host_echo_is_ready(&echo) &&
@@ -123,6 +124,13 @@ static bool test_contracts(void)
 	      v90_host_echo_window_delay_samples(&echo) ==
 		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 	      "ordinary owner did not initialize");
+	memset(&saved, 0, sizeof(saved));
+	saved.window_delay_samples = V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
+	CHECK(pcm_echo_reference_start_scan(&saved.reference,
+		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
+		      V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "owner differs from zero state with configured scan");
 	CHECK(!v90_host_echo_is_ready(NULL) &&
 	      !v90_host_echo_has_weak_margin(NULL) &&
 	      v90_host_echo_window_delay_samples(NULL) == 0,
@@ -168,6 +176,10 @@ static bool test_contracts(void)
 		      &echo, V90_HOST_ECHO_BYPASS, 0, &cleaned) ==
 		      V90_HOST_ECHO_INVALID_STATE,
 	      "corrupt owner was accepted");
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
+	      v90_host_echo_is_valid(&echo) &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "reset retained history or scan state");
 	return true;
 }
 

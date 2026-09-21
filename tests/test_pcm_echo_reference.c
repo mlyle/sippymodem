@@ -56,7 +56,7 @@ static int16_t returned_sample(size_t index)
 
 static bool test_ring_and_contracts(void)
 {
-	struct pcm_echo_reference reference;
+	struct pcm_echo_reference reference = { 0 };
 	struct pcm_echo_reference saved;
 	struct pcm_echo_reference_scan_result scan = {
 		.best_window_delay_samples = 1234,
@@ -65,12 +65,8 @@ static bool test_ring_and_contracts(void)
 	int16_t window[3] = { 11, 22, 33 };
 	int16_t output = 1234;
 
-	CHECK(pcm_echo_reference_init(NULL) ==
-		      PCM_ECHO_REFERENCE_INVALID_ARGUMENT,
-	      "null owner initialized");
-	CHECK(pcm_echo_reference_init(&reference) == PCM_ECHO_REFERENCE_OK &&
-		      pcm_echo_reference_is_valid(&reference),
-	      "ordinary owner did not initialize");
+	CHECK(pcm_echo_reference_is_valid(&reference),
+	      "zero-initialized owner is not valid");
 	CHECK(pcm_echo_reference_push(NULL, 0) ==
 		      PCM_ECHO_REFERENCE_INVALID_STATE &&
 	      pcm_echo_reference_read_at_age(NULL, 1, &output) ==
@@ -183,7 +179,7 @@ static bool test_ring_and_contracts(void)
 
 static bool test_long_delay_scan(void)
 {
-	struct pcm_echo_reference reference;
+	struct pcm_echo_reference reference = { 0 };
 	struct pcm_echo_reference_scan_result result = { 0 };
 	struct pcm_echo_reference_scan_result unchanged = {
 		.best_window_delay_samples = 77,
@@ -193,8 +189,7 @@ static bool test_long_delay_scan(void)
 	size_t index = 0;
 	bool acquired = false;
 
-	CHECK(pcm_echo_reference_init(&reference) == PCM_ECHO_REFERENCE_OK &&
-	      pcm_echo_reference_start_scan(
+	CHECK(pcm_echo_reference_start_scan(
 		      &reference, SHORT_FILTER_DELAY,
 		      FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK,
 	      "long-delay scan did not initialize");
@@ -279,14 +274,13 @@ static bool test_long_delay_scan(void)
 
 static bool test_cluster_scan(uint32_t first_return, uint32_t pre_samples)
 {
-	struct pcm_echo_reference reference;
+	struct pcm_echo_reference reference = { 0 };
 	struct pcm_echo_reference_scan_result scan;
 	const uint32_t last_return = first_return + 254u;
 	const uint32_t current = last_return > pre_samples ? last_return - pre_samples : 1u;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 
-	CHECK(pcm_echo_reference_init(&reference) == PCM_ECHO_REFERENCE_OK &&
-	      pcm_echo_reference_start_scan(&reference, current, pre_samples) == PCM_ECHO_REFERENCE_OK,
+	CHECK(pcm_echo_reference_start_scan(&reference, current, pre_samples) == PCM_ECHO_REFERENCE_OK,
 	      "cluster scan did not initialize");
 	for (size_t index = 0; index < history; ++index)
 		CHECK(pcm_echo_reference_push(&reference, reference_sample(index)) == PCM_ECHO_REFERENCE_OK,

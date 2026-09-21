@@ -51,20 +51,6 @@ bool pcm_echo_reference_is_valid(
 	       scan_state_is_valid(reference);
 }
 
-enum pcm_echo_reference_result pcm_echo_reference_init(
-	struct pcm_echo_reference *reference)
-{
-	struct pcm_echo_reference initialized;
-
-	if (reference == NULL)
-		return PCM_ECHO_REFERENCE_INVALID_ARGUMENT;
-	memset(&initialized, 0, sizeof(initialized));
-	if (!pcm_echo_reference_is_valid(&initialized))
-		return PCM_ECHO_REFERENCE_INVALID_STATE;
-	*reference = initialized;
-	return PCM_ECHO_REFERENCE_OK;
-}
-
 enum pcm_echo_reference_result pcm_echo_reference_push(
 	struct pcm_echo_reference *reference, int16_t sample)
 {

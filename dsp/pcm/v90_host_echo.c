@@ -122,23 +122,17 @@ static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
 enum v90_host_echo_result v90_host_echo_init(
 	struct v90_host_echo *echo)
 {
-	struct v90_host_echo initialized;
-
 	if (echo == NULL)
 		return V90_HOST_ECHO_INVALID_ARGUMENT;
-	memset(&initialized, 0, sizeof(initialized));
-	if (pcm_echo_reference_init(&initialized.reference) !=
-		    PCM_ECHO_REFERENCE_OK)
-		return V90_HOST_ECHO_INVALID_STATE;
-	initialized.window_delay_samples =
+	memset(echo, 0, sizeof(*echo));
+	echo->window_delay_samples =
 		V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
 	if (pcm_echo_reference_start_scan(
-		    &initialized.reference, initialized.window_delay_samples,
+		    &echo->reference, echo->window_delay_samples,
 		    V90_HOST_ECHO_FILTER_PRE_SAMPLES) !=
 		    PCM_ECHO_REFERENCE_OK ||
-	    !v90_host_echo_is_valid(&initialized))
+	    !v90_host_echo_is_valid(echo))
 		return V90_HOST_ECHO_INVALID_STATE;
-	*echo = initialized;
 	return V90_HOST_ECHO_OK;
 }
 
