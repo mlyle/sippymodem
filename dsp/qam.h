@@ -242,17 +242,6 @@ bool qam_demodulator_has_timing_lock(
 	const struct qam_demodulator *demodulator);
 enum qam_result qam_demodulator_reset(
 	struct qam_demodulator *demodulator);
-/* Adopt a mode-specific symbol phase and cancel any pending interpolated
- * crossing. Preserve the continuous recovered clock rate, timing evidence,
- * and matched-filter sample history owned by this stream. */
-enum qam_result qam_demodulator_rebase_timing(
-	struct qam_demodulator *demodulator, uint64_t phase_units);
-/* Move one timing-search candidate without resetting the carrier, matched
- * filter, or accumulated tracking evidence. A mode-specific finite marker
- * can use this after proving that the energy maximum lies between its symbol
- * decisions. */
-enum qam_result qam_demodulator_rebase_adjacent_timing(
-	struct qam_demodulator *demodulator, bool forward);
 /* Ready points are unnormalized matched-filter coordinates interpolated at
  * the exact rational symbol-clock crossing. */
 enum qam_result qam_demodulator_sample(

@@ -843,48 +843,6 @@ static void reset_recovery_phase(struct qam_demodulator *demodulator)
 	demodulator->recovery_phase_direction = 0;
 }
 
-enum qam_result qam_demodulator_rebase_timing(
-	struct qam_demodulator *demodulator, uint64_t phase_units)
-{
-	struct qam_demodulator next;
-
-	if (!qam_demodulator_is_valid(demodulator) ||
-	    !demodulator->timing_locked ||
-	    phase_units >= demodulator->symbol_period_units)
-		return QAM_INVALID_ARGUMENT;
-	next = *demodulator;
-	next.locked_phase_units = phase_units;
-	next.recovery_pending = false;
-	next.recovery_fraction = 0.0;
-	reset_recovery_phase(&next);
-	reset_timing_reference_filter(&next);
-	if (!qam_demodulator_is_valid(&next))
-		return QAM_INVALID_ARGUMENT;
-	*demodulator = next;
-	return QAM_OK;
-}
-
-enum qam_result qam_demodulator_rebase_adjacent_timing(
-	struct qam_demodulator *demodulator, bool forward)
-{
-	uint64_t phase;
-
-	if (!qam_demodulator_has_timing_lock(demodulator))
-		return QAM_INVALID_ARGUMENT;
-	phase = demodulator->locked_phase_units;
-	if (forward) {
-		phase += demodulator->timing_step_units;
-		if (phase >= demodulator->symbol_period_units)
-			phase -= demodulator->symbol_period_units;
-	} else if (phase >= demodulator->timing_step_units) {
-		phase -= demodulator->timing_step_units;
-	} else {
-		phase += demodulator->symbol_period_units -
-			 demodulator->timing_step_units;
-	}
-	return qam_demodulator_rebase_timing(demodulator, phase);
-}
-
 static bool track_recovery_step(
 	struct qam_demodulator *demodulator,
 	uint64_t reference_phase, uint64_t target_phase)

@@ -868,107 +868,6 @@ static bool test_filtered_clock_tracking(void)
 	return true;
 }
 
-static bool test_timing_rebase(void)
-{
-	struct qam_channel channel = {
-		.sample_rate = TEST_SAMPLE_RATE,
-		.symbol_rate_numerator = 3000,
-		.symbol_rate_denominator = 1,
-		.carrier_frequency_numerator = 1800,
-		.carrier_frequency_denominator = 1,
-		.rolloff = 0.2,
-		.pulse_span_symbols = 6,
-	};
-	struct qam_modulator modulator;
-	struct qam_demodulator demodulator;
-	struct qam_demodulator saved;
-	struct qam_demodulator expected;
-	struct qam_point point = { 0.6, 0.0 };
-	uint64_t phase;
-	size_t target = 3;
-
-	CHECK(qam_modulator_init(
-		      &modulator, &channel, TEST_AMPLITUDE) == QAM_OK &&
-	      qam_demodulator_init_with_timing_windows(
-		      &demodulator, &channel, 64, 256) == QAM_OK,
-	      "timing-rebase fixture did not initialize");
-	for (size_t sample_index = 0;
-	     sample_index < demodulator.timing_sample_target + TEST_SAMPLE_RATE;
-	     ++sample_index) {
-		struct qam_point received;
-		int16_t sample;
-		bool accepted;
-		bool ready;
-
-		CHECK(qam_modulator_sample(
-			      &modulator, &point, &sample, &accepted) == QAM_OK &&
-		      qam_demodulator_sample(
-			      &demodulator, sample, &received, &ready) == QAM_OK,
-		      "timing-rebase fixture failed");
-		if (accepted)
-			point = quadrant_point(
-				(uint8_t)(sample_index & 3u), 0.6);
-		if (demodulator.timing_locked)
-			break;
-	}
-	CHECK(demodulator.timing_locked &&
-	      demodulator.matched_history_count == QAM_INTERPOLATION_HISTORY &&
-	      demodulator.timing_candidate_count > target,
-	      "timing-rebase fixture did not acquire timing");
-	for (size_t index = 0; index < demodulator.timing_candidate_count;
-	     ++index) {
-		demodulator.timing[index].symbol_count = 1;
-		demodulator.timing[index].symbol_power_sum = (double)index + 1.0;
-	}
-	demodulator.timing_sample_count = 1;
-	demodulator.timing_forward_error_units = 17;
-	demodulator.timing_backward_error_units = 0;
-	demodulator.timing_error_windows = 1;
-	demodulator.timing_forward_windows = 1;
-	demodulator.recovery_pending = true;
-	demodulator.recovery_fraction = 0.25;
-	demodulator.recovery_step_units--;
-	demodulator.recovery_phase_units = 1;
-	demodulator.recovery_phase_samples = 3;
-	demodulator.recovery_phase_direction = 1;
-	phase = (demodulator.timing[target].phase_units +
-		 demodulator.timing_step_units / 4u) %
-		demodulator.symbol_period_units;
-	expected = demodulator;
-	expected.locked_phase_units = phase;
-	expected.recovery_pending = false;
-	expected.recovery_fraction = 0.0;
-	expected.recovery_phase_units = 0;
-	expected.recovery_phase_samples = 0;
-	expected.recovery_phase_direction = 0;
-	CHECK(qam_demodulator_is_valid(&demodulator) &&
-	      qam_demodulator_rebase_timing(&demodulator, phase) == QAM_OK &&
-	      qam_demodulator_is_valid(&demodulator) &&
-	      memcmp(&demodulator, &expected, sizeof(demodulator)) == 0,
-	      "timing rebase did not preserve continuous tracking state");
-	phase = demodulator.locked_phase_units;
-	CHECK(qam_demodulator_rebase_adjacent_timing(
-		      &demodulator, true) == QAM_OK &&
-	      demodulator.locked_phase_units ==
-		      (phase + demodulator.timing_step_units) %
-			      demodulator.symbol_period_units &&
-	      qam_demodulator_rebase_adjacent_timing(
-		      &demodulator, false) == QAM_OK &&
-	      demodulator.locked_phase_units == phase,
-	      "adjacent timing rebase did not make a reversible step");
-	saved = demodulator;
-	CHECK(qam_demodulator_rebase_timing(
-		      &demodulator, demodulator.symbol_period_units) ==
-			      QAM_INVALID_ARGUMENT &&
-	      memcmp(&demodulator, &saved, sizeof(demodulator)) == 0 &&
-	      qam_demodulator_rebase_timing(NULL, phase) ==
-		      QAM_INVALID_ARGUMENT &&
-	      qam_demodulator_rebase_adjacent_timing(NULL, true) ==
-		      QAM_INVALID_ARGUMENT,
-	      "invalid timing rebase mutated state");
-	return true;
-}
-
 static bool test_silence_does_not_lock(void)
 {
 	struct qam_channel channel = v22_channel(1200);
@@ -1429,7 +1328,6 @@ int main(void)
 		{ "receive tolerance", test_receive_tolerance },
 		{ "receive clock tracking", test_receive_clock_tracking },
 		{ "filtered clock tracking", test_filtered_clock_tracking },
-		{ "timing rebase", test_timing_rebase },
 		{ "silence does not lock", test_silence_does_not_lock },
 		{ "timing windows", test_timing_windows },
 		{ "configurable point power", test_configurable_point_power },
