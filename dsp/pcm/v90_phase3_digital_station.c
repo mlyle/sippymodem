@@ -69,6 +69,7 @@ bool v90_phase3_digital_station_is_valid(
 			       V90_PHASE3_DIGITAL_RECEIVE_INITIAL &&
 		       station->post_ja_silence_symbols_remaining == 0u;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_INITIAL ||
+	    station->transmit.protocol != PCM_PROTOCOL_V90 ||
 	    !pcm_phase3_digital_tx_is_valid(&station->transmit))
 		return false;
 	if (station->receive_stage == V90_PHASE3_DIGITAL_RECEIVE_DIL_RETURN)

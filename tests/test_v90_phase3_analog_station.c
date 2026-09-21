@@ -89,6 +89,40 @@ static bool continue_phase4_line(
 	return true;
 }
 
+static bool check_digital_protocol_owner(
+	const struct v90_phase3_digital_station *station)
+{
+	struct v90_phase3_digital_station wrong = *station, saved;
+	const struct v92_jd jd = {
+		.data_rate_capability_mask = V92_JD_RATE_CAPABILITY_MASK,
+		.maximum_spectral_shaping_lookahead = 2,
+	};
+	const struct v92_jp jp = {
+		.training_constellation = V92_CONSTELLATION_4_POINT,
+		.rate_renegotiation_constellation = V92_CONSTELLATION_4_POINT,
+	};
+	uint8_t octet = 0xa5;
+
+	/* A valid shared transmitter still has to belong to this protocol. */
+	CHECK(pcm_phase3_digital_tx_init_v92(&wrong.transmit, station->law,
+		      station->training_ucode, V90_PHASE3_TRN1D_MIN_SYMBOLS,
+		      &jd, &jp, &station->transmit.dil.parameters) ==
+		      PCM_PHASE3_DIGITAL_TX_OK &&
+	      pcm_phase3_digital_tx_is_valid(&wrong.transmit),
+	      "wrong-protocol transmitter fixture is invalid");
+	memcpy(&saved, &wrong, sizeof(saved));
+	CHECK(!v90_phase3_digital_station_is_valid(&wrong) &&
+	      !v90_phase3_digital_station_transmit_complete(&wrong) &&
+	      !v90_phase3_digital_station_receive_complete(&wrong) &&
+	      v90_phase3_digital_station_transmit(&wrong, &octet) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      v90_phase3_digital_station_receive(&wrong, 1234) ==
+		      V90_PHASE3_DIGITAL_STATION_INVALID_ARGUMENT &&
+	      octet == 0xa5 && memcmp(&wrong, &saved, sizeof(wrong)) == 0,
+	      "V.90 station accepted a V.92 transmitter");
+	return true;
+}
+
 static bool run_exchange(
 	enum g711_law law, enum v90_dil_profile dil_profile)
 {
@@ -186,6 +220,11 @@ static bool run_exchange(
 				      V90_PHASE3_DIGITAL_STATION_OK,
 			      "law %u digital receive failed at %u",
 			      (unsigned int)law, index);
+		if (digital.transmit_started &&
+		    digital.post_ja_silence_symbols_remaining ==
+			    V90_PHASE3_DIGITAL_POST_JA_SILENCE_SYMBOLS)
+			CHECK(check_digital_protocol_owner(&digital),
+			      "wrong-protocol owner rejection failed");
 		if (digital.transmit_started &&
 		    digital.transmit.stage == PCM_PHASE3_DIGITAL_TX_PREFIX)
 			CHECK(digital.receive_stage == V90_PHASE3_DIGITAL_RECEIVE_RETURN &&
