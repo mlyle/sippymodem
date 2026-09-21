@@ -24,7 +24,7 @@ enum {
 		MODEM_RATE * 15 / 1000 - FSK300_DETECTOR_WINDOW + 1,
 	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
-	/* Qualify three 20 ms mark blocks before accepting a fresh carrier. */
+	/* Qualify 60 ms of carrier, including data, after an online interruption. */
 	FSK300_CARRIER_RETURN_SAMPLES = MODEM_RATE * 60 / 1000,
 	FSK300_MIN_LINE_POWER = 10000000,
 	FSK300_MIN_DOMINANCE_Q8 = 180,
@@ -407,7 +407,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (datapump->missing_carrier_samples != 0) {
-		if (mark_is_present(&measurement)) {
+		if (line_signal_is_present(&measurement)) {
 			add_bounded(
 				&datapump->carrier_return_samples,
 				(uint32_t)(unsigned int)count,

@@ -1846,6 +1846,53 @@ static bool exercise_low_speed_carrier_recovery(
 	return true;
 }
 
+static bool exercise_fsk_data_carrier_recovery(
+	struct integration_endpoint *caller,
+	struct integration_endpoint *answerer, enum DP_ID id,
+	enum media_codec codec, const struct media_recorder *recorder)
+{
+	struct integration_endpoint *endpoints[] = { caller, answerer };
+	uint8_t payload[2][72];
+
+	for (size_t side = 0; side < ARRAY_LENGTH(endpoints); ++side) {
+		endpoints[side]->output_count = 0;
+		for (size_t byte = 0; byte < sizeof(payload[side]); ++byte)
+			payload[side][byte] = byte % 3 == 0 ? 0xff :
+				(uint8_t)(byte + 53 * side);
+		CHECK(modem_write(endpoints[side]->modem,
+				  (const char *)payload[side], sizeof(payload[side])) ==
+		      (int)sizeof(payload[side]), "FSK data recovery payload was not queued");
+	}
+	for (unsigned int frame = 0; frame < 200; ++frame) {
+		/* Lose 10 ms during continuous characters, without an idle MARK
+		 * interval afterward. Both receivers must recover on data. */
+		if (frame == 9) {
+			caller->erased_samples = MODEM_RATE / 100;
+			answerer->erased_samples = MODEM_RATE / 100;
+		}
+		CHECK(process_sip_frame(caller, answerer, codec, recorder),
+		      "FSK data recovery failed at the media boundary");
+		for (size_t side = 0; side < ARRAY_LENGTH(endpoints); ++side)
+			CHECK(endpoint_drain(endpoints[side]) &&
+			      modem_is_online(endpoints[side]->modem, id),
+			      "FSK id=%d side=%zu lost data-bearing carrier at frame %u",
+			      id, side, frame);
+	}
+	for (size_t side = 0; side < ARRAY_LENGTH(endpoints); ++side) {
+		struct integration_endpoint *endpoint = endpoints[side];
+
+		/* Raw bytes overlapping the loss may be damaged or missing, but
+		 * the undisturbed suffix must arrive before the sender goes idle. */
+		CHECK(endpoint->output_count >= 32 &&
+		      endpoint->output_count <= sizeof(payload[0]) &&
+		      memcmp(endpoint->output + endpoint->output_count - 32,
+			     payload[1 - side] + sizeof(payload[0]) - 32, 32) == 0,
+		      "FSK id=%d side=%zu did not recover the data suffix (%zu bytes)",
+		      id, side, endpoint->output_count);
+	}
+	return true;
+}
+
 static bool exercise_cleardown(
 	struct integration_endpoint *caller,
 	struct integration_endpoint *answerer,
@@ -2344,6 +2391,11 @@ static bool run_media_call(
 			      "%s did not preserve the link and pass data after "
 			      "carrier reacquisition",
 			      test_case->name);
+	if ((test_case->id == DP_V21 || test_case->id == DP_B103) &&
+	    test_case->raw_transport)
+		CHECK(exercise_fsk_data_carrier_recovery(
+			      &caller, &answerer, test_case->id, codec, &recorder),
+		      "%s did not recover carrier during continuous data", test_case->name);
 	CHECK(!capture.invalid &&
 		      capture.blocks[RECORD_TX_LINE_PCM] != 0 &&
 		      capture.blocks[
