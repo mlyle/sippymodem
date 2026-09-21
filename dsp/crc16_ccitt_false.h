@@ -16,8 +16,15 @@ enum crc16_ccitt_false_result {
 	CRC16_CCITT_FALSE_INVALID_ARGUMENT,
 };
 
-uint16_t crc16_ccitt_false_step(
-	uint16_t remainder, bool bit);
+static inline uint16_t crc16_ccitt_false_step(
+	uint16_t remainder, bool bit)
+{
+	uint16_t next = (uint16_t)(remainder << 1);
+
+	if ((((remainder >> 15) ^ (uint16_t)bit) & 1u) != 0)
+		next ^= 0x1021;
+	return next;
+}
 
 /* Bits are consumed in transmission order, most-significant bit first within
  * each octet. A zero-length input does not require a backing octet. */

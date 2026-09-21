@@ -4,20 +4,6 @@
 
 #include "packed_bits.h"
 
-enum {
-	CRC16_CCITT_FALSE_POLYNOMIAL = 0x1021,
-};
-
-uint16_t crc16_ccitt_false_step(
-	uint16_t remainder, bool bit)
-{
-	uint16_t next = (uint16_t)(remainder << 1);
-
-	if ((((remainder >> 15) ^ (uint16_t)bit) & 1u) != 0)
-		next ^= CRC16_CCITT_FALSE_POLYNOMIAL;
-	return next;
-}
-
 enum crc16_ccitt_false_result
 crc16_ccitt_false_packed_bits(
 	const uint8_t *packed, size_t bit_count, uint16_t *remainder)

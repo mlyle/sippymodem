@@ -33,6 +33,23 @@ static bool test_known_checks(void)
 	return true;
 }
 
+static bool test_all_bit_states(void)
+{
+	for (uint32_t remainder = 0; remainder <= UINT16_MAX; ++remainder)
+		for (unsigned bit = 0; bit < 2u; ++bit) {
+			/* Divide a wide register by x^16 + x^12 + x^5 + 1. */
+			uint32_t expected = (remainder ^ (bit << 15)) << 1;
+
+			if ((expected & UINT32_C(0x10000)) != 0)
+				expected ^= UINT32_C(0x11021);
+			CHECK(crc16_ccitt_false_step((uint16_t)remainder, bit != 0) ==
+				      (uint16_t)expected,
+			      "CRC bit step differs at remainder %u bit %u",
+			      (unsigned)remainder, bit);
+		}
+	return true;
+}
+
 static bool test_bit_traversal(void)
 {
 	static const uint8_t check_text[] = "123456789";
@@ -115,6 +132,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "known checks", test_known_checks },
+		{ "all bit states", test_all_bit_states },
 		{ "bit traversal", test_bit_traversal },
 		{ "exact bit bound", test_exact_bit_bound },
 		{ "validation", test_validation },
