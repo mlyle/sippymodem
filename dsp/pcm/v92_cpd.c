@@ -2,14 +2,13 @@
 
 #include "v92_cpd.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <limits.h>
 #include <string.h>
 
 enum {
-	CPD_INFORMATION_FIRST_BIT = 18,
 	CPD_MODULUS_PRESENT_BIT = 19,
 	CPD_FILTERS_PRESENT_BIT = 20,
 	CPD_CONSTELLATIONS_PRESENT_BIT = 21,
@@ -604,20 +603,6 @@ static bool wire_payload(
 	return wire->valid;
 }
 
-static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = CPD_INFORMATION_FIRST_BIT;
-	     bit < payload_end; ++bit) {
-		if (bit % V92_CPD_WORD_BITS == 0u)
-			continue;
-		remainder = crc16_ccitt_false_step(
-			remainder, packed_msb_bit(frame, bit) != 0u);
-	}
-	return remainder;
-}
-
 enum v92_cpd_result v92_cpd_encode_base(
 	const struct v92_cpd_base_parameters *parameters,
 	unsigned int mapping_frame_bits,
@@ -656,7 +641,7 @@ enum v92_cpd_result v92_cpd_encode_base(
 		return V92_CPD_INVALID_PARAMETERS;
 	packed_msb_write_msb_field(
 		encoded, V92_CPD_FIXED_BITS + 1u, CPD_CRC_BITS,
-		frame_crc(encoded, V92_CPD_FIXED_BITS));
+		pcm_control_frame_crc(encoded, V92_CPD_FIXED_BITS));
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_CPD_OK;
@@ -698,7 +683,7 @@ enum v92_cpd_result v92_cpd_encode(
 		return V92_CPD_INVALID_PARAMETERS;
 	packed_msb_write_msb_field(
 		encoded, payload_end + 1u, CPD_CRC_BITS,
-		frame_crc(encoded, payload_end));
+		pcm_control_frame_crc(encoded, payload_end));
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_CPD_OK;
@@ -747,7 +732,7 @@ enum v92_cpd_result v92_cpd_decode(
 		return V92_CPD_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, wire.cursor + 1u, CPD_CRC_BITS);
-	if (received_crc != frame_crc(frame, wire.cursor))
+	if (received_crc != pcm_control_frame_crc(frame, wire.cursor))
 		return V92_CPD_CRC_MISMATCH;
 	*parameters = decoded;
 	return V92_CPD_OK;

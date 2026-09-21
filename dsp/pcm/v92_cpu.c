@@ -2,13 +2,12 @@
 
 #include "v92_cpu.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
 
 enum {
-	CPU_INFORMATION_FIRST_BIT = 18,
 	CPU_TYPE_FIRST_BIT = 19,
 	CPU_TYPE_BITS = 2,
 	CPU_RATE_FIRST_BIT = 21,
@@ -170,21 +169,6 @@ static void encode_constellation_set(
 	}
 }
 
-static uint16_t frame_crc(
-	const uint8_t *frame, size_t payload_end)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = CPU_INFORMATION_FIRST_BIT;
-	     bit < payload_end; ++bit) {
-		if (bit % 17u == 0u)
-			continue;
-		remainder = crc16_ccitt_false_step(
-			remainder, packed_msb_bit(frame, bit) != 0u);
-	}
-	return remainder;
-}
-
 enum v92_cpu_result v92_cpu_encode(
 	const struct v92_cpu_parameters *parameters,
 	unsigned int mapping_frame_bits,
@@ -221,7 +205,7 @@ enum v92_cpu_result v92_cpu_encode(
 	payload_end = CPU_MASKS_FIRST_BIT + sets *
 		parameters->constellation_count *
 		V92_CPU_CONSTELLATION_BITS;
-	crc = frame_crc(encoded, payload_end);
+	crc = pcm_control_frame_crc(encoded, payload_end);
 	packed_msb_write_msb_field(
 		encoded, payload_end + 1u, CPU_CRC_BITS, crc);
 	memcpy(frame, encoded, frame_bytes);
@@ -270,7 +254,7 @@ enum v92_cpu_result v92_cpus_encode(
 		encoded, CPU_ACKNOWLEDGMENT_BIT, parameters->acknowledges_cpd);
 	packed_msb_write_msb_field(
 		encoded, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS,
-		frame_crc(encoded, CPUS_INFORMATION_BITS));
+		pcm_control_frame_crc(encoded, CPUS_INFORMATION_BITS));
 	memcpy(frame, encoded, bytes);
 	*frame_bit_count = bits;
 	return V92_CPU_OK;
@@ -300,7 +284,7 @@ enum v92_cpu_result v92_cpus_decode(
 		return V92_CPU_INVALID_FRAME;
 	if (packed_msb_read_msb_field(
 		    frame, CPUS_INFORMATION_BITS + 1u, CPU_CRC_BITS) !=
-	    frame_crc(frame, CPUS_INFORMATION_BITS))
+	    pcm_control_frame_crc(frame, CPUS_INFORMATION_BITS))
 		return V92_CPU_CRC_MISMATCH;
 	decoded = (struct v92_cpus_parameters){
 		.data_rate_number = (uint8_t)packed_msb_read_lsb_field(
@@ -513,7 +497,7 @@ enum v92_cpu_result v92_cpu_decode(
 		return V92_CPU_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, payload_end + 1u, CPU_CRC_BITS);
-	if (received_crc != frame_crc(frame, payload_end))
+	if (received_crc != pcm_control_frame_crc(frame, payload_end))
 		return V92_CPU_CRC_MISMATCH;
 
 	decode_constellation_set(

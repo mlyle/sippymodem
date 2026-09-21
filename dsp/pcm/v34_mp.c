@@ -2,7 +2,7 @@
 
 #include "v34_mp.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -152,26 +152,6 @@ enum v34_mp_rate_result v34_mp_select_rates(
 	return V34_MP_RATE_OK;
 }
 
-static bool is_start_bit(size_t bit_index)
-{
-	return bit_index >= V34_MP_START0_BIT &&
-	       bit_index < V34_MP_TYPE1_CRC_FIRST_BIT &&
-	       (bit_index - V34_MP_START0_BIT) % V34_MP_FIELD_STRIDE_BITS == 0;
-}
-
-static uint16_t frame_crc(const uint8_t *frame, size_t crc_first_bit)
-{
-	uint16_t remainder =
-		CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t index = V34_MP_TYPE_BIT; index < crc_first_bit; ++index) {
-		if (!is_start_bit(index))
-			remainder = crc16_ccitt_false_step(
-				remainder, packed_msb_bit(frame, index) != 0);
-	}
-	return remainder;
-}
-
 static void encode_common_parameters(
 	uint8_t *frame, const struct v34_mp_parameters *parameters,
 	bool type1)
@@ -259,7 +239,7 @@ enum v34_mp_result v34_mp_type0_encode(
 
 	encode_common_parameters(encoded, parameters, false);
 
-	crc = frame_crc(encoded, V34_MP_TYPE0_CRC_FIRST_BIT);
+	crc = pcm_control_frame_crc(encoded, V34_MP_TYPE0_CRC_FIRST_BIT);
 	/* The CCITT-FALSE numeric representation holds the first V.34 CRC
 	 * output in its most-significant bit. */
 	packed_msb_write_msb_field(
@@ -309,7 +289,8 @@ enum v34_mp_result v34_mp_type0_decode(
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE0_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS);
-	if (received_crc != frame_crc(frame, V34_MP_TYPE0_CRC_FIRST_BIT))
+	if (received_crc != pcm_control_frame_crc(
+			    frame, V34_MP_TYPE0_CRC_FIRST_BIT))
 		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded);
@@ -359,7 +340,7 @@ enum v34_mp_result v34_mp_type1_encode(
 			V34_MP_COEFFICIENT_COMPONENT_BITS,
 			(uint16_t)parameters->precoder_coefficients[index].imaginary);
 	}
-	crc = frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
+	crc = pcm_control_frame_crc(encoded, V34_MP_TYPE1_CRC_FIRST_BIT);
 	packed_msb_write_msb_field(
 		encoded, V34_MP_TYPE1_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS, crc);
@@ -384,7 +365,8 @@ enum v34_mp_result v34_mp_type1_decode(
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, V34_MP_TYPE1_CRC_FIRST_BIT,
 		V34_MP_CRC_BITS);
-	if (received_crc != frame_crc(frame, V34_MP_TYPE1_CRC_FIRST_BIT))
+	if (received_crc != pcm_control_frame_crc(
+			    frame, V34_MP_TYPE1_CRC_FIRST_BIT))
 		return V34_MP_CRC_MISMATCH;
 
 	decode_common_parameters(frame, &decoded.common);

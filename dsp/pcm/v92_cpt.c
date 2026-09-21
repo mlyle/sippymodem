@@ -2,14 +2,13 @@
 
 #include "v92_cpt.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <limits.h>
 #include <string.h>
 
 enum {
-	CPT_INFORMATION_FIRST_BIT = 18,
 	CPT_RATE_FIRST_BIT = 21,
 	CPT_RATE_BITS = 5,
 	CPT_SIGN_REDUNDANCY_FIRST_BIT = 31,
@@ -88,19 +87,6 @@ static size_t mask_bit(size_t set_index, uint8_t ucode)
 	return CPT_MASKS_FIRST_BIT +
 	       set_index * V92_CPT_CONSTELLATION_BITS +
 	       (size_t)(ucode / 16u) * 17u + 1u + ucode % 16u;
-}
-
-static uint16_t frame_crc(const uint8_t *frame, size_t payload_end)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t index = CPT_INFORMATION_FIRST_BIT;
-	     index < payload_end; ++index) {
-		if (index % 17u != 0)
-			remainder = crc16_ccitt_false_step(
-				remainder, packed_msb_bit(frame, index) != 0);
-	}
-	return remainder;
 }
 
 static void encode_constellation(
@@ -196,7 +182,7 @@ enum v92_cpt_result v92_cpt_encode(
 	}
 	payload_end = V92_CPT_HEADER_BITS +
 		      set_count * V92_CPT_CONSTELLATION_BITS;
-	crc = frame_crc(encoded, payload_end);
+	crc = pcm_control_frame_crc(encoded, payload_end);
 	packed_msb_write_msb_field(
 		encoded, payload_end + 1u, CPT_CRC_BITS, crc);
 	memcpy(frame, encoded, byte_count);
@@ -318,7 +304,7 @@ enum v92_cpt_result v92_cpt_decode(
 		return V92_CPT_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, payload_end + 1u, CPT_CRC_BITS);
-	if (received_crc != frame_crc(frame, payload_end))
+	if (received_crc != pcm_control_frame_crc(frame, payload_end))
 		return V92_CPT_CRC_MISMATCH;
 
 	decode_header(frame, &decoded);

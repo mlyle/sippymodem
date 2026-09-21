@@ -2,7 +2,7 @@
 
 #include "v90_mp.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -231,26 +231,6 @@ enum v90_mp_result v90_mp_sequence_size(
 	return V90_MP_OK;
 }
 
-static bool is_start_bit(size_t bit_index)
-{
-	return bit_index >= V90_MP_START0_BIT &&
-	       (bit_index - V90_MP_START0_BIT) %
-		       V90_MP_FIELD_STRIDE_BITS == 0;
-}
-
-static uint16_t sequence_crc(
-	const uint8_t *sequence, size_t crc_start_bit)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = V90_MP_TYPE_BIT; bit < crc_start_bit; ++bit) {
-		if (!is_start_bit(bit))
-			remainder = crc16_ccitt_false_step(
-				remainder, packed_msb_bit(sequence, bit) != 0);
-	}
-	return remainder;
-}
-
 static const struct v90_mp_parameters *record_common(
 	const struct v90_mp_record *record)
 {
@@ -340,7 +320,7 @@ enum v90_mp_result v90_mp_encode(
 	} else {
 		crc_start_bit = V90_MP_TYPE0_CRC_START_BIT;
 	}
-	crc = sequence_crc(encoded, crc_start_bit);
+	crc = pcm_control_frame_crc(encoded, crc_start_bit);
 	packed_msb_write_msb_field(
 		encoded, crc_start_bit + 1u, V90_MP_CRC_BITS, crc);
 	memcpy(sequence, encoded, byte_count);
@@ -425,7 +405,7 @@ enum v90_mp_result v90_mp_decode(
 		return V90_MP_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		sequence, crc_start_bit + 1u, V90_MP_CRC_BITS);
-	if (received_crc != sequence_crc(sequence, crc_start_bit))
+	if (received_crc != pcm_control_frame_crc(sequence, crc_start_bit))
 		return V90_MP_CRC_MISMATCH;
 
 	if (decoded.type == V90_MP_RECORD_TYPE0) {
