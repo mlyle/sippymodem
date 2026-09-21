@@ -83,6 +83,29 @@ struct phase2_info1_exchange {
 	bool short_exchange;
 };
 
+/* Record ownership in a valid exchange, without revalidating DSP state.
+ * Signal B supplies the first record (INFO1c/d), Signal A the second (INFO1a).
+ * A pending peer frame is not yet owned; short exchanges have no first record. */
+static inline bool phase2_info1_has_second_record(
+	const struct phase2_info1_exchange *exchange)
+{
+	return exchange != NULL &&
+	       (exchange->phase == PHASE2_INFO1_SILENCE ||
+		exchange->phase == PHASE2_INFO1_COMPLETE ||
+		(exchange->signal_role == PHASE2_SIGNAL_A &&
+		 (exchange->phase == PHASE2_INFO1_TRANSMITTING ||
+		  exchange->phase == PHASE2_INFO1_CARRIER_TAIL)));
+}
+
+static inline bool phase2_info1_has_first_record(
+	const struct phase2_info1_exchange *exchange)
+{
+	return exchange != NULL && !exchange->short_exchange &&
+	       (exchange->signal_role == PHASE2_SIGNAL_B ||
+		exchange->phase == PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED ||
+		phase2_info1_has_second_record(exchange));
+}
+
 /* One-way INFO1a after short ranging. Signal A starts phase-continuously
  * from the retained tone; Signal B emits silence and receives the record.
  * Its budget is the remaining interval from the original B reversal, not

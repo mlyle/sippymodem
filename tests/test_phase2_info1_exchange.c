@@ -101,6 +101,7 @@ static bool check_one_way_exchange(
 			complete = i;
 		if (de.kind == PHASE2_INFO1_EVENT_PEER_FRAME_PENDING) {
 			CHECK(!received && de.frame_event.payload_bit_count == 40 &&
+			      !phase2_info1_has_second_record(&digital) &&
 			      memcmp(de.frame_event.payload, payload, sizeof(payload)) == 0,
 			      "short INFO1a payload mismatch");
 			CHECK(check_last_sample(&before, input) &&
@@ -108,6 +109,11 @@ static bool check_one_way_exchange(
 			      "short INFO1a could not hand off");
 			received = true;
 		}
+		CHECK(!phase2_info1_has_first_record(&analog) &&
+		      !phase2_info1_has_first_record(&digital) &&
+		      phase2_info1_has_second_record(&analog) &&
+		      phase2_info1_has_second_record(&digital) == received,
+		      "short exchange lost record ownership at sample %zu", i);
 		line[i % delay] = quantize(law, ao);
 		if (analog.phase == PHASE2_INFO1_COMPLETE &&
 		    digital.phase == PHASE2_INFO1_COMPLETE)
@@ -221,6 +227,51 @@ static bool test_corrupt_frame_budget(void)
 	return true;
 }
 
+static bool test_record_ownership(void)
+{
+	static const struct {
+		enum phase2_info1_phase phase;
+		bool first_a;
+		bool second_a;
+		bool second_b;
+	} states[] = {
+		{ PHASE2_INFO1_TRANSMITTING, true, true, false },
+		{ PHASE2_INFO1_CARRIER_TAIL, true, true, false },
+		{ PHASE2_INFO1_WAITING_FOR_PEER, false, false, false },
+		{ PHASE2_INFO1_PEER_FRAME_PENDING, false, false, false },
+		{ PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED, true, false, false },
+		{ PHASE2_INFO1_RECOVERING, false, false, false },
+		{ PHASE2_INFO1_SILENCE, true, true, true },
+		{ PHASE2_INFO1_COMPLETE, true, true, true },
+		{ PHASE2_INFO1_FAILED, false, false, false },
+	};
+
+	CHECK(!phase2_info1_has_first_record(NULL) &&
+	      !phase2_info1_has_second_record(NULL), "absent exchange owns records");
+	for (size_t i = 0; i < ARRAY_LENGTH(states); ++i) {
+		for (unsigned short_exchange = 0; short_exchange < 2; ++short_exchange) {
+			struct phase2_info1_exchange exchange = {
+				.phase = states[i].phase,
+				.signal_role = PHASE2_SIGNAL_A,
+				.short_exchange = short_exchange != 0,
+			};
+
+			/* These are phase queries, not validation of nested DSP state. */
+			CHECK(phase2_info1_has_first_record(&exchange) ==
+				      (!short_exchange && states[i].first_a) &&
+			      phase2_info1_has_second_record(&exchange) == states[i].second_a,
+			      "Signal A ownership differs at phase %u short %u",
+			      states[i].phase, short_exchange);
+			exchange.signal_role = PHASE2_SIGNAL_B;
+			CHECK(phase2_info1_has_first_record(&exchange) == !short_exchange &&
+			      phase2_info1_has_second_record(&exchange) == states[i].second_b,
+			      "Signal B ownership differs at phase %u short %u",
+			      states[i].phase, short_exchange);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	const uint8_t payload[] = { 0 };
@@ -273,6 +324,7 @@ int main(void)
 		{ "one-way short INFO1a", test_one_way_exchange },
 		{ "short receive budget", test_receive_budget },
 		{ "corrupt INFO1a receive budget", test_corrupt_frame_budget },
+		{ "record ownership", test_record_ownership },
 		{ "short exchange validation", test_validation },
 	};
 	unsigned int failures = 0;

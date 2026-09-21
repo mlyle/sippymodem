@@ -104,11 +104,7 @@ static bool signal_b_state_is_valid(
 static bool signal_a_state_is_valid(
 	const struct phase2_info1_exchange *exchange, uint32_t deadline)
 {
-	if (exchange->short_exchange &&
-	    exchange->phase != PHASE2_INFO1_TRANSMITTING &&
-	    exchange->phase != PHASE2_INFO1_CARRIER_TAIL &&
-	    exchange->phase != PHASE2_INFO1_SILENCE &&
-	    exchange->phase != PHASE2_INFO1_COMPLETE)
+	if (exchange->short_exchange && !phase2_info1_has_second_record(exchange))
 		return false;
 	switch (exchange->phase) {
 	case PHASE2_INFO1_WAITING_FOR_PEER:

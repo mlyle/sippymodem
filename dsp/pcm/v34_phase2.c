@@ -126,17 +126,8 @@ static bool local_info1_is_valid(const struct v34_phase2 *phase2)
 
 	if (phase2->stage != V34_PHASE2_INFO1)
 		return !phase2->local_info1_stored;
-	if (phase2->local_role == V34_CALLING_STATION)
-		expected = true;
-	else
-		expected = phase2->state.info1.control.phase ==
-				   PHASE2_INFO1_TRANSMITTING ||
-			   phase2->state.info1.control.phase ==
-				   PHASE2_INFO1_CARRIER_TAIL ||
-			   phase2->state.info1.control.phase ==
-				   PHASE2_INFO1_SILENCE ||
-			   phase2->state.info1.control.phase ==
-				   PHASE2_INFO1_COMPLETE;
+	expected = phase2->local_role == V34_CALLING_STATION ||
+		phase2_info1_has_second_record(&phase2->state.info1.control);
 	if (phase2->local_info1_stored != expected)
 		return false;
 	if (!expected)

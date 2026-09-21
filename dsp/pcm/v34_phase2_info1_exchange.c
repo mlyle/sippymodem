@@ -38,30 +38,18 @@ static uint16_t probe_round_trip_delay(
 		.round_trip_delay_samples;
 }
 
-static bool phase_has_peer_parameters(
-	const struct v34_phase2_info1_exchange *exchange)
-{
-	const struct phase2_info1_exchange *control = &exchange->control;
-
-	if (control->signal_role == PHASE2_SIGNAL_B)
-		return control->phase == PHASE2_INFO1_SILENCE ||
-		       control->phase == PHASE2_INFO1_COMPLETE;
-	return control->phase == PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED ||
-	       control->phase == PHASE2_INFO1_TRANSMITTING ||
-	       control->phase == PHASE2_INFO1_CARRIER_TAIL ||
-	       control->phase == PHASE2_INFO1_SILENCE ||
-	       control->phase == PHASE2_INFO1_COMPLETE;
-}
-
 bool v34_phase2_info1_exchange_is_valid(
 	const struct v34_phase2_info1_exchange *exchange)
 {
 	bool expected;
 
 	if (exchange == NULL || !phase2_info1_is_valid(&exchange->control) ||
+	    exchange->control.short_exchange ||
 	    exchange->control.phase == PHASE2_INFO1_PEER_FRAME_PENDING)
 		return false;
-	expected = phase_has_peer_parameters(exchange);
+	expected = exchange->control.signal_role == PHASE2_SIGNAL_B ?
+		phase2_info1_has_second_record(&exchange->control) :
+		phase2_info1_has_first_record(&exchange->control);
 	if (exchange->peer_parameters_received != expected)
 		return false;
 	if (!expected)

@@ -51,32 +51,6 @@ static uint16_t probe_round_trip_delay(
 		.round_trip_delay_samples;
 }
 
-static bool phase_has_peer_record(
-	const struct pcm_phase2_info1_exchange *exchange)
-{
-	const struct phase2_info1_exchange *control = &exchange->control;
-
-	if (control->signal_role == PHASE2_SIGNAL_B)
-		return control->phase == PHASE2_INFO1_SILENCE ||
-		       control->phase == PHASE2_INFO1_COMPLETE;
-	return control->phase == PHASE2_INFO1_SIGNAL_A_REPLY_NEEDED ||
-	       control->phase == PHASE2_INFO1_TRANSMITTING ||
-	       control->phase == PHASE2_INFO1_CARRIER_TAIL ||
-	       control->phase == PHASE2_INFO1_SILENCE ||
-	       control->phase == PHASE2_INFO1_COMPLETE;
-}
-
-static bool phase_has_local_analog_record(
-	const struct pcm_phase2_info1_exchange *exchange)
-{
-	if (exchange->control.signal_role != PHASE2_SIGNAL_A)
-		return false;
-	return exchange->control.phase == PHASE2_INFO1_TRANSMITTING ||
-	       exchange->control.phase == PHASE2_INFO1_CARRIER_TAIL ||
-	       exchange->control.phase == PHASE2_INFO1_SILENCE ||
-	       exchange->control.phase == PHASE2_INFO1_COMPLETE;
-}
-
 static bool analog_record_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange)
 {
@@ -114,7 +88,6 @@ static bool analog_record_is_valid(
 bool pcm_phase2_info1_is_valid(
 	const struct pcm_phase2_info1_exchange *exchange)
 {
-	bool peer_record;
 	bool expect_digital;
 	bool expect_analog;
 
@@ -134,11 +107,8 @@ bool pcm_phase2_info1_is_valid(
 	    (exchange->protocol != PCM_PROTOCOL_V92 ||
 	     exchange->info1d_resends != 0u))
 		return false;
-	peer_record = phase_has_peer_record(exchange);
-	expect_digital = !exchange->control.short_exchange &&
-		(exchange->control.signal_role == PHASE2_SIGNAL_B || peer_record);
-	expect_analog = exchange->control.signal_role == PHASE2_SIGNAL_A ?
-			phase_has_local_analog_record(exchange) : peer_record;
+	expect_digital = phase2_info1_has_first_record(&exchange->control);
+	expect_analog = phase2_info1_has_second_record(&exchange->control);
 	if (exchange->digital_record_stored != expect_digital ||
 	    exchange->analog_record_stored != expect_analog)
 		return false;

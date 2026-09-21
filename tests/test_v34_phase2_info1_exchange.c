@@ -279,6 +279,14 @@ static bool check_bidirectional_exchange(
 					      &pair.caller.control.receiver),
 			      "caller decoded different INFO1a parameters");
 		}
+		CHECK(phase2_info1_has_first_record(&pair.caller.control) &&
+		      phase2_info1_has_second_record(&pair.caller.control) ==
+			      (caller_received != SIZE_MAX) &&
+		      phase2_info1_has_first_record(&pair.answerer.control) ==
+			      (answerer_received != SIZE_MAX) &&
+		      phase2_info1_has_second_record(&pair.answerer.control) ==
+			      (answerer_received != SIZE_MAX),
+		      "full INFO1 exchange lost record ownership at sample %zu", index);
 		if (caller_silencing) {
 			caller_silence_calls++;
 			CHECK(event.caller_transmit == 0,
@@ -611,6 +619,46 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_reject_short_exchange(void)
+{
+	struct v34_phase2_tone_transmitter tone;
+	const uint8_t payload[V34_INFO1A_PAYLOAD_BYTES] = { 0 };
+
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &tone, V34_ANSWERING_STATION, 12000) == V34_PHASE2_TONE_OK,
+	      "short exchange fixture tone failed");
+	for (unsigned role = 0; role < 2; ++role) {
+		struct v34_phase2_info1_exchange exchange = { 0 }, before;
+		struct v34_phase2_info1_exchange_event event = { 0 }, event_before;
+		int16_t output = 1234;
+		enum phase2_info1_result result;
+
+		if (role == 0) {
+			result = phase2_info1_init_short_signal_b(
+				&exchange.control, 1000, V34_INFO1A_PAYLOAD_BITS);
+		} else {
+			result = phase2_info1_init_short_signal_a(
+				&exchange.control, &tone, payload, V34_INFO1A_PAYLOAD_BITS);
+			exchange.peer_parameters = (union v34_phase2_info1_parameters){
+				.info1c = info1c_fixture(),
+			};
+			exchange.peer_parameters_received = true;
+		}
+		CHECK(result == PHASE2_INFO1_OK &&
+		      phase2_info1_is_valid(&exchange.control),
+		      "short exchange fixture is invalid for role %u", role);
+		before = exchange;
+		event_before = event;
+		CHECK(!v34_phase2_info1_exchange_is_valid(&exchange) &&
+		      v34_phase2_info1_exchange_sample(&exchange, 0, &output, &event) ==
+			      PHASE2_INFO1_INVALID_ARGUMENT &&
+		      memcmp(&exchange, &before, sizeof(exchange)) == 0 &&
+		      memcmp(&event, &event_before, sizeof(event)) == 0 && output == 1234,
+		      "V.34 accepted a V.92-only short exchange for role %u", role);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -620,6 +668,7 @@ int main(void)
 		{ "bidirectional exchange", test_bidirectional_exchange },
 		{ "exact peer deadlines", test_exact_deadlines },
 		{ "semantic frame rejection", test_semantic_frame_rejection },
+		{ "reject short exchange", test_reject_short_exchange },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
