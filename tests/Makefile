@@ -3508,18 +3508,20 @@ PYTHON_TESTS := \
 	test_local_interop.py
 TEST_JOBS ?= 4
 TEST_RUN_BINARIES := \
-	$(filter-out $(FSK_INTEGRATION_TEST_BINARY),$(TEST_BINARIES))
+	$(filter-out $(FSK_INTEGRATION_TEST_BINARY) $(PCM_CALL_TEST_BINARY),$(TEST_BINARIES))
 BINARY_TEST_RUNS := \
 	$(patsubst $(BUILD_DIR)/%,run-test-%,$(TEST_RUN_BINARIES))
 PYTHON_TEST_RUNS := $(addprefix run-python-,$(PYTHON_TESTS))
 V90_DATAPUMP_RUN := \
 	$(patsubst $(BUILD_DIR)/%,run-test-%,$(V90_DATAPUMP_TEST_BINARY))
+PCM_CALL_RUNS := $(addprefix run-pcm-call-,0 1 2 3)
 V34_MATRIX_SYMBOL_RATES := 2400 2743 2800 3000 3200 3429
 V34_MATRIX_RUNS := \
 	$(addprefix run-integration-v34-,$(V34_MATRIX_SYMBOL_RATES))
 INTEGRATION_RUNS := run-integration-core $(V34_MATRIX_RUNS)
 TEST_RUNS := \
 	$(V90_DATAPUMP_RUN) \
+	$(PCM_CALL_RUNS) \
 	$(INTEGRATION_RUNS) \
 	$(PYTHON_TEST_RUNS) \
 	$(filter-out $(V90_DATAPUMP_RUN),$(BINARY_TEST_RUNS))
@@ -3542,6 +3544,9 @@ $(PYTHON_TEST_RUNS): run-python-%: %
 
 $(BINARY_TEST_RUNS): run-test-%: $(BUILD_DIR)/%
 	./$<
+
+$(PCM_CALL_RUNS): run-pcm-call-%: $(PCM_CALL_TEST_BINARY)
+	./$< --shard $*
 
 run-integration-core: $(FSK_INTEGRATION_TEST_BINARY)
 	MODEM_INTEGRATION_FILTER= V34_MATRIX_FILTER= \

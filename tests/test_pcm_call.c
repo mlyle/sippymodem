@@ -11462,7 +11462,7 @@ static bool test_info1a_training_power(void)
 	return true;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	static const struct {
 		const char *name;
@@ -11542,8 +11542,19 @@ int main(void)
 		{ "result names", test_result_names },
 	};
 	unsigned int failures = 0;
+	size_t first = 0, stride = 1;
 
-	for (size_t index = 0; index < ARRAY_LENGTH(tests); ++index) {
+	if (argc != 1) {
+		if (argc != 3 || strcmp(argv[1], "--shard") != 0 ||
+		    argv[2][0] < '0' || argv[2][0] > '3' || argv[2][1] != '\0') {
+			fprintf(stderr, "usage: %s [--shard 0|1|2|3]\n", argv[0]);
+			return 2;
+		}
+		first = (size_t)(argv[2][0] - '0');
+		stride = 4;
+	}
+
+	for (size_t index = first; index < ARRAY_LENGTH(tests); index += stride) {
 		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
 		if (tests[index].run())
 			fprintf(stderr, "[       OK ] %s\n", tests[index].name);
