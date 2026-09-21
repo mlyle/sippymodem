@@ -9,13 +9,6 @@
 #include <math.h>
 #include <string.h>
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
@@ -347,7 +340,7 @@ static enum v92_upstream_data_rx_result receive_frame(
 					decoder.upstream_level,
 					decision.frame.v[symbol], &sample) != V92_PCM_FRAME_OK)
 				return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-			target.in_phase = quantize(decoder.mapping.law, sample);
+			target.in_phase = g711_quantize(decoder.mapping.law, sample);
 		}
 		/* Preserve the original equalizer residual, including excursions
 		 * clipped only for the frame decoder's fixed-point input. */

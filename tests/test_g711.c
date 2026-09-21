@@ -161,6 +161,10 @@ static bool test_all_linear_samples(void)
 		uint8_t pcmu_round_trip =
 			g711_encode_pcmu(pcmu_linear);
 
+		CHECK(g711_quantize(G711_LAW_PCMU, (int16_t)sample) == pcmu_linear,
+		      "PCMU reconstructed sample differs at %d", (int)sample);
+		CHECK(g711_quantize(G711_LAW_PCMA, (int16_t)sample) == pcma_linear,
+		      "PCMA reconstructed sample differs at %d", (int)sample);
 		/* Both PCMU zero codewords decode to linear zero, so ordinary
 		 * signed PCM necessarily canonicalizes negative zero to 0xff. */
 		CHECK(pcmu_round_trip == pcmu ||

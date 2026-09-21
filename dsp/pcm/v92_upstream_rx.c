@@ -7,13 +7,6 @@
 
 #include <stddef.h>
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 bool v92_upstream_rx_is_valid(const struct v92_upstream_rx *receiver)
 {
 	return receiver != NULL &&
@@ -137,7 +130,7 @@ static enum v92_upstream_rx_result sample(
 		size_t target_index =
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY -
 			next.training_tail_remaining;
-		int16_t selected = quantize(
+		int16_t selected = g711_quantize(
 			next.line.law, generated.nearest_level);
 
 		nominal_level = generated.nearest_level;

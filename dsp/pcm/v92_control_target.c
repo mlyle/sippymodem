@@ -5,13 +5,6 @@
 #include <math.h>
 #include <stddef.h>
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 bool v92_control_target(
 	enum g711_law law, const struct v92_phase4_demodulator *demodulator,
 	int16_t nominal, double observed, int16_t *target)
@@ -43,7 +36,7 @@ bool v92_control_target(
 	}
 	if (matches == 0u)
 		return false;
-	nominal_target = best = quantize(law, nominal);
+	nominal_target = best = g711_quantize(law, nominal);
 	if (matches > 1u) {
 		*target = best;
 		return true;
@@ -69,7 +62,7 @@ bool v92_control_target(
 				upper = lu - 1;
 			continue;
 		}
-		level = quantize(law, level);
+		level = g711_quantize(law, level);
 		error = fabs(observed - level);
 		/* Prefer the nominal target on ties, then the lower magnitude. */
 		if (error < best_error ||

@@ -22,6 +22,15 @@ int16_t g711_decode_pcmu(uint8_t octet);
 uint8_t g711_encode_pcma(int16_t sample);
 int16_t g711_decode_pcma(uint8_t octet);
 
+/* Reconstructed linear level after encoding. law must be valid; PCMU signed
+ * zeros both reconstruct as zero, while PCMA zero reconstructs as +8. */
+static inline int16_t g711_quantize(enum g711_law law, int16_t sample)
+{
+	return law == G711_LAW_PCMU ?
+		g711_decode_pcmu(g711_encode_pcmu(sample)) :
+		g711_decode_pcma(g711_encode_pcma(sample));
+}
+
 struct g711_interval {
 	int16_t lower, upper;
 };

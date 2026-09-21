@@ -138,13 +138,6 @@ static enum v92_phase4_digital_rx_result fail(
 	return V92_PHASE4_DIGITAL_RX_NUMERIC_FAILURE;
 }
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 static bool observe_channel(
 	struct v92_phase4_digital_rx *receiver, int16_t expected,
 	const struct qam_equalizer *equalizer,
@@ -163,14 +156,14 @@ static bool observe_channel(
 		if (v92_phase4_modulator_level(demodulator->constellation,
 			    demodulator->lu, magnitude, expected < 0, &linear) != V92_PHASE4_MODULATOR_OK)
 			return false;
-		if (quantize(law, linear) != expected)
+		if (g711_quantize(law, linear) != expected)
 			continue;
 		if (!v92_upstream_channel_sample(&receiver->channel, linear, (int32_t)raw))
 			return false;
 		/* Host DC/echo conditioning can move a sample within its original
 		 * cell without changing the direct mapping's G.711 point placement. */
 		if (receiver->channel.symbols > V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS &&
-		    quantize(law, (int16_t)fmin(raw, INT16_MAX)) != expected)
+		    g711_quantize(law, (int16_t)fmin(raw, INT16_MAX)) != expected)
 			receiver->channel_distorted = true;
 		return true;
 	}

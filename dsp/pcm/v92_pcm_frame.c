@@ -380,13 +380,6 @@ static int16_t scale_sample(
 			upstream_level, V92_PCM_GAIN_SHIFT));
 }
 
-static int16_t quantized_sample(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 static uint64_t level_error(
 	const struct v92_pcm_mapping *mapping, int16_t level,
 	const struct v92_pcm_frame *frame, const int16_t *samples)
@@ -394,7 +387,7 @@ static uint64_t level_error(
 	uint64_t error = 0u;
 
 	for (size_t symbol = 0u; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
-		int64_t residual = (int64_t)samples[symbol] - quantized_sample(
+		int64_t residual = (int64_t)samples[symbol] - g711_quantize(
 			mapping->law, scale_sample(mapping->cpd.four_times_gain_q0_16,
 				level, frame->v[symbol]));
 
@@ -830,7 +823,7 @@ static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
 
 static int16_t level_sample(const struct v92_pcm_frame_rx *receiver, int16_t level, int32_t v)
 {
-	return quantized_sample(receiver->mapping.law,
+	return g711_quantize(receiver->mapping.law,
 		scale_sample(receiver->mapping.cpd.four_times_gain_q0_16, level, v));
 }
 

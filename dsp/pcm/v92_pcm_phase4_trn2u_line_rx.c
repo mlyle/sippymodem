@@ -15,13 +15,6 @@ _Static_assert((int)V92_PCM_PHASE4_TRN2U_LINE_EQUALIZER_TAPS <=
 _Static_assert(V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY > 0,
 	       "TRN2u target queue must not be empty");
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 static unsigned control_search_minimum(bool renegotiation)
 {
 	return renegotiation ? V92_PCM_PHASE4_TRN2U_ALIGNMENT :
@@ -52,7 +45,7 @@ static bool targets_are_valid(
 				    (uint8_t)magnitude, sign, &level) !=
 			    V92_PHASE4_MODULATOR_OK)
 				return false;
-			points[count++] = quantize(law, level);
+			points[count++] = g711_quantize(law, level);
 		}
 	}
 	for (size_t index = 0;
@@ -191,7 +184,7 @@ static bool initialize_targets(
 			    &receiver->reference, &level) !=
 		    V92_PCM_PHASE4_TRN2U_OK)
 			return false;
-		receiver->expected[index] = quantize(receiver->law, level);
+		receiver->expected[index] = g711_quantize(receiver->law, level);
 	}
 	return true;
 }
@@ -314,7 +307,7 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	    V92_PCM_PHASE4_TRN2U_OK)
 		return fail(receiver);
 	next_expected = next.expected[next.expected_index];
-	next.expected[next.expected_index] = quantize(next.law, raw_expected);
+	next.expected[next.expected_index] = g711_quantize(next.law, raw_expected);
 	next.expected_index = (uint8_t)(
 		(next.expected_index + 1u) %
 		V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY);
@@ -329,7 +322,7 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 			      &decoded_group, &selected_level) !=
 			      V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
-	selected = quantize(next.law, selected_level);
+	selected = g711_quantize(next.law, selected_level);
 	bits = v92_phase4_modulator_bits_per_symbol(
 		next.demodulator.constellation);
 	if (bits == 0u)

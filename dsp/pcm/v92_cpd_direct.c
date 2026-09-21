@@ -177,13 +177,6 @@ enum v92_cpd_result v92_cpd_direct_init(
 	return V92_CPD_OK;
 }
 
-static int quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ?
-		g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 /* First integer pre-codec noise peak at which adjacent source levels can
  * share a reconstructed value. Decoded-code spacing alone overstates the
  * margin when one symbol sits near a quantizer boundary. */
@@ -241,8 +234,8 @@ static int level_separation(
 		if (eta != -count) {
 			int gap = cpd->data_rate_number >= 18u ?
 				input_margin(law, previous, lower) :
-				quantize(law, (int16_t)lower) -
-					quantize(law, (int16_t)previous);
+				g711_quantize(law, (int16_t)lower) -
+					g711_quantize(law, (int16_t)previous);
 
 			if (gap <= required_margin)
 				return 0;

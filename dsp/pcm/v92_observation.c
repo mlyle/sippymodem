@@ -216,8 +216,7 @@ static bool refit_bins(struct v92_observation *model,
 		double gain = sqrt(fit->low * fit->high);
 		for (size_t j = 0; j < count; j++) {
 			double value = fmax(INT16_MIN, fmin(INT16_MAX, round(gain * x[j])));
-			q[i][j] = model->law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu((int16_t)value)) :
-				g711_decode_pcma(g711_encode_pcma((int16_t)value));
+			q[i][j] = g711_quantize(model->law, (int16_t)value);
 		}
 		costs[i] = fit_bin_channel(fit, q[i], y, low, high, count, model->taps, variances + i) ?
 			bin_cost(q[i], low, high, count, model->taps, fit, variances[i]) : HUGE_VAL;
@@ -242,22 +241,16 @@ static bool refit_bins(struct v92_observation *model,
 	return true;
 }
 
-static int16_t quantize(enum g711_law law, int16_t sample)
-{
-	return law == G711_LAW_PCMU ? g711_decode_pcmu(g711_encode_pcmu(sample)) :
-		g711_decode_pcma(g711_encode_pcma(sample));
-}
-
 static int16_t scaled(enum g711_law law, double gain, int32_t x)
 {
 	/* An inferred reciprocal host gain can overflow for a subnormal gain.
 	 * Zero still maps to codec zero, not infinity times zero. */
-	if (x == 0) return quantize(law, 0);
+	if (x == 0) return g711_quantize(law, 0);
 	double sample = gain * x;
-	if (sample >= INT16_MAX) return quantize(law, INT16_MAX);
-	if (sample <= INT16_MIN) return quantize(law, INT16_MIN);
+	if (sample >= INT16_MAX) return g711_quantize(law, INT16_MAX);
+	if (sample <= INT16_MIN) return g711_quantize(law, INT16_MIN);
 	sample = round(sample);
-	return quantize(law, (int16_t)sample);
+	return g711_quantize(law, (int16_t)sample);
 }
 
 /* Bounds relative to the host sample. Use the same arithmetic for training
@@ -268,7 +261,7 @@ static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 	if (!isfinite(offset) || (offset != 0. && !level)) return false;
 	int16_t reconstructed = level ? *level : scaled(law, 1. / gain, observed);
 	struct g711_interval interval;
-	if (quantize(law, reconstructed) != reconstructed ||
+	if (g711_quantize(law, reconstructed) != reconstructed ||
 		!g711_quantization_interval(law, reconstructed, &interval)) return false;
 	*lower = (interval.lower == INT16_MIN ? -HUGE_VAL : (interval.lower - .5) * gain) + offset - observed;
 	*upper = (interval.upper == INT16_MAX ? HUGE_VAL : (interval.upper + .5) * gain) + offset - observed;
@@ -279,7 +272,7 @@ static bool codec_bounds(enum g711_law law, double gain, int16_t observed,
 
 static int16_t magnitude_code(enum g711_law law, int32_t x, unsigned magnitude)
 {
-	return quantize(law, (int16_t)(x < 0 ? -(int32_t)magnitude : (int32_t)magnitude));
+	return g711_quantize(law, (int16_t)(x < 0 ? -(int32_t)magnitude : (int32_t)magnitude));
 }
 
 static struct boundary next_boundary(enum g711_law law, int32_t x, unsigned magnitude)
@@ -604,7 +597,7 @@ double v92_observation_predict_scalar(enum g711_law law, double gain,
 	double physical = (gain * linear - offset) / host_gain;
 	if (!isfinite(physical)) return NAN;
 	int16_t sample = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX, round(physical)));
-	double prediction = host_gain * quantize(law, sample) + offset;
+	double prediction = host_gain * g711_quantize(law, sample) + offset;
 	return isfinite(prediction) ? prediction : NAN;
 }
 
@@ -943,7 +936,7 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 	if (!isfinite(mean) || !isfinite(variance) || variance <= 0. ||
 	    !isfinite(gain) || gain <= 0.) return NAN;
 	double divisor = sqrt(variance) * sqrt(2.);
-	int16_t center = quantize(law, (int16_t)fmax(INT16_MIN,
+	int16_t center = g711_quantize(law, (int16_t)fmax(INT16_MIN,
 		fmin(INT16_MAX, round(mean / gain))));
 	double prediction = center;
 	for (int direction = -1; direction <= 1; direction += 2) {
@@ -956,7 +949,7 @@ static double codec_mean(enum g711_law law, double mean, double variance, double
 			double boundary = (edge + direction * .5) * gain;
 			double distance = direction * (boundary - mean) / divisor;
 			if (distance >= 28.) break;
-			int16_t next = quantize(law, (int16_t)(edge + direction));
+			int16_t next = g711_quantize(law, (int16_t)(edge + direction));
 			prediction += (next - level) * .5 * erfc(distance);
 			level = next;
 		}
