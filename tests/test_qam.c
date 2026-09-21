@@ -87,6 +87,13 @@ static bool test_point_validation(void)
 	struct qam_point rejected_alias = { 1e-6, 0.0 };
 	double power = 7.0;
 
+	CHECK(qam_point_power(&finite) == 5.0 &&
+	      qam_point_power(&invalid_power[0]) == 0.0 &&
+	      !signbit(qam_point_power(&invalid_power[0])) &&
+	      isnan(qam_point_power(&bad_in_phase)) &&
+	      isinf(qam_point_power(&bad_quadrature)) &&
+	      isinf(qam_point_power(&invalid_power[3])),
+	      "raw point power added validation or changed arithmetic");
 	CHECK(point_is_finite(&finite) &&
 	      !point_is_finite(NULL) &&
 	      !point_is_finite(&bad_in_phase) &&

@@ -10,12 +10,6 @@ static const double QAM_CARRIER_PI = 3.14159265358979323846;
 static const double QAM_CARRIER_TWO_PI = 6.28318530717958647692;
 static const double QAM_CARRIER_MAX_FREQUENCY = 0.25;
 
-static double point_power(const struct qam_point *point)
-{
-	return point->in_phase * point->in_phase +
-	       point->quadrature * point->quadrature;
-}
-
 static bool carrier_gains_are_valid(
 	double proportional_gain, double integral_gain)
 {
@@ -108,7 +102,7 @@ static bool inverse_channel(
 	if (!point_is_finite(received) || !point_is_finite(transmitted) ||
 	    inverse == NULL)
 		return false;
-	power = point_power(received);
+	power = qam_point_power(received);
 	if (!isfinite(power) || power <= QAM_EQUALIZER_MINIMUM_POWER)
 		return false;
 	*inverse = (struct qam_point){
@@ -121,7 +115,7 @@ static bool inverse_channel(
 			power,
 	};
 	return point_is_finite(inverse) &&
-	       point_power(transmitted) > QAM_EQUALIZER_MINIMUM_POWER;
+	       qam_point_power(transmitted) > QAM_EQUALIZER_MINIMUM_POWER;
 }
 
 bool qam_equalizer_is_valid(
@@ -145,7 +139,7 @@ bool qam_equalizer_is_valid(
 			return false;
 		if (index < equalizer->tap_count)
 			coefficient_power +=
-				point_power(&equalizer->coefficients[index]);
+				qam_point_power(&equalizer->coefficients[index]);
 	}
 	return isfinite(coefficient_power) &&
 	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
@@ -419,7 +413,7 @@ static bool apply_adaptation(
 
 	for (size_t index = 0; index < tap_count;
 	     ++index)
-		power += point_power(&history[index]);
+		power += qam_point_power(&history[index]);
 	if (!isfinite(power))
 		return false;
 	for (size_t index = 0; index < tap_count;
@@ -454,8 +448,8 @@ static bool prepare_carrier_target(
 	*unrotated_target = rotate_point(target, -correction_phase);
 	if (!point_is_finite(unrotated_target))
 		return false;
-	if (point_power(output) <= QAM_EQUALIZER_MINIMUM_POWER ||
-	    point_power(target) <= QAM_EQUALIZER_MINIMUM_POWER)
+	if (qam_point_power(output) <= QAM_EQUALIZER_MINIMUM_POWER ||
+	    qam_point_power(target) <= QAM_EQUALIZER_MINIMUM_POWER)
 		return true;
 	cross = target->quadrature * output->in_phase -
 		target->in_phase * output->quadrature;

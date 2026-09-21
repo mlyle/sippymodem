@@ -17,12 +17,6 @@ static const double V34_PRECODER_MAXIMUM_MAGNITUDE_SUM = 4.0;
 static const double V34_PRECODER_MAXIMUM_DECISION_ERROR_POWER = 0.5;
 static const double V34_PRECODER_MINIMUM_DECISION_ERROR_POWER = 1e-8;
 
-static double point_power(struct qam_point point)
-{
-	return point.in_phase * point.in_phase +
-	       point.quadrature * point.quadrature;
-}
-
 static bool coefficients_are_zero(
 	const struct v34_q14_coefficient
 		coefficients[V34_PRECODER_TAP_COUNT])
@@ -108,17 +102,6 @@ static struct qam_point multiply_conjugate(
 	};
 }
 
-static struct qam_point multiply(
-	struct qam_point left, struct qam_point right)
-{
-	return (struct qam_point){
-		.in_phase = left.in_phase * right.in_phase -
-			    left.quadrature * right.quadrature,
-		.quadrature = left.in_phase * right.quadrature +
-			      left.quadrature * right.in_phase,
-	};
-}
-
 static double bounded_component(double value)
 {
 	if (value > V34_PRECODER_MAXIMUM_COMPONENT)
@@ -149,8 +132,8 @@ enum v34_precoder_trainer_result v34_precoder_trainer_observe(
 	};
 	feedback_error = decision_error;
 	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		struct qam_point prediction = multiply(
-			next.coefficients[tap], next.error_history[tap]);
+		struct qam_point prediction = qam_point_multiply(
+			&next.coefficients[tap], &next.error_history[tap]);
 
 		feedback_error.in_phase += prediction.in_phase;
 		feedback_error.quadrature += prediction.quadrature;
@@ -175,8 +158,8 @@ enum v34_precoder_trainer_result v34_precoder_trainer_observe(
 	next.observed_symbols++;
 	if (next.observed_symbols >=
 	    V34_PRECODER_TRAINER_SETTLING_SYMBOLS) {
-		next.decision_error_power += point_power(decision_error);
-		next.feedback_error_power += point_power(feedback_error);
+		next.decision_error_power += qam_point_power(&decision_error);
+		next.feedback_error_power += qam_point_power(&feedback_error);
 		next.measured_symbols++;
 	}
 	if (!v34_precoder_trainer_is_valid(&next))
