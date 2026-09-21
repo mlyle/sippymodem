@@ -347,6 +347,31 @@ static bool test_superframe_inversion_patterns(void)
 	return true;
 }
 
+static bool test_group_state_rejection(void)
+{
+	for (unsigned int direction = 0; direction < 2; ++direction) {
+		for (unsigned int bad = 0; bad < 3; ++bad) {
+			struct v34_scrambler state = {
+				.history = bad == 0 ? UINT32_C(1) << V34_SCRAMBLER_BITS : 0,
+				.polynomial = bad == 1 ? (enum v34_scrambler_polynomial)2 :
+					V34_POLYNOMIAL_GPC,
+			};
+			struct v34_scrambler saved = state;
+			struct v34_scrambler *owner = bad == 2 ? NULL : &state;
+			uint8_t output = UINT8_MAX;
+			enum v34_framing_result result = direction == 0 ?
+				v34_scramble_group(owner, 1, 1, &output) :
+				v34_descramble_group(owner, 1, 1, &output);
+
+			CHECK(result == V34_FRAMING_INVALID_ARGUMENT &&
+			      output == UINT8_MAX &&
+			      memcmp(&state, &saved, sizeof(state)) == 0,
+			      "V.34 group accepted invalid owner %u/%u", direction, bad);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v34_scrambler scrambler;
@@ -453,6 +478,7 @@ int main(void)
 		  test_differential_dibit_round_trip },
 		{ "superframe inversion patterns",
 		  test_superframe_inversion_patterns },
+		{ "group state rejection", test_group_state_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

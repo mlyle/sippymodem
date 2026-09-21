@@ -371,6 +371,31 @@ static bool test_three_bit_group_round_trip(void)
 	return true;
 }
 
+static bool test_group_state_rejection(void)
+{
+	for (unsigned int direction = 0; direction < 2; ++direction) {
+		for (unsigned int bad = 0; bad < 3; ++bad) {
+			struct v32_scrambler state = {
+				.history = bad == 0 ? UINT32_C(1) << V32_SCRAMBLER_BITS : 0,
+				.transmitter_role = bad == 1 ? (enum v32_transmitter_role)2 :
+					V32_CALLING_TRANSMITTER,
+			};
+			struct v32_scrambler saved = state;
+			struct v32_scrambler *owner = bad == 2 ? NULL : &state;
+			uint8_t output = UINT8_MAX;
+			enum v32_framing_result result = direction == 0 ?
+				v32_scramble_group(owner, 1, 1, &output) :
+				v32_descramble_group(owner, 1, 1, &output);
+
+			CHECK(result == V32_FRAMING_INVALID_ARGUMENT &&
+			      output == UINT8_MAX &&
+			      memcmp(&state, &saved, sizeof(state)) == 0,
+			      "V.32 group accepted invalid owner %u/%u", direction, bad);
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v32_scrambler scrambler;
@@ -475,6 +500,7 @@ int main(void)
 		  test_descrambler_resynchronization },
 		{ "three-bit group round trip",
 		  test_three_bit_group_round_trip },
+		{ "group state rejection", test_group_state_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

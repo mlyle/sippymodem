@@ -91,6 +91,19 @@ static bool points_are_close(
 	       fabs(left->quadrature - right->quadrature) < TEST_TOLERANCE;
 }
 
+static bool training_states_match(
+	const struct v34_training_sequence *left,
+	const struct v34_training_sequence *right)
+{
+	return left->scrambler.history == right->scrambler.history &&
+	       left->scrambler.polynomial == right->scrambler.polynomial &&
+	       left->role == right->role &&
+	       left->constellation == right->constellation &&
+	       left->last_clockwise_quarter_turns ==
+		       right->last_clockwise_quarter_turns &&
+	       left->has_last_symbol == right->has_last_symbol;
+}
+
 static bool test_role_and_constellation_sequences(void)
 {
 	static const enum v34_station_role roles[] = {
@@ -174,7 +187,7 @@ static bool test_role_and_constellation_sequences(void)
 				      fixed_point.in_phase == expected_fixed.in_phase &&
 				      fixed_point.quadrature ==
 					      expected_fixed.quadrature &&
-				      memcmp(&trn, &fixed_trn, sizeof(trn)) == 0 &&
+				      training_states_match(&trn, &fixed_trn) &&
 				      trn.last_clockwise_quarter_turns ==
 					      expected_rotation &&
 				      trn.has_last_symbol &&
@@ -272,7 +285,7 @@ static bool test_copy_and_restart(void)
 			      first_rotation == second_rotation &&
 			      memcmp(&first_point, &second_point,
 				     sizeof(first_point)) == 0 &&
-			      memcmp(&first, &second, sizeof(first)) == 0,
+			      training_states_match(&first, &second),
 			      "copied TRN stream diverged at %zu/%u", selection,
 			      symbol);
 		}

@@ -68,17 +68,15 @@ static enum v32_framing_result transform_group(
 	struct v32_scrambler *state, uint8_t input,
 	unsigned int bit_count, uint8_t *output, bool descramble)
 {
-	struct v32_scrambler next;
 	struct self_sync_scrambler shared;
 	const struct self_sync_scrambler_config *config;
 	enum self_sync_scrambler_result result;
 	uint8_t transformed;
 
-	if (!v32_scrambler_is_valid(state) || output == NULL)
+	if (state == NULL || output == NULL)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *state;
-	shared.history = next.history;
-	config = scrambler_config(next.transmitter_role);
+	shared.history = state->history;
+	config = scrambler_config(state->transmitter_role);
 	if (descramble)
 		result = self_sync_descramble_group(
 			&shared, config, input, bit_count, &transformed);
@@ -87,8 +85,7 @@ static enum v32_framing_result transform_group(
 			&shared, config, input, bit_count, &transformed);
 	if (result != SELF_SYNC_SCRAMBLER_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.history = shared.history;
-	*state = next;
+	state->history = shared.history;
 	*output = transformed;
 	return V32_FRAMING_OK;
 }
