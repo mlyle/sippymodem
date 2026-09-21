@@ -916,6 +916,76 @@ static bool test_rejected_initial_level(void)
 	return true;
 }
 
+static bool test_record_validation(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
+	     protocol <= PCM_PROTOCOL_V92; ++protocol) {
+		for (enum v90_modem_role role = V90_ANALOG_MODEM;
+		     role <= V90_DIGITAL_MODEM; ++role) {
+			for (unsigned flags = 0; flags < 8u; ++flags) {
+				bool ack = (flags & 1u) != 0;
+				bool capable = (flags & 2u) != 0;
+				bool short_requested = (flags & 4u) != 0;
+				union pcm_info0_record record;
+				struct v90_info0 *common;
+				struct v90_info0d *digital = NULL;
+
+				memset(&record, 0xa5, sizeof(record));
+				if (protocol == PCM_PROTOCOL_V90 && role == V90_ANALOG_MODEM) {
+					record.analog = analog_capabilities();
+					common = &record.analog;
+				} else if (protocol == PCM_PROTOCOL_V90) {
+					record.digital = digital_capabilities(TEST_CODEC_PCMU);
+					digital = &record.digital;
+					common = &digital->common;
+				} else if (role == V90_ANALOG_MODEM) {
+					record.v92_analog = (struct v92_info0a){
+						.v90 = analog_capabilities(),
+						.v92_capable = capable,
+						.short_phase2_requested = short_requested,
+					};
+					common = &record.v92_analog.v90;
+				} else {
+					record.v92_digital = (struct v92_info0d){
+						.v90 = digital_capabilities(TEST_CODEC_PCMA),
+						.v92_capable = capable,
+						.short_phase2_requested = short_requested,
+					};
+					digital = &record.v92_digital.v90;
+					common = &digital->common;
+				}
+				common->acknowledges_peer_info0 = ack;
+				CHECK(pcm_info0_common(&record, protocol, role) == common,
+				      "common fields selected the wrong record");
+				for (unsigned difference = 0; difference <= 6u; ++difference) {
+					common->maximum_symbol_rate_difference_steps = difference;
+					const union pcm_info0_record before = record;
+					bool valid = difference <= 5u &&
+						(protocol == PCM_PROTOCOL_V90 || capable || !short_requested);
+					CHECK(pcm_info0_is_valid(protocol, role, &record) == valid &&
+					      pcm_info0_offer_is_valid(protocol, role, &record) ==
+						(valid && !ack && (protocol == PCM_PROTOCOL_V90 || capable)) &&
+					      memcmp(&record, &before, sizeof(record)) == 0,
+					      "record/offer validation changed capability or ACK policy");
+				}
+				common->maximum_symbol_rate_difference_steps = 0;
+				if (digital != NULL) {
+					digital->maximum_transmit_power = 32;
+					CHECK(!pcm_info0_is_valid(protocol, role, &record) &&
+					      !pcm_info0_offer_is_valid(protocol, role, &record),
+					      "digital power bounds were not validated");
+				}
+				CHECK(!pcm_info0_is_valid(protocol, role, NULL) &&
+				      !pcm_info0_offer_is_valid(protocol, role, NULL) &&
+				      !pcm_info0_is_valid((enum pcm_protocol)9, role, &record) &&
+				      !pcm_info0_is_valid(protocol, (enum v90_modem_role)9, &record),
+				      "invalid INFO0 tags or storage accepted");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v90_info0 analog = analog_capabilities();
@@ -989,6 +1059,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "shared INFO0 record and offer validation", test_record_validation },
 		{ "protocol, codec, and capability matrix", test_pcm_exchange },
 		{ "dropped first record recovery", test_dropped_initial_info0 },
 		{ "INFO0 following-tone orderings",

@@ -121,42 +121,17 @@ static enum v34_station_role phase2_station_role(
 		       V34_ANSWERING_STATION : V34_CALLING_STATION;
 }
 
-static bool stored_local_info0_is_valid(const struct pcm_call *call)
-{
-	if (call->protocol == PCM_PROTOCOL_V92) {
-		if (call->local_role == V90_ANALOG_MODEM)
-			return v92_info0a_is_valid(
-				       &call->local_info0.v92_analog) &&
-			       call->local_info0.v92_analog.v92_capable &&
-			       !call->local_info0.v92_analog.v90
-					.acknowledges_peer_info0;
-		return v92_info0d_is_valid(&call->local_info0.v92_digital) &&
-		       call->local_info0.v92_digital.v92_capable &&
-		       !call->local_info0.v92_digital.v90.common
-				.acknowledges_peer_info0;
-	}
-	if (call->local_role == V90_ANALOG_MODEM)
-		return v90_info0_is_valid(&call->local_info0.analog) &&
-		       !call->local_info0.analog.acknowledges_peer_info0;
-	return v90_info0d_is_valid(&call->local_info0.digital) &&
-	       !call->local_info0.digital.common.acknowledges_peer_info0;
-}
-
 static bool stored_peer_info0_is_valid(const struct pcm_call *call)
 {
 	if (!call->peer_info0_stored)
 		return true;
-	if (call->protocol == PCM_PROTOCOL_V92)
-		return call->local_role == V90_ANALOG_MODEM ?
-		       v92_info0d_is_valid(
-			       &call->peer_info0.v92_digital) &&
-			       call->peer_info0.v92_digital.v92_capable :
-		       v92_info0a_is_valid(
-			       &call->peer_info0.v92_analog) &&
-			       call->peer_info0.v92_analog.v92_capable;
-	return call->local_role == V90_ANALOG_MODEM ?
-		       v90_info0d_is_valid(&call->peer_info0.digital) :
-		       v90_info0_is_valid(&call->peer_info0.analog);
+	return pcm_info0_is_valid(call->protocol,
+		       call->local_role == V90_ANALOG_MODEM ?
+			       V90_DIGITAL_MODEM : V90_ANALOG_MODEM, &call->peer_info0) &&
+	       (call->protocol == PCM_PROTOCOL_V90 ||
+		(call->local_role == V90_ANALOG_MODEM ?
+			call->peer_info0.v92_digital.v92_capable :
+			call->peer_info0.v92_analog.v92_capable));
 }
 
 static bool analog_configuration_is_valid(
@@ -413,7 +388,8 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 	    call->phase2_nominal_amplitude <= 0 ||
 	    !short_startup_is_valid(&call->short_startup, call->protocol,
 		    call->local_role, &call->local_info0, &call->local_info1) ||
-	    !stored_local_info0_is_valid(call) ||
+	    !pcm_info0_offer_is_valid(call->protocol, call->local_role,
+		    &call->local_info0) ||
 	    !stored_peer_info0_is_valid(call) ||
 	    !v34_full_retrain_is_valid(&call->retrain) ||
 	    call->retrain.detector.tone.local_role !=

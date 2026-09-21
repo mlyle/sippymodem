@@ -3,9 +3,8 @@
 #ifndef PCM_PHASE2_INFO0_EXCHANGE_H
 #define PCM_PHASE2_INFO0_EXCHANGE_H
 
-#include "pcm_protocol.h"
+#include "pcm_info0.h"
 #include "phase2_info0_exchange.h"
-#include "v92_info0.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -46,13 +45,6 @@ enum pcm_phase2_info0_exchange_state {
 	PCM_PHASE2_INFO0_COMPLETE,
 	/* Full retrain reuses the previously completed INFO0 agreement. */
 	PCM_PHASE2_INFO0_RETRAIN,
-};
-
-union pcm_info0_record {
-	struct v90_info0 analog;
-	struct v90_info0d digital;
-	struct v92_info0a v92_analog;
-	struct v92_info0d v92_digital;
 };
 
 struct pcm_phase2_info0_exchange_event {

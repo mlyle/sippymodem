@@ -33,31 +33,6 @@ static struct v90_info0 *record_common(
 		       &record->v92_digital.v90.common;
 }
 
-static const struct v90_info0 *record_common_const(
-	const union pcm_info0_record *record, enum pcm_protocol protocol,
-	enum v90_modem_role role)
-{
-	if (protocol == PCM_PROTOCOL_V90)
-		return role == V90_ANALOG_MODEM ?
-			       &record->analog : &record->digital.common;
-	return role == V90_ANALOG_MODEM ?
-		       &record->v92_analog.v90 :
-		       &record->v92_digital.v90.common;
-}
-
-static bool record_is_valid(
-	enum pcm_protocol protocol, enum v90_modem_role role,
-	const union pcm_info0_record *record)
-{
-	if (protocol == PCM_PROTOCOL_V90)
-		return role == V90_ANALOG_MODEM ?
-			       v90_info0_is_valid(&record->analog) :
-			       v90_info0d_is_valid(&record->digital);
-	return role == V90_ANALOG_MODEM ?
-		       v92_info0a_is_valid(&record->v92_analog) :
-		       v92_info0d_is_valid(&record->v92_digital);
-}
-
 static bool encode_record(
 	enum pcm_protocol protocol, enum v90_modem_role role,
 	const union pcm_info0_record *record, uint8_t *payload,
@@ -123,7 +98,7 @@ static bool local_info0_acknowledges_peer(
 	union pcm_info0_record local = { 0 };
 
 	return decode_local_info0(exchange, &local) &&
-	       record_common_const(
+	       pcm_info0_common(
 		       &local, exchange->protocol,
 		       exchange->local_role)->acknowledges_peer_info0;
 }
@@ -149,7 +124,7 @@ static bool peer_info0_is_valid(
 {
 	if (!state_retains_peer_info0(exchange->state))
 		return true;
-	return record_is_valid(
+	return pcm_info0_is_valid(
 		exchange->protocol, opposite_role(exchange->local_role),
 		&exchange->peer_info0);
 }
@@ -165,7 +140,7 @@ static bool exchange_state_contract_is_valid(
 	const struct pcm_phase2_info0_exchange *exchange, bool local_ack)
 {
 	bool peer_ack = state_retains_peer_info0(exchange->state) &&
-		record_common_const(
+		pcm_info0_common(
 			&exchange->peer_info0, exchange->protocol,
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0;
@@ -223,7 +198,7 @@ bool pcm_phase2_info0_exchange_is_valid(
 	    !decode_local_info0(exchange, &local) ||
 	    !peer_info0_is_valid(exchange))
 		return false;
-	local_ack = record_common_const(
+	local_ack = pcm_info0_common(
 		&local, exchange->protocol,
 		exchange->local_role)->acknowledges_peer_info0;
 	return exchange_state_contract_is_valid(exchange, local_ack);
@@ -253,7 +228,7 @@ static enum pcm_phase2_info0_exchange_result initialize(
 	if (exchange == NULL || local_info0 == NULL ||
 	    !pcm_protocol_is_valid(protocol) ||
 	    !pcm_modem_role_is_valid(role) ||
-	    !record_is_valid(protocol, role, local_info0))
+	    !pcm_info0_is_valid(protocol, role, local_info0))
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	initial = *local_info0;
 	record_common(
@@ -365,7 +340,7 @@ static bool info0_semantics_match(
 static bool peer_acknowledges_local(
 	const struct pcm_phase2_info0_exchange *exchange)
 {
-	return record_common_const(
+	return pcm_info0_common(
 		       &exchange->peer_info0, exchange->protocol,
 		       opposite_role(exchange->local_role))
 		->acknowledges_peer_info0;
@@ -418,7 +393,7 @@ static bool retain_peer_info0(
 	if (retained &&
 	    !info0_semantics_match(exchange, &exchange->peer_info0, &decoded))
 		return reject_peer_info0(exchange, event);
-	decoded_ack = record_common_const(
+	decoded_ack = pcm_info0_common(
 		&decoded, exchange->protocol,
 		opposite_role(exchange->local_role))
 		->acknowledges_peer_info0;
@@ -455,7 +430,7 @@ static bool retain_peer_info0(
 			&exchange->peer_info0, exchange->protocol,
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0 |=
-			record_common_const(
+			pcm_info0_common(
 				&decoded, exchange->protocol,
 				opposite_role(exchange->local_role))
 					->acknowledges_peer_info0;

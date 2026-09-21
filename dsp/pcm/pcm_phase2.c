@@ -10,40 +10,13 @@ static bool failure_is_valid(enum pcm_phase2_failure failure)
 	       failure <= PCM_PHASE2_FAILURE_INTERNAL;
 }
 
-static bool local_info0_is_valid(const struct pcm_phase2 *phase2)
-{
-	if (phase2->info0_protocol == PCM_PROTOCOL_V92) {
-		if (phase2->local_role == V90_ANALOG_MODEM)
-			return v92_info0a_is_valid(
-				       &phase2->local_info0.v92_analog) &&
-			       phase2->local_info0.v92_analog.v92_capable &&
-			       !phase2->local_info0.v92_analog.v90
-					.acknowledges_peer_info0;
-		return v92_info0d_is_valid(&phase2->local_info0.v92_digital) &&
-		       phase2->local_info0.v92_digital.v92_capable &&
-		       !phase2->local_info0.v92_digital.v90.common
-				.acknowledges_peer_info0;
-	}
-	if (phase2->local_role == V90_ANALOG_MODEM)
-		return v90_info0_is_valid(&phase2->local_info0.analog) &&
-		       !phase2->local_info0.analog.acknowledges_peer_info0;
-	return v90_info0d_is_valid(&phase2->local_info0.digital) &&
-	       !phase2->local_info0.digital.common.acknowledges_peer_info0;
-}
-
 static bool peer_info0_is_valid(const struct pcm_phase2 *phase2)
 {
-	if (!phase2->peer_info0_stored)
-		return true;
-	if (phase2->info0_protocol == PCM_PROTOCOL_V92)
-		return phase2->local_role == V90_ANALOG_MODEM ?
-			       v92_info0d_is_valid(
-				       &phase2->peer_info0.v92_digital) :
-			       v92_info0a_is_valid(
-				       &phase2->peer_info0.v92_analog);
-	return phase2->local_role == V90_ANALOG_MODEM ?
-		       v90_info0d_is_valid(&phase2->peer_info0.digital) :
-		       v90_info0_is_valid(&phase2->peer_info0.analog);
+	return !phase2->peer_info0_stored ||
+	       pcm_info0_is_valid(phase2->info0_protocol,
+		       phase2->local_role == V90_ANALOG_MODEM ?
+			       V90_DIGITAL_MODEM : V90_ANALOG_MODEM,
+		       &phase2->peer_info0);
 }
 
 static bool derive_startup(
@@ -225,7 +198,9 @@ bool pcm_phase2_is_valid(const struct pcm_phase2 *phase2)
 	    !pcm_modem_role_is_valid(phase2->local_role) ||
 	    !pcm_protocol_is_valid(phase2->info0_protocol) ||
 	    !failure_is_valid(phase2->failure) ||
-	    !local_info0_is_valid(phase2) || !peer_info0_is_valid(phase2) ||
+	    !pcm_info0_offer_is_valid(phase2->info0_protocol,
+		    phase2->local_role, &phase2->local_info0) ||
+	    !peer_info0_is_valid(phase2) ||
 	    !startup_is_valid(phase2) || !remote_probe_state_is_valid(phase2) ||
 	    (phase2->stage != PCM_PHASE2_RANGING &&
 	     !phase2->peer_info0_stored))
