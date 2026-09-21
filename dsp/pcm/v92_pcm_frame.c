@@ -818,7 +818,8 @@ static uint64_t cell_metric(const struct v92_pcm_frame_cell *cell,
 	double distance = fmax(cell->lower - point, fmax(point - cell->upper, 0.0));
 	double cost = present ? distance * distance * weight : 0.0;
 
-	return cost >= UINT64_MAX ? UINT64_MAX : (uint64_t)cost;
+	/* Compare with exactly representable 2^64 before converting to uint64_t. */
+	return cost >= 0x1p64 ? UINT64_MAX : (uint64_t)cost;
 }
 
 static int16_t level_sample(const struct v92_pcm_frame_rx *receiver, int16_t level, int32_t v)
