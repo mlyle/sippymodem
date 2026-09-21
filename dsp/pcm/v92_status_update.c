@@ -2,7 +2,7 @@
 
 #include "v92_status_update.h"
 
-#include "crc16_ccitt_false.h"
+#include "pcm_control_frame.h"
 #include "packed_bits.h"
 
 #include <stdbool.h>
@@ -44,18 +44,6 @@ size_t v92_status_update_frame_bytes(unsigned int alignment_bits)
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
 
-static uint16_t frame_crc(const uint8_t *frame)
-{
-	uint16_t remainder = CRC16_CCITT_FALSE_INITIAL_REMAINDER;
-
-	for (size_t bit = STATUS_MARKER_BIT;
-	     bit < STATUS_CRC_START_BIT; ++bit) {
-		remainder = crc16_ccitt_false_step(
-			remainder, packed_msb_bit(frame, bit) != 0u);
-	}
-	return remainder;
-}
-
 enum v92_status_update_result v92_status_update_encode(
 	uint16_t payload, unsigned int alignment_bits,
 	uint8_t *frame, size_t frame_capacity,
@@ -84,21 +72,10 @@ enum v92_status_update_result v92_status_update_encode(
 		V92_STATUS_UPDATE_PAYLOAD_BITS, payload);
 	packed_msb_write_msb_field(
 		encoded, STATUS_CRC_FIRST_BIT, STATUS_CRC_BITS,
-		frame_crc(encoded));
+		pcm_control_frame_crc(encoded, STATUS_CRC_START_BIT));
 	memcpy(frame, encoded, byte_count);
 	*frame_bit_count = bit_count;
 	return V92_STATUS_UPDATE_OK;
-}
-
-static bool bits_are(
-	const uint8_t *frame, size_t first_bit,
-	size_t bit_count, uint8_t value)
-{
-	for (size_t bit = 0u; bit < bit_count; ++bit) {
-		if (packed_msb_bit(frame, first_bit + bit) != value)
-			return false;
-	}
-	return true;
 }
 
 enum v92_status_update_result v92_status_update_decode(
@@ -120,19 +97,18 @@ enum v92_status_update_result v92_status_update_decode(
 	expected_bytes = (expected_bits + 7u) / 8u;
 	if (frame_capacity < expected_bytes)
 		return V92_STATUS_UPDATE_INVALID_ARGUMENT;
-	if (!bits_are(frame, 0u, 17u, 1u) ||
-	    packed_msb_bit(frame, 17u) != 0u ||
+	if (!pcm_control_frame_prefix_is_valid(frame) ||
 	    packed_msb_bit(frame, STATUS_MARKER_BIT) != 1u ||
 	    packed_msb_bit(frame, STATUS_CRC_START_BIT) != 0u ||
-	    !bits_are(
+	    !packed_msb_bits_are_zero(
 		    frame, STATUS_FILL_FIRST_BIT,
-		    frame_bit_count - STATUS_FILL_FIRST_BIT, 0u) ||
+		    frame_bit_count - STATUS_FILL_FIRST_BIT) ||
 	    !packed_msb_tail_is_zero(
 		    frame, frame_bit_count, expected_bytes))
 		return V92_STATUS_UPDATE_INVALID_FRAME;
 	if (packed_msb_read_msb_field(
 		    frame, STATUS_CRC_FIRST_BIT, STATUS_CRC_BITS) !=
-	    frame_crc(frame))
+	    pcm_control_frame_crc(frame, STATUS_CRC_START_BIT))
 		return V92_STATUS_UPDATE_CRC_MISMATCH;
 	decoded = (uint16_t)packed_msb_read_lsb_field(
 		frame, STATUS_PAYLOAD_FIRST_BIT,

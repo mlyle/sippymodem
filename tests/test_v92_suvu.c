@@ -145,6 +145,49 @@ static bool test_shared_framing(void)
 	return true;
 }
 
+static bool test_shared_framing_corruption(void)
+{
+	const uint16_t patterns[] = { 0u, 1u, 0x2aaau, 0x5555u, 0x7fffu };
+
+	for (unsigned int width = 9u; width <= 72u; ++width) {
+		if (width > 42u && width % 2u != 0u)
+			continue;
+		for (size_t i = 0u; i < ARRAY_LENGTH(patterns); ++i) {
+			uint8_t frame[V92_STATUS_UPDATE_MAX_FRAME_BYTES + 1u];
+			uint16_t decoded = 0u;
+			size_t bits = 0u, bytes;
+
+			memset(frame, 0xa5, sizeof(frame));
+			CHECK(v92_status_update_encode(
+				      patterns[i], width, frame, sizeof(frame), &bits) ==
+				      V92_STATUS_UPDATE_OK,
+			      "shared framing width %u did not encode", width);
+			bytes = (bits + 7u) / 8u;
+			CHECK(frame[bytes] == 0xa5 &&
+			      v92_status_update_decode(frame, bytes, bits, width, &decoded) ==
+				      V92_STATUS_UPDATE_OK && decoded == patterns[i],
+			      "shared framing width %u changed payload or guard", width);
+			for (size_t bit = 0u; bit < bytes * 8u; ++bit) {
+				uint8_t mask = (uint8_t)(0x80u >> (bit % 8u));
+				enum v92_status_update_result expected =
+					bit < 19u || bit == 34u || bit >= 51u ?
+					V92_STATUS_UPDATE_INVALID_FRAME :
+					V92_STATUS_UPDATE_CRC_MISMATCH;
+
+				frame[bit / 8u] ^= mask;
+				decoded = 0xa5a5u;
+				CHECK(v92_status_update_decode(
+					      frame, bytes, bits, width, &decoded) == expected &&
+				      decoded == 0xa5a5u,
+				      "shared framing width %u bit %zu accepted or mutated",
+				      width, bit);
+				frame[bit / 8u] ^= mask;
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_wire_fields(void)
 {
 	struct v92_suvu_parameters parameters = {
@@ -443,6 +486,7 @@ int main(void)
 	} tests[] = {
 		{ "dimensions", test_dimensions },
 		{ "shared framing", test_shared_framing },
+		{ "shared framing corruption", test_shared_framing_corruption },
 		{ "wire fields", test_wire_fields },
 		{ "all values round trip", test_all_values_round_trip },
 		{ "data widths", test_data_widths },
