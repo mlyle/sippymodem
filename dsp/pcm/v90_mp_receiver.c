@@ -87,8 +87,7 @@ static void clear_candidate(struct v90_mp_receiver *receiver)
 static void begin_candidate(struct v90_mp_receiver *receiver)
 {
 	clear_candidate(receiver);
-	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(receiver->sequence, bit, true);
+	pcm_control_frame_write_prefix(receiver->sequence);
 	receiver->bit_index = V90_MP_FRAME_SYNC_BITS + 1u;
 	receiver->stage = V90_MP_RECEIVE_TYPE;
 }

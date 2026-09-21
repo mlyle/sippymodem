@@ -102,8 +102,7 @@ static size_t map_first_bit(size_t interval)
 static void encode_header(
 	uint8_t *frame, const struct v90_cp_parameters *parameters)
 {
-	for (size_t index = 0; index < 17u; ++index)
-		packed_msb_set_bit(frame, index, true);
+	pcm_control_frame_write_prefix(frame);
 	packed_msb_set_bit(
 		frame, CP_KIND_BIT, parameters->kind == V90_CP_DATA);
 	packed_msb_write_lsb_field(

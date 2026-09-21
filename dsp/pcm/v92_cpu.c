@@ -94,8 +94,7 @@ static size_t map_first_bit(size_t interval)
 
 static void encode_prefix(uint8_t *frame, unsigned int type)
 {
-	for (size_t bit = 0u; bit < 17u; ++bit)
-		packed_msb_set_bit(frame, bit, true);
+	pcm_control_frame_write_prefix(frame);
 	packed_msb_write_lsb_field(
 		frame, CPU_TYPE_FIRST_BIT, CPU_TYPE_BITS, type);
 }

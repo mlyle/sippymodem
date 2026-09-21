@@ -22,6 +22,30 @@ static bool test_sync_prefix(void)
 	return true;
 }
 
+static bool test_write_prefix(void)
+{
+	uint8_t frame[16], expected[sizeof(frame)];
+
+	for (unsigned int pattern = 0; pattern <= UINT8_MAX; ++pattern) {
+		for (size_t offset = 0; offset < 8; ++offset) {
+			memset(frame, pattern, sizeof(frame));
+			memcpy(expected, frame, sizeof(expected));
+			for (size_t bit = 0; bit < 18u; ++bit) {
+				uint8_t mask = (uint8_t)(0x80u >> (bit % 8u));
+
+				if (bit < 17u)
+					expected[offset + bit / 8u] |= mask;
+				else
+					expected[offset + bit / 8u] &= (uint8_t)~mask;
+			}
+			pcm_control_frame_write_prefix(frame + offset);
+			CHECK(memcmp(frame, expected, sizeof(frame)) == 0,
+			      "prefix write damaged payload/guard at %zu/%u", offset, pattern);
+		}
+	}
+	return true;
+}
+
 static bool test_sync_suffix(void)
 {
 	uint8_t frame[32];
@@ -207,7 +231,8 @@ static bool test_constellation_rows(void)
 
 int main(void)
 {
-	return test_sync_prefix() && test_sync_suffix() && test_start_ranges() &&
+	return test_sync_prefix() && test_write_prefix() &&
+	       test_sync_suffix() && test_start_ranges() &&
 	       test_known_check() && test_payload_bounds() &&
 	       test_constellation_rows() ? 0 : 1;
 }

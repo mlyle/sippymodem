@@ -7,6 +7,15 @@
 #include "packed_bits.h"
 #include "pcm_constellation.h"
 
+/* Write the seventeen sync ones and first zero start bit into three bytes.
+ * The caller owns storage bounds; information bits 18 onward are preserved. */
+static inline void pcm_control_frame_write_prefix(uint8_t *frame)
+{
+	frame[0] = UINT8_MAX;
+	frame[1] = UINT8_MAX;
+	frame[2] = (uint8_t)((frame[2] & 0x3fu) | 0x80u);
+}
+
 /* The caller owns storage bounds. A complete prefix needs three bytes:
  * seventeen one bits followed by the first zero start bit, MSB first. */
 static inline bool pcm_control_frame_prefix_is_valid(const uint8_t *frame)

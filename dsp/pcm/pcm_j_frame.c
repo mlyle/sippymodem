@@ -4,6 +4,7 @@
 
 #include "crc16_ccitt_false.h"
 #include "packed_bits.h"
+#include "pcm_control_frame.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -58,9 +59,7 @@ enum pcm_j_frame_result pcm_j_frame_encode(
 
 	if (frame == NULL || frame_capacity < sizeof(encoded))
 		return PCM_J_FRAME_INVALID_ARGUMENT;
-	for (size_t index = FRAME_SYNC_FIRST_BIT;
-	     index < PCM_J_FRAME_SYNC_BITS; ++index)
-		packed_msb_set_bit(encoded, index, true);
+	pcm_control_frame_write_prefix(encoded);
 	encode_payload(encoded, payload);
 	encode_crc(encoded, payload_crc(payload));
 	memcpy(frame, encoded, sizeof(encoded));

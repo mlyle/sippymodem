@@ -243,8 +243,7 @@ static void encode_common(
 	uint8_t *sequence, const struct v90_mp_parameters *parameters,
 	bool type1)
 {
-	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(sequence, bit, true);
+	pcm_control_frame_write_prefix(sequence);
 	packed_msb_set_bit(sequence, V90_MP_TYPE_BIT, type1);
 	packed_msb_write_lsb_field(
 		sequence, V90_MP_RATE_FIRST_BIT, V90_MP_RATE_BITS,

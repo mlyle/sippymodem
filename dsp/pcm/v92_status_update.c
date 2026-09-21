@@ -64,8 +64,7 @@ enum v92_status_update_result v92_status_update_encode(
 	if (frame_capacity < byte_count)
 		return V92_STATUS_UPDATE_OUTPUT_TOO_SMALL;
 
-	for (size_t bit = 0u; bit < 17u; ++bit)
-		packed_msb_set_bit(encoded, bit, true);
+	pcm_control_frame_write_prefix(encoded);
 	packed_msb_set_bit(encoded, STATUS_MARKER_BIT, true);
 	packed_msb_write_lsb_field(
 		encoded, STATUS_PAYLOAD_FIRST_BIT,

@@ -156,9 +156,7 @@ static void encode_common_parameters(
 	uint8_t *frame, const struct v34_mp_parameters *parameters,
 	bool type1)
 {
-	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
-	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
-		packed_msb_set_bit(frame, index, true);
+	pcm_control_frame_write_prefix(frame);
 	packed_msb_set_bit(frame, V34_MP_TYPE_BIT, type1);
 	packed_msb_write_lsb_field(
 		frame, V34_MP_MAXIMUM_CALL_TO_ANSWER_RATE_FIRST_BIT,
@@ -454,9 +452,7 @@ static void clear_receive_frame(struct v34_mp_receiver *receiver)
 static void begin_receive_frame(struct v34_mp_receiver *receiver)
 {
 	clear_receive_frame(receiver);
-	for (size_t index = 0;
-	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index)
-		packed_msb_set_bit(receiver->frame, index, true);
+	pcm_control_frame_write_prefix(receiver->frame);
 	receiver->bit_index = V34_MP_TYPE_BIT;
 	receiver->stage = V34_MP_RECEIVE_TYPE;
 }

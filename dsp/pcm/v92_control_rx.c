@@ -174,8 +174,7 @@ static void finish_candidate(struct v92_control_rx *receiver, bool accepted)
 static void begin_candidate(struct v92_control_rx *receiver)
 {
 	clear_candidate(receiver);
-	for (size_t bit = 0u; bit < CONTROL_SYNC_BITS; ++bit)
-		packed_msb_set_bit(receiver->frame, bit, true);
+	pcm_control_frame_write_prefix(receiver->frame);
 	receiver->bit_index = CONTROL_MARKER_BIT;
 	receiver->stage = V92_CONTROL_RX_READ_MARKER;
 }

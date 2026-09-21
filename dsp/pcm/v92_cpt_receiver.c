@@ -153,8 +153,7 @@ static void clear_frame(struct v92_cpt_receiver *receiver)
 static void begin_frame(struct v92_cpt_receiver *receiver)
 {
 	clear_frame(receiver);
-	for (size_t index = 0; index < CPT_SYNC_BITS; ++index)
-		packed_msb_set_bit(receiver->frame, index, true);
+	pcm_control_frame_write_prefix(receiver->frame);
 	receiver->bit_index = CPT_INFORMATION_FIRST_BIT;
 	receiver->stage = V92_CPT_RECEIVER_READ_HEADER;
 }
