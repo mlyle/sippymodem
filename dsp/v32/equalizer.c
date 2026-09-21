@@ -146,7 +146,7 @@ enum v32_equalizer_result v32_equalizer_init(
 
 static enum v32_equalizer_result set_control(
 	struct v32_equalizer *equalizer,
-	enum equalizer_control control, uint16_t value)
+	enum equalizer_control control, unsigned int value)
 {
 	struct v32_equalizer next;
 
@@ -177,7 +177,7 @@ enum v32_equalizer_result v32_equalizer_set_adaptation(
 	enum v32_equalizer_adaptation adaptation)
 {
 	return set_control(
-		equalizer, CONTROL_ADAPTATION, (uint16_t)adaptation);
+		equalizer, CONTROL_ADAPTATION, (unsigned int)adaptation);
 }
 
 enum v32_equalizer_result v32_equalizer_set_carrier_tracking(

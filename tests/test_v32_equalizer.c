@@ -386,6 +386,9 @@ static bool test_lineage_and_pending_contract(void)
 	      v32_equalizer_set_adaptation(
 		      &first, V32_EQUALIZER_ADAPTATION_FINE) ==
 		      V32_EQUALIZER_DECISION_PENDING &&
+	      v32_equalizer_set_adaptation(
+		      &first, (enum v32_equalizer_adaptation)0x10000) ==
+		      V32_EQUALIZER_DECISION_PENDING &&
 	      v32_equalizer_set_carrier_tracking(&first, false) ==
 		      V32_EQUALIZER_DECISION_PENDING &&
 	      v32_equalizer_restart_carrier_acquisition(&first) ==
@@ -657,11 +660,16 @@ static bool test_rejected_calls_are_transactional(void)
 		      V32_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
 	      "overlap rejection changed owner state");
-	CHECK(v32_equalizer_set_adaptation(
-		      &equalizer, (enum v32_equalizer_adaptation)-1) ==
-		      V32_EQUALIZER_INVALID_ARGUMENT &&
-	      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
-	      "invalid adaptation mode changed owner state");
+	const int invalid_modes[] = {
+		-1, 3, 0x10000, 0x10001, 0x10002, -0x10000, INT_MIN, INT_MAX,
+	};
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid_modes); ++index) {
+		CHECK(v32_equalizer_set_adaptation(
+			      &equalizer, (enum v32_equalizer_adaptation)invalid_modes[index]) ==
+			      V32_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved, sizeof(saved)) == 0,
+		      "adaptation %d changed owner state", invalid_modes[index]);
+	}
 	equalizer.history_index = V32_EQUALIZER_TAPS;
 	CHECK(!v32_equalizer_is_valid(&equalizer) &&
 	      v32_equalizer_process(
