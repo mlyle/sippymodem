@@ -16,10 +16,12 @@
 #include <string.h>
 
 enum {
-	/* The tone-pair detector already rejects weak and ambiguous energy.
-	 * More than four detector windows are enough to answer the short mark
-	 * presented by interoperating V.21 modems without reacting to a transient. */
-	FSK300_MARK_ACQUIRE_SAMPLES = MODEM_RATE * 15 / 1000,
+	FSK300_DETECTOR_WINDOW =
+		(MODEM_RATE + FSK300_BIT_RATE / 2) / FSK300_BIT_RATE,
+	/* A 15 ms mark supplies this many consecutive complete detector windows.
+	 * Do not count the detector's initial window fill as extra carrier time. */
+	FSK300_MARK_ACQUIRE_SAMPLES =
+		MODEM_RATE * 15 / 1000 - FSK300_DETECTOR_WINDOW + 1,
 	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
 	/* Qualify three 20 ms mark blocks before accepting a fresh carrier. */
@@ -32,9 +34,6 @@ enum {
 	BELL103_ANSWERER_SPACE_HZ = 2025,
 	FSK300_TRANSMIT_AMPLITUDE = 8192,
 	FSK300_METRIC_SMOOTHING_SHIFT = 2,
-	FSK300_DETECTOR_WINDOW =
-		(MODEM_RATE + FSK300_BIT_RATE / 2) /
-		FSK300_BIT_RATE,
 };
 
 /* Bell 103 assigns the low-frequency pair to the originating station and
@@ -289,6 +288,15 @@ static int receive_samples(
 			    &datapump->receiver, receive[index], &bit, &ready) !=
 		    FSK_OK)
 			return -1;
+		if (datapump->training_state == FSK300_TRAINING_WAIT_MARK &&
+		    datapump->remote_mark_samples < FSK300_MARK_ACQUIRE_SAMPLES) {
+			struct fsk_measurement measurement =
+				fsk_receiver_measure(&datapump->receiver);
+
+			/* Qualify continuous mark; retain success until the block ends. */
+			datapump->remote_mark_samples = mark_is_present(&measurement) ?
+				datapump->remote_mark_samples + 1u : 0;
+		}
 		if (!ready || bits == NULL)
 			continue;
 		if (produced == capacity)
@@ -307,7 +315,6 @@ static void add_bounded(
 
 static int advance_training(
 	struct fsk300_datapump *datapump,
-	const struct fsk_measurement *measurement,
 	unsigned int count)
 {
 	if (training_session_advance(&datapump->training, count) !=
@@ -315,11 +322,6 @@ static int advance_training(
 		return DPSTAT_ERROR;
 
 	if (datapump->training_state == FSK300_TRAINING_WAIT_MARK) {
-		if (mark_is_present(measurement)) {
-			datapump->remote_mark_samples += count;
-		} else {
-			datapump->remote_mark_samples = 0;
-		}
 		if (datapump->remote_mark_samples < FSK300_MARK_ACQUIRE_SAMPLES)
 			return DPSTAT_OK;
 		datapump->training_state = datapump->originator ?
@@ -398,10 +400,10 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		sizeof(received_bits));
 	if (received_count < 0)
 		return DPSTAT_ERROR;
-	measurement = fsk_receiver_measure(&datapump->receiver);
 
 	if (datapump->training_state != FSK300_TRAINING_ONLINE)
-		return advance_training(datapump, &measurement, (unsigned int)count);
+		return advance_training(datapump, (unsigned int)count);
+	measurement = fsk_receiver_measure(&datapump->receiver);
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (datapump->missing_carrier_samples != 0) {

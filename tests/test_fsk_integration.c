@@ -9,6 +9,7 @@
 #include <g711.h>
 #include <media.h>
 #include <qam.h>
+#include <v21.h>
 #include <v22_datapump.h>
 #include <v22_framing.h>
 #include <v23_datapump.h>
@@ -3770,6 +3771,104 @@ static bool run_v90_recording_replay(
 	return true;
 }
 
+enum fsk_mark_fixture {
+	FSK_MARK_FRAGMENTED,
+	FSK_MARK_INITIAL,
+	FSK_MARK_BRIEF,
+};
+
+static bool run_fsk300_mark_qualification(
+	enum DP_ID id, int caller, unsigned int fragment, enum fsk_mark_fixture fixture)
+{
+	enum { MARK_LENGTH = MODEM_RATE * 15 / 1000 };
+	struct modem modem = { 0 };
+	struct dp_operations *operations = modem_dp_get_registered_ops(id);
+	struct fsk_channel channel = caller ? v21_channel_2 : v21_channel_1;
+	struct fsk_tone_generator tones;
+	int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
+	struct dp *dp;
+	unsigned int connected = 0;
+	/* End a qualifying short mark between native block boundaries. */
+	unsigned int mark_start = fixture == FSK_MARK_INITIAL ? 0 :
+		240 + (id == DP_V21 ? 9 - caller : 8 + caller);
+	bool valid = true;
+
+	if (id == DP_B103) {
+		channel.mark_frequency_hz = caller ? 2225 : 1270;
+		channel.space_frequency_hz = caller ? 2025 : 1070;
+	}
+	CHECK(operations != NULL &&
+	      fsk_tone_generator_init(&tones, &channel, 8192) == FSK_OK,
+	      "FSK qualification fixture did not initialize");
+	modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 10;
+	dp = operations->create(&modem, id, caller, MODEM_RATE, MODEM_FRAG,
+				operations);
+	CHECK(dp != NULL, "FSK qualification datapump did not initialize");
+	for (unsigned int at = 0; at < 2 * MODEM_RATE && valid;) {
+		unsigned int count = fragment;
+		int status;
+
+		if (count > 2 * MODEM_RATE - at)
+			count = 2 * MODEM_RATE - at;
+		for (unsigned int index = 0; index < count; ++index) {
+			/* Short marks end each native block, but never last the
+			 * required 15 ms. Follow them with a genuine carrier. */
+			uint8_t bit = at + index >= MODEM_RATE ||
+				(at + index) % MODEM_FRAG >= 13;
+
+			if (fixture != FSK_MARK_FRAGMENTED)
+				bit = at + index >= mark_start &&
+					at + index < mark_start + MARK_LENGTH;
+			if (fsk_tone_generator_sample(
+				    &tones, bit, &receive[index]) != FSK_OK) {
+				valid = false;
+				break;
+			}
+			/* Also protect the 15 ms mark seen by a fresh detector. */
+			if (fixture == FSK_MARK_INITIAL && at + index >= MARK_LENGTH)
+				receive[index] = 0;
+		}
+		if (!valid)
+			break;
+		status = operations->process(dp, receive, transmit, (int)count);
+		at += count;
+		if (status == DPSTAT_CONNECT) {
+			connected = at;
+			break;
+		}
+		valid = status == DPSTAT_OK;
+	}
+	CHECK(operations->delete(dp) == 0,
+	      "FSK qualification datapump did not release");
+	CHECK(valid && connected > (fixture == FSK_MARK_FRAGMENTED ?
+				   MODEM_RATE : mark_start + MARK_LENGTH) &&
+	      connected <= 2 * MODEM_RATE,
+	      "FSK id=%d caller=%d fragment=%u fixture=%d connected at %u, valid=%d",
+	      id, caller, fragment, fixture, connected, valid);
+	return true;
+}
+
+static bool test_fsk300_mark_qualification(void)
+{
+	const enum DP_ID ids[] = { DP_V21, DP_B103 };
+	const unsigned int fragments[] = { 1, 7, MODEM_FRAG };
+	bool valid = true;
+
+	CHECK(fsk300_datapump_register() == 0, "FSK registration failed");
+	for (size_t mode = 0; mode < ARRAY_LENGTH(ids); ++mode)
+		for (int caller = 0; caller <= 1; ++caller)
+			for (size_t fragment = 0; fragment < ARRAY_LENGTH(fragments);
+			     ++fragment)
+				for (enum fsk_mark_fixture fixture = FSK_MARK_FRAGMENTED;
+				     fixture <= FSK_MARK_BRIEF; ++fixture)
+					if (!run_fsk300_mark_qualification(
+						    ids[mode], caller, fragments[fragment],
+						    fixture))
+						valid = false;
+	CHECK(fsk300_datapump_unregister() == 0, "FSK deregistration failed");
+	return valid;
+}
+
 int main(void)
 {
 	const char *v32_recording_path =
@@ -4360,6 +4459,10 @@ int main(void)
 
 	if (v34_matrix_filter != NULL && v34_matrix_filter[0] != '\0')
 		return run_v34_rate_matrix(v34_matrix_filter) ? 0 : 1;
+	fprintf(stderr, "[ RUN      ] continuous 300-bit/s FSK mark qualification\n");
+	if (!test_fsk300_mark_qualification())
+		return 1;
+	fprintf(stderr, "[       OK ] continuous 300-bit/s FSK mark qualification\n");
 	fprintf(stderr, "[ RUN      ] bounded recording replay output\n");
 	if (!run_recording_replay_output()) {
 		fprintf(stderr, "[  FAILED  ] bounded recording replay output\n");
