@@ -11,23 +11,6 @@ enum {
 	AGC_WEIGHT_TOTAL_Q15 = 0x8000,
 };
 
-/* Exact formula for the normalized 128-entry reciprocal profile. */
-static uint16_t reciprocal_profile(
-	uint16_t value, uint16_t *exponent)
-{
-	uint16_t normalized = value;
-	uint16_t shift = 0;
-	uint16_t high;
-
-	while ((normalized & UINT16_C(0x8000)) == 0) {
-		normalized = (uint16_t)(normalized << 1);
-		shift++;
-	}
-	high = (uint16_t)(((uint32_t)normalized + 0x80u) >> 8);
-	*exponent = shift;
-	return (uint16_t)((UINT32_C(1) << 22) / high);
-}
-
 enum agc_result agc_measure_level_s16(
 	const int16_t *samples, size_t count, int16_t *level)
 {
@@ -155,7 +138,7 @@ enum agc_result agc_process(
 		next.smoothed_level = block_gain;
 		if (next.gain_mode == AGC_GAIN_TRACKING && block_gain != 0) {
 			uint16_t exponent;
-			uint16_t reciprocal = reciprocal_profile(
+			uint16_t reciprocal = normalized_reciprocal_q15(
 				(uint16_t)block_gain, &exponent);
 
 			next.gain_shift = (int16_t)exponent - 1;

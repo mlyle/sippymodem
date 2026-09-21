@@ -146,6 +146,12 @@ static bool test_arithmetic_shift(void)
 		{ UINT32_C(0x80000000), 0u, INT32_MIN },
 		{ UINT32_C(0x40000000), 1u, 0x20000000 },
 		{ UINT32_C(0x80000000), 1u, -1073741824 },
+		{ 16383u, 14u, 0 },
+		{ 16384u, 14u, 1 },
+		{ 16385u, 14u, 1 },
+		{ (uint32_t)-16383, 14u, -1 },
+		{ (uint32_t)-16384, 14u, -1 },
+		{ (uint32_t)-16385, 14u, -2 },
 		{ UINT32_MAX, 15u, -1 },
 		{ 32767u, 15u, 0 },
 		{ 32768u, 15u, 1 },
@@ -153,6 +159,12 @@ static bool test_arithmetic_shift(void)
 		{ (uint32_t)-32769, 15u, -2 },
 		{ UINT32_C(0x7fffffff), 15u, 65535 },
 		{ UINT32_C(0x80000000), 15u, -65536 },
+		{ 65535u, 16u, 0 },
+		{ 65536u, 16u, 1 },
+		{ 65537u, 16u, 1 },
+		{ (uint32_t)-65535, 16u, -1 },
+		{ (uint32_t)-65536, 16u, -1 },
+		{ (uint32_t)-65537, 16u, -2 },
 		{ UINT32_C(0x80000000), 31u, -1 },
 		{ UINT32_C(0x7fffffff), 31u, 0 },
 		{ UINT32_C(0x80000000), 32u, -1 },
@@ -162,8 +174,11 @@ static bool test_arithmetic_shift(void)
 	for (size_t index = 0u; index < ARRAY_LENGTH(cases); ++index)
 		CHECK(arithmetic_shift_right_u32(
 			      cases[index].input, cases[index].shift) ==
-			      cases[index].expected,
-		      "arithmetic shift case %zu changed", index);
+			      cases[index].expected &&
+		      arithmetic_shift_right_u64(
+			      (uint64_t)(int64_t)wrap_s32_from_u32(cases[index].input),
+			      cases[index].shift) == cases[index].expected,
+		      "32/64-bit arithmetic shift case %zu changed", index);
 	CHECK(arithmetic_shift_right_u64(
 		      UINT64_C(0x8000000000000000), 1u) ==
 		      INT64_C(-4611686018427387904) &&
@@ -184,6 +199,20 @@ static bool test_arithmetic_shift(void)
 	return true;
 }
 
+static bool test_normalized_reciprocal(void)
+{
+	uint16_t exponent;
+
+	for (unsigned int shift = 0; shift < 16u; ++shift)
+		CHECK(normalized_reciprocal_q15((uint16_t)(0x8000u >> shift),
+			      &exponent) == 32768u && exponent == shift,
+		      "reciprocal normalization changed at shift %u", shift);
+	CHECK(normalized_reciprocal_q15(0xff7fu, &exponent) == 16448u && exponent == 0 &&
+	      normalized_reciprocal_q15(0xff80u, &exponent) == 16384u && exponent == 0,
+	      "reciprocal high-byte rounding lost the 256 endpoint");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -196,6 +225,7 @@ int main(void)
 		{ "fixed-width words", test_fixed_width_words },
 		{ "wide energy arithmetic", test_wide_energy_arithmetic },
 		{ "arithmetic shift", test_arithmetic_shift },
+		{ "normalized reciprocal", test_normalized_reciprocal },
 	};
 	unsigned int failures = 0;
 

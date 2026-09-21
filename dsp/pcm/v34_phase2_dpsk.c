@@ -292,16 +292,9 @@ v34_phase2_dpsk_receiver_init(
 
 static int16_t q14_shift(int64_t accumulator, bool round)
 {
-	int64_t shifted;
-
 	if (round)
 		accumulator += INT64_C(8192);
-	if (accumulator >= 0)
-		shifted = accumulator / INT64_C(16384);
-	else
-		shifted = -((-accumulator + INT64_C(16383)) /
-			    INT64_C(16384));
-	return clamp_s16(shifted);
+	return clamp_s16(arithmetic_shift_right_u64((uint64_t)accumulator, 14u));
 }
 
 static int16_t select_carrier(
@@ -331,12 +324,7 @@ static int16_t select_carrier(
 			((int32_t)receiver->carrier_history[recent] +
 			 receiver->carrier_history[old]);
 	}
-	if (accumulator >= 0)
-		accumulator /= INT64_C(65536);
-	else
-		accumulator = -((-accumulator + INT64_C(65535)) /
-				INT64_C(65536));
-	return clamp_s16(accumulator);
+	return clamp_s16(arithmetic_shift_right_u64((uint64_t)accumulator, 16u));
 }
 
 static int16_t interpolate(

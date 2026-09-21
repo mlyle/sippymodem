@@ -135,6 +135,27 @@ static inline int16_t multiply_shift_s16(
 		(uint32_t)((int32_t)left * right), shift));
 }
 
+/* Quantized reciprocal profile, not a mathematically exact reciprocal.
+ * value must be nonzero and exponent writable. Return a Q15 mantissa and
+ * store the 0..15 left shifts that normalize value's leading one to bit 15.
+ * Round the normalized high byte upward at ties (128..256), then truncate
+ * 2^22 divided by that value; the returned mantissa is 16384..32768. */
+static inline uint16_t normalized_reciprocal_q15(
+	uint16_t value, uint16_t *exponent)
+{
+	uint16_t normalized = value;
+	uint16_t shift = 0;
+	uint16_t high;
+
+	while ((normalized & UINT16_C(0x8000)) == 0) {
+		normalized = (uint16_t)(normalized << 1);
+		shift++;
+	}
+	high = (uint16_t)(((uint32_t)normalized + 0x80u) >> 8);
+	*exponent = shift;
+	return (uint16_t)((UINT32_C(1) << 22) / high);
+}
+
 /* Euclid's algorithm, with gcd(0, 0) defined as zero. */
 static inline uint64_t gcd_u64(uint64_t left, uint64_t right)
 {

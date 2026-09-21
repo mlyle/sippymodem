@@ -16,22 +16,6 @@ enum {
 static const double FIXED_PHASE_PI =
 	3.1415926535897932384626433832795;
 
-static uint16_t reciprocal_q15(
-	uint16_t value, uint16_t *exponent)
-{
-	uint16_t normalized = value;
-	uint16_t shift = 0;
-	uint16_t high;
-
-	while ((normalized & UINT16_C(0x8000)) == 0) {
-		normalized = (uint16_t)(normalized << 1);
-		shift++;
-	}
-	high = (uint16_t)(((uint32_t)normalized + 0x80u) >> 8);
-	*exponent = shift;
-	return (uint16_t)((UINT32_C(1) << 22) / high);
-}
-
 static uint16_t atan_profile_u15(uint16_t ratio_q8)
 {
 	return (uint16_t)lround(
@@ -56,10 +40,10 @@ uint16_t fixed_phase_atan2_u15(int16_t x, int16_t y)
 	absolute_x = (uint16_t)magnitude_s16(x);
 	absolute_y = (uint16_t)magnitude_s16(y);
 	if (absolute_x < absolute_y) {
-		mantissa = reciprocal_q15(absolute_y, &exponent);
+		mantissa = normalized_reciprocal_q15(absolute_y, &exponent);
 		scale = (uint32_t)mantissa * absolute_x;
 	} else {
-		mantissa = reciprocal_q15(absolute_x, &exponent);
+		mantissa = normalized_reciprocal_q15(absolute_x, &exponent);
 		scale = (uint32_t)mantissa * absolute_y;
 	}
 	index = (uint16_t)(((scale >> 15) << (exponent & 0x1fu)) &
