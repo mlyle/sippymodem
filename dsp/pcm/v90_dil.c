@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "packed_bits.h"
+#include "pcm_control_frame.h"
 #include "pcm_dil_descriptor.h"
 
 #include <stdbool.h>
@@ -174,11 +175,7 @@ bool v90_dil_parameters_are_valid(
 
 static bool initial_framing_is_valid(const uint8_t *descriptor)
 {
-	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(descriptor, bit) == 0u)
-			return false;
-	}
-	return packed_msb_bit(descriptor, 17u) == 0u &&
+	return pcm_control_frame_prefix_is_valid(descriptor) &&
 	       packed_msb_bit(descriptor, 34u) == 0u;
 }
 

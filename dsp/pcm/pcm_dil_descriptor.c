@@ -3,6 +3,7 @@
 #include "pcm_dil_descriptor.h"
 
 #include "packed_bits.h"
+#include "pcm_control_frame.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -97,15 +98,11 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 {
 	if (!span_is_valid(descriptor, capacity, layout))
 		return PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT;
-	if (packed_msb_read_msb_field(
-		    descriptor, 0u, PCM_DIL_FRAME_SYNC_BITS) != UINT32_C(0x1ffff))
+	if (!pcm_control_frame_prefix_is_valid(descriptor) ||
+	    !pcm_control_frame_starts_are_zero(
+		    descriptor, FRAME_START_FIRST_BIT,
+		    layout->crc_start_bit + 1u))
 		return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
-	for (size_t bit = FRAME_START_FIRST_BIT;
-	     bit <= layout->crc_start_bit;
-	     bit += PCM_DIL_FIELD_STRIDE_BITS) {
-		if (packed_msb_bit(descriptor, bit) != 0u)
-			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
-	}
 	if (!packed_msb_bits_are_zero(
 		    descriptor,
 		    layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u,
@@ -174,8 +171,7 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_initialize(
 		return PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT;
 	bytes = pcm_dil_descriptor_storage_bytes(layout);
 	memset(descriptor, 0, bytes);
-	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(descriptor, bit, true);
+	pcm_control_frame_write_prefix(descriptor);
 	return PCM_DIL_DESCRIPTOR_OK;
 }
 

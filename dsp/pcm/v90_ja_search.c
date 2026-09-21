@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "packed_bits.h"
+#include "pcm_control_frame.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -23,12 +24,7 @@ static bool collected_bits_are_valid(
 	if (search->bit_index < V90_DIL_FRAME_SYNC_BITS + 1u ||
 	    search->bit_index > V90_DIL_MAX_DESCRIPTOR_BITS)
 		return false;
-	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(search->descriptor, bit) == 0)
-			return false;
-	}
-	if (packed_msb_bit(
-		    search->descriptor, V90_DIL_FRAME_SYNC_BITS) != 0)
+	if (!pcm_control_frame_prefix_is_valid(search->descriptor))
 		return false;
 	if (search->bit_index < V90_DIL_HEADER_BITS) {
 		if (search->descriptor_bits != 0u)
@@ -109,8 +105,7 @@ bool v90_ja_search_parameters(
 static void start_descriptor(struct v90_ja_search *search)
 {
 	memset(search->descriptor, 0, sizeof(search->descriptor));
-	for (size_t bit = 0; bit < V90_DIL_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(search->descriptor, bit, true);
+	pcm_control_frame_write_prefix(search->descriptor);
 	search->bit_index = V90_DIL_FRAME_SYNC_BITS + 1u;
 	search->descriptor_bits = 0;
 	search->consecutive_ones = 0;

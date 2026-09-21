@@ -3,6 +3,7 @@
 #include "v92_ja_decoder.h"
 
 #include "packed_bits.h"
+#include "pcm_control_frame.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -43,8 +44,7 @@ bool v92_ja_decoder_is_valid(const struct v92_ja_decoder *decoder)
 static void start_descriptor(struct v92_ja_decoder *decoder)
 {
 	memset(decoder->descriptor, 0, sizeof(decoder->descriptor));
-	for (size_t bit = 0; bit < V92_PHASE3_FRAME_SYNC_BITS; ++bit)
-		packed_msb_set_bit(decoder->descriptor, bit, true);
+	pcm_control_frame_write_prefix(decoder->descriptor);
 	decoder->bit_index = V92_PHASE3_FRAME_SYNC_BITS + 1u;
 	decoder->descriptor_bits = 0u;
 	decoder->consecutive_ones = 0u;

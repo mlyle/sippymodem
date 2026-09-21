@@ -10,7 +10,7 @@
 #include <string.h>
 
 enum {
-	TEST_CAPACITY = 40,
+	TEST_CAPACITY = (PCM_DIL_DESCRIPTOR_MAX_BITS + 7u) / 8u + 1u,
 	CRC_INITIAL_REMAINDER = 0xffff,
 	CRC_REFLECTED_POLYNOMIAL = 0x8408,
 };
@@ -132,46 +132,30 @@ static bool check_layout(
 		      PCM_DIL_DESCRIPTOR_OK,
 	      "DIL CRC differed from the independent recurrence");
 
-	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit) {
+	for (size_t bit = 0; bit < expected_bytes * 8u; ++bit) {
+		bool fixed = bit < PCM_DIL_FRAME_SYNC_BITS ||
+			(bit <= layout->crc_start_bit && bit % 17u == 0u) ||
+			(bit > layout->crc_start_bit + PCM_DIL_CRC_BITS &&
+			 bit < layout->bit_count);
+		enum pcm_dil_descriptor_result expected = fixed ?
+			PCM_DIL_DESCRIPTOR_INVALID_FRAME :
+			bit < layout->bit_count ? PCM_DIL_DESCRIPTOR_CRC_MISMATCH :
+			PCM_DIL_DESCRIPTOR_OK;
+
 		toggle_packed_bit(descriptor, bit);
 		memcpy(saved, descriptor, sizeof(saved));
-		CHECK(pcm_dil_descriptor_validate_crc(
+		CHECK(pcm_dil_descriptor_validate_framing(
 			      descriptor, sizeof(descriptor), layout) ==
-			      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
-		      pcm_dil_descriptor_finalize(
-			      descriptor, sizeof(descriptor), layout) ==
-			      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
+			      (fixed ? PCM_DIL_DESCRIPTOR_INVALID_FRAME :
+				       PCM_DIL_DESCRIPTOR_OK) &&
+		      pcm_dil_descriptor_validate_crc(
+			      descriptor, sizeof(descriptor), layout) == expected &&
+		      (!fixed || pcm_dil_descriptor_finalize(
+			      descriptor, sizeof(descriptor), layout) == expected) &&
 		      memcmp(descriptor, saved, sizeof(descriptor)) == 0,
-		      "invalid DIL prefix bit %zu was not rejected transactionally", bit);
+		      "DIL mutation at bit %zu changed framing/CRC or output", bit);
 		toggle_packed_bit(descriptor, bit);
 	}
-
-	toggle_packed_bit(descriptor, 26u);
-	CHECK(pcm_dil_descriptor_validate_framing(
-		      descriptor, sizeof(descriptor), layout) ==
-		      PCM_DIL_DESCRIPTOR_OK &&
-	      pcm_dil_descriptor_validate_crc(
-		      descriptor, sizeof(descriptor), layout) ==
-		      PCM_DIL_DESCRIPTOR_CRC_MISMATCH,
-	      "damaged DIL information did not fail CRC");
-	toggle_packed_bit(descriptor, 26u);
-	toggle_packed_bit(descriptor, PCM_DIL_FRAME_SYNC_BITS * 2u);
-	memcpy(saved, descriptor, sizeof(descriptor));
-	CHECK(pcm_dil_descriptor_validate_framing(
-		      descriptor, sizeof(descriptor), layout) ==
-		      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
-	      pcm_dil_descriptor_finalize(
-		      descriptor, sizeof(descriptor), layout) ==
-		      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
-	      memcmp(descriptor, saved, sizeof(descriptor)) == 0,
-	      "invalid DIL start bit was not rejected transactionally");
-	toggle_packed_bit(descriptor, PCM_DIL_FRAME_SYNC_BITS * 2u);
-	toggle_packed_bit(
-		descriptor, layout->crc_start_bit + PCM_DIL_CRC_BITS + 1u);
-	CHECK(pcm_dil_descriptor_validate_framing(
-		      descriptor, sizeof(descriptor), layout) ==
-		      PCM_DIL_DESCRIPTOR_INVALID_FRAME,
-	      "nonzero DIL fill bit was accepted");
 	return true;
 }
 
@@ -181,8 +165,10 @@ static bool test_layouts_and_crc(void)
 		struct pcm_dil_descriptor_layout layout;
 		size_t bytes;
 	} cases[] = {
+		{ { 51, 69 }, 9 },
 		{ { 221, 240 }, 30 },
 		{ { 255, 276 }, 35 },
+		{ { 2669, PCM_DIL_DESCRIPTOR_MAX_BITS }, 336 },
 	};
 
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
