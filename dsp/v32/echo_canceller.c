@@ -24,7 +24,7 @@ static bool geometry_is_valid(
 	       oldest < V32_ECHO_REFERENCE_CAPACITY;
 }
 
-static bool state_header_is_valid(
+bool v32_echo_canceller_header_is_valid(
 	const struct v32_echo_canceller *canceller)
 {
 	return canceller != NULL &&
@@ -47,7 +47,7 @@ bool v32_echo_canceller_is_valid(
 	/* Keep the complete scan as a full-width reduction so it can vectorize. */
 	unsigned int finite = 1;
 
-	if (!state_header_is_valid(canceller))
+	if (!v32_echo_canceller_header_is_valid(canceller))
 		return false;
 	for (size_t index = 0; index < V32_ECHO_REFERENCE_CAPACITY;
 	     ++index) {
@@ -114,7 +114,7 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 {
 	double power;
 
-	if (!state_header_is_valid(canceller))
+	if (!v32_echo_canceller_header_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
 	if (!point_is_finite(reference) ||
 	    memory_regions_overlap(
@@ -240,7 +240,7 @@ enum v32_echo_result v32_echo_canceller_process(
 	double scale[V32_ECHO_PHASE_COUNT] = { 0 };
 	size_t bytes;
 
-	if (!state_header_is_valid(canceller))
+	if (!v32_echo_canceller_header_is_valid(canceller))
 		return V32_ECHO_INVALID_STATE;
 	if (count == 0)
 		return V32_ECHO_OK;

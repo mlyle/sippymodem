@@ -311,6 +311,71 @@ static bool test_reference_contract(void)
 	return true;
 }
 
+static bool test_echo_header_rejection(void)
+{
+	struct v32_echo_frontend valid, invalid, saved;
+	const struct v32_echo_reference reference = { .point = { 0.5, -0.25 } };
+
+	CHECK(v32_echo_frontend_init(&valid, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_ECHO_OK, "header fixture did not initialize");
+	for (unsigned int field = 0; field < 13; ++field) {
+		double cleaned = -123.0;
+		bool ready = true;
+
+		invalid = valid;
+		switch (field) {
+		case 0:
+			invalid.echo.near_delay_symbols = V32_ECHO_MAX_NEAR_DELAY_SYMBOLS + 1u;
+			break;
+		case 1:
+			invalid.echo.round_trip_symbols = V32_ECHO_MIN_ROUND_TRIP_SYMBOLS - 1u;
+			break;
+		case 2:
+			invalid.echo.round_trip_symbols = V32_ECHO_MAX_ROUND_TRIP_SYMBOLS + 1u;
+			break;
+		case 3:
+			invalid.echo.reference_write = V32_ECHO_REFERENCE_CAPACITY;
+			break;
+		case 4:
+			invalid.echo.reference_fill = V32_ECHO_REFERENCE_CAPACITY + 1u;
+			break;
+		case 5:
+			invalid.echo.reference_write = 1;
+			break;
+		case 6:
+			invalid.echo.phase = V32_ECHO_PHASE_COUNT;
+			break;
+		case 7:
+			invalid.echo.adaptation = -0.1;
+			break;
+		case 8:
+			invalid.echo.adaptation = NAN;
+			break;
+		case 9:
+			invalid.echo.adaptation = 1.1;
+			break;
+		case 10:
+			invalid.echo.adapting = true;
+			break;
+		case 11:
+			invalid.echo.phase = 1;
+			invalid.filter.phase = 7;
+			break;
+		case 12:
+			invalid.echo.reference_pending = true;
+			break;
+		}
+		saved = invalid;
+		CHECK(!v32_echo_frontend_is_valid(&invalid) &&
+		      v32_echo_frontend_sample(&invalid, 100, &reference,
+					      &cleaned, &ready) == V32_ECHO_INVALID_STATE &&
+		      memcmp(&invalid, &saved, sizeof(saved)) == 0 &&
+		      cleaned == -123.0 && ready,
+		      "invalid echo header field %u changed state or output", field);
+	}
+	return true;
+}
+
 static bool test_push_rollback(void)
 {
 	struct v32_echo_frontend frontend;
@@ -672,7 +737,7 @@ static bool test_fragmentation_reset_and_reentrancy(void)
 int main(void)
 {
 	if (!test_cadence_and_profile() || !test_reference_contract() ||
-	    !test_push_rollback() || !test_voice_band() ||
+	    !test_echo_header_rejection() || !test_push_rollback() || !test_voice_band() ||
 	    !test_composed_echo() ||
 	    !test_fragmentation_reset_and_reentrancy())
 		return 1;

@@ -64,29 +64,6 @@ _Static_assert(
 		V32_ECHO_FRONTEND_FILTER_TAPS,
 	"V.32 line filter has the wrong shape");
 
-static bool echo_header_is_valid(
-	const struct v32_echo_canceller *echo)
-{
-	size_t oldest;
-
-	if (echo == NULL ||
-	    echo->near_delay_symbols > V32_ECHO_MAX_NEAR_DELAY_SYMBOLS ||
-	    echo->round_trip_symbols < V32_ECHO_MIN_ROUND_TRIP_SYMBOLS ||
-	    echo->round_trip_symbols > V32_ECHO_MAX_ROUND_TRIP_SYMBOLS)
-		return false;
-	oldest = (size_t)echo->near_delay_symbols +
-		 (size_t)echo->round_trip_symbols +
-		 V32_ECHO_WINDOW_SYMBOLS - 1u;
-	return oldest < V32_ECHO_REFERENCE_CAPACITY &&
-	       echo->reference_write < V32_ECHO_REFERENCE_CAPACITY &&
-	       echo->reference_fill <= V32_ECHO_REFERENCE_CAPACITY &&
-	       (echo->reference_fill == V32_ECHO_REFERENCE_CAPACITY ||
-		echo->reference_write == echo->reference_fill) &&
-	       echo->phase < V32_ECHO_PHASE_COUNT &&
-	       qam_adaptation_is_valid(echo->adaptation) &&
-	       (!echo->adapting || echo->adaptation > 0.0);
-}
-
 static bool frontend_header_is_valid(
 	const struct v32_echo_frontend *frontend)
 {
@@ -97,7 +74,7 @@ static bool frontend_header_is_valid(
 		return false;
 	filter = &frontend->filter;
 	echo = &frontend->echo;
-	return echo_header_is_valid(echo) &&
+	return v32_echo_canceller_header_is_valid(echo) &&
 	       filter->history_write < V32_ECHO_FRONTEND_FILTER_TAPS &&
 	       filter->phase < V32_ECHO_FRONTEND_FILTER_PHASES &&
 	       filter->inputs_needed >= 1 && filter->inputs_needed <= 2 &&

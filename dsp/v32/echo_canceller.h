@@ -60,6 +60,11 @@ struct v32_echo_canceller {
 	bool adapting;
 };
 
+/* Cheap bounds and lifecycle checks shared with the line frontend. This does
+ * not scan reference samples or coefficients; is_valid performs that scan. */
+bool v32_echo_canceller_header_is_valid(
+	const struct v32_echo_canceller *canceller);
+
 enum v32_echo_result v32_echo_canceller_init(
 	struct v32_echo_canceller *canceller,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);
