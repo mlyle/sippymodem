@@ -163,6 +163,16 @@ static bool check_reciprocal_probe(
 		observe_probe(
 			&pair, &event, caller_was_probing, answerer_was_probing,
 			index, &observation);
+		if (pair.caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE)
+			CHECK(phase2_reciprocal_probe_is_complete(
+				      &pair.caller.reciprocal_probe.control) ==
+				      (observation.caller_probe_acknowledged != SIZE_MAX),
+			      "caller completion differs at sample %zu", index);
+		if (pair.answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE)
+			CHECK(phase2_reciprocal_probe_is_complete(
+				      &pair.answerer.reciprocal_probe.control) ==
+				      (observation.answerer_probe_measured != SIZE_MAX),
+			      "answerer completion differs at sample %zu", index);
 		if (pair.caller.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 		    pair.answerer.stage == TEST_ENDPOINT_RECIPROCAL_PROBE &&
 		    pair.caller.reciprocal_probe.control.phase ==
@@ -542,6 +552,7 @@ static bool test_bounded_failures(void)
 		      "caller response wait failed at sample %zu", samples);
 	}
 	CHECK(samples == PHASE2_RECIPROCAL_PROBE_TONE_A_WAIT_SAMPLES &&
+	      !phase2_reciprocal_probe_is_complete(&caller.control) &&
 	      caller.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
 	      caller.control.failure ==
 		      PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
@@ -576,6 +587,7 @@ static bool test_bounded_failures(void)
 		      PHASE2_PROBE_TURNAROUND_MAXIMUM_WAIT_SAMPLES -
 			      answerer_start_elapsed &&
 	      answerer.control.phase == PHASE2_RECIPROCAL_PROBE_FAILED &&
+	      !phase2_reciprocal_probe_is_complete(&answerer.control) &&
 	      answerer.control.failure ==
 		      PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND &&
 	      event.kind ==
@@ -681,6 +693,8 @@ static bool test_validation(void)
 	struct phase2_reciprocal_probe_event event_before = event;
 	int16_t transmit = 1234;
 
+	CHECK(!phase2_reciprocal_probe_is_complete(NULL),
+	      "absent reciprocal probe is complete");
 	CHECK(completed_turnaround_states(
 		      &caller_turnaround, &answerer_turnaround),
 	      "reciprocal-probe validation fixtures did not initialize");

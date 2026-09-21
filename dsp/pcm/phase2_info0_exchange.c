@@ -120,7 +120,6 @@ enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
 {
 	struct phase2_info0_exchange restarted;
 	struct v34_phase2_info_audio_transmitter transmitter;
-	int16_t nominal_amplitude;
 
 	if (!phase2_info0_exchange_is_valid(exchange) ||
 	    exchange->transmit_phase != PHASE2_INFO0_TONE ||
@@ -129,13 +128,11 @@ enum phase2_info0_exchange_result phase2_info0_exchange_restart_info(
 	if (local_payload_bit_count !=
 	    exchange->info_transmitter.frame.payload_bit_count)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
-	nominal_amplitude = exchange->signal_role == PHASE2_SIGNAL_A ?
-				exchange->tone_transmitter.guard_amplitude :
-				exchange->tone_transmitter.carrier_amplitude;
 	if (v34_phase2_info_audio_transmitter_init(
 		    &transmitter,
 		    v34_phase2_station_for_signal(exchange->signal_role),
-		    nominal_amplitude, local_payload,
+		    v34_phase2_tone_nominal_amplitude(&exchange->tone_transmitter),
+		    local_payload,
 		    local_payload_bit_count) != V34_PHASE2_INFO_AUDIO_OK)
 		return PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 

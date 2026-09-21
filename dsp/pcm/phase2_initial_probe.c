@@ -14,17 +14,6 @@ static bool signal_is_b(const struct phase2_info0_exchange *exchange)
 	return exchange->signal_role == PHASE2_SIGNAL_B;
 }
 
-static int16_t nominal_amplitude(
-	const struct phase2_info0_exchange *exchange)
-{
-	const struct v34_phase2_tone_transmitter *tone =
-		&exchange->tone_transmitter;
-
-	return signal_is_b(exchange) ?
-		       tone->carrier_amplitude :
-		       tone->guard_amplitude;
-}
-
 static bool signal_b_path_is_valid(
 	const struct phase2_initial_probe *probe)
 {
@@ -158,7 +147,7 @@ phase2_initial_probe_init(
 			PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
 		if (v34_phase2_probe_sequence_init(
 			    &initialized.path.transmit,
-			    nominal_amplitude(exchange),
+			    v34_phase2_tone_nominal_amplitude(&exchange->tone_transmitter),
 			    completed_ranging->round_trip_delay_samples) !=
 		    V34_PHASE2_PROBE_SEQUENCE_OK)
 			return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;

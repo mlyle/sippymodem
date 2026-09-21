@@ -72,6 +72,16 @@ struct phase2_reciprocal_probe {
 	uint16_t signal_b_tone_wait_samples;
 };
 
+/* Completion of a valid role-specific probe, without revalidating its DSP
+ * state. Signal B has been acknowledged; Signal A has measured the probe. */
+static inline bool phase2_reciprocal_probe_is_complete(
+	const struct phase2_reciprocal_probe *probe)
+{
+	return probe != NULL &&
+	       (probe->phase == PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE ||
+		probe->phase == PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE);
+}
+
 /* Continue after probe turnaround. Signal B transmits reciprocal L1/L2, then
  * waits silently for a bounded Tone-A response if L2 reaches its wire limit.
  * Signal A measures the probe and raises Tone A when the fixed windows complete. */

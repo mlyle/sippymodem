@@ -287,11 +287,8 @@ static bool ready_for_info1(const struct pcm_phase2 *phase2)
 	    phase2->stage != PCM_PHASE2_RECIPROCAL_PROBE ||
 	    !phase2->remote_probe_stored)
 		return false;
-	return phase2->local_role == V90_DIGITAL_MODEM ?
-		       phase2->state.reciprocal_probe.control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
-		       phase2->state.reciprocal_probe.control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
+	return phase2_reciprocal_probe_is_complete(
+		&phase2->state.reciprocal_probe.control);
 }
 
 bool pcm_phase2_is_ready_for_info1(const struct pcm_phase2 *phase2)

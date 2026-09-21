@@ -249,11 +249,8 @@ static bool ready_for_info1(const struct v34_phase2 *phase2)
 	if (phase2->failure != V34_PHASE2_FAILURE_NONE ||
 	    phase2->stage != V34_PHASE2_RECIPROCAL_PROBE)
 		return false;
-	return phase2->local_role == V34_CALLING_STATION ?
-		       phase2->state.reciprocal_probe.control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
-		       phase2->state.reciprocal_probe.control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
+	return phase2_reciprocal_probe_is_complete(
+		&phase2->state.reciprocal_probe.control);
 }
 
 bool v34_phase2_is_ready_for_info1(const struct v34_phase2 *phase2)

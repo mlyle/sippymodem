@@ -10,25 +10,11 @@ static enum v34_station_role probe_role(
 	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
 }
 
-static bool completed_probe_matches_role(
+static const struct v34_phase2_tone_transmitter *probe_tone(
 	const struct v34_phase2_reciprocal_probe *probe)
 {
-	return probe_role(probe) == V34_CALLING_STATION ?
-		       probe->control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
-		       probe->control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
-}
-
-static int16_t probe_nominal_amplitude(
-	const struct v34_phase2_reciprocal_probe *probe)
-{
-	const struct v34_phase2_tone_transmitter *tone =
-		&probe->turnaround.initial_probe.ranging.info0_exchange
-			 .transport.tone_transmitter;
-
-	return probe_role(probe) == V34_CALLING_STATION ?
-		       tone->carrier_amplitude : tone->guard_amplitude;
+	return &probe->turnaround.initial_probe.ranging.info0_exchange
+			.transport.tone_transmitter;
 }
 
 static uint16_t probe_round_trip_delay(
@@ -69,13 +55,13 @@ enum phase2_info1_result v34_phase2_info1_exchange_caller_init(
 
 	if (exchange == NULL ||
 	    !v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !completed_probe_matches_role(completed_probe) ||
+	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
 	    probe_role(completed_probe) != V34_CALLING_STATION ||
 	    v34_info1c_encode(local_info1c, payload, sizeof(payload)) !=
 		    V34_INFO1_OK ||
 	    phase2_info1_init_signal_b(
 		    &initialized.control,
-		    probe_nominal_amplitude(completed_probe),
+		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
 		    probe_round_trip_delay(completed_probe), payload,
 		    V34_INFO1C_PAYLOAD_BITS, V34_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
@@ -94,14 +80,13 @@ enum phase2_info1_result v34_phase2_info1_exchange_answerer_init(
 
 	if (exchange == NULL ||
 	    !v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !completed_probe_matches_role(completed_probe) ||
+	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
 	    probe_role(completed_probe) != V34_ANSWERING_STATION)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
-	tone = &completed_probe->turnaround.initial_probe.ranging.info0_exchange
-			.transport.tone_transmitter;
+	tone = probe_tone(completed_probe);
 	if (phase2_info1_init_signal_a(
 		    &initialized.control, tone,
-		    probe_nominal_amplitude(completed_probe),
+		    v34_phase2_tone_nominal_amplitude(tone),
 		    probe_round_trip_delay(completed_probe),
 		    completed_probe->control.signal_a_reversal_elapsed_samples,
 		    V34_INFO1C_PAYLOAD_BITS, V34_INFO1A_PAYLOAD_BITS) !=

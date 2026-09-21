@@ -165,6 +165,38 @@ static bool test_phase_reversal(void)
 	return true;
 }
 
+static bool test_nominal_level_handoff(void)
+{
+	const enum v34_station_role roles[] = {
+		V34_CALLING_STATION, V34_ANSWERING_STATION,
+	};
+
+	for (size_t r = 0; r < ARRAY_LENGTH(roles); ++r) {
+		/* Cover every positive representable level accepted by each role. */
+		for (int level = 1; level <= INT16_MAX; ++level) {
+			struct v34_phase2_tone_transmitter tone;
+			int16_t sample;
+
+			if (v34_phase2_tone_transmitter_init(&tone, roles[r], level) !=
+			    V34_PHASE2_TONE_OK) {
+				CHECK(roles[r] == V34_ANSWERING_STATION && level > 16000,
+				      "unexpected tone rejection for role %d level %d", roles[r], level);
+				continue;
+			}
+			CHECK(v34_phase2_tone_nominal_amplitude(&tone) == level &&
+			      v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+				      V34_PHASE2_TONE_OK &&
+			      v34_phase2_tone_transmitter_reverse(&tone) ==
+				      V34_PHASE2_TONE_OK &&
+			      v34_phase2_tone_transmitter_sample(&tone, &sample) ==
+				      V34_PHASE2_TONE_OK &&
+			      v34_phase2_tone_nominal_amplitude(&tone) == level,
+			      "nominal handoff changed for role %d level %d", roles[r], level);
+		}
+	}
+	return true;
+}
+
 static int16_t codec_round_trip(int16_t sample, enum test_codec codec)
 {
 	switch (codec) {
@@ -1394,6 +1426,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "tone levels", test_tone_levels },
+		{ "nominal level handoff", test_nominal_level_handoff },
 		{ "phase reversal", test_phase_reversal },
 		{ "detection and reversal", test_detection_and_reversal },
 		{ "interrupted phase reference", test_interrupted_reference },

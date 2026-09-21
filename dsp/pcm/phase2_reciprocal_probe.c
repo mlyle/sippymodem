@@ -136,16 +136,6 @@ bool phase2_reciprocal_probe_is_valid(
 	       signal_a_path_is_valid(probe);
 }
 
-static int16_t nominal_amplitude(
-	const struct phase2_info0_exchange *exchange)
-{
-	const struct v34_phase2_tone_transmitter *tone =
-		&exchange->tone_transmitter;
-
-	return signal_is_b(exchange) ?
-		       tone->carrier_amplitude : tone->guard_amplitude;
-}
-
 enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	struct phase2_reciprocal_probe *probe,
 	const struct phase2_probe_turnaround *completed_turnaround,
@@ -170,7 +160,7 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 			    V34_PHASE2_TONE_OK ||
 		    v34_phase2_probe_sequence_init(
 			    &initialized.path.transmit,
-			    nominal_amplitude(&next_exchange),
+			    v34_phase2_tone_nominal_amplitude(&next_exchange.tone_transmitter),
 			    round_trip_delay_samples) !=
 			    V34_PHASE2_PROBE_SEQUENCE_OK)
 			return PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT;

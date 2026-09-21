@@ -131,6 +131,15 @@ v34_phase2_tone_transmitter_init(
 bool v34_phase2_tone_transmitter_is_valid(
 	const struct v34_phase2_tone_transmitter *transmitter);
 
+/* Recover the nominal level of a valid transmitter for a phase handoff.
+ * Tone A's carrier is attenuated; its guard retains the nominal level. */
+static inline int16_t v34_phase2_tone_nominal_amplitude(
+	const struct v34_phase2_tone_transmitter *transmitter)
+{
+	return transmitter->local_role == V34_CALLING_STATION ?
+		transmitter->carrier_amplitude : transmitter->guard_amplitude;
+}
+
 /* Reverse only the carrier. The answering station's guard remains phase
  * continuous, as required for transitions between Tone A states. */
 enum v34_phase2_tone_result

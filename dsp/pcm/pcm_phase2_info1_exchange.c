@@ -18,30 +18,11 @@ static enum v90_modem_role probe_role(
 	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
 }
 
-static bool completed_probe_matches_role(
-	const struct v90_phase2_reciprocal_probe *probe)
-{
-	return probe_role(probe) == V90_DIGITAL_MODEM ?
-		       probe->control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE :
-		       probe->control.phase ==
-			       PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
-}
-
 static const struct v34_phase2_tone_transmitter *probe_tone(
 	const struct v90_phase2_reciprocal_probe *probe)
 {
 	return &probe->turnaround.initial_probe.ranging.info0_exchange.transport
 			.tone_transmitter;
-}
-
-static int16_t probe_nominal_amplitude(
-	const struct v90_phase2_reciprocal_probe *probe)
-{
-	const struct v34_phase2_tone_transmitter *tone = probe_tone(probe);
-
-	return probe_role(probe) == V90_DIGITAL_MODEM ?
-		       tone->carrier_amplitude : tone->guard_amplitude;
 }
 
 static uint16_t probe_round_trip_delay(
@@ -185,7 +166,7 @@ static enum phase2_info1_result initialize_digital(
 	if (exchange == NULL || payload == NULL ||
 	    !pcm_info1d_is_valid(local_info1d) ||
 	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !completed_probe_matches_role(completed_probe) ||
+	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
 	    probe_role(completed_probe) != V90_DIGITAL_MODEM)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
 	initialized.digital = *local_info1d;
@@ -193,7 +174,7 @@ static enum phase2_info1_result initialize_digital(
 	initialized.digital_record_stored = true;
 	if (phase2_info1_init_signal_b(
 		    &initialized.control,
-		    probe_nominal_amplitude(completed_probe),
+		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
 		    probe_round_trip_delay(completed_probe), payload,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
@@ -246,11 +227,11 @@ static enum phase2_info1_result initialize_analog(
 
 	if (exchange == NULL || !pcm_protocol_is_valid(protocol) ||
 	    !v90_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !completed_probe_matches_role(completed_probe) ||
+	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
 	    probe_role(completed_probe) != V90_ANALOG_MODEM ||
 	    phase2_info1_init_signal_a(
 		    &initialized.control, probe_tone(completed_probe),
-		    probe_nominal_amplitude(completed_probe),
+		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
 		    probe_round_trip_delay(completed_probe),
 		    completed_probe->control.signal_a_reversal_elapsed_samples,
 		    V34_INFO1C_PAYLOAD_BITS, V90_INFO1A_PAYLOAD_BITS) !=
