@@ -78,25 +78,6 @@ static uint64_t lineage_tag(uint64_t lineage, uint16_t tag)
 	return lineage_word(lineage_word(lineage, UINT16_C(0xa55a)), tag);
 }
 
-static bool observation_is_zero(
-	const struct v32_equalizer_observation *observation)
-{
-	return observation->i == 0 && observation->q == 0 &&
-	       observation->phase == 0 && observation->magnitude == 0 &&
-	       observation->epoch == 0 && observation->lineage == 0;
-}
-
-static bool observations_equal(
-	const struct v32_equalizer_observation *left,
-	const struct v32_equalizer_observation *right)
-{
-	return left->i == right->i && left->q == right->q &&
-	       left->phase == right->phase &&
-	       left->magnitude == right->magnitude &&
-	       left->epoch == right->epoch &&
-	       left->lineage == right->lineage;
-}
-
 bool v32_equalizer_is_valid(
 	const struct v32_equalizer *equalizer)
 {
@@ -120,7 +101,7 @@ bool v32_equalizer_is_valid(
 		       equalizer->pending_observation.magnitude <= INT16_MAX;
 	return equalizer->samples_until_observation >= 1 &&
 	       equalizer->samples_until_observation <= SAMPLES_PER_SYMBOL &&
-	       observation_is_zero(&equalizer->pending_observation) &&
+	       v32_equalizer_observation_is_zero(&equalizer->pending_observation) &&
 	       equalizer->pending_filtered_i == 0 &&
 	       equalizer->pending_filtered_q == 0 &&
 	       equalizer->pending_carrier_phase == 0;
@@ -487,7 +468,7 @@ enum v32_equalizer_result v32_equalizer_commit(
 	    memory_regions_overlap(
 		    decision, sizeof(*decision), equalizer, sizeof(*equalizer)))
 		return V32_EQUALIZER_INVALID_ARGUMENT;
-	if (!observations_equal(
+	if (!v32_equalizer_observations_are_equal(
 		    &decision->observation, &equalizer->pending_observation))
 		return V32_EQUALIZER_INVALID_ARGUMENT;
 	if (decision->ideal_phase > INT16_MAX ||

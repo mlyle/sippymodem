@@ -14,21 +14,6 @@ static bool decoder_is_valid(const struct v32_symbol_decoder *decoder)
 	       decoder->phase_quadrant < 4;
 }
 
-static bool observation_is_zero(
-	const struct v32_equalizer_observation *observation)
-{
-	static const struct v32_equalizer_observation zero;
-
-	return memcmp(observation, &zero, sizeof(zero)) == 0;
-}
-
-static bool observations_match(
-	const struct v32_equalizer_observation *left,
-	const struct v32_equalizer_observation *right)
-{
-	return memcmp(left, right, sizeof(*left)) == 0;
-}
-
 static bool path_header_is_valid(
 	const struct v32_conditioning_path *path)
 {
@@ -198,8 +183,8 @@ bool v32_conditioning_path_handoff_is_valid(
 	if (handoff->observation_ready != pending)
 		return false;
 	if (!pending)
-		return observation_is_zero(&handoff->observation);
-	return observations_match(
+		return v32_equalizer_observation_is_zero(&handoff->observation);
+	return v32_equalizer_observations_are_equal(
 		&handoff->observation,
 		&handoff->receive.equalizer.pending_observation);
 }

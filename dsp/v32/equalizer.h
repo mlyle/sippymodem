@@ -37,6 +37,26 @@ struct v32_equalizer_observation {
 	uint64_t lineage;
 };
 
+/* Compare readable observations by their fields, not structure padding. */
+static inline bool v32_equalizer_observation_is_zero(
+	const struct v32_equalizer_observation *observation)
+{
+	return observation->i == 0 && observation->q == 0 &&
+	       observation->phase == 0 && observation->magnitude == 0 &&
+	       observation->epoch == 0 && observation->lineage == 0;
+}
+
+static inline bool v32_equalizer_observations_are_equal(
+	const struct v32_equalizer_observation *left,
+	const struct v32_equalizer_observation *right)
+{
+	return left->i == right->i && left->q == right->q &&
+	       left->phase == right->phase &&
+	       left->magnitude == right->magnitude &&
+	       left->epoch == right->epoch &&
+	       left->lineage == right->lineage;
+}
+
 struct v32_equalizer_decision {
 	struct v32_equalizer_observation observation;
 	uint16_t ideal_phase;

@@ -110,6 +110,31 @@ static uint64_t hash_observation(
 	return hash_word(hash, observation->magnitude);
 }
 
+static bool test_observation_comparison(void)
+{
+	const struct v32_equalizer_observation zero = { 0 };
+	const struct v32_equalizer_observation nonzero[] = {
+		{ .i = INT16_MIN }, { .q = INT16_MAX },
+		{ .phase = UINT16_MAX }, { .magnitude = UINT16_MAX },
+		{ .epoch = UINT64_MAX }, { .lineage = UINT64_MAX },
+	};
+
+	CHECK(v32_equalizer_observation_is_zero(&zero) &&
+	      v32_equalizer_observations_are_equal(&zero, &zero),
+	      "zero observation comparison failed");
+	for (size_t left = 0; left < ARRAY_LENGTH(nonzero); ++left) {
+		CHECK(!v32_equalizer_observation_is_zero(&nonzero[left]) &&
+		      !v32_equalizer_observations_are_equal(&nonzero[left], &zero) &&
+		      !v32_equalizer_observations_are_equal(&zero, &nonzero[left]),
+		      "observation field %zu was ignored", left);
+		for (size_t right = 0; right < ARRAY_LENGTH(nonzero); ++right)
+			CHECK(v32_equalizer_observations_are_equal(
+				      &nonzero[left], &nonzero[right]) == (left == right),
+			      "observation fields %zu/%zu miscompared", left, right);
+	}
+	return true;
+}
+
 static bool test_initial_profile(void)
 {
 	struct v32_equalizer equalizer;
@@ -657,6 +682,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "observation comparison", test_observation_comparison },
 		{ "initial profile", test_initial_profile },
 		{ "exact oracle", test_exact_oracle },
 		{ "fragment equivalence", test_fragment_equivalence },

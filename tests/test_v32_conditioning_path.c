@@ -354,6 +354,36 @@ static bool test_contracts(
 		      V32_CONDITIONING_PATH_OK &&
 	      v32_conditioning_path_handoff_is_valid(&handoff),
 	      "complete conditioning handoff was not valid");
+	saved_handoff = handoff;
+	for (unsigned int pending = 0; pending < 2; ++pending) {
+		static const size_t fields[] = {
+			offsetof(struct v32_equalizer_observation, i),
+			offsetof(struct v32_equalizer_observation, q),
+			offsetof(struct v32_equalizer_observation, phase),
+			offsetof(struct v32_equalizer_observation, magnitude),
+			offsetof(struct v32_equalizer_observation, epoch),
+			offsetof(struct v32_equalizer_observation, lineage),
+		};
+		unsigned char *bytes = (unsigned char *)&handoff.observation;
+
+		handoff = saved_handoff;
+		if (!pending) {
+			CHECK(v32_receive_path_init(&handoff.receive, 0,
+				      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) == V32_RECEIVE_PATH_OK,
+			      "inactive handoff fixture failed");
+			handoff.observation = (struct v32_equalizer_observation){ 0 };
+			handoff.observation_ready = false;
+		}
+		CHECK(v32_conditioning_path_handoff_is_valid(&handoff),
+		      "handoff comparison fixture %u invalid", pending);
+		for (size_t field = 0; field < ARRAY_LENGTH(fields); ++field) {
+			bytes[fields[field]] ^= 1u;
+			CHECK(!v32_conditioning_path_handoff_is_valid(&handoff),
+			      "handoff %u ignored observation field %zu", pending, field);
+			bytes[fields[field]] ^= 1u;
+		}
+	}
+	handoff = saved_handoff;
 	handoff.observation_ready = !handoff.observation_ready;
 	CHECK(!v32_conditioning_path_handoff_is_valid(&handoff),
 	      "conditioning handoff accepted mismatched readiness");
