@@ -117,6 +117,28 @@ static bool test_unpacked_validation(void)
 	      "nonbinary span was accepted");
 	CHECK(!unpacked_bits_are_binary(NULL, 0),
 	      "null span was accepted");
+	for (size_t offset = 0; offset < sizeof(uint64_t); ++offset) {
+		for (size_t count = 0; count <= 33; ++count) {
+			uint8_t storage[33 + sizeof(uint64_t)];
+			uint8_t *span = storage + offset;
+
+			/* Nonbinary sentinels must not affect the requested span. */
+			memset(storage, 255, sizeof(storage));
+			for (size_t index = 0; index < count; ++index)
+				span[index] = (uint8_t)(index & 1u);
+			CHECK(unpacked_bits_are_binary(span, count),
+			      "valid span at offset %zu length %zu rejected", offset, count);
+			for (size_t index = 0; index < count; ++index) {
+				for (unsigned value = 0; value <= UINT8_MAX; ++value) {
+					span[index] = (uint8_t)value;
+					CHECK(unpacked_bits_are_binary(span, count) == (value <= 1u),
+					      "offset %zu length %zu index %zu value %u misclassified",
+					      offset, count, index, value);
+				}
+				span[index] = (uint8_t)(index & 1u);
+			}
+		}
+	}
 	return true;
 }
 

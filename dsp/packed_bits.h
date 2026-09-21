@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Bit zero is the most-significant bit of byte zero. */
 static inline uint8_t packed_msb_bit(
@@ -97,6 +98,17 @@ static inline bool unpacked_bits_are_binary(
 {
 	if (bits == NULL)
 		return false;
+	/* Each byte is a bit. Check whole words without alignment or aliasing
+	 * assumptions; every byte's upper seven bits must be clear. */
+	while (count >= sizeof(uint64_t)) {
+		uint64_t word;
+
+		memcpy(&word, bits, sizeof(word));
+		if (word & UINT64_C(0xfefefefefefefefe))
+			return false;
+		bits += sizeof(word);
+		count -= sizeof(word);
+	}
 	for (size_t index = 0; index < count; ++index) {
 		if (bits[index] > 1u)
 			return false;
