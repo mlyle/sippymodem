@@ -45,8 +45,8 @@ struct test_endpoint {
 
 struct test_endpoint_event {
 	struct v34_phase2_ranging_event ranging;
-	struct v34_phase2_initial_probe_event initial_probe;
-	struct v34_phase2_probe_turnaround_event turnaround;
+	struct phase2_initial_probe_event initial_probe;
+	struct phase2_probe_turnaround_event turnaround;
 	struct phase2_reciprocal_probe_event reciprocal_probe;
 	bool entered_initial_probe;
 	bool entered_turnaround;

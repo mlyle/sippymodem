@@ -213,7 +213,7 @@ static bool check_initial_probe_turn(
 	      "tone response did not end answerer L2 within its bound");
 	CHECK(v34_phase2_initial_probe_measure(
 		      &pair.caller.initial_probe, &measurement) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -259,7 +259,7 @@ static bool test_answerer_accepts_early_tone_b(void)
 	struct v34_phase2_ranging caller_ranging;
 	struct v34_phase2_ranging answerer_ranging;
 	struct v34_phase2_initial_probe answerer;
-	struct v34_phase2_initial_probe_event event = { 0 };
+	struct phase2_initial_probe_event event = { 0 };
 	struct v34_phase2_tone_transmitter peer_tone;
 	int16_t prior_local_sample = 0;
 	bool peer_active = false;
@@ -267,7 +267,7 @@ static bool test_answerer_accepts_early_tone_b(void)
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
 	      v34_phase2_initial_probe_init(
 		      &answerer, &answerer_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &peer_tone, V34_CALLING_STATION, TEST_AMPLITUDE) ==
 		      V34_PHASE2_TONE_OK,
@@ -299,7 +299,7 @@ static bool test_answerer_accepts_early_tone_b(void)
 		}
 		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, (int16_t)received, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK &&
+			      PHASE2_INITIAL_PROBE_OK &&
 		      (peer_active || event.kind !=
 				      PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE),
 		      "answerer mistook its probe echo for Tone B");
@@ -324,7 +324,7 @@ static bool test_answerer_receives_concurrent_probe(void)
 	struct v34_phase2_ranging answerer_ranging;
 	struct v34_phase2_initial_probe answerer;
 	struct v34_phase2_probe_sequence peer_probe;
-	struct v34_phase2_initial_probe_event event;
+	struct phase2_initial_probe_event event;
 	uint64_t local_probe_magnitude = 0;
 	int16_t receive_gain = 0;
 	bool completed = false;
@@ -332,7 +332,7 @@ static bool test_answerer_receives_concurrent_probe(void)
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
 	      v34_phase2_initial_probe_init(
 		      &answerer, &answerer_ranging, true) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_probe_sequence_init(
 		      &peer_probe, TEST_AMPLITUDE,
 		      answerer_ranging.control.round_trip_delay_samples) ==
@@ -348,7 +348,7 @@ static bool test_answerer_receives_concurrent_probe(void)
 			      &peer_event) == V34_PHASE2_PROBE_SEQUENCE_OK &&
 		      v34_phase2_initial_probe_sample(
 			      &answerer, peer_transmit, &local_transmit,
-			      &event) == V34_PHASE2_INITIAL_PROBE_OK,
+			      &event) == PHASE2_INITIAL_PROBE_OK,
 		      "concurrent probe stopped at sample %zu", sample);
 		local_probe_magnitude +=
 			(uint64_t)sample_magnitude(local_transmit);
@@ -363,10 +363,10 @@ static bool test_answerer_receives_concurrent_probe(void)
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
 	      v34_phase2_initial_probe_measure(
 		      &answerer, &measurement) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_initial_probe_receive_gain(
 		      &answerer, &receive_gain) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -657,7 +657,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	struct v34_phase2_probe_turnaround turnaround;
 	struct v34_phase2_probe_sequence peer_probe;
 	struct v34_phase2_probe_acquisition_event concurrent_event;
-	struct v34_phase2_probe_turnaround_event turnaround_event;
+	struct phase2_probe_turnaround_event turnaround_event;
 	int16_t receive_gain = 0;
 	bool partial = false;
 	bool complete = false;
@@ -685,7 +685,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		      v34_phase2_initial_probe_sample_concurrent(
 			      &answerer_probe, peer_transmit,
 			      &concurrent_event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
+			      PHASE2_INITIAL_PROBE_OK,
 		      "concurrent probe prefix stopped at sample %zu", sample);
 		if (answerer_probe.concurrent_receive.phase ==
 			    V34_PHASE2_PROBE_ACQUISITION_RECEIVING &&
@@ -704,7 +704,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		      V34_PHASE2_PROBE_ACQUISITION_COMPLETE &&
 	      v34_phase2_probe_turnaround_init(
 		      &turnaround, &answerer_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      PHASE2_PROBE_TURNAROUND_OK,
 	      "probe did not retain its partial L2 at turnaround");
 	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
 		struct v34_phase2_probe_sequence_event peer_event;
@@ -717,7 +717,7 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 		      v34_phase2_probe_turnaround_sample(
 			      &turnaround, peer_transmit, &local_transmit,
 			      &turnaround_event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK,
+			      PHASE2_PROBE_TURNAROUND_OK,
 		      "concurrent probe turnaround stopped at sample %zu",
 		      sample);
 		if (turnaround.initial_probe.concurrent_receive.phase ==
@@ -729,10 +729,10 @@ static bool test_concurrent_probe_crosses_turnaround(void)
 	CHECK(complete &&
 	      v34_phase2_initial_probe_measure(
 		      &turnaround.initial_probe, &measurement) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_initial_probe_receive_gain(
 		      &turnaround.initial_probe, &receive_gain) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      measurement.l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
 	      measurement.l2.sample_count ==
@@ -747,7 +747,7 @@ static bool test_answerer_reversal_recovery(void)
 	struct v34_phase2_initial_probe caller_probe;
 	struct v34_phase2_initial_probe answerer_probe;
 	struct v34_phase2_probe_turnaround answerer;
-	struct v34_phase2_probe_turnaround_event event = { 0 };
+	struct phase2_probe_turnaround_event event = { 0 };
 	struct v34_phase2_tone_transmitter peer_tone;
 	int16_t peer_sample;
 	int16_t transmit;
@@ -761,7 +761,7 @@ static bool test_answerer_reversal_recovery(void)
 			       .tone_detector) == V34_PHASE2_TONE_OK &&
 	      v34_phase2_probe_turnaround_init(
 		      &answerer, &answerer_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      PHASE2_PROBE_TURNAROUND_OK &&
 	      v34_phase2_tone_transmitter_init(
 		      &peer_tone, V34_CALLING_STATION, 7000) ==
 		      V34_PHASE2_TONE_OK,
@@ -776,7 +776,7 @@ static bool test_answerer_reversal_recovery(void)
 			      V34_PHASE2_TONE_OK &&
 		      v34_phase2_probe_turnaround_sample(
 			      &answerer, peer_sample, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK,
+			      PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal recovery failed at sample %zu",
 		      samples);
 	CHECK(event.kind == PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED &&
@@ -802,7 +802,7 @@ static bool test_answerer_reversal_recovery(void)
 			      V34_PHASE2_TONE_OK &&
 		      v34_phase2_probe_turnaround_sample(
 			      &answerer, peer_sample, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK,
+			      PHASE2_PROBE_TURNAROUND_OK,
 		      "retried answerer turn failed at sample %zu", samples);
 		if (event.kind ==
 		    PHASE2_PROBE_TURNAROUND_EVENT_PROBE_RECEIVE_READY) {
@@ -826,7 +826,7 @@ static bool test_bounded_failures(void)
 	struct v34_phase2_initial_probe answerer;
 	struct v34_phase2_initial_probe failed;
 	struct v34_phase2_probe_sequence remote_probe;
-	struct v34_phase2_initial_probe_event event;
+	struct phase2_initial_probe_event event;
 	int16_t transmit;
 	size_t samples;
 
@@ -834,7 +834,7 @@ static bool test_bounded_failures(void)
 	      "failure fixtures did not complete ranging");
 	CHECK(v34_phase2_initial_probe_init(
 		      &caller, &caller_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK,
+		      PHASE2_INITIAL_PROBE_OK,
 	      "missing-probe fixture did not initialize");
 	for (samples = 0; samples < 1000 &&
 			  caller.control.phase !=
@@ -842,7 +842,7 @@ static bool test_bounded_failures(void)
 	     ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
+			      PHASE2_INITIAL_PROBE_OK,
 		      "missing-probe wait failed at sample %zu", samples);
 	CHECK(caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
 	      caller.control.failure ==
@@ -853,7 +853,7 @@ static bool test_bounded_failures(void)
 	transmit = 1234;
 	CHECK(v34_phase2_initial_probe_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      transmit == 0 &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_NONE &&
 	      memcmp(&caller, &failed, sizeof(caller)) == 0,
@@ -861,14 +861,14 @@ static bool test_bounded_failures(void)
 
 	CHECK(v34_phase2_initial_probe_init(
 		      &answerer, &answerer_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK,
+		      PHASE2_INITIAL_PROBE_OK,
 	      "transmit-limit fixture did not initialize");
 	const size_t wire_limit = (160u + 550u) * 8u +
 		answerer_ranging.control.round_trip_delay_samples;
 	for (samples = 0; samples < wire_limit; ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
+			      PHASE2_INITIAL_PROBE_OK,
 		      "probe transmit limit failed at sample %zu", samples);
 	CHECK(answerer.control.phase == PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE &&
 	      answerer.control.tone_wait_samples == 0 &&
@@ -891,7 +891,7 @@ static bool test_bounded_failures(void)
 					      V34_PHASE2_TONE_OK, "late Tone B failed");
 			CHECK(v34_phase2_initial_probe_sample(
 				      &late, received, &transmit, &event) ==
-				      V34_PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
+				      PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
 			      late.control.phase != PHASE2_INITIAL_PROBE_FAILED,
 			      "late Tone B was rejected at sample %zu", samples);
 			if (event.kind == PHASE2_INITIAL_PROBE_EVENT_LOCAL_PROBE_COMPLETE) {
@@ -908,7 +908,7 @@ static bool test_bounded_failures(void)
 	for (samples = 1; samples <= 400u; ++samples)
 		CHECK(v34_phase2_initial_probe_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
+			      PHASE2_INITIAL_PROBE_OK && transmit == 0 &&
 		      event.kind == (samples < 400u ? PHASE2_INITIAL_PROBE_EVENT_NONE :
 			      PHASE2_INITIAL_PROBE_EVENT_FAILED),
 		      "silent Tone-B deadline failed at sample %zu", samples);
@@ -922,7 +922,7 @@ static bool test_bounded_failures(void)
 
 	CHECK(v34_phase2_initial_probe_init(
 		      &caller, &caller_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK &&
+		      PHASE2_INITIAL_PROBE_OK &&
 	      v34_phase2_probe_sequence_init(
 		      &remote_probe, TEST_AMPLITUDE,
 		      caller_ranging.control.round_trip_delay_samples) ==
@@ -940,7 +940,7 @@ static bool test_bounded_failures(void)
 			      V34_PHASE2_PROBE_SEQUENCE_OK &&
 		      v34_phase2_initial_probe_sample(
 			      &caller, received, &transmit, &event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
+			      PHASE2_INITIAL_PROBE_OK,
 		      "tone-timeout probe failed at sample %zu", samples);
 	}
 	CHECK(caller.control.phase ==
@@ -954,7 +954,7 @@ static bool test_bounded_failures(void)
 		struct v34_phase2_probe_turnaround turnaround;
 
 		CHECK(v34_phase2_probe_turnaround_init(&turnaround, &caller) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+			      PHASE2_PROBE_TURNAROUND_OK &&
 		      turnaround.control.wait_samples ==
 			      caller.control.reversal_wait_samples_remaining,
 		      "missing Tone A blocked turnaround or reset its deadline");
@@ -973,10 +973,10 @@ static bool test_validation(void)
 	struct v34_phase2_initial_probe probe;
 	struct v34_phase2_initial_probe before;
 	struct v34_phase2_initial_probe invalid;
-	struct v34_phase2_initial_probe_event event = {
+	struct phase2_initial_probe_event event = {
 		.kind = PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	};
-	struct v34_phase2_initial_probe_event event_before = event;
+	struct phase2_initial_probe_event event_before = event;
 	int16_t transmit = 1234;
 
 	CHECK(v34_phase2_ranging_init(
@@ -988,36 +988,36 @@ static bool test_validation(void)
 	memset(&probe, 0xa5, sizeof(probe));
 	before = probe;
 	CHECK(v34_phase2_initial_probe_init(&probe, &unready, false) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
 	      v34_phase2_initial_probe_init(NULL, &caller_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "invalid initialization changed caller-owned state");
 	CHECK(v34_phase2_initial_probe_init(
 		      &probe, &caller_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK,
+		      PHASE2_INITIAL_PROBE_OK,
 	      "validation controller did not initialize");
 	before = probe;
 	CHECK(v34_phase2_initial_probe_sample(
 		      &probe, 0, NULL, &event) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      v34_phase2_initial_probe_sample(
 		      &probe, 0, &transmit, NULL) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
 	      memcmp(&probe, &before, sizeof(probe)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,
 	      "invalid sample output was not transactional");
 	CHECK(v34_phase2_initial_probe_init(
 		      &invalid, &caller_ranging, true) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "caller accepted concurrent answerer probe reception");
 	invalid = probe;
 	invalid.control.phase =
 		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;
 	CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
 	      v34_phase2_initial_probe_measure(&probe, NULL) ==
-		      V34_PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
+		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "validation contract changed");
 	return true;
 }
@@ -1033,24 +1033,24 @@ static bool test_turnaround_failures_and_validation(void)
 	struct v34_phase2_probe_turnaround answerer;
 	struct v34_phase2_probe_turnaround before;
 	struct v34_phase2_probe_turnaround invalid;
-	struct v34_phase2_probe_turnaround_event event;
-	struct v34_phase2_probe_turnaround_event event_before;
+	struct phase2_probe_turnaround_event event;
+	struct phase2_probe_turnaround_event event_before;
 	int16_t transmit;
 	size_t samples;
 
 	CHECK(completed_initial_probe_states(&caller_probe, &answerer_probe) &&
 	      v34_phase2_probe_turnaround_init(
 		      &caller, &caller_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      PHASE2_PROBE_TURNAROUND_OK &&
 	      v34_phase2_probe_turnaround_init(
 		      &answerer, &answerer_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround failure fixtures did not initialize");
 	const size_t remaining = caller.control.wait_samples;
 	for (samples = 0; samples < remaining; ++samples)
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+			      PHASE2_PROBE_TURNAROUND_OK &&
 		      event.kind == (samples + 1u == remaining ?
 			      PHASE2_PROBE_TURNAROUND_EVENT_RECOVERY_STARTED :
 			      PHASE2_PROBE_TURNAROUND_EVENT_NONE),
@@ -1062,7 +1062,7 @@ static bool test_turnaround_failures_and_validation(void)
 	for (samples = 1; samples < 400u; ++samples) {
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &caller, 0, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK &&
+			      PHASE2_PROBE_TURNAROUND_OK &&
 		      event.kind == (samples == 399u ?
 			      PHASE2_PROBE_TURNAROUND_EVENT_PROBE_TRANSMIT_READY :
 			      PHASE2_PROBE_TURNAROUND_EVENT_NONE),
@@ -1076,7 +1076,7 @@ static bool test_turnaround_failures_and_validation(void)
 	transmit = 1234;
 	CHECK(v34_phase2_probe_turnaround_sample(
 		      &caller, INT16_MIN, &transmit, &event) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      PHASE2_PROBE_TURNAROUND_OK &&
 	      transmit == 0 &&
 	      event.kind == PHASE2_PROBE_TURNAROUND_EVENT_NONE &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0,
@@ -1091,7 +1091,7 @@ static bool test_turnaround_failures_and_validation(void)
 	     ++samples)
 		CHECK(v34_phase2_probe_turnaround_sample(
 			      &answerer, 0, &transmit, &event) ==
-			      V34_PHASE2_PROBE_TURNAROUND_OK,
+			      PHASE2_PROBE_TURNAROUND_OK,
 		      "answerer reversal timeout failed at sample %zu", samples);
 	CHECK(samples ==
 		      PHASE2_PROBE_TURNAROUND_INITIAL_TONE_SAMPLES +
@@ -1108,23 +1108,23 @@ static bool test_turnaround_failures_and_validation(void)
 	CHECK(completed_ranging_pair(&caller_ranging, &answerer_ranging) &&
 	      v34_phase2_initial_probe_init(
 		      &unready_probe, &caller_ranging, false) ==
-		      V34_PHASE2_INITIAL_PROBE_OK,
+		      PHASE2_INITIAL_PROBE_OK,
 	      "turnaround validation fixtures did not initialize");
 	memset(&invalid, 0xa5, sizeof(invalid));
 	before = invalid;
 	CHECK(v34_phase2_probe_turnaround_init(
 		      &invalid, &unready_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      memcmp(&invalid, &before, sizeof(invalid)) == 0 &&
 	      v34_phase2_probe_turnaround_init(NULL, &caller_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
+		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT,
 	      "invalid turnaround initialization changed caller-owned state");
 	CHECK(v34_phase2_probe_turnaround_init(
 		      &caller, &caller_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK,
+		      PHASE2_PROBE_TURNAROUND_OK,
 	      "turnaround validation controller did not initialize");
 	before = caller;
-	event = (struct v34_phase2_probe_turnaround_event){
+	event = (struct phase2_probe_turnaround_event){
 		.kind = PHASE2_PROBE_TURNAROUND_EVENT_FAILED,
 		.failure =
 			PHASE2_PROBE_TURNAROUND_REMOTE_REVERSAL_TIMEOUT,
@@ -1133,10 +1133,10 @@ static bool test_turnaround_failures_and_validation(void)
 	transmit = 1234;
 	CHECK(v34_phase2_probe_turnaround_sample(
 		      &caller, 0, NULL, &event) ==
-		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      v34_phase2_probe_turnaround_sample(
 		      &caller, 0, &transmit, NULL) ==
-		      V34_PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
+		      PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT &&
 	      memcmp(&caller, &before, sizeof(caller)) == 0 &&
 	      memcmp(&event, &event_before, sizeof(event)) == 0 &&
 	      transmit == 1234,

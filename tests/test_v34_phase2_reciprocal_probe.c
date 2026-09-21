@@ -700,7 +700,7 @@ static bool test_validation(void)
 	      "reciprocal-probe validation fixtures did not initialize");
 	CHECK(v34_phase2_probe_turnaround_init(
 		      &unready, &caller_turnaround.initial_probe) ==
-		      V34_PHASE2_PROBE_TURNAROUND_OK &&
+		      PHASE2_PROBE_TURNAROUND_OK &&
 	      v34_phase2_probe_turnaround_is_valid(&unready),
 	      "unready turnaround fixture is invalid");
 	memset(&probe, 0xa5, sizeof(probe));

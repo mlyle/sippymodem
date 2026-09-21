@@ -713,7 +713,7 @@ static bool check_concurrent_trial(bool retraining)
 		      v34_phase2_initial_probe_sample_concurrent(
 			      &pair.answerer.state.initial_probe,
 			      peer_transmit, &receive_event) ==
-			      V34_PHASE2_INITIAL_PROBE_OK,
+			      PHASE2_INITIAL_PROBE_OK,
 		      "overlapping probe stopped at %zu", index);
 		/* The initial-call trial must not adopt a later returned copy of
 		 * the local probe after its echo-safe capture has expired. */
@@ -721,7 +721,7 @@ static bool check_concurrent_trial(bool retraining)
 			CHECK(v34_phase2_initial_probe_sample_concurrent(
 				      &empty_trial.state.initial_probe,
 				      peer_transmit, &receive_event) ==
-				      V34_PHASE2_INITIAL_PROBE_OK &&
+				      PHASE2_INITIAL_PROBE_OK &&
 			      !empty_trial.state.initial_probe.concurrent_receive_enabled &&
 			      !empty_trial.remote_probe_stored,
 			      "expired initial trial adopted delayed echo at %zu", index);

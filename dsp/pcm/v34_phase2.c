@@ -515,7 +515,7 @@ static bool enter_initial_probe(
 	if (v34_phase2_initial_probe_init(
 		    &next, &phase2->state.ranging,
 		    receive_concurrent) !=
-	    V34_PHASE2_INITIAL_PROBE_OK)
+	    PHASE2_INITIAL_PROBE_OK)
 		return false;
 	phase2->concurrent_probe_receive = receive_concurrent;
 	phase2->peer_info0 = exchange->peer_info0;
@@ -535,7 +535,7 @@ static bool enter_turnaround(
 
 	if (v34_phase2_probe_turnaround_init(
 		    &next, &phase2->state.initial_probe) !=
-	    V34_PHASE2_PROBE_TURNAROUND_OK)
+	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	phase2->state.turnaround = next;
 	phase2->stage = V34_PHASE2_PROBE_TURNAROUND;
@@ -559,10 +559,10 @@ static bool enter_reciprocal_probe(
 	    !phase2->remote_probe_stored) {
 		if (v34_phase2_initial_probe_measure(
 			    initial, &measurement) !=
-			    V34_PHASE2_INITIAL_PROBE_OK ||
+			    PHASE2_INITIAL_PROBE_OK ||
 		    v34_phase2_initial_probe_receive_gain(
 			    initial, &receive_gain) !=
-			    V34_PHASE2_INITIAL_PROBE_OK ||
+			    PHASE2_INITIAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(&measurement) ||
 		    receive_gain <= 0)
 			return false;
@@ -642,13 +642,13 @@ static bool sample_initial_probe(
 	struct v34_phase2 *phase2, int16_t received_sample,
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
-	struct v34_phase2_initial_probe_event child;
+	struct phase2_initial_probe_event child;
 	enum v34_station_role role = phase2->local_role;
 	bool measured_remote_probe;
 
 	if (v34_phase2_initial_probe_sample(
 		    &phase2->state.initial_probe, received_sample,
-		    transmit_sample, &child) != V34_PHASE2_INITIAL_PROBE_OK)
+		    transmit_sample, &child) != PHASE2_INITIAL_PROBE_OK)
 		return false;
 	phase2->concurrent_probe_receive =
 		phase2->state.initial_probe.concurrent_receive_enabled;
@@ -685,10 +685,10 @@ static bool sample_initial_probe(
 		if (v34_phase2_initial_probe_measure(
 			    &phase2->state.initial_probe,
 			    &measurement) !=
-		    V34_PHASE2_INITIAL_PROBE_OK ||
+		    PHASE2_INITIAL_PROBE_OK ||
 		    v34_phase2_initial_probe_receive_gain(
 			    &phase2->state.initial_probe, &receive_gain) !=
-			    V34_PHASE2_INITIAL_PROBE_OK ||
+			    PHASE2_INITIAL_PROBE_OK ||
 		    !v34_phase2_probe_measurement_is_valid(
 			    &measurement) ||
 		    receive_gain <= 0)
@@ -713,12 +713,12 @@ static bool sample_turnaround(
 	struct v34_phase2 *phase2, int16_t received_sample,
 	int16_t *transmit_sample, struct v34_phase2_event *event)
 {
-	struct v34_phase2_probe_turnaround_event child;
+	struct phase2_probe_turnaround_event child;
 
 	if (v34_phase2_probe_turnaround_sample(
 		    &phase2->state.turnaround, received_sample,
 		    transmit_sample, &child) !=
-	    V34_PHASE2_PROBE_TURNAROUND_OK)
+	    PHASE2_PROBE_TURNAROUND_OK)
 		return false;
 	phase2->concurrent_probe_receive =
 		phase2->state.turnaround.initial_probe

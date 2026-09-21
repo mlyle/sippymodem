@@ -132,7 +132,7 @@ static bool endpoint_sample(
 			if (v34_phase2_initial_probe_init(
 				    &endpoint->initial_probe, &endpoint->ranging,
 				    false) !=
-			    V34_PHASE2_INITIAL_PROBE_OK)
+			    PHASE2_INITIAL_PROBE_OK)
 				return false;
 			endpoint->stage = TEST_ENDPOINT_INITIAL_PROBE;
 			emitted.entered_initial_probe = true;
@@ -147,14 +147,14 @@ static bool endpoint_sample(
 		if (v34_phase2_initial_probe_sample(
 			    &endpoint->initial_probe, received_sample, transmit_sample,
 			    &emitted.initial_probe) !=
-		    V34_PHASE2_INITIAL_PROBE_OK)
+		    PHASE2_INITIAL_PROBE_OK)
 			return false;
 		if (endpoint->continue_to_turnaround &&
 		    emitted.initial_probe.kind == expected_ready) {
 			if (v34_phase2_probe_turnaround_init(
 				    &endpoint->turnaround,
 				    &endpoint->initial_probe) !=
-			    V34_PHASE2_PROBE_TURNAROUND_OK)
+			    PHASE2_PROBE_TURNAROUND_OK)
 				return false;
 			endpoint->stage = TEST_ENDPOINT_PROBE_TURNAROUND;
 			emitted.entered_turnaround = true;
@@ -170,7 +170,7 @@ static bool endpoint_sample(
 		if (v34_phase2_probe_turnaround_sample(
 			    &endpoint->turnaround, received_sample, transmit_sample,
 			    &emitted.turnaround) !=
-		    V34_PHASE2_PROBE_TURNAROUND_OK)
+		    PHASE2_PROBE_TURNAROUND_OK)
 			return false;
 		if (endpoint->continue_to_reciprocal_probe &&
 		    emitted.turnaround.kind == expected_ready) {
