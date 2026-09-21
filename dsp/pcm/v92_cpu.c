@@ -229,20 +229,9 @@ enum v92_cpu_result v92_cpu_encode(
 	return V92_CPU_OK;
 }
 
-static bool bits_are(
-	const uint8_t *frame, size_t first_bit,
-	size_t bit_count, uint8_t value)
-{
-	for (size_t bit = 0u; bit < bit_count; ++bit) {
-		if (packed_msb_bit(frame, first_bit + bit) != value)
-			return false;
-	}
-	return true;
-}
-
 static bool prefix_is_valid(const uint8_t *frame, unsigned int type)
 {
-	return bits_are(frame, 0u, 17u, 1u) &&
+	return packed_msb_read_msb_field(frame, 0u, 17u) == UINT32_C(0x1ffff) &&
 	       packed_msb_bit(frame, 17u) == 0u &&
 	       packed_msb_bit(frame, 18u) == 0u &&
 	       packed_msb_read_lsb_field(
@@ -304,9 +293,9 @@ enum v92_cpu_result v92_cpus_decode(
 		return V92_CPU_INVALID_ARGUMENT;
 	if (!prefix_is_valid(frame, 2u) ||
 	    packed_msb_bit(frame, CPUS_INFORMATION_BITS) != 0u ||
-	    !bits_are(
+	    !packed_msb_bits_are_zero(
 		    frame, CPUS_UNFILLED_BITS - 1u,
-		    bits - CPUS_UNFILLED_BITS + 1u, 0u) ||
+		    bits - CPUS_UNFILLED_BITS + 1u) ||
 	    !packed_msb_tail_is_zero(frame, bits, bytes))
 		return V92_CPU_INVALID_FRAME;
 	if (packed_msb_read_msb_field(
@@ -516,9 +505,9 @@ enum v92_cpu_result v92_cpu_decode(
 		row_count * V92_CPU_CONSTELLATION_BITS;
 	if (!row_starts_are_zero(frame, row_count) ||
 	    packed_msb_bit(frame, payload_end) != 0u ||
-	    !bits_are(
+	    !packed_msb_bits_are_zero(
 		    frame, payload_end + 1u + CPU_CRC_BITS,
-		    frame_bit_count - payload_end - 1u - CPU_CRC_BITS, 0u) ||
+		    frame_bit_count - payload_end - 1u - CPU_CRC_BITS) ||
 	    !packed_msb_tail_is_zero(
 		    frame, frame_bit_count, frame_bytes))
 		return V92_CPU_INVALID_FRAME;

@@ -253,11 +253,14 @@ static bool test_frame_rejection(void)
 		      V90_MP_CRC_MISMATCH &&
 	      records_are_equal(&decoded, &saved),
 	      "MP information corruption was not transactional");
-	memcpy(corrupt, valid, sizeof(corrupt));
-	replace_bit(corrupt, 0, 0);
-	CHECK(v90_mp_decode(corrupt, bit_count, 17, &decoded) ==
-		      V90_MP_INVALID_FRAME,
-	      "MP accepted a broken frame sync");
+	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
+		memcpy(corrupt, valid, sizeof(corrupt));
+		replace_bit(corrupt, bit, 0);
+		CHECK(v90_mp_decode(corrupt, bit_count, 17, &decoded) ==
+			      V90_MP_INVALID_FRAME &&
+		      records_are_equal(&decoded, &saved),
+		      "MP accepted a broken frame sync bit %zu", bit);
+	}
 	memcpy(corrupt, valid, sizeof(corrupt));
 	replace_bit(corrupt, 34, 1);
 	CHECK(v90_mp_decode(corrupt, bit_count, 17, &decoded) ==

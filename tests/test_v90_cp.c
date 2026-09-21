@@ -602,6 +602,15 @@ static bool test_corrupt_frames(void)
 	      "CP corruption fixture did not encode");
 	frame_bytes = (frame_bits + 7u) / 8u;
 
+	for (size_t bit = 0; bit < 17u; ++bit) {
+		memcpy(changed, valid, frame_bytes);
+		replace_frame_bit(changed, bit, 0);
+		CHECK(rejected_decode_is_transactional(
+			      changed, frame_bytes, frame_bits,
+			      V90_CP_INVALID_FRAME),
+		      "CP accepted a broken sync bit %zu", bit);
+	}
+
 	memcpy(changed, valid, frame_bytes);
 	replace_frame_bit(
 		changed, CP_RATE_FIRST_BIT,

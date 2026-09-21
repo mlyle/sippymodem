@@ -97,10 +97,9 @@ enum pcm_dil_descriptor_result pcm_dil_descriptor_validate_framing(
 {
 	if (!span_is_valid(descriptor, capacity, layout))
 		return PCM_DIL_DESCRIPTOR_INVALID_ARGUMENT;
-	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(descriptor, bit) == 0u)
-			return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
-	}
+	if (packed_msb_read_msb_field(
+		    descriptor, 0u, PCM_DIL_FRAME_SYNC_BITS) != UINT32_C(0x1ffff))
+		return PCM_DIL_DESCRIPTOR_INVALID_FRAME;
 	for (size_t bit = FRAME_START_FIRST_BIT;
 	     bit <= layout->crc_start_bit;
 	     bit += PCM_DIL_FIELD_STRIDE_BITS) {

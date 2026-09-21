@@ -577,6 +577,20 @@ static bool test_wire_rejection_and_contracts(void)
 	      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
 	      "invalid CPd decode call changed its destination");
 
+	for (size_t bit = 0u; bit < 17u; ++bit) {
+		memcpy(changed, frame, sizeof(changed));
+		packed_msb_set_bit(changed, bit, false);
+		CHECK(v92_cpd_probe_frame_bits(
+			      changed, (V92_CPD_FIXED_BITS + 7u) / 8u,
+			      V92_CPD_FIXED_BITS, FIXTURE_ALIGNMENT_BITS,
+			      &untouched_bits) == V92_CPD_INVALID_FRAME &&
+		      untouched_bits == SIZE_MAX &&
+		      v92_cpd_decode(changed, sizeof(changed), frame_bits,
+			      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_INVALID_FRAME &&
+		      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+		      "CPd accepted a broken prefix bit %zu", bit);
+	}
+
 	memcpy(changed, frame, sizeof(changed));
 	packed_msb_set_bit(changed, 30u, true);
 	packed_msb_write_msb_field(
@@ -602,13 +616,19 @@ static bool test_wire_rejection_and_contracts(void)
 		      changed, sizeof(changed), frame_bits,
 		      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_CRC_MISMATCH,
 	      "CPd CRC damage was not distinguished");
-	memcpy(changed, frame, sizeof(changed));
-	packed_msb_set_bit(
-		changed, V92_CPD_FIXED_BITS + 1u + CPD_CRC_BITS, true);
-	CHECK(v92_cpd_decode(
-		      changed, sizeof(changed), frame_bits,
-		      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_INVALID_FRAME,
-	      "nonzero CPd fill was accepted");
+	saved = decoded;
+	for (unsigned int last = 0u; last < 2u; ++last) {
+		size_t bit = last ? frame_bits - 1u :
+			V92_CPD_FIXED_BITS + 1u + CPD_CRC_BITS;
+
+		memcpy(changed, frame, sizeof(changed));
+		packed_msb_set_bit(changed, bit, true);
+		CHECK(v92_cpd_decode(
+			      changed, sizeof(changed), frame_bits,
+			      FIXTURE_ALIGNMENT_BITS, &decoded) == V92_CPD_INVALID_FRAME &&
+		      memcmp(&decoded, &saved, sizeof(decoded)) == 0,
+		      "nonzero CPd fill bit %zu was accepted", bit);
+	}
 	memcpy(changed, frame, sizeof(changed));
 	packed_msb_set_bit(changed, frame_bits, true);
 	CHECK(v92_cpd_decode(

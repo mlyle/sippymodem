@@ -369,12 +369,14 @@ static bool test_decode_corruption(void)
 	      "CPt corruption fixture did not encode");
 	frame_bytes = (frame_bits + 7u) / 8u;
 
-	memcpy(changed, original, sizeof(changed));
-	set_bit(changed, 0, 0);
-	CHECK(decode_rejects_unchanged(
-		      changed, frame_bytes, frame_bits,
-		      V92_CPT_INVALID_FRAME),
-	      "CPt accepted a broken sync prefix");
+	for (size_t bit = 0; bit < 17u; ++bit) {
+		memcpy(changed, original, sizeof(changed));
+		set_bit(changed, bit, 0);
+		CHECK(decode_rejects_unchanged(
+			      changed, frame_bytes, frame_bits,
+			      V92_CPT_INVALID_FRAME),
+		      "CPt accepted a broken sync bit %zu", bit);
+	}
 	memcpy(changed, original, sizeof(changed));
 	set_bit(changed, 19, 1);
 	CHECK(decode_rejects_unchanged(

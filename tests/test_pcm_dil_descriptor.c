@@ -132,6 +132,20 @@ static bool check_layout(
 		      PCM_DIL_DESCRIPTOR_OK,
 	      "DIL CRC differed from the independent recurrence");
 
+	for (size_t bit = 0; bit < PCM_DIL_FRAME_SYNC_BITS; ++bit) {
+		toggle_packed_bit(descriptor, bit);
+		memcpy(saved, descriptor, sizeof(saved));
+		CHECK(pcm_dil_descriptor_validate_crc(
+			      descriptor, sizeof(descriptor), layout) ==
+			      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
+		      pcm_dil_descriptor_finalize(
+			      descriptor, sizeof(descriptor), layout) ==
+			      PCM_DIL_DESCRIPTOR_INVALID_FRAME &&
+		      memcmp(descriptor, saved, sizeof(descriptor)) == 0,
+		      "invalid DIL prefix bit %zu was not rejected transactionally", bit);
+		toggle_packed_bit(descriptor, bit);
+	}
+
 	toggle_packed_bit(descriptor, 26u);
 	CHECK(pcm_dil_descriptor_validate_framing(
 		      descriptor, sizeof(descriptor), layout) ==

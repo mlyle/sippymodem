@@ -232,10 +232,8 @@ static bool framing_is_valid(
 	const uint8_t *frame, size_t payload_end,
 	size_t frame_bit_count)
 {
-	for (size_t index = 0; index < 17u; ++index) {
-		if (packed_msb_bit(frame, index) == 0)
-			return false;
-	}
+	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff))
+		return false;
 	for (size_t index = CP_START_FIRST_BIT;
 	     index <= payload_end; index += 17u) {
 		if (packed_msb_bit(frame, index) != 0)

@@ -522,7 +522,10 @@ static bool test_reserved_bits_are_ignored(void)
 
 static bool test_frame_rejection(void)
 {
-	static const size_t framing_bits[] = { 0, 17, 18, 34, 51, 68, 85, 87 };
+	static const size_t framing_bits[] = {
+		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 18, 34, 51, 68, 85, 87,
+	};
 	struct v34_mp_parameters parameters =
 		base_parameters(false);
 	struct v34_mp_parameters sentinel = {
@@ -619,7 +622,7 @@ static bool test_type1_reserved_bits_and_frame_rejection(void)
 		},
 	};
 	uint8_t valid[V34_MP_TYPE1_FRAME_BYTES];
-	size_t framing_bits[13];
+	size_t framing_bits[12 + V34_MP_TYPE0_FRAME_SYNC_BITS];
 	size_t framing_bit_count = 0;
 
 	sentinel.common = base_parameters(false);
@@ -645,7 +648,8 @@ static bool test_type1_reserved_bits_and_frame_rejection(void)
 		      "Type 1 MP decoder interpreted reserved bits");
 	}
 
-	framing_bits[framing_bit_count++] = 0;
+	for (size_t bit = 0; bit < V34_MP_TYPE0_FRAME_SYNC_BITS; ++bit)
+		framing_bits[framing_bit_count++] = bit;
 	framing_bits[framing_bit_count++] = MP_TYPE_BIT;
 	for (size_t index = MP_START0_BIT;
 	     index < MP_TYPE1_CRC_FIRST_BIT; index += MP_FIELD_STRIDE_BITS)

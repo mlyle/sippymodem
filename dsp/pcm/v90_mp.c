@@ -348,20 +348,12 @@ enum v90_mp_result v90_mp_encode(
 	return V90_MP_OK;
 }
 
-static bool frame_sync_is_valid(const uint8_t *sequence)
-{
-	for (size_t bit = 0; bit < V90_MP_FRAME_SYNC_BITS; ++bit) {
-		if (packed_msb_bit(sequence, bit) == 0)
-			return false;
-	}
-	return true;
-}
-
 static bool framing_bits_are_valid(
 	const uint8_t *sequence, size_t sequence_bit_count,
 	size_t crc_start_bit)
 {
-	if (!frame_sync_is_valid(sequence))
+	if (packed_msb_read_msb_field(
+		    sequence, 0u, V90_MP_FRAME_SYNC_BITS) != UINT32_C(0x1ffff))
 		return false;
 	for (size_t bit = V90_MP_START0_BIT; bit <= crc_start_bit;
 	     bit += V90_MP_FIELD_STRIDE_BITS) {

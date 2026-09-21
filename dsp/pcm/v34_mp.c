@@ -271,12 +271,9 @@ enum v34_mp_result v34_mp_type0_encode(
 
 static bool frame_sync_is_valid(const uint8_t *frame)
 {
-	for (size_t index = V34_MP_FRAME_SYNC_FIRST_BIT;
-	     index < V34_MP_TYPE0_FRAME_SYNC_BITS; ++index) {
-		if (packed_msb_bit(frame, index) == 0)
-			return false;
-	}
-	return true;
+	return packed_msb_read_msb_field(
+		       frame, V34_MP_FRAME_SYNC_FIRST_BIT,
+		       V34_MP_TYPE0_FRAME_SYNC_BITS) == UINT32_C(0x1ffff);
 }
 
 static bool framing_bits_are_valid(

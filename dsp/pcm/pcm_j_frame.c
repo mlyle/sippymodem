@@ -69,11 +69,10 @@ enum pcm_j_frame_result pcm_j_frame_encode(
 
 static bool framing_is_valid(const uint8_t *frame)
 {
-	for (size_t index = FRAME_SYNC_FIRST_BIT;
-	     index < PCM_J_FRAME_SYNC_BITS; ++index) {
-		if (packed_msb_bit(frame, index) == 0)
-			return false;
-	}
+	if (packed_msb_read_msb_field(
+		    frame, FRAME_SYNC_FIRST_BIT, PCM_J_FRAME_SYNC_BITS) !=
+	    UINT32_C(0x1ffff))
+		return false;
 	if (packed_msb_bit(frame, START0_BIT) != 0 ||
 	    packed_msb_bit(frame, START1_BIT) != 0 ||
 	    packed_msb_bit(frame, START2_BIT) != 0)

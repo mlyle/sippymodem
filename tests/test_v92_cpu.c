@@ -320,12 +320,14 @@ static bool test_extent_probe_failures(void)
 		      36u, NULL) == V92_CPU_INVALID_ARGUMENT,
 	      "CPu extent probe accepted an invalid boundary");
 
-	memcpy(changed, encoded, sizeof(changed));
-	set_bit(changed, 0u, 0u);
-	CHECK(probe_is_transactional(
-		      changed, sizeof(changed), V92_CPU_HEADER_BITS,
-		      36u, V92_CPU_INVALID_FRAME),
-	      "CPu extent probe accepted a broken prefix");
+	for (size_t bit = 0u; bit < 17u; ++bit) {
+		memcpy(changed, encoded, sizeof(changed));
+		set_bit(changed, bit, 0u);
+		CHECK(probe_is_transactional(
+			      changed, V92_CPU_HEADER_BITS / 8u, V92_CPU_HEADER_BITS,
+			      36u, V92_CPU_INVALID_FRAME),
+		      "CPu extent probe accepted a broken prefix bit %zu", bit);
+	}
 	memcpy(changed, encoded, sizeof(changed));
 	write_lsb_field(changed, CPU_RATE_FIRST_BIT, 5u, 31u);
 	CHECK(probe_is_transactional(
@@ -659,24 +661,30 @@ static bool test_decoder_failures(void)
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted an invalid extent");
 
-	memcpy(changed, encoded, frame_bytes);
-	set_bit(changed, 0u, 0u);
-	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 36u,
-		      V92_CPU_INVALID_FRAME),
-	      "CPu decoder accepted a broken preamble");
+	for (size_t bit = 0u; bit < 17u; ++bit) {
+		memcpy(changed, encoded, frame_bytes);
+		set_bit(changed, bit, 0u);
+		CHECK(decode_is_transactional(
+			      changed, frame_bytes, frame_bits, 36u,
+			      V92_CPU_INVALID_FRAME),
+		      "CPu decoder accepted a broken preamble bit %zu", bit);
+	}
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, V92_CPU_HEADER_BITS, 1u);
 	CHECK(decode_is_transactional(
 		      changed, frame_bytes, frame_bits, 36u,
 		      V92_CPU_INVALID_FRAME),
 	      "CPu decoder accepted a row start bit");
-	memcpy(changed, encoded, frame_bytes);
-	set_bit(changed, payload_end + 17u, 1u);
-	CHECK(decode_is_transactional(
-		      changed, frame_bytes, frame_bits, 36u,
-		      V92_CPU_INVALID_FRAME),
-	      "CPu decoder accepted a nonzero fill bit");
+	for (unsigned int last = 0u; last < 2u; ++last) {
+		size_t bit = last ? frame_bits - 1u : payload_end + 17u;
+
+		memcpy(changed, encoded, frame_bytes);
+		set_bit(changed, bit, 1u);
+		CHECK(decode_is_transactional(
+			      changed, frame_bytes, frame_bits, 36u,
+			      V92_CPU_INVALID_FRAME),
+		      "CPu decoder accepted a nonzero fill bit %zu", bit);
+	}
 
 	memcpy(changed, encoded, frame_bytes);
 	set_bit(changed, 26u, 1u);
@@ -824,6 +832,10 @@ static bool test_short_rejection(void)
 		CHECK(v92_cpus_decode(frame, bytes, count, width, &decoded) != V92_CPU_OK &&
 		      memcmp(&decoded, &unchanged, sizeof(decoded)) == 0,
 		      "CPus bit %zu corruption escaped validation or changed output", bit);
+		if (bit < 17u)
+			CHECK(probe_is_transactional(
+				      frame, 5u, 34u, width, V92_CPU_INVALID_FRAME),
+			      "CPus probe accepted a broken prefix bit %zu", bit);
 		memcpy(frame, saved, sizeof(frame));
 	}
 	for (size_t bit = 26u; bit <= 32u; ++bit) {

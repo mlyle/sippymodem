@@ -42,17 +42,6 @@ static bool alignment_is_valid(unsigned int mapping_frame_bits)
 	       mapping_frame_bits <= V92_CPD_DOWNSTREAM_DATA_MAX_BITS;
 }
 
-static bool bits_are(
-	const uint8_t *frame, size_t first_bit,
-	size_t bit_count, uint8_t value)
-{
-	for (size_t bit = 0u; bit < bit_count; ++bit) {
-		if (packed_msb_bit(frame, first_bit + bit) != value)
-			return false;
-	}
-	return true;
-}
-
 static bool filter_is_canonical(const struct v92_cpd_filter *filter)
 {
 	if (filter->count > V92_CPD_MAX_SECTION_COEFFICIENTS)
@@ -331,7 +320,7 @@ enum v92_cpd_result v92_cpd_probe_frame_bits(
 		return V92_CPD_INVALID_ARGUMENT;
 	if (received_bit_count < V92_CPD_FIXED_BITS)
 		return V92_CPD_INCOMPLETE;
-	if (!bits_are(frame, 0u, 17u, 1u) ||
+	if (packed_msb_read_msb_field(frame, 0u, 17u) != UINT32_C(0x1ffff) ||
 	    packed_msb_bit(frame, 17u) != 0u ||
 	    packed_msb_bit(frame, 34u) != 0u ||
 	    packed_msb_read_lsb_field(
@@ -752,9 +741,9 @@ enum v92_cpd_result v92_cpd_decode(
 	if (expected_bits != frame_bit_count ||
 	    wire.cursor + V92_CPD_TRAILER_BITS > frame_bit_count ||
 	    packed_msb_bit(frame, wire.cursor) != 0u ||
-	    !bits_are(
+	    !packed_msb_bits_are_zero(
 		    frame, wire.cursor + 1u + CPD_CRC_BITS,
-		    frame_bit_count - wire.cursor - 1u - CPD_CRC_BITS, 0u))
+		    frame_bit_count - wire.cursor - 1u - CPD_CRC_BITS))
 		return V92_CPD_INVALID_FRAME;
 	received_crc = (uint16_t)packed_msb_read_msb_field(
 		frame, wire.cursor + 1u, CPD_CRC_BITS);

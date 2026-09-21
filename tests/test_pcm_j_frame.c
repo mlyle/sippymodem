@@ -78,7 +78,10 @@ static bool test_generated_payloads(void)
 
 static bool test_rejection(void)
 {
-	static const size_t framing_bits[] = { 0, 17, 34, 51, 68 };
+	static const size_t framing_bits[] = {
+		0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+		17, 34, 51, 68,
+	};
 	uint8_t frame[PCM_J_FRAME_BYTES];
 	uint8_t malformed[PCM_J_FRAME_BYTES];
 	uint32_t decoded = UINT32_C(0x12345678);
