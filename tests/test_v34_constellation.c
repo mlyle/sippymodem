@@ -5,6 +5,7 @@
 #include "test.h"
 
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -220,6 +221,49 @@ static bool test_point_zero_rotations(void)
 			      close_to(point.quadrature, expected.quadrature) &&
 			      close_to(power, 1.0),
 		      "point-zero rotation changed at turn %d", turns);
+	}
+	return true;
+}
+
+static bool test_training_decision_validation(void)
+{
+	static const int sizes[] = { -1, 0, 4, 8, 16, 64, INT_MAX };
+
+	for (size_t size = 0; size < ARRAY_LENGTH(sizes); ++size) {
+		enum v34_constellation_size constellation =
+			(enum v34_constellation_size)sizes[size];
+		for (unsigned int quarter = 0; quarter <= UINT8_MAX; ++quarter) {
+			for (unsigned int rotation = 0;
+			     rotation <= UINT8_MAX; ++rotation) {
+				const struct qam_point sentinel = { 7.0, -9.0 };
+				const struct v34_analytic_sample fixed_sentinel =
+					{ 7, -9 };
+				struct qam_point point = sentinel;
+				struct v34_analytic_sample fixed = fixed_sentinel;
+				unsigned int quarter_count = sizes[size] == 4 ? 1u :
+					sizes[size] == 16 ? 4u : 0u;
+				bool valid = quarter < quarter_count && rotation < 4u;
+				enum v34_constellation_result expected = valid ?
+					V34_CONSTELLATION_OK :
+					V34_CONSTELLATION_INVALID_ARGUMENT;
+
+				CHECK(v34_training_decision_is_valid(constellation,
+					      (uint8_t)quarter, (uint8_t)rotation) == valid &&
+				      v34_training_constellation_point(constellation,
+					      (uint8_t)quarter, (uint8_t)rotation, &point) ==
+					      expected &&
+				      v34_training_constellation_fixed_point(constellation,
+					      (uint8_t)quarter, (uint8_t)rotation, &fixed) ==
+					      expected,
+				      "wrong label validity: size=%d quarter=%u rotation=%u",
+				      sizes[size], quarter, rotation);
+				CHECK(valid || (point.in_phase == sentinel.in_phase &&
+				      point.quadrature == sentinel.quadrature &&
+				      fixed.in_phase == fixed_sentinel.in_phase &&
+				      fixed.quadrature == fixed_sentinel.quadrature),
+				      "invalid training decision changed output");
+			}
+		}
 	}
 	return true;
 }
@@ -674,6 +718,7 @@ int main(void)
 		{ "quarter-superconstellation prefixes",
 		  test_quarter_superconstellation_prefixes },
 		{ "point-zero rotations", test_point_zero_rotations },
+		{ "training decision validation", test_training_decision_validation },
 		{ "four-point training set", test_four_point_constellation },
 		{ "sixteen-point training set", test_sixteen_point_constellation },
 		{ "fixed training sets", test_fixed_training_constellations },

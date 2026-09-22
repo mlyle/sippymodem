@@ -270,10 +270,8 @@ static bool training_grid_coordinates(
 	uint8_t quarter_point, uint8_t clockwise_quarter_turns,
 	int *in_phase, int *quadrature)
 {
-	if (clockwise_quarter_turns > 3u ||
-	    !v34_constellation_size_is_valid(constellation) ||
-	    (constellation == V34_CONSTELLATION_4_POINT ?
-		     quarter_point != 0u : quarter_point > 3u))
+	if (!v34_training_decision_is_valid(
+		    constellation, quarter_point, clockwise_quarter_turns))
 		return false;
 	*in_phase = (quarter_point & 1u) != 0u ? -3 : 1;
 	*quadrature = (quarter_point & 2u) != 0u ? -3 : 1;

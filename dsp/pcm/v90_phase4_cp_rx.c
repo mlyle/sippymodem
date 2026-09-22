@@ -37,17 +37,6 @@ enum v90_cp_result v90_phase4_cp_rx_init(
 	return V90_CP_OK;
 }
 
-static bool decision_is_valid(
-	const struct v90_phase4_cp_rx *rx,
-	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
-{
-	if (clockwise_quarter_turns > 3u)
-		return false;
-	if (rx->constellation == V34_CONSTELLATION_4_POINT)
-		return quarter_point == 0u;
-	return quarter_point <= 3u;
-}
-
 static enum v90_cp_result receive_dibit(
 	struct v90_cp_receiver *records, uint8_t dibit,
 	struct v90_cp_receive_event *event)
@@ -80,8 +69,8 @@ enum v90_cp_result v90_phase4_cp_rx_receive_decision(
 	uint8_t dibit;
 
 	if (!v90_phase4_cp_rx_is_valid(rx) ||
-	    !decision_is_valid(rx, quarter_point,
-			       clockwise_quarter_turns) ||
+	    !v34_training_decision_is_valid(
+		    rx->constellation, quarter_point, clockwise_quarter_turns) ||
 	    event == NULL)
 		return V90_CP_INVALID_ARGUMENT;
 	next = *rx;

@@ -60,6 +60,18 @@ static inline unsigned int v34_constellation_bits_per_symbol(
 	       constellation == V34_CONSTELLATION_16_POINT ? 4u : 0u;
 }
 
+/* Phase 3/4 labels shared by the point generators and control receivers. */
+static inline bool v34_training_decision_is_valid(
+	enum v34_constellation_size constellation,
+	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
+{
+	return clockwise_quarter_turns < 4u &&
+	       ((constellation == V34_CONSTELLATION_4_POINT &&
+		 quarter_point == 0u) ||
+		(constellation == V34_CONSTELLATION_16_POINT &&
+		 quarter_point < 4u));
+}
+
 enum v34_constellation_result {
 	V34_CONSTELLATION_OK,
 	V34_CONSTELLATION_INVALID_ARGUMENT,

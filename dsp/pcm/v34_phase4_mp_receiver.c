@@ -72,17 +72,6 @@ v34_phase4_mp_receiver_init_from_trn(
 	return V34_PHASE4_MP_RECEIVER_OK;
 }
 
-static bool decision_is_valid(
-	const struct v34_phase4_mp_receiver *receiver,
-	uint8_t quarter_point, uint8_t clockwise_quarter_turns)
-{
-	if (clockwise_quarter_turns > 3u)
-		return false;
-	if (receiver->constellation == V34_CONSTELLATION_4_POINT)
-		return quarter_point == 0u;
-	return quarter_point <= 3u;
-}
-
 static enum v34_phase4_mp_receiver_result receive_dibit(
 	struct v34_mp_receiver *records, uint8_t dibit,
 	struct v34_mp_receive_event *event)
@@ -117,8 +106,8 @@ v34_phase4_mp_receive_decision(
 	uint8_t dibit;
 
 	if (!v34_phase4_mp_receiver_is_valid(receiver) ||
-	    !decision_is_valid(receiver, quarter_point,
-			       clockwise_quarter_turns) ||
+	    !v34_training_decision_is_valid(receiver->constellation,
+		    quarter_point, clockwise_quarter_turns) ||
 	    event == NULL)
 		return V34_PHASE4_MP_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
