@@ -25,6 +25,14 @@ static inline const struct v90_info0 *pcm_info0_common(
 		       &record->v92_analog.v90 : &record->v92_digital.v90.common;
 }
 
+static inline struct v90_info0 *pcm_info0_mutable_common(
+	union pcm_info0_record *record, enum pcm_protocol protocol,
+	enum v90_modem_role role)
+{
+	/* The record is mutable; only the const view's qualifier is removed. */
+	return (struct v90_info0 *)pcm_info0_common(record, protocol, role);
+}
+
 /* A received V.92-format record may decline V.92 so startup can fall back.
  * Acknowledgment is an exchange property, not a capability constraint. */
 static inline bool pcm_info0_is_valid(enum pcm_protocol protocol,

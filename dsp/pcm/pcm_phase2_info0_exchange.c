@@ -21,18 +21,6 @@ static enum v90_modem_role opposite_role(enum v90_modem_role role)
 		       V90_DIGITAL_MODEM : V90_ANALOG_MODEM;
 }
 
-static struct v90_info0 *record_common(
-	union pcm_info0_record *record, enum pcm_protocol protocol,
-	enum v90_modem_role role)
-{
-	if (protocol == PCM_PROTOCOL_V90)
-		return role == V90_ANALOG_MODEM ?
-			       &record->analog : &record->digital.common;
-	return role == V90_ANALOG_MODEM ?
-		       &record->v92_analog.v90 :
-		       &record->v92_digital.v90.common;
-}
-
 static bool encode_record(
 	enum pcm_protocol protocol, enum v90_modem_role role,
 	const union pcm_info0_record *record, uint8_t *payload,
@@ -231,7 +219,7 @@ static enum pcm_phase2_info0_exchange_result initialize(
 	    !pcm_info0_is_valid(protocol, role, local_info0))
 		return PCM_PHASE2_INFO0_EXCHANGE_INVALID_ARGUMENT;
 	initial = *local_info0;
-	record_common(
+	pcm_info0_mutable_common(
 		&initial, protocol, role)->acknowledges_peer_info0 = false;
 	if (!encode_record(
 		    protocol, role, &initial, payload, sizeof(payload)) ||
@@ -322,10 +310,10 @@ static bool info0_semantics_match(
 	enum v90_modem_role role = opposite_role(exchange->local_role);
 	size_t payload_bytes = (payload_bits_for_role(role) + 7u) / 8u;
 
-	record_common(
+	pcm_info0_mutable_common(
 		&left_without_ack, exchange->protocol,
 		role)->acknowledges_peer_info0 = false;
-	record_common(
+	pcm_info0_mutable_common(
 		&right_without_ack, exchange->protocol,
 		role)->acknowledges_peer_info0 = false;
 	return encode_record(
@@ -409,7 +397,7 @@ static bool retain_peer_info0(
 	if (exchange->state == PCM_PHASE2_INFO0_VERIFY_REPEAT) {
 		bool late_ack = decoded_ack && !peer_acknowledges_local(exchange);
 
-		record_common(
+		pcm_info0_mutable_common(
 			&exchange->peer_info0, exchange->protocol,
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0 = decoded_ack;
@@ -426,7 +414,7 @@ static bool retain_peer_info0(
 	if (!retained) {
 		exchange->peer_info0 = decoded;
 	} else
-		record_common(
+		pcm_info0_mutable_common(
 			&exchange->peer_info0, exchange->protocol,
 			opposite_role(exchange->local_role))
 			->acknowledges_peer_info0 |=
@@ -486,7 +474,7 @@ static bool restart_local_info0(
 		    frame->payload, sizeof(frame->payload),
 		    frame->payload_bit_count, &local))
 		return false;
-	common = record_common(
+	common = pcm_info0_mutable_common(
 		&local, exchange->protocol, exchange->local_role);
 	common->acknowledges_peer_info0 = acknowledge_peer;
 	return encode_record(

@@ -955,7 +955,8 @@ static bool test_record_validation(void)
 					common = &digital->common;
 				}
 				common->acknowledges_peer_info0 = ack;
-				CHECK(pcm_info0_common(&record, protocol, role) == common,
+				CHECK(pcm_info0_common(&record, protocol, role) == common &&
+				      pcm_info0_mutable_common(&record, protocol, role) == common,
 				      "common fields selected the wrong record");
 				for (unsigned difference = 0; difference <= 6u; ++difference) {
 					common->maximum_symbol_rate_difference_steps = difference;
