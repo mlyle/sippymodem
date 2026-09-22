@@ -22,12 +22,6 @@ _Static_assert(
 			V90_DIGITAL_PATH_RRN_FRAME_CAPACITY,
 	"V.90 upstream control buffer must cover both bounded epochs");
 
-static bool initial_mp_is_valid(const struct v90_mp_record *record)
-{
-	return v90_mp_record_is_valid(record) &&
-	       !v90_mp_record_acknowledges_cp(record);
-}
-
 static bool pending_upstream_is_valid(const struct v90_digital_path *path)
 {
 	return path->pending_upstream_head <
@@ -166,7 +160,7 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 	    path->control_mapping.kind != V90_CP_TRAINING ||
 	    path->control_mapping.law != path->law ||
 	    !v90_phase4_cp_rx_is_valid(&path->control_symbols) ||
-	    !initial_mp_is_valid(&path->local_mp) ||
+	    !v90_mp_record_is_initial(&path->local_mp) ||
 	    (path->peer_upstream_rate_mask &
 	     (uint16_t)~V90_MP_RATE_CAPABILITY_MASK) != 0u ||
 	    !pcm_downstream_rate_mask_is_usable(

@@ -196,8 +196,7 @@ static bool v90_control_is_valid(
 	if (transmitter->v92_control_kind !=
 		    PCM_DOWNSTREAM_V92_CONTROL_NONE ||
 	    transmitter->v92_control_record_accepted ||
-	    !v90_mp_record_is_valid(&transmitter->control.mp) ||
-	    v90_mp_record_acknowledges_cp(&transmitter->control.mp) ||
+	    !v90_mp_record_is_initial(&transmitter->control.mp) ||
 	    transmitter->control_sequence_bits == 0 ||
 	    transmitter->control_bit_index >=
 		    transmitter->control_sequence_bits ||
@@ -556,8 +555,7 @@ enum pcm_downstream_tx_result pcm_downstream_tx_start_mp(
 	    transmitter->protocol != PCM_PROTOCOL_V90 ||
 	    transmitter->finish_requested)
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;
-	if (!v90_mp_record_is_valid(record) ||
-	    v90_mp_record_acknowledges_cp(record))
+	if (!v90_mp_record_is_initial(record))
 		return PCM_DOWNSTREAM_TX_INVALID_PARAMETERS;
 	if (transmitter->control_configured) {
 		if (same_mp_record(transmitter, record))

@@ -301,6 +301,13 @@ static bool test_record_comparison(void)
 	type1_base.parameters.type1.common.acknowledges_cp = false;
 	changed.parameters.type1.precoder_coefficients[1].imaginary--;
 	invalid.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
+	CHECK(v90_mp_record_is_initial(&type0) &&
+	      v90_mp_record_is_initial(&type1_base) &&
+	      !v90_mp_record_is_initial(&type0_prime) &&
+	      !v90_mp_record_is_initial(&type1) &&
+	      !v90_mp_record_is_initial(&invalid) &&
+	      !v90_mp_record_is_initial(NULL),
+	      "initial MP accepted an acknowledgement or invalid record");
 	CHECK(!v90_mp_record_acknowledges_cp(&type0) &&
 	      v90_mp_record_acknowledges_cp(&type0_prime) &&
 	      !v90_mp_record_equal(&type0, &type0_prime) &&

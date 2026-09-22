@@ -121,6 +121,12 @@ static const struct v90_mp_parameters *record_parameters(
 		       &record->parameters.type1.common;
 }
 
+bool v90_mp_record_is_initial(const struct v90_mp_record *record)
+{
+	return v90_mp_record_is_valid(record) &&
+	       !record_parameters(record)->acknowledges_cp;
+}
+
 bool v90_mp_record_acknowledges_cp(
 	const struct v90_mp_record *record)
 {

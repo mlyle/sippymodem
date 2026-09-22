@@ -6,12 +6,6 @@
 
 #include <stddef.h>
 
-static bool initial_mp_is_valid(const struct v90_mp_record *record)
-{
-	return v90_mp_record_is_valid(record) &&
-	       !v90_mp_record_acknowledges_cp(record);
-}
-
 static bool training_mapping_is_supported(
 	const struct v90_pcm_mapping *mapping, enum g711_law law,
 	uint8_t maximum_spectral_lookahead)
@@ -242,7 +236,7 @@ v90_phase4_digital_station_transmit_handoff(
 	struct v90_phase4_digital_transmit_handoff generated;
 
 	if (!v90_phase4_digital_station_is_valid(station) ||
-	    !initial_mp_is_valid(mp) || handoff == NULL)
+	    !v90_mp_record_is_initial(mp) || handoff == NULL)
 		return V90_PHASE4_DIGITAL_STATION_INVALID_ARGUMENT;
 	if (station->failed)
 		return V90_PHASE4_DIGITAL_STATION_FAILED;

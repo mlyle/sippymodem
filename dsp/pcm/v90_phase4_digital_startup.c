@@ -4,12 +4,6 @@
 
 #include "memory_region.h"
 
-static bool initial_mp_is_valid(const struct v90_mp_record *record)
-{
-	return v90_mp_record_is_valid(record) &&
-	       !v90_mp_record_acknowledges_cp(record);
-}
-
 static const struct v90_mp_parameters *mp_parameters(
 	const struct v90_mp_record *record)
 {
@@ -27,7 +21,7 @@ static bool select_initial_mp(
 	const struct v90_mp_parameters *parameters;
 	uint8_t maximum;
 
-	if (!initial_mp_is_valid(configured) ||
+	if (!v90_mp_record_is_initial(configured) ||
 	    !v90_phase4_digital_station_is_valid(station) ||
 	    !v90_phase4_digital_station_receive_complete(station) ||
 	    selected == NULL)
@@ -65,7 +59,8 @@ static bool configured_mp_matches(
 bool v90_phase4_digital_startup_is_valid(
 	const struct v90_phase4_digital_startup *startup)
 {
-	if (startup == NULL || !initial_mp_is_valid(&startup->initial_mp))
+	if (startup == NULL ||
+	    !v90_mp_record_is_initial(&startup->initial_mp))
 		return false;
 	switch (startup->stage) {
 	case V90_PHASE4_STARTUP_INITIAL: {
@@ -145,7 +140,7 @@ enum v90_phase4_startup_result v90_phase4_digital_startup_init(
 	    v90_phase4_digital_station_has_failed(station) ||
 	    v90_phase4_digital_station_receive_complete(station) ||
 	    v90_phase4_digital_station_transmit_complete(station) ||
-	    !initial_mp_is_valid(initial_mp))
+	    !v90_mp_record_is_initial(initial_mp))
 		return V90_PHASE4_STARTUP_INVALID_ARGUMENT;
 	initialized.state.initial = *station;
 	initialized.initial_mp = *initial_mp;

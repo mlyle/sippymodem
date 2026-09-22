@@ -80,6 +80,9 @@ struct v90_mp_record {
 
 bool v90_mp_record_is_valid(const struct v90_mp_record *record);
 
+/* An initial MP is valid and does not acknowledge CP. MP-prime does. */
+bool v90_mp_record_is_initial(const struct v90_mp_record *record);
+
 /* Lower the advertised maximum to the highest enabled rate at or below the
  * requested ceiling. A valid record with no such enabled rate is left
  * unchanged, as is an existing lower maximum or cleardown request. Invalid

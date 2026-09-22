@@ -163,11 +163,9 @@ static bool digital_configuration_is_valid(
 {
 	const struct v90_mp_record *mp = &phase4->initial_mp;
 
-	if (!v90_mp_record_is_valid(mp))
-		return false;
 	return v34_info1c_is_valid(info1) &&
 	       v90_jd_parameters_are_valid(&phase3->digital.jd) &&
-	       !v90_mp_record_acknowledges_cp(mp);
+	       v90_mp_record_is_initial(mp);
 }
 
 static bool v92_analog_configuration_is_valid(
