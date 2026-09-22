@@ -2,6 +2,7 @@
 
 #include "v34_phase2_dpsk.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "phase.h"
 
@@ -304,26 +305,11 @@ static int16_t select_carrier(
 		receiver->local_role == V34_CALLING_STATION ?
 			v34_phase2_carrier_2400_q16 :
 			v34_phase2_carrier_1200_q16;
-	int64_t accumulator = INT64_C(32768);
-	size_t next;
+	int64_t accumulator = INT64_C(32768) + fir_ring_symmetric_s16(
+		receiver->carrier_history, coefficients,
+		V34_PHASE2_DPSK_CARRIER_FILTER_TAPS,
+		&receiver->carrier_index, sample);
 
-	receiver->carrier_history[receiver->carrier_index] = sample;
-	next = (receiver->carrier_index + 1u) %
-	       V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
-	receiver->carrier_index = next;
-	for (size_t tap = 0;
-	     tap < V34_PHASE2_DPSK_CARRIER_FILTER_TAPS / 2u; ++tap) {
-		size_t recent =
-			(next + V34_PHASE2_DPSK_CARRIER_FILTER_TAPS - 1u - tap) %
-			V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
-		size_t old =
-			(next + tap) % V34_PHASE2_DPSK_CARRIER_FILTER_TAPS;
-
-		accumulator +=
-			(int32_t)coefficients[tap] *
-			((int32_t)receiver->carrier_history[recent] +
-			 receiver->carrier_history[old]);
-	}
 	return clamp_s16(arithmetic_shift_right_u64((uint64_t)accumulator, 16u));
 }
 
@@ -363,25 +349,11 @@ static int16_t differential_product(
 static int16_t lowpass_detector(
 	struct v34_phase2_dpsk_receiver *receiver, int16_t current)
 {
-	int64_t accumulator = 0;
-	size_t next;
+	int64_t accumulator = fir_ring_symmetric_s16(
+		receiver->lowpass_history, v34_phase2_lowpass_q14,
+		V34_PHASE2_DPSK_LOWPASS_TAPS,
+		&receiver->lowpass_index, current);
 
-	receiver->lowpass_history[receiver->lowpass_index] = current;
-	next = (receiver->lowpass_index + 1u) %
-	       V34_PHASE2_DPSK_LOWPASS_TAPS;
-	receiver->lowpass_index = next;
-	for (size_t tap = 0; tap < V34_PHASE2_DPSK_LOWPASS_TAPS / 2u;
-	     ++tap) {
-		size_t recent =
-			(next + V34_PHASE2_DPSK_LOWPASS_TAPS - 1u - tap) %
-			V34_PHASE2_DPSK_LOWPASS_TAPS;
-		size_t old = (next + tap) % V34_PHASE2_DPSK_LOWPASS_TAPS;
-
-		accumulator +=
-			(int32_t)v34_phase2_lowpass_q14[tap] *
-			((int32_t)receiver->lowpass_history[recent] +
-			 receiver->lowpass_history[old]);
-	}
 	return q14_shift(accumulator, false);
 }
 

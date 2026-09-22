@@ -70,7 +70,59 @@ static bool test_impulse_order(void)
 	return true;
 }
 
+static bool test_symmetric_ring(void)
+{
+	uint32_t random = UINT32_C(0x80cd176a);
+	int16_t guarded[82], saved[82], linear[80];
+	int16_t coefficients[40], saved_coefficients[40];
+
+	for (size_t count = 2; count <= ARRAY_LENGTH(linear); count += 2) {
+		for (size_t start = 0; start < count; ++start) {
+			size_t index = start;
+
+			for (size_t i = 0; i < ARRAY_LENGTH(guarded); ++i)
+				guarded[i] = start % 3 == 0 ? INT16_MIN :
+					start % 3 == 1 ? INT16_MAX : next_sample(&random);
+			for (size_t i = 0; i < ARRAY_LENGTH(coefficients); ++i)
+				coefficients[i] = start % 3 == 0 ? INT16_MIN :
+					start % 3 == 1 ? INT16_MAX : next_sample(&random);
+			memcpy(saved_coefficients, coefficients, sizeof(coefficients));
+			for (size_t tap = 0; tap < count; ++tap)
+				linear[tap] = guarded[1 + (start + count - 1 - tap) % count];
+			for (size_t trial = 0; trial < 2 * count; ++trial) {
+				int16_t sample = trial % 3 == 0 ? INT16_MIN :
+					trial % 3 == 1 ? INT16_MAX : next_sample(&random);
+				size_t inserted = index;
+				int64_t expected = 0;
+
+				memcpy(saved, guarded, sizeof(guarded));
+				memmove(linear + 1, linear, (count - 1) * sizeof(linear[0]));
+				linear[0] = sample;
+				/* Independent newest-first convolution, not paired arithmetic
+				 * or ring traversal. Full-width products must not wrap. */
+				for (size_t tap = 0; tap < count; ++tap)
+					expected += (int64_t)linear[tap] *
+						coefficients[tap < count / 2 ? tap : count - 1 - tap];
+				CHECK(fir_ring_symmetric_s16(guarded + 1, coefficients,
+							     count, &index, sample) == expected,
+				      "symmetric FIR sum changed at count=%zu start=%zu trial=%zu",
+				      count, start, trial);
+				CHECK(index == (inserted + 1) % count,
+				      "symmetric FIR cursor changed at count=%zu start=%zu trial=%zu",
+				      count, start, trial);
+				saved[inserted + 1] = sample;
+				CHECK(memcmp(guarded, saved, sizeof(guarded)) == 0,
+				      "symmetric FIR changed another slot or guard");
+				CHECK(memcmp(coefficients, saved_coefficients, sizeof(coefficients)) == 0,
+				      "symmetric FIR modified coefficients");
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
-	return test_full_width_convolution() && test_impulse_order() ? 0 : 1;
+	return test_full_width_convolution() && test_impulse_order() &&
+	       test_symmetric_ring() ? 0 : 1;
 }
