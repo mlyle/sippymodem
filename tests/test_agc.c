@@ -46,6 +46,46 @@ static void fill_reference_block(int16_t *samples, unsigned seed)
 	}
 }
 
+static bool test_q10_sample_scaling(void)
+{
+	static const int16_t gains[] = {
+		INT16_MIN, -1024, 0, 1, 512, 1024, 1025, 2048, 8192, INT16_MAX,
+	};
+
+	for (size_t gain = 0; gain < ARRAY_LENGTH(gains); ++gain) {
+		for (int32_t sample = INT16_MIN; sample <= INT16_MAX; ++sample) {
+			int64_t product = (int64_t)gains[gain] * sample;
+			bool expected_clip = product < -33554432 || product >= 33554432;
+
+			for (uint16_t rounding = 0; rounding <= 512; rounding += 512) {
+				int16_t expected;
+				bool clipped = !expected_clip;
+
+				if (expected_clip) {
+					expected = product < 0 ? -32512 : 32512;
+				} else {
+					int64_t rounded = product + rounding;
+					/* Independent floor division and low-word oracle. */
+					int64_t shifted = rounded >= 0 ? rounded / 1024 :
+						-((-rounded + 1023) / 1024);
+					uint16_t word = (uint16_t)shifted;
+
+					expected = word <= INT16_MAX ? (int16_t)word :
+						(int16_t)((int32_t)word - 65536);
+				}
+				CHECK(agc_scale_q10(gains[gain], (int16_t)sample,
+						   rounding, &clipped) == expected &&
+				      clipped == expected_clip &&
+				      agc_scale_q10(gains[gain], (int16_t)sample,
+						   rounding, NULL) == expected,
+				      "Q10 scaling changed at gain=%d sample=%d rounding=%u",
+				      gains[gain], (int)sample, rounding);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_fixed_square_root_profile(void)
 {
 	uint32_t value = 1;
@@ -286,7 +326,8 @@ static bool test_level_measurement_contract(void)
 
 int main(void)
 {
-	if (!test_fixed_square_root_profile() || !test_exact_arithmetic() ||
+	if (!test_q10_sample_scaling() ||
+	    !test_fixed_square_root_profile() || !test_exact_arithmetic() ||
 	    !test_lifecycle_and_contracts() ||
 	    !test_level_measurement_contract())
 		return 1;

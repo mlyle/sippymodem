@@ -3,9 +3,31 @@
 #ifndef AGC_H
 #define AGC_H
 
+#include "integer_math.h"
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+/* Q10 sample gain with pre-rounding clipping to +/-32512 outside the signed
+ * 26-bit product range. Inside that range, add rounding (0 or 512), shift,
+ * and retain the low 16 bits. If supplied, clipped is set on every call. */
+static inline int16_t agc_scale_q10(
+	int16_t gain, int16_t sample, uint32_t rounding, bool *clipped)
+{
+	int32_t product = (int32_t)gain * sample;
+	bool overflow = product < -INT32_C(33554432) ||
+			product >= INT32_C(33554432);
+
+	if (clipped != NULL)
+		*clipped = false;
+	if (!overflow)
+		return wrap_s16_from_s32(arithmetic_shift_right_u32(
+			(uint32_t)product + rounding, 10));
+	if (clipped != NULL)
+		*clipped = true;
+	return product < 0 ? -32512 : 32512;
+}
 
 enum agc_result {
 	AGC_OK,

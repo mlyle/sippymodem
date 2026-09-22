@@ -2,6 +2,7 @@
 
 #include "v8_line_conditioner.h"
 
+#include "agc.h"
 #include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
@@ -140,21 +141,6 @@ static void adapt_gain(
 	}
 }
 
-static int16_t scale_sample(
-	int16_t gain, int16_t sample, bool *overflow)
-{
-	int32_t product = (int32_t)gain * sample;
-	uint32_t top = (uint32_t)product >> 25;
-
-	if (top == 0u || top == 0x7fu)
-		return wrap_s16_from_s32(
-			arithmetic_shift_right_u32((uint32_t)product, 10));
-	*overflow = true;
-	return wrap_s16_from_s32(
-		       arithmetic_shift_right_u32((uint32_t)product, 16)) < 1 ?
-		       (int16_t)0x8100 : (int16_t)0x7f00;
-}
-
 static void condition_block(
 	struct v8_line_conditioner *conditioner,
 	struct v8_line_conditioned_block *block)
@@ -188,10 +174,10 @@ static void condition_block(
 	energy_level = fixed_square_root_u32(history_energy);
 
 	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
-		bool overflow = false;
+		bool overflow;
 
-		block->samples[index] = scale_sample(
-			(int16_t)conditioner->gain, block->samples[index],
+		block->samples[index] = agc_scale_q10(
+			(int16_t)conditioner->gain, block->samples[index], 0,
 			&overflow);
 		if (!overflow)
 			continue;

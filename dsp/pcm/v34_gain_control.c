@@ -23,20 +23,6 @@ enum {
 	V34_GAIN_ENERGY_HISTORY_Q15 = 0x6ccd,
 };
 
-static int16_t scale_sample(
-	int16_t gain, int16_t sample, uint32_t rounding)
-{
-	uint32_t product = (uint32_t)((int32_t)gain * sample);
-	uint32_t top = product >> 25;
-	int16_t overflow = wrap_s16_from_s32(
-		arithmetic_shift_right_u32(product, 16));
-
-	if (top == 0 || top == 0x7f)
-		return wrap_s16_from_s32(arithmetic_shift_right_u32(
-			product + rounding, V34_GAIN_FRACTION_BITS));
-	return overflow <= 0 ? (int16_t)0x8100 : (int16_t)0x7f00;
-}
-
 static uint16_t smooth_energy(uint16_t average, uint32_t energy)
 {
 	int32_t history = arithmetic_shift_right_u32(
@@ -188,8 +174,8 @@ static enum v34_gain_control_result process(
 	if (next.history_index == V34_GAIN_HISTORY_SAMPLES)
 		next.history_index = 0;
 	generated = (struct v34_analytic_sample){
-		.in_phase = scale_sample(next.gain, input.in_phase, rounding),
-		.quadrature = scale_sample(next.gain, input.quadrature, rounding),
+		.in_phase = agc_scale_q10(next.gain, input.in_phase, rounding, NULL),
+		.quadrature = agc_scale_q10(next.gain, input.quadrature, rounding, NULL),
 	};
 	next_count = (uint16_t)(next.energy_count + 1u);
 	next_energy = (uint32_t)((int32_t)generated.in_phase *
