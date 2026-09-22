@@ -4,15 +4,16 @@
 
 #include <stddef.h>
 
-static bool adopt_retrain_probe_prefix(
+static bool adopt_probe_prefix(
 	struct v34_phase2_initial_probe *probe)
 {
 	const struct v34_phase2_retrain_probe *trial =
 		&probe->ranging.retrain_probe;
 	struct v34_phase2_probe_acquisition *receive;
 	struct v34_phase2_probe_acquisition_event event = { 0 };
+	bool partial = trial->phase == V34_PHASE2_RETRAIN_PROBE_COLLECTING;
 
-	if (trial->phase != V34_PHASE2_RETRAIN_PROBE_ACQUIRED)
+	if (trial->phase != V34_PHASE2_RETRAIN_PROBE_ACQUIRED && !partial)
 		return true;
 	if (probe->ranging.info0_exchange.transport.signal_role ==
 	    PHASE2_SIGNAL_B)
@@ -20,19 +21,54 @@ static bool adopt_retrain_probe_prefix(
 	else if (probe->concurrent_receive_enabled)
 		receive = &probe->concurrent_receive;
 	else
-		return false;
+		return true;
 	for (size_t index = 0;
-	     index < V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES;
+	     index < trial->synchronizer.samples_observed;
 	     ++index)
 		if (v34_phase2_probe_acquisition_sample(
 			    receive, trial->synchronizer.capture[index],
 			    false, &event) !=
 		    V34_PHASE2_PROBE_ACQUISITION_OK)
 			return false;
-	return event.kind ==
+	return partial ? event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_NONE :
+	       event.kind ==
 		       V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED &&
 	       receive->phase ==
 		       V34_PHASE2_PROBE_ACQUISITION_RECEIVING;
+}
+
+static bool resolve_early_prefix(
+	struct v34_phase2_initial_probe *probe,
+	struct v34_phase2_probe_acquisition_event *event)
+{
+	struct v34_phase2_retrain_probe *trial = &probe->ranging.retrain_probe;
+	struct v34_phase2_probe_acquisition *receive = &probe->concurrent_receive;
+	uint16_t prefix = trial->synchronizer.samples_observed;
+
+	if (trial->phase != V34_PHASE2_RETRAIN_PROBE_COLLECTING)
+		return true;
+	if (event->kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_ACQUIRED) {
+		trial->synchronizer = receive->synchronizer;
+		trial->phase = V34_PHASE2_RETRAIN_PROBE_ACQUIRED;
+	} else if (event->kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND) {
+		/* Keep only samples since the original local-probe boundary. This
+		 * is the existing echo-safe trial, not a sliding retry window. */
+		uint16_t count = V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES - prefix;
+
+		for (uint16_t index = 0; index < count; ++index)
+			trial->synchronizer.capture[index] =
+				receive->synchronizer.capture[prefix + index];
+		if (v34_phase2_probe_acquisition_init(receive) !=
+		    V34_PHASE2_PROBE_ACQUISITION_OK)
+			return false;
+		for (uint16_t index = 0; index < count; ++index)
+			if (v34_phase2_probe_acquisition_sample(receive,
+				    trial->synchronizer.capture[index], false, event) !=
+			    V34_PHASE2_PROBE_ACQUISITION_OK)
+				return false;
+		*trial = (struct v34_phase2_retrain_probe){ 0 };
+	}
+	return true;
 }
 
 bool v34_phase2_initial_probe_is_valid(
@@ -77,7 +113,7 @@ enum phase2_initial_probe_result v34_phase2_initial_probe_init(
 	     v34_phase2_probe_acquisition_init(
 		     &initialized.concurrent_receive) !=
 		     V34_PHASE2_PROBE_ACQUISITION_OK) ||
-	    !adopt_retrain_probe_prefix(&initialized) ||
+	    !adopt_probe_prefix(&initialized) ||
 	    !v34_phase2_initial_probe_is_valid(&initialized))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	*probe = initialized;
@@ -110,7 +146,8 @@ v34_phase2_initial_probe_sample_concurrent(
 			    V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END;
 	if (v34_phase2_probe_acquisition_sample(
 		    receive, received_sample, finish_l2, &emitted) !=
-	    V34_PHASE2_PROBE_ACQUISITION_OK)
+		    V34_PHASE2_PROBE_ACQUISITION_OK ||
+	    !resolve_early_prefix(&next, &emitted))
 		return PHASE2_INITIAL_PROBE_INVALID_ARGUMENT;
 	if (emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND ||
 	    emitted.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_LIMIT_REACHED) {

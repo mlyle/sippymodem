@@ -669,6 +669,7 @@ static bool sample_initial_probe(
 				return false;
 			next.recovery_control = (struct phase2_ranging_control){ 0 };
 			next.recovery_paused = false;
+			next.retrain_probe = (struct v34_phase2_retrain_probe){ 0 };
 			phase2->state.ranging = next;
 			phase2->stage = V34_PHASE2_RANGING;
 			phase2->concurrent_probe_receive = false;

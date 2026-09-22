@@ -19,6 +19,12 @@ static bool retrain_probe_is_valid(
 		&ranging->retrain_probe;
 	bool caller_retrain = ranging->retraining &&
 		ranging->info0_exchange.local_role == V34_CALLING_STATION;
+	bool answerer_trial = !ranging->retraining &&
+		ranging->info0_exchange.local_role == V34_ANSWERING_STATION &&
+		ranging->control.round_trip_delay_valid &&
+		ranging->control.round_trip_delay_samples >=
+			V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES &&
+		!probe->early_boundary_retry_used;
 
 	if (!v34_phase2_probe_synchronizer_is_valid(
 		    &probe->synchronizer) ||
@@ -36,19 +42,19 @@ static bool retrain_probe_is_valid(
 		       probe->boundary_delay_samples == 0 &&
 		       synchronizer_is_empty(&probe->synchronizer);
 	case V34_PHASE2_RETRAIN_PROBE_WAIT_BOUNDARY:
-		return caller_retrain &&
+		return (caller_retrain || answerer_trial) &&
 		       !probe->early_boundary_retry_used &&
 		       probe->boundary_delay_samples > 0 &&
 		       probe->boundary_delay_samples <=
 			       PHASE2_RANGING_TONE_TAIL_SAMPLES &&
 		       synchronizer_is_empty(&probe->synchronizer);
 	case V34_PHASE2_RETRAIN_PROBE_COLLECTING:
-		return caller_retrain &&
+		return (caller_retrain || answerer_trial) &&
 		       probe->boundary_delay_samples == 0 &&
 		       probe->synchronizer.phase ==
 			       V34_PHASE2_PROBE_SYNCHRONIZER_COLLECTING;
 	case V34_PHASE2_RETRAIN_PROBE_ACQUIRED:
-		return caller_retrain &&
+		return (caller_retrain || answerer_trial) &&
 		       probe->boundary_delay_samples == 0 &&
 		       probe->synchronizer.phase ==
 			       V34_PHASE2_PROBE_SYNCHRONIZER_ACQUIRED &&
@@ -56,7 +62,7 @@ static bool retrain_probe_is_valid(
 			       PHASE2_RANGING_PROBE_READY &&
 		       ranging->control.round_trip_delay_valid;
 	case V34_PHASE2_RETRAIN_PROBE_REJECTED:
-		return caller_retrain &&
+		return (caller_retrain || answerer_trial) &&
 		       probe->boundary_delay_samples == 0 &&
 		       probe->synchronizer.phase ==
 			       V34_PHASE2_PROBE_SYNCHRONIZER_NOT_FOUND;
@@ -144,6 +150,9 @@ static bool pause_ranging_for_recovery(struct v34_phase2_ranging *ranging)
 	bool pause = control_has_ranging_epoch(
 		&retained, &ranging->info0_exchange.transport);
 
+	if (ranging->info0_exchange.local_role == V34_ANSWERING_STATION &&
+	    !reset_retrain_probe(ranging, V34_PHASE2_RETRAIN_PROBE_DISABLED))
+		return false;
 	if (phase2_ranging_control_init(
 		    &ranging->control,
 		    &ranging->info0_exchange.transport) != PHASE2_RANGING_OK)
@@ -299,8 +308,19 @@ static bool sample_retrain_probe_trial(
 	struct v34_phase2_retrain_probe *probe =
 		&ranging->retrain_probe;
 	struct v34_phase2_probe_synchronizer_event probe_event;
+	bool answerer = ranging->info0_exchange.local_role == V34_ANSWERING_STATION;
 
-	if (event->kind != PHASE2_RANGING_NO_EVENT) {
+	/* A recovering caller can begin L1 after this first B reversal, before
+	 * our own probe starts. Retain one bounded prefix, but never replace the
+	 * answerer's transmit schedule with the caller's retrain shortcut. */
+	if (answerer && !ranging->retraining &&
+	    event->kind == PHASE2_ROUND_TRIP_DELAY_MEASURED &&
+	    event->round_trip_delay_samples >=
+		    V34_PHASE2_PROBE_SYNCHRONIZER_CAPTURE_SAMPLES)
+		return reset_retrain_probe(ranging, V34_PHASE2_RETRAIN_PROBE_DISABLED) &&
+		       arm_retrain_probe_trial(ranging, tone_event);
+	if (event->kind != PHASE2_RANGING_NO_EVENT &&
+	    !(answerer && event->kind == PHASE2_PROBE_TRANSMIT_READY)) {
 		if (probe->phase != V34_PHASE2_RETRAIN_PROBE_ACQUIRED &&
 		    !reset_retrain_probe(
 			    ranging,
@@ -359,7 +379,10 @@ static bool sample_retrain_probe_trial(
 	case V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_NONE:
 		break;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_ACQUIRED:
-		accept_retrain_probe(ranging, event, generated);
+		if (answerer)
+			probe->phase = V34_PHASE2_RETRAIN_PROBE_ACQUIRED;
+		else
+			accept_retrain_probe(ranging, event, generated);
 		break;
 	case V34_PHASE2_PROBE_SYNCHRONIZER_EVENT_NOT_FOUND:
 		probe->phase =

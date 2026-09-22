@@ -2,6 +2,7 @@
 
 #include <v34_phase2_initial_probe.h>
 #include <v34_phase2_probe_turnaround.h>
+#include <g711.h>
 
 #include "v34_phase2_test_pair.h"
 #include "test.h"
@@ -56,6 +57,113 @@ struct turnaround_observation {
 static bool completed_ranging_pair(
 	struct v34_phase2_ranging *caller,
 	struct v34_phase2_ranging *answerer);
+
+static bool check_early_probe_prefix(enum test_codec codec, bool early)
+{
+	struct test_pair pair;
+	struct v34_phase2_ranging ranging;
+	struct v34_phase2_initial_probe initial;
+	struct v34_phase2_initial_probe transmit_only;
+	struct v34_phase2_probe_sequence source;
+	struct v34_phase2_probe_receiver_measurement measurement;
+	uint16_t tail = 0;
+	bool injected = false, measured = false, handed_off = false;
+	bool completed = false;
+
+	CHECK(test_v34_phase2_pair_init(&pair, codec, 1),
+	      "early probe pair did not initialize");
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		struct test_pair_event event;
+		struct phase2_ranging_control *control = &pair.answerer.ranging.control;
+
+		if (!injected && control->phase == PHASE2_WAIT_FIRST_REMOTE_REVERSAL &&
+		    control->measurement_elapsed_samples != 0) {
+			control->measurement_elapsed_samples += 1000;
+			injected = true;
+		}
+		CHECK(test_v34_phase2_pair_sample(&pair, &event),
+		      "early probe ranging stopped at %zu", sample);
+		if (event.answerer.ranging.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED) {
+			uint16_t latency = event.answerer.ranging.exchange_event
+				.tone_event.reversal_delay_samples;
+
+			CHECK(latency < PHASE2_RANGING_TONE_TAIL_SAMPLES,
+			      "reversal detection exceeded its tail");
+			tail = PHASE2_RANGING_TONE_TAIL_SAMPLES - latency;
+			ranging = pair.answerer.ranging;
+			measured = true;
+			break;
+		}
+	}
+	CHECK(injected && measured && v34_phase2_probe_sequence_init(
+		      &source, TEST_AMPLITUDE, 1000) == V34_PHASE2_PROBE_SEQUENCE_OK,
+	      "early probe did not reach its reversal boundary");
+	for (size_t sample = 0; sample < TEST_SAMPLE_LIMIT; ++sample) {
+		int16_t received = 0, transmitted;
+		struct v34_phase2_probe_sequence_event source_event;
+
+		if (tail != 0) {
+			tail--;
+		} else if (early || handed_off) {
+			CHECK(v34_phase2_probe_sequence_sample(
+				      &source, false, &received, &source_event) ==
+				      V34_PHASE2_PROBE_SEQUENCE_OK,
+			      "early probe source stopped at %zu", sample);
+		}
+		if (codec == TEST_CODEC_PCMU)
+			received = g711_decode_pcmu(g711_encode_pcmu(received));
+		else if (codec == TEST_CODEC_PCMA)
+			received = g711_decode_pcma(g711_encode_pcma(received));
+		if (!handed_off) {
+			struct v34_phase2_ranging_event event;
+
+			CHECK(v34_phase2_ranging_sample(&ranging, received,
+				      &transmitted, &event) == V34_PHASE2_RANGING_OK,
+			      "early probe response stopped at %zu", sample);
+			if (event.kind == PHASE2_PROBE_TRANSMIT_READY) {
+				CHECK(v34_phase2_initial_probe_init(&initial, &ranging, true) ==
+					      PHASE2_INITIAL_PROBE_OK &&
+				      v34_phase2_initial_probe_init(&transmit_only, &ranging, false) ==
+					      PHASE2_INITIAL_PROBE_OK &&
+				      !transmit_only.concurrent_receive_enabled,
+				      "early probe prefix did not cross handoff");
+				handed_off = true;
+			}
+		} else {
+			struct phase2_initial_probe_event event;
+			struct phase2_initial_probe_event transmit_event;
+			int16_t expected;
+
+			CHECK(v34_phase2_initial_probe_sample(&initial, received,
+				      &transmitted, &event) == PHASE2_INITIAL_PROBE_OK,
+			      "early probe receiver stopped at %zu", sample);
+			CHECK(v34_phase2_initial_probe_sample(&transmit_only, received,
+				      &expected, &transmit_event) == PHASE2_INITIAL_PROBE_OK &&
+			      transmitted == expected && event.kind == transmit_event.kind,
+			      "early reception changed local probing at %zu", sample);
+			if (event.receive_event.kind ==
+			    V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED) {
+				completed = true;
+				break;
+			}
+		}
+	}
+	CHECK(completed && source.samples_emitted == 2 * V34_PHASE2_PROBE_L1_SAMPLES + 1 &&
+	      v34_phase2_initial_probe_measure(&initial, &measurement) ==
+		      PHASE2_INITIAL_PROBE_OK,
+	      "probe prefix lost samples (codec=%d early=%d samples=%u complete=%d)",
+	      codec, early, source.samples_emitted, completed);
+	return true;
+}
+
+static bool test_early_probe_prefix(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec)
+		CHECK(check_early_probe_prefix(codec, true) &&
+		      check_early_probe_prefix(codec, false),
+		      "early probe prefix failed for codec %d", codec);
+	return true;
+}
 
 static int64_t sample_magnitude(int16_t sample)
 {
@@ -1176,6 +1284,7 @@ int main(void)
 			  test_answerer_accepts_early_tone_b },
 			{ "answerer concurrent probe",
 			  test_answerer_receives_concurrent_probe },
+			{ "early probe prefix", test_early_probe_prefix },
 			{ "concurrent probe crosses turnaround",
 			  test_concurrent_probe_crosses_turnaround },
 			{ "bidirectional probe turnaround", test_probe_turnaround },
