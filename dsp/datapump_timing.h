@@ -11,6 +11,14 @@ enum {
 	DATAPUMP_DEFAULT_CARRIER_WAIT_SECONDS = 60,
 };
 
+/* Accumulate media samples without wrapping past a training or loss limit. */
+static inline void datapump_add_samples_bounded(
+	uint32_t *value, uint32_t increment, uint32_t limit)
+{
+	*value = *value >= limit || increment >= limit - *value ?
+		       limit : *value + increment;
+}
+
 /* Return the S7 carrier-wait interval in 8 kHz media ticks. */
 static inline uint64_t datapump_carrier_wait_ticks(struct modem *modem)
 {

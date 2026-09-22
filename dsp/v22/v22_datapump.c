@@ -142,8 +142,6 @@ static int process_v22(
 static int retrain_v22(struct dp *dp);
 static int enter_link(struct v22_datapump *datapump);
 static void flush_retrain_candidate(struct v22_datapump *datapump);
-static void add_bounded(
-	uint32_t *value, uint32_t increment, uint32_t limit);
 
 /* V.22 6.3.1.2 keeps the established carrier instead of repeating a
  * handshake.  Bell 212A has the same carrier-preserving ATO1 behavior, so
@@ -1528,10 +1526,10 @@ static int advance_training_timer(
 	}
 	if (datapump_is_retraining(datapump)) {
 		if (datapump->retrain_peer_signal_received)
-			add_bounded(
+			datapump_add_samples_bounded(
 				&datapump->retrain_peer_samples, 1,
 				V22_RETRAIN_RETRY_SAMPLES);
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->retrain_retry_samples, 1,
 			V22_RETRAIN_RETRY_SAMPLES);
 		if (datapump->training_state == V22_TRAINING_RETRAIN_MARK &&
@@ -1561,7 +1559,7 @@ static int advance_training_timer(
 	}
 	if (datapump_uses_v22bis(datapump) && datapump->originator &&
 	    datapump->training_state == V22_TRAINING_WAIT_SCRAMBLED_MARK)
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->rate_signal_wait_samples, 1,
 			V22_RETRAIN_RETRY_SAMPLES);
 	if (datapump->training_state == V22_TRAINING_ORIGINATE_SILENCE) {
@@ -1632,13 +1630,6 @@ static bool carrier_is_present(
 	bool line_power_present)
 {
 	return measurement->timing_locked && line_power_present;
-}
-
-static void add_bounded(
-	uint32_t *value, uint32_t increment, uint32_t limit)
-{
-	*value = *value >= limit || increment >= limit - *value ?
-		       limit : *value + increment;
 }
 
 static int process_v22(
@@ -1743,7 +1734,7 @@ static int process_v22(
 				V22_CARRIER_RETURN_HOLD_SAMPLES;
 		datapump->missing_carrier_samples = 0;
 	} else {
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->missing_carrier_samples,
 			(uint32_t)(unsigned int)count,
 			carrier_loss_limit);

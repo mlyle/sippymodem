@@ -312,13 +312,6 @@ static bool carrier_is_present(
 	       measurement->dominance_q8 >= V23_MIN_DOMINANCE_Q8;
 }
 
-static void add_bounded(
-	uint32_t *value, uint32_t increment, uint32_t limit)
-{
-	*value = *value >= limit || increment >= limit - *value ?
-		       limit : *value + increment;
-}
-
 static int enter_online(struct v23_datapump *datapump)
 {
 	int transmit_rate = datapump->answerer ?
@@ -353,7 +346,7 @@ static int advance_training(
 
 	if (datapump->phase == V23_PHASE_WAIT_MARK) {
 		if (mark_is_present(measurement))
-			add_bounded(
+			datapump_add_samples_bounded(
 				&datapump->acquisition_samples, received_samples,
 				acquisition_limit);
 		else
@@ -379,7 +372,7 @@ static int advance_training(
 			fsk_receiver_reset(&datapump->receiver);
 			return DPSTAT_OK;
 		}
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->presentation_samples, received_samples,
 			datapump->presentation_limit_samples);
 		return datapump->presentation_samples >=
@@ -445,7 +438,7 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	if (carrier_is_present(&measurement)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->missing_carrier_samples, (uint32_t)count,
 			carrier_loss_limit);
 	}

@@ -306,13 +306,6 @@ static int receive_samples(
 	return (int)produced;
 }
 
-static void add_bounded(
-	uint32_t *value, uint32_t increment, uint32_t limit)
-{
-	*value = *value >= limit || increment >= limit - *value ?
-		       limit : *value + increment;
-}
-
 static int advance_training(
 	struct fsk300_datapump *datapump,
 	unsigned int count)
@@ -408,7 +401,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (datapump->missing_carrier_samples != 0) {
 		if (line_signal_is_present(&measurement)) {
-			add_bounded(
+			datapump_add_samples_bounded(
 				&datapump->carrier_return_samples,
 				(uint32_t)(unsigned int)count,
 				FSK300_CARRIER_RETURN_SAMPLES);
@@ -434,7 +427,7 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 		fsk_receiver_reset(&datapump->receiver);
 	}
 	datapump->carrier_return_samples = 0;
-	add_bounded(
+	datapump_add_samples_bounded(
 		&datapump->missing_carrier_samples,
 		(uint32_t)(unsigned int)count, carrier_loss_limit);
 	return datapump->missing_carrier_samples >= carrier_loss_limit ?

@@ -1585,13 +1585,6 @@ static bool carrier_is_present(
 	       power / (unsigned int)count >= V32_MIN_LINE_POWER;
 }
 
-static void add_bounded(
-	uint32_t *value, uint32_t increment, uint32_t limit)
-{
-	*value = *value >= limit || increment >= limit - *value ?
-		       limit : *value + increment;
-}
-
 static int process_v32(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
@@ -1658,7 +1651,7 @@ static int process_v32(
 		    receive, count)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
-		add_bounded(
+		datapump_add_samples_bounded(
 			&datapump->missing_carrier_samples,
 			(uint32_t)(unsigned int)count,
 			V32_CARRIER_LOSS_SAMPLES);

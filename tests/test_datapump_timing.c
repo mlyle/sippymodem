@@ -56,6 +56,31 @@ static bool test_configured_carrier_loss(void)
 	return true;
 }
 
+static bool test_bounded_sample_count(void)
+{
+	uint32_t samples = 0;
+
+	datapump_add_samples_bounded(&samples, 3, 10);
+	CHECK(samples == 3, "sample count did not advance below its limit");
+	datapump_add_samples_bounded(&samples, 7, 10);
+	CHECK(samples == 10, "sample count missed its exact limit");
+	datapump_add_samples_bounded(&samples, UINT32_MAX, 10);
+	CHECK(samples == 10, "sample count wrapped past its limit");
+	samples = 9;
+	datapump_add_samples_bounded(&samples, UINT32_MAX, 10);
+	CHECK(samples == 10, "large increment did not saturate");
+	samples = UINT32_MAX;
+	datapump_add_samples_bounded(&samples, 1, 10);
+	CHECK(samples == 10, "count above limit did not normalize");
+	samples = UINT32_MAX - 1u;
+	datapump_add_samples_bounded(&samples, 2, UINT32_MAX);
+	CHECK(samples == UINT32_MAX, "full-width limit wrapped");
+	samples = 7;
+	datapump_add_samples_bounded(&samples, 1, 0);
+	CHECK(samples == 0, "zero limit did not clear the count");
+	return true;
+}
+
 static bool test_initial_training_lifecycle(void)
 {
 	struct training_session session;
@@ -209,6 +234,7 @@ int main(void)
 	} tests[] = {
 		{ "default and configured wait", test_default_and_configured_wait },
 		{ "configured carrier loss", test_configured_carrier_loss },
+		{ "bounded sample count", test_bounded_sample_count },
 		{ "invalid modem", test_invalid_modem },
 		{ "initial training lifecycle", test_initial_training_lifecycle },
 		{ "retraining lifecycle", test_retraining_lifecycle },
