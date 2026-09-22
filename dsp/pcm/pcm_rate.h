@@ -10,7 +10,17 @@ enum {
 	PCM_DOWNSTREAM_BASE_FRAME_BITS = 20,
 	PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER = 1,
 	PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER = 22,
+	PCM_DOWNSTREAM_RATE_CAPABILITY_MASK =
+		(UINT32_C(1) << PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER) - 1u,
 };
+
+/* A configured rate set must be nonempty. A syntactically valid J record may
+ * advertise no rates, so wire-record validation has a different contract. */
+static inline bool pcm_downstream_rate_mask_is_usable(uint32_t mask)
+{
+	return mask != 0 &&
+	       (mask & ~(uint32_t)PCM_DOWNSTREAM_RATE_CAPABILITY_MASK) == 0;
+}
 
 struct pcm_downstream_rate_selection {
 	uint32_t enabled_mask;

@@ -4,6 +4,7 @@
 
 #include "memory_region.h"
 #include "packed_bits.h"
+#include "pcm_rate.h"
 #include "pcm_phase3_entry.h"
 #include "pcm_phase3_handoff.h"
 #include "v90_profile.h"
@@ -69,12 +70,6 @@ static bool pcm_upstream_is_enabled(
 {
 	return role == V90_ANALOG_MODEM ? info1->pcm_upstream_enabled :
 		info1->v92_digital.pcm_upstream_supported;
-}
-
-static bool downstream_rate_mask_is_valid(uint32_t mask)
-{
-	return mask != 0 &&
-	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0;
 }
 
 static bool downstream_rate_is_enabled(
@@ -312,7 +307,7 @@ static bool configuration_is_valid(
 	    !pcm_protocol_is_valid(configuration->protocol) ||
 	    !pcm_modem_role_is_valid(configuration->local_role) ||
 	    !g711_law_is_valid(configuration->law) ||
-	    !downstream_rate_mask_is_valid(
+	    !pcm_downstream_rate_mask_is_usable(
 		    configuration->enabled_downstream_rate_mask) ||
 	    configuration->phase2_nominal_amplitude <= 0 ||
 	    !short_startup_is_valid(&configuration->short_startup,
@@ -394,7 +389,7 @@ static bool stored_configuration_is_valid(const struct pcm_call *call)
 	    !v34_full_retrain_is_valid(&call->retrain) ||
 	    call->retrain.detector.tone.local_role !=
 		    phase2_station_role(call->local_role) ||
-	    !downstream_rate_mask_is_valid(
+	    !pcm_downstream_rate_mask_is_usable(
 		    call->enabled_downstream_rate_mask))
 		return false;
 	if (call->protocol == PCM_PROTOCOL_V92)

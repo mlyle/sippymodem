@@ -3,6 +3,7 @@
 #include "v90_upstream_rx.h"
 
 #include "memory_region.h"
+#include "pcm_rate.h"
 #include "v34_data_mapping.h"
 #include "v90_jd.h"
 #include "v90_upstream_mode.h"
@@ -15,12 +16,6 @@ static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
 	       !v90_mp_record_acknowledges_cp(record);
-}
-
-static bool downstream_rate_mask_is_valid(uint32_t mask)
-{
-	return mask != 0 &&
-	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0;
 }
 
 static bool downstream_rate_is_enabled(
@@ -122,7 +117,7 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 	    !v90_pcm_mapping_is_valid(&receiver->training_mapping) ||
 	    receiver->training_mapping.kind != V90_CP_TRAINING ||
 	    !initial_mp_is_valid(&receiver->local_mp) ||
-	    !downstream_rate_mask_is_valid(
+	    !pcm_downstream_rate_mask_is_usable(
 		    receiver->enabled_downstream_rate_mask) ||
 	    (receiver->stage != V90_UPSTREAM_RX_STAGE_CP &&
 	     receiver->stage != V90_UPSTREAM_RX_STAGE_CPS &&
@@ -214,7 +209,7 @@ enum v90_upstream_rx_result v90_upstream_rx_init(
 	    !v90_pcm_mapping_is_valid(training_mapping) ||
 	    training_mapping->kind != V90_CP_TRAINING ||
 	    !initial_mp_is_valid(local_mp) ||
-	    !downstream_rate_mask_is_valid(enabled_downstream_rate_mask))
+	    !pcm_downstream_rate_mask_is_usable(enabled_downstream_rate_mask))
 		return V90_UPSTREAM_RX_INVALID_ARGUMENT;
 	initialized.state.cp = *cp;
 	initialized.control_symbols = cp->symbols;

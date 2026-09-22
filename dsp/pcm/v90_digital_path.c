@@ -4,6 +4,7 @@
 
 #include "g711.h"
 #include "memory_region.h"
+#include "pcm_rate.h"
 #include "v34_data_quality.h"
 #include "v34_survivor.h"
 
@@ -25,12 +26,6 @@ static bool initial_mp_is_valid(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
 	       !v90_mp_record_acknowledges_cp(record);
-}
-
-static bool downstream_rate_mask_is_valid(uint32_t mask)
-{
-	return mask != 0u &&
-	       (mask & ~(uint32_t)V90_JD_RATE_CAPABILITY_MASK) == 0u;
 }
 
 static bool pending_upstream_is_valid(const struct v90_digital_path *path)
@@ -174,7 +169,7 @@ bool v90_digital_path_is_valid(const struct v90_digital_path *path)
 	    !initial_mp_is_valid(&path->local_mp) ||
 	    (path->peer_upstream_rate_mask &
 	     (uint16_t)~V90_MP_RATE_CAPABILITY_MASK) != 0u ||
-	    !downstream_rate_mask_is_valid(
+	    !pcm_downstream_rate_mask_is_usable(
 		    path->enabled_downstream_rate_mask) ||
 	    !v34_constellation_size_is_valid(
 		    path->rate_renegotiation_constellation) ||
@@ -207,7 +202,8 @@ enum v90_digital_path_result v90_digital_path_init(
 	const struct v90_pcm_mapping *training;
 
 	if (path == NULL || handoff == NULL ||
-	    !downstream_rate_mask_is_valid(enabled_downstream_rate_mask) ||
+	    !pcm_downstream_rate_mask_is_usable(
+		    enabled_downstream_rate_mask) ||
 	    !v34_constellation_size_is_valid(
 		    rate_renegotiation_constellation) ||
 	    !v90_phase4_digital_transmit_handoff_is_valid(

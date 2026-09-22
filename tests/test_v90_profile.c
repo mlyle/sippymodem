@@ -25,6 +25,13 @@ static uint32_t expected_bit_rate(uint8_t rate_index)
 
 static bool test_downstream_rate_selection(void)
 {
+	CHECK(!pcm_downstream_rate_mask_is_usable(0) &&
+	      pcm_downstream_rate_mask_is_usable(UINT32_C(1)) &&
+	      pcm_downstream_rate_mask_is_usable(
+		      PCM_DOWNSTREAM_RATE_CAPABILITY_MASK) &&
+	      !pcm_downstream_rate_mask_is_usable(
+		      UINT32_C(1) << PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER),
+	      "configured downstream rate mask bounds changed");
 	for (uint8_t index = PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
 	     index <= PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER; ++index) {
 		struct pcm_downstream_rate_selection selection;
