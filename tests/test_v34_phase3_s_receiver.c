@@ -793,6 +793,52 @@ static bool test_fixed_metric_exact_marker(void)
 	return true;
 }
 
+static bool check_adaptive_s_entry_phase(uint8_t suffix)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+
+	CHECK(generate_marker(rotations), "adaptive marker did not generate");
+	for (uint8_t offset = 0; offset < 4u; ++offset) {
+		for (uint8_t start = 0; start < 2u; ++start) {
+			struct v34_phase3_s_receiver receiver;
+
+			CHECK(v34_phase3_s_receiver_init_fixed_suffix(
+				      &receiver, suffix) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "adaptive phase receiver did not initialize");
+			for (unsigned int i = start; i < ARRAY_LENGTH(rotations); ++i) {
+				uint8_t rotation = (uint8_t)((rotations[i] + offset) & 3u);
+				struct v34_analytic_sample point;
+				struct v34_phase3_s_adaptation adaptation;
+
+				CHECK(v34_training_constellation_fixed_point(
+					      V34_CONSTELLATION_4_POINT, 0, rotation, &point) ==
+					      V34_CONSTELLATION_OK &&
+				      v34_phase3_s_receiver_receive_adaptive(
+					      &receiver, 0, rotation, point, &adaptation) ==
+					      (i + 1u == ARRAY_LENGTH(rotations) ?
+						       V34_PHASE3_S_RECEIVER_DETECTED :
+						       V34_PHASE3_S_RECEIVER_OK),
+				      "adaptive phase %u rotation %u lost symbol %u", start, offset, i);
+				CHECK(i < V34_PHASE3_S_SYMBOLS ?
+					      (adaptation.adapt &&
+					       adaptation.target.in_phase == point.in_phase &&
+					       adaptation.target.quadrature == point.quadrature) :
+					      !adaptation.adapt,
+				      "adaptive phase %u rotation %u chose the wrong target at %u",
+				      start, offset, i);
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_adaptive_s_entry_phase(void)
+{
+	return check_adaptive_s_entry_phase(V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS) &&
+	       check_adaptive_s_entry_phase(V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS + 1u);
+}
+
 static bool test_fixed_metric_api_ownership(void)
 {
 	const uint8_t suffix = V34_PHASE3_S_RECEIVER_MIN_S_SUFFIX_SYMBOLS;
@@ -833,7 +879,7 @@ static bool test_fixed_metric_api_ownership(void)
 	      adaptation.adapt &&
 	      adaptation.target.in_phase == point.in_phase &&
 	      adaptation.target.quadrature == point.quadrature &&
-	      fixed.target_seeded && fixed.next_target_rotation == 3u,
+	      fixed.target_rotation[0] == 3u && fixed.target_rotation[1] == 0u,
 	      "adaptive fixed owner did not publish its first S target");
 	saved = fixed;
 	CHECK(v34_phase3_s_receiver_receive_adaptive(
@@ -842,6 +888,16 @@ static bool test_fixed_metric_api_ownership(void)
 		      V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&fixed, &saved, sizeof(fixed)) == 0,
 	      "adaptive owner alias changed state");
+	for (unsigned int i = 1; i < 3u; ++i) {
+		uint8_t rotation = (i & 1u) != 0u ? 3u : 0u;
+
+		CHECK(v34_training_constellation_fixed_point(
+			      V34_CONSTELLATION_4_POINT, 0u, rotation, &point) ==
+			      V34_CONSTELLATION_OK &&
+		      receive_adaptive_marker(&fixed, 0u, rotation, point) ==
+			      V34_PHASE3_S_RECEIVER_OK,
+		      "adaptive S pair did not initialize");
+	}
 	CHECK(v34_training_constellation_fixed_point(
 		      V34_CONSTELLATION_4_POINT, 0u, 1u, &point) ==
 		      V34_CONSTELLATION_OK &&
@@ -1425,6 +1481,7 @@ int main(void)
 		{ "fixed metric fallback", test_fixed_metric_fallback },
 		{ "fixed metric exact marker",
 		  test_fixed_metric_exact_marker },
+		{ "adaptive S entry phase", test_adaptive_s_entry_phase },
 		{ "fixed metric API ownership",
 		  test_fixed_metric_api_ownership },
 		{ "fixed metric margin", test_fixed_metric_margin },

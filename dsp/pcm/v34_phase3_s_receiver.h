@@ -130,13 +130,13 @@ struct v34_phase3_s_receiver {
 	/* Bounded decisions consumed after the retained marker while a
 	 * transition-error candidate awaited confirmation. */
 	uint8_t post_marker_symbols;
-	/* S target phase is shared by every semantic consumer so Phase 3 and
-	 * Phase 4 cannot acquire the same signal with different adaptation. */
-	uint8_t next_target_rotation;
+	/* Next and alternate S targets, cleared before any decision and after
+	 * detection. Shared by every semantic consumer, independent of the
+	 * decision-history cursor or the phase at which reception started. */
+	uint8_t target_rotation[2];
 	bool detection_pending;
 	bool pending_metric;
 	bool metric_enabled;
-	bool target_seeded;
 	bool complete;
 };
 

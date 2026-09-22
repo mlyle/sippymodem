@@ -537,7 +537,6 @@ static bool test_training_case(
 		    receiver.semantic.phase3.stage ==
 			    V34_PHASE3_DECISION_RECEIVER_S) {
 			CHECK(receiver.semantic.phase3.s.buffered_decisions == 0u &&
-			      !receiver.semantic.phase3.s.target_seeded &&
 			      !receiver.line.equalizer.decision_pending,
 			      "role %u rate %u changed Phase 3 S during preroll",
 			      role, rate);
@@ -560,8 +559,7 @@ static bool test_training_case(
 			      !receiver.line.equalizer.decision_pending &&
 			      receiver.semantic.phase3.stage ==
 					V34_PHASE3_DECISION_RECEIVER_S &&
-			      receiver.semantic.phase3.s.buffered_decisions == 0u &&
-			      !receiver.semantic.phase3.s.target_seeded,
+			      receiver.semantic.phase3.s.buffered_decisions == 0u,
 			      "role %u rate %u adapted before S acquisition",
 			      role, rate);
 			timing_events++;
@@ -893,6 +891,53 @@ static bool test_training_case(
 	return test_data_erasure(&receiver, &source, role, rate);
 }
 
+static bool test_late_s_entry(void)
+{
+	const int16_t offsets[] = { -30, 50 };
+	struct v34_phase3_profile selected;
+
+	CHECK(profile(&selected, V34_ANSWERING_STATION, V34_SYMBOL_RATE_3200,
+		      12, true, 6), "late S profile did not initialize");
+	for (size_t n = 0; n < ARRAY_LENGTH(offsets); ++n) {
+		struct v34_phase34_receiver receiver;
+		struct v34_training_transmitter transmitter;
+		bool detected = false;
+
+		CHECK(v34_training_transmitter_init(&transmitter, &selected,
+			      V34_CONSTELLATION_4_POINT, SAMPLE_RATE, 5000) ==
+			      V34_TRAINING_TRANSMITTER_OK &&
+		      v34_phase34_receiver_init(&receiver, &selected,
+			      V34_CONSTELLATION_4_POINT, TEST_INITIAL_RECEIVE_GAIN) ==
+			      V34_PHASE34_RECEIVER_OK,
+		      "late S pair did not initialize");
+		for (unsigned int i = 0; i < SAMPLE_LIMIT && !detected; ++i) {
+			struct v34_phase34_receive_output output;
+			enum v34_phase34_receiver_result result;
+			int16_t sample;
+
+			if (transmitter.phase3.stage == V34_PHASE3_TRANSMITTER_TRN &&
+			    transmitter.phase3.trn_symbols == PHASE3_TRN_SYMBOLS)
+				CHECK(v34_training_transmitter_start_j(&transmitter) ==
+					      V34_TRAINING_TRANSMITTER_OK,
+				      "late S transmitter could not start J");
+			CHECK(v34_training_transmitter_sample(&transmitter, &sample) ==
+				      V34_TRAINING_TRANSMITTER_OK,
+			      "late S transmitter stopped");
+			/* Enter partway through S with a small constant DC bias. A
+			 * timing restart at the later qualified edge loses this suffix. */
+			if (i < 94u)
+				continue;
+			result = v34_phase34_receiver_sample(
+				&receiver, (int16_t)(sample + offsets[n]), &output);
+			CHECK(result < V34_PHASE34_RECEIVER_FAILED,
+			      "late S receiver failed at sample %u", i);
+			detected = result == V34_PHASE34_RECEIVER_J_DETECTED;
+		}
+		CHECK(detected, "DC offset %d prevented late S/J acquisition", offsets[n]);
+	}
+	return true;
+}
+
 static bool test_training(void)
 {
 	static const struct {
@@ -961,6 +1006,7 @@ int main(void)
 	} tests[] = {
 		{ "validation", test_validation },
 		{ "tone-owned acquisition", test_tone_owned_acquisition },
+		{ "late S entry", test_late_s_entry },
 		{ "continuous Phase 3 through data", test_training },
 	};
 	unsigned int failures = 0;

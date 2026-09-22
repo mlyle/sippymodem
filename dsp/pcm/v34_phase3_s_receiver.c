@@ -280,12 +280,14 @@ bool v34_phase3_s_receiver_is_valid(
 	      receiver->pending_detection.clockwise_quarter_turn_offset != 0 ||
 	      receiver->pending_detection.s_errors != 0 ||
 	      receiver->pending_detection.s_bar_errors != 0)) ||
-	    (!receiver->target_seeded &&
-	     receiver->next_target_rotation != 0u) ||
-	    (receiver->target_seeded &&
-	     receiver->next_target_rotation >= 4u) ||
-	    (receiver->target_seeded && !receiver->metric_enabled) ||
-	    (receiver->complete && receiver->target_seeded) ||
+	    receiver->target_rotation[0] >= 4u ||
+	    receiver->target_rotation[1] >= 4u ||
+	    ((!receiver->metric_enabled || receiver->complete ||
+	      receiver->buffered_decisions == 0u) ?
+		(receiver->target_rotation[0] != 0u ||
+		 receiver->target_rotation[1] != 0u) :
+		((receiver->target_rotation[0] ^
+		  receiver->target_rotation[1]) & 1u) == 0u) ||
 	    (!receiver->complete && receiver->post_marker_symbols != 0) ||
 	    (receiver->complete &&
 	     (receiver->buffered_decisions != window ||
@@ -524,10 +526,10 @@ static void complete_detection(
 		(struct v34_phase3_s_detection){ 0 };
 	receiver->pending_symbols = 0;
 	receiver->post_marker_symbols = post_marker_symbols;
-	receiver->next_target_rotation = 0u;
+	receiver->target_rotation[0] = 0u;
+	receiver->target_rotation[1] = 0u;
 	receiver->detection_pending = false;
 	receiver->pending_metric = false;
-	receiver->target_seeded = false;
 	receiver->complete = true;
 }
 
@@ -611,7 +613,6 @@ enum v34_phase3_s_receiver_result v34_phase3_s_receiver_receive(
 	uint8_t clockwise_quarter_turns)
 {
 	if (!v34_phase3_s_receiver_is_valid(receiver) ||
-	    receiver->target_seeded ||
 	    receiver->metric_enabled || quarter_point >= 4u ||
 	    clockwise_quarter_turns >= 4u)
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
@@ -647,8 +648,17 @@ v34_phase3_s_receiver_receive_adaptive(
 	if (receiver->complete)
 		return V34_PHASE3_S_RECEIVER_COMPLETE;
 	next = *receiver;
-	rotation = next.target_seeded ? next.next_target_rotation :
-				       clockwise_quarter_turns;
+	if (next.buffered_decisions == 0u) {
+		next.target_rotation[0] = clockwise_quarter_turns;
+		next.target_rotation[1] =
+			(uint8_t)((clockwise_quarter_turns + 3u) & 3u);
+	} else if (next.buffered_decisions == 1u &&
+		   ((clockwise_quarter_turns ^ next.target_rotation[1]) & 1u) != 0u) {
+		/* Either half of S can arrive first. Resolve its order from the
+		 * first adjacent pair, then hold that pair across S-bar. */
+		next.target_rotation[0] = clockwise_quarter_turns;
+	}
+	rotation = next.target_rotation[0];
 	if (v34_training_constellation_fixed_point(
 		    V34_CONSTELLATION_4_POINT, 0u, rotation, &target) !=
 	    V34_CONSTELLATION_OK ||
@@ -657,12 +667,6 @@ v34_phase3_s_receiver_receive_adaptive(
 		    (uint8_t)((rotation + 2u) & 3u), &opposite) !=
 		    V34_CONSTELLATION_OK)
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;
-	next.target_seeded = true;
-	/* S alternates between two absolute quarter rotations. The bounded
-	 * detector window is even, so its cursor retains parity after wrapping. */
-	next.next_target_rotation = (uint8_t)(
-		(rotation + ((next.next_decision & 1u) != 0u ? 1u : 3u)) &
-		3u);
 	result = receive_decision(
 		&next,
 		(uint8_t)(quarter_point * 4u + clockwise_quarter_turns),
@@ -670,13 +674,14 @@ v34_phase3_s_receiver_receive_adaptive(
 	if (result != V34_PHASE3_S_RECEIVER_OK &&
 	    result != V34_PHASE3_S_RECEIVER_DETECTED)
 		return result;
-	if (result == V34_PHASE3_S_RECEIVER_DETECTED) {
-		next.target_seeded = false;
-		next.next_target_rotation = 0u;
-	} else if (!next.detection_pending &&
-		   !s_bar_target_is_qualified(observation, target, opposite)) {
-		generated.target = target;
-		generated.adapt = true;
+	if (result != V34_PHASE3_S_RECEIVER_DETECTED) {
+		next.target_rotation[0] = next.target_rotation[1];
+		next.target_rotation[1] = rotation;
+		if (!next.detection_pending &&
+		    !s_bar_target_is_qualified(observation, target, opposite)) {
+			generated.target = target;
+			generated.adapt = true;
+		}
 	}
 	if (!v34_phase3_s_receiver_is_valid(&next))
 		return V34_PHASE3_S_RECEIVER_INVALID_ARGUMENT;

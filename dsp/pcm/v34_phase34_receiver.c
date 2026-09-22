@@ -212,8 +212,7 @@ bool v34_phase34_receiver_is_valid(
 				V34_PHASE3_DECISION_RECEIVER_S ||
 			receiver->semantic.phase3.stage ==
 				V34_PHASE3_DECISION_RECEIVER_REPEATED_S) &&
-		       receiver->semantic.phase3.s.buffered_decisions == 0u &&
-		       !receiver->semantic.phase3.s.target_seeded;
+		       receiver->semantic.phase3.s.buffered_decisions == 0u;
 	return true;
 }
 
