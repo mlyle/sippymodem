@@ -184,25 +184,6 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_init(
 	return PHASE2_RECIPROCAL_PROBE_OK;
 }
 
-static bool observe_remote_tone(
-	struct phase2_info0_exchange *exchange,
-	int16_t received_sample,
-	struct phase2_reciprocal_probe_event *event)
-{
-	return v34_phase2_tone_detector_sample(
-		       &exchange->tone_detector,
-		       received_sample, &event->tone_event) ==
-	       V34_PHASE2_TONE_OK;
-}
-
-static bool generate_local_tone(
-	struct phase2_info0_exchange *exchange, int16_t *sample)
-{
-	return v34_phase2_tone_transmitter_sample(
-		       &exchange->tone_transmitter, sample) ==
-	       V34_PHASE2_TONE_OK;
-}
-
 static void fail_probe(
 	struct phase2_reciprocal_probe *probe,
 	enum phase2_probe_failure failure,
@@ -224,7 +205,8 @@ static bool transmit_local_probe(
 		&probe->path.transmit;
 	bool remote_tone_started;
 
-	if (!observe_remote_tone(exchange, received_sample, event))
+	if (!phase2_info0_exchange_observe_tone(
+		    exchange, received_sample, &event->tone_event))
 		return false;
 	remote_tone_started =
 		event->tone_event.kind == V34_PHASE2_TONE_STARTED;
@@ -298,7 +280,8 @@ static bool receive_remote_probe(
 			    V34_PHASE2_PROBE_ACQUISITION_OK ||
 		    event->receive_event.kind !=
 			    V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED ||
-		    !generate_local_tone(exchange, transmit_sample))
+		    !phase2_info0_exchange_generate_tone(
+			    exchange, transmit_sample))
 			return false;
 		probe->phase = PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE;
 		event->kind =
@@ -389,7 +372,8 @@ enum phase2_reciprocal_probe_result phase2_reciprocal_probe_sample(
 			&generated, &emitted);
 		break;
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_A_TONE:
-		accepted = generate_local_tone(&next_exchange, &generated);
+		accepted = phase2_info0_exchange_generate_tone(
+			&next_exchange, &generated);
 		break;
 	case PHASE2_RECIPROCAL_PROBE_SIGNAL_B_COMPLETE:
 	case PHASE2_RECIPROCAL_PROBE_FAILED:

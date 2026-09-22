@@ -158,30 +158,11 @@ phase2_initial_probe_init(
 	return PHASE2_INITIAL_PROBE_OK;
 }
 
-static bool observe_remote_tone(
-	struct phase2_info0_exchange *exchange,
-	int16_t received_sample,
-	struct phase2_initial_probe_event *event)
-{
-	return v34_phase2_tone_detector_sample(
-		       &exchange->tone_detector,
-		       received_sample, &event->tone_event) ==
-	       V34_PHASE2_TONE_OK;
-}
-
 static bool reset_remote_tone_detector(
 	struct phase2_info0_exchange *exchange)
 {
 	return v34_phase2_tone_detector_reset(
 		       &exchange->tone_detector) ==
-	       V34_PHASE2_TONE_OK;
-}
-
-static bool generate_local_tone(
-	struct phase2_info0_exchange *exchange, int16_t *sample)
-{
-	return v34_phase2_tone_transmitter_sample(
-		       &exchange->tone_transmitter, sample) ==
 	       V34_PHASE2_TONE_OK;
 }
 
@@ -213,8 +194,10 @@ static bool receive_remote_probe(
 			    &event->receive_event) !=
 			    V34_PHASE2_PROBE_ACQUISITION_OK ||
 		    !reset_remote_tone_detector(exchange) ||
-		    !observe_remote_tone(exchange, received_sample, event) ||
-		    !generate_local_tone(exchange, transmit_sample))
+		    !phase2_info0_exchange_observe_tone(
+			    exchange, received_sample, &event->tone_event) ||
+		    !phase2_info0_exchange_generate_tone(
+			    exchange, transmit_sample))
 			return false;
 		probe->phase =
 			PHASE2_INITIAL_PROBE_SIGNAL_B_TONE;
@@ -261,7 +244,8 @@ static bool transmit_local_probe(
 			    V34_PHASE2_PROBE_L1_SAMPLES &&
 		    !reset_remote_tone_detector(exchange))
 			return false;
-		if (!observe_remote_tone(exchange, received_sample, event))
+		if (!phase2_info0_exchange_observe_tone(
+			    exchange, received_sample, &event->tone_event))
 			return false;
 	}
 	remote_tone_started = event->tone_event.kind ==
@@ -347,9 +331,11 @@ phase2_initial_probe_sample(
 		break;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
-		accepted = observe_remote_tone(
-				   &next_exchange, received_sample, &emitted) &&
-			   generate_local_tone(&next_exchange, &generated);
+		accepted = phase2_info0_exchange_observe_tone(
+				   &next_exchange, received_sample,
+				   &emitted.tone_event) &&
+			   phase2_info0_exchange_generate_tone(
+				   &next_exchange, &generated);
 		break;
 	case PHASE2_INITIAL_PROBE_FAILED:
 		break;

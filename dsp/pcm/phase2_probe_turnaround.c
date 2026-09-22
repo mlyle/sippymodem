@@ -172,26 +172,6 @@ phase2_probe_turnaround_init(
 	return PHASE2_PROBE_TURNAROUND_OK;
 }
 
-static bool observe_remote_tone(
-	struct phase2_info0_exchange *exchange,
-	int16_t received_sample,
-	struct phase2_probe_turnaround_event *event)
-{
-	return v34_phase2_tone_detector_sample(
-		       &exchange->tone_detector,
-		       received_sample, &event->tone_event) ==
-	       V34_PHASE2_TONE_OK;
-}
-
-static bool generate_local_tone(
-	struct phase2_info0_exchange *exchange,
-	int16_t *sample)
-{
-	return v34_phase2_tone_transmitter_sample(
-		       &exchange->tone_transmitter, sample) ==
-	       V34_PHASE2_TONE_OK;
-}
-
 static bool reverse_local_tone(
 	struct phase2_info0_exchange *exchange)
 {
@@ -431,10 +411,11 @@ phase2_probe_turnaround_sample(
 	    next.phase !=
 		    PHASE2_PROBE_TURNAROUND_SIGNAL_A_PROBE_READY &&
 	    next.phase != PHASE2_PROBE_TURNAROUND_TIMED_OUT &&
-	    !observe_remote_tone(&next_exchange, received_sample, &emitted))
+	    !phase2_info0_exchange_observe_tone(
+		    &next_exchange, received_sample, &emitted.tone_event))
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	if (phase_transmits_tone(next.phase) &&
-	    !generate_local_tone(&next_exchange, &generated))
+	    !phase2_info0_exchange_generate_tone(&next_exchange, &generated))
 		return PHASE2_PROBE_TURNAROUND_INVALID_ARGUMENT;
 	if (emitted.tone_event.kind ==
 	    V34_PHASE2_TONE_PHASE_REVERSED)

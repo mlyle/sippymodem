@@ -46,6 +46,24 @@ struct phase2_info0_exchange {
 	enum phase2_signal_role signal_role;
 };
 
+/* The probe stages share the INFO0 exchange's continuing tone state. */
+static inline bool phase2_info0_exchange_observe_tone(
+	struct phase2_info0_exchange *exchange, int16_t sample,
+	struct v34_phase2_tone_event *event)
+{
+	return v34_phase2_tone_detector_sample(
+		       &exchange->tone_detector, sample, event) ==
+	       V34_PHASE2_TONE_OK;
+}
+
+static inline bool phase2_info0_exchange_generate_tone(
+	struct phase2_info0_exchange *exchange, int16_t *sample)
+{
+	return v34_phase2_tone_transmitter_sample(
+		       &exchange->tone_transmitter, sample) ==
+	       V34_PHASE2_TONE_OK;
+}
+
 enum phase2_info0_exchange_result phase2_info0_exchange_init(
 	struct phase2_info0_exchange *exchange,
 	enum phase2_signal_role signal_role,
