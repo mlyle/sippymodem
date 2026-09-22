@@ -111,13 +111,21 @@ enum v92_phase4_modulator_result v92_phase4_modulator_init(
 	return V92_PHASE4_MODULATOR_OK;
 }
 
+/* The shared scrambler is MSB-first; Phase 4 groups are two or three bits,
+ * with bit zero first. Reversing both sides preserves their wire order. */
+static uint8_t reverse_group(uint8_t group, unsigned int bits)
+{
+	return (uint8_t)((((group & 1u) << 2) | (group & 2u) |
+			 (group >> 2)) >> (3u - bits));
+}
+
 enum v92_phase4_modulator_result v92_phase4_modulator_next(
 	struct v92_phase4_modulator *modulator,
 	uint8_t input_group, int16_t *sample)
 {
 	struct v92_phase4_modulator next;
 	unsigned int bits;
-	uint8_t scrambled_group = 0;
+	uint8_t scrambled_group;
 	uint8_t encoded_sign;
 	int16_t generated;
 
@@ -130,16 +138,11 @@ enum v92_phase4_modulator_result v92_phase4_modulator_next(
 	if (input_group >= (1u << bits))
 		return V92_PHASE4_MODULATOR_INVALID_ARGUMENT;
 	next = *modulator;
-	for (unsigned int bit = 0; bit < bits; ++bit) {
-		uint8_t scrambled;
-
-		if (v34_scramble_group(
-			    &next.scrambler,
-			    (uint8_t)((input_group >> bit) & 1u), 1u,
-			    &scrambled) != V34_FRAMING_OK)
-			return V92_PHASE4_MODULATOR_INVALID_STATE;
-		scrambled_group |= (uint8_t)(scrambled << bit);
-	}
+	if (v34_scramble_group(
+		    &next.scrambler, reverse_group(input_group, bits),
+		    bits, &scrambled_group) != V34_FRAMING_OK)
+		return V92_PHASE4_MODULATOR_INVALID_STATE;
+	scrambled_group = reverse_group(scrambled_group, bits);
 	encoded_sign = (uint8_t)(
 		(scrambled_group >> (bits - 1u)) ^
 		next.previous_encoded_sign);
@@ -232,7 +235,7 @@ enum v92_phase4_modulator_result v92_phase4_demodulator_next(
 	uint8_t magnitude_index;
 	uint8_t encoded_sign;
 	uint8_t scrambled_group;
-	uint8_t recovered_group = 0u;
+	uint8_t recovered_group;
 	int16_t selected;
 
 	if (demodulator == NULL || input_group == NULL || nearest_level == NULL ||
@@ -259,16 +262,11 @@ enum v92_phase4_modulator_result v92_phase4_demodulator_next(
 	scrambled_group = (uint8_t)(
 		magnitude_index |
 		((encoded_sign ^ next.previous_encoded_sign) << (bits - 1u)));
-	for (unsigned int bit = 0; bit < bits; ++bit) {
-		uint8_t recovered_bit;
-
-		if (v34_descramble_group(
-			    &next.descrambler,
-			    (uint8_t)((scrambled_group >> bit) & 1u),
-			    1u, &recovered_bit) != V34_FRAMING_OK)
-			return V92_PHASE4_MODULATOR_INVALID_STATE;
-		recovered_group |= (uint8_t)(recovered_bit << bit);
-	}
+	if (v34_descramble_group(
+		    &next.descrambler, reverse_group(scrambled_group, bits),
+		    bits, &recovered_group) != V34_FRAMING_OK)
+		return V92_PHASE4_MODULATOR_INVALID_STATE;
+	recovered_group = reverse_group(recovered_group, bits);
 	next.previous_encoded_sign = encoded_sign;
 	if (!v92_phase4_demodulator_is_valid(&next))
 		return V92_PHASE4_MODULATOR_INVALID_STATE;

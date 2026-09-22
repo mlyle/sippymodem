@@ -77,13 +77,17 @@ static bool test_generated_levels(void)
 
 static bool check_groups(
 	enum v92_constellation_size constellation,
-	uint8_t initial_previous_sign)
+	uint8_t initial_previous_sign, uint32_t initial_history)
 {
 	struct v92_phase4_modulator modulator;
 	struct v92_phase4_demodulator demodulator;
 	unsigned int bits =
 		v92_phase4_modulator_bits_per_symbol(constellation);
 	uint8_t group_count = (uint8_t)(1u << bits);
+	uint32_t history = initial_history;
+	uint8_t previous_sign = initial_previous_sign;
+	size_t level_count;
+	const int16_t *levels = magnitudes(constellation, &level_count);
 
 	CHECK(v92_phase4_modulator_init(
 		      &modulator, constellation, initial_previous_sign,
@@ -94,6 +98,10 @@ static bool check_groups(
 	      v92_phase4_modulator_is_valid(&modulator) &&
 	      v92_phase4_demodulator_is_valid(&demodulator),
 	      "V.92 Phase 4 group state did not initialize");
+	CHECK(levels != NULL && level_count == group_count / 2u,
+	      "V.92 Phase 4 model constellation differed");
+	modulator.scrambler.history = initial_history;
+	demodulator.descrambler.history = initial_history;
 	for (unsigned int cycle = 0; cycle < GROUP_CYCLES; ++cycle) {
 		for (uint8_t input_group = 0;
 		     input_group < group_count; ++input_group) {
@@ -101,6 +109,23 @@ static bool check_groups(
 			int16_t nearest_level = 1234;
 			int16_t sample = 0;
 			double noise = (cycle & 1u) != 0u ? 100.0 : -100.0;
+			uint8_t scrambled = 0;
+			int16_t expected;
+
+			/* Independent serial GPA model: delay 5 and 23, input
+			 * bit zero first, then differential sign and magnitude. */
+			for (unsigned int bit = 0; bit < bits; ++bit) {
+				uint8_t output = (uint8_t)(
+					((input_group >> bit) ^ (history >> 4) ^
+					 (history >> 22)) & 1u);
+
+				history = ((history << 1) | output) & 0x7fffffu;
+				scrambled |= (uint8_t)(output << bit);
+			}
+			previous_sign ^= (uint8_t)(scrambled >> (bits - 1u));
+			expected = levels[scrambled & (level_count - 1u)];
+			if (previous_sign != 0u)
+				expected = (int16_t)-expected;
 
 			CHECK(v92_phase4_modulator_next(
 				      &modulator, input_group, &sample) ==
@@ -111,7 +136,10 @@ static bool check_groups(
 				      V92_PHASE4_MODULATOR_OK,
 			      "V.92 Phase 4 group %u/%u did not modulate",
 			      cycle, input_group);
-			CHECK(recovered_group == input_group &&
+			CHECK(sample == expected &&
+			      modulator.scrambler.history == history &&
+			      modulator.previous_encoded_sign == previous_sign &&
+			      recovered_group == input_group &&
 			      nearest_level == sample &&
 			      modulator.previous_encoded_sign ==
 				      demodulator.previous_encoded_sign &&
@@ -128,6 +156,9 @@ static bool check_groups(
 
 static bool test_arbitrary_groups(void)
 {
+	static const uint32_t histories[] = {
+		0, 0x7fffff, 0x555555, 0x123456, 1u << 4, 1u << 22,
+	};
 	static const enum v92_constellation_size constellations[] = {
 		V92_CONSTELLATION_4_POINT,
 		V92_CONSTELLATION_8_POINT,
@@ -135,11 +166,13 @@ static bool test_arbitrary_groups(void)
 
 	for (size_t selection = 0;
 	     selection < ARRAY_LENGTH(constellations); ++selection) {
-		for (uint8_t previous_sign = 0;
-		     previous_sign <= 1u; ++previous_sign)
-			CHECK(check_groups(
-				      constellations[selection], previous_sign),
-			      "V.92 Phase 4 group sequence failed");
+		for (size_t seed = 0; seed < ARRAY_LENGTH(histories); ++seed)
+			for (uint8_t previous_sign = 0;
+			     previous_sign <= 1u; ++previous_sign)
+				CHECK(check_groups(
+					      constellations[selection],
+					      previous_sign, histories[seed]),
+				      "V.92 Phase 4 group sequence failed");
 	}
 	return true;
 }
