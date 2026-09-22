@@ -133,18 +133,6 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_start_next(
 	return V92_PHASE4_RECORD_TX_OK;
 }
 
-static uint8_t input_group(
-	const struct v92_phase4_record_tx *tx, unsigned int bits)
-{
-	uint8_t group = 0u;
-
-	for (unsigned int bit = 0u; bit < bits; ++bit) {
-		group |= (uint8_t)(
-			packed_msb_bit(tx->frame, tx->bit_index + bit) << bit);
-	}
-	return group;
-}
-
 enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 	struct v92_phase4_record_tx *tx, int16_t *sample)
 {
@@ -162,7 +150,8 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 		tx->modulator.constellation);
 	next = tx->modulator;
 	if (v92_phase4_modulator_next(
-		    &next, input_group(tx, bits), &generated) !=
+		    &next, (uint8_t)packed_msb_read_lsb_field(
+			    tx->frame, tx->bit_index, bits), &generated) !=
 	    V92_PHASE4_MODULATOR_OK)
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
 	tx->modulator = next;

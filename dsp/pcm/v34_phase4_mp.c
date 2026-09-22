@@ -234,12 +234,6 @@ v34_phase4_mp_start_next_type1_record(
 	return replace_record(transmitter, &record);
 }
 
-static uint8_t frame_dibit(const uint8_t *frame, size_t first_bit)
-{
-	return (uint8_t)((packed_msb_bit(frame, first_bit) << 1) |
-			 packed_msb_bit(frame, first_bit + 1u));
-}
-
 enum v34_phase4_mp_result v34_phase4_mp_next(
 	struct v34_phase4_mp *transmitter,
 	struct qam_point *point, uint8_t *quarter_point,
@@ -260,14 +254,16 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 	next = *transmitter;
 	if (v34_scramble_differential_dibit(
 		    &next.scrambler,
-		    frame_dibit(next.frame, next.bit_index),
+		    (uint8_t)packed_msb_read_msb_field(
+			    next.frame, next.bit_index, 2u),
 		    next.previous_clockwise_quarter_turns,
 		    &next_rotation) != V34_FRAMING_OK)
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (next.constellation == V34_CONSTELLATION_16_POINT &&
 	    v34_scramble_mapped_dibit(
 		    &next.scrambler,
-		    frame_dibit(next.frame, next.bit_index + 2u),
+		    (uint8_t)packed_msb_read_msb_field(
+			    next.frame, next.bit_index + 2u, 2u),
 		    &next_quarter_point) != V34_FRAMING_OK)
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	if (v34_training_constellation_point(

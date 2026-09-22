@@ -132,6 +132,52 @@ static bool current_cpu_acknowledges_cpd(
 	return true;
 }
 
+static bool test_record_bit_order(void)
+{
+	/* Storage is MSB-first, but each two/three-bit modulation group is
+	 * LSB-first. Three-bit symbols also straddle storage byte boundaries. */
+	static const uint8_t frame[] = { 0x1b, 0xe4, 0x59 };
+	static const uint8_t groups[][12] = {
+		{ 0, 2, 1, 3, 3, 1, 2, 0, 2, 2, 1, 2 },
+		{ 0, 3, 7, 3, 2, 4, 6, 4 },
+	};
+
+	for (unsigned mode = 0; mode < 2u; ++mode) {
+		struct v92_phase4_modulator expected;
+		struct v92_phase4_record_tx tx;
+		unsigned bits = mode + 2u;
+		int16_t sample = 1234;
+
+		CHECK(v92_phase4_modulator_init(
+			      &expected, mode ? V92_CONSTELLATION_8_POINT :
+				      V92_CONSTELLATION_4_POINT, 1u, TEST_LU) ==
+			      V92_PHASE4_MODULATOR_OK &&
+		      v92_phase4_record_tx_init(
+			      &tx, &expected, frame, sizeof(frame), 24u) ==
+			      V92_PHASE4_RECORD_TX_OK,
+		      "record bit-order fixture did not initialize");
+		for (unsigned symbol = 0; symbol < 24u / bits; ++symbol) {
+			int16_t reference;
+
+			CHECK(v92_phase4_modulator_next(
+				      &expected, groups[mode][symbol], &reference) ==
+				      V92_PHASE4_MODULATOR_OK &&
+			      v92_phase4_record_tx_next(&tx, &sample) ==
+				      V92_PHASE4_RECORD_TX_OK && sample == reference &&
+			      tx.modulator.scrambler.history == expected.scrambler.history &&
+			      tx.modulator.previous_encoded_sign == expected.previous_encoded_sign &&
+			      tx.bit_index == (symbol + 1u) * bits,
+			      "record group order differed at width %u symbol %u", bits, symbol);
+		}
+		sample = 1234;
+		CHECK(v92_phase4_record_tx_is_complete(&tx) &&
+		      v92_phase4_record_tx_next(&tx, &sample) ==
+			      V92_PHASE4_RECORD_TX_COMPLETE && sample == 1234,
+		      "record emitted beyond its exact storage boundary");
+	}
+	return true;
+}
+
 static bool test_early_peer_sequence(void)
 {
 	struct v92_phase4_analog_tx tx;
@@ -707,7 +753,7 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
-	if (!test_silence_agreement() || !test_silence_contracts() ||
+	if (!test_record_bit_order() || !test_silence_agreement() || !test_silence_contracts() ||
 	    !test_control_records() || !test_control_contracts() ||
 	    !test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, false) ||

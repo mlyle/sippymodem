@@ -158,13 +158,6 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_start_next_record(
 	return V90_PHASE4_CP_TX_OK;
 }
 
-static uint8_t frame_dibit(
-	const uint8_t *frame, size_t first_bit)
-{
-	return (uint8_t)((packed_msb_bit(frame, first_bit) << 1) |
-			 packed_msb_bit(frame, first_bit + 1u));
-}
-
 static enum v90_phase4_cp_tx_result map_symbol(
 	struct v90_phase4_cp_tx *tx,
 	uint8_t differential_dibit, uint8_t mapped_dibit,
@@ -215,9 +208,11 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 		return V90_PHASE4_CP_TX_RECORD_COMPLETE;
 	next = *tx;
 	if (map_symbol(
-		    &next, frame_dibit(next.frame, next.bit_index),
+		    &next, (uint8_t)packed_msb_read_msb_field(
+			    next.frame, next.bit_index, 2u),
 		    next.constellation == V34_CONSTELLATION_16_POINT ?
-			    frame_dibit(next.frame, next.bit_index + 2u) :
+			    (uint8_t)packed_msb_read_msb_field(
+				    next.frame, next.bit_index + 2u, 2u) :
 			    0u,
 		    &next_point, &next_quarter_point, &next_rotation) !=
 	    V90_PHASE4_CP_TX_OK)
