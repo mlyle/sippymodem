@@ -2,6 +2,7 @@
 
 #include "v34_timing_filter.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -83,21 +84,6 @@ static void shift_recursive_filter(
 		input_real = old_real;
 		input_imag = old_imag;
 	}
-}
-
-static int16_t high_pass_error(
-	int16_t history[V34_TIMING_FILTER_FIR_TAPS], int16_t input)
-{
-	uint32_t accumulator = 0;
-
-	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS; ++tap) {
-		int16_t old = history[tap];
-
-		history[tap] = input;
-		accumulator += multiply_low_s32(input, ERROR_HIGH_PASS[tap]);
-		input = old;
-	}
-	return round_shift_s32_word_to_s16(accumulator, 15);
 }
 
 static uint32_t pack_sample(struct v34_analytic_sample sample)
@@ -201,7 +187,9 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 			multiply_low_s32(filtered_positive_real,
 				     filtered_negative_imag),
 		14);
-	generated = high_pass_error(next.error_history, generated);
+	generated = round_shift_s32_word_to_s16(fir_shift_s16(
+		next.error_history, ERROR_HIGH_PASS,
+		V34_TIMING_FILTER_FIR_TAPS, generated), 15);
 	*filter = next;
 	*timing_error = generated;
 	return V34_TIMING_FILTER_OK;

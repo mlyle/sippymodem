@@ -2,6 +2,7 @@
 
 #include "v8_line_conditioner.h"
 
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 
@@ -94,31 +95,6 @@ enum v8_line_conditioner_result v8_line_conditioner_set_gain_mode(
 	return V8_LINE_CONDITIONER_OK;
 }
 
-static const int16_t *entrance_filter(enum v8_station_role role)
-{
-	return role == V8_CALLING_STATION ?
-		       V8_CALLER_ENTRANCE_FILTER :
-		       V8_ANSWERER_ENTRANCE_FILTER;
-}
-
-static int16_t entrance_filter_sample(
-	struct v8_line_conditioner *conditioner, int16_t sample)
-{
-	const int16_t *coefficients = entrance_filter(conditioner->role);
-	uint32_t accumulator = 0;
-
-	for (size_t index = 0;
-	     index < V8_LINE_ENTRANCE_FILTER_TAPS; ++index) {
-		int16_t previous = conditioner->entrance_history[index];
-
-		conditioner->entrance_history[index] = sample;
-		accumulator += (uint32_t)((int32_t)sample * coefficients[index]);
-		sample = previous;
-	}
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(accumulator, 14));
-}
-
 static int16_t gain_step(enum v8_line_gain_mode mode)
 {
 	return mode == V8_LINE_GAIN_COARSE ? 0x3333 : 0x0800;
@@ -183,13 +159,17 @@ static void condition_block(
 	struct v8_line_conditioner *conditioner,
 	struct v8_line_conditioned_block *block)
 {
+	const int16_t *coefficients = conditioner->role == V8_CALLING_STATION ?
+		V8_CALLER_ENTRANCE_FILTER : V8_ANSWERER_ENTRANCE_FILTER;
 	uint32_t history_energy = 0;
 	uint16_t energy_level;
 
 	block->gain_reset = false;
 	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index)
-		block->samples[index] = entrance_filter_sample(
-			conditioner, block->samples[index]);
+		block->samples[index] = wrap_s16_from_s32(
+			arithmetic_shift_right_u32(fir_shift_s16(
+				conditioner->entrance_history, coefficients,
+				V8_LINE_ENTRANCE_FILTER_TAPS, block->samples[index]), 14));
 	for (size_t index = 0; index < V8_LINE_BLOCK_SAMPLES; ++index) {
 		conditioner->power_history[conditioner->power_index] =
 			(uint16_t)block->samples[index];

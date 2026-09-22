@@ -3,6 +3,7 @@
 #include "v8_fsk.h"
 
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "v21.h"
@@ -163,17 +164,9 @@ static int16_t filter_sample(
 	const int16_t coefficients[V8_FSK_TRANSMIT_FILTER_TAPS],
 	int16_t sample)
 {
-	uint32_t accumulator = UINT32_C(0x8000);
-
-	for (size_t tap = 0; tap < V8_FSK_TRANSMIT_FILTER_TAPS; ++tap) {
-		int16_t previous = transmitter->filter_history[tap];
-
-		transmitter->filter_history[tap] = sample;
-		accumulator += (uint32_t)((int32_t)sample * coefficients[tap]);
-		sample = previous;
-	}
-	return wrap_s16_from_s32(
-		arithmetic_shift_right_u32(accumulator, 16));
+	return round_shift_s32_word_to_s16(fir_shift_s16(
+		transmitter->filter_history, coefficients,
+		V8_FSK_TRANSMIT_FILTER_TAPS, sample), 16);
 }
 
 enum v8_fsk_result v8_fsk_transmit_sample(

@@ -3,6 +3,7 @@
 #include "v34_pulse_modulator.h"
 
 #include "fixed_phase.h"
+#include "fir.h"
 #include "integer_math.h"
 #include "memory_region.h"
 #include "phase.h"
@@ -377,7 +378,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	uint32_t in_phase = 0x1000u;
 	uint32_t quadrature = 0x1000u;
 	uint32_t mixed;
-	uint32_t filtered = 0;
+	uint32_t filtered;
 	int16_t fixed_in_phase = 0;
 	int16_t fixed_quadrature = 0;
 	int16_t preemphasis_input;
@@ -437,13 +438,8 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	mixed -= multiply_low_s32(
 		arithmetic_shift_right_u32(quadrature, 13), phasor.sine);
 	preemphasis_input = round_shift_s32_word_to_s16(mixed, 14);
-	for (size_t tap = 0; tap < V34_PREEMPHASIS_TAPS; ++tap) {
-		int16_t previous = next.preemphasis_history[tap];
-
-		next.preemphasis_history[tap] = preemphasis_input;
-		filtered += multiply_low_s32(preemphasis_input, preemphasis[tap]);
-		preemphasis_input = previous;
-	}
+	filtered = fir_shift_s16(next.preemphasis_history, preemphasis,
+		V34_PREEMPHASIS_TAPS, preemphasis_input);
 	fixed_sample = round_shift_s32_word_to_s16(filtered, 14);
 	generated = (double)fixed_sample / V34_PULSE_OUTPUT_SCALE;
 	next.generated_samples++;
