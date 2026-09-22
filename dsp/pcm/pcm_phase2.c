@@ -127,15 +127,15 @@ static enum pcm_protocol child_protocol(const struct pcm_phase2 *phase2)
 	return (enum pcm_protocol)-1;
 }
 
-static enum pcm_phase2_failure initial_probe_failure(
-	enum phase2_initial_probe_failure failure)
+static enum pcm_phase2_failure probe_failure(
+	enum phase2_probe_failure failure)
 {
 	switch (failure) {
-	case PHASE2_INITIAL_PROBE_NO_FAILURE:
+	case PHASE2_PROBE_NO_FAILURE:
 		return PCM_PHASE2_FAILURE_NONE;
-	case PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
+	case PHASE2_PROBE_REMOTE_NOT_FOUND:
 		return PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
+	case PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT:
 		return PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 	}
 	return PCM_PHASE2_FAILURE_INTERNAL;
@@ -148,7 +148,7 @@ static enum pcm_phase2_failure active_failure(
 	case PCM_PHASE2_RANGING:
 		return PCM_PHASE2_FAILURE_NONE;
 	case PCM_PHASE2_INITIAL_PROBE:
-		return initial_probe_failure(
+		return probe_failure(
 			phase2->state.initial_probe.control.failure);
 	case PCM_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.turnaround.control.failure ==
@@ -156,15 +156,8 @@ static enum pcm_phase2_failure active_failure(
 			       PCM_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
 			       PCM_PHASE2_FAILURE_NONE;
 	case PCM_PHASE2_RECIPROCAL_PROBE:
-		switch (phase2->state.reciprocal_probe.control.failure) {
-		case PHASE2_RECIPROCAL_PROBE_NO_FAILURE:
-			return PCM_PHASE2_FAILURE_NONE;
-		case PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND:
-			return PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-		case PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT:
-			return PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-		}
-		break;
+		return probe_failure(
+			phase2->state.reciprocal_probe.control.failure);
 	case PCM_PHASE2_INFO1:
 		return phase2->state.info1.control.failure ==
 			       PHASE2_INFO1_PEER_TIMEOUT ?
@@ -955,7 +948,7 @@ static bool sample_initial_probe(
 		return phase2->local_role == V90_ANALOG_MODEM &&
 		       enter_turnaround(phase2, event);
 	case PHASE2_INITIAL_PROBE_EVENT_FAILED:
-		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
+		if (child.failure == PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT) {
 			struct pcm_phase2_ranging next =
 				phase2->state.initial_probe.ranging;
 
@@ -967,7 +960,7 @@ static bool sample_initial_probe(
 			phase2->stage = PCM_PHASE2_RANGING;
 			return true;
 		}
-		phase2->failure = initial_probe_failure(child.failure);
+		phase2->failure = probe_failure(child.failure);
 		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;
@@ -1042,10 +1035,7 @@ static bool sample_reciprocal_probe(
 		event->kind = PCM_PHASE2_EVENT_READY_FOR_INFO1;
 		return true;
 	case PHASE2_RECIPROCAL_PROBE_EVENT_FAILED:
-		phase2->failure = child.failure ==
-					  PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND ?
-				  PCM_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND :
-				  PCM_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
+		phase2->failure = probe_failure(child.failure);
 		event->kind = PCM_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 		return true;

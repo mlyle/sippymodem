@@ -30,24 +30,24 @@ static bool signal_b_path_is_valid(
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
 		return probe->tone_wait_samples == 0 &&
 		       probe->failure ==
-			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
+			       PHASE2_PROBE_NO_FAILURE &&
 		       (receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_SEARCHING ||
 			receive->phase ==
 				V34_PHASE2_PROBE_ACQUISITION_RECEIVING);
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_TONE:
 		return probe->failure ==
-			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
+			       PHASE2_PROBE_NO_FAILURE &&
 		       receive->phase ==
 			       V34_PHASE2_PROBE_ACQUISITION_COMPLETE;
 	case PHASE2_INITIAL_PROBE_FAILED:
 		switch (probe->failure) {
-		case PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
+		case PHASE2_PROBE_REMOTE_NOT_FOUND:
 			return probe->tone_wait_samples == 0 &&
 			       receive->phase ==
 				       V34_PHASE2_PROBE_ACQUISITION_NOT_FOUND;
-		case PHASE2_INITIAL_PROBE_NO_FAILURE:
-		case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
+		case PHASE2_PROBE_NO_FAILURE:
+		case PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT:
 			return false;
 		}
 		return false;
@@ -71,7 +71,7 @@ static bool signal_a_path_is_valid(
 	switch (probe->phase) {
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING:
 		return probe->tone_wait_samples == 0 && probe->failure ==
-			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
+			       PHASE2_PROBE_NO_FAILURE &&
 		       (transmit->phase ==
 				V34_PHASE2_PROBE_SEQUENCE_PHASE_L1 ||
 			transmit->phase ==
@@ -79,18 +79,18 @@ static bool signal_a_path_is_valid(
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_WAIT_TONE:
 		return probe->tone_wait_samples <
 			       PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES &&
-		       probe->failure == PHASE2_INITIAL_PROBE_NO_FAILURE &&
+		       probe->failure == PHASE2_PROBE_NO_FAILURE &&
 		       transmit->phase == V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_INITIAL_PROBE_SIGNAL_A_TONE:
 		return probe->tone_wait_samples == 0 && probe->failure ==
-			       PHASE2_INITIAL_PROBE_NO_FAILURE &&
+			       PHASE2_PROBE_NO_FAILURE &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_COMPLETE;
 	case PHASE2_INITIAL_PROBE_FAILED:
 		return probe->tone_wait_samples ==
 			       PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES &&
 		       probe->failure ==
-			       PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+			       PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT &&
 		       transmit->phase ==
 			       V34_PHASE2_PROBE_SEQUENCE_PHASE_LIMIT_REACHED;
 	case PHASE2_INITIAL_PROBE_SIGNAL_B_RECEIVING:
@@ -109,7 +109,7 @@ bool phase2_initial_probe_is_valid(
 	    (unsigned int)probe->phase >
 		    PHASE2_INITIAL_PROBE_FAILED ||
 	    (unsigned int)probe->failure >
-		    PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT)
+		    PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT)
 		return false;
 	return signal_is_b(exchange) ?
 		       signal_b_path_is_valid(probe) :
@@ -187,7 +187,7 @@ static bool generate_local_tone(
 
 static void fail_probe(
 	struct phase2_initial_probe *probe,
-	enum phase2_initial_probe_failure failure,
+	enum phase2_probe_failure failure,
 	struct phase2_initial_probe_event *event)
 {
 	probe->phase = PHASE2_INITIAL_PROBE_FAILED;
@@ -230,7 +230,7 @@ static bool receive_remote_probe(
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NOT_FOUND:
 		fail_probe(
 			probe,
-			PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND,
+			PHASE2_PROBE_REMOTE_NOT_FOUND,
 			event);
 		break;
 	case V34_PHASE2_PROBE_ACQUISITION_EVENT_NONE:
@@ -303,7 +303,7 @@ static bool wait_for_remote_tone(
 	    ++probe->tone_wait_samples == PHASE2_INITIAL_PROBE_TONE_B_WAIT_SAMPLES)
 		fail_probe(
 			probe,
-			PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT,
+			PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT,
 			event);
 	return true;
 }

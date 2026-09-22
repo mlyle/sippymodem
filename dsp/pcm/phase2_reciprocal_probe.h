@@ -4,8 +4,7 @@
 #define PHASE2_RECIPROCAL_PROBE_H
 
 #include "phase2_probe_turnaround.h"
-#include "v34_phase2_probe_acquisition.h"
-#include "v34_phase2_probe_sequence.h"
+#include "phase2_probe.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,12 +30,6 @@ enum phase2_reciprocal_probe_phase {
 	PHASE2_RECIPROCAL_PROBE_FAILED,
 };
 
-enum phase2_reciprocal_probe_failure {
-	PHASE2_RECIPROCAL_PROBE_NO_FAILURE,
-	PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND,
-	PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT,
-};
-
 enum phase2_reciprocal_probe_event_kind {
 	PHASE2_RECIPROCAL_PROBE_EVENT_NONE,
 	PHASE2_RECIPROCAL_PROBE_EVENT_REMOTE_PROBE_MEASURED,
@@ -49,7 +42,7 @@ struct phase2_reciprocal_probe_event {
 	struct v34_phase2_probe_sequence_event transmit_event;
 	struct v34_phase2_tone_event tone_event;
 	enum phase2_reciprocal_probe_event_kind kind;
-	enum phase2_reciprocal_probe_failure failure;
+	enum phase2_probe_failure failure;
 };
 
 enum phase2_reciprocal_probe_result {
@@ -57,15 +50,10 @@ enum phase2_reciprocal_probe_result {
 	PHASE2_RECIPROCAL_PROBE_INVALID_ARGUMENT,
 };
 
-union phase2_reciprocal_probe_path {
-	struct v34_phase2_probe_sequence transmit;
-	struct v34_phase2_probe_acquisition receive;
-};
-
 struct phase2_reciprocal_probe {
-	union phase2_reciprocal_probe_path path;
+	union phase2_probe_path path;
 	enum phase2_reciprocal_probe_phase phase;
-	enum phase2_reciprocal_probe_failure failure;
+	enum phase2_probe_failure failure;
 	/* Elapsed samples from Signal B's reversal. The mode-specific INFO1
 	 * owner retains this epoch for its response deadline. */
 	uint32_t signal_a_reversal_elapsed_samples;

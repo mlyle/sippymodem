@@ -24,15 +24,15 @@ static const struct v34_info0 *answerer_info0(
 		       &phase2->local_info0 : &phase2->peer_info0;
 }
 
-static enum v34_phase2_failure initial_probe_failure(
-	enum phase2_initial_probe_failure failure)
+static enum v34_phase2_failure probe_failure(
+	enum phase2_probe_failure failure)
 {
 	switch (failure) {
-	case PHASE2_INITIAL_PROBE_NO_FAILURE:
+	case PHASE2_PROBE_NO_FAILURE:
 		return V34_PHASE2_FAILURE_NONE;
-	case PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND:
+	case PHASE2_PROBE_REMOTE_NOT_FOUND:
 		return V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-	case PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT:
+	case PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT:
 		return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
 	}
 	return V34_PHASE2_FAILURE_INTERNAL;
@@ -70,7 +70,7 @@ static enum v34_phase2_failure active_failure(
 	case V34_PHASE2_RANGING:
 		return V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_INITIAL_PROBE:
-		return initial_probe_failure(
+		return probe_failure(
 			phase2->state.initial_probe.control.failure);
 	case V34_PHASE2_PROBE_TURNAROUND:
 		return phase2->state.turnaround.control.failure ==
@@ -78,15 +78,8 @@ static enum v34_phase2_failure active_failure(
 			       V34_PHASE2_FAILURE_REMOTE_REVERSAL_TIMEOUT :
 			       V34_PHASE2_FAILURE_NONE;
 	case V34_PHASE2_RECIPROCAL_PROBE:
-		switch (phase2->state.reciprocal_probe.control.failure) {
-		case PHASE2_RECIPROCAL_PROBE_NO_FAILURE:
-			return V34_PHASE2_FAILURE_NONE;
-		case PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND:
-			return V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND;
-		case PHASE2_RECIPROCAL_PROBE_LOCAL_TRANSMIT_LIMIT:
-			return V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
-		}
-		break;
+		return probe_failure(
+			phase2->state.reciprocal_probe.control.failure);
 	case V34_PHASE2_INFO1:
 		if (phase2->state.info1.control.failure ==
 		    PHASE2_INFO1_PEER_TIMEOUT)
@@ -658,7 +651,7 @@ static bool sample_initial_probe(
 		 child.receive_event.kind ==
 			 V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED);
 	if (child.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED) {
-		if (child.failure == PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT) {
+		if (child.failure == PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT) {
 			struct v34_phase2_ranging next =
 				phase2->state.initial_probe.ranging;
 
@@ -675,7 +668,7 @@ static bool sample_initial_probe(
 			phase2->remote_receive_gain = 0;
 			return true;
 		}
-		phase2->failure = initial_probe_failure(child.failure);
+		phase2->failure = probe_failure(child.failure);
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (measured_remote_probe) {
@@ -752,10 +745,7 @@ static bool sample_reciprocal_probe(
 	    PHASE2_RECIPROCAL_PROBE_OK)
 		return false;
 	if (child.kind == PHASE2_RECIPROCAL_PROBE_EVENT_FAILED) {
-		phase2->failure = child.failure ==
-					  PHASE2_RECIPROCAL_PROBE_REMOTE_NOT_FOUND ?
-				  V34_PHASE2_FAILURE_REMOTE_PROBE_NOT_FOUND :
-				  V34_PHASE2_FAILURE_LOCAL_PROBE_LIMIT;
+		phase2->failure = probe_failure(child.failure);
 		event->kind = V34_PHASE2_EVENT_FAILED;
 		event->failure = phase2->failure;
 	} else if (child.kind ==

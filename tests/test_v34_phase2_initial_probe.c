@@ -846,7 +846,7 @@ static bool test_bounded_failures(void)
 		      "missing-probe wait failed at sample %zu", samples);
 	CHECK(caller.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
 	      caller.control.failure ==
-		      PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND &&
+		      PHASE2_PROBE_REMOTE_NOT_FOUND &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED,
 	      "missing remote probe did not fail explicitly");
 	failed = caller;
@@ -914,7 +914,7 @@ static bool test_bounded_failures(void)
 		      "silent Tone-B deadline failed at sample %zu", samples);
 	CHECK(answerer.control.phase == PHASE2_INITIAL_PROBE_FAILED &&
 	      answerer.control.failure ==
-		      PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT &&
+		      PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT &&
 	      event.kind == PHASE2_INITIAL_PROBE_EVENT_FAILED &&
 	      event.transmit_event.kind ==
 		      V34_PHASE2_PROBE_SEQUENCE_EVENT_NONE,
@@ -1012,6 +1012,20 @@ static bool test_validation(void)
 		      &invalid, &caller_ranging, true) ==
 		      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 	      "caller accepted concurrent answerer probe reception");
+	for (int failure = -1; failure <= PHASE2_PROBE_LOCAL_TRANSMIT_LIMIT + 1;
+	     ++failure) {
+		if (failure == PHASE2_PROBE_NO_FAILURE)
+			continue;
+		invalid = probe;
+		invalid.control.failure = (enum phase2_probe_failure)failure;
+		before = invalid;
+		CHECK(!v34_phase2_initial_probe_is_valid(&invalid) &&
+		      v34_phase2_initial_probe_sample(&invalid, 0, &transmit, &event) ==
+			      PHASE2_INITIAL_PROBE_INVALID_ARGUMENT &&
+		      memcmp(&invalid, &before, sizeof(before)) == 0 &&
+		      memcmp(&event, &event_before, sizeof(event)) == 0 && transmit == 1234,
+		      "active initial probe accepted failure %d or changed outputs", failure);
+	}
 	invalid = probe;
 	invalid.control.phase =
 		PHASE2_INITIAL_PROBE_SIGNAL_A_TRANSMITTING;

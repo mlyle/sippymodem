@@ -4,8 +4,7 @@
 #define PHASE2_INITIAL_PROBE_H
 
 #include "phase2_ranging.h"
-#include "v34_phase2_probe_acquisition.h"
-#include "v34_phase2_probe_sequence.h"
+#include "phase2_probe.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -31,12 +30,6 @@ enum phase2_initial_probe_phase {
 	PHASE2_INITIAL_PROBE_FAILED,
 };
 
-enum phase2_initial_probe_failure {
-	PHASE2_INITIAL_PROBE_NO_FAILURE,
-	PHASE2_INITIAL_PROBE_REMOTE_NOT_FOUND,
-	PHASE2_INITIAL_PROBE_LOCAL_TRANSMIT_LIMIT,
-};
-
 enum phase2_initial_probe_event_kind {
 	PHASE2_INITIAL_PROBE_EVENT_NONE,
 	PHASE2_INITIAL_PROBE_EVENT_REMOTE_PROBE_COMPLETE,
@@ -49,7 +42,7 @@ struct phase2_initial_probe_event {
 	struct v34_phase2_probe_sequence_event transmit_event;
 	struct v34_phase2_tone_event tone_event;
 	enum phase2_initial_probe_event_kind kind;
-	enum phase2_initial_probe_failure failure;
+	enum phase2_probe_failure failure;
 };
 
 enum phase2_initial_probe_result {
@@ -57,15 +50,10 @@ enum phase2_initial_probe_result {
 	PHASE2_INITIAL_PROBE_INVALID_ARGUMENT,
 };
 
-union phase2_initial_probe_path {
-	struct v34_phase2_probe_acquisition receive;
-	struct v34_phase2_probe_sequence transmit;
-};
-
 struct phase2_initial_probe {
-	union phase2_initial_probe_path path;
+	union phase2_probe_path path;
 	enum phase2_initial_probe_phase phase;
-	enum phase2_initial_probe_failure failure;
+	enum phase2_probe_failure failure;
 	uint16_t tone_wait_samples;
 	uint16_t reversal_wait_samples_remaining;
 };
