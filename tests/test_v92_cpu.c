@@ -347,6 +347,45 @@ static bool test_extent_probe_failures(void)
 	return true;
 }
 
+static bool test_extent_probe_header(void)
+{
+	struct v92_cpu_parameters value = parameters(1u, false);
+	uint8_t frame[V92_CPU_MAX_FRAME_BYTES];
+	uint8_t header[V92_CPU_HEADER_BITS / 8u];
+	size_t bits = 0u;
+
+	CHECK(v92_cpu_encode(&value, 36u, frame, sizeof(frame), &bits) == V92_CPU_OK,
+	      "could not encode CPu probe fixture");
+	/* The extent probe needs no coefficient, law or shaping fields, but
+	 * must still reject the interleaved framing bits. Use exact header storage. */
+	for (size_t bit = 26u; bit < CPU_MAP_FIRST_BIT; ++bit) {
+		size_t inferred = 123u;
+		bool framing = bit % 17u == 0u;
+
+		memcpy(header, frame, sizeof(header));
+		set_bit(header, bit, (uint8_t)(1u - bit_at(header, bit)));
+		CHECK(v92_cpu_probe_frame_bits(
+			      header, sizeof(header), V92_CPU_HEADER_BITS,
+			      36u, &inferred) ==
+			      (framing ? V92_CPU_INVALID_FRAME : V92_CPU_OK) &&
+		      inferred == (framing ? 123u : bits),
+		      "CPu extent probe mishandled header bit %zu", bit);
+	}
+	memcpy(header, frame, sizeof(header));
+	write_lsb_field(header, map_first_bit(0u), 4u, 2u);
+	CHECK(probe_is_transactional(
+		      header, sizeof(header), V92_CPU_HEADER_BITS,
+		      36u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted an unreferenced intermediate row");
+	for (size_t interval = 0u; interval < 6u; ++interval)
+		write_lsb_field(header, map_first_bit(interval), 4u, 1u);
+	CHECK(probe_is_transactional(
+		      header, sizeof(header), V92_CPU_HEADER_BITS,
+		      36u, V92_CPU_INVALID_FRAME),
+	      "CPu extent probe accepted an unreferenced first row");
+	return true;
+}
+
 static bool test_scalar_validation(void)
 {
 	struct v92_cpu_parameters valid = parameters(1u, false);
@@ -920,6 +959,7 @@ int main(void)
 	} tests[] = {
 		{ "dimensions", test_dimensions },
 		{ "extent probe failures", test_extent_probe_failures },
+		{ "extent probe header", test_extent_probe_header },
 		{ "scalar validation", test_scalar_validation },
 		{ "constellation validation", test_constellation_validation },
 		{ "wire fields", test_wire_fields },

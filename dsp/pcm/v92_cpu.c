@@ -271,8 +271,8 @@ static bool header_framing_is_valid(const uint8_t *frame)
 	       packed_msb_bit(frame, 119u) == 0u;
 }
 
-static bool decode_maps(
-	const uint8_t *frame, struct v92_cpu_parameters *decoded)
+/* A zero count rejects both invalid indices and unreferenced rows. */
+static uint8_t decode_map(const uint8_t *frame, uint8_t *map)
 {
 	uint8_t used = 0u;
 	uint8_t greatest = 0u;
@@ -283,14 +283,15 @@ static bool decode_maps(
 			frame, pcm_control_frame_map_bit(interval), 4u);
 
 		if (index >= V92_CPU_MAX_CONSTELLATIONS)
-			return false;
-		decoded->frame_constellation[interval] = index;
+			return 0u;
+		if (map != NULL)
+			map[interval] = index;
 		used |= (uint8_t)(1u << index);
 		if (index > greatest)
 			greatest = index;
 	}
-	decoded->constellation_count = (uint8_t)(greatest + 1u);
-	return used == (uint8_t)((1u << decoded->constellation_count) - 1u);
+	return used == (uint8_t)((1u << (greatest + 1u)) - 1u) ?
+		(uint8_t)(greatest + 1u) : 0u;
 }
 
 static int8_t decode_signed_octet(uint8_t value)
@@ -336,7 +337,9 @@ static bool decode_header(
 		.codec_constellations_differ =
 			packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
 	};
-	return decode_maps(frame, decoded);
+	decoded->constellation_count =
+		decode_map(frame, decoded->frame_constellation);
+	return decoded->constellation_count != 0u;
 }
 
 enum v92_cpu_result v92_cpu_probe_frame_bits(
@@ -344,7 +347,7 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 	size_t received_bit_count, unsigned int mapping_frame_bits,
 	size_t *frame_bit_count)
 {
-	struct v92_cpu_parameters decoded;
+	uint8_t constellation_count;
 	size_t inferred;
 
 	if (frame == NULL || frame_bit_count == NULL)
@@ -369,12 +372,16 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 	if (received_bit_count < V92_CPU_HEADER_BITS)
 		return V92_CPU_INCOMPLETE;
 	if (!header_framing_is_valid(frame) ||
-	    !decode_header(frame, &decoded) ||
-	    decoded.data_rate_number > V92_CPU_MAX_DATA_RATE_NUMBER)
+	    packed_msb_read_lsb_field(frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS) >
+		    V92_CPU_MAX_DATA_RATE_NUMBER)
+		return V92_CPU_INVALID_FRAME;
+	constellation_count = decode_map(frame, NULL);
+	if (constellation_count == 0u)
 		return V92_CPU_INVALID_FRAME;
 	inferred = frame_bits_for_shape(
-		decoded.constellation_count,
-		decoded.codec_constellations_differ, mapping_frame_bits);
+		constellation_count,
+		packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
+		mapping_frame_bits);
 	if (inferred < received_bit_count || inferred > V92_CPU_MAX_FRAME_BITS)
 		return V92_CPU_INVALID_FRAME;
 	*frame_bit_count = inferred;
