@@ -50,7 +50,8 @@ bool v34_transmit_scrambler_is_valid(
 	const struct v34_scrambler *scrambler,
 	enum v34_station_role role);
 
-/* Process between one and eight bits, most-significant bit first. */
+/* Process between one and eight bits, most-significant bit first.
+ * Rejected calls leave state and output unchanged. */
 enum v34_framing_result v34_scramble_group(
 	struct v34_scrambler *scrambler, uint8_t input,
 	unsigned int bit_count, uint8_t *output);

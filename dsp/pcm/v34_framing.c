@@ -161,18 +161,14 @@ v34_scramble_mapped_dibit(
 	struct v34_scrambler *scrambler, uint8_t input_dibit,
 	uint8_t *mapped_dibit)
 {
-	struct v34_scrambler next;
 	uint8_t scrambled_dibit;
 
-	if (!v34_scrambler_is_valid(scrambler) ||
-	    input_dibit > 3u || mapped_dibit == NULL)
+	if (mapped_dibit == NULL)
 		return V34_FRAMING_INVALID_ARGUMENT;
-	next = *scrambler;
 	if (v34_scramble_group(
-		    &next, input_dibit, 2u, &scrambled_dibit) !=
+		    scrambler, input_dibit, 2u, &scrambled_dibit) !=
 	    V34_FRAMING_OK)
 		return V34_FRAMING_INVALID_ARGUMENT;
-	*scrambler = next;
 	*mapped_dibit = swap_dibit_bits(scrambled_dibit);
 	return V34_FRAMING_OK;
 }
@@ -182,20 +178,10 @@ v34_descramble_mapped_dibit(
 	struct v34_scrambler *descrambler, uint8_t mapped_dibit,
 	uint8_t *output_dibit)
 {
-	struct v34_scrambler next;
-	uint8_t output;
-
-	if (!v34_scrambler_is_valid(descrambler) ||
-	    mapped_dibit > 3u || output_dibit == NULL)
+	if (mapped_dibit > 3u)
 		return V34_FRAMING_INVALID_ARGUMENT;
-	next = *descrambler;
-	if (v34_descramble_group(
-		    &next, swap_dibit_bits(mapped_dibit), 2u, &output) !=
-	    V34_FRAMING_OK)
-		return V34_FRAMING_INVALID_ARGUMENT;
-	*descrambler = next;
-	*output_dibit = output;
-	return V34_FRAMING_OK;
+	return v34_descramble_group(
+		descrambler, swap_dibit_bits(mapped_dibit), 2u, output_dibit);
 }
 
 enum v34_framing_result
@@ -204,22 +190,18 @@ v34_scramble_differential_dibit(
 	uint8_t previous_clockwise_quarter_turns,
 	uint8_t *clockwise_quarter_turns)
 {
-	struct v34_scrambler next;
 	uint8_t increment;
 	uint8_t rotation;
 
-	if (!v34_scrambler_is_valid(scrambler) ||
-	    input_dibit > 3u || previous_clockwise_quarter_turns > 3u ||
+	if (previous_clockwise_quarter_turns > 3u ||
 	    clockwise_quarter_turns == NULL)
 		return V34_FRAMING_INVALID_ARGUMENT;
-	next = *scrambler;
 	if (v34_scramble_mapped_dibit(
-		    &next, input_dibit, &increment) !=
+		    scrambler, input_dibit, &increment) !=
 	    V34_FRAMING_OK)
 		return V34_FRAMING_INVALID_ARGUMENT;
 	rotation = (uint8_t)(
 		(previous_clockwise_quarter_turns + increment) & 3u);
-	*scrambler = next;
 	*clockwise_quarter_turns = rotation;
 	return V34_FRAMING_OK;
 }
@@ -232,9 +214,8 @@ v34_descramble_differential_dibit(
 {
 	uint8_t increment;
 
-	if (!v34_scrambler_is_valid(descrambler) ||
-	    previous_clockwise_quarter_turns > 3u ||
-	    current_clockwise_quarter_turns > 3u || output_dibit == NULL)
+	if (previous_clockwise_quarter_turns > 3u ||
+	    current_clockwise_quarter_turns > 3u)
 		return V34_FRAMING_INVALID_ARGUMENT;
 	increment = (uint8_t)((current_clockwise_quarter_turns + 4u -
 			       previous_clockwise_quarter_turns) &
