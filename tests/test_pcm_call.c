@@ -3035,8 +3035,7 @@ static bool run_probe_response_timeout(
 		      waiting.state.phase2.stage == PCM_PHASE2_RANGING &&
 		      ranging->control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
 		      ranging->control.local_tone_samples == 0u &&
-		      ranging->control.prior_round_trip_delay_samples ==
-			      source->round_trip_delay_samples &&
+		      ranging->control.prior_round_trip_delay_samples == 0u &&
 		      !ranging->control.round_trip_delay_valid &&
 		      !ranging->info0_exchange.transport.tone_detector.carrier.tone_present &&
 		      !waiting.retrain_active && !waiting.failed &&

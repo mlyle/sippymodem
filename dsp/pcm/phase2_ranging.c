@@ -192,7 +192,10 @@ enum phase2_ranging_result phase2_ranging_restart_after_probe(
 	    exchange->transmit_phase != PHASE2_INFO0_TONE)
 		return PHASE2_RANGING_INVALID_ARGUMENT;
 	transport = *exchange;
-	next.prior_round_trip_delay_samples = control->round_trip_delay_samples;
+	/* An unanswered probe does not confirm its ranging estimate. Preserve
+	 * only a delay supplied by an established call, so this new epoch can
+	 * correct a false first measurement instead of treating it as an alias. */
+	next.prior_round_trip_delay_samples = control->prior_round_trip_delay_samples;
 	/* The INFO receiver was idle during probing. Discard its old sample
 	 * history together with the Tone-B detector's previous reversal epoch. */
 	if (v34_phase2_tone_detector_reset(&transport.tone_detector) !=

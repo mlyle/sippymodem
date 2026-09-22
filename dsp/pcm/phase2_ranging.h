@@ -79,8 +79,9 @@ enum phase2_ranging_result phase2_ranging_control_init(
 	const struct phase2_info0_exchange *exchange);
 
 /* Recover an unanswered initial probe with fresh Tone A and first ranging,
- * retaining INFO0 and the measured delay. No full-retrain silence or INFO0
- * retransmission belongs to this V.34/V.90 recovery boundary. */
+ * retaining INFO0 and any established-call delay, not the failed probe's
+ * unconfirmed estimate. No full-retrain silence or INFO0 retransmission
+ * belongs to this V.34/V.90 recovery boundary. */
 enum phase2_ranging_result phase2_ranging_restart_after_probe(
 	struct phase2_ranging_control *control,
 	struct phase2_info0_exchange *exchange);

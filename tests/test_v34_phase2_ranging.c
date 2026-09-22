@@ -376,6 +376,58 @@ static bool test_early_turnaround_tolerance(void)
 	return true;
 }
 
+static bool test_probe_recovery_delay(void)
+{
+	const uint16_t confirmed_delays[] = { 0, 1653 };
+	struct v34_info0 calling = calling_capabilities();
+	struct v34_info0 answering = answering_capabilities();
+	const struct v34_phase2_tone_event reversal = {
+		.kind = V34_PHASE2_TONE_PHASE_REVERSED,
+		.reversal_delay_samples = 37,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(confirmed_delays); ++index) {
+		struct v34_phase2_ranging ranging;
+		struct phase2_ranging_event event;
+		uint16_t confirmed = confirmed_delays[index];
+		int16_t transmit = 0;
+
+		CHECK(v34_phase2_ranging_init_retrain(
+			      &ranging, V34_ANSWERING_STATION, TEST_AMPLITUDE,
+			      &answering, &calling) == V34_PHASE2_RANGING_OK,
+		      "probe recovery delay fixture did not initialize");
+		ranging.control = (struct phase2_ranging_control){
+			.phase = PHASE2_RANGING_PROBE_READY,
+			.local_tone_samples = PHASE2_RANGING_INITIAL_TONE_SAMPLES,
+			.post_reversal_samples = PHASE2_RANGING_TONE_TAIL_SAMPLES,
+			.prior_round_trip_delay_samples = confirmed,
+			.round_trip_delay_samples = 1653,
+			.round_trip_delay_valid = true,
+		};
+		CHECK(phase2_ranging_restart_after_probe(
+			      &ranging.control, &ranging.info0_exchange.transport) ==
+			      PHASE2_RANGING_OK &&
+		      ranging.control.prior_round_trip_delay_samples == confirmed,
+		      "unanswered probe promoted an unconfirmed delay");
+		/* The fresh reversal measures 3152 samples instead of the failed
+		 * probe's 1653. Only an established call may pin that new estimate. */
+		ranging.control.phase = PHASE2_WAIT_FIRST_REMOTE_REVERSAL;
+		ranging.control.local_tone_samples = PHASE2_RANGING_INITIAL_TONE_SAMPLES;
+		ranging.control.measurement_elapsed_samples =
+			3152 + PHASE2_RANGING_TURNAROUND_SAMPLES +
+			reversal.reversal_delay_samples;
+		CHECK(phase2_ranging_finish_sample(
+			      &ranging.control, &ranging.info0_exchange.transport,
+			      true, PHASE2_INFO0_TONE, &reversal, &transmit, &event) ==
+			      PHASE2_RANGING_OK &&
+		      event.kind == PHASE2_ROUND_TRIP_DELAY_MEASURED &&
+		      event.round_trip_delay_samples == (confirmed ? confirmed : 3152) &&
+		      v34_phase2_ranging_is_valid(&ranging),
+		      "probe recovery did not distinguish measured and confirmed delay");
+	}
+	return true;
+}
+
 static bool check_info_interrupted_reversal(
 	enum test_codec codec, enum v34_station_role local_role)
 {
@@ -1117,6 +1169,7 @@ int main(void)
 		{ "bidirectional ranging", test_bidirectional_ranging },
 		{ "weak bidirectional ranging", test_weak_ranging },
 		{ "early turnaround tolerance", test_early_turnaround_tolerance },
+		{ "probe recovery delay", test_probe_recovery_delay },
 		{ "INFO-interrupted reversal", test_info_interrupted_reversal },
 		{ "unanswered reversal recovery",
 		  test_unanswered_reversal_recovery },

@@ -1010,7 +1010,7 @@ static bool test_probe_recovery(void)
 			ranging->info0_exchange.transport.tone_transmitter;
 
 		CHECK(ranging->control.phase == PHASE2_SIGNAL_A_WAIT_INITIAL_TONE &&
-		      ranging->control.prior_round_trip_delay_samples == delay &&
+		      ranging->control.prior_round_trip_delay_samples == 0 &&
 		      ranging->control.local_tone_samples == 0u &&
 		      !ranging->control.round_trip_delay_valid &&
 		      !ranging->info0_exchange.transport.tone_detector.carrier.tone_present &&
