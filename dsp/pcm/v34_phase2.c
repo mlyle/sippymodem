@@ -336,6 +336,7 @@ enum v34_phase2_result v34_phase2_start_caller_info1(
 {
 	struct v34_phase2_info1_exchange exchange;
 	struct v34_phase2 next;
+	const struct v34_phase2_ranging *ranging;
 
 	if (!v34_phase2_is_valid(phase2) ||
 	    !v34_info1c_is_valid(local_info1c))
@@ -347,8 +348,11 @@ enum v34_phase2_result v34_phase2_start_caller_info1(
 	if (!v34_phase2_info1c_is_consistent(
 		    caller_info0(phase2), answerer_info0(phase2), local_info1c))
 		return V34_PHASE2_INVALID_ARGUMENT;
+	ranging = &phase2->state.reciprocal_probe.turnaround.initial_probe.ranging;
 	if (v34_phase2_info1_exchange_caller_init(
-		    &exchange, &phase2->state.reciprocal_probe,
+		    &exchange, v34_phase2_tone_nominal_amplitude(
+			    &ranging->info0_exchange.transport.tone_transmitter),
+		    ranging->control.round_trip_delay_samples,
 		    local_info1c) != PHASE2_INFO1_OK)
 		return V34_PHASE2_INVALID_STATE;
 	next = *phase2;
@@ -368,6 +372,7 @@ enum v34_phase2_result v34_phase2_start_answerer_info1(
 {
 	struct v34_phase2_info1_exchange exchange;
 	struct v34_phase2 next;
+	const struct v34_phase2_ranging *ranging;
 
 	if (!v34_phase2_is_valid(phase2))
 		return V34_PHASE2_INVALID_ARGUMENT;
@@ -375,8 +380,11 @@ enum v34_phase2_result v34_phase2_start_answerer_info1(
 	    !ready_for_info1(phase2) || !phase2->peer_info0_stored ||
 	    !phase2->remote_probe_stored)
 		return V34_PHASE2_INVALID_STATE;
+	ranging = &phase2->state.reciprocal_probe.turnaround.initial_probe.ranging;
 	if (v34_phase2_info1_exchange_answerer_init(
-		    &exchange, &phase2->state.reciprocal_probe) !=
+		    &exchange, &ranging->info0_exchange.transport.tone_transmitter,
+		    ranging->control.round_trip_delay_samples,
+		    phase2->state.reciprocal_probe.control.signal_a_reversal_elapsed_samples) !=
 	    PHASE2_INFO1_OK)
 		return V34_PHASE2_INVALID_STATE;
 	next = *phase2;

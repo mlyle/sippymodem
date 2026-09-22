@@ -5,7 +5,6 @@
 
 #include "phase2_info1_exchange.h"
 #include "v34_info1.h"
-#include "v34_phase2_reciprocal_probe.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,18 +37,19 @@ struct v34_phase2_info1_exchange {
 	bool peer_parameters_received;
 };
 
-/* The caller's reciprocal probe must have ended after Tone A acquisition.
- * INFO1c begins on the next line sample. */
+/* The Phase 2 owner decides when probing is complete. INFO1c begins on the
+ * next line sample, using the retained nominal level and measured delay. */
 enum phase2_info1_result v34_phase2_info1_exchange_caller_init(
 	struct v34_phase2_info1_exchange *exchange,
-	const struct v34_phase2_reciprocal_probe *completed_probe,
+	int16_t nominal_amplitude, uint16_t round_trip_delay_samples,
 	const struct v34_info1c *local_info1c);
 
-/* The answerer's reciprocal probe must have ended as it began final Tone A.
- * Tone A remains active while INFO1c is received. */
+/* Retain Tone A's phase and the owner's elapsed reversal epoch while receiving
+ * INFO1c. Starting this receiver does not restart the peer deadline. */
 enum phase2_info1_result v34_phase2_info1_exchange_answerer_init(
 	struct v34_phase2_info1_exchange *exchange,
-	const struct v34_phase2_reciprocal_probe *completed_probe);
+	const struct v34_phase2_tone_transmitter *tone,
+	uint16_t round_trip_delay_samples, uint32_t reversal_elapsed_samples);
 
 bool v34_phase2_info1_exchange_is_valid(
 	const struct v34_phase2_info1_exchange *exchange);

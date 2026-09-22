@@ -160,17 +160,26 @@ static bool exchange_pair_init(
 	size_t delay_samples, const struct v34_info1c *info1c)
 {
 	struct info1_exchange_pair initialized;
+	const struct v34_phase2_ranging *caller;
+	const struct v34_phase2_ranging *answerer;
 
 	memset(&initialized, 0, sizeof(initialized));
 	if (!completed_probe_pair(
-		    &initialized.channel, codec, delay_samples) ||
-	    v34_phase2_info1_exchange_caller_init(
-		    &initialized.caller,
-		    &initialized.channel.caller.reciprocal_probe, info1c) !=
+		    &initialized.channel, codec, delay_samples))
+		return false;
+	caller = &initialized.channel.caller.reciprocal_probe.turnaround.initial_probe.ranging;
+	answerer = &initialized.channel.answerer.reciprocal_probe.turnaround.initial_probe.ranging;
+	if (v34_phase2_info1_exchange_caller_init(
+		    &initialized.caller, v34_phase2_tone_nominal_amplitude(
+			    &caller->info0_exchange.transport.tone_transmitter),
+		    caller->control.round_trip_delay_samples, info1c) !=
 		    PHASE2_INFO1_OK ||
 	    v34_phase2_info1_exchange_answerer_init(
 		    &initialized.answerer,
-		    &initialized.channel.answerer.reciprocal_probe) !=
+		    &answerer->info0_exchange.transport.tone_transmitter,
+		    answerer->control.round_trip_delay_samples,
+		    initialized.channel.answerer.reciprocal_probe.control
+			    .signal_a_reversal_elapsed_samples) !=
 		    PHASE2_INFO1_OK)
 		return false;
 	*pair = initialized;
@@ -365,26 +374,38 @@ static bool test_bidirectional_exchange(void)
 static bool test_exact_deadlines(void)
 {
 	struct v34_info1c info1c = info1c_fixture();
-	struct test_pair probes;
+	struct v34_phase2_tone_transmitter tone;
 	struct v34_phase2_info1_exchange caller;
 	struct v34_phase2_info1_exchange answerer;
 	struct v34_phase2_info1_exchange terminal;
 	struct v34_phase2_info1_exchange_event event;
 	uint32_t caller_deadline;
 	uint32_t answerer_deadline;
-	uint32_t answerer_initial_elapsed;
+	const uint16_t round_trip_delay = 317;
+	const uint32_t answerer_initial_elapsed = 1234;
 	size_t caller_wait_samples = 0;
 	size_t answerer_wait_samples = 0;
 	int16_t transmit;
 
-	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 13) &&
-	      v34_phase2_info1_exchange_caller_init(
-		      &caller, &probes.caller.reciprocal_probe, &info1c) ==
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &tone, V34_ANSWERING_STATION, TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_reverse(&tone) == V34_PHASE2_TONE_OK,
+	      "INFO1 timeout tone did not initialize");
+	for (size_t index = 0; index < answerer_initial_elapsed; ++index)
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &transmit) == V34_PHASE2_TONE_OK,
+		      "INFO1 timeout tone did not advance");
+	CHECK(v34_phase2_info1_exchange_caller_init(
+		      &caller, TEST_AMPLITUDE, round_trip_delay, &info1c) ==
 		      PHASE2_INFO1_OK &&
 	      v34_phase2_info1_exchange_answerer_init(
-		      &answerer, &probes.answerer.reciprocal_probe) ==
+		      &answerer, &tone, round_trip_delay, answerer_initial_elapsed) ==
 		      PHASE2_INFO1_OK,
 	      "INFO1 timeout fixtures did not initialize");
+	CHECK(caller.control.round_trip_delay_samples == round_trip_delay &&
+	      answerer.control.round_trip_delay_samples == round_trip_delay &&
+	      answerer.control.peer_deadline_elapsed_samples == answerer_initial_elapsed &&
+	      memcmp(&answerer.control.signal_a_tone, &tone, sizeof(tone)) == 0,
+	      "INFO1 initialization lost the retained line context");
 	CHECK(!phase2_info1_is_waiting_for_peer(&caller.control) &&
 	      phase2_info1_is_waiting_for_peer(&answerer.control),
 	      "INFO1 listening interval did not distinguish transmit from wait");
@@ -394,8 +415,6 @@ static bool test_exact_deadlines(void)
 	answerer_deadline =
 		(uint32_t)PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES +
 		2u * answerer.control.round_trip_delay_samples;
-	answerer_initial_elapsed =
-		answerer.control.peer_deadline_elapsed_samples;
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		enum phase2_info1_phase before = caller.control.phase;
 
@@ -416,6 +435,8 @@ static bool test_exact_deadlines(void)
 	      "caller did not fail exactly 700 ms plus RTD after INFO1c");
 
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
+		int16_t expected;
+
 		CHECK(v34_phase2_info1_exchange_sample(
 			      &answerer, 0, &transmit, &event) ==
 			      PHASE2_INFO1_OK,
@@ -423,6 +444,9 @@ static bool test_exact_deadlines(void)
 		answerer_wait_samples++;
 		if (answerer.control.phase == PHASE2_INFO1_FAILED)
 			break;
+		CHECK(v34_phase2_tone_transmitter_sample(&tone, &expected) == V34_PHASE2_TONE_OK &&
+		      transmit == expected,
+		      "INFO1 receiver interrupted Tone A at sample %zu", index);
 	}
 	CHECK(answerer_wait_samples ==
 		      answerer_deadline - answerer_initial_elapsed &&
@@ -470,7 +494,6 @@ static bool test_exact_deadlines(void)
 static bool test_semantic_frame_rejection(void)
 {
 	struct v34_info1c info1c = info1c_fixture();
-	struct test_pair probes;
 	struct v34_phase2_info1_exchange caller;
 	struct v34_phase2_info1_exchange_event event;
 	struct v34_phase2_info_audio_transmitter peer;
@@ -484,9 +507,8 @@ static bool test_semantic_frame_rejection(void)
 	size_t received_samples = 0;
 	bool rejected = false;
 
-	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 1) &&
-	      v34_phase2_info1_exchange_caller_init(
-		      &caller, &probes.caller.reciprocal_probe, &info1c) ==
+	CHECK(v34_phase2_info1_exchange_caller_init(
+		      &caller, TEST_AMPLITUDE, 0, &info1c) ==
 		      PHASE2_INFO1_OK,
 	      "semantic-rejection fixture did not initialize");
 	for (size_t index = 0;
@@ -549,7 +571,7 @@ static bool test_validation(void)
 	struct v34_info1c info1c = info1c_fixture();
 	struct v34_info1c invalid_info1c = info1c;
 	struct v34_info1a info1a = info1a_fixture();
-	struct test_pair probes;
+	struct v34_phase2_tone_transmitter tone, wrong_tone;
 	struct v34_phase2_info1_exchange exchange;
 	struct v34_phase2_info1_exchange before;
 	struct v34_phase2_info1_exchange invalid;
@@ -557,27 +579,38 @@ static bool test_validation(void)
 	struct v34_phase2_info1_exchange_event event_before;
 	int16_t transmit = 1234;
 
-	CHECK(completed_probe_pair(&probes, TEST_CODEC_LINEAR, 1),
-	      "INFO1 validation probes did not complete");
+	CHECK(v34_phase2_tone_transmitter_init(
+		      &tone, V34_ANSWERING_STATION, TEST_AMPLITUDE) == V34_PHASE2_TONE_OK &&
+	      v34_phase2_tone_transmitter_init(
+		      &wrong_tone, V34_CALLING_STATION, TEST_AMPLITUDE) == V34_PHASE2_TONE_OK,
+	      "INFO1 validation tones did not initialize");
 	CHECK(!phase2_info1_is_waiting_for_peer(NULL),
 	      "absent INFO1 exchange reported an active receiver");
 	invalid_info1c.common.frequency_offset_1_50_hz_units = -513;
 	memset(&exchange, 0xa5, sizeof(exchange));
 	before = exchange;
 	CHECK(v34_phase2_info1_exchange_caller_init(
-		      &exchange, &probes.answerer.reciprocal_probe, &info1c) ==
+		      &exchange, 0, 0, &info1c) ==
 		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_caller_init(
-		      &exchange, &probes.caller.reciprocal_probe,
-		      &invalid_info1c) ==
+		      &exchange, TEST_AMPLITUDE, 0, &invalid_info1c) ==
 		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      v34_phase2_info1_exchange_caller_init(
-		      NULL, &probes.caller.reciprocal_probe, &info1c) ==
+		      NULL, TEST_AMPLITUDE, 0, &info1c) ==
+		      PHASE2_INFO1_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_answerer_init(
+		      &exchange, NULL, 0, 0) == PHASE2_INFO1_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_answerer_init(
+		      &exchange, &wrong_tone, 0, 0) == PHASE2_INFO1_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_answerer_init(
+		      NULL, &tone, 0, 0) == PHASE2_INFO1_INVALID_ARGUMENT &&
+	      v34_phase2_info1_exchange_answerer_init(
+		      &exchange, &tone, 0, PHASE2_INFO1_SIGNAL_A_WAIT_BASE_SAMPLES) ==
 		      PHASE2_INFO1_INVALID_ARGUMENT &&
 	      memcmp(&exchange, &before, sizeof(exchange)) == 0,
 	      "invalid INFO1 initialization mutated output state");
 	CHECK(v34_phase2_info1_exchange_caller_init(
-		      &exchange, &probes.caller.reciprocal_probe, &info1c) ==
+		      &exchange, TEST_AMPLITUDE, 0, &info1c) ==
 		      PHASE2_INFO1_OK,
 	      "valid INFO1 caller did not initialize");
 	before = exchange;
@@ -601,7 +634,7 @@ static bool test_validation(void)
 	CHECK(!v34_phase2_info1_exchange_is_valid(&invalid),
 	      "INFO1 validation accepted parameters without a peer event");
 	CHECK(v34_phase2_info1_exchange_answerer_init(
-		      &exchange, &probes.answerer.reciprocal_probe) ==
+		      &exchange, &tone, 0, 0) ==
 		      PHASE2_INFO1_OK,
 	      "valid INFO1 answerer did not initialize");
 	before = exchange;

@@ -4,6 +4,7 @@
 #define V34_PHASE2_H
 
 #include "v34_phase2_info1_exchange.h"
+#include "v34_phase2_reciprocal_probe.h"
 #include "v34_phase2_selection.h"
 
 #include <stdbool.h>

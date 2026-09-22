@@ -4,26 +4,6 @@
 
 #include <stddef.h>
 
-static enum v34_station_role probe_role(
-	const struct v34_phase2_reciprocal_probe *probe)
-{
-	return probe->turnaround.initial_probe.ranging.info0_exchange.local_role;
-}
-
-static const struct v34_phase2_tone_transmitter *probe_tone(
-	const struct v34_phase2_reciprocal_probe *probe)
-{
-	return &probe->turnaround.initial_probe.ranging.info0_exchange
-			.transport.tone_transmitter;
-}
-
-static uint16_t probe_round_trip_delay(
-	const struct v34_phase2_reciprocal_probe *probe)
-{
-	return probe->turnaround.initial_probe.ranging.control
-		.round_trip_delay_samples;
-}
-
 bool v34_phase2_info1_exchange_is_valid(
 	const struct v34_phase2_info1_exchange *exchange)
 {
@@ -47,22 +27,18 @@ bool v34_phase2_info1_exchange_is_valid(
 
 enum phase2_info1_result v34_phase2_info1_exchange_caller_init(
 	struct v34_phase2_info1_exchange *exchange,
-	const struct v34_phase2_reciprocal_probe *completed_probe,
+	int16_t nominal_amplitude, uint16_t round_trip_delay_samples,
 	const struct v34_info1c *local_info1c)
 {
 	struct v34_phase2_info1_exchange initialized = { 0 };
 	uint8_t payload[V34_INFO1C_PAYLOAD_BYTES];
 
 	if (exchange == NULL ||
-	    !v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
-	    probe_role(completed_probe) != V34_CALLING_STATION ||
 	    v34_info1c_encode(local_info1c, payload, sizeof(payload)) !=
 		    V34_INFO1_OK ||
 	    phase2_info1_init_signal_b(
-		    &initialized.control,
-		    v34_phase2_tone_nominal_amplitude(probe_tone(completed_probe)),
-		    probe_round_trip_delay(completed_probe), payload,
+		    &initialized.control, nominal_amplitude,
+		    round_trip_delay_samples, payload,
 		    V34_INFO1C_PAYLOAD_BITS, V34_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
 	    !v34_phase2_info1_exchange_is_valid(&initialized))
@@ -73,22 +49,17 @@ enum phase2_info1_result v34_phase2_info1_exchange_caller_init(
 
 enum phase2_info1_result v34_phase2_info1_exchange_answerer_init(
 	struct v34_phase2_info1_exchange *exchange,
-	const struct v34_phase2_reciprocal_probe *completed_probe)
+	const struct v34_phase2_tone_transmitter *tone,
+	uint16_t round_trip_delay_samples, uint32_t reversal_elapsed_samples)
 {
 	struct v34_phase2_info1_exchange initialized = { 0 };
-	const struct v34_phase2_tone_transmitter *tone;
 
-	if (exchange == NULL ||
-	    !v34_phase2_reciprocal_probe_is_valid(completed_probe) ||
-	    !phase2_reciprocal_probe_is_complete(&completed_probe->control) ||
-	    probe_role(completed_probe) != V34_ANSWERING_STATION)
+	if (exchange == NULL || tone == NULL)
 		return PHASE2_INFO1_INVALID_ARGUMENT;
-	tone = probe_tone(completed_probe);
 	if (phase2_info1_init_signal_a(
 		    &initialized.control, tone,
 		    v34_phase2_tone_nominal_amplitude(tone),
-		    probe_round_trip_delay(completed_probe),
-		    completed_probe->control.signal_a_reversal_elapsed_samples,
+		    round_trip_delay_samples, reversal_elapsed_samples,
 		    V34_INFO1C_PAYLOAD_BITS, V34_INFO1A_PAYLOAD_BITS) !=
 		    PHASE2_INFO1_OK ||
 	    !v34_phase2_info1_exchange_is_valid(&initialized))

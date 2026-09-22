@@ -248,6 +248,17 @@ static bool check_timeline(
 	CHECK(pair_init(&pair, codec, delay_samples),
 	      "Phase 2 pair did not initialize for codec %d delay %zu",
 	      codec, delay_samples);
+	{
+		struct v34_phase2 caller = pair.caller, answerer = pair.answerer;
+
+		CHECK(v34_phase2_start_caller_info1(&pair.caller, &local_info1c) ==
+			      V34_PHASE2_INVALID_STATE &&
+		      v34_phase2_start_answerer_info1(&pair.answerer) ==
+			      V34_PHASE2_INVALID_STATE &&
+		      memcmp(&caller, &pair.caller, sizeof(caller)) == 0 &&
+		      memcmp(&answerer, &pair.answerer, sizeof(answerer)) == 0,
+		      "Phase 2 permitted INFO1 before probing");
+	}
 	for (size_t index = 0; index < TEST_SAMPLE_LIMIT; ++index) {
 		struct v34_phase2_event caller_event;
 		struct v34_phase2_event answerer_event;
@@ -321,6 +332,15 @@ static bool check_timeline(
 	{
 		struct v34_info1c inconsistent = local_info1c;
 		struct v34_phase2 saved = pair.caller;
+		struct v34_phase2 saved_answerer = pair.answerer;
+
+		CHECK(v34_phase2_start_caller_info1(&pair.answerer, &local_info1c) ==
+			      V34_PHASE2_INVALID_STATE &&
+		      v34_phase2_start_answerer_info1(&pair.caller) ==
+			      V34_PHASE2_INVALID_STATE &&
+		      memcmp(&pair.caller, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&pair.answerer, &saved_answerer, sizeof(saved_answerer)) == 0,
+		      "Phase 2 permitted the wrong INFO1 station role");
 
 		inconsistent.answer_transmit[V34_SYMBOL_RATE_3429]
 			.projected_data_rate_2400_bps_units = 8;
