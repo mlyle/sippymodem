@@ -118,7 +118,8 @@ static bool source_sample(
 	       *accepted == can_accept;
 }
 
-static bool retained_receive_init(struct v32_receive_path *receive)
+static bool retained_receive_init(
+	struct v32_receive_path *receive, unsigned int cursor)
 {
 	struct v32_equalizer_observation observation;
 	struct v32_equalizer_decision decision;
@@ -145,9 +146,9 @@ static bool retained_receive_init(struct v32_receive_path *receive)
 	if (v32_equalizer_commit(&receive->equalizer, &decision) !=
 		    V32_EQUALIZER_OK ||
 	    v32_equalizer_process(
-		    &receive->equalizer, tail, ARRAY_LENGTH(tail), &consumed,
+		    &receive->equalizer, tail, 3u - cursor, &consumed,
 		    &observation) != V32_EQUALIZER_OK ||
-	    consumed != ARRAY_LENGTH(tail) ||
+	    consumed != 3u - cursor ||
 	    v32_equalizer_set_adaptation(
 		    &receive->equalizer, V32_EQUALIZER_ADAPTATION_FINE) !=
 		    V32_EQUALIZER_OK ||
@@ -157,12 +158,13 @@ static bool retained_receive_init(struct v32_receive_path *receive)
 		return false;
 	receive->equalizer.carrier_training_symbols = 77;
 	return v32_receive_path_is_valid(receive) &&
-	       receive->equalizer.epoch != 0 && receive->line.input_paused;
+	       receive->equalizer.epoch != 0 && receive->line.input_paused &&
+	       receive->equalizer.samples_until_observation == cursor;
 }
 
 static bool run_generated_role(
 	enum v32_transmitter_role role,
-	bool retained,
+	unsigned int retained_cursor, unsigned int carrier_octant,
 	struct v32_conditioning_path *completed)
 {
 	struct generated_source source;
@@ -175,10 +177,12 @@ static bool run_generated_role(
 	struct v32_receive_path expected_receive;
 	struct v32_symbol_decoder expected_decoder;
 	bool complete = false;
+	bool retained = retained_cursor != 0;
 
 	CHECK(completed != NULL && source_init(&source, role),
 	      "generated conditioning source did not initialize for role %d",
 	      role);
+	source.modulator.carrier_phase = carrier_octant * acos(-1.0) / 4.0;
 	if (!retained) {
 		CHECK(v32_conditioning_path_init(
 			      &path, role, 0,
@@ -189,7 +193,7 @@ static bool run_generated_role(
 	} else {
 		memset(&rejected, 0x5a, sizeof(rejected));
 		saved_rejected = rejected;
-		CHECK(retained_receive_init(&receive),
+		CHECK(retained_receive_init(&receive, retained_cursor),
 		      "retained receive path did not initialize for role %d",
 		      role);
 		saved_receive = receive;
@@ -233,11 +237,12 @@ static bool run_generated_role(
 	}
 	CHECK(complete,
 	      "generated conditioning reached its line limit for role %d/%d "
-	      "phase=%d trn=%u epoch=%llu signal=%d",
+	      "phase=%d trn=%u epoch=%llu signal=%d cursor=%u carrier=%u",
 	      role, retained, path.conditioning.phase,
 	      path.conditioning.trn_symbols,
 	      (unsigned long long)path.conditioning.observation_epoch,
-	      path.receive.line.timing.signal_detected);
+	      path.receive.line.timing.signal_detected,
+	      retained_cursor, carrier_octant);
 	CHECK(v32_conditioning_path_is_complete(&path) &&
 	      path.receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE &&
@@ -394,15 +399,14 @@ int main(void)
 {
 	struct v32_conditioning_path completed;
 
-	if (!run_generated_role(
-		    V32_CALLING_TRANSMITTER, false, &completed) ||
-	    !run_generated_role(
-		    V32_ANSWERING_TRANSMITTER, false, &completed) ||
-	    !run_generated_role(
-		    V32_CALLING_TRANSMITTER, true, &completed) ||
-	    !run_generated_role(
-		    V32_ANSWERING_TRANSMITTER, true, &completed) ||
-	    !test_contracts(&completed))
+	for (unsigned int cursor = 0; cursor <= 3; ++cursor)
+		for (unsigned int octant = 0; octant < 8; ++octant)
+			for (unsigned int role = 0; role < 2; ++role)
+				if (!run_generated_role(
+					    (enum v32_transmitter_role)role,
+					    cursor, octant, &completed))
+					return 1;
+	if (!test_contracts(&completed))
 		return 1;
 	puts("V.32 conditioning path tests passed");
 	return 0;

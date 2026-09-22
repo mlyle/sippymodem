@@ -688,12 +688,14 @@ static bool test_conditioning_reacquisition(void)
 		      &path.equalizer, false) == V32_EQUALIZER_OK,
 	      "conditioning reacquisition fixture did not initialize");
 	path.equalizer.carrier_training_symbols = 77;
+	path.equalizer.samples_until_observation = 3;
 	CHECK(v32_receive_path_is_valid(&path) &&
 	      path.line.input_paused,
 	      "conditioning reacquisition fixture is not trained and paused");
 	expected_echo = path.echo;
 	expected_line = path.line;
 	expected_equalizer = path.equalizer;
+	expected_equalizer.samples_until_observation = 1;
 	CHECK(v32_line_receiver_reacquire_timing(&expected_line) ==
 		      V32_LINE_RECEIVER_OK &&
 	      v32_equalizer_set_adaptation(

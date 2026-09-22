@@ -192,6 +192,9 @@ enum v32_receive_path_result v32_receive_path_reacquire_conditioning(
 		    V32_EQUALIZER_OK ||
 	    !v32_receive_path_is_valid(&next))
 		return V32_RECEIVE_PATH_INVALID_STATE;
+	/* Timing now starts a new three-sample/symbol stream. Its first
+	 * observation cannot inherit the old stream's partial-symbol cursor. */
+	next.equalizer.samples_until_observation = 1;
 	*path = next;
 	return V32_RECEIVE_PATH_OK;
 }
