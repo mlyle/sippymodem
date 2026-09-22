@@ -29,30 +29,6 @@ _Static_assert(
 			sizeof(QUADRATURE_HALF_PROFILE[0]) == 15,
 	"V.34 analytic quadrature profile size changed");
 
-static int16_t real_coefficient(size_t tap)
-{
-	size_t position;
-
-	if ((tap & 1u) != 0 || tap > 60u)
-		return 0;
-	position = tap / 2u;
-	if (position > 15u)
-		position = 30u - position;
-	return REAL_HALF_PROFILE[position];
-}
-
-static int16_t quadrature_coefficient(size_t tap)
-{
-	size_t position;
-
-	if ((tap & 1u) == 0 || tap > 59u)
-		return 0;
-	position = tap / 2u;
-	if (position < 15u)
-		return QUADRATURE_HALF_PROFILE[position];
-	return (int16_t)-QUADRATURE_HALF_PROFILE[29u - position];
-}
-
 bool v34_analytic_filter_is_valid(
 	const struct v34_analytic_filter *filter)
 {
@@ -80,7 +56,6 @@ enum v34_analytic_filter_result v34_analytic_filter_process(
 	struct v34_analytic_sample generated;
 	uint32_t in_phase = 0;
 	uint32_t quadrature = 0;
-	int16_t previous = 0;
 
 	if (!v34_analytic_filter_is_valid(filter))
 		return V34_ANALYTIC_FILTER_INVALID_STATE;
@@ -89,16 +64,25 @@ enum v34_analytic_filter_result v34_analytic_filter_process(
 		return V34_ANALYTIC_FILTER_INVALID_ARGUMENT;
 	next = *filter;
 	next.history[0] = sample;
-	for (size_t tap = 0; tap < V34_ANALYTIC_FILTER_TAPS; ++tap) {
-		int16_t current = next.history[tap];
+	/* Pair symmetric real taps and antisymmetric quadrature taps. */
+	for (size_t pair = 0; pair < 15u; ++pair) {
+		int32_t even_sum =
+			(int32_t)next.history[2u * pair] +
+			next.history[60u - 2u * pair];
+		int32_t odd_difference =
+			(int32_t)next.history[2u * pair + 1u] -
+			next.history[59u - 2u * pair];
 
-		next.history[tap] = previous;
-		in_phase += (uint32_t)((int32_t)current *
-					 real_coefficient(tap));
-		quadrature += (uint32_t)((int32_t)current *
-					   quadrature_coefficient(tap));
-		previous = current;
+		in_phase += (uint32_t)(even_sum * REAL_HALF_PROFILE[pair]);
+		quadrature += (uint32_t)(
+			odd_difference * QUADRATURE_HALF_PROFILE[pair]);
 	}
+	in_phase += (uint32_t)(
+		(int32_t)next.history[30] * REAL_HALF_PROFILE[15]);
+	memmove(&next.history[2], &next.history[1],
+		(V34_ANALYTIC_FILTER_TAPS - 2u) * sizeof(next.history[0]));
+	next.history[1] = sample;
+	next.history[0] = 0;
 	generated = (struct v34_analytic_sample){
 		.in_phase = round_shift_s32_word_to_s16(in_phase, 14),
 		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),
