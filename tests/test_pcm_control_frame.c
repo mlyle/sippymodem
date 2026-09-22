@@ -46,6 +46,32 @@ static bool test_write_prefix(void)
 	return true;
 }
 
+static bool test_streaming_sync(void)
+{
+	/* Every eighteen-bit input from every retained suffix. A sliding wire
+	 * window is independent of the receiver's saturated run counter. */
+	for (unsigned initial = 0; initial <= 17u; ++initial) {
+		for (uint32_t input = 0; input < (1u << 18); ++input) {
+			uint32_t window = (1u << initial) - 1u;
+			uint8_t ones = (uint8_t)initial;
+
+			for (unsigned remaining = 18u; remaining != 0u; --remaining) {
+				bool bit = ((input >> (remaining - 1u)) & 1u) != 0u;
+				unsigned suffix = 0;
+
+				window = ((window << 1u) | bit) & 0x3ffffu;
+				while (suffix < 17u && (window & (1u << suffix)) != 0u)
+					++suffix;
+				CHECK(pcm_control_frame_sync_bit(&ones, bit) ==
+					      (window == 0x3fffeu) && ones == suffix,
+				      "stream sync changed at suffix %u/input %x/bit %u",
+				      initial, input, remaining);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_sync_suffix(void)
 {
 	uint8_t frame[32];
@@ -299,7 +325,7 @@ static bool test_constellation_map(void)
 
 int main(void)
 {
-	return test_sync_prefix() && test_write_prefix() &&
+	return test_sync_prefix() && test_write_prefix() && test_streaming_sync() &&
 	       test_sync_suffix() && test_start_ranges() &&
 	       test_known_check() && test_payload_bounds() &&
 	       test_constellation_rows() && test_constellation_map() ? 0 : 1;

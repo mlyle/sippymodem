@@ -179,22 +179,6 @@ static void begin_candidate(struct v92_control_rx *receiver)
 	receiver->stage = V92_CONTROL_RX_READ_MARKER;
 }
 
-static bool advance_sync_run(
-	struct v92_control_rx *receiver, uint8_t bit)
-{
-	if (bit != 0u) {
-		if (receiver->sync_one_count < CONTROL_SYNC_BITS)
-			receiver->sync_one_count++;
-		return false;
-	}
-	if (receiver->sync_one_count == CONTROL_SYNC_BITS) {
-		receiver->sync_one_count = 0u;
-		return true;
-	}
-	receiver->sync_one_count = 0u;
-	return false;
-}
-
 static void reject_cpd(
 	struct v92_control_rx *receiver,
 	struct v92_control_event *event,
@@ -348,7 +332,7 @@ static bool receive_valid_bit(
 	size_t frame_bits = 0u;
 	enum v92_cpd_result probe;
 
-	if (advance_sync_run(receiver, bit)) {
+	if (pcm_control_frame_sync_bit(&receiver->sync_one_count, bit != 0u)) {
 		begin_candidate(receiver);
 		return true;
 	}

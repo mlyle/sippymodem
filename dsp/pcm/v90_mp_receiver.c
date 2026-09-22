@@ -92,22 +92,6 @@ static void begin_candidate(struct v90_mp_receiver *receiver)
 	receiver->stage = V90_MP_RECEIVE_TYPE;
 }
 
-static bool advance_sync_run(
-	struct v90_mp_receiver *receiver, uint8_t bit)
-{
-	if (bit != 0) {
-		if (receiver->sync_one_count < V90_MP_FRAME_SYNC_BITS)
-			receiver->sync_one_count++;
-		return false;
-	}
-	if (receiver->sync_one_count == V90_MP_FRAME_SYNC_BITS) {
-		receiver->sync_one_count = 0;
-		return true;
-	}
-	receiver->sync_one_count = 0;
-	return false;
-}
-
 static void finish_candidate(
 	struct v90_mp_receiver *receiver, struct v90_mp_event *event)
 {
@@ -136,17 +120,14 @@ static void receive_valid_bit(
 	struct v90_mp_receiver *receiver, uint8_t bit,
 	struct v90_mp_event *event)
 {
-	if (receiver->stage == V90_MP_SEARCH_SYNC) {
-		if (advance_sync_run(receiver, bit))
-			begin_candidate(receiver);
-		return;
-	}
-	if (advance_sync_run(receiver, bit)) {
+	if (pcm_control_frame_sync_bit(&receiver->sync_one_count, bit != 0u)) {
 		/* A valid MP cannot contain 17 consecutive ones between its
 		 * mandatory start bits, so this is an unambiguous newer prefix. */
 		begin_candidate(receiver);
 		return;
 	}
+	if (receiver->stage == V90_MP_SEARCH_SYNC)
+		return;
 	packed_msb_set_bit(
 		receiver->sequence, receiver->bit_index, bit != 0);
 	receiver->bit_index++;

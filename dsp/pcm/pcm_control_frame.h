@@ -24,6 +24,22 @@ static inline bool pcm_control_frame_prefix_is_valid(const uint8_t *frame)
 	       (frame[2] & 0xc0u) == 0x80u;
 }
 
+/* Consume one bit, reporting a prefix only at the zero after at least
+ * seventeen ones. The receiver owns and validates the saturated 0..17 count,
+ * including any retained suffix of a rejected record. Every zero clears it. */
+static inline bool pcm_control_frame_sync_bit(uint8_t *ones, bool bit)
+{
+	if (bit) {
+		if (*ones < 17u)
+			++*ones;
+		return false;
+	}
+	bool complete = *ones == 17u;
+
+	*ones = 0;
+	return complete;
+}
+
 /* Retain a rejected record's possible sync suffix, capped at the prefix's
  * seventeen ones. Bits at or after bit_count are not part of the record. */
 static inline uint8_t pcm_control_frame_trailing_ones(

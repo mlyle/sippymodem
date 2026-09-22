@@ -156,14 +156,8 @@ static void receive_bit(
 	struct v90_cp_receive_event *event)
 {
 	if (receiver->stage == V90_CP_RECEIVER_SEARCH_SYNC) {
-		if (bit != 0) {
-			if (receiver->sync_one_count < CP_SYNC_BITS)
-				receiver->sync_one_count++;
-		} else if (receiver->sync_one_count == CP_SYNC_BITS) {
+		if (pcm_control_frame_sync_bit(&receiver->sync_one_count, bit != 0u))
 			begin_frame(receiver);
-		} else {
-			receiver->sync_one_count = 0;
-		}
 		return;
 	}
 
