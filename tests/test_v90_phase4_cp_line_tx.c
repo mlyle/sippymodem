@@ -683,6 +683,27 @@ static bool test_transactional_contracts(void)
 	      memcmp(&untouched, &untouched_saved,
 		     sizeof(untouched)) == 0,
 	      "CP line accepted an inexact sample boundary");
+	/* A complete cursor must not bypass validation, including at the
+	 * record/SCR boundary and when resuming with new parameters. */
+	tx.symbols.bit_index = tx.symbols.frame_bit_count;
+	tx.symbols.frame[0] ^= 1u;
+	saved = tx;
+	saved_line = line;
+	sample = 777;
+	CHECK(!v90_phase4_cp_line_tx_is_valid(&tx) &&
+	      !v90_phase4_cp_line_tx_record_is_complete(&tx) &&
+	      !v90_phase4_cp_line_tx_is_handoff_ready(&tx) &&
+	      v90_phase4_cp_line_tx_sample(&tx, &sample) == V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_tx_scr_sample(&tx, false, &sample) ==
+		      V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_tx_handoff(&tx, &line) == V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      v90_phase4_cp_line_tx_resume_online(&untouched, &tx.line, &tx.symbols,
+		      V34_CONSTELLATION_4_POINT, &data) == V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT &&
+	      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 777 &&
+	      memcmp(&line, &saved_line, sizeof(line)) == 0 &&
+	      memcmp(&untouched, &untouched_saved, sizeof(untouched)) == 0,
+	      "invalid complete record bypassed CP line validation");
+	tx.symbols.frame[0] ^= 1u;
 	tx.symbols.previous_clockwise_quarter_turns = 4;
 	CHECK(!v90_phase4_cp_line_tx_is_valid(&tx) &&
 	      !v90_phase4_cp_line_tx_record_is_complete(&tx) &&

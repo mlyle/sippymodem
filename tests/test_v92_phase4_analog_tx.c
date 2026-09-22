@@ -178,6 +178,67 @@ static bool test_record_bit_order(void)
 	return true;
 }
 
+static bool test_record_boundaries(void)
+{
+	static const uint8_t frame[] = { 0x1b, 0xe4, 0x59 };
+	for (unsigned mode = 0; mode < 2u; ++mode) {
+		struct v92_phase4_modulator modulator, handoff;
+		struct v92_phase4_record_tx tx, saved;
+		int16_t sample = 1234;
+		CHECK(v92_phase4_modulator_init(&modulator, mode ?
+			      V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
+			      1u, TEST_LU) == V92_PHASE4_MODULATOR_OK &&
+		      v92_phase4_record_tx_init_e2u(&tx, &modulator, true) ==
+			      V92_PHASE4_RECORD_TX_OK, "record boundary fixture failed");
+		saved = tx;
+		handoff = modulator;
+		CHECK(!v92_phase4_record_tx_is_complete(&tx) &&
+		      v92_phase4_record_tx_start_next(&tx, frame, sizeof(frame), 24u) ==
+			      V92_PHASE4_RECORD_TX_IN_PROGRESS &&
+		      v92_phase4_record_tx_handoff(&tx, &handoff) ==
+			      V92_PHASE4_RECORD_TX_IN_PROGRESS &&
+		      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+		      memcmp(&handoff, &modulator, sizeof(handoff)) == 0,
+		      "incomplete record escaped its boundary");
+		tx.bit_index = tx.frame_bit_count;
+		saved = tx;
+		CHECK(v92_phase4_record_tx_is_complete(&tx) &&
+		      v92_phase4_record_tx_next(&tx, &sample) == V92_PHASE4_RECORD_TX_COMPLETE &&
+		      v92_phase4_record_tx_handoff(&tx, &handoff) == V92_PHASE4_RECORD_TX_OK &&
+		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234 &&
+		      memcmp(&handoff, &modulator, sizeof(handoff)) == 0,
+		      "complete record boundary changed state or output");
+		for (unsigned corrupt = 0; corrupt < 6u; ++corrupt) {
+			tx = saved;
+			switch (corrupt) {
+			case 0: tx.frame[(tx.frame_bit_count + 7u) / 8u] = 1u; break;
+			case 1: tx.frame[tx.frame_bit_count / 8u] |= 1u; break;
+			case 2: tx.modulator.previous_encoded_sign = 2u; break;
+			case 3: tx.bit_index = tx.frame_bit_count = 0u; break;
+			case 4: tx.bit_index += mode + 2u; break;
+			case 5: tx.bit_index--; break;
+			}
+			struct v92_phase4_record_tx before = tx;
+			CHECK(!v92_phase4_record_tx_is_valid(&tx) &&
+			      !v92_phase4_record_tx_is_complete(&tx) &&
+			      v92_phase4_record_tx_next(&tx, &sample) == V92_PHASE4_RECORD_TX_INVALID_STATE &&
+			      v92_phase4_record_tx_handoff(&tx, &handoff) == V92_PHASE4_RECORD_TX_INVALID_STATE &&
+			      v92_phase4_record_tx_start_next(&tx, frame, sizeof(frame), 24u) ==
+				      V92_PHASE4_RECORD_TX_INVALID_STATE &&
+			      memcmp(&tx, &before, sizeof(tx)) == 0 && sample == 1234 &&
+			      memcmp(&handoff, &modulator, sizeof(handoff)) == 0,
+			      "invalid record %u bypassed boundary validation", corrupt);
+		}
+		tx = saved;
+		CHECK(v92_phase4_record_tx_start_next(&tx, frame, sizeof(frame), 24u) ==
+			      V92_PHASE4_RECORD_TX_OK && tx.bit_index == 0u &&
+		      tx.frame_bit_count == 24u &&
+		      memcmp(&tx.modulator, &modulator, sizeof(modulator)) == 0,
+		      "next record lost its coder history");
+	}
+	return true;
+}
+
 static bool test_early_peer_sequence(void)
 {
 	struct v92_phase4_analog_tx tx;
@@ -753,7 +814,8 @@ static bool test_contracts(void)
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
-	if (!test_record_bit_order() || !test_silence_agreement() || !test_silence_contracts() ||
+	if (!test_record_bit_order() || !test_record_boundaries() ||
+	    !test_silence_agreement() || !test_silence_contracts() ||
 	    !test_control_records() || !test_control_contracts() ||
 	    !test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
 	    !test_pending_handoff(V92_CONSTELLATION_4_POINT, false) ||

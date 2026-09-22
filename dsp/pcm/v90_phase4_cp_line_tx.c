@@ -19,7 +19,7 @@ bool v90_phase4_cp_line_tx_record_is_complete(
 	const struct v90_phase4_cp_line_tx *tx)
 {
 	return v90_phase4_cp_line_tx_is_valid(tx) &&
-	       v90_phase4_cp_tx_record_is_complete(&tx->symbols);
+	       tx->symbols.bit_index == tx->symbols.frame_bit_count;
 }
 
 bool v90_phase4_cp_line_tx_is_handoff_ready(
@@ -94,7 +94,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_resume_online(
 	    control_symbols->role != online_line->profile.local_role)
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
 	if (!v34_training_line_needs_point(online_line) ||
-	    !v90_phase4_cp_tx_record_is_complete(control_symbols))
+	    control_symbols->bit_index != control_symbols->frame_bit_count)
 		return V90_PHASE4_CP_LINE_TX_INVALID_STATE;
 	if (!v90_cp_parameters_are_valid(parameters) ||
 	    parameters->kind != V90_CP_DATA)
@@ -162,10 +162,10 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_sample(
 
 	if (!v90_phase4_cp_line_tx_is_valid(tx) || sample == NULL)
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
-	if (v90_phase4_cp_line_tx_is_handoff_ready(tx))
+	accepting = v34_training_line_needs_point(&tx->line);
+	if (accepting && tx->symbols.bit_index == tx->symbols.frame_bit_count)
 		return V90_PHASE4_CP_LINE_TX_COMPLETE;
 	next = *tx;
-	accepting = v34_training_line_needs_point(&next.line);
 	if (accepting) {
 		uint8_t quarter_point;
 		uint8_t clockwise_quarter_turns;
@@ -207,7 +207,7 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_scr_sample(
 
 	if (!v90_phase4_cp_line_tx_is_valid(tx) || sample == NULL)
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
-	if (!v90_phase4_cp_line_tx_record_is_complete(tx))
+	if (tx->symbols.bit_index != tx->symbols.frame_bit_count)
 		return V90_PHASE4_CP_LINE_TX_RECORD_IN_PROGRESS;
 	if (stop_at_boundary && v34_training_line_needs_point(&tx->line))
 		return V90_PHASE4_CP_LINE_TX_COMPLETE;
@@ -246,7 +246,8 @@ enum v90_phase4_cp_line_tx_result v90_phase4_cp_line_tx_handoff(
 {
 	if (!v90_phase4_cp_line_tx_is_valid(tx) || line == NULL)
 		return V90_PHASE4_CP_LINE_TX_INVALID_ARGUMENT;
-	if (!v90_phase4_cp_line_tx_is_handoff_ready(tx))
+	if (tx->symbols.bit_index != tx->symbols.frame_bit_count ||
+	    !v34_training_line_needs_point(&tx->line))
 		return V90_PHASE4_CP_LINE_TX_INVALID_STATE;
 	*line = tx->line;
 	return V90_PHASE4_CP_LINE_TX_OK;

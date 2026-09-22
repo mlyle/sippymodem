@@ -433,6 +433,17 @@ static bool test_transactional_contracts(void)
 		      &tx, &point, &quarter, &rotation, &complete) ==
 		      V90_PHASE4_CP_TX_INVALID_ARGUMENT,
 	      "CP transmitter accepted corrupt differential phase");
+	tx = saved;
+	tx.bit_index = tx.frame_bit_count;
+	tx.frame[0] ^= 1u;
+	saved = tx;
+	CHECK(!v90_phase4_cp_tx_record_is_complete(&tx) &&
+	      v90_phase4_cp_tx_scr_next(&tx, &point, &quarter, &rotation) ==
+		      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
+	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+	      point.in_phase == saved_point.in_phase && point.quadrature == saved_point.quadrature &&
+	      quarter == saved_quarter && rotation == saved_rotation,
+	      "SCR accepted a corrupt record at the complete cursor");
 	CHECK(strcmp(v90_phase4_cp_tx_result_name(V90_PHASE4_CP_TX_OK),
 		     "ok") == 0 &&
 	      strcmp(v90_phase4_cp_tx_result_name(

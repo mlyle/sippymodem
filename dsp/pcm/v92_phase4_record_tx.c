@@ -120,7 +120,7 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_start_next(
 		return V92_PHASE4_RECORD_TX_INVALID_ARGUMENT;
 	if (!v92_phase4_record_tx_is_valid(tx))
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
-	if (!v92_phase4_record_tx_is_complete(tx))
+	if (tx->bit_index != tx->frame_bit_count)
 		return V92_PHASE4_RECORD_TX_IN_PROGRESS;
 	if (!record_shape_is_valid(
 		    &tx->modulator, frame, frame_capacity, frame_bit_count))
@@ -144,7 +144,7 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 		return V92_PHASE4_RECORD_TX_INVALID_ARGUMENT;
 	if (!v92_phase4_record_tx_is_valid(tx))
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
-	if (v92_phase4_record_tx_is_complete(tx))
+	if (tx->bit_index == tx->frame_bit_count)
 		return V92_PHASE4_RECORD_TX_COMPLETE;
 	bits = v92_phase4_modulator_bits_per_symbol(
 		tx->modulator.constellation);
@@ -168,7 +168,7 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_handoff(
 		return V92_PHASE4_RECORD_TX_INVALID_ARGUMENT;
 	if (!v92_phase4_record_tx_is_valid(tx))
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
-	if (!v92_phase4_record_tx_is_complete(tx))
+	if (tx->bit_index != tx->frame_bit_count)
 		return V92_PHASE4_RECORD_TX_IN_PROGRESS;
 	*modulator = tx->modulator;
 	return V92_PHASE4_RECORD_TX_OK;

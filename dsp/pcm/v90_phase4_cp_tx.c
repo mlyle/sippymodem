@@ -242,7 +242,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next(
 	if (!v90_phase4_cp_tx_is_valid(tx) || point == NULL ||
 	    quarter_point == NULL || clockwise_quarter_turns == NULL)
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
-	if (!v90_phase4_cp_tx_record_is_complete(tx))
+	if (tx->bit_index != tx->frame_bit_count)
 		return V90_PHASE4_CP_TX_RECORD_IN_PROGRESS;
 	next = *tx;
 	if (map_symbol(
