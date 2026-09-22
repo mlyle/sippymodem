@@ -140,7 +140,6 @@ V32_SOURCES := \
 	$(DSP_V32_SOURCE_DIR)/echo_training.c \
 	$(DSP_V32_SOURCE_DIR)/end_path.c \
 	$(DSP_V32_SOURCE_DIR)/equalizer.c \
-	$(DSP_V32_SOURCE_DIR)/four_point_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/line_receiver.c \
 	$(DSP_V32_SOURCE_DIR)/rate_path.c \
 	$(DSP_V32_SOURCE_DIR)/receive_path.c \

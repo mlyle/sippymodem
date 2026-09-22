@@ -62,7 +62,7 @@ enum v32_fixed_stage {
  * only differential framing and equalizer decisions remain live. */
 struct v32_fixed_rate_drain {
 	struct v32_receive_path receive;
-	struct v32_four_point_receiver four_point;
+	struct v32_uncoded_receiver four_point;
 	uint64_t observation_epoch;
 };
 
@@ -213,7 +213,7 @@ static bool fixed_rate_drain_is_valid(
 {
 	return drain != NULL &&
 	       v32_receive_path_is_valid(&drain->receive) &&
-	       v32_four_point_receiver_is_valid(&drain->four_point) &&
+	       v32_uncoded_receiver_is_valid(&drain->four_point) &&
 	       !drain->receive.equalizer.decision_pending &&
 	       drain->observation_epoch == drain->receive.equalizer.epoch;
 }
@@ -777,12 +777,13 @@ static int commit_fixed_rate_drain(
 	struct v32_equalizer_observation *observation)
 {
 	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
-		struct v32_four_point_receiver next = drain->four_point;
-		struct v32_four_point_symbol symbol;
+		struct v32_uncoded_receiver next = drain->four_point;
+		struct v32_uncoded_symbol symbol;
 
-		if (v32_four_point_receiver_observe(
-			    &next, observation, true, &symbol) !=
-			    V32_FOUR_POINT_RECEIVER_OK)
+		if (v32_uncoded_receiver_observe(
+			    &next, V32_4800_BITS_PER_SYMBOL,
+			    observation, true, &symbol) !=
+			    V32_UNCODED_RECEIVER_OK)
 			return -1;
 		receive_result = v32_receive_path_commit(
 			&drain->receive, &symbol.equalizer, observation);

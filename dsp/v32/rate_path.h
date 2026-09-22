@@ -4,7 +4,7 @@
 #define V32_RATE_PATH_H
 
 #include "conditioning_path.h"
-#include "four_point_receiver.h"
+#include "uncoded_receiver.h"
 #include "rate_signal.h"
 
 #include <stdbool.h>
@@ -21,7 +21,7 @@ enum v32_rate_path_result {
  * complete repeated rate signal. */
 struct v32_rate_path {
 	struct v32_receive_path receive;
-	struct v32_four_point_receiver four_point;
+	struct v32_uncoded_receiver four_point;
 	struct v32_rate_signal_detector detector;
 	uint64_t observation_epoch;
 };
@@ -30,7 +30,7 @@ struct v32_rate_path {
  * sequence.  A recovered observation may already be pending at the boundary. */
 struct v32_rate_path_handoff {
 	struct v32_receive_path receive;
-	struct v32_four_point_receiver four_point;
+	struct v32_uncoded_receiver four_point;
 	struct v32_rate_signal_detector detector;
 	struct v32_rate_offer offer;
 	struct v32_equalizer_observation observation;

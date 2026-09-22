@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <four_point_receiver.h>
+#include <uncoded_receiver.h>
 
 #include <constellation.h>
 #include <rate_signal.h>
@@ -63,7 +63,7 @@ static struct v32_equalizer_observation observation_for_quadrant(
 }
 
 static bool symbol_is_exact(
-	const struct v32_four_point_symbol *symbol,
+	const struct v32_uncoded_symbol *symbol,
 	const struct v32_equalizer_observation *observation,
 	uint8_t expected_dibit, uint8_t expected_quadrant,
 	bool expected_adaptation)
@@ -72,7 +72,7 @@ static bool symbol_is_exact(
 		0x468d, 0x668d, 0x068e, 0x268d,
 	};
 
-	return symbol->dibit == expected_dibit &&
+	return symbol->group == expected_dibit &&
 	       memcmp(&symbol->equalizer.observation,
 		      observation, sizeof(*observation)) == 0 &&
 	       symbol->equalizer.ideal_phase == PHASE[expected_quadrant] &&
@@ -82,10 +82,10 @@ static bool symbol_is_exact(
 
 static bool receive_dibit(
 	struct v32_symbol_encoder *encoder,
-	struct v32_four_point_receiver *receiver,
+	struct v32_uncoded_receiver *receiver,
 	uint8_t input, bool adapt_on_error,
 	uint64_t *epoch, uint64_t lineage,
-	struct v32_four_point_symbol *symbol)
+	struct v32_uncoded_symbol *symbol)
 {
 	struct v32_equalizer_observation observation;
 	uint8_t quadrant;
@@ -94,9 +94,10 @@ static bool receive_dibit(
 		      V32_FRAMING_OK,
 	      "four-point transmitter rejected dibit %u", input);
 	observation = observation_for_quadrant(quadrant, ++*epoch, lineage);
-	CHECK(v32_four_point_receiver_observe(
-		      receiver, &observation, adapt_on_error, symbol) ==
-		      V32_FOUR_POINT_RECEIVER_OK &&
+	CHECK(v32_uncoded_receiver_observe(
+		      receiver, V32_4800_BITS_PER_SYMBOL,
+		      &observation, adapt_on_error, symbol) ==
+		      V32_UNCODED_RECEIVER_OK &&
 	      symbol_is_exact(
 		      symbol, &observation, input, quadrant, adapt_on_error),
 	      "four-point receive decision changed at epoch %llu",
@@ -106,7 +107,7 @@ static bool receive_dibit(
 
 static bool receive_word(
 	struct v32_symbol_encoder *encoder,
-	struct v32_four_point_receiver *receiver,
+	struct v32_uncoded_receiver *receiver,
 	struct v32_rate_signal_detector *detector,
 	uint16_t word, bool adapt_on_error,
 	enum v32_rate_signal_event expected_event,
@@ -117,7 +118,7 @@ static bool receive_word(
 
 	for (unsigned int index = 0;
 	     index < V32_RATE_SIGNAL_DIBITS; ++index) {
-		struct v32_four_point_symbol symbol;
+		struct v32_uncoded_symbol symbol;
 		uint8_t input;
 
 		CHECK(v32_rate_signal_dibit(word, index, &input) ==
@@ -126,7 +127,7 @@ static bool receive_word(
 			      encoder, receiver, input, adapt_on_error,
 			      epoch, lineage, &symbol) &&
 		      v32_rate_signal_detector_observe(
-			      detector, symbol.dibit, &event, &offer) ==
+			      detector, symbol.group, &event, &offer) ==
 			      V32_RATE_SIGNAL_OK,
 		      "rate/E word 0x%04x failed at dibit %u", word, index);
 		CHECK(index + 1 == V32_RATE_SIGNAL_DIBITS ||
@@ -149,7 +150,7 @@ static bool test_conditioning_rate_and_data_continuity(void)
 		for (uint8_t initial = 0; initial < 4; ++initial) {
 			struct v32_symbol_encoder encoder;
 			struct v32_symbol_decoder seed;
-			struct v32_four_point_receiver receiver;
+			struct v32_uncoded_receiver receiver;
 			struct v32_rate_signal_detector detector;
 			uint32_t random = UINT32_C(0x6d8eb713) ^
 					  (uint32_t)(role * 0x100u + initial);
@@ -161,8 +162,8 @@ static bool test_conditioning_rate_and_data_continuity(void)
 			CHECK(make_conditioned_seed(
 				      (enum v32_transmitter_role)role, initial,
 				      &encoder, &seed, &random) &&
-			      v32_four_point_receiver_init(&receiver, &seed) ==
-				      V32_FOUR_POINT_RECEIVER_OK &&
+			      v32_uncoded_receiver_init(&receiver, &seed) ==
+				      V32_UNCODED_RECEIVER_OK &&
 			      v32_rate_signal_detector_init(&detector) ==
 				      V32_RATE_SIGNAL_OK,
 			      "four-point fixture %u/%u did not initialize",
@@ -183,7 +184,7 @@ static bool test_conditioning_rate_and_data_continuity(void)
 			      role, initial);
 			for (size_t index = 0; index < TEST_DATA_SYMBOLS;
 			     ++index) {
-				struct v32_four_point_symbol symbol;
+				struct v32_uncoded_symbol symbol;
 				uint8_t input = (uint8_t)(
 					fixture_random(&random) & 3u);
 
@@ -211,106 +212,111 @@ static bool test_contracts(void)
 {
 	struct v32_symbol_decoder seed;
 	struct v32_symbol_decoder invalid_seed;
-	struct v32_four_point_receiver receiver;
-	struct v32_four_point_receiver saved_receiver;
-	struct v32_four_point_symbol symbol;
-	struct v32_four_point_symbol saved_symbol;
+	struct v32_uncoded_receiver receiver;
+	struct v32_uncoded_receiver saved_receiver;
+	struct v32_uncoded_symbol symbol;
+	struct v32_uncoded_symbol saved_symbol;
 	struct v32_equalizer_observation observation;
 	union {
-		struct v32_four_point_receiver receiver;
+		struct v32_uncoded_receiver receiver;
 		struct v32_symbol_decoder seed;
 	} init_overlap;
 	union {
-		struct v32_four_point_receiver receiver;
+		struct v32_uncoded_receiver receiver;
 		struct v32_equalizer_observation observation;
 	} owner_input;
 	union {
-		struct v32_four_point_receiver receiver;
-		struct v32_four_point_symbol symbol;
+		struct v32_uncoded_receiver receiver;
+		struct v32_uncoded_symbol symbol;
 	} owner_output;
 	union {
 		struct v32_equalizer_observation observation;
-		struct v32_four_point_symbol symbol;
+		struct v32_uncoded_symbol symbol;
 	} input_output;
 
 	CHECK(v32_symbol_decoder_init(
 		      &seed, V32_CALLING_TRANSMITTER, 2) == V32_FRAMING_OK &&
-	      v32_four_point_receiver_init(&receiver, &seed) ==
-		      V32_FOUR_POINT_RECEIVER_OK,
+	      v32_uncoded_receiver_init(&receiver, &seed) ==
+		      V32_UNCODED_RECEIVER_OK,
 	      "contract receiver did not initialize");
 	invalid_seed = seed;
 	invalid_seed.phase_quadrant = 4;
 	memset(&symbol, 0xa5, sizeof(symbol));
 	saved_symbol = symbol;
 	saved_receiver = receiver;
-	CHECK(v32_four_point_receiver_init(NULL, &seed) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
-	      v32_four_point_receiver_init(&receiver, NULL) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
-	      v32_four_point_receiver_init(&receiver, &invalid_seed) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(v32_uncoded_receiver_init(NULL, &seed) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
+	      v32_uncoded_receiver_init(&receiver, NULL) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
+	      v32_uncoded_receiver_init(&receiver, &invalid_seed) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "receiver initialization rejection changed its owner");
 	init_overlap.seed = seed;
-	CHECK(v32_four_point_receiver_init(
+	CHECK(v32_uncoded_receiver_init(
 		      &init_overlap.receiver, &init_overlap.seed) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&init_overlap.seed, &seed, sizeof(seed)) == 0,
 	      "overlapping receiver seed was accepted or changed");
 
 	observation = observation_for_quadrant(
 		0, 7, UINT64_C(0x1122334455667788));
 	observation.epoch = 0;
-	CHECK(v32_four_point_receiver_observe(
-		      &receiver, &observation, true, &symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(v32_uncoded_receiver_observe(
+		      &receiver, V32_4800_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0 &&
-	      v32_four_point_receiver_observe(
-		      &receiver, NULL, true, &symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
-	      v32_four_point_receiver_observe(
-		      &receiver, &observation, true, NULL) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT,
+	      v32_uncoded_receiver_observe(
+		      &receiver, V32_4800_BITS_PER_SYMBOL,
+		      NULL, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
+	      v32_uncoded_receiver_observe(
+		      &receiver, V32_4800_BITS_PER_SYMBOL,
+		      &observation, true, NULL) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT,
 	      "invalid observation/output changed receiver state");
 
 	owner_input.receiver = saved_receiver;
-	CHECK(v32_four_point_receiver_observe(
-		      &owner_input.receiver, &owner_input.observation,
-		      true, &symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(v32_uncoded_receiver_observe(
+		      &owner_input.receiver, V32_4800_BITS_PER_SYMBOL,
+		      &owner_input.observation, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&owner_input.receiver, &saved_receiver,
 		     sizeof(saved_receiver)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "owner/input overlap was not transactional");
 	owner_output.receiver = saved_receiver;
 	observation.epoch = 8;
-	CHECK(v32_four_point_receiver_observe(
-		      &owner_output.receiver, &observation, true,
-		      &owner_output.symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(v32_uncoded_receiver_observe(
+		      &owner_output.receiver, V32_4800_BITS_PER_SYMBOL,
+		      &observation, true, &owner_output.symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&owner_output.receiver, &saved_receiver,
 		     sizeof(saved_receiver)) == 0,
 	      "owner/output overlap was not transactional");
 	input_output.observation = observation;
-	CHECK(v32_four_point_receiver_observe(
-		      &receiver, &input_output.observation, true,
-		      &input_output.symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_ARGUMENT &&
+	CHECK(v32_uncoded_receiver_observe(
+		      &receiver, V32_4800_BITS_PER_SYMBOL,
+		      &input_output.observation, true, &input_output.symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&input_output.observation, &observation,
 		     sizeof(observation)) == 0,
 	      "input/output overlap was not transactional");
 
 	receiver.decoder.phase_quadrant = 4;
-	CHECK(!v32_four_point_receiver_is_valid(&receiver) &&
-	      v32_four_point_receiver_observe(
-		      &receiver, &observation, true, &symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_STATE &&
+	CHECK(!v32_uncoded_receiver_is_valid(&receiver) &&
+	      v32_uncoded_receiver_observe(
+		      &receiver, V32_4800_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_STATE &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0 &&
-	      v32_four_point_receiver_observe(
-		      NULL, &observation, true, &symbol) ==
-		      V32_FOUR_POINT_RECEIVER_INVALID_STATE,
+	      v32_uncoded_receiver_observe(
+		      NULL, V32_4800_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_STATE,
 	      "corrupt receiver state was accepted");
 	return true;
 }

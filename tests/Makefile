@@ -430,7 +430,6 @@ V32_FIXED_RECEIVE_OBJECTS := \
 	$(BUILD_DIR)/receive_path.o \
 	$(BUILD_DIR)/echo_training.o \
 	$(BUILD_DIR)/conditioning_path.o \
-	$(BUILD_DIR)/four_point_receiver.o \
 	$(BUILD_DIR)/rate_path.o \
 	$(BUILD_DIR)/end_path.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
@@ -677,7 +676,7 @@ V32_CONDITIONING_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/echo_canceller.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/four_point_receiver.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/v32_decision.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/framing.o \
@@ -705,7 +704,6 @@ V32_RATE_PATH_TEST_OBJECTS := \
 	$(BUILD_DIR)/echo_canceller.o \
 	$(BUILD_DIR)/conditioning_receiver.o \
 	$(BUILD_DIR)/conditioning.o \
-	$(BUILD_DIR)/four_point_receiver.o \
 	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/trellis_receiver.o \
 	$(BUILD_DIR)/trellis_decoder.o \
@@ -754,7 +752,7 @@ V32_FOUR_POINT_RECEIVER_TEST_BINARY := \
 	$(BUILD_DIR)/test_v32_four_point_receiver
 V32_FOUR_POINT_RECEIVER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_v32_four_point_receiver.o \
-	$(BUILD_DIR)/four_point_receiver.o \
+	$(BUILD_DIR)/uncoded_receiver.o \
 	$(BUILD_DIR)/v32_decision.o \
 	$(BUILD_DIR)/constellation.o \
 	$(BUILD_DIR)/differential_qpsk.o \
@@ -4914,10 +4912,6 @@ $(BUILD_DIR)/trellis_decoder.o: \
 
 $(BUILD_DIR)/trellis_receiver.o: \
 	$(DSP_V32_SOURCE_DIR)/trellis_receiver.c | $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
-
-$(BUILD_DIR)/four_point_receiver.o: \
-	$(DSP_V32_SOURCE_DIR)/four_point_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/uncoded_receiver.o: \

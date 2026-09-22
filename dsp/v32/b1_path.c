@@ -20,7 +20,7 @@ static bool selected_mode(
 		return false;
 	switch (offer->rates) {
 	case V32_RATE_CAPABILITY_4800:
-		*mode = V32_B1_MODE_FOUR_POINT;
+		*mode = V32_B1_MODE_UNCODED;
 		*data_bits_per_symbol = V32_4800_BITS_PER_SYMBOL;
 		return true;
 	case V32_RATE_CAPABILITY_7200:
@@ -47,12 +47,9 @@ static bool selected_mode(
 static bool active_receiver_is_valid(const struct v32_b1_path *path)
 {
 	switch (path->mode) {
-	case V32_B1_MODE_FOUR_POINT:
-		return path->data_bits_per_symbol == V32_4800_BITS_PER_SYMBOL &&
-		       v32_four_point_receiver_is_valid(
-			       &path->receiver.four_point);
 	case V32_B1_MODE_UNCODED:
-		return path->data_bits_per_symbol == V32_9600_BITS_PER_SYMBOL &&
+		return (path->data_bits_per_symbol == V32_4800_BITS_PER_SYMBOL ||
+			path->data_bits_per_symbol == V32_9600_BITS_PER_SYMBOL) &&
 		       v32_uncoded_receiver_is_valid(&path->receiver.uncoded);
 	case V32_B1_MODE_TRELLIS:
 		return path->data_bits_per_symbol >= V32_TRELLIS_MIN_DATA_BITS &&
@@ -102,17 +99,16 @@ bool v32_b1_path_is_complete(const struct v32_b1_path *path)
 
 static bool initialize_receiver(
 	struct v32_b1_path *path,
-	const struct v32_four_point_receiver *four_point)
+	const struct v32_uncoded_receiver *four_point)
 {
 	switch (path->mode) {
-	case V32_B1_MODE_FOUR_POINT:
-		path->receiver.four_point = *four_point;
-		return true;
 	case V32_B1_MODE_UNCODED:
-		return v32_uncoded_receiver_init(
-			       &path->receiver.uncoded,
-			       &four_point->decoder.descrambler) ==
-		       V32_UNCODED_RECEIVER_OK;
+		path->receiver.uncoded = *four_point;
+		/* Only uncoded 9600 starts a new differential phase; the
+		 * continuously clocked descrambler crosses both boundaries. */
+		if (path->data_bits_per_symbol == V32_9600_BITS_PER_SYMBOL)
+			path->receiver.uncoded.decoder.phase_quadrant = 0;
+		return true;
 	case V32_B1_MODE_TRELLIS:
 		return v32_trellis_receiver_init(
 			       &path->receiver.trellis,
@@ -134,25 +130,15 @@ static enum v32_b1_path_result decide_observation(
 
 	*next_receiver = path->receiver;
 	switch (path->mode) {
-	case V32_B1_MODE_FOUR_POINT: {
-		struct v32_four_point_symbol symbol;
-
-		if (v32_four_point_receiver_observe(
-			    &next_receiver->four_point, observation, adapt,
-			    &symbol) != V32_FOUR_POINT_RECEIVER_OK)
-			return V32_B1_PATH_INVALID_STATE;
-		*b1_matches = *b1_matches && symbol.dibit == 3;
-		*equalizer = symbol.equalizer;
-		return V32_B1_PATH_OK;
-	}
 	case V32_B1_MODE_UNCODED: {
 		struct v32_uncoded_symbol symbol;
 
 		if (v32_uncoded_receiver_observe(
-			    &next_receiver->uncoded, observation, adapt,
-			    &symbol) != V32_UNCODED_RECEIVER_OK)
+			    &next_receiver->uncoded, path->data_bits_per_symbol,
+			    observation, adapt, &symbol) != V32_UNCODED_RECEIVER_OK)
 			return V32_B1_PATH_INVALID_STATE;
-		*b1_matches = *b1_matches && symbol.group == 15;
+		*b1_matches = *b1_matches &&
+			symbol.group == (1u << path->data_bits_per_symbol) - 1u;
 		*equalizer = symbol.equalizer;
 		return V32_B1_PATH_OK;
 	}

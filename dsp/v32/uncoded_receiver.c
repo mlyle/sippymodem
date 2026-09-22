@@ -21,19 +21,15 @@ bool v32_uncoded_receiver_is_valid(
 
 enum v32_uncoded_receiver_result v32_uncoded_receiver_init(
 	struct v32_uncoded_receiver *receiver,
-	const struct v32_scrambler *continuous_descrambler)
+	const struct v32_symbol_decoder *seed)
 {
-	struct v32_uncoded_receiver initialized = {
-		.decoder.phase_quadrant = 0,
-	};
+	struct v32_uncoded_receiver initialized;
 
-	if (receiver == NULL ||
-	    !v32_scrambler_is_valid(continuous_descrambler) ||
+	if (receiver == NULL || !decoder_is_valid(seed) ||
 	    memory_regions_overlap(
-		    receiver, sizeof(*receiver), continuous_descrambler,
-		    sizeof(*continuous_descrambler)))
+		    receiver, sizeof(*receiver), seed, sizeof(*seed)))
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
-	initialized.decoder.descrambler = *continuous_descrambler;
+	initialized.decoder = *seed;
 	if (!v32_uncoded_receiver_is_valid(&initialized))
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
 	*receiver = initialized;
@@ -56,29 +52,50 @@ static bool observe_arguments_are_separate(
 }
 
 enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
-	struct v32_uncoded_receiver *receiver,
+	struct v32_uncoded_receiver *receiver, uint8_t bits_per_symbol,
 	const struct v32_equalizer_observation *observation,
 	bool adapt_on_error, struct v32_uncoded_symbol *symbol)
 {
 	struct v32_uncoded_receiver next;
 	struct v32_uncoded_symbol next_symbol = { 0 };
-	struct v32_uncoded_decision decision;
+	enum v32_framing_result result;
 
 	if (!v32_uncoded_receiver_is_valid(receiver))
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
 	if (!observe_arguments_are_separate(receiver, observation, symbol))
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
 	next = *receiver;
-	if (v32_decide_uncoded_16(
-		    observation, adapt_on_error, &decision) !=
-	    V32_DECISION_OK)
+	switch (bits_per_symbol) {
+	case V32_4800_BITS_PER_SYMBOL: {
+		struct v32_quadrant_decision decision;
+
+		if (v32_decide_4_point(
+			    observation, adapt_on_error, &decision) !=
+		    V32_DECISION_OK)
+			return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
+		result = v32_4800_symbol_decode(
+			&next.decoder, decision.quadrant, &next_symbol.group);
+		next_symbol.equalizer = decision.equalizer;
+		break;
+	}
+	case V32_9600_BITS_PER_SYMBOL: {
+		struct v32_uncoded_decision decision;
+
+		if (v32_decide_uncoded_16(
+			    observation, adapt_on_error, &decision) !=
+		    V32_DECISION_OK)
+			return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
+		result = v32_9600_symbol_decode(
+			&next.decoder, decision.symbol, &next_symbol.group);
+		next_symbol.equalizer = decision.equalizer;
+		break;
+	}
+	default:
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
-	if (v32_9600_symbol_decode(
-		    &next.decoder, decision.symbol, &next_symbol.group) !=
-		    V32_FRAMING_OK ||
+	}
+	if (result != V32_FRAMING_OK ||
 	    !v32_uncoded_receiver_is_valid(&next))
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
-	next_symbol.equalizer = decision.equalizer;
 	*receiver = next;
 	*symbol = next_symbol;
 	return V32_UNCODED_RECEIVER_OK;

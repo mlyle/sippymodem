@@ -62,7 +62,7 @@ static bool adaptation_state_is_valid(const struct v32_end_path *path)
 static bool path_header_is_valid(const struct v32_end_path *path)
 {
 	return path != NULL &&
-	       v32_four_point_receiver_is_valid(&path->four_point) &&
+	       v32_uncoded_receiver_is_valid(&path->four_point) &&
 	       v32_rate_signal_detector_is_valid(&path->detector) &&
 	       offer_is_valid(&path->initial_offer, V32_RATE_SIGNAL) &&
 	       offer_is_valid(&path->selected_offer, V32_END_SIGNAL) &&
@@ -104,19 +104,20 @@ static enum v32_end_path_result commit_observations(
 	struct v32_equalizer_observation *observation)
 {
 	while (receive_result == V32_RECEIVE_PATH_OBSERVATION_READY) {
-		struct v32_four_point_receiver next_four_point;
+		struct v32_uncoded_receiver next_four_point;
 		struct v32_rate_signal_detector next_detector;
-		struct v32_four_point_symbol symbol;
+		struct v32_uncoded_symbol symbol;
 		struct v32_rate_offer offer;
 		enum v32_rate_signal_event event;
 
 		next_four_point = path->four_point;
 		next_detector = path->detector;
-		if (v32_four_point_receiver_observe(
-			    &next_four_point, observation, true, &symbol) !=
-			    V32_FOUR_POINT_RECEIVER_OK ||
+		if (v32_uncoded_receiver_observe(
+			    &next_four_point, V32_4800_BITS_PER_SYMBOL,
+			    observation, true, &symbol) !=
+			    V32_UNCODED_RECEIVER_OK ||
 		    v32_rate_signal_detector_observe(
-			    &next_detector, symbol.dibit, &event, &offer) !=
+			    &next_detector, symbol.group, &event, &offer) !=
 			    V32_RATE_SIGNAL_OK)
 			return V32_END_PATH_INVALID_STATE;
 		if (!event_is_allowed(path, event, &offer))
@@ -265,7 +266,7 @@ bool v32_end_path_handoff_is_valid(
 
 	if (handoff == NULL ||
 	    !v32_receive_path_is_valid(&handoff->receive) ||
-	    !v32_four_point_receiver_is_valid(&handoff->four_point) ||
+	    !v32_uncoded_receiver_is_valid(&handoff->four_point) ||
 	    !offer_is_valid(&handoff->selected_offer, V32_END_SIGNAL) ||
 	    !adaptation_is_valid(handoff->receive.equalizer.adaptation) ||
 	    !v32_receive_path_epoch_matches(

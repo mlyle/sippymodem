@@ -728,10 +728,6 @@ static bool run_role(
 	      "B1 boundary changed for role/mode %d/%u:%u", role,
 	      selected_offer->rates,
 	      selected_offer->trellis_at_highest_rate);
-	if (b1.mode == V32_B1_MODE_FOUR_POINT)
-		CHECK(b1.receiver.four_point.decoder.descrambler.history ==
-			      source.b1_history && b1.b1_matches,
-		      "4800 B1 state changed for role %d", role);
 	if (b1.mode == V32_B1_MODE_UNCODED)
 		CHECK(b1.receiver.uncoded.decoder.descrambler.history ==
 			      source.b1_history && b1.b1_matches,
@@ -1159,6 +1155,52 @@ static bool test_contracts(
 	return true;
 }
 
+static bool test_uncoded_phase_handoff(void)
+{
+	struct v32_end_path_handoff end = { 0 };
+
+	CHECK(v32_receive_path_init(
+		      &end.receive, 0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+		      V32_RECEIVE_PATH_OK &&
+	      v32_receive_path_set_adaptation(
+		      &end.receive, V32_EQUALIZER_ADAPTATION_DISABLED) ==
+		      V32_RECEIVE_PATH_OK,
+	      "phase handoff receive owner did not initialize");
+	for (unsigned int role = 0; role < 2; ++role) {
+		for (uint8_t phase = 0; phase < 4; ++phase) {
+			CHECK(v32_symbol_decoder_init(
+				      &end.four_point.decoder,
+				      (enum v32_transmitter_role)role, phase) ==
+				      V32_FRAMING_OK,
+			      "phase handoff framing did not initialize");
+			end.four_point.decoder.descrambler.history = 0x123456;
+			for (unsigned int mode = 0; mode < 2; ++mode) {
+				struct v32_b1_path b1;
+				uint8_t bits = mode == 0 ? 2 : 4;
+
+				end.selected_offer.rates = mode == 0 ?
+					V32_RATE_CAPABILITY_4800 :
+					V32_RATE_CAPABILITY_9600;
+				CHECK(v32_end_path_handoff_is_valid(&end) &&
+				      v32_b1_path_init(&b1, &end) == V32_B1_PATH_OK &&
+				      end.four_point.decoder.phase_quadrant == phase &&
+				      b1.observations == 0 &&
+				      b1.data_bits_per_symbol == bits &&
+				      b1.receiver.uncoded.decoder.phase_quadrant ==
+					      (mode == 0 ? phase : 0) &&
+				      b1.receiver.uncoded.decoder.descrambler.history ==
+					      0x123456 &&
+				      b1.receiver.uncoded.decoder.descrambler
+					      .transmitter_role ==
+					      (enum v32_transmitter_role)role,
+				      "phase handoff changed at role/phase/bits %u/%u/%u",
+				      role, phase, bits);
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	struct v32_conditioning_path_handoff conditioning;
@@ -1209,7 +1251,7 @@ int main(void)
 			}
 		}
 	}
-	if (!test_contracts(
+	if (!test_uncoded_phase_handoff() || !test_contracts(
 		    &conditioning, &started, &completed,
 		    &end_started, &end_completed, &completed_end_handoff,
 		    &b1_started, &b1_completed, &data_started,

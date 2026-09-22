@@ -91,28 +91,15 @@ static enum v32_data_path_result decide_observation(
 {
 	*next_receiver = path->b1.receiver;
 	switch (path->b1.mode) {
-	case V32_B1_MODE_FOUR_POINT: {
-		struct v32_four_point_symbol symbol;
-
-		if (v32_four_point_receiver_observe(
-			    &next_receiver->four_point, observation, true,
-			    &symbol) != V32_FOUR_POINT_RECEIVER_OK ||
-		    !append_group(
-			    batch, symbol.dibit,
-			    V32_4800_BITS_PER_SYMBOL))
-			return V32_DATA_PATH_INVALID_STATE;
-		*equalizer = symbol.equalizer;
-		return V32_DATA_PATH_OK;
-	}
 	case V32_B1_MODE_UNCODED: {
 		struct v32_uncoded_symbol symbol;
 
 		if (v32_uncoded_receiver_observe(
-			    &next_receiver->uncoded, observation, true,
-			    &symbol) != V32_UNCODED_RECEIVER_OK ||
+			    &next_receiver->uncoded, path->b1.data_bits_per_symbol,
+			    observation, true, &symbol) != V32_UNCODED_RECEIVER_OK ||
 		    !append_group(
 			    batch, symbol.group,
-			    V32_9600_BITS_PER_SYMBOL))
+			    path->b1.data_bits_per_symbol))
 			return V32_DATA_PATH_INVALID_STATE;
 		*equalizer = symbol.equalizer;
 		return V32_DATA_PATH_OK;

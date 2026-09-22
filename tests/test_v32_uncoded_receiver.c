@@ -27,7 +27,7 @@ struct test_lane {
 
 union test_overlap {
 	struct v32_uncoded_receiver receiver;
-	struct v32_scrambler descrambler;
+	struct v32_symbol_decoder seed;
 	struct v32_equalizer_observation observation;
 	struct v32_uncoded_symbol symbol;
 };
@@ -117,7 +117,7 @@ static bool init_lanes(struct test_lane lanes[TEST_LANES])
 			old_rate.phase_quadrant = old_phase;
 			lane->encoder = (struct v32_symbol_encoder){
 				.scrambler = prior_encoder.scrambler,
-				.phase_quadrant = 0,
+				.phase_quadrant = old_phase,
 			};
 			lane->role = (enum v32_transmitter_role)role;
 			lane->random = UINT32_C(0x32c19600) ^
@@ -127,21 +127,14 @@ static bool init_lanes(struct test_lane lanes[TEST_LANES])
 				(index + 1u);
 			CHECK(v32_uncoded_receiver_init(
 				      &lane->receiver,
-				      &old_rate.descrambler) ==
+				      &old_rate) ==
 			      V32_UNCODED_RECEIVER_OK &&
-			      lane->receiver.decoder.phase_quadrant == 0 &&
+			      lane->receiver.decoder.phase_quadrant == old_phase &&
 			      scramblers_match(
 				      &lane->receiver.decoder.descrambler,
 				      &old_rate.descrambler),
-			      "lane %zu carried old rate phase %u", index,
+			      "lane %zu changed supplied phase %u", index,
 			      old_phase);
-			if (old_phase != 0)
-				CHECK(receiver_states_match(
-					      &lane->receiver,
-					      &lanes[role * QPSK_QUADRANT_COUNT]
-						       .receiver),
-				      "old rate phase %u changed role %u seed",
-				      old_phase, role);
 		}
 	}
 	return true;
@@ -175,8 +168,9 @@ static bool receive_group(
 		      V32_DECISION_OK &&
 	      expected.symbol == signal &&
 	      v32_uncoded_receiver_observe(
-		      &lane->receiver, &observation, adapt_on_error,
-		      &symbol) == V32_UNCODED_RECEIVER_OK &&
+		      &lane->receiver, V32_9600_BITS_PER_SYMBOL,
+		      &observation, adapt_on_error, &symbol) ==
+		      V32_UNCODED_RECEIVER_OK &&
 	      symbol.group == input &&
 	      equalizer_decisions_match(
 		      &symbol.equalizer, &expected.equalizer),
@@ -229,8 +223,9 @@ static bool test_feedback_composition(
 			      &expected_group) == V32_FRAMING_OK,
 		      "feedback framing rejected point %u", signal);
 		CHECK(v32_uncoded_receiver_observe(
-			      &receiver, &observation, adapt_on_error,
-			      &symbol) == V32_UNCODED_RECEIVER_OK,
+			      &receiver, V32_9600_BITS_PER_SYMBOL,
+			      &observation, adapt_on_error, &symbol) ==
+			      V32_UNCODED_RECEIVER_OK,
 		      "feedback receiver rejected point %u", signal);
 		CHECK(symbol.group == expected_group &&
 		      equalizer_decisions_match(
@@ -281,8 +276,8 @@ static bool test_b1_and_data_streams(void)
 
 static bool test_contracts(void)
 {
-	struct v32_scrambler descrambler;
-	struct v32_scrambler invalid;
+	struct v32_symbol_decoder seed;
+	struct v32_symbol_decoder invalid;
 	struct v32_uncoded_receiver receiver;
 	struct v32_uncoded_receiver saved_receiver;
 	struct v32_uncoded_symbol symbol;
@@ -298,19 +293,19 @@ static bool test_contracts(void)
 	union test_overlap overlap = { 0 };
 	union test_overlap saved_overlap;
 
-	CHECK(v32_scrambler_init(
-		      &descrambler, V32_CALLING_TRANSMITTER) == V32_FRAMING_OK,
+	CHECK(v32_symbol_decoder_init(
+		      &seed, V32_CALLING_TRANSMITTER, 0) == V32_FRAMING_OK,
 	      "contract descrambler did not initialize");
-	descrambler.history = 0x123456;
-	CHECK(v32_uncoded_receiver_init(&receiver, &descrambler) ==
+	seed.descrambler.history = 0x123456;
+	CHECK(v32_uncoded_receiver_init(&receiver, &seed) ==
 		      V32_UNCODED_RECEIVER_OK &&
 	      v32_uncoded_receiver_is_valid(&receiver) &&
 	      !v32_uncoded_receiver_is_valid(NULL),
 	      "contract receiver did not initialize");
 	saved_receiver = receiver;
-	invalid = descrambler;
-	invalid.transmitter_role = (enum v32_transmitter_role)99;
-	CHECK(v32_uncoded_receiver_init(NULL, &descrambler) ==
+	invalid = seed;
+	invalid.descrambler.transmitter_role = (enum v32_transmitter_role)99;
+	CHECK(v32_uncoded_receiver_init(NULL, &seed) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      v32_uncoded_receiver_init(&receiver, NULL) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
@@ -318,24 +313,38 @@ static bool test_contracts(void)
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0,
 	      "invalid initialization changed its owner");
-	overlap.descrambler = descrambler;
+	overlap.seed = seed;
 	saved_overlap = overlap;
 	CHECK(v32_uncoded_receiver_init(
-		      &overlap.receiver, &overlap.descrambler) ==
+		      &overlap.receiver, &overlap.seed) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&overlap, &saved_overlap, sizeof(overlap)) == 0,
 	      "overlapping initialization was not transactional");
 	memset(&symbol, 0x3c, sizeof(symbol));
 	saved_symbol = symbol;
+	for (unsigned int bits = 0; bits <= UINT8_MAX; ++bits) {
+		if (bits == V32_4800_BITS_PER_SYMBOL ||
+		    bits == V32_9600_BITS_PER_SYMBOL)
+			continue;
+		CHECK(v32_uncoded_receiver_observe(
+			      &receiver, (uint8_t)bits, &observation, true,
+			      &symbol) == V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
+		      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
+		      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+		      "unsupported bit width %u changed receiver/output", bits);
+	}
 	observation.epoch = 0;
 	CHECK(v32_uncoded_receiver_observe(
-		      &receiver, &observation, true, &symbol) ==
+		      &receiver, V32_9600_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      v32_uncoded_receiver_observe(
-		      &receiver, NULL, true, &symbol) ==
+		      &receiver, V32_9600_BITS_PER_SYMBOL,
+		      NULL, true, &symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      v32_uncoded_receiver_observe(
-		      &receiver, &observation, true, NULL) ==
+		      &receiver, V32_9600_BITS_PER_SYMBOL,
+		      &observation, true, NULL) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
@@ -343,24 +352,25 @@ static bool test_contracts(void)
 	observation.epoch = 8;
 	overlap.receiver = saved_receiver;
 	CHECK(v32_uncoded_receiver_observe(
-		      &overlap.receiver, &overlap.observation,
-		      true, &symbol) == V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
+		      &overlap.receiver, V32_9600_BITS_PER_SYMBOL,
+		      &overlap.observation, true, &symbol) ==
+		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&overlap.receiver, &saved_receiver,
 		     sizeof(saved_receiver)) == 0 &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "owner/input overlap was not transactional");
 	overlap.receiver = saved_receiver;
 	CHECK(v32_uncoded_receiver_observe(
-		      &overlap.receiver, &observation, true,
-		      &overlap.symbol) ==
+		      &overlap.receiver, V32_9600_BITS_PER_SYMBOL,
+		      &observation, true, &overlap.symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&overlap.receiver, &saved_receiver,
 		     sizeof(saved_receiver)) == 0,
 	      "owner/output overlap was not transactional");
 	overlap.observation = observation;
 	CHECK(v32_uncoded_receiver_observe(
-		      &receiver, &overlap.observation, true,
-		      &overlap.symbol) ==
+		      &receiver, V32_9600_BITS_PER_SYMBOL,
+		      &overlap.observation, true, &overlap.symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_ARGUMENT &&
 	      memcmp(&receiver, &saved_receiver, sizeof(receiver)) == 0 &&
 	      memcmp(&overlap.observation, &observation,
@@ -369,10 +379,12 @@ static bool test_contracts(void)
 	receiver.decoder.phase_quadrant = QPSK_QUADRANT_COUNT;
 	CHECK(!v32_uncoded_receiver_is_valid(&receiver) &&
 	      v32_uncoded_receiver_observe(
-		      &receiver, &observation, true, &symbol) ==
+		      &receiver, V32_9600_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_STATE &&
 	      v32_uncoded_receiver_observe(
-		      NULL, &observation, true, &symbol) ==
+		      NULL, V32_9600_BITS_PER_SYMBOL,
+		      &observation, true, &symbol) ==
 		      V32_UNCODED_RECEIVER_INVALID_STATE &&
 	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
 	      "invalid receiver state was accepted");

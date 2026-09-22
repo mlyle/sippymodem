@@ -20,7 +20,7 @@ enum v32_end_path_result {
  * initial rate may repeat or transition once to the selected rate before E. */
 struct v32_end_path {
 	struct v32_receive_path receive;
-	struct v32_four_point_receiver four_point;
+	struct v32_uncoded_receiver four_point;
 	struct v32_rate_signal_detector detector;
 	struct v32_rate_offer initial_offer;
 	struct v32_rate_offer selected_offer;
@@ -33,7 +33,7 @@ struct v32_end_path {
  * recovered beyond E for the following B1 owner. */
 struct v32_end_path_handoff {
 	struct v32_receive_path receive;
-	struct v32_four_point_receiver four_point;
+	struct v32_uncoded_receiver four_point;
 	struct v32_rate_offer selected_offer;
 	struct v32_equalizer_observation observation;
 	uint64_t observation_epoch;

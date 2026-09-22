@@ -22,13 +22,11 @@ enum v32_b1_path_result {
 };
 
 enum v32_b1_mode {
-	V32_B1_MODE_FOUR_POINT,
 	V32_B1_MODE_UNCODED,
 	V32_B1_MODE_TRELLIS,
 };
 
 union v32_b1_receiver {
-	struct v32_four_point_receiver four_point;
 	struct v32_uncoded_receiver uncoded;
 	struct v32_trellis_receiver trellis;
 };
