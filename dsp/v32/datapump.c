@@ -33,7 +33,6 @@
 enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
-	V32_MIN_LINE_POWER = 1000000,
 	V32_CONDITIONING_SILENCE_SAMPLES = 24,
 	V32_CONDITIONING_SIGNAL_THRESHOLD = 256,
 };
@@ -1571,20 +1570,6 @@ static int receive_fixed_path_sample(
 	return -1;
 }
 
-static bool carrier_is_present(
-	bool timing_locked, const int16_t *samples, int count)
-{
-	uint64_t power = 0;
-
-	for (int index = 0; index < count; ++index) {
-		int32_t sample = samples[index];
-
-		power += (uint64_t)(sample * sample);
-	}
-	return timing_locked &&
-	       power / (unsigned int)count >= V32_MIN_LINE_POWER;
-}
-
 static int process_v32(
 	struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
@@ -1645,10 +1630,9 @@ static int process_v32(
 		return DPSTAT_CONNECT;
 	if (!training_session_is_online(&datapump->training))
 		return DPSTAT_OK;
-	if (carrier_is_present(
-		    fixed_path_receive_const(
-			    &datapump->fixed_path)->line.timing.signal_detected,
-		    receive, count)) {
+	if (fixed_path_receive_const(
+		    &datapump->fixed_path)->line.timing.signal_detected &&
+	    datapump_qam_line_power_present(receive, count)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
 		datapump_add_samples_bounded(

@@ -81,6 +81,29 @@ static bool test_bounded_sample_count(void)
 	return true;
 }
 
+static bool test_qam_line_power(void)
+{
+	int16_t samples[MODEM_FRAG + 1];
+
+	memset(samples, 0, sizeof(samples));
+	CHECK(!datapump_qam_line_power_present(NULL, 1) &&
+		      !datapump_qam_line_power_present(samples, 0) &&
+		      !datapump_qam_line_power_present(
+			      samples, MODEM_FRAG + 1),
+	      "invalid line-power window was accepted");
+	samples[0] = 999;
+	CHECK(!datapump_qam_line_power_present(samples, 1),
+	      "carrier floor accepted a subthreshold sample");
+	samples[0] = 1000;
+	CHECK(datapump_qam_line_power_present(samples, 1) &&
+		      !datapump_qam_line_power_present(samples, 2),
+	      "carrier floor did not use mean-square power");
+	samples[0] = INT16_MIN;
+	CHECK(datapump_qam_line_power_present(samples, MODEM_FRAG),
+	      "full-width sample square overflowed");
+	return true;
+}
+
 static bool test_initial_training_lifecycle(void)
 {
 	struct training_session session;
@@ -235,6 +258,7 @@ int main(void)
 		{ "default and configured wait", test_default_and_configured_wait },
 		{ "configured carrier loss", test_configured_carrier_loss },
 		{ "bounded sample count", test_bounded_sample_count },
+		{ "shared QAM line power", test_qam_line_power },
 		{ "invalid modem", test_invalid_modem },
 		{ "initial training lifecycle", test_initial_training_lifecycle },
 		{ "retraining lifecycle", test_retraining_lifecycle },

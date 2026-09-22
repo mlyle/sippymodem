@@ -34,7 +34,6 @@ enum {
 	V22_CARRIER_RETURN_HOLD_SAMPLES = MODEM_RATE / 10,
 	/* After 300 ms, resuming the old 2400-bit/s decisions is unsafe. */
 	V22BIS_CARRIER_RETRAIN_SAMPLES = MODEM_RATE * 3 / 10,
-	V22_MIN_LINE_POWER = 1000000,
 	V22_ORIGINATE_ACQUISITION_SYMBOLS = 64,
 	V22_ANSWER_ACQUISITION_SYMBOLS = 32,
 	V22BIS_RECEIVE_START_SAMPLES = MODEM_RATE * 450 / 1000,
@@ -1613,18 +1612,6 @@ static int advance_training_timer(
 	return 0;
 }
 
-static bool line_power_is_present(const int16_t *samples, int count)
-{
-	uint64_t power = 0;
-
-	for (int index = 0; index < count; ++index) {
-		int32_t sample = samples[index];
-
-		power += (uint64_t)(sample * sample);
-	}
-	return power / (unsigned int)count >= V22_MIN_LINE_POWER;
-}
-
 static bool carrier_is_present(
 	const struct qam_measurement *measurement,
 	bool line_power_present)
@@ -1651,7 +1638,7 @@ static int process_v22(
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
-	line_power_present = line_power_is_present(receive, count);
+	line_power_present = datapump_qam_line_power_present(receive, count);
 	/* The generic QAM floor is deliberately permissive.  Do not let codec
 	 * idle residue establish V.22 timing or protocol lineage before carrier. */
 	if (!line_power_present && !datapump_is_retraining(datapump) &&

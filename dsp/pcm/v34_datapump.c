@@ -28,7 +28,6 @@ enum {
 	/* One 20-ms media interval exceeds the trained equalizer's 20-symbol
 	 * centre delay at every V.34 symbol rate. */
 	V34_CARRIER_RECOVERY_SAMPLES = MODEM_RATE / 50,
-	V34_MIN_LINE_POWER = 1000000,
 };
 
 struct v34_datapump {
@@ -468,34 +467,22 @@ static bool data_link_is_online(const struct v34_datapump *datapump)
 	       modem->put_chars != NULL;
 }
 
-static bool window_has_carrier(const int16_t *samples, int count)
-{
-	uint64_t power = 0;
-
-	for (int index = 0; index < count; ++index) {
-		int32_t sample = samples[index];
-
-		power += (uint64_t)(sample * sample);
-	}
-	return power / (unsigned int)count >= V34_MIN_LINE_POWER;
-}
-
 static bool fragment_has_carrier(const int16_t *samples, int count)
 {
 	int offset;
 
 	if (count <= V34_CARRIER_WINDOW_SAMPLES)
-		return window_has_carrier(samples, count);
+		return datapump_qam_line_power_present(samples, count);
 	for (offset = 0;
 	     offset + V34_CARRIER_WINDOW_SAMPLES <= count;
 	     offset += V34_CARRIER_WINDOW_SAMPLES)
-		if (!window_has_carrier(
+		if (!datapump_qam_line_power_present(
 			    samples + offset, V34_CARRIER_WINDOW_SAMPLES))
 			return false;
 	/* Also cover a short tail without making a sub-window zero crossing its
 	 * own carrier decision. */
 	if (offset != count &&
-	    !window_has_carrier(
+	    !datapump_qam_line_power_present(
 		    samples + count - V34_CARRIER_WINDOW_SAMPLES,
 		    V34_CARRIER_WINDOW_SAMPLES))
 		return false;

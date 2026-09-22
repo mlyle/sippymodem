@@ -9,6 +9,8 @@
 
 enum {
 	DATAPUMP_DEFAULT_CARRIER_WAIT_SECONDS = 60,
+	/* Shared permissive line-power floor for QAM carrier gates. */
+	DATAPUMP_MIN_QAM_LINE_POWER = 1000000,
 };
 
 /* Accumulate media samples without wrapping past a training or loss limit. */
@@ -17,6 +19,23 @@ static inline void datapump_add_samples_bounded(
 {
 	*value = *value >= limit || increment >= limit - *value ?
 		       limit : *value + increment;
+}
+
+/* Mean square of one bounded 8 kHz media fragment. Use the same power floor
+ * for V.22, V.32, and V.34; timing and protocol qualification stay local. */
+static inline bool datapump_qam_line_power_present(
+	const int16_t *samples, int count)
+{
+	uint64_t power = 0;
+
+	if (samples == NULL || count <= 0 || count > MODEM_FRAG)
+		return false;
+	for (int index = 0; index < count; ++index) {
+		int32_t sample = samples[index];
+
+		power += (uint64_t)(sample * sample);
+	}
+	return power / (unsigned int)count >= DATAPUMP_MIN_QAM_LINE_POWER;
 }
 
 /* Return the S7 carrier-wait interval in 8 kHz media ticks. */
