@@ -301,6 +301,14 @@ static bool test_record_comparison(void)
 	type1_base.parameters.type1.common.acknowledges_cp = false;
 	changed.parameters.type1.precoder_coefficients[1].imaginary--;
 	invalid.parameters.type0.maximum_upstream_rate_2400_bps_units = 1;
+	CHECK(v90_mp_record_common(&type0) == &type0.parameters.type0 &&
+	      v90_mp_record_common(&type1) ==
+		      &type1.parameters.type1.common &&
+	      v90_mp_record_mutable_common(&type0) ==
+		      &type0.parameters.type0 &&
+	      v90_mp_record_mutable_common(&type1) ==
+		      &type1.parameters.type1.common,
+	      "MP common view selected the wrong record layout");
 	CHECK(v90_mp_record_is_initial(&type0) &&
 	      v90_mp_record_is_initial(&type1_base) &&
 	      !v90_mp_record_is_initial(&type0_prime) &&

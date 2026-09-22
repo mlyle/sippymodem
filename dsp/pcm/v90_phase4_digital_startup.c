@@ -4,14 +4,6 @@
 
 #include "memory_region.h"
 
-static const struct v90_mp_parameters *mp_parameters(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool select_initial_mp(
 	const struct v90_mp_record *configured,
 	const struct v90_phase4_digital_station *station,
@@ -26,7 +18,7 @@ static bool select_initial_mp(
 	    !v90_phase4_digital_station_receive_complete(station) ||
 	    selected == NULL)
 		return false;
-	parameters = mp_parameters(configured);
+	parameters = v90_mp_record_common(configured);
 	/* The probe supplies an initial ceiling. Receive quality is measured
 	 * under simultaneous TRN2d before the first MP is encoded, not under
 	 * the much quieter Ri signal at this CPt boundary. */

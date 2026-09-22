@@ -1150,6 +1150,7 @@ static bool test_contracts(void)
 	struct v90_pcm_mapping data_mapping;
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_tx saved_transmitter;
+	struct pcm_downstream_tx malformed;
 	struct pcm_downstream_symbol symbol;
 	struct pcm_downstream_symbol saved_symbol;
 
@@ -1209,6 +1210,18 @@ static bool test_contracts(void)
 		     sizeof(transmitter)) == 0 &&
 	      !pcm_downstream_tx_is_v92_control_boundary(NULL),
 	      "invalid CPd control was accepted");
+	CHECK(pcm_downstream_tx_init(
+		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
+		      PCM_DOWNSTREAM_TX_OK &&
+	      pcm_downstream_tx_start_mp(&transmitter, &empty_mp) ==
+		      PCM_DOWNSTREAM_TX_OK,
+	      "invalid MP fixture did not initialize");
+	malformed = transmitter;
+	malformed.control.mp.type = (enum v90_mp_record_type)99;
+	malformed.cleardown_records = 1u;
+	CHECK(invalid_transmitter_is_rejected(malformed) &&
+	      !pcm_downstream_tx_mp_starts_next_frame(&malformed),
+	      "invalid MP type reached cleardown or MP boundary");
 	CHECK(pcm_downstream_tx_init(
 		      &transmitter, PCM_PROTOCOL_V90, &mapping) ==
 		      PCM_DOWNSTREAM_TX_OK &&

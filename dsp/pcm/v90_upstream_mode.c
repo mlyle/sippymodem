@@ -6,14 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static const struct v90_mp_parameters *common_parameters(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool cp_is_final(const struct v90_cp_parameters *cp)
 {
 	return v90_cp_parameters_are_valid(cp) && cp->kind == V90_CP_DATA &&
@@ -58,7 +50,7 @@ enum v90_upstream_mode_result v90_upstream_mode_select(
 	if (!cp_is_final(cp) || !v90_mp_record_is_valid(mp) ||
 	    !v90_phase3_analog_profile_is_valid(transmitting_profile))
 		return V90_UPSTREAM_MODE_INVALID_PARAMETERS;
-	common = common_parameters(mp);
+	common = v90_mp_record_common(mp);
 	if (common->maximum_upstream_rate_2400_bps_units == 0)
 		return V90_UPSTREAM_MODE_NO_COMMON_RATE;
 	rate = select_rate(cp, common);

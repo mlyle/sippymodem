@@ -78,6 +78,25 @@ struct v90_mp_record {
 	union v90_mp_record_parameters parameters;
 };
 
+/* Borrowed views of the common Type 0/Type 1 fields. The record must have a
+ * valid type; callers retain ownership and must not change its type while
+ * using the view. */
+static inline const struct v90_mp_parameters *v90_mp_record_common(
+	const struct v90_mp_record *record)
+{
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
+static inline struct v90_mp_parameters *v90_mp_record_mutable_common(
+	struct v90_mp_record *record)
+{
+	return record->type == V90_MP_RECORD_TYPE0 ?
+		       &record->parameters.type0 :
+		       &record->parameters.type1.common;
+}
+
 bool v90_mp_record_is_valid(const struct v90_mp_record *record);
 
 /* An initial MP is valid and does not acknowledge CP. MP-prime does. */

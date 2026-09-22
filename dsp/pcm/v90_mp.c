@@ -69,14 +69,6 @@ bool v90_mp_record_is_valid(const struct v90_mp_record *record)
 	       v90_mp_type1_parameters_are_valid(&record->parameters.type1);
 }
 
-static struct v90_mp_parameters *mutable_record_parameters(
-	struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 bool v90_mp_record_limit_maximum_upstream_rate(
 	struct v90_mp_record *record,
 	uint8_t maximum_rate_2400_bps_units)
@@ -91,7 +83,7 @@ bool v90_mp_record_limit_maximum_upstream_rate(
 		    V90_MP_MAXIMUM_RATE_2400_BPS_UNITS)
 		return false;
 	limited = *record;
-	parameters = mutable_record_parameters(&limited);
+	parameters = v90_mp_record_mutable_common(&limited);
 	if (parameters->maximum_upstream_rate_2400_bps_units == 0u ||
 	    parameters->maximum_upstream_rate_2400_bps_units <=
 		    maximum_rate_2400_bps_units)
@@ -113,25 +105,17 @@ bool v90_mp_record_limit_maximum_upstream_rate(
 	return true;
 }
 
-static const struct v90_mp_parameters *record_parameters(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 bool v90_mp_record_is_initial(const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
-	       !record_parameters(record)->acknowledges_cp;
+	       !v90_mp_record_common(record)->acknowledges_cp;
 }
 
 bool v90_mp_record_acknowledges_cp(
 	const struct v90_mp_record *record)
 {
 	return v90_mp_record_is_valid(record) &&
-	       record_parameters(record)->acknowledges_cp;
+	       v90_mp_record_common(record)->acknowledges_cp;
 }
 
 static bool common_parameters_equal(
@@ -180,7 +164,7 @@ static bool records_equal(
 	return v90_mp_record_is_valid(left) &&
 	       v90_mp_record_is_valid(right) && left->type == right->type &&
 	       common_parameters_equal(
-		       record_parameters(left), record_parameters(right),
+		       v90_mp_record_common(left), v90_mp_record_common(right),
 		       compare_acknowledgement) &&
 	       record_coefficients_equal(left, right);
 }
@@ -235,14 +219,6 @@ enum v90_mp_result v90_mp_sequence_size(
 		return V90_MP_INVALID_PARAMETERS;
 	*bit_count = rounded;
 	return V90_MP_OK;
-}
-
-static const struct v90_mp_parameters *record_common(
-	const struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
 }
 
 static void encode_common(
@@ -304,7 +280,7 @@ enum v90_mp_result v90_mp_encode(
 		return V90_MP_NEED_OUTPUT;
 
 	encode_common(
-		encoded, record_common(record),
+		encoded, v90_mp_record_common(record),
 		record->type == V90_MP_RECORD_TYPE1);
 	if (record->type == V90_MP_RECORD_TYPE1) {
 		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
@@ -410,10 +386,8 @@ enum v90_mp_result v90_mp_decode(
 	if (received_crc != pcm_control_frame_crc(sequence, crc_start_bit))
 		return V90_MP_CRC_MISMATCH;
 
-	if (decoded.type == V90_MP_RECORD_TYPE0) {
-		decode_common(sequence, &decoded.parameters.type0);
-	} else {
-		decode_common(sequence, &decoded.parameters.type1.common);
+	decode_common(sequence, v90_mp_record_mutable_common(&decoded));
+	if (decoded.type == V90_MP_RECORD_TYPE1) {
 		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
 			decoded.parameters.type1.precoder_coefficients[tap].real =
 				decode_twos_complement(

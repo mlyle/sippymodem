@@ -31,19 +31,11 @@ static bool stage_matches_protocol(
 	       transmitter->stage == PCM_DOWNSTREAM_TX_MP_PRIME;
 }
 
-static struct v90_mp_parameters *record_common(
-	struct v90_mp_record *record)
-{
-	return record->type == V90_MP_RECORD_TYPE0 ?
-		       &record->parameters.type0 :
-		       &record->parameters.type1.common;
-}
-
 static bool record_requests_cleardown(const struct v90_mp_record *mp)
 {
-	return (mp->type == V90_MP_RECORD_TYPE0 ?
-		mp->parameters.type0.maximum_upstream_rate_2400_bps_units :
-		mp->parameters.type1.common.maximum_upstream_rate_2400_bps_units) == 0u;
+	const struct v90_mp_parameters *common = v90_mp_record_common(mp);
+
+	return common->maximum_upstream_rate_2400_bps_units == 0u;
 }
 
 static bool requests_cleardown(const struct pcm_downstream_tx *transmitter)
@@ -83,7 +75,7 @@ static bool encode_mp_sequence(
 	uint8_t encoded[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
 	size_t bit_count = 0;
 
-	record_common(&record)->acknowledges_cp = acknowledges_cp;
+	v90_mp_record_mutable_common(&record)->acknowledges_cp = acknowledges_cp;
 	if (v90_mp_encode(
 		    &record, frame_bits, encoded, sizeof(encoded),
 		    &bit_count) != V90_MP_OK ||
@@ -462,9 +454,9 @@ bool pcm_downstream_tx_is_valid(const struct pcm_downstream_tx *transmitter)
 	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
 	    (transmitter->encoder.finishing &&
 	     !transmitter->finish_requested) ||
+	    !control_state_is_valid(transmitter) ||
 	    (transmitter->cleardown_records != 0u &&
 	     !requests_cleardown(transmitter)) ||
-	    !control_state_is_valid(transmitter) ||
 	    !queue_is_valid(transmitter) ||
 	    !symbol_accounting_is_valid(transmitter))
 		return false;
@@ -528,8 +520,8 @@ bool pcm_downstream_tx_mp_starts_next_frame(const struct pcm_downstream_tx *tran
 	       transmitter->protocol == PCM_PROTOCOL_V90 &&
 	       transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	       transmitter->control_configured && transmitter->queue_count == 0u &&
-	       transmitter->accepted_frames >= initial_training_frames(transmitter) &&
-	       pcm_downstream_tx_is_valid(transmitter);
+	       pcm_downstream_tx_is_valid(transmitter) &&
+	       transmitter->accepted_frames >= initial_training_frames(transmitter);
 }
 
 static bool same_mp_record(
