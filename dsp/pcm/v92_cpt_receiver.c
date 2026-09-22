@@ -13,17 +13,9 @@
 enum {
 	CPT_SYNC_BITS = 17,
 	CPT_INFORMATION_FIRST_BIT = 18,
-	CPT_MAP_FIRST_BIT = 103,
-	CPT_MAP_BITS = 4,
 	CPT_CODEC_DIFFERENCE_BIT = 128,
 	CPT_HEADER_LAST_BIT = CPT_CODEC_DIFFERENCE_BIT,
 };
-
-static size_t map_first_bit(size_t interval)
-{
-	return CPT_MAP_FIRST_BIT + interval * CPT_MAP_BITS +
-	       (interval >= 4u ? 1u : 0u);
-}
 
 static size_t align_frame(size_t bit_count)
 {
@@ -34,22 +26,15 @@ static size_t align_frame(size_t bit_count)
 static bool infer_frame_bit_count(
 	const uint8_t *frame, size_t *frame_bit_count)
 {
-	size_t constellation_count = 1u;
+	size_t constellation_count;
 	size_t set_count;
 	size_t inferred;
 
 	if (frame == NULL || frame_bit_count == NULL)
 		return false;
-	for (size_t interval = 0;
-	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
-			frame, map_first_bit(interval), CPT_MAP_BITS);
-
-		if (index >= V92_CPT_MAX_CONSTELLATIONS)
-			return false;
-		if ((size_t)index + 1u > constellation_count)
-			constellation_count = (size_t)index + 1u;
-	}
+	constellation_count = pcm_control_frame_read_map(frame, NULL);
+	if (constellation_count == 0)
+		return false;
 	set_count = constellation_count *
 		(packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0 ?
 			 2u : 1u);

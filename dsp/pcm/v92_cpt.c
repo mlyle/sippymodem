@@ -24,8 +24,6 @@ enum {
 	CPT_B1_FIRST_BIT = 86,
 	CPT_B2_FIRST_BIT = 94,
 	CPT_COEFFICIENT_BITS = 8,
-	CPT_MAP_FIRST_BIT = 103,
-	CPT_MAP_BITS = 4,
 	CPT_CODEC_DIFFERENCE_BIT = 128,
 	CPT_CRC_BITS = 16,
 };
@@ -75,12 +73,6 @@ size_t v92_cpt_frame_bytes(
 	return bits == 0 ? 0 : (bits + 7u) / 8u;
 }
 
-static size_t map_first_bit(size_t interval)
-{
-	return CPT_MAP_FIRST_BIT + interval * CPT_MAP_BITS +
-	       (interval >= 4u ? 1u : 0u);
-}
-
 static void encode_header(
 	uint8_t *frame, const struct v92_cpt_parameters *parameters)
 {
@@ -114,12 +106,7 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CPT_B2_FIRST_BIT, CPT_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_b2_q1_6);
-	for (size_t interval = 0;
-	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		packed_msb_write_lsb_field(
-			frame, map_first_bit(interval), CPT_MAP_BITS,
-			parameters->frame_constellation[interval]);
-	}
+	pcm_control_frame_write_map(frame, parameters->frame_constellation);
 	packed_msb_set_bit(
 		frame, CPT_CODEC_DIFFERENCE_BIT,
 		parameters->codec_constellations_differ);
@@ -226,7 +213,7 @@ enum v92_cpt_result v92_cpt_decode(
 	struct v92_cpt_parameters *parameters)
 {
 	struct v92_cpt_parameters decoded = { 0 };
-	size_t constellation_count = 1;
+	size_t constellation_count;
 	size_t set_count;
 	size_t expected_bits;
 	size_t payload_end;
@@ -240,17 +227,10 @@ enum v92_cpt_result v92_cpt_decode(
 		return V92_CPT_INVALID_FRAME;
 	if (frame_capacity < (frame_bit_count + 7u) / 8u)
 		return V92_CPT_INVALID_ARGUMENT;
-	for (size_t interval = 0;
-	     interval < V92_CPT_FRAME_INTERVALS; ++interval) {
-		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
-			frame, map_first_bit(interval), CPT_MAP_BITS);
-
-		if (index >= V92_CPT_MAX_CONSTELLATIONS)
-			return V92_CPT_INVALID_FRAME;
-		decoded.frame_constellation[interval] = index;
-		if ((size_t)index + 1u > constellation_count)
-			constellation_count = (size_t)index + 1u;
-	}
+	constellation_count = pcm_control_frame_read_map(
+		frame, decoded.frame_constellation);
+	if (constellation_count == 0)
+		return V92_CPT_INVALID_FRAME;
 	decoded.codec_constellations_differ =
 		packed_msb_bit(frame, CPT_CODEC_DIFFERENCE_BIT) != 0;
 	set_count = constellation_count *

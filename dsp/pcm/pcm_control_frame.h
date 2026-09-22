@@ -71,6 +71,49 @@ static inline uint16_t pcm_control_frame_crc(
 	return remainder;
 }
 
+/* CP, CPt and CPu map six frame intervals to constellation rows. Each index
+ * is four bits, LSB first; the start bit at 119 splits the first four indices
+ * from the last two. Callers provide at least sixteen header bytes and six
+ * map entries. Writing requires four-bit indices; reading rejects indices
+ * beyond the six supported rows. Framing bits remain with the record owner. */
+static inline size_t pcm_control_frame_map_bit(size_t interval)
+{
+	return 103u + interval * 4u + (interval >= 4u ? 1u : 0u);
+}
+
+static inline void pcm_control_frame_write_map(
+	uint8_t *frame, const uint8_t map[PCM_CONSTELLATION_FRAME_INTERVALS])
+{
+	for (size_t interval = 0;
+	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval)
+		packed_msb_write_lsb_field(frame,
+			pcm_control_frame_map_bit(interval), 4u, map[interval]);
+}
+
+/* Return the declared row count, or zero for an out-of-range index. A NULL
+ * map probes the shape without copying indices. Otherwise map may be partly
+ * filled on failure; record owners retain their transactional output policy.
+ * Missing rows are not rejected here: CP cleardown ignores their contents. */
+static inline size_t pcm_control_frame_read_map(
+	const uint8_t *frame, uint8_t *map)
+{
+	size_t count = 1u;
+
+	for (size_t interval = 0;
+	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
+		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
+			frame, pcm_control_frame_map_bit(interval), 4u);
+
+		if (index >= PCM_CONSTELLATION_MAX_ROWS)
+			return 0;
+		if (map != NULL)
+			map[interval] = index;
+		if ((size_t)index + 1u > count)
+			count = (size_t)index + 1u;
+	}
+	return count;
+}
+
 /* CP, CPt and CPu share 136-bit constellation rows after a 136-bit header.
  * Each row carries eight words: a start bit followed by sixteen Ucode bits,
  * lowest Ucode first. The caller validates row counts and storage bounds.

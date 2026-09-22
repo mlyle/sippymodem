@@ -229,10 +229,78 @@ static bool test_constellation_rows(void)
 	return true;
 }
 
+static bool check_constellation_map(const uint8_t map[6], unsigned pattern)
+{
+	uint8_t frame[18], expected[sizeof(frame)], exact_header[16], decoded[8];
+	size_t cursor = 103u;
+	uint8_t count = 1u;
+	bool valid = true;
+
+	memset(frame, pattern, sizeof(frame));
+	memcpy(expected, frame, sizeof(frame));
+	for (size_t interval = 0; interval < 6u; ++interval) {
+		valid = valid && map[interval] < 6u;
+		if (map[interval] >= count)
+			count = map[interval] + 1u;
+		for (unsigned bit = 0; bit < 4u; ++bit) {
+			if (cursor % 17u == 0u)
+				++cursor;
+			uint8_t mask = (uint8_t)(0x80u >> (cursor % 8u));
+
+			if ((map[interval] & (1u << bit)) != 0u)
+				expected[1u + cursor / 8u] |= mask;
+			else
+				expected[1u + cursor / 8u] &= (uint8_t)~mask;
+			++cursor;
+		}
+	}
+	pcm_control_frame_write_map(frame + 1u, map);
+	CHECK(memcmp(frame, expected, sizeof(frame)) == 0,
+	      "constellation map changed wire bits or adjacent fields");
+	memcpy(exact_header, expected + 1u, sizeof(exact_header));
+	memset(decoded, 0xa5, sizeof(decoded));
+	CHECK(pcm_control_frame_read_map(exact_header, decoded + 1u) ==
+		      (valid ? count : 0u) &&
+	      pcm_control_frame_read_map(exact_header, NULL) ==
+		      (valid ? count : 0u) &&
+	      decoded[0] == 0xa5 && decoded[7] == 0xa5,
+	      "constellation map count, bounds or shape-only probe changed");
+	CHECK(!valid || memcmp(decoded + 1u, map, 6u) == 0,
+	      "constellation map decoded different indices");
+	return true;
+}
+
+static bool test_constellation_map(void)
+{
+	uint8_t map[6];
+
+	/* Every six-row map, including unused intermediate rows. The record
+	 * owner decides whether holes are legal for its message kind. */
+	for (unsigned combination = 0; combination < 46656u; ++combination) {
+		unsigned digits = combination;
+
+		for (size_t interval = 0; interval < 6u; ++interval) {
+			map[interval] = (uint8_t)(digits % 6u);
+			digits /= 6u;
+		}
+		CHECK(check_constellation_map(map, combination & 1u ? 0xffu : 0u),
+		      "map %u failed", combination);
+	}
+	for (size_t interval = 0; interval < 6u; ++interval) {
+		for (unsigned index = 6u; index < 16u; ++index) {
+			memset(map, 0, sizeof(map));
+			map[interval] = (uint8_t)index;
+			CHECK(check_constellation_map(map, 0xa5u),
+			      "invalid map index %u at %zu passed", index, interval);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	return test_sync_prefix() && test_write_prefix() &&
 	       test_sync_suffix() && test_start_ranges() &&
 	       test_known_check() && test_payload_bounds() &&
-	       test_constellation_rows() ? 0 : 1;
+	       test_constellation_rows() && test_constellation_map() ? 0 : 1;
 }

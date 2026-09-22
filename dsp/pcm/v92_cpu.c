@@ -25,8 +25,6 @@ enum {
 	CPU_B1_FIRST_BIT = 86,
 	CPU_B2_FIRST_BIT = 94,
 	CPU_COEFFICIENT_BITS = 8,
-	CPU_MAP_FIRST_BIT = 103,
-	CPU_MAP_BITS = 4,
 	CPU_CODEC_DIFFERENCE_BIT = 128,
 	CPU_MASKS_FIRST_BIT = V92_CPU_HEADER_BITS,
 	CPU_CRC_BITS = 16,
@@ -86,12 +84,6 @@ size_t v92_cpu_frame_bytes(
 	return bits == 0u ? 0u : (bits + 7u) / 8u;
 }
 
-static size_t map_first_bit(size_t interval)
-{
-	return CPU_MAP_FIRST_BIT + interval * CPU_MAP_BITS +
-	       (interval >= 4u ? 1u : 0u);
-}
-
 static void encode_prefix(uint8_t *frame, unsigned int type)
 {
 	pcm_control_frame_write_prefix(frame);
@@ -133,12 +125,7 @@ static void encode_header(
 	packed_msb_write_lsb_field(
 		frame, CPU_B2_FIRST_BIT, CPU_COEFFICIENT_BITS,
 		(uint8_t)parameters->shaping_b2_q1_6);
-	for (size_t interval = 0u;
-	     interval < V92_CPU_FRAME_INTERVALS; ++interval) {
-		packed_msb_write_lsb_field(
-			frame, map_first_bit(interval), CPU_MAP_BITS,
-			parameters->frame_constellation[interval]);
-	}
+	pcm_control_frame_write_map(frame, parameters->frame_constellation);
 	packed_msb_set_bit(
 		frame, CPU_CODEC_DIFFERENCE_BIT,
 		parameters->codec_constellations_differ);
@@ -293,7 +280,7 @@ static bool decode_maps(
 	for (size_t interval = 0u;
 	     interval < V92_CPU_FRAME_INTERVALS; ++interval) {
 		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
-			frame, map_first_bit(interval), CPU_MAP_BITS);
+			frame, pcm_control_frame_map_bit(interval), 4u);
 
 		if (index >= V92_CPU_MAX_CONSTELLATIONS)
 			return false;
