@@ -13,17 +13,6 @@ enum {
 	V34_PHASE34_DATA_DECODER_POWER_Q15 = 0x2000,
 };
 
-static bool handoff_is_clear(
-	const struct v34_phase3_decision_handoff *handoff)
-{
-	const unsigned char *bytes = (const unsigned char *)handoff;
-
-	for (size_t index = 0; index < sizeof(*handoff); ++index)
-		if (bytes[index] != 0u)
-			return false;
-	return true;
-}
-
 static uint16_t decoder_power(
 	const struct v34_phase34_receiver *receiver)
 {
@@ -36,7 +25,9 @@ static bool semantic_state_is_valid(
 	const struct v34_phase34_receiver *receiver)
 {
 	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE3)
-		return handoff_is_clear(&receiver->phase3_handoff) &&
+		return memory_region_is_zero(
+			       &receiver->phase3_handoff,
+			       sizeof(receiver->phase3_handoff)) &&
 		       v34_phase3_decision_receiver_is_valid(
 			       &receiver->semantic.phase3) &&
 		       !v34_phase3_decision_receiver_is_complete(
