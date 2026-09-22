@@ -210,6 +210,63 @@ static int test_result_names(void)
 	return 0;
 }
 
+static int test_binary_input_boundaries(void)
+{
+	static const size_t widths[] = { 0, 1, 7, 8, 9, 17, 42, 63, 64, 65, 72, 128 };
+	uint32_t radices[MIXED_RADIX_MAX_DIGITS];
+	uint32_t digits[MIXED_RADIX_MAX_DIGITS], saved[MIXED_RADIX_MAX_DIGITS];
+	uint8_t storage[MIXED_RADIX_MAX_BITS + 7];
+	uint8_t decoded[MIXED_RADIX_MAX_BITS + 1];
+
+	for (size_t digit = 0; digit < MIXED_RADIX_MAX_DIGITS; ++digit)
+		radices[digit] = 2;
+	for (size_t width = 0; width < sizeof(widths) / sizeof(widths[0]); ++width) {
+		size_t count = widths[width], digit_count = count != 0 ? count : 1;
+
+		for (size_t offset = 0; offset < 8; ++offset) {
+			uint8_t *bits = storage + offset;
+
+			memset(storage, 0xff, sizeof(storage));
+			for (size_t bit = 0; bit < count; ++bit)
+				bits[bit] = (uint8_t)(bit & 1u);
+			CHECK(mixed_radix_encode(radices, digit_count, bits, count, digits) ==
+				MIXED_RADIX_OK, "valid bits failed at %zu/%zu", count, offset);
+			for (size_t digit = 0; digit < digit_count; ++digit)
+				CHECK(digits[digit] == (count != 0 ? bits[digit] : 0),
+					"binary digit order changed");
+			memset(decoded, 0xa5, sizeof(decoded));
+			CHECK(mixed_radix_decode(radices, digit_count, digits, decoded, count) ==
+				MIXED_RADIX_OK && decoded[count] == 0xa5 &&
+			      memcmp(decoded, bits, count) == 0,
+			      "binary inverse changed at %zu/%zu", count, offset);
+			memset(digits, 0xa5, sizeof(digits));
+			memcpy(saved, digits, sizeof(saved));
+			for (size_t bit = 0; bit < count; ++bit) {
+				uint8_t state = 1, sign = 7;
+
+				bits[bit] = bit & 1u ? 2u : 255u;
+				CHECK(mixed_radix_encode(radices, digit_count, bits, count, digits) ==
+					MIXED_RADIX_OUT_OF_RANGE &&
+				      mixed_radix_encode_differential(radices, digit_count,
+					bits, count, &state, digits, &sign) == MIXED_RADIX_OUT_OF_RANGE &&
+				      state == 1 && sign == 7 &&
+				      memcmp(digits, saved, sizeof(digits)) == 0,
+				      "bad bit changed output/state at %zu/%zu/%zu", count, offset, bit);
+				bits[bit] = (uint8_t)(bit & 1u);
+			}
+		}
+	}
+	CHECK(mixed_radix_encode(radices, 1, NULL, 0, digits) == MIXED_RADIX_OK &&
+	      digits[0] == 0, "empty input must encode zero, including a null input");
+	memcpy(saved, digits, sizeof(saved));
+	storage[0] = 2;
+	CHECK(mixed_radix_encode(radices, 1, NULL, 1, digits) == MIXED_RADIX_INVALID_ARGUMENT &&
+	      mixed_radix_encode(radices, 0, storage, 1, digits) == MIXED_RADIX_INVALID_CONFIGURATION &&
+	      memcmp(digits, saved, sizeof(digits)) == 0,
+	      "argument/configuration rejection precedence changed");
+	return 0;
+}
+
 int main(void)
 {
 	CHECK(test_uneven_round_trip() == 0, "uneven round trip failed");
@@ -218,6 +275,7 @@ int main(void)
 	CHECK(test_differential_round_trip() == 0,
 	      "differential round trip failed");
 	CHECK(test_transactionality() == 0, "transactionality failed");
+	CHECK(test_binary_input_boundaries() == 0, "binary input boundaries failed");
 	CHECK(test_result_names() == 0, "result names failed");
 	return 0;
 }

@@ -31,17 +31,6 @@ static bool configuration_is_valid(
 	return maximum >= required;
 }
 
-static bool bits_are_binary(const uint8_t *bits, size_t bit_count)
-{
-	if (bits == NULL && bit_count != 0)
-		return false;
-	for (size_t bit = 0; bit < bit_count; ++bit) {
-		if (bits[bit] > 1)
-			return false;
-	}
-	return true;
-}
-
 static bool digits_are_in_range(
 	const uint32_t *radices, const uint32_t *digits,
 	size_t digit_count)
@@ -74,15 +63,19 @@ enum mixed_radix_result mixed_radix_encode(
 {
 	uint32_t encoded[MIXED_RADIX_MAX_DIGITS];
 	__uint128_t value = 0;
+	uint8_t combined = 0;
 
 	if (digits == NULL || (bits == NULL && bit_count != 0))
 		return MIXED_RADIX_INVALID_ARGUMENT;
 	if (!configuration_is_valid(radices, digit_count, bit_count))
 		return MIXED_RADIX_INVALID_CONFIGURATION;
-	if (!bits_are_binary(bits, bit_count))
+	/* Keep validity separate: a high non-binary bit may shift out of value. */
+	for (size_t bit = bit_count; bit > 0; --bit) {
+		combined |= bits[bit - 1];
+		value = (value << 1) | bits[bit - 1];
+	}
+	if (combined > 1)
 		return MIXED_RADIX_OUT_OF_RANGE;
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		value |= (__uint128_t)bits[bit] << bit;
 	for (size_t digit = 0; digit < digit_count; ++digit) {
 		encoded[digit] = (uint32_t)(value % radices[digit]);
 		value /= radices[digit];
@@ -120,8 +113,10 @@ static enum mixed_radix_result decode(
 	if (reject_unused && bit_count < MIXED_RADIX_MAX_BITS &&
 	    value >= ((__uint128_t)1 << bit_count))
 		return MIXED_RADIX_OUT_OF_RANGE;
-	for (size_t bit = 0; bit < bit_count; ++bit)
-		decoded[bit] = (uint8_t)((value >> bit) & 1);
+	for (size_t bit = 0; bit < bit_count; ++bit) {
+		decoded[bit] = (uint8_t)(value & 1);
+		value >>= 1;
+	}
 	if (bit_count != 0)
 		memcpy(bits, decoded, bit_count);
 	return MIXED_RADIX_OK;
