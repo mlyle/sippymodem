@@ -15,13 +15,20 @@ _Static_assert(
 		V34_PHASE2_PROBE_L1_SAMPLES,
 	"V.34 L2 limit must allow a complete measurement window");
 
+static bool l2_window_is_valid(uint32_t samples)
+{
+	return samples >= V34_PHASE2_PROBE_PERIOD_SAMPLES &&
+	       samples <= V34_PHASE2_PROBE_L1_SAMPLES &&
+	       samples % V34_PHASE2_PROBE_PERIOD_SAMPLES == 0;
+}
+
 bool v34_phase2_probe_measurement_is_valid(
 	const struct v34_phase2_probe_receiver_measurement *measurement)
 {
 	if (measurement == NULL ||
 	    measurement->l1.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
+	    !l2_window_is_valid(measurement->l2.sample_count) ||
+	    measurement->l2_samples < measurement->l2.sample_count ||
 	    measurement->l2_samples >=
 		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
 		return false;
@@ -77,12 +84,17 @@ bool v34_phase2_probe_receiver_is_valid(
 			       V34_PHASE2_PROBE_L1_SAMPLES &&
 		       receiver->l2_samples == l2_measured_samples;
 	case V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END:
-	case V34_PHASE2_PROBE_RECEIVER_COMPLETE:
 		return l1_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
 		       l2_measured_samples ==
 			       V34_PHASE2_PROBE_L1_SAMPLES &&
 		       receiver->l2_samples >=
 			       V34_PHASE2_PROBE_L1_SAMPLES &&
+		       receiver->l2_samples < l2_limit;
+	case V34_PHASE2_PROBE_RECEIVER_COMPLETE:
+		return l1_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
+		       l2_window_is_valid(l2_measured_samples) &&
+		       (l2_measured_samples == V34_PHASE2_PROBE_L1_SAMPLES ||
+			receiver->l2_samples == l2_measured_samples) &&
 		       receiver->l2_samples < l2_limit;
 	case V34_PHASE2_PROBE_RECEIVER_LIMIT_REACHED:
 		return l1_samples == V34_PHASE2_PROBE_L1_SAMPLES &&
@@ -196,9 +208,13 @@ v34_phase2_probe_receiver_sample(
 		result = measure_l1_sample(&next, received_sample, &emitted);
 		break;
 	case V34_PHASE2_PROBE_RECEIVER_MEASURE_L2:
-		if (finish_l2)
-			return V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT;
-		result = measure_l2_sample(&next, received_sample, &emitted);
+		if (finish_l2) {
+			if (!l2_window_is_valid(next.l2_samples))
+				return V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT;
+			wait_for_l2_end(&next, true, &emitted);
+		} else {
+			result = measure_l2_sample(&next, received_sample, &emitted);
+		}
 		break;
 	case V34_PHASE2_PROBE_RECEIVER_WAIT_L2_END:
 		wait_for_l2_end(&next, finish_l2, &emitted);

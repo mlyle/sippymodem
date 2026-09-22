@@ -186,6 +186,41 @@ static double spectrum_power(
 	return power;
 }
 
+static bool test_short_l2(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		struct test_stream stream;
+		struct v34_phase2_probe_acquisition_event event;
+		struct v34_phase2_probe_receiver_measurement measurement;
+		int16_t gain;
+
+		CHECK(stream_init(&stream, codec,
+			      V34_PHASE2_PROBE_SYNCHRONIZER_NOMINAL_LEADING_SAMPLES),
+		      "short probe stream did not initialize");
+		while (stream.probe_samples < V34_PHASE2_PROBE_L1_SAMPLES +
+			       V34_PHASE2_PROBE_PERIOD_SAMPLES)
+			CHECK(stream_sample(&stream, &event), "short probe input failed");
+		CHECK(v34_phase2_probe_acquisition_sample(
+			      &stream.acquisition, INT16_MIN, true, &event) ==
+			      V34_PHASE2_PROBE_ACQUISITION_OK &&
+		      event.kind == V34_PHASE2_PROBE_ACQUISITION_EVENT_COMPLETED &&
+		      event.l2_samples == V34_PHASE2_PROBE_PERIOD_SAMPLES &&
+		      v34_phase2_probe_acquisition_measure(
+			      &stream.acquisition, &measurement) ==
+			      V34_PHASE2_PROBE_ACQUISITION_OK &&
+		      measurement.l1.sample_count == V34_PHASE2_PROBE_L1_SAMPLES &&
+		      measurement.l2.sample_count == V34_PHASE2_PROBE_PERIOD_SAMPLES &&
+		      v34_phase2_probe_measurement_is_valid(&measurement) &&
+		      v34_phase2_probe_acquisition_receive_gain(
+			      &stream.acquisition, &gain) ==
+			      V34_PHASE2_PROBE_ACQUISITION_OK &&
+		      gain == TEST_RECEIVE_GAIN[codec],
+		      "short L2 handoff changed measurement or L1 gain: codec %d", codec);
+	}
+	return true;
+}
+
 static bool check_measurement_and_completion(
 	enum test_codec codec, uint16_t leading_samples)
 {
@@ -444,6 +479,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "measurement and completion", test_measurement_and_completion },
+		{ "short L2 handoff", test_short_l2 },
 		{ "receive limit", test_receive_limit },
 		{ "not found", test_not_found },
 		{ "validation", test_validation },

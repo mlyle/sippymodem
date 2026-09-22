@@ -127,18 +127,12 @@ enum v34_phase2_selection_result v34_phase2_select_preemphasis(
 		    measurement, sizeof(*measurement), filter_index,
 		    sizeof(*filter_index)) ||
 	    !preemphasis_probe_profile(symbol_rate, &profile) ||
-	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples >=
-		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+	    !v34_phase2_probe_measurement_is_valid(measurement))
 		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
 	sample = measurement->l2.harmonics[profile.source_bin].mean_square;
 	threshold = measurement->l2
 			    .harmonics[V34_PREEMPHASIS_THRESHOLD_BIN]
 			    .mean_square;
-	if (!isfinite(sample) || sample < 0.0 || !isfinite(threshold) ||
-	    threshold < 0.0)
-		return V34_PHASE2_SELECTION_INVALID_ARGUMENT;
 	slope = (double)profile.slope_q14 / 16384.0;
 	do {
 		selected++;
@@ -166,18 +160,12 @@ static bool v90_probe_metrics(
 	double maximum_fraction;
 	int maximum_exponent;
 
-	if (measurement == NULL ||
-	    measurement->l2.sample_count != V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples < V34_PHASE2_PROBE_L1_SAMPLES ||
-	    measurement->l2_samples >=
-		    V34_PHASE2_PROBE_L2_RECEIVE_LIMIT_SAMPLES)
+	if (!v34_phase2_probe_measurement_is_valid(measurement))
 		return false;
 	for (size_t index = 0;
 	     index < V34_PHASE2_PROBE_HIGHEST_HARMONIC; ++index) {
 		double power = measurement->l2.harmonics[index].mean_square;
 
-		if (!isfinite(power) || power < 0.0)
-			return false;
 		if (v90_probe_bin_is_active(index) && power > maximum)
 			maximum = power;
 	}

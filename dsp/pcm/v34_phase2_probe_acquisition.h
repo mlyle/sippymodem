@@ -60,9 +60,10 @@ v34_phase2_probe_acquisition_init(
 bool v34_phase2_probe_acquisition_is_valid(
 	const struct v34_phase2_probe_acquisition *acquisition);
 
-/* finish_l2 is accepted only after MEASUREMENT_READY. The completion call does
- * not consume received_sample, allowing the next protocol owner to receive
- * the first sample following L2. Terminal phases are idempotent. */
+/* finish_l2 follows the probe receiver's complete-period boundary while L2
+ * is measured, or is accepted at any sample after MEASUREMENT_READY. The
+ * completion call does not consume received_sample, allowing the next owner
+ * to receive the first sample following L2. Terminal phases are idempotent. */
 enum v34_phase2_probe_acquisition_result
 v34_phase2_probe_acquisition_sample(
 	struct v34_phase2_probe_acquisition *acquisition,

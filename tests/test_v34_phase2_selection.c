@@ -203,6 +203,38 @@ static bool test_v90_info1d_selection(void)
 	return true;
 }
 
+static bool test_short_probe_selection(void)
+{
+	struct v34_phase2_probe_receiver_measurement measurement = flat_probe_measurement();
+	struct v34_info1c configured = v90_info1d_configuration();
+	struct v34_info0 peer = full_capabilities();
+	struct v34_info1c selected;
+	uint8_t filter;
+
+	for (uint32_t count = V34_PHASE2_PROBE_PERIOD_SAMPLES;
+	     count <= V34_PHASE2_PROBE_L1_SAMPLES;
+	     count += V34_PHASE2_PROBE_PERIOD_SAMPLES) {
+		measurement.l2.sample_count = count;
+		measurement.l2_samples = count;
+		CHECK(v34_phase2_select_preemphasis(
+			      &measurement, V34_SYMBOL_RATE_3429, &filter) ==
+			      V34_PHASE2_SELECTION_OK && filter == 6 &&
+		      v34_phase2_select_v90_info1d(
+			      &measurement, &configured, &peer, &selected) ==
+			      V34_PHASE2_SELECTION_OK && v90_info1d_is_flat_selection(&selected),
+		      "short probe selection failed at %u samples", count);
+	}
+	measurement.l2.sample_count = V34_PHASE2_PROBE_PERIOD_SAMPLES - 1;
+	CHECK(v34_phase2_select_preemphasis(
+		      &measurement, V34_SYMBOL_RATE_3429, &filter) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT &&
+	      v34_phase2_select_v90_info1d(
+		      &measurement, &configured, &peer, &selected) ==
+		      V34_PHASE2_SELECTION_INVALID_ARGUMENT,
+	      "selection accepted an incomplete probe period");
+	return true;
+}
+
 static bool test_v90_info1d_common_fields(void)
 {
 	static const int16_t offsets[] = {
@@ -795,6 +827,7 @@ int main(void)
 		{ "V.90 INFO1d common-field ownership", test_v90_info1d_common_fields },
 		{ "V.90 INFO1d peer capabilities", test_v90_info1d_peer_capabilities },
 		{ "V.90 INFO1d validation", test_v90_info1d_validation },
+		{ "short probe selection", test_short_probe_selection },
 		{ "rate and carrier capabilities",
 		  test_rate_and_carrier_capabilities },
 		{ "cross-record constraints", test_cross_record_constraints },

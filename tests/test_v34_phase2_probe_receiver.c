@@ -95,8 +95,8 @@ static bool measurement_spectrum_is_plausible(
 
 	CHECK(measurement->l1.sample_count ==
 		      V34_PHASE2_PROBE_L1_SAMPLES &&
-	      measurement->l2.sample_count ==
-		      V34_PHASE2_PROBE_L1_SAMPLES,
+	      measurement->l2.sample_count >=
+		      V34_PHASE2_PROBE_PERIOD_SAMPLES,
 	      "probe receiver did not preserve complete measurement windows");
 	for (unsigned int harmonic = 1;
 	     harmonic <= V34_PHASE2_PROBE_HIGHEST_HARMONIC;
@@ -210,6 +210,14 @@ static bool check_measurement_and_completion(enum test_codec codec)
 		      V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
 	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
 	      "completed receiver changed terminal state for codec %d", codec);
+	receiver.l2_samples = V34_PHASE2_PROBE_L1_SAMPLES - 1;
+	before = receiver;
+	CHECK(!v34_phase2_probe_receiver_is_valid(&receiver) &&
+	      v34_phase2_probe_receiver_sample(
+		      &receiver, 1234, false, &event) ==
+		      V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+	      "completed receiver accepted more measured than received samples");
 	return true;
 }
 
@@ -219,6 +227,73 @@ static bool test_measurement_and_completion(void)
 	     codec <= TEST_CODEC_PCMA; ++codec)
 		CHECK(check_measurement_and_completion(codec),
 		      "probe receive failed for codec %d", codec);
+	return true;
+}
+
+static bool test_short_l2(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR;
+	     codec <= TEST_CODEC_PCMA; ++codec) {
+		struct v34_phase2_probe_transmitter transmitter;
+		struct v34_phase2_probe_receiver receiver;
+
+		CHECK(v34_phase2_probe_transmitter_init(
+			      &transmitter, TEST_NOMINAL_AMPLITUDE) ==
+			      V34_PHASE2_PROBE_OK &&
+		      v34_phase2_probe_receiver_init(&receiver) ==
+			      V34_PHASE2_PROBE_RECEIVER_OK &&
+		      feed_measurement_window(
+			      &receiver, &transmitter, V34_PHASE2_PROBE_L1,
+			      codec, V34_PHASE2_PROBE_RECEIVER_EVENT_L2_STARTED),
+		      "short L2 fixture failed for codec %d", codec);
+		for (uint32_t count = 0;
+		     count < V34_PHASE2_PROBE_L1_SAMPLES; ++count) {
+			struct v34_phase2_probe_receiver ended = receiver;
+			struct v34_phase2_probe_receiver_event event = { 0 };
+			struct v34_phase2_probe_receiver_measurement measurement;
+			bool whole_period = count != 0 &&
+				count % V34_PHASE2_PROBE_PERIOD_SAMPLES == 0;
+			int16_t sample;
+			enum v34_phase2_probe_receiver_result result =
+				v34_phase2_probe_receiver_sample(
+					&ended, INT16_MIN, true, &event);
+
+			if (whole_period) {
+				CHECK(result == V34_PHASE2_PROBE_RECEIVER_OK &&
+				      event.kind == V34_PHASE2_PROBE_RECEIVER_EVENT_COMPLETED &&
+				      event.l2_samples == count &&
+				      ended.phase == V34_PHASE2_PROBE_RECEIVER_COMPLETE &&
+				      v34_phase2_probe_receiver_is_valid(&ended) &&
+				      v34_phase2_probe_receiver_measure(&ended, &measurement) ==
+					      V34_PHASE2_PROBE_RECEIVER_OK &&
+				      measurement.l2.sample_count == count &&
+				      measurement.l2_samples == count &&
+				      v34_phase2_probe_measurement_is_valid(&measurement) &&
+				      measurement_spectrum_is_plausible(&measurement, codec) &&
+				      memcmp(&ended.l2_spectrum, &receiver.l2_spectrum,
+					     sizeof(receiver.l2_spectrum)) == 0,
+				      "short L2 completion failed: codec %d samples %u",
+				      codec, count);
+				measurement.l2.sample_count++;
+				measurement.l2_samples++;
+				CHECK(!v34_phase2_probe_measurement_is_valid(&measurement),
+				      "partial-period L2 measurement was accepted");
+			} else {
+				CHECK(result == V34_PHASE2_PROBE_RECEIVER_INVALID_ARGUMENT &&
+				      event.kind == V34_PHASE2_PROBE_RECEIVER_EVENT_NONE &&
+				      event.l2_samples == 0 &&
+				      memcmp(&ended, &receiver, sizeof(receiver)) == 0,
+				      "partial-period completion changed state at %u", count);
+			}
+			CHECK(v34_phase2_probe_transmitter_sample(
+				      &transmitter, V34_PHASE2_PROBE_L2, &sample) ==
+				      V34_PHASE2_PROBE_OK &&
+			      v34_phase2_probe_receiver_sample(
+				      &receiver, codec_round_trip(sample, codec), false,
+				      &event) == V34_PHASE2_PROBE_RECEIVER_OK,
+			      "short L2 input failed at %u", count);
+		}
+	}
 	return true;
 }
 
@@ -370,6 +445,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "measurement and completion", test_measurement_and_completion },
+		{ "short L2 completion", test_short_l2 },
 		{ "L2 receive limit", test_l2_limit },
 		{ "validation", test_validation },
 	};
