@@ -887,6 +887,24 @@ static bool test_validation(void)
 	      quarter == UINT8_MAX && rotation == UINT8_MAX && complete,
 	      "invalid MP emission mutated state or outputs");
 
+	for (unsigned int position = 0; position < 3u; ++position) {
+		struct v34_phase4_mp corrupt = saved;
+		struct v34_phase4_mp before;
+
+		corrupt.bit_index = position == 2u ? corrupt.frame_bit_count :
+			position * v34_constellation_bits_per_symbol(corrupt.constellation);
+		corrupt.frame[4] ^= 1u;
+		before = corrupt;
+		CHECK(v34_phase4_mp_next(
+			      &corrupt, &point, &quarter, &rotation, &complete) ==
+			      V34_PHASE4_MP_INVALID_ARGUMENT &&
+		      transmitters_are_equal(&corrupt, &before) &&
+		      point.in_phase == 7.0 && point.quadrature == -9.0 &&
+		      quarter == UINT8_MAX && rotation == UINT8_MAX && complete,
+		      "corrupt MP record mutated state or outputs at position %u",
+		      position);
+	}
+
 	transmitter = saved;
 	transmitter.bit_index = transmitter.frame_bit_count;
 	CHECK(v34_phase4_mp_is_valid(&transmitter),

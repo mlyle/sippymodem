@@ -427,6 +427,25 @@ static bool test_transactional_contracts(void)
 	      quarter == saved_quarter && rotation == saved_rotation &&
 	      complete == saved_complete,
 	      "missing CP symbol output mutated state");
+	for (unsigned int position = 0; position < 3u; ++position) {
+		struct v90_phase4_cp_tx corrupt = saved;
+		struct v90_phase4_cp_tx before;
+
+		corrupt.bit_index = position == 2u ? corrupt.frame_bit_count :
+			position * v34_constellation_bits_per_symbol(corrupt.constellation);
+		corrupt.frame[4] ^= 1u;
+		before = corrupt;
+		CHECK(v90_phase4_cp_tx_next(
+			      &corrupt, &point, &quarter, &rotation, &complete) ==
+			      V90_PHASE4_CP_TX_INVALID_ARGUMENT &&
+		      memcmp(&corrupt, &before, sizeof(corrupt)) == 0 &&
+		      point.in_phase == saved_point.in_phase &&
+		      point.quadrature == saved_point.quadrature &&
+		      quarter == saved_quarter && rotation == saved_rotation &&
+		      complete == saved_complete,
+		      "corrupt CP record mutated state or outputs at position %u",
+		      position);
+	}
 	tx.previous_clockwise_quarter_turns = 4;
 	CHECK(!v90_phase4_cp_tx_is_valid(&tx) &&
 	      v90_phase4_cp_tx_next(

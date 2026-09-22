@@ -11,6 +11,10 @@ struct encoded_mp_record {
 	size_t bit_count;
 };
 
+_Static_assert(V34_MP_TYPE0_FRAME_BITS % 4u == 0 &&
+	       V34_MP_TYPE1_FRAME_BITS % 4u == 0,
+	       "MP records must contain whole 16-point symbols");
+
 static bool frame_is_valid(const uint8_t *frame, size_t bit_count)
 {
 	if (bit_count != V34_MP_TYPE0_FRAME_BITS &&
@@ -271,10 +275,9 @@ enum v34_phase4_mp_result v34_phase4_mp_next(
 		    &next_point) != V34_CONSTELLATION_OK)
 		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	next.previous_clockwise_quarter_turns = next_rotation;
+	/* The record is unchanged; one aligned symbol preserves valid bounds. */
 	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
-	if (!v34_phase4_mp_is_valid(&next))
-		return V34_PHASE4_MP_INVALID_ARGUMENT;
 	*transmitter = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;

@@ -158,6 +158,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_start_next_record(
 	return V90_PHASE4_CP_TX_OK;
 }
 
+/* Mapping preserves framing validity and leaves the owned record unchanged. */
 static enum v90_phase4_cp_tx_result map_symbol(
 	struct v90_phase4_cp_tx *tx,
 	uint8_t differential_dibit, uint8_t mapped_dibit,
@@ -217,10 +218,9 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_next(
 		    &next_point, &next_quarter_point, &next_rotation) !=
 	    V90_PHASE4_CP_TX_OK)
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
+	/* The validated record and cursor contain whole symbols. */
 	next.bit_index += v34_constellation_bits_per_symbol(next.constellation);
 	complete = next.bit_index == next.frame_bit_count;
-	if (!v90_phase4_cp_tx_is_valid(&next))
-		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	*tx = next;
 	*point = next_point;
 	*quarter_point = next_quarter_point;
@@ -248,8 +248,7 @@ enum v90_phase4_cp_tx_result v90_phase4_cp_tx_scr_next(
 	if (map_symbol(
 		    &next, 3u, 3u, &next_point,
 		    &next_quarter_point, &next_rotation) !=
-	    V90_PHASE4_CP_TX_OK ||
-	    !v90_phase4_cp_tx_is_valid(&next))
+	    V90_PHASE4_CP_TX_OK)
 		return V90_PHASE4_CP_TX_INVALID_ARGUMENT;
 	*tx = next;
 	*point = next_point;
