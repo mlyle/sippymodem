@@ -556,6 +556,7 @@ V23_TEST_OBJECTS := $(BUILD_DIR)/test_v23.o \
 	$(BUILD_DIR)/fsk.o \
 	$(BUILD_DIR)/fixed_phase.o \
 	$(BUILD_DIR)/training_session.o \
+	$(BUILD_DIR)/v21.o \
 	$(BUILD_DIR)/v23_datapump.o
 V22_FRAMING_TEST_BINARY := $(BUILD_DIR)/test_v22_framing
 V22_FRAMING_TEST_OBJECTS := \

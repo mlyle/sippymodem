@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include <modem.h>
+#include <fsk.h>
+#include <fsk_online_source.h>
+#include <v21.h>
 #include <v23_datapump.h>
 
 #include "test.h"
@@ -36,6 +39,63 @@ static void initialize_modem(struct modem *modem)
 	modem->sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 10;
 	modem->sregs[SREG_CARRIER_DETECT_RESPONSE_TIME] = 6;
 	modem->sregs[SREG_CARRIER_LOSS_DISCONNECT_TIME] = 7;
+}
+
+static int online_bits(struct modem *modem, int nbits, u8 *bits, int count)
+{
+	unsigned int *requests = modem->dev_data;
+
+	if (nbits != 1 || count != 1)
+		return 0;
+	++*requests;
+	*bits = 0;
+	return *requests == 1 ? 1 : 0;
+}
+
+static bool test_online_source_symbol_handoff(void)
+{
+	struct fsk_transmitter transmitter;
+	struct fsk_online_source source = { 0 };
+	struct modem modem;
+	unsigned int requests = 0;
+	unsigned int samples;
+	int16_t sample;
+	bool consumed;
+
+	initialize_modem(&modem);
+	modem.dev_data = &requests;
+	modem.get_bits = online_bits;
+	CHECK(fsk_transmitter_init(
+		      &transmitter, &v21_channel_1, 8192) == FSK_OK,
+	      "online FSK transmitter did not initialize");
+	CHECK(fsk_transmitter_sample(
+		      &transmitter, 1, &sample, &consumed) == FSK_OK &&
+		      !consumed, "training mark ended unexpectedly");
+	for (samples = 0; transmitter.holding_bit && samples < 32; ++samples) {
+		CHECK(fsk_online_source_sample(
+			      &source, &transmitter, &modem, &sample) == FSK_OK &&
+			      requests == 0,
+		      "host bit displaced a training mark");
+	}
+	CHECK(!transmitter.holding_bit,
+	      "training mark never completed");
+	CHECK(fsk_online_source_sample(
+		      &source, &transmitter, &modem, &sample) == FSK_OK &&
+		      requests == 1 && source.pending &&
+		      transmitter.held_bit == 0,
+	      "first host bit was not latched at the next symbol");
+	for (samples = 0; source.pending && samples < 32; ++samples) {
+		CHECK(fsk_online_source_sample(
+			      &source, &transmitter, &modem, &sample) == FSK_OK &&
+			      requests == 1,
+		      "online source fetched a host bit mid-symbol");
+	}
+	CHECK(!source.pending, "online source never completed the host symbol");
+	CHECK(fsk_online_source_sample(
+		      &source, &transmitter, &modem, &sample) == FSK_OK &&
+		      requests == 2 && transmitter.held_bit == 1,
+	      "empty host source did not fall back to mark");
+	return true;
 }
 
 static bool pair_init(struct v23_pair *pair)
@@ -184,6 +244,12 @@ static bool test_training_roles_and_carrier_loss(void)
 
 int main(void)
 {
+	fprintf(stderr, "[ RUN      ] online FSK symbol handoff\n");
+	if (!test_online_source_symbol_handoff()) {
+		fprintf(stderr, "[  FAILED  ] online FSK symbol handoff\n");
+		return 1;
+	}
+	fprintf(stderr, "[       OK ] online FSK symbol handoff\n");
 	fprintf(stderr, "[ RUN      ] V.23 training roles and carrier loss\n");
 	if (!test_training_roles_and_carrier_loss()) {
 		fprintf(stderr, "[  FAILED  ] V.23 training roles and carrier loss\n");

@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
+#include "fsk_online_source.h"
 #include "training_session.h"
 
 #include <limits.h>
@@ -81,8 +82,7 @@ struct v23_datapump {
 	uint32_t missing_carrier_samples;
 	uint8_t prelink_bits[V23_PRELINK_BIT_CAPACITY];
 	size_t prelink_count;
-	uint8_t transmit_bit;
-	bool transmit_bit_pending;
+	struct fsk_online_source online_source;
 	bool answerer;
 };
 
@@ -208,31 +208,6 @@ static enum fsk_result generate_fsk_sample(
 		&datapump->transmitter, bit, sample, &consumed);
 }
 
-static enum fsk_result generate_data_sample(
-	struct v23_datapump *datapump, int16_t *sample)
-{
-	bool consumed;
-
-	if (!datapump->transmit_bit_pending &&
-	    fsk_transmitter_can_accept_bit(
-		    &datapump->transmitter)) {
-		datapump->transmit_bit = 1;
-		if (modem_get_bits(
-			    datapump->dp.modem, 1, &datapump->transmit_bit, 1) != 1)
-			datapump->transmit_bit = 1;
-		datapump->transmit_bit &= 1u;
-		datapump->transmit_bit_pending = true;
-	}
-	if (fsk_transmitter_sample(
-		    &datapump->transmitter,
-		    datapump->transmit_bit_pending ? datapump->transmit_bit : 1,
-		    sample, &consumed) != FSK_OK)
-		return FSK_INVALID_ARGUMENT;
-	if (consumed)
-		datapump->transmit_bit_pending = false;
-	return FSK_OK;
-}
-
 static enum fsk_result generate_output_sample(
 	struct v23_datapump *datapump, int16_t *sample)
 {
@@ -266,7 +241,9 @@ static enum fsk_result generate_output_sample(
 	case V23_PHASE_PRESENTATION:
 		return generate_fsk_sample(datapump, 1, sample);
 	case V23_PHASE_ONLINE:
-		return generate_data_sample(datapump, sample);
+		return fsk_online_source_sample(
+			&datapump->online_source, &datapump->transmitter,
+			datapump->dp.modem, sample);
 	}
 	return FSK_INVALID_ARGUMENT;
 }

@@ -6,6 +6,7 @@
 #include "modem.h"
 #include "modem_param.h"
 #include "fsk.h"
+#include "fsk_online_source.h"
 #include "training_session.h"
 #include "v21.h"
 
@@ -101,8 +102,7 @@ struct fsk300_datapump {
 	uint32_t remote_mark_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t carrier_return_samples;
-	uint8_t transmit_bit;
-	bool transmit_bit_pending;
+	struct fsk_online_source online_source;
 	bool originator;
 };
 
@@ -242,33 +242,19 @@ static void generate_mark(
 	}
 }
 
-static void generate_data(
+static enum fsk_result generate_data(
 	struct fsk300_datapump *datapump,
 	int16_t *transmit,
 	int count)
 {
 	for (int index = 0; index < count; ++index) {
-		bool consumed;
-
-		if (!datapump->transmit_bit_pending &&
-		    fsk_transmitter_can_accept_bit(
-			    &datapump->transmitter)) {
-			datapump->transmit_bit = 1;
-			if (modem_get_bits(
-				    datapump->dp.modem, 1,
-				    &datapump->transmit_bit, 1) != 1)
-				datapump->transmit_bit = 1;
-			datapump->transmit_bit &= 1u;
-			datapump->transmit_bit_pending = true;
-		}
-		(void)fsk_transmitter_sample(
-			&datapump->transmitter,
-			datapump->transmit_bit_pending ?
-				datapump->transmit_bit : 1,
-			&transmit[index], &consumed);
-		if (consumed)
-			datapump->transmit_bit_pending = false;
+		if (fsk_online_source_sample(
+			    &datapump->online_source,
+			    &datapump->transmitter,
+			    datapump->dp.modem, &transmit[index]) != FSK_OK)
+			return FSK_INVALID_ARGUMENT;
 	}
+	return FSK_OK;
 }
 
 static int receive_samples(
@@ -382,7 +368,10 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	    datapump->originator) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 	} else if (datapump->training_state == FSK300_TRAINING_ONLINE) {
-		generate_data(datapump, transmit, count);
+		if (generate_data(datapump, transmit, count) != FSK_OK) {
+			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+			return DPSTAT_ERROR;
+		}
 	} else {
 		generate_mark(datapump, transmit, count);
 	}
