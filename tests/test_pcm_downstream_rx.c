@@ -779,10 +779,14 @@ static bool test_ed_boundary_request(void)
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_rx receiver;
 	struct source source;
+	struct pcm_downstream_rx buffered;
+	struct pcm_downstream_event event = { 0 };
+	struct v90_pcm_symbol symbol;
 	struct observer observer = { 0 };
 	uint8_t sequence[V90_MP_MAXIMUM_SEQUENCE_BYTES];
 	uint8_t zeros[FRAME_BITS] = { 0 };
 	size_t sequence_bits;
+	uint8_t ucode;
 
 	CHECK(make_mapping(&mapping, G711_LAW_PCMA, 0, 0) &&
 	      source_init(&source, &mapping) &&
@@ -799,6 +803,18 @@ static bool test_ed_boundary_request(void)
 		      &receiver, &observer) &&
 	      observer.event_count == 1 && receiver.mp_prime_boundary,
 	      "exact MP-prime boundary was not retained");
+	buffered = receiver;
+	CHECK(v90_pcm_mapping_ucode(
+		      &mapping, V90_PCM_MAPPING_TRANSMIT, 0u, 0u,
+		      &ucode) == V90_PCM_MAPPING_OK &&
+	      v90_pcm_symbol_make(&symbol, mapping.law, ucode, true) &&
+	      pcm_downstream_rx_receive(&buffered, symbol.octet, &event) ==
+		      PCM_DOWNSTREAM_RX_BUFFERING &&
+	      buffered.stream.pending_count == 1u &&
+	      !buffered.mp_prime_boundary &&
+	      pcm_downstream_rx_is_valid(&buffered),
+	      "a buffered symbol did not clear the MP-prime boundary");
+
 	CHECK(pcm_downstream_rx_expect_ed(&receiver) ==
 		      PCM_DOWNSTREAM_RX_OK &&
 	      receiver.stage == PCM_DOWNSTREAM_RX_ED_SEARCH &&

@@ -482,17 +482,23 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
 	if (receiver->stage == PCM_DOWNSTREAM_RX_COMPLETE)
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
+	/* A partial frame cannot advance control or stage. The stream call is
+	 * transactional; clear only the MP-prime boundary after it accepts the
+	 * symbol. Skip copying and revalidating the whole receiver. */
+	if (receiver->stream.pending_count + 1u < V90_CP_FRAME_INTERVALS) {
+		stream_result = v90_pcm_stream_rx_receive_octet(
+			&receiver->stream, network_octet, &frame);
+		if (stream_result != V90_PCM_STREAM_RX_BUFFERING)
+			return map_stream_failure(stream_result);
+		if (receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH)
+			receiver->mp_prime_boundary = false;
+		return PCM_DOWNSTREAM_RX_BUFFERING;
+	}
 	next = *receiver;
 	if (next.stage == PCM_DOWNSTREAM_RX_MP_SEARCH)
 		next.mp_prime_boundary = false;
 	stream_result = v90_pcm_stream_rx_receive_octet(
 		&next.stream, network_octet, &frame);
-	if (stream_result == V90_PCM_STREAM_RX_BUFFERING) {
-		if (!pcm_downstream_rx_is_valid(&next))
-			return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
-		*receiver = next;
-		return PCM_DOWNSTREAM_RX_BUFFERING;
-	}
 	if (stream_result != V90_PCM_STREAM_RX_FRAME_READY)
 		return map_stream_failure(stream_result);
 
