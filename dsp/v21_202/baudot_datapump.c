@@ -2,6 +2,7 @@
 
 #include "baudot_datapump.h"
 
+#include "datapump_media.h"
 #include "modem.h"
 #include "modem_param.h"
 #include "baudot.h"
@@ -254,12 +255,8 @@ static int process_baudot(
 	const int16_t *receive = receive_buffer;
 	int16_t *transmit = transmit_buffer;
 
-	if (datapump == NULL || receive == NULL || transmit == NULL ||
-	    count <= 0 || count > MODEM_FRAG) {
-		if (transmit != NULL && count > 0 && count <= MODEM_FRAG)
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
-	}
 	flush_terminal_receive(datapump);
 	queue_terminal_text(datapump);
 	if (process_audio(

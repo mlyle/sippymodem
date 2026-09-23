@@ -3,6 +3,7 @@
 #include "fsk300_datapump.h"
 
 #include "datapump_link.h"
+#include "datapump_media.h"
 #include "datapump_timing.h"
 #include "modem.h"
 #include "fsk.h"
@@ -346,12 +347,8 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	uint32_t carrier_loss_limit;
 	int received_count;
 
-	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
-	    count > MODEM_FRAG) {
-		if (transmit != NULL && count > 0 && count <= MODEM_FRAG)
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
-	}
 	if ((datapump->training_state == FSK300_TRAINING_WAIT_MARK ||
 	     datapump->training_state == FSK300_TRAINING_GUARD) &&
 	    datapump->originator) {

@@ -3,6 +3,7 @@
 #include "v22_datapump.h"
 
 #include "datapump_link.h"
+#include "datapump_media.h"
 #include "datapump_timing.h"
 #include "modem.h"
 #include "qam.h"
@@ -1628,12 +1629,8 @@ static int process_v22(
 	bool linked = false;
 	bool return_hold_was_active;
 
-	if (datapump == NULL || receive == NULL || transmit == NULL ||
-	    count <= 0 || count > MODEM_FRAG) {
-		if (transmit != NULL && count > 0 && count <= MODEM_FRAG)
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
-	}
 	line_power_present = datapump_qam_line_power_present(receive, count);
 	/* The generic QAM floor is deliberately permissive.  Do not let codec
 	 * idle residue establish V.22 timing or protocol lineage before carrier. */

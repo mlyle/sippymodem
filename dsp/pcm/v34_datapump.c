@@ -3,6 +3,7 @@
 #include "v34_datapump.h"
 
 #include "datapump_link.h"
+#include "datapump_media.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
@@ -504,12 +505,8 @@ static int process_v34(
 	bool carrier_present;
 	bool carrier_erased = false;
 
-	if (datapump == NULL || receive == NULL || transmit == NULL ||
-	    count <= 0 || count > MODEM_FRAG) {
-		if (transmit != NULL && count > 0 && count <= MODEM_FRAG)
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
-	}
 	if (training_session_has_failed(&datapump->training)) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;

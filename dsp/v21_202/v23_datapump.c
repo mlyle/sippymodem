@@ -3,6 +3,7 @@
 #include "v23_datapump.h"
 
 #include "datapump_link.h"
+#include "datapump_media.h"
 #include "datapump_timing.h"
 #include "modem.h"
 #include "fsk.h"
@@ -352,12 +353,8 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	uint32_t carrier_loss_limit;
 	uint32_t received_samples = 0;
 
-	if (datapump == NULL || receive == NULL || transmit == NULL || count <= 0 ||
-	    count > MODEM_FRAG) {
-		if (transmit != NULL && count > 0 && count <= MODEM_FRAG)
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
-	}
 	if (datapump->phase == V23_PHASE_ONLINE &&
 	    datapump->prelink_count != 0) {
 		if (modem_put_bits(
