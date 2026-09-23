@@ -424,8 +424,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 		}
 		line->raw[line->symbol_count] = (int32_t)line->polarity * sample;
 		line->wire[line->symbol_count] = wire_known ? line->polarity *
-			(receiver->decoder.mapping.law == G711_LAW_PCMU ?
-				g711_decode_pcmu(code) : g711_decode_pcma(code)) : 0;
+			g711_decode(receiver->decoder.mapping.law, code) : 0;
 		line->wire_known[line->symbol_count] = wire_known;
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;

@@ -26,17 +26,18 @@ bool v90_pcm_symbol_parse(
 	struct v90_pcm_symbol *symbol, enum g711_law law,
 	uint8_t octet)
 {
-	struct v90_pcm_symbol parsed = { 0 };
-	uint8_t ucode = law == G711_LAW_PCMA ?
-			(uint8_t)((octet ^ UINT8_C(0xd5)) & UINT8_C(0x7f)) :
-			(uint8_t)(~octet & UINT8_C(0x7f));
-	bool positive = (octet & UINT8_C(0x80)) != 0;
-
-	if (symbol == NULL ||
-	    !v90_pcm_symbol_make(&parsed, law, ucode, positive) ||
-	    parsed.octet != octet)
+	if (symbol == NULL || !g711_law_is_valid(law))
 		return false;
-	*symbol = parsed;
+	*symbol = (struct v90_pcm_symbol){
+		.ucode = law == G711_LAW_PCMA ?
+			(uint8_t)((octet ^ UINT8_C(0xd5)) & UINT8_C(0x7f)) :
+			(uint8_t)(~octet & UINT8_C(0x7f)),
+		.positive = (octet & UINT8_C(0x80)) != 0,
+		.octet = octet,
+		/* The linear path uses -1 to preserve PCMU's negative zero. */
+		.sample = law == G711_LAW_PCMU && octet == UINT8_C(0x7f) ?
+			-1 : g711_decode(law, octet),
+	};
 	return true;
 }
 
