@@ -2,29 +2,21 @@
 
 #include "v34_data_mode.h"
 
-#include <limits.h>
-#include <stddef.h>
 #include <string.h>
 
 bool v34_data_direction_parameters_are_valid(
 	const struct v34_data_direction_parameters *parameters)
 {
-	if (parameters == NULL ||
-	    parameters->primary_data_rate_2400_bps_units <
-		    V34_MP_MINIMUM_RATE_2400_BPS_UNITS ||
-	    parameters->primary_data_rate_2400_bps_units >
-		    V34_MP_MAXIMUM_RATE_2400_BPS_UNITS ||
-	    !v34_trellis_selection_is_valid(parameters->trellis_selection) ||
-	    !v34_nonlinear_parameter_is_valid(
-		    parameters->nonlinear_parameter))
-		return false;
-	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT; ++index) {
-		if (parameters->precoder_coefficients[index].real == INT16_MIN ||
-		    parameters->precoder_coefficients[index].imaginary ==
-			    INT16_MIN)
-			return false;
-	}
-	return true;
+	return parameters != NULL &&
+	       parameters->primary_data_rate_2400_bps_units >=
+		       V34_MP_MINIMUM_RATE_2400_BPS_UNITS &&
+	       parameters->primary_data_rate_2400_bps_units <=
+		       V34_MP_MAXIMUM_RATE_2400_BPS_UNITS &&
+	       v34_trellis_selection_is_valid(parameters->trellis_selection) &&
+	       v34_nonlinear_parameter_is_valid(
+		       parameters->nonlinear_parameter) &&
+	       v34_precoder_coefficients_are_valid(
+		       parameters->precoder_coefficients);
 }
 
 bool v34_data_mode_is_valid(const struct v34_data_mode *mode)

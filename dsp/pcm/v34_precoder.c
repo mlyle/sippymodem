@@ -12,26 +12,12 @@ static bool grid_step_is_valid(enum v34_precoder_grid_step step)
 	       step == V34_PRECODER_GRID_STEP_4;
 }
 
-static bool coefficient_is_valid(
-	const struct v34_q14_coefficient *coefficient)
-{
-	/* INT16_MIN represents -2 exactly and is outside the specified
-	 * half-open coefficient interval. */
-	return coefficient->real != INT16_MIN &&
-	       coefficient->imaginary != INT16_MIN;
-}
-
 bool v34_precoder_is_valid(
 	const struct v34_precoder *precoder)
 {
-	if (precoder == NULL || !grid_step_is_valid(precoder->grid_step))
-		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
-	     ++tap) {
-		if (!coefficient_is_valid(&precoder->coefficients[tap]))
-			return false;
-	}
-	return true;
+	return precoder != NULL &&
+	       grid_step_is_valid(precoder->grid_step) &&
+	       v34_precoder_coefficients_are_valid(precoder->coefficients);
 }
 
 enum v34_precoder_result v34_precoder_init(
@@ -44,14 +30,10 @@ enum v34_precoder_result v34_precoder_init(
 
 	if (precoder == NULL ||
 	    !v34_mapping_parameters_is_valid(parameters) ||
-	    coefficients == NULL)
+	    !v34_precoder_coefficients_are_valid(coefficients))
 		return V34_PRECODER_INVALID_ARGUMENT;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT;
-	     ++tap) {
-		if (!coefficient_is_valid(&coefficients[tap]))
-			return V34_PRECODER_INVALID_ARGUMENT;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
 		initialized.coefficients[tap] = coefficients[tap];
-	}
 	initialized.grid_step =
 		v34_precoder_grid_step_for_mapping(parameters);
 	*precoder = initialized;

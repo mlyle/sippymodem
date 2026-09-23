@@ -642,6 +642,9 @@ static bool test_validation(void)
 		      ZERO_COEFFICIENTS),
 	      "validation fixture did not initialize");
 	saved = precoder;
+	CHECK(v34_precoder_coefficients_are_valid(ZERO_COEFFICIENTS) &&
+	      !v34_precoder_coefficients_are_valid(NULL),
+	      "shared Q14 coefficient validation changed");
 	parameters.mapping_frame_bits++;
 	CHECK(v34_precoder_init(
 		      NULL, &parameters, ZERO_COEFFICIENTS) ==
@@ -658,14 +661,16 @@ static bool test_validation(void)
 	      "invalid initialization changed its destination");
 	parameters.mapping_frame_bits--;
 	invalid_coefficients[1].real = INT16_MIN;
-	CHECK(v34_precoder_init(
+	CHECK(!v34_precoder_coefficients_are_valid(invalid_coefficients) &&
+	      v34_precoder_init(
 		      &precoder, &parameters, invalid_coefficients) ==
 		      V34_PRECODER_INVALID_ARGUMENT &&
 	      precoders_are_equal(&precoder, &saved),
 	      "invalid real coefficient changed the precoder");
 	invalid_coefficients[1].real = 0;
 	invalid_coefficients[1].imaginary = INT16_MIN;
-	CHECK(v34_precoder_init(
+	CHECK(!v34_precoder_coefficients_are_valid(invalid_coefficients) &&
+	      v34_precoder_init(
 		      &precoder, &parameters, invalid_coefficients) ==
 		      V34_PRECODER_INVALID_ARGUMENT &&
 	      precoders_are_equal(&precoder, &saved),

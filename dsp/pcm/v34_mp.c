@@ -61,17 +61,10 @@ bool v34_mp_parameters_are_valid(
 bool v34_mp_type1_parameters_are_valid(
 	const struct v34_mp_type1_parameters *parameters)
 {
-	if (parameters == NULL ||
-	    !v34_mp_parameters_are_valid(&parameters->common))
-		return false;
-	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
-	     ++index) {
-		if (parameters->precoder_coefficients[index].real == INT16_MIN ||
-		    parameters->precoder_coefficients[index].imaginary ==
-			    INT16_MIN)
-			return false;
-	}
-	return true;
+	return parameters != NULL &&
+	       v34_mp_parameters_are_valid(&parameters->common) &&
+	       v34_precoder_coefficients_are_valid(
+		       parameters->precoder_coefficients);
 }
 
 bool v34_mp_record_is_valid(const struct v34_mp_record *record)

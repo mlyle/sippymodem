@@ -7,6 +7,7 @@
 #include "v34_mapping_parameters.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -27,6 +28,20 @@ struct v34_q14_coefficient {
 	int16_t real;
 	int16_t imaginary;
 };
+
+/* -2 is outside the specified half-open Q14 coefficient interval. */
+static inline bool v34_precoder_coefficients_are_valid(
+	const struct v34_q14_coefficient
+		coefficients[V34_PRECODER_TAP_COUNT])
+{
+	if (coefficients == NULL)
+		return false;
+	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
+		if (coefficients[tap].real == INT16_MIN ||
+		    coefficients[tap].imaginary == INT16_MIN)
+			return false;
+	return true;
+}
 
 enum v34_precoder_grid_step {
 	V34_PRECODER_GRID_STEP_2 = 2,

@@ -48,16 +48,10 @@ bool v90_mp_parameters_are_valid(
 bool v90_mp_type1_parameters_are_valid(
 	const struct v90_mp_type1_parameters *parameters)
 {
-	if (parameters == NULL ||
-	    !v90_mp_parameters_are_valid(&parameters->common))
-		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
-		if (parameters->precoder_coefficients[tap].real == INT16_MIN ||
-		    parameters->precoder_coefficients[tap].imaginary ==
-			    INT16_MIN)
-			return false;
-	}
-	return true;
+	return parameters != NULL &&
+	       v90_mp_parameters_are_valid(&parameters->common) &&
+	       v34_precoder_coefficients_are_valid(
+		       parameters->precoder_coefficients);
 }
 
 bool v90_mp_record_is_valid(const struct v90_mp_record *record)

@@ -31,12 +31,9 @@ static bool coefficients_are_zero(
 bool v34_precoder_recommendation_is_valid(
 	const struct v34_precoder_recommendation *recommendation)
 {
-	if (recommendation == NULL)
+	if (recommendation == NULL ||
+	    !v34_precoder_coefficients_are_valid(recommendation->coefficients))
 		return false;
-	for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap)
-		if (recommendation->coefficients[tap].real == INT16_MIN ||
-		    recommendation->coefficients[tap].imaginary == INT16_MIN)
-			return false;
 	return recommendation->enabled ?
 		       !coefficients_are_zero(recommendation->coefficients) :
 		       coefficients_are_zero(recommendation->coefficients);
