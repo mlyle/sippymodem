@@ -486,18 +486,6 @@ static bool fragment_has_carrier(const int16_t *samples, int count)
 	return true;
 }
 
-static void note_missing_carrier(
-	struct v34_datapump *datapump, int count)
-{
-	if ((uint32_t)(unsigned int)count >=
-		   V34_CARRIER_LOSS_SAMPLES -
-			   datapump->missing_carrier_samples) {
-		datapump->missing_carrier_samples = V34_CARRIER_LOSS_SAMPLES;
-	} else {
-		datapump->missing_carrier_samples += (uint32_t)(unsigned int)count;
-	}
-}
-
 static bool set_data_erasure(
 	struct v34_datapump *datapump, bool erasure)
 {
@@ -553,7 +541,10 @@ static int process_v34(
 			datapump->call.state.phase4.receive.data_erasure;
 		if (!carrier_present) {
 			datapump->carrier_recovery_samples = 0;
-			note_missing_carrier(datapump, count);
+			datapump_add_samples_bounded(
+				&datapump->missing_carrier_samples,
+				(uint32_t)(unsigned int)count,
+				V34_CARRIER_LOSS_SAMPLES);
 			carrier_erased = true;
 		} else if (datapump->missing_carrier_samples != 0u) {
 			datapump->missing_carrier_samples = 0;
@@ -676,7 +667,10 @@ static int process_v34(
 		datapump->missing_carrier_samples = 0;
 	} else if (training_session_is_retraining(&datapump->training) &&
 		   !datapump->retrain_carrier_acquired) {
-		note_missing_carrier(datapump, count);
+		datapump_add_samples_bounded(
+			&datapump->missing_carrier_samples,
+			(uint32_t)(unsigned int)count,
+			V34_CARRIER_LOSS_SAMPLES);
 	}
 	if (datapump->pcm_restart != NULL &&
 	    datapump->call.stage == V34_CALL_RETRAIN_SILENCE) {
