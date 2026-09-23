@@ -119,7 +119,6 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 	struct v34_timing_filter *filter,
 	struct v34_analytic_sample input, int16_t *timing_error)
 {
-	struct v34_timing_filter next;
 	uint32_t b_real = 0;
 	uint32_t b_imag = 0;
 	uint32_t positive_a_real = 0;
@@ -140,17 +139,16 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 			filter, sizeof(*filter), timing_error,
 			sizeof(*timing_error)))
 		return V34_TIMING_FILTER_INVALID_ARGUMENT;
-	next = *filter;
 	input_real = scale_input(input.in_phase);
 	input_imag = scale_input(input.quadrature);
-	next.previous = next.current;
-	next.current = input;
+	filter->previous = filter->current;
+	filter->current = input;
 	for (size_t tap = 0; tap < V34_TIMING_FILTER_COMPLEX_TAPS; ++tap) {
-		int16_t old_real = next.positive_b_real[tap];
-		int16_t old_imag = next.positive_b_imag[tap];
+		int16_t old_real = filter->positive_b_real[tap];
+		int16_t old_imag = filter->positive_b_imag[tap];
 
-		next.positive_b_real[tap] = input_real;
-		next.positive_b_imag[tap] = input_imag;
+		filter->positive_b_real[tap] = input_real;
+		filter->positive_b_imag[tap] = input_imag;
 		accumulate_complex(
 			input_real, input_imag, B_REAL[tap], 0,
 			&b_real, &b_imag);
@@ -158,11 +156,11 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 		input_imag = old_imag;
 	}
 	shift_recursive_filter(
-		next.positive_a_real, next.positive_a_imag,
+		filter->positive_a_real, filter->positive_a_imag,
 		A_REAL, POSITIVE_A_IMAG,
 		&positive_a_real, &positive_a_imag);
 	shift_recursive_filter(
-		next.negative_a_real, next.negative_a_imag,
+		filter->negative_a_real, filter->negative_a_imag,
 		A_REAL, NEGATIVE_A_IMAG,
 		&negative_a_real, &negative_a_imag);
 	filtered_positive_real = rounded_shift(
@@ -173,19 +171,18 @@ enum v34_timing_filter_result v34_timing_filter_observe(
 		b_real - negative_a_real, UINT32_C(0x2000), 14);
 	filtered_negative_imag = rounded_shift(
 		b_imag - negative_a_imag, UINT32_C(0x2000), 14);
-	next.positive_a_real[0] = wrap_s16_from_s32(filtered_positive_real);
-	next.positive_a_imag[0] = wrap_s16_from_s32(filtered_positive_imag);
-	next.negative_a_real[0] = wrap_s16_from_s32(filtered_negative_real);
-	next.negative_a_imag[0] = wrap_s16_from_s32(filtered_negative_imag);
+	filter->positive_a_real[0] = wrap_s16_from_s32(filtered_positive_real);
+	filter->positive_a_imag[0] = wrap_s16_from_s32(filtered_positive_imag);
+	filter->negative_a_real[0] = wrap_s16_from_s32(filtered_negative_real);
+	filter->negative_a_imag[0] = wrap_s16_from_s32(filtered_negative_imag);
 	generated = round_shift_s32_word_to_s16(
 		multiply_low_s32(filtered_positive_imag, filtered_negative_real) -
 			multiply_low_s32(filtered_positive_real,
 				     filtered_negative_imag),
 		14);
 	generated = round_shift_s32_word_to_s16(fir_shift_s16(
-		next.error_history, ERROR_HIGH_PASS,
+		filter->error_history, ERROR_HIGH_PASS,
 		V34_TIMING_FILTER_FIR_TAPS, generated), 15);
-	*filter = next;
 	*timing_error = generated;
 	return V34_TIMING_FILTER_OK;
 }
@@ -194,7 +191,6 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 	struct v34_timing_filter *filter,
 	struct v34_analytic_sample *output)
 {
-	struct v34_timing_filter next;
 	uint32_t real = 0;
 	uint32_t imag = 0;
 	struct v34_analytic_sample generated;
@@ -204,14 +200,13 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 	if (output == NULL || memory_regions_overlap(
 			filter, sizeof(*filter), output, sizeof(*output)))
 		return V34_TIMING_FILTER_INVALID_ARGUMENT;
-	next = *filter;
-	memmove(next.prefilter_history + 2, next.prefilter_history,
-		sizeof(next.prefilter_history) -
-		2 * sizeof(next.prefilter_history[0]));
-	next.prefilter_history[0] = pack_sample(next.current);
-	next.prefilter_history[1] = pack_sample(next.previous);
+	memmove(filter->prefilter_history + 2, filter->prefilter_history,
+		sizeof(filter->prefilter_history) -
+		2 * sizeof(filter->prefilter_history[0]));
+	filter->prefilter_history[0] = pack_sample(filter->current);
+	filter->prefilter_history[1] = pack_sample(filter->previous);
 	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS; ++tap) {
-		uint32_t sample = next.prefilter_history[tap];
+		uint32_t sample = filter->prefilter_history[tap];
 
 		real += multiply_low_s32(high_s16_word(sample), PREFILTER[tap]);
 		imag += multiply_low_s32(low_s16(sample), PREFILTER[tap]);
@@ -220,7 +215,6 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 		.in_phase = round_shift_s32_word_to_s16(imag, 14),
 		.quadrature = round_shift_s32_word_to_s16(real, 14),
 	};
-	*filter = next;
 	*output = generated;
 	return V34_TIMING_FILTER_OK;
 }

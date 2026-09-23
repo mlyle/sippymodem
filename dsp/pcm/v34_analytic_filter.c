@@ -52,7 +52,6 @@ enum v34_analytic_filter_result v34_analytic_filter_process(
 	struct v34_analytic_filter *filter, int16_t sample,
 	struct v34_analytic_sample *output)
 {
-	struct v34_analytic_filter next;
 	struct v34_analytic_sample generated;
 	uint32_t in_phase = 0;
 	uint32_t quadrature = 0;
@@ -62,32 +61,30 @@ enum v34_analytic_filter_result v34_analytic_filter_process(
 	if (output == NULL || memory_regions_overlap(
 			filter, sizeof(*filter), output, sizeof(*output)))
 		return V34_ANALYTIC_FILTER_INVALID_ARGUMENT;
-	next = *filter;
-	next.history[0] = sample;
+	filter->history[0] = sample;
 	/* Pair symmetric real taps and antisymmetric quadrature taps. */
 	for (size_t pair = 0; pair < 15u; ++pair) {
 		int32_t even_sum =
-			(int32_t)next.history[2u * pair] +
-			next.history[60u - 2u * pair];
+			(int32_t)filter->history[2u * pair] +
+			filter->history[60u - 2u * pair];
 		int32_t odd_difference =
-			(int32_t)next.history[2u * pair + 1u] -
-			next.history[59u - 2u * pair];
+			(int32_t)filter->history[2u * pair + 1u] -
+			filter->history[59u - 2u * pair];
 
 		in_phase += (uint32_t)(even_sum * REAL_HALF_PROFILE[pair]);
 		quadrature += (uint32_t)(
 			odd_difference * QUADRATURE_HALF_PROFILE[pair]);
 	}
 	in_phase += (uint32_t)(
-		(int32_t)next.history[30] * REAL_HALF_PROFILE[15]);
-	memmove(&next.history[2], &next.history[1],
-		(V34_ANALYTIC_FILTER_TAPS - 2u) * sizeof(next.history[0]));
-	next.history[1] = sample;
-	next.history[0] = 0;
+		(int32_t)filter->history[30] * REAL_HALF_PROFILE[15]);
+	memmove(&filter->history[2], &filter->history[1],
+		(V34_ANALYTIC_FILTER_TAPS - 2u) * sizeof(filter->history[0]));
+	filter->history[1] = sample;
+	filter->history[0] = 0;
 	generated = (struct v34_analytic_sample){
 		.in_phase = round_shift_s32_word_to_s16(in_phase, 14),
 		.quadrature = round_shift_s32_word_to_s16(quadrature, 14),
 	};
-	*filter = next;
 	*output = generated;
 	return V34_ANALYTIC_FILTER_OK;
 }
