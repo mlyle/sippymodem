@@ -916,6 +916,11 @@ static bool test_contracts(
 	CHECK(v32_rate_path_handoff(&path, &handoff) == V32_RATE_PATH_OK &&
 	      v32_rate_path_handoff_is_valid(&handoff),
 	      "complete rate handoff was not valid");
+	handoff.observation.i ^= 1;
+	CHECK(!v32_rate_path_handoff_is_valid(&handoff),
+	      "rate handoff accepted an altered observation");
+	CHECK(v32_rate_path_handoff(&path, &handoff) == V32_RATE_PATH_OK,
+	      "complete rate handoff did not regenerate");
 	handoff.observation_ready = !handoff.observation_ready;
 	CHECK(!v32_rate_path_handoff_is_valid(&handoff),
 	      "rate handoff accepted mismatched readiness");
@@ -1029,6 +1034,11 @@ static bool test_contracts(
 		      V32_END_PATH_OK &&
 	      v32_end_path_handoff_is_valid(&end_handoff),
 	      "complete end handoff was not valid");
+	end_handoff.observation.i ^= 1;
+	CHECK(!v32_end_path_handoff_is_valid(&end_handoff),
+	      "end handoff accepted an altered observation");
+	CHECK(v32_end_path_handoff(&end, &end_handoff) == V32_END_PATH_OK,
+	      "complete end handoff did not regenerate");
 	end_handoff.selected_offer.rates ^= V32_RATE_CAPABILITY_4800;
 	CHECK(!v32_end_path_handoff_is_valid(&end_handoff),
 	      "end handoff accepted an invalid selected rate");

@@ -143,33 +143,21 @@ enum v32_rate_path_result v32_rate_path_sample(
 bool v32_rate_path_handoff_is_valid(
 	const struct v32_rate_path_handoff *handoff)
 {
-	bool pending;
 	struct v32_rate_offer decoded;
 
-	if (handoff == NULL ||
-	    !v32_receive_path_is_valid(&handoff->receive) ||
-	    !v32_uncoded_receiver_is_valid(&handoff->four_point) ||
-	    !v32_rate_signal_detector_is_valid(&handoff->detector) ||
-	    !v32_rate_signal_detector_offer(&handoff->detector, &decoded) ||
-	    !v32_rate_offers_match(&handoff->offer, &decoded) ||
-	    handoff->receive.equalizer.adaptation !=
-		    V32_EQUALIZER_ADAPTATION_FINE ||
-	    !v32_receive_path_epoch_matches(
-		    &handoff->receive, handoff->observation_epoch))
-		return false;
-	pending = handoff->receive.equalizer.decision_pending;
-	if (handoff->observation_ready != pending)
-		return false;
-	if (!pending) {
-		static const struct v32_equalizer_observation zero;
-
-		return memcmp(
-			       &handoff->observation, &zero, sizeof(zero)) == 0;
-	}
-	return memcmp(
-		       &handoff->observation,
-		       &handoff->receive.equalizer.pending_observation,
-		       sizeof(handoff->observation)) == 0;
+	return handoff != NULL &&
+	       v32_receive_path_is_valid(&handoff->receive) &&
+	       v32_uncoded_receiver_is_valid(&handoff->four_point) &&
+	       v32_rate_signal_detector_is_valid(&handoff->detector) &&
+	       v32_rate_signal_detector_offer(&handoff->detector, &decoded) &&
+	       v32_rate_offers_match(&handoff->offer, &decoded) &&
+	       handoff->receive.equalizer.adaptation ==
+		       V32_EQUALIZER_ADAPTATION_FINE &&
+	       v32_receive_path_epoch_matches(
+		       &handoff->receive, handoff->observation_epoch) &&
+	       v32_receive_path_handoff_observation_matches(
+		       &handoff->receive, handoff->observation_ready,
+		       &handoff->observation);
 }
 
 enum v32_rate_path_result v32_rate_path_handoff(

@@ -51,6 +51,19 @@ static inline bool v32_receive_path_epoch_matches(
 		       path->equalizer.pending_observation.epoch;
 }
 
+/* A handoff carries the pending decision or an empty observation. */
+static inline bool v32_receive_path_handoff_observation_matches(
+	const struct v32_receive_path *path, bool observation_ready,
+	const struct v32_equalizer_observation *observation)
+{
+	if (observation_ready != path->equalizer.decision_pending)
+		return false;
+	return observation_ready ?
+		v32_equalizer_observations_are_equal(
+			observation, &path->equalizer.pending_observation) :
+		v32_equalizer_observation_is_zero(observation);
+}
+
 enum v32_receive_path_result v32_receive_path_init(
 	struct v32_receive_path *path,
 	uint16_t near_delay_symbols, uint16_t round_trip_symbols);

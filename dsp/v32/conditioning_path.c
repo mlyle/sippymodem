@@ -173,20 +173,12 @@ enum v32_conditioning_path_result v32_conditioning_path_sample(
 bool v32_conditioning_path_handoff_is_valid(
 	const struct v32_conditioning_path_handoff *handoff)
 {
-	bool pending;
-
-	if (handoff == NULL ||
-	    !v32_receive_path_is_valid(&handoff->receive) ||
-	    !decoder_is_valid(&handoff->decoder))
-		return false;
-	pending = handoff->receive.equalizer.decision_pending;
-	if (handoff->observation_ready != pending)
-		return false;
-	if (!pending)
-		return v32_equalizer_observation_is_zero(&handoff->observation);
-	return v32_equalizer_observations_are_equal(
-		&handoff->observation,
-		&handoff->receive.equalizer.pending_observation);
+	return handoff != NULL &&
+	       v32_receive_path_is_valid(&handoff->receive) &&
+	       decoder_is_valid(&handoff->decoder) &&
+	       v32_receive_path_handoff_observation_matches(
+		       &handoff->receive, handoff->observation_ready,
+		       &handoff->observation);
 }
 
 enum v32_conditioning_path_result v32_conditioning_path_handoff(
