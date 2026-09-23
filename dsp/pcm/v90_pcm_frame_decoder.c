@@ -50,12 +50,15 @@ static bool decode_labels(
 	const uint8_t *ucodes,
 	uint8_t labels[V90_CP_FRAME_INTERVALS])
 {
+	const struct pcm_constellation *constellations =
+		decoder->decision_plane == V90_PCM_MAPPING_CODEC ?
+			decoder->mapping.codec : decoder->mapping.transmit;
+
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (v90_pcm_mapping_label(
-			    &decoder->mapping, decoder->decision_plane,
-			    interval, ucodes[interval], &labels[interval]) !=
-		    V90_PCM_MAPPING_OK)
+		if (!pcm_constellation_descending_rank(
+			    &constellations[interval], ucodes[interval],
+			    &labels[interval]))
 			return false;
 	}
 	return true;

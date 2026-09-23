@@ -350,7 +350,9 @@ static bool test_contracts(void)
 	ucodes[1] = 0;
 	CHECK(v90_pcm_frame_decoder_decode(
 		      &decoder, ucodes, signs, ARRAY_LENGTH(signs),
-		      &output) == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS,
+		      &output) == V90_PCM_FRAME_DECODER_INVALID_SYMBOLS &&
+	      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "absent Ucode was accepted");
 	CHECK(labels_to_ucodes(
 		      &mapping, V90_PCM_MAPPING_CODEC, labels, ucodes),
