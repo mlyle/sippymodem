@@ -350,13 +350,17 @@ static bool advance_trellis(
 		       V34_TRELLIS_OK;
 }
 
+static int16_t scale_gain_product(int32_t gain_level, int32_t v)
+{
+	return clamp_s16(round_shift_s64_to_s32_saturating(
+		(int64_t)v * gain_level, V92_PCM_GAIN_SHIFT));
+}
+
 static int16_t scale_sample(
 	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t v)
 {
-	return clamp_s16(round_shift_s64_to_s32_saturating(
-		(int64_t)v * four_times_gain_q0_16 *
-			upstream_level, V92_PCM_GAIN_SHIFT));
+	return scale_gain_product((int32_t)four_times_gain_q0_16 * upstream_level, v);
 }
 
 static uint64_t level_error(
@@ -866,12 +870,10 @@ static int16_t predicted_observation(
  * quality reporting. The caller has already validated the mapping and LU. */
 static uint64_t input_cell_metric(
 	const struct v92_pcm_frame_rx *receiver, int32_t v,
-	const struct g711_interval *cell)
+	const struct g711_interval *cell, int32_t minimum_gain, int32_t maximum_gain)
 {
-	int a = scale_sample(receiver->mapping.cpd.four_times_gain_q0_16,
-		receiver->minimum_level, v);
-	int b = scale_sample(receiver->mapping.cpd.four_times_gain_q0_16,
-		receiver->maximum_level, v);
+	int a = scale_gain_product(minimum_gain, v);
+	int b = scale_gain_product(maximum_gain, v);
 	int low = a < b ? a : b, high = a > b ? a : b;
 	int64_t error = low > cell->upper ? low - cell->upper :
 		high < cell->lower ? high - cell->lower : 0;
@@ -1028,6 +1030,12 @@ static enum v92_pcm_frame_result decode_frame(
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != receiver->mapping.data_bits_per_frame)
 		return V92_PCM_FRAME_OUT_OF_RANGE;
+	/* LU bounds are fixed for this frame. Factor them out of the per-point
+	 * cell score while retaining the exact fixed-point rounding. */
+	int32_t minimum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
+		receiver->minimum_level;
+	int32_t maximum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
+		receiver->maximum_level;
 	path_count = receiver->path_count;
 	struct v92_observation_cache cache;
 	if (model)
@@ -1222,7 +1230,8 @@ static enum v92_pcm_frame_result decode_frame(
 							precoder_output(precoder, u)) : 0;
 
 					if (input_metric) {
-						cost = input_cell_metric(receiver, v, &cell);
+						cost = input_cell_metric(receiver, v, &cell,
+							minimum_gain, maximum_gain);
 					} else {
 						int64_t error = (int64_t)samples[symbol] -
 							predicted_observation(receiver, u, v, samples[symbol], b1u);
