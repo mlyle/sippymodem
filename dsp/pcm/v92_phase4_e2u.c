@@ -420,7 +420,7 @@ enum v90_downstream_data_stream_result v92_downstream_transmit_owned(
 		    !start_digital_downstream_data(downstream, stage, cpu))
 			return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 	}
-	data_result = v90_downstream_data_stream_next(
+	data_result = v90_downstream_data_stream_next_owned(
 		&downstream->data, source, context, &symbol);
 	if (data_result != V90_DOWNSTREAM_DATA_STREAM_OK)
 		return data_result;

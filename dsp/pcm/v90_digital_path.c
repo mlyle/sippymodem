@@ -418,7 +418,7 @@ static enum v90_digital_path_result emit_downstream(
 				effective_context = NULL;
 			}
 			if (data_result == V90_DOWNSTREAM_DATA_STREAM_OK)
-				data_result = v90_downstream_data_stream_next(
+				data_result = v90_downstream_data_stream_next_owned(
 					&data, effective_source,
 					effective_context, &pcm);
 			if (data_result != V90_DOWNSTREAM_DATA_STREAM_OK)
@@ -550,7 +550,7 @@ static enum v90_digital_path_result emit_downstream(
 		void *effective_context =
 			path->rate_renegotiation_active ? NULL : source_context;
 		enum v90_downstream_data_stream_result result =
-			v90_downstream_data_stream_next(
+			v90_downstream_data_stream_next_owned(
 				&path->downstream.data, effective_source,
 				effective_context, &pcm);
 

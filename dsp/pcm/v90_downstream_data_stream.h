@@ -68,6 +68,14 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	v90_downstream_frame_source source, void *source_context,
 	struct v90_pcm_symbol *symbol);
 
+/* Call-owner path: a valid stream was established at the epoch boundary.
+ * Keep frame-source and coding failures transactional without rescanning the
+ * complete mapping and queue for each network character. */
+enum v90_downstream_data_stream_result v90_downstream_data_stream_next_owned(
+	struct v90_downstream_data_stream *stream,
+	v90_downstream_frame_source source, void *source_context,
+	struct v90_pcm_symbol *symbol);
+
 const char *v90_downstream_data_stream_result_name(
 	enum v90_downstream_data_stream_result result);
 

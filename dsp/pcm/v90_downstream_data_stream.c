@@ -213,17 +213,18 @@ static struct v90_pcm_symbol pop_symbol(
 	return symbol;
 }
 
-enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
+static enum v90_downstream_data_stream_result next_symbol(
 	struct v90_downstream_data_stream *stream,
 	v90_downstream_frame_source source, void *source_context,
-	struct v90_pcm_symbol *symbol)
+	struct v90_pcm_symbol *symbol, bool owned)
 {
 	struct v90_downstream_data_stream next;
 	struct v90_pcm_symbol generated;
 	enum v90_downstream_data_stream_result result =
 		V90_DOWNSTREAM_DATA_STREAM_OK;
 
-	if (!v90_downstream_data_stream_is_valid(stream) || symbol == NULL)
+	if (stream == NULL || symbol == NULL ||
+	    (!owned && !v90_downstream_data_stream_is_valid(stream)))
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT;
 	if (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	    stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA)
@@ -247,11 +248,27 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
 	if (next.queue_count == 0)
 		return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 	generated = pop_symbol(&next);
-	if (!v90_downstream_data_stream_is_valid(&next))
+	if (!owned && !v90_downstream_data_stream_is_valid(&next))
 		return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 	*stream = next;
 	*symbol = generated;
 	return V90_DOWNSTREAM_DATA_STREAM_OK;
+}
+
+enum v90_downstream_data_stream_result v90_downstream_data_stream_next(
+	struct v90_downstream_data_stream *stream,
+	v90_downstream_frame_source source, void *source_context,
+	struct v90_pcm_symbol *symbol)
+{
+	return next_symbol(stream, source, source_context, symbol, false);
+}
+
+enum v90_downstream_data_stream_result v90_downstream_data_stream_next_owned(
+	struct v90_downstream_data_stream *stream,
+	v90_downstream_frame_source source, void *source_context,
+	struct v90_pcm_symbol *symbol)
+{
+	return next_symbol(stream, source, source_context, symbol, true);
 }
 
 enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(

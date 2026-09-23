@@ -222,8 +222,12 @@ static bool verify_data_stream(
 	const struct v90_pcm_mapping *data_mapping)
 {
 	struct v90_downstream_data_stream transmit;
+	struct v90_downstream_data_stream owned;
 	struct v90_downstream_data_rx receive;
 	struct data_source source = {
+		.bit_count = data_mapping->frame_bits,
+	};
+	struct data_source owned_source = {
 		.bit_count = data_mapping->frame_bits,
 	};
 	size_t b1d_frames = 0;
@@ -233,6 +237,9 @@ static bool verify_data_stream(
 	CHECK(v90_downstream_data_stream_start_after_ed(
 		      &transmit, completed_transmit, data_mapping) ==
 		      V90_DOWNSTREAM_DATA_STREAM_OK &&
+	      v90_downstream_data_stream_start_after_ed(
+		      &owned, completed_transmit, data_mapping) ==
+		      V90_DOWNSTREAM_DATA_STREAM_OK &&
 	      v90_downstream_data_rx_start_after_ed(
 		      &receive, completed_receive, data_mapping) ==
 		      V90_DOWNSTREAM_DATA_RX_OK &&
@@ -240,6 +247,7 @@ static bool verify_data_stream(
 	      "post-Ed character stream did not start at B1d");
 	while (data_frames < DATA_FRAMES && symbols < MAXIMUM_DATA_SYMBOLS) {
 		struct v90_pcm_symbol symbol;
+		struct v90_pcm_symbol owned_symbol;
 		struct v90_pcm_stream_frame frame;
 		size_t source_count = source.frame_count;
 		enum v90_downstream_data_rx_result result;
@@ -249,6 +257,19 @@ static bool verify_data_stream(
 			      V90_DOWNSTREAM_DATA_STREAM_OK &&
 		      v90_pcm_symbol_is_valid(&symbol, data_mapping->law),
 		      "data stream stopped at network symbol %zu", symbols);
+		CHECK(v90_downstream_data_stream_next_owned(
+			      &owned, source_data_frame, &owned_source, &owned_symbol) ==
+		      V90_DOWNSTREAM_DATA_STREAM_OK,
+		      "owned stream stopped at network symbol %zu", symbols);
+		CHECK(owned_symbol.ucode == symbol.ucode &&
+		      owned_symbol.positive == symbol.positive &&
+		      owned_symbol.octet == symbol.octet &&
+		      owned_symbol.sample == symbol.sample,
+		      "owned stream emitted different symbol %zu", symbols);
+		CHECK(owned_source.frame_count == source.frame_count,
+		      "owned stream acquired different frame %zu", symbols);
+		CHECK(memcmp(&owned, &transmit, sizeof(owned)) == 0,
+		      "owned stream state diverged at network symbol %zu", symbols);
 		CHECK(source.frame_count - source_count <= 1,
 		      "one network symbol acquired multiple data frames");
 		symbols++;
@@ -302,6 +323,7 @@ static bool verify_data_stream(
 	}
 	{
 		struct v90_downstream_data_stream saved = transmit;
+		struct v90_downstream_data_stream owned_saved = saved;
 		struct v90_pcm_symbol output;
 		struct v90_pcm_symbol untouched;
 
@@ -319,6 +341,18 @@ static bool verify_data_stream(
 		      memcmp(&transmit, &saved, sizeof(transmit)) == 0 &&
 		      memcmp(&output, &untouched, sizeof(output)) == 0,
 		      "rejected frame source changed stream state or output");
+		CHECK(v90_downstream_data_stream_next_owned(
+			      &owned_saved, reject_data_frame, NULL, &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE &&
+		      memcmp(&owned_saved, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&output, &untouched, sizeof(output)) == 0 &&
+		      v90_downstream_data_stream_next_owned(
+			      &owned_saved, leave_data_frame_invalid, NULL,
+			      &output) ==
+			      V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE &&
+		      memcmp(&owned_saved, &saved, sizeof(saved)) == 0 &&
+		      memcmp(&output, &untouched, sizeof(output)) == 0,
+		      "rejected frame source changed owned stream state or output");
 		CHECK(v90_downstream_data_stream_next(
 			      &transmit, NULL, NULL, &output) ==
 			      V90_DOWNSTREAM_DATA_STREAM_OK &&
