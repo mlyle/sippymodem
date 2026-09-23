@@ -532,15 +532,16 @@ static enum v90_analog_path_result fail_path(
 	return result;
 }
 
-enum v90_analog_path_result v90_analog_path_transmit(
+static enum v90_analog_path_result transmit_clock(
 	struct v90_analog_path *path,
 	v34_mapping_frame_source source, void *source_context,
-	uint8_t *transmit_octet)
+	uint8_t *transmit_octet, bool owned)
 {
 	int16_t sample;
 	enum v90_analog_path_result result;
 
-	if (!v90_analog_path_is_valid(path) || transmit_octet == NULL ||
+	if (path == NULL || transmit_octet == NULL ||
+	    (!owned && !v90_analog_path_is_valid(path)) ||
 	    output_overlaps_path(path, transmit_octet, sizeof(*transmit_octet)))
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	if (path->failed)
@@ -557,10 +558,26 @@ enum v90_analog_path_result v90_analog_path_transmit(
 	if (result != V90_ANALOG_PATH_OK)
 		return fail_path(path, result);
 	path->receive_pending = true;
-	if (!v90_analog_path_is_valid(path))
+	if (!owned && !v90_analog_path_is_valid(path))
 		return fail_path(path, V90_ANALOG_PATH_INTERNAL_ERROR);
 	*transmit_octet = g711_encode(path->law, sample);
 	return V90_ANALOG_PATH_OK;
+}
+
+enum v90_analog_path_result v90_analog_path_transmit(
+	struct v90_analog_path *path,
+	v34_mapping_frame_source source, void *source_context,
+	uint8_t *transmit_octet)
+{
+	return transmit_clock(path, source, source_context, transmit_octet, false);
+}
+
+enum v90_analog_path_result v90_analog_path_transmit_owned(
+	struct v90_analog_path *path,
+	v34_mapping_frame_source source, void *source_context,
+	uint8_t *transmit_octet)
+{
+	return transmit_clock(path, source, source_context, transmit_octet, true);
 }
 
 static enum v90_analog_path_result accept_mp(
@@ -854,15 +871,16 @@ static enum v90_analog_path_result arm_ed(struct v90_analog_path *path)
 	return V90_ANALOG_PATH_OK;
 }
 
-enum v90_analog_path_result v90_analog_path_receive(
+static enum v90_analog_path_result receive_clock(
 	struct v90_analog_path *path, uint8_t received_octet,
-	struct v90_pcm_stream_frame *received)
+	struct v90_pcm_stream_frame *received, bool owned)
 {
 	struct v90_pcm_stream_frame frame;
 	bool frame_ready = false;
 	enum v90_analog_path_result result;
 
-	if (!v90_analog_path_is_valid(path) || received == NULL ||
+	if (path == NULL || received == NULL ||
+	    (!owned && !v90_analog_path_is_valid(path)) ||
 	    output_overlaps_path(path, received, sizeof(*received)))
 		return V90_ANALOG_PATH_INVALID_ARGUMENT;
 	if (path->failed)
@@ -892,11 +910,25 @@ enum v90_analog_path_result v90_analog_path_receive(
 	    result != V90_ANALOG_PATH_CLEARDOWN_COMPLETE &&
 	    result != V90_ANALOG_PATH_RATE_RENEGOTIATION)
 		return fail_path(path, result);
-	if (!v90_analog_path_is_valid(path))
+	if (!owned && !v90_analog_path_is_valid(path))
 		return fail_path(path, V90_ANALOG_PATH_INTERNAL_ERROR);
 	if (frame_ready)
 		*received = frame;
 	return result;
+}
+
+enum v90_analog_path_result v90_analog_path_receive(
+	struct v90_analog_path *path, uint8_t received_octet,
+	struct v90_pcm_stream_frame *received)
+{
+	return receive_clock(path, received_octet, received, false);
+}
+
+enum v90_analog_path_result v90_analog_path_receive_owned(
+	struct v90_analog_path *path, uint8_t received_octet,
+	struct v90_pcm_stream_frame *received)
+{
+	return receive_clock(path, received_octet, received, true);
 }
 
 enum v90_analog_path_result v90_analog_path_discard_receive(

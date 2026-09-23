@@ -126,6 +126,16 @@ enum v90_analog_path_result v90_analog_path_receive(
 	struct v90_analog_path *path, uint8_t received_octet,
 	struct v90_pcm_stream_frame *received);
 
+/* Call-owner clocks for a path validated at its transition boundary.
+ * Skip only recursive state scans; arguments, aliasing and DSP errors remain checked. */
+enum v90_analog_path_result v90_analog_path_transmit_owned(
+	struct v90_analog_path *path,
+	v34_mapping_frame_source source, void *source_context,
+	uint8_t *transmit_octet);
+enum v90_analog_path_result v90_analog_path_receive_owned(
+	struct v90_analog_path *path, uint8_t received_octet,
+	struct v90_pcm_stream_frame *received);
+
 /* Complete a transmitted interval without clocking the downstream receiver.
  * Call controllers use this while qualifying incoming no-energy retrain
  * evidence, so corrupt symbols cannot escape as host data. */

@@ -5037,7 +5037,7 @@ static enum pcm_call_result data_octet_owned(
 	if (cleardown_is_active_owned(call)) {
 		generated = g711_encode(call->law, 0);
 		if (call->local_role == V90_ANALOG_MODEM) {
-			result = analog_path_result(v90_analog_path_transmit(
+			result = analog_path_result(v90_analog_path_transmit_owned(
 				&call->state.data_path.analog,
 				NULL, NULL, &generated));
 			if (result == PCM_CALL_OK)
@@ -5077,7 +5077,7 @@ static enum pcm_call_result data_octet_owned(
 		if (retrain_candidate)
 			emitted = (struct pcm_call_data_event){ 0 };
 	} else if (call->local_role == V90_ANALOG_MODEM) {
-		analog_result = v90_analog_path_transmit(
+		analog_result = v90_analog_path_transmit_owned(
 			&call->state.data_path.analog,
 			sources->upstream, sources->upstream_context,
 			&generated);
@@ -5106,7 +5106,7 @@ static enum pcm_call_result data_octet_owned(
 				V90_ANALOG_PATH_DOWNSTREAM_TRAINING ?
 			v90_analog_path_discard_receive(
 				&call->state.data_path.analog) :
-			v90_analog_path_receive(
+			v90_analog_path_receive_owned(
 				&call->state.data_path.analog, received_octet,
 				&downstream_frame);
 		result = analog_path_result(analog_result);

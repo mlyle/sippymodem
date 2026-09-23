@@ -297,6 +297,7 @@ static bool verify_repeated_mp_recovery(
 	struct v90_phase4_analog_handoff invalid_handoff = handoff;
 	struct pcm_downstream_tx transmitter = digital->transmitter;
 	struct v90_analog_path path;
+	struct v90_analog_path owned_path;
 	struct v90_analog_path untouched;
 	struct v90_analog_path untouched_saved;
 	bool mp_corrupted = false;
@@ -317,10 +318,11 @@ static bool verify_repeated_mp_recovery(
 		      V90_ANALOG_PATH_OK &&
 	      pcm_downstream_tx_is_valid(&transmitter),
 	      "repeated-MP fixture did not initialize");
+	owned_path = path;
 	for (size_t clock = 0;
 	     clock < DOWNSTREAM_TRAINING_CHARACTER_LIMIT; ++clock) {
 		struct pcm_downstream_symbol symbol;
-		struct v90_pcm_stream_frame received;
+		struct v90_pcm_stream_frame received = { 0 };
 		struct pcm_downstream_rx *receiver =
 			&path.downstream.training;
 		uint8_t upstream_octet;
@@ -332,6 +334,16 @@ static bool verify_repeated_mp_recovery(
 		      pcm_downstream_tx_next(&transmitter, &symbol) ==
 			      PCM_DOWNSTREAM_TX_OK,
 		      "repeated-MP line stopped at clock %zu", clock);
+		if (clock < 96u) {
+			uint8_t owned_octet = 0u;
+
+			CHECK(v90_analog_path_transmit_owned(
+				      &owned_path, NULL, NULL, &owned_octet) ==
+				      V90_ANALOG_PATH_OK &&
+			      owned_octet == upstream_octet &&
+			      memcmp(&owned_path, &path, sizeof(path)) == 0,
+			      "owned V.90 transmit diverged at clock %zu", clock);
+		}
 		if (!mp_corrupted && !path.peer_mp_received &&
 		    receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
 		    receiver->stream.pending_count ==
@@ -362,6 +374,17 @@ static bool verify_repeated_mp_recovery(
 		CHECK(result == V90_ANALOG_PATH_OK,
 		      "rejected MP stopped the analogue path at clock %zu: %s",
 		      clock, v90_analog_path_result_name(result));
+		if (clock < 96u) {
+			struct v90_pcm_stream_frame owned_received = { 0 };
+			enum v90_analog_path_result owned_result =
+				v90_analog_path_receive_owned(
+					&owned_path, symbol.pcm.octet, &owned_received);
+
+			CHECK(owned_result == result &&
+			      memcmp(&owned_path, &path, sizeof(path)) == 0 &&
+			      memcmp(&owned_received, &received, sizeof(received)) == 0,
+			      "owned V.90 receive diverged at clock %zu", clock);
+		}
 		if (!path.peer_mp_received)
 			continue;
 		CHECK(mp_corrupted && mp_rejection_seen &&
