@@ -128,30 +128,34 @@ static enum v90_pcm_stream_rx_result receive_valid_decision(
 	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
 	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_pcm_stream_rx next;
+	struct v90_pcm_stream_rx completed;
+	struct v90_pcm_stream_rx *target = receiver;
 	struct v90_pcm_stream_frame generated;
 	enum v90_pcm_stream_rx_result result;
 
 	if (!pcm_constellation_contains(
 		    constellation_at(receiver, receiver->pending_count), ucode))
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
-	next = *receiver;
-	next.pending_ucodes[next.pending_count] = ucode;
-	next.pending_signs[next.pending_count] = positive ? 1u : 0u;
-	next.pending_count++;
-	next.received_symbols++;
-	if (next.pending_count < V90_CP_FRAME_INTERVALS)
-		result = V90_PCM_STREAM_RX_BUFFERING;
-	else
-		result = decode_frame(&next, &generated);
-	if (result != V90_PCM_STREAM_RX_BUFFERING &&
-	    result != V90_PCM_STREAM_RX_FRAME_READY)
+	/* Valid mappings have at least nine bits per six-symbol frame, so the
+	 * symbol counter cannot overflow. Snapshot only frame completion, where
+	 * decoding and bit accounting may reject the frame. */
+	if (receiver->pending_count == V90_CP_FRAME_INTERVALS - 1u) {
+		completed = *receiver;
+		target = &completed;
+	}
+	target->pending_ucodes[target->pending_count] = ucode;
+	target->pending_signs[target->pending_count] = positive ? 1u : 0u;
+	target->pending_count++;
+	target->received_symbols++;
+	if (target->pending_count < V90_CP_FRAME_INTERVALS)
+		return V90_PCM_STREAM_RX_BUFFERING;
+	result = decode_frame(target, &generated);
+	if (result != V90_PCM_STREAM_RX_FRAME_READY)
 		return result;
-	if (!v90_pcm_stream_rx_is_valid(&next))
+	if (!v90_pcm_stream_rx_is_valid(target))
 		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
-	*receiver = next;
-	if (result == V90_PCM_STREAM_RX_FRAME_READY)
-		*frame = generated;
+	*receiver = *target;
+	*frame = generated;
 	return result;
 }
 
