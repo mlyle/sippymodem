@@ -140,9 +140,6 @@ enum v92_cpu_result v92_cpu_encode(
 	uint8_t encoded[V92_CPU_MAX_FRAME_BYTES] = { 0 };
 	size_t frame_bits;
 	size_t frame_bytes;
-	size_t sets;
-	size_t payload_end;
-	uint16_t crc;
 
 	if (parameters == NULL || frame == NULL || frame_bit_count == NULL)
 		return V92_CPU_INVALID_ARGUMENT;
@@ -154,22 +151,10 @@ enum v92_cpu_result v92_cpu_encode(
 		return V92_CPU_OUTPUT_TOO_SMALL;
 
 	encode_header(encoded, parameters);
-	pcm_control_frame_write_constellations(
-		encoded, 0u, parameters->transmit_constellations,
-		parameters->constellation_count);
-	sets = parameters->codec_constellations_differ ? 2u : 1u;
-	if (sets == 2u) {
-		pcm_control_frame_write_constellations(
-			encoded, parameters->constellation_count,
-			parameters->codec_constellations,
-			parameters->constellation_count);
-	}
-	payload_end = CPU_MASKS_FIRST_BIT + sets *
-		parameters->constellation_count *
-		V92_CPU_CONSTELLATION_BITS;
-	crc = pcm_control_frame_crc(encoded, payload_end);
-	packed_msb_write_msb_field(
-		encoded, payload_end + 1u, CPU_CRC_BITS, crc);
+	pcm_control_frame_write_constellation_payload(
+		encoded, parameters->transmit_constellations,
+		parameters->codec_constellations, parameters->constellation_count,
+		parameters->codec_constellations_differ);
 	memcpy(frame, encoded, frame_bytes);
 	*frame_bit_count = frame_bits;
 	return V92_CPU_OK;
@@ -399,7 +384,6 @@ enum v92_cpu_result v92_cpu_decode(
 	size_t sets;
 	size_t row_count;
 	size_t payload_end;
-	uint16_t received_crc;
 
 	if (frame == NULL || parameters == NULL)
 		return V92_CPU_INVALID_ARGUMENT;
@@ -433,20 +417,11 @@ enum v92_cpu_result v92_cpu_decode(
 	    !packed_msb_tail_is_zero(
 		    frame, frame_bit_count, frame_bytes))
 		return V92_CPU_INVALID_FRAME;
-	received_crc = (uint16_t)packed_msb_read_msb_field(
-		frame, payload_end + 1u, CPU_CRC_BITS);
-	if (received_crc != pcm_control_frame_crc(frame, payload_end))
+	if (!pcm_control_frame_read_constellation_payload(
+		    frame, decoded.transmit_constellations,
+		    decoded.codec_constellations, decoded.constellation_count,
+		    decoded.codec_constellations_differ))
 		return V92_CPU_CRC_MISMATCH;
-
-	pcm_control_frame_read_constellations(
-		frame, 0u, decoded.transmit_constellations,
-		decoded.constellation_count);
-	if (sets == 2u) {
-		pcm_control_frame_read_constellations(
-			frame, decoded.constellation_count,
-			decoded.codec_constellations,
-			decoded.constellation_count);
-	}
 	if (!v92_cpu_parameters_are_valid(&decoded))
 		return V92_CPU_INVALID_FRAME;
 	*parameters = decoded;

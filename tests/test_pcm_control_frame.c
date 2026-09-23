@@ -323,10 +323,56 @@ static bool test_constellation_map(void)
 	return true;
 }
 
+static bool test_constellation_payload(void)
+{
+	struct pcm_constellation transmit[6] = { 0 };
+	struct pcm_constellation codec[6] = { 0 };
+	struct pcm_constellation decoded_transmit[6], decoded_codec[6];
+	struct pcm_constellation empty[6] = { 0 }, guard[6];
+	uint8_t frame[256];
+
+	memset(guard, 0xa5, sizeof(guard));
+	for (size_t count = 1u; count <= 6u; ++count) {
+		transmit[count - 1u].ucode_mask[count - 1u] = (uint8_t)count;
+		codec[count - 1u].ucode_mask[16u - count] = (uint8_t)(count + 1u);
+		for (unsigned dual = 0u; dual < 2u; ++dual) {
+			size_t end = (1u + count * (dual ? 2u : 1u)) * 136u;
+
+			memset(frame, 0, sizeof(frame));
+			pcm_control_frame_write_prefix(frame);
+			pcm_control_frame_write_constellation_payload(
+				frame, transmit, codec, count, dual != 0u);
+			memset(decoded_transmit, 0, sizeof(decoded_transmit));
+			memset(decoded_codec, 0, sizeof(decoded_codec));
+			CHECK(pcm_control_frame_read_constellation_payload(
+				      frame, decoded_transmit, decoded_codec, count,
+				      dual != 0u) &&
+			      memcmp(decoded_transmit, transmit, sizeof(transmit)) == 0 &&
+			      memcmp(decoded_codec, dual ? codec : empty,
+				     sizeof(codec)) == 0,
+			      "constellation payload changed at %zu rows/%u planes",
+			      count, dual + 1u);
+			packed_msb_set_bit(frame, end + 1u,
+				packed_msb_bit(frame, end + 1u) == 0u);
+			memset(decoded_transmit, 0xa5, sizeof(decoded_transmit));
+			memset(decoded_codec, 0xa5, sizeof(decoded_codec));
+			CHECK(!pcm_control_frame_read_constellation_payload(
+				      frame, decoded_transmit, decoded_codec, count,
+				      dual != 0u) &&
+			      memcmp(decoded_transmit, guard, sizeof(guard)) == 0 &&
+			      memcmp(decoded_codec, guard, sizeof(guard)) == 0,
+			      "bad CRC changed payload outputs at %zu rows/%u planes",
+			      count, dual + 1u);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	return test_sync_prefix() && test_write_prefix() && test_streaming_sync() &&
 	       test_sync_suffix() && test_start_ranges() &&
 	       test_known_check() && test_payload_bounds() &&
-	       test_constellation_rows() && test_constellation_map() ? 0 : 1;
+	       test_constellation_rows() && test_constellation_map() &&
+	       test_constellation_payload() ? 0 : 1;
 }
