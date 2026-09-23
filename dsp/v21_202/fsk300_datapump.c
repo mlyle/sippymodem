@@ -2,9 +2,9 @@
 
 #include "fsk300_datapump.h"
 
+#include "datapump_link.h"
 #include "datapump_timing.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "fsk.h"
 #include "fsk_online_source.h"
 #include "training_session.h"
@@ -327,12 +327,8 @@ static int advance_training(
 		datapump->training_state_samples += count;
 		if (datapump->training_state_samples < required)
 			return DPSTAT_OK;
-		if (modem_set_param(
-			    datapump->dp.modem, MDMPRM_TX_RATE,
-			    FSK300_BIT_RATE) != 0 ||
-		    modem_set_param(
-			    datapump->dp.modem, MDMPRM_RX_RATE,
-			    FSK300_BIT_RATE) != 0)
+		if (!datapump_set_link_rates(
+			    &datapump->dp, FSK300_BIT_RATE, FSK300_BIT_RATE))
 			return DPSTAT_ERROR;
 		if (training_session_connect(&datapump->training) !=
 		    TRAINING_SESSION_OK)

@@ -4,12 +4,12 @@
 
 #include "b1_path.h"
 #include "conditioning_path.h"
+#include "datapump_link.h"
 #include "datapump_timing.h"
 #include "data_path.h"
 #include "echo_training.h"
 #include "end_path.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "qam.h"
 #include "rate_path.h"
 #include "carrier.h"
@@ -1150,10 +1150,7 @@ static int enter_link(struct v32_datapump *datapump)
 	    (!uses_trellis(datapump) &&
 	     datapump->trellis_encoder_initialized))
 		return -1;
-	if (modem_set_param(
-		    datapump->dp.modem, MDMPRM_TX_RATE, (int)bit_rate) != 0 ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_RX_RATE, (int)bit_rate) != 0)
+	if (!datapump_set_link_rates(&datapump->dp, bit_rate, bit_rate))
 		return -1;
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)

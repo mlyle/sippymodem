@@ -2,9 +2,9 @@
 
 #include "v23_datapump.h"
 
+#include "datapump_link.h"
 #include "datapump_timing.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "fsk.h"
 #include "fsk_online_source.h"
 #include "training_session.h"
@@ -298,10 +298,8 @@ static int enter_online(struct v23_datapump *datapump)
 		V23_BACKWARD_BIT_RATE :
 		V23_FORWARD_BIT_RATE;
 
-	if (modem_set_param(
-		    datapump->dp.modem, MDMPRM_TX_RATE, transmit_rate) != 0 ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_RX_RATE, receive_rate) != 0)
+	if (!datapump_set_link_rates(
+		    &datapump->dp, transmit_rate, receive_rate))
 		return DPSTAT_ERROR;
 	if (training_session_connect(&datapump->training) !=
 	    TRAINING_SESSION_OK)

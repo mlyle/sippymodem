@@ -2,6 +2,7 @@
 
 #include "v90_datapump.h"
 
+#include "datapump_link.h"
 #include "datapump_timing.h"
 #include "memory_region.h"
 #include "modem.h"
@@ -561,13 +562,8 @@ static bool enter_link(struct v90_datapump *datapump)
 
 	if (!pcm_call_get_data_rates(
 		    &datapump->call, &transmit_rate, &receive_rate) ||
-	    transmit_rate > INT_MAX || receive_rate > INT_MAX ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_TX_RATE,
-		    (int)transmit_rate) != 0 ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_RX_RATE,
-		    (int)receive_rate) != 0)
+	    !datapump_set_link_rates(
+		    &datapump->dp, transmit_rate, receive_rate))
 		return false;
 	retrained = training_session_is_retraining(&datapump->training);
 	if (training_session_connect(&datapump->training) !=

@@ -2,9 +2,9 @@
 
 #include "v22_datapump.h"
 
+#include "datapump_link.h"
 #include "datapump_timing.h"
 #include "modem.h"
-#include "modem_param.h"
 #include "qam.h"
 #include "v22_framing.h"
 #include "v22bis_receiver.h"
@@ -1469,12 +1469,8 @@ static int receive_sample(
 
 static int enter_link(struct v22_datapump *datapump)
 {
-	if (modem_set_param(
-		    datapump->dp.modem, MDMPRM_TX_RATE,
-		    (int)datapump->bit_rate) != 0 ||
-	    modem_set_param(
-		    datapump->dp.modem, MDMPRM_RX_RATE,
-		    (int)datapump->bit_rate) != 0)
+	if (!datapump_set_link_rates(
+		    &datapump->dp, datapump->bit_rate, datapump->bit_rate))
 		return -1;
 	datapump->training_state = V22_TRAINING_ONLINE;
 	datapump->transmit_mode = V22_TRANSMIT_DATA;
