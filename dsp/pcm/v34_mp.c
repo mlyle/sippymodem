@@ -2,6 +2,7 @@
 
 #include "v34_mp.h"
 
+#include "integer_math.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
@@ -302,13 +303,6 @@ static size_t coefficient_component_first_bit(
 		       V34_MP_FIELD_STRIDE_BITS;
 }
 
-static int16_t decode_twos_complement(uint16_t value)
-{
-	if (value <= INT16_MAX)
-		return (int16_t)value;
-	return (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
-}
-
 enum v34_mp_result v34_mp_type1_encode(
 	const struct v34_mp_type1_parameters *parameters,
 	uint8_t *frame, size_t frame_capacity)
@@ -367,12 +361,12 @@ enum v34_mp_result v34_mp_type1_decode(
 	for (size_t index = 0; index < V34_PRECODER_TAP_COUNT;
 	     ++index) {
 		decoded.precoder_coefficients[index].real =
-			decode_twos_complement((uint16_t)packed_msb_read_lsb_field(
+			wrap_s16_from_s32((int32_t)packed_msb_read_lsb_field(
 				frame,
 				coefficient_component_first_bit(index, false),
 				V34_MP_COEFFICIENT_COMPONENT_BITS));
 		decoded.precoder_coefficients[index].imaginary =
-			decode_twos_complement((uint16_t)packed_msb_read_lsb_field(
+			wrap_s16_from_s32((int32_t)packed_msb_read_lsb_field(
 				frame,
 				coefficient_component_first_bit(index, true),
 				V34_MP_COEFFICIENT_COMPONENT_BITS));

@@ -2,10 +2,10 @@
 
 #include "v92_cpd.h"
 
+#include "integer_math.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
-#include <limits.h>
 #include <string.h>
 
 enum {
@@ -428,13 +428,6 @@ static uint32_t wire_row(
 	return value;
 }
 
-static int16_t signed_value(uint16_t value)
-{
-	return value <= INT16_MAX ?
-		(int16_t)value :
-		(int16_t)(-1 - (int32_t)(UINT16_MAX - value));
-}
-
 static bool wire_filters(
 	struct cpd_wire *wire, struct v92_cpd_parameters *parameters)
 {
@@ -461,7 +454,7 @@ static bool wire_filters(
 				wire, (uint16_t)filter->coefficient[index], 16u);
 
 			filter->coefficient[index] =
-				signed_value((uint16_t)value);
+				wrap_s16_from_s32((int32_t)value);
 		}
 	}
 	return wire->valid;
@@ -511,7 +504,7 @@ static bool wire_constellations(
 				16u);
 
 			constellation->positive_linear[index] =
-				signed_value((uint16_t)value);
+				wrap_s16_from_s32((int32_t)value);
 		}
 	}
 	return wire->valid;

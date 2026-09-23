@@ -2,6 +2,7 @@
 
 #include "v90_mp.h"
 
+#include "integer_math.h"
 #include "pcm_control_frame.h"
 #include "packed_bits.h"
 
@@ -323,13 +324,6 @@ static bool framing_bits_are_valid(
 		       sequence_bit_count - crc_start_bit - 1u - V90_MP_CRC_BITS);
 }
 
-static int16_t decode_twos_complement(uint16_t value)
-{
-	if (value <= INT16_MAX)
-		return (int16_t)value;
-	return (int16_t)(-1 - (int32_t)(UINT16_MAX - value));
-}
-
 static void decode_common(
 	const uint8_t *sequence, struct v90_mp_parameters *parameters)
 {
@@ -390,16 +384,16 @@ enum v90_mp_result v90_mp_decode(
 	if (decoded.type == V90_MP_RECORD_TYPE1) {
 		for (size_t tap = 0; tap < V34_PRECODER_TAP_COUNT; ++tap) {
 			decoded.parameters.type1.precoder_coefficients[tap].real =
-				decode_twos_complement(
-					(uint16_t)packed_msb_read_lsb_field(
+				wrap_s16_from_s32(
+					(int32_t)packed_msb_read_lsb_field(
 						sequence,
 						coefficient_component_first_bit(
 							tap, false),
 						V90_MP_COEFFICIENT_COMPONENT_BITS));
 			decoded.parameters.type1.precoder_coefficients[tap]
 				.imaginary =
-				decode_twos_complement(
-					(uint16_t)packed_msb_read_lsb_field(
+				wrap_s16_from_s32(
+					(int32_t)packed_msb_read_lsb_field(
 						sequence,
 						coefficient_component_first_bit(
 							tap, true),

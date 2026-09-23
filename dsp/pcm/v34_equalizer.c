@@ -5,17 +5,13 @@
 #include "integer_math.h"
 #include "memory_region.h"
 
-#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 static int16_t high_word(uint32_t value)
 {
-	uint16_t word = (uint16_t)(value >> 16);
-
-	return word <= INT16_MAX ?
-		       (int16_t)word : (int16_t)((int32_t)word - 65536);
+	return wrap_s16_from_s32((int32_t)(value >> 16));
 }
 
 static uint32_t coefficient_word(int16_t coefficient, uint16_t residue)
