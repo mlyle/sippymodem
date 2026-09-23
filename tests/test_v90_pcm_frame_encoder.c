@@ -497,6 +497,19 @@ static bool test_contracts(void)
 
 	CHECK(v90_pcm_frame_encoder_init(&encoder, &mapping) ==
 		      V90_PCM_FRAME_ENCODER_OK,
+	      "corrupt mapping fixture did not initialize");
+	encoder.mapping.transmit[0].ucode_mask[0] ^= 1u;
+	saved_encoder = encoder;
+	CHECK(!v90_pcm_frame_encoder_is_valid(&encoder) &&
+	      v90_pcm_frame_encoder_process(
+		      &encoder, bits, mapping.frame_bits,
+		      &output) == V90_PCM_FRAME_ENCODER_INVALID_STATE &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "corrupt mapping changed state or output");
+
+	CHECK(v90_pcm_frame_encoder_init(&encoder, &mapping) ==
+		      V90_PCM_FRAME_ENCODER_OK,
 	      "numeric fixture did not initialize");
 	encoder.mapping.shaping_a2_q1_6 = 64;
 	encoder.shaper.shaping_a2_q1_6 = 64;

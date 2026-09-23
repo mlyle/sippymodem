@@ -73,10 +73,9 @@ static bool encode_unsigned_symbols(
 		return false;
 	for (size_t interval = 0;
 	     interval < V90_CP_FRAME_INTERVALS; ++interval) {
-		if (v90_pcm_mapping_ucode(
-			    mapping, V90_PCM_MAPPING_TRANSMIT, interval,
-			    labels[interval], &ucodes[interval]) !=
-		    V90_PCM_MAPPING_OK)
+		if (!pcm_constellation_descending_select(
+			    &mapping->transmit[interval], labels[interval],
+			    &ucodes[interval]))
 			return false;
 	}
 	return true;
