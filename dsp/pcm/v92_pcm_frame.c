@@ -1109,7 +1109,7 @@ static enum v92_pcm_frame_result decode_frame(
 			offsets ? offsets[symbol] : 0.))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
-		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION) {
+		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION && !model) {
 			/* Companding noise grows with amplitude. Estimate reliability
 			 * from the observation, independently of each candidate point.
 			 * Compute once per symbol, outside the bounded path search. */
@@ -1189,7 +1189,7 @@ static enum v92_pcm_frame_result decode_frame(
 			/* Known B1u visits one residue class; data cycles all digits. */
 			for (int eta = first_eta; eta < end_eta; eta += (int)step) {
 				uint8_t digit = (uint8_t)next_digit;
-				int64_t error;
+				uint64_t cost;
 				struct frame_candidate candidate;
 
 				next_digit += !known;
@@ -1204,20 +1204,6 @@ static enum v92_pcm_frame_result decode_frame(
 					v = prefilter_output(&receiver->mapping, prefilter, x);
 				}
 
-				error = input_metric ? 0 : (int64_t)samples[symbol] -
-					predicted_observation(receiver, u, v, samples[symbol], b1u);
-				candidate = (struct frame_candidate){
-					.metric = add_u64_saturating(paths[path].state.metric,
-						(uint64_t)(error * error) * weight),
-					.eta = (int16_t)eta, .path = (uint8_t)path,
-					.digit = digit,
-				};
-				if (input_metric)
-					candidate.metric = add_u64_saturating(paths[path].state.metric,
-						input_cell_metric(receiver, v, &cell));
-				if (cells)
-					candidate.metric = add_u64_saturating(paths[path].state.metric,
-						cell_metric(cells + symbol, u, weight, present));
 				if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)
@@ -1225,10 +1211,23 @@ static enum v92_pcm_frame_result decode_frame(
 					uint64_t budget = count == V92_PCM_RX_PATHS ?
 						candidates[0].metric - paths[path].state.metric : UINT64_MAX;
 
-					candidate.metric = add_u64_saturating(paths[path].state.metric,
-						!present ? 0 :
-						v92_observation_score(&cache, precoder_output(precoder, u), history, budget));
+					cost = !present ? 0 :
+						v92_observation_score(&cache, precoder_output(precoder, u), history, budget);
+				} else if (cells) {
+					cost = cell_metric(cells + symbol, u, weight, present);
+				} else if (input_metric) {
+					cost = input_cell_metric(receiver, v, &cell);
+				} else {
+					int64_t error = (int64_t)samples[symbol] -
+						predicted_observation(receiver, u, v, samples[symbol], b1u);
+
+					cost = (uint64_t)(error * error) * weight;
 				}
+				candidate = (struct frame_candidate){
+					.metric = add_u64_saturating(paths[path].state.metric, cost),
+					.eta = (int16_t)eta, .path = (uint8_t)path,
+					.digit = digit,
+				};
 				candidate.path_metric = candidate.metric;
 				if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
 					candidate.metric = add_u64_saturating(candidate.metric,
