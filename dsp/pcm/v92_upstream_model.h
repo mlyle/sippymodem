@@ -13,7 +13,6 @@
  * end of acquisition until the final delayed B1u decision. */
 struct v92_upstream_model {
 	struct v92_observation model[2];
-	struct v92_pcm_frame_rx alternate;
 	/* The observation contract owns exactly one training scratch. */
 	union {
 		struct {
@@ -29,6 +28,8 @@ struct v92_upstream_model {
 	int16_t coefficient;
 	uint8_t valid, primary;
 	bool acquiring;
+	/* This large receiver is live only while a second hypothesis is active. */
+	struct v92_pcm_frame_rx alternate;
 };
 
 struct v92_upstream_data_rx;

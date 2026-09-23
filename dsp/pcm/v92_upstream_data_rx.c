@@ -7,7 +7,13 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
+
+_Static_assert(offsetof(struct v92_upstream_model, alternate) +
+	sizeof(((struct v92_upstream_model *)0)->alternate) ==
+	sizeof(struct v92_upstream_model),
+	"alternate receiver must end the model transaction");
 
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
@@ -274,13 +280,22 @@ static enum v92_upstream_data_rx_result receive_frame(
 	struct v92_upstream_data_frame *frame)
 {
 	struct v92_pcm_frame_rx decoder = receiver->decoder;
-	struct v92_upstream_model model = receiver->model;
+	struct v92_upstream_model model;
+	const size_t model_core = offsetof(struct v92_upstream_model, alternate);
+	bool alternate_active = line->received_frames <= V92_B1U_ACQUISITION_FRAMES ||
+		v92_upstream_model_has_alternate(receiver);
 	struct v92_pcm_frame_decision decision;
 	double predictions[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	struct v92_upstream_data_frame generated = { 0 };
+	enum v92_pcm_frame_result result;
 	bool b1u = line->received_frames < V92_B1U_FRAMES;
 	bool raw = line->plan.observation == V92_PCM_FRAME_CONSTELLATION;
-	enum v92_pcm_frame_result result = v92_upstream_model_decode(
+	/* Keep the rare alternate transactional without copying it on
+	 * every ordinary data frame. Acquisition may first create it here. */
+	memcpy(&model, &receiver->model, model_core);
+	if (alternate_active)
+		model.alternate = receiver->model.alternate;
+	result = v92_upstream_model_decode(
 		&model, &decoder, line, generated.bits, &decision, predictions);
 
 	if (result != V92_PCM_FRAME_OK)
@@ -383,7 +398,9 @@ static enum v92_upstream_data_rx_result receive_frame(
 	memset(line->wire_known, 0, sizeof(line->wire_known));
 	memset(line->received, 0, sizeof(line->received));
 	receiver->decoder = decoder;
-	receiver->model = model;
+	memcpy(&receiver->model, &model, model_core);
+	if (alternate_active)
+		receiver->model.alternate = model.alternate;
 	receiver->line = *line;
 	*frame = generated;
 	return V92_UPSTREAM_DATA_RX_FRAME;
