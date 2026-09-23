@@ -6,6 +6,7 @@
 #include "v34_station.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum {
@@ -58,6 +59,16 @@ enum v34_framing_result v34_scramble_group(
 enum v34_framing_result v34_descramble_group(
 	struct v34_scrambler *descrambler, uint8_t input,
 	unsigned int bit_count, uint8_t *output);
+
+/* Process nonempty, unpacked bit arrays in transmission order. Input and
+ * output may be the same array but must not otherwise overlap. Rejected calls
+ * leave state and output unchanged. */
+enum v34_framing_result v34_scramble_unpacked_bits(
+	struct v34_scrambler *scrambler, const uint8_t *input,
+	size_t bit_count, uint8_t *output);
+enum v34_framing_result v34_descramble_unpacked_bits(
+	struct v34_scrambler *descrambler, const uint8_t *input,
+	size_t bit_count, uint8_t *output);
 
 /* Scramble a first-then-second pair and return 2*second + first. Rejected
  * calls leave state and output unchanged. */

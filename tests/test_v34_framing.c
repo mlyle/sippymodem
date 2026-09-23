@@ -143,6 +143,66 @@ static bool test_group_round_trip(void)
 	return true;
 }
 
+static bool test_unpacked_bit_batches(void)
+{
+	uint32_t random = UINT32_C(0x9072a4b1);
+
+	for (unsigned int polynomial = 0; polynomial < 2u; ++polynomial) {
+		for (size_t count = 1u; count <= 65u; ++count) {
+			struct v34_scrambler grouped, batched, descrambler;
+			uint8_t input[65], expected[65], encoded[65];
+
+			CHECK(v34_scrambler_init(&grouped, polynomial) == V34_FRAMING_OK &&
+			      v34_scrambler_init(&batched, polynomial) == V34_FRAMING_OK &&
+			      v34_scrambler_init(&descrambler, polynomial) == V34_FRAMING_OK,
+			      "V.34 batch fixture failed at %u/%zu", polynomial, count);
+			for (size_t bit = 0; bit < count; ++bit) {
+				input[bit] = (uint8_t)(fixture_random(&random) >> 31);
+				CHECK(v34_scramble_group(
+					      &grouped, input[bit], 1u, &expected[bit]) ==
+					      V34_FRAMING_OK,
+				      "V.34 group fixture failed at %u/%zu", polynomial, count);
+			}
+			CHECK(v34_scramble_unpacked_bits(
+				      &batched, input, count, encoded) == V34_FRAMING_OK &&
+			      memcmp(encoded, expected, count) == 0 &&
+			      batched.history == grouped.history,
+			      "V.34 batch scramble changed at %u/%zu", polynomial, count);
+			CHECK(v34_descramble_unpacked_bits(
+				      &descrambler, encoded, count, encoded) == V34_FRAMING_OK &&
+			      memcmp(encoded, input, count) == 0 &&
+			      descrambler.history == grouped.history,
+			      "V.34 in-place batch descramble changed at %u/%zu",
+			      polynomial, count);
+		}
+		struct v34_scrambler scrambler;
+		uint8_t input[9] = { 0 }, output[9];
+		uint32_t before;
+
+		CHECK(v34_scrambler_init(&scrambler, polynomial) == V34_FRAMING_OK,
+		      "V.34 rejected batch fixture failed");
+		before = scrambler.history;
+		memset(output, 0xa5, sizeof(output));
+		input[8] = 2u;
+		CHECK(v34_scramble_unpacked_bits(
+			      &scrambler, input, sizeof(input), output) ==
+			      V34_FRAMING_INVALID_ARGUMENT &&
+		      scrambler.history == before && output[0] == 0xa5 &&
+		      output[8] == 0xa5,
+		      "V.34 batch accepted a late invalid bit");
+		input[8] = 0u;
+		CHECK(v34_scramble_unpacked_bits(
+			      &scrambler, input, 0u, output) ==
+			      V34_FRAMING_INVALID_ARGUMENT &&
+		      v34_descramble_unpacked_bits(
+			      &scrambler, input, 8u, input + 1u) ==
+			      V34_FRAMING_INVALID_ARGUMENT &&
+		      scrambler.history == before && input[1] == 0u,
+		      "V.34 batch accepted empty or overlapping input");
+	}
+	return true;
+}
+
 static bool test_differential_dibits(void)
 {
 	static const enum v34_station_role roles[] = {
@@ -483,6 +543,7 @@ int main(void)
 		{ "polynomial starts", test_polynomial_starts },
 		{ "station role polynomials", test_station_role_polynomials },
 		{ "group round trip", test_group_round_trip },
+		{ "unpacked bit batches", test_unpacked_bit_batches },
 		{ "mapped dibits", test_mapped_dibits },
 		{ "mapped dibit round trip", test_mapped_dibit_round_trip },
 		{ "differential dibits", test_differential_dibits },

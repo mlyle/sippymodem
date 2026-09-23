@@ -90,12 +90,10 @@ static enum v90_downstream_data_tx_result encode_frame(
 	uint8_t scrambled[V90_PCM_FRAME_MAX_BITS];
 	enum v90_pcm_frame_encoder_result result;
 
-	for (size_t bit = 0; bit < bit_count; ++bit) {
-		if (v34_scramble_group(
-			    &transmitter->scrambler, bits[bit], 1,
-			    &scrambled[bit]) != V34_FRAMING_OK)
-			return V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
-	}
+	if (v34_scramble_unpacked_bits(
+		    &transmitter->scrambler, bits, bit_count, scrambled) !=
+	    V34_FRAMING_OK)
+		return V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
 	result = v90_pcm_frame_encoder_process(
 		&transmitter->encoder, scrambled, bit_count, output);
 	switch (result) {

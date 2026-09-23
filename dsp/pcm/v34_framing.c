@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v34_framing.h"
+#include "packed_bits.h"
 
 #include "self_sync_scrambler.h"
 
@@ -149,6 +150,57 @@ enum v34_framing_result v34_descramble_group(
 	unsigned int bit_count, uint8_t *output)
 {
 	return transform_group(descrambler, input, bit_count, output, true);
+}
+
+static enum v34_framing_result transform_unpacked_bits(
+	struct v34_scrambler *state, const uint8_t *input,
+	size_t bit_count, uint8_t *output, bool descramble)
+{
+	struct v34_scrambler next;
+
+	if (state == NULL || input == NULL || output == NULL || bit_count == 0u ||
+	    !v34_scrambler_is_valid(state) ||
+	    !unpacked_bits_are_binary(input, bit_count) ||
+	    memory_regions_overlap(state, sizeof(*state), input, bit_count) ||
+	    memory_regions_overlap(state, sizeof(*state), output, bit_count) ||
+	    (input != output &&
+	     memory_regions_overlap(input, bit_count, output, bit_count)))
+		return V34_FRAMING_INVALID_ARGUMENT;
+	next = *state;
+	for (size_t offset = 0; offset < bit_count;) {
+		unsigned int count = (unsigned int)(
+			bit_count - offset < SELF_SYNC_MAX_GROUP_BITS ?
+				bit_count - offset : SELF_SYNC_MAX_GROUP_BITS);
+		uint8_t group = 0;
+
+		for (unsigned int bit = 0; bit < count; ++bit)
+			group = (uint8_t)((group << 1) | input[offset + bit]);
+		if (transform_group(&next, group, count, &group, descramble) !=
+		    V34_FRAMING_OK)
+			return V34_FRAMING_INVALID_ARGUMENT;
+		for (unsigned int bit = 0; bit < count; ++bit)
+			output[offset + bit] = (uint8_t)(
+				(group >> (count - bit - 1u)) & 1u);
+		offset += count;
+	}
+	*state = next;
+	return V34_FRAMING_OK;
+}
+
+enum v34_framing_result v34_scramble_unpacked_bits(
+	struct v34_scrambler *scrambler, const uint8_t *input,
+	size_t bit_count, uint8_t *output)
+{
+	return transform_unpacked_bits(
+		scrambler, input, bit_count, output, false);
+}
+
+enum v34_framing_result v34_descramble_unpacked_bits(
+	struct v34_scrambler *descrambler, const uint8_t *input,
+	size_t bit_count, uint8_t *output)
+{
+	return transform_unpacked_bits(
+		descrambler, input, bit_count, output, true);
 }
 
 static uint8_t swap_dibit_bits(uint8_t dibit)

@@ -511,12 +511,10 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 	    !unpacked_bits_are_binary(bits, bit_count))
 		return V92_PCM_FRAME_OUT_OF_RANGE;
 	next = transmitter->state;
-	for (size_t bit = 0u; bit < bit_count; ++bit) {
-		if (v34_scramble_group(
-			    &next.scrambler, bits[bit], 1u,
-			    &scrambled[bit]) != V34_FRAMING_OK)
-			return V92_PCM_FRAME_INVALID_PARAMETERS;
-	}
+	if (v34_scramble_unpacked_bits(
+		    &next.scrambler, bits, bit_count, scrambled) !=
+	    V34_FRAMING_OK)
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (v92_pcm_mapping_encode(
 		    &transmitter->mapping, scrambled, bit_count,
 		    &next.differential, encoded.digit,
@@ -906,11 +904,11 @@ static bool b1u_digits(
 	uint8_t differential = path->differential;
 	uint8_t sign;
 
-	for (size_t bit = 0u; bit < receiver->mapping.data_bits_per_frame; ++bit) {
-		if (v34_scramble_group(&scrambler, 1u, 1u, &bits[bit]) !=
-		    V34_FRAMING_OK)
-			return false;
-	}
+	memset(bits, 1, receiver->mapping.data_bits_per_frame);
+	if (v34_scramble_unpacked_bits(
+		    &scrambler, bits, receiver->mapping.data_bits_per_frame,
+		    bits) != V34_FRAMING_OK)
+		return false;
 	return v92_pcm_mapping_encode(
 		&receiver->mapping, bits, receiver->mapping.data_bits_per_frame,
 		&differential, digits, &sign) == V92_PCM_MAPPING_OK;

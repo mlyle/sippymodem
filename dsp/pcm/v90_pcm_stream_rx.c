@@ -111,12 +111,10 @@ static enum v90_pcm_stream_rx_result decode_frame(
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	if (result != V90_PCM_FRAME_DECODER_OK)
 		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
-	for (size_t bit = 0; bit < decoded.bit_count; ++bit) {
-		if (v34_descramble_group(
-			    &receiver->descrambler, decoded.bits[bit], 1,
-			    &decoded_frame.bits[bit]) != V34_FRAMING_OK)
-			return V90_PCM_STREAM_RX_INTERNAL_ERROR;
-	}
+	if (v34_descramble_unpacked_bits(
+		    &receiver->descrambler, decoded.bits, decoded.bit_count,
+		    decoded_frame.bits) != V34_FRAMING_OK)
+		return V90_PCM_STREAM_RX_INTERNAL_ERROR;
 	memcpy(decoded_frame.rules, decoded.rules,
 	       decoded.rule_count * sizeof(decoded.rules[0]));
 	decoded_frame.bit_count = decoded.bit_count;
