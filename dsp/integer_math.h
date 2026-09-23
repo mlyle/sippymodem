@@ -31,6 +31,17 @@ static inline int16_t wrap_s16_from_s32(int32_t value)
 		       (int16_t)word : (int16_t)((int32_t)word - 65536);
 }
 
+/* Assemble and read a signed high word with an unsigned low residue. */
+static inline uint32_t pack_s16_u16_words(int16_t high, uint16_t low)
+{
+	return ((uint32_t)(uint16_t)high << 16) | low;
+}
+
+static inline int16_t high_s16_word(uint32_t value)
+{
+	return wrap_s16_from_s32((int32_t)(value >> 16));
+}
+
 static inline int32_t magnitude_s16(int16_t value)
 {
 	return value < 0 ? -(int32_t)value : value;

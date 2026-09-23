@@ -234,7 +234,7 @@ static bool test_rounding_boundaries(void)
 		      v34_echo_canceller_advance(&canceller, cases[i].received, output, 0) ==
 			      V34_ECHO_CANCELLER_OK &&
 		      (uint16_t)canceller.coefficients[0] == cases[i].coefficient &&
-		      (uint16_t)canceller.residues[0] == cases[i].residue,
+		      canceller.residues[0] == cases[i].residue,
 		      "adaptation rounding case %zu changed", i);
 	}
 	for (int sign = -1; sign <= 1; sign += 2) {

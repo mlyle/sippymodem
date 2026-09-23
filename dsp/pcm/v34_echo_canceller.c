@@ -212,14 +212,12 @@ static void adapt_filter(
 	for (size_t tap = 0; tap < V34_ECHO_TAP_COUNT; ++tap) {
 		int16_t reference = reference_at_age(
 			canceller, tap + 1u);
-		uint32_t word =
-			((uint32_t)(uint16_t)canceller->coefficients[tap] << 16) |
-			(uint16_t)canceller->residues[tap];
+		uint32_t word = pack_s16_u16_words(
+			canceller->coefficients[tap], canceller->residues[tap]);
 
 		word += multiply_low_s32(reference, error);
-		canceller->coefficients[tap] = wrap_s16_from_s32(
-			arithmetic_shift_right_u32(word, 16));
-		canceller->residues[tap] = (int16_t)(uint16_t)word;
+		canceller->coefficients[tap] = high_s16_word(word);
+		canceller->residues[tap] = (uint16_t)word;
 	}
 }
 

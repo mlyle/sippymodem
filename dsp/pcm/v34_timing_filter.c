@@ -88,18 +88,13 @@ static void shift_recursive_filter(
 
 static uint32_t pack_sample(struct v34_analytic_sample sample)
 {
-	return ((uint32_t)(uint16_t)sample.quadrature << 16) |
-	       (uint16_t)sample.in_phase;
+	return pack_s16_u16_words(sample.quadrature,
+				  (uint16_t)sample.in_phase);
 }
 
 static int16_t low_s16(uint32_t value)
 {
 	return wrap_s16_from_s32((int32_t)(uint16_t)value);
-}
-
-static int16_t high_s16(uint32_t value)
-{
-	return wrap_s16_from_s32((int32_t)(uint16_t)(value >> 16));
 }
 
 bool v34_timing_filter_is_valid(const struct v34_timing_filter *filter)
@@ -218,7 +213,7 @@ enum v34_timing_filter_result v34_timing_filter_prefilter(
 	for (size_t tap = 0; tap < V34_TIMING_FILTER_FIR_TAPS; ++tap) {
 		uint32_t sample = next.prefilter_history[tap];
 
-		real += multiply_low_s32(high_s16(sample), PREFILTER[tap]);
+		real += multiply_low_s32(high_s16_word(sample), PREFILTER[tap]);
 		imag += multiply_low_s32(low_s16(sample), PREFILTER[tap]);
 	}
 	generated = (struct v34_analytic_sample){

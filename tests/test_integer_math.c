@@ -108,6 +108,13 @@ static bool test_fixed_width_words(void)
 	      clamp_s16(INT64_MAX) == INT16_MAX &&
 	      clamp_s16(INT64_MIN) == INT16_MIN,
 	      "shared signed-word helpers changed");
+	CHECK(pack_s16_u16_words(-1, UINT16_C(0x8000)) ==
+		      UINT32_C(0xffff8000) &&
+	      high_s16_word(UINT32_C(0xffff8000)) == -1 &&
+	      pack_s16_u16_words(INT16_MIN, UINT16_MAX) ==
+		      UINT32_C(0x8000ffff) &&
+	      high_s16_word(UINT32_C(0x8000ffff)) == INT16_MIN,
+	      "signed high word or unsigned residue changed");
 	return true;
 }
 

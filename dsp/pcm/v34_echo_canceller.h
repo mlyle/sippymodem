@@ -30,7 +30,7 @@ enum v34_echo_canceller_result {
 struct v34_echo_canceller {
 	int16_t references[V34_ECHO_TAP_COUNT];
 	int16_t coefficients[V34_ECHO_TAP_COUNT];
-	int16_t residues[V34_ECHO_TAP_COUNT];
+	uint16_t residues[V34_ECHO_TAP_COUNT];
 	size_t reference_write;
 	size_t reference_fill;
 	uint64_t validation_input_energy;

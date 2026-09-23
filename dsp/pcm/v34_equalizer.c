@@ -9,16 +9,6 @@
 #include <stdint.h>
 #include <string.h>
 
-static int16_t high_word(uint32_t value)
-{
-	return wrap_s16_from_s32((int32_t)(value >> 16));
-}
-
-static uint32_t coefficient_word(int16_t coefficient, uint16_t residue)
-{
-	return ((uint32_t)(uint16_t)coefficient << 16) | residue;
-}
-
 bool v34_equalizer_is_valid(const struct v34_equalizer *equalizer)
 {
 	return equalizer != NULL && equalizer->initialized &&
@@ -146,11 +136,11 @@ static void adapt_tap(
 {
 	int16_t sample_in_phase = equalizer->in_phase_delay[sample_index];
 	int16_t sample_quadrature = equalizer->quadrature_delay[sample_index];
-	uint32_t in_phase = coefficient_word(
+	uint32_t in_phase = pack_s16_u16_words(
 		equalizer->in_phase_coefficient[coefficient_index],
 		preserve_residue ?
 			equalizer->in_phase_residue[coefficient_index] : 0);
-	uint32_t quadrature = coefficient_word(
+	uint32_t quadrature = pack_s16_u16_words(
 		equalizer->quadrature_coefficient[coefficient_index],
 		preserve_residue ?
 			equalizer->quadrature_residue[coefficient_index] : 0);
@@ -163,8 +153,9 @@ static void adapt_tap(
 		in_phase += UINT32_C(0x8000);
 		quadrature += UINT32_C(0x8000);
 	}
-	equalizer->in_phase_coefficient[coefficient_index] = high_word(in_phase);
-	equalizer->quadrature_coefficient[coefficient_index] = high_word(quadrature);
+	equalizer->in_phase_coefficient[coefficient_index] = high_s16_word(in_phase);
+	equalizer->quadrature_coefficient[coefficient_index] =
+		high_s16_word(quadrature);
 	if (preserve_residue) {
 		equalizer->in_phase_residue[coefficient_index] = (uint16_t)in_phase;
 		equalizer->quadrature_residue[coefficient_index] =
