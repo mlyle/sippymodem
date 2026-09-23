@@ -1143,6 +1143,10 @@ static enum v92_pcm_frame_result decode_frame(
 
 			bool filter_metric = !model && !cells &&
 				receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
+			/* Candidate and lookahead costs are nonnegative; ties cannot replace. */
+			if (count == V92_PCM_RX_PATHS &&
+			    paths[path].state.metric >= candidates[0].metric)
+				continue;
 			if (model || filter_metric)
 				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
 			if (filter_metric)
@@ -1167,8 +1171,6 @@ static enum v92_pcm_frame_result decode_frame(
 			 * path is visited. Trim only tails whose enlarged observation
 			 * envelope cannot reach that budget; preserve eta/tie ordering. */
 			if (model && count == V92_PCM_RX_PATHS && present) {
-				if (paths[path].state.metric >= candidates[0].metric)
-					continue;
 				uint64_t budget = candidates[0].metric - paths[path].state.metric;
 
 				double radius = sqrt((budget + 1. + 1e-9 * budget) / cache.bound_scale);
