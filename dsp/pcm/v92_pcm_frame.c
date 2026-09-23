@@ -1121,12 +1121,13 @@ static enum v92_pcm_frame_result decode_frame(
 			int64_t precoder = 0, prefilter = 0;
 			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
 
-			if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
+			bool filter_metric = !model && !cells &&
+				receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
+			if (model || filter_metric)
 				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
+			if (filter_metric)
 				prefilter = prefilter_history(&receiver->mapping, &paths[path].state.filter);
-			}
 			if (model) {
-				precoder = precoder_history(&receiver->mapping, &paths[path].state.filter);
 				const int32_t *previous = x_history(&receiver->mapping, &paths[path].state.filter);
 				for (unsigned i = 1; i < model->taps; i++)
 					history[i - 1] = v92_observation_point(&cache, previous[i - 1]);
@@ -1196,14 +1197,6 @@ static enum v92_pcm_frame_result decode_frame(
 				if (next_digit == modulus)
 					next_digit = 0u;
 				int16_t u = signed_point(constellation, eta);
-				int32_t v = 0;
-
-				if (receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT) {
-					int32_t x = precoder_output(precoder, u);
-
-					v = prefilter_output(&receiver->mapping, prefilter, x);
-				}
-
 				if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)
@@ -1215,13 +1208,19 @@ static enum v92_pcm_frame_result decode_frame(
 						v92_observation_score(&cache, precoder_output(precoder, u), history, budget);
 				} else if (cells) {
 					cost = cell_metric(cells + symbol, u, weight, present);
-				} else if (input_metric) {
-					cost = input_cell_metric(receiver, v, &cell);
 				} else {
-					int64_t error = (int64_t)samples[symbol] -
-						predicted_observation(receiver, u, v, samples[symbol], b1u);
+					int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
+						prefilter_output(&receiver->mapping, prefilter,
+							precoder_output(precoder, u)) : 0;
 
-					cost = (uint64_t)(error * error) * weight;
+					if (input_metric) {
+						cost = input_cell_metric(receiver, v, &cell);
+					} else {
+						int64_t error = (int64_t)samples[symbol] -
+							predicted_observation(receiver, u, v, samples[symbol], b1u);
+
+						cost = (uint64_t)(error * error) * weight;
+					}
 				}
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric, cost),
