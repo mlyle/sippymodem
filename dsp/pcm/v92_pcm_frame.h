@@ -154,6 +154,13 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame);
 
+/* Upstream-stream owner path: mapping and coder state were validated when the
+ * epoch began. Keep input-bit and fallible coding checks for every frame. */
+enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
+	struct v92_pcm_frame_tx *transmitter,
+	const uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame *frame);
+
 /* Encode one RM or RM-prime frame (V.92 8.7.4) in the active data mapping.
  * Trellis, precoder and prefilter histories continue. Scrambler/differential
  * state is untouched; these signals specify modulus-output digits directly,

@@ -240,6 +240,12 @@ static bool test_rejection_and_transactionality(void)
 	      state == 2u && sign == 0xa5u &&
 	      memcmp(digits, digits_before, sizeof(digits)) == 0,
 	      "invalid differential state changed outputs");
+	CHECK(v92_pcm_mapping_encode_owned(
+		      &mapping, bits, mapping.data_bits_per_frame,
+		      &state, digits, &sign) == V92_PCM_MAPPING_OUT_OF_RANGE &&
+	      state == 2u && sign == 0xa5u &&
+	      memcmp(digits, digits_before, sizeof(digits)) == 0,
+	      "owned encode changed outputs after invalid differential state");
 	state = 0u;
 	memset(digits, 0xff, sizeof(digits));
 	memset(decoded, 0x3c, sizeof(decoded));

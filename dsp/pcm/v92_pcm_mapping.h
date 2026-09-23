@@ -53,6 +53,15 @@ enum v92_pcm_mapping_result v92_pcm_mapping_encode(
 	uint8_t *differential_state,
 	uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS],
 	uint8_t *frame_sign);
+/* Frame-owner path: the immutable CPd mapping was validated at initialization.
+ * Preserve per-frame length, bit, differential-state, and output checks. */
+enum v92_pcm_mapping_result v92_pcm_mapping_encode_owned(
+	const struct v92_pcm_mapping *mapping,
+	const uint8_t *bits, size_t bit_count,
+	uint8_t *differential_state,
+	uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS],
+	uint8_t *frame_sign);
+
 enum v92_pcm_mapping_result v92_pcm_mapping_decode(
 	const struct v92_pcm_mapping *mapping,
 	const uint8_t digits[V92_PCM_MAPPING_FRAME_SYMBOLS],

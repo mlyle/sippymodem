@@ -845,6 +845,12 @@ static bool test_rejection_and_names(void)
 		      &output) == V92_PCM_FRAME_OUT_OF_RANGE &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
 	      "non-bit input changed transmitter state");
+	CHECK(v92_pcm_frame_encode_owned(
+		      &transmitter, bits, transmitter.mapping.data_bits_per_frame,
+		      &output) == V92_PCM_FRAME_OUT_OF_RANGE &&
+	      memcmp(&transmitter, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &output_saved, sizeof(output)) == 0,
+	      "owned encode changed state or output after invalid bits");
 	transmitter.state.differential = 2u;
 	CHECK(v92_pcm_frame_encode(
 		      &transmitter, bits,

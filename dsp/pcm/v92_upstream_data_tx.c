@@ -134,7 +134,7 @@ static enum v92_upstream_data_tx_result generate_frame(
 			    !unpacked_bits_are_binary(bits, count))
 				return V92_UPSTREAM_DATA_TX_SOURCE_FAILURE;
 		}
-		if (v92_pcm_frame_encode(&encoder, bits, count, &frame) != V92_PCM_FRAME_OK)
+		if (v92_pcm_frame_encode_owned(&encoder, bits, count, &frame) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	}
 	for (size_t index = 0u; index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {

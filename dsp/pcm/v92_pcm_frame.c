@@ -499,14 +499,24 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame)
 {
+	if (transmitter == NULL || frame == NULL || bits == NULL)
+		return V92_PCM_FRAME_INVALID_ARGUMENT;
+	if (!v92_pcm_frame_tx_is_valid(transmitter))
+		return V92_PCM_FRAME_INVALID_PARAMETERS;
+	return v92_pcm_frame_encode_owned(transmitter, bits, bit_count, frame);
+}
+
+enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
+	struct v92_pcm_frame_tx *transmitter,
+	const uint8_t *bits, size_t bit_count,
+	struct v92_pcm_frame *frame)
+{
 	struct v92_pcm_frame_tx_state next;
 	struct v92_pcm_frame encoded = { 0 };
 	uint8_t scrambled[V92_PCM_MAPPING_MAX_BITS];
 
 	if (transmitter == NULL || frame == NULL || bits == NULL)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_frame_tx_is_valid(transmitter))
-		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (bit_count != transmitter->mapping.data_bits_per_frame ||
 	    !unpacked_bits_are_binary(bits, bit_count))
 		return V92_PCM_FRAME_OUT_OF_RANGE;
@@ -515,7 +525,7 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 		    &next.scrambler, bits, bit_count, scrambled) !=
 	    V34_FRAMING_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	if (v92_pcm_mapping_encode(
+	if (v92_pcm_mapping_encode_owned(
 		    &transmitter->mapping, scrambled, bit_count,
 		    &next.differential, encoded.digit,
 		    &encoded.frame_sign) != V92_PCM_MAPPING_OK)
