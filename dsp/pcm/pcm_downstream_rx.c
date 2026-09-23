@@ -374,31 +374,13 @@ static enum pcm_downstream_rx_result map_stream_failure(
 	return PCM_DOWNSTREAM_RX_INTERNAL_ERROR;
 }
 
-static uint8_t nonzero_bits(const struct v90_pcm_stream_frame *frame)
-{
-	uint8_t count = 0;
-
-	for (size_t bit = 0; bit < frame->bit_count; ++bit)
-		count += frame->bits[bit] != 0;
-	return count;
-}
-
-static uint8_t nonone_bits(const struct v90_pcm_stream_frame *frame)
-{
-	uint8_t count = 0;
-
-	for (size_t bit = 0; bit < frame->bit_count; ++bit)
-		count += frame->bits[bit] != 1;
-	return count;
-}
-
 static struct pcm_trn2d_frame classify_trn2d(
 	const struct v90_pcm_stream_frame *frame)
 {
 	struct pcm_trn2d_frame classified = {
 		.bit_count = frame->bit_count,
 		.rule_count = frame->rule_count,
-		.training_bit_errors = nonone_bits(frame),
+		.training_bit_errors = v90_pcm_stream_frame_bit_errors(frame, 1u),
 	};
 
 	memcpy(classified.bits, frame->bits, frame->bit_count);
@@ -448,7 +430,7 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 		/* A damaged repeated control prefix is not evidence that Ed began.
 		 * Keep looking for two complete zero frames; a nonzero frame breaks
 		 * the candidate without ending this continuous decoding epoch. */
-		if (nonzero_bits(frame) != 0u) {
+		if (v90_pcm_stream_frame_bit_errors(frame, 0u) != 0u) {
 			receiver->ed_frames = 0u;
 			return PCM_DOWNSTREAM_RX_BUFFERING;
 		}
@@ -470,7 +452,7 @@ static enum pcm_downstream_rx_result receive_ed_frame(
 		}
 	}
 	receiver->ed_frames++;
-	receiver->ed_bit_errors += nonzero_bits(frame);
+	receiver->ed_bit_errors += v90_pcm_stream_frame_bit_errors(frame, 0u);
 	if (receiver->ed_frames < V90_PHASE4_ED_FRAMES)
 		return PCM_DOWNSTREAM_RX_BUFFERING;
 	receiver->stage = PCM_DOWNSTREAM_RX_COMPLETE;

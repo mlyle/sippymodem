@@ -89,15 +89,6 @@ static enum v90_downstream_data_rx_result map_stream_failure(
 	return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
 }
 
-static uint8_t nonone_bits(const struct v90_pcm_stream_frame *frame)
-{
-	uint8_t errors = 0;
-
-	for (size_t bit = 0; bit < frame->bit_count; ++bit)
-		errors += frame->bits[bit] != 1;
-	return errors;
-}
-
 static enum v90_downstream_data_rx_result commit_stream_result(
 	struct v90_downstream_data_rx *receiver,
 	struct v90_downstream_data_rx *next,
@@ -116,7 +107,7 @@ static enum v90_downstream_data_rx_result commit_stream_result(
 	if (stream_result != V90_PCM_STREAM_RX_FRAME_READY)
 		return map_stream_failure(stream_result);
 	if (next->stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D) {
-		next->b1d_bit_errors += nonone_bits(decoded);
+		next->b1d_bit_errors += v90_pcm_stream_frame_bit_errors(decoded, 1u);
 		next->b1d_frames++;
 		if (next->b1d_frames == V90_PHASE4_B1D_FRAMES) {
 			next->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;

@@ -30,6 +30,16 @@ struct v90_pcm_stream_frame {
 	uint8_t rule_count;
 };
 
+static inline uint8_t v90_pcm_stream_frame_bit_errors(
+	const struct v90_pcm_stream_frame *frame, uint8_t expected)
+{
+	uint8_t errors = 0;
+
+	for (unsigned int bit = 0; bit < frame->bit_count; ++bit)
+		errors += frame->bits[bit] != expected;
+	return errors;
+}
+
 /* Own one phase-aligned six-symbol stream, the inverse PCM coder histories,
  * and one GPC descrambler epoch. Training/data policy and epoch boundaries
  * remain with the caller. */
