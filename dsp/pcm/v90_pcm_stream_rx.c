@@ -6,10 +6,19 @@
 
 #include <string.h>
 
-static bool pending_is_valid(const struct v90_pcm_stream_rx *receiver)
+/* Caller has validated the mapping, decision plane, and interval. */
+static const struct pcm_constellation *constellation_at(
+	const struct v90_pcm_stream_rx *receiver, size_t interval)
 {
 	const struct v90_pcm_frame_decoder *decoder = &receiver->decoder;
+	const struct v90_pcm_mapping *mapping = &decoder->mapping;
 
+	return decoder->decision_plane == V90_PCM_MAPPING_CODEC ?
+		&mapping->codec[interval] : &mapping->transmit[interval];
+}
+
+static bool pending_is_valid(const struct v90_pcm_stream_rx *receiver)
+{
 	if (receiver->pending_count >= V90_CP_FRAME_INTERVALS)
 		return false;
 	for (size_t interval = 0;
@@ -20,13 +29,10 @@ static bool pending_is_valid(const struct v90_pcm_stream_rx *receiver)
 				return false;
 			continue;
 		}
-		uint8_t label;
 
 		if (receiver->pending_signs[interval] > 1 ||
-		    v90_pcm_mapping_label(
-			    &decoder->mapping, decoder->decision_plane,
-			    interval, receiver->pending_ucodes[interval],
-			    &label) != V90_PCM_MAPPING_OK)
+		    !pcm_constellation_contains(constellation_at(receiver, interval),
+			    receiver->pending_ucodes[interval]))
 			return false;
 	}
 	return true;
@@ -81,18 +87,6 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_init(
 	return V90_PCM_STREAM_RX_OK;
 }
 
-static bool decision_is_valid(
-	const struct v90_pcm_stream_rx *receiver, uint8_t ucode)
-{
-	uint8_t label;
-
-	return v90_pcm_mapping_label(
-		       &receiver->decoder.mapping,
-		       receiver->decoder.decision_plane,
-		       receiver->pending_count, ucode, &label) ==
-	       V90_PCM_MAPPING_OK;
-}
-
 static enum v90_pcm_stream_rx_result decode_frame(
 	struct v90_pcm_stream_rx *receiver,
 	struct v90_pcm_stream_frame *generated)
@@ -138,7 +132,8 @@ static enum v90_pcm_stream_rx_result receive_valid_decision(
 	struct v90_pcm_stream_frame generated;
 	enum v90_pcm_stream_rx_result result;
 
-	if (!decision_is_valid(receiver, ucode))
+	if (!pcm_constellation_contains(
+		    constellation_at(receiver, receiver->pending_count), ucode))
 		return V90_PCM_STREAM_RX_INVALID_SYMBOL;
 	next = *receiver;
 	next.pending_ucodes[next.pending_count] = ucode;
@@ -177,9 +172,7 @@ static bool slice_symbol(
 {
 	const struct v90_pcm_mapping *mapping = &receiver->decoder.mapping;
 	const struct pcm_constellation *constellation =
-		receiver->decoder.decision_plane == V90_PCM_MAPPING_CODEC ?
-			&mapping->codec[receiver->pending_count] :
-			&mapping->transmit[receiver->pending_count];
+		constellation_at(receiver, receiver->pending_count);
 	int32_t magnitude = symbol->sample < 0 ? -symbol->sample : symbol->sample;
 	int32_t best_error = INT32_MAX;
 

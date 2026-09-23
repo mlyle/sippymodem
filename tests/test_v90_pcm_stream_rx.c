@@ -459,6 +459,10 @@ static bool test_contracts(void)
 		      "counter-limit prefix %zu failed", interval);
 	}
 	saved_receiver = receiver;
+	receiver.pending_ucodes[0] = 0u;
+	CHECK(!v90_pcm_stream_rx_is_valid(&receiver),
+	      "absent buffered codeword was accepted");
+	receiver = saved_receiver;
 	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, ucodes[V90_CP_FRAME_INTERVALS - 1u],
 		      false, &frame) == V90_PCM_STREAM_RX_OUT_OF_RANGE &&
