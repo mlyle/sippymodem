@@ -74,6 +74,25 @@ struct fsk_measurement {
 	bool ready;
 };
 
+/* The measurement is shared; each mode owns its power and dominance floors. */
+static inline bool fsk_measurement_tone_present(
+	const struct fsk_measurement *measurement,
+	uint64_t minimum_line_power, uint32_t minimum_dominance_q8)
+{
+	return measurement != NULL && measurement->ready &&
+	       measurement->line_power >= minimum_line_power &&
+	       measurement->dominance_q8 >= minimum_dominance_q8;
+}
+
+static inline bool fsk_measurement_mark_present(
+	const struct fsk_measurement *measurement,
+	uint64_t minimum_line_power, uint32_t minimum_dominance_q8)
+{
+	return fsk_measurement_tone_present(
+		       measurement, minimum_line_power, minimum_dominance_q8) &&
+	       measurement->mark_power > measurement->space_power;
+}
+
 enum fsk_result fsk_tone_generator_init(
 	struct fsk_tone_generator *generator,
 	const struct fsk_channel *channel,

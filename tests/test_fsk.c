@@ -523,6 +523,35 @@ static bool test_detector_ring_wrap(void)
 	return true;
 }
 
+static bool test_measurement_qualification(void)
+{
+	struct fsk_measurement measurement = {
+		.mark_power = 2,
+		.space_power = 1,
+		.line_power = 1000,
+		.dominance_q8 = 180,
+		.ready = true,
+	};
+
+	CHECK(!fsk_measurement_tone_present(NULL, 1000, 180),
+	      "null measurement qualified");
+	CHECK(fsk_measurement_tone_present(&measurement, 1000, 180) &&
+	      fsk_measurement_mark_present(&measurement, 1000, 180),
+	      "threshold boundaries did not qualify");
+	measurement.ready = false;
+	CHECK(!fsk_measurement_tone_present(&measurement, 1000, 180),
+	      "unready measurement qualified");
+	measurement.ready = true;
+	CHECK(!fsk_measurement_tone_present(&measurement, 1001, 180) &&
+	      !fsk_measurement_tone_present(&measurement, 1000, 181),
+	      "below-threshold measurement qualified");
+	measurement.mark_power = measurement.space_power;
+	CHECK(fsk_measurement_tone_present(&measurement, 1000, 180) &&
+	      !fsk_measurement_mark_present(&measurement, 1000, 180),
+	      "tone tie qualified as mark");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -534,6 +563,7 @@ int main(void)
 		{ "fractional symbol clock", test_fractional_symbol_clock },
 		{ "continuous tone detection", test_continuous_tone_detection },
 		{ "V.21 profiles", test_v21_profiles },
+		{ "measurement qualification", test_measurement_qualification },
 		{ "fixed detector arithmetic", test_fixed_detector_arithmetic },
 		{ "detector ring wrap", test_detector_ring_wrap },
 		{ "V.21 channel pairs", test_v21_channel_pairs },

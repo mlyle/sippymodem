@@ -272,23 +272,6 @@ static bool receive_input_sample(
 	return modem_put_bits(datapump->dp.modem, 1, &bit, 1) == 1;
 }
 
-static bool mark_is_present(
-	const struct fsk_measurement *measurement)
-{
-	return measurement->ready &&
-	       measurement->line_power >= V23_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= V23_MIN_DOMINANCE_Q8 &&
-	       measurement->mark_power > measurement->space_power;
-}
-
-static bool carrier_is_present(
-	const struct fsk_measurement *measurement)
-{
-	return measurement->ready &&
-	       measurement->line_power >= V23_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= V23_MIN_DOMINANCE_Q8;
-}
-
 static int enter_online(struct v23_datapump *datapump)
 {
 	int transmit_rate = datapump->answerer ?
@@ -320,7 +303,9 @@ static int advance_training(
 		V23_FORWARD_MARK_ACQUIRE_SAMPLES;
 
 	if (datapump->phase == V23_PHASE_WAIT_MARK) {
-		if (mark_is_present(measurement))
+		if (fsk_measurement_mark_present(
+			    measurement, V23_MIN_LINE_POWER,
+			    V23_MIN_DOMINANCE_Q8))
 			datapump_add_samples_bounded(
 				&datapump->acquisition_samples, received_samples,
 				acquisition_limit);
@@ -410,7 +395,9 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 		return advance_training(datapump, &measurement, received_samples);
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
-	if (carrier_is_present(&measurement)) {
+	if (fsk_measurement_tone_present(
+		    &measurement, V23_MIN_LINE_POWER,
+		    V23_MIN_DOMINANCE_Q8)) {
 		datapump->missing_carrier_samples = 0;
 	} else {
 		datapump_add_samples_bounded(

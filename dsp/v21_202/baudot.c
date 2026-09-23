@@ -517,9 +517,9 @@ static bool signal_is_present(
 	struct fsk_measurement measurement =
 		fsk_receiver_measure(&receiver->detector);
 
-	return decision_ready && measurement.ready &&
-	       measurement.line_power >= BAUDOT_RX_MIN_LINE_POWER &&
-	       measurement.dominance_q8 >= BAUDOT_RX_MIN_DOMINANCE_Q8;
+	return decision_ready && fsk_measurement_tone_present(
+		&measurement, BAUDOT_RX_MIN_LINE_POWER,
+		BAUDOT_RX_MIN_DOMINANCE_Q8);
 }
 
 static void lose_receive_carrier(

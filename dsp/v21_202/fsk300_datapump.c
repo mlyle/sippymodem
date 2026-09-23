@@ -213,15 +213,6 @@ static int delete_fsk300(struct dp *dp)
 	return 0;
 }
 
-static bool mark_is_present(
-	const struct fsk_measurement *measurement)
-{
-	return measurement->ready &&
-	       measurement->line_power >= FSK300_MIN_LINE_POWER &&
-	       measurement->dominance_q8 >= FSK300_MIN_DOMINANCE_Q8 &&
-	       measurement->mark_power > measurement->space_power;
-}
-
 static bool line_signal_is_present(
 	const struct fsk_measurement *measurement)
 {
@@ -280,7 +271,9 @@ static int receive_samples(
 				fsk_receiver_measure(&datapump->receiver);
 
 			/* Qualify continuous mark; retain success until the block ends. */
-			datapump->remote_mark_samples = mark_is_present(&measurement) ?
+			datapump->remote_mark_samples = fsk_measurement_mark_present(
+				&measurement, FSK300_MIN_LINE_POWER,
+				FSK300_MIN_DOMINANCE_Q8) ?
 				datapump->remote_mark_samples + 1u : 0;
 		}
 		if (!ready || bits == NULL)
