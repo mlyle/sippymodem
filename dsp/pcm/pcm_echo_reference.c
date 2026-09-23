@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "memory_region.h"
+#include "ring_history.h"
 
 #include <string.h>
 
@@ -57,23 +58,16 @@ enum pcm_echo_reference_result pcm_echo_reference_push(
 	if (!pcm_echo_reference_is_valid(reference))
 		return PCM_ECHO_REFERENCE_INVALID_STATE;
 	reference->samples[reference->write] = sample;
-	reference->write++;
-	if (reference->write == PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
-		reference->write = 0;
-	if (reference->fill < PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
-		reference->fill++;
+	ring_history_advance(&reference->write, &reference->fill,
+		PCM_ECHO_REFERENCE_HISTORY_SAMPLES);
 	return PCM_ECHO_REFERENCE_OK;
 }
 
 static int16_t sample_at_age(
 	const struct pcm_echo_reference *reference, uint32_t age)
 {
-	size_t index = reference->write +
-		PCM_ECHO_REFERENCE_HISTORY_SAMPLES - age;
-
-	if (index >= PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
-		index -= PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
-	return reference->samples[index];
+	return reference->samples[ring_index_at_age(
+		reference->write, PCM_ECHO_REFERENCE_HISTORY_SAMPLES, age)];
 }
 
 enum pcm_echo_reference_result pcm_echo_reference_read_at_age(

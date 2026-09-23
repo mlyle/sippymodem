@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "memory_region.h"
+#include "ring_history.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -80,14 +81,10 @@ enum v34_echo_canceller_result v34_echo_canceller_freeze(
 static int16_t reference_at_age(
 	const struct v34_echo_canceller *canceller, size_t age)
 {
-	size_t index;
-
 	if (age == 0 || age > canceller->reference_fill)
 		return 0;
-	index = canceller->reference_write + V34_ECHO_TAP_COUNT - age;
-	if (index >= V34_ECHO_TAP_COUNT)
-		index -= V34_ECHO_TAP_COUNT;
-	return canceller->references[index];
+	return canceller->references[ring_index_at_age(
+		canceller->reference_write, V34_ECHO_TAP_COUNT, age)];
 }
 
 static int32_t filter_prediction(
@@ -228,11 +225,8 @@ static void push_reference(
 		(uint32_t)(int32_t)transmit_sample, 1));
 
 	canceller->references[canceller->reference_write] = reference;
-	canceller->reference_write++;
-	if (canceller->reference_write == V34_ECHO_TAP_COUNT)
-		canceller->reference_write = 0;
-	if (canceller->reference_fill < V34_ECHO_TAP_COUNT)
-		canceller->reference_fill++;
+	ring_history_advance(&canceller->reference_write,
+		&canceller->reference_fill, V34_ECHO_TAP_COUNT);
 	if (reference != 0)
 		canceller->training_started = true;
 }

@@ -3,6 +3,7 @@
 #include "echo_canceller.h"
 
 #include "memory_region.h"
+#include "ring_history.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -128,11 +129,8 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 	if (!isfinite(power))
 		return V32_ECHO_INVALID_ARGUMENT;
 	canceller->reference[canceller->reference_write] = *reference;
-	canceller->reference_write++;
-	if (canceller->reference_write == V32_ECHO_REFERENCE_CAPACITY)
-		canceller->reference_write = 0;
-	if (canceller->reference_fill < V32_ECHO_REFERENCE_CAPACITY)
-		canceller->reference_fill++;
+	ring_history_advance(&canceller->reference_write,
+		&canceller->reference_fill, V32_ECHO_REFERENCE_CAPACITY);
 	canceller->reference_pending = true;
 	return V32_ECHO_OK;
 }
@@ -140,15 +138,11 @@ enum v32_echo_result v32_echo_canceller_push_reference(
 static struct qam_point reference_at_age(
 	const struct v32_echo_canceller *canceller, size_t age)
 {
-	size_t index;
-
 	if (age >= canceller->reference_fill)
 		return (struct qam_point){ 0 };
-	index = canceller->reference_write +
-		V32_ECHO_REFERENCE_CAPACITY - 1u - age;
-	if (index >= V32_ECHO_REFERENCE_CAPACITY)
-		index -= V32_ECHO_REFERENCE_CAPACITY;
-	return canceller->reference[index];
+	return canceller->reference[ring_index_at_age(
+		canceller->reference_write, V32_ECHO_REFERENCE_CAPACITY,
+		age + 1u)];
 }
 
 static struct qam_point tap_reference(
