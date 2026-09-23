@@ -1054,6 +1054,9 @@ static enum v92_pcm_frame_result decode_frame(
 	 * or changes B1u, filter-dependent scoring, or the delivered residual. */
 	bool lookahead = cells && !b1u;
 	uint64_t tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2] = { { 0 } };
+	uint64_t cell_cost[V92_PCM_MAPPING_FRAME_SYMBOLS]
+		[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
+	/* Reuse the exact lookahead costs when the beam visits the same points. */
 	if (lookahead) {
 		for (unsigned symbol = V92_PCM_MAPPING_FRAME_SYMBOLS; symbol-- > 0;) {
 			unsigned set = receiver->mapping.cpd.frame_constellation[symbol % V92_PCM_MAPPING_PHASES];
@@ -1064,6 +1067,7 @@ static enum v92_pcm_frame_result decode_frame(
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
 				uint64_t cost = cell_metric(cells + symbol, signed_point(constellation, eta),
 					weight, !received || received[symbol]);
+				cell_cost[symbol][eta + constellation->count] = cost;
 				unsigned parity = (unsigned)eta & 1u;
 
 				if (cost < minimum[parity]) minimum[parity] = cost;
@@ -1125,7 +1129,7 @@ static enum v92_pcm_frame_result decode_frame(
 			offsets ? offsets[symbol] : 0.))
 			return V92_PCM_FRAME_INVALID_PARAMETERS;
 
-		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION && !model) {
+		if (receiver->observation == V92_PCM_FRAME_CONSTELLATION && !model && !lookahead) {
 			/* Companding noise grows with amplitude. Estimate reliability
 			 * from the observation, independently of each candidate point.
 			 * Compute once per symbol, outside the bounded path search. */
@@ -1223,7 +1227,8 @@ static enum v92_pcm_frame_result decode_frame(
 					cost = !present ? 0 :
 						v92_observation_score(&cache, precoder_output(precoder, u), history, budget);
 				} else if (cells) {
-					cost = cell_metric(cells + symbol, u, weight, present);
+					cost = lookahead ? cell_cost[symbol][eta + constellation->count] :
+						cell_metric(cells + symbol, u, weight, present);
 				} else {
 					int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
 						prefilter_output(&receiver->mapping, prefilter,
