@@ -408,7 +408,6 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 	struct v34_adaptive_equalizer *equalizer,
 	struct v34_adaptive_equalizer_observation *observation)
 {
-	struct v34_adaptive_equalizer next;
 	struct v34_equalizer_accumulator accumulator;
 	struct v34_analytic_sample demodulated;
 	struct v34_adaptive_equalizer_observation generated;
@@ -424,8 +423,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 		    V34_ADAPTIVE_EQUALIZER_INPUTS_PER_OBSERVATION ||
 	    equalizer->epoch == UINT64_MAX)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	next = *equalizer;
-	if (v34_equalizer_filter(&next.equalizer, &accumulator) !=
+	if (v34_equalizer_filter(&equalizer->equalizer, &accumulator) !=
 	    V34_EQUALIZER_OK)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
 	demodulated = (struct v34_analytic_sample){
@@ -434,26 +432,23 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_observe(
 		.quadrature = round_shift_s32_word_to_s16(
 			(uint32_t)accumulator.quadrature, 14),
 	};
-	if ((next.feedback_mode & V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) != 0)
-		demodulated = apply_feedback(&next.feedback, demodulated);
-	next.epoch++;
+	if ((equalizer->feedback_mode & V34_ADAPTIVE_EQUALIZER_FEEDBACK_APPLY) != 0)
+		demodulated = apply_feedback(&equalizer->feedback, demodulated);
+	equalizer->epoch++;
 	generated = (struct v34_adaptive_equalizer_observation){
 		.decision = rotate_q14(
-			demodulated, next.rotate_in_phase,
+			demodulated, equalizer->rotate_in_phase,
 			wrap_s16_from_s32(
-				-(int32_t)next.rotate_quadrature)),
-		.epoch = next.epoch,
-		.lineage = next.lineage,
+				-(int32_t)equalizer->rotate_quadrature)),
+		.epoch = equalizer->epoch,
+		.lineage = equalizer->lineage,
 	};
-	next.pending_observation = generated;
-	next.pending_demodulated = demodulated;
-	next.pending_rotate_in_phase = next.rotate_in_phase;
-	next.pending_rotate_quadrature = next.rotate_quadrature;
-	next.inputs_since_observation = 0;
-	next.decision_pending = true;
-	if (!v34_adaptive_equalizer_is_valid(&next))
-		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	equalizer->pending_observation = generated;
+	equalizer->pending_demodulated = demodulated;
+	equalizer->pending_rotate_in_phase = equalizer->rotate_in_phase;
+	equalizer->pending_rotate_quadrature = equalizer->rotate_quadrature;
+	equalizer->inputs_since_observation = 0;
+	equalizer->decision_pending = true;
 	*observation = generated;
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }

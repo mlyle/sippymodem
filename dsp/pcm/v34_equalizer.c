@@ -53,18 +53,14 @@ enum v34_equalizer_result v34_equalizer_init_geometry(
 enum v34_equalizer_result v34_equalizer_clear_center(
 	struct v34_equalizer *equalizer)
 {
-	struct v34_equalizer next;
-
 	if (!v34_equalizer_is_valid(equalizer))
 		return V34_EQUALIZER_INVALID_STATE;
-	next = *equalizer;
-	for (size_t tap = next.identity_tap - V34_EQUALIZER_CENTER_TAPS / 2u;
-	     tap < next.identity_tap + V34_EQUALIZER_CENTER_TAPS / 2u;
+	for (size_t tap = equalizer->identity_tap - V34_EQUALIZER_CENTER_TAPS / 2u;
+	     tap < equalizer->identity_tap + V34_EQUALIZER_CENTER_TAPS / 2u;
 	     ++tap) {
-		next.in_phase_coefficient[tap] = 0;
-		next.quadrature_coefficient[tap] = 0;
+		equalizer->in_phase_coefficient[tap] = 0;
+		equalizer->quadrature_coefficient[tap] = 0;
 	}
-	*equalizer = next;
 	return V34_EQUALIZER_OK;
 }
 
