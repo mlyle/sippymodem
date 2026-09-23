@@ -62,6 +62,29 @@ static bool test_packed_constellation_rank(void)
 			      "descending rank differs for pattern %zu Ucode %u",
 			      pattern, ucode);
 		}
+		for (unsigned int label = 0; label <= count; ++label) {
+			uint8_t selected = 0xa5u;
+			uint8_t expected = 0xa5u;
+			unsigned int seen = 0;
+
+			for (unsigned int candidate = PCM_CONSTELLATION_UCODES;
+			     candidate > 0; --candidate) {
+				uint8_t value = (uint8_t)(candidate - 1u);
+
+				if (!pcm_constellation_contains(&constellation, value))
+					continue;
+				if (seen++ == label) {
+					expected = value;
+					break;
+				}
+			}
+			CHECK(pcm_constellation_descending_select(
+				      &constellation, (uint8_t)label, &selected) ==
+				      (label < count) &&
+			      selected == expected,
+			      "descending select differs for pattern %zu label %u",
+			      pattern, label);
+		}
 	}
 	return true;
 }

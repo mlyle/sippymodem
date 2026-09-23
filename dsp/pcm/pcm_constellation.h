@@ -71,6 +71,35 @@ static inline bool pcm_constellation_descending_rank(
 	return true;
 }
 
+/* Inverse of descending_rank: select the label-th present Ucode without
+ * scanning the empty codeword space. A missing label leaves output untouched. */
+static inline bool pcm_constellation_descending_select(
+	const struct pcm_constellation *constellation, uint8_t label,
+	uint8_t *ucode)
+{
+	if (constellation == NULL || ucode == NULL)
+		return false;
+	for (size_t byte = PCM_CONSTELLATION_MASK_BYTES; byte-- > 0;) {
+		uint8_t bits = constellation->ucode_mask[byte];
+		uint8_t count = pcm_constellation_byte_count(bits);
+
+		if (label >= count) {
+			label = (uint8_t)(label - count);
+			continue;
+		}
+		for (unsigned int bit = 8u; bit-- > 0;) {
+			if ((bits & (uint8_t)(1u << bit)) == 0)
+				continue;
+			if (label == 0u) {
+				*ucode = (uint8_t)(byte * 8u + bit);
+				return true;
+			}
+			--label;
+		}
+	}
+	return false;
+}
+
 static inline bool pcm_constellation_is_empty(
 	const struct pcm_constellation *constellation)
 {
