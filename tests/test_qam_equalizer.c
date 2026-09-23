@@ -656,11 +656,22 @@ static bool test_delayed_observations(void)
 	      "delayed observations did not retain both outputs");
 	{
 		struct qam_equalizer saved_equalizer = equalizer;
+		struct qam_equalizer invalid_equalizer = equalizer;
 		struct qam_equalizer_observation saved =
 			observation[1];
 		struct qam_point received =
 			multiply(gain, transmitted[2]);
 
+		invalid_equalizer.tap_count = 0;
+		CHECK(qam_equalizer_observe(
+			      &invalid_equalizer, &received, &observation[1], &ready) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      invalid_equalizer.tap_count == 0,
+		      "invalid equalizer did not take precedence");
+		CHECK(qam_equalizer_observe(
+			      &equalizer, &invalid, &observation[1], &ready) ==
+			      QAM_EQUALIZER_INVALID_STATE,
+		      "pending observation did not take precedence");
 		CHECK(qam_equalizer_observe(
 			      &equalizer, &received, &observation[1], &ready) ==
 			      QAM_EQUALIZER_INVALID_STATE &&
@@ -695,6 +706,22 @@ static bool test_delayed_observations(void)
 		      !qam_equalizer_observation_is_pending(
 			      &observation[1]),
 		      "delayed observations were not consumed exactly once");
+	}
+	{
+		struct qam_equalizer saved_equalizer = equalizer;
+		struct qam_equalizer_observation saved = observation[0];
+		bool saved_ready = ready;
+
+		CHECK(qam_equalizer_observe(
+			      &equalizer, &invalid, &observation[0], &ready) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      qam_equalizer_observe(
+			      &equalizer, NULL, &observation[0], &ready) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved_equalizer, sizeof(equalizer)) == 0 &&
+		      memcmp(&observation[0], &saved, sizeof(saved)) == 0 &&
+		      ready == saved_ready,
+		      "invalid observed input was not transactional");
 	}
 	CHECK(!qam_equalizer_observation_is_pending(NULL) &&
 	      qam_equalizer_observe(

@@ -355,11 +355,12 @@ enum qam_equalizer_result qam_equalizer_observe(
 	bool generated_ready;
 	enum qam_equalizer_result result;
 
-	if (!qam_equalizer_is_valid(equalizer) ||
-	    observation == NULL || ready == NULL)
+	if (equalizer == NULL || observation == NULL || ready == NULL)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (observation->pending)
-		return QAM_EQUALIZER_INVALID_STATE;
+		return qam_equalizer_is_valid(equalizer) ?
+			       QAM_EQUALIZER_INVALID_STATE :
+			       QAM_EQUALIZER_INVALID_ARGUMENT;
 	next = *equalizer;
 	result = qam_equalizer_push(
 		&next, received, &output, &generated_ready);
@@ -367,8 +368,6 @@ enum qam_equalizer_result qam_equalizer_observe(
 		return result;
 	/* A retained observation is the sole adaptation path for this output. */
 	next.can_adapt = false;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	*equalizer = next;
 	*ready = generated_ready;
 	if (generated_ready) {
