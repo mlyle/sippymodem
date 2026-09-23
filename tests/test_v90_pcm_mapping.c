@@ -31,6 +31,41 @@ static void fill_constellation(
 				  V90_CP_CONSTELLATION_UCODES));
 }
 
+static bool test_packed_constellation_rank(void)
+{
+	struct pcm_constellation constellation;
+	const uint8_t patterns[] = { 0x00u, 0xffu, 0x55u, 0xaau };
+
+	for (size_t pattern = 0; pattern < 5u; ++pattern) {
+		unsigned int count = 0;
+
+		for (size_t byte = 0; byte < PCM_CONSTELLATION_MASK_BYTES; ++byte)
+			constellation.ucode_mask[byte] = pattern < ARRAY_LENGTH(patterns) ?
+				patterns[pattern] : (uint8_t)((byte * 37u + 11u) * 29u);
+		for (unsigned int ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode)
+			count += pcm_constellation_contains(&constellation, (uint8_t)ucode);
+		CHECK(pcm_constellation_count(&constellation) == count,
+		      "packed constellation count differs for pattern %zu", pattern);
+		for (unsigned int ucode = 0; ucode < PCM_CONSTELLATION_UCODES; ++ucode) {
+			uint8_t rank = 0xa5u;
+			uint8_t expected = 0;
+			bool present = pcm_constellation_contains(
+				&constellation, (uint8_t)ucode);
+
+			for (unsigned int higher = ucode + 1u;
+			     higher < PCM_CONSTELLATION_UCODES; ++higher)
+				expected += pcm_constellation_contains(
+					&constellation, (uint8_t)higher);
+			CHECK(pcm_constellation_descending_rank(
+				      &constellation, (uint8_t)ucode, &rank) == present &&
+			      rank == (present ? expected : 0xa5u),
+			      "descending rank differs for pattern %zu Ucode %u",
+			      pattern, ucode);
+		}
+	}
+	return true;
+}
+
 static struct v90_cp_parameters parameters(
 	enum v90_cp_kind kind, uint8_t selected_rate_index,
 	uint8_t sign_redundancy, uint8_t constellation_size,
@@ -1026,6 +1061,7 @@ struct test_case {
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "packed constellation rank", test_packed_constellation_rank },
 		{ "exhaustive constellation power", test_mapping_power_exhaustive },
 		{ "exact constellation power bounds", test_mapping_power_bounds },
 		{ "training mapping", test_training_mapping },

@@ -28,9 +28,15 @@ static inline bool pcm_constellation_contains(
 		(uint8_t)(1u << (ucode % 8u))) != 0;
 }
 
-/* Count packed Ucodes without a data-dependent bit loop or a lookup table.
- * Sum adjacent bit pairs, then nibbles, then each byte; the total is at most
- * 128 and therefore fits the mapping's one-byte modulus. */
+/* Sum adjacent bit pairs, then nibbles. This also supplies the descending
+ * mapper rank without walking every codeword above a received symbol. */
+static inline uint8_t pcm_constellation_byte_count(uint8_t bits)
+{
+	bits = (uint8_t)((bits & 0x55u) + ((bits >> 1) & 0x55u));
+	bits = (uint8_t)((bits & 0x33u) + ((bits >> 2) & 0x33u));
+	return (uint8_t)((bits + (bits >> 4)) & 0x0fu);
+}
+
 static inline uint8_t pcm_constellation_count(
 	const struct pcm_constellation *constellation)
 {
@@ -38,14 +44,31 @@ static inline uint8_t pcm_constellation_count(
 
 	if (constellation == NULL)
 		return 0;
-	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index) {
-		uint8_t bits = constellation->ucode_mask[index];
-
-		bits = (uint8_t)((bits & 0x55u) + ((bits >> 1) & 0x55u));
-		bits = (uint8_t)((bits & 0x33u) + ((bits >> 2) & 0x33u));
-		count += (bits + (bits >> 4)) & 0x0fu;
-	}
+	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
+		count += pcm_constellation_byte_count(constellation->ucode_mask[index]);
 	return (uint8_t)count;
+}
+
+/* Mapper labels enumerate present Ucodes from 127 down to zero. Leave the
+ * output untouched when the queried Ucode is absent. */
+static inline bool pcm_constellation_descending_rank(
+	const struct pcm_constellation *constellation, uint8_t ucode,
+	uint8_t *rank)
+{
+	size_t byte;
+	unsigned int count;
+	uint8_t higher;
+
+	if (rank == NULL || !pcm_constellation_contains(constellation, ucode))
+		return false;
+	byte = ucode / 8u;
+	higher = (uint8_t)(constellation->ucode_mask[byte] &
+			   (uint8_t)(0xffu << ((ucode % 8u) + 1u)));
+	count = pcm_constellation_byte_count(higher);
+	for (size_t index = byte + 1u; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
+		count += pcm_constellation_byte_count(constellation->ucode_mask[index]);
+	*rank = (uint8_t)count;
+	return true;
 }
 
 static inline bool pcm_constellation_is_empty(

@@ -479,7 +479,6 @@ enum v90_pcm_mapping_result v90_pcm_mapping_label(
 	uint8_t ucode, uint8_t *label)
 {
 	const struct pcm_constellation *constellation;
-	uint8_t ordinal = 0;
 
 	if (!v90_pcm_mapping_is_valid(mapping) || label == NULL ||
 	    (plane != V90_PCM_MAPPING_TRANSMIT &&
@@ -491,19 +490,8 @@ enum v90_pcm_mapping_result v90_pcm_mapping_label(
 	constellation = plane == V90_PCM_MAPPING_CODEC ?
 				&mapping->codec[interval] :
 				&mapping->transmit[interval];
-	for (unsigned int candidate = V90_CP_CONSTELLATION_UCODES;
-	     candidate > 0; --candidate) {
-		uint8_t value = (uint8_t)(candidate - 1u);
-
-		if (!pcm_constellation_contains(constellation, value))
-			continue;
-		if (value == ucode) {
-			*label = ordinal;
-			return V90_PCM_MAPPING_OK;
-		}
-		ordinal++;
-	}
-	return V90_PCM_MAPPING_OUT_OF_RANGE;
+	return pcm_constellation_descending_rank(constellation, ucode, label) ?
+		       V90_PCM_MAPPING_OK : V90_PCM_MAPPING_OUT_OF_RANGE;
 }
 
 const char *v90_pcm_mapping_result_name(
