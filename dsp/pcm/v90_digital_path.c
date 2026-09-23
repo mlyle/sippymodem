@@ -32,18 +32,6 @@ static bool pending_upstream_is_valid(const struct v90_digital_path *path)
 		path->pending_upstream_count == 0u);
 }
 
-static bool data_mapping_matches(
-	const struct v90_pcm_mapping *mapping,
-	const struct v90_cp_parameters *parameters)
-{
-	struct v90_pcm_mapping expected;
-
-	return v90_pcm_mapping_init_transmit(
-		       &expected, parameters, mapping->law) ==
-		       V90_PCM_MAPPING_OK &&
-	       v90_pcm_mapping_equal(mapping, &expected);
-}
-
 static bool downstream_is_valid(const struct v90_digital_path *path)
 {
 	bool reconditioning =
@@ -115,9 +103,10 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 		bool mapping_state_is_valid =
 			(startup->data_cp_received == path->data_mapping_ready &&
 			 (!startup->data_cp_received ||
-			  data_mapping_matches(
+			  v90_pcm_mapping_matches_transmit(
 				  &path->data_mapping,
-				  &startup->data_parameters)));
+				  &startup->data_parameters,
+				  path->data_mapping.law)));
 
 		return v90_upstream_rx_is_valid(startup) &&
 		       startup->training_mapping.law == path->law &&
@@ -619,7 +608,9 @@ static enum v90_digital_path_result request_ed(
 	if (path->downstream_stage !=
 		    V90_DIGITAL_PATH_DOWNSTREAM_TRAINING ||
 	    !path->data_mapping_ready ||
-	    !data_mapping_matches(&path->data_mapping, parameters))
+	    !v90_pcm_mapping_matches_transmit(
+		    &path->data_mapping, parameters,
+		    path->data_mapping.law))
 		return V90_DIGITAL_PATH_SEQUENCE_MISMATCH;
 	return pcm_downstream_tx_request_ed(
 		       &path->downstream.training) == PCM_DOWNSTREAM_TX_OK ?

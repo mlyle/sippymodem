@@ -63,6 +63,12 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters, enum g711_law law);
 
+/* Compare an accepted CP with the owned network transmit encoding. The
+ * peer codec law in the CP does not change that encoding. */
+bool v90_pcm_mapping_matches_transmit(
+	const struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters, enum g711_law law);
+
 /* Build the Phase 4 control mapping used after online rate renegotiation.
  * V.90 8.6 retains the accepted CPt constellation set and K while taking all
  * sign and spectral-shaping parameters from the preceding data mode.

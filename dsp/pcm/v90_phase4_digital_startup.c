@@ -175,18 +175,6 @@ static enum v90_phase4_startup_result transmit_character(
 		active_station(startup), octet));
 }
 
-static bool mapping_matches(
-	const struct v90_pcm_mapping *mapping,
-	const struct v90_cp_parameters *parameters)
-{
-	struct v90_pcm_mapping expected;
-
-	return v90_pcm_mapping_init_transmit(
-		       &expected, parameters, mapping->law) ==
-		       V90_PCM_MAPPING_OK &&
-	       v90_pcm_mapping_equal(mapping, &expected);
-}
-
 static enum v90_phase4_startup_result receive_continued(
 	struct v90_phase4_digital_continuation *state, int16_t sample)
 {
@@ -202,9 +190,10 @@ static enum v90_phase4_startup_result receive_continued(
 		bool matches =
 			!v90_phase4_cp_line_rx_pending_record_is_valid(
 				&state->receive) ||
-			mapping_matches(
+			v90_pcm_mapping_matches_transmit(
 				&state->station.training_mapping,
-				&event.parameters);
+				&event.parameters,
+				state->station.training_mapping.law);
 
 		/* A rejected CPt candidate cannot revoke the accepted mapping
 		 * while Ri drains. Only a valid conflicting record can do that. */

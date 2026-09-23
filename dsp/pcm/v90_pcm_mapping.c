@@ -255,6 +255,18 @@ enum v90_pcm_mapping_result v90_pcm_mapping_init_transmit(
 	return V90_PCM_MAPPING_OK;
 }
 
+bool v90_pcm_mapping_matches_transmit(
+	const struct v90_pcm_mapping *mapping,
+	const struct v90_cp_parameters *parameters, enum g711_law law)
+{
+	struct v90_pcm_mapping expected;
+
+	return mapping != NULL && parameters != NULL &&
+	       v90_pcm_mapping_init_transmit(&expected, parameters, law) ==
+		       V90_PCM_MAPPING_OK &&
+	       v90_pcm_mapping_equal(mapping, &expected);
+}
+
 enum v90_pcm_mapping_result v90_pcm_mapping_init(
 	struct v90_pcm_mapping *mapping,
 	const struct v90_cp_parameters *parameters)

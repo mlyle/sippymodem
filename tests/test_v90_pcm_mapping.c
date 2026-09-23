@@ -334,8 +334,22 @@ static bool test_transmit_encoding(void)
 					      &mapping, &source, law) ==
 					      V90_PCM_MAPPING_OK &&
 				      v90_pcm_mapping_equal(&mapping, &expected) &&
+				      v90_pcm_mapping_matches_transmit(
+					      &mapping, &source, law) &&
+				      !v90_pcm_mapping_matches_transmit(
+					      &mapping, &source, source.law) &&
+				      !v90_pcm_mapping_matches_transmit(
+					      NULL, &source, law) &&
+				      !v90_pcm_mapping_matches_transmit(
+					      &mapping, NULL, law) &&
 				      memcmp(&source, &saved, sizeof(source)) == 0,
 				      "peer codec changed the transmit mapping or source CP");
+				expected_parameters = source;
+				expected_parameters.selected_rate_index =
+					data ? 2 : 12;
+				CHECK(!v90_pcm_mapping_matches_transmit(
+					      &mapping, &expected_parameters, law),
+				      "different CP rate matched the transmit mapping");
 				source.law = (enum g711_law)99;
 				CHECK(v90_pcm_mapping_init_transmit(
 					      &mapping, &source, law) ==

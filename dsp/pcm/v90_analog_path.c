@@ -18,17 +18,6 @@ enum {
 		 2399u) / 2400u + V34_TRAINING_LINE_FILTER_TAIL_SAMPLES,
 };
 
-static bool mapping_matches(
-	const struct v90_pcm_mapping *mapping,
-	const struct v90_cp_parameters *parameters)
-{
-	struct v90_pcm_mapping expected;
-
-	return v90_pcm_mapping_init(&expected, parameters) ==
-		       V90_PCM_MAPPING_OK &&
-	       v90_pcm_mapping_equal(mapping, &expected);
-}
-
 static bool control_mapping_matches(
 	const struct v90_analog_path *path)
 {
@@ -90,8 +79,9 @@ static bool upstream_is_valid(const struct v90_analog_path *path)
 		       path->peer_mp_prime_received &&
 		       v90_phase4_e_line_tx_is_valid(&path->upstream.e) &&
 		       path->upstream.e.cp.law == path->law &&
-		       mapping_matches(
-			       &path->data_mapping, &path->upstream.e.cp);
+		       v90_pcm_mapping_matches_transmit(
+			       &path->data_mapping, &path->upstream.e.cp,
+			       path->law);
 	if (path->upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA)
 		return path->finishing_cp && path->cp_prime_sent &&
 		       path->peer_mp_prime_received &&
@@ -153,7 +143,9 @@ bool v90_analog_path_is_valid(const struct v90_analog_path *path)
 	    !v90_pcm_mapping_is_valid(&path->data_mapping) ||
 	    path->data_mapping.kind != V90_CP_DATA ||
 	    path->data_mapping.law != path->law ||
-	    !mapping_matches(&path->data_mapping, &path->data_parameters) ||
+	    !v90_pcm_mapping_matches_transmit(
+		    &path->data_mapping, &path->data_parameters,
+		    path->law) ||
 	    !v90_phase4_cp_tx_is_valid(&path->control_symbols) ||
 	    !v90_phase4_cp_tx_record_is_complete(&path->control_symbols) ||
 	    !pcm_r_rx_is_valid(&path->rate_renegotiation) ||
