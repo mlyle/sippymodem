@@ -83,4 +83,11 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 	struct v92_upstream_data_tx *transmitter,
 	v92_upstream_frame_source source, void *context, int16_t *sample);
 
+/* Call-owner sample clock for a transmitter validated at the current media
+ * block boundary. Skip only its recursive state scan; argument, alias,
+ * source-failure and frame-coding checks remain in force. */
+enum v92_upstream_data_tx_result v92_upstream_data_tx_next_owned(
+	struct v92_upstream_data_tx *transmitter,
+	v92_upstream_frame_source source, void *context, int16_t *sample);
+
 #endif /* V92_UPSTREAM_DATA_TX_H */

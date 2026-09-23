@@ -396,6 +396,12 @@ static bool test_validation(void)
 		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      v92_upstream_data_tx_next(&transmit, NULL, NULL, &transmit.queue[0]) ==
 		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_next_owned(NULL, NULL, NULL, &output) ==
+		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_next_owned(&transmit, NULL, NULL, NULL) ==
+		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v92_upstream_data_tx_next_owned(&transmit, NULL, NULL, &transmit.queue[0]) ==
+		      V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT &&
 	      output == 12345 && memcmp(&transmit, &saved, sizeof(saved)) == 0,
 	      "invalid arguments changed state or output");
 	mapping.data_bits_per_frame = 0u;
@@ -437,8 +443,61 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_owned_clock(void)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_data_tx checked;
+	struct v92_upstream_data_tx owned;
+	struct source_state checked_source = { 0 };
+	struct source_state owned_source = { 0 };
+
+	CHECK(mapping_init(&mapping, G711_LAW_PCMU, 19u, true) &&
+	      v92_upstream_data_tx_init(&checked, &mapping, TEST_LEVEL) ==
+		      V92_UPSTREAM_DATA_TX_OK, "owned clock initialization failed");
+	owned = checked;
+	for (unsigned phase = 0u; phase < 3u; ++phase) {
+		size_t count = phase == 0u ? V92_B1U_SYMBOLS + 48u :
+			phase == 1u ? 408u :
+			V92_PCM_MAPPING_FRAME_SYMBOLS + V92_B1U_SYMBOLS;
+
+		if (phase == 1u)
+			CHECK(v92_upstream_data_tx_start_rm(&checked) ==
+				      V92_UPSTREAM_DATA_TX_OK &&
+			      v92_upstream_data_tx_start_rm(&owned) ==
+				      V92_UPSTREAM_DATA_TX_OK,
+			      "owned clock RM setup failed");
+		if (phase == 2u)
+			CHECK(v92_upstream_data_tx_start_e2u(&checked) ==
+				      V92_UPSTREAM_DATA_TX_OK &&
+			      v92_upstream_data_tx_start_e2u(&owned) ==
+				      V92_UPSTREAM_DATA_TX_OK,
+			      "owned clock finish setup failed");
+		for (size_t index = 0u; index < count; ++index) {
+			int16_t checked_sample = 0;
+			int16_t owned_sample = 0;
+			enum v92_upstream_data_tx_result checked_result =
+				v92_upstream_data_tx_next(
+					&checked, source, &checked_source,
+					&checked_sample);
+			enum v92_upstream_data_tx_result owned_result =
+				v92_upstream_data_tx_next_owned(
+					&owned, source, &owned_source, &owned_sample);
+
+			CHECK(checked_result == owned_result &&
+			      checked_sample == owned_sample &&
+			      checked_source.calls == owned_source.calls &&
+			      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+			      v92_upstream_data_tx_is_valid(&owned),
+			      "owned clock diverged at phase %u sample %zu",
+			      phase, index);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	return test_stream(false) && test_stream(true) &&
-	       test_rm_matrix() && test_finish_matrix() && test_rejected_sources_and_idle() && test_validation() ? 0 : 1;
+	       test_rm_matrix() && test_finish_matrix() &&
+	       test_rejected_sources_and_idle() && test_validation() && test_owned_clock() ? 0 : 1;
 }

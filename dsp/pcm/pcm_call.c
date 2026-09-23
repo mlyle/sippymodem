@@ -4473,7 +4473,7 @@ static enum pcm_call_result v92_fast_analog_transmit(struct pcm_call *call,
 			return PCM_CALL_NUMERIC_FAILURE;
 		fast->finish_started = true;
 	}
-	enum v92_upstream_data_tx_result result = v92_upstream_data_tx_next(&path->upstream,
+	enum v92_upstream_data_tx_result result = v92_upstream_data_tx_next_owned(&path->upstream,
 		fast->b1_started ? sources->pcm_upstream : v92_fast_upstream_bits,
 		fast->b1_started ? sources->pcm_upstream_context : fast, sample);
 	if (result == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
@@ -4778,7 +4778,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (--path->fast.deadline_remaining == 0u)
 				return path->fast.cleardown.active ? PCM_CALL_CLEARDOWN_COMPLETE : begin_retrain(call, false);
 		} else {
-			transmitted = v92_upstream_data_tx_next(&path->upstream,
+			transmitted = v92_upstream_data_tx_next_owned(&path->upstream,
 				sources->pcm_upstream, sources->pcm_upstream_context, &sample);
 			if (transmitted == V92_UPSTREAM_DATA_TX_SOURCE_FAILURE)
 				return PCM_CALL_SOURCE_FAILURE;

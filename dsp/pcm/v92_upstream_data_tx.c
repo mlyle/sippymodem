@@ -149,11 +149,13 @@ static enum v92_upstream_data_tx_result generate_frame(
 	return V92_UPSTREAM_DATA_TX_OK;
 }
 
-enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
+static enum v92_upstream_data_tx_result next_sample(
 	struct v92_upstream_data_tx *transmitter,
-	v92_upstream_frame_source source, void *context, int16_t *sample)
+	v92_upstream_frame_source source, void *context, int16_t *sample,
+	bool owned)
 {
-	if (!v92_upstream_data_tx_is_valid(transmitter) || sample == NULL ||
+	if (transmitter == NULL || sample == NULL ||
+	    (!owned && !v92_upstream_data_tx_is_valid(transmitter)) ||
 	    memory_regions_overlap(
 		    transmitter, sizeof(*transmitter), sample, sizeof(*sample)))
 		return V92_UPSTREAM_DATA_TX_INVALID_ARGUMENT;
@@ -182,4 +184,18 @@ enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
 		transmitter->finish_symbols_remaining--;
 	return rm_complete ? V92_UPSTREAM_DATA_TX_RM_COMPLETE :
 		fb1u_complete ? V92_UPSTREAM_DATA_TX_FB1U_COMPLETE : V92_UPSTREAM_DATA_TX_OK;
+}
+
+enum v92_upstream_data_tx_result v92_upstream_data_tx_next(
+	struct v92_upstream_data_tx *transmitter,
+	v92_upstream_frame_source source, void *context, int16_t *sample)
+{
+	return next_sample(transmitter, source, context, sample, false);
+}
+
+enum v92_upstream_data_tx_result v92_upstream_data_tx_next_owned(
+	struct v92_upstream_data_tx *transmitter,
+	v92_upstream_frame_source source, void *context, int16_t *sample)
+{
+	return next_sample(transmitter, source, context, sample, true);
 }
