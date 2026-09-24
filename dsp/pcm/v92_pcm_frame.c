@@ -10,6 +10,7 @@
 
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 enum {
@@ -701,6 +702,23 @@ struct frame_path {
 	bool uncertain;
 };
 
+/* Pending payload is unchanged while extending the twelve symbols of a
+ * frame. Keep its source path by origin and copy it only after the beam has
+ * settled, instead of copying ten delayed frames at every symbol. */
+static void copy_frame_path_without_pending(
+	struct frame_path *destination, const struct frame_path *source)
+{
+	const size_t pending_offset = offsetof(struct frame_path, state) +
+		offsetof(struct v92_pcm_frame_rx_path, pending);
+	const size_t after_pending = pending_offset +
+		sizeof(destination->state.pending);
+
+	memcpy(destination, source, pending_offset);
+	memcpy((char *)destination + after_pending,
+	       (const char *)source + after_pending,
+	       sizeof(*destination) - after_pending);
+}
+
 static enum v92_pcm_frame_rm rm_state(const struct v92_pcm_frame_rx_path *path)
 {
 	if (path->rm_frames < V92_PCM_RM_QUALIFY_FRAMES)
@@ -1267,7 +1285,8 @@ static enum v92_pcm_frame_result decode_frame(
 			struct v92_pcm_frame *frame = &next[index].frame;
 			int64_t error;
 
-			next[index] = paths[candidate->path];
+			copy_frame_path_without_pending(
+				&next[index], &paths[candidate->path]);
 			next[index].state.metric = candidate->path_metric;
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
@@ -1318,6 +1337,9 @@ static enum v92_pcm_frame_result decode_frame(
 	size_t valid = 0u;
 
 	for (size_t index = 0u; index < path_count; ++index) {
+		memcpy(paths[index].state.pending,
+		       receiver->paths[paths[index].origin].pending,
+		       sizeof(paths[index].state.pending));
 		uint8_t candidate_bits[V92_PCM_MAPPING_MAX_BITS];
 		struct v92_pcm_frame_rx_path *state = &paths[index].state;
 		bool request_word = observe_rm(&receiver->mapping, paths[index].frame.digit, b1u, state);
