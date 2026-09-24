@@ -221,30 +221,28 @@ static bool line_signal_is_present(
 	       measurement->line_power >= FSK300_MIN_LINE_POWER;
 }
 
-static void generate_mark(
+static enum fsk_result generate_samples(
 	struct fsk300_datapump *datapump,
 	int16_t *transmit,
-	int count)
+	int count, bool online)
 {
 	for (int index = 0; index < count; ++index) {
-		bool consumed;
+		enum fsk_result result;
 
-		(void)fsk_transmitter_sample(
-			&datapump->transmitter, 1, &transmit[index], &consumed);
-	}
-}
+		if (online)
+			result = fsk_online_source_sample(
+				&datapump->online_source,
+				&datapump->transmitter,
+				datapump->dp.modem, &transmit[index]);
+		else {
+			bool consumed;
 
-static enum fsk_result generate_data(
-	struct fsk300_datapump *datapump,
-	int16_t *transmit,
-	int count)
-{
-	for (int index = 0; index < count; ++index) {
-		if (fsk_online_source_sample(
-			    &datapump->online_source,
-			    &datapump->transmitter,
-			    datapump->dp.modem, &transmit[index]) != FSK_OK)
-			return FSK_INVALID_ARGUMENT;
+			result = fsk_transmitter_sample(
+				&datapump->transmitter, 1, &transmit[index],
+				&consumed);
+		}
+		if (result != FSK_OK)
+			return result;
 	}
 	return FSK_OK;
 }
@@ -353,13 +351,12 @@ static int process_fsk300(struct dp *dp, void *receive_buffer,
 	     datapump->training_state == FSK300_TRAINING_GUARD) &&
 	    datapump->originator) {
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
-	} else if (datapump->training_state == FSK300_TRAINING_ONLINE) {
-		if (generate_data(datapump, transmit, count) != FSK_OK) {
-			memset(transmit, 0, (size_t)count * sizeof(*transmit));
-			return DPSTAT_ERROR;
-		}
-	} else {
-		generate_mark(datapump, transmit, count);
+	} else if (generate_samples(
+			   datapump, transmit, count,
+			   datapump->training_state == FSK300_TRAINING_ONLINE) !=
+		   FSK_OK) {
+		memset(transmit, 0, (size_t)count * sizeof(*transmit));
+		return DPSTAT_ERROR;
 	}
 	received_count = receive_samples(
 		datapump, receive, count,
