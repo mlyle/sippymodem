@@ -758,6 +758,7 @@ struct frame_candidate {
 	int16_t eta;
 	uint8_t path;
 	uint8_t digit;
+	uint8_t y0;
 };
 
 /* Max-heap of the best bounded candidates. Equal metrics do not replace
@@ -1264,7 +1265,7 @@ static enum v92_pcm_frame_result decode_frame(
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric, cost),
 					.eta = (int16_t)eta, .path = (uint8_t)path,
-					.digit = digit,
+					.digit = digit, .y0 = y0,
 				};
 				candidate.path_metric = candidate.metric;
 				if (lookahead && symbol % V92_PCM_TRELLIS_INTERVAL_SYMBOLS != 3u)
@@ -1291,10 +1292,7 @@ static enum v92_pcm_frame_result decode_frame(
 			frame->signed_index[symbol] = candidate->eta;
 			frame->digit[symbol] = candidate->digit;
 			frame->u[symbol] = signed_point(constellation, candidate->eta);
-			if (v34_convolutional_encoder_output(&next[index].state.trellis,
-							    &frame->y0[symbol]) !=
-			    V34_TRELLIS_OK)
-				return V92_PCM_FRAME_INVALID_PARAMETERS;
+			frame->y0[symbol] = candidate->y0;
 			filter_step(&receiver->mapping, &next[index].state.filter,
 				    frame->u[symbol], &frame->x[symbol], &frame->v[symbol]);
 			/* Reconstructed error reports residuals, not input-cell rank.
