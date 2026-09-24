@@ -124,12 +124,15 @@ static bool symbol_matches(
 	bool inverted, bool bar, bool *matched)
 {
 	uint8_t expected_ucode;
+	const struct pcm_constellation *plane =
+		receiver->decision_plane == V90_PCM_MAPPING_CODEC ?
+			receiver->mapping.codec : receiver->mapping.transmit;
 	bool expected_positive = signal_positive(receiver->signal, interval);
 
-	if (v90_pcm_mapping_ucode(
-		    &receiver->mapping, receiver->decision_plane,
-		    interval % V90_CP_FRAME_INTERVALS, 0, &expected_ucode) !=
-	    V90_PCM_MAPPING_OK)
+	/* The caller validated the mapping before testing any hypotheses. */
+	if (!pcm_constellation_descending_select(
+		    &plane[interval % V90_CP_FRAME_INTERVALS], 0,
+		    &expected_ucode))
 		return false;
 	if (inverted)
 		expected_positive = !expected_positive;
@@ -405,9 +408,9 @@ enum pcm_r_tx_result pcm_r_tx_next(
 		return PCM_R_TX_COMPLETE;
 	next = *transmitter;
 	interval = next.transmitted_symbols % V90_CP_FRAME_INTERVALS;
-	if (v90_pcm_mapping_ucode(
-		    &next.mapping, V90_PCM_MAPPING_TRANSMIT,
-		    interval, 0, &ucode) != V90_PCM_MAPPING_OK)
+	/* The transmitter was validated at entry. */
+	if (!pcm_constellation_descending_select(
+		    &next.mapping.transmit[interval], 0, &ucode))
 		return PCM_R_TX_INTERNAL_ERROR;
 	/* Descending-Ucode mapping makes label zero the normative
 	 * highest-power constellation member used by every R signal. */
