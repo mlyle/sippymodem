@@ -8,6 +8,7 @@
 #include "test.h"
 
 static int source_calls;
+static int source_wrapper_calls;
 static int source_result;
 static int sink_calls;
 static int sink_result;
@@ -26,7 +27,11 @@ static int test_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 
 int modem_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 {
-	return modem->get_bits(modem, nbits, bits, count);
+	source_wrapper_calls++;
+	if (modem->get_bits != NULL)
+		return modem->get_bits(modem, nbits, bits, count);
+	memset(bits, 0xff, (size_t)count);
+	return count;
 }
 
 static int test_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
@@ -122,9 +127,11 @@ static bool test_source_bits(void)
 	      source_calls == 0,
 	      "offline frame read host bits");
 	modem.get_bits = NULL;
+	source_wrapper_calls = 0;
 	CHECK(datapump_source_bits(&dp, true, bits, sizeof(bits)) &&
-	      memcmp(bits, (u8[]){ 1, 1, 1, 1 }, sizeof(bits)) == 0,
-	      "missing host source did not emit marks");
+	      memcmp(bits, (u8[]){ 1, 1, 1, 1 }, sizeof(bits)) == 0 &&
+	      source_wrapper_calls == 1,
+	      "missing host source bypassed the modem wrapper");
 	CHECK(!datapump_source_bits(NULL, true, bits, sizeof(bits)) &&
 	      !datapump_source_bits(&dp, true, NULL, sizeof(bits)) &&
 	      !datapump_source_bits(&dp, true, bits, (size_t)INT_MAX + 1u),

@@ -42,7 +42,7 @@ static inline bool datapump_source_bits(
 	if (dp == NULL || dp->modem == NULL || bits == NULL ||
 	    bit_count > INT_MAX)
 		return false;
-	if (online && dp->modem->get_bits != NULL) {
+	if (online) {
 		int count = modem_get_bits(dp->modem, 1, bits, (int)bit_count);
 
 		if (count > 0)
