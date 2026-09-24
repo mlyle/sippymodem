@@ -31,6 +31,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 enum {
@@ -70,10 +71,13 @@ struct integration_endpoint {
 	uint8_t output[ENDPOINT_OUTPUT_CAPACITY];
 	size_t output_count;
 	size_t exact_frames;
+	uint64_t process_ns;
+	size_t process_samples;
 	size_t delayed_codeword_cursor;
 	size_t stops;
 	size_t erased_samples;
 	bool delay_codewords;
+	bool profile_cpu;
 	bool delay_one_sample;
 	uint8_t prior_codeword;
 };
@@ -175,6 +179,7 @@ static bool endpoint_init(
 	int flags;
 
 	memset(endpoint, 0, sizeof(*endpoint));
+	endpoint->profile_cpu = getenv("MODEM_CPU_BENCH") != NULL;
 	endpoint->modem_fd = -1;
 	endpoint->client_fd = -1;
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
@@ -482,6 +487,7 @@ static bool process_transmit_frame(
 	enum g711_law law;
 	bool exact_output = false;
 	bool received_mask[SIP_FRAME_SAMPLES];
+	struct timespec started, finished;
 	int silence;
 
 	if (endpoint == NULL || endpoint->modem == NULL ||
@@ -509,10 +515,20 @@ static bool process_transmit_frame(
 			endpoint->receive[index] = decode_codeword(law, (uint8_t)silence);
 		}
 	}
+	if (endpoint->profile_cpu && clock_gettime(CLOCK_THREAD_CPUTIME_ID, &started) != 0)
+		return false;
 	modem_process_g711(
 		endpoint->modem, law, endpoint->receive_codewords,
 		endpoint->receive, received_mask, endpoint->transmit_codewords,
 		endpoint->transmit, SIP_FRAME_SAMPLES, &exact_output);
+	if (endpoint->profile_cpu) {
+		if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &finished) != 0)
+			return false;
+		endpoint->process_ns += (uint64_t)(
+			(int64_t)(finished.tv_sec - started.tv_sec) * INT64_C(1000000000) +
+			finished.tv_nsec - started.tv_nsec);
+		endpoint->process_samples += SIP_FRAME_SAMPLES;
+	}
 	endpoint->erased_samples = 0;
 	if (!exact_output)
 		return media_encode(
@@ -2435,6 +2451,16 @@ static bool run_media_call(
 		CHECK(exercise_cleardown(
 			      &caller, &answerer, connected_id, test_case->cleardown_initiators, codec, &recorder),
 		      "%s did not complete protocol ATH0 cleardown", test_case->name);
+
+	/* CPU time inside modem_process_g711 excludes media plumbing and test work. */
+	if (caller.profile_cpu && caller.process_ns != 0u && answerer.process_ns != 0u)
+		fprintf(stderr, "[ CPU      ] %s over %s: caller %.2fx, answerer %.2fx (%zu/%zu samples)\n",
+			test_case->name, codec == MEDIA_CODEC_PCMU ? "PCMU" : "PCMA",
+			(double)caller.process_samples * 1000000000.0 /
+				(MODEM_RATE * (double)caller.process_ns),
+			(double)answerer.process_samples * 1000000000.0 /
+				(MODEM_RATE * (double)answerer.process_ns),
+			caller.process_samples, answerer.process_samples);
 
 	endpoint_destroy(&answerer);
 	endpoint_destroy(&caller);
