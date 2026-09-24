@@ -147,6 +147,7 @@ static int test_received_low_bits(void)
 static int test_transactionality(void)
 {
 	static const uint32_t good_radices[] = { 2, 2, 2 };
+	static const uint32_t surplus_radices[] = { 3, 3 };
 	static const uint32_t zero_radix[] = { 2, 0, 2 };
 	static const uint32_t small_capacity[] = { 2, 2 };
 	uint8_t invalid_bits[3] = { 0, 2, 1 };
@@ -154,6 +155,7 @@ static int test_transactionality(void)
 	uint8_t output[3] = { 7, 7, 7 };
 	uint32_t digits[3] = { 11, 12, 13 };
 	uint32_t invalid_digits[3] = { 0, 2, 0 };
+	uint32_t surplus_digits[2] = { 0, 0 };
 	uint8_t state = 0;
 	uint8_t sign = 7;
 
@@ -188,6 +190,19 @@ static int test_transactionality(void)
 		      output, 3) == MIXED_RADIX_OUT_OF_RANGE &&
 	      state == 2 && output[0] == 7,
 	      "rejected differential decode changed state");
+	state = 1;
+	CHECK(mixed_radix_decode_differential(
+		      surplus_radices, 2, surplus_digits, &state,
+		      output, 3) == MIXED_RADIX_OUT_OF_RANGE &&
+	      state == 1 && output[0] == 7 &&
+	      output[1] == 7 && output[2] == 7,
+	      "unused differential tuple changed state or bits");
+	CHECK(mixed_radix_decode_differential(
+		      good_radices, 3, invalid_digits, &state,
+		      output, 3) == MIXED_RADIX_OUT_OF_RANGE &&
+	      state == 1 && output[0] == 7 &&
+	      output[1] == 7 && output[2] == 7,
+	      "invalid differential digit changed state or bits");
 	CHECK(mixed_radix_encode(
 		      good_radices, 3, bits, 3, NULL) ==
 		      MIXED_RADIX_INVALID_ARGUMENT &&

@@ -89,16 +89,16 @@ enum mixed_radix_result mixed_radix_encode(
 static enum mixed_radix_result decode(
 	const uint32_t *radices, size_t digit_count,
 	const uint32_t *digits, uint8_t *bits, size_t bit_count,
-	bool reject_unused)
+	bool reject_unused, bool validated)
 {
 	uint8_t decoded[MIXED_RADIX_MAX_BITS];
 	__uint128_t value = 0;
 
 	if (digits == NULL || (bits == NULL && bit_count != 0))
 		return MIXED_RADIX_INVALID_ARGUMENT;
-	if (!configuration_is_valid(radices, digit_count, bit_count))
+	if (!validated && !configuration_is_valid(radices, digit_count, bit_count))
 		return MIXED_RADIX_INVALID_CONFIGURATION;
-	if (!digits_are_in_range(radices, digits, digit_count))
+	if (!validated && !digits_are_in_range(radices, digits, digit_count))
 		return MIXED_RADIX_OUT_OF_RANGE;
 	for (size_t index = digit_count; index > 0; --index) {
 		uint32_t radix = radices[index - 1];
@@ -126,14 +126,14 @@ enum mixed_radix_result mixed_radix_decode(
 	const uint32_t *radices, size_t digit_count,
 	const uint32_t *digits, uint8_t *bits, size_t bit_count)
 {
-	return decode(radices, digit_count, digits, bits, bit_count, true);
+	return decode(radices, digit_count, digits, bits, bit_count, true, false);
 }
 
 enum mixed_radix_result mixed_radix_decode_low_bits(
 	const uint32_t *radices, size_t digit_count,
 	const uint32_t *digits, uint8_t *bits, size_t bit_count)
 {
-	return decode(radices, digit_count, digits, bits, bit_count, false);
+	return decode(radices, digit_count, digits, bits, bit_count, false, false);
 }
 
 enum mixed_radix_result mixed_radix_encode_differential(
@@ -175,7 +175,6 @@ enum mixed_radix_result mixed_radix_decode_differential(
 	uint8_t *bits, size_t bit_count)
 {
 	uint32_t ordinary[MIXED_RADIX_MAX_DIGITS];
-	uint8_t decoded[MIXED_RADIX_MAX_BITS];
 	uint8_t previous;
 	uint8_t next;
 	enum mixed_radix_result result;
@@ -195,12 +194,11 @@ enum mixed_radix_result mixed_radix_decode_differential(
 			radices[digit] - 1 - digits[digit] : digits[digit];
 	next = (uint8_t)(digits_are_above_half(
 		radices, ordinary, digit_count) ^ previous);
-	result = mixed_radix_decode(
-		radices, digit_count, ordinary, decoded, bit_count);
+	/* Reflection needs validated digits; reuse that check for the decode. */
+	result = decode(
+		radices, digit_count, ordinary, bits, bit_count, true, true);
 	if (result != MIXED_RADIX_OK)
 		return result;
-	if (bit_count != 0)
-		memcpy(bits, decoded, bit_count);
 	*differential_state = next;
 	return MIXED_RADIX_OK;
 }
