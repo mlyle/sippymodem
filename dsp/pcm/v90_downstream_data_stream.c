@@ -2,8 +2,6 @@
 
 #include "v90_downstream_data_stream.h"
 
-#include "packed_bits.h"
-
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -136,8 +134,7 @@ static bool acquire_frame(
 		return true;
 	}
 	memset(bits, 2, bit_count);
-	return source(context, bits, bit_count) &&
-	       unpacked_bits_are_binary(bits, bit_count);
+	return source(context, bits, bit_count);
 }
 
 static bool fill_queue(
@@ -193,7 +190,9 @@ static enum v90_downstream_data_stream_result generate_frame(
 		return V90_DOWNSTREAM_DATA_STREAM_NUMERIC_FAILURE;
 	if (result != V90_DOWNSTREAM_DATA_TX_BUFFERING &&
 	    result != V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
-		return V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
+		return result == V90_DOWNSTREAM_DATA_TX_INVALID_BITS ?
+			V90_DOWNSTREAM_DATA_STREAM_SOURCE_FAILURE :
+			V90_DOWNSTREAM_DATA_STREAM_INTERNAL_ERROR;
 	stream->accepted_frames++;
 	if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY &&
 	    !fill_queue(stream, &output))

@@ -3,8 +3,6 @@
 #include "v92_upstream_data_tx.h"
 
 #include "memory_region.h"
-#include "packed_bits.h"
-
 #include <string.h>
 
 enum {
@@ -117,6 +115,7 @@ static enum v92_upstream_data_tx_result generate_frame(
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
 	size_t count = encoder.mapping.data_bits_per_frame;
+	bool sourced = false;
 
 	/* B1u is exactly 48 complete known-one frames. Fetching the first data
 	 * frame does not reset or reseed any of the active coding histories. */
@@ -131,12 +130,17 @@ static enum v92_upstream_data_tx_result generate_frame(
 			memset(bits, 1, count);
 		} else {
 			memset(bits, 2, count);
-			if (!source(context, bits, count) ||
-			    !unpacked_bits_are_binary(bits, count))
+			if (!source(context, bits, count))
 				return V92_UPSTREAM_DATA_TX_SOURCE_FAILURE;
+			sourced = true;
 		}
-		if (v92_pcm_frame_encode_owned(&encoder, bits, count, &frame) != V92_PCM_FRAME_OK)
-			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
+		enum v92_pcm_frame_result result =
+			v92_pcm_frame_encode_owned(&encoder, bits, count, &frame);
+
+		if (result != V92_PCM_FRAME_OK)
+			return sourced && result == V92_PCM_FRAME_OUT_OF_RANGE ?
+				V92_UPSTREAM_DATA_TX_SOURCE_FAILURE :
+				V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	}
 	for (size_t index = 0u; index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {
 		if (v92_pcm_frame_scale(
