@@ -141,7 +141,7 @@ static int process_v22(
 	struct dp *dp, void *receive, void *transmit, int count);
 static int retrain_v22(struct dp *dp);
 static int enter_link(struct v22_datapump *datapump);
-static void flush_retrain_candidate(struct v22_datapump *datapump);
+static int flush_retrain_candidate(struct v22_datapump *datapump);
 
 /* V.22 6.3.1.2 keeps the established carrier instead of repeating a
  * handshake.  Bell 212A has the same carrier-preserving ATO1 behavior, so
@@ -645,6 +645,18 @@ static void observe_answer_mark(
 	}
 }
 
+static int deliver_received_bits(
+	struct v22_datapump *datapump, uint8_t *bits,
+	size_t bit_count)
+{
+	struct modem *modem = datapump->dp.modem;
+
+	if (modem->put_bits == NULL)
+		return 0;
+	return modem_put_bits(modem, 1, bits, (int)bit_count) ==
+		       (int)bit_count ? 0 : -1;
+}
+
 static int output_received_bits(
 	struct v22_datapump *datapump, uint8_t *bits,
 	size_t bit_count)
@@ -664,12 +676,8 @@ static int output_received_bits(
 			       datapump->retrain_candidate_bit_count,
 		       bits, bit_count);
 		datapump->retrain_candidate_bit_count += (uint16_t)bit_count;
-	} else if (datapump->carrier_return_hold_samples == 0 &&
-		   datapump->dp.modem->put_bits != NULL) {
-		(void)modem_put_bits(
-			datapump->dp.modem, 1, bits,
-			(int)bit_count);
-	}
+	} else if (datapump->carrier_return_hold_samples == 0)
+		return deliver_received_bits(datapump, bits, bit_count);
 	return 0;
 }
 
@@ -916,18 +924,18 @@ static uint8_t receive_phase_quadrant(
 	return datapump->decoder.phase_quadrant;
 }
 
-static void flush_retrain_candidate(
+static int flush_retrain_candidate(
 	struct v22_datapump *datapump)
 {
 	if (datapump->retrain_candidate_bit_count != 0 &&
 	    datapump->retrain_candidate_deliver &&
-	    datapump->dp.modem->put_bits != NULL)
-		(void)modem_put_bits(
-			datapump->dp.modem, 1,
-			datapump->retrain_candidate_bits,
-			(int)datapump->retrain_candidate_bit_count);
+	    deliver_received_bits(
+		    datapump, datapump->retrain_candidate_bits,
+		    datapump->retrain_candidate_bit_count) != 0)
+		return -1;
 	datapump->retrain_candidate_bit_count = 0;
 	datapump->retrain_candidate_deliver = false;
+	return 0;
 }
 
 static void discard_retrain_candidate(
@@ -951,10 +959,10 @@ static int shift_retrain_candidate(struct v22_datapump *datapump)
 	if (datapump->retrain_candidate_bit_count < bit_count)
 		return datapump->retrain_candidate_deliver ? -1 : 0;
 	if (datapump->retrain_candidate_deliver &&
-	    datapump->dp.modem->put_bits != NULL)
-		(void)modem_put_bits(
-			datapump->dp.modem, 1,
-			datapump->retrain_candidate_bits, (int)bit_count);
+	    deliver_received_bits(
+		    datapump, datapump->retrain_candidate_bits,
+		    bit_count) != 0)
+		return -1;
 	datapump->retrain_candidate_bit_count -= (uint16_t)bit_count;
 	memmove(datapump->retrain_candidate_bits,
 		datapump->retrain_candidate_bits + bit_count,
@@ -1114,7 +1122,8 @@ static int observe_retrain_signal(
 			*ended = true;
 			return 0;
 		}
-		flush_retrain_candidate(datapump);
+		if (flush_retrain_candidate(datapump) != 0)
+			return -1;
 		datapump->retrain_symbol_history = 0;
 		if (datapump->rate_signal_detector.alternating_symbols != 0) {
 			if (remember_retrain_symbol(
@@ -1266,7 +1275,8 @@ static int retrain_v22(struct dp *dp)
 	if (datapump == NULL || !datapump_uses_v22bis(datapump) ||
 	    datapump->training_state != V22_TRAINING_ONLINE)
 		return -1;
-	flush_retrain_candidate(datapump);
+	if (flush_retrain_candidate(datapump) != 0)
+		return -1;
 	return begin_retrain(
 		datapump, receive_phase_quadrant(datapump), false);
 }
@@ -1666,7 +1676,8 @@ static int process_v22(
 		discard_receive = true;
 		if (datapump->missing_carrier_samples == 0) {
 			datapump->carrier_return_hold_samples = 0;
-			flush_retrain_candidate(datapump);
+			if (flush_retrain_candidate(datapump) != 0)
+				return DPSTAT_ERROR;
 			discard_retrain_candidate(datapump);
 			if (!datapump->dp.modem->cfg.ec)
 				modem_async_retrain(datapump->dp.modem);
