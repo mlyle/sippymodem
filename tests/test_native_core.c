@@ -2290,6 +2290,56 @@ static bool test_lapm_directional_preamble(void)
 	return true;
 }
 
+static bool test_lapm_peer_flag_preamble(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM peer flags",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *m = modem_create(&driver, "LAPM peer flags");
+	uint8_t bit;
+
+	CHECK(m != NULL, "LAPM peer-flag allocation failed");
+	m->caller = 1;
+	m->tx_rate = m->rx_rate = 1200;
+	m->cfg.ec = 1;
+	CHECK(modem_ec_init(m) == 0, "LAPM peer-flag initialization failed");
+	modem_hdlc_start(m);
+	m->get_bits = modem_hdlc_get_bits;
+	m->put_bits = modem_hdlc_put_bits;
+	modem_ec_start(m);
+	CHECK(m->packer.hdlc.tx_preamble_flags == 109,
+	      "wrong conservative LAPM preamble");
+	/* The HDLC decoder holds 18 bits of lookahead. Five wire flags
+	 * expose at least two complete, consecutive peer flags to it. */
+	for (unsigned i = 0; i < 3 * 8; ++i) {
+		bit = (0x7e >> (i % 8)) & 1;
+		CHECK(modem_hdlc_put_bits(m, 1, &bit, 1) == 1,
+		      "peer flag input failed");
+	}
+	CHECK(m->packer.hdlc.tx_preamble_flags == 109,
+	      "one peer flag prematurely released the ADP wait");
+	for (unsigned i = 3 * 8; i < 5 * 8; ++i) {
+		bit = (0x7e >> (i % 8)) & 1;
+		CHECK(modem_hdlc_put_bits(m, 1, &bit, 1) == 1,
+		      "peer flag input failed");
+	}
+	CHECK(m->packer.hdlc.tx_preamble_flags == 16 &&
+	      m->packer.hdlc.tx_preamble_complete != NULL,
+	      "peer flags did not release the ADP wait");
+	for (unsigned i = 0; i < 16 * 8; ++i)
+		CHECK(modem_hdlc_get_bits(m, 1, &bit, 1) == 1,
+		      "minimum LAPM flag preamble failed");
+	CHECK(m->packer.hdlc.tx_preamble_flags == 0 &&
+	      m->packer.hdlc.tx_preamble_complete == NULL &&
+	      m->packer.hdlc.get_tx_frame != NULL,
+	      "first XID did not follow 16 transmitted flags");
+	modem_delete(m);
+	return true;
+}
+
 static bool test_lapm_receive_backpressure(void)
 {
 	enum { LAPM_DATA_STATE = 2 };
@@ -3992,6 +4042,7 @@ int main(void)
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
+		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },

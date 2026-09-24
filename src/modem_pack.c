@@ -769,6 +769,14 @@ int modem_hdlc_put_bits(struct modem *m, int nbits,
 			in = s->data >> (s->bit-8) ;
 			/* flag: finish frame */
 			if (in == HDLC_FLAG) {
+				/* Two idle flags mean the peer has left ADP. The
+				 * originator can stop waiting for the longest ADP reply,
+				 * but must still send 16 flags before its first XID. */
+				if (i == 0 && !h->rx_error &&
+				    h->rx_frame->count == 0 &&
+				    h->tx_preamble_complete != NULL &&
+				    h->tx_preamble_flags > V42_PROTOCOL_PREAMBLE_FLAGS)
+					h->tx_preamble_flags = V42_PROTOCOL_PREAMBLE_FLAGS;
 				/* end of frame */;
 				if ( !h->rx_frame->count ) {
 					//HDLC_DBG("empty.\n");
