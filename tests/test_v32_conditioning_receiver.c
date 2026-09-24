@@ -1124,6 +1124,32 @@ static bool test_validation(void)
 	return true;
 }
 
+static bool test_epoch_age_saturates(void)
+{
+	struct v32_conditioning_receiver receiver;
+	struct v32_equalizer_observation observation;
+	bool ready = false;
+
+	CHECK(v32_conditioning_receiver_init(
+		      &receiver, V32_CALLING_TRANSMITTER) ==
+		      V32_CONDITIONING_RECEIVER_OK,
+	      "V.32 epoch-age receiver did not initialize");
+	for (unsigned int index = 0; index < 200u; ++index) {
+		CHECK(generated_observation(0, &observation) &&
+			      observe(&receiver, &observation, &ready) ==
+				      V32_CONDITIONING_RECEIVER_OK,
+		      "steady V.32 observation %u failed", index);
+	}
+	CHECK(v32_conditioning_receiver_is_valid(&receiver) &&
+		      receiver.phase == V32_CONDITIONING_SEARCH_S_BAR &&
+		      receiver.epoch_detector.timer == 0x97u && !ready,
+	      "V.32 epoch age did not saturate while searching");
+	receiver.epoch_detector.timer++;
+	CHECK(!v32_conditioning_receiver_is_valid(&receiver),
+	      "V.32 conditioning accepted an overflowing epoch age");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -1154,6 +1180,7 @@ int main(void)
 		  test_epoch_wrong_sequence_rejection },
 		{ "direct prefix remains exact",
 		  test_direct_prefix_remains_exact },
+		{ "epoch age saturates", test_epoch_age_saturates },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

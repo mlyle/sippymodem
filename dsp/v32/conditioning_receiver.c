@@ -25,6 +25,8 @@ enum {
 	 * is a receiver quality policy, not an additional wire requirement. */
 	V32_CONDITIONING_STABLE_TAIL_SYMBOLS =
 		2 * V32_RATE_SIGNAL_DIBITS,
+	/* Only the minimum S age matters to the energy-edge detector. */
+	V32_CONDITIONING_EPOCH_READY_SYMBOLS = 0x97,
 };
 
 static bool role_is_valid(enum v32_transmitter_role role)
@@ -82,6 +84,8 @@ bool v32_conditioning_receiver_is_valid(
 	if (receiver == NULL || !role_is_valid(receiver->source_role) ||
 	    !phase_is_valid(receiver->phase) || !pattern_is_valid(receiver) ||
 	    receiver->epoch_detector.phase > INT16_MAX ||
+	    receiver->epoch_detector.timer >
+		    V32_CONDITIONING_EPOCH_READY_SYMBOLS ||
 	    receiver->previous_quadrant >= QPSK_QUADRANT_COUNT ||
 	    receiver->quadrant_offset >= QPSK_QUADRANT_COUNT ||
 	    receiver->pending_quadrant_offset >=
@@ -301,7 +305,7 @@ static bool observe_epoch_energy(
 		0, 0, 13);
 	threshold = ((int32_t)average_energy * 4) / 3;
 	detected = history_energy > threshold &&
-		(int16_t)detector->timer > 0x96;
+		detector->timer == V32_CONDITIONING_EPOCH_READY_SYMBOLS;
 	if (detected) {
 		detector->i_older = 0;
 		detector->q_older = 0;
@@ -321,7 +325,8 @@ static bool observe_epoch_energy(
 		detector->i_last = observation->i;
 		detector->q_last = observation->q;
 	}
-	detector->timer++;
+	if (detector->timer < V32_CONDITIONING_EPOCH_READY_SYMBOLS)
+		detector->timer++;
 	return detected;
 }
 
