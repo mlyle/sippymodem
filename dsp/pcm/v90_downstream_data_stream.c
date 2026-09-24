@@ -40,7 +40,7 @@ static bool queue_is_valid(
 	if (stream->queue_count > V90_CP_FRAME_INTERVALS)
 		return false;
 	for (size_t index = 0; index < V90_CP_FRAME_INTERVALS; ++index) {
-		if (index < stream->queue_count) {
+		if (index >= (size_t)V90_CP_FRAME_INTERVALS - stream->queue_count) {
 			if (!v90_pcm_symbol_is_valid(&stream->queue[index], law))
 				return false;
 		} else if (!symbol_is_zero(&stream->queue[index])) {
@@ -155,10 +155,12 @@ static bool fill_queue(
 			return false;
 		/* The queue has a deterministic representation for transactional
 		 * snapshots; a frame's temporary symbol padding is not owned data. */
-		stream->queue[index].ucode = output->symbols[index].ucode;
-		stream->queue[index].positive = output->symbols[index].positive;
-		stream->queue[index].octet = output->symbols[index].octet;
-		stream->queue[index].sample = output->symbols[index].sample;
+		size_t queued = V90_CP_FRAME_INTERVALS - output->symbol_count + index;
+
+		stream->queue[queued].ucode = output->symbols[index].ucode;
+		stream->queue[queued].positive = output->symbols[index].positive;
+		stream->queue[queued].octet = output->symbols[index].octet;
+		stream->queue[queued].sample = output->symbols[index].sample;
 	}
 	stream->queue_count = output->symbol_count;
 	return true;
@@ -202,13 +204,11 @@ static enum v90_downstream_data_stream_result generate_frame(
 static struct v90_pcm_symbol pop_symbol(
 	struct v90_downstream_data_stream *stream)
 {
-	struct v90_pcm_symbol symbol = stream->queue[0];
+	size_t index = V90_CP_FRAME_INTERVALS - stream->queue_count;
+	struct v90_pcm_symbol symbol = stream->queue[index];
 
+	memset(&stream->queue[index], 0, sizeof(stream->queue[index]));
 	stream->queue_count--;
-	memmove(stream->queue, stream->queue + 1,
-		stream->queue_count * sizeof(stream->queue[0]));
-	memset(&stream->queue[stream->queue_count], 0,
-	       sizeof(stream->queue[0]));
 	stream->transmitted_symbols++;
 	return symbol;
 }

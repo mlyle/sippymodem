@@ -28,8 +28,8 @@ typedef bool (*v90_downstream_frame_source)(
 	void *context, uint8_t *bits, size_t bit_count);
 
 /* Adapt the six-symbol PCM frame encoder to the authoritative 8 ksymbol/s
- * network clock. The fixed queue owns one emitted frame; spectral lookahead
- * remains bounded inside the encoder. */
+ * network clock. The fixed queue owns one frame in its unconsumed suffix;
+ * spectral lookahead remains bounded inside the encoder. */
 struct v90_downstream_data_stream {
 	struct v90_downstream_data_tx transmitter;
 	struct v90_pcm_symbol queue[V90_CP_FRAME_INTERVALS];
