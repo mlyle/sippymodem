@@ -30,6 +30,23 @@ struct v23_pair {
 	int16_t answerer_output[FRAME_SAMPLES];
 };
 
+struct received_bits {
+	unsigned int calls;
+	unsigned int bits;
+};
+
+static int capture_received_bits(
+	struct modem *modem, int nbits, u8 *bits, int count)
+{
+	struct received_bits *received = modem->dev_data;
+
+	if (received == NULL || bits == NULL || nbits != 1 || count <= 0)
+		return 0;
+	received->calls++;
+	received->bits += (unsigned int)count;
+	return count;
+}
+
 static void initialize_modem(struct modem *modem)
 {
 	memset(modem, 0, sizeof(*modem));
@@ -169,6 +186,7 @@ static uint64_t sample_energy(const int16_t *samples)
 static bool test_training_roles_and_carrier_loss(void)
 {
 	struct v23_pair pair;
+	struct received_bits received = { 0 };
 	unsigned int originator_connect_frame = UINT_MAX;
 	unsigned int answerer_connect_frame = UINT_MAX;
 	int originator_status = DPSTAT_OK;
@@ -216,11 +234,26 @@ static bool test_training_roles_and_carrier_loss(void)
 	      "V.23 roles reported the wrong asymmetric rates");
 	CHECK(v23_datapump_unregister() != 0,
 	      "active V.23 pair did not protect its registration");
+	pair.originator_modem.dev_data = &received;
+	pair.originator_modem.put_bits = capture_received_bits;
+	CHECK(process_pair(
+		      &pair, false, &originator_status, &answerer_status),
+	      "V.23 online data frame failed");
+	received = (struct received_bits){ 0 };
+	CHECK(process_pair(
+		      &pair, false, &originator_status, &answerer_status) &&
+		      received.calls == 1 && received.bits > 1,
+	      "V.23 online bits were not delivered as one frame");
 
-	for (unsigned int frame = 0; frame < SHORT_GAP_FRAMES; ++frame)
+	for (unsigned int frame = 0; frame < SHORT_GAP_FRAMES; ++frame) {
 		CHECK(process_pair(
 		      &pair, true, &originator_status, &answerer_status),
 		      "V.23 lost a short carrier gap at frame %u", frame);
+		if (frame == 4)
+			received = (struct received_bits){ 0 };
+	}
+	CHECK(received.bits == 0,
+	      "V.23 delivered bits from a silent receive line");
 	for (unsigned int frame = 0; frame < 4; ++frame)
 		CHECK(process_pair(
 		      &pair, false, &originator_status, &answerer_status),

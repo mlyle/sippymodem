@@ -81,8 +81,8 @@ struct v23_datapump {
 	uint32_t presentation_samples;
 	uint32_t presentation_limit_samples;
 	uint32_t missing_carrier_samples;
-	uint8_t prelink_bits[V23_PRELINK_BIT_CAPACITY];
-	size_t prelink_count;
+	uint8_t pending_bits[V23_PRELINK_BIT_CAPACITY];
+	size_t pending_count;
 	struct fsk_online_source online_source;
 	bool answerer;
 };
@@ -264,13 +264,10 @@ static bool receive_input_sample(
 		return false;
 	if (!ready || phase == V23_PHASE_WAIT_MARK)
 		return true;
-	if (phase == V23_PHASE_PRESENTATION) {
-		if (datapump->prelink_count == V23_PRELINK_BIT_CAPACITY)
-			return false;
-		datapump->prelink_bits[datapump->prelink_count++] = bit;
-		return true;
-	}
-	return modem_put_bits(datapump->dp.modem, 1, &bit, 1) == 1;
+	if (datapump->pending_count == V23_PRELINK_BIT_CAPACITY)
+		return false;
+	datapump->pending_bits[datapump->pending_count++] = bit;
+	return true;
 }
 
 static int enter_online(struct v23_datapump *datapump)
@@ -319,7 +316,7 @@ static int advance_training(
 			return enter_online(datapump);
 		datapump->phase = V23_PHASE_PRESENTATION;
 		datapump->presentation_samples = 0;
-		datapump->prelink_count = 0;
+		datapump->pending_count = 0;
 		return training_session_note_progress(&datapump->training) ==
 			       TRAINING_SESSION_OK ?
 			       DPSTAT_OK : DPSTAT_ERROR;
@@ -329,7 +326,7 @@ static int advance_training(
 		    measurement->line_power < V23_MIN_LINE_POWER) {
 			datapump->phase = V23_PHASE_WAIT_MARK;
 			datapump->presentation_samples = 0;
-			datapump->prelink_count = 0;
+			datapump->pending_count = 0;
 			fsk_receiver_reset(&datapump->receiver);
 			return DPSTAT_OK;
 		}
@@ -356,15 +353,15 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit, count))
 		return DPSTAT_ERROR;
 	if (datapump->phase == V23_PHASE_ONLINE &&
-	    datapump->prelink_count != 0) {
+	    datapump->pending_count != 0) {
 		if (modem_put_bits(
-			    datapump->dp.modem, 1, datapump->prelink_bits,
-			    (int)datapump->prelink_count) !=
-		    (int)datapump->prelink_count) {
+			    datapump->dp.modem, 1, datapump->pending_bits,
+			    (int)datapump->pending_count) !=
+		    (int)datapump->pending_count) {
 			memset(transmit, 0, (size_t)count * sizeof(*transmit));
 			return DPSTAT_ERROR;
 		}
-		datapump->prelink_count = 0;
+		datapump->pending_count = 0;
 	}
 	for (int index = 0; index < count; ++index) {
 		enum v23_phase receive_phase = datapump->phase;
@@ -390,6 +387,15 @@ static int process_v23(struct dp *dp, void *receive_buffer,
 	measurement = fsk_receiver_measure(&datapump->receiver);
 	if (datapump->phase != V23_PHASE_ONLINE)
 		return advance_training(datapump, &measurement, received_samples);
+	/* A silent line can still produce clocked FSK decisions. */
+	if (measurement.ready &&
+	    measurement.line_power >= V23_MIN_LINE_POWER &&
+	    datapump->pending_count != 0 &&
+	    modem_put_bits(datapump->dp.modem, 1, datapump->pending_bits,
+			   (int)datapump->pending_count) !=
+		    (int)datapump->pending_count)
+		return DPSTAT_ERROR;
+	datapump->pending_count = 0;
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (fsk_measurement_tone_present(
