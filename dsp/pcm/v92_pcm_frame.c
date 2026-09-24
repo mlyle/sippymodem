@@ -747,18 +747,17 @@ struct frame_candidate {
 static void candidate_push(struct frame_candidate *candidates, size_t count)
 {
 	size_t child = count - 1u;
+	struct frame_candidate added = candidates[child];
 
 	while (child != 0u) {
 		size_t parent = (child - 1u) / 2u;
-		struct frame_candidate swap;
 
-		if (candidates[parent].metric >= candidates[child].metric)
+		if (candidates[parent].metric >= added.metric)
 			break;
-		swap = candidates[parent];
-		candidates[parent] = candidates[child];
-		candidates[child] = swap;
+		candidates[child] = candidates[parent];
 		child = parent;
 	}
+	candidates[child] = added;
 }
 
 static void candidate_replace(
@@ -766,26 +765,24 @@ static void candidate_replace(
 	const struct frame_candidate *replacement)
 {
 	size_t parent = 0u;
+	struct frame_candidate added = *replacement;
 
-	candidates[0] = *replacement;
 	for (;;) {
 		size_t left = 2u * parent + 1u;
 		size_t right = left + 1u;
 		size_t larger;
-		struct frame_candidate swap;
 
 		if (left >= count)
 			break;
 		larger = right < count &&
 			candidates[right].metric > candidates[left].metric ?
 				right : left;
-		if (candidates[parent].metric >= candidates[larger].metric)
+		if (added.metric >= candidates[larger].metric)
 			break;
-		swap = candidates[parent];
 		candidates[parent] = candidates[larger];
-		candidates[larger] = swap;
 		parent = larger;
 	}
+	candidates[parent] = added;
 }
 
 static int16_t signed_point(

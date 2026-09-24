@@ -229,6 +229,10 @@ static enum v90_downstream_data_stream_result next_symbol(
 	if (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	    stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA)
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE;
+	if (owned && stream->queue_count != 0u) {
+		*symbol = pop_symbol(stream);
+		return V90_DOWNSTREAM_DATA_STREAM_OK;
+	}
 	next = *stream;
 	for (size_t attempt = 0;
 	     next.queue_count == 0 &&
