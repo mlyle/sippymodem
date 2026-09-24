@@ -28,19 +28,31 @@ static bool e2u_candidate_is_valid(const struct v92_e2u_rx *e2u,
 
 bool v92_phase4_digital_station_is_valid(const struct v92_phase4_digital_station *station)
 {
-	return station != NULL && v92_phase4_digital_rx_is_valid(&station->receive) &&
-		v92_downstream_control_is_valid(&station->control) &&
-		receive_law(&station->receive) == station->control.transmit.encoder.mapping.law &&
+	const struct v92_phase4_digital_rx *receive;
+	bool training, receive_failed, renegotiating;
+
+	if (station == NULL || !v92_phase4_digital_rx_is_valid(&station->receive) ||
+	    !v92_downstream_control_is_valid(&station->control))
+		return false;
+	receive = &station->receive;
+	/* Child status getters each revalidate the full receive chain. The owner
+	 * has already checked it, so read this one state snapshot directly. */
+	training = receive->stage == V92_PHASE4_DIGITAL_RX_TRN2U;
+	receive_failed = receive->failed || (training ?
+		receive->signal.trn2u.failed : receive->signal.control.signal.failed);
+	renegotiating = training ? receive->signal.trn2u.renegotiation :
+		receive->signal.control.signal.line.renegotiation;
+	return receive_law(receive) == station->control.transmit.encoder.mapping.law &&
 		(!station->searching_e2u ||
-		 (v92_phase4_digital_rx_is_receiving_control(&station->receive) &&
-		  e2u_candidate_is_valid(&station->e2u, &station->receive.signal.control) &&
+		 (!training && !receive_failed &&
+		  e2u_candidate_is_valid(&station->e2u, &receive->signal.control) &&
 		  (station->control.failed || (!station->e2u.failed &&
 		   (station->control.cpu_received ||
 		    v92_downstream_control_silence_requested(&station->control)))))) &&
 		(station->control.cleardown.active ||
 		 (v92_upstream_plan_is_valid(&station->upstream_plan) &&
-		  station->control.previous_cpu == v92_phase4_digital_rx_is_renegotiating(&station->receive) &&
-		  (!v92_phase4_digital_rx_has_failed(&station->receive) || station->control.failed)));
+		  station->control.previous_cpu == renegotiating &&
+		  (!receive_failed || station->control.failed)));
 }
 
 bool v92_phase4_digital_station_has_failed(const struct v92_phase4_digital_station *station)

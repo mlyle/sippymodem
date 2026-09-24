@@ -1123,8 +1123,8 @@ static bool call_is_valid(
 				   PCM_CALL_V92_PHASE4_CONTROL) {
 			child_valid = v92_phase4_digital_station_is_valid(
 				&call->state.phase4.v92.owner.digital);
-			child_failed = v92_phase4_digital_station_has_failed(
-				&call->state.phase4.v92.owner.digital);
+			child_failed = child_valid &&
+				call->state.phase4.v92.owner.digital.control.failed;
 		} else if (uses_pcm_upstream(call)) {
 			return false;
 		} else if (call->local_role == V90_ANALOG_MODEM) {
