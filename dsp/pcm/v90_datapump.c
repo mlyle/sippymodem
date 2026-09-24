@@ -903,7 +903,7 @@ static int process_v90_g711(
 			return DPSTAT_DISCONNECT;
 		}
 		if (datapump->host_echo != NULL) {
-			if (v90_host_echo_advance(
+			if (v90_host_echo_advance_predicted(
 				    datapump->host_echo, echo_mode,
 				    receive_samples[index], cleaned_sample,
 				    transmit_samples[index]) != V90_HOST_ECHO_OK)

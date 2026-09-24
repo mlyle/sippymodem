@@ -554,7 +554,7 @@ static void track_timing(
 	memset(t->energy, 0, sizeof(t->energy));
 }
 
-enum v90_host_echo_result v90_host_echo_advance(
+static enum v90_host_echo_result advance_predicted(
 	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
 	int16_t received_sample, int16_t cleaned_sample,
 	int16_t transmitted_sample)
@@ -562,20 +562,9 @@ enum v90_host_echo_result v90_host_echo_advance(
 	struct pcm_echo_reference_scan_result scan;
 	struct training_step training;
 	uint32_t next_quiet;
-	int16_t expected;
 	enum v90_host_echo_result result;
 	enum pcm_echo_reference_result reference_result;
 
-	if (!header_is_valid(echo))
-		return V90_HOST_ECHO_INVALID_STATE;
-	if (!mode_is_valid(mode))
-		return V90_HOST_ECHO_INVALID_ARGUMENT;
-	result = v90_host_echo_predict(
-		echo, mode, received_sample, &expected);
-	if (result != V90_HOST_ECHO_OK)
-		return result;
-	if (expected != cleaned_sample)
-		return V90_HOST_ECHO_SEQUENCE_MISMATCH;
 	if (mode != V90_HOST_ECHO_FILTER && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
 	if (mode == V90_HOST_ECHO_FILTER && echo->filter_ready)
@@ -636,4 +625,34 @@ push_reference:
 		    PCM_ECHO_REFERENCE_OK)
 		return V90_HOST_ECHO_INVALID_STATE;
 	return V90_HOST_ECHO_OK;
+}
+
+enum v90_host_echo_result v90_host_echo_advance_predicted(
+	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample,
+	int16_t transmitted_sample)
+{
+	if (!header_is_valid(echo))
+		return V90_HOST_ECHO_INVALID_STATE;
+	if (!mode_is_valid(mode))
+		return V90_HOST_ECHO_INVALID_ARGUMENT;
+	return advance_predicted(echo, mode, received_sample, cleaned_sample,
+				 transmitted_sample);
+}
+
+enum v90_host_echo_result v90_host_echo_advance(
+	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample,
+	int16_t transmitted_sample)
+{
+	int16_t expected;
+	enum v90_host_echo_result result = v90_host_echo_predict(
+		echo, mode, received_sample, &expected);
+
+	if (result != V90_HOST_ECHO_OK)
+		return result;
+	if (expected != cleaned_sample)
+		return V90_HOST_ECHO_SEQUENCE_MISMATCH;
+	return advance_predicted(echo, mode, received_sample, cleaned_sample,
+				 transmitted_sample);
 }

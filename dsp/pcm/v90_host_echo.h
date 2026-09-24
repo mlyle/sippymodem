@@ -116,4 +116,12 @@ enum v90_host_echo_result v90_host_echo_advance(
 	int16_t received_sample, int16_t cleaned_sample,
 	int16_t transmitted_sample);
 
+/* For the media owner immediately after a successful predict call, with no
+ * intervening mutation of echo. The checked advance above remains available
+ * to callers that cannot guarantee this ordering. */
+enum v90_host_echo_result v90_host_echo_advance_predicted(
+	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+	int16_t received_sample, int16_t cleaned_sample,
+	int16_t transmitted_sample);
+
 #endif /* V90_HOST_ECHO_H */

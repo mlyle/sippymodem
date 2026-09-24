@@ -103,7 +103,7 @@ static bool echo_step(
 {
 	return v90_host_echo_predict(echo, mode, received, cleaned) ==
 		       V90_HOST_ECHO_OK &&
-	       v90_host_echo_advance(
+	       v90_host_echo_advance_predicted(
 		       echo, mode, received, *cleaned,
 		       transmit_sample(index)) == V90_HOST_ECHO_OK;
 }
@@ -112,6 +112,7 @@ static bool test_contracts(void)
 {
 	struct v90_host_echo echo;
 	struct v90_host_echo saved;
+	struct v90_host_echo predicted;
 	int16_t cleaned = 1234;
 
 	CHECK(v90_host_echo_init(NULL) == V90_HOST_ECHO_INVALID_ARGUMENT,
@@ -166,10 +167,15 @@ static bool test_contracts(void)
 		      V90_HOST_ECHO_INVALID_ARGUMENT &&
 	      memcmp(&echo, &saved, sizeof(saved)) == 0,
 	      "invalid advance mode changed owner");
+	predicted = echo;
 	CHECK(v90_host_echo_advance(
 		      &echo, V90_HOST_ECHO_FILTER, 17, 17, 91) ==
 		      V90_HOST_ECHO_OK && echo.reference.fill == 1,
 	      "matching prediction did not advance reference");
+	CHECK(v90_host_echo_advance_predicted(
+		      &predicted, V90_HOST_ECHO_FILTER, 17, 17, 91) ==
+	      V90_HOST_ECHO_OK && memcmp(&echo, &predicted, sizeof(echo)) == 0,
+	      "predicted advance diverged from checked advance");
 	echo.window_delay_samples = 0;
 	CHECK(!v90_host_echo_is_valid(&echo) &&
 	      v90_host_echo_predict(
