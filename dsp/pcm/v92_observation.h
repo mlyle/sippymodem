@@ -117,7 +117,8 @@ struct v92_observation_cache {
 	const struct v92_observation *model;
 	double relative_noise, variance, bound_scale, lower, upper;
 	/* Immutable per-fit constants and the current symbol's Gaussian scale. */
-	double width[V92_OBSERVATION_INTERVALS], margin[V92_OBSERVATION_TAPS], divisor;
+	double width[V92_OBSERVATION_INTERVALS], log_weight[V92_OBSERVATION_INTERVALS];
+	double margin[V92_OBSERVATION_TAPS], divisor;
 	int16_t observed;
 };
 

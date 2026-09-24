@@ -751,6 +751,7 @@ void v92_observation_begin(struct v92_observation_cache *cache,
 	for (size_t i = 0; i < INTERVALS; i++) {
 		const struct v92_observation_interval *fit = model->intervals + i;
 		cache->width[i] = log1p((fit->high - fit->low) / fit->low);
+		cache->log_weight[i] = fit->weight > 0. ? log(fit->weight) : -HUGE_VAL;
 		if (fit->weight > 0.)
 			for (unsigned j = 0; j < model->taps; j++)
 				extent[j] = fmax(extent[j], fabs(fit->coefficient[j]));
@@ -903,7 +904,7 @@ uint64_t v92_observation_score(struct v92_observation_cache *cache, int32_t x,
 			cells[j] = previous[j - 1].values.cell + i;
 			input[j] = previous[j - 1].x;
 		}
-		likelihood = log_add(likelihood, log(model->intervals[i].weight) +
+		likelihood = log_add(likelihood, cache->log_weight[i] +
 			compiled_log_likelihood(model->law, model->intervals + i, cells, input, model->taps,
 			cache->observed, cache->variance, cache->divisor, cache->width[i], cache->lower, cache->upper));
 	}
