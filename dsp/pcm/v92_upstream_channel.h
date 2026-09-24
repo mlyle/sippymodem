@@ -64,4 +64,9 @@ bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel);
 bool v92_upstream_channel_sample(
 	struct v92_upstream_channel *channel, int16_t expected, int32_t observed);
 
+/* The enclosing receiver validates the channel before and after each sample.
+ * Use this form only within that owned, transactional receive operation. */
+bool v92_upstream_channel_sample_owned(
+	struct v92_upstream_channel *channel, int16_t expected, int32_t observed);
+
 #endif /* V92_UPSTREAM_CHANNEL_H */

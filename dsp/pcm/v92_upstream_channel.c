@@ -51,7 +51,16 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 bool v92_upstream_channel_sample(
 	struct v92_upstream_channel *channel, int16_t expected, int32_t observed)
 {
-	if (!v92_upstream_channel_is_valid(channel) || observed < -32768 || observed > 32768)
+	if (!v92_upstream_channel_is_valid(channel))
+		return false;
+	return v92_upstream_channel_sample_owned(channel, expected, observed);
+}
+
+bool v92_upstream_channel_sample_owned(
+	struct v92_upstream_channel *channel, int16_t expected, int32_t observed)
+{
+	if (channel == NULL || channel->symbols > V92_UPSTREAM_CHANNEL_SYMBOLS ||
+	    observed < -32768 || observed > 32768)
 		return false;
 	if (channel->symbols == V92_UPSTREAM_CHANNEL_SYMBOLS)
 		return true;

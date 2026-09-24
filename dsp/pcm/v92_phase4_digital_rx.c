@@ -158,7 +158,7 @@ static bool observe_channel(
 			return false;
 		if (g711_quantize(law, linear) != expected)
 			continue;
-		if (!v92_upstream_channel_sample(&receiver->channel, linear, (int32_t)raw))
+		if (!v92_upstream_channel_sample_owned(&receiver->channel, linear, (int32_t)raw))
 			return false;
 		/* Host DC/echo conditioning can move a sample within its original
 		 * cell without changing the direct mapping's G.711 point placement. */
