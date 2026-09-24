@@ -64,7 +64,7 @@ static inline bool datapump_deliver_bits(
 	if (dp == NULL || dp->modem == NULL || bit_count > sizeof(copied) ||
 	    !unpacked_bits_are_binary(bits, bit_count))
 		return false;
-	if (!online || dp->modem->put_bits == NULL)
+	if (!online)
 		return true;
 	memcpy(copied, bits, bit_count);
 	return modem_put_bits(dp->modem, 1, copied, (int)bit_count) ==

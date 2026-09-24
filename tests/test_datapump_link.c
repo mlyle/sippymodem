@@ -11,6 +11,7 @@ static int source_calls;
 static int source_wrapper_calls;
 static int source_result;
 static int sink_calls;
+static int sink_wrapper_calls;
 static int sink_result;
 static u8 sink_bits[DATAPUMP_LINK_MAX_BITS];
 
@@ -48,7 +49,10 @@ static int test_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
 
 int modem_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
 {
-	return modem->put_bits(modem, nbits, bits, count);
+	sink_wrapper_calls++;
+	if (modem->put_bits != NULL)
+		return modem->put_bits(modem, nbits, bits, count);
+	return count;
 }
 
 /* Keep setter effects visible without constructing a complete host modem. */
@@ -157,8 +161,10 @@ static bool test_deliver_bits(void)
 	CHECK(datapump_deliver_bits(&dp, false, bits, 4) && sink_calls == 0,
 	      "offline frame called the host sink");
 	modem.put_bits = NULL;
-	CHECK(datapump_deliver_bits(&dp, true, bits, 4) && sink_calls == 0,
-	      "missing host sink rejected a valid frame");
+	sink_wrapper_calls = 0;
+	CHECK(datapump_deliver_bits(&dp, true, bits, 4) && sink_calls == 0 &&
+	      sink_wrapper_calls == 1,
+	      "missing host sink bypassed the modem wrapper");
 	modem.put_bits = test_put_bits;
 	bits[3] = 2;
 	CHECK(!datapump_deliver_bits(&dp, false, bits, 4) &&
