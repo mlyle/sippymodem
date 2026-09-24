@@ -1696,14 +1696,10 @@ static int process_v22(
 	carrier_loss_limit =
 		datapump_carrier_loss_ticks(datapump->dp.modem);
 	if (datapump_uses_v22bis(datapump) && line_power_present &&
-	    datapump->missing_carrier_samples >=
-		    V22BIS_CARRIER_RETRAIN_SAMPLES) {
-		if (begin_retrain(
-			    datapump, receive_phase_quadrant(datapump), false) != 0)
-			return DPSTAT_ERROR;
-	} else if (datapump_uses_v22bis(datapump) &&
-		   line_power_present && return_hold_was_active &&
-		   !carrier_is_present(&measurement, true)) {
+	    (datapump->missing_carrier_samples >=
+		     V22BIS_CARRIER_RETRAIN_SAMPLES ||
+	     (return_hold_was_active &&
+	      !carrier_is_present(&measurement, true)))) {
 		if (begin_retrain(
 			    datapump, receive_phase_quadrant(datapump), false) != 0)
 			return DPSTAT_ERROR;
