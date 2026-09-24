@@ -103,11 +103,11 @@ static bool detector_profile_is_valid(
 static bool observation_is_valid(
 	const struct single_tone_observation *observation)
 {
-	return isfinite(observation->in_phase) &&
-	       fabs(observation->in_phase) <= SINGLE_TONE_MAX_SAMPLE &&
-	       isfinite(observation->quadrature) &&
-	       fabs(observation->quadrature) <= SINGLE_TONE_MAX_SAMPLE &&
-	       isfinite(observation->energy) && observation->energy >= 0.0 &&
+	return observation->in_phase >= -SINGLE_TONE_MAX_SAMPLE &&
+	       observation->in_phase <= SINGLE_TONE_MAX_SAMPLE &&
+	       observation->quadrature >= -SINGLE_TONE_MAX_SAMPLE &&
+	       observation->quadrature <= SINGLE_TONE_MAX_SAMPLE &&
+	       observation->energy >= 0.0 &&
 	       observation->energy <= SINGLE_TONE_MAX_POWER;
 }
 

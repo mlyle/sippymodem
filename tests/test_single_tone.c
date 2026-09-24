@@ -389,6 +389,33 @@ static bool test_validation_is_transactional(void)
 		      SINGLE_TONE_INVALID_ARGUMENT &&
 	      memcmp(&detector, &before, sizeof(detector)) == 0,
 	      "invalid detector profiles changed caller-owned state");
+	detector.history[0].in_phase = NAN;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "NaN in-phase observation was accepted");
+	detector.history[0].in_phase = 0.0;
+	detector.history[0].quadrature = -INFINITY;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "infinite quadrature observation was accepted");
+	detector.history[0].quadrature = 0.0;
+	detector.history[0].energy = INFINITY;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "infinite observation energy was accepted");
+	detector.history[0].energy = -1.0;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "negative observation energy was accepted");
+	detector.history[0].energy = 0.0;
+	detector.history[0].in_phase = -(double)INT16_MIN + 1.0;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "high in-phase observation was accepted");
+	detector.history[0].in_phase = 0.0;
+	detector.history[0].quadrature = (double)INT16_MIN - 1.0;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "low quadrature observation was accepted");
+	detector.history[0].quadrature = 0.0;
+	detector.history[0].energy = (double)INT16_MIN * INT16_MIN + 1.0;
+	CHECK(!single_tone_detector_is_valid(&detector),
+	      "high observation energy was accepted");
+	detector.history[0].energy = 0.0;
 	transmitter.phase_step++;
 	transmitter_before = transmitter;
 	CHECK(single_tone_transmitter_sample(
