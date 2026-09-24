@@ -426,12 +426,15 @@ static enum v92_upstream_data_rx_result receive_sample(
 		return V92_UPSTREAM_DATA_RX_FAILED;
 	if ((receiver->model.valid || receiver->model.scalar_gain) && !wire_known)
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
-	/* Validated raw-coordinate buffering cannot fail. Keep a private line
-	 * only for the final frame sample or fallible FIR processing. */
-	bool buffered_raw = receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION &&
-		receiver->line.symbol_count + 1u < V92_PCM_MAPPING_FRAME_SYMBOLS;
-	line = buffered_raw ? &receiver->line : &next;
-	if (!buffered_raw)
+	/* An equalizer observation is transactional, and a handed-off FIR is
+	 * always ready. Only the final frame decode needs a private line. */
+	bool final_sample = receiver->line.symbol_count + 1u ==
+		V92_PCM_MAPPING_FRAME_SYMBOLS;
+	bool direct = !final_sample &&
+		(receiver->line.plan.observation == V92_PCM_FRAME_CONSTELLATION ||
+		 receiver->line.equalizer.fill > receiver->line.equalizer.decision_delay);
+	line = direct ? &receiver->line : &next;
+	if (!direct)
 		next = receiver->line;
 	if (line->plan.observation == V92_PCM_FRAME_CONSTELLATION) {
 		++line->input_samples;
@@ -450,18 +453,19 @@ static enum v92_upstream_data_rx_result receive_sample(
 			return receive_frame(receiver, line, frame);
 		return V92_UPSTREAM_DATA_RX_OK;
 	}
-	input = (struct qam_point){ .in_phase = next.polarity * (double)sample };
-	if (qam_equalizer_observe(&next.equalizer, &input,
-				  &next.observations[next.symbol_count], &ready) !=
+	input = (struct qam_point){ .in_phase = line->polarity * (double)sample };
+	if (qam_equalizer_observe(&line->equalizer, &input,
+				  &line->observations[line->symbol_count], &ready) !=
 		    QAM_EQUALIZER_OK || !ready)
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-	next.samples[next.symbol_count] = rounded_sample(
-		next.observations[next.symbol_count].output.in_phase);
-	next.symbol_count++;
-	next.input_samples++;
-	if (next.symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
-		return receive_frame(receiver, &next, frame);
-	receiver->line = next;
+	line->samples[line->symbol_count] = rounded_sample(
+		line->observations[line->symbol_count].output.in_phase);
+	line->symbol_count++;
+	line->input_samples++;
+	if (final_sample)
+		return receive_frame(receiver, line, frame);
+	if (!direct)
+		receiver->line = next;
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
