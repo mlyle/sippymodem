@@ -49,8 +49,7 @@ bool v92_anspcm_init(struct v92_anspcm *signal, enum g711_law law,
 		int16_t sample = (int16_t)(x * (alaw ? 8 : 4) -
 			(alaw && x < 0 ? 1 : 0));
 
-		initialized.period[k] = alaw ? g711_encode_pcma(sample) :
-			g711_encode_pcmu(sample);
+		initialized.period[k] = g711_encode(law, sample);
 	}
 	*signal = initialized;
 	return true;

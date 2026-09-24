@@ -70,8 +70,7 @@ enum v92_qc_analog_stage v92_qc_analog_sample(
 	if (exchange->stage == V92_QC_ANALOG_PHASE2 || exchange->stage == V92_QC_ANALOG_V8)
 		return exchange->stage;
 	if (exchange->stage == V92_QC_ANALOG_QTS) {
-		uint8_t octet = exchange->qts.law == G711_LAW_PCMU ?
-			g711_encode_pcmu(input) : g711_encode_pcma(input);
+		uint8_t octet = g711_encode(exchange->qts.law, input);
 		enum pcm_s_pattern_rx_result result = pcm_s_pattern_rx_receive(&exchange->qts, octet);
 
 		if (result == PCM_S_PATTERN_RX_SEQUENCE_COMPLETE)

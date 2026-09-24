@@ -112,9 +112,7 @@ static int32_t acquired_level(const struct pcm_s_pattern_rx *receiver)
 	int32_t magnitude = 0;
 
 	for (size_t i = 0; i < PCM_S_PATTERN_ACQUISITION_SYMBOLS; ++i) {
-		int32_t sample = receiver->law == G711_LAW_PCMU ?
-			g711_decode_pcmu(receiver->history[i]) :
-			g711_decode_pcma(receiver->history[i]);
+		int32_t sample = g711_decode(receiver->law, receiver->history[i]);
 
 		magnitude += sample < 0 ? -sample : sample;
 	}

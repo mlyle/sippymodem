@@ -555,8 +555,7 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
 		    received != V90_DOWNSTREAM_DATA_RX_DATA_FRAME)
 			return fail(owner);
-		generated = next.state.analog.cpu.law == G711_LAW_PCMA ?
-			g711_encode_pcma(sample) : g711_encode_pcmu(sample);
+		generated = g711_encode(next.state.analog.cpu.law, sample);
 	} else {
 		enum v92_phase4_e2u_result receive_result;
 		struct v92_phase4_e2u_digital_state *state = &next.state.digital;

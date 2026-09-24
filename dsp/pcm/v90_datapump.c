@@ -613,13 +613,11 @@ static bool start_call(
 		     &datapump->startup.local, &datapump->startup.peer) :
 	     pcm_call_init(&datapump->call, &configuration)) != PCM_CALL_OK)
 		return false;
+	const uint8_t silence = g711_encode(media_law, 0);
 	for (unsigned int index = 0; index < datapump->startup.tail_count; ++index) {
 		struct pcm_call_observation observation;
 		int16_t input = datapump->startup.receive_tail[index];
-		uint8_t received = media_law == G711_LAW_PCMU ?
-			g711_encode_pcmu(input) : g711_encode_pcma(input);
-		uint8_t silence = media_law == G711_LAW_PCMU ?
-			g711_encode_pcmu(0) : g711_encode_pcma(0);
+		uint8_t received = g711_encode(media_law, input);
 		uint8_t output;
 
 		/* V.8 already emitted these quiet samples and charged the training
@@ -689,8 +687,7 @@ static bool process_octet(
 	}
 	if (result == PCM_CALL_V8_FALLBACK_READY) {
 		datapump->v8_fallback_ready = true;
-		*transmitted = datapump->media_law == G711_LAW_PCMU ?
-			g711_encode_pcmu(0) : g711_encode_pcma(0);
+		*transmitted = g711_encode(datapump->media_law, 0);
 		*fallback = true;
 		return true;
 	}
@@ -722,10 +719,8 @@ static void mute_output(
 	enum g711_law law, uint8_t *codewords,
 	int16_t *samples, int count)
 {
-	uint8_t silence = law == G711_LAW_PCMA ?
-				  g711_encode_pcma(0) : g711_encode_pcmu(0);
-	int16_t linear = law == G711_LAW_PCMA ?
-		g711_decode_pcma(silence) : g711_decode_pcmu(silence);
+	uint8_t silence = g711_encode(law, 0);
+	int16_t linear = g711_decode(law, silence);
 
 	if (count <= 0 || count > MODEM_FRAG)
 		return;
@@ -875,9 +870,7 @@ static int process_v90_g711(
 			    &pcm_transmit, &connected, &fallback, &disconnected))
 			goto failure;
 		transmit_codewords[index] = pcm_transmit;
-		transmit_samples[index] = law == G711_LAW_PCMA ?
-			g711_decode_pcma(transmit_codewords[index]) :
-			g711_decode_pcmu(transmit_codewords[index]);
+		transmit_samples[index] = g711_decode(law, transmit_codewords[index]);
 		if (disconnected) {
 			mute_output(law, transmit_codewords + index + 1,
 				    transmit_samples + index + 1, count - index - 1);

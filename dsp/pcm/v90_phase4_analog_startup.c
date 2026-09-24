@@ -205,9 +205,7 @@ static enum v90_phase4_startup_result transmit_character(
 			v90_phase4_analog_station_transmit(station, &sample));
 
 	if (result == V90_PHASE4_STARTUP_OK)
-		*octet = station->receive.law == G711_LAW_PCMA ?
-			       g711_encode_pcma(sample) :
-			       g711_encode_pcmu(sample);
+		*octet = g711_encode(station->receive.law, sample);
 	return result;
 }
 
