@@ -5220,17 +5220,18 @@ enum pcm_call_result pcm_call_data_octet_owned(
 		transmit_octet, event);
 }
 
-enum pcm_call_result pcm_call_octet(
+static enum pcm_call_result call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet,
-	struct pcm_call_observation *observation)
+	struct pcm_call_observation *observation, bool owned)
 {
 	struct pcm_call_observation emitted = { 0 };
 	bool deadline_started;
 	uint8_t generated;
 	enum pcm_call_result result;
 
-	if (!pcm_call_owned_state_is_valid(call) || transmit_octet == NULL ||
+	if (call == NULL || (!owned && !pcm_call_owned_state_is_valid(call)) ||
+	    transmit_octet == NULL ||
 	    observation == NULL ||
 	    outputs_overlap(call, transmit_octet, observation))
 		return PCM_CALL_INVALID_ARGUMENT;
@@ -5314,13 +5315,29 @@ enum pcm_call_result pcm_call_octet(
 	emitted.next = call->stage;
 	if (call->qc_frame_pending)
 		call->qc_frame_interval = (call->qc_frame_interval + 1u) % V90_CP_FRAME_INTERVALS;
-	if (!pcm_call_owned_state_is_valid(call)) {
+	if (!owned && !pcm_call_owned_state_is_valid(call)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
 	}
 	*transmit_octet = generated;
 	*observation = emitted;
 	return result;
+}
+
+enum pcm_call_result pcm_call_octet(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	uint8_t *transmit_octet, struct pcm_call_observation *observation)
+{
+	return call_octet(call, received_octet, received_sample,
+		transmit_octet, observation, false);
+}
+
+enum pcm_call_result pcm_call_octet_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	uint8_t *transmit_octet, struct pcm_call_observation *observation)
+{
+	return call_octet(call, received_octet, received_sample,
+		transmit_octet, observation, true);
 }
 
 const char *pcm_call_result_name(enum pcm_call_result result)

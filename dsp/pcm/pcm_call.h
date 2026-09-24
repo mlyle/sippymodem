@@ -638,6 +638,13 @@ enum pcm_call_result pcm_call_octet(
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 
+/* The serialized datapump validates its owned call at each media-block
+ * boundary; avoid repeating the full graph check for every phase character. */
+enum pcm_call_result pcm_call_octet_owned(
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	uint8_t *transmit_octet,
+	struct pcm_call_observation *observation);
+
 /* Transfer the exact role-local Phase 4 handoff without consuming a network
  * character. V.92 resets upstream coding once at B1u while preserving the
  * trained line and the independent downstream training/data epoch. */

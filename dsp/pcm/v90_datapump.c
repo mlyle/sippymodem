@@ -687,7 +687,7 @@ static bool process_octet(
 	} else {
 		struct pcm_call_observation observation;
 
-		result = pcm_call_octet(
+		result = pcm_call_octet_owned(
 			&datapump->call, received, received_sample,
 			transmitted, &observation);
 	}

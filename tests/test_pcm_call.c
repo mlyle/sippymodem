@@ -11471,12 +11471,52 @@ static bool test_info1a_training_power(void)
 	return true;
 }
 
+static bool test_v92_owned_phase_octets(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (enum v90_modem_role role = V90_ANALOG_MODEM;
+		     role <= V90_DIGITAL_MODEM; ++role) {
+			struct pcm_call_configuration selected = v92_configuration(role, law);
+			struct pcm_call checked, owned;
+			uint8_t silence = silence_octet(law);
+
+			CHECK(pcm_call_init(&checked, &selected) == PCM_CALL_OK,
+			      "V.92 owned phase setup failed");
+			owned = checked;
+			for (unsigned clock = 0; clock < 128u; ++clock) {
+				struct pcm_call_observation checked_event, owned_event;
+				uint8_t checked_octet, owned_octet;
+				enum pcm_call_result checked_result = pcm_call_octet(
+					&checked, silence, 0, &checked_octet, &checked_event);
+				enum pcm_call_result owned_result = pcm_call_octet_owned(
+					&owned, silence, 0, &owned_octet, &owned_event);
+
+				CHECK(checked_result == PCM_CALL_OK && owned_result == checked_result &&
+				      checked_octet == owned_octet &&
+				      memcmp(&checked_event, &owned_event, sizeof(checked_event)) == 0 &&
+				      memcmp(&checked, &owned, sizeof(checked)) == 0 &&
+				      pcm_call_is_valid(&owned),
+				      "V.92 checked/owned phase diverged: law=%u role=%u clock=%u",
+				      law, role, clock);
+			}
+			struct pcm_call before = owned;
+			struct pcm_call_observation event;
+			CHECK(pcm_call_octet_owned(&owned, silence, 0,
+				(uint8_t *)&owned, &event) == PCM_CALL_INVALID_ARGUMENT &&
+			      memcmp(&owned, &before, sizeof(owned)) == 0,
+			      "V.92 owned phase accepted aliased output");
+		}
+	}
+	return true;
+}
+
 int main(int argc, char **argv)
 {
 	static const struct {
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
 		{ "V.92 short-profile validation", test_v92_short_validation },
