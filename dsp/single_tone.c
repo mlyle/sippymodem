@@ -103,22 +103,25 @@ static bool detector_profile_is_valid(
 static bool observation_is_valid(
 	const struct single_tone_observation *observation)
 {
-	return observation->in_phase >= -SINGLE_TONE_MAX_SAMPLE &&
-	       observation->in_phase <= SINGLE_TONE_MAX_SAMPLE &&
-	       observation->quadrature >= -SINGLE_TONE_MAX_SAMPLE &&
-	       observation->quadrature <= SINGLE_TONE_MAX_SAMPLE &&
-	       observation->energy >= 0.0 &&
-	       observation->energy <= SINGLE_TONE_MAX_POWER;
+	/* Evaluate every bound so the fixed-size history scan can vectorize. */
+	/* Bitwise conjunction is intentional: no per-field short circuit. */
+	return (observation->in_phase >= -SINGLE_TONE_MAX_SAMPLE) &
+	       (observation->in_phase <= SINGLE_TONE_MAX_SAMPLE) &
+	       (observation->quadrature >= -SINGLE_TONE_MAX_SAMPLE) &
+	       (observation->quadrature <= SINGLE_TONE_MAX_SAMPLE) &
+	       (observation->energy >= 0.0) &
+	       (observation->energy <= SINGLE_TONE_MAX_POWER);
 }
 
 static bool history_is_valid(
 	const struct single_tone_detector *detector)
 {
+	unsigned int valid = 1;
+
 	for (size_t index = 0;
 	     index < SINGLE_TONE_MAX_WINDOW_SAMPLES; ++index)
-		if (!observation_is_valid(&detector->history[index]))
-			return false;
-	return true;
+		valid &= observation_is_valid(&detector->history[index]);
+	return valid != 0;
 }
 
 static double retained_power(
