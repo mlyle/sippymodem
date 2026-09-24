@@ -800,14 +800,12 @@ static bool seed_host_echo_delay(struct v90_datapump *datapump)
 	return true;
 }
 
+/* The media loop calls this only for an unevaluated conventional upstream. */
 static bool apply_host_echo_margin(struct v90_datapump *datapump)
 {
 	struct pcm_call limited;
 
-	if (datapump->host_echo == NULL ||
-	    !pcm_call_uses_conventional_upstream(&datapump->call) ||
-	    datapump->host_echo_margin_evaluated ||
-	    !v90_host_echo_is_ready(datapump->host_echo))
+	if (!v90_host_echo_is_ready(datapump->host_echo))
 		return true;
 	if (datapump->call.stage != PCM_CALL_PHASE3 &&
 	    datapump->call.stage != PCM_CALL_PHASE3_MIXED)
@@ -916,7 +914,9 @@ static int process_v90_g711(
 					goto failure;
 				datapump->host_echo_margin_evaluated = false;
 				datapump->host_echo_delay_seeded = false;
-			} else if (!apply_host_echo_margin(datapump)) {
+			} else if (!datapump->host_echo_margin_evaluated &&
+				   pcm_call_uses_conventional_upstream(&datapump->call) &&
+				   !apply_host_echo_margin(datapump)) {
 				goto failure;
 			}
 			if (!seed_host_echo_delay(datapump))

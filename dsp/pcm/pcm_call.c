@@ -59,12 +59,6 @@ static bool uses_pcm_upstream(const struct pcm_call *call)
 	       call->phase3_entry.selection.upstream == PCM_UPSTREAM_PCM;
 }
 
-bool pcm_call_uses_conventional_upstream(const struct pcm_call *call)
-{
-	return call != NULL && call->phase3_entry_stored &&
-	       call->phase3_entry.selection.upstream == PCM_UPSTREAM_V34;
-}
-
 static bool pcm_upstream_is_enabled(
 	enum v90_modem_role role, const union pcm_call_local_info1 *info1)
 {

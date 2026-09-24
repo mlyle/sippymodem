@@ -653,7 +653,11 @@ enum pcm_call_result pcm_call_start_data_path(struct pcm_call *call);
 /* Inspect only the retained INFO1 selection, not the child DSP graph. False
  * before selection and during a new Phase 2/retrain epoch. The session can
  * remain V.92 while the selected upstream uses conventional V.34 modulation. */
-bool pcm_call_uses_conventional_upstream(const struct pcm_call *call);
+static inline bool pcm_call_uses_conventional_upstream(const struct pcm_call *call)
+{
+	return call != NULL && call->phase3_entry_stored &&
+	       call->phase3_entry.selection.upstream == PCM_UPSTREAM_V34;
+}
 
 /* Report role-local transmit and receive rates after both directions are
  * online. PCM rates round the exact mapping-frame rate to the nearest
