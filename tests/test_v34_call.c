@@ -1622,6 +1622,19 @@ static bool test_validation(void)
 	config = configuration(V34_CALLING_STATION);
 	CHECK(v34_call_init(&call, &config) == V34_CALL_OK,
 	      "validation call did not initialize");
+	{
+		struct v34_call invalid = call;
+
+		invalid.retrain.response_silence_samples_remaining = 1u;
+		CHECK(v34_full_retrain_is_valid(&invalid.retrain) &&
+		      !v34_call_is_valid(&invalid),
+		      "call accepted a retrain response outside retrain silence");
+		invalid = call;
+		invalid.retrain.detector.silence_history_count =
+			V34_RETRAIN_SILENCE_WINDOW_SAMPLES + 1u;
+		CHECK(!v34_call_is_valid(&invalid),
+		      "call accepted an invalid retrain detector");
+	}
 	saved = call;
 	CHECK(v34_call_sample(
 		      &call, 0, NULL, NULL, NULL, &observation,

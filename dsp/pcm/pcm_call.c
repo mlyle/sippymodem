@@ -973,7 +973,7 @@ static bool call_is_valid(
 	    (call->retrain_active && !call->peer_info0_stored) ||
 	    (call->stage == PCM_CALL_RETRAIN_SILENCE &&
 	     !call->retrain_active) ||
-	    (v34_full_retrain_response_is_active(&call->retrain) !=
+	    ((call->retrain.response_silence_samples_remaining != 0u) !=
 	     (call->stage == PCM_CALL_RETRAIN_SILENCE)) ||
 	    ((call->stage == PCM_CALL_PHASE2 ||
 	      call->stage == PCM_CALL_QC ||
@@ -1162,8 +1162,8 @@ static bool call_is_valid(
 		break;
 	case PCM_CALL_RETRAIN_SILENCE:
 		child_valid = call->peer_info0_stored &&
-			      v34_full_retrain_response_is_active(
-				      &call->retrain);
+			      call->retrain.response_silence_samples_remaining !=
+				      0u;
 		child_failed = false;
 		break;
 	default:

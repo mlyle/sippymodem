@@ -10874,6 +10874,16 @@ static bool test_validation(void)
 	      !pcm_call_is_online(&call),
 	      "valid call did not initialize");
 	invalid = call;
+	invalid.retrain.response_silence_samples_remaining = 1u;
+	CHECK(v34_full_retrain_is_valid(&invalid.retrain) &&
+	      !pcm_call_is_valid(&invalid),
+	      "call accepted a retrain response outside retrain silence");
+	invalid = call;
+	invalid.retrain.detector.silence_history_count =
+		V34_RETRAIN_SILENCE_WINDOW_SAMPLES + 1u;
+	CHECK(!pcm_call_is_valid(&invalid),
+	      "call accepted an invalid retrain detector");
+	invalid = call;
 	invalid.v92_upstream_retry_ceiling = 1u;
 	CHECK(!pcm_call_is_valid(&invalid), "V.90 accepted a PCM-upstream retry ceiling");
 	invalid = call;

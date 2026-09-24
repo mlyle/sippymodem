@@ -157,8 +157,8 @@ bool v34_call_is_valid(const struct v34_call *call)
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
 		child_valid = call->peer_info0_stored && call->retrain_active &&
-			      v34_full_retrain_response_is_active(
-				      &call->retrain);
+			      call->retrain.response_silence_samples_remaining !=
+				      0u;
 		child_failed = false;
 		child_role = call->local_role;
 		break;
@@ -176,7 +176,7 @@ bool v34_call_is_valid(const struct v34_call *call)
 		(call->stage == V34_CALL_PHASE4 &&
 		 call->state.phase4.rate_renegotiation &&
 		 !call->state.phase4.receive_data_active)) &&
-	       v34_full_retrain_response_is_active(&call->retrain) ==
+	       (call->retrain.response_silence_samples_remaining != 0u) ==
 		       (call->stage == V34_CALL_RETRAIN_SILENCE) &&
 	       v34_echo_canceller_is_adapting(&call->echo) ==
 		       echo_adaptation_is_expected(call) &&
