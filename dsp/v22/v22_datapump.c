@@ -443,7 +443,7 @@ static int start_v22bis_rate_signal(
 static int next_transmit_quadrant(
 	struct v22_datapump *datapump)
 {
-	uint8_t bits[2] = { 1, 1 };
+	uint8_t bits[2];
 	size_t bit_count = datapump_uses_600(datapump) ? 1u : 2u;
 	uint8_t quadrant;
 
@@ -466,13 +466,11 @@ static int next_transmit_quadrant(
 			(uint8_t)((datapump->transmit_quadrant + 3u) & 3u);
 		return 0;
 	}
-	if (datapump->transmit_mode == V22_TRANSMIT_DATA &&
-	    modem_get_bits(
-		    datapump->dp.modem, 1, bits, (int)bit_count) !=
-		    (int)bit_count)
-		bits[0] = bits[1] = 1;
-	bits[0] &= 1u;
-	bits[1] &= 1u;
+	if (!datapump_source_bits(
+		    &datapump->dp,
+		    datapump->transmit_mode == V22_TRANSMIT_DATA,
+		    bits, bit_count))
+		return -1;
 	if ((datapump_uses_600(datapump) &&
 	     v22_600_symbol_encode(
 		     &datapump->encoder, bits[0], &quadrant) !=
@@ -489,19 +487,13 @@ static int next_transmit_quadrant(
 static int next_transmit_v22bis_symbol(
 	struct v22_datapump *datapump)
 {
-	uint8_t bits[V22BIS_BITS_PER_SYMBOL] = { 1, 1, 1, 1 };
+	uint8_t bits[V22BIS_BITS_PER_SYMBOL];
 
-	if (datapump->transmit_mode == V22_TRANSMIT_DATA &&
-	    modem_get_bits(
-		    datapump->dp.modem, 1, bits,
-		    V22BIS_BITS_PER_SYMBOL) !=
-		    V22BIS_BITS_PER_SYMBOL)
-		for (size_t index = 0;
-		     index < V22BIS_BITS_PER_SYMBOL; ++index)
-			bits[index] = 1;
-	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
-	     ++index)
-		bits[index] &= 1u;
+	if (!datapump_source_bits(
+		    &datapump->dp,
+		    datapump->transmit_mode == V22_TRANSMIT_DATA,
+		    bits, V22BIS_BITS_PER_SYMBOL))
+		return -1;
 	return v22bis_symbol_encode(
 		       &datapump->v22bis_encoder, bits,
 		       &datapump->transmit_symbol) ==

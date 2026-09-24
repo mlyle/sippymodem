@@ -712,9 +712,7 @@ static int next_transmit_point(
 	    V32_STARTUP_OK)
 		return -1;
 	if (output == V32_STARTUP_DATA) {
-		uint8_t bits[V32_TRELLIS_MAX_DATA_BITS] = {
-			1, 1, 1, 1, 1, 1
-		};
+		uint8_t bits[V32_TRELLIS_MAX_DATA_BITS];
 
 		if (!training_session_is_online(&datapump->training)) {
 			if (enter_link(datapump) != 0)
@@ -725,11 +723,9 @@ static int next_transmit_point(
 			bit_count = V32_9600_BITS_PER_SYMBOL;
 		else if (trellis_data_bits != 0)
 			bit_count = trellis_data_bits;
-		if (modem_get_bits(
-			    datapump->dp.modem, 1, bits, (int)bit_count) !=
-		    (int)bit_count)
-			for (size_t index = 0; index < bit_count; ++index)
-				bits[index] = 1;
+		if (!datapump_source_bits(
+			    &datapump->dp, true, bits, bit_count))
+			return -1;
 		input = pack_bits(bits, bit_count);
 	}
 	if (output == V32_STARTUP_SELECTED_RATE_MARK &&
