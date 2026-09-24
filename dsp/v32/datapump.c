@@ -1161,27 +1161,22 @@ static int enter_link(struct v32_datapump *datapump)
 	return 0;
 }
 
-static void deliver_bits(
-	struct v32_datapump *datapump, uint8_t value,
-	size_t bit_count)
-{
-	uint8_t bits[V32_TRELLIS_MAX_DATA_BITS];
-
-	for (size_t index = 0; index < bit_count; ++index)
-		bits[index] = (uint8_t)((value >> (bit_count - index - 1u)) & 1u);
-	if (datapump->dp.modem->put_bits != NULL)
-		(void)modem_put_bits(
-			datapump->dp.modem, 1, bits, (int)bit_count);
-}
-
-static void deliver_fixed_batch(
+static int deliver_fixed_batch(
 	struct v32_datapump *datapump,
 	const struct v32_data_batch *batch)
 {
-	for (uint8_t index = 0; index < batch->count; ++index)
-		deliver_bits(
-			datapump, batch->groups[index].value,
-			batch->groups[index].bit_count);
+	for (uint8_t index = 0; index < batch->count; ++index) {
+		const struct v32_data_group *group = &batch->groups[index];
+		uint8_t bits[V32_TRELLIS_MAX_DATA_BITS];
+
+		for (size_t bit = 0; bit < group->bit_count; ++bit)
+			bits[bit] = (uint8_t)((group->value >>
+				(group->bit_count - bit - 1u)) & 1u);
+		if (!datapump_deliver_bits(
+			    &datapump->dp, true, bits, group->bit_count))
+			return -1;
+	}
+	return 0;
 }
 
 static int advance_fixed_b1(
@@ -1228,7 +1223,8 @@ static int advance_fixed_b1(
 		datapump->startup = next_startup;
 		datapump->fixed_path.owner.data = data;
 		datapump->fixed_path.stage = V32_FIXED_DATA;
-		deliver_fixed_batch(datapump, &batch);
+		if (deliver_fixed_batch(datapump, &batch) != 0)
+			return -1;
 		if (connected) {
 			if (enter_link(datapump) != 0)
 				return -1;
@@ -1501,7 +1497,8 @@ static int receive_fixed_path_sample(
 			    &datapump->fixed_path.owner.data, sample,
 			    reference, &batch) != V32_DATA_PATH_OK)
 			return -1;
-		deliver_fixed_batch(datapump, &batch);
+		if (deliver_fixed_batch(datapump, &batch) != 0)
+			return -1;
 		if (batch.retrain_requested) {
 			struct v32_datapump next = *datapump;
 
