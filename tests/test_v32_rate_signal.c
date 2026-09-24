@@ -234,7 +234,10 @@ static bool test_ignored_receive_extensions(void)
 		      V32_RATE_SIGNAL_OK &&
 		      observe_word(&detector, 0x0fff, &event, &offer) &&
 		      event == V32_RATE_SIGNAL_NO_EVENT &&
-		      observe_word(&detector, 0x0fff, &event, &offer) &&
+		      observe_word(&detector, 0x0ff9, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_DETECTED &&
+		      offer.rates == all_rates &&
+		      observe_word(&detector, 0x0ffb, &event, &offer) &&
 		      event == V32_RATE_SIGNAL_DETECTED &&
 		      offer.rates == all_rates,
 	      "V.32 detector did not lock through ignored extension bits");

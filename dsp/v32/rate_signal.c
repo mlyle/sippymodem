@@ -221,7 +221,8 @@ static bool acquire_alignment(
 	uint16_t second = (uint16_t)detector->window;
 	enum v32_rate_signal_type type;
 
-	if (first != second ||
+	if (((first ^ second) &
+	     (uint16_t)~V32_IGNORED_EXTENSION_BITS) != 0 ||
 	    v32_rate_signal_decode(second, &type, offer) !=
 		    V32_RATE_SIGNAL_OK ||
 	    type != V32_RATE_SIGNAL)
@@ -248,7 +249,8 @@ static enum v32_rate_signal_event observe_aligned_word(
 		(void)v32_rate_signal_detector_init(detector);
 		return V32_END_SIGNAL_DETECTED;
 	}
-	if (word != detector->locked_rate_word) {
+	if (((word ^ detector->locked_rate_word) &
+	     (uint16_t)~V32_IGNORED_EXTENSION_BITS) != 0) {
 		lose_alignment(detector);
 		return V32_RATE_SIGNAL_NO_EVENT;
 	}
