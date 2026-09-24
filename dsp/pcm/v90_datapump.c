@@ -443,27 +443,6 @@ static int process_v90(
 	return DPSTAT_ERROR;
 }
 
-static bool fill_source_bits(
-	struct v90_datapump *datapump, uint8_t *bits, size_t bit_count)
-{
-	int supplied = 0;
-
-	if (datapump == NULL || bits == NULL || bit_count > INT_MAX)
-		return false;
-	memset(bits, 1, bit_count);
-	if (training_session_is_online(&datapump->training) &&
-	    datapump->dp.modem->get_bits != NULL)
-		supplied = modem_get_bits(
-			datapump->dp.modem, 1, bits, (int)bit_count);
-	if (supplied < 0)
-		supplied = 0;
-	if ((size_t)supplied > bit_count)
-		supplied = (int)bit_count;
-	for (size_t index = 0; index < (size_t)supplied; ++index)
-		bits[index] &= 1u;
-	return true;
-}
-
 static bool source_upstream_frame(
 	void *context, const struct v34_mapping_frame *request,
 	uint8_t *primary_bits, uint8_t *auxiliary_bit)
@@ -476,7 +455,11 @@ static bool source_upstream_frame(
 	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
 	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
-	if (!fill_source_bits(datapump, bits, bit_count))
+	if (datapump == NULL ||
+	    !datapump_source_bits(
+		    &datapump->dp,
+		    training_session_is_online(&datapump->training),
+		    bits, bit_count))
 		return false;
 	memcpy(primary_bits, bits, request->primary_bits);
 	if (auxiliary_bit != NULL)
@@ -487,11 +470,17 @@ static bool source_upstream_frame(
 static bool source_pcm_frame(
 	void *context, uint8_t *bits, size_t bit_count)
 {
+	struct v90_datapump *datapump = context;
+
 	/* Downstream and V.92 upstream use the same host-bit contract, despite
 	 * their different six- and twelve-symbol mapping frames. */
-	if (bit_count == 0 || bit_count > V92_PCM_MAPPING_MAX_BITS)
+	if (datapump == NULL || bit_count == 0 ||
+	    bit_count > V92_PCM_MAPPING_MAX_BITS)
 		return false;
-	return fill_source_bits(context, bits, bit_count);
+	return datapump_source_bits(
+		&datapump->dp,
+		training_session_is_online(&datapump->training),
+		bits, bit_count);
 }
 
 static bool deliver_bits(

@@ -4,12 +4,14 @@
 #define DATAPUMP_LINK_H
 
 #include "modem_dp.h"
+#include "modem.h"
 #include "modem_param.h"
 
 #include <limits.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Set the host-facing link rates before reporting CONNECT.  Validate both
  * values before changing either rate; modem_set_param updates the modem's
@@ -24,6 +26,28 @@ static inline bool datapump_set_link_rates(
 		       dp->modem, MDMPRM_TX_RATE, (int)transmit_rate) == 0 &&
 	       modem_set_param(
 		       dp->modem, MDMPRM_RX_RATE, (int)receive_rate) == 0;
+}
+
+/* Supply one-bit host data in the online state. A short or unavailable read
+ * completes the frame with mark bits; only the reported prefix is payload. */
+static inline bool datapump_source_bits(
+	struct dp *dp, bool online, uint8_t *bits, size_t bit_count)
+{
+	size_t supplied = 0;
+
+	if (dp == NULL || dp->modem == NULL || bits == NULL ||
+	    bit_count > INT_MAX)
+		return false;
+	if (online && dp->modem->get_bits != NULL) {
+		int count = modem_get_bits(dp->modem, 1, bits, (int)bit_count);
+
+		if (count > 0)
+			supplied = (size_t)count < bit_count ? (size_t)count : bit_count;
+		for (size_t index = 0; index < supplied; ++index)
+			bits[index] &= 1u;
+	}
+	memset(bits + supplied, 1, bit_count - supplied);
+	return true;
 }
 
 #endif

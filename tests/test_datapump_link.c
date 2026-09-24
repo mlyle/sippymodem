@@ -3,7 +3,28 @@
 #include <datapump_link.h>
 #include <modem.h>
 
+#include <string.h>
+
 #include "test.h"
+
+static int source_calls;
+static int source_result;
+
+static int test_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
+{
+	(void)modem;
+	source_calls++;
+	if (nbits != 1)
+		return -1;
+	for (int index = 0; index < count; ++index)
+		bits[index] = (u8)(index + 2);
+	return source_result;
+}
+
+int modem_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
+{
+	return modem->get_bits(modem, nbits, bits, count);
+}
 
 /* Keep setter effects visible without constructing a complete host modem. */
 long modem_set_param(struct modem *modem, unsigned int name, int value)
@@ -54,7 +75,44 @@ static bool test_link_rates(void)
 	return true;
 }
 
+static bool test_source_bits(void)
+{
+	struct modem modem = { .get_bits = test_get_bits };
+	struct dp dp = { .modem = &modem };
+	u8 bits[4];
+
+	source_calls = 0;
+	source_result = 2;
+	memset(bits, 0xaa, sizeof(bits));
+	CHECK(datapump_source_bits(&dp, true, bits, sizeof(bits)) &&
+	      memcmp(bits, (u8[]){ 0, 1, 1, 1 }, sizeof(bits)) == 0 &&
+	      source_calls == 1,
+	      "short host read did not preserve payload and mark remainder");
+	source_result = -1;
+	CHECK(datapump_source_bits(&dp, true, bits, sizeof(bits)) &&
+	      memcmp(bits, (u8[]){ 1, 1, 1, 1 }, sizeof(bits)) == 0,
+	      "failed host read did not emit marks");
+	source_result = 4;
+	CHECK(datapump_source_bits(&dp, true, bits, sizeof(bits)) &&
+	      memcmp(bits, (u8[]){ 0, 1, 0, 1 }, sizeof(bits)) == 0,
+	      "full host read was not normalized to bits");
+	source_calls = 0;
+	CHECK(datapump_source_bits(&dp, false, bits, sizeof(bits)) &&
+	      memcmp(bits, (u8[]){ 1, 1, 1, 1 }, sizeof(bits)) == 0 &&
+	      source_calls == 0,
+	      "offline frame read host bits");
+	modem.get_bits = NULL;
+	CHECK(datapump_source_bits(&dp, true, bits, sizeof(bits)) &&
+	      memcmp(bits, (u8[]){ 1, 1, 1, 1 }, sizeof(bits)) == 0,
+	      "missing host source did not emit marks");
+	CHECK(!datapump_source_bits(NULL, true, bits, sizeof(bits)) &&
+	      !datapump_source_bits(&dp, true, NULL, sizeof(bits)) &&
+	      !datapump_source_bits(&dp, true, bits, (size_t)INT_MAX + 1u),
+	      "invalid source request accepted");
+	return true;
+}
+
 int main(void)
 {
-	return test_link_rates() ? 0 : 1;
+	return test_link_rates() && test_source_bits() ? 0 : 1;
 }

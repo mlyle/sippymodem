@@ -321,25 +321,16 @@ static bool source_mapping_frame(
 	struct v34_datapump *datapump = context;
 	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS + 1];
 	size_t bit_count;
-	int supplied = 0;
 
 	if (datapump == NULL || request == NULL || primary_bits == NULL ||
 	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
 	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
-	memset(bits, 1, bit_count);
-	if (training_session_is_online(&datapump->training) &&
-	    datapump->dp.modem->get_bits != NULL)
-		supplied = modem_get_bits(
-			datapump->dp.modem, 1, bits, (int)bit_count);
-	if (supplied < 0)
-		supplied = 0;
-	if ((size_t)supplied > bit_count)
-		supplied = (int)bit_count;
-	for (size_t index = 0; index < (size_t)supplied; ++index)
-		bits[index] &= 1u;
-	for (size_t index = (size_t)supplied; index < bit_count; ++index)
-		bits[index] = 1;
+	if (!datapump_source_bits(
+		    &datapump->dp,
+		    training_session_is_online(&datapump->training),
+		    bits, bit_count))
+		return false;
 	memcpy(primary_bits, bits, request->primary_bits);
 	if (auxiliary_bit != NULL)
 		*auxiliary_bit = bits[request->primary_bits];
