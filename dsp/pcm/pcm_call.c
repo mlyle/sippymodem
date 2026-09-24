@@ -1634,7 +1634,12 @@ bool pcm_call_phase4_is_ready(const struct pcm_call *call)
 
 bool pcm_call_is_online(const struct pcm_call *call)
 {
-	return pcm_call_is_valid(call) && data_path_is_online_owned(call);
+	return pcm_call_is_valid(call) && pcm_call_is_online_owned(call);
+}
+
+bool pcm_call_is_online_owned(const struct pcm_call *call)
+{
+	return data_path_is_online_owned(call);
 }
 
 bool pcm_call_get_short_startup(

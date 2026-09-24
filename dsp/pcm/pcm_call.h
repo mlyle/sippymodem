@@ -581,6 +581,8 @@ bool pcm_call_is_valid(const struct pcm_call *call);
 bool pcm_call_has_failed(const struct pcm_call *call);
 bool pcm_call_phase4_is_ready(const struct pcm_call *call);
 bool pcm_call_is_online(const struct pcm_call *call);
+/* For the serialized datapump media loop after call validation. */
+bool pcm_call_is_online_owned(const struct pcm_call *call);
 enum pcm_call_stage pcm_call_current_stage(const struct pcm_call *call);
 
 /* Export the actual V.92 training selection and live receive gain only from
