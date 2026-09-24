@@ -654,6 +654,9 @@ static bool test_delayed_observations(void)
 		      &equalizer, &transmitted[1], 0.2) ==
 		      QAM_EQUALIZER_INVALID_STATE,
 	      "delayed observations did not retain both outputs");
+	observation[0].history[observation[0].tap_count].in_phase = NAN;
+	CHECK(qam_equalizer_observation_is_pending(&observation[0]),
+	      "inactive observation history invalidated a pending sample");
 	{
 		struct qam_equalizer saved_equalizer = equalizer;
 		struct qam_equalizer invalid_equalizer = equalizer;
@@ -761,6 +764,10 @@ static bool test_span_extension(void)
 			      "extension fixture did not become idle");
 	}
 	extended = baseline;
+	extended.coefficients[extended.tap_count].in_phase = NAN;
+	extended.history[extended.tap_count].quadrature = NAN;
+	CHECK(qam_equalizer_is_valid(&extended),
+	      "inactive equalizer storage invalidated the active span");
 	CHECK(qam_equalizer_extend_span(
 		      &extended, QAM_EQUALIZER_MAX_TAP_COUNT) ==
 		      QAM_EQUALIZER_OK &&

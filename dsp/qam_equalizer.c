@@ -84,7 +84,7 @@ bool qam_equalizer_observation_is_pending(
 	    (!observation->carrier_tracking &&
 	     observation->carrier_phase != 0.0))
 		return false;
-	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
+	for (size_t index = 0; index < observation->tap_count;
 	     ++index) {
 		if (!point_is_finite(&observation->history[index]))
 			return false;
@@ -124,14 +124,13 @@ bool qam_equalizer_is_valid(
 	    !point_is_finite(&equalizer->last_output) ||
 	    !carrier_state_is_valid(equalizer))
 		return false;
-	for (size_t index = 0; index < QAM_EQUALIZER_MAX_TAP_COUNT;
+	for (size_t index = 0; index < equalizer->tap_count;
 	     ++index) {
 		if (!point_is_finite(&equalizer->coefficients[index]) ||
 		    !point_is_finite(&equalizer->history[index]))
 			return false;
-		if (index < equalizer->tap_count)
-			coefficient_power +=
-				qam_point_power(&equalizer->coefficients[index]);
+		coefficient_power +=
+			qam_point_power(&equalizer->coefficients[index]);
 	}
 	return isfinite(coefficient_power) &&
 	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
