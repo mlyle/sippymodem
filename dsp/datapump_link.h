@@ -54,6 +54,25 @@ static inline bool datapump_source_bits(
 	return true;
 }
 
+/* Read one host frame before separating its optional auxiliary bit. */
+static inline bool datapump_source_split_bits(
+	struct dp *dp, bool online, uint8_t *primary_bits,
+	size_t primary_count, uint8_t *auxiliary_bit)
+{
+	uint8_t bits[DATAPUMP_LINK_MAX_BITS];
+	size_t auxiliary_count = auxiliary_bit != NULL ? 1u : 0u;
+
+	if (primary_bits == NULL ||
+	    primary_count > DATAPUMP_LINK_MAX_BITS - auxiliary_count ||
+	    !datapump_source_bits(
+		    dp, online, bits, primary_count + auxiliary_count))
+		return false;
+	memcpy(primary_bits, bits, primary_count);
+	if (auxiliary_bit != NULL)
+		*auxiliary_bit = bits[primary_count];
+	return true;
+}
+
 /* Deliver one bounded unpacked-bit frame without lending the decoder's
  * storage to a host callback, which may modify its input buffer. */
 static inline bool datapump_deliver_bits(

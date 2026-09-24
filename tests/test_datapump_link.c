@@ -143,6 +143,46 @@ static bool test_source_bits(void)
 	return true;
 }
 
+static bool test_source_split_bits(void)
+{
+	struct modem modem = { .get_bits = test_get_bits };
+	struct dp dp = { .modem = &modem };
+	u8 primary[DATAPUMP_LINK_MAX_BITS];
+	u8 auxiliary = 0;
+
+	source_result = 2;
+	source_calls = 0;
+	CHECK(datapump_source_split_bits(&dp, true, primary, 3, &auxiliary) &&
+	      memcmp(primary, (u8[]){ 0, 1, 1 }, 3) == 0 && auxiliary == 1 &&
+	      source_calls == 1,
+	      "primary and auxiliary bits were not split from one host read");
+	source_result = DATAPUMP_LINK_MAX_BITS;
+	CHECK(datapump_source_split_bits(&dp, true, primary,
+					   DATAPUMP_LINK_MAX_BITS - 1,
+					   &auxiliary) &&
+	      primary[0] == 0 && primary[DATAPUMP_LINK_MAX_BITS - 2] == 0 &&
+	      auxiliary == 1 && source_calls == 2,
+	      "maximum mapping frame was not split safely");
+	source_result = 3;
+	CHECK(datapump_source_split_bits(&dp, true, primary, 3, NULL) &&
+	      memcmp(primary, (u8[]){ 0, 1, 0 }, 3) == 0 &&
+	      source_calls == 3,
+	      "primary-only mapping frame changed");
+	source_calls = 0;
+	CHECK(datapump_source_split_bits(&dp, false, primary, 3, &auxiliary) &&
+	      memcmp(primary, (u8[]){ 1, 1, 1 }, 3) == 0 &&
+	      auxiliary == 1 && source_calls == 0,
+	      "offline split frame read the host");
+	CHECK(!datapump_source_split_bits(&dp, true, NULL, 3, &auxiliary) &&
+	      !datapump_source_split_bits(&dp, true, primary,
+					    DATAPUMP_LINK_MAX_BITS, &auxiliary) &&
+	      !datapump_source_split_bits(&dp, true, primary,
+					    DATAPUMP_LINK_MAX_BITS + 1, NULL) &&
+	      source_calls == 0,
+	      "invalid split frame reached the host");
+	return true;
+}
+
 static bool test_deliver_bits(void)
 {
 	struct modem modem = { .put_bits = test_put_bits };
@@ -183,5 +223,6 @@ static bool test_deliver_bits(void)
 
 int main(void)
 {
-	return test_link_rates() && test_source_bits() && test_deliver_bits() ? 0 : 1;
+	return test_link_rates() && test_source_bits() &&
+	       test_source_split_bits() && test_deliver_bits() ? 0 : 1;
 }

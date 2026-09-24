@@ -453,23 +453,14 @@ static bool source_upstream_frame(
 	uint8_t *primary_bits, uint8_t *auxiliary_bit)
 {
 	struct v90_datapump *datapump = context;
-	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS + 1];
-	size_t bit_count;
 
-	if (request == NULL || primary_bits == NULL ||
+	if (datapump == NULL || request == NULL ||
 	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
-	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
-	if (datapump == NULL ||
-	    !datapump_source_bits(
-		    &datapump->dp,
-		    training_session_is_online(&datapump->training),
-		    bits, bit_count))
-		return false;
-	memcpy(primary_bits, bits, request->primary_bits);
-	if (auxiliary_bit != NULL)
-		*auxiliary_bit = bits[request->primary_bits];
-	return true;
+	return datapump_source_split_bits(
+		&datapump->dp,
+		training_session_is_online(&datapump->training),
+		primary_bits, request->primary_bits, auxiliary_bit);
 }
 
 static bool source_pcm_frame(

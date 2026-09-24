@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-_Static_assert((int)V34_MAX_MAPPING_FRAME_BITS <= DATAPUMP_LINK_MAX_BITS,
+_Static_assert((int)V34_MAX_MAPPING_FRAME_BITS + 1 <= DATAPUMP_LINK_MAX_BITS,
 	       "V.34 frame exceeds host bit delivery capacity");
 
 enum {
@@ -322,22 +322,14 @@ static bool source_mapping_frame(
 	uint8_t *primary_bits, uint8_t *auxiliary_bit)
 {
 	struct v34_datapump *datapump = context;
-	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS + 1];
-	size_t bit_count;
 
-	if (datapump == NULL || request == NULL || primary_bits == NULL ||
+	if (datapump == NULL || request == NULL ||
 	    request->primary_bits > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
-	bit_count = request->primary_bits + (auxiliary_bit != NULL ? 1u : 0u);
-	if (!datapump_source_bits(
-		    &datapump->dp,
-		    training_session_is_online(&datapump->training),
-		    bits, bit_count))
-		return false;
-	memcpy(primary_bits, bits, request->primary_bits);
-	if (auxiliary_bit != NULL)
-		*auxiliary_bit = bits[request->primary_bits];
-	return true;
+	return datapump_source_split_bits(
+		&datapump->dp,
+		training_session_is_online(&datapump->training),
+		primary_bits, request->primary_bits, auxiliary_bit);
 }
 
 static bool deliver_mapping_frame(
