@@ -45,10 +45,9 @@ bool pcm_echo_reference_is_valid(
 	const struct pcm_echo_reference *reference)
 {
 	return reference != NULL &&
-	       reference->write < PCM_ECHO_REFERENCE_HISTORY_SAMPLES &&
-	       reference->fill <= PCM_ECHO_REFERENCE_HISTORY_SAMPLES &&
-	       (reference->fill == PCM_ECHO_REFERENCE_HISTORY_SAMPLES ||
-		reference->write == reference->fill) &&
+	       ring_history_state_is_valid(
+		reference->write, reference->fill,
+		PCM_ECHO_REFERENCE_HISTORY_SAMPLES) &&
 	       scan_state_is_valid(reference);
 }
 

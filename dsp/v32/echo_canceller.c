@@ -32,10 +32,9 @@ bool v32_echo_canceller_header_is_valid(
 	       geometry_is_valid(
 		       canceller->near_delay_symbols,
 		       canceller->round_trip_symbols) &&
-	       canceller->reference_write < V32_ECHO_REFERENCE_CAPACITY &&
-	       canceller->reference_fill <= V32_ECHO_REFERENCE_CAPACITY &&
-	       (canceller->reference_fill == V32_ECHO_REFERENCE_CAPACITY ||
-		canceller->reference_write == canceller->reference_fill) &&
+	       ring_history_state_is_valid(
+		canceller->reference_write, canceller->reference_fill,
+		V32_ECHO_REFERENCE_CAPACITY) &&
 	       canceller->phase < V32_ECHO_PHASE_COUNT &&
 	       (canceller->phase == 0 || canceller->reference_pending) &&
 	       qam_adaptation_is_valid(canceller->adaptation) &&

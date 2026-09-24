@@ -33,10 +33,9 @@ bool v34_echo_canceller_is_valid(
 	const struct v34_echo_canceller *canceller)
 {
 	return canceller != NULL &&
-	       canceller->reference_write < V34_ECHO_TAP_COUNT &&
-	       canceller->reference_fill <= V34_ECHO_TAP_COUNT &&
-	       (canceller->reference_fill == V34_ECHO_TAP_COUNT ||
-		canceller->reference_write == canceller->reference_fill) &&
+	       ring_history_state_is_valid(
+		canceller->reference_write, canceller->reference_fill,
+		V34_ECHO_TAP_COUNT) &&
 	       (canceller->training_started || canceller->sample_count == 0);
 }
 
