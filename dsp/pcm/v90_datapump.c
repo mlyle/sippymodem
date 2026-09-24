@@ -23,6 +23,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+_Static_assert((int)V34_MAX_MAPPING_FRAME_BITS + 1 <= DATAPUMP_LINK_MAX_BITS,
+	       "V.34 frame exceeds host bit delivery capacity");
+_Static_assert((int)V92_PCM_MAPPING_MAX_BITS <= DATAPUMP_LINK_MAX_BITS,
+	       "V.92 frame exceeds host bit delivery capacity");
+
 struct v90_datapump {
 	struct dp dp;
 	struct pcm_call call;
@@ -487,21 +492,9 @@ static bool deliver_bits(
 	struct v90_datapump *datapump,
 	const uint8_t *bits, size_t bit_count)
 {
-	uint8_t copied[V34_MAX_MAPPING_FRAME_BITS + 1];
-
-	if (bits == NULL || bit_count > sizeof(copied))
-		return false;
-	for (size_t index = 0; index < bit_count; ++index) {
-		if (bits[index] > 1)
-			return false;
-		copied[index] = bits[index];
-	}
-	if (!training_session_is_online(&datapump->training) ||
-	    datapump->dp.modem->put_bits == NULL)
-		return true;
-	return modem_put_bits(
-		       datapump->dp.modem, 1, copied, (int)bit_count) ==
-	       (int)bit_count;
+	return datapump_deliver_bits(
+		&datapump->dp, training_session_is_online(&datapump->training),
+		bits, bit_count);
 }
 
 static bool deliver_event(

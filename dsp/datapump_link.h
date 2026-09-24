@@ -6,12 +6,16 @@
 #include "modem_dp.h"
 #include "modem.h"
 #include "modem_param.h"
+#include "packed_bits.h"
 
 #include <limits.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+
+/* Largest current host mapping burst: V.34 primary frame plus auxiliary bit. */
+enum { DATAPUMP_LINK_MAX_BITS = 80 };
 
 /* Set the host-facing link rates before reporting CONNECT.  Validate both
  * values before changing either rate; modem_set_param updates the modem's
@@ -48,6 +52,23 @@ static inline bool datapump_source_bits(
 	}
 	memset(bits + supplied, 1, bit_count - supplied);
 	return true;
+}
+
+/* Deliver one bounded unpacked-bit frame without lending the decoder's
+ * storage to a host callback, which may modify its input buffer. */
+static inline bool datapump_deliver_bits(
+	struct dp *dp, bool online, const uint8_t *bits, size_t bit_count)
+{
+	uint8_t copied[DATAPUMP_LINK_MAX_BITS];
+
+	if (dp == NULL || dp->modem == NULL || bit_count > sizeof(copied) ||
+	    !unpacked_bits_are_binary(bits, bit_count))
+		return false;
+	if (!online || dp->modem->put_bits == NULL)
+		return true;
+	memcpy(copied, bits, bit_count);
+	return modem_put_bits(dp->modem, 1, copied, (int)bit_count) ==
+	       (int)bit_count;
 }
 
 #endif

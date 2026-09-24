@@ -20,6 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+_Static_assert((int)V34_MAX_MAPPING_FRAME_BITS <= DATAPUMP_LINK_MAX_BITS,
+	       "V.34 frame exceeds host bit delivery capacity");
+
 enum {
 	/* A local full retrain does not receive the peer's response until both
 	 * stations have observed their 70 ms silence and 50 ms tone guards. */
@@ -341,19 +344,12 @@ static bool deliver_mapping_frame(
 	struct v34_datapump *datapump,
 	const struct v34_received_mapping_frame *received)
 {
-	uint8_t bits[V34_MAX_MAPPING_FRAME_BITS];
-
 	if (received == NULL ||
 	    received->primary_bit_count > V34_MAX_MAPPING_FRAME_BITS)
 		return false;
-	if (!training_session_is_online(&datapump->training) ||
-	    datapump->dp.modem->put_bits == NULL)
-		return true;
-	memcpy(bits, received->primary_bits, received->primary_bit_count);
-	return modem_put_bits(
-		       datapump->dp.modem, 1, bits,
-		       received->primary_bit_count) ==
-	       received->primary_bit_count;
+	return datapump_deliver_bits(
+		&datapump->dp, training_session_is_online(&datapump->training),
+		received->primary_bits, received->primary_bit_count);
 }
 
 static bool enter_link(struct v34_datapump *datapump)

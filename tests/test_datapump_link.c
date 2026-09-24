@@ -9,6 +9,9 @@
 
 static int source_calls;
 static int source_result;
+static int sink_calls;
+static int sink_result;
+static u8 sink_bits[DATAPUMP_LINK_MAX_BITS];
 
 static int test_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 {
@@ -24,6 +27,23 @@ static int test_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 int modem_get_bits(struct modem *modem, int nbits, u8 *bits, int count)
 {
 	return modem->get_bits(modem, nbits, bits, count);
+}
+
+static int test_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
+{
+	(void)modem;
+	sink_calls++;
+	if (nbits != 1 || count > (int)sizeof(sink_bits))
+		return -1;
+	memcpy(sink_bits, bits, (size_t)count);
+	if (count != 0)
+		bits[0] = 0xff; /* A host callback may reuse its input buffer. */
+	return sink_result;
+}
+
+int modem_put_bits(struct modem *modem, int nbits, u8 *bits, int count)
+{
+	return modem->put_bits(modem, nbits, bits, count);
 }
 
 /* Keep setter effects visible without constructing a complete host modem. */
@@ -112,7 +132,43 @@ static bool test_source_bits(void)
 	return true;
 }
 
+static bool test_deliver_bits(void)
+{
+	struct modem modem = { .put_bits = test_put_bits };
+	struct dp dp = { .modem = &modem };
+	u8 bits[DATAPUMP_LINK_MAX_BITS + 1];
+
+	memset(bits, 1, sizeof(bits));
+	sink_calls = 0;
+	sink_result = DATAPUMP_LINK_MAX_BITS;
+	CHECK(datapump_deliver_bits(&dp, true, bits,
+				    DATAPUMP_LINK_MAX_BITS) &&
+	      sink_calls == 1 && bits[0] == 1 &&
+	      memcmp(sink_bits, bits, DATAPUMP_LINK_MAX_BITS) == 0,
+	      "valid frame was not delivered through a private copy");
+	sink_calls = 0;
+	CHECK(datapump_deliver_bits(&dp, false, bits, 4) && sink_calls == 0,
+	      "offline frame called the host sink");
+	modem.put_bits = NULL;
+	CHECK(datapump_deliver_bits(&dp, true, bits, 4) && sink_calls == 0,
+	      "missing host sink rejected a valid frame");
+	modem.put_bits = test_put_bits;
+	bits[3] = 2;
+	CHECK(!datapump_deliver_bits(&dp, false, bits, 4) &&
+	      !datapump_deliver_bits(&dp, true, bits, 4) && sink_calls == 0,
+	      "nonbinary frame escaped validation");
+	bits[3] = 1;
+	CHECK(!datapump_deliver_bits(&dp, true, bits, sizeof(bits)) &&
+	      !datapump_deliver_bits(&dp, true, NULL, 4) &&
+	      !datapump_deliver_bits(NULL, true, bits, 4) && sink_calls == 0,
+	      "invalid delivery request reached the host sink");
+	sink_result = 3;
+	CHECK(!datapump_deliver_bits(&dp, true, bits, 4) && sink_calls == 1,
+	      "short host write was accepted");
+	return true;
+}
+
 int main(void)
 {
-	return test_link_rates() && test_source_bits() ? 0 : 1;
+	return test_link_rates() && test_source_bits() && test_deliver_bits() ? 0 : 1;
 }
