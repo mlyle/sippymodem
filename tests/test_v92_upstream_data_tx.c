@@ -220,6 +220,14 @@ static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, uns
 	struct v92_pcm_frame_tx frames = transmit.encoder;
 	unsigned source_calls = input.calls;
 
+	if (before.queue_count != 0u) {
+		struct v92_upstream_data_tx invalid = before;
+
+		invalid.queue[V92_PCM_MAPPING_FRAME_SYMBOLS - before.queue_count - 1u] = 1;
+		CHECK(!v92_upstream_data_tx_is_valid(&invalid),
+			"consumed queue slot accepted");
+	}
+
 	input.invalid = 1u;
 	CHECK(v92_upstream_data_tx_start_rm(&transmit) == V92_UPSTREAM_DATA_TX_OK &&
 		transmit.rm_symbols_remaining == 408u + before.queue_count &&
@@ -231,7 +239,8 @@ static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, uns
 		"pending RM request was restarted/reset");
 	for (unsigned i = 0; i < before.queue_count; ++i)
 		CHECK(v92_upstream_data_tx_next(&transmit, source, &input, &sample) ==
-			V92_UPSTREAM_DATA_TX_OK && sample == before.queue[i] &&
+			V92_UPSTREAM_DATA_TX_OK &&
+			sample == before.queue[V92_PCM_MAPPING_FRAME_SYMBOLS - before.queue_count + i] &&
 			memcmp(&transmit.encoder, &before.encoder, sizeof(before.encoder)) == 0,
 			"RM damaged the pending data-frame tail");
 	for (unsigned f = 0; f < 34u; ++f) {

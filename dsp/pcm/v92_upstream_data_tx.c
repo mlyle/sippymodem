@@ -34,8 +34,9 @@ bool v92_upstream_data_tx_is_valid(
 	     transmitter->b1u_symbols_remaining % V92_PCM_MAPPING_FRAME_SYMBOLS !=
 		     transmitter->queue_count))
 		return false;
-	for (size_t index = transmitter->queue_count;
-	     index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {
+	for (size_t index = 0u;
+	     index < (size_t)V92_PCM_MAPPING_FRAME_SYMBOLS -
+		     transmitter->queue_count; ++index) {
 		if (transmitter->queue[index] != 0)
 			return false;
 	}
@@ -171,11 +172,10 @@ static enum v92_upstream_data_tx_result next_sample(
 
 	if (rm_complete && v92_pcm_frame_tx_reset_control(&transmitter->encoder) != V92_PCM_FRAME_OK)
 		return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
-	*sample = transmitter->queue[0];
+	size_t index = V92_PCM_MAPPING_FRAME_SYMBOLS - transmitter->queue_count;
+	*sample = transmitter->queue[index];
+	transmitter->queue[index] = 0;
 	transmitter->queue_count--;
-	memmove(transmitter->queue, transmitter->queue + 1,
-		transmitter->queue_count * sizeof(transmitter->queue[0]));
-	transmitter->queue[transmitter->queue_count] = 0;
 	if (transmitter->b1u_symbols_remaining != 0u)
 		transmitter->b1u_symbols_remaining--;
 	if (transmitter->rm_symbols_remaining != 0u)

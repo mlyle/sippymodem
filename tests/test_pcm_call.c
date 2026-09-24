@@ -6504,7 +6504,7 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 						V92_PCM_FRAME_OK, "wrong direct B1 scale failed");
 				CHECK(tx->queue_count == V92_PCM_MAPPING_FRAME_SYMBOLS - 1u, "wrong B1 missed frame boundary");
 				tx->encoder = encoder;
-				memcpy(tx->queue, samples + 1u, tx->queue_count * sizeof(*samples));
+				memcpy(tx->queue + 1u, samples + 1u, tx->queue_count * sizeof(*samples));
 				*transmitted = encode_octet(law, samples[0]);
 				injected = true;
 			}

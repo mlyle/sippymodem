@@ -4388,7 +4388,9 @@ static enum pcm_call_result begin_v92_analog_rate_request(struct pcm_call *call)
 	    v92_pcm_phase3_ru_init(&prefix->transmit, call->law, level.ucode,
 		V92_PCM_PHASE3_RU) != V92_PCM_PHASE3_RU_OK)
 		return PCM_CALL_NUMERIC_FAILURE;
-	memcpy(prefix->queue, path->upstream.queue, sizeof(prefix->queue));
+	memcpy(prefix->queue,
+		path->upstream.queue + V92_PCM_MAPPING_FRAME_SYMBOLS - prefix->queue_count,
+		prefix->queue_count * sizeof(prefix->queue[0]));
 	call->state = (union pcm_call_state){ .phase4.v92 = state };
 	call->stage = PCM_CALL_PHASE4;
 	call->retrain_active = true;

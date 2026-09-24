@@ -27,6 +27,7 @@ typedef bool (*v92_upstream_frame_source)(
  * histories reset once at B1u and continue unchanged into ordinary data. */
 struct v92_upstream_data_tx {
 	struct v92_pcm_frame_tx encoder;
+	/* Consumed slots are zero; queue_count is the remaining fixed-frame tail. */
 	int16_t queue[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	int16_t upstream_level;
 	uint16_t b1u_symbols_remaining;
