@@ -236,7 +236,6 @@ enum v92_pcm_mapping_result v92_pcm_mapping_decode_owned(
 {
 	uint32_t bases[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint32_t encoded[V92_PCM_MAPPING_FRAME_SYMBOLS];
-	uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
 	uint8_t next_state;
 	enum mixed_radix_result result;
 
@@ -252,10 +251,9 @@ enum v92_pcm_mapping_result v92_pcm_mapping_decode_owned(
 	next_state = *differential_state;
 	result = mixed_radix_decode_differential(
 		bases, V92_PCM_MAPPING_FRAME_SYMBOLS, encoded,
-		&next_state, decoded, bit_count);
+		&next_state, bits, bit_count);
 	if (result != MIXED_RADIX_OK)
 		return mixed_result(result);
-	memcpy(bits, decoded, bit_count);
 	*differential_state = next_state;
 	return V92_PCM_MAPPING_OK;
 }
