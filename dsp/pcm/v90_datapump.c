@@ -167,22 +167,22 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	      datapump->call.protocol != datapump->protocol ||
 	      datapump->call.local_role != datapump->role ||
 	      datapump->call.law != datapump->media_law ||
-	      (pcm_call_has_failed(&datapump->call) &&
-	       !training_session_has_failed(&datapump->training)))) ||
-	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
-	     training_session_is_online(&datapump->training) !=
-		     (datapump->call_started &&
-		      pcm_call_is_online(&datapump->call)) &&
-	     !(training_session_is_retraining(&datapump->training) &&
-	       !pcm_call_is_online(&datapump->call))) ||
-	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
-	     datapump->call_started && pcm_call_is_online(&datapump->call) &&
-	     dp->status != DPSTAT_CONNECT) ||
-	    (!disconnecting && !training_session_has_failed(&datapump->training) &&
-	     (!datapump->call_started || !pcm_call_is_online(&datapump->call)) &&
-	     dp->status == DPSTAT_CONNECT &&
-	     !training_session_is_retraining(&datapump->training)))
+	      (datapump->call.failed &&
+	       !training_session_has_failed(&datapump->training)))))
 		return NULL;
+	/* The started call was validated above. Compare status with its owned
+	 * state instead of rescanning the nested call for every predicate. */
+	if (!disconnecting && !training_session_has_failed(&datapump->training)) {
+		bool online = datapump->call_started &&
+			pcm_call_is_online_owned(&datapump->call);
+		bool retraining = training_session_is_retraining(&datapump->training);
+
+		if ((training_session_is_online(&datapump->training) != online &&
+		     !(retraining && !online)) ||
+		    (online && dp->status != DPSTAT_CONNECT) ||
+		    (!online && dp->status == DPSTAT_CONNECT && !retraining))
+			return NULL;
+	}
 	return datapump;
 }
 
