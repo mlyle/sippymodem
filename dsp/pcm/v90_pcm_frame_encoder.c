@@ -2,6 +2,7 @@
 
 #include "v90_pcm_frame_encoder.h"
 
+#include "memory_region.h"
 #include "packed_bits.h"
 
 #include <string.h>
@@ -151,7 +152,9 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_process(
 	uint8_t ucodes[V90_CP_FRAME_INTERVALS];
 	enum v90_pcm_frame_encoder_result result;
 
-	if (encoder == NULL || bits == NULL || output == NULL)
+	if (encoder == NULL || bits == NULL || output == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder),
+				   output, sizeof(*output)))
 		return V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT;
 	if (!v90_pcm_frame_encoder_is_valid(encoder) || encoder->finishing)
 		return V90_PCM_FRAME_ENCODER_INVALID_STATE;
@@ -197,7 +200,9 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 	struct v90_spectral_output shaped;
 	enum v90_spectral_shaper_result result;
 
-	if (encoder == NULL || output == NULL)
+	if (encoder == NULL || output == NULL ||
+	    memory_regions_overlap(encoder, sizeof(*encoder),
+				   output, sizeof(*output)))
 		return V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT;
 	if (!v90_pcm_frame_encoder_is_valid(encoder))
 		return V90_PCM_FRAME_ENCODER_INVALID_STATE;

@@ -447,6 +447,10 @@ static bool test_contracts(void)
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_frame_encoder encoder;
 	struct v90_pcm_frame_encoder saved_encoder;
+	union {
+		struct v90_pcm_frame_encoder encoder;
+		struct v90_pcm_frame_output output;
+	} aliased;
 	struct v90_pcm_frame_output output;
 	struct v90_pcm_frame_output saved_output;
 	uint8_t bits[42] = { 0 };
@@ -459,6 +463,17 @@ static bool test_contracts(void)
 	memset(&output, 0xa5, sizeof(output));
 	saved_output = output;
 	saved_encoder = encoder;
+	aliased.encoder = encoder;
+	CHECK(v90_pcm_frame_encoder_process(
+		      &aliased.encoder, bits, mapping.frame_bits,
+		      &aliased.output) == V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT &&
+	      memcmp(&aliased.encoder, &encoder, sizeof(encoder)) == 0,
+	      "overlapping process output changed frame encoder state");
+	CHECK(v90_pcm_frame_encoder_finish(
+		      &aliased.encoder, &aliased.output) ==
+		      V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT &&
+	      memcmp(&aliased.encoder, &encoder, sizeof(encoder)) == 0,
+	      "overlapping finish output changed frame encoder state");
 	bits[7] = 2;
 	CHECK(v90_pcm_frame_encoder_process(
 		      &encoder, bits, mapping.frame_bits, &output) ==
