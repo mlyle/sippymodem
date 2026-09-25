@@ -72,7 +72,7 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	const uint8_t signs[V90_CP_FRAME_INTERVALS], size_t symbol_count,
 	struct v90_pcm_frame_decode_output *output)
 {
-	struct v90_pcm_frame_decoder next;
+	struct v90_sign_decoder next_signs;
 	struct v90_pcm_frame_decode_output generated = { 0 };
 	struct v90_sign_decode_output sign_output;
 	uint8_t modulus_bits[V90_PCM_FRAME_MAX_BITS];
@@ -101,15 +101,13 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 		return V90_PCM_FRAME_DECODER_INVALID_SYMBOLS;
 	if (mapping_result != V90_PCM_MAPPING_OK)
 		return V90_PCM_FRAME_DECODER_INTERNAL_ERROR;
-	next = *decoder;
+	next_signs = decoder->signs;
 	if (v90_sign_decoder_decode(
-		    &next.signs, signs, symbol_count, &sign_output) !=
+		    &next_signs, signs, symbol_count, &sign_output) !=
 	    V90_SIGN_DECODER_OK)
 		return V90_PCM_FRAME_DECODER_INTERNAL_ERROR;
-	if (!v90_pcm_frame_decoder_is_valid(&next) ||
-	    sign_output.bit_count != decoder->mapping.sign_bits ||
-	    sign_output.rule_count != decoder->mapping.sign_redundancy ||
-	    decoder->mapping.frame_bits > V90_PCM_FRAME_MAX_BITS)
+	if (sign_output.bit_count != decoder->mapping.sign_bits ||
+	    sign_output.rule_count != decoder->mapping.sign_redundancy)
 		return V90_PCM_FRAME_DECODER_INTERNAL_ERROR;
 	memcpy(generated.bits, sign_output.bits,
 	       decoder->mapping.sign_bits);
@@ -119,7 +117,7 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	       sign_output.rule_count * sizeof(sign_output.rules[0]));
 	generated.bit_count = decoder->mapping.frame_bits;
 	generated.rule_count = sign_output.rule_count;
-	*decoder = next;
+	decoder->signs = next_signs;
 	*output = generated;
 	return V90_PCM_FRAME_DECODER_OK;
 }
