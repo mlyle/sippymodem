@@ -95,6 +95,8 @@ static bool observe_output(
 				&observer->receiver,
 				received.octet, &frame);
 		}
+		CHECK(v90_downstream_data_rx_is_valid(&observer->receiver),
+		      "accepted symbol left the receiver invalid");
 		if (result == V90_DOWNSTREAM_DATA_RX_BUFFERING) {
 			CHECK(memcmp(&frame, &untouched, sizeof(frame)) == 0,
 			      "buffering changed the decoded frame");

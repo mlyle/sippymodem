@@ -99,26 +99,24 @@ static enum v90_downstream_data_rx_result map_stream_failure(
 
 static enum v90_downstream_data_rx_result commit_stream_result(
 	struct v90_downstream_data_rx *receiver,
-	struct v90_downstream_data_rx *next,
 	enum v90_pcm_stream_rx_result stream_result,
 	const struct v90_pcm_stream_frame *decoded,
 	struct v90_pcm_stream_frame *frame)
 {
 	enum v90_downstream_data_rx_result result;
 
-	if (stream_result == V90_PCM_STREAM_RX_BUFFERING) {
-		/* A checked constellation member cannot change the B1d stage or
-		 * counters; the stream owns the pending-symbol invariant here. */
-		*receiver = *next;
+	if (stream_result == V90_PCM_STREAM_RX_BUFFERING)
 		return V90_DOWNSTREAM_DATA_RX_BUFFERING;
-	}
 	if (stream_result != V90_PCM_STREAM_RX_FRAME_READY)
 		return map_stream_failure(stream_result);
-	if (next->stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D) {
-		next->b1d_bit_errors += v90_pcm_stream_frame_bit_errors(decoded, 1u);
-		next->b1d_frames++;
-		if (next->b1d_frames == V90_PHASE4_B1D_FRAMES) {
-			next->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
+	/* The stream commits a valid complete frame; its bounded bit count
+	 * also bounds B1d error accounting. */
+	if (receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D) {
+		receiver->b1d_bit_errors +=
+			v90_pcm_stream_frame_bit_errors(decoded, 1u);
+		receiver->b1d_frames++;
+		if (receiver->b1d_frames == V90_PHASE4_B1D_FRAMES) {
+			receiver->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
 			result = V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE;
 		} else {
 			result = V90_DOWNSTREAM_DATA_RX_B1D_FRAME;
@@ -126,9 +124,6 @@ static enum v90_downstream_data_rx_result commit_stream_result(
 	} else {
 		result = V90_DOWNSTREAM_DATA_RX_DATA_FRAME;
 	}
-	if (!v90_downstream_data_rx_is_valid(next))
-		return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
-	*receiver = *next;
 	*frame = *decoded;
 	return result;
 }
@@ -138,7 +133,6 @@ v90_downstream_data_rx_receive_decision(
 	struct v90_downstream_data_rx *receiver, uint8_t ucode,
 	bool positive, struct v90_pcm_stream_frame *frame)
 {
-	struct v90_downstream_data_rx next;
 	struct v90_pcm_stream_frame decoded;
 	enum v90_pcm_stream_rx_result stream_result;
 
@@ -149,18 +143,16 @@ v90_downstream_data_rx_receive_decision(
 	/* The stream receiver validates its own state before accepting input. */
 	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
-	next = *receiver;
 	stream_result = v90_pcm_stream_rx_receive_decision(
-		&next.stream, ucode, positive, &decoded);
+		&receiver->stream, ucode, positive, &decoded);
 	return commit_stream_result(
-		receiver, &next, stream_result, &decoded, frame);
+		receiver, stream_result, &decoded, frame);
 }
 
 enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 	struct v90_downstream_data_rx *receiver, uint8_t network_octet,
 	struct v90_pcm_stream_frame *frame)
 {
-	struct v90_downstream_data_rx next;
 	struct v90_pcm_stream_frame decoded;
 	enum v90_pcm_stream_rx_result stream_result;
 
@@ -170,11 +162,10 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
 	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
-	next = *receiver;
 	stream_result = v90_pcm_stream_rx_receive_octet(
-		&next.stream, network_octet, &decoded);
+		&receiver->stream, network_octet, &decoded);
 	return commit_stream_result(
-		receiver, &next, stream_result, &decoded, frame);
+		receiver, stream_result, &decoded, frame);
 }
 
 const char *v90_downstream_data_rx_result_name(
