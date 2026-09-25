@@ -3437,7 +3437,7 @@ static bool v92_pause_is_committed(const struct pcm_call *call)
 static enum pcm_call_result enter_v92_pause(struct pcm_call *call)
 {
 	struct v92_phase4_e2u_handoff handoff;
-	struct pcm_call next = *call;
+	struct pcm_call_v92_phase4_state saved_state;
 	union pcm_call_v92_phase4_owner owner = { 0 };
 
 	if (!call->v92_rate_renegotiation_active ||
@@ -3455,18 +3455,22 @@ static enum pcm_call_result enter_v92_pause(struct pcm_call *call)
 		owner.digital_pause.cpu = handoff.state.digital.cpu;
 		owner.digital_pause.plan = handoff.state.digital.upstream_plan;
 	}
-	next.state.phase4.v92.owner = owner;
-	next.state.phase4.v92.child = PCM_CALL_V92_PHASE4_PAUSE;
-	if (!pcm_call_is_valid(&next))
+	saved_state = call->state.phase4.v92;
+	call->state.phase4.v92.owner = owner;
+	call->state.phase4.v92.child = PCM_CALL_V92_PHASE4_PAUSE;
+	if (!pcm_call_is_valid(call)) {
+		call->state.phase4.v92 = saved_state;
 		return PCM_CALL_NUMERIC_FAILURE;
-	*call = next;
+	}
 	return PCM_CALL_OK;
 }
 
 static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 {
-	struct pcm_call next = *call;
+	struct pcm_call_v92_phase4_state saved_state;
 	struct v92_phase4_e2u e2u;
+	struct v90_pcm_mapping training_mapping;
+	bool peer_requested_silence;
 
 	if (!v92_phase4_control_is_ready(call))
 		return PCM_CALL_INVALID_STATE;
@@ -3480,13 +3484,13 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 		if (v92_phase4_e2u_init_analog(&e2u, &handoff) !=
 		    V92_PHASE4_E2U_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
-		next.state.phase4.v92.training_mapping = handoff.receive.stream.decoder.mapping;
-		next.state.phase4.v92.peer_requested_silence = handoff.pause &&
+		training_mapping = handoff.receive.stream.decoder.mapping;
+		peer_requested_silence = handoff.pause &&
 			call->state.phase4.v92.owner.analog.station.suvd.request_silence;
 	} else {
 		struct v92_phase4_digital_handoff handoff;
 
-		next.state.phase4.v92.training_mapping =
+		training_mapping =
 			call->state.phase4.v92.owner.digital.control.transmit.encoder.mapping;
 		if (v92_phase4_digital_station_handoff(
 			    &call->state.phase4.v92.owner.digital,
@@ -3495,21 +3499,27 @@ static enum pcm_call_result enter_v92_e2u(struct pcm_call *call)
 		if (v92_phase4_e2u_init_digital(&e2u, &handoff) !=
 		    V92_PHASE4_E2U_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
-		next.state.phase4.v92.peer_requested_silence = handoff.pause &&
+		peer_requested_silence = handoff.pause &&
 			call->state.phase4.v92.owner.digital.control.suvu.request_silence;
 	}
-	next.state.phase4.v92.owner = (union pcm_call_v92_phase4_owner){ .e2u = e2u };
-	next.state.phase4.v92.child = PCM_CALL_V92_PHASE4_E2U;
-	if (!pcm_call_is_valid(&next))
+	saved_state = call->state.phase4.v92;
+	call->state.phase4.v92.training_mapping = training_mapping;
+	call->state.phase4.v92.peer_requested_silence = peer_requested_silence;
+	call->state.phase4.v92.owner = (union pcm_call_v92_phase4_owner){ .e2u = e2u };
+	call->state.phase4.v92.child = PCM_CALL_V92_PHASE4_E2U;
+	if (!pcm_call_is_valid(call)) {
+		call->state.phase4.v92 = saved_state;
 		return PCM_CALL_NUMERIC_FAILURE;
+	}
 	/* E2u may itself have confirmed the pause in the control station.
 	 * Transition at that consumed boundary; do not clock E2u a second time. */
 	if (v92_phase4_e2u_is_complete(&e2u) && !v92_phase4_e2u_is_data_ready(&e2u)) {
-		enum pcm_call_result result = enter_v92_pause(&next);
-		if (result != PCM_CALL_OK)
+		enum pcm_call_result result = enter_v92_pause(call);
+		if (result != PCM_CALL_OK) {
+			call->state.phase4.v92 = saved_state;
 			return result;
+		}
 	}
-	*call = next;
 	return PCM_CALL_OK;
 }
 
