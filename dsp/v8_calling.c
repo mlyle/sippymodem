@@ -164,19 +164,15 @@ enum v8_calling_result v8_calling_init(
 enum v8_calling_result v8_calling_enable_quick_connect(
 	struct v8_calling *calling, const struct v92_qc1_message *request)
 {
-	struct v8_calling next;
-
 	if (!calling_is_valid(calling) ||
 	    calling->state != V8_CALLING_WAIT_ANSWER_SIGNAL ||
 	    calling->state_samples != 0 ||
 	    !qc_request_is_usable(&calling->local_menu, request))
 		return V8_CALLING_INVALID_ARGUMENT;
-	next = *calling;
-	next.qc_request = *request;
-	next.qc_enabled = true;
-	if (!v92_qc1_receiver_init(&next.qc_receiver))
+	if (!v92_qc1_receiver_init(&calling->qc_receiver))
 		return V8_CALLING_INVALID_ARGUMENT;
-	*calling = next;
+	calling->qc_request = *request;
+	calling->qc_enabled = true;
 	return V8_CALLING_OK;
 }
 

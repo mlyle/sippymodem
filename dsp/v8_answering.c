@@ -195,19 +195,15 @@ enum v8_answering_result v8_answering_enable_quick_connect(
 	struct v8_answering *answering,
 	const struct v92_qc1_message *response)
 {
-	struct v8_answering next;
-
 	if (!answering_is_valid(answering) ||
 	    answering->state != V8_ANSWERING_WAIT_CALL_MENU ||
 	    answering->state_samples != 0 ||
 	    !qc_response_is_usable(&answering->local_menu, response))
 		return V8_ANSWERING_INVALID_ARGUMENT;
-	next = *answering;
-	next.qc_response = *response;
-	next.qc_enabled = true;
-	if (!v92_qc1_receiver_init(&next.qc_receiver))
+	if (!v92_qc1_receiver_init(&answering->qc_receiver))
 		return V8_ANSWERING_INVALID_ARGUMENT;
-	*answering = next;
+	answering->qc_response = *response;
+	answering->qc_enabled = true;
 	return V8_ANSWERING_OK;
 }
 
