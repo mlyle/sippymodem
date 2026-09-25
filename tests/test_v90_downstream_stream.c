@@ -1474,6 +1474,48 @@ static bool test_contracts(void)
 		      V90_DOWNSTREAM_DATA_TX_OK &&
 	      v90_downstream_data_stream_is_valid(&stream),
 	      "data-stream contract fixture did not initialize");
+	{
+		struct v90_downstream_data_stream queued = stream;
+		struct v90_downstream_data_stream owned;
+		union {
+			struct v90_downstream_data_stream stream;
+			struct v90_pcm_symbol symbol;
+		} aliased;
+		struct v90_pcm_symbol public_symbol;
+		struct v90_pcm_symbol owned_symbol;
+
+		CHECK(v90_downstream_data_stream_next(
+			      &queued, NULL, NULL, &public_symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      queued.queue_count != 0u,
+		      "B1d did not leave a queued symbol");
+		owned = queued;
+		aliased.stream = queued;
+		CHECK(v90_downstream_data_stream_next(
+			      &aliased.stream, NULL, NULL, &aliased.symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+		      v90_downstream_data_stream_next_owned(
+			      &aliased.stream, NULL, NULL, &aliased.symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+		      v90_downstream_data_stream_finish(
+			      &aliased.stream, &aliased.symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT &&
+		      memcmp(&aliased.stream, &queued, sizeof(queued)) == 0,
+		      "overlapping symbol output changed the stream");
+		CHECK(v90_downstream_data_stream_next(
+			      &queued, reject_data_frame, NULL, &public_symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      v90_downstream_data_stream_next_owned(
+			      &owned, reject_data_frame, NULL, &owned_symbol) ==
+			      V90_DOWNSTREAM_DATA_STREAM_OK &&
+		      memcmp(&queued, &owned, sizeof(queued)) == 0 &&
+		      public_symbol.ucode == owned_symbol.ucode &&
+		      public_symbol.positive == owned_symbol.positive &&
+		      public_symbol.octet == owned_symbol.octet &&
+		      public_symbol.sample == owned_symbol.sample &&
+		      v90_downstream_data_stream_is_valid(&queued),
+		      "queued public symbol diverged from the owned path");
+	}
 	invalid_stream = stream;
 	invalid_stream.transmitter.stage =
 		V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE + 1;

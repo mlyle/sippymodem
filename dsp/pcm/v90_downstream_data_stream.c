@@ -2,6 +2,8 @@
 
 #include "v90_downstream_data_stream.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -10,13 +12,6 @@ enum {
 	V90_B1D_SYMBOLS =
 		V90_PHASE4_B1D_FRAMES * V90_CP_FRAME_INTERVALS,
 };
-
-static bool symbol_is_zero(const struct v90_pcm_symbol *symbol)
-{
-	static const struct v90_pcm_symbol zero;
-
-	return memcmp(symbol, &zero, sizeof(zero)) == 0;
-}
 
 static uint64_t delayed_symbols(
 	const struct v90_downstream_data_stream *stream)
@@ -41,7 +36,8 @@ static bool queue_is_valid(
 		if (index >= (size_t)V90_CP_FRAME_INTERVALS - stream->queue_count) {
 			if (!v90_pcm_symbol_is_valid(&stream->queue[index], law))
 				return false;
-		} else if (!symbol_is_zero(&stream->queue[index])) {
+		} else if (!memory_region_is_zero(
+				   &stream->queue[index], sizeof(stream->queue[index]))) {
 			return false;
 		}
 	}
@@ -217,12 +213,14 @@ static enum v90_downstream_data_stream_result next_symbol(
 		V90_DOWNSTREAM_DATA_STREAM_OK;
 
 	if (stream == NULL || symbol == NULL ||
+	    memory_regions_overlap(stream, sizeof(*stream),
+				   symbol, sizeof(*symbol)) ||
 	    (!owned && !v90_downstream_data_stream_is_valid(stream)))
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT;
 	if (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
 	    stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA)
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE;
-	if (owned && stream->queue_count != 0u) {
+	if (stream->queue_count != 0u) {
 		*symbol = pop_symbol(stream);
 		return V90_DOWNSTREAM_DATA_STREAM_OK;
 	}
@@ -275,7 +273,10 @@ enum v90_downstream_data_stream_result v90_downstream_data_stream_finish(
 	struct v90_downstream_data_stream next;
 	struct v90_pcm_symbol generated;
 
-	if (!v90_downstream_data_stream_is_valid(stream) || symbol == NULL)
+	if (stream == NULL || symbol == NULL ||
+	    memory_regions_overlap(stream, sizeof(*stream),
+				   symbol, sizeof(*symbol)) ||
+	    !v90_downstream_data_stream_is_valid(stream))
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_ARGUMENT;
 	if (stream->transmitter.stage == V90_DOWNSTREAM_DATA_TX_STAGE_B1D)
 		return V90_DOWNSTREAM_DATA_STREAM_INVALID_STATE;
