@@ -196,7 +196,6 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 	struct v90_pcm_frame_encoder *encoder,
 	struct v90_pcm_frame_output *output)
 {
-	struct v90_pcm_frame_encoder next;
 	struct v90_pcm_frame_output generated = { 0 };
 	struct v90_spectral_output shaped;
 	enum v90_spectral_shaper_result result;
@@ -207,17 +206,13 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 		return V90_PCM_FRAME_ENCODER_INVALID_ARGUMENT;
 	if (!v90_pcm_frame_encoder_is_valid(encoder))
 		return V90_PCM_FRAME_ENCODER_INVALID_STATE;
-	next = *encoder;
-	next.finishing = true;
-	if (next.mapping.sign_redundancy == 0) {
-		*encoder = next;
+	if (encoder->mapping.sign_redundancy == 0) {
+		encoder->finishing = true;
 		return V90_PCM_FRAME_ENCODER_COMPLETE;
 	}
-	result = v90_spectral_shaper_finish(&next.shaper, &shaped);
+	result = v90_spectral_shaper_finish(&encoder->shaper, &shaped);
 	if (result == V90_SPECTRAL_SHAPER_COMPLETE) {
-		if (!v90_pcm_frame_encoder_is_valid(&next))
-			return V90_PCM_FRAME_ENCODER_INTERNAL_ERROR;
-		*encoder = next;
+		encoder->finishing = true;
 		return V90_PCM_FRAME_ENCODER_COMPLETE;
 	}
 	if (result == V90_SPECTRAL_SHAPER_NUMERIC_FAILURE)
@@ -229,9 +224,7 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_finish(
 	generated.symbol_count = shaped.symbol_count;
 	generated.rules[0] = shaped.rule;
 	generated.rule_count = 1;
-	if (!v90_pcm_frame_encoder_is_valid(&next))
-		return V90_PCM_FRAME_ENCODER_INTERNAL_ERROR;
-	*encoder = next;
+	encoder->finishing = true;
 	*output = generated;
 	return V90_PCM_FRAME_ENCODER_SYMBOLS_READY;
 }

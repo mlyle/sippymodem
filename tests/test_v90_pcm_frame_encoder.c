@@ -539,6 +539,24 @@ static bool test_contracts(void)
 	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "numeric failure was not transactional");
+	CHECK(v90_pcm_frame_encoder_init(&encoder, &mapping) ==
+		      V90_PCM_FRAME_ENCODER_OK &&
+	      v90_pcm_frame_encoder_process(
+		      &encoder, bits, mapping.frame_bits, &output) ==
+		      V90_PCM_FRAME_ENCODER_BUFFERING,
+	      "finish numeric fixture did not buffer");
+	encoder.mapping.shaping_a2_q1_6 = 64;
+	encoder.shaper.shaping_a2_q1_6 = 64;
+	encoder.shaper.previous_v = DBL_MAX;
+	saved_encoder = encoder;
+	memset(&output, 0xa5, sizeof(output));
+	saved_output = output;
+	CHECK(v90_pcm_frame_encoder_is_valid(&encoder) &&
+	      v90_pcm_frame_encoder_finish(&encoder, &output) ==
+		      V90_PCM_FRAME_ENCODER_NUMERIC_FAILURE &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "finish numeric failure changed state or output");
 	mapping.modulus[0] = 0;
 	CHECK(v90_pcm_frame_encoder_init(&encoder, &mapping) ==
 		      V90_PCM_FRAME_ENCODER_INVALID_PARAMETERS &&
