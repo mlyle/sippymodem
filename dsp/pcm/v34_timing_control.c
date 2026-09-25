@@ -133,15 +133,11 @@ enum v34_timing_control_result v34_timing_control_init(
 enum v34_timing_control_result v34_timing_control_begin_acquisition(
 	struct v34_timing_control *control, bool full_pull_in)
 {
-	struct v34_timing_control next;
-
 	if (!v34_timing_control_is_valid(control))
 		return V34_TIMING_CONTROL_INVALID_STATE;
-	next = *control;
-	next.mode = V34_TIMING_CONTROL_INITIAL_PHASE;
-	next.full_pull_in = full_pull_in;
-	next.feedback_held = false;
-	*control = next;
+	control->mode = V34_TIMING_CONTROL_INITIAL_PHASE;
+	control->full_pull_in = full_pull_in;
+	control->feedback_held = false;
 	return V34_TIMING_CONTROL_OK;
 }
 

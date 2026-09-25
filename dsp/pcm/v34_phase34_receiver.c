@@ -678,8 +678,6 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 	struct v34_phase34_receiver *receiver)
 {
-	struct v34_phase34_receiver next;
-
 	if (!v34_phase34_receiver_is_valid(receiver) || receiver->failed ||
 	    receiver->stage != V34_PHASE34_RECEIVER_PHASE4 ||
 	    receiver->semantic.phase4.stage !=
@@ -691,13 +689,9 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 	    receiver->line.equalizer.epoch <
 		    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	next = *receiver;
-	next.tracking_started = false;
-	next.tracking_symbols = 0u;
-	next.phase4_s_rearmed = true;
-	if (!v34_phase34_receiver_is_valid(&next))
-		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
-	*receiver = next;
+	receiver->tracking_started = false;
+	receiver->tracking_symbols = 0u;
+	receiver->phase4_s_rearmed = true;
 	return V34_PHASE34_RECEIVER_OK;
 }
 

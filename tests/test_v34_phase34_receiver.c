@@ -270,6 +270,8 @@ static bool test_validation(void)
 		      &receiver, 1,
 		      (struct v34_phase34_receive_output *)&receiver) ==
 		      V34_PHASE34_RECEIVER_INVALID_ARGUMENT &&
+	      v34_phase34_receiver_rearm_phase4_s(&receiver) ==
+		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_set_data_erasure(NULL, true) ==
 		      V34_PHASE34_RECEIVER_INVALID_STATE &&
 	      v34_phase34_receiver_set_data_erasure(&receiver, true) ==
