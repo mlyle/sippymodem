@@ -339,15 +339,12 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	bool candidate_before;
 	bool candidate_after;
 	bool had_first;
-	bool marker_was_complete;
 
 	if (!v34_data_line_receiver_is_valid(receiver) || current == NULL ||
 	    received == NULL)
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
 	if (receiver->failed)
 		return V34_DATA_RECEIVE_FAILED;
-	marker_was_complete =
-		v34_data_line_receiver_rate_renegotiation_is_complete(receiver);
 
 	/* Even a latched marker leaves this call owning one input sample.
 	 * Preserve the physical clock before handing that state to control. */
@@ -356,7 +353,8 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 		&line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
 		receiver->line = line;
-		return marker_was_complete ?
+		return receiver->rate_renegotiation.enabled &&
+			v34_phase3_s_hunt_is_complete(&receiver->rate_renegotiation.s) ?
 			V34_DATA_RECEIVE_RATE_RENEGOTIATION : V34_DATA_RECEIVE_OK;
 	}
 	if (line_result != V34_LINE_RECEIVER_OBSERVATION_READY) {
