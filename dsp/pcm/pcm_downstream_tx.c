@@ -72,17 +72,15 @@ static bool encode_mp_sequence(
 	bool acknowledges_cp, uint8_t *sequence, size_t *sequence_bits)
 {
 	struct v90_mp_record record = *base;
-	uint8_t encoded[V90_MP_MAXIMUM_SEQUENCE_BYTES] = { 0 };
 	size_t bit_count = 0;
 
 	v90_mp_record_mutable_common(&record)->acknowledges_cp = acknowledges_cp;
+	memset(sequence, 0, V90_MP_MAXIMUM_SEQUENCE_BYTES);
 	if (v90_mp_encode(
-		    &record, frame_bits, encoded, sizeof(encoded),
+		    &record, frame_bits, sequence, V90_MP_MAXIMUM_SEQUENCE_BYTES,
 		    &bit_count) != V90_MP_OK ||
 	    bit_count == 0 || bit_count % frame_bits != 0)
 		return false;
-	memset(sequence, 0, V90_MP_MAXIMUM_SEQUENCE_BYTES);
-	memcpy(sequence, encoded, sizeof(encoded));
 	*sequence_bits = bit_count;
 	return true;
 }
@@ -91,16 +89,14 @@ static bool encode_suvd_sequence(
 	const struct v92_suvd_parameters *parameters, uint8_t frame_bits,
 	uint8_t *sequence, size_t *sequence_bits)
 {
-	uint8_t encoded[V92_SUVD_MAX_FRAME_BYTES] = { 0 };
 	size_t bit_count = 0u;
 
+	memset(sequence, 0, V92_SUVD_MAX_FRAME_BYTES);
 	if (v92_suvd_encode(
-		    parameters, frame_bits, encoded, sizeof(encoded),
+		    parameters, frame_bits, sequence, V92_SUVD_MAX_FRAME_BYTES,
 		    &bit_count) != V92_SUVD_OK ||
 	    bit_count == 0u || bit_count % frame_bits != 0u)
 		return false;
-	memset(sequence, 0, V92_SUVD_MAX_FRAME_BYTES);
-	memcpy(sequence, encoded, sizeof(encoded));
 	*sequence_bits = bit_count;
 	return true;
 }
