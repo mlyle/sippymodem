@@ -64,8 +64,6 @@ static bool receive_boundary_is_open(const struct v32_receive_path *path)
 enum v32_receive_path_result v32_receive_path_begin_echo_training(
 	struct v32_receive_path *path)
 {
-	struct v32_receive_path next;
-
 	if (!v32_receive_path_is_valid(path))
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (!receive_boundary_is_open(path))
@@ -74,18 +72,13 @@ enum v32_receive_path_result v32_receive_path_begin_echo_training(
 		return V32_RECEIVE_PATH_INVALID_STATE;
 	if (path->echo.echo.reference_pending)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	next = *path;
-	next.echo_training = true;
-	if (!v32_receive_path_is_valid(&next))
-		return V32_RECEIVE_PATH_INVALID_STATE;
-	*path = next;
+	path->echo_training = true;
 	return V32_RECEIVE_PATH_OK;
 }
 
 enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
 	struct v32_receive_path *path, double adaptation)
 {
-	struct v32_echo_frontend next_echo;
 	enum v32_echo_result result;
 
 	if (!v32_receive_path_is_valid(path))
@@ -94,23 +87,18 @@ enum v32_receive_path_result v32_receive_path_start_echo_adaptation(
 		return V32_RECEIVE_PATH_DECISION_PENDING;
 	if (!path->echo_training)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	next_echo = path->echo;
 	result = v32_echo_frontend_start_adaptation(
-		&next_echo, adaptation);
+		&path->echo, adaptation);
 	if (result == V32_ECHO_INVALID_ARGUMENT)
 		return V32_RECEIVE_PATH_INVALID_ARGUMENT;
-	if (result != V32_ECHO_OK ||
-	    !v32_echo_frontend_is_valid(&next_echo))
+	if (result != V32_ECHO_OK)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	path->echo = next_echo;
 	return V32_RECEIVE_PATH_OK;
 }
 
 enum v32_receive_path_result v32_receive_path_finish_echo_training(
 	struct v32_receive_path *path)
 {
-	struct v32_receive_path next;
-	struct v32_echo_frontend next_echo;
 	enum v32_echo_result result;
 
 	if (!v32_receive_path_is_valid(path))
@@ -119,24 +107,16 @@ enum v32_receive_path_result v32_receive_path_finish_echo_training(
 		return V32_RECEIVE_PATH_DECISION_PENDING;
 	if (!path->echo_training)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	next_echo = path->echo;
-	result = v32_echo_frontend_freeze(&next_echo);
-	if (result != V32_ECHO_OK ||
-	    !v32_echo_frontend_is_valid(&next_echo))
+	result = v32_echo_frontend_freeze(&path->echo);
+	if (result != V32_ECHO_OK)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	next = *path;
-	next.echo = next_echo;
-	next.echo_training = false;
-	if (!v32_receive_path_is_valid(&next))
-		return V32_RECEIVE_PATH_INVALID_STATE;
-	*path = next;
+	path->echo_training = false;
 	return V32_RECEIVE_PATH_OK;
 }
 
 static enum v32_receive_path_result change_gain_lifecycle(
 	struct v32_receive_path *path, bool freeze)
 {
-	struct v32_receive_path next;
 	enum v32_line_receiver_result result;
 
 	if (!v32_receive_path_is_valid(path))
@@ -145,14 +125,11 @@ static enum v32_receive_path_result change_gain_lifecycle(
 		return V32_RECEIVE_PATH_DECISION_PENDING;
 	if (path->echo_training || path->echo.echo.adapting)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	next = *path;
 	result = freeze ?
-		v32_line_receiver_freeze_gain(&next.line) :
-		v32_line_receiver_reacquire_gain(&next.line);
-	if (result != V32_LINE_RECEIVER_OK ||
-	    !v32_receive_path_is_valid(&next))
+		v32_line_receiver_freeze_gain(&path->line) :
+		v32_line_receiver_reacquire_gain(&path->line);
+	if (result != V32_LINE_RECEIVER_OK)
 		return V32_RECEIVE_PATH_INVALID_STATE;
-	*path = next;
 	return V32_RECEIVE_PATH_OK;
 }
 

@@ -433,7 +433,8 @@ static bool test_echo_adaptation_lifecycle(void)
 	initial_equalizer = path.equalizer;
 	CHECK(v32_receive_path_begin_echo_training(&path) ==
 		      V32_RECEIVE_PATH_OK && path.echo_training &&
-	      !path.echo.echo.adapting,
+	      !path.echo.echo.adapting &&
+	      v32_receive_path_is_valid(&path),
 	      "receive path did not start its echo prefill");
 
 	while (path.echo.echo.reference_fill < 64u ||
@@ -471,7 +472,8 @@ static bool test_echo_adaptation_lifecycle(void)
 		     sizeof(path.equalizer)) == 0,
 	      "echo prefill trained or clocked the downstream lane");
 	CHECK(v32_receive_path_start_echo_adaptation(&path, 0.65) ==
-		      V32_RECEIVE_PATH_OK && path.echo.echo.adapting,
+		      V32_RECEIVE_PATH_OK && path.echo.echo.adapting &&
+	      v32_receive_path_is_valid(&path),
 	      "receive path did not start echo adaptation after prefill");
 
 	while (path.echo.echo.reference_fill < 192u ||
@@ -608,7 +610,8 @@ static bool test_gain_lifecycle(void)
 	      memcmp(&path.line.timing, &initial_line.timing,
 		     sizeof(path.line.timing)) == 0 &&
 	      memcmp(&path.equalizer, &initial_equalizer,
-		     sizeof(path.equalizer)) == 0,
+		     sizeof(path.equalizer)) == 0 &&
+	      v32_receive_path_is_valid(&path),
 	      "gain lifecycle changed learned receive state");
 	CHECK(v32_receive_path_begin_echo_training(&path) ==
 		      V32_RECEIVE_PATH_OK,
