@@ -1454,6 +1454,7 @@ static bool test_contracts(void)
 	struct pcm_downstream_tx transmitter;
 	struct pcm_downstream_tx saved;
 	struct v90_downstream_data_stream stream;
+	struct v90_downstream_data_stream invalid_stream;
 	struct v90_downstream_data_stream saved_stream;
 	struct v90_pcm_symbol symbol;
 	struct v90_pcm_symbol saved_symbol;
@@ -1473,6 +1474,17 @@ static bool test_contracts(void)
 		      V90_DOWNSTREAM_DATA_TX_OK &&
 	      v90_downstream_data_stream_is_valid(&stream),
 	      "data-stream contract fixture did not initialize");
+	invalid_stream = stream;
+	invalid_stream.transmitter.stage =
+		V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE + 1;
+	CHECK(!v90_downstream_data_tx_is_valid(&invalid_stream.transmitter) &&
+	      !v90_downstream_data_stream_is_valid(&invalid_stream),
+	      "unknown transmitter stage was accepted");
+	invalid_stream = stream;
+	invalid_stream.transmitter.b1d_frames = V90_PHASE4_B1D_FRAMES + 1u;
+	CHECK(!v90_downstream_data_tx_is_valid(&invalid_stream.transmitter) &&
+	      !v90_downstream_data_stream_is_valid(&invalid_stream),
+	      "out-of-range B1d count was accepted");
 	saved_stream = stream;
 	memset(&symbol, 0xa5, sizeof(symbol));
 	saved_symbol = symbol;

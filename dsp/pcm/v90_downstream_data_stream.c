@@ -57,12 +57,6 @@ bool v90_downstream_data_stream_is_valid(
 
 	if (stream == NULL ||
 	    !v90_downstream_data_tx_is_valid(&stream->transmitter) ||
-	    (stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
-	     stream->transmitter.stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA &&
-	     stream->transmitter.stage !=
-		     V90_DOWNSTREAM_DATA_TX_STAGE_FINISHING &&
-	     stream->transmitter.stage !=
-		     V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE) ||
 	    !queue_is_valid(stream) ||
 	    stream->accepted_frames >
 		    UINT64_MAX / V90_CP_FRAME_INTERVALS ||

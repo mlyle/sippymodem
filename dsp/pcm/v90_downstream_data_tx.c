@@ -6,22 +6,14 @@
 
 #include <string.h>
 
-static bool stage_is_valid(enum v90_downstream_data_tx_stage stage)
-{
-	return stage >= V90_DOWNSTREAM_DATA_TX_STAGE_B1D &&
-	       stage <= V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE;
-}
-
 bool v90_downstream_data_tx_is_valid(
 	const struct v90_downstream_data_tx *transmitter)
 {
 	if (transmitter == NULL ||
-	    !stage_is_valid(transmitter->stage) ||
 	    !v90_pcm_frame_encoder_is_valid(&transmitter->encoder) ||
 	    transmitter->encoder.mapping.kind != V90_CP_DATA ||
 	    !v34_scrambler_is_valid(&transmitter->scrambler) ||
-	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC ||
-	    transmitter->b1d_frames > V90_PHASE4_B1D_FRAMES)
+	    transmitter->scrambler.polynomial != V34_POLYNOMIAL_GPC)
 		return false;
 
 	switch (transmitter->stage) {
