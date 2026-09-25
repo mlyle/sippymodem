@@ -4212,7 +4212,7 @@ bool pcm_call_get_data_rates(
 static enum pcm_call_result begin_rate_renegotiation_control(
 	struct pcm_call *call)
 {
-	struct pcm_call next = *call;
+	struct v34_retrain_detector saved_detector;
 
 	if (!pcm_call_uses_conventional_upstream(call) ||
 	    call->stage != PCM_CALL_DATA_PATH ||
@@ -4220,11 +4220,12 @@ static enum pcm_call_result begin_rate_renegotiation_control(
 	    !rate_renegotiation_is_active_owned(call) ||
 	    call->rate_renegotiation_deadline_armed)
 		return PCM_CALL_SEQUENCE_MISMATCH;
-	if (reset_retrain_detector(&next) != PCM_CALL_OK)
+	saved_detector = call->retrain.detector;
+	if (reset_retrain_detector(call) != PCM_CALL_OK ||
+	    !pcm_call_owned_state_is_valid(call)) {
+		call->retrain.detector = saved_detector;
 		return PCM_CALL_NUMERIC_FAILURE;
-	if (!pcm_call_owned_state_is_valid(&next))
-		return PCM_CALL_NUMERIC_FAILURE;
-	*call = next;
+	}
 	return PCM_CALL_OK;
 }
 
