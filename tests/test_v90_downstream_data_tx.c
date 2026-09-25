@@ -5,6 +5,7 @@
 
 #include "test.h"
 
+#include <float.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -226,6 +227,11 @@ static bool test_contract(void)
 	struct v90_pcm_mapping training_mapping;
 	struct v90_downstream_data_tx transmitter;
 	struct v90_downstream_data_tx saved;
+	struct v90_downstream_data_tx numeric;
+	union {
+		struct v90_downstream_data_tx transmitter;
+		struct v90_pcm_frame_output output;
+	} aliased;
 	struct v90_pcm_frame_output output;
 	struct v90_pcm_frame_output untouched;
 	uint8_t bits[V90_PCM_FRAME_MAX_BITS] = { 0 };
@@ -248,6 +254,13 @@ static bool test_contract(void)
 	saved = transmitter;
 	memset(&untouched, 0xa5, sizeof(untouched));
 	output = untouched;
+	aliased.transmitter = transmitter;
+	CHECK(v90_downstream_data_tx_next_b1d(
+		      &aliased.transmitter, &aliased.output) ==
+		      V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      memcmp(&aliased.transmitter, &transmitter,
+		     sizeof(transmitter)) == 0,
+	      "overlapping B1d output changed state");
 	CHECK(v90_downstream_data_tx_process(
 		      &transmitter, bits, data_mapping.frame_bits,
 		      &output) == V90_DOWNSTREAM_DATA_TX_INVALID_STATE &&
@@ -267,6 +280,17 @@ static bool test_contract(void)
 		      "contract B1d frame failed");
 	}
 	saved = transmitter;
+	aliased.transmitter = transmitter;
+	CHECK(v90_downstream_data_tx_process(
+		      &aliased.transmitter, bits, data_mapping.frame_bits,
+		      &aliased.output) ==
+		      V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      v90_downstream_data_tx_finish(
+		      &aliased.transmitter, &aliased.output) ==
+		      V90_DOWNSTREAM_DATA_TX_INVALID_ARGUMENT &&
+	      memcmp(&aliased.transmitter, &transmitter,
+		     sizeof(transmitter)) == 0,
+	      "overlapping DATA output changed state");
 	bits[0] = 2;
 	output = untouched;
 	CHECK(v90_downstream_data_tx_next_b1d(
@@ -278,6 +302,27 @@ static bool test_contract(void)
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&output, &untouched, sizeof(output)) == 0,
 	      "DATA rejection changed state or output");
+	bits[0] = 0;
+	CHECK(make_mapping(&data_mapping, G711_LAW_PCMU, 1, 0) &&
+	      v90_downstream_data_tx_init(&numeric, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK,
+	      "numeric fixture did not initialize");
+	for (size_t frame = 0; frame < V90_PHASE4_B1D_FRAMES; ++frame)
+		CHECK(v90_downstream_data_tx_next_b1d(&numeric, &output) ==
+			      V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
+		      "numeric fixture B1d failed");
+	numeric.encoder.mapping.shaping_a2_q1_6 = 64;
+	numeric.encoder.shaper.shaping_a2_q1_6 = 64;
+	numeric.encoder.shaper.previous_v = DBL_MAX;
+	output = untouched;
+	saved = numeric;
+	CHECK(v90_downstream_data_tx_is_valid(&numeric) &&
+	      v90_downstream_data_tx_process(
+		      &numeric, bits, data_mapping.frame_bits, &output) ==
+		      V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE &&
+	      memcmp(&numeric, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &untouched, sizeof(output)) == 0,
+	      "numeric failure advanced encoder or scrambler");
 	return true;
 }
 
