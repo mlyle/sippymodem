@@ -328,6 +328,7 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 	struct v34_received_mapping_frame *received)
 {
 	struct v34_data_line_receiver next;
+	struct v34_line_receiver line;
 	struct v34_adaptive_equalizer_observation observation;
 	struct v34_data_decision_output decoded;
 	struct v34_phase3_s_adaptation rrn_adaptation = { 0 };
@@ -350,11 +351,11 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 
 	/* Even a latched marker leaves this call owning one input sample.
 	 * Preserve the physical clock before handing that state to control. */
-	next = *receiver;
+	line = receiver->line;
 	line_result = v34_line_receiver_sample(
-		&next.line, sample, &observation);
+		&line, sample, &observation);
 	if (line_result == V34_LINE_RECEIVER_OK) {
-		*receiver = next;
+		receiver->line = line;
 		return marker_was_complete ?
 			V34_DATA_RECEIVE_RATE_RENEGOTIATION : V34_DATA_RECEIVE_OK;
 	}
@@ -362,6 +363,8 @@ enum v34_data_receive_result v34_data_line_receiver_sample(
 		receiver->failed = true;
 		return V34_DATA_RECEIVE_NUMERIC_FAILURE;
 	}
+	next = *receiver;
+	next.line = line;
 	candidate_before = next.rate_renegotiation.enabled &&
 		next.rate_renegotiation.s.candidate;
 	result = v34_data_decision_receiver_is_receiving_b1(&next.decisions) ?
