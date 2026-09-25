@@ -278,6 +278,20 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&frame, &frame_saved, sizeof(frame)) == 0,
 	      "rejected input changed receiver or output");
+	receiver.stream.decoder.mapping.frame_bits = 0;
+	saved = receiver;
+	CHECK(!v90_downstream_data_rx_is_valid(&receiver) &&
+	      v90_downstream_data_rx_receive_decision(
+		      &receiver, 0, true, &frame) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_STATE &&
+	      v90_downstream_data_rx_receive_octet(
+		      &receiver, 0, &frame) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_STATE &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
+	      memcmp(&frame, &frame_saved, sizeof(frame)) == 0,
+	      "invalid stream state changed receiver or output");
+	receiver.stream.decoder.mapping.frame_bits = data_mapping.frame_bits;
+
 	receiver.stage = (enum v90_downstream_data_rx_stage)99;
 	CHECK(!v90_downstream_data_rx_is_valid(&receiver) &&
 	      !v90_downstream_data_rx_is_valid(NULL) &&

@@ -10,13 +10,12 @@ static bool stage_is_valid(enum v90_downstream_data_rx_stage stage)
 	       stage <= V90_DOWNSTREAM_DATA_RX_STAGE_DATA;
 }
 
-bool v90_downstream_data_rx_is_valid(
+static bool b1d_state_is_valid(
 	const struct v90_downstream_data_rx *receiver)
 {
 	uint64_t classified_bits;
 
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
-	    !v90_pcm_stream_rx_is_valid(&receiver->stream) ||
 	    receiver->stream.decoder.mapping.kind != V90_CP_DATA ||
 	    receiver->b1d_frames > V90_PHASE4_B1D_FRAMES ||
 	    receiver->stream.received_frames < receiver->b1d_frames)
@@ -29,6 +28,13 @@ bool v90_downstream_data_rx_is_valid(
 		return receiver->b1d_frames < V90_PHASE4_B1D_FRAMES &&
 		       receiver->stream.received_frames == receiver->b1d_frames;
 	return receiver->b1d_frames == V90_PHASE4_B1D_FRAMES;
+}
+
+bool v90_downstream_data_rx_is_valid(
+	const struct v90_downstream_data_rx *receiver)
+{
+	return b1d_state_is_valid(receiver) &&
+	       v90_pcm_stream_rx_is_valid(&receiver->stream);
 }
 
 enum v90_downstream_data_rx_result v90_downstream_data_rx_init(
@@ -136,7 +142,8 @@ v90_downstream_data_rx_receive_decision(
 
 	if (receiver == NULL || frame == NULL)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!v90_downstream_data_rx_is_valid(receiver))
+	/* The stream receiver validates its own state before accepting input. */
+	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
 	next = *receiver;
 	stream_result = v90_pcm_stream_rx_receive_decision(
@@ -155,7 +162,7 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 
 	if (receiver == NULL || frame == NULL)
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
-	if (!v90_downstream_data_rx_is_valid(receiver))
+	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;
 	next = *receiver;
 	stream_result = v90_pcm_stream_rx_receive_octet(
