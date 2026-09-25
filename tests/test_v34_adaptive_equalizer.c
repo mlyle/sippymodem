@@ -306,6 +306,7 @@ static bool test_retained_pair_geometry(uint16_t taps, uint16_t delay)
 			CHECK(v34_adaptive_equalizer_retain_observation(
 				      &equalizer, &observation) ==
 				      V34_ADAPTIVE_EQUALIZER_OK &&
+			      v34_adaptive_equalizer_is_valid(&equalizer) &&
 			      equalizer.retained.pending &&
 			      !equalizer.decision_pending &&
 			      memcmp(&equalizer.equalizer, &first.equalizer,
@@ -686,6 +687,32 @@ static bool test_feedback_and_discard_lifecycle(void)
 		      &equalizer, V34_ADAPTIVE_EQUALIZER_FEEDBACK_NONE) ==
 		      V34_ADAPTIVE_EQUALIZER_OK,
 	      "frozen feedback application did not complete");
+	return true;
+}
+
+static bool test_discard_lineage_zero(void)
+{
+	struct v34_adaptive_equalizer equalizer;
+	struct v34_adaptive_equalizer saved;
+	struct v34_adaptive_equalizer_observation observation;
+
+	CHECK(v34_adaptive_equalizer_init(&equalizer) ==
+		      V34_ADAPTIVE_EQUALIZER_OK &&
+	      push_zero_symbol(&equalizer) &&
+	      v34_adaptive_equalizer_observe(&equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_OK,
+	      "zero-lineage discard fixture failed");
+	/* This valid lineage makes lineage_tag(lineage, 4) wrap to zero. */
+	equalizer.lineage = UINT64_C(0x3a59415ebfdaf0b6);
+	equalizer.pending_observation.lineage = equalizer.lineage;
+	observation.lineage = equalizer.lineage;
+	CHECK(v34_adaptive_equalizer_is_valid(&equalizer),
+	      "zero-lineage discard fixture is invalid");
+	saved = equalizer;
+	CHECK(v34_adaptive_equalizer_discard(&equalizer, &observation) ==
+		      V34_ADAPTIVE_EQUALIZER_INVALID_STATE &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "zero-lineage discard changed the owner");
 	return true;
 }
 
@@ -1582,6 +1609,7 @@ int main(void)
 	    !test_exact_decision_feedback_oracle() ||
 	    !test_feedback_history_lineage() ||
 	    !test_feedback_and_discard_lifecycle() ||
+	    !test_discard_lineage_zero() ||
 	    !test_feedback_training_boundary() ||
 	    !test_tracking_boundary() || !test_decision_quality_window() ||
 	    !test_transactionality() || !test_data_quality_policy() ||

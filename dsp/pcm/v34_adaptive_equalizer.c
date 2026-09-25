@@ -672,7 +672,7 @@ v34_adaptive_equalizer_retain_observation(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_observation *observation)
 {
-	struct v34_adaptive_equalizer next;
+	struct v34_adaptive_equalizer_retained *retained;
 
 	if (observation == NULL ||
 	    memory_regions_overlap(
@@ -686,25 +686,22 @@ v34_adaptive_equalizer_retain_observation(
 	if (!v34_adaptive_equalizer_observations_are_equal(
 		    observation, &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	next.retained = (struct v34_adaptive_equalizer_retained){
-		.observation = next.pending_observation,
-		.demodulated = next.pending_demodulated,
-		.rotate_in_phase = next.pending_rotate_in_phase,
-		.rotate_quadrature = next.pending_rotate_quadrature,
-		.equalizer_index = next.equalizer.index,
+	retained = &equalizer->retained;
+	*retained = (struct v34_adaptive_equalizer_retained){
+		.observation = equalizer->pending_observation,
+		.demodulated = equalizer->pending_demodulated,
+		.rotate_in_phase = equalizer->pending_rotate_in_phase,
+		.rotate_quadrature = equalizer->pending_rotate_quadrature,
+		.equalizer_index = equalizer->equalizer.index,
 		.pending = true,
 	};
-	memcpy(next.retained.in_phase_delay,
-	       next.equalizer.in_phase_delay,
-	       sizeof(next.retained.in_phase_delay));
-	memcpy(next.retained.quadrature_delay,
-	       next.equalizer.quadrature_delay,
-	       sizeof(next.retained.quadrature_delay));
-	clear_pending(&next);
-	if (!v34_adaptive_equalizer_is_valid(&next))
-		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	memcpy(retained->in_phase_delay,
+	       equalizer->equalizer.in_phase_delay,
+	       sizeof(retained->in_phase_delay));
+	memcpy(retained->quadrature_delay,
+	       equalizer->equalizer.quadrature_delay,
+	       sizeof(retained->quadrature_delay));
+	clear_pending(equalizer);
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
 
@@ -916,7 +913,7 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_discard(
 	struct v34_adaptive_equalizer *equalizer,
 	const struct v34_adaptive_equalizer_observation *observation)
 {
-	struct v34_adaptive_equalizer next;
+	uint64_t next_lineage;
 
 	if (observation == NULL ||
 	    memory_regions_overlap(
@@ -931,11 +928,10 @@ enum v34_adaptive_equalizer_result v34_adaptive_equalizer_discard(
 	if (!v34_adaptive_equalizer_observations_are_equal(
 		    observation, &equalizer->pending_observation))
 		return V34_ADAPTIVE_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	next.lineage = lineage_tag(next.lineage, 4);
-	clear_pending(&next);
-	if (!v34_adaptive_equalizer_is_valid(&next))
+	next_lineage = lineage_tag(equalizer->lineage, 4);
+	if (next_lineage == 0)
 		return V34_ADAPTIVE_EQUALIZER_INVALID_STATE;
-	*equalizer = next;
+	equalizer->lineage = next_lineage;
+	clear_pending(equalizer);
 	return V34_ADAPTIVE_EQUALIZER_OK;
 }
