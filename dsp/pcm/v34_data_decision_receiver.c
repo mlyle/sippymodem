@@ -91,19 +91,13 @@ enum v34_data_receive_result
 v34_data_decision_receiver_cancel_interval(
 	struct v34_data_decision_receiver *receiver)
 {
-	struct v34_data_decision_receiver next;
-
 	if (!v34_data_decision_receiver_is_valid(receiver))
 		return V34_DATA_RECEIVE_INVALID_STATE;
 	if (!receiver->has_first_symbol)
 		return V34_DATA_RECEIVE_INVALID_STATE;
-	next = *receiver;
-	next.first_observation =
+	receiver->first_observation =
 		(struct v34_adaptive_equalizer_observation){ 0 };
-	next.has_first_symbol = false;
-	if (!v34_data_decision_receiver_is_valid(&next))
-		return V34_DATA_RECEIVE_INVALID_STATE;
-	*receiver = next;
+	receiver->has_first_symbol = false;
 	return V34_DATA_RECEIVE_OK;
 }
 
@@ -133,22 +127,19 @@ v34_data_decision_receiver_observe(
 		return V34_DATA_RECEIVE_INVALID_STATE;
 	if (!v34_adaptive_equalizer_observation_is_valid(observation))
 		return V34_DATA_RECEIVE_INVALID_ARGUMENT;
-	next = *receiver;
-	normalized[1] = normalized_observation(observation);
-	if (!next.has_first_symbol) {
-		next.first_observation = *observation;
-		next.has_first_symbol = true;
+	if (!receiver->has_first_symbol) {
 		generated.equalizer[0] =
 			(struct v34_adaptive_equalizer_decision){
 				.observation = *observation,
 				.adaptation = V34_ADAPTIVE_EQUALIZER_SKIP,
 			};
-		if (!v34_data_decision_receiver_is_valid(&next))
-			return V34_DATA_RECEIVE_INVALID_STATE;
-		*receiver = next;
+		receiver->first_observation = *observation;
+		receiver->has_first_symbol = true;
 		*output = generated;
 		return V34_DATA_RECEIVE_OK;
 	}
+	next = *receiver;
+	normalized[1] = normalized_observation(observation);
 	normalized[0] = normalized_observation(&next.first_observation);
 	result = v34_data_channel_receiver_advance(
 		&next.data_receiver, normalized, &generated.current, targets,

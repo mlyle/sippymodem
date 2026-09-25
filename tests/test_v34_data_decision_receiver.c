@@ -460,6 +460,7 @@ static bool test_cancel_interval(void)
 	CHECK(v34_data_decision_receiver_observe(
 		      &fixture.receiver, &input, &output) == V34_DATA_RECEIVE_OK &&
 	      fixture.receiver.has_first_symbol &&
+	      v34_data_decision_receiver_is_valid(&fixture.receiver) &&
 	      v34_data_decision_receiver_cancel_interval(&fixture.receiver) ==
 		      V34_DATA_RECEIVE_OK &&
 	      memcmp(&fixture.receiver, &saved, sizeof(saved)) == 0,
