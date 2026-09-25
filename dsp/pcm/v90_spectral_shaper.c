@@ -99,19 +99,6 @@ enum v90_spectral_shaper_result v90_spectral_shaper_init(
 	return V90_SPECTRAL_SHAPER_OK;
 }
 
-static uint8_t apply_rule(
-	uint8_t initial_sign, size_t position,
-	enum v90_spectral_rule rule)
-{
-	bool invert = rule == V90_SPECTRAL_RULE_B ||
-		      (rule == V90_SPECTRAL_RULE_C &&
-		       (position & 1u) == 0) ||
-		      (rule == V90_SPECTRAL_RULE_D &&
-		       (position & 1u) != 0);
-
-	return initial_sign ^ (uint8_t)invert;
-}
-
 static bool filter_frame(
 	const struct v90_spectral_shaper *shaper,
 	const struct v90_spectral_frame *frame,
@@ -128,7 +115,7 @@ static bool filter_frame(
 
 	for (size_t position = 0; position < frame_length; ++position) {
 		struct v90_pcm_symbol magnitude;
-		bool positive = apply_rule(
+		bool positive = v90_spectral_rule_apply(
 			frame->initial_signs[position], position, rule) != 0;
 		double x;
 		double y;
@@ -226,7 +213,7 @@ static bool commit_first_frame(
 		if (!v90_pcm_symbol_make(
 			    &generated.symbols[position], shaper->law,
 			    shaper->pending[0].ucodes[position],
-			    apply_rule(
+			    v90_spectral_rule_apply(
 				    shaper->pending[0].initial_signs[position],
 				    position, rule) != 0))
 			return false;

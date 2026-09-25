@@ -24,6 +24,19 @@ enum v90_spectral_rule {
 	V90_SPECTRAL_RULE_D,
 };
 
+/* Applying the same sign rule twice recovers the initial sign. */
+static inline uint8_t v90_spectral_rule_apply(
+	uint8_t sign, size_t position, enum v90_spectral_rule rule)
+{
+	bool invert = rule == V90_SPECTRAL_RULE_B ||
+		      (rule == V90_SPECTRAL_RULE_C &&
+		       (position & 1u) == 0) ||
+		      (rule == V90_SPECTRAL_RULE_D &&
+		       (position & 1u) != 0);
+
+	return sign ^ (uint8_t)invert;
+}
+
 enum v90_spectral_shaper_result {
 	V90_SPECTRAL_SHAPER_OK,
 	V90_SPECTRAL_SHAPER_FRAME_READY,

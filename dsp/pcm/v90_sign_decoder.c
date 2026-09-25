@@ -58,16 +58,6 @@ static void decode_unshaped(
 	output->bit_count = V90_CP_FRAME_INTERVALS;
 }
 
-static bool rule_inverts(
-	enum v90_spectral_rule rule, size_t position)
-{
-	return rule == V90_SPECTRAL_RULE_B ||
-	       (rule == V90_SPECTRAL_RULE_C &&
-		(position & 1u) == 0) ||
-	       (rule == V90_SPECTRAL_RULE_D &&
-		(position & 1u) != 0);
-}
-
 static enum v90_spectral_rule identify_rule(
 	const struct v90_sign_decoder *decoder, uint8_t first_sign)
 {
@@ -97,9 +87,8 @@ static void decode_shaped(
 		output->rules[frame] = rule;
 		for (size_t position = 0;
 		     position < frame_length; ++position) {
-			uint8_t initial = signs[offset + position] ^
-					  (uint8_t)rule_inverts(
-						  rule, position);
+			uint8_t initial = v90_spectral_rule_apply(
+				signs[offset + position], position, rule);
 			uint8_t differential =
 				initial ^
 				decoder->previous_shaping_signs[position];
