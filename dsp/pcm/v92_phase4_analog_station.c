@@ -7,20 +7,6 @@
 #include <stddef.h>
 #include <string.h>
 
-static bool cpd_is_empty(const struct v92_cpd_base_parameters *parameters)
-{
-	static const struct v92_cpd_base_parameters empty;
-
-	return memcmp(parameters, &empty, sizeof(empty)) == 0;
-}
-
-static bool suvd_is_empty(const struct v92_suvd_parameters *parameters)
-{
-	static const struct v92_suvd_parameters empty;
-
-	return memcmp(parameters, &empty, sizeof(empty)) == 0;
-}
-
 static bool cpd_selection_equal(
 	const struct v92_cpd_base_parameters *left,
 	const struct v92_cpd_base_parameters *right)
@@ -59,7 +45,8 @@ static bool mapping_matches_base(
 static bool owned_mapping_is_valid(
 	const struct v92_phase4_analog_station *station)
 {
-	if (!station->cpd_received && !cpd_is_empty(&station->cpd))
+	if (!station->cpd_received &&
+	    !memory_region_is_zero(&station->cpd, sizeof(station->cpd)))
 		return false;
 	if (!station->cpd_received && !station->transmit.control.renegotiation)
 		return station->mapping.data_bits_per_frame == 0u;
@@ -83,7 +70,7 @@ static bool owned_state_is_valid(
 {
 	return (station->suvd_received ?
 		v92_suvd_parameters_are_valid(&station->suvd) :
-		suvd_is_empty(&station->suvd)) &&
+		memory_region_is_zero(&station->suvd, sizeof(station->suvd))) &&
 	       owned_mapping_is_valid(station) &&
 	       station->transmit.control.received_suvd == station->suvd_received &&
 	       station->transmit.control.received_cpd == station->cpd_received;

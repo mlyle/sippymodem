@@ -14,22 +14,6 @@ static bool silence_requested(const struct v92_downstream_control *control)
 		(control->request_silence || (control->suvu_received && control->suvu.request_silence));
 }
 
-static bool cpu_storage_is_empty(
-	const struct v92_downstream_control *control)
-{
-	static const struct v92_cpu_parameters empty;
-
-	return memcmp(&control->cpu, &empty, sizeof(empty)) == 0;
-}
-
-static bool suvu_storage_is_empty(
-	const struct v92_downstream_control *control)
-{
-	static const struct v92_suvu_parameters empty;
-
-	return memcmp(&control->suvu, &empty, sizeof(empty)) == 0;
-}
-
 static bool cpu_selection_equal(
 	const struct v92_cpu_parameters *left,
 	const struct v92_cpu_parameters *right)
@@ -133,7 +117,7 @@ static bool owned_state_is_valid(
 			v92_cpu_parameters_are_valid(&control->cpu) && control->cpu.data_rate_number != 0u &&
 			!control->cpu.acknowledges_cpd &&
 			(control->suvu_received ? v92_suvu_parameters_are_valid(&control->suvu) :
-				(suvu_storage_is_empty(control) && !control->peer_confirmation_received)) &&
+				(memory_region_is_zero(&control->suvu, sizeof(control->suvu)) && !control->peer_confirmation_received)) &&
 			control->peer_confirmation_received == (control->suvu.acknowledges_cpd || control->e2u_received) &&
 			(control->transmit_stage == V92_DOWNSTREAM_CONTROL_SILENCE_SUVD ? control->suvu_received :
 				((control->transmit_stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD ||
@@ -182,12 +166,12 @@ static bool owned_state_is_valid(
 		 control->cpu_received)) &&
 	       (control->suvu_received ?
 		v92_suvu_parameters_are_valid(&control->suvu) :
-		suvu_storage_is_empty(control)) &&
+		memory_region_is_zero(&control->suvu, sizeof(control->suvu))) &&
 	       (control->cpu_received || control->previous_cpu ?
 		(v92_cpu_parameters_are_valid(&control->cpu) &&
 		 control->cpu.data_rate_number != 0u &&
 		 (!control->cpu.acknowledges_cpd || control->cpu_received)) :
-		cpu_storage_is_empty(control)) &&
+		memory_region_is_zero(&control->cpu, sizeof(control->cpu))) &&
 	       control->peer_confirmation_received ==
 		(control->e2u_received || (control->suvu_received &&
 		  control->suvu.acknowledges_cpd) ||

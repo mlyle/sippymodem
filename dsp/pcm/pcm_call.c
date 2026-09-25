@@ -476,13 +476,6 @@ static bool phase3_entry_matches_call(const struct pcm_call *call)
 	       call->phase3_entry.selection.startup.protocol == call->protocol;
 }
 
-static bool suvd_is_empty(const struct v92_suvd_parameters *parameters)
-{
-	static const struct v92_suvd_parameters empty;
-
-	return memcmp(parameters, &empty, sizeof(empty)) == 0;
-}
-
 static bool v92_analog_mixed_is_valid(
 	const struct pcm_call *call, bool trailing_complete)
 {
@@ -501,7 +494,7 @@ static bool v92_analog_mixed_is_valid(
 		    V90_PCM_MAPPING_TRANSMIT ||
 	    (mixed->early_suvd_received ?
 		     !v92_suvd_parameters_are_valid(&mixed->early_suvd) :
-		     !suvd_is_empty(&mixed->early_suvd)))
+		     !memory_region_is_zero(&mixed->early_suvd, sizeof(mixed->early_suvd))))
 		return false;
 	if (call->failed)
 		return true;

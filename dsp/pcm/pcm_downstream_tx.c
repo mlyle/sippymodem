@@ -160,9 +160,6 @@ static bool store_sequence(
 static bool unconfigured_control_is_valid(
 	const struct pcm_downstream_tx *transmitter)
 {
-	static const union pcm_downstream_control_tx empty_control;
-	static const uint8_t empty_sequence[PCM_DOWNSTREAM_TX_CONTROL_BYTES];
-
 	return transmitter->stage == PCM_DOWNSTREAM_TX_TRN2D &&
 	       transmitter->v92_control_kind ==
 		       PCM_DOWNSTREAM_V92_CONTROL_NONE &&
@@ -172,10 +169,10 @@ static bool unconfigured_control_is_valid(
 	       !transmitter->ed_requested && transmitter->ed_frames == 0 &&
 	       transmitter->control_sequence_bits == 0 &&
 	       transmitter->control_bit_index == 0 &&
-	       memcmp(&transmitter->control, &empty_control,
-		      sizeof(empty_control)) == 0 &&
-	       memcmp(transmitter->control_sequence, empty_sequence,
-		      sizeof(empty_sequence)) == 0;
+	       memory_region_is_zero(&transmitter->control,
+				     sizeof(transmitter->control)) &&
+	       memory_region_is_zero(transmitter->control_sequence,
+				     sizeof(transmitter->control_sequence));
 }
 
 static bool v90_control_is_valid(
