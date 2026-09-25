@@ -827,17 +827,12 @@ enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_timing_frozen(
 	struct v34_phase34_receiver *receiver, bool frozen)
 {
-	struct v34_phase34_receiver next;
-
 	if (!v34_phase34_receiver_is_valid(receiver) ||
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	next = *receiver;
-	if (v34_receive_timing_set_data_frozen(&next.line.timing, frozen) !=
-		    V34_RECEIVE_TIMING_OK ||
-	    !v34_phase34_receiver_is_valid(&next))
+	if (v34_receive_timing_set_data_frozen(&receiver->line.timing, frozen) !=
+	    V34_RECEIVE_TIMING_OK)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	*receiver = next;
 	return V34_PHASE34_RECEIVER_OK;
 }
 
@@ -845,16 +840,10 @@ enum v34_phase34_receiver_result
 v34_phase34_receiver_set_data_erasure(
 	struct v34_phase34_receiver *receiver, bool erasure)
 {
-	struct v34_phase34_receiver next;
-
 	if (!v34_phase34_receiver_is_valid(receiver) ||
 	    receiver->stage != V34_PHASE34_RECEIVER_DATA ||
 	    receiver->line.equalizer.decision_pending)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	next = *receiver;
-	next.data_erasure = erasure;
-	if (!v34_phase34_receiver_is_valid(&next))
-		return V34_PHASE34_RECEIVER_INVALID_STATE;
-	*receiver = next;
+	receiver->data_erasure = erasure;
 	return V34_PHASE34_RECEIVER_OK;
 }
