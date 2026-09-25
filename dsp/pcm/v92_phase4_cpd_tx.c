@@ -2,24 +2,9 @@
 
 #include "v92_phase4_cpd_tx.h"
 
+#include "byte_fingerprint.h"
 #include "memory_region.h"
 #include "v92_pcm_mapping.h"
-
-enum {
-	FINGERPRINT_OFFSET = UINT32_C(2166136261),
-	FINGERPRINT_PRIME = UINT32_C(16777619),
-};
-
-static uint32_t fingerprint(const uint8_t *bytes, size_t count)
-{
-	uint32_t value = FINGERPRINT_OFFSET;
-
-	for (size_t index = 0u; index < count; ++index) {
-		value ^= bytes[index];
-		value *= FINGERPRINT_PRIME;
-	}
-	return value;
-}
 
 bool v92_phase4_cpd_tx_is_valid(
 	const struct v92_phase4_cpd_tx *transmitter)
@@ -39,7 +24,7 @@ bool v92_phase4_cpd_tx_is_valid(
 				     transmitter->frame_bits != 0u))
 		return false;
 	sequence_bytes = (transmitter->sequence_bits + 7u) / 8u;
-	return fingerprint(transmitter->sequence, sequence_bytes) ==
+	return byte_fingerprint(transmitter->sequence, sequence_bytes) ==
 	       transmitter->sequence_fingerprint;
 }
 
@@ -77,7 +62,7 @@ bool v92_phase4_cpd_tx_init(
 	initialized.law = downstream->encoder.mapping.law;
 	sequence_bytes = (initialized.sequence_bits + 7u) / 8u;
 	initialized.sequence_fingerprint =
-		fingerprint(initialized.sequence, sequence_bytes);
+		byte_fingerprint(initialized.sequence, sequence_bytes);
 	if (!v92_phase4_cpd_tx_is_valid(&initialized))
 		return false;
 	*transmitter = initialized;

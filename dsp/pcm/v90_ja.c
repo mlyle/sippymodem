@@ -4,6 +4,7 @@
 
 #include "v34_constellation.h"
 #include "v34_training_sequence.h"
+#include "byte_fingerprint.h"
 #include "packed_bits.h"
 
 #include <stddef.h>
@@ -41,19 +42,6 @@ static void store_descriptor_dibit(
 			   (uint8_t)(dibit << (6u - bit_index % 8u)));
 }
 
-static uint32_t descriptor_fingerprint(
-	const uint8_t *descriptor, uint16_t descriptor_bits)
-{
-	uint32_t fingerprint = UINT32_C(2166136261);
-	size_t bytes = (descriptor_bits + 7u) / 8u;
-
-	for (size_t index = 0; index < bytes; ++index) {
-		fingerprint ^= descriptor[index];
-		fingerprint *= UINT32_C(16777619);
-	}
-	return fingerprint;
-}
-
 bool v90_ja_tx_owned_state_is_valid(const struct v90_ja_tx *tx)
 {
 	if (tx == NULL || !analogue_scrambler_is_valid(&tx->scrambler) ||
@@ -63,8 +51,8 @@ bool v90_ja_tx_owned_state_is_valid(const struct v90_ja_tx *tx)
 	    tx->descriptor_bits % 2u != 0u ||
 	    tx->bit_index >= tx->descriptor_bits || tx->bit_index % 2u != 0u)
 		return false;
-	return tx->descriptor_fingerprint == descriptor_fingerprint(
-		       tx->descriptor, tx->descriptor_bits);
+	return tx->descriptor_fingerprint == byte_fingerprint(
+		       tx->descriptor, (tx->descriptor_bits + 7u) / 8u);
 }
 
 bool v90_ja_tx_is_valid(const struct v90_ja_tx *tx)
@@ -92,8 +80,8 @@ enum v90_ja_result v90_ja_tx_init_dil_from_trn(
 		return V90_JA_INVALID_ARGUMENT;
 	initialized.scrambler = trn->scrambler;
 	initialized.descriptor_bits = (uint16_t)descriptor_bits;
-	initialized.descriptor_fingerprint = descriptor_fingerprint(
-		initialized.descriptor, initialized.descriptor_bits);
+	initialized.descriptor_fingerprint = byte_fingerprint(
+		initialized.descriptor, (initialized.descriptor_bits + 7u) / 8u);
 	initialized.previous_clockwise_quarter_turns =
 		trn->last_clockwise_quarter_turns;
 	if (!v90_ja_tx_is_valid(&initialized))

@@ -2,6 +2,7 @@
 
 #include "v92_pcm_phase3_ja.h"
 
+#include "byte_fingerprint.h"
 #include "packed_bits.h"
 
 #include <stdbool.h>
@@ -13,18 +14,14 @@
 static uint32_t descriptor_fingerprint(
 	const struct v92_pcm_phase3_ja_tx *tx)
 {
-	uint32_t fingerprint = UINT32_C(2166136261);
-	size_t bytes = (tx->descriptor_bits + 7u) / 8u;
+	uint32_t fingerprint = byte_fingerprint(
+		tx->descriptor, (tx->descriptor_bits + 7u) / 8u);
 
-	for (size_t index = 0; index < bytes; ++index) {
-		fingerprint ^= tx->descriptor[index];
-		fingerprint *= UINT32_C(16777619);
-	}
-	fingerprint = (fingerprint ^ (uint32_t)tx->descriptor_bits) *
-		UINT32_C(16777619);
-	fingerprint = (fingerprint ^ tx->upstream_rate_mask) *
-		UINT32_C(16777619);
-	return (fingerprint ^ tx->dil_segments) * UINT32_C(16777619);
+	fingerprint = byte_fingerprint_mix_u32(
+		fingerprint, tx->descriptor_bits);
+	fingerprint = byte_fingerprint_mix_u32(
+		fingerprint, tx->upstream_rate_mask);
+	return byte_fingerprint_mix_u32(fingerprint, tx->dil_segments);
 }
 
 bool v92_pcm_phase3_ja_tx_is_valid(
