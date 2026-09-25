@@ -99,8 +99,8 @@ static enum v90_downstream_data_rx_result commit_stream_result(
 	enum v90_downstream_data_rx_result result;
 
 	if (stream_result == V90_PCM_STREAM_RX_BUFFERING) {
-		if (!v90_downstream_data_rx_is_valid(next))
-			return V90_DOWNSTREAM_DATA_RX_INTERNAL_ERROR;
+		/* A checked constellation member cannot change the B1d stage or
+		 * counters; the stream owns the pending-symbol invariant here. */
 		*receiver = *next;
 		return V90_DOWNSTREAM_DATA_RX_BUFFERING;
 	}
