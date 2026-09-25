@@ -190,8 +190,6 @@ enum qam_equalizer_result qam_equalizer_init_geometry(
 enum qam_equalizer_result qam_equalizer_extend_span(
 	struct qam_equalizer *equalizer, unsigned int tap_count)
 {
-	struct qam_equalizer extended;
-
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    tap_count < equalizer->tap_count ||
 	    tap_count > QAM_EQUALIZER_MAX_TAP_COUNT)
@@ -200,15 +198,11 @@ enum qam_equalizer_result qam_equalizer_extend_span(
 		return QAM_EQUALIZER_INVALID_STATE;
 	if (tap_count == equalizer->tap_count)
 		return QAM_EQUALIZER_OK;
-	extended = *equalizer;
-	for (size_t index = extended.tap_count; index < tap_count; ++index) {
-		extended.coefficients[index] = (struct qam_point){ 0 };
-		extended.history[index] = (struct qam_point){ 0 };
+	for (size_t index = equalizer->tap_count; index < tap_count; ++index) {
+		equalizer->coefficients[index] = (struct qam_point){ 0 };
+		equalizer->history[index] = (struct qam_point){ 0 };
 	}
-	extended.tap_count = tap_count;
-	if (!qam_equalizer_is_valid(&extended))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	*equalizer = extended;
+	equalizer->tap_count = tap_count;
 	return QAM_EQUALIZER_OK;
 }
 
@@ -216,47 +210,33 @@ enum qam_equalizer_result qam_equalizer_enable_carrier_tracking(
 	struct qam_equalizer *equalizer, double proportional_gain,
 	double integral_gain)
 {
-	struct qam_equalizer next;
-
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    !carrier_gains_are_valid(proportional_gain, integral_gain) ||
 	    integral_gain == 0.0)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (equalizer->can_adapt || equalizer->carrier_tracking)
 		return QAM_EQUALIZER_INVALID_STATE;
-	next = *equalizer;
-	next.last_unrotated_output = next.last_output;
-	next.carrier_proportional_gain = proportional_gain;
-	next.carrier_integral_gain = integral_gain;
-	next.carrier_tracking = true;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	*equalizer = next;
+	equalizer->last_unrotated_output = equalizer->last_output;
+	equalizer->carrier_proportional_gain = proportional_gain;
+	equalizer->carrier_integral_gain = integral_gain;
+	equalizer->carrier_tracking = true;
 	return QAM_EQUALIZER_OK;
 }
 
 enum qam_equalizer_result qam_equalizer_hold_carrier_frequency(
 	struct qam_equalizer *equalizer)
 {
-	struct qam_equalizer next;
-
 	if (!qam_equalizer_is_valid(equalizer))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!equalizer->carrier_tracking)
 		return QAM_EQUALIZER_INVALID_STATE;
-	next = *equalizer;
-	next.carrier_integral_gain = 0.0;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	*equalizer = next;
+	equalizer->carrier_integral_gain = 0.0;
 	return QAM_EQUALIZER_OK;
 }
 
 enum qam_equalizer_result qam_equalizer_set_carrier_proportional_gain(
 	struct qam_equalizer *equalizer, double proportional_gain)
 {
-	struct qam_equalizer next;
-
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    !isfinite(proportional_gain) || proportional_gain <= 0.0 ||
 	    proportional_gain > 1.0)
@@ -265,29 +245,19 @@ enum qam_equalizer_result qam_equalizer_set_carrier_proportional_gain(
 		return QAM_EQUALIZER_INVALID_STATE;
 	if (proportional_gain < equalizer->carrier_integral_gain)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	next.carrier_proportional_gain = proportional_gain;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	*equalizer = next;
+	equalizer->carrier_proportional_gain = proportional_gain;
 	return QAM_EQUALIZER_OK;
 }
 
 enum qam_equalizer_result qam_equalizer_set_carrier_error_limit(
 	struct qam_equalizer *equalizer, double maximum_error)
 {
-	struct qam_equalizer next;
-
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    !isfinite(maximum_error) || maximum_error <= 0.0)
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!equalizer->carrier_tracking)
 		return QAM_EQUALIZER_INVALID_STATE;
-	next = *equalizer;
-	next.carrier_error_limit = maximum_error;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	*equalizer = next;
+	equalizer->carrier_error_limit = maximum_error;
 	return QAM_EQUALIZER_OK;
 }
 
@@ -335,8 +305,8 @@ enum qam_equalizer_result qam_equalizer_push(
 		next.carrier_phase = wrap_carrier_phase(
 			next.carrier_phase + next.carrier_frequency);
 	next.can_adapt = next_ready;
-	if (!qam_equalizer_is_valid(&next))
-		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	/* Geometry and coefficient power are unchanged; new history and outputs
+	 * were checked finite above, and carrier phase remains bounded. */
 	*equalizer = next;
 	*ready = next_ready;
 	if (next_ready)

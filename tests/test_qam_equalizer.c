@@ -273,7 +273,9 @@ static bool test_generated_isi_channel(void)
 		      qam_equalizer_push(
 			      &trained, &received, &trained_output,
 			      &trained_ready) == QAM_EQUALIZER_OK &&
-		      baseline_ready == trained_ready,
+		      baseline_ready == trained_ready &&
+		      qam_equalizer_is_valid(&baseline) &&
+		      qam_equalizer_is_valid(&trained),
 		      "ISI equalizer rejected generated symbol %u", symbol);
 		if (!trained_ready)
 			continue;
@@ -773,7 +775,8 @@ static bool test_span_extension(void)
 		      QAM_EQUALIZER_OK &&
 	      extended.tap_count == QAM_EQUALIZER_MAX_TAP_COUNT &&
 	      extended.decision_delay == baseline.decision_delay &&
-	      extended.fill == baseline.fill && !extended.can_adapt,
+	      extended.fill == baseline.fill && !extended.can_adapt &&
+	      qam_equalizer_is_valid(&extended),
 	      "equalizer span did not extend in place");
 	for (size_t index = 0; index < baseline.tap_count; ++index) {
 		CHECK(points_are_close(
@@ -1002,7 +1005,7 @@ static bool test_validation(void)
 		      QAM_EQUALIZER_OK &&
 	      carrier.carrier_proportional_gain == 0.05 &&
 	      qam_equalizer_hold_carrier_frequency(&carrier) ==
-		      QAM_EQUALIZER_OK,
+		      QAM_EQUALIZER_OK && qam_equalizer_is_valid(&carrier),
 	      "carrier frequency hold was not valid and idempotent");
 	pending = equalizer;
 	for (unsigned int index = 0; index <= QAM_EQUALIZER_DELAY; ++index) {
