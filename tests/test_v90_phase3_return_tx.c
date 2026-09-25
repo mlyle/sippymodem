@@ -98,6 +98,10 @@ static bool test_validation_and_transactionality(void)
 	struct v90_phase3_return_tx corrupt;
 	struct qam_point point = { 3.0, -2.0 };
 	struct qam_point saved_point = point;
+	union {
+		struct v90_phase3_return_tx tx;
+		struct qam_point point;
+	} overlap;
 
 	CHECK(v90_phase3_return_tx_init(&tx) == V90_PHASE3_RETURN_TX_OK,
 	      "validation fixture did not initialize");
@@ -120,6 +124,23 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
 	      point_equal(&point, &saved_point),
 	      "silence overflow was not transactional");
+	overlap.tx = saved;
+	CHECK(v90_phase3_return_tx_next(&overlap.tx, &overlap.point) ==
+		      V90_PHASE3_RETURN_TX_INVALID_ARGUMENT &&
+	      memcmp(&overlap.tx, &saved, sizeof(saved)) == 0,
+	      "overlapping output changed return state");
+	CHECK(v90_phase3_return_tx_init(&tx) == V90_PHASE3_RETURN_TX_OK &&
+	      v90_phase3_return_tx_start_s(&tx) ==
+		      V90_PHASE3_RETURN_TX_OK,
+	      "S overflow fixture did not initialize");
+	tx.s_symbols = UINT32_MAX;
+	saved = tx;
+	CHECK(v90_phase3_return_tx_is_valid(&tx) &&
+	      v90_phase3_return_tx_next(&tx, &point) ==
+		      V90_PHASE3_RETURN_TX_OUT_OF_RANGE &&
+	      memcmp(&tx, &saved, sizeof(tx)) == 0 &&
+	      point_equal(&point, &saved_point),
+	      "S overflow was not transactional");
 	corrupt = (struct v90_phase3_return_tx){
 		.stage = V90_PHASE3_RETURN_TX_S_BAR,
 		.s_symbols = V34_PHASE3_S_SYMBOLS + 1u,

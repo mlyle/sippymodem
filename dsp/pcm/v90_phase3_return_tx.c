@@ -2,6 +2,7 @@
 
 #include "v90_phase3_return_tx.h"
 
+#include "memory_region.h"
 #include "v34_constellation.h"
 
 #include <stddef.h>
@@ -57,85 +58,69 @@ enum v90_phase3_return_tx_result v90_phase3_return_tx_init(
 enum v90_phase3_return_tx_result v90_phase3_return_tx_start_s(
 	struct v90_phase3_return_tx *tx)
 {
-	struct v90_phase3_return_tx next;
-
 	if (!v90_phase3_return_tx_is_valid(tx))
 		return V90_PHASE3_RETURN_TX_INVALID_ARGUMENT;
 	if (tx->stage != V90_PHASE3_RETURN_TX_SILENCE)
 		return V90_PHASE3_RETURN_TX_INVALID_STATE;
-	next = *tx;
-	next.stage = V90_PHASE3_RETURN_TX_S;
-	if (!v90_phase3_return_tx_is_valid(&next))
-		return V90_PHASE3_RETURN_TX_INVALID_STATE;
-	*tx = next;
+	tx->stage = V90_PHASE3_RETURN_TX_S;
 	return V90_PHASE3_RETURN_TX_OK;
 }
 
 enum v90_phase3_return_tx_result v90_phase3_return_tx_finish_s(
 	struct v90_phase3_return_tx *tx)
 {
-	struct v90_phase3_return_tx next;
-
 	if (!v90_phase3_return_tx_is_valid(tx))
 		return V90_PHASE3_RETURN_TX_INVALID_ARGUMENT;
 	if (tx->stage != V90_PHASE3_RETURN_TX_S)
 		return V90_PHASE3_RETURN_TX_INVALID_STATE;
 	if (tx->finish_s_requested)
 		return V90_PHASE3_RETURN_TX_OK;
-	next = *tx;
-	next.finish_s_requested = true;
-	if (next.s_symbols >= V34_PHASE3_S_SYMBOLS &&
-	    (next.s_symbols & 1u) == 0u)
-		next.stage = V90_PHASE3_RETURN_TX_S_BAR;
-	if (!v90_phase3_return_tx_is_valid(&next))
-		return V90_PHASE3_RETURN_TX_INVALID_STATE;
-	*tx = next;
+	tx->finish_s_requested = true;
+	if (tx->s_symbols >= V34_PHASE3_S_SYMBOLS &&
+	    (tx->s_symbols & 1u) == 0u)
+		tx->stage = V90_PHASE3_RETURN_TX_S_BAR;
 	return V90_PHASE3_RETURN_TX_OK;
 }
 
 enum v90_phase3_return_tx_result v90_phase3_return_tx_next(
 	struct v90_phase3_return_tx *tx, struct qam_point *point)
 {
-	struct v90_phase3_return_tx next;
 	struct qam_point generated = { 0 };
 
-	if (!v90_phase3_return_tx_is_valid(tx) || point == NULL)
+	if (!v90_phase3_return_tx_is_valid(tx) || point == NULL ||
+	    memory_regions_overlap(tx, sizeof(*tx), point, sizeof(*point)))
 		return V90_PHASE3_RETURN_TX_INVALID_ARGUMENT;
 	if (tx->stage == V90_PHASE3_RETURN_TX_COMPLETE)
 		return V90_PHASE3_RETURN_TX_DONE;
-	next = *tx;
-	switch (next.stage) {
+	switch (tx->stage) {
 	case V90_PHASE3_RETURN_TX_SILENCE:
-		if (next.silence_symbols == UINT32_MAX)
+		if (tx->silence_symbols == UINT32_MAX)
 			return V90_PHASE3_RETURN_TX_OUT_OF_RANGE;
-		next.silence_symbols++;
+		tx->silence_symbols++;
 		break;
 	case V90_PHASE3_RETURN_TX_S:
-		if (next.s_symbols == UINT32_MAX)
+		if (tx->s_symbols == UINT32_MAX)
 			return V90_PHASE3_RETURN_TX_OUT_OF_RANGE;
 		generated = v34_rotated_point_zero(
-			(int)(next.s_symbols & 1u));
-		next.s_symbols++;
-		if (next.finish_s_requested &&
-		    next.s_symbols >= V34_PHASE3_S_SYMBOLS &&
-		    (next.s_symbols & 1u) == 0u)
-			next.stage = V90_PHASE3_RETURN_TX_S_BAR;
+			(int)(tx->s_symbols & 1u));
+		tx->s_symbols++;
+		if (tx->finish_s_requested &&
+		    tx->s_symbols >= V34_PHASE3_S_SYMBOLS &&
+		    (tx->s_symbols & 1u) == 0u)
+			tx->stage = V90_PHASE3_RETURN_TX_S_BAR;
 		break;
 	case V90_PHASE3_RETURN_TX_S_BAR:
 		generated = v34_rotated_point_zero(
-			(int)(2u + (next.s_bar_symbols & 1u)));
-		next.s_bar_symbols++;
-		if (next.s_bar_symbols == V34_PHASE3_S_BAR_SYMBOLS)
-			next.stage = V90_PHASE3_RETURN_TX_COMPLETE;
+			(int)(2u + (tx->s_bar_symbols & 1u)));
+		tx->s_bar_symbols++;
+		if (tx->s_bar_symbols == V34_PHASE3_S_BAR_SYMBOLS)
+			tx->stage = V90_PHASE3_RETURN_TX_COMPLETE;
 		break;
 	case V90_PHASE3_RETURN_TX_COMPLETE:
 		return V90_PHASE3_RETURN_TX_DONE;
 	default:
 		return V90_PHASE3_RETURN_TX_INVALID_ARGUMENT;
 	}
-	if (!v90_phase3_return_tx_is_valid(&next))
-		return V90_PHASE3_RETURN_TX_INVALID_STATE;
-	*tx = next;
 	*point = generated;
 	return V90_PHASE3_RETURN_TX_OK;
 }
