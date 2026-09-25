@@ -500,6 +500,32 @@ static bool test_contracts(void)
 	      memcmp(&shaper, &saved_shaper, sizeof(shaper)) == 0 &&
 	      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "numeric failure was not transactional");
+	CHECK(make_mapping(&mapping, G711_LAW_PCMU, 1, 3) &&
+	      v90_spectral_shaper_init(&shaper, &mapping) ==
+		      V90_SPECTRAL_SHAPER_OK,
+	      "full-lookahead numeric fixture did not initialize");
+	for (size_t frame = 0; frame < 3; ++frame) {
+		CHECK(v90_spectral_shaper_push(
+			      &shaper, ucodes, signs, 6, &output) ==
+			      V90_SPECTRAL_SHAPER_BUFFERING,
+		      "full-lookahead fixture did not buffer frame %zu", frame);
+	}
+	shaper.shaping_a2_q1_6 = 64;
+	shaper.previous_v = DBL_MAX;
+	saved_shaper = shaper;
+	memset(&output, 0xa5, sizeof(output));
+	saved_output = output;
+	CHECK(v90_spectral_shaper_is_valid(&shaper) &&
+	      v90_spectral_shaper_push(
+		      &shaper, ucodes, signs, 6, &output) ==
+		      V90_SPECTRAL_SHAPER_NUMERIC_FAILURE &&
+	      memcmp(&shaper, &saved_shaper, sizeof(shaper)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      v90_spectral_shaper_finish(&shaper, &output) ==
+		      V90_SPECTRAL_SHAPER_NUMERIC_FAILURE &&
+	      memcmp(&shaper, &saved_shaper, sizeof(shaper)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "full-lookahead numeric failure changed state or output");
 	mapping.shaping_b1_q1_6 = 65;
 	CHECK(v90_spectral_shaper_init(&shaper, &mapping) ==
 		      V90_SPECTRAL_SHAPER_INVALID_PARAMETERS &&

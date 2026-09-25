@@ -218,6 +218,7 @@ static bool commit_first_frame(
 				    position, rule) != 0))
 			return false;
 	}
+	/* Nothing above changes the shaper on failure. */
 	shaper->previous_x = filter.x;
 	shaper->previous_y = filter.y;
 	shaper->previous_v = filter.v;
@@ -248,7 +249,6 @@ enum v90_spectral_shaper_result v90_spectral_shaper_push(
 	const uint8_t *ucodes, const uint8_t *initial_signs,
 	size_t symbol_count, struct v90_spectral_output *output)
 {
-	struct v90_spectral_shaper next;
 	struct v90_spectral_output generated;
 	struct v90_spectral_frame frame = { 0 };
 	size_t required;
@@ -266,18 +266,16 @@ enum v90_spectral_shaper_result v90_spectral_shaper_push(
 	memcpy(frame.initial_signs, initial_signs, required);
 	if (!frame_is_canonical(&frame, required))
 		return V90_SPECTRAL_SHAPER_OUT_OF_RANGE;
-	next = *shaper;
-	next.pending[next.pending_count++] = frame;
-	if (next.pending_count <= next.lookahead) {
-		*shaper = next;
+	shaper->pending[shaper->pending_count++] = frame;
+	if (shaper->pending_count <= shaper->lookahead)
 		return V90_SPECTRAL_SHAPER_BUFFERING;
+	result = emit_first(shaper, shaper->pending_count, &generated);
+	if (result != V90_SPECTRAL_SHAPER_FRAME_READY) {
+		shaper->pending_count--;
+		memset(&shaper->pending[shaper->pending_count], 0,
+		       sizeof(shaper->pending[0]));
+		return result;
 	}
-	result = emit_first(&next, next.pending_count, &generated);
-	if (result != V90_SPECTRAL_SHAPER_FRAME_READY ||
-	    !v90_spectral_shaper_is_valid(&next))
-		return result == V90_SPECTRAL_SHAPER_FRAME_READY ?
-			       V90_SPECTRAL_SHAPER_INVALID_STATE : result;
-	*shaper = next;
 	*output = generated;
 	return V90_SPECTRAL_SHAPER_FRAME_READY;
 }
@@ -286,7 +284,6 @@ enum v90_spectral_shaper_result v90_spectral_shaper_finish(
 	struct v90_spectral_shaper *shaper,
 	struct v90_spectral_output *output)
 {
-	struct v90_spectral_shaper next;
 	struct v90_spectral_output generated;
 	enum v90_spectral_shaper_result result;
 
@@ -294,18 +291,14 @@ enum v90_spectral_shaper_result v90_spectral_shaper_finish(
 		return V90_SPECTRAL_SHAPER_INVALID_ARGUMENT;
 	if (!v90_spectral_shaper_is_valid(shaper))
 		return V90_SPECTRAL_SHAPER_INVALID_STATE;
-	next = *shaper;
-	next.finishing = true;
-	if (next.pending_count == 0) {
-		*shaper = next;
+	if (shaper->pending_count == 0) {
+		shaper->finishing = true;
 		return V90_SPECTRAL_SHAPER_COMPLETE;
 	}
-	result = emit_first(&next, next.pending_count, &generated);
-	if (result != V90_SPECTRAL_SHAPER_FRAME_READY ||
-	    !v90_spectral_shaper_is_valid(&next))
-		return result == V90_SPECTRAL_SHAPER_FRAME_READY ?
-			       V90_SPECTRAL_SHAPER_INVALID_STATE : result;
-	*shaper = next;
+	result = emit_first(shaper, shaper->pending_count, &generated);
+	if (result != V90_SPECTRAL_SHAPER_FRAME_READY)
+		return result;
+	shaper->finishing = true;
 	*output = generated;
 	return V90_SPECTRAL_SHAPER_FRAME_READY;
 }
