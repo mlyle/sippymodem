@@ -106,9 +106,10 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_next_b1d(
 	struct v90_downstream_data_tx *transmitter,
 	struct v90_pcm_frame_output *output)
 {
-	struct v90_downstream_data_tx next;
+	struct v34_scrambler next_scrambler;
 	struct v90_pcm_frame_output generated;
 	uint8_t ones[V90_PCM_FRAME_MAX_BITS];
+	size_t frame_bits;
 	enum v90_downstream_data_tx_result result;
 
 	if (transmitter == NULL || output == NULL ||
@@ -118,20 +119,18 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_next_b1d(
 	if (!v90_downstream_data_tx_is_valid(transmitter) ||
 	    transmitter->stage != V90_DOWNSTREAM_DATA_TX_STAGE_B1D)
 		return V90_DOWNSTREAM_DATA_TX_INVALID_STATE;
-	next = *transmitter;
-	memset(ones, 1, next.encoder.mapping.frame_bits);
+	frame_bits = transmitter->encoder.mapping.frame_bits;
+	memset(ones, 1, frame_bits);
+	next_scrambler = transmitter->scrambler;
 	result = encode_frame(
-		&next.scrambler, &next.encoder, ones,
-		next.encoder.mapping.frame_bits, &generated);
+		&next_scrambler, &transmitter->encoder, ones,
+		frame_bits, &generated);
 	if (result != V90_DOWNSTREAM_DATA_TX_BUFFERING &&
 	    result != V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
 		return result;
-	next.b1d_frames++;
-	if (next.b1d_frames == V90_PHASE4_B1D_FRAMES)
-		next.stage = V90_DOWNSTREAM_DATA_TX_STAGE_DATA;
-	if (!v90_downstream_data_tx_is_valid(&next))
-		return V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
-	*transmitter = next;
+	transmitter->scrambler = next_scrambler;
+	if (++transmitter->b1d_frames == V90_PHASE4_B1D_FRAMES)
+		transmitter->stage = V90_DOWNSTREAM_DATA_TX_STAGE_DATA;
 	if (result == V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY)
 		*output = generated;
 	return result;
@@ -173,7 +172,6 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_finish(
 	struct v90_downstream_data_tx *transmitter,
 	struct v90_pcm_frame_output *output)
 {
-	struct v90_downstream_data_tx next;
 	struct v90_pcm_frame_output generated;
 	enum v90_pcm_frame_encoder_result result;
 
@@ -188,13 +186,10 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_finish(
 	if (transmitter->stage != V90_DOWNSTREAM_DATA_TX_STAGE_DATA &&
 	    transmitter->stage != V90_DOWNSTREAM_DATA_TX_STAGE_FINISHING)
 		return V90_DOWNSTREAM_DATA_TX_INVALID_STATE;
-	next = *transmitter;
-	result = v90_pcm_frame_encoder_finish(&next.encoder, &generated);
+	result = v90_pcm_frame_encoder_finish(
+		&transmitter->encoder, &generated);
 	if (result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY) {
-		next.stage = V90_DOWNSTREAM_DATA_TX_STAGE_FINISHING;
-		if (!v90_downstream_data_tx_is_valid(&next))
-			return V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
-		*transmitter = next;
+		transmitter->stage = V90_DOWNSTREAM_DATA_TX_STAGE_FINISHING;
 		*output = generated;
 		return V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY;
 	}
@@ -202,10 +197,7 @@ enum v90_downstream_data_tx_result v90_downstream_data_tx_finish(
 		return result == V90_PCM_FRAME_ENCODER_NUMERIC_FAILURE ?
 			       V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE :
 			       V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
-	next.stage = V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE;
-	if (!v90_downstream_data_tx_is_valid(&next))
-		return V90_DOWNSTREAM_DATA_TX_INTERNAL_ERROR;
-	*transmitter = next;
+	transmitter->stage = V90_DOWNSTREAM_DATA_TX_STAGE_COMPLETE;
 	return V90_DOWNSTREAM_DATA_TX_COMPLETE;
 }
 

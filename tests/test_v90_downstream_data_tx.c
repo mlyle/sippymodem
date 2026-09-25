@@ -64,6 +64,14 @@ static void generate_bits(
 			 (frame >> (bit % 3u))) & 1u);
 }
 
+static void force_numeric_failure(
+	struct v90_downstream_data_tx *transmitter)
+{
+	transmitter->encoder.mapping.shaping_a2_q1_6 = 64;
+	transmitter->encoder.shaper.shaping_a2_q1_6 = 64;
+	transmitter->encoder.shaper.previous_v = DBL_MAX;
+}
+
 static bool receiver_init(
 	struct receiver *receiver,
 	const struct v90_pcm_mapping *mapping)
@@ -303,17 +311,35 @@ static bool test_contract(void)
 	      memcmp(&output, &untouched, sizeof(output)) == 0,
 	      "DATA rejection changed state or output");
 	bits[0] = 0;
+	numeric = transmitter;
+	force_numeric_failure(&numeric);
+	saved = numeric;
+	CHECK(v90_downstream_data_tx_is_valid(&numeric) &&
+	      v90_downstream_data_tx_finish(&numeric, &output) ==
+		      V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE &&
+	      memcmp(&numeric, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &untouched, sizeof(output)) == 0,
+	      "numeric finish advanced encoder or stage");
 	CHECK(make_mapping(&data_mapping, G711_LAW_PCMU, 1, 0) &&
 	      v90_downstream_data_tx_init(&numeric, &data_mapping) ==
 		      V90_DOWNSTREAM_DATA_TX_OK,
 	      "numeric fixture did not initialize");
+	force_numeric_failure(&numeric);
+	saved = numeric;
+	CHECK(v90_downstream_data_tx_is_valid(&numeric) &&
+	      v90_downstream_data_tx_next_b1d(&numeric, &output) ==
+		      V90_DOWNSTREAM_DATA_TX_NUMERIC_FAILURE &&
+	      memcmp(&numeric, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &untouched, sizeof(output)) == 0,
+	      "numeric B1d advanced encoder, scrambler, or frame count");
+	CHECK(v90_downstream_data_tx_init(&numeric, &data_mapping) ==
+		      V90_DOWNSTREAM_DATA_TX_OK,
+	      "numeric fixture reset failed");
 	for (size_t frame = 0; frame < V90_PHASE4_B1D_FRAMES; ++frame)
 		CHECK(v90_downstream_data_tx_next_b1d(&numeric, &output) ==
 			      V90_DOWNSTREAM_DATA_TX_SYMBOLS_READY,
 		      "numeric fixture B1d failed");
-	numeric.encoder.mapping.shaping_a2_q1_6 = 64;
-	numeric.encoder.shaper.shaping_a2_q1_6 = 64;
-	numeric.encoder.shaper.previous_v = DBL_MAX;
+	force_numeric_failure(&numeric);
 	output = untouched;
 	saved = numeric;
 	CHECK(v90_downstream_data_tx_is_valid(&numeric) &&
