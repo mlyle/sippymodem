@@ -1515,9 +1515,44 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 	return true;
 }
 
+static bool test_inactive_filter_history(void)
+{
+	for (unsigned filtered = 0u; filtered < 2u; ++filtered) {
+		struct v92_pcm_mapping mapping;
+		struct v92_pcm_frame_tx transmitter;
+		struct v92_pcm_frame_rx baseline, duplicate;
+		struct v92_pcm_frame_decision decision;
+		uint8_t input[V92_PCM_MAPPING_MAX_BITS];
+		uint8_t bits[V92_PCM_MAPPING_MAX_BITS] = { 0 };
+		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
+
+		CHECK(mapping_init(&mapping, G711_LAW_PCMU, 13u, filtered != 0u) &&
+		      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_rx_init(&baseline, &mapping, UPSTREAM_LEVEL) ==
+			      V92_PCM_FRAME_OK, "inactive-history fixture failed");
+		memset(input, 1, mapping.data_bits_per_frame);
+		CHECK(waveform(&transmitter, input, samples, UPSTREAM_LEVEL),
+		      "inactive-history waveform failed");
+		baseline.path_count = 2u;
+		baseline.paths[1] = baseline.paths[0];
+		duplicate = baseline;
+		duplicate.paths[1].filter.history[V92_CPD_MAX_TOTAL_COEFFICIENTS - 1u] = 1;
+		CHECK(v92_pcm_frame_rx_is_valid(&duplicate) &&
+		      v92_pcm_frame_decode(&baseline, samples, true, bits,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_decode(&duplicate, samples, true, bits,
+			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      "inactive-history decode failed");
+		CHECK(duplicate.path_count == baseline.path_count,
+		      "unused history split paths with filter %u: %u versus %u",
+		      filtered, duplicate.path_count, baseline.path_count);
+	}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_direct_confidence()) return 1;
+	if (!test_direct_confidence() || !test_inactive_filter_history()) return 1;
 	if (!test_trellis_polarity()) return 1;
 	if (!test_polarity_acquisition_boundary()) return 1;
 	static const int16_t levels[] = { 4096, 4104, 4224, 4351 };

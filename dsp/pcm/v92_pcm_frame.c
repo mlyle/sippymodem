@@ -1052,6 +1052,12 @@ static enum v92_pcm_frame_result decode_frame(
 		receiver->minimum_level;
 	int32_t maximum_gain = (int32_t)receiver->mapping.cpd.four_times_gain_q0_16 *
 		receiver->maximum_level;
+	/* Only the active prefix can affect later symbols. */
+	size_t history_bytes =
+		(receiver->mapping.cpd.filter[V92_CPD_PRECODER_FEED_FORWARD].count +
+		 x_history_count(&receiver->mapping) +
+		 receiver->mapping.cpd.filter[V92_CPD_PREFILTER_FEEDBACK].count) *
+		sizeof(receiver->paths[0].filter.history[0]);
 	path_count = receiver->path_count;
 	struct v92_observation_cache cache;
 	if (model)
@@ -1417,7 +1423,8 @@ static enum v92_pcm_frame_result decode_frame(
 			    state->rm_prime_frames == prior->rm_prime_frames &&
 			    state->descrambler.history == prior->descrambler.history &&
 			    state->trellis.state == prior->trellis.state &&
-			    memcmp(&state->filter, &prior->filter, sizeof(state->filter)) == 0)
+			    memcmp(state->filter.history, prior->filter.history,
+			           history_bytes) == 0)
 				break;
 		}
 		uint64_t gap = survivor == valid ? UINT64_MAX :
