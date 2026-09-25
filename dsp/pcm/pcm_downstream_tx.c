@@ -1037,7 +1037,9 @@ static enum pcm_downstream_tx_result next_symbol(
 	struct pcm_downstream_symbol generated;
 	enum pcm_downstream_tx_result result = PCM_DOWNSTREAM_TX_OK;
 
-	if (transmitter == NULL || symbol == NULL)
+	if (transmitter == NULL || symbol == NULL ||
+	    memory_regions_overlap(transmitter, sizeof(*transmitter),
+				   symbol, sizeof(*symbol)))
 		return PCM_DOWNSTREAM_TX_INVALID_ARGUMENT;
 	if (!pcm_downstream_tx_is_valid(transmitter))
 		return PCM_DOWNSTREAM_TX_INVALID_STATE;

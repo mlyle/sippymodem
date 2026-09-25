@@ -1216,6 +1216,13 @@ static bool test_contracts(void)
 	      pcm_downstream_tx_start_mp(&transmitter, &empty_mp) ==
 		      PCM_DOWNSTREAM_TX_OK,
 	      "invalid MP fixture did not initialize");
+	saved_transmitter = transmitter;
+	CHECK(pcm_downstream_tx_next(
+		      &transmitter, &transmitter.queue[0]) ==
+		      PCM_DOWNSTREAM_TX_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved_transmitter,
+		     sizeof(transmitter)) == 0,
+	      "overlapping symbol output changed the transmitter");
 	malformed = transmitter;
 	malformed.control.mp.type = (enum v90_mp_record_type)99;
 	malformed.cleardown_records = 1u;

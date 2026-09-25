@@ -1267,6 +1267,12 @@ static bool test_contracts(void)
 	      memcmp(&receiver, &saved, sizeof(receiver)) == 0 &&
 	      memcmp(&event, &event_saved, sizeof(event)) == 0,
 	      "invalid receive call changed state or output");
+	CHECK(pcm_downstream_rx_receive(
+		      &receiver, 0,
+		      (struct pcm_downstream_event *)(void *)&receiver) ==
+		      PCM_DOWNSTREAM_RX_INVALID_ARGUMENT &&
+	      memcmp(&receiver, &saved, sizeof(receiver)) == 0,
+	      "overlapping event output changed the receiver");
 	CHECK(v90_pcm_symbol_make(
 		      &noisy, mapping.law, 1, false),
 	      "off-constellation symbol did not initialize");

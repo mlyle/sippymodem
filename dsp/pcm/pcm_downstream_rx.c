@@ -2,6 +2,8 @@
 
 #include "pcm_downstream_rx.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -476,7 +478,9 @@ enum pcm_downstream_rx_result pcm_downstream_rx_receive(
 	enum pcm_downstream_rx_result result;
 	enum v90_pcm_stream_rx_result stream_result;
 
-	if (receiver == NULL || event == NULL)
+	if (receiver == NULL || event == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   event, sizeof(*event)))
 		return PCM_DOWNSTREAM_RX_INVALID_ARGUMENT;
 	if (!pcm_downstream_rx_is_valid(receiver))
 		return PCM_DOWNSTREAM_RX_INVALID_STATE;
