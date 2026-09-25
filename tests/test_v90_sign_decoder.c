@@ -173,6 +173,10 @@ static bool test_contracts(void)
 {
 	struct v90_sign_decoder decoder;
 	struct v90_sign_decoder saved;
+	union {
+		struct v90_sign_decoder decoder;
+		struct v90_sign_decode_output output;
+	} aliased;
 	struct v90_sign_decoder untouched;
 	struct v90_sign_decoder untouched_saved;
 	struct v90_sign_decode_output decoded;
@@ -193,6 +197,12 @@ static bool test_contracts(void)
 	memset(&decoded, 0x5a, sizeof(decoded));
 	saved_decoded = decoded;
 	saved = decoder;
+	aliased.decoder = decoder;
+	CHECK(v90_sign_decoder_decode(
+		      &aliased.decoder, signs, ARRAY_LENGTH(signs),
+		      &aliased.output) == V90_SIGN_DECODER_INVALID_ARGUMENT &&
+	      memcmp(&aliased.decoder, &decoder, sizeof(decoder)) == 0,
+	      "overlapping output changed sign decoder state");
 	signs[4] = 2;
 	CHECK(v90_sign_decoder_decode(
 		      &decoder, signs, ARRAY_LENGTH(signs), &decoded) ==

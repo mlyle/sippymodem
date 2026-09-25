@@ -302,6 +302,10 @@ static bool test_contracts(void)
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_frame_decoder decoder;
 	struct v90_pcm_frame_decoder saved_decoder;
+	union {
+		struct v90_pcm_frame_decoder decoder;
+		struct v90_pcm_frame_decode_output output;
+	} aliased;
 	struct v90_pcm_frame_decoder untouched;
 	struct v90_pcm_frame_decoder saved_untouched;
 	struct v90_pcm_frame_decode_output output;
@@ -341,6 +345,12 @@ static bool test_contracts(void)
 	memset(&output, 0x5a, sizeof(output));
 	saved_output = output;
 	saved_decoder = decoder;
+	aliased.decoder = decoder;
+	CHECK(v90_pcm_frame_decoder_decode(
+		      &aliased.decoder, ucodes, signs, ARRAY_LENGTH(signs),
+		      &aliased.output) == V90_PCM_FRAME_DECODER_INVALID_ARGUMENT &&
+	      memcmp(&aliased.decoder, &decoder, sizeof(decoder)) == 0,
+	      "overlapping output changed frame decoder state");
 	signs[2] = 2;
 	CHECK(v90_pcm_frame_decoder_decode(
 		      &decoder, ucodes, signs, ARRAY_LENGTH(signs),

@@ -2,6 +2,8 @@
 
 #include "v90_pcm_frame_decoder.h"
 
+#include "memory_region.h"
+
 #include <string.h>
 
 static bool plane_is_valid(enum v90_pcm_mapping_plane plane)
@@ -78,7 +80,8 @@ enum v90_pcm_frame_decoder_result v90_pcm_frame_decoder_decode(
 	enum v90_pcm_mapping_result mapping_result;
 
 	if (decoder == NULL || ucodes == NULL || signs == NULL ||
-	    output == NULL)
+	    output == NULL || memory_regions_overlap(
+		    decoder, sizeof(*decoder), output, sizeof(*output)))
 		return V90_PCM_FRAME_DECODER_INVALID_ARGUMENT;
 	if (!v90_pcm_frame_decoder_is_valid(decoder))
 		return V90_PCM_FRAME_DECODER_INVALID_STATE;

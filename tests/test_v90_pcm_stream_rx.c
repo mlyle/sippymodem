@@ -365,6 +365,10 @@ static bool test_contracts(void)
 	struct v90_pcm_mapping mapping;
 	struct v90_pcm_stream_rx receiver;
 	struct v90_pcm_stream_rx saved_receiver;
+	union {
+		struct v90_pcm_stream_rx receiver;
+		struct v90_pcm_stream_frame frame;
+	} aliased;
 	struct v90_pcm_stream_rx untouched;
 	struct v90_pcm_stream_rx saved_untouched;
 	struct v90_pcm_stream_frame frame;
@@ -400,6 +404,15 @@ static bool test_contracts(void)
 	memset(&frame, 0x5a, sizeof(frame));
 	saved_frame = frame;
 	saved_receiver = receiver;
+	aliased.receiver = receiver;
+	CHECK(v90_pcm_stream_rx_receive_decision(
+		      &aliased.receiver, 0, false, &aliased.frame) ==
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
+	      v90_pcm_stream_rx_receive_octet(
+		      &aliased.receiver, 0, &aliased.frame) ==
+		      V90_PCM_STREAM_RX_INVALID_ARGUMENT &&
+	      memcmp(&aliased.receiver, &receiver, sizeof(receiver)) == 0,
+	      "overlapping output changed stream receiver state");
 	CHECK(v90_pcm_stream_rx_receive_decision(
 		      &receiver, 0, false, &frame) ==
 		      V90_PCM_STREAM_RX_INVALID_SYMBOL &&

@@ -2,6 +2,8 @@
 
 #include "v90_pcm_stream_rx.h"
 
+#include "memory_region.h"
+
 #include "v90_pcm_symbol.h"
 
 #include <string.h>
@@ -163,7 +165,9 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_decision(
 	struct v90_pcm_stream_rx *receiver, uint8_t ucode, bool positive,
 	struct v90_pcm_stream_frame *frame)
 {
-	if (receiver == NULL || frame == NULL)
+	if (receiver == NULL || frame == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   frame, sizeof(*frame)))
 		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_stream_rx_is_valid(receiver))
 		return V90_PCM_STREAM_RX_INVALID_STATE;
@@ -215,7 +219,9 @@ enum v90_pcm_stream_rx_result v90_pcm_stream_rx_receive_octet(
 	struct v90_pcm_symbol symbol;
 	uint8_t decision;
 
-	if (receiver == NULL || frame == NULL)
+	if (receiver == NULL || frame == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   frame, sizeof(*frame)))
 		return V90_PCM_STREAM_RX_INVALID_ARGUMENT;
 	if (!v90_pcm_stream_rx_is_valid(receiver))
 		return V90_PCM_STREAM_RX_INVALID_STATE;

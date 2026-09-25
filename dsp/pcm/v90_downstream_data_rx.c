@@ -2,6 +2,8 @@
 
 #include "v90_downstream_data_rx.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 
 static bool stage_is_valid(enum v90_downstream_data_rx_stage stage)
@@ -140,7 +142,9 @@ v90_downstream_data_rx_receive_decision(
 	struct v90_pcm_stream_frame decoded;
 	enum v90_pcm_stream_rx_result stream_result;
 
-	if (receiver == NULL || frame == NULL)
+	if (receiver == NULL || frame == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   frame, sizeof(*frame)))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
 	/* The stream receiver validates its own state before accepting input. */
 	if (!b1d_state_is_valid(receiver))
@@ -160,7 +164,9 @@ enum v90_downstream_data_rx_result v90_downstream_data_rx_receive_octet(
 	struct v90_pcm_stream_frame decoded;
 	enum v90_pcm_stream_rx_result stream_result;
 
-	if (receiver == NULL || frame == NULL)
+	if (receiver == NULL || frame == NULL ||
+	    memory_regions_overlap(receiver, sizeof(*receiver),
+				   frame, sizeof(*frame)))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT;
 	if (!b1d_state_is_valid(receiver))
 		return V90_DOWNSTREAM_DATA_RX_INVALID_STATE;

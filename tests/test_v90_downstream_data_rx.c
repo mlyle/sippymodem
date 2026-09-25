@@ -225,6 +225,10 @@ static bool test_contracts(void)
 	struct v90_pcm_mapping training_mapping;
 	struct v90_downstream_data_rx receiver;
 	struct v90_downstream_data_rx saved;
+	union {
+		struct v90_downstream_data_rx receiver;
+		struct v90_pcm_stream_frame frame;
+	} aliased;
 	struct v90_downstream_data_rx untouched;
 	struct v90_downstream_data_rx untouched_saved;
 	struct v90_pcm_stream_frame frame;
@@ -262,6 +266,15 @@ static bool test_contracts(void)
 	      !v90_downstream_data_rx_b1d_complete(&receiver),
 	      "contract receiver did not initialize");
 	saved = receiver;
+	aliased.receiver = receiver;
+	CHECK(v90_downstream_data_rx_receive_decision(
+		      &aliased.receiver, 0, false, &aliased.frame) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      v90_downstream_data_rx_receive_octet(
+		      &aliased.receiver, 0, &aliased.frame) ==
+		      V90_DOWNSTREAM_DATA_RX_INVALID_ARGUMENT &&
+	      memcmp(&aliased.receiver, &receiver, sizeof(receiver)) == 0,
+	      "overlapping output changed downstream receiver state");
 	memset(&frame, 0x5a, sizeof(frame));
 	frame_saved = frame;
 	CHECK(v90_pcm_symbol_make(

@@ -2,6 +2,8 @@
 
 #include "v90_sign_decoder.h"
 
+#include "memory_region.h"
+
 #include "packed_bits.h"
 
 bool v90_sign_decoder_is_valid(
@@ -118,7 +120,9 @@ enum v90_sign_decoder_result v90_sign_decoder_decode(
 	struct v90_sign_decoder next;
 	struct v90_sign_decode_output generated = { 0 };
 
-	if (decoder == NULL || signs == NULL || output == NULL)
+	if (decoder == NULL || signs == NULL || output == NULL ||
+	    memory_regions_overlap(decoder, sizeof(*decoder),
+				   output, sizeof(*output)))
 		return V90_SIGN_DECODER_INVALID_ARGUMENT;
 	if (!v90_sign_decoder_is_valid(decoder))
 		return V90_SIGN_DECODER_INVALID_STATE;
