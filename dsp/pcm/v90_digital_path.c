@@ -10,7 +10,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <string.h>
 
 _Static_assert(
 	V90_DIGITAL_PATH_MAPPING_FRAME_SYMBOLS == 8,
@@ -117,9 +116,8 @@ static bool upstream_is_valid(const struct v90_digital_path *path)
 			       &startup->local_mp, &path->local_mp) &&
 		       startup->enabled_downstream_rate_mask ==
 			       path->enabled_downstream_rate_mask &&
-		       memcmp(&startup->control_symbols,
-			      &path->control_symbols,
-			      sizeof(path->control_symbols)) == 0 &&
+		       v90_phase4_cp_rx_equal(&startup->control_symbols,
+					  &path->control_symbols) &&
 		       mapping_state_is_valid &&
 		       (path->rate_renegotiation_active ?
 				path->upstream_rate_2400_bps_units != 0u :

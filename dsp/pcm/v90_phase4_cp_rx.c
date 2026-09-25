@@ -3,6 +3,7 @@
 #include "v90_phase4_cp_rx.h"
 
 #include <stddef.h>
+#include <string.h>
 
 bool v90_phase4_cp_rx_is_valid(
 	const struct v90_phase4_cp_rx *rx)
@@ -13,6 +14,25 @@ bool v90_phase4_cp_rx_is_valid(
 		       &rx->descrambler, rx->transmitting_role) &&
 	       v90_cp_receiver_is_valid(&rx->records) &&
 	       rx->previous_clockwise_quarter_turns <= 3u;
+}
+
+bool v90_phase4_cp_rx_equal(
+	const struct v90_phase4_cp_rx *left,
+	const struct v90_phase4_cp_rx *right)
+{
+	return left != NULL && right != NULL &&
+	       left->descrambler.history == right->descrambler.history &&
+	       left->descrambler.polynomial == right->descrambler.polynomial &&
+	       memcmp(left->records.frame, right->records.frame,
+		      sizeof(left->records.frame)) == 0 &&
+	       left->records.frame_bit_count == right->records.frame_bit_count &&
+	       left->records.bit_index == right->records.bit_index &&
+	       left->records.sync_one_count == right->records.sync_one_count &&
+	       left->records.stage == right->records.stage &&
+	       left->transmitting_role == right->transmitting_role &&
+	       left->constellation == right->constellation &&
+	       left->previous_clockwise_quarter_turns ==
+		       right->previous_clockwise_quarter_turns;
 }
 
 enum v90_cp_result v90_phase4_cp_rx_init(

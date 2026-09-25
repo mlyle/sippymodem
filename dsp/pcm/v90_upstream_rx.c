@@ -144,9 +144,8 @@ bool v90_upstream_rx_is_valid(const struct v90_upstream_rx *receiver)
 		       (!receiver->data_cp_received || e_search_is_valid(receiver)) &&
 		       ((receiver->data_cp_received &&
 			 receiver->e_search.received_bits != 0u) ||
-			memcmp(&receiver->control_symbols,
-			       &receiver->state.cp.symbols,
-			       sizeof(receiver->control_symbols)) == 0) &&
+			v90_phase4_cp_rx_equal(&receiver->control_symbols,
+					       &receiver->state.cp.symbols)) &&
 		       !v90_phase4_cp_line_rx_has_pending_record(
 			       &receiver->state.cp);
 	case V90_UPSTREAM_RX_STAGE_E:

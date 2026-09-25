@@ -29,6 +29,10 @@ enum v90_cp_result v90_phase4_cp_rx_init(
 	enum v34_constellation_size constellation);
 bool v90_phase4_cp_rx_is_valid(
 	const struct v90_phase4_cp_rx *rx);
+/* Compare logical receiver state, not the padding in copied C structs. */
+bool v90_phase4_cp_rx_equal(
+	const struct v90_phase4_cp_rx *left,
+	const struct v90_phase4_cp_rx *right);
 
 /* Consume one exact training-constellation decision and emit at most one
  * alignment-free CP parser event. Rejected calls leave state and event

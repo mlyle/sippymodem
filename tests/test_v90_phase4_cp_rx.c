@@ -6,6 +6,7 @@
 #include "test.h"
 
 #include <math.h>
+#include <stddef.h>
 #include <string.h>
 
 static void add_ucode(
@@ -352,6 +353,43 @@ static bool test_two_rejections_in_one_symbol(void)
 	return true;
 }
 
+static bool test_logical_state_equality(void)
+{
+	struct v90_phase4_cp_rx left;
+	struct v90_phase4_cp_rx right;
+	size_t padding_start =
+		offsetof(struct v90_cp_receiver, sync_one_count) +
+		sizeof(left.records.sync_one_count);
+	size_t padding_end = offsetof(struct v90_cp_receiver, stage);
+
+	CHECK(v90_phase4_cp_rx_init(&left, V34_ANSWERING_STATION,
+				  V34_CONSTELLATION_4_POINT) == V90_CP_OK,
+	      "CP receiver equality fixture did not initialize");
+	right = left;
+	CHECK(v90_phase4_cp_rx_equal(&left, &right),
+	      "equal CP receiver states differ");
+	if (padding_start < padding_end) {
+		memset((uint8_t *)&right.records + padding_start, 0xa5,
+		       padding_end - padding_start);
+		CHECK(memcmp(&left.records, &right.records,
+			     sizeof(left.records)) != 0 &&
+		      v90_phase4_cp_rx_is_valid(&right) &&
+		      v90_phase4_cp_rx_equal(&left, &right),
+		      "CP receiver equality depends on struct padding");
+	}
+	right.previous_clockwise_quarter_turns = 1u;
+	CHECK(v90_phase4_cp_rx_is_valid(&right) &&
+	      !v90_phase4_cp_rx_equal(&left, &right),
+	      "CP receiver equality ignored differential phase");
+	right = left;
+	right.records.sync_one_count = 1u;
+	CHECK(v90_phase4_cp_rx_is_valid(&right) &&
+	      !v90_phase4_cp_rx_equal(&left, &right) &&
+	      !v90_phase4_cp_rx_equal(NULL, &right),
+	      "CP receiver equality ignored parser state");
+	return true;
+}
+
 static bool test_transactional_contracts(void)
 {
 	struct v90_phase4_cp_rx rx;
@@ -420,6 +458,7 @@ int main(void)
 		  test_corruption_and_reacquisition },
 		{ "fixed phase ambiguity", test_fixed_phase_ambiguity },
 		{ "two rejections in one symbol", test_two_rejections_in_one_symbol },
+		{ "logical state equality", test_logical_state_equality },
 		{ "transactional contracts", test_transactional_contracts },
 	};
 	unsigned int failures = 0;
