@@ -103,19 +103,19 @@ static bool encode_unshaped(
 }
 
 static enum v90_pcm_frame_encoder_result encode_shaped(
-	struct v90_pcm_frame_encoder *encoder,
+	struct v90_spectral_shaper *shaper,
 	const uint8_t *ucodes, const uint8_t *signs,
 	struct v90_pcm_frame_output *output)
 {
 	struct v90_pcm_frame_output generated = { 0 };
-	size_t frame_count = encoder->mapping.sign_redundancy;
+	size_t frame_count = shaper->sign_redundancy;
 	size_t frame_length = V90_CP_FRAME_INTERVALS / frame_count;
 
 	for (size_t frame = 0; frame < frame_count; ++frame) {
 		struct v90_spectral_output shaped;
 		enum v90_spectral_shaper_result result =
 			v90_spectral_shaper_push(
-				&encoder->shaper,
+				shaper,
 				ucodes + frame * frame_length,
 				signs + frame * frame_length,
 				frame_length, &shaped);
@@ -146,7 +146,8 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_process(
 	const uint8_t *bits, size_t bit_count,
 	struct v90_pcm_frame_output *output)
 {
-	struct v90_pcm_frame_encoder next;
+	struct v90_sign_encoder next_signs;
+	struct v90_spectral_shaper next_shaper;
 	struct v90_pcm_frame_output generated;
 	uint8_t initial_signs[V90_CP_FRAME_INTERVALS];
 	uint8_t ucodes[V90_CP_FRAME_INTERVALS];
@@ -161,31 +162,31 @@ enum v90_pcm_frame_encoder_result v90_pcm_frame_encoder_process(
 	if (bit_count != encoder->mapping.frame_bits ||
 	    !unpacked_bits_are_binary(bits, bit_count))
 		return V90_PCM_FRAME_ENCODER_INVALID_BITS;
-	next = *encoder;
+	next_signs = encoder->signs;
 	if (v90_sign_encoder_encode(
-		    &next.signs, bits, next.mapping.sign_bits,
+		    &next_signs, bits, encoder->mapping.sign_bits,
 		    initial_signs) != V90_SIGN_ENCODER_OK ||
 	    !encode_unsigned_symbols(
-		    &next.mapping, bits + next.mapping.sign_bits,
+		    &encoder->mapping, bits + encoder->mapping.sign_bits,
 		    ucodes))
 		return V90_PCM_FRAME_ENCODER_INTERNAL_ERROR;
-	if (next.mapping.sign_redundancy == 0) {
+	if (encoder->mapping.sign_redundancy == 0) {
 		if (!encode_unshaped(
-			    &next.mapping, ucodes, initial_signs,
+			    &encoder->mapping, ucodes, initial_signs,
 			    &generated))
 			return V90_PCM_FRAME_ENCODER_INTERNAL_ERROR;
 		result = V90_PCM_FRAME_ENCODER_SYMBOLS_READY;
 	} else {
+		next_shaper = encoder->shaper;
 		result = encode_shaped(
-			&next, ucodes, initial_signs, &generated);
+			&next_shaper, ucodes, initial_signs, &generated);
 	}
-	if ((result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
-	     result != V90_PCM_FRAME_ENCODER_BUFFERING) ||
-	    !v90_pcm_frame_encoder_is_valid(&next))
-		return result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY ||
-		       result == V90_PCM_FRAME_ENCODER_BUFFERING ?
-			       V90_PCM_FRAME_ENCODER_INTERNAL_ERROR : result;
-	*encoder = next;
+	if (result != V90_PCM_FRAME_ENCODER_SYMBOLS_READY &&
+	    result != V90_PCM_FRAME_ENCODER_BUFFERING)
+		return result;
+	encoder->signs = next_signs;
+	if (encoder->mapping.sign_redundancy != 0)
+		encoder->shaper = next_shaper;
 	if (result == V90_PCM_FRAME_ENCODER_SYMBOLS_READY)
 		*output = generated;
 	return result;
