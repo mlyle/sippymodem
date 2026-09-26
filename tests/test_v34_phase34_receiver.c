@@ -97,6 +97,53 @@ static bool received_all_ones(
 	       received->auxiliary_bit == 1u;
 }
 
+static bool sample_preserves_state(
+	const struct v34_phase34_receiver *receiver,
+	enum v34_phase34_receiver_result expected)
+{
+	struct v34_phase34_receiver next = *receiver;
+	struct v34_phase34_receive_output output;
+	struct v34_phase34_receive_output saved_output;
+
+	memset(&output, 0xa5, sizeof(output));
+	saved_output = output;
+	CHECK(v34_phase34_receiver_sample(&next, 123, &output) == expected &&
+	      memcmp(&next, receiver, sizeof(next)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0,
+	      "terminal sample changed state or output (expected %u)", expected);
+	return true;
+}
+
+static bool test_terminal_samples(const struct v34_phase34_receiver *receiver)
+{
+	struct v34_phase34_receiver next = *receiver;
+
+	CHECK(v34_phase34_receiver_is_valid(&next),
+	      "terminal fixture was not valid");
+	if (next.stage == V34_PHASE34_RECEIVER_PHASE4) {
+		CHECK(v34_phase34_receiver_is_complete(&next) &&
+		      sample_preserves_state(&next, V34_PHASE34_RECEIVER_COMPLETE),
+		      "completed training consumed another sample");
+	}
+	next.failed = true;
+	CHECK(v34_phase34_receiver_has_failed(&next) &&
+	      sample_preserves_state(&next, V34_PHASE34_RECEIVER_FAILED),
+	      "failed receiver consumed a sample or reported completion");
+	if (next.stage == V34_PHASE34_RECEIVER_PHASE4)
+		next.semantic.phase4.e_receiver.previous_clockwise_quarter_turns = 4;
+	else
+		next.semantic.data.data_receiver.channel_receiver.frame_decoder
+			.channel_decoder.survivor.path_index =
+			V34_SURVIVOR_TRACEBACK_INTERVALS;
+	CHECK(!v34_phase34_receiver_is_valid(&next) &&
+	      sample_preserves_state(&next, V34_PHASE34_RECEIVER_INVALID_STATE),
+	      "failed receiver hid invalid active child state");
+	next.failed = false;
+	CHECK(sample_preserves_state(&next, V34_PHASE34_RECEIVER_INVALID_STATE),
+	      "completion or data stage hid invalid active child state");
+	return true;
+}
+
 static bool source_init(
 	struct line_source *source,
 	const struct v34_phase3_profile *transmitting_profile, uint8_t rate)
@@ -662,6 +709,8 @@ static bool test_training_case(
 			struct v34_frame_geometry wrong =
 				source.mapping.schedule.geometry;
 
+			CHECK(test_terminal_samples(&receiver),
+			      "role %u rate %u training terminal checks failed", role, rate);
 			wrong.symbol_rate =
 				source.mapping.schedule.geometry.symbol_rate ==
 						V34_SYMBOL_RATE_2800 ?
@@ -886,6 +935,8 @@ static bool test_training_case(
 	      !receiver.line.equalizer.decision_pending,
 	      "role %u rate %u receiver did not retain its physical lineage",
 	      role, rate);
+	CHECK(test_terminal_samples(&receiver),
+	      "role %u rate %u data terminal checks failed", role, rate);
 	receiver.rate_renegotiation.acquire_phase = true;
 	CHECK(!v34_phase34_receiver_is_valid(&receiver),
 	      "online receiver accepted training-only phase acquisition");

@@ -501,8 +501,9 @@ static enum v34_phase34_receiver_result receive_data(
 	struct v34_phase3_s_adaptation adaptation;
 	bool control = false;
 
+	/* sample validated this child; the line receiver changes only line DSP. */
 	if (!receiver->data_erasure &&
-	    !v34_data_decision_receiver_is_receiving_b1(&data)) {
+	    !data.data_receiver.data_receiver.b1_active) {
 		enum v34_phase3_s_receiver_result marker =
 			v34_phase3_s_hunt_receive(&receiver->rate_renegotiation,
 				observation->decision, &adaptation, &control);
@@ -656,7 +657,10 @@ enum v34_phase34_receiver_result v34_phase34_receiver_sample(
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
 	if (receiver->failed)
 		return V34_PHASE34_RECEIVER_FAILED;
-	if (v34_phase34_receiver_is_complete(receiver))
+	/* The owner validation above includes the active semantic child. */
+	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
+	    receiver->semantic.phase4.stage ==
+		    V34_PHASE4_DECISION_RECEIVER_COMPLETE)
 		return V34_PHASE34_RECEIVER_COMPLETE;
 	if (receiver->stage == V34_PHASE34_RECEIVER_PHASE4 &&
 	    receiver->semantic.phase4.record_pending)
