@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "pcm_binary_sign.h"
+#include "memory_region.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -46,44 +47,35 @@ enum pcm_binary_sign_result pcm_binary_sign_init_from_scrambler(
 enum pcm_binary_sign_result pcm_binary_sign_track_scrambler_output(
 	struct pcm_binary_sign *state, uint8_t sign)
 {
-	struct pcm_binary_sign next;
 	uint8_t ignored;
 
 	if (state == NULL || sign > 1u)
 		return PCM_BINARY_SIGN_INVALID_ARGUMENT;
 	if (!pcm_binary_sign_is_valid(state))
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	next = *state;
 	if (v34_descramble_group(
-		    &next.scrambler, sign, 1u, &ignored) != V34_FRAMING_OK)
+		    &state->scrambler, sign, 1u, &ignored) != V34_FRAMING_OK)
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	next.previous_sign = sign;
-	if (!pcm_binary_sign_is_valid(&next))
-		return PCM_BINARY_SIGN_INVALID_STATE;
-	*state = next;
+	state->previous_sign = sign;
 	return PCM_BINARY_SIGN_OK;
 }
 
 enum pcm_binary_sign_result pcm_binary_sign_encode(
 	struct pcm_binary_sign *state, uint8_t bit, uint8_t *sign)
 {
-	struct pcm_binary_sign next;
 	uint8_t scrambled;
 	uint8_t encoded;
 
-	if (state == NULL || sign == NULL || bit > 1u)
+	if (state == NULL || sign == NULL || bit > 1u ||
+	    memory_regions_overlap(state, sizeof(*state), sign, sizeof(*sign)))
 		return PCM_BINARY_SIGN_INVALID_ARGUMENT;
 	if (!pcm_binary_sign_is_valid(state))
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	next = *state;
 	if (v34_scramble_group(
-		    &next.scrambler, bit, 1u, &scrambled) != V34_FRAMING_OK)
+		    &state->scrambler, bit, 1u, &scrambled) != V34_FRAMING_OK)
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	encoded = next.previous_sign ^ scrambled;
-	next.previous_sign = encoded;
-	if (!pcm_binary_sign_is_valid(&next))
-		return PCM_BINARY_SIGN_INVALID_STATE;
-	*state = next;
+	encoded = state->previous_sign ^ scrambled;
+	state->previous_sign = encoded;
 	*sign = encoded;
 	return PCM_BINARY_SIGN_OK;
 }
@@ -91,23 +83,20 @@ enum pcm_binary_sign_result pcm_binary_sign_encode(
 enum pcm_binary_sign_result pcm_binary_sign_decode(
 	struct pcm_binary_sign *state, uint8_t sign, uint8_t *bit)
 {
-	struct pcm_binary_sign next;
 	uint8_t scrambled;
 	uint8_t decoded;
 
-	if (state == NULL || bit == NULL || sign > 1u)
+	if (state == NULL || bit == NULL || sign > 1u ||
+	    memory_regions_overlap(state, sizeof(*state), bit, sizeof(*bit)))
 		return PCM_BINARY_SIGN_INVALID_ARGUMENT;
 	if (!pcm_binary_sign_is_valid(state))
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	next = *state;
-	scrambled = sign ^ next.previous_sign;
-	next.previous_sign = sign;
+	scrambled = sign ^ state->previous_sign;
 	if (v34_descramble_group(
-		    &next.scrambler, scrambled, 1u, &decoded) !=
-		    V34_FRAMING_OK ||
-	    !pcm_binary_sign_is_valid(&next))
+		    &state->scrambler, scrambled, 1u, &decoded) !=
+		    V34_FRAMING_OK)
 		return PCM_BINARY_SIGN_INVALID_STATE;
-	*state = next;
+	state->previous_sign = sign;
 	*bit = decoded;
 	return PCM_BINARY_SIGN_OK;
 }

@@ -35,6 +35,7 @@ bool pcm_binary_sign_is_valid(const struct pcm_binary_sign *state);
 enum pcm_binary_sign_result pcm_binary_sign_track_scrambler_output(
 	struct pcm_binary_sign *state, uint8_t sign);
 
+/* Output must not overlap state; rejected calls leave both unchanged. */
 enum pcm_binary_sign_result pcm_binary_sign_encode(
 	struct pcm_binary_sign *state, uint8_t bit, uint8_t *sign);
 enum pcm_binary_sign_result pcm_binary_sign_decode(

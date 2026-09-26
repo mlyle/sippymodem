@@ -155,6 +155,18 @@ static bool test_contracts(void)
 	      memcmp(&state, &before, sizeof(state)) == 0 &&
 	      output == UINT8_C(0xa5),
 	      "invalid binary-sign call changed state or output");
+	for (size_t offset = 0; offset < sizeof(state); ++offset) {
+		uint8_t *aliased = (uint8_t *)&state + offset;
+
+		CHECK(pcm_binary_sign_encode(&state, 0u, aliased) ==
+			      PCM_BINARY_SIGN_INVALID_ARGUMENT &&
+		      memcmp(&state, &before, sizeof(state)) == 0 &&
+		      pcm_binary_sign_decode(&state, 0u, aliased) ==
+			      PCM_BINARY_SIGN_INVALID_ARGUMENT &&
+		      memcmp(&state, &before, sizeof(state)) == 0,
+		      "aliased binary-sign output changed state at byte %zu",
+		      offset);
+	}
 	state.previous_sign = 2u;
 	before = state;
 	CHECK(!pcm_binary_sign_is_valid(&state) &&
