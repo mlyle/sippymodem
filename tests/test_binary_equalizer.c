@@ -250,6 +250,23 @@ static bool test_failed_adaptation_preserves_owner(void)
 	return true;
 }
 
+static bool test_output_ownership(void)
+{
+	struct qam_equalizer trained;
+	struct binary_equalizer receiver, before;
+
+	CHECK(trained_equalizer(&trained) && binary_equalizer_init(&receiver,
+	      &trained, TEST_MAGNITUDE, .125, 1) == BINARY_EQUALIZER_OK,
+	      "output-ownership fixture did not initialize");
+	before = receiver;
+	for (size_t byte = 0; byte < sizeof(receiver); ++byte)
+		CHECK(binary_equalizer_receive(&receiver, -TEST_MAGNITUDE,
+			      (uint8_t *)&receiver + byte) == BINARY_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+		      "sign output changed owner at byte %zu", byte);
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] binary equalizer decisions\n");
@@ -260,7 +277,7 @@ int main(void)
 	fprintf(stderr, "[       OK ] binary equalizer decisions\n");
 	fprintf(stderr, "[ RUN      ] binary equalizer contracts\n");
 	if (!test_contracts() || !test_immediate_adaptation() ||
-	    !test_failed_adaptation_preserves_owner()) {
+	    !test_failed_adaptation_preserves_owner() || !test_output_ownership()) {
 		fprintf(stderr, "[  FAILED  ] binary equalizer contracts\n");
 		return 1;
 	}

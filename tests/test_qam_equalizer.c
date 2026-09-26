@@ -733,6 +733,24 @@ static bool test_delayed_observations(void)
 		      NULL, &transmitted[0], &observation[0], &ready) ==
 		      QAM_EQUALIZER_INVALID_ARGUMENT,
 	      "invalid delayed observation arguments were accepted");
+	{
+		struct qam_point output;
+		struct qam_equalizer before;
+
+		CHECK(qam_equalizer_observe(&equalizer, &transmitted[0],
+			      &observation[0], &ready) == QAM_EQUALIZER_OK && ready &&
+		      qam_equalizer_push(&equalizer, &transmitted[1], &output,
+			      &ready) == QAM_EQUALIZER_OK && ready && equalizer.can_adapt,
+		      "interleaved decisions did not become ready");
+		before = equalizer;
+		CHECK(qam_equalizer_adapt_observation(&equalizer, &observation[0],
+			      &observation[0].output, 0.0) == QAM_EQUALIZER_OK &&
+		      !observation[0].pending &&
+		      memcmp(&equalizer, &before, sizeof(equalizer)) == 0 &&
+		      qam_equalizer_adapt(&equalizer, &equalizer.last_output, 0.0) ==
+			      QAM_EQUALIZER_OK && !equalizer.can_adapt,
+		      "delayed adaptation consumed the newer direct decision");
+	}
 	return true;
 }
 
@@ -943,6 +961,56 @@ static bool test_output_ownership(void)
 	return true;
 }
 
+static bool test_adaptation_power_boundaries(void)
+{
+	const struct qam_point reference = { 1.0, 0.0 };
+	static const struct {
+		unsigned int taps;
+		struct qam_point target;
+	} cases[] = {
+		{ 1, { 0.0, 0.0 } },
+		{ 2, { 0x1.8p512, 0.0 } },
+	};
+	double coefficient = cases[1].target.in_phase / (2.0 + 1e-12);
+	double tap_power = coefficient * coefficient;
+
+	CHECK(isfinite(tap_power) && !isfinite(tap_power + tap_power),
+	      "coefficient-power overflow fixture is not finite per tap");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
+		for (unsigned int carrier = 0; carrier < 2; ++carrier)
+			for (unsigned int delayed = 0; delayed < 2; ++delayed) {
+				struct qam_equalizer equalizer, before;
+				struct qam_equalizer_observation observation = { 0 }, saved;
+				struct qam_point output;
+				bool ready;
+
+				CHECK(qam_equalizer_init_geometry(&equalizer, &reference,
+					      &reference, cases[index].taps, 0) == QAM_EQUALIZER_OK &&
+				      (!carrier || qam_equalizer_enable_carrier_tracking(
+					      &equalizer, 0.1, 0.01) == QAM_EQUALIZER_OK),
+				      "power-boundary fixture did not initialize");
+				for (unsigned int tap = 1; tap < cases[index].taps; ++tap)
+					CHECK(qam_equalizer_push(&equalizer, &reference,
+						      &output, &ready) == QAM_EQUALIZER_OK && ready,
+					      "power-boundary history did not fill");
+				CHECK((delayed ? qam_equalizer_observe(&equalizer, &reference,
+					      &observation, &ready) : qam_equalizer_push(&equalizer,
+					      &reference, &output, &ready)) == QAM_EQUALIZER_OK && ready,
+				      "power-boundary decision did not become ready");
+				before = equalizer;
+				saved = observation;
+				CHECK((delayed ? qam_equalizer_adapt_observation(&equalizer,
+					      &observation, &cases[index].target, 1.0) :
+					      qam_equalizer_adapt(&equalizer, &cases[index].target, 1.0)) ==
+					      QAM_EQUALIZER_INVALID_ARGUMENT &&
+				      memcmp(&equalizer, &before, sizeof(equalizer)) == 0 &&
+				      memcmp(&observation, &saved, sizeof(observation)) == 0,
+				      "coefficient-power boundary %zu changed state (carrier %u, delayed %u)",
+				      index, carrier, delayed);
+			}
+	return true;
+}
+
 static bool test_reference_division_boundaries(void)
 {
 	struct qam_equalizer equalizer, saved;
@@ -1136,6 +1204,7 @@ int main(void)
 		{ "span extension", test_span_extension },
 		{ "product boundaries", test_product_boundaries },
 		{ "output ownership", test_output_ownership },
+		{ "adaptation power boundaries", test_adaptation_power_boundaries },
 		{ "reference division boundaries", test_reference_division_boundaries },
 		{ "validation", test_validation },
 	};

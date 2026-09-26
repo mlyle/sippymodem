@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "binary_equalizer.h"
+#include "memory_region.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -48,7 +49,8 @@ enum binary_equalizer_result binary_equalizer_receive(
 	uint8_t decision;
 	bool ready;
 
-	if (receiver == NULL || sign == NULL)
+	if (receiver == NULL || sign == NULL || memory_regions_overlap(
+		    receiver, sizeof(*receiver), sign, sizeof(*sign)))
 		return BINARY_EQUALIZER_INVALID_ARGUMENT;
 	if (!binary_equalizer_is_valid(receiver))
 		return BINARY_EQUALIZER_INVALID_STATE;
@@ -67,8 +69,7 @@ enum binary_equalizer_result binary_equalizer_receive(
 	};
 	if (qam_equalizer_adapt(
 		    &next.equalizer, &target,
-		    next.adaptation) != QAM_EQUALIZER_OK ||
-	    !binary_equalizer_is_valid(&next))
+		    next.adaptation) != QAM_EQUALIZER_OK)
 		return BINARY_EQUALIZER_INTERNAL_ERROR;
 	*receiver = next;
 	*sign = decision;
