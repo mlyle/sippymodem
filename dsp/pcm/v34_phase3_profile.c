@@ -39,6 +39,16 @@ static bool symbol_rate_fraction(
 	return false;
 }
 
+bool v34_symbol_rate_matches(
+	enum v34_symbol_rate rate, uint32_t numerator, uint32_t denominator)
+{
+	struct exact_fraction fraction;
+
+	return symbol_rate_fraction(rate, &fraction) &&
+	       numerator == fraction.numerator &&
+	       denominator == fraction.denominator;
+}
+
 static bool carrier_ratio(
 	enum v34_symbol_rate rate, bool high_carrier,
 	struct exact_fraction *ratio)

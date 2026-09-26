@@ -33,6 +33,10 @@ struct v34_phase3_profile {
 	bool high_carrier;
 };
 
+/* Match the canonical exact clock used by negotiated V.34 profiles. */
+bool v34_symbol_rate_matches(
+	enum v34_symbol_rate rate, uint32_t numerator, uint32_t denominator);
+
 bool v34_phase3_profile_is_valid(
 	const struct v34_phase3_profile *profile);
 

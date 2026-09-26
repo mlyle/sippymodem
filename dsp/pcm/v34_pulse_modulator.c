@@ -197,8 +197,10 @@ bool v34_pulse_modulator_is_valid(
 	if (modulator == NULL ||
 	    !selected_profile(modulator->symbol_rate, &profile) ||
 	    modulator->channel.sample_rate != V34_PULSE_SAMPLE_RATE ||
-	    modulator->channel.symbol_rate_numerator == 0 ||
-	    modulator->channel.symbol_rate_denominator == 0 ||
+	    !v34_symbol_rate_matches(
+		    modulator->symbol_rate,
+		    modulator->channel.symbol_rate_numerator,
+		    modulator->channel.symbol_rate_denominator) ||
 	    modulator->channel.carrier_frequency_numerator == 0 ||
 	    modulator->channel.carrier_frequency_denominator == 0 ||
 	    modulator->channel.rolloff != V34_LINE_ROLLOFF ||
@@ -211,9 +213,7 @@ bool v34_pulse_modulator_is_valid(
 		return false;
 	expected_period = (uint64_t)modulator->channel.sample_rate *
 		modulator->channel.symbol_rate_denominator;
-	if (expected_period == 0 ||
-	    modulator->channel.symbol_rate_numerator >= expected_period ||
-	    modulator->symbol_period_units != expected_period ||
+	if (modulator->symbol_period_units != expected_period ||
 	    modulator->carrier_phase_step != phase_step_u32(
 		    modulator->channel.sample_rate,
 		    modulator->channel.carrier_frequency_numerator,
@@ -221,7 +221,7 @@ bool v34_pulse_modulator_is_valid(
 	    modulator->carrier_phase_step == 0 ||
 	    (uint64_t)modulator->channel.carrier_frequency_numerator * 2u >=
 		    (uint64_t)modulator->channel.sample_rate *
-			    modulator->channel.carrier_frequency_denominator)
+		    modulator->channel.carrier_frequency_denominator)
 		return false;
 	expected_phase =
 		(modulator->generated_samples % expected_period) *
@@ -366,7 +366,6 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	const struct qam_point *point, double *sample,
 	bool *point_accepted)
 {
-	struct v34_pulse_modulator next;
 	struct pulse_profile profile;
 	struct fixed_phase_q14 phasor;
 	int16_t interpolated[V34_PULSE_TAPS];
@@ -379,6 +378,7 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	uint32_t quadrature = 0x1000u;
 	uint32_t mixed;
 	uint32_t filtered;
+	uint64_t next_symbol_phase;
 	int16_t fixed_in_phase = 0;
 	int16_t fixed_quadrature = 0;
 	int16_t preemphasis_input;
@@ -390,7 +390,8 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	    !outputs_are_disjoint(modulator, point, sample, point_accepted) ||
 	    !v34_pulse_modulator_is_valid(modulator))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
-	accepting = v34_pulse_modulator_needs_point(modulator);
+	accepting = modulator->symbol_phase_units <
+		modulator->channel.symbol_rate_numerator;
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
 	     (!qam_point_fits_power(point, modulator->maximum_point_power) ||
@@ -403,53 +404,54 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 		     modulator->symbol_rate,
 		     modulator->preemphasis_filter_index)) == NULL)
 		return V34_PULSE_MODULATOR_NUMERIC_FAILURE;
-	next = *modulator;
+	/* A valid owner has a bounded V.34 clock. After the checks above,
+	 * filtering and unsigned clock updates cannot reject the sample. */
+	next_symbol_phase = modulator->symbol_phase_units +
+		modulator->channel.symbol_rate_numerator;
+	if (next_symbol_phase >= modulator->symbol_period_units)
+		next_symbol_phase -= modulator->symbol_period_units;
 	if (point != NULL) {
 		memmove(
-			&next.in_phase_history[1], &next.in_phase_history[0],
+			&modulator->in_phase_history[1],
+			&modulator->in_phase_history[0],
 			(V34_PULSE_TAPS - 1u) *
-				sizeof(next.in_phase_history[0]));
+				sizeof(modulator->in_phase_history[0]));
 		memmove(
-			&next.quadrature_history[1],
-			&next.quadrature_history[0],
+			&modulator->quadrature_history[1],
+			&modulator->quadrature_history[0],
 			(V34_PULSE_TAPS - 1u) *
-				sizeof(next.quadrature_history[0]));
-		next.in_phase_history[0] = fixed_in_phase;
-		next.quadrature_history[0] = fixed_quadrature;
+				sizeof(modulator->quadrature_history[0]));
+		modulator->in_phase_history[0] = fixed_in_phase;
+		modulator->quadrature_history[0] = fixed_quadrature;
 	}
 	divisor = (uint32_t)gcd_u64(
-		next.channel.symbol_rate_numerator,
-		next.symbol_period_units);
-	row_count = (uint32_t)(next.symbol_period_units / divisor);
-	row = (uint32_t)(next.symbol_phase_units / divisor);
+		modulator->channel.symbol_rate_numerator,
+		modulator->symbol_period_units);
+	row_count = (uint32_t)(modulator->symbol_period_units / divisor);
+	row = (uint32_t)(modulator->symbol_phase_units / divisor);
 	coefficients = phase_coefficients(&profile, row, row_count, interpolated);
 	for (size_t index = 0; index < V34_PULSE_TAPS; ++index) {
 		int16_t coefficient = coefficients[V34_PULSE_TAPS - 1u - index];
 
 		in_phase += multiply_low_s32(
-			next.in_phase_history[index], coefficient);
+			modulator->in_phase_history[index], coefficient);
 		quadrature += multiply_low_s32(
-			next.quadrature_history[index], coefficient);
+			modulator->quadrature_history[index], coefficient);
 	}
 	phasor = fixed_phase_sin_cos_u16_q14(
-		(uint16_t)(next.carrier_phase >> 16));
+		(uint16_t)(modulator->carrier_phase >> 16));
 	mixed = multiply_low_s32(
 		arithmetic_shift_right_u32(in_phase, 13), phasor.cosine);
 	mixed -= multiply_low_s32(
 		arithmetic_shift_right_u32(quadrature, 13), phasor.sine);
 	preemphasis_input = round_shift_s32_word_to_s16(mixed, 14);
-	filtered = fir_shift_s16(next.preemphasis_history, preemphasis,
+	filtered = fir_shift_s16(modulator->preemphasis_history, preemphasis,
 		V34_PREEMPHASIS_TAPS, preemphasis_input);
 	fixed_sample = round_shift_s32_word_to_s16(filtered, 14);
 	generated = (double)fixed_sample / V34_PULSE_OUTPUT_SCALE;
-	next.generated_samples++;
-	next.carrier_phase += next.carrier_phase_step;
-	next.symbol_phase_units += next.channel.symbol_rate_numerator;
-	if (next.symbol_phase_units >= next.symbol_period_units)
-		next.symbol_phase_units -= next.symbol_period_units;
-	if (!v34_pulse_modulator_is_valid(&next))
-		return V34_PULSE_MODULATOR_NUMERIC_FAILURE;
-	*modulator = next;
+	modulator->generated_samples++;
+	modulator->carrier_phase += modulator->carrier_phase_step;
+	modulator->symbol_phase_units = next_symbol_phase;
 	*sample = generated;
 	*point_accepted = accepting;
 	return V34_PULSE_MODULATOR_OK;

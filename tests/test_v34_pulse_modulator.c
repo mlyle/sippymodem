@@ -151,7 +151,8 @@ static uint64_t waveform_hash(
 		}
 		if (v34_pulse_modulator_sample(
 			    &modulator, supplied, &sample, &accepted) !=
-		    V34_PULSE_MODULATOR_OK)
+		    V34_PULSE_MODULATOR_OK ||
+		    !v34_pulse_modulator_is_valid(&modulator))
 			return 0;
 		quantized = llround(sample * 1048576.0);
 		hash = hash_u64(hash, (uint64_t)quantized);
@@ -388,6 +389,136 @@ static bool test_initialization_and_copy(void)
 	return true;
 }
 
+static void set_sample_count(
+	struct v34_pulse_modulator *modulator, uint64_t count)
+{
+	modulator->generated_samples = count;
+	modulator->symbol_phase_units =
+		(count % modulator->symbol_period_units) *
+		modulator->channel.symbol_rate_numerator %
+		modulator->symbol_period_units;
+	modulator->carrier_phase = (uint32_t)count *
+		modulator->carrier_phase_step;
+}
+
+static bool test_clock_profile_mismatch(void)
+{
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		struct v34_phase3_profile profile = profile_for(
+			(enum v34_symbol_rate)rate, true);
+		struct qam_channel channel = channel_for(&profile);
+		struct v34_pulse_modulator initialized;
+		struct qam_point point = { 0.5, -0.25 };
+		double sample;
+		bool accepted;
+
+		CHECK(v34_pulse_modulator_init(
+			      &initialized, &profile, &channel, 2.0) ==
+			      V34_PULSE_MODULATOR_OK &&
+		      v34_pulse_modulator_sample(
+			      &initialized, &point, &sample, &accepted) ==
+			      V34_PULSE_MODULATOR_OK,
+		      "clock mismatch fixture did not initialize");
+		for (unsigned int other = 0; other <= V34_SYMBOL_RATE_COUNT; ++other) {
+			struct v34_pulse_modulator modulator = initialized;
+			struct v34_pulse_modulator saved;
+
+			if (other == rate)
+				continue;
+			modulator.symbol_rate = (enum v34_symbol_rate)other;
+			saved = modulator;
+			sample = 123.0;
+			accepted = true;
+			CHECK(!v34_pulse_modulator_is_valid(&modulator) &&
+			      !v34_pulse_modulator_needs_point(&modulator) &&
+			      v34_pulse_modulator_sample(
+				      &modulator, NULL, &sample, &accepted) ==
+				      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
+			      memcmp(&modulator, &saved, sizeof(modulator)) == 0 &&
+			      sample == 123.0 && accepted,
+			      "rate %u accepted clock for rate %u", other, rate);
+		}
+	}
+	return true;
+}
+
+static bool test_clock_boundaries(void)
+{
+	static const uint64_t COUNTS[] = {
+		UINT32_MAX - 1u, UINT32_MAX, (uint64_t)UINT32_MAX + 1u,
+		UINT64_MAX / 2u, UINT64_MAX - 1u,
+	};
+	struct qam_point point = { 0.5, -0.25 };
+
+	for (unsigned int rate = 0; rate < V34_SYMBOL_RATE_COUNT; ++rate) {
+		struct v34_phase3_profile profile = profile_for(
+			(enum v34_symbol_rate)rate, true);
+		struct qam_channel channel = channel_for(&profile);
+		struct v34_pulse_modulator initialized;
+
+		profile.preemphasis_filter_index =
+			V34_PREEMPHASIS_MAX_FILTER_INDEX;
+		CHECK(v34_pulse_modulator_init(
+			      &initialized, &profile, &channel, 2.0) ==
+			      V34_PULSE_MODULATOR_OK,
+		      "clock fixture did not initialize at rate %u", rate);
+		for (size_t trial = 0; trial < ARRAY_LENGTH(COUNTS); ++trial) {
+			struct v34_pulse_modulator modulator = initialized;
+			double sample = 123.0;
+			bool expected, accepted;
+
+			set_sample_count(&modulator, COUNTS[trial]);
+			CHECK(v34_pulse_modulator_is_valid(&modulator),
+			      "clock boundary fixture is invalid");
+			expected = v34_pulse_modulator_needs_point(&modulator);
+			CHECK(v34_pulse_modulator_sample(
+				      &modulator, expected ? &point : NULL,
+				      &sample, &accepted) == V34_PULSE_MODULATOR_OK &&
+			      v34_pulse_modulator_is_valid(&modulator) &&
+			      modulator.generated_samples == COUNTS[trial] + 1u &&
+			      accepted == expected && isfinite(sample),
+			      "clock transition failed at rate %u trial %zu", rate, trial);
+		}
+		struct v34_pulse_modulator modulator = initialized;
+		struct v34_pulse_modulator saved;
+		double sample = 123.0;
+		bool accepted = true;
+
+		set_sample_count(&modulator, UINT64_MAX);
+		saved = modulator;
+		CHECK(v34_pulse_modulator_is_valid(&modulator) &&
+		      v34_pulse_modulator_sample(
+			      &modulator,
+			      v34_pulse_modulator_needs_point(&modulator) ? &point : NULL,
+			      &sample, &accepted) == V34_PULSE_MODULATOR_NUMERIC_FAILURE &&
+		      memcmp(&modulator, &saved, sizeof(modulator)) == 0 &&
+		      sample == 123.0 && accepted,
+		      "sample counter overflow mutated state at rate %u", rate);
+
+		/* Reject a supplied non-V.34 clock before touching its histories. */
+		modulator = initialized;
+		CHECK(v34_pulse_modulator_sample(
+			      &modulator, &point, &sample, &accepted) ==
+			      V34_PULSE_MODULATOR_OK,
+		      "nonzero history fixture failed");
+		modulator.channel.symbol_rate_numerator = UINT32_MAX;
+		modulator.channel.symbol_rate_denominator = UINT32_MAX;
+		modulator.symbol_period_units = (uint64_t)TEST_SAMPLE_RATE * UINT32_MAX;
+		set_sample_count(&modulator, UINT64_MAX / UINT32_MAX);
+		saved = modulator;
+		sample = 123.0;
+		accepted = true;
+		CHECK(!v34_pulse_modulator_is_valid(&modulator) &&
+		      !v34_pulse_modulator_needs_point(&modulator) &&
+		      v34_pulse_modulator_sample(&modulator, NULL, &sample, &accepted) ==
+			      V34_PULSE_MODULATOR_INVALID_ARGUMENT &&
+		      memcmp(&modulator, &saved, sizeof(modulator)) == 0 &&
+		      sample == 123.0 && accepted,
+		      "non-V.34 clock was accepted or mutated state at rate %u", rate);
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -399,6 +530,8 @@ int main(void)
 		{ "pre-emphasis profiles", test_preemphasis_profiles },
 		{ "transactional contract", test_transactional_contract },
 		{ "initialization and copy", test_initialization_and_copy },
+		{ "clock profile mismatch", test_clock_profile_mismatch },
+		{ "clock boundaries", test_clock_boundaries },
 	};
 	unsigned int failures = 0;
 
