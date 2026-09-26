@@ -346,21 +346,6 @@ static bool outputs_are_disjoint(
 	return !memory_region_set_overlaps(regions, count);
 }
 
-static bool fixed_coordinate(double coordinate, int16_t *fixed)
-{
-	double scaled = coordinate * V34_PULSE_POINT_SCALE;
-	long rounded;
-
-	if (!isfinite(scaled) || scaled < INT16_MIN - 0.5 ||
-	    scaled >= INT16_MAX + 0.5)
-		return false;
-	rounded = lround(scaled);
-	if (rounded < INT16_MIN || rounded > INT16_MAX)
-		return false;
-	*fixed = (int16_t)rounded;
-	return true;
-}
-
 enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	struct v34_pulse_modulator *modulator,
 	const struct qam_point *point, double *sample,
@@ -395,8 +380,10 @@ enum v34_pulse_modulator_result v34_pulse_modulator_sample(
 	if ((point != NULL) != accepting ||
 	    (point != NULL &&
 	     (!qam_point_fits_power(point, modulator->maximum_point_power) ||
-	      !fixed_coordinate(point->in_phase, &fixed_in_phase) ||
-	      !fixed_coordinate(point->quadrature, &fixed_quadrature))))
+	      !qam_coordinate_to_s16(point->in_phase * V34_PULSE_POINT_SCALE,
+				     &fixed_in_phase) ||
+	      !qam_coordinate_to_s16(point->quadrature * V34_PULSE_POINT_SCALE,
+				     &fixed_quadrature))))
 		return V34_PULSE_MODULATOR_INVALID_ARGUMENT;
 	if (modulator->generated_samples == UINT64_MAX ||
 	    !selected_profile(modulator->symbol_rate, &profile) ||

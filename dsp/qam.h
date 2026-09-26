@@ -41,6 +41,18 @@ struct qam_point {
 	double quadrature;
 };
 
+/* Round an already-scaled coordinate to int16, halfway away from zero.
+ * Reject nonfinite or clipping inputs without changing the output. */
+static inline bool qam_coordinate_to_s16(double coordinate, int16_t *fixed)
+{
+	if (fixed == NULL ||
+	    !(coordinate > INT16_MIN - 0.5 &&
+	      coordinate < INT16_MAX + 0.5))
+		return false;
+	*fixed = (int16_t)lround(coordinate);
+	return true;
+}
+
 /* Raw arithmetic on readable points; callers retain their numeric checks. */
 static inline double qam_point_power(const struct qam_point *point)
 {

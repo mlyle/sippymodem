@@ -4,8 +4,6 @@
 
 #include "memory_region.h"
 
-#include <limits.h>
-#include <math.h>
 #include <stddef.h>
 
 bool v34_data_decision_receiver_is_valid(
@@ -64,27 +62,16 @@ static struct qam_point normalized_observation(
 	};
 }
 
-static bool fixed_coordinate(double normalized, int16_t *fixed)
-{
-	double scaled = normalized * V34_TRAINING_FIXED_AMPLITUDE;
-	long rounded;
-
-	if (!isfinite(scaled) || scaled < (double)INT16_MIN - 0.5 ||
-	    scaled > (double)INT16_MAX + 0.5)
-		return false;
-	rounded = lround(scaled);
-	if (rounded < INT16_MIN || rounded > INT16_MAX)
-		return false;
-	*fixed = (int16_t)rounded;
-	return true;
-}
-
 static bool fixed_target(
 	const struct qam_point *normalized, struct v34_analytic_sample *fixed)
 {
 	return point_is_finite(normalized) &&
-	       fixed_coordinate(normalized->in_phase, &fixed->in_phase) &&
-	       fixed_coordinate(normalized->quadrature, &fixed->quadrature);
+	       qam_coordinate_to_s16(
+		       normalized->in_phase * V34_TRAINING_FIXED_AMPLITUDE,
+		       &fixed->in_phase) &&
+	       qam_coordinate_to_s16(
+		       normalized->quadrature * V34_TRAINING_FIXED_AMPLITUDE,
+		       &fixed->quadrature);
 }
 
 enum v34_data_receive_result
