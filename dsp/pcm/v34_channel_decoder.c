@@ -6,6 +6,7 @@
 #include "v34_branches.h"
 
 #include <stddef.h>
+#include <string.h>
 
 static bool init_regions_overlap(
 	const struct v34_channel_decoder *decoder,
@@ -96,7 +97,7 @@ static enum v34_channel_decoder_result path_result(
 }
 
 static enum v34_channel_decoder_result advance_path(
-	struct v34_channel_decoder *decoder,
+	struct v34_survivor *survivor,
 	const struct qam_point estimates[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	const struct qam_point normalized[V34_2D_SYMBOLS_PER_4D_INTERVAL],
 	const struct v34_power_normalizer *normalizer,
@@ -120,7 +121,7 @@ static enum v34_channel_decoder_result advance_path(
 	}
 	{
 		enum v34_branches_result result = v34_build_branch_set(
-			slices, inversion_bit, decoder->survivor.selection,
+			slices, inversion_bit, survivor->selection,
 			&branches);
 
 		if (result != V34_BRANCHES_OK)
@@ -128,7 +129,7 @@ static enum v34_channel_decoder_result advance_path(
 	}
 	{
 		enum v34_survivor_result result = v34_survivor_advance(
-			&decoder->survivor, &branches, current, traceback,
+			survivor, &branches, current, traceback,
 			ready);
 
 		if (result != V34_SURVIVOR_OK)
@@ -170,7 +171,10 @@ static enum v34_channel_decoder_result advance(
 	uint8_t inversion_bit, struct v34_survivor_decision *current,
 	struct v34_decided_4d_interval *decided, bool *decided_ready)
 {
-	struct v34_channel_decoder next;
+	struct v34_survivor_traceback_step previous_step;
+	double previous_metric[V34_MAX_TRELLIS_STATES];
+	uint8_t previous_index;
+	uint8_t previous_intervals;
 	struct v34_survivor_decision generated_current;
 	struct v34_survivor_decision traceback;
 	struct v34_decided_4d_interval generated_decided;
@@ -185,25 +189,38 @@ static enum v34_channel_decoder_result advance(
 		    decided_ready) ||
 	    !v34_channel_decoder_is_valid(decoder))
 		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
-	next = *decoder;
+	/* A survivor update changes only its metrics, cursors, and one ring slot.
+	 * Keep that bounded undo record until the transactional inverse precoder
+	 * succeeds; the other traceback slots and configuration never change. */
+	previous_index = decoder->survivor.path_index;
+	previous_intervals = decoder->survivor.path_intervals;
+	memcpy(&previous_step, &decoder->survivor.path[previous_index],
+	       sizeof(previous_step));
+	memcpy(previous_metric, decoder->survivor.path_metric,
+	       sizeof(previous_metric));
 	{
 		enum v34_channel_decoder_result result = advance_path(
-			&next, estimates, normalized, normalizer, inversion_bit,
-			&generated_current, &traceback, &generated_ready);
+			&decoder->survivor, estimates, normalized, normalizer,
+			inversion_bit, &generated_current, &traceback,
+			&generated_ready);
 
 		if (result != V34_CHANNEL_DECODER_OK)
 			return result;
 	}
 	if (generated_ready) {
 		enum v34_path_decoder_result result = v34_decode_survivor_path(
-			&next.inverse_precoder, &traceback, &generated_decided);
+			&decoder->inverse_precoder, &traceback, &generated_decided);
 
-		if (result != V34_PATH_DECODER_OK)
+		if (result != V34_PATH_DECODER_OK) {
+			memcpy(&decoder->survivor.path[previous_index],
+			       &previous_step, sizeof(previous_step));
+			memcpy(decoder->survivor.path_metric, previous_metric,
+			       sizeof(previous_metric));
+			decoder->survivor.path_index = previous_index;
+			decoder->survivor.path_intervals = previous_intervals;
 			return path_result(result);
+		}
 	}
-	if (!v34_channel_decoder_is_valid(&next))
-		return V34_CHANNEL_DECODER_INVALID_ARGUMENT;
-	*decoder = next;
 	*current = generated_current;
 	*decided_ready = generated_ready;
 	if (generated_ready)

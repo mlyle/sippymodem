@@ -23,11 +23,13 @@ static const struct v34_q14_coefficient COEFFICIENTS[] = {
 struct channel_profile {
 	enum v34_symbol_rate symbol_rate;
 	uint8_t primary_rate;
+	bool expanded;
 };
 
 static const struct channel_profile PROFILES[] = {
-	{ V34_SYMBOL_RATE_3000, 8 },
-	{ V34_SYMBOL_RATE_2743, 8 },
+	{ V34_SYMBOL_RATE_3000, 8, false },
+	{ V34_SYMBOL_RATE_2743, 8, false },
+	{ V34_SYMBOL_RATE_3429, 14, true },
 };
 
 struct expected_interval {
@@ -46,7 +48,7 @@ static bool initialize_parameters(
 		       geometry, profile->symbol_rate, profile->primary_rate,
 		       false) == V34_FRAME_SCHEDULE_OK &&
 	       v34_mapping_parameters_init(
-		       parameters, geometry, false) ==
+		       parameters, geometry, profile->expanded) ==
 		       V34_MAPPING_PARAMETERS_OK;
 }
 
@@ -145,6 +147,11 @@ static bool decoded_matches(
 	       decoded->differential_output == expected->differential_output;
 }
 
+static bool rejected_advance_is_transactional(
+	struct v34_channel_decoder *decoder,
+	const struct qam_point estimates[2], uint8_t inversion_bit,
+	enum v34_channel_decoder_result expected);
+
 static bool test_generated_round_trip(void)
 {
 	for (size_t profile_index = 0; profile_index < ARRAY_LENGTH(PROFILES);
@@ -169,7 +176,8 @@ static bool test_generated_round_trip(void)
 				      &encoder, &parameters, COEFFICIENTS,
 				      selection) == V34_4D_ENCODER_OK &&
 			      v34_channel_decoder_init(
-				      &channel_decoder, &geometry, false,
+				      &channel_decoder, &geometry,
+				      PROFILES[profile_index].expanded,
 				      COEFFICIENTS, selection) ==
 				      V34_CHANNEL_DECODER_OK &&
 			      v34_4d_decoder_init(
@@ -218,6 +226,34 @@ static bool test_generated_round_trip(void)
 					encoded.trellis_output;
 				expected[interval].differential_output =
 					encoded.differential_output;
+				if (interval + 1u >= V34_SURVIVOR_TRACEBACK_INTERVALS) {
+					struct v34_precoder saved_precoder =
+						channel_decoder.inverse_precoder;
+
+					channel_decoder.inverse_precoder =
+						(struct v34_precoder){
+							.coefficients = {
+								{ INT16_MAX, 0 },
+								{ INT16_MAX, 0 }, { 0, 0 },
+							},
+							.previous_symbols = {
+								{ 1000000000, 0 },
+								{ -1000000000, 0 }, { 0, 0 },
+							},
+							.grid_step = saved_precoder.grid_step,
+						};
+					/* Retry the same late rejection at every ring position,
+					 * including first traceback and multiple wraps. */
+					for (unsigned retry = 0; retry < 2; ++retry)
+						CHECK(v34_channel_decoder_is_valid(&channel_decoder) &&
+						      rejected_advance_is_transactional(
+							      &channel_decoder, estimates,
+							      expected[interval].input.inversion_bit,
+							      V34_CHANNEL_DECODER_OUT_OF_RANGE),
+						      "late rollback %zu/%u/%zu/%u changed state",
+						      profile_index, selection, interval, retry);
+					channel_decoder.inverse_precoder = saved_precoder;
+				}
 				memset(&decided, 0xa5, sizeof(decided));
 				saved_decided = decided;
 				CHECK(v34_channel_decoder_advance(
@@ -225,6 +261,7 @@ static bool test_generated_round_trip(void)
 					      expected[interval].input.inversion_bit,
 					      &current, &decided, &ready) ==
 					      V34_CHANNEL_DECODER_OK &&
+				      v34_channel_decoder_is_valid(&channel_decoder) &&
 				      decisions_are_equal(
 					      &current, &expected_current) &&
 				      ready ==
@@ -447,29 +484,6 @@ static bool test_transactional_boundaries(void)
 		      V34_CHANNEL_DECODER_INVALID_ARGUMENT),
 	      "mismatched channel grid was accepted");
 
-	for (size_t interval = 0;
-	     interval + 1u < V34_SURVIVOR_TRACEBACK_INTERVALS;
-	     ++interval) {
-		CHECK(v34_channel_decoder_advance(
-			      &decoder, estimates, 0, &current, &decided,
-			      &ready) == V34_CHANNEL_DECODER_OK &&
-		      !ready,
-		      "channel late-failure history %zu changed", interval);
-	}
-	decoder.inverse_precoder = (struct v34_precoder){
-		.coefficients = {
-			{ INT16_MAX, 0 }, { INT16_MAX, 0 }, { 0, 0 },
-		},
-		.previous_symbols = {
-			{ 1000000000, 0 }, { -1000000000, 0 }, { 0, 0 },
-		},
-		.grid_step = V34_PRECODER_GRID_STEP_2,
-	};
-	CHECK(v34_channel_decoder_is_valid(&decoder) &&
-	      rejected_advance_is_transactional(
-		      &decoder, estimates, 0,
-		      V34_CHANNEL_DECODER_OUT_OF_RANGE),
-	      "traceback path failure changed channel state");
 	return true;
 }
 

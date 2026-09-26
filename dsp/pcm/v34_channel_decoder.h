@@ -42,7 +42,8 @@ bool v34_channel_decoder_is_valid(
  * boundary. `current` always receives the present-time hard decision for
  * channel tracking. `decided` is unchanged until `decided_ready` becomes true
  * at the survivor traceback depth, then receives one mapper interval in
- * transmission order. State and every output are unchanged on failure. */
+ * transmission order. State, input, and output regions must be disjoint.
+ * State and every output are unchanged on failure. */
 enum v34_channel_decoder_result
 v34_channel_decoder_advance(
 	struct v34_channel_decoder *decoder,
