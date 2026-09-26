@@ -36,6 +36,21 @@ static bool extension_is_near(uint16_t value, uint16_t expected, uint16_t span)
 
 static bool check_phase_estimator(void)
 {
+	static const struct {
+		int32_t first, second;
+		uint16_t expected;
+	} boundaries[] = {
+		{ INT32_MIN, INT32_MIN, UINT16_C(0xc000) },
+		{ INT32_MIN, INT32_MAX, UINT16_C(0x4000) },
+		{ INT32_MAX, INT32_MIN, UINT16_C(0x4000) },
+		{ INT32_MAX, INT32_MAX, UINT16_C(0xc000) },
+		{ 0, INT32_MIN, 0 },
+		{ 0, INT32_MAX, 0 },
+		{ 1, INT32_MIN, 0 },
+		{ 1, INT32_MAX, 0 },
+		{ -1, INT32_MIN, 0 },
+		{ -1, INT32_MAX, 0 },
+	};
 	uint16_t extension = UINT16_C(0x1357);
 	uint16_t inverted = 0u;
 
@@ -54,11 +69,78 @@ static bool check_phase_estimator(void)
 	CHECK(v92_su_phase_extension(INT32_MIN, 0, &extension) &&
 	      extension == UINT16_C(0x8000),
 	      "Su phase estimator did not safely canonicalize INT32_MIN");
+	for (size_t i = 0; i < ARRAY_LENGTH(boundaries); ++i)
+		CHECK(v92_su_phase_extension(boundaries[i].first,
+			      boundaries[i].second, &extension) &&
+		      extension == boundaries[i].expected,
+		      "Su phase boundary %zu changed to %04x", i, extension);
 	extension = UINT16_C(0x1357);
 	CHECK(!v92_su_phase_extension(0, 0, &extension) &&
 	      !v92_su_phase_extension(1, 1, NULL) &&
 	      extension == UINT16_C(0x1357),
 	      "empty Su phase estimate changed its output");
+	return true;
+}
+
+static bool test_phase_accumulator_bounds(void)
+{
+	const uint16_t counts[] = { 0, 1, V92_SU_RX_PHASE_SYMBOLS - 1,
+		V92_SU_RX_PHASE_SYMBOLS };
+
+	for (unsigned segment = 0; segment < 2u; ++segment) {
+		for (size_t c = 0; c < ARRAY_LENGTH(counts); ++c) {
+			struct v92_su_rx base;
+			int32_t limit = (int32_t)counts[c] * 32768;
+			const int32_t invalid[] = {
+				limit + 1, -limit - 1, INT32_MIN, INT32_MAX,
+			};
+
+			CHECK(v92_su_rx_init(&base, V92_SU_RX_MEASURE_PHASE,
+				      1, 1) == V92_SU_RX_OK, "bound fixture init");
+			base.total_symbols = 1000;
+			base.phase_samples[segment] = counts[c];
+			if (segment == 0u) {
+				base.stage = counts[c] == 0u ? V92_SU_RX_ACQUIRING :
+					counts[c] == V92_SU_RX_PHASE_SYMBOLS ?
+					V92_SU_RX_WAITING_TRANSITION : V92_SU_RX_FIRST_PHASE;
+			} else {
+				base.phase_samples[0] = V92_SU_RX_PHASE_SYMBOLS;
+				base.transition_symbol = 1;
+				base.stage = counts[c] == V92_SU_RX_PHASE_SYMBOLS ?
+					V92_SU_RX_COMPLETE : V92_SU_RX_SECOND_PHASE;
+			}
+			for (unsigned sign = 0; sign < 2u; ++sign) {
+				struct v92_su_rx receiver = base;
+				int16_t sample = sign ? INT16_MAX : INT16_MIN;
+				enum v92_su_rx_result result;
+
+				receiver.phase_component[segment] = sign ? -limit : limit;
+				receiver.history_valid = receiver.comparison_valid = 0x3f;
+				receiver.comparison_same = 0x3f;
+				receiver.history_signs = sign ? 0x3f : 0;
+				receiver.stable_symbols = V92_SU_RX_MIN_STABLE_SYMBOLS;
+				CHECK(v92_su_rx_is_valid(&receiver), "valid bound rejected");
+				result = v92_su_rx_sample(&receiver, sample);
+				CHECK(result <= V92_SU_RX_FAILURE &&
+				      v92_su_rx_is_valid(&receiver),
+				      "boundary accumulation failed: %u/%u/%u result=%d",
+				      segment, counts[c], sign, result);
+			}
+			for (size_t i = 0; i < ARRAY_LENGTH(invalid); ++i) {
+				struct v92_su_rx receiver = base;
+				struct v92_su_rx before;
+
+				receiver.phase_component[segment] = invalid[i];
+				before = receiver;
+				CHECK(!v92_su_rx_is_valid(&receiver) &&
+				      v92_su_rx_sample(&receiver, INT16_MIN) ==
+					      V92_SU_RX_INVALID_ARGUMENT &&
+				      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+				      "invalid accumulator accepted: %u/%u value=%d",
+				      segment, counts[c], invalid[i]);
+			}
+		}
+	}
 	return true;
 }
 
@@ -404,6 +486,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "phase estimator", check_phase_estimator },
+		{ "phase accumulator bounds", test_phase_accumulator_bounds },
 		{ "acquisition magnitude", test_acquisition_magnitude },
 		{ "generated phase probe", test_generated_phase_probe },
 		{ "absent phase rejection", test_absent_phase_is_rejected },

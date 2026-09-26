@@ -3,7 +3,6 @@
 #include "v92_su_rx.h"
 #include "integer_math.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -61,6 +60,14 @@ bool v92_su_rx_is_valid(const struct v92_su_rx *receiver)
 	    receiver->last_periodic_symbol > receiver->total_symbols ||
 	    receiver->transition_symbol > receiver->total_symbols)
 		return false;
+	/* A sign-folded int16 sample contributes at most 32768. Bounding the
+	 * retained sum makes the next addition safe throughout either window. */
+	for (unsigned segment = 0; segment < 2u; ++segment) {
+		int32_t limit = (int32_t)receiver->phase_samples[segment] * 32768;
+		if (receiver->phase_component[segment] < -limit ||
+		    receiver->phase_component[segment] > limit)
+			return false;
+	}
 	switch (receiver->stage) {
 	case V92_SU_RX_ACQUIRING:
 		return receiver->phase_samples[0] == 0u &&
@@ -264,8 +271,6 @@ bool v92_su_phase_extension(
 	int64_t first = first_component;
 	int64_t second = second_component;
 	double angle;
-	double scaled;
-	long rounded;
 
 	if (extension_q16 == NULL ||
 	    (first == 0 && second == 0))
@@ -275,12 +280,10 @@ bool v92_su_phase_extension(
 		second = -second;
 	}
 	angle = atan2(-(double)second, (double)first);
-	scaled = 32768.0 - angle * (65536.0 / acos(-1.0));
-	if (!isfinite(scaled) || scaled < (double)LONG_MIN ||
-	    scaled > (double)LONG_MAX)
-		return false;
-	rounded = lround(scaled);
-	*extension_q16 = (uint16_t)(unsigned long)rounded;
+	/* Canonical nonzero integer components bound the finite scaled phase
+	 * to [0, 65536], safely within long. Q16 wraps at one complete symbol. */
+	*extension_q16 = (uint16_t)lround(
+		32768.0 - angle * (65536.0 / acos(-1.0)));
 	return true;
 }
 
