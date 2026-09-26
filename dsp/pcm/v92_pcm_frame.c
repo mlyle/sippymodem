@@ -922,6 +922,18 @@ static uint64_t input_cell_metric(
 	return (uint64_t)(error * error);
 }
 
+static inline uint64_t sample_metric(const struct v92_pcm_frame_rx *receiver,
+	int16_t u, int32_t v, int16_t sample, bool b1u,
+	const struct g711_interval *cell, int32_t minimum_gain, int32_t maximum_gain,
+	uint64_t weight)
+{
+	if (cell)
+		return input_cell_metric(receiver, v, cell, minimum_gain, maximum_gain);
+	int64_t error = (int64_t)sample - predicted_observation(receiver, u, v, sample, b1u);
+
+	return (uint64_t)(error * error) * weight;
+}
+
 static bool b1u_digits(
 	const struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_frame_rx_path *path,
@@ -1075,8 +1087,20 @@ static enum v92_pcm_frame_result decode_frame(
 	 * This orders the existing beam; it never adds future costs to history
 	 * or changes B1u, filter-dependent scoring, or the delivered residual. */
 	bool lookahead = cells && !b1u;
+	/* Share history-independent scores, even when CPd explicitly carries
+	 * zero history coefficients. Precoding is then x=u; the prefilter's
+	 * current-input coefficient still scales it. Keep score and eta order. */
+	bool cache_points = !b1u && !model;
+	if (cache_points && receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT)
+		for (unsigned kind = 0; kind < V92_CPD_FILTER_SECTION_COUNT; ++kind) {
+			const struct v92_cpd_filter *filter = &receiver->mapping.cpd.filter[kind];
+
+			for (unsigned tap = kind == V92_CPD_PREFILTER_FEED_FORWARD;
+			     tap < filter->count; ++tap)
+				if (filter->coefficient[tap]) cache_points = false;
+		}
 	uint64_t tail[V92_PCM_MAPPING_FRAME_SYMBOLS][2] = { { 0 } };
-	uint64_t cell_cost[V92_PCM_MAPPING_FRAME_SYMBOLS]
+	uint64_t point_cost[V92_PCM_MAPPING_FRAME_SYMBOLS]
 		[2 * V92_CPD_MAX_CONSTELLATION_POINTS];
 	/* Reuse the exact lookahead costs when the beam visits the same points. */
 	if (lookahead) {
@@ -1089,7 +1113,7 @@ static enum v92_pcm_frame_result decode_frame(
 			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
 				uint64_t cost = cell_metric(cells + symbol, signed_point(constellation, eta),
 					weight, !received || received[symbol]);
-				cell_cost[symbol][eta + constellation->count] = cost;
+				point_cost[symbol][eta + constellation->count] = cost;
 				unsigned parity = (unsigned)eta & 1u;
 
 				if (cost < minimum[parity]) minimum[parity] = cost;
@@ -1157,13 +1181,23 @@ static enum v92_pcm_frame_result decode_frame(
 			 * Compute once per symbol, outside the bounded path search. */
 			weight = constellation_weight(receiver, samples[symbol]);
 		}
+		if (cache_points && !lookahead)
+			for (int eta = -(int)constellation->count; eta < constellation->count; ++eta) {
+				int16_t u = signed_point(constellation, eta);
+				int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
+					prefilter_output(&receiver->mapping, 0, u) : 0;
+
+				point_cost[symbol][eta + constellation->count] = sample_metric(receiver,
+					u, v, samples[symbol], b1u, input_metric ? &cell : NULL,
+					minimum_gain, maximum_gain, weight);
+			}
 
 		for (size_t path = 0u; path < path_count; ++path) {
 			uint8_t y0;
 			int64_t precoder = 0, prefilter = 0;
 			struct v92_observation_point history[V92_OBSERVATION_TAPS - 1];
 
-			bool filter_metric = !model && !cells &&
+			bool filter_metric = !cache_points && !model && !cells &&
 				receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT;
 			/* Candidate and lookahead costs are nonnegative; ties cannot replace. */
 			if (count == V92_PCM_RX_PATHS &&
@@ -1241,7 +1275,9 @@ static enum v92_pcm_frame_result decode_frame(
 				if (next_digit == modulus)
 					next_digit = 0u;
 				int16_t u = signed_point(constellation, eta);
-				if (model) {
+				if (cache_points) {
+					cost = point_cost[symbol][eta + constellation->count];
+				} else if (model) {
 					if (count == V92_PCM_RX_PATHS &&
 						paths[path].state.metric >= candidates[0].metric)
 						continue;
@@ -1251,22 +1287,14 @@ static enum v92_pcm_frame_result decode_frame(
 					cost = !present ? 0 :
 						v92_observation_score(&cache, precoder_output(precoder, u), history, budget);
 				} else if (cells) {
-					cost = lookahead ? cell_cost[symbol][eta + constellation->count] :
-						cell_metric(cells + symbol, u, weight, present);
+					cost = cell_metric(cells + symbol, u, weight, present);
 				} else {
 					int32_t v = receiver->observation == V92_PCM_FRAME_FILTER_OUTPUT ?
 						prefilter_output(&receiver->mapping, prefilter,
 							precoder_output(precoder, u)) : 0;
 
-					if (input_metric) {
-						cost = input_cell_metric(receiver, v, &cell,
-							minimum_gain, maximum_gain);
-					} else {
-						int64_t error = (int64_t)samples[symbol] -
-							predicted_observation(receiver, u, v, samples[symbol], b1u);
-
-						cost = (uint64_t)(error * error) * weight;
-					}
+					cost = sample_metric(receiver, u, v, samples[symbol], b1u,
+						input_metric ? &cell : NULL, minimum_gain, maximum_gain, weight);
 				}
 				candidate = (struct frame_candidate){
 					.metric = add_u64_saturating(paths[path].state.metric, cost),

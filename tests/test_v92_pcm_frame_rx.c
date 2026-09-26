@@ -1517,16 +1517,26 @@ static bool test_constellation_cells(enum g711_law law, double gain)
 
 static bool test_inactive_filter_history(void)
 {
-	for (unsigned filtered = 0u; filtered < 2u; ++filtered) {
+	static const int16_t coefficients[] = { INT16_MAX, INT16_MIN, 8193, 0 };
+
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned filtered = 0u; filtered < 2u; ++filtered)
+	for (unsigned coefficient = 0u; coefficient < ARRAY_LENGTH(coefficients); ++coefficient)
+	for (unsigned training = 0u; training < 2u; ++training) {
 		struct v92_pcm_mapping mapping;
 		struct v92_pcm_frame_tx transmitter;
 		struct v92_pcm_frame_rx baseline, duplicate;
-		struct v92_pcm_frame_decision decision;
+		struct v92_pcm_frame_decision decisions[2];
 		uint8_t input[V92_PCM_MAPPING_MAX_BITS];
-		uint8_t bits[V92_PCM_MAPPING_MAX_BITS] = { 0 };
+		uint8_t bits[2][V92_PCM_MAPPING_MAX_BITS] = { { 0 } };
 		int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 
-		CHECK(mapping_init(&mapping, G711_LAW_PCMU, 13u, filtered != 0u) &&
+		CHECK(mapping_init(&mapping, (enum g711_law)law, 13u, filtered != 0u),
+		      "inactive-history mapping failed");
+		struct v92_cpd_parameters cpd = mapping.cpd;
+
+		cpd.filter[V92_CPD_PREFILTER_FEED_FORWARD].coefficient[0] = coefficients[coefficient];
+		CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) == V92_PCM_MAPPING_OK &&
 		      v92_pcm_frame_tx_init(&transmitter, &mapping) == V92_PCM_FRAME_OK &&
 		      v92_pcm_frame_rx_init(&baseline, &mapping, UPSTREAM_LEVEL) ==
 			      V92_PCM_FRAME_OK, "inactive-history fixture failed");
@@ -1537,15 +1547,30 @@ static bool test_inactive_filter_history(void)
 		baseline.paths[1] = baseline.paths[0];
 		duplicate = baseline;
 		duplicate.paths[1].filter.history[V92_CPD_MAX_TOTAL_COEFFICIENTS - 1u] = 1;
+		/* A declared tap with a zero coefficient is also irrelevant, even
+		 * when its history slot is active and the current coefficient scales,
+		 * reverses or suppresses the transmitted constellation. */
+		if (!filtered)
+			for (unsigned tap = 0; tap < V92_CPD_DIRECT_FILTER_TAPS - 1u; ++tap)
+				duplicate.paths[1].filter.history[tap] = (int32_t)tap + 123;
 		CHECK(v92_pcm_frame_rx_is_valid(&duplicate) &&
-		      v92_pcm_frame_decode(&baseline, samples, true, bits,
-			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK &&
-		      v92_pcm_frame_decode(&duplicate, samples, true, bits,
-			mapping.data_bits_per_frame, &decision) == V92_PCM_FRAME_OK,
+		      v92_pcm_frame_decode(&baseline, samples, training != 0u, bits[0],
+			mapping.data_bits_per_frame, &decisions[0]) == V92_PCM_FRAME_OK &&
+		      v92_pcm_frame_decode(&duplicate, samples, training != 0u, bits[1],
+			mapping.data_bits_per_frame, &decisions[1]) == V92_PCM_FRAME_OK,
 		      "inactive-history decode failed");
 		CHECK(duplicate.path_count == baseline.path_count,
 		      "unused history split paths with filter %u: %u versus %u",
 		      filtered, duplicate.path_count, baseline.path_count);
+		CHECK(!memcmp(bits[0], bits[1], sizeof(bits[0])) &&
+		      decisions[0].squared_error == decisions[1].squared_error &&
+		      decisions[0].uncertain == decisions[1].uncertain &&
+		      decisions[0].ambiguous == decisions[1].ambiguous &&
+		      decisions[0].bits_ready == decisions[1].bits_ready &&
+		      decisions[0].rm == decisions[1].rm &&
+		      !memcmp(decisions[0].predicted_samples, decisions[1].predicted_samples,
+			 sizeof(decisions[0].predicted_samples)),
+		      "inactive history changed scoring or delivery");
 	}
 	return true;
 }
