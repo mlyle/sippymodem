@@ -128,7 +128,8 @@ bool qam_equalizer_is_handoff_ready(
 	const struct qam_equalizer *equalizer);
 
 /* Push one received symbol.  ready is false until the decision delay has
- * filled.  Invalid calls leave the equalizer and outputs unchanged. */
+ * filled. The equalizer, output and ready must not overlap. received may
+ * alias output or owned history. Invalid calls leave state and outputs unchanged. */
 enum qam_equalizer_result qam_equalizer_push(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,
@@ -137,7 +138,7 @@ enum qam_equalizer_result qam_equalizer_push(
 /* Push one symbol while retaining the exact output and tap inputs needed for
  * delayed adaptation. observation must not already be pending. It changes
  * only when ready becomes true; the caller then owns it until adaptation or
- * deliberate discard. */
+ * deliberate discard. Equalizer, observation and ready storage must be disjoint. */
 enum qam_equalizer_result qam_equalizer_observe(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *received,
@@ -153,7 +154,8 @@ enum qam_equalizer_result qam_equalizer_adapt(
 	const struct qam_point *target, double adaptation);
 
 /* Apply and consume one delayed observation transactionally. The equalizer
- * may have accepted later symbols since the observation was produced. */
+ * may have accepted later symbols since the observation was produced. The
+ * observation must not overlap the equalizer. */
 enum qam_equalizer_result
 qam_equalizer_adapt_observation(
 	struct qam_equalizer *equalizer,

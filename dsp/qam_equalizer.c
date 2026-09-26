@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "qam_equalizer.h"
+#include "memory_region.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -266,48 +267,52 @@ enum qam_equalizer_result qam_equalizer_push(
 	const struct qam_point *received,
 	struct qam_point *output, bool *ready)
 {
-	struct qam_equalizer next;
+	const struct memory_region outputs[] = {
+		{ equalizer, sizeof(*equalizer) },
+		{ output, sizeof(*output) },
+		{ ready, sizeof(*ready) },
+	};
+	struct qam_point input;
 	struct qam_point filtered = { 0 };
 	struct qam_point corrected;
 	double correction_phase;
 	bool next_ready;
 
 	if (!qam_equalizer_is_valid(equalizer) ||
-	    !point_is_finite(received) || output == NULL || ready == NULL)
+	    !point_is_finite(received) || output == NULL || ready == NULL ||
+	    memory_region_set_overlaps(outputs, 3))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
-	for (size_t index = next.tap_count - 1u;
-	     index != 0; --index)
-		next.history[index] = next.history[index - 1];
-	next.history[0] = *received;
-	for (size_t index = 0; index < next.tap_count;
+	input = *received;
+	/* Evaluate the shifted FIR before committing any history or output. */
+	for (size_t index = 0; index < equalizer->tap_count;
 	     ++index) {
 		struct qam_point term = qam_point_multiply(
-			&next.coefficients[index], &next.history[index]);
+			&equalizer->coefficients[index],
+			index == 0 ? &input : &equalizer->history[index - 1u]);
 
 		filtered.in_phase += term.in_phase;
 		filtered.quadrature += term.quadrature;
 	}
 	if (!point_is_finite(&filtered))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	correction_phase = next.carrier_phase;
-	corrected = next.carrier_tracking ?
+	correction_phase = equalizer->carrier_phase;
+	corrected = equalizer->carrier_tracking ?
 		    rotate_point(&filtered, correction_phase) : filtered;
 	if (!point_is_finite(&corrected))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	if (next.fill <= next.decision_delay)
-		next.fill++;
-	next_ready = next.fill > next.decision_delay;
-	next.last_unrotated_output = filtered;
-	next.last_output = corrected;
-	next.last_carrier_phase = correction_phase;
-	if (next_ready && next.carrier_tracking)
-		next.carrier_phase = wrap_carrier_phase(
-			next.carrier_phase + next.carrier_frequency);
-	next.can_adapt = next_ready;
-	/* Geometry and coefficient power are unchanged; new history and outputs
-	 * were checked finite above, and carrier phase remains bounded. */
-	*equalizer = next;
+	memmove(equalizer->history + 1, equalizer->history,
+		(equalizer->tap_count - 1u) * sizeof(input));
+	equalizer->history[0] = input;
+	if (equalizer->fill <= equalizer->decision_delay)
+		equalizer->fill++;
+	next_ready = equalizer->fill > equalizer->decision_delay;
+	equalizer->last_unrotated_output = filtered;
+	equalizer->last_output = corrected;
+	equalizer->last_carrier_phase = correction_phase;
+	if (next_ready && equalizer->carrier_tracking)
+		equalizer->carrier_phase = wrap_carrier_phase(
+			equalizer->carrier_phase + equalizer->carrier_frequency);
+	equalizer->can_adapt = next_ready;
 	*ready = next_ready;
 	if (next_ready)
 		*output = corrected;
@@ -319,40 +324,39 @@ enum qam_equalizer_result qam_equalizer_observe(
 	const struct qam_point *received,
 	struct qam_equalizer_observation *observation, bool *ready)
 {
-	struct qam_equalizer next;
+	const struct memory_region outputs[] = {
+		{ equalizer, sizeof(*equalizer) },
+		{ observation, sizeof(*observation) },
+		{ ready, sizeof(*ready) },
+	};
 	struct qam_point output = { 0 };
-	bool generated_ready;
 	enum qam_equalizer_result result;
 
-	if (equalizer == NULL || observation == NULL || ready == NULL)
+	if (equalizer == NULL || observation == NULL || ready == NULL ||
+	    memory_region_set_overlaps(outputs, 3))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (observation->pending)
 		return qam_equalizer_is_valid(equalizer) ?
 			       QAM_EQUALIZER_INVALID_STATE :
 			       QAM_EQUALIZER_INVALID_ARGUMENT;
-	next = *equalizer;
 	result = qam_equalizer_push(
-		&next, received, &output, &generated_ready);
+		equalizer, received, &output, ready);
 	if (result != QAM_EQUALIZER_OK)
 		return result;
 	/* A retained observation is the sole adaptation path for this output. */
-	next.can_adapt = false;
-	*equalizer = next;
-	*ready = generated_ready;
-	if (generated_ready) {
-		struct qam_equalizer_observation generated = {
+	equalizer->can_adapt = false;
+	if (*ready) {
+		*observation = (struct qam_equalizer_observation){
 			.output = output,
-			.unrotated_output = next.last_unrotated_output,
-			.carrier_phase = next.last_carrier_phase,
-			.tap_count = next.tap_count,
-			.decision_delay = next.decision_delay,
+			.unrotated_output = equalizer->last_unrotated_output,
+			.carrier_phase = equalizer->last_carrier_phase,
+			.tap_count = equalizer->tap_count,
+			.decision_delay = equalizer->decision_delay,
 			.pending = true,
-			.carrier_tracking = next.carrier_tracking,
+			.carrier_tracking = equalizer->carrier_tracking,
 		};
-		for (size_t index = 0;
-		     index < next.tap_count; ++index)
-			generated.history[index] = next.history[index];
-		*observation = generated;
+		memcpy(observation->history, equalizer->history,
+			equalizer->tap_count * sizeof(equalizer->history[0]));
 	}
 	return QAM_EQUALIZER_OK;
 }
@@ -474,12 +478,13 @@ qam_equalizer_adapt_observation(
 	const struct qam_point *target, double adaptation)
 {
 	struct qam_equalizer next;
-	struct qam_equalizer_observation consumed;
 	struct qam_point unrotated_target;
 
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    observation == NULL || !point_is_finite(target) ||
-	    !qam_adaptation_is_valid(adaptation))
+	    !qam_adaptation_is_valid(adaptation) ||
+	    memory_regions_overlap(equalizer, sizeof(*equalizer),
+				   observation, sizeof(*observation)))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!qam_equalizer_observation_is_pending(observation))
 		return QAM_EQUALIZER_INVALID_STATE;
@@ -488,19 +493,17 @@ qam_equalizer_adapt_observation(
 	    observation->carrier_tracking != equalizer->carrier_tracking)
 		return QAM_EQUALIZER_INVALID_STATE;
 	next = *equalizer;
-	consumed = *observation;
 	if (!prepare_carrier_target(
-		    &next, &consumed.output, consumed.carrier_phase,
+		    &next, &observation->output, observation->carrier_phase,
 		    target, &unrotated_target))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
 	if (!apply_adaptation(
-		    &next, consumed.history, &consumed.unrotated_output,
+		    &next, observation->history, &observation->unrotated_output,
 		    &unrotated_target,
-		    adaptation, consumed.tap_count))
+		    adaptation, observation->tap_count))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
-	consumed.pending = false;
 	*equalizer = next;
-	*observation = consumed;
+	observation->pending = false;
 	return QAM_EQUALIZER_OK;
 }
 

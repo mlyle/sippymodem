@@ -851,6 +851,15 @@ static bool test_product_boundaries(void)
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
 	      memcmp(&point, &saved_point, sizeof(point)) == 0,
 	      "equalizer product overflow changed state/output");
+	{
+		struct qam_equalizer_observation observation = { 0 }, before = observation;
+
+		CHECK(qam_equalizer_observe(&equalizer, &point, &observation, &ready) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT && !ready &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+		      memcmp(&observation, &before, sizeof(observation)) == 0,
+		      "observed product overflow changed state/output");
+	}
 	CHECK(qam_equalizer_init_geometry(&equalizer, &unity, &large, 1, 0) ==
 		      QAM_EQUALIZER_OK &&
 	      qam_equalizer_push(&equalizer, &large, &point, &ready) ==
@@ -861,6 +870,76 @@ static bool test_product_boundaries(void)
 		      QAM_EQUALIZER_INVALID_ARGUMENT &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
 	      "non-finite adaptation product changed state");
+	{
+		struct qam_equalizer_observation observation = { 0 }, before;
+
+		CHECK(qam_equalizer_observe(&equalizer, &large, &observation, &ready) ==
+			      QAM_EQUALIZER_OK && ready,
+		      "observed adaptation overflow fixture did not initialize");
+		saved = equalizer;
+		before = observation;
+		CHECK(qam_equalizer_adapt_observation(&equalizer, &observation, &target, 0.5) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+		      memcmp(&observation, &before, sizeof(observation)) == 0,
+		      "non-finite adaptation consumed delayed observation");
+	}
+	return true;
+}
+
+static bool test_output_ownership(void)
+{
+	const struct qam_point reference = { 1.0, 0.0 };
+	struct qam_equalizer equalizer, saved;
+	struct qam_equalizer_observation observation = { 0 };
+	struct qam_equalizer_observation saved_observation = observation;
+	struct qam_point output = { 4.0, 5.0 }, saved_output = output;
+	bool ready = true;
+
+	CHECK(qam_equalizer_init(&equalizer, &reference, &reference) ==
+		      QAM_EQUALIZER_OK,
+	      "ownership fixture did not initialize");
+	saved = equalizer;
+	for (size_t byte = 0; byte < sizeof(equalizer); ++byte) {
+		bool *aliased = (bool *)((unsigned char *)&equalizer + byte);
+
+		CHECK(qam_equalizer_push(&equalizer, &reference, &output, aliased) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      qam_equalizer_observe(&equalizer, &reference, &observation, aliased) ==
+			      QAM_EQUALIZER_INVALID_ARGUMENT &&
+		      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+		      memcmp(&observation, &saved_observation, sizeof(observation)) == 0,
+		      "aliased readiness changed owner at byte %zu", byte);
+	}
+	CHECK(qam_equalizer_push(&equalizer, &reference, &equalizer.coefficients[0], &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_push(&equalizer, &reference, &output, (bool *)&output) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_observe(&equalizer, &reference, &observation, &observation.pending) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_observe(&equalizer, &reference,
+		      (struct qam_equalizer_observation *)&equalizer, &ready) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      qam_equalizer_adapt_observation(&equalizer,
+		      (struct qam_equalizer_observation *)&equalizer, &reference, 0.1) ==
+		      QAM_EQUALIZER_INVALID_ARGUMENT &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+	      memcmp(&output, &saved_output, sizeof(output)) == 0 &&
+	      memcmp(&observation, &saved_observation, sizeof(observation)) == 0 && ready,
+	      "overlapping equalizer outputs were accepted");
+	/* Reading owned history is safe, even when committing shifts that history. */
+	equalizer.history[0] = (struct qam_point){ 2.0, 3.0 };
+	equalizer.history[1] = (struct qam_point){ 7.0, 9.0 };
+	saved = equalizer;
+	struct qam_point input = equalizer.history[1], expected;
+	bool expected_ready;
+	CHECK(qam_equalizer_push(&saved, &input, &expected, &expected_ready) ==
+		      QAM_EQUALIZER_OK &&
+	      qam_equalizer_push(&equalizer, &equalizer.history[1], &output, &ready) ==
+		      QAM_EQUALIZER_OK && ready == expected_ready &&
+	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
+	      "owned equalizer input changed history shift");
 	return true;
 }
 
@@ -1056,6 +1135,7 @@ int main(void)
 		{ "delayed observations", test_delayed_observations },
 		{ "span extension", test_span_extension },
 		{ "product boundaries", test_product_boundaries },
+		{ "output ownership", test_output_ownership },
 		{ "reference division boundaries", test_reference_division_boundaries },
 		{ "validation", test_validation },
 	};
