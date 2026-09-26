@@ -59,7 +59,8 @@ bool v34_training_line_needs_point(
 
 /* Emit exactly one line sample. Supply a point precisely when needs_point()
  * is true and NULL otherwise. Successful calls report whether that point was
- * accepted; all rejected calls leave state and outputs unchanged. */
+ * accepted; all rejected calls leave state and outputs unchanged. Owner,
+ * supplied point, sample and acceptance flag must occupy disjoint regions. */
 enum v34_training_line_result v34_training_line_sample(
 	struct v34_training_line *line,
 	const struct qam_point *point, int16_t *sample,

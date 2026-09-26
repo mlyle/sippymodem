@@ -3,6 +3,7 @@
 #include "v34_training_line.h"
 
 #include "v34_phase3_s_sequence.h"
+#include "memory_region.h"
 
 #include <limits.h>
 #include <math.h>
@@ -217,43 +218,45 @@ enum v34_training_line_result v34_training_line_sample(
 	const struct qam_point *point, int16_t *sample,
 	bool *point_accepted)
 {
-	struct v34_training_line next;
+	struct v34_pulse_modulator next;
+	const struct memory_region regions[] = {
+		{ line, sizeof(*line) },
+		{ sample, sizeof(*sample) },
+		{ point_accepted, sizeof(*point_accepted) },
+		{ point, sizeof(*point) },
+	};
 	double line_sample;
 	double scaled_sample;
-	long rounded;
 	bool accepting;
 	bool accepted;
 
-	if (!v34_training_line_is_valid(line) || sample == NULL ||
-	    point_accepted == NULL)
+	if (sample == NULL || point_accepted == NULL ||
+	    memory_region_set_overlaps(regions, point == NULL ? 3u : 4u) ||
+	    !v34_training_line_is_valid(line))
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
-	accepting = v34_pulse_modulator_needs_point(&line->carrier);
+	accepting = line->carrier.symbol_phase_units <
+		line->carrier.channel.symbol_rate_numerator;
 	if ((point != NULL) != accepting)
 		return V34_TRAINING_LINE_INVALID_ARGUMENT;
 	if (line->generated_samples == UINT64_MAX)
 		return V34_TRAINING_LINE_OUT_OF_RANGE;
-	next = *line;
+	next = line->carrier;
 	if (v34_pulse_modulator_sample(
-		    &next.carrier, point,
+		    &next, point,
 		    &line_sample, &accepted) != V34_PULSE_MODULATOR_OK)
 		return point != NULL ? V34_TRAINING_LINE_INVALID_ARGUMENT :
 				       V34_TRAINING_LINE_NUMERIC_FAILURE;
-	if (accepted != accepting)
-		return V34_TRAINING_LINE_NUMERIC_FAILURE;
-	scaled_sample = line_sample * next.output_gain;
+	scaled_sample = line_sample * line->output_gain;
 	if (!isfinite(scaled_sample))
 		return V34_TRAINING_LINE_NUMERIC_FAILURE;
 	if (scaled_sample < INT16_MIN - 0.499 ||
 	    scaled_sample > INT16_MAX + 0.499)
 		return V34_TRAINING_LINE_CLIPPING_RISK;
-	rounded = lround(scaled_sample);
-	if (rounded < INT16_MIN || rounded > INT16_MAX)
-		return V34_TRAINING_LINE_CLIPPING_RISK;
-	next.generated_samples++;
-	if (!v34_training_line_is_valid(&next))
-		return V34_TRAINING_LINE_NUMERIC_FAILURE;
-	*line = next;
-	*sample = (int16_t)rounded;
+	/* The pulse transition preserves its clocks and channel. Calibration
+	 * stays fixed, and the headroom check makes rounding representable. */
+	line->carrier = next;
+	line->generated_samples = next.generated_samples;
+	*sample = (int16_t)lround(scaled_sample);
 	*point_accepted = accepted;
 	return V34_TRAINING_LINE_OK;
 }
