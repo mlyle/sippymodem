@@ -2,6 +2,8 @@
 
 #include "v34_channel_frame_decoder.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <string.h>
 
@@ -101,14 +103,13 @@ bool v34_channel_frame_decoder_is_valid(
 }
 
 static bool load_next_channel_frame(
-	struct v34_channel_frame_decoder *decoder)
+	struct v34_frame_schedule *schedule,
+	struct v34_mapping_frame *frame)
 {
-	if (v34_frame_schedule_prepare_mapping_frame(
-		    &decoder->channel_schedule) !=
-		    V34_FRAME_SCHEDULE_OK)
+	if (v34_frame_schedule_prepare_mapping_frame(schedule) !=
+	    V34_FRAME_SCHEDULE_OK)
 		return false;
-	return v34_frame_schedule_next(
-		       &decoder->channel_schedule, &decoder->channel_frame) ==
+	return v34_frame_schedule_next(schedule, frame) ==
 	       V34_FRAME_SCHEDULE_OK;
 }
 
@@ -129,7 +130,8 @@ v34_channel_frame_decoder_init(
 	    v34_b1_frame_schedule_init(
 		    &initialized.channel_schedule, geometry) !=
 		    V34_FRAME_SCHEDULE_OK ||
-	    !load_next_channel_frame(&initialized) ||
+	    !load_next_channel_frame(
+		    &initialized.channel_schedule, &initialized.channel_frame) ||
 	    !v34_channel_frame_decoder_is_valid(&initialized))
 		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
 	*decoder = initialized;
@@ -151,17 +153,6 @@ static enum v34_channel_frame_decoder_result channel_result(
 	return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
 }
 
-static bool advance_channel_cursor(
-	struct v34_channel_frame_decoder *decoder)
-{
-	decoder->next_channel_interval++;
-	if (decoder->next_channel_interval <
-	    V34_4D_INTERVALS_PER_MAPPING_FRAME)
-		return true;
-	decoder->next_channel_interval = 0;
-	return load_next_channel_frame(decoder);
-}
-
 static enum v34_channel_frame_decoder_result advance(
 	struct v34_channel_frame_decoder *decoder,
 	const struct qam_point
@@ -174,55 +165,74 @@ static enum v34_channel_frame_decoder_result advance(
 		decided_frame[V34_4D_INTERVALS_PER_MAPPING_FRAME],
 	bool *frame_ready)
 {
-	struct v34_channel_frame_decoder next;
+	const size_t estimates_size =
+		sizeof(*estimates) * V34_2D_SYMBOLS_PER_4D_INTERVAL;
+	const struct memory_region regions[] = {
+		{ decoder, sizeof(*decoder) },
+		{ estimates, estimates_size },
+		{ normalized, normalized == NULL ? 0u : estimates_size },
+		{ normalizer, normalizer == NULL ? 0u : sizeof(*normalizer) },
+		{ current, sizeof(*current) },
+		{ decided_frame,
+		  sizeof(*decided_frame) * V34_4D_INTERVALS_PER_MAPPING_FRAME },
+		{ frame_ready, sizeof(*frame_ready) },
+	};
+	struct v34_frame_schedule next_schedule;
+	struct v34_mapping_frame next_frame;
 	struct v34_survivor_decision generated_current;
 	struct v34_decided_4d_interval generated_decided;
-	struct v34_decided_4d_interval generated_frame
-		[V34_4D_INTERVALS_PER_MAPPING_FRAME];
 	enum v34_channel_decoder_result result;
 	uint8_t inversion_bit;
+	uint8_t next_interval;
 	bool decided_ready;
 	bool generated_frame_ready = false;
 
 	if (!v34_channel_frame_decoder_is_valid(decoder) ||
 	    estimates == NULL || current == NULL || decided_frame == NULL ||
-	    frame_ready == NULL)
+	    frame_ready == NULL ||
+	    memory_region_set_overlaps(regions, sizeof regions / sizeof *regions))
 		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
 	inversion_bit = (uint8_t)(
 		(decoder->channel_frame.inversion_4d_mask >>
 		 decoder->next_channel_interval) &
 		1u);
-	next = *decoder;
+	/* Prepare the only fallible framing work before the child transaction.
+	 * Successful decoding leaves only bounded cursor and pending-frame updates;
+	 * the traceback history does not need a second snapshot here. */
+	next_schedule = decoder->channel_schedule;
+	next_frame = decoder->channel_frame;
+	next_interval = (uint8_t)((decoder->next_channel_interval + 1u) %
+				 V34_4D_INTERVALS_PER_MAPPING_FRAME);
+	if (next_interval == 0u &&
+	    !load_next_channel_frame(&next_schedule, &next_frame))
+		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
 	result = normalized == NULL ?
 		v34_channel_decoder_advance(
-			&next.channel_decoder, estimates, inversion_bit,
+			&decoder->channel_decoder, estimates, inversion_bit,
 			&generated_current, &generated_decided, &decided_ready) :
 		v34_channel_decoder_advance_projected(
-			&next.channel_decoder, estimates, normalized, normalizer,
+			&decoder->channel_decoder, estimates, normalized, normalizer,
 			inversion_bit, &generated_current, &generated_decided,
 			&decided_ready);
 	if (result != V34_CHANNEL_DECODER_OK)
 		return channel_result(result);
-	if (!advance_channel_cursor(&next))
-		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
+	decoder->channel_schedule = next_schedule;
+	decoder->channel_frame = next_frame;
+	decoder->next_channel_interval = next_interval;
 	if (decided_ready) {
-		next.pending_frame[next.pending_interval_count++] =
+		decoder->pending_frame[decoder->pending_interval_count++] =
 			generated_decided;
-		if (next.pending_interval_count ==
+		if (decoder->pending_interval_count ==
 		    V34_4D_INTERVALS_PER_MAPPING_FRAME) {
-			memcpy(generated_frame, next.pending_frame,
-			       sizeof(generated_frame));
-			next.pending_interval_count = 0;
+			decoder->pending_interval_count = 0;
 			generated_frame_ready = true;
 		}
 	}
-	if (!v34_channel_frame_decoder_is_valid(&next))
-		return V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT;
-	*decoder = next;
 	*current = generated_current;
 	*frame_ready = generated_frame_ready;
 	if (generated_frame_ready)
-		memcpy(decided_frame, generated_frame, sizeof(generated_frame));
+		memcpy(decided_frame, decoder->pending_frame,
+		       sizeof(decoder->pending_frame));
 	return V34_CHANNEL_FRAME_DECODER_OK;
 }
 

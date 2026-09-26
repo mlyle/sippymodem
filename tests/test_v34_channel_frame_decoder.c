@@ -304,7 +304,9 @@ static bool test_generated_b1_and_data_round_trip(void)
 						      &current,
 						      &transmitted.encoded.interval[interval],
 						      inversion_bit) &&
-					      ready == expected_ready,
+					      ready == expected_ready &&
+					      v34_channel_frame_decoder_is_valid(
+						      &fixture.channel_decoder),
 					      "channel interval %zu/%u/%zu/%u changed",
 					      configuration, selection, frame, interval);
 					if (!ready) {
@@ -504,6 +506,135 @@ static bool test_transactional_boundaries(void)
 	return true;
 }
 
+static bool test_frame_boundary_rejection(void)
+{
+	struct fixture fixture;
+	struct qam_point estimates[2] = { { 1.0, 1.0 }, { 1.0, 1.0 } };
+	struct v34_survivor_decision current;
+	struct v34_decided_4d_interval decided[4];
+	bool ready;
+
+	CHECK(initialize_fixture(
+		      &fixture, &CONFIGURATIONS[0], V34_TRELLIS_16_STATE),
+	      "frame boundary fixture did not initialize");
+	for (size_t interval = 0;
+	     interval + 1u < V34_SURVIVOR_TRACEBACK_INTERVALS; ++interval) {
+		CHECK(v34_channel_frame_decoder_advance(
+			      &fixture.channel_decoder, estimates, &current,
+			      decided, &ready) == V34_CHANNEL_FRAME_DECODER_OK &&
+		      !ready,
+		      "frame boundary history %zu changed", interval);
+	}
+	CHECK(fixture.channel_decoder.next_channel_interval == 3u,
+	      "rejection fixture is not at a mapping-frame boundary");
+	estimates[0].in_phase = NAN;
+	CHECK(rejected_advance_is_transactional(
+		      &fixture.channel_decoder, estimates,
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT),
+	      "invalid boundary input advanced the frame schedule");
+	estimates[0].in_phase = DBL_MAX;
+	CHECK(rejected_advance_is_transactional(
+		      &fixture.channel_decoder, estimates,
+		      V34_CHANNEL_FRAME_DECODER_NUMERIC_FAILURE),
+	      "overflowing boundary input advanced the frame schedule");
+	estimates[0].in_phase = 1.0;
+	fixture.channel_decoder.channel_decoder.inverse_precoder =
+		(struct v34_precoder){
+			.coefficients = {
+				{ INT16_MAX, 0 }, { INT16_MAX, 0 }, { 0, 0 },
+			},
+			.previous_symbols = {
+				{ 1000000000, 0 }, { -1000000000, 0 }, { 0, 0 },
+			},
+			.grid_step = V34_PRECODER_GRID_STEP_2,
+		};
+	CHECK(v34_channel_frame_decoder_is_valid(&fixture.channel_decoder) &&
+	      rejected_advance_is_transactional(
+		      &fixture.channel_decoder, estimates,
+		      V34_CHANNEL_FRAME_DECODER_OUT_OF_RANGE),
+	      "late traceback failure advanced framing or pending intervals");
+	return true;
+}
+
+static bool test_disjoint_regions(void)
+{
+	struct fixture fixture;
+	struct v34_channel_frame_decoder saved;
+	struct v34_power_normalizer normalizer;
+	struct v34_power_normalizer saved_normalizer;
+	const struct v34_symbol_power_measurement power = { 25.0, 256 };
+	struct qam_point estimates[2] = { { 1.0, 1.0 }, { 1.0, 1.0 } };
+	struct qam_point saved_estimates[2];
+	struct v34_survivor_decision current;
+	struct v34_survivor_decision saved_current;
+	struct v34_decided_4d_interval decided[4];
+	struct v34_decided_4d_interval saved_decided[4];
+	bool ready = true;
+
+	CHECK(initialize_fixture(
+		      &fixture, &CONFIGURATIONS[0], V34_TRELLIS_16_STATE),
+	      "overlap fixture did not initialize");
+	memset(fixture.channel_decoder.channel_decoder.inverse_precoder.coefficients,
+	       0, sizeof(fixture.channel_decoder.channel_decoder.inverse_precoder
+			 .coefficients));
+	CHECK(v34_power_normalizer_init(
+		      &normalizer, &fixture.channel_decoder.channel_decoder.parameters,
+		      V34_NONLINEAR_THETA_ZERO, &power, &power) == V34_SYMBOL_POWER_OK,
+	      "projected overlap fixture did not initialize");
+	saved_normalizer = normalizer;
+	saved = fixture.channel_decoder;
+	memset(&current, 0x5a, sizeof(current));
+	memset(decided, 0xa5, sizeof(decided));
+	saved_current = current;
+	memcpy(saved_estimates, estimates, sizeof(estimates));
+	memcpy(saved_decided, decided, sizeof(decided));
+	CHECK(v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder, estimates,
+		      (struct v34_survivor_decision *)
+			      &fixture.channel_decoder.channel_frame,
+		      decided, &ready) == V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder, estimates, &current,
+		      fixture.channel_decoder.pending_frame, &ready) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder, estimates, &current, decided,
+		      (bool *)&fixture.channel_decoder.next_channel_interval) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder,
+		      (const struct qam_point *)&fixture.channel_decoder,
+		      &current, decided, &ready) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder, estimates,
+		      (struct v34_survivor_decision *)estimates, decided, &ready) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance(
+		      &fixture.channel_decoder, estimates, &current, decided,
+		      (bool *)((unsigned char *)decided + sizeof(decided) - 1u)) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance_projected(
+		      &fixture.channel_decoder, estimates, estimates, &normalizer,
+		      &current, decided, &ready) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance_projected(
+		      &fixture.channel_decoder, estimates, saved_estimates, &normalizer,
+		      &current, decided, (bool *)&normalizer.normalization_gain) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      v34_channel_frame_decoder_advance_projected(
+		      &fixture.channel_decoder, estimates, saved_estimates, &normalizer,
+		      &current, fixture.channel_decoder.pending_frame, &ready) ==
+		      V34_CHANNEL_FRAME_DECODER_INVALID_ARGUMENT &&
+	      memcmp(&fixture.channel_decoder, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&normalizer, &saved_normalizer, sizeof(normalizer)) == 0 &&
+	      memcmp(estimates, saved_estimates, sizeof(estimates)) == 0 &&
+	      memcmp(&current, &saved_current, sizeof(current)) == 0 &&
+	      memcmp(decided, saved_decided, sizeof(decided)) == 0 && ready,
+	      "overlapping frame regions changed state or output");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -513,6 +644,8 @@ int main(void)
 		{ "generated B1 and data round trip",
 		  test_generated_b1_and_data_round_trip },
 		{ "transactional boundaries", test_transactional_boundaries },
+		{ "frame boundary rejection", test_frame_boundary_rejection },
+		{ "disjoint regions", test_disjoint_regions },
 	};
 	unsigned int failures = 0;
 

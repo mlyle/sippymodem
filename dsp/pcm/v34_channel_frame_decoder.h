@@ -47,7 +47,8 @@ bool v34_channel_frame_decoder_is_valid(
  * channel schedule. `current` always receives the present-time hard decision.
  * Once traceback has produced four ordered intervals, `decided_frame` receives
  * one complete mapping frame and `frame_ready` is true; otherwise that array is
- * unchanged. State and every output are unchanged on failure. */
+ * unchanged. State, input, and output regions must be disjoint. State and every
+ * output are unchanged on failure. */
 enum v34_channel_frame_decoder_result
 v34_channel_frame_decoder_advance(
 	struct v34_channel_frame_decoder *decoder,
