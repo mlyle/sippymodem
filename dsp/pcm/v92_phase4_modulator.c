@@ -129,7 +129,9 @@ enum v92_phase4_modulator_result v92_phase4_modulator_next(
 	uint8_t encoded_sign;
 	int16_t generated;
 
-	if (modulator == NULL || sample == NULL)
+	if (modulator == NULL || sample == NULL ||
+	    memory_regions_overlap(
+		    modulator, sizeof(*modulator), sample, sizeof(*sample)))
 		return V92_PHASE4_MODULATOR_INVALID_ARGUMENT;
 	if (!v92_phase4_modulator_is_valid(modulator))
 		return V92_PHASE4_MODULATOR_INVALID_STATE;

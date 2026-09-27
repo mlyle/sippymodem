@@ -311,6 +311,63 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_transmit_output_ownership(void)
+{
+	for (unsigned int points = 4u; points <= 8u; points += 4u) {
+		unsigned int groups = points;
+
+		for (uint8_t sign = 0u; sign <= 1u; ++sign) {
+			struct {
+				int16_t before;
+				struct v92_phase4_modulator modulator;
+				int16_t after;
+			} owned = { .before = 123, .after = 456 }, saved;
+			int16_t warm_sample;
+
+			CHECK(v92_phase4_modulator_init(
+				      &owned.modulator, points, sign, TEST_LU) ==
+				      V92_PHASE4_MODULATOR_OK,
+			      "output ownership state did not initialize");
+			for (unsigned int warm = 0u; warm < 4u; ++warm)
+				CHECK(v92_phase4_modulator_next(
+					      &owned.modulator, (uint8_t)(groups - 1u),
+					      &warm_sample) == V92_PHASE4_MODULATOR_OK,
+				      "output ownership state did not warm");
+
+			for (uint8_t group = 0u; group < groups; ++group) {
+				struct v92_phase4_modulator expected = owned.modulator;
+				int16_t sample;
+
+				saved = owned;
+				CHECK(v92_phase4_modulator_next(&expected, group, &sample) ==
+					      V92_PHASE4_MODULATOR_OK,
+				      "disjoint output did not modulate");
+				CHECK(v92_phase4_modulator_next(
+					      &owned.modulator, group, &owned.modulator.lu) ==
+					      V92_PHASE4_MODULATOR_INVALID_ARGUMENT &&
+				      memcmp(&owned, &saved, sizeof(owned)) == 0,
+				      "overlapping output changed state points=%u sign=%u group=%u",
+				      points, sign, group);
+				CHECK(v92_phase4_modulator_next(
+					      &owned.modulator, group, &owned.before) ==
+					      V92_PHASE4_MODULATOR_OK &&
+				      owned.before == sample && owned.after == saved.after &&
+				      memcmp(&owned.modulator, &expected, sizeof(expected)) == 0,
+				      "disjoint preceding output changed modulation");
+				owned = saved;
+				CHECK(v92_phase4_modulator_next(
+					      &owned.modulator, group, &owned.after) ==
+					      V92_PHASE4_MODULATOR_OK &&
+				      owned.after == sample && owned.before == saved.before &&
+				      memcmp(&owned.modulator, &expected, sizeof(expected)) == 0,
+				      "disjoint following output changed modulation");
+				owned = saved;
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_level_range(void)
 {
 	for (unsigned int points = 4u; points <= 8u; points += 4u) {
@@ -398,7 +455,8 @@ int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 Phase 4 modulator\n");
 	if (!test_generated_levels() || !test_arbitrary_groups() ||
-	    !test_contracts() || !test_level_range()) {
+	    !test_contracts() || !test_level_range() ||
+	    !test_transmit_output_ownership()) {
 		fprintf(stderr, "[  FAILED  ] V.92 Phase 4 modulator\n");
 		return 1;
 	}

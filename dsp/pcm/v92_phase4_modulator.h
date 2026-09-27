@@ -55,7 +55,8 @@ bool v92_phase4_modulator_is_valid(
 	const struct v92_phase4_modulator *modulator);
 
 /* Scramble and modulate one complete group. input_group must fit the selected
- * two- or three-bit width. Rejected calls leave state and sample unchanged. */
+ * two- or three-bit width; sample must lie outside the modulator. Rejected
+ * calls leave state and sample unchanged. */
 enum v92_phase4_modulator_result v92_phase4_modulator_next(
 	struct v92_phase4_modulator *modulator,
 	uint8_t input_group, int16_t *sample);
