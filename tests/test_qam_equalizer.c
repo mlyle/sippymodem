@@ -609,6 +609,59 @@ static bool test_instance_selected_span(void)
 	return true;
 }
 
+static bool test_immediate_observations(void)
+{
+	static const unsigned int spans[] = { 7u, 21u, QAM_EQUALIZER_MAX_TAP_COUNT };
+	const struct qam_point reference = { 1.0, 1.0 };
+	const struct qam_point gain = { 0.8, -0.3 };
+	struct qam_point received_reference = multiply(gain, reference);
+	uint32_t random = UINT32_C(0x12875adf);
+
+	for (size_t span = 0; span < ARRAY_LENGTH(spans); ++span) {
+		for (unsigned int tracking = 0; tracking < 2u; ++tracking) {
+			struct qam_equalizer direct, retained;
+			CHECK(qam_equalizer_init_geometry(&direct, &received_reference,
+				&reference, spans[span], spans[span] / 2u) == QAM_EQUALIZER_OK,
+			      "immediate adaptation fixture failed");
+			if (tracking)
+				CHECK(qam_equalizer_enable_carrier_tracking(&direct, 0.05, 0.001) ==
+					QAM_EQUALIZER_OK, "immediate carrier fixture failed");
+			retained = direct;
+			for (unsigned int index = 0; index < 512u; ++index) {
+				struct qam_equalizer_observation observation = { 0 };
+				struct qam_point target = { random_level(&random), random_level(&random) };
+				struct qam_point input = rotate(multiply(gain, target), index * 0.001);
+				struct qam_point output = { 0 };
+				bool direct_ready, retained_ready;
+				CHECK(qam_equalizer_push(&direct, &input, &output, &direct_ready) ==
+					QAM_EQUALIZER_OK &&
+				      qam_equalizer_observe(&retained, &input, &observation, &retained_ready) ==
+					QAM_EQUALIZER_OK && direct_ready == retained_ready,
+				      "immediate observation changed readiness");
+				if (direct_ready) {
+					CHECK(memcmp(&output, &observation.output, sizeof(output)) == 0,
+					      "immediate observation changed output");
+					if (index % 3u != 0u) {
+						double adaptation = index % 5u ? 0.05 : 0.0;
+						CHECK(qam_equalizer_adapt(&direct, &target, adaptation) ==
+							QAM_EQUALIZER_OK &&
+						      qam_equalizer_adapt_observation(&retained, &observation,
+							&target, adaptation) == QAM_EQUALIZER_OK,
+						      "immediate adaptation failed");
+					}
+				}
+				/* A skipped decision is discarded, not exported with the line. */
+				direct.can_adapt = false;
+				CHECK(memcmp(&direct, &retained, sizeof(direct)) == 0 &&
+				      qam_equalizer_is_valid(&direct) &&
+				      (!direct_ready || qam_equalizer_is_handoff_ready(&direct)),
+				      "immediate adaptation changed taps, history, or carrier");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_delayed_observations(void)
 {
 	static const struct qam_point transmitted[] = {
@@ -1201,6 +1254,7 @@ int main(void)
 		{ "carrier decision policy", test_carrier_decision_policy },
 		{ "instance-selected channel span", test_instance_selected_span },
 		{ "delayed observations", test_delayed_observations },
+		{ "immediate observation equivalence", test_immediate_observations },
 		{ "span extension", test_span_extension },
 		{ "product boundaries", test_product_boundaries },
 		{ "output ownership", test_output_ownership },

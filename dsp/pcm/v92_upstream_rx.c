@@ -84,7 +84,7 @@ static enum v92_upstream_rx_result sample(
 {
 	struct v92_upstream_rx next;
 	struct v92_upstream_decision generated;
-	struct qam_equalizer_observation observation = { 0 };
+	struct qam_point output;
 	struct qam_point input;
 	struct qam_point target;
 	int16_t expected_level = 0;
@@ -116,12 +116,12 @@ static enum v92_upstream_rx_result sample(
 		.in_phase = next.line.polarity > 0 ?
 			input_sample : -(double)input_sample,
 	};
-	if (qam_equalizer_observe(
-		    &next.line.equalizer, &input, &observation, &ready) !=
+	if (qam_equalizer_push(
+		    &next.line.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready ||
 	    v92_phase4_demodulator_next(
-		    &next.line.demodulator, observation.output.in_phase,
+		    &next.line.demodulator, output.in_phase,
 		    &generated.group, &generated.nearest_level) !=
 		    V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
@@ -139,17 +139,18 @@ static enum v92_upstream_rx_result sample(
 	}
 	if (adapt) {
 		if (!v92_control_target(next.line.law, &next.line.demodulator,
-				nominal_level, observation.output.in_phase, &gradient_target))
+				nominal_level, output.in_phase, &gradient_target))
 			return fail(receiver);
 		target = (struct qam_point){
 			.in_phase = gradient_target,
 		};
-		if (qam_equalizer_adapt_observation(
-			    &next.line.equalizer, &observation, &target,
+		if (qam_equalizer_adapt(
+			    &next.line.equalizer, &target,
 			    next.line.adaptation) != QAM_EQUALIZER_OK)
 			return fail(receiver);
 	}
-	generated.equalized_level = observation.output.in_phase;
+	next.line.equalizer.can_adapt = false;
+	generated.equalized_level = output.in_phase;
 	next.line.input_samples++;
 	if (!v92_upstream_rx_is_valid(&next))
 		return fail(receiver);

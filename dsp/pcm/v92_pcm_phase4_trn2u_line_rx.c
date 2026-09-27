@@ -280,7 +280,7 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	struct v92_pcm_phase4_trn2u_line_rx *receiver, int16_t sample)
 {
 	struct v92_pcm_phase4_trn2u_line_rx next;
-	struct qam_equalizer_observation observation = { 0 };
+	struct qam_point output;
 	struct qam_point input;
 	struct qam_point target;
 	double error;
@@ -314,11 +314,11 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 	input = (struct qam_point){
 		.in_phase = next.polarity > 0 ? sample : -(double)sample,
 	};
-	if (qam_equalizer_observe(
-		    &next.equalizer, &input, &observation, &ready) !=
+	if (qam_equalizer_push(
+		    &next.equalizer, &input, &output, &ready) !=
 		    QAM_EQUALIZER_OK ||
 	    !ready || v92_phase4_demodulator_next(
-			      &next.demodulator, observation.output.in_phase,
+			      &next.demodulator, output.in_phase,
 			      &decoded_group, &selected_level) !=
 			      V92_PHASE4_MODULATOR_OK)
 		return fail(receiver);
@@ -329,7 +329,7 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 		return fail(receiver);
 	training_group = (uint8_t)((1u << bits) - 1u);
 	target = (struct qam_point){ .in_phase = next_expected };
-	error = observation.output.in_phase - target.in_phase;
+	error = output.in_phase - target.in_phase;
 	if (!isfinite(error) ||
 	    !isfinite(next.squared_error_sum + error * error))
 		return fail(receiver);
@@ -339,14 +339,15 @@ v92_pcm_phase4_trn2u_line_rx_sample(
 		/* Retain nominal residual evidence above; only the training
 		 * gradient allows the uncertainty inherited from TRN1u's LU. */
 		if (!v92_control_target(next.law, &next.demodulator, selected_level,
-				observation.output.in_phase, &gradient_target))
+				output.in_phase, &gradient_target))
 			return fail(receiver);
 		target.in_phase = gradient_target;
-		if (qam_equalizer_adapt_observation(
-			    &next.equalizer, &observation, &target,
+		if (qam_equalizer_adapt(
+			    &next.equalizer, &target,
 			    next.adaptation) != QAM_EQUALIZER_OK)
 			return fail(receiver);
 	} else {
+		next.equalizer.can_adapt = false;
 		next.symbol_errors++;
 	}
 	if (decoded_group != training_group)
