@@ -127,6 +127,45 @@ static bool test_epochs_fragmentation_and_reentrancy(void)
 	return true;
 }
 
+static bool test_sample_rounding(void)
+{
+	const struct {
+		double input;
+		int16_t expected;
+	} cases[] = {
+		{ nextafter(0.5, 0.0), 0 },
+		{ 0.5, 1 },
+		{ nextafter(0.5, 1.0), 1 },
+		{ nextafter(-0.5, 0.0), 0 },
+		{ -0.5, -1 },
+		{ nextafter(-0.5, -1.0), -1 },
+		{ nextafter(1.5, 0.0), 1 },
+		{ 1.5, 2 },
+		{ nextafter(-1.5, 0.0), -1 },
+		{ -1.5, -2 },
+		{ 32766.5, INT16_MAX },
+		{ -32767.5, INT16_MIN },
+		{ 1e100, INT16_MAX },
+		{ -1e100, INT16_MIN },
+	};
+	struct v32_line_receiver receiver;
+	size_t produced = 123;
+
+	CHECK(v32_line_receiver_init(&receiver) == V32_LINE_RECEIVER_OK,
+	      "rounding fixture did not initialize");
+	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index) {
+		CHECK(v32_line_receiver_process(
+			      &receiver, &cases[index].input, 1, false,
+			      NULL, 0, &produced) == V32_LINE_RECEIVER_OK &&
+		      produced == 0 && receiver.epoch_fill == index + 1u &&
+		      receiver.epoch[index] == cases[index].expected,
+		      "sample %.17g rounded to %d instead of %d",
+		      cases[index].input, receiver.epoch[index],
+		      cases[index].expected);
+	}
+	return true;
+}
+
 static bool test_adaptation_and_gain_boundaries(void)
 {
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES];
@@ -239,6 +278,7 @@ static bool test_adaptation_and_gain_boundaries(void)
 
 static bool test_line_contracts(void)
 {
+	static const double nonfinite[] = { NAN, INFINITY, -INFINITY };
 	double samples[V32_LINE_RECEIVER_EPOCH_SAMPLES + 1u];
 	int16_t output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
 	int16_t saved_output[V32_SYMBOL_TIMING_MAX_OUTPUT_SAMPLES];
@@ -272,11 +312,13 @@ static bool test_line_contracts(void)
 		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
 		     false, output, ARRAY_LENGTH(output) - 1u, &produced),
 	     "short output");
-	samples[17] = NAN;
-	CHECK_REJECT(v32_line_receiver_process(
-		     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
-		     false, output, ARRAY_LENGTH(output), &produced),
-	     "nonfinite input");
+	for (size_t index = 0; index < ARRAY_LENGTH(nonfinite); ++index) {
+		samples[17] = nonfinite[index];
+		CHECK_REJECT(v32_line_receiver_process(
+			     &receiver, samples, V32_LINE_RECEIVER_EPOCH_SAMPLES,
+			     false, output, ARRAY_LENGTH(output), &produced),
+		     "nonfinite input");
+	}
 	samples[17] = 4252.0;
 	CHECK_REJECT(v32_line_receiver_process(
 		     &receiver, (const double *)(const void *)&receiver, 1,
@@ -440,6 +482,7 @@ static bool test_composed_echo_line_owner(void)
 int main(void)
 {
 	if (!test_epochs_fragmentation_and_reentrancy() ||
+	    !test_sample_rounding() ||
 	    !test_adaptation_and_gain_boundaries() ||
 	    !test_line_contracts() || !test_composed_echo_line_owner())
 		return 1;

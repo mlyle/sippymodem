@@ -2,8 +2,8 @@
 
 #include "line_receiver.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -16,16 +16,6 @@ static const struct agc_config V32_RECEIVE_GAIN = {
 	.history_weight_q15 = 0x4000,
 	.input_weight_q15 = 0x4000,
 };
-
-static int16_t quantize_sample(double sample)
-{
-	if (sample >= 32766.5)
-		return INT16_MAX;
-	if (sample <= -32767.5)
-		return INT16_MIN;
-	return (int16_t)(int32_t)(sample >= 0.0 ? sample + 0.5 :
-						      sample - 0.5);
-}
 
 bool v32_line_receiver_is_valid(
 	const struct v32_line_receiver *receiver)
@@ -197,7 +187,7 @@ enum v32_line_receiver_result v32_line_receiver_process(
 	}
 
 	for (size_t index = 0; index < count; ++index) {
-		next.epoch[next.epoch_fill++] = quantize_sample(cleaned[index]);
+		next.epoch[next.epoch_fill++] = sample_round_s16(cleaned[index]);
 		if (next.epoch_fill == V32_LINE_RECEIVER_EPOCH_SAMPLES) {
 			enum agc_result result = agc_process(
 				&next.gain, next.epoch,
