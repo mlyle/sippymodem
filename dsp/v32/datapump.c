@@ -21,6 +21,7 @@
 #include "startup.h"
 #include "training_session.h"
 #include "trellis.h"
+#include "v8_datapump.h"
 
 #include <limits.h>
 #include <math.h>
@@ -577,6 +578,7 @@ static struct dp *create_v32(
 	int max_fragment, struct dp_operations *operations)
 {
 	struct v32_datapump *datapump;
+	struct single_tone_detector calling_carrier;
 	bool is_caller = caller != 0;
 	uint8_t rates = rate_capabilities(modem);
 
@@ -596,6 +598,12 @@ static struct dp *create_v32(
 		    &datapump->training,
 		    datapump_carrier_wait_ticks(modem)) !=
 		    TRAINING_SESSION_OK) {
+		free(datapump);
+		return NULL;
+	}
+	if (!is_caller && v8_datapump_v32_handoff(modem->dp, &calling_carrier) &&
+	    v32_answerer_line_resume(&datapump->answerer_line_startup,
+		    V32_TRANSMIT_AMPLITUDE, &calling_carrier) != V32_LINE_STARTUP_OK) {
 		free(datapump);
 		return NULL;
 	}

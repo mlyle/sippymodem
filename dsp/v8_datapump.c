@@ -7,6 +7,7 @@
 #include "memory_region.h"
 #include "modem.h"
 #include "modem_param.h"
+#include "single_tone.h"
 #include "v8_answering.h"
 #include "v8_calling.h"
 #include "v90_datapump.h"
@@ -23,12 +24,15 @@ struct v8_datapump {
 		struct v8_answering answering;
 	} handshake;
 	struct v8_pcm_handoff handoff;
+	struct single_tone_detector legacy_carrier;
+	unsigned int legacy_carrier_samples;
 	enum DP_ID requested_datapump;
 	uint16_t offered_modulations;
 	bool caller;
 	bool handoff_requested;
 	bool v34_fallback;
 	bool restarted;
+	bool legacy_v32;
 };
 
 static struct dp *create_v8(
@@ -157,6 +161,13 @@ static struct dp *create_v8(
 	}
 	datapump->requested_datapump = id;
 	datapump->offered_modulations = offered;
+	if (!caller && MODEM_AUTOMODE(modem) &&
+	    (offered & V8_MODULATION_V32) != 0 &&
+	    fallback_datapump(modem, V8_MODULATION_V32) != 0 &&
+	    single_tone_detector_init(&datapump->legacy_carrier, 1800) != SINGLE_TONE_OK) {
+		free(datapump);
+		return NULL;
+	}
 	if (id == DP_V92) {
 		if (restarting ?
 		    !v90_datapump_v8_fallback_handoff(modem->dp, &datapump->handoff.training) :
@@ -356,7 +367,7 @@ static int process_v8_samples(
 	return complete ? request_handoff(datapump) : DPSTAT_OK;
 }
 
-static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+static int process_handshake(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
 {
 	struct v8_datapump *datapump = v8_from_dp(dp);
 	const int16_t *receive = receive_buffer;
@@ -386,12 +397,72 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 	return DPSTAT_OK;
 }
 
+static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer, int count)
+{
+	struct v8_datapump *datapump = v8_from_dp(dp);
+	const int16_t *receive = receive_buffer;
+	bool listening;
+	int result;
+
+	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit_buffer, count))
+		return DPSTAT_ERROR;
+	listening = datapump->legacy_carrier.profile.frequency_hz != 0 &&
+		datapump->handshake.answering.state == V8_ANSWERING_WAIT_CALL_MENU;
+	/* A legacy V.32 caller answers ANSam with sustained 1800-Hz carrier.
+	 * Recorded answerers leave ANSam early for this response, then use the
+	 * ordinary 75-ms silence and AC exchange. Confirm half a second, not a
+	 * short carrier fragment. Consume input before generating output so an
+	 * in-place fragment preserves its complete carrier history too. */
+	for (int i = 0; listening && i < count; ++i) {
+		struct single_tone_event event;
+
+		if (single_tone_detector_sample(&datapump->legacy_carrier,
+			    receive[i], &event) != SINGLE_TONE_OK) {
+			memset(transmit_buffer, 0, (size_t)count * sizeof(*receive));
+			return DPSTAT_ERROR;
+		}
+		if (!datapump->legacy_carrier.tone_present ||
+		    event.kind == SINGLE_TONE_PHASE_REVERSED)
+			datapump->legacy_carrier_samples = 0;
+		else if (datapump->legacy_carrier_samples < MODEM_RATE / 2)
+			datapump->legacy_carrier_samples++;
+	}
+	result = process_handshake(dp, receive_buffer, transmit_buffer, count);
+	if (result != DPSTAT_OK || !listening ||
+	    datapump->handshake.answering.state != V8_ANSWERING_WAIT_CALL_MENU ||
+	    datapump->legacy_carrier_samples < MODEM_RATE / 2)
+		return result;
+	if (modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, DP_V32) != 0)
+		return DPSTAT_ERROR;
+	/* No CM/JM was exchanged: leave error-control detection enabled and do
+	 * not report V.8 negotiation or an agreed PCM role. */
+	dp->modem->dsp_info.startup = MODEM_STARTUP_UNKNOWN;
+	dp->modem->dsp_info.v8_lapm = false;
+	dp->modem->dsp_info.pcm_role = MODEM_PCM_ROLE_NONE;
+	datapump->legacy_v32 = true;
+	datapump->handoff_requested = true;
+	dp->status = DPSTAT_CHANGEDP;
+	return DPSTAT_CHANGEDP;
+}
+
+bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier)
+{
+	const struct v8_datapump *datapump = v8_from_dp_const(dp);
+
+	if (datapump == NULL || carrier == NULL || !datapump->legacy_v32 ||
+	    !datapump->handoff_requested ||
+	    memory_regions_overlap(datapump, sizeof(*datapump), carrier, sizeof(*carrier)))
+		return false;
+	*carrier = datapump->legacy_carrier;
+	return true;
+}
+
 bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff)
 {
 	const struct v8_datapump *datapump = v8_from_dp_const(dp);
 
 	if (datapump == NULL || handoff == NULL || !datapump->handoff_requested ||
-	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback ||
+	    datapump->requested_datapump != DP_V92 || datapump->v34_fallback || datapump->legacy_v32 ||
 	    training_session_has_failed(&datapump->handoff.training) ||
 	    memory_regions_overlap(datapump, sizeof(*datapump), handoff, sizeof(*handoff)))
 		return false;

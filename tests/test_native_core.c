@@ -1455,6 +1455,7 @@ static bool test_v8_handoff(void)
 	struct dp_operations *operations;
 	struct dp *calling_dp;
 	struct dp *answering_dp;
+	struct single_tone_detector legacy_carrier;
 	int16_t calling_audio[MODEM_FRAG] = { 0 };
 	int16_t answering_audio[MODEM_FRAG] = { 0 };
 	int calling_status = DPSTAT_OK;
@@ -1528,6 +1529,8 @@ static bool test_v8_handoff(void)
 		}
 		CHECK(calling_status == DPSTAT_CHANGEDP &&
 			      answering_status == DPSTAT_CHANGEDP &&
+			      !v8_datapump_v32_handoff(calling_dp, &legacy_carrier) &&
+			      !v8_datapump_v32_handoff(answering_dp, &legacy_carrier) &&
 			      caller->dp_requested == selections[selection].handoff &&
 			      answerer->dp_requested == selections[selection].handoff &&
 			      caller->dsp_info.pcm_role ==
@@ -1605,6 +1608,76 @@ static bool test_v8_fallback_limits(void)
 	}
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
 	      "fallback limit registrations leaked");
+	return true;
+}
+
+static bool test_v8_legacy_v32(void)
+{
+	struct modem_driver driver = {
+		.name = "legacy V.32 selection",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	struct datapumps datapumps = { 0 };
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
+	      "legacy V.32 registrations failed");
+	for (unsigned int scenario = 0; scenario < 6; ++scenario) {
+		struct modem *modem = modem_create(&driver, "automatic answerer");
+		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
+		struct single_tone_transmitter tone;
+		struct single_tone_detector carrier;
+		struct v8_pcm_handoff pcm;
+		struct dp *dp;
+		int result = DPSTAT_OK;
+
+		CHECK(modem != NULL && ops != NULL &&
+		      single_tone_transmitter_init(&tone, scenario == 4 ? 1650 : 1800,
+			      12000) == SINGLE_TONE_OK,
+		      "legacy V.32 fixture failed");
+		MODEM_AUTOMODE(modem) = scenario != 1;
+		modem->min_rate = scenario == 2 ? 16800 : 300;
+		modem->max_rate = 56000;
+		modem->cfg.ec = 1;
+		dp = ops->create(modem, DP_V92, scenario == 3,
+			MODEM_RATE, MODEM_FRAG, ops);
+		CHECK(dp != NULL && !v8_datapump_v32_handoff(dp, &carrier),
+		      "legacy V.32 handoff was available before detection");
+		/* A 300-ms fragment followed by 100 ms silence must not count
+		 * towards the subsequent half-second continuous confirmation. */
+		for (unsigned int sample = 0; sample < MODEM_RATE &&
+		     result == DPSTAT_OK; sample += MODEM_FRAG) {
+			int16_t rx[MODEM_FRAG], tx[MODEM_FRAG];
+
+			for (unsigned int i = 0; i < MODEM_FRAG; ++i) {
+				CHECK(single_tone_transmitter_sample(&tone, &rx[i]) == SINGLE_TONE_OK,
+				      "legacy V.32 stimulus failed");
+				if (sample + i >= MODEM_RATE * 3 / 10 &&
+				    sample + i < MODEM_RATE * 4 / 10)
+					rx[i] = 0;
+			}
+			result = ops->process(dp, rx, scenario == 5 ? rx : tx, MODEM_FRAG);
+			CHECK(result == DPSTAT_OK || result == DPSTAT_CHANGEDP,
+			      "legacy detector failed scenario %u", scenario);
+			CHECK(result != DPSTAT_CHANGEDP || sample >= MODEM_RATE * 9 / 10,
+			      "legacy detector accumulated disconnected carrier fragments");
+		}
+		CHECK((scenario == 0 || scenario == 5) == (result == DPSTAT_CHANGEDP) &&
+		      (scenario == 0 || scenario == 5) == v8_datapump_v32_handoff(dp, &carrier) &&
+		      modem->dp_requested == (scenario == 0 || scenario == 5 ? DP_V32 : 0),
+		      "legacy V.32 escaped selection limits in scenario %u", scenario);
+		if (scenario == 0 || scenario == 5)
+			CHECK(single_tone_detector_is_valid(&carrier) && carrier.tone_present &&
+			      carrier.profile.frequency_hz == 1800 &&
+			      !v8_datapump_pcm_handoff(dp, &pcm) &&
+			      !v8_datapump_v32_handoff(dp, NULL) &&
+			      modem->cfg.ec == 1 && !modem->dsp_info.v8_lapm &&
+			      modem->dsp_info.startup == MODEM_STARTUP_UNKNOWN,
+			      "legacy handoff lost carrier history or invented V.8 agreement");
+		CHECK(ops->delete(dp) == 0, "legacy negotiation state leaked");
+		modem_delete(modem);
+	}
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "legacy V.32 registrations leaked");
 	return true;
 }
 
@@ -4071,6 +4144,7 @@ int main(void)
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
 		{ "V.8 fallback limits", test_v8_fallback_limits },
+		{ "V.8 legacy V.32 selection", test_v8_legacy_v32 },
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "observed CONNECT startup", test_connect_reports_observed_startup },
 		{ "data-pump error-control policy",

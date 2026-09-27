@@ -11,6 +11,7 @@
 #include <stdbool.h>
 
 struct dp;
+struct single_tone_detector;
 
 /* Copied before the V.8 owner is deleted. QC transfers after the final
  * QC1/QCA1 sample; the fragment tail was already emitted as silence. */
@@ -24,6 +25,9 @@ struct v8_pcm_handoff {
 };
 
 bool v8_datapump_pcm_handoff(const struct dp *dp, struct v8_pcm_handoff *handoff);
+/* An automatic answerer's legacy V.32 selection transfers the already
+ * acquired calling carrier before the negotiation owner is deleted. */
+bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier);
 
 /* Returns the classic V.8 mode carried with the requested datapump. */
 static inline enum v8_modulation

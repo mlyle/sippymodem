@@ -127,6 +127,7 @@ struct modem_test_case {
 	unsigned int minimum_caller_rate_signals;
 	unsigned int minimum_caller_rate_signal_sample;
 	bool automode;
+	bool answerer_automode;
 	bool requires_v8;
 	bool requires_exact_g711;
 	bool test_prelink;
@@ -2007,7 +2008,7 @@ static bool run_media_call(
 			test_case->answerer_selection_command :
 			test_case->selection_command;
 	bool answerer_requires_v8 =
-		(test_case->automode || test_case->requires_v8) &&
+		(test_case->automode || test_case->answerer_automode || test_case->requires_v8) &&
 		v8_datapump_modulation(answerer_id) != V8_MODULATION_NONE;
 	bool online = false;
 	bool answerer_used_v8 = !answerer_requires_v8;
@@ -2137,7 +2138,8 @@ static bool run_media_call(
 		      MODEM_DP(caller.modem) == test_case->id &&
 		      MODEM_DP(answerer.modem) == answerer_id &&
 		      MODEM_AUTOMODE(caller.modem) == test_case->automode &&
-		      MODEM_AUTOMODE(answerer.modem) == test_case->automode &&
+		      MODEM_AUTOMODE(answerer.modem) ==
+			      (test_case->automode || test_case->answerer_automode) &&
 		      endpoint_drain(&caller) && endpoint_drain(&answerer) &&
 		      output_contains(&caller, "OK") &&
 		      output_contains(&answerer, "OK"),
@@ -4019,6 +4021,28 @@ int main(void)
 	enum v90_modem_role v90_replay_pcm_role;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
+		{
+			.id = DP_V32, .answerer_id = DP_V92,
+			.name = "legacy auto-answer V.32 raw",
+			.selection_command = "AT+MS=32,0,9600,9600\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600, .answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT,
+			.answerer_automode = true, .raw_transport = true,
+		},
+		{
+			.id = DP_V32, .answerer_id = DP_V92,
+			.name = "legacy auto-answer V.32 LAPM",
+			.selection_command = "AT+MS=32,0,9600,9600\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600, .answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT,
+			.answerer_automode = true, .require_lapm = true,
+		},
 		{
 			.id = DP_V21, .answerer_id = DP_V92,
 			.name = "subset auto-answer V.21",

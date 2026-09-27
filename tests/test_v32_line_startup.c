@@ -481,9 +481,8 @@ static bool run_answerer_standard_exchange(enum test_codec codec)
 static bool drive_paired_line_exchange(
 	struct v32_line_startup *caller,
 	struct v32_answerer_line_startup *answerer,
-	enum test_codec codec)
+	enum test_codec codec, int16_t caller_transmit)
 {
-	int16_t caller_transmit = 0;
 	int16_t answerer_transmit = 0;
 	bool caller_complete = false;
 	bool answerer_complete = false;
@@ -527,7 +526,7 @@ static bool run_paired_line_exchange(enum test_codec codec)
 			      &answerer, TEST_AMPLITUDE) ==
 		      V32_LINE_STARTUP_OK,
 	      "paired line-startup fixture did not initialize");
-	return drive_paired_line_exchange(&caller, &answerer, codec);
+	return drive_paired_line_exchange(&caller, &answerer, codec, 0);
 }
 
 static bool run_paired_retrain_exchange(enum test_codec codec)
@@ -541,7 +540,7 @@ static bool run_paired_retrain_exchange(enum test_codec codec)
 			      &answerer, TEST_AMPLITUDE) ==
 		      V32_LINE_STARTUP_OK,
 	      "paired line-retrain fixture did not initialize");
-	return drive_paired_line_exchange(&caller, &answerer, codec);
+	return drive_paired_line_exchange(&caller, &answerer, codec, 0);
 }
 
 static bool test_generated_answerer_exchange(void)
@@ -554,6 +553,51 @@ static bool test_generated_answerer_exchange(void)
 		      "paired answerer exchange failed codec %d", codec);
 		CHECK(run_paired_retrain_exchange(codec),
 		      "paired retrain exchange failed codec %d", codec);
+	}
+	return true;
+}
+
+static bool test_resume_after_answer_tone(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA; ++codec) {
+		struct v32_line_startup caller;
+		struct v32_answerer_line_startup answerer, before;
+		struct single_tone_detector carrier;
+		struct single_tone_event event;
+		int16_t calling_sample, answering_sample;
+		bool complete;
+
+		CHECK(v32_line_retrain_init(&caller, TEST_AMPLITUDE) == V32_LINE_STARTUP_OK &&
+		      v32_answerer_line_startup_init(&answerer, TEST_AMPLITUDE) == V32_LINE_STARTUP_OK &&
+		      single_tone_detector_init(&carrier, V32_CALLING_CARRIER_HZ) == SINGLE_TONE_OK,
+		      "resumed line fixture failed");
+		before = answerer;
+		CHECK(v32_answerer_line_resume(&answerer, TEST_AMPLITUDE, &carrier) ==
+			      V32_LINE_STARTUP_INVALID_ARGUMENT &&
+		      memcmp(&answerer, &before, sizeof(answerer)) == 0,
+		      "resume accepted an unacquired carrier or changed state on rejection");
+		for (unsigned int i = 0; i < SINGLE_TONE_SAMPLE_RATE / 2; ++i)
+			CHECK(v32_line_startup_process(&caller, 0, &calling_sample, &complete) ==
+				      V32_LINE_STARTUP_OK &&
+			      single_tone_detector_sample(&carrier,
+				      codec_round_trip(calling_sample, codec), &event) == SINGLE_TONE_OK,
+			      "resumed line did not acquire calling carrier");
+		CHECK(v32_answerer_line_resume(&answerer, TEST_AMPLITUDE, &carrier) == V32_LINE_STARTUP_OK &&
+		      answerer.state == V32_ANSWERER_LINE_SILENCE &&
+		      memcmp(&answerer.calling_carrier, &carrier, sizeof(carrier)) == 0,
+		      "resume repeated answer tone or lost acquired carrier history");
+		for (unsigned int i = 0; i < V32_ANSWERER_SILENCE_SAMPLES; ++i)
+			CHECK(answerer.state == V32_ANSWERER_LINE_SILENCE &&
+			      v32_line_startup_process(&caller, 0, &calling_sample, &complete) == V32_LINE_STARTUP_OK &&
+			      v32_answerer_line_startup_process(&answerer,
+				      codec_round_trip(calling_sample, codec), &answering_sample,
+				      &complete) == V32_LINE_STARTUP_OK && answering_sample == 0,
+			      "resume did not preserve exactly 75 ms of silence");
+		CHECK(answerer.state == V32_ANSWERER_LINE_SEND_AC &&
+		      answerer.calling_carrier.tone_present &&
+		      v32_line_startup_process(&caller, 0, &calling_sample, &complete) == V32_LINE_STARTUP_OK &&
+		      drive_paired_line_exchange(&caller, &answerer, codec, calling_sample),
+		      "resumed answerer did not complete ordinary AC exchange");
 	}
 	return true;
 }
@@ -659,6 +703,7 @@ int main(void)
 	} tests[] = {
 		{ "generated exchange", test_generated_exchange },
 		{ "generated answerer exchange", test_generated_answerer_exchange },
+		{ "resume after answer tone", test_resume_after_answer_tone },
 		{ "early answer loss", test_early_answer_loss_fails },
 		{ "transactional validation", test_validation_is_transactional },
 	};

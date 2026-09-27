@@ -10,11 +10,21 @@
 #include <echo_training.h>
 #include <line_startup.h>
 #include <rate_path.h>
+#include <v8_datapump.h>
 
 #include "test.h"
 
 #include <stddef.h>
 #include <stdint.h>
+
+/* This standalone fixture has no automatic-negotiation owner. Real handoffs
+ * are exercised by the native-core and paired-media integration tests. */
+bool v8_datapump_v32_handoff(const struct dp *dp, struct single_tone_detector *carrier)
+{
+	(void)dp;
+	(void)carrier;
+	return false;
+}
 
 enum {
 	TEST_TONE_AMPLITUDE = 12000,

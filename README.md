@@ -142,6 +142,16 @@ preserves the training deadline across ordinary-V.8 fallback, and reports
 Connect cases require that evidence; fallback calls still exercise data and
 retrains but are reported as profile mismatches.
 
+For broad incoming-call selection, issue `AT+MS=92,1,300,56000` and `ATS0=1`.
+The factory selection remains fixed V.21. Automatic answering accepts V.8
+callers offering lower families within the configured rate bounds; paired
+media tests cover V.21, V.23, V.22bis, V.32, and V.34. It also recognizes a
+legacy V.32 caller's sustained 1800-Hz response during ANSam and transfers its
+acquired carrier into the existing 75-ms silence and AC turnaround exchange,
+without repeating the answer tone or claiming V.8 negotiation. This early
+branch follows recorded peer behavior, but the complete no-menu tone ladder
+and V.22-only downgrade within the shared V.22/V.22bis family remain incomplete.
+
 Initialize the pinned pjproject submodule once, then build with `make`:
 
 ```

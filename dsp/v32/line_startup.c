@@ -387,6 +387,24 @@ enum v32_line_startup_result v32_answerer_line_retrain_init(
 		startup, transmit_amplitude, V32_ANSWERER_LINE_SEND_AC);
 }
 
+enum v32_line_startup_result v32_answerer_line_resume(
+	struct v32_answerer_line_startup *startup, int16_t transmit_amplitude,
+	const struct single_tone_detector *calling_carrier)
+{
+	struct v32_answerer_line_startup initialized;
+
+	if (startup == NULL || !single_tone_detector_is_valid(calling_carrier) ||
+	    calling_carrier->profile.frequency_hz != V32_CALLING_CARRIER_HZ ||
+	    calling_carrier->profile.sample_rate_hz != SINGLE_TONE_SAMPLE_RATE ||
+	    !calling_carrier->tone_present ||
+	    answerer_init(&initialized, transmit_amplitude,
+		    V32_ANSWERER_LINE_SILENCE) != V32_LINE_STARTUP_OK)
+		return V32_LINE_STARTUP_INVALID_ARGUMENT;
+	initialized.calling_carrier = *calling_carrier;
+	*startup = initialized;
+	return V32_LINE_STARTUP_OK;
+}
+
 bool v32_answerer_line_startup_is_complete(
 	const struct v32_answerer_line_startup *startup)
 {
@@ -462,7 +480,7 @@ enum v32_line_startup_result v32_answerer_line_startup_process(
 		return V32_LINE_STARTUP_OK;
 	}
 	next = *startup;
-	if (next.state >= V32_ANSWERER_LINE_SEND_AC &&
+	if (next.state >= V32_ANSWERER_LINE_SILENCE &&
 	    next.state <= V32_ANSWERER_LINE_HOLD_RESPONSE &&
 	    single_tone_detector_sample(
 		    &next.calling_carrier, receive_sample,

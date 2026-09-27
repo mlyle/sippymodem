@@ -133,6 +133,10 @@ enum v32_line_startup_result v32_answerer_line_startup_init(
 enum v32_line_startup_result v32_answerer_line_retrain_init(
 	struct v32_answerer_line_startup *startup,
 	int16_t transmit_amplitude);
+/* Continue after an automatic answer tone, without repeating that tone. */
+enum v32_line_startup_result v32_answerer_line_resume(
+	struct v32_answerer_line_startup *startup, int16_t transmit_amplitude,
+	const struct single_tone_detector *calling_carrier);
 bool v32_answerer_line_startup_is_valid(
 	const struct v32_answerer_line_startup *startup);
 bool v32_answerer_line_startup_is_complete(
