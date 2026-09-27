@@ -136,6 +136,57 @@ static bool test_saturation(void)
 	return true;
 }
 
+static bool test_gain_bounds(void)
+{
+	/* Exercise both corrections over every valid Q10 gain, including zero
+	 * and both sides of the increase ceiling. Scaling uses the old gain. */
+	for (int gain = 0; gain <= INT16_MAX; ++gain)
+		for (unsigned int scenario = 0; scenario < 8u; ++scenario) {
+			bool info = (scenario & 1u) != 0;
+			bool frozen = (scenario & 2u) != 0;
+			bool decrease = (scenario & 4u) != 0;
+			struct v34_gain_control control;
+			struct v34_gain_control expected;
+			struct v34_analytic_sample output = { -1, -1 };
+			int16_t scalar = -1;
+			enum v34_gain_control_result result;
+
+			CHECK(v34_gain_control_init(&control, 1) == V34_GAIN_CONTROL_OK,
+			      "gain boundary owner did not initialize");
+			for (size_t index = 0; index < V34_GAIN_HISTORY_SAMPLES; ++index)
+				control.history[index] = 1000;
+			control.history_index = V34_GAIN_HISTORY_SAMPLES - 1u;
+			control.energy_count = V34_GAIN_UPDATE_SAMPLES - 1u;
+			control.gain = (int16_t)gain;
+			control.correction = decrease ? 2000 : -2000;
+			control.mode = frozen ? V34_GAIN_FROZEN : V34_GAIN_TRACKING;
+			expected = control;
+			expected.history[V34_GAIN_HISTORY_SAMPLES - 1u] = 0;
+			expected.history_index = 0;
+			expected.energy_count = 0;
+			if (!frozen) {
+				expected.correction = 0;
+				if (decrease || gain <= 0x6a00)
+					expected.gain = (int16_t)(gain *
+						(decrease ? 0x390a : 0x47cf) / 16384);
+			}
+			if (info) {
+				result = v34_gain_control_process_info(&control, 0, &scalar);
+				CHECK(scalar == 0, "INFO boundary scaling changed");
+			} else {
+				result = v34_gain_control_process(&control,
+					(struct v34_analytic_sample){ 0, 1024 }, &output);
+				CHECK(output.in_phase == 0 && output.quadrature == gain,
+				      "gain correction changed its current sample");
+			}
+			CHECK(result == V34_GAIN_CONTROL_OK &&
+			      v34_gain_control_is_valid(&control) &&
+			      memcmp(&control, &expected, sizeof(control)) == 0,
+			      "gain %d scenario %u broke bounds", gain, scenario);
+		}
+	return true;
+}
+
 static bool test_ownership(void)
 {
 	struct v34_gain_control left;
@@ -180,6 +231,29 @@ static bool test_ownership(void)
 		      memcmp(&left, &saved, sizeof(left)) == 0 &&
 		      memcmp(&output, &saved_output, sizeof(output)) == 0,
 	      "V.34 gain rejection was not transactional");
+
+	for (unsigned int field = 0; field < 5u; ++field) {
+		struct v34_gain_control invalid = saved;
+		struct v34_gain_control snapshot;
+		int16_t scalar = 137;
+
+		switch (field) {
+		case 0: invalid.initialized = false; break;
+		case 1: invalid.history_index = V34_GAIN_HISTORY_SAMPLES; break;
+		case 2: invalid.energy_count = V34_GAIN_UPDATE_SAMPLES; break;
+		case 3: invalid.gain = -1; break;
+		case 4: invalid.mode = (enum v34_gain_mode)2; break;
+		}
+		snapshot = invalid;
+		CHECK(v34_gain_control_process(&invalid,
+			      (struct v34_analytic_sample){ INT16_MAX, INT16_MIN },
+			      &output) == V34_GAIN_CONTROL_INVALID_STATE &&
+		      v34_gain_control_process_info(&invalid, INT16_MAX, &scalar) ==
+			      V34_GAIN_CONTROL_INVALID_STATE &&
+		      memcmp(&invalid, &snapshot, sizeof(invalid)) == 0 &&
+		      memcmp(&output, &saved_output, sizeof(output)) == 0 && scalar == 137,
+		      "invalid gain field %u changed state or output", field);
+	}
 
 	for (unsigned int index = 0; index < 512; ++index) {
 		struct v34_analytic_sample input;
@@ -474,6 +548,7 @@ int main(void)
 		{ "INFO scalar profile", test_info_profile },
 		{ "INFO scalar ownership", test_info_ownership },
 		{ "saturation", test_saturation },
+		{ "bounded gain corrections", test_gain_bounds },
 		{ "ownership", test_ownership },
 		{ "measured acquisition refresh", test_measured_refresh },
 		{ "refresh correction continuation", test_refresh_continuation },
