@@ -165,6 +165,42 @@ run `./src/slmodemd` without a hardware-device argument or helper process. Set
 `SIP_RECORD_PREFIX` to enable the bounded recording interface; the prefix must
 identify files that do not already exist.
 
+For an interactive modem console, install `splitvt` and C-Kermit, copy
+`tools/sip-terminal.example.json` to the ignored `.sip-terminal.json`, make it
+owner-only (`chmod 600 .sip-terminal.json`), and fill in the private provider
+settings. Then run either:
+
+```
+python3 tools/modem_terminal.py 2600
+python3 tools/modem_terminal.py pstn
+```
+
+These commands start the local `src/slmodemd` and register the selected account;
+they do not dial or set auto-answer. The top half shows live SIP trace and modem
+errors, and the bottom half starts C-Kermit connected to the modem's PTY. Enter
+AT commands directly. `Ctrl-W` switches panes; `Ctrl-O` then `q` quits both and
+stops the modem. Kermit's `Ctrl-\` then `c` returns to its command prompt;
+`exit` closes the console. Kermit startup files are skipped. Trace is private
+and temporary, but can display addresses and dialed numbers; do not publish it
+without redaction. No audio capture is enabled by this launcher.
+The launcher enables `SIP_TRACE=1`, which can also be used with the daemon alone.
+Credential-bearing and authentication records are omitted entirely; this is
+not general redaction of SIP metadata.
+
+Each profile contains native `SIP_*` settings, not shell commands. Ambient SIP
+settings are ignored. `--config` selects another private JSON file and `--modem`
+selects another executable. `SIP_REGISTER=0` is useful for explicitly configured
+local-only tests. For provider dialing, `ATD<number>` sends that user part to the
+configured SIP domain; `ATDsip:<user>@<host>` selects an explicit SIP destination.
+PSTN routing and permitted number formats depend on the selected account.
+
+This console does not configure a router or discover a public address. Existing
+NAT settings belong in the private profile: `SIP_PUBLIC_ADDR` advertises the
+public address, while `SIP_PORT` and `SIP_RTP_PORT` select local UDP ports. Static
+port forwarding must preserve those ports. Symmetric RTP learns the media peer
+from received packets, but is not STUN/TURN and does not guarantee traversal of
+arbitrary NAT or CGNAT. Leave public-address overrides unset on a direct route.
+
 Live interoperability campaigns are deliberately opt-in. Copy
 `tools/live-campaign.example.json` to the ignored `.live-campaign.json`, make
 it owner-only, fill in the three private SIP environments, and enable it. The

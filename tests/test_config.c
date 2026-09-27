@@ -16,7 +16,7 @@ static const char *const config_environment[] = {
 	"SIP_AUTO_ANSWER", "SIP_CODEC",       "SIP_RTP_PORT",
 	"SIP_JB_MS",       "SIP_FRAME_MS",    "SIP_REMOTE_CLOCK",
 	"SIP_GAIN",        "SIP_TX_GAIN",     "SIP_RX_GAIN",
-	"SIP_RECORD_PREFIX",
+	"SIP_RECORD_PREFIX", "SIP_TRACE",
 };
 
 static void clear_environment(void)
@@ -32,6 +32,7 @@ static bool test_defaults(void)
 	config_init(&config);
 	CHECK(config.sip.listen_port == 5060, "wrong default SIP port");
 	CHECK(config.sip.log_level == 4, "wrong default SIP log level");
+	CHECK(!config.sip.trace_enabled, "trace should be opt-in");
 	CHECK(config.sip.registration_enabled,
 	      "SIP registration should be enabled by default");
 	CHECK(!config.sip.automatic_answer,
@@ -69,6 +70,7 @@ static bool set_test_environment(void)
 	       setenv("SIP_TARGET", "sip:bob@example.net", 1) == 0 &&
 	       setenv("SIP_PORT", "5070", 1) == 0 &&
 	       setenv("SIP_LOG_LEVEL", "6", 1) == 0 &&
+	       setenv("SIP_TRACE", "yes", 1) == 0 &&
 	       setenv("SIP_REGISTER", "yes", 1) == 0 &&
 	       setenv("SIP_AUTO_ANSWER", "on", 1) == 0 &&
 	       setenv("SIP_CODEC", "CLEARMODE", 1) == 0 &&
@@ -116,6 +118,7 @@ static bool test_environment_overrides(void)
 	      "target was not applied");
 	CHECK(config.sip.listen_port == 5070 && config.sip.log_level == 6,
 	      "SIP integer settings were not applied");
+	CHECK(config.sip.trace_enabled, "trace setting was not applied");
 	CHECK(config.sip.registration_enabled && config.sip.automatic_answer,
 	      "SIP boolean settings were not applied");
 	CHECK(config.media.codec == MEDIA_CODEC_CLEARMODE,
@@ -161,6 +164,7 @@ static bool test_invalid_environment(void)
 	memset(oversized, 'x', sizeof(oversized) - 1);
 	oversized[sizeof(oversized) - 1] = '\0';
 	return expect_invalid_value("SIP_PORT", "65536") &&
+	       expect_invalid_value("SIP_TRACE", "sometimes") &&
 	       expect_invalid_value("SIP_REGISTER", "sometimes") &&
 	       expect_invalid_value("SIP_GAIN", "NaN") &&
 	       expect_invalid_value("SIP_CODEC", "lossy") &&

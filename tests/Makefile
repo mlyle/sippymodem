@@ -3513,6 +3513,7 @@ PYTHON_TESTS := \
 	test_fast_matrix.py \
 	test_fast_interop.py \
 	test_live_terminal.py \
+	test_modem_terminal.py \
 	test_build_compiler.py \
 	test_build_dependencies.py \
 	test_revision_build.py \

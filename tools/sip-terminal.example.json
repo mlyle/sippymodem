@@ -1,0 +1,14 @@
+{
+  "2600": {
+    "SIP_LOGIN": "account:password@private-registrar.example.invalid:5060",
+    "SIP_REGISTER": "1",
+    "SIP_PORT": "5060",
+    "SIP_CODEC": "PCMU/8000/1"
+  },
+  "pstn": {
+    "SIP_LOGIN": "account:password@pstn-registrar.example.invalid:5060",
+    "SIP_REGISTER": "1",
+    "SIP_PORT": "5060",
+    "SIP_CODEC": "PCMU/8000/1"
+  }
+}

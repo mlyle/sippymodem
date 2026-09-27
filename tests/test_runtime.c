@@ -75,6 +75,7 @@ struct runtime_capture {
 	char terminal_input[64];
 	size_t terminal_input_count;
 	bool short_modem_write;
+	struct sip_signaling_callbacks callbacks;
 };
 
 static struct runtime_capture capture;
@@ -399,6 +400,7 @@ struct modem_host *modem_host_create(
 	if (host != NULL) {
 		host->marker = 1;
 		host->callbacks = *callbacks;
+		capture.callbacks = *callbacks;
 		capture.host_received_recorder = recorder != NULL;
 	}
 	return host;
@@ -832,6 +834,71 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 	return true;
 }
 
+static bool test_opt_in_signaling_trace(void)
+{
+	static const char *const messages[] = {
+		"SIP/2.0 200 OK\r\nContent-Length: 0\r\n",
+		"INVITE sip:peer@example.net SIP/2.0\r\n"
+		"pRoXy-AuThOrIzAtIoN: Digest\r\n\tresponse=secret\r\n",
+		"Authorization: secret",
+		"Authentication-Info: secret",
+		"WWW-Authenticate: Digest nonce=secret",
+		"password=secret", "credential=secret",
+		"ready \033[31m\001",
+	};
+	struct app_config config = runtime_config(false);
+	struct modem_runtime *runtime;
+	struct sip_trace_record record = { .origin = SIP_TRACE_LIBRARY, .level = 4 };
+	char oversized[8193] = { 0 };
+	char output[1024] = { 0 };
+	FILE *stream;
+	size_t output_size;
+	int saved_stderr;
+	int restored;
+
+	memset(&capture, 0, sizeof(capture));
+	runtime = modem_runtime_create(&config, "trace-test");
+	CHECK(runtime != NULL && capture.callbacks.trace == NULL,
+	      "signaling trace is not opt-in");
+	modem_runtime_destroy(runtime);
+	config.sip.trace_enabled = true;
+	runtime = modem_runtime_create(&config, "trace-test");
+	CHECK(runtime != NULL && capture.callbacks.trace != NULL,
+	      "trace callback was not installed");
+	stream = tmpfile();
+	CHECK(stream != NULL, "trace capture failed");
+	fflush(stderr);
+	saved_stderr = dup(STDERR_FILENO);
+	CHECK(saved_stderr >= 0 && dup2(fileno(stream), STDERR_FILENO) >= 0,
+	      "cannot redirect trace output");
+	for (size_t index = 0; index < ARRAY_LENGTH(messages); ++index) {
+		record.data = messages[index];
+		record.size = strlen(record.data);
+		capture.callbacks.trace(capture.callbacks.context, &record);
+	}
+	record.data = oversized;
+	record.size = sizeof(oversized);
+	capture.callbacks.trace(capture.callbacks.context, &record);
+	fflush(stderr);
+	restored = dup2(saved_stderr, STDERR_FILENO);
+	close(saved_stderr);
+	CHECK(restored >= 0, "cannot restore stderr");
+	rewind(stream);
+	output_size = fread(output, 1, sizeof(output) - 1, stream);
+	fclose(stream);
+	modem_runtime_destroy(runtime);
+	CHECK(output_size != 0, "trace emitted no output");
+	CHECK(strstr(output, "SIP/2.0 200 OK\nContent-Length: 0\n") != NULL &&
+	      strstr(output, "authentication record omitted") != NULL &&
+	      strstr(output, "oversized record omitted") != NULL &&
+	      strstr(output, "ready ?[31m?\n") != NULL,
+	      "trace omitted useful text or failed to sanitize controls");
+	CHECK(strstr(output, "secret") == NULL &&
+	      strchr(output, '\033') == NULL && strchr(output, '\r') == NULL,
+	      "trace exposed credentials or terminal control bytes");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -843,6 +910,7 @@ int main(void)
 		{ "open and close", test_opens_and_closes_in_dependency_order },
 		{ "lifecycle failures", test_reports_lifecycle_failures },
 		{ "bounded host step", test_steps_bounded_host_and_evidence_work },
+		{ "opt-in signaling trace", test_opt_in_signaling_trace },
 	};
 	unsigned int failures = 0;
 

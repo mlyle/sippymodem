@@ -25,6 +25,7 @@ struct sip_config {
 	char target[APP_CONFIG_TEXT_MAX];
 	unsigned int listen_port;
 	unsigned int log_level;
+	bool trace_enabled;
 	bool registration_enabled;
 	bool automatic_answer;
 };

@@ -13,4 +13,5 @@
 __pycache__/
 /.live-call.json
 /.live-campaign.json
+/.sip-terminal.json
 /live-call-artifacts/

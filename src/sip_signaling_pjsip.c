@@ -30,6 +30,8 @@ struct sip_signaling {
 	int last_library_status;
 	unsigned int local_port;
 	unsigned int callback_depth;
+	pj_log_func *previous_log_writer;
+	int previous_log_level;
 	char login_buffer[APP_CONFIG_TEXT_MAX];
 	char identity_uri[SIP_ACCOUNT_URI_MAX];
 	char registrar_uri[SIP_ACCOUNT_URI_MAX];
@@ -54,6 +56,7 @@ struct sip_signaling {
 	bool registration_may_exist;
 	bool account_configured;
 	bool library_created;
+	bool log_writer_installed;
 	bool opened;
 	bool closing;
 	bool close_requested;
@@ -647,6 +650,13 @@ static enum sip_signaling_result initialize_library(
 	pjsua_media_config media;
 	pj_status_t status;
 
+	/* pj_init() logs before pjsua_init() installs the configured callback.
+	 * Own that interval too, so diagnostics never pollute the PTY report. */
+	signaling->previous_log_writer = pj_log_get_log_func();
+	signaling->previous_log_level = pj_log_get_level();
+	pj_log_set_log_func(&pjsip_trace);
+	pj_log_set_level((int)signaling->config.sip.log_level);
+	signaling->log_writer_installed = true;
 	status = pjsua_create();
 	if (status != PJ_SUCCESS) {
 		emit_library_error(signaling, "create signaling library", status);
@@ -668,7 +678,8 @@ static enum sip_signaling_result initialize_library(
 	logging.level = signaling->config.sip.log_level > PJ_LOG_MAX_LEVEL
 			? PJ_LOG_MAX_LEVEL
 			: signaling->config.sip.log_level;
-	logging.console_level = 0;
+	/* PJSUA gates even an application log callback by console_level. */
+	logging.console_level = signaling->callbacks.trace != NULL ? logging.level : 0;
 	logging.msg_logging = signaling->callbacks.trace != NULL;
 	logging.cb = &pjsip_trace;
 	configure_media(&signaling->config, &media);
@@ -827,6 +838,11 @@ static enum sip_signaling_result close_now(
 	emit_media_inactive(signaling);
 	if (signaling->library_created)
 		status = pjsua_destroy2(destroy_flags);
+	if (signaling->log_writer_installed) {
+		pj_log_set_log_func(signaling->previous_log_writer);
+		pj_log_set_level(signaling->previous_log_level);
+		signaling->log_writer_installed = false;
+	}
 	signaling->library_created = false;
 	signaling->opened = false;
 	signaling->closing = false;

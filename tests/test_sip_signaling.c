@@ -202,6 +202,8 @@ static bool library_media_transport_is_ephemeral(void)
 
 static bool test_local_transport_lifecycle(void)
 {
+	pj_log_func *previous_log_writer = pj_log_get_log_func();
+	int previous_log_level = pj_log_get_level();
 	struct callback_capture capture = { 0 };
 	struct sip_signaling *signaling =
 		create_local_signaling(&capture);
@@ -226,7 +228,8 @@ static bool test_local_transport_lifecycle(void)
 	CHECK(library_media_transport_is_ephemeral(),
 	      "unused library media transport retained a fixed port");
 	CHECK(capture.ready_count == 1 && capture.error_count == 0 &&
-		      capture.trace_count != 0 && capture.adapter_trace_count != 0,
+		      capture.trace_count > capture.adapter_trace_count &&
+		      capture.adapter_trace_count != 0,
 	      "open callbacks were wrong");
 	CHECK(sip_signaling_open(signaling) ==
 		      SIP_SIGNALING_OK &&
@@ -239,6 +242,9 @@ static bool test_local_transport_lifecycle(void)
 		      SIP_SIGNALING_OK &&
 		      !sip_signaling_is_open(signaling),
 	      "signaling close failed");
+	CHECK(pj_log_get_log_func() == previous_log_writer &&
+	      pj_log_get_level() == previous_log_level,
+	      "signaling did not restore the process log settings");
 	CHECK(sip_signaling_step(signaling, 0) ==
 		      SIP_SIGNALING_NOT_OPEN,
 	      "closed signaling context accepted polling");

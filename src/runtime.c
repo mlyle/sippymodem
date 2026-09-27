@@ -10,7 +10,9 @@
 #include "slmodem_driver.h"
 #include "slmodem_terminal.h"
 
+#include <ctype.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,12 +51,61 @@ static void destroy_incomplete_runtime(struct modem_runtime *runtime)
 	free(runtime);
 }
 
+static void trace_signaling(void *context, const struct sip_trace_record *record)
+{
+	static const char *const private_words[] = {
+		"authorization", "authenticate", "authentication", "password", "credential",
+	};
+	char output[8193];
+	size_t used = 0;
+	(void)context;
+	if (record == NULL || record->data == NULL || record->size == 0)
+		return;
+	/* PJSIP supplies whole log records, including whole SIP messages. Omit
+	 * credential-bearing records rather than parsing possibly folded headers.
+	 * Keep traces bounded and remote text unable to control the terminal. */
+	if (record->size >= sizeof(output)) {
+		fputs("[SIP trace: oversized record omitted]\n", stderr);
+		return;
+	}
+	for (size_t word = 0; word < sizeof(private_words) / sizeof(*private_words);
+	     ++word) {
+		size_t length = strlen(private_words[word]);
+
+		for (size_t offset = 0; offset + length <= record->size; ++offset) {
+			size_t matched = 0;
+
+			while (matched < length &&
+			       tolower((unsigned char)record->data[offset + matched]) ==
+				       private_words[word][matched])
+				++matched;
+			if (matched == length) {
+				fputs("[SIP trace: authentication record omitted]\n", stderr);
+				return;
+			}
+		}
+	}
+	for (size_t index = 0; index < record->size; ++index) {
+		unsigned char byte = (unsigned char)record->data[index];
+
+		if (byte == '\r')
+			continue;
+		output[used++] = (byte >= 32 && byte < 127) || byte == '\n' || byte == '\t' ?
+			(char)byte : '?';
+	}
+	output[used] = '\0';
+	fputs(output, stderr);
+	if (used != 0 && output[used - 1] != '\n')
+		fputc('\n', stderr);
+}
+
 struct modem_runtime *modem_runtime_create(
 	const struct app_config *config, const char *modem_name)
 {
 	struct modem_runtime *runtime;
 	const struct media_recorder *recorder = NULL;
 	struct modem_driver *modem_driver;
+	struct sip_signaling_callbacks callbacks;
 	size_t name_length;
 	int saved_error;
 
@@ -103,9 +154,11 @@ struct modem_runtime *modem_runtime_create(
 		if (recorder == NULL)
 			goto fail;
 	}
+	callbacks = *slmodem_calls_callbacks(&runtime->calls);
+	if (config->sip.trace_enabled)
+		callbacks.trace = trace_signaling;
 	runtime->host = modem_host_create(
-		config, recorder,
-		slmodem_calls_callbacks(&runtime->calls),
+		config, recorder, &callbacks,
 		slmodem_adapter_core(&runtime->adapter));
 	if (runtime->host == NULL ||
 	    !slmodem_driver_attach(

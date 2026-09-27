@@ -201,6 +201,7 @@ int config_apply_environment(
 			     error));
 	APPLY(apply_unsigned(&updated.sip.log_level, "SIP_LOG_LEVEL", 0, 10,
 			     error));
+	APPLY(apply_boolean(&updated.sip.trace_enabled, "SIP_TRACE", error));
 	APPLY(apply_boolean(&updated.sip.registration_enabled, "SIP_REGISTER",
 			    error));
 	APPLY(apply_boolean(&updated.sip.automatic_answer, "SIP_AUTO_ANSWER",
