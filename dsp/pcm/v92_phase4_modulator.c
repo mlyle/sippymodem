@@ -153,8 +153,6 @@ enum v92_phase4_modulator_result v92_phase4_modulator_next(
 		    encoded_sign, &generated))
 		return V92_PHASE4_MODULATOR_INVALID_STATE;
 	next.previous_encoded_sign = encoded_sign;
-	if (!v92_phase4_modulator_is_valid(&next))
-		return V92_PHASE4_MODULATOR_INVALID_STATE;
 	*modulator = next;
 	*sample = generated;
 	return V92_PHASE4_MODULATOR_OK;
@@ -268,8 +266,6 @@ enum v92_phase4_modulator_result v92_phase4_demodulator_next(
 		return V92_PHASE4_MODULATOR_INVALID_STATE;
 	recovered_group = reverse_group(recovered_group, bits);
 	next.previous_encoded_sign = encoded_sign;
-	if (!v92_phase4_demodulator_is_valid(&next))
-		return V92_PHASE4_MODULATOR_INVALID_STATE;
 	*demodulator = next;
 	*input_group = recovered_group;
 	*nearest_level = selected;

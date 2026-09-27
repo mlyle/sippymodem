@@ -311,11 +311,94 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_level_range(void)
+{
+	for (unsigned int points = 4u; points <= 8u; points += 4u) {
+		unsigned int bits = points == 4u ? 2u : 3u;
+		double normalization = sqrt((points * points - 1.0) / 3.0);
+
+		for (int32_t lu = INT16_MIN; lu <= INT16_MAX; ++lu) {
+			struct v92_phase4_modulator modulator = { 0 }, saved;
+			struct v92_phase4_demodulator demodulator = { 0 }, saved_rx;
+			long outer = (long)floor((points - 1u) * (double)lu /
+					       normalization + 0.5);
+			bool valid = lu > 0 && outer <= INT16_MAX;
+
+			saved = modulator;
+			saved_rx = demodulator;
+			CHECK((v92_phase4_modulator_init(
+				       &modulator, points, 0u, (int16_t)lu) ==
+				       V92_PHASE4_MODULATOR_OK) == valid &&
+			      (v92_phase4_demodulator_init(
+				       &demodulator, points, 0u, (int16_t)lu) ==
+				       V92_PHASE4_MODULATOR_OK) == valid,
+			      "Phase 4 LU range differed points=%u lu=%d", points, (int)lu);
+			if (!valid) {
+				CHECK(memcmp(&modulator, &saved, sizeof(saved)) == 0 &&
+				      memcmp(&demodulator, &saved_rx, sizeof(saved_rx)) == 0,
+				      "invalid LU changed its coding owner");
+				continue;
+			}
+			for (uint8_t sign = 0u; sign <= 1u; ++sign) {
+				for (uint8_t group = 0u; group < (1u << bits); ++group) {
+					struct v92_phase4_modulator tx = modulator;
+					struct v92_phase4_demodulator rx = demodulator;
+					uint32_t history = 0u;
+					uint8_t recovered = 0xa5u;
+					int16_t sample = 123, nearest = 456;
+					long magnitude = (long)floor(
+						(2u * (group & ((1u << (bits - 1u)) - 1u)) + 1u) *
+						(double)lu / normalization + 0.5);
+					bool negative = ((group >> (bits - 1u)) ^ sign) != 0u;
+
+					tx.previous_encoded_sign = rx.previous_encoded_sign = sign;
+					saved = tx;
+					saved_rx = rx;
+					/* Zero GPA history has no feedback in its first group. */
+					for (unsigned int bit = 0u; bit < bits; ++bit)
+						history = (history << 1) | ((group >> bit) & 1u);
+					CHECK((v92_phase4_modulator_next(&tx, group, &sample) ==
+						       V92_PHASE4_MODULATOR_OK) == (magnitude > 0),
+					      "Phase 4 inner level range differed");
+					if (magnitude == 0) {
+						CHECK(sample == 123 && memcmp(&tx, &saved, sizeof(tx)) == 0,
+						      "zero-rounded symbol changed state or output");
+						continue;
+					}
+					CHECK(sample == (negative ? -magnitude : magnitude) &&
+					      tx.scrambler.history == history &&
+					      tx.previous_encoded_sign == negative &&
+					      tx.lu == lu && tx.constellation == points &&
+					      v92_phase4_modulator_is_valid(&tx),
+					      "Phase 4 modulation broke its owner invariant");
+					if (floor(lu / normalization + 0.5) == 0.0) {
+						CHECK(v92_phase4_demodulator_next(&rx, sample, &recovered, &nearest) ==
+							      V92_PHASE4_MODULATOR_INVALID_STATE &&
+						      recovered == 0xa5u && nearest == 456 &&
+						      memcmp(&rx, &saved_rx, sizeof(rx)) == 0,
+						      "zero-rounded constellation changed receive state");
+						continue;
+					}
+					CHECK(v92_phase4_demodulator_next(&rx, sample, &recovered, &nearest) ==
+						      V92_PHASE4_MODULATOR_OK &&
+					      recovered == group && nearest == sample &&
+					      rx.descrambler.history == history &&
+					      rx.previous_encoded_sign == negative &&
+					      rx.lu == lu && rx.constellation == points &&
+					      v92_phase4_demodulator_is_valid(&rx),
+					      "Phase 4 demodulation broke its owner invariant");
+				}
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 Phase 4 modulator\n");
 	if (!test_generated_levels() || !test_arbitrary_groups() ||
-	    !test_contracts()) {
+	    !test_contracts() || !test_level_range()) {
 		fprintf(stderr, "[  FAILED  ] V.92 Phase 4 modulator\n");
 		return 1;
 	}
