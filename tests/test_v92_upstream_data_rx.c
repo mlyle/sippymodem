@@ -90,6 +90,66 @@ static bool receive_compared(
 	return true;
 }
 
+/* Preflight must protect BOTH decoders before either one's coding changes.
+ * Inactive alternate storage is not a decoder and must remain untouched. */
+static bool check_control_reset(const struct v92_upstream_data_rx *receiver)
+{
+	bool paired = v92_upstream_model_has_alternate(receiver);
+	struct v92_upstream_data_rx actual, expected;
+
+	for (unsigned branch = 0u; branch < (paired ? 2u : 1u); ++branch)
+		for (unsigned fault = 0u; fault < 5u; ++fault) {
+			actual = *receiver;
+			struct v92_pcm_frame_rx *decoder = branch ?
+				&actual.model.alternate : &actual.decoder;
+
+			if (fault == 0u) decoder->path_count = 0u;
+			if (fault == 1u) decoder->paths[0].differential = 2u;
+			if (fault == 2u) decoder->paths[0].pending[0][0] = 2u;
+			if (fault == 3u) actual.failed = true;
+			if (fault == 4u) {
+				decoder->paths[0].differential = 2u;
+				actual.failed = true;
+			}
+			expected = actual;
+			CHECK(v92_upstream_data_rx_reset_control(&actual) ==
+				(fault == 3u ? V92_UPSTREAM_DATA_RX_FAILED : V92_UPSTREAM_DATA_RX_INVALID_STATE) &&
+			      !memcmp(&actual, &expected, sizeof(actual)),
+			      "control reset mutated state after failed preflight: branch=%u fault=%u", branch, fault);
+		}
+	actual = *receiver;
+	if (!paired)
+		memset(&actual.model.alternate, 0xa5, sizeof(actual.model.alternate));
+	for (unsigned branch = 0u; branch < (paired ? 2u : 1u); ++branch) {
+		struct v92_pcm_frame_rx *decoder = branch ? &actual.model.alternate : &actual.decoder;
+
+		for (size_t path = 0u; path < decoder->path_count; ++path) {
+			decoder->paths[path].descrambler.history = 7u;
+			decoder->paths[path].differential = 1u;
+			decoder->paths[path].rm_frames = V92_PCM_RM_QUALIFY_FRAMES;
+			decoder->paths[path].rm_prime_frames = 2u;
+		}
+	}
+	CHECK(v92_upstream_data_rx_is_valid(&actual), "reset fixture is not valid");
+	expected = actual;
+	for (unsigned branch = 0u; branch < (paired ? 2u : 1u); ++branch) {
+		struct v92_pcm_frame_rx *decoder = branch ? &expected.model.alternate : &expected.decoder;
+
+		for (size_t path = 0u; path < decoder->path_count; ++path) {
+			decoder->paths[path].descrambler.history = 0u;
+			decoder->paths[path].differential = 0u;
+			decoder->paths[path].rm_frames = 0u;
+			decoder->paths[path].rm_prime_frames = 0u;
+		}
+	}
+	CHECK(v92_upstream_data_rx_reset_control(&actual) == V92_UPSTREAM_DATA_RX_OK &&
+	      !memcmp(&actual, &expected, sizeof(actual)) && v92_upstream_data_rx_is_valid(&actual) &&
+	      v92_upstream_data_rx_reset_control(&actual) == V92_UPSTREAM_DATA_RX_OK &&
+	      !memcmp(&actual, &expected, sizeof(actual)),
+	      "control reset changed retained state or was not idempotent");
+	return true;
+}
+
 /* A trained FIR with the real causal delay, not a zero-delay stand-in. Feed
  * E2u's first delayed samples before exporting its receive-side boundary. */
 static bool prepare_e2u_at_level(
@@ -1568,7 +1628,8 @@ static bool test_channel_plan(
 	}
 	CHECK(memcmp(&receiver.line.plan, &plan, sizeof(plan)) == 0,
 	      "B1u calibration changed the negotiated receive plan");
-	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	CHECK(check_control_reset(&receiver) &&
+	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
 	      memcmp(&saved, &receiver.line, sizeof(saved)) == 0,
 	      "control reset changed channel plan or line timing");
 	return true;
@@ -2133,7 +2194,8 @@ static bool test_scalar_model(enum g711_law law, int polarity, bool wrong_bit)
 	      !memcmp(&receiver.line.host, &saved.line.host, sizeof(saved.line.host)),
 	      "scalar erasure hid its residual or changed the fit");
 	receiver = saved;
-	CHECK(v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
+	CHECK(check_control_reset(&receiver) &&
+	      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
 	      receiver.model.scalar_gain == frozen && !memcmp(&receiver.line, &saved.line, sizeof(saved.line)),
 	      "control reset discarded the established scalar channel");
 	for (unsigned fault = 0; fault < 5; fault++) {
@@ -2256,6 +2318,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 		     receiver.line.received_frames == V92_B1U_FRAMES + 18u)) {
 			struct v92_upstream_data_line saved_line = receiver.line;
 			CHECK(receiver.model.valid == 3u &&
+			      check_control_reset(&receiver) &&
 			      v92_upstream_data_rx_reset_control(&receiver) == V92_UPSTREAM_DATA_RX_OK &&
 			      memcmp(&saved_line, &receiver.line, sizeof(saved_line)) == 0,
 			      "paired codec control reset failed");
@@ -2600,7 +2663,8 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 		if (control && rx.line.received_frames == V92_B1U_FRAMES) {
 			struct v92_pcm_frame_rx expected = rx.model.alternate;
 
-			CHECK(v92_pcm_frame_rx_reset_control(&expected) == V92_PCM_FRAME_OK &&
+			CHECK(check_control_reset(&rx) &&
+			      v92_pcm_frame_rx_reset_control(&expected) == V92_PCM_FRAME_OK &&
 			      v92_upstream_data_rx_reset_control(&rx) == V92_UPSTREAM_DATA_RX_OK &&
 			      memcmp(&rx.model.alternate, &expected, sizeof(expected)) == 0,
 			      "control reset left the delayed B1 validator in the old epoch");

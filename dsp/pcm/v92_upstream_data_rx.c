@@ -175,16 +175,13 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_reset_control(
 		return V92_UPSTREAM_DATA_RX_FAILED;
 	if (receiver->line.symbol_count != 0u || receiver->line.received_frames < V92_B1U_FRAMES)
 		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
-	struct v92_pcm_frame_rx decoder = receiver->decoder;
-	struct v92_pcm_frame_rx alternate = receiver->model.alternate;
 	bool paired = v92_upstream_model_has_alternate(receiver);
 
-	if (v92_pcm_frame_rx_reset_control(&decoder) != V92_PCM_FRAME_OK ||
-	    (paired && v92_pcm_frame_rx_reset_control(&alternate) != V92_PCM_FRAME_OK))
-		return V92_UPSTREAM_DATA_RX_INVALID_STATE;
-	receiver->decoder = decoder;
+	/* Preflight validated every active decoder. Reset only clears coding
+	 * fields, with no further failure point or change to delayed payload. */
+	(void)v92_pcm_frame_rx_reset_control(&receiver->decoder);
 	if (paired)
-		receiver->model.alternate = alternate;
+		(void)v92_pcm_frame_rx_reset_control(&receiver->model.alternate);
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
