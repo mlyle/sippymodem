@@ -498,6 +498,71 @@ static bool test_calibrated_filter_ownership(void)
 	return true;
 }
 
+static bool test_profile_validation(void)
+{
+	struct v34_phase3_profile profile = profile_fixture();
+	struct v34_phase3_profile invalid[13];
+	struct v34_training_line line;
+	struct qam_point point = generated_point(0);
+	int16_t sample;
+	bool accepted;
+
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid); ++index)
+		invalid[index] = profile;
+	invalid[0].symbol_rate_numerator = 0;
+	invalid[1].symbol_rate_denominator = 0;
+	invalid[2].carrier_frequency_numerator = 0;
+	invalid[3].carrier_frequency_denominator = 0;
+	invalid[4].md_symbol_count = 1;
+	invalid[5].symbol_rate = V34_SYMBOL_RATE_COUNT;
+	invalid[6].local_role = (enum v34_station_role)-1;
+	invalid[7].transmit_power_reduction_db =
+		V34_INFO1_MAX_POWER_REDUCTION_DB + 1u;
+	invalid[8].preemphasis_filter_index =
+		V34_INFO1_MAX_PREEMPHASIS_FILTER_INDEX + 1u;
+	invalid[9].projected_data_rate_2400_bps_units = 0;
+	invalid[10].projected_data_rate_2400_bps_units =
+		V34_INFO1_MAX_DATA_RATE_2400_BPS_UNITS + 1u;
+	invalid[11].md_length_35_ms_units =
+		V34_INFO1_MAX_MD_LENGTH_35_MS_UNITS + 1u;
+	invalid[12].high_carrier = !profile.high_carrier;
+	CHECK(v34_training_line_init(&line, &profile, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK,
+	      "profile validation fixture did not initialize");
+	for (unsigned int phase = 0; phase < 2u; ++phase) {
+		const struct qam_point *supplied = phase == 0u ? &point : NULL;
+
+		for (size_t index = 0; index < ARRAY_LENGTH(invalid); ++index) {
+			struct v34_training_line bad = line;
+			struct v34_training_line before;
+
+			bad.profile = invalid[index];
+			before = bad;
+			sample = 1234;
+			accepted = true;
+			CHECK(v34_pulse_modulator_is_valid(&bad.carrier) &&
+			      !v34_phase3_profile_is_valid(&bad.profile) &&
+			      !v34_line_channel_matches(
+				      &bad.profile, &bad.carrier.channel),
+			      "channel validation missed profile field %zu", index);
+			CHECK(!v34_training_line_is_valid(&bad) &&
+			      !v34_training_line_needs_point(&bad) &&
+			      v34_training_line_sample(&bad, supplied, &sample,
+						       &accepted) ==
+				      V34_TRAINING_LINE_INVALID_ARGUMENT &&
+			      memcmp(&bad, &before, sizeof(bad)) == 0 &&
+			      sample == 1234 && accepted,
+			      "invalid profile %zu changed state or outputs", index);
+		}
+		CHECK(v34_training_line_sample(&line, supplied, &sample,
+					       &accepted) == V34_TRAINING_LINE_OK &&
+		      accepted == (phase == 0u) &&
+		      !v34_training_line_needs_point(&line),
+		      "valid profile lost point admission");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -511,6 +576,7 @@ int main(void)
 		{ "disjoint sample buffers", test_disjoint_buffers },
 		{ "late sample rollback", test_late_sample_rollback },
 		{ "calibrated filter ownership", test_calibrated_filter_ownership },
+		{ "profile validation", test_profile_validation },
 	};
 	unsigned int failures = 0;
 

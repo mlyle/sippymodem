@@ -154,7 +154,6 @@ bool v34_training_line_is_valid(
 	const struct v34_training_line *line)
 {
 	if (line == NULL ||
-	    !v34_phase3_profile_is_valid(&line->profile) ||
 	    !v34_pulse_modulator_is_valid(&line->carrier) ||
 	    line->carrier.preemphasis_filter_index !=
 		    line->profile.preemphasis_filter_index ||
