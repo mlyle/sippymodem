@@ -21,7 +21,7 @@ struct observer {
 	size_t accepted_frames;
 	size_t received_frames;
 	bool use_decisions;
-	bool damage_b1d;
+	unsigned damage_b1d;
 };
 
 static void add_ucode(
@@ -75,10 +75,12 @@ static bool observe_output(
 		struct v90_pcm_stream_frame untouched;
 		struct v90_pcm_symbol received = output->symbols[symbol];
 		enum v90_downstream_data_rx_result result;
+		size_t damage_first = observer->damage_b1d == 2u ? 0u : B1D_DAMAGE_FIRST;
+		size_t damage_end = observer->damage_b1d == 2u ? 4u : B1D_DAMAGE_END;
 
 		if (observer->damage_b1d &&
-		    observer->received_frames >= B1D_DAMAGE_FIRST &&
-		    observer->received_frames < B1D_DAMAGE_END)
+		    observer->received_frames >= damage_first &&
+		    observer->received_frames < damage_end)
 			CHECK(v90_pcm_symbol_make(
 				      &received,
 				      observer->receiver.stream.decoder.mapping.law,
@@ -127,7 +129,7 @@ static bool observe_output(
 		 * clean B1d frames and require exact recovery by the final one;
 		 * no payload frames are skipped or delayed to hide errors. */
 		if (!observer->damage_b1d ||
-		    observer->received_frames < B1D_DAMAGE_FIRST ||
+		    observer->received_frames < damage_first ||
 		    observer->received_frames >= V90_PHASE4_B1D_FRAMES - 1u)
 			CHECK(memcmp(frame.bits,
 				     observer->expected[observer->received_frames],
@@ -141,7 +143,7 @@ static bool observe_output(
 
 static bool run_stream(
 	enum g711_law law, uint8_t redundancy, uint8_t lookahead,
-	bool use_decisions, bool damage_b1d)
+	bool use_decisions, unsigned damage_b1d)
 {
 	struct v90_pcm_mapping mapping;
 	struct v90_downstream_data_tx transmitter;
@@ -214,7 +216,8 @@ static bool run_stream(
 	CHECK(observer.received_frames == observer.accepted_frames &&
 	      observer.received_frames == TOTAL_FRAMES &&
 	      observer.receiver.b1d_frames == V90_PHASE4_B1D_FRAMES &&
-	      (observer.receiver.b1d_bit_errors > 0) == damage_b1d &&
+	      (observer.receiver.b1d_bit_errors > 0) == (damage_b1d != 0u) &&
+	      v90_downstream_data_rx_b1d_qualified(&observer.receiver) == (damage_b1d != 1u) &&
 	      v90_downstream_data_rx_b1d_complete(&observer.receiver) &&
 	      v90_downstream_data_rx_is_valid(&observer.receiver),
 	      "B1d/DATA boundary or accounting changed");
@@ -311,6 +314,7 @@ static bool test_contracts(void)
 	CHECK(!v90_downstream_data_rx_is_valid(&receiver) &&
 	      !v90_downstream_data_rx_is_valid(NULL) &&
 	      !v90_downstream_data_rx_b1d_complete(NULL) &&
+	      !v90_downstream_data_rx_b1d_qualified(NULL) &&
 	      strcmp(v90_downstream_data_rx_result_name(
 		     V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE),
 		     "B1d complete") == 0 &&
@@ -323,7 +327,7 @@ static bool test_contracts(void)
 
 static bool test_streams(void)
 {
-	for (unsigned damaged = 0; damaged < 2; ++damaged) {
+	for (unsigned damaged = 0; damaged < 3; ++damaged) {
 		CHECK(run_stream(G711_LAW_PCMU, 3, 3, false, damaged),
 		      "shaped PCMU octet stream failed (damage %u)", damaged);
 		CHECK(run_stream(G711_LAW_PCMA, 3, 3, true, damaged),

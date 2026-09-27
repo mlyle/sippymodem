@@ -20,6 +20,7 @@ static bool b1d_state_is_valid(
 	if (receiver == NULL || !stage_is_valid(receiver->stage) ||
 	    receiver->stream.decoder.mapping.kind != V90_CP_DATA ||
 	    receiver->b1d_frames > V90_PHASE4_B1D_FRAMES ||
+	    receiver->b1d_clean_frames > receiver->b1d_frames ||
 	    receiver->stream.received_frames < receiver->b1d_frames)
 		return false;
 	classified_bits = (uint64_t)receiver->b1d_frames *
@@ -112,8 +113,10 @@ static enum v90_downstream_data_rx_result commit_stream_result(
 	/* The stream commits a valid complete frame; its bounded bit count
 	 * also bounds B1d error accounting. */
 	if (receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_B1D) {
-		receiver->b1d_bit_errors +=
-			v90_pcm_stream_frame_bit_errors(decoded, 1u);
+		uint8_t errors = v90_pcm_stream_frame_bit_errors(decoded, 1u);
+
+		receiver->b1d_bit_errors += errors;
+		receiver->b1d_clean_frames = errors ? 0u : receiver->b1d_clean_frames + 1u;
 		receiver->b1d_frames++;
 		if (receiver->b1d_frames == V90_PHASE4_B1D_FRAMES) {
 			receiver->stage = V90_DOWNSTREAM_DATA_RX_STAGE_DATA;

@@ -6542,7 +6542,8 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 	CHECK(false, "wrong direct B1 test timed out");
 }
 
-/* Faults: none, one bad epoch, every epoch, or a fixed caller-owned map. */
+/* Faults: none, one bad epoch, every epoch, a fixed caller-owned map,
+ * or a recoverable startup transient followed by a clean B1d tail. */
 static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsigned fault)
 {
 	struct pcm_call_configuration ac, dc;
@@ -6595,9 +6596,10 @@ static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsig
 					stream = &call->state.data_path.v92_digital.downstream.data;
 				if (mode != 2u && call->state.data_path.digital.downstream_stage == V90_DIGITAL_PATH_DOWNSTREAM_DATA)
 					stream = &call->state.data_path.digital.downstream.data;
-				if (stream && stream->transmitter.b1d_frames == V90_PHASE4_B1D_FRAMES - 1u && !stream->queue_count) {
-					/* A valid waveform with a wrong late scrambled bit must
-					 * not qualify merely because all 48 frames elapsed. */
+				if (stream && stream->transmitter.b1d_frames ==
+					(fault == 4u ? 3u : V90_PHASE4_B1D_FRAMES - 1u) && !stream->queue_count) {
+					/* A valid waveform with a wrong scrambled bit may settle
+					 * early, but a late error must prevent qualification. */
 					stream->transmitter.scrambler.history ^= UINT32_C(1) << 22u;
 					injected = true;
 				}
@@ -6620,7 +6622,7 @@ static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsig
 			CHECK(result == PCM_CALL_OK, "downstream B1 data clock failed: mode=%u law=%u fault=%u result=%s",
 			      mode, law, fault, pcm_call_result_name(result));
 			if (side == 0u) {
-				CHECK(!fault || recovered || event.kind == PCM_CALL_DATA_NONE, "bad B1d delivered payload");
+				CHECK(!fault || fault == 4u || recovered || event.kind == PCM_CALL_DATA_NONE, "bad B1d delivered payload");
 				if (call->stage == PCM_CALL_RETRAIN_SILENCE) {
 					CHECK(fault && injected && !recovered && !pcm_call_is_online(call) &&
 					      call->downstream_retry_ceiling == 21u && pcm_call_is_valid(call) &&
@@ -6632,10 +6634,10 @@ static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsig
 				}
 				if (pcm_call_is_online(call)) {
 					uint32_t upstream, downstream;
-					CHECK(!fault || (fault == 1u && recovered),
+					CHECK(!fault || (fault == 1u && recovered) || (fault == 4u && injected && !recovered),
 					      "wrong B1d opened data path: mode=%u law=%u injected=%u", mode, law, injected);
 					CHECK(pcm_call_get_data_rates(call, &upstream, &downstream) &&
-					      downstream == (fault ? 28000u : 56000u), "B1d recovery ignored rate masks");
+					      downstream == (recovered ? 28000u : 56000u), "B1d recovery ignored rate masks");
 				}
 				if (payload_enabled && event.kind == PCM_CALL_DOWNSTREAM_FRAME) {
 					const struct v90_pcm_stream_frame *frame = &event.frame.downstream;
@@ -6664,7 +6666,7 @@ static bool test_downstream_b1_validation(void)
 {
 	for (unsigned mode = 0u; mode < 3u; ++mode)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-			for (unsigned fault = 0u; fault < 4u; ++fault)
+			for (unsigned fault = 0u; fault < 5u; ++fault)
 				CHECK(run_downstream_b1_validation(mode, law, fault), "downstream B1 validation failed");
 	return true;
 }

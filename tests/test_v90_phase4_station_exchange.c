@@ -406,7 +406,7 @@ static bool verify_final_downstream_exchange(
 	struct v90_phase4_analog_receive_handoff *analog,
 	const struct v90_cp_parameters *training,
 	uint32_t enabled_downstream_rate_mask,
-	bool expect_rate_deferral, bool damage_prime)
+	bool expect_rate_deferral, bool damage_prime, bool damage_mp)
 {
 	struct v90_cp_parameters data_cp = *training;
 	struct v90_phase4_analog_handoff analog_handoff = {
@@ -435,6 +435,8 @@ static bool verify_final_downstream_exchange(
 	bool upstream_source_failure_checked = false;
 	bool unadvertised_candidate_seen = false;
 	bool prime_damaged = false;
+	bool mp_damaged = false;
+	bool first_mp_seen = false;
 	bool e_acknowledged = false;
 
 	data_cp.kind = V90_CP_DATA;
@@ -615,6 +617,24 @@ static bool verify_final_downstream_exchange(
 			upstream_data_frames++;
 		}
 
+		/* Lose the plain MP on the wire, but preserve the scrambler and
+		 * framing so the first intact parameter record is MP-prime. */
+		if (damage_mp && !mp_damaged && training_active) {
+			const struct pcm_downstream_rx *receiver =
+				&analog_path.downstream.training;
+
+			if (receiver->stage == PCM_DOWNSTREAM_RX_MP_SEARCH &&
+			    receiver->stream.pending_count == V90_CP_FRAME_INTERVALS - 1u &&
+			    receiver->control.mp.stage == V90_MP_RECEIVE_SEQUENCE &&
+			    receiver->control.mp.bit_index > V90_MP_FRAME_SYNC_BITS + 1u &&
+			    receiver->control.mp.bit_index +
+				    receiver->stream.decoder.mapping.frame_bits +
+				    V34_SCRAMBLER_BITS < receiver->control.mp.sequence_bit_count) {
+				CHECK(alter_last_modulus_symbol(receiver, &digital_octet),
+				      "could not damage the first MP");
+				mp_damaged = true;
+			}
+		}
 		memset(&downstream_frame, 0x5a, sizeof(downstream_frame));
 		saved_downstream_frame = downstream_frame;
 		analog_result = v90_analog_path_receive(
@@ -623,6 +643,13 @@ static bool verify_final_downstream_exchange(
 		      analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME,
 		      "analogue receive failed at clock %zu: %s", clock,
 		      v90_analog_path_result_name(analog_result));
+		if (damage_mp && analog_path.peer_mp_received && !first_mp_seen) {
+			CHECK(mp_damaged && analog_path.peer_mp_prime_received &&
+			      !analog_path.cp_prime_sent && !analog_path.ed_armed &&
+			      analog_path.upstream_stage == V90_ANALOG_PATH_UPSTREAM_CP,
+			      "first MP-prime skipped the complete CP-prime response");
+			first_mp_seen = true;
+		}
 		if (training_active)
 			downstream_training_characters++;
 		if (analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME) {
@@ -658,6 +685,7 @@ static bool verify_final_downstream_exchange(
 	CHECK(analog_path.peer_mp_received &&
 	      !expect_rate_deferral &&
 	      (!damage_prime || (prime_damaged && e_acknowledged)) &&
+	      (!damage_mp || (mp_damaged && first_mp_seen)) &&
 	      analog_path.peer_mp_prime_received &&
 	      analog_path.cp_prime_sent && analog_path.finishing_cp &&
 	      analog_path.ed_armed && trn2d_complete &&
@@ -822,15 +850,19 @@ static bool run_exchange(
 	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
-		      V90_JD_RATE_CAPABILITY_MASK, false, false) &&
+		      V90_JD_RATE_CAPABILITY_MASK, false, false, false) &&
 	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
-		      V90_JD_RATE_CAPABILITY_MASK, false, true) &&
+		      V90_JD_RATE_CAPABILITY_MASK, false, true, false) &&
 	      verify_final_downstream_exchange(
 		      &analog_transmit, &digital_receive,
 		      &digital_transmit, &analog_receive, &training,
-		      UINT32_C(2), true, false),
+		      V90_JD_RATE_CAPABILITY_MASK, false, false, true) &&
+	      verify_final_downstream_exchange(
+		      &analog_transmit, &digital_receive,
+		      &digital_transmit, &analog_receive, &training,
+		      UINT32_C(2), true, false, false),
 	      "paired owners disagreed through downstream data");
 	return true;
 }

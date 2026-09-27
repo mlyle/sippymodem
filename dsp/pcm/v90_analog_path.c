@@ -592,23 +592,18 @@ static enum v90_analog_path_result accept_mp(
 	 * acknowledgement does not match an ordinary rate negotiation. */
 	if (parameters->maximum_upstream_rate_2400_bps_units == 0u)
 		return V90_ANALOG_PATH_CLEARDOWN_COMPLETE;
-	if (prime) {
-		if (!path->peer_mp_received ||
-		    !v90_mp_record_acknowledges_cp(record) ||
-		    !v90_mp_record_parameters_equal(&path->peer_mp, record))
-			return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
-		path->peer_mp_prime_received = true;
-		return V90_ANALOG_PATH_OK;
-	}
-	if (v90_mp_record_acknowledges_cp(record) ||
-	    path->peer_mp_prime_received)
+	if (v90_mp_record_acknowledges_cp(record) != prime ||
+	    (!prime && path->peer_mp_prime_received) ||
+	    (path->peer_mp_received &&
+	     !v90_mp_record_parameters_equal(&path->peer_mp, record)))
 		return V90_ANALOG_PATH_SEQUENCE_MISMATCH;
-	if (path->peer_mp_received)
-		return v90_mp_record_equal(&path->peer_mp, record) ?
-			       V90_ANALOG_PATH_OK :
-			       V90_ANALOG_PATH_SEQUENCE_MISMATCH;
-	path->peer_mp = *record;
+	/* MP-prime contains the complete MP parameters (V.90 8.6.3), even
+	 * when no plain MP was decoded. Keep the first CRC-checked record;
+	 * prepare_cp_record still sends a complete CP-prime before E. */
+	if (!path->peer_mp_received)
+		path->peer_mp = *record;
 	path->peer_mp_received = true;
+	path->peer_mp_prime_received = prime;
 	return V90_ANALOG_PATH_OK;
 }
 

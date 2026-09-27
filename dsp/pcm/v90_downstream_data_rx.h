@@ -7,6 +7,7 @@
 #include "v90_phase4.h"
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 enum v90_downstream_data_rx_stage {
@@ -36,7 +37,20 @@ struct v90_downstream_data_rx {
 	uint64_t b1d_bit_errors;
 	enum v90_downstream_data_rx_stage stage;
 	uint8_t b1d_frames;
+	uint8_t b1d_clean_frames;
 };
+
+/* Receiver policy, not a change to V.90 8.6.1's 48-frame B1d. Allow the
+ * first 6 ms for the data constellation/coding transition to settle, then
+ * require 40 consecutive error-free frames (30 ms). Keep total errors for
+ * diagnostics; no B1d frame becomes host data and no payload is delayed. */
+static inline bool v90_downstream_data_rx_b1d_qualified(
+	const struct v90_downstream_data_rx *receiver)
+{
+	return receiver != NULL &&
+	       receiver->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
+	       receiver->b1d_clean_frames >= 40u;
+}
 
 enum v90_downstream_data_rx_result v90_downstream_data_rx_init(
 	struct v90_downstream_data_rx *receiver,
@@ -50,7 +64,7 @@ bool v90_downstream_data_rx_b1d_complete(
 /* Consume one hard decision at the known mapper phase. A complete frame is
  * always returned, including the 48th B1d frame reported by B1D_COMPLETE.
  * B1d departures from binary ones do not shift this decoder's DATA boundary.
- * The call owner must qualify b1d_bit_errors before admitting online data. */
+ * The call owner must require b1d_qualified before admitting online data. */
 enum v90_downstream_data_rx_result
 v90_downstream_data_rx_receive_decision(
 	struct v90_downstream_data_rx *receiver, uint8_t ucode,

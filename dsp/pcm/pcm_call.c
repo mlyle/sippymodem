@@ -1400,9 +1400,7 @@ static bool analog_downstream_is_online_owned(
 	return !path->failed &&
 	       (path->rate_renegotiation_active ||
 		(path->downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA &&
-		 path->downstream.data.stage ==
-			 V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
-		 path->downstream.data.b1d_bit_errors == 0u));
+		 v90_downstream_data_rx_b1d_qualified(&path->downstream.data)));
 }
 
 static bool digital_downstream_is_online_owned(
@@ -1432,8 +1430,7 @@ static bool v92_peer_b1_received_owned(const struct pcm_call *call)
 
 		return (!path->fast.deadline_remaining || pcm_r_rx_is_complete(&path->rf)) &&
 		       path->downstream_stage == V92_PHASE4_E2U_DOWNSTREAM_DATA &&
-		       path->downstream.data.stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA &&
-		       path->downstream.data.b1d_bit_errors == 0u;
+		       v90_downstream_data_rx_b1d_qualified(&path->downstream.data);
 	}
 	const struct pcm_call_v92_digital_data *path =
 		&call->state.data_path.v92_digital;
@@ -1544,9 +1541,9 @@ static enum pcm_call_result advance_b1_deadline(struct pcm_call *call)
 				rx = &call->state.data_path.v92_analog.downstream.data;
 		} else if (call->state.data_path.analog.downstream_stage == V90_ANALOG_PATH_DOWNSTREAM_DATA)
 			rx = &call->state.data_path.analog.downstream.data;
-		if (rx && rx->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA && rx->b1d_bit_errors != 0u) {
+		if (rx && rx->stage == V90_DOWNSTREAM_DATA_RX_STAGE_DATA && !v90_downstream_data_rx_b1d_qualified(rx)) {
 			/* V.90 8.6.1 / V.92 8.8.1 transmit known ones throughout B1d.
-			 * A frame boundary alone cannot qualify data. Phase 4 permits
+			 * An unsettled B1d tail cannot qualify data. Phase 4 permits
 			 * full retrain; an automatic profile tries a strictly lower K.
 			 * Explicit maps and exhausted rate masks fail without silently
 			 * replacing caller policy or repeating an unusable selection. */
@@ -4832,7 +4829,7 @@ static enum pcm_call_result v92_data_octet_owned(
 			&path->downstream_stage, &path->cpu, &path->upstream.encoder.mapping,
 			received_octet, &frame);
 		if (received == V90_DOWNSTREAM_DATA_RX_DATA_FRAME) {
-			if (!suppress_frame && path->downstream.data.b1d_bit_errors == 0u) {
+			if (!suppress_frame && v90_downstream_data_rx_b1d_qualified(&path->downstream.data)) {
 				emitted->frame.downstream = frame;
 				emitted->kind = PCM_CALL_DOWNSTREAM_FRAME;
 			}
@@ -5119,7 +5116,7 @@ static enum pcm_call_result data_octet_owned(
 		if (!retrain_candidate &&
 		    result == PCM_CALL_OK &&
 		    analog_result == V90_ANALOG_PATH_DOWNSTREAM_FRAME &&
-		    call->state.data_path.analog.downstream.data.b1d_bit_errors == 0u) {
+		    v90_downstream_data_rx_b1d_qualified(&call->state.data_path.analog.downstream.data)) {
 			emitted.frame.downstream = downstream_frame;
 			emitted.kind = PCM_CALL_DOWNSTREAM_FRAME;
 		}
