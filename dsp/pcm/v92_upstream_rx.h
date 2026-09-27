@@ -40,7 +40,8 @@ bool v92_upstream_rx_is_valid(const struct v92_upstream_rx *receiver);
 bool v92_upstream_rx_has_failed(const struct v92_upstream_rx *receiver);
 
 /* Predict the equalizer-coordinate level for a known next input group without
- * advancing either coding history. This is the reference used by E2u. */
+ * changing receiver state. level must not overlap receiver; rejected calls
+ * leave level unchanged. This is the reference used by E2u. */
 bool v92_upstream_rx_expected_level(
 	const struct v92_upstream_rx *receiver, uint8_t input_group,
 	int16_t *level);

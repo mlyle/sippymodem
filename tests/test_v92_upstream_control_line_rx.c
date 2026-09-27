@@ -707,6 +707,93 @@ static bool test_e2u_carrier(void)
 	return true;
 }
 
+static bool run_prediction_contracts(
+	enum g711_law law, enum v92_constellation_size points,
+	uint8_t previous_sign, int8_t polarity)
+{
+	struct v92_pcm_phase4_trn2u transmitter;
+	struct v92_pcm_phase4_trn2u_line_handoff boundary;
+	struct {
+		int16_t before;
+		struct v92_upstream_rx receiver;
+		int16_t after;
+	} outputs = { 0 };
+	struct v92_upstream_rx saved;
+	unsigned int groups =
+		1u << v92_phase4_modulator_bits_per_symbol(points);
+
+	CHECK(build_boundary(law, points, previous_sign, polarity,
+			     &transmitter, &boundary) &&
+	      v92_upstream_rx_init(&outputs.receiver, &boundary) ==
+		      V92_UPSTREAM_RX_OK,
+	      "prediction boundary did not initialize");
+	for (unsigned int tail = 0u; tail < 2u; ++tail) {
+		outputs.receiver.training_tail_remaining = tail != 0u ?
+			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY : 0u;
+		saved = outputs.receiver;
+		for (unsigned int group = 0u; group < groups; ++group) {
+			const struct v92_phase4_demodulator *demodulator =
+				&outputs.receiver.line.demodulator;
+			struct v92_phase4_modulator reference = {
+				.scrambler = demodulator->descrambler,
+				.constellation = demodulator->constellation,
+				.lu = demodulator->lu,
+				.previous_encoded_sign =
+					demodulator->previous_encoded_sign,
+			};
+			int16_t expected;
+
+			CHECK(v92_phase4_modulator_next(
+				      &reference, (uint8_t)group, &expected) ==
+				      V92_PHASE4_MODULATOR_OK &&
+			      v92_upstream_rx_expected_level(
+				      &outputs.receiver, (uint8_t)group, &outputs.before) &&
+			      v92_upstream_rx_expected_level(
+				      &outputs.receiver, (uint8_t)group, &outputs.after) &&
+			      outputs.before == expected && outputs.after == expected &&
+			      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
+			      "prediction changed state or disagreed law=%u points=%u group=%u",
+			      law, points, group);
+			CHECK(!v92_upstream_rx_expected_level(
+				      &outputs.receiver, (uint8_t)group,
+				      &outputs.receiver.line.demodulator.lu) &&
+			      !v92_upstream_rx_expected_level(
+				      &outputs.receiver, (uint8_t)group,
+				      &outputs.receiver.line.pending_training_targets[0]) &&
+			      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
+			      "prediction accepted an output within its receive owner");
+		}
+	}
+	outputs.receiver.failed = true;
+	saved = outputs.receiver;
+	outputs.after = 123;
+	CHECK(!v92_upstream_rx_expected_level(
+		      &outputs.receiver, 0u, &outputs.after) &&
+	      outputs.after == 123 &&
+	      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
+	      "failed prediction changed state or output");
+	outputs.receiver.failed = false;
+	outputs.receiver.line.demodulator.lu = 0;
+	saved = outputs.receiver;
+	CHECK(!v92_upstream_rx_expected_level(
+		      &outputs.receiver, 0u, &outputs.after) &&
+	      outputs.after == 123 &&
+	      memcmp(&outputs.receiver, &saved, sizeof(saved)) == 0,
+	      "invalid prediction changed state or output");
+	return true;
+}
+
+static bool test_prediction_contracts(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (unsigned int points = 4u; points <= 8u; points += 4u)
+			for (uint8_t sign = 0u; sign <= 1u; ++sign)
+				for (int8_t polarity = -1; polarity <= 1; polarity += 2)
+					CHECK(run_prediction_contracts(law, points, sign, polarity),
+					      "prediction contract matrix stopped");
+	return true;
+}
+
 static bool test_e2u_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
@@ -1109,6 +1196,7 @@ int main(void)
 		{ "generated digital Phase 4 lines", test_generated_lines },
 		{ "generated E2u boundaries", test_e2u },
 		{ "E2u carrier qualification", test_e2u_carrier },
+		{ "read-only upstream predictions", test_prediction_contracts },
 		{ "E2u contracts", test_e2u_contracts },
 		{ "control-line contracts", test_contracts },
 		{ "digital receive contracts", test_digital_receive_contracts },

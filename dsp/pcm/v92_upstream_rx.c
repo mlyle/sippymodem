@@ -30,7 +30,9 @@ bool v92_upstream_rx_expected_level(
 	int16_t generated;
 
 	if (!v92_upstream_rx_is_valid(receiver) || receiver->failed ||
-	    level == NULL)
+	    level == NULL ||
+	    memory_regions_overlap(
+		    receiver, sizeof(*receiver), level, sizeof(*level)))
 		return false;
 	demodulator = &receiver->line.demodulator;
 	bits = v92_phase4_modulator_bits_per_symbol(
