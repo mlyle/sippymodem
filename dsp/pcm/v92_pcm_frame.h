@@ -154,10 +154,12 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame);
 
-/* Upstream-stream owner path: mapping and coder state were validated when the
- * epoch began. Keep input-bit and fallible coding checks for every frame. */
+/* Upstream-stream owner path: the mapping is frozen for the coding epoch and
+ * both inputs were validated at its boundary. Stage only mutable coder state;
+ * keep input-bit and fallible coding checks for every frame. */
 enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
-	struct v92_pcm_frame_tx *transmitter,
+	const struct v92_pcm_mapping *mapping,
+	struct v92_pcm_frame_tx_state *state,
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame);
 
@@ -165,9 +167,11 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
  * Trellis, precoder and prefilter histories continue. Scrambler/differential
  * state is untouched; these signals specify modulus-output digits directly,
  * so frame_sign is zero. The caller owns repetition and the control reset.
- * Rejected calls leave state/output unchanged; they must not overlap. */
+ * The mapping and state are checked; all three regions must be disjoint.
+ * Rejected calls leave state/output unchanged. */
 enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
-	struct v92_pcm_frame_tx *transmitter, bool prime, struct v92_pcm_frame *frame);
+	const struct v92_pcm_mapping *mapping,
+	struct v92_pcm_frame_tx_state *state, bool prime, struct v92_pcm_frame *frame);
 
 /* Apply nonzero CPd 4G and positive trained LU to one prefilter output.
  * Rejected calls leave the sample unchanged. */

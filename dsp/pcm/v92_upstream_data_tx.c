@@ -110,17 +110,18 @@ static enum v92_upstream_data_tx_result generate_frame(
 	struct v92_upstream_data_tx *transmitter,
 	v92_upstream_frame_source source, void *context)
 {
-	struct v92_pcm_frame_tx encoder = transmitter->encoder;
+	const struct v92_pcm_mapping *mapping = &transmitter->encoder.mapping;
+	struct v92_pcm_frame_tx_state state = transmitter->encoder.state;
 	struct v92_pcm_frame frame;
 	int16_t samples[V92_PCM_MAPPING_FRAME_SYMBOLS];
 	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
-	size_t count = encoder.mapping.data_bits_per_frame;
+	size_t count = mapping->data_bits_per_frame;
 	bool sourced = false;
 
 	/* B1u is exactly 48 complete known-one frames. Fetching the first data
 	 * frame does not reset or reseed any of the active coding histories. */
 	if (transmitter->rm_symbols_remaining != 0u) {
-		if (v92_pcm_frame_encode_rm(&encoder,
+		if (v92_pcm_frame_encode_rm(mapping, &state,
 			transmitter->rm_symbols_remaining <= RM_PRIME_SYMBOLS, &frame) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	} else {
@@ -135,7 +136,7 @@ static enum v92_upstream_data_tx_result generate_frame(
 			sourced = true;
 		}
 		enum v92_pcm_frame_result result =
-			v92_pcm_frame_encode_owned(&encoder, bits, count, &frame);
+			v92_pcm_frame_encode_owned(mapping, &state, bits, count, &frame);
 
 		if (result != V92_PCM_FRAME_OK)
 			return sourced && result == V92_PCM_FRAME_OUT_OF_RANGE ?
@@ -144,11 +145,11 @@ static enum v92_upstream_data_tx_result generate_frame(
 	}
 	for (size_t index = 0u; index < V92_PCM_MAPPING_FRAME_SYMBOLS; ++index) {
 		if (v92_pcm_frame_scale(
-			    encoder.mapping.cpd.four_times_gain_q0_16, transmitter->upstream_level,
+			    mapping->cpd.four_times_gain_q0_16, transmitter->upstream_level,
 			    frame.v[index], &samples[index]) != V92_PCM_FRAME_OK)
 			return V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE;
 	}
-	transmitter->encoder.state = encoder.state;
+	transmitter->encoder.state = state;
 	memcpy(transmitter->queue, samples, sizeof(samples));
 	transmitter->queue_count = V92_PCM_MAPPING_FRAME_SYMBOLS;
 	return V92_UPSTREAM_DATA_TX_OK;

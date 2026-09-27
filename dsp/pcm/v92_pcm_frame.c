@@ -476,25 +476,28 @@ static bool encode_digits(const struct v92_pcm_mapping *mapping,
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_encode_rm(
-	struct v92_pcm_frame_tx *transmitter, bool prime, struct v92_pcm_frame *frame)
+	const struct v92_pcm_mapping *mapping,
+	struct v92_pcm_frame_tx_state *state, bool prime, struct v92_pcm_frame *frame)
 {
 	struct v92_pcm_frame encoded = { 0 };
 
-	if (transmitter == NULL || frame == NULL ||
-	    memory_regions_overlap(transmitter, sizeof(*transmitter), frame, sizeof(*frame)))
+	if (mapping == NULL || state == NULL || frame == NULL ||
+	    memory_regions_overlap(mapping, sizeof(*mapping), state, sizeof(*state)) ||
+	    memory_regions_overlap(mapping, sizeof(*mapping), frame, sizeof(*frame)) ||
+	    memory_regions_overlap(state, sizeof(*state), frame, sizeof(*frame)))
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (!v92_pcm_frame_tx_is_valid(transmitter))
+	if (!v92_pcm_mapping_is_valid(mapping) || !state_is_valid(state, mapping->cpd.trellis))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	struct v92_pcm_frame_tx_state next = transmitter->state;
+	struct v92_pcm_frame_tx_state next = *state;
 
 	/* V.92 Tables 25/26 specify digits at the modulus encoder output,
 	 * bypassing scrambling and differential coding, not the channel coder. */
 	for (size_t i = 0u; i < V92_PCM_MAPPING_FRAME_SYMBOLS; ++i)
 		encoded.digit[i] = (i % 4u < 2u) != prime ?
-			(uint8_t)(transmitter->mapping.cpd.modulus[i] - 1u) : 0u;
-	if (!encode_digits(&transmitter->mapping, &next, &encoded))
+			(uint8_t)(mapping->cpd.modulus[i] - 1u) : 0u;
+	if (!encode_digits(mapping, &next, &encoded))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	transmitter->state = next;
+	*state = next;
 	*frame = encoded;
 	return V92_PCM_FRAME_OK;
 }
@@ -508,11 +511,13 @@ enum v92_pcm_frame_result v92_pcm_frame_encode(
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
 	if (!v92_pcm_frame_tx_is_valid(transmitter))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	return v92_pcm_frame_encode_owned(transmitter, bits, bit_count, frame);
+	return v92_pcm_frame_encode_owned(&transmitter->mapping,
+		&transmitter->state, bits, bit_count, frame);
 }
 
 enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
-	struct v92_pcm_frame_tx *transmitter,
+	const struct v92_pcm_mapping *mapping,
+	struct v92_pcm_frame_tx_state *state,
 	const uint8_t *bits, size_t bit_count,
 	struct v92_pcm_frame *frame)
 {
@@ -520,24 +525,24 @@ enum v92_pcm_frame_result v92_pcm_frame_encode_owned(
 	struct v92_pcm_frame encoded = { 0 };
 	uint8_t scrambled[V92_PCM_MAPPING_MAX_BITS];
 
-	if (transmitter == NULL || frame == NULL || bits == NULL)
+	if (mapping == NULL || state == NULL || frame == NULL || bits == NULL)
 		return V92_PCM_FRAME_INVALID_ARGUMENT;
-	if (bit_count != transmitter->mapping.data_bits_per_frame ||
+	if (bit_count != mapping->data_bits_per_frame ||
 	    !unpacked_bits_are_binary(bits, bit_count))
 		return V92_PCM_FRAME_OUT_OF_RANGE;
-	next = transmitter->state;
+	next = *state;
 	if (v34_scramble_unpacked_bits(
 		    &next.scrambler, bits, bit_count, scrambled) !=
 	    V34_FRAMING_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
 	if (v92_pcm_mapping_encode_owned(
-		    &transmitter->mapping, scrambled, bit_count,
+		    mapping, scrambled, bit_count,
 		    &next.differential, encoded.digit,
 		    &encoded.frame_sign) != V92_PCM_MAPPING_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	if (!encode_digits(&transmitter->mapping, &next, &encoded))
+	if (!encode_digits(mapping, &next, &encoded))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	transmitter->state = next;
+	*state = next;
 	*frame = encoded;
 	return V92_PCM_FRAME_OK;
 }

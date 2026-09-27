@@ -246,7 +246,8 @@ static bool test_rm_sequence(enum g711_law law, uint8_t rate, bool filtered, uns
 	for (unsigned f = 0; f < 34u; ++f) {
 		struct v92_pcm_frame frame;
 
-		CHECK(v92_pcm_frame_encode_rm(&frames, f >= 32u, &frame) == V92_PCM_FRAME_OK,
+		CHECK(v92_pcm_frame_encode_rm(&frames.mapping, &frames.state,
+			f >= 32u, &frame) == V92_PCM_FRAME_OK,
 			"RM frame did not encode");
 		for (unsigned i = 0; i < 12u; ++i) {
 			bool complete = f == 33u && i == 11u;
@@ -452,7 +453,7 @@ static bool test_validation(void)
 	return true;
 }
 
-static bool test_owned_clock(void)
+static bool test_owned_clock_case(enum g711_law law, uint8_t rate, bool filtered)
 {
 	struct v92_pcm_mapping mapping;
 	struct v92_upstream_data_tx checked;
@@ -460,7 +461,7 @@ static bool test_owned_clock(void)
 	struct source_state checked_source = { 0 };
 	struct source_state owned_source = { 0 };
 
-	CHECK(mapping_init(&mapping, G711_LAW_PCMU, 19u, true) &&
+	CHECK(mapping_init(&mapping, law, rate, filtered) &&
 	      v92_upstream_data_tx_init(&checked, &mapping, TEST_LEVEL) ==
 		      V92_UPSTREAM_DATA_TX_OK, "owned clock initialization failed");
 	owned = checked;
@@ -504,9 +505,58 @@ static bool test_owned_clock(void)
 	return true;
 }
 
+static bool test_owned_clock(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate)
+			for (unsigned filtered = 0u; filtered < 2u; ++filtered)
+				CHECK(test_owned_clock_case(law, rate, filtered != 0u),
+				      "owned clock matrix failed");
+	return true;
+}
+
+static bool test_owned_frame_rollback(void)
+{
+	struct v92_pcm_mapping mapping;
+	struct v92_upstream_data_tx tx;
+
+	CHECK(mapping_init(&mapping, G711_LAW_PCMU, 19u, true) &&
+	      v92_upstream_data_tx_init(&tx, &mapping, TEST_LEVEL) ==
+		      V92_UPSTREAM_DATA_TX_OK, "rollback fixture failed");
+	tx.b1u_symbols_remaining = 0u;
+	/* Even on the block-owner path, a late scaling failure must not commit
+	 * already encoded scrambler, differential, trellis or filter histories. */
+	for (unsigned fault = 0u; fault < 3u; ++fault) {
+		struct v92_upstream_data_tx invalid = tx;
+
+		if (fault == 0u)
+			invalid.upstream_level = 0;
+		else if (fault == 1u)
+			invalid.encoder.mapping.cpd.four_times_gain_q0_16 = 0u;
+		else
+			invalid.encoder.state.differential = 2u;
+		for (unsigned source_fault = 0u; source_fault < 4u; ++source_fault) {
+			struct v92_upstream_data_tx saved = invalid;
+			struct source_state input = { .invalid = source_fault };
+			int16_t sample = 12345;
+
+			CHECK(v92_upstream_data_tx_next_owned(&invalid, source,
+				      &input, &sample) == (source_fault != 0u ?
+				      V92_UPSTREAM_DATA_TX_SOURCE_FAILURE :
+				      V92_UPSTREAM_DATA_TX_NUMERIC_FAILURE) &&
+			      input.calls == 1u && sample == 12345 &&
+			      memcmp(&invalid, &saved, sizeof(saved)) == 0,
+			      "owned frame failure committed state: fault %u source %u",
+			      fault, source_fault);
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	return test_stream(false) && test_stream(true) &&
 	       test_rm_matrix() && test_finish_matrix() &&
-	       test_rejected_sources_and_idle() && test_validation() && test_owned_clock() ? 0 : 1;
+	       test_rejected_sources_and_idle() && test_validation() &&
+	       test_owned_clock() && test_owned_frame_rollback() ? 0 : 1;
 }

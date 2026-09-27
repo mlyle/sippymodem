@@ -967,7 +967,7 @@ static bool test_rm_receive(enum g711_law law, uint8_t rate,
 				memcmp(&rx, &expected, sizeof(rx)) == 0,
 				"control reset lost delayed tags, trellis, filters or payload");
 		}
-		CHECK((request ? v92_pcm_frame_encode_rm(&tx, f >= PRIME, &frame) :
+		CHECK((request ? v92_pcm_frame_encode_rm(&tx.mapping, &tx.state, f >= PRIME, &frame) :
 			v92_pcm_frame_encode(&tx, payload[f], mapping.data_bits_per_frame, &frame)) ==
 			V92_PCM_FRAME_OK, "RM frame generation failed");
 		memset(decoded, 0xa5, sizeof(decoded));

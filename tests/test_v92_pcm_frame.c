@@ -430,7 +430,8 @@ static bool test_transmitter_equations(uint8_t rate, unsigned trellis,
 		if (rm) {
 			struct v92_pcm_frame_tx_state before = transmitter.state;
 
-			CHECK(v92_pcm_frame_encode_rm(&transmitter, prime, &frame) == V92_PCM_FRAME_OK &&
+			CHECK(v92_pcm_frame_encode_rm(&transmitter.mapping, &transmitter.state,
+				prime, &frame) == V92_PCM_FRAME_OK &&
 				memcmp(&before.scrambler, &transmitter.state.scrambler,
 					sizeof(before.scrambler)) == 0 &&
 				before.differential == transmitter.state.differential,
@@ -846,11 +847,35 @@ static bool test_rejection_and_names(void)
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0,
 	      "non-bit input changed transmitter state");
 	CHECK(v92_pcm_frame_encode_owned(
-		      &transmitter, bits, transmitter.mapping.data_bits_per_frame,
+		      &transmitter.mapping, &transmitter.state,
+		      bits, transmitter.mapping.data_bits_per_frame,
 		      &output) == V92_PCM_FRAME_OUT_OF_RANGE &&
 	      memcmp(&transmitter, &saved, sizeof(saved)) == 0 &&
 	      memcmp(&output, &output_saved, sizeof(output)) == 0,
 	      "owned encode changed state or output after invalid bits");
+	CHECK(v92_pcm_frame_encode_owned(NULL, &transmitter.state,
+		      bits, saved.mapping.data_bits_per_frame, &output) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_owned(&transmitter.mapping, NULL,
+		      bits, saved.mapping.data_bits_per_frame, &output) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      memcmp(&transmitter, &saved, sizeof(saved)) == 0 &&
+	      memcmp(&output, &output_saved, sizeof(output)) == 0,
+	      "missing mapping or coding state changed the frame transaction");
+	bits[0] = 0u;
+	struct v92_pcm_frame_tx expected = saved;
+	struct v92_pcm_frame_tx_state staged = saved.state;
+	struct v92_pcm_frame expected_frame;
+
+	CHECK(v92_pcm_frame_encode(&expected, bits,
+		      saved.mapping.data_bits_per_frame, &expected_frame) == V92_PCM_FRAME_OK &&
+	      v92_pcm_frame_encode_owned(&saved.mapping, &staged, bits,
+		      saved.mapping.data_bits_per_frame, &output) == V92_PCM_FRAME_OK &&
+	      memcmp(&staged, &expected.state, sizeof(staged)) == 0 &&
+	      memcmp(&output, &expected_frame, sizeof(output)) == 0 &&
+	      memcmp(&saved, &transmitter, sizeof(saved)) == 0,
+	      "separate coding state changed the mapping owner or encoded frame");
+	output = output_saved;
 	transmitter.state.differential = 2u;
 	CHECK(v92_pcm_frame_encode(
 		      &transmitter, bits,
@@ -868,12 +893,19 @@ static bool test_rejection_and_names(void)
 		      V92_PCM_FRAME_INVALID_ARGUMENT,
 	      "invalid scalar gain/level/output changed its contract");
 	struct v92_pcm_frame_tx invalid = transmitter;
+	struct v92_pcm_frame_tx alias_saved = saved;
 
-	CHECK(v92_pcm_frame_encode_rm(NULL, false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_encode_rm(&saved, true, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_encode_rm(&saved, false, (struct v92_pcm_frame *)&saved) ==
+	CHECK(v92_pcm_frame_encode_rm(NULL, &saved.state, false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved.mapping, NULL, false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved.mapping, &saved.state, true, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved.mapping, &saved.state, false, (struct v92_pcm_frame *)&saved) ==
 		      V92_PCM_FRAME_INVALID_ARGUMENT &&
-	      v92_pcm_frame_encode_rm(&transmitter, true, &output) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      v92_pcm_frame_encode_rm(&saved.mapping, &saved.state, false, (struct v92_pcm_frame *)&saved.state) ==
+		      V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&saved.mapping, (struct v92_pcm_frame_tx_state *)&saved.mapping,
+		      false, &output) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_encode_rm(&transmitter.mapping, &transmitter.state, true, &output) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+	      memcmp(&saved, &alias_saved, sizeof(saved)) == 0 &&
 	      memcmp(&transmitter, &invalid, sizeof(transmitter)) == 0 &&
 	      memcmp(&output, &output_saved, sizeof(output)) == 0,
 	      "invalid RM encoding changed state/output");

@@ -19,7 +19,8 @@ enum v92_upstream_data_tx_result {
 
 /* Supply one complete post-B1u frame, in earliest-bit-first order. Initialize
  * every requested bit to zero or one; false rejects the frame. NULL emits
- * idle ones. The source owns its external read side effects. */
+ * idle ones. The source owns its external read side effects; it must not
+ * modify or reenter the transmitter while its frame is being fetched. */
 typedef bool (*v92_upstream_frame_source)(
 	void *context, uint8_t *bits, size_t bit_count);
 

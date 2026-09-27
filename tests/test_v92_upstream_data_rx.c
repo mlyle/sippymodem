@@ -2223,7 +2223,7 @@ static bool test_codec_model(int polarity, bool rm, uint8_t rate, bool peer, boo
 			transmitter.state.differential = 0u;
 		}
 		CHECK((rm && f >= RM_START && f < RM_END ?
-			v92_pcm_frame_encode_rm(&transmitter, f >= RM_PRIME, &frame) :
+			v92_pcm_frame_encode_rm(&transmitter.mapping, &transmitter.state, f >= RM_PRIME, &frame) :
 			v92_pcm_frame_encode(&transmitter, bits, mapping.data_bits_per_frame, &frame)) ==
 			V92_PCM_FRAME_OK, "codec frame encode failed");
 		if (peer && !peer_frame(&transmitter, &frame, initial_filter, f, &changed))
