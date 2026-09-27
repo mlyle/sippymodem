@@ -404,6 +404,8 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	modem = modem_create(&driver, "ATO1 lifecycle test");
 	CHECK(modem != NULL && modem_dial(modem) == 0,
 	      "ATO1 test call did not start");
+	CHECK(strcmp(modem_call_phase(modem), "call-progress") == 0,
+	      "dialing phase missing from diagnostics");
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	CHECK(pipe(fallback_pipe) == 0,
@@ -449,11 +451,15 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 		      modem->command == 0 && modem->retrain_pending == 1 &&
 		      retrain_dp.datapump.status == DPSTAT_OK,
 	      "accepted ATO1 reported completion before retraining");
+	CHECK(strcmp(modem_call_phase(modem), "local-retrain") == 0,
+	      "pending ATO1 was reported online");
 	modem_process(modem, receive, transmit, MODEM_FRAG);
 	CHECK(modem->state == TEST_STATE_MODEM_ONLINE &&
 		      modem->retrain_pending == 0 &&
 		      retrain_dp.datapump.status == DPSTAT_CONNECT,
 	      "data-pump CONNECT did not complete ATO1");
+	CHECK(strcmp(modem_call_phase(modem), "online") == 0,
+	      "completed ATO1 retained retrain phase");
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	CHECK(process_at_command(modem, resume) == 1 &&

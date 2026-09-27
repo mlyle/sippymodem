@@ -469,6 +469,8 @@ extern void modem_hangup(struct modem *m);
 extern int modem_stop_now(struct modem *m);
 extern int modem_answer(struct modem *m);
 extern int modem_online(struct modem *m, int retrain);
+/* Borrowed static name of the host call phase; no state is changed. */
+extern const char *modem_call_phase(const struct modem *m);
 extern int modem_report_incoming_call(struct modem *m);
 extern int modem_report_outgoing_call_connected(struct modem *m);
 extern int modem_report_remote_call_end(struct modem *m);

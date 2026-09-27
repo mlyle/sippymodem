@@ -57,6 +57,17 @@ enum audio_path_result {
 
 struct audio_path;
 
+/* Absolute signed-16-bit peaks (0..32768) since the last take. RX is before
+ * gain and excludes generated playout; TX is after gain, before G.711 encoding
+ * (or the canonical decode of exact PCM codewords). Metering is opt-in. */
+struct audio_levels {
+	unsigned int receive_peak;
+	unsigned int transmit_peak;
+};
+
+void audio_path_set_level_metering(struct audio_path *path, bool enabled);
+struct audio_levels audio_path_take_levels(struct audio_path *path);
+
 struct audio_path *audio_path_create(
 	struct sip_session *session,
 	const struct media_config *config,

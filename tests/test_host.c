@@ -244,6 +244,7 @@ static struct modem_host *create_remote_host(
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
 	config.media.remote_clock = true;
+	config.sip.trace_enabled = callbacks != NULL && callbacks->trace != NULL;
 	return modem_host_create(&config, NULL, callbacks, &core);
 }
 
@@ -497,6 +498,12 @@ static bool test_remote_media_clocks_elapsed_time(void)
 		      MODEM_HOST_OK && datagrams == 1 && frames == 2 &&
 		      core.calls == 4 && !core.received_silence,
 	      "lost inbound RTP time delayed the modem's transmit clock");
+	struct audio_levels levels = modem_host_take_audio_levels(host);
+	CHECK(levels.receive_peak == 32124 && levels.transmit_peak == 0,
+	      "host did not expose decoded PCMU levels");
+	levels = modem_host_take_audio_levels(host);
+	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
+	      "host retained peaks between intervals");
 	/* Packet boundaries need not coincide with the modem's frame boundary. */
 	for (unsigned int part = 0; part < 2; ++part) {
 		size_t count = part == 0 ? 3 : 5;
@@ -514,6 +521,11 @@ static bool test_remote_media_clocks_elapsed_time(void)
 			      datagrams == 1 && frames == part && core.calls == 4 + part,
 		      "partial frame credit did not survive separate socket drains");
 	}
+	CHECK(modem_host_hangup(host) == SIP_SIGNALING_OK,
+	      "metered call did not hang up");
+	levels = modem_host_take_audio_levels(host);
+	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
+	      "hangup retained audio peaks for the next call");
 	CHECK(modem_host_close(host) == SIP_SESSION_OK,
 	      "remote-clock host did not close");
 	modem_host_destroy(host);

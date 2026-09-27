@@ -22,8 +22,42 @@ struct audio_path {
 	enum g711_law law;
 	enum media_result last_media_result;
 	enum rtp_endpoint_result last_rtp_result;
+	bool meter_levels;
+	struct audio_levels levels;
 	int16_t samples[];
 };
+
+void audio_path_set_level_metering(struct audio_path *path, bool enabled)
+{
+	if (path != NULL) {
+		path->meter_levels = enabled;
+		path->levels = (struct audio_levels){ 0 };
+	}
+}
+
+struct audio_levels audio_path_take_levels(struct audio_path *path)
+{
+	struct audio_levels levels = { 0 };
+
+	if (path != NULL) {
+		levels = path->levels;
+		path->levels = (struct audio_levels){ 0 };
+	}
+	return levels;
+}
+
+static unsigned int sample_peak(const int16_t *samples, const bool *received,
+			       size_t count, unsigned int peak)
+{
+	for (size_t i = 0; i < count; ++i) {
+		int sample = samples[i];
+		unsigned int magnitude = sample < 0 ? -sample : sample;
+
+		if ((received == NULL || received[i]) && magnitude > peak)
+			peak = magnitude;
+	}
+	return peak;
+}
 
 static bool gain_is_valid(double gain)
 {
@@ -137,6 +171,9 @@ enum audio_path_result audio_path_process_frame(
 		path->frame_samples, NULL);
 	if (path->last_media_result != MEDIA_OK)
 		return AUDIO_PATH_PLAYOUT_ERROR;
+	if (path->meter_levels)
+		path->levels.receive_peak = sample_peak(receive_samples, received_mask,
+			path->frame_samples, path->levels.receive_peak);
 
 	apply_gain(receive_samples, path->frame_samples, path->receive_gain);
 	recording_emit(
@@ -186,6 +223,9 @@ enum audio_path_result audio_path_process_frame(
 		path->last_rtp_result = sip_session_send(
 			path->session, transmit_samples, path->frame_samples);
 	}
+	if (path->meter_levels && path->last_rtp_result == RTP_ENDPOINT_OK)
+		path->levels.transmit_peak = sample_peak(transmit_samples, NULL,
+			path->frame_samples, path->levels.transmit_peak);
 	return path->last_rtp_result == RTP_ENDPOINT_OK ?
 		       AUDIO_PATH_OK :
 		       AUDIO_PATH_TRANSMIT_ERROR;

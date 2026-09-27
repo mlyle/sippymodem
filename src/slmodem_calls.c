@@ -19,6 +19,7 @@ static void capture_call(
 
 	if (calls == NULL || event == NULL)
 		return;
+	calls->state = event->state;
 	if (calls->pending_count == SLMODEM_CALL_EVENT_CAPACITY) {
 		calls->overflowed = true;
 		calls->pending_head = 0;

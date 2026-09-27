@@ -422,6 +422,27 @@ static void modem_report_result(struct modem *m, enum MODEM_RESULT code)
 #define IS_STATE_ONLINE(stat) ((stat) == STATE_MODEM_ONLINE || (stat) == STATE_COMMAND_ONLINE)
 #define IS_STATE_DISC(stat) ((stat) == STATE_EC_DISC || (stat) == STATE_DP_DISC)
 
+const char *modem_call_phase(const struct modem *m)
+{
+	if (m == NULL)
+		return "unknown";
+	switch (m->state) {
+	case STATE_MODEM_IDLE: return "idle";
+	case STATE_DP_ESTAB:
+		return m->dp != NULL && m->dp->id == DP_CALLPROG ?
+			"call-progress" : "training";
+	case STATE_EC_ESTAB: return "error-control-negotiation";
+	case STATE_MODEM_ONLINE:
+	case STATE_COMMAND_ONLINE:
+		if (m->retrain_pending)
+			return "local-retrain";
+		return m->state == STATE_MODEM_ONLINE ? "online" : "online-command";
+	case STATE_EC_DISC: return "error-control-disconnect";
+	case STATE_DP_DISC: return "cleardown";
+	default: return "unknown";
+	}
+}
+
 
 static int modem_set_state(struct modem *m, unsigned new_state)
 {

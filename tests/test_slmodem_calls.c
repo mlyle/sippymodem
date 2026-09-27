@@ -105,8 +105,10 @@ static bool test_preserves_event_order(void)
 	      "call latch initialization failed");
 	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING,
 		  SIP_CALL_EARLY);
+	CHECK(calls.state == SIP_CALL_EARLY, "SIP early state was not retained");
 	emit_call(&calls, SIP_CALL_DIRECTION_OUTGOING,
 		  SIP_CALL_CONNECTED);
+	CHECK(calls.state == SIP_CALL_CONNECTED, "SIP connected state was not retained");
 	CHECK(capture.outgoing_connected_calls == 0,
 	      "call transition ran inside its signaling callback");
 	CHECK(slmodem_calls_drain(&calls) ==

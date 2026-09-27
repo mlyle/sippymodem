@@ -35,6 +35,7 @@ struct slmodem_calls {
 		pending[SLMODEM_CALL_EVENT_CAPACITY];
 	unsigned int pending_head;
 	unsigned int pending_count;
+	enum sip_call_state state;
 	bool overflowed;
 };
 

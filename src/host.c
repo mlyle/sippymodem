@@ -28,8 +28,10 @@ static void synchronize_audio(struct modem_host *host)
 	bool was_active = audio_scheduler_is_active(
 		&host->audio_scheduler);
 
-	if (!media_configured || !host->media_was_configured)
+	if (!media_configured || !host->media_was_configured) {
 		host->audio_suspended = false;
+		(void)audio_path_take_levels(host->audio_path);
+	}
 	audio_scheduler_set_active(
 		&host->audio_scheduler,
 		media_configured && !host->audio_suspended);
@@ -66,6 +68,7 @@ struct modem_host *modem_host_create(
 		    MEDIA_SAMPLE_RATE,
 		    MEDIA_MAX_CATCHUP_FRAMES))
 		goto fail;
+	audio_path_set_level_metering(host->audio_path, config->sip.trace_enabled);
 	return host;
 
 fail:
@@ -84,6 +87,11 @@ void modem_host_destroy(struct modem_host *host)
 	audio_path_destroy(host->audio_path);
 	sip_session_destroy(host->session);
 	free(host);
+}
+
+struct audio_levels modem_host_take_audio_levels(struct modem_host *host)
+{
+	return audio_path_take_levels(host != NULL ? host->audio_path : NULL);
 }
 
 enum sip_session_result modem_host_open(
@@ -105,6 +113,7 @@ enum sip_session_result modem_host_close(
 	if (host == NULL)
 		return SIP_SESSION_INVALID_ARGUMENT;
 	audio_scheduler_set_active(&host->audio_scheduler, false);
+	(void)audio_path_take_levels(host->audio_path);
 	host->media_was_configured = false;
 	host->audio_suspended = false;
 	host->remote_seed_pending = false;

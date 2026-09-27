@@ -61,6 +61,7 @@ int modem_host_media_poll_fd(
 	const struct modem_host *host);
 
 size_t modem_host_frame_samples(const struct modem_host *host);
+struct audio_levels modem_host_take_audio_levels(struct modem_host *host);
 bool modem_host_is_open(const struct modem_host *host);
 bool modem_host_media_is_configured(
 	const struct modem_host *host);

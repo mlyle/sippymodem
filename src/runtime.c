@@ -35,6 +35,9 @@ struct modem_runtime {
 	enum slmodem_terminal_result last_modem_terminal_result;
 	enum pty_terminal_result last_terminal_result;
 	bool terminal_client_connected;
+	bool trace_enabled;
+	bool trace_started;
+	uint64_t trace_time_ns;
 };
 
 static void destroy_incomplete_runtime(struct modem_runtime *runtime)
@@ -123,6 +126,7 @@ struct modem_runtime *modem_runtime_create(
 	if (runtime == NULL)
 		return NULL;
 	memcpy(runtime->modem_name, modem_name, name_length + 1);
+	runtime->trace_enabled = config->sip.trace_enabled;
 	if (datapumps_start(&runtime->datapumps) !=
 	    DATAPUMPS_OK) {
 		errno = EBUSY;
@@ -361,6 +365,39 @@ static enum modem_runtime_result advance_terminal(
 	return MODEM_RUNTIME_OK;
 }
 
+static void trace_call(struct modem_runtime *runtime, uint64_t now_ns)
+{
+	struct audio_levels levels;
+	const struct dp *dp = runtime->modem->dp;
+	char text[256];
+	struct sip_trace_record record = {
+		.origin = SIP_TRACE_ADAPTER,
+		.level = 3,
+		.data = text,
+	};
+	int length;
+
+	if (!runtime->trace_enabled || !modem_host_is_open(runtime->host))
+		return;
+	if (runtime->trace_started &&
+	    (now_ns <= runtime->trace_time_ns ||
+	     now_ns - runtime->trace_time_ns < UINT64_C(1000000000)))
+		return;
+	runtime->trace_started = true;
+	runtime->trace_time_ns = now_ns;
+	levels = modem_host_take_audio_levels(runtime->host);
+	length = snprintf(text, sizeof(text),
+		"CALL sip=%s phase=%s datapump=%s TX-peak=%u/32768 RX-peak=%u/32768\n",
+		sip_call_state_name(runtime->calls.state),
+		modem_call_phase(runtime->modem),
+		dp != NULL && dp->op != NULL && dp->op->name != NULL ? dp->op->name : "none",
+		levels.transmit_peak, levels.receive_peak);
+	if (length > 0 && (size_t)length < sizeof(text)) {
+		record.size = (size_t)length;
+		trace_signaling(NULL, &record);
+	}
+}
+
 enum modem_runtime_result modem_runtime_step(
 	struct modem_runtime *runtime, uint64_t now_ns,
 	size_t *terminal_bytes_received, size_t *datagrams_received,
@@ -381,6 +418,7 @@ enum modem_runtime_result modem_runtime_step(
 	runtime->last_host_result = modem_host_step(
 		runtime->host, now_ns, datagrams_received, frames_processed);
 	calls_result = drain_call_transitions(runtime);
+	trace_call(runtime, now_ns);
 	if (runtime->recording_files != NULL &&
 	    recording_files_last_result(runtime->recording_files) !=
 		    RECORDING_FILES_OK)

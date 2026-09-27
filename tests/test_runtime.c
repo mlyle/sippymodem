@@ -29,6 +29,8 @@ struct recording_files {
 };
 
 struct runtime_capture {
+	unsigned int level_reads;
+	struct audio_levels levels;
 	unsigned int modem_creates;
 	unsigned int modem_deletes;
 	unsigned int datapump_starts;
@@ -216,6 +218,26 @@ void modem_delete(struct modem *modem)
 	free(modem);
 }
 
+const char *modem_call_phase(const struct modem *modem)
+{
+	(void)modem;
+	return "training";
+}
+
+const char *sip_call_state_name(enum sip_call_state state)
+{
+	return state == SIP_CALL_CONNECTED ? "connected" : "idle";
+}
+
+struct audio_levels modem_host_take_audio_levels(struct modem_host *host)
+{
+	struct audio_levels levels = capture.levels;
+	(void)host;
+	capture.level_reads++;
+	capture.levels = (struct audio_levels){ 0 };
+	return levels;
+}
+
 int modem_report_remote_call_end(struct modem *modem)
 {
 	capture.remote_ends++;
@@ -293,8 +315,9 @@ const struct modem_core *slmodem_adapter_core(
 static void queue_call(
 	void *context, const struct sip_call_event *event)
 {
-	(void)context;
+	struct slmodem_calls *calls = context;
 	if (event != NULL) {
+		calls->state = event->state;
 		capture.call = *event;
 		capture.call_pending = true;
 	}
@@ -899,6 +922,58 @@ static bool test_opt_in_signaling_trace(void)
 	return true;
 }
 
+static bool test_call_trace_is_rate_limited(void)
+{
+	struct app_config config = runtime_config(false);
+	struct modem_runtime *runtime;
+	char output[2048] = { 0 };
+	FILE *stream = tmpfile();
+	int saved_stderr;
+	unsigned int reads;
+
+	CHECK(stream != NULL, "call trace capture failed");
+	memset(&capture, 0, sizeof(capture));
+	runtime = modem_runtime_create(&config, "untraced");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+	      "disabled trace fixture failed");
+	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
+	CHECK(capture.level_reads == 0, "disabled trace collected levels");
+	modem_runtime_destroy(runtime);
+
+	memset(&capture, 0, sizeof(capture));
+	config.sip.trace_enabled = true;
+	runtime = modem_runtime_create(&config, "call-trace");
+	CHECK(runtime != NULL && modem_runtime_open(runtime) == MODEM_RUNTIME_OK,
+	      "call trace fixture failed");
+	fflush(stderr);
+	saved_stderr = dup(STDERR_FILENO);
+	CHECK(saved_stderr >= 0 && dup2(fileno(stream), STDERR_FILENO) >= 0,
+	      "cannot redirect call trace");
+	capture.levels = (struct audio_levels){ .receive_peak = 1000, .transmit_peak = 32768 };
+	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
+	capture.call = (struct sip_call_event){ .state = SIP_CALL_CONNECTED };
+	capture.emit_call = true;
+	(void)modem_runtime_step(runtime, 999999999, NULL, NULL, NULL);
+	(void)modem_runtime_step(runtime, 1000000000, NULL, NULL, NULL);
+	(void)modem_runtime_step(runtime, 1000000000, NULL, NULL, NULL);
+	(void)modem_runtime_step(runtime, 0, NULL, NULL, NULL);
+	reads = capture.level_reads;
+	fflush(stderr);
+	int restored = dup2(saved_stderr, STDERR_FILENO);
+	close(saved_stderr);
+	CHECK(restored >= 0, "cannot restore call trace output");
+	rewind(stream);
+	size_t output_size = fread(output, 1, sizeof(output) - 1, stream);
+	fclose(stream);
+	modem_runtime_destroy(runtime);
+	CHECK(reads == 2, "call trace exceeded once per second or missed the boundary");
+	CHECK(output_size != 0, "call trace emitted no output");
+	CHECK(strstr(output, "CALL sip=idle phase=training datapump=none TX-peak=32768/32768 RX-peak=1000/32768") &&
+	      strstr(output, "CALL sip=connected phase=training datapump=none TX-peak=0/32768 RX-peak=0/32768"),
+	      "call trace lost state or retained peaks when no frames arrived");
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -911,6 +986,7 @@ int main(void)
 		{ "lifecycle failures", test_reports_lifecycle_failures },
 		{ "bounded host step", test_steps_bounded_host_and_evidence_work },
 		{ "opt-in signaling trace", test_opt_in_signaling_trace },
+		{ "rate-limited call trace", test_call_trace_is_rate_limited },
 	};
 	unsigned int failures = 0;
 

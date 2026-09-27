@@ -203,6 +203,15 @@ are received media (possibly silence), not proof of audible voice or decoded
 modem data; concealed/idle samples are locally supplied silence. These reports
 continue even when incoming RTP stops. The rebuilt daemon does not accept the
 old `-d3` option; use `SIP_TRACE=1` instead.
+`CALL` status lines also appear at most once per second, including before media
+arrives: they show the SIP state, host modem phase (training, error-control
+negotiation, online, local retrain, or cleardown), and active datapump.
+`TX-peak` and `RX-peak` are absolute signed-16-bit audio peaks for the interval,
+with 32768 representing full scale. RX is before receive gain and excludes
+generated playout silence; TX is successfully sent audio after transmit gain,
+before G.711 encoding (or decoded exact PCM codewords). Zero means silence or
+no samples; use the RTP counts to distinguish those cases. Peaks reset after
+each report and between calls. Metering is disabled when tracing is off.
 Credential-bearing and authentication records are omitted entirely; this is
 not general redaction of SIP metadata.
 

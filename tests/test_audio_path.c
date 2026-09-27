@@ -109,6 +109,8 @@ static enum modem_core_result process_core(
 		       sizeof(capture->expected_receive)) == 0;
 	memcpy(transmit_samples, capture->transmit,
 	       count * sizeof(transmit_samples[0]));
+	/* The modem owns scratch buffers: metering must precede this mutation. */
+	memset(receive_samples, 0, count * sizeof(*receive_samples));
 	return capture->result;
 }
 
@@ -276,6 +278,56 @@ static bool test_stops_at_each_failed_boundary(void)
 	return true;
 }
 
+static bool test_interval_audio_levels(void)
+{
+	struct sip_session session = {
+		.frame_samples = TEST_FRAME_SAMPLES,
+		.receive_samples = { 1000, -2000, -32768, 30000 },
+		.received_mask = { true, true, false, false },
+	};
+	struct core_capture core = { .transmit = { 10, -20, 20000, -20000 } };
+	const struct media_config config = {
+		.receive_gain = 0.5, .transmit_gain = 2.0,
+	};
+	const struct modem_core modem_core = { .context = &core, .process = process_core };
+	struct audio_path *path = audio_path_create(&session, &config, NULL, &modem_core);
+	struct audio_levels levels;
+
+	CHECK(path != NULL && audio_path_process_frame(path) == AUDIO_PATH_OK,
+	      "metering fixture failed");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
+	      "metering was not opt-in");
+	audio_path_set_level_metering(path, true);
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK, "metered frame failed");
+	memset(session.receive_samples, 0, sizeof(session.receive_samples));
+	memset(core.transmit, 0, sizeof(core.transmit));
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK, "silent frame failed");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.receive_peak == 2000 && levels.transmit_peak == 32768,
+	      "interval peaks lost gain, negative full scale, provenance or earlier frames");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
+	      "idle interval retained stale peaks");
+	session.receive_samples[0] = -32768;
+	core.transmit[0] = 1234;
+	session.send_result = RTP_ENDPOINT_NO_REMOTE;
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_TRANSMIT_ERROR,
+	      "failed send fixture failed");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.receive_peak == 32768 && levels.transmit_peak == 0,
+	      "RX overflowed or failed TX was counted as sent");
+	session.send_result = RTP_ENDPOINT_OK;
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK, "reset fixture failed");
+	audio_path_set_level_metering(path, false);
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK, "disabled fixture failed");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.receive_peak == 0 && levels.transmit_peak == 0,
+	      "disabling the meter retained or collected samples");
+	audio_path_destroy(path);
+	return true;
+}
+
 static bool test_preserves_exact_transmit_codewords(void)
 {
 	static const uint8_t exact_codewords[] = { 0x7f, 0xff, 0x00, 0x80 };
@@ -317,6 +369,7 @@ static bool test_preserves_exact_transmit_codewords(void)
 	       sizeof(exact_codewords));
 	path = audio_path_create(&session, &config, &recorder, &modem_core);
 	CHECK(path != NULL, "exact-output audio path creation failed");
+	audio_path_set_level_metering(path, true);
 	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK &&
 		      session.send_calls == 0 && session.send_g711_calls == 1 &&
 		      memcmp(session.sent_codewords, exact_codewords,
@@ -327,7 +380,21 @@ static bool test_preserves_exact_transmit_codewords(void)
 		      recordings.streams[1] == RECORD_TX_MODEM_PCM &&
 		      memcmp(recordings.samples[1], decoded, sizeof(decoded)) == 0,
 	      "exact G.711 output did not retain canonical PCM evidence");
+	struct audio_levels levels = audio_path_take_levels(path);
+	CHECK(levels.transmit_peak == 32124,
+	      "PCMU meter read scratch samples instead of exact codewords");
 	audio_path_destroy(path);
+	config.codec = MEDIA_CODEC_PCMA;
+	path = audio_path_create(&session, &config, NULL, &modem_core);
+	CHECK(path != NULL, "PCMA metering fixture failed");
+	audio_path_set_level_metering(path, true);
+	CHECK(audio_path_process_frame(path) == AUDIO_PATH_OK, "PCMA frame failed");
+	levels = audio_path_take_levels(path);
+	CHECK(levels.transmit_peak == 5504,
+	      "PCMA meter read scratch samples instead of exact codewords");
+	audio_path_destroy(path);
+	config.codec = MEDIA_CODEC_PCMU;
+	session.send_g711_calls = 1;
 
 	config.transmit_gain = 2.0;
 	memset(&recordings, 0, sizeof(recordings));
@@ -391,6 +458,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "gained recorded frame", test_processes_gained_recorded_frame },
 		{ "failed boundaries", test_stops_at_each_failed_boundary },
+		{ "interval audio levels", test_interval_audio_levels },
 		{ "exact G.711 transmit", test_preserves_exact_transmit_codewords },
 		{ "ownership and gain validation",
 		  test_rejects_invalid_ownership_and_gain },
