@@ -1915,6 +1915,23 @@ static bool test_compact_boundary(void)
 	return true;
 }
 
+static bool cpd_tx_rejection_is_transactional(
+	struct v92_phase4_cpd_tx transmitter,
+	struct pcm_downstream_tx downstream)
+{
+	struct v92_phase4_cpd_tx saved_transmitter = transmitter;
+	struct pcm_downstream_tx saved_downstream = downstream;
+	struct pcm_downstream_symbol symbol;
+	struct pcm_downstream_symbol saved_symbol;
+
+	memset(&symbol, 0xa5, sizeof(symbol));
+	saved_symbol = symbol;
+	return !v92_phase4_cpd_tx_next(&transmitter, &downstream, &symbol) &&
+	       memcmp(&transmitter, &saved_transmitter, sizeof(transmitter)) == 0 &&
+	       memcmp(&downstream, &saved_downstream, sizeof(downstream)) == 0 &&
+	       memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0;
+}
+
 static bool cpd_tx_contracts_are_transactional(
 	const struct v92_phase4_cpd_tx *valid,
 	const struct pcm_downstream_tx *valid_downstream)
@@ -1946,15 +1963,71 @@ static bool cpd_tx_contracts_are_transactional(
 	      "overlapping full CPd owners changed state or output");
 
 	transmitter.sequence[0] ^= 1u;
-	saved_transmitter = transmitter;
-	CHECK(!v92_phase4_cpd_tx_next(
-		      &transmitter, &downstream, &symbol) &&
-	      memcmp(&transmitter, &saved_transmitter,
-		     sizeof(transmitter)) == 0 &&
-	      memcmp(&downstream, &saved_downstream,
-		     sizeof(downstream)) == 0 &&
-	      memcmp(&symbol, &saved_symbol, sizeof(symbol)) == 0,
+	CHECK(cpd_tx_rejection_is_transactional(transmitter, downstream),
 	      "corrupt full CPd source changed state or output");
+	return true;
+}
+
+static bool test_cpd_transmitter_boundaries(void)
+{
+	const struct v92_suvd_parameters suvd = { 0 };
+
+	for (unsigned law = 0u; law < 2u; ++law) {
+		for (unsigned lookahead = 0u; lookahead < 4u; ++lookahead) {
+			struct v92_cpt_parameters cpt = cpt_parameters(law);
+			struct v92_cpd_parameters parameters = cpd_parameters(law);
+			struct v90_pcm_mapping mapping;
+			struct pcm_downstream_tx downstream;
+			struct v92_phase4_cpd_tx transmitter;
+			struct pcm_downstream_symbol symbol;
+
+			cpt.spectral_lookahead = lookahead;
+			CHECK(v90_pcm_mapping_init_from_v92_cpt(&mapping, &cpt, law) ==
+				      V90_PCM_MAPPING_OK &&
+			      pcm_downstream_tx_init(&downstream, PCM_PROTOCOL_V92,
+						     &mapping) == PCM_DOWNSTREAM_TX_OK &&
+			      pcm_downstream_tx_start_suvd(&downstream, &suvd) ==
+				      PCM_DOWNSTREAM_TX_OK,
+			      "CPd boundary fixture failed");
+			for (unsigned n = 0u; n < DOWNSTREAM_LIMIT &&
+			     !pcm_downstream_tx_is_v92_control_boundary(&downstream); ++n)
+				CHECK(pcm_downstream_tx_next(&downstream, &symbol) ==
+					      PCM_DOWNSTREAM_TX_OK, "SUVd boundary stopped");
+			CHECK(pcm_downstream_tx_is_v92_control_boundary(&downstream) &&
+			      v92_phase4_cpd_tx_init(&transmitter, &downstream, &parameters) &&
+			      cpd_tx_contracts_are_transactional(&transmitter, &downstream),
+			      "CPd boundary contract failed law=%u lookahead=%u", law, lookahead);
+
+			struct pcm_downstream_tx exhausted = downstream;
+			while (exhausted.queue_count != 0u)
+				CHECK(pcm_downstream_tx_next(&exhausted, &symbol) ==
+					      PCM_DOWNSTREAM_TX_OK, "queued SUVd stopped");
+			CHECK(v90_pcm_frame_encoder_init(&exhausted.encoder, &mapping) ==
+				      V90_PCM_FRAME_ENCODER_OK, "CPd overflow encoder failed");
+			/* With lookahead, buffer one source frame before the next overflows. */
+			exhausted.accepted_frames = UINT64_MAX / V90_CP_FRAME_INTERVALS -
+				(lookahead != 0u);
+			exhausted.transmitted_symbols = exhausted.accepted_frames * V90_CP_FRAME_INTERVALS;
+			CHECK(pcm_downstream_tx_is_valid(&exhausted) &&
+			      cpd_tx_rejection_is_transactional(transmitter, exhausted),
+			      "CPd frame overflow changed owners or output");
+
+			struct v92_phase4_cpd_tx source = transmitter;
+			for (unsigned n = 0u; n < DOWNSTREAM_LIMIT && !transmitter.complete; ++n) {
+				CHECK(v92_phase4_cpd_tx_next(&transmitter, &downstream, &symbol),
+				      "CPd emission stopped at %u", n);
+				source.bit_index = transmitter.bit_index;
+				source.complete = transmitter.complete;
+				CHECK(v92_phase4_cpd_tx_is_valid(&transmitter) &&
+				      pcm_downstream_tx_is_valid(&downstream) &&
+				      memcmp(&source, &transmitter, sizeof(source)) == 0,
+				      "CPd emission changed source or mapping");
+			}
+			CHECK(transmitter.complete && transmitter.bit_index == transmitter.sequence_bits &&
+			      cpd_tx_rejection_is_transactional(transmitter, downstream),
+			      "CPd completion was not exact and transactional");
+		}
+	}
 	return true;
 }
 
@@ -2538,6 +2611,7 @@ int main(void)
 		{ "analogue early control handoff", test_analog_early_control },
 		{ "analogue retry at complete peer records", test_analog_retry_boundary },
 		{ "compact station boundary", test_compact_boundary },
+		{ "CPd transmitter boundaries", test_cpd_transmitter_boundaries },
 		{ "early CPu acknowledgement", test_early_cpu_acknowledgement },
 		{ "short CPu phase guard", test_short_cpu_requires_renegotiation },
 		{ "cleardown physical CP deadlines", test_cleardown_timing },

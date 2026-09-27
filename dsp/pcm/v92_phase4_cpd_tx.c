@@ -74,8 +74,6 @@ bool v92_phase4_cpd_tx_next(
 	struct pcm_downstream_tx *downstream,
 	struct pcm_downstream_symbol *symbol)
 {
-	struct v92_phase4_cpd_tx next;
-	struct pcm_downstream_tx next_downstream;
 	struct pcm_downstream_source_record record;
 	struct pcm_downstream_symbol generated;
 
@@ -94,25 +92,20 @@ bool v92_phase4_cpd_tx_next(
 	    downstream->encoder.mapping.law != transmitter->law ||
 	    downstream->encoder.mapping.frame_bits != transmitter->frame_bits)
 		return false;
-	next = *transmitter;
-	next_downstream = *downstream;
 	record = (struct pcm_downstream_source_record){
-		.sequence = next.sequence,
-		.sequence_capacity = sizeof(next.sequence),
-		.sequence_bits = next.sequence_bits,
-		.bit_index = next.bit_index,
+		.sequence = transmitter->sequence,
+		.sequence_capacity = sizeof(transmitter->sequence),
+		.sequence_bits = transmitter->sequence_bits,
+		.bit_index = transmitter->bit_index,
 	};
 	if (pcm_downstream_tx_next_source_record(
-		    &next_downstream, &record, &generated) !=
+		    downstream, &record, &generated) !=
 	    PCM_DOWNSTREAM_TX_OK)
 		return false;
-	next.bit_index = record.bit_index;
-	next.complete = record.complete;
-	if (!v92_phase4_cpd_tx_is_valid(&next) ||
-	    !pcm_downstream_tx_is_valid(&next_downstream))
-		return false;
-	*transmitter = next;
-	*downstream = next_downstream;
+	/* The shared transaction validates and commits the line and bounded
+	 * cursor together; neither the source nor its mapping changes. */
+	transmitter->bit_index = record.bit_index;
+	transmitter->complete = record.complete;
 	*symbol = generated;
 	return true;
 }
