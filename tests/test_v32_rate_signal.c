@@ -197,6 +197,65 @@ static bool observe_word(
 	return true;
 }
 
+static bool test_cleardown(void)
+{
+	const struct v32_rate_offer empty = { 0 };
+	uint16_t word = UINT16_MAX;
+
+	CHECK(v32_rate_signal_encode(V32_CLEARDOWN_SIGNAL, &empty, &word) ==
+		      V32_RATE_SIGNAL_OK && word == 0x0111,
+	      "zero-rate cleardown changed transmission order");
+	for (unsigned int variant = 0; variant < 8; ++variant) {
+		struct v32_rate_offer offer;
+		enum v32_rate_signal_type type;
+		uint16_t received = word | ((variant & 3u) << 1u) |
+			((variant & 4u) != 0 ? 0x0080u : 0);
+
+		CHECK(v32_rate_signal_decode(received, &type, &offer) ==
+			      V32_RATE_SIGNAL_OK && type == V32_CLEARDOWN_SIGNAL &&
+		      offers_are_equal(&offer, &empty),
+		      "cleardown incorrectly depended on coding/extensions");
+		for (unsigned int prefix = 0; prefix < V32_RATE_SIGNAL_DIBITS; ++prefix) {
+			struct v32_rate_signal_detector detector = { 0 };
+			enum v32_rate_signal_event event;
+
+			for (unsigned int index = 0; index < prefix; ++index)
+				CHECK(v32_rate_signal_detector_observe(
+					      &detector, 2, &event, &offer) == V32_RATE_SIGNAL_OK &&
+				      event == V32_RATE_SIGNAL_NO_EVENT,
+				      "prefix falsely requested cleardown");
+			CHECK(observe_word(&detector, received, &event, &offer) &&
+			      event == V32_RATE_SIGNAL_NO_EVENT &&
+			      observe_word(&detector, received, &event, &offer) &&
+			      event == V32_CLEARDOWN_SIGNAL_DETECTED &&
+			      offers_are_equal(&offer, &empty) &&
+			      !detector.aligned &&
+			      v32_rate_signal_detector_is_valid(&detector) &&
+			      !v32_rate_signal_detector_offer(&detector, &offer),
+			      "cleardown did not require two words at offset %u", prefix);
+		}
+	}
+	{
+		struct v32_rate_signal_detector detector = { 0 };
+		struct v32_rate_offer offer;
+		enum v32_rate_signal_event event;
+
+		CHECK(observe_word(&detector, 0x0511, &event, &offer) &&
+		      observe_word(&detector, 0x0511, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_DETECTED &&
+		      observe_word(&detector, word, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_NO_EVENT &&
+		      observe_word(&detector, word, &event, &offer) &&
+		      event == V32_CLEARDOWN_SIGNAL_DETECTED,
+		      "aligned rate detector accepted a single cleardown word");
+		CHECK(observe_word(&detector, 0x0911, &event, &offer) &&
+		      observe_word(&detector, 0x0911, &event, &offer) &&
+		      event == V32_RATE_SIGNAL_NO_EVENT,
+		      "unsupported V.32 2400 rate was mistaken for cleardown");
+	}
+	return true;
+}
+
 static bool test_ignored_receive_extensions(void)
 {
 	const uint8_t all_rates =
@@ -395,7 +454,7 @@ static bool test_validation(void)
 			      &word) ==
 			      V32_RATE_SIGNAL_INVALID_OFFER &&
 		      v32_rate_signal_encode(
-			      (enum v32_rate_signal_type)2,
+			      (enum v32_rate_signal_type)3,
 			      &multiple_rates, &word) ==
 			      V32_RATE_SIGNAL_INVALID_ARGUMENT &&
 		      word == UINT16_MAX,
@@ -406,10 +465,10 @@ static bool test_validation(void)
 		      type == V32_END_SIGNAL &&
 		      offers_are_equal(&decoded, &saved) &&
 		      v32_rate_signal_decode(
-			      0x0111, &type, &decoded) ==
+			      0x0911, &type, &decoded) ==
 			      V32_RATE_SIGNAL_INVALID_WORD &&
 		      offers_are_equal(&decoded, &saved),
-	      "V.32 decoder accepted reserved bits or an empty offer");
+	      "V.32 decoder accepted reserved bits or unsupported 2400");
 	CHECK(v32_rate_signal_dibit(
 		      0x0511, V32_RATE_SIGNAL_DIBITS, &dibit) ==
 		      V32_RATE_SIGNAL_INVALID_ARGUMENT &&
@@ -429,6 +488,7 @@ int main(void)
 		{ "normative words", test_normative_words },
 		{ "capability round trip", test_capability_round_trip },
 		{ "transmission order", test_transmission_order },
+		{ "zero-rate cleardown", test_cleardown },
 		{ "ignored receive extensions",
 		  test_ignored_receive_extensions },
 		{ "repeated rate detection", test_repeated_rate_detection },

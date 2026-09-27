@@ -598,24 +598,27 @@ static bool test_decoded_event_exchange(void)
 	return true;
 }
 
-static bool test_no_common_rate(void)
+static bool check_no_common_rate(enum v32_endpoint_role role, uint16_t word)
 {
 	struct v32_startup caller;
 	struct v32_startup saved;
 	bool connected = true;
 
 	CHECK(v32_startup_init(
-		      &caller, V32_CALLER,
+		      &caller, role,
 		      V32_RATE_CAPABILITY_4800) ==
 		      V32_STARTUP_OK,
 	      "V.32 incompatible-rate fixture did not initialize");
+	if (role == V32_ANSWERER)
+		CHECK(v32_startup_finish_conditioning(&caller) == V32_STARTUP_OK,
+		      "answerer could not receive the peer rate");
 	for (unsigned int repeat = 0; repeat < 2; ++repeat) {
 		for (unsigned int index = 0;
 		     index < V32_RATE_SIGNAL_DIBITS; ++index) {
 			uint8_t dibit;
 
 			CHECK(v32_rate_signal_dibit(
-				      0x0b11, index, &dibit) ==
+				      word, index, &dibit) ==
 				      V32_RATE_SIGNAL_OK,
 			      "V.32 incompatible rate word did not decode");
 			if (repeat == 1 &&
@@ -639,6 +642,13 @@ static bool test_no_common_rate(void)
 		}
 	}
 	return true;
+}
+
+static bool test_no_common_rate(void)
+{
+	return check_no_common_rate(V32_CALLER, 0x0b11) &&
+	       check_no_common_rate(V32_CALLER, 0x0111) &&
+	       check_no_common_rate(V32_ANSWERER, 0x0197);
 }
 
 static bool test_validation(void)

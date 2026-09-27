@@ -377,6 +377,7 @@ static bool complete_conditioning(
 	struct generated_source *source,
 	enum v32_transmitter_role role,
 	const struct v32_rate_offer *selected_offer,
+	bool cleardown,
 	struct v32_conditioning_path *conditioning,
 	struct v32_conditioning_path_handoff *handoff)
 {
@@ -388,6 +389,8 @@ static bool complete_conditioning(
 		      V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
 		      V32_CONDITIONING_PATH_OK,
 	      "rate-path conditioning did not initialize for role %d", role);
+	if (cleardown)
+		source->rate_word = 0x0111;
 	for (unsigned int index = 0;
 	     index < TEST_LINE_SAMPLE_LIMIT && !complete; ++index) {
 		struct v32_echo_reference reference;
@@ -411,6 +414,40 @@ static bool complete_conditioning(
 	      handoff->receive.equalizer.adaptation ==
 		      V32_EQUALIZER_ADAPTATION_FINE,
 	      "conditioning did not expose the first rate observation");
+	return true;
+}
+
+static bool test_cleardown(enum v32_transmitter_role role)
+{
+	struct generated_source source;
+	struct v32_conditioning_path conditioning;
+	struct v32_conditioning_path_handoff handoff;
+	struct v32_rate_path rate;
+	struct v32_rate_path_handoff rejected;
+	enum v32_rate_path_result result;
+	bool cleared = false;
+
+	CHECK(complete_conditioning(&source, role, &SELECTED_OFFERS[0],
+				    true, &conditioning, &handoff),
+	      "cleardown conditioning did not complete");
+	result = v32_rate_path_init(&rate, &handoff);
+	CHECK(result == V32_RATE_PATH_OK, "cleardown rate path did not initialize");
+	for (unsigned int index = 0; index < TEST_LINE_SAMPLE_LIMIT && !cleared; ++index) {
+		struct v32_echo_reference reference;
+		int16_t sample;
+		bool accepted;
+
+		CHECK(source_sample(&source, &sample, &reference, &accepted),
+		      "cleardown source stopped");
+		result = v32_rate_path_sample(&rate, sample, accepted ? &reference : NULL);
+		CHECK(result == V32_RATE_PATH_OK || result == V32_RATE_PATH_CLEARDOWN,
+		      "cleardown became a usable rate or invalid state: %d", result);
+		cleared = result == V32_RATE_PATH_CLEARDOWN;
+	}
+	CHECK(cleared && v32_rate_path_is_valid(&rate) &&
+	      !v32_rate_path_is_complete(&rate) &&
+	      v32_rate_path_handoff(&rate, &rejected) == V32_RATE_PATH_INVALID_STATE,
+	      "cleardown was lost or exposed a negotiated-rate handoff");
 	return true;
 }
 
@@ -521,7 +558,7 @@ static bool run_role(
 	bool complete = false;
 
 	CHECK(complete_conditioning(
-		      &source, role, selected_offer, &conditioning, &handoff),
+		      &source, role, selected_offer, false, &conditioning, &handoff),
 	      "rate-path conditioning failed for role %d", role);
 	CHECK(v32_rate_path_init(&path, &handoff) == V32_RATE_PATH_OK &&
 	      v32_rate_path_is_valid(&path) &&
@@ -1261,7 +1298,9 @@ int main(void)
 			}
 		}
 	}
-	if (!test_uncoded_phase_handoff() || !test_contracts(
+	if (!test_cleardown(V32_CALLING_TRANSMITTER) ||
+	    !test_cleardown(V32_ANSWERING_TRANSMITTER) ||
+	    !test_uncoded_phase_handoff() || !test_contracts(
 		    &conditioning, &started, &completed,
 		    &end_started, &end_completed, &completed_end_handoff,
 		    &b1_started, &b1_completed, &data_started,

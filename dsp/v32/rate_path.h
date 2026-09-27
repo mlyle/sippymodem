@@ -15,6 +15,7 @@ enum v32_rate_path_result {
 	V32_RATE_PATH_COMPLETE,
 	V32_RATE_PATH_INVALID_ARGUMENT,
 	V32_RATE_PATH_INVALID_STATE,
+	V32_RATE_PATH_CLEARDOWN,
 };
 
 /* Own the continuous post-conditioning receive lane through the first
@@ -48,7 +49,8 @@ bool v32_rate_path_is_complete(
 
 /* Consume one 8 kHz receive sample after the corresponding transmit sample.
  * COMPLETE consumes the decision which completes the second identical
- * 16-bit rate word. */
+ * 16-bit rate word. CLEARDOWN consumes the same boundary but cannot provide
+ * a negotiated-rate handoff. */
 enum v32_rate_path_result v32_rate_path_sample(
 	struct v32_rate_path *path, int16_t received,
 	const struct v32_echo_reference *accepted_reference);

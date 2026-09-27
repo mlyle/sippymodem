@@ -566,6 +566,8 @@ enum v32_startup_result v32_startup_observe(
 		result = v32_startup_note_rate_signal(&next, &offer);
 	else if (event == V32_END_SIGNAL_DETECTED)
 		result = v32_startup_note_end_signal(&next, &offer);
+	else if (event == V32_CLEARDOWN_SIGNAL_DETECTED)
+		result = V32_STARTUP_NO_COMMON_RATE;
 	else if (next.end_received)
 		result = v32_startup_note_confirmation(
 			&next, dibit, connected);

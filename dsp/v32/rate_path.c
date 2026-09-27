@@ -61,6 +61,8 @@ static enum v32_rate_path_result commit_observations(
 		path->observation_epoch = symbol.equalizer.observation.epoch;
 		if (event == V32_END_SIGNAL_DETECTED)
 			return V32_RATE_PATH_INVALID_STATE;
+		if (event == V32_CLEARDOWN_SIGNAL_DETECTED)
+			return V32_RATE_PATH_CLEARDOWN;
 		if (event == V32_RATE_SIGNAL_DETECTED)
 			return path_header_is_valid(path) ?
 				       V32_RATE_PATH_COMPLETE :

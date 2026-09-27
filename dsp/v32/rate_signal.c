@@ -37,7 +37,7 @@ enum {
 static bool signal_type_is_valid(enum v32_rate_signal_type type)
 {
 	return type == V32_RATE_SIGNAL ||
-	       type == V32_END_SIGNAL;
+	       type == V32_END_SIGNAL || type == V32_CLEARDOWN_SIGNAL;
 }
 
 static bool has_one_rate(uint8_t rates)
@@ -58,6 +58,9 @@ static bool offer_is_valid(
 {
 	uint8_t highest;
 
+	if (type == V32_CLEARDOWN_SIGNAL)
+		return offer != NULL && offer->rates == 0 &&
+		       !offer->trellis_at_highest_rate;
 	if (offer == NULL ||
 	    (offer->rates & (uint8_t)~V32_RATE_CAPABILITY_MASK) != 0 ||
 	    offer->rates == 0)
@@ -102,8 +105,8 @@ enum v32_rate_signal_result v32_rate_signal_encode(
 		return V32_RATE_SIGNAL_INVALID_ARGUMENT;
 	if (!offer_is_valid(offer, type))
 		return V32_RATE_SIGNAL_INVALID_OFFER;
-	encoded = type == V32_RATE_SIGNAL ? V32_RATE_FIXED_BITS :
-						      V32_END_FIXED_BITS;
+	encoded = type == V32_END_SIGNAL ? V32_END_FIXED_BITS :
+						 V32_RATE_FIXED_BITS;
 	encoded |= encode_rates(offer->rates);
 	if (offer->trellis_at_highest_rate)
 		encoded |= V32_B8_TRELLIS;
@@ -140,7 +143,11 @@ enum v32_rate_signal_result v32_rate_signal_decode(
 	if (type == NULL || offer == NULL)
 		return V32_RATE_SIGNAL_INVALID_ARGUMENT;
 	if (rate_fixed == V32_RATE_FIXED_BITS) {
-		decoded_type = V32_RATE_SIGNAL;
+		/* V.32bis Table 5, note 3: zero B4-B6/B9-B10/B12 calls
+		 * for cleardown. B8 and the reserved extension bits do not
+		 * select a coding mode when no rate is offered. */
+		decoded_type = (word & V32_RATE_FIELD_MASK) == 0 ?
+			V32_CLEARDOWN_SIGNAL : V32_RATE_SIGNAL;
 	} else if (end_fixed == V32_END_FIXED_BITS) {
 		decoded_type = V32_END_SIGNAL;
 	} else {
@@ -153,7 +160,9 @@ enum v32_rate_signal_result v32_rate_signal_decode(
 	      V32_RATE_CAPABILITY_12000 |
 	      V32_RATE_CAPABILITY_14400)) != 0)
 		return V32_RATE_SIGNAL_INVALID_WORD;
-	decoded.trellis_at_highest_rate = (word & V32_B8_TRELLIS) != 0;
+	decoded.trellis_at_highest_rate =
+		decoded_type != V32_CLEARDOWN_SIGNAL &&
+		(word & V32_B8_TRELLIS) != 0;
 	if (!offer_is_valid(&decoded, decoded_type))
 		return V32_RATE_SIGNAL_INVALID_WORD;
 	*type = decoded_type;
@@ -213,7 +222,7 @@ static void lose_alignment(
 	detector->aligned = false;
 }
 
-static bool acquire_alignment(
+static enum v32_rate_signal_event acquire_alignment(
 	struct v32_rate_signal_detector *detector,
 	struct v32_rate_offer *offer)
 {
@@ -225,12 +234,16 @@ static bool acquire_alignment(
 	     (uint16_t)~V32_IGNORED_EXTENSION_BITS) != 0 ||
 	    v32_rate_signal_decode(second, &type, offer) !=
 		    V32_RATE_SIGNAL_OK ||
-	    type != V32_RATE_SIGNAL)
-		return false;
+	    type == V32_END_SIGNAL)
+		return V32_RATE_SIGNAL_NO_EVENT;
+	if (type == V32_CLEARDOWN_SIGNAL) {
+		(void)v32_rate_signal_detector_init(detector);
+		return V32_CLEARDOWN_SIGNAL_DETECTED;
+	}
 	detector->locked_rate_word = second;
 	detector->dibits_since_boundary = 0;
 	detector->aligned = true;
-	return true;
+	return V32_RATE_SIGNAL_DETECTED;
 }
 
 static enum v32_rate_signal_event observe_aligned_word(
@@ -276,9 +289,8 @@ v32_rate_signal_detector_observe(
 	if (next.dibits_seen < V32_DETECTOR_WINDOW_DIBITS)
 		next.dibits_seen++;
 	if (!next.aligned) {
-		if (next.dibits_seen == V32_DETECTOR_WINDOW_DIBITS &&
-		    acquire_alignment(&next, &decoded))
-			observed = V32_RATE_SIGNAL_DETECTED;
+		if (next.dibits_seen == V32_DETECTOR_WINDOW_DIBITS)
+			observed = acquire_alignment(&next, &decoded);
 	} else {
 		next.dibits_since_boundary++;
 		if (next.dibits_since_boundary ==

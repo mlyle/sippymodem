@@ -9,6 +9,7 @@
 #include <datapump.h>
 #include <echo_training.h>
 #include <line_startup.h>
+#include <rate_path.h>
 
 #include "test.h"
 
@@ -45,6 +46,8 @@ struct test_conditioning_signal {
 	struct qam_modulator modulator;
 	struct v32_conditioning_transmitter transmitter;
 	struct qam_point point;
+	struct v32_symbol_encoder encoder;
+	unsigned int rate_dibits;
 };
 
 static int unused_start(struct modem *modem)
@@ -251,10 +254,26 @@ static bool conditioning_signal_sample(
 	if (can_accept) {
 		uint8_t quadrant;
 
-		if (v32_conditioning_transmitter_next(
-			    &signal->transmitter, &quadrant) !=
-			    V32_CONDITIONING_OK ||
-		    v32_4800_constellation_point(
+		if (!v32_conditioning_transmitter_is_complete(&signal->transmitter)) {
+			if (v32_conditioning_transmitter_next(
+				    &signal->transmitter, &quadrant) != V32_CONDITIONING_OK)
+				return false;
+		} else {
+			uint8_t dibit;
+
+			if (signal->rate_dibits == 0 &&
+			    v32_conditioning_transmitter_framing_state(
+				    &signal->transmitter, &signal->encoder) != V32_CONDITIONING_OK)
+				return false;
+			if (v32_rate_signal_dibit(0x0111,
+				    signal->rate_dibits % V32_RATE_SIGNAL_DIBITS, &dibit) !=
+				    V32_RATE_SIGNAL_OK ||
+			    v32_4800_symbol_encode(&signal->encoder, dibit, &quadrant) !=
+				    V32_FRAMING_OK)
+				return false;
+			signal->rate_dibits++;
+		}
+		if (v32_4800_constellation_point(
 			    quadrant, &signal->point) !=
 			    V32_CONSTELLATION_OK)
 			return false;
@@ -399,6 +418,79 @@ static bool test_answerer_requires_fresh_conditioning(void)
 	}
 	CHECK(quiet_samples == TEST_SILENCE_RUN,
 	      "V.32 answerer did not require fresh S-bar evidence");
+	{
+		struct v32_conditioning_path reply;
+		struct v32_rate_path rate;
+		struct v32_echo_reference silence;
+		struct qam_point zero = { 0 };
+		int16_t received = 0;
+		bool rate_started = false;
+		bool cleared = false;
+		bool disconnected = false;
+
+		CHECK(v32_echo_reference_init(&silence, &zero, 0) == V32_ECHO_OK,
+		      "silent decoder reference did not initialize");
+		CHECK(v32_conditioning_path_init(&reply, V32_ANSWERING_TRANSMITTER,
+			      0, V32_ECHO_MIN_ROUND_TRIP_SYMBOLS) ==
+			      V32_CONDITIONING_PATH_OK,
+		      "peer reply receiver did not initialize");
+		for (unsigned int sample = 0;
+		     sample < MODEM_RATE * 3u && !disconnected; ++sample) {
+			int16_t caller_transmit;
+			/* This independent receiver has no local echo, but must still
+			 * supply a silent reference on every transmit-symbol epoch. */
+			const struct v32_echo_frontend *echo = rate_started ?
+				&rate.receive.echo : &reply.receive.echo;
+			const struct v32_echo_reference *reference =
+				echo->filter.inputs_needed == 1 && echo->echo.phase == 0 ?
+				&silence : NULL;
+			int status;
+
+			CHECK(conditioning_signal_sample(&caller, &caller_transmit),
+			      "peer cleardown source stopped");
+			received = mix_samples(answerer_transmit, caller_transmit);
+			status = operations->process(
+				datapump, &received, &answerer_transmit, 1);
+			CHECK(status == DPSTAT_OK || status == DPSTAT_ERROR,
+			      "peer cleardown incorrectly connected: %d", status);
+			disconnected = status == DPSTAT_ERROR;
+			if (disconnected)
+				break;
+			if (!rate_started) {
+				enum v32_conditioning_path_result result =
+					v32_conditioning_path_sample(
+						&reply, answerer_transmit, reference);
+
+				CHECK(result == V32_CONDITIONING_PATH_OK ||
+				      result == V32_CONDITIONING_PATH_COMPLETE,
+				      "answerer cleardown conditioning stopped: %d", result);
+				if (result == V32_CONDITIONING_PATH_COMPLETE) {
+					struct v32_conditioning_path_handoff handoff;
+
+					CHECK(v32_conditioning_path_handoff(&reply, &handoff) ==
+						      V32_CONDITIONING_PATH_OK &&
+					      v32_rate_path_init(&rate, &handoff) == V32_RATE_PATH_OK,
+					      "answerer did not emit valid second conditioning");
+					rate_started = true;
+				}
+			} else if (!cleared) {
+				enum v32_rate_path_result result =
+					v32_rate_path_sample(
+						&rate, answerer_transmit, reference);
+
+				CHECK(result == V32_RATE_PATH_OK ||
+				      result == V32_RATE_PATH_CLEARDOWN,
+				      "answerer selected data after refusal: %d", result);
+				cleared = result == V32_RATE_PATH_CLEARDOWN;
+			}
+		}
+		CHECK(disconnected && cleared && answerer_transmit == 0,
+		      "peer refusal did not finish a bounded on-wire cleardown");
+		received = 0;
+		CHECK(operations->process(datapump, &received, &answerer_transmit, 1) ==
+			      DPSTAT_ERROR && answerer_transmit == 0,
+		      "cleardown failure was not latched");
+	}
 	CHECK(operations->delete(datapump) == 0,
 	      "V.32 answerer conditioning cleanup failed");
 	modem_delete(modem);

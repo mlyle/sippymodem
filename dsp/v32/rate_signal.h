@@ -10,6 +10,7 @@
 enum {
 	V32_RATE_SIGNAL_BITS = 16,
 	V32_RATE_SIGNAL_DIBITS = 8,
+	V32_CLEARDOWN_SYMBOLS = 64,
 };
 
 enum v32_rate_capability {
@@ -23,6 +24,7 @@ enum v32_rate_capability {
 enum v32_rate_signal_type {
 	V32_RATE_SIGNAL,
 	V32_END_SIGNAL,
+	V32_CLEARDOWN_SIGNAL,
 };
 
 enum v32_rate_signal_result {
@@ -36,6 +38,7 @@ enum v32_rate_signal_event {
 	V32_RATE_SIGNAL_NO_EVENT,
 	V32_RATE_SIGNAL_DETECTED,
 	V32_END_SIGNAL_DETECTED,
+	V32_CLEARDOWN_SIGNAL_DETECTED,
 };
 
 struct v32_rate_offer {
@@ -77,7 +80,8 @@ static inline bool v32_rate_offers_match(
 		       right->trellis_at_highest_rate;
 }
 
-/* Rate words are represented in transmission order: B0 is bit 15. */
+/* Rate words are represented in transmission order: B0 is bit 15. Cleardown
+ * has an empty offer and no coding selection; it is never a usable rate. */
 enum v32_rate_signal_result v32_rate_signal_encode(
 	enum v32_rate_signal_type type,
 	const struct v32_rate_offer *offer, uint16_t *word);

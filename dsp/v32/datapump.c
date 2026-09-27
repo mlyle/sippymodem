@@ -53,6 +53,8 @@ enum v32_fixed_stage {
 	V32_FIXED_ANSWERER_RATE,
 	V32_FIXED_ANSWERER_SECOND_CONDITIONING,
 	V32_FIXED_ANSWERER_END,
+	V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING,
+	V32_FIXED_ANSWERER_CLEARDOWN,
 	V32_FIXED_B1,
 	V32_FIXED_DATA,
 };
@@ -99,6 +101,7 @@ struct v32_datapump {
 	uint32_t missing_carrier_samples;
 	uint16_t caller_s_extension_symbols;
 	uint8_t conditioning_silence_samples;
+	uint8_t cleardown_symbols;
 	bool trellis_encoder_initialized;
 	bool answerer_s_detected;
 	bool caller;
@@ -173,6 +176,13 @@ static bool fixed_path_is_active(
 	return datapump->fixed_path.stage != V32_FIXED_OFF;
 }
 
+static bool fixed_path_is_clearing(const struct v32_datapump *datapump)
+{
+	return datapump->fixed_path.stage ==
+		       V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING ||
+	       datapump->fixed_path.stage == V32_FIXED_ANSWERER_CLEARDOWN;
+}
+
 static const struct v32_receive_path *fixed_path_receive_const(
 	const struct v32_fixed_path *path)
 {
@@ -203,6 +213,8 @@ static const struct v32_receive_path *fixed_path_receive_const(
 	case V32_FIXED_ANSWERER_END:
 		return &path->owner.end.receive;
 	case V32_FIXED_OFF:
+	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
+	case V32_FIXED_ANSWERER_CLEARDOWN:
 		break;
 	}
 	return NULL;
@@ -232,7 +244,7 @@ static bool fixed_path_is_valid(
 	     path->stage <= V32_FIXED_CALLER_END) ||
 	    (datapump->caller &&
 	     path->stage >= V32_FIXED_ANSWERER_INITIAL_ECHO &&
-	     path->stage <= V32_FIXED_ANSWERER_END))
+	     path->stage <= V32_FIXED_ANSWERER_CLEARDOWN))
 		return false;
 	switch (path->stage) {
 	case V32_FIXED_CALLER_CONDITIONING:
@@ -307,6 +319,15 @@ static bool fixed_path_is_valid(
 			v32_end_path_is_valid(&path->owner.end) &&
 			!v32_end_path_is_complete(&path->owner.end);
 		break;
+	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
+		return datapump->cleardown_symbols == 0 &&
+		       v32_conditioning_transmitter_is_valid(
+			       &path->training.conditioning);
+	case V32_FIXED_ANSWERER_CLEARDOWN:
+		return datapump->cleardown_symbols <= V32_CLEARDOWN_SYMBOLS +
+			       datapump->modulator.channel.pulse_span_symbols + 1u &&
+		       v32_conditioning_transmitter_is_complete(
+			       &path->training.conditioning);
 	case V32_FIXED_OFF:
 		return false;
 	}
@@ -912,6 +933,34 @@ static int finish_fixed_answerer_conditioning(
 	return next_transmit_point(datapump, linked);
 }
 
+static int next_cleardown_point(struct v32_datapump *datapump)
+{
+	if (datapump->cleardown_symbols < V32_CLEARDOWN_SYMBOLS) {
+		const struct v32_rate_offer empty = { 0 };
+		uint16_t word;
+		uint8_t dibit;
+		uint8_t quadrant;
+
+		if (v32_rate_signal_encode(V32_CLEARDOWN_SIGNAL, &empty, &word) !=
+			    V32_RATE_SIGNAL_OK ||
+		    v32_rate_signal_dibit(
+			    word, datapump->cleardown_symbols % V32_RATE_SIGNAL_DIBITS,
+			    &dibit) != V32_RATE_SIGNAL_OK ||
+		    v32_4800_symbol_encode(
+			    &datapump->encoder, dibit, &quadrant) != V32_FRAMING_OK ||
+		    v32_4800_constellation_point(
+			    quadrant, &datapump->transmit_point) != V32_CONSTELLATION_OK)
+			return -1;
+	} else {
+		/* Retain RTP long enough to flush the final rate word's pulse. */
+		datapump->transmit_point = (struct qam_point){ 0 };
+	}
+	if (datapump->cleardown_symbols < V32_CLEARDOWN_SYMBOLS +
+		    datapump->modulator.channel.pulse_span_symbols + 1u)
+		datapump->cleardown_symbols++;
+	return 0;
+}
+
 static int generate_fixed_path_sample(
 	struct v32_datapump *datapump, int16_t *sample,
 	struct v32_echo_reference *reference, bool *reference_ready,
@@ -994,7 +1043,8 @@ static int generate_fixed_path_sample(
 			}
 			break;
 		}
-		case V32_FIXED_ANSWERER_SECOND_CONDITIONING: {
+		case V32_FIXED_ANSWERER_SECOND_CONDITIONING:
+		case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING: {
 			uint8_t quadrant;
 			enum v32_conditioning_result result =
 				v32_conditioning_transmitter_next(
@@ -1002,9 +1052,19 @@ static int generate_fixed_path_sample(
 					&quadrant);
 
 			if (result == V32_CONDITIONING_COMPLETE) {
-				if (finish_fixed_answerer_conditioning(
-					    datapump, linked) != 0)
+				if (fixed_path_is_clearing(datapump)) {
+					if (v32_conditioning_transmitter_framing_state(
+						    &datapump->fixed_path.training.conditioning,
+						    &datapump->encoder) != V32_CONDITIONING_OK)
+						return -1;
+					datapump->fixed_path.stage =
+						V32_FIXED_ANSWERER_CLEARDOWN;
+					if (next_cleardown_point(datapump) != 0)
+						return -1;
+				} else if (finish_fixed_answerer_conditioning(
+						   datapump, linked) != 0) {
 					return -1;
+				}
 			} else if (result != V32_CONDITIONING_OK ||
 				   v32_4800_constellation_point(
 					   quadrant,
@@ -1022,6 +1082,10 @@ static int generate_fixed_path_sample(
 			break;
 		case V32_FIXED_ANSWERER_RATE:
 			datapump->transmit_point = silence;
+			break;
+		case V32_FIXED_ANSWERER_CLEARDOWN:
+			if (next_cleardown_point(datapump) != 0)
+				return -1;
 			break;
 		case V32_FIXED_ANSWERER_END:
 			if (next_transmit_point(datapump, linked) != 0)
@@ -1447,10 +1511,24 @@ static int receive_fixed_path_sample(
 			begin_fixed_rate(datapump, selection, linked) : 0;
 	}
 	case V32_FIXED_CALLER_RATE_OFFER:
-	case V32_FIXED_CALLER_SELECTION: {
+	case V32_FIXED_CALLER_SELECTION:
+	case V32_FIXED_ANSWERER_RATE: {
 		enum v32_rate_path_result result = v32_rate_path_sample(
 			&datapump->fixed_path.owner.rate, sample, reference);
 
+		if (result == V32_RATE_PATH_CLEARDOWN && !datapump->caller) {
+			/* V.32bis 6.2: send second conditioning, then R3 cleardown
+			 * for at least 64T. No E or data handoff follows refusal. */
+			if (v32_conditioning_transmitter_init(
+				    &datapump->fixed_path.training.conditioning,
+				    V32_ANSWERING_TRANSMITTER,
+				    V32_CONDITIONING_TRN_MIN_SYMBOLS) != V32_CONDITIONING_OK)
+				return -1;
+			datapump->cleardown_symbols = 0;
+			datapump->fixed_path.stage =
+				V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING;
+			return 0;
+		}
 		if (result != V32_RATE_PATH_OK &&
 		    result != V32_RATE_PATH_COMPLETE)
 			return -1;
@@ -1535,16 +1613,6 @@ static int receive_fixed_path_sample(
 		return result == V32_CONDITIONING_PATH_COMPLETE ?
 			begin_fixed_rate(datapump, false, linked) : 0;
 	}
-	case V32_FIXED_ANSWERER_RATE: {
-		enum v32_rate_path_result result = v32_rate_path_sample(
-			&datapump->fixed_path.owner.rate, sample, reference);
-
-		if (result != V32_RATE_PATH_OK &&
-		    result != V32_RATE_PATH_COMPLETE)
-			return -1;
-		return result == V32_RATE_PATH_COMPLETE ?
-			finish_fixed_rate(datapump, linked) : 0;
-	}
 	case V32_FIXED_ANSWERER_END: {
 		enum v32_end_path_result result = v32_end_path_sample(
 			&datapump->fixed_path.owner.end, sample, reference);
@@ -1555,6 +1623,9 @@ static int receive_fixed_path_sample(
 		return result == V32_END_PATH_COMPLETE ?
 			finish_fixed_end(datapump, linked) : 0;
 	}
+	case V32_FIXED_ANSWERER_CLEARDOWN_CONDITIONING:
+	case V32_FIXED_ANSWERER_CLEARDOWN:
+		return 0;
 	case V32_FIXED_OFF:
 		break;
 	}
@@ -1576,7 +1647,14 @@ static int process_v32(
 		memset(transmit, 0, (size_t)count * sizeof(*transmit));
 		return DPSTAT_ERROR;
 	}
+	/* The final nonempty fragment must reach the host before reporting the
+	 * disconnect; the ordinary failure path deliberately blanks its output. */
+	if (datapump->fixed_path.stage == V32_FIXED_ANSWERER_CLEARDOWN &&
+	    datapump->cleardown_symbols == V32_CLEARDOWN_SYMBOLS +
+		    datapump->modulator.channel.pulse_span_symbols + 1u)
+		goto failure;
 	if (!training_session_is_online(&datapump->training) &&
+	    !fixed_path_is_clearing(datapump) &&
 	    training_session_advance(
 		    &datapump->training,
 		    (uint64_t)(unsigned int)count) !=
