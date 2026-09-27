@@ -641,7 +641,9 @@ static enum v92_pcm_frame_result initialize_receiver(
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level,
 	enum v92_pcm_frame_observation observation)
 {
-	struct v92_pcm_frame_rx initialized = { 0 };
+	struct v92_pcm_mapping accepted;
+	struct v34_scrambler descrambler = { 0 };
+	struct v34_convolutional_encoder trellis = { 0 };
 	enum v34_trellis_selection selected;
 
 	if (receiver == NULL || mapping == NULL)
@@ -650,19 +652,24 @@ static enum v92_pcm_frame_result initialize_receiver(
 	    (observation == V92_PCM_FRAME_FILTER_OUTPUT && upstream_level <= 0) ||
 	    !trellis_selection(mapping->cpd.trellis, &selected))
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	initialized.mapping = *mapping;
-	initialized.observation = observation;
-	initialized.upstream_level = upstream_level;
-	initialized.minimum_level = upstream_level;
-	initialized.maximum_level = upstream_level;
-	initialized.path_count = 1u;
-	if (v34_scrambler_init(&initialized.paths[0].descrambler,
+	if (v34_scrambler_init(&descrambler,
 			       V34_POLYNOMIAL_GPA) !=
 		    V34_FRAMING_OK ||
-	    v34_convolutional_encoder_init(&initialized.paths[0].trellis, selected) !=
+	    v34_convolutional_encoder_init(&trellis, selected) !=
 		    V34_TRELLIS_OK)
 		return V92_PCM_FRAME_INVALID_PARAMETERS;
-	*receiver = initialized;
+	/* All fallible work precedes replacement. Preserve a mapping that aliases
+	 * this owner without staging the empty traceback histories. */
+	accepted = *mapping;
+	memset(receiver, 0, sizeof(*receiver));
+	receiver->mapping = accepted;
+	receiver->observation = observation;
+	receiver->upstream_level = upstream_level;
+	receiver->minimum_level = upstream_level;
+	receiver->maximum_level = upstream_level;
+	receiver->path_count = 1u;
+	receiver->paths[0].descrambler = descrambler;
+	receiver->paths[0].trellis = trellis;
 	return V92_PCM_FRAME_OK;
 }
 

@@ -180,7 +180,9 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 	int32_t prefilter_output, int16_t *sample);
 
 /* Initialize at B1u with the accepted CPd and trained LU. The continuous
- * line equalizer and timing remain owned by the caller. */
+ * line equalizer and timing remain owned by the caller. Both initializers
+ * accept the receiver's own mapping and leave the receiver unchanged on
+ * rejection. */
 enum v92_pcm_frame_result v92_pcm_frame_rx_init(
 	struct v92_pcm_frame_rx *receiver,
 	const struct v92_pcm_mapping *mapping, int16_t upstream_level);

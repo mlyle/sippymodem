@@ -812,6 +812,64 @@ static bool test_pending_bit_validation(void)
 	return true;
 }
 
+static bool test_receiver_initialization(void)
+{
+	const int16_t levels[] = { 0, 1, B1U_TEST_LEVEL, INT16_MAX };
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (uint8_t rate = 1u; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
+			for (unsigned selection = V92_CPD_TRELLIS_16_STATE;
+			     selection <= V92_CPD_TRELLIS_64_STATE; ++selection) {
+				struct v92_cpd_parameters cpd = parameters(rate);
+				struct v92_pcm_mapping mapping;
+				cpd.trellis = (enum v92_cpd_trellis)selection;
+				CHECK(v92_pcm_mapping_init(&mapping, (enum g711_law)law, &cpd) ==
+				      V92_PCM_MAPPING_OK, "receiver initialization mapping");
+				for (size_t index = 0u; index < ARRAY_LENGTH(levels); ++index) {
+					struct v92_pcm_frame_rx expected = { 0 }, rx, saved;
+					expected.mapping = mapping;
+					expected.observation = index == 0u ? V92_PCM_FRAME_CONSTELLATION : V92_PCM_FRAME_FILTER_OUTPUT;
+					expected.upstream_level = expected.minimum_level = expected.maximum_level = levels[index];
+					expected.path_count = 1u;
+					CHECK(v34_scrambler_init(&expected.paths[0].descrambler, V34_POLYNOMIAL_GPA) == V34_FRAMING_OK &&
+					      v34_convolutional_encoder_init(&expected.paths[0].trellis,
+						      (enum v34_trellis_selection)selection) == V34_TRELLIS_OK,
+					      "receiver initialization coding seeds");
+					for (unsigned alias = 0u; alias < 2u; ++alias) {
+						memset(&rx, 0xa5, sizeof(rx));
+						rx.mapping = mapping;
+						const struct v92_pcm_mapping *input = alias ? &rx.mapping : &mapping;
+						enum v92_pcm_frame_result result = index == 0u ?
+							v92_pcm_frame_rx_init_constellation(&rx, input) :
+							v92_pcm_frame_rx_init(&rx, input, levels[index]);
+						CHECK(result == V92_PCM_FRAME_OK && v92_pcm_frame_rx_is_valid(&rx) &&
+						      memcmp(&rx, &expected, sizeof(rx)) == 0,
+						      "receiver replacement changed law %u rate %u trellis %u domain %zu alias %u",
+						      law, rate, selection, index, alias);
+						/* A malformed in-owner mapping must also survive rejection. */
+						rx.mapping.data_bits_per_frame++;
+						saved = rx;
+						result = index == 0u ? v92_pcm_frame_rx_init_constellation(&rx, &rx.mapping) :
+							v92_pcm_frame_rx_init(&rx, &rx.mapping, levels[index]);
+						CHECK(result == V92_PCM_FRAME_INVALID_PARAMETERS &&
+						      memcmp(&rx, &saved, sizeof(rx)) == 0,
+						      "rejected alias changed receiver");
+						CHECK(v92_pcm_frame_rx_init(&rx, &mapping, 0) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+						      v92_pcm_frame_rx_init(&rx, &mapping, -1) == V92_PCM_FRAME_INVALID_PARAMETERS &&
+						      v92_pcm_frame_rx_init(&rx, NULL, levels[index]) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+						      v92_pcm_frame_rx_init_constellation(&rx, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+						      memcmp(&rx, &saved, sizeof(rx)) == 0,
+						      "invalid level or missing mapping changed receiver");
+					}
+				}
+			}
+		}
+	}
+	CHECK(v92_pcm_frame_rx_init(NULL, NULL, 0) == V92_PCM_FRAME_INVALID_ARGUMENT &&
+	      v92_pcm_frame_rx_init_constellation(NULL, NULL) == V92_PCM_FRAME_INVALID_ARGUMENT,
+	      "missing receiver changed initialization result");
+	return true;
+}
+
 static bool test_rejection_and_names(void)
 {
 	static const char *const names[] = {
@@ -933,7 +991,8 @@ int main(void)
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_level_refinement() ||
-	    !test_pending_bit_validation() || !test_rejection_and_names())
+	    !test_pending_bit_validation() || !test_receiver_initialization() ||
+	    !test_rejection_and_names())
 		return 1;
 	return 0;
 }
