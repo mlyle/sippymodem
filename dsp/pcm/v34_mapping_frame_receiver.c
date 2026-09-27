@@ -42,13 +42,11 @@ v34_receive_mapping_frame(
 	generated.primary_bit_count = recovered.primary_bit_count;
 	generated.auxiliary_bit_count = recovered.auxiliary_bit_count;
 	generated.auxiliary_bit = recovered.auxiliary_bit;
-	for (uint8_t index = 0; index < recovered.primary_bit_count; ++index) {
-		if (v34_descramble_group(
-			    &next_descrambler, recovered.primary_bits[index], 1,
-			    &generated.primary_bits[index]) !=
-		    V34_FRAMING_OK)
-			return V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT;
-	}
+	if (v34_descramble_unpacked_bits(
+		    &next_descrambler, recovered.primary_bits,
+		    recovered.primary_bit_count, generated.primary_bits) !=
+	    V34_FRAMING_OK)
+		return V34_MAPPING_FRAME_RECEIVER_INVALID_ARGUMENT;
 	*schedule = next_schedule;
 	*descrambler = next_descrambler;
 	*mapping_decoder = next_decoder;

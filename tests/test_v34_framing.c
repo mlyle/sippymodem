@@ -148,14 +148,17 @@ static bool test_unpacked_bit_batches(void)
 	uint32_t random = UINT32_C(0x9072a4b1);
 
 	for (unsigned int polynomial = 0; polynomial < 2u; ++polynomial) {
-		for (size_t count = 1u; count <= 65u; ++count) {
+		for (size_t count = 1u; count <= 80u; ++count) {
 			struct v34_scrambler grouped, batched, descrambler;
-			uint8_t input[65], expected[65], encoded[65];
+			uint8_t input[80], expected[80], encoded[80];
 
 			CHECK(v34_scrambler_init(&grouped, polynomial) == V34_FRAMING_OK &&
 			      v34_scrambler_init(&batched, polynomial) == V34_FRAMING_OK &&
 			      v34_scrambler_init(&descrambler, polynomial) == V34_FRAMING_OK,
 			      "V.34 batch fixture failed at %u/%zu", polynomial, count);
+			grouped.history = fixture_random(&random) &
+				((UINT32_C(1) << V34_SCRAMBLER_BITS) - 1u);
+			batched = descrambler = grouped;
 			for (size_t bit = 0; bit < count; ++bit) {
 				input[bit] = (uint8_t)(fixture_random(&random) >> 31);
 				CHECK(v34_scramble_group(

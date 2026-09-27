@@ -89,13 +89,10 @@ v34_transmit_mapping_frame(
 	    primary_bit_count != generated.mapping_frame.primary_bits ||
 	    primary_bits == NULL)
 		return V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT;
-	for (size_t index = 0; index < primary_bit_count; ++index) {
-		if (v34_scramble_group(
-			    &next_scrambler, primary_bits[index], 1,
-			    &scrambled_primary_bits[index]) !=
-		    V34_FRAMING_OK)
-			return V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT;
-	}
+	if (v34_scramble_unpacked_bits(
+		    &next_scrambler, primary_bits, primary_bit_count,
+		    scrambled_primary_bits) != V34_FRAMING_OK)
+		return V34_MAPPING_FRAME_TRANSMITTER_INVALID_ARGUMENT;
 	{
 		enum v34_mapping_frame_encoder_result result =
 			v34_encode_mapping_frame(
