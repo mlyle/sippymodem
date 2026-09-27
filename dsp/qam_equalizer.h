@@ -148,14 +148,16 @@ bool qam_equalizer_observation_is_pending(
 	const struct qam_equalizer_observation *observation);
 
 /* Adapt the most recently produced output toward a known or decided symbol.
- * Each output may be adapted at most once. */
+ * Each output may be adapted at most once. The target may alias owned points;
+ * rejected calls leave the equalizer unchanged. */
 enum qam_equalizer_result qam_equalizer_adapt(
 	struct qam_equalizer *equalizer,
 	const struct qam_point *target, double adaptation);
 
 /* Apply and consume one delayed observation transactionally. The equalizer
  * may have accepted later symbols since the observation was produced. The
- * observation must not overlap the equalizer. */
+ * observation must not overlap the equalizer. The target may alias points in
+ * either owner; rejection leaves both owners unchanged. */
 enum qam_equalizer_result
 qam_equalizer_adapt_observation(
 	struct qam_equalizer *equalizer,

@@ -1011,6 +1011,37 @@ static bool test_output_ownership(void)
 		      QAM_EQUALIZER_OK && ready == expected_ready &&
 	      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0,
 	      "owned equalizer input changed history shift");
+	for (unsigned int delayed = 0; delayed < 2; ++delayed)
+		for (unsigned int slot = 0; slot < 4; ++slot) {
+			struct qam_equalizer_observation retained = { 0 }, copied;
+			const struct qam_point received = { 2.0, 3.0 };
+			CHECK(qam_equalizer_init_geometry(&equalizer, &reference, &reference,
+				      7, 0) == QAM_EQUALIZER_OK &&
+			      qam_equalizer_enable_carrier_tracking(&equalizer, 0.1, 0.01) ==
+				      QAM_EQUALIZER_OK, "owned adaptation fixture failed");
+			equalizer.carrier_phase = 0.25;
+			equalizer.coefficients[7].in_phase = NAN;
+			equalizer.history[7].quadrature = NAN;
+			CHECK((delayed ? qam_equalizer_observe(&equalizer, &received, &retained, &ready) :
+				      qam_equalizer_push(&equalizer, &received, &output, &ready)) ==
+				      QAM_EQUALIZER_OK && ready, "owned adaptation decision failed");
+			const struct qam_point *target = slot == 0 ? &equalizer.coefficients[0] :
+				slot == 1 ? &equalizer.history[0] : slot == 2 ? &equalizer.last_output :
+				delayed ? &retained.history[0] : &equalizer.last_unrotated_output;
+			struct qam_point copied_target = *target;
+			saved = equalizer;
+			copied = retained;
+			CHECK((delayed ? qam_equalizer_adapt_observation(&saved, &copied, &copied_target, 0.1) :
+				      qam_equalizer_adapt(&saved, &copied_target, 0.1)) == QAM_EQUALIZER_OK &&
+			      (delayed ? qam_equalizer_adapt_observation(&equalizer, &retained, target, 0.1) :
+				      qam_equalizer_adapt(&equalizer, target, 0.1)) == QAM_EQUALIZER_OK &&
+			      memcmp(&equalizer, &saved, sizeof(equalizer)) == 0 &&
+			      memcmp(&retained, &copied, sizeof(retained)) == 0 &&
+			      isnan(equalizer.coefficients[7].in_phase) &&
+			      isnan(equalizer.history[7].quadrature),
+			      "owned adaptation target or inactive taps changed (delayed %u, slot %u)",
+			      delayed, slot);
+		}
 	return true;
 }
 
@@ -1023,6 +1054,8 @@ static bool test_adaptation_power_boundaries(void)
 	} cases[] = {
 		{ 1, { 0.0, 0.0 } },
 		{ 2, { 0x1.8p512, 0.0 } },
+		{ 7, { 1.0, 0x1p516 } },
+		{ QAM_EQUALIZER_MAX_TAP_COUNT, { 1.0, 0x1p516 } },
 	};
 	double coefficient = cases[1].target.in_phase / (2.0 + 1e-12);
 	double tap_power = coefficient * coefficient;
@@ -1060,6 +1093,16 @@ static bool test_adaptation_power_boundaries(void)
 				      memcmp(&observation, &saved, sizeof(observation)) == 0,
 				      "coefficient-power boundary %zu changed state (carrier %u, delayed %u)",
 				      index, carrier, delayed);
+				if (carrier && cases[index].target.quadrature != 0.0) {
+					/* The rejected tap update must also discard an otherwise
+					 * valid carrier proposal, without consuming the decision. */
+					CHECK((delayed ? qam_equalizer_adapt_observation(&before, &saved,
+						      &cases[index].target, 0.0) : qam_equalizer_adapt(&before,
+						      &cases[index].target, 0.0)) == QAM_EQUALIZER_OK &&
+					      before.carrier_frequency == 0.25 &&
+					      before.carrier_phase != equalizer.carrier_phase,
+					      "late-failure fixture did not propose carrier correction");
+				}
 			}
 	return true;
 }

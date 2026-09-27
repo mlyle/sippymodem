@@ -361,96 +361,17 @@ enum qam_equalizer_result qam_equalizer_observe(
 	return QAM_EQUALIZER_OK;
 }
 
-static bool apply_adaptation(
-	struct qam_equalizer *equalizer,
-	const struct qam_point history[
-		QAM_EQUALIZER_MAX_TAP_COUNT],
-	const struct qam_point *output,
-	const struct qam_point *target, double adaptation)
-{
-	struct qam_point error = {
-		.in_phase = target->in_phase - output->in_phase,
-		.quadrature = target->quadrature - output->quadrature,
-	};
-	double power = QAM_EQUALIZER_MINIMUM_POWER;
-	double coefficient_power = 0.0;
-
-	for (size_t index = 0; index < equalizer->tap_count;
-	     ++index)
-		power += qam_point_power(&history[index]);
-	if (!isfinite(power))
-		return false;
-	for (size_t index = 0; index < equalizer->tap_count;
-	     ++index) {
-		struct qam_point conjugate = {
-			.in_phase = history[index].in_phase,
-			.quadrature = -history[index].quadrature,
-		};
-		struct qam_point update = qam_point_multiply(&error, &conjugate);
-
-		equalizer->coefficients[index].in_phase +=
-			adaptation * update.in_phase / power;
-		equalizer->coefficients[index].quadrature +=
-			adaptation * update.quadrature / power;
-		coefficient_power += qam_point_power(&equalizer->coefficients[index]);
-	}
-	/* History and geometry are unchanged; the carrier update was validated. */
-	return isfinite(coefficient_power) &&
-	       coefficient_power > QAM_EQUALIZER_MINIMUM_POWER;
-}
-
-static bool prepare_carrier_target(
-	struct qam_equalizer *equalizer,
-	const struct qam_point *output, double correction_phase,
-	const struct qam_point *target, struct qam_point *unrotated_target)
-{
-	double cross;
-	double error;
-	double frequency;
-
-	if (!equalizer->carrier_tracking) {
-		*unrotated_target = *target;
-		return true;
-	}
-	*unrotated_target = rotate_point(target, -correction_phase);
-	if (!point_is_finite(unrotated_target))
-		return false;
-	if (qam_point_power(output) <= QAM_EQUALIZER_MINIMUM_POWER ||
-	    qam_point_power(target) <= QAM_EQUALIZER_MINIMUM_POWER)
-		return true;
-	cross = target->quadrature * output->in_phase -
-		target->in_phase * output->quadrature;
-	/* The V.34 decision-directed detector is a cross product. Unlike a
-	 * unit-angle error, it naturally gives weak decisions less authority. */
-	error = cross;
-	if (equalizer->carrier_error_limit > 0.0) {
-		if (error > equalizer->carrier_error_limit)
-			error = equalizer->carrier_error_limit;
-		else if (error < -equalizer->carrier_error_limit)
-			error = -equalizer->carrier_error_limit;
-	}
-	if (!isfinite(error))
-		return false;
-	frequency = equalizer->carrier_frequency +
-		    equalizer->carrier_integral_gain * error;
-	if (frequency > QAM_CARRIER_MAX_FREQUENCY)
-		frequency = QAM_CARRIER_MAX_FREQUENCY;
-	else if (frequency < -QAM_CARRIER_MAX_FREQUENCY)
-		frequency = -QAM_CARRIER_MAX_FREQUENCY;
-	equalizer->carrier_frequency = frequency;
-	equalizer->carrier_phase = wrap_carrier_phase(
-		equalizer->carrier_phase +
-		equalizer->carrier_proportional_gain * error);
-	return carrier_state_is_valid(equalizer);
-}
-
 static enum qam_equalizer_result adapt_decision(
 	struct qam_equalizer *equalizer,
 	struct qam_equalizer_observation *observation,
 	const struct qam_point *target, double adaptation)
 {
-	struct qam_equalizer next;
+	struct qam_point coefficients[QAM_EQUALIZER_MAX_TAP_COUNT];
 	struct qam_point unrotated_target;
+	const struct qam_point *output, *unrotated_output, *history;
+	double phase, frequency, correction_phase;
+	double power = QAM_EQUALIZER_MINIMUM_POWER;
+	double coefficient_power = 0.0;
 
 	if (!qam_equalizer_is_valid(equalizer) ||
 	    !point_is_finite(target) ||
@@ -467,20 +388,74 @@ static enum qam_equalizer_result adapt_decision(
 	} else if (!equalizer->can_adapt) {
 		return QAM_EQUALIZER_INVALID_STATE;
 	}
-	next = *equalizer;
-	if (!prepare_carrier_target(
-		    &next, observation != NULL ? &observation->output : &next.last_output,
-		    observation != NULL ? observation->carrier_phase : next.last_carrier_phase,
-		    target, &unrotated_target) ||
-	    !apply_adaptation(
-		    &next, observation != NULL ? observation->history : next.history,
-		    observation != NULL ? &observation->unrotated_output :
-			    &next.last_unrotated_output,
-		    &unrotated_target, adaptation))
+	output = observation != NULL ? &observation->output : &equalizer->last_output;
+	unrotated_output = observation != NULL ? &observation->unrotated_output :
+		&equalizer->last_unrotated_output;
+	history = observation != NULL ? observation->history : equalizer->history;
+	correction_phase = observation != NULL ? observation->carrier_phase :
+		equalizer->last_carrier_phase;
+	phase = equalizer->carrier_phase;
+	frequency = equalizer->carrier_frequency;
+	unrotated_target = *target;
+	if (equalizer->carrier_tracking) {
+		unrotated_target = rotate_point(target, -correction_phase);
+		if (!point_is_finite(&unrotated_target))
+			return QAM_EQUALIZER_INVALID_ARGUMENT;
+		if (qam_point_power(output) > QAM_EQUALIZER_MINIMUM_POWER &&
+		    qam_point_power(target) > QAM_EQUALIZER_MINIMUM_POWER) {
+			/* The V.34 cross-product detector naturally gives weak
+			 * decisions less authority than a unit-angle error. */
+			double error = target->quadrature * output->in_phase -
+				target->in_phase * output->quadrature;
+			if (equalizer->carrier_error_limit > 0.0) {
+				if (error > equalizer->carrier_error_limit)
+					error = equalizer->carrier_error_limit;
+				else if (error < -equalizer->carrier_error_limit)
+					error = -equalizer->carrier_error_limit;
+			}
+			if (!isfinite(error))
+				return QAM_EQUALIZER_INVALID_ARGUMENT;
+			frequency += equalizer->carrier_integral_gain * error;
+			if (frequency > QAM_CARRIER_MAX_FREQUENCY)
+				frequency = QAM_CARRIER_MAX_FREQUENCY;
+			else if (frequency < -QAM_CARRIER_MAX_FREQUENCY)
+				frequency = -QAM_CARRIER_MAX_FREQUENCY;
+			phase = wrap_carrier_phase(phase +
+				equalizer->carrier_proportional_gain * error);
+			if (!isfinite(phase) || !isfinite(frequency))
+				return QAM_EQUALIZER_INVALID_ARGUMENT;
+		}
+	}
+	struct qam_point error = {
+		.in_phase = unrotated_target.in_phase - unrotated_output->in_phase,
+		.quadrature = unrotated_target.quadrature - unrotated_output->quadrature,
+	};
+	for (size_t index = 0; index < equalizer->tap_count; ++index)
+		power += qam_point_power(&history[index]);
+	if (!isfinite(power))
 		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	for (size_t index = 0; index < equalizer->tap_count; ++index) {
+		struct qam_point conjugate = {
+			.in_phase = history[index].in_phase,
+			.quadrature = -history[index].quadrature,
+		};
+		struct qam_point update = qam_point_multiply(&error, &conjugate);
+
+		coefficients[index] = equalizer->coefficients[index];
+		coefficients[index].in_phase += adaptation * update.in_phase / power;
+		coefficients[index].quadrature += adaptation * update.quadrature / power;
+		coefficient_power += qam_point_power(&coefficients[index]);
+	}
+	if (!isfinite(coefficient_power) || coefficient_power <= QAM_EQUALIZER_MINIMUM_POWER)
+		return QAM_EQUALIZER_INVALID_ARGUMENT;
+	/* Stage only the taps and carrier state adaptation actually changes.
+	 * History, decisions, and inactive taps remain owned by the receiver. */
+	memcpy(equalizer->coefficients, coefficients,
+		equalizer->tap_count * sizeof(coefficients[0]));
+	equalizer->carrier_phase = phase;
+	equalizer->carrier_frequency = frequency;
 	if (observation == NULL)
-		next.can_adapt = false;
-	*equalizer = next;
+		equalizer->can_adapt = false;
 	if (observation != NULL)
 		observation->pending = false;
 	return QAM_EQUALIZER_OK;
