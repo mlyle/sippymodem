@@ -251,10 +251,73 @@ static bool test_rounding_boundaries(void)
 	return true;
 }
 
+static bool test_energy_normalization(void)
+{
+	static const struct {
+		size_t count;
+		int16_t reference, tail, alpha;
+	} cases[] = {
+		{ 144, 0, 0, 123 },       /* Silence retains the previous scale. */
+		{ 1, 8, 0, -13 },
+		{ 1, 16, 0, -3 },
+		{ 1, 32, 0, -1 },
+		{ 144, 3500, 0, -1994 },
+		{ 144, -16384, 0, -90 }, /* Maximum ordinary half-amplitude energy. */
+		/* Full-range stored references are also accepted owner states. */
+		{ 63, INT16_MIN, 0, -52 },
+		{ 65, INT16_MIN, 0, -3277 },
+		{ 128, INT16_MIN, 0, 123 }, /* Wrapped zero retains the scale. */
+		{ 144, INT16_MIN, 0, -205 },
+		{ 127, INT16_MIN, INT16_MAX, 0 }, /* Rounded divisor wraps to zero. */
+		{ 64, INT16_MIN, 0, 0 }, /* 0x80000000 has no normalizable bits. */
+	};
+	struct v34_echo_canceller canceller, saved;
+	int16_t output;
+
+	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+		CHECK(v34_echo_canceller_init(&canceller) == V34_ECHO_CANCELLER_OK,
+		      "energy owner did not initialize");
+		canceller.reference_fill = V34_ECHO_TAP_COUNT;
+		canceller.training_started = true;
+		canceller.sample_count = V34_ECHO_TAP_COUNT - 1u;
+		canceller.alpha = 123;
+		for (size_t tap = 0; tap < cases[i].count; ++tap)
+			canceller.references[tap] = cases[i].reference;
+		if (cases[i].tail != 0)
+			canceller.references[cases[i].count] = cases[i].tail;
+		for (size_t tap = 0; tap < V34_ECHO_TAP_COUNT; ++tap)
+			canceller.residues[tap] = 0x1234;
+		saved = canceller;
+		CHECK(v34_echo_canceller_predict(&canceller, 345, &output) ==
+			      V34_ECHO_CANCELLER_OK && output == 345 &&
+		      memcmp(&canceller, &saved, sizeof(saved)) == 0,
+		      "energy case %zu changed pure prediction", i);
+		CHECK(v34_echo_canceller_advance(&canceller, 345, 346, -2048) ==
+			      V34_ECHO_CANCELLER_SEQUENCE_MISMATCH &&
+		      memcmp(&canceller, &saved, sizeof(saved)) == 0,
+		      "energy case %zu changed rejected advance", i);
+		CHECK(v34_echo_canceller_advance(&canceller, 345, output, -2048) ==
+			      V34_ECHO_CANCELLER_OK &&
+		      canceller.alpha == cases[i].alpha &&
+		      canceller.sample_count == V34_ECHO_TAP_COUNT &&
+		      canceller.reference_write == 1 &&
+		      canceller.reference_fill == V34_ECHO_TAP_COUNT &&
+		      canceller.references[0] == -1024,
+		      "energy case %zu did not normalize and advance", i);
+		if (cases[i].alpha == 0)
+			CHECK(memcmp(canceller.coefficients, saved.coefficients,
+				     sizeof(saved.coefficients)) == 0 &&
+			      memcmp(canceller.residues, saved.residues,
+				     sizeof(saved.residues)) == 0,
+			      "unnormalizable energy updated coefficients");
+	}
+	return true;
+}
+
 int main(void)
 {
 	if (!test_validation_and_transactionality() || !test_near_cancellation() ||
-	    !test_rounding_boundaries())
+	    !test_rounding_boundaries() || !test_energy_normalization())
 		return 1;
 	puts("V.34 echo canceller tests passed");
 	return 0;

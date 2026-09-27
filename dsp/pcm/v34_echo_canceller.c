@@ -117,20 +117,22 @@ static uint32_t reference_energy(
 
 static int16_t alpha_from_energy(uint32_t energy, int32_t scale)
 {
-	uint8_t shift = 0;
+	unsigned int width = bit_width_unsigned(energy & UINT32_C(0x7fffffff));
+	unsigned int shift;
 	int32_t denominator;
 	int32_t numerator;
 	int16_t quotient;
 	int32_t bounded;
 	int32_t result;
 
-	if (energy == 0)
+	/* Normalize to bit 30, retaining the fixed-width energy arithmetic. */
+	if (width == 0)
 		return 0;
-	while ((energy & UINT32_C(0x40000000)) == 0) {
-		++shift;
-		energy <<= 1;
-	}
+	shift = 31u - width;
+	energy <<= shift;
 	denominator = arithmetic_shift_right_u32(energy + 0x8000u, 16);
+	if (denominator == 0)
+		return 0;
 	numerator = wrap_s32_from_u32(
 		UINT32_C(1) << ((shift + 0x15u) & 0x1fu));
 	quotient = wrap_s16_from_s32(numerator / denominator);
