@@ -226,6 +226,90 @@ static bool test_menu_audio_round_trip(void)
 	return true;
 }
 
+static bool test_transmit_ownership(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct {
+			int16_t before;
+			struct v8_fsk fsk;
+			int16_t after;
+		} adjacent = { .before = 123, .after = 456 };
+		struct v8_fsk *fsk = &adjacent.fsk;
+		struct v8_fsk saved, twin;
+		int16_t sample = 123, expected;
+		bool consumed = true, expected_consumed;
+		int16_t *sample_aliases[] = {
+			&fsk->transmitter.filter_history[0],
+			&fsk->transmitter.filter_history[V8_FSK_TRANSMIT_FILTER_TAPS - 1],
+			&fsk->line.entrance_history[0],
+			&fsk->receiver.history[0],
+			(void *)&fsk->role,
+		};
+		bool *consumed_aliases[] = {
+			&fsk->transmitter.holding_bit,
+			(void *)&fsk->line.input_count,
+			&fsk->receiver.timing_locked,
+			(void *)&fsk->role,
+		};
+
+		CHECK(v8_fsk_init(fsk, role) == V8_FSK_OK,
+		      "V.8 transmit ownership fixture role %d", role);
+		for (size_t index = 0; index < 128; ++index) {
+			CHECK(v8_fsk_transmit_sample(fsk, (index / 7u) & 1u,
+				      &sample, &consumed) == V8_FSK_OK &&
+			      v8_fsk_filter_transmit_sample(fsk,
+				      (int16_t)((int)index * 137 - 16384),
+				      &sample) == V8_FSK_OK,
+			      "V.8 transmit warmup role %d sample %zu", role, index);
+		}
+		memcpy(&saved, fsk, sizeof(saved));
+		sample = 123;
+		consumed = true;
+		for (size_t index = 0; index < ARRAY_LENGTH(sample_aliases); ++index)
+			CHECK(v8_fsk_transmit_sample(fsk, 0, sample_aliases[index],
+				      &consumed) == V8_FSK_INVALID_ARGUMENT &&
+			      v8_fsk_filter_transmit_sample(fsk, INT16_MIN,
+				      sample_aliases[index]) == V8_FSK_INVALID_ARGUMENT &&
+			      memcmp(fsk, &saved, sizeof(saved)) == 0 && consumed,
+			      "V.8 role %d accepted sample owner alias %zu", role, index);
+		for (size_t index = 0; index < ARRAY_LENGTH(consumed_aliases); ++index)
+			CHECK(v8_fsk_transmit_sample(fsk, 0, &sample,
+				      consumed_aliases[index]) == V8_FSK_INVALID_ARGUMENT &&
+			      memcmp(fsk, &saved, sizeof(saved)) == 0 && sample == 123,
+			      "V.8 role %d accepted consumed owner alias %zu", role, index);
+		for (size_t index = 0; index < sizeof(sample); ++index) {
+			union {
+				int16_t sample;
+				unsigned char bytes[sizeof(int16_t)];
+			} outputs = { .sample = 123 };
+
+			CHECK(v8_fsk_transmit_sample(fsk, 0, &outputs.sample,
+				      (void *)&outputs.bytes[index]) == V8_FSK_INVALID_ARGUMENT &&
+			      memcmp(fsk, &saved, sizeof(saved)) == 0 && outputs.sample == 123,
+			      "V.8 role %d accepted overlapping outputs at %zu", role, index);
+		}
+		CHECK(v8_fsk_transmit_sample(fsk, 2, &sample, &consumed) == V8_FSK_INVALID_ARGUMENT &&
+		      v8_fsk_transmit_sample(fsk, 0, NULL, &consumed) == V8_FSK_INVALID_ARGUMENT &&
+		      v8_fsk_transmit_sample(fsk, 0, &sample, NULL) == V8_FSK_INVALID_ARGUMENT &&
+		      v8_fsk_filter_transmit_sample(fsk, 0, NULL) == V8_FSK_INVALID_ARGUMENT &&
+		      memcmp(fsk, &saved, sizeof(saved)) == 0 && sample == 123 && consumed,
+		      "V.8 role %d changed warmed state on rejection", role);
+
+		twin = *fsk;
+		CHECK(v8_fsk_transmit_sample(&twin, 0, &expected, &expected_consumed) == V8_FSK_OK &&
+		      v8_fsk_transmit_sample(fsk, 0, &adjacent.before, &consumed) == V8_FSK_OK &&
+		      adjacent.before == expected && adjacent.after == 456 &&
+		      consumed == expected_consumed && memcmp(fsk, &twin, sizeof(twin)) == 0,
+		      "V.8 role %d rejected disjoint neighboring sample", role);
+		CHECK(v8_fsk_filter_transmit_sample(&twin, INT16_MAX, &expected) == V8_FSK_OK &&
+		      v8_fsk_filter_transmit_sample(fsk, INT16_MAX, &adjacent.after) == V8_FSK_OK &&
+		      adjacent.after == expected && memcmp(fsk, &twin, sizeof(twin)) == 0,
+		      "V.8 role %d rejected disjoint neighboring filtered sample", role);
+	}
+	return true;
+}
+
 static bool test_block_validation(void)
 {
 	struct v8_fsk fsk, saved;
@@ -335,6 +419,7 @@ int main(void)
 		{ "station channels", test_station_channels },
 		{ "transmit oracle", test_transmit_oracle },
 		{ "menu audio round trip", test_menu_audio_round_trip },
+		{ "transmit ownership", test_transmit_ownership },
 		{ "block validation", test_block_validation },
 		{ "validation and reset", test_validation_and_reset },
 	};

@@ -44,11 +44,13 @@ enum v8_fsk_result v8_fsk_reset(
 
 bool v8_fsk_can_accept_bit(
 	const struct v8_fsk *fsk);
+/* Transmit outputs must be separate from the whole FSK owner and one another.
+ * Rejected calls leave both the owner and outputs unchanged. */
 enum v8_fsk_result v8_fsk_transmit_sample(
 	struct v8_fsk *fsk, uint8_t bit, int16_t *sample,
 	bool *bit_consumed);
-/* ANSam and the following answer-station control message share this exact
- * line-filter history. */
+/* The same sample ownership/rejection contract applies. ANSam and the following
+ * answer-station control message share this exact line-filter history. */
 enum v8_fsk_result v8_fsk_filter_transmit_sample(
 	struct v8_fsk *fsk, int16_t unfiltered, int16_t *sample);
 enum v8_fsk_result v8_fsk_receive_sample(

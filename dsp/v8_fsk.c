@@ -173,7 +173,7 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 	struct v8_fsk *fsk, uint8_t bit, int16_t *sample,
 	bool *bit_consumed)
 {
-	struct v8_fsk_transmitter next;
+	struct v8_fsk_transmitter *transmitter;
 	uint16_t step;
 	uint32_t bit_progress;
 	int16_t generated;
@@ -189,28 +189,28 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 		    sample, sizeof(*sample), bit_consumed,
 		    sizeof(*bit_consumed)))
 		return V8_FSK_INVALID_ARGUMENT;
-	next = fsk->transmitter;
-	if (!next.holding_bit) {
-		next.held_bit = bit;
-		next.holding_bit = true;
+	transmitter = &fsk->transmitter;
+	if (!transmitter->holding_bit) {
+		transmitter->held_bit = bit;
+		transmitter->holding_bit = true;
 	}
-	step = next.held_bit ? next.mark_phase_step : next.space_phase_step;
-	next.carrier_phase = (uint16_t)(
-		(next.carrier_phase + step) & V8_FSK_PHASE_MASK);
+	step = transmitter->held_bit ? transmitter->mark_phase_step :
+		transmitter->space_phase_step;
+	transmitter->carrier_phase = (uint16_t)(
+		(transmitter->carrier_phase + step) & V8_FSK_PHASE_MASK);
 	generated = multiply_shift_s16(
 		fixed_phase_cosine_u8_q14(
-			(uint8_t)(next.carrier_phase >> V8_FSK_PHASE_SHIFT)),
-		next.gain, 14);
+			(uint8_t)(transmitter->carrier_phase >> V8_FSK_PHASE_SHIFT)),
+		transmitter->gain, 14);
 	generated = filter_sample(
-		&next, transmit_filter(fsk->role), generated);
-	bit_progress = (uint32_t)next.bit_progress + V8_FSK_BIT_RATE;
+		transmitter, transmit_filter(fsk->role), generated);
+	bit_progress = (uint32_t)transmitter->bit_progress + V8_FSK_BIT_RATE;
 	if (bit_progress >= V8_FSK_SAMPLE_RATE) {
 		bit_progress -= V8_FSK_SAMPLE_RATE;
-		next.holding_bit = false;
+		transmitter->holding_bit = false;
 		consumed = true;
 	}
-	next.bit_progress = (uint16_t)bit_progress;
-	fsk->transmitter = next;
+	transmitter->bit_progress = (uint16_t)bit_progress;
 	*sample = generated;
 	*bit_consumed = consumed;
 	return V8_FSK_OK;
@@ -219,18 +219,12 @@ enum v8_fsk_result v8_fsk_transmit_sample(
 enum v8_fsk_result v8_fsk_filter_transmit_sample(
 	struct v8_fsk *fsk, int16_t unfiltered, int16_t *sample)
 {
-	struct v8_fsk_transmitter next;
-	int16_t generated;
-
 	if (!fsk_is_configured(fsk) || sample == NULL ||
 	    memory_regions_overlap(
 		    fsk, sizeof(*fsk), sample, sizeof(*sample)))
 		return V8_FSK_INVALID_ARGUMENT;
-	next = fsk->transmitter;
-	generated = filter_sample(
-		&next, transmit_filter(fsk->role), unfiltered);
-	fsk->transmitter = next;
-	*sample = generated;
+	*sample = filter_sample(
+		&fsk->transmitter, transmit_filter(fsk->role), unfiltered);
 	return V8_FSK_OK;
 }
 
