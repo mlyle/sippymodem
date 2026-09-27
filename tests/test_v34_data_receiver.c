@@ -400,6 +400,100 @@ static bool test_b1_schedule_continuity(void)
 	return true;
 }
 
+static bool test_disjoint_receive_regions(void)
+{
+	for (size_t index = 0; index < ARRAY_LENGTH(CONFIGURATIONS); ++index) {
+		struct fixture fixture;
+		struct packet packet;
+		struct v34_received_mapping_frame received;
+		struct v34_received_mapping_frame saved_received;
+		union {
+			struct v34_data_receiver receiver;
+			struct v34_decided_4d_interval
+				decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+			struct v34_received_mapping_frame received;
+		} owner, saved_owner;
+		union {
+			struct v34_decided_4d_interval
+				decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+			struct v34_received_mapping_frame received;
+		} payload, saved_payload;
+		struct {
+			struct v34_data_receiver receiver;
+			struct v34_decided_4d_interval
+				decided[V34_4D_INTERVALS_PER_MAPPING_FRAME];
+			struct v34_received_mapping_frame received;
+		} adjacent;
+
+		CHECK(initialize_fixture(&fixture, &CONFIGURATIONS[index]),
+		      "region fixture %zu did not initialize", index);
+		/* Exercise both B1 and ordinary data with live coding histories. */
+		for (unsigned int data = 0; data < 2u; ++data) {
+			CHECK(transmit_next(&fixture, data == 0u, false, false,
+					    UINT32_C(0x31415927), &packet),
+			      "region frame %zu/%u did not transmit", index, data);
+			memset(&owner, 0xa5, sizeof(owner));
+			owner.receiver = fixture.receiver;
+			memcpy(&saved_owner, &owner, sizeof(owner));
+			memset(&received, 0xa5, sizeof(received));
+			memcpy(&saved_received, &received, sizeof(received));
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &owner.receiver, owner.decided, &received) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      memcmp(&owner, &saved_owner, sizeof(owner)) == 0 &&
+			      memcmp(&received, &saved_received, sizeof(received)) == 0,
+			      "owner/input overlap %zu/%u changed state", index, data);
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &owner.receiver, packet.decided,
+				      &owner.received) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      memcmp(&owner, &saved_owner, sizeof(owner)) == 0,
+			      "owner/output overlap %zu/%u was accepted", index, data);
+			memset(&payload, 0xa5, sizeof(payload));
+			memcpy(payload.decided, packet.decided, sizeof(payload.decided));
+			memcpy(&saved_payload, &payload, sizeof(payload));
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &owner.receiver, payload.decided,
+				      &payload.received) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      memcmp(&owner, &saved_owner, sizeof(owner)) == 0 &&
+			      memcmp(&payload, &saved_payload, sizeof(payload)) == 0,
+			      "input/output overlap %zu/%u was accepted", index, data);
+			payload.decided[V34_4D_INTERVALS_PER_MAPPING_FRAME - 1u]
+				.trellis_output = 2u;
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &owner.receiver, payload.decided, &received) ==
+				      V34_DATA_RECEIVE_INVALID_ARGUMENT &&
+			      memcmp(&owner, &saved_owner, sizeof(owner)) == 0 &&
+			      memcmp(&received, &saved_received, sizeof(received)) == 0,
+			      "late rejection %zu/%u changed state or output", index, data);
+			adjacent.receiver = owner.receiver;
+			memcpy(adjacent.decided, packet.decided, sizeof(adjacent.decided));
+			CHECK(v34_data_receiver_receive_mapping_frame(
+				      &adjacent.receiver, adjacent.decided,
+				      &adjacent.received) ==
+				      (data == 0u ? V34_DATA_RECEIVE_B1_IN_PROGRESS :
+						    V34_DATA_RECEIVE_MAPPING_FRAME_READY) &&
+			      received_matches(&adjacent.received, &packet) &&
+			      memcmp(adjacent.decided, packet.decided,
+				     sizeof(adjacent.decided)) == 0,
+			      "disjoint retry %zu/%u failed or changed input", index, data);
+			fixture.receiver = adjacent.receiver;
+			while (fixture.receiver.b1_active) {
+				CHECK(transmit_next(&fixture, true, false, false, 0, &packet) &&
+				      v34_data_receiver_receive_mapping_frame(
+					      &fixture.receiver, packet.decided, &received) ==
+					      (packet.frame.completes_data_frame ?
+						       V34_DATA_RECEIVE_B1_COMPLETE :
+						       V34_DATA_RECEIVE_B1_IN_PROGRESS) &&
+				      received_matches(&received, &packet),
+				      "region fixture %zu lost its B1 handoff", index);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct fixture fixture;
@@ -465,6 +559,7 @@ int main(void)
 		{ "B1 and superframe handoff", test_b1_and_superframe_handoff },
 		{ "B1 errors and rejection", test_b1_errors_and_rejection },
 		{ "B1 schedule continuity", test_b1_schedule_continuity },
+		{ "disjoint receive regions", test_disjoint_receive_regions },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;

@@ -37,7 +37,8 @@ bool v34_data_receiver_is_receiving_b1(
  * payload while counting non-one decisions without changing the physical
  * frame schedule; MAPPING_FRAME_READY exposes ordinary data. A completed
  * ordinary data frame advances automatically, including superframe wraparound.
- * State and destination are unchanged on rejection. */
+ * Receiver, read-only decisions, and destination must be disjoint. State and
+ * destination are unchanged on rejection. */
 enum v34_data_receive_result
 v34_data_receiver_receive_mapping_frame(
 	struct v34_data_receiver *receiver,
