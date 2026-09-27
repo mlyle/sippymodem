@@ -86,8 +86,8 @@ static int16_t reference_at_age(
 		canceller->reference_write, V34_ECHO_TAP_COUNT, age)];
 }
 
-static int32_t filter_prediction(
-	const struct v34_echo_canceller *canceller)
+static int16_t filter_residual(
+	const struct v34_echo_canceller *canceller, int16_t received_sample)
 {
 	uint32_t accumulated = 0;
 
@@ -98,7 +98,9 @@ static int32_t filter_prediction(
 		accumulated += multiply_low_s32(
 			canceller->coefficients[tap], reference);
 	}
-	return wrap_s32_from_u32(accumulated);
+	return wrap_s16_from_s32(
+		(int32_t)received_sample +
+		arithmetic_shift_right_u32(accumulated * 4u + 0x8000u, 16));
 }
 
 static uint32_t reference_energy(
@@ -158,15 +160,10 @@ static void calculate_step(
 	const struct v34_echo_canceller *canceller,
 	int16_t received_sample, struct echo_step *step)
 {
-	uint32_t prediction = (uint32_t)filter_prediction(canceller);
-	uint32_t feedback;
 	bool smooth;
 	uint32_t energy = 0;
 
-	feedback = prediction * 4u + 0x8000u;
-	step->residual = wrap_s16_from_s32(
-		(int32_t)received_sample +
-		arithmetic_shift_right_u32(feedback, 16));
+	step->residual = filter_residual(canceller, received_sample);
 	step->cleaned = canceller->filtering ?
 			step->residual : received_sample;
 	step->alpha = canceller->alpha;
@@ -191,16 +188,14 @@ enum v34_echo_canceller_result v34_echo_canceller_predict(
 	const struct v34_echo_canceller *canceller,
 	int16_t received_sample, int16_t *cleaned_sample)
 {
-	struct echo_step step;
-
 	if (!v34_echo_canceller_is_valid(canceller))
 		return V34_ECHO_CANCELLER_INVALID_STATE;
 	if (cleaned_sample == NULL || memory_regions_overlap(
 		    canceller, sizeof(*canceller),
 		    cleaned_sample, sizeof(*cleaned_sample)))
 		return V34_ECHO_CANCELLER_INVALID_ARGUMENT;
-	calculate_step(canceller, received_sample, &step);
-	*cleaned_sample = step.cleaned;
+	*cleaned_sample = canceller->filtering ?
+		filter_residual(canceller, received_sample) : received_sample;
 	return V34_ECHO_CANCELLER_OK;
 }
 

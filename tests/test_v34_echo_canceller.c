@@ -161,6 +161,62 @@ static bool test_validation_and_transactionality(void)
 	return true;
 }
 
+static bool test_prediction_purity(void)
+{
+	static const uint32_t clocks[] = { 0, 143, 2024, 17999, UINT32_MAX };
+	static const struct {
+		int16_t received, residual;
+	} cases[] = {
+		{ INT16_MIN, 31744 }, /* Residual wraps rather than saturating. */
+		{ -1000, -2024 },
+		{ 0, -1024 },
+		{ INT16_MAX, 31743 },
+	};
+
+	for (size_t clock = 0; clock < sizeof(clocks) / sizeof(clocks[0]); ++clock) {
+		for (unsigned flags = 0; flags < 4; ++flags) {
+			for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); ++i) {
+				struct v34_echo_canceller canceller, saved;
+				int16_t output;
+
+				CHECK(v34_echo_canceller_init(&canceller) == V34_ECHO_CANCELLER_OK,
+				      "prediction owner did not initialize");
+				canceller.reference_write = canceller.reference_fill = 1;
+				canceller.references[0] = 8192;
+				canceller.coefficients[0] = -2048;
+				canceller.residues[0] = 123;
+				canceller.training_started = true;
+				canceller.filtering = (flags & 1u) != 0;
+				canceller.adapting = (flags & 2u) != 0;
+				canceller.sample_count = clocks[clock];
+				canceller.alpha = 512;
+				saved = canceller;
+				int16_t expected = canceller.filtering ?
+					cases[i].residual : cases[i].received;
+				for (unsigned repeat = 0; repeat < 2; ++repeat)
+					CHECK(v34_echo_canceller_predict(&canceller,
+						      cases[i].received, &output) == V34_ECHO_CANCELLER_OK &&
+					      output == expected && memcmp(&canceller, &saved, sizeof(saved)) == 0,
+					      "prediction changed output or owner at %zu/%u/%zu", clock, flags, i);
+				CHECK(v34_echo_canceller_advance(&canceller, cases[i].received,
+					      expected == INT16_MAX ? INT16_MIN : expected + 1, 16384) ==
+					      V34_ECHO_CANCELLER_SEQUENCE_MISMATCH &&
+				      memcmp(&canceller, &saved, sizeof(saved)) == 0,
+				      "rejected advance changed prediction owner");
+				CHECK(v34_echo_canceller_advance(&canceller,
+					      cases[i].received, output, 16384) == V34_ECHO_CANCELLER_OK &&
+				      canceller.sample_count == clocks[clock] + (saved.adapting ? 1u : 0u) &&
+				      canceller.reference_write == 2 && canceller.references[1] == 8192,
+				      "matching advance changed the sample or reference clock");
+				if (clock == 0 && saved.adapting && cases[i].received == 0)
+					CHECK(canceller.coefficients[0] == -2056 && canceller.residues[0] == 123,
+					      "adaptation failed to use the residual while filtering was %u", flags & 1u);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_near_cancellation(void)
 {
 	struct v34_echo_canceller canceller;
@@ -316,7 +372,8 @@ static bool test_energy_normalization(void)
 
 int main(void)
 {
-	if (!test_validation_and_transactionality() || !test_near_cancellation() ||
+	if (!test_validation_and_transactionality() || !test_prediction_purity() ||
+	    !test_near_cancellation() ||
 	    !test_rounding_boundaries() || !test_energy_normalization())
 		return 1;
 	puts("V.34 echo canceller tests passed");
