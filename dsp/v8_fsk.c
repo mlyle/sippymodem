@@ -282,7 +282,6 @@ enum v8_fsk_result v8_fsk_receive_sample(
 	bool *bit_ready)
 {
 	struct v8_line_conditioner next_line;
-	struct fsk_receiver next;
 	struct v8_line_conditioned_block block;
 	uint8_t received = 0;
 	bool block_ready;
@@ -296,15 +295,14 @@ enum v8_fsk_result v8_fsk_receive_sample(
 		    bit, sizeof(*bit), bit_ready, sizeof(*bit_ready)))
 		return V8_FSK_INVALID_ARGUMENT;
 	next_line = fsk->line;
-	next = fsk->receiver;
 	if (v8_line_conditioner_process_sample(
 		    &next_line, sample, &block, &block_ready) !=
 	    V8_LINE_CONDITIONER_OK)
 		return V8_FSK_INVALID_ARGUMENT;
-	if (block_ready && !receive_block(&next, &block, &received, &ready))
+	if (block_ready && v8_fsk_receive_block(
+		    fsk, &block, &received, &ready) != V8_FSK_OK)
 		return V8_FSK_INVALID_ARGUMENT;
 	fsk->line = next_line;
-	fsk->receiver = next;
 	*bit = received;
 	*bit_ready = ready;
 	return V8_FSK_OK;

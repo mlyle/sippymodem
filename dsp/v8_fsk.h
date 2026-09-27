@@ -53,6 +53,8 @@ enum v8_fsk_result v8_fsk_transmit_sample(
  * answer-station control message share this exact line-filter history. */
 enum v8_fsk_result v8_fsk_filter_transmit_sample(
 	struct v8_fsk *fsk, int16_t unfiltered, int16_t *sample);
+/* Receive outputs must be separate from the whole owner and one another.
+ * Rejection leaves line state, detector state, and outputs unchanged. */
 enum v8_fsk_result v8_fsk_receive_sample(
 	struct v8_fsk *fsk, int16_t sample, uint8_t *bit,
 	bool *bit_ready);

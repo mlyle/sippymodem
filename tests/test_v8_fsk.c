@@ -310,6 +310,77 @@ static bool test_transmit_ownership(void)
 	return true;
 }
 
+static bool receive_rejects_unchanged(struct v8_fsk *fsk, const char *reason)
+{
+	struct v8_fsk saved;
+	uint8_t bit = 7;
+	bool ready = true;
+
+	memcpy(&saved, fsk, sizeof(saved));
+	CHECK(v8_fsk_receive_sample(fsk, 0, &bit, &ready) == V8_FSK_INVALID_ARGUMENT &&
+	      memcmp(fsk, &saved, sizeof(saved)) == 0 && bit == 7 && ready,
+	      "V.8 receive role %d changed owner or outputs: %s", fsk->role, reason);
+	return true;
+}
+
+static bool test_receive_rollback(void)
+{
+	for (enum v8_station_role role = V8_CALLING_STATION;
+	     role <= V8_ANSWERING_STATION; ++role) {
+		struct v8_fsk fsk, saved;
+		struct fsk_receiver saved_receiver;
+		uint8_t bit = 7;
+		bool ready = true;
+
+		CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK,
+		      "V.8 deferred detector fixture role %d", role);
+		fsk.receiver.samples_per_symbol_q16 = 0;
+		memcpy(&saved_receiver, &fsk.receiver, sizeof(saved_receiver));
+		/* Until a block is ready, only the line front end advances. */
+		for (size_t index = 0; index < V8_LINE_INPUT_QUEUE_SAMPLES - 1; ++index)
+			CHECK(v8_fsk_receive_sample(&fsk, 0, &bit, &ready) == V8_FSK_OK &&
+			      memcmp(&fsk.receiver, &saved_receiver, sizeof(saved_receiver)) == 0 &&
+			      bit == 0 && !ready,
+			      "V.8 role %d advanced detector without a block", role);
+		CHECK(receive_rejects_unchanged(&fsk, "deferred detector rejection"),
+		      "V.8 deferred detector rollback failed");
+		memcpy(&saved, &fsk, sizeof(saved));
+		bit = 7;
+		ready = true;
+		CHECK(v8_fsk_receive_sample(&fsk, 0, (void *)&fsk.receiver, &ready) == V8_FSK_INVALID_ARGUMENT &&
+		      v8_fsk_receive_sample(&fsk, 0, &bit, (void *)&fsk.line) == V8_FSK_INVALID_ARGUMENT &&
+		      v8_fsk_receive_sample(&fsk, 0, (void *)&ready, &ready) == V8_FSK_INVALID_ARGUMENT &&
+		      memcmp(&fsk, &saved, sizeof(saved)) == 0 && bit == 7 && ready,
+		      "V.8 receive role %d accepted overlapping outputs", role);
+
+		CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK,
+		      "V.8 partial detector fixture role %d", role);
+		fsk.line.input_count = V8_LINE_INPUT_QUEUE_SAMPLES - 1;
+		fsk.receiver.history_count = fsk.receiver.channel.detector_window;
+		fsk.receiver.samples_per_symbol_q16 = UINT32_C(1) << 16;
+		fsk.receiver.sample_countdown_q16 = 1;
+		fsk.receiver.timing_locked = true;
+		fsk.receiver.last_bit = 1;
+		/* A second bit in the same block rejects after detector mutation. */
+		CHECK(receive_rejects_unchanged(&fsk, "multiple bits from one block"),
+		      "V.8 partial detector rollback failed");
+
+		CHECK(v8_fsk_init(&fsk, role) == V8_FSK_OK,
+		      "V.8 gain postvalidation fixture role %d", role);
+		fsk.line.input_count = V8_LINE_INPUT_QUEUE_SAMPLES - 1;
+		fsk.line.gain_mode = V8_LINE_GAIN_COARSE;
+		fsk.line.gain = 1;
+		fsk.line.filtered_energy = INT16_MAX;
+		fsk.line.entrance_history[16] = INT16_MAX;
+		for (size_t index = 0; index < fsk.line.input_count; ++index)
+			fsk.line.input_queue[index] = INT16_MAX;
+		/* Gain contraction rounds to zero and fails line postvalidation. */
+		CHECK(receive_rejects_unchanged(&fsk, "line gain postvalidation"),
+		      "V.8 line postvalidation rollback failed");
+	}
+	return true;
+}
+
 static bool test_block_validation(void)
 {
 	struct v8_fsk fsk, saved;
@@ -420,6 +491,7 @@ int main(void)
 		{ "transmit oracle", test_transmit_oracle },
 		{ "menu audio round trip", test_menu_audio_round_trip },
 		{ "transmit ownership", test_transmit_ownership },
+		{ "receive rollback", test_receive_rollback },
 		{ "block validation", test_block_validation },
 		{ "validation and reset", test_validation_and_reset },
 	};
