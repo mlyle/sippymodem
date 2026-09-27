@@ -186,17 +186,12 @@ int modem_async_get_bits(struct modem *m, int nbits, u8 *bit_buf, int bit_cnt)
 		bit_cnt--;
 		s->bit = 0;
 	}
-#if 0
-	memcpy(bit_buf,(1<<nbits)-1,bit_cnt);
-	ret += bit_cnt;
-#else
 	while (bit_cnt > 0) {
 		/* fill stops */
 		*bit_buf++ = (1<<nbits)-1;
 		bit_cnt --;
 		ret ++;
 	}
-#endif
 	return ret;
 }
 
@@ -898,39 +893,3 @@ int modem_hdlc_reframe(struct modem *m)
 	hdlc_reset_physical_framing(m, h);
 	return 0;
 }
-
-#if 0
-// temp stupid things
-static struct hdlc_frame *tmp_get_frame(void *framer)
-{
-	frame_t *f;
-	struct modem *m = framer;
-	if(m->get_chars) {
-		f = &m->packer.hdlc._tx_frame;
-		f->buf = m->packer.hdlc._tx_buf;
-		f->size = m->get_chars(m,f->buf,sizeof(m->packer.hdlc._tx_buf));
-		if(f->size <= 0) {
-			return NULL;
-		}
-		PACK_DBG("get frame: %d...\n",f->size);
-		return f;
-	}
-	return NULL;
-}
-static void tmp_put_frame(void *framer, frame_t *fr)
-{
-	struct modem *m = framer;
-	if(fr->count > 0 && m->put_chars) {
-		PACK_DBG("put frame: %d...\n",fr->count);
-		m->put_chars(m,fr->buf,fr->count);
-	}
-	return;
-}
-
-void tmp_init(struct modem *m)
-{
-        m->packer.hdlc.get_tx_frame = tmp_get_frame;
-        m->packer.hdlc.rx_complete  = tmp_put_frame;
-	m->packer.hdlc.framer = m;
-}
-#endif

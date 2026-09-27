@@ -752,10 +752,6 @@ void modem_update_config(struct modem *m, struct modem_config *cfg)
 	PRINT_CONFIG(comp_dict_size);
 	PRINT_CONFIG(comp_max_string);
 #endif
-	// FIXME, FIXME, FIXME !!!
-#if 0	
-	if(cfg->ec) ; /* TBD: now ec reconfig is handled internally in EC */
-#endif
 	if (cfg->comp && m->cfg.comp &&
 	    (cfg->comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
 	    (m->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0) {
@@ -1310,12 +1306,6 @@ static int modem_put_chars(struct modem *m, const char *buf, int n)
 		/* perror("write"); */
 		ret = 0;
 	}
-#if 0
-	if(ret>0) {
-		//MODEM_DBG("modem_comp_put_chars: %d...\n",i);
-		modem_debug_log_data(m,	MODEM_DBG_RX_CHARS,buf,i);
-	}
-#endif
 	return ret;
 }
 

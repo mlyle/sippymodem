@@ -118,11 +118,7 @@ long modem_get_param(struct modem *m, unsigned param_name)
 	case GetCallingToneFlag:
 		return m->homolog->params->CallingToneFlag;
 	case GetHookFlashTime:
-#if 0
-		return modem_get_sreg(m,SREG_FLASH_TIMER);
-#else
 		return m->homolog->params->HookFlashTime;
-#endif
 	case GetBlindDialPause:
 		return modem_get_sreg(m,SREG_DIAL_TONE_WAIT_TIME);
 	case GetNoAnswerTimeOut:

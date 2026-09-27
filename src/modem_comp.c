@@ -207,10 +207,6 @@ INLINE_FUNC u16 add_char(struct comp_state *c, u16 at, u8 ch)
 INLINE_FUNC int send_string(struct comp_state *c)
 {
 	int ret;
-#if 0
-	c->str_data[c->str_len] = 0;
-	COMP_DBG("out string %d: '%s'\n",c->last_matched,c->str_data);
-#endif
 	memcpy(c->obuf+c->olen,c->str_data,c->str_len);
 	ret = c->str_len;
 	c->olen += ret;
@@ -513,11 +509,6 @@ static int test_mode(struct comp_state *c)
 			c->bit_data = 0;
 			c->mode = COMPRESSED;
 		}
-#if 0
-		else if (0) { /* fixme: when RESET? */
-			COMP_DBG("encoder RESET\n");
-		}
-#endif
 		break;
 	case COMPRESSED:
 		if (c->cmp_last > (TEST_SLICE<<3)) {

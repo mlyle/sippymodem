@@ -325,16 +325,6 @@ static int process_I(struct modem *m, char *p, int *len)
 		modem_send_to_tty(m,modem_author,strlen(modem_author));
 		modem_send_to_tty(m,CRLF_CHARS(m),2);
 		break;
-#if 0
-	case 2:
-		s = "Modem Manufacturer: unknown (TBD)";
-		modem_send_to_tty(m,s,strlen(s));
-		modem_send_to_tty(m,CRLF_CHARS(m),2);
-		s = "Modem Provider: unknown (TBD)";
-		modem_send_to_tty(m,s,strlen(s));
-		modem_send_to_tty(m,CRLF_CHARS(m),2);		
-		break;
-#endif
 	case 3:
 		s = m->dev_name ? m->dev_name : "unknown";
 		modem_send_to_tty(m, s, strlen(s));
@@ -356,20 +346,10 @@ static int process_I(struct modem *m, char *p, int *len)
 	case 5:
 		modem_send_to_tty(m,"Stored Profile 0:",17);
 		modem_send_to_tty(m,CRLF_CHARS(m),2);
-#if 0
-		s = load_profile(m,0);
-		if (s!=NULL)
-			ret = print_sregs(m,s);
-#endif
 		break;
 	case 6:
 		modem_send_to_tty(m, "Stored Profile 1:",17);
 		modem_send_to_tty(m, CRLF_CHARS(m),2);
-#if 0
-		s = load_profile(m,1);
-		if (s!=NULL)
-			ret = print_sregs (m,s);
-#endif
 		break;
 	case 7:
 		s = m->homolog->name;
@@ -1430,15 +1410,6 @@ int process_at_command(struct modem *m, char *cmd)
 			case 'W': /* AT&W */
 				ret = -1;
 				break;
-#if 0
-			case 'Z': /* AT&Z */
-				c = toupper(*p++);
-				if (c == 'L'){
-					ret = print_last_dial_string (m);
-					break; /* ZL */
-				}
-				break; /* Z */
-#endif
 			default:
 				return -1;
 			}
@@ -1580,12 +1551,6 @@ int process_at_command(struct modem *m, char *cmd)
 				if(isdigit(*p)) len++;
 				// ret = set_sreg(m,SREG_V42_BASEREG,*p,0,5,&len);
 				break;
-#if 0
-			case 'B': /* AT\B */
-				break;
-			case 'K': /* AT\K */
-				break;
-#endif
 			case 'N': /* AT\N */
 				ret = set_sreg(m,SREG_EC,*p,0,5,&len);
 				break;

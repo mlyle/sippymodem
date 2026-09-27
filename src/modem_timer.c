@@ -48,12 +48,7 @@
 
 #include <modem_timer.h>
 
-#if 0
-#include <stdio.h>
-#define WARN(fmt...) fprintf(stderr, fmt);
-#else
 #define WARN(fmt...)
-#endif
 
 #define MAX_TIME LONG_MAX
 
@@ -206,4 +201,3 @@ void modem_timer_exit()
 {
 	sigaction(SIGALRM,&timer_list.old_act,NULL);
 }
-
