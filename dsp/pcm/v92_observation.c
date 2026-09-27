@@ -422,7 +422,7 @@ static unsigned bucket_shift(const struct v92_observation *model)
 	uint32_t positive = (uint32_t)model->first[model->count - 1];
 	uint32_t extent = negative > positive ? negative : positive;
 	uint32_t cells = (extent - 1u) / (V92_OBSERVATION_BUCKETS / 2u);
-	return cells ? (unsigned)(sizeof(unsigned) * CHAR_BIT) - __builtin_clz(cells) : 0u;
+	return bit_width_unsigned(cells);
 }
 
 static int64_t bucket_edge(unsigned bucket, unsigned shift)

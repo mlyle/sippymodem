@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "g711.h"
+#include "integer_math.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -15,19 +16,6 @@ enum {
 	G711_PCMU_NEGATIVE_MASK = 0x7f,
 };
 
-static unsigned int g711_segment(uint32_t magnitude,
-				 unsigned int first_segment_end)
-{
-	unsigned int segment = 0;
-
-	while (magnitude > first_segment_end &&
-	       segment < G711_SEGMENT_COUNT) {
-		magnitude >>= 1;
-		segment++;
-	}
-	return segment;
-}
-
 uint8_t g711_encode_pcmu(int16_t sample)
 {
 	uint32_t magnitude;
@@ -41,7 +29,8 @@ uint8_t g711_encode_pcmu(int16_t sample)
 		mask = G711_PCMU_POSITIVE_MASK;
 	}
 
-	unsigned int segment = g711_segment(magnitude, 0xff);
+	/* Segment is the bit width above the first segment's low eight bits. */
+	unsigned int segment = bit_width_unsigned(magnitude >> 8);
 	if (segment == G711_SEGMENT_COUNT)
 		return (uint8_t)(0x7f ^ mask);
 
@@ -77,7 +66,7 @@ uint8_t g711_encode_pcma(int16_t sample)
 		mask = G711_PCMA_POSITIVE_MASK;
 	}
 
-	unsigned int segment = g711_segment(magnitude, 0x1f);
+	unsigned int segment = bit_width_unsigned(magnitude >> 5);
 	if (segment == G711_SEGMENT_COUNT)
 		return (uint8_t)(0x7f ^ mask);
 

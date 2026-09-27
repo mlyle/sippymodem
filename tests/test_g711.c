@@ -120,6 +120,40 @@ static bool test_pcma_code_space(void)
 	return true;
 }
 
+static bool test_pcmu_quantization_intervals(void)
+{
+	/* Enumerate biased quantizer bins independently of segment selection.
+	 * The last bin absorbs saturation; only positive zero has input 0. */
+	unsigned int covered = 0;
+
+	for (unsigned int segment = 0; segment < 8; ++segment) {
+		int width = 1 << (segment + 3);
+
+		for (unsigned int mantissa = 0; mantissa < 16; ++mantissa) {
+			unsigned int code = (segment << 4) | mantissa;
+			int lower = (16 + (int)mantissa) * width - 132;
+			int upper = (17 + (int)mantissa) * width - 133;
+
+			if (lower < 0) lower = 0;
+			if (code == 127u) upper = 32768;
+			for (int magnitude = lower; magnitude <= upper; ++magnitude) {
+				if (magnitude <= INT16_MAX) {
+					CHECK(g711_encode_pcmu((int16_t)magnitude) == (uint8_t)(code ^ 0xffu),
+					      "PCMU positive interval failed at %d", magnitude);
+					++covered;
+				}
+				if (magnitude != 0) {
+					CHECK(g711_encode_pcmu((int16_t)-magnitude) == (uint8_t)(code ^ 0x7fu),
+					      "PCMU negative interval failed at %d", -magnitude);
+					++covered;
+				}
+			}
+		}
+	}
+	CHECK(covered == 65536u, "PCMU bins did not cover the signed input range");
+	return true;
+}
+
 static bool test_pcma_quantization_intervals(void)
 {
 	/* Table 1a/G.711 intervals in left-justified 16-bit PCM.  Enumerate
@@ -368,6 +402,7 @@ int main(void)
 		{ "PCMA known values", test_pcma_known_values },
 		{ "PCMU code space", test_pcmu_code_space },
 		{ "PCMA code space", test_pcma_code_space },
+		{ "PCMU quantization intervals", test_pcmu_quantization_intervals },
 		{ "PCMA quantization intervals", test_pcma_quantization_intervals },
 		{ "all linear samples", test_all_linear_samples },
 		{ "quantization interval edges", test_quantization_interval_edges },

@@ -7,6 +7,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Number of significant bits, including a defined zero result for zero. */
+static inline unsigned int bit_width_unsigned(unsigned int value)
+{
+	return value ? (unsigned int)(sizeof(value) * CHAR_BIT) -
+		       (unsigned int)__builtin_clz(value) : 0u;
+}
+
 /* Interpret the low fixed-width word without relying on implementation-defined
  * unsigned-to-signed conversions. */
 static inline int32_t wrap_s32_from_u32(uint32_t value)

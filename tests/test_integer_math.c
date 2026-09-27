@@ -4,6 +4,31 @@
 
 #include "test.h"
 
+static bool test_bit_width(void)
+{
+	unsigned int bits = (unsigned int)(sizeof(unsigned int) * CHAR_BIT);
+
+	for (unsigned int value = 0; value <= UINT16_MAX; ++value) {
+		unsigned int expected = 0;
+
+		for (unsigned int remaining = value; remaining; remaining >>= 1)
+			++expected;
+		CHECK(bit_width_unsigned(value) == expected,
+		      "bit width changed for %u", value);
+	}
+	for (unsigned int shift = 0; shift < bits; ++shift) {
+		unsigned int value = 1u << shift;
+
+		CHECK(bit_width_unsigned(value - 1u) == shift &&
+		      bit_width_unsigned(value) == shift + 1u &&
+		      bit_width_unsigned(value | (value - 1u)) == shift + 1u,
+		      "bit width boundary changed at %u", shift);
+	}
+	CHECK(bit_width_unsigned(UINT_MAX) == bits,
+	      "bit width truncated a full unsigned word");
+	return true;
+}
+
 static bool test_zero_and_symmetry(void)
 {
 	CHECK(gcd_u64(0, 0) == 0 &&
@@ -226,6 +251,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "bit width", test_bit_width },
 		{ "zero and symmetry", test_zero_and_symmetry },
 		{ "full-width values", test_full_width_values },
 		{ "signed rounding", test_signed_rounding },
