@@ -162,24 +162,23 @@ static uint8_t gray_dibit(uint8_t dibit)
 	return (uint8_t)(dibit ^ (dibit >> 1));
 }
 
+/* The scrambler rejects invalid input before changing its history. Once the
+ * owner is valid, the remaining two-bit phase mapping cannot fail. */
 enum v32_framing_result v32_trn_symbol_encode(
 	struct v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant)
 {
-	struct v32_symbol_encoder next;
 	uint8_t scrambled;
 	uint8_t next_quadrant;
 
 	if (!symbol_encoder_is_valid(encoder) || quadrant == NULL)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *encoder;
 	if (v32_scramble_dibit(
-		    &next.scrambler, input, &scrambled) !=
+		    &encoder->scrambler, input, &scrambled) !=
 	    V32_FRAMING_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
 	next_quadrant = gray_dibit(scrambled);
-	next.phase_quadrant = next_quadrant;
-	*encoder = next;
+	encoder->phase_quadrant = next_quadrant;
 	*quadrant = next_quadrant;
 	return V32_FRAMING_OK;
 }
@@ -188,22 +187,19 @@ enum v32_framing_result v32_4800_symbol_encode(
 	struct v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *quadrant)
 {
-	struct v32_symbol_encoder next;
 	uint8_t scrambled;
 	uint8_t next_quadrant;
 
 	if (!symbol_encoder_is_valid(encoder) || quadrant == NULL)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *encoder;
 	if (v32_scramble_dibit(
-		    &next.scrambler, input, &scrambled) !=
+		    &encoder->scrambler, input, &scrambled) !=
 		    V32_FRAMING_OK ||
 	    differential_qpsk_encode(
-		    next.phase_quadrant, scrambled, &next_quadrant) !=
+		    encoder->phase_quadrant, scrambled, &next_quadrant) !=
 		    DIFFERENTIAL_QPSK_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = next_quadrant;
-	*encoder = next;
+	encoder->phase_quadrant = next_quadrant;
 	*quadrant = next_quadrant;
 	return V32_FRAMING_OK;
 }
@@ -212,23 +208,20 @@ enum v32_framing_result v32_9600_symbol_encode(
 	struct v32_symbol_encoder *encoder, uint8_t input,
 	uint8_t *symbol)
 {
-	struct v32_symbol_encoder next;
 	uint8_t next_quadrant;
 	uint8_t scrambled;
 
 	if (!symbol_encoder_is_valid(encoder) || symbol == NULL)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *encoder;
 	if (v32_scramble_group(
-		    &next.scrambler, input,
+		    &encoder->scrambler, input,
 		    V32_9600_BITS_PER_SYMBOL, &scrambled) !=
 		    V32_FRAMING_OK ||
 	    differential_qpsk_encode(
-		    next.phase_quadrant, (uint8_t)(scrambled >> 2),
+		    encoder->phase_quadrant, (uint8_t)(scrambled >> 2),
 		    &next_quadrant) != DIFFERENTIAL_QPSK_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = next_quadrant;
-	*encoder = next;
+	encoder->phase_quadrant = next_quadrant;
 	*symbol = (uint8_t)((next_quadrant << 2) | (scrambled & 3u));
 	return V32_FRAMING_OK;
 }
@@ -254,21 +247,18 @@ enum v32_framing_result v32_trn_symbol_decode(
 	struct v32_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *output)
 {
-	struct v32_symbol_decoder next;
 	uint8_t decoded;
 	uint8_t scrambled;
 
 	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
 	    quadrant >= QPSK_QUADRANT_COUNT)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *decoder;
 	scrambled = gray_dibit(quadrant);
 	if (v32_descramble_dibit(
-		    &next.descrambler, scrambled, &decoded) !=
+		    &decoder->descrambler, scrambled, &decoded) !=
 	    V32_FRAMING_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = quadrant;
-	*decoder = next;
+	decoder->phase_quadrant = quadrant;
 	*output = decoded;
 	return V32_FRAMING_OK;
 }
@@ -277,23 +267,20 @@ enum v32_framing_result v32_4800_symbol_decode(
 	struct v32_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *output)
 {
-	struct v32_symbol_decoder next;
 	uint8_t decoded;
 	uint8_t scrambled;
 
 	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
 	    quadrant >= QPSK_QUADRANT_COUNT)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *decoder;
 	if (differential_qpsk_decode(
-		    next.phase_quadrant, quadrant, &scrambled) !=
+		    decoder->phase_quadrant, quadrant, &scrambled) !=
 		    DIFFERENTIAL_QPSK_OK ||
 	    v32_descramble_dibit(
-		    &next.descrambler, scrambled, &decoded) !=
+		    &decoder->descrambler, scrambled, &decoded) !=
 		    V32_FRAMING_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = quadrant;
-	*decoder = next;
+	decoder->phase_quadrant = quadrant;
 	*output = decoded;
 	return V32_FRAMING_OK;
 }
@@ -302,7 +289,6 @@ enum v32_framing_result v32_9600_symbol_decode(
 	struct v32_symbol_decoder *decoder, uint8_t symbol,
 	uint8_t *output)
 {
-	struct v32_symbol_decoder next;
 	uint8_t decoded;
 	uint8_t high_dibit;
 	uint8_t quadrant;
@@ -311,20 +297,18 @@ enum v32_framing_result v32_9600_symbol_decode(
 	if (!symbol_decoder_is_valid(decoder) || output == NULL ||
 	    symbol >= V32_9600_SYMBOL_COUNT)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next = *decoder;
 	quadrant = (uint8_t)(symbol >> 2);
 	if (differential_qpsk_decode(
-		    next.phase_quadrant, quadrant, &high_dibit) !=
+		    decoder->phase_quadrant, quadrant, &high_dibit) !=
 		    DIFFERENTIAL_QPSK_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
 	scrambled = (uint8_t)((high_dibit << 2) | (symbol & 3u));
 	if (v32_descramble_group(
-		    &next.descrambler, scrambled,
+		    &decoder->descrambler, scrambled,
 		    V32_9600_BITS_PER_SYMBOL, &decoded) !=
 	    V32_FRAMING_OK)
 		return V32_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = quadrant;
-	*decoder = next;
+	decoder->phase_quadrant = quadrant;
 	*output = decoded;
 	return V32_FRAMING_OK;
 }

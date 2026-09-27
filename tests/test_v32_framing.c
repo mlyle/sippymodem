@@ -396,29 +396,72 @@ static bool test_group_state_rejection(void)
 	return true;
 }
 
+static bool test_symbol_rejection(void)
+{
+	static const struct {
+		enum v32_framing_result (*encode)(
+			struct v32_symbol_encoder *, uint8_t, uint8_t *);
+		enum v32_framing_result (*decode)(
+			struct v32_symbol_decoder *, uint8_t, uint8_t *);
+		uint8_t limit;
+	} modes[] = {
+		{ v32_trn_symbol_encode, v32_trn_symbol_decode, 3 },
+		{ v32_4800_symbol_encode, v32_4800_symbol_decode, 3 },
+		{ v32_9600_symbol_encode, v32_9600_symbol_decode, 15 },
+	};
+
+	for (size_t mode = 0; mode < ARRAY_LENGTH(modes); ++mode) {
+		for (unsigned int role = 0; role < 2; ++role) {
+			for (unsigned int bad = 0; bad < 7; ++bad) {
+				struct v32_scrambler scrambler = {
+					.history = bad == 3 ?
+						UINT32_C(1) << V32_SCRAMBLER_BITS :
+						UINT32_C(0x5a1234),
+					.transmitter_role = (enum v32_transmitter_role)(
+						bad == 4 ? -1 : bad == 5 ? 2 : (int)role),
+				};
+				struct v32_symbol_encoder encoder = {
+					.scrambler = scrambler,
+					.phase_quadrant = bad == 2 ? 4 : 2,
+				};
+				struct v32_symbol_decoder decoder = {
+					.descrambler = scrambler,
+					.phase_quadrant = encoder.phase_quadrant,
+				};
+				struct v32_symbol_encoder saved_encoder = encoder;
+				struct v32_symbol_decoder saved_decoder = decoder;
+				uint8_t output = UINT8_MAX;
+				uint8_t input = bad == 0 ? modes[mode].limit + 1u : 0;
+				uint8_t *destination = bad == 1 ? NULL : &output;
+
+				CHECK(modes[mode].encode(
+					      bad == 6 ? NULL : &encoder, input,
+					      destination) == V32_FRAMING_INVALID_ARGUMENT &&
+				      modes[mode].decode(
+					      bad == 6 ? NULL : &decoder, input,
+					      destination) == V32_FRAMING_INVALID_ARGUMENT &&
+				      output == UINT8_MAX &&
+				      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+				      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0,
+				      "V.32 symbol rejection changed at %zu/%u/%u",
+				      mode, role, bad);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_validation(void)
 {
 	struct v32_scrambler scrambler;
 	struct v32_scrambler saved_scrambler;
-	struct v32_symbol_encoder encoder;
-	struct v32_symbol_encoder saved_encoder;
-	struct v32_symbol_decoder decoder;
-	struct v32_symbol_decoder saved_decoder;
 	uint8_t output = UINT8_MAX;
 
 	CHECK(v32_scrambler_init(
 		      &scrambler, V32_CALLING_TRANSMITTER) ==
-		      V32_FRAMING_OK &&
-		      v32_symbol_encoder_init(
-			      &encoder, V32_CALLING_TRANSMITTER, 2) ==
-			      V32_FRAMING_OK &&
-		      v32_symbol_decoder_init(
-			      &decoder, V32_CALLING_TRANSMITTER, 2) ==
-			      V32_FRAMING_OK,
+		      V32_FRAMING_OK,
 	      "V.32 validation fixtures did not initialize");
 	saved_scrambler = scrambler;
-	saved_encoder = encoder;
-	saved_decoder = decoder;
 	CHECK(v32_scrambler_init(
 		      NULL, V32_CALLING_TRANSMITTER) ==
 		      V32_FRAMING_INVALID_ARGUMENT &&
@@ -446,36 +489,7 @@ static bool test_validation(void)
 			      V32_FRAMING_INVALID_ARGUMENT &&
 		      memcmp(&scrambler, &saved_scrambler,
 			     sizeof(scrambler)) == 0 &&
-		      v32_trn_symbol_encode(&encoder, 4, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      v32_trn_symbol_encode(&encoder, 0, NULL) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      v32_4800_symbol_encode(&encoder, 4, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      v32_9600_symbol_encode(&encoder, 16, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      v32_9600_symbol_encode(&encoder, 0, NULL) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
-		      v32_trn_symbol_decode(&decoder, 4, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
-		      v32_trn_symbol_decode(&decoder, 0, NULL) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
-		      v32_9600_symbol_decode(&decoder, 16, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
-		      v32_9600_symbol_decode(&decoder, 0, NULL) ==
-			      V32_FRAMING_INVALID_ARGUMENT &&
-		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
-		      output == UINT8_MAX &&
-		      v32_4800_symbol_decode(NULL, 0, &output) ==
-			      V32_FRAMING_INVALID_ARGUMENT,
+		      output == UINT8_MAX,
 	      "V.32 framing accepted invalid input or mutated state");
 	scrambler.history = UINT32_C(1) << V32_SCRAMBLER_BITS;
 	CHECK(!v32_scrambler_is_valid(&scrambler),
@@ -501,6 +515,7 @@ int main(void)
 		{ "three-bit group round trip",
 		  test_three_bit_group_round_trip },
 		{ "group state rejection", test_group_state_rejection },
+		{ "symbol rejection", test_symbol_rejection },
 		{ "validation", test_validation },
 	};
 	unsigned int failures = 0;
