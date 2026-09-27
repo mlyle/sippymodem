@@ -136,11 +136,11 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_start_next(
 enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 	struct v92_phase4_record_tx *tx, int16_t *sample)
 {
-	struct v92_phase4_modulator next;
 	unsigned int bits;
 	int16_t generated;
 
-	if (tx == NULL || sample == NULL)
+	if (tx == NULL || sample == NULL ||
+	    memory_regions_overlap(tx, sizeof(*tx), sample, sizeof(*sample)))
 		return V92_PHASE4_RECORD_TX_INVALID_ARGUMENT;
 	if (!v92_phase4_record_tx_is_valid(tx))
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
@@ -148,13 +148,11 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 		return V92_PHASE4_RECORD_TX_COMPLETE;
 	bits = v92_phase4_modulator_bits_per_symbol(
 		tx->modulator.constellation);
-	next = tx->modulator;
 	if (v92_phase4_modulator_next(
-		    &next, (uint8_t)packed_msb_read_lsb_field(
+		    &tx->modulator, (uint8_t)packed_msb_read_lsb_field(
 			    tx->frame, tx->bit_index, bits), &generated) !=
 	    V92_PHASE4_MODULATOR_OK)
 		return V92_PHASE4_RECORD_TX_INVALID_STATE;
-	tx->modulator = next;
 	tx->bit_index += bits;
 	*sample = generated;
 	return V92_PHASE4_RECORD_TX_OK;

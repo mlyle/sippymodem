@@ -62,6 +62,8 @@ enum v92_phase4_record_tx_result v92_phase4_record_tx_start_next(
 	const uint8_t *frame, size_t frame_capacity,
 	size_t frame_bit_count);
 
+/* The sample must not overlap the record owner. Rejected calls and completed
+ * records leave both the owner and sample unchanged. */
 enum v92_phase4_record_tx_result v92_phase4_record_tx_next(
 	struct v92_phase4_record_tx *tx, int16_t *sample);
 

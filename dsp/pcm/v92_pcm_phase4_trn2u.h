@@ -35,8 +35,8 @@ enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_init(
 bool v92_pcm_phase4_trn2u_is_valid(
 	const struct v92_pcm_phase4_trn2u *trn2u);
 
-/* Consume scrambled binary ones in transmission order. Rejected calls leave
- * both the generator and sample unchanged. */
+/* Consume scrambled binary ones in transmission order. The sample must not
+ * overlap the generator. Rejected calls leave both unchanged. */
 enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_next(
 	struct v92_pcm_phase4_trn2u *trn2u, int16_t *sample);
 

@@ -2,6 +2,8 @@
 
 #include "v92_pcm_phase4_trn2u.h"
 
+#include "memory_region.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -32,26 +34,22 @@ enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_init(
 enum v92_pcm_phase4_trn2u_result v92_pcm_phase4_trn2u_next(
 	struct v92_pcm_phase4_trn2u *trn2u, int16_t *sample)
 {
-	struct v92_pcm_phase4_trn2u next;
 	unsigned int bits;
 	int16_t generated;
 
-	if (trn2u == NULL || sample == NULL)
+	if (trn2u == NULL || sample == NULL ||
+	    memory_regions_overlap(trn2u, sizeof(*trn2u), sample, sizeof(*sample)))
 		return V92_PCM_PHASE4_TRN2U_INVALID_ARGUMENT;
 	if (!v92_pcm_phase4_trn2u_is_valid(trn2u) ||
 	    trn2u->emitted_symbols == UINT32_MAX)
 		return V92_PCM_PHASE4_TRN2U_INVALID_STATE;
-	next = *trn2u;
 	bits = v92_phase4_modulator_bits_per_symbol(
-		next.modulator.constellation);
-	if (bits == 0 || v92_phase4_modulator_next(
-		    &next.modulator, (uint8_t)((1u << bits) - 1u),
+		trn2u->modulator.constellation);
+	if (v92_phase4_modulator_next(
+		    &trn2u->modulator, (uint8_t)((1u << bits) - 1u),
 		    &generated) != V92_PHASE4_MODULATOR_OK)
 		return V92_PCM_PHASE4_TRN2U_INVALID_STATE;
-	next.emitted_symbols++;
-	if (!v92_pcm_phase4_trn2u_is_valid(&next))
-		return V92_PCM_PHASE4_TRN2U_INVALID_STATE;
-	*trn2u = next;
+	trn2u->emitted_symbols++;
 	*sample = generated;
 	return V92_PCM_PHASE4_TRN2U_OK;
 }

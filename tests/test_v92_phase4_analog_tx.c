@@ -203,6 +203,8 @@ static bool test_record_boundaries(void)
 		tx.bit_index = tx.frame_bit_count;
 		saved = tx;
 		CHECK(v92_phase4_record_tx_is_complete(&tx) &&
+		      v92_phase4_record_tx_next(&tx, &tx.modulator.lu) ==
+			      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
 		      v92_phase4_record_tx_next(&tx, &sample) == V92_PHASE4_RECORD_TX_COMPLETE &&
 		      v92_phase4_record_tx_handoff(&tx, &handoff) == V92_PHASE4_RECORD_TX_OK &&
 		      memcmp(&tx, &saved, sizeof(tx)) == 0 && sample == 1234 &&
@@ -236,6 +238,75 @@ static bool test_record_boundaries(void)
 		      memcmp(&tx.modulator, &modulator, sizeof(modulator)) == 0,
 		      "next record lost its coder history");
 	}
+	return true;
+}
+
+static bool test_record_output_ownership(void)
+{
+	static const uint8_t frame[] = { 0x1b, 0xe4, 0x59 };
+	for (unsigned mode = 0; mode < 2u; ++mode) {
+		for (uint8_t sign = 0; sign <= 1u; ++sign) {
+			struct {
+				int16_t before;
+				struct v92_phase4_record_tx owner;
+				int16_t after;
+			} wrapped = { .before = 1234, .after = 5678 };
+			struct v92_phase4_record_tx saved, expected;
+			struct v92_phase4_modulator modulator;
+			int16_t sample;
+
+			CHECK(v92_phase4_modulator_init(&modulator, mode ?
+				      V92_CONSTELLATION_8_POINT : V92_CONSTELLATION_4_POINT,
+				      sign, TEST_LU) == V92_PHASE4_MODULATOR_OK &&
+			      v92_phase4_record_tx_init(&wrapped.owner, &modulator,
+				      frame, sizeof(frame), 24u) == V92_PHASE4_RECORD_TX_OK,
+			      "record output fixture did not initialize");
+			for (unsigned symbol = 0; symbol < 3u; ++symbol)
+				CHECK(v92_phase4_record_tx_next(&wrapped.owner, &sample) ==
+					      V92_PHASE4_RECORD_TX_OK, "record warm-up failed");
+			saved = wrapped.owner;
+			CHECK(v92_phase4_record_tx_next(&wrapped.owner,
+				      &wrapped.owner.modulator.lu) == V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+			      memcmp(&wrapped.owner, &saved, sizeof(saved)) == 0,
+			      "record overlapping sample changed coding state");
+			/* Progress is outside the nested mapper; reject without dereferencing. */
+			CHECK(v92_phase4_record_tx_next(&wrapped.owner,
+				      (int16_t *)(void *)&wrapped.owner.bit_index) ==
+				      V92_PHASE4_RECORD_TX_INVALID_ARGUMENT &&
+			      memcmp(&wrapped.owner, &saved, sizeof(saved)) == 0,
+			      "record output overwrote its progress");
+			expected = saved;
+			CHECK(v92_phase4_record_tx_next(&expected, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      v92_phase4_record_tx_next(&wrapped.owner, &wrapped.before) ==
+				      V92_PHASE4_RECORD_TX_OK && wrapped.before == sample &&
+			      wrapped.after == 5678 && memcmp(&wrapped.owner, &expected, sizeof(expected)) == 0,
+			      "record preceding disjoint output differed");
+			CHECK(v92_phase4_record_tx_next(&expected, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      v92_phase4_record_tx_next(&wrapped.owner, &wrapped.after) ==
+				      V92_PHASE4_RECORD_TX_OK && wrapped.after == sample &&
+			      memcmp(&wrapped.owner, &expected, sizeof(expected)) == 0,
+			      "record following disjoint output differed");
+		}
+	}
+	return true;
+}
+
+static bool test_record_mapper_failure(void)
+{
+	static const uint8_t frame[] = { 0 };
+	struct v92_phase4_modulator modulator;
+	struct v92_phase4_record_tx tx, saved;
+	int16_t sample = 1234;
+
+	CHECK(v92_phase4_modulator_init(&modulator, V92_CONSTELLATION_4_POINT, 0u, 1) ==
+		      V92_PHASE4_MODULATOR_OK &&
+	      v92_phase4_record_tx_init(&tx, &modulator, frame, sizeof(frame), 2u) ==
+		      V92_PHASE4_RECORD_TX_OK, "low-level record did not initialize");
+	saved = tx;
+	CHECK(v92_phase4_record_tx_is_valid(&tx) &&
+	      v92_phase4_record_tx_next(&tx, &sample) == V92_PHASE4_RECORD_TX_INVALID_STATE &&
+	      memcmp(&tx, &saved, sizeof(saved)) == 0 && sample == 1234,
+	      "record mapper failure advanced history, progress or output");
 	return true;
 }
 
@@ -815,6 +886,7 @@ int main(void)
 {
 	fprintf(stderr, "[ RUN      ] V.92 analogue Phase 4 control\n");
 	if (!test_record_bit_order() || !test_record_boundaries() ||
+	    !test_record_output_ownership() || !test_record_mapper_failure() ||
 	    !test_silence_agreement() || !test_silence_contracts() ||
 	    !test_control_records() || !test_control_contracts() ||
 	    !test_early_peer_sequence() || !test_training_boundaries() || !test_timeout_and_retry() ||
