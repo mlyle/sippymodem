@@ -28,8 +28,7 @@ bool v92_e2u_rx_is_valid(const struct v92_e2u_rx *receiver)
 	    (receiver->expected_symbols != V92_PHASE4_E2U_SYMBOLS &&
 	     receiver->expected_symbols != V92_PHASE4_E2U_EXTENDED_SYMBOLS) ||
 	    receiver->received_symbols > receiver->expected_symbols ||
-	    (v92_upstream_rx_has_failed(&receiver->signal) &&
-	     !receiver->failed) ||
+	    (receiver->signal.failed && !receiver->failed) ||
 	    !metrics_are_valid(receiver))
 		return false;
 	return !receiver->matched ||
@@ -56,14 +55,12 @@ enum v92_e2u_rx_result v92_e2u_rx_init(
 	struct v92_e2u_rx initialized = { 0 };
 
 	if (receiver == NULL || !v92_upstream_rx_is_valid(signal) ||
-	    v92_upstream_rx_has_failed(signal) ||
+	    signal->failed ||
 	    signal->training_tail_remaining != 0u)
 		return V92_E2U_RX_INVALID_ARGUMENT;
 	initialized.signal = *signal;
 	initialized.expected_symbols = extend_one_symbol ?
 		V92_PHASE4_E2U_EXTENDED_SYMBOLS : V92_PHASE4_E2U_SYMBOLS;
-	if (!v92_e2u_rx_is_valid(&initialized))
-		return V92_E2U_RX_NUMERIC_FAILURE;
 	*receiver = initialized;
 	return V92_E2U_RX_OK;
 }
@@ -182,7 +179,7 @@ enum v92_e2u_rx_result v92_e2u_rx_search(
 	    receiver->signal.line.demodulator.constellation != control->signal.line.demodulator.constellation ||
 	    control->signal.training_tail_remaining != 0u)
 		return V92_E2U_RX_INVALID_STATE;
-	if (receiver->failed || v92_upstream_control_line_rx_has_failed(control))
+	if (receiver->failed || control->signal.failed)
 		return V92_E2U_RX_FAILED;
 	if (receiver->matched)
 		return V92_E2U_RX_COMPLETE;

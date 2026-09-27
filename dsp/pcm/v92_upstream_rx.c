@@ -67,8 +67,6 @@ enum v92_upstream_rx_result v92_upstream_rx_init(
 		.training_tail_remaining =
 			V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
 	};
-	if (!v92_upstream_rx_is_valid(&initialized))
-		return V92_UPSTREAM_RX_NUMERIC_FAILURE;
 	*receiver = initialized;
 	return V92_UPSTREAM_RX_OK;
 }

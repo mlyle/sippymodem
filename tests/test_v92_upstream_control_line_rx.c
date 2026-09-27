@@ -794,6 +794,103 @@ static bool test_prediction_contracts(void)
 	return true;
 }
 
+static bool test_control_initialization(void)
+{
+	for (unsigned int law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned int points = 4u; points <= 8u; points += 4u) {
+			for (int8_t polarity = -1; polarity <= 1; polarity += 2) {
+				struct v92_pcm_phase4_trn2u transmitter;
+				struct v92_pcm_phase4_trn2u_line_handoff boundary;
+				struct v92_upstream_rx signal, saved_signal;
+				struct v92_upstream_control_line_rx control;
+				CHECK(build_boundary(law, points, 1u, polarity,
+					&transmitter, &boundary), "initialization fixture failed");
+				memset(&signal, 0xa5, sizeof(signal));
+				CHECK(v92_upstream_rx_init(&signal, &boundary) == V92_UPSTREAM_RX_OK &&
+				      v92_upstream_rx_is_valid(&signal) && !signal.failed &&
+				      signal.training_tail_remaining == V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY &&
+				      memcmp(&signal.line, &boundary, sizeof(boundary)) == 0,
+				      "fresh control signal lost the trained line");
+				saved_signal = signal;
+				signal.failed = true;
+				signal.training_tail_remaining = 0u;
+				CHECK(v92_upstream_rx_init(&signal, &signal.line) == V92_UPSTREAM_RX_OK &&
+				      memcmp(&signal, &saved_signal, sizeof(signal)) == 0,
+				      "aliased signal initialization lost the handoff");
+				memset(&control, 0xa5, sizeof(control));
+				CHECK(v92_upstream_control_line_rx_init(&control, &boundary) ==
+					      V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+				      v92_upstream_control_line_rx_is_valid(&control) &&
+				      memcmp(&control.signal.line, &signal.line, sizeof(signal.line)) == 0 &&
+				      control.signal.training_tail_remaining == signal.training_tail_remaining &&
+				      control.signal.failed == signal.failed &&
+				      control.cpu_repeat_symbols == 0u && control.cpu_repeat_remaining == 0u &&
+				      !control.cpu_repeat_confirmed,
+				      "fresh control parser did not reset framing");
+				struct v92_upstream_control_line_rx saved_control = control;
+				control.signal.failed = true;
+				CHECK(v92_upstream_control_line_rx_init(&control, &control.signal.line) ==
+					      V92_UPSTREAM_CONTROL_LINE_RX_OK &&
+				      memcmp(&control, &saved_control, sizeof(control)) == 0,
+				      "aliased control initialization lost the handoff");
+				signal.training_tail_remaining = 0u;
+				for (unsigned int extended = 0u; extended < 2u; ++extended) {
+					struct v92_e2u_rx receiver, saved;
+					memset(&receiver, 0xa5, sizeof(receiver));
+					CHECK(v92_e2u_rx_init(&receiver, &signal, extended != 0u) == V92_E2U_RX_OK &&
+					      v92_e2u_rx_is_valid(&receiver) &&
+					      memcmp(&receiver.signal.line, &signal.line, sizeof(signal.line)) == 0 &&
+					      receiver.signal.training_tail_remaining == signal.training_tail_remaining &&
+					      receiver.signal.failed == signal.failed &&
+					      receiver.expected_symbols == (extended ? V92_PHASE4_E2U_EXTENDED_SYMBOLS :
+						V92_PHASE4_E2U_SYMBOLS) && !receiver.received_symbols &&
+					      !receiver.bit_errors && !receiver.matched && !receiver.failed &&
+					      receiver.correlation == 0.0 && receiver.observed_energy == 0.0 &&
+					      receiver.expected_energy == 0.0,
+					      "fresh E2u receiver did not reset evidence");
+					saved = receiver;
+					receiver.received_symbols = receiver.expected_symbols;
+					receiver.matched = true;
+					CHECK(v92_e2u_rx_init(&receiver, &receiver.signal, extended != 0u) ==
+						      V92_E2U_RX_OK && memcmp(&receiver, &saved, sizeof(saved)) == 0,
+					      "aliased E2u initialization lost the signal");
+					for (unsigned int flags = 0u; flags < 16u; ++flags) {
+						receiver = saved;
+						receiver.signal.failed = (flags & 1u) != 0u;
+						receiver.failed = (flags & 2u) != 0u;
+						receiver.matched = (flags & 4u) != 0u;
+						receiver.received_symbols = flags & 8u ? receiver.expected_symbols : 0u;
+						bool valid = (!receiver.signal.failed || receiver.failed) &&
+							(!receiver.matched || ((flags & 8u) && !receiver.failed));
+						CHECK(v92_e2u_rx_is_valid(&receiver) == valid &&
+						      v92_e2u_rx_has_failed(&receiver) == (valid && receiver.failed),
+						      "E2u failure propagation changed flags=%u", flags);
+					}
+					receiver = saved;
+					receiver.signal.failed = true;
+					saved = receiver;
+					CHECK(v92_e2u_rx_init(&receiver, &receiver.signal, extended != 0u) ==
+						      V92_E2U_RX_INVALID_ARGUMENT &&
+					      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+					      "failed aliased E2u input was not transactional");
+				}
+				signal.line.demodulator.lu = 0;
+				saved_signal = signal;
+				CHECK(v92_upstream_rx_init(&signal, &signal.line) == V92_UPSTREAM_RX_INVALID_ARGUMENT &&
+				      memcmp(&signal, &saved_signal, sizeof(signal)) == 0,
+				      "invalid aliased signal was not transactional");
+				control.signal.line.demodulator.lu = 0;
+				saved_control = control;
+				CHECK(v92_upstream_control_line_rx_init(&control, &control.signal.line) ==
+					      V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT &&
+				      memcmp(&control, &saved_control, sizeof(control)) == 0,
+				      "invalid aliased control input was not transactional");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_e2u_contracts(void)
 {
 	struct v92_pcm_phase4_trn2u transmitter;
@@ -1197,6 +1294,7 @@ int main(void)
 		{ "generated E2u boundaries", test_e2u },
 		{ "E2u carrier qualification", test_e2u_carrier },
 		{ "read-only upstream predictions", test_prediction_contracts },
+		{ "fresh and aliased control initialization", test_control_initialization },
 		{ "E2u contracts", test_e2u_contracts },
 		{ "control-line contracts", test_contracts },
 		{ "digital receive contracts", test_digital_receive_contracts },

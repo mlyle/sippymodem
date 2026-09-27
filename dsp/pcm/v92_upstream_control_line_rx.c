@@ -46,18 +46,16 @@ v92_upstream_control_line_rx_init(
 	struct v92_upstream_control_line_rx initialized = { 0 };
 
 	if (receiver == NULL ||
-	    !v92_pcm_phase4_trn2u_line_handoff_is_valid(handoff))
+	    v92_upstream_rx_init(&initialized.signal, handoff) !=
+		    V92_UPSTREAM_RX_OK)
 		return V92_UPSTREAM_CONTROL_LINE_RX_INVALID_ARGUMENT;
-	if (v92_upstream_rx_init(&initialized.signal, handoff) !=
-		    V92_UPSTREAM_RX_OK ||
-	    v92_control_rx_init_upstream(
+	if (v92_control_rx_init_upstream(
 		    &initialized.control,
 		    initialized.signal.line.demodulator.constellation ==
 			    V92_CONSTELLATION_4_POINT ?
 			    V92_CONTROL_UPSTREAM_4_POINT_BITS :
 			    V92_CONTROL_UPSTREAM_8_POINT_BITS) !=
-		    V92_CONTROL_RX_OK ||
-	    !v92_upstream_control_line_rx_is_valid(&initialized))
+		    V92_CONTROL_RX_OK)
 		return V92_UPSTREAM_CONTROL_LINE_RX_INTERNAL_ERROR;
 	*receiver = initialized;
 	return V92_UPSTREAM_CONTROL_LINE_RX_OK;
