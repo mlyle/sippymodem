@@ -1984,6 +1984,7 @@ static bool run_media_call(
 		'S', 'I', 'P', 'B',
 	};
 	static const char dial_command[] = "ATDpeer\r";
+	static const char auto_answer_command[] = "ATS0=1\r";
 	struct datapumps datapumps = { 0 };
 	struct integration_endpoint caller;
 	struct integration_endpoint answerer;
@@ -2143,7 +2144,10 @@ static bool run_media_call(
 	      "%s was not selectable through AT+MS", test_case->name);
 	caller.output_count = 0;
 	answerer.output_count = 0;
-	CHECK(modem_set_sreg(answerer.modem, SREG_ANS_DELAY, 0) == 0 &&
+	CHECK(modem_write(answerer.modem, auto_answer_command,
+			  (int)(sizeof(auto_answer_command) - 1)) ==
+		      (int)(sizeof(auto_answer_command) - 1) &&
+		      modem_set_sreg(answerer.modem, SREG_ANS_DELAY, 0) == 0 &&
 		      modem_write(caller.modem, dial_command,
 			  (int)(sizeof(dial_command) - 1)) ==
 			      (int)(sizeof(dial_command) - 1) &&
@@ -2154,7 +2158,8 @@ static bool run_media_call(
 	CHECK(modem_report_outgoing_call_connected(caller.modem) == 0 &&
 		      caller.modem->dp != NULL &&
 		      caller.modem->dp->id == initial_datapump &&
-		      modem_answer(answerer.modem) == 0,
+		      modem_report_incoming_call(answerer.modem) == 0 &&
+		      answerer.modem->started,
 	      "connected SIP call did not select %s roles", test_case->name);
 	CHECK(!impair_answerer_precarrier ||
 		      endpoint_replace_precarrier_silence(
@@ -4014,6 +4019,58 @@ int main(void)
 	enum v90_modem_role v90_replay_pcm_role;
 	bool integration_case_selected = false;
 	static const struct modem_test_case test_cases[] = {
+		{
+			.id = DP_V21, .answerer_id = DP_V92,
+			.name = "subset auto-answer V.21",
+			.selection_command = "AT+MS=21,1,300,300\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 300, .caller_rx_rate = 300,
+			.answerer_tx_rate = 300, .answerer_rx_rate = 300,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.automode = true, .raw_transport = true,
+		},
+		{
+			.id = DP_V23, .answerer_id = DP_V92,
+			.name = "subset auto-answer V.23",
+			.selection_command = "AT+MS=23,1,300,1200\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 75, .caller_rx_rate = 1200,
+			.answerer_tx_rate = 1200, .answerer_rx_rate = 75,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.automode = true, .raw_transport = true,
+		},
+		{
+			.id = DP_V22BIS, .answerer_id = DP_V92,
+			.name = "subset auto-answer V.22bis",
+			.selection_command = "AT+MS=122,1,2400,2400\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 2400, .caller_rx_rate = 2400,
+			.answerer_tx_rate = 2400, .answerer_rx_rate = 2400,
+			.carrier_loss_samples = MODEM_RATE * 7 / 10,
+			.automode = true, .require_lapm = true,
+		},
+		{
+			.id = DP_V32, .answerer_id = DP_V92,
+			.name = "subset auto-answer V.32",
+			.selection_command = "AT+MS=32,1,9600,9600\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600, .answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 5,
+			.training_frame_limit = V32_TRAINING_FRAME_LIMIT,
+			.automode = true, .require_lapm = true,
+		},
+		{
+			.id = DP_V34, .answerer_id = DP_V92,
+			.name = "subset auto-answer V.34",
+			.selection_command = "AT+MS=34,1,9600,9600\r",
+			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
+			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
+			.answerer_tx_rate = 9600, .answerer_rx_rate = 9600,
+			.carrier_loss_samples = MODEM_RATE / 2,
+			.training_frame_limit = 1500,
+			.automode = true, .require_lapm = true,
+		},
 		{
 			.id = DP_V21,
 			.name = "forced V.21 raw ATO1 resume",

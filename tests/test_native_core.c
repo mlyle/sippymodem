@@ -1465,8 +1465,8 @@ static bool test_v8_handoff(void)
 	operations = modem_dp_get_registered_ops(DP_V8);
 	CHECK(operations != NULL,
 	      "V.8 handoff operation did not initialize");
-	for (size_t selection = 0;
-	     selection < ARRAY_LENGTH(selections); ++selection) {
+	for (size_t run = 0; run < 2 * ARRAY_LENGTH(selections); ++run) {
+		size_t selection = run % ARRAY_LENGTH(selections);
 		enum DP_ID caller_requested =
 			selections[selection].caller_requested;
 		enum DP_ID answerer_requested =
@@ -1476,6 +1476,8 @@ static bool test_v8_handoff(void)
 		answerer = modem_create(&driver, "V.8 answerer");
 		CHECK(caller != NULL && answerer != NULL,
 		      "V.8 handoff endpoints did not initialize");
+		MODEM_AUTOMODE(caller) = run >= ARRAY_LENGTH(selections);
+		MODEM_AUTOMODE(answerer) = MODEM_AUTOMODE(caller);
 		CHECK(process_at_command(
 			      caller, selections[selection].caller_digital ?
 				      "AT+V90D=1" : "AT+V90D=0") == 0 &&
@@ -1554,6 +1556,55 @@ static bool test_v8_handoff(void)
 	}
 	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
 	      "V.8 handoff registrations did not stop");
+	return true;
+}
+
+static bool test_v8_fallback_limits(void)
+{
+	struct modem_driver driver = {
+		.name = "V.8 fallback limits",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	struct datapumps datapumps = { 0 };
+
+	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
+	      "fallback limit registrations failed");
+	for (unsigned int restricted = 0; restricted < 3; ++restricted) {
+		struct modem *caller = modem_create(&driver, "restricted caller");
+		struct modem *answerer = modem_create(&driver, "automatic answerer");
+		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
+		int16_t tx[MODEM_FRAG] = { 0 }, rx[MODEM_FRAG] = { 0 };
+		int result = DPSTAT_OK;
+		struct dp *calling, *answering;
+
+		CHECK(caller != NULL && answerer != NULL && ops != NULL,
+		      "fallback limit endpoints failed");
+		/* V.21 must not bypass a fixed family or a 1200-bit/s floor.
+		 * Conversely, selecting V.21 must not offer the higher V.32 family. */
+		MODEM_AUTOMODE(answerer) = restricted != 0;
+		answerer->min_rate = restricted == 1 ? 1200 : 300;
+		calling = ops->create(caller, restricted == 2 ? DP_V32 : DP_V21,
+			1, MODEM_RATE, MODEM_FRAG, ops);
+		answering = ops->create(answerer, restricted == 2 ? DP_V21 : DP_V34,
+			0, MODEM_RATE, MODEM_FRAG, ops);
+		CHECK(calling != NULL && answering != NULL,
+		      "restricted V.8 handshakes failed to initialize");
+		for (unsigned int frame = 0; result == DPSTAT_OK &&
+		     frame < 12u * MODEM_RATE / MODEM_FRAG; ++frame) {
+			result = ops->process(answering, tx, rx, MODEM_FRAG);
+			if (result == DPSTAT_OK)
+				result = ops->process(calling, rx, tx, MODEM_FRAG);
+		}
+		CHECK(result == DPSTAT_ERROR && caller->dp_requested == 0 &&
+		      answerer->dp_requested == 0,
+		      "V.8 escaped configured fallback limit %u", restricted);
+		CHECK(ops->delete(calling) == 0 && ops->delete(answering) == 0,
+		      "restricted V.8 handshakes leaked state");
+		modem_delete(caller);
+		modem_delete(answerer);
+	}
+	CHECK(datapumps_stop(&datapumps) == DATAPUMPS_OK,
+	      "fallback limit registrations leaked");
 	return true;
 }
 
@@ -4019,6 +4070,7 @@ int main(void)
 		  test_escape_discards_async_transmit_fragment },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
+		{ "V.8 fallback limits", test_v8_fallback_limits },
 		{ "modulation report identity", test_modulation_report_identity },
 		{ "observed CONNECT startup", test_connect_reports_observed_startup },
 		{ "data-pump error-control policy",

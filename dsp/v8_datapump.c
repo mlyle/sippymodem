@@ -24,7 +24,7 @@ struct v8_datapump {
 	} handshake;
 	struct v8_pcm_handoff handoff;
 	enum DP_ID requested_datapump;
-	enum v8_modulation negotiated_modulation;
+	uint16_t offered_modulations;
 	bool caller;
 	bool handoff_requested;
 	bool v34_fallback;
@@ -58,7 +58,7 @@ static const struct v8_datapump *v8_from_dp_const(const struct dp *dp)
 		datapump->requested_datapump);
 	if (&datapump->dp != dp ||
 	    modulation == V8_MODULATION_NONE ||
-	    modulation != datapump->negotiated_modulation ||
+	    (modulation & datapump->offered_modulations) == 0 ||
 	    datapump->handoff.tail_count >= MODEM_FRAG ||
 	    (!datapump->handoff.quick_connect && datapump->handoff.tail_count != 0) ||
 	    (datapump->requested_datapump == DP_V92 &&
@@ -72,6 +72,34 @@ static struct v8_datapump *v8_from_dp(struct dp *dp)
 	return (struct v8_datapump *)v8_from_dp_const(dp);
 }
 
+/* V.8 selects a family; rate exchange remains owned by that datapump.
+ * Only advertise fallbacks with at least one rate inside the AT+MS range. */
+static enum DP_ID fallback_datapump(
+	const struct modem *modem, enum v8_modulation modulation)
+{
+	static const struct {
+		enum DP_ID id;
+		unsigned int first_rate, last_rate, step;
+	} profiles[] = {
+		{ DP_V32, 4800, 14400, 2400 },
+		{ DP_V22BIS, 2400, 2400, 1 },
+		{ DP_V22, 600, 1200, 600 },
+		{ DP_V23, 1200, 1200, 1 },
+		{ DP_V21, 300, 300, 1 },
+	};
+
+	for (size_t i = 0; i < sizeof(profiles) / sizeof(profiles[0]); ++i) {
+		if (v8_datapump_modulation(profiles[i].id) != modulation ||
+		    modem_dp_get_registered_ops(profiles[i].id) == NULL)
+			continue;
+		for (unsigned int rate = profiles[i].first_rate;
+		     rate <= profiles[i].last_rate; rate += profiles[i].step)
+			if (modem->min_rate <= rate && modem->max_rate >= rate)
+				return profiles[i].id;
+	}
+	return 0;
+}
+
 static struct dp *create_v8(
 	struct modem *modem, enum DP_ID id, int caller, int sample_rate,
 	int max_fragment, struct dp_operations *operations)
@@ -81,6 +109,7 @@ static struct dp *create_v8(
 	enum v8_modulation modulation =
 		v8_datapump_modulation(id);
 	enum v8_menu_result menu_result;
+	uint16_t offered = modulation;
 	bool digital = false;
 	bool lapm;
 	bool restarting = modem != NULL && modem->dp != NULL &&
@@ -93,19 +122,24 @@ static struct dp *create_v8(
 		return NULL;
 
 	lapm = modem_get_sreg(modem, SREG_EC) != 0;
+	if (MODEM_AUTOMODE(modem)) {
+		/* Modulation bits are ordered from the highest family downward. */
+		for (unsigned int bit = (unsigned int)modulation << 1;
+		     bit <= V8_MODULATION_V21; bit <<= 1)
+			if (fallback_datapump(modem, (enum v8_modulation)bit) != 0)
+				offered |= bit;
+	}
+	menu_result = v8_call_menu_init(&local_menu, offered, lapm);
+	if (menu_result != V8_MENU_OK)
+		return NULL;
 	if (v8_datapump_uses_pcm(id)) {
 		digital = modem_get_param(
 			modem, MDMPRM_V90_DIGITAL_INDICATION) != 0;
-		menu_result = v8_pcm_call_menu_init(
-			&local_menu,
-			digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
-			digital ? V8_PSTN_DIGITAL : 0, lapm);
-	} else {
-		menu_result = v8_call_menu_init(
-			&local_menu, modulation, lapm);
+		local_menu.pcm_present = true;
+		local_menu.pstn_access_present = true;
+		local_menu.pcm_availability = digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG;
+		local_menu.pstn_access = digital ? V8_PSTN_DIGITAL : 0;
 	}
-	if (menu_result != V8_MENU_OK)
-		return NULL;
 	datapump = calloc(1, sizeof(*datapump));
 	if (datapump == NULL)
 		return NULL;
@@ -122,7 +156,7 @@ static struct dp *create_v8(
 		return NULL;
 	}
 	datapump->requested_datapump = id;
-	datapump->negotiated_modulation = modulation;
+	datapump->offered_modulations = offered;
 	if (id == DP_V92) {
 		if (restarting ?
 		    !v90_datapump_v8_fallback_handoff(modem->dp, &datapump->handoff.training) :
@@ -239,10 +273,15 @@ static int request_handoff(struct v8_datapump *datapump)
 			&datapump->handshake.answering, &menu, &modulation) ==
 			V8_ANSWERING_OK;
 	}
-	if (!selected || modulation != datapump->negotiated_modulation ||
-	    menu.modulations != datapump->negotiated_modulation)
+	if (!selected || (modulation & datapump->offered_modulations) == 0 ||
+	    (menu.modulations & ~datapump->offered_modulations) != 0)
 		return DPSTAT_ERROR;
-	if (v8_datapump_uses_pcm(datapump->requested_datapump)) {
+	if (modulation != v8_datapump_modulation(handoff)) {
+		handoff = fallback_datapump(datapump->dp.modem, modulation);
+		if (handoff == 0)
+			return DPSTAT_ERROR;
+	}
+	if (v8_datapump_uses_pcm(handoff)) {
 		if (!selected_pcm_role(datapump, &menu, &pcm_role))
 			return DPSTAT_ERROR;
 		if (!menu.pcm_present) {
