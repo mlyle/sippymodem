@@ -935,6 +935,38 @@ static bool b1u_switch_contracts(const struct v92_upstream_data_rx *initial,
 	}
 	CHECK(v92_upstream_data_rx_start_b1u(NULL, mapping, plan) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT,
 	      "null B1u receiver accepted");
+	if (plan->observation == V92_PCM_FRAME_CONSTELLATION)
+		for (unsigned wide = 0; wide < 2; ++wide)
+			for (unsigned upper = 0; upper < 2; ++upper) {
+				struct v92_upstream_data_rx rx = *initial;
+				struct v92_upstream_plan proposed = *plan;
+
+				/* Valid old bounds can exceed the supported range only
+				 * AFTER rebasing. Reject before replacing either decoder. */
+				rx.line.plan.gain = rx.line.calibration.gain = 1.0;
+				rx.line.calibration.minimum = wide ? .5 : 1.0;
+				rx.line.calibration.maximum = wide ? 2.0 : 1.0;
+				proposed.gain = upper ? 32768.0 : 1.0 / 32768.0;
+				CHECK(v92_upstream_data_rx_is_valid(&rx), "rebasing fixture is invalid");
+				struct v92_upstream_data_rx expected = rx;
+				if (!wide) {
+					expected.line.plan = proposed;
+					expected.line.received_frames = 0;
+					expected.line.calibration.gain = proposed.gain;
+					expected.line.calibration.minimum = proposed.gain;
+					expected.line.calibration.maximum = proposed.gain;
+					expected.line.calibration.correlation = expected.line.calibration.energy = 0;
+					pcm_gain_init(&expected.line.host.fit);
+					expected.line.host.gain = expected.line.host.lower = expected.line.host.upper = 0;
+					CHECK(v92_pcm_frame_rx_init_constellation(&expected.decoder, mapping) == V92_PCM_FRAME_OK,
+					      "boundary decoder fixture failed");
+					v92_upstream_model_init(&expected);
+				}
+				CHECK(v92_upstream_data_rx_start_b1u(&rx, mapping, &proposed) ==
+				      (wide ? V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS : V92_UPSTREAM_DATA_RX_OK) &&
+				      !memcmp(&rx, &expected, sizeof(rx)) && v92_upstream_data_rx_is_valid(&rx),
+				      "B1u gain boundary changed retained state: wide=%u upper=%u", wide, upper);
+			}
 	return true;
 }
 

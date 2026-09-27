@@ -15,6 +15,16 @@ _Static_assert(offsetof(struct v92_upstream_model, alternate) +
 	sizeof(struct v92_upstream_model),
 	"alternate receiver must end the model transaction");
 
+static bool calibrated_gain_is_valid(const struct v92_upstream_data_line *line)
+{
+	return isfinite(line->calibration.gain) &&
+	       isfinite(line->calibration.minimum) && isfinite(line->calibration.maximum) &&
+	       line->calibration.minimum >= 1.0 / 32768.0 && line->calibration.maximum <= 32768.0 &&
+	       line->calibration.minimum <= line->plan.gain && line->calibration.maximum >= line->plan.gain &&
+	       line->calibration.gain >= line->calibration.minimum &&
+	       line->calibration.gain <= line->calibration.maximum;
+}
+
 bool v92_upstream_data_rx_is_valid(
 	const struct v92_upstream_data_rx *receiver)
 {
@@ -44,15 +54,7 @@ bool v92_upstream_data_rx_is_valid(
 		    (!memory_region_is_zero(&line->host.fit, sizeof(line->host.fit)) &&
 		     (line->received_frames >= V92_B1U_ACQUISITION_FRAMES ||
 		      !pcm_gain_is_valid(&line->host.fit))) ||
-		    !isfinite(line->calibration.gain) ||
-		    !isfinite(line->calibration.minimum) ||
-		    !isfinite(line->calibration.maximum) ||
-		    line->calibration.minimum < 1.0 / 32768.0 ||
-		    line->calibration.maximum > 32768.0 ||
-		    line->calibration.minimum > line->plan.gain ||
-		    line->calibration.maximum < line->plan.gain ||
-		    line->calibration.gain < line->calibration.minimum ||
-		    line->calibration.gain > line->calibration.maximum ||
+		    !calibrated_gain_is_valid(line) ||
 		    !isfinite(line->calibration.correlation) ||
 		    !isfinite(line->calibration.energy) ||
 		    line->calibration.energy < 0.0 ||
@@ -204,30 +206,30 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 	    mapping->law != receiver->decoder.mapping.law || mapping->cpd.extend_e2u ||
 	    plan->observation != receiver->line.plan.observation || plan->delay != receiver->line.plan.delay)
 		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
-	struct v92_upstream_data_rx next = *receiver;
+	struct v92_upstream_data_line line = receiver->line;
+	line.plan = *plan;
+	line.received_frames = 0;
 	if (plan->observation == V92_PCM_FRAME_CONSTELLATION) {
 		double ratio = plan->gain / receiver->line.plan.gain;
-		next.line.calibration.gain *= ratio;
+		line.calibration.gain *= ratio;
 		/* The old bounds contain the nominal gain. Preserve that invariant
 		 * exactly: multiplying by a rounded ratio can miss it by one ULP. */
-		next.line.calibration.minimum = fmin(plan->gain, next.line.calibration.minimum * ratio);
-		next.line.calibration.maximum = fmax(plan->gain, next.line.calibration.maximum * ratio);
-		next.line.calibration.correlation = next.line.calibration.energy = 0.0;
-		pcm_gain_init(&next.line.host.fit);
-		next.line.host.gain = next.line.host.lower = next.line.host.upper = 0.0;
-		if (v92_pcm_frame_rx_init_constellation(&next.decoder, mapping) != V92_PCM_FRAME_OK)
+		line.calibration.minimum = fmin(plan->gain, line.calibration.minimum * ratio);
+		line.calibration.maximum = fmax(plan->gain, line.calibration.maximum * ratio);
+		line.calibration.correlation = line.calibration.energy = 0.0;
+		pcm_gain_init(&line.host.fit);
+		line.host.gain = line.host.lower = line.host.upper = 0.0;
+		if (!calibrated_gain_is_valid(&line))
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
-	} else if (v92_pcm_frame_rx_init(&next.decoder, mapping, receiver->decoder.upstream_level) != V92_PCM_FRAME_OK) {
+		if (v92_pcm_frame_rx_init_constellation(&receiver->decoder, mapping) != V92_PCM_FRAME_OK)
+			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+	} else if (v92_pcm_frame_rx_init(&receiver->decoder, mapping, receiver->decoder.upstream_level) != V92_PCM_FRAME_OK) {
 		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	}
-	next.line.plan = *plan;
-	next.line.received_frames = 0;
-	/* A new mapping changes the codec fit's coordinates. Reacquire it from
-	 * the new known B1u, retaining the warm physical line and calibrated LU. */
-	v92_upstream_model_init(&next);
-	if (!v92_upstream_data_rx_is_valid(&next))
-		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
-	*receiver = next;
+	/* Decoder init commits only on success and rebased gain is validated.
+	 * Reacquire the mapping-dependent model, retaining the warm physical line. */
+	receiver->line = line;
+	v92_upstream_model_init(receiver);
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
