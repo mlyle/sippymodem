@@ -281,6 +281,11 @@ static bool test_generated_profiles(void)
 					      data_power[1] <= pow(10.0, 0.3) * training_power[0],
 					      "analogue profile did not generate rate %u",
 					      bit_rate);
+					CHECK(configuration.analog_phase4.training_parameters
+						      .upstream_rate_mask == 0x1fffu &&
+					      configuration.analog_phase4.data_parameters
+						      .upstream_rate_mask == 0x1fffu,
+					      "default CP omitted supported 2400-bit/s upstream steps");
 				} else {
 					uint8_t jd[V90_JD_FRAME_BYTES];
 					bool jd_matches =
@@ -322,6 +327,11 @@ static bool test_generated_profiles(void)
 						       .initial_mp),
 					      "digital profile did not advertise rate %u",
 					      bit_rate);
+					CHECK(configuration.digital_phase4.initial_mp.parameters.type0
+						      .upstream_rate_capability_mask == 0x1fffu &&
+					      configuration.digital_phase4.initial_mp.parameters.type0
+						      .maximum_upstream_rate_2400_bps_units == 12,
+					      "default MP omitted supported rates or changed its maximum");
 				}
 			}
 		}

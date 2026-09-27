@@ -15,7 +15,6 @@ enum {
 	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 6,
 	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
-	V90_DEFAULT_UPSTREAM_RATE_MASK = 0x1555,
 	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
 	V90_SIGN_REDUNDANCY = 1,
 	/* Depths zero and one are mandatory at the digital modem; deeper
@@ -155,7 +154,9 @@ static enum v90_profile_result select_upstream(
 	struct v90_upstream_selection *selection)
 {
 	struct v90_upstream_selection selected = {
-		.rate_mask = V90_DEFAULT_UPSTREAM_RATE_MASK,
+		/* V.90 Tables 14/16: capabilities use 2400-bit/s steps, not
+		 * 4800-bit/s steps. MP's maximum separately bounds selection. */
+		.rate_mask = V90_CP_UPSTREAM_RATE_MASK,
 		.maximum_rate_2400_bps_units =
 			V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS,
 		.symbol_rate = V34_SYMBOL_RATE_3000,
