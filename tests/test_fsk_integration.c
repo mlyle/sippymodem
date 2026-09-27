@@ -3860,6 +3860,13 @@ enum fsk_mark_fixture {
 	FSK_MARK_FRAGMENTED,
 	FSK_MARK_INITIAL,
 	FSK_MARK_BRIEF,
+	FSK_MARK_WITHDRAWN,
+	FSK_MARK_PROBE,
+	FSK_MARK_DATA,
+	FSK_MARK_ABSENT,
+	FSK_MARK_OFFSET_LOW,
+	FSK_MARK_OFFSET_HIGH,
+	FSK_MARK_WRONG_FREQUENCY,
 };
 
 static bool run_fsk300_mark_qualification(
@@ -3870,9 +3877,11 @@ static bool run_fsk300_mark_qualification(
 	struct dp_operations *operations = modem_dp_get_registered_ops(id);
 	struct fsk_channel channel = caller ? v21_channel_2 : v21_channel_1;
 	struct fsk_tone_generator tones;
+	struct fsk_tone_generator probe;
 	int16_t receive[MODEM_FRAG], transmit[MODEM_FRAG];
 	struct dp *dp;
 	unsigned int connected = 0;
+	bool timed_out = false;
 	/* End a qualifying short mark between native block boundaries. */
 	unsigned int mark_start = fixture == FSK_MARK_INITIAL ? 0 :
 		240 + (id == DP_V21 ? 9 - caller : 8 + caller);
@@ -3882,36 +3891,66 @@ static bool run_fsk300_mark_qualification(
 		channel.mark_frequency_hz = caller ? 2225 : 1270;
 		channel.space_frequency_hz = caller ? 2025 : 1070;
 	}
+	if (fixture == FSK_MARK_OFFSET_LOW)
+		channel.mark_frequency_hz -= 15;
+	if (fixture == FSK_MARK_OFFSET_HIGH)
+		channel.mark_frequency_hz += 15;
 	CHECK(operations != NULL &&
 	      fsk_tone_generator_init(&tones, &channel, 8192) == FSK_OK,
 	      "FSK qualification fixture did not initialize");
-	modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 10;
+	/* Model a nearby answer probe followed by an unrelated tone. */
+	channel.mark_frequency_hz += 25;
+	channel.space_frequency_hz = id == DP_B103 && caller ? 1800 : 600;
+	CHECK(fsk_tone_generator_init(&probe, &channel, 8192) == FSK_OK,
+	      "FSK answer probe did not initialize");
+	modem.sregs[SREG_WAIT_CARRIER_AFTER_DIAL] = 3;
 	dp = operations->create(&modem, id, caller, MODEM_RATE, MODEM_FRAG,
 				operations);
 	CHECK(dp != NULL, "FSK qualification datapump did not initialize");
-	for (unsigned int at = 0; at < 2 * MODEM_RATE && valid;) {
+	for (unsigned int at = 0; at < 4 * MODEM_RATE && valid;) {
 		unsigned int count = fragment;
 		int status;
 
-		if (count > 2 * MODEM_RATE - at)
-			count = 2 * MODEM_RATE - at;
+		if (count > 4 * MODEM_RATE - at)
+			count = 4 * MODEM_RATE - at;
 		for (unsigned int index = 0; index < count; ++index) {
 			/* Short marks end each native block, but never last the
 			 * required 15 ms. Follow them with a genuine carrier. */
 			uint8_t bit = at + index >= MODEM_RATE ||
 				(at + index) % MODEM_FRAG >= 13;
 
-			if (fixture != FSK_MARK_FRAGMENTED)
+			if (fixture == FSK_MARK_INITIAL || fixture == FSK_MARK_BRIEF)
 				bit = at + index >= mark_start &&
 					at + index < mark_start + MARK_LENGTH;
+			if (fixture >= FSK_MARK_WITHDRAWN)
+				bit = at + index < MODEM_RATE * (caller ? 300 : 80) / 1000;
+			if (fixture == FSK_MARK_PROBE)
+				bit = at + index < MODEM_RATE * (caller ? 950 : 140) / 1000;
+			if (fixture == FSK_MARK_DATA)
+				bit = at + index < MODEM_RATE * (caller ? 300 : 80) / 1000 ||
+					((at + index) / 27) % 2;
+			if (at + index >= MODEM_RATE && fixture != FSK_MARK_ABSENT)
+				bit = 1;
+			if (fixture >= FSK_MARK_OFFSET_LOW)
+				bit = 1;
 			if (fsk_tone_generator_sample(
-				    &tones, bit, &receive[index]) != FSK_OK) {
+				    (fixture == FSK_MARK_PROBE && at + index < MODEM_RATE) ||
+					fixture == FSK_MARK_WRONG_FREQUENCY ?
+					&probe : &tones, bit, &receive[index]) != FSK_OK) {
 				valid = false;
 				break;
 			}
-			/* Also protect the 15 ms mark seen by a fresh detector. */
-			if (fixture == FSK_MARK_INITIAL && at + index >= MARK_LENGTH)
+			/* A brief carrier is insufficient for CONNECT. A later
+			 * genuine carrier must still work within the same deadline. */
+			if ((fixture == FSK_MARK_INITIAL && at + index >= MARK_LENGTH &&
+			     at + index < MODEM_RATE) ||
+			    ((fixture == FSK_MARK_WITHDRAWN || fixture == FSK_MARK_ABSENT) &&
+			     !bit))
 				receive[index] = 0;
+			if (fragment == 1)
+				receive[index] = g711_decode_pcmu(g711_encode_pcmu(receive[index]));
+			if (fragment == 7)
+				receive[index] = g711_decode_pcma(g711_encode_pcma(receive[index]));
 		}
 		if (!valid)
 			break;
@@ -3921,13 +3960,22 @@ static bool run_fsk300_mark_qualification(
 			connected = at;
 			break;
 		}
+		if ((fixture == FSK_MARK_ABSENT || fixture == FSK_MARK_WRONG_FREQUENCY) &&
+		    status == DPSTAT_ERROR) {
+			timed_out = at > 3 * MODEM_RATE && at <= 3 * MODEM_RATE + fragment;
+			break;
+		}
 		valid = status == DPSTAT_OK;
 	}
 	CHECK(operations->delete(dp) == 0,
 	      "FSK qualification datapump did not release");
-	CHECK(valid && connected > (fixture == FSK_MARK_FRAGMENTED ?
-				   MODEM_RATE : mark_start + MARK_LENGTH) &&
-	      connected <= 2 * MODEM_RATE,
+	bool early_data = fixture == FSK_MARK_DATA ||
+		(!caller && fixture == FSK_MARK_BRIEF) ||
+		fixture == FSK_MARK_OFFSET_LOW || fixture == FSK_MARK_OFFSET_HIGH;
+	CHECK(valid && (fixture == FSK_MARK_ABSENT || fixture == FSK_MARK_WRONG_FREQUENCY ?
+	      connected == 0 && timed_out :
+	      connected > (early_data ? mark_start + MARK_LENGTH : MODEM_RATE) &&
+	      connected <= 3 * MODEM_RATE),
 	      "FSK id=%d caller=%d fragment=%u fixture=%d connected at %u, valid=%d",
 	      id, caller, fragment, fixture, connected, valid);
 	return true;
@@ -3945,8 +3993,10 @@ static bool test_fsk300_mark_qualification(void)
 			for (size_t fragment = 0; fragment < ARRAY_LENGTH(fragments);
 			     ++fragment)
 				for (enum fsk_mark_fixture fixture = FSK_MARK_FRAGMENTED;
-				     fixture <= FSK_MARK_BRIEF; ++fixture)
-					if (!run_fsk300_mark_qualification(
+				     fixture <= FSK_MARK_WRONG_FREQUENCY; ++fixture)
+					if ((fixture != FSK_MARK_WRONG_FREQUENCY ||
+					     (ids[mode] == DP_B103 && caller)) &&
+					    !run_fsk300_mark_qualification(
 						    ids[mode], caller, fragments[fragment],
 						    fixture))
 						valid = false;

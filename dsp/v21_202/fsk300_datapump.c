@@ -26,6 +26,7 @@ enum {
 		MODEM_RATE * 15 / 1000 - FSK300_DETECTOR_WINDOW + 1,
 	FSK300_GUARD_SAMPLES = MODEM_RATE * 160 / 1000,
 	FSK300_ORIGINATE_MARK_SAMPLES = 6400,
+	FSK300_TRAINING_LOSS_SAMPLES = MODEM_RATE * 60 / 1000,
 	/* Qualify 60 ms of carrier, including data, after an online interruption. */
 	FSK300_CARRIER_RETURN_SAMPLES = MODEM_RATE * 60 / 1000,
 	FSK300_MIN_LINE_POWER = 10000000,
@@ -34,6 +35,7 @@ enum {
 	BELL103_ORIGINATOR_SPACE_HZ = 1070,
 	BELL103_ANSWERER_MARK_HZ = 2225,
 	BELL103_ANSWERER_SPACE_HZ = 2025,
+	BELL103_MARK_TOLERANCE_HZ = 15,
 	FSK300_TRANSMIT_AMPLITUDE = 8192,
 	FSK300_METRIC_SMOOTHING_SHIFT = 2,
 };
@@ -103,6 +105,8 @@ struct fsk300_datapump {
 	uint32_t remote_mark_samples;
 	uint32_t missing_carrier_samples;
 	uint32_t carrier_return_samples;
+	uint32_t guard_crossings;
+	int16_t previous_sample;
 	struct fsk_online_source online_source;
 	bool originator;
 };
@@ -274,7 +278,31 @@ static int receive_samples(
 				&measurement, FSK300_MIN_LINE_POWER,
 				FSK300_MIN_DOMINANCE_Q8) ?
 				datapump->remote_mark_samples + 1u : 0;
+		} else if (datapump->training_state == FSK300_TRAINING_SEND_MARK) {
+			struct fsk_measurement measurement =
+				fsk_receiver_measure(&datapump->receiver);
+			uint64_t strongest = measurement.mark_power > measurement.space_power ?
+				measurement.mark_power : measurement.space_power;
+			/* FSK projections use Q6 coefficients. At least half of
+			 * the line power must remain in either receive tone. Allow
+			 * data once we respond, but not unrelated answer probes. */
+			bool present = line_signal_is_present(&measurement) &&
+				strongest >= measurement.line_power *
+					FSK300_DETECTOR_WINDOW * 1024u;
+
+			datapump->missing_carrier_samples = present ? 0 :
+				datapump->missing_carrier_samples + 1u;
+			if (datapump->missing_carrier_samples >= FSK300_TRAINING_LOSS_SAMPLES) {
+				datapump->training_state = FSK300_TRAINING_WAIT_MARK;
+				datapump->training_state_samples = 0;
+				datapump->remote_mark_samples = 0;
+				datapump->missing_carrier_samples = 0;
+			}
 		}
+		if (datapump->training_state == FSK300_TRAINING_GUARD &&
+		    datapump->previous_sample <= 0 && receive[index] > 0)
+			datapump->guard_crossings++;
+		datapump->previous_sample = receive[index];
 		if (!ready || bits == NULL)
 			continue;
 		if (produced == capacity)
@@ -298,6 +326,7 @@ static int advance_training(
 		datapump->training_state = datapump->originator ?
 			FSK300_TRAINING_GUARD : FSK300_TRAINING_SEND_MARK;
 		datapump->training_state_samples = 0;
+		datapump->guard_crossings = 0;
 		return training_session_note_progress(&datapump->training) ==
 			       TRAINING_SESSION_OK ?
 			       DPSTAT_OK : DPSTAT_ERROR;
@@ -306,6 +335,22 @@ static int advance_training(
 		datapump->training_state_samples += count;
 		if (datapump->training_state_samples < FSK300_GUARD_SAMPLES)
 			return DPSTAT_OK;
+		if (datapump->profile->id == DP_B103) {
+			/* The one-symbol FSK detector also accepts the nearby
+			 * 2250 Hz answer probe. Use the existing silent guard to
+			 * check mark frequency, allowing one crossing of phase
+			 * uncertainty as well as the frequency tolerance. */
+			int64_t error = (int64_t)datapump->guard_crossings * MODEM_RATE -
+				(int64_t)datapump->training_state_samples * BELL103_ANSWERER_MARK_HZ;
+			int64_t limit = MODEM_RATE + (int64_t)datapump->training_state_samples *
+				BELL103_MARK_TOLERANCE_HZ;
+
+			if (error < -limit || error > limit) {
+				datapump->training_state = FSK300_TRAINING_WAIT_MARK;
+				datapump->remote_mark_samples = 0;
+				return DPSTAT_OK;
+			}
+		}
 		datapump->training_state = FSK300_TRAINING_SEND_MARK;
 		datapump->training_state_samples = 0;
 		return training_session_note_progress(&datapump->training) ==
@@ -317,7 +362,8 @@ static int advance_training(
 			FSK300_ORIGINATE_MARK_SAMPLES : FSK300_GUARD_SAMPLES;
 
 		datapump->training_state_samples += count;
-		if (datapump->training_state_samples < required)
+		if (datapump->training_state_samples < required ||
+		    datapump->missing_carrier_samples != 0)
 			return DPSTAT_OK;
 		if (!datapump_set_link_rates(
 			    &datapump->dp, FSK300_BIT_RATE, FSK300_BIT_RATE))
