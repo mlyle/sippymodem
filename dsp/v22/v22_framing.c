@@ -138,22 +138,19 @@ enum v22_framing_result v22_600_symbol_encode(
 	struct v22_symbol_encoder *encoder, uint8_t bit,
 	uint8_t *quadrant)
 {
-	struct v22_symbol_encoder next;
 	uint8_t scrambled;
 
 	if (encoder == NULL || bit > 1 || quadrant == NULL ||
 	    encoder->phase_quadrant >= QPSK_QUADRANT_COUNT ||
 	    !v22_scrambler_is_valid(&encoder->scrambler))
 		return V22_FRAMING_INVALID_ARGUMENT;
-	next = *encoder;
-	if (v22_scramble_bit(&next.scrambler, bit, &scrambled) !=
+	if (v22_scramble_bit(&encoder->scrambler, bit, &scrambled) !=
 	    V22_FRAMING_OK)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* V.22 Table 1: zero advances 90 degrees and one advances 270. */
-	next.phase_quadrant = (uint8_t)(
-		(next.phase_quadrant + (scrambled == 0 ? 1u : 3u)) & 3u);
-	*encoder = next;
-	*quadrant = next.phase_quadrant;
+	encoder->phase_quadrant = (uint8_t)(
+		(encoder->phase_quadrant + (scrambled == 0 ? 1u : 3u)) & 3u);
+	*quadrant = encoder->phase_quadrant;
 	return V22_FRAMING_OK;
 }
 
@@ -203,7 +200,6 @@ enum v22_framing_result v22_600_symbol_decode(
 	struct v22_symbol_decoder *decoder, uint8_t quadrant,
 	uint8_t *bit)
 {
-	struct v22_symbol_decoder next;
 	uint8_t decoded;
 	uint8_t quarter_turns;
 	uint8_t scrambled;
@@ -218,13 +214,11 @@ enum v22_framing_result v22_600_symbol_decode(
 	if (quarter_turns != 1u && quarter_turns != 3u)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	scrambled = quarter_turns == 3u ? 1u : 0u;
-	next = *decoder;
 	if (v22_descramble_bit(
-		    &next.descrambler, scrambled, &decoded) !=
+		    &decoder->descrambler, scrambled, &decoded) !=
 	    V22_FRAMING_OK)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = quadrant;
-	*decoder = next;
+	decoder->phase_quadrant = quadrant;
 	*bit = decoded;
 	return V22_FRAMING_OK;
 }
@@ -269,7 +263,6 @@ enum v22_framing_result v22bis_rate_signal_observe(
 	uint8_t quarter_turns,
 	enum v22bis_rate_signal_event *event)
 {
-	struct v22bis_rate_signal_detector next;
 	enum v22bis_rate_signal_event next_event =
 		V22BIS_RATE_SIGNAL_NONE;
 	bool alternating;
@@ -277,34 +270,28 @@ enum v22_framing_result v22bis_rate_signal_observe(
 	if (!v22bis_rate_signal_detector_is_valid(detector) ||
 	    quarter_turns >= QPSK_QUADRANT_COUNT || event == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	next = *detector;
 	alternating = is_rate_signal_turn(quarter_turns) &&
-		(next.alternating_symbols == 0 ||
-		 quarter_turns != next.previous_turn);
-	if (next.present && !alternating) {
-		next_event = next.alternating_symbols >=
-			V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS ?
-				V22BIS_RATE_SIGNAL_FULLY_ENDED :
-				V22BIS_RATE_SIGNAL_ENDED;
-		next.present = false;
-		next.alternating_symbols =
+		(detector->alternating_symbols == 0 ||
+		 quarter_turns != detector->previous_turn);
+	if (!alternating) {
+		if (detector->present)
+			next_event = detector->alternating_symbols >=
+				V22BIS_RATE_SIGNAL_COMPLETE_SYMBOLS ?
+					V22BIS_RATE_SIGNAL_FULLY_ENDED :
+					V22BIS_RATE_SIGNAL_ENDED;
+		detector->present = false;
+		detector->alternating_symbols =
 			is_rate_signal_turn(quarter_turns) ? 1u : 0u;
-	} else if (!alternating) {
-		next.alternating_symbols =
-			is_rate_signal_turn(quarter_turns) ? 1u : 0u;
-	} else if (next.alternating_symbols <
+	} else if (detector->alternating_symbols <
 		   V22BIS_ALTERNATING_RUN_MAX_SYMBOLS) {
-		next.alternating_symbols++;
-		if (next.alternating_symbols ==
+		detector->alternating_symbols++;
+		if (detector->alternating_symbols ==
 		    V22BIS_RATE_SIGNAL_MIN_SYMBOLS) {
-			next.present = true;
+			detector->present = true;
 			next_event = V22BIS_RATE_SIGNAL_STARTED;
 		}
 	}
-	next.previous_turn = quarter_turns;
-	if (!v22bis_rate_signal_detector_is_valid(&next))
-		return V22_FRAMING_INVALID_ARGUMENT;
-	*detector = next;
+	detector->previous_turn = quarter_turns;
 	*event = next_event;
 	return V22_FRAMING_OK;
 }

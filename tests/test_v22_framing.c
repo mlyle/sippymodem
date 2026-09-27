@@ -197,6 +197,48 @@ static bool test_600_validation(void)
 		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
 		      value == UINT8_MAX,
 	      "V.22 600 framing accepted invalid input or mutated state");
+	CHECK(v22_600_symbol_encode(NULL, 0, &value) ==
+		      V22_FRAMING_INVALID_ARGUMENT &&
+		      v22_600_symbol_encode(&encoder, 0, NULL) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      v22_600_symbol_decode(NULL, 1, &value) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      v22_600_symbol_decode(&decoder, 1, NULL) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      v22_600_symbol_decode(&decoder, 4, &value) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+		      value == UINT8_MAX,
+	      "V.22 600 scalar validation changed state or output");
+	for (unsigned int invalid = 0; invalid < 3; ++invalid) {
+		encoder = saved_encoder;
+		decoder = saved_decoder;
+		if (invalid == 0) {
+			encoder.scrambler.history = UINT32_C(1) << 17;
+			decoder.descrambler.history = UINT32_C(1) << 17;
+		} else if (invalid == 1) {
+			encoder.scrambler.consecutive_ones = 65;
+			decoder.descrambler.consecutive_ones = 65;
+		} else {
+			encoder.phase_quadrant = 4;
+			decoder.phase_quadrant = 4;
+		}
+		{
+			struct v22_symbol_encoder before_tx = encoder;
+			struct v22_symbol_decoder before_rx = decoder;
+
+			CHECK(v22_600_symbol_encode(&encoder, 0, &value) ==
+				      V22_FRAMING_INVALID_ARGUMENT &&
+				      v22_600_symbol_decode(&decoder, 1, &value) ==
+					      V22_FRAMING_INVALID_ARGUMENT &&
+				      memcmp(&encoder, &before_tx, sizeof(encoder)) == 0 &&
+				      memcmp(&decoder, &before_rx, sizeof(decoder)) == 0 &&
+				      value == UINT8_MAX,
+			      "V.22 600 corrupt state %u was not rejected atomically",
+			      invalid);
+		}
+	}
 	return true;
 }
 
@@ -569,6 +611,50 @@ static bool test_v22bis_rate_signal_detection(void)
 	return true;
 }
 
+static bool test_v22bis_rate_signal_transitions(void)
+{
+	/* Cover every valid detector state, including saturated marker runs. */
+	for (uint8_t count = 0; count <= 64; ++count) {
+		for (uint8_t previous = 0; previous < 4; ++previous) {
+			for (uint8_t turn = 0; turn < 4; ++turn) {
+				struct v22bis_rate_signal_detector detector = {
+					.alternating_symbols = count,
+					.previous_turn = previous,
+					.present = count >= 12,
+				};
+				bool is_turn = turn == 1 || turn == 3;
+				bool continues = is_turn &&
+					(count == 0 || turn != previous);
+				uint8_t expected_count = continues ?
+					(count == 64 ? 64 : count + 1) :
+					(is_turn ? 1 : 0);
+				enum v22bis_rate_signal_event expected =
+					V22BIS_RATE_SIGNAL_NONE;
+				enum v22bis_rate_signal_event event =
+					V22BIS_RATE_SIGNAL_STARTED;
+
+				if (!continues && count >= 12)
+					expected = count >= 59 ?
+						V22BIS_RATE_SIGNAL_FULLY_ENDED :
+						V22BIS_RATE_SIGNAL_ENDED;
+				else if (continues && count == 11)
+					expected = V22BIS_RATE_SIGNAL_STARTED;
+				CHECK(v22bis_rate_signal_observe(
+					      &detector, turn, &event) ==
+					      V22_FRAMING_OK &&
+					      v22bis_rate_signal_detector_is_valid(&detector) &&
+					      detector.alternating_symbols == expected_count &&
+					      detector.previous_turn == turn &&
+					      detector.present == (expected_count >= 12) &&
+					      event == expected,
+				      "V.22bis marker transition changed at %u/%u/%u",
+				      count, previous, turn);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_descrambler_resynchronization(void)
 {
 	struct v22_scrambler encoder;
@@ -656,6 +742,8 @@ int main(void)
 		{ "V.22bis validation", test_v22bis_validation },
 		{ "V.22bis rate-signal generation and detection",
 		  test_v22bis_rate_signal_detection },
+		{ "V.22bis complete rate-signal transitions",
+		  test_v22bis_rate_signal_transitions },
 		{ "descrambler resynchronization",
 		  test_descrambler_resynchronization },
 		{ "validation", test_validation },
