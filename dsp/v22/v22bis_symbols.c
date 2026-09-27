@@ -52,18 +52,16 @@ enum v22_framing_result v22bis_symbol_encode(
 	    !unpacked_bits_are_binary(bits, V22BIS_BITS_PER_SYMBOL) ||
 	    symbol == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
+	/* Binary input preserves valid state. The copy keeps overlapping caller
+	 * bits unchanged while the scrambler advances. */
 	next = *encoder;
 	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
-		if (v22_scramble_bit(
-			    &next.scrambler, bits[index], &scrambled[index]) !=
-		    V22_FRAMING_OK)
-			return V22_FRAMING_INVALID_ARGUMENT;
-	if (differential_qpsk_encode(
-		    next.phase_quadrant,
-		    (uint8_t)((scrambled[0] << 1) | scrambled[1]),
-		    &quadrant) != DIFFERENTIAL_QPSK_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+		(void)v22_scramble_bit(
+			&next.scrambler, bits[index], &scrambled[index]);
+	(void)differential_qpsk_encode(
+		next.phase_quadrant,
+		(uint8_t)((scrambled[0] << 1) | scrambled[1]), &quadrant);
 	next.phase_quadrant = quadrant;
 	*encoder = next;
 	*symbol = (uint8_t)((quadrant << 2) | (scrambled[2] << 1) |
@@ -87,7 +85,6 @@ enum v22_framing_result v22bis_symbol_decode(
 	struct v22bis_symbol_decoder *decoder, uint8_t symbol,
 	uint8_t bits[V22BIS_BITS_PER_SYMBOL])
 {
-	struct v22bis_symbol_decoder next;
 	uint8_t decoded[V22BIS_BITS_PER_SYMBOL];
 	uint8_t scrambled[V22BIS_BITS_PER_SYMBOL];
 	uint8_t quadrant = (uint8_t)(symbol >> 2);
@@ -96,23 +93,19 @@ enum v22_framing_result v22bis_symbol_decode(
 	if (!decoder_is_valid(decoder) ||
 	    symbol >= V22BIS_SYMBOL_COUNT || bits == NULL)
 		return V22_FRAMING_INVALID_ARGUMENT;
-	next = *decoder;
-	if (differential_qpsk_decode(
-		    next.phase_quadrant, quadrant, &dibit) !=
-	    DIFFERENTIAL_QPSK_OK)
-		return V22_FRAMING_INVALID_ARGUMENT;
+	/* Validated quadrants and binary descrambler steps cannot fail. */
+	(void)differential_qpsk_decode(
+		decoder->phase_quadrant, quadrant, &dibit);
 	scrambled[0] = (uint8_t)(dibit >> 1);
 	scrambled[1] = (uint8_t)(dibit & 1u);
 	scrambled[2] = (uint8_t)((symbol >> 1) & 1u);
 	scrambled[3] = (uint8_t)(symbol & 1u);
 	for (size_t index = 0; index < V22BIS_BITS_PER_SYMBOL;
 	     ++index)
-		if (v22_descramble_bit(
-			    &next.descrambler, scrambled[index],
-			    &decoded[index]) != V22_FRAMING_OK)
-			return V22_FRAMING_INVALID_ARGUMENT;
-	next.phase_quadrant = quadrant;
-	*decoder = next;
+		(void)v22_descramble_bit(
+			&decoder->descrambler, scrambled[index], &decoded[index]);
+	decoder->phase_quadrant = quadrant;
+	/* Commit decoded bytes last: the output can overlap the owner. */
 	memcpy(bits, decoded, sizeof(decoded));
 	return V22_FRAMING_OK;
 }
@@ -157,16 +150,9 @@ enum v22_framing_result v22bis_constellation_point(
 enum v22_framing_result v22bis_1200_constellation_point(
 	uint8_t quadrant, struct qam_point *point)
 {
-	struct qam_point next;
-
-	if (quadrant >= QPSK_QUADRANT_COUNT || point == NULL ||
-	    v22bis_constellation_point(
-		    (uint8_t)((quadrant << 2) | 1u), &next) !=
-		    V22_FRAMING_OK)
+	if (quadrant >= QPSK_QUADRANT_COUNT)
 		return V22_FRAMING_INVALID_ARGUMENT;
 	/* V.22bis 2.5.2.2 selects the unscaled Figure 2 element labelled 01. */
-	if (!point_is_finite(&next))
-		return V22_FRAMING_INVALID_ARGUMENT;
-	*point = next;
-	return V22_FRAMING_OK;
+	return v22bis_constellation_point(
+		(uint8_t)((quadrant << 2) | 1u), point);
 }

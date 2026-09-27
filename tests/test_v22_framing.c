@@ -473,6 +473,115 @@ static bool test_v22bis_validation(void)
 	return true;
 }
 
+static bool test_v22bis_symbol_aliasing(void)
+{
+	for (uint8_t ones = V22_SCRAMBLER_ONES_LIMIT - 4u;
+	     ones <= V22_SCRAMBLER_ONES_LIMIT; ++ones) {
+		for (uint8_t phase = 0; phase < QPSK_QUADRANT_COUNT; ++phase) {
+			for (size_t offset = 0;
+			     offset < sizeof(struct v22bis_symbol_encoder); ++offset) {
+				struct v22bis_symbol_encoder encoder, expected;
+				uint8_t bits[V22BIS_BITS_PER_SYMBOL], symbol;
+
+				CHECK(v22bis_symbol_encoder_init(&encoder, phase) ==
+					      V22_FRAMING_OK, "alias encoder did not initialize");
+				/* Binary bytes in either byte order; advancing the history
+				 * changes unread input bytes unless the owner is copied. */
+				encoder.scrambler.history = UINT32_C(0x101);
+				encoder.scrambler.consecutive_ones = ones;
+				expected = encoder;
+				memcpy(bits, &encoder.scrambler.history, sizeof(bits));
+				CHECK(v22bis_symbol_encode(&expected, bits, &symbol) ==
+					      V22_FRAMING_OK, "ordinary encoding failed");
+				((uint8_t *)&expected)[offset] = symbol;
+				CHECK(v22bis_symbol_encode(&encoder,
+					      (const uint8_t *)&encoder.scrambler.history,
+					      (uint8_t *)&encoder + offset) == V22_FRAMING_OK &&
+				      memcmp(&encoder, &expected, sizeof(encoder)) == 0,
+				      "encoder alias ordering changed at %u/%u/%zu",
+				      ones, phase, offset);
+			}
+			for (uint8_t symbol = 0; symbol < V22BIS_SYMBOL_COUNT; ++symbol) {
+				struct v22bis_symbol_decoder initial, finished;
+				uint8_t bits[V22BIS_BITS_PER_SYMBOL];
+
+				CHECK(v22bis_symbol_decoder_init(&initial, phase) ==
+					      V22_FRAMING_OK, "alias decoder did not initialize");
+				initial.descrambler.history =
+					(UINT32_C(1) << V22_SCRAMBLER_BITS) - 1u;
+				initial.descrambler.consecutive_ones = ones;
+				finished = initial;
+				CHECK(v22bis_symbol_decode(&finished, symbol, bits) ==
+					      V22_FRAMING_OK, "ordinary decoding failed");
+				for (size_t offset = 0;
+				     offset <= sizeof(initial) - sizeof(bits); ++offset) {
+					struct v22bis_symbol_decoder decoder = initial;
+					struct v22bis_symbol_decoder expected = finished;
+
+					memcpy((uint8_t *)&expected + offset, bits, sizeof(bits));
+					CHECK(v22bis_symbol_decode(&decoder, symbol,
+						      (uint8_t *)&decoder + offset) == V22_FRAMING_OK &&
+					      memcmp(&decoder, &expected, sizeof(decoder)) == 0,
+					      "decoder alias ordering changed at %u/%u/%u/%zu",
+					      ones, phase, symbol, offset);
+				}
+			}
+		}
+	}
+	return true;
+}
+
+static bool test_v22bis_owner_rejection(void)
+{
+	struct v22bis_symbol_encoder encoder, saved_encoder;
+	struct v22bis_symbol_decoder decoder, saved_decoder;
+	const uint8_t input[V22BIS_BITS_PER_SYMBOL] = { 1, 0, 1, 0 };
+	const uint8_t sentinel[V22BIS_BITS_PER_SYMBOL] = { 7, 8, 9, 10 };
+	uint8_t decoded[V22BIS_BITS_PER_SYMBOL], symbol = UINT8_MAX;
+
+	memcpy(decoded, sentinel, sizeof(decoded));
+	for (unsigned field = 0; field < 3; ++field) {
+		CHECK(v22bis_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
+		      v22bis_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
+		      "rejection owners did not initialize");
+		if (field == 0) {
+			encoder.scrambler.history = decoder.descrambler.history =
+				UINT32_C(1) << V22_SCRAMBLER_BITS;
+		} else if (field == 1) {
+			encoder.scrambler.consecutive_ones =
+				decoder.descrambler.consecutive_ones =
+					V22_SCRAMBLER_ONES_LIMIT + 1u;
+		} else {
+			encoder.phase_quadrant = decoder.phase_quadrant = QPSK_QUADRANT_COUNT;
+		}
+		saved_encoder = encoder;
+		saved_decoder = decoder;
+		CHECK(v22bis_symbol_encode(&encoder, input, &symbol) ==
+			      V22_FRAMING_INVALID_ARGUMENT && symbol == UINT8_MAX &&
+		      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+		      v22bis_symbol_decode(&decoder, 0, decoded) ==
+			      V22_FRAMING_INVALID_ARGUMENT &&
+		      memcmp(decoded, sentinel, sizeof(decoded)) == 0 &&
+		      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0,
+		      "invalid owner field %u changed state or output", field);
+	}
+	CHECK(v22bis_symbol_encoder_init(&encoder, 0) == V22_FRAMING_OK &&
+	      v22bis_symbol_decoder_init(&decoder, 0) == V22_FRAMING_OK,
+	      "null-argument owners did not initialize");
+	saved_encoder = encoder;
+	saved_decoder = decoder;
+	CHECK(v22bis_symbol_encode(NULL, input, &symbol) == V22_FRAMING_INVALID_ARGUMENT &&
+	      v22bis_symbol_encode(&encoder, NULL, &symbol) == V22_FRAMING_INVALID_ARGUMENT &&
+	      v22bis_symbol_encode(&encoder, input, NULL) == V22_FRAMING_INVALID_ARGUMENT &&
+	      v22bis_symbol_decode(NULL, 0, decoded) == V22_FRAMING_INVALID_ARGUMENT &&
+	      v22bis_symbol_decode(&decoder, 0, NULL) == V22_FRAMING_INVALID_ARGUMENT &&
+	      memcmp(&encoder, &saved_encoder, sizeof(encoder)) == 0 &&
+	      memcmp(&decoder, &saved_decoder, sizeof(decoder)) == 0 &&
+	      symbol == UINT8_MAX && memcmp(decoded, sentinel, sizeof(decoded)) == 0,
+	      "null symbol arguments changed owner or output");
+	return true;
+}
+
 static bool test_v22bis_rate_signal_detection(void)
 {
 	struct v22bis_rate_signal_detector detector;
@@ -740,6 +849,8 @@ int main(void)
 		  test_v22bis_1200_constellation },
 		{ "V.22bis symbol round trip", test_v22bis_symbol_round_trip },
 		{ "V.22bis validation", test_v22bis_validation },
+		{ "V.22bis symbol aliasing", test_v22bis_symbol_aliasing },
+		{ "V.22bis owner rejection", test_v22bis_owner_rejection },
 		{ "V.22bis rate-signal generation and detection",
 		  test_v22bis_rate_signal_detection },
 		{ "V.22bis complete rate-signal transitions",
