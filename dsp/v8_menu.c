@@ -330,34 +330,32 @@ enum v8_menu_result v8_joint_menu_select(
 	struct v8_menu selected;
 	struct v8_pcm_roles roles;
 
-	if (!menu_is_valid(call_menu) || !menu_is_valid(answer_menu) ||
-	    call_menu->modulations == 0 || answer_menu->modulations == 0 ||
-	    joint_menu == NULL)
+	if (joint_menu == NULL ||
+	    v8_pcm_select_roles(call_menu, answer_menu, &roles) != V8_MENU_OK ||
+	    call_menu->modulations == 0 || answer_menu->modulations == 0)
 		return V8_MENU_INVALID_ARGUMENT;
+	/* Resolve PCM availability before constructing JM, including when only
+	 * one endpoint offers PCM. V.8 section 7.4 permits the PCM category in
+	 * JM only when it was present in CM. */
 	selected = (struct v8_menu){
 		.call_function = call_menu->call_function,
 		.modulations = call_menu->modulations & answer_menu->modulations,
 		.modulation_octets = call_menu->modulation_octets,
-		.pcm_availability = answer_menu->pcm_availability,
+		.pcm_availability = roles.caller == V8_PCM_ROLE_NONE ?
+			0 : answer_menu->pcm_availability,
 		.pstn_access =
 			(call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) |
 			(answer_menu->pstn_access &
 			 (V8_PSTN_ANSWER_CELLULAR | V8_PSTN_DIGITAL)),
-		.pcm_present =
-			call_menu->pcm_present && answer_menu->pcm_present,
+		.pcm_present = roles.caller != V8_PCM_ROLE_NONE,
 		.pstn_access_present =
 			answer_menu->pstn_access_present ||
 			(call_menu->pstn_access_present &&
 			 (call_menu->pstn_access & V8_PSTN_CALL_CELLULAR) != 0),
 		.lapm = call_menu->lapm && answer_menu->lapm,
 	};
-	if (!menu_is_valid(&selected) ||
-	    v8_pcm_select_roles(call_menu, &selected, &roles) != V8_MENU_OK)
+	if (!menu_is_valid(&selected))
 		return V8_MENU_INVALID_ARGUMENT;
-	if (roles.caller == V8_PCM_ROLE_NONE) {
-		selected.pcm_availability = 0;
-		selected.pcm_present = false;
-	}
 	*joint_menu = selected;
 	return V8_MENU_OK;
 }

@@ -483,6 +483,52 @@ static bool test_pcm_role_fallback(void)
 	return true;
 }
 
+static bool test_pcm_with_non_pcm_peer(void)
+{
+	struct v8_menu pcm;
+	struct v8_menu non_pcm;
+	struct v8_menu joint;
+	struct v8_pcm_roles roles;
+	uint8_t information[V8_MAX_INFORMATION_OCTETS];
+	size_t count;
+
+	for (unsigned int digital = 0; digital < 2; ++digital) {
+		CHECK(v8_pcm_call_menu_init(&pcm,
+			      digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
+			      digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK,
+		      "PCM capability setup failed");
+		for (unsigned int common = 0; common < 2; ++common) {
+			CHECK(v8_call_menu_init(&non_pcm, common ?
+				      V8_MODULATION_V34_DUPLEX : V8_MODULATION_V21,
+				      true) == V8_MENU_OK,
+			      "non-PCM capability setup failed");
+			for (unsigned int pcm_caller = 0; pcm_caller < 2; ++pcm_caller) {
+				const struct v8_menu *call = pcm_caller ? &pcm : &non_pcm;
+				const struct v8_menu *answer = pcm_caller ? &non_pcm : &pcm;
+				enum v8_modulation selected = V8_MODULATION_NONE;
+
+				CHECK(v8_joint_menu_select(call, answer, &joint) == V8_MENU_OK &&
+				      !joint.pcm_present && joint.pcm_availability == 0 &&
+				      joint.modulation_octets == call->modulation_octets &&
+				      joint.lapm &&
+				      v8_menu_encode(&joint, information, sizeof(information),
+					      &count) == V8_MENU_OK &&
+				      (information[1] & 0x20) == 0 &&
+				      v8_pcm_select_roles(call, &joint, &roles) == V8_MENU_OK &&
+				      roles.caller == V8_PCM_ROLE_NONE &&
+				      roles.answerer == V8_PCM_ROLE_NONE &&
+				      v8_menu_selected_modulation(&joint, &selected) ==
+					      (common ? V8_MENU_OK : V8_MENU_NO_COMMON_MODULATION) &&
+				      selected == (common ? V8_MODULATION_V34_DUPLEX :
+					      V8_MODULATION_NONE),
+				      "mixed PCM menu failed: digital=%u common=%u pcm_caller=%u",
+				      digital, common, pcm_caller);
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_no_common_modulation(void)
 {
 	static const uint8_t expected[] = {
@@ -813,6 +859,7 @@ int main(void)
 		{ "joint menu selection", test_joint_menu_selection },
 		{ "PCM role selection", test_pcm_role_selection },
 		{ "PCM role fallback", test_pcm_role_fallback },
+		{ "PCM with non-PCM peer", test_pcm_with_non_pcm_peer },
 		{ "no common modulation", test_no_common_modulation },
 		{ "joint validation", test_joint_validation },
 		{ "repeated menu confirmation", test_repeated_menu_confirmation },
