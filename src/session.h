@@ -38,6 +38,7 @@ enum sip_session_result sip_session_step(
 	struct sip_session *session,
 	unsigned int signaling_timeout_ms,
 	size_t *datagrams_received);
+void sip_session_trace_media(struct sip_session *session, uint64_t now_ns);
 
 enum sip_signaling_result sip_session_dial(
 	struct sip_session *session, const char *target);

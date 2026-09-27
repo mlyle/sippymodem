@@ -189,11 +189,20 @@ These commands start the local `src/slmodemd` and register the selected account;
 they do not dial or set auto-answer. The top half shows live SIP trace and modem
 errors, and the bottom half starts C-Kermit connected to the modem's PTY. Enter
 AT commands directly. `Ctrl-W` switches panes; `Ctrl-O` then `q` quits both and
-stops the modem. Kermit's `Ctrl-\` then `c` returns to its command prompt;
-`exit` closes the console. Kermit startup files are skipped. Trace is private
+stops the modem. Kermit's `Ctrl-\` then `Q` also quits the console and stops the
+modem; `Ctrl-\` then `C` returns to its command prompt, where `exit` does the
+same cleanup. Kermit startup files are skipped. Trace is private
 and temporary, but can display addresses and dialed numbers; do not publish it
 without redaction. No audio capture is enabled by this launcher.
 The launcher enables `SIP_TRACE=1`, which can also be used with the daemon alone.
+While media is configured, `RTP` trace lines report the codec, local port, actual
+send destination (SDP or learned symmetric RTP), and interval packet/sample
+counts once per second. `RX=0` means no UDP datagrams arrived in that interval;
+`accepted=0` with nonzero RX indicates rejected packets. Buffered/played samples
+are received media (possibly silence), not proof of audible voice or decoded
+modem data; concealed/idle samples are locally supplied silence. These reports
+continue even when incoming RTP stops. The rebuilt daemon does not accept the
+old `-d3` option; use `SIP_TRACE=1` instead.
 Credential-bearing and authentication records are omitted entirely; this is
 not general redaction of SIP metadata.
 

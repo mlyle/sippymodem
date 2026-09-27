@@ -2,6 +2,9 @@
 
 #include "sip_media_bridge.h"
 
+#include <arpa/inet.h>
+#include <inttypes.h>
+#include <stdio.h>
 #include <string.h>
 
 static void forward_ready(void *context)
@@ -46,6 +49,11 @@ static void forward_media(
 	bridge->last_binding =
 		sip_rtp_apply(bridge->endpoint, event);
 	if (bridge->last_binding == SIP_RTP_OK) {
+		if (!bridge->media_configured) {
+			bridge->trace_endpoint = bridge->endpoint->stats;
+			bridge->trace_receiver = bridge->endpoint->stream->receiver.stats;
+			bridge->trace_started = false;
+		}
 		bridge->media_configured =
 			event->state == SIP_MEDIA_CONFIGURED;
 	} else if (bridge->binding_failures != UINT64_MAX) {
@@ -96,6 +104,66 @@ void sip_media_bridge_clear_media(
 		return;
 	rtp_endpoint_clear_remote(bridge->endpoint);
 	bridge->media_configured = false;
+}
+
+void sip_media_bridge_trace_media(struct sip_media_bridge *bridge, uint64_t now_ns)
+{
+	struct rtp_endpoint *endpoint;
+	const struct rtp_receiver_stats *rx;
+	struct sockaddr_in remote;
+	bool learned;
+	char address[INET_ADDRSTRLEN];
+	char text[1024];
+	int length;
+	struct sip_trace_record record = {
+		.origin = SIP_TRACE_ADAPTER,
+		.level = 3,
+		.data = text,
+	};
+
+	if (bridge == NULL || bridge->destination.trace == NULL ||
+	    !bridge->media_configured)
+		return;
+	if (bridge->trace_started && now_ns >= bridge->trace_time_ns &&
+	    now_ns - bridge->trace_time_ns < UINT64_C(1000000000))
+		return;
+	endpoint = bridge->endpoint;
+	rx = &endpoint->stream->receiver.stats;
+	if (!rtp_endpoint_transmit_remote(endpoint, &remote, &learned) ||
+	    inet_ntop(AF_INET, &remote.sin_addr, address, sizeof(address)) == NULL)
+		return;
+	/* Interval counts expose stalls even after earlier successful reception.
+	 * No payload inspection, per-packet printing, or extra audio buffering. */
+#define RX(field) (rx->field - bridge->trace_receiver.field)
+#define IO(field) (endpoint->stats.field - bridge->trace_endpoint.field)
+	length = snprintf(text, sizeof(text),
+		"RTP %s pt=%u local=:%u remote=%s:%u (%s) "
+		"TX=%" PRIu64 " RX=%" PRIu64 " accepted=%" PRIu64 " "
+		"filtered=%" PRIu64 " malformed=%" PRIu64 " bad-pt=%" PRIu64 " "
+		"oversized=%" PRIu64 " rx-errors=%" PRIu64 " "
+		"tx-errors=%" PRIu64 " no-remote=%" PRIu64 " "
+		"samples: buffered=%" PRIu64 " played=%" PRIu64 " "
+		"concealed=%" PRIu64 " idle=%" PRIu64 " late=%" PRIu64 "\n",
+		media_codec_name(endpoint->stream->codec),
+		(unsigned)endpoint->stream->receiver.config.payload_type,
+		(unsigned)rtp_endpoint_local_port(endpoint), address,
+		(unsigned)ntohs(remote.sin_port), learned ? "learned" : "SDP",
+		IO(transmit_sent), IO(receive_datagrams), RX(packets_accepted),
+		IO(receive_filtered), RX(malformed_packets), RX(unexpected_payloads),
+		IO(receive_oversized), IO(receive_errors),
+		IO(transmit_errors), IO(transmit_no_remote),
+		RX(samples_buffered), RX(samples_played), RX(samples_concealed),
+		RX(samples_idle), RX(late_samples));
+#undef IO
+#undef RX
+	bridge->trace_started = true;
+	bridge->trace_time_ns = now_ns;
+	bridge->trace_endpoint = endpoint->stats;
+	bridge->trace_receiver = *rx;
+	if (length <= 0 || (size_t)length >= sizeof(text))
+		return;
+	record.size = (size_t)length;
+	forward_trace(bridge, &record);
 }
 
 enum sip_rtp_result sip_media_bridge_last_binding(

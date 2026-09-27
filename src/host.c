@@ -180,6 +180,7 @@ enum modem_host_result modem_host_step(
 	}
 	if (frames_processed != NULL)
 		*frames_processed = frames;
+	sip_session_trace_media(host->session, now_ns);
 	if (host->last_audio_scheduler_result ==
 	    AUDIO_SCHEDULER_MODEM_STOPPED)
 		return suspend_failed_audio(

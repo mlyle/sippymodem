@@ -181,7 +181,8 @@ def main() -> int:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise ValueError("splitvt needs an interactive terminal")
         print("Trace above; modem terminal below. Ctrl-O q quits both panes.\n"
-              "C-Kermit: Ctrl-\\ then c returns to its command prompt.", flush=True)
+              "C-Kermit: Ctrl-\\ then Q quits and stops the modem; "
+              "Ctrl-\\ then C returns to its command prompt.", flush=True)
         return run(args.modem.resolve(), values, programs[0], programs[1])
     except KeyboardInterrupt:
         return 130

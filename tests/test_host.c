@@ -231,7 +231,8 @@ static struct modem_host *create_host(
 }
 
 static struct modem_host *create_remote_host(
-	struct core_capture *core_capture)
+	struct core_capture *core_capture,
+	const struct sip_signaling_callbacks *callbacks)
 {
 	struct app_config config;
 	const struct modem_core core = {
@@ -243,7 +244,7 @@ static struct modem_host *create_remote_host(
 	config.media.frame_duration_ms = 1;
 	config.media.jitter_buffer_ms = 0;
 	config.media.remote_clock = true;
-	return modem_host_create(&config, NULL, NULL, &core);
+	return modem_host_create(&config, NULL, callbacks, &core);
 }
 
 static bool test_owns_lifecycle_and_call_control(void)
@@ -395,9 +396,23 @@ static bool test_steps_recorded_media_on_the_frame_clock(void)
 	return true;
 }
 
+static void capture_media_trace(void *context, const struct sip_trace_record *record)
+{
+	char *text = context;
+	if (record->size < 1024) {
+		memcpy(text, record->data, record->size);
+		text[record->size] = '\0';
+	}
+}
+
 static bool test_remote_media_clocks_elapsed_time(void)
 {
 	struct core_capture core = { 0 };
+	char trace[1024] = { 0 };
+	const struct sip_signaling_callbacks callbacks = {
+		.context = trace,
+		.trace = capture_media_trace,
+	};
 	struct modem_host *host;
 	struct sockaddr_in peer = {
 		.sin_family = AF_INET,
@@ -428,7 +443,7 @@ static bool test_remote_media_clocks_elapsed_time(void)
 				  &address_size) == 0,
 	      "remote clock peer socket did not open");
 	fake.remote_port = ntohs(peer.sin_port);
-	host = create_remote_host(&core);
+	host = create_remote_host(&core, &callbacks);
 	CHECK(host != NULL && modem_host_open(host) == SIP_SESSION_OK &&
 		      modem_host_dial(host, "sip:peer@127.0.0.1") ==
 			      SIP_SIGNALING_OK &&
@@ -445,6 +460,8 @@ static bool test_remote_media_clocks_elapsed_time(void)
 		      modem_host_wait_ns(host, 1000000000) ==
 			      MODEM_HOST_SIGNALING_POLL_NS,
 	      "remote-clock host did not emit exactly one seed frame");
+	CHECK(strstr(trace, "TX=1 RX=0 accepted=0"),
+	      "trace did not report the seed packet with no inbound media");
 	CHECK(rtp_packet_write(packet, sizeof(packet), &rtp_header,
 				       payload, sizeof(payload), &packet_size) ==
 		      RTP_OK &&
@@ -460,6 +477,12 @@ static bool test_remote_media_clocks_elapsed_time(void)
 		      MODEM_HOST_IDLE &&
 		      datagrams == 0 && frames == 0 && core.calls == 2,
 	      "remote-clock host advanced from wall time alone");
+	CHECK(strstr(trace, "TX=1 RX=1 accepted=1") &&
+	      strstr(trace, "buffered=8 played=8"),
+	      "host trace did not expose real received audio");
+	CHECK(modem_host_step(host, 2000000000, &datagrams, &frames) ==
+	      MODEM_HOST_IDLE && strstr(trace, "TX=0 RX=0 accepted=0"),
+	      "stopped remote media clock also stopped diagnostics");
 	/* One lost inbound packet must not also remove an outbound clock tick. */
 	rtp_header.sequence += 2;
 	rtp_header.timestamp += 16;

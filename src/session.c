@@ -179,6 +179,12 @@ enum sip_session_result sip_session_step(
 		       SIP_SESSION_OK;
 }
 
+void sip_session_trace_media(struct sip_session *session, uint64_t now_ns)
+{
+	if (session != NULL && session->opened)
+		sip_media_bridge_trace_media(&session->bridge, now_ns);
+}
+
 static enum sip_signaling_result not_open_result(
 	const struct sip_session *session)
 {

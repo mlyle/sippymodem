@@ -26,6 +26,7 @@ struct callback_capture {
 	unsigned int ready;
 	unsigned int error;
 	unsigned int trace;
+	char trace_text[1024];
 	unsigned int registration;
 	unsigned int call;
 	unsigned int media;
@@ -56,13 +57,24 @@ static void capture_ready(void *context)
 
 DEFINE_CAPTURE(capture_error, error,
 	       struct sip_signaling_error)
-DEFINE_CAPTURE(capture_trace, trace,
-	       struct sip_trace_record)
 DEFINE_CAPTURE(capture_registration, registration,
 	       struct sip_registration_event)
 DEFINE_CAPTURE(capture_call, call, struct sip_call_event)
 
 #undef DEFINE_CAPTURE
+
+static void capture_trace(void *context, const struct sip_trace_record *record)
+{
+	struct callback_capture *capture = context;
+
+	capture->trace++;
+	capture->observed_callback_depth |=
+		sip_media_bridge_is_in_callback(capture->bridge);
+	if (record->data != NULL && record->size < sizeof(capture->trace_text)) {
+		memcpy(capture->trace_text, record->data, record->size);
+		capture->trace_text[record->size] = '\0';
+	}
+}
 
 static void capture_media(
 	void *context, const struct sip_media_event *event)
@@ -221,6 +233,76 @@ static bool test_validates_initialization(void)
 	return true;
 }
 
+static bool test_media_trace_intervals_and_lifecycle(void)
+{
+	struct bridge_fixture fixture;
+	struct callback_capture capture = { 0 };
+	struct sip_media_event media = {
+		.state = SIP_MEDIA_CONFIGURED,
+		.remote_address_family = SIP_MEDIA_ADDRESS_IPV4,
+		.codec = MEDIA_CODEC_PCMU,
+		.payload_type = 0,
+		.sample_rate = MEDIA_SAMPLE_RATE,
+		.channels = 1,
+		.remote_address = "127.0.0.1",
+		.remote_port = 42000,
+	};
+	const struct sip_signaling_callbacks *source;
+
+	CHECK(open_fixture(&fixture, &capture), "could not open trace fixture");
+	capture.bridge = &fixture.bridge;
+	source = sip_media_bridge_callbacks(&fixture.bridge);
+	media.local_port = rtp_endpoint_local_port(&fixture.endpoint);
+	sip_media_bridge_trace_media(&fixture.bridge, 0);
+	CHECK(capture.trace == 0, "unconfigured media produced diagnostics");
+	source->media_changed(source->context, &media);
+	sip_media_bridge_trace_media(&fixture.bridge, 0);
+	CHECK(capture.trace == 1 && capture.observed_callback_depth &&
+	      strstr(capture.trace_text, "RTP PCMU/8000/1 pt=0") &&
+	      strstr(capture.trace_text, "remote=127.0.0.1:42000 (SDP)") &&
+	      strstr(capture.trace_text, "TX=0 RX=0 accepted=0"),
+	      "initial trace did not expose an empty media path");
+	fixture.endpoint.stats.receive_datagrams = 4;
+	fixture.endpoint.stats.receive_filtered = 1;
+	fixture.endpoint.stats.transmit_sent = 2;
+	fixture.stream.receiver.stats.packets_accepted = 1;
+	fixture.stream.receiver.stats.malformed_packets = 1;
+	fixture.stream.receiver.stats.unexpected_payloads = 1;
+	fixture.stream.receiver.stats.samples_buffered = 8;
+	fixture.stream.receiver.stats.samples_played = 8;
+	fixture.stream.receiver.stats.samples_concealed = 16;
+	fixture.endpoint.learned_address = fixture.endpoint.remote_address;
+	fixture.endpoint.learned_address.sin_port = htons(43000);
+	fixture.endpoint.remote_learned = true;
+	sip_media_bridge_trace_media(&fixture.bridge, 999999999);
+	CHECK(capture.trace == 1, "trace flooded within its interval");
+	sip_media_bridge_trace_media(&fixture.bridge, 1000000000);
+	CHECK(capture.trace == 2 &&
+	      strstr(capture.trace_text, "remote=127.0.0.1:43000 (learned)") &&
+	      strstr(capture.trace_text, "TX=2 RX=4 accepted=1") &&
+	      strstr(capture.trace_text, "filtered=1 malformed=1 bad-pt=1") &&
+	      strstr(capture.trace_text, "buffered=8 played=8 concealed=16"),
+	      "trace hid route learning, rejected packets or concealed media");
+	sip_media_bridge_trace_media(&fixture.bridge, 2000000000);
+	CHECK(capture.trace == 3 &&
+	      strstr(capture.trace_text, "TX=0 RX=0 accepted=0") &&
+	      strstr(capture.trace_text, "buffered=0 played=0 concealed=0"),
+	      "previous traffic masked an interval with no received media");
+	sip_media_bridge_clear_media(&fixture.bridge);
+	sip_media_bridge_trace_media(&fixture.bridge, 3000000000);
+	CHECK(capture.trace == 3, "cleared media continued tracing");
+	source->media_changed(source->context, &media);
+	sip_media_bridge_trace_media(&fixture.bridge, 3000000000);
+	CHECK(capture.trace == 4 &&
+	      strstr(capture.trace_text, "TX=0 RX=0 accepted=0"),
+	      "a new call inherited the previous call's counts");
+	fixture.bridge.destination.trace = NULL;
+	sip_media_bridge_trace_media(&fixture.bridge, 4000000000);
+	CHECK(capture.trace == 4, "disabled tracing still invoked its sink");
+	rtp_endpoint_close(&fixture.endpoint);
+	return true;
+}
+
 struct test_case {
 	const char *name;
 	bool (*run)(void);
@@ -231,6 +313,7 @@ int main(void)
 	static const struct test_case tests[] = {
 		{ "forward and bind", test_forwards_and_binds_before_media_callback },
 		{ "initialization validation", test_validates_initialization },
+		{ "media trace intervals", test_media_trace_intervals_and_lifecycle },
 	};
 	unsigned int failures = 0;
 

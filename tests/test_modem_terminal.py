@@ -143,6 +143,31 @@ class ModemTerminalTests(unittest.TestCase):
             self.assertIn("flow-control none", args[-1])
             self.assertNotIn("dial", args[-1])
 
+    def test_kermit_completion_stops_modem_and_splitvt(self):
+        modem = mock.Mock()
+        modem.poll.return_value = None
+        screen = mock.Mock()
+        screen.poll.return_value = None
+        screen.wait.side_effect = [subprocess.TimeoutExpired("splitvt", .2), 0]
+        calls = 0
+
+        def spawn(arguments, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return modem
+            # This is the same completion notification emitted when Ctrl-\ Q
+            # exits Kermit; splitvt may keep its trace pane alive afterward.
+            Path(kwargs["env"]["MODEM_TERMINAL_DONE"]).write_text("0")
+            return screen
+
+        with (mock.patch.object(terminal.subprocess, "Popen", side_effect=spawn),
+              mock.patch.object(terminal, "read_published_device", return_value="/dev/pts/123")):
+            self.assertEqual(terminal.run(Path("/modem"), {}, "/splitvt", "/kermit"), 0)
+        screen.terminate.assert_called_once()
+        modem.terminate.assert_called_once()
+        modem.stdout.close.assert_called_once()
+
     def test_stop_bounds_unresponsive_child(self):
         child = mock.Mock()
         child.poll.return_value = None
