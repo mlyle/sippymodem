@@ -109,7 +109,9 @@ struct v92_upstream_data_frame {
  * held-out B1u. Missing acquisition media or unsupported filters retain the
  * linear receiver without a fitted codec prediction.
  * A zero-initialized plan selects the equalized filter-output path above.
- * The mapping and plan must belong to the complete CPd sent to the peer. */
+ * The mapping and plan must belong to the complete CPd sent to the peer.
+ * Handoff, mapping and plan must be disjoint from the receiver. Rejection
+ * leaves the receiver unchanged; success clears all prior data state. */
 enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	struct v92_upstream_data_rx *receiver,
 	const struct v92_upstream_rx *handoff,

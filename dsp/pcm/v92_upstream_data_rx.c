@@ -111,7 +111,7 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 	const struct v92_pcm_mapping *mapping,
 	const struct v92_upstream_plan *plan)
 {
-	struct v92_upstream_data_rx initialized = { 0 };
+	struct v92_upstream_data_line line;
 
 	if (receiver == NULL || handoff == NULL || mapping == NULL || plan == NULL ||
 	    memory_regions_overlap(receiver, sizeof(*receiver), plan, sizeof(*plan)) ||
@@ -122,10 +122,9 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		return V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT;
 	if (!v92_upstream_rx_is_valid(handoff) || handoff->failed ||
 	    !v92_upstream_plan_is_valid(plan) ||
-	    handoff->training_tail_remaining != 0u ||
-	    !v92_pcm_mapping_is_valid(mapping) || mapping->law != handoff->line.law)
+	    handoff->training_tail_remaining != 0u || mapping->law != handoff->line.law)
 		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
-	initialized.line = (struct v92_upstream_data_line){
+	line = (struct v92_upstream_data_line){
 		.plan = *plan,
 		.input_samples = handoff->line.input_samples,
 		.polarity = handoff->line.polarity,
@@ -137,15 +136,15 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		if (!g711_quantization_interval(mapping->law, lu, &levels))
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 
-		initialized.line.calibration.gain = plan->gain;
-		pcm_gain_init(&initialized.line.host.fit);
-		initialized.line.calibration.minimum = fmax(1.0 / 32768.0,
+		line.calibration.gain = plan->gain;
+		pcm_gain_init(&line.host.fit);
+		line.calibration.minimum = fmax(1.0 / 32768.0,
 			plan->gain * lu / levels.upper);
 		/* LU is positive even when its PCMU cell also contains zero. */
-		initialized.line.calibration.maximum = fmin(32768.0,
+		line.calibration.maximum = fmin(32768.0,
 			plan->gain * lu / fmax(1.0, levels.lower));
-		initialized.line.delay_remaining = plan->delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
-		if (v92_pcm_frame_rx_init_constellation(&initialized.decoder, mapping) != V92_PCM_FRAME_OK)
+		line.delay_remaining = plan->delay - V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+		if (!calibrated_gain_is_valid(&line))
 			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
 	} else {
 		/* Training uses known symbols and a sparse constellation. Dense
@@ -153,16 +152,20 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_init(
 		 * fast acquisition loop: even a quantized LU estimate can make it
 		 * chase the wrong point. Retain the trained FIR and any slower
 		 * caller-selected step, but bound decision-directed tracking. */
-		initialized.line.equalizer = handoff->line.equalizer;
-		initialized.line.adaptation = fmin(handoff->line.adaptation, 0.002);
-		if (v92_pcm_frame_rx_init(&initialized.decoder, mapping,
-			    handoff->line.demodulator.lu) != V92_PCM_FRAME_OK)
-			return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
+		line.equalizer = handoff->line.equalizer;
+		line.adaptation = fmin(handoff->line.adaptation, 0.002);
 	}
-	v92_upstream_model_init(&initialized);
-	if (!v92_upstream_data_rx_is_valid(&initialized))
+	/* The decoder validates the mapping and commits only on success. Preflight
+	 * the line first; zero counters and a fresh model need no speculative histories. */
+	enum v92_pcm_frame_result result = plan->observation == V92_PCM_FRAME_CONSTELLATION ?
+		v92_pcm_frame_rx_init_constellation(&receiver->decoder, mapping) :
+		v92_pcm_frame_rx_init(&receiver->decoder, mapping, handoff->line.demodulator.lu);
+	if (result != V92_PCM_FRAME_OK)
 		return V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS;
-	*receiver = initialized;
+	const size_t line_offset = offsetof(struct v92_upstream_data_rx, line);
+	memset((char *)receiver + line_offset, 0, sizeof(*receiver) - line_offset);
+	receiver->line = line;
+	v92_upstream_model_init(receiver);
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 

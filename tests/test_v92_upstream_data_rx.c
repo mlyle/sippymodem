@@ -227,6 +227,88 @@ static bool prepare_e2u(
 		TEST_LU, (int16_t)lround(TEST_LU * channel->gain), 0.002, V92_CONSTELLATION_4_POINT);
 }
 
+static bool test_data_initialization(void)
+{
+	const int16_t levels[] = { 2, 3, TEST_LU, 16000 };
+	const double gains[] = { 1.0 / 32768.0, nextafter(1.0 / 32768.0, 1.0),
+		1.0, 4096.0, nextafter(32768.0, 1.0), 32768.0 };
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		for (int polarity = -1; polarity <= 1; polarity += 2)
+			for (size_t level = 0; level < ARRAY_LENGTH(levels); ++level) {
+				struct channel channel = { .gain = 1.0, .law = law, .polarity = polarity };
+				struct v92_phase4_record_tx e2u_tx;
+				struct v92_e2u_rx e2u_rx;
+				CHECK(prepare_e2u_at_level(&channel, false, &e2u_tx, &e2u_rx,
+					TEST_LU, TEST_LU, 0.001, V92_CONSTELLATION_4_POINT),
+					"initialization handoff fixture failed");
+				/* Exercise valid constructor bounds even at LU cells too small
+				 * to carry this fixture's E2u waveform without codec erasures. */
+				int16_t target;
+				CHECK(v92_phase4_demodulator_init(&e2u_rx.signal.line.demodulator,
+					V92_CONSTELLATION_4_POINT, 0, levels[level]) == V92_PHASE4_MODULATOR_OK &&
+				      v92_phase4_modulator_level(V92_CONSTELLATION_4_POINT, levels[level], 0, 0,
+					&target) == V92_PHASE4_MODULATOR_OK, "LU boundary fixture failed");
+				for (size_t i = 0; i < ARRAY_LENGTH(e2u_rx.signal.line.pending_training_targets); ++i)
+					e2u_rx.signal.line.pending_training_targets[i] = g711_quantize(law, target);
+				for (uint8_t rate = 1; rate <= V92_CPD_MAX_DATA_RATE_NUMBER; ++rate) {
+					struct v92_cpd_parameters cpd;
+					struct v92_pcm_mapping mapping;
+					CHECK(v92_cpd_direct_init(&cpd, law, rate, false) == V92_CPD_OK &&
+					      v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK,
+					      "initialization mapping fixture failed");
+					for (size_t gain = 0; gain < ARRAY_LENGTH(gains); ++gain)
+						for (unsigned domain = 0; domain < 2; ++domain) {
+							struct v92_upstream_plan plan = domain ? (struct v92_upstream_plan){
+								.gain = gains[gain], .observation = V92_PCM_FRAME_CONSTELLATION,
+								.delay = gain % 2 ? V92_B1U_SYMBOLS - 1 :
+									V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY,
+							} : direct_plan;
+							struct v92_upstream_data_rx receiver, expected = { 0 };
+							expected.line.plan = plan;
+							expected.line.input_samples = e2u_rx.signal.line.input_samples;
+							expected.line.polarity = polarity;
+							if (domain) {
+								struct g711_interval cell;
+								CHECK(g711_quantization_interval(law, levels[level], &cell) &&
+								      v92_pcm_frame_rx_init_constellation(&expected.decoder, &mapping) ==
+									V92_PCM_FRAME_OK, "constellation initialization fixture failed");
+								expected.line.calibration.gain = plan.gain;
+								expected.line.calibration.minimum = fmax(1.0 / 32768.0,
+									plan.gain * levels[level] / cell.upper);
+								expected.line.calibration.maximum = fmin(32768.0,
+									plan.gain * levels[level] / fmax(1.0, cell.lower));
+								pcm_gain_init(&expected.line.host.fit);
+								expected.line.delay_remaining = plan.delay -
+									V92_PCM_PHASE4_TRN2U_LINE_DECISION_DELAY;
+							} else {
+								CHECK(v92_pcm_frame_rx_init(&expected.decoder, &mapping, levels[level]) ==
+								      V92_PCM_FRAME_OK, "filter initialization fixture failed");
+								expected.line.equalizer = e2u_rx.signal.line.equalizer;
+								expected.line.adaptation = 0.001;
+							}
+							v92_upstream_model_init(&expected);
+							memset(&receiver, 0xa5, sizeof(receiver));
+							CHECK(v92_upstream_data_rx_init(&receiver, &e2u_rx.signal, &mapping, &plan) ==
+							      V92_UPSTREAM_DATA_RX_OK && v92_upstream_data_rx_is_valid(&receiver) &&
+							      !memcmp(&receiver, &expected, sizeof(receiver)),
+							      "fresh handoff changed state: law %u rate %u domain %u level %d gain %g",
+							      law, rate, domain, levels[level], gains[gain]);
+							CHECK(v92_upstream_data_rx_init(&receiver, (const void *)&receiver.model,
+								&mapping, &plan) == V92_UPSTREAM_DATA_RX_INVALID_ARGUMENT &&
+							      !memcmp(&receiver, &expected, sizeof(receiver)),
+							      "aliased training handoff changed receiver");
+							struct v92_upstream_rx failed = e2u_rx.signal;
+							failed.failed = true;
+							CHECK(v92_upstream_data_rx_init(&receiver, &failed, &mapping, &plan) ==
+							      V92_UPSTREAM_DATA_RX_INVALID_PARAMETERS &&
+							      !memcmp(&receiver, &expected, sizeof(receiver)),
+							      "failed training handoff changed receiver");
+						}
+				}
+			}
+	return true;
+}
+
 struct idle_source {
 	unsigned int frames;
 	unsigned int idle_frames;
@@ -2724,6 +2806,7 @@ static bool test_direct_b1_validation(enum g711_law law, int polarity, bool faul
 
 int main(void)
 {
+	if (!test_data_initialization()) return 1;
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++)
 		for (int polarity = -1; polarity <= 1; polarity += 2)
 			for (unsigned fault = 0; fault < 2; fault++)
