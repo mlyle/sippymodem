@@ -23,16 +23,11 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_init(
 	struct v32_uncoded_receiver *receiver,
 	const struct v32_symbol_decoder *seed)
 {
-	struct v32_uncoded_receiver initialized;
-
 	if (receiver == NULL || !decoder_is_valid(seed) ||
 	    memory_regions_overlap(
 		    receiver, sizeof(*receiver), seed, sizeof(*seed)))
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
-	initialized.decoder = *seed;
-	if (!v32_uncoded_receiver_is_valid(&initialized))
-		return V32_UNCODED_RECEIVER_INVALID_STATE;
-	*receiver = initialized;
+	receiver->decoder = *seed;
 	return V32_UNCODED_RECEIVER_OK;
 }
 
@@ -56,7 +51,6 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
 	const struct v32_equalizer_observation *observation,
 	bool adapt_on_error, struct v32_uncoded_symbol *symbol)
 {
-	struct v32_uncoded_receiver next;
 	struct v32_uncoded_symbol next_symbol = { 0 };
 	enum v32_framing_result result;
 
@@ -64,7 +58,7 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
 	if (!observe_arguments_are_separate(receiver, observation, symbol))
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
-	next = *receiver;
+	/* Symbol framing already leaves its owner unchanged on rejection. */
 	switch (bits_per_symbol) {
 	case V32_4800_BITS_PER_SYMBOL: {
 		struct v32_quadrant_decision decision;
@@ -74,7 +68,7 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
 		    V32_DECISION_OK)
 			return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
 		result = v32_4800_symbol_decode(
-			&next.decoder, decision.quadrant, &next_symbol.group);
+			&receiver->decoder, decision.quadrant, &next_symbol.group);
 		next_symbol.equalizer = decision.equalizer;
 		break;
 	}
@@ -86,17 +80,15 @@ enum v32_uncoded_receiver_result v32_uncoded_receiver_observe(
 		    V32_DECISION_OK)
 			return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
 		result = v32_9600_symbol_decode(
-			&next.decoder, decision.symbol, &next_symbol.group);
+			&receiver->decoder, decision.symbol, &next_symbol.group);
 		next_symbol.equalizer = decision.equalizer;
 		break;
 	}
 	default:
 		return V32_UNCODED_RECEIVER_INVALID_ARGUMENT;
 	}
-	if (result != V32_FRAMING_OK ||
-	    !v32_uncoded_receiver_is_valid(&next))
+	if (result != V32_FRAMING_OK)
 		return V32_UNCODED_RECEIVER_INVALID_STATE;
-	*receiver = next;
 	*symbol = next_symbol;
 	return V32_UNCODED_RECEIVER_OK;
 }
