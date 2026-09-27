@@ -253,12 +253,14 @@ static int process_D(struct modem *m, char *p, int *len)
 	switch (toupper(*p)) {
 	case 'T':
 		modem_set_sreg(m,SREG_TONE_OR_PULSE,1);
+		p++; /* Dial modifiers are not part of the SIP destination. */
 		break;
 	case 'P':
 #ifdef NO_PULSE_DIAL
 		return -1;
 #endif
 		modem_set_sreg(m,SREG_TONE_OR_PULSE,0);
+		p++;
 		break;
 	case 'L':
 		if(m->dial_string[0] != '\0') {

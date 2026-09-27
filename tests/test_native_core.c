@@ -1717,10 +1717,19 @@ static bool test_at_dial_destinations_are_bounded(void)
 	static struct {
 		char command[64];
 		const char *destination;
+		int tone;
 	} cases[] = {
-		{ "ATDextension", "extension" },
-		{ "ATDuser@example.invalid", "user@example.invalid" },
-		{ "ATDsip:peer@example.invalid", "sip:peer@example.invalid" },
+		{ "ATDextension", "extension", -1 },
+		{ "ATDuser@example.invalid", "user@example.invalid", -1 },
+		{ "ATDsip:peer@example.invalid", "sip:peer@example.invalid", -1 },
+		{ "ATD5551234", "5551234", -1 },
+		{ "ATDT5551234", "5551234", 1 },
+		{ "ATDP5551234", "5551234", 0 },
+		{ "atdt5551234", "5551234", 1 },
+		{ "atdp5551234", "5551234", 0 },
+		{ "ATDTsip:Test@example.invalid", "sip:Test@example.invalid", 1 },
+		{ "ATDPsip:Peer@example.invalid", "sip:Peer@example.invalid", 0 },
+		{ "ATDsip:Test@example.invalid", "sip:Test@example.invalid", -1 },
 	};
 	struct datapumps datapumps = { 0 };
 	struct modem_driver driver = {
@@ -1738,10 +1747,22 @@ static bool test_at_dial_destinations_are_bounded(void)
 
 		CHECK(modem != NULL,
 		      "AT dial modem %zu could not be created", index);
+		if (cases[index].tone >= 0)
+			modem_set_sreg(modem, SREG_TONE_OR_PULSE, !cases[index].tone);
 		CHECK(process_at_command(modem, cases[index].command) == 1 &&
 			      strcmp(modem->dial_string,
-				     cases[index].destination) == 0,
+				     cases[index].destination) == 0 &&
+			      modem_get_sreg(modem, SREG_TONE_OR_PULSE) ==
+				      (cases[index].tone < 0 ? 1 : cases[index].tone),
 		      "AT dial destination %zu changed", index);
+		CHECK(modem_stop_now(modem) == 0, "AT dial modem did not stop");
+		{
+			char redial[] = "ATDL";
+
+			CHECK(process_at_command(modem, redial) == 1 &&
+			      strcmp(modem->dial_string, cases[index].destination) == 0,
+			      "redial changed AT dial destination %zu", index);
+		}
 		modem_delete(modem);
 	}
 	{
