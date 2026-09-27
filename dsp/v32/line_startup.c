@@ -677,9 +677,13 @@ v32_line_startup_process(
 			    &next.answer_tone, receive_sample, &answer_event) !=
 		    SINGLE_TONE_OK)
 			return V32_LINE_STARTUP_INVALID_ARGUMENT;
-		if (answer_event.kind == SINGLE_TONE_ENDED)
-			return fail_startup(
-				&next, startup, transmit_sample, complete);
+		if (answer_event.kind == SINGLE_TONE_ENDED) {
+			/* No calling carrier has been sent yet. A partial answer
+			 * tone does not commit the exchange; qualify it again within
+			 * the owning training session's unchanged deadline. */
+			enter_state(&next, V32_LINE_WAIT_ANSWER_TONE);
+			break;
+		}
 		advance_state_clock(&next);
 		if (next.state_samples ==
 		    V32_ANSWER_GUARD_SAMPLES) {

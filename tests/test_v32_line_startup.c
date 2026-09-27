@@ -305,7 +305,7 @@ static bool test_generated_exchange(void)
 	return true;
 }
 
-static bool test_early_answer_loss_fails(void)
+static bool run_early_answer_loss_recovery(enum test_codec codec)
 {
 	struct v32_line_startup startup;
 	struct single_tone_transmitter answerer;
@@ -317,25 +317,44 @@ static bool test_early_answer_loss_fails(void)
 		      V32_LINE_STARTUP_OK &&
 		      single_tone_transmitter_init(
 			      &answerer, V32_ANSWER_TONE_HZ,
-			      TEST_AMPLITUDE) == SINGLE_TONE_OK &&
-		      advance_to_state(
-			      &startup, &answerer, TEST_CODEC_LINEAR,
-			      V32_LINE_ANSWER_GUARD),
-	      "early-loss fixture did not acquire the answer tone");
-	for (size_t count = 0; count < TEST_TRANSITION_LIMIT; ++count) {
-		enum v32_line_startup_result result =
-			v32_line_startup_process(
-				&startup, 0, &transmit, &complete);
-
-		if (result == V32_LINE_STARTUP_PROTOCOL_ERROR)
-			break;
+			      TEST_AMPLITUDE) == SINGLE_TONE_OK,
+	      "early-loss fixture did not initialize");
+	for (unsigned int attempt = 0; attempt < 3; ++attempt) {
+		CHECK(advance_to_state(&startup, &answerer, codec,
+				       V32_LINE_ANSWER_GUARD),
+		      "did not reacquire answer tone");
+		for (size_t count = 0; count < V32_ANSWER_GUARD_SAMPLES / 2; ++count)
+			CHECK(process_tone(&startup, &answerer, codec,
+					   &transmit, &complete) &&
+			      startup.state == V32_LINE_ANSWER_GUARD &&
+			      transmit == 0 && !complete,
+			      "partial guards accumulated or transmitted carrier");
+		for (size_t count = 0; count < TEST_TRANSITION_LIMIT; ++count)
+			CHECK(v32_line_startup_process(
+				      &startup, codec_round_trip(0, codec),
+				      &transmit, &complete) == V32_LINE_STARTUP_OK &&
+			      transmit == 0 && !complete,
+			      "early answer loss failed or transmitted carrier");
+		CHECK(startup.state == V32_LINE_WAIT_ANSWER_TONE,
+		      "early answer loss did not return to acquisition");
 	}
-	CHECK(startup.state == V32_LINE_STARTUP_FAILED &&
+	CHECK(advance_to_state(&startup, &answerer, codec, V32_LINE_ANSWER_GUARD),
+	      "did not acquire final answer tone");
+	for (size_t count = 0; count < V32_ANSWER_GUARD_SAMPLES; ++count)
+		CHECK(process_tone(&startup, &answerer, codec, &transmit, &complete) &&
 		      transmit == 0 && !complete &&
-		      v32_line_startup_process(
-			      &startup, 0, &transmit, &complete) ==
-			      V32_LINE_STARTUP_PROTOCOL_ERROR,
-	      "premature answer-tone loss did not fail closed");
+		      startup.state == (count + 1 == V32_ANSWER_GUARD_SAMPLES ?
+			V32_LINE_SEND_CALLING_CARRIER : V32_LINE_ANSWER_GUARD),
+		      "recovered answer guard was not a full interval");
+	return true;
+}
+
+static bool test_early_answer_loss_recovery(void)
+{
+	for (enum test_codec codec = TEST_CODEC_LINEAR; codec <= TEST_CODEC_PCMA;
+	     ++codec)
+		CHECK(run_early_answer_loss_recovery(codec),
+		      "answer guard recovery failed codec %d", codec);
 	return true;
 }
 
@@ -704,7 +723,7 @@ int main(void)
 		{ "generated exchange", test_generated_exchange },
 		{ "generated answerer exchange", test_generated_answerer_exchange },
 		{ "resume after answer tone", test_resume_after_answer_tone },
-		{ "early answer loss", test_early_answer_loss_fails },
+		{ "early answer loss recovery", test_early_answer_loss_recovery },
 		{ "transactional validation", test_validation_is_transactional },
 	};
 	unsigned int failures = 0;
