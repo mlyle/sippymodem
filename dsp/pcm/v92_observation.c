@@ -2,6 +2,7 @@
 #include "v92_observation.h"
 #include "memory_region.h"
 #include "integer_math.h"
+#include "sample_math.h"
 
 #include <float.h>
 #include <limits.h>
@@ -246,11 +247,7 @@ static int16_t scaled(enum g711_law law, double gain, int32_t x)
 	/* An inferred reciprocal host gain can overflow for a subnormal gain.
 	 * Zero still maps to codec zero, not infinity times zero. */
 	if (x == 0) return g711_quantize(law, 0);
-	double sample = gain * x;
-	if (sample >= INT16_MAX) return g711_quantize(law, INT16_MAX);
-	if (sample <= INT16_MIN) return g711_quantize(law, INT16_MIN);
-	sample = round(sample);
-	return g711_quantize(law, (int16_t)sample);
+	return g711_quantize(law, sample_round_s16(gain * x));
 }
 
 /* Bounds relative to the host sample. Use the same arithmetic for training

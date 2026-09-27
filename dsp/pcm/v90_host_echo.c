@@ -4,6 +4,7 @@
 
 #include "integer_math.h"
 #include "memory_region.h"
+#include "sample_math.h"
 
 #include <float.h>
 #include <limits.h>
@@ -240,15 +241,6 @@ static bool estimate_echo(
 	return true;
 }
 
-static int16_t round_s16(double value)
-{
-	if (value >= INT16_MAX)
-		return INT16_MAX;
-	if (value <= INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)(value >= 0.0 ? value + 0.5 : value - 0.5);
-}
-
 enum v90_host_echo_result v90_host_echo_predict(
 	const struct v90_host_echo *echo, enum v90_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample)
@@ -275,7 +267,7 @@ enum v90_host_echo_result v90_host_echo_predict(
 		if (!estimate_echo(
 			    coefficients, references, &estimate, &energy))
 			return V90_HOST_ECHO_NUMERIC_FAILURE;
-		generated = round_s16((double)received_sample - estimate);
+		generated = sample_round_s16((double)received_sample - estimate);
 	}
 	*cleaned_sample = generated;
 	return V90_HOST_ECHO_OK;

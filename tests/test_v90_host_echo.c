@@ -189,6 +189,35 @@ static bool test_contracts(void)
 	return true;
 }
 
+static bool test_half_sample_prediction(void)
+{
+	struct v90_host_echo echo;
+	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	      "rounding owner did not initialize");
+	for (unsigned i = 0; i < echo.window_delay_samples + V90_HOST_ECHO_FILTER_TAPS; ++i)
+		CHECK(pcm_echo_reference_push(&echo.reference, 1) == PCM_ECHO_REFERENCE_OK,
+		      "rounding reference did not fill");
+	echo.filter_ready = true;
+	echo.train_samples = V90_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	echo.train_peak = V90_HOST_ECHO_READY_MIN_PEAK;
+	CHECK(v90_host_echo_is_valid(&echo), "rounding fixture is invalid");
+	for (int sign = -1; sign <= 1; sign += 2) {
+		echo.coefficients[0] = sign * 0.5f;
+		/* Both taps are exactly representable floats. Their double sum is
+		 * the representable neighbor just below the half-sample magnitude. */
+		echo.coefficients[1] = -sign * 0x1p-54f;
+		int16_t cleaned = 1234;
+		CHECK(v90_host_echo_predict(&echo, V90_HOST_ECHO_FILTER, 0, &cleaned) ==
+		      V90_HOST_ECHO_OK && cleaned == 0,
+		      "sub-half echo rounded across the boundary for sign %d", sign);
+		echo.coefficients[1] = 0.0f;
+		CHECK(v90_host_echo_predict(&echo, V90_HOST_ECHO_FILTER, 0, &cleaned) ==
+		      V90_HOST_ECHO_OK && cleaned == -sign,
+		      "half echo did not round away from zero for sign %d", sign);
+	}
+	return true;
+}
+
 static bool test_long_delay_cancellation(void)
 {
 	struct v90_host_echo echo;
@@ -830,6 +859,7 @@ int main(void)
 			UINT32_C(0x31415927) + trial * 7919u, trial % 2 ? 30000 : 1000))
 			return 1;
 	if (!test_contracts() || !test_training_quiet_boundary() ||
+	    !test_half_sample_prediction() ||
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
 	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||

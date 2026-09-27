@@ -3,9 +3,7 @@
 #include "pcm_downstream_equalizer.h"
 
 #include "memory_region.h"
-
-#include <limits.h>
-#include <math.h>
+#include "sample_math.h"
 
 bool pcm_downstream_equalizer_is_valid(const struct pcm_downstream_equalizer *equalizer)
 {
@@ -78,11 +76,7 @@ bool pcm_downstream_equalizer_receive(struct pcm_downstream_equalizer *equalizer
 		*decision = octet;
 		return true;
 	}
-	if (linear > INT16_MAX)
-		linear = INT16_MAX;
-	if (linear < INT16_MIN)
-		linear = INT16_MIN;
-	sample = (int16_t)lround(linear);
+	sample = sample_round_s16(linear);
 	*decision = g711_encode(equalizer->law, sample);
 	return true;
 }

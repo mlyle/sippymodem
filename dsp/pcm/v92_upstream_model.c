@@ -3,6 +3,7 @@
 #include "v92_upstream_model.h"
 #include "v92_upstream_data_rx.h"
 #include "integer_math.h"
+#include "sample_math.h"
 
 #include <limits.h>
 #include <math.h>
@@ -171,8 +172,7 @@ void v92_upstream_model_fit(struct v92_upstream_model *model,
 			close_acquisition(model);
 			return;
 		}
-		samples[i] = (int16_t)fmax(INT16_MIN, fmin(INT16_MAX,
-			round(model->raw[i] * line->calibration.gain)));
+		samples[i] = sample_round_s16(model->raw[i] * line->calibration.gain);
 	}
 	const struct v92_cpd_filter *feedback = &decoder->mapping.cpd.filter[V92_CPD_PRECODER_FEEDBACK];
 	const struct v92_observation_training training = {

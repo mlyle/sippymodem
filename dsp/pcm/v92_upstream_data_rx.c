@@ -3,9 +3,9 @@
 #include "v92_upstream_data_rx.h"
 
 #include "memory_region.h"
+#include "sample_math.h"
 #include "v92_data_quality.h"
 
-#include <limits.h>
 #include <math.h>
 #include <stddef.h>
 #include <string.h>
@@ -234,15 +234,6 @@ enum v92_upstream_data_rx_result v92_upstream_data_rx_start_b1u(
 	return V92_UPSTREAM_DATA_RX_OK;
 }
 
-static int16_t rounded_sample(double level)
-{
-	if (level >= INT16_MAX)
-		return INT16_MAX;
-	if (level <= INT16_MIN)
-		return INT16_MIN;
-	return (int16_t)lround(level);
-}
-
 static enum v92_upstream_data_rx_result fail(
 	struct v92_upstream_data_rx *receiver, enum v92_upstream_data_rx_result result)
 {
@@ -448,7 +439,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 		line->wire_known[line->symbol_count] = wire_known;
 		line->host_samples[line->symbol_count] = wire_known ? host_sample : 0;
 		line->received[line->symbol_count] = wire_known && available;
-		line->samples[line->symbol_count] = rounded_sample(line->raw[line->symbol_count] * line->calibration.gain);
+		line->samples[line->symbol_count] = sample_round_s16(line->raw[line->symbol_count] * line->calibration.gain);
 		if (++line->symbol_count == V92_PCM_MAPPING_FRAME_SYMBOLS)
 			return receive_frame(receiver, line, frame);
 		return V92_UPSTREAM_DATA_RX_OK;
@@ -458,7 +449,7 @@ static enum v92_upstream_data_rx_result receive_sample(
 				  &line->observations[line->symbol_count], &ready) !=
 		    QAM_EQUALIZER_OK || !ready)
 		return fail(receiver, V92_UPSTREAM_DATA_RX_NUMERIC_FAILURE);
-	line->samples[line->symbol_count] = rounded_sample(
+	line->samples[line->symbol_count] = sample_round_s16(
 		line->observations[line->symbol_count].output.in_phase);
 	line->symbol_count++;
 	line->input_samples++;
