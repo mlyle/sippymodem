@@ -439,7 +439,7 @@ def render_dashboard(
         for role in roles
     }
 
-    def role_fields(family: str, link_mode: str, role: str) -> tuple[str, str]:
+    def role_fields(family: str, link_mode: str, role: str) -> tuple[str, str, bool]:
         role_results = [
             result
             for result, requested, _ in calls
@@ -524,23 +524,24 @@ def render_dashboard(
         mismatch_fields = " " * 12 + " ".join(
             f"{mismatches[maturity]:>2}" for maturity in MATURITY_ORDER[:4]
         ) + f" {mismatch_request_cell:>2}" + " " * 6
-        return fields, mismatch_fields
+        return fields, mismatch_fields, any(mismatches.values())
 
     for family, link_mode in groups:
         mode_label = {LINK_LAPM: "l", LINK_RAW: "r"}.get(link_mode, "?")
         label = f"{FAMILY_LABELS.get(family, family)}/{mode_label}"
-        originator, originator_mismatches = role_fields(
+        originator, originator_mismatches, originator_has_mismatch = role_fields(
             family, link_mode, ROLE_ORIGINATOR
         )
-        callback, callback_mismatches = role_fields(
+        callback, callback_mismatches, callback_has_mismatch = role_fields(
             family, link_mode, ROLE_CALLBACK
         )
         rows.append(
             f"{label:<12} {originator} | {callback}"
         )
-        rows.append(
-            f"{'  mismatch':<12} {originator_mismatches} | {callback_mismatches}"
-        )
+        if originator_has_mismatch or callback_has_mismatch:
+            rows.append(
+                f"{'  mismatch':<12} {originator_mismatches} | {callback_mismatches}"
+            )
 
     def total_fields(role: str) -> str:
         total = totals[role]

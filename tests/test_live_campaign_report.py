@@ -241,7 +241,7 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertTrue(any(line.startswith("V.22bis/r") for line in lines))
         self.assertTrue(any(line.startswith("V.22bis/l") for line in lines))
         self.assertEqual(
-            len(lines), 2 * len({(case.family, case.link_mode) for case in cases}) + 8
+            len(lines), len({(case.family, case.link_mode) for case in cases}) + 8
         )
         self.assertLessEqual(max(map(len, dashboard.splitlines())), 100)
 
@@ -682,6 +682,47 @@ class LiveCampaignReportTests(unittest.TestCase):
         self.assertEqual(lines[index][25:36].split(), ["0"] * 4)
         unknown = next(line for line in lines if line.startswith("?/?"))
         self.assertEqual(unknown[25:36].split(), ["0", "0", "0", "1"])
+
+    def test_zero_mismatch_rows_are_hidden(self) -> None:
+        cases = cases_for_suite("standard")
+        for results in ((), (self.result(connected=True, initial_data=True),),
+                        (self.result(connected=True, profile_error="profile mismatch",
+                                     outcome=OUTCOME_INFRASTRUCTURE_ERROR),)):
+            with self.subTest(results=results):
+                dashboard = render_dashboard(
+                    cases, 1, results, revision="a",
+                    campaign_id="test-campaign", elapsed_seconds=1,
+                )
+                self.assertFalse(any(line.startswith("  mismatch")
+                                     for line in dashboard.splitlines()))
+
+    def test_mismatch_row_visibility_is_specific_to_modulation_and_link_mode(self) -> None:
+        cases = cases_for_suite("standard")
+        for role in ("originator", "callback"):
+            for link_mode, suffix in (("raw", "r"), ("lapm", "l")):
+                with self.subTest(role=role, link_mode=link_mode):
+                    case = next(case for case in cases if case.family == "v90"
+                                and case.role == role and case.link_mode == link_mode)
+                    result = self.result(
+                        case_name=case.name, family=case.family, role=role,
+                        link_mode=link_mode, connected=True, initial_data=True,
+                        modulation="V.34", protocol="none",
+                        profile_error="CONNECT selected V.34 instead of V.90",
+                    )
+                    lines = render_dashboard(
+                        cases, 1, (result,), revision="a",
+                        campaign_id="test-campaign", elapsed_seconds=1,
+                    ).splitlines()
+                    mismatch_rows = [i for i, line in enumerate(lines)
+                                     if line.startswith("  mismatch")]
+                    self.assertEqual(len(mismatch_rows), 1)
+                    index = mismatch_rows[0]
+                    self.assertTrue(lines[index - 1].startswith(f"V.90/{suffix}"))
+                    expected = ["0", "0", "1", "0"]
+                    self.assertEqual(lines[index][25:36].split(),
+                                     expected if role == "originator" else ["0"] * 4)
+                    self.assertEqual(lines[index][60:71].split(),
+                                     expected if role == "callback" else ["0"] * 4)
 
     def test_mismatch_rows_preserve_requested_buckets_and_credit_actual_once(self) -> None:
         cases = tuple(case for case in cases_for_suite("standard")

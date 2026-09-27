@@ -277,9 +277,10 @@ class LiveCampaignTests(unittest.TestCase):
                 live=False,
             )
         recent = [line for line in dashboard.splitlines() if line[:3].isdigit()]
-        self.assertEqual(len(recent), 1)
+        self.assertEqual(len(recent), 2)
         self.assertLessEqual(len(dashboard.splitlines()), 13)
         self.assertTrue(recent[0].startswith("005"))
+        self.assertTrue(recent[1].startswith("004"))
 
     def test_display_keeps_mismatch_profiles_together_within_terminal(self) -> None:
         case = CASES_BY_NAME["v21-300-originator"]
@@ -290,7 +291,7 @@ class LiveCampaignTests(unittest.TestCase):
             receive_rate=300, transmit_rate=300,
             detail="CONNECT selected Bell 103 instead of V.21",
         )
-        for terminal_rows, expected_calls in ((16, 0), (17, 1), (18, 1)):
+        for terminal_rows, expected_calls in ((15, 0), (16, 1), (17, 1)):
             with self.subTest(terminal_rows=terminal_rows), mock.patch(
                 "tools.live_campaign.shutil.get_terminal_size",
                 return_value=os.terminal_size((80, terminal_rows)),
