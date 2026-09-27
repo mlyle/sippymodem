@@ -445,6 +445,59 @@ static bool test_late_sample_rollback(void)
 	return true;
 }
 
+static bool test_calibrated_filter_ownership(void)
+{
+	struct v34_phase3_profile profile = profile_fixture();
+	struct v34_training_line line;
+	struct qam_point point = generated_point(0);
+	int16_t sample;
+	bool accepted;
+
+	CHECK(v34_training_line_init(&line, &profile, 8000, 5000) ==
+		      V34_TRAINING_LINE_OK,
+	      "filter ownership fixture did not initialize");
+	for (unsigned int index = 0; index < 64u; ++index)
+		CHECK(v34_training_line_sample(&line,
+			      v34_training_line_needs_point(&line) ? &point : NULL,
+			      &sample, &accepted) == V34_TRAINING_LINE_OK,
+		      "filter ownership fixture did not warm");
+	CHECK(advance_to_point_boundary(&line),
+	      "filter ownership fixture did not reach a point boundary");
+	for (unsigned int phase = 0; phase < 2u; ++phase) {
+		const struct qam_point *supplied = phase == 0u ? &point : NULL;
+
+		for (unsigned int owner = 0; owner < 2u; ++owner) {
+			struct v34_training_line bad = line;
+			struct v34_training_line before;
+
+			if (owner == 0u)
+				bad.carrier.preemphasis_filter_index ^= 1u;
+			else
+				bad.profile.preemphasis_filter_index ^= 1u;
+			before = bad;
+			sample = 1234;
+			accepted = true;
+			CHECK(v34_phase3_profile_is_valid(&bad.profile) &&
+			      v34_pulse_modulator_is_valid(&bad.carrier),
+			      "filter mismatch fixture damaged a child owner");
+			CHECK(!v34_training_line_is_valid(&bad) &&
+			      !v34_training_line_needs_point(&bad) &&
+			      v34_training_line_sample(&bad, supplied, &sample,
+						       &accepted) ==
+				      V34_TRAINING_LINE_INVALID_ARGUMENT &&
+			      memcmp(&bad, &before, sizeof(bad)) == 0 &&
+			      sample == 1234 && accepted,
+			      "inconsistent calibrated filter was used or mutated");
+		}
+		CHECK(v34_training_line_sample(&line, supplied, &sample,
+					       &accepted) == V34_TRAINING_LINE_OK &&
+		      accepted == (phase == 0u) &&
+		      !v34_training_line_needs_point(&line),
+		      "consistent filter lost point admission");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct {
@@ -457,6 +510,7 @@ int main(void)
 		{ "initialization and overflow", test_initialization_and_overflow },
 		{ "disjoint sample buffers", test_disjoint_buffers },
 		{ "late sample rollback", test_late_sample_rollback },
+		{ "calibrated filter ownership", test_calibrated_filter_ownership },
 	};
 	unsigned int failures = 0;
 
