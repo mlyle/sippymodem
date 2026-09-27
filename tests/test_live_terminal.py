@@ -189,22 +189,40 @@ class LiveTerminalTests(unittest.TestCase):
                 self.assertEqual(decoder.pop(), "connect")
                 self.assertEqual(decoder.connect_report.modulation, expected)
 
-    def test_hangup_escapes_online_before_ath0(self) -> None:
+    def test_hangup_notifies_peer_before_escape_and_ath0(self) -> None:
         terminal = ModemTerminal(-1)
         terminal._decoder.feed(b"CONNECT 300\r\n")
+        events = []
         with (
-            mock.patch("tools.live_terminal.time.sleep") as sleep,
-            mock.patch.object(terminal, "_write") as write,
+            mock.patch("tools.live_terminal.time.sleep",
+                       side_effect=lambda seconds: events.append(seconds)),
+            mock.patch("tools.live_terminal.time.monotonic", return_value=10.0),
+            mock.patch.object(terminal, "_write",
+                              side_effect=lambda data, deadline: events.append(data)) as write,
             mock.patch.object(
                 terminal, "_read_result", side_effect=("ok", "ok")
             ),
         ):
             self.assertTrue(terminal.escape_and_hang_up())
-        sleep.assert_called_once_with(1.1)
-        self.assertEqual(
-            [call.args[0] for call in write.call_args_list],
-            [b"+++", b"ATH0\r"],
-        )
+        self.assertEqual(events, [b"BYE\n", 1.1, b"+++", b"ATH0\r"])
+        self.assertEqual(write.call_args_list[0], mock.call(b"BYE\n", 11.0))
+
+    def test_hangup_continues_when_peer_bye_write_fails(self) -> None:
+        for error in (LiveTerminalError, OSError, TimeoutError):
+            with self.subTest(error=error):
+                terminal = ModemTerminal(-1)
+                terminal._decoder.feed(b"CONNECT 300\r\n")
+                with (
+                    mock.patch("tools.live_terminal.time.sleep") as sleep,
+                    mock.patch.object(terminal, "_write",
+                                      side_effect=(error, None, None)) as write,
+                    mock.patch.object(terminal, "_read_result",
+                                      side_effect=("ok", "ok")),
+                ):
+                    self.assertTrue(terminal.escape_and_hang_up())
+                sleep.assert_called_once_with(1.1)
+                self.assertEqual([call.args[0] for call in write.call_args_list],
+                                 [b"BYE\n", b"+++", b"ATH0\r"])
 
     def test_hangup_in_command_mode_or_training_does_not_escape(self) -> None:
         for response in ("ok", "no-carrier", "error"):
@@ -226,11 +244,11 @@ class LiveTerminalTests(unittest.TestCase):
 
     def test_online_hangup_reports_escape_and_command_failures(self) -> None:
         for responses, expected, writes in (
-            (("no-carrier",), True, [b"+++"]),
-            (("error",), False, [b"+++"]),
-            ((TimeoutError,), False, [b"+++"]),
-            (("ok", "error"), False, [b"+++", b"ATH0\r"]),
-            (("ok", TimeoutError), False, [b"+++", b"ATH0\r"]),
+            (("no-carrier",), True, [b"BYE\n", b"+++"]),
+            (("error",), False, [b"BYE\n", b"+++"]),
+            ((TimeoutError,), False, [b"BYE\n", b"+++"]),
+            (("ok", "error"), False, [b"BYE\n", b"+++", b"ATH0\r"]),
+            (("ok", TimeoutError), False, [b"BYE\n", b"+++", b"ATH0\r"]),
         ):
             with self.subTest(responses=responses):
                 terminal = ModemTerminal(-1)
