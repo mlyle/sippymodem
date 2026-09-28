@@ -234,6 +234,11 @@ enum v92_cpt_result v92_cpt_decode(
 		return V92_CPT_CRC_MISMATCH;
 	decode_header(frame, &decoded);
 	decoded.constellation_count = (uint8_t)constellation_count;
+	if (!pcm_constellations_compact(
+		    decoded.transmit_constellations, decoded.codec_constellations,
+		    decoded.frame_constellation, &decoded.constellation_count,
+		    decoded.codec_constellations_differ))
+		return V92_CPT_INVALID_FRAME;
 	if (!v92_cpt_parameters_are_valid(&decoded))
 		return V92_CPT_INVALID_FRAME;
 	*parameters = decoded;

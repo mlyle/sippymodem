@@ -729,9 +729,74 @@ struct test_case {
 	bool (*run)(void);
 };
 
+static bool test_sparse_wire_maps(void)
+{
+	for (unsigned int differs = 0; differs < 2u; ++differs) {
+		struct v90_cp_parameters value = variable_parameters(6u, differs != 0u);
+		size_t payload_end = 136u + 6u * 136u * (differs + 1u);
+
+		for (unsigned int subset = 32u; subset < 64u; ++subset) {
+			struct v90_cp_parameters decoded;
+			uint8_t frame[V90_CP_MAX_FRAME_BYTES];
+			uint8_t rows[6];
+			uint8_t count = 0;
+			size_t bits = 0;
+
+			CHECK(v90_cp_encode(&value, frame, sizeof(frame), &bits) == V90_CP_OK,
+			      "could not encode sparse map fixture");
+			for (uint8_t row = 0; row < 6u; ++row) {
+				if ((subset & (1u << row)) != 0)
+					rows[count++] = row;
+			}
+			for (size_t interval = 0; interval < 6u; ++interval) {
+				size_t first = 103u + 4u * interval + (interval >= 4u);
+				uint8_t row = rows[interval % count];
+
+				for (size_t bit = 0; bit < 4u; ++bit)
+					replace_frame_bit(frame, first + bit,
+						(uint8_t)((row >> bit) & 1u));
+			}
+			/* Unreferenced wire rows may also be empty. Their framing and
+			 * CRC are still checked before the decoded rows are compacted. */
+			if (subset & 1u)
+				for (size_t row = 0; row < 6u; ++row) {
+					if ((subset & (1u << row)) != 0)
+						continue;
+					for (size_t plane = 0; plane <= differs; ++plane)
+						for (size_t bit = 0; bit < 136u; ++bit)
+							replace_frame_bit(frame, 136u + (6u * plane + row) * 136u + bit, 0);
+				}
+			uint16_t crc = reference_crc(frame, payload_end);
+			for (size_t bit = 0; bit < 16u; ++bit)
+				replace_frame_bit(frame, payload_end + 1u + bit,
+					(uint8_t)((crc >> (15u - bit)) & 1u));
+			CHECK(v90_cp_decode(frame, sizeof(frame), bits, &decoded) == V90_CP_OK &&
+			      decoded.constellation_count == count,
+			      "rejected sparse wire map %u", subset);
+			for (size_t interval = 0; interval < 6u; ++interval) {
+				CHECK(decoded.frame_constellation[interval] == interval % count,
+				      "did not compact interval map");
+			}
+			for (size_t row = 0; row < count; ++row) {
+				CHECK(memcmp(&decoded.transmit_constellations[row],
+					     &value.transmit_constellations[rows[row]],
+					     sizeof(struct pcm_constellation)) == 0 &&
+				      memcmp(&decoded.codec_constellations[row],
+					     &value.codec_constellations[rows[row]],
+					     sizeof(struct pcm_constellation)) == 0,
+				      "compaction changed selected constellation");
+			}
+			CHECK(v90_cp_parameters_are_valid(&decoded),
+			      "decoded sparse map is not canonical");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "sparse wire maps", test_sparse_wire_maps },
 		{ "dimensions and boundaries", test_dimensions_and_boundaries },
 		{ "constellation membership", test_constellation_membership },
 		{ "constellation cardinality", test_constellation_cardinality },

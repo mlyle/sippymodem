@@ -112,6 +112,59 @@ static inline bool pcm_constellation_is_empty(
 	return used == 0;
 }
 
+/* Wire records include every row through the greatest map index, even
+ * when an intermediate row is unused. After framing and CRC validation,
+ * compact referenced rows so all three control messages share the mapper's
+ * canonical representation. Check before changing the caller's arrays. */
+static inline bool pcm_constellations_compact(
+	struct pcm_constellation transmit[PCM_CONSTELLATION_MAX_ROWS],
+	struct pcm_constellation codec[PCM_CONSTELLATION_MAX_ROWS],
+	uint8_t frame_constellation[PCM_CONSTELLATION_FRAME_INTERVALS],
+	uint8_t *count, bool codec_differs)
+{
+	uint8_t used = 0;
+	uint8_t remap[PCM_CONSTELLATION_MAX_ROWS] = { 0 };
+	uint8_t compact_count = 0;
+
+	if (transmit == NULL || codec == NULL || frame_constellation == NULL ||
+	    count == NULL || *count == 0 || *count > PCM_CONSTELLATION_MAX_ROWS)
+		return false;
+	for (size_t interval = 0;
+	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
+		uint8_t index = frame_constellation[interval];
+
+		if (index >= *count)
+			return false;
+		used |= (uint8_t)(1u << index);
+	}
+	for (size_t index = 0; index < *count; ++index) {
+		if ((used & (1u << index)) != 0 &&
+		    (pcm_constellation_is_empty(&transmit[index]) ||
+		     (codec_differs && pcm_constellation_is_empty(&codec[index]))))
+			return false;
+	}
+	for (size_t index = 0; index < *count; ++index) {
+		if ((used & (1u << index)) == 0)
+			continue;
+		remap[index] = compact_count;
+		transmit[compact_count] = transmit[index];
+		if (codec_differs)
+			codec[compact_count] = codec[index];
+		++compact_count;
+	}
+	for (size_t index = 0; index < PCM_CONSTELLATION_MAX_ROWS; ++index) {
+		if (index >= compact_count)
+			transmit[index] = (struct pcm_constellation){ { 0 } };
+		if (index >= compact_count || !codec_differs)
+			codec[index] = (struct pcm_constellation){ { 0 } };
+	}
+	for (size_t interval = 0;
+	     interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval)
+		frame_constellation[interval] = remap[frame_constellation[interval]];
+	*count = compact_count;
+	return true;
+}
+
 /* V.90 CP and V.92 CPt/CPu use the same six-interval layout. Every declared
  * row must be referenced and nonempty; unused rows, including the whole
  * optional codec plane when absent, must be empty. */

@@ -256,29 +256,6 @@ static bool header_framing_is_valid(const uint8_t *frame)
 	       packed_msb_bit(frame, 119u) == 0u;
 }
 
-/* A zero count rejects both invalid indices and unreferenced rows. */
-static uint8_t decode_map(const uint8_t *frame, uint8_t *map)
-{
-	uint8_t used = 0u;
-	uint8_t greatest = 0u;
-
-	for (size_t interval = 0u;
-	     interval < V92_CPU_FRAME_INTERVALS; ++interval) {
-		uint8_t index = (uint8_t)packed_msb_read_lsb_field(
-			frame, pcm_control_frame_map_bit(interval), 4u);
-
-		if (index >= V92_CPU_MAX_CONSTELLATIONS)
-			return 0u;
-		if (map != NULL)
-			map[interval] = index;
-		used |= (uint8_t)(1u << index);
-		if (index > greatest)
-			greatest = index;
-	}
-	return used == (uint8_t)((1u << (greatest + 1u)) - 1u) ?
-		(uint8_t)(greatest + 1u) : 0u;
-}
-
 static int8_t decode_signed_octet(uint8_t value)
 {
 	return value <= INT8_MAX ?
@@ -323,7 +300,7 @@ static bool decode_header(
 			packed_msb_bit(frame, CPU_CODEC_DIFFERENCE_BIT) != 0u,
 	};
 	decoded->constellation_count =
-		decode_map(frame, decoded->frame_constellation);
+		pcm_control_frame_read_map(frame, decoded->frame_constellation);
 	return decoded->constellation_count != 0u;
 }
 
@@ -360,7 +337,7 @@ enum v92_cpu_result v92_cpu_probe_frame_bits(
 	    packed_msb_read_lsb_field(frame, CPU_RATE_FIRST_BIT, CPU_RATE_BITS) >
 		    V92_CPU_MAX_DATA_RATE_NUMBER)
 		return V92_CPU_INVALID_FRAME;
-	constellation_count = decode_map(frame, NULL);
+	constellation_count = pcm_control_frame_read_map(frame, NULL);
 	if (constellation_count == 0u)
 		return V92_CPU_INVALID_FRAME;
 	inferred = frame_bits_for_shape(
@@ -422,6 +399,11 @@ enum v92_cpu_result v92_cpu_decode(
 		    decoded.codec_constellations, decoded.constellation_count,
 		    decoded.codec_constellations_differ))
 		return V92_CPU_CRC_MISMATCH;
+	if (!pcm_constellations_compact(
+		    decoded.transmit_constellations, decoded.codec_constellations,
+		    decoded.frame_constellation, &decoded.constellation_count,
+		    decoded.codec_constellations_differ))
+		return V92_CPU_INVALID_FRAME;
 	if (!v92_cpu_parameters_are_valid(&decoded))
 		return V92_CPU_INVALID_FRAME;
 	*parameters = decoded;
