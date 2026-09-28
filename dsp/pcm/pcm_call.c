@@ -1958,6 +1958,8 @@ static enum pcm_call_result enter_phase3(struct pcm_call *call)
 		return PCM_CALL_UNUSABLE_SELECTION;
 	next = *call;
 	next.state.phase3 = (union pcm_call_phase3_state){ 0 };
+	pcm_gain_init(&next.upstream_host_gain);
+	next.upstream_host_gain_inconsistent = false;
 	if (entry.selection.upstream == PCM_UPSTREAM_PCM &&
 	    call->local_role == V90_ANALOG_MODEM) {
 		struct v92_phase3_analog_station station;
@@ -2882,6 +2884,23 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    &mixed->phase3, &handoff) !=
 		    V92_PHASE3_DIGITAL_STATION_OK)
 			return PCM_CALL_INVALID_STATE;
+		/* CPd describes levels before host gain. Phase 3 decodes cleaned
+		 * samples, so convert its binary target and FIR output together;
+		 * retain the FIR's physical input history in its original units.
+		 * Inconsistent raw/host pairs supply no gain evidence. */
+		double gain;
+		if (!call->upstream_host_gain_inconsistent &&
+		    pcm_gain_estimate(&call->upstream_host_gain, &gain) && gain > 0.0) {
+			handoff.signal_level /= gain;
+			for (size_t tap = 0; tap < handoff.equalizer.tap_count; ++tap) {
+				handoff.equalizer.coefficients[tap].in_phase /= gain;
+				handoff.equalizer.coefficients[tap].quadrature /= gain;
+			}
+			handoff.equalizer.last_output.in_phase /= gain;
+			handoff.equalizer.last_output.quadrature /= gain;
+			handoff.equalizer.last_unrotated_output.in_phase /= gain;
+			handoff.equalizer.last_unrotated_output.quadrature /= gain;
+		}
 		result = select_v92_upstream(call, upstream_rate_mask, handoff.signal_level, &cpd);
 		if (result != PCM_CALL_OK)
 			return result;
@@ -3128,7 +3147,7 @@ static enum pcm_call_result sample_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&call->state.phase3.v92_digital,
-				g711_decode(call->law, received_octet)));
+				received_sample));
 	} else if (call->local_role == V90_ANALOG_MODEM) {
 		int16_t sample;
 
@@ -3256,7 +3275,7 @@ static enum pcm_call_result v92_downstream_transmit_result(
 }
 
 static enum pcm_call_result sample_v92_mixed_phase3(
-	struct pcm_call *call, uint8_t received_octet,
+	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
@@ -3286,7 +3305,7 @@ static enum pcm_call_result sample_v92_mixed_phase3(
 		result = v92_digital_phase3_result(
 			v92_phase3_digital_station_receive(
 				&mixed->phase3,
-				g711_decode(call->law, received_octet)));
+				received_sample));
 	}
 	return result == PCM_CALL_OK ? advance_phase3(call) : result;
 }
@@ -3299,7 +3318,7 @@ static enum pcm_call_result sample_mixed_phase3(
 
 	if (uses_pcm_upstream(call))
 		return sample_v92_mixed_phase3(
-			call, received_octet, transmit_octet);
+			call, received_octet, received_sample, transmit_octet);
 
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_analog_mixed_state *mixed =
@@ -5286,6 +5305,7 @@ enum pcm_call_result pcm_call_data_octet_owned(
 
 static enum pcm_call_result call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	int16_t host_sample,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation, bool owned)
 {
@@ -5310,6 +5330,12 @@ static enum pcm_call_result call_octet(
 		return PCM_CALL_V34_FALLBACK_READY;
 	if (call->stage == PCM_CALL_PHASE4 && pcm_call_phase4_is_ready(call))
 		return PCM_CALL_PHASE4_READY;
+	if (call->local_role == V90_DIGITAL_MODEM && uses_pcm_upstream(call) &&
+	    (call->stage == PCM_CALL_PHASE3 || call->stage == PCM_CALL_PHASE3_MIXED) &&
+	    !call->upstream_host_gain_inconsistent &&
+	    !pcm_gain_observe(&call->upstream_host_gain,
+		    g711_decode(call->law, received_octet), host_sample))
+		call->upstream_host_gain_inconsistent = true;
 	if (!condition_downstream(call, &received_octet)) {
 		call->failed = true;
 		return PCM_CALL_NUMERIC_FAILURE;
@@ -5392,15 +5418,16 @@ enum pcm_call_result pcm_call_octet(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
-	return call_octet(call, received_octet, received_sample,
+	return call_octet(call, received_octet, received_sample, received_sample,
 		transmit_octet, observation, false);
 }
 
 enum pcm_call_result pcm_call_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	int16_t host_sample,
 	uint8_t *transmit_octet, struct pcm_call_observation *observation)
 {
-	return call_octet(call, received_octet, received_sample,
+	return call_octet(call, received_octet, received_sample, host_sample,
 		transmit_octet, observation, true);
 }
 

@@ -6,6 +6,7 @@
 #include "pcm_phase3_entry.h"
 #include "pcm_downstream_rx.h"
 #include "pcm_downstream_equalizer.h"
+#include "pcm_gain.h"
 #include "pcm_downstream_tx.h"
 #include "v90_analog_path.h"
 #include "v90_digital_path.h"
@@ -499,6 +500,8 @@ struct pcm_call {
 	/* V.92 PCM channel memory, independent of control/data coding epochs.
 	 * A full retrain clears it; Ri learns the next channel. */
 	struct pcm_downstream_equalizer downstream_equalizer;
+	struct pcm_gain upstream_host_gain;
+	bool upstream_host_gain_inconsistent;
 	/* Inherit Su's reconstruction history at the Phase 3 handoff. Keep it
 	 * across Phase 4, data and rate exchanges on the same 8 kHz grid. */
 	struct fractional_delay upstream_transmit_delay;
@@ -642,9 +645,13 @@ enum pcm_call_result pcm_call_octet(
 	struct pcm_call_observation *observation);
 
 /* The serialized datapump validates its owned call at each media-block
- * boundary; avoid repeating the full graph check for every phase character. */
+ * boundary; avoid repeating the full graph check for every phase character.
+ * host_sample is the sample before echo cancellation, paired with the raw
+ * codeword for host-gain measurement. received_sample remains the cleaned
+ * physical input to the signal receiver. */
 enum pcm_call_result pcm_call_octet_owned(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
+	int16_t host_sample,
 	uint8_t *transmit_octet,
 	struct pcm_call_observation *observation);
 

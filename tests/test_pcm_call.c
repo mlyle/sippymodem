@@ -11675,6 +11675,62 @@ static bool test_info1a_training_power(void)
 	return true;
 }
 
+/* Wire codewords retain quantization evidence; the digital signal receiver
+ * must consume the independently conditioned physical sample in both Phase 3
+ * owners. A second receiver shares the clean channel but sees uncancelled
+ * interference only in its wire argument. */
+static bool test_v92_phase3_cleaned_input(void)
+{
+	unsigned stages = 0;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned dil = 0; dil < 2; ++dil) {
+			struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+			struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+			struct pcm_call calls[2], shadow;
+			struct channel wire;
+			bool complete = false;
+
+			ac.phase3.v92_analog.dil_profile = dil ? V90_DIL_PROFILE_CONVENTIONAL : V90_DIL_PROFILE_NONE;
+			CHECK(pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
+			      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK && channel_init(&wire, law, 3),
+			      "cleaned Phase 3 setup failed");
+			shadow = calls[1];
+			for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
+				uint8_t rx[2], tx[2], shadow_tx;
+				struct pcm_call_observation event, shadow_event;
+
+				channel_receive(&wire, &rx[0], &rx[1]);
+				int16_t clean = decode_octet(law, rx[1]);
+				uint8_t raw = rx[1];
+				if (shadow.stage == PCM_CALL_PHASE3 || shadow.stage == PCM_CALL_PHASE3_MIXED) {
+					stages |= 1u << shadow.stage;
+					int impaired = clean + (clock % 6 < 3 ? 16000 : -16000);
+					if (impaired > INT16_MAX) impaired = INT16_MAX;
+					if (impaired < INT16_MIN) impaired = INT16_MIN;
+					raw = encode_octet(law, (int16_t)impaired);
+				}
+				CHECK(pcm_call_octet(&calls[0], rx[0], decode_octet(law, rx[0]), &tx[0], &event) == PCM_CALL_OK &&
+				      pcm_call_octet(&calls[1], rx[1], clean, &tx[1], &event) == PCM_CALL_OK &&
+				      pcm_call_octet(&shadow, raw, clean, &shadow_tx, &shadow_event) == PCM_CALL_OK,
+				      "law %u DIL %u cleaned startup failed at %zu", law, dil, clock);
+				CHECK(shadow_tx == tx[1] && shadow.stage == calls[1].stage,
+				      "law %u DIL %u wire interference changed startup at %zu", law, dil, clock);
+				channel_transmit(&wire, tx[0], tx[1]);
+				if (calls[0].stage == PCM_CALL_PHASE4 && calls[1].stage == PCM_CALL_PHASE4) {
+					complete = true;
+					break;
+				}
+			}
+			CHECK(complete &&
+			      pcm_call_is_valid(&shadow), "cleaned startup law %u DIL %u complete %u stages %u final %u/%u",
+			      law, dil, complete, stages, calls[0].stage, calls[1].stage);
+		}
+	}
+	CHECK(stages == ((1u << PCM_CALL_PHASE3) | (1u << PCM_CALL_PHASE3_MIXED)),
+	      "cleaned input did not cover both digital Phase 3 owners");
+	return true;
+}
+
 static bool test_v92_owned_phase_octets(void)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
@@ -11693,7 +11749,7 @@ static bool test_v92_owned_phase_octets(void)
 				enum pcm_call_result checked_result = pcm_call_octet(
 					&checked, silence, 0, &checked_octet, &checked_event);
 				enum pcm_call_result owned_result = pcm_call_octet_owned(
-					&owned, silence, 0, &owned_octet, &owned_event);
+					&owned, silence, 0, 0, &owned_octet, &owned_event);
 
 				CHECK(checked_result == PCM_CALL_OK && owned_result == checked_result &&
 				      checked_octet == owned_octet &&
@@ -11705,7 +11761,7 @@ static bool test_v92_owned_phase_octets(void)
 			}
 			struct pcm_call before = owned;
 			struct pcm_call_observation event;
-			CHECK(pcm_call_octet_owned(&owned, silence, 0,
+			CHECK(pcm_call_octet_owned(&owned, silence, 0, 0,
 				(uint8_t *)&owned, &event) == PCM_CALL_INVALID_ARGUMENT &&
 			      memcmp(&owned, &before, sizeof(owned)) == 0,
 			      "V.92 owned phase accepted aliased output");
@@ -11720,6 +11776,7 @@ int main(int argc, char **argv)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
 		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
