@@ -33,6 +33,7 @@ SAFE_ENVIRONMENT_KEYS = frozenset(
         "SIP_JB_MS",
         "SIP_LOG_LEVEL",
         "SIP_REMOTE_CLOCK",
+        "SIP_PCM_CODEC_GRID",
         "SIP_RX_GAIN",
         "SIP_TX_GAIN",
     }

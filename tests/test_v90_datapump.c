@@ -251,6 +251,7 @@ static struct modem endpoint_modem(
 	enum modem_pcm_role role, struct bit_endpoint *bits)
 {
 	struct modem modem = {
+		.pcm_codec_grid = true,
 		.dev_data = bits,
 		.min_rate = MODEM_MIN_RATE,
 		.max_rate = MODEM_MAX_RATE,
@@ -1781,6 +1782,7 @@ static bool run_fallback_restart(
 		CHECK(v92_profile_init(&configuration, V90_ANALOG_MODEM, law,
 				       28000, 56000, pcm_up_max_drn, &upstream) == V92_PROFILE_OK,
 		      "V.92 fallback peer profile did not initialize");
+		configuration.phase3.v92_analog.restore_codec_grid = true;
 		configuration.local_info0.v92_analog.v90.symbol_rate_2800_supported = true;
 	} else {
 		CHECK(v90_profile_init(&configuration, V90_ANALOG_MODEM, law,

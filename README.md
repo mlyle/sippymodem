@@ -119,6 +119,12 @@ PCM-upstream residuals or ambiguous payload trigger up to two automatic full
 retrains per call; ambiguous bits are never delivered. Generated-channel tests
 are not evidence of robust operation on a physical line.
 
+For V.92 PCM upstream, the analogue transmitter retains the phase requested
+by Jp through training and data. Set `SIP_PCM_CODEC_GRID=1` only when that
+endpoint connects directly to another digital codec with no intervening
+analogue conversion. The default is `0`; remote RTP clocking does not establish
+this topology. Native direct-codec interoperability runs should opt in explicitly.
+
 The PCM call owner supports V.92 shortened Phase 2/3 using caller-retained
 training settings. Its read-only profile query uses the actual training
 selection and live receive gain, rejecting retrain, rate exchange, and

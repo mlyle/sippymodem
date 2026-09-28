@@ -3940,8 +3940,8 @@ static enum pcm_call_result sample_phase4(
 	if (uses_pcm_upstream(call)) {
 		enum pcm_call_result result = sample_v92_phase4(
 			call, received_octet, received_sample, transmit_octet);
-		/* After Jp-prime this is an exact codec-grid delay. Keep its
-		 * history across all control coders, including the final CPu. */
+		/* Retain the selected Jp phase and reconstruction history across
+		 * all control coders, including the final CPu. */
 		return call->local_role == V90_ANALOG_MODEM ?
 			filter_v92_upstream(call, result,
 				result == PCM_CALL_OK ? g711_decode(call->law, *transmit_octet) : 0,

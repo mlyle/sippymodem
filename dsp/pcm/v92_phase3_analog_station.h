@@ -51,6 +51,10 @@ struct v92_phase3_analog_station_configuration {
 	enum g711_law law;
 	/* Nominal upstream level at call entry, independent of downstream UINFO. */
 	uint8_t upstream_lu_ucode;
+	/* Only a direct codec-to-codec transport may discard the negotiated
+	 * Jp phase at Jp-prime. RTP sample rate alone does not establish this.
+	 * The default preserves the phase for a physical analogue path. */
+	bool restore_codec_grid;
 };
 
 union v92_phase3_analog_receive {
@@ -90,6 +94,7 @@ struct v92_phase3_analog_station {
 	int16_t upstream_lu;
 	uint8_t upstream_lu_ucode;
 	uint8_t downstream_training_ucode;
+	bool restore_codec_grid;
 	bool failed;
 };
 

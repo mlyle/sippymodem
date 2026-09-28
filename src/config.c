@@ -215,6 +215,8 @@ int config_apply_environment(
 			     1000, error));
 	APPLY(apply_boolean(&updated.media.remote_clock, "SIP_REMOTE_CLOCK",
 			    error));
+	APPLY(apply_boolean(&updated.media.pcm_codec_grid, "SIP_PCM_CODEC_GRID",
+			    error));
 	APPLY(apply_string(updated.recording.prefix,
 			   sizeof(updated.recording.prefix), "SIP_RECORD_PREFIX",
 			   error));

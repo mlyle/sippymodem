@@ -36,6 +36,7 @@ struct media_config {
 	unsigned int jitter_buffer_ms;
 	unsigned int frame_duration_ms;
 	bool remote_clock;
+	bool pcm_codec_grid;
 	double transmit_gain;
 	double receive_gain;
 };

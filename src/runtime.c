@@ -145,6 +145,7 @@ struct modem_runtime *modem_runtime_create(
 	    !slmodem_terminal_init(
 		    &runtime->modem_terminal, runtime->modem))
 		goto fail;
+	runtime->modem->pcm_codec_grid = config->media.pcm_codec_grid;
 	runtime->terminal = pty_terminal_create();
 	if (runtime->terminal == NULL)
 		goto fail;

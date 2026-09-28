@@ -203,6 +203,8 @@ static bool endpoint_init(
 	endpoint->client_fd = sockets[1];
 	endpoint->modem->pty = endpoint->modem_fd;
 	endpoint->modem->dev_data = endpoint;
+	/* This harness joins exact G.711 codecs without an analogue conversion. */
+	endpoint->modem->pcm_codec_grid = true;
 	return true;
 }
 

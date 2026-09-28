@@ -233,6 +233,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 		    PCM_S_PATTERN_RX_OK)
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	fractional_delay_init(&initialized.transmit_delay);
+	initialized.restore_codec_grid = configuration->restore_codec_grid;
 	initialized.cpt_parameters = configuration->cpt;
 	initialized.upstream_rate_mask = configuration->upstream_rate_mask;
 	initialized.dil_profile = configuration->dil_profile;
@@ -529,7 +530,7 @@ static enum v92_phase3_analog_station_result receive_j(
 		}
 		if (v92_su_accept_jp_prime(
 			    &station->transmit.su,
-			    &station->transmit_delay, true) != V92_SU_COMPLETE ||
+			    &station->transmit_delay, station->restore_codec_grid) != V92_SU_COMPLETE ||
 		    v92_pcm_phase3_cpt_tx_init(
 			    &cpt, station->law,
 			    station->upstream_lu_ucode,

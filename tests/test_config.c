@@ -16,7 +16,7 @@ static const char *const config_environment[] = {
 	"SIP_AUTO_ANSWER", "SIP_CODEC",       "SIP_RTP_PORT",
 	"SIP_JB_MS",       "SIP_FRAME_MS",    "SIP_REMOTE_CLOCK",
 	"SIP_GAIN",        "SIP_TX_GAIN",     "SIP_RX_GAIN",
-	"SIP_RECORD_PREFIX", "SIP_TRACE",
+	"SIP_RECORD_PREFIX", "SIP_TRACE", "SIP_PCM_CODEC_GRID",
 };
 
 static void clear_environment(void)
@@ -48,6 +48,7 @@ static bool test_defaults(void)
 	      "wrong default jitter buffer");
 	CHECK(config.media.frame_duration_ms == 10,
 	      "wrong default RTP frame duration");
+	CHECK(!config.media.pcm_codec_grid, "physical PCM timing should be the default");
 	CHECK(config.media.remote_clock, "remote clock should be enabled");
 	CHECK(config.media.transmit_gain == 1.0 &&
 		      config.media.receive_gain == 1.0,
@@ -78,6 +79,7 @@ static bool set_test_environment(void)
 	       setenv("SIP_JB_MS", "30", 1) == 0 &&
 	       setenv("SIP_FRAME_MS", "20", 1) == 0 &&
 	       setenv("SIP_REMOTE_CLOCK", "false", 1) == 0 &&
+	       setenv("SIP_PCM_CODEC_GRID", "true", 1) == 0 &&
 	       setenv("SIP_GAIN", "0.75", 1) == 0 &&
 	       setenv("SIP_RX_GAIN", "0.80", 1) == 0 &&
 	       setenv("SIP_RECORD_PREFIX", "/tmp/modem-call", 1) == 0;
@@ -127,6 +129,7 @@ static bool test_environment_overrides(void)
 		      config.media.jitter_buffer_ms == 30 &&
 		      config.media.frame_duration_ms == 20,
 	      "media timing settings were not applied");
+	CHECK(config.media.pcm_codec_grid, "explicit codec topology was not applied");
 	CHECK(!config.media.remote_clock, "remote clock setting was not applied");
 	CHECK(config.media.transmit_gain == 0.75 &&
 		      config.media.receive_gain == 0.80,

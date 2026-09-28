@@ -60,6 +60,7 @@ static struct v92_phase3_analog_station_configuration analog_configuration(
 			.training_ucode = TEST_UCODE,
 		},
 		.cpt = cpt_parameters(law),
+		.restore_codec_grid = true,
 		.upstream_rate_mask = rate_mask,
 		.initial_trn1u_symbols =
 			V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS,
@@ -118,8 +119,28 @@ static bool check_jp_prime_deadline(
 	return true;
 }
 
+static bool check_jp_prime_phase(
+	const struct v92_phase3_analog_station *before, uint8_t octet)
+{
+	for (unsigned int exact = 0; exact < 2u; ++exact) {
+		struct v92_phase3_analog_station station = *before;
+		struct fractional_delay expected = before->transmit_delay;
+		int32_t phase = exact ? 0 : before->transmit.su.post_jp_phase_q16;
+
+		station.restore_codec_grid = exact != 0;
+		CHECK(fractional_delay_set_phase(&expected, phase) == FRACTIONAL_DELAY_OK,
+		      "invalid expected Jp phase");
+		CHECK(v92_phase3_analog_station_receive(&station, octet) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+		      memcmp(&station.transmit_delay, &expected, sizeof(expected)) == 0,
+		      "Jp-prime did not preserve physical history or selected phase");
+	}
+	return true;
+}
+
 static bool run_exchange(enum g711_law law, unsigned delay,
-	enum v90_dil_profile dil_profile)
+	enum v90_dil_profile dil_profile, int32_t channel_phase)
 {
 	const enum v92_constellation_size training_constellation = delay ?
 		V92_CONSTELLATION_4_POINT : V92_CONSTELLATION_8_POINT;
@@ -149,12 +170,14 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 	uint8_t downstream_delay[4096];
 	int16_t upstream_delay[4096] = { 0 };
 	unsigned cursor = 0;
+	int16_t previous_channel_sample = 0;
 	size_t su_started = SIZE_MAX;
 	bool cpt_started = false;
 	bool trn2u_started = false;
 	bool finished = false;
 
 	configuration.dil_profile = dil_profile;
+	configuration.restore_codec_grid = channel_phase == 0;
 	CHECK(delay <= ARRAY_LENGTH(downstream_delay), "delay exceeds test wire");
 	memset(downstream_delay, law == G711_LAW_PCMA ?
 		g711_encode_pcma(0) : g711_encode_pcmu(0), sizeof(downstream_delay));
@@ -188,7 +211,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 		if (!v92_phase3_analog_station_receive_complete(&analog)) {
 			uint8_t delivered = delay ? downstream_delay[cursor] : octet;
 			enum v92_phase3_analog_station_result result;
-			bool waiting_jp_prime = dil_symbols &&
+			bool waiting_jp_prime =
 				analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
 				analog.transmit.su.stage == V92_SU_JP_PRIME_WAIT;
 			struct v92_phase3_analog_station before;
@@ -203,7 +226,9 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			      "downstream receive failed at %zu: %s", index,
 			      v92_phase3_analog_station_result_name(result));
 			if (waiting_jp_prime && analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT)
-				CHECK(check_jp_prime_deadline(&before, delivered), "late Jp-prime handling failed");
+				CHECK(check_jp_prime_phase(&before, delivered) &&
+				      (!dil_symbols || check_jp_prime_deadline(&before, delivered)),
+				      "Jp-prime handling failed");
 		}
 
 		if (!v92_phase3_analog_station_transmit_complete(&analog)) {
@@ -249,6 +274,12 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			      fractional_delay_process(&trn2u_delay, sample, &sample) == FRACTIONAL_DELAY_OK,
 			      "TRN2u generation failed at %zu", index);
 		}
+		/* An independent central-office sampling phase. Linear interpolation
+		 * gives a causal physical channel with a quarter-symbol offset. */
+		int16_t current = sample;
+		sample = (int16_t)(((int32_t)sample * (65536 - channel_phase) +
+			(int32_t)previous_channel_sample * channel_phase) / 65536);
+		previous_channel_sample = current;
 		sample = media_sample(law, sample);
 		if (!v92_phase3_digital_station_receive_complete(&digital)) {
 			int16_t delivered = delay ? upstream_delay[cursor] : sample;
@@ -373,12 +404,12 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 
 static bool test_nonzero_station_pair(void)
 {
-	return run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_CONVENTIONAL) &&
-	       run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_CONVENTIONAL) &&
-	       run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_CONVENTIONAL) &&
-	       run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_CONVENTIONAL) &&
-	       run_exchange(G711_LAW_PCMU, 4096u, V90_DIL_PROFILE_CONVENTIONAL) &&
-	       run_exchange(G711_LAW_PCMA, 4096u, V90_DIL_PROFILE_CONVENTIONAL);
+	return run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_CONVENTIONAL, 0) &&
+	       run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_CONVENTIONAL, 0) &&
+	       run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_CONVENTIONAL, 0) &&
+	       run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_CONVENTIONAL, 0) &&
+	       run_exchange(G711_LAW_PCMU, 4096u, V90_DIL_PROFILE_CONVENTIONAL, 0) &&
+	       run_exchange(G711_LAW_PCMA, 4096u, V90_DIL_PROFILE_CONVENTIONAL, 0);
 }
 
 static bool run_delayed_ri(enum g711_law law)
@@ -928,6 +959,12 @@ static bool test_digital_contracts(void)
 	return true;
 }
 
+static bool test_fractional_channel(void)
+{
+	return run_exchange(G711_LAW_PCMU, 3u, V90_DIL_PROFILE_NONE, 16384) &&
+	       run_exchange(G711_LAW_PCMA, 3u, V90_DIL_PROFILE_NONE, 16384);
+}
+
 int main(void)
 {
 	static const struct {
@@ -945,6 +982,7 @@ int main(void)
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
 		{ "digital station contracts", test_digital_contracts },
+		{ "independent fractional sampling phase", test_fractional_channel },
 	};
 	unsigned int failures = 0u;
 
@@ -953,13 +991,13 @@ int main(void)
 
 		fprintf(stderr, "[ RUN      ] %s\n", tests[index].name);
 		if (index == 0u)
-			passed = run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_NONE);
+			passed = run_exchange(G711_LAW_PCMU, false, V90_DIL_PROFILE_NONE, 0);
 		else if (index == 1u)
-			passed = run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_NONE);
+			passed = run_exchange(G711_LAW_PCMA, false, V90_DIL_PROFILE_NONE, 0);
 		else if (index == 2u)
-			passed = run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_NONE);
+			passed = run_exchange(G711_LAW_PCMU, true, V90_DIL_PROFILE_NONE, 0);
 		else if (index == 3u)
-			passed = run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_NONE);
+			passed = run_exchange(G711_LAW_PCMA, true, V90_DIL_PROFILE_NONE, 0);
 		else
 			passed = tests[index].run();
 		if (passed)

@@ -362,6 +362,22 @@ static struct v92_cpd_parameters v92_cpd_parameters(enum g711_law law)
 	return full;
 }
 
+/* These native exchanges connect exact G.711 codecs. Physical fractional
+ * timing has separate channel coverage and is the production default. */
+static enum v92_profile_result codec_v92_profile_init(
+	struct pcm_call_configuration *configuration,
+	enum v90_modem_role role, enum g711_law law,
+	unsigned int minimum, unsigned int maximum, uint8_t upstream,
+	const struct v90_upstream_policy *conventional)
+{
+	enum v92_profile_result result = v92_profile_init(
+		configuration, role, law, minimum, maximum, upstream, conventional);
+
+	if (result == V92_PROFILE_OK && role == V90_ANALOG_MODEM)
+		configuration->phase3.v92_analog.restore_codec_grid = true;
+	return result;
+}
+
 static struct pcm_call_configuration v92_configuration(
 	enum v90_modem_role role, enum g711_law law)
 {
@@ -396,6 +412,7 @@ static struct pcm_call_configuration v92_configuration(
 			(struct v92_phase3_analog_station_configuration){
 				.local_info1a = v92_analog_info1(),
 				.cpt = v92_cpt_parameters(law),
+				.restore_codec_grid = true,
 				.upstream_rate_mask = rate_mask,
 				.initial_trn1u_symbols =
 					V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS,
@@ -1836,9 +1853,9 @@ static bool run_automatic_upstream(enum pcm_protocol protocol, enum g711_law law
 		      v90_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, NULL) == V90_PROFILE_OK,
 		      "automatic V.90 profiles failed");
 	} else {
-		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u,
+		CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u,
 			trial == 0u ? NULL : &policy) == V92_PROFILE_OK &&
-		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
+		      codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
 		      "automatic V.92 profiles failed");
 		ac.local_info1.pcm_upstream_enabled = false;
 	}
@@ -6585,7 +6602,7 @@ static bool run_wrong_direct_b1(enum g711_law law, bool fault)
 	 * ceiling, so this test requires bit validation rather than a power alarm. */
 	ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	ac.phase3.v92_analog.upstream_rate_mask = UINT32_C(1) << 12u;
-	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 13u, NULL) == V92_PROFILE_OK &&
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 13u, NULL) == V92_PROFILE_OK &&
 	      channel_init(&wire, law, 3u) && pcm_call_init(&analog, &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&digital, &dc) == PCM_CALL_OK, "wrong direct B1 setup failed");
 	for (unsigned clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -6696,8 +6713,8 @@ static bool run_downstream_b1_validation(unsigned mode, enum g711_law law, unsig
 		      v90_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, NULL) == V90_PROFILE_OK,
 		      "downstream B1 profile failed");
 	} else {
-		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
-		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
+		CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+		      codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
 		      "downstream B1 V.92 profile failed");
 		if (mode == 1u)
 			ac.local_info1.pcm_upstream_enabled = false;
@@ -6827,7 +6844,7 @@ static bool run_v92_b1_quality_window(enum g711_law law)
 	unsigned checked = 0u;
 
 	ac.phase3.v92_analog.upstream_rate_mask = UINT32_C(1) << 18u;
-	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
 	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 quality window setup failed");
 	for (unsigned clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
@@ -7184,8 +7201,8 @@ static bool test_v92_short_calls(void)
 			const unsigned delay = scenario == SHORT_BOTH ? 257u : 13u;
 			const unsigned offers = scenario == SHORT_ANALOG_ONLY ? 1u :
 				scenario == SHORT_DIGITAL_ONLY ? 2u : 3u;
-			CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK &&
-			      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK,
+			CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK &&
+			      codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK,
 			      "short-started native profiles failed");
 			ac.local_info0.v92_analog.short_phase2_requested = (offers & 1u) != 0;
 			dc.local_info0.v92_digital.short_phase2_requested = (offers & 2u) != 0;
@@ -7425,8 +7442,8 @@ static bool run_v92_learned_short_pcm(int qc_caller)
 {
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		struct pcm_call_configuration ac, dc;
-		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK &&
-		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK,
+		CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK &&
+		      codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 52000, 52000, 13, NULL) == V92_PROFILE_OK,
 		      "learned PCM profile setup");
 		/* Full training may replace this proposal after probing. Retain the
 		 * actual wire selection, not the initial configuration. */
@@ -7588,14 +7605,14 @@ static bool capture_v92_duplex_data(
 	sample_limit += (size_t)payload_frames * V92_PCM_MAPPING_FRAME_SYMBOLS;
 
 	if (offer != NULL) {
-		CHECK(!long_cpd && v92_profile_init(
+		CHECK(!long_cpd && codec_v92_profile_init(
 			      &dc, V90_DIGITAL_MODEM, law,
 			      offer->downstream_rate ? offer->downstream_rate : 28000u,
 			      offer->downstream_rate ? offer->downstream_rate : 56000u,
 			      offer->local_maximum, NULL) == V92_PROFILE_OK,
 		      "V.92 negotiating profile failed");
 		if (offer->downstream_rate)
-			CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law,
+			CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law,
 				offer->downstream_rate, offer->downstream_rate,
 				offer->local_maximum, NULL) == V92_PROFILE_OK,
 				"V.92 native analogue profile failed");
@@ -8258,7 +8275,7 @@ static bool run_v92_b1_no_path_recovery(enum g711_law law)
 	bool recovered = false;
 
 	ac.phase3.v92_analog.upstream_rate_mask = (UINT32_C(1) << 19u) - 1u;
-	CHECK(v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
+	CHECK(codec_v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
 	      channel_init(&wire, law, 3u) && pcm_call_init(&calls[0], &ac) == PCM_CALL_OK &&
 	      pcm_call_init(&calls[1], &dc) == PCM_CALL_OK, "B1 no-path setup failed");
 	for (unsigned clock = 0u; clock < 2u * CALL_SAMPLE_LIMIT; ++clock) {
@@ -10281,7 +10298,7 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 		struct channel line;
 
 		if (generated) {
-			CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000, 56000,
+			CHECK(codec_v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000, 56000,
 					      14u, NULL) == V92_PROFILE_OK,
 			      "generated downstream-reselection profile failed");
 			ac.v92_analog_phase4.cpu.data_rate_number = 11u;
@@ -11206,7 +11223,7 @@ static bool test_v92_validation(void)
 		CHECK(!pcm_call_is_valid(&invalid), "fixed CPd accepted a retry ceiling");
 		struct pcm_call_configuration direct;
 
-		CHECK(v92_profile_init(&direct, V90_DIGITAL_MODEM, G711_LAW_PCMU,
+		CHECK(codec_v92_profile_init(&direct, V90_DIGITAL_MODEM, G711_LAW_PCMU,
 			28000u, 56000u, 19u, NULL) == V92_PROFILE_OK &&
 		      pcm_call_init(&invalid, &direct) == PCM_CALL_OK &&
 		      invalid.v92_upstream_retry_ceiling == 0u, "new call inherited a retry ceiling");
