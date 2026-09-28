@@ -7837,30 +7837,38 @@ static bool test_v92_codec_noise_recovery(void)
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		for (unsigned noisy = 0; noisy <= 1; noisy++) {
 			bool recovery = noisy != 0u;
-			unsigned retries = recovery ? (law == G711_LAW_PCMU ? 1u : 2u) : 0u;
+			unsigned retries = recovery ? 2u : 0u;
 			struct v92_upstream_offer offer = {
 				.peer_mask = (UINT32_C(1) << 18) | (recovery ?
 					(UINT32_C(1) << 17) | (UINT32_C(1) << 12) : 0u),
 				.local_maximum = 19u,
-				.expected = recovery ? (law == G711_LAW_PCMU ? 18u : 13u) : 19u,
+				.expected = recovery ? 13u : 19u,
 				.postcursor = .10, .receive_gain = .75,
 				.expected_retrains = retries,
 				.noise_peak = noisy ? 8u : 0u, .payload_frames = 4000u,
 			};
-			/* With CPt following Ri, this seeded noisy wire carries
-			 * 46.667k in mu-law and 40k in A-law. Keep exact payload and
-			 * rate checks: only the ambiguous higher rates may retrain. */
+			/* At 48k/46.667k, merged coding paths can disagree with only
+			 * weak likelihood evidence. Recover to 40k rather than deliver
+			 * that disputed payload, in either law. Clean wire stays at 48k. */
 			struct v92_online_pair pair;
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 			      "codec %u noise %u failed sustained PCM data or recovery", law, offer.noise_peak);
 			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == offer.expected_retrains,
 			      "codec noise did not trigger the expected online quality recovery");
 			if (recovery) {
+				if (law == G711_LAW_PCMU) {
+					/* Delay shifts the deterministic noise relative to the
+					 * coded symbols. These two cases previously delivered
+					 * wrong bits at frames 3354 and 2295 before recovery. */
+					const size_t delays[] = { 16u, 18u };
+					for (size_t i = 0; i < ARRAY_LENGTH(delays); ++i)
+						CHECK(run_v92_duplex_data(law, delays[i], false, &offer),
+						      "noisy PCM delay %zu exposed disputed payload", delays[i]);
+				}
 				/* Keep only the failed rates on the same noisy wire:
 				 * exhaust the offer instead of inventing a usable rate
 				 * or delivering the ambiguous payload. */
-				offer.peer_mask = (UINT32_C(1) << 18) |
-					(law == G711_LAW_PCMA ? UINT32_C(1) << 17 : 0u);
+				offer.peer_mask = (UINT32_C(1) << 18) | (UINT32_C(1) << 17);
 				offer.expected = 0u;
 				CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, NULL),
 				      "codec noise did not reject an exhausted peer offer");

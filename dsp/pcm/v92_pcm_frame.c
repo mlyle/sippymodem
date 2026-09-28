@@ -1471,10 +1471,9 @@ static enum v92_pcm_frame_result decode_frame(
 			(state->metric > paths[survivor].state.metric ?
 			 state->metric - paths[survivor].state.metric :
 			 paths[survivor].state.metric - state->metric);
-		/* Observation scores are -2e6 times the log likelihood.
-		 * A gap of at most 3e6 is insufficient to settle disputed
-		 * payload when coding histories merge. Keep the winning state. */
-		bool unresolved = gap == 0u || (model && gap <= UINT64_C(3000000));
+		/* Once histories merge, future samples cannot improve this
+		 * decision. Retain a low-margin disagreement for recovery. */
+		bool unresolved = gap == 0u || (model && gap <= V92_PCM_RX_AMBIGUITY_COST);
 
 		/* Once future-equivalent paths merge, later samples cannot settle
 		 * their disputed payload. Tag either possible winner for this

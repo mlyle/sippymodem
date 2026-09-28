@@ -21,6 +21,10 @@ enum {
 	/* 120-symbol (15 ms) traceback with bounded competing histories. */
 	V92_PCM_RX_PATHS = 32,
 	V92_PCM_RX_DELAY_FRAMES = 10,
+	/* Observation costs are -2e6 log likelihood. Do not settle conflicting
+	 * payload below roughly 20:1 evidence when future histories merge.
+	 * This is receiver recovery policy, not a wire-protocol requirement. */
+	V92_PCM_RX_AMBIGUITY_COST = 6000000,
 	/* Qualify 240T inside the 384T request, before its 24T prime tail. */
 	V92_PCM_RM_QUALIFY_FRAMES = 20,
 	/* Includes the enlarged final (clipped) positive PCMU cell. */
