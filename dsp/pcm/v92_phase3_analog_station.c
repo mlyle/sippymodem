@@ -385,6 +385,14 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 			station->failed = true;
 		return result;
 	}
+	/* Su's reconstruction delay is physical channel memory, not a training
+	 * coder. Use it before Su too, and retain pending samples when
+	 * TRN1u/CPt and TRN2u take over. Su already advances it internally. */
+	if (result == V92_PHASE3_ANALOG_STATION_OK &&
+	    station->transmit_stage != V92_PHASE3_ANALOG_TRANSMIT_SU &&
+	    fractional_delay_process(&next.transmit_delay, generated, &generated) !=
+		    FRACTIONAL_DELAY_OK)
+		result = V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	if (result != V92_PHASE3_ANALOG_STATION_OK ||
 	    !v92_phase3_analog_station_is_valid(&next)) {
 		station->failed = true;

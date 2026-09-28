@@ -126,7 +126,9 @@ v92_phase3_analog_station_downstream_handoff(
 	struct v92_cpt_parameters *parameters);
 
 /* Transfer the exact TRN2u generator, including symbols sent while waiting
- * for Ri-bar. Rejected calls leave handoff unchanged. */
+ * for Ri-bar. The caller must also retain transmit_delay for the emitted
+ * waveform, independently of subsequent coding changes. Rejected calls
+ * leave handoff unchanged. */
 enum v92_phase3_analog_station_result
 v92_phase3_analog_station_transmit_handoff(
 	const struct v92_phase3_analog_station *station,

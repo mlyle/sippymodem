@@ -678,13 +678,22 @@ static bool test_v92_upstream_power(void)
 		      station.downstream_training_ucode == selected.analog.pcm.training_ucode,
 		      "upstream reduction changed the retained proposal or downstream UINFO");
 		selected_level = station.upstream_lu;
-		for (unsigned sample = 0; sample < V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS +
+		/* Measure the line after the causal reconstruction delay, including
+		 * the final queued TRN1u symbols rather than the coder's frontier. */
+		unsigned quiet = V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS + FRACTIONAL_DELAY_CENTER;
+		int16_t silence;
+		CHECK(g711_ucode_sample((enum g711_law)law, 0u, true, &silence),
+		      "codec silence was invalid");
+		for (unsigned sample = 0; sample < quiet +
 		     V92_PCM_PHASE3_RU_SYMBOLS + V92_PCM_PHASE3_RU_BAR_SYMBOLS +
 		     V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS; ++sample) {
 			int16_t output;
 			CHECK(v92_phase3_analog_station_transmit(&station, NULL, &output) ==
 				V92_PHASE3_ANALOG_STATION_OK, "reduced upstream training failed");
-			if (sample >= V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS)
+			if (sample < quiet)
+				CHECK(output == (sample < FRACTIONAL_DELAY_CENTER ? 0 : silence),
+				      "upstream guard was not silent");
+			else
 				CHECK(output == station.upstream_lu || output == -station.upstream_lu,
 				      "Ru/TRN1u did not use the selected upstream power");
 		}

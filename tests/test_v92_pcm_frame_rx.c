@@ -1322,6 +1322,44 @@ static bool observed_rejection(struct v92_pcm_frame_rx *rx,
 	return true;
 }
 
+static bool observed_merged_payload(const struct v92_pcm_frame_rx *before,
+	const struct v92_observation *model, const int16_t samples[12], const int16_t levels[12])
+{
+	/* Future-equivalent histories cannot obtain more evidence about their
+	 * old payload. Cover the roughly 27:1 disagreement from a noisy 48k
+	 * call, as well as both sides of the receiver's confidence boundary. */
+	const uint64_t gaps[] = { 0u, 6700000u,
+		V92_PCM_RX_AMBIGUITY_COST, V92_PCM_RX_AMBIGUITY_COST + 1u };
+	for (unsigned i = 0; i < ARRAY_LENGTH(gaps); ++i) {
+		struct v92_pcm_frame_rx rx = *before;
+		struct v92_pcm_frame_decision decision;
+		struct v92_pcm_frame_likelihood likelihood;
+		struct v92_pcm_frame_channel channel = { .model = model, .levels = levels };
+		uint8_t decoded[V92_PCM_MAPPING_MAX_BITS];
+		unsigned best = 0;
+		for (unsigned p = 1; p < rx.path_count; ++p)
+			if (rx.paths[p].metric < rx.paths[best].metric) best = p;
+		rx.paths[0] = rx.paths[best];
+		rx.paths[0].metric = 0;
+		rx.paths[1] = rx.paths[0];
+		rx.paths[1].metric = gaps[i];
+		rx.paths[1].pending[0][0] ^= 1u;
+		rx.paths[1].pending[V92_PCM_RX_DELAY_FRAMES - 1u][1] ^= 1u;
+		rx.path_count = 2;
+		bool disputed = i + 1u < ARRAY_LENGTH(gaps);
+		CHECK(v92_pcm_frame_decode_observed(&rx, samples, false, decoded,
+			rx.mapping.data_bits_per_frame, &decision, &channel, &likelihood) == V92_PCM_FRAME_OK &&
+			decision.bits_ready && decision.ambiguous == disputed,
+			"merged payload lost confidence at gap %llu", (unsigned long long)gaps[i]);
+		best = 0;
+		for (unsigned p = 1; p < rx.path_count; ++p)
+			if (rx.paths[p].metric < rx.paths[best].metric) best = p;
+		CHECK(((rx.paths[best].ambiguous_frames >> (V92_PCM_RX_DELAY_FRAMES - 2u)) & 1u) == disputed,
+			"merged history lost its delayed payload dispute");
+	}
+	return true;
+}
+
 static bool test_observed_channel(enum g711_law law, unsigned taps)
 {
 	struct v92_cpd_parameters cpd;
@@ -1365,7 +1403,8 @@ static bool test_observed_channel(enum g711_law law, unsigned taps)
 		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
 			V92_PCM_FRAME_OK, "payload encode failed");
 		channel_samples(law, taps, &frame, memory, levels, samples);
-		if (f == 60 && !observed_rejection(&rx, &model, samples, levels)) return false;
+		if (f == 60 && (!observed_rejection(&rx, &model, samples, levels) ||
+			!observed_merged_payload(&rx, &model, samples, levels))) return false;
 		struct v92_pcm_frame_channel channel = { .model = &model, .levels = levels, .received = received };
 		if (f == 50) { channel.levels = NULL; channel.received = NULL; }
 		struct v92_pcm_frame_rx erased_rx = rx;

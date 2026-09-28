@@ -925,6 +925,10 @@ static bool call_is_valid(
 	      !v92_jd_is_valid(&call->v92_peer_jd))) ||
 	    (uses_pcm_upstream(call) &&
 	     call->local_role == V90_ANALOG_MODEM &&
+	     (call->stage == PCM_CALL_PHASE4 || call->stage == PCM_CALL_DATA_PATH) &&
+	     !fractional_delay_is_valid(&call->upstream_transmit_delay)) ||
+	    (uses_pcm_upstream(call) &&
+	     call->local_role == V90_ANALOG_MODEM &&
 	     call->stage != PCM_CALL_PHASE2 &&
 	     call->stage != PCM_CALL_PHASE3 &&
 	     call->stage != PCM_CALL_RETRAIN_SILENCE &&
@@ -2831,6 +2835,7 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			    early_suvd, NULL) != V92_PHASE4_ANALOG_STATION_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
 		station.round_trip_delay_samples = call->round_trip_delay_samples;
+		next.upstream_transmit_delay = mixed->phase3.transmit_delay;
 		next.state.phase4.v92 = (struct pcm_call_v92_phase4_state){
 			.rate_renegotiation_constellation = mixed->phase3.rate_renegotiation_constellation,
 			.owner.analog.station = station,
@@ -3860,13 +3865,44 @@ static enum pcm_call_result sample_v92_phase4(
 	}
 }
 
+static enum pcm_call_result filter_v92_upstream(struct pcm_call *call,
+	enum pcm_call_result result, int16_t sample, uint8_t *octet)
+{
+	if (result == PCM_CALL_CLEARDOWN_COMPLETE) {
+		/* Protocol completion precedes physical completion. Drain at most
+		 * one FIR history before retiring the final zero-rate record. */
+		bool pending = false;
+		for (unsigned i = 0; i < FRACTIONAL_DELAY_TAPS; ++i)
+			pending |= call->upstream_transmit_delay.history[i] != 0;
+		if (!pending) {
+			*octet = g711_encode(call->law, 0);
+			return result;
+		}
+		sample = 0;
+	} else if (result != PCM_CALL_OK) {
+		return result;
+	}
+	if (fractional_delay_process(&call->upstream_transmit_delay,
+		    sample, &sample) != FRACTIONAL_DELAY_OK)
+		return PCM_CALL_NUMERIC_FAILURE;
+	*octet = g711_encode(call->law, sample);
+	return PCM_CALL_OK;
+}
+
 static enum pcm_call_result sample_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
 	uint8_t *transmit_octet)
 {
-	if (uses_pcm_upstream(call))
-		return sample_v92_phase4(
+	if (uses_pcm_upstream(call)) {
+		enum pcm_call_result result = sample_v92_phase4(
 			call, received_octet, received_sample, transmit_octet);
+		/* After Jp-prime this is an exact codec-grid delay. Keep its
+		 * history across all control coders, including the final CPu. */
+		return call->local_role == V90_ANALOG_MODEM ?
+			filter_v92_upstream(call, result,
+				result == PCM_CALL_OK ? g711_decode(call->law, *transmit_octet) : 0,
+				transmit_octet) : result;
+	}
 	enum v90_phase4_startup_result result =
 		call->local_role == V90_ANALOG_MODEM ?
 			v90_phase4_analog_startup_octet(
@@ -4775,10 +4811,15 @@ static enum pcm_call_result v92_data_octet_owned(
 
 		if (path->fast.deadline_remaining) {
 			enum pcm_call_result result = v92_fast_analog_transmit(call, sources, &sample);
+			if (result == PCM_CALL_CLEARDOWN_COMPLETE)
+				return filter_v92_upstream(call, result, 0, generated);
 			if (result != PCM_CALL_OK)
 				return result;
-			if (--path->fast.deadline_remaining == 0u)
-				return path->fast.cleardown.active ? PCM_CALL_CLEARDOWN_COMPLETE : begin_retrain(call, false);
+			if (path->fast.deadline_remaining == 1u)
+				return path->fast.cleardown.active ?
+					filter_v92_upstream(call, PCM_CALL_CLEARDOWN_COMPLETE, 0, generated) :
+					begin_retrain(call, false);
+			--path->fast.deadline_remaining;
 		} else {
 			transmitted = v92_upstream_data_tx_next_owned(&path->upstream,
 				sources->pcm_upstream, sources->pcm_upstream_context, &sample);
@@ -4787,7 +4828,8 @@ static enum pcm_call_result v92_data_octet_owned(
 			if (transmitted != V92_UPSTREAM_DATA_TX_OK)
 				return PCM_CALL_NUMERIC_FAILURE;
 		}
-		*generated = g711_encode(call->law, sample);
+		if (filter_v92_upstream(call, PCM_CALL_OK, sample, generated) != PCM_CALL_OK)
+			return PCM_CALL_NUMERIC_FAILURE;
 		if (!condition_downstream(call, &received_octet))
 			return PCM_CALL_NUMERIC_FAILURE;
 		bool suppress_frame = false;

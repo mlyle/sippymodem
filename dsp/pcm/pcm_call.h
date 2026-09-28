@@ -499,6 +499,9 @@ struct pcm_call {
 	/* V.92 PCM channel memory, independent of control/data coding epochs.
 	 * A full retrain clears it; Ri learns the next channel. */
 	struct pcm_downstream_equalizer downstream_equalizer;
+	/* Inherit Su's reconstruction history at the Phase 3 handoff. Keep it
+	 * across Phase 4, data and rate exchanges on the same 8 kHz grid. */
+	struct fractional_delay upstream_transmit_delay;
 	struct v92_data_quality pcm_upstream_quality;
 	struct v92_jd v92_peer_jd;
 	uint32_t enabled_downstream_rate_mask;

@@ -17,6 +17,7 @@
 #include "test.h"
 
 #include <float.h>
+#include <limits.h>
 #include <math.h>
 #include <string.h>
 
@@ -3230,9 +3231,13 @@ static bool run_v92_phase3_deadlines(enum g711_law law, size_t delay)
 					/* V.92 9.5.2.1.1: measure the emitted line, not a
 					 * child counter that could hide a second quiet interval
 					 * in Phase 2. Allow either codec's zero representation. */
-					CHECK(clock - info1a_end - 1u == V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS,
-					      "law %u delay %zu emitted %zu quiet samples after INFO1a, expected 560",
-					      law, delay, clock - info1a_end - 1u);
+					/* The causal reconstruction adds 15 samples to the
+					 * nominal guard: 71.875 ms, within 70 +/- 5 ms. */
+					size_t quiet = clock - info1a_end - 1u;
+					CHECK(quiet == V92_PCM_PHASE3_OPENING_SILENCE_SYMBOLS + FRACTIONAL_DELAY_CENTER &&
+					      quiet >= 65u * 8u && quiet <= 75u * 8u,
+					      "law %u delay %zu emitted %zu quiet samples after INFO1a",
+					      law, delay, quiet);
 					ru_started = true;
 				}
 			}
@@ -3345,9 +3350,15 @@ static bool v92_analog_timely_response(const struct pcm_call *before, uint8_t in
 			station->post_ja_silence_samples == 0u,
 			"last-tick Sd reversal did not end Ja on its twelve-symbol boundary");
 		int16_t sample = 1;
-		CHECK(v92_phase3_analog_station_transmit(station, NULL, &sample) ==
-			V92_PHASE3_ANALOG_STATION_OK && sample == 0 && station->post_ja_silence_samples == 1u,
-			"silence clock did not start after the last Ja symbol");
+		struct fractional_delay delay = station->transmit_delay;
+		for (unsigned i = 0; i <= FRACTIONAL_DELAY_CENTER; ++i) {
+			int16_t expected;
+			CHECK(fractional_delay_process(&delay, 0, &expected) == FRACTIONAL_DELAY_OK &&
+				v92_phase3_analog_station_transmit(station, NULL, &sample) ==
+				V92_PHASE3_ANALOG_STATION_OK && sample == expected && station->post_ja_silence_samples == i + 1u,
+				"silence generation lost the last delayed Ja symbols");
+		}
+		CHECK(sample == 0, "Ja tail did not finish before silence");
 		station->post_ja_silence_samples = UINT32_MAX;
 		CHECK(v92_phase3_analog_station_transmit(station, NULL, &sample) ==
 			V92_PHASE3_ANALOG_STATION_OK && sample == 0 && station->post_ja_silence_samples == UINT32_MAX,
@@ -5837,9 +5848,12 @@ static bool run_v92_phase4_control(
 			digital.state.phase4.v92.child ==
 				PCM_CALL_V92_PHASE4_CONTROL;
 
+		/* With the physical transmit delay, CPd may overlap CPu rather
+		 * than SUVu. Interrupt active control records on both sides. */
 		if (!cleardown_checked && digital_control_active && analog.stage == PCM_CALL_PHASE4 &&
 		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL &&
-		    analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU &&
+		    (analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_SUVU ||
+		     analog.state.phase4.v92.owner.analog.station.transmit.stage == V92_PHASE4_ANALOG_TX_CPU) &&
 		    digital.state.phase4.v92.owner.digital.control.transmit_stage == V92_DOWNSTREAM_CONTROL_CPD &&
 		    digital.state.phase4.v92.owner.digital.control.initial_cpd.bit_index != 0u) {
 			CHECK(check_peer_cleardown(&analog, &digital, &channel, 0u) &&
@@ -5917,12 +5931,21 @@ static bool run_v92_phase4_control(
 			analog.state.phase4.v92.owner.analog.station.transmit.control.completed_cpu_records : 0u;
 		uint32_t wait_before = timed_control ?
 			analog.state.phase4.v92.owner.analog.cpu_repeat_remaining_samples : 0u;
+		struct fractional_delay analog_delay = analog.upstream_transmit_delay;
 		analog_result = analog_ready ? PCM_CALL_PHASE4_READY :
 			pcm_call_octet(
 				&analog, analog_received,
 				decode_octet(law, analog_received),
 				&analog_transmitted,
 				&analog_observation);
+		if (analog_ready) {
+			/* This fixture stops at the logical handoff. Drain its queued
+			 * E2u tail as the real data owner would, without generating B1u. */
+			int16_t sample;
+			CHECK(fractional_delay_process(&analog.upstream_transmit_delay, 0, &sample) ==
+			      FRACTIONAL_DELAY_OK, "Phase 4 tail did not drain");
+			analog_transmitted = encode_octet(law, sample);
+		}
 		if (timed_control && analog_result == PCM_CALL_OK && analog.stage == PCM_CALL_PHASE4 &&
 		    analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL) {
 			const struct pcm_call_v92_analog_phase4_control *state = &analog.state.phase4.v92.owner.analog;
@@ -5959,6 +5982,7 @@ static bool run_v92_phase4_control(
 				       V92_PHASE4_RECORD_TX_OK) &&
 			      v92_phase4_record_tx_next(&expected, &sample) ==
 				      V92_PHASE4_RECORD_TX_OK &&
+			      fractional_delay_process(&analog_delay, sample, &sample) == FRACTIONAL_DELAY_OK &&
 			      analog_transmitted == encode_octet(law, sample) &&
 			      analog.stage == PCM_CALL_PHASE4 &&
 			      analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U,
@@ -6190,6 +6214,8 @@ static bool v92_data_boundary(struct pcm_call *call)
 	      pcm_call_start_data_path(call) == PCM_CALL_OK &&
 	      memcmp(&call->downstream_equalizer, &snapshot.downstream_equalizer,
 		      sizeof(call->downstream_equalizer)) == 0 &&
+	      memcmp(&call->upstream_transmit_delay, &snapshot.upstream_transmit_delay,
+		      sizeof(call->upstream_transmit_delay)) == 0 &&
 	      memcmp(&call->retrain.detector, &snapshot.retrain.detector,
 		      sizeof(call->retrain.detector)) == 0 &&
 	      call->stage == PCM_CALL_DATA_PATH && pcm_call_is_valid(call) &&
@@ -6206,6 +6232,21 @@ static bool v92_data_boundary(struct pcm_call *call)
 		      path->downstream_stage == from->downstream_stage &&
 		      memcmp(&path->downstream, &from->downstream, sizeof(path->downstream)) == 0,
 		      "V.92 analogue data entry lost its continuous downstream");
+		/* E2u's queued tail must leave the wire before freshly generated
+		 * B1u. Coding state resets here; physical channel memory does not. */
+		struct pcm_call probe = *call;
+		struct fractional_delay delay = call->upstream_transmit_delay;
+		uint8_t silence = silence_octet(call->law);
+		for (unsigned i = 0u; i < FRACTIONAL_DELAY_CENTER; ++i) {
+			struct pcm_call_data_event event;
+			uint8_t transmitted;
+			int16_t expected;
+
+			CHECK(fractional_delay_process(&delay, 0, &expected) == FRACTIONAL_DELAY_OK &&
+			      pcm_call_data_octet(&probe, silence, 0, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
+			      transmitted == g711_encode(call->law, expected),
+			      "V.92 data entry dropped delayed E2u symbol %u", i);
+		}
 	} else {
 		struct pcm_call_v92_digital_data *path = &call->state.data_path.v92_digital;
 		struct v92_phase4_e2u_digital_handoff *from = &handoff.state.digital;
@@ -7832,7 +7873,8 @@ static bool test_v92_codec_noise_recovery(void)
 {
 	/* A short all-ones B1u or 200-frame data check misses rare dense-map
 	 * disagreements. Keep clean data through 4000 frames, then inject bounded
-	 * noise before the tandem codec throughout real training and payload.
+	 * noise before the tandem codec throughout real training and 20000 payload
+	 * frames: a marginal map can stay apparently clean beyond 4000 frames.
 	 * Never arm quality state or tolerate a wrong delivered payload here. */
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; law++) {
 		for (unsigned noisy = 0; noisy <= 1; noisy++) {
@@ -7845,7 +7887,8 @@ static bool test_v92_codec_noise_recovery(void)
 				.expected = recovery ? 13u : 19u,
 				.postcursor = .10, .receive_gain = .75,
 				.expected_retrains = retries,
-				.noise_peak = noisy ? 8u : 0u, .payload_frames = 4000u,
+				.noise_peak = noisy ? 8u : 0u,
+				.payload_frames = noisy ? 20000u : 4000u,
 			};
 			/* At 48k/46.667k, merged coding paths can disagree with only
 			 * weak likelihood evidence. Recover to 40k rather than deliver
@@ -7853,8 +7896,11 @@ static bool test_v92_codec_noise_recovery(void)
 			struct v92_online_pair pair;
 			CHECK(capture_v92_duplex_data(law, 3u, false, &offer, NULL, 0u, &pair),
 			      "codec %u noise %u failed sustained PCM data or recovery", law, offer.noise_peak);
-			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == offer.expected_retrains,
-			      "codec noise did not trigger the expected online quality recovery");
+			/* The fixture counts both peers' actual retrains. After this
+			 * longer clean run at the recovered rate, the incident budget
+			 * must have rearmed rather than retaining a lifetime count. */
+			CHECK(pair.digital.pcm_upstream_quality.automatic_retrains == 0u,
+			      "sustained clean PCM data did not rearm the recovery budget");
 			if (recovery) {
 				if (law == G711_LAW_PCMU) {
 					/* Delay shifts the deterministic noise relative to the
@@ -8320,6 +8366,7 @@ static bool test_v92_quality_rate_recovery(void)
 
 struct v92_rate_call {
 	struct pcm_call call;
+	struct fractional_delay upstream_delay;
 	struct v92_phase4_analog_station *analog;
 	struct pcm_downstream_rx peer;
 	struct v90_downstream_data_rx data_peer;
@@ -8353,6 +8400,8 @@ static bool v92_rate_call_sample(struct v92_rate_call *test, int16_t sample)
 	const struct pcm_call_data_sources sources = {
 		.downstream = pcm_payload, .downstream_context = &test->downstream_source,
 	};
+	CHECK(fractional_delay_process(&test->upstream_delay, sample, &sample) == FRACTIONAL_DELAY_OK,
+	      "synthetic rate peer lost its transmit history");
 
 	if (pcm_call_phase4_is_ready(call)) {
 		CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "post-Ru data entry failed");
@@ -8504,6 +8553,7 @@ static bool v92_interrupted_rate_recovery(const struct v92_rate_call *test,
 	for (unsigned rollback = 0; rollback < 2u; ++rollback) {
 		struct pcm_call call = test->call;
 		struct v92_phase4_record_tx changed = *record;
+		struct fractional_delay delay = test->upstream_delay;
 		struct v92_cpus_parameters cpus = {
 			.data_rate_number = test->cpu.data_rate_number + (rollback ? 0u : 1u),
 			.acknowledges_cpd = !rollback,
@@ -8521,7 +8571,8 @@ static bool v92_interrupted_rate_recovery(const struct v92_rate_call *test,
 			if (v92_phase4_record_tx_is_complete(&changed))
 				CHECK(v92_phase4_record_tx_start_next(&changed, frame, sizeof(frame), bits) ==
 					V92_PHASE4_RECORD_TX_OK, "contradictory CPus did not restart");
-			CHECK(v92_phase4_record_tx_next(&changed, &sample) == V92_PHASE4_RECORD_TX_OK,
+			CHECK(v92_phase4_record_tx_next(&changed, &sample) == V92_PHASE4_RECORD_TX_OK &&
+			      fractional_delay_process(&delay, sample, &sample) == FRACTIONAL_DELAY_OK,
 			      "contradictory CPus transmitter failed");
 			uint8_t octet = encode_octet(call.law, sample);
 			CHECK(pcm_call_octet(&call, octet, decode_octet(call.law, octet), &generated,
@@ -8606,11 +8657,12 @@ static bool v92_resume_rate_call(struct v92_rate_call *test, struct v92_phase4_r
 }
 
 static bool run_v92_rate_request(struct pcm_call *online,
-	struct v92_upstream_data_tx *upstream, unsigned epoch, bool local)
+	struct v92_upstream_data_tx *upstream, struct fractional_delay *delay, unsigned epoch, bool local)
 {
 	const enum g711_law law = online->law;
 	struct v92_rate_call test = {
 		.call = *online, .quality_retrains = online->pcm_upstream_quality.automatic_retrains,
+		.upstream_delay = *delay,
 	};
 	const struct pcm_call_v92_digital_data *path = &online->state.data_path.v92_digital;
 	test.cpu = path->cpu;
@@ -8650,7 +8702,10 @@ static bool run_v92_rate_request(struct pcm_call *online,
 	}
 	bool broken_checked = false;
 	double ru_history[2] = {-upstream->upstream_level, -upstream->upstream_level};
-	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS; ++i) {
+	/* The reversal reaches the receiver during the following TRN2u, not
+	 * when the last Ru sample enters the causal reconstruction filter. */
+	unsigned training_sent = local ? FRACTIONAL_DELAY_TAPS : 0u;
+	for (unsigned i = 0; i < PCM_R_SEQUENCE_SYMBOLS + training_sent; ++i) {
 		int sign = i % 6u < 3u ? 1 : -1;
 		if (i >= PCM_R_SYMBOLS)
 			sign = -sign;
@@ -8662,6 +8717,12 @@ static bool run_v92_rate_request(struct pcm_call *online,
 			filtered = 0.8 * input + 0.25 * ru_history[0] - 0.25 * ru_history[1];
 		ru_history[1] = ru_history[0];
 		ru_history[0] = input;
+		if (i >= PCM_R_SEQUENCE_SYMBOLS) {
+			int16_t sample;
+			CHECK(v92_pcm_phase4_trn2u_next(&training, &sample) == V92_PCM_PHASE4_TRN2U_OK,
+			      "post-Ru training did not start");
+			filtered = sample;
+		}
 		CHECK(v92_rate_call_sample(&test, decode_octet(law,
 			encode_octet(law, (int16_t)filtered))), "Ru/bar failed");
 		if (local && test.call.state.phase4.v92.child == PCM_CALL_V92_PHASE4_RU &&
@@ -8709,9 +8770,10 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		CHECK(v92_resume_rate_call(&test, &handoff.transmit, &handoff.mapping,
 			upstream->upstream_level, mapping_bits, upstream), "analogue rate exchange did not resume");
 		*online = test.call;
+		*delay = test.upstream_delay;
 		return true;
 	}
-	for (unsigned i = 0; i < 2400u; ++i) {
+	for (unsigned i = training_sent; i < 2400u; ++i) {
 		int16_t sample;
 		CHECK(v92_pcm_phase4_trn2u_next(&training, &sample) == V92_PCM_PHASE4_TRN2U_OK &&
 		      v92_rate_call_sample(&test, decode_octet(law, encode_octet(law, sample))), "TRN2u failed");
@@ -8747,6 +8809,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 			CHECK(v92_resume_rate_call(&test, &record, &upstream->encoder.mapping,
 				upstream->upstream_level, mapping_bits, upstream), "rate exchange did not resume");
 			*online = test.call;
+			*delay = test.upstream_delay;
 			return true;
 		}
 		if (which) {
@@ -8775,6 +8838,7 @@ static bool run_v92_rate_request(struct pcm_call *online,
 		CHECK(v92_rate_call_sample(&test, upstream->upstream_level), "cleardown failed");
 	CHECK(test.complete, "rate exchange did not complete bounded cleardown");
 	*online = test.call;
+	*delay = test.upstream_delay;
 	return true;
 }
 
@@ -8857,17 +8921,19 @@ static bool test_v92_remote_rate_request(void)
 				for (unsigned initiator = 0u; initiator < 2u; ++initiator) {
 					struct pcm_call different = pair.digital;
 					struct v92_upstream_data_tx source = *upstream;
+					struct fractional_delay delay = pair.analog.upstream_transmit_delay;
 					enum g711_law codec = law == G711_LAW_PCMU ? G711_LAW_PCMA : G711_LAW_PCMU;
 					different.state.data_path.v92_digital.cpu.law = codec;
 					CHECK(pcm_call_is_valid(&different) && v92_data_error_contracts(&different) &&
-					      run_v92_rate_request(&different, &source, 1u, initiator != 0u) &&
+					      run_v92_rate_request(&different, &source, &delay, 1u, initiator != 0u) &&
 					      different.state.data_path.v92_digital.cpu.law == codec && different.law == law,
 					      "rate exchange changed peer codec or network encoding");
 				}
 			}
 			struct pcm_call local = pair.digital;
 			struct v92_upstream_data_tx delayed = *upstream;
-			CHECK(run_v92_rate_request(&local, &delayed, 1u, true),
+			struct fractional_delay delay = pair.analog.upstream_transmit_delay;
+			CHECK(run_v92_rate_request(&local, &delayed, &delay, 1u, true),
 			      "delayed digital rate request failed");
 			/* Retained initial-training metadata must not extend a new E2u.
 			 * This flag no longer affects the already-running data coders. */
@@ -8878,7 +8944,7 @@ static bool test_v92_remote_rate_request(void)
 				 * recovery attempts have been exhausted, without resetting them. */
 				if (epoch == 1u)
 					pair.digital.pcm_upstream_quality.automatic_retrains = V92_DATA_QUALITY_MAX_RETRAINS;
-				CHECK(run_v92_rate_request(&pair.digital, upstream, epoch, false),
+				CHECK(run_v92_rate_request(&pair.digital, upstream, &pair.analog.upstream_transmit_delay, epoch, false),
 				      "law %u rate %u Ru epoch %u failed", law, rates[i], epoch);
 			}
 		}
@@ -8986,6 +9052,8 @@ static bool run_v92_fast_response(struct v92_online_pair *pair, unsigned hangup)
 			finishing = true;
 		}
 		enum v92_upstream_data_tx_result tx = v92_upstream_data_tx_next(upstream, v92_fast_peer_bits, &peer, &sample);
+		CHECK(fractional_delay_process(&pair->analog.upstream_transmit_delay, sample, &sample) == FRACTIONAL_DELAY_OK,
+		      "synthetic fast peer lost its transmit history");
 		CHECK(tx == V92_UPSTREAM_DATA_TX_OK || tx == V92_UPSTREAM_DATA_TX_RM_COMPLETE ||
 		      tx == V92_UPSTREAM_DATA_TX_FB1U_COMPLETE, "fast peer TX failed");
 		if (tx == V92_UPSTREAM_DATA_TX_RM_COMPLETE)
@@ -9167,6 +9235,7 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 	bool hangup_requested = false;
 	unsigned checked = 0u;
 	unsigned damaged = 0u;
+	unsigned damage_clock = UINT_MAX;
 	/* A saved setup may request silence, but fast exchange must not inherit it. */
 	pair->analog.v92_analog_phase4_configuration.suvu.request_silence = true;
 	for (unsigned role = 0; role < 2u; ++role) {
@@ -9230,8 +9299,10 @@ static bool run_v92_fast_pair(struct v92_online_pair *pair, unsigned initiators,
 		const struct pcm_call_v92_analog_fast *fast = &pair->analog.state.data_path.v92_analog.fast;
 		/* Corrupt generated CPu octets, not receiver event flags. The peer
 		 * must recover its continuous decoder and qualify a later repeat. */
-		if (damaged < burst_symbols && (damaged || (fast->rm_complete && !fast->finish_started &&
-		    fast->control.record == V92_UPSTREAM_CONTROL_CPU && fast->record_index > 0u))) {
+		if (burst_symbols && damage_clock == UINT_MAX && fast->rm_complete && !fast->finish_started &&
+		    fast->control.record == V92_UPSTREAM_CONTROL_CPU && fast->record_index > 0u)
+			damage_clock = clock + FRACTIONAL_DELAY_CENTER;
+		if (damaged < burst_symbols && clock >= damage_clock) {
 			transmitted[0] = silence_octet(pair->analog.law);
 			++damaged;
 		}
@@ -9298,6 +9369,7 @@ static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 	for (unsigned offset = 0; offset < V92_PCM_MAPPING_FRAME_SYMBOLS; ++offset) {
 		struct pcm_call call = shifted;
 		struct v92_upstream_data_tx data = call.state.data_path.v92_analog.upstream;
+		struct fractional_delay delay = call.upstream_transmit_delay;
 		unsigned queued = data.queue_count;
 		struct pcm_call_observation observation;
 		uint8_t transmitted;
@@ -9319,7 +9391,8 @@ static bool v92_analog_rate_prefix_contracts(const struct pcm_call *online)
 				bool positive = (symbol % 6u < 3u) != (symbol >= 384u);
 				expected = positive ? data.upstream_level : -data.upstream_level;
 			}
-			CHECK(pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
+			CHECK(fractional_delay_process(&delay, expected, &expected) == FRACTIONAL_DELAY_OK &&
+			      pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &observation) == PCM_CALL_OK &&
 			      transmitted == encode_octet(call.law, expected),
 			      "Ru moved off the queued frame boundary offset %u symbol %u", offset, i);
 		}
@@ -9344,6 +9417,7 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 	call.phase3_configuration.v92_analog.upstream_lu_ucode -= 4u;
 	struct pcm_r_tx rd;
 	struct v92_upstream_data_tx data = call.state.data_path.v92_analog.upstream;
+	struct fractional_delay delay = call.upstream_transmit_delay;
 	struct v90_pcm_mapping mapping;
 	struct pcm_downstream_tx training;
 	struct pcm_downstream_rx expected_receive;
@@ -9361,6 +9435,7 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 		int16_t expected;
 		CHECK(pcm_r_tx_next(&rd, &symbol) == PCM_R_TX_OK &&
 		      v92_upstream_data_tx_next(&data, NULL, NULL, &expected) == V92_UPSTREAM_DATA_TX_OK &&
+		      fractional_delay_process(&delay, expected, &expected) == FRACTIONAL_DELAY_OK &&
 		      pcm_call_data_octet(&call, symbol.octet, symbol.sample, true, NULL, &transmitted, &event) == PCM_CALL_OK &&
 		      transmitted == encode_octet(call.law, expected), "remote Rd changed data framing");
 		CHECK(i < PCM_R_RX_MIN_SYMBOLS - 1u || event.kind == PCM_CALL_DATA_NONE,
@@ -9396,7 +9471,8 @@ static bool v92_analog_remote_rd(const struct pcm_call *online)
 			CHECK(result == PCM_DOWNSTREAM_RX_BUFFERING || result == PCM_DOWNSTREAM_RX_TRN2D_FRAME,
 			      "independent TRN2d decode failed");
 		}
-		CHECK(pcm_call_octet(&call, symbol.octet, symbol.sample, &transmitted, &observation) == PCM_CALL_OK &&
+		CHECK(fractional_delay_process(&delay, expected, &expected) == FRACTIONAL_DELAY_OK &&
+		      pcm_call_octet(&call, symbol.octet, symbol.sample, &transmitted, &observation) == PCM_CALL_OK &&
 		      transmitted == encode_octet(call.law, expected), "remote Rd response waveform failed");
 	}
 	CHECK(memcmp(&call.state.phase4.v92.owner.analog.station.receive, &expected_receive,
@@ -9638,6 +9714,7 @@ static bool test_v92_rate_request(void)
 				unsigned requests = epoch / 3u;
 				bool lose_ack = requests && epoch % 3u == 2u;
 				unsigned damaged = 0u;
+				uint32_t damage_pending = 0u;
 				bool e2u_confirmed = false;
 				pair.analog.v92_analog_phase4_configuration.suvu.request_silence = (requests & 1u) != 0u;
 				pair.digital.v92_digital_phase4_configuration.suvd.request_silence = (requests & 2u) != 0u;
@@ -9687,10 +9764,9 @@ static bool test_v92_rate_request(void)
 							    v92_suvu_decode(record->frame, sizeof(record->frame), record->frame_bit_count,
 								12u * v92_phase4_modulator_bits_per_symbol(record->modulator.constellation), &status) == V92_SUVU_OK &&
 							    status.acknowledges_cpd) {
-								/* One on-wire sign error invalidates each pause ACK's CRC;
-								 * neither endpoint's coder or decoded event is altered. */
-								transmitted[role] ^= 0x80u;
-								damaged++;
+								/* Follow this symbol through the reconstruction delay:
+								 * damage only the wire, not either endpoint's coder. */
+								damage_pending |= UINT32_C(1) << FRACTIONAL_DELAY_CENTER;
 							}
 						}
 						if (call->stage == PCM_CALL_PHASE4 && call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE) {
@@ -9724,6 +9800,11 @@ static bool test_v92_rate_request(void)
 							resumed[role] = true;
 						}
 					}
+					if (damage_pending & 1u) {
+						transmitted[0] ^= 0x80u;
+						damaged++;
+					}
+					damage_pending >>= 1u;
 					channel_transmit(&pair.wire, transmitted[0], transmitted[1]);
 					if (requests && epoch % 3u == 0u) {
 						for (unsigned role = 0; role < 2u; ++role) {
@@ -9760,7 +9841,10 @@ static bool test_v92_rate_request(void)
 				      !pair.analog.v92_rate_renegotiation_active && !pair.digital.v92_rate_renegotiation_active &&
 				      !pair.analog.rate_renegotiation_deadline_armed && !pair.digital.rate_renegotiation_deadline_armed &&
 				      pair.digital.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS,
-				      "rate exchange did not return to ordered duplex data");
+				      "rate exchange did not return to ordered duplex data: law %u rate %u epoch %u "
+				      "frames %u/%u pause %u/%u resume %u/%u damaged %u E2u-confirmed %u checks %u/%u",
+				      law, rates[i], epoch, frames[0], frames[1], paused[0], paused[1], resumed[0], resumed[1],
+				      damaged, e2u_confirmed, pause_checked, e2u_checked);
 				uint32_t at, ar, dt, dr;
 				CHECK(pcm_call_get_data_rates(&pair.analog, &at, &ar) &&
 				      pcm_call_get_data_rates(&pair.digital, &dt, &dr) &&

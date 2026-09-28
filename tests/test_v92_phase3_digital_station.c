@@ -116,6 +116,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 	struct v92_phase3_analog_station analog;
 	struct v92_phase3_digital_station digital;
 	struct v92_pcm_phase4_trn2u trn2u;
+	struct fractional_delay trn2u_delay;
 	struct v92_pcm_phase3_cpt_line_handoff receive_handoff;
 	struct v92_pcm_phase4_trn2u transmit_handoff;
 	struct v92_cpt_parameters analog_downstream;
@@ -198,10 +199,12 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 					      V92_PHASE3_ANALOG_STATION_OK,
 				      "analogue Phase 4 handoff failed");
 				trn2u = transmit_handoff;
+				trn2u_delay = analog.transmit_delay;
 				trn2u_started = true;
 			}
 			CHECK(v92_pcm_phase4_trn2u_next(&trn2u, &sample) ==
-				      V92_PCM_PHASE4_TRN2U_OK,
+				      V92_PCM_PHASE4_TRN2U_OK &&
+			      fractional_delay_process(&trn2u_delay, sample, &sample) == FRACTIONAL_DELAY_OK,
 			      "TRN2u generation failed at %zu", index);
 		}
 		sample = media_sample(law, sample);
@@ -370,22 +373,24 @@ static bool run_delayed_ri(enum g711_law law)
 	}
 	CHECK(studying && !scr.finish_scr_requested, "no open SCR boundary");
 	training = analog.transmit.cpt.trn1u;
+	struct fractional_delay training_delay = analog.transmit_delay;
 	/* Continue the actual SCR coding history as a peer still training its
 	 * receiver. Drive only wire input; do not inject analogue receive state. */
 	for (size_t i = 0; i < 6000; ++i) {
 		struct v90_pcm_symbol downstream, expected;
-		int16_t sample;
+		int16_t sample, expected_sample;
 
 		CHECK(pcm_phase3_digital_tx_next(&scr, &downstream) == PCM_PHASE3_DIGITAL_TX_OK &&
 		      v92_phase3_analog_station_receive(&analog, downstream.octet) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
-		      v92_pcm_phase3_trn1u_next(&training, &expected) == V92_PCM_PHASE3_TRN1U_OK,
+		      v92_pcm_phase3_trn1u_next(&training, &expected) == V92_PCM_PHASE3_TRN1U_OK &&
+		      fractional_delay_process(&training_delay, expected.sample, &expected_sample) == FRACTIONAL_DELAY_OK,
 		      "extended SCR failed at %zu", i);
 		CHECK(!v90_phase4_ri_search_is_acquired(&analog.receive.ri) &&
 		      analog.transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
-		      sample == expected.sample, "analogue left TRN1u before Ri at %zu", i);
+		      sample == expected_sample, "analogue left TRN1u or lost Su history before Ri at %zu", i);
 	}
 	CHECK(v90_phase4_ri_tx_init(&ri, law, TEST_UCODE) == V90_PHASE4_RI_OK,
 	      "delayed Ri did not initialize");
