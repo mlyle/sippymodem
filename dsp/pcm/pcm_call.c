@@ -123,6 +123,20 @@ static bool stored_peer_info0_is_valid(const struct pcm_call *call)
 			call->peer_info0.v92_analog.v92_capable));
 }
 
+/* Generated maps use equal capacity in every interval. Their selected levels
+ * may differ after DIL; a retrain regenerates levels from that capacity. */
+static bool generated_cp_is_valid(const struct v90_cp_parameters *parameters)
+{
+	if (parameters->codec_constellations_differ || parameters->constellation_count == 0 ||
+	    parameters->constellation_count > V90_CP_MAX_CONSTELLATIONS)
+		return false;
+	unsigned size = pcm_constellation_count(&parameters->transmit_constellations[0]);
+	for (unsigned row = 1; row < parameters->constellation_count; ++row)
+		if (pcm_constellation_count(&parameters->transmit_constellations[row]) != size)
+			return false;
+	return true;
+}
+
 static bool analog_configuration_is_valid(
 	const union pcm_call_local_info1 *info1,
 	const union pcm_call_phase3_configuration *phase3,
@@ -131,10 +145,8 @@ static bool analog_configuration_is_valid(
 {
 	return v90_info1a_is_valid(&info1->analog) &&
 	       (!phase4->generate_constellations ||
-		(phase4->training_parameters.constellation_count == 1u &&
-		 !phase4->training_parameters.codec_constellations_differ &&
-		 phase4->data_parameters.constellation_count == 1u &&
-		 !phase4->data_parameters.codec_constellations_differ)) &&
+		(generated_cp_is_valid(&phase4->training_parameters) &&
+		 generated_cp_is_valid(&phase4->data_parameters))) &&
 	       phase3->analog.nominal_peak_amplitude > 0 &&
 	       v90_dil_profile_is_valid(phase3->analog.dil_profile) &&
 	       phase4->training_parameters.kind == V90_CP_TRAINING &&
@@ -2659,15 +2671,16 @@ static void limit_analog_phase4_lookahead(
 
 static bool select_measured_data(const struct pcm_call *call, uint32_t enabled,
 	uint8_t *rate, uint8_t redundancy, uint32_t power,
-	struct pcm_constellation *constellation)
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
+	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count)
 {
 	const struct pcm_constellation *available = call->downstream_dil.measured ?
-		&call->downstream_dil.usable : NULL;
+		call->downstream_dil.usable : NULL;
 
 	for (uint8_t candidate = *rate; candidate != 0; --candidate) {
 		if ((enabled & (UINT32_C(1) << (candidate - 1u))) != 0 &&
-		    v90_profile_generate_measured_constellation(call->law, candidate,
-			    redundancy, power, available, constellation)) {
+		    v90_profile_generate_measured_constellations(call->law, candidate,
+			    redundancy, power, available, rows, map, count)) {
 			*rate = candidate;
 			return true;
 		}
@@ -2678,20 +2691,38 @@ static bool select_measured_data(const struct pcm_call *call, uint32_t enabled,
 static bool select_analog_constellations(struct pcm_call *call, uint32_t enabled)
 {
 	struct pcm_call_analog_phase4_configuration *config = &call->analog_phase4_configuration;
+	struct v90_cp_parameters *training_parameters = &config->training_parameters;
+	struct v90_cp_parameters *data = &config->data_parameters;
 	struct v90_pcm_mapping training;
+	uint32_t limit = downstream_power_limit(call, NULL);
 
 	if (!config->generate_constellations)
 		return true;
-	return v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
-	       v90_profile_select_constellation(&training, downstream_power_limit(call, NULL),
-			&config->training_parameters.transmit_constellations[0]) &&
-	       (!call->downstream_dil.measured || pcm_dil_select_training(&call->downstream_dil,
-			&config->training_parameters.transmit_constellations[0])) &&
-	       v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
-	       select_measured_data(call, enabled,
-			&config->data_parameters.selected_rate_index, config->data_parameters.sign_redundancy,
-			downstream_power_limit(call, &training),
-			&config->data_parameters.transmit_constellations[0]);
+	/* Restore a common capacity template before each full training. The
+	 * generator replaces its levels, so old impairment maps cannot ratchet
+	 * the next selection downward or impose an obsolete phase pattern. */
+	training_parameters->constellation_count = 1u;
+	memset(training_parameters->frame_constellation, 0, sizeof(training_parameters->frame_constellation));
+	for (unsigned row = 1; row < V90_CP_MAX_CONSTELLATIONS; ++row)
+		training_parameters->transmit_constellations[row] = (struct pcm_constellation){ 0 };
+	if (call->downstream_dil.measured) {
+		training_parameters->trn1d_ratio_q3_13 = call->downstream_dil.trn1d_ratio_q3_13;
+		data->trn1d_ratio_q3_13 = call->downstream_dil.trn1d_ratio_q3_13;
+	}
+	if (v90_pcm_mapping_init(&training, training_parameters) != V90_PCM_MAPPING_OK)
+		return false;
+	if (call->downstream_dil.measured) {
+		if (!v90_profile_select_measured_constellations(&training, limit,
+				call->downstream_dil.usable, training_parameters->transmit_constellations,
+				training_parameters->frame_constellation, &training_parameters->constellation_count))
+			return false;
+	} else if (!v90_profile_select_constellation(&training, limit,
+			&training_parameters->transmit_constellations[0]))
+		return false;
+	return v90_pcm_mapping_init(&training, training_parameters) == V90_PCM_MAPPING_OK &&
+	       select_measured_data(call, enabled, &data->selected_rate_index, data->sign_redundancy,
+			downstream_power_limit(call, &training), data->transmit_constellations,
+			data->frame_constellation, &data->constellation_count);
 }
 
 static uint32_t downstream_selection_mask(const struct pcm_call *call)
@@ -2868,12 +2899,15 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 			cpu.spectral_lookahead_frames =
 				call->v92_peer_jd.maximum_spectral_shaping_lookahead;
 		next.downstream_dil = mixed->phase3.dil_result;
+		if (next.downstream_dil.measured)
+			cpu.trn1d_ratio_q3_13 = next.downstream_dil.trn1d_ratio_q3_13;
 		if (call->analog_phase4_configuration.generate_constellations) {
 			uint32_t limit = downstream_power_limit(call, &mixed->receive.stream.decoder.mapping);
 
 			if (!select_measured_data(&next, downstream_selection_mask(call) &
 				    call->v92_peer_jd.data_rate_capability_mask, &cpu.data_rate_number,
-				    cpu.sign_redundancy, limit, &cpu.transmit_constellations[0]))
+				    cpu.sign_redundancy, limit, cpu.transmit_constellations,
+				    cpu.frame_constellation, &cpu.constellation_count))
 				return PCM_CALL_UNUSABLE_SELECTION;
 		}
 		if (v92_phase3_analog_station_transmit_handoff(
@@ -3142,7 +3176,7 @@ static bool qc_wait_for_frame(struct pcm_call *call)
 
 static enum pcm_call_result sample_phase3(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet)
+	uint8_t unconditioned_octet, uint8_t *transmit_octet)
 {
 	enum pcm_call_result result;
 
@@ -3159,7 +3193,7 @@ static enum pcm_call_result sample_phase3(
 		result = v92_analog_phase3_result(
 			v92_phase3_analog_station_receive(
 				&call->state.phase3.v92_analog,
-				received_octet));
+				received_octet, unconditioned_octet));
 		if (result == PCM_CALL_OK)
 			result = retain_v92_peer_jd(call);
 	} else if (uses_pcm_upstream(call)) {
@@ -5336,6 +5370,7 @@ static enum pcm_call_result call_octet(
 	struct pcm_call_observation *observation, bool owned)
 {
 	struct pcm_call_observation emitted = { 0 };
+	uint8_t unconditioned_octet = received_octet;
 	bool deadline_started;
 	uint8_t generated;
 	enum pcm_call_result result;
@@ -5386,7 +5421,7 @@ static enum pcm_call_result call_octet(
 		break;
 	case PCM_CALL_PHASE3:
 		result = sample_phase3(
-			call, received_octet, received_sample, &generated);
+			call, received_octet, received_sample, unconditioned_octet, &generated);
 		break;
 	case PCM_CALL_PHASE3_MIXED:
 		result = sample_mixed_phase3(

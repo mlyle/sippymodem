@@ -126,13 +126,15 @@ analogue conversion. The default is `0`; remote RTP clocking does not establish
 this topology. Native direct-codec interoperability runs should opt in explicitly.
 
 V.90 and V.92 share DIL measurement and downstream constellation selection.
-The receiver qualifies levels observed twice with each sign in all six frame
-intervals, after filter settling. Changed or unobserved levels are excluded
-from training and data selections; data rates remain bounded by measured
-capacity, negotiated capabilities, and transmit power. This supports a common
-set of unchanged G.711 levels, including routes with robbed-bit substitutions.
-General digital attenuation, codec-law conversion, and different inverse maps
-for individual frame intervals are not yet inferred from DIL.
+The receiver qualifies levels observed twice with each sign in each of the six
+frame intervals, after filter settling. It identifies constant least-significant
+bit substitutions independently in those intervals and derives the codec-side
+TRN1d RMS ratio. Training and data share constellation selection under exact
+frame-power and capacity bounds; identical interval sets share a control-message
+row. Incomplete or unsupported substitution evidence retains the conservative
+common-level selection. General digital attenuation and codec-law conversion
+remain unsupported; the learner selects unchanged levels rather than constructing
+inverse maps for changed levels.
 
 The PCM call owner supports V.92 shortened Phase 2/3 using caller-retained
 training settings. Its read-only profile query uses the actual training

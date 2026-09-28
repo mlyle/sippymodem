@@ -1999,6 +1999,11 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_upstream_rx.o \
 	$(BUILD_DIR)/v92_phase3_analog_station.o \
 	$(BUILD_DIR)/pcm_dil_receiver.o \
+	$(BUILD_DIR)/v90_profile.o \
+	$(BUILD_DIR)/pcm_rate.o \
+	$(BUILD_DIR)/mixed_radix.o \
+	$(BUILD_DIR)/v90_pcm_mapping.o \
+	$(BUILD_DIR)/v90_cp.o \
 	$(BUILD_DIR)/v90_dil_sequence.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
@@ -4431,7 +4436,7 @@ $(V90_DIL_TEST_BINARY): $(V90_DIL_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(V90_DIL_SEQUENCE_TEST_BINARY): $(V90_DIL_SEQUENCE_TEST_OBJECTS)
-	$(CC) $(LDFLAGS) -o $@ $^
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V90_JA_TEST_BINARY): $(V90_JA_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^

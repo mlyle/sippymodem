@@ -107,7 +107,7 @@ static bool check_jp_prime_deadline(
 		late.transmit.su.stage_symbols = waits[index];
 		CHECK(v92_phase3_analog_station_is_valid(&late), "invalid late Jp-prime fixture");
 		enum v92_phase3_analog_station_result result =
-			v92_phase3_analog_station_receive(&late, octet);
+			v92_phase3_analog_station_receive(&late, octet, octet);
 
 		CHECK(index == 0 ? result == V92_PHASE3_ANALOG_STATION_OK &&
 			      late.second_trn1u_symbols == V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS :
@@ -130,7 +130,7 @@ static bool check_jp_prime_phase(
 		station.restore_codec_grid = exact != 0;
 		CHECK(fractional_delay_set_phase(&expected, phase) == FRACTIONAL_DELAY_OK,
 		      "invalid expected Jp phase");
-		CHECK(v92_phase3_analog_station_receive(&station, octet) ==
+		CHECK(v92_phase3_analog_station_receive(&station, octet, octet) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
 		      memcmp(&station.transmit_delay, &expected, sizeof(expected)) == 0,
@@ -220,7 +220,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 				before = analog;
 			downstream_delay[cursor] = octet;
 			result = v92_phase3_analog_station_receive(
-				&analog, delivered);
+				&analog, delivered, delivered);
 			CHECK(result == V92_PHASE3_ANALOG_STATION_OK ||
 			      result == V92_PHASE3_ANALOG_STATION_COMPLETE,
 			      "downstream receive failed at %zu: %s", index,
@@ -377,7 +377,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 		      !v92_phase3_analog_station_receive_complete(&analog) &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
-		      v92_phase3_analog_station_receive(&analog, 0xa5) ==
+		      v92_phase3_analog_station_receive(&analog, 0xa5, 0xa5) ==
 			      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 		      sample == 1234 &&
 		      memcmp(&analog, &saved, sizeof(analog)) == 0,
@@ -438,7 +438,7 @@ static bool run_delayed_ri(enum g711_law law)
 
 		CHECK(v92_phase3_digital_station_transmit(&digital, &octet) ==
 			      V92_PHASE3_DIGITAL_STATION_OK &&
-		      v92_phase3_analog_station_receive(&analog, octet) ==
+		      v92_phase3_analog_station_receive(&analog, octet, octet) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
@@ -459,7 +459,7 @@ static bool run_delayed_ri(enum g711_law law)
 		int16_t sample, expected_sample;
 
 		CHECK(pcm_phase3_digital_tx_next(&scr, &downstream) == PCM_PHASE3_DIGITAL_TX_OK &&
-		      v92_phase3_analog_station_receive(&analog, downstream.octet) ==
+		      v92_phase3_analog_station_receive(&analog, downstream.octet, downstream.octet) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
@@ -477,7 +477,7 @@ static bool run_delayed_ri(enum g711_law law)
 		int16_t sample;
 
 		CHECK(v90_phase4_ri_tx_next(&ri, &octet) == V90_PHASE4_RI_OK &&
-		      v92_phase3_analog_station_receive(&analog, octet) == V92_PHASE3_ANALOG_STATION_OK &&
+		      v92_phase3_analog_station_receive(&analog, octet, octet) == V92_PHASE3_ANALOG_STATION_OK &&
 		      v92_phase3_analog_station_transmit(&analog, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK, "delayed Ri delivery failed at %zu", i);
 		CHECK(v90_phase4_ri_search_is_acquired(&analog.receive.ri) ||
@@ -797,7 +797,7 @@ static bool test_analog_contracts(void)
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_analog_station_transmit(&station, NULL, NULL) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
-	      v92_phase3_analog_station_receive(NULL, 0u) ==
+	      v92_phase3_analog_station_receive(NULL, 0u, 0u) ==
 		      V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT &&
 	      v92_phase3_analog_station_transmit_handoff(
 		      &station, NULL) ==

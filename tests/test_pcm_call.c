@@ -43,6 +43,8 @@ struct channel {
 	int16_t upstream_history[3];
 	unsigned noise_peak;
 	uint32_t noise_state;
+	unsigned downstream_robbed_pattern;
+	uint8_t downstream_phase;
 };
 
 struct downstream_source {
@@ -671,6 +673,13 @@ static void channel_receive(
 {
 	*analog = channel->digital_to_analog[channel->cursor];
 	*digital = channel->analog_to_digital[channel->cursor];
+	if (channel->downstream_robbed_pattern) {
+		if (channel->downstream_phase == 4u)
+			*analog |= 1u;
+		if (channel->downstream_robbed_pattern == 2u && channel->downstream_phase == 1u)
+			*analog &= (uint8_t)~1u;
+		channel->downstream_phase = (uint8_t)((channel->downstream_phase + 1u) % 6u);
+	}
 	if (channel->postcursor[0] != 0.0 || channel->postcursor[1] != 0.0 ||
 	    channel->postcursor[2] != 0.0 || channel->noise_peak != 0u) {
 		int16_t current = decode_octet(channel->law, *digital);
@@ -4063,7 +4072,7 @@ static bool check_short_quiet_receive(
 
 static bool run_full_retrain(
 	enum pcm_protocol protocol, enum g711_law law,
-	enum v90_modem_role initiating_role, bool generated)
+	enum v90_modem_role initiating_role, bool generated, bool robbed_bits)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -4100,6 +4109,10 @@ static bool run_full_retrain(
 		 * separately supplied multi-plane PCM-upstream CPt/CPu records. */
 		if (protocol == PCM_PROTOCOL_V92)
 			analog.call.local_info1.pcm_upstream_enabled = false;
+	}
+	if (robbed_bits) {
+		analog.call.phase3_configuration.analog.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
+		channel.downstream_robbed_pattern = 2u;
 	}
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
@@ -4271,6 +4284,10 @@ static bool run_full_retrain(
 		      tc <= 5368u * 5368u && dc <= 5368u * 5368u && dc <= tf * pow(10.0, 0.3),
 		      "generated conventional call exceeded peer power after retrain");
 	}
+	if (robbed_bits)
+		CHECK(analog.call.downstream_dil.measured && analog.call.downstream_dil.interval_model &&
+		      analog.call.analog_phase4_configuration.data_parameters.constellation_count > 1u,
+		      "full retrain lost the learned interval constellations");
 	return true;
 }
 
@@ -4279,11 +4296,20 @@ static bool test_full_retrain(void)
 	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
 	     protocol <= PCM_PROTOCOL_V92; ++protocol)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, false) &&
-			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM, false) &&
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, false, false) &&
+			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM, false, false) &&
 			      run_full_retrain(protocol, law,
-				      law == G711_LAW_PCMU ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, true),
+				      law == G711_LAW_PCMU ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, true, false),
 			      "protocol %u law %u full retrain matrix failed", protocol, law);
+	return true;
+}
+
+static bool test_conventional_dil_retrain(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, true, true),
+			      "measured conventional retrain protocol %u law %u", protocol, law);
 	return true;
 }
 
@@ -7019,7 +7045,8 @@ struct v92_upstream_offer {
 	/* Additional delayed samples exercise the measured channel inverse. */
 	double second_postcursor, third_postcursor;
 	bool check_b1_peer_retrain;
-	bool downstream_robbed_bit;
+	unsigned downstream_robbed_pattern;
+	uint8_t downstream_robbed_rotation;
 };
 
 static bool v92_peer_retrain_quality_guard(const struct pcm_call *boundary, int16_t amplitude);
@@ -7624,7 +7651,7 @@ static bool capture_v92_duplex_data(
 		if (channel_memory)
 			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	}
-	if (offer && offer->downstream_robbed_bit) {
+	if (offer && offer->downstream_robbed_pattern == 1u) {
 		/* A stable training code keeps binary gain acquisition independent
 		 * of the level substitutions that DIL is meant to discover. */
 		struct v90_pcm_symbol training;
@@ -7655,14 +7682,15 @@ static bool capture_v92_duplex_data(
 		wire.postcursor[1] = offer->second_postcursor;
 		wire.postcursor[2] = offer->third_postcursor;
 		wire.noise_peak = offer->noise_peak;
+		wire.downstream_robbed_pattern = offer->downstream_robbed_pattern;
+		wire.downstream_phase = offer->downstream_robbed_rotation;
 	}
+
 	for (size_t clock = 0u; clock < sample_limit; ++clock) {
 		uint8_t ar, dr, at, dt;
 		struct pcm_call *calls[] = { &analog, &digital };
 
 		channel_receive(&wire, &ar, &dr);
-		if (offer && offer->downstream_robbed_bit && clock % 6u == 4u)
-			ar |= 1u;
 		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
 			struct pcm_call *call = calls[role];
 			enum pcm_call_stage previous_stage = call->stage;
@@ -7900,15 +7928,17 @@ static bool capture_v92_duplex_data(
 			      offer->local_maximum,
 		      "V.92 did not exchange the complete selected mapping or lost its rate policy");
 	}
-	if (offer && offer->downstream_robbed_bit) {
+	if (offer && offer->downstream_robbed_pattern) {
 		const struct pcm_dil_result *measured = &analog.downstream_dil;
 		CHECK(measured->measured && measured->rejected_levels > 0,
 		      "DIL did not retain rejected-level evidence");
 		const struct v90_pcm_mapping *mapping = &analog.state.data_path.v92_analog.downstream.data.stream.decoder.mapping;
-		for (unsigned code = 0; code < 128u; ++code)
-			CHECK(!pcm_constellation_contains(&mapping->transmit[0], code) ||
-			      pcm_constellation_contains(&measured->usable, code),
-			      "CPu selected an unqualified level");
+		CHECK(measured->interval_model, "DIL did not identify the interval substitutions");
+		for (unsigned interval = 0; interval < 6u; ++interval)
+			for (unsigned code = 0; code < 128u; ++code)
+				CHECK(!pcm_constellation_contains(&mapping->transmit[interval], code) ||
+				      pcm_constellation_contains(&measured->usable[interval], code),
+				      "CPu selected an unqualified interval level");
 	}
 	if (capture != NULL)
 		*capture = (struct v92_online_pair){ .analog = analog, .digital = digital, .wire = wire };
@@ -7923,12 +7953,27 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd,
 
 static bool test_v92_dil_data(void)
 {
-	const struct v92_upstream_offer offer = {
+	struct v92_upstream_offer offer = {
 		.peer_mask = 1u, .local_maximum = 1u, .expected = 1u,
-		.downstream_rate = 28000u, .downstream_robbed_bit = true,
+		.downstream_rate = 28000u, .downstream_robbed_pattern = 1u,
 	};
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		CHECK(run_v92_duplex_data(law, 3u, false, &offer), "measured DIL duplex data law %u", law);
+		for (unsigned rotation = 0; rotation < 6u; ++rotation) {
+			offer.downstream_robbed_pattern = 2u;
+			offer.downstream_robbed_rotation = rotation;
+			CHECK(run_v92_duplex_data(law, 3u + rotation, false, &offer),
+			      "opposing robbed bits law %u rotation %u", law, rotation);
+		}
+		struct v92_upstream_offer retry = offer;
+		retry.peer_mask = 3u;
+		retry.local_maximum = 2u;
+		retry.expected_retrains = 1u;
+		CHECK(capture_v92_duplex_data(law, 3u, false, &retry, NULL, 1u, NULL),
+		      "DIL did not relearn after B1 recovery law %u", law);
+		offer.downstream_robbed_pattern = 1u;
+		offer.downstream_robbed_rotation = 0u;
+	}
 	return true;
 }
 
@@ -10335,8 +10380,8 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 					      14u, NULL) == V92_PROFILE_OK,
 			      "generated downstream-reselection profile failed");
 			ac.v92_analog_phase4.cpu.data_rate_number = 11u;
-			/* Exercise reduction of an over-power generated training seed as
-			 * well as preservation of the native sparse CPt at the default limit. */
+			/* Exercise measured selection from both an over-power seed and
+			 * the native sparse CPt, preserving their respective capacities. */
 			if (power_code == 31u)
 				ac.phase3.v92_analog.cpt.transmit_constellations[0] =
 					ac.analog_phase4.training_parameters.transmit_constellations[0];
@@ -10424,17 +10469,24 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 								      V90_PCM_MAPPING_OK &&
 							      v90_pcm_mapping_power(&accepted_training, V90_PCM_MAPPING_CODEC, law,
 										    &lower, &upper) == V90_PCM_MAPPING_OK &&
-							      upper <= peer_rms * peer_rms &&
-							      accepted_training.modulus[0] ==
-								      pcm_constellation_count(&expected_cpt.transmit_constellations[0]),
-							      "generated CPt exceeded peer power or lost capacity");
-							if (power_code == 31u)
-								expected_cpt.transmit_constellations[0] = cpt.transmit_constellations[0];
+							      upper <= peer_rms * peer_rms,
+							      "generated CPt exceeded peer power");
+							for (unsigned interval = 0; interval < 6u; ++interval)
+								CHECK(accepted_training.modulus[interval] ==
+									      pcm_constellation_count(&expected_cpt.transmit_constellations[0]),
+								      "measured CPt lost interval capacity");
+							/* DIL may replace seed levels independently in each
+							 * interval. All other wire fields remain prescribed. */
+							memcpy(expected_cpt.transmit_constellations, cpt.transmit_constellations,
+								sizeof(expected_cpt.transmit_constellations));
+							memcpy(expected_cpt.frame_constellation, cpt.frame_constellation,
+								sizeof(expected_cpt.frame_constellation));
+							expected_cpt.constellation_count = cpt.constellation_count;
 						}
 						CHECK(v92_cpt_encode(&expected_cpt, sent, sizeof(sent), &sent_bits) == V92_CPT_OK &&
 						      v92_cpt_encode(&cpt, got, sizeof(got), &got_bits) == V92_CPT_OK &&
 						      sent_bits == got_bits && memcmp(sent, got, (sent_bits + 7u) / 8u) == 0,
-						      "law %u epoch %zu CPt did not retain its map with peer lookahead %u",
+						      "law %u epoch %zu CPt changed fields beyond its measured map and peer lookahead %u",
 						      law, epoch, peer_lookaheads[epoch]);
 						cpt_checked = true;
 					}
@@ -10469,11 +10521,25 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 				      v90_pcm_mapping_power(&data, plane, law, &df, &dc_power) == V90_PCM_MAPPING_OK &&
 				      tc <= peer_rms * peer_rms &&
 				      dc_power <= peer_rms * peer_rms &&
-				      dc_power <= tf * pow(10.0, 0.3) &&
-				      data.modulus[0] <= original.modulus[0],
-				      "law %u epoch %zu generated CPu power %u, CPt %u, limit %u, or capacity grew",
+				      dc_power <= tf * pow(10.0, 0.3),
+				      "law %u epoch %zu generated CPu power %u, CPt %u, limit %u",
 				      law, epoch, dc_power, tf, peer_rms * peer_rms);
-				expected.transmit_constellations[0] = received->transmit_constellations[0];
+				for (unsigned interval = 0; interval < 6u; ++interval)
+					CHECK(data.modulus[interval] <= original.modulus[interval],
+					      "measured CPu retained unnecessary interval capacity");
+				const struct pcm_dil_result *measured = &calls[0].downstream_dil;
+				CHECK(measured->measured, "generated reselection lost DIL evidence");
+				for (unsigned interval = 0; interval < 6u; ++interval)
+					for (unsigned code = 0; code < 128u; ++code)
+						CHECK((!pcm_constellation_contains(&data.transmit[interval], code) &&
+						       !pcm_constellation_contains(&accepted_training.transmit[interval], code)) ||
+						      pcm_constellation_contains(&measured->usable[interval], code),
+						      "reselection advertised an unqualified CPt/CPu point");
+				memcpy(expected.transmit_constellations, received->transmit_constellations,
+					sizeof(expected.transmit_constellations));
+				memcpy(expected.frame_constellation, received->frame_constellation,
+					sizeof(expected.frame_constellation));
+				expected.constellation_count = received->constellation_count;
 			}
 			CHECK(v92_cpu_encode(&expected, 24u, expected_wire, sizeof(expected_wire),
 					     &expected_bits) == V92_CPU_OK &&
@@ -11827,7 +11893,8 @@ int main(int argc, char **argv)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
-		{ "V.92 DIL excludes robbed-bit levels", test_v92_dil_data },
+		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },
+		{ "V.90/V.92 conventional DIL and retrain", test_conventional_dil_retrain },
 		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },

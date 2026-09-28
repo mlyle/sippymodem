@@ -160,7 +160,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 	    !v90_phase3_analog_station_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	if (dil.segment_count != 0 &&
-	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, law))
+	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, law, training_ucode))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	*station = initialized;
 	return V90_PHASE3_ANALOG_STATION_OK;
@@ -436,7 +436,7 @@ static enum v90_phase3_analog_station_result receive_dil(
 	struct v90_phase3_analog_station *station, uint8_t octet)
 {
 	if (station->dil_received_symbols < station->dil_training_symbols) {
-		if (!pcm_dil_receiver_receive(&station->dil_receiver, octet))
+		if (!pcm_dil_receiver_receive(&station->dil_receiver, octet, octet))
 			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->dil_received_symbols++;
 		if (station->dil_received_symbols == station->dil_training_symbols &&

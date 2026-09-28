@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 enum {
 	PCM_CONSTELLATION_UCODES = 128,
@@ -110,6 +111,34 @@ static inline bool pcm_constellation_is_empty(
 	for (size_t index = 0; index < PCM_CONSTELLATION_MASK_BYTES; ++index)
 		used |= constellation->ucode_mask[index];
 	return used == 0;
+}
+
+/* Pack six interval sets into the smallest ordered row table. Identical
+ * intervals share one row. Input may alias rows; rejected sets change nothing. */
+static inline bool pcm_constellations_pack(
+	const struct pcm_constellation intervals[PCM_CONSTELLATION_FRAME_INTERVALS],
+	struct pcm_constellation rows[PCM_CONSTELLATION_MAX_ROWS],
+	uint8_t map[PCM_CONSTELLATION_FRAME_INTERVALS], uint8_t *count)
+{
+	struct pcm_constellation packed[PCM_CONSTELLATION_MAX_ROWS] = { 0 };
+	uint8_t indices[PCM_CONSTELLATION_FRAME_INTERVALS], used = 0;
+
+	if (intervals == NULL || rows == NULL || map == NULL || count == NULL)
+		return false;
+	for (unsigned interval = 0; interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
+		if (pcm_constellation_is_empty(&intervals[interval]))
+			return false;
+		uint8_t row = 0;
+		while (row < used && memcmp(&packed[row], &intervals[interval], sizeof(packed[row])) != 0)
+			++row;
+		if (row == used)
+			packed[used++] = intervals[interval];
+		indices[interval] = row;
+	}
+	memcpy(rows, packed, sizeof(packed));
+	memcpy(map, indices, sizeof(indices));
+	*count = used;
+	return true;
 }
 
 /* Wire records include every row through the greatest map index, even

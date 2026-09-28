@@ -60,11 +60,21 @@ bool v90_profile_generate_data_constellation(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
-/* Same power/distance design restricted to DIL-qualified levels. NULL retains
+/* Preserve the mapping's equal interval cardinalities, using qualified levels
+ * and the exact whole-frame power bound. Output is unchanged on failure. */
+bool v90_profile_select_measured_constellations(
+	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
+	const struct pcm_constellation available[V90_CP_FRAME_INTERVALS],
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
+	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count);
+
+/* Same exact power/distance design over six DIL-qualified interval sets. NULL retains
  * the direct-codec level set. Empty or insufficient sets fail transactionally. */
-bool v90_profile_generate_measured_constellation(enum g711_law law,
+bool v90_profile_generate_measured_constellations(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
-	const struct pcm_constellation *available, struct pcm_constellation *constellation);
+	const struct pcm_constellation available[V90_CP_FRAME_INTERVALS],
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
+	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count);
 
 const char *v90_profile_result_name(enum v90_profile_result result);
 

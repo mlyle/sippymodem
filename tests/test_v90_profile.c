@@ -737,27 +737,67 @@ static bool test_generated_data_capacity(void)
 
 static bool test_measured_data_capacity(void)
 {
-	struct pcm_constellation available = { 0 };
-	const struct pcm_constellation empty = { 0 };
+	struct pcm_constellation available[6] = { 0 };
 
-	for (unsigned code = 8u; code < 40u; code += 4u)
-		available.ucode_mask[code / 8u] |= (uint8_t)(1u << (code % 8u));
+	/* Disjoint interval sets require distinct rows. All eight points are
+	 * necessary at the lowest rate, making the selected sets unambiguous. */
+	for (unsigned interval = 0; interval < 6u; ++interval)
+		for (unsigned code = 8u + interval % 3u; code < 40u; code += 4u)
+			available[interval].ucode_mask[code / 8u] |= (uint8_t)(1u << (code % 8u));
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		struct pcm_constellation selected = { 0 };
+		struct v90_cp_parameters cp = {
+			.kind = V90_CP_DATA, .law = law, .selected_rate_index = 1u,
+		};
+		struct v90_pcm_mapping mapping;
+		uint32_t lower, upper;
 
-		CHECK(v90_profile_generate_measured_constellation(law, 1u, 0u,
-			4024u * 4024u, &available, &selected) &&
-		      memcmp(&selected, &available, sizeof(selected)) == 0,
-		      "measured selection did not use the eight qualified levels");
-		struct pcm_constellation saved = selected;
-		CHECK(!v90_profile_generate_measured_constellation(law, V90_CP_RATE_INDEX_MAX,
-			0u, 4024u * 4024u, &available, &selected) &&
-		      !v90_profile_generate_measured_constellation(law, 1u, 0u,
-			1u, &available, &selected) &&
-		      !v90_profile_generate_measured_constellation(law, 1u, 0u,
-			4024u * 4024u, &empty, &selected) &&
-		      memcmp(&selected, &saved, sizeof(selected)) == 0,
-		      "insufficient measured capacity or power changed the selection");
+		CHECK(v90_profile_generate_measured_constellations(law, 1u, 0u,
+			4024u * 4024u, available, cp.transmit_constellations,
+			cp.frame_constellation, &cp.constellation_count) &&
+		      cp.constellation_count == 3u &&
+		      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &lower, &upper) == V90_PCM_MAPPING_OK,
+		      "measured interval selection failed");
+		for (unsigned interval = 0; interval < 6u; ++interval)
+			CHECK(memcmp(&mapping.transmit[interval], &available[interval], sizeof(available[0])) == 0 &&
+			      cp.frame_constellation[interval] == interval % 3u,
+			      "measured selection lost a level or duplicated a row");
+		struct v90_cp_parameters saved = cp;
+		CHECK(!v90_profile_generate_measured_constellations(law, V90_CP_RATE_INDEX_MAX,
+			0u, 4024u * 4024u, available, cp.transmit_constellations,
+			cp.frame_constellation, &cp.constellation_count) &&
+		      !v90_profile_generate_measured_constellations(law, 1u, 0u,
+			upper - 1u, available, cp.transmit_constellations,
+			cp.frame_constellation, &cp.constellation_count) &&
+		      memcmp(&cp, &saved, sizeof(cp)) == 0,
+		      "insufficient measured capacity or exact power changed output");
+		struct pcm_constellation incomplete[6];
+		memcpy(incomplete, available, sizeof(incomplete));
+		incomplete[5] = (struct pcm_constellation){ 0 };
+		CHECK(!v90_profile_generate_measured_constellations(law, 1u, 0u,
+			4024u * 4024u, incomplete, cp.transmit_constellations,
+			cp.frame_constellation, &cp.constellation_count) &&
+		      memcmp(&cp, &saved, sizeof(cp)) == 0,
+		      "unusable final interval changed earlier rows");
+		CHECK(v90_profile_generate_measured_constellations(law, 1u, 0u,
+			upper, available, cp.transmit_constellations,
+			cp.frame_constellation, &cp.constellation_count) &&
+		      memcmp(&cp, &saved, sizeof(cp)) == 0,
+		      "exact whole-frame power boundary rejected");
+
+		struct pcm_call_configuration profile;
+		CHECK(v90_profile_init(&profile, V90_ANALOG_MODEM, law, 28000, 56000, NULL) == V90_PROFILE_OK,
+		      "measured training profile failed");
+		cp = profile.analog_phase4.training_parameters;
+		CHECK(v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      v90_profile_select_measured_constellations(&mapping, upper, available,
+			cp.transmit_constellations, cp.frame_constellation, &cp.constellation_count) &&
+		      v90_pcm_mapping_init(&mapping, &cp) == V90_PCM_MAPPING_OK &&
+		      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC, law, &lower, &upper) == V90_PCM_MAPPING_OK,
+		      "measured training selection failed");
+		for (unsigned interval = 0; interval < 6u; ++interval)
+			CHECK(memcmp(&mapping.transmit[interval], &available[interval], sizeof(available[0])) == 0,
+			      "training failed to preserve its interval cardinality");
 	}
 	return true;
 }

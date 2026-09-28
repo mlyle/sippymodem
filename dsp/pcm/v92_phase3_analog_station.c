@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 #include "v92_phase3_analog_station.h"
+#include "v90_profile.h"
 #include "v90_phase3_sd.h"
 
 #include <stddef.h>
@@ -238,7 +239,8 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	fractional_delay_init(&initialized.transmit_delay);
 	initialized.learn_dil = configuration->learn_dil && dil.segment_count != 0;
 	if (initialized.learn_dil &&
-	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, configuration->law))
+	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, configuration->law,
+		    configuration->local_info1a.training_ucode))
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	initialized.restore_codec_grid = configuration->restore_codec_grid;
 	initialized.cpt_parameters = configuration->cpt;
@@ -330,10 +332,26 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	     v90_phase4_ri_search_is_acquired(&station->receive.ri)) &&
 	    v92_pcm_phase3_trn1u_can_handoff(&station->transmit.cpt.trn1u)) {
 		if (station->learn_dil) {
+			struct v90_pcm_mapping mapping;
+			uint32_t lower, limit;
+
+			/* The call owner has already bounded this proposal by INFO0d.
+			 * Fit measured levels within the same exact power budget. */
+			if (v90_pcm_mapping_init_from_v92_cpt(&mapping,
+				    &station->cpt_parameters, station->law) != V90_PCM_MAPPING_OK ||
+			    v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC,
+				    station->law, &lower, &limit) != V90_PCM_MAPPING_OK)
+				return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 			if (!pcm_dil_receiver_finish(&station->dil_receiver, &station->dil_result) ||
-			    !pcm_dil_select_training(&station->dil_result,
-				    &station->cpt_parameters.transmit_constellations[0]) ||
-			    v92_cpt_encode(&station->cpt_parameters, station->transmit.cpt.frame,
+			    !v90_profile_select_measured_constellations(&mapping, limit,
+				    station->dil_result.usable,
+				    station->cpt_parameters.transmit_constellations,
+				    station->cpt_parameters.frame_constellation,
+				    &station->cpt_parameters.constellation_count))
+				return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+			station->cpt_parameters.trn1d_ratio_q3_13 =
+				station->dil_result.trn1d_ratio_q3_13;
+			if (v92_cpt_encode(&station->cpt_parameters, station->transmit.cpt.frame,
 				    sizeof(station->transmit.cpt.frame),
 				    &station->transmit.cpt.frame_bit_count) != V92_CPT_OK)
 				return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
@@ -570,13 +588,14 @@ static enum v92_phase3_analog_station_result receive_j(
 }
 
 static enum v92_phase3_analog_station_result receive_ri(
-	struct v92_phase3_analog_station *station, uint8_t network_octet)
+	struct v92_phase3_analog_station *station, uint8_t network_octet,
+	uint8_t unconditioned_octet)
 {
 	if (station->learn_dil &&
 	    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
 	    station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
 	    station->dil_receiver.symbols < station->dil_receiver.limit &&
-	    !pcm_dil_receiver_receive(&station->dil_receiver, network_octet))
+	    !pcm_dil_receiver_receive(&station->dil_receiver, network_octet, unconditioned_octet))
 		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	/* A nonzero-DIL peer cannot acknowledge CPt before receiving it.
 	 * Do not hunt for Ri in the preceding training symbols. */
@@ -611,7 +630,8 @@ static enum v92_phase3_analog_station_result receive_ri(
 }
 
 enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
-	struct v92_phase3_analog_station *station, uint8_t network_octet)
+	struct v92_phase3_analog_station *station, uint8_t network_octet,
+	uint8_t unconditioned_octet)
 {
 	struct v92_phase3_analog_station next;
 	enum v92_phase3_analog_station_result result;
@@ -631,7 +651,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
 		result = receive_j(&next, network_octet);
 		break;
 	case V92_PHASE3_ANALOG_RECEIVE_RI:
-		result = receive_ri(&next, network_octet);
+		result = receive_ri(&next, network_octet, unconditioned_octet);
 		break;
 	case V92_PHASE3_ANALOG_RECEIVE_COMPLETE:
 		return V92_PHASE3_ANALOG_STATION_COMPLETE;

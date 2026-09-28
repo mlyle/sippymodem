@@ -282,13 +282,13 @@ static bool spaced_constellation(struct pcm_constellation *constellation,
 	return false;
 }
 
-/* Called only for a validated direct-law mapping with a common row. */
-static bool select_data_constellation(const struct v90_pcm_mapping *mapping,
+/* Called only for a validated direct-law mapping with equal cardinalities. */
+static bool select_spaced_constellations(const struct v90_pcm_mapping *mapping,
 	uint32_t maximum_power, const struct pcm_constellation *available,
-	struct pcm_constellation *constellation)
+	struct pcm_constellation constellations[V90_CP_FRAME_INTERVALS])
 {
 	struct v90_pcm_mapping candidate = *mapping;
-	struct pcm_constellation best = { 0 };
+	struct pcm_constellation best[V90_CP_FRAME_INTERVALS] = { 0 };
 	uint8_t size = mapping->modulus[0];
 	int16_t peak;
 	bool found = false;
@@ -304,27 +304,48 @@ static bool select_data_constellation(const struct v90_pcm_mapping *mapping,
 		uint32_t spacing = low + (high - low) / 2u;
 		uint32_t floor, ceiling;
 
-		if (!spaced_constellation(&candidate.transmit[0], mapping->law, size, spacing, available)) {
+		bool fits = true;
+		for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
+			fits = spaced_constellation(&candidate.transmit[slot], mapping->law,
+				size, spacing, available ? &available[slot] : NULL) && fits;
+			candidate.codec[slot] = candidate.transmit[slot];
+		}
+		if (!fits) {
 			high = spacing - 1u;
 			continue;
-		}
-		for (size_t slot = 0; slot < V90_CP_FRAME_INTERVALS; ++slot) {
-			candidate.transmit[slot] = candidate.transmit[0];
-			candidate.codec[slot] = candidate.transmit[0];
 		}
 		if (v90_pcm_mapping_power(&candidate, V90_PCM_MAPPING_CODEC,
 					 mapping->law, &floor, &ceiling) != V90_PCM_MAPPING_OK)
 			return false;
 		if (ceiling <= maximum_power) {
-			best = candidate.transmit[0];
+			memcpy(best, candidate.transmit, sizeof(best));
 			found = true;
 			low = spacing + 1u;
 		} else
 			high = spacing - 1u;
 	}
 	if (found)
-		*constellation = best;
+		memcpy(constellations, best, sizeof(best));
 	return found;
+}
+
+bool v90_profile_select_measured_constellations(
+	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
+	const struct pcm_constellation available[V90_CP_FRAME_INTERVALS],
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
+	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count)
+{
+	struct pcm_constellation selected[V90_CP_FRAME_INTERVALS];
+
+	if (rows == NULL || map == NULL || count == NULL ||
+	    !v90_pcm_mapping_is_valid(mapping) || mapping->codec_plane_differs ||
+	    maximum_power == 0)
+		return false;
+	for (unsigned interval = 1; interval < V90_CP_FRAME_INTERVALS; ++interval)
+		if (mapping->modulus[interval] != mapping->modulus[0])
+			return false;
+	return select_spaced_constellations(mapping, maximum_power, available, selected) &&
+		pcm_constellations_pack(selected, rows, map, count);
 }
 
 bool v90_profile_select_constellation(
@@ -341,8 +362,13 @@ bool v90_profile_select_constellation(
 		if (memcmp(&mapping->transmit[0], &mapping->transmit[slot],
 			   sizeof(mapping->transmit[0])) != 0)
 			return false;
-	if (mapping->kind == V90_CP_DATA)
-		return select_data_constellation(mapping, maximum_power, NULL, constellation);
+	if (mapping->kind == V90_CP_DATA) {
+		struct pcm_constellation selected[V90_CP_FRAME_INTERVALS];
+		if (!select_spaced_constellations(mapping, maximum_power, NULL, selected))
+			return false;
+		*constellation = selected[0];
+		return true;
+	}
 	size = mapping->modulus[0];
 	candidate = *mapping;
 	/* Preserve distinct labels, reducing the highest level until the exact
@@ -367,9 +393,11 @@ bool v90_profile_select_constellation(
 	return false;
 }
 
-bool v90_profile_generate_measured_constellation(enum g711_law law,
+bool v90_profile_generate_measured_constellations(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
-	const struct pcm_constellation *available, struct pcm_constellation *constellation)
+	const struct pcm_constellation available[V90_CP_FRAME_INTERVALS],
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS],
+	uint8_t map[V90_CP_FRAME_INTERVALS], uint8_t *count)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = V90_CP_DATA, .law = law,
@@ -377,8 +405,9 @@ bool v90_profile_generate_measured_constellation(enum g711_law law,
 		.sign_redundancy = sign_redundancy, .constellation_count = 1u,
 	};
 	struct v90_pcm_mapping mapping;
+	struct pcm_constellation selected[V90_CP_FRAME_INTERVALS];
 
-	if (constellation == NULL || maximum_power == 0 ||
+	if (rows == NULL || map == NULL || count == NULL || maximum_power == 0 ||
 	    !g711_law_is_valid(law) || rate_index == 0u ||
 	    rate_index > V90_CP_RATE_INDEX_MAX || sign_redundancy > 3u)
 		return false;
@@ -389,15 +418,22 @@ bool v90_profile_generate_measured_constellation(enum g711_law law,
 	generate_constellation(&parameters.transmit_constellations[0],
 		data_constellation_size(rate_index, sign_redundancy), V90_CONSTELLATION_LAST_UCODE);
 	return v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK &&
-		select_data_constellation(&mapping, maximum_power, available, constellation);
+		select_spaced_constellations(&mapping, maximum_power, available, selected) &&
+		pcm_constellations_pack(selected, rows, map, count);
 }
 
 bool v90_profile_generate_data_constellation(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
 	struct pcm_constellation *constellation)
 {
-	return v90_profile_generate_measured_constellation(law, rate_index,
-		sign_redundancy, maximum_power, NULL, constellation);
+	struct pcm_constellation rows[V90_CP_MAX_CONSTELLATIONS];
+	uint8_t map[V90_CP_FRAME_INTERVALS], count;
+
+	if (constellation == NULL || !v90_profile_generate_measured_constellations(law,
+		    rate_index, sign_redundancy, maximum_power, NULL, rows, map, &count))
+		return false;
+	*constellation = rows[0];
+	return true;
 }
 
 static struct v90_cp_parameters cp_parameters(

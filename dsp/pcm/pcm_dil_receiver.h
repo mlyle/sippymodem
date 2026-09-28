@@ -6,15 +6,17 @@
 #include "pcm_constellation.h"
 #include "v90_dil_sequence.h"
 
-/* The first supported impairment class retains a common set of G.711 levels
- * in all six intervals after linear equalization. Code substitutions (including
- * robbed bits) remove affected levels. We do not infer an unmeasured codec law
- * or use a nearest-level guess to turn a collision into a valid constellation. */
+/* Qualify unchanged levels separately in each six-symbol frame interval.
+ * A fitted constant-LSB substitution model supplies the codec-side TRN1d
+ * ratio. Without that model, retain the common-level selection and configured
+ * unity ratio; general digital pads and codec-law conversion remain unsupported. */
 struct pcm_dil_result {
-	struct pcm_constellation usable;
+	struct pcm_constellation usable[PCM_CONSTELLATION_FRAME_INTERVALS];
 	uint32_t symbols;
 	uint16_t gain_q3_13;
+	uint16_t trn1d_ratio_q3_13;
 	uint8_t rejected_levels;
+	bool interval_model;
 	bool measured;
 };
 
@@ -23,7 +25,10 @@ struct pcm_dil_receiver {
 	/* Two independent observations of each sign in each interval. Counters
 	 * saturate at two; memory and arithmetic are bounded for any descriptor. */
 	uint8_t observations[PCM_CONSTELLATION_UCODES][12];
-	struct pcm_constellation rejected;
+	struct pcm_constellation rejected[PCM_CONSTELLATION_FRAME_INTERVALS];
+	/* Candidate bits: identity, force wire LSB zero, force wire LSB one. */
+	uint8_t lsb_models[PCM_CONSTELLATION_FRAME_INTERVALS];
+	uint8_t training_ucode;
 	uint64_t reference_energy;
 	uint64_t received_cross;
 	uint32_t symbols;
@@ -31,15 +36,14 @@ struct pcm_dil_receiver {
 };
 
 bool pcm_dil_receiver_init(struct pcm_dil_receiver *receiver,
-	const struct v90_dil_parameters *parameters, enum g711_law law);
-/* Call once per symbol, starting immediately after Jd-prime/Jp-prime. */
-bool pcm_dil_receiver_receive(struct pcm_dil_receiver *receiver, uint8_t octet);
+	const struct v90_dil_parameters *parameters, enum g711_law law,
+	uint8_t training_ucode);
+/* Call once per symbol after Jd-prime/Jp-prime. The conditioned octet
+ * qualifies usable levels; unconditioned evidence identifies substitutions. */
+bool pcm_dil_receiver_receive(struct pcm_dil_receiver *receiver,
+	uint8_t octet, uint8_t unconditioned_octet);
 /* A deadline may end a traversal early. Unobserved levels remain unavailable. */
 bool pcm_dil_receiver_finish(const struct pcm_dil_receiver *receiver,
 	struct pcm_dil_result *result);
-/* Preserve cardinality and bound every ordered level by its original value.
- * This cannot increase the shared mapper's exact average-power bound. */
-bool pcm_dil_select_training(const struct pcm_dil_result *result,
-	struct pcm_constellation *constellation);
 
 #endif

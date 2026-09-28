@@ -6,6 +6,7 @@
 #include "pcm_dil_receiver.h"
 
 #include <stdbool.h>
+#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -211,56 +212,123 @@ struct test_case {
 	bool (*run)(void);
 };
 
+static uint8_t impaired_octet(uint8_t octet, unsigned pattern, unsigned phase)
+{
+	if (pattern && phase == 4u)
+		octet |= 1u;
+	if (pattern == 2u && phase == 1u)
+		octet &= (uint8_t)~1u;
+	return octet;
+}
+
 static bool test_measured_levels(void)
 {
-	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
-		for (unsigned int robbed = 0; robbed < 2u; ++robbed) {
-			struct v90_dil_parameters parameters;
-			struct v90_dil_sequence sequence;
-			struct pcm_dil_receiver receiver;
-			struct pcm_dil_result result;
-			uint32_t length;
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned pattern = 0; pattern < 3u; ++pattern)
+	for (unsigned rotation = 0; rotation < 6u; ++rotation)
+	for (unsigned restored = 0; restored < 2u; ++restored) {
+		struct v90_dil_parameters parameters;
+		struct v90_dil_sequence sequence;
+		struct pcm_dil_receiver receiver;
+		struct pcm_dil_result result;
+		uint32_t length;
 
-			CHECK(v90_dil_profile_init(&parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
-			      v90_dil_training_symbol_count(&parameters, &length) &&
-			      v90_dil_sequence_init(&sequence, &parameters, law) == V90_DIL_SEQUENCE_OK &&
-			      pcm_dil_receiver_init(&receiver, &parameters, law), "DIL measurement init");
-			for (uint32_t index = 0; index < length; ++index) {
-				struct v90_pcm_symbol symbol;
-
-				CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK,
-				      "DIL generator failed");
-				/* Force an LSB on one of six intervals, independent of the
-				 * receiver's implementation and descriptor segment edges. */
-				uint8_t wire = symbol.octet;
-				if (robbed && index % 6u == 4u)
-					wire |= 1u;
-				CHECK(pcm_dil_receiver_receive(&receiver, wire), "DIL observation failed");
-			}
-			CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
-			      result.symbols == length && pcm_constellation_count(&result.usable) >= 40u,
-			      "DIL did not qualify enough levels: %u", pcm_constellation_count(&result.usable));
-			if (!robbed)
-				CHECK(result.gain_q3_13 == 8192u && result.rejected_levels == 0u,
-				      "transparent DIL gain or rejection changed");
+		CHECK(v90_dil_profile_init(&parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+		      v90_dil_training_symbol_count(&parameters, &length) &&
+		      v90_dil_sequence_init(&sequence, &parameters, law) == V90_DIL_SEQUENCE_OK &&
+		      pcm_dil_receiver_init(&receiver, &parameters, law, 90u), "DIL measurement init");
+		for (uint32_t index = 0; index < length; ++index) {
+			struct v90_pcm_symbol symbol;
+			CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK, "DIL symbol failed");
+			uint8_t octet = impaired_octet(symbol.octet, pattern, (index + rotation) % 6u);
+			/* Even perfect conditioning cannot make an altered D/A level
+			 * safe to advertise as an identical transmit/codec point. */
+			CHECK(pcm_dil_receiver_receive(&receiver, restored ? symbol.octet : octet, octet),
+			      "DIL observation failed");
+		}
+		CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
+		      result.interval_model && result.symbols == length, "DIL did not qualify the interval model");
+		struct pcm_constellation common = result.usable[0];
+		for (unsigned interval = 0; interval < 6u; ++interval) {
+			CHECK(pcm_constellation_count(&result.usable[interval]) >= 40u, "too few measured levels");
+			for (unsigned byte = 0; byte < sizeof(common.ucode_mask); ++byte)
+				common.ucode_mask[byte] &= result.usable[interval].ucode_mask[byte];
 			for (uint8_t code = 2u; code <= 108u; ++code) {
 				struct v90_pcm_symbol symbol;
-
 				CHECK(v90_pcm_symbol_make(&symbol, law, code, true), "invalid code");
-				CHECK(pcm_constellation_contains(&result.usable, code) ==
-				      (!robbed || (symbol.octet & 1u) != 0),
-				      "DIL qualified a changed level or missed a stable one: law %u code %u", law, code);
+				CHECK(pcm_constellation_contains(&result.usable[interval], code) ==
+				      (symbol.octet == impaired_octet(symbol.octet, pattern, (interval + rotation) % 6u)),
+				      "incorrect qualified level: law %u phase %u code %u", law, interval, code);
 			}
-			struct pcm_dil_receiver before = receiver;
-			CHECK(!pcm_dil_receiver_receive(&receiver, 0) &&
-			      memcmp(&receiver, &before, sizeof(receiver)) == 0,
-			      "DIL overrun changed the receiver");
-			struct pcm_constellation training = { .ucode_mask = { 0 } };
-			training.ucode_mask[80u / 8u] = 1u;
-			training.ucode_mask[40u / 8u] = 1u;
-			CHECK(pcm_dil_select_training(&result, &training) &&
-			      pcm_constellation_count(&training) == 2u,
-			      "DIL training selection lost capacity");
+		}
+		CHECK(pattern != 2u || pcm_constellation_is_empty(&common), "opposite robbed bits retained a common set");
+		struct v90_pcm_symbol nominal;
+		CHECK(v90_pcm_symbol_make(&nominal, law, 90u, true), "invalid training level");
+		double energy = 0;
+		for (unsigned interval = 0; interval < 6u; ++interval) {
+			double value = g711_decode(law, impaired_octet(nominal.octet, pattern, interval));
+			energy += value * value;
+		}
+		double ratio = nominal.sample / sqrt(energy / 6.0);
+		CHECK(fabs(result.trn1d_ratio_q3_13 / 8192.0 - ratio) <= 0.5 / 8192.0,
+		      "TRN1d ratio did not use codec-side UINFO RMS");
+		if (!pattern)
+			CHECK(result.gain_q3_13 == 8192u && result.rejected_levels == 0u,
+			      "transparent DIL gain or rejection changed");
+		struct pcm_dil_receiver before = receiver;
+		CHECK(!pcm_dil_receiver_receive(&receiver, 0, 0) && memcmp(&receiver, &before, sizeof(receiver)) == 0,
+		      "DIL overrun changed the receiver");
+	}
+	return true;
+}
+
+static bool test_measured_evidence(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned unknown = 0; unknown < 2u; ++unknown) {
+		struct v90_dil_parameters parameters;
+		struct v90_dil_sequence sequence;
+		struct pcm_dil_receiver receiver;
+		struct pcm_dil_result result;
+		uint32_t length;
+
+		CHECK(v90_dil_profile_init(&parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+		      v90_dil_training_symbol_count(&parameters, &length) &&
+		      v90_dil_sequence_init(&sequence, &parameters, law) == V90_DIL_SEQUENCE_OK &&
+		      pcm_dil_receiver_init(&receiver, &parameters, law, 91u), "evidence fixture failed");
+		struct pcm_dil_receiver saved = receiver;
+		struct pcm_dil_result untouched = { .symbols = 123u };
+		result = untouched;
+		CHECK(!pcm_dil_receiver_init(&receiver, &parameters, law, 128u) &&
+		      memcmp(&receiver, &saved, sizeof(saved)) == 0 &&
+		      !pcm_dil_receiver_finish(&receiver, &result) &&
+		      memcmp(&result, &untouched, sizeof(result)) == 0, "rejected evidence changed output");
+		for (uint32_t index = 0; index < length; ++index) {
+			struct v90_pcm_symbol symbol;
+			CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK, "evidence symbol failed");
+			uint8_t raw = symbol.octet, conditioned = raw;
+			if (symbol.ucode == 47u && index % 6u == 3u) {
+				conditioned ^= 2u; /* Outside every supported LSB model. */
+				if (unknown)
+					raw = conditioned;
+			}
+			CHECK(pcm_dil_receiver_receive(&receiver, conditioned, raw), "evidence observation failed");
+			if (index == 71u) {
+				saved = receiver;
+				CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
+				      !result.interval_model && result.trn1d_ratio_q3_13 == 8192u &&
+				      memcmp(&receiver, &saved, sizeof(saved)) == 0,
+				      "short traversal fabricated an interval model or changed continuation");
+			}
+		}
+		CHECK(pcm_dil_receiver_finish(&receiver, &result) &&
+		      result.interval_model == !unknown && result.trn1d_ratio_q3_13 == 8192u,
+		      "conditioned samples contaminated the raw substitution model");
+		for (unsigned interval = 0; interval < 6u; ++interval) {
+			CHECK(pcm_constellation_contains(&result.usable[interval], 47u) == (!unknown && interval != 3u),
+			      "unqualified cell survived interval or conservative common selection");
+			CHECK(pcm_constellation_contains(&result.usable[interval], 80u), "unchanged evidence was lost");
+			CHECK(!pcm_constellation_contains(&result.usable[interval], 120u), "unobserved level was qualified");
 		}
 	}
 	return true;
@@ -270,6 +338,7 @@ int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "measured DIL levels", test_measured_levels },
+		{ "measured evidence and conservative fallback", test_measured_evidence },
 		{ "exact repeated cycles", test_exact_cycles },
 		{ "bounded segment finish", test_bounded_finish },
 		{ "maximum segment", test_maximum_segment },

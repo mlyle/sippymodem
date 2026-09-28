@@ -119,10 +119,12 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_transmit(
 	struct v92_phase3_analog_station *station,
 	const struct v90_pcm_symbol *md_symbol, int16_t *sample);
 
-/* Consume one raw G.711 network character. The receiver acquires Ri without
- * assuming that the call owner observed its first character. */
+/* Consume one conditioned G.711 character and its unconditioned counterpart.
+ * DIL uses the latter to identify digital substitutions before equalization.
+ * Ri acquisition does not require the owner to observe its first character. */
 enum v92_phase3_analog_station_result v92_phase3_analog_station_receive(
-	struct v92_phase3_analog_station *station, uint8_t network_octet);
+	struct v92_phase3_analog_station *station, uint8_t network_octet,
+	uint8_t unconditioned_octet);
 
 bool v92_phase3_analog_station_transmit_complete(
 	const struct v92_phase3_analog_station *station);
