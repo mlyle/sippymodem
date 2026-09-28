@@ -1332,6 +1332,7 @@ static enum pcm_call_result begin_retrain(
 		return PCM_CALL_NUMERIC_FAILURE;
 	next.state = (union pcm_call_state){ 0 };
 	next.downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
+	next.downstream_dil = (struct pcm_dil_result){ 0 };
 	next.phase3_entry = (struct pcm_phase3_entry){ 0 };
 	next.v92_peer_jd = (struct v92_jd){ 0 };
 	next.b1_deadline_remaining_samples = 0u;
@@ -2656,7 +2657,25 @@ static void limit_analog_phase4_lookahead(
 			maximum_lookahead;
 }
 
-static bool select_analog_constellations(struct pcm_call *call)
+static bool select_measured_data(const struct pcm_call *call, uint32_t enabled,
+	uint8_t *rate, uint8_t redundancy, uint32_t power,
+	struct pcm_constellation *constellation)
+{
+	const struct pcm_constellation *available = call->downstream_dil.measured ?
+		&call->downstream_dil.usable : NULL;
+
+	for (uint8_t candidate = *rate; candidate != 0; --candidate) {
+		if ((enabled & (UINT32_C(1) << (candidate - 1u))) != 0 &&
+		    v90_profile_generate_measured_constellation(call->law, candidate,
+			    redundancy, power, available, constellation)) {
+			*rate = candidate;
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool select_analog_constellations(struct pcm_call *call, uint32_t enabled)
 {
 	struct pcm_call_analog_phase4_configuration *config = &call->analog_phase4_configuration;
 	struct v90_pcm_mapping training;
@@ -2666,9 +2685,11 @@ static bool select_analog_constellations(struct pcm_call *call)
 	return v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
 	       v90_profile_select_constellation(&training, downstream_power_limit(call, NULL),
 			&config->training_parameters.transmit_constellations[0]) &&
+	       (!call->downstream_dil.measured || pcm_dil_select_training(&call->downstream_dil,
+			&config->training_parameters.transmit_constellations[0])) &&
 	       v90_pcm_mapping_init(&training, &config->training_parameters) == V90_PCM_MAPPING_OK &&
-	       v90_profile_generate_data_constellation(call->law,
-			config->data_parameters.selected_rate_index, config->data_parameters.sign_redundancy,
+	       select_measured_data(call, enabled,
+			&config->data_parameters.selected_rate_index, config->data_parameters.sign_redundancy,
 			downstream_power_limit(call, &training),
 			&config->data_parameters.transmit_constellations[0]);
 }
@@ -2714,7 +2735,9 @@ static enum pcm_call_result enter_phase4(struct pcm_call *call)
 				.maximum_spectral_shaping_lookahead);
 		next.analog_phase4_configuration.data_parameters
 			.selected_rate_index = selected_rate_index;
-		if (!select_analog_constellations(&next))
+		next.downstream_dil = mixed->phase3.dil_result;
+		if (!select_analog_constellations(&next, downstream_selection_mask(call) &
+			    receive_handoff.jd.data_rate_capability_mask))
 			return PCM_CALL_UNUSABLE_SELECTION;
 		if (!call->round_trip_delay_stored)
 			return PCM_CALL_INVALID_STATE;
@@ -2844,11 +2867,13 @@ static enum pcm_call_result enter_v92_phase4(struct pcm_call *call)
 		    call->v92_peer_jd.maximum_spectral_shaping_lookahead)
 			cpu.spectral_lookahead_frames =
 				call->v92_peer_jd.maximum_spectral_shaping_lookahead;
+		next.downstream_dil = mixed->phase3.dil_result;
 		if (call->analog_phase4_configuration.generate_constellations) {
 			uint32_t limit = downstream_power_limit(call, &mixed->receive.stream.decoder.mapping);
 
-			if (!v90_profile_generate_data_constellation(call->law, cpu.data_rate_number,
-				cpu.sign_redundancy, limit, &cpu.transmit_constellations[0]))
+			if (!select_measured_data(&next, downstream_selection_mask(call) &
+				    call->v92_peer_jd.data_rate_capability_mask, &cpu.data_rate_number,
+				    cpu.sign_redundancy, limit, &cpu.transmit_constellations[0]))
 				return PCM_CALL_UNUSABLE_SELECTION;
 		}
 		if (v92_phase3_analog_station_transmit_handoff(
@@ -4362,6 +4387,7 @@ static enum pcm_call_result recover_rate_renegotiation_failure(
 static void complete_cleardown(struct pcm_call *call)
 {
 	call->downstream_equalizer = (struct pcm_downstream_equalizer){ 0 };
+	call->downstream_dil = (struct pcm_dil_result){ 0 };
 	if (uses_pcm_upstream(call))
 		memset(&call->state, 0, sizeof(call->state));
 	call->stage = PCM_CALL_CLOSED;

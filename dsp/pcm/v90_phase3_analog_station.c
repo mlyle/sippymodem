@@ -159,6 +159,9 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_init(
 		    PCM_S_PATTERN_RX_OK ||
 	    !v90_phase3_analog_station_is_valid(&initialized))
 		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (dil.segment_count != 0 &&
+	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, law))
+		return V90_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	*station = initialized;
 	return V90_PHASE3_ANALOG_STATION_OK;
 }
@@ -430,10 +433,15 @@ static enum v90_phase3_analog_station_result receive_sign(
 }
 
 static enum v90_phase3_analog_station_result receive_dil(
-	struct v90_phase3_analog_station *station)
+	struct v90_phase3_analog_station *station, uint8_t octet)
 {
 	if (station->dil_received_symbols < station->dil_training_symbols) {
+		if (!pcm_dil_receiver_receive(&station->dil_receiver, octet))
+			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		station->dil_received_symbols++;
+		if (station->dil_received_symbols == station->dil_training_symbols &&
+		    !pcm_dil_receiver_finish(&station->dil_receiver, &station->dil_result))
+			return V90_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 		return V90_PHASE3_ANALOG_STATION_OK;
 	}
 	if (station->dil_received_symbols == station->dil_training_symbols &&
@@ -480,7 +488,7 @@ enum v90_phase3_analog_station_result v90_phase3_analog_station_receive(
 	else if (!pcm_phase3_j_receiver_is_complete(&next.receive.signs))
 		result = receive_sign(&next, network_octet);
 	else
-		result = receive_dil(&next);
+		result = receive_dil(&next, network_octet);
 	if (result != V90_PHASE3_ANALOG_STATION_OK) {
 		station->failed = true;
 		return result;

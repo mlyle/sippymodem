@@ -735,6 +735,33 @@ static bool test_generated_data_capacity(void)
 	return true;
 }
 
+static bool test_measured_data_capacity(void)
+{
+	struct pcm_constellation available = { 0 };
+	const struct pcm_constellation empty = { 0 };
+
+	for (unsigned code = 8u; code < 40u; code += 4u)
+		available.ucode_mask[code / 8u] |= (uint8_t)(1u << (code % 8u));
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		struct pcm_constellation selected = { 0 };
+
+		CHECK(v90_profile_generate_measured_constellation(law, 1u, 0u,
+			4024u * 4024u, &available, &selected) &&
+		      memcmp(&selected, &available, sizeof(selected)) == 0,
+		      "measured selection did not use the eight qualified levels");
+		struct pcm_constellation saved = selected;
+		CHECK(!v90_profile_generate_measured_constellation(law, V90_CP_RATE_INDEX_MAX,
+			0u, 4024u * 4024u, &available, &selected) &&
+		      !v90_profile_generate_measured_constellation(law, 1u, 0u,
+			1u, &available, &selected) &&
+		      !v90_profile_generate_measured_constellation(law, 1u, 0u,
+			4024u * 4024u, &empty, &selected) &&
+		      memcmp(&selected, &saved, sizeof(selected)) == 0,
+		      "insufficient measured capacity or power changed the selection");
+	}
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -768,6 +795,7 @@ int main(void)
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "generated constellation power selection", test_constellation_power_selection },
 		{ "generated data capacity", test_generated_data_capacity },
+		{ "measured data capacity", test_measured_data_capacity },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },
 		{ "result names", test_result_names },

@@ -60,6 +60,12 @@ bool v90_profile_generate_data_constellation(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
+/* Same power/distance design restricted to DIL-qualified levels. NULL retains
+ * the direct-codec level set. Empty or insufficient sets fail transactionally. */
+bool v90_profile_generate_measured_constellation(enum g711_law law,
+	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
+	const struct pcm_constellation *available, struct pcm_constellation *constellation);
+
 const char *v90_profile_result_name(enum v90_profile_result result);
 
 #endif /* V90_PROFILE_H */

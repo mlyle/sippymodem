@@ -3,6 +3,7 @@
 #include "test.h"
 
 #include "v90_dil_sequence.h"
+#include "pcm_dil_receiver.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -210,9 +211,65 @@ struct test_case {
 	bool (*run)(void);
 };
 
+static bool test_measured_levels(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned int robbed = 0; robbed < 2u; ++robbed) {
+			struct v90_dil_parameters parameters;
+			struct v90_dil_sequence sequence;
+			struct pcm_dil_receiver receiver;
+			struct pcm_dil_result result;
+			uint32_t length;
+
+			CHECK(v90_dil_profile_init(&parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+			      v90_dil_training_symbol_count(&parameters, &length) &&
+			      v90_dil_sequence_init(&sequence, &parameters, law) == V90_DIL_SEQUENCE_OK &&
+			      pcm_dil_receiver_init(&receiver, &parameters, law), "DIL measurement init");
+			for (uint32_t index = 0; index < length; ++index) {
+				struct v90_pcm_symbol symbol;
+
+				CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK,
+				      "DIL generator failed");
+				/* Force an LSB on one of six intervals, independent of the
+				 * receiver's implementation and descriptor segment edges. */
+				uint8_t wire = symbol.octet;
+				if (robbed && index % 6u == 4u)
+					wire |= 1u;
+				CHECK(pcm_dil_receiver_receive(&receiver, wire), "DIL observation failed");
+			}
+			CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
+			      result.symbols == length && pcm_constellation_count(&result.usable) >= 40u,
+			      "DIL did not qualify enough levels: %u", pcm_constellation_count(&result.usable));
+			if (!robbed)
+				CHECK(result.gain_q3_13 == 8192u && result.rejected_levels == 0u,
+				      "transparent DIL gain or rejection changed");
+			for (uint8_t code = 2u; code <= 108u; ++code) {
+				struct v90_pcm_symbol symbol;
+
+				CHECK(v90_pcm_symbol_make(&symbol, law, code, true), "invalid code");
+				CHECK(pcm_constellation_contains(&result.usable, code) ==
+				      (!robbed || (symbol.octet & 1u) != 0),
+				      "DIL qualified a changed level or missed a stable one: law %u code %u", law, code);
+			}
+			struct pcm_dil_receiver before = receiver;
+			CHECK(!pcm_dil_receiver_receive(&receiver, 0) &&
+			      memcmp(&receiver, &before, sizeof(receiver)) == 0,
+			      "DIL overrun changed the receiver");
+			struct pcm_constellation training = { .ucode_mask = { 0 } };
+			training.ucode_mask[80u / 8u] = 1u;
+			training.ucode_mask[40u / 8u] = 1u;
+			CHECK(pcm_dil_select_training(&result, &training) &&
+			      pcm_constellation_count(&training) == 2u,
+			      "DIL training selection lost capacity");
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
+		{ "measured DIL levels", test_measured_levels },
 		{ "exact repeated cycles", test_exact_cycles },
 		{ "bounded segment finish", test_bounded_finish },
 		{ "maximum segment", test_maximum_segment },

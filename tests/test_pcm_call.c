@@ -7019,6 +7019,7 @@ struct v92_upstream_offer {
 	/* Additional delayed samples exercise the measured channel inverse. */
 	double second_postcursor, third_postcursor;
 	bool check_b1_peer_retrain;
+	bool downstream_robbed_bit;
 };
 
 static bool v92_peer_retrain_quality_guard(const struct pcm_call *boundary, int16_t amplitude);
@@ -7623,6 +7624,15 @@ static bool capture_v92_duplex_data(
 		if (channel_memory)
 			ac.phase3.v92_analog.upstream_lu_ucode = 60u;
 	}
+	if (offer && offer->downstream_robbed_bit) {
+		/* A stable training code keeps binary gain acquisition independent
+		 * of the level substitutions that DIL is meant to discover. */
+		struct v90_pcm_symbol training;
+		CHECK(v90_pcm_symbol_make(&training, law, 90u, true), "training code");
+		uint8_t code = (training.octet & 1u) ? 90u : 91u;
+		ac.local_info1.v92_analog.training_ucode = code;
+		ac.phase3.v92_analog.local_info1a.training_ucode = code;
+	}
 	if (jp != NULL)
 		dc.phase3.v92_digital.jp = *jp;
 	if (long_cpd) {
@@ -7651,6 +7661,8 @@ static bool capture_v92_duplex_data(
 		struct pcm_call *calls[] = { &analog, &digital };
 
 		channel_receive(&wire, &ar, &dr);
+		if (offer && offer->downstream_robbed_bit && clock % 6u == 4u)
+			ar |= 1u;
 		for (size_t role = 0u; role < ARRAY_LENGTH(calls); ++role) {
 			struct pcm_call *call = calls[role];
 			enum pcm_call_stage previous_stage = call->stage;
@@ -7888,6 +7900,16 @@ static bool capture_v92_duplex_data(
 			      offer->local_maximum,
 		      "V.92 did not exchange the complete selected mapping or lost its rate policy");
 	}
+	if (offer && offer->downstream_robbed_bit) {
+		const struct pcm_dil_result *measured = &analog.downstream_dil;
+		CHECK(measured->measured && measured->rejected_levels > 0,
+		      "DIL did not retain rejected-level evidence");
+		const struct v90_pcm_mapping *mapping = &analog.state.data_path.v92_analog.downstream.data.stream.decoder.mapping;
+		for (unsigned code = 0; code < 128u; ++code)
+			CHECK(!pcm_constellation_contains(&mapping->transmit[0], code) ||
+			      pcm_constellation_contains(&measured->usable, code),
+			      "CPu selected an unqualified level");
+	}
 	if (capture != NULL)
 		*capture = (struct v92_online_pair){ .analog = analog, .digital = digital, .wire = wire };
 	return true;
@@ -7897,6 +7919,17 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd,
 	const struct v92_upstream_offer *offer)
 {
 	return capture_v92_duplex_data(law, delay, long_cpd, offer, NULL, 0u, NULL);
+}
+
+static bool test_v92_dil_data(void)
+{
+	const struct v92_upstream_offer offer = {
+		.peer_mask = 1u, .local_maximum = 1u, .expected = 1u,
+		.downstream_rate = 28000u, .downstream_robbed_bit = true,
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_v92_duplex_data(law, 3u, false, &offer), "measured DIL duplex data law %u", law);
+	return true;
 }
 
 static bool test_v92_duplex_data(void)
@@ -11794,6 +11827,7 @@ int main(int argc, char **argv)
 		bool (*run)(void);
 	} tests[] = {
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
+		{ "V.92 DIL excludes robbed-bit levels", test_v92_dil_data },
 		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },

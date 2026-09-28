@@ -300,6 +300,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_upstream_rx.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil_sequence.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_dil_receiver.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_ja_search.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_phase3_ja_rx.c \

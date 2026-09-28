@@ -46,7 +46,7 @@ PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_phase2.c pcm_phase2_info1_handoff.c \
 	pcm_phase3_digital_prefix.c pcm_phase3_digital_tx.c \
 	pcm_phase3_entry.c pcm_phase3_j_receiver.c \
-	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_rate.c \
+	pcm_phase3_handoff.c pcm_call.c pcm_phase3_profile.c pcm_rate.c pcm_dil_receiver.c \
 	pcm_startup.c pcm_s_pattern_rx.c \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v90_*.c)) \
 	$(notdir $(wildcard $(DSP_PCM_SOURCE_DIR)/v92_*.c))
@@ -1998,6 +1998,8 @@ V92_PHASE3_DIGITAL_STATION_TEST_OBJECTS := \
 	$(BUILD_DIR)/v92_ru_rx.o \
 	$(BUILD_DIR)/v92_upstream_rx.o \
 	$(BUILD_DIR)/v92_phase3_analog_station.o \
+	$(BUILD_DIR)/pcm_dil_receiver.o \
+	$(BUILD_DIR)/v90_dil_sequence.o \
 	$(BUILD_DIR)/v92_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_phase3_digital_tx.o \
 	$(BUILD_DIR)/pcm_phase3_digital_prefix.o \
@@ -2462,6 +2464,7 @@ V90_DIL_TEST_OBJECTS := \
 	$(BUILD_DIR)/v90_dil.o
 V90_DIL_SEQUENCE_TEST_BINARY := $(BUILD_DIR)/test_v90_dil_sequence
 V90_DIL_SEQUENCE_TEST_OBJECTS := \
+	$(BUILD_DIR)/pcm_dil_receiver.o \
 	$(BUILD_DIR)/test_v90_dil_sequence.o \
 	$(PCM_DIL_DESCRIPTOR_OBJECT) \
 	$(BUILD_DIR)/v90_dil.o \
@@ -2735,6 +2738,8 @@ V90_PHASE3_ANALOG_STATION_TEST_BINARY := \
 V90_PHASE3_ANALOG_STATION_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v90_phase3_analog_station.o \
 	$(BUILD_DIR)/v90_phase3_analog_station.o \
+	$(BUILD_DIR)/pcm_dil_receiver.o \
+	$(BUILD_DIR)/v90_dil_sequence.o \
 	$(BUILD_DIR)/v90_phase3_digital_station.o \
 	$(BUILD_DIR)/pcm_s_pattern_rx.o \
 	$(BUILD_DIR)/pcm_phase3_j_receiver.o \
@@ -5591,6 +5596,10 @@ $(BUILD_DIR)/pcm_phase3_digital_prefix.o: \
 
 $(BUILD_DIR)/v90_dil.o: \
 	$(DSP_PCM_SOURCE_DIR)/v90_dil.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/pcm_dil_receiver.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_dil_receiver.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v90_dil_sequence.o: \

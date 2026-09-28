@@ -257,7 +257,8 @@ static void generate_constellation(
 }
 
 static bool spaced_constellation(struct pcm_constellation *constellation,
-	enum g711_law law, uint8_t size, uint32_t spacing)
+	enum g711_law law, uint8_t size, uint32_t spacing,
+	const struct pcm_constellation *available)
 {
 	uint32_t threshold = (spacing + 1u) / 2u;
 
@@ -270,7 +271,8 @@ static bool spaced_constellation(struct pcm_constellation *constellation,
 
 		if (!g711_ucode_sample(law, (uint8_t)code, true, &level))
 			return false;
-		if ((uint32_t)level < threshold)
+		if ((available != NULL && !pcm_constellation_contains(available, (uint8_t)code)) ||
+		    (uint32_t)level < threshold)
 			continue;
 		add_ucode(constellation, (uint8_t)code);
 		if (--size == 0)
@@ -282,7 +284,8 @@ static bool spaced_constellation(struct pcm_constellation *constellation,
 
 /* Called only for a validated direct-law mapping with a common row. */
 static bool select_data_constellation(const struct v90_pcm_mapping *mapping,
-	uint32_t maximum_power, struct pcm_constellation *constellation)
+	uint32_t maximum_power, const struct pcm_constellation *available,
+	struct pcm_constellation *constellation)
 {
 	struct v90_pcm_mapping candidate = *mapping;
 	struct pcm_constellation best = { 0 };
@@ -301,7 +304,7 @@ static bool select_data_constellation(const struct v90_pcm_mapping *mapping,
 		uint32_t spacing = low + (high - low) / 2u;
 		uint32_t floor, ceiling;
 
-		if (!spaced_constellation(&candidate.transmit[0], mapping->law, size, spacing)) {
+		if (!spaced_constellation(&candidate.transmit[0], mapping->law, size, spacing, available)) {
 			high = spacing - 1u;
 			continue;
 		}
@@ -339,7 +342,7 @@ bool v90_profile_select_constellation(
 			   sizeof(mapping->transmit[0])) != 0)
 			return false;
 	if (mapping->kind == V90_CP_DATA)
-		return select_data_constellation(mapping, maximum_power, constellation);
+		return select_data_constellation(mapping, maximum_power, NULL, constellation);
 	size = mapping->modulus[0];
 	candidate = *mapping;
 	/* Preserve distinct labels, reducing the highest level until the exact
@@ -364,9 +367,9 @@ bool v90_profile_select_constellation(
 	return false;
 }
 
-bool v90_profile_generate_data_constellation(enum g711_law law,
+bool v90_profile_generate_measured_constellation(enum g711_law law,
 	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
-	struct pcm_constellation *constellation)
+	const struct pcm_constellation *available, struct pcm_constellation *constellation)
 {
 	struct v90_cp_parameters parameters = {
 		.kind = V90_CP_DATA, .law = law,
@@ -375,7 +378,8 @@ bool v90_profile_generate_data_constellation(enum g711_law law,
 	};
 	struct v90_pcm_mapping mapping;
 
-	if (!g711_law_is_valid(law) || rate_index == 0u ||
+	if (constellation == NULL || maximum_power == 0 ||
+	    !g711_law_is_valid(law) || rate_index == 0u ||
 	    rate_index > V90_CP_RATE_INDEX_MAX || sign_redundancy > 3u)
 		return false;
 	/* Regenerate capacity at the selected K. Retaining a former high-rate
@@ -385,7 +389,15 @@ bool v90_profile_generate_data_constellation(enum g711_law law,
 	generate_constellation(&parameters.transmit_constellations[0],
 		data_constellation_size(rate_index, sign_redundancy), V90_CONSTELLATION_LAST_UCODE);
 	return v90_pcm_mapping_init(&mapping, &parameters) == V90_PCM_MAPPING_OK &&
-		v90_profile_select_constellation(&mapping, maximum_power, constellation);
+		select_data_constellation(&mapping, maximum_power, available, constellation);
+}
+
+bool v90_profile_generate_data_constellation(enum g711_law law,
+	uint8_t rate_index, uint8_t sign_redundancy, uint32_t maximum_power,
+	struct pcm_constellation *constellation)
+{
+	return v90_profile_generate_measured_constellation(law, rate_index,
+		sign_redundancy, maximum_power, NULL, constellation);
 }
 
 static struct v90_cp_parameters cp_parameters(

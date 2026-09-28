@@ -125,6 +125,15 @@ endpoint connects directly to another digital codec with no intervening
 analogue conversion. The default is `0`; remote RTP clocking does not establish
 this topology. Native direct-codec interoperability runs should opt in explicitly.
 
+V.90 and V.92 share DIL measurement and downstream constellation selection.
+The receiver qualifies levels observed twice with each sign in all six frame
+intervals, after filter settling. Changed or unobserved levels are excluded
+from training and data selections; data rates remain bounded by measured
+capacity, negotiated capabilities, and transmit power. This supports a common
+set of unchanged G.711 levels, including routes with robbed-bit substitutions.
+General digital attenuation, codec-law conversion, and different inverse maps
+for individual frame intervals are not yet inferred from DIL.
+
 The PCM call owner supports V.92 shortened Phase 2/3 using caller-retained
 training settings. Its read-only profile query uses the actual training
 selection and live receive gain, rejecting retrain, rate exchange, and

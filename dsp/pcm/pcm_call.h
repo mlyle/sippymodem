@@ -500,6 +500,8 @@ struct pcm_call {
 	/* V.92 PCM channel memory, independent of control/data coding epochs.
 	 * A full retrain clears it; Ri learns the next channel. */
 	struct pcm_downstream_equalizer downstream_equalizer;
+	/* Retained through data/rate changes; refreshed on full training. */
+	struct pcm_dil_result downstream_dil;
 	struct pcm_gain upstream_host_gain;
 	bool upstream_host_gain_inconsistent;
 	/* Inherit Su's reconstruction history at the Phase 3 handoff. Keep it

@@ -4,6 +4,7 @@
 #define V92_PHASE3_ANALOG_STATION_H
 
 #include "pcm_s_pattern_rx.h"
+#include "pcm_dil_receiver.h"
 #include "v90_phase4_ri_search.h"
 #include "v92_pcm_phase3_cpt_tx.h"
 #include "v92_pcm_phase3_initial_tx.h"
@@ -41,10 +42,10 @@ enum v92_phase3_analog_station_result {
 
 struct v92_phase3_analog_station_configuration {
 	struct v92_pcm_info1a local_info1a;
-	/* Caller-selected downstream map; adaptive DIL map selection is not
-	 * owned by this station. Nonzero DIL allows one training traversal,
-	 * shortened only to meet the post-Su CPt deadline. */
+	/* Seed downstream map. With learning enabled, DIL may replace its
+	 * levels before the first CPt, within the post-Su deadline. */
 	struct v92_cpt_parameters cpt;
+	bool learn_dil;
 	uint32_t upstream_rate_mask;
 	uint32_t initial_trn1u_symbols;
 	enum v90_dil_profile dil_profile;
@@ -81,6 +82,9 @@ struct v92_phase3_analog_station {
 	union v92_phase3_analog_transmit transmit;
 	struct fractional_delay transmit_delay;
 	struct v92_cpt_parameters cpt_parameters;
+	struct pcm_dil_receiver dil_receiver;
+	struct pcm_dil_result dil_result;
+	bool learn_dil;
 	uint32_t upstream_rate_mask;
 	uint32_t second_trn1u_symbols;
 	enum v90_dil_profile dil_profile;

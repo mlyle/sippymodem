@@ -104,6 +104,7 @@ static void configure_analog(
 			.initial_trn1u_symbols =
 				V92_PROFILE_INITIAL_TRN1U_SYMBOLS,
 			.dil_profile = V90_DIL_PROFILE_CONVENTIONAL,
+			.learn_dil = true,
 			.law = selected->law,
 			.upstream_lu_ucode = V92_TRAINING_UCODE,
 		};

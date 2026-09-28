@@ -6,6 +6,7 @@
 #include "v90_phase3_analog_line_tx.h"
 #include "v90_phase3_return_line_tx.h"
 #include "pcm_s_pattern_rx.h"
+#include "pcm_dil_receiver.h"
 #include "pcm_phase3_j_receiver.h"
 
 #include <stdbool.h>
@@ -64,6 +65,8 @@ struct v90_phase3_analog_receive_handoff {
 struct v90_phase3_analog_station {
 	union v90_phase3_analog_station_transmit transmit;
 	union v90_phase3_analog_station_receive receive;
+	struct pcm_dil_receiver dil_receiver;
+	struct pcm_dil_result dil_result;
 	uint32_t dil_training_symbols;
 	uint32_t dil_received_symbols;
 	enum v90_phase3_analog_transmit_stage transmit_stage;

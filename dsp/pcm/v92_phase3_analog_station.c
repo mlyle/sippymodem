@@ -193,7 +193,10 @@ bool v92_phase3_analog_station_configuration_is_valid(
 		       configuration->upstream_rate_mask) &&
 	       v92_pcm_info1a_is_valid(&configuration->local_info1a) &&
 	       v92_cpt_parameters_are_valid(&configuration->cpt) &&
-	       configuration->cpt.law == configuration->law;
+	       configuration->cpt.law == configuration->law &&
+	       (!configuration->learn_dil ||
+		(configuration->cpt.constellation_count == 1u &&
+		 !configuration->cpt.codec_constellations_differ));
 }
 
 enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
@@ -233,6 +236,10 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 		    PCM_S_PATTERN_RX_OK)
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	fractional_delay_init(&initialized.transmit_delay);
+	initialized.learn_dil = configuration->learn_dil && dil.segment_count != 0;
+	if (initialized.learn_dil &&
+	    !pcm_dil_receiver_init(&initialized.dil_receiver, &dil, configuration->law))
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
 	initialized.restore_codec_grid = configuration->restore_codec_grid;
 	initialized.cpt_parameters = configuration->cpt;
 	initialized.upstream_rate_mask = configuration->upstream_rate_mask;
@@ -321,11 +328,19 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	    station->transmit.cpt.trn1u.emitted_symbols >= station->second_trn1u_symbols &&
 	    (station->dil_profile != V90_DIL_PROFILE_NONE ||
 	     v90_phase4_ri_search_is_acquired(&station->receive.ri)) &&
-	    v92_pcm_phase3_trn1u_can_handoff(
-		    &station->transmit.cpt.trn1u) &&
-	    v92_pcm_phase3_cpt_tx_start(&station->transmit.cpt) !=
-		    V92_PCM_PHASE3_CPT_TX_OK)
-		return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	    v92_pcm_phase3_trn1u_can_handoff(&station->transmit.cpt.trn1u)) {
+		if (station->learn_dil) {
+			if (!pcm_dil_receiver_finish(&station->dil_receiver, &station->dil_result) ||
+			    !pcm_dil_select_training(&station->dil_result,
+				    &station->cpt_parameters.transmit_constellations[0]) ||
+			    v92_cpt_encode(&station->cpt_parameters, station->transmit.cpt.frame,
+				    sizeof(station->transmit.cpt.frame),
+				    &station->transmit.cpt.frame_bit_count) != V92_CPT_OK)
+				return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+		}
+		if (v92_pcm_phase3_cpt_tx_start(&station->transmit.cpt) != V92_PCM_PHASE3_CPT_TX_OK)
+			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+	}
 	if (v92_pcm_phase3_cpt_tx_is_complete(&station->transmit.cpt)) {
 		struct v92_pcm_phase4_trn2u trn2u;
 
@@ -557,6 +572,12 @@ static enum v92_phase3_analog_station_result receive_j(
 static enum v92_phase3_analog_station_result receive_ri(
 	struct v92_phase3_analog_station *station, uint8_t network_octet)
 {
+	if (station->learn_dil &&
+	    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+	    station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    station->dil_receiver.symbols < station->dil_receiver.limit &&
+	    !pcm_dil_receiver_receive(&station->dil_receiver, network_octet))
+		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	/* A nonzero-DIL peer cannot acknowledge CPt before receiving it.
 	 * Do not hunt for Ri in the preceding training symbols. */
 	if (station->dil_profile != V90_DIL_PROFILE_NONE &&
