@@ -141,6 +141,15 @@ static bool test_generated_profiles(void)
 				      pcm_call_is_valid(&conventional_call),
 				      "role %u law %u rate %u lost conventional policy",
 				      role_index, law_index, rate);
+				CHECK(role == V90_ANALOG_MODEM ?
+				      conventional.local_info1.analog.upstream_symbol_rate ==
+					      V34_SYMBOL_RATE_3429 &&
+				      conventional.analog_phase4.data_parameters.upstream_rate_mask == 0x1fffu :
+				      conventional.digital_phase4.initial_mp.parameters.type0
+					      .maximum_upstream_rate_2400_bps_units == 14 &&
+				      conventional.digital_phase4.initial_mp.parameters.type0
+					      .upstream_rate_capability_mask == 0x1fffu,
+				      "V.92 default conventional upstream lost 33.6k capability");
 				if (role == V90_ANALOG_MODEM) {
 					const struct v92_phase3_analog_station_configuration
 						*phase3 = &configuration.phase3.v92_analog;

@@ -2107,6 +2107,29 @@ static enum pcm_phase2_result start_short_analog_info1(struct pcm_call *call)
 	return result;
 }
 
+static bool select_conventional_upstream(
+	const struct pcm_call *call, struct v90_info1a *selected)
+{
+	const struct v90_info0d *capabilities = call->protocol == PCM_PROTOCOL_V92 ?
+		&call->peer_info0.v92_digital.v90 : &call->peer_info0.digital;
+	struct v34_info1c peer;
+
+	if (pcm_phase2_peer_info1d(&call->state.phase2, &peer) != PCM_PHASE2_OK)
+		return false;
+	/* V.90 Tables 9/10: INFO1a selects a usable INFO1d projection.
+	 * Keep the configured ceiling intact for subsequent retrains. */
+	for (int rate = selected->upstream_symbol_rate; rate >= V34_SYMBOL_RATE_3000; --rate) {
+		if (rate == V34_SYMBOL_RATE_3429 &&
+		    !capabilities->upstream_symbol_rate_3429_supported)
+			continue;
+		if (peer.answer_transmit[rate].projected_data_rate_2400_bps_units != 0u) {
+			selected->upstream_symbol_rate = (enum v34_symbol_rate)rate;
+			return true;
+		}
+	}
+	return false;
+}
+
 static enum pcm_call_result advance_phase2(
 	struct pcm_call *call, const struct pcm_phase2_event *event)
 {
@@ -2169,6 +2192,8 @@ static enum pcm_call_result advance_phase2(
 			pcm_upstream = peer.pcm_upstream_supported &&
 				call->local_info1.pcm_upstream_enabled;
 		}
+		if (!pcm_upstream && !select_conventional_upstream(call, &selected.analog))
+			return PCM_CALL_UNUSABLE_SELECTION;
 		if (!select_training_ucode(call, pcm_upstream ?
 			&selected.v92_analog.training_ucode : &selected.analog.training_ucode))
 			return PCM_CALL_UNUSABLE_SELECTION;

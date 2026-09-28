@@ -109,9 +109,11 @@ standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90, and
 V.92 are registered. V.90 can select every standard PCM downstream rate from
 28000 through 56000 bit/s and a conventional V.34 upstream from 4800 through
-33600 bit/s at 3000, 3200, or 3429 symbol/s. V.90 and V.92 share one PCM call
-state machine. V.92 supports PCM or conventional upstream and optional
-QC1/QCA1 Quick Connect startup (`AT+V92Q=1`). These experimental profiles
+33600 bit/s at 3000, 3200, or 3429 symbol/s. Automatic conventional upstream
+allows 33600 bit/s, selecting a usable peer-offered symbol rate below the local
+ceiling; the final rate still depends on the peer's MP and measured quality.
+V.90 and V.92 share one PCM call state machine. V.92 supports PCM or conventional
+upstream and optional QC1/QCA1 Quick Connect startup (`AT+V92Q=1`). These experimental profiles
 can carry native duplex host data and perform full retrains. Sustained excessive
 PCM-upstream residuals or ambiguous payload trigger up to two automatic full
 retrains per call; ambiguous bits are never delivered. Generated-channel tests

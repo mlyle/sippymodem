@@ -63,7 +63,8 @@ struct endpoint {
 	size_t phase4_octets;
 	size_t downstream_frames;
 	size_t upstream_frames;
-	uint16_t upstream_received_delay;
+	uint32_t upstream_received_delay;
+	uint8_t upstream_delay_bits;
 	uint16_t phase4_entry_ri_symbols;
 	uint32_t phase4_entry_ri_wait_samples;
 	uint32_t info1_b1_deadline_samples;
@@ -600,10 +601,10 @@ static bool downstream_frame_matches(
 
 static bool upstream_frame_matches(
 	const struct v34_received_mapping_frame *received,
-	uint16_t *received_delay, size_t frame_index)
+	uint32_t *received_delay, size_t frame_index, uint8_t delay_bits)
 {
 	uint8_t expected[V34_MAX_MAPPING_FRAME_BITS];
-	uint16_t delayed;
+	uint32_t delayed;
 	uint8_t expected_auxiliary = (uint8_t)(
 		(frame_index + received->mapping_frame.index) & 1u);
 
@@ -615,12 +616,11 @@ static bool upstream_frame_matches(
 		return false;
 	generate_data_bits(
 		expected, received->primary_bit_count, frame_index + 97u);
-	delayed = *received_delay;
+	delayed = *received_delay & ((UINT32_C(1) << delay_bits) - 1u);
 	for (size_t bit = 0; bit < received->primary_bit_count; ++bit) {
 		uint8_t wire_bit = (uint8_t)(delayed & 1u);
 
-		delayed = (uint16_t)((delayed >> 1) |
-				     ((uint16_t)expected[bit] << 15));
+		delayed = (delayed >> 1) | ((uint32_t)expected[bit] << (delay_bits - 1u));
 		if (received->primary_bits[bit] != wire_bit)
 			return false;
 	}
@@ -1065,7 +1065,8 @@ static bool endpoint_data_octet(
 			return false;
 		if (!upstream_frame_matches(
 			    &event.frame.upstream,
-			    &endpoint->upstream_received_delay, expected)) {
+			    &endpoint->upstream_received_delay, expected,
+			    endpoint->upstream_delay_bits ? endpoint->upstream_delay_bits : 16u)) {
 			CHECK(endpoint->resync_data_frame, "upstream frame %zu differs", expected);
 		} else {
 			endpoint->resync_data_frame = false;
@@ -1092,7 +1093,7 @@ static bool endpoint_octet(
 		    memcmp(&channel, &endpoint->call.downstream_equalizer, sizeof(channel)) != 0)
 			return false;
 		if (endpoint->call.local_role == V90_DIGITAL_MODEM)
-			endpoint->upstream_received_delay = UINT16_MAX;
+			endpoint->upstream_received_delay = UINT32_MAX;
 		endpoint->phase4_boundary_checked = true;
 		endpoint->data_path_started = true;
 	}
@@ -1809,6 +1810,100 @@ static bool step_endpoints(
 		    &digital_transmitted))
 		return false;
 	channel_transmit(channel, analog_transmitted, digital_transmitted);
+	return true;
+}
+
+static bool run_automatic_upstream(enum pcm_protocol protocol, enum g711_law law, unsigned trial)
+{
+	const enum v34_symbol_rate expected_baud[] = {
+		V34_SYMBOL_RATE_3429, V34_SYMBOL_RATE_3200, V34_SYMBOL_RATE_3000,
+		V34_SYMBOL_RATE_3000, V34_SYMBOL_RATE_3000,
+	};
+	const unsigned expected_rate[] = { 33600u, 31200u, 28800u, 28800u, 0u };
+	struct v90_upstream_policy policy = { 0 };
+	struct pcm_call_configuration ac, dc;
+	struct endpoint analog = { .upstream_received_delay = UINT16_MAX };
+	struct endpoint digital = { .upstream_received_delay = UINT16_MAX };
+	struct channel wire;
+
+	/* Exercise both NULL and all-zero automatic policies, then a local
+	 * ceiling against a faster peer. PCM upstream remains a separate path. */
+	if (trial == 3u)
+		policy.maximum_symbol_rate = 3000u;
+	if (protocol == PCM_PROTOCOL_V90) {
+		CHECK(v90_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u,
+			trial == 0u ? NULL : &policy) == V90_PROFILE_OK &&
+		      v90_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, NULL) == V90_PROFILE_OK,
+		      "automatic V.90 profiles failed");
+	} else {
+		CHECK(v92_profile_init(&ac, V90_ANALOG_MODEM, law, 28000u, 56000u, 19u,
+			trial == 0u ? NULL : &policy) == V92_PROFILE_OK &&
+		      v92_profile_init(&dc, V90_DIGITAL_MODEM, law, 28000u, 56000u, 19u, NULL) == V92_PROFILE_OK,
+		      "automatic V.92 profiles failed");
+		ac.local_info1.pcm_upstream_enabled = false;
+	}
+	struct v34_info1c *offer = protocol == PCM_PROTOCOL_V90 ?
+		&dc.local_info1.digital : &dc.local_info1.v92_digital.v34;
+	struct v90_info0d *capabilities = protocol == PCM_PROTOCOL_V90 ?
+		&dc.local_info0.digital : &dc.local_info0.v92_digital.v90;
+	if (trial == 1u)
+		capabilities->upstream_symbol_rate_3429_supported = false;
+	if (trial == 2u || trial == 4u) {
+		for (unsigned rate = trial == 4u ? V34_SYMBOL_RATE_3000 : V34_SYMBOL_RATE_3200;
+		     rate <= V34_SYMBOL_RATE_3429; ++rate)
+			offer->answer_transmit[rate].projected_data_rate_2400_bps_units = 0u;
+	}
+	CHECK(channel_init(&wire, law, 3u) &&
+	      pcm_call_init(&analog.call, &ac) == PCM_CALL_OK &&
+	      pcm_call_init(&digital.call, &dc) == PCM_CALL_OK, "automatic call setup failed");
+	for (size_t clock = 0u; clock < CALL_SAMPLE_LIMIT; ++clock) {
+		if (trial == 4u) {
+			uint8_t rx[2], tx[2];
+			struct pcm_call_observation event;
+			channel_receive(&wire, &rx[0], &rx[1]);
+			enum pcm_call_result result = pcm_call_octet(&analog.call, rx[0],
+				decode_octet(law, rx[0]), &tx[0], &event);
+			if (result == PCM_CALL_UNUSABLE_SELECTION) {
+				CHECK(!analog.call.phase3_entry_stored &&
+				      event.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1D_RECEIVED,
+				      "empty offer failed outside INFO1 selection");
+				return true;
+			}
+			CHECK(result == PCM_CALL_OK && pcm_call_octet(&digital.call, rx[1],
+				decode_octet(law, rx[1]), &tx[1], &event) == PCM_CALL_OK,
+			      "empty upstream offer failed unexpectedly");
+			channel_transmit(&wire, tx[0], tx[1]);
+			continue;
+		}
+		if (analog.call.stage == PCM_CALL_DATA_PATH &&
+		    analog.call.state.data_path.analog.upstream_stage == V90_ANALOG_PATH_UPSTREAM_DATA)
+			digital.upstream_delay_bits = analog.call.state.data_path.analog.upstream.data.primary_delay_bits;
+		CHECK(step_endpoints(&wire, &analog, &digital, law),
+		      "automatic upstream failed: protocol=%u law=%u trial=%u clock=%zu",
+		      protocol, law, trial, clock);
+		if (analog.downstream_frames < 64u || digital.upstream_frames < 64u)
+			continue;
+		uint32_t upstream, downstream;
+		CHECK(pcm_call_get_data_rates(&analog.call, &upstream, &downstream) &&
+		      upstream == expected_rate[trial] && downstream == 56000u &&
+		      pcm_call_get_data_rates(&digital.call, &downstream, &upstream) &&
+		      upstream == expected_rate[trial] && downstream == 56000u &&
+		      analog.call.phase3_entry.selection.analog.conventional.upstream_symbol_rate == expected_baud[trial] &&
+		      digital.call.phase3_entry.selection.analog.conventional.upstream_symbol_rate == expected_baud[trial] &&
+		      memcmp(&analog.call.local_info1, &ac.local_info1, sizeof(ac.local_info1)) == 0,
+		      "automatic upstream ignored the peer offer or local ceiling: protocol=%u law=%u trial=%u rate=%u",
+		      protocol, law, trial, upstream);
+		return true;
+	}
+	CHECK(false, "automatic upstream timed out: protocol=%u law=%u trial=%u", protocol, law, trial);
+}
+
+static bool test_automatic_upstream(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			for (unsigned trial = 0u; trial < 5u; ++trial)
+				CHECK(run_automatic_upstream(protocol, law, trial), "automatic upstream failed");
 	return true;
 }
 
@@ -4605,7 +4700,7 @@ static bool run_rate_renegotiation_case(
 	size_t received_before;
 	size_t downstream_before;
 	size_t rd_symbols = 0u;
-	uint16_t resumed_upstream_delay = UINT16_MAX;
+	uint32_t resumed_upstream_delay = UINT16_MAX;
 	uint32_t prior_transmit_rate;
 	uint32_t prior_receive_rate;
 	uint32_t expected_deadline;
@@ -4971,7 +5066,7 @@ static bool run_rate_renegotiation_case(
 			bool matches = upstream_frame_matches(
 				&event.frame.upstream,
 				&resumed_upstream_delay,
-				upstream_before_resume);
+				upstream_before_resume, 16u);
 
 			CHECK(!was_active && !upstream_host_frame_received && matches,
 			      "law/constellation %u/%u rate-renegotiation replayed "
@@ -5139,7 +5234,7 @@ static bool run_paired_remote_rate_renegotiation(
 	size_t rd_high_water = 0u;
 	size_t s_high_water = 0u;
 	size_t s_bar_high_water = 0u;
-	uint16_t upstream_delay = UINT16_MAX;
+	uint32_t upstream_delay = UINT16_MAX;
 	uint32_t analog_rates[2];
 	uint32_t digital_rates[2];
 	uint32_t analog_deadline;
@@ -5477,7 +5572,7 @@ static bool run_paired_remote_rate_renegotiation(
 		    analog_started && !digital_path->rate_renegotiation_active) {
 			bool matches = upstream_frame_matches(
 				&digital_event.frame.upstream, &upstream_delay,
-				analog_resume_source);
+				analog_resume_source, 16u);
 
 			CHECK(matches || pcm_frame_is_fill(
 				      digital_event.frame.upstream.primary_bits,
@@ -11683,6 +11778,7 @@ int main(int argc, char **argv)
 		{ "validation and transactionality", test_validation },
 		{ "V.92 validation", test_v92_validation },
 		{ "result names", test_result_names },
+		{ "automatic conventional upstream and peer-limited fallback", test_automatic_upstream },
 	};
 	unsigned int failures = 0;
 	size_t first = 0, stride = 1;

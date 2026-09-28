@@ -15,7 +15,6 @@ enum {
 	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 6,
 	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
-	V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS = 12,
 	V90_SIGN_REDUNDANCY = 1,
 	/* Depths zero and one are mandatory at the digital modem; deeper
 	 * spectral shaping is optional.  Use the deepest mandatory profile in
@@ -30,7 +29,6 @@ struct v90_upstream_selection {
 	uint16_t rate_mask;
 	uint8_t maximum_rate_2400_bps_units;
 	enum v34_symbol_rate symbol_rate;
-	bool custom;
 	bool suppress_optional_info1d_3429;
 };
 
@@ -104,7 +102,7 @@ static struct v34_info1c digital_info1(
 		 * mandatory 3200 fallback from digital INFO1d. */
 		if (rate == V34_SYMBOL_RATE_3429 &&
 		    (upstream->suppress_optional_info1d_3429 ||
-		     (upstream->custom && rate > (size_t)upstream->symbol_rate)))
+		     rate > (size_t)upstream->symbol_rate))
 			projected = 0;
 		info1.answer_transmit[rate] =
 			(struct v34_info1_probe_result){
@@ -153,14 +151,8 @@ static enum v90_profile_result select_upstream(
 	const struct v90_upstream_policy *policy,
 	struct v90_upstream_selection *selection)
 {
-	struct v90_upstream_selection selected = {
-		/* V.90 Tables 14/16: capabilities use 2400-bit/s steps, not
-		 * 4800-bit/s steps. MP's maximum separately bounds selection. */
-		.rate_mask = V90_CP_UPSTREAM_RATE_MASK,
-		.maximum_rate_2400_bps_units =
-			V90_DEFAULT_UPSTREAM_MAXIMUM_RATE_UNITS,
-		.symbol_rate = V34_SYMBOL_RATE_3000,
-	};
+	const struct v90_upstream_policy automatic = { 0 };
+	struct v90_upstream_selection selected = { 0 };
 	unsigned int minimum;
 	unsigned int maximum;
 	unsigned int symbol_rate;
@@ -168,18 +160,10 @@ static enum v90_profile_result select_upstream(
 
 	if (selection == NULL)
 		return V90_PROFILE_INVALID_ARGUMENT;
-	if (policy == NULL) {
-		*selection = selected;
-		return V90_PROFILE_OK;
-	}
+	if (policy == NULL)
+		policy = &automatic;
 	selected.suppress_optional_info1d_3429 =
 		policy->suppress_optional_info1d_3429;
-	if (policy->minimum_bit_rate == 0 &&
-	     policy->maximum_bit_rate == 0 &&
-	     policy->maximum_symbol_rate == 0) {
-		*selection = selected;
-		return V90_PROFILE_OK;
-	}
 	minimum = policy->minimum_bit_rate == 0 ?
 			  4800u : policy->minimum_bit_rate;
 	maximum = policy->maximum_bit_rate == 0 ?
@@ -194,9 +178,8 @@ static enum v90_profile_result select_upstream(
 		return V90_PROFILE_UNSUPPORTED_RATE;
 	maximum_units = selected.symbol_rate == V34_SYMBOL_RATE_3000 ? 12u :
 			selected.symbol_rate == V34_SYMBOL_RATE_3200 ? 13u : 14u;
-	selected.rate_mask = 0;
-	selected.maximum_rate_2400_bps_units = 0;
-	selected.custom = true;
+	/* V.90 Tables 14/16: capabilities use 2400-bit/s steps. Automatic
+	 * selection includes 31.2/33.6k, subject to the peer's INFO1d and MP. */
 	for (unsigned int units = V90_MP_MINIMUM_RATE_2400_BPS_UNITS;
 	     units <= maximum_units; ++units) {
 		unsigned int bit_rate = units * 2400u;

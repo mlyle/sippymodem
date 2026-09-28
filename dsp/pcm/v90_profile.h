@@ -13,7 +13,8 @@ enum {
 	V90_PROFILE_MAX_DOWNSTREAM_BIT_RATE = 56000,
 };
 
-/* Zero fields select the generated conventional-upstream defaults. */
+/* Zero rate limits allow 4800..33600 bit/s. A zero symbol-rate ceiling
+ * chooses the highest rate needed by that range (up to 3429 symbols/s). */
 struct v90_upstream_policy {
 	unsigned int minimum_bit_rate;
 	unsigned int maximum_bit_rate;
