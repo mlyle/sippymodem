@@ -721,6 +721,11 @@ static bool run_pcm_pair(
 	bool post_retrain_data_enabled = false;
 	bool automatic_retrain = upstream_channel == UPSTREAM_CHANNEL_NOISE_BURST;
 	bool exercise_retrain = retrain_role != MODEM_PCM_ROLE_NONE || automatic_retrain;
+	/* Reserve payload time at the slowest supported upstream rate separately
+	 * from each training budget, which now includes nonzero DIL. */
+	size_t sample_limit = (CALL_OCTET_LIMIT +
+		(minimum_received_bits * MODEM_RATE + 4799u) / 4800u) *
+		(exercise_retrain ? 2u : 1u);
 	uint32_t noise_state = UINT32_C(0x197bc485);
 	unsigned int noise_samples = 0;
 	unsigned int dropout_samples = 0;
@@ -762,9 +767,7 @@ static bool run_pcm_pair(
 	      operations->use_count == 2 && v90_datapump_is_busy(),
 	      "V.90 peers did not own independent data pumps");
 	for (size_t octet = 0;
-	     octet < (require_online ?
-			     CALL_OCTET_LIMIT * (exercise_retrain ? 2u : 1u) :
-			     30000u);
+	     octet < (require_online ? sample_limit : 30000u);
 	     ++octet) {
 		uint8_t next_digital;
 		uint8_t next_analog;

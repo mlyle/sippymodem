@@ -5,6 +5,11 @@
 
 #include <stddef.h>
 
+enum {
+	/* V.92 9.5.2.1.11: CPt within 5000 ms of the post-Jp Su reversal. */
+	CPT_DEADLINE_SYMBOLS = 40000,
+};
+
 static bool receive_stage_is_valid(
 	enum v92_phase3_analog_receive_stage stage)
 {
@@ -156,6 +161,9 @@ bool v92_phase3_analog_station_is_valid(
 		       V90_INFO1A_MAX_TRAINING_UCODE &&
 	       station->upstream_lu > 0 &&
 	       station->upstream_rate_mask != 0u &&
+	       station->second_trn1u_symbols >= V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS &&
+	       station->second_trn1u_symbols <= CPT_DEADLINE_SYMBOLS &&
+	       station->second_trn1u_symbols % V92_PCM_PHASE3_TRN1U_ALIGNMENT == 0u &&
 	       v92_pcm_dil_rate_mask_is_valid(station->upstream_rate_mask) &&
 	       v90_dil_profile_is_valid(station->dil_profile) &&
 	       v92_cpt_parameters_are_valid(&station->cpt_parameters) &&
@@ -193,6 +201,7 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 	const struct v92_phase3_analog_station_configuration *configuration)
 {
 	struct v92_phase3_analog_station initialized = { 0 };
+	struct v90_dil_parameters dil;
 	struct v90_pcm_symbol lu;
 
 	if (station == NULL ||
@@ -201,6 +210,14 @@ enum v92_phase3_analog_station_result v92_phase3_analog_station_init(
 		    &lu, configuration->law,
 		    configuration->upstream_lu_ucode, true))
 		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (v90_dil_profile_init(&dil, configuration->dil_profile) != V90_DIL_OK ||
+	    !v90_dil_training_symbol_count(&dil, &initialized.second_trn1u_symbols))
+		return V92_PHASE3_ANALOG_STATION_INVALID_ARGUMENT;
+	if (initialized.second_trn1u_symbols < V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS)
+		initialized.second_trn1u_symbols = V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS;
+	initialized.second_trn1u_symbols =
+		(initialized.second_trn1u_symbols + V92_PCM_PHASE3_TRN1U_ALIGNMENT - 1u) /
+		V92_PCM_PHASE3_TRN1U_ALIGNMENT * V92_PCM_PHASE3_TRN1U_ALIGNMENT;
 	if (v92_pcm_phase3_initial_tx_init(
 		    &initialized.transmit.initial, configuration->law,
 		    configuration->upstream_lu_ucode,
@@ -297,10 +314,10 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	    V92_PCM_PHASE3_CPT_TX_OK)
 		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	*sample = symbol.sample;
-	/* V.92 9.5.2.1.10-11: N=0 waits for Ri. With DIL the configured
-	 * map is already available: start CPt after the minimum TRN1u.
-	 * Waiting for a full DIL traversal can exceed the five-second limit. */
+	/* N=0 waits for Ri; nonzero DIL allows a training traversal, bounded
+	 * at Jp-prime by the time left since the post-Jp Su reversal. */
 	if (station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    station->transmit.cpt.trn1u.emitted_symbols >= station->second_trn1u_symbols &&
 	    (station->dil_profile != V90_DIL_PROFILE_NONE ||
 	     v90_phase4_ri_search_is_acquired(&station->receive.ri)) &&
 	    v92_pcm_phase3_trn1u_can_handoff(
@@ -492,6 +509,24 @@ static enum v92_phase3_analog_station_result receive_j(
 		struct v92_pcm_phase3_cpt_tx cpt;
 		struct v90_phase4_ri_search ri;
 
+		if (station->dil_profile != V90_DIL_PROFILE_NONE) {
+			/* Su's counter resets after its 24T reversal. Account for
+			 * that interval, the CPt prefix, and fractional rounding
+			 * before budgeting TRN1u. Check before subtracting: a late
+			 * Jp-prime must not wrap the budget or bypass minimum TRN1u. */
+			const uint32_t available = CPT_DEADLINE_SYMBOLS -
+				V92_SU_JP_BAR_INPUT_SYMBOLS - V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS - 1u;
+			uint64_t waited = station->transmit.su.stage_symbols;
+
+			if (station->transmit.su.stage != V92_SU_JP_PRIME_WAIT ||
+			    waited > available - V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS)
+				return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
+			uint32_t remaining = (available - (uint32_t)waited) /
+				V92_PCM_PHASE3_TRN1U_ALIGNMENT * V92_PCM_PHASE3_TRN1U_ALIGNMENT;
+
+			if (station->second_trn1u_symbols > remaining)
+				station->second_trn1u_symbols = remaining;
+		}
 		if (v92_su_accept_jp_prime(
 			    &station->transmit.su,
 			    &station->transmit_delay, true) != V92_SU_COMPLETE ||

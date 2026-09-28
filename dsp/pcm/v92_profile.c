@@ -15,8 +15,6 @@ enum {
 	V92_SIGN_REDUNDANCY = 1,
 };
 
-static const uint8_t v92_cpt_ucodes[] = { 76, 68, 57, 35 };
-
 static void add_ucode(
 	struct pcm_constellation *constellation, uint8_t ucode)
 {
@@ -25,15 +23,20 @@ static void add_ucode(
 }
 
 static void generate_cpt_constellation(
-	struct pcm_constellation *constellation)
+	struct pcm_constellation *constellation, enum g711_law law)
 {
+	static const uint8_t ucodes[][4] = {
+		{ 87, 81, 69, 47 },
+		{ 76, 68, 57, 35 },
+	};
+
 	/* CPt is a training map, independent of the later CPu data rate. Four
 	 * levels in each of six intervals carry exactly twelve modulus bits;
-	 * with Sr=1 this selects the compact 22667 bit/s training profile. */
-	for (size_t index = 0;
-	     index < sizeof(v92_cpt_ucodes) / sizeof(v92_cpt_ucodes[0]);
-	     ++index)
-		add_ucode(constellation, v92_cpt_ucodes[index]);
+	 * with Sr=1 this selects the compact 22667 bit/s training profile.
+	 * The mu-law levels and a1=1 below match successful hardware calls;
+	 * retain the A-law map until equivalent evidence is available. */
+	for (size_t index = 0; index < 4u; ++index)
+		add_ucode(constellation, ucodes[law == G711_LAW_PCMA][index]);
 }
 
 static struct v92_pcm_info1a analog_info1(void)
@@ -51,13 +54,14 @@ static struct v92_cpt_parameters cpt_parameters(enum g711_law law)
 	struct v92_cpt_parameters parameters = {
 		.law = law,
 		.trn1d_ratio_q3_13 = UINT16_C(0x2000),
+		.shaping_a1_q1_6 = law == G711_LAW_PCMU ? 64 : 0,
 		.selected_rate_index = V92_CPT_SELECTED_RATE_INDEX,
 		.sign_redundancy = V92_SIGN_REDUNDANCY,
 		.spectral_lookahead = 2,
 		.constellation_count = 1,
 	};
 
-	generate_cpt_constellation(&parameters.transmit_constellations[0]);
+	generate_cpt_constellation(&parameters.transmit_constellations[0], law);
 	return parameters;
 }
 
@@ -99,6 +103,7 @@ static void configure_analog(
 			.upstream_rate_mask = upstream_rate_mask,
 			.initial_trn1u_symbols =
 				V92_PROFILE_INITIAL_TRN1U_SYMBOLS,
+			.dil_profile = V90_DIL_PROFILE_CONVENTIONAL,
 			.law = selected->law,
 			.upstream_lu_ucode = V92_TRAINING_UCODE,
 		};

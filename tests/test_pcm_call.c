@@ -7721,7 +7721,8 @@ static bool capture_v92_duplex_data(
 				}
 			} else {
 				struct pcm_call_observation observation;
-				bool entering_v92_phase4 = role == 1u && call->stage == PCM_CALL_PHASE3_MIXED;
+				bool entering_v92_phase4 = role == 1u &&
+					(call->stage == PCM_CALL_PHASE3 || call->stage == PCM_CALL_PHASE3_MIXED);
 				bool damaged_training = role == 1u && offer != NULL &&
 					retrains[role] < offer->damaged_trn2u_epochs &&
 					call->stage == PCM_CALL_PHASE4 &&
@@ -7757,9 +7758,15 @@ static bool capture_v92_duplex_data(
 				}
 				CHECK(result == PCM_CALL_OK, "V.92 role %zu stage %u training failed at clock %zu: %s",
 				      role, call->stage, clock, pcm_call_result_name(result));
-				if (entering_v92_phase4 && call->stage == PCM_CALL_PHASE4)
-					selected_lu = call->state.phase4.v92.owner.digital.receive
-						.signal.trn2u.demodulator.lu;
+				if (entering_v92_phase4 && call->stage == PCM_CALL_PHASE4) {
+					/* Nonzero DIL can buffer enough TRN2u to enter control
+					 * before the downstream Phase 3 suffix has finished. */
+					const struct v92_phase4_digital_rx *rx =
+						&call->state.phase4.v92.owner.digital.receive;
+					selected_lu = rx->stage == V92_PHASE4_DIGITAL_RX_TRN2U ?
+						rx->signal.trn2u.demodulator.lu :
+						rx->signal.control.signal.line.demodulator.lu;
+				}
 				if (observation.phase2.kind == PCM_PHASE2_EVENT_LOCAL_INFO1A_SENT ||
 				    observation.phase2.kind == PCM_PHASE2_EVENT_PEER_INFO1A_RECEIVED) {
 					CHECK(call->b1_deadline_armed && call->b1_deadline_remaining_samples ==
@@ -10343,12 +10350,18 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 						      law, epoch, side, clock);
 				}
 				channel_transmit(&line, tx[0], tx[1]);
-				if (!cpt_checked && calls[1].stage == PCM_CALL_PHASE3_MIXED) {
+				if (!cpt_checked && (calls[1].stage == PCM_CALL_PHASE3 ||
+						     calls[1].stage == PCM_CALL_PHASE3_MIXED)) {
 					struct v92_cpt_parameters cpt;
+					const struct v92_phase3_digital_station *phase3 =
+						calls[1].stage == PCM_CALL_PHASE3 ? &calls[1].state.phase3.v92_digital :
+							&calls[1].state.mixed.v92_digital.phase3;
 
-					if (v92_phase3_digital_station_downstream_handoff(
-						    &calls[1].state.mixed.v92_digital.phase3, &cpt) ==
-					    V92_PHASE3_DIGITAL_STATION_OK) {
+					/* With DIL, both handoffs can finish in one sample;
+					 * observe the accepted CPt before that boundary. */
+					if ((phase3->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_CPT ||
+					     phase3->receive_stage == V92_PHASE3_DIGITAL_RECEIVE_COMPLETE) &&
+					    v92_pcm_phase3_cpt_line_rx_parameters(&phase3->receive.cpt, &cpt)) {
 						struct v92_cpt_parameters expected_cpt = ac.phase3.v92_analog.cpt;
 						uint8_t sent[V92_CPT_MAX_FRAME_BYTES], got[V92_CPT_MAX_FRAME_BYTES];
 						size_t sent_bits, got_bits;
@@ -10386,7 +10399,9 @@ static bool run_v92_downstream_reselection(bool generated, uint8_t power_code)
 			      pcm_call_get_data_rates(&calls[0], &at, &ar) &&
 			      pcm_call_get_data_rates(&calls[1], &dt, &dr) && at == dr && ar == dt &&
 			      ar == ((expected_rates[epoch] + 20u) * 8000u + 3u) / 6u,
-			      "law %u epoch %zu did not exchange data at the common downstream rate", law, epoch);
+			      "law %u epoch %zu generated=%u power=%u did not exchange data at the common downstream rate "
+			      "(CPt=%u frames=%u/%u stages=%u/%u)", law, epoch, generated, power_code,
+			      cpt_checked, frames[0], frames[1], calls[0].stage, calls[1].stage);
 			received = &calls[1].state.data_path.v92_digital.cpu;
 			expected.data_rate_number = expected_rates[epoch];
 			if (expected.spectral_lookahead_frames > peer_lookaheads[epoch])

@@ -47,6 +47,8 @@ enum {
 	DATA_FRAME_LIMIT = 400,
 	RETRAIN_FRAME_LIMIT = 500,
 	V32_RETRAIN_FRAME_LIMIT = 750,
+	/* Nonzero V.92 DIL adds about four seconds to full retraining. */
+	V92_RETRAIN_FRAME_LIMIT = 750,
 	RETRAIN_RESPONSE_LOSS_FRAMES = 70,
 	MAX_CALLER_DELAY_FRAMES = 70,
 	/* 2,400 line samples are 720 V.32 symbols. */
@@ -1034,7 +1036,8 @@ static bool exercise_retrain(
 	}
 	for (unsigned int frame = 0;
 	     frame < (id == DP_V32 ?
-			      V32_RETRAIN_FRAME_LIMIT : RETRAIN_FRAME_LIMIT);
+			      V32_RETRAIN_FRAME_LIMIT : id == DP_V92 ?
+			      V92_RETRAIN_FRAME_LIMIT : RETRAIN_FRAME_LIMIT);
 	     ++frame) {
 		bool losing_response = lose_first_response &&
 			frame < RETRAIN_RESPONSE_LOSS_FRAMES;

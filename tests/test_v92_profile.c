@@ -32,16 +32,17 @@ static uint8_t constellation_members(
 }
 
 static bool cpt_constellation_is_canonical(
-	const struct pcm_constellation *constellation)
+	const struct pcm_constellation *constellation, enum g711_law law)
 {
-	static const uint8_t expected[] = { 76, 68, 57, 35 };
+	static const uint8_t expected[][4] = {
+		{ 87, 81, 69, 47 }, /* mu-law hardware training selection */
+		{ 76, 68, 57, 35 }, /* retain the A-law selection */
+	};
 
-	if (constellation_members(constellation) !=
-	    sizeof(expected) / sizeof(expected[0]))
+	if (constellation_members(constellation) != 4u)
 		return false;
-	for (size_t index = 0; index < sizeof(expected) / sizeof(expected[0]);
-	     ++index) {
-		if (!pcm_constellation_contains(constellation, expected[index]))
+	for (size_t index = 0; index < 4u; ++index) {
+		if (!pcm_constellation_contains(constellation, expected[law == G711_LAW_PCMA][index]))
 			return false;
 	}
 	return true;
@@ -165,14 +166,21 @@ static bool test_generated_profiles(void)
 					      phase3->upstream_rate_mask == upstream_mask &&
 					      phase3->initial_trn1u_symbols ==
 						      V92_PROFILE_INITIAL_TRN1U_SYMBOLS &&
+					      phase3->dil_profile == V90_DIL_PROFILE_CONVENTIONAL &&
+					      phase3->upstream_lu_ucode == 91u &&
 					      phase3->cpt.selected_rate_index ==
 						      9 &&
+					      phase3->cpt.constellation_count == 1u &&
+					      phase3->cpt.shaping_a1_q1_6 == (law == G711_LAW_PCMU ? 64 : 0) &&
+					      phase3->cpt.shaping_a2_q1_6 == 0 &&
+					      phase3->cpt.shaping_b1_q1_6 == 0 &&
+					      phase3->cpt.shaping_b2_q1_6 == 0 &&
 					      configuration.v92_analog_phase4.cpu
 						      .data_rate_number ==
 						      downstream.selected_data_rate_number &&
 					      cpt_constellation_is_canonical(
 						      &phase3->cpt
-						       .transmit_constellations[0]) &&
+						       .transmit_constellations[0], law) &&
 					      v90_pcm_mapping_init_from_v92_cpt(
 						      &cpt_mapping, &phase3->cpt, phase3->cpt.law) ==
 						      V90_PCM_MAPPING_OK &&
@@ -186,6 +194,16 @@ static bool test_generated_profiles(void)
 						       .transmit_constellations[0]) >= 8,
 					      "analogue profile did not generate rate %u",
 					      rate);
+					uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
+					size_t frame_bits;
+
+					CHECK(v92_cpt_encode(&phase3->cpt, frame, sizeof(frame), &frame_bits) == V92_CPT_OK &&
+					      frame_bits == 300u &&
+					      memcmp(&configuration.v92_analog_phase4.cpu.transmit_constellations[0],
+						     &configuration.analog_phase4.data_parameters.transmit_constellations[0],
+						     sizeof(struct pcm_constellation)) == 0 &&
+					      configuration.v92_analog_phase4.cpu.shaping_a1_q1_6 == 0,
+					      "CPt training changed the shared-row encoding or CPu data selection");
 				} else {
 					CHECK(configuration.local_info0.v92_digital.v90
 						      .nominal_transmit_power ==

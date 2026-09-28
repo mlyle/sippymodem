@@ -41,8 +41,9 @@ enum v92_phase3_analog_station_result {
 
 struct v92_phase3_analog_station_configuration {
 	struct v92_pcm_info1a local_info1a;
-	/* Caller-selected downstream map; DIL impairment learning is not owned
-	 * by this station. With nonzero DIL, CPt starts after minimum TRN1u. */
+	/* Caller-selected downstream map; adaptive DIL map selection is not
+	 * owned by this station. Nonzero DIL allows one training traversal,
+	 * shortened only to meet the post-Su CPt deadline. */
 	struct v92_cpt_parameters cpt;
 	uint32_t upstream_rate_mask;
 	uint32_t initial_trn1u_symbols;
@@ -77,6 +78,7 @@ struct v92_phase3_analog_station {
 	struct fractional_delay transmit_delay;
 	struct v92_cpt_parameters cpt_parameters;
 	uint32_t upstream_rate_mask;
+	uint32_t second_trn1u_symbols;
 	enum v90_dil_profile dil_profile;
 	/* Emitted silence after Ja, frozen once Jd starts Su; saturates. */
 	uint32_t post_ja_silence_samples;
