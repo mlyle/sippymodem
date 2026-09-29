@@ -312,20 +312,33 @@ static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law)
 	return cpd->four_times_gain_q0_16 != 0u;
 }
 
-static uint8_t balanced_modulus(unsigned int data_bits)
+static bool balanced_moduli(uint8_t moduli[V92_CPD_MODULUS_COUNT], unsigned int data_bits)
 {
 	/* V.92 6.4.1-6.4.2: an ordinary interval needs M signed points,
 	 * each fourth (trellis) interval needs 2M. Choose the smallest N
 	 * with (2N)^9 * N^3 >= 2^K. Products fit in 128 bits for N<=64. */
+	__uint128_t required = (__uint128_t)1u << data_bits;
+
 	for (unsigned int points = 1u; points <= 64u; ++points) {
 		__uint128_t capacity = 1u;
 
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
 			capacity *= symbol % 4u == 3u ? points : 2u * points;
-		if (capacity >= ((__uint128_t)1u << data_bits))
-			return (uint8_t)points;
+		if (capacity < required)
+			continue;
+		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
+			moduli[symbol] = symbol % 4u == 3u ? points : 2u * points;
+		/* Some analogue modems infer K from floor(log2(product(M))).
+		 * Keep that width equal to the selected rate. At 37.333k the
+		 * balanced product is exactly 2^(K+1); removing one ordinary
+		 * representative avoids an unadvertised extra bit per frame. */
+		while (capacity >= 2u * required && moduli[0] > 1u) {
+			capacity = capacity / moduli[0] * (moduli[0] - 1u);
+			--moduli[0];
+		}
+		return capacity >= required && capacity < 2u * required;
 	}
-	return 0u;
+	return false;
 }
 
 bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
@@ -375,12 +388,8 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	 * or erase payload distinctions during companding. Keep the low-rate
 	 * and level-selected direct mappings separate. */
 	if (next.data_rate_number >= 9u && next.trellis == V92_CPD_TRELLIS_16_STATE) {
-		uint8_t modulus = balanced_modulus(v92_pcm_mapping_data_bits(next.data_rate_number));
-
-		if (modulus == 0u)
+		if (!balanced_moduli(next.modulus, v92_pcm_mapping_data_bits(next.data_rate_number)))
 			return false;
-		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
-			next.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
 	}
 	/* The direct 40k/44k selections omit outer representatives that an
 	 * identity precoder cannot reach. Restore them for precoder feedback. */

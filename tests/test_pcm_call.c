@@ -7922,18 +7922,17 @@ static bool capture_v92_duplex_data(
 			memcpy(expected.filter, rx->decoder.mapping.cpd.filter, sizeof(expected.filter));
 			expected.four_times_gain_q0_16 = rx->decoder.mapping.cpd.four_times_gain_q0_16;
 			if (offer->expected >= 9u && expected.trellis == V92_CPD_TRELLIS_16_STATE) {
-				unsigned int modulus = rx->decoder.mapping.cpd.modulus[3];
-				__uint128_t capacity = 1u, smaller = 1u;
+				__uint128_t capacity = 1u;
 				__uint128_t required = (__uint128_t)1u << v92_pcm_mapping_data_bits(offer->expected);
 
-				CHECK(modulus > 1u, "V.92 selected an empty balanced alphabet");
-				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
-					expected.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
+				/* The focused channel test checks the balanced geometry.
+				 * Here require its capacity to agree with the negotiated
+				 * width and verify that both peers exchanged every modulus. */
+				memcpy(expected.modulus, rx->decoder.mapping.cpd.modulus, sizeof(expected.modulus));
+				for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol)
 					capacity *= expected.modulus[symbol];
-					smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
-				}
-				CHECK(capacity >= required && smaller < required,
-				      "V.92 did not exchange the minimum balanced alphabet");
+				CHECK(capacity >= required && capacity < 2u * required,
+				      "V.92 exchanged capacity outside the selected frame width");
 			}
 			if ((expected.trellis == V92_CPD_TRELLIS_32_STATE && expected.constellation[0].count == 32u) ||
 			    (offer->expected == 16u && expected.constellation[0].count == 27u))

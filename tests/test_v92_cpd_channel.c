@@ -84,14 +84,18 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 
 		CHECK(modulus > 1u, "rate %u has no balanced alphabet", rate);
 		for (size_t symbol = 0u; symbol < V92_CPD_MODULUS_COUNT; ++symbol) {
-			original.modulus[symbol] = symbol % 4u == 3u ? modulus : 2u * modulus;
-			CHECK(cpd.modulus[symbol] == original.modulus[symbol],
+			unsigned balanced = symbol % 4u == 3u ? modulus : 2u * modulus;
+
+			CHECK(cpd.modulus[symbol] <= balanced && cpd.modulus[symbol] + 1u >= balanced,
 				"rate %u did not balance interval %zu", rate, symbol);
-			capacity *= original.modulus[symbol];
+			original.modulus[symbol] = cpd.modulus[symbol];
+			capacity *= cpd.modulus[symbol];
 			smaller *= symbol % 4u == 3u ? modulus - 1u : 2u * (modulus - 1u);
 		}
 		CHECK(capacity >= required && smaller < required,
 			"rate %u did not use minimum balanced capacity", rate);
+		CHECK(capacity < 2u * required,
+			"rate %u modulus capacity encodes an extra bit", rate);
 	}
 	if ((original.trellis == V92_CPD_TRELLIS_32_STATE && original.constellation[0].count == 32u) ||
 	    (rate == 16u && original.constellation[0].count == 27u))
