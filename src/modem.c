@@ -2174,6 +2174,7 @@ int modem_reset(struct modem *m)
 	m->v90_upstream_min_rate = 0;
 	m->v90_upstream_max_rate = 0;
 	m->v90_upstream_max_baud = 0;
+	m->v92_upstream_lu_ucode = 0;
 	m->v34_symbol_rate = 0;
 	sregs_init(m->sregs);
 	modem_homolog_init(m,m->homolog->id,NULL);

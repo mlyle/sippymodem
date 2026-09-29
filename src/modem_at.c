@@ -807,6 +807,7 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 	char *end;
 	unsigned long enabled;
 	unsigned long rate;
+	unsigned long lu_ucode = 0;
 	unsigned int max_drn = 0;
 
 	switch (*p) {
@@ -814,7 +815,7 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 		p++;
 		*len = 1;
 		if (*p == '?') {
-			const char capabilities[] = "(0,1),(0,24000-48000)";
+			const char capabilities[] = "(0,1),(0,24000-48000),(0-127)";
 
 			modem_send_to_tty(m, capabilities,
 					  (int)strlen(capabilities));
@@ -831,18 +832,28 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			p++;
 			*len += 1;
 			rate = strtoul(p, &end, 0);
-			if (p == end || enabled == 0 || *end == ',')
+			if (p == end || enabled == 0)
 				return -1;
 			*len += (int)(end - p);
+			p = end;
 			max_drn = v92_pcm_upstream_drn(rate);
 			if (max_drn == 0)
 				return -1;
+			if (*p == ',') {
+				p++;
+				*len += 1;
+				if (parse_unsigned(&p, len, &lu_ucode) < 0 ||
+				    lu_ucode > 127 || *p == ',')
+					return -1;
+			}
 		}
 		if (modem_set_param(
-			    m, MDMPRM_V92_PCM_UPSTREAM, (int)enabled) < 0)
+			    m, MDMPRM_V92_PCM_UPSTREAM, (int)enabled) < 0 ||
+		    modem_set_sreg(
+			    m, SREG_V92_PCM_UPSTREAM_MAX_DRN, (int)max_drn) < 0)
 			return -1;
-		return modem_set_sreg(
-			m, SREG_V92_PCM_UPSTREAM_MAX_DRN, (int)max_drn);
+		m->v92_upstream_lu_ucode = (unsigned)lu_ucode;
+		return 0;
 	case '?':
 		*len = 1;
 		max_drn = (unsigned int)modem_get_sreg(
@@ -854,6 +865,12 @@ static int process_plus_V92U(struct modem *m, char *p, int *len)
 			rate = ((max_drn + 17u) * 8000u + 3u) / 6u;
 			snprintf(response, sizeof(response), "%ld,%lu",
 				 modem_get_param(m, MDMPRM_V92_PCM_UPSTREAM), rate);
+			if (m->v92_upstream_lu_ucode != 0) {
+				size_t used = strlen(response);
+
+				snprintf(response + used, sizeof(response) - used,
+					 ",%u", m->v92_upstream_lu_ucode);
+			}
 		}
 		modem_send_to_tty(m, response, (int)strlen(response));
 		modem_send_to_tty(m, CRLF_CHARS(m), 2);

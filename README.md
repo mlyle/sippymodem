@@ -125,6 +125,15 @@ endpoint connects directly to another digital codec with no intervening
 analogue conversion. The default is `0`; remote RTP clocking does not establish
 this topology. Native direct-codec interoperability runs should opt in explicitly.
 
+`AT+V92U=1,40000` caps PCM upstream at 40000 bit/s. An optional third field
+selects the analogue transmitter's training level as a V.92 U-code, for example
+`AT+V92U=1,40000,69`. Valid levels are 1–127; zero or omission uses the profile
+default (91). This also sets the upstream data reference level; the peer's CPd
+gain and filters still apply. The downstream training request is independent.
+`AT+V92U?` reports the selection, and `ATZ` clears it. Level selection applies
+to the next call and is retained through its retrains. Select a level using
+measurements on the intended route; a lower level does not always train reliably.
+
 V.90 and V.92 share DIL measurement and downstream constellation selection.
 The receiver qualifies levels observed twice with each sign in each of the six
 frame intervals, after filter settling. It identifies constant least-significant

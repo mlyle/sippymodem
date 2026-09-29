@@ -319,6 +319,8 @@ struct modem {
 	unsigned v90_upstream_min_rate;
 	unsigned v90_upstream_max_rate;
 	unsigned v90_upstream_max_baud;
+	/* Zero uses the profile's PCM upstream training level. */
+	unsigned v92_upstream_lu_ucode;
 	/* Media topology, retained across AT resets and call retraining. */
 	bool pcm_codec_grid;
 	/* Zero selects the V.34 symbol rate automatically. */

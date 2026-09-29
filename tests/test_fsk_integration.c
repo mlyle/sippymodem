@@ -4627,6 +4627,21 @@ int main(void)
 		},
 		{
 			.id = DP_V92,
+			.name = "V.92 50667/40000 PCM duplex LAPM with U69 training and retrain",
+			.cleardown_initiators = 1u,
+			.selection_command =
+				"AT+MS=92,0,50667,50667+V92Q=0+V92U=1,40000,69\r",
+			.caller_tx_rate = 40000,
+			.caller_rx_rate = 50667,
+			.answerer_tx_rate = 50667,
+			.answerer_rx_rate = 40000,
+			.training_frame_limit = 2500,
+			.requires_v8 = true,
+			.requires_exact_g711 = true,
+			.test_retrain = true,
+		},
+		{
+			.id = DP_V92,
 			.name = "V.92 28000 PCM duplex V.44 rate exchange",
 			.cleardown_initiators = 2u,
 			.selection_command =

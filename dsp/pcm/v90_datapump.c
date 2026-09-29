@@ -606,9 +606,17 @@ static bool start_call(
 		     datapump->maximum_pcm_upstream_data_rate_number, &upstream) !=
 		     V92_PROFILE_OK))
 		return false;
-	if (datapump->role == V90_ANALOG_MODEM && datapump->protocol == PCM_PROTOCOL_V92)
+	if (datapump->role == V90_ANALOG_MODEM && datapump->protocol == PCM_PROTOCOL_V92) {
+		unsigned int lu_ucode = datapump->dp.modem->v92_upstream_lu_ucode;
+
+		if (lu_ucode > 127u)
+			return false;
+		if (lu_ucode != 0u)
+			configuration.phase3.v92_analog.upstream_lu_ucode =
+				(uint8_t)lu_ucode;
 		configuration.phase3.v92_analog.restore_codec_grid =
 			datapump->dp.modem->pcm_codec_grid;
+	}
 	/* This host owns delayed echo acquisition; bare PCM calls need not
 	 * lengthen their default training interval to accommodate that owner. */
 	if (datapump->protocol == PCM_PROTOCOL_V92 && datapump->host_echo != NULL)

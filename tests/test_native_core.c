@@ -1979,6 +1979,8 @@ static bool test_at_pcm_profile_controls(void)
 		      modem->v90_upstream_max_rate == 0 &&
 		      modem->v90_upstream_max_baud == 0,
 	      "PCM profile controls did not have deterministic defaults");
+	CHECK(modem->v92_upstream_lu_ucode == 0,
+	      "PCM upstream did not default to the profile training level");
 	CHECK(process_at_command(modem, "AT+V90D=1") == 0 &&
 		      modem_get_param(
 			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 1 &&
@@ -2020,6 +2022,46 @@ static bool test_at_pcm_profile_controls(void)
 		      modem_get_sreg(
 			      modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 0,
 	      "AT+V92U did not reject invalid rates or reset cleanly");
+	CHECK(process_at_command(modem, "AT+V92U=1,40000,69") == 0 &&
+		      modem->v92_upstream_lu_ucode == 69 &&
+		      modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13,
+	      "AT+V92U did not retain its rate and training level");
+	char invalid_levels[][32] = {
+		"AT+V92U=1,40000,128", "AT+V92U=1,40000,-1",
+		"AT+V92U=1,40000,", "AT+V92U=1,40000,69,1",
+		"AT+V92U=0,40000,69", "AT+V92U=1,28100,70",
+	};
+	for (size_t index = 0; index < ARRAY_LENGTH(invalid_levels); ++index)
+		CHECK(process_at_command(modem, invalid_levels[index]) == -1 &&
+			      modem->v92_upstream_lu_ucode == 69 &&
+			      modem_get_param(modem, MDMPRM_V92_PCM_UPSTREAM) == 1 &&
+			      modem_get_sreg(modem, SREG_V92_PCM_UPSTREAM_MAX_DRN) == 13,
+		      "invalid AT+V92U level changed the retained profile");
+	CHECK(process_at_command(modem, "AT+V92U=1,40000,0") == 0 &&
+		      modem->v92_upstream_lu_ucode == 0 &&
+		      process_at_command(modem, "AT+V92U=1,40000,127") == 0 &&
+		      modem->v92_upstream_lu_ucode == 127 &&
+		      process_at_command(modem, "AT+V92U=1,40000") == 0 &&
+		      modem->v92_upstream_lu_ucode == 0 &&
+		      process_at_command(modem, "AT+V92U=1,40000,1") == 0 &&
+		      modem->v92_upstream_lu_ucode == 1 &&
+		      process_at_command(modem, "AT+V92U=0") == 0 &&
+		      modem->v92_upstream_lu_ucode == 0 &&
+		      process_at_command(modem, "AT+V92U=1,40000,69") == 0,
+	      "AT+V92U did not accept or reset its bounded training level");
+	int response_pipe[2];
+	char response[64] = { 0 };
+
+	CHECK(pipe(response_pipe) == 0, "PCM profile response pipe failed");
+	modem->pty = response_pipe[1];
+	CHECK(process_at_command(modem, "AT+V92U?") == 0,
+	      "PCM upstream profile query failed");
+	close(response_pipe[1]);
+	modem->pty = -1;
+	ssize_t response_length = read(response_pipe[0], response, sizeof(response) - 1u);
+	close(response_pipe[0]);
+	CHECK(response_length > 0 && strstr(response, "1,40000,69\r\n") != NULL,
+	      "PCM upstream query omitted the selected training level");
 	CHECK(process_at_command(modem, "ATZ") == 0 &&
 		      modem_get_param(
 			      modem, MDMPRM_V90_DIGITAL_INDICATION) == 0 &&
@@ -2029,6 +2071,8 @@ static bool test_at_pcm_profile_controls(void)
 		      modem->v90_upstream_max_rate == 0 &&
 		      modem->v90_upstream_max_baud == 0,
 	      "modem reset retained a forced PCM profile");
+	CHECK(modem->v92_upstream_lu_ucode == 0,
+	      "modem reset retained the PCM upstream training level");
 	modem_delete(modem);
 	return true;
 }
