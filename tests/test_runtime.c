@@ -796,6 +796,18 @@ static bool test_steps_bounded_host_and_evidence_work(void)
 		      modem_runtime_last_host_result(runtime) ==
 			      MODEM_HOST_MODEM_STOPPED,
 	      "runtime treated a handled modem stop as fatal");
+	capture.host_step_result = MODEM_HOST_MEDIA_TIMEOUT;
+	modem->started = 1;
+	unsigned int remote_ends = capture.remote_ends;
+
+	CHECK(modem_runtime_step(runtime, 104, NULL, NULL, NULL) == MODEM_RUNTIME_OK &&
+	      capture.remote_ends == remote_ends + 1 && !modem->started,
+	      "media timeout did not stop the modem while preserving the terminal");
+	capture.remote_end_result = -1;
+	CHECK(modem_runtime_step(runtime, 104, NULL, NULL, NULL) ==
+		      MODEM_RUNTIME_MODEM_STOP_ERROR,
+	      "media timeout hid a modem cleanup failure");
+	capture.remote_end_result = 0;
 
 	capture.host_step_result = MODEM_HOST_IDLE;
 	capture.emit_call = true;

@@ -474,14 +474,14 @@ static bool test_remote_media_clocks_elapsed_time(void)
 		      MODEM_HOST_OK &&
 		      datagrams == 1 && frames == 1 && core.calls == 2,
 	      "one received RTP frame did not clock one modem frame");
-	CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+	CHECK(modem_host_step(host, 2000000000, &datagrams, &frames) ==
 		      MODEM_HOST_IDLE &&
 		      datagrams == 0 && frames == 0 && core.calls == 2,
 	      "remote-clock host advanced from wall time alone");
 	CHECK(strstr(trace, "TX=1 RX=1 accepted=1") &&
 	      strstr(trace, "buffered=8 played=8"),
 	      "host trace did not expose real received audio");
-	CHECK(modem_host_step(host, 2000000000, &datagrams, &frames) ==
+	CHECK(modem_host_step(host, 3000000000, &datagrams, &frames) ==
 	      MODEM_HOST_IDLE && strstr(trace, "TX=0 RX=0 accepted=0"),
 	      "stopped remote media clock also stopped diagnostics");
 	/* One lost inbound packet must not also remove an outbound clock tick. */
@@ -494,7 +494,7 @@ static bool test_remote_media_clocks_elapsed_time(void)
 			     (struct sockaddr *)&host_address,
 			     sizeof(host_address)) == (ssize_t)packet_size,
 	      "RTP packet following a clock gap was not sent");
-	CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+	CHECK(modem_host_step(host, 4000000000, &datagrams, &frames) ==
 		      MODEM_HOST_OK && datagrams == 1 && frames == 2 &&
 		      core.calls == 4 && !core.received_silence,
 	      "lost inbound RTP time delayed the modem's transmit clock");
@@ -516,11 +516,46 @@ static bool test_remote_media_clocks_elapsed_time(void)
 				     (struct sockaddr *)&host_address,
 				     sizeof(host_address)) == (ssize_t)packet_size,
 		      "partial RTP clock frame was not sent");
-		CHECK(modem_host_step(host, UINT64_MAX, &datagrams, &frames) ==
+		CHECK(modem_host_step(host, 4000000000, &datagrams, &frames) ==
 			      (part == 0 ? MODEM_HOST_IDLE : MODEM_HOST_OK) &&
 			      datagrams == 1 && frames == part && core.calls == 4 + part,
 		      "partial frame credit did not survive separate socket drains");
 	}
+	/* Missing RTP must eventually release the call even without SIP BYE.
+	 * Invalid packets are not clock credit and cannot keep it alive. */
+	const uint64_t deadline = UINT64_C(4000000000) +
+		MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS;
+
+	fake.defer_hangup_media = true;
+	CHECK(sendto(peer_fd, "bad", 3, 0, (struct sockaddr *)&host_address,
+		     sizeof(host_address)) == 3 &&
+	      modem_host_step(host, deadline - 1,
+		      &datagrams, &frames) == MODEM_HOST_IDLE &&
+	      datagrams == 1 && frames == 0 && fake.hangups == 0 &&
+	      modem_host_audio_is_active(host),
+	      "remote media deadline rejected a short gap or processed malformed audio");
+	CHECK(modem_host_step(host, deadline,
+		      &datagrams, &frames) == MODEM_HOST_MEDIA_TIMEOUT &&
+	      datagrams == 0 && frames == 0 && fake.hangups == 1 &&
+	      !modem_host_audio_is_active(host) &&
+	      modem_host_media_is_configured(host),
+	      "missing RTP did not suspend audio and request hangup at its deadline");
+	CHECK(modem_host_step(host, deadline + 1, &datagrams, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 && fake.hangups == 1,
+	      "media timeout repeated hangup while waiting for SIP teardown");
+	fake.emit_inactive_on_step = true;
+	CHECK(modem_host_step(host, deadline + 2, NULL, NULL) == MODEM_HOST_IDLE &&
+	      !modem_host_media_is_configured(host),
+	      "media timeout retained the old call lifecycle");
+	CHECK(modem_host_dial(host, "sip:peer@127.0.0.1") == SIP_SIGNALING_OK &&
+	      modem_host_step(host, UINT64_MAX - MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS,
+		      NULL, &frames) == MODEM_HOST_OK && frames == 1 &&
+	      modem_host_audio_is_active(host) &&
+	      modem_host_step(host, UINT64_MAX - 1, NULL, &frames) == MODEM_HOST_IDLE &&
+	      frames == 0 &&
+	      modem_host_step(host, UINT64_MAX, NULL, &frames) == MODEM_HOST_MEDIA_TIMEOUT &&
+	      frames == 0 && fake.hangups == 2,
+	      "new media did not reset its bounded, overflow-safe startup deadline");
 	CHECK(modem_host_hangup(host) == SIP_SIGNALING_OK,
 	      "metered call did not hang up");
 	levels = modem_host_take_audio_levels(host);

@@ -15,6 +15,9 @@ enum {
 	MODEM_HOST_SIGNALING_POLL_NS = 20000000,
 };
 
+/* Modem RTP is continuous, including training silence. */
+#define MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS UINT64_C(5000000000)
+
 enum modem_host_result {
 	MODEM_HOST_OK,
 	MODEM_HOST_IDLE,
@@ -23,6 +26,7 @@ enum modem_host_result {
 	MODEM_HOST_MEDIA_BINDING_ERROR,
 	MODEM_HOST_AUDIO_ERROR,
 	MODEM_HOST_MODEM_STOPPED,
+	MODEM_HOST_MEDIA_TIMEOUT,
 };
 
 struct modem_host;

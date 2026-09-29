@@ -102,8 +102,10 @@ and exact sample-derived scheduler. Its nonblocking step records every network,
 line, and modem boundary, performs bounded catch-up, and reports rejected media
 updates without interrupting an established stream. Timing, modem-core,
 playout, or transmit failure suspends audio and requests hangup until a new
-media lifecycle begins. A guarded adapter presents the transitional Smart Link
-sample processor to that host at the exact 8 kHz SIP media clock. The foreground
+media lifecycle begins. With `SIP_REMOTE_CLOCK=1`, five seconds without accepted
+RTP clock progress ends the call and reports `NO CARRIER`, so missing media
+cannot leave the terminal stuck online. A guarded adapter presents the transitional
+Smart Link sample processor to that host at the exact 8 kHz SIP media clock. The foreground
 daemon now owns that runtime directly, publishes its pseudoterminal path on
 standard output, and shuts down cleanly on SIGINT or SIGTERM. V.21, V.22, Bell
 103, Bell 212A, V.23, V.22bis, V.32/V.32bis, Baudot TTY/TDD, V.34, V.90, and

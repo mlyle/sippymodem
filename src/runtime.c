@@ -436,6 +436,9 @@ enum modem_runtime_result modem_runtime_step(
 	 * terminal alive so the modem result can be reported and reused. */
 	if (runtime->last_host_result == MODEM_HOST_MODEM_STOPPED)
 		return MODEM_RUNTIME_OK;
+	if (runtime->last_host_result == MODEM_HOST_MEDIA_TIMEOUT)
+		return modem_report_remote_call_end(runtime->modem) == 0 ?
+			MODEM_RUNTIME_OK : MODEM_RUNTIME_MODEM_STOP_ERROR;
 	if (runtime->last_host_result != MODEM_HOST_OK &&
 	    runtime->last_host_result != MODEM_HOST_IDLE)
 		return MODEM_RUNTIME_HOST_ERROR;

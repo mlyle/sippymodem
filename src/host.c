@@ -18,6 +18,8 @@ struct modem_host {
 	bool audio_suspended;
 	bool remote_clock;
 	bool remote_seed_pending;
+	bool remote_clock_started;
+	uint64_t remote_clock_time_ns;
 };
 
 static void synchronize_audio(struct modem_host *host)
@@ -38,8 +40,10 @@ static void synchronize_audio(struct modem_host *host)
 	if (host->remote_clock && !was_active &&
 	    audio_scheduler_is_active(&host->audio_scheduler))
 		host->remote_seed_pending = true;
-	if (!audio_scheduler_is_active(&host->audio_scheduler))
+	if (!audio_scheduler_is_active(&host->audio_scheduler)) {
 		host->remote_seed_pending = false;
+		host->remote_clock_started = false;
+	}
 	host->media_was_configured = media_configured;
 }
 
@@ -117,6 +121,7 @@ enum sip_session_result modem_host_close(
 	host->media_was_configured = false;
 	host->audio_suspended = false;
 	host->remote_seed_pending = false;
+	host->remote_clock_started = false;
 	host->last_session_result = sip_session_close(host->session);
 	return host->last_session_result;
 }
@@ -176,6 +181,20 @@ enum modem_host_result modem_host_step(
 		return MODEM_HOST_SESSION_ERROR;
 
 	if (host->remote_clock) {
+		if (audio_scheduler_is_active(&host->audio_scheduler)) {
+			/* Only accepted RTP clock credit refreshes this deadline.
+			 * Otherwise missing media freezes sample-based modem timers,
+			 * including carrier loss and disconnect. */
+			if (!host->remote_clock_started || remote_frames != 0) {
+				host->remote_clock_started = true;
+				host->remote_clock_time_ns = now_ns;
+			} else if (now_ns >= host->remote_clock_time_ns &&
+				   now_ns - host->remote_clock_time_ns >=
+					   MODEM_HOST_REMOTE_MEDIA_TIMEOUT_NS) {
+				return suspend_failed_audio(
+					host, MODEM_HOST_MEDIA_TIMEOUT);
+			}
+		}
 		if (host->remote_seed_pending) {
 			remote_frames++;
 			host->remote_seed_pending = false;
@@ -320,6 +339,8 @@ const char *modem_host_result_name(enum modem_host_result result)
 		return "scheduled audio failed";
 	case MODEM_HOST_MODEM_STOPPED:
 		return "modem core stopped";
+	case MODEM_HOST_MEDIA_TIMEOUT:
+		return "remote RTP clock stopped";
 	}
 	return "unknown host result";
 }
