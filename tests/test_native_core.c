@@ -25,6 +25,7 @@
 
 extern int process_at_command(struct modem *modem, char *command);
 extern int modem_dial(struct modem *modem);
+extern int modem_recv_from_tty(struct modem *modem, char *buffer, int count);
 
 static int unused_start(struct modem *modem)
 {
@@ -187,6 +188,106 @@ static bool test_escape_discards_async_transmit_fragment(void)
 		      modem->pack.bit == 0 && modem->pack.data == 0 &&
 		      modem->xmit.count == 0,
 	      "confirmed escape remained queued as asynchronous line data");
+	modem_delete(modem);
+	return true;
+}
+
+static bool test_escape_holds_candidate_bytes(void)
+{
+	enum { TEST_STATE_MODEM_ONLINE = 5 };
+	struct modem_driver driver = {
+		.name = "escape hold test",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, "escape hold test");
+	char received[8];
+	uint8_t bits[32];
+
+	CHECK(modem != NULL, "escape hold modem could not be created");
+	for (unsigned ec = 0; ec < 2; ec++) {
+		modem->state = TEST_STATE_MODEM_ONLINE;
+		modem->command = 0;
+		modem->cfg.ec = ec;
+		modem->get_chars = modem_recv_from_tty;
+		modem->last_esc_check = 0;
+		for (unsigned index = 0; index < 3; index++) {
+			CHECK(modem_write(modem, "+", 1) == 1 &&
+				      modem->escape_count == index + 1,
+			      "split escape candidate was not retained");
+			CHECK(modem_recv_from_tty(modem, received, sizeof(received)) == 0,
+			      "escape candidate reached the character source (EC %u)", ec);
+		}
+		if (!ec) {
+			CHECK(modem_async_get_bits(modem, 1, bits, sizeof(bits)) == sizeof(bits),
+			      "raw escape guard did not produce idle bits");
+			for (unsigned index = 0; index < sizeof(bits); index++)
+				CHECK(bits[index] == 1, "escape candidate reached raw framing");
+		}
+		modem->event_deadline = get_time() - 1;
+		CHECK(modem_service_event(modem) == 1 && modem->command == 1 &&
+			      modem->xmit.count == 0,
+		      "confirmed escape was not consumed as command syntax");
+	}
+	modem->state = TEST_STATE_MODEM_ONLINE;
+	modem->command = 0;
+	for (unsigned count = 1; count <= 2; count++) {
+		modem->last_esc_check = 0;
+		CHECK(modem_write(modem, "++", count) == (int)count &&
+			      modem_recv_from_tty(modem, received, sizeof(received)) == 0,
+		      "incomplete escape was not held");
+		CHECK(modem->event_scheduled, "incomplete escape has no expiry");
+		modem->event_deadline = get_time() - 1;
+		CHECK(modem_service_event(modem) == 1 && modem->command == 0 &&
+			      modem_recv_from_tty(modem, received, sizeof(received)) == (int)count &&
+			      memcmp(received, "++", count) == 0,
+		      "expired incomplete escape did not return to line data");
+	}
+	for (unsigned count = 2; count <= 3; count++) {
+		modem->last_esc_check = 0;
+		CHECK(modem_write(modem, "+++", count) == (int)count &&
+			      modem_write(modem, "x", 1) == 1 &&
+			      modem_recv_from_tty(modem, received, sizeof(received)) == (int)count + 1 &&
+			      memcmp(received, "+++", count) == 0 && received[count] == 'x',
+		      "cancelled escape changed line data");
+		modem->event_deadline = get_time() - 1;
+		CHECK(modem_service_event(modem) == 1 && modem->command == 0,
+		      "cancelled escape entered command mode");
+	}
+	/* Earlier data may cross the ring boundary while its escape suffix waits. */
+	modem->xmit.head = modem->xmit.tail = modem->xmit.size - 2;
+	CHECK(modem_write(modem, "old", 3) == 3, "earlier line data was not queued");
+	modem->last_esc_check = 0;
+	CHECK(modem_write(modem, "+++", 3) == 3 &&
+		      modem_recv_from_tty(modem, received, sizeof(received)) == 3 &&
+		      memcmp(received, "old", 3) == 0 && modem->xmit.count == 3,
+	      "escape hold blocked or consumed earlier ring data");
+	modem->event_deadline = get_time() - 1;
+	CHECK(modem_service_event(modem) == 1 && modem->command == 1,
+	      "wrapped escape did not enter command mode");
+	/* Backpressure must count only accepted bytes toward an escape. */
+	modem->state = TEST_STATE_MODEM_ONLINE;
+	modem->command = 0;
+	modem->xmit.tail = 0;
+	modem->xmit.head = modem->xmit.count = modem->xmit.size - 1;
+	memset(modem->xmit.buf, 'o', modem->xmit.count);
+	modem->last_esc_check = 0;
+	CHECK(modem_write(modem, "+++", 3) == 1 && modem->escape_count == 1 &&
+		      modem_write(modem, "++", 2) == 0 && modem->escape_count == 1,
+	      "unaccepted input changed the escape candidate");
+	while (modem->xmit.count > 1) {
+		int count = modem_recv_from_tty(modem, received, sizeof(received));
+
+		CHECK(count > 0, "escape candidate blocked older data under backpressure");
+		for (int index = 0; index < count; index++)
+			CHECK(received[index] == 'o', "unconfirmed escape escaped a full queue");
+	}
+	modem->event_deadline = get_time() - 1;
+	CHECK(modem_service_event(modem) == 1 && modem->command == 0 &&
+		      modem_recv_from_tty(modem, received, sizeof(received)) == 1 &&
+		      received[0] == '+',
+	      "partial write did not release its incomplete escape");
 	modem_delete(modem);
 	return true;
 }
@@ -4168,6 +4269,7 @@ int main(void)
 		  test_modem_events_are_instance_owned },
 		{ "escape discards async transmit fragment",
 		  test_escape_discards_async_transmit_fragment },
+		{ "escape holds candidate bytes", test_escape_holds_candidate_bytes },
 		{ "V.8 datapump mapping", test_v8_datapump_mapping },
 		{ "V.8 handoff", test_v8_handoff },
 		{ "V.8 fallback limits", test_v8_fallback_limits },

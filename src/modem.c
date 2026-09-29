@@ -1300,9 +1300,15 @@ static int modem_get_chars(struct modem *m, char *buf, int n)
 {
 	int ret = 0, cnt;
         while(n) {
+		int available = m->xmit.count;
+
+		/* Keep a possible escape out of both framing and compression
+		 * until its guard expires or later input cancels it. */
+		if (m->state == STATE_MODEM_ONLINE)
+			available -= (int)m->escape_count;
                 cnt = n;
-                if (cnt > m->xmit.count)
-                        cnt = m->xmit.count;
+                if (cnt > available)
+                        cnt = available;
                 if (cnt > m->xmit.size - m->xmit.tail)
                         cnt = m->xmit.size - m->xmit.tail;
                 if (cnt <= 0) {
@@ -2303,8 +2309,9 @@ static int modem_check_escape(struct modem *m, const char *buf, int count)
 		goto noescape_out;
 
 	m->escape_count += count;
-        if(m->escape_count == 3)
-		schedule_event(m,MDMEVENT_ESCAPE,ESCAPE_TIMEOUT(m));
+	/* One or two held characters also need an expiry: they become line
+	 * data when no third escape character arrives. */
+	schedule_event(m,MDMEVENT_ESCAPE,ESCAPE_TIMEOUT(m));
 
 	m->last_esc_check = now;
 	return m->escape_count;
@@ -2319,16 +2326,14 @@ static int modem_check_escape(struct modem *m, const char *buf, int count)
 
 int modem_write(struct modem *m, const char *buffer, int count)
 {
-       	const char *buf;
+	const char *buf;
+	const char *written = buffer;
 	int cnt, ret = 0;
 	if(IS_STATE_CONNECTING(m->state)) {
 		MODEM_DBG("modem_tty_write: hangup...\n");
 		modem_hup(m,1);
 		return count;
 	}
-
-	if(m->state == STATE_MODEM_ONLINE)
-		modem_check_escape(m,buffer,count);
 
 	while(count) {
 		cnt = count;
@@ -2348,6 +2353,8 @@ int modem_write(struct modem *m, const char *buffer, int count)
 		buffer += cnt;
 		count -= cnt;
 	}
+	if (m->state == STATE_MODEM_ONLINE && ret > 0)
+		modem_check_escape(m, written, ret);
 	if(m->command)
 		modem_at_process(m);
 	return ret;
