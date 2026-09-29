@@ -515,24 +515,30 @@ static enum v92_phase4_e2u_result fail(struct v92_phase4_e2u *owner)
 
 enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	struct v92_phase4_e2u *owner, uint8_t received_octet,
-	int16_t received_sample, uint8_t *transmit_octet)
+	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample)
 {
 	struct v92_phase4_e2u next;
-	uint8_t generated;
+	uint8_t generated = 0;
+	int16_t sample = 0;
 
-	if (owner == NULL || transmit_octet == NULL ||
-	    memory_regions_overlap(owner, sizeof(*owner),
-				   transmit_octet, sizeof(*transmit_octet)))
+	if (owner == NULL)
 		return V92_PHASE4_E2U_INVALID_ARGUMENT;
 	if (!v92_phase4_e2u_is_valid(owner))
 		return V92_PHASE4_E2U_INVALID_STATE;
+	if ((owner->local_role == V90_ANALOG_MODEM ? transmit_sample == NULL : transmit_octet == NULL) ||
+	    (transmit_sample != NULL && memory_regions_overlap(owner, sizeof(*owner),
+		transmit_sample, sizeof(*transmit_sample))) ||
+	    (transmit_octet != NULL && memory_regions_overlap(owner, sizeof(*owner),
+		transmit_octet, sizeof(*transmit_octet))) ||
+	    (transmit_sample != NULL && transmit_octet != NULL && memory_regions_overlap(
+		transmit_sample, sizeof(*transmit_sample), transmit_octet, sizeof(*transmit_octet))))
+		return V92_PHASE4_E2U_INVALID_ARGUMENT;
 	if (owner->failed)
 		return V92_PHASE4_E2U_FAILED;
 	if (v92_phase4_e2u_is_complete(owner))
 		return V92_PHASE4_E2U_COMPLETE;
 	next = *owner;
 	if (next.local_role == V90_ANALOG_MODEM) {
-		int16_t sample;
 		struct v90_pcm_stream_frame frame;
 		struct v92_phase4_e2u_analog_state *state = &next.state.analog;
 		enum v90_downstream_data_rx_result received;
@@ -555,7 +561,6 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 		    received != V90_DOWNSTREAM_DATA_RX_B1D_COMPLETE &&
 		    received != V90_DOWNSTREAM_DATA_RX_DATA_FRAME)
 			return fail(owner);
-		generated = g711_encode(next.state.analog.cpu.law, sample);
 	} else {
 		enum v92_phase4_e2u_result receive_result;
 		struct v92_phase4_e2u_digital_state *state = &next.state.digital;
@@ -576,7 +581,10 @@ enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	if (!v92_phase4_e2u_is_valid(&next))
 		return fail(owner);
 	*owner = next;
-	*transmit_octet = generated;
+	if (owner->local_role == V90_ANALOG_MODEM)
+		*transmit_sample = sample;
+	else
+		*transmit_octet = generated;
 	return v92_phase4_e2u_is_complete(owner) ?
 		V92_PHASE4_E2U_COMPLETE : V92_PHASE4_E2U_OK;
 }

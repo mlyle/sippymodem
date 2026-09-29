@@ -5929,6 +5929,35 @@ static bool retrain_preserves_protocol(
 	       pcm_call_is_valid(&retraining);
 }
 
+static bool v92_phase4_linear_training(const struct pcm_call *snapshot)
+{
+	struct pcm_call call = *snapshot;
+	struct v92_phase4_analog_station source = call.state.phase4.v92.owner.analog.station;
+	CHECK(source.transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U &&
+	      fractional_delay_set_phase(&call.upstream_transmit_delay,
+		      FRACTIONAL_DELAY_ONE_SAMPLE_Q16 / 4) == FRACTIONAL_DELAY_OK,
+	      "linear training fixture did not retain TRN2u and its timing filter");
+	struct fractional_delay expected = call.upstream_transmit_delay;
+	struct fractional_delay rounded = expected;
+	unsigned distinct = 0;
+	for (unsigned i = 0; i < 64u; ++i) {
+		int16_t sample, early_rounding;
+		uint8_t transmitted;
+		struct pcm_call_observation event;
+		CHECK(v92_phase4_analog_station_transmit(&source, &sample) == V92_PHASE4_ANALOG_STATION_OK,
+		      "linear training source stopped");
+		early_rounding = g711_quantize(call.law, sample);
+		CHECK(fractional_delay_process(&expected, sample, &sample) == FRACTIONAL_DELAY_OK &&
+		      fractional_delay_process(&rounded, early_rounding, &early_rounding) == FRACTIONAL_DELAY_OK &&
+		      pcm_call_octet(&call, silence_octet(call.law), 0, &transmitted, &event) == PCM_CALL_OK &&
+		      transmitted == g711_encode(call.law, sample),
+		      "Phase 4 quantized TRN2u before filtering: law %u symbol %u", call.law, i);
+		distinct += g711_encode(call.law, sample) != g711_encode(call.law, early_rounding);
+	}
+	CHECK(distinct != 0u, "linear training fixture did not distinguish premature quantization");
+	return true;
+}
+
 static bool run_v92_phase4_control(
 	enum g711_law law, size_t delay)
 {
@@ -5955,6 +5984,7 @@ static bool run_v92_phase4_control(
 	bool digital_handoff_reached = false;
 	bool completion_failure_checked = false;
 	bool cleardown_checked = false;
+	bool linear_training_checked = false;
 	bool wait_started = false, wait_advanced = false, wait_expired = false;
 	size_t first_cpu_sent = SIZE_MAX;
 	size_t first_cpu_received = SIZE_MAX;
@@ -6065,6 +6095,10 @@ static bool run_v92_phase4_control(
 		digital_observation = (struct pcm_call_observation){ 0 };
 		bool timed_control = analog.stage == PCM_CALL_PHASE4 &&
 			analog.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL;
+		if (timed_control && !linear_training_checked) {
+			CHECK(v92_phase4_linear_training(&analog), "Phase 4 did not preserve linear training");
+			linear_training_checked = true;
+		}
 		uint64_t completed_before = timed_control ?
 			analog.state.phase4.v92.owner.analog.station.transmit.control.completed_cpu_records : 0u;
 		uint32_t wait_before = timed_control ?

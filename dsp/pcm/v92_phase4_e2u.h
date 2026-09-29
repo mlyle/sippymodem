@@ -117,12 +117,17 @@ bool v92_phase4_e2u_is_data_ready(const struct v92_phase4_e2u *owner);
 
 /* Consume and produce one simultaneous 8 kHz media interval. The authoritative
  * downstream codeword and upstream sample are supplied together; only the
- * role-owned input is used. COMPLETE consumes the final E2u interval.
+ * role-owned input is used. The digital role writes transmit_octet; the
+ * analogue role writes the unquantized transmit_sample, so its caller can
+ * apply the continuous transmit filter before G.711 encoding. Only the
+ * role-owned output is required; the other may be NULL and is untouched.
+ * Present outputs must not overlap one another or the owner.
+ * COMPLETE consumes the final E2u interval.
  * A contradictory decoded control record returns SEQUENCE_MISMATCH and
  * latches failure without committing its parameters or output. */
 enum v92_phase4_e2u_result v92_phase4_e2u_next(
 	struct v92_phase4_e2u *owner, uint8_t received_octet,
-	int16_t received_sample, uint8_t *transmit_octet);
+	int16_t received_sample, uint8_t *transmit_octet, int16_t *transmit_sample);
 
 bool v92_phase4_e2u_handoff_is_valid(
 	const struct v92_phase4_e2u_handoff *handoff);

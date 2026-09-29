@@ -3653,7 +3653,7 @@ static enum pcm_call_result v92_e2u_result(
 /* PHASE4_READY consumes no output interval: the prefix has drained and the
  * control transmitter now owns that same interval. */
 static enum pcm_call_result transmit_v92_rate_prefix(
-	struct pcm_call_v92_phase4_state *state, uint8_t *octet)
+	struct pcm_call_v92_phase4_state *state, uint8_t *octet, int16_t *sample)
 {
 	struct v90_pcm_symbol symbol;
 	enum v90_downstream_data_stream_result result;
@@ -3668,7 +3668,7 @@ static enum pcm_call_result transmit_v92_rate_prefix(
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_RU) {
 		struct pcm_call_v92_analog_rate_prefix *prefix = &state->prefix.analog;
 		if (prefix->queue_count) {
-			*octet = g711_encode(prefix->transmit.law, prefix->queue[0]);
+			*sample = prefix->queue[0];
 			prefix->queue_count--;
 			memmove(prefix->queue, prefix->queue + 1,
 				prefix->queue_count * sizeof(prefix->queue[0]));
@@ -3687,7 +3687,7 @@ static enum pcm_call_result transmit_v92_rate_prefix(
 		}
 		if (v92_pcm_phase3_ru_next(&prefix->transmit, &symbol) != V92_PCM_PHASE3_RU_OK)
 			return PCM_CALL_NUMERIC_FAILURE;
-		*octet = symbol.octet;
+		*sample = symbol.sample;
 		return PCM_CALL_OK;
 	}
 	if (state->prefix_stage == PCM_CALL_V92_PREFIX_DATA) {
@@ -3771,16 +3771,15 @@ static bool activate_v92_cleardown(struct pcm_call *call)
 }
 
 static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
-	uint8_t received_octet, int16_t received_sample, uint8_t *transmit_octet)
+	uint8_t received_octet, int16_t received_sample, uint8_t *transmit_octet,
+	int16_t *transmit_sample)
 {
 	struct pcm_call_v92_phase4_state *state = &call->state.phase4.v92;
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct v92_rate_pause_analog *pause = &state->owner.analog_pause.signal;
-		int16_t sample;
-		if (!v92_rate_pause_analog_transmit(pause, &sample) ||
+		if (!v92_rate_pause_analog_transmit(pause, transmit_sample) ||
 		    !v92_rate_pause_analog_receive(pause, received_octet))
 			return PCM_CALL_SEQUENCE_MISMATCH;
-		*transmit_octet = g711_encode(call->law, sample);
 		if (!v92_rate_pause_analog_is_ready(pause))
 			return PCM_CALL_OK;
 		struct pcm_call_v92_analog_phase4_control resumed = { 0 };
@@ -3809,14 +3808,14 @@ static enum pcm_call_result sample_v92_pause(struct pcm_call *call,
 
 static enum pcm_call_result sample_v92_phase4(
 	struct pcm_call *call, uint8_t received_octet, int16_t received_sample,
-	uint8_t *transmit_octet)
+	uint8_t *transmit_octet, int16_t *transmit_sample)
 {
 	bool prefix_sent = false;
 	if (!activate_v92_cleardown(call))
 		return PCM_CALL_INVALID_STATE;
 	if (call->state.phase4.v92.prefix_stage != PCM_CALL_V92_PREFIX_NONE) {
 		enum pcm_call_result result = transmit_v92_rate_prefix(
-			&call->state.phase4.v92, transmit_octet);
+			&call->state.phase4.v92, transmit_octet, transmit_sample);
 
 		if (result != PCM_CALL_OK && result != PCM_CALL_PHASE4_READY)
 			return result;
@@ -3843,27 +3842,24 @@ static enum pcm_call_result sample_v92_phase4(
 	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_E2U) {
 		struct v92_phase4_e2u *e2u = &call->state.phase4.v92.owner.e2u;
 		enum pcm_call_result result = v92_e2u_result(v92_phase4_e2u_next(
-			e2u, received_octet, received_sample, transmit_octet));
+			e2u, received_octet, received_sample, transmit_octet, transmit_sample));
 		if (result == PCM_CALL_OK && v92_phase4_e2u_is_complete(e2u) &&
 		    !v92_phase4_e2u_is_data_ready(e2u))
 			return enter_v92_pause(call);
 		return result;
 	}
 	if (call->state.phase4.v92.child == PCM_CALL_V92_PHASE4_PAUSE)
-		return sample_v92_pause(call, received_octet, received_sample, transmit_octet);
+		return sample_v92_pause(call, received_octet, received_sample, transmit_octet, transmit_sample);
 	if (call->local_role == V90_ANALOG_MODEM) {
 		struct pcm_call_v92_analog_phase4_control *state =
 			&call->state.phase4.v92.owner.analog;
 		uint64_t completed_before = state->station.transmit.control.completed_cpu_records;
-		int16_t sample;
 		enum pcm_call_result result = prefix_sent ? PCM_CALL_OK : v92_analog_phase4_result(
 			v92_phase4_analog_station_transmit(
-				&state->station, &sample));
+				&state->station, transmit_sample));
 
 		if (result != PCM_CALL_OK)
 			return result;
-		if (!prefix_sent)
-			*transmit_octet = g711_encode(call->law, sample);
 		if (call->state.phase4.v92.prefix_stage == PCM_CALL_V92_PREFIX_RU &&
 		    !pcm_r_rx_is_complete(&call->state.phase4.v92.prefix.analog.receive)) {
 			enum pcm_r_rx_result received = pcm_r_rx_receive(
@@ -3997,14 +3993,15 @@ static enum pcm_call_result sample_phase4(
 	uint8_t *transmit_octet)
 {
 	if (uses_pcm_upstream(call)) {
+		int16_t sample = 0;
 		enum pcm_call_result result = sample_v92_phase4(
-			call, received_octet, received_sample, transmit_octet);
+			call, received_octet, received_sample, transmit_octet, &sample);
 		/* Retain the selected Jp phase and reconstruction history across
-		 * all control coders, including the final CPu. */
+		 * all control coders, including the final CPu. Keep analogue
+		 * samples linear until this filter, just as in B1u and data;
+		 * earlier G.711 rounding would train a different transmit path. */
 		return call->local_role == V90_ANALOG_MODEM ?
-			filter_v92_upstream(call, result,
-				result == PCM_CALL_OK ? g711_decode(call->law, *transmit_octet) : 0,
-				transmit_octet) : result;
+			filter_v92_upstream(call, result, sample, transmit_octet) : result;
 	}
 	enum v90_phase4_startup_result result =
 		call->local_role == V90_ANALOG_MODEM ?
