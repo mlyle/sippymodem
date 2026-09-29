@@ -139,6 +139,32 @@ static bool test_half_sample_preserves_voice_band_energy(void)
 	return true;
 }
 
+static bool test_half_sample_removes_nyquist_component(void)
+{
+	for (int direction = -1; direction <= 1; direction += 2)
+		for (int offset = -1; offset <= 1; ++offset) {
+			struct fractional_delay delay;
+			int16_t output = 0;
+			int32_t phase = direction * FRACTIONAL_DELAY_HALF_SAMPLE_Q16 + offset;
+
+			fractional_delay_init(&delay);
+			CHECK(fractional_delay_set_phase(&delay, phase) == FRACTIONAL_DELAY_OK,
+			      "half-sample phase did not initialize");
+			/* A half-sample shift samples cos(pi*n) at its zero crossings.
+			 * Residual alternating energy biases V.92 Su's two-phase probe.
+			 * Adjacent Q16 phases must approach the same zero continuously. */
+			for (unsigned n = 0; n < 2u * FRACTIONAL_DELAY_TAPS; ++n) {
+				CHECK(fractional_delay_process(&delay, n & 1u ? -12000 : 12000,
+					      &output) == FRACTIONAL_DELAY_OK,
+				      "half-sample Nyquist probe failed");
+				if (n >= FRACTIONAL_DELAY_TAPS)
+					CHECK(offset == 0 ? output == 0 : output >= -3 && output <= 3,
+					      "near-half-sample phase %d retained Nyquist output %d", phase, output);
+			}
+		}
+	return true;
+}
+
 static bool test_reconfiguration_is_continuous_and_transactional(void)
 {
 	struct fractional_delay delay;
@@ -275,6 +301,7 @@ int main(void)
 		{ "all phases preserve a valid stream",
 		  test_all_phases_preserve_valid_stream },
 		{ "voice-band energy", test_half_sample_preserves_voice_band_energy },
+		{ "half-sample Nyquist cancellation", test_half_sample_removes_nyquist_component },
 		{ "continuous reconfiguration",
 		  test_reconfiguration_is_continuous_and_transactional },
 		{ "cubic interpolation", test_cubic_interpolation },

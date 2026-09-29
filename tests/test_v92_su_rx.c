@@ -218,8 +218,9 @@ static bool run_phase_receiver(
 
 static bool test_generated_phase_probe(void)
 {
-	static const struct channel_bench_effect_spec exact = {
-		.kind = CHANNEL_BENCH_PCMU,
+	static const struct channel_bench_effect_spec exact[] = {
+		{ .kind = CHANNEL_BENCH_PCMU },
+		{ .kind = CHANNEL_BENCH_PCMA },
 	};
 	static const struct channel_bench_effect_spec impaired[] = {
 		{
@@ -260,12 +261,14 @@ static bool test_generated_phase_probe(void)
 	uint16_t impaired_extension = 0u;
 	uint16_t filtered_extension = 0u;
 
-	CHECK(run_phase_receiver(&exact, 1u, true, &exact_extension),
-	      "exact generated Su phase probe failed");
-	CHECK(extension_is_near(
-		      exact_extension, UINT16_C(0x8000), UINT16_C(0x0800)),
-	      "exact Su phase was %04x instead of one half symbol",
-	      exact_extension);
+	for (size_t law = 0; law < ARRAY_LENGTH(exact); ++law) {
+		CHECK(run_phase_receiver(exact + law, 1u, true, &exact_extension),
+		      "exact generated Su phase probe failed");
+		CHECK(extension_is_near(
+			      exact_extension, UINT16_C(0x8000), UINT16_C(0x0010)),
+		      "exact Su phase was %04x instead of one half symbol for law %zu",
+		      exact_extension, law);
+	}
 	CHECK(run_phase_receiver(
 		      impaired, ARRAY_LENGTH(impaired), true, &impaired_extension),
 	      "impaired generated Su phase probe failed");

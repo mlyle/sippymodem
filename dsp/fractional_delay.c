@@ -56,16 +56,19 @@ static enum fractional_delay_result generate_coefficients(
 	int32_t coefficients[FRACTIONAL_DELAY_TAPS])
 {
 	/*
-	 * Generate h[n] sinc(n - 15 - phase), where h is a 31-point Hamming
-	 * window, then normalize the result to unity DC gain.  Each tap is
-	 * rounded to the nearest Q15 unit; correcting the nearest central tap
-	 * removes the accumulated quantization error exactly.
+	 * Apply a Hamming window centered on sinc(n - 15 - phase), retaining
+	 * the fixed sample history, then normalize to unity DC gain. Round
+	 * to Q15 and remove the accumulated DC error at the central tap(s).
 	 */
 	static const double pi = 3.14159265358979323846264338327950288;
 	double terms[FRACTIONAL_DELAY_TAPS];
 	double sum = 0.0;
 	int64_t quantized_sum;
 	double phase;
+	bool half_sample = phase_q16 == -FRACTIONAL_DELAY_HALF_SAMPLE_Q16 ||
+		phase_q16 == FRACTIONAL_DELAY_HALF_SAMPLE_Q16;
+	size_t count = FRACTIONAL_DELAY_TAPS - (unsigned)half_sample;
+	size_t first = half_sample && phase_q16 > 0 ? 1u : 0u;
 
 	if (!phase_is_valid(phase_q16))
 		return FRACTIONAL_DELAY_OUT_OF_RANGE;
@@ -78,11 +81,17 @@ static enum fractional_delay_result generate_coefficients(
 	}
 	phase = (double)phase_q16 /
 		(double)FRACTIONAL_DELAY_ONE_SAMPLE_Q16;
+	/* Move the window with the sinc, rather than leaving it centered at
+	 * 15. Exact half samples then have thirty symmetric nonzero taps,
+	 * and nearby phases approach that kernel continuously. A fixed odd
+	 * window leaves alternating energy that biases V.92 Su phase probes. */
 	for (size_t tap = 0; tap < FRACTIONAL_DELAY_TAPS; ++tap) {
 		double distance = (double)tap - FRACTIONAL_DELAY_CENTER - phase;
-		double window = 0.54 - 0.46 * cos(
-			2.0 * pi * (double)tap /
-			(double)(FRACTIONAL_DELAY_TAPS - 1));
+		if (fabs(distance) > FRACTIONAL_DELAY_CENTER) {
+			terms[tap] = 0.0;
+			continue;
+		}
+		double window = 0.54 + 0.46 * cos(pi * distance / FRACTIONAL_DELAY_CENTER);
 		double sinc = sin(pi * distance) / (pi * distance);
 
 		terms[tap] = window * sinc;
@@ -102,9 +111,20 @@ static enum fractional_delay_result generate_coefficients(
 			return FRACTIONAL_DELAY_NUMERIC_FAILURE;
 		coefficients[tap] = (int32_t)quantized;
 	}
+	if (half_sample)
+		for (size_t tap = 0; tap < count / 2u; ++tap)
+			coefficients[first + count - 1u - tap] = coefficients[first + tap];
 	quantized_sum = coefficient_sum(coefficients);
-	coefficients[correction_tap(phase_q16)] +=
-		(int32_t)(FRACTIONAL_DELAY_Q15_ONE - quantized_sum);
+	if (half_sample) {
+		/* Paired coefficients make the correction even. Preserve symmetry
+		 * as well as unity DC gain when rounding to Q15. */
+		int32_t correction = (int32_t)(FRACTIONAL_DELAY_Q15_ONE - quantized_sum) / 2;
+		coefficients[first + count / 2u - 1u] += correction;
+		coefficients[first + count / 2u] += correction;
+	} else {
+		coefficients[correction_tap(phase_q16)] +=
+			(int32_t)(FRACTIONAL_DELAY_Q15_ONE - quantized_sum);
+	}
 	return coefficient_sum(coefficients) == FRACTIONAL_DELAY_Q15_ONE ?
 		FRACTIONAL_DELAY_OK : FRACTIONAL_DELAY_NUMERIC_FAILURE;
 }
