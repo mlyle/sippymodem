@@ -1611,6 +1611,13 @@ enum pcm_call_result pcm_call_start_retrain(struct pcm_call *call)
 	return begin_retrain(call, false);
 }
 
+bool pcm_call_is_full_retraining(const struct pcm_call *call)
+{
+	return pcm_call_is_valid(call) && call->retrain_active &&
+	       !rate_renegotiation_is_active_owned(call) &&
+	       !v92_fast_is_active_owned(call);
+}
+
 bool pcm_call_has_failed(const struct pcm_call *call)
 {
 	return pcm_call_is_valid(call) && call->failed;

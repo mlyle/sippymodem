@@ -923,6 +923,8 @@ static bool exercise_retrain(
 	unsigned int completion_frames = 0;
 	int pending_transmit_bits = 0;
 	int pending_transmit_chars = 0;
+	bool interrupt_exchange = id == DP_V92 && !raw_transport;
+	unsigned retrain_quiet = 0, longest_retrain_quiet = 0;
 
 	if (caller == NULL || answerer == NULL || initiator == NULL ||
 	    sequence >= ARRAY_LENGTH(caller_payloads))
@@ -996,8 +998,28 @@ static bool exercise_retrain(
 			"V.92 retrain fixture did not interrupt pending LAPM data\n");
 		return false;
 	}
+	/* ATO1 must request a full retrain even while a shorter exchange is
+	 * already active. The two directions exercise RR and FPE respectively.
+	 * PCMA lets the peer start the exchange and clocks its request across
+	 * the media boundary; PCMU interrupts a local request immediately. */
+	if (interrupt_exchange) {
+		struct dp *exchange = codec == MEDIA_CODEC_PCMA ?
+			peer->modem->dp : initiator->modem->dp;
+		if (!(sequence == 0 ? v90_datapump_start_rate_renegotiation(exchange, false) :
+		      v90_datapump_start_fast_exchange(exchange))) {
+			fprintf(stderr, "pre-ATO1 parameter exchange did not start\n");
+			return false;
+		}
+		if (codec == MEDIA_CODEC_PCMA)
+			for (unsigned frame = 0; frame < 4; ++frame)
+				if (!process_sip_frame(caller, answerer, codec, recorder) ||
+				    !endpoint_drain(caller) || !endpoint_drain(answerer))
+					return false;
+	}
 	initiator->modem->state = TEST_STATE_COMMAND_ONLINE;
 	initiator->modem->command = 1;
+	size_t initiator_output_before_request = initiator->output_count;
+	size_t peer_output_before_request = peer->output_count;
 	if (peer_request_frame == 0) {
 		peer->modem->state = TEST_STATE_COMMAND_ONLINE;
 		peer->modem->command = 1;
@@ -1008,12 +1030,12 @@ static bool exercise_retrain(
 	     (process_at_command(peer->modem, peer_command) != 1 ||
 	      (peer->modem->retrain_pending != 0) != peer_retrains)) ||
 	    !endpoint_drain(caller) || !endpoint_drain(answerer) ||
-	    (initiator_retrains && initiator->output_count != 0) ||
+	    (initiator_retrains && initiator->output_count != initiator_output_before_request) ||
 	    (!initiator_retrains &&
 	     (!output_contains(initiator, "WARNING: Retrain unavailable") ||
 	      !output_contains_connect(initiator, bit_rate))) ||
 	    (peer_request_frame == 0 && peer_retrains &&
-	     peer->output_count != 0) ||
+	     peer->output_count != peer_output_before_request) ||
 	    (peer_request_frame == 0 && !peer_retrains &&
 	     (!output_contains(peer, "WARNING: Retrain unavailable") ||
 	      !output_contains_connect(peer, bit_rate)))) {
@@ -1076,6 +1098,18 @@ static bool exercise_retrain(
 				      reduce_answerer_to_caller)) ||
 		    !endpoint_drain(caller) || !endpoint_drain(answerer))
 			return false;
+		if (interrupt_exchange) {
+			enum g711_law law;
+			if (!codec_law(codec, &law))
+				return false;
+			for (unsigned sample = 0; sample < SIP_FRAME_SAMPLES; ++sample) {
+				bool quiet = abs(decode_codeword(law,
+					initiator->transmit_codewords[sample])) <= 8;
+				retrain_quiet = quiet ? retrain_quiet + 1u : 0u;
+				if (retrain_quiet > longest_retrain_quiet)
+					longest_retrain_quiet = retrain_quiet;
+			}
+		}
 		if (id == DP_V22BIS && !peer_requested &&
 		    frame < ATO1_100MS_FRAMES) {
 			/* V.22bis 6.4 defines a complete 100 ms S1 before the
@@ -1122,6 +1156,10 @@ static bool exercise_retrain(
 	}
 	if (id == DP_V92 && !output_contains(initiator, "Upstream: PCM\r\n")) {
 		fprintf(stderr, "V.92 retrain omitted negotiated upstream evidence\n");
+		return false;
+	}
+	if (interrupt_exchange && longest_retrain_quiet < MODEM_RATE * 70 / 1000) {
+		fprintf(stderr, "ATO1 completed a parameter exchange without full retrain\n");
 		return false;
 	}
 	if (raw_transport) {

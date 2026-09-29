@@ -322,15 +322,18 @@ static int retrain_v90(struct dp *dp)
 
 	if (datapump == NULL || datapump->call.stage == PCM_CALL_CLOSED)
 		return -1;
-	if (training_session_is_retraining(&datapump->training))
+	bool retraining = training_session_is_retraining(&datapump->training);
+	if (retraining && pcm_call_is_full_retraining(&datapump->call))
 		return 0;
-	if (!training_session_is_online(&datapump->training))
+	if (!retraining && !training_session_is_online(&datapump->training))
 		return -1;
 	training = datapump->training;
 	call = datapump->call;
+	/* ATO1 supersedes a rate or fast exchange. Keep its existing bounded
+	 * training transaction; repeated full-retrain requests do not restart it. */
 	if (pcm_call_start_retrain(&call) != PCM_CALL_OK ||
-	    training_session_start_retrain(
-		    &training, TRAINING_LOCAL_RETRAIN) != TRAINING_SESSION_OK)
+	    (!retraining && training_session_start_retrain(
+		    &training, TRAINING_LOCAL_RETRAIN) != TRAINING_SESSION_OK))
 		return -1;
 	/* Already transmitted data still returns while the peer starts Tone A.
 	 * Retain a qualified in-call model through the new ranging exchange. */
