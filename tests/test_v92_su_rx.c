@@ -395,6 +395,50 @@ static bool test_transition_receiver_is_reusable(void)
 	return true;
 }
 
+static bool test_short_response_at_each_pattern_phase(void)
+{
+	/* The peer starts TRN1u immediately after its (24 + epsilon)T
+	 * response. Detect the inversion before those first training symbols
+	 * leave the reconstruction delay, including a half-symbol input phase. */
+	for (unsigned wait = 96; wait < 108; ++wait) {
+		struct fractional_delay delay;
+		struct v92_su source;
+		struct v92_su_rx receiver;
+		struct v92_jp parameters = jp(UINT16_C(0x8000));
+		bool detected = false;
+
+		fractional_delay_init(&delay);
+		CHECK(v92_su_init(&source, 6908) == V92_SU_OK &&
+		      advance_to_jp_wait(&source, &delay) &&
+		      v92_su_rx_init(&receiver, V92_SU_RX_TRANSITION_ONLY,
+			      TEST_THRESHOLD, TEST_PHASE_THRESHOLD) == V92_SU_RX_OK,
+		      "short Su response did not initialize");
+		for (unsigned i = 0; i < wait; ++i) {
+			int16_t sample;
+			CHECK(v92_su_next(&source, &delay, &sample) == V92_SU_OK,
+			      "Su wait failed");
+			enum v92_su_rx_result result = v92_su_rx_sample(&receiver, sample);
+			CHECK(result == V92_SU_RX_OK || result == V92_SU_RX_ACQUIRED,
+			      "Su reversed before Jp");
+		}
+		CHECK(v92_su_accept_jp(&source, &parameters) == V92_SU_OK,
+		      "short Su response rejected Jp");
+		for (unsigned i = 0; i < V92_SU_JP_BAR_INPUT_SYMBOLS +
+			     FRACTIONAL_DELAY_CENTER && !detected; ++i) {
+			int16_t sample;
+			enum v92_su_result generated = v92_su_next(&source, &delay, &sample);
+			CHECK(generated == V92_SU_OK || generated == V92_SU_REACHED_JP_PRIME_WAIT,
+			      "short Su generation failed");
+			enum v92_su_rx_result result = v92_su_rx_sample(&receiver, sample);
+			CHECK(result == V92_SU_RX_OK || result == V92_SU_RX_TRANSITION,
+			      "short Su response failed");
+			detected = result == V92_SU_RX_TRANSITION;
+		}
+		CHECK(detected, "missed Su reversal after %u wait symbols", wait);
+	}
+	return true;
+}
+
 static bool test_validation_is_transactional(void)
 {
 	struct v92_su_rx receiver;
@@ -492,6 +536,7 @@ int main(void)
 		{ "absent phase rejection", test_absent_phase_is_rejected },
 		{ "reusable transition receiver",
 		  test_transition_receiver_is_reusable },
+		{ "short response at each pattern phase", test_short_response_at_each_pattern_phase },
 		{ "transactional validation", test_validation_is_transactional },
 	};
 	unsigned int failures = 0;

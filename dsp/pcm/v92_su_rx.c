@@ -177,7 +177,10 @@ static enum su_comparison classify_sample(
 		return SU_COMPARISON_PERIODIC;
 	opposite_count = bit_count6(
 		receiver->comparison_opposite & receiver->comparison_valid);
-	return opposite_count >= 3u && opposite_count > same_count ?
+	/* Three reversed signs identify the transition halfway through a
+	 * six-symbol window. Requiring a strict majority can miss the short
+	 * Jp response when fractional reconstruction changes its zero crossings. */
+	return opposite_count >= 3u && opposite_count >= same_count ?
 		       SU_COMPARISON_INVERTED : SU_COMPARISON_NONE;
 }
 
