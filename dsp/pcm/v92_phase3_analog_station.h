@@ -53,7 +53,7 @@ struct v92_phase3_analog_station_configuration {
 	/* Nominal upstream level at call entry, independent of downstream UINFO. */
 	uint8_t upstream_lu_ucode;
 	/* Only a direct codec-to-codec transport may discard the negotiated
-	 * Jp phase at Jp-prime. RTP sample rate alone does not establish this.
+	 * Jp phase when TRN1u starts. RTP sample rate alone does not establish this.
 	 * The default preserves the phase for a physical analogue path. */
 	bool restore_codec_grid;
 };

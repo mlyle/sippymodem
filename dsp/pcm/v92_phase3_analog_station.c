@@ -9,6 +9,9 @@
 enum {
 	/* V.92 9.5.2.1.11: CPt within 5000 ms of the post-Jp Su reversal. */
 	CPT_DEADLINE_SYMBOLS = 40000,
+	CPT_MAX_TRN1U_SYMBOLS = (CPT_DEADLINE_SYMBOLS -
+		V92_SU_JP_BAR_INPUT_SYMBOLS - V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS - 1u) /
+		V92_PCM_PHASE3_TRN1U_ALIGNMENT * V92_PCM_PHASE3_TRN1U_ALIGNMENT,
 };
 
 static bool receive_stage_is_valid(
@@ -66,6 +69,7 @@ static bool transmit_is_valid(
 	case V92_PHASE3_ANALOG_TRANSMIT_SU:
 		return v92_su_is_valid(&station->transmit.su) &&
 		       !v92_su_is_complete(&station->transmit.su) &&
+		       station->transmit.su.stage != V92_SU_TRN1U_READY &&
 		       station->transmit_delay.phase_q16 ==
 			       station->transmit.su.phase_q16;
 	case V92_PHASE3_ANALOG_TRANSMIT_CPT:
@@ -92,15 +96,21 @@ static bool coordination_is_valid(
 			return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_INITIAL;
 		case PCM_PHASE3_J_RECEIVER_JD:
-		case PCM_PHASE3_J_RECEIVER_JP:
 			return station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_SU;
+		case PCM_PHASE3_J_RECEIVER_JP:
+			return (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
+				station->transmit.su.stage == V92_SU_JP_BAR_RESPONSE) ||
+			       (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+				station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U);
 		case PCM_PHASE3_J_RECEIVER_DONE:
 			return false;
 		}
 		return false;
 	case V92_PHASE3_ANALOG_RECEIVE_RI:
-		return station->transmit_stage ==
+		return (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
+			station->transmit.su.stage == V92_SU_JP_BAR_RESPONSE) ||
+		       station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_CPT ||
 		       station->transmit_stage ==
 			       V92_PHASE3_ANALOG_TRANSMIT_TRN2U;
@@ -308,8 +318,23 @@ static enum v92_phase3_analog_station_result transmit_su(
 	enum v92_su_result result = v92_su_next(
 		&station->transmit.su, &station->transmit_delay, sample);
 
-	return result == V92_SU_OK || result == V92_SU_REACHED_JP_WAIT ||
-		       result == V92_SU_REACHED_JP_PRIME_WAIT ?
+	if (result == V92_SU_REACHED_TRN1U_READY) {
+		struct v92_pcm_phase3_cpt_tx cpt;
+
+		/* Figures 10 and 11/V.92: TRN1u follows the (24 + epsilon)T
+		 * reversal immediately. Jp-prime controls downstream reception;
+		 * waiting for it here would insert another, unrequested Su segment. */
+		if (v92_su_finish(&station->transmit.su, &station->transmit_delay,
+			    station->restore_codec_grid) != V92_SU_COMPLETE ||
+		    v92_pcm_phase3_cpt_tx_init(&cpt, station->law,
+			    station->upstream_lu_ucode, &station->cpt_parameters) !=
+			    V92_PCM_PHASE3_CPT_TX_OK)
+			return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
+		station->transmit = (union v92_phase3_analog_transmit){ .cpt = cpt };
+		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_CPT;
+		return V92_PHASE3_ANALOG_STATION_OK;
+	}
+	return result == V92_SU_OK || result == V92_SU_REACHED_JP_WAIT ?
 		       V92_PHASE3_ANALOG_STATION_OK :
 		       V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 }
@@ -319,6 +344,10 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 {
 	struct v90_pcm_symbol symbol;
 
+	if (station->dil_profile != V90_DIL_PROFILE_NONE &&
+	    station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    station->transmit.cpt.trn1u.emitted_symbols >= CPT_MAX_TRN1U_SYMBOLS)
+		return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
 	if (v92_pcm_phase3_cpt_tx_next(
 		    &station->transmit.cpt, &symbol) !=
 	    V92_PCM_PHASE3_CPT_TX_OK)
@@ -326,7 +355,8 @@ static enum v92_phase3_analog_station_result transmit_cpt(
 	*sample = symbol.sample;
 	/* N=0 waits for Ri; nonzero DIL allows a training traversal, bounded
 	 * at Jp-prime by the time left since the post-Jp Su reversal. */
-	if (station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	if (station->receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI &&
+	    station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
 	    station->transmit.cpt.trn1u.emitted_symbols >= station->second_trn1u_symbols &&
 	    (station->dil_profile != V90_DIL_PROFILE_NONE ||
 	     v90_phase4_ri_search_is_acquired(&station->receive.ri)) &&
@@ -540,45 +570,29 @@ static enum v92_phase3_analog_station_result receive_j(
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
 	if (result == PCM_PHASE3_J_RECEIVER_COMPLETE) {
-		struct v92_pcm_phase3_cpt_tx cpt;
 		struct v90_phase4_ri_search ri;
 
 		if (station->dil_profile != V90_DIL_PROFILE_NONE) {
-			/* Su's counter resets after its 24T reversal. Account for
-			 * that interval, the CPt prefix, and fractional rounding
-			 * before budgeting TRN1u. Check before subtracting: a late
-			 * Jp-prime must not wrap the budget or bypass minimum TRN1u. */
-			const uint32_t available = CPT_DEADLINE_SYMBOLS -
-				V92_SU_JP_BAR_INPUT_SYMBOLS - V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS - 1u;
-			uint64_t waited = station->transmit.su.stage_symbols;
-
-			if (station->transmit.su.stage != V92_SU_JP_PRIME_WAIT ||
-			    waited > available - V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS)
+			/* Training is already in progress while Jp finishes. Allow
+			 * a DIL traversal from this receive boundary, still bounded
+			 * by the five-second deadline measured from the Su reversal. */
+			uint32_t emitted = station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT ?
+				station->transmit.cpt.trn1u.emitted_symbols : 0u;
+			if (emitted >= CPT_MAX_TRN1U_SYMBOLS)
 				return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-			uint32_t remaining = (available - (uint32_t)waited) /
+			uint32_t target = (emitted + station->second_trn1u_symbols +
+				V92_PCM_PHASE3_TRN1U_ALIGNMENT - 1u) /
 				V92_PCM_PHASE3_TRN1U_ALIGNMENT * V92_PCM_PHASE3_TRN1U_ALIGNMENT;
-
-			if (station->second_trn1u_symbols > remaining)
-				station->second_trn1u_symbols = remaining;
+			station->second_trn1u_symbols = target < CPT_MAX_TRN1U_SYMBOLS ?
+				target : CPT_MAX_TRN1U_SYMBOLS;
 		}
-		if (v92_su_accept_jp_prime(
-			    &station->transmit.su,
-			    &station->transmit_delay, station->restore_codec_grid) != V92_SU_COMPLETE ||
-		    v92_pcm_phase3_cpt_tx_init(
-			    &cpt, station->law,
-			    station->upstream_lu_ucode,
-			    &station->cpt_parameters) !=
-			    V92_PCM_PHASE3_CPT_TX_OK ||
-		    v90_phase4_ri_search_init(
+		if (v90_phase4_ri_search_init(
 			    &ri, station->law,
 			    station->downstream_training_ucode) !=
 			    V90_PHASE4_RI_SEARCH_OK)
 			return V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH;
-		station->transmit =
-			(union v92_phase3_analog_transmit){ .cpt = cpt };
 		station->receive =
 			(union v92_phase3_analog_receive){ .ri = ri };
-		station->transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_CPT;
 		station->receive_stage = V92_PHASE3_ANALOG_RECEIVE_RI;
 		return V92_PHASE3_ANALOG_STATION_OK;
 	}
@@ -592,16 +606,18 @@ static enum v92_phase3_analog_station_result receive_ri(
 	uint8_t unconditioned_octet)
 {
 	if (station->learn_dil &&
-	    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
-	    station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
+	    (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU ||
+	     (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+	      station->transmit.cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U)) &&
 	    station->dil_receiver.symbols < station->dil_receiver.limit &&
 	    !pcm_dil_receiver_receive(&station->dil_receiver, network_octet, unconditioned_octet))
 		return V92_PHASE3_ANALOG_STATION_NUMERIC_FAILURE;
 	/* A nonzero-DIL peer cannot acknowledge CPt before receiving it.
 	 * Do not hunt for Ri in the preceding training symbols. */
 	if (station->dil_profile != V90_DIL_PROFILE_NONE &&
-	    station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
-	    station->transmit.cpt.completed_records == 0u)
+	    (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU ||
+	     (station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+	      station->transmit.cpt.completed_records == 0u)))
 		return V92_PHASE3_ANALOG_STATION_OK;
 	enum v90_phase4_ri_search_result result =
 		v90_phase4_ri_search_receive(
@@ -611,7 +627,8 @@ static enum v92_phase3_analog_station_result receive_ri(
 	if (result == (station->dil_profile == V90_DIL_PROFILE_NONE ?
 		V90_PHASE4_RI_SEARCH_TRANSITION_DETECTED :
 		V90_PHASE4_RI_SEARCH_ACQUIRED))
-		return v92_pcm_phase3_cpt_tx_request_finish(
+		return station->transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+		       v92_pcm_phase3_cpt_tx_request_finish(
 			       &station->transmit.cpt) ==
 			       V92_PCM_PHASE3_CPT_TX_OK ?
 			       V92_PHASE3_ANALOG_STATION_OK :

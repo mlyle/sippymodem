@@ -98,44 +98,120 @@ static int16_t media_sample(enum g711_law law, int16_t sample)
 static bool check_jp_prime_deadline(
 	const struct v92_phase3_analog_station *before, uint8_t octet)
 {
-	const uint64_t last_wait = 40000u - V92_SU_JP_BAR_INPUT_SYMBOLS -
-		V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS - 1u - V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS;
-	const uint64_t waits[] = { last_wait, last_wait + 1u, 40000u, UINT64_MAX - 1u };
+	const uint32_t last = (40000u - V92_SU_JP_BAR_INPUT_SYMBOLS -
+		V92_PCM_PHASE3_CPT_PREAMBLE_SYMBOLS - 1u) / 12u * 12u;
+	const uint32_t counts[] = { last - 1u, last, 40000u, UINT32_MAX };
 
-	for (size_t index = 0; index < ARRAY_LENGTH(waits); ++index) {
+	for (size_t index = 0; index < ARRAY_LENGTH(counts); ++index) {
 		struct v92_phase3_analog_station late = *before;
-		late.transmit.su.stage_symbols = waits[index];
+		late.transmit.cpt.trn1u.emitted_symbols = counts[index];
 		CHECK(v92_phase3_analog_station_is_valid(&late), "invalid late Jp-prime fixture");
 		enum v92_phase3_analog_station_result result =
 			v92_phase3_analog_station_receive(&late, octet, octet);
 
 		CHECK(index == 0 ? result == V92_PHASE3_ANALOG_STATION_OK &&
-			      late.second_trn1u_symbols == V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS :
+			      late.second_trn1u_symbols == last :
 			      result == V92_PHASE3_ANALOG_STATION_SEQUENCE_MISMATCH &&
 			      v92_phase3_analog_station_has_failed(&late),
-		      "Jp-prime deadline mishandled wait %llu: %s",
-		      (unsigned long long)waits[index], v92_phase3_analog_station_result_name(result));
+		      "Jp-prime deadline mishandled %u training symbols: %s",
+		      counts[index], v92_phase3_analog_station_result_name(result));
 	}
 	return true;
 }
 
-static bool check_jp_prime_phase(
-	const struct v92_phase3_analog_station *before, uint8_t octet)
+static bool check_su_phase(const struct v92_phase3_analog_station *before)
 {
-	for (unsigned int exact = 0; exact < 2u; ++exact) {
+	for (unsigned exact = 0; exact < 2u; ++exact) {
 		struct v92_phase3_analog_station station = *before;
 		struct fractional_delay expected = before->transmit_delay;
-		int32_t phase = exact ? 0 : before->transmit.su.post_jp_phase_q16;
+		struct v92_su su = before->transmit.su;
+		int16_t sample, expected_sample;
+		int32_t phase = exact ? 0 : su.post_jp_phase_q16;
 
 		station.restore_codec_grid = exact != 0;
-		CHECK(fractional_delay_set_phase(&expected, phase) == FRACTIONAL_DELAY_OK,
-		      "invalid expected Jp phase");
-		CHECK(v92_phase3_analog_station_receive(&station, octet, octet) ==
+		CHECK(v92_su_next(&su, &expected, &expected_sample) == V92_SU_REACHED_TRN1U_READY &&
+		      fractional_delay_set_phase(&expected, phase) == FRACTIONAL_DELAY_OK,
+		      "invalid expected Su handoff");
+		CHECK(v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
 			      V92_PHASE3_ANALOG_STATION_OK &&
 		      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+		      station.transmit.cpt.trn1u.emitted_symbols == 0u &&
+		      station.transmit.cpt.trn1u.scrambler.history == 0u &&
+		      sample == expected_sample &&
 		      memcmp(&station.transmit_delay, &expected, sizeof(expected)) == 0,
-		      "Jp-prime did not preserve physical history or selected phase");
+		      "Su did not hand off directly to zero-seeded TRN1u at the selected phase");
 	}
+	return true;
+}
+
+static bool check_early_jp_prime(
+	const struct v92_phase3_analog_station *before, uint8_t octet)
+{
+	struct v92_phase3_analog_station station = *before;
+	struct v92_su su;
+	int16_t sample;
+
+	/* A very short round trip can return Jp-prime while the 24T
+	 * response is still being sent. Receive DIL without truncating Su. */
+	fractional_delay_init(&station.transmit_delay);
+	CHECK(v92_su_init(&su, station.upstream_lu) == V92_SU_OK,
+	      "early Jp-prime fixture failed");
+	while (su.stage != V92_SU_JP_WAIT)
+		CHECK(v92_su_next(&su, &station.transmit_delay, &sample) <= V92_SU_REACHED_JP_WAIT,
+		      "early Jp-prime Su setup failed");
+	CHECK(v92_su_accept_jp(&su, &station.receive.j.parameters.v92.jp) == V92_SU_OK,
+	      "early Jp-prime Jp setup failed");
+	station.transmit = (union v92_phase3_analog_transmit){ .su = su };
+	station.transmit_stage = V92_PHASE3_ANALOG_TRANSMIT_SU;
+	CHECK(v92_phase3_analog_station_receive(&station, octet, octet) ==
+		      V92_PHASE3_ANALOG_STATION_OK &&
+	      station.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI &&
+	      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU,
+	      "early Jp-prime truncated Su or rejected DIL reception");
+	for (unsigned i = 0; i < V92_SU_JP_BAR_INPUT_SYMBOLS; ++i)
+		CHECK(v92_phase3_analog_station_transmit(&station, NULL, &sample) ==
+			      V92_PHASE3_ANALOG_STATION_OK &&
+		      (i + 1u == V92_SU_JP_BAR_INPUT_SYMBOLS ?
+			      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT &&
+			      station.transmit.cpt.trn1u.emitted_symbols == 0u :
+			      station.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU),
+		      "early Jp-prime changed the Su response length");
+	return true;
+}
+
+static bool check_trn1u_without_su_reversal(
+	const struct v92_phase3_digital_station *boundary)
+{
+	struct v92_phase3_digital_station digital = *boundary;
+	struct v92_pcm_phase3_trn1u training;
+	const unsigned symbols = V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS +
+		V92_PCM_PHASE3_TRN1U_LINE_DECISION_DELAY;
+
+	/* Let the peer receive a complete Jp before supplying its response. */
+	for (unsigned n = 0; n < 512u && !digital.downstream.jp_records; ++n) {
+		uint8_t octet;
+		CHECK(v92_phase3_digital_station_transmit(&digital, &octet) ==
+			      V92_PHASE3_DIGITAL_STATION_OK, "Jp transmission failed");
+	}
+	CHECK(digital.downstream.jp_records, "Jp did not finish a record");
+	/* Model an obscured Su response. Acquisition must retain TRN1u's first
+	 * symbol even when the reversal detector has not established Su. */
+	CHECK(v92_pcm_phase3_trn1u_init(&training, digital.law, TEST_UCODE) ==
+		      V92_PCM_PHASE3_TRN1U_OK, "TRN1u fixture initialization failed");
+	for (unsigned n = 0; n < symbols; ++n) {
+		struct v90_pcm_symbol symbol;
+
+		CHECK(v92_pcm_phase3_trn1u_next(&training, &symbol) == V92_PCM_PHASE3_TRN1U_OK &&
+		      v92_phase3_digital_station_receive(&digital, symbol.sample) ==
+			      V92_PHASE3_DIGITAL_STATION_OK,
+		      "obscured Su response lost training at symbol %u", n);
+	}
+	CHECK(digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U &&
+	      digital.downstream.finish_jp_requested &&
+	      digital.receive.trn1u.stage == V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_TRAINING &&
+	      digital.receive.trn1u.output_symbols == V92_PCM_PHASE3_TRN1U_LINE_SYNC_SYMBOLS &&
+	      digital.receive.trn1u.training_errors == 0u,
+	      "obscured Su response discarded the zero-seeded TRN1u opening");
 	return true;
 }
 
@@ -212,8 +288,8 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			uint8_t delivered = delay ? downstream_delay[cursor] : octet;
 			enum v92_phase3_analog_station_result result;
 			bool waiting_jp_prime =
-				analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
-				analog.transmit.su.stage == V92_SU_JP_PRIME_WAIT;
+				analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_J &&
+				analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT;
 			struct v92_phase3_analog_station before;
 
 			if (waiting_jp_prime)
@@ -225,10 +301,13 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			      result == V92_PHASE3_ANALOG_STATION_COMPLETE,
 			      "downstream receive failed at %zu: %s", index,
 			      v92_phase3_analog_station_result_name(result));
-			if (waiting_jp_prime && analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_CPT)
-				CHECK(check_jp_prime_phase(&before, delivered) &&
+			if (waiting_jp_prime && analog.receive_stage == V92_PHASE3_ANALOG_RECEIVE_RI)
+				CHECK(memcmp(&analog.transmit, &before.transmit, sizeof(analog.transmit)) == 0 &&
+				      memcmp(&analog.transmit_delay, &before.transmit_delay,
+					     sizeof(analog.transmit_delay)) == 0 &&
+				      check_early_jp_prime(&before, delivered) &&
 				      (!dil_symbols || check_jp_prime_deadline(&before, delivered)),
-				      "Jp-prime handling failed");
+				      "Jp-prime reset training or mishandled its deadline");
 		}
 
 		if (!v92_phase3_analog_station_transmit_complete(&analog)) {
@@ -245,12 +324,16 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 
 				CHECK(trained >= V92_PCM_PHASE3_TRN1U_MIN_SYMBOLS &&
 				      trained % V92_PCM_PHASE3_TRN1U_ALIGNMENT == 0u &&
-				      (delay < 4096u ? trained == dil_symbols :
-					      trained < dil_symbols && index - su_started >= 39980u),
+				      (delay < 4096u ? trained >= dil_symbols :
+					      trained == 39948u && index - su_started >= 39980u),
 				      "DIL training interval was %u symbols at delay %u",
 				      trained, delay);
 				cpt_started = true;
 			}
+			if (analog.transmit_stage == V92_PHASE3_ANALOG_TRANSMIT_SU &&
+			    analog.transmit.su.stage == V92_SU_JP_BAR_RESPONSE &&
+			    analog.transmit.su.stage_symbols + 1u == V92_SU_JP_BAR_INPUT_SYMBOLS)
+				CHECK(check_su_phase(&analog), "Su handoff failed");
 			enum v92_phase3_analog_station_result result =
 				v92_phase3_analog_station_transmit(
 					&analog, NULL, &sample);
@@ -283,6 +366,7 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 		sample = media_sample(law, sample);
 		if (!v92_phase3_digital_station_receive_complete(&digital)) {
 			int16_t delivered = delay ? upstream_delay[cursor] : sample;
+			bool measuring_su = digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE;
 			bool receiving_ja =
 				digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_INITIAL &&
 				digital.receive.initial.stage == V92_PCM_PHASE3_INITIAL_RX_JA;
@@ -299,6 +383,8 @@ static bool run_exchange(enum g711_law law, unsigned delay,
 			      "digital receiver returned %s at %zu",
 			      v92_phase3_digital_station_result_name(result),
 			      index);
+			if (measuring_su && digital.receive_stage == V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE)
+				CHECK(check_trn1u_without_su_reversal(&digital), "TRN1u acquisition failed");
 			if (receiving_ja && digital.receive_stage ==
 					    V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE)
 				CHECK(digital.receive.su.minimum_magnitude == TEST_SU_THRESHOLD &&
@@ -497,7 +583,7 @@ static bool test_delayed_ri(void)
 	return run_delayed_ri(G711_LAW_PCMU) && run_delayed_ri(G711_LAW_PCMA);
 }
 
-static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
+static bool run_nonzero_dil(enum g711_law law)
 {
 	/* A scripted peer requests DIL, then sends CPt while DIL is active.
 	 * Hold CPt after Ri to distinguish that acknowledgement from E1u. */
@@ -559,10 +645,8 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 			if (su.stage == V92_SU_JP_WAIT && digital.downstream.jp_records != 0)
 				CHECK(v92_su_accept_jp(&su, &digital.jp) == V92_SU_OK,
 				      "peer could not acknowledge Jp");
-			if (su.stage == V92_SU_JP_PRIME_WAIT &&
-			    ((early_trn1u && digital.downstream.finish_jp_requested) ||
-			     digital.downstream.stage == PCM_PHASE3_DIGITAL_TX_DIL)) {
-				CHECK(v92_su_accept_jp_prime(&su, &delay, true) == V92_SU_COMPLETE &&
+			if (su.stage == V92_SU_TRN1U_READY) {
+				CHECK(v92_su_finish(&su, &delay, true) == V92_SU_COMPLETE &&
 				      v92_pcm_phase3_cpt_tx_init(&cpt, law, TEST_UCODE, &parameters) ==
 					      V92_PCM_PHASE3_CPT_TX_OK,
 				      "peer could not enter DIL study");
@@ -582,7 +666,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 		} else if (peer == PEER_SU) {
 			enum v92_su_result result = v92_su_next(&su, &delay, &sample);
 			CHECK(result == V92_SU_OK || result == V92_SU_REACHED_JP_WAIT ||
-			      result == V92_SU_REACHED_JP_PRIME_WAIT, "Su generation failed");
+			      result == V92_SU_REACHED_TRN1U_READY, "Su generation failed");
 		} else {
 			if (cpt.stage == V92_PCM_PHASE3_CPT_TX_TRN1U &&
 			    cpt.trn1u.emitted_symbols == 6000) {
@@ -635,7 +719,7 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 		finished = v92_phase3_digital_station_receive_complete(&digital) &&
 			v92_phase3_digital_station_transmit_complete(&digital);
 	}
-	CHECK(finished && trn1u_overlapped_jp == early_trn1u &&
+	CHECK(finished && trn1u_overlapped_jp &&
 	      mid_segment_finish && e1u_started && ri_symbols == 3000 &&
 	      digital.downstream.scr_symbols == 0 && !digital.downstream.finish_scr_requested &&
 	      digital.downstream.dil.complete && digital.ri.finish_requested &&
@@ -682,17 +766,8 @@ static bool run_nonzero_dil(enum g711_law law, bool early_trn1u)
 
 static bool test_nonzero_dil(void)
 {
-	return run_nonzero_dil(G711_LAW_PCMU, false) &&
-	       run_nonzero_dil(G711_LAW_PCMA, false);
-}
-
-static bool test_early_second_trn1u(void)
-{
-	/* A peer can begin the second TRN1u after its Su-bar while our
-	 * transmitter is still completing Jp/Jp-prime. Retain its zero-seeded
-	 * opening, without shortening our downstream acknowledgement. */
-	return run_nonzero_dil(G711_LAW_PCMU, true) &&
-	       run_nonzero_dil(G711_LAW_PCMA, true);
+	return run_nonzero_dil(G711_LAW_PCMU) &&
+	       run_nonzero_dil(G711_LAW_PCMA);
 }
 
 static bool test_analog_contracts(void)
@@ -978,7 +1053,6 @@ int main(void)
 		{ "zero-DIL waits for delayed Ri", test_delayed_ri },
 		{ "nonzero-DIL station exchange", test_nonzero_dil },
 		{ "native nonzero-DIL station pair", test_nonzero_station_pair },
-		{ "second TRN1u overlaps Jp", test_early_second_trn1u },
 		{ "analogue station contracts", test_analog_contracts },
 		{ "manufacturer interval backpressure", test_md_backpressure },
 		{ "digital station contracts", test_digital_contracts },

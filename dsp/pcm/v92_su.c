@@ -45,8 +45,8 @@ bool v92_su_is_valid(const struct v92_su *su)
 		       su->phase_q16 ==
 			       -FRACTIONAL_DELAY_HALF_SAMPLE_Q16 &&
 		       post_jp_phase_is_valid(su->post_jp_phase_q16);
-	case V92_SU_JP_PRIME_WAIT:
-		return su->stage_symbols != UINT64_MAX &&
+	case V92_SU_TRN1U_READY:
+		return su->stage_symbols == 0 &&
 		       post_jp_phase_is_valid(su->post_jp_phase_q16) &&
 		       su->phase_q16 == su->post_jp_phase_q16;
 	case V92_SU_DONE:
@@ -131,14 +131,14 @@ static enum v92_su_result advance(struct v92_su *su)
 		return V92_SU_OK;
 	case V92_SU_JP_BAR_RESPONSE:
 		if (su->stage_symbols == V92_SU_JP_BAR_INPUT_SYMBOLS) {
-			su->stage = V92_SU_JP_PRIME_WAIT;
+			su->stage = V92_SU_TRN1U_READY;
 			su->stage_symbols = 0;
 			su->phase_q16 = su->post_jp_phase_q16;
-			return V92_SU_REACHED_JP_PRIME_WAIT;
+			return V92_SU_REACHED_TRN1U_READY;
 		}
 		return V92_SU_OK;
-	case V92_SU_JP_PRIME_WAIT:
-		return V92_SU_OK;
+	case V92_SU_TRN1U_READY:
+		break;
 	case V92_SU_DONE:
 		break;
 	}
@@ -161,7 +161,7 @@ enum v92_su_result v92_su_next(
 	if (!v92_su_is_valid(su) || !fractional_delay_is_valid(delay) ||
 	    delay->phase_q16 != su->phase_q16)
 		return V92_SU_INVALID_STATE;
-	if (su->stage == V92_SU_DONE)
+	if (su->stage == V92_SU_TRN1U_READY || su->stage == V92_SU_DONE)
 		return V92_SU_COMPLETE;
 	next = *su;
 	sample = raw_symbol(&next);
@@ -206,7 +206,7 @@ enum v92_su_result v92_su_accept_jp(
 	return V92_SU_OK;
 }
 
-enum v92_su_result v92_su_accept_jp_prime(
+enum v92_su_result v92_su_finish(
 	struct v92_su *su, struct fractional_delay *delay,
 	bool restore_codec_grid)
 {
@@ -217,7 +217,7 @@ enum v92_su_result v92_su_accept_jp_prime(
 	if (su == NULL || delay == NULL)
 		return V92_SU_INVALID_ARGUMENT;
 	if (!v92_su_is_valid(su) ||
-	    su->stage != V92_SU_JP_PRIME_WAIT ||
+	    su->stage != V92_SU_TRN1U_READY ||
 	    !fractional_delay_is_valid(delay) ||
 	    delay->phase_q16 != su->phase_q16)
 		return V92_SU_INVALID_STATE;
@@ -256,8 +256,8 @@ const char *v92_su_stage_name(enum v92_su_stage stage)
 		return "Jp wait";
 	case V92_SU_JP_BAR_RESPONSE:
 		return "inverted Jp response";
-	case V92_SU_JP_PRIME_WAIT:
-		return "Jp-prime wait";
+	case V92_SU_TRN1U_READY:
+		return "ready for TRN1u";
 	case V92_SU_DONE:
 		return "complete";
 	}
@@ -271,8 +271,8 @@ const char *v92_su_result_name(enum v92_su_result result)
 		return "ok";
 	case V92_SU_REACHED_JP_WAIT:
 		return "Jp wait started";
-	case V92_SU_REACHED_JP_PRIME_WAIT:
-		return "Jp-prime wait started";
+	case V92_SU_REACHED_TRN1U_READY:
+		return "TRN1u ready";
 	case V92_SU_COMPLETE:
 		return "complete";
 	case V92_SU_INVALID_ARGUMENT:

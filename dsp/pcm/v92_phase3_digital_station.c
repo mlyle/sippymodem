@@ -31,9 +31,10 @@ static bool receive_is_valid(
 		return station->receive.su.mode == V92_SU_RX_MEASURE_PHASE &&
 		       v92_su_rx_is_valid(&station->receive.su);
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
-		return station->receive.su.mode == V92_SU_RX_TRANSITION_ONLY &&
-		       v92_su_rx_is_valid(&station->receive.su) &&
-		       !v92_su_rx_is_complete(&station->receive.su);
+		return station->receive.response.su.mode == V92_SU_RX_TRANSITION_ONLY &&
+		       v92_su_rx_is_valid(&station->receive.response.su) &&
+		       !v92_su_rx_is_complete(&station->receive.response.su) &&
+		       v92_pcm_phase3_trn1u_line_rx_is_valid(&station->receive.response.trn1u);
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
 		return v92_pcm_phase3_trn1u_line_rx_is_valid(
 			&station->receive.trn1u);
@@ -83,8 +84,11 @@ static bool receive_has_failed(
 		return v92_pcm_phase3_initial_rx_has_failed(
 			&station->receive.initial);
 	case V92_PHASE3_DIGITAL_RECEIVE_SU_PHASE:
-	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
 		return v92_su_rx_has_failed(&station->receive.su);
+	case V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE:
+		return v92_su_rx_has_failed(&station->receive.response.su) ||
+		       station->receive.response.trn1u.stage ==
+			       V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_FAILED;
 	case V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U:
 		return station->receive.trn1u.stage ==
 		       V92_PCM_PHASE3_TRN1U_LINE_RX_STAGE_FAILED;
@@ -356,6 +360,7 @@ static enum v92_phase3_digital_station_result receive_su_phase(
 		return V92_PHASE3_DIGITAL_STATION_OK;
 	if (result == V92_SU_RX_PHASE_READY) {
 		struct v92_su_rx response;
+		struct v92_pcm_phase3_trn1u_line_rx trn1u;
 		uint16_t extension;
 
 		if (!v92_su_rx_phase_extension(
@@ -368,11 +373,13 @@ static enum v92_phase3_digital_station_result receive_su_phase(
 		    v92_su_rx_init(
 			    &response, V92_SU_RX_TRANSITION_ONLY,
 			    station->su_minimum_magnitude,
-			    station->receive.su.phase_minimum_magnitude) != V92_SU_RX_OK)
+			    station->receive.su.phase_minimum_magnitude) != V92_SU_RX_OK ||
+		    v92_pcm_phase3_trn1u_line_rx_init(&trn1u, station->equalizer_adaptation) !=
+			    V92_PCM_PHASE3_TRN1U_LINE_RX_OK)
 			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
 		station->jp.su_phase_extension_q16 = extension;
 		station->receive =
-			(union v92_phase3_digital_receive){ .su = response };
+			(union v92_phase3_digital_receive){ .response = { response, trn1u } };
 		station->receive_stage =
 			V92_PHASE3_DIGITAL_RECEIVE_SU_RESPONSE;
 		return V92_PHASE3_DIGITAL_STATION_OK;
@@ -386,31 +393,32 @@ static enum v92_phase3_digital_station_result receive_su_response(
 	struct v92_phase3_digital_station *station, int16_t sample)
 {
 	enum v92_su_rx_result result =
-		v92_su_rx_sample(&station->receive.su, sample);
+		v92_su_rx_sample(&station->receive.response.su, sample);
+	/* A fractional phase change and channel memory can obscure the short
+	 * reversal. Hunt TRN1u while waiting for Su so a late reversal decision
+	 * cannot discard the zero-seeded opening. Either event confirms Jp. */
+	enum v92_pcm_phase3_trn1u_line_rx_result training =
+		v92_pcm_phase3_trn1u_line_rx_sample(&station->receive.response.trn1u, sample);
 
-	if (result == V92_SU_RX_OK || result == V92_SU_RX_ACQUIRED)
+	if (result != V92_SU_RX_OK && result != V92_SU_RX_ACQUIRED &&
+	    result != V92_SU_RX_TRANSITION)
+		return result == V92_SU_RX_FAILURE ?
+			V92_PHASE3_DIGITAL_STATION_FAILED : V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	if (training != V92_PCM_PHASE3_TRN1U_LINE_RX_OK &&
+	    training != V92_PCM_PHASE3_TRN1U_LINE_RX_ALIGNED)
+		return training == V92_PCM_PHASE3_TRN1U_LINE_RX_FAILED ?
+			V92_PHASE3_DIGITAL_STATION_FAILED : V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	if (result != V92_SU_RX_TRANSITION && training != V92_PCM_PHASE3_TRN1U_LINE_RX_ALIGNED)
 		return V92_PHASE3_DIGITAL_STATION_OK;
-	if (result == V92_SU_RX_TRANSITION) {
-		struct v92_pcm_phase3_trn1u_line_rx trn1u;
+	struct v92_pcm_phase3_trn1u_line_rx trn1u = station->receive.response.trn1u;
 
-		if (pcm_phase3_digital_tx_finish_jp(&station->downstream) !=
-			    PCM_PHASE3_DIGITAL_TX_OK ||
-		    v92_pcm_phase3_trn1u_line_rx_init(
-			    &trn1u, station->equalizer_adaptation) !=
-			    V92_PCM_PHASE3_TRN1U_LINE_RX_OK)
-			return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
-		/* Arm acquisition on the Su reversal. Waiting for our Jp/Jp-prime
-		 * tail to finish can discard the peer's zero-seeded TRN1u opening.
-		 * The downstream acknowledgement keeps its own complete timing. */
-		station->receive =
-			(union v92_phase3_digital_receive){ .trn1u = trn1u };
-		station->receive_stage =
-			V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U;
-		return V92_PHASE3_DIGITAL_STATION_OK;
-	}
-	return result == V92_SU_RX_FAILURE ?
-		       V92_PHASE3_DIGITAL_STATION_FAILED :
-		       V92_PHASE3_DIGITAL_STATION_NUMERIC_FAILURE;
+	if (pcm_phase3_digital_tx_finish_jp(&station->downstream) != PCM_PHASE3_DIGITAL_TX_OK)
+		return V92_PHASE3_DIGITAL_STATION_SEQUENCE_MISMATCH;
+	/* Keep all received samples; the downstream acknowledgement still
+	 * sends its complete Jp/Jp-prime tail independently. */
+	station->receive = (union v92_phase3_digital_receive){ .trn1u = trn1u };
+	station->receive_stage = V92_PHASE3_DIGITAL_RECEIVE_SECOND_TRN1U;
+	return V92_PHASE3_DIGITAL_STATION_OK;
 }
 
 static enum v92_phase3_digital_station_result receive_second_trn1u(

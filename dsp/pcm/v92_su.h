@@ -23,14 +23,14 @@ enum v92_su_stage {
 	V92_SU_JD_BAR_RESPONSE,
 	V92_SU_JP_WAIT,
 	V92_SU_JP_BAR_RESPONSE,
-	V92_SU_JP_PRIME_WAIT,
+	V92_SU_TRN1U_READY,
 	V92_SU_DONE,
 };
 
 enum v92_su_result {
 	V92_SU_OK,
 	V92_SU_REACHED_JP_WAIT,
-	V92_SU_REACHED_JP_PRIME_WAIT,
+	V92_SU_REACHED_TRN1U_READY,
 	V92_SU_COMPLETE,
 	V92_SU_INVALID_ARGUMENT,
 	V92_SU_INVALID_STATE,
@@ -57,8 +57,9 @@ enum v92_su_result v92_su_init(struct v92_su *su, int16_t lu);
 bool v92_su_is_valid(const struct v92_su *su);
 bool v92_su_is_complete(const struct v92_su *su);
 
-/* Emit one 8000-symbol/s signed-linear sample. Rejected calls leave the Su
- * state, delay state, and output unchanged. */
+/* Emit one 8000-symbol/s signed-linear sample. REACHED_TRN1U_READY emits
+ * the final Su sample; subsequent calls return COMPLETE without output.
+ * Rejected calls leave the Su state, delay state, and output unchanged. */
 enum v92_su_result v92_su_next(
 	struct v92_su *su, struct fractional_delay *delay,
 	int16_t *output);
@@ -67,9 +68,10 @@ enum v92_su_result v92_su_next(
 enum v92_su_result v92_su_accept_jp(
 	struct v92_su *su, const struct v92_jp *jp);
 
-/* Complete Su after Jp-prime. An exact 8 kHz codec-grid transmitter restores
- * phase zero; an analogue backend preserves the selected fractional phase. */
-enum v92_su_result v92_su_accept_jp_prime(
+/* Finish Su after the post-Jp reversal, before transmitting TRN1u. An exact
+ * 8 kHz codec-grid transmitter restores phase zero; an analogue backend
+ * preserves the selected fractional phase. */
+enum v92_su_result v92_su_finish(
 	struct v92_su *su, struct fractional_delay *delay,
 	bool restore_codec_grid);
 

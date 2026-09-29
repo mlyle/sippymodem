@@ -106,7 +106,7 @@ static bool reach_jp_wait(
 		       FRACTIONAL_DELAY_HALF_SAMPLE_Q16;
 }
 
-static bool reach_jp_prime_wait(
+static bool finish_jp_response(
 	struct v92_su *su, struct fractional_delay *actual,
 	struct fractional_delay *expected, uint8_t *pattern_phase,
 	uint16_t extension)
@@ -119,14 +119,14 @@ static bool reach_jp_prime_wait(
 	for (size_t index = 0; index < V92_SU_JP_BAR_INPUT_SYMBOLS; ++index) {
 		enum v92_su_result wanted =
 			index + 1u == V92_SU_JP_BAR_INPUT_SYMBOLS ?
-				V92_SU_REACHED_JP_PRIME_WAIT : V92_SU_OK;
+				V92_SU_REACHED_TRN1U_READY : V92_SU_OK;
 
 		if (!check_symbol(
 			    su, actual, expected, true, wanted,
 			    pattern_phase))
 			return false;
 	}
-	return su->stage == V92_SU_JP_PRIME_WAIT &&
+	return su->stage == V92_SU_TRN1U_READY &&
 	       su->stage_symbols == 0;
 }
 
@@ -151,17 +151,15 @@ static bool test_continuous_su_timeline(void)
 			      &su, &actual, &expected, false, V92_SU_OK,
 			      &pattern_phase),
 		      "Su Jp wait differed at %zu", index);
-	CHECK(reach_jp_prime_wait(
+	CHECK(finish_jp_response(
 		      &su, &actual, &expected, &pattern_phase, UINT16_C(0x80b0)),
 	      "Su Jp response differed");
 	CHECK(v92_su_get_phase(&su, &phase) && phase == 0x00b0,
 	      "Su Jp extension selected phase %d", phase);
-	for (size_t index = 0; index < 17; ++index)
-		CHECK(check_symbol(
-			      &su, &actual, &expected, false, V92_SU_OK,
-			      &pattern_phase),
-		      "Su Jp-prime wait differed at %zu", index);
-	CHECK(v92_su_accept_jp_prime(&su, &actual, false) ==
+	CHECK(v92_su_next(&su, &actual, &output) == V92_SU_COMPLETE &&
+	      output == 1234 && memcmp(&actual, &expected, sizeof(actual)) == 0,
+	      "Su continued past the post-Jp response");
+	CHECK(v92_su_finish(&su, &actual, false) ==
 		      V92_SU_COMPLETE &&
 	      v92_su_is_complete(&su) &&
 	      actual.phase_q16 == 0x00b0 &&
@@ -196,7 +194,7 @@ static bool test_phase_extension_and_codec_grid(void)
 		      v92_su_init(&su, TEST_LU) == V92_SU_OK &&
 		      reach_jp_wait(
 			      &su, &actual, &expected, &pattern_phase) &&
-		      reach_jp_prime_wait(
+		      finish_jp_response(
 			      &su, &actual, &expected, &pattern_phase,
 			      fixtures[fixture].extension) &&
 		      v92_su_get_phase(&su, &phase) &&
@@ -204,7 +202,7 @@ static bool test_phase_extension_and_codec_grid(void)
 		      "extension 0x%04x selected phase %d instead of %d",
 		      fixtures[fixture].extension, phase,
 		      fixtures[fixture].phase_q16);
-		CHECK(v92_su_accept_jp_prime(
+		CHECK(v92_su_finish(
 			      &su, &actual, restore_codec_grid) ==
 			      V92_SU_COMPLETE &&
 		      actual.phase_q16 ==
@@ -245,7 +243,7 @@ static bool test_validation_is_transactional(void)
 		      V92_SU_INVALID_ARGUMENT &&
 	      v92_su_accept_jp(&su, &valid_jp) ==
 		      V92_SU_INVALID_STATE &&
-	      v92_su_accept_jp_prime(&su, &delay, false) ==
+	      v92_su_finish(&su, &delay, false) ==
 		      V92_SU_INVALID_STATE &&
 	      memcmp(&su, &su_before, sizeof(su)) == 0 &&
 	      memcmp(&delay, &delay_before, sizeof(delay)) == 0 &&

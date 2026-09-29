@@ -42,6 +42,10 @@ enum v92_phase3_digital_station_result {
 union v92_phase3_digital_receive {
 	struct v92_pcm_phase3_initial_rx initial;
 	struct v92_su_rx su;
+	struct {
+		struct v92_su_rx su;
+		struct v92_pcm_phase3_trn1u_line_rx trn1u;
+	} response;
 	struct v92_pcm_phase3_trn1u_line_rx trn1u;
 	struct v92_pcm_phase3_cpt_line_rx cpt;
 };

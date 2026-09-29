@@ -369,12 +369,16 @@ static bool test_transition_receiver_is_reusable(void)
 	      "Su transition receiver did not arm once");
 	for (size_t index = 0; index < 48u && transitions == 0u; ++index) {
 		int16_t sample;
-		enum v92_su_result generated =
-			v92_su_next(&source, &delay, &sample);
+		enum v92_su_result generated = v92_su_next(&source, &delay, &sample);
+		if (generated == V92_SU_COMPLETE) {
+			CHECK(fractional_delay_process(&delay, 0, &sample) == FRACTIONAL_DELAY_OK,
+			      "Su filter tail failed");
+			generated = V92_SU_OK;
+		}
 		enum v92_su_rx_result result;
 
 		CHECK(generated == V92_SU_OK ||
-		      generated == V92_SU_REACHED_JP_PRIME_WAIT,
+		      generated == V92_SU_REACHED_TRN1U_READY,
 		      "Su Jp response source failed at %zu", index);
 		result = v92_su_rx_sample(&receiver, sample);
 		CHECK(result == V92_SU_RX_OK ||
@@ -427,7 +431,12 @@ static bool test_short_response_at_each_pattern_phase(void)
 			     FRACTIONAL_DELAY_CENTER && !detected; ++i) {
 			int16_t sample;
 			enum v92_su_result generated = v92_su_next(&source, &delay, &sample);
-			CHECK(generated == V92_SU_OK || generated == V92_SU_REACHED_JP_PRIME_WAIT,
+			if (generated == V92_SU_COMPLETE) {
+				CHECK(fractional_delay_process(&delay, 0, &sample) == FRACTIONAL_DELAY_OK,
+				      "Su filter tail failed");
+				generated = V92_SU_OK;
+			}
+			CHECK(generated == V92_SU_OK || generated == V92_SU_REACHED_TRN1U_READY,
 			      "short Su generation failed");
 			enum v92_su_rx_result result = v92_su_rx_sample(&receiver, sample);
 			CHECK(result == V92_SU_RX_OK || result == V92_SU_RX_TRANSITION,
