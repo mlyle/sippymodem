@@ -341,6 +341,29 @@ static enum v34_phase3_exchange_result drive_transmitter(
 	return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
 }
 
+static enum v34_phase3_exchange_result discard_caller_wait_sample(
+	struct v34_phase3_exchange *exchange, int16_t sample)
+{
+	struct v34_line_receiver *line = &exchange->receive.line;
+	struct v34_adaptive_equalizer_observation observation;
+	enum v34_line_receiver_result result;
+
+	if (v34_receive_timing_set_feedback_held(&line->timing, true) !=
+		    V34_RECEIVE_TIMING_OK ||
+	    v34_receive_timing_freeze_gain(&line->timing) !=
+		    V34_RECEIVE_TIMING_OK)
+		return V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	result = v34_line_receiver_sample(line, sample, &observation);
+	if (result == V34_LINE_RECEIVER_OBSERVATION_READY)
+		return v34_adaptive_equalizer_discard(
+			       &line->equalizer, &observation) ==
+			       V34_ADAPTIVE_EQUALIZER_OK ?
+		       V34_PHASE3_EXCHANGE_OK :
+		       V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+	return result == V34_LINE_RECEIVER_OK ? V34_PHASE3_EXCHANGE_OK :
+		V34_PHASE3_EXCHANGE_NUMERIC_FAILURE;
+}
+
 static enum v34_phase3_exchange_result drive_receiver(
 	struct v34_phase3_exchange *exchange, int16_t sample,
 	uint32_t *events)
@@ -352,12 +375,13 @@ static enum v34_phase3_exchange_result drive_receiver(
 	    exchange->transmit.phase3.stage < V34_PHASE3_TRANSMITTER_J)
 		return V34_PHASE3_EXCHANGE_OK;
 	/* The caller's answering peer cannot begin Phase 4 S before receiving
-	 * local J. Discard the remaining Phase 3 peer stream (and any local
-	 * echo); the Phase 4 owner performs the fresh receive rearm at handoff. */
+	 * local J. Discard decisions from the remaining peer stream and local
+	 * echo while keeping the waveform clock continuous. Hold learned gain,
+	 * coefficients and timing feedback until the Phase 4 rearm. */
 	if (exchange->local_role == V34_CALLING_STATION &&
 	    receiver_complete(exchange) &&
 	    !exchange->receive.phase4_s_rearmed)
-		return V34_PHASE3_EXCHANGE_OK;
+		return discard_caller_wait_sample(exchange, sample);
 	{
 		struct v34_phase34_receive_output output = { 0 };
 		enum v34_phase34_receiver_result result =

@@ -1285,8 +1285,11 @@ static bool test_validation_and_transactionality(void)
 		struct v34_phase4_exchange_configuration configuration =
 			phase4_configuration(V34_CALLING_STATION);
 		struct v34_phase34_receiver expected_receive;
+		struct v34_receive_timing expected_timing =
+			caller.handoff.receive.line.timing;
 
 		expected_receive = caller.handoff.receive;
+		expected_timing.timing.feedback_held = false;
 		CHECK(v34_phase4_exchange_init(
 			      &exchange, &caller.handoff, &configuration, 17u) ==
 			      V34_PHASE4_EXCHANGE_OK &&
@@ -1294,9 +1297,10 @@ static bool test_validation_and_transactionality(void)
 			      &expected_receive) ==
 			      V34_PHASE34_RECEIVER_OK &&
 		      exchange.receive.phase4_s_rearmed &&
+		      !exchange.receive.line.timing.timing.feedback_held &&
 		      v34_receive_timing_is_acquired(&exchange.receive.line.timing) &&
 		      memcmp(&exchange.receive.line.timing,
-			     &caller.handoff.receive.line.timing,
+			     &expected_timing,
 			     sizeof(exchange.receive.line.timing)) == 0 &&
 		      memcmp(&exchange.receive.line.equalizer,
 			     &caller.handoff.receive.line.equalizer,
@@ -1304,6 +1308,36 @@ static bool test_validation_and_transactionality(void)
 		      memcmp(&exchange.receive, &expected_receive,
 			     sizeof(exchange.receive)) == 0,
 		      "caller Phase 4 did not retain the receive lineage");
+		{
+			struct v34_phase3_exchange_handoff partial = caller.handoff;
+			struct v34_line_receiver *line = &partial.receive.line;
+
+			for (unsigned int index = 0u;
+			     index < 16u && line->equalizer.inputs_since_observation == 0u;
+			     ++index) {
+				struct v34_adaptive_equalizer_observation observation;
+				enum v34_line_receiver_result result =
+					v34_line_receiver_sample(line, 0, &observation);
+
+				CHECK(result == V34_LINE_RECEIVER_OK ||
+				      (result == V34_LINE_RECEIVER_OBSERVATION_READY &&
+				       v34_adaptive_equalizer_discard(
+					       &line->equalizer, &observation) ==
+					       V34_ADAPTIVE_EQUALIZER_OK),
+				      "partial handoff could not advance the physical clock");
+			}
+			expected_timing = line->timing;
+			expected_timing.timing.feedback_held = false;
+			CHECK(line->equalizer.inputs_since_observation != 0u &&
+			      v34_phase4_exchange_init(
+				      &exchange, &partial, &configuration, 17u) ==
+				      V34_PHASE4_EXCHANGE_OK &&
+			      memcmp(&exchange.receive.line.equalizer, &line->equalizer,
+				     sizeof(line->equalizer)) == 0 &&
+			      memcmp(&exchange.receive.line.timing, &expected_timing,
+				     sizeof(expected_timing)) == 0,
+			      "Phase 4 discarded or restarted a partial physical symbol");
+		}
 
 		configuration = phase4_configuration(V34_ANSWERING_STATION);
 		CHECK(v34_phase4_exchange_init(

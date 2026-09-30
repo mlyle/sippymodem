@@ -688,11 +688,15 @@ enum v34_phase34_receiver_result v34_phase34_receiver_rearm_phase4_s(
 		    V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
 	    receiver->phase4_s_rearmed ||
 	    receiver->line.equalizer.decision_pending ||
-	    receiver->line.equalizer.inputs_since_observation != 0u ||
 	    !v34_receive_timing_is_acquired(&receiver->line.timing) ||
 	    receiver->line.equalizer.epoch <
 		    V34_ADAPTIVE_EQUALIZER_FIRST_SIGNAL_EPOCH)
 		return V34_PHASE34_RECEIVER_INVALID_STATE;
+	/* Preserve a partial physical symbol across this semantic handoff.
+	 * The complete line owner continues its existing sample timeline. */
+	if (v34_receive_timing_set_feedback_held(
+		    &receiver->line.timing, false) != V34_RECEIVE_TIMING_OK)
+		return V34_PHASE34_RECEIVER_NUMERIC_FAILURE;
 	receiver->tracking_started = false;
 	receiver->tracking_symbols = 0u;
 	receiver->phase4_s_rearmed = true;

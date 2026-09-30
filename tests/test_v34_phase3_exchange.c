@@ -231,6 +231,10 @@ static bool run_generated_duplex_exchange(
 		bool answerer_was_transmitting = answerer.transmit_started;
 		bool caller_timing_was_acquired =
 			v34_receive_timing_is_acquired(&caller.receive.line.timing);
+		bool caller_waiting = caller.receive.stage ==
+			V34_PHASE34_RECEIVER_PHASE4;
+		struct v34_line_receiver caller_wait_line;
+		struct v34_phase4_decision_receiver caller_wait_semantic;
 		bool answerer_timing_was_acquired =
 			v34_receive_timing_is_acquired(&answerer.receive.line.timing);
 		bool answerer_starting_j =
@@ -245,6 +249,10 @@ static bool run_generated_duplex_exchange(
 			     &initialized_answerer_receiver,
 			     sizeof(initialized_answerer_receiver)) == 0,
 		      "answerer receiver advanced before local J");
+		if (caller_waiting) {
+			caller_wait_line = caller.receive.line;
+			caller_wait_semantic = caller.receive.semantic.phase4;
+		}
 		caller_result = v34_phase3_exchange_sample(
 			      &caller, caller_receive,
 			      &next_call_to_answer,
@@ -257,6 +265,43 @@ static bool run_generated_duplex_exchange(
 		      answerer_result == V34_PHASE3_EXCHANGE_OK,
 		      "codec %d Phase 3 exchange failed at sample %zu: %d/%d",
 		      codec, index, caller_result, answerer_result);
+		if (caller_waiting) {
+			const struct v34_line_receiver *line = &caller.receive.line;
+			const struct v34_equalizer *before =
+				&caller_wait_line.equalizer.equalizer;
+			const struct v34_equalizer *after =
+				&line->equalizer.equalizer;
+
+			CHECK(line->timing.carrier.phase ==
+				      caller_wait_line.timing.carrier.phase +
+				      caller_wait_line.timing.carrier.phase_step,
+			      "caller stopped its waveform clock during local training");
+			CHECK(line->timing.gain.gain ==
+				      caller_wait_line.timing.gain.gain &&
+			      line->timing.timing.integrator ==
+				      caller_wait_line.timing.timing.integrator &&
+			      line->timing.timing.state_count ==
+				      caller_wait_line.timing.timing.state_count &&
+			      line->timing.timing.mode ==
+				      caller_wait_line.timing.timing.mode &&
+			      memcmp(after->in_phase_coefficient,
+				     before->in_phase_coefficient,
+				     sizeof(after->in_phase_coefficient)) == 0 &&
+			      memcmp(after->quadrature_coefficient,
+				     before->quadrature_coefficient,
+				     sizeof(after->quadrature_coefficient)) == 0 &&
+			      memcmp(after->in_phase_residue,
+				     before->in_phase_residue,
+				     sizeof(after->in_phase_residue)) == 0 &&
+			      memcmp(after->quadrature_residue,
+				     before->quadrature_residue,
+				     sizeof(after->quadrature_residue)) == 0 &&
+			      memcmp(&caller.receive.semantic.phase4,
+				     &caller_wait_semantic,
+				     sizeof(caller_wait_semantic)) == 0 &&
+			      !line->equalizer.decision_pending,
+			      "caller trained or accepted peer symbols before local J");
+		}
 		if (!answerer_was_transmitting) {
 			CHECK(next_answer_to_call == 0,
 			      "answerer emitted sample %d during initial silence",
