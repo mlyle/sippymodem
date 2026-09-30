@@ -24,7 +24,6 @@
 #include "v8_datapump.h"
 
 #include <limits.h>
-#include <math.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -35,8 +34,6 @@
 enum {
 	V32_TRANSMIT_AMPLITUDE = 12000,
 	V32_CARRIER_LOSS_SAMPLES = MODEM_RATE / 5,
-	V32_CONDITIONING_SILENCE_SAMPLES = 24,
-	V32_CONDITIONING_SIGNAL_THRESHOLD = 256,
 };
 
 enum v32_fixed_stage {
@@ -45,7 +42,6 @@ enum v32_fixed_stage {
 	V32_FIXED_CALLER_RATE_OFFER,
 	V32_FIXED_CALLER_RATE_DRAIN,
 	V32_FIXED_CALLER_ECHO,
-	V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING,
 	V32_FIXED_CALLER_SECOND_CONDITIONING,
 	V32_FIXED_CALLER_SELECTION,
 	V32_FIXED_CALLER_END,
@@ -101,7 +97,6 @@ struct v32_datapump {
 	struct training_session training;
 	uint32_t missing_carrier_samples;
 	uint16_t caller_s_extension_symbols;
-	uint8_t conditioning_silence_samples;
 	uint8_t cleardown_symbols;
 	bool trellis_encoder_initialized;
 	bool answerer_s_detected;
@@ -196,7 +191,6 @@ static const struct v32_receive_path *fixed_path_receive_const(
 		return &path->owner.rate.receive;
 	case V32_FIXED_CALLER_RATE_DRAIN:
 	case V32_FIXED_CALLER_ECHO:
-	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
 		return &path->owner.drain.receive;
 	case V32_FIXED_CALLER_END:
 		return &path->owner.end.receive;
@@ -263,10 +257,6 @@ static bool fixed_path_is_valid(
 	case V32_FIXED_CALLER_RATE_DRAIN:
 	case V32_FIXED_CALLER_ECHO:
 		valid = fixed_rate_drain_is_valid(&path->owner.drain);
-		break;
-	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
-		valid = fixed_rate_drain_is_valid(&path->owner.drain) &&
-			path->owner.drain.receive.line.input_paused;
 		break;
 	case V32_FIXED_CALLER_END:
 		valid = v32_end_path_is_valid(&path->owner.end) &&
@@ -379,32 +369,23 @@ static bool line_state_is_valid(
 	if (!v32_line_startup_is_valid(&datapump->line_startup) ||
 	    !v32_answerer_line_startup_is_valid(
 		    &datapump->answerer_line_startup) ||
-	    datapump->conditioning_silence_samples >
-		    V32_CONDITIONING_SILENCE_SAMPLES ||
 	    (datapump->answerer_s_detected &&
 	     (datapump->caller ||
 	      datapump->startup.phase != V32_ANSWERER_SEND_OFFER)))
 		return false;
 	if (fixed_path_is_active(datapump)) {
-		bool waiting = datapump->fixed_path.stage ==
-			V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING;
-
 		if (!datapump->caller)
 			return v32_answerer_line_startup_is_complete(
 				       &datapump->answerer_line_startup) &&
 			       datapump->line_startup.state ==
 				       V32_LINE_WAIT_ANSWER_TONE &&
 			       datapump->caller_s_extension_symbols == 0 &&
-			       datapump->conditioning_silence_samples == 0 &&
 			       fixed_path_is_valid(datapump);
 		return v32_line_startup_is_complete(
 			       &datapump->line_startup) &&
-		       (waiting ||
-			datapump->conditioning_silence_samples == 0) &&
 		       fixed_path_is_valid(datapump);
 	}
 	if (datapump->caller_s_extension_symbols != 0 ||
-	    datapump->conditioning_silence_samples != 0 ||
 	    datapump->answerer_s_detected)
 		return false;
 	if (datapump->caller)
@@ -567,7 +548,6 @@ static int initialize_protocol(
 	       sizeof(datapump->fixed_path));
 	datapump->missing_carrier_samples = 0;
 	datapump->caller_s_extension_symbols = 0;
-	datapump->conditioning_silence_samples = 0;
 	datapump->trellis_encoder_initialized = false;
 	datapump->answerer_s_detected = false;
 	return 0;
@@ -873,17 +853,24 @@ static int finish_fixed_echo(
 	struct v32_datapump *datapump, bool *linked)
 {
 	struct v32_symbol_encoder encoder;
+	struct v32_conditioning_path conditioning;
 	struct v32_receive_path *receive =
 		&datapump->fixed_path.owner.drain.receive;
 
 	if (v32_echo_training_framing_state(
 		    &datapump->fixed_path.training.echo, &encoder) !=
-		    V32_ECHO_TRAINING_OK || !receive->line.input_paused)
+		    V32_ECHO_TRAINING_OK ||
+	    v32_conditioning_path_init_from_receive(
+		    &conditioning, V32_ANSWERING_TRANSMITTER, receive) !=
+		    V32_CONDITIONING_PATH_OK)
 		return -1;
+	/* V.32bis 6.1 advances on the peer's conditioning signal. Residual
+	 * echo or noise can prevent absolute silence even on a usable line;
+	 * the conditioning owner must acquire S/S-bar and qualify peer TRN. */
+	datapump->fixed_path.owner.conditioning = conditioning;
 	datapump->encoder = encoder;
 	datapump->fixed_path.stage =
-		V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING;
-	datapump->conditioning_silence_samples = 0;
+		V32_FIXED_CALLER_SECOND_CONDITIONING;
 	return next_transmit_point(datapump, linked);
 }
 
@@ -1022,7 +1009,6 @@ static int generate_fixed_path_sample(
 			break;
 		}
 		case V32_FIXED_CALLER_SECOND_CONDITIONING:
-		case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING:
 		case V32_FIXED_CALLER_SELECTION:
 		case V32_FIXED_CALLER_END:
 		case V32_FIXED_B1:
@@ -1467,42 +1453,6 @@ static int receive_fixed_path_sample(
 	const struct v32_echo_reference *reference, bool *linked)
 {
 	switch (datapump->fixed_path.stage) {
-	case V32_FIXED_CALLER_WAIT_SECOND_CONDITIONING: {
-		struct v32_receive_path *receive =
-			&datapump->fixed_path.owner.drain.receive;
-		double cleaned;
-		bool cleaned_ready;
-
-		if (v32_receive_path_sample_paused(
-			    receive, sample, reference,
-			    &cleaned, &cleaned_ready) != V32_RECEIVE_PATH_OK)
-			return -1;
-		if (!cleaned_ready)
-			return 0;
-		if (datapump->conditioning_silence_samples <
-		    V32_CONDITIONING_SILENCE_SAMPLES) {
-			if (fabs(cleaned) <= V32_CONDITIONING_SIGNAL_THRESHOLD)
-				datapump->conditioning_silence_samples++;
-			else
-				datapump->conditioning_silence_samples = 0;
-			return 0;
-		}
-		if (fabs(cleaned) <= V32_CONDITIONING_SIGNAL_THRESHOLD)
-			return 0;
-		{
-			struct v32_conditioning_path conditioning;
-
-			if (v32_conditioning_path_init_from_receive(
-				    &conditioning, V32_ANSWERING_TRANSMITTER,
-				    receive) != V32_CONDITIONING_PATH_OK)
-				return -1;
-			datapump->fixed_path.owner.conditioning = conditioning;
-			datapump->fixed_path.stage =
-				V32_FIXED_CALLER_SECOND_CONDITIONING;
-			datapump->conditioning_silence_samples = 0;
-		}
-		return 0;
-	}
 	case V32_FIXED_CALLER_CONDITIONING:
 	case V32_FIXED_CALLER_SECOND_CONDITIONING: {
 		bool selection = datapump->fixed_path.stage ==

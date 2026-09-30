@@ -110,6 +110,7 @@ enum integration_impairment {
 	INTEGRATION_IMPAIRMENT_NONE,
 	INTEGRATION_IMPAIRMENT_COMPOSITE,
 	INTEGRATION_IMPAIRMENT_DIGITAL_DELAY,
+	INTEGRATION_IMPAIRMENT_TRAINING_NOISE,
 };
 
 struct modem_test_case {
@@ -646,6 +647,16 @@ static bool endpoint_add_impairment(
 		return channel_bench_init(
 			       &endpoint->receive_bench, composite,
 			       ARRAY_LENGTH(composite)) == CHANNEL_BENCH_OK;
+	case INTEGRATION_IMPAIRMENT_TRAINING_NOISE: {
+		const struct channel_bench_effect_spec noise = {
+			.kind = CHANNEL_BENCH_NOISE,
+			.parameters.noise = { .peak = 800, .seed = seed },
+		};
+
+		return channel_bench_init(
+			       &endpoint->receive_bench, &noise, 1) ==
+		       CHANNEL_BENCH_OK;
+	}
 	case INTEGRATION_IMPAIRMENT_DIGITAL_DELAY: {
 		int silence = media_codec_silence_octet(codec);
 
@@ -4337,6 +4348,19 @@ int main(void)
 			.caller_delay_frames = V32_LONG_DELAY_FRAMES,
 			.automode = true,
 			.test_retrain = true,
+		},
+		{
+			.id = DP_V32,
+			.name = "V.32 4800 noisy conditioning",
+			.selection_command = "AT+MS=32,1,4800,4800\r",
+			.caller_tx_rate = V32_4800_BIT_RATE,
+			.caller_rx_rate = V32_4800_BIT_RATE,
+			.answerer_tx_rate = V32_4800_BIT_RATE,
+			.answerer_rx_rate = V32_4800_BIT_RATE,
+			.automode = true,
+			.require_lapm = true,
+			.test_retrain = true,
+			.impairment = INTEGRATION_IMPAIRMENT_TRAINING_NOISE,
 		},
 		{
 			.id = DP_V32,
