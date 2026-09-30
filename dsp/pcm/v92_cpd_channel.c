@@ -229,6 +229,24 @@ static void apply_normal(const struct v92_upstream_channel *channel,
 	}
 }
 
+static void inverse_rhs(const struct v92_upstream_channel *channel, double scale, double rhs[TAPS])
+{
+	for (size_t tap = 0; tap < Z2_TAPS; ++tap)
+		rhs[tap] = (double)moment(channel, true, tap, false, DELAY) / scale;
+	for (size_t tap = 0; tap < P1_TAPS; ++tap)
+		rhs[Z2_TAPS + tap] = (double)moment(channel, false, DELAY + tap + 1u, false, DELAY) / scale;
+}
+
+static double inverse_error(const struct v92_upstream_channel *channel,
+	const double coefficients[TAPS], double scale, const double rhs[TAPS])
+{
+	double normal[TAPS];
+
+	apply_normal(channel, coefficients, 0.0, scale, normal);
+	return (double)moment(channel, false, DELAY, false, DELAY) / scale -
+		2.0 * dot(coefficients, rhs) + dot(coefficients, normal);
+}
+
 static bool solve(const struct v92_upstream_channel *channel, double coefficients[TAPS])
 {
 	double residual[TAPS], direction[TAPS], normal[TAPS], rhs[TAPS];
@@ -241,10 +259,7 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 		return false;
 	double regularization = 1.0e-3 * (Z2_TAPS * observed + P1_TAPS * expected) / (TAPS * scale);
 
-	for (size_t tap = 0; tap < Z2_TAPS; ++tap)
-		rhs[tap] = (double)moment(channel, true, tap, false, DELAY) / scale;
-	for (size_t tap = 0; tap < P1_TAPS; ++tap)
-		rhs[Z2_TAPS + tap] = (double)moment(channel, false, DELAY + tap + 1u, false, DELAY) / scale;
+	inverse_rhs(channel, scale, rhs);
 	memcpy(residual, rhs, sizeof(residual));
 	memcpy(direction, rhs, sizeof(direction));
 	memset(coefficients, 0, TAPS * sizeof(*coefficients));
@@ -271,8 +286,7 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 		if (next_norm <= initial_norm * 1.0e-14) {
 			/* Reject a solved but uninformative/noisy inverse. This is an
 			 * implementation quality bound, not a negotiated wire limit. */
-			apply_normal(channel, coefficients, 0.0, scale, normal);
-			double error = target / scale - 2.0 * dot(coefficients, rhs) + dot(coefficients, normal);
+			double error = inverse_error(channel, coefficients, scale, rhs);
 
 			return isfinite(error) && error >= -1.0e-10 * target / scale &&
 				error <= 0.05 * target / scale;
@@ -282,6 +296,32 @@ static bool solve(const struct v92_upstream_channel *channel, double coefficient
 		norm = next_norm;
 	}
 	return false;
+}
+
+static bool select_inverse(const struct v92_upstream_channel *channel, double coefficients[TAPS])
+{
+	if (!solve_short_channel(channel, coefficients) && !solve_four_tap_channel(channel, coefficients))
+		return solve(channel, coefficients);
+	double general[TAPS], rhs[TAPS];
+
+	if (!solve(channel, general))
+		return true;
+	double scale = fmax(channel->observed_autocorrelation[0], channel->expected_autocorrelation[0]);
+
+	inverse_rhs(channel, scale, rhs);
+	double short_error = inverse_error(channel, coefficients, scale, rhs);
+	double general_error = inverse_error(channel, general, scale, rhs);
+
+	/* Small timing offsets can leave weak distant taps that pass the 2%
+	 * short-fit limit yet destroy high-rate B1u. Compare both candidates
+	 * in the same delayed-target plane, using the exact finite window.
+	 * Require 10% less residual energy before adding a long filter; small
+	 * reductions from fitting quantization noise should retain the simpler
+	 * inverse. This selection margin is local policy, not a V.92 limit. */
+	if (isfinite(general_error) && (!isfinite(short_error) ||
+	    fmax(0.0, general_error) < 0.9 * fmax(0.0, short_error)))
+		memcpy(coefficients, general, sizeof(general));
+	return true;
 }
 
 static bool normalize_gain(struct v92_cpd_parameters *cpd, enum g711_law law)
@@ -357,8 +397,7 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
 	    !v92_upstream_channel_has_stable_gain(channel) ||
-	    (!solve_short_channel(channel, coefficients) &&
-	     !solve_four_tap_channel(channel, coefficients) && !solve(channel, coefficients)))
+	    !select_inverse(channel, coefficients))
 		return false;
 	for (size_t tap = 0; tap < TAPS; ++tap) {
 		if (!isfinite(coefficients[tap]) ||

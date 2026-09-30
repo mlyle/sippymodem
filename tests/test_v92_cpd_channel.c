@@ -2,6 +2,7 @@
 
 #include <v92_cpd_channel.h>
 #include <v92_cpd_direct.h>
+#include <fractional_delay.h>
 
 #include "test.h"
 
@@ -13,7 +14,7 @@ enum {
 	LEVEL = 4096,
 	PAYLOAD_FRAMES = 2000,
 	FRAMES = V92_B1U_FRAMES + PAYLOAD_FRAMES + V92_PCM_RX_DELAY_FRAMES,
-	SYMBOLS = (FRAMES + 6) * V92_PCM_MAPPING_FRAME_SYMBOLS,
+	SYMBOLS = (FRAMES + 8) * V92_PCM_MAPPING_FRAME_SYMBOLS,
 };
 
 static uint32_t random_word(uint32_t *state)
@@ -32,39 +33,77 @@ static int16_t quantize(enum g711_law law, double value)
 		g711_decode_pcma(g711_encode_pcma(sample));
 }
 
+/* Independent Table 28 GPA symbols at Lu=2620; retain differential sign. */
+static void training_symbols(int16_t *target, size_t count)
+{
+	uint32_t history = 0;
+	unsigned sign = 0;
+
+	for (unsigned n = 0; n < count; ++n) {
+		unsigned group = 0;
+		for (unsigned bit = 0; bit < 2; ++bit) {
+			unsigned scrambled = 1u ^ ((history >> 4) & 1u) ^ ((history >> 22) & 1u);
+
+			history = ((history << 1) | scrambled) & 0x7fffffu;
+			group |= scrambled << bit;
+		}
+		sign ^= group >> 1;
+		target[n] = (int16_t)((sign ? -1 : 1) * ((group & 1) ? 3515 : 1172));
+	}
+}
+
 static __uint128_t distance(__uint128_t left, __uint128_t right)
 {
 	return left >= right ? left - right : right - left;
 }
 
-static bool test_channel(enum g711_law law, double main, double post, double second, uint8_t rate)
+static bool test_channel_model(enum g711_law law, double main, double post, double second, uint8_t rate, int32_t phase)
 {
 	/* Intermediate power-of-two moduli concentrated large points in some
 	 * trellis slots. At the higher LU used by native calls, those symbols
 	 * clipped after normalization even on a unity channel. */
-	const int level = rate >= 9u && rate <= 12u ? 7168 : LEVEL;
+	const int level = phase ? 2620 : rate >= 9u && rate <= 12u ? 7168 : LEVEL;
 	struct v92_upstream_channel channel = { 0 };
 	struct v92_cpd_parameters cpd, original;
 	struct v92_upstream_plan plan;
 	struct v92_pcm_mapping mapping;
 	struct v92_pcm_frame_tx transmitter;
 	struct v92_pcm_frame_rx receiver;
-	uint8_t payload[FRAMES + 6][V92_PCM_MAPPING_MAX_BITS];
+	uint8_t payload[FRAMES + 8][V92_PCM_MAPPING_MAX_BITS];
 	int16_t line[SYMBOLS];
 	uint32_t random = 0x35791bdu;
 	uint64_t energy = 0u;
 	int16_t previous = 0, older = 0;
-	unsigned payload_frames = rate >= 16u ? PAYLOAD_FRAMES : 120u;
+	unsigned payload_frames = phase || rate >= 16u ? PAYLOAD_FRAMES : 120u;
 	unsigned frames = V92_B1U_FRAMES + payload_frames + V92_PCM_RX_DELAY_FRAMES;
 
-	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
-		int16_t expected = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
+	if (phase) {
+		int16_t target[V92_UPSTREAM_CHANNEL_SYMBOLS + FRACTIONAL_DELAY_CENTER];
+		struct fractional_delay delay;
 
-		CHECK(v92_upstream_channel_sample(&channel, expected,
-			quantize(law, main * expected + post * previous + second * older)), "measurement failed");
-		older = previous;
-		previous = expected;
+		training_symbols(target, ARRAY_LENGTH(target));
+		fractional_delay_init(&delay);
+		CHECK(fractional_delay_set_phase(&delay, phase) == FRACTIONAL_DELAY_OK, "training timing failed");
+		for (unsigned n = 0; n < ARRAY_LENGTH(target); ++n) {
+			int16_t input;
+
+			CHECK(fractional_delay_process(&delay, target[n], &input) == FRACTIONAL_DELAY_OK,
+			      "training channel failed");
+			if (n >= FRACTIONAL_DELAY_CENTER)
+				CHECK(v92_upstream_channel_sample(&channel, target[n - FRACTIONAL_DELAY_CENTER],
+					quantize(law, input)), "timing measurement failed");
+		}
+	} else {
+		for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_SYMBOLS; ++i) {
+			int16_t expected = (int16_t)((int)(random_word(&random) % 8192u) - 4096);
+
+			CHECK(v92_upstream_channel_sample(&channel, expected,
+				quantize(law, main * expected + post * previous + second * older)), "measurement failed");
+			older = previous;
+			previous = expected;
+		}
 	}
+
 	CHECK(v92_cpd_direct_select(&cpd, law, rate, level, false) == V92_CPD_OK, "initial CPd failed");
 	if (rate == 13u)
 		CHECK(cpd.constellation[0].count == 32u, "direct 40k did not omit outer points");
@@ -136,7 +175,8 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 		v92_pcm_frame_rx_init_constellation(&receiver, &mapping) == V92_PCM_FRAME_OK,
 		"paired mapping failed");
 	previous = older = 0;
-	for (unsigned frame = 0; frame < frames + 6; ++frame) {
+	unsigned extra = phase ? 8u : 6u;
+	for (unsigned frame = 0; frame < frames + extra; ++frame) {
 		struct v92_pcm_frame encoded;
 
 		for (unsigned bit = 0; bit < mapping.data_bits_per_frame; ++bit)
@@ -154,9 +194,23 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 				"transmit clipped: law=%u rate=%u H=(%g,%g) frame=%u symbol=%u",
 				law, rate, main, post, frame, symbol);
 			line[frame * V92_PCM_MAPPING_FRAME_SYMBOLS + symbol] =
-				quantize(law, main * transmitted + post * previous + second * older);
+				phase ? transmitted : quantize(law, main * transmitted + post * previous + second * older);
 			older = previous;
 			previous = transmitted;
+		}
+	}
+	if (phase) {
+		struct fractional_delay delay;
+
+		fractional_delay_init(&delay);
+		CHECK(fractional_delay_set_phase(&delay, phase) == FRACTIONAL_DELAY_OK, "payload timing failed");
+		for (unsigned n = 0; n < (frames + extra) * V92_PCM_MAPPING_FRAME_SYMBOLS; ++n) {
+			int16_t observed;
+
+			CHECK(fractional_delay_process(&delay, line[n], &observed) == FRACTIONAL_DELAY_OK,
+			      "payload channel failed");
+			if (n >= FRACTIONAL_DELAY_CENTER)
+				line[n - FRACTIONAL_DELAY_CENTER] = quantize(law, observed);
 		}
 	}
 	/* Check unit mean-square power independently of the receive gain: a
@@ -196,6 +250,11 @@ static bool test_channel(enum g711_law law, double main, double post, double sec
 	}
 	CHECK(delivered == payload_frames, "wrong payload count");
 	return true;
+}
+
+static bool test_channel(enum g711_law law, double main, double post, double second, uint8_t rate)
+{
+	return test_channel_model(law, main, post, second, rate, 0);
 }
 
 static bool test_short_channel_selection(void)
@@ -474,20 +533,7 @@ static bool test_training_changes(void)
 	 * four-point training distribution rather than fitting uniform noise. */
 	enum { CLEAN, ECHO, PRECURSOR, DELAYED, DROP, DUPLICATE, GAIN_STEP, GAP, CASES };
 	int16_t target[V92_UPSTREAM_CHANNEL_SYMBOLS + 1];
-	uint32_t history = 0;
-	unsigned sign = 0;
-
-	for (unsigned n = 0; n < ARRAY_LENGTH(target); ++n) {
-		unsigned group = 0;
-		for (unsigned bit = 0; bit < 2; ++bit) {
-			unsigned scrambled = 1u ^ ((history >> 4) & 1u) ^ ((history >> 22) & 1u);
-
-			history = ((history << 1) | scrambled) & 0x7fffffu;
-			group |= scrambled << bit;
-		}
-		sign ^= group >> 1;
-		target[n] = (int16_t)((sign ? -1 : 1) * ((group & 1) ? 3515 : 1172));
-	}
+	training_symbols(target, ARRAY_LENGTH(target));
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
 		for (unsigned kind = 0; kind < CASES; ++kind) {
 			struct v92_upstream_channel channel = { 0 };
@@ -543,6 +589,13 @@ int main(void)
 	    !test_finite_window_inverse(true))
 		return 1;
 	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		/* +/- 0.011 sample timing has a small training residual but needs
+		 * the distant filter taps. The short inverse used to fail B1u at
+		 * 40/44/48k on mu-law. Check actual payload through both codecs. */
+		for (uint8_t rate = 13; rate <= 19; rate += 3)
+			if (!test_channel_model(law, 1.0, 0.0, 0.0, rate, -714) ||
+			    !test_channel_model(law, 1.0, 0.0, 0.0, rate, 714))
+				return 1;
 		/* Both laws, both trellis families, and every intermediate rate. */
 		for (uint8_t rate = 1u; rate <= 15u; ++rate)
 			if (!test_channel((enum g711_law)law, 1.0, 0.0, 0.0, rate) ||

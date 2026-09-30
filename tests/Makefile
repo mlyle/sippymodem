@@ -1891,6 +1891,7 @@ V92_CPD_DIRECT_TEST_OBJECTS := $(sort \
 V92_CPD_CHANNEL_TEST_BINARY := $(BUILD_DIR)/test_v92_cpd_channel
 V92_CPD_CHANNEL_TEST_OBJECTS := $(sort \
 	$(BUILD_DIR)/test_v92_cpd_channel.o \
+	$(BUILD_DIR)/fractional_delay.o \
 	$(BUILD_DIR)/v92_cpd_channel.o \
 	$(BUILD_DIR)/v92_upstream_channel.o \
 	$(filter-out $(BUILD_DIR)/test_v92_cpd_direct.o, \
