@@ -3,6 +3,7 @@
 #include <lapm_v44_session.h>
 
 #include "test.h"
+#include "lapm_xid_fixture.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -376,6 +377,71 @@ static bool test_response_errors_and_reset(void)
 	return true;
 }
 
+static bool test_dual_compression_retry(void)
+{
+	const struct lapm_v44_config config = config_for(v44_default_offer());
+	struct lapm_v44_session session, before;
+	struct lapm_v44_prepared command, retry, stale, retransmission;
+	struct v42_xid_fields base, decoded;
+
+	CHECK(v42_xid_decode(lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response), &base) == V42_XID_OK,
+	      "dual compression fixture did not decode");
+	base.user_data = NULL;
+	base.user_data_length = 0;
+	CHECK(lapm_v44_session_init(&session, &config) == LAPM_V44_OK &&
+	      lapm_v44_prepare_command(&session, &base, &command) == LAPM_V44_OK &&
+	      lapm_v44_commit(&session, &command) == LAPM_V44_OK,
+	      "dual compression command setup failed");
+	before = session;
+	CHECK(lapm_v44_accept_response(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response)) == LAPM_V44_MALFORMED &&
+	      memcmp(&session, &before, sizeof(session)) == 0 &&
+	      lapm_v44_prepare_retry_without_v44(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response), &retry) == LAPM_V44_OK &&
+	      memcmp(&session, &before, sizeof(session)) == 0,
+	      "rejected response or unqueued retry changed session state");
+	stale = retry;
+	CHECK(v42_xid_decode(retry.data, retry.length, &decoded) == V42_XID_OK &&
+	      decoded.user_data == NULL &&
+	      decoded.private_negotiation_length == base.private_negotiation_length &&
+	      memcmp(decoded.private_negotiation, base.private_negotiation,
+		 base.private_negotiation_length) == 0 &&
+	      decoded.parameter_negotiation_length == base.parameter_negotiation_length &&
+	      memcmp(decoded.parameter_negotiation, base.parameter_negotiation,
+		 base.parameter_negotiation_length) == 0,
+	      "retry did not retain the frozen LAPM and V.42bis parameters");
+	CHECK(lapm_v44_commit(&session, &retry) == LAPM_V44_OK &&
+	      lapm_v44_commit(&session, &stale) == LAPM_V44_STALE_TRANSACTION &&
+	      lapm_v44_prepare_retry_without_v44(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response), &retry) == LAPM_V44_INVALID_STATE &&
+	      lapm_v44_prepare_retransmission(&session, &retransmission) == LAPM_V44_OK &&
+	      retransmission.length == stale.length &&
+	      memcmp(retransmission.data, stale.data, stale.length) == 0,
+	      "retry was repeated or its retransmission changed");
+	CHECK(lapm_v44_accept_response(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response)) == LAPM_V44_OK &&
+	      session.phase == LAPM_V44_DECLINED &&
+	      lapm_v44_session_call_reset(&session) == LAPM_V44_OK &&
+	      lapm_v44_prepare_command(&session, &base, &command) == LAPM_V44_OK &&
+	      decode_v44(command.data, command.length, &session.command_offer) &&
+	      session.command_offer.transmit.enabled && session.command_offer.receive.enabled,
+	      "V.42bis reply failed or a new call lost the configured V.44 offer");
+	CHECK(lapm_v44_commit(&session, &command) == LAPM_V44_OK &&
+	      lapm_v44_prepare_retry_without_v44(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response) - 1, &retry) == LAPM_V44_MALFORMED,
+	      "malformed V.44 response triggered recovery");
+	base.private_negotiation = NULL;
+	base.private_negotiation_length = 0;
+	CHECK(lapm_v44_session_call_reset(&session) == LAPM_V44_OK &&
+	      lapm_v44_prepare_command(&session, &base, &command) == LAPM_V44_OK &&
+	      lapm_v44_commit(&session, &command) == LAPM_V44_OK &&
+	      lapm_v44_prepare_retry_without_v44(&session, lapm_dual_compression_response,
+		 sizeof(lapm_dual_compression_response), &retry) == LAPM_V44_INVALID_STATE,
+	      "V.44-only command invented a V.42bis offer");
+	return true;
+}
+
 static bool test_readiness_interlock(void)
 {
 	struct lapm_v44_config config =
@@ -423,6 +489,7 @@ int main(void)
 		  test_decline_and_malformed_tails },
 		{ "response errors and reset", test_response_errors_and_reset },
 		{ "readiness interlock", test_readiness_interlock },
+		{ "bounded dual compression recovery", test_dual_compression_retry },
 	};
 	unsigned int failures = 0;
 

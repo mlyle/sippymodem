@@ -860,17 +860,32 @@ enum rx_xid_response_result {
 	RX_XID_RESPONSE_FATAL = -2,
 };
 
+static void t401_timeout(struct modem *m);
+
 static enum rx_xid_response_result rx_xid_response(
 	struct lapm_state *l, frame_t *f)
 {
 	struct lapm_xid_config config;
 	struct v44_offer offer;
 
-	if (decode_xid(l, f, &config) != 0 ||
-	    lapm_v44_accept_response(
-		    &l->v44_session, f->buf + 2,
-		    (size_t)f->count - 2U) != LAPM_V44_OK)
+	if (decode_xid(l, f, &config) != 0)
 		return RX_XID_RESPONSE_IGNORED;
+	if (lapm_v44_accept_response(
+		    &l->v44_session, f->buf + 2,
+		    (size_t)f->count - 2U) != LAPM_V44_OK) {
+		struct lapm_v44_prepared retry;
+
+		/* V.44 7.3 permits only one compression selection in a response.
+		 * Obtain an unambiguous reply with one V.42bis-only command. Do not
+		 * apply the rejected parameters or extend retries under queue pressure. */
+		if (l->modem->cfg.comp &&
+		    (l->modem->cfg.comp_types & MODEM_COMP_TYPE_V42BIS) != 0 &&
+		    lapm_v44_prepare_retry_without_v44(&l->v44_session,
+			f->buf + 2, (size_t)f->count - 2U, &retry) == LAPM_V44_OK &&
+		    queue_xid(l, l->cmd_addr, &retry) == 0)
+			T401_START(l);
+		return RX_XID_RESPONSE_IGNORED;
+	}
 	if (l->v44_session.phase == LAPM_V44_NEGOTIATED) {
 		if (lapm_v44_get_negotiated_offer(
 			    &l->v44_session, &offer) != LAPM_V44_OK)

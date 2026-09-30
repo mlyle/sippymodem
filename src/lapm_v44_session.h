@@ -101,6 +101,14 @@ enum lapm_v44_result lapm_v44_prepare_retransmission(
 	const struct lapm_v44_session *session,
 	struct lapm_v44_prepared *prepared);
 
+/* An otherwise valid response selecting both algorithms can trigger one new
+ * command retaining the frozen V.42bis offer and omitting V.44. Queue and
+ * commit this command before restarting the response timer. */
+enum lapm_v44_result lapm_v44_prepare_retry_without_v44(
+	const struct lapm_v44_session *session,
+	const uint8_t *response, size_t response_length,
+	struct lapm_v44_prepared *prepared);
+
 /* Exact duplicate commands replay the committed response; base_fields is ignored. */
 enum lapm_v44_result lapm_v44_prepare_response(
 	const struct lapm_v44_session *session,

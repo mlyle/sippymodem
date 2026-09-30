@@ -15,6 +15,7 @@
 #include <v90_profile.h>
 
 #include "test.h"
+#include "lapm_xid_fixture.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -2115,6 +2116,88 @@ static bool test_at_v34_symbol_rate(void)
 		      modem->v34_symbol_rate == 0,
 	      "modem reset retained a forced V.34 symbol rate");
 	modem_delete(modem);
+	return true;
+}
+
+static bool test_lapm_dual_compression_retry(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM compression retry test",
+		.start = unused_start, .stop = unused_stop, .ioctl = unused_control,
+	};
+	struct modem *caller = modem_create(&driver, "LAPM compression retry caller");
+	struct lapm_v44_session before;
+	struct v42_xid_fields fields;
+	uint8_t preamble[109], received[LAPM_MAX_INFO_SIZE + 4];
+	frame_t incoming = { .buf = received };
+	frame_t *outgoing;
+
+	CHECK(caller != NULL, "compression retry caller could not be created");
+	caller->caller = 1;
+	caller->rx_rate = caller->tx_rate = 2400;
+	CHECK(modem_ec_init(caller) == 0, "compression retry initialization failed");
+	modem_ec_start(caller);
+	CHECK(modem_hdlc_get_bits(caller, 8, preamble, sizeof(preamble)) == sizeof(preamble),
+	      "compression retry preamble failed");
+	outgoing = caller->packer.hdlc.tx_frame;
+	caller->packer.hdlc.tx_frame = NULL;
+	CHECK(outgoing != NULL, "compression retry initial XID missing");
+	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+	before = caller->ec.lapm.v44_session;
+	received[0] = caller->ec.lapm.cmd_addr;
+	received[1] = 0xaf;
+	memcpy(received + 2, lapm_dual_compression_response, sizeof(lapm_dual_compression_response));
+	incoming.count = 2 + sizeof(lapm_dual_compression_response);
+	caller->bit_timer = 1234;
+	caller->ec.lapm.rtx_count = 3;
+	{
+		frame_t *const saved_next = caller->ec.lapm.ctrl_list->next;
+		bool unchanged;
+
+		caller->ec.lapm.ctrl_list->next = caller->ec.lapm.tx_ctrl;
+		caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+		unchanged = memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+			caller->bit_timer == 1234 && caller->ec.lapm.rtx_count == 3;
+		caller->ec.lapm.ctrl_list->next = saved_next;
+		CHECK(unchanged, "retry queue pressure changed the command or its deadline");
+	}
+	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.config == 1 && caller->ec.lapm.v44_path == NULL &&
+	      caller->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING &&
+	      caller->bit_timer == 14400 && caller->ec.lapm.rtx_count == 0 &&
+	      caller->ec.lapm.tx_info_size == 128,
+	      "dual selection applied settings or failed to start the new XID deadline");
+	outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+	      v42_xid_decode(outgoing->buf + 2, outgoing->size - 2, &fields) == V42_XID_OK &&
+	      fields.private_negotiation != NULL && fields.user_data == NULL,
+	      "dual selection did not queue a V.42bis-only command");
+	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+	before = caller->ec.lapm.v44_session;
+	caller->bit_timer = 2345;
+	caller->ec.lapm.rtx_count = 2;
+	incoming.count--;
+	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+	CHECK(memcmp(&before, &caller->ec.lapm.v44_session, sizeof(before)) == 0 &&
+	      caller->bit_timer == 2345 && caller->ec.lapm.rtx_count == 2 &&
+	      caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer) == NULL,
+	      "malformed response restarted negotiation");
+	incoming.count++;
+	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.config == 0 && caller->ec.lapm.v44_path == NULL &&
+	      caller->ec.lapm.v44_session.phase == LAPM_V44_DECLINED &&
+	      caller->cfg.comp == 3 && caller->bit_timer == 14400,
+	      "cached reply to a V.42bis-only command did not finish XID negotiation");
+	outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->buf[1] == 0x7f,
+	      "compression retry did not proceed to SABME");
+	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+	received[0] = caller->ec.lapm.cmd_addr;
+	received[1] = 0x73;
+	incoming.count = 2;
+	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+	CHECK(caller->ec.lapm.state == 2, "compression retry did not establish LAPM");
+	modem_delete(caller);
 	return true;
 }
 
@@ -4340,6 +4423,7 @@ int main(void)
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
+		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
 		{ "LAPM peer-flag preamble", test_lapm_peer_flag_preamble },
 		{ "LAPM receive backpressure", test_lapm_receive_backpressure },
