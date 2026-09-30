@@ -275,12 +275,20 @@ static bool test_generated_profiles(void)
 					      v90_pcm_mapping_init(&mapping,
 						      &configuration.analog_phase4
 						       .training_parameters) == V90_PCM_MAPPING_OK &&
+					      mapping.frame_bits == 24 && mapping.sign_bits == 6 &&
+					      mapping.modulus_bits == 18 &&
 					      v90_pcm_mapping_power(&mapping, V90_PCM_MAPPING_CODEC,
 						      law, &training_power[0], &training_power[1]) ==
 						      V90_PCM_MAPPING_OK &&
 					      data_power[1] <= pow(10.0, 0.3) * training_power[0],
 					      "analogue profile did not generate rate %u",
 					      bit_rate);
+					uint64_t training_capacity = 1;
+					for (unsigned interval = 0; interval < V90_CP_FRAME_INTERVALS;
+					     ++interval)
+						training_capacity *= mapping.modulus[interval];
+					CHECK(training_capacity == (UINT64_C(1) << mapping.modulus_bits),
+					      "CPt left unused labels in its training constellations");
 					CHECK(configuration.analog_phase4.training_parameters
 						      .upstream_rate_mask == 0x1fffu &&
 					      configuration.analog_phase4.data_parameters

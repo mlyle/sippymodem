@@ -23,6 +23,9 @@ enum {
 	V90_CONSTELLATION_FIRST_UCODE = 24,
 	V90_CONSTELLATION_LAST_UCODE = 108,
 	V90_INITIAL_CONSTELLATION_SIZE = 8,
+	/* Eight levels in each of six intervals carry K=18 modulus bits.
+	 * With S=6 unshaped signs, Table 14's CPt rate number is 24-8. */
+	V90_TRAINING_RATE_INDEX = 16,
 };
 
 struct v90_upstream_selection {
@@ -450,7 +453,7 @@ static struct v90_cp_parameters cp_parameters(
 		.shaping_b1_q1_6 = kind == V90_CP_TRAINING ? 0 : -1,
 		.shaping_b2_q1_6 = kind == V90_CP_TRAINING ? 0 : 31,
 		.selected_rate_index = kind == V90_CP_TRAINING ?
-			13 : data_rate_index,
+			V90_TRAINING_RATE_INDEX : data_rate_index,
 		/* Keep CPt unshaped so its fixed MP'/Ed boundary has no delayed
 		 * spectral frame to carry into the data mapping. */
 		.sign_redundancy = kind == V90_CP_TRAINING ?
