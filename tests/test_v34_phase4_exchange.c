@@ -431,6 +431,7 @@ struct renegotiating_peer {
 	struct v34_data_stream data;
 	struct v34_data_startup startup;
 	struct v34_mp_record local_mp;
+	unsigned int acknowledgment_delay_records;
 	bool peer_mp_received;
 	bool peer_acknowledged;
 	bool transmitting_mp;
@@ -521,7 +522,11 @@ transmit:
 				      V34_TRAINING_TRANSMITTER_OK,
 			      "rate renegotiation peer could not transmit E");
 		} else {
-			local->acknowledges_peer_mp = peer->peer_mp_received;
+			if (peer->peer_mp_received &&
+			    peer->acknowledgment_delay_records != 0u)
+				peer->acknowledgment_delay_records--;
+			else
+				local->acknowledges_peer_mp = peer->peer_mp_received;
 			CHECK((peer->local_mp.type == V34_MP_RECORD_TYPE0 ?
 			       v34_training_transmitter_start_mp_type0(&peer->training,
 				       &peer->local_mp.parameters.type0) :
@@ -538,13 +543,15 @@ transmit:
 
 static bool test_online_rate_renegotiation(void)
 {
-	for (unsigned int calling_peer = 0; calling_peer < 2u; ++calling_peer) {
+	for (unsigned int variant = 0; variant < 4u; ++variant) {
+		unsigned int calling_peer = variant & 1u;
 		struct endpoint caller, answerer;
 		struct renegotiating_peer peer = { 0 };
 		struct endpoint *initiator = calling_peer ? &caller : &answerer;
 		struct endpoint *responder = calling_peer ? &answerer : &caller;
 		uint32_t caller_events, answerer_events;
 		uint32_t events_seen = 0;
+		bool waited_for_acknowledgment = false;
 
 		CHECK(run_pair(&caller, &answerer, &caller_events, &answerer_events),
 		      "rate renegotiation initial call failed");
@@ -553,6 +560,7 @@ static bool test_online_rate_renegotiation(void)
 		      "rate renegotiation peer could not retain transmit line");
 		peer.receive = initiator->phase4.receive;
 		peer.local_mp = initiator->phase4.transmit_mp;
+		peer.acknowledgment_delay_records = variant >= 2u ? 6u : 0u;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
 			->maximum_call_to_answer_rate_2400_bps_units = 3;
 		v34_mp_record_common_parameters_mutable(&peer.local_mp)
@@ -567,17 +575,28 @@ static bool test_online_rate_renegotiation(void)
 				      initiator->next_received, &peer_output) &&
 			      endpoint_sample(responder, responder->next_received,
 				      &responder_output, &events),
-			      "rate renegotiation stopped: peer=%u sample=%zu", calling_peer, sample);
+			      "rate renegotiation stopped: variant=%u sample=%zu", variant, sample);
 			initiator->next_received = responder_output;
 			responder->next_received = peer_output;
 			events_seen |= events;
+			if (responder->phase4.rate_renegotiation &&
+			    peer.acknowledgment_delay_records != 0u &&
+			    responder->phase4.transmit_mp_prime_complete) {
+				CHECK(!responder->phase4.peer_mp_prime_received &&
+				      !responder->phase4.transmit_data_active &&
+				      responder->phase4.transmit.training.stage ==
+					      V34_TRAINING_TRANSMITTER_PHASE4_MP,
+				      "local MP-prime did not wait for reciprocal acknowledgment");
+				waited_for_acknowledgment = true;
+			}
 			if (peer.transmitting_data &&
 			    v34_phase4_exchange_is_online(&responder->phase4) &&
 			    initiator->mapping_frames_received >= 4u &&
 			    responder->mapping_frames_received >= 4u)
 				break;
 		}
-		CHECK((events_seen & V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0 &&
+		CHECK((variant < 2u || waited_for_acknowledgment) &&
+		      (events_seen & V34_PHASE4_EXCHANGE_EVENT_RATE_RENEGOTIATION) != 0 &&
 		      (events_seen & V34_PHASE4_EXCHANGE_EVENT_ONLINE) != 0 &&
 		      peer.transmitting_data && initiator->mapping_frames_received >= 4u &&
 		      responder->mapping_frames_received >= 4u &&
@@ -585,8 +604,8 @@ static bool test_online_rate_renegotiation(void)
 			      .primary_data_rate_2400_bps_units == 3u &&
 		      responder->phase4.data_startup.mode.receive
 			      .primary_data_rate_2400_bps_units == 3u,
-		      "rate renegotiation did not restore reduced-rate data: peer=%u events=0x%x frames=%u/%u",
-		      calling_peer, events_seen, initiator->mapping_frames_received,
+		      "rate renegotiation did not restore reduced-rate data: variant=%u events=0x%x frames=%u/%u",
+		      variant, events_seen, initiator->mapping_frames_received,
 		      responder->mapping_frames_received);
 	}
 	return true;
@@ -791,12 +810,8 @@ static bool test_generated_online_exchange(void)
 	      caller_seen, answerer_seen);
 	CHECK(caller.phase4.transmit_data_active &&
 	      answerer.phase4.transmit_data_active &&
-	      caller.phase4.transmit_mp_records_completed != 0u &&
-	      caller.phase4.transmit_mp_records_completed <=
-		      V34_PHASE4_MAX_MP_PRIME_RECORDS &&
-	      answerer.phase4.transmit_mp_records_completed != 0u &&
-	      answerer.phase4.transmit_mp_records_completed <=
-		      V34_PHASE4_MAX_MP_PRIME_RECORDS &&
+	      caller.phase4.transmit_mp_prime_complete &&
+	      answerer.phase4.transmit_mp_prime_complete &&
 	      caller.phase4.receive_data_active &&
 	      answerer.phase4.receive_data_active &&
 	      caller.phase4.transmit_b1_complete &&
@@ -1196,31 +1211,24 @@ static bool test_mp_acknowledgment_boundaries(void)
 	      pending.receive.semantic.phase4.stage ==
 		      V34_PHASE4_DECISION_RECEIVER_E,
 	      "early reciprocal MP-prime did not arm E reception");
-	CHECK(pending.transmit_mp_records_completed == 0,
-	      "ordinary MP did not start at its first record");
-	for (uint8_t record = 0; record < V34_PHASE4_MIN_MP_RECORDS; ++record) {
+	CHECK(!pending.transmit_mp_prime_started &&
+	      !pending.transmit_mp_prime_complete,
+	      "ordinary MP already retained an acknowledgment");
+	{
 		struct v34_received_mapping_frame received = { 0 };
 		int16_t sample = 0;
 
 		CHECK(complete_local_mp_record(&pending),
-		      "ordinary MP did not reach record %u boundary", record + 1u);
+		      "ordinary MP did not reach its current record boundary");
 		events = 0;
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
 			      &received) == V34_PHASE4_EXCHANGE_OK,
-		      "ordinary MP record %u did not complete", record + 1u);
-		if (record + 1u < V34_PHASE4_MIN_MP_RECORDS) {
-			CHECK(!pending.transmit_mp_prime_started &&
-			      pending.transmit_mp_records_completed == record + 1u &&
-			      events == 0,
-			      "ordinary MP record %u acknowledged early", record + 1u);
-		} else {
-			CHECK(pending.transmit_mp_prime_started &&
-			      pending.transmit_mp_records_completed == 0 &&
-			      events ==
-				      V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED,
-			      "second ordinary MP record did not start MP-prime");
-		}
+		      "ordinary MP record did not complete");
+		CHECK(pending.transmit_mp_prime_started &&
+		      !pending.transmit_mp_prime_complete &&
+		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED,
+		      "current ordinary MP boundary did not start MP-prime");
 	}
 	{
 		struct v34_received_mapping_frame received = { 0 };
@@ -1232,7 +1240,7 @@ static bool test_mp_acknowledgment_boundaries(void)
 		CHECK(v34_phase4_exchange_sample(
 			      &pending, 0, NULL, NULL, &sample, &events,
 			      &received) == V34_PHASE4_EXCHANGE_OK &&
-		      pending.transmit_mp_records_completed == 1u &&
+		      pending.transmit_mp_prime_complete &&
 		      pending.transmit.training.stage ==
 			      V34_TRAINING_TRANSMITTER_PHASE4_E &&
 		      events == V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_E_STARTED,
@@ -1350,10 +1358,9 @@ static bool test_validation_and_transactionality(void)
 		      "answerer incorrectly applied the caller-only S rearm");
 	}
 	exchange = caller.phase4;
-	exchange.transmit_mp_records_completed =
-		V34_PHASE4_MAX_MP_PRIME_RECORDS + 1;
+	exchange.transmit_mp_prime_complete = false;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),
-	      "Phase 4 accepted too many completed MP records");
+	      "Phase 4 accepted data without a completed local MP-prime");
 	exchange = caller.phase4;
 	exchange.transmit_mp_prime_started = false;
 	CHECK(!v34_phase4_exchange_is_valid(&exchange),

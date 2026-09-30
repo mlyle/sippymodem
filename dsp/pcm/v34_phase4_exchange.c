@@ -303,7 +303,7 @@ static bool transmitter_stage_is_valid(
 		return exchange->transmit_trn_started &&
 		       exchange->transmit_mp_started &&
 		       exchange->transmit_mp_prime_started &&
-		       exchange->transmit_mp_records_completed != 0u &&
+		       exchange->transmit_mp_prime_complete &&
 		       exchange->peer_mp_prime_received &&
 		       exchange->data_startup_prepared;
 	stage = exchange->transmit.training.stage;
@@ -318,7 +318,7 @@ static bool transmitter_stage_is_valid(
 		return false;
 	if (stage == V34_TRAINING_TRANSMITTER_PHASE4_E &&
 	    (!exchange->transmit_mp_prime_started ||
-	     exchange->transmit_mp_records_completed == 0u ||
+	     !exchange->transmit_mp_prime_complete ||
 	     !exchange->peer_mp_prime_received ||
 	     !exchange->data_startup_prepared))
 		return false;
@@ -363,12 +363,8 @@ bool v34_phase4_exchange_is_valid(
 	    transmit_sample_rate(exchange) != V34_RECEIVE_TIMING_SAMPLE_RATE ||
 	    (exchange->receive.failed && !exchange->failed) ||
 	    (exchange->transmit_mp_started && !trn_ready_for_mp(exchange)) ||
-	    exchange->transmit_mp_records_completed >
-		    (exchange->transmit_mp_prime_started ?
-			     V34_PHASE4_MAX_MP_PRIME_RECORDS :
-			     V34_PHASE4_MIN_MP_RECORDS) ||
-	    (!exchange->transmit_mp_started &&
-	     exchange->transmit_mp_records_completed != 0u) ||
+	    (exchange->transmit_mp_prime_complete &&
+	     !exchange->transmit_mp_prime_started) ||
 	    (exchange->transmit_mp_prime_started &&
 	     (!exchange->transmit_mp_started || !exchange->peer_mp_received)) ||
 	    (exchange->peer_mp_prime_received &&
@@ -630,20 +626,16 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 	    v34_training_transmitter_phase4_mp_record_complete(
 			    &exchange->transmit.training)) {
 		bool acknowledged;
-		uint8_t repeat_records = exchange->transmit_mp_prime_started ?
-			V34_PHASE4_MAX_MP_PRIME_RECORDS :
-			V34_PHASE4_MIN_MP_RECORDS;
 
-		if (exchange->transmit_mp_records_completed <
-		    repeat_records)
-			exchange->transmit_mp_records_completed++;
-		acknowledged = exchange->transmit_mp_prime_started ||
-			(exchange->peer_mp_received &&
-			 exchange->transmit_mp_records_completed ==
-				 V34_PHASE4_MIN_MP_RECORDS);
+		/* V.34 11.4.1: acknowledge at the current record boundary.
+		 * A completed local MP-prime and reciprocal acknowledgment are
+		 * both required before ending the exchange with E. */
+		if (exchange->transmit_mp_prime_started)
+			exchange->transmit_mp_prime_complete = true;
+		acknowledged = exchange->peer_mp_received;
 
 		if (exchange->transmit_mp_prime_started &&
-		    exchange->transmit_mp_records_completed != 0u &&
+		    exchange->transmit_mp_prime_complete &&
 		    exchange->peer_mp_prime_received &&
 		    exchange->data_startup_prepared) {
 			result = transmit_result(v34_training_transmitter_start_e(
@@ -658,7 +650,6 @@ static enum v34_phase4_exchange_result prepare_transmitter(
 			return result;
 		if (acknowledged && !exchange->transmit_mp_prime_started) {
 			exchange->transmit_mp_prime_started = true;
-			exchange->transmit_mp_records_completed = 0;
 			*events |=
 				V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_MP_PRIME_STARTED;
 		}

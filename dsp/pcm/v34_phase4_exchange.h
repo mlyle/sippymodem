@@ -49,12 +49,6 @@ enum {
 	/* Keep J active for more than 128 symbols and until the caller receives
 	 * S/S-bar, then release J-prime at a complete J-pattern boundary. */
 	V34_PHASE4_J_RELEASE_MIN_SYMBOLS = 129,
-	/* Complete at least two ordinary MP records before acknowledging a peer
-	 * record. Continue ordinary MP until that peer record has arrived. */
-	V34_PHASE4_MIN_MP_RECORDS = 2,
-	/* Bound the completed MP' record count while waiting for the reciprocal
-	 * acknowledgement. Release E at the next complete record boundary. */
-	V34_PHASE4_MAX_MP_PRIME_RECORDS = 4,
 };
 
 struct v34_phase4_exchange_configuration {
@@ -101,8 +95,8 @@ struct v34_phase4_exchange {
 	bool peer_s_detected;
 	bool transmit_trn_started;
 	bool transmit_mp_started;
-	uint8_t transmit_mp_records_completed;
 	bool transmit_mp_prime_started;
+	bool transmit_mp_prime_complete;
 	bool peer_mp_received;
 	bool peer_mp_prime_received;
 	bool data_preparation_required;
