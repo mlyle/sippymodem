@@ -42,6 +42,10 @@ struct v34_phase3_exchange_configuration {
 	enum v34_constellation_size requested_remote_constellation;
 	uint32_t sample_rate;
 	int16_t nominal_peak_amplitude;
+	uint16_t round_trip_delay_samples;
+	/* Allow the echo learner to use the role-specific training deadline.
+	 * The owner may finish earlier after qualifying its echo model. */
+	bool extend_training;
 };
 
 /* Exact full-duplex sample boundary after both Phase 3 J selections. The
@@ -58,17 +62,21 @@ bool v34_phase3_exchange_handoff_is_valid(
 	const struct v34_phase3_exchange_handoff *handoff);
 
 /* Own both directions of one endpoint's zero-local-MD Phase 3 exchange.
- * Answering transmission begins after the required 70 ms silence and retains
- * TRN through the complete two-second zero-RTD line-training window. Calling
- * transmission begins after peer J detection and uses the required 512T
- * minimum. The following Phase 4 owner decides when the caller may terminate
- * J. Calls on one instance must be serialized. */
+ * Answering transmission begins after the required 70 ms silence and uses
+ * the fixed echo-training window by default. Calling transmission begins
+ * after peer J detection and defaults to the required 512T minimum.
+ * Extended training uses the role-specific deadline and measured
+ * round-trip delay; the owner may finish once its echo model qualifies.
+ * The following Phase 4 owner decides when the caller may terminate J.
+ * Calls on one instance must be serialized. */
 struct v34_phase3_exchange {
 	struct v34_training_transmitter transmit;
 	struct v34_phase34_receiver receive;
 	uint32_t trn_target_symbols;
+	uint32_t trn_limit_symbols;
 	uint32_t answer_silence_samples;
 	uint32_t silence_samples_remaining;
+	uint16_t round_trip_delay_samples;
 	enum v34_station_role local_role;
 	bool transmit_started;
 	bool stop_transmit_requested;
@@ -83,6 +91,11 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	const struct v34_phase3_profile *peer_transmit,
 	const struct v34_phase3_exchange_configuration *configuration,
 	int16_t initial_receive_gain);
+
+/* End TRN at the next sample after at least 512 symbols. This only shortens
+ * the configured deadline; it never resets the waveform or scrambler. */
+enum v34_phase3_exchange_result v34_phase3_exchange_finish_training(
+	struct v34_phase3_exchange *exchange);
 
 bool v34_phase3_exchange_is_valid(
 	const struct v34_phase3_exchange *exchange);

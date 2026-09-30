@@ -3,6 +3,7 @@
 #include "v34_phase3_exchange.h"
 
 #include "memory_region.h"
+#include "phase2_ranging.h"
 
 #include <limits.h>
 #include <stddef.h>
@@ -77,24 +78,62 @@ static bool zero_md_trn_target(
 	return *symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
 }
 
+static bool maximum_trn_target(
+	const struct v34_phase3_profile *profile,
+	uint16_t round_trip_delay_samples, uint32_t *symbols)
+{
+	uint64_t samples;
+	uint64_t total_symbols;
+	uint32_t prefix = V34_PHASE3_S_SEQUENCE_SYMBOLS +
+		V34_PHASE3_PP_SEQUENCE_SYMBOLS;
+
+	if (round_trip_delay_samples >
+	    PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+		    PHASE2_RANGING_TURNAROUND_SAMPLES)
+		return false;
+	/* V.34 11.3.1.1.6 permits 2000 ms + 2 RTD for the caller;
+	 * 11.3.1.2.3 permits 2000 ms + RTD for the answerer. Count the
+	 * entire zero-MD S/S-bar and PP prefix conservatively, and reserve
+	 * one host sample for rounding the final waveform boundary. */
+	samples = 2u * V34_RECEIVE_TIMING_SAMPLE_RATE - 1u +
+		(uint64_t)round_trip_delay_samples *
+		(profile->local_role == V34_CALLING_STATION ? 2u : 1u);
+	total_symbols = samples * profile->symbol_rate_numerator /
+		((uint64_t)V34_RECEIVE_TIMING_SAMPLE_RATE *
+		 profile->symbol_rate_denominator);
+	if (total_symbols < prefix + V34_TRAINING_SEQUENCE_MIN_SYMBOLS ||
+	    total_symbols - prefix > UINT32_MAX)
+		return false;
+	*symbols = (uint32_t)(total_symbols - prefix);
+	return true;
+}
+
 static bool trn_timing_is_valid(
 	const struct v34_phase3_exchange *exchange)
 {
 	uint32_t expected;
+	uint32_t limit;
+	uint32_t target = exchange->trn_target_symbols;
 
 	if (!zero_md_trn_target(
 		    &exchange->transmit.line.profile, &expected) ||
-	    exchange->trn_target_symbols != expected)
+	    !maximum_trn_target(&exchange->transmit.line.profile,
+				exchange->round_trip_delay_samples, &limit) ||
+	    (exchange->trn_limit_symbols != expected &&
+	     exchange->trn_limit_symbols != limit) ||
+	    target < V34_TRAINING_SEQUENCE_MIN_SYMBOLS ||
+	    target > exchange->trn_limit_symbols)
 		return false;
 	switch (exchange->transmit.phase3.stage) {
 	case V34_PHASE3_TRANSMITTER_S:
 	case V34_PHASE3_TRANSMITTER_PP:
-		return exchange->transmit.phase3.trn_symbols == 0;
+		return exchange->transmit.phase3.trn_symbols == 0 &&
+		       target == exchange->trn_limit_symbols;
 	case V34_PHASE3_TRANSMITTER_TRN:
-		return exchange->transmit.phase3.trn_symbols <= expected;
+		return exchange->transmit.phase3.trn_symbols <= target;
 	case V34_PHASE3_TRANSMITTER_J:
 	case V34_PHASE3_TRANSMITTER_COMPLETE:
-		return exchange->transmit.phase3.trn_symbols == expected;
+		return exchange->transmit.phase3.trn_symbols == target;
 	}
 	return false;
 }
@@ -187,6 +226,7 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 {
 	struct v34_phase3_exchange initialized = { 0 };
 	enum v34_training_transmitter_result transmit_result;
+	uint32_t limit;
 
 	if (exchange == NULL || configuration == NULL ||
 	    !roles_are_reciprocal(local_transmit, peer_transmit) ||
@@ -217,9 +257,17 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	    V34_PHASE34_RECEIVER_OK)
 		return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
 	initialized.local_role = local_transmit->local_role;
+	initialized.round_trip_delay_samples =
+		configuration->round_trip_delay_samples;
 	if (!zero_md_trn_target(
-		    local_transmit, &initialized.trn_target_symbols))
+		    local_transmit, &initialized.trn_limit_symbols))
 		return V34_PHASE3_EXCHANGE_OUT_OF_RANGE;
+	if (!maximum_trn_target(local_transmit,
+		initialized.round_trip_delay_samples, &limit))
+		return V34_PHASE3_EXCHANGE_OUT_OF_RANGE;
+	if (configuration->extend_training)
+		initialized.trn_limit_symbols = limit;
+	initialized.trn_target_symbols = initialized.trn_limit_symbols;
 	if (initialized.local_role == V34_ANSWERING_STATION) {
 		if (!answer_silence_samples(
 			    configuration->sample_rate,
@@ -231,6 +279,21 @@ enum v34_phase3_exchange_result v34_phase3_exchange_init(
 	if (!v34_phase3_exchange_is_valid(&initialized))
 		return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
 	*exchange = initialized;
+	return V34_PHASE3_EXCHANGE_OK;
+}
+
+enum v34_phase3_exchange_result v34_phase3_exchange_finish_training(
+	struct v34_phase3_exchange *exchange)
+{
+	if (!v34_phase3_exchange_is_valid(exchange))
+		return V34_PHASE3_EXCHANGE_INVALID_ARGUMENT;
+	if (exchange->failed || !exchange->transmit_started ||
+	    exchange->transmit.stage != V34_TRAINING_TRANSMITTER_PHASE3 ||
+	    exchange->transmit.phase3.stage != V34_PHASE3_TRANSMITTER_TRN ||
+	    exchange->transmit.phase3.trn_symbols <
+		    V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
+		return V34_PHASE3_EXCHANGE_INVALID_STATE;
+	exchange->trn_target_symbols = exchange->transmit.phase3.trn_symbols;
 	return V34_PHASE3_EXCHANGE_OK;
 }
 

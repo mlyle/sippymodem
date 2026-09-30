@@ -3,6 +3,7 @@
 #include <v34_phase3_exchange.h>
 
 #include <g711.h>
+#include <phase2_ranging.h>
 
 #include "test.h"
 
@@ -165,7 +166,8 @@ static bool record_events(uint32_t events, uint32_t *seen)
 
 static bool run_generated_duplex_exchange(
 	enum test_codec codec, size_t delay_samples,
-	enum v34_symbol_rate symbol_rate)
+	enum v34_symbol_rate symbol_rate, bool extended,
+	uint32_t finish_symbols)
 {
 	const uint32_t common_events =
 		V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED |
@@ -208,7 +210,12 @@ static bool run_generated_duplex_exchange(
 	uint32_t answerer_signal_phase = 0;
 	int16_t last_answer_transmit = 1;
 	bool complete = false;
+	uint32_t caller_trn_symbols;
 
+	caller_configuration.extend_training = extended;
+	answerer_configuration.extend_training = extended;
+	caller_configuration.round_trip_delay_samples = 2u * delay_samples;
+	answerer_configuration.round_trip_delay_samples = 2u * delay_samples;
 	CHECK(v34_phase3_exchange_init(
 		      &caller, &caller_profile, &answerer_profile,
 		      &caller_configuration, TEST_INITIAL_RECEIVE_GAIN) ==
@@ -218,6 +225,10 @@ static bool run_generated_duplex_exchange(
 		      &answerer_configuration, TEST_INITIAL_RECEIVE_GAIN) ==
 		      V34_PHASE3_EXCHANGE_OK,
 	      "duplex Phase 3 exchange did not initialize");
+	caller_trn_symbols = extended ? caller.trn_target_symbols :
+		V34_TRAINING_SEQUENCE_MIN_SYMBOLS;
+	if (extended)
+		answerer_trn_symbols = answerer.trn_target_symbols;
 	initialized_answerer_receiver = answerer.receive;
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		int16_t caller_receive;
@@ -243,6 +254,39 @@ static bool run_generated_duplex_exchange(
 			answerer.transmit.phase3.trn_symbols ==
 				answerer.trn_target_symbols;
 
+		struct v34_phase3_exchange *stations[] = { &caller, &answerer };
+		for (size_t station = 0; station < ARRAY_LENGTH(stations); ++station) {
+			struct v34_phase3_exchange *current = stations[station];
+
+			if (!finish_symbols || current->transmit.phase3.stage !=
+				V34_PHASE3_TRANSMITTER_TRN)
+				continue;
+			if (current->transmit.phase3.trn_symbols ==
+				V34_TRAINING_SEQUENCE_MIN_SYMBOLS - 1u) {
+				struct v34_phase3_exchange before = *current;
+
+				CHECK(v34_phase3_exchange_finish_training(current) ==
+					V34_PHASE3_EXCHANGE_INVALID_STATE &&
+				      memcmp(current, &before, sizeof(before)) == 0,
+				      "early echo completion changed the training prefix");
+			}
+			if (current->transmit.phase3.trn_symbols >= finish_symbols) {
+				struct v34_phase3_exchange expected = *current;
+
+				expected.trn_target_symbols =
+					current->transmit.phase3.trn_symbols;
+				CHECK(v34_phase3_exchange_finish_training(current) ==
+					V34_PHASE3_EXCHANGE_OK &&
+				      memcmp(current, &expected, sizeof(expected)) == 0,
+				      "echo completion reset live waveform or scrambler state");
+				if (station == 0)
+					caller_trn_symbols = expected.trn_target_symbols;
+				else {
+					answerer_trn_symbols = expected.trn_target_symbols;
+					answerer_starting_j = true;
+				}
+			}
+		}
 		channel_receive(&channel, &caller_receive, &answerer_receive);
 		CHECK(!answerer_starting_j ||
 		      memcmp(&answerer.receive,
@@ -390,7 +434,7 @@ static bool run_generated_duplex_exchange(
 	      "Phase 3 event coverage differed: caller=0x%x answerer=0x%x",
 	      caller_seen, answerer_seen);
 	CHECK(caller.transmit.phase3.stage == V34_PHASE3_TRANSMITTER_J &&
-	      caller.trn_target_symbols == V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+	      caller.trn_target_symbols == caller_trn_symbols &&
 	      caller.transmit.phase3.trn_symbols == caller.trn_target_symbols &&
 	      caller.transmit.phase3.j_symbols >=
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
@@ -426,6 +470,15 @@ static bool run_generated_duplex_exchange(
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.line.timing),
 	      "Phase 3 handoff lost either J constellation selection");
+	struct v34_phase3_exchange saved_caller = caller;
+	struct v34_phase3_exchange saved_answerer = answerer;
+	CHECK(v34_phase3_exchange_finish_training(&caller) ==
+		V34_PHASE3_EXCHANGE_INVALID_STATE &&
+	      v34_phase3_exchange_finish_training(&answerer) ==
+		V34_PHASE3_EXCHANGE_INVALID_STATE &&
+	      memcmp(&caller, &saved_caller, sizeof(caller)) == 0 &&
+	      memcmp(&answerer, &saved_answerer, sizeof(answerer)) == 0,
+	      "echo completion changed the completed duplex boundary");
 	return true;
 }
 
@@ -478,6 +531,73 @@ static bool test_trn_duration_policy(void)
 	return true;
 }
 
+static bool test_extended_training_limits(void)
+{
+	static const enum v34_symbol_rate rates[] = {
+		V34_SYMBOL_RATE_2400, V34_SYMBOL_RATE_2743,
+		V34_SYMBOL_RATE_2800, V34_SYMBOL_RATE_3000,
+		V34_SYMBOL_RATE_3200, V34_SYMBOL_RATE_3429,
+	};
+	static const uint16_t delays[] = {
+		0, 1, 3333,
+		PHASE2_RANGING_MAXIMUM_WAIT_SAMPLES -
+			PHASE2_RANGING_TURNAROUND_SAMPLES,
+	};
+	struct v34_phase3_exchange_configuration config =
+		configuration(V34_CONSTELLATION_4_POINT);
+
+	config.extend_training = true;
+	for (size_t rate = 0; rate < ARRAY_LENGTH(rates); ++rate) {
+		struct v34_phase3_profile profiles[2];
+
+		CHECK(profile_at_rate(V34_CALLING_STATION, rates[rate], false,
+			3, &profiles[0]) &&
+		      profile_at_rate(V34_ANSWERING_STATION, rates[rate],
+			rates[rate] != V34_SYMBOL_RATE_3429, 3, &profiles[1]),
+		      "bounded training profiles did not initialize");
+		for (size_t delay = 0; delay < ARRAY_LENGTH(delays); ++delay) {
+			config.round_trip_delay_samples = delays[delay];
+			for (size_t role = 0; role < ARRAY_LENGTH(profiles); ++role) {
+				struct v34_phase3_exchange exchange;
+				struct v34_phase3_exchange saved;
+				const struct v34_phase3_profile *profile = &profiles[role];
+				uint64_t budget = 2u * SAMPLE_RATE +
+					(uint64_t)delays[delay] * (role == 0 ? 2u : 1u);
+				uint64_t scaled_budget = budget *
+					profile->symbol_rate_numerator;
+				uint64_t symbol_samples = (uint64_t)SAMPLE_RATE *
+					profile->symbol_rate_denominator;
+
+				CHECK(v34_phase3_exchange_init(&exchange, profile,
+					&profiles[1u - role], &config,
+					TEST_INITIAL_RECEIVE_GAIN) ==
+					V34_PHASE3_EXCHANGE_OK,
+				      "extended training initialization failed");
+				uint64_t emitted = (uint64_t)(
+					exchange.trn_target_symbols +
+					V34_PHASE3_S_SEQUENCE_SYMBOLS +
+					V34_PHASE3_PP_SEQUENCE_SYMBOLS) * symbol_samples;
+				CHECK(exchange.trn_target_symbols == exchange.trn_limit_symbols &&
+				      exchange.trn_target_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+				      emitted < scaled_budget &&
+				      scaled_budget - emitted <= symbol_samples +
+					profile->symbol_rate_numerator,
+				      "rate %d role %zu RTD %u exceeded or wasted its deadline",
+				      rates[rate], role, delays[delay]);
+				saved = exchange;
+				CHECK(v34_phase3_exchange_finish_training(&exchange) ==
+					V34_PHASE3_EXCHANGE_INVALID_STATE &&
+				      memcmp(&exchange, &saved, sizeof(saved)) == 0,
+				      "echo completion before transmission changed the owner");
+				exchange.trn_target_symbols = exchange.trn_limit_symbols + 1u;
+				CHECK(!v34_phase3_exchange_is_valid(&exchange),
+				      "training beyond its deadline remained valid");
+			}
+		}
+	}
+	return true;
+}
+
 static bool test_generated_duplex_exchange(void)
 {
 	static const struct {
@@ -505,8 +625,15 @@ static bool test_generated_duplex_exchange(void)
 	for (size_t index = 0; index < ARRAY_LENGTH(cases); ++index)
 		CHECK(run_generated_duplex_exchange(
 			      cases[index].codec, cases[index].delay_samples,
-			      cases[index].symbol_rate),
+			      cases[index].symbol_rate, false, 0),
 		      "generated case %zu failed", index);
+	CHECK(run_generated_duplex_exchange(TEST_PCMU, 13,
+		V34_SYMBOL_RATE_3000, true, 0) &&
+	      run_generated_duplex_exchange(TEST_PCMA, 47,
+		V34_SYMBOL_RATE_3429, true, 512) &&
+	      run_generated_duplex_exchange(TEST_PCMU, 13,
+		V34_SYMBOL_RATE_3000, true, 1024),
+	      "extended or early-finished duplex training failed");
 	return true;
 }
 
@@ -567,6 +694,13 @@ static bool test_validation_and_transactionality(void)
 	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
 	      "clipping-risk Phase 3 line changed the destination");
 	config = configuration(V34_CONSTELLATION_4_POINT);
+	config.round_trip_delay_samples = UINT16_MAX;
+	CHECK(v34_phase3_exchange_init(
+		      &exchange, &caller_profile, &answerer_profile, &config,
+		      TEST_INITIAL_RECEIVE_GAIN) == V34_PHASE3_EXCHANGE_OUT_OF_RANGE &&
+	      memcmp(&exchange, &saved, sizeof(exchange)) == 0,
+	      "unbounded round-trip delay changed the destination");
+	config = configuration(V34_CONSTELLATION_4_POINT);
 	CHECK(v34_phase3_exchange_init(
 		      &exchange, &caller_profile, &answerer_profile, &config,
 		      TEST_INITIAL_RECEIVE_GAIN) ==
@@ -599,6 +733,8 @@ static bool test_validation_and_transactionality(void)
 	      overlap.events == UINT32_C(0x5a5aa5a5),
 	      "rejected Phase 3 calls were not transactional");
 	CHECK(!v34_phase3_exchange_is_valid(NULL) &&
+	      v34_phase3_exchange_finish_training(NULL) ==
+		      V34_PHASE3_EXCHANGE_INVALID_ARGUMENT &&
 	      !v34_phase3_exchange_has_failed(NULL) &&
 	      !v34_phase3_exchange_is_handoff_ready(NULL) &&
 	      !v34_phase3_exchange_handoff_is_valid(NULL),
@@ -613,6 +749,7 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "TRN duration policy", test_trn_duration_policy },
+		{ "extended training limits", test_extended_training_limits },
 		{ "generated duplex exchange", test_generated_duplex_exchange },
 		{ "validation and transactionality",
 		  test_validation_and_transactionality },
