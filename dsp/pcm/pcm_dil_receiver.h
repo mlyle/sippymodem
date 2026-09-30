@@ -6,7 +6,8 @@
 #include "pcm_constellation.h"
 #include "v90_dil_sequence.h"
 
-/* Qualify unchanged levels separately in each six-symbol frame interval.
+/* Qualify levels in each six-symbol frame interval after choosing one line
+ * polarity from signed DIL correlation.
  * A fitted constant-LSB substitution model supplies the codec-side TRN1d
  * ratio. Without that model, retain the common-level selection and configured
  * unity ratio; general digital pads and codec-law conversion remain unsupported. */
@@ -18,6 +19,7 @@ struct pcm_dil_result {
 	uint8_t rejected_levels;
 	bool interval_model;
 	bool measured;
+	bool polarity_inverted;
 };
 
 struct pcm_dil_receiver {
@@ -25,12 +27,13 @@ struct pcm_dil_receiver {
 	/* Two independent observations of each sign in each interval. Counters
 	 * saturate at two; memory and arithmetic are bounded for any descriptor. */
 	uint8_t observations[PCM_CONSTELLATION_UCODES][12];
-	struct pcm_constellation rejected[PCM_CONSTELLATION_FRAME_INTERVALS];
+	/* Keep both line polarities until signed correlation chooses one. */
+	struct pcm_constellation rejected[2][PCM_CONSTELLATION_FRAME_INTERVALS];
 	/* Candidate bits: identity, force wire LSB zero, force wire LSB one. */
 	uint8_t lsb_models[PCM_CONSTELLATION_FRAME_INTERVALS];
 	uint8_t training_ucode;
 	uint64_t reference_energy;
-	uint64_t received_cross;
+	int64_t received_cross;
 	uint32_t symbols;
 	uint32_t limit;
 };

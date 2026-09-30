@@ -56,29 +56,34 @@ bool pcm_dil_receiver_receive(struct pcm_dil_receiver *receiver,
 	uint8_t *count = &receiver->observations[expected.ucode][slot];
 	if (*count < 2u)
 		++*count;
-	if (expected.ucode != received.ucode ||
-	    (expected.sample > 0) != (received.sample > 0))
-		add_code(&receiver->rejected[interval], expected.ucode);
-	/* Fit substitutions from the unconditioned wire evidence. Equalizer
-	 * corrections may move a received cell without a digital substitution. */
+	bool inverted = (expected.sample > 0) != (received.sample > 0);
+	for (unsigned polarity = 0; polarity < 2u; ++polarity) {
+		if (expected.ucode != received.ucode || inverted != (polarity != 0u))
+			add_code(&receiver->rejected[polarity][interval], expected.ucode);
+	}
+	/* Raw D/A magnitudes determine the pad and TRN1d RMS ratio. Their sign
+	 * may differ from conditioned evidence when equalization removes the
+	 * line polarity. Cell qualification above still checks signed samples. */
 	if (expected.ucode != 0)
 		for (unsigned model = 0; model < 3u; ++model)
-			if (substitute_lsb(expected.octet, model) != unconditioned_octet)
+			if ((substitute_lsb(expected.octet, model) & 0x7fu) !=
+			    (unconditioned_octet & 0x7fu))
 				receiver->lsb_models[interval] &= (uint8_t)~(1u << model);
-	/* Signed correlation rejects reversed or absent signals without an
-	 * absolute-value detector accidentally accepting the wrong DIL phase.
+	/* A single signed fit chooses the line polarity for the whole traversal.
+	 * Cell qualification still requires repeated matching signs and levels;
+	 * taking an absolute value per symbol would hide wrong DIL phases.
 	 * The descriptor bound is 195840 symbols; these sums fit in 48 bits. */
 	int64_t cross = (int64_t)expected.sample * received.sample;
 	receiver->reference_energy += (uint64_t)((int64_t)expected.sample * expected.sample);
-	if (cross > 0)
-		receiver->received_cross += (uint64_t)cross;
+	receiver->received_cross += cross;
 	return true;
 }
 
 /* V.90 Table 14 / V.92 Table 23 specify transmitter / codec D/A TRN1d RMS.
  * Evaluate the fitted substitutions at UINFO, rather than treating equalizer
  * or host gain as digital attenuation. Ambiguous models must agree at UINFO. */
-static bool training_ratio(const struct pcm_dil_receiver *receiver, uint16_t *ratio)
+static bool training_ratio(const struct pcm_dil_receiver *receiver,
+	unsigned polarity, uint16_t *ratio)
 {
 	struct v90_pcm_symbol nominal;
 	double energy = 0;
@@ -88,10 +93,11 @@ static bool training_ratio(const struct pcm_dil_receiver *receiver, uint16_t *ra
 	for (unsigned interval = 0; interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
 		unsigned observed = 0;
 		/* Require repeated evidence spanning an upper chord's worth of
-		 * levels, rather than extrapolating from a short binary prefix. */
+		 * levels with consistent polarity, rather than a short binary prefix. */
 		for (unsigned code = 64u; code < PCM_CONSTELLATION_UCODES; ++code)
 			observed += receiver->observations[code][2u * interval] == 2u &&
-				receiver->observations[code][2u * interval + 1u] == 2u;
+				receiver->observations[code][2u * interval + 1u] == 2u &&
+				!pcm_constellation_contains(&receiver->rejected[polarity][interval], (uint8_t)code);
 
 		if (observed < 16u)
 			return false;
@@ -125,16 +131,21 @@ bool pcm_dil_receiver_finish(const struct pcm_dil_receiver *receiver,
 	    receiver->symbols > receiver->limit || receiver->reference_energy == 0)
 		return false;
 	next.symbols = receiver->symbols;
-	uint64_t gain = (receiver->received_cross * 8192u + receiver->reference_energy / 2u) /
+	unsigned polarity = receiver->received_cross < 0;
+	uint64_t cross = (uint64_t)receiver->received_cross;
+	if (polarity)
+		cross = UINT64_C(0) - cross;
+	next.polarity_inverted = polarity != 0u;
+	uint64_t gain = (cross * 8192u + receiver->reference_energy / 2u) /
 		receiver->reference_energy;
 	next.gain_q3_13 = (uint16_t)(gain > UINT16_MAX ? UINT16_MAX : gain);
-	next.interval_model = training_ratio(receiver, &next.trn1d_ratio_q3_13);
+	next.interval_model = training_ratio(receiver, polarity, &next.trn1d_ratio_q3_13);
 	for (uint8_t code = 1; code < PCM_CONSTELLATION_UCODES; ++code) {
 		struct v90_pcm_symbol symbol;
 		if (!v90_pcm_symbol_make(&symbol, receiver->expected.law, code, true))
 			return false;
 		for (unsigned interval = 0; interval < PCM_CONSTELLATION_FRAME_INTERVALS; ++interval) {
-			bool changed = pcm_constellation_contains(&receiver->rejected[interval], code);
+			bool changed = pcm_constellation_contains(&receiver->rejected[polarity][interval], code);
 			bool observed = receiver->observations[code][2u * interval] == 2u &&
 				receiver->observations[code][2u * interval + 1u] == 2u;
 			/* Equalization may hide a substituted cell. The advertised

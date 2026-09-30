@@ -226,7 +226,9 @@ static bool test_measured_levels(void)
 	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
 	for (unsigned pattern = 0; pattern < 3u; ++pattern)
 	for (unsigned rotation = 0; rotation < 6u; ++rotation)
-	for (unsigned restored = 0; restored < 2u; ++restored) {
+	for (unsigned restored = 0; restored < 2u; ++restored)
+	for (unsigned inverted = 0; inverted < 2u; ++inverted)
+	for (unsigned raw_inverted = 0; raw_inverted < 2u; ++raw_inverted) {
 		struct v90_dil_parameters parameters;
 		struct v90_dil_sequence sequence;
 		struct pcm_dil_receiver receiver;
@@ -243,11 +245,13 @@ static bool test_measured_levels(void)
 			uint8_t octet = impaired_octet(symbol.octet, pattern, (index + rotation) % 6u);
 			/* Even perfect conditioning cannot make an altered D/A level
 			 * safe to advertise as an identical transmit/codec point. */
-			CHECK(pcm_dil_receiver_receive(&receiver, restored ? symbol.octet : octet, octet),
+			uint8_t sign = inverted ? 0x80u : 0u;
+			CHECK(pcm_dil_receiver_receive(&receiver, (restored ? symbol.octet : octet) ^ sign, octet ^ (raw_inverted ? 0x80u : 0u)),
 			      "DIL observation failed");
 		}
 		CHECK(pcm_dil_receiver_finish(&receiver, &result) && result.measured &&
-		      result.interval_model && result.symbols == length, "DIL did not qualify the interval model");
+		      result.interval_model && result.symbols == length && result.polarity_inverted == (inverted != 0u),
+		      "DIL did not qualify the interval model and line polarity");
 		struct pcm_constellation common = result.usable[0];
 		for (unsigned interval = 0; interval < 6u; ++interval) {
 			CHECK(pcm_constellation_count(&result.usable[interval]) >= 40u, "too few measured levels");
@@ -334,10 +338,60 @@ static bool test_measured_evidence(void)
 	return true;
 }
 
+static bool test_polarity_evidence(void)
+{
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+	for (unsigned damage = 0; damage < 4u; ++damage) {
+		struct v90_dil_parameters parameters;
+		struct v90_dil_sequence sequence;
+		struct pcm_dil_receiver receiver;
+		struct pcm_dil_result result;
+		uint32_t length;
+		uint8_t changed_code = 0;
+
+		CHECK(v90_dil_profile_init(&parameters, V90_DIL_PROFILE_CONVENTIONAL) == V90_DIL_OK &&
+		      v90_dil_training_symbol_count(&parameters, &length) &&
+		      v90_dil_sequence_init(&sequence, &parameters, law) == V90_DIL_SEQUENCE_OK &&
+		      pcm_dil_receiver_init(&receiver, &parameters, law, 90u),
+		      "polarity evidence fixture failed");
+		if (damage == 3u) {
+			struct v90_pcm_symbol discarded;
+			CHECK(v90_dil_sequence_next(&sequence, &discarded) == V90_DIL_SEQUENCE_OK,
+			      "shifted DIL fixture failed");
+		}
+		for (uint32_t index = 0; index < length; ++index) {
+			struct v90_pcm_symbol symbol;
+			CHECK(v90_dil_sequence_next(&sequence, &symbol) == V90_DIL_SEQUENCE_OK,
+			      "polarity evidence symbol failed");
+			uint8_t octet = symbol.octet;
+			if ((damage == 0u && index % 2u) || (damage == 2u && index == 18u)) {
+				octet ^= 0x80u;
+				changed_code = symbol.ucode;
+			}
+			if (damage == 1u)
+				octet = g711_encode(law, 0);
+			CHECK(pcm_dil_receiver_receive(&receiver, octet, octet),
+			      "polarity evidence observation failed");
+		}
+		CHECK(pcm_dil_receiver_finish(&receiver, &result), "polarity evidence finish failed");
+		for (unsigned interval = 0; interval < 6u; ++interval)
+			if (damage == 2u)
+				CHECK(result.interval_model && !result.polarity_inverted &&
+				      pcm_constellation_contains(&result.usable[interval], changed_code) == (interval != 0u) &&
+				      pcm_constellation_contains(&result.usable[interval], 80u),
+				      "one early wrong sign locked the polarity or retained its damaged cell");
+			else
+				CHECK(pcm_constellation_is_empty(&result.usable[interval]),
+				      "changing polarity, silence or shifted DIL qualified a level");
+	}
+	return true;
+}
+
 int main(void)
 {
 	static const struct test_case tests[] = {
 		{ "measured DIL levels", test_measured_levels },
+		{ "polarity evidence and rejection", test_polarity_evidence },
 		{ "measured evidence and conservative fallback", test_measured_evidence },
 		{ "exact repeated cycles", test_exact_cycles },
 		{ "bounded segment finish", test_bounded_finish },

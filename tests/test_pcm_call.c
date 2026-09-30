@@ -45,6 +45,7 @@ struct channel {
 	unsigned noise_peak;
 	uint32_t noise_state;
 	unsigned downstream_robbed_pattern;
+	bool downstream_inverted;
 	uint8_t downstream_phase;
 };
 
@@ -674,6 +675,8 @@ static void channel_receive(
 {
 	*analog = channel->digital_to_analog[channel->cursor];
 	*digital = channel->analog_to_digital[channel->cursor];
+	if (channel->downstream_inverted)
+		*analog ^= 0x80u;
 	if (channel->downstream_robbed_pattern) {
 		if (channel->downstream_phase == 4u)
 			*analog |= 1u;
@@ -4073,7 +4076,7 @@ static bool check_short_quiet_receive(
 
 static bool run_full_retrain(
 	enum pcm_protocol protocol, enum g711_law law,
-	enum v90_modem_role initiating_role, bool generated, bool robbed_bits)
+	enum v90_modem_role initiating_role, bool generated, bool robbed_bits, bool inverted)
 {
 	struct channel channel;
 	struct endpoint analog;
@@ -4111,9 +4114,10 @@ static bool run_full_retrain(
 		if (protocol == PCM_PROTOCOL_V92)
 			analog.call.local_info1.pcm_upstream_enabled = false;
 	}
-	if (robbed_bits) {
+	channel.downstream_inverted = inverted;
+	if (robbed_bits || inverted) {
 		analog.call.phase3_configuration.analog.dil_profile = V90_DIL_PROFILE_CONVENTIONAL;
-		channel.downstream_robbed_pattern = 2u;
+		channel.downstream_robbed_pattern = robbed_bits ? 2u : 0u;
 	}
 	for (size_t clock = 0; clock < CALL_SAMPLE_LIMIT; ++clock) {
 		CHECK(step_endpoints(&channel, &analog, &digital, law),
@@ -4129,6 +4133,9 @@ static bool run_full_retrain(
 	}
 	CHECK(initially_online, "law %u retrain pair did not reach data",
 	      (unsigned int)law);
+	if (inverted)
+		CHECK(analog.call.downstream_dil.measured && analog.call.downstream_dil.polarity_inverted,
+		      "reversed conventional call did not learn its line polarity");
 	CHECK(pcm_call_uses_conventional_upstream(&analog.call) &&
 	      pcm_call_uses_conventional_upstream(&digital.call) &&
 	      analog.call.protocol == protocol && digital.call.protocol == protocol &&
@@ -4167,6 +4174,7 @@ static bool run_full_retrain(
 			.minimum_line_power = 4096.0;
 	initiator_receive_floor = initiator->call.retrain.detector.tone
 		.carrier.profile.minimum_line_power;
+	channel.downstream_inverted = false;
 	CHECK(pcm_call_start_retrain(&initiator->call) == PCM_CALL_OK &&
 	      initiator->call.stage == PCM_CALL_RETRAIN_SILENCE &&
 	      initiator->call.downstream_equalizer.training_level == 0 &&
@@ -4285,6 +4293,9 @@ static bool run_full_retrain(
 		      tc <= 5368u * 5368u && dc <= 5368u * 5368u && dc <= tf * pow(10.0, 0.3),
 		      "generated conventional call exceeded peer power after retrain");
 	}
+	if (inverted)
+		CHECK(analog.call.downstream_dil.measured && !analog.call.downstream_dil.polarity_inverted,
+		      "full retrain retained the previous line polarity");
 	if (robbed_bits)
 		CHECK(analog.call.downstream_dil.measured && analog.call.downstream_dil.interval_model &&
 		      analog.call.analog_phase4_configuration.data_parameters.constellation_count > 1u,
@@ -4297,11 +4308,20 @@ static bool test_full_retrain(void)
 	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90;
 	     protocol <= PCM_PROTOCOL_V92; ++protocol)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, false, false) &&
-			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM, false, false) &&
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, false, false, false) &&
+			      run_full_retrain(protocol, law, V90_DIGITAL_MODEM, false, false, false) &&
 			      run_full_retrain(protocol, law,
-				      law == G711_LAW_PCMU ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, true, false),
+				      law == G711_LAW_PCMU ? V90_ANALOG_MODEM : V90_DIGITAL_MODEM, true, false, false),
 			      "protocol %u law %u full retrain matrix failed", protocol, law);
+	return true;
+}
+
+static bool test_conventional_dil_polarity(void)
+{
+	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
+		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, true, false, true),
+			      "conventional DIL polarity data/retrain mode %u law %u", protocol, law);
 	return true;
 }
 
@@ -4309,7 +4329,7 @@ static bool test_conventional_dil_retrain(void)
 {
 	for (enum pcm_protocol protocol = PCM_PROTOCOL_V90; protocol <= PCM_PROTOCOL_V92; ++protocol)
 		for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
-			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, true, true),
+			CHECK(run_full_retrain(protocol, law, V90_ANALOG_MODEM, true, true, false),
 			      "measured conventional retrain protocol %u law %u", protocol, law);
 	return true;
 }
@@ -7081,6 +7101,7 @@ struct v92_upstream_offer {
 	double second_postcursor, third_postcursor;
 	bool check_b1_peer_retrain;
 	unsigned downstream_robbed_pattern;
+	bool downstream_inverted;
 	uint8_t downstream_robbed_rotation;
 };
 
@@ -7717,6 +7738,7 @@ static bool capture_v92_duplex_data(
 		wire.postcursor[1] = offer->second_postcursor;
 		wire.postcursor[2] = offer->third_postcursor;
 		wire.noise_peak = offer->noise_peak;
+		wire.downstream_inverted = offer->downstream_inverted;
 		wire.downstream_robbed_pattern = offer->downstream_robbed_pattern;
 		wire.downstream_phase = offer->downstream_robbed_rotation;
 	}
@@ -7983,6 +8005,19 @@ static bool run_v92_duplex_data(enum g711_law law, size_t delay, bool long_cpd,
 	const struct v92_upstream_offer *offer)
 {
 	return capture_v92_duplex_data(law, delay, long_cpd, offer, NULL, 0u, NULL);
+}
+
+static bool test_v92_dil_polarity(void)
+{
+	const struct v92_upstream_offer offer = {
+		.peer_mask = 1u, .local_maximum = 1u, .expected = 1u,
+		.downstream_rate = 28000u, .downstream_robbed_pattern = 2u,
+		.downstream_inverted = true,
+	};
+	for (enum g711_law law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law)
+		CHECK(run_v92_duplex_data(law, 3u, false, &offer),
+		      "PCM-upstream DIL lost raw pad evidence after polarity correction law %u", law);
+	return true;
 }
 
 static bool test_v92_dil_data(void)
@@ -12000,7 +12035,9 @@ int main(int argc, char **argv)
 		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
 		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },
+		{ "V.92 reversed DIL with robbed bits", test_v92_dil_polarity },
 		{ "V.90/V.92 conventional DIL and retrain", test_conventional_dil_retrain },
+		{ "V.90/V.92 reversed DIL and polarity relearning", test_conventional_dil_polarity },
 		{ "V.92 checked and owned phase octets", test_v92_owned_phase_octets },
 		{ "V.90 peer CPs echo reconditioning", test_echo_reconditioning },
 		{ "V.34 fallback retains PCM retrain agreement", test_v34_restart },
