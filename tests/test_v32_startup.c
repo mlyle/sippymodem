@@ -438,6 +438,70 @@ static bool test_repeated_initial_offer(void)
 	return true;
 }
 
+static bool test_multi_rate_selection(void)
+{
+	static const uint8_t masks[] = {
+		V32_RATE_CAPABILITY_4800 | V32_RATE_CAPABILITY_7200,
+		V32_RATE_CAPABILITY_4800 | V32_RATE_CAPABILITY_7200 |
+			V32_RATE_CAPABILITY_9600,
+		V32_RATE_CAPABILITY_4800 | V32_RATE_CAPABILITY_9600 |
+			V32_RATE_CAPABILITY_12000 | V32_RATE_CAPABILITY_14400,
+	};
+
+	for (size_t index = 0; index < ARRAY_LENGTH(masks); ++index) {
+		struct v32_rate_offer offer = {
+			.rates = masks[index],
+			.trellis_at_highest_rate = true,
+		};
+		struct v32_startup caller;
+		struct v32_rate_offer decoded;
+		enum v32_rate_signal_type type;
+		uint8_t highest = v32_rate_highest(offer.rates);
+		uint16_t word;
+
+		CHECK(v32_startup_init(&caller, V32_CALLER, offer.rates) ==
+			      V32_STARTUP_OK &&
+		      v32_rate_signal_encode(V32_RATE_SIGNAL, &offer, &word) ==
+			      V32_RATE_SIGNAL_OK &&
+		      observe_word(&caller, word) && observe_word(&caller, word) &&
+		      caller.selected_rate == 0 && !caller.end_pending &&
+		      v32_startup_expect_selection(&caller) == V32_STARTUP_OK &&
+		      observe_word(&caller, word) && observe_word(&caller, word) &&
+		      caller.selected_rate == highest && caller.end_pending &&
+		      !caller.selection_expected && caller.rate_word == word,
+		      "V.32 caller rejected multi-rate R3 mask %x", offer.rates);
+		CHECK(v32_rate_signal_decode(caller.end_word, &type, &decoded) ==
+			      V32_RATE_SIGNAL_OK && type == V32_END_SIGNAL &&
+		      decoded.rates == highest && decoded.trellis_at_highest_rate,
+		      "V.32 caller did not emit a single-rate E after mask %x",
+		      offer.rates);
+	}
+	{
+		const struct v32_rate_offer enabled = {
+			.rates = V32_RATE_CAPABILITY_4800,
+		};
+		const struct v32_rate_offer outside_response = {
+			.rates = V32_RATE_CAPABILITY_4800 |
+				 V32_RATE_CAPABILITY_9600,
+			.trellis_at_highest_rate = true,
+		};
+		struct v32_startup caller, before;
+
+		CHECK(v32_startup_init(&caller, V32_CALLER, enabled.rates) ==
+			      V32_STARTUP_OK &&
+		      v32_startup_note_rate_signal(&caller, &enabled) ==
+			      V32_STARTUP_OK &&
+		      v32_startup_expect_selection(&caller) == V32_STARTUP_OK,
+		      "V.32 out-of-response selection fixture did not initialize");
+		before = caller;
+		CHECK(v32_startup_note_rate_signal(&caller, &outside_response) ==
+			      V32_STARTUP_NO_COMMON_RATE &&
+		      memcmp(&caller, &before, sizeof(caller)) == 0,
+		      "V.32 caller changed state for R3 above its R2 ceiling");
+	}
+	return true;
+}
+
 static bool test_answerer_selects_lower_rate(void)
 {
 	const uint8_t rates = V32_RATE_CAPABILITY_4800 |
@@ -736,6 +800,7 @@ int main(void)
 		{ "selection readiness and rate boundary",
 		  test_selection_readiness_and_rate_boundary },
 		{ "repeated initial offer", test_repeated_initial_offer },
+		{ "multi-rate final selection", test_multi_rate_selection },
 		{ "answerer selects lower rate", test_answerer_selects_lower_rate },
 		{ "decoded event exchange", test_decoded_event_exchange },
 		{ "no common rate", test_no_common_rate },

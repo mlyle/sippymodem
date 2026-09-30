@@ -425,11 +425,16 @@ static enum v32_startup_result observe_rate_event(
 			return V32_STARTUP_INVALID_ARGUMENT;
 		enter_phase(startup, V32_CALLER_SEND_RESPONSE);
 	} else if (startup->phase == V32_CALLER_SEND_RESPONSE) {
-		if (startup->selection_expected &&
-		    (offer->rates & (uint8_t)(offer->rates - 1u)) == 0) {
-			uint8_t selected = offer->rates;
+		if (startup->selection_expected) {
+			/* Some peers retain lower enabled rates in R3. Select its
+			 * highest rate, then emit a single-rate E. The preceding
+			 * conditioning boundary distinguishes R3 from repeated R1. */
+			uint8_t selected = v32_rate_highest(offer->rates);
+			struct v32_rate_offer selection = *offer;
 
-			if (!offer_selects_rate(offer, selected) ||
+			selection.rates = selected;
+
+			if (!offer_selects_rate(&selection, selected) ||
 			    (selected & startup->transmitted_rates) == 0)
 				return V32_STARTUP_NO_COMMON_RATE;
 			if (!configure_selected_rate(

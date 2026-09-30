@@ -1396,13 +1396,16 @@ static int finish_fixed_rate(
 	}
 	{
 		struct v32_end_path end;
+		struct v32_rate_offer selected_offer;
 		enum v32_end_path_result result;
 
-		if (next_startup.selected_rate != handoff.offer.rates ||
-		    next_startup.selection_expected)
+		if ((next_startup.selected_rate & handoff.offer.rates) !=
+			    next_startup.selected_rate ||
+		    next_startup.selection_expected ||
+		    !selected_offer_from_startup(&next_startup, &selected_offer))
 			return -1;
 		result = v32_end_path_init(
-			&end, &handoff, &handoff.offer,
+			&end, &handoff, &selected_offer,
 			V32_EQUALIZER_ADAPTATION_FINE);
 		if (result != V32_END_PATH_OK &&
 		    result != V32_END_PATH_COMPLETE)
