@@ -630,6 +630,57 @@ static bool feed_control_bits(
 	return true;
 }
 
+static bool test_empty_pcm_refusal(void)
+{
+	static const uint8_t information[] = {
+		0xc1, 0x45, 0x2a, 0x0d, 0x07,
+	};
+	static const uint8_t missing_access[] = {
+		0xc1, 0x45, 0x2a, 0x07,
+	};
+	static const uint8_t duplicate_pcm[] = {
+		0xc1, 0x45, 0x2a, 0x0d, 0x07, 0x07,
+	};
+	struct v8_menu_detector detector;
+	struct v8_menu detected, caller, joint;
+	struct v8_pcm_roles roles;
+	uint8_t encoded[V8_MAX_INFORMATION_OCTETS];
+	size_t count;
+	size_t sequence_bits = V8_PREAMBLE_BITS +
+		ARRAY_LENGTH(information) * V8_FRAMED_OCTET_BITS;
+	bool confirmed;
+
+	CHECK(v8_menu_detector_init(&detector) == V8_MENU_OK &&
+	      feed_control_bits(&detector, information, ARRAY_LENGTH(information),
+				2u * sequence_bits + V8_PREAMBLE_BITS,
+				&detected, &confirmed) && confirmed &&
+	      detected.modulations == V8_MODULATION_V34_DUPLEX &&
+	      detected.lapm && detected.pcm_present &&
+	      detected.pcm_availability == 0 && detected.pstn_access_present &&
+	      detected.pstn_access == 0,
+	      "V.8 repeated empty PCM refusal was rejected");
+	for (unsigned int digital = 0; digital < 2; ++digital) {
+		CHECK(v8_pcm_call_menu_init(&caller,
+				digital ? V8_PCM_DIGITAL : V8_PCM_ANALOG,
+				digital ? V8_PSTN_DIGITAL : 0, true) == V8_MENU_OK &&
+		      v8_joint_menu_select(&caller, &detected, &joint) == V8_MENU_OK &&
+		      joint.modulations == V8_MODULATION_V34_DUPLEX && joint.lapm &&
+		      !joint.pcm_present && joint.pcm_availability == 0 &&
+		      v8_pcm_select_roles(&caller, &joint, &roles) == V8_MENU_OK &&
+		      roles.caller == V8_PCM_ROLE_NONE &&
+		      roles.answerer == V8_PCM_ROLE_NONE &&
+		      v8_menu_encode(&joint, encoded, sizeof(encoded), &count) ==
+			      V8_MENU_OK && (encoded[1] & 0x20) == 0,
+		      "V.8 empty refusal incorrectly authorized a PCM role");
+	}
+	CHECK(decode_has_result(missing_access, ARRAY_LENGTH(missing_access),
+			       V8_MENU_MALFORMED) &&
+	      decode_has_result(duplicate_pcm, ARRAY_LENGTH(duplicate_pcm),
+			       V8_MENU_MALFORMED),
+	      "V.8 empty refusal bypassed category validation");
+	return true;
+}
+
 static bool test_repeated_menu_confirmation(void)
 {
 	struct v8_menu offered;
@@ -862,6 +913,7 @@ int main(void)
 		{ "PCM with non-PCM peer", test_pcm_with_non_pcm_peer },
 		{ "no common modulation", test_no_common_modulation },
 		{ "joint validation", test_joint_validation },
+		{ "empty PCM refusal", test_empty_pcm_refusal },
 		{ "repeated menu confirmation", test_repeated_menu_confirmation },
 		{ "mismatched menu restart", test_mismatched_menu_restart },
 		{ "malformed menu recovery", test_malformed_menu_recovery },
