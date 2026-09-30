@@ -97,7 +97,8 @@ static bool point_has_power(
 static bool points_recur(
 	const struct qam_point *previous,
 	const struct qam_point *delayed,
-	const struct qam_point *point, double minimum_point_power)
+	const struct qam_point *point, double minimum_point_power,
+	double minimum_correlation)
 {
 	double point_power = point->in_phase * point->in_phase +
 			     point->quadrature * point->quadrature;
@@ -125,7 +126,7 @@ static bool points_recur(
 			(delayed->in_phase / delayed_scale) +
 		(point->quadrature / point_scale) *
 			(delayed->quadrature / delayed_scale);
-	return isfinite(correlation) && correlation >= 0.98 &&
+	return isfinite(correlation) && correlation >= minimum_correlation &&
 	       transition_power >= 0.02 * (point_power + previous_power);
 }
 
@@ -141,9 +142,10 @@ static void remember_recurrence(
 	prefix->recurrence[1] = *point;
 }
 
-enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
+static enum v34_phase3_s_prefix_result receive_prefix(
 	struct v34_phase3_s_prefix *prefix,
-	const struct qam_point *point, double minimum_point_power)
+	const struct qam_point *point, double minimum_point_power,
+	double minimum_correlation)
 {
 	struct v34_phase3_s_prefix next;
 	uint8_t turn;
@@ -197,7 +199,7 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 	    (!next.recurrence_qualified || next.require_recurrence)) {
 		if (points_recur(
 			    &next.previous, &next.recurrence[0], point,
-			    minimum_point_power)) {
+			    minimum_point_power, minimum_correlation)) {
 			if (next.recurrence_hits <
 			    V34_PHASE3_S_PREFIX_RECURRENCE_HITS)
 				next.recurrence_hits++;
@@ -225,6 +227,13 @@ enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
 	return recurrence_just_qualified ?
 		       V34_PHASE3_S_PREFIX_REBASE_TIMING :
 		       V34_PHASE3_S_PREFIX_OK;
+}
+
+enum v34_phase3_s_prefix_result v34_phase3_s_prefix_receive(
+	struct v34_phase3_s_prefix *prefix,
+	const struct qam_point *point, double minimum_point_power)
+{
+	return receive_prefix(prefix, point, minimum_point_power, 0.98);
 }
 
 bool v34_phase3_s_detection_is_valid(
@@ -949,9 +958,14 @@ enum v34_phase3_s_receiver_result v34_phase3_s_hunt_receive(
 		/* Qualify recurrence from measured points. Slicing first would make
 		 * unrelated data in alternating quadrants look perfectly periodic. */
 		normalized = normalized_fixed_observation(observation);
-		prefix_result = v34_phase3_s_prefix_receive(
+		/* Training S can retain phase noise from uncancelled echo before
+		 * the equalizer acquires it. Allow 16 degrees of lag-two phase
+		 * error here; the alternating turns and complete S/S-bar marker
+		 * still qualify acquisition. Online data keeps the tighter gate. */
+		prefix_result = receive_prefix(
 			&next.prefix, &normalized,
-			(double)MINIMUM_POINT_POWER_Q8 / 256.0);
+			(double)MINIMUM_POINT_POWER_Q8 / 256.0,
+			next.acquire_phase ? 0.96 : 0.98);
 		if (prefix_result != V34_PHASE3_S_PREFIX_OK &&
 		    prefix_result != V34_PHASE3_S_PREFIX_DETECTED &&
 		    prefix_result != V34_PHASE3_S_PREFIX_REBASE_TIMING)

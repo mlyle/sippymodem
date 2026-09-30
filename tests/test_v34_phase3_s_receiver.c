@@ -1411,6 +1411,68 @@ static bool test_training_hunt_acquires_phase(void)
 	return true;
 }
 
+static bool test_training_hunt_with_phase_noise(void)
+{
+	uint8_t rotations[V34_PHASE3_S_SEQUENCE_SYMBOLS];
+
+	CHECK(generate_marker(rotations), "noisy training marker did not generate");
+	for (uint8_t offset = 0; offset < 4u; ++offset) {
+		for (unsigned int has_s_bar = 0; has_s_bar < 2u; ++has_s_bar) {
+			struct v34_phase3_s_hunt training;
+			struct v34_phase3_s_hunt online;
+
+			CHECK(v34_phase3_s_hunt_init_training(&training) ==
+				      V34_PHASE3_S_RECEIVER_OK &&
+			      v34_phase3_s_hunt_init(&online) ==
+				      V34_PHASE3_S_RECEIVER_OK,
+			      "noisy training hunts did not initialize");
+			for (size_t symbol = 0; symbol < ARRAY_LENGTH(rotations); ++symbol) {
+				/* Opposite phase errors in successive two-symbol blocks
+				 * make lag-two correlation cos(0.25), about 0.969. The
+				 * quarter-turn pattern and full S-bar remain unambiguous. */
+				double phase = ((symbol / 2u) & 1u) != 0u ? 0.125 : -0.125;
+				uint8_t rotation = (uint8_t)(
+					(rotations[has_s_bar ? symbol : symbol % V34_PHASE3_S_SYMBOLS] +
+					 offset) & 3u);
+				struct v34_analytic_sample target;
+				struct v34_analytic_sample point;
+				struct v34_phase3_s_adaptation adaptation;
+				bool control;
+				enum v34_phase3_s_receiver_result result;
+
+				CHECK(v34_training_constellation_fixed_point(
+					      V34_CONSTELLATION_4_POINT, 0u, rotation, &target) ==
+					      V34_CONSTELLATION_OK,
+				      "noisy training target did not generate");
+				point.in_phase = (int16_t)lround(
+					target.in_phase * cos(phase) - target.quadrature * sin(phase));
+				point.quadrature = (int16_t)lround(
+					target.in_phase * sin(phase) + target.quadrature * cos(phase));
+				CHECK(v34_phase3_s_hunt_receive(
+					      &online, point, &adaptation, &control) ==
+					      V34_PHASE3_S_RECEIVER_OK && !control &&
+				      !adaptation.adapt && !online.candidate,
+				      "phase noise relaxed the online S gate at %zu", symbol);
+				result = v34_phase3_s_hunt_receive(
+					&training, point, &adaptation, &control);
+				CHECK(result == (has_s_bar && symbol + 1u == ARRAY_LENGTH(rotations) ?
+						 V34_PHASE3_S_RECEIVER_DETECTED :
+						 V34_PHASE3_S_RECEIVER_OK),
+				      "noisy training boundary changed at %zu (offset %u, S-bar %u)",
+				      symbol, offset, has_s_bar);
+			}
+			CHECK(has_s_bar ?
+				      (v34_phase3_s_hunt_is_complete(&training) &&
+				       training.marker.detection.clockwise_quarter_turn_offset == offset &&
+				       training.marker.detection.s_errors == 0u &&
+				       training.marker.detection.s_bar_errors == 0u) :
+				      !v34_phase3_s_hunt_is_complete(&training),
+			      "noisy training did not require and locate the complete S-bar");
+		}
+	}
+	return true;
+}
+
 static bool test_online_hunt_reset_and_validation(void)
 {
 	struct v34_phase3_s_hunt hunt;
@@ -1495,6 +1557,8 @@ int main(void)
 		  test_online_hunt_rejects_non_s_recurrence },
 		{ "training S hunt phase acquisition",
 		  test_training_hunt_acquires_phase },
+		{ "training S hunt with phase noise",
+		  test_training_hunt_with_phase_noise },
 		{ "online S hunt reset and validation",
 		  test_online_hunt_reset_and_validation },
 	};
