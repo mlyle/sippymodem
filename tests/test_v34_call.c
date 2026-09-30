@@ -11,8 +11,8 @@
 enum {
 	SAMPLE_LIMIT = 140000,
 	LINE_DELAY_SAMPLES = 13,
-	LINE_DELAY_CAPACITY = 1440,
-	ECHO_DELAY_CAPACITY = 256,
+	LINE_DELAY_CAPACITY = 1666,
+	ECHO_DELAY_CAPACITY = 3333,
 	TEST_ECHO_DELAY_SAMPLES = 32,
 	NOMINAL_AMPLITUDE = 7000,
 };
@@ -22,7 +22,6 @@ struct self_echo {
 	size_t cursor;
 	size_t delay_samples;
 	int16_t gain_q15;
-	bool disable_filter;
 };
 
 struct channel {
@@ -41,6 +40,8 @@ struct endpoint {
 	unsigned int mapping_frames_received;
 	uint32_t transmit_primary_bits;
 	uint32_t receive_primary_bits;
+	uint32_t phase3_trn_symbols;
+	uint32_t phase3_transmit_samples;
 	uint32_t mapping_pattern_seed;
 	uint32_t peer_mapping_pattern_seed;
 	uint8_t primary_idle_bits_remaining;
@@ -371,6 +372,17 @@ static bool endpoint_accept_observation(
 	const struct v34_call_observation *observation,
 	const struct v34_received_mapping_frame *received)
 {
+	if (observation->processed == V34_CALL_PHASE3 &&
+	    (observation->events.phase3 &
+	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_J_STARTED) != 0) {
+		const struct v34_training_transmitter *transmit =
+			observation->next == V34_CALL_PHASE4 ?
+				&endpoint->call.state.phase4.transmit.training :
+				&endpoint->call.state.phase3.transmit;
+
+		endpoint->phase3_trn_symbols = transmit->phase3.trn_symbols;
+		endpoint->phase3_transmit_samples = transmit->line.generated_samples;
+	}
 	if (observation->next == V34_CALL_PHASE3)
 		endpoint->entered_phase3 = true;
 	if (observation->next == V34_CALL_PHASE4)
@@ -469,12 +481,12 @@ static int16_t codec_round_trip(int16_t sample, bool pcma)
 static void channel_transmit(
 	struct channel *channel, int16_t caller, int16_t answerer)
 {
+	caller = codec_round_trip(caller, channel->pcma);
+	answerer = codec_round_trip(answerer, channel->pcma);
 	self_echo_transmit(&channel->echo[V34_CALLING_STATION], caller);
 	self_echo_transmit(&channel->echo[V34_ANSWERING_STATION], answerer);
-	channel->call_to_answer[channel->cursor] =
-		codec_round_trip(caller, channel->pcma);
-	channel->answer_to_call[channel->cursor] =
-		codec_round_trip(answerer, channel->pcma);
+	channel->call_to_answer[channel->cursor] = caller;
+	channel->answer_to_call[channel->cursor] = answerer;
 	channel->cursor = (channel->cursor + 1u) %
 		(channel->delay_samples != 0u ? channel->delay_samples :
 					       LINE_DELAY_SAMPLES);
@@ -491,10 +503,6 @@ static bool channel_sample_pair(
 	int16_t caller_transmit;
 	int16_t answerer_transmit;
 
-	if (channel->echo[V34_CALLING_STATION].disable_filter)
-		caller->call.echo.filtering = false;
-	if (channel->echo[V34_ANSWERING_STATION].disable_filter)
-		answerer->call.echo.filtering = false;
 	channel_receive(channel, &caller_receive, &answerer_receive);
 	note_peer_primary_delays(caller, answerer);
 	if (!endpoint_sample(
@@ -508,9 +516,9 @@ static bool channel_sample_pair(
 	return true;
 }
 
-static bool run_initialized_pair(
+static bool run_pair_until_frames(
 	struct endpoint *caller, struct endpoint *answerer,
-	struct channel *channel)
+	struct channel *channel, unsigned int minimum_frames)
 {
 	for (size_t index = 0; index < SAMPLE_LIMIT; ++index) {
 		struct v34_call_observation caller_observation;
@@ -522,11 +530,18 @@ static bool run_initialized_pair(
 			return false;
 		if (v34_call_is_online(&caller->call) &&
 		    v34_call_is_online(&answerer->call) &&
-		    caller->mapping_frames_received >= 4u &&
-		    answerer->mapping_frames_received >= 4u)
+		    caller->mapping_frames_received >= minimum_frames &&
+		    answerer->mapping_frames_received >= minimum_frames)
 			return true;
 	}
 	return false;
+}
+
+static bool run_initialized_pair(
+	struct endpoint *caller, struct endpoint *answerer,
+	struct channel *channel)
+{
+	return run_pair_until_frames(caller, answerer, channel, 4u);
 }
 
 static bool run_online_pair(
@@ -640,62 +655,97 @@ static bool test_pcmu_call(void)
 }
 
 static bool run_echo_call(
-	enum v34_station_role echoed_role, bool pcma, bool disable_filter,
-	struct endpoint *result)
+	enum v34_station_role echoed_role, bool pcma,
+	size_t echo_delay, size_t line_delay, struct endpoint *result)
 {
 	struct channel channel = {
 		.pcma = pcma,
+		.delay_samples = line_delay,
 	};
 	struct endpoint caller;
 	struct endpoint answerer;
 	bool connected;
 
 	channel.echo[echoed_role] = (struct self_echo){
-		.delay_samples = TEST_ECHO_DELAY_SAMPLES,
+		.delay_samples = echo_delay,
 		.gain_q15 = 14000,
-		.disable_filter = disable_filter,
 	};
 	CHECK(endpoint_init(&caller, V34_CALLING_STATION) &&
 	      endpoint_init(&answerer, V34_ANSWERING_STATION),
 	      "echoed endpoints did not initialize");
-	caller.suppress_failure_diagnostic = disable_filter;
-	answerer.suppress_failure_diagnostic = disable_filter;
-	connected = run_initialized_pair(&caller, &answerer, &channel);
+	caller.generated_mapping_frames = answerer.generated_mapping_frames = true;
+	caller.mapping_pattern_seed = answerer.peer_mapping_pattern_seed =
+		UINT32_C(0x34c011ab);
+	answerer.mapping_pattern_seed = caller.peer_mapping_pattern_seed =
+		UINT32_C(0x34a05e17);
+	connected = run_pair_until_frames(&caller, &answerer, &channel, 256u);
 	*result = echoed_role == V34_CALLING_STATION ? caller : answerer;
 	return connected;
 }
 
-static bool check_echo_call(enum v34_station_role role, bool pcma)
+static bool check_echo_call(
+	enum v34_station_role role, bool pcma,
+	size_t echo_delay, size_t line_delay)
 {
 	struct endpoint filtered;
-	uint64_t maximum_residual_percent =
-		role == V34_CALLING_STATION ? 5u : 1u;
 	const char *station = role == V34_CALLING_STATION ? "calling" :
 							       "answering";
 
-	CHECK(!run_echo_call(role, pcma, true, &filtered),
-	      "uncancelled %s-station echo reached mapped data", station);
-	CHECK(run_echo_call(role, pcma, false, &filtered),
+	CHECK(run_echo_call(role, pcma, echo_delay, line_delay, &filtered),
 	      "cancelled %s-station echo did not reach mapped data", station);
-	CHECK(filtered.call.echo.filtering &&
-	      filtered.call.echo.validation_input_energy != 0 &&
-	      filtered.call.echo.validation_residual_energy * 100u <
-		      filtered.call.echo.validation_input_energy *
-			      maximum_residual_percent,
+	CHECK(pcm_host_echo_is_ready(&filtered.call.echo) &&
+	      filtered.call.echo.window_delay_samples <= echo_delay &&
+	      filtered.call.echo.window_delay_samples +
+		      PCM_HOST_ECHO_FILTER_TAPS > echo_delay,
 	      "%s-station echo model was not retained", station);
 	return true;
 }
 
 static bool test_echo_calls(void)
 {
-	CHECK(check_echo_call(V34_ANSWERING_STATION, false),
+	CHECK(check_echo_call(V34_ANSWERING_STATION, false, 32, LINE_DELAY_SAMPLES),
 	      "PCMU answerer echo call failed");
-	CHECK(check_echo_call(V34_ANSWERING_STATION, true),
+	CHECK(check_echo_call(V34_ANSWERING_STATION, true, 32, LINE_DELAY_SAMPLES),
 	      "PCMA answerer echo call failed");
-	CHECK(check_echo_call(V34_CALLING_STATION, false),
+	CHECK(check_echo_call(V34_CALLING_STATION, false, 32, LINE_DELAY_SAMPLES),
 	      "PCMU caller echo call failed");
-	CHECK(check_echo_call(V34_CALLING_STATION, true),
+	CHECK(check_echo_call(V34_CALLING_STATION, true, 32, LINE_DELAY_SAMPLES),
 	      "PCMA caller echo call failed");
+	return true;
+}
+
+static bool test_delayed_echo_calls(void)
+{
+	/* Long propagation can still have a near return. Ranging determines
+	 * the deadline, while the transmit reference determines the echo path. */
+	CHECK(check_echo_call(V34_CALLING_STATION, true, 32, 1666) &&
+	      check_echo_call(V34_ANSWERING_STATION, false, 32, 1666),
+	      "near echo failed with long propagation");
+	for (unsigned law = 0; law < 2; ++law)
+		CHECK(check_echo_call(V34_CALLING_STATION, law != 0, 3333, 1666) &&
+		      check_echo_call(V34_ANSWERING_STATION, law != 0, 3333, 1666),
+		      "law %u delayed return did not verify mapped data", law);
+	return true;
+}
+
+static bool test_quiet_training_completion(void)
+{
+	struct endpoint caller;
+	struct endpoint answerer;
+	struct channel channel;
+
+	CHECK(run_online_pair(&caller, &answerer, &channel, false),
+	      "quiet training did not reach verified data");
+	const struct endpoint *endpoints[] = { &caller, &answerer };
+	for (size_t role = 0; role < ARRAY_LENGTH(endpoints); ++role) {
+		CHECK(!pcm_host_echo_is_ready(&endpoints[role]->call.echo) &&
+		      endpoints[role]->phase3_trn_symbols >= V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
+		      endpoints[role]->phase3_transmit_samples >=
+			PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES &&
+		      endpoints[role]->phase3_transmit_samples < V34_PHASE2_SAMPLE_RATE,
+		      "role %zu accepted a quiet model or missed its bounded early finish",
+		      role);
+	}
 	return true;
 }
 
@@ -1967,6 +2017,8 @@ int main(void)
 		{ "generated PCMU call", test_pcmu_call },
 		{ "delayed PCMU and PCMA calls", test_delayed_calls },
 		{ "generated station echo", test_echo_calls },
+		{ "delayed station echo", test_delayed_echo_calls },
+		{ "quiet training completion", test_quiet_training_completion },
 		{ "symmetric selected-rate calls", test_symmetric_calls },
 		{ "local and remote full retrain", test_full_retrain },
 		{ "full retrain through answerer echo", test_echo_retrain },

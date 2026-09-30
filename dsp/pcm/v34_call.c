@@ -10,6 +10,27 @@
 static enum v34_call_result phase3_result(
 	enum v34_phase3_exchange_result result);
 
+static bool initialize_echo(struct pcm_host_echo *echo)
+{
+	/* Preserve near-return coverage. The shared scan independently locates
+	 * delayed returns; peer ranging only determines the training deadline. */
+	return pcm_host_echo_init(echo) == PCM_HOST_ECHO_OK &&
+	       pcm_host_echo_seed_window_delay(echo, 1u) == PCM_HOST_ECHO_OK;
+}
+
+static enum v34_phase3_exchange_result initialize_phase3(
+	struct v34_call *call, const struct v34_phase3_profile *local,
+	const struct v34_phase3_profile *peer, int16_t gain)
+{
+	struct v34_phase3_exchange_configuration config =
+		call->phase3_configuration;
+
+	config.extend_training = true;
+	config.round_trip_delay_samples = call->round_trip_delay_samples;
+	return v34_phase3_exchange_init(
+		&call->state.phase3, local, peer, &config, gain);
+}
+
 static bool configuration_is_valid(
 	const struct v34_call_configuration *configuration)
 {
@@ -42,7 +63,8 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 	     !v34_info0_is_valid(&call->peer_info0)) ||
 	    !v34_full_retrain_is_valid(&call->retrain) ||
 	    call->retrain.detector.tone.local_role != call->local_role ||
-	    !v34_echo_canceller_is_valid(&call->echo) ||
+	    !pcm_host_echo_is_valid(&call->echo) ||
+	    call->echo_quiet_samples > PCM_ECHO_REFERENCE_HISTORY_SAMPLES ||
 	    (!call->round_trip_delay_stored &&
 	     call->round_trip_delay_samples != 0u) ||
 	    call->round_trip_delay_samples >
@@ -64,16 +86,50 @@ static bool stored_configuration_is_valid(const struct v34_call *call)
 		       v34_info1a_is_valid(&call->local_info1.answering);
 }
 
-static bool echo_adaptation_is_expected(const struct v34_call *call)
+static bool echo_is_training(const struct v34_call *call)
 {
 	if (call->stage != V34_CALL_PHASE3 ||
 	    call->state.phase3.transmit.stage !=
 		    V34_TRAINING_TRANSMITTER_PHASE3 ||
 	    call->state.phase3.transmit.phase3.stage ==
-		    V34_PHASE3_TRANSMITTER_J)
+		    V34_PHASE3_TRANSMITTER_J ||
+	    (call->state.phase3.transmit.phase3.stage ==
+		     V34_PHASE3_TRANSMITTER_TRN &&
+	     call->state.phase3.transmit.phase3.trn_symbols ==
+		     call->state.phase3.trn_target_symbols))
 		return false;
-	return call->local_role == V34_ANSWERING_STATION ||
-	       call->state.phase3.transmit_started;
+	return call->state.phase3.transmit_started;
+}
+
+static bool echo_training_can_finish(const struct v34_call *call)
+{
+	const struct v34_training_transmitter *transmit;
+	const struct v34_phase3_profile *profile;
+	uint64_t minimum_samples;
+	uint32_t return_guard;
+
+	if (!echo_is_training(call))
+		return false;
+	transmit = &call->state.phase3.transmit;
+	if (transmit->phase3.stage != V34_PHASE3_TRANSMITTER_TRN ||
+	    transmit->phase3.trn_symbols < V34_TRAINING_SEQUENCE_MIN_SYMBOLS)
+		return false;
+	if (pcm_host_echo_is_ready(&call->echo))
+		return !pcm_host_echo_has_weak_margin(&call->echo);
+	profile = &transmit->line.profile;
+	minimum_samples = ((uint64_t)V34_TRAINING_SEQUENCE_MIN_SYMBOLS *
+		V34_PHASE2_SAMPLE_RATE * profile->symbol_rate_denominator +
+		profile->symbol_rate_numerator - 1u) /
+		profile->symbol_rate_numerator;
+	/* A quiet prefix can precede a delayed return. Retain the shared
+	 * 700 ms acquisition horizon, or a longer measured RTD plus 50 ms,
+	 * before accepting a complete 512T interval of negligible input. */
+	return_guard = call->round_trip_delay_samples +
+		V34_PHASE2_SAMPLE_RATE / 20u;
+	if (return_guard < PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES)
+		return_guard = PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES;
+	return call->echo_quiet_samples >= minimum_samples &&
+	       transmit->line.generated_samples >= return_guard + minimum_samples;
 }
 
 static bool add_caller_retrain_fallbacks(struct v34_call *call)
@@ -178,8 +234,6 @@ bool v34_call_is_valid(const struct v34_call *call)
 		 !call->state.phase4.receive_data_active)) &&
 	       (call->retrain.response_silence_samples_remaining != 0u) ==
 		       (call->stage == V34_CALL_RETRAIN_SILENCE) &&
-	       v34_echo_canceller_is_adapting(&call->echo) ==
-		       echo_adaptation_is_expected(call) &&
 	       (call->round_trip_delay_stored ||
 		(call->stage == V34_CALL_PHASE2 &&
 		 call->state.phase2.stage == V34_PHASE2_RANGING)) &&
@@ -210,10 +264,7 @@ enum v34_call_result v34_call_init(
 	if (v34_full_retrain_init(
 		    &initialized.retrain,
 		    configuration->local_role) != V34_PHASE2_TONE_OK ||
-	    v34_echo_canceller_init(&initialized.echo) !=
-		    V34_ECHO_CANCELLER_OK ||
-	    v34_echo_canceller_freeze(&initialized.echo) !=
-		    V34_ECHO_CANCELLER_OK)
+	    !initialize_echo(&initialized.echo))
 		return V34_CALL_INVALID_ARGUMENT;
 	if (!v34_call_is_valid(&initialized))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -263,19 +314,14 @@ enum v34_call_result v34_call_init_from_phase2(
 	initialized.stage = V34_CALL_PHASE3;
 	initialized.peer_info0_stored = true;
 	initialized.round_trip_delay_stored = true;
-	result = v34_phase3_exchange_init(
-		&initialized.state.phase3, local, peer,
-		&initialized.phase3_configuration, handoff->receive_gain);
+	result = initialize_phase3(
+		&initialized, local, peer, handoff->receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
 	if (v34_full_retrain_init(
 		    &initialized.retrain, initialized.local_role) !=
 		    V34_PHASE2_TONE_OK ||
-	    v34_echo_canceller_init(&initialized.echo) !=
-		    V34_ECHO_CANCELLER_OK ||
-	    (initialized.local_role == V34_CALLING_STATION &&
-	     v34_echo_canceller_freeze(&initialized.echo) !=
-		     V34_ECHO_CANCELLER_OK))
+	    !initialize_echo(&initialized.echo))
 		return V34_CALL_NUMERIC_FAILURE;
 	if (!v34_call_is_valid(&initialized))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -306,12 +352,10 @@ static enum v34_call_result begin_retrain(
 		return V34_CALL_INVALID_STATE;
 	if (v34_full_retrain_begin_response(
 		    &next.retrain, retain_peer_tone) != V34_PHASE2_TONE_OK ||
-	    v34_echo_canceller_init(&next.echo) !=
-		    V34_ECHO_CANCELLER_OK ||
-	    v34_echo_canceller_freeze(&next.echo) !=
-		    V34_ECHO_CANCELLER_OK)
+	    !initialize_echo(&next.echo))
 		return V34_CALL_NUMERIC_FAILURE;
 	next.retrain_active = true;
+	next.echo_quiet_samples = 0;
 	next.rate_renegotiation_remaining_samples = 0u;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
@@ -455,21 +499,9 @@ static enum v34_call_result enter_phase3(struct v34_call *call)
 		    &call->state.phase2, &receive_gain) != V34_PHASE2_OK)
 		return V34_CALL_NUMERIC_FAILURE;
 	call->peer_info0_stored = true;
-	result = v34_phase3_exchange_init(
-		&call->state.phase3, &local, &peer,
-		&call->phase3_configuration, receive_gain);
+	result = initialize_phase3(call, &local, &peer, receive_gain);
 	if (result != V34_PHASE3_EXCHANGE_OK)
 		return phase3_result(result);
-	if (v34_echo_canceller_init(&call->echo) !=
-		    V34_ECHO_CANCELLER_OK)
-		return V34_CALL_NUMERIC_FAILURE;
-	/* The caller retains pass-through until its own Phase 3 transmission.
-	 * The answering peer then turns off J and leaves a training interval
-	 * before it may answer the caller's later J. */
-	if (call->local_role == V34_CALLING_STATION &&
-	    v34_echo_canceller_freeze(&call->echo) !=
-		    V34_ECHO_CANCELLER_OK)
-		return V34_CALL_NUMERIC_FAILURE;
 	call->stage = V34_CALL_PHASE3;
 	return V34_CALL_OK;
 }
@@ -746,7 +778,8 @@ enum v34_call_result v34_call_sample(
 	enum v34_call_result result;
 	int16_t conditioned = received_sample;
 	int16_t generated = 0;
-	bool echo_processed;
+	enum pcm_host_echo_mode echo_mode;
+	bool echo_advanced;
 	bool retrain_requested = false;
 
 	if (!v34_call_is_valid(call) || transmit_sample == NULL ||
@@ -755,15 +788,23 @@ enum v34_call_result v34_call_sample(
 		return V34_CALL_INVALID_ARGUMENT;
 	if (call->failed)
 		return V34_CALL_FAILED;
+	if (echo_training_can_finish(call) &&
+	    v34_phase3_exchange_finish_training(&call->state.phase3) !=
+		    V34_PHASE3_EXCHANGE_OK) {
+		call->failed = true;
+		return V34_CALL_NUMERIC_FAILURE;
+	}
 	emitted.processed = call->stage;
-	echo_processed = (emitted.processed == V34_CALL_PHASE3 ||
-			  emitted.processed == V34_CALL_PHASE4 ||
-			  emitted.processed == V34_CALL_CLEARDOWN) &&
-			 (call->echo.adapting || call->echo.filtering);
-	if (echo_processed &&
-	    v34_echo_canceller_predict(
-		    &call->echo, received_sample, &conditioned) !=
-		    V34_ECHO_CANCELLER_OK) {
+	/* Every consumed host sample retains its actual transmit reference,
+	 * including Phase 2 and silence. TRAIN preserves raw receive input;
+	 * Each duplex phase requires current confidence for a weak model. */
+	echo_mode = echo_is_training(call) ? PCM_HOST_ECHO_TRAIN :
+		(call->stage == V34_CALL_PHASE2 ||
+		 call->stage == V34_CALL_RETRAIN_SILENCE) ?
+			PCM_HOST_ECHO_BYPASS : PCM_HOST_ECHO_FILTER_DATA;
+	if (pcm_host_echo_predict(
+		    &call->echo, echo_mode, received_sample, &conditioned) !=
+	    PCM_HOST_ECHO_OK) {
 		call->failed = true;
 		return V34_CALL_NUMERIC_FAILURE;
 	}
@@ -820,27 +861,20 @@ enum v34_call_result v34_call_sample(
 	default:
 		return V34_CALL_INVALID_STATE;
 	}
-	if (emitted.processed == V34_CALL_PHASE3 &&
-	    call->local_role == V34_CALLING_STATION &&
-	    (emitted.events.phase3 &
-	     V34_PHASE3_EXCHANGE_EVENT_TRANSMIT_STARTED) != 0) {
-		if (v34_echo_canceller_init(&call->echo) !=
-		    V34_ECHO_CANCELLER_OK)
-			result = V34_CALL_NUMERIC_FAILURE;
-		else
-			echo_processed = true;
+	echo_advanced = pcm_host_echo_advance_predicted(
+		&call->echo, echo_mode, received_sample, conditioned,
+		generated) == PCM_HOST_ECHO_OK;
+	if (!echo_advanced)
+		result = V34_CALL_NUMERIC_FAILURE;
+	if (echo_mode == PCM_HOST_ECHO_TRAIN &&
+	    received_sample > -PCM_HOST_ECHO_READY_MIN_PEAK &&
+	    received_sample < PCM_HOST_ECHO_READY_MIN_PEAK) {
+		if (call->echo_quiet_samples < PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
+			call->echo_quiet_samples++;
+	} else {
+		call->echo_quiet_samples = 0;
 	}
-	if (echo_processed &&
-	    v34_echo_canceller_advance(
-		    &call->echo, received_sample, conditioned, generated) !=
-		    V34_ECHO_CANCELLER_OK)
-		result = V34_CALL_NUMERIC_FAILURE;
-	else if (v34_echo_canceller_is_adapting(&call->echo) &&
-		 !echo_adaptation_is_expected(call) &&
-		 v34_echo_canceller_freeze(&call->echo) !=
-			 V34_ECHO_CANCELLER_OK)
-		result = V34_CALL_NUMERIC_FAILURE;
-	else if (retrain_requested)
+	if (echo_advanced && retrain_requested)
 		result = begin_retrain(call, false);
 	if (result == V34_CALL_OK && call->stage == V34_CALL_PHASE4 &&
 	    call->state.phase4.online_announced)

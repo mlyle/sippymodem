@@ -6,7 +6,7 @@
 #include "v34_phase2.h"
 #include "v34_phase3_exchange.h"
 #include "v34_phase4_exchange.h"
-#include "v34_echo_canceller.h"
+#include "pcm_host_echo.h"
 #include "v34_cleardown.h"
 
 #include <stdbool.h>
@@ -47,6 +47,7 @@ struct v34_call_configuration {
 	 * and projected-rate fields are policy inputs; the call replaces each
 	 * active pre-emphasis field from its retained remote probe measurement. */
 	union v34_local_info1 local_info1;
+	/* The call supplies the measured Phase-2 delay and echo-training policy. */
 	struct v34_phase3_exchange_configuration phase3;
 	struct v34_phase4_exchange_configuration phase4;
 };
@@ -76,7 +77,7 @@ struct v34_call_observation {
  * exact handoff boundaries. Calls on one instance must be serialized. */
 struct v34_call {
 	union v34_call_state state;
-	struct v34_echo_canceller echo;
+	struct pcm_host_echo echo;
 	union v34_local_info1 local_info1;
 	struct v34_info0 local_info0;
 	struct v34_info0 peer_info0;
@@ -84,6 +85,7 @@ struct v34_call {
 	struct v34_phase4_exchange_configuration phase4_configuration;
 	struct v34_full_retrain retrain;
 	uint32_t rate_renegotiation_remaining_samples;
+	uint32_t echo_quiet_samples;
 	uint16_t round_trip_delay_samples;
 	int16_t phase2_nominal_amplitude;
 	enum v34_station_role local_role;
