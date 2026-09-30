@@ -351,10 +351,15 @@ static bool advance_trellis(
 		       V34_TRELLIS_OK;
 }
 
+static int32_t scale_gain_product_unclipped(int32_t gain_level, int32_t v)
+{
+	return round_shift_s64_to_s32_saturating(
+		(int64_t)v * gain_level, V92_PCM_GAIN_SHIFT);
+}
+
 static int16_t scale_gain_product(int32_t gain_level, int32_t v)
 {
-	return clamp_s16(round_shift_s64_to_s32_saturating(
-		(int64_t)v * gain_level, V92_PCM_GAIN_SHIFT));
+	return clamp_s16(scale_gain_product_unclipped(gain_level, v));
 }
 
 static int16_t scale_sample(
@@ -559,6 +564,34 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 		return V92_PCM_FRAME_OUT_OF_RANGE;
 	*sample = scale_sample(four_times_gain_q0_16, upstream_level, prefilter_output);
 	return V92_PCM_FRAME_OK;
+}
+
+bool v92_pcm_frame_b1u_fits(
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level)
+{
+	struct v92_pcm_frame_tx_state state;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+
+	if (!v92_pcm_mapping_is_valid(mapping) || upstream_level <= 0 ||
+	    !state_init(&state, mapping->cpd.trellis))
+		return false;
+	memset(bits, 1, mapping->data_bits_per_frame);
+	int32_t gain_level = (int32_t)mapping->cpd.four_times_gain_q0_16 * upstream_level;
+
+	for (unsigned index = 0; index < V92_B1U_FRAMES; ++index) {
+		struct v92_pcm_frame frame;
+
+		if (v92_pcm_frame_encode_owned(mapping, &state, bits,
+			    mapping->data_bits_per_frame, &frame) != V92_PCM_FRAME_OK)
+			return false;
+		for (unsigned symbol = 0; symbol < V92_PCM_MAPPING_FRAME_SYMBOLS; ++symbol) {
+			int32_t scaled = scale_gain_product_unclipped(gain_level, frame.v[symbol]);
+
+			if (scaled < INT16_MIN || scaled > INT16_MAX)
+				return false;
+		}
+	}
+	return true;
 }
 
 static bool noise_is_valid(const struct v92_pcm_frame_noise *noise)

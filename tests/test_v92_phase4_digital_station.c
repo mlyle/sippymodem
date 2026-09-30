@@ -9,6 +9,7 @@
 #include <v92_phase4_digital_station.h>
 
 #include "test.h"
+#include "v92_clipping_fixture.h"
 #include "v92_phase4_record_fixture.h"
 
 #include <stdint.h>
@@ -926,6 +927,33 @@ static bool run_full_cpd_ownership(enum g711_law law, unsigned omitted)
 	      full_cpd_source_init(&source, &training_mapping),
 	      "full CPd fixture did not initialize for law %u",
 	      (unsigned int)law);
+	if (law == G711_LAW_PCMU && !omitted) {
+		struct v92_cpd_parameters clipping;
+		struct v92_phase4_analog_station rejected = station;
+
+		CHECK(v92_clipping_parameters(&clipping) &&
+		      v92_phase4_analog_station_init(&rejected, &handoff, &downstream,
+			&suvu, &cpu, NULL, &clipping) == V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM &&
+		      memcmp(&rejected, &station, sizeof(station)) == 0,
+		      "early clipping CPd committed or acknowledged a selection");
+		struct full_cpd_source peer = source;
+		uint8_t record[V92_CPD_MAX_FRAME_BYTES];
+		size_t bits, ignored = 0;
+
+		CHECK(v92_cpd_encode(&clipping, training_mapping.frame_bits, record, sizeof(record), &bits) ==
+		      V92_CPD_OK && push_full_cpd_training(&peer, &rejected, &ignored),
+		      "clipping wire fixture failed");
+		enum v92_phase4_analog_station_result result = V92_PHASE4_ANALOG_STATION_OK;
+		for (unsigned repeat = 0; repeat < 3 && result == V92_PHASE4_ANALOG_STATION_OK; ++repeat)
+			result = push_full_cpd_sequence(&peer, &rejected, record, bits, &ignored);
+		CHECK(result == V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM &&
+		      !rejected.cpd_received && !rejected.transmit.control.received_cpd &&
+		      !rejected.transmit.control.cpu.acknowledges_cpd &&
+		      memcmp(&rejected.mapping, &station.mapping, sizeof(station.mapping)) == 0 &&
+		      v92_phase4_analog_station_is_valid(&rejected),
+		      "wire clipping CPd changed mapping or acknowledgement: %s",
+		      v92_phase4_analog_station_result_name(result));
+	}
 	wire = full;
 	if (omitted) {
 		struct v92_cpd_parameters previous = full;

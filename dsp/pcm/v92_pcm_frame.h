@@ -183,6 +183,14 @@ enum v92_pcm_frame_result v92_pcm_frame_scale(
 	uint16_t four_times_gain_q0_16, int16_t upstream_level,
 	int32_t prefilter_output, int16_t *sample);
 
+/* Check the known 48-frame B1u from zero coding memories with the shared
+ * encoder and scaling arithmetic. False means invalid inputs or a waveform
+ * that cannot be represented without signed-PCM saturation. The mapping is
+ * unchanged. This is a local output constraint, not a coefficient-norm rule
+ * or a guarantee that every later payload waveform fits. */
+bool v92_pcm_frame_b1u_fits(
+	const struct v92_pcm_mapping *mapping, int16_t upstream_level);
+
 /* Initialize at B1u with the accepted CPd and trained LU. The continuous
  * line equalizer and timing remain owned by the caller. Both initializers
  * accept the receiver's own mapping and leave the receiver unchanged on

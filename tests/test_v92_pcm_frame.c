@@ -5,6 +5,7 @@
 #include <integer_math.h>
 
 #include "test.h"
+#include "v92_clipping_fixture.h"
 
 #include <limits.h>
 #include <math.h>
@@ -985,9 +986,58 @@ static bool test_rejection_and_names(void)
 	return true;
 }
 
+static bool test_b1u_output_range(void)
+{
+	struct v92_cpd_parameters cpd;
+	struct v92_pcm_mapping mapping;
+	struct v92_pcm_frame_tx tx;
+	uint8_t bits[V92_PCM_MAPPING_MAX_BITS];
+	unsigned clips = 0, first = V92_B1U_SYMBOLS;
+
+	CHECK(v92_clipping_parameters(&cpd) &&
+	      v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_tx_init(&tx, &mapping) == V92_PCM_FRAME_OK,
+	      "captured clipping selection failed to initialize");
+	struct v92_pcm_mapping saved = mapping;
+
+	CHECK(!v92_pcm_frame_b1u_fits(&mapping, 2620) &&
+	      memcmp(&mapping, &saved, sizeof(mapping)) == 0,
+	      "unrepresentable B1u accepted or mapping changed");
+	memset(bits, 1, mapping.data_bits_per_frame);
+	for (unsigned n = 0; n < V92_B1U_FRAMES; ++n) {
+		struct v92_pcm_frame frame;
+
+		CHECK(v92_pcm_frame_encode(&tx, bits, mapping.data_bits_per_frame, &frame) ==
+		      V92_PCM_FRAME_OK, "captured B1u encoding failed");
+		for (unsigned j = 0; j < V92_PCM_MAPPING_FRAME_SYMBOLS; ++j) {
+			int16_t sample;
+
+			CHECK(v92_pcm_frame_scale(cpd.four_times_gain_q0_16, 2620, frame.v[j], &sample) ==
+			      V92_PCM_FRAME_OK, "legacy saturated scaling changed");
+			if (sample == INT16_MIN || sample == INT16_MAX) {
+				if (!clips++) first = n * V92_PCM_MAPPING_FRAME_SYMBOLS + j;
+			}
+		}
+	}
+	CHECK(clips == 74 && first == 349, "captured clipping boundary changed: %u/%u", clips, first);
+	/* Large feedback alone is legal: the finite-alphabet precoder chooses
+	 * equivalent points to limit its output. Do not impose an L1 norm cap. */
+	cpd = parameters(1u);
+	cpd.constellation[0].count = 64u;
+	for (unsigned i = 0; i < 64; ++i)
+		cpd.constellation[0].positive_linear[i] = (int16_t)(100 * (i + 1));
+	cpd.filter[V92_CPD_PRECODER_FEEDBACK] =
+		(struct v92_cpd_filter){ .count = 1, .coefficient = { 20000 } };
+	CHECK(v92_pcm_mapping_init(&mapping, G711_LAW_PCMU, &cpd) == V92_PCM_MAPPING_OK &&
+	      v92_pcm_frame_b1u_fits(&mapping, 1024), "usable large-feedback B1u rejected");
+	CHECK(!v92_pcm_frame_b1u_fits(NULL, 1024) && !v92_pcm_frame_b1u_fits(&mapping, 0),
+	      "invalid B1u check accepted");
+	return true;
+}
+
 int main(void)
 {
-	if (!test_b1u_oracle() || !test_b1u_coding_acquisition() ||
+	if (!test_b1u_output_range() || !test_b1u_oracle() || !test_b1u_coding_acquisition() ||
 	    !test_model_acquisition_boundary() || !test_rate_matrix_and_reset() ||
 	    !test_transmitter_equation_matrix() ||
 	    !test_filters() || !test_level_refinement() ||

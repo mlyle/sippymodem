@@ -17,6 +17,7 @@ enum v92_phase4_analog_station_result {
 	V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE,
 	V92_PHASE4_ANALOG_STATION_E2U_READY,
 	V92_PHASE4_ANALOG_STATION_FAILED,
+	V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM,
 	V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT,
 	V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS,
 	V92_PHASE4_ANALOG_STATION_INVALID_STATE,
@@ -28,6 +29,8 @@ enum v92_phase4_analog_station_result {
  * first nonzero CPd owns the PCM-upstream selection; omitted sections may use
  * the previous mapping only during rate reentry. Later CPd records may
  * acknowledge CPu, repeat that selection, or request cleardown.
+ * UNUSABLE_WAVEFORM requests caller-owned retraining without committing or
+ * acknowledging a CPd whose known B1u would saturate the PCM output.
  * A zero-rate CPd terminates the exchange without a mapping or Ed/E2u. Ed/E2u
  * emission and data mode follow in the next owner. One instance is
  * serialized. */

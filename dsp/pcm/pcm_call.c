@@ -3439,7 +3439,7 @@ static enum pcm_call_result phase4_startup_result(
 }
 
 static enum pcm_call_result v92_analog_phase4_result(
-	enum v92_phase4_analog_station_result result)
+	struct pcm_call *call, enum v92_phase4_analog_station_result result)
 {
 	switch (result) {
 	case V92_PHASE4_ANALOG_STATION_OK:
@@ -3447,6 +3447,17 @@ static enum pcm_call_result v92_analog_phase4_result(
 		return PCM_CALL_OK;
 	case V92_PHASE4_ANALOG_STATION_CLEARDOWN_COMPLETE:
 		return PCM_CALL_CLEARDOWN_COMPLETE;
+	case V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM: {
+		/* V.92 9.6.2.2 permits full retrain during Phase 4. Share the
+		 * bounded training/decoder recovery budget; a new exchange does
+		 * not replenish attempts. Exhaustion must not enter the separate
+		 * rate-renegotiation recovery path and restart forever. */
+		enum v92_data_quality_result quality =
+			v92_data_quality_retrain(&call->pcm_upstream_quality);
+
+		return quality == V92_DATA_QUALITY_RETRAIN ? begin_retrain(call, false) :
+			quality == V92_DATA_QUALITY_EXHAUSTED ? PCM_CALL_FAILED : PCM_CALL_NUMERIC_FAILURE;
+	}
 	case V92_PHASE4_ANALOG_STATION_FAILED:
 		return PCM_CALL_FAILED;
 	case V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS:
@@ -3861,7 +3872,7 @@ static enum pcm_call_result sample_v92_phase4(
 		struct pcm_call_v92_analog_phase4_control *state =
 			&call->state.phase4.v92.owner.analog;
 		uint64_t completed_before = state->station.transmit.control.completed_cpu_records;
-		enum pcm_call_result result = prefix_sent ? PCM_CALL_OK : v92_analog_phase4_result(
+		enum pcm_call_result result = prefix_sent ? PCM_CALL_OK : v92_analog_phase4_result(call,
 			v92_phase4_analog_station_transmit(
 				&state->station, transmit_sample));
 
@@ -3876,16 +3887,18 @@ static enum pcm_call_result sample_v92_phase4(
 				PCM_CALL_OK : PCM_CALL_SEQUENCE_MISMATCH;
 		}
 		if (state->station.cleardown.active)
-			return v92_analog_phase4_result(v92_phase4_analog_station_receive(
+			return v92_analog_phase4_result(call, v92_phase4_analog_station_receive(
 				&state->station, received_octet));
 		/* Expire before consuming this sample so a whole peer record
 		 * ending exactly at the threshold can qualify or cancel retry. */
 		result = advance_v92_cpu_repeat(state, completed_before, call->round_trip_delay_samples);
 		if (result != PCM_CALL_OK)
 			return result;
-		result = v92_analog_phase4_result(
+		result = v92_analog_phase4_result(call,
 			v92_phase4_analog_station_receive(
 				&state->station, received_octet));
+		if (call->stage == PCM_CALL_RETRAIN_SILENCE)
+			return result;
 		cancel_v92_cpu_repeat_if_confirmed(state);
 		if (result != PCM_CALL_OK)
 			return result;

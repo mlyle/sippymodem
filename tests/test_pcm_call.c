@@ -15,6 +15,7 @@
 #include <packed_bits.h>
 
 #include "test.h"
+#include "v92_clipping_fixture.h"
 
 #include <float.h>
 #include <limits.h>
@@ -10829,6 +10830,77 @@ static bool run_v92_unavailable_selection(
 	return false;
 }
 
+static bool run_v92_clipping_recovery(bool persistent)
+{
+	const enum g711_law law = G711_LAW_PCMU;
+	struct pcm_call_configuration ac = v92_configuration(V90_ANALOG_MODEM, law);
+	struct pcm_call_configuration dc = v92_configuration(V90_DIGITAL_MODEM, law);
+	struct pcm_call analog, digital;
+	struct channel wire;
+	struct v92_cpd_parameters clipping;
+	struct pcm_payload_source sources[2] = { { .reject = true }, { .reject = true } };
+	uint32_t frames[2] = { 0, 0 };
+	unsigned injected = 0;
+	bool in_epoch = false;
+
+	ac.phase3.v92_analog.upstream_lu_ucode = 69u;
+	CHECK(v92_clipping_parameters(&clipping) && channel_init(&wire, law, 3u) &&
+	      pcm_call_init(&analog, &ac) == PCM_CALL_OK && pcm_call_init(&digital, &dc) == PCM_CALL_OK,
+	      "clipping recovery fixture failed");
+	for (unsigned clock = 0; clock < 4u * CALL_SAMPLE_LIMIT; ++clock) {
+		uint8_t rx[2], tx[2];
+		struct pcm_call *calls[] = { &analog, &digital };
+		channel_receive(&wire, &rx[0], &rx[1]);
+		for (unsigned side = 0; side < 2; ++side) {
+			struct pcm_call *call = calls[side];
+			if (pcm_call_phase4_is_ready(call))
+				CHECK(pcm_call_start_data_path(call) == PCM_CALL_OK, "recovered data handoff failed");
+			if (call->stage == PCM_CALL_DATA_PATH) {
+				CHECK(!persistent && v92_payload_sample(call, rx[side], decode_octet(law, rx[side]),
+					&sources[side], &frames[side], &tx[side]), "clipped selection reached data");
+			} else {
+				struct pcm_call_observation event;
+				enum pcm_call_result result = pcm_call_octet(call, rx[side], decode_octet(law, rx[side]),
+					&tx[side], &event);
+				if (result != PCM_CALL_OK) {
+					CHECK(persistent && side == 0 && result == PCM_CALL_FAILED &&
+					      injected == V92_DATA_QUALITY_MAX_RETRAINS + 1u &&
+					      analog.pcm_upstream_quality.automatic_retrains == V92_DATA_QUALITY_MAX_RETRAINS &&
+					      pcm_call_is_valid(&analog) && pcm_call_has_failed(&analog),
+					      "clipping recovery failed unexpectedly: side %u injection %u result %s", side, injected,
+					      pcm_call_result_name(result));
+					return true;
+				}
+			}
+		}
+		if (digital.stage != PCM_CALL_PHASE4) in_epoch = false;
+		if (!in_epoch && digital.stage == PCM_CALL_PHASE4 &&
+		    digital.state.phase4.v92.child == PCM_CALL_V92_PHASE4_CONTROL && (persistent || !injected)) {
+			struct v92_phase4_digital_station *station = &digital.state.phase4.v92.owner.digital;
+
+			CHECK(station->control.transmit_stage == V92_DOWNSTREAM_CONTROL_INITIAL_SUVD &&
+			      v92_phase4_cpd_tx_init(&station->control.initial_cpd, &station->control.transmit, &clipping),
+			      "could not inject clipping CPd");
+			in_epoch = true;
+			injected++;
+		}
+		channel_transmit(&wire, tx[0], tx[1]);
+		if (frames[0] >= 20u && frames[1] >= 20u) {
+			CHECK(!persistent && injected == 1 && analog.pcm_upstream_quality.automatic_retrains == 1 &&
+			      pcm_call_is_online(&analog) && pcm_call_is_online(&digital), "recovery lost its retry budget");
+			return true;
+		}
+	}
+	CHECK(false, "clipping recovery did not finish: persistent %u injections %u stages %u/%u",
+		persistent, injected, analog.stage, digital.stage);
+	return false;
+}
+
+static bool test_v92_clipping_recovery(void)
+{
+	return run_v92_clipping_recovery(false) && run_v92_clipping_recovery(true);
+}
+
 static bool test_v92_phase4_control(void)
 {
 	for (size_t delay = 1; delay <= 3; ++delay)
@@ -11925,6 +11997,7 @@ int main(int argc, char **argv)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "V.92 clipping selection retrain", test_v92_clipping_recovery },
 		{ "V.92 cleaned input through Phase 3", test_v92_phase3_cleaned_input },
 		{ "V.92 learns robbed bits in each frame interval", test_v92_dil_data },
 		{ "V.90/V.92 conventional DIL and retrain", test_conventional_dil_retrain },

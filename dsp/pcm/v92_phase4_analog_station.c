@@ -3,6 +3,7 @@
 #include "v92_phase4_analog_station.h"
 
 #include "memory_region.h"
+#include "v92_pcm_frame.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -164,7 +165,7 @@ static bool note_suvd(
 	return true;
 }
 
-static bool note_cpd(
+static enum v92_phase4_analog_station_result note_cpd(
 	struct v92_phase4_analog_station *station,
 	const struct v92_cpd_parameters *parameters)
 {
@@ -174,12 +175,12 @@ static bool note_cpd(
 	struct v92_cpd_parameters selected;
 
 	if (!v92_cpd_parameters_are_valid(parameters))
-		return false;
+		return V92_PHASE4_ANALOG_STATION_FAILED;
 	base = cpd_base(parameters);
 	if (station->cpd_received &&
 	    (!cpd_selection_equal(&station->cpd, &base) ||
 	     (station->cpd.acknowledges_cpu && !base.acknowledges_cpu)))
-		return false;
+		return V92_PHASE4_ANALOG_STATION_FAILED;
 	selected = *parameters;
 	if (station->cpd_received || station->transmit.control.renegotiation) {
 		const struct v92_cpd_parameters *previous = &station->mapping.cpd;
@@ -195,24 +196,32 @@ static bool note_cpd(
 		selected.modulus_present = selected.filters_present = selected.constellations_present = true;
 	}
 	if (v92_pcm_mapping_init(&mapping, station->transmit.control.cpu.law, &selected) != V92_PCM_MAPPING_OK)
-		return false;
+		return V92_PHASE4_ANALOG_STATION_FAILED;
 	if (station->cpd_received) {
 		mapping.cpd.acknowledges_cpu = station->mapping.cpd.acknowledges_cpu;
 		if (!v92_pcm_mapping_equal(&mapping, &station->mapping))
-			return false;
+			return V92_PHASE4_ANALOG_STATION_FAILED;
 	}
+	/* V.92 8.7.1 starts B1u from zero memories. Preflight its exact waveform
+	 * before committing or acknowledging a new selection; a CRC-valid CPd
+	 * can still exceed this host's signed-PCM output range. Repeated ACKs
+	 * need no new simulation because mapping equality was checked above. */
+	int16_t lu = transmit.stage == V92_PHASE4_ANALOG_TX_TRN2U ?
+		transmit.signal.trn2u.modulator.lu : transmit.signal.record.modulator.lu;
+	if (!station->cpd_received && !v92_pcm_frame_b1u_fits(&mapping, lu))
+		return V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM;
 	base.acknowledges_cpu |= station->cpd.acknowledges_cpu;
 	mapping.cpd.acknowledges_cpu = base.acknowledges_cpu;
 	if (transmit.stage != V92_PHASE4_ANALOG_TX_E2U_READY &&
 	    v92_phase4_analog_tx_note_cpd(
 		    &transmit, base.acknowledges_cpu) !=
 		    V92_PHASE4_ANALOG_TX_OK)
-		return false;
+		return V92_PHASE4_ANALOG_STATION_FAILED;
 	station->transmit = transmit;
 	station->mapping = mapping;
 	station->cpd = base;
 	station->cpd_received = true;
-	return true;
+	return V92_PHASE4_ANALOG_STATION_OK;
 }
 
 enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
@@ -251,9 +260,15 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_init(
 		return V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS;
 	initialized.transmit.signal.trn2u = *transmit_handoff;
 	initialized.receive = *downstream;
-	if ((early_suvd != NULL && !note_suvd(&initialized, early_suvd)) ||
-	    (early_cpd != NULL && !note_cpd(&initialized, early_cpd)) ||
-	    !v92_phase4_analog_station_is_valid(&initialized))
+	if (early_suvd != NULL && !note_suvd(&initialized, early_suvd))
+		return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
+	if (early_cpd != NULL) {
+		enum v92_phase4_analog_station_result result = note_cpd(&initialized, early_cpd);
+
+		if (result != V92_PHASE4_ANALOG_STATION_OK)
+			return result;
+	}
+	if (!v92_phase4_analog_station_is_valid(&initialized))
 		return V92_PHASE4_ANALOG_STATION_INTERNAL_ERROR;
 	*station = initialized;
 	return V92_PHASE4_ANALOG_STATION_OK;
@@ -294,13 +309,6 @@ static enum v92_phase4_analog_station_result fail(
 {
 	station->failed = true;
 	return V92_PHASE4_ANALOG_STATION_FAILED;
-}
-
-static bool accept_cpd_event(
-	struct v92_phase4_analog_station *station,
-	const struct v92_cpd_parameters *parameters)
-{
-	return note_cpd(station, parameters);
 }
 
 static bool arm_ed_confirmation(
@@ -356,15 +364,19 @@ enum v92_phase4_analog_station_result v92_phase4_analog_station_receive(
 		    !arm_ed_confirmation(station))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
-	case PCM_DOWNSTREAM_RX_CPD:
+	case PCM_DOWNSTREAM_RX_CPD: {
 		if (event.control.type != V92_CONTROL_EVENT_CPD ||
-		    event.control.record.cpd.frame_result != V92_CPD_OK ||
-		    !accept_cpd_event(
-			    station,
-			    &event.control.record.cpd.parameters) ||
-		    !arm_ed_confirmation(station))
+		    event.control.record.cpd.frame_result != V92_CPD_OK)
+			return fail(station);
+		enum v92_phase4_analog_station_result accepted =
+			note_cpd(station, &event.control.record.cpd.parameters);
+
+		if (accepted == V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM)
+			return accepted;
+		if (accepted != V92_PHASE4_ANALOG_STATION_OK || !arm_ed_confirmation(station))
 			return fail(station);
 		return V92_PHASE4_ANALOG_STATION_EVENT;
+	}
 	case PCM_DOWNSTREAM_RX_SUVD_REJECTED:
 	case PCM_DOWNSTREAM_RX_CPD_REJECTED:
 		if (!arm_ed_confirmation(station))
@@ -551,6 +563,8 @@ const char *v92_phase4_analog_station_result_name(
 		return "E2u ready";
 	case V92_PHASE4_ANALOG_STATION_FAILED:
 		return "failed";
+	case V92_PHASE4_ANALOG_STATION_UNUSABLE_WAVEFORM:
+		return "unusable waveform";
 	case V92_PHASE4_ANALOG_STATION_INVALID_ARGUMENT:
 		return "invalid argument";
 	case V92_PHASE4_ANALOG_STATION_INVALID_PARAMETERS:
