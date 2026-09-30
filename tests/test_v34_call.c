@@ -531,8 +531,12 @@ static bool run_pair_until_frames(
 		if (v34_call_is_online(&caller->call) &&
 		    v34_call_is_online(&answerer->call) &&
 		    caller->mapping_frames_received >= minimum_frames &&
-		    answerer->mapping_frames_received >= minimum_frames)
+		    answerer->mapping_frames_received >= minimum_frames) {
+			CHECK(caller->call.phase4_e_remaining_samples == 0u &&
+			      answerer->call.phase4_e_remaining_samples == 0u,
+			      "received E retained a startup deadline into online data");
 			return true;
+		}
 	}
 	return false;
 }
@@ -1943,6 +1947,69 @@ static bool test_phase2_handoff(void)
 	return true;
 }
 
+static bool test_initial_e_timeout(void)
+{
+	for (unsigned int role = 0; role < 2u; ++role) {
+		for (unsigned int variant = 0; variant < 3u; ++variant) {
+			struct endpoint caller = { 0 }, answerer = { 0 };
+			struct endpoint *waiting = role == V34_CALLING_STATION ?
+				&caller : &answerer;
+			struct channel channel = { 0 };
+			struct v34_call_configuration configurations[] = {
+				configuration(V34_CALLING_STATION),
+				configuration(V34_ANSWERING_STATION),
+			};
+			bool armed = false;
+			bool peer_cme = variant == 1u;
+
+			configurations[role].local_info0.cme_modem = variant == 2u;
+			configurations[1u - role].local_info0.cme_modem = peer_cme;
+			CHECK(v34_call_init(&caller.call, &configurations[0]) == V34_CALL_OK &&
+			      v34_call_init(&answerer.call, &configurations[1]) == V34_CALL_OK,
+			      "initial E deadline endpoints did not initialize");
+			for (size_t sample = 0; sample < SAMPLE_LIMIT; ++sample) {
+				struct v34_call_observation observations[2];
+
+				CHECK(channel_sample_pair(&channel, &caller, &answerer,
+					      &observations[0], &observations[1]),
+				      "initial E deadline fixture failed at %zu", sample);
+				if (observations[role].processed == V34_CALL_PHASE4 &&
+				    (observations[role].events.phase4 &
+				     V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED) != 0) {
+					armed = true;
+					break;
+				}
+			}
+			uint32_t timeout = peer_cme ? 240000u : 20000u +
+				(role == V34_CALLING_STATION ? 2u : 3u) *
+					waiting->call.round_trip_delay_samples;
+
+			CHECK(armed && waiting->call.phase4_e_remaining_samples == timeout,
+			      "role %u variant %u armed the wrong initial E deadline", role, variant);
+			/* Stop the peer before MP/E. The same silence must not reset
+			 * the deadline, and our own CME flag must not extend it. */
+			for (uint32_t sample = 1; sample <= timeout; ++sample) {
+				struct v34_call_observation observation;
+				struct v34_received_mapping_frame received;
+				int16_t transmitted;
+
+				CHECK(v34_call_sample(&waiting->call, 0, NULL, NULL,
+					      &transmitted, &observation, &received) == V34_CALL_OK,
+				      "initial E silence failed: role=%u variant=%u sample=%u",
+				      role, variant, sample);
+				CHECK((waiting->call.stage == V34_CALL_RETRAIN_SILENCE) ==
+					      (sample == timeout),
+				      "initial E retrain occurred at the wrong sample: %u/%u",
+				      sample, timeout);
+			}
+			CHECK(waiting->call.phase4_e_remaining_samples == 0u &&
+			      waiting->call.retrain_active,
+			      "initial E expiry did not clear the timer and start retrain");
+		}
+	}
+	return true;
+}
+
 static bool test_rate_renegotiation_timeout(void)
 {
 	for (unsigned int variant = 0; variant < 3u; ++variant) {
@@ -1986,14 +2053,14 @@ static bool test_rate_renegotiation_timeout(void)
 			      "rate renegotiation timeout path failed: variant=%u sample=%u", variant, sample);
 			channel_transmit(&channel, calling_peer ? peer_output : generated,
 				calling_peer ? generated : peer_output);
-			if (armed_at == UINT32_MAX && responder->call.rate_renegotiation_remaining_samples) {
+			if (armed_at == UINT32_MAX && responder->call.phase4_e_remaining_samples) {
 				armed_at = sample;
-				CHECK(responder->call.rate_renegotiation_remaining_samples == timeout,
+				CHECK(responder->call.phase4_e_remaining_samples == timeout,
 				      "rate renegotiation armed the wrong timeout");
 			}
 			if (responder->call.stage == V34_CALL_RETRAIN_SILENCE) {
 				CHECK(armed_at != UINT32_MAX && sample - armed_at == timeout &&
-				      responder->call.rate_renegotiation_remaining_samples == 0u,
+				      responder->call.phase4_e_remaining_samples == 0u,
 				      "rate renegotiation retrained at the wrong deadline");
 				retrained = true;
 				break;
@@ -2010,6 +2077,7 @@ int main(void)
 		const char *name;
 		bool (*run)(void);
 	} tests[] = {
+		{ "bounded initial E exchange", test_initial_e_timeout },
 		{ "bounded online rate renegotiation", test_rate_renegotiation_timeout },
 		{ "reciprocal zero-rate cleardown", test_cleardown },
 		{ "cleardown waits for peer MP-prime", test_cleardown_waits_for_prime },

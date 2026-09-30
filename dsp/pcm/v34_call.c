@@ -227,10 +227,9 @@ bool v34_call_is_valid(const struct v34_call *call)
 		return false;
 	}
 	return child_valid && child_role == call->local_role &&
-	       call->rate_renegotiation_remaining_samples <= 30u * 8000u &&
-	       (call->rate_renegotiation_remaining_samples == 0u ||
+	       call->phase4_e_remaining_samples <= 30u * 8000u &&
+	       (call->phase4_e_remaining_samples == 0u ||
 		(call->stage == V34_CALL_PHASE4 &&
-		 call->state.phase4.rate_renegotiation &&
 		 !call->state.phase4.receive_data_active)) &&
 	       (call->retrain.response_silence_samples_remaining != 0u) ==
 		       (call->stage == V34_CALL_RETRAIN_SILENCE) &&
@@ -356,7 +355,7 @@ static enum v34_call_result begin_retrain(
 		return V34_CALL_NUMERIC_FAILURE;
 	next.retrain_active = true;
 	next.echo_quiet_samples = 0;
-	next.rate_renegotiation_remaining_samples = 0u;
+	next.phase4_e_remaining_samples = 0u;
 	next.stage = V34_CALL_RETRAIN_SILENCE;
 	if (!v34_call_is_valid(&next))
 		return V34_CALL_NUMERIC_FAILURE;
@@ -684,6 +683,36 @@ static enum v34_call_result sample_phase4(
 	return phase4_result(result);
 }
 
+/* V.34 11.4.2: start after J-prime or S-bar has finished. Initial
+ * callers allow two round trips; answerers allow three. The peer's INFO0
+ * CME bit selects the extended deadline. Online responders retain 11.6.2.2. */
+static bool phase4_e_has_timed_out(struct v34_call *call, uint32_t events)
+{
+	const struct v34_phase4_exchange *exchange = &call->state.phase4;
+	uint32_t start_event = exchange->rate_renegotiation ?
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_S_BAR_STARTED :
+		V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_TRN_STARTED;
+
+	if (exchange->receive_data_active) {
+		call->phase4_e_remaining_samples = 0u;
+	} else if ((events & start_event) != 0) {
+		bool cme = exchange->rate_renegotiation ?
+			(call->local_info0.cme_modem || call->peer_info0.cme_modem) :
+			call->peer_info0.cme_modem;
+		uint32_t round_trips = exchange->rate_renegotiation ||
+			call->local_role == V34_ANSWERING_STATION ? 3u : 2u;
+
+		call->phase4_e_remaining_samples = cme ?
+			30u * V34_PHASE2_SAMPLE_RATE :
+			V34_PHASE2_SAMPLE_RATE * 5u / 2u +
+				round_trips * call->round_trip_delay_samples;
+	} else if (call->phase4_e_remaining_samples != 0u &&
+		   --call->phase4_e_remaining_samples == 0u) {
+		return true;
+	}
+	return false;
+}
+
 static bool phase4_receive_has_failed(
 	const struct v34_phase4_exchange *exchange)
 {
@@ -826,22 +855,9 @@ enum v34_call_result v34_call_sample(
 		if (result != V34_CALL_OK &&
 		    phase4_receive_has_failed(&call->state.phase4))
 			retrain_requested = true;
-		if (result == V34_CALL_OK && call->state.phase4.rate_renegotiation) {
-			if (call->state.phase4.receive_data_active) {
-				call->rate_renegotiation_remaining_samples = 0u;
-			} else if ((emitted.events.phase4 &
-				    V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_S_BAR_STARTED) != 0) {
-				/* V.34 11.6.2.2: a responder waits 2500 ms plus
-				 * three measured round trips after S becomes S-bar for E.
-				 * CME operation instead permits 30 seconds. */
-				call->rate_renegotiation_remaining_samples =
-					(call->local_info0.cme_modem || call->peer_info0.cme_modem) ?
-					30u * 8000u : 20000u + 3u * call->round_trip_delay_samples;
-			} else if (call->rate_renegotiation_remaining_samples != 0u &&
-				   --call->rate_renegotiation_remaining_samples == 0u) {
-				retrain_requested = true;
-			}
-		}
+		if (result == V34_CALL_OK &&
+		    phase4_e_has_timed_out(call, emitted.events.phase4))
+			retrain_requested = true;
 		break;
 	case V34_CALL_RETRAIN_SILENCE:
 		result = sample_retrain_silence(
