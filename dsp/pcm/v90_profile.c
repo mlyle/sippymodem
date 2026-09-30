@@ -15,10 +15,9 @@ enum {
 	V90_PHASE2_DIGITAL_NOMINAL_POWER_CODE = 6,
 	V90_PHASE2_DIGITAL_MAXIMUM_POWER_CODE = 23,
 	V90_PHASE3_NOMINAL_AMPLITUDE = 6000,
-	V90_SIGN_REDUNDANCY = 1,
 	/* Depths zero and one are mandatory at the digital modem; deeper
-	 * spectral shaping is optional.  Use the deepest mandatory profile in
-	 * both directions so Jd and the subsequent CP mapping agree. */
+	 * spectral shaping is optional. Advertise the mandatory depth even
+	 * though the generated conventional CP profile is unshaped. */
 	V90_SPECTRAL_LOOKAHEAD = 1,
 	V90_CONSTELLATION_FIRST_UCODE = 24,
 	V90_CONSTELLATION_LAST_UCODE = 108,
@@ -259,6 +258,21 @@ static void generate_constellation(
 	}
 }
 
+bool v90_profile_generate_data_template(uint8_t rate_index,
+	uint8_t sign_redundancy, struct pcm_constellation *constellation)
+{
+	struct pcm_constellation generated = { 0 };
+
+	if (constellation == NULL || rate_index < PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER ||
+	    rate_index > PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER || sign_redundancy > 3u)
+		return false;
+	generate_constellation(&generated,
+		data_constellation_size(rate_index, sign_redundancy),
+		V90_CONSTELLATION_LAST_UCODE);
+	*constellation = generated;
+	return true;
+}
+
 static bool spaced_constellation(struct pcm_constellation *constellation,
 	enum g711_law law, uint8_t size, uint32_t spacing,
 	const struct pcm_constellation *available)
@@ -448,26 +462,20 @@ static struct v90_cp_parameters cp_parameters(
 		.law = law,
 		.upstream_rate_mask = upstream_rate_mask,
 		.trn1d_ratio_q3_13 = 0x2000u,
-		.shaping_a1_q1_6 = kind == V90_CP_TRAINING ? 0 : -16,
-		.shaping_a2_q1_6 = kind == V90_CP_TRAINING ? 0 : 8,
-		.shaping_b1_q1_6 = kind == V90_CP_TRAINING ? 0 : -1,
-		.shaping_b2_q1_6 = kind == V90_CP_TRAINING ? 0 : 31,
 		.selected_rate_index = kind == V90_CP_TRAINING ?
 			V90_TRAINING_RATE_INDEX : data_rate_index,
-		/* Keep CPt unshaped so its fixed MP'/Ed boundary has no delayed
-		 * spectral frame to carry into the data mapping. */
-		.sign_redundancy = kind == V90_CP_TRAINING ?
-			0 : V90_SIGN_REDUNDANCY,
-		.spectral_lookahead = kind == V90_CP_TRAINING ?
-			0 : V90_SPECTRAL_LOOKAHEAD,
+		/* Keep the conventional training and data sign coding identical.
+		 * Some peers apply CP shaping before MP/Ed ends, discarding a
+		 * training sign bit when CPt and CP have different redundancy. */
 		.constellation_count = 1,
 	};
 
-	generate_constellation(
-		&parameters.transmit_constellations[0],
-		kind == V90_CP_TRAINING ? V90_INITIAL_CONSTELLATION_SIZE :
-			data_constellation_size(data_rate_index, V90_SIGN_REDUNDANCY),
-		V90_CONSTELLATION_LAST_UCODE);
+	if (kind == V90_CP_TRAINING)
+		generate_constellation(&parameters.transmit_constellations[0],
+			V90_INITIAL_CONSTELLATION_SIZE, V90_CONSTELLATION_LAST_UCODE);
+	else
+		v90_profile_generate_data_template(data_rate_index,
+			parameters.sign_redundancy, &parameters.transmit_constellations[0]);
 	return parameters;
 }
 

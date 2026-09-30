@@ -255,9 +255,17 @@ static bool test_generated_profiles(void)
 						      .data_parameters.kind ==
 						      V90_CP_DATA &&
 					      configuration.analog_phase4
-						      .data_parameters.sign_redundancy == 1 &&
+						      .data_parameters.sign_redundancy == 0 &&
 					      configuration.analog_phase4
-						      .data_parameters.spectral_lookahead == 1 &&
+						      .data_parameters.spectral_lookahead == 0 &&
+					      configuration.analog_phase4
+						      .data_parameters.shaping_a1_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .data_parameters.shaping_a2_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .data_parameters.shaping_b1_q1_6 == 0 &&
+					      configuration.analog_phase4
+						      .data_parameters.shaping_b2_q1_6 == 0 &&
 					      configuration.analog_phase4
 						      .data_parameters
 						      .selected_rate_index == rate_index &&
@@ -810,6 +818,39 @@ static bool test_measured_data_capacity(void)
 	return true;
 }
 
+static bool test_data_template_capacity(void)
+{
+	struct pcm_constellation template = { 0 };
+	struct pcm_constellation saved;
+
+	for (uint8_t rate = PCM_DOWNSTREAM_MIN_DATA_RATE_NUMBER;
+	     rate <= PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER; ++rate) {
+		for (uint8_t redundancy = 0; redundancy <= 3u; ++redundancy) {
+			uint64_t capacity = 1;
+			unsigned int bits = PCM_DOWNSTREAM_BASE_FRAME_BITS + rate -
+				(V90_CP_FRAME_INTERVALS - redundancy);
+			unsigned int count;
+
+			CHECK(v90_profile_generate_data_template(rate, redundancy, &template),
+			      "data template failed at rate %u redundancy %u", rate, redundancy);
+			count = pcm_constellation_count(&template);
+			for (unsigned int interval = 0; interval < V90_CP_FRAME_INTERVALS; ++interval)
+				capacity *= count;
+			CHECK(count >= 8u && capacity >= (UINT64_C(1) << bits),
+			      "data template lost capacity at rate %u redundancy %u", rate, redundancy);
+		}
+	}
+	saved = template;
+	CHECK(!v90_profile_generate_data_template(0, 1, &template) &&
+	      !v90_profile_generate_data_template(PCM_DOWNSTREAM_MAX_DATA_RATE_NUMBER + 1u,
+		      1, &template) &&
+	      !v90_profile_generate_data_template(1, 4, &template) &&
+	      !v90_profile_generate_data_template(1, 1, NULL) &&
+	      memcmp(&template, &saved, sizeof(template)) == 0,
+	      "invalid data template changed output");
+	return true;
+}
+
 static bool test_result_names(void)
 {
 	static const char *const expected[] = {
@@ -843,6 +884,7 @@ int main(void)
 		{ "generated role and media profiles", test_generated_profiles },
 		{ "generated constellation power selection", test_constellation_power_selection },
 		{ "generated data capacity", test_generated_data_capacity },
+		{ "initial data template capacity", test_data_template_capacity },
 		{ "measured data capacity", test_measured_data_capacity },
 		{ "upstream policy", test_upstream_policy },
 		{ "rate bounds and transactionality", test_transactionality },

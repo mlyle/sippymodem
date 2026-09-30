@@ -196,14 +196,19 @@ static bool test_generated_profiles(void)
 					      rate);
 					uint8_t frame[V92_CPT_MAX_FRAME_BYTES];
 					size_t frame_bits;
+					struct v90_pcm_mapping cpu_mapping;
 
 					CHECK(v92_cpt_encode(&phase3->cpt, frame, sizeof(frame), &frame_bits) == V92_CPT_OK &&
 					      frame_bits == 300u &&
-					      memcmp(&configuration.v92_analog_phase4.cpu.transmit_constellations[0],
-						     &configuration.analog_phase4.data_parameters.transmit_constellations[0],
-						     sizeof(struct pcm_constellation)) == 0 &&
+					      v90_pcm_mapping_init_from_v92_cpu(&cpu_mapping,
+						      &configuration.v92_analog_phase4.cpu, law) == V90_PCM_MAPPING_OK &&
+					      cpu_mapping.sign_bits == 5u &&
+					      cpu_mapping.modulus_bits == cpu_mapping.frame_bits - 5u &&
+					      configuration.analog_phase4.data_parameters.sign_redundancy == 0u &&
+					      configuration.v92_analog_phase4.cpu.sign_redundancy == 1u &&
+					      configuration.v92_analog_phase4.cpu.spectral_lookahead_frames == 2u &&
 					      configuration.v92_analog_phase4.cpu.shaping_a1_q1_6 == 0,
-					      "CPt training changed the shared-row encoding or CPu data selection");
+					      "CPu did not retain shaped capacity independently of conventional CP");
 				} else {
 					CHECK(configuration.local_info0.v92_digital.v90
 						      .nominal_transmit_power ==

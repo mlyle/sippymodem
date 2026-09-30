@@ -51,6 +51,12 @@ bool v90_profile_select_constellation(
 	const struct v90_pcm_mapping *mapping, uint32_t maximum_power,
 	struct pcm_constellation *constellation);
 
+/* Initial common-row capacity for CP or CPu, sized for its own sign
+ * redundancy. The call later selects levels under the measured power limit.
+ * Failure leaves the output unchanged. */
+bool v90_profile_generate_data_template(uint8_t rate_index,
+	uint8_t sign_redundancy, struct pcm_constellation *constellation);
+
 /* Generated CP/CPu data maps use the smallest common row of at least eight
  * levels supporting the selected rate and sign redundancy, then maximize signed
  * distance under the exact power budget above. Regenerate on every rate

@@ -65,8 +65,8 @@ static struct v92_cpt_parameters cpt_parameters(enum g711_law law)
 	return parameters;
 }
 
-static struct v92_cpu_parameters cpu_parameters(
-	const struct v90_cp_parameters *data)
+static bool cpu_parameters(
+	const struct v90_cp_parameters *data, struct v92_cpu_parameters *cpu)
 {
 	struct v92_cpu_parameters parameters = {
 		.law = data->law,
@@ -77,11 +77,16 @@ static struct v92_cpu_parameters cpu_parameters(
 		.constellation_count = 1,
 	};
 
-	parameters.transmit_constellations[0] = data->transmit_constellations[0];
-	return parameters;
+	/* CPu retains shaped signs; its extra modulus bit needs its own
+	 * capacity template rather than the conventional unshaped CP row. */
+	if (!v90_profile_generate_data_template(parameters.data_rate_number,
+		    parameters.sign_redundancy, &parameters.transmit_constellations[0]))
+		return false;
+	*cpu = parameters;
+	return true;
 }
 
-static void configure_analog(
+static bool configure_analog(
 	struct pcm_call_configuration *selected,
 	const struct pcm_call_configuration *v90,
 	uint32_t upstream_rate_mask)
@@ -94,7 +99,7 @@ static void configure_analog(
 	};
 	selected->local_info1.pcm_upstream_enabled = upstream_rate_mask != 0u;
 	if (!selected->local_info1.pcm_upstream_enabled)
-		return;
+		return true;
 	selected->local_info1.v92_analog = info1;
 	selected->phase3.v92_analog =
 		(struct v92_phase3_analog_station_configuration){
@@ -112,8 +117,8 @@ static void configure_analog(
 		.prefilter_level_db_q2_2 = V92_SUVU_NO_MEASUREMENT_Q2_2,
 		.wait_for_cpu = true,
 	};
-	selected->v92_analog_phase4.cpu = cpu_parameters(
-		&v90->analog_phase4.data_parameters);
+	return cpu_parameters(&v90->analog_phase4.data_parameters,
+		&selected->v92_analog_phase4.cpu);
 }
 
 static void configure_digital(
@@ -185,10 +190,10 @@ enum v92_profile_result v92_profile_init(
 	 * latter's policy for INFO1 selection and subsequent full retrains. */
 	selected = v90;
 	selected.protocol = PCM_PROTOCOL_V92;
-	if (role == V90_ANALOG_MODEM)
-		configure_analog(
-			&selected, &v90, upstream_rate_mask);
-	else
+	if (role == V90_ANALOG_MODEM) {
+		if (!configure_analog(&selected, &v90, upstream_rate_mask))
+			return V92_PROFILE_UNSUPPORTED_RATE;
+	} else
 		configure_digital(
 			&selected, &v90,
 			maximum_upstream_data_rate_number);
