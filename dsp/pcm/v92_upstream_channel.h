@@ -22,6 +22,14 @@ enum {
 		V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS + V92_UPSTREAM_CHANNEL_MAX_LAG + 1,
 	V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS = 512,
 	V92_UPSTREAM_CHANNEL_SYMBOLS = V92_PCM_PHASE4_TRN2U_INITIAL_MIN_SYMBOLS,
+	V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS = 512,
+	V92_UPSTREAM_CHANNEL_WINDOWS = (V92_UPSTREAM_CHANNEL_SYMBOLS -
+		V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS + V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS - 1) /
+		V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS,
+};
+
+struct v92_upstream_channel_window {
+	int64_t expected_energy, observed_energy, cross;
 };
 
 /* Zero initialization starts one bounded TRN2u measurement. Observations are
@@ -33,6 +41,9 @@ enum {
  * Cross-correlation index PRECURSOR_LAGS+k accumulates observed(n)*expected(n-k)
  * for k>=0, or expected(n)*observed(n+k) for k<0, over the retained window. */
 struct v92_upstream_channel {
+	/* Retain short-window gain evidence so a fit across a clock slip,
+	 * dropout or gain change cannot hide that change in a long filter. */
+	struct v92_upstream_channel_window window[V92_UPSTREAM_CHANNEL_WINDOWS];
 	/* Delayed-target moments over the same window as yy and xy. Shifting
 	 * the ordinary autocorrelations would introduce endpoint errors. */
 	int64_t previous_expected_energy;
@@ -53,6 +64,12 @@ struct v92_upstream_channel {
 };
 
 bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel);
+
+/* Compare short-window scalar fits, allowing for residual ISI/noise. This
+ * conservative local policy detects changing gain/alignment; it does not
+ * prove that an arbitrary channel is time invariant. Complete measurement
+ * only; leaves all evidence unchanged. */
+bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *channel);
 
 /* A completed, energetic training measurement fits one positive gain with
  * at most 1% relative RMS residual. This selects whether the existing receive

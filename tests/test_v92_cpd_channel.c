@@ -299,6 +299,19 @@ static bool test_quantized_stability(void)
 		channel.observed_autocorrelation[0] = (int64_t)(energy * (1.0 + b * b + c * c));
 		channel.observed_autocorrelation[1] = (int64_t)(energy * b * (1.0 + c));
 		channel.observed_autocorrelation[2] = (int64_t)(energy * c);
+		for (unsigned w = 0; w < V92_UPSTREAM_CHANNEL_WINDOWS; ++w) {
+			unsigned remaining = V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS -
+				w * V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+			unsigned count = remaining < V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS ?
+				remaining : V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+			double part = energy * count /
+				(V92_UPSTREAM_CHANNEL_SYMBOLS - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS);
+
+			channel.window[w] = (struct v92_upstream_channel_window){
+				.expected_energy = (int64_t)part, .cross = (int64_t)part,
+				.observed_energy = (int64_t)(part * (1.0 + b * b + c * c)),
+			};
+		}
 		CHECK(v92_cpd_direct_init(&cpd, G711_LAW_PCMU, 1u, false) == V92_CPD_OK &&
 			v92_cpd_channel_design(&cpd, &channel, G711_LAW_PCMU, LEVEL, &plan),
 			"stability boundary %zu did not use the general designer", i);
@@ -455,9 +468,77 @@ static bool test_receive_plan(void)
 	return true;
 }
 
+static bool test_training_changes(void)
+{
+	/* Independent GPA ones and Table 28 levels at LU2620. Keep the real
+	 * four-point training distribution rather than fitting uniform noise. */
+	enum { CLEAN, ECHO, PRECURSOR, DELAYED, DROP, DUPLICATE, GAIN_STEP, GAP, CASES };
+	int16_t target[V92_UPSTREAM_CHANNEL_SYMBOLS + 1];
+	uint32_t history = 0;
+	unsigned sign = 0;
+
+	for (unsigned n = 0; n < ARRAY_LENGTH(target); ++n) {
+		unsigned group = 0;
+		for (unsigned bit = 0; bit < 2; ++bit) {
+			unsigned scrambled = 1u ^ ((history >> 4) & 1u) ^ ((history >> 22) & 1u);
+
+			history = ((history << 1) | scrambled) & 0x7fffffu;
+			group |= scrambled << bit;
+		}
+		sign ^= group >> 1;
+		target[n] = (int16_t)((sign ? -1 : 1) * ((group & 1) ? 3515 : 1172));
+	}
+	for (unsigned law = G711_LAW_PCMU; law <= G711_LAW_PCMA; ++law) {
+		for (unsigned kind = 0; kind < CASES; ++kind) {
+			struct v92_upstream_channel channel = { 0 };
+			bool stable = kind < DROP;
+
+			for (unsigned n = 0; n < V92_UPSTREAM_CHANNEL_SYMBOLS; ++n) {
+				double value = target[n];
+				int16_t previous = n ? target[n - 1] : 0;
+
+				if (kind == ECHO) value = .55 * target[n] + .43 * previous;
+				if (kind == PRECURSOR) value = .95 * target[n] + .05 * target[n + 1];
+				if (kind == DELAYED) value = previous;
+				if (kind == DROP && n >= 6000) value = target[n + 1];
+				if (kind == DUPLICATE && n >= 6000) value = previous;
+				if (kind == GAIN_STEP && n >= 6000) value *= .9;
+				if (kind == GAP && n >= 5900 && n < 6100) value = 0;
+				CHECK(v92_upstream_channel_sample(&channel, target[n], quantize(law, value)),
+				      "training-change measurement failed");
+			}
+			CHECK(v92_upstream_channel_has_stable_gain(&channel) == stable,
+			      "training stability law %u kind %u changed", law, kind);
+			struct v92_upstream_channel saved_channel = channel;
+			for (unsigned rate = 13; rate <= 19; rate += 3) {
+				struct v92_cpd_parameters cpd;
+				struct v92_upstream_plan plan = { 0 }, saved_plan = plan;
+
+				CHECK(v92_cpd_direct_select(&cpd, law, rate, 2620, false) == V92_CPD_OK,
+				      "training-change mapping failed");
+				struct v92_cpd_parameters saved = cpd;
+				CHECK(v92_cpd_channel_design(&cpd, &channel, law, 2620, &plan) == stable &&
+				      memcmp(&channel, &saved_channel, sizeof(channel)) == 0,
+				      "training-change design law %u kind %u rate %u", law, kind, rate);
+				if (!stable)
+					CHECK(memcmp(&cpd, &saved, sizeof(cpd)) == 0 &&
+					      memcmp(&plan, &saved_plan, sizeof(plan)) == 0,
+					      "rejected changing channel committed parameters");
+				else {
+					struct v92_pcm_mapping mapping;
+
+					CHECK(v92_pcm_mapping_init(&mapping, law, &cpd) == V92_PCM_MAPPING_OK &&
+					      v92_pcm_frame_b1u_fits(&mapping, 2620), "stable channel produced clipping B1u");
+				}
+			}
+		}
+	}
+	return true;
+}
+
 int main(void)
 {
-	if (!test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
+	if (!test_training_changes() || !test_rejections() || !test_receive_plan() || !test_short_channel_selection() ||
 	    !test_quantized_stability() || !test_finite_window_inverse(false) ||
 	    !test_finite_window_inverse(true))
 		return 1;

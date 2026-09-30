@@ -356,6 +356,7 @@ bool v92_cpd_channel_design(struct v92_cpd_parameters *parameters,
 	    memory_regions_overlap(parameters, sizeof(*parameters), channel, sizeof(*channel)) ||
 	    memory_regions_overlap(parameters, sizeof(*parameters), plan, sizeof(*plan)) ||
 	    memory_regions_overlap(plan, sizeof(*plan), channel, sizeof(*channel)) ||
+	    !v92_upstream_channel_has_stable_gain(channel) ||
 	    (!solve_short_channel(channel, coefficients) &&
 	     !solve_four_tap_channel(channel, coefficients) && !solve(channel, coefficients)))
 		return false;

@@ -45,6 +45,24 @@ static bool test_correlations(bool full_scale)
 			      "measurement boundary moved at symbol %d lag %d", index, lag);
 		}
 	}
+	/* Pin every short-window moment independently, including the partial
+	 * final window and the excluded settling prefix. */
+	for (unsigned w = 0; w < V92_UPSTREAM_CHANNEL_WINDOWS; ++w) {
+		int64_t xx = 0, yy = 0, xy = 0;
+		unsigned start = V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS + w * V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+		unsigned end = start + V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+
+		if (end > V92_UPSTREAM_CHANNEL_SYMBOLS) end = V92_UPSTREAM_CHANNEL_SYMBOLS;
+		for (unsigned n = start; n < end; ++n) {
+			int64_t x = expected(n, full_scale), y = observed(n, full_scale);
+
+			xx += x * x;
+			yy += y * y;
+			xy += x * y;
+		}
+		CHECK(channel.window[w].expected_energy == xx && channel.window[w].observed_energy == yy &&
+		      channel.window[w].cross == xy, "short-window %u changed", w);
+	}
 	/* Compute each complete sum independently, without the streaming history. */
 	int64_t previous_energy = 0, second_energy = 0, previous_cross = 0;
 
@@ -95,6 +113,16 @@ static bool test_rejection(void)
 	      !v92_upstream_channel_sample(&channel, 0, -32769) &&
 	      !v92_upstream_channel_sample(&channel, 0, 32769) &&
 	      memcmp(&channel, &saved, sizeof(channel)) == 0, "invalid input changed channel");
+	channel.window[0].expected_energy = 1;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "unowned window energy accepted");
+	channel = saved;
+	channel.symbols = V92_UPSTREAM_CHANNEL_SYMBOLS;
+	channel.window[V92_UPSTREAM_CHANNEL_WINDOWS - 1u].observed_energy =
+		INT64_C(32768) * 32768 * V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+	CHECK(!v92_upstream_channel_is_valid(&channel), "partial-window energy bound ignored");
+	channel = saved;
+	CHECK(!v92_upstream_channel_has_stable_gain(&channel) && !v92_upstream_channel_has_stable_gain(NULL),
+	      "incomplete stability evidence accepted");
 	channel.symbols = V92_UPSTREAM_CHANNEL_SYMBOLS + 1;
 	saved = channel;
 	CHECK(!v92_upstream_channel_sample(&channel, 0, 0) &&

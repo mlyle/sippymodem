@@ -2,6 +2,8 @@
 
 #include "v92_upstream_channel.h"
 
+#include <float.h>
+#include <math.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -11,6 +13,16 @@ static bool correlations_are_bounded(const int64_t *values, size_t count, int64_
 		if (values[index] < -bound || values[index] > bound)
 			return false;
 	return true;
+}
+
+static unsigned window_symbols(unsigned used, unsigned window)
+{
+	unsigned start = window * V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
+
+	if (used <= start)
+		return 0;
+	return used - start < V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS ?
+		used - start : V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS;
 }
 
 bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
@@ -32,6 +44,15 @@ bool v92_upstream_channel_is_valid(const struct v92_upstream_channel *channel)
 	    !correlations_are_bounded(channel->cross_correlation,
 		V92_UPSTREAM_CHANNEL_CROSS_LAGS, bound))
 		return false;
+	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_WINDOWS; ++i) {
+		const struct v92_upstream_channel_window *window = &channel->window[i];
+		int64_t limit = (int64_t)window_symbols(used, i) * 32768 * 32768;
+
+		if (window->expected_energy < 0 || window->expected_energy > limit ||
+		    window->observed_energy < 0 || window->observed_energy > limit ||
+		    window->cross < -limit || window->cross > limit)
+			return false;
+	}
 	for (size_t index = 0; index <= V92_UPSTREAM_CHANNEL_MAX_LAG; ++index) {
 		if (channel->observed_history[index] < -32768 ||
 		    channel->observed_history[index] > 32768 ||
@@ -78,6 +99,13 @@ bool v92_upstream_channel_sample_owned(
 	channel->expected_history[0] = expected;
 	if (++channel->symbols <= V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS)
 		return true;
+	unsigned used = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+	struct v92_upstream_channel_window *window =
+		&channel->window[(used - 1u) / V92_UPSTREAM_CHANNEL_WINDOW_SYMBOLS];
+
+	window->expected_energy += (int64_t)expected * expected;
+	window->observed_energy += (int64_t)observed * observed;
+	window->cross += (int64_t)expected * observed;
 	channel->previous_expected_energy +=
 		(int64_t)channel->expected_history[1] * channel->expected_history[1];
 	channel->second_expected_energy +=
@@ -95,6 +123,37 @@ bool v92_upstream_channel_sample_owned(
 		channel->cross_correlation[V92_UPSTREAM_CHANNEL_PRECURSOR_LAGS - lead] +=
 			(int64_t)expected * channel->observed_history[lead];
 	return true;
+}
+
+bool v92_upstream_channel_has_stable_gain(const struct v92_upstream_channel *channel)
+{
+	if (!v92_upstream_channel_is_valid(channel) ||
+	    channel->symbols != V92_UPSTREAM_CHANNEL_SYMBOLS)
+		return false;
+	double lower = -DBL_MAX, upper = DBL_MAX;
+	unsigned used = channel->symbols - V92_UPSTREAM_CHANNEL_SETTLE_SYMBOLS;
+
+	for (unsigned i = 0; i < V92_UPSTREAM_CHANNEL_WINDOWS; ++i) {
+		const struct v92_upstream_channel_window *window = &channel->window[i];
+		double xx = window->expected_energy, xy = window->cross, yy = window->observed_energy;
+
+		if (!(xx > 0.0))
+			return false;
+		double gain = xy / xx, residual = yy - gain * xy;
+
+		if (residual < -1.0e-10 * yy)
+			return false;
+		/* Interference contributes uncertainty to the scalar estimate. Six
+		 * estimated standard errors plus 1% relative gain tolerance keep
+		 * static ISI/noise from being mistaken for a changing channel.
+		 * These are estimator safeguards, not V.92 acceptance limits. */
+		double margin = 0.01 * fabs(gain) +
+			6.0 * sqrt(fmax(0.0, residual) / (window_symbols(used, i) * xx));
+
+		lower = fmax(lower, gain - margin);
+		upper = fmin(upper, gain + margin);
+	}
+	return lower <= upper;
 }
 
 bool v92_upstream_channel_fits_gain(const struct v92_upstream_channel *channel)
