@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(condition, ...)                                                \
@@ -302,6 +303,167 @@ static bool test_long_delay_cancellation(void)
 	return true;
 }
 
+static bool test_near_window_seed(void)
+{
+	struct pcm_host_echo echo;
+	struct pcm_host_echo saved;
+	uint64_t returned_energy = 0;
+	uint64_t residual_energy = 0;
+	int16_t cleaned;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "near-return echo owner did not initialize");
+	for (size_t index = 0; index < 400; ++index)
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_BYPASS, index, 0, &cleaned),
+		      "near-return history failed at %zu", index);
+	saved = echo;
+	CHECK(pcm_host_echo_seed_window_delay(NULL, 1) == PCM_HOST_ECHO_INVALID_STATE &&
+	      pcm_host_echo_seed_window_delay(&echo, 0) == PCM_HOST_ECHO_INVALID_ARGUMENT &&
+	      pcm_host_echo_seed_window_delay(&echo,
+		PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES + 1u) ==
+		PCM_HOST_ECHO_INVALID_ARGUMENT &&
+	      memcmp(&echo, &saved, sizeof(echo)) == 0,
+	      "invalid window changed the retained echo reference");
+	CHECK(pcm_host_echo_seed_window_delay(&echo, 1) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_window_delay_samples(&echo) == 1 &&
+	      echo.reference.write == saved.reference.write &&
+	      echo.reference.fill == saved.reference.fill &&
+	      memcmp(echo.reference.samples, saved.reference.samples,
+		     sizeof(echo.reference.samples)) == 0 &&
+	      !pcm_host_echo_is_ready(&echo),
+	      "window selection discarded history or authorized subtraction");
+	for (size_t index = 400; index < 6000; ++index) {
+		int16_t returned = scale_q15(transmit_sample(index - 32u), 11000);
+		int16_t received = add_s16(returned + remote_sample(index));
+
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index, received, &cleaned) &&
+		      cleaned == received,
+		      "near-return training failed or subtracted unqualified echo");
+		if (index == 400) {
+			saved = echo;
+			CHECK(pcm_host_echo_seed_window_delay(&echo, 1) ==
+				PCM_HOST_ECHO_INVALID_STATE &&
+			      memcmp(&echo, &saved, sizeof(echo)) == 0,
+			      "window selection reset an active learner");
+		}
+	}
+	CHECK(pcm_host_echo_is_ready(&echo) && echo.window_delay_samples == 1,
+	      "near return was not independently qualified");
+	for (size_t index = 6000; index < 10000; ++index) {
+		int16_t returned = scale_q15(transmit_sample(index - 32u), 11000);
+		int16_t remote = remote_sample(index);
+
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
+			add_s16(returned + remote), &cleaned),
+		      "qualified near-return filtering failed");
+		returned_energy = energy_add(returned_energy, returned);
+		residual_energy = energy_add(residual_energy, (int32_t)cleaned - remote);
+	}
+	CHECK(residual_energy * 64u < returned_energy,
+	      "near-return model failed the independent residual measurement");
+	return true;
+}
+
+static bool test_negligible_return_does_not_qualify(void)
+{
+	struct pcm_host_echo echo;
+	uint16_t peak = 0;
+	int16_t cleaned;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_window_delay(&echo, 1) == PCM_HOST_ECHO_OK,
+	      "negligible-return owner did not initialize");
+	for (size_t index = 0; index < 8000; ++index) {
+		int32_t returned = 0;
+
+		/* Sixteen weak returns have a measurable aggregate coefficient
+		 * sum and occasional peaks above 64, but RMS remains below 32. */
+		for (unsigned tap = 0; tap < 16; ++tap) {
+			unsigned age = 32u + 2u * tap;
+
+			if (index >= age)
+				returned += scale_q15(transmit_sample(index - age), 49);
+		}
+		if (abs(returned) > peak)
+			peak = (uint16_t)abs(returned);
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
+			(int16_t)returned, &cleaned) && cleaned == returned &&
+		      !pcm_host_echo_is_ready(&echo),
+		      "negligible input qualified subtraction at %zu", index);
+	}
+	CHECK(peak >= PCM_HOST_ECHO_READY_MIN_PEAK,
+	      "negligible-return fixture did not exercise the peak gate");
+	return true;
+}
+
+static bool test_runtime_model_confidence(void)
+{
+	struct pcm_host_echo echo;
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
+	int16_t cleaned;
+	uint64_t returned_energy = 0, residual_energy = 0;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_window_delay(&echo, 1) == PCM_HOST_ECHO_OK,
+	      "runtime-confidence owner did not initialize");
+	for (size_t index = 0; index < 34000; ++index) {
+		int16_t returned = index >= 32 ?
+			scale_q15(transmit_sample(index - 32), 512) : 0;
+		int16_t received = index < 9500 ? add_s16(returned +
+			generated_sample(index, UINT32_C(0x5a177202), 160)) : returned;
+
+		CHECK(echo_step(&echo, index < 14000 ? PCM_HOST_ECHO_TRAIN :
+			PCM_HOST_ECHO_FILTER_DATA, index, received, &cleaned),
+		      "runtime-confidence acquisition failed at %zu", index);
+	}
+	CHECK(pcm_host_echo_is_ready(&echo) && pcm_host_echo_has_weak_margin(&echo) &&
+	      !echo.filter_suspended,
+	      "independently useful quiet-return prediction was suspended");
+	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
+	/* A tiny return cannot establish current timing through a much stronger
+	 * independent peer. Stop altering receive samples, but retain the model. */
+	for (size_t index = 34000; index < 74000; ++index) {
+		int16_t returned = scale_q15(transmit_sample(index - 32), 512);
+		int16_t received = add_s16(returned +
+			generated_sample(index, UINT32_C(0x3450a107), 12000));
+
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER_DATA, index, received, &cleaned),
+		      "dominant-peer monitoring failed at %zu", index);
+		if (index >= 64000)
+			CHECK(cleaned == received,
+			      "unsupported runtime prediction altered the peer at %zu", index);
+	}
+	CHECK(echo.filter_suspended && pcm_host_echo_is_ready(&echo) &&
+	      echo.window_delay_samples == 1 &&
+	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+	      "runtime monitoring discarded or adapted the trained model");
+	{
+		int16_t returned = scale_q15(transmit_sample(74000 - 32), 512);
+		int16_t training_cleaned;
+
+		CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER,
+			returned, &training_cleaned) == PCM_HOST_ECHO_OK &&
+		      abs(training_cleaned) < abs(returned) / 4,
+		      "data confidence interrupted the stable training filter");
+	}
+	/* With the peer quiet again, shadow predictions must independently
+	 * restore subtraction without another training interval. */
+	for (size_t index = 74000; index < 108000; ++index) {
+		int16_t returned = scale_q15(transmit_sample(index - 32), 512);
+
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER_DATA, index, returned, &cleaned),
+		      "shadow prediction failed at %zu", index);
+		if (index >= 98000) {
+			returned_energy = energy_add(returned_energy, returned);
+			residual_energy = energy_add(residual_energy, cleaned);
+		}
+	}
+	CHECK(!echo.filter_suspended && residual_energy * 64u < returned_energy &&
+	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+	      "fresh confidence did not restore the frozen model");
+	return true;
+}
+
 static bool test_phase2_delay_seed(void)
 {
 	struct pcm_host_echo seeded;
@@ -449,7 +611,7 @@ static bool test_weak_joint_margin(void)
 	      "weak-margin owner did not initialize");
 	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
 		int16_t unrelated = generated_sample(
-			index, UINT32_C(0x4f1bbcdc), 1400);
+			index, UINT32_C(0x4f1bbcdc), 1800);
 		int16_t received = add_s16(
 			(int32_t)echo_sample(index) + unrelated);
 		int16_t cleaned;
@@ -464,6 +626,16 @@ static bool test_weak_joint_margin(void)
 	      "joint echo model did not retain weak margin: error=%" PRIu64
 	      " input=%" PRIu64,
 	      echo.error_energy, echo.input_energy);
+	/* Continued independent echo training can strengthen the same model.
+	 * The fitting margin must follow those later coefficients. */
+	for (size_t index = TRAIN_SAMPLES; index < 2u * TRAIN_SAMPLES; ++index) {
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
+			       echo_sample(index), &cleaned),
+		      "continued echo training failed at %zu", index);
+	}
+	CHECK(pcm_host_echo_is_ready(&echo) && !pcm_host_echo_has_weak_margin(&echo),
+	      "continued training retained the first weak fitting margin");
 	return true;
 }
 
@@ -754,6 +926,38 @@ static bool test_acquisition_after_unrelated_prefix(void)
 	return true;
 }
 
+static bool test_prompt_frozen_delay_tracking(void)
+{
+	struct pcm_host_echo echo;
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
+	uint32_t original_delay;
+
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
+	      "prompt timing owner did not initialize");
+	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
+			       echo_sample(index), &cleaned),
+		      "prompt timing training failed at %zu", index);
+	}
+	CHECK(pcm_host_echo_is_ready(&echo), "prompt timing model not ready");
+	original_delay = echo.window_delay_samples;
+	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
+	/* A material return moves by 10 ms immediately before a finite control
+	 * signal. Recover within 125 ms while the peer remains independent. */
+	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 1000u; ++index) {
+		int16_t received = add_s16((int32_t)remote_sample(index) * 7 +
+					 echo_sample(index - 80u));
+		int16_t cleaned;
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index, received, &cleaned),
+		      "prompt frozen filtering failed at %zu", index);
+	}
+	CHECK(echo.window_delay_samples == original_delay + 80u &&
+	      memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
+	      "material return did not retime promptly without refitting");
+	return true;
+}
+
 static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 {
 	struct pcm_host_echo echo;
@@ -810,7 +1014,7 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 		      "bad prediction advanced timing evidence");
 		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER,
 			       TRAIN_SAMPLES + 48000, INT16_MAX, &cleaned) &&
-		      echo.timing.fill == 0 && echo.timing.count == 0,
+		      echo.timing.fill == 0 && echo.timing.slow.count == 0,
 		      "clipped input retained timing evidence");
 		CHECK(memcmp(coefficients, echo.coefficients, sizeof(coefficients)) == 0,
 		      "clipped input changed the frozen response");
@@ -862,7 +1066,10 @@ int main(void)
 	    !test_half_sample_prediction() ||
 	    !test_prediction_energy_saturation() ||
 	    !test_long_delay_cancellation() ||
-	    !test_phase2_delay_seed() || !test_long_phase2_delay_seed() ||
+	    !test_near_window_seed() || !test_negligible_return_does_not_qualify() ||
+	    !test_runtime_model_confidence() ||
+	    !test_phase2_delay_seed() ||
+	    !test_long_phase2_delay_seed() ||
 	    !test_weak_joint_margin() ||
 	    !test_distributed_echo(false, false) || !test_distributed_echo(true, false) ||
 	    !test_distributed_echo(true, true) ||
@@ -876,7 +1083,7 @@ int main(void)
 	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
 		if (!test_frozen_delay_tracking(shifts[index], false))
 			return 1;
-	if (!test_frozen_delay_tracking(8, true))
+	if (!test_prompt_frozen_delay_tracking() || !test_frozen_delay_tracking(8, true))
 		return 1;
 	for (uint32_t salt = 1; salt <= 8; ++salt)
 		if (!test_unrelated_input_does_not_retime(salt * UINT32_C(7919)))

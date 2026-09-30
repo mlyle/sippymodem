@@ -27,10 +27,12 @@ enum {
 	 * fill and leaves the retimed filter its required 250 ms in TRN1d. */
 	PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES = 4,
 	PCM_HOST_ECHO_READY_MIN_PEAK = 64,
+	PCM_HOST_ECHO_READY_MIN_RMS = 32,
 	/* Requalify small host timing changes without adapting to peer data. */
 	PCM_HOST_ECHO_TIMING_RADIUS = PCM_ECHO_REFERENCE_SAMPLE_RATE / 50,
 	PCM_HOST_ECHO_TIMING_BINS = 2 * PCM_HOST_ECHO_TIMING_RADIUS + 1,
 	PCM_HOST_ECHO_TIMING_WINDOW = 8192,
+	PCM_HOST_ECHO_FAST_TIMING_WINDOW = 128,
 };
 
 _Static_assert((unsigned)PCM_HOST_ECHO_FILTER_TAPS ==
@@ -41,6 +43,7 @@ enum pcm_host_echo_mode {
 	PCM_HOST_ECHO_BYPASS,
 	PCM_HOST_ECHO_TRAIN,
 	PCM_HOST_ECHO_FILTER,
+	PCM_HOST_ECHO_FILTER_DATA,
 };
 
 enum pcm_host_echo_result {
@@ -56,15 +59,20 @@ struct pcm_host_echo_timing_evidence {
 	uint64_t energy, current_energy, input;
 };
 
-struct pcm_host_echo_timing {
-	int32_t prediction[PCM_HOST_ECHO_TIMING_BINS];
-	int16_t received[PCM_HOST_ECHO_TIMING_BINS];
+struct pcm_host_echo_timing_window {
 	int64_t cross[PCM_HOST_ECHO_TIMING_BINS];
 	uint64_t energy[PCM_HOST_ECHO_TIMING_BINS];
 	struct pcm_host_echo_timing_evidence first;
 	uint64_t input;
-	uint16_t write, fill, count, candidate;
+	uint16_t count, candidate;
 	bool second, first_qualified;
+};
+
+struct pcm_host_echo_timing {
+	int32_t prediction[PCM_HOST_ECHO_TIMING_BINS];
+	int16_t received[PCM_HOST_ECHO_TIMING_BINS];
+	struct pcm_host_echo_timing_window slow, fast;
+	uint16_t write, fill;
 };
 
 struct pcm_host_echo {
@@ -85,11 +93,17 @@ struct pcm_host_echo {
 	bool delay_acquired;
 	bool filter_ready;
 	bool weak_margin;
+	bool filter_suspended;
 	struct pcm_host_echo_timing timing;
 };
 
 enum pcm_host_echo_result pcm_host_echo_init(
 	struct pcm_host_echo *echo);
+
+/* Select an initial window without assuming that the echo occurs there.
+ * History may already be present, but acquisition must not have begun. */
+enum pcm_host_echo_result pcm_host_echo_seed_window_delay(
+	struct pcm_host_echo *echo, uint32_t window_delay_samples);
 
 /* Refine the initial delay hypothesis from the shared Phase-2 ranging result.
  * Transmit history may already be present, but training must not have begun. */
@@ -104,7 +118,10 @@ uint32_t pcm_host_echo_window_delay_samples(
 
 /* Prediction is pure. TRAIN retains raw input while learning. FILTER keeps
  * coefficients frozen; independently qualified timing changes may reposition
- * the model, but cannot learn the peer's signal as a new echo response. */
+ * the model, but cannot learn the peer's signal as a new echo response.
+ * FILTER_DATA requires fresh support for a weak fitting margin; an
+ * unsupported model is monitored without subtraction until its prediction
+ * qualifies again. */
 enum pcm_host_echo_result pcm_host_echo_predict(
 	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample);

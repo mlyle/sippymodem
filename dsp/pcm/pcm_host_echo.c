@@ -39,7 +39,13 @@ static bool mode_is_valid(enum pcm_host_echo_mode mode)
 {
 	return mode == PCM_HOST_ECHO_BYPASS ||
 	       mode == PCM_HOST_ECHO_TRAIN ||
-	       mode == PCM_HOST_ECHO_FILTER;
+	       mode == PCM_HOST_ECHO_FILTER ||
+	       mode == PCM_HOST_ECHO_FILTER_DATA;
+}
+
+static bool mode_is_filtering(enum pcm_host_echo_mode mode)
+{
+	return mode == PCM_HOST_ECHO_FILTER || mode == PCM_HOST_ECHO_FILTER_DATA;
 }
 
 static uint32_t scan_current_delay(
@@ -57,8 +63,10 @@ static bool header_is_valid(const struct pcm_host_echo *echo)
 	if (echo == NULL || !pcm_echo_reference_is_valid(&echo->reference) ||
 	    echo->timing.write >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->timing.fill > PCM_HOST_ECHO_TIMING_BINS ||
-	    echo->timing.count >= PCM_HOST_ECHO_TIMING_WINDOW ||
-	    echo->timing.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.slow.count >= PCM_HOST_ECHO_TIMING_WINDOW ||
+	    echo->timing.fast.count >= PCM_HOST_ECHO_FAST_TIMING_WINDOW ||
+	    echo->timing.slow.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.fast.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->reference.scan_count == 0 ||
 	    echo->window_delay_samples == 0 ||
 	    echo->window_delay_samples >
@@ -78,6 +86,8 @@ static bool header_is_valid(const struct pcm_host_echo *echo)
 		PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
 		PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
 	return (!echo->weak_margin || echo->filter_ready) &&
+	       (!echo->filter_suspended || echo->filter_ready ||
+		    echo->retained_delay_samples) &&
 	       (!echo->filter_ready ||
 		(echo->train_samples >= ready_min &&
 		 echo->train_peak >= PCM_HOST_ECHO_READY_MIN_PEAK &&
@@ -153,6 +163,22 @@ static bool training_is_pristine(const struct pcm_host_echo *echo)
 	return true;
 }
 
+enum pcm_host_echo_result pcm_host_echo_seed_window_delay(
+	struct pcm_host_echo *echo, uint32_t window_delay_samples)
+{
+	if (!header_is_valid(echo) || !training_is_pristine(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	if (window_delay_samples == 0 || window_delay_samples >
+	    PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES)
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	if (pcm_echo_reference_start_scan(&echo->reference,
+		window_delay_samples, PCM_HOST_ECHO_FILTER_PRE_SAMPLES) !=
+	    PCM_ECHO_REFERENCE_OK)
+		return PCM_HOST_ECHO_INVALID_STATE;
+	echo->window_delay_samples = window_delay_samples;
+	return PCM_HOST_ECHO_OK;
+}
+
 enum pcm_host_echo_result pcm_host_echo_seed_phase2_delay(
 	struct pcm_host_echo *echo, uint32_t round_trip_delay_samples)
 {
@@ -178,12 +204,7 @@ enum pcm_host_echo_result pcm_host_echo_seed_phase2_delay(
 		return_delay = round_trip_delay_samples;
 	window_delay = return_delay > PCM_HOST_ECHO_FILTER_PRE_SAMPLES ?
 		(uint32_t)return_delay - PCM_HOST_ECHO_FILTER_PRE_SAMPLES : 1u;
-	if (pcm_echo_reference_start_scan(
-		    &echo->reference, window_delay,
-		    PCM_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
-		return PCM_HOST_ECHO_INVALID_STATE;
-	echo->window_delay_samples = window_delay;
-	return PCM_HOST_ECHO_OK;
+	return pcm_host_echo_seed_window_delay(echo, window_delay);
 }
 
 bool pcm_host_echo_is_ready(const struct pcm_host_echo *echo)
@@ -241,14 +262,29 @@ static bool estimate_echo(
 	return true;
 }
 
+static enum pcm_host_echo_result predict_frozen_model(
+	const struct pcm_host_echo *echo, int16_t received_sample,
+	int16_t *cleaned_sample)
+{
+	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
+	const float *coefficients = echo->retained_delay_samples ?
+		echo->retained_coefficients : echo->coefficients;
+	double estimate, energy;
+	enum pcm_host_echo_result result = read_filter_window(echo, references);
+
+	if (result != PCM_HOST_ECHO_OK)
+		return result;
+	if (!estimate_echo(coefficients, references, &estimate, &energy))
+		return PCM_HOST_ECHO_NUMERIC_FAILURE;
+	*cleaned_sample = sample_round_s16((double)received_sample - estimate);
+	return PCM_HOST_ECHO_OK;
+}
+
 enum pcm_host_echo_result pcm_host_echo_predict(
 	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample)
 {
-	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
 	int16_t generated = received_sample;
-	double estimate;
-	double energy;
 	enum pcm_host_echo_result result;
 
 	if (!header_is_valid(echo))
@@ -257,17 +293,12 @@ enum pcm_host_echo_result pcm_host_echo_predict(
 	    memory_regions_overlap(
 		    echo, sizeof(*echo), cleaned_sample, sizeof(*cleaned_sample)))
 		return PCM_HOST_ECHO_INVALID_ARGUMENT;
-	if (mode == PCM_HOST_ECHO_FILTER && (echo->filter_ready || echo->retained_delay_samples)) {
-		const float *coefficients = echo->retained_delay_samples ?
-			echo->retained_coefficients : echo->coefficients;
-
-		result = read_filter_window(echo, references);
+	if (mode_is_filtering(mode) &&
+	    (mode != PCM_HOST_ECHO_FILTER_DATA || !echo->filter_suspended) &&
+	    (echo->filter_ready || echo->retained_delay_samples)) {
+		result = predict_frozen_model(echo, received_sample, &generated);
 		if (result != PCM_HOST_ECHO_OK)
 			return result;
-		if (!estimate_echo(
-			    coefficients, references, &estimate, &energy))
-			return PCM_HOST_ECHO_NUMERIC_FAILURE;
-		generated = sample_round_s16((double)received_sample - estimate);
 	}
 	*cleaned_sample = generated;
 	return PCM_HOST_ECHO_OK;
@@ -385,8 +416,20 @@ static void maybe_mark_ready(struct pcm_host_echo *echo)
 		PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
 		PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
 
-	if (echo->filter_ready || echo->train_samples < train_min ||
+	/* TRAIN may keep improving a qualified model. Its fitting margin must
+	 * describe the current retained coefficients rather than the first fit. */
+	if (echo->filter_ready) {
+		echo->weak_margin = (__uint128_t)echo->error_energy * 6u >=
+			echo->input_energy;
+		return;
+	}
+	/* A transient peak in otherwise quiet input cannot qualify a useful
+	 * return. Require sustained energy as well as independent correlation. */
+	if (echo->train_samples < train_min ||
 	    echo->train_peak < PCM_HOST_ECHO_READY_MIN_PEAK ||
+	    (__uint128_t)echo->input_energy <
+		    (__uint128_t)echo->train_samples *
+		    PCM_HOST_ECHO_READY_MIN_RMS * PCM_HOST_ECHO_READY_MIN_RMS ||
 	    coefficient_sum(echo) < PCM_HOST_ECHO_COEFFICIENT_MIN_SUM ||
 	    !correlation_at_least(echo->prediction_energy, echo->input_energy,
 				  echo->prediction_cross_energy) ||
@@ -400,6 +443,7 @@ static void maybe_mark_ready(struct pcm_host_echo *echo)
 		return;
 	echo->weak_margin = weak;
 	echo->filter_ready = true;
+	echo->filter_suspended = false;
 	echo->retained_delay_samples = 0;
 	memset(echo->retained_coefficients, 0, sizeof(echo->retained_coefficients));
 }
@@ -449,59 +493,40 @@ static void commit_training_step(
 	echo->train_peak = step->train_peak;
 }
 
+static bool prediction_is_qualified(
+	int64_t cross, uint64_t energy, uint64_t input,
+	unsigned samples, unsigned strength)
+{
+	return cross > 0 && energy != 0 &&
+	       (__uint128_t)cross * 2 >= energy &&
+	       (__uint128_t)cross * cross * samples >=
+		       (__uint128_t)strength * input * energy;
+}
+
 static bool timing_is_qualified(
 	const struct pcm_host_echo_timing_evidence *e,
 	unsigned samples, unsigned strength)
 {
 	/* Require useful cancellation as well as correlation. Compare against
 	 * the current delay on the same input, including the peer's signal.
-	 * Strength is sample_count * r-squared: require 9 independently in each
-	 * window and 36 together. These are timing-confidence gates, not SNR
-	 * estimates; agreement and a half-prediction-energy improvement are also
+	 * Strength is sample_count * r-squared. The long monitor uses 9 in
+	 * each window and 36 together; short windows use 3 and 12 for material
+	 * returns only. Agreement and a half-prediction-energy improvement are
 	 * required so unrelated input cannot win just by choosing another bin. */
 	__int128 improvement = 2 * ((__int128)e->cross - e->current_cross) -
 		((__int128)e->energy - e->current_energy);
 
-	return e->cross > 0 && e->energy != 0 &&
-	       (__uint128_t)e->cross * 2 >= e->energy &&
-	       (__uint128_t)e->cross * e->cross * samples >=
-		       (__uint128_t)strength * e->input * e->energy &&
+	return prediction_is_qualified(e->cross, e->energy, e->input,
+				       samples, strength) &&
 	       improvement > 0 && (__uint128_t)improvement * 2 >= e->energy;
 }
 
-static void track_timing(
-	struct pcm_host_echo *echo, int16_t received, int16_t cleaned)
+static bool finish_timing_window(struct pcm_host_echo *echo,
+	struct pcm_host_echo_timing_window *t, unsigned samples,
+	unsigned strength, unsigned combined_strength)
 {
-	struct pcm_host_echo_timing *t = &echo->timing;
 	const unsigned bins = PCM_HOST_ECHO_TIMING_BINS;
 	const unsigned radius = PCM_HOST_ECHO_TIMING_RADIUS;
-	unsigned index = t->write;
-	int16_t input;
-
-	/* Clipped subtraction does not describe the frozen filter prediction. */
-	if (cleaned == INT16_MIN || cleaned == INT16_MAX ||
-	    received == INT16_MIN || received == INT16_MAX) {
-		memset(t, 0, sizeof(*t));
-		return;
-	}
-	t->prediction[index] = (int32_t)received - cleaned;
-	t->received[index] = received;
-	t->write = (index + 1) % bins;
-	if (t->fill < bins && ++t->fill < bins)
-		return;
-	/* Delay the observation so earlier AND later predictions are available.
-	 * Reuse already computed predictions; do not run one FIR per candidate. */
-	input = t->received[(index + bins - radius) % bins];
-	t->input += square_s16(input);
-	for (unsigned candidate = 0; candidate < bins; ++candidate) {
-		int32_t predicted = t->prediction[index];
-
-		t->cross[candidate] += (int64_t)input * predicted;
-		t->energy[candidate] += (int64_t)predicted * predicted;
-		index = index == 0 ? bins - 1 : index - 1;
-	}
-	if (++t->count != PCM_HOST_ECHO_TIMING_WINDOW)
-		return;
 	unsigned best = radius;
 	for (unsigned candidate = 0; candidate < bins; ++candidate)
 		if (2 * t->cross[candidate] - (int64_t)t->energy[candidate] >
@@ -513,8 +538,38 @@ static void track_timing(
 		.input = t->input,
 	};
 	bool qualified = timing_is_qualified(
-		&evidence, PCM_HOST_ECHO_TIMING_WINDOW, 9);
-	if (t->second && t->first_qualified && qualified && best == t->candidate) {
+		&evidence, samples, strength);
+	if (echo->weak_margin && !prediction_is_qualified(evidence.current_cross,
+		evidence.current_energy, evidence.input,
+		samples, 9))
+		echo->filter_suspended = true;
+	if (echo->weak_margin && t->second) {
+		/* A marginal training fit needs continued support in data.
+		 * Reuse the timing monitor's independent confidence bounds at the
+		 * current delay. One unsupported window suspends subtraction;
+		 * two fresh windows are required to restore it. Keep testing the
+		 * frozen prediction while bypassed. */
+		echo->filter_suspended =
+			!prediction_is_qualified(t->first.current_cross,
+				t->first.current_energy, t->first.input,
+				samples, 9) ||
+			!prediction_is_qualified(evidence.current_cross,
+				evidence.current_energy, evidence.input,
+				samples, 9) ||
+			!prediction_is_qualified(
+				evidence.current_cross + t->first.current_cross,
+				evidence.current_energy + t->first.current_energy,
+				evidence.input + t->first.input,
+				2 * samples, 36);
+	}
+	/* A short window can follow a strong return before a handshake ends.
+	 * Weak returns retain the long monitor's sensitivity; require at least
+	 * 1/32 of received energy in both short-window predictions. */
+	bool material_return =
+		(__uint128_t)evidence.energy * 32u >= evidence.input &&
+		(__uint128_t)t->first.energy * 32u >= t->first.input;
+	if ((samples == PCM_HOST_ECHO_TIMING_WINDOW || material_return) &&
+	    t->second && t->first_qualified && qualified && best == t->candidate) {
 		struct pcm_host_echo_timing_evidence combined = {
 			.cross = evidence.cross + t->first.cross,
 			.current_cross = evidence.current_cross + t->first.current_cross,
@@ -526,14 +581,15 @@ static void track_timing(
 
 		/* Two disjoint windows must choose the same useful delay, and
 		 * the combined normalized correlation must be stronger still. */
-		if (timing_is_qualified(&combined, 2 * PCM_HOST_ECHO_TIMING_WINDOW, 36) &&
+		if (timing_is_qualified(&combined, 2 * samples, combined_strength) &&
 		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
 		    (uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
 		    pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
 					  PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK) {
 			echo->window_delay_samples = (uint32_t)delay;
-			memset(t, 0, sizeof(*t));
-			return;
+			echo->filter_suspended = false;
+			memset(&echo->timing, 0, sizeof(echo->timing));
+			return true;
 		}
 	}
 	t->second = !t->second;
@@ -544,6 +600,49 @@ static void track_timing(
 	t->input = 0;
 	memset(t->cross, 0, sizeof(t->cross));
 	memset(t->energy, 0, sizeof(t->energy));
+	return false;
+}
+
+static void track_timing(
+	struct pcm_host_echo *echo, int16_t received, int16_t cleaned)
+{
+	struct pcm_host_echo_timing *t = &echo->timing;
+	const unsigned bins = PCM_HOST_ECHO_TIMING_BINS;
+	const unsigned radius = PCM_HOST_ECHO_TIMING_RADIUS;
+	unsigned index = t->write;
+
+	if (cleaned == INT16_MIN || cleaned == INT16_MAX ||
+	    received == INT16_MIN || received == INT16_MAX) {
+		memset(t, 0, sizeof(*t));
+		return;
+	}
+	t->prediction[index] = (int32_t)received - cleaned;
+	t->received[index] = received;
+	t->write = (index + 1) % bins;
+	if (t->fill < bins && ++t->fill < bins)
+		return;
+	int16_t input = t->received[(index + bins - radius) % bins];
+
+	t->slow.input += square_s16(input);
+	t->fast.input += square_s16(input);
+	for (unsigned candidate = 0; candidate < bins; ++candidate) {
+		int32_t predicted = t->prediction[index];
+		int64_t cross = (int64_t)input * predicted;
+		uint64_t energy = (int64_t)predicted * predicted;
+
+		t->slow.cross[candidate] += cross;
+		t->fast.cross[candidate] += cross;
+		t->slow.energy[candidate] += energy;
+		t->fast.energy[candidate] += energy;
+		index = index == 0 ? bins - 1 : index - 1;
+	}
+	if (++t->fast.count == PCM_HOST_ECHO_FAST_TIMING_WINDOW &&
+	    finish_timing_window(echo, &t->fast,
+				 PCM_HOST_ECHO_FAST_TIMING_WINDOW, 3, 12))
+		return;
+	if (++t->slow.count == PCM_HOST_ECHO_TIMING_WINDOW)
+		finish_timing_window(echo, &t->slow,
+				     PCM_HOST_ECHO_TIMING_WINDOW, 9, 36);
 }
 
 static enum pcm_host_echo_result advance_predicted(
@@ -557,10 +656,18 @@ static enum pcm_host_echo_result advance_predicted(
 	enum pcm_host_echo_result result;
 	enum pcm_echo_reference_result reference_result;
 
-	if (mode != PCM_HOST_ECHO_FILTER && echo->timing.fill != 0)
+	if (!mode_is_filtering(mode) && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
-	if (mode == PCM_HOST_ECHO_FILTER && echo->filter_ready)
-		track_timing(echo, received_sample, cleaned_sample);
+	if (mode_is_filtering(mode) && echo->filter_ready) {
+		int16_t monitored = cleaned_sample;
+
+		if (mode == PCM_HOST_ECHO_FILTER_DATA && echo->filter_suspended) {
+			result = predict_frozen_model(echo, received_sample, &monitored);
+			if (result != PCM_HOST_ECHO_OK)
+				return result;
+		}
+		track_timing(echo, received_sample, monitored);
+	}
 
 	if (mode == PCM_HOST_ECHO_TRAIN) {
 		next_quiet = echo->quiet_samples == UINT32_MAX ? UINT32_MAX :
