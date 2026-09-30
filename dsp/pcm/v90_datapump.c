@@ -12,7 +12,7 @@
 #include "v8_datapump.h"
 #include "v34_data_quality.h"
 #include "v34_datapump.h"
-#include "v90_host_echo.h"
+#include "pcm_host_echo.h"
 #include "v90_info1.h"
 #include "v90_mp.h"
 #include "v90_profile.h"
@@ -35,7 +35,7 @@ struct v90_datapump {
 	struct v34_data_quality upstream_quality;
 	struct pcm_v34_fallback_handoff fallback;
 	struct v8_pcm_handoff startup;
-	struct v90_host_echo *host_echo;
+	struct pcm_host_echo *host_echo;
 	enum v90_modem_role role;
 	enum pcm_protocol protocol;
 	enum g711_law media_law;
@@ -147,7 +147,7 @@ static struct v90_datapump *v90_from_dp(struct dp *dp)
 	     (datapump->host_echo != NULL)) ||
 	    (datapump->host_echo_margin_evaluated &&
 	     (!datapump->call_started || datapump->host_echo == NULL ||
-	      !v90_host_echo_is_ready(datapump->host_echo))) ||
+	      !pcm_host_echo_is_ready(datapump->host_echo))) ||
 	    (datapump->host_echo_delay_seeded &&
 	     (datapump->host_echo == NULL || !datapump->call_started ||
 	      !datapump->call.round_trip_delay_stored)) ||
@@ -260,7 +260,7 @@ static struct dp *create_v90(
 	if (role == V90_DIGITAL_MODEM) {
 		datapump->host_echo = malloc(sizeof(*datapump->host_echo));
 		if (datapump->host_echo == NULL ||
-		    v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK) {
+		    pcm_host_echo_init(datapump->host_echo) != PCM_HOST_ECHO_OK) {
 			free(datapump->host_echo);
 			free(datapump);
 			return NULL;
@@ -338,8 +338,8 @@ static int retrain_v90(struct dp *dp)
 	/* Already transmitted data still returns while the peer starts Tone A.
 	 * Retain a qualified in-call model through the new ranging exchange. */
 	if (datapump->host_echo != NULL &&
-	    !v90_host_echo_is_ready(datapump->host_echo)) {
-		if (v90_host_echo_init(datapump->host_echo) != V90_HOST_ECHO_OK)
+	    !pcm_host_echo_is_ready(datapump->host_echo)) {
+		if (pcm_host_echo_init(datapump->host_echo) != PCM_HOST_ECHO_OK)
 			return -1;
 		datapump->host_echo_margin_evaluated = false;
 		datapump->host_echo_delay_seeded = false;
@@ -641,8 +641,8 @@ static bool start_call(
 		    output != silence)
 			return false;
 		if (datapump->host_echo != NULL &&
-		    v90_host_echo_advance(datapump->host_echo, V90_HOST_ECHO_BYPASS,
-			    input, input, 0) != V90_HOST_ECHO_OK)
+		    pcm_host_echo_advance(datapump->host_echo, PCM_HOST_ECHO_BYPASS,
+			    input, input, 0) != PCM_HOST_ECHO_OK)
 			return false;
 	}
 	datapump->media_law = media_law;
@@ -745,14 +745,14 @@ static void mute_output(
 			samples[index] = linear;
 }
 
-static enum v90_host_echo_mode host_echo_mode(
+static enum pcm_host_echo_mode host_echo_mode(
 	const struct v90_datapump *datapump)
 {
 	const struct pcm_call *call = &datapump->call;
 	const struct pcm_phase3_digital_tx *transmit = NULL;
 
 	if (datapump->host_echo == NULL)
-		return V90_HOST_ECHO_BYPASS;
+		return PCM_HOST_ECHO_BYPASS;
 	/* Both upstream procedures make the analogue peer quiet during TRN1d.
 	 * Learn from that interval only, then freeze while receiving the peer.
 	 * Select the active Phase 3 owner before inspecting its common TX. */
@@ -767,7 +767,7 @@ static enum v90_host_echo_mode host_echo_mode(
 		if (transmit != NULL &&
 		    transmit->stage == PCM_PHASE3_DIGITAL_TX_PREFIX &&
 		    transmit->sequence.prefix.stage == PCM_PHASE3_DIGITAL_PREFIX_TRN1D)
-			return V90_HOST_ECHO_TRAIN;
+			return PCM_HOST_ECHO_TRAIN;
 	}
 	/* The upstream receiver owns physical samples through retrain
 	 * ranging, both return markers, and the completed-return drain. A ready
@@ -779,8 +779,8 @@ static enum v90_host_echo_mode host_echo_mode(
 	    call->stage == PCM_CALL_PHASE4 ||
 	    call->stage == PCM_CALL_DATA_PATH ||
 	    call->stage == PCM_CALL_RETRAIN_SILENCE)
-		return V90_HOST_ECHO_FILTER;
-	return V90_HOST_ECHO_BYPASS;
+		return PCM_HOST_ECHO_FILTER;
+	return PCM_HOST_ECHO_BYPASS;
 }
 
 static bool seed_host_echo_delay(struct v90_datapump *datapump)
@@ -788,13 +788,13 @@ static bool seed_host_echo_delay(struct v90_datapump *datapump)
 	/* The seed belongs to this echo model. Retrain can replace the call's
 	 * ranging measurement, including with zero, before the model resets. */
 	if (datapump->host_echo == NULL || datapump->host_echo_delay_seeded ||
-	    v90_host_echo_is_ready(datapump->host_echo) ||
+	    pcm_host_echo_is_ready(datapump->host_echo) ||
 	    !datapump->call.round_trip_delay_stored ||
 	    datapump->call.round_trip_delay_samples == 0)
 		return true;
-	if (v90_host_echo_seed_phase2_delay(
+	if (pcm_host_echo_seed_phase2_delay(
 		    datapump->host_echo,
-		    datapump->call.round_trip_delay_samples) != V90_HOST_ECHO_OK)
+		    datapump->call.round_trip_delay_samples) != PCM_HOST_ECHO_OK)
 		return false;
 	datapump->host_echo_delay_seeded = true;
 	return true;
@@ -805,12 +805,12 @@ static bool apply_host_echo_margin(struct v90_datapump *datapump)
 {
 	struct pcm_call limited;
 
-	if (!v90_host_echo_is_ready(datapump->host_echo))
+	if (!pcm_host_echo_is_ready(datapump->host_echo))
 		return true;
 	if (datapump->call.stage != PCM_CALL_PHASE3 &&
 	    datapump->call.stage != PCM_CALL_PHASE3_MIXED)
 		return false;
-	if (!v90_host_echo_has_weak_margin(datapump->host_echo)) {
+	if (!pcm_host_echo_has_weak_margin(datapump->host_echo)) {
 		datapump->host_echo_margin_evaluated = true;
 		return true;
 	}
@@ -861,7 +861,7 @@ static int process_v90_g711(
 	}
 	for (int index = 0; index < count; ++index) {
 		enum pcm_call_stage stage_before = datapump->call.stage;
-		enum v90_host_echo_mode echo_mode = host_echo_mode(datapump);
+		enum pcm_host_echo_mode echo_mode = host_echo_mode(datapump);
 		int16_t cleaned_sample = receive_samples[index];
 		uint8_t pcm_transmit;
 
@@ -873,10 +873,10 @@ static int process_v90_g711(
 			    TRAINING_SESSION_OK)
 			goto failure;
 		if (datapump->host_echo != NULL &&
-		    v90_host_echo_predict(
+		    pcm_host_echo_predict(
 			    datapump->host_echo, echo_mode,
 			    receive_samples[index], &cleaned_sample) !=
-			    V90_HOST_ECHO_OK)
+			    PCM_HOST_ECHO_OK)
 			goto failure;
 		if (!process_octet(
 			    datapump, receive_codewords[index],
@@ -892,10 +892,10 @@ static int process_v90_g711(
 			return DPSTAT_DISCONNECT;
 		}
 		if (datapump->host_echo != NULL) {
-			if (v90_host_echo_advance_predicted(
+			if (pcm_host_echo_advance_predicted(
 				    datapump->host_echo, echo_mode,
 				    receive_samples[index], cleaned_sample,
-				    transmit_samples[index]) != V90_HOST_ECHO_OK)
+				    transmit_samples[index]) != PCM_HOST_ECHO_OK)
 				goto failure;
 			/* Retain qualified cancellation through retrain ranging, but
 			 * reacquire it for the new Phase 3/TRN1d epoch. Old margin and
@@ -903,12 +903,12 @@ static int process_v90_g711(
 			 * Unqualified models still clear at the silence/tone handoff. */
 			if ((stage_before == PCM_CALL_RETRAIN_SILENCE &&
 			     datapump->call.stage != PCM_CALL_RETRAIN_SILENCE &&
-			     !v90_host_echo_is_ready(datapump->host_echo)) ||
+			     !pcm_host_echo_is_ready(datapump->host_echo)) ||
 			    (stage_before == PCM_CALL_PHASE2 &&
 			     datapump->call.stage != PCM_CALL_PHASE2 &&
 			     datapump->call.retrain_active)) {
-				if (v90_host_echo_init(datapump->host_echo) !=
-				    V90_HOST_ECHO_OK)
+				if (pcm_host_echo_init(datapump->host_echo) !=
+				    PCM_HOST_ECHO_OK)
 					goto failure;
 				datapump->host_echo_margin_evaluated = false;
 				datapump->host_echo_delay_seeded = false;

@@ -194,7 +194,7 @@ PCM_SOURCES := \
 	$(DSP_PCM_SOURCE_DIR)/v90_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_profile.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_datapump.c \
-	$(DSP_PCM_SOURCE_DIR)/v90_host_echo.c \
+	$(DSP_PCM_SOURCE_DIR)/pcm_host_echo.c \
 	$(DSP_PCM_SOURCE_DIR)/v90_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_info0.c \
 	$(DSP_PCM_SOURCE_DIR)/v92_qc1.c \

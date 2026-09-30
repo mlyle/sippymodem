@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include "v90_host_echo.h"
+#include "pcm_host_echo.h"
 
 #include "integer_math.h"
 #include "memory_region.h"
@@ -12,20 +12,20 @@
 #include <stddef.h>
 #include <string.h>
 
-#define V90_HOST_ECHO_ADAPTATION 0.35
-#define V90_HOST_ECHO_ENERGY_FLOOR 1048576.0
-#define V90_HOST_ECHO_COEFFICIENT_MIN_SUM 0.010
+#define PCM_HOST_ECHO_ADAPTATION 0.35
+#define PCM_HOST_ECHO_ENERGY_FLOOR 1048576.0
+#define PCM_HOST_ECHO_COEFFICIENT_MIN_SUM 0.010
 /* A delay candidate sees one return, not the complete multipath model.
  * Require r-squared >= 1/32 to move an unqualified window; only the later
  * independent whole-filter prediction can authorize subtraction. */
-#define V90_HOST_ECHO_SCAN_CORRELATION_PPM 31250u
-#define V90_HOST_ECHO_SCAN_IMPROVEMENT 4u
+#define PCM_HOST_ECHO_SCAN_CORRELATION_PPM 31250u
+#define PCM_HOST_ECHO_SCAN_IMPROVEMENT 4u
 /* Allow a bounded local return path beyond the Phase-2 reversal interval. */
-#define V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES \
+#define PCM_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES \
 	(PCM_ECHO_REFERENCE_SAMPLE_RATE / 20)
 
 struct training_step {
-	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	uint64_t prediction_energy;
 	uint64_t input_energy;
 	uint64_t error_energy;
@@ -35,11 +35,11 @@ struct training_step {
 	bool available;
 };
 
-static bool mode_is_valid(enum v90_host_echo_mode mode)
+static bool mode_is_valid(enum pcm_host_echo_mode mode)
 {
-	return mode == V90_HOST_ECHO_BYPASS ||
-	       mode == V90_HOST_ECHO_TRAIN ||
-	       mode == V90_HOST_ECHO_FILTER;
+	return mode == PCM_HOST_ECHO_BYPASS ||
+	       mode == PCM_HOST_ECHO_TRAIN ||
+	       mode == PCM_HOST_ECHO_FILTER;
 }
 
 static uint32_t scan_current_delay(
@@ -49,16 +49,16 @@ static uint32_t scan_current_delay(
 	       reference->scan_current_index * reference->scan_step;
 }
 
-static bool header_is_valid(const struct v90_host_echo *echo)
+static bool header_is_valid(const struct pcm_host_echo *echo)
 {
 	uint64_t last_age;
 	uint32_t ready_min;
 
 	if (echo == NULL || !pcm_echo_reference_is_valid(&echo->reference) ||
-	    echo->timing.write >= V90_HOST_ECHO_TIMING_BINS ||
-	    echo->timing.fill > V90_HOST_ECHO_TIMING_BINS ||
-	    echo->timing.count >= V90_HOST_ECHO_TIMING_WINDOW ||
-	    echo->timing.candidate >= V90_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.write >= PCM_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.fill > PCM_HOST_ECHO_TIMING_BINS ||
+	    echo->timing.count >= PCM_HOST_ECHO_TIMING_WINDOW ||
+	    echo->timing.candidate >= PCM_HOST_ECHO_TIMING_BINS ||
 	    echo->reference.scan_count == 0 ||
 	    echo->window_delay_samples == 0 ||
 	    echo->window_delay_samples >
@@ -66,29 +66,29 @@ static bool header_is_valid(const struct v90_host_echo *echo)
 	    scan_current_delay(&echo->reference) != echo->window_delay_samples)
 		return false;
 	last_age = (uint64_t)echo->window_delay_samples +
-		   V90_HOST_ECHO_FILTER_TAPS - 1u;
+		   PCM_HOST_ECHO_FILTER_TAPS - 1u;
 	if (last_age > PCM_ECHO_REFERENCE_HISTORY_SAMPLES)
 		return false;
 	if (echo->retained_delay_samples &&
 	    (echo->filter_ready || !echo->delay_acquired ||
 	     echo->retained_delay_samples > PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES ||
-	     echo->reference.fill < echo->retained_delay_samples + V90_HOST_ECHO_FILTER_TAPS - 1u))
+	     echo->reference.fill < echo->retained_delay_samples + PCM_HOST_ECHO_FILTER_TAPS - 1u))
 		return false;
 	ready_min = echo->delay_acquired ?
-		V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
-		V90_HOST_ECHO_TRAIN_MIN_SAMPLES;
+		PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
+		PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
 	return (!echo->weak_margin || echo->filter_ready) &&
 	       (!echo->filter_ready ||
 		(echo->train_samples >= ready_min &&
-		 echo->train_peak >= V90_HOST_ECHO_READY_MIN_PEAK &&
+		 echo->train_peak >= PCM_HOST_ECHO_READY_MIN_PEAK &&
 		 echo->reference.fill >= last_age));
 }
 
-bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
+bool pcm_host_echo_is_valid(const struct pcm_host_echo *echo)
 {
 	if (!header_is_valid(echo))
 		return false;
-	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
+	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		if (!isfinite(echo->coefficients[tap]) ||
 		    !isfinite(echo->retained_coefficients[tap]) ||
 		    (!echo->retained_delay_samples && echo->retained_coefficients[tap] != 0.0f))
@@ -97,7 +97,7 @@ bool v90_host_echo_is_valid(const struct v90_host_echo *echo)
 	return true;
 }
 
-static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
+static enum pcm_host_echo_result restart_training(struct pcm_host_echo *echo)
 {
 	memset(&echo->timing, 0, sizeof(echo->timing));
 	memset(echo->coefficients, 0, sizeof(echo->coefficients));
@@ -116,28 +116,28 @@ static enum v90_host_echo_result restart_training(struct v90_host_echo *echo)
 	 * evidence together, whether retrying this delay or acquiring a new one. */
 	return pcm_echo_reference_start_scan(
 		       &echo->reference, echo->window_delay_samples,
-		       V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK ?
-		V90_HOST_ECHO_OK : V90_HOST_ECHO_INVALID_STATE;
+		       PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK ?
+		PCM_HOST_ECHO_OK : PCM_HOST_ECHO_INVALID_STATE;
 }
 
-enum v90_host_echo_result v90_host_echo_init(
-	struct v90_host_echo *echo)
+enum pcm_host_echo_result pcm_host_echo_init(
+	struct pcm_host_echo *echo)
 {
 	if (echo == NULL)
-		return V90_HOST_ECHO_INVALID_ARGUMENT;
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
 	memset(echo, 0, sizeof(*echo));
 	echo->window_delay_samples =
-		V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
+		PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
 	if (pcm_echo_reference_start_scan(
 		    &echo->reference, echo->window_delay_samples,
-		    V90_HOST_ECHO_FILTER_PRE_SAMPLES) !=
+		    PCM_HOST_ECHO_FILTER_PRE_SAMPLES) !=
 		    PCM_ECHO_REFERENCE_OK ||
-	    !v90_host_echo_is_valid(echo))
-		return V90_HOST_ECHO_INVALID_STATE;
-	return V90_HOST_ECHO_OK;
+	    !pcm_host_echo_is_valid(echo))
+		return PCM_HOST_ECHO_INVALID_STATE;
+	return PCM_HOST_ECHO_OK;
 }
 
-static bool training_is_pristine(const struct v90_host_echo *echo)
+static bool training_is_pristine(const struct pcm_host_echo *echo)
 {
 	if (echo->prediction_energy != 0 || echo->input_energy != 0 ||
 	    echo->error_energy != 0 || echo->prediction_cross_energy != 0 ||
@@ -145,7 +145,7 @@ static bool training_is_pristine(const struct v90_host_echo *echo)
 	    echo->train_peak != 0 || echo->delay_acquired ||
 	    echo->filter_ready || echo->weak_margin || echo->retained_delay_samples)
 		return false;
-	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
+	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		if (echo->coefficients[tap] != 0.0f ||
 		    echo->retained_coefficients[tap] != 0.0f)
 			return false;
@@ -153,20 +153,20 @@ static bool training_is_pristine(const struct v90_host_echo *echo)
 	return true;
 }
 
-enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
-	struct v90_host_echo *echo, uint32_t round_trip_delay_samples)
+enum pcm_host_echo_result pcm_host_echo_seed_phase2_delay(
+	struct pcm_host_echo *echo, uint32_t round_trip_delay_samples)
 {
 	uint64_t return_delay;
 	uint32_t window_delay;
 
 	if (!header_is_valid(echo) || !training_is_pristine(echo))
-		return V90_HOST_ECHO_INVALID_STATE;
+		return PCM_HOST_ECHO_INVALID_STATE;
 	if (round_trip_delay_samples == 0)
-		return V90_HOST_ECHO_INVALID_ARGUMENT;
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
 	return_delay = (uint64_t)round_trip_delay_samples +
-		V90_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES;
-	if (return_delay > V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES)
-		return_delay = V90_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES;
+		PCM_HOST_ECHO_PHASE2_DELAY_MARGIN_SAMPLES;
+	if (return_delay > PCM_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES)
+		return_delay = PCM_HOST_ECHO_DEFAULT_RETURN_DELAY_SAMPLES;
 	/* A representable measured delay is a better starting hypothesis than
 	 * the short default. Keep the scan and filter-readiness checks: ranging
 	 * is not proof of the echo path, and out-of-history estimates still need
@@ -174,58 +174,58 @@ enum v90_host_echo_result v90_host_echo_seed_phase2_delay(
 	if (round_trip_delay_samples > return_delay &&
 	    round_trip_delay_samples <=
 		    PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
-			    V90_HOST_ECHO_FILTER_PRE_SAMPLES)
+			    PCM_HOST_ECHO_FILTER_PRE_SAMPLES)
 		return_delay = round_trip_delay_samples;
-	window_delay = return_delay > V90_HOST_ECHO_FILTER_PRE_SAMPLES ?
-		(uint32_t)return_delay - V90_HOST_ECHO_FILTER_PRE_SAMPLES : 1u;
+	window_delay = return_delay > PCM_HOST_ECHO_FILTER_PRE_SAMPLES ?
+		(uint32_t)return_delay - PCM_HOST_ECHO_FILTER_PRE_SAMPLES : 1u;
 	if (pcm_echo_reference_start_scan(
 		    &echo->reference, window_delay,
-		    V90_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
-		return V90_HOST_ECHO_INVALID_STATE;
+		    PCM_HOST_ECHO_FILTER_PRE_SAMPLES) != PCM_ECHO_REFERENCE_OK)
+		return PCM_HOST_ECHO_INVALID_STATE;
 	echo->window_delay_samples = window_delay;
-	return V90_HOST_ECHO_OK;
+	return PCM_HOST_ECHO_OK;
 }
 
-bool v90_host_echo_is_ready(const struct v90_host_echo *echo)
+bool pcm_host_echo_is_ready(const struct pcm_host_echo *echo)
 {
 	return header_is_valid(echo) && (echo->filter_ready || echo->retained_delay_samples);
 }
 
-bool v90_host_echo_has_weak_margin(const struct v90_host_echo *echo)
+bool pcm_host_echo_has_weak_margin(const struct pcm_host_echo *echo)
 {
-	return v90_host_echo_is_ready(echo) && (echo->weak_margin || echo->retained_delay_samples);
+	return pcm_host_echo_is_ready(echo) && (echo->weak_margin || echo->retained_delay_samples);
 }
 
-uint32_t v90_host_echo_window_delay_samples(
-	const struct v90_host_echo *echo)
+uint32_t pcm_host_echo_window_delay_samples(
+	const struct pcm_host_echo *echo)
 {
 	return header_is_valid(echo) ? echo->window_delay_samples : 0;
 }
 
-static enum v90_host_echo_result read_filter_window(
-	const struct v90_host_echo *echo,
-	int16_t references[V90_HOST_ECHO_FILTER_TAPS])
+static enum pcm_host_echo_result read_filter_window(
+	const struct pcm_host_echo *echo,
+	int16_t references[PCM_HOST_ECHO_FILTER_TAPS])
 {
 	uint32_t delay = echo->retained_delay_samples ?
 		echo->retained_delay_samples : echo->window_delay_samples;
 	enum pcm_echo_reference_result result =
 		pcm_echo_reference_read_window(
 			&echo->reference, delay,
-			references, V90_HOST_ECHO_FILTER_TAPS);
+			references, PCM_HOST_ECHO_FILTER_TAPS);
 
 	return result == PCM_ECHO_REFERENCE_OK ?
-		V90_HOST_ECHO_OK : V90_HOST_ECHO_INVALID_STATE;
+		PCM_HOST_ECHO_OK : PCM_HOST_ECHO_INVALID_STATE;
 }
 
 static bool estimate_echo(
-	const float coefficients[V90_HOST_ECHO_FILTER_TAPS],
-	const int16_t references[V90_HOST_ECHO_FILTER_TAPS],
+	const float coefficients[PCM_HOST_ECHO_FILTER_TAPS],
+	const int16_t references[PCM_HOST_ECHO_FILTER_TAPS],
 	double *estimate, double *energy)
 {
 	double predicted = 0.0;
 	double accumulated_energy = 0.0;
 
-	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
+	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		double coefficient = coefficients[tap];
 		double reference = references[tap];
 
@@ -241,36 +241,36 @@ static bool estimate_echo(
 	return true;
 }
 
-enum v90_host_echo_result v90_host_echo_predict(
-	const struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+enum pcm_host_echo_result pcm_host_echo_predict(
+	const struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t *cleaned_sample)
 {
-	int16_t references[V90_HOST_ECHO_FILTER_TAPS];
+	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
 	int16_t generated = received_sample;
 	double estimate;
 	double energy;
-	enum v90_host_echo_result result;
+	enum pcm_host_echo_result result;
 
 	if (!header_is_valid(echo))
-		return V90_HOST_ECHO_INVALID_STATE;
+		return PCM_HOST_ECHO_INVALID_STATE;
 	if (!mode_is_valid(mode) || cleaned_sample == NULL ||
 	    memory_regions_overlap(
 		    echo, sizeof(*echo), cleaned_sample, sizeof(*cleaned_sample)))
-		return V90_HOST_ECHO_INVALID_ARGUMENT;
-	if (mode == V90_HOST_ECHO_FILTER && (echo->filter_ready || echo->retained_delay_samples)) {
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
+	if (mode == PCM_HOST_ECHO_FILTER && (echo->filter_ready || echo->retained_delay_samples)) {
 		const float *coefficients = echo->retained_delay_samples ?
 			echo->retained_coefficients : echo->coefficients;
 
 		result = read_filter_window(echo, references);
-		if (result != V90_HOST_ECHO_OK)
+		if (result != PCM_HOST_ECHO_OK)
 			return result;
 		if (!estimate_echo(
 			    coefficients, references, &estimate, &energy))
-			return V90_HOST_ECHO_NUMERIC_FAILURE;
+			return PCM_HOST_ECHO_NUMERIC_FAILURE;
 		generated = sample_round_s16((double)received_sample - estimate);
 	}
 	*cleaned_sample = generated;
-	return V90_HOST_ECHO_OK;
+	return PCM_HOST_ECHO_OK;
 }
 
 static uint64_t double_square_u64(double value)
@@ -289,11 +289,11 @@ static int64_t round_s64(double value)
 	return (int64_t)(value >= 0.0 ? value + 0.5 : value - 0.5);
 }
 
-static enum v90_host_echo_result prepare_training_step(
-	const struct v90_host_echo *echo, int16_t received_sample,
+static enum pcm_host_echo_result prepare_training_step(
+	const struct pcm_host_echo *echo, int16_t received_sample,
 	struct training_step *step)
 {
-	int16_t references[V90_HOST_ECHO_FILTER_TAPS];
+	int16_t references[PCM_HOST_ECHO_FILTER_TAPS];
 	double estimate;
 	double energy;
 	double error;
@@ -304,33 +304,33 @@ static enum v90_host_echo_result prepare_training_step(
 	memset(step, 0, sizeof(*step));
 	window_result = pcm_echo_reference_read_window(
 		&echo->reference, echo->window_delay_samples, references,
-		V90_HOST_ECHO_FILTER_TAPS);
+		PCM_HOST_ECHO_FILTER_TAPS);
 	if (window_result == PCM_ECHO_REFERENCE_NOT_READY)
-		return V90_HOST_ECHO_OK;
+		return PCM_HOST_ECHO_OK;
 	if (window_result != PCM_ECHO_REFERENCE_OK)
-		return V90_HOST_ECHO_INVALID_STATE;
+		return PCM_HOST_ECHO_INVALID_STATE;
 	if (!estimate_echo(
 		    echo->coefficients, references, &estimate, &energy))
-		return V90_HOST_ECHO_NUMERIC_FAILURE;
+		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	if (energy <= 0.0)
-		return V90_HOST_ECHO_OK;
+		return PCM_HOST_ECHO_OK;
 	error = (double)received_sample - estimate;
-	scale = V90_HOST_ECHO_ADAPTATION * error /
-		(energy + V90_HOST_ECHO_ENERGY_FLOOR);
+	scale = PCM_HOST_ECHO_ADAPTATION * error /
+		(energy + PCM_HOST_ECHO_ENERGY_FLOOR);
 	if (!isfinite(scale))
-		return V90_HOST_ECHO_NUMERIC_FAILURE;
-	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap) {
+		return PCM_HOST_ECHO_NUMERIC_FAILURE;
+	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap) {
 		double coefficient = echo->coefficients[tap] +
 			scale * references[tap];
 
 		if (!isfinite(coefficient) || coefficient > FLT_MAX ||
 		    coefficient < -FLT_MAX)
-			return V90_HOST_ECHO_NUMERIC_FAILURE;
+			return PCM_HOST_ECHO_NUMERIC_FAILURE;
 		step->coefficients[tap] = (float)coefficient;
 		post_estimate += step->coefficients[tap] * references[tap];
 	}
 	if (!isfinite(post_estimate))
-		return V90_HOST_ECHO_NUMERIC_FAILURE;
+		return PCM_HOST_ECHO_NUMERIC_FAILURE;
 	/* A spread-out return can have no strongly correlated individual delay
 	 * bin. Qualify the full model instead, using its prediction BEFORE the
 	 * current input adapts it; a post-update fit can correlate with noise. */
@@ -351,7 +351,7 @@ static enum v90_host_echo_result prepare_training_step(
 	if (step->train_peak < (uint32_t)magnitude_s16(received_sample))
 		step->train_peak = (uint16_t)magnitude_s16(received_sample);
 	step->available = true;
-	return V90_HOST_ECHO_OK;
+	return PCM_HOST_ECHO_OK;
 }
 
 static bool correlation_at_least(
@@ -370,24 +370,24 @@ static bool correlation_at_least(
 	return left >= right / 8u + (right % 8u != 0);
 }
 
-static double coefficient_sum(const struct v90_host_echo *echo)
+static double coefficient_sum(const struct pcm_host_echo *echo)
 {
 	double sum = 0.0;
 
-	for (size_t tap = 0; tap < V90_HOST_ECHO_FILTER_TAPS; ++tap)
+	for (size_t tap = 0; tap < PCM_HOST_ECHO_FILTER_TAPS; ++tap)
 		sum += fabs((double)echo->coefficients[tap]);
 	return sum;
 }
 
-static void maybe_mark_ready(struct v90_host_echo *echo)
+static void maybe_mark_ready(struct pcm_host_echo *echo)
 {
 	uint32_t train_min = echo->delay_acquired ?
-		V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
-		V90_HOST_ECHO_TRAIN_MIN_SAMPLES;
+		PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES :
+		PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
 
 	if (echo->filter_ready || echo->train_samples < train_min ||
-	    echo->train_peak < V90_HOST_ECHO_READY_MIN_PEAK ||
-	    coefficient_sum(echo) < V90_HOST_ECHO_COEFFICIENT_MIN_SUM ||
+	    echo->train_peak < PCM_HOST_ECHO_READY_MIN_PEAK ||
+	    coefficient_sum(echo) < PCM_HOST_ECHO_COEFFICIENT_MIN_SUM ||
 	    !correlation_at_least(echo->prediction_energy, echo->input_energy,
 				  echo->prediction_cross_energy) ||
 	    (__uint128_t)echo->error_energy * 2u > echo->input_energy)
@@ -405,7 +405,7 @@ static void maybe_mark_ready(struct v90_host_echo *echo)
 }
 
 static bool scan_should_retime(
-	const struct v90_host_echo *echo,
+	const struct pcm_host_echo *echo,
 	const struct pcm_echo_reference_scan_result *scan)
 {
 	uint32_t delta =
@@ -417,27 +417,27 @@ static bool scan_should_retime(
 				scan->best_window_delay_samples;
 	uint64_t improvement =
 		(uint64_t)scan->current_correlation_ppm *
-		V90_HOST_ECHO_SCAN_IMPROVEMENT;
+		PCM_HOST_ECHO_SCAN_IMPROVEMENT;
 
 	/* A weak model may cover only later returns. Allow an earlier peak
 	 * outside its window to widen coverage without discarding that model. */
 	bool extend_weak_window = echo->filter_ready && echo->weak_margin &&
-		scan->best_window_delay_samples + V90_HOST_ECHO_FILTER_PRE_SAMPLES +
+		scan->best_window_delay_samples + PCM_HOST_ECHO_FILTER_PRE_SAMPLES +
 			echo->reference.scan_step < scan->current_window_delay_samples;
 
 	return (!echo->filter_ready || extend_weak_window) &&
-	       echo->train_peak >= V90_HOST_ECHO_READY_MIN_PEAK &&
+	       echo->train_peak >= PCM_HOST_ECHO_READY_MIN_PEAK &&
 	       delta > echo->reference.scan_step &&
 	       scan->best_window_delay_samples != 0 &&
 	       scan->best_window_delay_samples !=
 		       scan->current_window_delay_samples &&
 	       scan->best_correlation_ppm >=
-		       V90_HOST_ECHO_SCAN_CORRELATION_PPM &&
+		       PCM_HOST_ECHO_SCAN_CORRELATION_PPM &&
 	       (extend_weak_window || scan->best_correlation_ppm >= improvement);
 }
 
 static void commit_training_step(
-	struct v90_host_echo *echo, const struct training_step *step)
+	struct pcm_host_echo *echo, const struct training_step *step)
 {
 	memcpy(echo->coefficients, step->coefficients,
 	       sizeof(echo->coefficients));
@@ -450,7 +450,7 @@ static void commit_training_step(
 }
 
 static bool timing_is_qualified(
-	const struct v90_host_echo_timing_evidence *e,
+	const struct pcm_host_echo_timing_evidence *e,
 	unsigned samples, unsigned strength)
 {
 	/* Require useful cancellation as well as correlation. Compare against
@@ -470,11 +470,11 @@ static bool timing_is_qualified(
 }
 
 static void track_timing(
-	struct v90_host_echo *echo, int16_t received, int16_t cleaned)
+	struct pcm_host_echo *echo, int16_t received, int16_t cleaned)
 {
-	struct v90_host_echo_timing *t = &echo->timing;
-	const unsigned bins = V90_HOST_ECHO_TIMING_BINS;
-	const unsigned radius = V90_HOST_ECHO_TIMING_RADIUS;
+	struct pcm_host_echo_timing *t = &echo->timing;
+	const unsigned bins = PCM_HOST_ECHO_TIMING_BINS;
+	const unsigned radius = PCM_HOST_ECHO_TIMING_RADIUS;
 	unsigned index = t->write;
 	int16_t input;
 
@@ -500,22 +500,22 @@ static void track_timing(
 		t->energy[candidate] += (int64_t)predicted * predicted;
 		index = index == 0 ? bins - 1 : index - 1;
 	}
-	if (++t->count != V90_HOST_ECHO_TIMING_WINDOW)
+	if (++t->count != PCM_HOST_ECHO_TIMING_WINDOW)
 		return;
 	unsigned best = radius;
 	for (unsigned candidate = 0; candidate < bins; ++candidate)
 		if (2 * t->cross[candidate] - (int64_t)t->energy[candidate] >
 		    2 * t->cross[best] - (int64_t)t->energy[best])
 			best = candidate;
-	struct v90_host_echo_timing_evidence evidence = {
+	struct pcm_host_echo_timing_evidence evidence = {
 		.cross = t->cross[best], .current_cross = t->cross[radius],
 		.energy = t->energy[best], .current_energy = t->energy[radius],
 		.input = t->input,
 	};
 	bool qualified = timing_is_qualified(
-		&evidence, V90_HOST_ECHO_TIMING_WINDOW, 9);
+		&evidence, PCM_HOST_ECHO_TIMING_WINDOW, 9);
 	if (t->second && t->first_qualified && qualified && best == t->candidate) {
-		struct v90_host_echo_timing_evidence combined = {
+		struct pcm_host_echo_timing_evidence combined = {
 			.cross = evidence.cross + t->first.cross,
 			.current_cross = evidence.current_cross + t->first.current_cross,
 			.energy = evidence.energy + t->first.energy,
@@ -526,11 +526,11 @@ static void track_timing(
 
 		/* Two disjoint windows must choose the same useful delay, and
 		 * the combined normalized correlation must be stronger still. */
-		if (timing_is_qualified(&combined, 2 * V90_HOST_ECHO_TIMING_WINDOW, 36) &&
+		if (timing_is_qualified(&combined, 2 * PCM_HOST_ECHO_TIMING_WINDOW, 36) &&
 		    delay > 0 && delay <= PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES &&
-		    (uint64_t)delay + V90_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
+		    (uint64_t)delay + PCM_HOST_ECHO_FILTER_TAPS - 1 <= echo->reference.fill &&
 		    pcm_echo_reference_start_scan(&echo->reference, (uint32_t)delay,
-					  V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK) {
+					  PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK) {
 			echo->window_delay_samples = (uint32_t)delay;
 			memset(t, 0, sizeof(*t));
 			return;
@@ -546,34 +546,34 @@ static void track_timing(
 	memset(t->energy, 0, sizeof(t->energy));
 }
 
-static enum v90_host_echo_result advance_predicted(
-	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+static enum pcm_host_echo_result advance_predicted(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t cleaned_sample,
 	int16_t transmitted_sample)
 {
 	struct pcm_echo_reference_scan_result scan;
 	struct training_step training;
 	uint32_t next_quiet;
-	enum v90_host_echo_result result;
+	enum pcm_host_echo_result result;
 	enum pcm_echo_reference_result reference_result;
 
-	if (mode != V90_HOST_ECHO_FILTER && echo->timing.fill != 0)
+	if (mode != PCM_HOST_ECHO_FILTER && echo->timing.fill != 0)
 		memset(&echo->timing, 0, sizeof(echo->timing));
-	if (mode == V90_HOST_ECHO_FILTER && echo->filter_ready)
+	if (mode == PCM_HOST_ECHO_FILTER && echo->filter_ready)
 		track_timing(echo, received_sample, cleaned_sample);
 
-	if (mode == V90_HOST_ECHO_TRAIN) {
+	if (mode == PCM_HOST_ECHO_TRAIN) {
 		next_quiet = echo->quiet_samples == UINT32_MAX ? UINT32_MAX :
 			echo->quiet_samples + 1u;
-		if (next_quiet >= V90_HOST_ECHO_QUIET_SAMPLES) {
+		if (next_quiet >= PCM_HOST_ECHO_QUIET_SAMPLES) {
 			result = prepare_training_step(
 				echo, received_sample, &training);
-			if (result != V90_HOST_ECHO_OK)
+			if (result != PCM_HOST_ECHO_OK)
 				return result;
 			reference_result = PCM_ECHO_REFERENCE_NOT_READY;
 			if (training.available &&
 			    training.train_samples %
-				    V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES == 0)
+				    PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES == 0)
 				reference_result =
 					pcm_echo_reference_scan_observe(
 						&echo->reference,
@@ -582,7 +582,7 @@ static enum v90_host_echo_result advance_predicted(
 			    reference_result != PCM_ECHO_REFERENCE_NOT_READY &&
 			    reference_result !=
 				    PCM_ECHO_REFERENCE_SCAN_READY)
-				return V90_HOST_ECHO_INVALID_STATE;
+				return PCM_HOST_ECHO_INVALID_STATE;
 			/* Qualify the current model before a completed scan considers
 			 * discarding it just to recenter the same covered echo. */
 			if (training.available) {
@@ -600,51 +600,51 @@ static enum v90_host_echo_result advance_predicted(
 				echo->window_delay_samples =
 					scan.best_window_delay_samples;
 				echo->delay_acquired = true;
-				if (restart_training(echo) != V90_HOST_ECHO_OK)
-					return V90_HOST_ECHO_INVALID_STATE;
+				if (restart_training(echo) != PCM_HOST_ECHO_OK)
+					return PCM_HOST_ECHO_INVALID_STATE;
 				goto push_reference;
 			}
 		}
 		echo->quiet_samples = next_quiet;
 		if (!echo->filter_ready &&
-		    echo->train_samples >= V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES &&
-		    restart_training(echo) != V90_HOST_ECHO_OK)
-			return V90_HOST_ECHO_INVALID_STATE;
+		    echo->train_samples >= PCM_HOST_ECHO_TRAIN_WINDOW_SAMPLES &&
+		    restart_training(echo) != PCM_HOST_ECHO_OK)
+			return PCM_HOST_ECHO_INVALID_STATE;
 	}
 
 push_reference:
 	if (pcm_echo_reference_push(&echo->reference, transmitted_sample) !=
 		    PCM_ECHO_REFERENCE_OK)
-		return V90_HOST_ECHO_INVALID_STATE;
-	return V90_HOST_ECHO_OK;
+		return PCM_HOST_ECHO_INVALID_STATE;
+	return PCM_HOST_ECHO_OK;
 }
 
-enum v90_host_echo_result v90_host_echo_advance_predicted(
-	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+enum pcm_host_echo_result pcm_host_echo_advance_predicted(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t cleaned_sample,
 	int16_t transmitted_sample)
 {
 	if (!header_is_valid(echo))
-		return V90_HOST_ECHO_INVALID_STATE;
+		return PCM_HOST_ECHO_INVALID_STATE;
 	if (!mode_is_valid(mode))
-		return V90_HOST_ECHO_INVALID_ARGUMENT;
+		return PCM_HOST_ECHO_INVALID_ARGUMENT;
 	return advance_predicted(echo, mode, received_sample, cleaned_sample,
 				 transmitted_sample);
 }
 
-enum v90_host_echo_result v90_host_echo_advance(
-	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+enum pcm_host_echo_result pcm_host_echo_advance(
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	int16_t received_sample, int16_t cleaned_sample,
 	int16_t transmitted_sample)
 {
 	int16_t expected;
-	enum v90_host_echo_result result = v90_host_echo_predict(
+	enum pcm_host_echo_result result = pcm_host_echo_predict(
 		echo, mode, received_sample, &expected);
 
-	if (result != V90_HOST_ECHO_OK)
+	if (result != PCM_HOST_ECHO_OK)
 		return result;
 	if (expected != cleaned_sample)
-		return V90_HOST_ECHO_SEQUENCE_MISMATCH;
+		return PCM_HOST_ECHO_SEQUENCE_MISMATCH;
 	return advance_predicted(echo, mode, received_sample, cleaned_sample,
 				 transmitted_sample);
 }

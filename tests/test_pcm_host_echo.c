@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
-#include <v90_host_echo.h>
+#include <pcm_host_echo.h>
 
 #include <inttypes.h>
 #include <limits.h>
@@ -22,14 +22,14 @@
 
 enum {
 	RETURN_DELAY = 5600,
-	FILTER_DELAY = RETURN_DELAY - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+	FILTER_DELAY = RETURN_DELAY - PCM_HOST_ECHO_FILTER_PRE_SAMPLES,
 	TRAIN_SAMPLES = 16000,
 	VERIFY_SAMPLES = 4000,
 	FALSE_TRAIN_SAMPLES = 8000,
 	SHORT_RETURN_DELAY = 724,
 	SHORT_PHASE2_DELAY = 324,
 	SHORT_FILTER_DELAY =
-		SHORT_RETURN_DELAY - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+		SHORT_RETURN_DELAY - PCM_HOST_ECHO_FILTER_PRE_SAMPLES,
 	SHORT_TRAIN_SAMPLES = 5000,
 };
 
@@ -98,92 +98,92 @@ static uint64_t energy_add(uint64_t accumulated, int32_t sample)
 }
 
 static bool echo_step(
-	struct v90_host_echo *echo, enum v90_host_echo_mode mode,
+	struct pcm_host_echo *echo, enum pcm_host_echo_mode mode,
 	size_t index, int16_t received, int16_t *cleaned)
 {
-	return v90_host_echo_predict(echo, mode, received, cleaned) ==
-		       V90_HOST_ECHO_OK &&
-	       v90_host_echo_advance_predicted(
+	return pcm_host_echo_predict(echo, mode, received, cleaned) ==
+		       PCM_HOST_ECHO_OK &&
+	       pcm_host_echo_advance_predicted(
 		       echo, mode, received, *cleaned,
-		       transmit_sample(index)) == V90_HOST_ECHO_OK;
+		       transmit_sample(index)) == PCM_HOST_ECHO_OK;
 }
 
 static bool test_contracts(void)
 {
-	struct v90_host_echo echo;
-	struct v90_host_echo saved;
-	struct v90_host_echo predicted;
+	struct pcm_host_echo echo;
+	struct pcm_host_echo saved;
+	struct pcm_host_echo predicted;
 	int16_t cleaned = 1234;
 
-	CHECK(v90_host_echo_init(NULL) == V90_HOST_ECHO_INVALID_ARGUMENT,
+	CHECK(pcm_host_echo_init(NULL) == PCM_HOST_ECHO_INVALID_ARGUMENT,
 	      "null owner initialized");
 	memset(&echo, 0xa5, sizeof(echo));
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_is_valid(&echo) &&
-	      !v90_host_echo_is_ready(&echo) &&
-	      !v90_host_echo_has_weak_margin(&echo) &&
-	      v90_host_echo_window_delay_samples(&echo) ==
-		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_is_valid(&echo) &&
+	      !pcm_host_echo_is_ready(&echo) &&
+	      !pcm_host_echo_has_weak_margin(&echo) &&
+	      pcm_host_echo_window_delay_samples(&echo) ==
+		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 	      "ordinary owner did not initialize");
 	memset(&saved, 0, sizeof(saved));
-	saved.window_delay_samples = V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
+	saved.window_delay_samples = PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES;
 	CHECK(pcm_echo_reference_start_scan(&saved.reference,
-		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
-		      V90_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
+		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
+		      PCM_HOST_ECHO_FILTER_PRE_SAMPLES) == PCM_ECHO_REFERENCE_OK &&
 	      memcmp(&echo, &saved, sizeof(echo)) == 0,
 	      "owner differs from zero state with configured scan");
-	CHECK(!v90_host_echo_is_ready(NULL) &&
-	      !v90_host_echo_has_weak_margin(NULL) &&
-	      v90_host_echo_window_delay_samples(NULL) == 0,
+	CHECK(!pcm_host_echo_is_ready(NULL) &&
+	      !pcm_host_echo_has_weak_margin(NULL) &&
+	      pcm_host_echo_window_delay_samples(NULL) == 0,
 	      "null owner answered a lifecycle query");
-	CHECK(v90_host_echo_predict(NULL, V90_HOST_ECHO_BYPASS, 17,
+	CHECK(pcm_host_echo_predict(NULL, PCM_HOST_ECHO_BYPASS, 17,
 				    &cleaned) ==
-		      V90_HOST_ECHO_INVALID_STATE && cleaned == 1234,
+		      PCM_HOST_ECHO_INVALID_STATE && cleaned == 1234,
 	      "null prediction changed output");
-	CHECK(v90_host_echo_predict(
-		      &echo, (enum v90_host_echo_mode)99, 17, &cleaned) ==
-		      V90_HOST_ECHO_INVALID_ARGUMENT && cleaned == 1234,
+	CHECK(pcm_host_echo_predict(
+		      &echo, (enum pcm_host_echo_mode)99, 17, &cleaned) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT && cleaned == 1234,
 	      "invalid mode changed prediction output");
-	CHECK(v90_host_echo_predict(
-		      &echo, V90_HOST_ECHO_BYPASS, 17, NULL) ==
-		      V90_HOST_ECHO_INVALID_ARGUMENT,
+	CHECK(pcm_host_echo_predict(
+		      &echo, PCM_HOST_ECHO_BYPASS, 17, NULL) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT,
 	      "null prediction output was accepted");
-	CHECK(v90_host_echo_predict(
-		      &echo, V90_HOST_ECHO_BYPASS, 17, (int16_t *)&echo) ==
-		      V90_HOST_ECHO_INVALID_ARGUMENT,
+	CHECK(pcm_host_echo_predict(
+		      &echo, PCM_HOST_ECHO_BYPASS, 17, (int16_t *)&echo) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT,
 	      "owner/output overlap was accepted");
-	CHECK(v90_host_echo_predict(
-		      &echo, V90_HOST_ECHO_FILTER, 17, &cleaned) ==
-		      V90_HOST_ECHO_OK && cleaned == 17,
+	CHECK(pcm_host_echo_predict(
+		      &echo, PCM_HOST_ECHO_FILTER, 17, &cleaned) ==
+		      PCM_HOST_ECHO_OK && cleaned == 17,
 	      "untrained filter changed input");
 	saved = echo;
-	CHECK(v90_host_echo_advance(
-		      &echo, V90_HOST_ECHO_FILTER, 17, 18, 91) ==
-		      V90_HOST_ECHO_SEQUENCE_MISMATCH &&
+	CHECK(pcm_host_echo_advance(
+		      &echo, PCM_HOST_ECHO_FILTER, 17, 18, 91) ==
+		      PCM_HOST_ECHO_SEQUENCE_MISMATCH &&
 	      memcmp(&echo, &saved, sizeof(saved)) == 0,
 	      "prediction mismatch changed owner");
-	CHECK(v90_host_echo_advance(
-		      &echo, (enum v90_host_echo_mode)99, 17, 17, 91) ==
-		      V90_HOST_ECHO_INVALID_ARGUMENT &&
+	CHECK(pcm_host_echo_advance(
+		      &echo, (enum pcm_host_echo_mode)99, 17, 17, 91) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT &&
 	      memcmp(&echo, &saved, sizeof(saved)) == 0,
 	      "invalid advance mode changed owner");
 	predicted = echo;
-	CHECK(v90_host_echo_advance(
-		      &echo, V90_HOST_ECHO_FILTER, 17, 17, 91) ==
-		      V90_HOST_ECHO_OK && echo.reference.fill == 1,
+	CHECK(pcm_host_echo_advance(
+		      &echo, PCM_HOST_ECHO_FILTER, 17, 17, 91) ==
+		      PCM_HOST_ECHO_OK && echo.reference.fill == 1,
 	      "matching prediction did not advance reference");
-	CHECK(v90_host_echo_advance_predicted(
-		      &predicted, V90_HOST_ECHO_FILTER, 17, 17, 91) ==
-	      V90_HOST_ECHO_OK && memcmp(&echo, &predicted, sizeof(echo)) == 0,
+	CHECK(pcm_host_echo_advance_predicted(
+		      &predicted, PCM_HOST_ECHO_FILTER, 17, 17, 91) ==
+	      PCM_HOST_ECHO_OK && memcmp(&echo, &predicted, sizeof(echo)) == 0,
 	      "predicted advance diverged from checked advance");
 	echo.window_delay_samples = 0;
-	CHECK(!v90_host_echo_is_valid(&echo) &&
-	      v90_host_echo_predict(
-		      &echo, V90_HOST_ECHO_BYPASS, 0, &cleaned) ==
-		      V90_HOST_ECHO_INVALID_STATE,
+	CHECK(!pcm_host_echo_is_valid(&echo) &&
+	      pcm_host_echo_predict(
+		      &echo, PCM_HOST_ECHO_BYPASS, 0, &cleaned) ==
+		      PCM_HOST_ECHO_INVALID_STATE,
 	      "corrupt owner was accepted");
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_is_valid(&echo) &&
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_is_valid(&echo) &&
 	      memcmp(&echo, &saved, sizeof(echo)) == 0,
 	      "reset retained history or scan state");
 	return true;
@@ -191,28 +191,28 @@ static bool test_contracts(void)
 
 static bool test_half_sample_prediction(void)
 {
-	struct v90_host_echo echo;
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	struct pcm_host_echo echo;
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "rounding owner did not initialize");
-	for (unsigned i = 0; i < echo.window_delay_samples + V90_HOST_ECHO_FILTER_TAPS; ++i)
+	for (unsigned i = 0; i < echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS; ++i)
 		CHECK(pcm_echo_reference_push(&echo.reference, 1) == PCM_ECHO_REFERENCE_OK,
 		      "rounding reference did not fill");
 	echo.filter_ready = true;
-	echo.train_samples = V90_HOST_ECHO_TRAIN_MIN_SAMPLES;
-	echo.train_peak = V90_HOST_ECHO_READY_MIN_PEAK;
-	CHECK(v90_host_echo_is_valid(&echo), "rounding fixture is invalid");
+	echo.train_samples = PCM_HOST_ECHO_TRAIN_MIN_SAMPLES;
+	echo.train_peak = PCM_HOST_ECHO_READY_MIN_PEAK;
+	CHECK(pcm_host_echo_is_valid(&echo), "rounding fixture is invalid");
 	for (int sign = -1; sign <= 1; sign += 2) {
 		echo.coefficients[0] = sign * 0.5f;
 		/* Both taps are exactly representable floats. Their double sum is
 		 * the representable neighbor just below the half-sample magnitude. */
 		echo.coefficients[1] = -sign * 0x1p-54f;
 		int16_t cleaned = 1234;
-		CHECK(v90_host_echo_predict(&echo, V90_HOST_ECHO_FILTER, 0, &cleaned) ==
-		      V90_HOST_ECHO_OK && cleaned == 0,
+		CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER, 0, &cleaned) ==
+		      PCM_HOST_ECHO_OK && cleaned == 0,
 		      "sub-half echo rounded across the boundary for sign %d", sign);
 		echo.coefficients[1] = 0.0f;
-		CHECK(v90_host_echo_predict(&echo, V90_HOST_ECHO_FILTER, 0, &cleaned) ==
-		      V90_HOST_ECHO_OK && cleaned == -sign,
+		CHECK(pcm_host_echo_predict(&echo, PCM_HOST_ECHO_FILTER, 0, &cleaned) ==
+		      PCM_HOST_ECHO_OK && cleaned == -sign,
 		      "half echo did not round away from zero for sign %d", sign);
 	}
 	return true;
@@ -220,32 +220,32 @@ static bool test_half_sample_prediction(void)
 
 static bool test_long_delay_cancellation(void)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 	uint64_t echo_energy = 0;
 	uint64_t residual_energy = 0;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "training owner did not initialize");
 	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
 		int16_t received = echo_sample(index);
 		int16_t cleaned;
 
 		CHECK(echo_step(
-			      &echo, V90_HOST_ECHO_TRAIN, index,
+			      &echo, PCM_HOST_ECHO_TRAIN, index,
 			      received, &cleaned),
 		      "training failed at sample %zu", index);
 		CHECK(cleaned == received,
 		      "training filtered sample %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo) &&
-	      !v90_host_echo_has_weak_margin(&echo),
+	CHECK(pcm_host_echo_is_ready(&echo) &&
+	      !pcm_host_echo_has_weak_margin(&echo),
 	      "trained filter did not become ready: delay=%u train=%u peak=%u",
-	      v90_host_echo_window_delay_samples(&echo),
+	      pcm_host_echo_window_delay_samples(&echo),
 	      echo.train_samples, echo.train_peak);
 	CHECK(echo.delay_acquired &&
-	      v90_host_echo_window_delay_samples(&echo) == FILTER_DELAY,
+	      pcm_host_echo_window_delay_samples(&echo) == FILTER_DELAY,
 	      "long delay was not acquired: %u",
-	      v90_host_echo_window_delay_samples(&echo));
+	      pcm_host_echo_window_delay_samples(&echo));
 
 	for (size_t index = TRAIN_SAMPLES;
 	     index < TRAIN_SAMPLES + VERIFY_SAMPLES; ++index) {
@@ -256,7 +256,7 @@ static bool test_long_delay_cancellation(void)
 		int32_t error;
 
 		CHECK(echo_step(
-			      &echo, V90_HOST_ECHO_FILTER, index,
+			      &echo, PCM_HOST_ECHO_FILTER, index,
 			      received, &cleaned),
 		      "filtering failed at sample %zu", index);
 		error = (int32_t)cleaned - remote;
@@ -269,33 +269,33 @@ static bool test_long_delay_cancellation(void)
 	      residual_energy, echo_energy);
 
 	{
-		struct v90_host_echo corrupt = echo;
+		struct pcm_host_echo corrupt = echo;
 		int16_t unchanged = 321;
 
 		corrupt.coefficients[0] = NAN;
-		CHECK(!v90_host_echo_is_valid(&corrupt) &&
-		      v90_host_echo_predict(
-			      &corrupt, V90_HOST_ECHO_FILTER, 0,
-			      &unchanged) == V90_HOST_ECHO_NUMERIC_FAILURE &&
+		CHECK(!pcm_host_echo_is_valid(&corrupt) &&
+		      pcm_host_echo_predict(
+			      &corrupt, PCM_HOST_ECHO_FILTER, 0,
+			      &unchanged) == PCM_HOST_ECHO_NUMERIC_FAILURE &&
 		      unchanged == 321,
 		      "non-finite active model changed output");
 	}
 	{
-		struct v90_host_echo fresh;
+		struct pcm_host_echo fresh;
 		int16_t cleaned = 321;
 
-		CHECK(v90_host_echo_init(&fresh) == V90_HOST_ECHO_OK &&
-		      v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-		      !v90_host_echo_is_ready(&echo) &&
+		CHECK(pcm_host_echo_init(&fresh) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+		      !pcm_host_echo_is_ready(&echo) &&
 		      memcmp(&echo, &fresh, sizeof(echo)) == 0,
 		      "new training epoch retained old model or readiness");
-		CHECK(v90_host_echo_predict(
-			      &echo, V90_HOST_ECHO_FILTER, 1234, &cleaned) ==
-			      V90_HOST_ECHO_OK && cleaned == 1234,
+		CHECK(pcm_host_echo_predict(
+			      &echo, PCM_HOST_ECHO_FILTER, 1234, &cleaned) ==
+			      PCM_HOST_ECHO_OK && cleaned == 1234,
 		      "reset model filtered input before new training");
-		CHECK(v90_host_echo_seed_phase2_delay(
-			      &echo, SHORT_PHASE2_DELAY) == V90_HOST_ECHO_OK &&
-		      v90_host_echo_window_delay_samples(&echo) ==
+		CHECK(pcm_host_echo_seed_phase2_delay(
+			      &echo, SHORT_PHASE2_DELAY) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_window_delay_samples(&echo) ==
 			      SHORT_FILTER_DELAY,
 		      "new training epoch rejected a fresh ranging delay");
 	}
@@ -304,26 +304,26 @@ static bool test_long_delay_cancellation(void)
 
 static bool test_phase2_delay_seed(void)
 {
-	struct v90_host_echo seeded;
-	struct v90_host_echo unseeded;
-	struct v90_host_echo saved;
+	struct pcm_host_echo seeded;
+	struct pcm_host_echo unseeded;
+	struct pcm_host_echo saved;
 
-	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_init(&unseeded) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&seeded) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_init(&unseeded) == PCM_HOST_ECHO_OK,
 	      "delay-seed owners did not initialize");
 	saved = seeded;
-	CHECK(v90_host_echo_seed_phase2_delay(NULL, SHORT_PHASE2_DELAY) ==
-		      V90_HOST_ECHO_INVALID_STATE &&
-	      v90_host_echo_seed_phase2_delay(&seeded, 0) ==
-		      V90_HOST_ECHO_INVALID_ARGUMENT &&
+	CHECK(pcm_host_echo_seed_phase2_delay(NULL, SHORT_PHASE2_DELAY) ==
+		      PCM_HOST_ECHO_INVALID_STATE &&
+	      pcm_host_echo_seed_phase2_delay(&seeded, 0) ==
+		      PCM_HOST_ECHO_INVALID_ARGUMENT &&
 	      memcmp(&seeded, &saved, sizeof(saved)) == 0,
 	      "invalid Phase-2 delay changed owner");
-	CHECK(v90_host_echo_seed_phase2_delay(
-		      &seeded, SHORT_PHASE2_DELAY) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_window_delay_samples(&seeded) ==
+	CHECK(pcm_host_echo_seed_phase2_delay(
+		      &seeded, SHORT_PHASE2_DELAY) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_window_delay_samples(&seeded) ==
 		      SHORT_FILTER_DELAY,
 	      "Phase-2 delay did not seed host echo: %u",
-	      v90_host_echo_window_delay_samples(&seeded));
+	      pcm_host_echo_window_delay_samples(&seeded));
 	CHECK(seeded.reference.scan_required_fill >=
 		      PCM_ECHO_REFERENCE_REQUIRED_DELAY_SAMPLES,
 	      "short seed narrowed long-delay coverage: %u",
@@ -335,38 +335,38 @@ static bool test_phase2_delay_seed(void)
 		int16_t unseeded_cleaned;
 
 		CHECK(echo_step(
-			      &seeded, V90_HOST_ECHO_TRAIN, index,
+			      &seeded, PCM_HOST_ECHO_TRAIN, index,
 			      received, &seeded_cleaned) &&
 		      echo_step(
-			      &unseeded, V90_HOST_ECHO_TRAIN, index,
+			      &unseeded, PCM_HOST_ECHO_TRAIN, index,
 			      received, &unseeded_cleaned),
 		      "delay-seed training failed at sample %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&seeded) &&
-	      !v90_host_echo_is_ready(&unseeded),
+	CHECK(pcm_host_echo_is_ready(&seeded) &&
+	      !pcm_host_echo_is_ready(&unseeded),
 	      "Phase-2 seed did not accelerate acquisition: seeded=%d "
 	      "unseeded=%d",
-	      v90_host_echo_is_ready(&seeded),
-	      v90_host_echo_is_ready(&unseeded));
+	      pcm_host_echo_is_ready(&seeded),
+	      pcm_host_echo_is_ready(&unseeded));
 	saved = seeded;
-	CHECK(v90_host_echo_seed_phase2_delay(
+	CHECK(pcm_host_echo_seed_phase2_delay(
 		      &seeded, SHORT_PHASE2_DELAY) ==
-		      V90_HOST_ECHO_INVALID_STATE &&
+		      PCM_HOST_ECHO_INVALID_STATE &&
 	      memcmp(&seeded, &saved, sizeof(saved)) == 0,
 	      "trained owner accepted a new Phase-2 delay");
-	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_seed_phase2_delay(
+	CHECK(pcm_host_echo_init(&seeded) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(
 		      &seeded, PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES +
-			       V90_HOST_ECHO_FILTER_PRE_SAMPLES) ==
-		      V90_HOST_ECHO_OK && v90_host_echo_is_valid(&seeded) &&
+			       PCM_HOST_ECHO_FILTER_PRE_SAMPLES) ==
+		      PCM_HOST_ECHO_OK && pcm_host_echo_is_valid(&seeded) &&
 	      seeded.window_delay_samples ==
 		      PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES,
 	      "last representable measured delay was not retained");
-	CHECK(v90_host_echo_init(&seeded) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_seed_phase2_delay(&seeded, UINT32_MAX) ==
-		      V90_HOST_ECHO_OK && v90_host_echo_is_valid(&seeded) &&
+	CHECK(pcm_host_echo_init(&seeded) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(&seeded, UINT32_MAX) ==
+		      PCM_HOST_ECHO_OK && pcm_host_echo_is_valid(&seeded) &&
 	      seeded.window_delay_samples ==
-		      V90_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
+		      PCM_HOST_ECHO_DEFAULT_WINDOW_DELAY_SAMPLES,
 	      "out-of-history ranging broke the default search");
 	return true;
 }
@@ -386,15 +386,15 @@ static bool test_long_phase2_delay_seed(void)
 
 	for (size_t trial = 0; trial < sizeof(paths) / sizeof(paths[0]);
 	     ++trial) {
-		struct v90_host_echo echo;
+		struct pcm_host_echo echo;
 		uint32_t delay = paths[trial].delay;
 		uint32_t seed = (uint32_t)((int)delay + paths[trial].seed_offset);
 		uint64_t echo_energy = 0;
 		uint64_t residual_energy = 0;
 
-		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-		      v90_host_echo_seed_phase2_delay(&echo, seed) ==
-			      V90_HOST_ECHO_OK,
+		CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_seed_phase2_delay(&echo, seed) ==
+			      PCM_HOST_ECHO_OK,
 		      "long ranging seed failed: %u", delay);
 		/* Phase 2 has already supplied TX history. A measured return inside
 		 * that history should train without first searching from the default
@@ -407,19 +407,19 @@ static bool test_long_phase2_delay_seed(void)
 				transmit_sample(index - delay), 11000) : 0;
 			int16_t cleaned;
 
-			CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
-						     V90_HOST_ECHO_BYPASS,
+			CHECK(echo_step(&echo, train ? PCM_HOST_ECHO_TRAIN :
+						     PCM_HOST_ECHO_BYPASS,
 					index, received, &cleaned) &&
 			      cleaned == received,
 			      "long seed changed training input: %u/%zu", delay, index);
-			CHECK(train || !v90_host_echo_is_ready(&echo),
+			CHECK(train || !pcm_host_echo_is_ready(&echo),
 			      "ranging alone qualified an echo filter: %u", delay);
 		}
-		CHECK(v90_host_echo_is_ready(&echo) && !echo.delay_acquired &&
+		CHECK(pcm_host_echo_is_ready(&echo) && !echo.delay_acquired &&
 		      echo.window_delay_samples ==
-			      seed - V90_HOST_ECHO_FILTER_PRE_SAMPLES,
+			      seed - PCM_HOST_ECHO_FILTER_PRE_SAMPLES,
 		      "long measured delay needed a fresh search: %u ready=%d window=%u",
-		      delay, v90_host_echo_is_ready(&echo), echo.window_delay_samples);
+		      delay, pcm_host_echo_is_ready(&echo), echo.window_delay_samples);
 		for (size_t index = history + training;
 		     index < history + training + VERIFY_SAMPLES; ++index) {
 			int16_t remote = remote_sample(index);
@@ -427,7 +427,7 @@ static bool test_long_phase2_delay_seed(void)
 				transmit_sample(index - delay), 11000);
 			int16_t cleaned;
 
-			CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+			CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 					add_s16((int32_t)remote + returned), &cleaned),
 			      "long seeded filtering failed: %u/%zu", delay, index);
 			echo_energy = energy_add(echo_energy, returned);
@@ -443,9 +443,9 @@ static bool test_long_phase2_delay_seed(void)
 
 static bool test_weak_joint_margin(void)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "weak-margin owner did not initialize");
 	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
 		int16_t unrelated = generated_sample(
@@ -455,12 +455,12 @@ static bool test_weak_joint_margin(void)
 		int16_t cleaned;
 
 		CHECK(echo_step(
-			      &echo, V90_HOST_ECHO_TRAIN, index,
+			      &echo, PCM_HOST_ECHO_TRAIN, index,
 			      received, &cleaned),
 		      "weak-margin training failed at sample %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo) &&
-	      v90_host_echo_has_weak_margin(&echo),
+	CHECK(pcm_host_echo_is_ready(&echo) &&
+	      pcm_host_echo_has_weak_margin(&echo),
 	      "joint echo model did not retain weak margin: error=%" PRIu64
 	      " input=%" PRIu64,
 	      echo.error_energy, echo.input_energy);
@@ -483,33 +483,33 @@ static int16_t distributed_echo_sample(size_t index, size_t returns, bool late_p
 
 static bool test_distributed_echo(bool acquire, bool late_peak)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	const size_t training = acquire ? 8000 : 4000;
 	const size_t returns = acquire && !late_peak ? 8 : 16;
 	uint64_t echo_energy = 0, residual_energy = 0;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_seed_phase2_delay(&echo, acquire ? 2138 : 2967) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(&echo, acquire ? 2138 : 2967) == PCM_HOST_ECHO_OK,
 	      "distributed echo owner did not initialize");
 	for (size_t index = 0; index < history + training; ++index) {
 		bool train = index >= history;
 		int16_t received = train ? distributed_echo_sample(index, returns, late_peak) : 0;
 		int16_t cleaned;
 
-		CHECK(echo_step(&echo, train ? V90_HOST_ECHO_TRAIN :
-			V90_HOST_ECHO_BYPASS, index, received, &cleaned),
+		CHECK(echo_step(&echo, train ? PCM_HOST_ECHO_TRAIN :
+			PCM_HOST_ECHO_BYPASS, index, received, &cleaned),
 		      "distributed training failed at %zu", index);
 		CHECK(cleaned == received, "training changed input");
 		if (echo.delay_acquired &&
-		    echo.train_samples < V90_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES)
-			CHECK(!v90_host_echo_is_ready(&echo),
+		    echo.train_samples < PCM_HOST_ECHO_RETIMED_TRAIN_MIN_SAMPLES)
+			CHECK(!pcm_host_echo_is_ready(&echo),
 			      "delay acquisition alone qualified a filter");
 	}
-	CHECK(v90_host_echo_is_ready(&echo) && echo.delay_acquired == acquire &&
-	      (acquire || echo.window_delay_samples == 2967 - V90_HOST_ECHO_FILTER_PRE_SAMPLES) &&
+	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired == acquire &&
+	      (acquire || echo.window_delay_samples == 2967 - PCM_HOST_ECHO_FILTER_PRE_SAMPLES) &&
 	      echo.window_delay_samples <= 2967 &&
-	      echo.window_delay_samples + V90_HOST_ECHO_FILTER_TAPS > 2967 + 17 * (returns - 1),
+	      echo.window_delay_samples + PCM_HOST_ECHO_FILTER_TAPS > 2967 + 17 * (returns - 1),
 	      "distributed model did not qualify: ready=%d delay=%u",
 	      echo.filter_ready, echo.window_delay_samples);
 	for (size_t index = history + training;
@@ -517,7 +517,7 @@ static bool test_distributed_echo(bool acquire, bool late_peak)
 		int16_t remote = remote_sample(index);
 		int16_t returned = distributed_echo_sample(index, returns, late_peak);
 		int16_t cleaned;
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			add_s16((int32_t)remote + returned), &cleaned),
 		      "distributed verification failed at %zu", index);
 		echo_energy = energy_add(echo_energy, returned);
@@ -531,39 +531,39 @@ static bool test_distributed_echo(bool acquire, bool late_peak)
 
 static bool test_retained_cancellation(size_t training, bool unrelated)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	uint64_t source_energy = 0, residual_energy = 0;
 	bool ready = false, retained = false;
-	float saved[V90_HOST_ECHO_FILTER_TAPS];
+	float saved[PCM_HOST_ECHO_FILTER_TAPS];
 
 	/* The seeded window covers enough later returns to qualify weakly,
 	 * but leaves the first returns outside. A new window needs more time
 	 * to qualify; short training must keep the original cancellation. */
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK &&
-	      v90_host_echo_seed_phase2_delay(&echo, 3067) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK &&
+	      pcm_host_echo_seed_phase2_delay(&echo, 3067) == PCM_HOST_ECHO_OK,
 	      "retained echo owner did not initialize");
 	for (size_t i = 0; i < history + training; ++i) {
 		int16_t clean, received = i >= history ? distributed_echo_sample(i, 8, false) : 0;
 
 		if (retained && unrelated)
 			received = generated_sample(i, UINT32_C(0xf4a8b223), 30000);
-		CHECK(echo_step(&echo, i >= history ? V90_HOST_ECHO_TRAIN : V90_HOST_ECHO_BYPASS,
+		CHECK(echo_step(&echo, i >= history ? PCM_HOST_ECHO_TRAIN : PCM_HOST_ECHO_BYPASS,
 			      i, received, &clean), "retained training failed at %zu", i);
-		CHECK(clean == received && (!ready || v90_host_echo_is_ready(&echo)),
+		CHECK(clean == received && (!ready || pcm_host_echo_is_ready(&echo)),
 		      "training changed input or lost qualified cancellation at %zu", i);
-		ready |= v90_host_echo_is_ready(&echo);
+		ready |= pcm_host_echo_is_ready(&echo);
 		if (echo.retained_delay_samples) {
 			if (!retained)
 				memcpy(saved, echo.retained_coefficients, sizeof(saved));
 			CHECK(!memcmp(saved, echo.retained_coefficients, sizeof(saved)),
 			      "retained coefficients were refitted");
-			CHECK(!echo.filter_ready && v90_host_echo_has_weak_margin(&echo),
+			CHECK(!echo.filter_ready && pcm_host_echo_has_weak_margin(&echo),
 			      "unqualified replacement lost retained quality");
 			retained = true;
 		}
 	}
-	CHECK(retained && v90_host_echo_is_ready(&echo),
+	CHECK(retained && pcm_host_echo_is_ready(&echo),
 	      "fixture did not retain its partial model");
 	bool replaced = training >= 6500 && !unrelated;
 
@@ -573,7 +573,7 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 		int16_t returned = distributed_echo_sample(i, 8, false);
 		int16_t peer = remote_sample(i), clean;
 
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, i,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, i,
 			      add_s16((int32_t)returned + peer), &clean),
 		      "retained filtering failed at %zu", i);
 		source_energy = energy_add(source_energy, returned);
@@ -583,23 +583,23 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 	      "retained cancellation failed: training=%zu unrelated=%u residual=%" PRIu64
 	      " source=%" PRIu64, training, unrelated, residual_energy, source_energy);
 	if (echo.retained_delay_samples) {
-		struct v90_host_echo invalid = echo;
+		struct pcm_host_echo invalid = echo;
 
 		invalid.retained_delay_samples = PCM_ECHO_REFERENCE_MAX_WINDOW_DELAY_SAMPLES + 1u;
-		CHECK(!v90_host_echo_is_valid(&invalid), "out-of-history retained model accepted");
+		CHECK(!pcm_host_echo_is_valid(&invalid), "out-of-history retained model accepted");
 		invalid = echo;
 		invalid.retained_coefficients[0] = NAN;
-		CHECK(!v90_host_echo_is_valid(&invalid), "nonfinite retained model accepted");
+		CHECK(!pcm_host_echo_is_valid(&invalid), "nonfinite retained model accepted");
 		invalid = echo;
 		invalid.filter_ready = true;
-		CHECK(!v90_host_echo_is_valid(&invalid), "two active models accepted");
+		CHECK(!pcm_host_echo_is_valid(&invalid), "two active models accepted");
 		invalid = echo;
 		invalid.retained_delay_samples = 0;
-		CHECK(!v90_host_echo_is_valid(&invalid), "unowned retained coefficients accepted");
+		CHECK(!pcm_host_echo_is_valid(&invalid), "unowned retained coefficients accepted");
 	}
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK, "retained owner reset failed");
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK, "retained owner reset failed");
 	echo.retained_coefficients[0] = 1.0f;
-	CHECK(v90_host_echo_seed_phase2_delay(&echo, 3067) == V90_HOST_ECHO_INVALID_STATE,
+	CHECK(pcm_host_echo_seed_phase2_delay(&echo, 3067) == PCM_HOST_ECHO_INVALID_STATE,
 	      "unowned retained coefficients accepted as pristine");
 	return true;
 }
@@ -607,32 +607,32 @@ static bool test_retained_cancellation(size_t training, bool unrelated)
 static bool test_training_quiet_boundary(void)
 {
 	for (unsigned scenario = 0; scenario < 3; ++scenario) {
-		struct v90_host_echo echo;
+		struct pcm_host_echo echo;
 
-		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+		CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 		      "quiet-boundary owner did not initialize");
 		if (scenario != 0) {
 			for (unsigned index = 0;
 			     index < echo.window_delay_samples +
-				     V90_HOST_ECHO_FILTER_TAPS - 1u; ++index)
+				     PCM_HOST_ECHO_FILTER_TAPS - 1u; ++index)
 				CHECK(pcm_echo_reference_push(
 					      &echo.reference, scenario == 2 ? 100 : 0) ==
 					      PCM_ECHO_REFERENCE_OK,
 				      "quiet-boundary reference did not fill");
 		}
-		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES - 2u;
+		echo.quiet_samples = PCM_HOST_ECHO_QUIET_SAMPLES - 2u;
 		for (unsigned step = 0; step < 2; ++step) {
 			unsigned trained = scenario == 2 && step == 1;
 
-			CHECK(v90_host_echo_advance(
-				      &echo, V90_HOST_ECHO_TRAIN, 100, 100, 100) ==
-				      V90_HOST_ECHO_OK &&
+			CHECK(pcm_host_echo_advance(
+				      &echo, PCM_HOST_ECHO_TRAIN, 100, 100, 100) ==
+				      PCM_HOST_ECHO_OK &&
 			      echo.quiet_samples ==
-				      V90_HOST_ECHO_QUIET_SAMPLES - 1u + step &&
+				      PCM_HOST_ECHO_QUIET_SAMPLES - 1u + step &&
 			      echo.train_samples == trained &&
 			      (trained ? echo.coefficients[0] > 0.0f :
 					 echo.coefficients[0] == 0.0f) &&
-			      v90_host_echo_is_valid(&echo),
+			      pcm_host_echo_is_valid(&echo),
 			      "quiet-boundary scenario %u step %u changed training",
 			      scenario, step);
 		}
@@ -643,20 +643,20 @@ static bool test_training_quiet_boundary(void)
 static bool test_prediction_energy_saturation(void)
 {
 	for (int sign = -1; sign <= 1; sign += 2) {
-		struct v90_host_echo echo;
+		struct pcm_host_echo echo;
 		int16_t received = sign * 100;
 
-		CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+		CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 		      "saturation owner did not initialize");
 		for (size_t index = 0; index < PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 		     ++index)
 			CHECK(pcm_echo_reference_push(&echo.reference, 100) ==
 			      PCM_ECHO_REFERENCE_OK, "saturation history fill failed");
 		echo.coefficients[0] = 1e20f;
-		echo.quiet_samples = V90_HOST_ECHO_QUIET_SAMPLES;
-		CHECK(v90_host_echo_advance(&echo, V90_HOST_ECHO_TRAIN,
-			received, received, 100) == V90_HOST_ECHO_OK &&
-		      v90_host_echo_is_valid(&echo) && !v90_host_echo_is_ready(&echo),
+		echo.quiet_samples = PCM_HOST_ECHO_QUIET_SAMPLES;
+		CHECK(pcm_host_echo_advance(&echo, PCM_HOST_ECHO_TRAIN,
+			received, received, 100) == PCM_HOST_ECHO_OK &&
+		      pcm_host_echo_is_valid(&echo) && !pcm_host_echo_is_ready(&echo),
 		      "finite oversized prediction broke training");
 		CHECK(echo.prediction_energy == UINT64_MAX &&
 		      echo.error_energy == UINT64_MAX &&
@@ -668,31 +668,31 @@ static bool test_prediction_energy_saturation(void)
 
 static bool test_unrelated_input_does_not_train(uint32_t salt, int16_t span)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 
 	/* Adaptation improves the current sample's fit even for independent
 	 * noise. Readiness must use predictions made before that update. */
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "noise owner did not initialize");
 	for (size_t index = 0; index < history + FALSE_TRAIN_SAMPLES; ++index) {
 		int16_t input = generated_sample(index, salt, span);
 		int16_t cleaned;
 
 		CHECK(echo_step(
-			      &echo, index < history ? V90_HOST_ECHO_BYPASS : V90_HOST_ECHO_TRAIN, index,
+			      &echo, index < history ? PCM_HOST_ECHO_BYPASS : PCM_HOST_ECHO_TRAIN, index,
 			      input, &cleaned),
 		      "noise training failed at sample %zu", index);
-		CHECK(cleaned == input && !v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
+		CHECK(cleaned == input && !pcm_host_echo_is_ready(&echo) && !echo.delay_acquired,
 		      "uncorrelated input acquired or enabled a filter at %zu", index);
 	}
-	CHECK(!v90_host_echo_is_ready(&echo) && !echo.delay_acquired,
+	CHECK(!pcm_host_echo_is_ready(&echo) && !echo.delay_acquired,
 	      "uncorrelated input produced a ready model: delay=%u corr=%" PRIi64,
 	      echo.window_delay_samples, echo.prediction_cross_energy);
 	CHECK(echo.reference.scan_samples != 0 &&
 	      echo.reference.scan_samples <=
 		      FALSE_TRAIN_SAMPLES /
-		      V90_HOST_ECHO_SCAN_INTERVAL_SAMPLES,
+		      PCM_HOST_ECHO_SCAN_INTERVAL_SAMPLES,
 	      "delay scan was not decimated: %u observations",
 	      echo.reference.scan_samples);
 	return true;
@@ -700,15 +700,15 @@ static bool test_unrelated_input_does_not_train(uint32_t salt, int16_t span)
 
 static bool test_acquisition_after_unrelated_prefix(void)
 {
-	struct v90_host_echo echo;
-	const size_t prefix = V90_HOST_ECHO_TRAIN_WINDOW_SAMPLES +
-		V90_HOST_ECHO_QUIET_SAMPLES;
+	struct pcm_host_echo echo;
+	const size_t prefix = PCM_HOST_ECHO_TRAIN_WINDOW_SAMPLES +
+		PCM_HOST_ECHO_QUIET_SAMPLES;
 	const size_t training = 3u * prefix;
 	const size_t history = PCM_ECHO_REFERENCE_HISTORY_SAMPLES;
 	uint64_t echo_energy = 0;
 	uint64_t residual_energy = 0;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "prefix owner did not initialize");
 	/* The peer can still be transmitting strongly when local TRN1d starts.
 	 * Keep ordinary TX history, then let that unrelated input subside after
@@ -717,8 +717,8 @@ static bool test_acquisition_after_unrelated_prefix(void)
 	for (size_t index = 0; index < history + training; ++index) {
 		int16_t received = echo_sample(index);
 		int16_t cleaned;
-		enum v90_host_echo_mode mode = index < history ?
-			V90_HOST_ECHO_BYPASS : V90_HOST_ECHO_TRAIN;
+		enum pcm_host_echo_mode mode = index < history ?
+			PCM_HOST_ECHO_BYPASS : PCM_HOST_ECHO_TRAIN;
 
 		if (index >= history && index < history + prefix)
 			received = add_s16((int32_t)received + generated_sample(
@@ -728,20 +728,20 @@ static bool test_acquisition_after_unrelated_prefix(void)
 		CHECK(cleaned == received,
 		      "unqualified/training sample was filtered at %zu", index);
 		if (index < history + prefix)
-			CHECK(!v90_host_echo_is_ready(&echo),
+			CHECK(!pcm_host_echo_is_ready(&echo),
 			      "unrelated prefix qualified a model at %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo) && echo.delay_acquired &&
+	CHECK(pcm_host_echo_is_ready(&echo) && echo.delay_acquired &&
 	      echo.window_delay_samples == FILTER_DELAY,
 	      "clean training retained rejected correlation: ready=%d delay=%u",
-	      v90_host_echo_is_ready(&echo), echo.window_delay_samples);
+	      pcm_host_echo_is_ready(&echo), echo.window_delay_samples);
 	for (size_t index = history + training;
 	     index < history + training + VERIFY_SAMPLES; ++index) {
 		int16_t remote = remote_sample(index);
 		int16_t returned = echo_sample(index);
 		int16_t cleaned;
 
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			       add_s16((int32_t)returned + remote), &cleaned),
 		      "post-prefix filtering failed at sample %zu", index);
 		echo_energy = energy_add(echo_energy, returned);
@@ -756,20 +756,20 @@ static bool test_acquisition_after_unrelated_prefix(void)
 
 static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 	uint64_t source_energy = 0, residual_energy = 0;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "timing owner did not initialize");
 	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
 		int16_t cleaned;
 
-		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
 			       echo_sample(index) / 16, &cleaned),
 		      "weak-return training failed at %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo), "weak return was not qualified");
-	float coefficients[V90_HOST_ECHO_FILTER_TAPS];
+	CHECK(pcm_host_echo_is_ready(&echo), "weak return was not qualified");
+	float coefficients[PCM_HOST_ECHO_FILTER_TAPS];
 	uint32_t original_delay = echo.window_delay_samples;
 
 	memcpy(coefficients, echo.coefficients, sizeof(coefficients));
@@ -777,12 +777,12 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	 * much louder. Only timing may change; never fit the remote as echo. */
 	for (size_t index = TRAIN_SAMPLES; index < TRAIN_SAMPLES + 48000; ++index) {
 		int16_t remote = remote_sample(index) * 7;
-		int shift = transient && index >= TRAIN_SAMPLES + V90_HOST_ECHO_TIMING_WINDOW ?
+		int shift = transient && index >= TRAIN_SAMPLES + PCM_HOST_ECHO_TIMING_WINDOW ?
 			0 : changed_delay;
 		int16_t returned = echo_sample((size_t)((int64_t)index - shift)) / 16;
 		int16_t cleaned;
 
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			       add_s16((int32_t)remote + returned), &cleaned),
 		      "changed-return filtering failed at %zu", index);
 		if (index >= TRAIN_SAMPLES + 40000) {
@@ -801,14 +801,14 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 	      "retimed residual too large: %" PRIu64 " / %" PRIu64,
 	      residual_energy, source_energy);
 	{
-		struct v90_host_echo saved = echo;
+		struct pcm_host_echo saved = echo;
 		int16_t cleaned;
 
-		CHECK(v90_host_echo_advance(&echo, V90_HOST_ECHO_FILTER,
-			0, INT16_MIN, 0) == V90_HOST_ECHO_SEQUENCE_MISMATCH &&
+		CHECK(pcm_host_echo_advance(&echo, PCM_HOST_ECHO_FILTER,
+			0, INT16_MIN, 0) == PCM_HOST_ECHO_SEQUENCE_MISMATCH &&
 		      memcmp(&echo, &saved, sizeof(echo)) == 0,
 		      "bad prediction advanced timing evidence");
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER,
 			       TRAIN_SAMPLES + 48000, INT16_MAX, &cleaned) &&
 		      echo.timing.fill == 0 && echo.timing.count == 0,
 		      "clipped input retained timing evidence");
@@ -820,18 +820,18 @@ static bool test_frozen_delay_tracking(int changed_delay, bool transient)
 
 static bool test_unrelated_input_does_not_retime(uint32_t salt)
 {
-	struct v90_host_echo echo;
+	struct pcm_host_echo echo;
 
-	CHECK(v90_host_echo_init(&echo) == V90_HOST_ECHO_OK,
+	CHECK(pcm_host_echo_init(&echo) == PCM_HOST_ECHO_OK,
 	      "false-timing owner did not initialize");
 	for (size_t index = 0; index < TRAIN_SAMPLES; ++index) {
 		int16_t cleaned;
 
-		CHECK(echo_step(&echo, V90_HOST_ECHO_TRAIN, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_TRAIN, index,
 			       echo_sample(index) / 16, &cleaned),
 		      "false-timing training failed at %zu", index);
 	}
-	CHECK(v90_host_echo_is_ready(&echo), "false-timing model not qualified");
+	CHECK(pcm_host_echo_is_ready(&echo), "false-timing model not qualified");
 	uint32_t original_delay = echo.window_delay_samples;
 
 	/* Remove the echo entirely. Coloured remote noise plus a tone must not
@@ -842,7 +842,7 @@ static bool test_unrelated_input_does_not_retime(uint32_t salt)
 		int16_t cleaned;
 
 		remote = remote / 2 + (int16_t)(500 * sin(index * .7));
-		CHECK(echo_step(&echo, V90_HOST_ECHO_FILTER, index,
+		CHECK(echo_step(&echo, PCM_HOST_ECHO_FILTER, index,
 			       (int16_t)remote, &cleaned),
 		      "unrelated input failed at %zu", index);
 		CHECK(echo.window_delay_samples == original_delay,
@@ -871,8 +871,8 @@ int main(void)
 	    !test_retained_cancellation(12000, true) ||
 	    !test_acquisition_after_unrelated_prefix())
 		return 1;
-	const int shifts[] = {0, 8, -60, -V90_HOST_ECHO_TIMING_RADIUS,
-		V90_HOST_ECHO_TIMING_RADIUS};
+	const int shifts[] = {0, 8, -60, -PCM_HOST_ECHO_TIMING_RADIUS,
+		PCM_HOST_ECHO_TIMING_RADIUS};
 	for (size_t index = 0; index < sizeof(shifts) / sizeof(shifts[0]); ++index)
 		if (!test_frozen_delay_tracking(shifts[index], false))
 			return 1;
@@ -881,6 +881,6 @@ int main(void)
 	for (uint32_t salt = 1; salt <= 8; ++salt)
 		if (!test_unrelated_input_does_not_retime(salt * UINT32_C(7919)))
 			return 1;
-	puts("V.90 host echo tests passed");
+	puts("PCM host echo tests passed");
 	return 0;
 }

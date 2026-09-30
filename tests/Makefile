@@ -38,7 +38,7 @@ V34_NATIVE_OBJECTS := \
 PCM_RUNTIME_SOURCE_NAMES := \
 	pcm_gain.c \
 	pcm_dil_descriptor.c pcm_downstream_rx.c pcm_downstream_tx.c pcm_downstream_equalizer.c \
-	pcm_echo_reference.c \
+	pcm_echo_reference.c pcm_host_echo.c \
 	pcm_info1.c pcm_j_frame.c pcm_r.c \
 	pcm_binary_sign.c \
 	pcm_phase2_info0_exchange.c pcm_phase2_info1_exchange.c \
@@ -1508,10 +1508,10 @@ PCM_ECHO_REFERENCE_TEST_BINARY := \
 PCM_ECHO_REFERENCE_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_pcm_echo_reference.o \
 	$(BUILD_DIR)/pcm_echo_reference.o
-V90_HOST_ECHO_TEST_BINARY := $(BUILD_DIR)/test_v90_host_echo
-V90_HOST_ECHO_TEST_OBJECTS := \
-	$(BUILD_DIR)/test_v90_host_echo.o \
-	$(BUILD_DIR)/v90_host_echo.o \
+PCM_HOST_ECHO_TEST_BINARY := $(BUILD_DIR)/test_pcm_host_echo
+PCM_HOST_ECHO_TEST_OBJECTS := \
+	$(BUILD_DIR)/test_pcm_host_echo.o \
+	$(BUILD_DIR)/pcm_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o
 V34_CALL_TEST_BINARY := $(BUILD_DIR)/test_v34_call
 V34_PHASE4_E_SEQUENCE_TEST_BINARY := \
@@ -2934,7 +2934,7 @@ V90_DATAPUMP_TEST_OBJECTS = $(sort \
 	$(BUILD_DIR)/v34_profile.o \
 	$(BUILD_DIR)/v90_datapump.o \
 	$(BUILD_DIR)/v92_data_quality.o \
-	$(BUILD_DIR)/v90_host_echo.o \
+	$(BUILD_DIR)/pcm_host_echo.o \
 	$(BUILD_DIR)/pcm_echo_reference.o \
 	$(BUILD_DIR)/pcm_rate.o \
 	$(BUILD_DIR)/v90_profile.o \
@@ -3369,7 +3369,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(V34_PHASE4_EXCHANGE_TEST_BINARY) \
 	$(V34_ECHO_CANCELLER_TEST_BINARY) \
 	$(PCM_ECHO_REFERENCE_TEST_BINARY) \
-	$(V90_HOST_ECHO_TEST_BINARY) \
+	$(PCM_HOST_ECHO_TEST_BINARY) \
 	$(V34_CALL_TEST_BINARY) \
 	$(V34_PHASE4_E_SEQUENCE_TEST_BINARY) \
 	$(V34_PHASE4_E_RECEIVER_TEST_BINARY) \
@@ -4117,7 +4117,7 @@ $(V34_ECHO_CANCELLER_TEST_BINARY): $(V34_ECHO_CANCELLER_TEST_OBJECTS)
 $(PCM_ECHO_REFERENCE_TEST_BINARY): $(PCM_ECHO_REFERENCE_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
-$(V90_HOST_ECHO_TEST_BINARY): $(V90_HOST_ECHO_TEST_OBJECTS)
+$(PCM_HOST_ECHO_TEST_BINARY): $(PCM_HOST_ECHO_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(V34_CALL_TEST_BINARY): $(V34_CALL_TEST_OBJECTS)
@@ -6008,8 +6008,8 @@ $(BUILD_DIR)/pcm_echo_reference.o: \
 	$(DSP_PCM_SOURCE_DIR)/pcm_echo_reference.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
-$(BUILD_DIR)/v90_host_echo.o: \
-	$(DSP_PCM_SOURCE_DIR)/v90_host_echo.c | $(BUILD_DIR)
+$(BUILD_DIR)/pcm_host_echo.o: \
+	$(DSP_PCM_SOURCE_DIR)/pcm_host_echo.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/v22_datapump.o: \
