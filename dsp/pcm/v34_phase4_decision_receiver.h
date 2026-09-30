@@ -14,8 +14,8 @@
 #include <stdint.h>
 
 enum {
-	/* J and J-prime differ by only two dibits.  Confirm the following
-	 * zero-seeded TRN before making known-sequence equalizer decisions. */
+	/* Confirm zero-seeded TRN after J-prime or the answerer's S marker
+	 * before making known-sequence equalizer decisions. */
 	V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS = 16,
 };
 
@@ -53,8 +53,9 @@ enum v34_phase4_decision_receiver_result {
  * known TRN decisions. Four-point reception advances that known lineage until
  * the physical MP boundary diverges; sixteen-point reception lets the
  * continuous MP decoder self-synchronize. The answering peer first supplies
- * its S/S-bar boundary. Qualify S recurrence before using it as equalizer
- * feedback: delayed Phase 3 J is not a training target. The physical timing
+ * its S/S-bar boundary, confirmed by the peer's TRN scrambler before the
+ * handoff. Qualify S recurrence before using it as equalizer feedback:
+ * delayed Phase 3 J is not a training target. The physical timing
  * and one adaptive equalizer remain in the aggregate receive owner through
  * B1 and data. A complete MP event pauses this owner until the controller
  * decides whether to continue MP or start E. */
@@ -64,6 +65,11 @@ struct v34_phase4_decision_receiver {
 	struct v34_training_sequence expected_trn;
 	struct v34_phase4_mp_receiver mp_receiver;
 	struct v34_phase4_e_receiver e_receiver;
+	/* Bounded complex correlation while S awaits peer TRN confirmation. */
+	int64_t trn_correlation_in_phase;
+	int64_t trn_correlation_quadrature;
+	uint64_t trn_observed_energy;
+	uint64_t trn_target_energy;
 	uint16_t trn_symbols;
 	uint8_t trn_candidate_errors;
 	enum v34_phase4_decision_receiver_stage stage;

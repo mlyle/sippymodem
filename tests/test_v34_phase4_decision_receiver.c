@@ -381,9 +381,7 @@ static bool run_timeline(
 		for (unsigned int symbol = 0;
 		     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 			enum v34_phase4_decision_receiver_result expected =
-				symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
-					V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
-					V34_PHASE4_DECISION_RECEIVER_OK;
+				V34_PHASE4_DECISION_RECEIVER_OK;
 
 			CHECK(v34_phase3_s_sequence_next(
 				      &answer_s, &normalized, &section) ==
@@ -435,6 +433,9 @@ static bool run_timeline(
 		enum v34_phase4_decision_receiver_result expected =
 			symbol + 1u == V34_TRAINING_SEQUENCE_MIN_SYMBOLS ?
 				V34_PHASE4_DECISION_RECEIVER_TRN_COMPLETE :
+			role == V34_ANSWERING_STATION && symbol + 1u ==
+				V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS ?
+				V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
 				V34_PHASE4_DECISION_RECEIVER_OK;
 		struct v34_analytic_sample received;
 		struct v34_analytic_sample target;
@@ -687,9 +688,7 @@ static bool delayed_answer_marker_alignment(
 	for (unsigned int symbol = 0;
 	     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
 		enum v34_phase4_decision_receiver_result expected =
-			symbol + 1u == V34_PHASE3_S_SEQUENCE_SYMBOLS ?
-				V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
-				V34_PHASE4_DECISION_RECEIVER_OK;
+			V34_PHASE4_DECISION_RECEIVER_OK;
 
 		CHECK(v34_phase3_s_sequence_next(
 			      &s, &normalized, &section) ==
@@ -704,7 +703,7 @@ static bool delayed_answer_marker_alignment(
 		      receive_fixed(&fixture, point, expected),
 		      "delayed answer S observation %u stopped", symbol);
 	}
-	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
+	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 	      v34_training_sequence_init(
 		      &trn, V34_ANSWERING_STATION, constellation) ==
 		      V34_TRAINING_SEQUENCE_OK,
@@ -712,11 +711,22 @@ static bool delayed_answer_marker_alignment(
 	CHECK(fixture.receiver.trn_symbols == 0u &&
 	      memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
 	      "delayed marker changed the known TRN cursor");
-	CHECK(v34_training_sequence_next_fixed(
-		      &trn, &point, &quarter, &rotation) == V34_TRAINING_SEQUENCE_OK &&
-	      receive_fixed(
-		      &fixture, point, V34_PHASE4_DECISION_RECEIVER_OK),
-	      "first post-marker TRN target was misaligned");
+	for (unsigned int symbol = 0; symbol <
+	     V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS; ++symbol) {
+		enum v34_phase4_decision_receiver_result expected =
+			symbol + 1u == V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS ?
+				V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
+				V34_PHASE4_DECISION_RECEIVER_OK;
+
+		CHECK(v34_training_sequence_next_fixed(
+			      &trn, &point, &quarter, &rotation) ==
+			      V34_TRAINING_SEQUENCE_OK &&
+		      receive_fixed(&fixture, point, expected),
+		      "post-marker TRN confirmation %u was misaligned", symbol);
+	}
+	CHECK(fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_TRN &&
+	      memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
+	      "confirmed marker did not retain its TRN cursor");
 	return true;
 }
 
@@ -729,6 +739,120 @@ static bool test_delayed_answer_marker_alignment(void)
 			      V34_CONSTELLATION_16_POINT, offset),
 		      "delayed answer marker failed at rotation %u", offset);
 	}
+	return true;
+}
+
+static bool answer_s_requires_peer_training(
+	enum v34_constellation_size constellation, uint8_t offset)
+{
+	struct receive_fixture fixture = {
+		.clock.lineage = UINT64_C(14695981039346656037),
+	};
+	struct v34_phase3_j_sequence j;
+
+	CHECK(make_j_sequence(V34_ANSWERING_STATION, constellation, &j) &&
+	      v34_phase4_decision_receiver_init(
+		      &fixture.receiver, &j, constellation) ==
+		      V34_PHASE4_DECISION_RECEIVER_OK,
+	      "answer confirmation did not initialize");
+	/* A complete reflected S is still not peer training. Try the local
+	 * scrambler, silence, and a carrier-free copy before the actual peer. */
+	for (unsigned int attempt = 0; attempt < 4u; ++attempt) {
+		struct v34_phase3_s_sequence s;
+		struct v34_training_sequence trn;
+
+		CHECK(v34_phase3_s_sequence_init(&s) == V34_PHASE3_S_SEQUENCE_OK &&
+		      v34_training_sequence_init(&trn,
+			      attempt == 0u ? V34_CALLING_STATION :
+					      V34_ANSWERING_STATION,
+			      constellation) == V34_TRAINING_SEQUENCE_OK,
+		      "confirmation sources did not initialize");
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE3_S_SEQUENCE_SYMBOLS; ++symbol) {
+			struct qam_point normalized;
+			enum v34_phase3_s_section section;
+			struct v34_analytic_sample point;
+			uint8_t quarter;
+			uint8_t rotation;
+			struct v34_receive_action output;
+			struct v34_mp_receive_event event = { 0 };
+			struct v34_adaptive_equalizer_observation input;
+
+			CHECK(v34_phase3_s_sequence_next(&s, &normalized, &section) ==
+				      V34_PHASE3_S_SEQUENCE_OK &&
+			      v34_training_constellation_slice(V34_CONSTELLATION_4_POINT,
+				      &normalized, &quarter, &rotation) == V34_CONSTELLATION_OK &&
+			      v34_training_constellation_fixed_point(V34_CONSTELLATION_4_POINT,
+				      quarter, (uint8_t)((rotation + offset) & 3u), &point) ==
+				      V34_CONSTELLATION_OK,
+			      "confirmation S source stopped");
+			input = observation(&fixture.clock, point);
+			CHECK(v34_phase4_decision_receiver_observe(&fixture.receiver,
+				      &input, TEST_DECODER_POWER_Q15, &output, &event) ==
+				      V34_PHASE4_DECISION_RECEIVER_OK &&
+			      fixture.receiver.stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S,
+			      "S alone committed the peer handoff");
+		}
+		for (unsigned int symbol = 0;
+		     symbol < V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS; ++symbol) {
+			struct v34_analytic_sample point;
+			uint8_t quarter;
+			uint8_t rotation;
+			struct v34_receive_action output;
+			struct v34_mp_receive_event event;
+			struct v34_mp_receive_event saved_event;
+			struct v34_adaptive_equalizer_observation input;
+			bool accepted = attempt == 3u && symbol + 1u ==
+				V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS;
+
+			CHECK(v34_training_sequence_next_fixed(&trn, &point, &quarter,
+				      &rotation) == V34_TRAINING_SEQUENCE_OK &&
+			      v34_training_constellation_fixed_point(constellation, quarter,
+				      (uint8_t)((rotation + offset) & 3u), &point) ==
+				      V34_CONSTELLATION_OK,
+			      "confirmation TRN source stopped");
+			if (attempt == 1u)
+				point = (struct v34_analytic_sample){ 0 };
+			if (attempt == 2u) {
+				point.in_phase /= 32;
+				point.quadrature /= 32;
+			}
+			if (attempt == 3u && symbol == 7u) {
+				int16_t in_phase = point.in_phase;
+
+				point.in_phase = point.quadrature;
+				point.quadrature = (int16_t)-in_phase;
+			}
+			input = observation(&fixture.clock, point);
+			memset(&event, 0xa5, sizeof(event));
+			saved_event = event;
+			CHECK(v34_phase4_decision_receiver_observe(&fixture.receiver,
+				      &input, TEST_DECODER_POWER_Q15, &output, &event) ==
+				      (accepted ? V34_PHASE4_DECISION_RECEIVER_S_DETECTED :
+						  V34_PHASE4_DECISION_RECEIVER_OK) &&
+			      output.action == (accepted ? V34_RECEIVE_BEGIN_TRACKING :
+							  V34_RECEIVE_DISCARD) &&
+			      memcmp(&event, &saved_event, sizeof(event)) == 0,
+			      "unconfirmed TRN became feedback or a handoff");
+		}
+		CHECK(fixture.receiver.trn_symbols ==
+			      (attempt == 3u ? V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS :
+						  0u) &&
+		      v34_phase4_decision_receiver_is_valid(&fixture.receiver),
+		      "confirmation did not reset or retain the TRN cursor");
+		if (attempt == 3u)
+			CHECK(memcmp(&fixture.receiver.expected_trn, &trn, sizeof(trn)) == 0,
+			      "confirmed TRN skipped or repeated source symbols");
+	}
+	return true;
+}
+
+static bool test_answer_s_requires_peer_training(void)
+{
+	for (uint8_t offset = 0; offset < 4u; ++offset)
+		CHECK(answer_s_requires_peer_training(V34_CONSTELLATION_4_POINT, offset) &&
+		      answer_s_requires_peer_training(V34_CONSTELLATION_16_POINT, offset),
+		      "answer confirmation failed at rotation %u", offset);
 	return true;
 }
 
@@ -1018,6 +1142,8 @@ int main(void)
 		  test_role_constellation_timelines },
 		{ "delayed answer marker alignment",
 		  test_delayed_answer_marker_alignment },
+		{ "answer S requires peer training",
+		  test_answer_s_requires_peer_training },
 		{ "J-prime training evidence",
 		  test_j_prime_requires_training_evidence },
 		{ "false J-prime preserves training",

@@ -108,8 +108,25 @@ static bool answer_s_state_is_valid(
 	if (!answering_peer)
 		return receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
 		       s_is_initial(&receiver->answer_s);
-	return v34_phase3_s_hunt_is_complete(&receiver->answer_s) ==
-	       (receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S);
+	return receiver->stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
+	       v34_phase3_s_hunt_is_complete(&receiver->answer_s);
+}
+
+static bool answer_confirmation_is_valid(
+	const struct v34_phase4_decision_receiver *receiver)
+{
+	uint64_t bound = (uint64_t)receiver->trn_symbols * 2u *
+			32768u * 32768u;
+
+	if (receiver->stage != V34_PHASE4_DECISION_RECEIVER_ANSWER_S ||
+	    !v34_phase3_s_hunt_is_complete(&receiver->answer_s))
+		bound = 0u;
+	return receiver->trn_correlation_in_phase >= -(int64_t)bound &&
+	       receiver->trn_correlation_in_phase <= (int64_t)bound &&
+	       receiver->trn_correlation_quadrature >= -(int64_t)bound &&
+	       receiver->trn_correlation_quadrature <= (int64_t)bound &&
+	       receiver->trn_observed_energy <= bound &&
+	       receiver->trn_target_energy <= bound;
 }
 
 static bool trn_state_is_valid(
@@ -127,6 +144,13 @@ static bool trn_state_is_valid(
 	    receiver->trn_candidate_errors >
 		    V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_MAX_ERRORS)
 		return false;
+	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S &&
+	    v34_phase3_s_hunt_is_complete(&receiver->answer_s))
+		return receiver->trn_symbols <
+			       V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS &&
+		       receiver->trn_candidate_errors == 0u &&
+		       receiver->expected_trn.has_last_symbol ==
+			       (receiver->trn_symbols != 0u);
 	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_CALL_J_PRIME ||
 	    receiver->stage == V34_PHASE4_DECISION_RECEIVER_ANSWER_S)
 		return receiver->trn_symbols == 0u &&
@@ -147,9 +171,8 @@ static bool trn_state_is_valid(
 		return false;
 	if (receiver->stage == V34_PHASE4_DECISION_RECEIVER_TRN)
 		return receiver->trn_symbols < V34_TRAINING_SEQUENCE_MIN_SYMBOLS &&
-		       (!calling_peer ||
-			receiver->trn_symbols >=
-				V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS);
+		       receiver->trn_symbols >=
+			       V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS;
 	if (receiver->stage ==
 	    V34_PHASE4_DECISION_RECEIVER_TRN_OR_MP)
 		return receiver->mp_receiver.constellation ==
@@ -179,6 +202,7 @@ bool v34_phase4_decision_receiver_is_valid(
 	    !v34_phase4_mp_receiver_is_valid(&receiver->mp_receiver) ||
 	    !v34_station_role_is_valid(
 		    receiver->mp_receiver.transmitting_role) ||
+	    !answer_confirmation_is_valid(receiver) ||
 	    (receiver->rate_renegotiation ?
 	     (receiver->stage < V34_PHASE4_DECISION_RECEIVER_MP ||
 	      receiver->mp_receiver.constellation != V34_CONSTELLATION_4_POINT) :
@@ -311,22 +335,85 @@ v34_phase4_decision_receiver_expect_e(
 	return clear_record(receiver, true);
 }
 
-static bool advance_trn_prefix(
-	struct v34_phase4_decision_receiver *receiver, uint8_t symbols)
+static bool reset_expected_trn(
+	struct v34_phase4_decision_receiver *receiver)
 {
-	for (uint8_t symbol = 0; symbol < symbols; ++symbol) {
-		struct v34_analytic_sample ignored;
-		uint8_t ignored_quarter;
-		uint8_t ignored_rotation;
+	struct v34_training_sequence reset;
 
-		if (v34_training_sequence_next_fixed(
-			    &receiver->expected_trn, &ignored,
-			    &ignored_quarter, &ignored_rotation) !=
-		    V34_TRAINING_SEQUENCE_OK)
-			return false;
-		receiver->trn_symbols++;
-	}
+	if (v34_training_sequence_init(
+		    &reset, receiver->mp_receiver.transmitting_role,
+		    receiver->mp_receiver.constellation) != V34_TRAINING_SEQUENCE_OK)
+		return false;
+	receiver->expected_trn = reset;
+	receiver->trn_symbols = 0u;
+	receiver->trn_candidate_errors = 0u;
 	return true;
+}
+
+static bool confirm_answer_trn(
+	struct v34_phase4_decision_receiver *receiver,
+	struct v34_analytic_sample observed)
+{
+	struct v34_analytic_sample target;
+	uint8_t quarter;
+	uint8_t rotation;
+
+	if (v34_training_sequence_next_fixed(
+		    &receiver->expected_trn, &target, &quarter, &rotation) !=
+	    V34_TRAINING_SEQUENCE_OK)
+		return false;
+	receiver->trn_symbols++;
+	receiver->trn_correlation_in_phase +=
+		(int64_t)observed.in_phase * target.in_phase +
+		(int64_t)observed.quadrature * target.quadrature;
+	receiver->trn_correlation_quadrature +=
+		(int64_t)observed.quadrature * target.in_phase -
+		(int64_t)observed.in_phase * target.quadrature;
+	receiver->trn_observed_energy +=
+		(uint64_t)((int64_t)observed.in_phase * observed.in_phase) +
+		(uint64_t)((int64_t)observed.quadrature * observed.quadrature);
+	receiver->trn_target_energy +=
+		(uint64_t)((int64_t)target.in_phase * target.in_phase) +
+		(uint64_t)((int64_t)target.quadrature * target.quadrature);
+	return true;
+}
+
+static enum v34_phase4_decision_receiver_result finish_answer_confirmation(
+	struct v34_phase4_decision_receiver *receiver,
+	struct v34_receive_action *output)
+{
+	double real = (double)receiver->trn_correlation_in_phase;
+	double imaginary = (double)receiver->trn_correlation_quadrature;
+	bool qualified;
+
+	*output = v34_receive_action_only(V34_RECEIVE_DISCARD);
+	if (receiver->trn_symbols <
+	    V34_PHASE4_DECISION_RECEIVER_TRN_CONFIRM_SYMBOLS)
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	/* A reflected local S has the same marker but a different TRN scrambler.
+	 * Require correlation >= 0.65 with peer TRN at useful signal power.
+	 * Complex magnitude permits residual carrier phase; no known-sequence
+	 * feedback or transmitter handoff is committed before qualification. */
+	qualified = receiver->trn_target_energy != 0u &&
+		receiver->trn_observed_energy * 16u >=
+			receiver->trn_target_energy &&
+		real * real + imaginary * imaginary >= 0.4225 *
+			(double)receiver->trn_observed_energy *
+			(double)receiver->trn_target_energy;
+	receiver->trn_correlation_in_phase = 0;
+	receiver->trn_correlation_quadrature = 0;
+	receiver->trn_observed_energy = 0u;
+	receiver->trn_target_energy = 0u;
+	if (!qualified) {
+		if (!reset_expected_trn(receiver) ||
+		    v34_phase3_s_hunt_init_training(&receiver->answer_s) !=
+			    V34_PHASE3_S_RECEIVER_OK)
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		return V34_PHASE4_DECISION_RECEIVER_OK;
+	}
+	receiver->stage = V34_PHASE4_DECISION_RECEIVER_TRN;
+	*output = v34_receive_action_only(V34_RECEIVE_BEGIN_TRACKING);
+	return V34_PHASE4_DECISION_RECEIVER_S_DETECTED;
 }
 
 static enum v34_phase4_decision_receiver_result receive_answer_s(
@@ -338,7 +425,14 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 	struct v34_phase3_s_adaptation adaptation;
 	uint8_t post_marker_symbols;
 	bool control;
-	enum v34_phase3_s_receiver_result result =
+	enum v34_phase3_s_receiver_result result;
+
+	if (v34_phase3_s_hunt_is_complete(&receiver->answer_s)) {
+		if (!confirm_answer_trn(receiver, observation->decision))
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+		return finish_answer_confirmation(receiver, output);
+	}
+	result =
 		v34_phase3_s_hunt_receive(
 			&receiver->answer_s, observation->decision,
 			&adaptation, &control);
@@ -355,12 +449,17 @@ static enum v34_phase4_decision_receiver_result receive_answer_s(
 	*output = v34_receive_action_only(V34_RECEIVE_DISCARD);
 	if (result != V34_PHASE3_S_RECEIVER_DETECTED ||
 	    !v34_phase3_s_hunt_get_post_marker_symbols(
-		    &receiver->answer_s, &post_marker_symbols) ||
-	    !advance_trn_prefix(receiver, post_marker_symbols))
+		    &receiver->answer_s, &post_marker_symbols))
 		return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
-	receiver->stage = V34_PHASE4_DECISION_RECEIVER_TRN;
-	*output = v34_receive_action_only(V34_RECEIVE_BEGIN_TRACKING);
-	return V34_PHASE4_DECISION_RECEIVER_S_DETECTED;
+	for (uint8_t symbol = 0; symbol < post_marker_symbols; ++symbol) {
+		struct v34_analytic_sample observed;
+
+		if (!v34_phase3_s_hunt_get_post_marker_observation(
+			    &receiver->answer_s, symbol, &observed) ||
+		    !confirm_answer_trn(receiver, observed))
+			return V34_PHASE4_DECISION_RECEIVER_INVALID_STATE;
+	}
+	return finish_answer_confirmation(receiver, output);
 }
 
 static bool advance_call_j_prime(
@@ -414,21 +513,6 @@ static enum v34_phase4_decision_receiver_result receive_call_j_prime(
 		receiver->stage =
 			V34_PHASE4_DECISION_RECEIVER_CALL_TRN_CANDIDATE;
 	return V34_PHASE4_DECISION_RECEIVER_OK;
-}
-
-static bool reset_expected_trn(
-	struct v34_phase4_decision_receiver *receiver)
-{
-	struct v34_training_sequence reset;
-
-	if (v34_training_sequence_init(
-		    &reset, receiver->mp_receiver.transmitting_role,
-		    receiver->mp_receiver.constellation) != V34_TRAINING_SEQUENCE_OK)
-		return false;
-	receiver->expected_trn = reset;
-	receiver->trn_symbols = 0u;
-	receiver->trn_candidate_errors = 0u;
-	return true;
 }
 
 static enum v34_phase4_decision_receiver_result
