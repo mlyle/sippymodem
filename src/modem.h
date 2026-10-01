@@ -253,6 +253,7 @@ struct lapm_state {
         int busy;
         int peer_busy;
         int retrain_poll;
+        bool accept_sabme_retry; /* answering DCE, before peer I/S traffic */
         bool stalled_retrain;
         u8 stalled_polls; /* status enquiries without acknowledgement progress */
         u8  cmd_addr;

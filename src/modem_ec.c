@@ -1340,6 +1340,12 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		bool already_linked = l->state == LAPM_DATA;
 
 		EC_DBG("sabme received.\n");
+		/* V.42 8.4.9.1: connected SABME terminates the call except
+		 * for the answerer's initial establishment retry after a lost UA. */
+		if (already_linked && !l->accept_sabme_retry) {
+			complete_link_release(l);
+			return;
+		}
 		/* V.42 7.2.2/8.3.2.1: the control function must be ready,
 		 * with negotiation complete, before accepting establishment. */
 		if (!lapm_can_establish(l)) {
@@ -1602,6 +1608,10 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	if (type != FRAME_U && l->state == LAPM_ESTAB &&
 	    (l->config || !complete_link_establishment(l)))
 		return;
+	/* Valid numbered traffic proves the peer has left establishment. This
+	 * history must survive sequence wrap and physical retraining. */
+	if (type != FRAME_U)
+		l->accept_sabme_retry = false;
 	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f,f->count);
 	switch(type) {
 	case FRAME_I:
@@ -1656,6 +1666,7 @@ static int reinitialize_for_link_establishment(struct lapm_state *l)
 	l->rx_head = l->rx_count = 0;
 	l->modem->packer_process = NULL;
 	reset_lapm_sequence(l);
+	l->accept_sabme_retry = !l->modem->caller;
 	return 0;
 }
 
@@ -1711,6 +1722,7 @@ static void reset_lapm_sequence(struct lapm_state *l)
 	l->busy = 0;
 	l->peer_busy = 0;
 	l->retrain_poll = 0;
+	l->accept_sabme_retry = false;
 	l->stalled_retrain = false;
 	l->reject = 0;
 	l->vs = 0;

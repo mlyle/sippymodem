@@ -3201,9 +3201,6 @@ static bool test_lapm_xid_envelopes(void)
 	enum {
 		XID_CONTROL = 0xaf,
 		SABME_CONTROL = 0x7f,
-		UA_CONTROL = 0x73,
-		UNNUMBERED_CONTROL_MASK = 0xef,
-		LAPM_ESTABLISHING_STATE = 1,
 		LAPM_DATA_STATE = 2,
 	};
 	struct modem_driver driver = {
@@ -3379,6 +3376,38 @@ static bool test_lapm_xid_envelopes(void)
 		answerer->packer.hdlc.framer);
 	CHECK(outgoing != NULL,
 	      "LAPM answerer did not acknowledge link establishment");
+	/* Lose the initial UA and advance only the answerer's encoder. The
+	 * caller remains in establishment and legitimately retries SABME. */
+	answerer->packer.hdlc.tx_complete(
+		answerer->packer.hdlc.framer, outgoing);
+	for (size_t index = 0; index < sizeof(discarded); ++index)
+		discarded[index] = (uint8_t)(index * 29U + 17U);
+	lapm_source.data = discarded;
+	lapm_source.length = sizeof(discarded);
+	lapm_source.offset = 0;
+	answerer->get_chars = scripted_lapm_source;
+	outgoing = answerer->packer.hdlc.get_tx_frame(
+		answerer->packer.hdlc.framer);
+	CHECK(outgoing != NULL && (outgoing->buf[1] & 1U) == 0 &&
+	      lapm_source.offset == sizeof(discarded),
+	      "lost-UA fixture did not create an unacknowledged V.44 frame");
+	answerer->packer.hdlc.tx_complete(
+		answerer->packer.hdlc.framer, outgoing);
+	caller->bit_timer_func(caller);
+	outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->buf[1] == SABME_CONTROL,
+	      "lost-UA caller did not retransmit SABME");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(answerer->packer.hdlc.framer, &incoming);
+	CHECK(answerer->ec.lapm.state == LAPM_DATA_STATE &&
+	      answerer->ec.lapm.sent_info == answerer->ec.lapm.info_list &&
+	      answerer->ec.lapm.tx_info == answerer->ec.lapm.info_list,
+	      "initial SABME retry retained discarded V.44 information");
+	outgoing = answerer->packer.hdlc.get_tx_frame(answerer->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->buf[1] == 0x73,
+	      "lost-UA answerer did not repeat its acknowledgement");
 	memcpy(received, outgoing->buf, (size_t)outgoing->size);
 	incoming.count = outgoing->size;
 	answerer->packer.hdlc.tx_complete(
@@ -3388,6 +3417,33 @@ static bool test_lapm_xid_envelopes(void)
 	CHECK(caller->ec.lapm.state == LAPM_DATA_STATE &&
 		      answerer->ec.lapm.state == LAPM_DATA_STATE,
 	      "LAPM peers did not enter the data state");
+	for (size_t index = 0; index < sizeof(recovery); ++index)
+		recovery[index] = (uint8_t)('a' + (index / 11U) % 5U);
+	lapm_source.data = recovery;
+	lapm_source.length = sizeof(recovery);
+	lapm_source.offset = 0;
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	lapm_sink.result = 1;
+	caller->put_chars = scripted_lapm_sink;
+	outgoing = answerer->packer.hdlc.get_tx_frame(answerer->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size > 3 &&
+	      lapm_source.offset == sizeof(recovery),
+	      "retried LAPM establishment did not produce compressed data");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	answerer->packer.hdlc.tx_complete(answerer->packer.hdlc.framer, outgoing);
+	caller->packer.hdlc.rx_complete(caller->packer.hdlc.framer, &incoming);
+	CHECK(lapm_sink.length == sizeof(recovery) &&
+	      memcmp(lapm_sink.data, recovery, sizeof(recovery)) == 0,
+	      "initial SABME retry did not reset the V.44 compression history");
+	/* Deliver the acknowledgement before exercising the opposite direction. */
+	outgoing = caller->packer.hdlc.get_tx_frame(caller->packer.hdlc.framer);
+	CHECK(outgoing != NULL && outgoing->size == 3 && outgoing->buf[1] == 1,
+	      "retried LAPM establishment did not acknowledge V.44 data");
+	memcpy(received, outgoing->buf, (size_t)outgoing->size);
+	incoming.count = outgoing->size;
+	caller->packer.hdlc.tx_complete(caller->packer.hdlc.framer, outgoing);
+	answerer->packer.hdlc.rx_complete(answerer->packer.hdlc.framer, &incoming);
 
 	{
 		static const uint8_t truncated[] = {
@@ -3444,86 +3500,15 @@ static bool test_lapm_xid_envelopes(void)
 		      answerer->packer_process == NULL,
 	      "V.44 did not resume and deliver the information field exactly once");
 
-	/*
-	 * Advance only the encoder, then establish a fresh LAPM sequence. Both
-	 * peers must perform C-INIT before subsequent compressed data can agree.
-	 */
-	for (size_t index = 0; index < sizeof(discarded); ++index)
-		discarded[index] = (uint8_t)(index * 29U + 17U);
-	lapm_source.data = discarded;
-	lapm_source.length = sizeof(discarded);
-	lapm_source.offset = 0;
-	outgoing = caller->packer.hdlc.get_tx_frame(
-		caller->packer.hdlc.framer);
-	CHECK(outgoing != NULL && (outgoing->buf[1] & 1U) == 0 &&
-		      lapm_source.offset == sizeof(discarded),
-	      "LAPM reset fixture did not create an unacknowledged V.44 frame");
-	caller->packer.hdlc.tx_complete(
-		caller->packer.hdlc.framer, outgoing);
-
+	/* Numbered traffic has completed initial establishment. A new SABME
+	 * must release the call instead of silently resetting stream history. */
 	received[0] = answerer->ec.lapm.rsp_addr;
 	received[1] = SABME_CONTROL;
 	incoming.count = 2;
-	answerer->packer.hdlc.rx_complete(
-		answerer->packer.hdlc.framer, &incoming);
-	CHECK(answerer->ec.lapm.state == LAPM_DATA_STATE &&
-		      answerer->ec.lapm.v44_path != NULL &&
-		      answerer->ec.lapm.rx_count == 0,
-	      "received SABME did not reinitialize the V.44 receive path");
-
-	caller->ec.lapm.state = LAPM_ESTABLISHING_STATE;
-	outgoing = NULL;
-	for (size_t index = 0; index < LAPM_CTRL_FRAMES; ++index) {
-		frame_t *candidate = answerer->packer.hdlc.get_tx_frame(
-			answerer->packer.hdlc.framer);
-
-		CHECK(candidate != NULL,
-		      "LAPM answerer did not queue establishment acknowledgement");
-		if ((candidate->buf[1] & UNNUMBERED_CONTROL_MASK) ==
-		    (UA_CONTROL & UNNUMBERED_CONTROL_MASK)) {
-			outgoing = candidate;
-			break;
-		}
-		answerer->packer.hdlc.tx_complete(
-			answerer->packer.hdlc.framer, candidate);
-	}
-	CHECK(outgoing != NULL,
-	      "LAPM answerer control queue did not contain UA");
-	memcpy(received, outgoing->buf, (size_t)outgoing->size);
-	incoming.count = outgoing->size;
-	answerer->packer.hdlc.tx_complete(
-		answerer->packer.hdlc.framer, outgoing);
-	caller->packer.hdlc.rx_complete(
-		caller->packer.hdlc.framer, &incoming);
-	CHECK(caller->ec.lapm.state == LAPM_DATA_STATE &&
-		      caller->ec.lapm.v44_path != NULL &&
-		      caller->ec.lapm.sent_info == caller->ec.lapm.info_list &&
-		      caller->ec.lapm.tx_info == caller->ec.lapm.info_list &&
-		      caller->ec.lapm.rx_count == 0 &&
-		      caller->packer_process == NULL,
-	      "received UA retained discarded frames or V.44 stream state");
-
-	for (size_t index = 0; index < sizeof(recovery); ++index)
-		recovery[index] = (uint8_t)('a' + (index / 11U) % 5U);
-	lapm_source.data = recovery;
-	lapm_source.length = sizeof(recovery);
-	lapm_source.offset = 0;
-	memset(&lapm_sink, 0, sizeof(lapm_sink));
-	lapm_sink.result = 1;
-	outgoing = caller->packer.hdlc.get_tx_frame(
-		caller->packer.hdlc.framer);
-	CHECK(outgoing != NULL && outgoing->size > 3 &&
-		      lapm_source.offset == sizeof(recovery),
-	      "re-established LAPM path did not produce compressed data");
-	memcpy(received, outgoing->buf, (size_t)outgoing->size);
-	incoming.count = outgoing->size;
-	caller->packer.hdlc.tx_complete(
-		caller->packer.hdlc.framer, outgoing);
-	answerer->packer.hdlc.rx_complete(
-		answerer->packer.hdlc.framer, &incoming);
-	CHECK(lapm_sink.length == sizeof(recovery) &&
-		      memcmp(lapm_sink.data, recovery, sizeof(recovery)) == 0,
-	      "V.44 transfer did not recover after LAPM re-establishment");
+	answerer->packer.hdlc.rx_complete(answerer->packer.hdlc.framer, &incoming);
+	CHECK(answerer->ec.lapm.state == 0 && !answerer->bit_timer &&
+	      strcmp(modem_call_phase(answerer), "cleardown") == 0,
+	      "connected SABME restarted the V.44 stream instead of releasing");
 	memset(&lapm_source, 0, sizeof(lapm_source));
 	modem_ec_exit(caller);
 	modem_ec_exit(answerer);
@@ -4055,6 +4040,109 @@ static bool test_lapm_default_establishment(void)
 		modem_delete(m);
 	}
 	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_lapm_connected_sabme(void)
+{
+	enum { INITIAL, SHORT_FRAME, WRONG_ADDRESS, INFORMATION, RR_COMMAND,
+	       RNR_COMMAND, REJ_COMMAND, RR_RESPONSE, RNR_RESPONSE, REJ_RESPONSE,
+	       SEQUENCE_WRAP, RETRAIN };
+	struct modem_driver driver = {
+		.name = "LAPM connected SABME", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned poll = 0; poll < 2; ++poll)
+	for (unsigned scenario = INITIAL; scenario <= RETRAIN; ++scenario) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, 0x7f, 0 };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "connected SABME allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		CHECK(modem_ec_init(m) == 0, "connected SABME initialization failed");
+		modem_hdlc_start(m);
+		/* Keep each role's addresses while bypassing XID and its preamble. */
+		m->caller = 0;
+		modem_ec_start(m);
+		m->caller = caller;
+		m->state = 4;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = caller ? l->cmd_addr : l->rsp_addr;
+		wire[1] = caller ? 0x0f : 0x7f;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == (caller ? 0x7f : 0x73),
+		      "connected SABME fixture did not establish the link");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		if (caller) {
+			wire[1] = 0x73;
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		CHECK(l->state == 2 && m->state == 5, "connected SABME fixture did not connect");
+		m->state = 6; /* A retry must not announce CONNECT or leave command mode. */
+		wire[0] = l->rsp_addr;
+		wire[1] = 0;
+		incoming.count = 3;
+		if (scenario == SHORT_FRAME)
+			incoming.count = 2;
+		if (scenario == WRONG_ADDRESS)
+			wire[0] = 0;
+		if (scenario >= RR_COMMAND && scenario <= REJ_RESPONSE) {
+			wire[1] = 1 + 4 * ((scenario - RR_COMMAND) % 3);
+			wire[0] = scenario <= REJ_COMMAND ? l->rsp_addr : l->cmd_addr;
+		}
+		if (scenario == RETRAIN)
+			wire[1] = 1;
+		if (scenario != INITIAL) {
+			unsigned frames = scenario == SEQUENCE_WRAP ? 128 : 1;
+			for (unsigned n = 0; n < frames; ++n) {
+				if (scenario == SEQUENCE_WRAP)
+					wire[1] = n << 1;
+				m->packer.hdlc.rx_complete(l, &incoming);
+				CHECK(l->state == 2, "SABME fixture rejected valid peer traffic");
+				while ((outgoing = m->packer.hdlc.get_tx_frame(l)) != NULL)
+					m->packer.hdlc.tx_complete(l, outgoing);
+			}
+		}
+		if (scenario == SEQUENCE_WRAP)
+			CHECK(!l->vr && !l->vs && !l->va, "SABME fixture did not wrap its sequence");
+		if (scenario == RETRAIN) {
+			m->get_bits = modem_hdlc_get_bits;
+			m->put_bits = modem_hdlc_put_bits;
+			CHECK(modem_ec_resume_after_retrain(m) == 0,
+			      "SABME fixture could not resume physical retraining");
+		}
+		wire[0] = l->rsp_addr;
+		wire[1] = 0x6f | poll << 4;
+		incoming.count = 2;
+		bool initial_retry = !caller && scenario <= WRONG_ADDRESS;
+		for (unsigned repeat = 0; repeat < (initial_retry ? 3 : 1); ++repeat) {
+			m->packer.hdlc.rx_complete(l, &incoming);
+			if (!initial_retry) {
+				CHECK(l->state == 0 && !m->bit_timer &&
+				      strcmp(modem_call_phase(m), "cleardown") == 0 &&
+				      l->ctrl_list == l->tx_ctrl,
+				      "connected SABME restarted instead of releasing: role=%u P=%u scenario=%u",
+				      caller, poll, scenario);
+				break;
+			}
+			CHECK(l->state == 2 && m->state == 6 && !l->vr && !l->vs && !l->va,
+			      "initial SABME retry changed host state or retained sequences");
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 2 &&
+			      outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == (0x63 | poll << 4),
+			      "initial SABME retry did not repeat UA with F=P");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		modem_ec_exit(m);
+		modem_delete(m);
+	}
 	return true;
 }
 
@@ -6538,6 +6626,7 @@ int main(void)
 		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
 		{ "LAPM SABME establishment readiness", test_lapm_sabme_readiness },
 		{ "LAPM defaults without negotiation", test_lapm_default_establishment },
+		{ "LAPM connected SABME", test_lapm_connected_sabme },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM mode command collisions", test_lapm_mode_command_collisions },
