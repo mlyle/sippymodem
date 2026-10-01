@@ -116,62 +116,41 @@ int16_t fixed_phase_cosine_u8_q14(uint8_t phase)
 		2.0 * FIXED_PHASE_PI * phase / 256.0) * 16384.0);
 }
 
-static int32_t floor_divide_power_of_two(
-	int32_t value, unsigned int shift)
-{
-	if (value >= 0)
-		return value / (INT32_C(1) << shift);
-	return -(int32_t)(((uint32_t)(-value) +
-			  (UINT32_C(1) << shift) - 1u) >> shift);
-}
-
 struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase)
 {
-	static const int16_t cosine_sign[] = {
-		16384, 16384, -16384, -16384,
-		16384, -16384, -16384, 16384,
-	};
-	static const int16_t sine_sign[] = {
-		28620, -25834, 12917, 0,
-		16384, 16384, -16384, -16384,
-	};
-	int32_t index = floor_divide_power_of_two(phase, 5);
-	int32_t quadrant = floor_divide_power_of_two(phase, 13);
-	int32_t fraction = (int32_t)phase -
-		index * FIXED_PHASE_INTERPOLATION_STEPS;
+	uint16_t normalized = (uint16_t)phase & UINT16_C(0x7fff);
+	unsigned int quadrant = normalized >> 13;
+	unsigned int index = (normalized >> 5) & 0xffu;
+	int32_t fraction = normalized & 0x1fu;
 	uint16_t sine0;
 	uint16_t sine1;
 	uint16_t cosine0;
 	uint16_t cosine1;
-	uint32_t sine;
-	uint32_t cosine;
-	struct fixed_phase_q14 result;
+	int32_t sine;
+	int32_t cosine;
 
-	if (quadrant % 2 != 0) {
-		index = -index - 1;
+	if ((quadrant & 1u) != 0) {
+		index = FIXED_PHASE_QUARTER_STEPS - index - 1u;
 		fraction = FIXED_PHASE_INTERPOLATION_STEPS - fraction;
 	}
-	index = (int32_t)((uint32_t)index & 0xffu);
-	sine0 = quadrant_sine_q15((unsigned int)index);
-	sine1 = quadrant_sine_q15((unsigned int)index + 1u);
+
+	sine0 = quadrant_sine_q15(index);
+	sine1 = quadrant_sine_q15(index + 1u);
 	cosine0 = quadrant_sine_q15(
-		FIXED_PHASE_QUARTER_STEPS - (unsigned int)index);
+		FIXED_PHASE_QUARTER_STEPS - index);
 	cosine1 = quadrant_sine_q15(
-		FIXED_PHASE_QUARTER_STEPS - (unsigned int)index - 1u);
-	sine = ((uint32_t)sine0 +
-		 (uint32_t)arithmetic_shift_right_u32(
-			 (uint32_t)(((int32_t)sine1 - (int32_t)sine0) *
-				    fraction), 5)) &
-		UINT16_MAX;
-	cosine = ((uint32_t)cosine0 +
-		   (uint32_t)arithmetic_shift_right_u32(
-			   (uint32_t)(((int32_t)cosine1 -
-				       (int32_t)cosine0) * fraction),
-			   5)) &
-		  UINT16_MAX;
-	result.sine = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)sine * sine_sign[quadrant + 4]), 15));
-	result.cosine = wrap_s16_from_s32(arithmetic_shift_right_u32(
-		(uint32_t)((int32_t)cosine * cosine_sign[quadrant + 4]), 15));
-	return result;
+		FIXED_PHASE_QUARTER_STEPS - index - 1u);
+	sine = sine0 + arithmetic_shift_right_u32(
+		(uint32_t)(((int32_t)sine1 - sine0) * fraction), 5);
+	cosine = cosine0 + arithmetic_shift_right_u32(
+		(uint32_t)(((int32_t)cosine1 - cosine0) * fraction), 5);
+	if (quadrant >= 2u)
+		sine = -sine;
+	if (quadrant == 1u || quadrant == 2u)
+		cosine = -cosine;
+	/* Retain floor rounding when scaling the signed Q15 samples to Q14. */
+	return (struct fixed_phase_q14){
+		.sine = (int16_t)arithmetic_shift_right_u32((uint32_t)sine, 1),
+		.cosine = (int16_t)arithmetic_shift_right_u32((uint32_t)cosine, 1),
+	};
 }

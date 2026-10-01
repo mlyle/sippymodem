@@ -13,8 +13,9 @@ struct fixed_phase_q14 {
 	int16_t cosine;
 };
 
-/* Preserve the modem's signed phase interpolation over the complete s16
- * domain.  Returning the pair by value leaves no partial output state. */
+/* One full turn is 0x8000 phase units; signed inputs wrap modulo a turn.
+ * Interpolated Q14 components are bounded by +/-16384, with at most two
+ * Q14 units of error from the analytic sine and cosine. */
 struct fixed_phase_q14 fixed_phase_sin_cos_q14(int16_t phase);
 
 /* Unsigned carrier phase uses 0x10000 units per full turn. */

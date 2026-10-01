@@ -56,26 +56,58 @@ static bool test_generated_endpoints(void)
 	return true;
 }
 
-static bool test_complete_phasor_profile(void)
+static bool test_positive_phasor_profile(void)
 {
 	uint32_t hash = UINT32_C(2166136261);
 
-	for (uint32_t word = 0; word <= UINT16_MAX; ++word) {
+	/* Keep the complete positive profile bit-exact for existing consumers. */
+	for (uint32_t word = 0; word <= INT16_MAX; ++word) {
 		struct fixed_phase_q14 sample =
-			fixed_phase_sin_cos_q14(word_to_s16((uint16_t)word));
+			fixed_phase_sin_cos_q14((int16_t)word);
 
 		hash = hash_word(hash, (uint16_t)sample.sine);
 		hash = hash_word(hash, (uint16_t)sample.cosine);
 	}
-	CHECK(hash == UINT32_C(0x09520978),
-	      "complete fixed phasor profile changed: %#x", hash);
+	CHECK(hash == UINT32_C(0xb9bd06c5),
+	      "positive fixed phasor profile changed: %#x", hash);
 	CHECK(fixed_phase_sin_cos_q14(0).sine == 0 &&
 		      fixed_phase_sin_cos_q14(0).cosine == 16384 &&
 		      fixed_phase_sin_cos_q14(0x2000).sine == 16384 &&
 		      fixed_phase_sin_cos_q14(0x2000).cosine == 0 &&
-		      fixed_phase_sin_cos_q14((int16_t)-24576).sine == -25834 &&
+		      fixed_phase_sin_cos_q14(0x4000).sine == 0 &&
+		      fixed_phase_sin_cos_q14(0x4000).cosine == -16384 &&
+		      fixed_phase_sin_cos_q14(0x6000).sine == -16384 &&
+		      fixed_phase_sin_cos_q14(0x6000).cosine == 0 &&
+		      fixed_phase_sin_cos_q14((int16_t)-24576).sine == 16384 &&
 		      fixed_phase_sin_cos_q14((int16_t)-24576).cosine == 0,
 	      "fixed phasor cardinal or signed-phase behavior changed");
+	return true;
+}
+
+static bool test_signed_phase_wrap_and_bounds(void)
+{
+	for (int32_t phase = 0; phase <= INT16_MAX; ++phase) {
+		struct fixed_phase_q14 positive =
+			fixed_phase_sin_cos_q14((int16_t)phase);
+		struct fixed_phase_q14 negative =
+			fixed_phase_sin_cos_q14((int16_t)(phase - 32768));
+		double radians = 2.0 * PI * phase / 32768.0;
+
+		CHECK(positive.sine == negative.sine &&
+			      positive.cosine == negative.cosine,
+		      "phase aliases differ at %d: %d/%d versus %d/%d",
+		      (int)phase, positive.sine, positive.cosine,
+		      negative.sine, negative.cosine);
+		CHECK(positive.sine >= -16384 && positive.sine <= 16384 &&
+			      positive.cosine >= -16384 &&
+			      positive.cosine <= 16384,
+		      "phasor exceeds unit Q14 amplitude at %d: %d/%d",
+		      (int)phase, positive.sine, positive.cosine);
+		CHECK(fabs(positive.sine - sin(radians) * 16384.0) <= 2.0 &&
+			      fabs(positive.cosine - cos(radians) * 16384.0) <= 2.0,
+		      "phasor interpolation exceeds two Q14 units at %d",
+		      (int)phase);
+	}
 	return true;
 }
 
@@ -158,7 +190,8 @@ int main(void)
 		bool (*run)(void);
 	} tests[] = {
 		{ "generated endpoints", test_generated_endpoints },
-		{ "complete phasor profile", test_complete_phasor_profile },
+		{ "positive phasor profile", test_positive_phasor_profile },
+		{ "signed phase wrap and bounds", test_signed_phase_wrap_and_bounds },
 		{ "complete unsigned carrier profile",
 		  test_complete_unsigned_carrier_profile },
 		{ "compact cosine profile", test_compact_cosine_profile },
