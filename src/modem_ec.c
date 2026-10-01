@@ -1400,7 +1400,7 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 
 /* rx unnumbered frame */
 
-static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
+static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 {
 	//LAPM_PRINT_FRAME("rx unnum:",1,f);
 	switch(FRAME_CTRL(f)&0xef) {
@@ -1414,12 +1414,12 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		if (reinitialize_for_link_establishment(l) != 0) {
 			TX_DM(l,FRAME_U_PF(f));
 			modem_update_status(l->modem, STATUS_EC_ERROR);
-			return -1;
+			return;
 		}
 		if (TX_UA(l,FRAME_U_PF(f)) != 0) {
 			l->state = LAPM_IDLE;
 			modem_update_status(l->modem, STATUS_EC_ERROR);
-			return -1;
+			return;
 		}
 		/* going to connected state */
 		l->state = LAPM_DATA;
@@ -1428,11 +1428,6 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 			modem_update_status(l->modem, STATUS_EC_LINK);
 		break;
 	}
-	case FRAME_U_UI:
-		/* break signal */
-		/* pf = 0 */
-		/* TBD */
-		break;
 	case FRAME_U_DISC:
 		/* respond UA (or DM) */
 		if (l->state == LAPM_IDLE)
@@ -1444,7 +1439,7 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 			T401_STOP(l);
 			if (TX_UA(l,FRAME_U_PF(f)) != 0) {
 				modem_update_status(l->modem, STATUS_EC_ERROR);
-				return -1;
+				return;
 			}
 			/* UA is queued, not yet serialized. Keep HDLC and the modem
 			 * line alive for that response and the peer's cleardown. */
@@ -1455,15 +1450,7 @@ static int rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		/* exchange general id info */
 		rx_xid_command(l,f);
 		break;
-	case FRAME_U_TEST:
-		/* TBD */
-		/* optional */
-		break;
-	default:
-		EC_ERR("rx unnum cmd: unknown frame 0x%02x\n", FRAME_CTRL(f));
-		return -1;
 	}
-	return 0;
 }
 
 static bool complete_link_establishment(struct lapm_state *l)
@@ -1490,7 +1477,7 @@ static void complete_link_release(struct lapm_state *l)
 	modem_update_status(l->modem, STATUS_EC_RELEASE);
 }
 
-static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
+static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 {
 	//LAPM_PRINT_FRAME("rx unnum",0, f);
 	switch(FRAME_CTRL(f)&0xef) {
@@ -1506,11 +1493,6 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			   ((l->state == LAPM_ESTAB || l->state == LAPM_DISC) && FRAME_U_PF(f))) {
 			complete_link_release(l);
 		}
-		break;
-	case FRAME_U_UI:
-		/* break signal */
-		/* pf = 0 */
-		/* TBD */
 		break;
 	case FRAME_U_UA:
 		/* notify us about mode change, responds SABME,DISC */
@@ -1560,11 +1542,7 @@ static int rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 			}
 		}
 		break;
-	default:
-		EC_ERR("rx unnum rsp: unknown frame 0x%02x\n", FRAME_CTRL(f));
-		break;
 	}
-	return 0;
 }
 
 
@@ -1643,6 +1621,32 @@ static bool valid_numbered_frame(
 		FRAME_CTRL(f) == FRAME_S_REJ);
 }
 
+static bool valid_unnumbered_frame(const struct lapm_state *l, const frame_t *f)
+{
+	/* V.42 Table 8/8.2.4: fixed U headers permit no information field;
+	 * FRMR carries five octets. Validate direction before dispatch, too. */
+	switch (FRAME_CTRL(f) & 0xef) {
+	case FRAME_U_SABME:
+	case FRAME_U_DISC:
+		return RX_IS_COMMAND(f) && f->count == 2;
+	case FRAME_U_UA:
+	case FRAME_U_DM:
+		return !RX_IS_COMMAND(f) && f->count == 2;
+	case FRAME_U_FRMR:
+		return !RX_IS_COMMAND(f) && f->count == 7;
+	case FRAME_U_TEST:
+		if (!RX_IS_COMMAND(f))
+			return false;
+		/* Optional TEST and UI are currently ignored after validation. */
+		/* fall through */
+	case FRAME_U_UI:
+	case FRAME_U_XID:
+		return !FRAME_U_PF(f);
+	default:
+		return false;
+	}
+}
+
 static void lapm_rx_complete(void *framer, frame_t *f)
 {
 	struct lapm_state *l = framer;
@@ -1657,11 +1661,12 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	if (type != FRAME_U && (f->count < 3 ||
 	    (l->state != LAPM_DATA && l->state != LAPM_ESTAB)))
 		return;
-	/* V.42 8.5.5/8.4.9.2: reject malformed numbered frames before any
-	 * link indication, acknowledgement, flow control or payload delivery. */
-	if (type != FRAME_U && !valid_numbered_frame(l, f, type)) {
-		EC_ERR("rejected numbered frame: control=%02x length=%d nr=%u\n",
-		       FRAME_CTRL(f), f->count, FRAME_NR(f));
+	/* V.42 8.5.5/8.4.9.2: reject malformed frames before any link
+	 * indication, acknowledgement, configuration or payload delivery. */
+	if (type == FRAME_U ? !valid_unnumbered_frame(l, f) :
+	    !valid_numbered_frame(l, f, type)) {
+		EC_ERR("rejected frame: control=%02x length=%d\n",
+		       FRAME_CTRL(f), f->count);
 		if (l->state == LAPM_DATA)
 			complete_link_release(l);
 		return;

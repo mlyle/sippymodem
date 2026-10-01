@@ -3153,6 +3153,83 @@ static bool test_lapm_numbered_frame_rejection(void)
 	return true;
 }
 
+static bool test_lapm_unnumbered_frame_rejection(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM unnumbered rejection", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+	/* V.42 Table 8 and 8.2.4: fixed headers have no information field,
+	 * except FRMR, whose information field contains exactly five octets. */
+	static const struct {
+		unsigned control, length;
+		bool command;
+	} fixed[] = {
+		{ 0x73, 2, false }, { 0x63, 2, false },
+		{ 0x7f, 2, true }, { 0x6f, 2, true },
+		{ 0x53, 2, true }, { 0x43, 2, true },
+		{ 0x1f, 2, false }, { 0x0f, 2, false },
+		{ 0x87, 7, false }, { 0x97, 7, false },
+	};
+	/* UI/XID require P/F=0; TEST is a command with P=0. Other control
+	 * encodings are undefined, regardless of their direction or length. */
+	static const unsigned invalid[] = { 0x13, 0xbf, 0xf3, 0xff, 0x23 };
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned state = 0; state < 4; ++state)
+	for (unsigned response = 0; response < 2; ++response)
+	for (size_t i = 0; i < ARRAY_LENGTH(fixed) + ARRAY_LENGTH(invalid) + 1; ++i)
+	for (unsigned length = 2; length <= 8; ++length) {
+		unsigned control = i < ARRAY_LENGTH(fixed) ? fixed[i].control :
+			i < ARRAY_LENGTH(fixed) + ARRAY_LENGTH(invalid) ?
+			invalid[i - ARRAY_LENGTH(fixed)] : 0xe3;
+		if (i < ARRAY_LENGTH(fixed) && fixed[i].length == length &&
+		    fixed[i].command == !response)
+			continue;
+		if (control == 0xe3 && !response)
+			continue; /* Optional TEST has a variable information field. */
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[8] = { 0, control, 0x82 };
+		frame_t incoming = { .buf = wire, .count = length };
+
+		CHECK(m != NULL, "unnumbered rejection allocation failed");
+		m->caller = caller;
+		m->cfg.ec = 1;
+		m->cfg.comp = 0;
+		m->rx_rate = m->tx_rate = 28800;
+		CHECK(modem_ec_init(m) == 0, "unnumbered rejection initialization failed");
+		modem_ec_start(m);
+		struct lapm_state *l = &m->ec.lapm;
+		l->state = state;
+		l->va = l->vs = l->vr = 7;
+		l->busy = l->peer_busy = 1;
+		l->rx_count = 1;
+		l->rx_buf[0] = 'R';
+		m->state = state == 2 ? 5 : 4;
+		m->bit_timer = 1234;
+		wire[0] = response ? l->cmd_addr : l->rsp_addr;
+		struct lapm_state before = *l;
+		struct modem_config configuration = m->cfg;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(memcmp(&configuration, &m->cfg, sizeof(configuration)) == 0,
+		      "rejected U frame changed negotiated configuration");
+		if (state != 2) {
+			CHECK(memcmp(l, &before, sizeof(before)) == 0 && m->state == 4 &&
+			      m->bit_timer == 1234,
+			      "rejected U frame changed pending link: role=%u state=%u response=%u control=%02x length=%u",
+			      caller, state, response, control, length);
+		} else {
+			CHECK(l->state == 0 && !l->rx_count && !l->busy && !l->peer_busy &&
+			      !m->bit_timer && l->tx_ctrl == l->ctrl_list &&
+			      l->rx_buf[0] == 'R' && strcmp(modem_call_phase(m), "cleardown") == 0,
+			      "rejected U frame retained link: role=%u response=%u control=%02x length=%u",
+			      caller, response, control, length);
+		}
+		modem_delete(m);
+	}
+	return true;
+}
+
 static bool test_lapm_acknowledgement_queue_consistency(void)
 {
 	struct modem_driver driver = {
@@ -5146,6 +5223,7 @@ int main(void)
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM numbered frame rejection", test_lapm_numbered_frame_rejection },
+		{ "LAPM unnumbered frame rejection", test_lapm_unnumbered_frame_rejection },
 		{ "LAPM acknowledgement queue consistency", test_lapm_acknowledgement_queue_consistency },
 		{ "LAPM acknowledgement window", test_lapm_acknowledgement_window },
 		{ "LAPM repeated sequence error poll", test_lapm_repeated_sequence_error_poll },
