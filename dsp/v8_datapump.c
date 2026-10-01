@@ -85,7 +85,7 @@ static enum DP_ID fallback_datapump(
 		enum DP_ID id;
 		unsigned int first_rate, last_rate, step;
 	} profiles[] = {
-		{ DP_V32, 4800, 14400, 2400 },
+		{ DP_V32BIS, 4800, 14400, 2400 },
 		{ DP_V22BIS, 2400, 2400, 1 },
 		{ DP_V22, 600, 1200, 600 },
 		{ DP_V23, 1200, 1200, 1 },
@@ -97,9 +97,14 @@ static enum DP_ID fallback_datapump(
 		    modem_dp_get_registered_ops(profiles[i].id) == NULL)
 			continue;
 		for (unsigned int rate = profiles[i].first_rate;
-		     rate <= profiles[i].last_rate; rate += profiles[i].step)
-			if (modem->min_rate <= rate && modem->max_rate >= rate)
-				return profiles[i].id;
+		     rate <= profiles[i].last_rate; rate += profiles[i].step) {
+			if (modem->min_rate > rate || modem->max_rate < rate)
+				continue;
+			if (profiles[i].id == DP_V32BIS && modem->max_rate <= 9600 &&
+			    (modem->min_rate > 7200 || modem->max_rate < 7200))
+				return DP_V32;
+			return profiles[i].id;
+		}
 	}
 	return 0;
 }
@@ -402,6 +407,7 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 	struct v8_datapump *datapump = v8_from_dp(dp);
 	const int16_t *receive = receive_buffer;
 	bool listening;
+	enum DP_ID handoff;
 	int result;
 
 	if (!datapump_linear_fragment_is_ready(datapump, receive, transmit_buffer, count))
@@ -432,7 +438,9 @@ static int process_v8(struct dp *dp, void *receive_buffer, void *transmit_buffer
 	    datapump->handshake.answering.state != V8_ANSWERING_WAIT_CALL_MENU ||
 	    datapump->legacy_carrier_samples < MODEM_RATE / 2)
 		return result;
-	if (modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, DP_V32) != 0)
+	handoff = v8_datapump_modulation(datapump->requested_datapump) == V8_MODULATION_V32 ?
+		datapump->requested_datapump : fallback_datapump(dp->modem, V8_MODULATION_V32);
+	if (handoff == 0 || modem_set_param(dp->modem, MDMPRM_DP_REQUESTED, handoff) != 0)
 		return DPSTAT_ERROR;
 	/* No CM/JM was exchanged: leave error-control detection enabled and do
 	 * not report V.8 negotiation or an agreed PCM role. */

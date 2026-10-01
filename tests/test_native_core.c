@@ -1826,7 +1826,7 @@ static bool test_v8_legacy_v32(void)
 
 	CHECK(datapumps_start(&datapumps) == DATAPUMPS_OK,
 	      "legacy V.32 registrations failed");
-	for (unsigned int scenario = 0; scenario < 6; ++scenario) {
+	for (unsigned int scenario = 0; scenario < 8; ++scenario) {
 		struct modem *modem = modem_create(&driver, "automatic answerer");
 		struct dp_operations *ops = modem_dp_get_registered_ops(DP_V8);
 		struct single_tone_transmitter tone;
@@ -1843,7 +1843,10 @@ static bool test_v8_legacy_v32(void)
 		modem->min_rate = scenario == 2 ? 16800 : 300;
 		modem->max_rate = 56000;
 		modem->cfg.ec = 1;
-		dp = ops->create(modem, DP_V92, scenario == 3,
+		enum DP_ID requested = scenario == 6 ? DP_V32 :
+			scenario == 7 ? DP_V32BIS : DP_V92;
+		bool accepted = scenario == 0 || scenario >= 5;
+		dp = ops->create(modem, requested, scenario == 3,
 			MODEM_RATE, MODEM_FRAG, ops);
 		CHECK(dp != NULL && !v8_datapump_v32_handoff(dp, &carrier),
 		      "legacy V.32 handoff was available before detection");
@@ -1866,11 +1869,12 @@ static bool test_v8_legacy_v32(void)
 			CHECK(result != DPSTAT_CHANGEDP || sample >= MODEM_RATE * 9 / 10,
 			      "legacy detector accumulated disconnected carrier fragments");
 		}
-		CHECK((scenario == 0 || scenario == 5) == (result == DPSTAT_CHANGEDP) &&
-		      (scenario == 0 || scenario == 5) == v8_datapump_v32_handoff(dp, &carrier) &&
-		      modem->dp_requested == (scenario == 0 || scenario == 5 ? DP_V32 : 0),
+		CHECK(accepted == (result == DPSTAT_CHANGEDP) &&
+		      accepted == v8_datapump_v32_handoff(dp, &carrier) &&
+		      modem->dp_requested == (accepted ?
+			      (scenario == 6 ? DP_V32 : DP_V32BIS) : 0),
 		      "legacy V.32 escaped selection limits in scenario %u", scenario);
-		if (scenario == 0 || scenario == 5)
+		if (accepted)
 			CHECK(single_tone_detector_is_valid(&carrier) && carrier.tone_present &&
 			      carrier.profile.frequency_hz == 1800 &&
 			      !v8_datapump_pcm_handoff(dp, &pcm) &&
@@ -6642,6 +6646,19 @@ static bool test_owns_source_built_datapump_registrations(void)
 	CHECK(v32_operations->delete(v32) == 0 &&
 		      v32_operations->use_count == 0,
 	      "V.32 data pump did not release after line startup");
+	/* The shared DSP must retain the selected protocol's rate set. */
+	static const unsigned int bis_rates[] = { 7200, 12000, 14400 };
+	for (size_t index = 0; index < ARRAY_LENGTH(bis_rates); ++index) {
+		modem->min_rate = modem->max_rate = bis_rates[index];
+		CHECK(v32_operations->create(modem, DP_V32, 1, MODEM_RATE,
+			      MODEM_FRAG, v32_operations) == NULL &&
+			      v32_operations->use_count == 0,
+		      "V.32 accepted the V.32bis-only rate %u", bis_rates[index]);
+		v32bis = v32bis_operations->create(modem, DP_V32BIS, 1,
+			MODEM_RATE, MODEM_FRAG, v32bis_operations);
+		CHECK(v32bis != NULL && v32bis_operations->delete(v32bis) == 0,
+		      "V.32bis rejected its rate %u", bis_rates[index]);
+	}
 	modem->min_rate = modem->max_rate = 14400;
 	v32bis = v32bis_operations->create(
 		modem, DP_V32BIS, 1, MODEM_RATE, MODEM_FRAG,
@@ -6650,7 +6667,7 @@ static bool test_owns_source_built_datapump_registrations(void)
 		      v32bis_operations->use_count == 1 &&
 		      v32bis_operations->delete(v32bis) == 0 &&
 		      v32bis_operations->use_count == 0,
-	      "V.32bis alias did not share the V.32 data pump");
+	      "V.32bis did not share the V.32 data pump");
 	modem->min_rate = V34_MAX_BIT_RATE + 1;
 	modem->max_rate = V34_MAX_BIT_RATE + V34_RATE_STEP;
 	CHECK(v34_operations->create(

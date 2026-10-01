@@ -399,7 +399,7 @@ static bool line_state_is_valid(
 		       V32_ANSWERER_LINE_FAILED;
 }
 
-static uint8_t rate_capabilities(const struct modem *modem)
+static uint8_t rate_capabilities(const struct modem *modem, enum DP_ID id)
 {
 	uint8_t rates = 0;
 
@@ -420,6 +420,8 @@ static uint8_t rate_capabilities(const struct modem *modem)
 	if (modem->min_rate <= V32_14400_BIT_RATE &&
 	    modem->max_rate >= V32_14400_BIT_RATE)
 		rates |= V32_RATE_CAPABILITY_14400;
+	if (id == DP_V32)
+		rates &= V32_RATE_CAPABILITY_4800 | V32_RATE_CAPABILITY_9600;
 	return rates;
 }
 
@@ -470,7 +472,7 @@ static struct v32_datapump *v32_from_dp(struct dp *dp)
 	    !qam_modulator_is_valid(&datapump->modulator) ||
 	    !v32_startup_is_valid(&datapump->startup) ||
 	    datapump->startup.role != endpoint_role(datapump->caller) ||
-	    datapump->startup.supported_rates != rate_capabilities(dp->modem) ||
+	    datapump->startup.supported_rates != rate_capabilities(dp->modem, dp->id) ||
 	    (!training_session_has_failed(&datapump->training) &&
 	     training_session_is_online(&datapump->training) !=
 		     v32_startup_is_complete(&datapump->startup)) ||
@@ -560,7 +562,7 @@ static struct dp *create_v32(
 	struct v32_datapump *datapump;
 	struct single_tone_detector calling_carrier;
 	bool is_caller = caller != 0;
-	uint8_t rates = rate_capabilities(modem);
+	uint8_t rates = rate_capabilities(modem, id);
 
 	if (modem == NULL ||
 	    (id != DP_V32 && id != DP_V32BIS) ||
@@ -602,7 +604,7 @@ static int prepare_retrain(
 	struct v32_datapump *datapump, enum training_origin origin)
 {
 	if (initialize_protocol(
-		    datapump, rate_capabilities(datapump->dp.modem),
+		    datapump, rate_capabilities(datapump->dp.modem, datapump->dp.id),
 		    true) != 0 ||
 	    training_session_start_retrain(
 		    &datapump->training, origin) != TRAINING_SESSION_OK)

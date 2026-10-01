@@ -117,6 +117,7 @@ struct modem_test_case {
 	enum DP_ID id;
 	enum DP_ID answerer_id;
 	enum DP_ID connected_id;
+	enum DP_ID answerer_connected_id;
 	const char *name;
 	const char *selection_command;
 	const char *answerer_selection_command;
@@ -1070,7 +1071,7 @@ static bool exercise_retrain(
 		return false;
 	}
 	for (unsigned int frame = 0;
-	     frame < (id == DP_V32 ?
+	     frame < (v8_datapump_modulation(id) == V8_MODULATION_V32 ?
 			      V32_RETRAIN_FRAME_LIMIT : id == DP_V92 ?
 			      V92_RETRAIN_FRAME_LIMIT : RETRAIN_FRAME_LIMIT);
 	     ++frame) {
@@ -2064,6 +2065,8 @@ static bool run_media_call(
 		test_case->answerer_id : test_case->id;
 	enum DP_ID connected_id = test_case->connected_id != 0 ?
 		test_case->connected_id : test_case->id;
+	enum DP_ID answerer_connected_id = test_case->answerer_connected_id != 0 ?
+		test_case->answerer_connected_id : connected_id;
 	const char *answerer_selection =
 		test_case->answerer_selection_command != NULL ?
 			test_case->answerer_selection_command :
@@ -2085,7 +2088,8 @@ static bool run_media_call(
 	unsigned int training_frame_limit =
 		test_case->training_frame_limit != 0 ?
 			test_case->training_frame_limit :
-			(test_case->id == DP_V32 ? V32_TRAINING_FRAME_LIMIT :
+			(v8_datapump_modulation(test_case->id) == V8_MODULATION_V32 ?
+			 V32_TRAINING_FRAME_LIMIT :
 			 uses_v8 ? NEGOTIATED_TRAINING_FRAME_LIMIT :
 				   TRAINING_FRAME_LIMIT);
 	int selection_length = (int)strlen(test_case->selection_command);
@@ -2250,7 +2254,7 @@ static bool run_media_call(
 		      "%s answerer pre-carrier noise failed",
 		      test_case->name);
 		if (answerer.modem->dp != NULL &&
-		    answerer.modem->dp->id == DP_V32) {
+		    v8_datapump_modulation(answerer.modem->dp->id) == V8_MODULATION_V32) {
 			bool answerer_silent = true;
 
 			for (size_t sample = 0;
@@ -2284,7 +2288,7 @@ static bool run_media_call(
 			prelink_queued = true;
 		}
 		if (modem_is_online(caller.modem, connected_id) &&
-		    modem_is_online(answerer.modem, connected_id)) {
+		    modem_is_online(answerer.modem, answerer_connected_id)) {
 			online = true;
 			break;
 		}
@@ -2301,14 +2305,14 @@ static bool run_media_call(
 	      test_case->name,
 	      modem_is_online(caller.modem, connected_id),
 	      caller.modem->tx_rate, caller.modem->rx_rate,
-	      modem_is_online(answerer.modem, connected_id),
+	      modem_is_online(answerer.modem, answerer_connected_id),
 	      answerer.modem->tx_rate, answerer.modem->rx_rate);
 	CHECK(!monitor_caller_rate ||
 		      caller_rate_monitor.starts >=
 			      test_case->minimum_caller_rate_signals,
 	      "%s caller emitted only %u late V.22bis rate signal(s)",
 	      test_case->name, caller_rate_monitor.starts);
-	CHECK(test_case->id != DP_V32 ||
+	CHECK(v8_datapump_modulation(test_case->id) != V8_MODULATION_V32 ||
 		      answerer_silence_max >=
 			      V32_MIN_HALF_DUPLEX_GAP_FRAMES,
 	      "%s answerer did not cease transmission while conditioning its "
@@ -4136,6 +4140,7 @@ int main(void)
 		{
 			.id = DP_V32, .answerer_id = DP_V92,
 			.name = "legacy auto-answer V.32 raw",
+			.answerer_connected_id = DP_V32BIS,
 			.selection_command = "AT+MS=32,0,9600,9600\r",
 			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
 			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
@@ -4147,6 +4152,7 @@ int main(void)
 		{
 			.id = DP_V32, .answerer_id = DP_V92,
 			.name = "legacy auto-answer V.32 LAPM",
+			.answerer_connected_id = DP_V32BIS,
 			.selection_command = "AT+MS=32,0,9600,9600\r",
 			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
 			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
@@ -4188,6 +4194,7 @@ int main(void)
 		{
 			.id = DP_V32, .answerer_id = DP_V92,
 			.name = "subset auto-answer V.32",
+			.answerer_connected_id = DP_V32BIS,
 			.selection_command = "AT+MS=32,1,9600,9600\r",
 			.answerer_selection_command = "AT+MS=92,1,300,56000\r",
 			.caller_tx_rate = 9600, .caller_rx_rate = 9600,
@@ -4371,9 +4378,9 @@ int main(void)
 			.impairment = INTEGRATION_IMPAIRMENT_TRAINING_NOISE,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 7200 LAPM retrain",
-			.selection_command = "AT+MS=32,1,7200,7200\r",
+			.selection_command = "AT+MS=132,1,7200,7200\r",
 			.caller_tx_rate = V32_7200_BIT_RATE,
 			.caller_rx_rate = V32_7200_BIT_RATE,
 			.answerer_tx_rate = V32_7200_BIT_RATE,
@@ -4396,6 +4403,16 @@ int main(void)
 		},
 		{
 			.id = DP_V32,
+			.name = "V.32 default range stays at 9600",
+			.selection_command = "AT+MS=32,0,300,56000\r",
+			.caller_tx_rate = V32_9600_BIT_RATE,
+			.caller_rx_rate = V32_9600_BIT_RATE,
+			.answerer_tx_rate = V32_9600_BIT_RATE,
+			.answerer_rx_rate = V32_9600_BIT_RATE,
+			.raw_transport = true,
+		},
+		{
+			.id = DP_V32,
 			.name = "V.32 9600 raw retrain",
 			.selection_command = "AT+MS=32,1,9600,9600\r",
 			.caller_tx_rate = V32_9600_BIT_RATE,
@@ -4408,9 +4425,9 @@ int main(void)
 			.raw_transport = true,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 12000 LAPM retrain",
-			.selection_command = "AT+MS=32,1,12000,12000\r",
+			.selection_command = "AT+MS=132,1,12000,12000\r",
 			.caller_tx_rate = V32_12000_BIT_RATE,
 			.caller_rx_rate = V32_12000_BIT_RATE,
 			.answerer_tx_rate = V32_12000_BIT_RATE,
@@ -4420,9 +4437,9 @@ int main(void)
 			.test_retrain = true,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 14400 LAPM retrain",
-			.selection_command = "AT+MS=32,1,14400,14400\r",
+			.selection_command = "AT+MS=132,1,14400,14400\r",
 			.caller_tx_rate = V32_14400_BIT_RATE,
 			.caller_rx_rate = V32_14400_BIT_RATE,
 			.answerer_tx_rate = V32_14400_BIT_RATE,
@@ -4432,9 +4449,9 @@ int main(void)
 			.test_retrain = true,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 7200 impaired LAPM retrain",
-			.selection_command = "AT+MS=32,1,7200,7200\r",
+			.selection_command = "AT+MS=132,1,7200,7200\r",
 			.caller_tx_rate = V32_7200_BIT_RATE,
 			.caller_rx_rate = V32_7200_BIT_RATE,
 			.answerer_tx_rate = V32_7200_BIT_RATE,
@@ -4445,9 +4462,9 @@ int main(void)
 			.impairment = INTEGRATION_IMPAIRMENT_COMPOSITE,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 14400 impaired LAPM retrain",
-			.selection_command = "AT+MS=32,1,14400,14400\r",
+			.selection_command = "AT+MS=132,1,14400,14400\r",
 			.caller_tx_rate = V32_14400_BIT_RATE,
 			.caller_rx_rate = V32_14400_BIT_RATE,
 			.answerer_tx_rate = V32_14400_BIT_RATE,
@@ -4458,9 +4475,9 @@ int main(void)
 			.impairment = INTEGRATION_IMPAIRMENT_COMPOSITE,
 		},
 		{
-			.id = DP_V32,
+			.id = DP_V32BIS,
 			.name = "V.32bis 14400 impaired raw retrain",
-			.selection_command = "AT+MS=32,1,14400,14400\r",
+			.selection_command = "AT+MS=132,1,14400,14400\r",
 			.caller_tx_rate = V32_14400_BIT_RATE,
 			.caller_rx_rate = V32_14400_BIT_RATE,
 			.answerer_tx_rate = V32_14400_BIT_RATE,
