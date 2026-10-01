@@ -409,6 +409,7 @@ SELF_SYNC_SCRAMBLER_TEST_OBJECTS := \
 	$(BUILD_DIR)/test_self_sync_scrambler.o \
 	$(SELF_SYNC_SCRAMBLER_OBJECT)
 NATIVE_CORE_TEST_BINARY := $(BUILD_DIR)/test_native_core
+NATIVE_CORE_DEBUG_TEST_BINARY := $(BUILD_DIR)/test_native_core_debug
 NATIVE_CORE_SOURCE_NAMES := homolog_data modem modem_at modem_comp \
 	modem_debug modem_ec modem_pack modem_param modem_timer sysdep_common
 NATIVE_CORE_OBJECTS := $(addprefix $(BUILD_DIR)/native_, \
@@ -3267,7 +3268,7 @@ TEST_BINARIES := $(PACK_TEST_BINARY) $(CONFIG_TEST_BINARY) \
 	$(PACKED_BITS_TEST_BINARY) \
 	$(PHASE_TEST_BINARY) $(FIXED_PHASE_TEST_BINARY) \
 	$(SELF_SYNC_SCRAMBLER_TEST_BINARY) \
-	$(NATIVE_CORE_TEST_BINARY) \
+	$(NATIVE_CORE_TEST_BINARY) $(NATIVE_CORE_DEBUG_TEST_BINARY) \
 	$(FSK_TEST_BINARY) $(V8_ANSAM_TEST_BINARY) \
 	$(V8_ANSWERING_TEST_BINARY) \
 	$(V8_CALLING_TEST_BINARY) \
@@ -3787,6 +3788,11 @@ $(SELF_SYNC_SCRAMBLER_TEST_BINARY): $(SELF_SYNC_SCRAMBLER_TEST_OBJECTS)
 	$(CC) $(LDFLAGS) -o $@ $^
 
 $(NATIVE_CORE_TEST_BINARY): $(NATIVE_CORE_TEST_OBJECTS)
+	$(CC) $(LDFLAGS) -o $@ $^ -lm
+
+$(NATIVE_CORE_DEBUG_TEST_BINARY): \
+	$(filter-out $(BUILD_DIR)/native_modem_ec.o,$(NATIVE_CORE_TEST_OBJECTS)) \
+	$(BUILD_DIR)/native_modem_ec_debug.o
 	$(CC) $(LDFLAGS) -o $@ $^ -lm
 
 $(FSK_TEST_BINARY): $(FSK_TEST_OBJECTS)
@@ -6059,6 +6065,10 @@ $(BUILD_DIR)/v8_line_conditioner.o: \
 $(BUILD_DIR)/v8_menu.o: \
 	$(DSP_SOURCE_DIR)/v8_menu.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+$(BUILD_DIR)/native_modem_ec_debug.o: ../src/modem_ec.c | $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -DEC_DEBUG=1 -DCONFIG_DEBUG_MODEM=1 \
+		-MMD -MP -c -o $@ $<
 
 $(BUILD_DIR)/native_%.o: ../src/%.c | $(BUILD_DIR)
 	$(CC) $(CPPFLAGS) $(filter-out -Werror,$(CFLAGS)) \

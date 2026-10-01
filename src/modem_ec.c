@@ -313,184 +313,31 @@ extern inline u32 lapm_get_be_val(const u8 *buf, int len)
                                    l->modem->name , ##arg)
 #define EC_DBG1(fmt...) // EC_DBG(fmt)
 
-static char print_buf[(LAPM_MAX_INFO_SIZE+3)*2];
-
-/* frame debug prints */
-static const char *get_frame_name(frame_t *f)
+/* Frames reach this hook only after construction or receive validation. */
+static void print_frame(
+	struct lapm_state *l, const char *title, bool command,
+	const frame_t *f, int length)
 {
-	if (!(f->buf[1]&0x1))
-		return "INFO";
-	switch(f->buf[1]&0xef) {
-	case FRAME_S_RR:    return "RR";
-	case FRAME_S_RNR:   return "RNR";
-	case FRAME_S_REJ:   return "REJ";
-	case FRAME_S_SREJ:  return "SREJ";
-	case FRAME_U_SABME: return "SABME";
-	case FRAME_U_DM:    return "DM";
-	case FRAME_U_UI:    return "UI";
-	case FRAME_U_DISC:  return "DISC";
-	case FRAME_U_UA:    return "UA";
-	case FRAME_U_FRMR:  return "FRMR";
-	case FRAME_U_XID:   return "XID";
-	case FRAME_U_TEST:  return "TEST";
-	default:
-		break;
-	}
-	return "invalid frame";
-}
-
-static void print_frame(struct lapm_state *l, char *title, int cmd, frame_t *f)
-{
-	int i;
-	i = sprintf(print_buf,"(va/vs/vr %d/%d/%d) %s: %s %s",
-		    l->va,l->vs,l->vr,
-		    title,get_frame_name(f),cmd?"cmd":"rsp");
-	switch (FRAME_TYPE(f)) {
-	case FRAME_I:
-		EC_DBG("%s[%d] cnt=%d, (ns/nr %d/%d)...\n",print_buf,
-			 FRAME_I_PF(f),f->count-3,FRAME_NS(f),FRAME_NR(f));
-		break;
-	case FRAME_S:
-		EC_DBG("%s[%d], (nr %d)...\n",print_buf,
-			 FRAME_S_PF(f), FRAME_NR(f));
-		break;
-	case FRAME_U:
-		EC_DBG("%s[%d]...\n",print_buf, FRAME_U_PF(f));
-		break;
-	default:
-		EC_DBG("%s: unknown frame.\n", print_buf);
-		break;
+	EC_DBG("%s %s: addr=%02x control=%02x length=%d (va/vs/vr %d/%d/%d)\n",
+	       title, command ? "cmd" : "rsp", FRAME_ADDR(f), FRAME_CTRL(f),
+	       length, l->va, l->vs, l->vr);
+	if (FRAME_TYPE(f) == FRAME_I && length >= 3) {
+		EC_DBG("%s: ns=%d nr=%d pf=%d\n",
+		       title, FRAME_NS(f), FRAME_NR(f), FRAME_I_PF(f));
+	} else if (FRAME_TYPE(f) == FRAME_S && length >= 3) {
+		EC_DBG("%s: nr=%d pf=%d\n", title, FRAME_NR(f), FRAME_S_PF(f));
 	}
 }
 
-#define LAPM_PRINT_FRAME(str,cmd,f) print_frame(l,str,cmd,f)
+#define LAPM_PRINT_FRAME(str,cmd,f,len) print_frame(l,str,cmd,f,len)
 
-/* XID debug prints */
-static int print_xid_params(char *str_buf, const u8 *buf, int len)
-{
-	u8 pid, plen;
-	u32 pval;
-	int i = 0;
-	while (len > 0) {
-		pid  = buf[0];
-		plen = buf[1];
-		buf += 2;
-		len -= 2 + plen;
-		if (len < 0)
-			break;
-		switch (pid) {
-		case PI_HDLC_OPTFUNCS:
-			i += sprintf(str_buf + i,"HDLC_OPTFUNC = 0x%x, ",
-				     lapm_get_le_val(buf,plen));
-			break;
-		case PI_TX_INFO_MAXSIZE:
-			pval = lapm_get_be_val(buf,plen);
-			i += sprintf(str_buf + i,"TX_INFOSIZE = %u, ",pval>>3);
-			break;
-		case PI_RX_INFO_MAXSIZE:
-			pval = lapm_get_be_val(buf,plen);
-			i += sprintf(str_buf + i,"RX_INFOSIZE = %u, ",pval>>3);
-			break;
-		case PI_TX_WINDOW_SIZE:
-			i += sprintf(str_buf + i,"TX_WINSIZE = %u, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		case PI_RX_WINDOW_SIZE:
-			i += sprintf(str_buf + i,"RX_WINSIZE = %u, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		default:
-			i += sprintf(str_buf + i,"??, ");
-			break;
-		}
-		buf += plen;
-	}
-	i += sprintf(str_buf+i,"\n");
-	return i;
-}
-
-static int print_xid_private_params(char *str_buf, const u8 *buf, int len)
-{
-	u8 pid, plen;
-	int i = 0;
-	while (len > 0) {
-		pid  = buf[0];
-		plen = buf[1];
-		buf += 2;
-		len -= 2 + plen;
-		if (len < 0)
-			break;
-		switch (pid) {
-		case PI_PARAMETER_SET_ID:
-			i += sprintf(str_buf + i,"PARAM_SETID = 0x%x, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		case PI_V42BIS_REQUEST:
-			i += sprintf(str_buf + i,"V42BIS_REQUEST = 0x%x, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		case PI_V42BIS_CW_NUMBER:
-			i += sprintf(str_buf + i,"V42BIS_CWNUM = %d, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		case PI_V42BIS_MAX_STRING:
-			i += sprintf(str_buf + i,"V42BIS_MAXSTR = %d, ",
-				     lapm_get_be_val(buf,plen));
-			break;
-		default:
-			i += sprintf(str_buf + i,"??, ");
-			break;
-		}
-		buf += plen;
-	}
-	i += sprintf(str_buf+i,"\n");
-	return i;
-}
-
-static int print_xid(struct lapm_state *l,char *str,frame_t *f, int len)
-{
-	struct v42_xid_fields fields;
-	int i = 0;
-
-	if (len < 0 || v42_xid_decode(
-			f->buf + 2, (size_t)len, &fields) !=
-			V42_XID_OK) {
-		EC_DBG("%s: malformed XID\n", str);
-		return -1;
-	}
-	i = sprintf(print_buf,"XID: FID %02x;\n",
-		      V42_XID_GENERAL_FORMAT);
-	if (fields.parameter_negotiation != NULL) {
-		i += sprintf(print_buf+i,"GI_PARAMS(%zu): ",
-			     fields.parameter_negotiation_length);
-		i += print_xid_params(
-			print_buf+i, fields.parameter_negotiation,
-			(int)fields.parameter_negotiation_length);
-	}
-	if (fields.private_negotiation != NULL) {
-		i += sprintf(print_buf+i,"GI_PRIVATE_PARAMS(%zu): ",
-			     fields.private_negotiation_length);
-		i += print_xid_private_params(
-			print_buf+i, fields.private_negotiation,
-			(int)fields.private_negotiation_length);
-	}
-	if (fields.user_data != NULL)
-		i += sprintf(print_buf+i,"GI_USER_DATA(%zu)\n",
-			     fields.user_data_length);
-	EC_DBG("%s : %s\n", str, print_buf);
-	return 0;
-}
-
-#define LAPM_PRINT_XID(str,f,len) print_xid(l,str,f,len);
-
-#else /* !LAPM_DEBUG */
+#else /* !EC_DEBUG */
 
 #define EC_DBG(fmt...)
 #define EC_DBG1(fmt...)
-#define LAPM_PRINT_FRAME(str,cmd,f)
-#define LAPM_PRINT_XID(str,f,len)
+#define LAPM_PRINT_FRAME(str,cmd,f,len)
 
-#endif /* !LAPM_DEBUG */
+#endif /* !EC_DEBUG */
 
 
 
@@ -663,7 +510,6 @@ static int decode_xid(
 	if (f == NULL || f->buf == NULL || f->count < 2 || config == NULL)
 		return -1;
 	length = (size_t)f->count - 2U;
-	LAPM_PRINT_XID("rx_xid",f,(int)length);
 	if (v42_xid_decode(
 			f->buf + 2, length, &fields) !=
 			V42_XID_OK)
@@ -779,7 +625,6 @@ static int queue_xid(
 		l->ctrl_count++;
 		return -1;
 	}
-	LAPM_PRINT_XID("tx_xid",f,(int)prepared->length);
 	return 0;
 }
 
@@ -1060,7 +905,6 @@ static int tx_info(struct lapm_state *l)
 		f->size = n + 3;
 		l->info_list = l->info_list->next;
 		l->tx_count++;   // debug
-		LAPM_PRINT_FRAME("tx_info",1,f);
 	}
 
 	/* start T401 */
@@ -1185,7 +1029,6 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 	int ret = 0;
 	int payload_length;
 	bool retrain_progress;
-	//LAPM_PRINT_FRAME("rx_info",1,f);
 	payload_length = f->count - 3;
 
 	/* ack I frames: nr -1 */
@@ -1283,7 +1126,6 @@ static int rx_info(struct lapm_state *l, frame_t *f)
 
 static void rx_super_cmd(struct lapm_state *l, frame_t *f)
 {
-	//LAPM_PRINT_FRAME("rx super:",1,f);
 
 	/* note 8.4.7:
 	   if l->busy each RR,RNR,REJ with p=1 should be replied by RNR with f=1 */
@@ -1344,7 +1186,6 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 {
 	bool retrain_response = l->retrain_poll && l->rtx_count &&
 		FRAME_S_PF(f);
-	//LAPM_PRINT_FRAME("rx_super",0,f);
 
 	if (!l->rtx_count && FRAME_S_PF(f)) {
 		EC_ERR("rx_super: unsolisited final response!\n");
@@ -1483,7 +1324,6 @@ static void complete_link_release(struct lapm_state *l)
 
 static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 {
-	//LAPM_PRINT_FRAME("rx unnum",0, f);
 	switch(FRAME_CTRL(f)&0xef) {
 	case FRAME_U_DM:
 		if (l->state == LAPM_IDLE) {
@@ -1578,7 +1418,6 @@ static frame_t *lapm_get_tx_frame(void *framer)
 	l->vs = (l->vs + 1)&0x7f;
 	if (!l->modem->bit_timer || l->modem->bit_timer_func == t403_timeout)
 		TIMER_START(l);
-	//LAPM_PRINT_FRAME("get_tx_frame",1,f);
 
 	return f;
 }
@@ -1586,7 +1425,7 @@ static frame_t *lapm_get_tx_frame(void *framer)
 static void lapm_tx_complete(void *framer, frame_t *f)
 {
 	struct lapm_state *l = framer;
-	LAPM_PRINT_FRAME("tx",TX_IS_COMMAND(f),f);
+	LAPM_PRINT_FRAME("tx",TX_IS_COMMAND(f),f,f->size);
 	switch(FRAME_TYPE(f)) {
 	case FRAME_I:
 		l->sent_count++; // debug
@@ -1680,7 +1519,7 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 	if (type != FRAME_U && l->state == LAPM_ESTAB &&
 	    (l->config || !complete_link_establishment(l)))
 		return;
-	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f);
+	LAPM_PRINT_FRAME("rx",RX_IS_COMMAND(f),f,f->count);
 	switch(type) {
 	case FRAME_I:
 		rx_info(l,f);
@@ -1793,7 +1632,7 @@ static int alloc_frames(struct lapm_state *l)
 #define arrsize(a) (sizeof(a)/sizeof((a)[0]))
 	frame_t *f;
 	size_t i;
-	EC_DBG("alloc_frames: lapm size %d (info %d, ctrl %d).\n",
+	EC_DBG("alloc_frames: lapm size %zu (info %zu, ctrl %zu).\n",
 	       sizeof(*l), sizeof(l->info_buf), sizeof(l->ctrl_buf));
 	/* init info list */
 	l->info_list = &l->info_buf[0].frame;

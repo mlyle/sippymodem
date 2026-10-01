@@ -2279,6 +2279,46 @@ static bool test_lapm_xid_parameters(void)
 	return true;
 }
 
+static bool test_lapm_repeated_xid_parameters(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM repeated XID parameters",
+		.start = unused_start,
+		.stop = unused_stop,
+		.ioctl = unused_control,
+	};
+	struct modem *modem = modem_create(&driver, driver.name);
+	/* A 127-octet information field containing 41 valid parameter items. */
+	uint8_t wire[129] = { 0, 0xaf, 0x82, 0x80, 0, 123 };
+	frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+	struct v42_xid_fields fields;
+	frame_t *response;
+
+	CHECK(modem != NULL, "repeated XID modem could not be created");
+	modem->cfg.comp = 0;
+	CHECK(modem_ec_init(modem) == 0,
+	      "repeated XID modem could not initialize");
+	modem_ec_start(modem);
+	wire[0] = modem->ec.lapm.rsp_addr;
+	for (size_t index = 6; index < sizeof(wire); index += 3) {
+		wire[index] = 7;
+		wire[index + 1] = 1;
+		wire[index + 2] = 15;
+	}
+	modem->packer.hdlc.rx_complete(modem->packer.hdlc.framer, &incoming);
+	response = modem->packer.hdlc.get_tx_frame(modem->packer.hdlc.framer);
+	CHECK(response != NULL && response->buf[1] == 0xaf &&
+		      v42_xid_decode(response->buf + 2,
+			      (size_t)response->size - 2U, &fields) == V42_XID_OK &&
+		      fields.parameter_negotiation_length == 20 &&
+		      modem->ec.lapm.tx_win_size == 15 &&
+		      modem->ec.lapm.rx_win_size == 15,
+	      "bounded repeated XID parameters did not produce a valid response");
+	modem->packer.hdlc.tx_complete(modem->packer.hdlc.framer, response);
+	modem_delete(modem);
+	return true;
+}
+
 static bool test_lapm_xid_envelopes(void)
 {
 	static const uint8_t expected_parameters[] = {
@@ -5429,6 +5469,7 @@ int main(void)
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
+		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },
 		{ "bounded LAPM XID envelopes", test_lapm_xid_envelopes },
 		{ "bounded LAPM compression retry", test_lapm_dual_compression_retry },
 		{ "LAPM directional preamble", test_lapm_directional_preamble },
