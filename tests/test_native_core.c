@@ -22,6 +22,7 @@
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 extern int process_at_command(struct modem *modem, char *command);
@@ -2471,6 +2472,48 @@ static bool test_lapm_v42bis_invalid_parameters(void)
 			CHECK(m->cfg.comp == 0 && (!response || !m->ec.lapm.config),
 			      "unknown private parameter set %zu selected V.42bis", scenario);
 		}
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_decoder_failure(void)
+{
+	static const uint8_t payloads[][5] = {
+		{ 0, 0, 2, 0, 4 }, /* ECM, impossible STEPUP, trailing data. */
+		{ 0, 0, 4, 1 },    /* ECM, unassigned codeword 260 at frame end. */
+	};
+	static const size_t lengths[] = { 5, 4 };
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis decoder failure", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t scenario = 0; scenario < ARRAY_LENGTH(payloads); ++scenario) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[8] = { 0 };
+		frame_t incoming = { .buf = wire, .count = 3 + lengths[scenario] };
+
+		CHECK(m != NULL, "decoder failure modem allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 6;
+		CHECK(start_lapm_compression_fixture(m, false), "decoder failure fixture failed");
+		m->ec.lapm.state = 2; /* Established LAPM data state. */
+		m->ec.lapm.config = 0;
+		modem_update_status(m, STATUS_EC_LINK);
+		CHECK(m->state == 5 && (m->modem_info & TIOCM_CD) && m->put_chars != NULL,
+		      "decoder failure fixture did not go online");
+		wire[0] = m->ec.lapm.rsp_addr;
+		memcpy(wire + 3, payloads[scenario], lengths[scenario]);
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		CHECK(!modem_ec_can_establish(m) && !(m->modem_info & TIOCM_CD) &&
+			      m->result_code == 3 && m->sample_timer != 0 &&
+			      m->ec.lapm.vr == 0 && m->ec.lapm.rx_count == 0 && m->packer_process == NULL,
+		      "decoder error %zu was acknowledged or retained instead of releasing the call", scenario);
 		modem_ec_exit(m);
 		modem_comp_exit(m);
 		modem_delete(m);
@@ -5906,6 +5949,7 @@ int main(void)
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
 		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },
 		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
+		{ "LAPM V.42bis decoder failure", test_lapm_v42bis_decoder_failure },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },

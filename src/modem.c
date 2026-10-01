@@ -1400,7 +1400,7 @@ static int modem_comp_put_chars(struct modem *m, const char *buf, int n)
 		if(cnt < 0) {
 			MODEM_DBG("decoder error. %d(%d)\n",i,n);
 			modem_update_status(m,STATUS_ERROR);
-			break;
+			return -1;
 		}
 		m->comp.count += cnt;
 		if(!comp_send_output(m))
@@ -1516,7 +1516,7 @@ static void modem_setup_config(struct modem *m)
 	else
 		m->cfg.comp = 0;
 	m->cfg.comp_dict_size  = COMP_MAX_CODEWORDS;
-	m->cfg.comp_max_string = COMP_MAX_STRING;
+	m->cfg.comp_max_string = COMP_DEFAULT_STRING;
 
 	/* setup dsp data */
 	/* An exchanged V.8 selection belongs only to this physical call. */

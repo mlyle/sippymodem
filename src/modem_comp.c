@@ -63,7 +63,6 @@
 /* V42bis parameters limitation */
 #define MIN_DICT_SIZE 512   /* min dictionary size enabled by protocol */
 #define MIN_STR_SIZE    6   /* min string size enabled by protocol     */
-#define MAX_STR_SIZE  250   /* max string size enabled by protocol     */
 
 /* V42bis constants */
 #define CHAR_SIZE      8                     /* char size (bits)          N3 */
@@ -220,10 +219,16 @@ INLINE_FUNC int recv_data(struct comp_state *c, u16 cw)
 {
 	int i,ret = 0;
 	u16 p = cw;
-	COMP_DBG1("dec recv %d: '%s'\n",cw,show_string(c,cw));
-	for (ret = 0 ; p ; ret++) {
+	/* Bound the complete dictionary walk before copying or changing state.
+	 * Root entries have no parent; unassigned string entries do too. */
+	while (p) {
+		if (p < FIRST_ENTRY || p >= c->dict_size || p == c->next_free ||
+		    (p >= FIRST_FREE && c->dict[p].parent == 0) ||
+		    ++ret > c->max_string - c->str_len)
+			return -1;
 		p = c->dict[p].parent;
 	}
+	COMP_DBG1("dec recv %d: '%s'\n",cw,show_string(c,cw));
 	p = cw;
 	i = c->str_len + ret - 1;
 	while(p) {
@@ -284,21 +289,24 @@ int comp_decode(struct comp_state *c, u8 *in, int n)
 				c->bit_len = 0;
 				break;
 			case CCW_STEPUP: /* increase cw size */
-				c->cw_size++;
-				c->threshold <<= 1;
-				COMP_DBG("C decoder: STEPUP %d\n", c->cw_size);
-				if (c->cw_size > (c->dict_size>>3)) { /* C-ERROR */
+				/* V.42bis 5.8: C2 cannot grow beyond the bits needed
+				 * for N2 - 1, including non-power-of-two dictionaries. */
+				if (c->threshold >= (unsigned int)c->dict_size) { /* C-ERROR */
 					COMP_ERR("fatal: cw size too big!\n");
 					return -1;
 				}
+				c->cw_size++;
+				c->threshold <<= 1;
+				COMP_DBG("C decoder: STEPUP %d\n", c->cw_size);
 				break;
-			default:       /* regular codeword */
-				if (cw == c->next_free) { /* C-ERROR */
-					COMP_ERR("fatal: next free!\n");
+			default: {     /* regular codeword */
+				int decoded = recv_data(c, cw);
+
+				if (decoded < 0) { /* C-ERROR: free, empty or invalid string. */
+					COMP_ERR("fatal: invalid dictionary codeword!\n");
 					return -1;
 				}
-
-				ret += recv_data(c,cw);
+				ret += decoded;
 				if (c->update_at) {
 					ch = c->str_data[0];
 					p = match_char(c,c->update_at,ch);
@@ -334,6 +342,7 @@ int comp_decode(struct comp_state *c, u8 *in, int n)
 				}
 				send_string(c);
 				break;
+			}
 			}
 			break;
 		case TRANSPARENT:
@@ -713,7 +722,7 @@ int comp_force_change_mode(struct comp_state *c, enum COMP_MODE mode)
 bool modem_comp_parameters_valid(int dict_size, int max_str)
 {
 	return dict_size >= MIN_DICT_SIZE &&
-	       max_str >= MIN_STR_SIZE && max_str <= MAX_STR_SIZE;
+	       max_str >= MIN_STR_SIZE && max_str <= COMP_MAX_STRING;
 }
 
 int comp_init(struct comp_state *c,int dict_size,int max_str)
@@ -721,7 +730,7 @@ int comp_init(struct comp_state *c,int dict_size,int max_str)
 	struct dict *d;
 	int i;
 	memset(c,0,sizeof(*c));
-	if (!modem_comp_parameters_valid(dict_size, max_str))
+	if (!modem_comp_parameters_valid(dict_size, max_str) || dict_size > UINT16_MAX)
 		return -1;
 	/* alloc dict */
 	d = COMP_ALLOC(dict_size*sizeof(*d));
@@ -740,20 +749,6 @@ int comp_init(struct comp_state *c,int dict_size,int max_str)
 	dict_init(c);
 	/* temporary */
 	c->olen = 0;
-	return 0;
-}
-
-int comp_config(struct comp_state *c,int dict_size,int max_str)
-{
-	if (!modem_comp_parameters_valid(dict_size, max_str))
-		return -1;
-	if (dict_size > c->dict_size || max_str > sizeof(c->str_data))
-		return -1;
-	c->max_string= max_str;
-	c->dict_size = dict_size;
-	//dict_init(c);
-	/* temporary */
-	//c->olen = 0;
 	return 0;
 }
 
@@ -777,7 +772,6 @@ int comp_exit(struct comp_state *c)
 
 /* exported functions prototypes */
 extern int comp_init(struct comp_state *c,int dict_size,int max_str);
-extern int comp_config(struct comp_state *c,int dict_size,int max_str);
 extern int comp_exit(struct comp_state *c);
 extern int comp_encode(struct comp_state *c, u8 *in, int n);
 extern int comp_decode(struct comp_state *c, u8 *in, int n);
@@ -803,12 +797,16 @@ int modem_comp_init(struct modem *m)
 
 int modem_comp_config(struct modem *m,int dict_size,int max_str)
 {
-	int ret = 0;
-	if ((ret = comp_config(&m->comp.encoder,dict_size,max_str)) ||
-	    (ret = comp_config(&m->comp.decoder,dict_size,max_str)) )
+	/* Check both owned capacities before committing either configuration. */
+	if (!modem_comp_parameters_valid(dict_size, max_str) ||
+	    dict_size > m->comp.encoder.dict_size || dict_size > m->comp.decoder.dict_size) {
 		COMP_ERR("modem_comp_config: setup failed (%d/%d).\n",
 			 dict_size,max_str);
-	return ret;
+		return -1;
+	}
+	m->comp.encoder.max_string = m->comp.decoder.max_string = max_str;
+	m->comp.encoder.dict_size = m->comp.decoder.dict_size = dict_size;
+	return 0;
 }
 
 

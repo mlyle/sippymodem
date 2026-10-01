@@ -143,7 +143,8 @@ struct dp_driver {
  */
 
 #define COMP_MAX_CODEWORDS 2048  /* dictionary size   */
-#define COMP_MAX_STRING    34    /* max string length */
+#define COMP_DEFAULT_STRING 34
+#define COMP_MAX_STRING     250 /* V.42bis 5.1 maximum string length */
 
 /* encoder and decoder states */
 struct comp_state {
@@ -155,7 +156,7 @@ struct comp_state {
 	u16 last_matched;  /* last matched dict entry */
 	u16 last_added;    /* last added dict entry */
 	u16 cw_size;       /* cw size */
-	u16 threshold;     /* cw size threshold */
+	u32 threshold;     /* next cw size threshold, including 65536 */
 	u8  escape_char;   /* escape char value */
 	int max_string;    /* max string length */
 	int dict_size;     /* dictionary size */
