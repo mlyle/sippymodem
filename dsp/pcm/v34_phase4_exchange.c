@@ -299,6 +299,9 @@ static bool transmitter_stage_is_valid(
 		       (exchange->peer_mp_prime_received ||
 			exchange->receive_data_active) &&
 		       exchange->data_startup_prepared;
+	if (exchange->transmit.training.rate_renegotiation !=
+	    exchange->rate_renegotiation)
+		return false;
 	stage = exchange->transmit.training.stage;
 	entered_trn = stage == V34_TRAINING_TRANSMITTER_PHASE4_TRN ||
 		      stage == V34_TRAINING_TRANSMITTER_PHASE4_MP ||
@@ -316,15 +319,12 @@ static bool transmitter_stage_is_valid(
 	      !exchange->receive_data_active) ||
 	     !exchange->data_startup_prepared))
 		return false;
-	if (exchange->rate_renegotiation)
-		return exchange->transmit.training.rate_renegotiation &&
-		       (stage == V34_TRAINING_TRANSMITTER_RENEGOTIATION_S || entered_trn);
-	if (local_role(exchange) == V34_CALLING_STATION)
-		return stage == V34_TRAINING_TRANSMITTER_PHASE3 ||
-		       stage == V34_TRAINING_TRANSMITTER_J_PRIME ||
-		       entered_trn;
-	return local_role(exchange) == V34_ANSWERING_STATION &&
-	       (stage == V34_TRAINING_TRANSMITTER_ANSWER_S || entered_trn);
+	if (exchange->rate_renegotiation ||
+	    local_role(exchange) == V34_ANSWERING_STATION)
+		return stage == V34_TRAINING_TRANSMITTER_PHASE4_S || entered_trn;
+	return local_role(exchange) == V34_CALLING_STATION &&
+	       (stage == V34_TRAINING_TRANSMITTER_PHASE3 ||
+		stage == V34_TRAINING_TRANSMITTER_J_PRIME || entered_trn);
 }
 
 bool v34_phase4_exchange_is_valid(
@@ -936,17 +936,18 @@ static enum v34_phase4_exchange_result generate_transmit_sample(
 	enum v34_phase4_exchange_result result;
 
 	if (!exchange->transmit_data_active) {
-		bool before_s_bar = exchange->transmit.training.stage ==
-			V34_TRAINING_TRANSMITTER_RENEGOTIATION_S &&
-			exchange->transmit.training.phase4.answer_s.emitted_symbols <=
+		bool before_s_bar = exchange->rate_renegotiation &&
+			exchange->transmit.training.stage ==
+				V34_TRAINING_TRANSMITTER_PHASE4_S &&
+			exchange->transmit.training.phase4.s.emitted_symbols <=
 				V34_PHASE3_S_SYMBOLS;
 
 		result = transmit_result(v34_training_transmitter_sample(
 			&exchange->transmit.training, sample));
 		if (result == V34_PHASE4_EXCHANGE_OK) {
 			if (before_s_bar && exchange->transmit.training.stage ==
-				    V34_TRAINING_TRANSMITTER_RENEGOTIATION_S &&
-			    exchange->transmit.training.phase4.answer_s.emitted_symbols >
+				    V34_TRAINING_TRANSMITTER_PHASE4_S &&
+			    exchange->transmit.training.phase4.s.emitted_symbols >
 				    V34_PHASE3_S_SYMBOLS)
 				*events |= V34_PHASE4_EXCHANGE_EVENT_TRANSMIT_S_BAR_STARTED;
 			note_transmitter(exchange, events);

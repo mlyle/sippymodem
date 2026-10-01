@@ -89,10 +89,10 @@ static bool model_finish_j(struct model_training *model)
 			return false;
 		model->stage = V34_TRAINING_TRANSMITTER_J_PRIME;
 	} else {
-		if (v34_phase3_s_sequence_init(&model->phase4.answer_s) !=
+		if (v34_phase3_s_sequence_init(&model->phase4.s) !=
 		    V34_PHASE3_S_SEQUENCE_OK)
 			return false;
-		model->stage = V34_TRAINING_TRANSMITTER_ANSWER_S;
+		model->stage = V34_TRAINING_TRANSMITTER_PHASE4_S;
 	}
 	return true;
 }
@@ -160,17 +160,16 @@ static bool model_next_point(
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return v34_phase3_transmitter_next(&model->phase3, point) ==
 		       V34_PHASE3_TRANSMITTER_OK;
-	case V34_TRAINING_TRANSMITTER_ANSWER_S:
-	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S: {
+	case V34_TRAINING_TRANSMITTER_PHASE4_S: {
 		struct v34_training_sequence trn;
 		enum v34_phase3_s_section section;
 
 		if (v34_phase3_s_sequence_next(
-			    &model->phase4.answer_s, point, &section) !=
+			    &model->phase4.s, point, &section) !=
 		    V34_PHASE3_S_SEQUENCE_OK)
 			return false;
 		if (!v34_phase3_s_sequence_is_complete(
-			    &model->phase4.answer_s))
+			    &model->phase4.s))
 			return true;
 		if (v34_training_sequence_init(
 			    &trn, model->line.profile.local_role,
@@ -250,10 +249,9 @@ static bool protocol_state_matches(
 	switch (model->stage) {
 	case V34_TRAINING_TRANSMITTER_PHASE3:
 		return true;
-	case V34_TRAINING_TRANSMITTER_ANSWER_S:
-	case V34_TRAINING_TRANSMITTER_RENEGOTIATION_S:
-		return actual->phase4.answer_s.emitted_symbols ==
-		       model->phase4.answer_s.emitted_symbols;
+	case V34_TRAINING_TRANSMITTER_PHASE4_S:
+		return actual->phase4.s.emitted_symbols ==
+		       model->phase4.s.emitted_symbols;
 	case V34_TRAINING_TRANSMITTER_J_PRIME:
 		return actual->phase4.j_prime.emitted_symbols ==
 		       model->phase4.j_prime.emitted_symbols &&
@@ -406,7 +404,7 @@ static bool run_composed_sequence(
 		       (1u <<
 			(8u + (role == V34_CALLING_STATION ?
 				V34_TRAINING_TRANSMITTER_J_PRIME :
-				V34_TRAINING_TRANSMITTER_ANSWER_S))) |
+				V34_TRAINING_TRANSMITTER_PHASE4_S))) |
 		       (1u << (8u + V34_TRAINING_TRANSMITTER_PHASE4_TRN)) |
 		       (1u << (8u + V34_TRAINING_TRANSMITTER_PHASE4_MP)) |
 		       (1u << (8u + V34_TRAINING_TRANSMITTER_PHASE4_E))) &&
@@ -574,7 +572,7 @@ static bool test_online_resume(void)
 		struct v34_training_transmitter actual, before;
 		struct model_training model = {
 			.phase4_constellation = V34_CONSTELLATION_4_POINT,
-			.stage = V34_TRAINING_TRANSMITTER_RENEGOTIATION_S,
+			.stage = V34_TRAINING_TRANSMITTER_PHASE4_S,
 		};
 
 		CHECK(v34_training_transmitter_init(&actual, &profile,
@@ -582,7 +580,7 @@ static bool test_online_resume(void)
 			      V34_TRAINING_TRANSMITTER_OK && advance_to_phase4(&actual),
 		      "online resume fixture did not establish a waveform");
 		model.line = actual.line;
-		CHECK(v34_phase3_s_sequence_init(&model.phase4.answer_s) ==
+		CHECK(v34_phase3_s_sequence_init(&model.phase4.s) ==
 			      V34_PHASE3_S_SEQUENCE_OK &&
 		      v34_training_transmitter_resume_online(&actual, &model.line) ==
 			      V34_TRAINING_TRANSMITTER_OK &&

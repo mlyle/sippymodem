@@ -158,7 +158,7 @@ static bool handoff_ready(const struct v34_phase3_exchange *exchange)
 	return exchange->local_role == V34_ANSWERING_STATION &&
 	       exchange->transmit_stopped &&
 	       exchange->transmit.stage ==
-		       V34_TRAINING_TRANSMITTER_ANSWER_S;
+		       V34_TRAINING_TRANSMITTER_PHASE4_S;
 }
 
 bool v34_phase3_exchange_is_valid(
@@ -169,6 +169,7 @@ bool v34_phase3_exchange_is_valid(
 
 	if (exchange == NULL ||
 	    !v34_training_transmitter_is_valid(&exchange->transmit) ||
+	    exchange->transmit.rate_renegotiation ||
 	    !v34_phase34_receiver_is_valid(&exchange->receive) ||
 	    !trn_timing_is_valid(exchange) ||
 	    !roles_are_reciprocal(&exchange->transmit.line.profile,
@@ -206,7 +207,7 @@ bool v34_phase3_exchange_is_valid(
 		    (exchange->transmit_stopped &&
 		     (!exchange->stop_transmit_requested ||
 		      exchange->transmit.stage !=
-			      V34_TRAINING_TRANSMITTER_ANSWER_S)))
+			      V34_TRAINING_TRANSMITTER_PHASE4_S)))
 			return false;
 	} else {
 		return false;
@@ -315,6 +316,7 @@ bool v34_phase3_exchange_handoff_is_valid(
 {
 	if (handoff == NULL ||
 	    !v34_training_transmitter_is_valid(&handoff->transmit) ||
+	    handoff->transmit.rate_renegotiation ||
 	    !v34_phase34_receiver_is_valid(&handoff->receive) ||
 	    v34_phase34_receiver_has_failed(&handoff->receive) ||
 	    handoff->receive.stage != V34_PHASE34_RECEIVER_PHASE4 ||
@@ -335,7 +337,7 @@ bool v34_phase3_exchange_handoff_is_valid(
 		       handoff->transmit.phase3.stage ==
 			       V34_PHASE3_TRANSMITTER_J :
 		       handoff->transmit.stage ==
-			       V34_TRAINING_TRANSMITTER_ANSWER_S &&
+			       V34_TRAINING_TRANSMITTER_PHASE4_S &&
 		       handoff->transmit.phase3.stage ==
 			       V34_PHASE3_TRANSMITTER_COMPLETE;
 }

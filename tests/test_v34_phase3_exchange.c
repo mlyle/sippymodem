@@ -187,7 +187,8 @@ static bool run_generated_duplex_exchange(
 		symbol_rate == V34_SYMBOL_RATE_3200 ? 5125u :
 		symbol_rate == V34_SYMBOL_RATE_3429 ? 5554u : 4750u;
 	struct v34_phase3_exchange_configuration caller_configuration =
-		configuration(V34_CONSTELLATION_16_POINT);
+		configuration(extended ? V34_CONSTELLATION_4_POINT :
+					 V34_CONSTELLATION_16_POINT);
 	struct v34_phase3_exchange_configuration answerer_configuration =
 		configuration(V34_CONSTELLATION_4_POINT);
 	struct v34_phase3_exchange caller;
@@ -440,7 +441,7 @@ static bool run_generated_duplex_exchange(
 		      V34_PHASE3_J_PATTERN_SYMBOLS &&
 	      answerer.stop_transmit_requested && answerer.transmit_stopped &&
 	      answerer.transmit.stage ==
-		      V34_TRAINING_TRANSMITTER_ANSWER_S &&
+		      V34_TRAINING_TRANSMITTER_PHASE4_S &&
 	      answerer.trn_target_symbols == answerer_trn_symbols &&
 	      answerer.transmit.phase3.trn_symbols ==
 		      answerer.trn_target_symbols &&
@@ -459,9 +460,10 @@ static bool run_generated_duplex_exchange(
 			      .remote_constellation == V34_CONSTELLATION_4_POINT &&
 	      answerer_handoff.receive.phase3_handoff.j
 		      .sequence
-			      .remote_constellation == V34_CONSTELLATION_16_POINT &&
+			      .remote_constellation ==
+				      caller_configuration.requested_remote_constellation &&
 	      caller_handoff.transmit.phase3.remote_constellation ==
-		      V34_CONSTELLATION_16_POINT &&
+		      caller_configuration.requested_remote_constellation &&
 	      answerer_handoff.transmit.phase3.remote_constellation ==
 		      V34_CONSTELLATION_4_POINT &&
 	      !caller_handoff.receive.phase4_s_rearmed &&
@@ -470,6 +472,19 @@ static bool run_generated_duplex_exchange(
 	      v34_receive_timing_is_acquired(
 		      &answerer_handoff.receive.line.timing),
 	      "Phase 3 handoff lost either J constellation selection");
+	if (answerer_handoff.transmit.phase4_constellation ==
+	    V34_CONSTELLATION_4_POINT) {
+		struct v34_phase3_exchange online = answerer;
+		struct v34_phase3_exchange_handoff online_handoff = answerer_handoff;
+
+		online.transmit.rate_renegotiation = true;
+		online_handoff.transmit.rate_renegotiation = true;
+		CHECK(v34_training_transmitter_is_valid(&online.transmit) &&
+		      v34_training_transmitter_is_valid(&online_handoff.transmit) &&
+		      !v34_phase3_exchange_is_valid(&online) &&
+		      !v34_phase3_exchange_handoff_is_valid(&online_handoff),
+		      "online S context crossed the initial Phase 3 boundary");
+	}
 	struct v34_phase3_exchange saved_caller = caller;
 	struct v34_phase3_exchange saved_answerer = answerer;
 	CHECK(v34_phase3_exchange_finish_training(&caller) ==

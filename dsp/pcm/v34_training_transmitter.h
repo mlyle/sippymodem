@@ -16,12 +16,11 @@
 
 enum v34_training_transmitter_stage {
 	V34_TRAINING_TRANSMITTER_PHASE3,
-	V34_TRAINING_TRANSMITTER_ANSWER_S,
+	V34_TRAINING_TRANSMITTER_PHASE4_S,
 	V34_TRAINING_TRANSMITTER_J_PRIME,
 	V34_TRAINING_TRANSMITTER_PHASE4_TRN,
 	V34_TRAINING_TRANSMITTER_PHASE4_MP,
 	V34_TRAINING_TRANSMITTER_PHASE4_E,
-	V34_TRAINING_TRANSMITTER_RENEGOTIATION_S,
 };
 
 enum v34_training_transmitter_result {
@@ -35,7 +34,7 @@ enum v34_training_transmitter_result {
 };
 
 union v34_training_transmitter_phase4_state {
-	struct v34_phase3_s_sequence answer_s;
+	struct v34_phase3_s_sequence s;
 	struct v34_phase4_j_prime_sequence j_prime;
 	struct v34_training_sequence trn;
 	struct v34_phase4_mp mp;
@@ -45,7 +44,8 @@ union v34_training_transmitter_phase4_state {
 /* One station's normalized training and uninterrupted line waveform. The call
  * controller decides when open-ended intervals may end and owns MP/MP-prime
  * negotiation policy. The current sequence owner accepts only a negotiated
- * zero-length MD interval. */
+ * zero-length MD interval. Initial answer training and either station's online
+ * rate change share the S/S-bar stage; rate_renegotiation owns that context. */
 struct v34_training_transmitter {
 	struct v34_training_line line;
 	struct v34_phase3_transmitter phase3;

@@ -1218,6 +1218,14 @@ static bool test_mp_acknowledgment_boundaries(void)
 	CHECK(caller.has_preparation_snapshot &&
 	      answerer.has_preparation_snapshot,
 	      "generated exchange did not expose its preparation boundary");
+	{
+		struct v34_phase4_exchange crossed = caller.preparation_snapshot;
+
+		crossed.transmit.training.rate_renegotiation = true;
+		CHECK(v34_training_transmitter_is_valid(&crossed.transmit.training) &&
+		      !v34_phase4_exchange_is_valid(&crossed),
+		      "initial exchange accepted an online transmit context");
+	}
 	snapshot = !caller.preparation_snapshot.peer_mp_prime_received ?
 		&caller.preparation_snapshot :
 		&answerer.preparation_snapshot;

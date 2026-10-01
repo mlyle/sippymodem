@@ -80,8 +80,8 @@ union v34_phase4_transmit_path {
  * boundary. Receipt of the first valid peer MP pauses
  * the sample path until prepare_data_startup() performs the negotiated mapping
  * and line-peak calibration at a separate preparation boundary, before E/B1.
- * A valid final peer MP-prime
- * record arms E reception at that exact record boundary. Transmit and receive
+ * After a valid peer MP, the continuous receiver accepts MP-prime or E as the
+ * reciprocal acknowledgment. Transmit and receive
  * enter B1 independently, retaining early mapped data in the sample-call
  * outputs. Calls on one instance must be serialized. One physical receiver
  * remains continuous from Phase 3 through mapped data. */
