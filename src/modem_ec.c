@@ -271,17 +271,7 @@ static struct v44_character_path *create_v44_path(
 	return v44_character_path_create(&config);
 }
 
-static int reinitialize_for_link_establishment(struct lapm_state *l)
-{
-	if (l->v44_path != NULL &&
-	    v44_character_path_reinitialize(l->v44_path) !=
-		    V44_CHARACTER_PATH_OK)
-		return -1;
-	l->rx_head = l->rx_count = 0;
-	l->modem->packer_process = NULL;
-	reset_lapm_sequence(l);
-	return 0;
-}
+static int reinitialize_for_link_establishment(struct lapm_state *l);
 
 /* debug stuffs */
 #define EC_ERR(fmt,arg...) eprintf("%s ec err: " fmt , \
@@ -1328,6 +1318,12 @@ static void rx_super_rsp(struct lapm_state *l, frame_t *f)
 
 /* rx unnumbered frame */
 
+static bool lapm_can_establish(const struct lapm_state *l)
+{
+	return !l->config && modem_ec_can_establish(l->modem) &&
+	       l->modem->packer.hdlc.tx_preamble_complete == NULL;
+}
+
 static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 {
 	unsigned control = FRAME_CTRL(f) & 0xef;
@@ -1350,6 +1346,13 @@ static void rx_unnum_cmd(struct lapm_state *l, frame_t *f)
 		bool already_linked = l->state == LAPM_DATA;
 
 		EC_DBG("sabme received.\n");
+		/* V.42 7.2.2/8.3.2.1: the control function must be ready,
+		 * with negotiation complete, before accepting establishment. */
+		if (!lapm_can_establish(l)) {
+			if (TX_DM(l, FRAME_U_PF(f)) != 0)
+				complete_link_release(l);
+			return;
+		}
 		/* discard unacked I frames,
 		   reset vs,vr,va, clear exceptions */
 		if (reinitialize_for_link_establishment(l) != 0) {
@@ -1424,9 +1427,7 @@ static void rx_unnum_rsp(struct lapm_state *l, frame_t *f)
 	case FRAME_U_DM:
 		if (l->state == LAPM_IDLE) {
 			/* V.42 8.8: establish with SABME before indicating a link. */
-			if (!FRAME_U_PF(f) && !l->config &&
-			    modem_ec_can_establish(l->modem) &&
-			    l->modem->packer.hdlc.tx_preamble_complete == NULL &&
+			if (!FRAME_U_PF(f) && lapm_can_establish(l) &&
 			    lapm_connect(l) != 0)
 				modem_update_status(l->modem, STATUS_EC_ERROR);
 		} else if ((l->state == LAPM_DATA && (l->rtx_count || !FRAME_U_PF(f))) ||
@@ -1646,6 +1647,28 @@ static void lapm_rx_complete(void *framer, frame_t *f)
 
 
 /* lapm api functions */
+
+static int reinitialize_for_link_establishment(struct lapm_state *l)
+{
+	if (l->v44_session.phase == LAPM_V44_READY) {
+		/* V.42 7.2.2: omitting XID selects the defaults, including P0=0. */
+		struct lapm_xid_config config = {
+			.tx_win_size = LAPM_DFLT_WIN_SIZE,
+			.rx_win_size = LAPM_DFLT_WIN_SIZE,
+			.tx_info_size = LAPM_DFLT_INFO_SIZE,
+			.rx_info_size = LAPM_DFLT_INFO_SIZE,
+			.modem = DEFAULT_MODEM_EC_CONFIG,
+		};
+		apply_xid_config(l, &config);
+	}
+	if (l->v44_path != NULL &&
+	    v44_character_path_reinitialize(l->v44_path) != V44_CHARACTER_PATH_OK)
+		return -1;
+	l->rx_head = l->rx_count = 0;
+	l->modem->packer_process = NULL;
+	reset_lapm_sequence(l);
+	return 0;
+}
 
 static int lapm_connect(struct lapm_state *l)
 {

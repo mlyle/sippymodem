@@ -3091,6 +3091,7 @@ static bool test_lapm_xid_envelopes(void)
 	      "LAPM XID peers could not initialize");
 	modem_ec_start(caller);
 	modem_ec_start(answerer);
+	caller->state = answerer->state = 4; /* Both hosts await error control. */
 	CHECK(caller->packer.hdlc.tx_preamble_flags == 109u &&
 		      caller->packer.hdlc.tx_preamble_complete != NULL &&
 		      caller->packer.hdlc.get_tx_frame == NULL &&
@@ -3745,6 +3746,167 @@ static bool test_lapm_receive_information_limit(void)
 			      "legal maximum payload did not drain exactly once");
 		}
 		modem_ec_exit(m);
+		modem_delete(m);
+	}
+	memset(&lapm_sink, 0, sizeof(lapm_sink));
+	return true;
+}
+
+static bool test_lapm_sabme_readiness(void)
+{
+	enum { PENDING, PREAMBLE, IDLE, EC_CLOSING, DP_CLOSING, DISABLED };
+	struct modem_driver driver = {
+		.name = "LAPM SABME readiness", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned caller = 0; caller < 2; ++caller)
+	for (unsigned poll = 0; poll < 2; ++poll)
+	for (unsigned scenario = PENDING; scenario <= DISABLED; ++scenario)
+	for (unsigned pressure = 0; pressure < 2; ++pressure) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, 0x6f | poll << 4 };
+		uint8_t command[LAPM_MAX_INFO_SIZE + 2];
+		int command_size = 0;
+		frame_t incoming = { .buf = wire, .count = sizeof(wire) };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "SABME readiness allocation failed");
+		m->caller = caller;
+		m->cfg.comp = 0;
+		m->cfg.ec_tx_info_size = 70;
+		m->cfg.ec_rx_info_size = 80;
+		CHECK(modem_ec_init(m) == 0, "SABME readiness initialization failed");
+		/* Exercise an outstanding command in either address orientation. */
+		m->caller = scenario <= PREAMBLE ? 1 : 0;
+		modem_ec_start(m);
+		m->caller = caller;
+		m->state = scenario == IDLE ? 1 : scenario == EC_CLOSING ? 7 :
+			scenario == DP_CLOSING ? 9 : 4;
+		struct lapm_state *l = &m->ec.lapm;
+		if (scenario == PENDING) {
+			void (*complete)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+			m->packer.hdlc.tx_preamble_complete = NULL;
+			m->packer.hdlc.tx_preamble_flags = 0;
+			complete(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size <= (int)sizeof(command),
+			      "SABME readiness fixture did not send XID");
+			command_size = outgoing->size;
+			memcpy(command, outgoing->buf, (size_t)command_size);
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (scenario == DISABLED)
+			m->cfg.ec = 0;
+		struct lapm_v44_session session = l->v44_session;
+		struct modem_config config = m->cfg;
+		unsigned host = m->state;
+		void (*timeout)(struct modem *) = m->bit_timer_func;
+		void (*preamble)(struct modem *) = m->packer.hdlc.tx_preamble_complete;
+		m->bit_timer = 1234;
+		l->rtx_count = 2;
+		wire[0] = l->rsp_addr;
+		for (unsigned repeat = 0; repeat < (pressure ? LAPM_CTRL_FRAMES : 2); ++repeat) {
+			frame_t *slot = l->ctrl_list;
+			m->packer.hdlc.rx_complete(l, &incoming);
+			if (pressure && repeat == LAPM_CTRL_FRAMES - 1)
+				break;
+			CHECK(l->state == 0 && m->state == host && l->rtx_count == 2 &&
+			      l->config == (scenario == PENDING) && m->bit_timer == 1234 &&
+			      m->bit_timer_func == timeout &&
+			      m->packer.hdlc.tx_preamble_complete == preamble &&
+			      memcmp(&l->v44_session, &session, sizeof(session)) == 0 &&
+			      memcmp(&m->cfg, &config, sizeof(config)) == 0 &&
+			      l->tx_info_size == 70 && l->rx_info_size == 80,
+			      "premature SABME changed establishment: role=%u P=%u scenario=%u",
+			      caller, poll, scenario);
+			if (pressure)
+				continue;
+			/* The wire preamble defers serialization, including the DM. */
+			outgoing = scenario == PREAMBLE ? slot : m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == 2 &&
+			      outgoing->buf[0] == l->rsp_addr &&
+			      outgoing->buf[1] == (0x0f | poll << 4),
+			      "premature SABME did not receive DM with F=P");
+			if (scenario != PREAMBLE)
+				m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		if (pressure) {
+			CHECK(l->state == 0 && m->bit_timer == 0 &&
+			      strcmp(modem_call_phase(m), scenario == IDLE ? "idle" : "cleardown") == 0,
+			      "unreplyable SABME left establishment active: role=%u scenario=%u link=%d host=%u phase=%s",
+			      caller, scenario, l->state, m->state, modem_call_phase(m));
+		} else if (scenario == PENDING) {
+			timeout(m);
+			outgoing = m->packer.hdlc.get_tx_frame(l);
+			CHECK(outgoing != NULL && outgoing->size == command_size &&
+			      memcmp(outgoing->buf, command, (size_t)command_size) == 0 &&
+			      l->config && l->rtx_count == 3,
+			      "premature SABME replaced the frozen XID retry");
+			m->packer.hdlc.tx_complete(l, outgoing);
+		}
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_default_establishment(void)
+{
+	struct modem_driver driver = {
+		.name = "LAPM default establishment", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (unsigned peer_ready = 0; peer_ready < 2; ++peer_ready)
+	for (unsigned poll = 0; poll < 2; ++poll) {
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[] = { 0, peer_ready ? 0x0f : 0x6f | poll << 4, 0, 'B' };
+		frame_t incoming = { .buf = wire, .count = 2 };
+		frame_t *outgoing;
+
+		CHECK(m != NULL, "default establishment allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS | MODEM_COMP_TYPE_V44;
+		m->cfg.ec_tx_info_size = 70;
+		m->cfg.ec_rx_info_size = 80;
+		m->cfg.ec_tx_win_size = 2;
+		m->cfg.ec_rx_win_size = 3;
+		CHECK(modem_comp_init(m) == 0 && modem_ec_init(m) == 0,
+		      "default establishment codec initialization failed");
+		modem_ec_start(m);
+		m->state = 4;
+		struct lapm_state *l = &m->ec.lapm;
+		wire[0] = peer_ready ? l->cmd_addr : l->rsp_addr;
+		m->packer.hdlc.rx_complete(l, &incoming);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->size == 2 &&
+		      outgoing->buf[1] == (peer_ready ? 0x7f : 0x63 | poll << 4),
+		      "default establishment did not queue the correct mode frame");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		if (peer_ready) {
+			wire[1] = 0x73;
+			m->packer.hdlc.rx_complete(l, &incoming);
+		}
+		CHECK(l->state == 2 && m->state == 5 && !m->cfg.comp &&
+		      l->tx_info_size == 128 && l->rx_info_size == 128 &&
+		      l->tx_win_size == 15 && l->rx_win_size == 15 && l->v44_path == NULL,
+		      "establishment without XID used unnegotiated compression or limits");
+		CHECK(modem_write(m, "A", 1) == 1, "default link rejected terminal input");
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->size == 4 && outgoing->buf[3] == 'A',
+		      "default link compressed an unnegotiated terminal byte");
+		m->packer.hdlc.tx_complete(l, outgoing);
+		m->put_chars = scripted_lapm_sink;
+		memset(&lapm_sink, 0, sizeof(lapm_sink));
+		lapm_sink.result = 1;
+		wire[0] = l->rsp_addr;
+		wire[1] = 0;
+		wire[2] = 2; /* N(R)=1 acknowledges the transmitted byte. */
+		incoming.count = sizeof(wire);
+		m->packer.hdlc.rx_complete(l, &incoming);
+		CHECK(lapm_sink.length == 1 && lapm_sink.data[0] == 'B',
+		      "default link did not deliver an uncompressed information byte");
+		modem_comp_exit(m);
 		modem_delete(m);
 	}
 	memset(&lapm_sink, 0, sizeof(lapm_sink));
@@ -4534,6 +4696,7 @@ static bool test_lapm_idle_supervision(void)
 		CHECK(modem_ec_init(m) == 0, "idle LAPM initialization failed");
 		modem_hdlc_start(m);
 		modem_ec_start(m);
+		m->state = 4;
 		m->get_bits = modem_hdlc_get_bits;
 		m->put_bits = modem_hdlc_put_bits;
 		struct lapm_state *l = &m->ec.lapm;
@@ -4667,9 +4830,22 @@ static bool test_lapm_acknowledgement_progress(void)
 		CHECK(modem_ec_init(m) == 0, "progress fixture initialization failed");
 		modem_hdlc_start(m);
 		modem_ec_start(m);
+		m->state = 4;
 		m->get_bits = modem_hdlc_get_bits;
 		m->put_bits = modem_hdlc_put_bits;
 		struct lapm_state *l = &m->ec.lapm;
+		/* Agree the small transmit limits before using them for this test. */
+		uint8_t request[] = {
+			l->rsp_addr, 0xaf, 0x82, 0x80, 0, 6,
+			6, 1, 8, 8, 1, 1,
+		};
+		frame_t xid = { .buf = request, .count = sizeof(request) };
+		m->packer.hdlc.rx_complete(l, &xid);
+		outgoing = m->packer.hdlc.get_tx_frame(l);
+		CHECK(outgoing != NULL && outgoing->buf[1] == 0xaf &&
+		      l->tx_info_size == 1 && l->tx_win_size == 1,
+		      "progress fixture did not negotiate its small limits");
+		m->packer.hdlc.tx_complete(l, outgoing);
 		wire[0] = l->rsp_addr;
 		m->packer.hdlc.rx_complete(l, &incoming);
 		outgoing = m->packer.hdlc.get_tx_frame(l);
@@ -6211,6 +6387,8 @@ int main(void)
 		{ "LAPM receive frame boundaries", test_lapm_receive_frame_boundaries },
 		{ "LAPM receive information limit", test_lapm_receive_information_limit },
 		{ "LAPM peer-ready DM establishment", test_lapm_peer_ready_dm },
+		{ "LAPM SABME establishment readiness", test_lapm_sabme_readiness },
+		{ "LAPM defaults without negotiation", test_lapm_default_establishment },
 		{ "LAPM unnumbered response states", test_lapm_unnumbered_responses },
 		{ "LAPM disconnected DISC response", test_lapm_disconnected_disc },
 		{ "LAPM mode command collisions", test_lapm_mode_command_collisions },
