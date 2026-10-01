@@ -2215,7 +2215,7 @@ static bool test_lapm_xid_parameters(void)
 		0x07, 0x01, 0x07,
 		0x08, 0x01, 0x0b,
 	};
-	static const uint8_t expected_private[] = {
+	uint8_t expected_private[] = {
 		0x00, 0x03, 'V', '4', '2',
 		0x01, 0x01, 0x03,
 		0x02, 0x02, 0x04, 0x00,
@@ -2234,7 +2234,9 @@ static bool test_lapm_xid_parameters(void)
 		.ioctl = unused_control,
 	};
 
-	for (size_t index = 0; index < ARRAY_LENGTH(compression_types); ++index) {
+	for (size_t scenario = 0; scenario < 3 * ARRAY_LENGTH(compression_types); ++scenario) {
+		size_t index = scenario / 3;
+		unsigned int directions = scenario % 3 + 1;
 		struct modem *modem = modem_create(&driver, "LAPM XID parameters");
 		struct v42_xid_fields fields;
 		uint8_t preamble[109];
@@ -2247,7 +2249,7 @@ static bool test_lapm_xid_parameters(void)
 		modem->cfg.ec_rx_info_size = 119;
 		modem->cfg.ec_tx_win_size = 7;
 		modem->cfg.ec_rx_win_size = 11;
-		modem->cfg.comp = 3;
+		modem->cfg.comp = directions;
 		modem->cfg.comp_types = compression_types[index];
 		modem->cfg.comp_dict_size = 1024;
 		modem->cfg.comp_max_string = 12;
@@ -2266,6 +2268,8 @@ static bool test_lapm_xid_parameters(void)
 				      sizeof(expected_parameters)) == 0,
 		      "XID did not encode the V.42 mask and directional parameters");
 		if ((compression_types[index] & MODEM_COMP_TYPE_V42BIS) != 0) {
+			/* P0 is relative to the negotiation initiator, while cfg is RX/TX. */
+			expected_private[7] = ((directions & 1) << 1) | ((directions & 2) >> 1);
 			CHECK(fields.private_negotiation_length == sizeof(expected_private) &&
 				      memcmp(fields.private_negotiation, expected_private,
 					      sizeof(expected_private)) == 0,
@@ -2275,6 +2279,201 @@ static bool test_lapm_xid_parameters(void)
 			      "XID offered V.42bis without the configured capability");
 		}
 		modem_delete(modem);
+	}
+	return true;
+}
+
+static bool start_lapm_compression_fixture(struct modem *m, bool response)
+{
+	uint8_t preamble[109];
+	frame_t *outgoing;
+
+	m->caller = response;
+	m->rx_rate = m->tx_rate = 2400;
+	CHECK(modem_comp_init(m) == 0 && modem_ec_init(m) == 0,
+	      "compression fixture could not initialize");
+	modem_ec_start(m);
+	m->state = 4; /* Error-control establishment. */
+	if (response) {
+		CHECK(modem_hdlc_get_bits(m, 8, preamble, sizeof(preamble)) ==
+			      (int)sizeof(preamble), "compression fixture preamble failed");
+		outgoing = m->packer.hdlc.tx_frame;
+		m->packer.hdlc.tx_frame = NULL;
+		CHECK(outgoing != NULL, "compression fixture command was missing");
+		m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_negotiation(void)
+{
+	static const struct {
+		unsigned int local_dict, local_string, peer_dict, peer_string;
+	} limits[] = {
+		{ 512, 6, 4096, 32 },
+		{ 1024, 12, 768, 10 },
+		{ 512, 6, 65535, 250 },
+		{ 512, 6, 512, 6 },
+	};
+	struct modem_driver driver = {
+		.name = "LAPM V.42bis negotiation", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	/* Both XID directions, every P0 combination, policy, and unequal capacities. */
+	for (unsigned int scenario = 0; scenario < 64 * ARRAY_LENGTH(limits); ++scenario) {
+		unsigned int capacity = scenario / 64;
+		unsigned int peer = scenario & 3;
+		unsigned int local = (scenario >> 2) & 3;
+		bool supported = (scenario & 16) != 0;
+		bool response = (scenario & 32) != 0;
+		unsigned int peer_local = response ? ((peer & 1) << 1) | ((peer & 2) >> 1) : peer;
+		unsigned int allowed = supported ? local : 0;
+		bool invalid_response = response && (peer_local & ~allowed) != 0;
+		unsigned int selected = peer_local & allowed;
+		unsigned int dict_size = limits[capacity].local_dict;
+		unsigned int max_string = limits[capacity].local_string;
+		unsigned int peer_dict = limits[capacity].peer_dict;
+		unsigned int peer_string = limits[capacity].peer_string;
+		uint8_t parameters[] = {
+			0, 3, 'V', '4', '2', 1, 1, peer,
+			2, 2, peer_dict >> 8, peer_dict, 3, 1, peer_string,
+		};
+		struct v42_xid_fields fields = {
+			.private_negotiation = parameters,
+			.private_negotiation_length = sizeof(parameters),
+		};
+		struct modem *m = modem_create(&driver, driver.name);
+		uint8_t wire[64];
+		size_t length;
+		frame_t incoming = { .buf = wire };
+		frame_t *outgoing;
+		int timer;
+
+		CHECK(m != NULL, "compression modem allocation failed");
+		m->cfg.comp = local;
+		m->cfg.comp_types = supported ? MODEM_COMP_TYPE_V42BIS : MODEM_COMP_TYPE_V44;
+		m->cfg.comp_dict_size = dict_size;
+		m->cfg.comp_max_string = max_string;
+		CHECK(start_lapm_compression_fixture(m, response), "compression fixture failed");
+		timer = m->bit_timer;
+		wire[0] = response ? m->ec.lapm.cmd_addr : m->ec.lapm.rsp_addr;
+		wire[1] = 0xaf;
+		CHECK(v42_xid_encode(&fields, wire + 2, sizeof(wire) - 2, &length) == V42_XID_OK,
+		      "compression XID encoding failed");
+		incoming.count = (int)length + 2;
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		if (invalid_response) {
+			CHECK(m->ec.lapm.config && m->bit_timer == timer && m->cfg.comp == local &&
+				      m->ec.lapm.v44_session.phase == LAPM_V44_COMMAND_PENDING,
+			      "compression response %u accepted a direction we did not offer", scenario);
+		} else {
+			CHECK(m->cfg.comp == selected, "compression case %u selected directions %d, expected %u",
+			      scenario, m->cfg.comp, selected);
+			if (selected) {
+				unsigned int selected_dict = peer_dict < dict_size ? peer_dict : dict_size;
+				unsigned int selected_string = peer_string < max_string ? peer_string : max_string;
+
+				CHECK(m->cfg.comp_dict_size == (int)selected_dict &&
+					      m->cfg.comp_max_string == (int)selected_string &&
+					      m->comp.encoder.dict_size == (int)selected_dict &&
+					      m->comp.decoder.dict_size == (int)selected_dict &&
+					      m->comp.encoder.max_string == (int)selected_string &&
+					      m->comp.decoder.max_string == (int)selected_string,
+				      "compression case %u did not select the smaller allocated limits", scenario);
+			}
+			outgoing = m->packer.hdlc.get_tx_frame(m->packer.hdlc.framer);
+			CHECK(outgoing != NULL, "compression case %u did not queue its reply", scenario);
+			if (!response) {
+				CHECK(outgoing->buf[1] == 0xaf &&
+					      v42_xid_decode(outgoing->buf + 2, outgoing->size - 2, &fields) == V42_XID_OK,
+				      "compression response could not be decoded");
+				if (selected) {
+					CHECK(fields.private_negotiation_length == sizeof(parameters) &&
+						      fields.private_negotiation[7] == selected &&
+						      ((fields.private_negotiation[10] << 8) |
+						       fields.private_negotiation[11]) == (int)m->cfg.comp_dict_size &&
+						      fields.private_negotiation[14] == m->cfg.comp_max_string,
+					      "compression reply advertised different directions or limits from its codec");
+				} else {
+					CHECK(fields.private_negotiation == NULL,
+					      "compression reply offered a disabled capability");
+				}
+			}
+			m->packer.hdlc.tx_complete(m->packer.hdlc.framer, outgoing);
+		}
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
+	}
+	return true;
+}
+
+static bool test_lapm_v42bis_invalid_parameters(void)
+{
+	static const struct {
+		uint8_t field[16];
+		size_t length;
+		bool fatal;
+		bool ignored;
+	} cases[] = {
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 1, 255 }, 12, true, false },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 2, 2, 0, 0 }, 12, true, false },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 3, 1, 5 }, 11, true, false },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 3, 1, 251 }, 11, true, false },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 4 }, 8, false, true },
+		{ { 0, 3, 'V', '4', '2', 1, 2, 3, 0 }, 9, false, true },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 2, 3, 1, 2, 0 }, 13, false, true },
+		{ { 0, 3, 'V', '4', '2', 1, 1, 3, 3, 2, 0, 6 }, 12, false, true },
+		{ { 0, 3, 'X', '4', '2', 1, 1, 3, 2, 2, 1, 255 }, 12, false, false },
+		{ { 1, 1, 3, 2, 2, 2, 0 }, 7, false, false },
+		{ { 0, 3, 'V', '4', '2', 2, 2, 2, 0, 3, 1, 6 }, 12, false, false },
+	};
+	struct modem_driver driver = {
+		.name = "LAPM invalid V.42bis parameters", .start = unused_start,
+		.stop = unused_stop, .ioctl = unused_control,
+	};
+
+	for (size_t scenario = 0; scenario < 2 * ARRAY_LENGTH(cases); ++scenario) {
+		size_t index = scenario / 2;
+		bool response = (scenario & 1) != 0;
+		struct modem *m = modem_create(&driver, driver.name);
+		struct v42_xid_fields fields = {
+			.private_negotiation = cases[index].field,
+			.private_negotiation_length = cases[index].length,
+		};
+		uint8_t wire[64];
+		size_t length;
+		frame_t incoming = { .buf = wire };
+		int timer;
+
+		CHECK(m != NULL, "invalid compression modem allocation failed");
+		m->cfg.comp = 3;
+		m->cfg.comp_types = MODEM_COMP_TYPE_V42BIS;
+		m->cfg.comp_dict_size = 512;
+		m->cfg.comp_max_string = 6;
+		CHECK(start_lapm_compression_fixture(m, response), "invalid compression fixture failed");
+		timer = m->bit_timer;
+		wire[0] = response ? m->ec.lapm.cmd_addr : m->ec.lapm.rsp_addr;
+		wire[1] = 0xaf;
+		CHECK(v42_xid_encode(&fields, wire + 2, sizeof(wire) - 2, &length) == V42_XID_OK,
+		      "invalid compression XID envelope could not be encoded");
+		incoming.count = (int)length + 2;
+		m->packer.hdlc.rx_complete(m->packer.hdlc.framer, &incoming);
+		if (cases[index].fatal) {
+			CHECK(!modem_ec_can_establish(m) && m->result_code != 0,
+			      "invalid compression limit %zu did not disconnect", scenario);
+		} else if (cases[index].ignored) {
+			CHECK(m->state == 4 && m->cfg.comp == 3 && m->bit_timer == timer &&
+				      (!response || m->ec.lapm.config),
+			      "malformed compression parameter %zu changed negotiation", scenario);
+		} else {
+			CHECK(m->cfg.comp == 0 && (!response || !m->ec.lapm.config),
+			      "unknown private parameter set %zu selected V.42bis", scenario);
+		}
+		modem_ec_exit(m);
+		modem_comp_exit(m);
+		modem_delete(m);
 	}
 	return true;
 }
@@ -5705,6 +5904,8 @@ int main(void)
 		{ "AT PCM profile controls", test_at_pcm_profile_controls },
 		{ "AT V.34 symbol rate", test_at_v34_symbol_rate },
 		{ "LAPM XID parameter encoding", test_lapm_xid_parameters },
+		{ "LAPM V.42bis negotiation", test_lapm_v42bis_negotiation },
+		{ "LAPM V.42bis invalid parameters", test_lapm_v42bis_invalid_parameters },
 		{ "LAPM XID negotiation directions", test_lapm_xid_directions },
 		{ "LAPM simultaneous XID negotiation", test_lapm_xid_collisions },
 		{ "LAPM repeated XID parameters", test_lapm_repeated_xid_parameters },

@@ -283,17 +283,7 @@ static int reinitialize_for_link_establishment(struct lapm_state *l)
 	return 0;
 }
 
-/* le/be value parsing */
-extern inline u32 lapm_get_le_val(const u8 *buf, int len)
-{
-	u32 val = 0;
-	while(len--) {
-		val <<= 8;
-		val |= buf[len];
-	}
-	return val;
-}
-
+/* Big-endian value parsing. */
 extern inline u32 lapm_get_be_val(const u8 *buf, int len)
 {
 	u32 val = 0;
@@ -431,6 +421,12 @@ struct lapm_xid_config {
 	struct modem_config modem;
 };
 
+enum xid_decode_result {
+	XID_VALID = 0,
+	XID_MALFORMED = -1,
+	XID_INVALID_COMPRESSION = -2,
+};
+
 static void parse_xid_params(
 	struct lapm_xid_config *config, const u8 *buf, int len)
 {
@@ -477,51 +473,81 @@ static void parse_xid_params(
 }
 
 
-static void parse_xid_private_params(
-	struct modem_config *cfg, const u8 *buf, int len)
+static unsigned int reverse_compression_directions(unsigned int directions)
 {
+	return ((directions & 1U) << 1) | ((directions & 2U) >> 1);
+}
+
+static enum xid_decode_result parse_xid_private_params(
+	struct modem_config *cfg, const struct modem_config *local,
+	bool command, const u8 *buf, int len)
+{
+	static const u8 identifier[] = { PI_PARAMETER_SET_ID, 3, 'V', '4', '2' };
+	unsigned int allowed = (local->comp_types & MODEM_COMP_TYPE_V42BIS) ? local->comp : 0;
 	u8 pid, plen;
+
+	/* Table 11b: the parameter-set identifier comes first. Unknown sets
+	 * do not give the remaining parameter identifiers V.42bis semantics. */
+	if (len < (int)sizeof(identifier) || memcmp(buf, identifier, sizeof(identifier)) != 0)
+		return XID_VALID;
+	buf += sizeof(identifier);
+	len -= sizeof(identifier);
 	while (len > 0) {
 		pid  = buf[0];
 		plen = buf[1];
 		buf += 2;
 		len -= 2 + plen;
-		if (len < 0)
-			break;
 		switch (pid) {
-		case PI_PARAMETER_SET_ID:
-			//pval = lapm_get_be_val(buf,plen);
-			break;
 		case PI_V42BIS_REQUEST:
-			cfg->comp = lapm_get_le_val(buf,plen);
+			if (plen != 1 || buf[0] > 3)
+				return XID_MALFORMED;
+			/* cfg bit 1 is local RX, bit 2 local TX. P0 directions are
+			 * relative to the negotiation initiator in both frame types. */
+			cfg->comp = command ? buf[0] : reverse_compression_directions(buf[0]);
+			if (!command && (cfg->comp & ~allowed) != 0)
+				return XID_MALFORMED;
+			cfg->comp &= allowed;
 			cfg->comp_types |= MODEM_COMP_TYPE_V42BIS;
 			break;
 		case PI_V42BIS_CW_NUMBER:
-			cfg->comp_dict_size = lapm_get_be_val(buf,plen);
+			if (plen != 2)
+				return XID_MALFORMED;
+			cfg->comp_dict_size = ((unsigned int)buf[0] << 8) | buf[1];
 			break;
 		case PI_V42BIS_MAX_STRING:
-			cfg->comp_max_string = lapm_get_be_val(buf,plen);
+			if (plen != 1)
+				return XID_MALFORMED;
+			cfg->comp_max_string = buf[0];
 			break;
 		default:
 			break;
 		}
+		if (!modem_comp_parameters_valid(cfg->comp_dict_size, cfg->comp_max_string))
+			return XID_INVALID_COMPRESSION;
 		buf += plen;
 	}
+	/* V.42bis 5.1: both DCEs use the lower P1/P2 proposals. Select before
+	 * advertising a response so it agrees with the allocated codec limits. */
+	if (cfg->comp_dict_size > local->comp_dict_size)
+		cfg->comp_dict_size = local->comp_dict_size;
+	if (cfg->comp_max_string > local->comp_max_string)
+		cfg->comp_max_string = local->comp_max_string;
+	return XID_VALID;
 }
 
-static int decode_xid(
+static enum xid_decode_result decode_xid(
 	struct lapm_state *l, frame_t *f, struct lapm_xid_config *config)
 {
 	struct v42_xid_fields fields;
 	size_t length;
 
 	if (f == NULL || f->buf == NULL || f->count < 2 || config == NULL)
-		return -1;
+		return XID_MALFORMED;
 	length = (size_t)f->count - 2U;
 	if (v42_xid_decode(
 			f->buf + 2, length, &fields) !=
 			V42_XID_OK)
-		return -1;
+		return XID_MALFORMED;
 	*config = (struct lapm_xid_config) {
 		.tx_win_size = l->tx_win_size,
 		.rx_win_size = l->rx_win_size,
@@ -533,15 +559,22 @@ static int decode_xid(
 		parse_xid_params(
 			config, fields.parameter_negotiation,
 			(int)fields.parameter_negotiation_length);
-	if (fields.private_negotiation != NULL)
-		parse_xid_private_params(
-			&config->modem, fields.private_negotiation,
+	if (fields.private_negotiation != NULL) {
+		enum xid_decode_result result = parse_xid_private_params(
+			&config->modem, &l->modem->cfg, RX_IS_COMMAND(f), fields.private_negotiation,
 			(int)fields.private_negotiation_length);
+
+		if (result != XID_VALID) {
+			if (result == XID_INVALID_COMPRESSION)
+				EC_ERR("invalid V.42bis compression limits\n");
+			return result;
+		}
+	}
 	config->modem.ec_tx_win_size = config->tx_win_size;
 	config->modem.ec_rx_win_size = config->rx_win_size;
 	config->modem.ec_tx_info_size = config->tx_info_size;
 	config->modem.ec_rx_info_size = config->rx_info_size;
-	return 0;
+	return XID_VALID;
 }
 
 static void apply_xid_config(
@@ -573,7 +606,7 @@ static struct lapm_xid_config current_xid_config(
 }
 
 static void build_xid_fields(
-	const struct lapm_xid_config *config,
+	const struct lapm_xid_config *config, bool initiator,
 	u8 parameters[XID_PARAMETER_LENGTH],
 	u8 private_parameters[XID_PRIVATE_LENGTH],
 	struct v42_xid_fields *fields)
@@ -590,7 +623,8 @@ static void build_xid_fields(
 	};
 	const u8 private_values[XID_PRIVATE_LENGTH] = {
 		PI_PARAMETER_SET_ID, 3, 0x56, 0x34, 0x32,
-		PI_V42BIS_REQUEST, 1, config->modem.comp,
+		PI_V42BIS_REQUEST, 1, initiator ?
+			reverse_compression_directions(config->modem.comp) : config->modem.comp,
 		PI_V42BIS_CW_NUMBER, 2,
 		(u8)(config->modem.comp_dict_size >> 8),
 		(u8)config->modem.comp_dict_size,
@@ -651,7 +685,7 @@ static int tx_xid_command(struct lapm_state *l)
 		struct v42_xid_fields fields;
 
 		build_xid_fields(
-			&config, parameters, private_parameters, &fields);
+			&config, true, parameters, private_parameters, &fields);
 		result = lapm_v44_prepare_command(
 			&l->v44_session, &fields, &prepared);
 	}
@@ -670,12 +704,20 @@ static int rx_xid_command(struct lapm_state *l, frame_t *f)
 	struct v42_xid_fields fields;
 	bool duplicate = l->v44_session.response_length != 0;
 	bool pending = l->v44_session.phase == LAPM_V44_COMMAND_PENDING;
+	enum xid_decode_result decoded;
 
 	if (!duplicate && l->state == LAPM_DATA)
 		return -1;
-	if (decode_xid(l, f, &config) != 0)
+	decoded = decode_xid(l, f, &config);
+	if (decoded == XID_INVALID_COMPRESSION) {
+		l->config = 0;
+		T401_STOP(l);
+		modem_update_status(l->modem, STATUS_EC_ERROR);
 		return -1;
-	build_xid_fields(&config, parameters, private_parameters, &fields);
+	}
+	if (decoded != XID_VALID)
+		return -1;
+	build_xid_fields(&config, false, parameters, private_parameters, &fields);
 	if (lapm_v44_prepare_response(
 			&l->v44_session, f->buf + 2, (size_t)f->count - 2U,
 			&fields, &prepared) != LAPM_V44_OK)
@@ -713,8 +755,11 @@ static enum rx_xid_response_result rx_xid_response(
 {
 	struct lapm_xid_config config;
 	struct v44_offer offer;
+	enum xid_decode_result decoded = decode_xid(l, f, &config);
 
-	if (decode_xid(l, f, &config) != 0)
+	if (decoded == XID_INVALID_COMPRESSION)
+		return RX_XID_RESPONSE_FATAL;
+	if (decoded != XID_VALID)
 		return RX_XID_RESPONSE_IGNORED;
 	if (lapm_v44_accept_response(
 		    &l->v44_session, f->buf + 2,

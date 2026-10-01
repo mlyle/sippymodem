@@ -709,13 +709,19 @@ int comp_force_change_mode(struct comp_state *c, enum COMP_MODE mode)
  */
 
 
+/* V.42bis 5.1: invalid P1/P2 values are procedural errors. */
+bool modem_comp_parameters_valid(int dict_size, int max_str)
+{
+	return dict_size >= MIN_DICT_SIZE &&
+	       max_str >= MIN_STR_SIZE && max_str <= MAX_STR_SIZE;
+}
+
 int comp_init(struct comp_state *c,int dict_size,int max_str)
 {
 	struct dict *d;
 	int i;
 	memset(c,0,sizeof(*c));
-	if (dict_size < MIN_DICT_SIZE ||
-	    max_str < MIN_STR_SIZE || max_str > MAX_STR_SIZE)
+	if (!modem_comp_parameters_valid(dict_size, max_str))
 		return -1;
 	/* alloc dict */
 	d = COMP_ALLOC(dict_size*sizeof(*d));
@@ -739,8 +745,7 @@ int comp_init(struct comp_state *c,int dict_size,int max_str)
 
 int comp_config(struct comp_state *c,int dict_size,int max_str)
 {
-	if (dict_size < MIN_DICT_SIZE ||
-	    max_str < MIN_STR_SIZE || max_str > MAX_STR_SIZE)
+	if (!modem_comp_parameters_valid(dict_size, max_str))
 		return -1;
 	if (dict_size > c->dict_size || max_str > sizeof(c->str_data))
 		return -1;
