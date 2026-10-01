@@ -436,6 +436,8 @@ const char *modem_call_phase(const struct modem *m)
 	case STATE_COMMAND_ONLINE:
 		if (m->retrain_pending)
 			return "local-retrain";
+		if (m->dp != NULL && m->dp->status == DPSTAT_OK)
+			return "retraining";
 		return m->state == STATE_MODEM_ONLINE ? "online" : "online-command";
 	case STATE_EC_DISC: return "error-control-disconnect";
 	case STATE_DP_DISC: return "cleardown";

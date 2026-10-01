@@ -289,6 +289,7 @@ static int start_local_retrain(struct v34_datapump *datapump)
 		return -1;
 	datapump->call = call;
 	datapump->training = training;
+	datapump->dp.status = DPSTAT_OK;
 	datapump->missing_carrier_samples = 0;
 	datapump->carrier_recovery_samples = 0;
 	datapump->retrain_carrier_acquired = false;
@@ -586,6 +587,7 @@ static int process_v34(
 				return DPSTAT_ERROR;
 			}
 			datapump->retrain_carrier_acquired = false;
+			datapump->dp.status = DPSTAT_OK;
 		}
 		if (!training_session_is_online(&datapump->training) &&
 		    observation_has_progress(&observation) &&

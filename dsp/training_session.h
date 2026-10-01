@@ -55,9 +55,9 @@ enum training_session_result training_session_advance(
 enum training_session_result training_session_note_progress(
 	struct training_session *session);
 
-/* Begin the same active training generation under a new datapump owner.  The
- * origin and generation survive while the new owner receives one complete,
- * bounded training interval. */
+/* Transfer the active generation to a new datapump owner. Initial training
+ * receives a fresh interval; retraining retains its elapsed-time deadline.
+ * Per-owner progress diagnostics restart in either case. */
 enum training_session_result training_session_transfer(
 	struct training_session *session);
 

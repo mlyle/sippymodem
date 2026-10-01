@@ -346,6 +346,7 @@ static int retrain_v90(struct dp *dp)
 	}
 	datapump->call = call;
 	datapump->training = training;
+	datapump->dp.status = DPSTAT_OK;
 	datapump->upstream_quality_ready = false;
 	return 0;
 }
@@ -379,6 +380,7 @@ static bool start_parameter_exchange(struct dp *dp, bool fast, bool request_sile
 		datapump->call.v92_digital_phase4_configuration.suvd.request_silence;
 	datapump->call = call;
 	datapump->training = training;
+	datapump->dp.status = DPSTAT_OK;
 	return true;
 }
 
@@ -714,12 +716,14 @@ static bool process_octet(
 		return false;
 	if (was_qc && datapump->call.stage == PCM_CALL_PHASE2)
 		datapump->dp.modem->dsp_info.startup = MODEM_STARTUP_QC;
-	if (was_online &&
-	    datapump->call.retrain_active && !pcm_call_is_online_owned(&datapump->call) &&
-	    training_session_start_retrain(
-		    &datapump->training, TRAINING_REMOTE_RETRAIN) !=
-		    TRAINING_SESSION_OK)
-		return false;
+	if (was_online && datapump->call.retrain_active &&
+	    !pcm_call_is_online_owned(&datapump->call)) {
+		if (training_session_start_retrain(
+			    &datapump->training, TRAINING_REMOTE_RETRAIN) !=
+			    TRAINING_SESSION_OK)
+			return false;
+		datapump->dp.status = DPSTAT_OK;
+	}
 	if (!training_session_is_online(&datapump->training) &&
 	    pcm_call_is_online_owned(&datapump->call)) {
 		if (!enter_link(datapump))
@@ -929,9 +933,8 @@ static int process_v90_g711(
 				    (unsigned int)remaining) !=
 				    TRAINING_SESSION_OK)
 				goto failure;
-			/* V.90 has completed the shared Phase 2 exchange.  Give the
-			 * V.34 owner a complete bounded Phase 3/4 interval instead of
-			 * charging it for the preceding PCM negotiation. */
+			/* Initial fallback gives V.34 a complete Phase 3/4 interval.
+			 * A retrain retains its deadline across every owner change. */
 			if (!datapump->v8_fallback_ready &&
 			    training_session_transfer(&datapump->training) !=
 				    TRAINING_SESSION_OK)

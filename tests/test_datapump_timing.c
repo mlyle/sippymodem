@@ -208,11 +208,20 @@ static bool test_training_owner_transfer(void)
 		      &session, TRAINING_REMOTE_RETRAIN) == TRAINING_SESSION_OK &&
 	      training_session_advance(&session, 75) == TRAINING_SESSION_OK &&
 	      training_session_transfer(&session) == TRAINING_SESSION_OK &&
-	      session.elapsed_ticks == 0 && session.stalled_ticks == 0 &&
+	      session.elapsed_ticks == 75 && session.stalled_ticks == 0 &&
 	      session.progress_events == 0 && session.generation == 2 &&
 	      session.origin == TRAINING_REMOTE_RETRAIN &&
 	      training_session_is_retraining(&session),
-	      "retrain owner transfer lost its generation or origin");
+	      "retrain owner transfer lost its deadline, generation or origin");
+	for (unsigned transfer = 0; transfer < 25; ++transfer) {
+		CHECK(training_session_advance(&session, 1) == TRAINING_SESSION_OK &&
+		      training_session_transfer(&session) == TRAINING_SESSION_OK &&
+		      session.elapsed_ticks == 76 + transfer,
+		      "repeated owner transfer extended a retrain deadline");
+	}
+	CHECK(training_session_advance(&session, 1) == TRAINING_SESSION_DEADLINE &&
+	      training_session_has_failed(&session) && session.elapsed_ticks == 100,
+	      "retrain owner changes prevented deadline expiry");
 	CHECK(training_session_transfer(NULL) ==
 		      TRAINING_SESSION_INVALID_ARGUMENT,
 	      "missing owner transfer was accepted");

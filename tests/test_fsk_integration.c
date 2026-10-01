@@ -1401,6 +1401,9 @@ static bool exercise_v92_rate_exchange(
 		      v90_datapump_start_rate_renegotiation(owned[initiator], pause) &&
 		      !v90_datapump_start_rate_renegotiation(owned[initiator], !pause),
 		      "native rate request or duplicate rejection failed");
+		CHECK(owned[initiator]->status == DPSTAT_OK &&
+		      strcmp(modem_call_phase(endpoints[initiator]->modem), "retraining") == 0,
+		      "rate exchange reported online before completing training");
 		/* Exercise each role requesting silence, simultaneous requests, and
 		 * then a plain exchange that must not inherit the preceding pause. */
 		if (epoch == 10u)
@@ -1420,8 +1423,11 @@ static bool exercise_v92_rate_exchange(
 			      "rate exchange media failed at frame %u", frame);
 			for (unsigned side = 0; side < 2; ++side) {
 				struct modem *m = endpoints[side]->modem;
-				CHECK(modem_is_online(m, DP_V92) && m->state == host_state[side] &&
-				      m->dp == owned[side] && m->cfg.ec && !m->command &&
+				CHECK(m->started && m->get_bits != NULL && m->put_bits != NULL &&
+				      m->state == host_state[side] && m->dp == owned[side] &&
+				      (m->dp->status == DPSTAT_OK || m->dp->status == DPSTAT_CONNECT) &&
+				      strcmp(modem_call_phase(m), m->dp->status == DPSTAT_OK ?
+					     "retraining" : "online") == 0 && m->cfg.ec && !m->command &&
 				      m->ec.lapm.state == retained[side].state &&
 				      m->ec.lapm.v44_path == retained[side].v44_path &&
 				      memcmp(&m->ec.lapm.v44_session, &retained[side].v44_session,
@@ -1466,7 +1472,8 @@ static bool exercise_v92_rate_exchange(
 		CHECK(poll_seen[0] && poll_seen[1],
 		      "rate exchange %u did not poll retained LAPM state (polls=%d/%d)",
 		      epoch, poll_seen[0], poll_seen[1]);
-		CHECK(settled == 25u &&
+		CHECK(settled == 25u && modem_is_online(caller->modem, DP_V92) &&
+		      modem_is_online(answerer->modem, DP_V92) &&
 		      memcmp(caller->output, payload[1], sizeof(payload[1])) == 0 &&
 		      memcmp(answerer->output, payload[0], sizeof(payload[0])) == 0,
 		      "rate exchange %u lost ordered LAPM data (outputs=%zu/%zu, settled=%u)",

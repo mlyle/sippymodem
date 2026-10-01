@@ -108,7 +108,10 @@ enum training_session_result training_session_transfer(
 		return TRAINING_SESSION_INVALID_ARGUMENT;
 	if (session->state != TRAINING_SESSION_ACTIVE)
 		return TRAINING_SESSION_INVALID_STATE;
-	session->elapsed_ticks = 0;
+	/* Initial PCM fallback gives V.34 its own training interval. Once
+	 * online, a retrain has one deadline across all datapump owners. */
+	if (session->origin == TRAINING_INITIAL)
+		session->elapsed_ticks = 0;
 	session->stalled_ticks = 0;
 	session->progress_events = 0;
 	return TRAINING_SESSION_OK;

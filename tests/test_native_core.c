@@ -562,6 +562,10 @@ static bool test_ato1_waits_for_datapump_retrain(void)
 	      "data-pump CONNECT did not complete ATO1");
 	CHECK(strcmp(modem_call_phase(modem), "online") == 0,
 	      "completed ATO1 retained retrain phase");
+	retrain_dp.datapump.status = DPSTAT_OK;
+	CHECK(strcmp(modem_call_phase(modem), "retraining") == 0,
+	      "automatic datapump retraining was reported online");
+	retrain_dp.datapump.status = DPSTAT_CONNECT;
 	modem->state = TEST_STATE_COMMAND_ONLINE;
 	modem->command = 1;
 	CHECK(process_at_command(modem, resume) == 1 &&

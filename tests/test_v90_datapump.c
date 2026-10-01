@@ -1831,6 +1831,7 @@ static bool run_fallback_restart(
 				CHECK(digital.dp_requested == DP_V34 &&
 				      v90_datapump_v34_fallback_handoff(dp, &handoff) &&
 				      training_session_is_retraining(&handoff.training) == after_online &&
+				      (!after_online || handoff.training.elapsed_ticks != 0) &&
 				      handoff.restart.protocol == configuration.protocol &&
 				      (protocol != DP_V92 ||
 				       handoff.restart.local_info1.v92_digital.pcm_upstream_supported ==
@@ -1988,6 +1989,8 @@ static bool run_fallback_restart(
 					pcm_call_start_retrain(&peer) == PCM_CALL_OK) :
 				       digital.dp->op->retrain(digital.dp) == 0,
 			      "fallback ATO1 did not start");
+			CHECK(remote || digital.dp->status == DPSTAT_OK,
+			      "fallback retrain retained online datapump status");
 		}
 	}
 	CHECK(phases == expected_phases && returned && peer_returned &&
